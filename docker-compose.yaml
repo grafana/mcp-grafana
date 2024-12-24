@@ -1,0 +1,19 @@
+version: "3"
+
+services:
+  grafana:
+    image: grafana/grafana
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Admin"
+      GF_LOG_LEVEL: debug
+      GF_SERVER_ROUTER_LOGGING: true
+    ports:
+      - 3000:3000/tcp
+    volumes:
+      # - ./provisioning:/etc/grafana/provisioning
+      # persist data in /var/lib/grafana so that jobs still work between re-ups
+      - "var-lib-grafana:/var/lib/grafana"
+
+volumes:
+  var-lib-grafana:
