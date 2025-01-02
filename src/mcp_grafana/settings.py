@@ -6,7 +6,7 @@ class GrafanaSettings(BaseSettings):
         env_prefix="GRAFANA_", env_file=".env"
     )
 
-    url: str
+    url: str = "http://localhost:3000"
     api_key: str | None = None
 
 
