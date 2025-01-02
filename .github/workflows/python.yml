@@ -26,7 +26,7 @@ jobs:
           python-version-file: ".python-version"
           
       - name: Install the project
-        run: uv sync --all-extras --dev
+        run: uv sync --all-extras --all-groups
 
       - name: Run ruff
         run: uv run ruff check .
