@@ -1,6 +1,6 @@
 from mcp.server import FastMCP
 
-from .client import grafana_client, SearchDashboardsArguments
+from ..client import SearchDashboardsArguments, grafana_client
 
 
 async def search_dashboards(arguments: SearchDashboardsArguments) -> bytes:

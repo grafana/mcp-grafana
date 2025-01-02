@@ -8,6 +8,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import UUID4, BaseModel, ConfigDict, Field, PlainSerializer, TypeAdapter
 
+
 CustomDateTime = Annotated[
     datetime,
     PlainSerializer(lambda _datetime: _datetime.isoformat(), return_type=str),
