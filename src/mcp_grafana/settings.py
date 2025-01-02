@@ -1,4 +1,14 @@
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class SearchSettings(BaseSettings):
+    enabled: bool = True
+    limit: int = 1000
+
+
+class ToolSettings(BaseSettings):
+    search: SearchSettings = Field(default_factory=SearchSettings)
 
 
 class GrafanaSettings(BaseSettings):
@@ -8,6 +18,8 @@ class GrafanaSettings(BaseSettings):
 
     url: str = "http://localhost:3000"
     api_key: str | None = None
+
+    tools: ToolSettings = Field(default_factory=ToolSettings)
 
 
 grafana_settings = GrafanaSettings()
