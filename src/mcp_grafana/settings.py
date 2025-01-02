@@ -13,7 +13,7 @@ class ToolSettings(BaseSettings):
 
 class GrafanaSettings(BaseSettings):
     model_config: SettingsConfigDict = SettingsConfigDict(
-        env_prefix="GRAFANA_", env_file=".env"
+        env_prefix="GRAFANA_", env_file=".env", env_nested_delimiter="__"
     )
 
     url: str = "http://localhost:3000"
