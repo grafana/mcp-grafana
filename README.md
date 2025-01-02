@@ -25,6 +25,10 @@ This is useful if you don't use certain functionality or if you don't want to ta
 
 ### Tools
 
+| Tool | Description |
+| --- | --- |
+| `search_dashboards` | Search for dashboards |
+
 ## Usage
 
 1. Create a service account in Grafana with enough permissions to use the tools you want to use,
