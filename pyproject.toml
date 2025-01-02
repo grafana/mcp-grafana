@@ -6,7 +6,7 @@ readme = "README.md"
 authors = [
     { name = "Ben Sully", email = "ben.sully@grafana.com" }
 ]
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "httpx>=0.28.1",
     "mcp==1.2.0rc1",
