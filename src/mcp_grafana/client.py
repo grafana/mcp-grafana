@@ -16,10 +16,18 @@ import httpx
 from pydantic import UUID4
 
 from .settings import grafana_settings
-from .types import (AddActivityToIncidentArguments, CreateIncidentArguments,
-                    CreateSiftInvestigationArguments, IncidentPreviewBody,
-                    IncidentPreviewQuery, ListIncidentsArguments, Query,
-                    SearchDashboardsArguments, Selector, query_list)
+from .types import (
+    AddActivityToIncidentArguments,
+    CreateIncidentArguments,
+    CreateSiftInvestigationArguments,
+    IncidentPreviewBody,
+    IncidentPreviewQuery,
+    ListIncidentsArguments,
+    Query,
+    SearchDashboardsArguments,
+    Selector,
+    query_list,
+)
 
 
 class GrafanaError(Exception):
