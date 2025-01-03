@@ -7,7 +7,7 @@ This provides access to your Grafana instance and the surrounding ecosystem.
 ## Features
 
 - [x] Search for dashboards
-- [ ] List and fetch datasource information
+- [x] List and fetch datasource information
 - [ ] Query datasources
   - [ ] Prometheus
   - [ ] Loki (log queries, metric queries)
@@ -17,7 +17,7 @@ This provides access to your Grafana instance and the surrounding ecosystem.
   - [ ] Metric names
   - [ ] Label names
   - [ ] Label values
-- [ ] Search, create, update and close incidents, including attaching notes and other activity
+- [x] Search, create, update and close incidents
 - [ ] Start Sift investigations and view the results
 
 The list of tools is configurable, so you can choose which tools you want to make available to the MCP client.
@@ -31,6 +31,10 @@ This is useful if you don't use certain functionality or if you don't want to ta
 | `list_datasources` | Datasources | List datasources |
 | `get_datasource_by_uid` | Datasources | Get a datasource by uid |
 | `get_datasource_by_name` | Datasources | Get a datasource by name |
+| `list_incidents` | Incidents | List incidents in Grafana Incident |
+| `create_incident` | Incidents | Create an incident in Grafana Incident |
+| `add_activity_to_incident` | Incidents | Add an activity item to an incident in Grafana Incident |
+| `resolve_incident` | Incidents | Resolve an incident in Grafana Incident |
 
 ## Usage
 

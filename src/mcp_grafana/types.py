@@ -110,6 +110,7 @@ class DSQueryResponse(BaseModel):
 
 
 class ListIncidentsArguments(BaseModel):
+    query: str | None = None
     limit: int = Field(default=10, ge=1, le=100)
     status: Literal["resolved", "active"] | None = Field(default=None)
 

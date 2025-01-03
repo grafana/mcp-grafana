@@ -92,20 +92,7 @@ class GrafanaClient:
         return await self.get(f"/api/dashboards/uid/{dashboard_uid}")
 
     # TODO: split incident stuff into a separate client.
-    async def list_incidents(self, arguments: ListIncidentsArguments) -> bytes:
-        # TODO: do this in the tool, not in the client.
-        query_string = "isdrill:false"
-        if arguments.status is not None:
-            query_string += f" and status:{arguments.status}"
-        body = IncidentPreviewBody(
-            query=IncidentPreviewQuery(
-                query_string=query_string,
-                order_direction="DESC",
-                order_field="createdTime",
-                limit=arguments.limit,
-            ),
-            include_custom_field_values=True,
-        )
+    async def list_incidents(self, body: IncidentPreviewBody) -> bytes:
         return await self.post(
             "/api/plugins/grafana-incident-app/resources/api/IncidentsService.QueryIncidentPreviews",
             json=body.model_dump(),
