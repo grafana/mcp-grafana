@@ -8,9 +8,8 @@ from ..client import (
     grafana_client,
     AddActivityToIncidentArguments,
     CreateIncidentArguments,
-    IncidentPreviewBody,
-    IncidentPreviewQuery,
 )
+from ..types import IncidentPreviewBody, IncidentPreviewQuery
 
 
 class ListIncidentsArguments(BaseModel):

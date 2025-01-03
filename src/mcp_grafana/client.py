@@ -21,8 +21,6 @@ from .types import (
     CreateIncidentArguments,
     CreateSiftInvestigationArguments,
     IncidentPreviewBody,
-    IncidentPreviewQuery,
-    ListIncidentsArguments,
     Query,
     SearchDashboardsArguments,
     Selector,
