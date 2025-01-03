@@ -31,10 +31,10 @@ This is useful if you don't use certain functionality or if you don't want to ta
 | `list_datasources` | Datasources | List datasources |
 | `get_datasource_by_uid` | Datasources | Get a datasource by uid |
 | `get_datasource_by_name` | Datasources | Get a datasource by name |
-| `list_incidents` | Incidents | List incidents in Grafana Incident |
-| `create_incident` | Incidents | Create an incident in Grafana Incident |
-| `add_activity_to_incident` | Incidents | Add an activity item to an incident in Grafana Incident |
-| `resolve_incident` | Incidents | Resolve an incident in Grafana Incident |
+| `list_incidents` | Incident | List incidents in Grafana Incident |
+| `create_incident` | Incident | Create an incident in Grafana Incident |
+| `add_activity_to_incident` | Incident | Add an activity item to an incident in Grafana Incident |
+| `resolve_incident` | Incident | Resolve an incident in Grafana Incident |
 
 ## Usage
 

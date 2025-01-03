@@ -26,9 +26,20 @@ class SearchSettings(BaseSettings):
     )
 
 
+class IncidentSettings(BaseSettings):
+    """
+    Settings for the Incident tools.
+    """
+
+    enabled: bool = Field(
+        default=True, description="Whether to enable the incident tools."
+    )
+
+
 class ToolSettings(BaseSettings):
     search: SearchSettings = Field(default_factory=SearchSettings)
     datasources: DatasourcesSettings = Field(default_factory=DatasourcesSettings)
+    incident: IncidentSettings = Field(default_factory=IncidentSettings)
 
 
 class GrafanaSettings(BaseSettings):
