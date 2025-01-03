@@ -25,9 +25,12 @@ This is useful if you don't use certain functionality or if you don't want to ta
 
 ### Tools
 
-| Tool | Description |
-| --- | --- |
-| `search_dashboards` | Search for dashboards |
+| Tool | Category | Description |
+| --- | --- | --- |
+| `search_dashboards` | Search | Search for dashboards |
+| `list_datasources` | Datasources | List datasources |
+| `get_datasource_by_uid` | Datasources | Get a datasource by uid |
+| `get_datasource_by_name` | Datasources | Get a datasource by name |
 
 ## Usage
 
@@ -54,8 +57,8 @@ Follow the [Grafana documentation][service-account] for details.
 }
 ```
 
-To disable a set of tools, set the environment variable `GRAFANA_TOOLS__<TOOL>__ENABLED` to `"false"`.
-For example, to disable the dashboard search tool, set `"GRAFANA_TOOLS__SEARCH__ENABLED": "false"`.
+To disable a category of tools, set the environment variable `GRAFANA_TOOLS__<TOOL>__ENABLED` to `"false"`.
+For example, to disable the search tools, set `"GRAFANA_TOOLS__SEARCH__ENABLED": "false"`.
 
 [mcp]: https://modelcontextprotocol.io/
 [service-account]: https://grafana.com/docs/grafana/latest/administration/service-accounts/

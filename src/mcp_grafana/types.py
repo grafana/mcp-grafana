@@ -8,6 +8,8 @@ from typing import Annotated, Any, Literal
 
 from pydantic import UUID4, BaseModel, ConfigDict, Field, PlainSerializer, TypeAdapter
 
+from .settings import grafana_settings
+
 
 CustomDateTime = Annotated[
     datetime,
@@ -42,7 +44,7 @@ class SearchDashboardsArguments(BaseModel):
     dashboard_uids: list[str] | None = None
     folder_uids: list[str] | None = None
     only_starred: bool = False
-    limit: int = 1000
+    limit: int = grafana_settings.tools.search.limit
     page: int = 1
 
 
