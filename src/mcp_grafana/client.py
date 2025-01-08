@@ -71,7 +71,7 @@ class GrafanaClient:
         self, uid: str | None = None, name: str | None = None
     ) -> bytes:
         if uid is not None:
-            return await self.get(f"/api/datasources/{uid}")
+            return await self.get(f"/api/datasources/uid/{uid}")
         elif name is not None:
             return await self.get(f"/api/datasources/name/{name}")
         else:
