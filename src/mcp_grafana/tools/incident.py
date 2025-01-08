@@ -9,7 +9,7 @@ from ..client import (
     AddActivityToIncidentArguments,
     CreateIncidentArguments,
 )
-from ..types import IncidentPreviewBody, IncidentPreviewQuery
+from ..grafana_types import IncidentPreviewBody, IncidentPreviewQuery
 
 
 class ListIncidentsArguments(BaseModel):

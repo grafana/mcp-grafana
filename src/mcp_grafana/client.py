@@ -16,7 +16,7 @@ import httpx
 from pydantic import UUID4
 
 from .settings import grafana_settings
-from .types import (
+from .grafana_types import (
     AddActivityToIncidentArguments,
     CreateIncidentArguments,
     CreateSiftInvestigationArguments,
