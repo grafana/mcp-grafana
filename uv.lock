@@ -161,16 +161,13 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "httpx" },
-    { name = "mcp" },
+    { name = "mcp", extra = ["cli"] },
     { name = "pydantic" },
     { name = "pydantic-settings" },
+    { name = "typer" },
 ]
 
 [package.dev-dependencies]
-cli = [
-    { name = "mcp", extra = ["cli"] },
-    { name = "typer" },
-]
 dev = [
     { name = "pytest" },
 ]
@@ -181,16 +178,13 @@ lint = [
 [package.metadata]
 requires-dist = [
     { name = "httpx", specifier = ">=0.28.1" },
-    { name = "mcp", specifier = "==1.2.0rc1" },
+    { name = "mcp", extras = ["cli"], specifier = "==1.2.0rc1" },
     { name = "pydantic", specifier = ">=2.10.4" },
     { name = "pydantic-settings", specifier = ">=2.7.0" },
+    { name = "typer", specifier = ">=0.15.1" },
 ]
 
 [package.metadata.requires-dev]
-cli = [
-    { name = "mcp", extras = ["cli"], specifier = "==1.2.0rc1" },
-    { name = "typer", specifier = ">=0.15.1" },
-]
 dev = [{ name = "pytest", specifier = ">=8.3.4" }]
 lint = [{ name = "ruff", specifier = ">=0.8.5" }]
 
