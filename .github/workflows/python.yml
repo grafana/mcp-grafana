@@ -23,7 +23,7 @@ jobs:
       - name: "Set up Python"
         uses: actions/setup-python@v5
         with:
-          python-version-file: ".python-version"
+          python-version-file: "pyproject.toml"
           
       - name: Install the project
         run: uv sync --all-extras --all-groups
