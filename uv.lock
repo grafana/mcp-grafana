@@ -169,6 +169,7 @@ dependencies = [
 [package.dev-dependencies]
 cli = [
     { name = "mcp", extra = ["cli"] },
+    { name = "typer" },
 ]
 dev = [
     { name = "pytest" },
@@ -186,7 +187,10 @@ requires-dist = [
 ]
 
 [package.metadata.requires-dev]
-cli = [{ name = "mcp", extras = ["cli"], specifier = "==1.2.0rc1" }]
+cli = [
+    { name = "mcp", extras = ["cli"], specifier = "==1.2.0rc1" },
+    { name = "typer", specifier = ">=0.15.1" },
+]
 dev = [{ name = "pytest", specifier = ">=8.3.4" }]
 lint = [{ name = "ruff", specifier = ">=0.8.5" }]
 

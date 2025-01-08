@@ -14,9 +14,13 @@ dependencies = [
     "pydantic>=2.10.4",
 ]
 
+[project.scripts]
+mcp-grafana = "mcp_grafana.cli:app"
+
 [dependency-groups]
 cli = [
     "mcp[cli]==1.2.0rc1",
+    "typer>=0.15.1",
 ]
 dev = [
     "pytest>=8.3.4",
