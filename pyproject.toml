@@ -6,6 +6,7 @@ readme = "README.md"
 authors = [
     { name = "Ben Sully", email = "ben.sully@grafana.com" }
 ]
+license = { file = "LICENSE" }
 requires-python = ">=3.12"
 dependencies = [
     "httpx>=0.28.1",

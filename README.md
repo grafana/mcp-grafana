@@ -64,5 +64,9 @@ Follow the [Grafana documentation][service-account] for details.
 To disable a category of tools, set the environment variable `GRAFANA_TOOLS__<CATEGORY>__ENABLED` to `"false"`.
 For example, to disable the search tools, set `"GRAFANA_TOOLS__SEARCH__ENABLED": "false"`.
 
+## License
+
+This project is licensed under the [Apache License, Version 2.0](LICENSE).
+
 [mcp]: https://modelcontextprotocol.io/
 [service-account]: https://grafana.com/docs/grafana/latest/administration/service-accounts/
