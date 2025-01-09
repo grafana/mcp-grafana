@@ -50,9 +50,6 @@ async def query_prometheus(
         expr=expr,  # type: ignore
         intervalMs=step_seconds * 1000,
     )
-    print(query.model_dump_json(by_alias=True))
-    print(start)
-    print(end)
     response = await grafana_client.query(start, end, [query])
     return DSQueryResponse.model_validate_json(response)
 
