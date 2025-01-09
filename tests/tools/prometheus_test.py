@@ -42,7 +42,7 @@ async def test_query_prometheus_range(step_seconds):
 
 
 async def test_get_prometheus_metric_metadata():
-    # Test getting metadata for a common metric
+    # Test fetching metric metadata
     metadata = await get_prometheus_metric_metadata("robustperception", 10)
     assert 0 < len(metadata) <= 10
 
