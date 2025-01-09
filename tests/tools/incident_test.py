@@ -15,4 +15,8 @@ async def test_list_incidents():
     )
     incidents_bytes = await list_incidents(arguments)
     incidents = json.loads(incidents_bytes)
-    assert len(incidents) <= 2
+    previews = incidents["incidentPreviews"]
+    assert len(previews) <= 2
+    for preview in previews:
+        assert preview["status"] == "active"
+        assert preview["isDrill"] is False
