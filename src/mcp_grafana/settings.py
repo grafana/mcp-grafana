@@ -36,10 +36,21 @@ class IncidentSettings(BaseSettings):
     )
 
 
+class PrometheusSettings(BaseSettings):
+    """
+    Settings for the Prometheus tools.
+    """
+
+    enabled: bool = Field(
+        default=True, description="Whether to enable the Prometheus tools."
+    )
+
+
 class ToolSettings(BaseSettings):
     search: SearchSettings = Field(default_factory=SearchSettings)
     datasources: DatasourcesSettings = Field(default_factory=DatasourcesSettings)
     incident: IncidentSettings = Field(default_factory=IncidentSettings)
+    prometheus: PrometheusSettings = Field(default_factory=PrometheusSettings)
 
 
 class GrafanaSettings(BaseSettings):

@@ -9,14 +9,15 @@ This provides access to your Grafana instance and the surrounding ecosystem.
 - [x] Search for dashboards
 - [x] List and fetch datasource information
 - [ ] Query datasources
-  - [ ] Prometheus
+  - [x] Prometheus
   - [ ] Loki (log queries, metric queries)
   - [ ] Tempo
   - [ ] Pyroscope
-- [ ] Query Prometheus metadata
-  - [ ] Metric names
-  - [ ] Label names
-  - [ ] Label values
+- [x] Query Prometheus metadata
+  - [x] Metric metadata
+  - [x] Metric names
+  - [x] Label names
+  - [x] Label values
 - [x] Search, create, update and close incidents
 - [ ] Start Sift investigations and view the results
 
@@ -31,6 +32,11 @@ This is useful if you don't use certain functionality or if you don't want to ta
 | `list_datasources` | Datasources | List datasources |
 | `get_datasource_by_uid` | Datasources | Get a datasource by uid |
 | `get_datasource_by_name` | Datasources | Get a datasource by name |
+| `query_prometheus` | Prometheus | Execute a query against a Prometheus datasource |
+| `get_prometheus_metric_metadata` | Prometheus | Get metadata for a metric |
+| `get_prometheus_metric_names` | Prometheus | Get list of available metric names |
+| `get_prometheus_label_names` | Prometheus | Get list of label names for a metric |
+| `get_prometheus_label_values` | Prometheus | Get values for a specific label |
 | `list_incidents` | Incident | List incidents in Grafana Incident |
 | `create_incident` | Incident | Create an incident in Grafana Incident |
 | `add_activity_to_incident` | Incident | Add an activity item to an incident in Grafana Incident |
