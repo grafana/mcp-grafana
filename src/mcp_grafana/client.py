@@ -20,7 +20,7 @@ from .grafana_types import (
     AddActivityToIncidentArguments,
     CreateIncidentArguments,
     CreateSiftInvestigationArguments,
-    IncidentPreviewBody,
+    QueryIncidentPreviewsRequest,
     Query,
     SearchDashboardsArguments,
     Selector,
@@ -90,7 +90,7 @@ class GrafanaClient:
         return await self.get(f"/api/dashboards/uid/{dashboard_uid}")
 
     # TODO: split incident stuff into a separate client.
-    async def list_incidents(self, body: IncidentPreviewBody) -> bytes:
+    async def list_incidents(self, body: QueryIncidentPreviewsRequest) -> bytes:
         return await self.post(
             "/api/plugins/grafana-incident-app/resources/api/IncidentsService.QueryIncidentPreviews",
             json=body.model_dump(),

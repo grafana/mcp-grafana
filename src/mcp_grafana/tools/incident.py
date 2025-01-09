@@ -9,7 +9,7 @@ from ..client import (
     AddActivityToIncidentArguments,
     CreateIncidentArguments,
 )
-from ..grafana_types import IncidentPreviewBody, IncidentPreviewQuery
+from ..grafana_types import QueryIncidentPreviewsRequest, IncidentPreviewsQuery
 
 
 class ListIncidentsArguments(BaseModel):
@@ -40,14 +40,14 @@ async def list_incidents(arguments: ListIncidentsArguments) -> bytes:
     query_string = "isdrill:false" if not arguments.drill else ""
     if arguments.status is not None:
         query_string += f" and status:{arguments.status}"
-    body = IncidentPreviewBody(
-        query=IncidentPreviewQuery(
-            query_string=query_string,
-            order_direction="DESC",
-            order_field="createdTime",
+    body = QueryIncidentPreviewsRequest(
+        query=IncidentPreviewsQuery(
+            queryString=query_string,
+            orderDirection="DESC",
+            orderField="createdTime",
             limit=arguments.limit,
         ),
-        include_custom_field_values=True,
+        includeCustomFieldValues=True,
     )
     return await grafana_client.list_incidents(body)
 
@@ -72,9 +72,10 @@ async def add_activity_to_incident(
     """
     return await grafana_client.add_activity_to_incident(
         AddActivityToIncidentArguments(
-            incident_id=incident_id,
+            incidentId=incident_id,
             body=body,
-            event_time=event_time,
+            activityKind="userNote",
+            eventTime=event_time,
         )
     )
 

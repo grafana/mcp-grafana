@@ -6,9 +6,22 @@ import textwrap
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import UUID4, BaseModel, ConfigDict, Field, PlainSerializer, TypeAdapter
+import pydantic
+from pydantic import UUID4, ConfigDict, Field, PlainSerializer, TypeAdapter
 
 from .settings import grafana_settings
+
+
+class BaseModel(pydantic.BaseModel):
+    """
+    Custom base model that excludes unset and None values, and uses aliases
+    when serializing.
+    """
+
+    def model_dump(self, *args, **kwargs):
+        return super().model_dump(
+            exclude_unset=True, exclude_none=True, by_alias=True, *args, **kwargs
+        )
 
 
 CustomDateTime = Annotated[
@@ -18,18 +31,25 @@ CustomDateTime = Annotated[
 
 
 class Datasource(BaseModel):
-    id: int
-    uid: str
-    name: str
-    type: str
-    access: str
-    url: str
-    user: str
-    database: str
-    basic_auth: bool = Field(alias="basicAuth")
-    basic_auth_user: str = Field(alias="basicAuthUser")
-    is_default: bool = Field(alias="isDefault")
-    with_credentials: bool = Field(alias="withCredentials")
+    """
+    A Grafana datasource.
+    """
+
+    id: int = Field(description="The ID of the datasource")
+    uid: str = Field(description="The UID of the datasource")
+    name: str = Field(description="The name of the datasource")
+    type: str = Field(description="The type of the datasource")
+    access: str = Field(description="The access mode of the datasource")
+    url: str = Field(description="The URL of the datasource")
+    user: str = Field(description="The user to connect to the datasource")
+    database: str = Field(description="The database to connect to the datasource")
+    basic_auth: bool = Field(alias="basicAuth", description="Whether to use basic auth")
+    basic_auth_user: str | None = Field(
+        None, alias="basicAuthUser", description="The user to use for basic auth"
+    )
+    is_default: bool = Field(
+        alias="isDefault", description="Whether the datasource is the default"
+    )
     json_data: dict[str, Any] = Field(alias="jsonData", default_factory=dict)
     secure_json_fields: dict[str, bool] = Field(
         alias="secureJsonData", default_factory=dict
@@ -37,35 +57,67 @@ class Datasource(BaseModel):
 
 
 class SearchDashboardsArguments(BaseModel):
-    query: str | None
-    tags: list[str] | None = None
-    type: Literal["dash-db"] | Literal["dash-folder"] | None = None
-    dashboard_ids: list[int] | None = None
-    dashboard_uids: list[str] | None = None
-    folder_uids: list[str] | None = None
-    only_starred: bool = False
-    limit: int = grafana_settings.tools.search.limit
-    page: int = 1
+    """
+    Arguments for the `search_dashboards` tool and API endpoint.
+    """
+
+    query: str | None = Field(description="The query to search for")
+    tags: list[str] | None = Field(
+        default=None, description="Only return dashboards with these tags"
+    )
+    type: Literal["dash-db"] | Literal["dash-folder"] | None = Field(
+        default=None,
+        description="Whether to search for dashboards ('dash-db') or folders ('dash-folder').",
+    )
+    dashboard_ids: list[int] | None = Field(
+        default=None,
+        alias="dashboardIds",
+        description="List of dashboard IDs to search for",
+    )
+    dashboard_uids: list[str] | None = Field(
+        default=None,
+        serialization_alias="dashboardUIDs",
+        description="List of dashboard UIDs to search for",
+    )
+    folder_uids: list[str] | None = Field(
+        default=None,
+        serialization_alias="folderUIDs",
+        description="List of folder UIDs to search for",
+    )
+    starred: bool = Field(default=False, description="Only include starred dashboards")
+    limit: int = Field(
+        default=grafana_settings.tools.search.limit,
+        description="Limit the number of returned results",
+    )
+    page: int = Field(default=1)
 
 
 class DatasourceRef(BaseModel):
+    """
+    A reference to a Grafana datasource, generally used in queries.
+    """
+
     uid: str = Field(description="The unique uid of the datasource")
     type: str = Field(description="The type of the datasource")
 
 
 class Query(BaseModel):
+    """
+    A query to run against a datasource using the `/api/ds/query` endpoint.
+    """
+
     # Queries can have arbitrary other fields.
     model_config = ConfigDict(extra="allow")
 
-    refId: str = Field(alias="ref_id")
+    ref_id: str = Field(alias="refId")
     datasource: DatasourceRef = Field(description="The datasource to query")
-    queryType: str = Field(
-        alias="query_type", description="The type of query, e.g. 'range'"
+    query_type: str = Field(
+        alias="queryType", description="The type of query, e.g. 'range'"
     )
-    intervalMs: int | None = Field(
-        alias="interval_ms",
+    interval_ms: int | None = Field(
+        None,
+        alias="intervalMs",
         description="The time series time interval in milliseconds",
-        default=None,
     )
 
 
@@ -76,55 +128,101 @@ Labels = dict[str, str]
 
 
 class Config(BaseModel):
+    """
+    Configuration for a field in a DataFrame's schema.
+    """
+
     display_name_from_ds: str | None = Field(alias="displayNameFromDS", default=None)
 
 
 class SchemaField(BaseModel):
+    """
+    The schema of a DataFrame's field.
+    """
+
     name: str
     labels: dict[str, str] = Field(default_factory=dict)
     config: Config | None = Field(default=None)
 
 
 class FrameSchema(BaseModel):
+    """
+    The schema of a DataFrame.
+    """
+
     name: str | None = None
     fields: list[SchemaField]
 
 
 class FrameData(BaseModel):
+    """
+    The data of a DataFrame.
+    """
+
     values: list[list[Any]]
 
 
 class Frame(BaseModel):
+    """
+    A DataFrame returned by a query.
+    """
+
     frame_schema: FrameSchema = Field(alias="schema")
     data: FrameData
 
 
 class QueryResult(BaseModel):
-    frames: list[Frame]
-    error: str | None = None
-    status: int | None = None
+    """
+    The result of executing a query.
+    """
+
+    frames: list[Frame] = Field(description="The data frames returned by the query")
+    error: str | None = Field(None, description="An error message if the query failed")
+    status: int | None = Field(None, description="The status code of the query")
 
 
 class DSQueryResponse(BaseModel):
-    results: dict[str, QueryResult]
+    """
+    The response from the `/api/ds/query` endpoint.
+    """
+
+    results: dict[str, QueryResult] = Field(
+        description="The results of the query, keyed by the refId of the input queries"
+    )
 
 
 class ListIncidentsArguments(BaseModel):
+    """
+    Arguments for the `list_incidents` tool.
+    """
+
     query: str | None = None
     limit: int = Field(default=10, ge=1, le=100)
     status: Literal["resolved", "active"] | None = Field(default=None)
 
 
-class IncidentPreviewQuery(BaseModel):
+class IncidentPreviewsQuery(BaseModel):
+    """
+    A query for the `QueryIncidentPreviews` endpoint.
+
+    Ref: https://grafana.com/docs/grafana-cloud/alerting-and-irm/irm/incident/api/reference/#incidentpreviewsquery
+    """
+
     limit: int
-    orderDirection: str = Field(alias="order_direction")
-    orderField: str = Field(alias="order_field")
-    queryString: str = Field(alias="query_string")
+    order_direction: str = Field(alias="orderDirection")
+    order_field: str = Field(alias="orderField")
+    query_string: str = Field(alias="queryString")
 
 
-class IncidentPreviewBody(BaseModel):
-    query: IncidentPreviewQuery
-    includeCustomFieldValues: Literal[True] = Field(alias="include_custom_field_values")
+class QueryIncidentPreviewsRequest(BaseModel):
+    """
+    A request to the `QueryIncidentPreviews` endpoint.
+
+    Ref: https://grafana.com/docs/grafana-cloud/alerting-and-irm/irm/incident/api/reference/#queryincidentpreviews
+    """
+
+    query: IncidentPreviewsQuery
+    include_custom_field_values: Literal[True] = Field(alias="includeCustomFieldValues")
 
 
 class Label(BaseModel):
@@ -133,6 +231,10 @@ class Label(BaseModel):
 
 
 class IncidentPreview(BaseModel):
+    """
+    A preview of an incident.
+    """
+
     incident_id: str = Field(alias="incidentID")
     title: str
     description: str
@@ -156,26 +258,25 @@ class CreateIncidentArguments(BaseModel):
     severity: Literal["minor", "major", "critical"] | None = Field(
         description="The severity of the incident", default=None
     )
-    roomPrefix: str = Field(alias="room_prefix", default="incident")
-    isDrill: bool = Field(alias="is_drill", default=False)
+    room_prefix: str = Field(alias="roomPrefix", default="incident")
+    is_drill: bool = Field(alias="isDrill", default=False)
     status: Literal["resolved", "active"] = Field(default="active")
-    attachCaption: str = Field(alias="attach_caption", default="")
-    attachUrl: str = Field(alias="attach_url", default="")
+    attach_caption: str = Field(alias="attachCaption", default="")
+    attach_url: str = Field(alias="attachUrl", default="")
     labels: list[Label] = Field(alias="labels", default=[])
 
 
 class AddActivityToIncidentArguments(BaseModel):
-    incidentId: str = Field(alias="incident_id")
-    activityKind: Literal["userNote"] = Field(
-        alias="activity_kind",
-        default="userNote",
+    incident_id: str = Field(alias="incidentId")
+    activity_kind: Literal["userNote"] = Field(
+        alias="activityKind",
         description="The type of activity this item represents. For now, only 'userNote' is supported.",
     )
     body: str = Field(
         description="A human readable description of the activity. URLs will be parsed and attached as context."
     )
-    eventTime: CustomDateTime | None = Field(
-        alias="event_time",
+    event_time: CustomDateTime | None = Field(
+        alias="eventTime",
         default=None,
         description="The time that the activity occurred. If not provided, the current time will be used.",
     )
@@ -233,8 +334,8 @@ class SiftInvestigationRequestData(BaseModel):
 
 class CreateSiftInvestigationArguments(BaseModel):
     name: str = Field(description="The name of the investigation.")
-    requestData: SiftInvestigationRequestData = Field(
-        alias="request_data", description="Inputs to the investigation."
+    request_data: SiftInvestigationRequestData = Field(
+        alias="requestData", description="Inputs to the investigation."
     )
 
     # Don't bother with these for now.
