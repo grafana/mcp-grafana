@@ -34,5 +34,6 @@ jobs:
       - name: Run tests
         run: uv run pytest tests --cloud
         env:
-          GRAFANA_URL: ${{ secrets.CLOUD_GRAFANA_URL }}
+          # E.g. https://mcptests.grafana-dev.net.
+          GRAFANA_URL: ${{ vars.CLOUD_GRAFANA_URL }}
           GRAFANA_API_KEY: ${{ secrets.CLOUD_GRAFANA_API_KEY }}
