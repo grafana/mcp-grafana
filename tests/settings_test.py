@@ -4,6 +4,7 @@ from unittest.mock import patch
 from mcp_grafana.settings import GrafanaSettings
 
 
+@patch.dict(os.environ, clear=True)
 def test_settings():
     # Test we can instantiate settings with defaults.
     settings = GrafanaSettings(url="http://localhost:3000")

@@ -9,9 +9,8 @@ services:
     ports:
       - 3000:3000/tcp
     volumes:
-      # - ./provisioning:/etc/grafana/provisioning
-      # persist data in /var/lib/grafana so that jobs still work between re-ups
-      - "var-lib-grafana:/var/lib/grafana"
+      - ./tests/provisioning:/etc/grafana/provisioning
+      - ./tests/dashboards:/var/lib/grafana/dashboards
 
 volumes:
   var-lib-grafana:

@@ -22,6 +22,7 @@ mcp-grafana = "mcp_grafana.cli:app"
 [dependency-groups]
 dev = [
     "pytest>=8.3.4",
+    "pytest-asyncio>=0.25.2",
 ]
 lint = [
     "ruff>=0.8.5",
@@ -30,3 +31,6 @@ lint = [
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+asyncio_default_fixture_loop_scope = "session"
