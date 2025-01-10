@@ -70,9 +70,57 @@ Follow the [Grafana documentation][service-account] for details.
 To disable a category of tools, set the environment variable `GRAFANA_TOOLS__<CATEGORY>__ENABLED` to `"false"`.
 For example, to disable the search tools, set `"GRAFANA_TOOLS__SEARCH__ENABLED": "false"`.
 
+## Development
+
+Contributions are welcome! Please open an issue or submit a pull request if you have any suggestions or improvements.
+
+This project uses [`uv`] to manage dependencies. Install `uv` following the instructions for your platform.
+
+You can then create a virtual environment and install the dependencies with:
+
+```bash
+uv sync --all-groups
+```
+
+### Testing
+
+TL;DR: start a Grafana instance with `docker-compose up`, run `uv run ruff check .` for lints, and `uv run pytest tests --integration` to run unit and integration tests.
+
+To run unit tests, run:
+
+```bash
+uv run pytest tests
+```
+
+More comprehensive integration tests will require a Grafana instance to be running locally on port 3000; you can start one with Docker Compose:
+
+```bash
+docker-compose up -d
+```
+
+The integration tests can be run with:
+
+```bash
+uv run pytest --integration tests
+```
+
+If you're adding more tools, please add integration tests for them. The existing tests should be a good starting point.
+
+Certain tools use functionality that is only available in Grafana Cloud. Such tests should use the `mark_cloud` Pytest mark; see the [incident_test.py](tests/tools/incident_test.py) file for an example.
+Use the `GRAFANA_URL` and `GRAFANA_API_KEY` environment variables to configure the Grafana instance to use for testing, and run these tests with:
+
+```bash
+GRAFANA_URL=https://myinstance.grafana.net GRAFANA_API_KEY=my-api-key uv run pytest --cloud tests
+```
+
+### Linting
+
+This project uses [ruff](https://github.com/charliermarsh/ruff) for linting.
+
 ## License
 
 This project is licensed under the [Apache License, Version 2.0](LICENSE).
 
 [mcp]: https://modelcontextprotocol.io/
 [service-account]: https://grafana.com/docs/grafana/latest/administration/service-accounts/
+[`uv`]: https://docs.astral.sh/uv/
