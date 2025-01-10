@@ -147,7 +147,7 @@ class GrafanaClient:
         body = {
             "from": str(math.floor(_from.timestamp() * 1000)),
             "to": str(math.floor(to.timestamp() * 1000)),
-            "queries": query_list.dump_python(queries),
+            "queries": query_list.dump_python(queries, by_alias=True),
         }
         return await self.post("/api/ds/query", json=body)
 
