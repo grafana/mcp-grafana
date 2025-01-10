@@ -4,6 +4,8 @@ from mcp_grafana.tools.incident import list_incidents, ListIncidentsArguments
 
 from . import mark_cloud
 
+# All tests in this file require a cloud Grafana instance and
+# an asynchronous event loop.
 pytestmark = mark_cloud
 
 
