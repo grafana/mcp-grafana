@@ -22,8 +22,8 @@ async def query_prometheus(
     datasource_uid: str,
     expr: str,
     start_rfc3339: str,
-    end_rfc3339: str,
-    step_seconds: int,
+    end_rfc3339: str | None = None,
+    step_seconds: int | None = None,
     query_type: PrometheusQueryType = "range",
 ) -> DSQueryResponse:
     """
@@ -38,8 +38,13 @@ async def query_prometheus(
     step_seconds: The time series step size in seconds. Ignored if `query_type` is 'instant'.
     query_type: The type of query to use. Either 'range' or 'instant'.
     """
+    if query_type == "range" and (end_rfc3339 is None or step_seconds is None):
+        raise ValueError(
+            "end_rfc3339 and step_seconds must be provided when query_type is 'range'"
+        )
     start = datetime.fromisoformat(start_rfc3339)
-    end = datetime.fromisoformat(end_rfc3339)
+    end = datetime.fromisoformat(end_rfc3339) if end_rfc3339 is not None else start
+    interval_ms = step_seconds * 1000 if step_seconds is not None else None
     query = Query(
         refId="A",
         datasource=DatasourceRef(
@@ -48,7 +53,7 @@ async def query_prometheus(
         ),
         queryType=query_type,
         expr=expr,  # type: ignore
-        intervalMs=step_seconds * 1000,
+        intervalMs=interval_ms,
     )
     response = await grafana_client.query(start, end, [query])
     return DSQueryResponse.model_validate_json(response)

@@ -55,13 +55,13 @@ class GrafanaClient:
     async def get(self, path: str, params: dict[str, str] | None = None) -> bytes:
         r = await self.c.get(path, params=params)
         if not r.is_success:
-            raise GrafanaError(r.read())
+            raise GrafanaError(r.read().decode())
         return r.read()
 
     async def post(self, path: str, json: dict[str, Any]) -> bytes:
         r = await self.c.post(path, json=json)
         if not r.is_success:
-            raise GrafanaError(r.read())
+            raise GrafanaError(r.read().decode())
         return r.read()
 
     async def list_datasources(self) -> bytes:
