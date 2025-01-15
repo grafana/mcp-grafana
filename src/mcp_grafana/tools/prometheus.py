@@ -137,7 +137,7 @@ async def list_prometheus_label_names(
     matches: Optionally, a list of label matchers to filter the results by.
     start: Optionally, the start time of the time range to filter the results by.
     end: Optionally, the end time of the time range to filter the results by.
-    limit: Optionally, the maximum number of results to return.
+    limit: Optionally, the maximum number of results to return. Defaults to 100.
     """
     response = await grafana_client.list_prometheus_label_names(
         datasource_uid,
@@ -167,7 +167,7 @@ async def list_prometheus_label_values(
     matches: Optionally, a list of selectors to filter the results by.
     start: Optionally, the start time of the query.
     end: Optionally, the end time of the query.
-    limit: Optionally, the maximum number of results to return.
+    limit: Optionally, the maximum number of results to return. Defaults to 100.
     """
     response = await grafana_client.list_prometheus_label_values(
         datasource_uid,

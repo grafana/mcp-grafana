@@ -48,14 +48,14 @@ async def test_list_prometheus_metric_metadata():
 
 
 async def test_list_prometheus_metric_names():
-    # Test listing list of available metric names
+    # Test listing available metric names
     metric_names = await list_prometheus_metric_names("robustperception", ".*")
     assert isinstance(metric_names, list)
     assert len(metric_names) > 0
 
 
 async def test_list_prometheus_label_names():
-    # Test listting list of label names for a metric
+    # Test listing label names for a metric
     label_names = await list_prometheus_label_names(
         "robustperception",
         [Selector(filters=[LabelMatcher(name="job", value="node")])],
@@ -66,7 +66,7 @@ async def test_list_prometheus_label_names():
 
 
 async def test_list_prometheus_label_values():
-    # Test listting values for a specific label
+    # Test listing values for a specific label
     label_values = await list_prometheus_label_values("robustperception", "job")
     assert isinstance(label_values, list)
     assert len(label_values) > 0
