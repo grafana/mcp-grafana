@@ -151,7 +151,7 @@ class GrafanaClient:
         }
         return await self.post("/api/ds/query", json=body)
 
-    async def get_prometheus_metric_metadata(
+    async def list_prometheus_metric_metadata(
         self,
         datasource_uid: str,
         limit: int | None = None,
@@ -169,7 +169,7 @@ class GrafanaClient:
             f"/api/datasources/proxy/uid/{datasource_uid}/api/v1/metadata", params
         )
 
-    async def get_prometheus_label_names(
+    async def list_prometheus_label_names(
         self,
         datasource_uid: str,
         matches: list[Selector] | None = None,
@@ -192,7 +192,7 @@ class GrafanaClient:
             params,
         )
 
-    async def get_prometheus_label_values(
+    async def list_prometheus_label_values(
         self,
         datasource_uid: str,
         label_name: str,

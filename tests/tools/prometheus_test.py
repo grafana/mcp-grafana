@@ -6,10 +6,10 @@ from mcp_grafana.client import GrafanaError
 from mcp_grafana.grafana_types import DSQueryResponse, LabelMatcher, Selector
 from mcp_grafana.tools.prometheus import (
     query_prometheus,
-    get_prometheus_metric_metadata,
-    get_prometheus_metric_names,
-    get_prometheus_label_names,
-    get_prometheus_label_values,
+    list_prometheus_metric_metadata,
+    list_prometheus_metric_names,
+    list_prometheus_label_names,
+    list_prometheus_label_values,
 )
 
 from . import mark_integration
@@ -117,23 +117,22 @@ class TestPrometheusQueries:
         assert len(query_result.frames[0].data.values) == 0
 
 
-async def test_get_prometheus_metric_metadata():
+async def test_list_prometheus_metric_metadata():
     # Test fetching metric metadata
-    metadata = await get_prometheus_metric_metadata("robustperception", 10)
+    metadata = await list_prometheus_metric_metadata("robustperception", 10)
     assert 0 < len(metadata) <= 10
 
 
-async def test_get_prometheus_metric_names():
-    # Test getting list of available metric names
-    metric_names = await get_prometheus_metric_names("robustperception", ".*")
+async def test_list_prometheus_metric_names():
+    # Test listing available metric names
+    metric_names = await list_prometheus_metric_names("robustperception", ".*")
     assert isinstance(metric_names, list)
     assert len(metric_names) > 0
-    assert "up" in metric_names  # 'up' metric should always be present
 
 
-async def test_get_prometheus_label_names():
-    # Test getting list of label names for a metric
-    label_names = await get_prometheus_label_names(
+async def test_list_prometheus_label_names():
+    # Test listing label names for a metric
+    label_names = await list_prometheus_label_names(
         "robustperception",
         [Selector(filters=[LabelMatcher(name="job", value="node")])],
     )
@@ -142,8 +141,8 @@ async def test_get_prometheus_label_names():
     assert "instance" in label_names  # 'instance' is a common label
 
 
-async def test_get_prometheus_label_values():
-    # Test getting values for a specific label
-    label_values = await get_prometheus_label_values("robustperception", "job")
+async def test_list_prometheus_label_values():
+    # Test listing values for a specific label
+    label_values = await list_prometheus_label_values("robustperception", "job")
     assert isinstance(label_values, list)
     assert len(label_values) > 0

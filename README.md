@@ -33,10 +33,10 @@ This is useful if you don't use certain functionality or if you don't want to ta
 | `get_datasource_by_uid` | Datasources | Get a datasource by uid |
 | `get_datasource_by_name` | Datasources | Get a datasource by name |
 | `query_prometheus` | Prometheus | Execute a query against a Prometheus datasource |
-| `get_prometheus_metric_metadata` | Prometheus | Get metadata for a metric |
-| `get_prometheus_metric_names` | Prometheus | Get list of available metric names |
-| `get_prometheus_label_names` | Prometheus | Get list of label names for a metric |
-| `get_prometheus_label_values` | Prometheus | Get values for a specific label |
+| `list_prometheus_metric_metadata` | Prometheus | List metric metadata |
+| `list_prometheus_metric_names` | Prometheus | List available metric names |
+| `list_prometheus_label_names` | Prometheus | List label names matching a selector |
+| `list_prometheus_label_values` | Prometheus | List values for a specific label |
 | `list_incidents` | Incident | List incidents in Grafana Incident |
 | `create_incident` | Incident | Create an incident in Grafana Incident |
 | `add_activity_to_incident` | Incident | Add an activity item to an incident in Grafana Incident |

@@ -1,3 +1,4 @@
+import itertools
 import re
 from datetime import datetime
 from typing import Literal
@@ -59,27 +60,28 @@ async def query_prometheus(
     return DSQueryResponse.model_validate_json(response)
 
 
-async def get_prometheus_metric_metadata(
+async def list_prometheus_metric_metadata(
     datasource_uid: str,
-    limit: int | None = None,
-    limit_per_metric: int | None = None,
+    limit: int = 10,
+    limit_per_metric: int = 10,
     metric: str | None = None,
 ) -> dict[str, list[PrometheusMetricMetadata]]:
     """
-    Get metadata for all metrics in Prometheus.
+    List metadata for all metrics in Prometheus.
 
     # Parameters.
 
     datasource_uid: The uid of the Grafana datasource to query.
-    limit: Optionally, the maximum number of results to return.
-    limit_per_metric: Optionally, the maximum number of results to return per metric.
+    limit: The maximum number of results to return. Defaults to 10.
+    limit_per_metric: The maximum number of results to return per metric.
+                      Defaults to 10.
     metric: Optionally, a metric name to filter the results by.
 
     # Returns.
 
     A mapping from metric name to all available metadata for that metric.
     """
-    response = await grafana_client.get_prometheus_metric_metadata(
+    response = await grafana_client.list_prometheus_metric_metadata(
         datasource_uid,
         limit=limit,
         limit_per_metric=limit_per_metric,
@@ -92,39 +94,46 @@ async def get_prometheus_metric_metadata(
     )
 
 
-async def get_prometheus_metric_names(
+async def list_prometheus_metric_names(
     datasource_uid: str,
     regex: str,
+    limit: int = 10,
+    page: int = 1,
 ) -> list[str]:
     """
-    Get metric names in a Prometheus datasource that match the given regex.
+    List metric names in a Prometheus datasource that match the given regex.
 
     # Parameters.
 
     datasource_uid: The uid of the Grafana datasource to query.
     regex: The regex to match against the metric names. Uses Python's re.match.
+    limit: The maximum number of results to return. Defaults to 10.
+    page: The page number to return. Defaults to 1.
 
     # Returns.
 
     A list of metric names that match the given regex.
     """
-    name_label_values = await get_prometheus_label_values(datasource_uid, "__name__")
+    name_label_values = await list_prometheus_label_values(datasource_uid, "__name__")
     compiled = re.compile(regex)
-    return [name for name in name_label_values if compiled.match(name)]
+    matches = (name for name in name_label_values if compiled.match(name))
+    start = (page - 1) * limit
+    stop = start + limit
+    return list(itertools.islice(matches, start, stop))
 
 
-async def get_prometheus_label_names(
+async def list_prometheus_label_names(
     datasource_uid: str,
     matches: list[Selector] | None = None,
     start: datetime | None = None,
     end: datetime | None = None,
-    limit: int | None = None,
+    limit: int = 100,
 ) -> list[str]:
     """
-    Get the label names in a Prometheus datasource, optionally filtered to those
+    List the label names in a Prometheus datasource, optionally filtered to those
     matching the given selectors and within the given time range.
 
-    If you want to get the label names for a specific metric, pass a matcher
+    If you want to list the label names for a specific metric, pass a matcher
     like `{__name__="metric_name"}` to the `matches` parameter.
 
     # Parameters.
@@ -133,9 +142,9 @@ async def get_prometheus_label_names(
     matches: Optionally, a list of label matchers to filter the results by.
     start: Optionally, the start time of the time range to filter the results by.
     end: Optionally, the end time of the time range to filter the results by.
-    limit: Optionally, the maximum number of results to return.
+    limit: Optionally, the maximum number of results to return. Defaults to 100.
     """
-    response = await grafana_client.get_prometheus_label_names(
+    response = await grafana_client.list_prometheus_label_names(
         datasource_uid,
         matches=matches,
         start=start,
@@ -145,13 +154,13 @@ async def get_prometheus_label_names(
     return ResponseWrapper[list[str]].model_validate_json(response).data
 
 
-async def get_prometheus_label_values(
+async def list_prometheus_label_values(
     datasource_uid: str,
     label_name: str,
     matches: list[Selector] | None = None,
     start: datetime | None = None,
     end: datetime | None = None,
-    limit: int | None = None,
+    limit: int = 100,
 ):
     """
     Get the values of a label in Prometheus.
@@ -163,9 +172,9 @@ async def get_prometheus_label_values(
     matches: Optionally, a list of selectors to filter the results by.
     start: Optionally, the start time of the query.
     end: Optionally, the end time of the query.
-    limit: Optionally, the maximum number of results to return.
+    limit: Optionally, the maximum number of results to return. Defaults to 100.
     """
-    response = await grafana_client.get_prometheus_label_values(
+    response = await grafana_client.list_prometheus_label_values(
         datasource_uid,
         label_name,
         matches=matches,
@@ -178,7 +187,7 @@ async def get_prometheus_label_values(
 
 def add_tools(mcp: FastMCP):
     mcp.add_tool(query_prometheus)
-    mcp.add_tool(get_prometheus_metric_metadata)
-    mcp.add_tool(get_prometheus_metric_names)
-    mcp.add_tool(get_prometheus_label_names)
-    mcp.add_tool(get_prometheus_label_values)
+    mcp.add_tool(list_prometheus_metric_metadata)
+    mcp.add_tool(list_prometheus_metric_names)
+    mcp.add_tool(list_prometheus_label_names)
+    mcp.add_tool(list_prometheus_label_values)
