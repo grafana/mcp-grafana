@@ -34,7 +34,7 @@ jobs:
           python-version-file: "pyproject.toml"
           
       - name: Install the project
-        run: uv sync --all-extras --all-groups
+        run: uv sync --all-extras --all-groups --locked
 
       - name: Run ruff
         run: uv run ruff check .
