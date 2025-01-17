@@ -1,6 +1,6 @@
 [project]
 name = "mcp-grafana"
-version = "0.1.0"
+version = "0.1.1"
 description = "MCP server for Grafana and the ecosystem"
 readme = "README.md"
 authors = [
