@@ -4,7 +4,8 @@ Pydantic models for the Grafana API.
 
 import textwrap
 from datetime import datetime
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Generic, Literal, TypeVar
+
 
 import pydantic
 from pydantic import UUID4, ConfigDict, Field, PlainSerializer, TypeAdapter
@@ -345,7 +346,10 @@ class CreateSiftInvestigationArguments(BaseModel):
     # )
 
 
-class ResponseWrapper[T](BaseModel):
+T = TypeVar("T")
+
+
+class ResponseWrapper(BaseModel, Generic[T]):
     status: str
     data: T
 
