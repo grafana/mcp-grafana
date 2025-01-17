@@ -1,6 +1,6 @@
 # Grafana MCP server
 
-A [Model Context Protocol][mcp] (MCP) server for Grafana. 
+A [Model Context Protocol][mcp] (MCP) server for Grafana.
 
 This provides access to your Grafana instance and the surrounding ecosystem.
 
@@ -67,6 +67,8 @@ Follow the [Grafana documentation][service-account] for details.
 }
 ```
 
+> Note: if you see `Error: spawn uvx ENOENT` in Claude Desktop, you need to specify the full path to `uvx` (see [discussion](https://github.com/orgs/modelcontextprotocol/discussions/20))
+
 To disable a category of tools, set the environment variable `GRAFANA_TOOLS__<CATEGORY>__ENABLED` to `"false"`.
 For example, to disable the search tools, set `"GRAFANA_TOOLS__SEARCH__ENABLED": "false"`.
 
@@ -80,6 +82,12 @@ You can then create a virtual environment and install the dependencies with:
 
 ```bash
 uv sync --all-groups
+```
+
+To run the server, use:
+
+```bash
+uvx --from . mcp-grafana
 ```
 
 ### Testing
