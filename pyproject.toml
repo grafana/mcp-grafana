@@ -10,7 +10,7 @@ license = { file = "LICENSE" }
 requires-python = ">=3.10"
 dependencies = [
     "httpx>=0.28.1",
-    "mcp[cli]==1.2.0",
+    "mcp[cli]==1.2.1",
     "pydantic-settings>=2.7.0",
     "pydantic>=2.10.4",
     "typer>=0.15.1",
