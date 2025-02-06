@@ -90,7 +90,7 @@ To run the server, use:
 uvx --from . mcp-grafana
 ```
 
-You can also run the server using docker. To build the image, use
+You can also run the server using the SSE transport inside Docker. To build the image, use
 
 ```
 make build-image
