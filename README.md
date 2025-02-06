@@ -90,6 +90,18 @@ To run the server, use:
 uvx --from . mcp-grafana
 ```
 
+You can also run the server using the SSE transport inside Docker. To build the image, use
+
+```
+make build-image
+```
+
+And to run the image, use:
+
+```
+docker run -it --rm mcp-grafana:latest --port-forward 8000:8000
+```
+
 ### Testing
 
 TL;DR: start a Grafana instance with `docker-compose up`, run `uv run ruff check .` for lints, and `uv run pytest tests --integration` to run unit and integration tests.
