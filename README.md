@@ -99,7 +99,7 @@ make build-image
 And to run the image, use:
 
 ```
-docker run -it --rm mcp-grafana:latest --port-forward 8000:8000
+docker run -it --rm -p 8000:8000 mcp-grafana:latest
 ```
 
 ### Testing
