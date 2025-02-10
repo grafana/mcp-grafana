@@ -21,8 +21,10 @@ mcp-grafana = "mcp_grafana.cli:app"
 
 [dependency-groups]
 dev = [
+    "httpx-sse>=0.4.0",
     "pytest>=8.3.4",
     "pytest-asyncio>=0.25.2",
+    "pytest-httpserver>=1.1.1",
 ]
 lint = [
     "ruff>=0.8.5",
