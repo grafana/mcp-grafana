@@ -1,3 +1,5 @@
+import contextvars
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -69,4 +71,11 @@ class GrafanaSettings(BaseSettings):
     tools: ToolSettings = Field(default_factory=ToolSettings)
 
 
-grafana_settings = GrafanaSettings()
+# This contextvar can be updated by middleware to reflect the Grafana settings
+# for the current request.
+
+# If the middleware is not used, the default settings will be used.
+grafana_settings: contextvars.ContextVar[GrafanaSettings] = contextvars.ContextVar(
+    "grafana_settings"
+)
+grafana_settings.set(GrafanaSettings())

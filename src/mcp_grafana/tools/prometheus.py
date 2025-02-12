@@ -56,7 +56,7 @@ async def query_prometheus(
         expr=expr,  # type: ignore
         intervalMs=interval_ms,
     )
-    response = await grafana_client.query(start, end, [query])
+    response = await grafana_client.get().query(start, end, [query])
     return DSQueryResponse.model_validate_json(response)
 
 
@@ -81,7 +81,7 @@ async def list_prometheus_metric_metadata(
 
     A mapping from metric name to all available metadata for that metric.
     """
-    response = await grafana_client.list_prometheus_metric_metadata(
+    response = await grafana_client.get().list_prometheus_metric_metadata(
         datasource_uid,
         limit=limit,
         limit_per_metric=limit_per_metric,
@@ -144,7 +144,7 @@ async def list_prometheus_label_names(
     end: Optionally, the end time of the time range to filter the results by.
     limit: Optionally, the maximum number of results to return. Defaults to 100.
     """
-    response = await grafana_client.list_prometheus_label_names(
+    response = await grafana_client.get().list_prometheus_label_names(
         datasource_uid,
         matches=matches,
         start=start,
@@ -174,7 +174,7 @@ async def list_prometheus_label_values(
     end: Optionally, the end time of the query.
     limit: Optionally, the maximum number of results to return. Defaults to 100.
     """
-    response = await grafana_client.list_prometheus_label_values(
+    response = await grafana_client.get().list_prometheus_label_values(
         datasource_uid,
         label_name,
         matches=matches,
