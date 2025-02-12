@@ -84,10 +84,10 @@ You can then create a virtual environment and install the dependencies with:
 uv sync --all-groups
 ```
 
-To run the server, use:
+To run the server and edit the source code live, use:
 
 ```bash
-uvx --from . mcp-grafana
+uvx --with-editable . mcp-grafana
 ```
 
 You can also run the server using the SSE transport inside Docker. To build the image, use
