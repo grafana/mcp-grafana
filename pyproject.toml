@@ -34,3 +34,7 @@ build-backend = "hatchling.build"
 
 [tool.pytest.ini_options]
 asyncio_default_fixture_loop_scope = "session"
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"

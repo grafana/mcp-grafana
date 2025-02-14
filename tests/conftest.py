@@ -1,3 +1,6 @@
+import pytest
+
+
 def pytest_addoption(parser):
     """
     Add command line options for integration and cloud tests.
@@ -29,3 +32,8 @@ def pytest_addoption(parser):
         default=False,
         help="enable cloud integration tests",
     )
+
+
+@pytest.fixture
+def anyio_backend():
+    return "asyncio"

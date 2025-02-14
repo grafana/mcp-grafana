@@ -1,15 +1,8 @@
-import enum
-
 import typer
 
-from . import mcp
+from . import mcp, Transport
 
 app = typer.Typer()
-
-
-class Transport(enum.StrEnum):
-    stdio = "stdio"
-    sse = "sse"
 
 
 @app.command()
