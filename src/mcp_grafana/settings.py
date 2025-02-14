@@ -1,3 +1,5 @@
+import contextvars
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -66,7 +68,23 @@ class GrafanaSettings(BaseSettings):
         description="A Grafana API key or service account token with the necessary permissions to use the tools.",
     )
 
+    access_token: str | None = Field(
+        default=None,
+        description="A Grafana Cloud Access Token, provided in and passed to Grafana using the X-Access-Token header.",
+    )
+    id_token: str | None = Field(
+        default=None,
+        description="A Grafana ID Token, provided by Grafana to identify the user, and passed to Grafana in the X-Grafana-Id header.",
+    )
+
     tools: ToolSettings = Field(default_factory=ToolSettings)
 
 
-grafana_settings = GrafanaSettings()
+# This contextvar can be updated by middleware to reflect the Grafana settings
+# for the current request.
+
+# If the middleware is not used, the default settings will be used.
+grafana_settings: contextvars.ContextVar[GrafanaSettings] = contextvars.ContextVar(
+    "grafana_settings"
+)
+grafana_settings.set(GrafanaSettings())

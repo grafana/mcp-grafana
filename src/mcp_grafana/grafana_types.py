@@ -87,7 +87,7 @@ class SearchDashboardsArguments(BaseModel):
     )
     starred: bool = Field(default=False, description="Only include starred dashboards")
     limit: int = Field(
-        default=grafana_settings.tools.search.limit,
+        default=grafana_settings.get().tools.search.limit,
         description="Limit the number of returned results",
     )
     page: int = Field(default=1)

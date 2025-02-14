@@ -5,6 +5,8 @@ import anyio
 import uvicorn
 from mcp.server import FastMCP
 
+from mcp_grafana.transports.http import GrafanaAuthMiddleware
+
 from .tools import add_tools
 
 
@@ -17,6 +19,7 @@ class Transport(enum.StrEnum):
 class GrafanaMCP(FastMCP):
     async def run_http_async(self) -> None:
         from starlette.applications import Starlette
+        from starlette.middleware import Middleware
         from starlette.routing import Mount
 
         from .transports.http import handle_message
@@ -36,6 +39,7 @@ class GrafanaMCP(FastMCP):
 
         starlette_app = Starlette(
             debug=self.settings.debug,
+            middleware=[Middleware(GrafanaAuthMiddleware)],
             routes=[Mount("/", app=handle_http)],
         )
 

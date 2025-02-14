@@ -1,5 +1,6 @@
 import logging
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from json import JSONDecodeError
 from typing import Any, Tuple
 
@@ -8,10 +9,13 @@ from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStre
 import httpx
 from mcp import types
 from pydantic import ValidationError
+from starlette.datastructures import Headers
 from starlette.requests import Request
-from starlette.responses import JSONResponse, Response
-from starlette.types import Receive, Scope, Send
+from starlette.responses import JSONResponse, PlainTextResponse, Response
+from starlette.types import ASGIApp, Receive, Scope, Send
 
+from ..client import GrafanaClient, grafana_client
+from ..settings import GrafanaSettings, grafana_settings
 
 logger = logging.getLogger(__name__)
 
@@ -123,6 +127,7 @@ async def handle_message(scope: Scope, receive: Receive, send: Send):
                 response = Response("Not found", status_code=404)
                 await response(scope, receive, send)
                 return
+
             try:
                 json = await request.json()
             except JSONDecodeError as err:
@@ -135,22 +140,38 @@ async def handle_message(scope: Scope, receive: Receive, send: Send):
                 client_message = types.JSONRPCMessage.model_validate(json)
                 logger.debug(f"Validated client message: {client_message}")
             except ValidationError as err:
-                logger.error(f"Failed to parse message: {err}")
-                response = Response("Could not parse message", status_code=400)
+                logger.error(f"Failed to validate message: {err}")
+                response = Response(f"Invalid message: {err}", status_code=400)
                 await response(scope, receive, send)
                 return
 
-            # As part of the MCP spec we need to initialize first.
+            # As part of the MCP spec we need to initialize before we can handle
+            # any other messages; the server has this assumption embedded in it.
             # In a stateful flow (e.g. stdio or sse transports) the client would
             # send an initialize request to the server, and the server would send
             # a response back to the client. In this case we're trying to be stateless,
-            # so we'll handle the initialization ourselves.
-            logger.debug("Initializing server")
-            await initialize(read_stream_writer, write_stream_reader)
+            # so we'll handle the initialization ourselves, unless this happens to be
+            # an initialization request.
+            try:
+                types.InitializeRequest.model_validate(
+                    client_message.root.model_dump(
+                        by_alias=True, mode="json", exclude_none=True
+                    )
+                )
+                logger.debug("Skipping automatic initialization")
+            except ValidationError:
+                logger.debug("Automatically handling initialization")
+                await initialize(read_stream_writer, write_stream_reader)
 
             # Alright, now we can send the client message.
             logger.debug("Sending client message")
             await read_stream_writer.send(client_message)
+
+            if isinstance(client_message.root, types.JSONRPCNotification):
+                # Notifications don't have a response, so we don't need to wait for one.
+                response = PlainTextResponse("Accepted", status_code=202)
+                await response(scope, receive, send)
+                return
 
             # Wait for the server's response, and forward it to the client.
             server_message = await write_stream_reader.receive()
@@ -196,3 +217,65 @@ async def http_client(url: str, headers: dict[str, Any] | None = None):
         finally:
             await read_stream_writer.aclose()
             await write_stream_reader.aclose()
+
+
+@dataclass
+class GrafanaInfo:
+    """
+    Simple container for the Grafana URL and API key.
+    """
+
+    url: str
+    access_token: str | None
+    id_token: str | None
+    api_key: str | None
+
+    @classmethod
+    def from_headers(cls, headers: Headers) -> "GrafanaInfo | None":
+        url = headers.get("X-Grafana-URL")
+        if url is None:
+            return None
+        api_key = headers.get("X-Grafana-API-Key")
+        access_token = headers.get("X-Access-Token")
+        id_token = headers.get("X-Grafana-Id")
+        return cls(
+            url=url, api_key=api_key, access_token=access_token, id_token=id_token
+        )
+
+
+class GrafanaAuthMiddleware:
+    """
+    ASGI middleware that extracts authn and authz headers from incoming
+    requests and updates the settings and client contextvars for
+    the current request.
+    """
+
+    def __init__(self, app: ASGIApp):
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send):
+        if scope["type"] == "http":
+            request = Request(scope)
+            if (info := GrafanaInfo.from_headers(request.headers)) is not None:
+                current_settings = grafana_settings.get()
+                new_settings = GrafanaSettings(
+                    url=info.url,
+                    api_key=info.api_key,
+                    access_token=info.access_token,
+                    id_token=info.id_token,
+                    tools=current_settings.tools,
+                )
+                settings_token = grafana_settings.set(new_settings)
+                client_token = grafana_client.set(
+                    GrafanaClient.from_settings(new_settings)
+                )
+                try:
+                    await self.app(scope, receive, send)
+                finally:
+                    grafana_settings.reset(settings_token)
+                    grafana_client.reset(client_token)
+            else:
+                await self.app(scope, receive, send)
+
+        else:
+            await self.app(scope, receive, send)

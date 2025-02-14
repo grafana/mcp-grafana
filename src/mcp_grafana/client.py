@@ -8,6 +8,7 @@ It's a bit messy for now because it came out of a Hackathon.
 We should separate HTTP types from tool types.
 """
 
+import contextvars
 import math
 from datetime import datetime
 from typing import Any
@@ -15,7 +16,7 @@ from typing import Any
 import httpx
 from pydantic import UUID4
 
-from .settings import grafana_settings
+from .settings import grafana_settings, GrafanaSettings
 from .grafana_types import (
     AddActivityToIncidentArguments,
     CreateIncidentArguments,
@@ -40,17 +41,82 @@ class BearerAuth(httpx.Auth):
     def __init__(self, api_key: str):
         self.api_key = api_key
 
-    def auth_flow(self, request):
+    def auth_flow(self, request: httpx.Request):
         request.headers["Authorization"] = f"Bearer {self.api_key}"
         yield request
 
 
+class AccessTokenAuth(httpx.Auth):
+    def __init__(self, access_token: str):
+        self.access_token = access_token
+
+    def auth_flow(self, request: httpx.Request):
+        request.headers["X-Access-Token"] = self.access_token
+        yield request
+
+
+class AccessTokenOnBehalfOfAuth(httpx.Auth):
+    def __init__(self, access_token: str, id_token: str):
+        self.access_token = access_token
+        self.id_token = id_token
+
+    def auth_flow(self, request: httpx.Request):
+        request.headers["X-Access-Token"] = self.access_token
+        request.headers["X-Grafana-Id"] = self.id_token
+        yield request
+
+
 class GrafanaClient:
-    def __init__(self, url: str, api_key: str | None = None) -> None:
-        auth = BearerAuth(api_key) if api_key is not None else None
+    def __init__(
+        self,
+        url: str,
+        *,
+        api_key: str | None = None,
+        access_token: str | None = None,
+        id_token: str | None = None,
+    ) -> None:
+        auth = None
+        if api_key is not None:
+            auth = BearerAuth(api_key) if api_key is not None else None
+        elif access_token is not None and id_token is not None:
+            auth = AccessTokenOnBehalfOfAuth(access_token, id_token)
+        elif access_token is not None:
+            auth = AccessTokenAuth(access_token)
         self.c = httpx.AsyncClient(
-            base_url=url, auth=auth, timeout=httpx.Timeout(timeout=30.0)
+            base_url=url,
+            auth=auth,
+            timeout=httpx.Timeout(timeout=30.0),
         )
+
+    @classmethod
+    def from_settings(cls, settings: GrafanaSettings) -> "GrafanaClient":
+        """
+        Create a Grafana client from the given settings.
+        """
+        if settings.access_token is not None and settings.id_token is not None:
+            return cls(
+                settings.url,
+                access_token=settings.access_token,
+                id_token=settings.id_token,
+            )
+        elif settings.access_token is None:
+            return cls(settings.url, access_token=settings.access_token)
+        else:
+            return cls(settings.url, api_key=settings.api_key)
+
+    @classmethod
+    def for_current_request(cls) -> "GrafanaClient":
+        """
+        Create a Grafana client for the current request.
+
+        This will use the Grafana settings from the current contextvar.
+        If running with the stdio transport then these settings will be
+        the ones in the MCP server's settings. If running with the SSE
+        transport then the settings will be extracted from the request
+        headers if possible, falling back to the defaults in the MCP
+        server's settings.
+        """
+        return cls.from_settings(grafana_settings.get())
 
     async def get(self, path: str, params: dict[str, str] | None = None) -> bytes:
         r = await self.c.get(path, params=params)
@@ -217,4 +283,5 @@ class GrafanaClient:
         )
 
 
-grafana_client = GrafanaClient(grafana_settings.url, api_key=grafana_settings.api_key)
+grafana_client = contextvars.ContextVar("grafana_client")
+grafana_client.set(GrafanaClient.for_current_request())
