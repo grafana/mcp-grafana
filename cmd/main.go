@@ -18,7 +18,8 @@ func newServer() *server.MCPServer {
 		"mcp-grafana",
 		"0.1.0",
 	)
-	s.AddTool(tools.SearchDashboardsTool, tools.SearchDashboardsHandler)
+	tools.AddSearchTools(s)
+	tools.AddDatasourceTools(s)
 	return s
 }
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/server"
 
 	"github.com/grafana/grafana-openapi-client-go/client/search"
 	mcpgrafana "github.com/grafana/mcp-grafana"
@@ -37,3 +38,7 @@ var SearchDashboardsTool, SearchDashboardsHandler = mcpgrafana.MustTool(
 	"Search for dashboards",
 	searchDashboards,
 )
+
+func AddSearchTools(mcp *server.MCPServer) {
+	mcp.AddTool(SearchDashboardsTool, SearchDashboardsHandler)
+}
