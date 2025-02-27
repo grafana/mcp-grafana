@@ -21,6 +21,7 @@ func newServer() *server.MCPServer {
 	tools.AddSearchTools(s)
 	tools.AddDatasourceTools(s)
 	tools.AddIncidentTools(s)
+	tools.AddPrometheusTools(s)
 	return s
 }
 
@@ -30,12 +31,12 @@ func run(transport string) error {
 	switch transport {
 	case "stdio":
 		srv := server.NewStdioServer(s)
-		srv.SetContextFunc(mcpgrafana.ExtractClientFromEnv)
+		srv.SetContextFunc(mcpgrafana.ComposedStdioContextFunc)
 		return srv.Listen(context.Background(), os.Stdin, os.Stdout)
 	case "sse":
 		addr := "http://localhost:8080"
 		srv := server.NewSSEServer(s, addr)
-		srv.SetContextFunc(mcpgrafana.ExtractClientFromHeaders)
+		srv.SetContextFunc(mcpgrafana.ComposedSSEContextFunc)
 		log.Printf("SSE server listening on %s", addr)
 		if err := srv.Start("localhost:8080"); err != nil {
 			return fmt.Errorf("Server error: %v", err)
