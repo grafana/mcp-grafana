@@ -20,6 +20,7 @@ func newServer() *server.MCPServer {
 	)
 	tools.AddSearchTools(s)
 	tools.AddDatasourceTools(s)
+	tools.AddIncidentTools(s)
 	return s
 }
 

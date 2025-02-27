@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-openapi/strfmt"
 	"github.com/grafana/grafana-openapi-client-go/client"
+	"github.com/grafana/incident-go"
 	"github.com/mark3labs/mcp-go/server"
 )
 
@@ -21,6 +22,18 @@ const (
 	grafanaURLHeader    = "X-Grafana-URL"
 	grafanaAPIKeyHeader = "X-Grafana-API-Key"
 )
+
+func urlAndAPIKeyFromEnv() (string, string) {
+	u := os.Getenv(grafanaURLEnvVar)
+	apiKey := os.Getenv(grafanaAPIEnvVar)
+	return u, apiKey
+}
+
+func urlAndAPIKeyFromHeaders(req *http.Request) (string, string) {
+	u := req.Header.Get(grafanaURLHeader)
+	apiKey := req.Header.Get(grafanaAPIKeyHeader)
+	return u, apiKey
+}
 
 // ExtractClientFromEnv is a StdioContextFunc that extracts Grafana configuration
 // from environment variables and injects a configured client into the context.
@@ -52,7 +65,8 @@ var ExtractClientFromEnv server.StdioContextFunc = func(ctx context.Context) con
 var ExtractClientFromHeaders server.SSEContextFunc = func(ctx context.Context, req *http.Request) context.Context {
 	cfg := client.DefaultTransportConfig()
 	// Extract transport config from request headers, and set it on the context.
-	if u := req.Header.Get(grafanaURLHeader); u != "" {
+	u, apiKey := urlAndAPIKeyFromHeaders(req)
+	if u != "" {
 		if url, err := url.Parse(u); err == nil {
 			cfg.Host = url.Host
 			if url.Scheme == "http" {
@@ -60,7 +74,7 @@ var ExtractClientFromHeaders server.SSEContextFunc = func(ctx context.Context, r
 			}
 		}
 	}
-	if apiKey := req.Header.Get(grafanaAPIKeyHeader); apiKey != "" {
+	if apiKey != "" {
 		cfg.APIKey = apiKey
 	}
 	client := client.NewHTTPClientWithConfig(strfmt.Default, cfg)
@@ -77,6 +91,34 @@ func WithGrafanaClient(ctx context.Context, client *client.GrafanaHTTPAPI) conte
 // GrafanaClientFromContext retrieves the Grafana client from the context.
 func GrafanaClientFromContext(ctx context.Context) *client.GrafanaHTTPAPI {
 	c, ok := ctx.Value(clientKey{}).(*client.GrafanaHTTPAPI)
+	if !ok {
+		return nil
+	}
+	return c
+}
+
+type incidentClientKey struct{}
+
+var ExtractIncidentClientFromEnv server.StdioContextFunc = func(ctx context.Context) context.Context {
+	grafanaUrl, apiKey := urlAndAPIKeyFromEnv()
+	incidentUrl := fmt.Sprintf("%s/api/plugins/grafana-incident-app/resources/api", grafanaUrl)
+	client := incident.NewClient(incidentUrl, apiKey)
+	return context.WithValue(ctx, incidentClientKey{}, client)
+}
+
+var ExtractIncidentClientFromHeaders server.SSEContextFunc = func(ctx context.Context, req *http.Request) context.Context {
+	grafanaUrl, apiKey := urlAndAPIKeyFromHeaders(req)
+	incidentUrl := fmt.Sprintf("%s/api/plugins/grafana-incident-app/resources/api", grafanaUrl)
+	client := incident.NewClient(incidentUrl, apiKey)
+	return context.WithValue(ctx, incidentClientKey{}, client)
+}
+
+func WithIncidentClient(ctx context.Context, client *incident.Client) context.Context {
+	return context.WithValue(ctx, incidentClientKey{}, client)
+}
+
+func IncidentClientFromContext(ctx context.Context) *incident.Client {
+	c, ok := ctx.Value(incidentClientKey{}).(*incident.Client)
 	if !ok {
 		return nil
 	}
