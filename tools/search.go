@@ -12,15 +12,14 @@ import (
 )
 
 type SearchDashboardsParams struct {
+	Query string `json:"query" jsonschema:"description=The query to search for"`
 }
 
-func SearchDashboardsHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func searchDashboards(ctx context.Context, args SearchDashboardsParams) (*mcp.CallToolResult, error) {
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
 	params := search.NewSearchParamsWithContext(ctx)
-	if q, ok := request.Params.Arguments["query"]; ok {
-		if q, ok := q.(string); ok {
-			params.SetQuery(&q)
-		}
+	if args.Query != "" {
+		params.SetQuery(&args.Query)
 	}
 	search, err := c.Search.Search(params)
 	if err != nil {
@@ -33,10 +32,8 @@ func SearchDashboardsHandler(ctx context.Context, request mcp.CallToolRequest) (
 	return mcp.NewToolResultText(string(b)), nil
 }
 
-var SearchDashboardsTool = mcp.NewTool("search_dashboards",
-	mcp.WithDescription("Search for dashboards"),
-	mcp.WithString("query",
-		mcp.Description("Query string"),
-		mcp.Required(),
-	),
+var SearchDashboardsTool, SearchDashboardsHandler = mcpgrafana.MustTool(
+	"search_dashboards",
+	"Search for dashboards",
+	searchDashboards,
 )
