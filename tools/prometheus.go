@@ -36,7 +36,7 @@ func promClientFromContext(ctx context.Context, uid string) (promv1.API, error) 
 }
 
 type ListPrometheusMetricMetadataParams struct {
-	DatasourceUID  string `json:"datasourceUid" jsonschema:"description=The UID of the datasource to query"`
+	DatasourceUID  string `json:"datasourceUid" jsonschema:"required,description=The UID of the datasource to query"`
 	Limit          int    `json:"limit" jsonschema:"description=The maximum number of metrics to return"`
 	LimitPerMetric int    `json:"limitPerMetric" jsonschema:"description=The maximum number of metrics to return per metric"`
 	Metric         string `json:"metric" jsonschema:"description=The metric to query"`
@@ -71,9 +71,9 @@ var ListPrometheusMetricMetadataTool, ListPrometheusMetricMetadataHandler = mcpg
 )
 
 type QueryPrometheusParams struct {
-	DatasourceUID string `json:"datasourceUid" jsonschema:"description=The UID of the datasource to query"`
-	Expr          string `json:"expr" jsonschema:"description=The PromQL expression to query"`
-	StartRFC3339  string `json:"startRfc3339" jsonschema:"description=The start time in RFC3339 format"`
+	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the datasource to query"`
+	Expr          string `json:"expr" jsonschema:"required,description=The PromQL expression to query"`
+	StartRFC3339  string `json:"startRfc3339" jsonschema:"required,description=The start time in RFC3339 format"`
 	EndRFC3339    string `json:"endRfc3339,omitempty" jsonschema:"description=The end time in RFC3339 format. Ignored if queryType is 'instant'"`
 	StepSeconds   int    `json:"stepSeconds,omitempty" jsonschema:"description=The time series step size in seconds. Ignored if queryType is 'instant'"`
 	QueryType     string `json:"queryType,omitempty" jsonschema:"description=The type of query to use. Either 'range' or 'instant'"`
@@ -143,7 +143,7 @@ var QueryPrometheusTool, QueryPrometheusHandler = mcpgrafana.MustTool(
 )
 
 type ListPrometheusMetricNamesParams struct {
-	DatasourceUID string `json:"datasourceUid" jsonschema:"description=The UID of the datasource to query"`
+	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the datasource to query"`
 	Regex         string `json:"regex" jsonschema:"description=The regex to match against the metric names"`
 	Limit         int    `json:"limit,omitempty" jsonschema:"description=The maximum number of results to return"`
 	Page          int    `json:"page,omitempty" jsonschema:"description=The page number to return"`
@@ -171,15 +171,20 @@ func ListPrometheusMetricNames(ctx context.Context, args ListPrometheusMetricNam
 		return nil, fmt.Errorf("listing Prometheus metric names: %w", err)
 	}
 
-	// Filter by regex
-	re, err := regexp.Compile(args.Regex)
-	if err != nil {
-		return nil, fmt.Errorf("compiling regex: %w", err)
-	}
-
-	var matches []string
-	for _, val := range labelValues {
-		if re.MatchString(string(val)) {
+	// Filter by regex if provided
+	matches := []string{}
+	if args.Regex != "" {
+		re, err := regexp.Compile(args.Regex)
+		if err != nil {
+			return nil, fmt.Errorf("compiling regex: %w", err)
+		}
+		for _, val := range labelValues {
+			if re.MatchString(string(val)) {
+				matches = append(matches, string(val))
+			}
+		}
+	} else {
+		for _, val := range labelValues {
 			matches = append(matches, string(val))
 		}
 	}
@@ -232,7 +237,7 @@ func (s Selector) String() string {
 }
 
 type ListPrometheusLabelNamesParams struct {
-	DatasourceUID string     `json:"datasourceUid" jsonschema:"description=The UID of the datasource to query"`
+	DatasourceUID string     `json:"datasourceUid" jsonschema:"required,description=The UID of the datasource to query"`
 	Matches       []Selector `json:"matches,omitempty" jsonschema:"description=Optionally, a list of label matchers to filter the results by"`
 	StartRFC3339  string     `json:"startRfc3339,omitempty" jsonschema:"description=Optionally, the start time of the time range to filter the results by"`
 	EndRFC3339    string     `json:"endRfc3339,omitempty" jsonschema:"description=Optionally, the end time of the time range to filter the results by"`
@@ -291,8 +296,8 @@ var ListPrometheusLabelNamesTool, ListPrometheusLabelNamesHandler = mcpgrafana.M
 )
 
 type ListPrometheusLabelValuesParams struct {
-	DatasourceUID string     `json:"datasourceUid" jsonschema:"description=The UID of the datasource to query"`
-	LabelName     string     `json:"labelName" jsonschema:"description=The name of the label to query"`
+	DatasourceUID string     `json:"datasourceUid" jsonschema:"required,description=The UID of the datasource to query"`
+	LabelName     string     `json:"labelName" jsonschema:"required,description=The name of the label to query"`
 	Matches       []Selector `json:"matches,omitempty" jsonschema:"description=Optionally, a list of selectors to filter the results by"`
 	StartRFC3339  string     `json:"startRfc3339,omitempty" jsonschema:"description=Optionally, the start time of the query"`
 	EndRFC3339    string     `json:"endRfc3339,omitempty" jsonschema:"description=Optionally, the end time of the query"`

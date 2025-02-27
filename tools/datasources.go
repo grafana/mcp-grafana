@@ -33,7 +33,7 @@ var ListDatasourcesTool, ListDatasourcesHandler = mcpgrafana.MustTool(
 )
 
 type GetDatasourceByUIDParams struct {
-	UID string `json:"uid" jsonschema:"description=The uid of the datasource"`
+	UID string `json:"uid" jsonschema:"required,description=The uid of the datasource"`
 }
 
 func getDatasourceByUID(ctx context.Context, args GetDatasourceByUIDParams) (*mcp.CallToolResult, error) {
@@ -56,7 +56,7 @@ var GetDatasourceByUIDTool, GetDatasourceByUIDHandler = mcpgrafana.MustTool(
 )
 
 type GetDatasourceByNameParams struct {
-	Name string `json:"name" jsonschema:"description=The name of the datasource"`
+	Name string `json:"name" jsonschema:"required,description=The name of the datasource"`
 }
 
 func getDatasourceByName(ctx context.Context, args GetDatasourceByNameParams) (*mcp.CallToolResult, error) {

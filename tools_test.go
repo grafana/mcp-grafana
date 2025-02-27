@@ -23,6 +23,12 @@ func testToolHandler(ctx context.Context, params testToolParams) (*mcp.CallToolR
 	return mcp.NewToolResultText(params.Name + ": " + string(rune(params.Value))), nil
 }
 
+type emptyToolParams struct{}
+
+func emptyToolHandler(ctx context.Context, params emptyToolParams) (*mcp.CallToolResult, error) {
+	return mcp.NewToolResultText("empty"), nil
+}
+
 func TestConvertTool(t *testing.T) {
 	t.Run("valid handler conversion", func(t *testing.T) {
 		tool, handler, err := ConvertTool("test_tool", "A test tool", testToolHandler)
@@ -86,6 +92,42 @@ func TestConvertTool(t *testing.T) {
 		_, err = handler(ctx, errorRequest)
 		assert.Error(t, err)
 		assert.Equal(t, "test error", err.Error())
+	})
+
+	t.Run("empty handler params", func(t *testing.T) {
+		tool, handler, err := ConvertTool("empty", "description", emptyToolHandler)
+
+		require.NoError(t, err)
+		require.NotNil(t, tool)
+		require.NotNil(t, handler)
+
+		// Check tool properties
+		assert.Equal(t, "empty", tool.Name)
+		assert.Equal(t, "description", tool.Description)
+
+		// Check schema properties
+		assert.Equal(t, "object", tool.InputSchema.Type)
+		assert.Len(t, tool.InputSchema.Properties, 0)
+
+		// Test handler execution
+		ctx := context.Background()
+		request := mcp.CallToolRequest{
+			Params: struct {
+				Name      string         "json:\"name\""
+				Arguments map[string]any "json:\"arguments,omitempty\""
+				Meta      *struct {
+					ProgressToken mcp.ProgressToken "json:\"progressToken,omitempty\""
+				} "json:\"_meta,omitempty\""
+			}{
+				Name: "empty",
+			},
+		}
+		result, err := handler(ctx, request)
+		require.NoError(t, err)
+		require.Len(t, result.Content, 1)
+		resultString, ok := result.Content[0].(mcp.TextContent)
+		require.True(t, ok)
+		assert.Equal(t, "empty", resultString.Text)
 	})
 
 	t.Run("invalid handler types", func(t *testing.T) {

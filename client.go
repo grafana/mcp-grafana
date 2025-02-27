@@ -137,16 +137,16 @@ func GrafanaClientFromContext(ctx context.Context) *client.GrafanaHTTPAPI {
 type incidentClientKey struct{}
 
 var ExtractIncidentClientFromEnv server.StdioContextFunc = func(ctx context.Context) context.Context {
-	grafanaUrl, apiKey := urlAndAPIKeyFromEnv()
-	incidentUrl := fmt.Sprintf("%s/api/plugins/grafana-incident-app/resources/api", grafanaUrl)
-	client := incident.NewClient(incidentUrl, apiKey)
+	grafanaURL, apiKey := urlAndAPIKeyFromEnv()
+	incidentURL := fmt.Sprintf("%s/api/plugins/grafana-incident-app/resources/api", grafanaURL)
+	client := incident.NewClient(incidentURL, apiKey)
 	return context.WithValue(ctx, incidentClientKey{}, client)
 }
 
 var ExtractIncidentClientFromHeaders server.SSEContextFunc = func(ctx context.Context, req *http.Request) context.Context {
-	grafanaUrl, apiKey := urlAndAPIKeyFromHeaders(req)
-	incidentUrl := fmt.Sprintf("%s/api/plugins/grafana-incident-app/resources/api", grafanaUrl)
-	client := incident.NewClient(incidentUrl, apiKey)
+	grafanaURL, apiKey := urlAndAPIKeyFromHeaders(req)
+	incidentURL := fmt.Sprintf("%s/api/plugins/grafana-incident-app/resources/api", grafanaURL)
+	client := incident.NewClient(incidentURL, apiKey)
 	return context.WithValue(ctx, incidentClientKey{}, client)
 }
 
