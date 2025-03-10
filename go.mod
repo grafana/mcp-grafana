@@ -63,4 +63,5 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
+// Use a fork until https://github.com/mark3labs/mcp-go/pull/32 is merged.
 replace github.com/mark3labs/mcp-go => github.com/grafana/mcp-go v0.8.6-0.20250226194234-5e1fa6f6f8af
