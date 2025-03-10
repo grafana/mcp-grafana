@@ -25,7 +25,7 @@ func newServer() *server.MCPServer {
 	return s
 }
 
-func run(transport string) error {
+func run(transport, addr string) error {
 	s := newServer()
 
 	switch transport {
@@ -34,11 +34,10 @@ func run(transport string) error {
 		srv.SetContextFunc(mcpgrafana.ComposedStdioContextFunc)
 		return srv.Listen(context.Background(), os.Stdin, os.Stdout)
 	case "sse":
-		addr := "http://localhost:8080"
-		srv := server.NewSSEServer(s, addr)
+		srv := server.NewSSEServer(s, "http://"+addr)
 		srv.SetContextFunc(mcpgrafana.ComposedSSEContextFunc)
 		log.Printf("SSE server listening on %s", addr)
-		if err := srv.Start("localhost:8080"); err != nil {
+		if err := srv.Start(addr); err != nil {
 			return fmt.Errorf("Server error: %v", err)
 		}
 	default:
@@ -59,9 +58,10 @@ func main() {
 		"stdio",
 		"Transport type (stdio or sse)",
 	)
+	addr := flag.String("sse-address", "localhost:8000", "The host and port to start the sse server on")
 	flag.Parse()
 
-	if err := run(transport); err != nil {
+	if err := run(transport, *addr); err != nil {
 		panic(err)
 	}
 }
