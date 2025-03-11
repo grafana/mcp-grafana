@@ -185,8 +185,8 @@ func TestConvertTool(t *testing.T) {
 	})
 }
 
-func TestCreateJsonSchemaFromHandler(t *testing.T) {
-	schema := createJsonSchemaFromHandler(testToolHandler)
+func TestCreateJSONSchemaFromHandler(t *testing.T) {
+	schema := createJSONSchemaFromHandler(testToolHandler)
 
 	assert.Equal(t, "object", schema.Type)
 	assert.Len(t, schema.Required, 2) // name and value are required, optional is not

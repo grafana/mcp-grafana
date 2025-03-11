@@ -125,7 +125,7 @@ func ConvertTool[T any](name, description string, toolHandler ToolHandlerFunc[T]
 		return result, handlerErr
 	}
 
-	jsonSchema := createJsonSchemaFromHandler(toolHandler)
+	jsonSchema := createJSONSchemaFromHandler(toolHandler)
 	properties := make(map[string]any, jsonSchema.Properties.Len())
 	for pair := jsonSchema.Properties.Oldest(); pair != nil; pair = pair.Next() {
 		properties[pair.Key] = pair.Value
@@ -144,7 +144,7 @@ func ConvertTool[T any](name, description string, toolHandler ToolHandlerFunc[T]
 }
 
 // Creates a full JSON schema from a user provided handler by introspecting the arguments
-func createJsonSchemaFromHandler(handler any) *jsonschema.Schema {
+func createJSONSchemaFromHandler(handler any) *jsonschema.Schema {
 	handlerValue := reflect.ValueOf(handler)
 	handlerType := handlerValue.Type()
 	argumentType := handlerType.In(1)
