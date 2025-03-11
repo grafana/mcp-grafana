@@ -1,4 +1,5 @@
-// Requires a Prometheus instance running on localhost:9090.
+// Requires a Grafana instance running on localhost:3000,
+// with a Prometheus datasource provisioned.
 // Run with `go test -tags integration`.
 //go:build integration
 
