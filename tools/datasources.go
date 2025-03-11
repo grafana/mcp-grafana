@@ -2,10 +2,8 @@ package tools
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
-	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
 	"github.com/grafana/grafana-openapi-client-go/client/datasources"
@@ -33,17 +31,13 @@ type GetDatasourceByUIDParams struct {
 	UID string `json:"uid" jsonschema:"required,description=The uid of the datasource"`
 }
 
-func getDatasourceByUID(ctx context.Context, args GetDatasourceByUIDParams) (*mcp.CallToolResult, error) {
+func getDatasourceByUID(ctx context.Context, args GetDatasourceByUIDParams) (*datasources.GetDataSourceByUIDOK, error) {
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
 	datasource, err := c.Datasources.GetDataSourceByUID(args.UID)
 	if err != nil {
 		return nil, fmt.Errorf("get datasource by uid %s: %w", args.UID, err)
 	}
-	b, err := json.Marshal(datasource.Payload)
-	if err != nil {
-		return nil, fmt.Errorf("marshal datasource: %w", err)
-	}
-	return mcp.NewToolResultText(string(b)), nil
+	return datasource, nil
 }
 
 var GetDatasourceByUID = mcpgrafana.MustTool(
@@ -56,17 +50,13 @@ type GetDatasourceByNameParams struct {
 	Name string `json:"name" jsonschema:"required,description=The name of the datasource"`
 }
 
-func getDatasourceByName(ctx context.Context, args GetDatasourceByNameParams) (*mcp.CallToolResult, error) {
+func getDatasourceByName(ctx context.Context, args GetDatasourceByNameParams) (*datasources.GetDataSourceByNameOK, error) {
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
 	datasource, err := c.Datasources.GetDataSourceByName(args.Name)
 	if err != nil {
 		return nil, fmt.Errorf("get datasource by name %s: %w", args.Name, err)
 	}
-	b, err := json.Marshal(datasource.Payload)
-	if err != nil {
-		return nil, fmt.Errorf("marshal datasource: %w", err)
-	}
-	return mcp.NewToolResultText(string(b)), nil
+	return datasource, nil
 }
 
 var GetDatasourceByName = mcpgrafana.MustTool(

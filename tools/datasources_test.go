@@ -41,30 +41,24 @@ func TestDatasourcesTools(t *testing.T) {
 		ctx := newTestContext()
 		result, err := listDatasources(ctx, ListDatasourcesParams{})
 		require.NoError(t, err)
-		assert.Len(t, result.Payload, 0)
-		// tc := result.Content[0].(mcp.TextContent)
-		// assert.Equal(t, tc.Text, "[]")
+		assert.Len(t, result.Payload, 1)
 	})
 
-	// t.Run("get datasource by uid", func(t *testing.T) {
-	// 	ctx := context.Background()
-	// 	result, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{
-	// 		UID: "uid-1",
-	// 	})
-	// 	if err != nil {
-	// 		t.Fatal(err)
-	// 	}
-	// 	t.Log(result)
-	// })
+	t.Run("get datasource by uid", func(t *testing.T) {
+		ctx := newTestContext()
+		result, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{
+			UID: "prometheus",
+		})
+		require.NoError(t, err)
+		assert.Equal(t, "Prometheus", result.Payload.Name)
+	})
 
-	// t.Run("get datasource by name", func(t *testing.T) {
-	// 	ctx := context.Background()
-	// 	result, err := getDatasourceByName(ctx, GetDatasourceByNameParams{
-	// 		Name: "name-1",
-	// 	})
-	// 	if err != nil {
-	// 		t.Fatal(err)
-	// 	}
-	// 	t.Log(result)
-	// })
+	t.Run("get datasource by name", func(t *testing.T) {
+		ctx := newTestContext()
+		result, err := getDatasourceByName(ctx, GetDatasourceByNameParams{
+			Name: "Prometheus",
+		})
+		require.NoError(t, err)
+		assert.Equal(t, "Prometheus", result.Payload.Name)
+	})
 }
