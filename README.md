@@ -85,7 +85,7 @@ This project is written in Go. Install Go following the instructions for your pl
 To run the server, use:
 
 ```bash
-go run ./...
+make run
 ```
 
 You can also run the server using the SSE transport inside Docker. To build the image, use
@@ -105,7 +105,7 @@ docker run -it --rm -p 8000:8000 mcp-grafana:latest
 To run unit tests, run:
 
 ```bash
-go run ./...
+make test
 ```
 
 **TODO: add integration tests and cloud tests.**
@@ -133,7 +133,11 @@ GRAFANA_URL=https://myinstance.grafana.net GRAFANA_API_KEY=my-api-key uv run pyt
 
 ### Linting
 
-**TODO: add golangci-lint and document it here.**
+To lint the code, run:
+
+```bash
+make lint
+```
 
 ## License
 
