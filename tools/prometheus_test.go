@@ -73,6 +73,7 @@ func TestPrometheusTools(t *testing.T) {
 
 func TestPrometheusQueries(t *testing.T) {
 	t.Run("query prometheus range", func(t *testing.T) {
+		t.Skip("Skipping because we don't have a Prometheus instance with enough data")
 		end := time.Now()
 		start := end.Add(-10 * time.Minute)
 		for _, step := range []int{15, 60, 300} {
