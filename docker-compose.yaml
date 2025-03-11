@@ -12,5 +12,12 @@ services:
       - ./tests/provisioning:/etc/grafana/provisioning
       - ./tests/dashboards:/var/lib/grafana/dashboards
 
+  prometheus:
+    image: prom/prometheus
+    ports:
+      - "9090:9090"
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+
 volumes:
   var-lib-grafana:

@@ -14,6 +14,9 @@ import (
 )
 
 const (
+	defaultGrafanaHost = "localhost:3000"
+	defaultGrafanaURL  = "http://" + defaultGrafanaHost
+
 	grafanaURLEnvVar = "GRAFANA_URL"
 	grafanaAPIEnvVar = "GRAFANA_API_KEY"
 
@@ -62,12 +65,18 @@ func WithGrafanaAPIKey(ctx context.Context, apiKey string) context.Context {
 
 // GrafanaURLFromContext extracts the Grafana URL from the context.
 func GrafanaURLFromContext(ctx context.Context) string {
-	return ctx.Value(grafanaURLKey{}).(string)
+	if u, ok := ctx.Value(grafanaURLKey{}).(string); ok {
+		return u
+	}
+	return defaultGrafanaURL
 }
 
 // GrafanaAPIKeyFromContext extracts the Grafana API key from the context.
 func GrafanaAPIKeyFromContext(ctx context.Context) string {
-	return ctx.Value(grafanaAPIKeyKey{}).(string)
+	if k, ok := ctx.Value(grafanaAPIKeyKey{}).(string); ok {
+		return k
+	}
+	return ""
 }
 
 type grafanaClientKey struct{}

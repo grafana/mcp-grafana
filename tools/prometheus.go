@@ -42,7 +42,7 @@ type ListPrometheusMetricMetadataParams struct {
 	Metric         string `json:"metric" jsonschema:"description=The metric to query"`
 }
 
-func listPrometheusMetricMetadata(ctx context.Context, args ListPrometheusMetricMetadataParams) (*mcp.CallToolResult, error) {
+func listPrometheusMetricMetadata(ctx context.Context, args ListPrometheusMetricMetadataParams) (map[string][]promv1.Metadata, error) {
 	promClient, err := promClientFromContext(ctx, args.DatasourceUID)
 	if err != nil {
 		return nil, fmt.Errorf("getting Prometheus client: %w", err)
@@ -57,11 +57,7 @@ func listPrometheusMetricMetadata(ctx context.Context, args ListPrometheusMetric
 	if err != nil {
 		return nil, fmt.Errorf("listing Prometheus metric metadata: %w", err)
 	}
-	b, err := json.Marshal(metadata)
-	if err != nil {
-		return nil, fmt.Errorf("marshalling Prometheus metric metadata: %w", err)
-	}
-	return mcp.NewToolResultText(string(b)), nil
+	return metadata, nil
 }
 
 var ListPrometheusMetricMetadata = mcpgrafana.MustTool(
