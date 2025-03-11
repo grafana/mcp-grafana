@@ -1,3 +1,7 @@
+// Requires a Prometheus instance running on localhost:9090.
+// Run with `go test -tags integration`.
+//go:build integration
+
 package tools
 
 import (
@@ -14,6 +18,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// newTestContext creates a new context with the Grafana URL and API key
+// from the environment variables GRAFANA_URL and GRAFANA_API_KEY.
+// TODO: move this to a shared file.
 func newTestContext() context.Context {
 	cfg := client.DefaultTransportConfig()
 	cfg.Host = "localhost:3000"
@@ -30,6 +37,10 @@ func newTestContext() context.Context {
 		if url.Scheme == "http" {
 			cfg.Schemes = []string{"http"}
 		}
+	}
+
+	if apiKey := os.Getenv("GRAFANA_API_KEY"); apiKey != "" {
+		cfg.APIKey = apiKey
 	}
 
 	client := client.NewHTTPClientWithConfig(strfmt.Default, cfg)

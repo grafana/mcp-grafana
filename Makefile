@@ -10,5 +10,9 @@ lint:
 test:
 	go test ./...
 
+.PHONY: test-all
+test-all:
+	go test -v -tags integration ./...
+
 .PHONY: run
 	go run ./...

@@ -17,7 +17,7 @@ type ListIncidentsParams struct {
 	Status string `json:"status" jsonschema:"description=The status of the incidents to include"`
 }
 
-func listIncidents(ctx context.Context, args ListIncidentsParams) (*mcp.CallToolResult, error) {
+func listIncidents(ctx context.Context, args ListIncidentsParams) (*incident.QueryIncidentsResponse, error) {
 	c := mcpgrafana.IncidentClientFromContext(ctx)
 	is := incident.NewIncidentsService(c)
 	query := ""
@@ -37,11 +37,7 @@ func listIncidents(ctx context.Context, args ListIncidentsParams) (*mcp.CallTool
 	if err != nil {
 		return nil, fmt.Errorf("list incidents: %w", err)
 	}
-	b, err := json.Marshal(incidents.Incidents)
-	if err != nil {
-		return nil, fmt.Errorf("marshal incidents: %w", err)
-	}
-	return mcp.NewToolResultText(string(b)), nil
+	return incidents, nil
 }
 
 var ListIncidents = mcpgrafana.MustTool(
