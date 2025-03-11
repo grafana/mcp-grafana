@@ -32,6 +32,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # Start the Grafana server.
+      # Do this early so that it can start up in time for the tests to run.
+      # We may need to add a wait here.
+      - name: Start docker-compose services
+        uses: hoverkraft-tech/compose-action@v2.0.2
+        with:
+          compose-file: "docker-compose.yaml"
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
