@@ -45,49 +45,47 @@ This is useful if you don't use certain functionality or if you don't want to ta
 ## Usage
 
 1. Create a service account in Grafana with enough permissions to use the tools you want to use,
-generate a service account token, and copy it to the clipboard for use in the configuration file.
-Follow the [Grafana documentation][service-account] for details.
+   generate a service account token, and copy it to the clipboard for use in the configuration file.
+   Follow the [Grafana documentation][service-account] for details.
 
-2. Add the server configuration to your client configuration file. For example, for Claude Desktop:
+2. Download the latest release of `mcp-grafana` from the [releases page](https://github.com/grafana/mcp-grafana/releases) and place it in your `$PATH`.
 
-```json
-{
-  "mcpServers": {
-    "grafana": {
-      "command": "uvx",
-      "args": [
-        "mcp-grafana"
-      ],
-      "env": {
-        "GRAFANA_URL": "http://localhost:3000",
-        "GRAFANA_API_KEY": "<your service account token>"
-      }
-    }
-  }
-}
-```
+   If you have a Go toolchain installed you can also build and install it from source, using the `GOBIN` environment variable
+   to specify the directory where the binary should be installed. This should also be in your `PATH`.
 
-> Note: if you see `Error: spawn uvx ENOENT` in Claude Desktop, you need to specify the full path to `uvx` (see [discussion](https://github.com/orgs/modelcontextprotocol/discussions/20))
+   ```bash
+   GOBIN="$HOME/go/bin" go install github.com/grafana/mcp-grafana@latest
+   ```
 
-To disable a category of tools, set the environment variable `GRAFANA_TOOLS__<CATEGORY>__ENABLED` to `"false"`.
-For example, to disable the search tools, set `"GRAFANA_TOOLS__SEARCH__ENABLED": "false"`.
+3. Add the server configuration to your client configuration file. For example, for Claude Desktop:
+
+   ```json
+   {
+     "mcpServers": {
+       "grafana": {
+         "command": "mcp-grafana",
+         "args": [],
+         "env": {
+           "GRAFANA_URL": "http://localhost:3000",
+           "GRAFANA_API_KEY": "<your service account token>"
+         }
+       }
+     }
+   }
+   ```
+
+> Note: if you see `Error: spawn mcp-grafana ENOENT` in Claude Desktop, you need to specify the full path to `mcp-grafana`.
 
 ## Development
 
 Contributions are welcome! Please open an issue or submit a pull request if you have any suggestions or improvements.
 
-This project uses [`uv`] to manage dependencies. Install `uv` following the instructions for your platform.
+This project is written in Go. Install Go following the instructions for your platform.
 
-You can then create a virtual environment and install the dependencies with:
-
-```bash
-uv sync --all-groups
-```
-
-To run the server and edit the source code live, use:
+To run the server, use:
 
 ```bash
-uvx --with-editable . mcp-grafana
+go run ./...
 ```
 
 You can also run the server using the SSE transport inside Docker. To build the image, use
@@ -104,13 +102,13 @@ docker run -it --rm -p 8000:8000 mcp-grafana:latest
 
 ### Testing
 
-TL;DR: start a Grafana instance with `docker-compose up`, run `uv run ruff check .` for lints, and `uv run pytest tests --integration` to run unit and integration tests.
-
 To run unit tests, run:
 
 ```bash
-uv run pytest tests
+go run ./...
 ```
+
+**TODO: add integration tests and cloud tests.**
 
 More comprehensive integration tests will require a Grafana instance to be running locally on port 3000; you can start one with Docker Compose:
 
@@ -135,7 +133,7 @@ GRAFANA_URL=https://myinstance.grafana.net GRAFANA_API_KEY=my-api-key uv run pyt
 
 ### Linting
 
-This project uses [ruff](https://github.com/charliermarsh/ruff) for linting.
+**TODO: add golangci-lint and document it here.**
 
 ## License
 
@@ -143,4 +141,3 @@ This project is licensed under the [Apache License, Version 2.0](LICENSE).
 
 [mcp]: https://modelcontextprotocol.io/
 [service-account]: https://grafana.com/docs/grafana/latest/administration/service-accounts/
-[`uv`]: https://docs.astral.sh/uv/
