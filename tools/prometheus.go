@@ -42,7 +42,7 @@ type ListPrometheusMetricMetadataParams struct {
 	Metric         string `json:"metric" jsonschema:"description=The metric to query"`
 }
 
-func ListPrometheusMetricMetadata(ctx context.Context, args ListPrometheusMetricMetadataParams) (*mcp.CallToolResult, error) {
+func listPrometheusMetricMetadata(ctx context.Context, args ListPrometheusMetricMetadataParams) (*mcp.CallToolResult, error) {
 	promClient, err := promClientFromContext(ctx, args.DatasourceUID)
 	if err != nil {
 		return nil, fmt.Errorf("getting Prometheus client: %w", err)
@@ -64,10 +64,10 @@ func ListPrometheusMetricMetadata(ctx context.Context, args ListPrometheusMetric
 	return mcp.NewToolResultText(string(b)), nil
 }
 
-var ListPrometheusMetricMetadataTool, ListPrometheusMetricMetadataHandler = mcpgrafana.MustTool(
+var ListPrometheusMetricMetadata = mcpgrafana.MustTool(
 	"list_prometheus_metric_metadata",
 	"List Prometheus metric metadata",
-	ListPrometheusMetricMetadata,
+	listPrometheusMetricMetadata,
 )
 
 type QueryPrometheusParams struct {
@@ -79,7 +79,7 @@ type QueryPrometheusParams struct {
 	QueryType     string `json:"queryType,omitempty" jsonschema:"description=The type of query to use. Either 'range' or 'instant'"`
 }
 
-func QueryPrometheus(ctx context.Context, args QueryPrometheusParams) (*mcp.CallToolResult, error) {
+func queryPrometheus(ctx context.Context, args QueryPrometheusParams) (*mcp.CallToolResult, error) {
 	promClient, err := promClientFromContext(ctx, args.DatasourceUID)
 	if err != nil {
 		return nil, fmt.Errorf("getting Prometheus client: %w", err)
@@ -136,10 +136,10 @@ func QueryPrometheus(ctx context.Context, args QueryPrometheusParams) (*mcp.Call
 	return nil, fmt.Errorf("invalid query type: %s", queryType)
 }
 
-var QueryPrometheusTool, QueryPrometheusHandler = mcpgrafana.MustTool(
+var QueryPrometheus = mcpgrafana.MustTool(
 	"query_prometheus",
 	"Query Prometheus using a range or instant request",
-	QueryPrometheus,
+	queryPrometheus,
 )
 
 type ListPrometheusMetricNamesParams struct {
@@ -149,7 +149,7 @@ type ListPrometheusMetricNamesParams struct {
 	Page          int    `json:"page,omitempty" jsonschema:"description=The page number to return"`
 }
 
-func ListPrometheusMetricNames(ctx context.Context, args ListPrometheusMetricNamesParams) (*mcp.CallToolResult, error) {
+func listPrometheusMetricNames(ctx context.Context, args ListPrometheusMetricNamesParams) (*mcp.CallToolResult, error) {
 	promClient, err := promClientFromContext(ctx, args.DatasourceUID)
 	if err != nil {
 		return nil, fmt.Errorf("getting Prometheus client: %w", err)
@@ -207,10 +207,10 @@ func ListPrometheusMetricNames(ctx context.Context, args ListPrometheusMetricNam
 	return mcp.NewToolResultText(string(b)), nil
 }
 
-var ListPrometheusMetricNamesTool, ListPrometheusMetricNamesHandler = mcpgrafana.MustTool(
+var ListPrometheusMetricNames = mcpgrafana.MustTool(
 	"list_prometheus_metric_names",
 	"List metric names in a Prometheus datasource that match the given regex",
-	ListPrometheusMetricNames,
+	listPrometheusMetricNames,
 )
 
 type LabelMatcher struct {
@@ -244,7 +244,7 @@ type ListPrometheusLabelNamesParams struct {
 	Limit         int        `json:"limit,omitempty" jsonschema:"description=Optionally, the maximum number of results to return"`
 }
 
-func ListPrometheusLabelNames(ctx context.Context, args ListPrometheusLabelNamesParams) (*mcp.CallToolResult, error) {
+func listPrometheusLabelNames(ctx context.Context, args ListPrometheusLabelNamesParams) (*mcp.CallToolResult, error) {
 	promClient, err := promClientFromContext(ctx, args.DatasourceUID)
 	if err != nil {
 		return nil, fmt.Errorf("getting Prometheus client: %w", err)
@@ -289,10 +289,10 @@ func ListPrometheusLabelNames(ctx context.Context, args ListPrometheusLabelNames
 	return mcp.NewToolResultText(string(b)), nil
 }
 
-var ListPrometheusLabelNamesTool, ListPrometheusLabelNamesHandler = mcpgrafana.MustTool(
+var ListPrometheusLabelNames = mcpgrafana.MustTool(
 	"list_prometheus_label_names",
 	"List the label names in a Prometheus datasource",
-	ListPrometheusLabelNames,
+	listPrometheusLabelNames,
 )
 
 type ListPrometheusLabelValuesParams struct {
@@ -304,7 +304,7 @@ type ListPrometheusLabelValuesParams struct {
 	Limit         int        `json:"limit,omitempty" jsonschema:"description=Optionally, the maximum number of results to return"`
 }
 
-func ListPrometheusLabelValues(ctx context.Context, args ListPrometheusLabelValuesParams) (*mcp.CallToolResult, error) {
+func listPrometheusLabelValues(ctx context.Context, args ListPrometheusLabelValuesParams) (*mcp.CallToolResult, error) {
 	promClient, err := promClientFromContext(ctx, args.DatasourceUID)
 	if err != nil {
 		return nil, fmt.Errorf("getting Prometheus client: %w", err)
@@ -349,16 +349,16 @@ func ListPrometheusLabelValues(ctx context.Context, args ListPrometheusLabelValu
 	return mcp.NewToolResultText(string(b)), nil
 }
 
-var ListPrometheusLabelValuesTool, ListPrometheusLabelValuesHandler = mcpgrafana.MustTool(
+var ListPrometheusLabelValues = mcpgrafana.MustTool(
 	"list_prometheus_label_values",
 	"Get the values of a label in Prometheus",
-	ListPrometheusLabelValues,
+	listPrometheusLabelValues,
 )
 
 func AddPrometheusTools(mcp *server.MCPServer) {
-	mcp.AddTool(ListPrometheusMetricMetadataTool, ListPrometheusMetricMetadataHandler)
-	mcp.AddTool(QueryPrometheusTool, QueryPrometheusHandler)
-	mcp.AddTool(ListPrometheusMetricNamesTool, ListPrometheusMetricNamesHandler)
-	mcp.AddTool(ListPrometheusLabelNamesTool, ListPrometheusLabelNamesHandler)
-	mcp.AddTool(ListPrometheusLabelValuesTool, ListPrometheusLabelValuesHandler)
+	ListPrometheusMetricMetadata.Register(mcp)
+	QueryPrometheus.Register(mcp)
+	ListPrometheusMetricNames.Register(mcp)
+	ListPrometheusLabelNames.Register(mcp)
+	ListPrometheusLabelValues.Register(mcp)
 }

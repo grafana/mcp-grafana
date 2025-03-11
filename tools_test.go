@@ -131,48 +131,11 @@ func TestConvertTool(t *testing.T) {
 	})
 
 	t.Run("invalid handler types", func(t *testing.T) {
-		// Test non-function handler
-		_, _, err := ConvertTool("invalid", "description", "not a function")
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "must be a function")
-
-		// Test wrong number of arguments
-		wrongArgsFunc := func(ctx context.Context) (*mcp.CallToolResult, error) {
-			return nil, nil
-		}
-		_, _, err = ConvertTool("invalid", "description", wrongArgsFunc)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "must have 2 arguments")
-
-		// Test wrong number of return values
-		wrongReturnFunc := func(ctx context.Context, params testToolParams) *mcp.CallToolResult {
-			return nil
-		}
-		_, _, err = ConvertTool("invalid", "description", wrongReturnFunc)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "must return 2 values")
-
-		// Test wrong first argument type
-		wrongFirstArgFunc := func(s string, params testToolParams) (*mcp.CallToolResult, error) {
-			return nil, nil
-		}
-		_, _, err = ConvertTool("invalid", "description", wrongFirstArgFunc)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "first argument must be context.Context")
-
-		// Test wrong first return value type
-		wrongFirstReturnFunc := func(ctx context.Context, params testToolParams) (string, error) {
-			return "", nil
-		}
-		_, _, err = ConvertTool("invalid", "description", wrongFirstReturnFunc)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "first return value must be mcp.CallToolResult")
-
 		// Test wrong second argument type (not a struct)
 		wrongSecondArgFunc := func(ctx context.Context, s string) (*mcp.CallToolResult, error) {
 			return nil, nil
 		}
-		_, _, err = ConvertTool("invalid", "description", wrongSecondArgFunc)
+		_, _, err := ConvertTool("invalid", "description", wrongSecondArgFunc)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "second argument must be a struct")
 	})

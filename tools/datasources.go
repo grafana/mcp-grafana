@@ -26,7 +26,7 @@ func listDatasources(ctx context.Context, args ListDatasourcesParams) (*mcp.Call
 	return mcp.NewToolResultText(string(b)), nil
 }
 
-var ListDatasourcesTool, ListDatasourcesHandler = mcpgrafana.MustTool(
+var ListDatasources = mcpgrafana.MustTool(
 	"list_datasources",
 	"List datasources",
 	listDatasources,
@@ -49,7 +49,7 @@ func getDatasourceByUID(ctx context.Context, args GetDatasourceByUIDParams) (*mc
 	return mcp.NewToolResultText(string(b)), nil
 }
 
-var GetDatasourceByUIDTool, GetDatasourceByUIDHandler = mcpgrafana.MustTool(
+var GetDatasourceByUID = mcpgrafana.MustTool(
 	"get_datasource_by_uid",
 	"Get datasource by uid",
 	getDatasourceByUID,
@@ -72,14 +72,14 @@ func getDatasourceByName(ctx context.Context, args GetDatasourceByNameParams) (*
 	return mcp.NewToolResultText(string(b)), nil
 }
 
-var GetDatasourceByNameTool, GetDatasourceByNameHandler = mcpgrafana.MustTool(
+var GetDatasourceByName = mcpgrafana.MustTool(
 	"get_datasource_by_name",
 	"Get datasource by name",
 	getDatasourceByName,
 )
 
 func AddDatasourceTools(mcp *server.MCPServer) {
-	mcp.AddTool(ListDatasourcesTool, ListDatasourcesHandler)
-	mcp.AddTool(GetDatasourceByUIDTool, GetDatasourceByUIDHandler)
-	mcp.AddTool(GetDatasourceByNameTool, GetDatasourceByNameHandler)
+	ListDatasources.Register(mcp)
+	GetDatasourceByUID.Register(mcp)
+	GetDatasourceByName.Register(mcp)
 }

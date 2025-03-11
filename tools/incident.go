@@ -17,7 +17,7 @@ type ListIncidentsParams struct {
 	Status string `json:"status" jsonschema:"description=The status of the incidents to include"`
 }
 
-func ListIncidents(ctx context.Context, args ListIncidentsParams) (*mcp.CallToolResult, error) {
+func listIncidents(ctx context.Context, args ListIncidentsParams) (*mcp.CallToolResult, error) {
 	c := mcpgrafana.IncidentClientFromContext(ctx)
 	is := incident.NewIncidentsService(c)
 	query := ""
@@ -44,10 +44,10 @@ func ListIncidents(ctx context.Context, args ListIncidentsParams) (*mcp.CallTool
 	return mcp.NewToolResultText(string(b)), nil
 }
 
-var ListIncidentsTool, ListIncidentsHandler = mcpgrafana.MustTool(
+var ListIncidents = mcpgrafana.MustTool(
 	"list_incidents",
 	"List incidents",
-	ListIncidents,
+	listIncidents,
 )
 
 type CreateIncidentParams struct {
@@ -61,7 +61,7 @@ type CreateIncidentParams struct {
 	Labels        []incident.IncidentLabel `json:"labels" jsonschema:"description=The labels to add to the incident"`
 }
 
-func CreateIncident(ctx context.Context, args CreateIncidentParams) (*mcp.CallToolResult, error) {
+func createIncident(ctx context.Context, args CreateIncidentParams) (*mcp.CallToolResult, error) {
 	c := mcpgrafana.IncidentClientFromContext(ctx)
 	is := incident.NewIncidentsService(c)
 	incident, err := is.CreateIncident(ctx, incident.CreateIncidentRequest{
@@ -84,10 +84,10 @@ func CreateIncident(ctx context.Context, args CreateIncidentParams) (*mcp.CallTo
 	return mcp.NewToolResultText(string(b)), nil
 }
 
-var CreateIncidentTool, CreateIncidentHandler = mcpgrafana.MustTool(
+var CreateIncident = mcpgrafana.MustTool(
 	"create_incident",
 	"Create an incident",
-	CreateIncident,
+	createIncident,
 )
 
 type AddActivityToIncidentParams struct {
@@ -96,7 +96,7 @@ type AddActivityToIncidentParams struct {
 	EventTime  string `json:"eventTime" jsonschema:"description=The time that the activity occurred. If not provided, the current time will be used"`
 }
 
-func AddActivityToIncident(ctx context.Context, args AddActivityToIncidentParams) (*mcp.CallToolResult, error) {
+func addActivityToIncident(ctx context.Context, args AddActivityToIncidentParams) (*mcp.CallToolResult, error) {
 	c := mcpgrafana.IncidentClientFromContext(ctx)
 	as := incident.NewActivityService(c)
 	activity, err := as.AddActivity(ctx, incident.AddActivityRequest{
@@ -115,14 +115,14 @@ func AddActivityToIncident(ctx context.Context, args AddActivityToIncidentParams
 	return mcp.NewToolResultText(string(b)), nil
 }
 
-var AddActivityToIncidentTool, AddActivityToIncidentHandler = mcpgrafana.MustTool(
+var AddActivityToIncident = mcpgrafana.MustTool(
 	"add_activity_to_incident",
 	"Add an activity to an incident",
-	AddActivityToIncident,
+	addActivityToIncident,
 )
 
 func AddIncidentTools(mcp *server.MCPServer) {
-	mcp.AddTool(ListIncidentsTool, ListIncidentsHandler)
-	mcp.AddTool(CreateIncidentTool, CreateIncidentHandler)
-	mcp.AddTool(AddActivityToIncidentTool, AddActivityToIncidentHandler)
+	ListIncidents.Register(mcp)
+	CreateIncident.Register(mcp)
+	AddActivityToIncident.Register(mcp)
 }

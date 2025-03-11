@@ -11,15 +11,48 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 )
 
-func MustTool(name, description string, toolHandler any) (mcp.Tool, server.ToolHandlerFunc) {
+// Tool is a struct that represents a tool definition and the function used
+// to handle tool calls.
+//
+// The simplest way to create a Tool is to use `MustTool`, or `ConvertTool`
+// if you wish to create tools at runtime and need to handle errors without
+// panicking.
+type Tool struct {
+	Tool    mcp.Tool
+	Handler server.ToolHandlerFunc
+}
+
+// Register adds the Tool to the given MCPServer.
+//
+// It is a convenience method that calls `server.MCPServer.Register` with the
+// Tool's Tool and Handler fields, allowing you to add the tool in a single
+// statement:
+//
+//	mcpgrafana.MustTool(name, description, toolHandler).Register(server)
+func (t *Tool) Register(mcp *server.MCPServer) {
+	mcp.AddTool(t.Tool, t.Handler)
+}
+
+// MustTool creates a new Tool from the given name, description, and toolHandler.
+// It panics if the tool cannot be created.
+func MustTool[T any](name, description string, toolHandler ToolHandlerFunc[T]) Tool {
 	tool, handler, err := ConvertTool(name, description, toolHandler)
 	if err != nil {
 		panic(err)
 	}
-	return tool, handler
+	return Tool{Tool: tool, Handler: handler}
 }
 
-func ConvertTool(name, description string, toolHandler any) (mcp.Tool, server.ToolHandlerFunc, error) {
+// ToolHandlerFunc is the type of a handler function for a tool.
+type ToolHandlerFunc[T any] = func(ctx context.Context, request T) (*mcp.CallToolResult, error)
+
+// ConvertTool converts a toolHandler function to a Tool and ToolHandlerFunc.
+//
+// The toolHandler function must have two arguments: a context.Context and a struct
+// to be used as the parameters for the tool. The second argument must not be a pointer,
+// should be marshalable to JSON, and the fields should have a `jsonschema` tag with the
+// description of the parameter.
+func ConvertTool[T any](name, description string, toolHandler ToolHandlerFunc[T]) (mcp.Tool, server.ToolHandlerFunc, error) {
 	zero := mcp.Tool{}
 	handlerValue := reflect.ValueOf(toolHandler)
 	handlerType := handlerValue.Type()

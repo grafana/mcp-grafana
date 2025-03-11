@@ -33,12 +33,12 @@ func searchDashboards(ctx context.Context, args SearchDashboardsParams) (*mcp.Ca
 	return mcp.NewToolResultText(string(b)), nil
 }
 
-var SearchDashboardsTool, SearchDashboardsHandler = mcpgrafana.MustTool(
+var SearchDashboards = mcpgrafana.MustTool(
 	"search_dashboards",
 	"Search for dashboards",
 	searchDashboards,
 )
 
 func AddSearchTools(mcp *server.MCPServer) {
-	mcp.AddTool(SearchDashboardsTool, SearchDashboardsHandler)
+	SearchDashboards.Register(mcp)
 }
