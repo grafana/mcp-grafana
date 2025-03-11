@@ -2,12 +2,10 @@ package tools
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	"github.com/grafana/incident-go"
 	mcpgrafana "github.com/grafana/mcp-grafana"
-	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
 
@@ -57,7 +55,7 @@ type CreateIncidentParams struct {
 	Labels        []incident.IncidentLabel `json:"labels" jsonschema:"description=The labels to add to the incident"`
 }
 
-func createIncident(ctx context.Context, args CreateIncidentParams) (*mcp.CallToolResult, error) {
+func createIncident(ctx context.Context, args CreateIncidentParams) (*incident.Incident, error) {
 	c := mcpgrafana.IncidentClientFromContext(ctx)
 	is := incident.NewIncidentsService(c)
 	incident, err := is.CreateIncident(ctx, incident.CreateIncidentRequest{
@@ -73,11 +71,7 @@ func createIncident(ctx context.Context, args CreateIncidentParams) (*mcp.CallTo
 	if err != nil {
 		return nil, fmt.Errorf("create incident: %w", err)
 	}
-	b, err := json.Marshal(incident)
-	if err != nil {
-		return nil, fmt.Errorf("marshal incident: %w", err)
-	}
-	return mcp.NewToolResultText(string(b)), nil
+	return &incident.Incident, nil
 }
 
 var CreateIncident = mcpgrafana.MustTool(
@@ -92,7 +86,7 @@ type AddActivityToIncidentParams struct {
 	EventTime  string `json:"eventTime" jsonschema:"description=The time that the activity occurred. If not provided, the current time will be used"`
 }
 
-func addActivityToIncident(ctx context.Context, args AddActivityToIncidentParams) (*mcp.CallToolResult, error) {
+func addActivityToIncident(ctx context.Context, args AddActivityToIncidentParams) (*incident.ActivityItem, error) {
 	c := mcpgrafana.IncidentClientFromContext(ctx)
 	as := incident.NewActivityService(c)
 	activity, err := as.AddActivity(ctx, incident.AddActivityRequest{
@@ -104,11 +98,7 @@ func addActivityToIncident(ctx context.Context, args AddActivityToIncidentParams
 	if err != nil {
 		return nil, fmt.Errorf("add activity to incident: %w", err)
 	}
-	b, err := json.Marshal(activity)
-	if err != nil {
-		return nil, fmt.Errorf("marshal incident: %w", err)
-	}
-	return mcp.NewToolResultText(string(b)), nil
+	return &activity.ActivityItem, nil
 }
 
 var AddActivityToIncident = mcpgrafana.MustTool(
