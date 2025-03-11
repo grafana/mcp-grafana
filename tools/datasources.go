@@ -6,19 +6,19 @@ import (
 
 	"github.com/mark3labs/mcp-go/server"
 
-	"github.com/grafana/grafana-openapi-client-go/client/datasources"
+	"github.com/grafana/grafana-openapi-client-go/models"
 	mcpgrafana "github.com/grafana/mcp-grafana"
 )
 
 type ListDatasourcesParams struct{}
 
-func listDatasources(ctx context.Context, args ListDatasourcesParams) (*datasources.GetDataSourcesOK, error) {
+func listDatasources(ctx context.Context, args ListDatasourcesParams) (models.DataSourceList, error) {
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
 	datasources, err := c.Datasources.GetDataSources()
 	if err != nil {
 		return nil, fmt.Errorf("list datasources: %w", err)
 	}
-	return datasources, nil
+	return datasources.Payload, nil
 }
 
 var ListDatasources = mcpgrafana.MustTool(
@@ -31,13 +31,13 @@ type GetDatasourceByUIDParams struct {
 	UID string `json:"uid" jsonschema:"required,description=The uid of the datasource"`
 }
 
-func getDatasourceByUID(ctx context.Context, args GetDatasourceByUIDParams) (*datasources.GetDataSourceByUIDOK, error) {
+func getDatasourceByUID(ctx context.Context, args GetDatasourceByUIDParams) (*models.DataSource, error) {
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
 	datasource, err := c.Datasources.GetDataSourceByUID(args.UID)
 	if err != nil {
 		return nil, fmt.Errorf("get datasource by uid %s: %w", args.UID, err)
 	}
-	return datasource, nil
+	return datasource.Payload, nil
 }
 
 var GetDatasourceByUID = mcpgrafana.MustTool(
@@ -50,13 +50,13 @@ type GetDatasourceByNameParams struct {
 	Name string `json:"name" jsonschema:"required,description=The name of the datasource"`
 }
 
-func getDatasourceByName(ctx context.Context, args GetDatasourceByNameParams) (*datasources.GetDataSourceByNameOK, error) {
+func getDatasourceByName(ctx context.Context, args GetDatasourceByNameParams) (*models.DataSource, error) {
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
 	datasource, err := c.Datasources.GetDataSourceByName(args.Name)
 	if err != nil {
 		return nil, fmt.Errorf("get datasource by name %s: %w", args.Name, err)
 	}
-	return datasource, nil
+	return datasource.Payload, nil
 }
 
 var GetDatasourceByName = mcpgrafana.MustTool(

@@ -1,4 +1,5 @@
-// Requires a Prometheus instance running on localhost:9090.
+// Requires a Grafana instance running on localhost:3000,
+// with a Prometheus datasource provisioned.
 // Run with `go test -tags integration`.
 //go:build integration
 
@@ -52,7 +53,7 @@ func TestDatasourcesTools(t *testing.T) {
 		ctx := newTestContext()
 		result, err := listDatasources(ctx, ListDatasourcesParams{})
 		require.NoError(t, err)
-		assert.Len(t, result.Payload, 1)
+		assert.Len(t, result, 1)
 	})
 
 	t.Run("get datasource by uid", func(t *testing.T) {
@@ -61,7 +62,7 @@ func TestDatasourcesTools(t *testing.T) {
 			UID: "prometheus",
 		})
 		require.NoError(t, err)
-		assert.Equal(t, "Prometheus", result.Payload.Name)
+		assert.Equal(t, "Prometheus", result.Name)
 	})
 
 	t.Run("get datasource by name", func(t *testing.T) {
@@ -70,6 +71,6 @@ func TestDatasourcesTools(t *testing.T) {
 			Name: "Prometheus",
 		})
 		require.NoError(t, err)
-		assert.Equal(t, "Prometheus", result.Payload.Name)
+		assert.Equal(t, "Prometheus", result.Name)
 	})
 }
