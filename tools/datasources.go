@@ -8,22 +8,19 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
+	"github.com/grafana/grafana-openapi-client-go/client/datasources"
 	mcpgrafana "github.com/grafana/mcp-grafana"
 )
 
 type ListDatasourcesParams struct{}
 
-func listDatasources(ctx context.Context, args ListDatasourcesParams) (*mcp.CallToolResult, error) {
+func listDatasources(ctx context.Context, args ListDatasourcesParams) (*datasources.GetDataSourcesOK, error) {
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
 	datasources, err := c.Datasources.GetDataSources()
 	if err != nil {
 		return nil, fmt.Errorf("list datasources: %w", err)
 	}
-	b, err := json.Marshal(datasources.Payload)
-	if err != nil {
-		return nil, fmt.Errorf("marshal datasources: %w", err)
-	}
-	return mcp.NewToolResultText(string(b)), nil
+	return datasources, nil
 }
 
 var ListDatasources = mcpgrafana.MustTool(

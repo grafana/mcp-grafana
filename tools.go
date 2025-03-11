@@ -35,7 +35,7 @@ func (t *Tool) Register(mcp *server.MCPServer) {
 
 // MustTool creates a new Tool from the given name, description, and toolHandler.
 // It panics if the tool cannot be created.
-func MustTool[T any](name, description string, toolHandler ToolHandlerFunc[T]) Tool {
+func MustTool[T any, R any](name, description string, toolHandler ToolHandlerFunc[T, R]) Tool {
 	tool, handler, err := ConvertTool(name, description, toolHandler)
 	if err != nil {
 		panic(err)
@@ -44,7 +44,7 @@ func MustTool[T any](name, description string, toolHandler ToolHandlerFunc[T]) T
 }
 
 // ToolHandlerFunc is the type of a handler function for a tool.
-type ToolHandlerFunc[T any] = func(ctx context.Context, request T) (*mcp.CallToolResult, error)
+type ToolHandlerFunc[T any, R any] = func(ctx context.Context, request T) (R, error)
 
 // ConvertTool converts a toolHandler function to a Tool and ToolHandlerFunc.
 //
@@ -52,7 +52,7 @@ type ToolHandlerFunc[T any] = func(ctx context.Context, request T) (*mcp.CallToo
 // to be used as the parameters for the tool. The second argument must not be a pointer,
 // should be marshalable to JSON, and the fields should have a `jsonschema` tag with the
 // description of the parameter.
-func ConvertTool[T any](name, description string, toolHandler ToolHandlerFunc[T]) (mcp.Tool, server.ToolHandlerFunc, error) {
+func ConvertTool[T any, R any](name, description string, toolHandler ToolHandlerFunc[T, R]) (mcp.Tool, server.ToolHandlerFunc, error) {
 	zero := mcp.Tool{}
 	handlerValue := reflect.ValueOf(toolHandler)
 	handlerType := handlerValue.Type()
@@ -68,9 +68,7 @@ func ConvertTool[T any](name, description string, toolHandler ToolHandlerFunc[T]
 	if handlerType.In(0) != reflect.TypeOf((*context.Context)(nil)).Elem() {
 		return zero, nil, fmt.Errorf("tool handler first argument must be context.Context")
 	}
-	if handlerType.Out(0) != reflect.TypeOf(&mcp.CallToolResult{}) {
-		return zero, nil, fmt.Errorf("tool handler first return value must be mcp.CallToolResult")
-	}
+	// We no longer check the type of the first return value
 	if handlerType.Out(1).Kind() != reflect.Interface {
 		return zero, nil, fmt.Errorf("tool handler second return value must be error")
 	}
@@ -105,24 +103,72 @@ func ConvertTool[T any](name, description string, toolHandler ToolHandlerFunc[T]
 			return mcp.NewToolResultError("tool handler must return 2 values"), nil
 		}
 		if !output[0].CanInterface() {
-			return mcp.NewToolResultError("tool handler first return value must be mcp.CallToolResult"), nil
+			return mcp.NewToolResultError("tool handler first return value must be interfaceable"), nil
 		}
-		var result *mcp.CallToolResult
-		var ok bool
-		if !output[0].IsNil() {
-			result, ok = output[0].Interface().(*mcp.CallToolResult)
-			if !ok {
-				return mcp.NewToolResultError("tool handler first return value must be mcp.CallToolResult"), nil
-			}
-		}
+
+		// Handle the error return value first
 		var handlerErr error
-		if !output[1].IsNil() {
+		var ok bool
+		if output[1].Kind() == reflect.Interface && !output[1].IsNil() {
 			handlerErr, ok = output[1].Interface().(error)
 			if !ok {
 				return mcp.NewToolResultError("tool handler second return value must be error"), nil
 			}
 		}
-		return result, handlerErr
+
+		// If there's an error, return nil result and the error
+		if handlerErr != nil {
+			return nil, handlerErr
+		}
+
+		// Check if the first return value is nil (only for pointer, interface, map, etc.)
+		isNilable := output[0].Kind() == reflect.Ptr || 
+			output[0].Kind() == reflect.Interface || 
+			output[0].Kind() == reflect.Map || 
+			output[0].Kind() == reflect.Slice || 
+			output[0].Kind() == reflect.Chan || 
+			output[0].Kind() == reflect.Func
+		
+		if isNilable && output[0].IsNil() {
+			return nil, nil
+		}
+
+		returnVal := output[0].Interface()
+		returnType := output[0].Type()
+
+		// Case 1: Already a *mcp.CallToolResult
+		if callResult, ok := returnVal.(*mcp.CallToolResult); ok {
+			return callResult, nil
+		}
+
+		// Case 2: An mcp.CallToolResult (not a pointer)
+		if returnType.ConvertibleTo(reflect.TypeOf(mcp.CallToolResult{})) {
+			callResult := returnVal.(mcp.CallToolResult)
+			return &callResult, nil
+		}
+
+		// Case 3: String or *string
+		if str, ok := returnVal.(string); ok {
+			if str == "" {
+				return nil, nil
+			}
+			return mcp.NewToolResultText(str), nil
+		}
+
+		if strPtr, ok := returnVal.(*string); ok {
+			if strPtr == nil || *strPtr == "" {
+				return nil, nil
+			}
+			return mcp.NewToolResultText(*strPtr), nil
+		}
+
+		// Case 4: Any other type - marshal to JSON
+		jsonBytes, err := json.Marshal(returnVal)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to marshal return value: %s", err)), nil
+		}
+
+		return mcp.NewToolResultText(string(jsonBytes)), nil
 	}
 
 	jsonSchema := createJSONSchemaFromHandler(toolHandler)
