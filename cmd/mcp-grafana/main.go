@@ -34,8 +34,11 @@ func run(transport, addr string) error {
 		srv.SetContextFunc(mcpgrafana.ComposedStdioContextFunc)
 		return srv.Listen(context.Background(), os.Stdin, os.Stdout)
 	case "sse":
-		srv := server.NewSSEServer(s, "http://"+addr)
-		srv.SetContextFunc(mcpgrafana.ComposedSSEContextFunc)
+		url := "http://" + addr
+		srv := server.NewSSEServer(s,
+			server.WithBaseURL(url),
+			server.WithSSEContextFunc(mcpgrafana.ComposedSSEContextFunc),
+		)
 		log.Printf("SSE server listening on %s", addr)
 		if err := srv.Start(addr); err != nil {
 			return fmt.Errorf("Server error: %v", err)
