@@ -41,8 +41,8 @@ func (rt *authRoundTripper) RoundTrip(req *http.Request) (*http.Response, error)
 type QueryLokiParams struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the datasource to query"`
 	Query         string `json:"query" jsonschema:"required,description=The LogQL query to execute"`
-	StartTime     string `json:"startTime" jsonschema:"required,description=The start time"`
-	EndTime       string `json:"endTime,omitempty" jsonschema:"description=The end time"`
+	StartRFC3339  string `json:"startRfc3339" jsonschema:"required,description=The start time in RFC3339 format"`
+	EndRFC3339    string `json:"endRfc3339,omitempty" jsonschema:"description=The end time in RFC3339 format."`
 	Limit         int    `json:"limit,omitempty" jsonschema:"description=The maximum number of log lines to return"`
 	Direction     string `json:"direction,omitempty" jsonschema:"description=The direction of the query, either 'forward' or 'backward'"`
 }
@@ -55,14 +55,14 @@ func queryLoki(ctx context.Context, args QueryLokiParams) (map[string]interface{
 	}
 
 	// Parse time parameters
-	startTime, err := time.Parse(time.RFC3339, args.StartTime)
+	startTime, err := time.Parse(time.RFC3339, args.StartRFC3339)
 	if err != nil {
 		return nil, fmt.Errorf("parsing start time: %w", err)
 	}
 
 	var endTime time.Time
-	if args.EndTime != "" {
-		endTime, err = time.Parse(time.RFC3339, args.EndTime)
+	if args.EndRFC3339 != "" {
+		endTime, err = time.Parse(time.RFC3339, args.EndRFC3339)
 		if err != nil {
 			return nil, fmt.Errorf("parsing end time: %w", err)
 		}
@@ -126,8 +126,8 @@ var QueryLoki = mcpgrafana.MustTool(
 // ListLokiLabelNamesParams defines the parameters for listing Loki label names
 type ListLokiLabelNamesParams struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the datasource to query"`
-	StartTime     string `json:"startTime,omitempty" jsonschema:"description=Optionally, the start time of the time range to filter the results by"`
-	EndTime       string `json:"endTime,omitempty" jsonschema:"description=Optionally, the end time of the time range to filter the results by"`
+	StartRFC3339  string `json:"startRfc3339,omitempty" jsonschema:"description=Optionally, the start time of the time range to filter the results by"`
+	EndRFC3339    string `json:"endRfc3339,omitempty" jsonschema:"description=Optionally, the end time of the time range to filter the results by"`
 }
 
 // listLokiLabelNames lists all label names in a Loki datasource
@@ -139,8 +139,8 @@ func listLokiLabelNames(ctx context.Context, args ListLokiLabelNamesParams) ([]s
 
 	// Parse time parameters if provided
 	var startTime, endTime time.Time
-	if args.StartTime != "" {
-		startTime, err = time.Parse(time.RFC3339, args.StartTime)
+	if args.StartRFC3339 != "" {
+		startTime, err = time.Parse(time.RFC3339, args.StartRFC3339)
 		if err != nil {
 			return nil, fmt.Errorf("parsing start time: %w", err)
 		}
@@ -148,8 +148,8 @@ func listLokiLabelNames(ctx context.Context, args ListLokiLabelNamesParams) ([]s
 		startTime = time.Now().Add(-1 * time.Hour)
 	}
 
-	if args.EndTime != "" {
-		endTime, err = time.Parse(time.RFC3339, args.EndTime)
+	if args.EndRFC3339 != "" {
+		endTime, err = time.Parse(time.RFC3339, args.EndRFC3339)
 		if err != nil {
 			return nil, fmt.Errorf("parsing end time: %w", err)
 		}
@@ -193,8 +193,8 @@ var ListLokiLabelNames = mcpgrafana.MustTool(
 type ListLokiLabelValuesParams struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the datasource to query"`
 	LabelName     string `json:"labelName" jsonschema:"required,description=The name of the label to query"`
-	StartTime     string `json:"startTime,omitempty" jsonschema:"description=Optionally, the start time of the query"`
-	EndTime       string `json:"endTime,omitempty" jsonschema:"description=Optionally, the end time of the query"`
+	StartRFC3339  string `json:"startRfc3339,omitempty" jsonschema:"description=Optionally, the start time of the query"`
+	EndRFC3339    string `json:"endRfc3339,omitempty" jsonschema:"description=Optionally, the end time of the query"`
 }
 
 // listLokiLabelValues lists all values for a specific label in a Loki datasource
@@ -206,8 +206,8 @@ func listLokiLabelValues(ctx context.Context, args ListLokiLabelValuesParams) ([
 
 	// Parse time parameters if provided
 	var startTime, endTime time.Time
-	if args.StartTime != "" {
-		startTime, err = time.Parse(time.RFC3339, args.StartTime)
+	if args.StartRFC3339 != "" {
+		startTime, err = time.Parse(time.RFC3339, args.StartRFC3339)
 		if err != nil {
 			return nil, fmt.Errorf("parsing start time: %w", err)
 		}
@@ -215,8 +215,8 @@ func listLokiLabelValues(ctx context.Context, args ListLokiLabelValuesParams) ([
 		startTime = time.Now().Add(-1 * time.Hour)
 	}
 
-	if args.EndTime != "" {
-		endTime, err = time.Parse(time.RFC3339, args.EndTime)
+	if args.EndRFC3339 != "" {
+		endTime, err = time.Parse(time.RFC3339, args.EndRFC3339)
 		if err != nil {
 			return nil, fmt.Errorf("parsing end time: %w", err)
 		}
