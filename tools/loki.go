@@ -11,19 +11,30 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 )
 
-// lokiClientFromContext creates a simple HTTP client for Loki API requests
-// We're using a simple HTTP client approach since the Loki client libraries
-// are not as standardized as Prometheus ones
 func lokiClientFromContext(ctx context.Context, uid string) (*http.Client, string, error) {
 	grafanaURL, apiKey := mcpgrafana.GrafanaURLFromContext(ctx), mcpgrafana.GrafanaAPIKeyFromContext(ctx)
 	url := fmt.Sprintf("%s/api/datasources/proxy/uid/%s", strings.TrimRight(grafanaURL, "/"), uid)
 
-	client := &http.Client{}
-
-	// We'll use the apiKey when making requests, not when creating the client
-	_ = apiKey
+	client := &http.Client{
+		Transport: &authRoundTripper{
+			apiKey:     apiKey,
+			underlying: http.DefaultTransport,
+		},
+	}
 
 	return client, url, nil
+}
+
+type authRoundTripper struct {
+	apiKey     string
+	underlying http.RoundTripper
+}
+
+func (rt *authRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	if rt.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+rt.apiKey)
+	}
+	return rt.underlying.RoundTrip(req)
 }
 
 // QueryLokiParams defines the parameters for querying Loki
@@ -86,12 +97,6 @@ func queryLoki(ctx context.Context, args QueryLokiParams) (map[string]interface{
 	q.Add("limit", fmt.Sprintf("%d", limit))
 	q.Add("direction", direction)
 	req.URL.RawQuery = q.Encode()
-
-	// Add authorization header if API key is available
-	apiKey := mcpgrafana.GrafanaAPIKeyFromContext(ctx)
-	if apiKey != "" {
-		req.Header.Add("Authorization", "Bearer "+apiKey)
-	}
 
 	// Execute the request
 	resp, err := client.Do(req)
@@ -165,12 +170,6 @@ func listLokiLabelNames(ctx context.Context, args ListLokiLabelNamesParams) ([]s
 	q.Add("end", fmt.Sprintf("%d", endTime.UnixNano()))
 	req.URL.RawQuery = q.Encode()
 
-	// Add authorization header if API key is available
-	apiKey := mcpgrafana.GrafanaAPIKeyFromContext(ctx)
-	if apiKey != "" {
-		req.Header.Add("Authorization", "Bearer "+apiKey)
-	}
-
 	// Execute the request
 	resp, err := client.Do(req)
 	if err != nil {
@@ -237,12 +236,6 @@ func listLokiLabelValues(ctx context.Context, args ListLokiLabelValuesParams) ([
 	q.Add("start", fmt.Sprintf("%d", startTime.UnixNano()))
 	q.Add("end", fmt.Sprintf("%d", endTime.UnixNano()))
 	req.URL.RawQuery = q.Encode()
-
-	// Add authorization header if API key is available
-	apiKey := mcpgrafana.GrafanaAPIKeyFromContext(ctx)
-	if apiKey != "" {
-		req.Header.Add("Authorization", "Bearer "+apiKey)
-	}
 
 	// Execute the request
 	resp, err := client.Do(req)
