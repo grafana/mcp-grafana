@@ -53,7 +53,8 @@ func TestDatasourcesTools(t *testing.T) {
 		ctx := newTestContext()
 		result, err := listDatasources(ctx, ListDatasourcesParams{})
 		require.NoError(t, err)
-		assert.Greater(t, len(result), 0)
+		// Three datasources are provisioned in the test environment (Prometheus and Loki).
+		assert.Len(t, result, 3)
 	})
 
 	t.Run("get datasource by uid", func(t *testing.T) {
