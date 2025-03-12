@@ -21,6 +21,6 @@ func TestCloudIncidentTools(t *testing.T) {
 			Limit: 2,
 		})
 		require.NoError(t, err)
-		assert.Len(t, result.Incidents, 2)
+		assert.Len(t, result.IncidentPreviews, 2)
 	})
 }

@@ -15,7 +15,10 @@ type ListIncidentsParams struct {
 	Status string `json:"status" jsonschema:"description=The status of the incidents to include"`
 }
 
-func listIncidents(ctx context.Context, args ListIncidentsParams) (*incident.QueryIncidentsResponse, error) {
+type incidentSummary struct {
+}
+
+func listIncidents(ctx context.Context, args ListIncidentsParams) (*incident.QueryIncidentPreviewsResponse, error) {
 	c := mcpgrafana.IncidentClientFromContext(ctx)
 	is := incident.NewIncidentsService(c)
 	query := ""
@@ -25,8 +28,8 @@ func listIncidents(ctx context.Context, args ListIncidentsParams) (*incident.Que
 	if args.Status != "" {
 		query += fmt.Sprintf(" and status:%s", args.Status)
 	}
-	incidents, err := is.QueryIncidents(ctx, incident.QueryIncidentsRequest{
-		Query: incident.IncidentsQuery{
+	incidents, err := is.QueryIncidentPreviews(ctx, incident.QueryIncidentPreviewsRequest{
+		Query: incident.IncidentPreviewsQuery{
 			QueryString:    query,
 			OrderDirection: "DESC",
 			Limit:          args.Limit,
