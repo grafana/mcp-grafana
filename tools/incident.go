@@ -15,9 +15,6 @@ type ListIncidentsParams struct {
 	Status string `json:"status" jsonschema:"description=The status of the incidents to include"`
 }
 
-type incidentSummary struct {
-}
-
 func listIncidents(ctx context.Context, args ListIncidentsParams) (*incident.QueryIncidentPreviewsResponse, error) {
 	c := mcpgrafana.IncidentClientFromContext(ctx)
 	is := incident.NewIncidentsService(c)
