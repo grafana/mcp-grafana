@@ -22,7 +22,7 @@ func TestIncidentTools(t *testing.T) {
 			Limit: 2,
 		})
 		require.NoError(t, err)
-		assert.Len(t, result.Incidents, 2)
+		assert.Len(t, result.IncidentPreviews, 2)
 	})
 
 	t.Run("create incident", func(t *testing.T) {

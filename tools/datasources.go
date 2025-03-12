@@ -12,13 +12,35 @@ import (
 
 type ListDatasourcesParams struct{}
 
-func listDatasources(ctx context.Context, args ListDatasourcesParams) (models.DataSourceList, error) {
+type dataSourceSummary struct {
+	ID        int64  `json:"id"`
+	UID       string `json:"uid"`
+	Name      string `json:"name"`
+	Type      string `json:"type"`
+	IsDefault bool   `json:"isDefault"`
+}
+
+func listDatasources(ctx context.Context, args ListDatasourcesParams) ([]dataSourceSummary, error) {
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
 	datasources, err := c.Datasources.GetDataSources()
 	if err != nil {
 		return nil, fmt.Errorf("list datasources: %w", err)
 	}
-	return datasources.Payload, nil
+	return summarizeDatasources(datasources.Payload), nil
+}
+
+func summarizeDatasources(dataSources models.DataSourceList) []dataSourceSummary {
+	result := make([]dataSourceSummary, 0, len(dataSources))
+	for _, ds := range dataSources {
+		result = append(result, dataSourceSummary{
+			ID:        ds.ID,
+			UID:       ds.UID,
+			Name:      ds.Name,
+			Type:      ds.Type,
+			IsDefault: ds.IsDefault,
+		})
+	}
+	return result
 }
 
 var ListDatasources = mcpgrafana.MustTool(
