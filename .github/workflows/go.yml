@@ -1,0 +1,52 @@
+name: Go
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - name: Lint
+        uses: golangci/golangci-lint-action@v3
+        with:
+          version: v1.64
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Start the Grafana server.
+      # Do this early so that it can start up in time for the tests to run.
+      # We may need to add a wait here.
+      - name: Start docker-compose services
+        uses: hoverkraft-tech/compose-action@v2.0.2
+        with:
+          compose-file: "docker-compose.yaml"
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - name: Wait for Grafana server and Prometheus server to start and scrape
+        run: sleep 30
+
+      - name: Run tests
+        run: make test-all

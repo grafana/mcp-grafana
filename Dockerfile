@@ -1,28 +1,41 @@
-FROM python:3.13-slim AS builder
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+# Build stage
+FROM golang:1.24-bullseye AS builder
 
-# Change the working directory to the `app` directory
+# Set the working directory
 WORKDIR /app
 
-# Install dependencies
-RUN --mount=type=cache,target=/root/.cache/uv \
-  --mount=type=bind,source=uv.lock,target=uv.lock \
-  --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
-  uv sync --frozen --no-install-project --no-editable
+# Copy go.mod and go.sum files
+COPY go.mod go.sum ./
 
-# Copy the project into the intermediate image
-ADD . /app
+# Download dependencies
+RUN go mod download
 
-# Sync the project
-RUN --mount=type=cache,target=/root/.cache/uv \
-  uv sync --frozen --no-editable
+# Copy the source code
+COPY . .
 
-FROM python:3.13-slim
+# Build the application
+RUN go build -o mcp-grafana ./cmd/mcp-grafana
 
-# Copy the environment, but not the source code
-COPY --from=builder --chown=app:app /app/.venv /app/.venv
+# Final stage
+FROM debian:bullseye-slim
 
+# Install ca-certificates for HTTPS requests
+RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
+
+# Create a non-root user
+RUN useradd -r -u 1000 -m mcp-grafana
+
+# Set the working directory
+WORKDIR /app
+
+# Copy the binary from the builder stage
+COPY --from=builder --chown=1000:1000 /app/mcp-grafana /app/
+
+# Use the non-root user
+USER mcp-grafana
+
+# Expose the port the app runs on
 EXPOSE 8000
 
 # Run the application
-ENTRYPOINT ["/app/.venv/bin/mcp-grafana", "--transport", "sse"]
+ENTRYPOINT ["/app/mcp-grafana", "--transport", "sse", "--sse-address", "0.0.0.0:8000"]
