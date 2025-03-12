@@ -8,15 +8,9 @@ datasources:
     access: proxy
     url: http://prometheus:9090
     isDefault: true
-  - name: DigitalOcean demo
+  - name: Prometheus Demo
     id: 2
-    uid: digitalocean
+    uid: prometheus-demo
     type: prometheus
     access: proxy
-    url: http://demo.do.prometheus.io:9090
-  - name: Prom Labs
-    id: 3
-    uid: promlabs
-    type: prometheus
-    access: proxy
-    url: http://demo.promlabs.com:9090
+    url: https://prometheus.demo.prometheus.io
