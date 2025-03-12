@@ -7,7 +7,7 @@ require (
 	github.com/grafana/grafana-openapi-client-go v0.0.0-20250108132429-8d7e1f158f65
 	github.com/grafana/incident-go v0.0.0-20250211094540-dc6a98fdae43
 	github.com/invopop/jsonschema v0.13.0
-	github.com/mark3labs/mcp-go v0.8.5
+	github.com/mark3labs/mcp-go v0.13.0
 	github.com/prometheus/client_golang v1.21.0
 	github.com/prometheus/common v0.62.0
 	github.com/stretchr/testify v1.10.0
@@ -62,6 +62,3 @@ require (
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
-
-// Use a fork until https://github.com/mark3labs/mcp-go/pull/32 is merged.
-replace github.com/mark3labs/mcp-go => github.com/grafana/mcp-go v0.8.6-0.20250226194234-5e1fa6f6f8af
