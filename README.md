@@ -54,7 +54,7 @@ This is useful if you don't use certain functionality or if you don't want to ta
    to specify the directory where the binary should be installed. This should also be in your `PATH`.
 
    ```bash
-   GOBIN="$HOME/go/bin" go install github.com/grafana/mcp-grafana@latest
+   GOBIN="$HOME/go/bin" go install github.com/grafana/mcp-grafana/cmd/mcp-grafana@latest
    ```
 
 3. Add the server configuration to your client configuration file. For example, for Claude Desktop:
