@@ -53,7 +53,7 @@ func TestDatasourcesTools(t *testing.T) {
 		ctx := newTestContext()
 		result, err := listDatasources(ctx, ListDatasourcesParams{})
 		require.NoError(t, err)
-		assert.Len(t, result, 1)
+		assert.Greater(t, len(result), 0)
 	})
 
 	t.Run("get datasource by uid", func(t *testing.T) {

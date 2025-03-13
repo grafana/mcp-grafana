@@ -8,3 +8,9 @@ datasources:
     access: proxy
     url: http://prometheus:9090
     isDefault: true
+  - name: Prometheus Demo
+    id: 2
+    uid: prometheus-demo
+    type: prometheus
+    access: proxy
+    url: https://prometheus.demo.prometheus.io
