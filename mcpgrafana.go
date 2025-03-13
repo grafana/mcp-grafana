@@ -44,6 +44,9 @@ type grafanaAPIKeyKey struct{}
 // from environment variables and injects a configured client into the context.
 var ExtractGrafanaInfoFromEnv server.StdioContextFunc = func(ctx context.Context) context.Context {
 	u, apiKey := urlAndAPIKeyFromEnv()
+	if u == "" {
+		u = defaultGrafanaURL
+	}
 	return WithGrafanaURL(WithGrafanaAPIKey(ctx, apiKey), u)
 }
 
@@ -51,6 +54,16 @@ var ExtractGrafanaInfoFromEnv server.StdioContextFunc = func(ctx context.Context
 // from request headers and injects a configured client into the context.
 var ExtractGrafanaInfoFromHeaders server.SSEContextFunc = func(ctx context.Context, req *http.Request) context.Context {
 	u, apiKey := urlAndAPIKeyFromHeaders(req)
+	uEnv, apiKeyEnv := urlAndAPIKeyFromEnv()
+	if u == "" {
+		u = uEnv
+	}
+	if u == "" {
+		u = defaultGrafanaURL
+	}
+	if apiKey == "" {
+		apiKey = apiKeyEnv
+	}
 	return WithGrafanaURL(WithGrafanaAPIKey(ctx, apiKey), u)
 }
 
