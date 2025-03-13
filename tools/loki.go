@@ -51,10 +51,8 @@ func newLokiClient(ctx context.Context, uid string) (*Client, error) {
 	}, nil
 }
 
-// fetchData is a generic method to fetch data from Loki API
-func (c *Client) fetchData(ctx context.Context, urlPath string, startRFC3339, endRFC3339 string) ([]string, error) {
-	var data []string
-
+// buildURL constructs a full URL for a Loki API endpoint
+func (c *Client) buildURL(urlPath string) string {
 	fullURL := c.baseURL
 	if !strings.HasSuffix(fullURL, "/") && !strings.HasPrefix(urlPath, "/") {
 		fullURL += "/"
@@ -62,31 +60,30 @@ func (c *Client) fetchData(ctx context.Context, urlPath string, startRFC3339, en
 		// Remove the leading slash from urlPath to avoid double slash
 		urlPath = strings.TrimPrefix(urlPath, "/")
 	}
-	fullURL += urlPath
+	return fullURL + urlPath
+}
+
+// makeRequest makes an HTTP request to the Loki API and returns the response body
+func (c *Client) makeRequest(ctx context.Context, method, urlPath string, params url.Values) ([]byte, error) {
+	fullURL := c.buildURL(urlPath)
 
 	u, err := url.Parse(fullURL)
 	if err != nil {
 		return nil, fmt.Errorf("parsing URL: %w", err)
 	}
 
-	params := url.Values{}
-	if startRFC3339 != "" {
-		params.Add("start", startRFC3339)
-	}
-	if endRFC3339 != "" {
-		params.Add("end", endRFC3339)
+	if params != nil {
+		u.RawQuery = params.Encode()
 	}
 
-	u.RawQuery = params.Encode()
-
-	req, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
+	req, err := http.NewRequestWithContext(ctx, method, u.String(), nil)
 	if err != nil {
-		return data, fmt.Errorf("creating request: %w", err)
+		return nil, fmt.Errorf("creating request: %w", err)
 	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return data, fmt.Errorf("executing request: %w", err)
+		return nil, fmt.Errorf("executing request: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -100,25 +97,41 @@ func (c *Client) fetchData(ctx context.Context, urlPath string, startRFC3339, en
 	body := io.LimitReader(resp.Body, 1024*1024*48)
 	bodyBytes, err := io.ReadAll(body)
 	if err != nil {
-		return data, fmt.Errorf("reading response body: %w", err)
+		return nil, fmt.Errorf("reading response body: %w", err)
 	}
 
 	// Check if the response is empty
 	if len(bodyBytes) == 0 {
-		return data, fmt.Errorf("empty response from Loki API")
+		return nil, fmt.Errorf("empty response from Loki API")
 	}
 
 	// Trim any whitespace that might cause JSON parsing issues
-	trimmedBody := bytes.TrimSpace(bodyBytes)
+	return bytes.TrimSpace(bodyBytes), nil
+}
+
+// fetchData is a generic method to fetch data from Loki API
+func (c *Client) fetchData(ctx context.Context, urlPath string, startRFC3339, endRFC3339 string) ([]string, error) {
+	params := url.Values{}
+	if startRFC3339 != "" {
+		params.Add("start", startRFC3339)
+	}
+	if endRFC3339 != "" {
+		params.Add("end", endRFC3339)
+	}
+
+	bodyBytes, err := c.makeRequest(ctx, "GET", urlPath, params)
+	if err != nil {
+		return nil, err
+	}
 
 	var labelResponse LabelResponse
-	err = json.Unmarshal(trimmedBody, &labelResponse)
+	err = json.Unmarshal(bodyBytes, &labelResponse)
 	if err != nil {
-		return data, fmt.Errorf("unmarshalling response (content: %s): %w", string(trimmedBody), err)
+		return nil, fmt.Errorf("unmarshalling response (content: %s): %w", string(bodyBytes), err)
 	}
 
 	if labelResponse.Status != "success" {
-		return data, fmt.Errorf("Loki API returned unexpected response format: %s", string(trimmedBody))
+		return nil, fmt.Errorf("Loki API returned unexpected response format: %s", string(bodyBytes))
 	}
 
 	// Check if Data is nil or empty and handle it explicitly
@@ -171,7 +184,6 @@ func listLokiLabelNames(ctx context.Context, args ListLokiLabelNamesParams) ([]s
 		return nil, err
 	}
 
-	// Handle empty results explicitly to avoid Zod validation errors
 	if len(result) == 0 {
 		return []string{}, nil
 	}
@@ -209,7 +221,6 @@ func listLokiLabelValues(ctx context.Context, args ListLokiLabelValuesParams) ([
 		return nil, err
 	}
 
-	// Handle empty results explicitly to avoid Zod validation errors
 	if len(result) == 0 {
 		// Return empty slice instead of nil
 		return []string{}, nil
@@ -227,22 +238,6 @@ var ListLokiLabelValues = mcpgrafana.MustTool(
 
 // fetchStats is a method to fetch stats data from Loki API
 func (c *Client) fetchStats(ctx context.Context, query, startRFC3339, endRFC3339 string) (*Stats, error) {
-	fullURL := c.baseURL
-	urlPath := "/loki/api/v1/index/stats"
-
-	if !strings.HasSuffix(fullURL, "/") && !strings.HasPrefix(urlPath, "/") {
-		fullURL += "/"
-	} else if strings.HasSuffix(fullURL, "/") && strings.HasPrefix(urlPath, "/") {
-		// Remove the leading slash from urlPath to avoid double slash
-		urlPath = strings.TrimPrefix(urlPath, "/")
-	}
-	fullURL += urlPath
-
-	u, err := url.Parse(fullURL)
-	if err != nil {
-		return nil, fmt.Errorf("parsing URL: %w", err)
-	}
-
 	params := url.Values{}
 	params.Add("query", query)
 
@@ -263,44 +258,15 @@ func (c *Client) fetchStats(ctx context.Context, query, startRFC3339, endRFC3339
 		params.Add("end", fmt.Sprintf("%d", endTime.UnixNano()))
 	}
 
-	u.RawQuery = params.Encode()
-
-	req, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
+	bodyBytes, err := c.makeRequest(ctx, "GET", "/loki/api/v1/index/stats", params)
 	if err != nil {
-		return nil, fmt.Errorf("creating request: %w", err)
+		return nil, err
 	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("executing request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	// Check for non-200 status code
-	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("Loki API returned status code %d: %s", resp.StatusCode, string(bodyBytes))
-	}
-
-	// Read the response body with a limit to prevent memory issues
-	body := io.LimitReader(resp.Body, 1024*1024*48)
-	bodyBytes, err := io.ReadAll(body)
-	if err != nil {
-		return nil, fmt.Errorf("reading response body: %w", err)
-	}
-
-	// Check if the response is empty
-	if len(bodyBytes) == 0 {
-		return nil, fmt.Errorf("empty response from Loki API")
-	}
-
-	// Trim any whitespace that might cause JSON parsing issues
-	trimmedBody := bytes.TrimSpace(bodyBytes)
 
 	var stats Stats
-	err = json.Unmarshal(trimmedBody, &stats)
+	err = json.Unmarshal(bodyBytes, &stats)
 	if err != nil {
-		return nil, fmt.Errorf("unmarshalling response (content: %s): %w", string(trimmedBody), err)
+		return nil, fmt.Errorf("unmarshalling response (content: %s): %w", string(bodyBytes), err)
 	}
 
 	return &stats, nil
