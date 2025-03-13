@@ -23,7 +23,44 @@ services:
     image: grafana/loki:2.6.0
     ports:
       - "3100:3100"
-    command: -config.file=/etc/loki/local-config.yaml
+    command: -config.file=/etc/loki/loki-config.yml
+    volumes:
+      - ./tests/loki-config.yml:/etc/loki/loki-config.yml
+      - loki-data:/loki
+
+  promtail:
+    image: grafana/promtail:2.6.0
+    volumes:
+      - ./tests/promtail-config.yml:/etc/promtail/config.yml
+      - /var/log:/var/log
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: -config.file=/etc/promtail/config.yml
+    depends_on:
+      - loki
+  
+  log-generator:
+    image: alpine:latest
+    platform: linux/arm64
+    command: >
+      /bin/sh -c "while true; do
+        echo '{\"level\":\"info\",\"message\":\"Test log message\",\"timestamp\":\"'$$(date -Iseconds)'\",\"service\":\"test-service\"}';
+        sleep 5;
+      done"
+    depends_on:
+      - loki
+    logging:
+      driver: loki
+      options:
+        loki-url: "http://loki:3100/loki/api/v1/push"
+        loki-retries: "5"
+        loki-batch-size: "400"
 
 volumes:
   var-lib-grafana:
+  loki-data:
+  docker-sock:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /var/run/docker.sock
