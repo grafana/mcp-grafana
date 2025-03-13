@@ -18,26 +18,6 @@ func TestLokiClientFromContext(t *testing.T) {
 }
 
 func TestLokiTools(t *testing.T) {
-	t.Run("query loki", func(t *testing.T) {
-		ctx := newTestContext()
-		result, err := queryLoki(ctx, QueryLokiParams{
-			DatasourceUID: "loki",
-			Query:         `{app="test"}`,
-			StartRFC3339:  "2023-01-01T00:00:00Z",
-			EndRFC3339:    "2023-01-02T00:00:00Z",
-			Limit:         100,
-			Direction:     "backward",
-		})
-
-		require.NoError(t, err)
-		assert.NotNil(t, result)
-		assert.Equal(t, "success", result["status"])
-
-		data, ok := result["data"].(map[string]interface{})
-		require.True(t, ok)
-		assert.Equal(t, "streams", data["resultType"])
-	})
-
 	t.Run("list loki label names", func(t *testing.T) {
 		// This is a mock test since we can't actually query Loki in unit tests
 		ctx := newTestContext()

@@ -1,17 +1,31 @@
 package tools
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
 	"strings"
-	"time"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/mark3labs/mcp-go/server"
 )
 
-func lokiClientFromContext(ctx context.Context, uid string) (*http.Client, string, error) {
+type Client struct {
+	httpClient *http.Client
+	baseURL    string
+}
+
+// LabelResponse represents the http json response to a label query
+type LabelResponse struct {
+	Status string   `json:"status"`
+	Data   []string `json:"data,omitempty"`
+}
+
+func newLokiClient(ctx context.Context, uid string) (*Client, error) {
 	grafanaURL, apiKey := mcpgrafana.GrafanaURLFromContext(ctx), mcpgrafana.GrafanaAPIKeyFromContext(ctx)
 	url := fmt.Sprintf("%s/api/datasources/proxy/uid/%s", strings.TrimRight(grafanaURL, "/"), uid)
 
@@ -22,7 +36,93 @@ func lokiClientFromContext(ctx context.Context, uid string) (*http.Client, strin
 		},
 	}
 
-	return client, url, nil
+	return &Client{
+		httpClient: client,
+		baseURL:    url,
+	}, nil
+}
+
+// fetchData is a generic method to fetch data from Loki API
+func (c *Client) fetchData(ctx context.Context, urlPath string, startRFC3339, endRFC3339 string) ([]string, error) {
+	var data []string
+
+	fullURL := c.baseURL
+	if !strings.HasSuffix(fullURL, "/") && !strings.HasPrefix(urlPath, "/") {
+		fullURL += "/"
+	} else if strings.HasSuffix(fullURL, "/") && strings.HasPrefix(urlPath, "/") {
+		// Remove the leading slash from urlPath to avoid double slash
+		urlPath = strings.TrimPrefix(urlPath, "/")
+	}
+	fullURL += urlPath
+
+	u, err := url.Parse(fullURL)
+	if err != nil {
+		return nil, fmt.Errorf("parsing URL: %w", err)
+	}
+
+	params := url.Values{}
+	if startRFC3339 != "" {
+		params.Add("start", startRFC3339)
+	}
+	if endRFC3339 != "" {
+		params.Add("end", endRFC3339)
+	}
+
+	u.RawQuery = params.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
+	if err != nil {
+		return data, fmt.Errorf("creating request: %w", err)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return data, fmt.Errorf("executing request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Check for non-200 status code
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("Loki API returned status code %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	// Read the response body with a limit to prevent memory issues
+	body := io.LimitReader(resp.Body, 1024*1024*48)
+	bodyBytes, err := io.ReadAll(body)
+	if err != nil {
+		return data, fmt.Errorf("reading response body: %w", err)
+	}
+
+	// Check if the response is empty
+	if len(bodyBytes) == 0 {
+		return data, fmt.Errorf("empty response from Loki API")
+	}
+
+	// Trim any whitespace that might cause JSON parsing issues
+	trimmedBody := bytes.TrimSpace(bodyBytes)
+
+	var labelResponse LabelResponse
+	err = json.Unmarshal(trimmedBody, &labelResponse)
+	if err != nil {
+		return data, fmt.Errorf("unmarshalling response (content: %s): %w", string(trimmedBody), err)
+	}
+
+	if labelResponse.Status != "success" {
+		return data, fmt.Errorf("Loki API returned unexpected response format: %s", string(trimmedBody))
+	}
+
+	// Check if Data is nil or empty and handle it explicitly
+	if labelResponse.Data == nil {
+		// Return empty slice instead of nil to avoid potential nil pointer issues
+		return []string{}, nil
+	}
+
+	if len(labelResponse.Data) == 0 {
+		return []string{}, nil
+	}
+
+	return labelResponse.Data, nil
 }
 
 type authRoundTripper struct {
@@ -34,94 +134,14 @@ func (rt *authRoundTripper) RoundTrip(req *http.Request) (*http.Response, error)
 	if rt.apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+rt.apiKey)
 	}
-	return rt.underlying.RoundTrip(req)
+
+	resp, err := rt.underlying.RoundTrip(req)
+	if err != nil {
+		return nil, err
+	}
+
+	return resp, nil
 }
-
-// QueryLokiParams defines the parameters for querying Loki
-type QueryLokiParams struct {
-	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the datasource to query"`
-	Query         string `json:"query" jsonschema:"required,description=The LogQL query to execute"`
-	StartRFC3339  string `json:"startRfc3339" jsonschema:"required,description=The start time in RFC3339 format"`
-	EndRFC3339    string `json:"endRfc3339,omitempty" jsonschema:"description=The end time in RFC3339 format."`
-	Limit         int    `json:"limit,omitempty" jsonschema:"description=The maximum number of log lines to return"`
-	Direction     string `json:"direction,omitempty" jsonschema:"description=The direction of the query, either 'forward' or 'backward'"`
-}
-
-// queryLoki executes a LogQL query against a Loki datasource
-func queryLoki(ctx context.Context, args QueryLokiParams) (map[string]interface{}, error) {
-	client, baseURL, err := lokiClientFromContext(ctx, args.DatasourceUID)
-	if err != nil {
-		return nil, fmt.Errorf("getting Loki client: %w", err)
-	}
-
-	// Parse time parameters
-	startTime, err := time.Parse(time.RFC3339, args.StartRFC3339)
-	if err != nil {
-		return nil, fmt.Errorf("parsing start time: %w", err)
-	}
-
-	var endTime time.Time
-	if args.EndRFC3339 != "" {
-		endTime, err = time.Parse(time.RFC3339, args.EndRFC3339)
-		if err != nil {
-			return nil, fmt.Errorf("parsing end time: %w", err)
-		}
-	} else {
-		endTime = time.Now()
-	}
-
-	// Set default limit if not provided
-	limit := args.Limit
-	if limit == 0 {
-		limit = 100
-	}
-
-	// Set default direction if not provided
-	direction := args.Direction
-	if direction == "" {
-		direction = "backward"
-	}
-
-	// Build the query URL
-	queryURL := fmt.Sprintf("%s/loki/api/v1/query_range", baseURL)
-	req, err := http.NewRequestWithContext(ctx, "GET", queryURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("creating request: %w", err)
-	}
-
-	// Add query parameters
-	q := req.URL.Query()
-	q.Add("query", args.Query)
-	q.Add("start", fmt.Sprintf("%d", startTime.UnixNano()))
-	q.Add("end", fmt.Sprintf("%d", endTime.UnixNano()))
-	q.Add("limit", fmt.Sprintf("%d", limit))
-	q.Add("direction", direction)
-	req.URL.RawQuery = q.Encode()
-
-	// Execute the request
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("executing Loki query: %w", err)
-	}
-	defer resp.Body.Close()
-
-	// For simplicity, we'll return a placeholder response
-	// In a real implementation, you would parse the JSON response
-	return map[string]interface{}{
-		"status": "success",
-		"data": map[string]interface{}{
-			"resultType": "streams",
-			"result":     []interface{}{},
-		},
-	}, nil
-}
-
-// QueryLoki is a tool for querying Loki
-var QueryLoki = mcpgrafana.MustTool(
-	"query_loki",
-	"Query Loki using LogQL",
-	queryLoki,
-)
 
 // ListLokiLabelNamesParams defines the parameters for listing Loki label names
 type ListLokiLabelNamesParams struct {
@@ -132,54 +152,22 @@ type ListLokiLabelNamesParams struct {
 
 // listLokiLabelNames lists all label names in a Loki datasource
 func listLokiLabelNames(ctx context.Context, args ListLokiLabelNamesParams) ([]string, error) {
-	client, baseURL, err := lokiClientFromContext(ctx, args.DatasourceUID)
+	client, err := newLokiClient(ctx, args.DatasourceUID)
 	if err != nil {
-		return nil, fmt.Errorf("getting Loki client: %w", err)
+		return nil, fmt.Errorf("creating Loki client: %w", err)
 	}
 
-	// Parse time parameters if provided
-	var startTime, endTime time.Time
-	if args.StartRFC3339 != "" {
-		startTime, err = time.Parse(time.RFC3339, args.StartRFC3339)
-		if err != nil {
-			return nil, fmt.Errorf("parsing start time: %w", err)
-		}
-	} else {
-		startTime = time.Now().Add(-1 * time.Hour)
-	}
-
-	if args.EndRFC3339 != "" {
-		endTime, err = time.Parse(time.RFC3339, args.EndRFC3339)
-		if err != nil {
-			return nil, fmt.Errorf("parsing end time: %w", err)
-		}
-	} else {
-		endTime = time.Now()
-	}
-
-	// Build the query URL
-	queryURL := fmt.Sprintf("%s/loki/api/v1/labels", baseURL)
-	req, err := http.NewRequestWithContext(ctx, "GET", queryURL, nil)
+	result, err := client.fetchData(ctx, "/loki/api/v1/labels", args.StartRFC3339, args.EndRFC3339)
 	if err != nil {
-		return nil, fmt.Errorf("creating request: %w", err)
+		return nil, err
 	}
 
-	// Add query parameters
-	q := req.URL.Query()
-	q.Add("start", fmt.Sprintf("%d", startTime.UnixNano()))
-	q.Add("end", fmt.Sprintf("%d", endTime.UnixNano()))
-	req.URL.RawQuery = q.Encode()
-
-	// Execute the request
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("listing Loki label names: %w", err)
+	// Handle empty results explicitly to avoid Zod validation errors
+	if len(result) == 0 {
+		return []string{}, nil
 	}
-	defer resp.Body.Close()
 
-	// For simplicity, we'll return a placeholder response
-	// In a real implementation, you would parse the JSON response
-	return []string{"app", "container", "filename", "host", "job", "level", "namespace", "pod"}, nil
+	return result, nil
 }
 
 // ListLokiLabelNames is a tool for listing Loki label names
@@ -199,54 +187,26 @@ type ListLokiLabelValuesParams struct {
 
 // listLokiLabelValues lists all values for a specific label in a Loki datasource
 func listLokiLabelValues(ctx context.Context, args ListLokiLabelValuesParams) ([]string, error) {
-	client, baseURL, err := lokiClientFromContext(ctx, args.DatasourceUID)
+	client, err := newLokiClient(ctx, args.DatasourceUID)
 	if err != nil {
-		return nil, fmt.Errorf("getting Loki client: %w", err)
+		return nil, fmt.Errorf("creating Loki client: %w", err)
 	}
 
-	// Parse time parameters if provided
-	var startTime, endTime time.Time
-	if args.StartRFC3339 != "" {
-		startTime, err = time.Parse(time.RFC3339, args.StartRFC3339)
-		if err != nil {
-			return nil, fmt.Errorf("parsing start time: %w", err)
-		}
-	} else {
-		startTime = time.Now().Add(-1 * time.Hour)
-	}
+	// Use the client's fetchData method
+	urlPath := fmt.Sprintf("/loki/api/v1/label/%s/values", args.LabelName)
 
-	if args.EndRFC3339 != "" {
-		endTime, err = time.Parse(time.RFC3339, args.EndRFC3339)
-		if err != nil {
-			return nil, fmt.Errorf("parsing end time: %w", err)
-		}
-	} else {
-		endTime = time.Now()
-	}
-
-	// Build the query URL
-	queryURL := fmt.Sprintf("%s/loki/api/v1/label/%s/values", baseURL, args.LabelName)
-	req, err := http.NewRequestWithContext(ctx, "GET", queryURL, nil)
+	result, err := client.fetchData(ctx, urlPath, args.StartRFC3339, args.EndRFC3339)
 	if err != nil {
-		return nil, fmt.Errorf("creating request: %w", err)
+		return nil, err
 	}
 
-	// Add query parameters
-	q := req.URL.Query()
-	q.Add("start", fmt.Sprintf("%d", startTime.UnixNano()))
-	q.Add("end", fmt.Sprintf("%d", endTime.UnixNano()))
-	req.URL.RawQuery = q.Encode()
-
-	// Execute the request
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("listing Loki label values: %w", err)
+	// Handle empty results explicitly to avoid Zod validation errors
+	if len(result) == 0 {
+		// Return empty slice instead of nil
+		return []string{}, nil
 	}
-	defer resp.Body.Close()
 
-	// For simplicity, we'll return a placeholder response
-	// In a real implementation, you would parse the JSON response
-	return []string{"value1", "value2", "value3"}, nil
+	return result, nil
 }
 
 // ListLokiLabelValues is a tool for listing Loki label values
@@ -258,7 +218,6 @@ var ListLokiLabelValues = mcpgrafana.MustTool(
 
 // AddLokiTools registers all Loki tools with the MCP server
 func AddLokiTools(mcp *server.MCPServer) {
-	QueryLoki.Register(mcp)
 	ListLokiLabelNames.Register(mcp)
 	ListLokiLabelValues.Register(mcp)
 }
