@@ -15,6 +15,14 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 )
 
+const (
+	// DefaultLokiLogLimit is the default number of log lines to return if not specified
+	DefaultLokiLogLimit = 10
+
+	// MaxLokiLogLimit is the maximum number of log lines that can be requested
+	MaxLokiLogLimit = 100
+)
+
 type Client struct {
 	httpClient *http.Client
 	baseURL    string
@@ -305,7 +313,7 @@ type QueryLokiLogsParams struct {
 	LogQL         string `json:"logql" jsonschema:"required,description=The LogQL query to execute"`
 	StartRFC3339  string `json:"startRfc3339,omitempty" jsonschema:"description=Optionally, the start time of the query in RFC3339 format"`
 	EndRFC3339    string `json:"endRfc3339,omitempty" jsonschema:"description=Optionally, the end time of the query in RFC3339 format"`
-	Limit         int    `json:"limit,omitempty" jsonschema:"description=Optionally, the maximum number of log lines to return"`
+	Limit         int    `json:"limit,omitempty" jsonschema:"description=Optionally, the maximum number of log lines to return (default: 10, max: 100)"`
 	Direction     string `json:"direction,omitempty" jsonschema:"description=Optionally, the direction of the query: 'forward' or 'backward'"`
 }
 
@@ -314,6 +322,17 @@ type LogEntry struct {
 	Timestamp string            `json:"timestamp"`
 	Line      string            `json:"line"`
 	Labels    map[string]string `json:"labels"`
+}
+
+// enforceLogLimit ensures a log limit value is within acceptable bounds
+func enforceLogLimit(requestedLimit int) int {
+	if requestedLimit <= 0 {
+		return DefaultLokiLogLimit
+	}
+	if requestedLimit > MaxLokiLogLimit {
+		return MaxLokiLogLimit
+	}
+	return requestedLimit
 }
 
 // queryLokiLogs queries logs from a Loki datasource using LogQL
@@ -335,11 +354,8 @@ func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) ([]LogEntry, e
 		endTime = time.Now().Format(time.RFC3339)
 	}
 
-	// Set default limit if not provided
-	limit := args.Limit
-	if limit <= 0 {
-		limit = 10
-	}
+	// Apply limit constraints
+	limit := enforceLogLimit(args.Limit)
 
 	// Set default direction if not provided
 	direction := args.Direction
