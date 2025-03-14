@@ -45,4 +45,37 @@ func TestLokiTools(t *testing.T) {
 		assert.GreaterOrEqual(t, result.Entries, 0, "Should have a valid entries count")
 		assert.GreaterOrEqual(t, result.Bytes, 0, "Should have a valid bytes count")
 	})
+
+	t.Run("query loki logs", func(t *testing.T) {
+		ctx := newTestContext()
+		result, err := queryLokiLogs(ctx, QueryLokiLogsParams{
+			DatasourceUID: "loki",
+			LogQL:         `{container=~".+"}`,
+			Limit:         10,
+		})
+		require.NoError(t, err)
+
+		// We can't assert on specific log content as it will vary,
+		// but we can check that the structure is correct
+		// If we got logs, check that they have the expected structure
+		for _, entry := range result {
+			assert.NotEmpty(t, entry.Timestamp, "Log entry should have a timestamp")
+			assert.NotNil(t, entry.Labels, "Log entry should have labels")
+		}
+	})
+
+	t.Run("query loki logs with no results", func(t *testing.T) {
+		ctx := newTestContext()
+		// Use a query that's unlikely to match any logs
+		result, err := queryLokiLogs(ctx, QueryLokiLogsParams{
+			DatasourceUID: "loki",
+			LogQL:         `{container="non-existent-container-name-123456789"}`,
+			Limit:         10,
+		})
+		require.NoError(t, err)
+
+		// Should return an empty slice, not nil
+		assert.NotNil(t, result, "Empty results should be an empty slice, not nil")
+		assert.Equal(t, 0, len(result), "Empty results should have length 0")
+	})
 }

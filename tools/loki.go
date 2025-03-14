@@ -236,6 +236,157 @@ var ListLokiLabelValues = mcpgrafana.MustTool(
 	listLokiLabelValues,
 )
 
+// LogStream represents a stream of log entries from Loki
+type LogStream struct {
+	Stream map[string]string `json:"stream"`
+	Values [][]string        `json:"values"` // [timestamp, log line]
+}
+
+// QueryRangeResponse represents the response from Loki's query_range API
+type QueryRangeResponse struct {
+	Status string `json:"status"`
+	Data   struct {
+		ResultType string      `json:"resultType"`
+		Result     []LogStream `json:"result"`
+	} `json:"data"`
+}
+
+// fetchLogs is a method to fetch logs from Loki API
+func (c *Client) fetchLogs(ctx context.Context, query, startRFC3339, endRFC3339 string, limit int, direction string) ([]LogStream, error) {
+	params := url.Values{}
+	params.Add("query", query)
+
+	// Convert RFC3339 timestamps to Unix nanoseconds if provided
+	if startRFC3339 != "" {
+		startTime, err := time.Parse(time.RFC3339, startRFC3339)
+		if err != nil {
+			return nil, fmt.Errorf("parsing start time: %w", err)
+		}
+		params.Add("start", fmt.Sprintf("%d", startTime.UnixNano()))
+	}
+
+	if endRFC3339 != "" {
+		endTime, err := time.Parse(time.RFC3339, endRFC3339)
+		if err != nil {
+			return nil, fmt.Errorf("parsing end time: %w", err)
+		}
+		params.Add("end", fmt.Sprintf("%d", endTime.UnixNano()))
+	}
+
+	if limit > 0 {
+		params.Add("limit", fmt.Sprintf("%d", limit))
+	}
+
+	if direction != "" {
+		params.Add("direction", direction)
+	}
+
+	bodyBytes, err := c.makeRequest(ctx, "GET", "/loki/api/v1/query_range", params)
+	if err != nil {
+		return nil, err
+	}
+
+	var queryResponse QueryRangeResponse
+	err = json.Unmarshal(bodyBytes, &queryResponse)
+	if err != nil {
+		return nil, fmt.Errorf("unmarshalling response (content: %s): %w", string(bodyBytes), err)
+	}
+
+	if queryResponse.Status != "success" {
+		return nil, fmt.Errorf("Loki API returned unexpected response format: %s", string(bodyBytes))
+	}
+
+	return queryResponse.Data.Result, nil
+}
+
+// QueryLokiLogsParams defines the parameters for querying Loki logs
+type QueryLokiLogsParams struct {
+	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the datasource to query"`
+	LogQL         string `json:"logql" jsonschema:"required,description=The LogQL query to execute"`
+	StartRFC3339  string `json:"startRfc3339,omitempty" jsonschema:"description=Optionally, the start time of the query in RFC3339 format"`
+	EndRFC3339    string `json:"endRfc3339,omitempty" jsonschema:"description=Optionally, the end time of the query in RFC3339 format"`
+	Limit         int    `json:"limit,omitempty" jsonschema:"description=Optionally, the maximum number of log lines to return"`
+	Direction     string `json:"direction,omitempty" jsonschema:"description=Optionally, the direction of the query: 'forward' or 'backward'"`
+}
+
+// LogEntry represents a single log entry with metadata
+type LogEntry struct {
+	Timestamp string            `json:"timestamp"`
+	Line      string            `json:"line"`
+	Labels    map[string]string `json:"labels"`
+}
+
+// queryLokiLogs queries logs from a Loki datasource using LogQL
+func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) ([]LogEntry, error) {
+	client, err := newLokiClient(ctx, args.DatasourceUID)
+	if err != nil {
+		return nil, fmt.Errorf("creating Loki client: %w", err)
+	}
+
+	// Set default time range if not provided
+	startTime := args.StartRFC3339
+	endTime := args.EndRFC3339
+	if startTime == "" {
+		// Default to 1 hour ago if not specified
+		startTime = time.Now().Add(-1 * time.Hour).Format(time.RFC3339)
+	}
+	if endTime == "" {
+		// Default to now if not specified
+		endTime = time.Now().Format(time.RFC3339)
+	}
+
+	// Set default limit if not provided
+	limit := args.Limit
+	if limit <= 0 {
+		limit = 10
+	}
+
+	// Set default direction if not provided
+	direction := args.Direction
+	if direction == "" {
+		direction = "backward" // Most recent logs first
+	}
+
+	streams, err := client.fetchLogs(ctx, args.LogQL, startTime, endTime, limit, direction)
+	if err != nil {
+		return nil, err
+	}
+
+	// Handle empty results
+	if len(streams) == 0 {
+		return []LogEntry{}, nil
+	}
+
+	// Convert the streams to a flat list of log entries
+	var entries []LogEntry
+	for _, stream := range streams {
+		for _, value := range stream.Values {
+			if len(value) >= 2 {
+				entry := LogEntry{
+					Timestamp: value[0],
+					Line:      value[1],
+					Labels:    stream.Stream,
+				}
+				entries = append(entries, entry)
+			}
+		}
+	}
+
+	// If we processed all streams but still have no entries, return an empty slice
+	if len(entries) == 0 {
+		return []LogEntry{}, nil
+	}
+
+	return entries, nil
+}
+
+// QueryLokiLogs is a tool for querying logs from Loki
+var QueryLokiLogs = mcpgrafana.MustTool(
+	"query_loki_logs",
+	"Query logs from a Loki datasource using LogQL",
+	queryLokiLogs,
+)
+
 // fetchStats is a method to fetch stats data from Loki API
 func (c *Client) fetchStats(ctx context.Context, query, startRFC3339, endRFC3339 string) (*Stats, error) {
 	params := url.Values{}
@@ -319,4 +470,5 @@ func AddLokiTools(mcp *server.MCPServer) {
 	ListLokiLabelNames.Register(mcp)
 	ListLokiLabelValues.Register(mcp)
 	QueryLokiStats.Register(mcp)
+	QueryLokiLogs.Register(mcp)
 }
