@@ -259,16 +259,13 @@ type QueryRangeResponse struct {
 	} `json:"data"`
 }
 
-// fetchLogs is a method to fetch logs from Loki API
-func (c *Client) fetchLogs(ctx context.Context, query, startRFC3339, endRFC3339 string, limit int, direction string) ([]LogStream, error) {
-	params := url.Values{}
-	params.Add("query", query)
-
-	// Convert RFC3339 timestamps to Unix nanoseconds if provided
+// addTimeRangeParams adds start and end time parameters to the URL values
+// It handles conversion from RFC3339 to Unix nanoseconds
+func addTimeRangeParams(params url.Values, startRFC3339, endRFC3339 string) error {
 	if startRFC3339 != "" {
 		startTime, err := time.Parse(time.RFC3339, startRFC3339)
 		if err != nil {
-			return nil, fmt.Errorf("parsing start time: %w", err)
+			return fmt.Errorf("parsing start time: %w", err)
 		}
 		params.Add("start", fmt.Sprintf("%d", startTime.UnixNano()))
 	}
@@ -276,9 +273,36 @@ func (c *Client) fetchLogs(ctx context.Context, query, startRFC3339, endRFC3339 
 	if endRFC3339 != "" {
 		endTime, err := time.Parse(time.RFC3339, endRFC3339)
 		if err != nil {
-			return nil, fmt.Errorf("parsing end time: %w", err)
+			return fmt.Errorf("parsing end time: %w", err)
 		}
 		params.Add("end", fmt.Sprintf("%d", endTime.UnixNano()))
+	}
+
+	return nil
+}
+
+// getDefaultTimeRange returns default start and end times if not provided
+// Returns start time (1 hour ago) and end time (now) in RFC3339 format
+func getDefaultTimeRange(startRFC3339, endRFC3339 string) (string, string) {
+	if startRFC3339 == "" {
+		// Default to 1 hour ago if not specified
+		startRFC3339 = time.Now().Add(-1 * time.Hour).Format(time.RFC3339)
+	}
+	if endRFC3339 == "" {
+		// Default to now if not specified
+		endRFC3339 = time.Now().Format(time.RFC3339)
+	}
+	return startRFC3339, endRFC3339
+}
+
+// fetchLogs is a method to fetch logs from Loki API
+func (c *Client) fetchLogs(ctx context.Context, query, startRFC3339, endRFC3339 string, limit int, direction string) ([]LogStream, error) {
+	params := url.Values{}
+	params.Add("query", query)
+
+	// Add time range parameters
+	if err := addTimeRangeParams(params, startRFC3339, endRFC3339); err != nil {
+		return nil, err
 	}
 
 	if limit > 0 {
@@ -342,17 +366,8 @@ func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) ([]LogEntry, e
 		return nil, fmt.Errorf("creating Loki client: %w", err)
 	}
 
-	// Set default time range if not provided
-	startTime := args.StartRFC3339
-	endTime := args.EndRFC3339
-	if startTime == "" {
-		// Default to 1 hour ago if not specified
-		startTime = time.Now().Add(-1 * time.Hour).Format(time.RFC3339)
-	}
-	if endTime == "" {
-		// Default to now if not specified
-		endTime = time.Now().Format(time.RFC3339)
-	}
+	// Get default time range if not provided
+	startTime, endTime := getDefaultTimeRange(args.StartRFC3339, args.EndRFC3339)
 
 	// Apply limit constraints
 	limit := enforceLogLimit(args.Limit)
@@ -408,21 +423,9 @@ func (c *Client) fetchStats(ctx context.Context, query, startRFC3339, endRFC3339
 	params := url.Values{}
 	params.Add("query", query)
 
-	// Convert RFC3339 timestamps to Unix nanoseconds if provided
-	if startRFC3339 != "" {
-		startTime, err := time.Parse(time.RFC3339, startRFC3339)
-		if err != nil {
-			return nil, fmt.Errorf("parsing start time: %w", err)
-		}
-		params.Add("start", fmt.Sprintf("%d", startTime.UnixNano()))
-	}
-
-	if endRFC3339 != "" {
-		endTime, err := time.Parse(time.RFC3339, endRFC3339)
-		if err != nil {
-			return nil, fmt.Errorf("parsing end time: %w", err)
-		}
-		params.Add("end", fmt.Sprintf("%d", endTime.UnixNano()))
+	// Add time range parameters
+	if err := addTimeRangeParams(params, startRFC3339, endRFC3339); err != nil {
+		return nil, err
 	}
 
 	bodyBytes, err := c.makeRequest(ctx, "GET", "/loki/api/v1/index/stats", params)
@@ -454,17 +457,8 @@ func queryLokiStats(ctx context.Context, args QueryLokiStatsParams) (*Stats, err
 		return nil, fmt.Errorf("creating Loki client: %w", err)
 	}
 
-	// Set default time range if not provided
-	startTime := args.StartRFC3339
-	endTime := args.EndRFC3339
-	if startTime == "" {
-		// Default to 1 hour ago if not specified
-		startTime = time.Now().Add(-1 * time.Hour).Format(time.RFC3339)
-	}
-	if endTime == "" {
-		// Default to now if not specified
-		endTime = time.Now().Format(time.RFC3339)
-	}
+	// Get default time range if not provided
+	startTime, endTime := getDefaultTimeRange(args.StartRFC3339, args.EndRFC3339)
 
 	stats, err := client.fetchStats(ctx, args.LogQL, startTime, endTime)
 	if err != nil {
