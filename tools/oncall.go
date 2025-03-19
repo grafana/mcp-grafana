@@ -20,21 +20,21 @@ func oncallClientFromContext(ctx context.Context) (*aapi.Client, error) {
 
 	// Try to get OnCall specific URL and API key
 	grafanaOnCallURL := mcpgrafana.GrafanaOnCallURLFromContext(ctx)
-	grafanaOnCallApiKey := mcpgrafana.GrafanaOnCallAPIKeyFromContext(ctx)
+	grafanaOnCallToken := mcpgrafana.GrafanaOnCallTokenFromContext(ctx)
 
 	if grafanaOnCallURL == "" {
 		return nil, fmt.Errorf("OnCall API URL is not set")
 	}
 
-	if grafanaOnCallApiKey == "" {
-		return nil, fmt.Errorf("OnCall API Key is not set")
+	if grafanaOnCallToken == "" {
+		return nil, fmt.Errorf("OnCall Token is not set")
 	}
 
 	// Make sure the URL doesn't end with a slash as the client will append paths
 	grafanaOnCallURL = strings.TrimRight(grafanaOnCallURL, "/")
 
 	// Create a new OnCall client
-	client, err := aapi.NewWithGrafanaURL(grafanaOnCallURL, grafanaOnCallApiKey, grafanaURL)
+	client, err := aapi.NewWithGrafanaURL(grafanaOnCallURL, grafanaOnCallToken, grafanaURL)
 	if err != nil {
 		return nil, fmt.Errorf("creating OnCall client: %w", err)
 	}

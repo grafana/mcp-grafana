@@ -21,11 +21,14 @@ const (
 	grafanaURLEnvVar = "GRAFANA_URL"
 	grafanaAPIEnvVar = "GRAFANA_API_KEY"
 
-	grafanaOnCallURLEnvVar    = "GRAFANA_ONCALL_URL"
-	grafanaOnCallAPIKeyEnvVar = "GRAFANA_ONCALL_API_KEY"
+	grafanaOnCallURLEnvVar   = "GRAFANA_ONCALL_URL"
+	grafanaOnCallTokenEnvVar = "GRAFANA_ONCALL_TOKEN"
 
 	grafanaURLHeader    = "X-Grafana-URL"
 	grafanaAPIKeyHeader = "X-Grafana-API-Key"
+
+	grafanaOnCallURLHeader   = "X-Grafana-OnCall-URL"
+	grafanaOnCallTokenHeader = "X-Grafana-OnCall-Token"
 )
 
 func urlAndAPIKeyFromEnv() (string, string) {
@@ -34,11 +37,11 @@ func urlAndAPIKeyFromEnv() (string, string) {
 	return u, apiKey
 }
 
-// oncallURLAndAPIKeyFromEnv retrieves OnCall URL and API key from environment variables
-func oncallURLAndAPIKeyFromEnv() (string, string) {
+// oncallURLAndTokenFromEnv retrieves OnCall URL and token from environment variables
+func oncallURLAndTokenFromEnv() (string, string) {
 	u := strings.TrimRight(os.Getenv(grafanaOnCallURLEnvVar), "/")
-	apiKey := os.Getenv(grafanaOnCallAPIKeyEnvVar)
-	return u, apiKey
+	token := os.Getenv(grafanaOnCallTokenEnvVar)
+	return u, token
 }
 
 func urlAndAPIKeyFromHeaders(req *http.Request) (string, string) {
@@ -47,10 +50,17 @@ func urlAndAPIKeyFromHeaders(req *http.Request) (string, string) {
 	return u, apiKey
 }
 
+// oncallURLAndTokenFromHeaders retrieves OnCall URL and token from request headers
+func oncallURLAndTokenFromHeaders(req *http.Request) (string, string) {
+	u := req.Header.Get(grafanaOnCallURLHeader)
+	token := req.Header.Get(grafanaOnCallTokenHeader)
+	return u, token
+}
+
 type grafanaURLKey struct{}
 type grafanaAPIKeyKey struct{}
 type grafanaOnCallURLKey struct{}
-type grafanaOnCallAPIKey struct{}
+type grafanaOnCallTokenKey struct{}
 
 // ExtractGrafanaInfoFromEnv is a StdioContextFunc that extracts Grafana configuration
 // from environment variables and injects a configured client into the context.
@@ -94,9 +104,9 @@ func WithGrafanaOnCallURL(ctx context.Context, url string) context.Context {
 	return context.WithValue(ctx, grafanaOnCallURLKey{}, url)
 }
 
-// WithGrafanaOnCallAPIKey adds the Grafana OnCall API key to the context.
-func WithGrafanaOnCallAPIKey(ctx context.Context, apiKey string) context.Context {
-	return context.WithValue(ctx, grafanaOnCallAPIKey{}, apiKey)
+// WithGrafanaOnCallToken adds the Grafana OnCall token to the context.
+func WithGrafanaOnCallToken(ctx context.Context, token string) context.Context {
+	return context.WithValue(ctx, grafanaOnCallTokenKey{}, token)
 }
 
 // GrafanaURLFromContext extracts the Grafana URL from the context.
@@ -123,9 +133,9 @@ func GrafanaOnCallURLFromContext(ctx context.Context) string {
 	return ""
 }
 
-// GrafanaOnCallAPIKeyFromContext extracts the Grafana OnCall API key from the context.
-func GrafanaOnCallAPIKeyFromContext(ctx context.Context) string {
-	if k, ok := ctx.Value(grafanaOnCallAPIKey{}).(string); ok {
+// GrafanaOnCallTokenFromContext extracts the Grafana OnCall token from the context.
+func GrafanaOnCallTokenFromContext(ctx context.Context) string {
+	if k, ok := ctx.Value(grafanaOnCallTokenKey{}).(string); ok {
 		return k
 	}
 	return ""
@@ -225,14 +235,37 @@ func IncidentClientFromContext(ctx context.Context) *incident.Client {
 
 // Extract predefined context functions
 var ExtractOnCallInfoFromEnv server.StdioContextFunc = func(ctx context.Context) context.Context {
-	onCallURL, onCallAPIKey := oncallURLAndAPIKeyFromEnv()
+	onCallURL, onCallToken := oncallURLAndTokenFromEnv()
 
 	// Add OnCall values if they exist
 	if onCallURL != "" {
 		ctx = WithGrafanaOnCallURL(ctx, onCallURL)
 	}
-	if onCallAPIKey != "" {
-		ctx = WithGrafanaOnCallAPIKey(ctx, onCallAPIKey)
+	if onCallToken != "" {
+		ctx = WithGrafanaOnCallToken(ctx, onCallToken)
+	}
+
+	return ctx
+}
+
+var ExtractOnCallInfoFromHeaders server.SSEContextFunc = func(ctx context.Context, req *http.Request) context.Context {
+	onCallURL, onCallToken := oncallURLAndTokenFromHeaders(req)
+
+	// If headers don't have OnCall values, check environment
+	onCallURLEnv, onCallTokenEnv := oncallURLAndTokenFromEnv()
+	if onCallURL == "" {
+		onCallURL = onCallURLEnv
+	}
+	if onCallToken == "" {
+		onCallToken = onCallTokenEnv
+	}
+
+	// Add OnCall values if they exist
+	if onCallURL != "" {
+		ctx = WithGrafanaOnCallURL(ctx, onCallURL)
+	}
+	if onCallToken != "" {
+		ctx = WithGrafanaOnCallToken(ctx, onCallToken)
 	}
 
 	return ctx
@@ -271,4 +304,5 @@ var ComposedSSEContextFunc = ComposeSSEContextFuncs(
 	ExtractGrafanaInfoFromHeaders,
 	ExtractGrafanaClientFromHeaders,
 	ExtractIncidentClientFromHeaders,
+	ExtractOnCallInfoFromHeaders,
 )
