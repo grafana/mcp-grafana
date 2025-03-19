@@ -21,6 +21,9 @@ const (
 	grafanaURLEnvVar = "GRAFANA_URL"
 	grafanaAPIEnvVar = "GRAFANA_API_KEY"
 
+	grafanaOnCallURLEnvVar    = "GRAFANA_ONCALL_URL"
+	grafanaOnCallAPIKeyEnvVar = "GRAFANA_ONCALL_API_KEY"
+
 	grafanaURLHeader    = "X-Grafana-URL"
 	grafanaAPIKeyHeader = "X-Grafana-API-Key"
 )
@@ -28,6 +31,13 @@ const (
 func urlAndAPIKeyFromEnv() (string, string) {
 	u := strings.TrimRight(os.Getenv(grafanaURLEnvVar), "/")
 	apiKey := os.Getenv(grafanaAPIEnvVar)
+	return u, apiKey
+}
+
+// oncallURLAndAPIKeyFromEnv retrieves OnCall URL and API key from environment variables
+func oncallURLAndAPIKeyFromEnv() (string, string) {
+	u := strings.TrimRight(os.Getenv(grafanaOnCallURLEnvVar), "/")
+	apiKey := os.Getenv(grafanaOnCallAPIKeyEnvVar)
 	return u, apiKey
 }
 
@@ -39,6 +49,8 @@ func urlAndAPIKeyFromHeaders(req *http.Request) (string, string) {
 
 type grafanaURLKey struct{}
 type grafanaAPIKeyKey struct{}
+type grafanaOnCallURLKey struct{}
+type grafanaOnCallAPIKey struct{}
 
 // ExtractGrafanaInfoFromEnv is a StdioContextFunc that extracts Grafana configuration
 // from environment variables and injects a configured client into the context.
@@ -77,6 +89,16 @@ func WithGrafanaAPIKey(ctx context.Context, apiKey string) context.Context {
 	return context.WithValue(ctx, grafanaAPIKeyKey{}, apiKey)
 }
 
+// WithGrafanaOnCallURL adds the Grafana OnCall URL to the context.
+func WithGrafanaOnCallURL(ctx context.Context, url string) context.Context {
+	return context.WithValue(ctx, grafanaOnCallURLKey{}, url)
+}
+
+// WithGrafanaOnCallAPIKey adds the Grafana OnCall API key to the context.
+func WithGrafanaOnCallAPIKey(ctx context.Context, apiKey string) context.Context {
+	return context.WithValue(ctx, grafanaOnCallAPIKey{}, apiKey)
+}
+
 // GrafanaURLFromContext extracts the Grafana URL from the context.
 func GrafanaURLFromContext(ctx context.Context) string {
 	if u, ok := ctx.Value(grafanaURLKey{}).(string); ok {
@@ -88,6 +110,22 @@ func GrafanaURLFromContext(ctx context.Context) string {
 // GrafanaAPIKeyFromContext extracts the Grafana API key from the context.
 func GrafanaAPIKeyFromContext(ctx context.Context) string {
 	if k, ok := ctx.Value(grafanaAPIKeyKey{}).(string); ok {
+		return k
+	}
+	return ""
+}
+
+// GrafanaOnCallURLFromContext extracts the Grafana OnCall URL from the context.
+func GrafanaOnCallURLFromContext(ctx context.Context) string {
+	if u, ok := ctx.Value(grafanaOnCallURLKey{}).(string); ok {
+		return u
+	}
+	return ""
+}
+
+// GrafanaOnCallAPIKeyFromContext extracts the Grafana OnCall API key from the context.
+func GrafanaOnCallAPIKeyFromContext(ctx context.Context) string {
+	if k, ok := ctx.Value(grafanaOnCallAPIKey{}).(string); ok {
 		return k
 	}
 	return ""
@@ -185,6 +223,21 @@ func IncidentClientFromContext(ctx context.Context) *incident.Client {
 	return c
 }
 
+// Extract predefined context functions
+var ExtractOnCallInfoFromEnv server.StdioContextFunc = func(ctx context.Context) context.Context {
+	onCallURL, onCallAPIKey := oncallURLAndAPIKeyFromEnv()
+
+	// Add OnCall values if they exist
+	if onCallURL != "" {
+		ctx = WithGrafanaOnCallURL(ctx, onCallURL)
+	}
+	if onCallAPIKey != "" {
+		ctx = WithGrafanaOnCallAPIKey(ctx, onCallAPIKey)
+	}
+
+	return ctx
+}
+
 // ComposeStdioContextFuncs composes multiple StdioContextFuncs into a single one.
 func ComposeStdioContextFuncs(funcs ...server.StdioContextFunc) server.StdioContextFunc {
 	return func(ctx context.Context) context.Context {
@@ -210,6 +263,7 @@ var ComposedStdioContextFunc = ComposeStdioContextFuncs(
 	ExtractGrafanaInfoFromEnv,
 	ExtractGrafanaClientFromEnv,
 	ExtractIncidentClientFromEnv,
+	ExtractOnCallInfoFromEnv,
 )
 
 // ComposedSSEContextFunc is a SSEContextFunc that comprises all predefined SSEContextFuncs.
