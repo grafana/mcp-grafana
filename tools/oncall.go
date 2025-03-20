@@ -147,7 +147,33 @@ var GetOnCallShift = mcpgrafana.MustTool(
 	getOnCallShift,
 )
 
+type GetCurrentOnCallUsersParams struct {
+	ScheduleID string `json:"scheduleId" jsonschema:"required,description=The ID of the schedule to get current on-call users for"`
+}
+
+func getCurrentOnCallUsers(ctx context.Context, args GetCurrentOnCallUsersParams) (*aapi.Schedule, error) {
+	client, err := oncallClientFromContext(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("getting OnCall client: %w", err)
+	}
+
+	scheduleService := aapi.NewScheduleService(client)
+	schedule, _, err := scheduleService.GetSchedule(args.ScheduleID, &aapi.GetScheduleOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("getting schedule %s: %w", args.ScheduleID, err)
+	}
+
+	return schedule, nil
+}
+
+var GetCurrentOnCallUsers = mcpgrafana.MustTool(
+	"get_current_oncall_users",
+	"Get users currently on-call for a specific schedule",
+	getCurrentOnCallUsers,
+)
+
 func AddOnCallTools(mcp *server.MCPServer) {
 	ListOnCallSchedules.Register(mcp)
 	GetOnCallShift.Register(mcp)
+	GetCurrentOnCallUsers.Register(mcp)
 }
