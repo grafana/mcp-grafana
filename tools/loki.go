@@ -471,7 +471,7 @@ func queryLokiStats(ctx context.Context, args QueryLokiStatsParams) (*Stats, err
 // QueryLokiStats is a tool for querying stats from Loki
 var QueryLokiStats = mcpgrafana.MustTool(
 	"query_loki_stats",
-	"Query statistics about logs in a Loki datasource using LogQL",
+	"Query statistics about log streams in a Loki datasource, using LogQL selectors to select streams",
 	queryLokiStats,
 )
 
