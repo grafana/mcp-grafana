@@ -55,3 +55,36 @@ func TestCloudOnCallSchedules(t *testing.T) {
 			"Result count should respect the limit parameter")
 	})
 }
+
+func TestCloudOnCallShift(t *testing.T) {
+	ctx := createOnCallCloudTestContext(t)
+
+	// First get a schedule to find a valid shift
+	schedules, err := listOnCallSchedules(ctx, ListOnCallSchedulesParams{
+		Limit: 1,
+	})
+	require.NoError(t, err, "Should not error when listing schedules")
+	require.NotEmpty(t, schedules, "Should have at least one schedule to test with")
+	require.NotNil(t, schedules[0].Shifts, "Schedule should have shifts field")
+	require.NotEmpty(t, *schedules[0].Shifts, "Schedule should have at least one shift")
+
+	shifts := *schedules[0].Shifts
+	shiftID := shifts[0]
+
+	// Test getting shift details with valid ID
+	t.Run("get shift details", func(t *testing.T) {
+		result, err := getOnCallShift(ctx, GetOnCallShiftParams{
+			ShiftID: shiftID,
+		})
+		require.NoError(t, err, "Should not error when getting shift details")
+		assert.NotNil(t, result, "Result should not be nil")
+		assert.Equal(t, shiftID, result.ID, "Should return the correct shift")
+	})
+
+	t.Run("get shift with invalid ID", func(t *testing.T) {
+		_, err := getOnCallShift(ctx, GetOnCallShiftParams{
+			ShiftID: "invalid-shift-id",
+		})
+		assert.Error(t, err, "Should error when getting shift with invalid ID")
+	})
+}

@@ -122,6 +122,32 @@ var ListOnCallSchedules = mcpgrafana.MustTool(
 	listOnCallSchedules,
 )
 
+type GetOnCallShiftParams struct {
+	ShiftID string `json:"shiftId" jsonschema:"required,description=The ID of the shift to get details for"`
+}
+
+func getOnCallShift(ctx context.Context, args GetOnCallShiftParams) (*aapi.OnCallShift, error) {
+	client, err := oncallClientFromContext(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("getting OnCall client: %w", err)
+	}
+
+	shiftService := aapi.NewOnCallShiftService(client)
+	shift, _, err := shiftService.GetOnCallShift(args.ShiftID, &aapi.GetOnCallShiftOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("getting OnCall shift %s: %w", args.ShiftID, err)
+	}
+
+	return shift, nil
+}
+
+var GetOnCallShift = mcpgrafana.MustTool(
+	"get_oncall_shift",
+	"Get details for a specific OnCall shift",
+	getOnCallShift,
+)
+
 func AddOnCallTools(mcp *server.MCPServer) {
 	ListOnCallSchedules.Register(mcp)
+	GetOnCallShift.Register(mcp)
 }
