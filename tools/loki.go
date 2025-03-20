@@ -176,8 +176,8 @@ func (rt *authRoundTripper) RoundTrip(req *http.Request) (*http.Response, error)
 // ListLokiLabelNamesParams defines the parameters for listing Loki label names
 type ListLokiLabelNamesParams struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the datasource to query"`
-	StartRFC3339  string `json:"startRfc3339,omitempty" jsonschema:"description=Optionally, the start time of the time range to filter the results by"`
-	EndRFC3339    string `json:"endRfc3339,omitempty" jsonschema:"description=Optionally, the end time of the time range to filter the results by"`
+	StartRFC3339  string `json:"startRfc3339,omitempty" jsonschema:"description=Optionally, the start time of the query in RFC3339 format (defaults to 1 hour ago)"`
+	EndRFC3339    string `json:"endRfc3339,omitempty" jsonschema:"description=Optionally, the end time of the query in RFC3339 format (defaults to now)"`
 }
 
 // listLokiLabelNames lists all label names in a Loki datasource
@@ -202,16 +202,16 @@ func listLokiLabelNames(ctx context.Context, args ListLokiLabelNamesParams) ([]s
 // ListLokiLabelNames is a tool for listing Loki label names
 var ListLokiLabelNames = mcpgrafana.MustTool(
 	"list_loki_label_names",
-	"List the label names in a Loki datasource",
+	"List all available label names in a Loki datasource for the given time range. Returns the set of unique label keys found in the logs.",
 	listLokiLabelNames,
 )
 
 // ListLokiLabelValuesParams defines the parameters for listing Loki label values
 type ListLokiLabelValuesParams struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the datasource to query"`
-	LabelName     string `json:"labelName" jsonschema:"required,description=The name of the label to query"`
-	StartRFC3339  string `json:"startRfc3339,omitempty" jsonschema:"description=Optionally, the start time of the query"`
-	EndRFC3339    string `json:"endRfc3339,omitempty" jsonschema:"description=Optionally, the end time of the query"`
+	LabelName     string `json:"labelName" jsonschema:"required,description=The name of the label to retrieve values for (e.g. 'app', 'env', 'pod')"`
+	StartRFC3339  string `json:"startRfc3339,omitempty" jsonschema:"description=Optionally, the start time of the query in RFC3339 format (defaults to 1 hour ago)"`
+	EndRFC3339    string `json:"endRfc3339,omitempty" jsonschema:"description=Optionally, the end time of the query in RFC3339 format (defaults to now)"`
 }
 
 // listLokiLabelValues lists all values for a specific label in a Loki datasource
@@ -240,7 +240,7 @@ func listLokiLabelValues(ctx context.Context, args ListLokiLabelValuesParams) ([
 // ListLokiLabelValues is a tool for listing Loki label values
 var ListLokiLabelValues = mcpgrafana.MustTool(
 	"list_loki_label_values",
-	"Get the values of a label in Loki",
+	"Retrieve all possible values for a specific label in Loki within the given time range. Useful for exploring available options for filtering logs.",
 	listLokiLabelValues,
 )
 
@@ -334,11 +334,11 @@ func (c *Client) fetchLogs(ctx context.Context, query, startRFC3339, endRFC3339 
 // QueryLokiLogsParams defines the parameters for querying Loki logs
 type QueryLokiLogsParams struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the datasource to query"`
-	LogQL         string `json:"logql" jsonschema:"required,description=The LogQL query to execute"`
+	LogQL         string `json:"logql" jsonschema:"required,description=The LogQL query to execute against Loki. This can be a simple label matcher or a complex query with filters, parsers, and expressions. Supports full LogQL syntax including label matchers, filter operators, pattern expressions, and pipeline operations."`
 	StartRFC3339  string `json:"startRfc3339,omitempty" jsonschema:"description=Optionally, the start time of the query in RFC3339 format"`
 	EndRFC3339    string `json:"endRfc3339,omitempty" jsonschema:"description=Optionally, the end time of the query in RFC3339 format"`
 	Limit         int    `json:"limit,omitempty" jsonschema:"description=Optionally, the maximum number of log lines to return (default: 10, max: 100)"`
-	Direction     string `json:"direction,omitempty" jsonschema:"description=Optionally, the direction of the query: 'forward' or 'backward'"`
+	Direction     string `json:"direction,omitempty" jsonschema:"description=Optionally, the direction of the query: 'forward' (oldest first) or 'backward' (newest first, default)"`
 }
 
 // LogEntry represents a single log entry with metadata
@@ -414,7 +414,7 @@ func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) ([]LogEntry, e
 // QueryLokiLogs is a tool for querying logs from Loki
 var QueryLokiLogs = mcpgrafana.MustTool(
 	"query_loki_logs",
-	"Query logs from a Loki datasource using LogQL",
+	"Query and retrieve log entries from a Loki datasource using LogQL. Returns log lines with timestamps and labels. Use query_loki_stats first to check stream size, then list_loki_label_names/values to verify labels exist. Supports full LogQL syntax including filters and expressions.",
 	queryLokiLogs,
 )
 
@@ -445,7 +445,7 @@ func (c *Client) fetchStats(ctx context.Context, query, startRFC3339, endRFC3339
 // QueryLokiStatsParams defines the parameters for querying Loki stats
 type QueryLokiStatsParams struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the datasource to query"`
-	LogQL         string `json:"logql" jsonschema:"required,description=The LogQL query to execute"`
+	LogQL         string `json:"logql" jsonschema:"required,description=The LogQL matcher expression to execute. This parameter only accepts label matcher expressions and does not support full LogQL queries. Line filters, pattern operations, and metric aggregations are not supported by the stats API endpoint. Only simple label selectors can be used here."`
 	StartRFC3339  string `json:"startRfc3339,omitempty" jsonschema:"description=Optionally, the start time of the query in RFC3339 format"`
 	EndRFC3339    string `json:"endRfc3339,omitempty" jsonschema:"description=Optionally, the end time of the query in RFC3339 format"`
 }
