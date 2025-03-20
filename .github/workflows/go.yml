@@ -67,7 +67,7 @@ jobs:
       - name: Run cloud tests
         env:
           GRAFANA_URL: ${{ vars.CLOUD_GRAFANA_URL }}
-          ONCALL_API_URL: ${{ vars.CLOUD_ONCALL_API_URL }}
-          ONCALL_API_TOKEN: ${{ secrets.CLOUD_ONCALL_API_TOKEN }}
+          GRAFANA_ONCALL_URL: ${{ vars.CLOUD_GRAFANA_ONCALL_URL }}
+          GRAFANA_ONCALL_TOKEN: ${{ secrets.CLOUD_GRAFANA_ONCALL_TOKEN }}
         run: make test-cloud
 
