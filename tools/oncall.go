@@ -2,7 +2,9 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"strings"
 
 	aapi "github.com/grafana/amixr-api-go-client"
@@ -14,27 +16,62 @@ const (
 	SCHEDULES_ENDPOINT = "schedules/"
 )
 
+// getOnCallURLFromSettings retrieves the OnCall API URL from the Grafana settings endpoint.
+// It makes a GET request to <grafana-url>/api/plugins/grafana-irm-app/settings and extracts
+// the OnCall URL from the jsonData.onCallApiUrl field in the response.
+// Returns the OnCall URL if found, or an error if the URL cannot be retrieved.
+func getOnCallURLFromSettings(ctx context.Context, grafanaURL, grafanaAPIKey string) (string, error) {
+	settingsURL := fmt.Sprintf("%s/api/plugins/grafana-irm-app/settings", strings.TrimRight(grafanaURL, "/"))
+
+	req, err := http.NewRequestWithContext(ctx, "GET", settingsURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("creating settings request: %w", err)
+	}
+
+	if grafanaAPIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+grafanaAPIKey)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("fetching settings: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("unexpected status code from settings API: %d", resp.StatusCode)
+	}
+
+	var settings struct {
+		JsonData struct {
+			OnCallApiUrl string `json:"onCallApiUrl"`
+		} `json:"jsonData"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&settings); err != nil {
+		return "", fmt.Errorf("decoding settings response: %w", err)
+	}
+
+	if settings.JsonData.OnCallApiUrl == "" {
+		return "", fmt.Errorf("OnCall API URL is not set in settings")
+	}
+
+	return settings.JsonData.OnCallApiUrl, nil
+}
+
 func oncallClientFromContext(ctx context.Context) (*aapi.Client, error) {
 	// Get the standard Grafana URL and API key
-	grafanaURL := mcpgrafana.GrafanaURLFromContext(ctx)
+	grafanaURL, grafanaAPIKey := mcpgrafana.GrafanaURLFromContext(ctx), mcpgrafana.GrafanaAPIKeyFromContext(ctx)
 
-	// Try to get OnCall specific URL and API key
-	grafanaOnCallURL := mcpgrafana.GrafanaOnCallURLFromContext(ctx)
-	grafanaOnCallToken := mcpgrafana.GrafanaOnCallTokenFromContext(ctx)
-
-	if grafanaOnCallURL == "" {
-		return nil, fmt.Errorf("OnCall API URL is not set")
+	// Try to get OnCall URL from settings endpoint
+	grafanaOnCallURL, err := getOnCallURLFromSettings(ctx, grafanaURL, grafanaAPIKey)
+	if err != nil {
+		return nil, fmt.Errorf("getting OnCall URL from settings: %w", err)
 	}
 
-	if grafanaOnCallToken == "" {
-		return nil, fmt.Errorf("OnCall Token is not set")
-	}
-
-	// Make sure the URL doesn't end with a slash as the client will append paths
 	grafanaOnCallURL = strings.TrimRight(grafanaOnCallURL, "/")
 
-	// Create a new OnCall client
-	client, err := aapi.NewWithGrafanaURL(grafanaOnCallURL, grafanaOnCallToken, grafanaURL)
+	client, err := aapi.NewWithGrafanaURL(grafanaOnCallURL, grafanaAPIKey, grafanaURL)
 	if err != nil {
 		return nil, fmt.Errorf("creating OnCall client: %w", err)
 	}

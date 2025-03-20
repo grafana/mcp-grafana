@@ -19,20 +19,14 @@ func createOnCallCloudTestContext(t *testing.T) context.Context {
 		t.Skip("GRAFANA_URL environment variable not set, skipping cloud OnCall integration tests")
 	}
 
-	oncallURL := os.Getenv("GRAFANA_ONCALL_URL")
-	if oncallURL == "" {
-		t.Skip("GRAFANA_ONCALL_URL environment variable not set, skipping cloud OnCall integration tests")
-	}
-
-	oncallToken := os.Getenv("GRAFANA_ONCALL_TOKEN")
-	if oncallToken == "" {
-		t.Skip("GRAFANA_ONCALL_TOKEN environment variable not set, skipping cloud OnCall integration tests")
+	grafanaApiKey := os.Getenv("GRAFANA_API_KEY")
+	if grafanaApiKey == "" {
+		t.Skip("GRAFANA_API_KEY environment variable not set, skipping cloud OnCall integration tests")
 	}
 
 	ctx := context.Background()
 	ctx = mcpgrafana.WithGrafanaURL(ctx, grafanaURL)
-	ctx = mcpgrafana.WithGrafanaOnCallURL(ctx, oncallURL)
-	ctx = mcpgrafana.WithGrafanaOnCallToken(ctx, oncallToken)
+	ctx = mcpgrafana.WithGrafanaAPIKey(ctx, grafanaApiKey)
 
 	return ctx
 }
