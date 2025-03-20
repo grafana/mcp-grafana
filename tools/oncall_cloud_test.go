@@ -13,7 +13,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// createOnCallCloudTestContext creates a context with the necessary values from environment variables
 func createOnCallCloudTestContext(t *testing.T) context.Context {
 	grafanaURL := os.Getenv("GRAFANA_URL")
 	if grafanaURL == "" {
@@ -38,7 +37,6 @@ func createOnCallCloudTestContext(t *testing.T) context.Context {
 	return ctx
 }
 
-// TestCloudOnCallSchedules tests the list schedules tool with a real API in Grafana Cloud
 func TestCloudOnCallSchedules(t *testing.T) {
 	ctx := createOnCallCloudTestContext(t)
 
