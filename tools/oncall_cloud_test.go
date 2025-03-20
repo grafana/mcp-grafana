@@ -54,6 +54,26 @@ func TestCloudOnCallSchedules(t *testing.T) {
 		assert.LessOrEqual(t, len(result), limit,
 			"Result count should respect the limit parameter")
 	})
+
+	// Get a team ID from an existing schedule to test filtering
+	schedules, err := listOnCallSchedules(ctx, ListOnCallSchedulesParams{})
+	require.NoError(t, err, "Should not error when listing schedules")
+
+	if len(schedules) > 0 && schedules[0].TeamId != "" {
+		teamID := schedules[0].TeamId
+
+		// Test filtering by team ID
+		t.Run("list schedules by team ID", func(t *testing.T) {
+			result, err := listOnCallSchedules(ctx, ListOnCallSchedulesParams{
+				TeamID: teamID,
+			})
+			require.NoError(t, err, "Should not error when listing schedules by team")
+			assert.NotEmpty(t, result, "Should return at least one schedule")
+			for _, schedule := range result {
+				assert.Equal(t, teamID, schedule.TeamId, "All schedules should belong to the specified team")
+			}
+		})
+	}
 }
 
 func TestCloudOnCallShift(t *testing.T) {
@@ -86,5 +106,37 @@ func TestCloudOnCallShift(t *testing.T) {
 			ShiftID: "invalid-shift-id",
 		})
 		assert.Error(t, err, "Should error when getting shift with invalid ID")
+	})
+}
+
+func TestCloudGetCurrentOnCallUsers(t *testing.T) {
+	ctx := createOnCallCloudTestContext(t)
+
+	// First get a schedule to use for testing
+	schedules, err := listOnCallSchedules(ctx, ListOnCallSchedulesParams{
+		Limit: 1,
+	})
+	require.NoError(t, err, "Should not error when listing schedules")
+	require.NotEmpty(t, schedules, "Should have at least one schedule to test with")
+
+	scheduleID := schedules[0].ID
+
+	// Test getting current on-call users
+	t.Run("get current on-call users", func(t *testing.T) {
+		result, err := getCurrentOnCallUsers(ctx, GetCurrentOnCallUsersParams{
+			ScheduleID: scheduleID,
+		})
+		require.NoError(t, err, "Should not error when getting current on-call users")
+		assert.NotNil(t, result, "Result should not be nil")
+		assert.Equal(t, scheduleID, result.ID, "Should return the correct schedule")
+		// Note: We can't assert on OnCallNow contents as it depends on the actual schedule state
+		assert.NotNil(t, result.OnCallNow, "OnCallNow field should be present")
+	})
+
+	t.Run("get current on-call users with invalid schedule ID", func(t *testing.T) {
+		_, err := getCurrentOnCallUsers(ctx, GetCurrentOnCallUsersParams{
+			ScheduleID: "invalid-schedule-id",
+		})
+		assert.Error(t, err, "Should error when getting current on-call users with invalid schedule ID")
 	})
 }
