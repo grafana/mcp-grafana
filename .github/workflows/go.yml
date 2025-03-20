@@ -50,3 +50,24 @@ jobs:
 
       - name: Run tests
         run: make test-all
+
+  test-cloud:
+    name: Test Cloud
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - name: Run cloud tests
+        env:
+          CLOUD_GRAFANA_URL: ${{ vars.CLOUD_GRAFANA_URL }}
+          CLOUD_ONCALL_API_URL: ${{ vars.CLOUD_ONCALL_API_URL }}
+          CLOUD_ONCALL_API_TOKEN: ${{ vars.CLOUD_ONCALL_API_TOKEN }}
+        run: make test-cloud
+

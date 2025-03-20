@@ -1,0 +1,32 @@
+name: OnCall Cloud Tests
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  # Allow manual triggering for testing
+  workflow_dispatch:
+
+jobs:
+  oncall-schedule-tests:
+    name: OnCall Schedules API Tests
+    runs-on: ubuntu-latest
+    # Optional: Only run on specific circumstances
+    # if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version-file: 'go.mod'  # Use the Go version from go.mod
+          check-latest: true
+
+      - name: Run OnCall Schedules Tests
+        run: go test -tags integration,cloud ./tools -run TestCloudOnCallSchedules -v
+        env:
+          GRAFANA_URL: ${{ vars.CLOUD_GRAFANA_URL }}
+          GRAFANA_ONCALL_URL: ${{ vars.CLOUD_ONCALL_API_URL }}
+          GRAFANA_ONCALL_TOKEN: ${{ secrets.CLOUD_ONCALL_API_TOKEN }} 

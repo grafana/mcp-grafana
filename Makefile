@@ -24,6 +24,10 @@ test: ## Run the Go unit tests.
 test-all: ## Run the Go unit and integration tests.
 	go test -v -tags integration ./...
 
+.PHONY: test-cloud
+test-cloud: ## Run only the cloud tests.
+	go test -v -tags cloud ./tools -run TestCloudOnCall
+
 .PHONY: run
 run: ## Run the MCP server in stdio mode.
 	go run ./...
