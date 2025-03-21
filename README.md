@@ -10,7 +10,9 @@ This provides access to your Grafana instance and the surrounding ecosystem.
 - [x] List and fetch datasource information
 - [ ] Query datasources
   - [x] Prometheus
-  - [ ] Loki (log queries, metric queries)
+  - [x] Loki
+    - [x] Log queries
+    - [x] Metric queries
   - [ ] Tempo
   - [ ] Pyroscope
 - [x] Query Prometheus metadata
@@ -18,6 +20,10 @@ This provides access to your Grafana instance and the surrounding ecosystem.
   - [x] Metric names
   - [x] Label names
   - [x] Label values
+- [x] Query Loki metadata
+  - [x] Label names
+  - [x] Label values
+  - [x] Stats
 - [x] Search, create, update and close incidents
 - [ ] Start Sift investigations and view the results
 
@@ -41,6 +47,10 @@ This is useful if you don't use certain functionality or if you don't want to ta
 | `create_incident` | Incident | Create an incident in Grafana Incident |
 | `add_activity_to_incident` | Incident | Add an activity item to an incident in Grafana Incident |
 | `resolve_incident` | Incident | Resolve an incident in Grafana Incident |
+| `query_loki_logs` | Loki | Query and retrieve logs using LogQL (either log or metric queries) |
+| `list_loki_label_names` | Loki | List all available label names in logs |
+| `list_loki_label_values` | Loki | List values for a specific log label |
+| `query_loki_stats` | Loki | Get statistics about log streams |
 
 ## Usage
 
