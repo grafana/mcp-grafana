@@ -20,11 +20,10 @@ This provides access to your Grafana instance and the surrounding ecosystem.
   - [x] Metric names
   - [x] Label names
   - [x] Label values
-- [x] Query Loki
+- [x] Query Loki metadata
   - [x] Label names
   - [x] Label values
   - [x] Stats
-  - [x] Logs
 - [x] Search, create, update and close incidents
 - [ ] Start Sift investigations and view the results
 
