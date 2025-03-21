@@ -191,9 +191,34 @@ var ListOnCallTeams = mcpgrafana.MustTool(
 	listOnCallTeams,
 )
 
+type ListOnCallUsersParams struct {
+}
+
+func listOnCallUsers(ctx context.Context, args ListOnCallUsersParams) ([]*aapi.User, error) {
+	client, err := oncallClientFromContext(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("getting OnCall client: %w", err)
+	}
+
+	userService := aapi.NewUserService(client)
+	response, _, err := userService.ListUsers(&aapi.ListUserOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("listing OnCall users: %w", err)
+	}
+
+	return response.Users, nil
+}
+
+var ListOnCallUsers = mcpgrafana.MustTool(
+	"list_oncall_users",
+	"List users from Grafana OnCall",
+	listOnCallUsers,
+)
+
 func AddOnCallTools(mcp *server.MCPServer) {
 	ListOnCallSchedules.Register(mcp)
 	GetOnCallShift.Register(mcp)
 	GetCurrentOnCallUsers.Register(mcp)
 	ListOnCallTeams.Register(mcp)
+	ListOnCallUsers.Register(mcp)
 }
