@@ -9,8 +9,8 @@ services:
     ports:
       - 3000:3000/tcp
     volumes:
-      - ./tests/provisioning:/etc/grafana/provisioning
-      - ./tests/dashboards:/var/lib/grafana/dashboards
+      - ./testdata/provisioning:/etc/grafana/provisioning
+      - ./testdata/dashboards:/var/lib/grafana/dashboards
 
   prometheus:
     image: prom/prometheus
@@ -25,12 +25,12 @@ services:
       - "3100:3100"
     command: -config.file=/etc/loki/loki-config.yml
     volumes:
-      - ./tests/loki-config.yml:/etc/loki/loki-config.yml
+      - ./testdata/loki-config.yml:/etc/loki/loki-config.yml
 
   promtail:
     image: grafana/promtail:2.6.0
     volumes:
-      - ./tests/promtail-config.yml:/etc/promtail/config.yml
+      - ./testdata/promtail-config.yml:/etc/promtail/config.yml
       - /var/log:/var/log
       - /var/run/docker.sock:/var/run/docker.sock
     command: -config.file=/etc/promtail/config.yml
