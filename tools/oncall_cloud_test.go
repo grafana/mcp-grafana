@@ -1,6 +1,15 @@
 //go:build cloud
 // +build cloud
 
+// This file contains cloud integration tests that run against a dedicated test instance
+// at mcptests.grafana-dev.net. This instance is configured with a minimal setup on the OnCall side:
+//   - One team
+//   - One schedule
+//   - One shift
+//   - One user
+// These tests expect this configuration to exist and will skip if the required
+// environment variables (GRAFANA_URL, GRAFANA_API_KEY) are not set.
+
 package tools
 
 import (
