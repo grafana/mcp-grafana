@@ -4,8 +4,8 @@
 // This file contains cloud integration tests that run against a dedicated test instance
 // at mcptests.grafana-dev.net. This instance is configured with a minimal setup on the OnCall side:
 //   - One team
-//   - One schedule
-//   - One shift
+//   - Two schedules (only one has a team assigned)
+//   - One shift in the schedule with a team assigned
 //   - One user
 // These tests expect this configuration to exist and will skip if the required
 // environment variables (GRAFANA_URL, GRAFANA_API_KEY) are not set.
@@ -151,6 +151,26 @@ func TestCloudOnCallTeams(t *testing.T) {
 			team := result[0]
 			assert.NotEmpty(t, team.ID, "Team should have an ID")
 			assert.NotEmpty(t, team.Name, "Team should have a name")
+		}
+	})
+}
+
+func TestCloudOnCallUsers(t *testing.T) {
+	ctx := createOnCallCloudTestContext(t)
+
+	t.Run("list users", func(t *testing.T) {
+		result, err := listOnCallUsers(ctx, ListOnCallUsersParams{})
+		require.NoError(t, err, "Should not error when listing users")
+
+		// We can't assert exact counts since we're using a real instance,
+		// but we can check that the call succeeded and returned data
+		assert.NotNil(t, result, "Result should not be nil")
+
+		// If we have users, verify they have the expected fields
+		if len(result) > 0 {
+			user := result[0]
+			assert.NotEmpty(t, user.ID, "User should have an ID")
+			assert.NotEmpty(t, user.Username, "User should have a username")
 		}
 	})
 }
