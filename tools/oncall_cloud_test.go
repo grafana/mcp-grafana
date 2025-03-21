@@ -44,17 +44,6 @@ func TestCloudOnCallSchedules(t *testing.T) {
 		assert.NotNil(t, result, "Result should not be nil")
 	})
 
-	// Test with a limit parameter
-	t.Run("list schedules with limit", func(t *testing.T) {
-		limit := 1
-		result, err := listOnCallSchedules(ctx, ListOnCallSchedulesParams{
-			Limit: limit,
-		})
-		require.NoError(t, err, "Should not error when listing schedules with limit")
-		assert.LessOrEqual(t, len(result), limit,
-			"Result count should respect the limit parameter")
-	})
-
 	// Get a team ID from an existing schedule to test filtering
 	schedules, err := listOnCallSchedules(ctx, ListOnCallSchedulesParams{})
 	require.NoError(t, err, "Should not error when listing schedules")
@@ -80,9 +69,7 @@ func TestCloudOnCallShift(t *testing.T) {
 	ctx := createOnCallCloudTestContext(t)
 
 	// First get a schedule to find a valid shift
-	schedules, err := listOnCallSchedules(ctx, ListOnCallSchedulesParams{
-		Limit: 1,
-	})
+	schedules, err := listOnCallSchedules(ctx, ListOnCallSchedulesParams{})
 	require.NoError(t, err, "Should not error when listing schedules")
 	require.NotEmpty(t, schedules, "Should have at least one schedule to test with")
 	require.NotNil(t, schedules[0].Shifts, "Schedule should have shifts field")
@@ -113,9 +100,7 @@ func TestCloudGetCurrentOnCallUsers(t *testing.T) {
 	ctx := createOnCallCloudTestContext(t)
 
 	// First get a schedule to use for testing
-	schedules, err := listOnCallSchedules(ctx, ListOnCallSchedulesParams{
-		Limit: 1,
-	})
+	schedules, err := listOnCallSchedules(ctx, ListOnCallSchedulesParams{})
 	require.NoError(t, err, "Should not error when listing schedules")
 	require.NotEmpty(t, schedules, "Should have at least one schedule to test with")
 
