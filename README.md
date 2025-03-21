@@ -12,7 +12,7 @@ This provides access to your Grafana instance and the surrounding ecosystem.
   - [x] Prometheus
   - [x] Loki
     - [x] Log queries
-    - [ ] Metric queries
+    - [x] Metric queries
   - [ ] Tempo
   - [ ] Pyroscope
 - [x] Query Prometheus metadata

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -246,8 +247,8 @@ var ListLokiLabelValues = mcpgrafana.MustTool(
 
 // LogStream represents a stream of log entries from Loki
 type LogStream struct {
-	Stream map[string]string `json:"stream"`
-	Values [][]string        `json:"values"` // [timestamp, log line]
+	Stream map[string]string   `json:"stream"`
+	Values [][]json.RawMessage `json:"values"` // [timestamp, value] where value can be string or number
 }
 
 // QueryRangeResponse represents the response from Loki's query_range API
@@ -341,10 +342,11 @@ type QueryLokiLogsParams struct {
 	Direction     string `json:"direction,omitempty" jsonschema:"description=Optionally, the direction of the query: 'forward' (oldest first) or 'backward' (newest first, default)"`
 }
 
-// LogEntry represents a single log entry with metadata
+// LogEntry represents a single log entry or metric sample with metadata
 type LogEntry struct {
 	Timestamp string            `json:"timestamp"`
-	Line      string            `json:"line"`
+	Line      string            `json:"line,omitempty"`  // For log queries
+	Value     *float64          `json:"value,omitempty"` // For metric queries
 	Labels    map[string]string `json:"labels"`
 }
 
@@ -394,10 +396,42 @@ func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) ([]LogEntry, e
 		for _, value := range stream.Values {
 			if len(value) >= 2 {
 				entry := LogEntry{
-					Timestamp: value[0],
-					Line:      value[1],
+					Timestamp: string(value[0]),
 					Labels:    stream.Stream,
 				}
+
+				// Handle metric queries (numeric values) vs log queries
+				if stream.Stream["__type__"] == "metrics" {
+					// For metric queries, parse the value as a number
+					var numStr string
+					if err := json.Unmarshal(value[1], &numStr); err == nil {
+						if v, err := strconv.ParseFloat(numStr, 64); err == nil {
+							entry.Value = &v
+						} else {
+							// Skip invalid numeric values
+							continue
+						}
+					} else {
+						// Try direct number parsing if string parsing fails
+						var v float64
+						if err := json.Unmarshal(value[1], &v); err == nil {
+							entry.Value = &v
+						} else {
+							// Skip invalid values
+							continue
+						}
+					}
+				} else {
+					// For log queries, parse the value as a string
+					var logLine string
+					if err := json.Unmarshal(value[1], &logLine); err == nil {
+						entry.Line = logLine
+					} else {
+						// Skip invalid log lines
+						continue
+					}
+				}
+
 				entries = append(entries, entry)
 			}
 		}
@@ -414,7 +448,7 @@ func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) ([]LogEntry, e
 // QueryLokiLogs is a tool for querying logs from Loki
 var QueryLokiLogs = mcpgrafana.MustTool(
 	"query_loki_logs",
-	"Query and retrieve log entries from a Loki datasource using LogQL. Returns log lines with timestamps and labels. Use query_loki_stats first to check stream size, then list_loki_label_names/values to verify labels exist. Supports full LogQL syntax including filters and expressions.",
+	"Query and retrieve log entries or metric values from a Loki datasource using LogQL. Returns either log lines or numeric values with timestamps and labels. Use query_loki_stats first to check stream size, then list_loki_label_names/values to verify labels exist. Supports full LogQL syntax including both log queries and metric queries (e.g., rate, count_over_time).",
 	queryLokiLogs,
 )
 
