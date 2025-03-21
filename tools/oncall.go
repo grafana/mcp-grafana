@@ -81,7 +81,6 @@ func oncallClientFromContext(ctx context.Context) (*aapi.Client, error) {
 
 type ListOnCallSchedulesParams struct {
 	TeamID string `json:"teamId,omitempty" jsonschema:"description=The ID of the team to list schedules for"`
-	Limit  int    `json:"limit,omitempty" jsonschema:"description=The maximum number of schedules to return"`
 }
 
 func listOnCallSchedules(ctx context.Context, args ListOnCallSchedulesParams) ([]*aapi.Schedule, error) {
@@ -91,10 +90,6 @@ func listOnCallSchedules(ctx context.Context, args ListOnCallSchedulesParams) ([
 	}
 
 	listOptions := &aapi.ListScheduleOptions{}
-
-	if args.Limit > 0 {
-		listOptions.ListOptions.Page = args.Limit
-	}
 
 	scheduleService := aapi.NewScheduleService(client)
 	response, _, err := scheduleService.ListSchedules(listOptions)
