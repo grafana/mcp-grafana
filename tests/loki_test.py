@@ -17,7 +17,7 @@ models = ["gpt-3.5-turbo", "gpt-4-turbo", "groq/llama3-70b-8192"]
 
 @pytest.fixture
 def mcp_url():
-    return os.environ.get("MCP_GRAFANA_URL", "http://localhost:8000")
+    return os.environ.get("MCP_GRAFANA_URL", "http://localhost:8000/sse")
 
 
 @pytest.fixture
