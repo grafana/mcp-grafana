@@ -448,7 +448,7 @@ func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) ([]LogEntry, e
 // QueryLokiLogs is a tool for querying logs from Loki
 var QueryLokiLogs = mcpgrafana.MustTool(
 	"query_loki_logs",
-	"Query and retrieve log entries or metric values from a Loki datasource using LogQL. Returns either log lines or numeric values with timestamps and labels. Use query_loki_stats first to check stream size, then list_loki_label_names/values to verify labels exist. Supports full LogQL syntax including both log queries and metric queries (e.g., rate, count_over_time).",
+	"Query and retrieve log entries or metric values from a Loki datasource using LogQL. Returns either log lines or numeric values with timestamps and labels. Use `query_loki_stats` first to check stream size, then `list_loki_label_names` and `list_loki_label_values` to verify labels exist. Supports full LogQL syntax including both log queries and metric queries (e.g., rate, count_over_time).",
 	queryLokiLogs,
 )
 
