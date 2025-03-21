@@ -140,3 +140,23 @@ func TestCloudGetCurrentOnCallUsers(t *testing.T) {
 		assert.Error(t, err, "Should error when getting current on-call users with invalid schedule ID")
 	})
 }
+
+func TestCloudOnCallTeams(t *testing.T) {
+	ctx := createOnCallCloudTestContext(t)
+
+	t.Run("list teams", func(t *testing.T) {
+		result, err := listOnCallTeams(ctx, ListOnCallTeamsParams{})
+		require.NoError(t, err, "Should not error when listing teams")
+
+		// We can't assert exact counts since we're using a real instance,
+		// but we can check that the call succeeded and returned data
+		assert.NotNil(t, result, "Result should not be nil")
+
+		// If we have teams, verify they have the expected fields
+		if len(result) > 0 {
+			team := result[0]
+			assert.NotEmpty(t, team.ID, "Team should have an ID")
+			assert.NotEmpty(t, team.Name, "Team should have a name")
+		}
+	})
+}
