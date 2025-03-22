@@ -19,3 +19,8 @@ dev = [
     "pytest>=8.3.5",
     "pytest-asyncio>=0.25.3",
 ]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
