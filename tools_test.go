@@ -527,9 +527,9 @@ func TestConvertTool(t *testing.T) {
 			},
 		}
 
-		result, err := handler(context.Background(), mismatchRequest)
-		assert.Nil(t, err) // Error is returned in the result, not as an error
-		assert.Contains(t, result.Content[0].(mcp.TextContent).Text, "unmarshal args")
+		_, err = handler(context.Background(), mismatchRequest)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "unmarshal args")
 	})
 }
 

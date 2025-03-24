@@ -7,7 +7,7 @@ require (
 	github.com/grafana/grafana-openapi-client-go v0.0.0-20250108132429-8d7e1f158f65
 	github.com/grafana/incident-go v0.0.0-20250211094540-dc6a98fdae43
 	github.com/invopop/jsonschema v0.13.0
-	github.com/mark3labs/mcp-go v0.13.0
+	github.com/mark3labs/mcp-go v0.15.0
 	github.com/prometheus/client_golang v1.21.0
 	github.com/prometheus/common v0.62.0
 	github.com/stretchr/testify v1.10.0
@@ -47,6 +47,7 @@ require (
 	github.com/prometheus/client_model v0.6.1 // indirect
 	github.com/prometheus/procfs v0.15.1 // indirect
 	github.com/wk8/go-ordered-map/v2 v2.1.8 // indirect
+	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	go.mongodb.org/mongo-driver v1.14.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.1.0 // indirect
 	go.opentelemetry.io/otel v1.34.0 // indirect
