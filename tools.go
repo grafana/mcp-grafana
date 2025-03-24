@@ -3,6 +3,7 @@ package mcpgrafana
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 
@@ -57,25 +58,25 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 	handlerValue := reflect.ValueOf(toolHandler)
 	handlerType := handlerValue.Type()
 	if handlerType.Kind() != reflect.Func {
-		return zero, nil, fmt.Errorf("tool handler must be a function")
+		return zero, nil, errors.New("tool handler must be a function")
 	}
 	if handlerType.NumIn() != 2 {
-		return zero, nil, fmt.Errorf("tool handler must have 2 arguments")
+		return zero, nil, errors.New("tool handler must have 2 arguments")
 	}
 	if handlerType.NumOut() != 2 {
-		return zero, nil, fmt.Errorf("tool handler must return 2 values")
+		return zero, nil, errors.New("tool handler must return 2 values")
 	}
 	if handlerType.In(0) != reflect.TypeOf((*context.Context)(nil)).Elem() {
-		return zero, nil, fmt.Errorf("tool handler first argument must be context.Context")
+		return zero, nil, errors.New("tool handler first argument must be context.Context")
 	}
 	// We no longer check the type of the first return value
 	if handlerType.Out(1).Kind() != reflect.Interface {
-		return zero, nil, fmt.Errorf("tool handler second return value must be error")
+		return zero, nil, errors.New("tool handler second return value must be error")
 	}
 
 	argType := handlerType.In(1)
 	if argType.Kind() != reflect.Struct {
-		return zero, nil, fmt.Errorf("tool handler second argument must be a struct")
+		return zero, nil, errors.New("tool handler second argument must be a struct")
 	}
 
 	handler := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -87,23 +88,23 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 
 		unmarshaledArgs := reflect.New(argType).Interface()
 		if err := json.Unmarshal([]byte(s), unmarshaledArgs); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("unmarshal args: %s", err)), nil
+			return nil, fmt.Errorf("unmarshal args: %s", err)
 		}
 
 		// Need to dereference the unmarshaled arguments
 		of := reflect.ValueOf(unmarshaledArgs)
 		if of.Kind() != reflect.Ptr || !of.Elem().CanInterface() {
-			return mcp.NewToolResultError("arguments must be a struct"), nil
+			return nil, errors.New("arguments must be a struct")
 		}
 
 		args := []reflect.Value{reflect.ValueOf(ctx), of.Elem()}
 
 		output := handlerValue.Call(args)
 		if len(output) != 2 {
-			return mcp.NewToolResultError("tool handler must return 2 values"), nil
+			return nil, errors.New("tool handler must return 2 values")
 		}
 		if !output[0].CanInterface() {
-			return mcp.NewToolResultError("tool handler first return value must be interfaceable"), nil
+			return nil, errors.New("tool handler first return value must be interfaceable")
 		}
 
 		// Handle the error return value first
@@ -112,7 +113,7 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 		if output[1].Kind() == reflect.Interface && !output[1].IsNil() {
 			handlerErr, ok = output[1].Interface().(error)
 			if !ok {
-				return mcp.NewToolResultError("tool handler second return value must be error"), nil
+				return nil, errors.New("tool handler second return value must be error")
 			}
 		}
 
@@ -122,13 +123,13 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 		}
 
 		// Check if the first return value is nil (only for pointer, interface, map, etc.)
-		isNilable := output[0].Kind() == reflect.Ptr || 
-			output[0].Kind() == reflect.Interface || 
-			output[0].Kind() == reflect.Map || 
-			output[0].Kind() == reflect.Slice || 
-			output[0].Kind() == reflect.Chan || 
+		isNilable := output[0].Kind() == reflect.Ptr ||
+			output[0].Kind() == reflect.Interface ||
+			output[0].Kind() == reflect.Map ||
+			output[0].Kind() == reflect.Slice ||
+			output[0].Kind() == reflect.Chan ||
 			output[0].Kind() == reflect.Func
-		
+
 		if isNilable && output[0].IsNil() {
 			return nil, nil
 		}
@@ -165,7 +166,7 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 		// Case 4: Any other type - marshal to JSON
 		jsonBytes, err := json.Marshal(returnVal)
 		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to marshal return value: %s", err)), nil
+			return nil, fmt.Errorf("failed to marshal return value: %s", err)
 		}
 
 		return mcp.NewToolResultText(string(jsonBytes)), nil
