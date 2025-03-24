@@ -158,7 +158,7 @@ func TestCloudOnCallTeams(t *testing.T) {
 func TestCloudOnCallUsers(t *testing.T) {
 	ctx := createOnCallCloudTestContext(t)
 
-	t.Run("list users", func(t *testing.T) {
+	t.Run("list all users", func(t *testing.T) {
 		result, err := listOnCallUsers(ctx, ListOnCallUsersParams{})
 		require.NoError(t, err, "Should not error when listing users")
 
@@ -172,5 +172,30 @@ func TestCloudOnCallUsers(t *testing.T) {
 			assert.NotEmpty(t, user.ID, "User should have an ID")
 			assert.NotEmpty(t, user.Username, "User should have a username")
 		}
+	})
+
+	// Get a user ID from the list to test filtering
+	users, err := listOnCallUsers(ctx, ListOnCallUsersParams{})
+	require.NoError(t, err, "Should not error when listing users")
+	require.NotEmpty(t, users, "Should have at least one user to test with")
+
+	userID := users[0].ID
+
+	t.Run("get user by ID", func(t *testing.T) {
+		result, err := listOnCallUsers(ctx, ListOnCallUsersParams{
+			UserID: userID,
+		})
+		require.NoError(t, err, "Should not error when getting user by ID")
+		assert.NotNil(t, result, "Result should not be nil")
+		assert.Len(t, result, 1, "Should return exactly one user")
+		assert.Equal(t, userID, result[0].ID, "Should return the correct user")
+		assert.NotEmpty(t, result[0].Username, "User should have a username")
+	})
+
+	t.Run("get user with invalid ID", func(t *testing.T) {
+		_, err := listOnCallUsers(ctx, ListOnCallUsersParams{
+			UserID: "invalid-user-id",
+		})
+		assert.Error(t, err, "Should error when getting user with invalid ID")
 	})
 }

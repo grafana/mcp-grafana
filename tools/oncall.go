@@ -192,6 +192,7 @@ var ListOnCallTeams = mcpgrafana.MustTool(
 )
 
 type ListOnCallUsersParams struct {
+	UserID string `json:"userId,omitempty" jsonschema:"description=The ID of the user to get details for. If provided, returns only that user's details"`
 }
 
 func listOnCallUsers(ctx context.Context, args ListOnCallUsersParams) ([]*aapi.User, error) {
@@ -201,6 +202,16 @@ func listOnCallUsers(ctx context.Context, args ListOnCallUsersParams) ([]*aapi.U
 	}
 
 	userService := aapi.NewUserService(client)
+
+	if args.UserID != "" {
+		user, _, err := userService.GetUser(args.UserID, &aapi.GetUserOptions{})
+		if err != nil {
+			return nil, fmt.Errorf("getting OnCall user %s: %w", args.UserID, err)
+		}
+		return []*aapi.User{user}, nil
+	}
+
+	// Otherwise, list all users
 	response, _, err := userService.ListUsers(&aapi.ListUserOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("listing OnCall users: %w", err)
@@ -211,7 +222,7 @@ func listOnCallUsers(ctx context.Context, args ListOnCallUsersParams) ([]*aapi.U
 
 var ListOnCallUsers = mcpgrafana.MustTool(
 	"list_oncall_users",
-	"List users from Grafana OnCall",
+	"List users from Grafana OnCall, optionally filtered by user ID",
 	listOnCallUsers,
 )
 
