@@ -12,10 +12,6 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 )
 
-const (
-	SCHEDULES_ENDPOINT = "schedules/"
-)
-
 // getOnCallURLFromSettings retrieves the OnCall API URL from the Grafana settings endpoint.
 // It makes a GET request to <grafana-url>/api/plugins/grafana-irm-app/settings and extracts
 // the OnCall URL from the jsonData.onCallApiUrl field in the response.
