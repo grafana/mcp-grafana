@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"regexp"
 
 	"github.com/grafana/grafana-openapi-client-go/models"
 	mcpgrafana "github.com/grafana/mcp-grafana"
@@ -14,8 +15,9 @@ const (
 )
 
 type ListAlertRulesParams struct {
-	Limit int `json:"limit,omitempty" jsonschema:"description=The maximum number of results to return. Default is 100."`
-	Page  int `json:"page,omitempty" jsonschema:"description=The page number to return."`
+	Limit          int        `json:"limit,omitempty" jsonschema:"description=The maximum number of results to return. Default is 100."`
+	Page           int        `json:"page,omitempty" jsonschema:"description=The page number to return."`
+	LabelSelectors []Selector `json:"label_selectors,omitempty" jsonschema:"description=Optionally, a list of matchers to filter alert rules by labels"`
 }
 
 func (p ListAlertRulesParams) validate() error {
@@ -30,8 +32,9 @@ func (p ListAlertRulesParams) validate() error {
 }
 
 type alertRuleSummary struct {
-	UID   string `json:"uid"`
-	Title string `json:"title"`
+	UID    string            `json:"uid"`
+	Title  string            `json:"title"`
+	Labels map[string]string `json:"labels,omitempty"`
 }
 
 func listAlertRules(ctx context.Context, args ListAlertRulesParams) ([]alertRuleSummary, error) {
@@ -45,12 +48,89 @@ func listAlertRules(ctx context.Context, args ListAlertRulesParams) ([]alertRule
 		return nil, fmt.Errorf("list alert rules: %w", err)
 	}
 
-	alertRules, err := applyPagination(response.Payload, args.Limit, args.Page)
+	// Apply selectors if any
+	alertRules := response.Payload
+	if len(args.LabelSelectors) > 0 {
+		filteredResult := models.ProvisionedAlertRules{}
+		for _, rule := range alertRules {
+			if rule == nil {
+				continue
+			}
+			match, err := matchesSelectors(*rule, args.LabelSelectors)
+			if err != nil {
+				return nil, fmt.Errorf("list alert rules: %w", err)
+			}
+			if match {
+				filteredResult = append(filteredResult, rule)
+			}
+		}
+		alertRules = filteredResult
+	}
+
+	alertRules, err = applyPagination(alertRules, args.Limit, args.Page)
 	if err != nil {
 		return nil, fmt.Errorf("list alert rules: %w", err)
 	}
 
 	return summarizeAlertRules(alertRules), nil
+}
+
+// matchesSelectors checks if an alert rule matches all provided selectors
+func matchesSelectors(rule models.ProvisionedAlertRule, selectors []Selector) (bool, error) {
+	for _, selector := range selectors {
+		match, err := matchesSelector(rule, selector)
+		if err != nil {
+			return false, err
+		}
+		if !match {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+// matchesSelector checks if an alert rule matches a single selector
+func matchesSelector(rule models.ProvisionedAlertRule, selector Selector) (bool, error) {
+	for _, filter := range selector.Filters {
+		value, exists := rule.Labels[filter.Name]
+
+		if !exists {
+			// Only match if we're looking for inequality
+			if filter.Type == "!=" || filter.Type == "!~" {
+				continue // This filter matches, check the next one
+			}
+			return false, nil
+		}
+
+		match, err := matchLabelFilter(value, filter)
+		if err != nil {
+			return false, err
+		}
+		if !match {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+// matchLabelFilter checks if a label value matches the filter
+func matchLabelFilter(value string, filter LabelMatcher) (bool, error) {
+	switch filter.Type {
+	case "", "=":
+		return value == filter.Value, nil
+	case "!=":
+		return value != filter.Value, nil
+	case "=~":
+		return regexp.MatchString(filter.Value, value)
+	case "!~":
+		matched, err := regexp.MatchString(filter.Value, value)
+		if err != nil {
+			return false, err
+		}
+		return !matched, nil
+	default:
+		return false, nil
+	}
 }
 
 func summarizeAlertRules(alertRules models.ProvisionedAlertRules) []alertRuleSummary {
@@ -62,8 +142,9 @@ func summarizeAlertRules(alertRules models.ProvisionedAlertRules) []alertRuleSum
 		}
 
 		result = append(result, alertRuleSummary{
-			UID:   r.UID,
-			Title: title,
+			UID:    r.UID,
+			Title:  title,
+			Labels: r.Labels,
 		})
 	}
 	return result

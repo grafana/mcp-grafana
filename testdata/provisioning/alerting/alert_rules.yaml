@@ -60,6 +60,7 @@ groups:
         labels:
           severity: info
           type: test
+          rule: first
         isPaused: false
 
       - uid: test_alert_rule_2
@@ -116,6 +117,7 @@ groups:
         labels:
           severity: info
           type: test
+          rule: second
         isPaused: false
 
       - uid: test_alert_rule_paused
@@ -172,4 +174,5 @@ groups:
         labels:
           severity: info
           type: test
+          rule: third
         isPaused: true
