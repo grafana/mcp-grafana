@@ -129,17 +129,10 @@ docker-compose up -d
 The integration tests can be run with:
 
 ```bash
-uv run pytest --integration tests
+make test-all
 ```
 
 If you're adding more tools, please add integration tests for them. The existing tests should be a good starting point.
-
-Certain tools use functionality that is only available in Grafana Cloud. Such tests should use the `mark_cloud` Pytest mark; see the [incident_test.py](tests/tools/incident_test.py) file for an example.
-Use the `GRAFANA_URL` and `GRAFANA_API_KEY` environment variables to configure the Grafana instance to use for testing, and run these tests with:
-
-```bash
-GRAFANA_URL=https://myinstance.grafana.net GRAFANA_API_KEY=my-api-key uv run pytest --cloud tests
-```
 
 ### Linting
 
