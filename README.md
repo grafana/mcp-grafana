@@ -7,6 +7,7 @@ This provides access to your Grafana instance and the surrounding ecosystem.
 ## Features
 
 - [x] Search for dashboards
+- [x] Get dashboard by UID
 - [x] List and fetch datasource information
 - [ ] Query datasources
   - [x] Prometheus
@@ -35,6 +36,7 @@ This is useful if you don't use certain functionality or if you don't want to ta
 | Tool | Category | Description |
 | --- | --- | --- |
 | `search_dashboards` | Search | Search for dashboards |
+| `get_dashboard_by_uid` | Dashboard | Get a dashboard by uid |
 | `list_datasources` | Datasources | List datasources |
 | `get_datasource_by_uid` | Datasources | Get a datasource by uid |
 | `get_datasource_by_name` | Datasources | Get a datasource by name |
