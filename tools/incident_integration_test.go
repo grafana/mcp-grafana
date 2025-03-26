@@ -35,6 +35,7 @@ func createCloudTestContext(t *testing.T) context.Context {
 	ctx := context.Background()
 	ctx = mcpgrafana.WithGrafanaURL(ctx, grafanaURL)
 	ctx = mcpgrafana.WithGrafanaAPIKey(ctx, grafanaApiKey)
+	ctx = mcpgrafana.ExtractIncidentClientFromEnv(ctx)
 	return ctx
 }
 
