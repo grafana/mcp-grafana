@@ -39,8 +39,8 @@ func getOnCallURLFromSettings(ctx context.Context, grafanaURL, grafanaAPIKey str
 	}
 
 	var settings struct {
-		JsonData struct {
-			OnCallApiUrl string `json:"onCallApiUrl"`
+		JSONData struct {
+			OnCallAPIURL string `json:"onCallApiUrl"`
 		} `json:"jsonData"`
 	}
 
@@ -48,11 +48,11 @@ func getOnCallURLFromSettings(ctx context.Context, grafanaURL, grafanaAPIKey str
 		return "", fmt.Errorf("decoding settings response: %w", err)
 	}
 
-	if settings.JsonData.OnCallApiUrl == "" {
+	if settings.JSONData.OnCallAPIURL == "" {
 		return "", fmt.Errorf("OnCall API URL is not set in settings")
 	}
 
-	return settings.JsonData.OnCallApiUrl, nil
+	return settings.JSONData.OnCallAPIURL, nil
 }
 
 func oncallClientFromContext(ctx context.Context) (*aapi.Client, error) {
