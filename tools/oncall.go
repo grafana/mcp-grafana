@@ -208,8 +208,9 @@ var ListOnCallTeams = mcpgrafana.MustTool(
 )
 
 type ListOnCallUsersParams struct {
-	UserID string `json:"userId,omitempty" jsonschema:"description=The ID of the user to get details for. If provided, returns only that user's details"`
-	Page   int    `json:"page,omitempty" jsonschema:"description=The page number to return"`
+	UserID   string `json:"userId,omitempty" jsonschema:"description=The ID of the user to get details for. If provided, returns only that user's details"`
+	Username string `json:"username,omitempty" jsonschema:"description=The username to filter users by. If provided, returns only the user matching this username"`
+	Page     int    `json:"page,omitempty" jsonschema:"description=The page number to return"`
 }
 
 func listOnCallUsers(ctx context.Context, args ListOnCallUsersParams) ([]*aapi.User, error) {
@@ -233,6 +234,9 @@ func listOnCallUsers(ctx context.Context, args ListOnCallUsersParams) ([]*aapi.U
 	if args.Page > 0 {
 		listOptions.Page = args.Page
 	}
+	if args.Username != "" {
+		listOptions.Username = args.Username
+	}
 
 	response, _, err := userService.ListUsers(listOptions)
 	if err != nil {
@@ -244,7 +248,7 @@ func listOnCallUsers(ctx context.Context, args ListOnCallUsersParams) ([]*aapi.U
 
 var ListOnCallUsers = mcpgrafana.MustTool(
 	"list_oncall_users",
-	"List users from Grafana OnCall, optionally filtered by user ID",
+	"List users from Grafana OnCall. If user ID is provided, returns details for that specific user. If username is provided, returns the user matching that username",
 	listOnCallUsers,
 )
 
