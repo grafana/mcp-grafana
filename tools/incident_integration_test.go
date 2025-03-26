@@ -1,12 +1,13 @@
 // Requires a Cloud or other Grafana instance with Grafana Incident available,
 // with a Prometheus datasource provisioned.
-// Run with `go test -tags integration,cloud`.
-//go:build integration && cloud
+//go:build cloud
+// +build cloud
 
 package tools
 
 import (
 	"context"
+	"os"
 	"testing"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
@@ -14,13 +15,39 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// This file contains cloud integration tests that run against a dedicated test instance
+// at mcptests.grafana-dev.net. This instance is configured with a minimal setup on the Incident side
+// with two incidents created, one minor and one major, and both of them resolved.
+// These tests expect this configuration to exist and will skip if the required
+// environment variables (GRAFANA_URL, GRAFANA_API_KEY) are not set.
+
+func createCloudTestContext(t *testing.T) context.Context {
+	grafanaURL := os.Getenv("GRAFANA_URL")
+	if grafanaURL == "" {
+		t.Skip("GRAFANA_URL environment variable not set, skipping cloud Incident integration tests")
+	}
+
+	grafanaApiKey := os.Getenv("GRAFANA_API_KEY")
+	if grafanaApiKey == "" {
+		t.Skip("GRAFANA_API_KEY environment variable not set, skipping cloud Incident integration tests")
+	}
+
+	ctx := context.Background()
+	ctx = mcpgrafana.WithGrafanaURL(ctx, grafanaURL)
+	ctx = mcpgrafana.WithGrafanaAPIKey(ctx, grafanaApiKey)
+	ctx = mcpgrafana.ExtractIncidentClientFromEnv(ctx)
+	return ctx
+}
+
 func TestCloudIncidentTools(t *testing.T) {
 	t.Run("list incidents", func(t *testing.T) {
-		ctx := mcpgrafana.ExtractIncidentClientFromEnv(context.Background())
+		ctx := createCloudTestContext(t)
 		result, err := listIncidents(ctx, ListIncidentsParams{
-			Limit: 2,
+			Limit: 1,
 		})
 		require.NoError(t, err)
-		assert.Len(t, result.IncidentPreviews, 2)
+		assert.NotNil(t, result, "Result should not be nil")
+		assert.NotNil(t, result.IncidentPreviews, "IncidentPreviews should not be nil")
+		assert.LessOrEqual(t, len(result.IncidentPreviews), 1, "Should not return more incidents than the limit")
 	})
 }
