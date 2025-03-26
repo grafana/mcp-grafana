@@ -81,7 +81,16 @@ type ListOnCallSchedulesParams struct {
 	Page       int    `json:"page,omitempty" jsonschema:"description=The page number to return (1-based)"`
 }
 
-func listOnCallSchedules(ctx context.Context, args ListOnCallSchedulesParams) ([]*aapi.Schedule, error) {
+// ScheduleSummary represents a simplified view of an OnCall schedule
+type ScheduleSummary struct {
+	ID       string   `json:"id" jsonschema:"description=The unique identifier of the schedule"`
+	Name     string   `json:"name" jsonschema:"description=The name of the schedule"`
+	TeamID   string   `json:"teamId" jsonschema:"description=The ID of the team this schedule belongs to"`
+	Timezone string   `json:"timezone" jsonschema:"description=The timezone for this schedule"`
+	Shifts   []string `json:"shifts" jsonschema:"description=List of shift IDs in this schedule"`
+}
+
+func listOnCallSchedules(ctx context.Context, args ListOnCallSchedulesParams) ([]*ScheduleSummary, error) {
 	client, err := oncallClientFromContext(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("getting OnCall client: %w", err)
@@ -94,7 +103,16 @@ func listOnCallSchedules(ctx context.Context, args ListOnCallSchedulesParams) ([
 		if err != nil {
 			return nil, fmt.Errorf("getting OnCall schedule %s: %w", args.ScheduleID, err)
 		}
-		return []*aapi.Schedule{schedule}, nil
+		summary := &ScheduleSummary{
+			ID:       schedule.ID,
+			Name:     schedule.Name,
+			TeamID:   schedule.TeamId,
+			Timezone: schedule.TimeZone,
+		}
+		if schedule.Shifts != nil {
+			summary.Shifts = *schedule.Shifts
+		}
+		return []*ScheduleSummary{summary}, nil
 	}
 
 	listOptions := &aapi.ListScheduleOptions{}
@@ -107,18 +125,27 @@ func listOnCallSchedules(ctx context.Context, args ListOnCallSchedulesParams) ([
 		return nil, fmt.Errorf("listing OnCall schedules: %w", err)
 	}
 
-	// Filter by team ID if provided
-	if args.TeamID != "" {
-		filteredSchedules := []*aapi.Schedule{}
-		for _, schedule := range response.Schedules {
-			if schedule.TeamId == args.TeamID {
-				filteredSchedules = append(filteredSchedules, schedule)
-			}
+	// Convert schedules to summaries
+	summaries := make([]*ScheduleSummary, 0, len(response.Schedules))
+	for _, schedule := range response.Schedules {
+		// Filter by team ID if provided. Note: We filter here because the API doesn't support
+		// filtering by team ID directly in the ListSchedules endpoint.
+		if args.TeamID != "" && schedule.TeamId != args.TeamID {
+			continue
 		}
-		return filteredSchedules, nil
+		summary := &ScheduleSummary{
+			ID:       schedule.ID,
+			Name:     schedule.Name,
+			TeamID:   schedule.TeamId,
+			Timezone: schedule.TimeZone,
+		}
+		if schedule.Shifts != nil {
+			summary.Shifts = *schedule.Shifts
+		}
+		summaries = append(summaries, summary)
 	}
 
-	return response.Schedules, nil
+	return summaries, nil
 }
 
 var ListOnCallSchedules = mcpgrafana.MustTool(
@@ -152,11 +179,18 @@ var GetOnCallShift = mcpgrafana.MustTool(
 	getOnCallShift,
 )
 
+// CurrentOnCallUsers represents the currently on-call users for a schedule
+type CurrentOnCallUsers struct {
+	ScheduleID   string   `json:"scheduleId" jsonschema:"description=The ID of the schedule"`
+	ScheduleName string   `json:"scheduleName" jsonschema:"description=The name of the schedule"`
+	Users        []string `json:"users" jsonschema:"description=List of user IDs currently on call"`
+}
+
 type GetCurrentOnCallUsersParams struct {
 	ScheduleID string `json:"scheduleId" jsonschema:"required,description=The ID of the schedule to get current on-call users for"`
 }
 
-func getCurrentOnCallUsers(ctx context.Context, args GetCurrentOnCallUsersParams) (*aapi.Schedule, error) {
+func getCurrentOnCallUsers(ctx context.Context, args GetCurrentOnCallUsersParams) (*CurrentOnCallUsers, error) {
 	client, err := oncallClientFromContext(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("getting OnCall client: %w", err)
@@ -168,7 +202,11 @@ func getCurrentOnCallUsers(ctx context.Context, args GetCurrentOnCallUsersParams
 		return nil, fmt.Errorf("getting schedule %s: %w", args.ScheduleID, err)
 	}
 
-	return schedule, nil
+	return &CurrentOnCallUsers{
+		ScheduleID:   schedule.ID,
+		ScheduleName: schedule.Name,
+		Users:        schedule.OnCallNow,
+	}, nil
 }
 
 var GetCurrentOnCallUsers = mcpgrafana.MustTool(

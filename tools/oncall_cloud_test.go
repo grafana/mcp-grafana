@@ -57,8 +57,8 @@ func TestCloudOnCallSchedules(t *testing.T) {
 	schedules, err := listOnCallSchedules(ctx, ListOnCallSchedulesParams{})
 	require.NoError(t, err, "Should not error when listing schedules")
 
-	if len(schedules) > 0 && schedules[0].TeamId != "" {
-		teamID := schedules[0].TeamId
+	if len(schedules) > 0 && schedules[0].TeamID != "" {
+		teamID := schedules[0].TeamID
 
 		// Test filtering by team ID
 		t.Run("list schedules by team ID", func(t *testing.T) {
@@ -68,7 +68,7 @@ func TestCloudOnCallSchedules(t *testing.T) {
 			require.NoError(t, err, "Should not error when listing schedules by team")
 			assert.NotEmpty(t, result, "Should return at least one schedule")
 			for _, schedule := range result {
-				assert.Equal(t, teamID, schedule.TeamId, "All schedules should belong to the specified team")
+				assert.Equal(t, teamID, schedule.TeamID, "All schedules should belong to the specified team")
 			}
 		})
 	}
@@ -81,10 +81,9 @@ func TestCloudOnCallShift(t *testing.T) {
 	schedules, err := listOnCallSchedules(ctx, ListOnCallSchedulesParams{})
 	require.NoError(t, err, "Should not error when listing schedules")
 	require.NotEmpty(t, schedules, "Should have at least one schedule to test with")
-	require.NotNil(t, schedules[0].Shifts, "Schedule should have shifts field")
-	require.NotEmpty(t, *schedules[0].Shifts, "Schedule should have at least one shift")
+	require.NotEmpty(t, schedules[0].Shifts, "Schedule should have at least one shift")
 
-	shifts := *schedules[0].Shifts
+	shifts := schedules[0].Shifts
 	shiftID := shifts[0]
 
 	// Test getting shift details with valid ID
@@ -122,9 +121,8 @@ func TestCloudGetCurrentOnCallUsers(t *testing.T) {
 		})
 		require.NoError(t, err, "Should not error when getting current on-call users")
 		assert.NotNil(t, result, "Result should not be nil")
-		assert.Equal(t, scheduleID, result.ID, "Should return the correct schedule")
-		// Note: We can't assert on OnCallNow contents as it depends on the actual schedule state
-		assert.NotNil(t, result.OnCallNow, "OnCallNow field should be present")
+		assert.Equal(t, scheduleID, result.ScheduleID, "Should return the correct schedule")
+		assert.NotNil(t, result.Users, "Users field should be present")
 	})
 
 	t.Run("get current on-call users with invalid schedule ID", func(t *testing.T) {
