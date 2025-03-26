@@ -6,7 +6,6 @@
 package tools
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -29,7 +28,9 @@ func TestDashboardTools(t *testing.T) {
 			UID: dashboardUID,
 		})
 		require.NoError(t, err)
-		assert.Equal(t, dashboardUID, result.Dashboard["uid"])
+		dashboardMap, ok := result.Dashboard.(map[string]interface{})
+		require.True(t, ok, "Dashboard should be a map")
+		assert.Equal(t, dashboardUID, dashboardMap["uid"])
 		assert.NotNil(t, result.Meta)
 	})
 
