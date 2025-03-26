@@ -24,6 +24,7 @@ func newServer() *server.MCPServer {
 	tools.AddPrometheusTools(s)
 	tools.AddLokiTools(s)
 	tools.AddAlertingTools(s)
+	tools.AddDashboardTools(s)
 	return s
 }
 
