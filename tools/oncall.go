@@ -77,6 +77,7 @@ func oncallClientFromContext(ctx context.Context) (*aapi.Client, error) {
 
 type ListOnCallSchedulesParams struct {
 	TeamID string `json:"teamId,omitempty" jsonschema:"description=The ID of the team to list schedules for"`
+	Page   int    `json:"page,omitempty" jsonschema:"description=The page number to return"`
 }
 
 func listOnCallSchedules(ctx context.Context, args ListOnCallSchedulesParams) ([]*aapi.Schedule, error) {
@@ -86,6 +87,9 @@ func listOnCallSchedules(ctx context.Context, args ListOnCallSchedulesParams) ([
 	}
 
 	listOptions := &aapi.ListScheduleOptions{}
+	if args.Page > 0 {
+		listOptions.Page = args.Page
+	}
 
 	scheduleService := aapi.NewScheduleService(client)
 	response, _, err := scheduleService.ListSchedules(listOptions)
@@ -164,6 +168,7 @@ var GetCurrentOnCallUsers = mcpgrafana.MustTool(
 )
 
 type ListOnCallTeamsParams struct {
+	Page int `json:"page,omitempty" jsonschema:"description=The page number to return"`
 }
 
 func listOnCallTeams(ctx context.Context, args ListOnCallTeamsParams) ([]*aapi.Team, error) {
@@ -172,8 +177,13 @@ func listOnCallTeams(ctx context.Context, args ListOnCallTeamsParams) ([]*aapi.T
 		return nil, fmt.Errorf("getting OnCall client: %w", err)
 	}
 
+	listOptions := &aapi.ListTeamOptions{}
+	if args.Page > 0 {
+		listOptions.Page = args.Page
+	}
+
 	teamService := aapi.NewTeamService(client)
-	response, _, err := teamService.ListTeams(&aapi.ListTeamOptions{})
+	response, _, err := teamService.ListTeams(listOptions)
 	if err != nil {
 		return nil, fmt.Errorf("listing OnCall teams: %w", err)
 	}
@@ -189,6 +199,7 @@ var ListOnCallTeams = mcpgrafana.MustTool(
 
 type ListOnCallUsersParams struct {
 	UserID string `json:"userId,omitempty" jsonschema:"description=The ID of the user to get details for. If provided, returns only that user's details"`
+	Page   int    `json:"page,omitempty" jsonschema:"description=The page number to return"`
 }
 
 func listOnCallUsers(ctx context.Context, args ListOnCallUsersParams) ([]*aapi.User, error) {
@@ -208,7 +219,12 @@ func listOnCallUsers(ctx context.Context, args ListOnCallUsersParams) ([]*aapi.U
 	}
 
 	// Otherwise, list all users
-	response, _, err := userService.ListUsers(&aapi.ListUserOptions{})
+	listOptions := &aapi.ListUserOptions{}
+	if args.Page > 0 {
+		listOptions.Page = args.Page
+	}
+
+	response, _, err := userService.ListUsers(listOptions)
 	if err != nil {
 		return nil, fmt.Errorf("listing OnCall users: %w", err)
 	}
