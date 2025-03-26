@@ -76,8 +76,9 @@ func oncallClientFromContext(ctx context.Context) (*aapi.Client, error) {
 }
 
 type ListOnCallSchedulesParams struct {
-	TeamID string `json:"teamId,omitempty" jsonschema:"description=The ID of the team to list schedules for"`
-	Page   int    `json:"page,omitempty" jsonschema:"description=The page number to return"`
+	TeamID     string `json:"teamId,omitempty" jsonschema:"description=The ID of the team to list schedules for"`
+	ScheduleID string `json:"scheduleId,omitempty" jsonschema:"description=The ID of the schedule to get details for. If provided, returns only that schedule's details"`
+	Page       int    `json:"page,omitempty" jsonschema:"description=The page number to return (1-based)"`
 }
 
 func listOnCallSchedules(ctx context.Context, args ListOnCallSchedulesParams) ([]*aapi.Schedule, error) {
@@ -86,12 +87,21 @@ func listOnCallSchedules(ctx context.Context, args ListOnCallSchedulesParams) ([
 		return nil, fmt.Errorf("getting OnCall client: %w", err)
 	}
 
+	scheduleService := aapi.NewScheduleService(client)
+
+	if args.ScheduleID != "" {
+		schedule, _, err := scheduleService.GetSchedule(args.ScheduleID, &aapi.GetScheduleOptions{})
+		if err != nil {
+			return nil, fmt.Errorf("getting OnCall schedule %s: %w", args.ScheduleID, err)
+		}
+		return []*aapi.Schedule{schedule}, nil
+	}
+
 	listOptions := &aapi.ListScheduleOptions{}
 	if args.Page > 0 {
 		listOptions.Page = args.Page
 	}
 
-	scheduleService := aapi.NewScheduleService(client)
 	response, _, err := scheduleService.ListSchedules(listOptions)
 	if err != nil {
 		return nil, fmt.Errorf("listing OnCall schedules: %w", err)
@@ -113,7 +123,7 @@ func listOnCallSchedules(ctx context.Context, args ListOnCallSchedulesParams) ([
 
 var ListOnCallSchedules = mcpgrafana.MustTool(
 	"list_oncall_schedules",
-	"List schedules from Grafana OnCall",
+	"List OnCall schedules. Optionally provide a scheduleId to get details for a specific schedule",
 	listOnCallSchedules,
 )
 
@@ -138,7 +148,7 @@ func getOnCallShift(ctx context.Context, args GetOnCallShiftParams) (*aapi.OnCal
 
 var GetOnCallShift = mcpgrafana.MustTool(
 	"get_oncall_shift",
-	"Get details for a specific OnCall shift",
+	"Get details for a specific OnCall shift within a schedule. A shift represents a specific time period in a schedule when someone is on call",
 	getOnCallShift,
 )
 
