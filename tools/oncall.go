@@ -150,7 +150,7 @@ func listOnCallSchedules(ctx context.Context, args ListOnCallSchedulesParams) ([
 
 var ListOnCallSchedules = mcpgrafana.MustTool(
 	"list_oncall_schedules",
-	"List OnCall schedules. Optionally provide a scheduleId to get details for a specific schedule",
+	"List OnCall schedules. A schedule is a calendar-based system defining when team members are on-call. Optionally provide a scheduleId to get details for a specific schedule",
 	listOnCallSchedules,
 )
 
@@ -175,7 +175,7 @@ func getOnCallShift(ctx context.Context, args GetOnCallShiftParams) (*aapi.OnCal
 
 var GetOnCallShift = mcpgrafana.MustTool(
 	"get_oncall_shift",
-	"Get details for a specific OnCall shift within a schedule. A shift represents a specific time period in a schedule when someone is on call",
+	"Get details for a specific OnCall shift. A shift represents a designated time period within a rotation when a team or individual is actively on-call",
 	getOnCallShift,
 )
 
@@ -211,7 +211,7 @@ func getCurrentOnCallUsers(ctx context.Context, args GetCurrentOnCallUsersParams
 
 var GetCurrentOnCallUsers = mcpgrafana.MustTool(
 	"get_current_oncall_users",
-	"Get users currently on-call for a specific schedule",
+	"Get users currently on-call for a specific schedule. A schedule is a calendar-based system defining when team members are on-call",
 	getCurrentOnCallUsers,
 )
 
