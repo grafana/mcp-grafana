@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/prometheus/common/model"
+	"github.com/prometheus/prometheus/model/labels"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -69,6 +70,165 @@ func TestPrometheusTools(t *testing.T) {
 		require.NoError(t, err)
 		assert.Len(t, result, 1)
 	})
+}
+
+func TestSelectorMatches(t *testing.T) {
+	testCases := []struct {
+		name      string
+		selector  Selector
+		labels    map[string]string
+		expected  bool
+		expectErr bool
+	}{
+		{
+			name: "Equal match",
+			selector: Selector{
+				Filters: []LabelMatcher{
+					{Name: "job", Type: "=", Value: "prometheus"},
+				},
+			},
+			labels:   map[string]string{"job": "prometheus"},
+			expected: true,
+		},
+		{
+			name: "Equal no match",
+			selector: Selector{
+				Filters: []LabelMatcher{
+					{Name: "job", Type: "=", Value: "prometheus"},
+				},
+			},
+			labels:   map[string]string{"job": "node-exporter"},
+			expected: false,
+		},
+		{
+			name: "Not equal match",
+			selector: Selector{
+				Filters: []LabelMatcher{
+					{Name: "job", Type: "!=", Value: "prometheus"},
+				},
+			},
+			labels:   map[string]string{"job": "node-exporter"},
+			expected: true,
+		},
+		{
+			name: "Not equal no match",
+			selector: Selector{
+				Filters: []LabelMatcher{
+					{Name: "job", Type: "!=", Value: "prometheus"},
+				},
+			},
+			labels:   map[string]string{"job": "prometheus"},
+			expected: false,
+		},
+		{
+			name: "Regex match",
+			selector: Selector{
+				Filters: []LabelMatcher{
+					{Name: "job", Type: "=~", Value: "prom.*"},
+				},
+			},
+			labels:   map[string]string{"job": "prometheus"},
+			expected: true,
+		},
+		{
+			name: "Regex no match",
+			selector: Selector{
+				Filters: []LabelMatcher{
+					{Name: "job", Type: "=~", Value: "node.*"},
+				},
+			},
+			labels:   map[string]string{"job": "prometheus"},
+			expected: false,
+		},
+		{
+			name: "Not regex match",
+			selector: Selector{
+				Filters: []LabelMatcher{
+					{Name: "job", Type: "!~", Value: "node.*"},
+				},
+			},
+			labels:   map[string]string{"job": "prometheus"},
+			expected: true,
+		},
+		{
+			name: "Not regex no match",
+			selector: Selector{
+				Filters: []LabelMatcher{
+					{Name: "job", Type: "!~", Value: "prom.*"},
+				},
+			},
+			labels:   map[string]string{"job": "prometheus"},
+			expected: false,
+		},
+		{
+			name: "Multiple filters all match",
+			selector: Selector{
+				Filters: []LabelMatcher{
+					{Name: "job", Type: "=", Value: "prometheus"},
+					{Name: "instance", Type: "=~", Value: "localhost.*"},
+				},
+			},
+			labels:   map[string]string{"job": "prometheus", "instance": "localhost:9090"},
+			expected: true,
+		},
+		{
+			name: "Multiple filters one doesn't match",
+			selector: Selector{
+				Filters: []LabelMatcher{
+					{Name: "job", Type: "=", Value: "prometheus"},
+					{Name: "instance", Type: "=~", Value: "remote.*"},
+				},
+			},
+			labels:   map[string]string{"job": "prometheus", "instance": "localhost:9090"},
+			expected: false,
+		},
+		{
+			name: "Label doesn't exist with = operator",
+			selector: Selector{
+				Filters: []LabelMatcher{
+					{Name: "missing", Type: "=", Value: "value"},
+				},
+			},
+			labels:   map[string]string{"job": "prometheus"},
+			expected: false,
+		},
+		{
+			name: "Label doesn't exist with != operator",
+			selector: Selector{
+				Filters: []LabelMatcher{
+					{Name: "missing", Type: "!=", Value: "value"},
+				},
+			},
+			labels:   map[string]string{"job": "prometheus"},
+			expected: true,
+		},
+		{
+			name: "Invalid matcher type",
+			selector: Selector{
+				Filters: []LabelMatcher{
+					{Name: "job", Type: "<>", Value: "prometheus"},
+				},
+			},
+			labels:    map[string]string{"job": "prometheus"},
+			expected:  false,
+			expectErr: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			lbls := labels.FromMap(tc.labels)
+			result, err := tc.selector.Matches(lbls)
+
+			if tc.expectErr {
+				assert.Error(t, err)
+				return
+			}
+
+			assert.NoError(t, err)
+			assert.Equal(t, tc.expected, result)
+		})
+	}
 }
 
 func TestPrometheusQueries(t *testing.T) {

@@ -13,6 +13,17 @@ import (
 	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	"github.com/prometheus/common/config"
 	"github.com/prometheus/common/model"
+	"github.com/prometheus/prometheus/model/labels"
+)
+
+var (
+	matchTypeMap = map[string]labels.MatchType{
+		"":   labels.MatchEqual,
+		"=":  labels.MatchEqual,
+		"!=": labels.MatchNotEqual,
+		"=~": labels.MatchRegexp,
+		"!~": labels.MatchNotRegexp,
+	}
 )
 
 func promClientFromContext(ctx context.Context, uid string) (promv1.API, error) {
@@ -195,9 +206,9 @@ var ListPrometheusMetricNames = mcpgrafana.MustTool(
 )
 
 type LabelMatcher struct {
-	Name  string `json:"name"`
-	Value string `json:"value"`
-	Type  string `json:"type"` // "=" or "!=" or "=~" or "!~"
+	Name  string `json:"name" jsonschema:"required,description=The name of the label to match against"`
+	Value string `json:"value" jsonschema:"required,description=The value to match against"`
+	Type  string `json:"type" jsonschema:"required,description=One of the '=' or '!=' or '=~' or '!~'"`
 }
 
 type Selector struct {
@@ -218,6 +229,27 @@ func (s Selector) String() string {
 	}
 	b.WriteRune('}')
 	return b.String()
+}
+
+// Matches runs the matchers against the given labels and returns whether they match the selector.
+func (s Selector) Matches(lbls labels.Labels) (bool, error) {
+	matchers := make(labels.Selector, 0, len(s.Filters))
+
+	for _, filter := range s.Filters {
+		matchType, ok := matchTypeMap[filter.Type]
+		if !ok {
+			return false, fmt.Errorf("invalid matcher type: %s", filter.Type)
+		}
+
+		matcher, err := labels.NewMatcher(matchType, filter.Name, filter.Value)
+		if err != nil {
+			return false, fmt.Errorf("creating matcher: %w", err)
+		}
+
+		matchers = append(matchers, matcher)
+	}
+
+	return matchers.Matches(lbls), nil
 }
 
 type ListPrometheusLabelNamesParams struct {

@@ -3,11 +3,12 @@ package tools
 import (
 	"context"
 	"fmt"
-	"regexp"
 
 	"github.com/grafana/grafana-openapi-client-go/models"
-	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/mark3labs/mcp-go/server"
+	"github.com/prometheus/prometheus/model/labels"
+
+	mcpgrafana "github.com/grafana/mcp-grafana"
 )
 
 const (
@@ -48,23 +49,9 @@ func listAlertRules(ctx context.Context, args ListAlertRulesParams) ([]alertRule
 		return nil, fmt.Errorf("list alert rules: %w", err)
 	}
 
-	// Apply selectors if any
-	alertRules := response.Payload
-	if len(args.LabelSelectors) > 0 {
-		filteredResult := models.ProvisionedAlertRules{}
-		for _, rule := range alertRules {
-			if rule == nil {
-				continue
-			}
-			match, err := matchesSelectors(*rule, args.LabelSelectors)
-			if err != nil {
-				return nil, fmt.Errorf("list alert rules: %w", err)
-			}
-			if match {
-				filteredResult = append(filteredResult, rule)
-			}
-		}
-		alertRules = filteredResult
+	alertRules, err := filterAlertRules(response.Payload, args.LabelSelectors)
+	if err != nil {
+		return nil, fmt.Errorf("list alert rules: %w", err)
 	}
 
 	alertRules, err = applyPagination(alertRules, args.Limit, args.Page)
@@ -75,10 +62,37 @@ func listAlertRules(ctx context.Context, args ListAlertRulesParams) ([]alertRule
 	return summarizeAlertRules(alertRules), nil
 }
 
+// filterAlertRules filters a list of alert rules based on label selectors
+func filterAlertRules(rules models.ProvisionedAlertRules, selectors []Selector) (models.ProvisionedAlertRules, error) {
+	if len(selectors) == 0 {
+		return rules, nil
+	}
+
+	filteredResult := models.ProvisionedAlertRules{}
+	for _, rule := range rules {
+		if rule == nil {
+			continue
+		}
+
+		match, err := matchesSelectors(*rule, selectors)
+		if err != nil {
+			return nil, fmt.Errorf("filtering alert rules: %w", err)
+		}
+
+		if match {
+			filteredResult = append(filteredResult, rule)
+		}
+	}
+
+	return filteredResult, nil
+}
+
 // matchesSelectors checks if an alert rule matches all provided selectors
 func matchesSelectors(rule models.ProvisionedAlertRule, selectors []Selector) (bool, error) {
+	promLabels := labels.FromMap(rule.Labels)
+
 	for _, selector := range selectors {
-		match, err := matchesSelector(rule, selector)
+		match, err := selector.Matches(promLabels)
 		if err != nil {
 			return false, err
 		}
@@ -87,50 +101,6 @@ func matchesSelectors(rule models.ProvisionedAlertRule, selectors []Selector) (b
 		}
 	}
 	return true, nil
-}
-
-// matchesSelector checks if an alert rule matches a single selector
-func matchesSelector(rule models.ProvisionedAlertRule, selector Selector) (bool, error) {
-	for _, filter := range selector.Filters {
-		value, exists := rule.Labels[filter.Name]
-
-		if !exists {
-			// Only match if we're looking for inequality
-			if filter.Type == "!=" || filter.Type == "!~" {
-				continue // This filter matches, check the next one
-			}
-			return false, nil
-		}
-
-		match, err := matchLabelFilter(value, filter)
-		if err != nil {
-			return false, err
-		}
-		if !match {
-			return false, nil
-		}
-	}
-	return true, nil
-}
-
-// matchLabelFilter checks if a label value matches the filter
-func matchLabelFilter(value string, filter LabelMatcher) (bool, error) {
-	switch filter.Type {
-	case "", "=":
-		return value == filter.Value, nil
-	case "!=":
-		return value != filter.Value, nil
-	case "=~":
-		return regexp.MatchString(filter.Value, value)
-	case "!~":
-		matched, err := regexp.MatchString(filter.Value, value)
-		if err != nil {
-			return false, err
-		}
-		return !matched, nil
-	default:
-		return false, nil
-	}
 }
 
 func summarizeAlertRules(alertRules models.ProvisionedAlertRules) []alertRuleSummary {
