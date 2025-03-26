@@ -27,32 +27,40 @@ This provides access to your Grafana instance and the surrounding ecosystem.
   - [x] Stats
 - [x] Search, create, update and close incidents
 - [ ] Start Sift investigations and view the results
+- [ ] Alerting
+  - [x] List and fetch alert rule information
+  - [ ] Get alert rule statuses (firing/normal/error/etc.)
+  - [ ] Create and change alert rules
+  - [ ] List contact points
+  - [ ] Create and change contact points
 
 The list of tools is configurable, so you can choose which tools you want to make available to the MCP client.
 This is useful if you don't use certain functionality or if you don't want to take up too much of the context window.
 
 ### Tools
 
-| Tool | Category | Description |
-| --- | --- | --- |
-| `search_dashboards` | Search | Search for dashboards |
-| `get_dashboard_by_uid` | Dashboard | Get a dashboard by uid |
-| `list_datasources` | Datasources | List datasources |
-| `get_datasource_by_uid` | Datasources | Get a datasource by uid |
-| `get_datasource_by_name` | Datasources | Get a datasource by name |
-| `query_prometheus` | Prometheus | Execute a query against a Prometheus datasource |
-| `list_prometheus_metric_metadata` | Prometheus | List metric metadata |
-| `list_prometheus_metric_names` | Prometheus | List available metric names |
-| `list_prometheus_label_names` | Prometheus | List label names matching a selector |
-| `list_prometheus_label_values` | Prometheus | List values for a specific label |
-| `list_incidents` | Incident | List incidents in Grafana Incident |
-| `create_incident` | Incident | Create an incident in Grafana Incident |
-| `add_activity_to_incident` | Incident | Add an activity item to an incident in Grafana Incident |
-| `resolve_incident` | Incident | Resolve an incident in Grafana Incident |
-| `query_loki_logs` | Loki | Query and retrieve logs using LogQL (either log or metric queries) |
-| `list_loki_label_names` | Loki | List all available label names in logs |
-| `list_loki_label_values` | Loki | List values for a specific log label |
-| `query_loki_stats` | Loki | Get statistics about log streams |
+| Tool                              | Category    | Description                                                        |
+|-----------------------------------|-------------|--------------------------------------------------------------------|
+| `search_dashboards`               | Search      | Search for dashboards                                              |
+| `get_dashboard_by_uid`            | Dashboard   | Get a dashboard by uid                                             |
+| `list_datasources`                | Datasources | List datasources                                                   |
+| `get_datasource_by_uid`           | Datasources | Get a datasource by uid                                            |
+| `get_datasource_by_name`          | Datasources | Get a datasource by name                                           |
+| `query_prometheus`                | Prometheus  | Execute a query against a Prometheus datasource                    |
+| `list_prometheus_metric_metadata` | Prometheus  | List metric metadata                                               |
+| `list_prometheus_metric_names`    | Prometheus  | List available metric names                                        |
+| `list_prometheus_label_names`     | Prometheus  | List label names matching a selector                               |
+| `list_prometheus_label_values`    | Prometheus  | List values for a specific label                                   |
+| `list_incidents`                  | Incident    | List incidents in Grafana Incident                                 |
+| `create_incident`                 | Incident    | Create an incident in Grafana Incident                             |
+| `add_activity_to_incident`        | Incident    | Add an activity item to an incident in Grafana Incident            |
+| `resolve_incident`                | Incident    | Resolve an incident in Grafana Incident                            |
+| `query_loki_logs`                 | Loki        | Query and retrieve logs using LogQL (either log or metric queries) |
+| `list_loki_label_names`           | Loki        | List all available label names in logs                             |
+| `list_loki_label_values`          | Loki        | List values for a specific log label                               |
+| `query_loki_stats`                | Loki        | Get statistics about log streams                                   |
+| `list_alert_rules`                | Alerting    | List alert rules                                                   |
+| `get_alert_rule_by_uid`           | Alerting    | Get alert rule by UID                                              |
 
 ## Usage
 
