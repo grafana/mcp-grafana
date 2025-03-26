@@ -47,10 +47,20 @@ func TestCloudOnCallSchedules(t *testing.T) {
 	t.Run("list all schedules", func(t *testing.T) {
 		result, err := listOnCallSchedules(ctx, ListOnCallSchedulesParams{})
 		require.NoError(t, err, "Should not error when listing schedules")
-
-		// We can't assert exact counts or values since we're using a real instance,
-		// but we can check that the call succeeded and returned some data
 		assert.NotNil(t, result, "Result should not be nil")
+	})
+
+	// Test pagination
+	t.Run("list schedules with pagination", func(t *testing.T) {
+		// Get first page
+		page1, err := listOnCallSchedules(ctx, ListOnCallSchedulesParams{Page: 1})
+		require.NoError(t, err, "Should not error when listing schedules page 1")
+		assert.NotNil(t, page1, "Page 1 should not be nil")
+
+		// Get second page
+		page2, err := listOnCallSchedules(ctx, ListOnCallSchedulesParams{Page: 2})
+		require.NoError(t, err, "Should not error when listing schedules page 2")
+		assert.NotNil(t, page2, "Page 2 should not be nil")
 	})
 
 	// Get a team ID from an existing schedule to test filtering
@@ -70,6 +80,25 @@ func TestCloudOnCallSchedules(t *testing.T) {
 			for _, schedule := range result {
 				assert.Equal(t, teamID, schedule.TeamID, "All schedules should belong to the specified team")
 			}
+		})
+	}
+
+	// Test getting a specific schedule
+	if len(schedules) > 0 {
+		scheduleID := schedules[0].ID
+		t.Run("get specific schedule", func(t *testing.T) {
+			result, err := listOnCallSchedules(ctx, ListOnCallSchedulesParams{
+				ScheduleID: scheduleID,
+			})
+			require.NoError(t, err, "Should not error when getting specific schedule")
+			assert.Len(t, result, 1, "Should return exactly one schedule")
+			assert.Equal(t, scheduleID, result[0].ID, "Should return the correct schedule")
+
+			// Verify all summary fields are present
+			schedule := result[0]
+			assert.NotEmpty(t, schedule.Name, "Schedule should have a name")
+			assert.NotEmpty(t, schedule.Timezone, "Schedule should have a timezone")
+			assert.NotNil(t, schedule.Shifts, "Schedule should have a shifts field")
 		})
 	}
 }
@@ -122,6 +151,7 @@ func TestCloudGetCurrentOnCallUsers(t *testing.T) {
 		require.NoError(t, err, "Should not error when getting current on-call users")
 		assert.NotNil(t, result, "Result should not be nil")
 		assert.Equal(t, scheduleID, result.ScheduleID, "Should return the correct schedule")
+		assert.NotEmpty(t, result.ScheduleName, "Schedule should have a name")
 		assert.NotNil(t, result.Users, "Users field should be present")
 	})
 
@@ -139,17 +169,26 @@ func TestCloudOnCallTeams(t *testing.T) {
 	t.Run("list teams", func(t *testing.T) {
 		result, err := listOnCallTeams(ctx, ListOnCallTeamsParams{})
 		require.NoError(t, err, "Should not error when listing teams")
-
-		// We can't assert exact counts since we're using a real instance,
-		// but we can check that the call succeeded and returned data
 		assert.NotNil(t, result, "Result should not be nil")
 
-		// If we have teams, verify they have the expected fields
 		if len(result) > 0 {
 			team := result[0]
 			assert.NotEmpty(t, team.ID, "Team should have an ID")
 			assert.NotEmpty(t, team.Name, "Team should have a name")
 		}
+	})
+
+	// Test pagination
+	t.Run("list teams with pagination", func(t *testing.T) {
+		// Get first page
+		page1, err := listOnCallTeams(ctx, ListOnCallTeamsParams{Page: 1})
+		require.NoError(t, err, "Should not error when listing teams page 1")
+		assert.NotNil(t, page1, "Page 1 should not be nil")
+
+		// Get second page
+		page2, err := listOnCallTeams(ctx, ListOnCallTeamsParams{Page: 2})
+		require.NoError(t, err, "Should not error when listing teams page 2")
+		assert.NotNil(t, page2, "Page 2 should not be nil")
 	})
 }
 
@@ -159,12 +198,8 @@ func TestCloudOnCallUsers(t *testing.T) {
 	t.Run("list all users", func(t *testing.T) {
 		result, err := listOnCallUsers(ctx, ListOnCallUsersParams{})
 		require.NoError(t, err, "Should not error when listing users")
-
-		// We can't assert exact counts since we're using a real instance,
-		// but we can check that the call succeeded and returned data
 		assert.NotNil(t, result, "Result should not be nil")
 
-		// If we have users, verify they have the expected fields
 		if len(result) > 0 {
 			user := result[0]
 			assert.NotEmpty(t, user.ID, "User should have an ID")
@@ -172,12 +207,26 @@ func TestCloudOnCallUsers(t *testing.T) {
 		}
 	})
 
-	// Get a user ID from the list to test filtering
+	// Test pagination
+	t.Run("list users with pagination", func(t *testing.T) {
+		// Get first page
+		page1, err := listOnCallUsers(ctx, ListOnCallUsersParams{Page: 1})
+		require.NoError(t, err, "Should not error when listing users page 1")
+		assert.NotNil(t, page1, "Page 1 should not be nil")
+
+		// Get second page
+		page2, err := listOnCallUsers(ctx, ListOnCallUsersParams{Page: 2})
+		require.NoError(t, err, "Should not error when listing users page 2")
+		assert.NotNil(t, page2, "Page 2 should not be nil")
+	})
+
+	// Get a user ID and username from the list to test filtering
 	users, err := listOnCallUsers(ctx, ListOnCallUsersParams{})
 	require.NoError(t, err, "Should not error when listing users")
 	require.NotEmpty(t, users, "Should have at least one user to test with")
 
 	userID := users[0].ID
+	username := users[0].Username
 
 	t.Run("get user by ID", func(t *testing.T) {
 		result, err := listOnCallUsers(ctx, ListOnCallUsersParams{
@@ -190,10 +239,29 @@ func TestCloudOnCallUsers(t *testing.T) {
 		assert.NotEmpty(t, result[0].Username, "User should have a username")
 	})
 
+	t.Run("get user by username", func(t *testing.T) {
+		result, err := listOnCallUsers(ctx, ListOnCallUsersParams{
+			Username: username,
+		})
+		require.NoError(t, err, "Should not error when getting user by username")
+		assert.NotNil(t, result, "Result should not be nil")
+		assert.Len(t, result, 1, "Should return exactly one user")
+		assert.Equal(t, username, result[0].Username, "Should return the correct user")
+		assert.NotEmpty(t, result[0].ID, "User should have an ID")
+	})
+
 	t.Run("get user with invalid ID", func(t *testing.T) {
 		_, err := listOnCallUsers(ctx, ListOnCallUsersParams{
 			UserID: "invalid-user-id",
 		})
 		assert.Error(t, err, "Should error when getting user with invalid ID")
+	})
+
+	t.Run("get user with invalid username", func(t *testing.T) {
+		result, err := listOnCallUsers(ctx, ListOnCallUsersParams{
+			Username: "invalid-username",
+		})
+		require.NoError(t, err, "Should not error when getting user with invalid username")
+		assert.Empty(t, result, "Should return empty result set for invalid username")
 	})
 }
