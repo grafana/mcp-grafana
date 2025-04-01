@@ -16,9 +16,10 @@ build-image: ## Build the Docker image.
 lint: ## Lint the Go code.
 	go tool -modfile go.tools.mod golangci-lint run
 
-.PHONY: test-unit
+.PHONY: test test-unit
 test-unit: ## Run the unit tests (no external dependencies required).
 	go test -v -tags unit ./...
+test: test-unit
 
 .PHONY: test-integration
 test-integration: ## Run only the Docker-based integration tests (Requires docker containers to be up and running).
