@@ -43,7 +43,7 @@ func run(transport, addr string, logLevel slog.Level) error {
 		srv := server.NewSSEServer(s,
 			server.WithSSEContextFunc(mcpgrafana.ComposedSSEContextFunc),
 		)
-		slog.Info("Starting Grafana MCP server using SSE transport")
+		slog.Info("Starting Grafana MCP server using SSE transport", "address", addr)
 		if err := srv.Start(addr); err != nil {
 			return fmt.Errorf("Server error: %v", err)
 		}
