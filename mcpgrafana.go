@@ -48,7 +48,11 @@ var ExtractGrafanaInfoFromEnv server.StdioContextFunc = func(ctx context.Context
 	if u == "" {
 		u = defaultGrafanaURL
 	}
-	slog.Info("Using Grafana configuration", "url", u, "api_key_set", apiKey != "")
+	parsedURL, err := url.Parse(u)
+	if err != nil {
+		panic(fmt.Errorf("invalid Grafana URL %s: %w", u, err))
+	}
+	slog.Info("Using Grafana configuration", "url", parsedURL.Redacted(), "api_key_set", apiKey != "")
 	return WithGrafanaURL(WithGrafanaAPIKey(ctx, apiKey), u)
 }
 
@@ -103,20 +107,22 @@ var ExtractGrafanaClientFromEnv server.StdioContextFunc = func(ctx context.Conte
 	cfg := client.DefaultTransportConfig()
 	// Extract transport config from env vars, and set it on the context.
 	var grafanaURL string
+	var parsedURL *url.URL
 	var ok bool
+	var err error
 	if grafanaURL, ok = os.LookupEnv(grafanaURLEnvVar); ok {
-		url, err := url.Parse(grafanaURL)
+		parsedURL, err = url.Parse(grafanaURL)
 		if err != nil {
 			panic(fmt.Errorf("invalid %s: %w", grafanaURLEnvVar, err))
 		}
-		cfg.Host = url.Host
+		cfg.Host = parsedURL.Host
 		// The Grafana client will always prefer HTTPS even if the URL is HTTP,
 		// so we need to limit the schemes to HTTP if the URL is HTTP.
-		if url.Scheme == "http" {
+		if parsedURL.Scheme == "http" {
 			cfg.Schemes = []string{"http"}
 		}
 	} else {
-		grafanaURL = defaultGrafanaURL
+		parsedURL, _ = url.Parse(defaultGrafanaURL)
 	}
 
 	apiKey := os.Getenv(grafanaAPIEnvVar)
@@ -124,7 +130,7 @@ var ExtractGrafanaClientFromEnv server.StdioContextFunc = func(ctx context.Conte
 		cfg.APIKey = apiKey
 	}
 
-	slog.Debug("Creating Grafana client", "url", grafanaURL, "api_key_set", apiKey != "")
+	slog.Debug("Creating Grafana client", "url", parsedURL.Redacted(), "api_key_set", apiKey != "")
 	client := client.NewHTTPClientWithConfig(strfmt.Default, cfg)
 	return context.WithValue(ctx, grafanaClientKey{}, client)
 }
@@ -174,7 +180,11 @@ var ExtractIncidentClientFromEnv server.StdioContextFunc = func(ctx context.Cont
 		grafanaURL = defaultGrafanaURL
 	}
 	incidentURL := fmt.Sprintf("%s/api/plugins/grafana-incident-app/resources/api/v1/", grafanaURL)
-	slog.Debug("Creating Incident client", "url", incidentURL, "api_key_set", apiKey != "")
+	parsedURL, err := url.Parse(incidentURL)
+	if err != nil {
+		panic(fmt.Errorf("invalid incident URL %s: %w", incidentURL, err))
+	}
+	slog.Debug("Creating Incident client", "url", parsedURL.Redacted(), "api_key_set", apiKey != "")
 	client := incident.NewClient(incidentURL, apiKey)
 	return context.WithValue(ctx, incidentClientKey{}, client)
 }
