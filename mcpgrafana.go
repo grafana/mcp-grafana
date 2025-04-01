@@ -3,6 +3,7 @@ package mcpgrafana
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -47,6 +48,7 @@ var ExtractGrafanaInfoFromEnv server.StdioContextFunc = func(ctx context.Context
 	if u == "" {
 		u = defaultGrafanaURL
 	}
+	slog.Info("Using Grafana configuration", "url", u, "api_key_set", apiKey != "")
 	return WithGrafanaURL(WithGrafanaAPIKey(ctx, apiKey), u)
 }
 
@@ -100,8 +102,10 @@ type grafanaClientKey struct{}
 var ExtractGrafanaClientFromEnv server.StdioContextFunc = func(ctx context.Context) context.Context {
 	cfg := client.DefaultTransportConfig()
 	// Extract transport config from env vars, and set it on the context.
-	if u, ok := os.LookupEnv(grafanaURLEnvVar); ok {
-		url, err := url.Parse(u)
+	var grafanaURL string
+	var ok bool
+	if grafanaURL, ok = os.LookupEnv(grafanaURLEnvVar); ok {
+		url, err := url.Parse(grafanaURL)
 		if err != nil {
 			panic(fmt.Errorf("invalid %s: %w", grafanaURLEnvVar, err))
 		}
@@ -111,11 +115,16 @@ var ExtractGrafanaClientFromEnv server.StdioContextFunc = func(ctx context.Conte
 		if url.Scheme == "http" {
 			cfg.Schemes = []string{"http"}
 		}
+	} else {
+		grafanaURL = defaultGrafanaURL
 	}
-	if apiKey := os.Getenv(grafanaAPIEnvVar); apiKey != "" {
+
+	apiKey := os.Getenv(grafanaAPIEnvVar)
+	if apiKey != "" {
 		cfg.APIKey = apiKey
 	}
 
+	slog.Debug("Creating Grafana client", "url", grafanaURL, "api_key_set", apiKey != "")
 	client := client.NewHTTPClientWithConfig(strfmt.Default, cfg)
 	return context.WithValue(ctx, grafanaClientKey{}, client)
 }
@@ -161,7 +170,11 @@ type incidentClientKey struct{}
 
 var ExtractIncidentClientFromEnv server.StdioContextFunc = func(ctx context.Context) context.Context {
 	grafanaURL, apiKey := urlAndAPIKeyFromEnv()
+	if grafanaURL == "" {
+		grafanaURL = defaultGrafanaURL
+	}
 	incidentURL := fmt.Sprintf("%s/api/plugins/grafana-incident-app/resources/api/v1/", grafanaURL)
+	slog.Debug("Creating Incident client", "url", incidentURL, "api_key_set", apiKey != "")
 	client := incident.NewClient(incidentURL, apiKey)
 	return context.WithValue(ctx, incidentClientKey{}, client)
 }
