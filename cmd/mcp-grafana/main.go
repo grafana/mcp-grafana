@@ -25,7 +25,7 @@ func maybeAddTools(s *server.MCPServer, tf func(*server.MCPServer), disable bool
 type disabledTools struct {
 	search, datasource, incident,
 	prometheus, loki, alerting,
-	dashboard, oncall bool
+	dashboard, oncall, sift bool
 }
 
 func (dt *disabledTools) addFlags() {
@@ -37,6 +37,7 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.alerting, "disable-alerting", false, "Disable alerting tools")
 	flag.BoolVar(&dt.dashboard, "disable-dashboard", false, "Disable dashboard tools")
 	flag.BoolVar(&dt.oncall, "disable-oncall", false, "Disable oncall tools")
+	flag.BoolVar(&dt.sift, "disable-sift", false, "Disable sift tools")
 }
 
 func (dt *disabledTools) addTools(s *server.MCPServer) {
@@ -48,6 +49,7 @@ func (dt *disabledTools) addTools(s *server.MCPServer) {
 	maybeAddTools(s, tools.AddAlertingTools, dt.alerting, "alerting")
 	maybeAddTools(s, tools.AddDashboardTools, dt.dashboard, "dashboard")
 	maybeAddTools(s, tools.AddOnCallTools, dt.oncall, "oncall")
+	maybeAddTools(s, tools.AddSiftTools, dt.sift, "sift")
 }
 
 func newServer(dt disabledTools) *server.MCPServer {
