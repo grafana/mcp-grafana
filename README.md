@@ -33,6 +33,12 @@ This provides access to your Grafana instance and the surrounding ecosystem.
   - [ ] Create and change alert rules
   - [ ] List contact points
   - [ ] Create and change contact points
+- [x] Access Grafana OnCall functionality
+  - [x] List and manage schedules
+  - [x] Get shift details
+  - [x] Get current on-call users
+  - [x] List teams and users
+  - [ ] List alert groups
 
 The list of tools is configurable, so you can choose which tools you want to make available to the MCP client.
 This is useful if you don't use certain functionality or if you don't want to take up too much of the context window.
@@ -61,6 +67,11 @@ This is useful if you don't use certain functionality or if you don't want to ta
 | `query_loki_stats`                | Loki        | Get statistics about log streams                                   |
 | `list_alert_rules`                | Alerting    | List alert rules                                                   |
 | `get_alert_rule_by_uid`           | Alerting    | Get alert rule by UID                                              |
+| `list_oncall_schedules`           | OnCall      | List schedules from Grafana OnCall                                 |
+| `get_oncall_shift`                | OnCall      | Get details for a specific OnCall shift                           |
+| `get_current_oncall_users`        | OnCall      | Get users currently on-call for a specific schedule                |
+| `list_oncall_teams`               | OnCall      | List teams from Grafana OnCall                                     |
+| `list_oncall_users`               | OnCall      | List users from Grafana OnCall                                     |
 
 ## Usage
 
@@ -122,13 +133,28 @@ docker run -it --rm -p 8000:8000 mcp-grafana:latest
 
 ### Testing
 
-To run unit tests, run:
+There are three types of tests available:
 
+1. Unit Tests (no external dependencies required):
+```bash
+make test-unit
+```
+
+You can also run unit tests with:
 ```bash
 make test
 ```
 
-**TODO: add integration tests and cloud tests.**
+2. Integration Tests (requires docker containers to be up and running):
+```bash
+make test-integration
+```
+
+3. Cloud Tests (requires cloud Grafana instance and credentials):
+```bash
+make test-cloud
+```
+> Note: Cloud tests are automatically configured in CI. For local development, you'll need to set up your own Grafana Cloud instance and credentials.
 
 More comprehensive integration tests will require a Grafana instance to be running locally on port 3000; you can start one with Docker Compose:
 

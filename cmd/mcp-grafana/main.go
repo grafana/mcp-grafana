@@ -25,6 +25,7 @@ func newServer() *server.MCPServer {
 	tools.AddLokiTools(s)
 	tools.AddAlertingTools(s)
 	tools.AddDashboardTools(s)
+	tools.AddOnCallTools(s)
 	return s
 }
 
