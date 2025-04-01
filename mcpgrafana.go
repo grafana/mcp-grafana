@@ -24,6 +24,7 @@ const (
 
 	grafanaURLHeader    = "X-Grafana-URL"
 	grafanaAPIKeyHeader = "X-Grafana-API-Key"
+	grafanaOrgIDHeader  = "X-Scope-OrgID"
 )
 
 func urlAndAPIKeyFromEnv() (string, string) {
@@ -40,6 +41,7 @@ func urlAndAPIKeyFromHeaders(req *http.Request) (string, string) {
 
 type grafanaURLKey struct{}
 type grafanaAPIKeyKey struct{}
+type grafanaOrgIDKey struct{}
 
 // grafanaDebugKey is the context key for the Grafana transport's debug flag.
 type grafanaDebugKey struct{}
@@ -90,7 +92,8 @@ var ExtractGrafanaInfoFromHeaders server.SSEContextFunc = func(ctx context.Conte
 	if apiKey == "" {
 		apiKey = apiKeyEnv
 	}
-	return WithGrafanaURL(WithGrafanaAPIKey(ctx, apiKey), u)
+	orgID := req.Header.Get(grafanaOrgIDHeader)
+	return WithGrafanaOrgID(WithGrafanaURL(WithGrafanaAPIKey(ctx, apiKey), u), orgID)
 }
 
 // WithGrafanaURL adds the Grafana URL to the context.
@@ -101,6 +104,11 @@ func WithGrafanaURL(ctx context.Context, url string) context.Context {
 // WithGrafanaAPIKey adds the Grafana API key to the context.
 func WithGrafanaAPIKey(ctx context.Context, apiKey string) context.Context {
 	return context.WithValue(ctx, grafanaAPIKeyKey{}, apiKey)
+}
+
+// WithGrafanaOrgID adds the Grafana organization ID to the context.
+func WithGrafanaOrgID(ctx context.Context, orgID string) context.Context {
+	return context.WithValue(ctx, grafanaOrgIDKey{}, orgID)
 }
 
 // GrafanaURLFromContext extracts the Grafana URL from the context.
@@ -115,6 +123,15 @@ func GrafanaURLFromContext(ctx context.Context) string {
 func GrafanaAPIKeyFromContext(ctx context.Context) string {
 	if k, ok := ctx.Value(grafanaAPIKeyKey{}).(string); ok {
 		return k
+	}
+	return ""
+}
+
+// GrafanaOrgIDFromContext extracts the Grafana organization ID from the context.
+// TODO: To be discovered
+func GrafanaOrgIDFromContext(ctx context.Context) string {
+	if orgID, ok := ctx.Value(grafanaOrgIDKey{}).(string); ok {
+		return orgID
 	}
 	return ""
 }
