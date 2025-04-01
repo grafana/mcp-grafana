@@ -133,13 +133,28 @@ docker run -it --rm -p 8000:8000 mcp-grafana:latest
 
 ### Testing
 
-To run unit tests, run:
+There are three types of tests available:
 
+1. Unit Tests (no external dependencies required):
+```bash
+make test-unit
+```
+
+You can also run unit tests with:
 ```bash
 make test
 ```
 
-**TODO: add integration tests and cloud tests.**
+2. Integration Tests (requires docker containers to be up and running):
+```bash
+make test-integration
+```
+
+3. Cloud Tests (requires cloud Grafana instance and credentials):
+```bash
+make test-cloud
+```
+> Note: Cloud tests are automatically configured in CI. For local development, you'll need to set up your own Grafana Cloud instance and credentials.
 
 More comprehensive integration tests will require a Grafana instance to be running locally on port 3000; you can start one with Docker Compose:
 
