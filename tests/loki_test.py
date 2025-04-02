@@ -51,11 +51,11 @@ async def mcp_client(mcp_url, grafana_headers):
 @pytest.mark.parametrize("model", models)
 async def test_loki(model: str, mcp_client: ClientSession):
     tools = await mcp_client.list_tools()
-    prompt = "Can you show me the unique container values from the Grafana container using any available Loki datasource? Use the least amount of tools possible."
+    prompt = "Can you show me the last 10 log lines from all containers using any available Loki datasource? Use the least amount of tools possible."
 
     messages: list[Message] = [
-        Message(role="system", content="You are a helpful assistant."),  # type: ignore
-        Message(role="user", content=prompt),  # type: ignore
+        Message(role="system", content="You are a helpful assistant."),
+        Message(role="user", content=prompt),
     ]
     tools = [convert_tool(t) for t in tools.tools]
 
@@ -65,7 +65,7 @@ async def test_loki(model: str, mcp_client: ClientSession):
         tools=tools,
     )
 
-    # Check that there's a tool call.
+    # Check that there's a datasources tool call.
     assert isinstance(response, ModelResponse)
     messages.extend(
         await assert_and_handle_tool_call(response, mcp_client, "list_datasources")
@@ -87,14 +87,14 @@ async def test_loki(model: str, mcp_client: ClientSession):
         tools=tools,
     )
 
-    # Check that there's a tool call.
+    # Check that there's a loki logstool call.
     assert isinstance(response, ModelResponse)
     messages.extend(
         await assert_and_handle_tool_call(
             response,
             mcp_client,
-            "list_loki_label_values",
-            {"datasourceUid": "loki", "labelName": "container"},
+            "query_loki_logs",
+            {"datasourceUid": "loki"},
         )
     )
 
@@ -107,12 +107,12 @@ async def test_loki(model: str, mcp_client: ClientSession):
 
     # Check that the response has some log lines.
     content = response.choices[0].message.content  # type: ignore
-    container_label_checker = CustomLLMBooleanEvaluator(
+    log_lines_checker = CustomLLMBooleanEvaluator(
         settings=CustomLLMBooleanSettings(
-            prompt="Does the response look like it contains container label values?",
+            prompt="Does the response provide a meaningful analysis or summary of the log data retrieved from Grafana? It should interpret and present the information in a clear, human-readable way rather than just showing raw log lines.",
         )
     )
-    expect(input=prompt, output=content).to_pass(container_label_checker)
+    expect(input=prompt, output=content).to_pass(log_lines_checker)
 
 
 async def assert_and_handle_tool_call(
@@ -142,7 +142,11 @@ async def assert_and_handle_tool_call(
             else json.loads(tool_call.function.arguments)
         )
         assert tool_call.function.name == expected_tool
-        assert arguments == (expected_args or {})
+
+        if expected_args:
+            for key, value in expected_args.items():
+                assert key in arguments, f"Missing required argument '{key}' in tool call"
+                assert arguments[key] == value, f"Argument '{key}' has wrong value. Expected: {value}, Got: {arguments[key]}"
         result = await mcp_client.call_tool(tool_call.function.name, arguments)
         # Assume each tool returns a single text content for now
         assert len(result.content) == 1
