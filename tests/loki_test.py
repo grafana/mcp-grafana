@@ -51,7 +51,7 @@ async def mcp_client(mcp_url, grafana_headers):
 @pytest.mark.parametrize("model", models)
 async def test_loki(model: str, mcp_client: ClientSession):
     tools = await mcp_client.list_tools()
-    prompt = "Can you show me the last 10 log lines from all containers using any available Loki datasource? Use the least amount of tools possible."
+    prompt = "Can you list the last 10 log lines from all containers using any available Loki datasource? Give me the raw log lines. Please use only the necessary tools to get this information."
 
     messages: list[Message] = [
         Message(role="system", content="You are a helpful assistant."),
@@ -109,10 +109,81 @@ async def test_loki(model: str, mcp_client: ClientSession):
     content = response.choices[0].message.content  # type: ignore
     log_lines_checker = CustomLLMBooleanEvaluator(
         settings=CustomLLMBooleanSettings(
-            prompt="Does the response provide a meaningful analysis or summary of the log data retrieved from Grafana? It should interpret and present the information in a clear, human-readable way rather than just showing raw log lines.",
+            prompt="Does the response contain specific information that could only come from a Loki datasource? This could be actual log lines with timestamps, container names, or a summary that references specific log data. The response should show evidence of real data rather than generic statements.",
         )
     )
+    print("content", content)
     expect(input=prompt, output=content).to_pass(log_lines_checker)
+
+
+@pytest.mark.parametrize("model", models)
+async def test_loki_container_labels(model: str, mcp_client: ClientSession):
+    tools = await mcp_client.list_tools()
+    prompt = "Can you list the values for the container label in any available loki datasource? Please use only the necessary tools to get this information."
+
+    messages: list[Message] = [
+        Message(role="system", content="You are a helpful assistant."),
+        Message(role="user", content=prompt),
+    ]
+    tools = [convert_tool(t) for t in tools.tools]
+
+    response = await acompletion(
+        model=model,
+        messages=messages,
+        tools=tools,
+    )
+
+    # Check that there's a datasources tool call.
+    assert isinstance(response, ModelResponse)
+    messages.extend(
+        await assert_and_handle_tool_call(response, mcp_client, "list_datasources")
+    )
+
+    datasources_response = messages[-1].content
+    datasources_data = json.loads(datasources_response)
+    assert len(datasources_data) > 0, "Should have at least one datasource"
+
+    # Verify Loki datasource exists
+    loki_datasources = [ds for ds in datasources_data if ds.get("type") == "loki"]
+    assert len(loki_datasources) > 0, "No Loki datasource found"
+    print(f"\nFound Loki datasource: {loki_datasources[0]['name']} (uid: {loki_datasources[0]['uid']})")
+
+    # Call the LLM including the tool call result.
+    response = await acompletion(
+        model=model,
+        messages=messages,
+        tools=tools,
+    )
+
+    # Check that there's a list_loki_label_values tool call.
+    assert isinstance(response, ModelResponse)
+    messages.extend(
+        await assert_and_handle_tool_call(
+            response,
+            mcp_client,
+            "list_loki_label_values",
+            {
+                "datasourceUid": "loki",
+                "labelName": "container"
+            },
+        )
+    )
+
+    # Call the LLM including the tool call result.
+    response = await acompletion(
+        model=model,
+        messages=messages,
+        tools=tools,
+    )
+
+    # Check that the response provides a meaningful summary of container labels
+    content = response.choices[0].message.content  # type: ignore
+    label_checker = CustomLLMBooleanEvaluator(
+        settings=CustomLLMBooleanSettings(
+            prompt="Does the response provide a clear and organized list of container names found in the logs? It should present the container names in a readable format and may include additional context about their usage.",
+        )
+    )
+    expect(input=prompt, output=content).to_pass(label_checker)
 
 
 async def assert_and_handle_tool_call(
