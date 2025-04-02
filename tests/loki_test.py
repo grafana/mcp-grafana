@@ -19,17 +19,12 @@ models = ["gpt-4o", "claude-3-5-sonnet-20240620"]
 pytestmark = pytest.mark.anyio
 
 
-@pytest.fixture(scope="session")
-def anyio_backend():
-    return "asyncio"
-
-
-@pytest.fixture(scope="session")
+@pytest.fixture
 def mcp_url():
     return os.environ.get("MCP_GRAFANA_URL", "http://localhost:8000/sse")
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture
 def grafana_headers():
     headers = {
         "X-Grafana-URL": os.environ.get("GRAFANA_URL", "http://localhost:3000"),
@@ -39,7 +34,7 @@ def grafana_headers():
     return headers
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture
 async def mcp_client(mcp_url, grafana_headers):
     async with sse_client(mcp_url, headers=grafana_headers) as (
         read,
