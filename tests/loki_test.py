@@ -49,7 +49,7 @@ async def mcp_client(mcp_url, grafana_headers):
 @pytest.mark.parametrize("model", models)
 async def test_loki(model: str, mcp_client: ClientSession):
     tools = await mcp_client.list_tools()
-    prompt = "what are the most recent log lines coming from Grafana?"
+    prompt = "Can you show me the unique container values from the Grafana container using any available Loki datasource? Use the least amount of tools possible."
 
     messages: list[Message] = [
         Message(role="system", content="You are a helpful assistant."),  # type: ignore
@@ -69,23 +69,9 @@ async def test_loki(model: str, mcp_client: ClientSession):
         await assert_and_handle_tool_call(response, mcp_client, "list_datasources")
     )
 
-    # Call the LLM including the tool call result.
-    response = await acompletion(
-        model=model,
-        messages=messages,
-        tools=tools,
-    )
-
-    # Check that there's a tool call.
-    assert isinstance(response, ModelResponse)
-    messages.extend(
-        await assert_and_handle_tool_call(
-            response,
-            mcp_client,
-            "list_loki_label_names",
-            {"datasourceUid": "loki"},
-        )
-    )
+    datasources_response = messages[-1].content
+    datasources_data = json.loads(datasources_response)
+    assert len(datasources_data) > 0, "Should have at least one datasource"
 
     # Call the LLM including the tool call result.
     response = await acompletion(
@@ -112,35 +98,14 @@ async def test_loki(model: str, mcp_client: ClientSession):
         tools=tools,
     )
 
-    # Check that there's another tool call.
-    assert isinstance(response, ModelResponse)
-    messages.extend(
-        await assert_and_handle_tool_call(
-            response,
-            mcp_client,
-            "query_loki_logs",
-            {
-                "datasourceUid": "loki",
-                "logql": 'container="grafana"',
-            },
-        )
-    )
-
-    # Call the LLM including the tool call result.
-    response = await acompletion(
-        model=model,
-        messages=messages,
-        tools=tools,
-    )
-
     # Check that the response has some log lines.
     content = response.choices[0].message.content  # type: ignore
-    log_line_checker = CustomLLMBooleanEvaluator(
+    container_label_checker = CustomLLMBooleanEvaluator(
         settings=CustomLLMBooleanSettings(
-            prompt="Does the response look like it contains Grafana log lines?",
+            prompt="Does the response look like it contains container label values?",
         )
     )
-    expect(input=prompt, output=content).to_pass(log_line_checker)
+    expect(input=prompt, output=content).to_pass(container_label_checker)
 
 
 async def assert_and_handle_tool_call(
