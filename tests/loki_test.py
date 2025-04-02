@@ -4,7 +4,6 @@ from typing import Any
 
 from litellm.types.utils import ModelResponse
 import pytest
-import pytest_asyncio
 from langevals import expect
 from langevals_langevals.llm_boolean import (
     CustomLLMBooleanEvaluator,
@@ -16,6 +15,13 @@ from mcp import ClientSession
 from mcp.client.sse import sse_client
 
 models = ["gpt-4o", "claude-3-5-sonnet-20240620"]
+
+pytestmark = pytest.mark.anyio
+
+
+@pytest.fixture(scope="session")
+def anyio_backend():
+    return "asyncio"
 
 
 @pytest.fixture(scope="session")
@@ -33,7 +39,7 @@ def grafana_headers():
     return headers
 
 
-@pytest_asyncio.fixture(loop_scope="session", scope="session")
+@pytest.fixture(scope="session")
 async def mcp_client(mcp_url, grafana_headers):
     async with sse_client(mcp_url, headers=grafana_headers) as (
         read,
@@ -45,7 +51,6 @@ async def mcp_client(mcp_url, grafana_headers):
             yield session
 
 
-@pytest.mark.asyncio(loop_scope="session")
 @pytest.mark.parametrize("model", models)
 async def test_loki(model: str, mcp_client: ClientSession):
     tools = await mcp_client.list_tools()
