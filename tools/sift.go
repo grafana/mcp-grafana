@@ -190,7 +190,6 @@ func siftClientFromContext(ctx context.Context) (*SiftClient, error) {
 type CreateInvestigationParams struct {
 	Name        string               `json:"name" jsonschema:"required,description=The name of the investigation"`
 	RequestData InvestigationRequest `json:"requestData" jsonschema:"required,description=The request data for the investigation"`
-	GrafanaURL  string               `json:"grafanaUrl,omitempty" jsonschema:"description=The Grafana URL to be used for datasource queries"`
 	Verbose     bool                 `json:"verbose,omitempty" jsonschema:"description=Whether to include extra details in the results of each analysis"`
 }
 
@@ -212,7 +211,7 @@ func createInvestigation(ctx context.Context, args CreateInvestigationParams) (*
 	investigation := &Investigation{
 		Name:        args.Name,
 		RequestData: args.RequestData,
-		GrafanaURL:  args.GrafanaURL,
+		GrafanaURL:  client.url,
 		Verbose:     args.Verbose,
 		Status:      InvestigationStatusPending,
 	}
@@ -223,7 +222,7 @@ func createInvestigation(ctx context.Context, args CreateInvestigationParams) (*
 // CreateInvestigation is a tool for creating new investigations
 var CreateInvestigation = mcpgrafana.MustTool(
 	"create_investigation",
-	"Create a new investigation with the specified parameters. The investigation will be created in a pending state and will be processed asynchronously. If time is not provided, the default time range will be last hour and the title can be infered by the labels used. User can provide labels to run the investigation on.",
+	"Create a new investigation with the specified parameters. If time is not provided, the default time range will be last hour and the title can be infered by the labels used. User can provide labels to run the investigation on.",
 	createInvestigation,
 )
 
@@ -245,21 +244,103 @@ func (c *SiftClient) createInvestigation(ctx context.Context, investigation *Inv
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := c.client.Do(req)
+	// resp, err := c.client.Do(req)
+	// if err != nil {
+	// 	return nil, fmt.Errorf("executing request: %w", err)
+	// }
+	// defer resp.Body.Close()
+
+	// if resp.StatusCode/200 != 1 {
+	// 	body, _ := io.ReadAll(resp.Body)
+	// 	return nil, fmt.Errorf("unexpected status code %d: %s", resp.StatusCode, string(body))
+	// }
+
+	// var result Investigation
+	// if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	// 	return nil, fmt.Errorf("decoding response: %w", err)
+	// }
+	response, err := c.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("executing request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusCreated {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("unexpected status code %d: %s", resp.StatusCode, string(body))
+		return nil, err
 	}
 
-	var result Investigation
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("decoding response: %w", err)
+	body := io.LimitReader(response.Body, 1024*1024*48)
+	defer response.Body.Close()
+
+	buf, err := io.ReadAll(body)
+	if err != nil {
+		err = fmt.Errorf("failed to read response body: %w", err)
+		return nil, err
 	}
 
-	return &result, nil
+	investigationResponse := struct {
+		Status string        `json:"status"`
+		Data   Investigation `json:"data"`
+	}{}
+
+	// Unmarshal the response
+	err = json.Unmarshal(buf, &investigationResponse)
+	if err != nil {
+		err = fmt.Errorf("failed to unmarshal response body: %w. body: %s", err, buf)
+		return nil, err
+	}
+
+	// Poll for investigation completion
+	ticker := time.NewTicker(5 * time.Second) // Poll every 5 seconds
+	defer ticker.Stop()
+
+	// Add timeout of 5 minutes
+	timeout := time.After(5 * time.Minute)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("context cancelled while waiting for investigation completion")
+		case <-timeout:
+			return nil, fmt.Errorf("timeout waiting for investigation completion after 5 minutes")
+		case <-ticker.C:
+			// Get investigation status
+			statusReq, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/api/plugins/grafana-ml-app/resources/sift/api/v1/investigations/%s", c.url, investigationResponse.Data.ID), nil)
+			if err != nil {
+				return nil, fmt.Errorf("creating status request: %w", err)
+			}
+
+			// Send the request
+			response, err := c.client.Do(statusReq)
+			if err != nil {
+				return nil, err
+			}
+
+			body := io.LimitReader(response.Body, 1024*1024*48)
+			defer response.Body.Close()
+
+			buf, err := io.ReadAll(body)
+			if err != nil {
+				err = fmt.Errorf("failed to read response body: %w", err)
+				return nil, err
+			}
+
+			investigationResponse := struct {
+				Status string        `json:"status"`
+				Data   Investigation `json:"data"`
+			}{}
+
+			// Unmarshal the response
+			err = json.Unmarshal(buf, &investigationResponse)
+			if err != nil {
+				err = fmt.Errorf("failed to unmarshal response body: %w. body: %s", err, buf)
+				return nil, err
+			}
+
+			// If investigation failed, return error
+			if investigationResponse.Data.Status == InvestigationStatusFailed {
+				return nil, fmt.Errorf("investigation failed: %s", investigation.FailureReason)
+			}
+
+			// If investigation failed, return error
+			if investigationResponse.Data.Status == InvestigationStatusFinished {
+				return &investigationResponse.Data, nil
+			}
+		}
+	}
 }
