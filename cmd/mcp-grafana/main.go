@@ -4,7 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 
 	"github.com/mark3labs/mcp-go/server"
@@ -29,19 +29,21 @@ func newServer() *server.MCPServer {
 	return s
 }
 
-func run(transport, addr string) error {
+func run(transport, addr string, logLevel slog.Level) error {
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})))
 	s := newServer()
 
 	switch transport {
 	case "stdio":
 		srv := server.NewStdioServer(s)
 		srv.SetContextFunc(mcpgrafana.ComposedStdioContextFunc)
+		slog.Info("Starting Grafana MCP server using stdio transport")
 		return srv.Listen(context.Background(), os.Stdin, os.Stdout)
 	case "sse":
 		srv := server.NewSSEServer(s,
 			server.WithSSEContextFunc(mcpgrafana.ComposedSSEContextFunc),
 		)
-		log.Printf("SSE server listening on %s", addr)
+		slog.Info("Starting Grafana MCP server using SSE transport", "address", addr)
 		if err := srv.Start(addr); err != nil {
 			return fmt.Errorf("Server error: %v", err)
 		}
@@ -64,9 +66,18 @@ func main() {
 		"Transport type (stdio or sse)",
 	)
 	addr := flag.String("sse-address", "localhost:8000", "The host and port to start the sse server on")
+	logLevel := flag.String("log-level", "info", "Log level (debug, info, warn, error)")
 	flag.Parse()
 
-	if err := run(transport, *addr); err != nil {
+	if err := run(transport, *addr, parseLevel(*logLevel)); err != nil {
 		panic(err)
 	}
+}
+
+func parseLevel(level string) slog.Level {
+	var l slog.Level
+	if err := l.UnmarshalText([]byte(level)); err != nil {
+		return slog.LevelInfo
+	}
+	return l
 }
