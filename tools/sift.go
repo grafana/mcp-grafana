@@ -162,7 +162,6 @@ type RequestData struct {
 type SiftClient struct {
 	client *http.Client
 	url    string
-	orgID  string
 }
 
 func NewSiftClient(url, apiKey string) *SiftClient {
@@ -181,13 +180,8 @@ func NewSiftClient(url, apiKey string) *SiftClient {
 func siftClientFromContext(ctx context.Context) (*SiftClient, error) {
 	// Get the standard Grafana URL and API key
 	grafanaURL, grafanaAPIKey := mcpgrafana.GrafanaURLFromContext(ctx), mcpgrafana.GrafanaAPIKeyFromContext(ctx)
-	orgID := mcpgrafana.GrafanaOrgIDFromContext(ctx)
-	if orgID == "" {
-		return nil, fmt.Errorf("organization ID not set in context")
-	}
 
 	client := NewSiftClient(grafanaURL, grafanaAPIKey)
-	client.orgID = orgID
 
 	return client, nil
 }
@@ -250,7 +244,6 @@ func (c *SiftClient) createInvestigation(ctx context.Context, investigation *Inv
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Scope-OrgID", c.orgID)
 
 	resp, err := c.client.Do(req)
 	if err != nil {
