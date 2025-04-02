@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/mark3labs/mcp-go/server"
 
@@ -10,7 +11,9 @@ import (
 	mcpgrafana "github.com/grafana/mcp-grafana"
 )
 
-type ListDatasourcesParams struct{}
+type ListDatasourcesParams struct {
+	Type string `json:"type,omitempty" jsonschema:"descripton=The type of datasources to search for. For example, 'prometheus', 'loki', 'tempo', etc..."`
+}
 
 type dataSourceSummary struct {
 	ID        int64  `json:"id"`
@@ -22,11 +25,28 @@ type dataSourceSummary struct {
 
 func listDatasources(ctx context.Context, args ListDatasourcesParams) ([]dataSourceSummary, error) {
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
-	datasources, err := c.Datasources.GetDataSources()
+	resp, err := c.Datasources.GetDataSources()
 	if err != nil {
 		return nil, fmt.Errorf("list datasources: %w", err)
 	}
-	return summarizeDatasources(datasources.Payload), nil
+	datasources := filterDatasources(resp.Payload, args.Type)
+	return summarizeDatasources(datasources), nil
+}
+
+// filterDatasources returns only datasources of the specified type `t`. If `t`
+// is an empty string no filtering is done.
+func filterDatasources(datasources models.DataSourceList, t string) models.DataSourceList {
+	if t == "" {
+		return datasources
+	}
+	filtered := models.DataSourceList{}
+	t = strings.ToLower(t)
+	for _, ds := range datasources {
+		if strings.Contains(strings.ToLower(ds.Type), t) {
+			filtered = append(filtered, ds)
+		}
+	}
+	return filtered
 }
 
 func summarizeDatasources(dataSources models.DataSourceList) []dataSourceSummary {
