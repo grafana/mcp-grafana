@@ -14,20 +14,22 @@ from mcp.types import TextContent, Tool
 from mcp import ClientSession
 from mcp.client.sse import sse_client
 
+DEFAULT_GRAFANA_URL = "http://localhost:3000"
+DEFAULT_MCP_URL = "http://localhost:8000/sse"
+
 models = ["gpt-4o", "claude-3-5-sonnet-20240620"]
 
 pytestmark = pytest.mark.anyio
 
-
 @pytest.fixture
 def mcp_url():
-    return os.environ.get("MCP_GRAFANA_URL", "http://localhost:8000/sse")
+    return os.environ.get("MCP_GRAFANA_URL", DEFAULT_MCP_URL)
 
 
 @pytest.fixture
 def grafana_headers():
     headers = {
-        "X-Grafana-URL": os.environ.get("GRAFANA_URL", "http://localhost:3000"),
+        "X-Grafana-URL": os.environ.get("GRAFANA_URL", DEFAULT_GRAFANA_URL),
     }
     if key := os.environ.get("GRAFANA_API_KEY"):
         headers["X-Grafana-API-Key"] = key
@@ -72,6 +74,11 @@ async def test_loki(model: str, mcp_client: ClientSession):
     datasources_response = messages[-1].content
     datasources_data = json.loads(datasources_response)
     assert len(datasources_data) > 0, "Should have at least one datasource"
+
+    # Verify Loki datasource exists
+    loki_datasources = [ds for ds in datasources_data if ds.get("type") == "loki"]
+    assert len(loki_datasources) > 0, "No Loki datasource found"
+    print(f"\nFound Loki datasource: {loki_datasources[0]['name']} (uid: {loki_datasources[0]['uid']})")
 
     # Call the LLM including the tool call result.
     response = await acompletion(
