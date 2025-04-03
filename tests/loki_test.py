@@ -24,6 +24,7 @@ models = ["gpt-4o", "claude-3-5-sonnet-20240620"]
 
 pytestmark = pytest.mark.anyio
 
+
 @pytest.fixture
 def mcp_url():
     return os.environ.get("MCP_GRAFANA_URL", DEFAULT_MCP_URL)
@@ -46,7 +47,6 @@ async def mcp_client(mcp_url, grafana_headers):
         write,
     ):
         async with ClientSession(read, write) as session:
-            # Initialize the connection
             await session.initialize()
             yield session
 
@@ -81,7 +81,9 @@ async def test_loki(model: str, mcp_client: ClientSession):
     # Verify Loki datasource exists
     loki_datasources = [ds for ds in datasources_data if ds.get("type") == "loki"]
     assert len(loki_datasources) > 0, "No Loki datasource found"
-    print(f"\nFound Loki datasource: {loki_datasources[0]['name']} (uid: {loki_datasources[0]['uid']})")
+    print(
+        f"\nFound Loki datasource: {loki_datasources[0]['name']} (uid: {loki_datasources[0]['uid']})"
+    )
 
     # Call the LLM including the tool call result.
     response = await acompletion(
@@ -109,7 +111,7 @@ async def test_loki(model: str, mcp_client: ClientSession):
     )
 
     # Check that the response has some log lines.
-    content = response.choices[0].message.content  # type: ignore
+    content = response.choices[0].message.content
     log_lines_checker = CustomLLMBooleanEvaluator(
         settings=CustomLLMBooleanSettings(
             prompt="Does the response contain specific information that could only come from a Loki datasource? This could be actual log lines with timestamps, container names, or a summary that references specific log data. The response should show evidence of real data rather than generic statements.",
@@ -149,7 +151,9 @@ async def test_loki_container_labels(model: str, mcp_client: ClientSession):
     # Verify Loki datasource exists
     loki_datasources = [ds for ds in datasources_data if ds.get("type") == "loki"]
     assert len(loki_datasources) > 0, "No Loki datasource found"
-    print(f"\nFound Loki datasource: {loki_datasources[0]['name']} (uid: {loki_datasources[0]['uid']})")
+    print(
+        f"\nFound Loki datasource: {loki_datasources[0]['name']} (uid: {loki_datasources[0]['uid']})"
+    )
 
     # Call the LLM including the tool call result.
     response = await acompletion(
@@ -165,10 +169,7 @@ async def test_loki_container_labels(model: str, mcp_client: ClientSession):
             response,
             mcp_client,
             "list_loki_label_values",
-            {
-                "datasourceUid": "loki",
-                "labelName": "container"
-            },
+            {"datasourceUid": "loki", "labelName": "container"},
         )
     )
 
@@ -180,7 +181,7 @@ async def test_loki_container_labels(model: str, mcp_client: ClientSession):
     )
 
     # Check that the response provides a meaningful summary of container labels
-    content = response.choices[0].message.content  # type: ignore
+    content = response.choices[0].message.content
     label_checker = CustomLLMBooleanEvaluator(
         settings=CustomLLMBooleanSettings(
             prompt="Does the response provide a clear and organized list of container names found in the logs? It should present the container names in a readable format and may include additional context about their usage.",
@@ -219,8 +220,12 @@ async def assert_and_handle_tool_call(
 
         if expected_args:
             for key, value in expected_args.items():
-                assert key in arguments, f"Missing required argument '{key}' in tool call"
-                assert arguments[key] == value, f"Argument '{key}' has wrong value. Expected: {value}, Got: {arguments[key]}"
+                assert key in arguments, (
+                    f"Missing required argument '{key}' in tool call"
+                )
+                assert arguments[key] == value, (
+                    f"Argument '{key}' has wrong value. Expected: {value}, Got: {arguments[key]}"
+                )
         result = await mcp_client.call_tool(tool_call.function.name, arguments)
         # Assume each tool returns a single text content for now
         assert len(result.content) == 1
