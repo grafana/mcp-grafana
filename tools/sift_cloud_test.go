@@ -10,35 +10,14 @@
 package tools
 
 import (
-	"context"
-	"os"
 	"testing"
 
-	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func createSiftCloudTestContext(t *testing.T) context.Context {
-	grafanaURL := os.Getenv("GRAFANA_URL")
-	if grafanaURL == "" {
-		t.Skip("GRAFANA_URL environment variable not set, skipping cloud Sift integration tests")
-	}
-
-	grafanaApiKey := os.Getenv("GRAFANA_API_KEY")
-	if grafanaApiKey == "" {
-		t.Skip("GRAFANA_API_KEY environment variable not set, skipping cloud Sift integration tests")
-	}
-
-	ctx := context.Background()
-	ctx = mcpgrafana.WithGrafanaURL(ctx, grafanaURL)
-	ctx = mcpgrafana.WithGrafanaAPIKey(ctx, grafanaApiKey)
-
-	return ctx
-}
-
 func TestCloudSiftInvestigations(t *testing.T) {
-	ctx := createSiftCloudTestContext(t)
+	ctx := createCloudTestContext(t, "Sift")
 
 	// Test listing all investigations
 	t.Run("list all investigations", func(t *testing.T) {
