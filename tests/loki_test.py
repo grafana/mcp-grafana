@@ -13,6 +13,9 @@ from litellm import ChatCompletionMessageToolCall, Choices, Message, acompletion
 from mcp.types import TextContent, Tool
 from mcp import ClientSession
 from mcp.client.sse import sse_client
+from dotenv import load_dotenv
+
+load_dotenv()
 
 DEFAULT_GRAFANA_URL = "http://localhost:3000"
 DEFAULT_MCP_URL = "http://localhost:8000/sse"
