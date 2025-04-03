@@ -10,6 +10,10 @@ The test suite evaluates the LLM's ability to use Grafana MCP tools effectively:
   - Process and present the results in a meaningful way
   - Evaluating the LLM responses using `langevals` package, using custom LLM-as-a-Judge approach.
 
+The tests are run against two LLM models:
+- GPT-4
+- Claude 3.5 Sonnet
+
 Tests are using [`uv`] to manage dependencies. Install uv following the instructions for your platform.
 
 ## Prerequisites
