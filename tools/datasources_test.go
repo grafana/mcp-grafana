@@ -57,6 +57,14 @@ func TestDatasourcesTools(t *testing.T) {
 		assert.Len(t, result, 3)
 	})
 
+	t.Run("list datasources for type", func(t *testing.T) {
+		ctx := newTestContext()
+		result, err := listDatasources(ctx, ListDatasourcesParams{Type: "Prometheus"})
+		require.NoError(t, err)
+		// Only two Prometheus datasources are provisioned in the test environment.
+		assert.Len(t, result, 2)
+	})
+
 	t.Run("get datasource by uid", func(t *testing.T) {
 		ctx := newTestContext()
 		result, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{
