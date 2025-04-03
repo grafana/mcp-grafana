@@ -13,35 +13,14 @@
 package tools
 
 import (
-	"context"
-	"os"
 	"testing"
 
-	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func createOnCallCloudTestContext(t *testing.T) context.Context {
-	grafanaURL := os.Getenv("GRAFANA_URL")
-	if grafanaURL == "" {
-		t.Skip("GRAFANA_URL environment variable not set, skipping cloud OnCall integration tests")
-	}
-
-	grafanaApiKey := os.Getenv("GRAFANA_API_KEY")
-	if grafanaApiKey == "" {
-		t.Skip("GRAFANA_API_KEY environment variable not set, skipping cloud OnCall integration tests")
-	}
-
-	ctx := context.Background()
-	ctx = mcpgrafana.WithGrafanaURL(ctx, grafanaURL)
-	ctx = mcpgrafana.WithGrafanaAPIKey(ctx, grafanaApiKey)
-
-	return ctx
-}
-
 func TestCloudOnCallSchedules(t *testing.T) {
-	ctx := createOnCallCloudTestContext(t)
+	ctx := createCloudTestContext(t, "OnCall")
 
 	// Test listing all schedules
 	t.Run("list all schedules", func(t *testing.T) {
@@ -104,7 +83,7 @@ func TestCloudOnCallSchedules(t *testing.T) {
 }
 
 func TestCloudOnCallShift(t *testing.T) {
-	ctx := createOnCallCloudTestContext(t)
+	ctx := createCloudTestContext(t, "OnCall")
 
 	// First get a schedule to find a valid shift
 	schedules, err := listOnCallSchedules(ctx, ListOnCallSchedulesParams{})
@@ -134,7 +113,7 @@ func TestCloudOnCallShift(t *testing.T) {
 }
 
 func TestCloudGetCurrentOnCallUsers(t *testing.T) {
-	ctx := createOnCallCloudTestContext(t)
+	ctx := createCloudTestContext(t, "OnCall")
 
 	// First get a schedule to use for testing
 	schedules, err := listOnCallSchedules(ctx, ListOnCallSchedulesParams{})
@@ -171,7 +150,7 @@ func TestCloudGetCurrentOnCallUsers(t *testing.T) {
 }
 
 func TestCloudOnCallTeams(t *testing.T) {
-	ctx := createOnCallCloudTestContext(t)
+	ctx := createCloudTestContext(t, "OnCall")
 
 	t.Run("list teams", func(t *testing.T) {
 		result, err := listOnCallTeams(ctx, ListOnCallTeamsParams{})
@@ -200,7 +179,7 @@ func TestCloudOnCallTeams(t *testing.T) {
 }
 
 func TestCloudOnCallUsers(t *testing.T) {
-	ctx := createOnCallCloudTestContext(t)
+	ctx := createCloudTestContext(t, "OnCall")
 
 	t.Run("list all users", func(t *testing.T) {
 		result, err := listOnCallUsers(ctx, ListOnCallUsersParams{})
