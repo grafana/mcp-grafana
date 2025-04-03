@@ -222,54 +222,87 @@ func createInvestigation(ctx context.Context, args CreateInvestigationParams) (*
 // CreateInvestigation is a tool for creating new investigations
 var CreateInvestigation = mcpgrafana.MustTool(
 	"create_investigation",
-	"Create a new investigation with the specified parameters. If time is not provided, the default time range will be last hour and the title can be infered by the labels used. User can provide labels to run the investigation on.",
+	"Create a new investigation. An investigation analyzes data from different datasource types. It takes a set of labels and values to scope the analysis, optionally accepts a time range (defaults to last hour if not specified) and the title can be infered by the labels used. The investigation will automatically explore relevant data sources and provide insights about potential causes.",
 	createInvestigation,
+)
+
+// GetInvestigationParams defines the parameters for retrieving an investigation
+type GetInvestigationParams struct {
+	ID string `json:"id" jsonschema:"required,description=The UUID of the investigation as a string (e.g. '02adab7c-bf5b-45f2-9459-d71a2c29e11b')"`
+}
+
+// getInvestigation retrieves an existing investigation
+func getInvestigation(ctx context.Context, args GetInvestigationParams) (*Investigation, error) {
+	client, err := siftClientFromContext(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("creating Sift client: %w", err)
+	}
+
+	// Parse the UUID string
+	id, err := uuid.Parse(args.ID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid investigation ID format: %w", err)
+	}
+
+	investigation, err := client.getInvestigation(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("getting investigation: %w", err)
+	}
+
+	return investigation, nil
+}
+
+// GetInvestigation is a tool for retrieving an existing investigation
+var GetInvestigation = mcpgrafana.MustTool(
+	"get_investigation",
+	"Retrieves an existing investigation by its UUID. The ID should be provided as a string in UUID format (e.g. '02adab7c-bf5b-45f2-9459-d71a2c29e11b').",
+	getInvestigation,
 )
 
 // AddSiftTools registers all Sift tools with the MCP server
 func AddSiftTools(mcp *server.MCPServer) {
 	CreateInvestigation.Register(mcp)
+	GetInvestigation.Register(mcp)
 }
 
-// TODO: this needs to be refactored so it waits for the investigation to be finished
-func (c *SiftClient) createInvestigation(ctx context.Context, investigation *Investigation) (*Investigation, error) {
-	jsonData, err := json.Marshal(investigation)
-	if err != nil {
-		return nil, fmt.Errorf("marshaling investigation: %w", err)
+// makeRequest is a helper method to make HTTP requests and handle common response patterns
+func (c *SiftClient) makeRequest(ctx context.Context, method, path string, body []byte) ([]byte, error) {
+	var req *http.Request
+	var err error
+
+	if body != nil {
+		req, err = http.NewRequestWithContext(ctx, method, c.url+path, bytes.NewBuffer(body))
+		if err != nil {
+			return nil, fmt.Errorf("creating request: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+	} else {
+		req, err = http.NewRequestWithContext(ctx, method, c.url+path, nil)
+		if err != nil {
+			return nil, fmt.Errorf("creating request: %w", err)
+		}
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", c.url+"/api/plugins/grafana-ml-app/resources/sift/api/v1/investigations", bytes.NewBuffer(jsonData))
-	if err != nil {
-		return nil, fmt.Errorf("creating request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	// resp, err := c.client.Do(req)
-	// if err != nil {
-	// 	return nil, fmt.Errorf("executing request: %w", err)
-	// }
-	// defer resp.Body.Close()
-
-	// if resp.StatusCode/200 != 1 {
-	// 	body, _ := io.ReadAll(resp.Body)
-	// 	return nil, fmt.Errorf("unexpected status code %d: %s", resp.StatusCode, string(body))
-	// }
-
-	// var result Investigation
-	// if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-	// 	return nil, fmt.Errorf("decoding response: %w", err)
-	// }
 	response, err := c.client.Do(req)
 	if err != nil {
 		return nil, err
 	}
 
-	body := io.LimitReader(response.Body, 1024*1024*48)
+	reader := io.LimitReader(response.Body, 1024*1024*48)
 	defer response.Body.Close()
 
-	buf, err := io.ReadAll(body)
+	buf, err := io.ReadAll(reader)
 	if err != nil {
-		err = fmt.Errorf("failed to read response body: %w", err)
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	return buf, nil
+}
+
+// getInvestigation is a helper method to get the current status of an investigation
+func (c *SiftClient) getInvestigation(ctx context.Context, id uuid.UUID) (*Investigation, error) {
+	buf, err := c.makeRequest(ctx, "GET", fmt.Sprintf("/api/plugins/grafana-ml-app/resources/sift/api/v1/investigations/%s", id), nil)
+	if err != nil {
 		return nil, err
 	}
 
@@ -278,18 +311,37 @@ func (c *SiftClient) createInvestigation(ctx context.Context, investigation *Inv
 		Data   Investigation `json:"data"`
 	}{}
 
-	// Unmarshal the response
-	err = json.Unmarshal(buf, &investigationResponse)
+	if err := json.Unmarshal(buf, &investigationResponse); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal response body: %w. body: %s", err, buf)
+	}
+
+	return &investigationResponse.Data, nil
+}
+
+func (c *SiftClient) createInvestigation(ctx context.Context, investigation *Investigation) (*Investigation, error) {
+	jsonData, err := json.Marshal(investigation)
 	if err != nil {
-		err = fmt.Errorf("failed to unmarshal response body: %w. body: %s", err, buf)
+		return nil, fmt.Errorf("marshaling investigation: %w", err)
+	}
+
+	buf, err := c.makeRequest(ctx, "POST", "/api/plugins/grafana-ml-app/resources/sift/api/v1/investigations", jsonData)
+	if err != nil {
 		return nil, err
 	}
 
+	investigationResponse := struct {
+		Status string        `json:"status"`
+		Data   Investigation `json:"data"`
+	}{}
+
+	if err := json.Unmarshal(buf, &investigationResponse); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal response body: %w. body: %s", err, buf)
+	}
+
 	// Poll for investigation completion
-	ticker := time.NewTicker(5 * time.Second) // Poll every 5 seconds
+	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
-	// Add timeout of 5 minutes
 	timeout := time.After(5 * time.Minute)
 
 	for {
@@ -299,47 +351,17 @@ func (c *SiftClient) createInvestigation(ctx context.Context, investigation *Inv
 		case <-timeout:
 			return nil, fmt.Errorf("timeout waiting for investigation completion after 5 minutes")
 		case <-ticker.C:
-			// Get investigation status
-			statusReq, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/api/plugins/grafana-ml-app/resources/sift/api/v1/investigations/%s", c.url, investigationResponse.Data.ID), nil)
-			if err != nil {
-				return nil, fmt.Errorf("creating status request: %w", err)
-			}
-
-			// Send the request
-			response, err := c.client.Do(statusReq)
+			investigation, err := c.getInvestigation(ctx, investigationResponse.Data.ID)
 			if err != nil {
 				return nil, err
 			}
 
-			body := io.LimitReader(response.Body, 1024*1024*48)
-			defer response.Body.Close()
-
-			buf, err := io.ReadAll(body)
-			if err != nil {
-				err = fmt.Errorf("failed to read response body: %w", err)
-				return nil, err
-			}
-
-			investigationResponse := struct {
-				Status string        `json:"status"`
-				Data   Investigation `json:"data"`
-			}{}
-
-			// Unmarshal the response
-			err = json.Unmarshal(buf, &investigationResponse)
-			if err != nil {
-				err = fmt.Errorf("failed to unmarshal response body: %w. body: %s", err, buf)
-				return nil, err
-			}
-
-			// If investigation failed, return error
-			if investigationResponse.Data.Status == InvestigationStatusFailed {
+			if investigation.Status == InvestigationStatusFailed {
 				return nil, fmt.Errorf("investigation failed: %s", investigation.FailureReason)
 			}
 
-			// If investigation failed, return error
-			if investigationResponse.Data.Status == InvestigationStatusFinished {
-				return &investigationResponse.Data, nil
+			if investigation.Status == InvestigationStatusFinished {
+				return investigation, nil
 			}
 		}
 	}
