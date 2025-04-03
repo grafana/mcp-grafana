@@ -186,11 +186,20 @@ func siftClientFromContext(ctx context.Context) (*SiftClient, error) {
 	return client, nil
 }
 
+// CheckType represents the type of analysis check to perform
+type CheckType string
+
+const (
+	CheckTypeErrorPatternLogs CheckType = "ErrorPatternLogs"
+	CheckTypeSlowRequests     CheckType = "SlowRequests"
+)
+
 // CreateInvestigationParams defines the parameters for creating a new investigation
 type CreateInvestigationParams struct {
 	Name        string               `json:"name" jsonschema:"required,description=The name of the investigation"`
 	RequestData InvestigationRequest `json:"requestData" jsonschema:"required,description=The request data for the investigation"`
 	Verbose     bool                 `json:"verbose,omitempty" jsonschema:"description=Whether to include extra details in the results of each analysis"`
+	Checks      []CheckType          `json:"checks,omitempty" jsonschema:"description=Optional list of specific checks to run. Can include ErrorPatternLogs and SlowRequests. If not provided, all checks will be run."`
 }
 
 // createInvestigation creates a new investigation
@@ -208,6 +217,18 @@ func createInvestigation(ctx context.Context, args CreateInvestigationParams) (*
 		args.RequestData.End = time.Now()
 	}
 
+	// If checks are provided, validate them
+	if len(args.Checks) > 0 {
+		for _, check := range args.Checks {
+			switch check {
+			case CheckTypeErrorPatternLogs, CheckTypeSlowRequests:
+			default:
+				return nil, fmt.Errorf("invalid check type: %s. Valid types are: %s, %s",
+					check, CheckTypeErrorPatternLogs, CheckTypeSlowRequests)
+			}
+		}
+	}
+
 	investigation := &Investigation{
 		Name:        args.Name,
 		RequestData: args.RequestData,
@@ -222,7 +243,7 @@ func createInvestigation(ctx context.Context, args CreateInvestigationParams) (*
 // CreateInvestigation is a tool for creating new investigations
 var CreateInvestigation = mcpgrafana.MustTool(
 	"create_investigation",
-	"Create a new investigation. An investigation analyzes data from different datasource types. It takes a set of labels and values to scope the analysis, optionally accepts a time range (defaults to last hour if not specified) and the title can be infered by the labels used. The investigation will automatically explore relevant data sources and provide insights about potential causes.",
+	"Create a new investigation. An investigation analyzes data from different datasource types. It takes a set of labels and values to scope the analysis, optionally accepts a time range (defaults to last hour if not specified) and the title can be infered by the labels used. The investigation will automatically explore relevant data sources and provide insights about potential causes. Optionally pass ErrorPatternLogs or SlowRequests as check types to run specific checks.",
 	createInvestigation,
 )
 
