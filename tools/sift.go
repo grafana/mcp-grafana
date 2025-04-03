@@ -327,11 +327,44 @@ var GetAnalysis = mcpgrafana.MustTool(
 	getAnalysis,
 )
 
+// ListInvestigationsParams defines the parameters for retrieving investigations
+type ListInvestigationsParams struct {
+	Limit int `json:"limit,omitempty" jsonschema:"description=Maximum number of investigations to return. Defaults to 10 if not specified."`
+}
+
+// listInvestigations retrieves a list of investigations with an optional limit
+func listInvestigations(ctx context.Context, args ListInvestigationsParams) ([]Investigation, error) {
+	client, err := siftClientFromContext(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("creating Sift client: %w", err)
+	}
+
+	// Set default limit if not provided
+	if args.Limit <= 0 {
+		args.Limit = 10
+	}
+
+	investigations, err := client.listInvestigations(ctx, args.Limit)
+	if err != nil {
+		return nil, fmt.Errorf("getting investigations: %w", err)
+	}
+
+	return investigations, nil
+}
+
+// ListInvestigations is a tool for retrieving a list of investigations
+var ListInvestigations = mcpgrafana.MustTool(
+	"list_investigations",
+	"Retrieves a list of investigations with an optional limit. If no limit is specified, defaults to 10 investigations.",
+	listInvestigations,
+)
+
 // AddSiftTools registers all Sift tools with the MCP server
 func AddSiftTools(mcp *server.MCPServer) {
 	CreateInvestigation.Register(mcp)
 	GetInvestigation.Register(mcp)
 	GetAnalysis.Register(mcp)
+	ListInvestigations.Register(mcp)
 }
 
 // makeRequest is a helper method to make HTTP requests and handle common response patterns
@@ -478,4 +511,24 @@ func (c *SiftClient) getAnalysis(ctx context.Context, investigationID, analysisI
 	}
 
 	return targetAnalysis, nil
+}
+
+// listInvestigations is a helper method to get a list of investigations
+func (c *SiftClient) listInvestigations(ctx context.Context, limit int) ([]Investigation, error) {
+	path := fmt.Sprintf("/api/plugins/grafana-ml-app/resources/sift/api/v1/investigations?limit=%d", limit)
+	buf, err := c.makeRequest(ctx, "GET", path, nil)
+	if err != nil {
+		return nil, fmt.Errorf("making request: %w", err)
+	}
+
+	var response struct {
+		Status string          `json:"status"`
+		Data   []Investigation `json:"data"`
+	}
+
+	if err := json.Unmarshal(buf, &response); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal response body: %w. body: %s", err, buf)
+	}
+
+	return response.Data, nil
 }
