@@ -107,6 +107,23 @@ type Analysis struct {
 	CreateWithID bool `json:"-" gorm:"-"`
 }
 
+type DatasourceConfig struct {
+	LokiDatasource       DatasourceInfo `json:"lokiDatasource" gorm:"not null;embedded;embeddedPrefix:loki_"`
+	PrometheusDatasource DatasourceInfo `json:"prometheusDatasource" gorm:"not null;embedded;embeddedPrefix:prometheus_"`
+	TempoDatasource      DatasourceInfo `json:"tempoDatasource" gorm:"not null;embedded;embeddedPrefix:tempo_"`
+	PyroscopeDatasource  DatasourceInfo `json:"pyroscopeDatasource" gorm:"not null;embedded;embeddedPrefix:pyroscope_"`
+}
+
+type DatasourceInfo struct {
+	Uid string `json:"uid"`
+}
+
+// AnalysisMeta represents metadata about the analyses
+type AnalysisMeta struct {
+	CountsByStage map[string]interface{} `json:"countsByStage"`
+	Items         []Analysis             `json:"items"`
+}
+
 type Investigation struct {
 	ID        uuid.UUID `json:"id" gorm:"primarykey;type:char(36)" validate:"isdefault"`
 	CreatedAt time.Time `json:"created" gorm:"index" validate:"isdefault"`
@@ -114,8 +131,7 @@ type Investigation struct {
 
 	TenantID string `json:"tenantId" gorm:"index;not null;size:256"`
 
-	// TODO: To be added.
-	// Datasources DatasourceConfig `json:"datasources" gorm:"embedded;embeddedPrefix:datasources_"`
+	Datasources DatasourceConfig `json:"datasources" gorm:"embedded;embeddedPrefix:datasources_"`
 
 	Name        string               `json:"name"`
 	RequestData InvestigationRequest `json:"requestData" gorm:"not null;embedded;embeddedPrefix:request_"`
@@ -127,9 +143,6 @@ type Investigation struct {
 	// for this investigation.
 	// If missing from a request then the `X-Grafana-URL` header is used.
 	GrafanaURL string `json:"grafanaUrl"`
-
-	// Verbose allows the client to write extra details in the results of each analysis.
-	Verbose bool `json:"verbose" gorm:"-"`
 
 	// Status describes the state of the investigation (pending, running, failed, or finished).
 	// This is stored in the db along with the failure reason if the investigation failed.
@@ -145,12 +158,8 @@ type Investigation struct {
 	// investigation failed.
 	FailureReason string `json:"failureReason,omitempty"`
 
-	// TODO: Add this when we want to extract quicker analysis results for later usage
-	// // AnalysisMeta contains high level metadata about the investigation's analyses.
-	// // It is computed on the fly in the AfterFind hook on Investigations.
-	// AnalysisMeta analysisMeta `json:"analyses" gorm:"-"`
-
-	Analyses []Analysis `json:"-"`
+	// Analyses contains metadata about the investigation's analyses
+	Analyses AnalysisMeta `json:"analyses"`
 }
 
 type RequestData struct {
@@ -209,9 +218,9 @@ func createInvestigation(ctx context.Context, args CreateInvestigationParams) (*
 		return nil, fmt.Errorf("creating Sift client: %w", err)
 	}
 
-	// Set default time range to last hour if not provided
+	// Set default time range to last 30 minutes if not provided
 	if args.RequestData.Start.IsZero() {
-		args.RequestData.Start = time.Now().Add(-1 * time.Hour)
+		args.RequestData.Start = time.Now().Add(-30 * time.Minute)
 	}
 	if args.RequestData.End.IsZero() {
 		args.RequestData.End = time.Now()
@@ -233,7 +242,6 @@ func createInvestigation(ctx context.Context, args CreateInvestigationParams) (*
 		Name:        args.Name,
 		RequestData: args.RequestData,
 		GrafanaURL:  client.url,
-		Verbose:     args.Verbose,
 		Status:      InvestigationStatusPending,
 	}
 
@@ -280,10 +288,50 @@ var GetInvestigation = mcpgrafana.MustTool(
 	getInvestigation,
 )
 
+// GetAnalysisParams defines the parameters for retrieving a specific analysis
+type GetAnalysisParams struct {
+	InvestigationID string `json:"investigationId" jsonschema:"required,description=The UUID of the investigation as a string (e.g. '02adab7c-bf5b-45f2-9459-d71a2c29e11b')"`
+	AnalysisID      string `json:"analysisId" jsonschema:"required,description=The UUID of the specific analysis to retrieve"`
+}
+
+// getAnalysis retrieves a specific analysis from an investigation
+func getAnalysis(ctx context.Context, args GetAnalysisParams) (*Analysis, error) {
+	client, err := siftClientFromContext(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("creating Sift client: %w", err)
+	}
+
+	// Parse the UUID strings
+	investigationID, err := uuid.Parse(args.InvestigationID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid investigation ID format: %w", err)
+	}
+
+	analysisID, err := uuid.Parse(args.AnalysisID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid analysis ID format: %w", err)
+	}
+
+	analysis, err := client.getAnalysis(ctx, investigationID, analysisID)
+	if err != nil {
+		return nil, fmt.Errorf("getting analysis: %w", err)
+	}
+
+	return analysis, nil
+}
+
+// GetAnalysis is a tool for retrieving a specific analysis from an investigation
+var GetAnalysis = mcpgrafana.MustTool(
+	"get_analysis",
+	"Retrieves a specific analysis from an investigation by their UUIDs. Both the investigation ID and analysis ID should be provided as strings in UUID format.",
+	getAnalysis,
+)
+
 // AddSiftTools registers all Sift tools with the MCP server
 func AddSiftTools(mcp *server.MCPServer) {
 	CreateInvestigation.Register(mcp)
 	GetInvestigation.Register(mcp)
+	GetAnalysis.Register(mcp)
 }
 
 // makeRequest is a helper method to make HTTP requests and handle common response patterns
@@ -386,4 +434,48 @@ func (c *SiftClient) createInvestigation(ctx context.Context, investigation *Inv
 			}
 		}
 	}
+}
+
+// getAnalyses is a helper method to get all analyses from an investigation
+func (c *SiftClient) getAnalyses(ctx context.Context, investigationID uuid.UUID) ([]Analysis, error) {
+	path := fmt.Sprintf("/api/plugins/grafana-ml-app/resources/sift/api/v1/investigations/%s/analyses", investigationID)
+	buf, err := c.makeRequest(ctx, "GET", path, nil)
+	if err != nil {
+		return nil, fmt.Errorf("making request: %w", err)
+	}
+
+	var response struct {
+		Status string     `json:"status"`
+		Data   []Analysis `json:"data"`
+	}
+
+	if err := json.Unmarshal(buf, &response); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal response body: %w. body: %s", err, buf)
+	}
+
+	return response.Data, nil
+}
+
+// getAnalysis is a helper method to get a specific analysis from an investigation
+func (c *SiftClient) getAnalysis(ctx context.Context, investigationID, analysisID uuid.UUID) (*Analysis, error) {
+	// First get all analyses to verify the analysis exists
+	analyses, err := c.getAnalyses(ctx, investigationID)
+	if err != nil {
+		return nil, fmt.Errorf("getting analyses: %w", err)
+	}
+
+	// Find the specific analysis
+	var targetAnalysis *Analysis
+	for _, analysis := range analyses {
+		if analysis.ID == analysisID {
+			targetAnalysis = &analysis
+			break
+		}
+	}
+
+	if targetAnalysis == nil {
+		return nil, fmt.Errorf("analysis with ID %s not found in investigation %s", analysisID, investigationID)
+	}
+
+	return targetAnalysis, nil
 }
