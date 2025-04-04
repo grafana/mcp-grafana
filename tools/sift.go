@@ -226,7 +226,7 @@ func createInvestigation(ctx context.Context, args CreateInvestigationParams) (*
 // CreateInvestigation is a tool for creating new investigations
 var CreateInvestigation = mcpgrafana.MustTool(
 	"create_investigation",
-	"Create a new investigation. An investigation analyzes data from different datasource types. It takes a set of labels and values to scope the analysis, optionally accepts a time range (defaults to last hour if not specified) and the title can be infered by the labels used. The investigation will automatically explore relevant data sources and provide insights about potential causes. Optionally pass ErrorPatternLogs or SlowRequests as check types to run specific checks.",
+	"Create a new investigation. An investigation analyzes data from different datasource types. It takes a set of labels and values to scope the analysis, optionally accepts a time range (defaults to last hour if not specified) and the title can be infered by the labels used. The investigation will automatically explore relevant data sources and provide insights about potential causes.",
 	createInvestigation,
 )
 
