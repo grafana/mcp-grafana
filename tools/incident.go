@@ -103,7 +103,7 @@ func addActivityToIncident(ctx context.Context, args AddActivityToIncidentParams
 
 var AddActivityToIncident = mcpgrafana.MustTool(
 	"add_activity_to_incident",
-	"Add an activity to an incident",
+	"Add a note to an incident's timeline. The note will appear in the incident's activity feed. Use this if there is a request to add context to an incident with a note.",
 	addActivityToIncident,
 )
 
@@ -111,4 +111,29 @@ func AddIncidentTools(mcp *server.MCPServer) {
 	ListIncidents.Register(mcp)
 	CreateIncident.Register(mcp)
 	AddActivityToIncident.Register(mcp)
+	GetIncident.Register(mcp)
 }
+
+type GetIncidentParams struct {
+	ID string `json:"id" jsonschema:"description=The ID of the incident to retrieve"`
+}
+
+func getIncident(ctx context.Context, args GetIncidentParams) (*incident.Incident, error) {
+	c := mcpgrafana.IncidentClientFromContext(ctx)
+	is := incident.NewIncidentsService(c)
+
+	incidentResp, err := is.GetIncident(ctx, incident.GetIncidentRequest{
+		IncidentID: args.ID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get incident by ID: %w", err)
+	}
+
+	return &incidentResp.Incident, nil
+}
+
+var GetIncident = mcpgrafana.MustTool(
+	"get_incident",
+	"Get a single incident by ID. Returns the full incident details including title, status, severity, and other metadata.",
+	getIncident,
+)
