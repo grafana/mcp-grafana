@@ -218,14 +218,6 @@ func createInvestigation(ctx context.Context, args CreateInvestigationParams) (*
 		return nil, fmt.Errorf("creating Sift client: %w", err)
 	}
 
-	// Set default time range to last 30 minutes if not provided
-	if args.RequestData.Start.IsZero() {
-		args.RequestData.Start = time.Now().Add(-30 * time.Minute)
-	}
-	if args.RequestData.End.IsZero() {
-		args.RequestData.End = time.Now()
-	}
-
 	// If checks are provided, validate them
 	if len(args.Checks) > 0 {
 		for _, check := range args.Checks {
@@ -359,12 +351,156 @@ var ListInvestigations = mcpgrafana.MustTool(
 	listInvestigations,
 )
 
+// RunErrorPatternLogsParams defines the parameters for running an ErrorPatternLogs check
+type RunErrorPatternLogsParams struct {
+	Name     string            `json:"name" jsonschema:"required,description=The name of the investigation"`
+	Labels   map[string]string `json:"labels" jsonschema:"required,description=Labels to scope the analysis"`
+	Start    time.Time         `json:"start,omitempty" jsonschema:"description=Start time for the investigation. Defaults to 30 minutes ago if not specified."`
+	End      time.Time         `json:"end,omitempty" jsonschema:"description=End time for the investigation. Defaults to now if not specified."`
+	QueryURL string            `json:"queryUrl,omitempty" jsonschema:"description=Optional query URL for the investigation"`
+}
+
+// runErrorPatternLogs creates an investigation with ErrorPatternLogs check, waits for it to complete, and returns the analysis
+func runErrorPatternLogs(ctx context.Context, args RunErrorPatternLogsParams) (*Analysis, error) {
+	client, err := siftClientFromContext(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("creating Sift client: %w", err)
+	}
+
+	// // Set default time range to last 30 minutes if not provided
+	// if args.Start.IsZero() {
+	// 	args.Start = time.Now().Add(-30 * time.Minute)
+	// }
+	// if args.End.IsZero() {
+	// 	args.End = time.Now()
+	// }
+
+	// Create the investigation request with ErrorPatternLogs check
+	requestData := InvestigationRequest{
+		Labels:   args.Labels,
+		Start:    args.Start,
+		End:      args.End,
+		QueryURL: args.QueryURL,
+		Checks:   []string{string(CheckTypeErrorPatternLogs)},
+	}
+
+	investigation := &Investigation{
+		Name:        args.Name,
+		RequestData: requestData,
+		GrafanaURL:  client.url,
+		Status:      InvestigationStatusPending,
+	}
+
+	// Create the investigation and wait for it to complete
+	completedInvestigation, err := client.createInvestigation(ctx, investigation)
+	if err != nil {
+		return nil, fmt.Errorf("creating investigation: %w", err)
+	}
+
+	// Get all analyses from the completed investigation
+	analyses, err := client.getAnalyses(ctx, completedInvestigation.ID)
+	if err != nil {
+		return nil, fmt.Errorf("getting analyses: %w", err)
+	}
+
+	// Find the ErrorPatternLogs analysis
+	var errorPatternLogsAnalysis *Analysis
+	for i := range analyses {
+		if analyses[i].Name == string(CheckTypeErrorPatternLogs) {
+			errorPatternLogsAnalysis = &analyses[i]
+			break
+		}
+	}
+
+	if errorPatternLogsAnalysis == nil {
+		return nil, fmt.Errorf("ErrorPatternLogs analysis not found in investigation %s", completedInvestigation.ID)
+	}
+
+	return errorPatternLogsAnalysis, nil
+}
+
+// RunErrorPatternLogs is a tool for running an ErrorPatternLogs check
+var RunErrorPatternLogs = mcpgrafana.MustTool(
+	"run_error_pattern_logs",
+	"Creates an investigation with ErrorPatternLogs check, waits for it to complete, and returns the analysis results. This tool simplifies the process of running an ErrorPatternLogs check by handling the creation, waiting, and retrieval of results in a single operation.",
+	runErrorPatternLogs,
+)
+
+// RunSlowRequestsCheckParams defines the parameters for running an SlowRequests check
+type RunSlowRequestsCheckParams struct {
+	Name     string            `json:"name" jsonschema:"required,description=The name of the investigation"`
+	Labels   map[string]string `json:"labels" jsonschema:"required,description=Labels to scope the analysis"`
+	Start    time.Time         `json:"start,omitempty" jsonschema:"description=Start time for the investigation. Defaults to 30 minutes ago if not specified."`
+	End      time.Time         `json:"end,omitempty" jsonschema:"description=End time for the investigation. Defaults to now if not specified."`
+	QueryURL string            `json:"queryUrl,omitempty" jsonschema:"description=Optional query URL for the investigation"`
+}
+
+// runSlowRequests creates an investigation with SlowRequests check, waits for it to complete, and returns the analysis
+func runSlowRequests(ctx context.Context, args RunSlowRequestsCheckParams) (*Analysis, error) {
+	client, err := siftClientFromContext(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("creating Sift client: %w", err)
+	}
+
+	// Create the investigation request with SlowRequests check
+	requestData := InvestigationRequest{
+		Labels:   args.Labels,
+		Start:    args.Start,
+		End:      args.End,
+		QueryURL: args.QueryURL,
+		Checks:   []string{string(CheckTypeSlowRequests)},
+	}
+
+	investigation := &Investigation{
+		Name:        args.Name,
+		RequestData: requestData,
+		GrafanaURL:  client.url,
+		Status:      InvestigationStatusPending,
+	}
+
+	// Create the investigation and wait for it to complete
+	completedInvestigation, err := client.createInvestigation(ctx, investigation)
+	if err != nil {
+		return nil, fmt.Errorf("creating investigation: %w", err)
+	}
+
+	// Get all analyses from the completed investigation
+	analyses, err := client.getAnalyses(ctx, completedInvestigation.ID)
+	if err != nil {
+		return nil, fmt.Errorf("getting analyses: %w", err)
+	}
+
+	// Find the SlowRequests analysis
+	var slowRequestsAnalysis *Analysis
+	for i := range analyses {
+		if analyses[i].Name == string(CheckTypeSlowRequests) {
+			slowRequestsAnalysis = &analyses[i]
+			break
+		}
+	}
+
+	if slowRequestsAnalysis == nil {
+		return nil, fmt.Errorf("SlowRequests analysis not found in investigation %s", completedInvestigation.ID)
+	}
+
+	return slowRequestsAnalysis, nil
+}
+
+// RunSlowRequestsCheck is a tool for running an SlowRequests check
+var RunSlowRequestsCheck = mcpgrafana.MustTool(
+	"run_slow_requests_check",
+	"Creates an investigation with SlowRequests check, waits for it to complete, and returns the analysis results. This tool simplifies the process of running an SlowRequests check by handling the creation, waiting, and retrieval of results in a single operation.",
+	runSlowRequests,
+)
+
 // AddSiftTools registers all Sift tools with the MCP server
 func AddSiftTools(mcp *server.MCPServer) {
 	CreateInvestigation.Register(mcp)
 	GetInvestigation.Register(mcp)
 	GetAnalysis.Register(mcp)
 	ListInvestigations.Register(mcp)
+	RunErrorPatternLogs.Register(mcp)
+	RunSlowRequestsCheck.Register(mcp)
 }
 
 // makeRequest is a helper method to make HTTP requests and handle common response patterns
@@ -421,6 +557,14 @@ func (c *SiftClient) getInvestigation(ctx context.Context, id uuid.UUID) (*Inves
 }
 
 func (c *SiftClient) createInvestigation(ctx context.Context, investigation *Investigation) (*Investigation, error) {
+	// Set default time range to last 30 minutes if not provided
+	if investigation.RequestData.Start.IsZero() {
+		investigation.RequestData.Start = time.Now().Add(-30 * time.Minute)
+	}
+	if investigation.RequestData.End.IsZero() {
+		investigation.RequestData.End = time.Now()
+	}
+
 	jsonData, err := json.Marshal(investigation)
 	if err != nil {
 		return nil, fmt.Errorf("marshaling investigation: %w", err)
