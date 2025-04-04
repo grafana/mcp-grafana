@@ -44,8 +44,6 @@ type InvestigationRequest struct {
 	// TODO: Add this when we have a new investigation source field InvestigationSourceTypeMCP.
 	// InvestigationSource InvestigationSource `json:"investigationSource" gorm:"embedded;embeddedPrefix:investigation_source_"`
 
-	// This field holds metric query input for oncall integration investigations.
-	// To be removed after migrating to a new more explicit field.
 	QueryURL string `json:"queryUrl"`
 
 	Checks []string `json:"checks" gorm:"serializer:json"`
@@ -58,7 +56,7 @@ type AnalysisStep struct {
 	State string `json:"state"`
 	// The exit message of the step. Can be empty if the step was successful.
 	ExitMessage string `json:"exitMessage"`
-	// Runtime statistics for this step, stored as JSON in the database
+	// Runtime statistics for this step
 	Stats map[string]interface{} `json:"stats,omitempty"`
 }
 
@@ -72,10 +70,9 @@ type AnalysisEvent struct {
 
 // Interesting: The analysis complete with results that indicate a probable cause for failure.
 type AnalysisResult struct {
-	Successful  bool   `json:"successful"`
-	Interesting bool   `json:"interesting"`
-	Message     string `json:"message"`
-	// Do not put these into the database while we are testing it out. Just used for sending to OnCall.
+	Successful      bool                   `json:"successful"`
+	Interesting     bool                   `json:"interesting"`
+	Message         string                 `json:"message"`
 	MarkdownSummary string                 `json:"-" gorm:"-"`
 	Details         map[string]interface{} `json:"details"`
 	Events          []AnalysisEvent        `json:"events,omitempty" gorm:"serializer:json"`
@@ -83,7 +80,6 @@ type AnalysisResult struct {
 
 // An Analysis struct provides the status and results
 // of running a specific type of check.
-// The information is stored in the database.
 type Analysis struct {
 	ID        uuid.UUID `json:"id" gorm:"primarykey;type:char(36)" validate:"isdefault"`
 	CreatedAt time.Time `json:"created" validate:"isdefault"`
@@ -100,11 +96,6 @@ type Analysis struct {
 	Title  string         `json:"title"`
 	Steps  []AnalysisStep `json:"steps" gorm:"foreignKey:AnalysisID;constraint:OnDelete:CASCADE"`
 	Result AnalysisResult `json:"result" gorm:"embedded;embeddedPrefix:result_"`
-
-	// CreateWithID is used to indicate that the analysis should be created with the
-	// ID in the ID field, rather than generating a new one. This is used by the
-	// copy command of the mlapi CLI.
-	CreateWithID bool `json:"-" gorm:"-"`
 }
 
 type DatasourceConfig struct {
@@ -141,17 +132,9 @@ type Investigation struct {
 
 	// GrafanaURL is the Grafana URL to be used for datasource queries
 	// for this investigation.
-	// If missing from a request then the `X-Grafana-URL` header is used.
 	GrafanaURL string `json:"grafanaUrl"`
 
 	// Status describes the state of the investigation (pending, running, failed, or finished).
-	// This is stored in the db along with the failure reason if the investigation failed.
-	// It is computed in the AfterUpdate hook on Analyses.
-	//
-	// Note this is not tagged as validate:"isdefault" because we want users to be able
-	// to take an existing investigation, update a field or two, and just POST it to
-	// create a new investigation. If we included that tag we'd return a 400 here even
-	// though we just ignore the field, which just adds a slightly annoying step for users.
 	Status InvestigationStatus `json:"status"`
 
 	// FailureReason is a short human-friendly string that explains the reason that the
@@ -366,14 +349,6 @@ func runErrorPatternLogs(ctx context.Context, args RunErrorPatternLogsParams) (*
 	if err != nil {
 		return nil, fmt.Errorf("creating Sift client: %w", err)
 	}
-
-	// // Set default time range to last 30 minutes if not provided
-	// if args.Start.IsZero() {
-	// 	args.Start = time.Now().Add(-30 * time.Minute)
-	// }
-	// if args.End.IsZero() {
-	// 	args.End = time.Now()
-	// }
 
 	// Create the investigation request with ErrorPatternLogs check
 	requestData := InvestigationRequest{
