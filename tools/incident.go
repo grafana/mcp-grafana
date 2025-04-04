@@ -18,6 +18,13 @@ type ListIncidentsParams struct {
 func listIncidents(ctx context.Context, args ListIncidentsParams) (*incident.QueryIncidentPreviewsResponse, error) {
 	c := mcpgrafana.IncidentClientFromContext(ctx)
 	is := incident.NewIncidentsService(c)
+
+	// Set default limit to 10 if not specified
+	limit := args.Limit
+	if limit <= 0 {
+		limit = 10
+	}
+
 	query := ""
 	if !args.Drill {
 		query = "isdrill:false"
@@ -29,7 +36,7 @@ func listIncidents(ctx context.Context, args ListIncidentsParams) (*incident.Que
 		Query: incident.IncidentPreviewsQuery{
 			QueryString:    query,
 			OrderDirection: "DESC",
-			Limit:          args.Limit,
+			Limit:          limit,
 		},
 	})
 	if err != nil {
