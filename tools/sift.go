@@ -397,7 +397,7 @@ func runErrorPatternLogs(ctx context.Context, args RunErrorPatternLogsParams) (*
 // RunErrorPatternLogs is a tool for running an ErrorPatternLogs check
 var RunErrorPatternLogs = mcpgrafana.MustTool(
 	"run_error_pattern_logs",
-	"Creates an investigation with ErrorPatternLogs check, waits for it to complete, and returns the analysis results. This tool simplifies the process of running an ErrorPatternLogs check by handling the creation, waiting, and retrieval of results in a single operation.",
+	"Creates an investigation with ErrorPatternLogs check, waits for it to complete, and returns the analysis results. This tool triggers an investigation with the ErrorPatternLogs check in the relevant Loki datasource. It investigates if the there are elevated errors rates in the logs compared to the last day's average and returns the error pattern found, if any.",
 	runErrorPatternLogs,
 )
 
@@ -464,7 +464,7 @@ func runSlowRequests(ctx context.Context, args RunSlowRequestsCheckParams) (*Ana
 // RunSlowRequestsCheck is a tool for running an SlowRequests check
 var RunSlowRequestsCheck = mcpgrafana.MustTool(
 	"run_slow_requests_check",
-	"Creates an investigation with SlowRequests check, waits for it to complete, and returns the analysis results. This tool simplifies the process of running an SlowRequests check by handling the creation, waiting, and retrieval of results in a single operation.",
+	"Creates an investigation with SlowRequests check in the relevant Tempo datasources, waits for it to complete, and returns the analysis results.",
 	runSlowRequests,
 )
 
