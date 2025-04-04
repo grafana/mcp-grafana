@@ -11,6 +11,8 @@ import (
 	mcpgrafana "github.com/grafana/mcp-grafana"
 )
 
+var dashboardTypeStr = "dash-db"
+
 type SearchDashboardsParams struct {
 	Query string `json:"query" jsonschema:"description=The query to search for"`
 }
@@ -20,6 +22,7 @@ func searchDashboards(ctx context.Context, args SearchDashboardsParams) (models.
 	params := search.NewSearchParamsWithContext(ctx)
 	if args.Query != "" {
 		params.SetQuery(&args.Query)
+		params.SetType(&dashboardTypeStr)
 	}
 	search, err := c.Search.Search(params)
 	if err != nil {

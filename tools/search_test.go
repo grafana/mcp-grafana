@@ -8,6 +8,7 @@ package tools
 import (
 	"testing"
 
+	"github.com/grafana/grafana-openapi-client-go/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -20,5 +21,6 @@ func TestSearchTools(t *testing.T) {
 		})
 		require.NoError(t, err)
 		assert.Len(t, result, 1)
+		assert.Equal(t, models.HitType("dash-db"), result[0].Type)
 	})
 }
