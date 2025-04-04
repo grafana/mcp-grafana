@@ -26,7 +26,14 @@ This provides access to your Grafana instance and the surrounding ecosystem.
   - [x] Label values
   - [x] Stats
 - [x] Search, create, update and close incidents
-- [ ] Start Sift investigations and view the results
+- [x] Start Sift investigations and view the results
+  - [x] Create Investigations
+  - [x] List Investigations with a limit parameter
+  - [x] Get Investigation
+  - [x] Get Analyses
+  - [x] Create an Investigation only running ErrorPatternLogs Check
+  - [x] Create an Investigation only running SlowRequests Check
+  - [ ] Add tools on the other Sift Checks
 - [ ] Alerting
   - [x] List and fetch alert rule information
   - [x] Get alert rule statuses (firing/normal/error/etc.)
@@ -74,6 +81,12 @@ the OnCall tools, use `--disable-oncall`.
 | `get_current_oncall_users`        | OnCall      | Get users currently on-call for a specific schedule                |
 | `list_oncall_teams`               | OnCall      | List teams from Grafana OnCall                                     |
 | `list_oncall_users`               | OnCall      | List users from Grafana OnCall                                     |
+| `create_investigation`            | Sift        | Create a new Sift investigation to analyze data from different datasources |
+| `get_investigation`               | Sift        | Retrieve an existing Sift investigation by its UUID                     |
+| `get_analysis`                    | Sift        | Retrieve a specific analysis from a Sift investigation                 |
+| `list_investigations`             | Sift        | Retrieve a list of Sift investigations with an optional limit           |
+| `run_error_pattern_logs`          | Sift        | Create a Sift investigation with ErrorPatternLogs check and get results |
+| `run_slow_requests_check`         | Sift        | Create a Sift investigation with SlowRequests check and get results    |
 
 ## Usage
 

@@ -226,7 +226,7 @@ func createInvestigation(ctx context.Context, args CreateInvestigationParams) (*
 // CreateInvestigation is a tool for creating new investigations
 var CreateInvestigation = mcpgrafana.MustTool(
 	"create_investigation",
-	"Create a new investigation. An investigation analyzes data from different datasource types. It takes a set of labels and values to scope the analysis, optionally accepts a time range (defaults to last hour if not specified) and the title can be infered by the labels used. The investigation will automatically explore relevant data sources and provide insights about potential causes.",
+	"Create a new Sift investigation. An investigation analyzes data from different datasource types. It takes a set of labels and values to scope the analysis, optionally accepts a time range (defaults to last hour if not specified) and the title can be infered by the labels used. The investigation will automatically explore relevant data sources and provide insights about potential causes.",
 	createInvestigation,
 )
 
@@ -259,7 +259,7 @@ func getInvestigation(ctx context.Context, args GetInvestigationParams) (*Invest
 // GetInvestigation is a tool for retrieving an existing investigation
 var GetInvestigation = mcpgrafana.MustTool(
 	"get_investigation",
-	"Retrieves an existing investigation by its UUID. The ID should be provided as a string in UUID format (e.g. '02adab7c-bf5b-45f2-9459-d71a2c29e11b').",
+	"Retrieves an existing Sift investigation by its UUID. The ID should be provided as a string in UUID format (e.g. '02adab7c-bf5b-45f2-9459-d71a2c29e11b').",
 	getInvestigation,
 )
 
@@ -298,7 +298,7 @@ func getAnalysis(ctx context.Context, args GetAnalysisParams) (*Analysis, error)
 // GetAnalysis is a tool for retrieving a specific analysis from an investigation
 var GetAnalysis = mcpgrafana.MustTool(
 	"get_analysis",
-	"Retrieves a specific analysis from an investigation by their UUIDs. Both the investigation ID and analysis ID should be provided as strings in UUID format.",
+	"Retrieves a specific analysis from a Sift investigation by their UUIDs. Both the investigation ID and analysis ID should be provided as strings in UUID format.",
 	getAnalysis,
 )
 
@@ -330,7 +330,7 @@ func listInvestigations(ctx context.Context, args ListInvestigationsParams) ([]I
 // ListInvestigations is a tool for retrieving a list of investigations
 var ListInvestigations = mcpgrafana.MustTool(
 	"list_investigations",
-	"Retrieves a list of investigations with an optional limit. If no limit is specified, defaults to 10 investigations.",
+	"Retrieves a list of Sift investigations with an optional limit. If no limit is specified, defaults to 10 investigations.",
 	listInvestigations,
 )
 
@@ -397,7 +397,7 @@ func runErrorPatternLogs(ctx context.Context, args RunErrorPatternLogsParams) (*
 // RunErrorPatternLogs is a tool for running an ErrorPatternLogs check
 var RunErrorPatternLogs = mcpgrafana.MustTool(
 	"run_error_pattern_logs",
-	"Creates an investigation with ErrorPatternLogs check, waits for it to complete, and returns the analysis results. This tool triggers an investigation with the ErrorPatternLogs check in the relevant Loki datasource. It investigates if the there are elevated errors rates in the logs compared to the last day's average and returns the error pattern found, if any.",
+	"Creates a Sift investigation with ErrorPatternLogs check, waits for it to complete, and returns the analysis results. This tool triggers an investigation with the ErrorPatternLogs check in the relevant Loki datasource. It investigates if the there are elevated errors rates in the logs compared to the last day's average and returns the error pattern found, if any.",
 	runErrorPatternLogs,
 )
 
@@ -464,7 +464,7 @@ func runSlowRequests(ctx context.Context, args RunSlowRequestsCheckParams) (*Ana
 // RunSlowRequestsCheck is a tool for running an SlowRequests check
 var RunSlowRequestsCheck = mcpgrafana.MustTool(
 	"run_slow_requests_check",
-	"Creates an investigation with SlowRequests check in the relevant Tempo datasources, waits for it to complete, and returns the analysis results.",
+	"Creates a Sift investigation with SlowRequests check in the relevant Tempo datasources, waits for it to complete, and returns the analysis results.",
 	runSlowRequests,
 )
 
