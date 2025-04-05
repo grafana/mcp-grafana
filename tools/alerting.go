@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/grafana/grafana-openapi-client-go/client/provisioning"
 	"github.com/grafana/grafana-openapi-client-go/models"
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/prometheus/prometheus/model/labels"
@@ -13,6 +14,7 @@ import (
 
 const (
 	DefaultListAlertRulesLimit = 100
+	DefaultListContactPointsLimit = 100
 )
 
 type ListAlertRulesParams struct {
@@ -179,7 +181,93 @@ var GetAlertRuleByUID = mcpgrafana.MustTool(
 	getAlertRuleByUID,
 )
 
+type ListContactPointsParams struct {
+	Limit int     `json:"limit,omitempty" jsonschema:"description=The maximum number of results to return. Default is 100."`
+	Page  int     `json:"page,omitempty" jsonschema:"description=The page number to return."`
+	Name  *string `json:"name,omitempty" jsonschema:"description=Filter contact points by name"`
+}
+
+func (p ListContactPointsParams) validate() error {
+	if p.Limit < 0 {
+		return fmt.Errorf("invalid limit: %d, must be greater than 0", p.Limit)
+	}
+	if p.Page < 0 {
+		return fmt.Errorf("invalid page: %d, must be greater than 0", p.Page)
+	}
+	return nil
+}
+
+type contactPointSummary struct {
+	UID  string  `json:"uid"`
+	Name string  `json:"name"`
+	Type *string `json:"type,omitempty"`
+}
+
+func listContactPoints(ctx context.Context, args ListContactPointsParams) ([]contactPointSummary, error) {
+	if err := args.validate(); err != nil {
+		return nil, fmt.Errorf("list contact points: %w", err)
+	}
+
+	c := mcpgrafana.GrafanaClientFromContext(ctx)
+
+	params := provisioning.NewGetContactpointsParams().WithContext(ctx)
+	if args.Name != nil {
+		params.Name = args.Name
+	}
+
+	response, err := c.Provisioning.GetContactpoints(params)
+	if err != nil {
+		return nil, fmt.Errorf("list contact points: %w", err)
+	}
+
+	pagedContactPoints, err := applyContactPointPagination(response.Payload, args.Limit, args.Page)
+	if err != nil {
+		return nil, fmt.Errorf("list contact points: %w", err)
+	}
+
+	return summarizeContactPoints(pagedContactPoints), nil
+}
+
+func summarizeContactPoints(contactPoints []*models.EmbeddedContactPoint) []contactPointSummary {
+	result := make([]contactPointSummary, 0, len(contactPoints))
+	for _, cp := range contactPoints {
+		result = append(result, contactPointSummary{
+			UID:  cp.UID,
+			Name: cp.Name,
+			Type: cp.Type,
+		})
+	}
+	return result
+}
+
+func applyContactPointPagination(items []*models.EmbeddedContactPoint, limit, page int) ([]*models.EmbeddedContactPoint, error) {
+	if limit == 0 {
+		limit = DefaultListContactPointsLimit
+	}
+	if page == 0 {
+		page = 1
+	}
+
+	start := (page - 1) * limit
+	end := start + limit
+
+	if start >= len(items) {
+		return []*models.EmbeddedContactPoint{}, nil
+	} else if end > len(items) {
+		return items[start:], nil
+	}
+
+	return items[start:end], nil
+}
+
+var ListContactPoints = mcpgrafana.MustTool(
+	"list_contact_points",
+	"List contact points",
+	listContactPoints,
+)
+
 func AddAlertingTools(mcp *server.MCPServer) {
 	ListAlertRules.Register(mcp)
 	GetAlertRuleByUID.Register(mcp)
+	ListContactPoints.Register(mcp)
 }
