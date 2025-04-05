@@ -50,4 +50,16 @@ func TestCloudIncidentTools(t *testing.T) {
 		assert.NotNil(t, result.IncidentPreviews, "IncidentPreviews should not be nil")
 		assert.LessOrEqual(t, len(result.IncidentPreviews), 1, "Should not return more incidents than the limit")
 	})
+
+	t.Run("get incident by ID", func(t *testing.T) {
+		ctx := createCloudTestContext(t)
+		result, err := getIncident(ctx, GetIncidentParams{
+			ID: "1",
+		})
+		require.NoError(t, err)
+		assert.NotNil(t, result, "Result should not be nil")
+		assert.Equal(t, "1", result.IncidentID, "Should return the requested incident ID")
+		assert.NotEmpty(t, result.Title, "Incident should have a title")
+		assert.NotEmpty(t, result.Status, "Incident should have a status")
+	})
 }
