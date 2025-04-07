@@ -119,6 +119,9 @@ func listOnCallSchedules(ctx context.Context, args ListOnCallSchedulesParams) ([
 	if args.Page > 0 {
 		listOptions.Page = args.Page
 	}
+	if args.TeamID != "" {
+		listOptions.TeamID = args.TeamID
+	}
 
 	response, _, err := scheduleService.ListSchedules(listOptions)
 	if err != nil {
@@ -128,11 +131,6 @@ func listOnCallSchedules(ctx context.Context, args ListOnCallSchedulesParams) ([
 	// Convert schedules to summaries
 	summaries := make([]*ScheduleSummary, 0, len(response.Schedules))
 	for _, schedule := range response.Schedules {
-		// Filter by team ID if provided. Note: We filter here because the API doesn't support
-		// filtering by team ID directly in the ListSchedules endpoint.
-		if args.TeamID != "" && schedule.TeamId != args.TeamID {
-			continue
-		}
 		summary := &ScheduleSummary{
 			ID:       schedule.ID,
 			Name:     schedule.Name,
