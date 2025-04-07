@@ -183,16 +183,12 @@ var GetAlertRuleByUID = mcpgrafana.MustTool(
 
 type ListContactPointsParams struct {
 	Limit int     `json:"limit,omitempty" jsonschema:"description=The maximum number of results to return. Default is 100."`
-	Page  int     `json:"page,omitempty" jsonschema:"description=The page number to return."`
 	Name  *string `json:"name,omitempty" jsonschema:"description=Filter contact points by name"`
 }
 
 func (p ListContactPointsParams) validate() error {
 	if p.Limit < 0 {
 		return fmt.Errorf("invalid limit: %d, must be greater than 0", p.Limit)
-	}
-	if p.Page < 0 {
-		return fmt.Errorf("invalid page: %d, must be greater than 0", p.Page)
 	}
 	return nil
 }
@@ -220,7 +216,7 @@ func listContactPoints(ctx context.Context, args ListContactPointsParams) ([]con
 		return nil, fmt.Errorf("list contact points: %w", err)
 	}
 
-	pagedContactPoints, err := applyContactPointPagination(response.Payload, args.Limit, args.Page)
+	pagedContactPoints, err := applyContactPointPagination(response.Payload, args.Limit)
 	if err != nil {
 		return nil, fmt.Errorf("list contact points: %w", err)
 	}
@@ -240,24 +236,16 @@ func summarizeContactPoints(contactPoints []*models.EmbeddedContactPoint) []cont
 	return result
 }
 
-func applyContactPointPagination(items []*models.EmbeddedContactPoint, limit, page int) ([]*models.EmbeddedContactPoint, error) {
-	if limit == 0 {
-		limit = DefaultListContactPointsLimit
-	}
-	if page == 0 {
-		page = 1
-	}
+func applyContactPointPagination(items []*models.EmbeddedContactPoint, limit int) ([]*models.EmbeddedContactPoint, error) {
+    if limit == 0 {
+        limit = DefaultListContactPointsLimit
+    }
 
-	start := (page - 1) * limit
-	end := start + limit
+    if limit > len(items) {
+        return items, nil
+    }
 
-	if start >= len(items) {
-		return []*models.EmbeddedContactPoint{}, nil
-	} else if end > len(items) {
-		return items[start:], nil
-	}
-
-	return items[start:end], nil
+    return items[:limit], nil
 }
 
 var ListContactPoints = mcpgrafana.MustTool(
