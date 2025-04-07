@@ -27,6 +27,12 @@ var (
 )
 
 func promClientFromContext(ctx context.Context, uid string) (promv1.API, error) {
+	// First check if the datasource exists
+	_, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: uid})
+	if err != nil {
+		return nil, fmt.Errorf("datasource with UID '%s' not found. Please check if the datasource exists and is accessible", uid)
+	}
+
 	grafanaURL, apiKey := mcpgrafana.GrafanaURLFromContext(ctx), mcpgrafana.GrafanaAPIKeyFromContext(ctx)
 	url := fmt.Sprintf("%s/api/datasources/proxy/uid/%s", strings.TrimRight(grafanaURL, "/"), uid)
 	rt := api.DefaultRoundTripper
@@ -42,6 +48,7 @@ func promClientFromContext(ctx context.Context, uid string) (promv1.API, error) 
 	if err != nil {
 		return nil, fmt.Errorf("creating Prometheus client: %w", err)
 	}
+
 	return promv1.NewAPI(c), nil
 }
 
