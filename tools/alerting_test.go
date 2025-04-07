@@ -429,24 +429,15 @@ func TestAlertingTools_ListContactPoints(t *testing.T) {
 		require.ElementsMatch(t, allExpectedContactPoints, result)
 	})
 
-	t.Run("list contact points with pagination", func(t *testing.T) {
+	t.Run("list one contact point", func(t *testing.T) {
 		ctx := newTestContext()
 
 		// Get the first page with limit 1
 		result1, err := listContactPoints(ctx, ListContactPointsParams{
 			Limit: 1,
-			Page:  1,
 		})
 		require.NoError(t, err)
 		require.Len(t, result1, 1)
-
-		// The next page should be empty
-		result2, err := listContactPoints(ctx, ListContactPointsParams{
-			Limit: 1,
-			Page:  4,
-		})
-		require.NoError(t, err)
-		require.Empty(t, result2)
 	})
 
 	t.Run("list contact points with name filter", func(t *testing.T) {
@@ -459,15 +450,6 @@ func TestAlertingTools_ListContactPoints(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, result, 1)
 		require.Equal(t, "Email1", result[0].Name)
-	})
-
-	t.Run("list contact points with invalid page parameter", func(t *testing.T) {
-		ctx := newTestContext()
-		result, err := listContactPoints(ctx, ListContactPointsParams{
-			Page: -1,
-		})
-		require.Error(t, err)
-		require.Empty(t, result)
 	})
 
 	t.Run("list contact points with invalid limit parameter", func(t *testing.T) {
@@ -483,7 +465,6 @@ func TestAlertingTools_ListContactPoints(t *testing.T) {
 		ctx := newTestContext()
 		result, err := listContactPoints(ctx, ListContactPointsParams{
 			Limit: 1000,
-			Page:  1,
 		})
 		require.NoError(t, err)
 		require.NotEmpty(t, result)
