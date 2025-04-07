@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	DefaultListAlertRulesLimit = 100
+	DefaultListAlertRulesLimit    = 100
 	DefaultListContactPointsLimit = 100
 )
 
@@ -216,7 +216,7 @@ func listContactPoints(ctx context.Context, args ListContactPointsParams) ([]con
 		return nil, fmt.Errorf("list contact points: %w", err)
 	}
 
-	pagedContactPoints, err := applyContactPointPagination(response.Payload, args.Limit)
+	pagedContactPoints, err := applyLimitToContactPoints(response.Payload, args.Limit)
 	if err != nil {
 		return nil, fmt.Errorf("list contact points: %w", err)
 	}
