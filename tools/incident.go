@@ -12,7 +12,7 @@ import (
 type ListIncidentsParams struct {
 	Limit  int    `json:"limit" jsonschema:"description=The maximum number of incidents to return"`
 	Drill  bool   `json:"drill" jsonschema:"description=Whether to include drill incidents"`
-	Status string `json:"status" jsonschema:"description=The status of the incidents to include. Valid values: 'active', 'resolved', 'mitigated'"`
+	Status string `json:"status" jsonschema:"description=The status of the incidents to include. Valid values: 'active', 'resolved'"`
 }
 
 func listIncidents(ctx context.Context, args ListIncidentsParams) (*incident.QueryIncidentPreviewsResponse, error) {
