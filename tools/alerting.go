@@ -236,16 +236,16 @@ func summarizeContactPoints(contactPoints []*models.EmbeddedContactPoint) []cont
 	return result
 }
 
-func applyContactPointPagination(items []*models.EmbeddedContactPoint, limit int) ([]*models.EmbeddedContactPoint, error) {
-    if limit == 0 {
-        limit = DefaultListContactPointsLimit
-    }
+func applyLimitToContactPoints(items []*models.EmbeddedContactPoint, limit int) ([]*models.EmbeddedContactPoint, error) {
+	if limit == 0 {
+		limit = DefaultListContactPointsLimit
+	}
 
-    if limit > len(items) {
-        return items, nil
-    }
+	if limit > len(items) {
+		return items, nil
+	}
 
-    return items[:limit], nil
+	return items[:limit], nil
 }
 
 var ListContactPoints = mcpgrafana.MustTool(
