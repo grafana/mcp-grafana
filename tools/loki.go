@@ -47,7 +47,7 @@ func newLokiClient(ctx context.Context, uid string) (*Client, error) {
 	// First check if the datasource exists
 	_, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: uid})
 	if err != nil {
-		return nil, fmt.Errorf("datasource with UID '%s' not found. Please check if the datasource exists and is accessible", uid)
+		return nil, err
 	}
 
 	grafanaURL, apiKey := mcpgrafana.GrafanaURLFromContext(ctx), mcpgrafana.GrafanaAPIKeyFromContext(ctx)

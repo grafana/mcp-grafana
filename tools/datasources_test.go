@@ -74,6 +74,16 @@ func TestDatasourcesTools(t *testing.T) {
 		assert.Equal(t, "Prometheus", result.Name)
 	})
 
+	t.Run("get datasource by uid - not found", func(t *testing.T) {
+		ctx := newTestContext()
+		result, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{
+			UID: "non-existent-datasource",
+		})
+		require.Error(t, err)
+		require.Nil(t, result)
+		assert.Contains(t, err.Error(), "not found")
+	})
+
 	t.Run("get datasource by name", func(t *testing.T) {
 		ctx := newTestContext()
 		result, err := getDatasourceByName(ctx, GetDatasourceByNameParams{
