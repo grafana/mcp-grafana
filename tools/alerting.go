@@ -216,12 +216,12 @@ func listContactPoints(ctx context.Context, args ListContactPointsParams) ([]con
 		return nil, fmt.Errorf("list contact points: %w", err)
 	}
 
-	pagedContactPoints, err := applyLimitToContactPoints(response.Payload, args.Limit)
+	filteredContactPoints, err := applyLimitToContactPoints(response.Payload, args.Limit)
 	if err != nil {
 		return nil, fmt.Errorf("list contact points: %w", err)
 	}
 
-	return summarizeContactPoints(pagedContactPoints), nil
+	return summarizeContactPoints(filteredContactPoints), nil
 }
 
 func summarizeContactPoints(contactPoints []*models.EmbeddedContactPoint) []contactPointSummary {

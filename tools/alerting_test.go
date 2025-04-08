@@ -432,7 +432,7 @@ func TestAlertingTools_ListContactPoints(t *testing.T) {
 	t.Run("list one contact point", func(t *testing.T) {
 		ctx := newTestContext()
 
-		// Get the first page with limit 1
+		// Get the contact points with limit 1
 		result1, err := listContactPoints(ctx, ListContactPointsParams{
 			Limit: 1,
 		})
