@@ -399,3 +399,85 @@ func TestAlertingTools_GetAlertRuleByUID(t *testing.T) {
 		require.Contains(t, err.Error(), "getAlertRuleNotFound")
 	})
 }
+
+var (
+	emailType = "email"
+
+	contactPoint1 = contactPointSummary{
+		UID:  "email1",
+		Name: "Email1",
+		Type: &emailType,
+	}
+	contactPoint2 = contactPointSummary{
+		UID:  "email2",
+		Name: "Email2",
+		Type: &emailType,
+	}
+	contactPoint3 = contactPointSummary{
+		UID:  "",
+		Name: "email receiver",
+		Type: &emailType,
+	}
+	allExpectedContactPoints = []contactPointSummary{contactPoint1, contactPoint2, contactPoint3}
+)
+
+func TestAlertingTools_ListContactPoints(t *testing.T) {
+	t.Run("list contact points", func(t *testing.T) {
+		ctx := newTestContext()
+		result, err := listContactPoints(ctx, ListContactPointsParams{})
+		require.NoError(t, err)
+		require.ElementsMatch(t, allExpectedContactPoints, result)
+	})
+
+	t.Run("list one contact point", func(t *testing.T) {
+		ctx := newTestContext()
+
+		// Get the contact points with limit 1
+		result1, err := listContactPoints(ctx, ListContactPointsParams{
+			Limit: 1,
+		})
+		require.NoError(t, err)
+		require.Len(t, result1, 1)
+	})
+
+	t.Run("list contact points with name filter", func(t *testing.T) {
+		ctx := newTestContext()
+		name := "Email1"
+
+		result, err := listContactPoints(ctx, ListContactPointsParams{
+			Name: &name,
+		})
+		require.NoError(t, err)
+		require.Len(t, result, 1)
+		require.Equal(t, "Email1", result[0].Name)
+	})
+
+	t.Run("list contact points with invalid limit parameter", func(t *testing.T) {
+		ctx := newTestContext()
+		result, err := listContactPoints(ctx, ListContactPointsParams{
+			Limit: -1,
+		})
+		require.Error(t, err)
+		require.Empty(t, result)
+	})
+
+	t.Run("list contact points with large limit", func(t *testing.T) {
+		ctx := newTestContext()
+		result, err := listContactPoints(ctx, ListContactPointsParams{
+			Limit: 1000,
+		})
+		require.NoError(t, err)
+		require.NotEmpty(t, result)
+	})
+
+	t.Run("list contact points with non-existent name filter", func(t *testing.T) {
+		ctx := newTestContext()
+		name := "NonExistentAlert"
+
+		result, err := listContactPoints(ctx, ListContactPointsParams{
+			Name: &name,
+		})
+		require.NoError(t, err)
+		require.Empty(t, result)
+	})
+}
