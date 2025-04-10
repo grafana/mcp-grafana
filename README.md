@@ -7,6 +7,7 @@ This provides access to your Grafana instance and the surrounding ecosystem.
 ## Features
 
 - [x] Search for dashboards
+- [x] Get dashboard by UID
 - [x] List and fetch datasource information
 - [ ] Query datasources
   - [x] Prometheus
@@ -26,31 +27,51 @@ This provides access to your Grafana instance and the surrounding ecosystem.
   - [x] Stats
 - [x] Search, create, update and close incidents
 - [ ] Start Sift investigations and view the results
+- [ ] Alerting
+  - [x] List and fetch alert rule information
+  - [ ] Get alert rule statuses (firing/normal/error/etc.)
+  - [ ] Create and change alert rules
+  - [ ] List contact points
+  - [ ] Create and change contact points
+- [x] Access Grafana OnCall functionality
+  - [x] List and manage schedules
+  - [x] Get shift details
+  - [x] Get current on-call users
+  - [x] List teams and users
+  - [ ] List alert groups
 
 The list of tools is configurable, so you can choose which tools you want to make available to the MCP client.
 This is useful if you don't use certain functionality or if you don't want to take up too much of the context window.
 
 ### Tools
 
-| Tool | Category | Description |
-| --- | --- | --- |
-| `search_dashboards` | Search | Search for dashboards |
-| `list_datasources` | Datasources | List datasources |
-| `get_datasource_by_uid` | Datasources | Get a datasource by uid |
-| `get_datasource_by_name` | Datasources | Get a datasource by name |
-| `query_prometheus` | Prometheus | Execute a query against a Prometheus datasource |
-| `list_prometheus_metric_metadata` | Prometheus | List metric metadata |
-| `list_prometheus_metric_names` | Prometheus | List available metric names |
-| `list_prometheus_label_names` | Prometheus | List label names matching a selector |
-| `list_prometheus_label_values` | Prometheus | List values for a specific label |
-| `list_incidents` | Incident | List incidents in Grafana Incident |
-| `create_incident` | Incident | Create an incident in Grafana Incident |
-| `add_activity_to_incident` | Incident | Add an activity item to an incident in Grafana Incident |
-| `resolve_incident` | Incident | Resolve an incident in Grafana Incident |
-| `query_loki_logs` | Loki | Query and retrieve logs using LogQL (either log or metric queries) |
-| `list_loki_label_names` | Loki | List all available label names in logs |
-| `list_loki_label_values` | Loki | List values for a specific log label |
-| `query_loki_stats` | Loki | Get statistics about log streams |
+| Tool                              | Category    | Description                                                        |
+|-----------------------------------|-------------|--------------------------------------------------------------------|
+| `search_dashboards`               | Search      | Search for dashboards                                              |
+| `get_dashboard_by_uid`            | Dashboard   | Get a dashboard by uid                                             |
+| `list_datasources`                | Datasources | List datasources                                                   |
+| `get_datasource_by_uid`           | Datasources | Get a datasource by uid                                            |
+| `get_datasource_by_name`          | Datasources | Get a datasource by name                                           |
+| `query_prometheus`                | Prometheus  | Execute a query against a Prometheus datasource                    |
+| `list_prometheus_metric_metadata` | Prometheus  | List metric metadata                                               |
+| `list_prometheus_metric_names`    | Prometheus  | List available metric names                                        |
+| `list_prometheus_label_names`     | Prometheus  | List label names matching a selector                               |
+| `list_prometheus_label_values`    | Prometheus  | List values for a specific label                                   |
+| `list_incidents`                  | Incident    | List incidents in Grafana Incident                                 |
+| `create_incident`                 | Incident    | Create an incident in Grafana Incident                             |
+| `add_activity_to_incident`        | Incident    | Add an activity item to an incident in Grafana Incident            |
+| `resolve_incident`                | Incident    | Resolve an incident in Grafana Incident                            |
+| `query_loki_logs`                 | Loki        | Query and retrieve logs using LogQL (either log or metric queries) |
+| `list_loki_label_names`           | Loki        | List all available label names in logs                             |
+| `list_loki_label_values`          | Loki        | List values for a specific log label                               |
+| `query_loki_stats`                | Loki        | Get statistics about log streams                                   |
+| `list_alert_rules`                | Alerting    | List alert rules                                                   |
+| `get_alert_rule_by_uid`           | Alerting    | Get alert rule by UID                                              |
+| `list_oncall_schedules`           | OnCall      | List schedules from Grafana OnCall                                 |
+| `get_oncall_shift`                | OnCall      | Get details for a specific OnCall shift                           |
+| `get_current_oncall_users`        | OnCall      | Get users currently on-call for a specific schedule                |
+| `list_oncall_teams`               | OnCall      | List teams from Grafana OnCall                                     |
+| `list_oncall_users`               | OnCall      | List users from Grafana OnCall                                     |
 
 ## Usage
 
@@ -112,13 +133,28 @@ docker run -it --rm -p 8000:8000 mcp-grafana:latest
 
 ### Testing
 
-To run unit tests, run:
+There are three types of tests available:
 
+1. Unit Tests (no external dependencies required):
+```bash
+make test-unit
+```
+
+You can also run unit tests with:
 ```bash
 make test
 ```
 
-**TODO: add integration tests and cloud tests.**
+2. Integration Tests (requires docker containers to be up and running):
+```bash
+make test-integration
+```
+
+3. Cloud Tests (requires cloud Grafana instance and credentials):
+```bash
+make test-cloud
+```
+> Note: Cloud tests are automatically configured in CI. For local development, you'll need to set up your own Grafana Cloud instance and credentials.
 
 More comprehensive integration tests will require a Grafana instance to be running locally on port 3000; you can start one with Docker Compose:
 
@@ -129,17 +165,10 @@ docker-compose up -d
 The integration tests can be run with:
 
 ```bash
-uv run pytest --integration tests
+make test-all
 ```
 
 If you're adding more tools, please add integration tests for them. The existing tests should be a good starting point.
-
-Certain tools use functionality that is only available in Grafana Cloud. Such tests should use the `mark_cloud` Pytest mark; see the [incident_test.py](tests/tools/incident_test.py) file for an example.
-Use the `GRAFANA_URL` and `GRAFANA_API_KEY` environment variables to configure the Grafana instance to use for testing, and run these tests with:
-
-```bash
-GRAFANA_URL=https://myinstance.grafana.net GRAFANA_API_KEY=my-api-key uv run pytest --cloud tests
-```
 
 ### Linting
 
