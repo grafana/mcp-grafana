@@ -179,7 +179,7 @@ var ExtractIncidentClientFromEnv server.StdioContextFunc = func(ctx context.Cont
 	if grafanaURL == "" {
 		grafanaURL = defaultGrafanaURL
 	}
-	incidentURL := fmt.Sprintf("%s/api/plugins/grafana-incident-app/resources/api/v1/", grafanaURL)
+	incidentURL := fmt.Sprintf("%s/api/plugins/grafana-irm-app/resources/api/v1/", grafanaURL)
 	parsedURL, err := url.Parse(incidentURL)
 	if err != nil {
 		panic(fmt.Errorf("invalid incident URL %s: %w", incidentURL, err))
@@ -191,7 +191,7 @@ var ExtractIncidentClientFromEnv server.StdioContextFunc = func(ctx context.Cont
 
 var ExtractIncidentClientFromHeaders server.SSEContextFunc = func(ctx context.Context, req *http.Request) context.Context {
 	grafanaURL, apiKey := urlAndAPIKeyFromHeaders(req)
-	incidentURL := fmt.Sprintf("%s/api/plugins/grafana-incident-app/resources/api/v1/", grafanaURL)
+	incidentURL := fmt.Sprintf("%s/api/plugins/grafana-irm-app/resources/api/v1/", grafanaURL)
 	client := incident.NewClient(incidentURL, apiKey)
 	return context.WithValue(ctx, incidentClientKey{}, client)
 }

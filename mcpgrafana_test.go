@@ -18,7 +18,7 @@ func TestExtractIncidentClientFromEnv(t *testing.T) {
 
 	client := IncidentClientFromContext(ctx)
 	require.NotNil(t, client)
-	assert.Equal(t, "http://my-test-url.grafana.com/api/plugins/grafana-incident-app/resources/api/v1/", client.RemoteHost)
+	assert.Equal(t, "http://my-test-url.grafana.com/api/plugins/grafana-irm-app/resources/api/v1/", client.RemoteHost)
 }
 
 func TestExtractGrafanaInfoFromHeaders(t *testing.T) {
