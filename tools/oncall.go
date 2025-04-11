@@ -75,6 +75,46 @@ func oncallClientFromContext(ctx context.Context) (*aapi.Client, error) {
 	return client, nil
 }
 
+// getUserServiceFromContext creates a new UserService using the OnCall client from the context
+func getUserServiceFromContext(ctx context.Context) (*aapi.UserService, error) {
+	client, err := oncallClientFromContext(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("getting OnCall client: %w", err)
+	}
+
+	return aapi.NewUserService(client), nil
+}
+
+// getScheduleServiceFromContext creates a new ScheduleService using the OnCall client from the context
+func getScheduleServiceFromContext(ctx context.Context) (*aapi.ScheduleService, error) {
+	client, err := oncallClientFromContext(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("getting OnCall client: %w", err)
+	}
+
+	return aapi.NewScheduleService(client), nil
+}
+
+// getTeamServiceFromContext creates a new TeamService using the OnCall client from the context
+func getTeamServiceFromContext(ctx context.Context) (*aapi.TeamService, error) {
+	client, err := oncallClientFromContext(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("getting OnCall client: %w", err)
+	}
+
+	return aapi.NewTeamService(client), nil
+}
+
+// getOnCallShiftServiceFromContext creates a new OnCallShiftService using the OnCall client from the context
+func getOnCallShiftServiceFromContext(ctx context.Context) (*aapi.OnCallShiftService, error) {
+	client, err := oncallClientFromContext(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("getting OnCall client: %w", err)
+	}
+
+	return aapi.NewOnCallShiftService(client), nil
+}
+
 type ListOnCallSchedulesParams struct {
 	TeamID     string `json:"teamId,omitempty" jsonschema:"description=The ID of the team to list schedules for"`
 	ScheduleID string `json:"scheduleId,omitempty" jsonschema:"description=The ID of the schedule to get details for. If provided, returns only that schedule's details"`
@@ -91,12 +131,10 @@ type ScheduleSummary struct {
 }
 
 func listOnCallSchedules(ctx context.Context, args ListOnCallSchedulesParams) ([]*ScheduleSummary, error) {
-	client, err := oncallClientFromContext(ctx)
+	scheduleService, err := getScheduleServiceFromContext(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("getting OnCall client: %w", err)
+		return nil, fmt.Errorf("getting OnCall schedule service: %w", err)
 	}
-
-	scheduleService := aapi.NewScheduleService(client)
 
 	if args.ScheduleID != "" {
 		schedule, _, err := scheduleService.GetSchedule(args.ScheduleID, &aapi.GetScheduleOptions{})
@@ -119,6 +157,9 @@ func listOnCallSchedules(ctx context.Context, args ListOnCallSchedulesParams) ([
 	if args.Page > 0 {
 		listOptions.Page = args.Page
 	}
+	if args.TeamID != "" {
+		listOptions.TeamID = args.TeamID
+	}
 
 	response, _, err := scheduleService.ListSchedules(listOptions)
 	if err != nil {
@@ -128,11 +169,6 @@ func listOnCallSchedules(ctx context.Context, args ListOnCallSchedulesParams) ([
 	// Convert schedules to summaries
 	summaries := make([]*ScheduleSummary, 0, len(response.Schedules))
 	for _, schedule := range response.Schedules {
-		// Filter by team ID if provided. Note: We filter here because the API doesn't support
-		// filtering by team ID directly in the ListSchedules endpoint.
-		if args.TeamID != "" && schedule.TeamId != args.TeamID {
-			continue
-		}
 		summary := &ScheduleSummary{
 			ID:       schedule.ID,
 			Name:     schedule.Name,
@@ -159,12 +195,11 @@ type GetOnCallShiftParams struct {
 }
 
 func getOnCallShift(ctx context.Context, args GetOnCallShiftParams) (*aapi.OnCallShift, error) {
-	client, err := oncallClientFromContext(ctx)
+	shiftService, err := getOnCallShiftServiceFromContext(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("getting OnCall client: %w", err)
+		return nil, fmt.Errorf("getting OnCall shift service: %w", err)
 	}
 
-	shiftService := aapi.NewOnCallShiftService(client)
 	shift, _, err := shiftService.GetOnCallShift(args.ShiftID, &aapi.GetOnCallShiftOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("getting OnCall shift %s: %w", args.ShiftID, err)
@@ -181,9 +216,9 @@ var GetOnCallShift = mcpgrafana.MustTool(
 
 // CurrentOnCallUsers represents the currently on-call users for a schedule
 type CurrentOnCallUsers struct {
-	ScheduleID   string   `json:"scheduleId" jsonschema:"description=The ID of the schedule"`
-	ScheduleName string   `json:"scheduleName" jsonschema:"description=The name of the schedule"`
-	Users        []string `json:"users" jsonschema:"description=List of user IDs currently on call"`
+	ScheduleID   string       `json:"scheduleId" jsonschema:"description=The ID of the schedule"`
+	ScheduleName string       `json:"scheduleName" jsonschema:"description=The name of the schedule"`
+	Users        []*aapi.User `json:"users" jsonschema:"description=List of users currently on call"`
 }
 
 type GetCurrentOnCallUsersParams struct {
@@ -191,27 +226,51 @@ type GetCurrentOnCallUsersParams struct {
 }
 
 func getCurrentOnCallUsers(ctx context.Context, args GetCurrentOnCallUsersParams) (*CurrentOnCallUsers, error) {
-	client, err := oncallClientFromContext(ctx)
+	scheduleService, err := getScheduleServiceFromContext(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("getting OnCall client: %w", err)
+		return nil, fmt.Errorf("getting OnCall schedule service: %w", err)
 	}
 
-	scheduleService := aapi.NewScheduleService(client)
 	schedule, _, err := scheduleService.GetSchedule(args.ScheduleID, &aapi.GetScheduleOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("getting schedule %s: %w", args.ScheduleID, err)
 	}
 
-	return &CurrentOnCallUsers{
+	// Create the result with the schedule info
+	result := &CurrentOnCallUsers{
 		ScheduleID:   schedule.ID,
 		ScheduleName: schedule.Name,
-		Users:        schedule.OnCallNow,
-	}, nil
+		Users:        make([]*aapi.User, 0, len(schedule.OnCallNow)),
+	}
+
+	// If there are no users on call, return early
+	if len(schedule.OnCallNow) == 0 {
+		return result, nil
+	}
+
+	// Get the user service to fetch user details
+	userService, err := getUserServiceFromContext(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("getting OnCall user service: %w", err)
+	}
+
+	// Fetch details for each user currently on call
+	for _, userID := range schedule.OnCallNow {
+		user, _, err := userService.GetUser(userID, &aapi.GetUserOptions{})
+		if err != nil {
+			// Log the error but continue with other users
+			fmt.Printf("Error fetching user %s: %v\n", userID, err)
+			continue
+		}
+		result.Users = append(result.Users, user)
+	}
+
+	return result, nil
 }
 
 var GetCurrentOnCallUsers = mcpgrafana.MustTool(
 	"get_current_oncall_users",
-	"Get users currently on-call for a specific schedule. A schedule is a calendar-based system defining when team members are on-call",
+	"Get users currently on-call for a specific schedule. A schedule is a calendar-based system defining when team members are on-call. This tool will return info about all users currently on-call for the schedule, regardless of team.",
 	getCurrentOnCallUsers,
 )
 
@@ -220,9 +279,9 @@ type ListOnCallTeamsParams struct {
 }
 
 func listOnCallTeams(ctx context.Context, args ListOnCallTeamsParams) ([]*aapi.Team, error) {
-	client, err := oncallClientFromContext(ctx)
+	teamService, err := getTeamServiceFromContext(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("getting OnCall client: %w", err)
+		return nil, fmt.Errorf("getting OnCall team service: %w", err)
 	}
 
 	listOptions := &aapi.ListTeamOptions{}
@@ -230,7 +289,6 @@ func listOnCallTeams(ctx context.Context, args ListOnCallTeamsParams) ([]*aapi.T
 		listOptions.Page = args.Page
 	}
 
-	teamService := aapi.NewTeamService(client)
 	response, _, err := teamService.ListTeams(listOptions)
 	if err != nil {
 		return nil, fmt.Errorf("listing OnCall teams: %w", err)
@@ -252,12 +310,10 @@ type ListOnCallUsersParams struct {
 }
 
 func listOnCallUsers(ctx context.Context, args ListOnCallUsersParams) ([]*aapi.User, error) {
-	client, err := oncallClientFromContext(ctx)
+	userService, err := getUserServiceFromContext(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("getting OnCall client: %w", err)
+		return nil, fmt.Errorf("getting OnCall user service: %w", err)
 	}
-
-	userService := aapi.NewUserService(client)
 
 	if args.UserID != "" {
 		user, _, err := userService.GetUser(args.UserID, &aapi.GetUserOptions{})

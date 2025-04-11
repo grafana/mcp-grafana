@@ -4,7 +4,7 @@ go 1.24.0
 
 require (
 	github.com/go-openapi/strfmt v0.23.0
-	github.com/grafana/amixr-api-go-client v0.0.20
+	github.com/grafana/amixr-api-go-client v0.0.21
 	github.com/grafana/grafana-openapi-client-go v0.0.0-20250108132429-8d7e1f158f65
 	github.com/grafana/incident-go v0.0.0-20250211094540-dc6a98fdae43
 	github.com/invopop/jsonschema v0.13.0

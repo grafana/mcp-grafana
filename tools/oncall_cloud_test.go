@@ -153,6 +153,13 @@ func TestCloudGetCurrentOnCallUsers(t *testing.T) {
 		assert.Equal(t, scheduleID, result.ScheduleID, "Should return the correct schedule")
 		assert.NotEmpty(t, result.ScheduleName, "Schedule should have a name")
 		assert.NotNil(t, result.Users, "Users field should be present")
+
+		// Assert that Users is of type []*aapi.User
+		if len(result.Users) > 0 {
+			user := result.Users[0]
+			assert.NotEmpty(t, user.ID, "User should have an ID")
+			assert.NotEmpty(t, user.Username, "User should have a username")
+		}
 	})
 
 	t.Run("get current on-call users with invalid schedule ID", func(t *testing.T) {
