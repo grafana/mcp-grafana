@@ -39,21 +39,35 @@ var (
 
 	rule1 = alertRuleSummary{
 		UID:    rule1UID,
+		State:  "",
 		Title:  rule1Title,
 		Labels: rule1Labels,
 	}
 	rule2 = alertRuleSummary{
 		UID:    rule2UID,
+		State:  "",
 		Title:  rule2Title,
 		Labels: rule2Labels,
 	}
 	rulePaused = alertRuleSummary{
 		UID:    rulePausedUID,
+		State:  "",
 		Title:  rulePausedTitle,
 		Labels: rule3Labels,
 	}
 	allExpectedRules = []alertRuleSummary{rule1, rule2, rulePaused}
 )
+
+// Because the state depends on the evaluation of the alert rules,
+// clear it before comparing the results to avoid waiting for the
+// alerts to start firing or be in the pending state.
+func clearState(rules []alertRuleSummary) []alertRuleSummary {
+	for i := range rules {
+		rules[i].State = ""
+	}
+
+	return rules
+}
 
 func TestAlertingTools_ListAlertRules(t *testing.T) {
 	t.Run("list alert rules", func(t *testing.T) {
@@ -61,7 +75,7 @@ func TestAlertingTools_ListAlertRules(t *testing.T) {
 		result, err := listAlertRules(ctx, ListAlertRulesParams{})
 		require.NoError(t, err)
 
-		require.ElementsMatch(t, allExpectedRules, result)
+		require.ElementsMatch(t, allExpectedRules, clearState(result))
 	})
 
 	t.Run("list alert rules with pagination", func(t *testing.T) {
@@ -104,7 +118,7 @@ func TestAlertingTools_ListAlertRules(t *testing.T) {
 		ctx := newTestContext()
 		result, err := listAlertRules(ctx, ListAlertRulesParams{})
 		require.NoError(t, err)
-		require.ElementsMatch(t, allExpectedRules, result)
+		require.ElementsMatch(t, allExpectedRules, clearState(result))
 	})
 
 	t.Run("list alert rules with selectors that match", func(t *testing.T) {
@@ -123,7 +137,7 @@ func TestAlertingTools_ListAlertRules(t *testing.T) {
 			},
 		})
 		require.NoError(t, err)
-		require.ElementsMatch(t, allExpectedRules, result)
+		require.ElementsMatch(t, allExpectedRules, clearState(result))
 	})
 
 	t.Run("list alert rules with selectors that don't match", func(t *testing.T) {
@@ -170,7 +184,7 @@ func TestAlertingTools_ListAlertRules(t *testing.T) {
 			},
 		})
 		require.NoError(t, err)
-		require.ElementsMatch(t, []alertRuleSummary{rule2}, result)
+		require.ElementsMatch(t, []alertRuleSummary{rule2}, clearState(result))
 	})
 
 	t.Run("list alert rules with regex matcher", func(t *testing.T) {
@@ -189,7 +203,7 @@ func TestAlertingTools_ListAlertRules(t *testing.T) {
 			},
 		})
 		require.NoError(t, err)
-		require.ElementsMatch(t, []alertRuleSummary{rule1}, result)
+		require.ElementsMatch(t, []alertRuleSummary{rule1}, clearState(result))
 	})
 
 	t.Run("list alert rules with selectors and pagination", func(t *testing.T) {
@@ -211,7 +225,7 @@ func TestAlertingTools_ListAlertRules(t *testing.T) {
 		})
 		require.NoError(t, err)
 		require.Len(t, result, 1)
-		require.ElementsMatch(t, []alertRuleSummary{rule1}, result)
+		require.ElementsMatch(t, []alertRuleSummary{rule1}, clearState(result))
 
 		// Second page
 		result, err = listAlertRules(ctx, ListAlertRulesParams{
@@ -231,7 +245,7 @@ func TestAlertingTools_ListAlertRules(t *testing.T) {
 		})
 		require.NoError(t, err)
 		require.Len(t, result, 1)
-		require.ElementsMatch(t, []alertRuleSummary{rule2}, result)
+		require.ElementsMatch(t, []alertRuleSummary{rule2}, clearState(result))
 	})
 
 	t.Run("list alert rules with not equals operator", func(t *testing.T) {
@@ -250,7 +264,7 @@ func TestAlertingTools_ListAlertRules(t *testing.T) {
 			},
 		})
 		require.NoError(t, err)
-		require.ElementsMatch(t, allExpectedRules, result)
+		require.ElementsMatch(t, allExpectedRules, clearState(result))
 	})
 
 	t.Run("list alert rules with not matches operator", func(t *testing.T) {
@@ -269,7 +283,7 @@ func TestAlertingTools_ListAlertRules(t *testing.T) {
 			},
 		})
 		require.NoError(t, err)
-		require.ElementsMatch(t, allExpectedRules, result)
+		require.ElementsMatch(t, allExpectedRules, clearState(result))
 	})
 
 	t.Run("list alert rules with non-existent label", func(t *testing.T) {
@@ -309,7 +323,7 @@ func TestAlertingTools_ListAlertRules(t *testing.T) {
 			},
 		})
 		require.NoError(t, err)
-		require.ElementsMatch(t, allExpectedRules, result)
+		require.ElementsMatch(t, allExpectedRules, clearState(result))
 	})
 
 	t.Run("list alert rules with a limit that is larger than the number of rules", func(t *testing.T) {
@@ -319,7 +333,7 @@ func TestAlertingTools_ListAlertRules(t *testing.T) {
 			Page:  1,
 		})
 		require.NoError(t, err)
-		require.ElementsMatch(t, allExpectedRules, result)
+		require.ElementsMatch(t, allExpectedRules, clearState(result))
 	})
 
 	t.Run("list alert rules with a page that doesn't exist", func(t *testing.T) {
