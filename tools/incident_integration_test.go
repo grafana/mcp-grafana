@@ -34,7 +34,7 @@ func TestCloudIncidentTools(t *testing.T) {
 	})
 
 	t.Run("get incident by ID", func(t *testing.T) {
-		ctx := createCloudTestContext(t)
+		ctx := createCloudTestContext(t, "Incident")
 		result, err := getIncident(ctx, GetIncidentParams{
 			ID: "1",
 		})
