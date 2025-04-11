@@ -77,6 +77,10 @@ func getDatasourceByUID(ctx context.Context, args GetDatasourceByUIDParams) (*mo
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
 	datasource, err := c.Datasources.GetDataSourceByUID(args.UID)
 	if err != nil {
+		// Check if it's a 404 Not Found Error
+		if strings.Contains(err.Error(), "404") {
+			return nil, fmt.Errorf("datasource with UID '%s' not found. Please check if the datasource exists and is accessible", args.UID)
+		}
 		return nil, fmt.Errorf("get datasource by uid %s: %w", args.UID, err)
 	}
 	return datasource.Payload, nil

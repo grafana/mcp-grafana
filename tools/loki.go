@@ -44,6 +44,12 @@ type Stats struct {
 }
 
 func newLokiClient(ctx context.Context, uid string) (*Client, error) {
+	// First check if the datasource exists
+	_, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: uid})
+	if err != nil {
+		return nil, err
+	}
+
 	grafanaURL, apiKey := mcpgrafana.GrafanaURLFromContext(ctx), mcpgrafana.GrafanaAPIKeyFromContext(ctx)
 	url := fmt.Sprintf("%s/api/datasources/proxy/uid/%s", strings.TrimRight(grafanaURL, "/"), uid)
 
