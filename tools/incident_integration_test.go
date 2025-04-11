@@ -35,6 +35,7 @@ func TestCloudIncidentTools(t *testing.T) {
 
 	t.Run("get incident by ID", func(t *testing.T) {
 		ctx := createCloudTestContext(t, "Incident")
+		ctx = mcpgrafana.ExtractIncidentClientFromEnv(ctx)
 		result, err := getIncident(ctx, GetIncidentParams{
 			ID: "1",
 		})
