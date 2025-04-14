@@ -81,7 +81,6 @@ the OnCall tools, use `--disable-oncall`.
 | `get_current_oncall_users`        | OnCall      | Get users currently on-call for a specific schedule                |
 | `list_oncall_teams`               | OnCall      | List teams from Grafana OnCall                                     |
 | `list_oncall_users`               | OnCall      | List users from Grafana OnCall                                     |
-| `create_investigation`            | Sift        | Create a new Sift investigation to analyze data from different datasources |
 | `get_investigation`               | Sift        | Retrieve an existing Sift investigation by its UUID                     |
 | `get_analysis`                    | Sift        | Retrieve a specific analysis from a Sift investigation                 |
 | `list_investigations`             | Sift        | Retrieve a list of Sift investigations with an optional limit           |
