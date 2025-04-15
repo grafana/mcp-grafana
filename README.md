@@ -42,6 +42,8 @@ This provides access to your Grafana instance and the surrounding ecosystem.
 
 The list of tools is configurable, so you can choose which tools you want to make available to the MCP client.
 This is useful if you don't use certain functionality or if you don't want to take up too much of the context window.
+To disable a category of tools, use the `--disable-<category>` flag when starting the server. For example, to disable
+the OnCall tools, use `--disable-oncall`.
 
 ### Tools
 

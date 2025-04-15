@@ -13,25 +13,55 @@ import (
 	"github.com/grafana/mcp-grafana/tools"
 )
 
-func newServer() *server.MCPServer {
+func maybeAddTools(s *server.MCPServer, tf func(*server.MCPServer), disable bool, category string) {
+	if disable {
+		slog.Info("Disabling tools", "category", category)
+		return
+	}
+	tf(s)
+}
+
+// disabledTools indicates whether each category of tools should be disabled.
+type disabledTools struct {
+	search, datasource, incident,
+	prometheus, loki, alerting,
+	dashboard, oncall bool
+}
+
+func (dt *disabledTools) addFlags() {
+	flag.BoolVar(&dt.search, "disable-search", false, "Disable search tools")
+	flag.BoolVar(&dt.datasource, "disable-datasource", false, "Disable datasource tools")
+	flag.BoolVar(&dt.incident, "disable-incident", false, "Disable incident tools")
+	flag.BoolVar(&dt.prometheus, "disable-prometheus", false, "Disable prometheus tools")
+	flag.BoolVar(&dt.loki, "disable-loki", false, "Disable loki tools")
+	flag.BoolVar(&dt.alerting, "disable-alerting", false, "Disable alerting tools")
+	flag.BoolVar(&dt.dashboard, "disable-dashboard", false, "Disable dashboard tools")
+	flag.BoolVar(&dt.oncall, "disable-oncall", false, "Disable oncall tools")
+}
+
+func (dt *disabledTools) addTools(s *server.MCPServer) {
+	maybeAddTools(s, tools.AddSearchTools, dt.search, "search")
+	maybeAddTools(s, tools.AddDatasourceTools, dt.datasource, "datasource")
+	maybeAddTools(s, tools.AddIncidentTools, dt.incident, "incident")
+	maybeAddTools(s, tools.AddPrometheusTools, dt.prometheus, "prometheus")
+	maybeAddTools(s, tools.AddLokiTools, dt.loki, "loki")
+	maybeAddTools(s, tools.AddAlertingTools, dt.alerting, "alerting")
+	maybeAddTools(s, tools.AddDashboardTools, dt.dashboard, "dashboard")
+	maybeAddTools(s, tools.AddOnCallTools, dt.oncall, "oncall")
+}
+
+func newServer(dt disabledTools) *server.MCPServer {
 	s := server.NewMCPServer(
 		"mcp-grafana",
 		"0.1.0",
 	)
-	tools.AddSearchTools(s)
-	tools.AddDatasourceTools(s)
-	tools.AddIncidentTools(s)
-	tools.AddPrometheusTools(s)
-	tools.AddLokiTools(s)
-	tools.AddAlertingTools(s)
-	tools.AddDashboardTools(s)
-	tools.AddOnCallTools(s)
+	dt.addTools(s)
 	return s
 }
 
-func run(transport, addr string, logLevel slog.Level) error {
+func run(transport, addr string, logLevel slog.Level, dt disabledTools) error {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})))
-	s := newServer()
+	s := newServer(dt)
 
 	switch transport {
 	case "stdio":
@@ -67,9 +97,11 @@ func main() {
 	)
 	addr := flag.String("sse-address", "localhost:8000", "The host and port to start the sse server on")
 	logLevel := flag.String("log-level", "info", "Log level (debug, info, warn, error)")
+	var dt disabledTools
+	dt.addFlags()
 	flag.Parse()
 
-	if err := run(transport, *addr, parseLevel(*logLevel)); err != nil {
+	if err := run(transport, *addr, parseLevel(*logLevel), dt); err != nil {
 		panic(err)
 	}
 }
