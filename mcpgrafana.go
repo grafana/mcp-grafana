@@ -146,6 +146,13 @@ var ExtractGrafanaClientFromHeaders server.SSEContextFunc = func(ctx context.Con
 	cfg := client.DefaultTransportConfig()
 	// Extract transport config from request headers, and set it on the context.
 	u, apiKey := urlAndAPIKeyFromHeaders(req)
+	uEnv, apiKeyEnv := urlAndAPIKeyFromEnv()
+	if u == "" {
+		u = uEnv
+	}
+	if apiKey == "" {
+		apiKey = apiKeyEnv
+	}
 	if u != "" {
 		if url, err := url.Parse(u); err == nil {
 			cfg.Host = url.Host
@@ -197,6 +204,16 @@ var ExtractIncidentClientFromEnv server.StdioContextFunc = func(ctx context.Cont
 
 var ExtractIncidentClientFromHeaders server.SSEContextFunc = func(ctx context.Context, req *http.Request) context.Context {
 	grafanaURL, apiKey := urlAndAPIKeyFromHeaders(req)
+	grafanaURLEnv, apiKeyEnv := urlAndAPIKeyFromEnv()
+	if grafanaURL == "" {
+		grafanaURL = grafanaURLEnv
+	}
+	if grafanaURL == "" {
+		grafanaURL = defaultGrafanaURL
+	}
+	if apiKey == "" {
+		apiKey = apiKeyEnv
+	}
 	incidentURL := fmt.Sprintf("%s/api/plugins/grafana-irm-app/resources/api/v1/", grafanaURL)
 	client := incident.NewClient(incidentURL, apiKey)
 	return context.WithValue(ctx, incidentClientKey{}, client)
