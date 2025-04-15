@@ -67,9 +67,9 @@ func TestCloudSiftInvestigations(t *testing.T) {
 		// Verify all required fields are present
 		assert.NotEmpty(t, result.Name, "Investigation should have a name")
 		assert.NotEmpty(t, result.TenantID, "Investigation should have a tenant ID")
-		assert.NotNil(t, result.Datasources, "Investigation should have datasources")
-		assert.NotNil(t, result.RequestData, "Investigation should have request data")
-		assert.NotNil(t, result.Analyses, "Investigation should have analyses")
+		assert.NotNil(t, result.GrafanaURL, "Investigation should have a Grafana URL")
+		assert.NotNil(t, result.Status, "Investigation should have a status")
+		assert.NotNil(t, result.FailureReason, "Investigation should have a failure reason")
 	})
 
 	// Test getting a non-existent investigation
