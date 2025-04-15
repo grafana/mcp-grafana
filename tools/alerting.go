@@ -56,7 +56,7 @@ func listAlertRules(ctx context.Context, args ListAlertRulesParams) ([]alertRule
 		return nil, fmt.Errorf("list alert rules: %w", err)
 	}
 
-	alertRules := []AlertingRule{}
+	alertRules := []alertingRule{}
 	for _, group := range response.Data.RuleGroups {
 		alertRules = append(alertRules, group.Rules...)
 	}
@@ -75,12 +75,12 @@ func listAlertRules(ctx context.Context, args ListAlertRulesParams) ([]alertRule
 }
 
 // filterAlertRules filters a list of alert rules based on label selectors
-func filterAlertRules(rules []AlertingRule, selectors []Selector) ([]AlertingRule, error) {
+func filterAlertRules(rules []alertingRule, selectors []Selector) ([]alertingRule, error) {
 	if len(selectors) == 0 {
 		return rules, nil
 	}
 
-	filteredResult := []AlertingRule{}
+	filteredResult := []alertingRule{}
 	for _, rule := range rules {
 		match, err := matchesSelectors(rule, selectors)
 		if err != nil {
@@ -96,7 +96,7 @@ func filterAlertRules(rules []AlertingRule, selectors []Selector) ([]AlertingRul
 }
 
 // matchesSelectors checks if an alert rule matches all provided selectors
-func matchesSelectors(rule AlertingRule, selectors []Selector) (bool, error) {
+func matchesSelectors(rule alertingRule, selectors []Selector) (bool, error) {
 	for _, selector := range selectors {
 		match, err := selector.Matches(rule.Labels)
 		if err != nil {
@@ -109,7 +109,7 @@ func matchesSelectors(rule AlertingRule, selectors []Selector) (bool, error) {
 	return true, nil
 }
 
-func summarizeAlertRules(alertRules []AlertingRule) []alertRuleSummary {
+func summarizeAlertRules(alertRules []alertingRule) []alertRuleSummary {
 	result := make([]alertRuleSummary, 0, len(alertRules))
 	for _, r := range alertRules {
 		result = append(result, alertRuleSummary{
@@ -124,7 +124,7 @@ func summarizeAlertRules(alertRules []AlertingRule) []alertRuleSummary {
 
 // applyPagination applies pagination to the list of alert rules.
 // It doesn't sort the items and relies on the order returned by the API.
-func applyPagination(items []AlertingRule, limit, page int) ([]AlertingRule, error) {
+func applyPagination(items []alertingRule, limit, page int) ([]alertingRule, error) {
 	if limit == 0 {
 		limit = DefaultListAlertRulesLimit
 	}

@@ -15,17 +15,17 @@ import (
 )
 
 var (
-	fakeRuleGroup = RuleGroup{
+	fakeruleGroup = ruleGroup{
 		Name:      "TestGroup",
 		FolderUID: "test-folder",
-		Rules: []AlertingRule{
+		Rules: []alertingRule{
 			{
 				State:     "firing",
 				Name:      "Test Alert Rule",
 				UID:       "test-rule-uid",
 				FolderUID: "test-folder",
 				Labels:    labels.Labels{{Name: "severity", Value: "critical"}},
-				Alerts: []Alert{
+				Alerts: []alert{
 					{
 						Labels:      labels.Labels{{Name: "instance", Value: "test-instance"}},
 						Annotations: labels.Labels{{Name: "summary", Value: "Test alert firing"}},
@@ -38,10 +38,10 @@ var (
 	}
 )
 
-func setupMockServer(handler http.HandlerFunc) (*httptest.Server, *AlertingClient) {
+func setupMockServer(handler http.HandlerFunc) (*httptest.Server, *alertingClient) {
 	server := httptest.NewServer(handler)
 	baseURL, _ := url.Parse(server.URL)
-	client := &AlertingClient{
+	client := &alertingClient{
 		baseURL:    baseURL,
 		apiKey:     "test-api-key",
 		httpClient: &http.Client{},
@@ -49,9 +49,9 @@ func setupMockServer(handler http.HandlerFunc) (*httptest.Server, *AlertingClien
 	return server, client
 }
 
-func mockRulesResponse() RulesResponse {
-	resp := RulesResponse{}
-	resp.Data.RuleGroups = []RuleGroup{fakeRuleGroup}
+func mockrulesResponse() rulesResponse {
+	resp := rulesResponse{}
+	resp.Data.RuleGroups = []ruleGroup{fakeruleGroup}
 	return resp
 }
 
@@ -60,7 +60,7 @@ func TestAlertingClient_GetRules(t *testing.T) {
 		require.Equal(t, "/api/prometheus/grafana/api/v1/rules", r.URL.Path)
 		require.Equal(t, "Bearer test-api-key", r.Header.Get("Authorization"))
 
-		resp := mockRulesResponse()
+		resp := mockrulesResponse()
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		err := json.NewEncoder(w).Encode(resp)
@@ -71,7 +71,7 @@ func TestAlertingClient_GetRules(t *testing.T) {
 	rules, err := client.GetRules(context.Background())
 	require.NoError(t, err)
 	require.NotNil(t, rules)
-	require.ElementsMatch(t, rules.Data.RuleGroups, []RuleGroup{fakeRuleGroup})
+	require.ElementsMatch(t, rules.Data.RuleGroups, []ruleGroup{fakeruleGroup})
 }
 
 func TestAlertingClient_GetRules_Error(t *testing.T) {

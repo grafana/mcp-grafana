@@ -20,20 +20,20 @@ const (
 	rulesEndpointPath = "/api/prometheus/grafana/api/v1/rules"
 )
 
-type AlertingClient struct {
+type alertingClient struct {
 	baseURL    *url.URL
 	apiKey     string
 	httpClient *http.Client
 }
 
-func newAlertingClientFromContext(ctx context.Context) (*AlertingClient, error) {
+func newAlertingClientFromContext(ctx context.Context) (*alertingClient, error) {
 	baseURL := strings.TrimRight(mcpgrafana.GrafanaURLFromContext(ctx), "/")
 	parsedBaseURL, err := url.Parse(baseURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid Grafana base URL %q: %w", baseURL, err)
 	}
 
-	return &AlertingClient{
+	return &alertingClient{
 		baseURL: parsedBaseURL,
 		apiKey:  mcpgrafana.GrafanaAPIKeyFromContext(ctx),
 		httpClient: &http.Client{
@@ -42,7 +42,7 @@ func newAlertingClientFromContext(ctx context.Context) (*AlertingClient, error) 
 	}, nil
 }
 
-func (c *AlertingClient) makeRequest(ctx context.Context, path string) (*http.Response, error) {
+func (c *alertingClient) makeRequest(ctx context.Context, path string) (*http.Response, error) {
 	p := c.baseURL.JoinPath(path).String()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p, nil)
@@ -70,14 +70,14 @@ func (c *AlertingClient) makeRequest(ctx context.Context, path string) (*http.Re
 	return resp, nil
 }
 
-func (c *AlertingClient) GetRules(ctx context.Context) (*RulesResponse, error) {
+func (c *alertingClient) GetRules(ctx context.Context) (*rulesResponse, error) {
 	resp, err := c.makeRequest(ctx, rulesEndpointPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get alert rules from Grafana API: %w", err)
 	}
 	defer resp.Body.Close()
 
-	var rulesResponse RulesResponse
+	var rulesResponse rulesResponse
 	decoder := json.NewDecoder(resp.Body)
 	if err := decoder.Decode(&rulesResponse); err != nil {
 		return nil, fmt.Errorf("failed to decode rules response from %s: %w", rulesEndpointPath, err)
@@ -86,24 +86,24 @@ func (c *AlertingClient) GetRules(ctx context.Context) (*RulesResponse, error) {
 	return &rulesResponse, nil
 }
 
-type RulesResponse struct {
+type rulesResponse struct {
 	Data struct {
-		RuleGroups []RuleGroup      `json:"groups"`
+		RuleGroups []ruleGroup      `json:"groups"`
 		NextToken  string           `json:"groupNextToken,omitempty"`
 		Totals     map[string]int64 `json:"totals,omitempty"`
 	} `json:"data"`
 }
 
-type RuleGroup struct {
+type ruleGroup struct {
 	Name           string         `json:"name"`
 	FolderUID      string         `json:"folderUid"`
-	Rules          []AlertingRule `json:"rules"`
+	Rules          []alertingRule `json:"rules"`
 	Interval       float64        `json:"interval"`
 	LastEvaluation time.Time      `json:"lastEvaluation"`
 	EvaluationTime float64        `json:"evaluationTime"`
 }
 
-type AlertingRule struct {
+type alertingRule struct {
 	State          string           `json:"state,omitempty"`
 	Name           string           `json:"name,omitempty"`
 	Query          string           `json:"query,omitempty"`
@@ -111,7 +111,7 @@ type AlertingRule struct {
 	KeepFiringFor  float64          `json:"keepFiringFor,omitempty"`
 	Annotations    labels.Labels    `json:"annotations,omitempty"`
 	ActiveAt       *time.Time       `json:"activeAt,omitempty"`
-	Alerts         []Alert          `json:"alerts,omitempty"`
+	Alerts         []alert          `json:"alerts,omitempty"`
 	Totals         map[string]int64 `json:"totals,omitempty"`
 	TotalsFiltered map[string]int64 `json:"totalsFiltered,omitempty"`
 	UID            string           `json:"uid"`
@@ -124,7 +124,7 @@ type AlertingRule struct {
 	EvaluationTime float64          `json:"evaluationTime"`
 }
 
-type Alert struct {
+type alert struct {
 	Labels      labels.Labels `json:"labels"`
 	Annotations labels.Labels `json:"annotations"`
 	State       string        `json:"state"`
