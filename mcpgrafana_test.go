@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/go-openapi/runtime/client"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -71,5 +72,37 @@ func TestExtractGrafanaInfoFromHeaders(t *testing.T) {
 		assert.Equal(t, "http://my-test-url.grafana.com", url)
 		apiKey := GrafanaAPIKeyFromContext(ctx)
 		assert.Equal(t, "my-test-api-key", apiKey)
+	})
+}
+
+func TestExtractGrafanaClientPath(t *testing.T) {
+	t.Run("no custom path", func(t *testing.T) {
+		t.Setenv("GRAFANA_URL", "http://my-test-url.grafana.com/")
+		ctx := ExtractGrafanaClientFromEnv(context.Background())
+
+		c := GrafanaClientFromContext(ctx)
+		require.NotNil(t, c)
+		rt := c.Transport.(*client.Runtime)
+		assert.Equal(t, "/api", rt.BasePath)
+	})
+
+	t.Run("custom path", func(t *testing.T) {
+		t.Setenv("GRAFANA_URL", "http://my-test-url.grafana.com/grafana")
+		ctx := ExtractGrafanaClientFromEnv(context.Background())
+
+		c := GrafanaClientFromContext(ctx)
+		require.NotNil(t, c)
+		rt := c.Transport.(*client.Runtime)
+		assert.Equal(t, "/grafana/api", rt.BasePath)
+	})
+
+	t.Run("custom path, trailing slash", func(t *testing.T) {
+		t.Setenv("GRAFANA_URL", "http://my-test-url.grafana.com/grafana/")
+		ctx := ExtractGrafanaClientFromEnv(context.Background())
+
+		c := GrafanaClientFromContext(ctx)
+		require.NotNil(t, c)
+		rt := c.Transport.(*client.Runtime)
+		assert.Equal(t, "/grafana/api", rt.BasePath)
 	})
 }
