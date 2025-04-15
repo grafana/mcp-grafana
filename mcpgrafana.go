@@ -101,6 +101,10 @@ func GrafanaAPIKeyFromContext(ctx context.Context) string {
 
 type grafanaClientKey struct{}
 
+func makeBasePath(path string) string {
+	return strings.Join([]string{strings.TrimRight(path, "/"), "api"}, "/")
+}
+
 // ExtractGrafanaClientFromEnv is a StdioContextFunc that extracts Grafana configuration
 // from environment variables and injects a configured client into the context.
 var ExtractGrafanaClientFromEnv server.StdioContextFunc = func(ctx context.Context) context.Context {
@@ -116,6 +120,7 @@ var ExtractGrafanaClientFromEnv server.StdioContextFunc = func(ctx context.Conte
 			panic(fmt.Errorf("invalid %s: %w", grafanaURLEnvVar, err))
 		}
 		cfg.Host = parsedURL.Host
+		cfg.BasePath = makeBasePath(parsedURL.Path)
 		// The Grafana client will always prefer HTTPS even if the URL is HTTP,
 		// so we need to limit the schemes to HTTP if the URL is HTTP.
 		if parsedURL.Scheme == "http" {
@@ -144,6 +149,7 @@ var ExtractGrafanaClientFromHeaders server.SSEContextFunc = func(ctx context.Con
 	if u != "" {
 		if url, err := url.Parse(u); err == nil {
 			cfg.Host = url.Host
+			cfg.BasePath = makeBasePath(url.Path)
 			if url.Scheme == "http" {
 				cfg.Schemes = []string{"http"}
 			}
