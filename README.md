@@ -29,9 +29,9 @@ This provides access to your Grafana instance and the surrounding ecosystem.
 - [ ] Start Sift investigations and view the results
 - [ ] Alerting
   - [x] List and fetch alert rule information
-  - [ ] Get alert rule statuses (firing/normal/error/etc.)
+  - [x] Get alert rule statuses (firing/normal/error/etc.)
   - [ ] Create and change alert rules
-  - [ ] List contact points
+  - [x] List contact points
   - [ ] Create and change contact points
 - [x] Access Grafana OnCall functionality
   - [x] List and manage schedules
