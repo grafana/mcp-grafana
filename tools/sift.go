@@ -35,100 +35,56 @@ const (
 )
 
 type InvestigationRequest struct {
-	AlertLabels map[string]string `json:"alertLabels,omitempty" gorm:"-"`
+	AlertLabels map[string]string `json:"alertLabels,omitempty"`
 	Labels      map[string]string `json:"labels"`
 
-	Start time.Time `json:"start" gorm:"not null"`
-	End   time.Time `json:"end" gorm:"not null"`
-
-	// TODO: Add this when we have a new investigation source field InvestigationSourceTypeMCP.
-	// InvestigationSource InvestigationSource `json:"investigationSource" gorm:"embedded;embeddedPrefix:investigation_source_"`
+	Start time.Time `json:"start"`
+	End   time.Time `json:"end"`
 
 	QueryURL string `json:"queryUrl"`
 
-	Checks []string `json:"checks" gorm:"serializer:json"`
-}
-
-// AnalysisStep represents a single step in the analysis process.
-type AnalysisStep struct {
-	CreatedAt time.Time `json:"created" validate:"isdefault"`
-	// State that the Analysis is entering.
-	State string `json:"state"`
-	// The exit message of the step. Can be empty if the step was successful.
-	ExitMessage string `json:"exitMessage"`
-	// Runtime statistics for this step
-	Stats map[string]interface{} `json:"stats,omitempty"`
-}
-
-type AnalysisEvent struct {
-	StartTime   time.Time              `json:"startTime"`
-	EndTime     time.Time              `json:"endTime"`
-	Name        string                 `json:"name"`
-	Description string                 `json:"description,omitempty"`
-	Details     map[string]interface{} `json:"details"`
+	Checks []string `json:"checks"`
 }
 
 // Interesting: The analysis complete with results that indicate a probable cause for failure.
 type AnalysisResult struct {
-	Successful      bool                   `json:"successful"`
-	Interesting     bool                   `json:"interesting"`
-	Message         string                 `json:"message"`
-	MarkdownSummary string                 `json:"-" gorm:"-"`
-	Details         map[string]interface{} `json:"details"`
-	Events          []AnalysisEvent        `json:"events,omitempty" gorm:"serializer:json"`
+	Successful  bool                   `json:"successful"`
+	Interesting bool                   `json:"interesting"`
+	Message     string                 `json:"message"`
+	Details     map[string]interface{} `json:"details"`
+}
+
+type AnalysisMeta struct {
+	Items []Analysis `json:"items"`
 }
 
 // An Analysis struct provides the status and results
 // of running a specific type of check.
 type Analysis struct {
-	ID        uuid.UUID `json:"id" gorm:"primarykey;type:char(36)" validate:"isdefault"`
-	CreatedAt time.Time `json:"created" validate:"isdefault"`
-	UpdatedAt time.Time `json:"modified" validate:"isdefault"`
+	ID        uuid.UUID `json:"id"`
+	CreatedAt time.Time `json:"created"`
+	UpdatedAt time.Time `json:"modified"`
 
-	Status    AnalysisStatus `json:"status" gorm:"default:pending;index:idx_analyses_stats,priority:100"`
-	StartedAt *time.Time     `json:"started" validate:"isdefault"`
+	Status    AnalysisStatus `json:"status"`
+	StartedAt *time.Time     `json:"started"`
 
 	// Foreign key to the Investigation that created this Analysis.
-	InvestigationID uuid.UUID `json:"investigationId" gorm:"index:idx_analyses_stats,priority:10"`
+	InvestigationID uuid.UUID `json:"investigationId"`
 
 	// Name is the name of the check that this analysis represents.
 	Name   string         `json:"name"`
 	Title  string         `json:"title"`
-	Steps  []AnalysisStep `json:"steps" gorm:"foreignKey:AnalysisID;constraint:OnDelete:CASCADE"`
-	Result AnalysisResult `json:"result" gorm:"embedded;embeddedPrefix:result_"`
-}
-
-type DatasourceConfig struct {
-	LokiDatasource       DatasourceInfo `json:"lokiDatasource" gorm:"not null;embedded;embeddedPrefix:loki_"`
-	PrometheusDatasource DatasourceInfo `json:"prometheusDatasource" gorm:"not null;embedded;embeddedPrefix:prometheus_"`
-	TempoDatasource      DatasourceInfo `json:"tempoDatasource" gorm:"not null;embedded;embeddedPrefix:tempo_"`
-	PyroscopeDatasource  DatasourceInfo `json:"pyroscopeDatasource" gorm:"not null;embedded;embeddedPrefix:pyroscope_"`
-}
-
-type DatasourceInfo struct {
-	Uid string `json:"uid"`
-}
-
-// AnalysisMeta represents metadata about the analyses
-type AnalysisMeta struct {
-	CountsByStage map[string]interface{} `json:"countsByStage"`
-	Items         []Analysis             `json:"items"`
+	Result AnalysisResult `json:"result"`
 }
 
 type Investigation struct {
-	ID        uuid.UUID `json:"id" gorm:"primarykey;type:char(36)" validate:"isdefault"`
-	CreatedAt time.Time `json:"created" gorm:"index" validate:"isdefault"`
-	UpdatedAt time.Time `json:"modified" validate:"isdefault"`
+	ID        uuid.UUID `json:"id"`
+	CreatedAt time.Time `json:"created"`
+	UpdatedAt time.Time `json:"modified"`
 
-	TenantID string `json:"tenantId" gorm:"index;not null;size:256"`
+	TenantID string `json:"tenantId"`
 
-	Datasources DatasourceConfig `json:"datasources" gorm:"embedded;embeddedPrefix:datasources_"`
-
-	Name        string               `json:"name"`
-	RequestData InvestigationRequest `json:"requestData" gorm:"not null;embedded;embeddedPrefix:request_"`
-
-	// TODO: Add this when we want to extract discovered inputs for later usage
-	// Inputs      Inputs               `json:"inputs" gorm:"serializer:json"`
+	Name string `json:"name"`
 
 	// GrafanaURL is the Grafana URL to be used for datasource queries
 	// for this investigation.
@@ -141,13 +97,7 @@ type Investigation struct {
 	// investigation failed.
 	FailureReason string `json:"failureReason,omitempty"`
 
-	// Analyses contains metadata about the investigation's analyses
 	Analyses AnalysisMeta `json:"analyses"`
-}
-
-type RequestData struct {
-	Labels map[string]string `json:"labels"`
-	Checks []string          `json:"checks"`
 }
 
 // SiftClient represents a client for interacting with the Sift API
@@ -254,7 +204,7 @@ func getAnalysis(ctx context.Context, args GetAnalysisParams) (*Analysis, error)
 // GetAnalysis is a tool for retrieving a specific analysis from an investigation
 var GetAnalysis = mcpgrafana.MustTool(
 	"get_analysis",
-	"Retrieves a specific analysis from a Sift investigation by their UUIDs. Both the investigation ID and analysis ID should be provided as strings in UUID format.",
+	"Retrieves a specific analysis from an investigation by its UUID. The investigation ID and analysis ID should be provided as strings in UUID format.",
 	getAnalysis,
 )
 
@@ -290,8 +240,8 @@ var ListInvestigations = mcpgrafana.MustTool(
 	listInvestigations,
 )
 
-// RunErrorPatternLogsParams defines the parameters for running an ErrorPatternLogs check
-type RunErrorPatternLogsParams struct {
+// FindErrorPatternLogsParams defines the parameters for running an ErrorPatternLogs check
+type FindErrorPatternLogsParams struct {
 	Name     string            `json:"name" jsonschema:"required,description=The name of the investigation"`
 	Labels   map[string]string `json:"labels" jsonschema:"required,description=Labels to scope the analysis"`
 	Start    time.Time         `json:"start,omitempty" jsonschema:"description=Start time for the investigation. Defaults to 30 minutes ago if not specified."`
@@ -299,8 +249,8 @@ type RunErrorPatternLogsParams struct {
 	QueryURL string            `json:"queryUrl,omitempty" jsonschema:"description=Optional query URL for the investigation"`
 }
 
-// runErrorPatternLogs creates an investigation with ErrorPatternLogs check, waits for it to complete, and returns the analysis
-func runErrorPatternLogs(ctx context.Context, args RunErrorPatternLogsParams) (*Analysis, error) {
+// findErrorPatternLogs creates an investigation with ErrorPatternLogs check, waits for it to complete, and returns the analysis
+func findErrorPatternLogs(ctx context.Context, args FindErrorPatternLogsParams) (*Analysis, error) {
 	client, err := siftClientFromContext(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("creating Sift client: %w", err)
@@ -316,14 +266,13 @@ func runErrorPatternLogs(ctx context.Context, args RunErrorPatternLogsParams) (*
 	}
 
 	investigation := &Investigation{
-		Name:        args.Name,
-		RequestData: requestData,
-		GrafanaURL:  client.url,
-		Status:      InvestigationStatusPending,
+		Name:       args.Name,
+		GrafanaURL: client.url,
+		Status:     InvestigationStatusPending,
 	}
 
 	// Create the investigation and wait for it to complete
-	completedInvestigation, err := client.createInvestigation(ctx, investigation)
+	completedInvestigation, err := client.createInvestigation(ctx, investigation, requestData)
 	if err != nil {
 		return nil, fmt.Errorf("creating investigation: %w", err)
 	}
@@ -350,15 +299,15 @@ func runErrorPatternLogs(ctx context.Context, args RunErrorPatternLogsParams) (*
 	return errorPatternLogsAnalysis, nil
 }
 
-// RunErrorPatternLogs is a tool for running an ErrorPatternLogs check
-var RunErrorPatternLogs = mcpgrafana.MustTool(
-	"run_error_pattern_logs",
-	"Creates a Sift investigation with ErrorPatternLogs check, waits for it to complete, and returns the analysis results. This tool triggers an investigation with the ErrorPatternLogs check in the relevant Loki datasource. It investigates if the there are elevated errors rates in the logs compared to the last day's average and returns the error pattern found, if any.",
-	runErrorPatternLogs,
+// FindErrorPatternLogs is a tool for running an ErrorPatternLogs check
+var FindErrorPatternLogs = mcpgrafana.MustTool(
+	"find_error_pattern_logs",
+	"Creates an investigation to search for error patterns in logs, waits for it to complete, and returns the analysis results. This tool triggers an investigation in the relevant Loki datasource to determine if there are elevated error rates compared to the last day's average, and returns the error pattern found, if any.",
+	findErrorPatternLogs,
 )
 
-// RunSlowRequestsCheckParams defines the parameters for running an SlowRequests check
-type RunSlowRequestsCheckParams struct {
+// FindSlowRequestsParams defines the parameters for running an SlowRequests check
+type FindSlowRequestsParams struct {
 	Name     string            `json:"name" jsonschema:"required,description=The name of the investigation"`
 	Labels   map[string]string `json:"labels" jsonschema:"required,description=Labels to scope the analysis"`
 	Start    time.Time         `json:"start,omitempty" jsonschema:"description=Start time for the investigation. Defaults to 30 minutes ago if not specified."`
@@ -366,8 +315,8 @@ type RunSlowRequestsCheckParams struct {
 	QueryURL string            `json:"queryUrl,omitempty" jsonschema:"description=Optional query URL for the investigation"`
 }
 
-// runSlowRequests creates an investigation with SlowRequests check, waits for it to complete, and returns the analysis
-func runSlowRequests(ctx context.Context, args RunSlowRequestsCheckParams) (*Analysis, error) {
+// findSlowRequests creates an investigation with SlowRequests check, waits for it to complete, and returns the analysis
+func findSlowRequests(ctx context.Context, args FindSlowRequestsParams) (*Analysis, error) {
 	client, err := siftClientFromContext(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("creating Sift client: %w", err)
@@ -383,14 +332,13 @@ func runSlowRequests(ctx context.Context, args RunSlowRequestsCheckParams) (*Ana
 	}
 
 	investigation := &Investigation{
-		Name:        args.Name,
-		RequestData: requestData,
-		GrafanaURL:  client.url,
-		Status:      InvestigationStatusPending,
+		Name:       args.Name,
+		GrafanaURL: client.url,
+		Status:     InvestigationStatusPending,
 	}
 
 	// Create the investigation and wait for it to complete
-	completedInvestigation, err := client.createInvestigation(ctx, investigation)
+	completedInvestigation, err := client.createInvestigation(ctx, investigation, requestData)
 	if err != nil {
 		return nil, fmt.Errorf("creating investigation: %w", err)
 	}
@@ -417,11 +365,11 @@ func runSlowRequests(ctx context.Context, args RunSlowRequestsCheckParams) (*Ana
 	return slowRequestsAnalysis, nil
 }
 
-// RunSlowRequestsCheck is a tool for running an SlowRequests check
-var RunSlowRequestsCheck = mcpgrafana.MustTool(
-	"run_slow_requests_check",
-	"Creates a Sift investigation with SlowRequests check in the relevant Tempo datasources, waits for it to complete, and returns the analysis results.",
-	runSlowRequests,
+// FindSlowRequests is a tool for running an SlowRequests check
+var FindSlowRequests = mcpgrafana.MustTool(
+	"find_slow_requests",
+	"Creates an investigation to search for slow requests in the relevant Tempo datasources, waits for it to complete, and returns the analysis results.",
+	findSlowRequests,
 )
 
 // AddSiftTools registers all Sift tools with the MCP server
@@ -429,8 +377,8 @@ func AddSiftTools(mcp *server.MCPServer) {
 	GetInvestigation.Register(mcp)
 	GetAnalysis.Register(mcp)
 	ListInvestigations.Register(mcp)
-	RunErrorPatternLogs.Register(mcp)
-	RunSlowRequestsCheck.Register(mcp)
+	FindErrorPatternLogs.Register(mcp)
+	FindSlowRequests.Register(mcp)
 }
 
 // makeRequest is a helper method to make HTTP requests and handle common response patterns
@@ -486,16 +434,25 @@ func (c *SiftClient) getInvestigation(ctx context.Context, id uuid.UUID) (*Inves
 	return &investigationResponse.Data, nil
 }
 
-func (c *SiftClient) createInvestigation(ctx context.Context, investigation *Investigation) (*Investigation, error) {
+func (c *SiftClient) createInvestigation(ctx context.Context, investigation *Investigation, requestData InvestigationRequest) (*Investigation, error) {
 	// Set default time range to last 30 minutes if not provided
-	if investigation.RequestData.Start.IsZero() {
-		investigation.RequestData.Start = time.Now().Add(-30 * time.Minute)
+	if requestData.Start.IsZero() {
+		requestData.Start = time.Now().Add(-30 * time.Minute)
 	}
-	if investigation.RequestData.End.IsZero() {
-		investigation.RequestData.End = time.Now()
+	if requestData.End.IsZero() {
+		requestData.End = time.Now()
 	}
 
-	jsonData, err := json.Marshal(investigation)
+	// Create the payload including the necessary fields for the API
+	payload := struct {
+		Investigation
+		RequestData InvestigationRequest `json:"requestData"`
+	}{
+		Investigation: *investigation,
+		RequestData:   requestData,
+	}
+
+	jsonData, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("marshaling investigation: %w", err)
 	}
