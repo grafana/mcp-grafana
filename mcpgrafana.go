@@ -101,6 +101,10 @@ func GrafanaAPIKeyFromContext(ctx context.Context) string {
 
 type grafanaClientKey struct{}
 
+func makeBasePath(path string) string {
+	return strings.Join([]string{strings.TrimRight(path, "/"), "api"}, "/")
+}
+
 // ExtractGrafanaClientFromEnv is a StdioContextFunc that extracts Grafana configuration
 // from environment variables and injects a configured client into the context.
 var ExtractGrafanaClientFromEnv server.StdioContextFunc = func(ctx context.Context) context.Context {
@@ -116,6 +120,7 @@ var ExtractGrafanaClientFromEnv server.StdioContextFunc = func(ctx context.Conte
 			panic(fmt.Errorf("invalid %s: %w", grafanaURLEnvVar, err))
 		}
 		cfg.Host = parsedURL.Host
+		cfg.BasePath = makeBasePath(parsedURL.Path)
 		// The Grafana client will always prefer HTTPS even if the URL is HTTP,
 		// so we need to limit the schemes to HTTP if the URL is HTTP.
 		if parsedURL.Scheme == "http" {
@@ -141,9 +146,17 @@ var ExtractGrafanaClientFromHeaders server.SSEContextFunc = func(ctx context.Con
 	cfg := client.DefaultTransportConfig()
 	// Extract transport config from request headers, and set it on the context.
 	u, apiKey := urlAndAPIKeyFromHeaders(req)
+	uEnv, apiKeyEnv := urlAndAPIKeyFromEnv()
+	if u == "" {
+		u = uEnv
+	}
+	if apiKey == "" {
+		apiKey = apiKeyEnv
+	}
 	if u != "" {
 		if url, err := url.Parse(u); err == nil {
 			cfg.Host = url.Host
+			cfg.BasePath = makeBasePath(url.Path)
 			if url.Scheme == "http" {
 				cfg.Schemes = []string{"http"}
 			}
@@ -191,6 +204,16 @@ var ExtractIncidentClientFromEnv server.StdioContextFunc = func(ctx context.Cont
 
 var ExtractIncidentClientFromHeaders server.SSEContextFunc = func(ctx context.Context, req *http.Request) context.Context {
 	grafanaURL, apiKey := urlAndAPIKeyFromHeaders(req)
+	grafanaURLEnv, apiKeyEnv := urlAndAPIKeyFromEnv()
+	if grafanaURL == "" {
+		grafanaURL = grafanaURLEnv
+	}
+	if grafanaURL == "" {
+		grafanaURL = defaultGrafanaURL
+	}
+	if apiKey == "" {
+		apiKey = apiKeyEnv
+	}
 	incidentURL := fmt.Sprintf("%s/api/plugins/grafana-irm-app/resources/api/v1/", grafanaURL)
 	client := incident.NewClient(incidentURL, apiKey)
 	return context.WithValue(ctx, incidentClientKey{}, client)

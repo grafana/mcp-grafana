@@ -87,8 +87,8 @@ type QueryPrometheusParams struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the datasource to query"`
 	Expr          string `json:"expr" jsonschema:"required,description=The PromQL expression to query"`
 	StartRFC3339  string `json:"startRfc3339" jsonschema:"required,description=The start time in RFC3339 format"`
-	EndRFC3339    string `json:"endRfc3339,omitempty" jsonschema:"description=The end time in RFC3339 format. Ignored if queryType is 'instant'"`
-	StepSeconds   int    `json:"stepSeconds,omitempty" jsonschema:"description=The time series step size in seconds. Ignored if queryType is 'instant'"`
+	EndRFC3339    string `json:"endRfc3339,omitempty" jsonschema:"description=The end time in RFC3339 format. Required if queryType is 'range', ignored if queryType is 'instant'"`
+	StepSeconds   int    `json:"stepSeconds,omitempty" jsonschema:"description=The time series step size in seconds. Required if queryType is 'range', ignored if queryType is 'instant'"`
 	QueryType     string `json:"queryType,omitempty" jsonschema:"description=The type of query to use. Either 'range' or 'instant'"`
 }
 
