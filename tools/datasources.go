@@ -12,7 +12,7 @@ import (
 )
 
 type ListDatasourcesParams struct {
-	Type string `json:"type,omitempty" jsonschema:"description=The type of datasources to search for. For example, 'prometheus', 'loki', 'tempo', etc..."`
+	Type string `json:"type,omitempty" jsonschema:"description=The type of datasources to search for. For example\\, 'prometheus'\\, 'loki'\\, 'tempo'\\, etc..."`
 }
 
 type dataSourceSummary struct {

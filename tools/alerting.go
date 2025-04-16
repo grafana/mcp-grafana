@@ -19,7 +19,7 @@ const (
 type ListAlertRulesParams struct {
 	Limit          int        `json:"limit,omitempty" jsonschema:"description=The maximum number of results to return. Default is 100."`
 	Page           int        `json:"page,omitempty" jsonschema:"description=The page number to return."`
-	LabelSelectors []Selector `json:"label_selectors,omitempty" jsonschema:"description=Optionally, a list of matchers to filter alert rules by labels"`
+	LabelSelectors []Selector `json:"label_selectors,omitempty" jsonschema:"description=Optionally\\, a list of matchers to filter alert rules by labels"`
 }
 
 func (p ListAlertRulesParams) validate() error {

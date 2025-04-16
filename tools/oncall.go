@@ -117,7 +117,7 @@ func getOnCallShiftServiceFromContext(ctx context.Context) (*aapi.OnCallShiftSer
 
 type ListOnCallSchedulesParams struct {
 	TeamID     string `json:"teamId,omitempty" jsonschema:"description=The ID of the team to list schedules for"`
-	ScheduleID string `json:"scheduleId,omitempty" jsonschema:"description=The ID of the schedule to get details for. If provided, returns only that schedule's details"`
+	ScheduleID string `json:"scheduleId,omitempty" jsonschema:"description=The ID of the schedule to get details for. If provided\\, returns only that schedule's details"`
 	Page       int    `json:"page,omitempty" jsonschema:"description=The page number to return (1-based)"`
 }
 
@@ -304,8 +304,8 @@ var ListOnCallTeams = mcpgrafana.MustTool(
 )
 
 type ListOnCallUsersParams struct {
-	UserID   string `json:"userId,omitempty" jsonschema:"description=The ID of the user to get details for. If provided, returns only that user's details"`
-	Username string `json:"username,omitempty" jsonschema:"description=The username to filter users by. If provided, returns only the user matching this username"`
+	UserID   string `json:"userId,omitempty" jsonschema:"description=The ID of the user to get details for. If provided\\, returns only that user's details"`
+	Username string `json:"username,omitempty" jsonschema:"description=The username to filter users by. If provided\\, returns only the user matching this username"`
 	Page     int    `json:"page,omitempty" jsonschema:"description=The page number to return"`
 }
 
