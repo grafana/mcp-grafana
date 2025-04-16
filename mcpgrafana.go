@@ -41,6 +41,26 @@ func urlAndAPIKeyFromHeaders(req *http.Request) (string, string) {
 type grafanaURLKey struct{}
 type grafanaAPIKeyKey struct{}
 
+// grafanaDebugKey is the context key for the Grafana transport's debug flag.
+type grafanaDebugKey struct{}
+
+// WithGrafanaDebug adds the Grafana debug flag to the context.
+func WithGrafanaDebug(ctx context.Context, debug bool) context.Context {
+	if debug {
+		slog.Info("Grafana transport debug mode enabled")
+	}
+	return context.WithValue(ctx, grafanaDebugKey{}, debug)
+}
+
+// GrafanaDebugFromContext extracts the Grafana debug flag from the context.
+// If the flag is not set, it returns false.
+func GrafanaDebugFromContext(ctx context.Context) bool {
+	if debug, ok := ctx.Value(grafanaDebugKey{}).(bool); ok {
+		return debug
+	}
+	return false
+}
+
 // ExtractGrafanaInfoFromEnv is a StdioContextFunc that extracts Grafana configuration
 // from environment variables and injects a configured client into the context.
 var ExtractGrafanaInfoFromEnv server.StdioContextFunc = func(ctx context.Context) context.Context {
@@ -135,6 +155,8 @@ var ExtractGrafanaClientFromEnv server.StdioContextFunc = func(ctx context.Conte
 		cfg.APIKey = apiKey
 	}
 
+	cfg.Debug = GrafanaDebugFromContext(ctx)
+
 	slog.Debug("Creating Grafana client", "url", parsedURL.Redacted(), "api_key_set", apiKey != "")
 	client := client.NewHTTPClientWithConfig(strfmt.Default, cfg)
 	return context.WithValue(ctx, grafanaClientKey{}, client)
@@ -165,6 +187,9 @@ var ExtractGrafanaClientFromHeaders server.SSEContextFunc = func(ctx context.Con
 	if apiKey != "" {
 		cfg.APIKey = apiKey
 	}
+
+	cfg.Debug = GrafanaDebugFromContext(ctx)
+
 	client := client.NewHTTPClientWithConfig(strfmt.Default, cfg)
 	return WithGrafanaClient(ctx, client)
 }
@@ -251,16 +276,27 @@ func ComposeSSEContextFuncs(funcs ...server.SSEContextFunc) server.SSEContextFun
 	}
 }
 
-// ComposedStdioContextFunc is a StdioContextFunc that comprises all predefined StdioContextFuncs.
-var ComposedStdioContextFunc = ComposeStdioContextFuncs(
-	ExtractGrafanaInfoFromEnv,
-	ExtractGrafanaClientFromEnv,
-	ExtractIncidentClientFromEnv,
-)
+// ComposedStdioContextFunc returns a StdioContextFunc that comprises all predefined StdioContextFuncs,
+// as well as the Grafana debug flag.
+func ComposedStdioContextFunc(debug bool) server.StdioContextFunc {
+	return ComposeStdioContextFuncs(
+		func(ctx context.Context) context.Context {
+			return WithGrafanaDebug(ctx, debug)
+		},
+		ExtractGrafanaInfoFromEnv,
+		ExtractGrafanaClientFromEnv,
+		ExtractIncidentClientFromEnv,
+	)
+}
 
 // ComposedSSEContextFunc is a SSEContextFunc that comprises all predefined SSEContextFuncs.
-var ComposedSSEContextFunc = ComposeSSEContextFuncs(
-	ExtractGrafanaInfoFromHeaders,
-	ExtractGrafanaClientFromHeaders,
-	ExtractIncidentClientFromHeaders,
-)
+func ComposedSSEContextFunc(debug bool) server.SSEContextFunc {
+	return ComposeSSEContextFuncs(
+		func(ctx context.Context, req *http.Request) context.Context {
+			return WithGrafanaDebug(ctx, debug)
+		},
+		ExtractGrafanaInfoFromHeaders,
+		ExtractGrafanaClientFromHeaders,
+		ExtractIncidentClientFromHeaders,
+	)
+}
