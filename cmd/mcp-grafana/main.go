@@ -28,6 +28,12 @@ type disabledTools struct {
 	dashboard, oncall bool
 }
 
+// Configuration for the Grafana client.
+type grafanaConfig struct {
+	// Whether to enable debug mode for the Grafana transport.
+	debug bool
+}
+
 func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.search, "disable-search", false, "Disable search tools")
 	flag.BoolVar(&dt.datasource, "disable-datasource", false, "Disable datasource tools")
@@ -37,6 +43,10 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.alerting, "disable-alerting", false, "Disable alerting tools")
 	flag.BoolVar(&dt.dashboard, "disable-dashboard", false, "Disable dashboard tools")
 	flag.BoolVar(&dt.oncall, "disable-oncall", false, "Disable oncall tools")
+}
+
+func (gc *grafanaConfig) addFlags() {
+	flag.BoolVar(&gc.debug, "debug", false, "Enable debug mode for the Grafana transport")
 }
 
 func (dt *disabledTools) addTools(s *server.MCPServer) {
@@ -59,19 +69,19 @@ func newServer(dt disabledTools) *server.MCPServer {
 	return s
 }
 
-func run(transport, addr string, logLevel slog.Level, dt disabledTools) error {
+func run(transport, addr string, logLevel slog.Level, dt disabledTools, gc grafanaConfig) error {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})))
 	s := newServer(dt)
 
 	switch transport {
 	case "stdio":
 		srv := server.NewStdioServer(s)
-		srv.SetContextFunc(mcpgrafana.ComposedStdioContextFunc)
+		srv.SetContextFunc(mcpgrafana.ComposedStdioContextFunc(gc.debug))
 		slog.Info("Starting Grafana MCP server using stdio transport")
 		return srv.Listen(context.Background(), os.Stdin, os.Stdout)
 	case "sse":
 		srv := server.NewSSEServer(s,
-			server.WithSSEContextFunc(mcpgrafana.ComposedSSEContextFunc),
+			server.WithSSEContextFunc(mcpgrafana.ComposedSSEContextFunc(gc.debug)),
 		)
 		slog.Info("Starting Grafana MCP server using SSE transport", "address", addr)
 		if err := srv.Start(addr); err != nil {
@@ -99,9 +109,11 @@ func main() {
 	logLevel := flag.String("log-level", "info", "Log level (debug, info, warn, error)")
 	var dt disabledTools
 	dt.addFlags()
+	var gc grafanaConfig
+	gc.addFlags()
 	flag.Parse()
 
-	if err := run(transport, *addr, parseLevel(*logLevel), dt); err != nil {
+	if err := run(transport, *addr, parseLevel(*logLevel), dt, gc); err != nil {
 		panic(err)
 	}
 }
