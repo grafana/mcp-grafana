@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"slices"
+	"strings"
 
 	"github.com/mark3labs/mcp-go/server"
 
@@ -13,16 +15,23 @@ import (
 	"github.com/grafana/mcp-grafana/tools"
 )
 
-func maybeAddTools(s *server.MCPServer, tf func(*server.MCPServer), disable bool, category string) {
+func maybeAddTools(s *server.MCPServer, tf func(*server.MCPServer), enabledTools []string, disable bool, category string) {
+	if !slices.Contains(enabledTools, category) {
+		slog.Debug("Not enabling tools", "category", category)
+		return
+	}
 	if disable {
 		slog.Info("Disabling tools", "category", category)
 		return
 	}
+	slog.Debug("Enabling tools", "category", category)
 	tf(s)
 }
 
 // disabledTools indicates whether each category of tools should be disabled.
 type disabledTools struct {
+	enabledTools string
+
 	search, datasource, incident,
 	prometheus, loki, alerting,
 	dashboard, oncall bool
@@ -35,6 +44,8 @@ type grafanaConfig struct {
 }
 
 func (dt *disabledTools) addFlags() {
+	flag.StringVar(&dt.enabledTools, "enabled-tools", "search,datasource,incident,prometheus,loki,alerting,dashboard,oncall", "A comma separated list of tools enabled for this server. Can be overwritten entirely or by disabling specific components, e.g. --disable-search.")
+
 	flag.BoolVar(&dt.search, "disable-search", false, "Disable search tools")
 	flag.BoolVar(&dt.datasource, "disable-datasource", false, "Disable datasource tools")
 	flag.BoolVar(&dt.incident, "disable-incident", false, "Disable incident tools")
@@ -50,14 +61,15 @@ func (gc *grafanaConfig) addFlags() {
 }
 
 func (dt *disabledTools) addTools(s *server.MCPServer) {
-	maybeAddTools(s, tools.AddSearchTools, dt.search, "search")
-	maybeAddTools(s, tools.AddDatasourceTools, dt.datasource, "datasource")
-	maybeAddTools(s, tools.AddIncidentTools, dt.incident, "incident")
-	maybeAddTools(s, tools.AddPrometheusTools, dt.prometheus, "prometheus")
-	maybeAddTools(s, tools.AddLokiTools, dt.loki, "loki")
-	maybeAddTools(s, tools.AddAlertingTools, dt.alerting, "alerting")
-	maybeAddTools(s, tools.AddDashboardTools, dt.dashboard, "dashboard")
-	maybeAddTools(s, tools.AddOnCallTools, dt.oncall, "oncall")
+	enabledTools := strings.Split(dt.enabledTools, ",")
+	maybeAddTools(s, tools.AddSearchTools, enabledTools, dt.search, "search")
+	maybeAddTools(s, tools.AddDatasourceTools, enabledTools, dt.datasource, "datasource")
+	maybeAddTools(s, tools.AddIncidentTools, enabledTools, dt.incident, "incident")
+	maybeAddTools(s, tools.AddPrometheusTools, enabledTools, dt.prometheus, "prometheus")
+	maybeAddTools(s, tools.AddLokiTools, enabledTools, dt.loki, "loki")
+	maybeAddTools(s, tools.AddAlertingTools, enabledTools, dt.alerting, "alerting")
+	maybeAddTools(s, tools.AddDashboardTools, enabledTools, dt.dashboard, "dashboard")
+	maybeAddTools(s, tools.AddOnCallTools, enabledTools, dt.oncall, "oncall")
 }
 
 func newServer(dt disabledTools) *server.MCPServer {
