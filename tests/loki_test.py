@@ -226,6 +226,8 @@ async def assert_and_handle_tool_call(
                 assert arguments[key] == value, (
                     f"Argument '{key}' has wrong value. Expected: {value}, Got: {arguments[key]}"
                 )
+        
+        print(f"calling tool: {tool_call.function.name}({arguments})")
         result = await mcp_client.call_tool(tool_call.function.name, arguments)
         # Assume each tool returns a single text content for now
         assert len(result.content) == 1
