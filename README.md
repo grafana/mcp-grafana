@@ -201,6 +201,14 @@ To lint the code, run:
 make lint
 ```
 
+This includes a custom linter that checks for unescaped commas in `jsonschema` struct tags. The commas in `description` fields must be escaped with `\\,` to prevent silent truncation. You can run just this linter with:
+
+```bash
+make lint-jsonschema
+```
+
+See the [JSONSchema Linter documentation](internal/linter/jsonschema/README.md) for more details.
+
 ## License
 
 This project is licensed under the [Apache License, Version 2.0](LICENSE).

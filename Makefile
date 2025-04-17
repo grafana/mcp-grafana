@@ -12,9 +12,15 @@ help: ## Print this help message.
 build-image: ## Build the Docker image.
 	docker build -t mcp-grafana:latest .
 
-.PHONY: lint
-lint: ## Lint the Go code.
+.PHONY: lint lint-jsonschema lint-jsonschema-fix
+lint: lint-jsonschema ## Lint the Go code.
 	go tool -modfile go.tools.mod golangci-lint run
+
+lint-jsonschema: ## Lint for unescaped commas in jsonschema tags.
+	go run ./cmd/linters/jsonschema --path .
+
+lint-jsonschema-fix: ## Automatically fix unescaped commas in jsonschema tags.
+	go run ./cmd/linters/jsonschema --path . --fix
 
 .PHONY: test test-unit
 test-unit: ## Run the unit tests (no external dependencies required).

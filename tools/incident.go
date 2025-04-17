@@ -12,7 +12,7 @@ import (
 type ListIncidentsParams struct {
 	Limit  int    `json:"limit" jsonschema:"description=The maximum number of incidents to return"`
 	Drill  bool   `json:"drill" jsonschema:"description=Whether to include drill incidents"`
-	Status string `json:"status" jsonschema:"description=The status of the incidents to include. Valid values: 'active', 'resolved'"`
+	Status string `json:"status" jsonschema:"description=The status of the incidents to include. Valid values: 'active'\\, 'resolved'"`
 }
 
 func listIncidents(ctx context.Context, args ListIncidentsParams) (*incident.QueryIncidentPreviewsResponse, error) {
@@ -90,7 +90,7 @@ var CreateIncident = mcpgrafana.MustTool(
 type AddActivityToIncidentParams struct {
 	IncidentID string `json:"incidentId" jsonschema:"description=The ID of the incident to add the activity to"`
 	Body       string `json:"body" jsonschema:"description=The body of the activity. URLs will be parsed and attached as context"`
-	EventTime  string `json:"eventTime" jsonschema:"description=The time that the activity occurred. If not provided, the current time will be used"`
+	EventTime  string `json:"eventTime" jsonschema:"description=The time that the activity occurred. If not provided\\, the current time will be used"`
 }
 
 func addActivityToIncident(ctx context.Context, args AddActivityToIncidentParams) (*incident.ActivityItem, error) {
