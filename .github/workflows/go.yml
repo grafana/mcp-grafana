@@ -19,14 +19,8 @@ jobs:
           go-version: "1.24"
           cache: true
 
-      # Use the golangci-lint action for improved caching etc.
-      - name: Lint with golangi-lint
-        uses: golangci/golangci-lint-action@v3
-        with:
-          version: v1.64
-
-      - name: Lint with custom linters
-        run: make lint-jsonschema
+      - name: Run linters
+        run: make lint
 
   test-unit:
     name: Test Unit
