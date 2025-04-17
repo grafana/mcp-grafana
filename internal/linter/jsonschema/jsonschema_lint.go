@@ -36,7 +36,11 @@ type JSONSchemaError struct {
 // It captures:
 // 1. The jsonschema tag
 // 2. Parts of the description containing unescaped commas
-var tagPattern = regexp.MustCompile(`jsonschema:"([^"]*)description=([^"]*[^\\],[^"]*)"`) 
+// The pattern correctly handles:
+// - Simple unescaped comma: "description=Something, with comma"
+// - Escaped quote followed by unescaped comma: "description=With \"quote, and comma"
+// - But not match escaped comma: "description=With escaped\, comma"
+var tagPattern = regexp.MustCompile(`jsonschema:"([^"]*)description=(.*?[^\\],)([^"]*)"`)
 
 // FindUnescapedCommas scans Go files for jsonschema struct tags with unescaped commas in descriptions
 func (l *JSONSchemaLinter) FindUnescapedCommas(baseDir string) error {

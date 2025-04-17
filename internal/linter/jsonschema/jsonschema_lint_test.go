@@ -81,6 +81,32 @@ type Mixed struct {
 	}
 }
 
+// TestEscapedQuotesWithComma tests if the regex correctly identifies unescaped commas
+// in jsonschema tags that contain escaped quotes
+func TestEscapedQuotesWithComma(t *testing.T) {
+	testCases := []struct {
+		tag         string
+		shouldMatch bool
+		description string
+	}{
+		{`jsonschema:"description=This has an unescaped, comma"`, true, "Simple unescaped comma"},
+		{`jsonschema:"description=This has escaped quote \"followed by, comma"`, true, "Escaped quote then unescaped comma"},
+		{`jsonschema:"description=This has escaped quote \", comma"`, true, "Escaped quote, comma with space"},
+		{`jsonschema:"description=This has escaped quote \\\"and escaped\\, comma"`, false, "Properly escaped quote and comma"},
+		{`jsonschema:"description=No comma here"`, false, "No comma at all"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			matches := tagPattern.FindStringSubmatch(tc.tag)
+			hasMatch := len(matches) > 0
+			if hasMatch != tc.shouldMatch {
+				t.Fatalf("Test failed for %s: expected match=%v, got=%v\n", tc.description, tc.shouldMatch, hasMatch)
+			}
+		})
+	}
+}
+
 func TestFixUnescapedCommas(t *testing.T) {
 	// Create a temporary directory for test files
 	tmpDir, err := os.MkdirTemp("", "jsonschema-linter-test")
