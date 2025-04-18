@@ -25,7 +25,7 @@ func maybeAddTools(s *server.MCPServer, tf func(*server.MCPServer), disable bool
 type disabledTools struct {
 	search, datasource, incident,
 	prometheus, loki, alerting,
-	dashboard, oncall bool
+	dashboard, oncall, asserts bool
 }
 
 // Configuration for the Grafana client.
@@ -43,6 +43,7 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.alerting, "disable-alerting", false, "Disable alerting tools")
 	flag.BoolVar(&dt.dashboard, "disable-dashboard", false, "Disable dashboard tools")
 	flag.BoolVar(&dt.oncall, "disable-oncall", false, "Disable oncall tools")
+	flag.BoolVar(&dt.asserts, "disable-asserts", false, "Disable asserts tools")
 }
 
 func (gc *grafanaConfig) addFlags() {
@@ -58,6 +59,7 @@ func (dt *disabledTools) addTools(s *server.MCPServer) {
 	maybeAddTools(s, tools.AddAlertingTools, dt.alerting, "alerting")
 	maybeAddTools(s, tools.AddDashboardTools, dt.dashboard, "dashboard")
 	maybeAddTools(s, tools.AddOnCallTools, dt.oncall, "oncall")
+	maybeAddTools(s, tools.AddAssertsTools, dt.asserts, "asserts")
 }
 
 func newServer(dt disabledTools) *server.MCPServer {
