@@ -1,7 +1,5 @@
-// Requires a Grafana instance running on localhost:3000,
-// with the Asserts plugin installed and configured.
-// Run with `go test -tags integration`.
-//go:build integration
+//go:build cloud
+// +build cloud
 
 package tools
 
