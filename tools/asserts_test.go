@@ -1,5 +1,5 @@
-//go:build cloud
-// +build cloud
+//go:build unit
+// +build unit
 
 package tools
 
