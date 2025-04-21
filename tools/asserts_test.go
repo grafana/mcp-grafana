@@ -1,7 +1,11 @@
+// Requires a Grafana instance running on localhost:3000,
+// with the Asserts plugin installed and configured.
+// Run with `go test -tags integration`.
+//go:build integration
+
 package tools
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -10,14 +14,15 @@ import (
 
 func TestAssertTools(t *testing.T) {
 	t.Run("get assertions", func(t *testing.T) {
-		result, err := getAssertions(context.Background(), GetAssertionsParams{
+		ctx := newTestContext()
+		result, err := getAssertions(ctx, GetAssertionsParams{
 			EntityName: "test",
 			EntityType: "test",
-			Env: "test",	
-			Site: "test",
-			Namespace: "test",
-			StartTime: 1713571200,
-			EndTime: 1713657600,
+			Env:        "test",
+			Site:       "test",
+			Namespace:  "test",
+			StartTime:  1713571200,
+			EndTime:    1713657600,
 		})
 		require.NoError(t, err)
 		assert.NotNil(t, result)
