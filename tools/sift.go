@@ -38,20 +38,20 @@ type investigationRequest struct {
 }
 
 // Interesting: The analysis complete with results that indicate a probable cause for failure.
-type AnalysisResult struct {
+type analysisResult struct {
 	Successful  bool                   `json:"successful"`
 	Interesting bool                   `json:"interesting"`
 	Message     string                 `json:"message"`
 	Details     map[string]interface{} `json:"details"`
 }
 
-type AnalysisMeta struct {
-	Items []Analysis `json:"items"`
+type analysisMeta struct {
+	Items []analysis `json:"items"`
 }
 
-// An Analysis struct provides the status and results
+// An analysis struct provides the status and results
 // of running a specific type of check.
-type Analysis struct {
+type analysis struct {
 	ID        uuid.UUID `json:"id"`
 	CreatedAt time.Time `json:"created"`
 	UpdatedAt time.Time `json:"modified"`
@@ -65,7 +65,7 @@ type Analysis struct {
 	// Name is the name of the check that this analysis represents.
 	Name   string         `json:"name"`
 	Title  string         `json:"title"`
-	Result AnalysisResult `json:"result"`
+	Result analysisResult `json:"result"`
 }
 
 type Investigation struct {
@@ -88,7 +88,7 @@ type Investigation struct {
 	// investigation failed.
 	FailureReason string `json:"failureReason,omitempty"`
 
-	Analyses AnalysisMeta `json:"analyses"`
+	Analyses analysisMeta `json:"analyses"`
 }
 
 // siftClient represents a client for interacting with the Sift API.
@@ -167,7 +167,7 @@ type GetSiftAnalysisParams struct {
 }
 
 // getSiftAnalysis retrieves a specific analysis from an investigation
-func getSiftAnalysis(ctx context.Context, args GetSiftAnalysisParams) (*Analysis, error) {
+func getSiftAnalysis(ctx context.Context, args GetSiftAnalysisParams) (*analysis, error) {
 	client, err := siftClientFromContext(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("creating Sift client: %w", err)
@@ -241,7 +241,7 @@ type FindErrorPatternLogsParams struct {
 }
 
 // findErrorPatternLogs creates an investigation with ErrorPatternLogs check, waits for it to complete, and returns the analysis
-func findErrorPatternLogs(ctx context.Context, args FindErrorPatternLogsParams) (*Analysis, error) {
+func findErrorPatternLogs(ctx context.Context, args FindErrorPatternLogsParams) (*analysis, error) {
 	client, err := siftClientFromContext(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("creating Sift client: %w", err)
@@ -275,7 +275,7 @@ func findErrorPatternLogs(ctx context.Context, args FindErrorPatternLogsParams) 
 	}
 
 	// Find the ErrorPatternLogs analysis
-	var errorPatternLogsAnalysis *Analysis
+	var errorPatternLogsAnalysis *analysis
 	for i := range analyses {
 		if analyses[i].Name == string(checkTypeErrorPatternLogs) {
 			errorPatternLogsAnalysis = &analyses[i]
@@ -307,7 +307,7 @@ type FindSlowRequestsParams struct {
 }
 
 // findSlowRequests creates an investigation with SlowRequests check, waits for it to complete, and returns the analysis
-func findSlowRequests(ctx context.Context, args FindSlowRequestsParams) (*Analysis, error) {
+func findSlowRequests(ctx context.Context, args FindSlowRequestsParams) (*analysis, error) {
 	client, err := siftClientFromContext(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("creating Sift client: %w", err)
@@ -341,7 +341,7 @@ func findSlowRequests(ctx context.Context, args FindSlowRequestsParams) (*Analys
 	}
 
 	// Find the SlowRequests analysis
-	var slowRequestsAnalysis *Analysis
+	var slowRequestsAnalysis *analysis
 	for i := range analyses {
 		if analyses[i].Name == string(checkTypeSlowRequests) {
 			slowRequestsAnalysis = &analyses[i]
@@ -492,7 +492,7 @@ func (c *siftClient) createSiftInvestigation(ctx context.Context, investigation 
 }
 
 // getSiftAnalyses is a helper method to get all analyses from an investigation
-func (c *siftClient) getSiftAnalyses(ctx context.Context, investigationID uuid.UUID) ([]Analysis, error) {
+func (c *siftClient) getSiftAnalyses(ctx context.Context, investigationID uuid.UUID) ([]analysis, error) {
 	path := fmt.Sprintf("/api/plugins/grafana-ml-app/resources/sift/api/v1/investigations/%s/analyses", investigationID)
 	buf, err := c.makeRequest(ctx, "GET", path, nil)
 	if err != nil {
@@ -501,7 +501,7 @@ func (c *siftClient) getSiftAnalyses(ctx context.Context, investigationID uuid.U
 
 	var response struct {
 		Status string     `json:"status"`
-		Data   []Analysis `json:"data"`
+		Data   []analysis `json:"data"`
 	}
 
 	if err := json.Unmarshal(buf, &response); err != nil {
@@ -512,7 +512,7 @@ func (c *siftClient) getSiftAnalyses(ctx context.Context, investigationID uuid.U
 }
 
 // getSiftAnalysis is a helper method to get a specific analysis from an investigation
-func (c *siftClient) getSiftAnalysis(ctx context.Context, investigationID, analysisID uuid.UUID) (*Analysis, error) {
+func (c *siftClient) getSiftAnalysis(ctx context.Context, investigationID, analysisID uuid.UUID) (*analysis, error) {
 	// First get all analyses to verify the analysis exists
 	analyses, err := c.getSiftAnalyses(ctx, investigationID)
 	if err != nil {
@@ -520,7 +520,7 @@ func (c *siftClient) getSiftAnalysis(ctx context.Context, investigationID, analy
 	}
 
 	// Find the specific analysis
-	var targetAnalysis *Analysis
+	var targetAnalysis *analysis
 	for _, analysis := range analyses {
 		if analysis.ID == analysisID {
 			targetAnalysis = &analysis
