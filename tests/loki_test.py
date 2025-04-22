@@ -124,7 +124,7 @@ async def test_loki_logs_tool(model: str, mcp_client: ClientSession):
 @pytest.mark.parametrize("model", models)
 async def test_loki_container_labels(model: str, mcp_client: ClientSession):
     tools = await mcp_client.list_tools()
-    prompt = "Can you list the values for the container label in any available loki datasource? Please use only the necessary tools to get this information."
+    prompt = "Can you list the values for the label container in any available loki datasource? Please use only the necessary tools to get this information."
 
     messages: list[Message] = [
         Message(role="system", content="You are a helpful assistant."),
