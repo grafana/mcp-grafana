@@ -21,7 +21,7 @@ func TestCloudSiftInvestigations(t *testing.T) {
 
 	// Test listing all investigations
 	t.Run("list all investigations", func(t *testing.T) {
-		result, err := listInvestigations(ctx, ListInvestigationsParams{})
+		result, err := listSiftInvestigations(ctx, ListSiftInvestigationsParams{})
 		require.NoError(t, err, "Should not error when listing investigations")
 		assert.NotNil(t, result, "Result should not be nil")
 		assert.GreaterOrEqual(t, len(result), 1, "Should have at least one investigation")
@@ -34,7 +34,7 @@ func TestCloudSiftInvestigations(t *testing.T) {
 		require.NoError(t, err, "Should not error when getting Sift client")
 
 		// List investigations with a limit of 1
-		investigations, err := client.listInvestigations(ctx, 1)
+		investigations, err := client.listSiftInvestigations(ctx, 1)
 		require.NoError(t, err, "Should not error when listing investigations with limit")
 		assert.NotNil(t, investigations, "Investigations should not be nil")
 		assert.LessOrEqual(t, len(investigations), 1, "Should have at most one investigation")
@@ -49,7 +49,7 @@ func TestCloudSiftInvestigations(t *testing.T) {
 	})
 
 	// Get an investigation ID from the list to test getting a specific investigation
-	investigations, err := listInvestigations(ctx, ListInvestigationsParams{Limit: 1})
+	investigations, err := listSiftInvestigations(ctx, ListSiftInvestigationsParams{Limit: 1})
 	require.NoError(t, err, "Should not error when listing investigations")
 	require.NotEmpty(t, investigations, "Should have at least one investigation to test with")
 
@@ -57,7 +57,7 @@ func TestCloudSiftInvestigations(t *testing.T) {
 
 	// Test getting a specific investigation
 	t.Run("get specific investigation", func(t *testing.T) {
-		result, err := getInvestigation(ctx, GetInvestigationParams{
+		result, err := getSiftInvestigation(ctx, GetSiftInvestigationParams{
 			ID: investigationID,
 		})
 		require.NoError(t, err, "Should not error when getting specific investigation")
@@ -74,7 +74,7 @@ func TestCloudSiftInvestigations(t *testing.T) {
 
 	// Test getting a non-existent investigation
 	t.Run("get non-existent investigation", func(t *testing.T) {
-		_, err := getInvestigation(ctx, GetInvestigationParams{
+		_, err := getSiftInvestigation(ctx, GetSiftInvestigationParams{
 			ID: "00000000-0000-0000-0000-000000000000",
 		})
 		assert.NoError(t, err, "Should not error when getting non-existent investigation")
@@ -83,7 +83,7 @@ func TestCloudSiftInvestigations(t *testing.T) {
 	// Test getting analyses for an investigation
 	t.Run("get analyses for investigation", func(t *testing.T) {
 		// Get the investigation
-		result, err := getInvestigation(ctx, GetInvestigationParams{
+		result, err := getSiftInvestigation(ctx, GetSiftInvestigationParams{
 			ID: investigationID,
 		})
 		require.NoError(t, err, "Should not error when getting specific investigation")
@@ -93,7 +93,7 @@ func TestCloudSiftInvestigations(t *testing.T) {
 		analysisID := result.Analyses.Items[0].ID
 
 		// Get the analysis
-		analysis, err := getAnalysis(ctx, GetAnalysisParams{
+		analysis, err := getSiftAnalysis(ctx, GetSiftAnalysisParams{
 			InvestigationID: investigationID,
 			AnalysisID:      analysisID.String(),
 		})

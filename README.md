@@ -31,8 +31,8 @@ This provides access to your Grafana instance and the surrounding ecosystem.
   - [x] List Investigations with a limit parameter
   - [x] Get Investigation
   - [x] Get Analyses
-  - [x] Create an Investigation only running ErrorPatternLogs Check
-  - [x] Create an Investigation only running SlowRequests Check
+  - [x] Find error patterns in logs using Sift
+  - [x] Find slow requests using Sift
   - [ ] Add tools on the other Sift Checks
 - [ ] Alerting
   - [x] List and fetch alert rule information
@@ -77,15 +77,15 @@ the OnCall tools, use `--disable-oncall`.
 | `list_alert_rules`                | Alerting    | List alert rules                                                   |
 | `get_alert_rule_by_uid`           | Alerting    | Get alert rule by UID                                              |
 | `list_oncall_schedules`           | OnCall      | List schedules from Grafana OnCall                                 |
-| `get_oncall_shift`                | OnCall      | Get details for a specific OnCall shift                           |
+| `get_oncall_shift`                | OnCall      | Get details for a specific OnCall shift                            |
 | `get_current_oncall_users`        | OnCall      | Get users currently on-call for a specific schedule                |
 | `list_oncall_teams`               | OnCall      | List teams from Grafana OnCall                                     |
 | `list_oncall_users`               | OnCall      | List users from Grafana OnCall                                     |
-| `get_investigation`               | Sift        | Retrieve an existing Sift investigation by its UUID                     |
-| `get_analysis`                    | Sift        | Retrieve a specific analysis from a Sift investigation                 |
-| `list_investigations`             | Sift        | Retrieve a list of Sift investigations with an optional limit           |
-| `run_error_pattern_logs`          | Sift        | Create a Sift investigation with ErrorPatternLogs check and get results |
-| `run_slow_requests_check`         | Sift        | Create a Sift investigation with SlowRequests check and get results    |
+| `get_investigation`               | Sift        | Retrieve an existing Sift investigation by its UUID                |
+| `get_analysis`                    | Sift        | Retrieve a specific analysis from a Sift investigation             |
+| `list_investigations`             | Sift        | Retrieve a list of Sift investigations with an optional limit      |
+| `find_error_pattern_logs`         | Sift        | Finds elevated error patterns in Loki logs.                        |
+| `find_slow_requests`              | Sift        | Finds slow requests from the relevant tempo datasources.           |
 
 ## Usage
 
