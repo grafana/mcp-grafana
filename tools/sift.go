@@ -192,7 +192,7 @@ func getSiftAnalysis(ctx context.Context, args GetSiftAnalysisParams) (*analysis
 	return analysis, nil
 }
 
-// GetAnalysis is a tool for retrieving a specific analysis from an investigation
+// GetSiftAnalysis is a tool for retrieving a specific analysis from an investigation
 var GetSiftAnalysis = mcpgrafana.MustTool(
 	"get_sift_analysis",
 	"Retrieves a specific analysis from an investigation by its UUID. The investigation ID and analysis ID should be provided as strings in UUID format.",
