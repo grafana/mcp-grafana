@@ -224,7 +224,7 @@ func listSiftInvestigations(ctx context.Context, args ListSiftInvestigationsPara
 	return investigations, nil
 }
 
-// ListInvestigations is a tool for retrieving a list of investigations
+// ListSiftInvestigations is a tool for retrieving a list of investigations
 var ListSiftInvestigations = mcpgrafana.MustTool(
 	"list_sift_investigations",
 	"Retrieves a list of Sift investigations with an optional limit. If no limit is specified, defaults to 10 investigations.",
