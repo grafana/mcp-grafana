@@ -34,7 +34,12 @@ Tests are using [`uv`] to manage dependencies. Install uv following the instruct
 
 3. Start the required Docker containers
 
-4. Run the tests:
+4. Start the MCP server in SSE mode; from the root of the project:
+   ```bash
+   go run ./cmd/mcp-grafana -t sse
+   ```
+
+5. Run the tests:
    ```bash
    uv run pytest
    ```

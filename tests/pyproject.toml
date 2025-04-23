@@ -14,6 +14,7 @@ dependencies = []
 [dependency-groups]
 dev = [
     "anyio>=4.9.0",
+    "flaky>=3.8.1",
     "langevals[langevals]>=0.1.8",
     "litellm>=1.63.12",
     "mcp>=1.1.3",

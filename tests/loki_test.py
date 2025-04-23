@@ -52,7 +52,7 @@ async def mcp_client(mcp_url, grafana_headers):
 
 
 @pytest.mark.parametrize("model", models)
-@pytest.mark.flaky(reruns=3)
+@pytest.mark.flaky(max_runs=3)
 async def test_loki_logs_tool(model: str, mcp_client: ClientSession):
     tools = await mcp_client.list_tools()
     prompt = "Can you list the last 10 log lines from all containers using any available Loki datasource? Give me the raw log lines. Please use only the necessary tools to get this information."
@@ -123,7 +123,7 @@ async def test_loki_logs_tool(model: str, mcp_client: ClientSession):
 
 
 @pytest.mark.parametrize("model", models)
-@pytest.mark.flaky(reruns=3)
+@pytest.mark.flaky(max_runs=3)
 async def test_loki_container_labels(model: str, mcp_client: ClientSession):
     tools = await mcp_client.list_tools()
     prompt = "Can you list the values for the label container in any available loki datasource? Please use only the necessary tools to get this information."
@@ -228,7 +228,7 @@ async def assert_and_handle_tool_call(
                 assert arguments[key] == value, (
                     f"Argument '{key}' has wrong value. Expected: {value}, Got: {arguments[key]}"
                 )
-        
+
         print(f"calling tool: {tool_call.function.name}({arguments})")
         result = await mcp_client.call_tool(tool_call.function.name, arguments)
         # Assume each tool returns a single text content for now
