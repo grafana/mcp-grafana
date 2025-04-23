@@ -4,6 +4,7 @@ go 1.24.0
 
 require (
 	github.com/go-openapi/strfmt v0.23.0
+	github.com/google/uuid v1.6.0
 	github.com/grafana/amixr-api-go-client v0.0.21
 	github.com/grafana/grafana-openapi-client-go v0.0.0-20250108132429-8d7e1f158f65
 	github.com/grafana/incident-go v0.0.0-20250211094540-dc6a98fdae43
@@ -34,7 +35,6 @@ require (
 	github.com/go-openapi/swag v0.23.0 // indirect
 	github.com/go-openapi/validate v0.24.0 // indirect
 	github.com/google/go-querystring v1.1.0 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/grafana/regexp v0.0.0-20240518133315-a468a5bfb3bc // indirect
 	github.com/hashicorp/go-cleanhttp v0.5.2 // indirect
 	github.com/hashicorp/go-retryablehttp v0.7.7 // indirect
