@@ -53,7 +53,6 @@ async def mcp_client(mcp_url, grafana_headers):
 
 @pytest.mark.parametrize("model", models)
 @pytest.mark.flaky(reruns=3)
-@pytest.mark.pass_rate(0.6)
 async def test_loki_logs_tool(model: str, mcp_client: ClientSession):
     tools = await mcp_client.list_tools()
     prompt = "Can you list the last 10 log lines from all containers using any available Loki datasource? Give me the raw log lines. Please use only the necessary tools to get this information."
@@ -125,7 +124,6 @@ async def test_loki_logs_tool(model: str, mcp_client: ClientSession):
 
 @pytest.mark.parametrize("model", models)
 @pytest.mark.flaky(reruns=3)
-@pytest.mark.pass_rate(0.6)
 async def test_loki_container_labels(model: str, mcp_client: ClientSession):
     tools = await mcp_client.list_tools()
     prompt = "Can you list the values for the label container in any available loki datasource? Please use only the necessary tools to get this information."
