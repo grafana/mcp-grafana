@@ -233,11 +233,10 @@ var ListSiftInvestigations = mcpgrafana.MustTool(
 
 // FindErrorPatternLogsParams defines the parameters for running an ErrorPatternLogs check
 type FindErrorPatternLogsParams struct {
-	Name     string            `json:"name" jsonschema:"required,description=The name of the investigation"`
-	Labels   map[string]string `json:"labels" jsonschema:"required,description=Labels to scope the analysis"`
-	Start    time.Time         `json:"start,omitempty" jsonschema:"description=Start time for the investigation. Defaults to 30 minutes ago if not specified."`
-	End      time.Time         `json:"end,omitempty" jsonschema:"description=End time for the investigation. Defaults to now if not specified."`
-	QueryURL string            `json:"queryUrl,omitempty" jsonschema:"description=Optional query URL for the investigation"`
+	Name   string            `json:"name" jsonschema:"required,description=The name of the investigation"`
+	Labels map[string]string `json:"labels" jsonschema:"required,description=Labels to scope the analysis"`
+	Start  time.Time         `json:"start,omitempty" jsonschema:"description=Start time for the investigation. Defaults to 30 minutes ago if not specified."`
+	End    time.Time         `json:"end,omitempty" jsonschema:"description=End time for the investigation. Defaults to now if not specified."`
 }
 
 // findErrorPatternLogs creates an investigation with ErrorPatternLogs check, waits for it to complete, and returns the analysis
@@ -249,11 +248,10 @@ func findErrorPatternLogs(ctx context.Context, args FindErrorPatternLogsParams) 
 
 	// Create the investigation request with ErrorPatternLogs check
 	requestData := investigationRequest{
-		Labels:   args.Labels,
-		Start:    args.Start,
-		End:      args.End,
-		QueryURL: args.QueryURL,
-		Checks:   []string{string(checkTypeErrorPatternLogs)},
+		Labels: args.Labels,
+		Start:  args.Start,
+		End:    args.End,
+		Checks: []string{string(checkTypeErrorPatternLogs)},
 	}
 
 	investigation := &Investigation{
@@ -299,11 +297,10 @@ var FindErrorPatternLogs = mcpgrafana.MustTool(
 
 // FindSlowRequestsParams defines the parameters for running an SlowRequests check
 type FindSlowRequestsParams struct {
-	Name     string            `json:"name" jsonschema:"required,description=The name of the investigation"`
-	Labels   map[string]string `json:"labels" jsonschema:"required,description=Labels to scope the analysis"`
-	Start    time.Time         `json:"start,omitempty" jsonschema:"description=Start time for the investigation. Defaults to 30 minutes ago if not specified."`
-	End      time.Time         `json:"end,omitempty" jsonschema:"description=End time for the investigation. Defaults to now if not specified."`
-	QueryURL string            `json:"queryUrl,omitempty" jsonschema:"description=Optional query URL for the investigation"`
+	Name   string            `json:"name" jsonschema:"required,description=The name of the investigation"`
+	Labels map[string]string `json:"labels" jsonschema:"required,description=Labels to scope the analysis"`
+	Start  time.Time         `json:"start,omitempty" jsonschema:"description=Start time for the investigation. Defaults to 30 minutes ago if not specified."`
+	End    time.Time         `json:"end,omitempty" jsonschema:"description=End time for the investigation. Defaults to now if not specified."`
 }
 
 // findSlowRequests creates an investigation with SlowRequests check, waits for it to complete, and returns the analysis
@@ -315,11 +312,10 @@ func findSlowRequests(ctx context.Context, args FindSlowRequestsParams) (*analys
 
 	// Create the investigation request with SlowRequests check
 	requestData := investigationRequest{
-		Labels:   args.Labels,
-		Start:    args.Start,
-		End:      args.End,
-		QueryURL: args.QueryURL,
-		Checks:   []string{string(checkTypeSlowRequests)},
+		Labels: args.Labels,
+		Start:  args.Start,
+		End:    args.End,
+		Checks: []string{string(checkTypeSlowRequests)},
 	}
 
 	investigation := &Investigation{
