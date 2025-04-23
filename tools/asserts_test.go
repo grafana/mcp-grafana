@@ -41,8 +41,8 @@ func TestAssertTools(t *testing.T) {
 			Env:        "test",
 			Site:       "test",
 			Namespace:  "test",
-			StartTime:  1745257768000,
-			EndTime:    1745261368000,
+			StartTime:  1745257768,
+			EndTime:    1745261368,
 		})
 		require.NoError(t, err)
 		assert.NotNil(t, result)

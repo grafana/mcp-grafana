@@ -30,8 +30,8 @@ func newAssertsClient(ctx context.Context) (*Client, error) {
 }
 
 type GetAssertionsParams struct {
-	StartTime  int64  `json:"startTime" jsonschema:"description=The start time of the assertion status in unix milliseconds format"`
-	EndTime    int64  `json:"endTime" jsonschema:"description=The end time of the assertion status in unix milliseconds format"`
+	StartTime  int64  `json:"startTime" jsonschema:"description=The start time of the assertion status in RFC3339 format"`
+	EndTime    int64  `json:"endTime" jsonschema:"description=The end time of the assertion status in RFC3339 format"`
 	EntityType string `json:"entityType" jsonschema:"description=The type of the entity to list"`
 	EntityName string `json:"entityName" jsonschema:"description=The name of the entity to list"`
 	Env       string `json:"env" jsonschema:"description=The env of the entity to list"`
@@ -96,8 +96,8 @@ func getAssertions(ctx context.Context, args GetAssertionsParams) (string, error
 
 	// Create request body
 	reqBody := RequestBody{
-		StartTime: args.StartTime,
-		EndTime:   args.EndTime,
+		StartTime: args.StartTime * 1000,
+		EndTime:   args.EndTime * 1000,
 		EntityKeys: []Entity{
 			{
 				Name: args.EntityName,
