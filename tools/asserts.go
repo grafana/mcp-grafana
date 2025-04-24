@@ -34,7 +34,7 @@ func newAssertsClient(ctx context.Context) (*Client, error) {
 type GetAssertionsParams struct {
 	StartRFC3339 string `json:"startRfc3339" jsonschema:"required,description=The start time in RFC3339 format"`
 	EndRFC3339   string `json:"endRfc3339" jsonschema:"required,description=The end time in RFC3339 format"`
-	EntityType   string `json:"entityType" jsonschema:"description=The type of the entity to list, like Service, Node, Pod, etc."`
+	EntityType   string `json:"entityType" jsonschema:"description=The type of the entity to list (e.g. Service\\, Node\\, Pod\\, etc.)"`
 	EntityName   string `json:"entityName" jsonschema:"description=The name of the entity to list"`
 	Env          string `json:"env" jsonschema:"description=The env of the entity to list"`
 	Site         string `json:"site" jsonschema:"description=The site of the entity to list"`
