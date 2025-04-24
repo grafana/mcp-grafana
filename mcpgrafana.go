@@ -40,6 +40,7 @@ func urlAndAPIKeyFromHeaders(req *http.Request) (string, string) {
 
 type grafanaURLKey struct{}
 type grafanaAPIKeyKey struct{}
+type grafanaAccessTokenKey struct{}
 
 // grafanaDebugKey is the context key for the Grafana transport's debug flag.
 type grafanaDebugKey struct{}
@@ -103,6 +104,12 @@ func WithGrafanaAPIKey(ctx context.Context, apiKey string) context.Context {
 	return context.WithValue(ctx, grafanaAPIKeyKey{}, apiKey)
 }
 
+// WithGrafanaAccessToken adds the Grafana access token to the context. An
+// access token is used for on-behalf-of auth in Grafana Cloud.
+func WithGrafanaAccessToken(ctx context.Context, accessToken string) context.Context {
+	return context.WithValue(ctx, grafanaAccessTokenKey{}, accessToken)
+}
+
 // GrafanaURLFromContext extracts the Grafana URL from the context.
 func GrafanaURLFromContext(ctx context.Context) string {
 	if u, ok := ctx.Value(grafanaURLKey{}).(string); ok {
@@ -114,6 +121,15 @@ func GrafanaURLFromContext(ctx context.Context) string {
 // GrafanaAPIKeyFromContext extracts the Grafana API key from the context.
 func GrafanaAPIKeyFromContext(ctx context.Context) string {
 	if k, ok := ctx.Value(grafanaAPIKeyKey{}).(string); ok {
+		return k
+	}
+	return ""
+}
+
+// GrafanaAccessTokenFromContext extracts a Grafana access token from the context.
+// An access token is used for on-behalf-of auth in Grafana Cloud.
+func GrafanaAccessTokenFromContext(ctx context.Context) string {
+	if k, ok := ctx.Value(grafanaAccessTokenKey{}).(string); ok {
 		return k
 	}
 	return ""

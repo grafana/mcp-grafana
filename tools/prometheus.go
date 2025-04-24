@@ -33,10 +33,22 @@ func promClientFromContext(ctx context.Context, uid string) (promv1.API, error) 
 		return nil, err
 	}
 
-	grafanaURL, apiKey := mcpgrafana.GrafanaURLFromContext(ctx), mcpgrafana.GrafanaAPIKeyFromContext(ctx)
+	var (
+		grafanaURL  = mcpgrafana.GrafanaURLFromContext(ctx)
+		apiKey      = mcpgrafana.GrafanaAPIKeyFromContext(ctx)
+		accessToken = mcpgrafana.GrafanaAccessTokenFromContext(ctx)
+	)
 	url := fmt.Sprintf("%s/api/datasources/proxy/uid/%s", strings.TrimRight(grafanaURL, "/"), uid)
 	rt := api.DefaultRoundTripper
-	if apiKey != "" {
+	if accessToken != "" {
+		rt = config.NewHeadersRoundTripper(&config.Headers{
+			Headers: map[string]config.Header{
+				"X-Access-Token": config.Header{
+					Secrets: []config.Secret{config.Secret(accessToken)},
+				},
+			},
+		}, rt)
+	} else if apiKey != "" {
 		rt = config.NewAuthorizationCredentialsRoundTripper(
 			"Bearer", config.NewInlineSecret(apiKey), rt,
 		)

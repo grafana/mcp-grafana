@@ -50,13 +50,18 @@ func newLokiClient(ctx context.Context, uid string) (*Client, error) {
 		return nil, err
 	}
 
-	grafanaURL, apiKey := mcpgrafana.GrafanaURLFromContext(ctx), mcpgrafana.GrafanaAPIKeyFromContext(ctx)
+	var (
+		grafanaURL  = mcpgrafana.GrafanaURLFromContext(ctx)
+		apiKey      = mcpgrafana.GrafanaAPIKeyFromContext(ctx)
+		accessToken = mcpgrafana.GrafanaAccessTokenFromContext(ctx)
+	)
 	url := fmt.Sprintf("%s/api/datasources/proxy/uid/%s", strings.TrimRight(grafanaURL, "/"), uid)
 
 	client := &http.Client{
 		Transport: &authRoundTripper{
-			apiKey:     apiKey,
-			underlying: http.DefaultTransport,
+			accessToken: accessToken,
+			apiKey:      apiKey,
+			underlying:  http.DefaultTransport,
 		},
 	}
 
@@ -163,12 +168,15 @@ func (c *Client) fetchData(ctx context.Context, urlPath string, startRFC3339, en
 }
 
 type authRoundTripper struct {
-	apiKey     string
-	underlying http.RoundTripper
+	accessToken string
+	apiKey      string
+	underlying  http.RoundTripper
 }
 
 func (rt *authRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
-	if rt.apiKey != "" {
+	if rt.accessToken != "" {
+		req.Header.Set("X-Access-Token", rt.accessToken)
+	} else if rt.apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+rt.apiKey)
 	}
 

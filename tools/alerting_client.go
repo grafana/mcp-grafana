@@ -21,9 +21,10 @@ const (
 )
 
 type alertingClient struct {
-	baseURL    *url.URL
-	apiKey     string
-	httpClient *http.Client
+	baseURL     *url.URL
+	accessToken string
+	apiKey      string
+	httpClient  *http.Client
 }
 
 func newAlertingClientFromContext(ctx context.Context) (*alertingClient, error) {
@@ -34,8 +35,9 @@ func newAlertingClientFromContext(ctx context.Context) (*alertingClient, error) 
 	}
 
 	return &alertingClient{
-		baseURL: parsedBaseURL,
-		apiKey:  mcpgrafana.GrafanaAPIKeyFromContext(ctx),
+		baseURL:     parsedBaseURL,
+		accessToken: mcpgrafana.GrafanaAccessTokenFromContext(ctx),
+		apiKey:      mcpgrafana.GrafanaAPIKeyFromContext(ctx),
 		httpClient: &http.Client{
 			Timeout: defaultTimeout,
 		},
@@ -53,7 +55,10 @@ func (c *alertingClient) makeRequest(ctx context.Context, path string) (*http.Re
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/json")
 
-	if c.apiKey != "" {
+	// If accessToken is set we use that first and fall back to normal Authorization.
+	if c.accessToken != "" {
+		req.Header.Set("X-Access-Token", c.accessToken)
+	} else if c.apiKey != "" {
 		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.apiKey))
 	}
 
