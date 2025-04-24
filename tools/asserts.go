@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
+
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/mark3labs/mcp-go/server"
 )
@@ -30,34 +32,35 @@ func newAssertsClient(ctx context.Context) (*Client, error) {
 }
 
 type GetAssertionsParams struct {
-	StartTime  int64  `json:"startTime" jsonschema:"description=The start time of the assertion status in RFC3339 format"`
-	EndTime    int64  `json:"endTime" jsonschema:"description=The end time of the assertion status in RFC3339 format"`
-	EntityType string `json:"entityType" jsonschema:"description=The type of the entity to list"`
-	EntityName string `json:"entityName" jsonschema:"description=The name of the entity to list"`
-	Env       string `json:"env" jsonschema:"description=The env of the entity to list"`
-	Site      string `json:"site" jsonschema:"description=The site of the entity to list"`
-	Namespace string `json:"namespace" jsonschema:"description=The namespace of the entity to list"`
+	StartRFC3339 string `json:"startRfc3339" jsonschema:"required,description=The start time in RFC3339 format"`
+	EndRFC3339   string `json:"endRfc3339" jsonschema:"required,description=The end time in RFC3339 format"`
+	EntityType   string `json:"entityType" jsonschema:"description=The type of the entity to list, like Service, Node, Pod, etc."`
+	EntityName   string `json:"entityName" jsonschema:"description=The name of the entity to list"`
+	Env          string `json:"env" jsonschema:"description=The env of the entity to list"`
+	Site         string `json:"site" jsonschema:"description=The site of the entity to list"`
+	Namespace    string `json:"namespace" jsonschema:"description=The namespace of the entity to list"`
 }
 
-type Scope struct {
+type scope struct {
 	Env       string `json:"env"`
 	Site      string `json:"site"`
-	Namespace string `json:"namespace"`	
+	Namespace string `json:"namespace"`
 }
 
-type Entity struct {
+type entity struct {
 	Name  string `json:"name"`
 	Type  string `json:"type"`
-	Scope Scope  `json:"scope"`
+	Scope scope  `json:"scope"`
 }
 
-type RequestBody struct {
+type requestBody struct {
 	StartTime             int64    `json:"startTime"`
 	EndTime               int64    `json:"endTime"`
-	EntityKeys            []Entity `json:"entityKeys"`
-	SuggestionSrcEntities []Entity `json:"suggestionSrcEntities"`
+	EntityKeys            []entity `json:"entityKeys"`
+	SuggestionSrcEntities []entity `json:"suggestionSrcEntities"`
 	AlertCategories       []string `json:"alertCategories"`
 }
+
 func (c *Client) fetchAssertsData(ctx context.Context, urlPath string, method string, reqBody any) (string, error) {
 	jsonData, err := json.Marshal(reqBody)
 	if err != nil {
@@ -85,7 +88,7 @@ func (c *Client) fetchAssertsData(ctx context.Context, urlPath string, method st
 		return "", fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(body))
 	}
 
-	return string(body), nil	
+	return string(body), nil
 }
 
 func getAssertions(ctx context.Context, args GetAssertionsParams) (string, error) {
@@ -94,22 +97,32 @@ func getAssertions(ctx context.Context, args GetAssertionsParams) (string, error
 		return "", fmt.Errorf("failed to create Asserts client: %w", err)
 	}
 
+	startTime, err := time.Parse(time.RFC3339, args.StartRFC3339)
+	if err != nil {
+		return "", fmt.Errorf("parsing start time: %w", err)
+	}
+
+	endTime, err := time.Parse(time.RFC3339, args.EndRFC3339)
+	if err != nil {
+		return "", fmt.Errorf("parsing end time: %w", err)
+	}
+
 	// Create request body
-	reqBody := RequestBody{
-		StartTime: args.StartTime * 1000,
-		EndTime:   args.EndTime * 1000,
-		EntityKeys: []Entity{
+	reqBody := requestBody{
+		StartTime: startTime.UnixMilli(),
+		EndTime:   endTime.UnixMilli(),
+		EntityKeys: []entity{
 			{
 				Name: args.EntityName,
 				Type: args.EntityType,
-				Scope: Scope{
+				Scope: scope{
 					Env:       args.Env,
 					Site:      args.Site,
 					Namespace: args.Namespace,
 				},
 			},
 		},
-		SuggestionSrcEntities: []Entity{},
+		SuggestionSrcEntities: []entity{},
 		AlertCategories:       []string{"saturation", "amend", "anomaly", "failure", "error"},
 	}
 

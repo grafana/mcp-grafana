@@ -36,13 +36,13 @@ func TestAssertTools(t *testing.T) {
 		defer server.Close()
 
 		result, err := getAssertions(ctx, GetAssertionsParams{
-			EntityName: "test",
-			EntityType: "test",
-			Env:        "test",
-			Site:       "test",
-			Namespace:  "test",
-			StartTime:  1745257768,
-			EndTime:    1745261368,
+			StartRFC3339: "2025-04-23T10:00:00Z",
+			EndRFC3339:   "2025-04-23T16:00:00Z",
+			EntityType:   "Service",
+			EntityName:   "mongodb",
+			Env:          "asserts-demo",
+			Site:         "app",
+			Namespace:    "robot-shop",
 		})
 		require.NoError(t, err)
 		assert.NotNil(t, result)
