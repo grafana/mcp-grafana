@@ -32,13 +32,13 @@ func newAssertsClient(ctx context.Context) (*Client, error) {
 }
 
 type GetAssertionsParams struct {
-	StartRFC3339 string `json:"startRfc3339" jsonschema:"required,description=The start time in RFC3339 format"`
-	EndRFC3339   string `json:"endRfc3339" jsonschema:"required,description=The end time in RFC3339 format"`
-	EntityType   string `json:"entityType" jsonschema:"description=The type of the entity to list (e.g. Service\\, Node\\, Pod\\, etc.)"`
-	EntityName   string `json:"entityName" jsonschema:"description=The name of the entity to list"`
-	Env          string `json:"env" jsonschema:"description=The env of the entity to list"`
-	Site         string `json:"site" jsonschema:"description=The site of the entity to list"`
-	Namespace    string `json:"namespace" jsonschema:"description=The namespace of the entity to list"`
+	StartTime  time.Time `json:"startTime" jsonschema:"required,description=The start time in RFC3339 format"`
+	EndTime    time.Time `json:"endTime" jsonschema:"required,description=The end time in RFC3339 format"`
+	EntityType string    `json:"entityType" jsonschema:"description=The type of the entity to list (e.g. Service\\, Node\\, Pod\\, etc.)"`
+	EntityName string    `json:"entityName" jsonschema:"description=The name of the entity to list"`
+	Env        string    `json:"env" jsonschema:"description=The env of the entity to list"`
+	Site       string    `json:"site" jsonschema:"description=The site of the entity to list"`
+	Namespace  string    `json:"namespace" jsonschema:"description=The namespace of the entity to list"`
 }
 
 type scope struct {
@@ -97,20 +97,10 @@ func getAssertions(ctx context.Context, args GetAssertionsParams) (string, error
 		return "", fmt.Errorf("failed to create Asserts client: %w", err)
 	}
 
-	startTime, err := time.Parse(time.RFC3339, args.StartRFC3339)
-	if err != nil {
-		return "", fmt.Errorf("parsing start time: %w", err)
-	}
-
-	endTime, err := time.Parse(time.RFC3339, args.EndRFC3339)
-	if err != nil {
-		return "", fmt.Errorf("parsing end time: %w", err)
-	}
-
 	// Create request body
 	reqBody := requestBody{
-		StartTime: startTime.UnixMilli(),
-		EndTime:   endTime.UnixMilli(),
+		StartTime: args.StartTime.UnixMilli(),
+		EndTime:   args.EndTime.UnixMilli(),
 		EntityKeys: []entity{
 			{
 				Name: args.EntityName,
@@ -143,4 +133,3 @@ var GetAssertions = mcpgrafana.MustTool(
 func AddAssertsTools(mcp *server.MCPServer) {
 	GetAssertions.Register(mcp)
 }
-

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/stretchr/testify/assert"
@@ -36,13 +37,13 @@ func TestAssertTools(t *testing.T) {
 		defer server.Close()
 
 		result, err := getAssertions(ctx, GetAssertionsParams{
-			StartRFC3339: "2025-04-23T10:00:00Z",
-			EndRFC3339:   "2025-04-23T16:00:00Z",
-			EntityType:   "Service",
-			EntityName:   "mongodb",
-			Env:          "asserts-demo",
-			Site:         "app",
-			Namespace:    "robot-shop",
+			StartTime:  time.Date(2025, 4, 23, 10, 0, 0, 0, time.UTC),
+			EndTime:    time.Date(2025, 4, 23, 11, 0, 0, 0, time.UTC),
+			EntityType: "Service",
+			EntityName: "mongodb",
+			Env:        "asserts-demo",
+			Site:       "app",
+			Namespace:  "robot-shop",
 		})
 		require.NoError(t, err)
 		assert.NotNil(t, result)
