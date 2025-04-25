@@ -79,7 +79,7 @@ func listPrometheusMetricMetadata(ctx context.Context, args ListPrometheusMetric
 
 var ListPrometheusMetricMetadata = mcpgrafana.MustTool(
 	"list_prometheus_metric_metadata",
-	"List Prometheus metric metadata",
+	"List Prometheus metric metadata. Returns metadata about metrics currently scraped from targets. Note: This endpoint is experimental.",
 	listPrometheusMetricMetadata,
 )
 
@@ -141,7 +141,7 @@ func queryPrometheus(ctx context.Context, args QueryPrometheusParams) (model.Val
 
 var QueryPrometheus = mcpgrafana.MustTool(
 	"query_prometheus",
-	"Query Prometheus using a range or instant request",
+	"Query Prometheus using a PromQL expression. Supports both instant queries (at a single point in time) and range queries (over a time range).",
 	queryPrometheus,
 )
 
@@ -208,7 +208,7 @@ func listPrometheusMetricNames(ctx context.Context, args ListPrometheusMetricNam
 
 var ListPrometheusMetricNames = mcpgrafana.MustTool(
 	"list_prometheus_metric_names",
-	"List metric names in a Prometheus datasource that match the given regex",
+	"List metric names in a Prometheus datasource. Retrieves all metric names and then filters them locally using the provided regex. Supports pagination.",
 	listPrometheusMetricNames,
 )
 
@@ -310,7 +310,7 @@ func listPrometheusLabelNames(ctx context.Context, args ListPrometheusLabelNames
 
 var ListPrometheusLabelNames = mcpgrafana.MustTool(
 	"list_prometheus_label_names",
-	"List the label names in a Prometheus datasource",
+	"List label names in a Prometheus datasource. Allows filtering by series selectors and time range.",
 	listPrometheusLabelNames,
 )
 
@@ -366,7 +366,7 @@ func listPrometheusLabelValues(ctx context.Context, args ListPrometheusLabelValu
 
 var ListPrometheusLabelValues = mcpgrafana.MustTool(
 	"list_prometheus_label_values",
-	"Get the values of a label in Prometheus",
+	"Get the values for a specific label name in Prometheus. Allows filtering by series selectors and time range.",
 	listPrometheusLabelValues,
 )
 
