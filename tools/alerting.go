@@ -146,7 +146,7 @@ func applyPagination(items []alertingRule, limit, page int) ([]alertingRule, err
 
 var ListAlertRules = mcpgrafana.MustTool(
 	"list_alert_rules",
-	"Lists alert rules with their current states (pending, firing, error, recovering, inactive) and labels. Inactive state means the alert state is normal, not firing.",
+	"Lists Grafana alert rules, returning a summary including UID, title, current state (e.g., 'pending', 'firing', 'inactive'), and labels. Supports filtering by labels using selectors and pagination. Example label selector: `[{'name': 'severity', 'type': '=', 'value': 'critical'}]`. Inactive state means the alert state is normal, not firing",
 	listAlertRules,
 )
 
@@ -177,7 +177,7 @@ func getAlertRuleByUID(ctx context.Context, args GetAlertRuleByUIDParams) (*mode
 
 var GetAlertRuleByUID = mcpgrafana.MustTool(
 	"get_alert_rule_by_uid",
-	"Retrieves detailed information about a specific alert rule by its UID.",
+	"Retrieves the full configuration and detailed status of a specific Grafana alert rule identified by its unique ID (UID). The response includes fields like title, condition, query data, folder UID, rule group, state settings (no data, error), evaluation interval, annotations, and labels.",
 	getAlertRuleByUID,
 )
 
@@ -250,7 +250,7 @@ func applyLimitToContactPoints(items []*models.EmbeddedContactPoint, limit int) 
 
 var ListContactPoints = mcpgrafana.MustTool(
 	"list_contact_points",
-	"Lists notification contact points with their type, name, and configuration.",
+	"Lists Grafana notification contact points, returning a summary including UID, name, and type for each. Supports filtering by name - exact match - and limiting the number of results.",
 	listContactPoints,
 )
 
