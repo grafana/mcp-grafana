@@ -93,23 +93,59 @@ the OnCall tools, use `--disable-oncall`.
    generate a service account token, and copy it to the clipboard for use in the configuration file.
    Follow the [Grafana documentation][service-account] for details.
 
-2. Download the latest release of `mcp-grafana` from the [releases page](https://github.com/grafana/mcp-grafana/releases) and place it in your `$PATH`.
+2. You have several options to install `mcp-grafana`:
 
-   If you have a Go toolchain installed you can also build and install it from source, using the `GOBIN` environment variable
-   to specify the directory where the binary should be installed. This should also be in your `PATH`.
+   * **Docker image**: Use the pre-built Docker image from Docker Hub:
 
-   ```bash
-   GOBIN="$HOME/go/bin" go install github.com/grafana/mcp-grafana/cmd/mcp-grafana@latest
-   ```
+     ```bash
+     docker pull mcp/grafana
+     docker run -p 8000:8000 -e GRAFANA_URL=http://localhost:3000 -e GRAFANA_API_KEY=<your service account token> mcp/grafana
+     ```
+
+   * **Download binary**: Download the latest release of `mcp-grafana` from the [releases page](https://github.com/grafana/mcp-grafana/releases) and place it in your `$PATH`.
+
+   * **Build from source**: If you have a Go toolchain installed you can also build and install it from source, using the `GOBIN` environment variable
+     to specify the directory where the binary should be installed. This should also be in your `PATH`.
+
+     ```bash
+     GOBIN="$HOME/go/bin" go install github.com/grafana/mcp-grafana/cmd/mcp-grafana@latest
+     ```
 
 3. Add the server configuration to your client configuration file. For example, for Claude Desktop:
 
+   **If using the binary:**
    ```json
    {
      "mcpServers": {
        "grafana": {
          "command": "mcp-grafana",
          "args": [],
+         "env": {
+           "GRAFANA_URL": "http://localhost:3000",
+           "GRAFANA_API_KEY": "<your service account token>"
+         }
+       }
+     }
+   }
+   ```
+
+   **If using Docker:**
+   ```json
+   {
+     "mcpServers": {
+       "grafana": {
+         "command": "docker",
+         "args": [
+           "run",
+           "--rm",
+           "-p",
+           "8000:8000",
+           "-e",
+           "GRAFANA_URL",
+           "-e",
+           "GRAFANA_API_KEY",
+           "mcp/grafana"
+         ],
          "env": {
            "GRAFANA_URL": "http://localhost:3000",
            "GRAFANA_API_KEY": "<your service account token>"
@@ -127,12 +163,40 @@ You can enable debug mode for the Grafana transport by adding the `-debug` flag 
 
 To use debug mode with the Claude Desktop configuration, update your config as follows:
 
+**If using the binary:**
 ```json
 {
   "mcpServers": {
     "grafana": {
       "command": "mcp-grafana",
       "args": ["-debug"],
+      "env": {
+        "GRAFANA_URL": "http://localhost:3000",
+        "GRAFANA_API_KEY": "<your service account token>"
+      }
+    }
+  }
+}
+```
+
+**If using Docker:**
+```json
+{
+  "mcpServers": {
+    "grafana": {
+      "command": "docker",
+      "args": [
+        "run",
+        "--rm",
+        "-p",
+        "8000:8000",
+        "-e",
+        "GRAFANA_URL",
+        "-e",
+        "GRAFANA_API_KEY",
+        "mcp/grafana",
+        "-debug"
+      ],
       "env": {
         "GRAFANA_URL": "http://localhost:3000",
         "GRAFANA_API_KEY": "<your service account token>"
@@ -154,7 +218,7 @@ To run the server, use:
 make run
 ```
 
-You can also run the server using the SSE transport inside Docker. To build the image, use
+You can also run the server using the SSE transport inside a custom built Docker image. To build the image, use
 
 ```
 make build-image
