@@ -36,15 +36,15 @@ type GetAssertionsParams struct {
 	EndTime    time.Time `json:"endTime" jsonschema:"required,description=The end time in RFC3339 format"`
 	EntityType string    `json:"entityType" jsonschema:"description=The type of the entity to list (e.g. Service\\, Node\\, Pod\\, etc.)"`
 	EntityName string    `json:"entityName" jsonschema:"description=The name of the entity to list"`
-	Env        string    `json:"env" jsonschema:"description=The env of the entity to list"`
-	Site       string    `json:"site" jsonschema:"description=The site of the entity to list"`
-	Namespace  string    `json:"namespace" jsonschema:"description=The namespace of the entity to list"`
+	Env        string    `json:"env,omitempty" jsonschema:"description=The env of the entity to list"`
+	Site       string    `json:"site,omitempty" jsonschema:"description=The site of the entity to list"`
+	Namespace  string    `json:"namespace,omitempty" jsonschema:"description=The namespace of the entity to list"`
 }
 
 type scope struct {
-	Env       string `json:"env"`
-	Site      string `json:"site"`
-	Namespace string `json:"namespace"`
+	Env       string `json:"env,omitempty"`
+	Site      string `json:"site,omitempty"`
+	Namespace string `json:"namespace,omitempty"`
 }
 
 type entity struct {
@@ -103,17 +103,23 @@ func getAssertions(ctx context.Context, args GetAssertionsParams) (string, error
 		EndTime:   args.EndTime.UnixMilli(),
 		EntityKeys: []entity{
 			{
-				Name: args.EntityName,
-				Type: args.EntityType,
-				Scope: scope{
-					Env:       args.Env,
-					Site:      args.Site,
-					Namespace: args.Namespace,
-				},
+				Name:  args.EntityName,
+				Type:  args.EntityType,
+				Scope: scope{},
 			},
 		},
 		SuggestionSrcEntities: []entity{},
 		AlertCategories:       []string{"saturation", "amend", "anomaly", "failure", "error"},
+	}
+
+	if args.Env != "" {
+		reqBody.EntityKeys[0].Scope.Env = args.Env
+	}
+	if args.Site != "" {
+		reqBody.EntityKeys[0].Scope.Site = args.Site
+	}
+	if args.Namespace != "" {
+		reqBody.EntityKeys[0].Scope.Namespace = args.Namespace
 	}
 
 	data, err := client.fetchAssertsData(ctx, "/v1/assertions/llm-summary", "POST", reqBody)
