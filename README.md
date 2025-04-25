@@ -7,7 +7,9 @@ This provides access to your Grafana instance and the surrounding ecosystem.
 ## Features
 
 - [x] Search for dashboards
-- [x] Get dashboard by UID
+- [x] Dashboards
+  - [x] Get dashboard by UID
+  - [x] Update or create a dashboard (DISCLAIMER: Be careful with context windows. See https://github.com/grafana/mcp-grafana/issues/101 for details)
 - [x] List and fetch datasource information
 - [ ] Query datasources
   - [x] Prometheus
@@ -58,6 +60,7 @@ the OnCall tools, use `--disable-oncall`.
 |-----------------------------------|-------------|--------------------------------------------------------------------|
 | `search_dashboards`               | Search      | Search for dashboards                                              |
 | `get_dashboard_by_uid`            | Dashboard   | Get a dashboard by uid                                             |
+| `update_dashboard`                | Dashboard   | Update or create a new dashboard                                   |
 | `list_datasources`                | Datasources | List datasources                                                   |
 | `get_datasource_by_uid`           | Datasources | Get a datasource by uid                                            |
 | `get_datasource_by_name`          | Datasources | Get a datasource by name                                           |
