@@ -64,8 +64,5 @@ var UpdateDashboard = mcpgrafana.MustTool(
 
 func AddDashboardTools(mcp *server.MCPServer) {
 	GetDashboardByUID.Register(mcp)
-<<<<<<< HEAD
 	UpdateDashboard.Register(mcp)
-=======
->>>>>>> 5a539dd (improve search and dashboard descriptions)
 }
