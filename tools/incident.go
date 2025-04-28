@@ -83,7 +83,7 @@ func createIncident(ctx context.Context, args CreateIncidentParams) (*incident.I
 
 var CreateIncident = mcpgrafana.MustTool(
 	"create_incident",
-	"Create a new Grafana incident. Requires title, severity, and room prefix. Allows setting status and labels.",
+	"Create a new Grafana incident. Requires title, severity, and room prefix. Allows setting status and labels. This tool should be used judiciously and sparingly, and only after confirmation from the user, as it may notify or alarm lots of people.",
 	createIncident,
 )
 
