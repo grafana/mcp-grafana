@@ -35,10 +35,6 @@ test-integration: ## Run only the Docker-based integration tests (Requires docke
 test-cloud: ## Run only the cloud-based tests (requires cloud Grafana instance and credentials).
 	go test -v -tags cloud ./tools
 
-.PHONY: test-asserts
-test-asserts: ## Run only the asserts-based tests (requires Asserts Grafana instance and credentials).
-	go test -v -tags asserts ./tools -run TestAssertsCloudIntegration
-
 .PHONY: run
 run: ## Run the MCP server in stdio mode.
 	go run ./cmd/mcp-grafana

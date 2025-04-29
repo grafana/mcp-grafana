@@ -20,7 +20,7 @@ import (
 )
 
 func TestCloudOnCallSchedules(t *testing.T) {
-	ctx := createCloudTestContext(t, "OnCall")
+	ctx := createCloudTestContext(t, "OnCall", "GRAFANA_URL", "GRAFANA_API_KEY")
 
 	// Test listing all schedules
 	t.Run("list all schedules", func(t *testing.T) {
@@ -83,7 +83,7 @@ func TestCloudOnCallSchedules(t *testing.T) {
 }
 
 func TestCloudOnCallShift(t *testing.T) {
-	ctx := createCloudTestContext(t, "OnCall")
+	ctx := createCloudTestContext(t, "OnCall", "GRAFANA_URL", "GRAFANA_API_KEY")
 
 	// First get a schedule to find a valid shift
 	schedules, err := listOnCallSchedules(ctx, ListOnCallSchedulesParams{})
@@ -113,7 +113,7 @@ func TestCloudOnCallShift(t *testing.T) {
 }
 
 func TestCloudGetCurrentOnCallUsers(t *testing.T) {
-	ctx := createCloudTestContext(t, "OnCall")
+	ctx := createCloudTestContext(t, "OnCall", "GRAFANA_URL", "GRAFANA_API_KEY")
 
 	// First get a schedule to use for testing
 	schedules, err := listOnCallSchedules(ctx, ListOnCallSchedulesParams{})
@@ -150,7 +150,7 @@ func TestCloudGetCurrentOnCallUsers(t *testing.T) {
 }
 
 func TestCloudOnCallTeams(t *testing.T) {
-	ctx := createCloudTestContext(t, "OnCall")
+	ctx := createCloudTestContext(t, "OnCall", "GRAFANA_URL", "GRAFANA_API_KEY")
 
 	t.Run("list teams", func(t *testing.T) {
 		result, err := listOnCallTeams(ctx, ListOnCallTeamsParams{})
@@ -179,7 +179,7 @@ func TestCloudOnCallTeams(t *testing.T) {
 }
 
 func TestCloudOnCallUsers(t *testing.T) {
-	ctx := createCloudTestContext(t, "OnCall")
+	ctx := createCloudTestContext(t, "OnCall", "GRAFANA_URL", "GRAFANA_API_KEY")
 
 	t.Run("list all users", func(t *testing.T) {
 		result, err := listOnCallUsers(ctx, ListOnCallUsersParams{})

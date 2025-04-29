@@ -82,23 +82,6 @@ jobs:
         env:
           GRAFANA_URL: ${{ vars.CLOUD_GRAFANA_URL }}
           GRAFANA_API_KEY: ${{ secrets.CLOUD_GRAFANA_API_KEY }}
-        run: make test-cloud
-
-  test-asserts:
-    name: Test Asserts
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: "1.24"
-          cache: true
-
-      - name: Run asserts tests
-        env:
           ASSERTS_GRAFANA_URL: ${{ vars.ASSERTS_GRAFANA_URL }}
           ASSERTS_GRAFANA_API_KEY: ${{ secrets.ASSERTS_GRAFANA_API_KEY }}
-        run: make test-asserts
+        run: make test-cloud

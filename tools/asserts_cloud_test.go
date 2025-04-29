@@ -1,5 +1,5 @@
-//go:build asserts
-// +build asserts
+//go:build cloud
+// +build cloud
 
 // This file contains cloud integration tests that run against a dedicated test instance
 // connected to a Grafana instance at (ASSERTS_GRAFANA_URL, ASSERTS_GRAFANA_API_KEY).
@@ -9,36 +9,15 @@
 package tools
 
 import (
-	"context"
-	"os"
 	"testing"
 	"time"
 
-	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func createAssertsCloudTestContext(t *testing.T, testName string) context.Context {
-	grafanaURL := os.Getenv("ASSERTS_GRAFANA_URL")
-	if grafanaURL == "" {
-		t.Skipf("ASSERTS_GRAFANA_URL environment variable not set, skipping cloud %s integration tests", testName)
-	}
-
-	grafanaApiKey := os.Getenv("ASSERTS_GRAFANA_API_KEY")
-	if grafanaApiKey == "" {
-		t.Skipf("ASSERTS_GRAFANA_API_KEY environment variable not set, skipping cloud %s integration tests", testName)
-	}
-
-	ctx := context.Background()
-	ctx = mcpgrafana.WithGrafanaURL(ctx, grafanaURL)
-	ctx = mcpgrafana.WithGrafanaAPIKey(ctx, grafanaApiKey)
-
-	return ctx
-}
-
 func TestAssertsCloudIntegration(t *testing.T) {
-	ctx := createAssertsCloudTestContext(t, "Asserts")
+	ctx := createCloudTestContext(t, "Asserts", "ASSERTS_GRAFANA_URL", "ASSERTS_GRAFANA_API_KEY")
 
 	t.Run("get assertions", func(t *testing.T) {
 		// Set up time range for the last hour
