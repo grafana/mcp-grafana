@@ -16,7 +16,6 @@ type GetDashboardByUIDParams struct {
 
 func getDashboardByUID(ctx context.Context, args GetDashboardByUIDParams) (*models.DashboardFullWithMeta, error) {
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
-
 	dashboard, err := c.Dashboards.GetDashboardByUID(args.UID)
 	if err != nil {
 		return nil, fmt.Errorf("get dashboard by uid %s: %w", args.UID, err)
@@ -53,7 +52,7 @@ func updateDashboard(ctx context.Context, args UpdateDashboardParams) (*models.P
 
 var GetDashboardByUID = mcpgrafana.MustTool(
 	"get_dashboard_by_uid",
-	"Get dashboard by uid",
+	"Retrieves the complete dashboard, including panels, variables, and settings, for a specific dashboard identified by its UID.",
 	getDashboardByUID,
 )
 

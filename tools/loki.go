@@ -209,7 +209,7 @@ func listLokiLabelNames(ctx context.Context, args ListLokiLabelNamesParams) ([]s
 // ListLokiLabelNames is a tool for listing Loki label names
 var ListLokiLabelNames = mcpgrafana.MustTool(
 	"list_loki_label_names",
-	"List all available label names in a Loki datasource for the given time range. Returns the set of unique label keys found in the logs.",
+	"Lists all available label names (keys) found in logs within a specified Loki datasource and time range. Returns a list of unique label strings (e.g., `[\"app\", \"env\", \"pod\"]`). If the time range is not provided, it defaults to the last hour.",
 	listLokiLabelNames,
 )
 
@@ -247,7 +247,7 @@ func listLokiLabelValues(ctx context.Context, args ListLokiLabelValuesParams) ([
 // ListLokiLabelValues is a tool for listing Loki label values
 var ListLokiLabelValues = mcpgrafana.MustTool(
 	"list_loki_label_values",
-	"Retrieve all possible values for a specific label in Loki within the given time range. Useful for exploring available options for filtering logs.",
+	"Retrieves all unique values associated with a specific `labelName` within a Loki datasource and time range. Returns a list of string values (e.g., for `labelName=\"env\"`, might return `[\"prod\", \"staging\", \"dev\"]`). Useful for discovering filter options. Defaults to the last hour if the time range is omitted.",
 	listLokiLabelValues,
 )
 
@@ -454,7 +454,7 @@ func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) ([]LogEntry, e
 // QueryLokiLogs is a tool for querying logs from Loki
 var QueryLokiLogs = mcpgrafana.MustTool(
 	"query_loki_logs",
-	"Query and retrieve log entries or metric values from a Loki datasource using LogQL. Returns either log lines or numeric values with timestamps and labels. Use `query_loki_stats` first to check stream size, then `list_loki_label_names` and `list_loki_label_values` to verify labels exist. Supports full LogQL syntax including both log queries and metric queries (e.g., rate, count_over_time).",
+	"Executes a LogQL query against a Loki datasource to retrieve log entries or metric values. Returns a list of results, each containing a timestamp, labels, and either a log line (`line`) or a numeric metric value (`value`). Defaults to the last hour, a limit of 10 entries, and 'backward' direction (newest first). Supports full LogQL syntax for log and metric queries (e.g., `{app=\"foo\"} |= \"error\"`, `rate({app=\"bar\"}[1m])`). Prefer using `query_loki_stats` first to check stream size and `list_loki_label_names` and `list_loki_label_values` to verify labels exist.",
 	queryLokiLogs,
 )
 
@@ -511,7 +511,7 @@ func queryLokiStats(ctx context.Context, args QueryLokiStatsParams) (*Stats, err
 // QueryLokiStats is a tool for querying stats from Loki
 var QueryLokiStats = mcpgrafana.MustTool(
 	"query_loki_stats",
-	"Query statistics about log streams in a Loki datasource, using LogQL selectors to select streams",
+	"Retrieves statistics about log streams matching a given LogQL *selector* within a Loki datasource and time range. Returns an object containing the count of streams, chunks, entries, and total bytes (e.g., `{\"streams\": 5, \"chunks\": 50, \"entries\": 10000, \"bytes\": 512000}`). The `logql` parameter **must** be a simple label selector (e.g., `{app=\"nginx\", env=\"prod\"}`) and does not support line filters, parsers, or aggregations. Defaults to the last hour if the time range is omitted.",
 	queryLokiStats,
 )
 

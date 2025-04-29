@@ -186,7 +186,7 @@ func listOnCallSchedules(ctx context.Context, args ListOnCallSchedulesParams) ([
 
 var ListOnCallSchedules = mcpgrafana.MustTool(
 	"list_oncall_schedules",
-	"List OnCall schedules. A schedule is a calendar-based system defining when team members are on-call. Optionally provide a scheduleId to get details for a specific schedule",
+	"List Grafana OnCall schedules, optionally filtering by team ID. If a specific schedule ID is provided, retrieves details for only that schedule. Returns a list of schedule summaries including ID, name, team ID, timezone, and shift IDs. Supports pagination.",
 	listOnCallSchedules,
 )
 
@@ -210,7 +210,7 @@ func getOnCallShift(ctx context.Context, args GetOnCallShiftParams) (*aapi.OnCal
 
 var GetOnCallShift = mcpgrafana.MustTool(
 	"get_oncall_shift",
-	"Get details for a specific OnCall shift. A shift represents a designated time period within a rotation when a team or individual is actively on-call",
+	"Get detailed information for a specific Grafana OnCall shift using its ID. A shift represents a designated time period within a schedule when users are actively on-call. Returns the full shift details.",
 	getOnCallShift,
 )
 
@@ -270,7 +270,7 @@ func getCurrentOnCallUsers(ctx context.Context, args GetCurrentOnCallUsersParams
 
 var GetCurrentOnCallUsers = mcpgrafana.MustTool(
 	"get_current_oncall_users",
-	"Get users currently on-call for a specific schedule. A schedule is a calendar-based system defining when team members are on-call. This tool will return info about all users currently on-call for the schedule, regardless of team.",
+	"Get the list of users currently on-call for a specific Grafana OnCall schedule ID. Returns the schedule ID, name, and a list of detailed user objects for those currently on call.",
 	getCurrentOnCallUsers,
 )
 
@@ -299,7 +299,7 @@ func listOnCallTeams(ctx context.Context, args ListOnCallTeamsParams) ([]*aapi.T
 
 var ListOnCallTeams = mcpgrafana.MustTool(
 	"list_oncall_teams",
-	"List teams from Grafana OnCall",
+	"List teams configured in Grafana OnCall. Returns a list of team objects with their details. Supports pagination.",
 	listOnCallTeams,
 )
 
@@ -342,7 +342,7 @@ func listOnCallUsers(ctx context.Context, args ListOnCallUsersParams) ([]*aapi.U
 
 var ListOnCallUsers = mcpgrafana.MustTool(
 	"list_oncall_users",
-	"List users from Grafana OnCall. If user ID is provided, returns details for that specific user. If username is provided, returns the user matching that username",
+	"List users from Grafana OnCall. Can retrieve all users, a specific user by ID, or filter by username. Returns a list of user objects with their details. Supports pagination.",
 	listOnCallUsers,
 )
 

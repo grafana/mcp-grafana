@@ -47,7 +47,7 @@ func listIncidents(ctx context.Context, args ListIncidentsParams) (*incident.Que
 
 var ListIncidents = mcpgrafana.MustTool(
 	"list_incidents",
-	"List incidents",
+	"List Grafana incidents. Allows filtering by status ('active', 'resolved') and optionally including drill incidents. Returns a preview list with basic details.",
 	listIncidents,
 )
 
@@ -83,7 +83,7 @@ func createIncident(ctx context.Context, args CreateIncidentParams) (*incident.I
 
 var CreateIncident = mcpgrafana.MustTool(
 	"create_incident",
-	"Create an incident",
+	"Create a new Grafana incident. Requires title, severity, and room prefix. Allows setting status and labels. This tool should be used judiciously and sparingly, and only after confirmation from the user, as it may notify or alarm lots of people.",
 	createIncident,
 )
 
@@ -110,7 +110,7 @@ func addActivityToIncident(ctx context.Context, args AddActivityToIncidentParams
 
 var AddActivityToIncident = mcpgrafana.MustTool(
 	"add_activity_to_incident",
-	"Add a note to an incident's timeline. The note will appear in the incident's activity feed. Use this if there is a request to add context to an incident with a note.",
+	"Add a note (userNote activity) to an existing incident's timeline using its ID. The note body can include URLs which will be attached as context. Use this to add context to an incident.",
 	addActivityToIncident,
 )
 
@@ -141,6 +141,6 @@ func getIncident(ctx context.Context, args GetIncidentParams) (*incident.Inciden
 
 var GetIncident = mcpgrafana.MustTool(
 	"get_incident",
-	"Get a single incident by ID. Returns the full incident details including title, status, severity, and other metadata.",
+	"Get a single incident by ID. Returns the full incident details including title, status, severity, labels, timestamps, and other metadata.",
 	getIncident,
 )
