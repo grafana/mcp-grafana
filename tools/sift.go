@@ -97,10 +97,11 @@ type siftClient struct {
 	url    string
 }
 
-func newSiftClient(url, accessToken, apiKey string) *siftClient {
+func newSiftClient(url, accessToken, userToken, apiKey string) *siftClient {
 	client := &http.Client{
 		Transport: &authRoundTripper{
 			accessToken: accessToken,
+			userToken:   userToken,
 			apiKey:      apiKey,
 			underlying:  http.DefaultTransport,
 		},
@@ -114,12 +115,12 @@ func newSiftClient(url, accessToken, apiKey string) *siftClient {
 func siftClientFromContext(ctx context.Context) (*siftClient, error) {
 	// Get the standard Grafana URL and API key
 	var (
-		grafanaURL         = mcpgrafana.GrafanaURLFromContext(ctx)
-		grafanaAPIKey      = mcpgrafana.GrafanaAPIKeyFromContext(ctx)
-		grafanaAccessToken = mcpgrafana.GrafanaAccessTokenFromContext(ctx)
+		grafanaURL                           = mcpgrafana.GrafanaURLFromContext(ctx)
+		grafanaAPIKey                        = mcpgrafana.GrafanaAPIKeyFromContext(ctx)
+		grafanaAccessToken, grafanaUserToken = mcpgrafana.OnBehalfOfAuthFromContext(ctx)
 	)
 
-	client := newSiftClient(grafanaURL, grafanaAccessToken, grafanaAPIKey)
+	client := newSiftClient(grafanaURL, grafanaAccessToken, grafanaUserToken, grafanaAPIKey)
 
 	return client, nil
 }

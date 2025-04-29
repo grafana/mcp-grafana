@@ -104,10 +104,23 @@ func WithGrafanaAPIKey(ctx context.Context, apiKey string) context.Context {
 	return context.WithValue(ctx, grafanaAPIKeyKey{}, apiKey)
 }
 
-// WithGrafanaAccessToken adds the Grafana access token to the context. An
-// access token is used for on-behalf-of auth in Grafana Cloud.
-func WithGrafanaAccessToken(ctx context.Context, accessToken string) context.Context {
-	return context.WithValue(ctx, grafanaAccessTokenKey{}, accessToken)
+// WithOnBehalfOfAuth adds the Grafana access token and user token to the
+// context. These tokens are used for on-behalf-of auth in Grafana Cloud.
+func WithOnBehalfOfAuth(ctx context.Context, accessToken, userToken string) (context.Context, error) {
+	if accessToken == "" || userToken == "" {
+		return nil, fmt.Errorf("neither accessToken nor userToken can be empty")
+	}
+	return context.WithValue(ctx, grafanaAccessTokenKey{}, []string{accessToken, userToken}), nil
+}
+
+// MustWithOnBehalfOfAuth adds the access and user tokens to the context,
+// panicing if either are empty.
+func MustWithOnBehalfOfAuth(ctx context.Context, accessToken, userToken string) context.Context {
+	ctx, err := WithOnBehalfOfAuth(ctx, accessToken, userToken)
+	if err != nil {
+		panic(err)
+	}
+	return ctx
 }
 
 // GrafanaURLFromContext extracts the Grafana URL from the context.
@@ -126,13 +139,13 @@ func GrafanaAPIKeyFromContext(ctx context.Context) string {
 	return ""
 }
 
-// GrafanaAccessTokenFromContext extracts a Grafana access token from the context.
-// An access token is used for on-behalf-of auth in Grafana Cloud.
-func GrafanaAccessTokenFromContext(ctx context.Context) string {
-	if k, ok := ctx.Value(grafanaAccessTokenKey{}).(string); ok {
-		return k
+// OnBehalfOfAuthFromContext extracts the Grafana access and user tokens from
+// the context. These tokens are used for on-behalf-of auth in Grafana Cloud.
+func OnBehalfOfAuthFromContext(ctx context.Context) (string, string) {
+	if k, ok := ctx.Value(grafanaAccessTokenKey{}).([]string); ok {
+		return k[0], k[1]
 	}
-	return ""
+	return "", ""
 }
 
 type grafanaClientKey struct{}
