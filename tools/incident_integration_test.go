@@ -21,7 +21,7 @@ import (
 
 func TestCloudIncidentTools(t *testing.T) {
 	t.Run("list incidents", func(t *testing.T) {
-		ctx := createCloudTestContext(t, "Incident")
+		ctx := createCloudTestContext(t, "Incident", "GRAFANA_URL", "GRAFANA_API_KEY")
 		ctx = mcpgrafana.ExtractIncidentClientFromEnv(ctx)
 
 		result, err := listIncidents(ctx, ListIncidentsParams{
@@ -34,7 +34,7 @@ func TestCloudIncidentTools(t *testing.T) {
 	})
 
 	t.Run("get incident by ID", func(t *testing.T) {
-		ctx := createCloudTestContext(t, "Incident")
+		ctx := createCloudTestContext(t, "Incident", "GRAFANA_URL", "GRAFANA_API_KEY")
 		ctx = mcpgrafana.ExtractIncidentClientFromEnv(ctx)
 		result, err := getIncident(ctx, GetIncidentParams{
 			ID: "1",

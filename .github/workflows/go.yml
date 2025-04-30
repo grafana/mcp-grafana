@@ -93,4 +93,6 @@ jobs:
         env:
           GRAFANA_URL: ${{ vars.CLOUD_GRAFANA_URL }}
           GRAFANA_API_KEY: ${{ secrets.CLOUD_GRAFANA_API_KEY }}
+          ASSERTS_GRAFANA_URL: ${{ vars.ASSERTS_GRAFANA_URL }}
+          ASSERTS_GRAFANA_API_KEY: ${{ secrets.ASSERTS_GRAFANA_API_KEY }}
         run: make test-cloud

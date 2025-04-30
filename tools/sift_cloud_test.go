@@ -17,7 +17,7 @@ import (
 )
 
 func TestCloudSiftInvestigations(t *testing.T) {
-	ctx := createCloudTestContext(t, "Sift")
+	ctx := createCloudTestContext(t, "Sift", "GRAFANA_URL", "GRAFANA_API_KEY")
 
 	// Test listing all investigations
 	t.Run("list all investigations", func(t *testing.T) {
