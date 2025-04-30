@@ -3,9 +3,11 @@ package tools
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/mark3labs/mcp-go/server"
 
+	"github.com/PaesslerAG/jsonpath"
 	"github.com/grafana/grafana-openapi-client-go/models"
 	mcpgrafana "github.com/grafana/mcp-grafana"
 )
@@ -62,7 +64,63 @@ var UpdateDashboard = mcpgrafana.MustTool(
 	updateDashboard,
 )
 
+// Params for the new tool
+// PanelExprInfo holds a panel title and its expressions
+type PanelExprInfo struct {
+	Title string   `json:"title"`
+	Exprs []string `json:"exprs"`
+}
+
+type GetDashboardPanelTitlesAndExprsParams struct {
+	UID string `json:"uid" jsonschema:"required,description=The UID of the dashboard"`
+}
+
+type GetDashboardPanelTitlesAndExprsResult struct {
+	Result []PanelExprInfo `json:"result"`
+}
+
+type StringResult struct {
+	Result string `json:"result"`
+}
+
+// Tool function
+func getDashboardPanelExprsText(ctx context.Context, args GetDashboardPanelTitlesAndExprsParams) (StringResult, error) {
+	dashboard, err := getDashboardByUID(ctx, GetDashboardByUIDParams(args))
+	if err != nil {
+		return StringResult{}, fmt.Errorf("get dashboard by uid: %w", err)
+	}
+
+	queries, err := jsonpath.Get("$.panels[*].targets[*].expr", dashboard.Dashboard)
+	if err != nil {
+		return StringResult{
+			Result: fmt.Sprintf("jsonpath error (exprs): %s", err),
+		}, fmt.Errorf("jsonpath error (exprs): %w", err)
+	}
+
+	var exprs []string
+	switch q := queries.(type) {
+	case []interface{}:
+		for _, expr := range q {
+			if s, ok := expr.(string); ok {
+				exprs = append(exprs, s)
+			}
+		}
+	default:
+		return StringResult{}, fmt.Errorf("unexpected type: %T", q)
+	}
+
+	return StringResult{Result: strings.Join(exprs, "\n")}, nil
+}
+
+// Register the tool
+var GetDashboardPanelExprsText = mcpgrafana.MustTool(
+	"get_dashboard_panel_exprs_text",
+	"Returns all panel expressions for a dashboard as plain text, one per line.",
+	getDashboardPanelExprsText,
+)
+
 func AddDashboardTools(mcp *server.MCPServer) {
 	GetDashboardByUID.Register(mcp)
 	UpdateDashboard.Register(mcp)
+	GetDashboardPanelExprsText.Register(mcp)
 }
