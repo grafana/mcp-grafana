@@ -83,40 +83,57 @@ type StringResult struct {
 	Result string `json:"result"`
 }
 
-// Tool function
-func getDashboardPanelExprsText(ctx context.Context, args GetDashboardPanelTitlesAndExprsParams) (StringResult, error) {
+func GetDashboardPanelQueriesTool(ctx context.Context, args GetDashboardPanelTitlesAndExprsParams) (StringResult, error) {
 	dashboard, err := getDashboardByUID(ctx, GetDashboardByUIDParams(args))
 	if err != nil {
 		return StringResult{}, fmt.Errorf("get dashboard by uid: %w", err)
 	}
 
-	queries, err := jsonpath.Get("$.panels[*].targets[*].expr", dashboard.Dashboard)
+	// Get all panels
+	panelsResult, err := jsonpath.Get("$.panels[*]", dashboard.Dashboard)
 	if err != nil {
 		return StringResult{
-			Result: fmt.Sprintf("jsonpath error (exprs): %s", err),
-		}, fmt.Errorf("jsonpath error (exprs): %w", err)
+			Result: fmt.Sprintf("jsonpath error (panels): %s", err),
+		}, fmt.Errorf("jsonpath error (panels): %w", err)
 	}
 
-	var exprs []string
-	switch q := queries.(type) {
-	case []interface{}:
-		for _, expr := range q {
-			if s, ok := expr.(string); ok {
-				exprs = append(exprs, s)
+	panels, ok := panelsResult.([]any)
+	if !ok {
+		return StringResult{}, fmt.Errorf("panels is not a slice")
+	}
+
+	var sb strings.Builder
+	for _, p := range panels {
+		panel, ok := p.(map[string]any)
+		if !ok {
+			continue
+		}
+		title, _ := panel["title"].(string)
+		sb.WriteString(fmt.Sprintf("Panel: %s\n", title))
+
+		targets, ok := panel["targets"].([]interface{})
+		if ok {
+			for _, t := range targets {
+				target, ok := t.(map[string]any)
+				if !ok {
+					continue
+				}
+				expr := fmt.Sprintf("%v", target["expr"])
+				if expr != "" && expr != "<nil>" {
+					sb.WriteString(fmt.Sprintf("  Query: %s\n", expr))
+				}
 			}
 		}
-	default:
-		return StringResult{}, fmt.Errorf("unexpected type: %T", q)
 	}
 
-	return StringResult{Result: strings.Join(exprs, "\n")}, nil
+	return StringResult{Result: sb.String()}, nil
 }
 
 // Register the tool
 var GetDashboardPanelExprsText = mcpgrafana.MustTool(
 	"get_dashboard_panel_exprs_text",
 	"Returns all panel expressions for a dashboard as plain text, one per line.",
-	getDashboardPanelExprsText,
+	GetDashboardPanelQueriesTool,
 )
 
 func AddDashboardTools(mcp *server.MCPServer) {
