@@ -3,7 +3,6 @@ package tools
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/mark3labs/mcp-go/server"
 
@@ -64,8 +63,6 @@ var UpdateDashboard = mcpgrafana.MustTool(
 	updateDashboard,
 )
 
-// Params for the new tool
-// PanelExprInfo holds a panel title and its expressions
 type PanelExprInfo struct {
 	Title string   `json:"title"`
 	Exprs []string `json:"exprs"`
@@ -83,33 +80,43 @@ type StringResult struct {
 	Result string `json:"result"`
 }
 
-func GetDashboardPanelQueriesTool(ctx context.Context, args GetDashboardPanelTitlesAndExprsParams) (StringResult, error) {
+type PanelQuery struct {
+	Title string `json:"title"`
+	Query string `json:"query"`
+}
+
+func GetDashboardPanelQueriesTool(ctx context.Context, args GetDashboardPanelTitlesAndExprsParams) (struct {
+	Result []PanelQuery `json:"result"`
+}, error) {
 	dashboard, err := getDashboardByUID(ctx, GetDashboardByUIDParams(args))
 	if err != nil {
-		return StringResult{}, fmt.Errorf("get dashboard by uid: %w", err)
+		return struct {
+			Result []PanelQuery `json:"result"`
+		}{}, fmt.Errorf("get dashboard by uid: %w", err)
 	}
 
 	// Get all panels
 	panelsResult, err := jsonpath.Get("$.panels[*]", dashboard.Dashboard)
 	if err != nil {
-		return StringResult{
-			Result: fmt.Sprintf("jsonpath error (panels): %s", err),
-		}, fmt.Errorf("jsonpath error (panels): %w", err)
+		return struct {
+			Result []PanelQuery `json:"result"`
+		}{}, fmt.Errorf("jsonpath error (panels): %w", err)
 	}
 
 	panels, ok := panelsResult.([]any)
 	if !ok {
-		return StringResult{}, fmt.Errorf("panels is not a slice")
+		return struct {
+			Result []PanelQuery `json:"result"`
+		}{}, fmt.Errorf("panels is not a slice")
 	}
 
-	var sb strings.Builder
+	var panelQueries []PanelQuery
 	for _, p := range panels {
 		panel, ok := p.(map[string]any)
 		if !ok {
 			continue
 		}
 		title, _ := panel["title"].(string)
-		sb.WriteString(fmt.Sprintf("Panel: %s\n", title))
 
 		targets, ok := panel["targets"].([]interface{})
 		if ok {
@@ -120,24 +127,28 @@ func GetDashboardPanelQueriesTool(ctx context.Context, args GetDashboardPanelTit
 				}
 				expr := fmt.Sprintf("%v", target["expr"])
 				if expr != "" && expr != "<nil>" {
-					sb.WriteString(fmt.Sprintf("  Query: %s\n", expr))
+					panelQueries = append(panelQueries, PanelQuery{
+						Title: title,
+						Query: expr,
+					})
 				}
 			}
 		}
 	}
 
-	return StringResult{Result: sb.String()}, nil
+	return struct {
+		Result []PanelQuery `json:"result"`
+	}{Result: panelQueries}, nil
 }
 
-// Register the tool
-var GetDashboardPanelExprsText = mcpgrafana.MustTool(
-	"get_dashboard_panel_exprs_text",
-	"Returns all panel expressions for a dashboard as plain text, one per line.",
+var GetDashboardPanelQueries = mcpgrafana.MustTool(
+	"get_dashboard_panel_queries",
+	"Returns a JSON object with a 'result' field containing an array of objects, each representing a panel in the specified dashboard. Each object includes the panel's title and its associated query string. This allows you to programmatically access all panel queries (title and query) for a dashboard.",
 	GetDashboardPanelQueriesTool,
 )
 
 func AddDashboardTools(mcp *server.MCPServer) {
 	GetDashboardByUID.Register(mcp)
 	UpdateDashboard.Register(mcp)
-	GetDashboardPanelExprsText.Register(mcp)
+	GetDashboardPanelQueries.Register(mcp)
 }
