@@ -303,7 +303,7 @@ func findErrorPatternLogs(ctx context.Context, args FindErrorPatternLogsParams) 
 		if !ok {
 			continue
 		}
-		examples, err := addErrorPatternExamplesToPatternMap(ctx, patternMap, datasourceUID)
+		examples, err := fetchErrorPatternLogExamples(ctx, patternMap, datasourceUID)
 		if err != nil {
 			return nil, err
 		}
@@ -576,7 +576,7 @@ func (c *siftClient) listSiftInvestigations(ctx context.Context, limit int) ([]I
 	return response.Data, nil
 }
 
-func addErrorPatternExamplesToPatternMap(ctx context.Context, patternMap map[string]any, datasourceUID string) ([]string, error) {
+func fetchErrorPatternLogExamples(ctx context.Context, patternMap map[string]any, datasourceUID string) ([]string, error) {
 	query, _ := patternMap["query"].(string)
 	logEntries, err := queryLokiLogs(ctx, QueryLokiLogsParams{
 		DatasourceUID: datasourceUID,
