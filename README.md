@@ -160,6 +160,22 @@ the OnCall tools, use `--disable-oncall`.
 
 > Note: if you see `Error: spawn mcp-grafana ENOENT` in Claude Desktop, you need to specify the full path to `mcp-grafana`.
 
+
+**Using VSCode with remote MCP server**
+
+Make sure your `.vscode/settings.json` includes:
+
+```json
+"mcp": {
+  "servers": {
+    "grafana": {
+      "type": "sse",
+      "url": "http://localhost:8000/sse"
+    }
+  }
+}
+```
+
 ### Debug Mode
 
 You can enable debug mode for the Grafana transport by adding the `-debug` flag to the command. This will provide detailed logging of HTTP requests and responses between the MCP server and the Grafana API, which can be helpful for troubleshooting.
