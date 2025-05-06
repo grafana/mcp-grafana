@@ -23,6 +23,9 @@ const (
 	investigationStatusFailed   investigationStatus = "failed"
 )
 
+// errorPatternLogExampleLimit controls how many log examples are fetched per error pattern.
+const errorPatternLogExampleLimit = 3
+
 type analysisStatus string
 
 type investigationRequest struct {
@@ -39,10 +42,10 @@ type investigationRequest struct {
 
 // Interesting: The analysis complete with results that indicate a probable cause for failure.
 type analysisResult struct {
-	Successful  bool                   `json:"successful"`
-	Interesting bool                   `json:"interesting"`
-	Message     string                 `json:"message"`
-	Details     map[string]interface{} `json:"details"`
+	Successful  bool           `json:"successful"`
+	Interesting bool           `json:"interesting"`
+	Message     string         `json:"message"`
+	Details     map[string]any `json:"details"`
 }
 
 type analysisMeta struct {
@@ -68,6 +71,12 @@ type analysis struct {
 	Result analysisResult `json:"result"`
 }
 
+type InvestigationDatasources struct {
+	LokiDatasource struct {
+		UID string `json:"uid"`
+	} `json:"lokiDatasource"`
+}
+
 type Investigation struct {
 	ID        uuid.UUID `json:"id"`
 	CreatedAt time.Time `json:"created"`
@@ -89,6 +98,8 @@ type Investigation struct {
 	FailureReason string `json:"failureReason,omitempty"`
 
 	Analyses analysisMeta `json:"analyses"`
+
+	Datasources InvestigationDatasources `json:"datasources"`
 }
 
 // siftClient represents a client for interacting with the Sift API.
@@ -283,6 +294,20 @@ func findErrorPatternLogs(ctx context.Context, args FindErrorPatternLogsParams) 
 
 	if errorPatternLogsAnalysis == nil {
 		return nil, fmt.Errorf("ErrorPatternLogs analysis not found in investigation %s", completedInvestigation.ID)
+	}
+
+	datasourceUID := completedInvestigation.Datasources.LokiDatasource.UID
+
+	for _, pattern := range errorPatternLogsAnalysis.Result.Details["patterns"].([]any) {
+		patternMap, ok := pattern.(map[string]any)
+		if !ok {
+			continue
+		}
+		examples, err := fetchErrorPatternLogExamples(ctx, patternMap, datasourceUID)
+		if err != nil {
+			return nil, err
+		}
+		patternMap["examples"] = examples
 	}
 
 	return errorPatternLogsAnalysis, nil
@@ -549,4 +574,23 @@ func (c *siftClient) listSiftInvestigations(ctx context.Context, limit int) ([]I
 	}
 
 	return response.Data, nil
+}
+
+func fetchErrorPatternLogExamples(ctx context.Context, patternMap map[string]any, datasourceUID string) ([]string, error) {
+	query, _ := patternMap["query"].(string)
+	logEntries, err := queryLokiLogs(ctx, QueryLokiLogsParams{
+		DatasourceUID: datasourceUID,
+		LogQL:         query,
+		Limit:         errorPatternLogExampleLimit,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("querying Loki: %w", err)
+	}
+	var examples []string
+	for _, entry := range logEntries {
+		if entry.Line != "" {
+			examples = append(examples, entry.Line)
+		}
+	}
+	return examples, nil
 }
