@@ -21,9 +21,11 @@ const (
 )
 
 type alertingClient struct {
-	baseURL    *url.URL
-	apiKey     string
-	httpClient *http.Client
+	baseURL     *url.URL
+	accessToken string
+	userToken   string
+	apiKey      string
+	httpClient  *http.Client
 }
 
 func newAlertingClientFromContext(ctx context.Context) (*alertingClient, error) {
@@ -32,10 +34,13 @@ func newAlertingClientFromContext(ctx context.Context) (*alertingClient, error) 
 	if err != nil {
 		return nil, fmt.Errorf("invalid Grafana base URL %q: %w", baseURL, err)
 	}
+	accessToken, userToken := mcpgrafana.OnBehalfOfAuthFromContext(ctx)
 
 	return &alertingClient{
-		baseURL: parsedBaseURL,
-		apiKey:  mcpgrafana.GrafanaAPIKeyFromContext(ctx),
+		baseURL:     parsedBaseURL,
+		accessToken: accessToken,
+		userToken:   userToken,
+		apiKey:      mcpgrafana.GrafanaAPIKeyFromContext(ctx),
 		httpClient: &http.Client{
 			Timeout: defaultTimeout,
 		},
@@ -53,7 +58,11 @@ func (c *alertingClient) makeRequest(ctx context.Context, path string) (*http.Re
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/json")
 
-	if c.apiKey != "" {
+	// If accessToken is set we use that first and fall back to normal Authorization.
+	if c.accessToken != "" && c.userToken != "" {
+		req.Header.Set("X-Access-Token", c.accessToken)
+		req.Header.Set("X-Grafana-Id", c.userToken)
+	} else if c.apiKey != "" {
 		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.apiKey))
 	}
 

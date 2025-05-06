@@ -40,6 +40,7 @@ func urlAndAPIKeyFromHeaders(req *http.Request) (string, string) {
 
 type grafanaURLKey struct{}
 type grafanaAPIKeyKey struct{}
+type grafanaAccessTokenKey struct{}
 
 // grafanaDebugKey is the context key for the Grafana transport's debug flag.
 type grafanaDebugKey struct{}
@@ -103,6 +104,25 @@ func WithGrafanaAPIKey(ctx context.Context, apiKey string) context.Context {
 	return context.WithValue(ctx, grafanaAPIKeyKey{}, apiKey)
 }
 
+// WithOnBehalfOfAuth adds the Grafana access token and user token to the
+// context. These tokens are used for on-behalf-of auth in Grafana Cloud.
+func WithOnBehalfOfAuth(ctx context.Context, accessToken, userToken string) (context.Context, error) {
+	if accessToken == "" || userToken == "" {
+		return nil, fmt.Errorf("neither accessToken nor userToken can be empty")
+	}
+	return context.WithValue(ctx, grafanaAccessTokenKey{}, []string{accessToken, userToken}), nil
+}
+
+// MustWithOnBehalfOfAuth adds the access and user tokens to the context,
+// panicing if either are empty.
+func MustWithOnBehalfOfAuth(ctx context.Context, accessToken, userToken string) context.Context {
+	ctx, err := WithOnBehalfOfAuth(ctx, accessToken, userToken)
+	if err != nil {
+		panic(err)
+	}
+	return ctx
+}
+
 // GrafanaURLFromContext extracts the Grafana URL from the context.
 func GrafanaURLFromContext(ctx context.Context) string {
 	if u, ok := ctx.Value(grafanaURLKey{}).(string); ok {
@@ -117,6 +137,15 @@ func GrafanaAPIKeyFromContext(ctx context.Context) string {
 		return k
 	}
 	return ""
+}
+
+// OnBehalfOfAuthFromContext extracts the Grafana access and user tokens from
+// the context. These tokens are used for on-behalf-of auth in Grafana Cloud.
+func OnBehalfOfAuthFromContext(ctx context.Context) (string, string) {
+	if k, ok := ctx.Value(grafanaAccessTokenKey{}).([]string); ok {
+		return k[0], k[1]
+	}
+	return "", ""
 }
 
 type grafanaClientKey struct{}

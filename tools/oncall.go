@@ -57,7 +57,10 @@ func getOnCallURLFromSettings(ctx context.Context, grafanaURL, grafanaAPIKey str
 
 func oncallClientFromContext(ctx context.Context) (*aapi.Client, error) {
 	// Get the standard Grafana URL and API key
-	grafanaURL, grafanaAPIKey := mcpgrafana.GrafanaURLFromContext(ctx), mcpgrafana.GrafanaAPIKeyFromContext(ctx)
+	var (
+		grafanaURL    = mcpgrafana.GrafanaURLFromContext(ctx)
+		grafanaAPIKey = mcpgrafana.GrafanaAPIKeyFromContext(ctx)
+	)
 
 	// Try to get OnCall URL from settings endpoint
 	grafanaOnCallURL, err := getOnCallURLFromSettings(ctx, grafanaURL, grafanaAPIKey)
@@ -67,6 +70,7 @@ func oncallClientFromContext(ctx context.Context) (*aapi.Client, error) {
 
 	grafanaOnCallURL = strings.TrimRight(grafanaOnCallURL, "/")
 
+	// TODO: Allow access to OnCall using an access token instead of an API key.
 	client, err := aapi.NewWithGrafanaURL(grafanaOnCallURL, grafanaAPIKey, grafanaURL)
 	if err != nil {
 		return nil, fmt.Errorf("creating OnCall client: %w", err)
