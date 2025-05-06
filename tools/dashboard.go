@@ -68,7 +68,7 @@ type PanelExprInfo struct {
 	Exprs []string `json:"exprs"`
 }
 
-type GetDashboardPanelTitlesAndExprsParams struct {
+type DashboardPanelQueriesParams struct {
 	UID string `json:"uid" jsonschema:"required,description=The UID of the dashboard"`
 }
 
@@ -85,32 +85,28 @@ type PanelQuery struct {
 	Query string `json:"query"`
 }
 
-func GetDashboardPanelQueriesTool(ctx context.Context, args GetDashboardPanelTitlesAndExprsParams) (struct {
+func GetDashboardPanelQueriesTool(ctx context.Context, args DashboardPanelQueriesParams) (struct {
 	Result []PanelQuery `json:"result"`
 }, error) {
+	result := struct {
+		Result []PanelQuery `json:"result"`
+	}{}
+
 	dashboard, err := getDashboardByUID(ctx, GetDashboardByUIDParams(args))
 	if err != nil {
-		return struct {
-			Result []PanelQuery `json:"result"`
-		}{}, fmt.Errorf("get dashboard by uid: %w", err)
+		return result, fmt.Errorf("get dashboard by uid: %w", err)
 	}
 
-	// Get all panels
 	panelsResult, err := jsonpath.Get("$.panels[*]", dashboard.Dashboard)
 	if err != nil {
-		return struct {
-			Result []PanelQuery `json:"result"`
-		}{}, fmt.Errorf("jsonpath error (panels): %w", err)
+		return result, fmt.Errorf("jsonpath error (panels): %w", err)
 	}
 
 	panels, ok := panelsResult.([]any)
 	if !ok {
-		return struct {
-			Result []PanelQuery `json:"result"`
-		}{}, fmt.Errorf("panels is not a slice")
+		return result, fmt.Errorf("panels is not a slice")
 	}
 
-	var panelQueries []PanelQuery
 	for _, p := range panels {
 		panel, ok := p.(map[string]any)
 		if !ok {
@@ -118,27 +114,26 @@ func GetDashboardPanelQueriesTool(ctx context.Context, args GetDashboardPanelTit
 		}
 		title, _ := panel["title"].(string)
 
-		targets, ok := panel["targets"].([]interface{})
-		if ok {
-			for _, t := range targets {
-				target, ok := t.(map[string]any)
-				if !ok {
-					continue
-				}
-				expr := fmt.Sprintf("%v", target["expr"])
-				if expr != "" && expr != "<nil>" {
-					panelQueries = append(panelQueries, PanelQuery{
-						Title: title,
-						Query: expr,
-					})
-				}
+		targets, ok := panel["targets"].([]any)
+		if !ok {
+			continue
+		}
+		for _, t := range targets {
+			target, ok := t.(map[string]any)
+			if !ok {
+				continue
+			}
+			expr, _ := target["expr"].(string)
+			if expr != "" {
+				result.Result = append(result.Result, PanelQuery{
+					Title: title,
+					Query: expr,
+				})
 			}
 		}
 	}
 
-	return struct {
-		Result []PanelQuery `json:"result"`
-	}{Result: panelQueries}, nil
+	return result, nil
 }
 
 var GetDashboardPanelQueries = mcpgrafana.MustTool(
