@@ -1,6 +1,3 @@
-import os
-
-from litellm.types.utils import ModelResponse
 import pytest
 from langevals import expect
 from langevals_langevals.llm_boolean import (
@@ -9,50 +6,14 @@ from langevals_langevals.llm_boolean import (
 )
 from litellm import Message, acompletion
 from mcp import ClientSession
-from mcp.client.sse import sse_client
-from dotenv import load_dotenv
 
+from conftest import models
 from utils import (
     get_converted_tools,
     llm_tool_call_sequence,
 )
 
-
-load_dotenv()
-
-DEFAULT_GRAFANA_URL = "http://localhost:3000"
-DEFAULT_MCP_URL = "http://localhost:8000/sse"
-
-models = ["gpt-4o", "claude-3-5-sonnet-20240620"]
-
 pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def mcp_url():
-    return os.environ.get("MCP_GRAFANA_URL", DEFAULT_MCP_URL)
-
-
-@pytest.fixture
-def grafana_headers():
-    headers = {
-        "X-Grafana-URL": os.environ.get("GRAFANA_URL", DEFAULT_GRAFANA_URL),
-    }
-    if key := os.environ.get("GRAFANA_API_KEY"):
-        headers["X-Grafana-API-Key"] = key
-    return headers
-
-
-@pytest.fixture
-async def mcp_client(mcp_url, grafana_headers):
-    async with sse_client(mcp_url, headers=grafana_headers) as (
-        read,
-        write,
-    ):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
-            yield session
-
 
 @pytest.mark.parametrize("model", models)
 @pytest.mark.flaky(max_runs=3)
