@@ -22,7 +22,7 @@ pytestmark = pytest.mark.anyio
 @pytest.mark.flaky(max_runs=3)
 async def test_loki_logs_tool(model: str, mcp_client: ClientSession):
     tools = await get_converted_tools(mcp_client)
-    prompt = "Can you list the last 10 log lines from all containers using any available Loki datasource? Give me the raw log lines. Please use only the necessary tools to get this information."
+    prompt = "Can you list the last 10 log lines from container 'mcp-grafana-grafana-1' using any available Loki datasource? Give me the raw log lines. Please use only the necessary tools to get this information."
 
     messages = [
         Message(role="system", content="You are a helpful assistant."),
@@ -40,7 +40,7 @@ async def test_loki_logs_tool(model: str, mcp_client: ClientSession):
 
     # 2. Query logs
     messages = await llm_tool_call_sequence(
-        model, messages, tools, mcp_client, "query_loki_logs", {"datasourceUid": loki_ds["uid"]}
+        model, messages, tools, mcp_client, "query_loki_logs", {"datasourceUid": loki_ds["uid"], "logql": "{container=\"mcp-grafana-grafana-1\"}"}
     )
 
     # 3. Final LLM response
