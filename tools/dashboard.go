@@ -125,7 +125,7 @@ func GetDashboardPanelQueriesTool(ctx context.Context, args DashboardPanelQuerie
 
 var GetDashboardPanelQueries = mcpgrafana.MustTool(
 	"get_dashboard_panel_queries",
-	"Returns a JSON object with a 'result' field containing an array of objects, each representing a panel in the specified dashboard. Each object includes the panel's title and its associated query string. This allows you to programmatically access all panel queries (title and query) for a dashboard.",
+	"Get the title, datasource and query string of each panel in a dashboard. Returns a JSON object with a 'result' field containing an array of objects, each representing a panel in the specified dashboard.",
 	GetDashboardPanelQueriesTool,
 )
 
