@@ -145,11 +145,12 @@ func TestDashboardTools(t *testing.T) {
 
 		// The initial demo dashboard plus for all dashboards created by the integration tests,
 		// every panel should have identical title and query values.
-		// Datasource UID may differ.
+		// Datasource UID may differ. Datasource type can be an empty string as well but on the demo and test dashboards it should be "prometheus".
 		for _, panelQuery := range result {
 			assert.Equal(t, panelQuery.Title, "Node Load")
 			assert.Equal(t, panelQuery.Query, "node_load1")
-			assert.NotEmpty(t, panelQuery.DatasourceUID)
+			assert.NotEmpty(t, panelQuery.Datasource.UID)
+			assert.Equal(t, panelQuery.Datasource.Type, "prometheus")
 		}
 	})
 }

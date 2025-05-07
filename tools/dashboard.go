@@ -67,10 +67,15 @@ type DashboardPanelQueriesParams struct {
 	UID string `json:"uid" jsonschema:"required,description=The UID of the dashboard"`
 }
 
+type DatasourceInfo struct {
+	UID  string `json:"uid"`
+	Type string `json:"type"`
+}
+
 type PanelQuery struct {
-	Title         string `json:"title"`
-	Query         string `json:"query"`
-	DatasourceUID string `json:"datasourceUid"`
+	Title      string         `json:"title"`
+	Query      string         `json:"query"`
+	Datasource DatasourceInfo `json:"datasource"`
 }
 
 func GetDashboardPanelQueriesTool(ctx context.Context, args DashboardPanelQueriesParams) ([]PanelQuery, error) {
@@ -98,11 +103,14 @@ func GetDashboardPanelQueriesTool(ctx context.Context, args DashboardPanelQuerie
 		}
 		title, _ := panel["title"].(string)
 
-		var datasourceUid string
+		var datasourceInfo DatasourceInfo
 		if dsField, dsExists := panel["datasource"]; dsExists && dsField != nil {
 			if dsMap, ok := dsField.(map[string]any); ok {
 				if uid, ok := dsMap["uid"].(string); ok {
-					datasourceUid = uid
+					datasourceInfo.UID = uid
+				}
+				if dsType, ok := dsMap["type"].(string); ok {
+					datasourceInfo.Type = dsType
 				}
 			}
 		}
@@ -119,9 +127,9 @@ func GetDashboardPanelQueriesTool(ctx context.Context, args DashboardPanelQuerie
 			expr, _ := target["expr"].(string)
 			if expr != "" {
 				result = append(result, PanelQuery{
-					Title:         title,
-					Query:         expr,
-					DatasourceUID: datasourceUid,
+					Title:      title,
+					Query:      expr,
+					Datasource: datasourceInfo,
 				})
 			}
 		}
@@ -132,7 +140,7 @@ func GetDashboardPanelQueriesTool(ctx context.Context, args DashboardPanelQuerie
 
 var GetDashboardPanelQueries = mcpgrafana.MustTool(
 	"get_dashboard_panel_queries",
-	"Get the title, datasource UID (which may be a concrete UID or a template variable like \"$datasource\"), and query string of each panel in a dashboard. If the datasource UID is a template variable, it won't be usable directly for queries. Returns an array of objects, each representing a panel in the specified dashboard.",
+	"Get the title, query string, and datasource information for each panel in a dashboard. The datasource is an object with fields `uid` (which may be a concrete UID or a template variable like \"$datasource\") and `type`. If the datasource UID is a template variable, it won't be usable directly for queries. Returns an array of objects, each representing a panel, with fields: title, query, and datasource (an object with uid and type).",
 	GetDashboardPanelQueriesTool,
 )
 
