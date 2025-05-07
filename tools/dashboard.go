@@ -6,7 +6,6 @@ import (
 
 	"github.com/mark3labs/mcp-go/server"
 
-	"github.com/PaesslerAG/jsonpath"
 	"github.com/grafana/grafana-openapi-client-go/models"
 	mcpgrafana "github.com/grafana/mcp-grafana"
 )
@@ -86,14 +85,13 @@ func GetDashboardPanelQueriesTool(ctx context.Context, args DashboardPanelQuerie
 		return result, fmt.Errorf("get dashboard by uid: %w", err)
 	}
 
-	panelsResult, err := jsonpath.Get("$.panels[*]", dashboard.Dashboard)
-	if err != nil {
-		return result, fmt.Errorf("jsonpath error (panels): %w", err)
-	}
-
-	panels, ok := panelsResult.([]any)
+	db, ok := dashboard.Dashboard.(map[string]any)
 	if !ok {
-		return result, fmt.Errorf("panels is not a slice")
+		return result, fmt.Errorf("dashboard is not a JSON object")
+	}
+	panels, ok := db["panels"].([]any)
+	if !ok {
+		return result, fmt.Errorf("panels is not a JSON array")
 	}
 
 	for _, p := range panels {
