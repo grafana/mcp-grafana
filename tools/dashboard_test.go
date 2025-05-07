@@ -130,4 +130,21 @@ func TestDashboardTools(t *testing.T) {
 		_, err := updateDashboard(ctx, params)
 		require.NoError(t, err)
 	})
+
+	t.Run("get dashboard panel queries", func(t *testing.T) {
+		ctx := newTestContext()
+
+		// Get the test dashboard
+		dashboard := getExistingTestDashboard(t, ctx, "")
+
+		result, err := GetDashboardPanelQueriesTool(ctx, DashboardPanelQueriesParams{
+			UID: dashboard.UID,
+		})
+		require.NoError(t, err)
+		assert.Greater(t, len(result.Result), 0, "Should return at least one panel query")
+		for _, panelQuery := range result.Result {
+			assert.Equal(t, panelQuery.Title, "Node Load")
+			assert.Equal(t, panelQuery.Query, "node_load1")
+		}
+	})
 }
