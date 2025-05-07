@@ -67,19 +67,19 @@ type DashboardPanelQueriesParams struct {
 	UID string `json:"uid" jsonschema:"required,description=The UID of the dashboard"`
 }
 
-type DatasourceInfo struct {
+type datasourceInfo struct {
 	UID  string `json:"uid"`
 	Type string `json:"type"`
 }
 
-type PanelQuery struct {
+type panelQuery struct {
 	Title      string         `json:"title"`
 	Query      string         `json:"query"`
-	Datasource DatasourceInfo `json:"datasource"`
+	Datasource datasourceInfo `json:"datasource"`
 }
 
-func GetDashboardPanelQueriesTool(ctx context.Context, args DashboardPanelQueriesParams) ([]PanelQuery, error) {
-	result := make([]PanelQuery, 0)
+func GetDashboardPanelQueriesTool(ctx context.Context, args DashboardPanelQueriesParams) ([]panelQuery, error) {
+	result := make([]panelQuery, 0)
 
 	dashboard, err := getDashboardByUID(ctx, GetDashboardByUIDParams(args))
 	if err != nil {
@@ -103,7 +103,7 @@ func GetDashboardPanelQueriesTool(ctx context.Context, args DashboardPanelQuerie
 		}
 		title, _ := panel["title"].(string)
 
-		var datasourceInfo DatasourceInfo
+		var datasourceInfo datasourceInfo
 		if dsField, dsExists := panel["datasource"]; dsExists && dsField != nil {
 			if dsMap, ok := dsField.(map[string]any); ok {
 				if uid, ok := dsMap["uid"].(string); ok {
@@ -126,7 +126,7 @@ func GetDashboardPanelQueriesTool(ctx context.Context, args DashboardPanelQuerie
 			}
 			expr, _ := target["expr"].(string)
 			if expr != "" {
-				result = append(result, PanelQuery{
+				result = append(result, panelQuery{
 					Title:      title,
 					Query:      expr,
 					Datasource: datasourceInfo,
