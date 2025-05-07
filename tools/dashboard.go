@@ -132,7 +132,7 @@ func GetDashboardPanelQueriesTool(ctx context.Context, args DashboardPanelQuerie
 
 var GetDashboardPanelQueries = mcpgrafana.MustTool(
 	"get_dashboard_panel_queries",
-	"Get the title, datasource and query string of each panel in a dashboard. Returns a JSON object with a 'result' field containing an array of objects, each representing a panel in the specified dashboard.",
+	"Get the title, datasource UID (which may be a concrete UID or a template variable like \"$datasource\"), and query string of each panel in a dashboard. If the datasource UID is a template variable, it won't be usable directly for queries. Returns an array of objects, each representing a panel in the specified dashboard.",
 	GetDashboardPanelQueriesTool,
 )
 
