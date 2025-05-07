@@ -63,21 +63,8 @@ var UpdateDashboard = mcpgrafana.MustTool(
 	updateDashboard,
 )
 
-type PanelExprInfo struct {
-	Title string   `json:"title"`
-	Exprs []string `json:"exprs"`
-}
-
 type DashboardPanelQueriesParams struct {
 	UID string `json:"uid" jsonschema:"required,description=The UID of the dashboard"`
-}
-
-type GetDashboardPanelTitlesAndExprsResult struct {
-	Result []PanelExprInfo `json:"result"`
-}
-
-type StringResult struct {
-	Result string `json:"result"`
 }
 
 type PanelQuery struct {
