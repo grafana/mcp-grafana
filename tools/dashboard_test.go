@@ -141,8 +141,9 @@ func TestDashboardTools(t *testing.T) {
 			UID: dashboard.UID,
 		})
 		require.NoError(t, err)
-		assert.Greater(t, len(result.Result), 0, "Should return at least one panel query")
-		for _, panelQuery := range result.Result {
+		assert.Greater(t, len(result), 0, "Should return at least one panel query")
+
+		for _, panelQuery := range result {
 			assert.Equal(t, panelQuery.Title, "Node Load")
 			assert.Equal(t, panelQuery.Query, "node_load1")
 		}

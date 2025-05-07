@@ -72,12 +72,8 @@ type PanelQuery struct {
 	Query string `json:"query"`
 }
 
-func GetDashboardPanelQueriesTool(ctx context.Context, args DashboardPanelQueriesParams) (struct {
-	Result []PanelQuery `json:"result"`
-}, error) {
-	result := struct {
-		Result []PanelQuery `json:"result"`
-	}{}
+func GetDashboardPanelQueriesTool(ctx context.Context, args DashboardPanelQueriesParams) ([]PanelQuery, error) {
+	result := make([]PanelQuery, 0)
 
 	dashboard, err := getDashboardByUID(ctx, GetDashboardByUIDParams(args))
 	if err != nil {
@@ -112,7 +108,7 @@ func GetDashboardPanelQueriesTool(ctx context.Context, args DashboardPanelQuerie
 			}
 			expr, _ := target["expr"].(string)
 			if expr != "" {
-				result.Result = append(result.Result, PanelQuery{
+				result = append(result, PanelQuery{
 					Title: title,
 					Query: expr,
 				})
