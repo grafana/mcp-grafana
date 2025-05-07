@@ -68,8 +68,9 @@ type DashboardPanelQueriesParams struct {
 }
 
 type PanelQuery struct {
-	Title string `json:"title"`
-	Query string `json:"query"`
+	Title         string `json:"title"`
+	Query         string `json:"query"`
+	DatasourceUID string `json:"datasourceUid"`
 }
 
 func GetDashboardPanelQueriesTool(ctx context.Context, args DashboardPanelQueriesParams) ([]PanelQuery, error) {
@@ -97,6 +98,15 @@ func GetDashboardPanelQueriesTool(ctx context.Context, args DashboardPanelQuerie
 		}
 		title, _ := panel["title"].(string)
 
+		var datasourceUid string
+		if dsField, dsExists := panel["datasource"]; dsExists && dsField != nil {
+			if dsMap, ok := dsField.(map[string]any); ok {
+				if uid, ok := dsMap["uid"].(string); ok {
+					datasourceUid = uid
+				}
+			}
+		}
+
 		targets, ok := panel["targets"].([]any)
 		if !ok {
 			continue
@@ -109,8 +119,9 @@ func GetDashboardPanelQueriesTool(ctx context.Context, args DashboardPanelQuerie
 			expr, _ := target["expr"].(string)
 			if expr != "" {
 				result = append(result, PanelQuery{
-					Title: title,
-					Query: expr,
+					Title:         title,
+					Query:         expr,
+					DatasourceUID: datasourceUid,
 				})
 			}
 		}

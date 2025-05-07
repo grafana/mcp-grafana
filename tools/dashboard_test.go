@@ -143,9 +143,13 @@ func TestDashboardTools(t *testing.T) {
 		require.NoError(t, err)
 		assert.Greater(t, len(result), 0, "Should return at least one panel query")
 
+		// The initial demo dashboard plus for all dashboards created by the integration tests,
+		// every panel should have identical title and query values.
+		// Datasource UID may differ.
 		for _, panelQuery := range result {
 			assert.Equal(t, panelQuery.Title, "Node Load")
 			assert.Equal(t, panelQuery.Query, "node_load1")
+			assert.NotEmpty(t, panelQuery.DatasourceUID)
 		}
 	})
 }
