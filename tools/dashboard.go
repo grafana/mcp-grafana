@@ -62,7 +62,88 @@ var UpdateDashboard = mcpgrafana.MustTool(
 	updateDashboard,
 )
 
+type DashboardPanelQueriesParams struct {
+	UID string `json:"uid" jsonschema:"required,description=The UID of the dashboard"`
+}
+
+type datasourceInfo struct {
+	UID  string `json:"uid"`
+	Type string `json:"type"`
+}
+
+type panelQuery struct {
+	Title      string         `json:"title"`
+	Query      string         `json:"query"`
+	Datasource datasourceInfo `json:"datasource"`
+}
+
+func GetDashboardPanelQueriesTool(ctx context.Context, args DashboardPanelQueriesParams) ([]panelQuery, error) {
+	result := make([]panelQuery, 0)
+
+	dashboard, err := getDashboardByUID(ctx, GetDashboardByUIDParams(args))
+	if err != nil {
+		return result, fmt.Errorf("get dashboard by uid: %w", err)
+	}
+
+	db, ok := dashboard.Dashboard.(map[string]any)
+	if !ok {
+		return result, fmt.Errorf("dashboard is not a JSON object")
+	}
+	panels, ok := db["panels"].([]any)
+	if !ok {
+		return result, fmt.Errorf("panels is not a JSON array")
+	}
+
+	for _, p := range panels {
+		panel, ok := p.(map[string]any)
+		if !ok {
+			continue
+		}
+		title, _ := panel["title"].(string)
+
+		var datasourceInfo datasourceInfo
+		if dsField, dsExists := panel["datasource"]; dsExists && dsField != nil {
+			if dsMap, ok := dsField.(map[string]any); ok {
+				if uid, ok := dsMap["uid"].(string); ok {
+					datasourceInfo.UID = uid
+				}
+				if dsType, ok := dsMap["type"].(string); ok {
+					datasourceInfo.Type = dsType
+				}
+			}
+		}
+
+		targets, ok := panel["targets"].([]any)
+		if !ok {
+			continue
+		}
+		for _, t := range targets {
+			target, ok := t.(map[string]any)
+			if !ok {
+				continue
+			}
+			expr, _ := target["expr"].(string)
+			if expr != "" {
+				result = append(result, panelQuery{
+					Title:      title,
+					Query:      expr,
+					Datasource: datasourceInfo,
+				})
+			}
+		}
+	}
+
+	return result, nil
+}
+
+var GetDashboardPanelQueries = mcpgrafana.MustTool(
+	"get_dashboard_panel_queries",
+	"Get the title, query string, and datasource information for each panel in a dashboard. The datasource is an object with fields `uid` (which may be a concrete UID or a template variable like \"$datasource\") and `type`. If the datasource UID is a template variable, it won't be usable directly for queries. Returns an array of objects, each representing a panel, with fields: title, query, and datasource (an object with uid and type).",
+	GetDashboardPanelQueriesTool,
+)
+
 func AddDashboardTools(mcp *server.MCPServer) {
 	GetDashboardByUID.Register(mcp)
 	UpdateDashboard.Register(mcp)
+	GetDashboardPanelQueries.Register(mcp)
 }
