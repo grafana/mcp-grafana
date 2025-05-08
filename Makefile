@@ -42,3 +42,11 @@ run: ## Run the MCP server in stdio mode.
 .PHONY: run-sse
 run-sse: ## Run the MCP server in SSE mode.
 	go run ./cmd/mcp-grafana --transport sse
+
+.PHONY: test-python-e2e
+test-python-e2e: ## Run Python E2E tests (requires Docker, MCP server, and Python deps)
+	docker-compose up -d
+	nohup go run ./cmd/mcp-grafana -t sse > mcp.log 2>&1 &
+	sleep 30
+	cd tests && uv sync --all-groups
+	cd tests && uv run pytest
