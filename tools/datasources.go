@@ -100,6 +100,9 @@ func getDatasourceByName(ctx context.Context, args GetDatasourceByNameParams) (*
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
 	datasource, err := c.Datasources.GetDataSourceByName(args.Name)
 	if err != nil {
+		if strings.Contains(err.Error(), "404") {
+			return &models.DataSource{}, nil // Not found, return empty datasource without error
+		}
 		return nil, fmt.Errorf("get datasource by name %s: %w", args.Name, err)
 	}
 	return datasource.Payload, nil
