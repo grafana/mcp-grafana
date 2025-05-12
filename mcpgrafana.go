@@ -77,9 +77,9 @@ var ExtractGrafanaInfoFromEnv server.StdioContextFunc = func(ctx context.Context
 	return WithGrafanaURL(WithGrafanaAPIKey(ctx, apiKey), u)
 }
 
-// ExtractGrafanaInfoFromHeaders is a SSEContextFunc that extracts Grafana configuration
+// ExtractGrafanaInfoFromHeaders is a HTTPContextFunc that extracts Grafana configuration
 // from request headers and injects a configured client into the context.
-var ExtractGrafanaInfoFromHeaders server.SSEContextFunc = func(ctx context.Context, req *http.Request) context.Context {
+var ExtractGrafanaInfoFromHeaders server.HTTPContextFunc = func(ctx context.Context, req *http.Request) context.Context {
 	u, apiKey := urlAndAPIKeyFromHeaders(req)
 	uEnv, apiKeyEnv := urlAndAPIKeyFromEnv()
 	if u == "" {
@@ -191,9 +191,9 @@ var ExtractGrafanaClientFromEnv server.StdioContextFunc = func(ctx context.Conte
 	return context.WithValue(ctx, grafanaClientKey{}, client)
 }
 
-// ExtractGrafanaClientFromHeaders is a SSEContextFunc that extracts Grafana configuration
+// ExtractGrafanaClientFromHeaders is a HTTPContextFunc that extracts Grafana configuration
 // from request headers and injects a configured client into the context.
-var ExtractGrafanaClientFromHeaders server.SSEContextFunc = func(ctx context.Context, req *http.Request) context.Context {
+var ExtractGrafanaClientFromHeaders server.HTTPContextFunc = func(ctx context.Context, req *http.Request) context.Context {
 	cfg := client.DefaultTransportConfig()
 	// Extract transport config from request headers, and set it on the context.
 	u, apiKey := urlAndAPIKeyFromHeaders(req)
@@ -256,7 +256,7 @@ var ExtractIncidentClientFromEnv server.StdioContextFunc = func(ctx context.Cont
 	return context.WithValue(ctx, incidentClientKey{}, client)
 }
 
-var ExtractIncidentClientFromHeaders server.SSEContextFunc = func(ctx context.Context, req *http.Request) context.Context {
+var ExtractIncidentClientFromHeaders server.HTTPContextFunc = func(ctx context.Context, req *http.Request) context.Context {
 	grafanaURL, apiKey := urlAndAPIKeyFromHeaders(req)
 	grafanaURLEnv, apiKeyEnv := urlAndAPIKeyFromEnv()
 	if grafanaURL == "" {
@@ -295,8 +295,8 @@ func ComposeStdioContextFuncs(funcs ...server.StdioContextFunc) server.StdioCont
 	}
 }
 
-// ComposeSSEContextFuncs composes multiple SSEContextFuncs into a single one.
-func ComposeSSEContextFuncs(funcs ...server.SSEContextFunc) server.SSEContextFunc {
+// ComposeHTTPContextFuncs composes multiple HTTPContextFuncs into a single one.
+func ComposeHTTPContextFuncs(funcs ...server.HTTPContextFunc) server.HTTPContextFunc {
 	return func(ctx context.Context, req *http.Request) context.Context {
 		for _, f := range funcs {
 			ctx = f(ctx, req)
@@ -318,9 +318,9 @@ func ComposedStdioContextFunc(debug bool) server.StdioContextFunc {
 	)
 }
 
-// ComposedSSEContextFunc is a SSEContextFunc that comprises all predefined SSEContextFuncs.
-func ComposedSSEContextFunc(debug bool) server.SSEContextFunc {
-	return ComposeSSEContextFuncs(
+// ComposedHTTPContextFunc is a HTTPContextFunc that comprises all predefined HTTPContextFuncs.
+func ComposedHTTPContextFunc(debug bool) server.HTTPContextFunc {
+	return ComposeHTTPContextFuncs(
 		func(ctx context.Context, req *http.Request) context.Context {
 			return WithGrafanaDebug(ctx, debug)
 		},
