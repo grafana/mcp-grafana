@@ -34,6 +34,6 @@ var ListTeams = mcpgrafana.MustTool(
 	listTeams,
 )
 
-func AddTeamsTools(mcp *server.MCPServer) {
+func AddAdminTools(mcp *server.MCPServer) {
 	ListTeams.Register(mcp)
 }
