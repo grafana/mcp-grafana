@@ -304,6 +304,10 @@ func findErrorPatternLogs(ctx context.Context, args FindErrorPatternLogsParams) 
 
 	datasourceUID := completedInvestigation.Datasources.LokiDatasource.UID
 
+	if errorPatternLogsAnalysis.Result.Details == nil {
+		// No patterns found, return the analysis without examples
+		return errorPatternLogsAnalysis, nil
+	}
 	for _, pattern := range errorPatternLogsAnalysis.Result.Details["patterns"].([]any) {
 		patternMap, ok := pattern.(map[string]any)
 		if !ok {
