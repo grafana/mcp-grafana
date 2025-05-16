@@ -11,6 +11,7 @@ package tools
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -49,11 +50,19 @@ func TestCloudSiftInvestigations(t *testing.T) {
 	})
 
 	// Get an investigation ID from the list to test getting a specific investigation
-	investigations, err := listSiftInvestigations(ctx, ListSiftInvestigationsParams{Limit: 1})
+	investigations, err := listSiftInvestigations(ctx, ListSiftInvestigationsParams{Limit: 10})
 	require.NoError(t, err, "Should not error when listing investigations")
 	require.NotEmpty(t, investigations, "Should have at least one investigation to test with")
 
-	investigationID := investigations[0].ID.String()
+	// Find an investigation with at least one analysis.
+	var investigationID string
+	for _, investigation := range investigations {
+		if len(investigation.Analyses.Items) > 0 {
+			investigationID = investigation.ID.String()
+			break
+		}
+	}
+	require.NotEmpty(t, investigationID, "Should have at least one investigation with at least one analysis")
 
 	// Test getting a specific investigation
 	t.Run("get specific investigation", func(t *testing.T) {
@@ -104,5 +113,26 @@ func TestCloudSiftInvestigations(t *testing.T) {
 		assert.NotEmpty(t, analysis.Name, "Analysis should have a name")
 		assert.NotEmpty(t, analysis.InvestigationID, "Analysis should have an investigation ID")
 		assert.NotNil(t, analysis.Result, "Analysis should have a result")
+	})
+
+	t.Run("find error patterns", func(t *testing.T) {
+		// Find error patterns
+		analysis, err := findErrorPatternLogs(ctx, FindErrorPatternLogsParams{
+			Name: "Test Sift",
+			Labels: map[string]string{
+				"namespace": "hosted-grafana",
+				"cluster":   "dev-eu-west-2",
+				"slug":      "mcptests",
+			},
+			Start: time.Now().Add(-5 * time.Minute),
+			End:   time.Now(),
+		})
+		require.NoError(t, err, "Should not error when finding error patterns")
+		assert.NotNil(t, analysis, "Result should not be nil")
+
+		// Verify all required fields are present
+		assert.NotEmpty(t, analysis.Name, "Analysis should have a name")
+		assert.NotEmpty(t, analysis.InvestigationID, "Analysis should have an investigation ID")
+		assert.NotEmpty(t, analysis.Result.Message, "Analysis  should have a message")
 	})
 }
