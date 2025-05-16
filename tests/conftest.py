@@ -25,8 +25,10 @@ def grafana_headers():
     headers = {
         "X-Grafana-URL": os.environ.get("GRAFANA_URL", DEFAULT_GRAFANA_URL),
     }
-    if key := os.environ.get("GRAFANA_API_KEY"):
-        headers["X-Grafana-API-Key"] = key
+    key = os.environ.get("GRAFANA_API_KEY")
+    if not key:
+        raise ValueError("GRAFANA_API_KEY is not set")
+    headers["X-Grafana-API-Key"] = key
     return headers
 
 @pytest.fixture
@@ -39,17 +41,6 @@ async def mcp_client(mcp_url, grafana_headers):
 @pytest.fixture
 def mcp_url():
     return os.environ.get("MCP_GRAFANA_URL", DEFAULT_MCP_URL)
-
-
-@pytest.fixture
-def grafana_headers():
-    headers = {
-        "X-Grafana-URL": os.environ.get("GRAFANA_URL", DEFAULT_GRAFANA_URL),
-    }
-    if key := os.environ.get("GRAFANA_API_KEY"):
-        headers["X-Grafana-API-Key"] = key
-    return headers
-
 
 @pytest.fixture
 async def mcp_client(mcp_url, grafana_headers):
