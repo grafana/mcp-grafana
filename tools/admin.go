@@ -12,7 +12,7 @@ import (
 )
 
 type ListTeamsParams struct {
-	Query string `json:"query" jsonschema:"description=The query to search for teams"`
+	Query string `json:"query" jsonschema:"description=The query to search for teams. Can be left empty to fetch all teams"`
 }
 
 func listTeams(ctx context.Context, args ListTeamsParams) (*models.SearchTeamQueryResult, error) {

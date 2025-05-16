@@ -17,9 +17,10 @@ pytestmark = pytest.mark.anyio
 
 @pytest.mark.parametrize("model", models)
 @pytest.mark.flaky(max_runs=3)
-async def test_create_team_tool(model: str, mcp_client: ClientSession):
+async def test_list_teams_tool(model: str, mcp_client: ClientSession):
     tools = await get_converted_tools(mcp_client)
-    prompt = "Can you list the teams in Grafana?"
+    # FIXME: we need to add teams to the environment and check for existence
+    prompt = "Can you list teams in Grafana? If there are none, just say so."
 
     messages = [
         Message(role="system", content="You are a helpful assistant."),
@@ -39,5 +40,4 @@ async def test_create_team_tool(model: str, mcp_client: ClientSession):
             prompt="Does the response contain specific information about the teams in Grafana?",
         )
     )
-    print("content", content)
     expect(input=prompt, output=content).to_pass(panel_queries_checker)
