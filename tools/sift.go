@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -288,6 +289,7 @@ func findErrorPatternLogs(ctx context.Context, args FindErrorPatternLogsParams) 
 	}
 
 	// Get all analyses from the completed investigation
+	slog.Debug("Getting analyses", "investigation_id", completedInvestigation.ID)
 	analyses, err := client.getSiftAnalyses(ctx, completedInvestigation.ID)
 	if err != nil {
 		return nil, fmt.Errorf("getting analyses: %w", err)
@@ -305,6 +307,7 @@ func findErrorPatternLogs(ctx context.Context, args FindErrorPatternLogsParams) 
 	if errorPatternLogsAnalysis == nil {
 		return nil, fmt.Errorf("ErrorPatternLogs analysis not found in investigation %s", completedInvestigation.ID)
 	}
+	slog.Debug("Found ErrorPatternLogs analysis", "analysis_id", errorPatternLogsAnalysis.ID)
 
 	datasourceUID := completedInvestigation.Datasources.LokiDatasource.UID
 
@@ -485,10 +488,12 @@ func (c *siftClient) createSiftInvestigation(ctx context.Context, investigation 
 		return nil, fmt.Errorf("marshaling investigation: %w", err)
 	}
 
+	slog.Debug("Creating investigation", "payload", string(jsonData))
 	buf, err := c.makeRequest(ctx, "POST", "/api/plugins/grafana-ml-app/resources/sift/api/v1/investigations", jsonData)
 	if err != nil {
 		return nil, err
 	}
+	slog.Debug("Investigation created", "response", string(buf))
 
 	investigationResponse := struct {
 		Status string        `json:"status"`
@@ -512,6 +517,7 @@ func (c *siftClient) createSiftInvestigation(ctx context.Context, investigation 
 		case <-timeout:
 			return nil, fmt.Errorf("timeout waiting for investigation completion after 5 minutes")
 		case <-ticker.C:
+			slog.Debug("Polling investigation status", "investigation_id", investigationResponse.Data.ID)
 			investigation, err := c.getSiftInvestigation(ctx, investigationResponse.Data.ID)
 			if err != nil {
 				return nil, err
