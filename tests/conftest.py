@@ -40,17 +40,6 @@ async def mcp_client(mcp_url, grafana_headers):
 def mcp_url():
     return os.environ.get("MCP_GRAFANA_URL", DEFAULT_MCP_URL)
 
-
-@pytest.fixture
-def grafana_headers():
-    headers = {
-        "X-Grafana-URL": os.environ.get("GRAFANA_URL", DEFAULT_GRAFANA_URL),
-    }
-    if key := os.environ.get("GRAFANA_API_KEY"):
-        headers["X-Grafana-API-Key"] = key
-    return headers
-
-
 @pytest.fixture
 async def mcp_client(mcp_url, grafana_headers):
     async with sse_client(mcp_url, headers=grafana_headers) as (

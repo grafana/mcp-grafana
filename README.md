@@ -49,6 +49,12 @@ This provides access to your Grafana instance and the surrounding ecosystem.
   - [x] Get current on-call users
   - [x] List teams and users
   - [ ] List alert groups
+- [x] Admin functionality
+  - [ ] List users
+  - [x] List teams
+  - [ ] List roles
+  - [ ] List assignments of roles
+  - [ ] Debug role assignments
 
 The list of tools is configurable, so you can choose which tools you want to make available to the MCP client.
 This is useful if you don't use certain functionality or if you don't want to take up too much of the context window.
@@ -58,7 +64,8 @@ the OnCall tools, use `--disable-oncall`.
 ### Tools
 
 | Tool                              | Category    | Description                                                        |
-|-----------------------------------|-------------|--------------------------------------------------------------------|
+| --------------------------------- | ----------- | ------------------------------------------------------------------ |
+| `list_teams`                      | Admin       | List all teams                                                     |
 | `search_dashboards`               | Search      | Search for dashboards                                              |
 | `get_dashboard_by_uid`            | Dashboard   | Get a dashboard by uid                                             |
 | `update_dashboard`                | Dashboard   | Update or create a new dashboard                                   |
@@ -100,16 +107,16 @@ the OnCall tools, use `--disable-oncall`.
 
 2. You have several options to install `mcp-grafana`:
 
-   * **Docker image**: Use the pre-built Docker image from Docker Hub:
+   - **Docker image**: Use the pre-built Docker image from Docker Hub:
 
      ```bash
      docker pull mcp/grafana
      docker run -p 8000:8000 -e GRAFANA_URL=http://localhost:3000 -e GRAFANA_API_KEY=<your service account token> mcp/grafana
      ```
 
-   * **Download binary**: Download the latest release of `mcp-grafana` from the [releases page](https://github.com/grafana/mcp-grafana/releases) and place it in your `$PATH`.
+   - **Download binary**: Download the latest release of `mcp-grafana` from the [releases page](https://github.com/grafana/mcp-grafana/releases) and place it in your `$PATH`.
 
-   * **Build from source**: If you have a Go toolchain installed you can also build and install it from source, using the `GOBIN` environment variable
+   - **Build from source**: If you have a Go toolchain installed you can also build and install it from source, using the `GOBIN` environment variable
      to specify the directory where the binary should be installed. This should also be in your `PATH`.
 
      ```bash
@@ -119,6 +126,7 @@ the OnCall tools, use `--disable-oncall`.
 3. Add the server configuration to your client configuration file. For example, for Claude Desktop:
 
    **If using the binary:**
+
    ```json
    {
      "mcpServers": {
@@ -135,6 +143,7 @@ the OnCall tools, use `--disable-oncall`.
    ```
 
    **If using Docker:**
+
    ```json
    {
      "mcpServers": {
@@ -162,7 +171,6 @@ the OnCall tools, use `--disable-oncall`.
 
 > Note: if you see `Error: spawn mcp-grafana ENOENT` in Claude Desktop, you need to specify the full path to `mcp-grafana`.
 
-
 **Using VSCode with remote MCP server**
 
 Make sure your `.vscode/settings.json` includes:
@@ -185,6 +193,7 @@ You can enable debug mode for the Grafana transport by adding the `-debug` flag 
 To use debug mode with the Claude Desktop configuration, update your config as follows:
 
 **If using the binary:**
+
 ```json
 {
   "mcpServers": {
@@ -201,6 +210,7 @@ To use debug mode with the Claude Desktop configuration, update your config as f
 ```
 
 **If using Docker:**
+
 ```json
 {
   "mcpServers": {
@@ -256,24 +266,29 @@ docker run -it --rm -p 8000:8000 mcp-grafana:latest
 There are three types of tests available:
 
 1. Unit Tests (no external dependencies required):
+
 ```bash
 make test-unit
 ```
 
 You can also run unit tests with:
+
 ```bash
 make test
 ```
 
 2. Integration Tests (requires docker containers to be up and running):
+
 ```bash
 make test-integration
 ```
 
 3. Cloud Tests (requires cloud Grafana instance and credentials):
+
 ```bash
 make test-cloud
 ```
+
 > Note: Cloud tests are automatically configured in CI. For local development, you'll need to set up your own Grafana Cloud instance and credentials.
 
 More comprehensive integration tests will require a Grafana instance to be running locally on port 3000; you can start one with Docker Compose:
