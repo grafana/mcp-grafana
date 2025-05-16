@@ -150,6 +150,8 @@ var ListAlertRules = mcpgrafana.MustTool(
 	"Lists Grafana alert rules, returning a summary including UID, title, current state (e.g., 'pending', 'firing', 'inactive'), and labels. Supports filtering by labels using selectors and pagination. Example label selector: `[{'name': 'severity', 'type': '=', 'value': 'critical'}]`. Inactive state means the alert state is normal, not firing",
 	listAlertRules,
 	mcp.WithTitleAnnotation("List alert rules"),
+	mcp.WithIdempotentHintAnnotation(true),
+	mcp.WithReadOnlyHintAnnotation(true),
 )
 
 type GetAlertRuleByUIDParams struct {
@@ -182,6 +184,8 @@ var GetAlertRuleByUID = mcpgrafana.MustTool(
 	"Retrieves the full configuration and detailed status of a specific Grafana alert rule identified by its unique ID (UID). The response includes fields like title, condition, query data, folder UID, rule group, state settings (no data, error), evaluation interval, annotations, and labels.",
 	getAlertRuleByUID,
 	mcp.WithTitleAnnotation("Get alert rule details"),
+	mcp.WithIdempotentHintAnnotation(true),
+	mcp.WithReadOnlyHintAnnotation(true),
 )
 
 type ListContactPointsParams struct {
@@ -256,6 +260,8 @@ var ListContactPoints = mcpgrafana.MustTool(
 	"Lists Grafana notification contact points, returning a summary including UID, name, and type for each. Supports filtering by name - exact match - and limiting the number of results.",
 	listContactPoints,
 	mcp.WithTitleAnnotation("List notification contact points"),
+	mcp.WithIdempotentHintAnnotation(true),
+	mcp.WithReadOnlyHintAnnotation(true),
 )
 
 func AddAlertingTools(mcp *server.MCPServer) {

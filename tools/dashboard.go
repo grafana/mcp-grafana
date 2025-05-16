@@ -56,6 +56,8 @@ var GetDashboardByUID = mcpgrafana.MustTool(
 	"Retrieves the complete dashboard, including panels, variables, and settings, for a specific dashboard identified by its UID.",
 	getDashboardByUID,
 	mcp.WithTitleAnnotation("Get dashboard details"),
+	mcp.WithIdempotentHintAnnotation(true),
+	mcp.WithReadOnlyHintAnnotation(true),
 )
 
 var UpdateDashboard = mcpgrafana.MustTool(
@@ -63,6 +65,7 @@ var UpdateDashboard = mcpgrafana.MustTool(
 	"Create or update a dashboard",
 	updateDashboard,
 	mcp.WithTitleAnnotation("Create or update dashboard"),
+	mcp.WithDestructiveHintAnnotation(true),
 )
 
 type DashboardPanelQueriesParams struct {
@@ -144,6 +147,8 @@ var GetDashboardPanelQueries = mcpgrafana.MustTool(
 	"Get the title, query string, and datasource information for each panel in a dashboard. The datasource is an object with fields `uid` (which may be a concrete UID or a template variable like \"$datasource\") and `type`. If the datasource UID is a template variable, it won't be usable directly for queries. Returns an array of objects, each representing a panel, with fields: title, query, and datasource (an object with uid and type).",
 	GetDashboardPanelQueriesTool,
 	mcp.WithTitleAnnotation("Get dashboard panel queries"),
+	mcp.WithIdempotentHintAnnotation(true),
+	mcp.WithReadOnlyHintAnnotation(true),
 )
 
 func AddDashboardTools(mcp *server.MCPServer) {
