@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
 	"github.com/grafana/grafana-openapi-client-go/client/search"
@@ -35,6 +36,7 @@ var SearchDashboards = mcpgrafana.MustTool(
 	"search_dashboards",
 	"Search for Grafana dashboards by a query string. Returns a list of matching dashboards with details like title, UID, folder, tags, and URL.",
 	searchDashboards,
+	mcp.WithTitleAnnotation("Search dashboards"),
 )
 
 func AddSearchTools(mcp *server.MCPServer) {

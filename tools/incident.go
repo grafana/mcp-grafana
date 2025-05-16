@@ -6,6 +6,7 @@ import (
 
 	"github.com/grafana/incident-go"
 	mcpgrafana "github.com/grafana/mcp-grafana"
+	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
 
@@ -49,6 +50,7 @@ var ListIncidents = mcpgrafana.MustTool(
 	"list_incidents",
 	"List Grafana incidents. Allows filtering by status ('active', 'resolved') and optionally including drill incidents. Returns a preview list with basic details.",
 	listIncidents,
+	mcp.WithTitleAnnotation("List incidents"),
 )
 
 type CreateIncidentParams struct {
@@ -85,6 +87,7 @@ var CreateIncident = mcpgrafana.MustTool(
 	"create_incident",
 	"Create a new Grafana incident. Requires title, severity, and room prefix. Allows setting status and labels. This tool should be used judiciously and sparingly, and only after confirmation from the user, as it may notify or alarm lots of people.",
 	createIncident,
+	mcp.WithTitleAnnotation("Create incident"),
 )
 
 type AddActivityToIncidentParams struct {
@@ -112,6 +115,7 @@ var AddActivityToIncident = mcpgrafana.MustTool(
 	"add_activity_to_incident",
 	"Add a note (userNote activity) to an existing incident's timeline using its ID. The note body can include URLs which will be attached as context. Use this to add context to an incident.",
 	addActivityToIncident,
+	mcp.WithTitleAnnotation("Add activity to incident"),
 )
 
 func AddIncidentTools(mcp *server.MCPServer) {
@@ -143,4 +147,5 @@ var GetIncident = mcpgrafana.MustTool(
 	"get_incident",
 	"Get a single incident by ID. Returns the full incident details including title, status, severity, labels, timestamps, and other metadata.",
 	getIncident,
+	mcp.WithTitleAnnotation("Get incident details"),
 )

@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	mcpgrafana "github.com/grafana/mcp-grafana"
+	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
 
@@ -175,6 +176,7 @@ var GetSiftInvestigation = mcpgrafana.MustTool(
 	"get_sift_investigation",
 	"Retrieves an existing Sift investigation by its UUID. The ID should be provided as a string in UUID format (e.g. '02adab7c-bf5b-45f2-9459-d71a2c29e11b').",
 	getSiftInvestigation,
+	mcp.WithTitleAnnotation("Get Sift investigation"),
 )
 
 // GetSiftAnalysisParams defines the parameters for retrieving a specific analysis
@@ -214,6 +216,7 @@ var GetSiftAnalysis = mcpgrafana.MustTool(
 	"get_sift_analysis",
 	"Retrieves a specific analysis from an investigation by its UUID. The investigation ID and analysis ID should be provided as strings in UUID format.",
 	getSiftAnalysis,
+	mcp.WithTitleAnnotation("Get Sift analysis"),
 )
 
 // ListSiftInvestigationsParams defines the parameters for retrieving investigations
@@ -246,6 +249,7 @@ var ListSiftInvestigations = mcpgrafana.MustTool(
 	"list_sift_investigations",
 	"Retrieves a list of Sift investigations with an optional limit. If no limit is specified, defaults to 10 investigations.",
 	listSiftInvestigations,
+	mcp.WithTitleAnnotation("List Sift investigations"),
 )
 
 // FindErrorPatternLogsParams defines the parameters for running an ErrorPatternLogs check
@@ -328,6 +332,7 @@ var FindErrorPatternLogs = mcpgrafana.MustTool(
 	"find_error_pattern_logs",
 	"Searches Loki logs for elevated error patterns compared to the last day's average, waits for the analysis to complete, and returns the results including any patterns found.",
 	findErrorPatternLogs,
+	mcp.WithTitleAnnotation("Find error patterns in logs"),
 )
 
 // FindSlowRequestsParams defines the parameters for running an SlowRequests check
@@ -392,6 +397,7 @@ var FindSlowRequests = mcpgrafana.MustTool(
 	"find_slow_requests",
 	"Searches relevant Tempo datasources for slow requests, waits for the analysis to complete, and returns the results.",
 	findSlowRequests,
+	mcp.WithTitleAnnotation("Find slow requests"),
 )
 
 // AddSiftTools registers all Sift tools with the MCP server

@@ -36,8 +36,12 @@ func (t *Tool) Register(mcp *server.MCPServer) {
 
 // MustTool creates a new Tool from the given name, description, and toolHandler.
 // It panics if the tool cannot be created.
-func MustTool[T any, R any](name, description string, toolHandler ToolHandlerFunc[T, R]) Tool {
-	tool, handler, err := ConvertTool(name, description, toolHandler)
+func MustTool[T any, R any](
+	name, description string,
+	toolHandler ToolHandlerFunc[T, R],
+	options ...mcp.ToolOption,
+) Tool {
+	tool, handler, err := ConvertTool(name, description, toolHandler, options...)
 	if err != nil {
 		panic(err)
 	}
@@ -53,7 +57,7 @@ type ToolHandlerFunc[T any, R any] = func(ctx context.Context, request T) (R, er
 // to be used as the parameters for the tool. The second argument must not be a pointer,
 // should be marshalable to JSON, and the fields should have a `jsonschema` tag with the
 // description of the parameter.
-func ConvertTool[T any, R any](name, description string, toolHandler ToolHandlerFunc[T, R]) (mcp.Tool, server.ToolHandlerFunc, error) {
+func ConvertTool[T any, R any](name, description string, toolHandler ToolHandlerFunc[T, R], options ...mcp.ToolOption) (mcp.Tool, server.ToolHandlerFunc, error) {
 	zero := mcp.Tool{}
 	handlerValue := reflect.ValueOf(toolHandler)
 	handlerType := handlerValue.Type()
@@ -183,11 +187,15 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 		Required:   jsonSchema.Required,
 	}
 
-	return mcp.Tool{
+	t := mcp.Tool{
 		Name:        name,
 		Description: description,
 		InputSchema: inputSchema,
-	}, handler, nil
+	}
+	for _, option := range options {
+		option(&t)
+	}
+	return t, handler, nil
 }
 
 // Creates a full JSON schema from a user provided handler by introspecting the arguments
