@@ -92,4 +92,14 @@ func TestDatasourcesTools(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "Prometheus", result.Name)
 	})
+
+	t.Run("get datasource by name - not found", func(t *testing.T) {
+		ctx := newTestContext()
+		result, err := getDatasourceByName(ctx, GetDatasourceByNameParams{
+			Name: "non-existent-datasource",
+		})
+		require.NoError(t, err)
+		assert.NotNil(t, result)
+		assert.Equal(t, "", result.Name)
+	})
 }
