@@ -12,6 +12,10 @@ help: ## Print this help message.
 build-image: ## Build the Docker image.
 	docker build -t mcp-grafana:latest .
 
+.PHONY: build
+build: ## Build the binary.
+	go build -o dist/mcp-grafana ./cmd/mcp-grafana
+
 .PHONY: lint lint-jsonschema lint-jsonschema-fix
 lint: lint-jsonschema ## Lint the Go code.
 	go tool -modfile go.tools.mod golangci-lint run
