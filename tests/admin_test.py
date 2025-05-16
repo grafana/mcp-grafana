@@ -6,6 +6,8 @@ from langevals_langevals.llm_boolean import (
 )
 from litellm import Message, acompletion
 from mcp import ClientSession
+import aiohttp
+import uuid
 
 from conftest import models
 from utils import (
@@ -15,12 +17,75 @@ from utils import (
 
 pytestmark = pytest.mark.anyio
 
+
+@pytest.fixture
+async def grafana_team(mcp_client):
+    """Create a temporary test team and clean it up after the test is done."""
+    # Generate a unique team name to avoid conflicts
+    team_name = f"test-team-{uuid.uuid4().hex[:8]}"
+
+    # Get Grafana URL and API key from the client session
+    session_info = await mcp_client.get_session_info()
+    headers = session_info.headers
+    grafana_url = headers.get("X-Grafana-URL")
+
+    auth_header = None
+    if "X-Grafana-API-Key" in headers:
+        auth_header = {
+            "Authorization": f"Bearer {headers['X-Grafana-API-Key']}"
+        }
+    else:
+        # Fall back to access token auth if available
+        if "X-Access-Token" in headers and "X-Grafana-Id" in headers:
+            auth_header = {
+                "X-Access-Token": headers["X-Access-Token"],
+                "X-Grafana-Id": headers["X-Grafana-Id"],
+            }
+
+    if not auth_header:
+        pytest.skip("No authentication credentials available to create team")
+
+    # Create the team using Grafana API
+    team_id = None
+    async with aiohttp.ClientSession() as session:
+        create_url = f"{grafana_url}/api/teams"
+        async with session.post(
+            create_url,
+            headers=auth_header,
+            json={"name": team_name, "email": f"{team_name}@example.com"}
+        ) as response:
+            if response.status != 200:
+                resp_text = await response.text()
+                pytest.skip(f"Failed to create team: {resp_text}")
+            resp_data = await response.json()
+            team_id = resp_data.get("teamId")
+
+    # Yield the team info for the test to use
+    yield {"id": team_id, "name": team_name}
+
+    # Clean up after the test
+    if team_id:
+        async with aiohttp.ClientSession() as session:
+            delete_url = f"{grafana_url}/api/teams/{team_id}"
+            async with session.delete(
+                delete_url, headers=auth_header
+            ) as response:
+                if response.status != 200:
+                    resp_text = await response.text()
+                    print(f"Warning: Failed to delete team: {resp_text}")
+
+
 @pytest.mark.parametrize("model", models)
 @pytest.mark.flaky(max_runs=3)
-async def test_list_teams_tool(model: str, mcp_client: ClientSession):
+async def test_list_teams_tool(
+    model: str, mcp_client: ClientSession, grafana_team
+):
     tools = await get_converted_tools(mcp_client)
-    # FIXME: we need to add teams to the environment and check for existence
-    prompt = "Can you list teams in Grafana? If there are none, just say so."
+    team_name = grafana_team["name"]  # Get the name of the created team
+    prompt = (
+        f"Can you list teams in Grafana? "
+        f"There should be a team named {team_name}."
+    )
 
     messages = [
         Message(role="system", content="You are a helpful assistant."),
