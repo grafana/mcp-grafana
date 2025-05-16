@@ -1,3 +1,4 @@
+from typing import Dict
 import pytest
 from langevals import expect
 from langevals_langevals.llm_boolean import (
@@ -21,7 +22,7 @@ pytestmark = pytest.mark.anyio
 
 
 @pytest.fixture
-async def grafana_team(mcp_client):
+async def grafana_team():
     """Create a temporary test team and clean it up after the test is done."""
     # Generate a unique team name to avoid conflicts
     team_name = f"test-team-{uuid.uuid4().hex[:8]}"
@@ -66,12 +67,12 @@ async def grafana_team(mcp_client):
 
 @pytest.mark.parametrize("model", models)
 @pytest.mark.flaky(max_runs=3)
-async def test_list_teams_tool(model: str, mcp_client: ClientSession, grafana_team):
+async def test_list_teams_tool(
+    model: str, mcp_client: ClientSession, grafana_team: Dict[str, str]
+):
     tools = await get_converted_tools(mcp_client)
-    team_name = grafana_team["name"]  # Get the name of the created team
-    prompt = (
-        f"Can you list teams in Grafana? " f"There should be a team named {team_name}."
-    )
+    team_name = grafana_team["name"]
+    prompt = "Can you list the teams in Grafana?"
 
     messages = [
         Message(role="system", content="You are a helpful assistant."),
@@ -95,6 +96,7 @@ async def test_list_teams_tool(model: str, mcp_client: ClientSession, grafana_te
             prompt=(
                 "Does the response contain specific information about "
                 "the teams in Grafana?"
+                f"There should be a team named {team_name}. "
             ),
         )
     )
