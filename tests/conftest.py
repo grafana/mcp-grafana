@@ -25,10 +25,8 @@ def grafana_headers():
     headers = {
         "X-Grafana-URL": os.environ.get("GRAFANA_URL", DEFAULT_GRAFANA_URL),
     }
-    key = os.environ.get("GRAFANA_API_KEY")
-    if not key:
-        raise ValueError("GRAFANA_API_KEY is not set")
-    headers["X-Grafana-API-Key"] = key
+    if key := os.environ.get("GRAFANA_API_KEY"):
+        headers["X-Grafana-API-Key"] = key
     return headers
 
 @pytest.fixture
