@@ -98,6 +98,8 @@ var ListPrometheusMetricMetadata = mcpgrafana.MustTool(
 	"List Prometheus metric metadata. Returns metadata about metrics currently scraped from targets. Note: This endpoint is experimental.",
 	listPrometheusMetricMetadata,
 	mcp.WithTitleAnnotation("List Prometheus metric metadata"),
+	mcp.WithIdempotentHintAnnotation(true),
+	mcp.WithReadOnlyHintAnnotation(true),
 )
 
 type QueryPrometheusParams struct {
@@ -161,6 +163,8 @@ var QueryPrometheus = mcpgrafana.MustTool(
 	"Query Prometheus using a PromQL expression. Supports both instant queries (at a single point in time) and range queries (over a time range).",
 	queryPrometheus,
 	mcp.WithTitleAnnotation("Query Prometheus metrics"),
+	mcp.WithIdempotentHintAnnotation(true),
+	mcp.WithReadOnlyHintAnnotation(true),
 )
 
 type ListPrometheusMetricNamesParams struct {
@@ -229,6 +233,8 @@ var ListPrometheusMetricNames = mcpgrafana.MustTool(
 	"List metric names in a Prometheus datasource. Retrieves all metric names and then filters them locally using the provided regex. Supports pagination.",
 	listPrometheusMetricNames,
 	mcp.WithTitleAnnotation("List Prometheus metric names"),
+	mcp.WithIdempotentHintAnnotation(true),
+	mcp.WithReadOnlyHintAnnotation(true),
 )
 
 type LabelMatcher struct {
@@ -332,6 +338,8 @@ var ListPrometheusLabelNames = mcpgrafana.MustTool(
 	"List label names in a Prometheus datasource. Allows filtering by series selectors and time range.",
 	listPrometheusLabelNames,
 	mcp.WithTitleAnnotation("List Prometheus label names"),
+	mcp.WithIdempotentHintAnnotation(true),
+	mcp.WithReadOnlyHintAnnotation(true),
 )
 
 type ListPrometheusLabelValuesParams struct {
@@ -389,6 +397,8 @@ var ListPrometheusLabelValues = mcpgrafana.MustTool(
 	"Get the values for a specific label name in Prometheus. Allows filtering by series selectors and time range.",
 	listPrometheusLabelValues,
 	mcp.WithTitleAnnotation("List Prometheus label values"),
+	mcp.WithIdempotentHintAnnotation(true),
+	mcp.WithReadOnlyHintAnnotation(true),
 )
 
 func AddPrometheusTools(mcp *server.MCPServer) {
