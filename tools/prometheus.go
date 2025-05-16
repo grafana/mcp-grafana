@@ -8,6 +8,7 @@ import (
 	"time"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
+	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/prometheus/client_golang/api"
 	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
@@ -96,6 +97,7 @@ var ListPrometheusMetricMetadata = mcpgrafana.MustTool(
 	"list_prometheus_metric_metadata",
 	"List Prometheus metric metadata. Returns metadata about metrics currently scraped from targets. Note: This endpoint is experimental.",
 	listPrometheusMetricMetadata,
+	mcp.WithTitleAnnotation("List Prometheus metric metadata"),
 )
 
 type QueryPrometheusParams struct {
@@ -158,6 +160,7 @@ var QueryPrometheus = mcpgrafana.MustTool(
 	"query_prometheus",
 	"Query Prometheus using a PromQL expression. Supports both instant queries (at a single point in time) and range queries (over a time range).",
 	queryPrometheus,
+	mcp.WithTitleAnnotation("Query Prometheus metrics"),
 )
 
 type ListPrometheusMetricNamesParams struct {
@@ -225,6 +228,7 @@ var ListPrometheusMetricNames = mcpgrafana.MustTool(
 	"list_prometheus_metric_names",
 	"List metric names in a Prometheus datasource. Retrieves all metric names and then filters them locally using the provided regex. Supports pagination.",
 	listPrometheusMetricNames,
+	mcp.WithTitleAnnotation("List Prometheus metric names"),
 )
 
 type LabelMatcher struct {
@@ -327,6 +331,7 @@ var ListPrometheusLabelNames = mcpgrafana.MustTool(
 	"list_prometheus_label_names",
 	"List label names in a Prometheus datasource. Allows filtering by series selectors and time range.",
 	listPrometheusLabelNames,
+	mcp.WithTitleAnnotation("List Prometheus label names"),
 )
 
 type ListPrometheusLabelValuesParams struct {
@@ -383,6 +388,7 @@ var ListPrometheusLabelValues = mcpgrafana.MustTool(
 	"list_prometheus_label_values",
 	"Get the values for a specific label name in Prometheus. Allows filtering by series selectors and time range.",
 	listPrometheusLabelValues,
+	mcp.WithTitleAnnotation("List Prometheus label values"),
 )
 
 func AddPrometheusTools(mcp *server.MCPServer) {

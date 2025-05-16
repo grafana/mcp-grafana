@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
 	"github.com/grafana/grafana-openapi-client-go/models"
@@ -67,6 +68,7 @@ var ListDatasources = mcpgrafana.MustTool(
 	"list_datasources",
 	"List available Grafana datasources. Optionally filter by datasource type (e.g., 'prometheus', 'loki'). Returns a summary list including ID, UID, name, type, and default status.",
 	listDatasources,
+	mcp.WithTitleAnnotation("List datasources"),
 )
 
 type GetDatasourceByUIDParams struct {
@@ -90,6 +92,7 @@ var GetDatasourceByUID = mcpgrafana.MustTool(
 	"get_datasource_by_uid",
 	"Retrieves detailed information about a specific datasource using its UID. Returns the full datasource model, including name, type, URL, access settings, JSON data, and secure JSON field status.",
 	getDatasourceByUID,
+	mcp.WithTitleAnnotation("Get datasource by UID"),
 )
 
 type GetDatasourceByNameParams struct {
@@ -109,6 +112,7 @@ var GetDatasourceByName = mcpgrafana.MustTool(
 	"get_datasource_by_name",
 	"Retrieves detailed information about a specific datasource using its name. Returns the full datasource model, including UID, type, URL, access settings, JSON data, and secure JSON field status.",
 	getDatasourceByName,
+	mcp.WithTitleAnnotation("Get datasource by name"),
 )
 
 func AddDatasourceTools(mcp *server.MCPServer) {

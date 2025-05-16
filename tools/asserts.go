@@ -11,6 +11,7 @@ import (
 	"time"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
+	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
 
@@ -134,6 +135,7 @@ var GetAssertions = mcpgrafana.MustTool(
 	"get_assertions",
 	"Get assertion summary for a given entity with its type, name, env, site, namespace, and a time range",
 	getAssertions,
+	mcp.WithTitleAnnotation("Get assertions summary"),
 )
 
 func AddAssertsTools(mcp *server.MCPServer) {
