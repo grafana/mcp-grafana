@@ -154,19 +154,18 @@ func makeBasePath(path string) string {
 	return strings.Join([]string{strings.TrimRight(path, "/"), "api"}, "/")
 }
 
-// ExtractGrafanaClientFromEnv is a StdioContextFunc that extracts Grafana configuration
-// from environment variables and injects a configured client into the context.
-var ExtractGrafanaClientFromEnv server.StdioContextFunc = func(ctx context.Context) context.Context {
+// NewGrafanaClient creates a Grafana client with the provided URL and API key,
+// configured to use the correct scheme and debug mode.
+func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string) *client.GrafanaHTTPAPI {
 	cfg := client.DefaultTransportConfig()
-	// Extract transport config from env vars, and set it on the context.
-	var grafanaURL string
+
 	var parsedURL *url.URL
-	var ok bool
 	var err error
-	if grafanaURL, ok = os.LookupEnv(grafanaURLEnvVar); ok {
+
+	if grafanaURL != "" {
 		parsedURL, err = url.Parse(grafanaURL)
 		if err != nil {
-			panic(fmt.Errorf("invalid %s: %w", grafanaURLEnvVar, err))
+			panic(fmt.Errorf("invalid Grafana URL: %w", err))
 		}
 		cfg.Host = parsedURL.Host
 		cfg.BasePath = makeBasePath(parsedURL.Path)
@@ -179,7 +178,6 @@ var ExtractGrafanaClientFromEnv server.StdioContextFunc = func(ctx context.Conte
 		parsedURL, _ = url.Parse(defaultGrafanaURL)
 	}
 
-	apiKey := os.Getenv(grafanaAPIEnvVar)
 	if apiKey != "" {
 		cfg.APIKey = apiKey
 	}
@@ -187,14 +185,26 @@ var ExtractGrafanaClientFromEnv server.StdioContextFunc = func(ctx context.Conte
 	cfg.Debug = GrafanaDebugFromContext(ctx)
 
 	slog.Debug("Creating Grafana client", "url", parsedURL.Redacted(), "api_key_set", apiKey != "")
-	client := client.NewHTTPClientWithConfig(strfmt.Default, cfg)
-	return context.WithValue(ctx, grafanaClientKey{}, client)
+	return client.NewHTTPClientWithConfig(strfmt.Default, cfg)
+}
+
+// ExtractGrafanaClientFromEnv is a StdioContextFunc that extracts Grafana configuration
+// from environment variables and injects a configured client into the context.
+var ExtractGrafanaClientFromEnv server.StdioContextFunc = func(ctx context.Context) context.Context {
+	// Extract transport config from env vars
+	grafanaURL, ok := os.LookupEnv(grafanaURLEnvVar)
+	if !ok {
+		grafanaURL = defaultGrafanaURL
+	}
+	apiKey := os.Getenv(grafanaAPIEnvVar)
+
+	grafanaClient := NewGrafanaClient(ctx, grafanaURL, apiKey)
+	return context.WithValue(ctx, grafanaClientKey{}, grafanaClient)
 }
 
 // ExtractGrafanaClientFromHeaders is a HTTPContextFunc that extracts Grafana configuration
 // from request headers and injects a configured client into the context.
 var ExtractGrafanaClientFromHeaders server.HTTPContextFunc = func(ctx context.Context, req *http.Request) context.Context {
-	cfg := client.DefaultTransportConfig()
 	// Extract transport config from request headers, and set it on the context.
 	u, apiKey := urlAndAPIKeyFromHeaders(req)
 	uEnv, apiKeyEnv := urlAndAPIKeyFromEnv()
@@ -204,23 +214,9 @@ var ExtractGrafanaClientFromHeaders server.HTTPContextFunc = func(ctx context.Co
 	if apiKey == "" {
 		apiKey = apiKeyEnv
 	}
-	if u != "" {
-		if url, err := url.Parse(u); err == nil {
-			cfg.Host = url.Host
-			cfg.BasePath = makeBasePath(url.Path)
-			if url.Scheme == "http" {
-				cfg.Schemes = []string{"http"}
-			}
-		}
-	}
-	if apiKey != "" {
-		cfg.APIKey = apiKey
-	}
 
-	cfg.Debug = GrafanaDebugFromContext(ctx)
-
-	client := client.NewHTTPClientWithConfig(strfmt.Default, cfg)
-	return WithGrafanaClient(ctx, client)
+	grafanaClient := NewGrafanaClient(ctx, u, apiKey)
+	return WithGrafanaClient(ctx, grafanaClient)
 }
 
 // WithGrafanaClient sets the Grafana client in the context.
