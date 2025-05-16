@@ -49,11 +49,19 @@ func TestCloudSiftInvestigations(t *testing.T) {
 	})
 
 	// Get an investigation ID from the list to test getting a specific investigation
-	investigations, err := listSiftInvestigations(ctx, ListSiftInvestigationsParams{Limit: 1})
+	investigations, err := listSiftInvestigations(ctx, ListSiftInvestigationsParams{Limit: 10})
 	require.NoError(t, err, "Should not error when listing investigations")
 	require.NotEmpty(t, investigations, "Should have at least one investigation to test with")
 
-	investigationID := investigations[0].ID.String()
+	// Find an investigation with at least one analysis.
+	var investigationID string
+	for _, investigation := range investigations {
+		if len(investigation.Analyses.Items) > 0 {
+			investigationID = investigation.ID.String()
+			break
+		}
+	}
+	require.NotEmpty(t, investigationID, "Should have at least one investigation with at least one analysis")
 
 	// Test getting a specific investigation
 	t.Run("get specific investigation", func(t *testing.T) {
