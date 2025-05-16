@@ -8,6 +8,8 @@ from litellm import Message, acompletion
 from mcp import ClientSession
 import aiohttp
 import uuid
+import os
+from conftest import DEFAULT_GRAFANA_URL
 
 from conftest import models
 from utils import (
@@ -24,23 +26,12 @@ async def grafana_team(mcp_client):
     # Generate a unique team name to avoid conflicts
     team_name = f"test-team-{uuid.uuid4().hex[:8]}"
 
-    # Get Grafana URL and API key from the client session
-    session_info = await mcp_client.get_session_info()
-    headers = session_info.headers
-    grafana_url = headers.get("X-Grafana-URL")
+    # Get Grafana URL and API key from environment
+    grafana_url = os.environ.get("GRAFANA_URL", DEFAULT_GRAFANA_URL)
 
     auth_header = None
-    if "X-Grafana-API-Key" in headers:
-        auth_header = {
-            "Authorization": f"Bearer {headers['X-Grafana-API-Key']}"
-        }
-    else:
-        # Fall back to access token auth if available
-        if "X-Access-Token" in headers and "X-Grafana-Id" in headers:
-            auth_header = {
-                "X-Access-Token": headers["X-Access-Token"],
-                "X-Grafana-Id": headers["X-Grafana-Id"],
-            }
+    if api_key := os.environ.get("GRAFANA_API_KEY"):
+        auth_header = {"Authorization": f"Bearer {api_key}"}
 
     if not auth_header:
         pytest.skip("No authentication credentials available to create team")
@@ -52,7 +43,7 @@ async def grafana_team(mcp_client):
         async with session.post(
             create_url,
             headers=auth_header,
-            json={"name": team_name, "email": f"{team_name}@example.com"}
+            json={"name": team_name, "email": f"{team_name}@example.com"},
         ) as response:
             if response.status != 200:
                 resp_text = await response.text()
@@ -67,9 +58,7 @@ async def grafana_team(mcp_client):
     if team_id:
         async with aiohttp.ClientSession() as session:
             delete_url = f"{grafana_url}/api/teams/{team_id}"
-            async with session.delete(
-                delete_url, headers=auth_header
-            ) as response:
+            async with session.delete(delete_url, headers=auth_header) as response:
                 if response.status != 200:
                     resp_text = await response.text()
                     print(f"Warning: Failed to delete team: {resp_text}")
@@ -77,14 +66,11 @@ async def grafana_team(mcp_client):
 
 @pytest.mark.parametrize("model", models)
 @pytest.mark.flaky(max_runs=3)
-async def test_list_teams_tool(
-    model: str, mcp_client: ClientSession, grafana_team
-):
+async def test_list_teams_tool(model: str, mcp_client: ClientSession, grafana_team):
     tools = await get_converted_tools(mcp_client)
     team_name = grafana_team["name"]  # Get the name of the created team
     prompt = (
-        f"Can you list teams in Grafana? "
-        f"There should be a team named {team_name}."
+        f"Can you list teams in Grafana? " f"There should be a team named {team_name}."
     )
 
     messages = [
@@ -94,7 +80,11 @@ async def test_list_teams_tool(
 
     # 1. Call the list teams tool
     messages = await llm_tool_call_sequence(
-        model, messages, tools, mcp_client, "list_teams",
+        model,
+        messages,
+        tools,
+        mcp_client,
+        "list_teams",
     )
 
     # 2. Final LLM response
@@ -102,7 +92,10 @@ async def test_list_teams_tool(
     content = response.choices[0].message.content
     panel_queries_checker = CustomLLMBooleanEvaluator(
         settings=CustomLLMBooleanSettings(
-            prompt="Does the response contain specific information about the teams in Grafana?",
+            prompt=(
+                "Does the response contain specific information about "
+                "the teams in Grafana?"
+            ),
         )
     )
     expect(input=prompt, output=content).to_pass(panel_queries_checker)
