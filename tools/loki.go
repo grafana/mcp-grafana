@@ -224,6 +224,8 @@ var ListLokiLabelNames = mcpgrafana.MustTool(
 	"Lists all available label names (keys) found in logs within a specified Loki datasource and time range. Returns a list of unique label strings (e.g., `[\"app\", \"env\", \"pod\"]`). If the time range is not provided, it defaults to the last hour.",
 	listLokiLabelNames,
 	mcp.WithTitleAnnotation("List Loki label names"),
+	mcp.WithIdempotentHintAnnotation(true),
+	mcp.WithReadOnlyHintAnnotation(true),
 )
 
 // ListLokiLabelValuesParams defines the parameters for listing Loki label values
@@ -263,6 +265,8 @@ var ListLokiLabelValues = mcpgrafana.MustTool(
 	"Retrieves all unique values associated with a specific `labelName` within a Loki datasource and time range. Returns a list of string values (e.g., for `labelName=\"env\"`, might return `[\"prod\", \"staging\", \"dev\"]`). Useful for discovering filter options. Defaults to the last hour if the time range is omitted.",
 	listLokiLabelValues,
 	mcp.WithTitleAnnotation("List Loki label values"),
+	mcp.WithIdempotentHintAnnotation(true),
+	mcp.WithReadOnlyHintAnnotation(true),
 )
 
 // LogStream represents a stream of log entries from Loki
@@ -471,6 +475,8 @@ var QueryLokiLogs = mcpgrafana.MustTool(
 	"Executes a LogQL query against a Loki datasource to retrieve log entries or metric values. Returns a list of results, each containing a timestamp, labels, and either a log line (`line`) or a numeric metric value (`value`). Defaults to the last hour, a limit of 10 entries, and 'backward' direction (newest first). Supports full LogQL syntax for log and metric queries (e.g., `{app=\"foo\"} |= \"error\"`, `rate({app=\"bar\"}[1m])`). Prefer using `query_loki_stats` first to check stream size and `list_loki_label_names` and `list_loki_label_values` to verify labels exist.",
 	queryLokiLogs,
 	mcp.WithTitleAnnotation("Query Loki logs"),
+	mcp.WithIdempotentHintAnnotation(true),
+	mcp.WithReadOnlyHintAnnotation(true),
 )
 
 // fetchStats is a method to fetch stats data from Loki API
@@ -529,6 +535,8 @@ var QueryLokiStats = mcpgrafana.MustTool(
 	"Retrieves statistics about log streams matching a given LogQL *selector* within a Loki datasource and time range. Returns an object containing the count of streams, chunks, entries, and total bytes (e.g., `{\"streams\": 5, \"chunks\": 50, \"entries\": 10000, \"bytes\": 512000}`). The `logql` parameter **must** be a simple label selector (e.g., `{app=\"nginx\", env=\"prod\"}`) and does not support line filters, parsers, or aggregations. Defaults to the last hour if the time range is omitted.",
 	queryLokiStats,
 	mcp.WithTitleAnnotation("Get Loki log statistics"),
+	mcp.WithIdempotentHintAnnotation(true),
+	mcp.WithReadOnlyHintAnnotation(true),
 )
 
 // AddLokiTools registers all Loki tools with the MCP server

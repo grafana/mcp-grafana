@@ -136,6 +136,8 @@ var GetAssertions = mcpgrafana.MustTool(
 	"Get assertion summary for a given entity with its type, name, env, site, namespace, and a time range",
 	getAssertions,
 	mcp.WithTitleAnnotation("Get assertions summary"),
+	mcp.WithIdempotentHintAnnotation(true),
+	mcp.WithReadOnlyHintAnnotation(true),
 )
 
 func AddAssertsTools(mcp *server.MCPServer) {

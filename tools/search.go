@@ -37,6 +37,8 @@ var SearchDashboards = mcpgrafana.MustTool(
 	"Search for Grafana dashboards by a query string. Returns a list of matching dashboards with details like title, UID, folder, tags, and URL.",
 	searchDashboards,
 	mcp.WithTitleAnnotation("Search dashboards"),
+	mcp.WithIdempotentHintAnnotation(true),
+	mcp.WithReadOnlyHintAnnotation(true),
 )
 
 func AddSearchTools(mcp *server.MCPServer) {
