@@ -18,11 +18,14 @@ import (
 func newAssertsClient(ctx context.Context) (*Client, error) {
 	grafanaURL, apiKey := mcpgrafana.GrafanaURLFromContext(ctx), mcpgrafana.GrafanaAPIKeyFromContext(ctx)
 	url := fmt.Sprintf("%s/api/plugins/grafana-asserts-app/resources/asserts/api-server", strings.TrimRight(grafanaURL, "/"))
+	accessToken, userToken := mcpgrafana.OnBehalfOfAuthFromContext(ctx)
 
 	client := &http.Client{
 		Transport: &authRoundTripper{
-			apiKey:     apiKey,
-			underlying: http.DefaultTransport,
+			apiKey:      apiKey,
+			accessToken: accessToken,
+			userToken:   userToken,
+			underlying:  http.DefaultTransport,
 		},
 	}
 
