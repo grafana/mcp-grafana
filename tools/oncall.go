@@ -194,6 +194,8 @@ var ListOnCallSchedules = mcpgrafana.MustTool(
 	"List Grafana OnCall schedules, optionally filtering by team ID. If a specific schedule ID is provided, retrieves details for only that schedule. Returns a list of schedule summaries including ID, name, team ID, timezone, and shift IDs. Supports pagination.",
 	listOnCallSchedules,
 	mcp.WithTitleAnnotation("List OnCall schedules"),
+	mcp.WithIdempotentHintAnnotation(true),
+	mcp.WithReadOnlyHintAnnotation(true),
 )
 
 type GetOnCallShiftParams struct {
@@ -219,6 +221,8 @@ var GetOnCallShift = mcpgrafana.MustTool(
 	"Get detailed information for a specific Grafana OnCall shift using its ID. A shift represents a designated time period within a schedule when users are actively on-call. Returns the full shift details.",
 	getOnCallShift,
 	mcp.WithTitleAnnotation("Get OnCall shift"),
+	mcp.WithIdempotentHintAnnotation(true),
+	mcp.WithReadOnlyHintAnnotation(true),
 )
 
 // CurrentOnCallUsers represents the currently on-call users for a schedule
@@ -280,6 +284,8 @@ var GetCurrentOnCallUsers = mcpgrafana.MustTool(
 	"Get the list of users currently on-call for a specific Grafana OnCall schedule ID. Returns the schedule ID, name, and a list of detailed user objects for those currently on call.",
 	getCurrentOnCallUsers,
 	mcp.WithTitleAnnotation("Get current on-call users"),
+	mcp.WithIdempotentHintAnnotation(true),
+	mcp.WithReadOnlyHintAnnotation(true),
 )
 
 type ListOnCallTeamsParams struct {
@@ -310,6 +316,8 @@ var ListOnCallTeams = mcpgrafana.MustTool(
 	"List teams configured in Grafana OnCall. Returns a list of team objects with their details. Supports pagination.",
 	listOnCallTeams,
 	mcp.WithTitleAnnotation("List OnCall teams"),
+	mcp.WithIdempotentHintAnnotation(true),
+	mcp.WithReadOnlyHintAnnotation(true),
 )
 
 type ListOnCallUsersParams struct {
@@ -354,6 +362,8 @@ var ListOnCallUsers = mcpgrafana.MustTool(
 	"List users from Grafana OnCall. Can retrieve all users, a specific user by ID, or filter by username. Returns a list of user objects with their details. Supports pagination.",
 	listOnCallUsers,
 	mcp.WithTitleAnnotation("List OnCall users"),
+	mcp.WithIdempotentHintAnnotation(true),
+	mcp.WithReadOnlyHintAnnotation(true),
 )
 
 func AddOnCallTools(mcp *server.MCPServer) {

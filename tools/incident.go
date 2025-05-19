@@ -51,6 +51,8 @@ var ListIncidents = mcpgrafana.MustTool(
 	"List Grafana incidents. Allows filtering by status ('active', 'resolved') and optionally including drill incidents. Returns a preview list with basic details.",
 	listIncidents,
 	mcp.WithTitleAnnotation("List incidents"),
+	mcp.WithIdempotentHintAnnotation(true),
+	mcp.WithReadOnlyHintAnnotation(true),
 )
 
 type CreateIncidentParams struct {
@@ -148,4 +150,6 @@ var GetIncident = mcpgrafana.MustTool(
 	"Get a single incident by ID. Returns the full incident details including title, status, severity, labels, timestamps, and other metadata.",
 	getIncident,
 	mcp.WithTitleAnnotation("Get incident details"),
+	mcp.WithIdempotentHintAnnotation(true),
+	mcp.WithReadOnlyHintAnnotation(true),
 )
