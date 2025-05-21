@@ -5,7 +5,7 @@ on:
     branches: [main]
   pull_request:
   schedule:
-    - cron: '0 0 * * *'
+    - cron: "0 0 * * *"
 
 permissions:
   contents: read
@@ -79,6 +79,9 @@ jobs:
   test-cloud:
     name: Test Cloud
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -91,20 +94,26 @@ jobs:
           go-version: "1.24"
           cache: true
 
+      - id: get-secrets
+        uses: grafana/shared-workflows/actions/get-vault-secrets@5d7e361bc7e0a183cde8afe9899fb7b596d2659b # get-vault-secrets-v1.2.0
+        with:
+          # Secrets placed in the ci/repo/grafana/mcp-grafana/<path> path in Vault
+          repo_secrets: |
+            GRAFANA_API_KEY=mcptests-grafana:api-key
+            ASSERTS_GRAFANA_API_KEY=dev-grafana:api-key
+
       - name: Run cloud tests
         env:
           GRAFANA_URL: ${{ vars.CLOUD_GRAFANA_URL }}
-          GRAFANA_API_KEY: ${{ secrets.CLOUD_GRAFANA_API_KEY }}
           ASSERTS_GRAFANA_URL: ${{ vars.ASSERTS_GRAFANA_URL }}
-          ASSERTS_GRAFANA_API_KEY: ${{ secrets.ASSERTS_GRAFANA_API_KEY }}
         run: make test-cloud
 
   test-python-e2e:
     name: Python E2E Tests
     runs-on: ubuntu-latest
-    env:
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    permissions:
+      id-token: write
+      contents: read
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -122,8 +131,16 @@ jobs:
           cd tests
           uv sync --all-groups
 
+      - id: get-secrets
+        uses: grafana/shared-workflows/actions/get-vault-secrets@5d7e361bc7e0a183cde8afe9899fb7b596d2659b # get-vault-secrets-v1.2.0
+        with:
+          # Secrets placed in the ci/repo/grafana/mcp-grafana/<path> path in Vault
+          repo_secrets: |
+            ANTHROPIC_API_KEY=anthropic:api-key
+            OPENAI_API_KEY=openai:api-key
+
       - name: Start docker-compose services
-        uses:  hoverkraft-tech/compose-action@8be2d741e891ac9b8ac20825e6f3904149599925
+        uses: hoverkraft-tech/compose-action@8be2d741e891ac9b8ac20825e6f3904149599925
         with:
           compose-file: "docker-compose.yaml"
 
