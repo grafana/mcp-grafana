@@ -78,6 +78,7 @@ jobs:
 
   test-cloud:
     name: Test Cloud
+    if: github.event.repository.fork != true
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -110,6 +111,7 @@ jobs:
 
   test-python-e2e:
     name: Python E2E Tests
+    if: github.event.repository.fork != true
     runs-on: ubuntu-latest
     permissions:
       id-token: write
