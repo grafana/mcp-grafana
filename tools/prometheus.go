@@ -108,8 +108,8 @@ type QueryPrometheusParams struct {
 	Expr          string `json:"expr" jsonschema:"required,description=The PromQL expression to query"`
 	StartRFC3339  string `json:"startRfc3339" jsonschema:"description=The start time in RFC3339 format"`
 	EndRFC3339    string `json:"endRfc3339,omitempty" jsonschema:"description=The end time in RFC3339 format. Required if queryType is 'range'\\, ignored if queryType is 'instant'"`
-	StartRelative string `json:"startRelative,omitempty" jsonschema:"description=The start time relative to now (e.g. 'now-1h'\\, 'now-1d'). Alternative to startRfc3339"`
-	EndRelative   string `json:"endRelative,omitempty" jsonschema:"description=The end time relative to now (e.g. 'now'\\, 'now-30m'). Alternative to endRfc3339"`
+	StartRelative string `json:"startRelative,omitempty" jsonschema:"description=The start time relative to now (e.g. 'now-1h'\\, 'now-1.5h'\\, 'now-2h45m'). Valid time units are 'ns'\\, 'us' (or 'µs')\\, 'ms'\\, 's'\\, 'm'\\, 'h'\\, 'd'. Alternative to startRfc3339"`
+	EndRelative   string `json:"endRelative,omitempty" jsonschema:"description=The end time relative to now (e.g. 'now-1h'\\, 'now-1.5h'\\, 'now-2h45m'). Valid time units are 'ns'\\, 'us' (or 'µs')\\, 'ms'\\, 's'\\, 'm'\\, 'h'\\, 'd'. Alternative to endRfc3339"`
 	StepSeconds   int    `json:"stepSeconds,omitempty" jsonschema:"description=The time series step size in seconds. Required if queryType is 'range'\\, ignored if queryType is 'instant'"`
 	QueryType     string `json:"queryType,omitempty" jsonschema:"description=The type of query to use. Either 'range' or 'instant'"`
 }
