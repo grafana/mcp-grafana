@@ -119,26 +119,21 @@ type QueryPrometheusParams struct {
 func parseRelativeTime(relativeTime string) (time.Time, error) {
 	now := time.Now()
 
-	// If it's just "now", return current time
 	if relativeTime == "now" {
 		return now, nil
 	}
 
-	// Check if it starts with "now-"
 	if !strings.HasPrefix(relativeTime, "now-") {
 		return time.Time{}, fmt.Errorf("invalid relative time format: %s, must start with 'now' or 'now-'", relativeTime)
 	}
 
-	// Extract the duration part
 	durationStr := strings.TrimPrefix(relativeTime, "now-")
 
-	// Parse the duration
 	duration, err := gtime.ParseDuration(durationStr)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("invalid duration in relative time: %s, error: %w", durationStr, err)
 	}
 
-	// Subtract the duration from now
 	return now.Add(-duration), nil
 }
 
@@ -162,7 +157,6 @@ func queryPrometheus(ctx context.Context, args QueryPrometheusParams) (model.Val
 		queryType = "range"
 	}
 
-	// Determine start time from either RFC3339 or relative format
 	var startTime time.Time
 	startTime, err = parseTime(args.StartRelative, args.StartRFC3339)
 	if err != nil {
@@ -175,7 +169,6 @@ func queryPrometheus(ctx context.Context, args QueryPrometheusParams) (model.Val
 			return nil, fmt.Errorf("stepSeconds must be provided when queryType is 'range'")
 		}
 
-		// Determine end time from either RFC3339 or relative format
 		var endTime time.Time
 		endTime, err = parseTime(args.EndRelative, args.EndRFC3339)
 		if err != nil {
