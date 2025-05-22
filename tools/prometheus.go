@@ -142,6 +142,15 @@ func parseRelativeTime(relativeTime string) (time.Time, error) {
 	return now.Add(-duration), nil
 }
 
+func parseTime(timeRelative string, timeRFC339 string) (time.Time, error) {
+	if timeRelative != "" {
+		return parseRelativeTime(timeRelative)
+	} else if timeRFC339 != "" {
+		return time.Parse(time.RFC3339, timeRFC339)
+	}
+	return time.Time{}, fmt.Errorf("either Rfc3339 time or relative time must be provided")
+}
+
 func queryPrometheus(ctx context.Context, args QueryPrometheusParams) (model.Value, error) {
 	promClient, err := promClientFromContext(ctx, args.DatasourceUID)
 	if err != nil {
@@ -155,18 +164,9 @@ func queryPrometheus(ctx context.Context, args QueryPrometheusParams) (model.Val
 
 	// Determine start time from either RFC3339 or relative format
 	var startTime time.Time
-	if args.StartRelative != "" {
-		startTime, err = parseRelativeTime(args.StartRelative)
-		if err != nil {
-			return nil, fmt.Errorf("parsing relative start time: %w", err)
-		}
-	} else if args.StartRFC3339 != "" {
-		startTime, err = time.Parse(time.RFC3339, args.StartRFC3339)
-		if err != nil {
-			return nil, fmt.Errorf("parsing RFC3339 start time: %w", err)
-		}
-	} else {
-		return nil, fmt.Errorf("either startRfc3339 or startRelative must be provided")
+	startTime, err = parseTime(args.StartRelative, args.StartRFC3339)
+	if err != nil {
+		return nil, fmt.Errorf("parsing start time: %w", err)
 	}
 
 	if queryType == "range" {
@@ -177,18 +177,9 @@ func queryPrometheus(ctx context.Context, args QueryPrometheusParams) (model.Val
 
 		// Determine end time from either RFC3339 or relative format
 		var endTime time.Time
-		if args.EndRelative != "" {
-			endTime, err = parseRelativeTime(args.EndRelative)
-			if err != nil {
-				return nil, fmt.Errorf("parsing relative end time: %w", err)
-			}
-		} else if args.EndRFC3339 != "" {
-			endTime, err = time.Parse(time.RFC3339, args.EndRFC3339)
-			if err != nil {
-				return nil, fmt.Errorf("parsing RFC3339 end time: %w", err)
-			}
-		} else {
-			return nil, fmt.Errorf("either endRfc3339 or endRelative must be provided when queryType is 'range'")
+		endTime, err = parseTime(args.EndRelative, args.EndRFC3339)
+		if err != nil {
+			return nil, fmt.Errorf("parsing end time: %w", err)
 		}
 
 		step := time.Duration(args.StepSeconds) * time.Second
