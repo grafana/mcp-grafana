@@ -103,12 +103,42 @@ var ListPrometheusMetricMetadata = mcpgrafana.MustTool(
 )
 
 type QueryPrometheusParams struct {
-	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the datasource to query"`
-	Expr          string `json:"expr" jsonschema:"required,description=The PromQL expression to query"`
-	StartRFC3339  string `json:"startRfc3339" jsonschema:"required,description=The start time in RFC3339 format"`
-	EndRFC3339    string `json:"endRfc3339,omitempty" jsonschema:"description=The end time in RFC3339 format. Required if queryType is 'range'\\, ignored if queryType is 'instant'"`
-	StepSeconds   int    `json:"stepSeconds,omitempty" jsonschema:"description=The time series step size in seconds. Required if queryType is 'range'\\, ignored if queryType is 'instant'"`
-	QueryType     string `json:"queryType,omitempty" jsonschema:"description=The type of query to use. Either 'range' or 'instant'"`
+	DatasourceUID  string `json:"datasourceUid" jsonschema:"required,description=The UID of the datasource to query"`
+	Expr           string `json:"expr" jsonschema:"required,description=The PromQL expression to query"`
+	StartRFC3339   string `json:"startRfc3339" jsonschema:"description=The start time in RFC3339 format"`
+	EndRFC3339     string `json:"endRfc3339,omitempty" jsonschema:"description=The end time in RFC3339 format. Required if queryType is 'range'\\, ignored if queryType is 'instant'"`
+	StartRelative  string `json:"startRelative,omitempty" jsonschema:"description=The start time relative to now (e.g. 'now-1h'\\, 'now-1d'). Alternative to startRfc3339"`
+	EndRelative    string `json:"endRelative,omitempty" jsonschema:"description=The end time relative to now (e.g. 'now'\\, 'now-30m'). Alternative to endRfc3339"`
+	StepSeconds    int    `json:"stepSeconds,omitempty" jsonschema:"description=The time series step size in seconds. Required if queryType is 'range'\\, ignored if queryType is 'instant'"`
+	QueryType      string `json:"queryType,omitempty" jsonschema:"description=The type of query to use. Either 'range' or 'instant'"`
+}
+
+// parseRelativeTime parses a relative time expression like "now-1h" or "now-30m"
+// and returns the corresponding time.Time value
+func parseRelativeTime(relativeTime string) (time.Time, error) {
+	now := time.Now()
+	
+	// If it's just "now", return current time
+	if relativeTime == "now" {
+		return now, nil
+	}
+	
+	// Check if it starts with "now-"
+	if !strings.HasPrefix(relativeTime, "now-") {
+		return time.Time{}, fmt.Errorf("invalid relative time format: %s, must start with 'now' or 'now-'", relativeTime)
+	}
+	
+	// Extract the duration part
+	durationStr := strings.TrimPrefix(relativeTime, "now-")
+	
+	// Parse the duration
+	duration, err := time.ParseDuration(durationStr)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("invalid duration in relative time: %s, error: %w", durationStr, err)
+	}
+	
+	// Subtract the duration from now
+	return now.Add(-duration), nil
 }
 
 func queryPrometheus(ctx context.Context, args QueryPrometheusParams) (model.Value, error) {
@@ -122,19 +152,42 @@ func queryPrometheus(ctx context.Context, args QueryPrometheusParams) (model.Val
 		queryType = "range"
 	}
 
-	startTime, err := time.Parse(time.RFC3339, args.StartRFC3339)
-	if err != nil {
-		return nil, fmt.Errorf("parsing start time: %w", err)
+	// Determine start time from either RFC3339 or relative format
+	var startTime time.Time
+	if args.StartRelative != "" {
+		startTime, err = parseRelativeTime(args.StartRelative)
+		if err != nil {
+			return nil, fmt.Errorf("parsing relative start time: %w", err)
+		}
+	} else if args.StartRFC3339 != "" {
+		startTime, err = time.Parse(time.RFC3339, args.StartRFC3339)
+		if err != nil {
+			return nil, fmt.Errorf("parsing RFC3339 start time: %w", err)
+		}
+	} else {
+		return nil, fmt.Errorf("either startRfc3339 or startRelative must be provided")
 	}
 
 	if queryType == "range" {
-		if args.EndRFC3339 == "" || args.StepSeconds == 0 {
-			return nil, fmt.Errorf("endRfc3339 and stepSeconds must be provided when queryType is 'range'")
+		// For range queries, we need end time and step
+		if args.StepSeconds == 0 {
+			return nil, fmt.Errorf("stepSeconds must be provided when queryType is 'range'")
 		}
-
-		endTime, err := time.Parse(time.RFC3339, args.EndRFC3339)
-		if err != nil {
-			return nil, fmt.Errorf("parsing end time: %w", err)
+		
+		// Determine end time from either RFC3339 or relative format
+		var endTime time.Time
+		if args.EndRelative != "" {
+			endTime, err = parseRelativeTime(args.EndRelative)
+			if err != nil {
+				return nil, fmt.Errorf("parsing relative end time: %w", err)
+			}
+		} else if args.EndRFC3339 != "" {
+			endTime, err = time.Parse(time.RFC3339, args.EndRFC3339)
+			if err != nil {
+				return nil, fmt.Errorf("parsing RFC3339 end time: %w", err)
+			}
+		} else {
+			return nil, fmt.Errorf("either endRfc3339 or endRelative must be provided when queryType is 'range'")
 		}
 
 		step := time.Duration(args.StepSeconds) * time.Second
@@ -160,7 +213,7 @@ func queryPrometheus(ctx context.Context, args QueryPrometheusParams) (model.Val
 
 var QueryPrometheus = mcpgrafana.MustTool(
 	"query_prometheus",
-	"Query Prometheus using a PromQL expression. Supports both instant queries (at a single point in time) and range queries (over a time range).",
+	"Query Prometheus using a PromQL expression. Supports both instant queries (at a single point in time) and range queries (over a time range). Time can be specified either in RFC3339 format or as relative time expressions like 'now', 'now-1h', 'now-30m', etc.",
 	queryPrometheus,
 	mcp.WithTitleAnnotation("Query Prometheus metrics"),
 	mcp.WithIdempotentHintAnnotation(true),
