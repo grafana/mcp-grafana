@@ -34,9 +34,10 @@ func TestParseRelativeTime(t *testing.T) {
 			expectedDelta: -30 * time.Minute,
 		},
 		{
-			name:          "now-1d (invalid duration)",
+			name:          "now-1d",
 			input:         "now-1d",
-			expectedError: true,
+			expectedError: false,
+			expectedDelta: -24 * time.Hour,
 		},
 		{
 			name:          "invalid format",
