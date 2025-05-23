@@ -138,9 +138,6 @@ func parseRelativeTime(relativeTime string) (time.Time, error) {
 func parseTime(timeStr string) (time.Time, error) {
 	if strings.HasPrefix(timeStr, "now") {
 		return parseRelativeTime(timeStr)
-	}
-	if strings.HasPrefix(timeStr, "now") {
-		return parseRelativeTime(timeStr)
 	} else {
 		return time.Parse(time.RFC3339, timeStr)
 	}
@@ -164,7 +161,6 @@ func queryPrometheus(ctx context.Context, args QueryPrometheusParams) (model.Val
 	}
 
 	if queryType == "range" {
-		// For range queries, we need end time and step
 		if args.StepSeconds == 0 {
 			return nil, fmt.Errorf("stepSeconds must be provided when queryType is 'range'")
 		}
