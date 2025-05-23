@@ -233,7 +233,6 @@ func TestSelectorMatches(t *testing.T) {
 
 func TestPrometheusQueries(t *testing.T) {
 	t.Run("query prometheus range", func(t *testing.T) {
-		t.Skip("Skipping because we don't have a Prometheus instance with enough data")
 		end := time.Now()
 		start := end.Add(-10 * time.Minute)
 		for _, step := range []int{15, 60, 300} {
@@ -241,7 +240,7 @@ func TestPrometheusQueries(t *testing.T) {
 				ctx := newTestContext()
 				result, err := queryPrometheus(ctx, QueryPrometheusParams{
 					DatasourceUID: "prometheus",
-					Expr:          "up",
+					Expr:          "test",
 					StartRFC3339:  start.Format(time.RFC3339),
 					EndRFC3339:    end.Format(time.RFC3339),
 					StepSeconds:   step,
@@ -253,7 +252,7 @@ func TestPrometheusQueries(t *testing.T) {
 				expectedLen := int(end.Sub(start).Seconds()/float64(step)) + 1
 				assert.Len(t, matrix[0].Values, expectedLen)
 				assert.Less(t, matrix[0].Values[0].Timestamp.Sub(model.TimeFromUnix(start.Unix())), time.Duration(step)*time.Second)
-				assert.Equal(t, matrix[0].Metric["__name__"], model.LabelValue("up"))
+				assert.Equal(t, matrix[0].Metric["__name__"], model.LabelValue("test"))
 			})
 		}
 	})
