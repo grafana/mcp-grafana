@@ -16,8 +16,10 @@ services:
     image: prom/prometheus
     ports:
       - "9090:9090"
-    command:
-      - --config.file=/etc/prometheus/prometheus.yml
+    entrypoint: /etc/prometheus/entrypoint.sh
+    volumes:
+      - ./testdata/prometheus-seed.yml:/etc/prometheus/prometheus-seed.yml
+      - ./testdata/prometheus-entrypoint.sh:/etc/prometheus/entrypoint.sh
 
   loki:
     image: grafana/loki:2.6.0
