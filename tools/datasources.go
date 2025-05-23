@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -11,6 +12,8 @@ import (
 	"github.com/grafana/grafana-openapi-client-go/models"
 	mcpgrafana "github.com/grafana/mcp-grafana"
 )
+
+var ErrDatasourceNotFound = errors.New("datasource not found")
 
 type ListDatasourcesParams struct {
 	Type string `json:"type,omitempty" jsonschema:"description=The type of datasources to search for. For example\\, 'prometheus'\\, 'loki'\\, 'tempo'\\, etc..."`
@@ -81,9 +84,8 @@ func getDatasourceByUID(ctx context.Context, args GetDatasourceByUIDParams) (*mo
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
 	datasource, err := c.Datasources.GetDataSourceByUID(args.UID)
 	if err != nil {
-		// Check if it's a 404 Not Found Error
 		if strings.Contains(err.Error(), "404") {
-			return nil, fmt.Errorf("datasource with UID '%s' not found. Please check if the datasource exists and is accessible", args.UID)
+			return &models.DataSource{}, fmt.Errorf("%w: datasource UID '%s' does not exist or you don't have access. Use list_datasources to see available datasources", ErrDatasourceNotFound, args.UID)
 		}
 		return nil, fmt.Errorf("get datasource by uid %s: %w", args.UID, err)
 	}
@@ -107,6 +109,9 @@ func getDatasourceByName(ctx context.Context, args GetDatasourceByNameParams) (*
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
 	datasource, err := c.Datasources.GetDataSourceByName(args.Name)
 	if err != nil {
+		if strings.Contains(err.Error(), "404") {
+			return &models.DataSource{}, fmt.Errorf("%w: datasource with name '%s' not found; check if the datasource exists in Grafana and you have permission to access it", ErrDatasourceNotFound, args.Name)
+		}
 		return nil, fmt.Errorf("get datasource by name %s: %w", args.Name, err)
 	}
 	return datasource.Payload, nil
