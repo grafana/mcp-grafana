@@ -78,7 +78,7 @@ jobs:
 
   test-cloud:
     name: Test Cloud
-    if: github.event.repository.fork != true
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -111,7 +111,7 @@ jobs:
 
   test-python-e2e:
     name: Python E2E Tests
-    if: github.event.repository.fork != true
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     permissions:
       id-token: write
