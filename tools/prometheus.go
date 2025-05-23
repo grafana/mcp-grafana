@@ -106,10 +106,8 @@ var ListPrometheusMetricMetadata = mcpgrafana.MustTool(
 type QueryPrometheusParams struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the datasource to query"`
 	Expr          string `json:"expr" jsonschema:"required,description=The PromQL expression to query"`
-	StartRFC3339  string `json:"startRfc3339" jsonschema:"description=The start time in RFC3339 format"`
-	EndRFC3339    string `json:"endRfc3339,omitempty" jsonschema:"description=The end time in RFC3339 format. Required if queryType is 'range'\\, ignored if queryType is 'instant'"`
-	StartRelative string `json:"startRelative,omitempty" jsonschema:"description=The start time relative to now (e.g. 'now-1h'\\, 'now-1.5h'\\, 'now-2h45m'). Valid time units are 'ns'\\, 'us' (or 'µs')\\, 'ms'\\, 's'\\, 'm'\\, 'h'\\, 'd'. Alternative to startRfc3339"`
-	EndRelative   string `json:"endRelative,omitempty" jsonschema:"description=The end time relative to now (e.g. 'now-1h'\\, 'now-1.5h'\\, 'now-2h45m'). Valid time units are 'ns'\\, 'us' (or 'µs')\\, 'ms'\\, 's'\\, 'm'\\, 'h'\\, 'd'. Alternative to endRfc3339"`
+	StartTime     string `json:"startTime" jsonschema:"required,description=The start time. Supported formats are RFC3339 or relative to now (e.g. 'now'\\, 'now-1.5h'\\, 'now-2h45m'). Valid time units are 'ns'\\, 'us' (or 'µs')\\, 'ms'\\, 's'\\, 'm'\\, 'h'\\, 'd'."`
+	EndTime       string `json:"endTime,omitempty" jsonschema:"description=The end time. Required if queryType is 'range'\\, ignored if queryType is 'instant' Supported formats are RFC3339 or relative to now (e.g. 'now'\\, 'now-1.5h'\\, 'now-2h45m'). Valid time units are 'ns'\\, 'us' (or 'µs')\\, 'ms'\\, 's'\\, 'm'\\, 'h'\\, 'd'."`
 	StepSeconds   int    `json:"stepSeconds,omitempty" jsonschema:"description=The time series step size in seconds. Required if queryType is 'range'\\, ignored if queryType is 'instant'"`
 	QueryType     string `json:"queryType,omitempty" jsonschema:"description=The type of query to use. Either 'range' or 'instant'"`
 }
@@ -137,13 +135,15 @@ func parseRelativeTime(relativeTime string) (time.Time, error) {
 	return now.Add(-duration), nil
 }
 
-func parseTime(timeRelative string, timeRFC339 string) (time.Time, error) {
-	if timeRelative != "" {
-		return parseRelativeTime(timeRelative)
-	} else if timeRFC339 != "" {
-		return time.Parse(time.RFC3339, timeRFC339)
+func parseTime(timeStr string) (time.Time, error) {
+	if strings.HasPrefix(timeStr, "now") {
+		return parseRelativeTime(timeStr)
 	}
-	return time.Time{}, fmt.Errorf("either Rfc3339 time or relative time must be provided")
+	if strings.HasPrefix(timeStr, "now") {
+		return parseRelativeTime(timeStr)
+	} else {
+		return time.Parse(time.RFC3339, timeStr)
+	}
 }
 
 func queryPrometheus(ctx context.Context, args QueryPrometheusParams) (model.Value, error) {
@@ -158,7 +158,7 @@ func queryPrometheus(ctx context.Context, args QueryPrometheusParams) (model.Val
 	}
 
 	var startTime time.Time
-	startTime, err = parseTime(args.StartRelative, args.StartRFC3339)
+	startTime, err = parseTime(args.StartTime)
 	if err != nil {
 		return nil, fmt.Errorf("parsing start time: %w", err)
 	}
@@ -170,7 +170,7 @@ func queryPrometheus(ctx context.Context, args QueryPrometheusParams) (model.Val
 		}
 
 		var endTime time.Time
-		endTime, err = parseTime(args.EndRelative, args.EndRFC3339)
+		endTime, err = parseTime(args.EndTime)
 		if err != nil {
 			return nil, fmt.Errorf("parsing end time: %w", err)
 		}
