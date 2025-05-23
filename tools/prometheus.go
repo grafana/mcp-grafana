@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gogf/gf/v2/os/gtime"
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -105,10 +106,41 @@ var ListPrometheusMetricMetadata = mcpgrafana.MustTool(
 type QueryPrometheusParams struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the datasource to query"`
 	Expr          string `json:"expr" jsonschema:"required,description=The PromQL expression to query"`
-	StartRFC3339  string `json:"startRfc3339" jsonschema:"required,description=The start time in RFC3339 format"`
-	EndRFC3339    string `json:"endRfc3339,omitempty" jsonschema:"description=The end time in RFC3339 format. Required if queryType is 'range'\\, ignored if queryType is 'instant'"`
+	StartTime     string `json:"startTime" jsonschema:"required,description=The start time. Supported formats are RFC3339 or relative to now (e.g. 'now'\\, 'now-1.5h'\\, 'now-2h45m'). Valid time units are 'ns'\\, 'us' (or 'µs')\\, 'ms'\\, 's'\\, 'm'\\, 'h'\\, 'd'."`
+	EndTime       string `json:"endTime,omitempty" jsonschema:"description=The end time. Required if queryType is 'range'\\, ignored if queryType is 'instant' Supported formats are RFC3339 or relative to now (e.g. 'now'\\, 'now-1.5h'\\, 'now-2h45m'). Valid time units are 'ns'\\, 'us' (or 'µs')\\, 'ms'\\, 's'\\, 'm'\\, 'h'\\, 'd'."`
 	StepSeconds   int    `json:"stepSeconds,omitempty" jsonschema:"description=The time series step size in seconds. Required if queryType is 'range'\\, ignored if queryType is 'instant'"`
 	QueryType     string `json:"queryType,omitempty" jsonschema:"description=The type of query to use. Either 'range' or 'instant'"`
+}
+
+// parseRelativeTime parses a relative time expression like "now-1h" or "now-30m"
+// and returns the corresponding time.Time value
+func parseRelativeTime(relativeTime string) (time.Time, error) {
+	now := time.Now()
+
+	if relativeTime == "now" {
+		return now, nil
+	}
+
+	if !strings.HasPrefix(relativeTime, "now-") {
+		return time.Time{}, fmt.Errorf("invalid relative time format: %s, must start with 'now' or 'now-'", relativeTime)
+	}
+
+	durationStr := strings.TrimPrefix(relativeTime, "now-")
+
+	duration, err := gtime.ParseDuration(durationStr)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("invalid duration in relative time: %s, error: %w", durationStr, err)
+	}
+
+	return now.Add(-duration), nil
+}
+
+func parseTime(timeStr string) (time.Time, error) {
+	if strings.HasPrefix(timeStr, "now") {
+		return parseRelativeTime(timeStr)
+	} else {
+		return time.Parse(time.RFC3339, timeStr)
+	}
 }
 
 func queryPrometheus(ctx context.Context, args QueryPrometheusParams) (model.Value, error) {
@@ -122,17 +154,19 @@ func queryPrometheus(ctx context.Context, args QueryPrometheusParams) (model.Val
 		queryType = "range"
 	}
 
-	startTime, err := time.Parse(time.RFC3339, args.StartRFC3339)
+	var startTime time.Time
+	startTime, err = parseTime(args.StartTime)
 	if err != nil {
 		return nil, fmt.Errorf("parsing start time: %w", err)
 	}
 
 	if queryType == "range" {
-		if args.EndRFC3339 == "" || args.StepSeconds == 0 {
-			return nil, fmt.Errorf("endRfc3339 and stepSeconds must be provided when queryType is 'range'")
+		if args.StepSeconds == 0 {
+			return nil, fmt.Errorf("stepSeconds must be provided when queryType is 'range'")
 		}
 
-		endTime, err := time.Parse(time.RFC3339, args.EndRFC3339)
+		var endTime time.Time
+		endTime, err = parseTime(args.EndTime)
 		if err != nil {
 			return nil, fmt.Errorf("parsing end time: %w", err)
 		}
@@ -160,7 +194,7 @@ func queryPrometheus(ctx context.Context, args QueryPrometheusParams) (model.Val
 
 var QueryPrometheus = mcpgrafana.MustTool(
 	"query_prometheus",
-	"Query Prometheus using a PromQL expression. Supports both instant queries (at a single point in time) and range queries (over a time range).",
+	"Query Prometheus using a PromQL expression. Supports both instant queries (at a single point in time) and range queries (over a time range). Time can be specified either in RFC3339 format or as relative time expressions like 'now', 'now-1h', 'now-30m', etc.",
 	queryPrometheus,
 	mcp.WithTitleAnnotation("Query Prometheus metrics"),
 	mcp.WithIdempotentHintAnnotation(true),
