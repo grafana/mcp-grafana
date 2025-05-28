@@ -107,11 +107,22 @@ the OnCall tools, use `--disable-oncall`.
 
 2. You have several options to install `mcp-grafana`:
 
-   - **Docker image**: Use the pre-built Docker image from Docker Hub:
+   - **Docker image**: Use the pre-built Docker image from Docker Hub.
+
+     **Important**: The Docker image's entrypoint is configured to run the MCP server in SSE mode by default, but most users will want to use STDIO mode for direct integration with AI assistants like Claude Desktop:
+
+     1. **STDIO Mode**: For stdio mode you must explicitly override the default with `-t stdio` and include the `-i` flag to keep stdin open:
 
      ```bash
      docker pull mcp/grafana
-     docker run -p 8000:8000 -e GRAFANA_URL=http://localhost:3000 -e GRAFANA_API_KEY=<your service account token> mcp/grafana
+     docker run --rm -i -e GRAFANA_URL=http://localhost:3000 -e GRAFANA_API_KEY=<your service account token> mcp/grafana -t stdio
+     ```
+
+     2. **SSE Mode**: In this mode, the server runs as an HTTP server that clients connect to. You must expose port 8000 using the `-p` flag:
+
+     ```bash
+     docker pull mcp/grafana
+     docker run --rm -p 8000:8000 -e GRAFANA_URL=http://localhost:3000 -e GRAFANA_API_KEY=<your service account token> mcp/grafana
      ```
 
    - **Download binary**: Download the latest release of `mcp-grafana` from the [releases page](https://github.com/grafana/mcp-grafana/releases) and place it in your `$PATH`.
@@ -142,6 +153,8 @@ the OnCall tools, use `--disable-oncall`.
    }
    ```
 
+> Note: if you see `Error: spawn mcp-grafana ENOENT` in Claude Desktop, you need to specify the full path to `mcp-grafana`.
+
    **If using Docker:**
 
    ```json
@@ -152,13 +165,14 @@ the OnCall tools, use `--disable-oncall`.
          "args": [
            "run",
            "--rm",
-           "-p",
-           "8000:8000",
+           "-i",
            "-e",
            "GRAFANA_URL",
            "-e",
            "GRAFANA_API_KEY",
-           "mcp/grafana"
+           "mcp/grafana",
+           "-t",
+           "stdio"
          ],
          "env": {
            "GRAFANA_URL": "http://localhost:3000",
@@ -169,11 +183,11 @@ the OnCall tools, use `--disable-oncall`.
    }
    ```
 
-> Note: if you see `Error: spawn mcp-grafana ENOENT` in Claude Desktop, you need to specify the full path to `mcp-grafana`.
+   > Note: The `-t stdio` argument is essential here because it overrides the default SSE mode in the Docker image.
 
 **Using VSCode with remote MCP server**
 
-Make sure your `.vscode/settings.json` includes:
+If you're using VSCode and running the MCP server in SSE mode (which is the default when using the Docker image without overriding the transport), make sure your `.vscode/settings.json` includes the following:
 
 ```json
 "mcp": {
@@ -219,13 +233,14 @@ To use debug mode with the Claude Desktop configuration, update your config as f
       "args": [
         "run",
         "--rm",
-        "-p",
-        "8000:8000",
+        "-i",
         "-e",
         "GRAFANA_URL",
         "-e",
         "GRAFANA_API_KEY",
         "mcp/grafana",
+        "-t",
+        "stdio",
         "-debug"
       ],
       "env": {
@@ -237,28 +252,42 @@ To use debug mode with the Claude Desktop configuration, update your config as f
 }
 ```
 
+> Note: As with the standard configuration, the `-t stdio` argument is required to override the default SSE mode in the Docker image.
+
 ## Development
 
 Contributions are welcome! Please open an issue or submit a pull request if you have any suggestions or improvements.
 
 This project is written in Go. Install Go following the instructions for your platform.
 
-To run the server, use:
+To run the server locally in STDIO mode (which is the default for local development), use:
 
 ```bash
 make run
 ```
 
-You can also run the server using the SSE transport inside a custom built Docker image. To build the image, use
+To run the server locally in SSE mode, use:
+
+```bash
+go run ./cmd/mcp-grafana --transport sse
+```
+
+You can also run the server using the SSE transport inside a custom built Docker image. Just like the published Docker image, this custom image's entrypoint defaults to SSE mode. To build the image, use:
 
 ```
 make build-image
 ```
 
-And to run the image, use:
+And to run the image in SSE mode (the default), use:
 
 ```
 docker run -it --rm -p 8000:8000 mcp-grafana:latest
+```
+
+If you need to run it in STDIO mode instead, override the transport setting:
+
+```
+docker run -it --rm mcp-grafana:latest -t stdio
 ```
 
 ### Testing
