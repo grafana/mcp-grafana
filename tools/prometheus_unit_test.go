@@ -9,6 +9,11 @@ import (
 )
 
 func TestParseRelativeTime(t *testing.T) {
+	const day = 24 * time.Hour
+	const week = 7 * day
+	const year = time.Duration(float64(day) * 365)
+	const month = time.Duration(float64(day) * 30)
+
 	testCases := []struct {
 		name          string
 		input         string
@@ -43,7 +48,19 @@ func TestParseRelativeTime(t *testing.T) {
 			name:          "now-1w",
 			input:         "now-1w",
 			expectedError: false,
-			expectedDelta: -7 * 24 * time.Hour,
+			expectedDelta: -week,
+		},
+		{
+			name:          "now-1M",
+			input:         "now-1M",
+			expectedError: false,
+			expectedDelta: -month,
+		},
+		{
+			name:          "now-1y",
+			input:         "now-1y",
+			expectedError: false,
+			expectedDelta: -year,
 		},
 		{
 			name:          "now-1.5h",
