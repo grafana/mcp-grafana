@@ -108,11 +108,9 @@ func TestConvertTool(t *testing.T) {
 		ctx := context.Background()
 		request := mcp.CallToolRequest{
 			Params: struct {
-				Name      string         `json:"name"`
-				Arguments map[string]any `json:"arguments,omitempty"`
-				Meta      *struct {
-					ProgressToken mcp.ProgressToken `json:"progressToken,omitempty"`
-				} `json:"_meta,omitempty"`
+				Name      string    `json:"name"`
+				Arguments any       `json:"arguments,omitempty"`
+				Meta      *mcp.Meta `json:"_meta,omitempty"`
 			}{
 				Name: "test_tool",
 				Arguments: map[string]any{
@@ -132,11 +130,9 @@ func TestConvertTool(t *testing.T) {
 		// Test error handling
 		errorRequest := mcp.CallToolRequest{
 			Params: struct {
-				Name      string         `json:"name"`
-				Arguments map[string]any `json:"arguments,omitempty"`
-				Meta      *struct {
-					ProgressToken mcp.ProgressToken `json:"progressToken,omitempty"`
-				} `json:"_meta,omitempty"`
+				Name      string    `json:"name"`
+				Arguments any       `json:"arguments,omitempty"`
+				Meta      *mcp.Meta `json:"_meta,omitempty"`
 			}{
 				Name: "test_tool",
 				Arguments: map[string]any{
@@ -170,11 +166,9 @@ func TestConvertTool(t *testing.T) {
 		ctx := context.Background()
 		request := mcp.CallToolRequest{
 			Params: struct {
-				Name      string         `json:"name"`
-				Arguments map[string]any `json:"arguments,omitempty"`
-				Meta      *struct {
-					ProgressToken mcp.ProgressToken `json:"progressToken,omitempty"`
-				} `json:"_meta,omitempty"`
+				Name      string    `json:"name"`
+				Arguments any       `json:"arguments,omitempty"`
+				Meta      *mcp.Meta `json:"_meta,omitempty"`
 			}{
 				Name: "empty",
 			},
@@ -195,11 +189,9 @@ func TestConvertTool(t *testing.T) {
 		ctx := context.Background()
 		request := mcp.CallToolRequest{
 			Params: struct {
-				Name      string         `json:"name"`
-				Arguments map[string]any `json:"arguments,omitempty"`
-				Meta      *struct {
-					ProgressToken mcp.ProgressToken `json:"progressToken,omitempty"`
-				} `json:"_meta,omitempty"`
+				Name      string    `json:"name"`
+				Arguments any       `json:"arguments,omitempty"`
+				Meta      *mcp.Meta `json:"_meta,omitempty"`
 			}{
 				Name: "string_tool",
 				Arguments: map[string]any{
@@ -220,11 +212,9 @@ func TestConvertTool(t *testing.T) {
 		// Test empty string return
 		emptyRequest := mcp.CallToolRequest{
 			Params: struct {
-				Name      string         `json:"name"`
-				Arguments map[string]any `json:"arguments,omitempty"`
-				Meta      *struct {
-					ProgressToken mcp.ProgressToken `json:"progressToken,omitempty"`
-				} `json:"_meta,omitempty"`
+				Name      string    `json:"name"`
+				Arguments any       `json:"arguments,omitempty"`
+				Meta      *mcp.Meta `json:"_meta,omitempty"`
 			}{
 				Name: "string_tool",
 				Arguments: map[string]any{
@@ -241,11 +231,9 @@ func TestConvertTool(t *testing.T) {
 		// Test error return
 		errorRequest := mcp.CallToolRequest{
 			Params: struct {
-				Name      string         `json:"name"`
-				Arguments map[string]any `json:"arguments,omitempty"`
-				Meta      *struct {
-					ProgressToken mcp.ProgressToken `json:"progressToken,omitempty"`
-				} `json:"_meta,omitempty"`
+				Name      string    `json:"name"`
+				Arguments any       `json:"arguments,omitempty"`
+				Meta      *mcp.Meta `json:"_meta,omitempty"`
 			}{
 				Name: "string_tool",
 				Arguments: map[string]any{
@@ -268,11 +256,9 @@ func TestConvertTool(t *testing.T) {
 		ctx := context.Background()
 		request := mcp.CallToolRequest{
 			Params: struct {
-				Name      string         `json:"name"`
-				Arguments map[string]any `json:"arguments,omitempty"`
-				Meta      *struct {
-					ProgressToken mcp.ProgressToken `json:"progressToken,omitempty"`
-				} `json:"_meta,omitempty"`
+				Name      string    `json:"name"`
+				Arguments any       `json:"arguments,omitempty"`
+				Meta      *mcp.Meta `json:"_meta,omitempty"`
 			}{
 				Name: "string_ptr_tool",
 				Arguments: map[string]any{
@@ -293,11 +279,9 @@ func TestConvertTool(t *testing.T) {
 		// Test nil string pointer return
 		nilRequest := mcp.CallToolRequest{
 			Params: struct {
-				Name      string         `json:"name"`
-				Arguments map[string]any `json:"arguments,omitempty"`
-				Meta      *struct {
-					ProgressToken mcp.ProgressToken `json:"progressToken,omitempty"`
-				} `json:"_meta,omitempty"`
+				Name      string    `json:"name"`
+				Arguments any       `json:"arguments,omitempty"`
+				Meta      *mcp.Meta `json:"_meta,omitempty"`
 			}{
 				Name: "string_ptr_tool",
 				Arguments: map[string]any{
@@ -314,11 +298,9 @@ func TestConvertTool(t *testing.T) {
 		// Test empty string pointer return
 		emptyRequest := mcp.CallToolRequest{
 			Params: struct {
-				Name      string         `json:"name"`
-				Arguments map[string]any `json:"arguments,omitempty"`
-				Meta      *struct {
-					ProgressToken mcp.ProgressToken `json:"progressToken,omitempty"`
-				} `json:"_meta,omitempty"`
+				Name      string    `json:"name"`
+				Arguments any       `json:"arguments,omitempty"`
+				Meta      *mcp.Meta `json:"_meta,omitempty"`
 			}{
 				Name: "string_ptr_tool",
 				Arguments: map[string]any{
@@ -335,11 +317,9 @@ func TestConvertTool(t *testing.T) {
 		// Test error return
 		errorRequest := mcp.CallToolRequest{
 			Params: struct {
-				Name      string         `json:"name"`
-				Arguments map[string]any `json:"arguments,omitempty"`
-				Meta      *struct {
-					ProgressToken mcp.ProgressToken `json:"progressToken,omitempty"`
-				} `json:"_meta,omitempty"`
+				Name      string    `json:"name"`
+				Arguments any       `json:"arguments,omitempty"`
+				Meta      *mcp.Meta `json:"_meta,omitempty"`
 			}{
 				Name: "string_ptr_tool",
 				Arguments: map[string]any{
@@ -362,11 +342,9 @@ func TestConvertTool(t *testing.T) {
 		ctx := context.Background()
 		request := mcp.CallToolRequest{
 			Params: struct {
-				Name      string         `json:"name"`
-				Arguments map[string]any `json:"arguments,omitempty"`
-				Meta      *struct {
-					ProgressToken mcp.ProgressToken `json:"progressToken,omitempty"`
-				} `json:"_meta,omitempty"`
+				Name      string    `json:"name"`
+				Arguments any       `json:"arguments,omitempty"`
+				Meta      *mcp.Meta `json:"_meta,omitempty"`
 			}{
 				Name: "struct_tool",
 				Arguments: map[string]any{
@@ -388,11 +366,9 @@ func TestConvertTool(t *testing.T) {
 		// Test error return
 		errorRequest := mcp.CallToolRequest{
 			Params: struct {
-				Name      string         `json:"name"`
-				Arguments map[string]any `json:"arguments,omitempty"`
-				Meta      *struct {
-					ProgressToken mcp.ProgressToken `json:"progressToken,omitempty"`
-				} `json:"_meta,omitempty"`
+				Name      string    `json:"name"`
+				Arguments any       `json:"arguments,omitempty"`
+				Meta      *mcp.Meta `json:"_meta,omitempty"`
 			}{
 				Name: "struct_tool",
 				Arguments: map[string]any{
@@ -415,11 +391,9 @@ func TestConvertTool(t *testing.T) {
 		ctx := context.Background()
 		request := mcp.CallToolRequest{
 			Params: struct {
-				Name      string         `json:"name"`
-				Arguments map[string]any `json:"arguments,omitempty"`
-				Meta      *struct {
-					ProgressToken mcp.ProgressToken `json:"progressToken,omitempty"`
-				} `json:"_meta,omitempty"`
+				Name      string    `json:"name"`
+				Arguments any       `json:"arguments,omitempty"`
+				Meta      *mcp.Meta `json:"_meta,omitempty"`
 			}{
 				Name: "struct_ptr_tool",
 				Arguments: map[string]any{
@@ -441,11 +415,9 @@ func TestConvertTool(t *testing.T) {
 		// Test nil struct pointer return
 		nilRequest := mcp.CallToolRequest{
 			Params: struct {
-				Name      string         `json:"name"`
-				Arguments map[string]any `json:"arguments,omitempty"`
-				Meta      *struct {
-					ProgressToken mcp.ProgressToken `json:"progressToken,omitempty"`
-				} `json:"_meta,omitempty"`
+				Name      string    `json:"name"`
+				Arguments any       `json:"arguments,omitempty"`
+				Meta      *mcp.Meta `json:"_meta,omitempty"`
 			}{
 				Name: "struct_ptr_tool",
 				Arguments: map[string]any{
@@ -462,11 +434,9 @@ func TestConvertTool(t *testing.T) {
 		// Test error return
 		errorRequest := mcp.CallToolRequest{
 			Params: struct {
-				Name      string         `json:"name"`
-				Arguments map[string]any `json:"arguments,omitempty"`
-				Meta      *struct {
-					ProgressToken mcp.ProgressToken `json:"progressToken,omitempty"`
-				} `json:"_meta,omitempty"`
+				Name      string    `json:"name"`
+				Arguments any       `json:"arguments,omitempty"`
+				Meta      *mcp.Meta `json:"_meta,omitempty"`
 			}{
 				Name: "struct_ptr_tool",
 				Arguments: map[string]any{
@@ -498,11 +468,9 @@ func TestConvertTool(t *testing.T) {
 		// Test with invalid JSON
 		invalidRequest := mcp.CallToolRequest{
 			Params: struct {
-				Name      string         `json:"name"`
-				Arguments map[string]any `json:"arguments,omitempty"`
-				Meta      *struct {
-					ProgressToken mcp.ProgressToken `json:"progressToken,omitempty"`
-				} `json:"_meta,omitempty"`
+				Name      string    `json:"name"`
+				Arguments any       `json:"arguments,omitempty"`
+				Meta      *mcp.Meta `json:"_meta,omitempty"`
 			}{
 				Arguments: map[string]any{
 					"name": make(chan int), // Channels can't be marshaled to JSON
@@ -517,11 +485,9 @@ func TestConvertTool(t *testing.T) {
 		// Test with type mismatch
 		mismatchRequest := mcp.CallToolRequest{
 			Params: struct {
-				Name      string         `json:"name"`
-				Arguments map[string]any `json:"arguments,omitempty"`
-				Meta      *struct {
-					ProgressToken mcp.ProgressToken `json:"progressToken,omitempty"`
-				} `json:"_meta,omitempty"`
+				Name      string    `json:"name"`
+				Arguments any       `json:"arguments,omitempty"`
+				Meta      *mcp.Meta `json:"_meta,omitempty"`
 			}{
 				Arguments: map[string]any{
 					"name":  123, // Should be a string
