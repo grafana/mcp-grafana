@@ -34,22 +34,21 @@ func TestParseRelativeTime(t *testing.T) {
 			expectedDelta: -30 * time.Minute,
 		},
 		{
-			name:          "now-1.5h",
-			input:         "now-1.5h",
-			expectedError: false,
-			expectedDelta: -90 * time.Minute,
-		},
-		{
-			name:          "now-1d5h9m",
-			input:         "now-1d5h9m",
-			expectedError: false,
-			expectedDelta: -29*time.Hour - 9*time.Minute,
-		},
-		{
 			name:          "now-1d",
 			input:         "now-1d",
 			expectedError: false,
 			expectedDelta: -24 * time.Hour,
+		},
+		{
+			name:          "now-1w",
+			input:         "now-1w",
+			expectedError: false,
+			expectedDelta: -7 * 24 * time.Hour,
+		},
+		{
+			name:          "now-1.5h",
+			input:         "now-1.5h",
+			expectedError: true,
 		},
 		{
 			name:          "invalid format",
@@ -66,7 +65,7 @@ func TestParseRelativeTime(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			now := time.Now()
-			result, err := parseRelativeTime(tc.input)
+			result, err := parseTime(tc.input)
 
 			if tc.expectedError {
 				assert.Error(t, err)

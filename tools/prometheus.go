@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gogf/gf/v2/os/gtime"
+	"github.com/grafana/grafana-plugin-sdk-go/backend/gtime"
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -112,35 +112,11 @@ type QueryPrometheusParams struct {
 	QueryType     string `json:"queryType,omitempty" jsonschema:"description=The type of query to use. Either 'range' or 'instant'"`
 }
 
-// parseRelativeTime parses a relative time expression like "now-1h" or "now-30m"
-// and returns the corresponding time.Time value
-func parseRelativeTime(relativeTime string) (time.Time, error) {
-	now := time.Now()
-
-	if relativeTime == "now" {
-		return now, nil
-	}
-
-	if !strings.HasPrefix(relativeTime, "now-") {
-		return time.Time{}, fmt.Errorf("invalid relative time format: %s, must start with 'now' or 'now-'", relativeTime)
-	}
-
-	durationStr := strings.TrimPrefix(relativeTime, "now-")
-
-	duration, err := gtime.ParseDuration(durationStr)
-	if err != nil {
-		return time.Time{}, fmt.Errorf("invalid duration in relative time: %s, error: %w", durationStr, err)
-	}
-
-	return now.Add(-duration), nil
-}
-
 func parseTime(timeStr string) (time.Time, error) {
-	if strings.HasPrefix(timeStr, "now") {
-		return parseRelativeTime(timeStr)
-	} else {
-		return time.Parse(time.RFC3339, timeStr)
+	tr := gtime.TimeRange{
+		From: timeStr,
 	}
+	return tr.ParseFrom()
 }
 
 func queryPrometheus(ctx context.Context, args QueryPrometheusParams) (model.Value, error) {
