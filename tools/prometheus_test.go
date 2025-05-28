@@ -241,8 +241,8 @@ func TestPrometheusQueries(t *testing.T) {
 				result, err := queryPrometheus(ctx, QueryPrometheusParams{
 					DatasourceUID: "prometheus",
 					Expr:          "test",
-					StartRFC3339:  start.Format(time.RFC3339),
-					EndRFC3339:    end.Format(time.RFC3339),
+					StartTime:     start.Format(time.RFC3339),
+					EndTime:       end.Format(time.RFC3339),
 					StepSeconds:   step,
 					QueryType:     "range",
 				})
@@ -297,12 +297,11 @@ func TestPrometheusQueries(t *testing.T) {
 	})
 
 	t.Run("query prometheus range with relative timestamps", func(t *testing.T) {
-		t.Skip("Skipping because we don't have a Prometheus instance with enough data")
 		ctx := newTestContext()
 		beforeQuery := model.TimeFromUnix(time.Now().Unix())
 		result, err := queryPrometheus(ctx, QueryPrometheusParams{
 			DatasourceUID: "prometheus",
-			Expr:          "up",
+			Expr:          "test",
 			StartTime:     "now-1h",
 			EndTime:       "now",
 			StepSeconds:   60,
@@ -333,6 +332,6 @@ func TestPrometheusQueries(t *testing.T) {
 		assert.True(t, lastSampleTime <= afterQuery.Add(buffer),
 			"Last timestamp should be before or equal to the time after the query (with 5s buffer)")
 
-		assert.Equal(t, matrix[0].Metric["__name__"], model.LabelValue("up"))
+		assert.Equal(t, matrix[0].Metric["__name__"], model.LabelValue("test"))
 	})
 }

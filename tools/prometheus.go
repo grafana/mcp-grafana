@@ -115,6 +115,7 @@ type QueryPrometheusParams struct {
 func parseTime(timeStr string) (time.Time, error) {
 	tr := gtime.TimeRange{
 		From: timeStr,
+		Now:  time.Now(),
 	}
 	return tr.ParseFrom()
 }
