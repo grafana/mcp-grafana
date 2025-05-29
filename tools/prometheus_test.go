@@ -241,8 +241,8 @@ func TestPrometheusQueries(t *testing.T) {
 				result, err := queryPrometheus(ctx, QueryPrometheusParams{
 					DatasourceUID: "prometheus",
 					Expr:          "test",
-					StartRFC3339:  start.Format(time.RFC3339),
-					EndRFC3339:    end.Format(time.RFC3339),
+					StartTime:     start.Format(time.RFC3339),
+					EndTime:       end.Format(time.RFC3339),
 					StepSeconds:   step,
 					QueryType:     "range",
 				})
@@ -262,7 +262,7 @@ func TestPrometheusQueries(t *testing.T) {
 		result, err := queryPrometheus(ctx, QueryPrometheusParams{
 			DatasourceUID: "prometheus",
 			Expr:          "up",
-			StartRFC3339:  time.Now().Format(time.RFC3339),
+			StartTime:     time.Now().Format(time.RFC3339),
 			QueryType:     "instant",
 		})
 		require.NoError(t, err)
@@ -270,5 +270,68 @@ func TestPrometheusQueries(t *testing.T) {
 		assert.Equal(t, scalar[0].Value, model.SampleValue(1))
 		assert.Equal(t, scalar[0].Timestamp, model.TimeFromUnix(time.Now().Unix()))
 		assert.Equal(t, scalar[0].Metric["__name__"], model.LabelValue("up"))
+	})
+
+	t.Run("query prometheus instant with relative timestamps", func(t *testing.T) {
+		ctx := newTestContext()
+		beforeQuery := model.TimeFromUnix(time.Now().Unix())
+		result, err := queryPrometheus(ctx, QueryPrometheusParams{
+			DatasourceUID: "prometheus",
+			Expr:          "up",
+			StartTime:     "now",
+			QueryType:     "instant",
+		})
+		afterQuery := model.TimeFromUnix(time.Now().Unix())
+		require.NoError(t, err)
+		scalar := result.(model.Vector)
+		assert.Equal(t, scalar[0].Value, model.SampleValue(1))
+
+		// Check that the timestamp is within the expected range
+		buffer := 5 * time.Second
+		assert.True(t, scalar[0].Timestamp >= beforeQuery,
+			"Result timestamp should be after or equal to the time before the query")
+		assert.True(t, scalar[0].Timestamp <= afterQuery.Add(buffer),
+			"Result timestamp should be before or equal to the time after the query (with 5s buffer)")
+
+		assert.Equal(t, scalar[0].Metric["__name__"], model.LabelValue("up"))
+	})
+
+	t.Run("query prometheus range with relative timestamps", func(t *testing.T) {
+		ctx := newTestContext()
+		beforeQuery := model.TimeFromUnix(time.Now().Unix())
+		result, err := queryPrometheus(ctx, QueryPrometheusParams{
+			DatasourceUID: "prometheus",
+			Expr:          "test",
+			StartTime:     "now-1h",
+			EndTime:       "now",
+			StepSeconds:   60,
+			QueryType:     "range",
+		})
+		afterQuery := model.TimeFromUnix(time.Now().Unix())
+		require.NoError(t, err)
+		matrix := result.(model.Matrix)
+		require.Len(t, matrix, 1)
+
+		// Should have approximately 60 samples (one per minute for an hour)
+		assert.InDelta(t, 60, len(matrix[0].Values), 2)
+
+		buffer := 5 * time.Second
+		oneHour := time.Hour
+
+		firstSampleTime := matrix[0].Values[0].Timestamp
+		// Check that the start timestamp is within the expected range
+		assert.True(t, firstSampleTime >= beforeQuery.Add(-oneHour),
+			"First timestamp should be after or equal to the time before the query minus one hour")
+		assert.True(t, firstSampleTime <= afterQuery.Add(buffer).Add(-oneHour),
+			"First timestamp should be before or equal to the time after the query minus one hour (with 5s buffer)")
+
+		// Check that the end timestamp is is within the expected range
+		lastSampleTime := matrix[0].Values[len(matrix[0].Values)-1].Timestamp
+		assert.True(t, lastSampleTime >= beforeQuery,
+			"Last timestamp should be after or equal to the time before the query")
+		assert.True(t, lastSampleTime <= afterQuery.Add(buffer),
+			"Last timestamp should be before or equal to the time after the query (with 5s buffer)")
+
+		assert.Equal(t, matrix[0].Metric["__name__"], model.LabelValue("test"))
 	})
 }

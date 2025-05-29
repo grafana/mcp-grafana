@@ -18,6 +18,7 @@ services:
       - "9090:9090"
     entrypoint: /etc/prometheus/entrypoint.sh
     volumes:
+      - ./testdata/prometheus.yml:/etc/prometheus/prometheus.yml
       - ./testdata/prometheus-seed.yml:/etc/prometheus/prometheus-seed.yml
       - ./testdata/prometheus-entrypoint.sh:/etc/prometheus/entrypoint.sh
 
