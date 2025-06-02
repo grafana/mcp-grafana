@@ -11,14 +11,14 @@ import (
 func TestParseRelativeTime(t *testing.T) {
 	const day = 24 * time.Hour
 	const week = 7 * day
-	const year = time.Duration(float64(day) * 365)
-	const month = time.Duration(float64(day) * 30)
 
 	testCases := []struct {
 		name          string
 		input         string
 		expectedError bool
 		expectedDelta time.Duration // Expected time difference from now
+		isMonthCase   bool          // Special handling for month arithmetic
+		isYearCase    bool          // Special handling for year arithmetic
 	}{
 		{
 			name:          "now",
@@ -54,13 +54,13 @@ func TestParseRelativeTime(t *testing.T) {
 			name:          "now-1M",
 			input:         "now-1M",
 			expectedError: false,
-			expectedDelta: -month,
+			isMonthCase:   true,
 		},
 		{
 			name:          "now-1y",
 			input:         "now-1y",
 			expectedError: false,
-			expectedDelta: -year,
+			isYearCase:    true,
 		},
 		{
 			name:          "now-1.5h",
@@ -95,6 +95,16 @@ func TestParseRelativeTime(t *testing.T) {
 				// For "now", the result should be very close to the current time
 				// Allow a small tolerance for execution time
 				diff := result.Sub(now)
+				assert.Less(t, diff.Abs(), 2*time.Second, "Time difference should be less than 2 seconds")
+			} else if tc.isMonthCase {
+				// For month calculations, use proper calendar arithmetic
+				expected := now.AddDate(0, -1, 0)
+				diff := result.Sub(expected)
+				assert.Less(t, diff.Abs(), 2*time.Second, "Time difference should be less than 2 seconds")
+			} else if tc.isYearCase {
+				// For year calculations, use proper calendar arithmetic
+				expected := now.AddDate(-1, 0, 0)
+				diff := result.Sub(expected)
 				assert.Less(t, diff.Abs(), 2*time.Second, "Time difference should be less than 2 seconds")
 			} else {
 				// For other relative times, compare with the expected delta from now
