@@ -6,55 +6,49 @@ This provides access to your Grafana instance and the surrounding ecosystem.
 
 ## Features
 
-- [x] Search for dashboards
-- [x] Dashboards
-  - [x] Get dashboard by UID
-  - [x] Update or create a dashboard (DISCLAIMER: Be careful with context windows. See https://github.com/grafana/mcp-grafana/issues/101 for details)
-  - [x] Get the title, query string, and datasource information (including UID and type, if available) from every panel in a dashboard
-- [x] List and fetch datasource information
-- [ ] Query datasources
-  - [x] Prometheus
-  - [x] Loki
-    - [x] Log queries
-    - [x] Metric queries
-  - [ ] Tempo
-  - [ ] Pyroscope
-- [x] Query Prometheus metadata
-  - [x] Metric metadata
-  - [x] Metric names
-  - [x] Label names
-  - [x] Label values
-- [x] Query Loki metadata
-  - [x] Label names
-  - [x] Label values
-  - [x] Stats
-- [x] Search, create, update and close incidents
-- [x] Start Sift investigations and view the results
-  - [x] Create Investigations
-  - [x] List Investigations with a limit parameter
-  - [x] Get Investigation
-  - [x] Get Analyses
-  - [x] Find error patterns in logs using Sift
-  - [x] Find slow requests using Sift
-  - [ ] Add tools on the other Sift Checks
-- [ ] Alerting
-  - [x] List and fetch alert rule information
-  - [x] Get alert rule statuses (firing/normal/error/etc.)
-  - [ ] Create and change alert rules
-  - [x] List contact points
-  - [ ] Create and change contact points
-- [x] Access Grafana OnCall functionality
-  - [x] List and manage schedules
-  - [x] Get shift details
-  - [x] Get current on-call users
-  - [x] List teams and users
-  - [ ] List alert groups
-- [x] Admin functionality
-  - [ ] List users
-  - [x] List teams
-  - [ ] List roles
-  - [ ] List assignments of roles
-  - [ ] Debug role assignments
+_The following features are currently available in MCP server. This list is for informational purposes only and does not represent a roadmap or commitment to future features._
+
+### Dashboards
+- **Search for dashboards:** Find dashboards by title or other metadata
+- **Get dashboard by UID:** Retrieve full dashboard details using its unique identifier
+- **Update or create a dashboard:** Modify existing dashboards or create new ones. _Note: Use with caution due to context window limitations; see [issue #101](https://github.com/grafana/mcp-grafana/issues/101)_ 
+- **Get panel queries and datasource info:** Get the title, query string, and datasource information (including UID and type, if available) from every panel in a dashboard
+
+### Datasources
+- **List and fetch datasource information:** View all configured datasources and retrieve detailed information about each.
+    - _Supported datasource types: Prometheus, Loki._
+
+### Prometheus Querying
+- **Query Prometheus:** Execute PromQL queries (supports both instant and range metric queries) against Prometheus datasources.
+- **Query Prometheus metadata:** Retrieve metric metadata, metric names, label names, and label values from Prometheus datasources.
+
+### Loki Querying
+- **Query Loki logs and metrics:** Run both log queries and metric queries using LogQL against Loki datasources.
+- **Query Loki metadata:** Retrieve label names, label values, and stream statistics from Loki datasources.
+
+### Incidents
+- **Search, create, update, and close incidents:** Manage incidents in Grafana Incident, including searching, creating, updating, and resolving incidents.
+
+### Sift Investigations
+- **Create Sift investigations:** Start a new Sift investigation for analyzing logs or traces.
+- **List Sift investigations:** Retrieve a list of Sift investigations, with support for a limit parameter.
+- **Get Sift investigation:** Retrieve details of a specific Sift investigation by its UUID.
+- **Get Sift analyses:** Retrieve a specific analysis from a Sift investigation.
+- **Find error patterns in logs:** Detect elevated error patterns in Loki logs using Sift.
+- **Find slow requests:** Detect slow requests using Sift (Tempo).
+
+### Alerting
+- **List and fetch alert rule information:** View alert rules and their statuses (firing/normal/error/etc.) in Grafana.
+- **List contact points:** View configured notification contact points in Grafana.
+
+### Grafana OnCall
+- **List and manage schedules:** View and manage on-call schedules in Grafana OnCall.
+- **Get shift details:** Retrieve detailed information about specific on-call shifts.
+- **Get current on-call users:** See which users are currently on call for a schedule.
+- **List teams and users:** View all OnCall teams and users.
+
+### Admin
+- **List teams:** View all configured teams in Grafana.
 
 The list of tools is configurable, so you can choose which tools you want to make available to the MCP client.
 This is useful if you don't use certain functionality or if you don't want to take up too much of the context window.
