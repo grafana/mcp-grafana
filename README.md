@@ -128,6 +128,12 @@ the OnCall tools, use `--disable-oncall`.
      GOBIN="$HOME/go/bin" go install github.com/grafana/mcp-grafana/cmd/mcp-grafana@latest
      ```
 
+   - **ToolHive**: Use [ToolHive](https://github.com/stacklok/toolhive) for simplified MCP server deployment with enhanced security defaults.
+
+     ```bash
+     thv run grafana
+     ```
+
 3. Add the server configuration to your client configuration file. For example, for Claude Desktop:
 
    **If using the binary:**
