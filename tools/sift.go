@@ -440,18 +440,30 @@ func (c *siftClient) makeRequest(ctx context.Context, method, path string, body 
 
 	response, err := c.client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("executing request: %w", err)
 	}
-
-	reader := io.LimitReader(response.Body, 1024*1024*48)
 	defer response.Body.Close()
 
+	// Check for non-200 status code (matching Loki client's logic)
+	if response.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(response.Body) // Read full body on error
+		return nil, fmt.Errorf("API request returned status code %d: %s", response.StatusCode, string(bodyBytes))
+	}
+
+	// Read the response body with a limit to prevent memory issues
+	reader := io.LimitReader(response.Body, 1024*1024*48) // 48MB limit
 	buf, err := io.ReadAll(reader)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
 
-	return buf, nil
+	// Check if the response is empty (matching Loki client's logic)
+	if len(buf) == 0 {
+		return nil, fmt.Errorf("empty response from API")
+	}
+
+	// Trim any whitespace that might cause JSON parsing issues (matching Loki client's logic)
+	return bytes.TrimSpace(buf), nil
 }
 
 // getSiftInvestigation is a helper method to get the current status of an investigation
