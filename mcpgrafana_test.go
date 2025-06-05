@@ -173,7 +173,7 @@ func TestExtractGrafanaClientFromHeaders(t *testing.T) {
 		ctx := ExtractGrafanaClientFromHeaders(context.Background(), req)
 		c := GrafanaClientFromContext(ctx)
 		url := minURLFromClient(c)
-		assert.Equal(t, "localhost", url.host)
+		assert.Equal(t, "localhost:3000", url.host)
 		assert.Equal(t, "/api", url.basePath)
 	})
 

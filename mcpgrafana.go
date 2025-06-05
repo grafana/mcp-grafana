@@ -167,20 +167,21 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string) *client.Gr
 	var parsedURL *url.URL
 	var err error
 
-	if grafanaURL != "" {
-		parsedURL, err = url.Parse(grafanaURL)
-		if err != nil {
-			panic(fmt.Errorf("invalid Grafana URL: %w", err))
-		}
-		cfg.Host = parsedURL.Host
-		cfg.BasePath = makeBasePath(parsedURL.Path)
-		// The Grafana client will always prefer HTTPS even if the URL is HTTP,
-		// so we need to limit the schemes to HTTP if the URL is HTTP.
-		if parsedURL.Scheme == "http" {
-			cfg.Schemes = []string{"http"}
-		}
-	} else {
-		parsedURL, _ = url.Parse(defaultGrafanaURL)
+	if grafanaURL == "" {
+		grafanaURL = defaultGrafanaURL
+	}
+
+	parsedURL, err = url.Parse(grafanaURL)
+	if err != nil {
+		panic(fmt.Errorf("invalid Grafana URL: %w", err))
+	}
+	cfg.Host = parsedURL.Host
+	cfg.BasePath = makeBasePath(parsedURL.Path)
+
+	// The Grafana client will always prefer HTTPS even if the URL is HTTP,
+	// so we need to limit the schemes to HTTP if the URL is HTTP.
+	if parsedURL.Scheme == "http" {
+		cfg.Schemes = []string{"http"}
 	}
 
 	if apiKey != "" {
@@ -215,6 +216,9 @@ var ExtractGrafanaClientFromHeaders httpContextFunc = func(ctx context.Context, 
 	uEnv, apiKeyEnv := urlAndAPIKeyFromEnv()
 	if u == "" {
 		u = uEnv
+	}
+	if u == "" {
+		u = defaultGrafanaURL
 	}
 	if apiKey == "" {
 		apiKey = apiKeyEnv
