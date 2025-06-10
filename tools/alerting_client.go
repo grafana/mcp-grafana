@@ -36,7 +36,7 @@ func newAlertingClientFromContext(ctx context.Context) (*alertingClient, error) 
 		return nil, fmt.Errorf("invalid Grafana base URL %q: %w", baseURL, err)
 	}
 
-	return &alertingClient{
+	client := &alertingClient{
 		baseURL:     parsedBaseURL,
 		accessToken: cfg.AccessToken,
 		idToken:     cfg.IDToken,
@@ -44,7 +44,17 @@ func newAlertingClientFromContext(ctx context.Context) (*alertingClient, error) 
 		httpClient: &http.Client{
 			Timeout: defaultTimeout,
 		},
-	}, nil
+	}
+
+	// Create custom transport with TLS configuration if available
+	if tlsConfig := mcpgrafana.GrafanaConfigFromContext(ctx).TLSConfig; tlsConfig != nil {
+		client.httpClient.Transport, err = tlsConfig.HTTPTransport(http.DefaultTransport.(*http.Transport))
+		if err != nil {
+			return nil, fmt.Errorf("failed to create custom transport: %w", err)
+		}
+	}
+
+	return client, nil
 }
 
 func (c *alertingClient) makeRequest(ctx context.Context, path string) (*http.Response, error) {

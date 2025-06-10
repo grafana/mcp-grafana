@@ -2,6 +2,8 @@ package mcpgrafana
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -41,6 +43,14 @@ func urlAndAPIKeyFromHeaders(req *http.Request) (string, string) {
 // grafanaConfigKey is the context key for Grafana configuration.
 type grafanaConfigKey struct{}
 
+// TLSConfig holds TLS configuration for Grafana clients.
+type TLSConfig struct {
+	CertFile   string
+	KeyFile    string
+	CAFile     string
+	SkipVerify bool
+}
+
 // GrafanaConfig represents the full configuration for Grafana clients.
 type GrafanaConfig struct {
 	// Debug enables debug mode for the Grafana client.
@@ -59,6 +69,9 @@ type GrafanaConfig struct {
 	// It comes from the `X-Grafana-Id` header sent from Grafana to plugin backends.
 	// It is used for on-behalf-of auth in Grafana Cloud.
 	IDToken string
+
+	// TLSConfig holds TLS configuration for all Grafana clients.
+	TLSConfig *TLSConfig
 }
 
 // WithGrafanaConfig adds Grafana configuration to the context.
@@ -73,6 +86,56 @@ func GrafanaConfigFromContext(ctx context.Context) GrafanaConfig {
 		return config
 	}
 	return GrafanaConfig{}
+}
+
+// CreateTLSConfig creates a *tls.Config from TLSConfig.
+func (tc *TLSConfig) CreateTLSConfig() (*tls.Config, error) {
+	if tc == nil {
+		return nil, nil
+	}
+
+	tlsConfig := &tls.Config{
+		InsecureSkipVerify: tc.SkipVerify,
+	}
+
+	// Load client certificate if both cert and key files are provided
+	if tc.CertFile != "" && tc.KeyFile != "" {
+		cert, err := tls.LoadX509KeyPair(tc.CertFile, tc.KeyFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load client certificate: %w", err)
+		}
+		tlsConfig.Certificates = []tls.Certificate{cert}
+	}
+
+	// Load CA certificate if provided
+	if tc.CAFile != "" {
+		caCert, err := os.ReadFile(tc.CAFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read CA certificate: %w", err)
+		}
+		caCertPool := x509.NewCertPool()
+		if !caCertPool.AppendCertsFromPEM(caCert) {
+			return nil, fmt.Errorf("failed to parse CA certificate")
+		}
+		tlsConfig.RootCAs = caCertPool
+	}
+
+	return tlsConfig, nil
+}
+
+// HTTPTransport creates an HTTP transport with custom TLS configuration.
+func (tc *TLSConfig) HTTPTransport(defaultTransport *http.Transport) (http.RoundTripper, error) {
+	transport := defaultTransport.Clone()
+
+	if tc != nil {
+		tlsCfg, err := tc.CreateTLSConfig()
+		if err != nil {
+			return nil, err
+		}
+		transport.TLSClientConfig = tlsCfg
+	}
+
+	return transport, nil
 }
 
 // ExtractGrafanaInfoFromEnv is a StdioContextFunc that extracts Grafana configuration
@@ -153,7 +216,7 @@ func makeBasePath(path string) string {
 }
 
 // NewGrafanaClient creates a Grafana client with the provided URL and API key,
-// configured to use the correct scheme and debug mode.
+// configured to use the correct scheme, debug mode, and TLS configuration.
 func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string) *client.GrafanaHTTPAPI {
 	cfg := client.DefaultTransportConfig()
 
@@ -183,6 +246,19 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string) *client.Gr
 
 	config := GrafanaConfigFromContext(ctx)
 	cfg.Debug = config.Debug
+
+	// Configure TLS if custom TLS configuration is provided
+	if tlsConfig := config.TLSConfig; tlsConfig != nil {
+		tlsCfg, err := tlsConfig.CreateTLSConfig()
+		if err != nil {
+			panic(fmt.Errorf("failed to create TLS config: %w", err))
+		}
+		cfg.TLSConfig = tlsCfg
+		slog.Debug("Using custom TLS configuration",
+			"cert_file", tlsConfig.CertFile,
+			"ca_file", tlsConfig.CAFile,
+			"skip_verify", tlsConfig.SkipVerify)
+	}
 
 	slog.Debug("Creating Grafana client", "url", parsedURL.Redacted(), "api_key_set", apiKey != "")
 	return client.NewHTTPClientWithConfig(strfmt.Default, cfg)
@@ -253,6 +329,20 @@ var ExtractIncidentClientFromEnv server.StdioContextFunc = func(ctx context.Cont
 	slog.Debug("Creating Incident client", "url", parsedURL.Redacted(), "api_key_set", apiKey != "")
 	client := incident.NewClient(incidentURL, apiKey)
 
+	// Configure custom TLS if available
+	if tlsConfig := GrafanaConfigFromContext(ctx).TLSConfig; tlsConfig != nil {
+		transport, err := tlsConfig.HTTPTransport(http.DefaultTransport.(*http.Transport))
+		if err != nil {
+			slog.Error("Failed to create custom transport for incident client, using default", "error", err)
+		} else {
+			client.HTTPClient.Transport = transport
+			slog.Debug("Using custom TLS configuration for incident client",
+				"cert_file", tlsConfig.CertFile,
+				"ca_file", tlsConfig.CAFile,
+				"skip_verify", tlsConfig.SkipVerify)
+		}
+	}
+
 	return context.WithValue(ctx, incidentClientKey{}, client)
 }
 
@@ -270,6 +360,20 @@ var ExtractIncidentClientFromHeaders httpContextFunc = func(ctx context.Context,
 	}
 	incidentURL := fmt.Sprintf("%s/api/plugins/grafana-irm-app/resources/api/v1/", grafanaURL)
 	client := incident.NewClient(incidentURL, apiKey)
+
+	// Configure custom TLS if available
+	if tlsConfig := GrafanaConfigFromContext(ctx).TLSConfig; tlsConfig != nil {
+		transport, err := tlsConfig.HTTPTransport(http.DefaultTransport.(*http.Transport))
+		if err != nil {
+			slog.Error("Failed to create custom transport for incident client, using default", "error", err)
+		} else {
+			client.HTTPClient.Transport = transport
+			slog.Debug("Using custom TLS configuration for incident client",
+				"cert_file", tlsConfig.CertFile,
+				"ca_file", tlsConfig.CAFile,
+				"skip_verify", tlsConfig.SkipVerify)
+		}
+	}
 
 	return context.WithValue(ctx, incidentClientKey{}, client)
 }
@@ -317,7 +421,7 @@ func ComposeHTTPContextFuncs(funcs ...httpContextFunc) server.HTTPContextFunc {
 }
 
 // ComposedStdioContextFunc returns a StdioContextFunc that comprises all predefined StdioContextFuncs,
-// as well as the Grafana debug flag.
+// as well as the Grafana debug flag and TLS configuration.
 func ComposedStdioContextFunc(config GrafanaConfig) server.StdioContextFunc {
 	return ComposeStdioContextFuncs(
 		func(ctx context.Context) context.Context {
