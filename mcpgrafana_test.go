@@ -74,10 +74,9 @@ func TestExtractGrafanaInfoFromHeaders(t *testing.T) {
 		req, err := http.NewRequest("GET", "http://example.com", nil)
 		require.NoError(t, err)
 		ctx := ExtractGrafanaInfoFromHeaders(context.Background(), req)
-		url := GrafanaURLFromContext(ctx)
-		assert.Equal(t, defaultGrafanaURL, url)
-		apiKey := GrafanaAPIKeyFromContext(ctx)
-		assert.Equal(t, "", apiKey)
+		config := GrafanaConfigFromContext(ctx)
+		assert.Equal(t, defaultGrafanaURL, config.URL)
+		assert.Equal(t, "", config.APIKey)
 	})
 
 	t.Run("no headers, with env", func(t *testing.T) {
@@ -87,10 +86,9 @@ func TestExtractGrafanaInfoFromHeaders(t *testing.T) {
 		req, err := http.NewRequest("GET", "http://example.com", nil)
 		require.NoError(t, err)
 		ctx := ExtractGrafanaInfoFromHeaders(context.Background(), req)
-		url := GrafanaURLFromContext(ctx)
-		assert.Equal(t, "http://my-test-url.grafana.com", url)
-		apiKey := GrafanaAPIKeyFromContext(ctx)
-		assert.Equal(t, "my-test-api-key", apiKey)
+		config := GrafanaConfigFromContext(ctx)
+		assert.Equal(t, "http://my-test-url.grafana.com", config.URL)
+		assert.Equal(t, "my-test-api-key", config.APIKey)
 	})
 
 	t.Run("with headers, no env", func(t *testing.T) {
@@ -99,10 +97,9 @@ func TestExtractGrafanaInfoFromHeaders(t *testing.T) {
 		req.Header.Set(grafanaURLHeader, "http://my-test-url.grafana.com")
 		req.Header.Set(grafanaAPIKeyHeader, "my-test-api-key")
 		ctx := ExtractGrafanaInfoFromHeaders(context.Background(), req)
-		url := GrafanaURLFromContext(ctx)
-		assert.Equal(t, "http://my-test-url.grafana.com", url)
-		apiKey := GrafanaAPIKeyFromContext(ctx)
-		assert.Equal(t, "my-test-api-key", apiKey)
+		config := GrafanaConfigFromContext(ctx)
+		assert.Equal(t, "http://my-test-url.grafana.com", config.URL)
+		assert.Equal(t, "my-test-api-key", config.APIKey)
 	})
 
 	t.Run("with headers, with env", func(t *testing.T) {
@@ -115,10 +112,9 @@ func TestExtractGrafanaInfoFromHeaders(t *testing.T) {
 		req.Header.Set(grafanaURLHeader, "http://my-test-url.grafana.com")
 		req.Header.Set(grafanaAPIKeyHeader, "my-test-api-key")
 		ctx := ExtractGrafanaInfoFromHeaders(context.Background(), req)
-		url := GrafanaURLFromContext(ctx)
-		assert.Equal(t, "http://my-test-url.grafana.com", url)
-		apiKey := GrafanaAPIKeyFromContext(ctx)
-		assert.Equal(t, "my-test-api-key", apiKey)
+		config := GrafanaConfigFromContext(ctx)
+		assert.Equal(t, "http://my-test-url.grafana.com", config.URL)
+		assert.Equal(t, "my-test-api-key", config.APIKey)
 	})
 }
 

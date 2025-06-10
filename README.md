@@ -11,7 +11,7 @@ _The following features are currently available in MCP server. This list is for 
 ### Dashboards
 - **Search for dashboards:** Find dashboards by title or other metadata
 - **Get dashboard by UID:** Retrieve full dashboard details using its unique identifier
-- **Update or create a dashboard:** Modify existing dashboards or create new ones. _Note: Use with caution due to context window limitations; see [issue #101](https://github.com/grafana/mcp-grafana/issues/101)_ 
+- **Update or create a dashboard:** Modify existing dashboards or create new ones. _Note: Use with caution due to context window limitations; see [issue #101](https://github.com/grafana/mcp-grafana/issues/101)_
 - **Get panel queries and datasource info:** Get the title, query string, and datasource information (including UID and type, if available) from every panel in a dashboard
 
 ### Datasources
