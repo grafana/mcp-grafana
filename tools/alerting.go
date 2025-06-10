@@ -155,7 +155,9 @@ var ListAlertRules = mcpgrafana.MustTool(
 )
 
 type GetAlertRuleByUIDParams struct {
-	UID string `json:"uid" jsonschema:"required,description=The uid of the alert rule"`
+	UID    string `json:"uid" jsonschema:"required,description=The uid of the alert rule"`
+	Url    string `json:"url" jsonschema:"description=The grafana url to connect"`
+	ApiKey string `json:"api_key" jsonschema:"description=The grafana api key"`
 }
 
 func (p GetAlertRuleByUIDParams) validate() error {
@@ -171,7 +173,8 @@ func getAlertRuleByUID(ctx context.Context, args GetAlertRuleByUIDParams) (*mode
 		return nil, fmt.Errorf("get alert rule by uid: %w", err)
 	}
 
-	c := mcpgrafana.GrafanaClientFromContext(ctx)
+	// c := mcpgrafana.GrafanaClientFromContext(ctx)
+	c := mcpgrafana.NewGrafanaClient(ctx, args.Url, args.ApiKey)
 	alertRule, err := c.Provisioning.GetAlertRule(args.UID)
 	if err != nil {
 		return nil, fmt.Errorf("get alert rule by uid %s: %w", args.UID, err)
@@ -189,8 +192,10 @@ var GetAlertRuleByUID = mcpgrafana.MustTool(
 )
 
 type ListContactPointsParams struct {
-	Limit int     `json:"limit,omitempty" jsonschema:"description=The maximum number of results to return. Default is 100."`
-	Name  *string `json:"name,omitempty" jsonschema:"description=Filter contact points by name"`
+	Limit  int     `json:"limit,omitempty" jsonschema:"description=The maximum number of results to return. Default is 100."`
+	Name   *string `json:"name,omitempty" jsonschema:"description=Filter contact points by name"`
+	Url    string  `json:"url" jsonschema:"description=The grafana url to connect to"`
+	ApiKey string  `json:"api_key" jsonschema:"description=The grafana api key"`
 }
 
 func (p ListContactPointsParams) validate() error {
@@ -211,8 +216,8 @@ func listContactPoints(ctx context.Context, args ListContactPointsParams) ([]con
 		return nil, fmt.Errorf("list contact points: %w", err)
 	}
 
-	c := mcpgrafana.GrafanaClientFromContext(ctx)
-
+	// c := mcpgrafana.GrafanaClientFromContext(ctx)
+	c := mcpgrafana.NewGrafanaClient(ctx, args.Url, args.ApiKey)
 	params := provisioning.NewGetContactpointsParams().WithContext(ctx)
 	if args.Name != nil {
 		params.Name = args.Name

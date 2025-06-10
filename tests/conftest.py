@@ -7,7 +7,7 @@ from mcp import ClientSession
 load_dotenv()
 
 DEFAULT_GRAFANA_URL = "http://localhost:3000"
-DEFAULT_MCP_URL = "http://localhost:8000/sse"
+DEFAULT_MCP_URL = "http://localhost:8080/sse"
 
 models = ["gpt-4o", "claude-3-5-sonnet-20240620"]
 

@@ -10,7 +10,7 @@ import (
 	aapi "github.com/grafana/amixr-api-go-client"
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	// "github.com/mark3labs/mcp-go/server"
 )
 
 // getOnCallURLFromSettings retrieves the OnCall API URL from the Grafana settings endpoint.
@@ -366,10 +366,10 @@ var ListOnCallUsers = mcpgrafana.MustTool(
 	mcp.WithReadOnlyHintAnnotation(true),
 )
 
-func AddOnCallTools(mcp *server.MCPServer) {
-	ListOnCallSchedules.Register(mcp)
-	GetOnCallShift.Register(mcp)
-	GetCurrentOnCallUsers.Register(mcp)
-	ListOnCallTeams.Register(mcp)
-	ListOnCallUsers.Register(mcp)
-}
+// func AddOnCallTools(mcp *server.MCPServer) {
+// 	ListOnCallSchedules.Register(mcp)
+// 	GetOnCallShift.Register(mcp)
+// 	GetCurrentOnCallUsers.Register(mcp)
+// 	ListOnCallTeams.Register(mcp)
+// 	ListOnCallUsers.Register(mcp)
+// }

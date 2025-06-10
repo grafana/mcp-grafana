@@ -35,7 +35,7 @@ COPY --from=builder --chown=1000:1000 /app/mcp-grafana /app/
 USER mcp-grafana
 
 # Expose the port the app runs on
-EXPOSE 8000
+EXPOSE 8080
 
 # Run the application
-ENTRYPOINT ["/app/mcp-grafana", "--transport", "sse", "--sse-address", "0.0.0.0:8000"]
+ENTRYPOINT ["/app/mcp-grafana", "--transport", "streamable-http", "--address", "0.0.0.0:8080"]

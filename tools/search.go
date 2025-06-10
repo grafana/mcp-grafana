@@ -15,11 +15,14 @@ import (
 var dashboardTypeStr = "dash-db"
 
 type SearchDashboardsParams struct {
-	Query string `json:"query" jsonschema:"description=The query to search for"`
+	Query  string `json:"query" jsonschema:"description=The query to search for"`
+	Url    string `json:"url" jsonschema:"description=The grafana url to connect to"`
+	ApiKey string `json:"api_key" jsonschema:"description=The grafana api key"`
 }
 
 func searchDashboards(ctx context.Context, args SearchDashboardsParams) (models.HitList, error) {
-	c := mcpgrafana.GrafanaClientFromContext(ctx)
+	// c := mcpgrafana.GrafanaClientFromContext(ctx)
+	c := mcpgrafana.NewGrafanaClient(ctx, args.Url, args.ApiKey)
 	params := search.NewSearchParamsWithContext(ctx)
 	if args.Query != "" {
 		params.SetQuery(&args.Query)

@@ -112,11 +112,11 @@ the OnCall tools, use `--disable-oncall`.
      docker run --rm -i -e GRAFANA_URL=http://localhost:3000 -e GRAFANA_API_KEY=<your service account token> mcp/grafana -t stdio
      ```
 
-     2. **SSE Mode**: In this mode, the server runs as an HTTP server that clients connect to. You must expose port 8000 using the `-p` flag:
+     2. **SSE Mode**: In this mode, the server runs as an HTTP server that clients connect to. You must expose port 8080 using the `-p` flag:
 
      ```bash
      docker pull mcp/grafana
-     docker run --rm -p 8000:8000 -e GRAFANA_URL=http://localhost:3000 -e GRAFANA_API_KEY=<your service account token> mcp/grafana
+     docker run --rm -p 8080:8080 -e GRAFANA_URL=http://localhost:3000 -e GRAFANA_API_KEY=<your service account token> mcp/grafana
      ```
 
    - **Download binary**: Download the latest release of `mcp-grafana` from the [releases page](https://github.com/grafana/mcp-grafana/releases) and place it in your `$PATH`.
@@ -188,7 +188,7 @@ If you're using VSCode and running the MCP server in SSE mode (which is the defa
   "servers": {
     "grafana": {
       "type": "sse",
-      "url": "http://localhost:8000/sse"
+      "url": "http://localhost:8080/sse"
     }
   }
 }
@@ -275,7 +275,7 @@ make build-image
 And to run the image in SSE mode (the default), use:
 
 ```
-docker run -it --rm -p 8000:8000 mcp-grafana:latest
+docker run -it --rm -p 8080:8080 mcp-grafana:latest
 ```
 
 If you need to run it in STDIO mode instead, override the transport setting:

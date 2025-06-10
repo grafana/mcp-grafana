@@ -13,7 +13,9 @@ import (
 )
 
 type ListDatasourcesParams struct {
-	Type string `json:"type,omitempty" jsonschema:"description=The type of datasources to search for. For example\\, 'prometheus'\\, 'loki'\\, 'tempo'\\, etc..."`
+	Type   string `json:"type,omitempty" jsonschema:"description=The type of datasources to search for. For example\\, 'prometheus'\\, 'loki'\\, 'tempo'\\, etc..."`
+	Url    string `json:"url" jsonschema:"description=The grafana url to connect"`
+	ApiKey string `json:"api_key" jsonschema:"description=The grafana api key"`
 }
 
 type dataSourceSummary struct {
@@ -25,7 +27,8 @@ type dataSourceSummary struct {
 }
 
 func listDatasources(ctx context.Context, args ListDatasourcesParams) ([]dataSourceSummary, error) {
-	c := mcpgrafana.GrafanaClientFromContext(ctx)
+	// c := mcpgrafana.GrafanaClientFromContext(ctx)
+	c := mcpgrafana.NewGrafanaClient(ctx, args.Url, args.ApiKey)
 	resp, err := c.Datasources.GetDataSources()
 	if err != nil {
 		return nil, fmt.Errorf("list datasources: %w", err)
@@ -74,11 +77,14 @@ var ListDatasources = mcpgrafana.MustTool(
 )
 
 type GetDatasourceByUIDParams struct {
-	UID string `json:"uid" jsonschema:"required,description=The uid of the datasource"`
+	UID    string `json:"uid" jsonschema:"required,description=The uid of the datasource"`
+	Url    string `json:"url" jsonschema:"description=The grafana url to connect"`
+	ApiKey string `json:"api_key" jsonschema:"description=The grafana api key"`
 }
 
 func getDatasourceByUID(ctx context.Context, args GetDatasourceByUIDParams) (*models.DataSource, error) {
-	c := mcpgrafana.GrafanaClientFromContext(ctx)
+	// c := mcpgrafana.GrafanaClientFromContext(ctx)
+	c := mcpgrafana.NewGrafanaClient(ctx, args.Url, args.ApiKey)
 	datasource, err := c.Datasources.GetDataSourceByUID(args.UID)
 	if err != nil {
 		// Check if it's a 404 Not Found Error
@@ -100,11 +106,14 @@ var GetDatasourceByUID = mcpgrafana.MustTool(
 )
 
 type GetDatasourceByNameParams struct {
-	Name string `json:"name" jsonschema:"required,description=The name of the datasource"`
+	Name   string `json:"name" jsonschema:"required,description=The name of the datasource"`
+	Url    string `json:"url" jsonschema:"description=The grafana url to connect"`
+	ApiKey string `json:"api_key" jsonschema:"description=The grafana api key"`
 }
 
 func getDatasourceByName(ctx context.Context, args GetDatasourceByNameParams) (*models.DataSource, error) {
-	c := mcpgrafana.GrafanaClientFromContext(ctx)
+	// c := mcpgrafana.GrafanaClientFromContext(ctx)
+	c := mcpgrafana.NewGrafanaClient(ctx, args.Url, args.ApiKey)
 	datasource, err := c.Datasources.GetDataSourceByName(args.Name)
 	if err != nil {
 		return nil, fmt.Errorf("get datasource by name %s: %w", args.Name, err)

@@ -12,11 +12,14 @@ import (
 )
 
 type GetDashboardByUIDParams struct {
-	UID string `json:"uid" jsonschema:"required,description=The UID of the dashboard"`
+	UID    string `json:"uid" jsonschema:"required,description=The UID of the dashboard"`
+	Url    string `json:"url" jsonschema:"description=The grafana url to connect"`
+	ApiKey string `json:"api_key" jsonschema:"description=The grafana api key"`
 }
 
 func getDashboardByUID(ctx context.Context, args GetDashboardByUIDParams) (*models.DashboardFullWithMeta, error) {
-	c := mcpgrafana.GrafanaClientFromContext(ctx)
+	// c := mcpgrafana.GrafanaClientFromContext(ctx)
+	c := mcpgrafana.NewGrafanaClient(ctx, args.Url, args.ApiKey)
 	dashboard, err := c.Dashboards.GetDashboardByUID(args.UID)
 	if err != nil {
 		return nil, fmt.Errorf("get dashboard by uid %s: %w", args.UID, err)
@@ -30,13 +33,16 @@ type UpdateDashboardParams struct {
 	Message   string                 `json:"message" jsonschema:"optional,description=Set a commit message for the version history"`
 	Overwrite bool                   `json:"overwrite" jsonschema:"optional,description=Overwrite the dashboard if it exists. Otherwise create one"`
 	UserID    int64                  `json:"userId" jsonschema:"optional,ID of the user making the change"`
+	Url       string                 `json:"url" jsonschema:"description=The grafana url to connect"`
+	ApiKey    string                 `json:"api_key" jsonschema:"description=The grafana api key"`
 }
 
 // updateDashboard can be used to save an existing dashboard, or create a new one.
 // DISCLAIMER: Large-sized dashboard JSON can exhaust context windows. We will
 // implement features that address this in https://github.com/grafana/mcp-grafana/issues/101.
 func updateDashboard(ctx context.Context, args UpdateDashboardParams) (*models.PostDashboardOKBody, error) {
-	c := mcpgrafana.GrafanaClientFromContext(ctx)
+	// c := mcpgrafana.GrafanaClientFromContext(ctx)
+	c := mcpgrafana.NewGrafanaClient(ctx, args.Url, args.ApiKey)
 	cmd := &models.SaveDashboardCommand{
 		Dashboard: args.Dashboard,
 		FolderUID: args.FolderUID,
@@ -69,7 +75,9 @@ var UpdateDashboard = mcpgrafana.MustTool(
 )
 
 type DashboardPanelQueriesParams struct {
-	UID string `json:"uid" jsonschema:"required,description=The UID of the dashboard"`
+	UID    string `json:"uid" jsonschema:"required,description=The UID of the dashboard"`
+	Url    string `json:"url" jsonschema:"description=The grafana url to connect"`
+	ApiKey string `json:"api_key" jsonschema:"description=The grafana api key"`
 }
 
 type datasourceInfo struct {

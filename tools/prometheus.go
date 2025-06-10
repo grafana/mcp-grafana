@@ -74,6 +74,8 @@ type ListPrometheusMetricMetadataParams struct {
 	Limit          int    `json:"limit" jsonschema:"description=The maximum number of metrics to return"`
 	LimitPerMetric int    `json:"limitPerMetric" jsonschema:"description=The maximum number of metrics to return per metric"`
 	Metric         string `json:"metric" jsonschema:"description=The metric to query"`
+	Url            string `json:"url" jsonschema:"description=The grafana url to connect"`
+	ApiKey         string `json:"api_key" jsonschema:"description=The grafana api key"`
 }
 
 func listPrometheusMetricMetadata(ctx context.Context, args ListPrometheusMetricMetadataParams) (map[string][]promv1.Metadata, error) {

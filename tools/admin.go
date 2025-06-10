@@ -12,11 +12,14 @@ import (
 )
 
 type ListTeamsParams struct {
-	Query string `json:"query" jsonschema:"description=The query to search for teams. Can be left empty to fetch all teams"`
+	Query  string `json:"query" jsonschema:"description=The query to search for teams. Can be left empty to fetch all teams"`
+	Url    string `json:"url" jsonschema:"description=The grafana url to connect to for fetching teams"`
+	ApiKey string `json:"api_key" jsonschema:"description=The grafana api key for fetching teams"`
 }
 
 func listTeams(ctx context.Context, args ListTeamsParams) (*models.SearchTeamQueryResult, error) {
-	c := mcpgrafana.GrafanaClientFromContext(ctx)
+	// c := mcpgrafana.GrafanaClientFromContext(ctx)
+	c := mcpgrafana.NewGrafanaClient(ctx, args.Url, args.ApiKey)
 	params := teams.NewSearchTeamsParamsWithContext(ctx)
 	if args.Query != "" {
 		params.SetQuery(&args.Query)

@@ -7,7 +7,7 @@ import (
 	"github.com/grafana/incident-go"
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	// "github.com/mark3labs/mcp-go/server"
 )
 
 type ListIncidentsParams struct {
@@ -120,12 +120,12 @@ var AddActivityToIncident = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("Add activity to incident"),
 )
 
-func AddIncidentTools(mcp *server.MCPServer) {
-	ListIncidents.Register(mcp)
-	CreateIncident.Register(mcp)
-	AddActivityToIncident.Register(mcp)
-	GetIncident.Register(mcp)
-}
+// func AddIncidentTools(mcp *server.MCPServer) {
+// 	ListIncidents.Register(mcp)
+// 	CreateIncident.Register(mcp)
+// 	AddActivityToIncident.Register(mcp)
+// 	GetIncident.Register(mcp)
+// }
 
 type GetIncidentParams struct {
 	ID string `json:"id" jsonschema:"description=The ID of the incident to retrieve"`
