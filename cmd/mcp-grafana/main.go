@@ -34,7 +34,8 @@ type disabledTools struct {
 
 	search, datasource, incident,
 	prometheus, loki, alerting,
-	dashboard, oncall, asserts, sift, admin bool
+	dashboard, oncall, asserts, sift, admin,
+	pyroscope bool
 }
 
 // Configuration for the Grafana client.
@@ -44,7 +45,7 @@ type grafanaConfig struct {
 }
 
 func (dt *disabledTools) addFlags() {
-	flag.StringVar(&dt.enabledTools, "enabled-tools", "search,datasource,incident,prometheus,loki,alerting,dashboard,oncall,asserts,sift,admin", "A comma separated list of tools enabled for this server. Can be overwritten entirely or by disabling specific components, e.g. --disable-search.")
+	flag.StringVar(&dt.enabledTools, "enabled-tools", "search,datasource,incident,prometheus,loki,alerting,dashboard,oncall,asserts,sift,admin,pyroscope", "A comma separated list of tools enabled for this server. Can be overwritten entirely or by disabling specific components, e.g. --disable-search.")
 
 	flag.BoolVar(&dt.search, "disable-search", false, "Disable search tools")
 	flag.BoolVar(&dt.datasource, "disable-datasource", false, "Disable datasource tools")
@@ -57,6 +58,7 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.asserts, "disable-asserts", false, "Disable asserts tools")
 	flag.BoolVar(&dt.sift, "disable-sift", false, "Disable sift tools")
 	flag.BoolVar(&dt.admin, "disable-admin", false, "Disable admin tools")
+	flag.BoolVar(&dt.pyroscope, "disable-pyroscope", false, "Disable pyroscope tools")
 }
 
 func (gc *grafanaConfig) addFlags() {
@@ -76,6 +78,7 @@ func (dt *disabledTools) addTools(s *server.MCPServer) {
 	maybeAddTools(s, tools.AddAssertsTools, enabledTools, dt.asserts, "asserts")
 	maybeAddTools(s, tools.AddSiftTools, enabledTools, dt.sift, "sift")
 	maybeAddTools(s, tools.AddAdminTools, enabledTools, dt.admin, "admin")
+	maybeAddTools(s, tools.AddPyroscopeTools, enabledTools, dt.pyroscope, "pyroscope")
 }
 
 func newServer(dt disabledTools) *server.MCPServer {
