@@ -21,3 +21,9 @@ datasources:
     access: proxy
     url: http://loki:3100
     isDefault: false
+  - name: pyroscope
+    uid: pyroscope
+    type: grafana-pyroscope-datasource
+    access: proxy
+    url: http://pyroscope:4040
+    isDefault: false

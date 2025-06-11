@@ -39,3 +39,8 @@ services:
     command: -config.file=/etc/promtail/config.yml
     depends_on:
       - loki
+
+  pyroscope:
+    image: grafana/pyroscope:1.13.4
+    ports:
+      - 4040:4040
