@@ -134,7 +134,7 @@ func main() {
 		"Transport type (stdio or sse)",
 	)
 	addr := flag.String("address", "localhost:8000", "The host and port to start the sse server on")
-	basePath := flag.String("base-path", "", "Base path for the sse")
+	basePath := flag.String("base-path", "", "Base path for the sse server")
 	endpointPath := flag.String("endpoint-path", "/mcp", "Endpoint path for the streamable-http server")
 	logLevel := flag.String("log-level", "info", "Log level (debug, info, warn, error)")
 	var dt disabledTools
