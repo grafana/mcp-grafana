@@ -87,7 +87,7 @@ func newServer(dt disabledTools) *server.MCPServer {
 	return s
 }
 
-func run(transport, addr, basePath string, logLevel slog.Level, dt disabledTools, gc grafanaConfig) error {
+func run(transport, addr, basePath string, endpointPath string, logLevel slog.Level, dt disabledTools, gc grafanaConfig) error {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})))
 	s := newServer(dt)
 
@@ -103,6 +103,15 @@ func run(transport, addr, basePath string, logLevel slog.Level, dt disabledTools
 			server.WithStaticBasePath(basePath),
 		)
 		slog.Info("Starting Grafana MCP server using SSE transport", "address", addr, "basePath", basePath)
+		if err := srv.Start(addr); err != nil {
+			return fmt.Errorf("Server error: %v", err)
+		}
+	case "streamable-http":
+		srv := server.NewStreamableHTTPServer(s, server.WithHTTPContextFunc(mcpgrafana.ComposedHTTPContextFunc(gc.debug)),
+			server.WithStateLess(true),
+			server.WithEndpointPath(endpointPath),
+		)
+		slog.Info("Starting Grafana MCP server using StreamableHTTP transport", "address", addr, "endpointPath", endpointPath)
 		if err := srv.Start(addr); err != nil {
 			return fmt.Errorf("Server error: %v", err)
 		}
@@ -124,8 +133,9 @@ func main() {
 		"stdio",
 		"Transport type (stdio or sse)",
 	)
-	addr := flag.String("sse-address", "localhost:8000", "The host and port to start the sse server on")
+	addr := flag.String("address", "localhost:8000", "The host and port to start the sse server on")
 	basePath := flag.String("base-path", "", "Base path for the sse server")
+	endpointPath := flag.String("endpoint-path", "/mcp", "Endpoint path for the streamable-http server")
 	logLevel := flag.String("log-level", "info", "Log level (debug, info, warn, error)")
 	var dt disabledTools
 	dt.addFlags()
@@ -133,7 +143,7 @@ func main() {
 	gc.addFlags()
 	flag.Parse()
 
-	if err := run(transport, *addr, *basePath, parseLevel(*logLevel), dt, gc); err != nil {
+	if err := run(transport, *addr, *basePath, *endpointPath, parseLevel(*logLevel), dt, gc); err != nil {
 		panic(err)
 	}
 }
