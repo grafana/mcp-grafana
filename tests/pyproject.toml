@@ -25,4 +25,5 @@ dev = [
 [tool.pytest.ini_options]
 
 [tool.uv.sources]
+# Until https://github.com/langwatch/langevals/issues/20.
 langevals = { git = "https://github.com/langwatch/langevals", rev = "3a934d1dc4ea95f039cf7bc4969e6bad1543c719" }
