@@ -249,6 +249,7 @@ func fetchPyroscopeProfile(ctx context.Context, args FetchPyroscopeProfileParams
 		return "", fmt.Errorf("failed to call Pyroscope API: %w", err)
 	}
 
+	res = cleanupDotProfile(res)
 	return res, nil
 }
 
@@ -403,4 +404,16 @@ func validateTimeRange(start time.Time, end time.Time) (time.Time, time.Time, er
 	}
 
 	return start, end, nil
+}
+
+var cleanupRegex = regexp.MustCompile(`(?m)(fontsize=\d+ )|(id="node\d+" )|(labeltooltip=".*?\)" )|(tooltip=".*?\)" )|(N\d+ -> N\d+).*|(N\d+ \[label="other.*\n)|(shape=box )|(fillcolor="#\w{6}")|(color="#\w{6}" )`)
+
+func cleanupDotProfile(profile string) string {
+	return cleanupRegex.ReplaceAllStringFunc(profile, func(match string) string {
+		// Preserve edge labels (e.g., "N1 -> N2")
+		if m := regexp.MustCompile(`^N\d+ -> N\d+`).FindString(match); m != "" {
+			return m
+		}
+		return ""
+	})
 }
