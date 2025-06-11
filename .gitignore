@@ -8,6 +8,7 @@ wheels/
 .DS_Store
 .vscode/
 .env
+.cursor/
 
 # Virtual environments
 .venv
