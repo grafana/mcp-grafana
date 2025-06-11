@@ -200,9 +200,9 @@ var FetchPyroscopeProfile = mcpgrafana.MustTool(
 
 type FetchPyroscopeProfileParams struct {
 	DataSourceUID string `json:"data_source_uid" jsonschema:"required,description=The UID of the datasource to query"`
-	ProfileType   string `json:"profile_type" jsonschema:"required,description=Type profile type, use the list_pyroscope_profile_types tool to fetch available profile types"`
+	ProfileType   string `json:"profile_type" jsonschema:"required,description=Type profile type\\, use the list_pyroscope_profile_types tool to fetch available profile types"`
 	Matchers      string `json:"matchers,omitempty" jsonschema:"description=Optionally\\, Prometheus style matchers used to filter the result set (defaults to: {})"`
-	MaxNodes      int    `json:"max_nodes,omitempty" jsonschema:"description=Optionally\\, the maximum number of nodes in the resulting profile. Less nodes results in smaller profiles that execute faster, more nodes result in larger queries that have more detail. A value of -1 indicates to use as many nodes as necessary (default: 16384)"`
+	MaxNodes      int    `json:"max_nodes,omitempty" jsonschema:"description=Optionally\\, the maximum number of nodes in the resulting profile. Less nodes results in smaller profiles that execute faster\\, more nodes result in larger queries that have more detail. A value of -1 indicates to use as many nodes as necessary (default: 16384)"`
 	StartRFC3339  string `json:"start_rfc_3339,omitempty" jsonschema:"description=Optionally\\, the start time of the query in RFC3339 format (defaults to 1 hour ago)"`
 	EndRFC3339    string `json:"end_rfc_3339,omitempty" jsonschema:"description=Optionally\\, the end time of the query in RFC3339 format (defaults to now)"`
 }
