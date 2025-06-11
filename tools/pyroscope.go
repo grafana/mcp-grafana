@@ -202,7 +202,7 @@ type FetchPyroscopeProfileParams struct {
 	DataSourceUID string `json:"data_source_uid" jsonschema:"required,description=The UID of the datasource to query"`
 	ProfileType   string `json:"profile_type" jsonschema:"required,description=Type profile type\\, use the list_pyroscope_profile_types tool to fetch available profile types"`
 	Matchers      string `json:"matchers,omitempty" jsonschema:"description=Optionally\\, Prometheus style matchers used to filter the result set (defaults to: {})"`
-	MaxNodes      int    `json:"max_nodes,omitempty" jsonschema:"description=Optionally\\, the maximum number of nodes in the resulting profile. Less nodes results in smaller profiles that execute faster\\, more nodes result in larger queries that have more detail. A value of -1 indicates to use as many nodes as necessary (default: 16384)"`
+	MaxNodeDepth  int    `json:"max_node_depth,omitempty" jsonschema:"description=Optionally\\, the maximum depth of nodes in the resulting profile. Less depth results in smaller profiles that execute faster\\, more depth result in larger profiles that have more detail. A value of -1 indicates to use an unbounded node depth (default: 100). Reducing max node depth from the default will negatively impact the accuracy of the profile"`
 	StartRFC3339  string `json:"start_rfc_3339,omitempty" jsonschema:"description=Optionally\\, the start time of the query in RFC3339 format (defaults to 1 hour ago)"`
 	EndRFC3339    string `json:"end_rfc_3339,omitempty" jsonschema:"description=Optionally\\, the end time of the query in RFC3339 format (defaults to now)"`
 }
@@ -214,7 +214,7 @@ func fetchPyroscopeProfile(ctx context.Context, args FetchPyroscopeProfileParams
 		args.Matchers = fmt.Sprintf("{%s}", args.Matchers)
 	}
 
-	args.MaxNodes = intOrDefault(args.MaxNodes, 16384)
+	args.MaxNodeDepth = intOrDefault(args.MaxNodeDepth, 100)
 
 	start, err := rfc3339OrDefault(args.StartRFC3339, time.Time{})
 	if err != nil {
@@ -242,7 +242,7 @@ func fetchPyroscopeProfile(ctx context.Context, args FetchPyroscopeProfileParams
 		Start:       start,
 		End:         end,
 		Format:      "dot",
-		MaxNodes:    args.MaxNodes,
+		MaxNodes:    args.MaxNodeDepth,
 	}
 	res, err := client.Render(ctx, req)
 	if err != nil {
