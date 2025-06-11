@@ -52,6 +52,10 @@ run: ## Run the MCP server in stdio mode.
 run-sse: ## Run the MCP server in SSE mode.
 	go run ./cmd/mcp-grafana --transport sse --log-level debug --debug
 
+PHONY: run-streamable-http
+run-streamable-http: ## Run the MCP server in StreamableHTTP mode.
+	go run ./cmd/mcp-grafana --transport streamable-http --log-level debug --debug
+
 .PHONY: run-test-services
 run-test-services: ## Run the docker-compose services required for the unit and integration tests.
 	docker-compose up -d --build

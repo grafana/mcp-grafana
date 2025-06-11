@@ -106,6 +106,15 @@ func run(transport, addr, basePath string, logLevel slog.Level, dt disabledTools
 		if err := srv.Start(addr); err != nil {
 			return fmt.Errorf("Server error: %v", err)
 		}
+	case "streamable-http":
+		srv := server.NewStreamableHTTPServer(s, server.WithHTTPContextFunc(mcpgrafana.ComposedHTTPContextFunc(gc.debug)),
+			server.WithStateLess(true),
+			server.WithEndpointPath(basePath),
+		)
+		slog.Info("Starting Grafana MCP server using StreamableHTTP transport", "address", addr, "basePath", basePath)
+		if err := srv.Start(addr); err != nil {
+			return fmt.Errorf("Server error: %v", err)
+		}
 	default:
 		return fmt.Errorf(
 			"Invalid transport type: %s. Must be 'stdio' or 'sse'",
@@ -124,14 +133,21 @@ func main() {
 		"stdio",
 		"Transport type (stdio or sse)",
 	)
-	addr := flag.String("sse-address", "localhost:8000", "The host and port to start the sse server on")
-	basePath := flag.String("base-path", "", "Base path for the sse server")
+	addr := flag.String("address", "localhost:8000", "The host and port to start the sse server on")
+	basePath := flag.String("base-path", "", "Base path for the sse or streamable-http server")
 	logLevel := flag.String("log-level", "info", "Log level (debug, info, warn, error)")
 	var dt disabledTools
 	dt.addFlags()
 	var gc grafanaConfig
 	gc.addFlags()
 	flag.Parse()
+
+	if transport == "streamable-http" {
+		if basePath == nil || *basePath == "" {
+			endpoint := "/mcp"
+			basePath = &endpoint
+		}
+	}
 
 	if err := run(transport, *addr, *basePath, parseLevel(*logLevel), dt, gc); err != nil {
 		panic(err)
