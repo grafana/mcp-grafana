@@ -877,7 +877,7 @@ wheels = [
 [[package]]
 name = "langevals"
 version = "0.1.8"
-source = { git = "https://github.com/langwatch/langevals#3a934d1dc4ea95f039cf7bc4969e6bad1543c719" }
+source = { git = "https://github.com/langwatch/langevals?rev=3a934d1dc4ea95f039cf7bc4969e6bad1543c719#3a934d1dc4ea95f039cf7bc4969e6bad1543c719" }
 dependencies = [
     { name = "fastapi" },
     { name = "gunicorn" },
@@ -900,7 +900,9 @@ langevals = [
 [[package]]
 name = "langevals-core"
 version = "0.1.14"
-source = { directory = "../../../../.cache/uv/git-v0/checkouts/d70a522c95c0e55c/3a934d1/langevals_core" }
+# Note: I had to manually switch this from a `directory` to a `git` source after running `uv lock`.
+# I think this is https://github.com/astral-sh/uv/issues/9516? But that was resolved so I'm not sure.
+source = { git = "https://github.com/langwatch/langevals?subdirectory=langevals_core&rev=3a934d1dc4ea95f039cf7bc4969e6bad1543c719#3a934d1dc4ea95f039cf7bc4969e6bad1543c719" }
 dependencies = [
     { name = "anyio" },
     { name = "boto3" },
@@ -929,7 +931,9 @@ requires-dist = [
 [[package]]
 name = "langevals-langevals"
 version = "0.1.10"
-source = { directory = "../../../../.cache/uv/git-v0/checkouts/d70a522c95c0e55c/3a934d1/evaluators/langevals" }
+# Note: I had to manually switch this from a `directory` to a `git` source after running `uv lock`.
+# I think this is https://github.com/astral-sh/uv/issues/9516? But that was resolved so I'm not sure.
+source = { git = "https://github.com/langwatch/langevals?subdirectory=evaluators/langevals&rev=3a934d1dc4ea95f039cf7bc4969e6bad1543c719#3a934d1dc4ea95f039cf7bc4969e6bad1543c719" }
 dependencies = [
     { name = "dspy" },
     { name = "jsonschema" },
@@ -945,7 +949,7 @@ dependencies = [
 requires-dist = [
     { name = "dspy", specifier = ">=2.6.8,<3.0.0" },
     { name = "jsonschema", specifier = ">=4.23.0,<5.0.0" },
-    { name = "langevals-core", directory = "../../../../.cache/uv/git-v0/checkouts/d70a522c95c0e55c/3a934d1/langevals_core" },
+    { name = "langevals-core", git = "https://github.com/langwatch/langevals?subdirectory=langevals_core&rev=3a934d1dc4ea95f039cf7bc4969e6bad1543c719#3a934d1dc4ea95f039cf7bc4969e6bad1543c719" },
     { name = "litellm", specifier = ">=1.61.20,<2.0.0" },
     { name = "markdown", specifier = ">=3.7,<4.0" },
     { name = "numpy", specifier = ">=1.26.4,<2.0.0" },
@@ -1779,7 +1783,7 @@ dev = [
 dev = [
     { name = "anyio", specifier = ">=4.9.0" },
     { name = "flaky", specifier = ">=3.8.1" },
-    { name = "langevals", extras = ["langevals"], git = "https://github.com/langwatch/langevals" },
+    { name = "langevals", extras = ["langevals"], git = "https://github.com/langwatch/langevals?rev=3a934d1dc4ea95f039cf7bc4969e6bad1543c719" },
     { name = "litellm", specifier = ">=1.63.12" },
     { name = "mcp", specifier = ">=1.9.3" },
     { name = "pytest", specifier = ">=8.3.5" },
