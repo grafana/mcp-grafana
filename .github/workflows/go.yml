@@ -110,9 +110,12 @@ jobs:
         run: make test-cloud
 
   test-python-e2e:
-    name: Python E2E Tests
+    name: Python E2E Tests (${{ matrix.transport }})
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        transport: [stdio, sse, streamable-http]
     permissions:
       id-token: write
       contents: read
@@ -150,16 +153,21 @@ jobs:
       - name: Wait for Grafana server and Prometheus server to start and scrape
         run: sleep 30
 
+      - name: Build mcp-grafana
+        run: go build -o dist/mcp-grafana ./cmd/mcp-grafana
+
       - name: Start MCP server in background
-        run: |
-          go build ./cmd/mcp-grafana
-          nohup go run ./cmd/mcp-grafana -t sse > mcp.log 2>&1 &
+        if: matrix.transport != 'stdio'
+        run: nohup ./dist/mcp-grafana -t ${{ matrix.transport }} > mcp.log 2>&1 &
 
       - name: Run Python e2e tests
+        env:
+          MCP_GRAFANA_PATH: ../dist/mcp-grafana
+          MCP_TRANSPORT: ${{ matrix.transport }}
         run: |
           cd tests
           uv run pytest
 
-      - if: failure()
+      - if: failure() && matrix.transport != 'stdio'
         name: Print MCP logs
         run: cat mcp.log
