@@ -359,6 +359,10 @@ func (c *pyroscopeClient) get(ctx context.Context, path string, params url.Value
 	if len(body) == 0 {
 		return nil, fmt.Errorf("Pyroscope API returned an empty response")
 	}
+
+	if strings.Contains(string(body), "Showing nodes accounting for 0, 0% of 0 total") {
+		return nil, fmt.Errorf("Pyroscope API returned a empty profile")
+	}
 	return body, nil
 }
 
