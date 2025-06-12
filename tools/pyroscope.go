@@ -254,13 +254,12 @@ func fetchPyroscopeProfile(ctx context.Context, args FetchPyroscopeProfileParams
 }
 
 func newPyroscopeClient(ctx context.Context, uid string) (*pyroscopeClient, error) {
-	apiKey := mcpgrafana.GrafanaAPIKeyFromContext(ctx)
-	accessToken, userToken := mcpgrafana.OnBehalfOfAuthFromContext(ctx)
+	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
 	httpClient := &http.Client{
 		Transport: &authRoundTripper{
-			accessToken: accessToken,
-			userToken:   userToken,
-			apiKey:      apiKey,
+			accessToken: cfg.AccessToken,
+			idToken:     cfg.IDToken,
+			apiKey:      cfg.APIKey,
 			underlying:  http.DefaultTransport,
 		},
 		Timeout: 10 * time.Second,
@@ -271,7 +270,7 @@ func newPyroscopeClient(ctx context.Context, uid string) (*pyroscopeClient, erro
 		return nil, err
 	}
 
-	base, err := url.Parse(mcpgrafana.GrafanaURLFromContext(ctx))
+	base, err := url.Parse(cfg.URL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse base url: %w", err)
 	}
