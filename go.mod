@@ -13,7 +13,7 @@ require (
 	github.com/grafana/grafana-plugin-sdk-go v0.277.1
 	github.com/grafana/incident-go v0.0.0-20250211094540-dc6a98fdae43
 	github.com/invopop/jsonschema v0.13.0
-	github.com/mark3labs/mcp-go v0.31.0
+	github.com/mark3labs/mcp-go v0.32.0
 	github.com/prometheus/client_golang v1.22.0
 	github.com/prometheus/common v0.64.0
 	github.com/prometheus/prometheus v0.304.1
