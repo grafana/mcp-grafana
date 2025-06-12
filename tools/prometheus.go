@@ -35,27 +35,24 @@ func promClientFromContext(ctx context.Context, uid string) (promv1.API, error) 
 		return nil, err
 	}
 
-	var (
-		grafanaURL             = mcpgrafana.GrafanaURLFromContext(ctx)
-		apiKey                 = mcpgrafana.GrafanaAPIKeyFromContext(ctx)
-		accessToken, userToken = mcpgrafana.OnBehalfOfAuthFromContext(ctx)
-	)
-	url := fmt.Sprintf("%s/api/datasources/proxy/uid/%s", strings.TrimRight(grafanaURL, "/"), uid)
+	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
+	url := fmt.Sprintf("%s/api/datasources/proxy/uid/%s", strings.TrimRight(cfg.URL, "/"), uid)
+
 	rt := api.DefaultRoundTripper
-	if accessToken != "" && userToken != "" {
+	if cfg.AccessToken != "" && cfg.IDToken != "" {
 		rt = config.NewHeadersRoundTripper(&config.Headers{
 			Headers: map[string]config.Header{
-				"X-Access-Token": config.Header{
-					Secrets: []config.Secret{config.Secret(accessToken)},
+				"X-Access-Token": {
+					Secrets: []config.Secret{config.Secret(cfg.AccessToken)},
 				},
-				"X-Grafana-Id": config.Header{
-					Secrets: []config.Secret{config.Secret(userToken)},
+				"X-Grafana-Id": {
+					Secrets: []config.Secret{config.Secret(cfg.IDToken)},
 				},
 			},
 		}, rt)
-	} else if apiKey != "" {
+	} else if cfg.APIKey != "" {
 		rt = config.NewAuthorizationCredentialsRoundTripper(
-			"Bearer", config.NewInlineSecret(apiKey), rt,
+			"Bearer", config.NewInlineSecret(cfg.APIKey), rt,
 		)
 	}
 	c, err := api.NewClient(api.Config{

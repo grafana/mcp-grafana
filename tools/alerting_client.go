@@ -23,24 +23,24 @@ const (
 type alertingClient struct {
 	baseURL     *url.URL
 	accessToken string
-	userToken   string
+	idToken     string
 	apiKey      string
 	httpClient  *http.Client
 }
 
 func newAlertingClientFromContext(ctx context.Context) (*alertingClient, error) {
-	baseURL := strings.TrimRight(mcpgrafana.GrafanaURLFromContext(ctx), "/")
+	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
+	baseURL := strings.TrimRight(cfg.URL, "/")
 	parsedBaseURL, err := url.Parse(baseURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid Grafana base URL %q: %w", baseURL, err)
 	}
-	accessToken, userToken := mcpgrafana.OnBehalfOfAuthFromContext(ctx)
 
 	return &alertingClient{
 		baseURL:     parsedBaseURL,
-		accessToken: accessToken,
-		userToken:   userToken,
-		apiKey:      mcpgrafana.GrafanaAPIKeyFromContext(ctx),
+		accessToken: cfg.AccessToken,
+		idToken:     cfg.IDToken,
+		apiKey:      cfg.APIKey,
 		httpClient: &http.Client{
 			Timeout: defaultTimeout,
 		},
@@ -59,9 +59,9 @@ func (c *alertingClient) makeRequest(ctx context.Context, path string) (*http.Re
 	req.Header.Set("Content-Type", "application/json")
 
 	// If accessToken is set we use that first and fall back to normal Authorization.
-	if c.accessToken != "" && c.userToken != "" {
+	if c.accessToken != "" && c.idToken != "" {
 		req.Header.Set("X-Access-Token", c.accessToken)
-		req.Header.Set("X-Grafana-Id", c.userToken)
+		req.Header.Set("X-Grafana-Id", c.idToken)
 	} else if c.apiKey != "" {
 		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.apiKey))
 	}

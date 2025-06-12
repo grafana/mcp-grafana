@@ -90,22 +90,31 @@ func newServer(dt disabledTools) *server.MCPServer {
 	return s
 }
 
-func run(transport, addr, basePath string, logLevel slog.Level, dt disabledTools, gc grafanaConfig) error {
+func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt disabledTools, gc mcpgrafana.GrafanaConfig) error {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})))
 	s := newServer(dt)
 
 	switch transport {
 	case "stdio":
 		srv := server.NewStdioServer(s)
-		srv.SetContextFunc(mcpgrafana.ComposedStdioContextFunc(gc.debug))
+		srv.SetContextFunc(mcpgrafana.ComposedStdioContextFunc(gc))
 		slog.Info("Starting Grafana MCP server using stdio transport")
 		return srv.Listen(context.Background(), os.Stdin, os.Stdout)
 	case "sse":
 		srv := server.NewSSEServer(s,
-			server.WithSSEContextFunc(mcpgrafana.ComposedSSEContextFunc(gc.debug)),
+			server.WithSSEContextFunc(mcpgrafana.ComposedSSEContextFunc(gc)),
 			server.WithStaticBasePath(basePath),
 		)
 		slog.Info("Starting Grafana MCP server using SSE transport", "address", addr, "basePath", basePath)
+		if err := srv.Start(addr); err != nil {
+			return fmt.Errorf("Server error: %v", err)
+		}
+	case "streamable-http":
+		srv := server.NewStreamableHTTPServer(s, server.WithHTTPContextFunc(mcpgrafana.ComposedHTTPContextFunc(gc)),
+			server.WithStateLess(true),
+			server.WithEndpointPath(endpointPath),
+		)
+		slog.Info("Starting Grafana MCP server using StreamableHTTP transport", "address", addr, "endpointPath", endpointPath)
 		if err := srv.Start(addr); err != nil {
 			return fmt.Errorf("Server error: %v", err)
 		}
@@ -127,8 +136,9 @@ func main() {
 		"stdio",
 		"Transport type (stdio or sse)",
 	)
-	addr := flag.String("sse-address", "localhost:8000", "The host and port to start the sse server on")
+	addr := flag.String("address", "localhost:8000", "The host and port to start the sse server on")
 	basePath := flag.String("base-path", "", "Base path for the sse server")
+	endpointPath := flag.String("endpoint-path", "/mcp", "Endpoint path for the streamable-http server")
 	logLevel := flag.String("log-level", "info", "Log level (debug, info, warn, error)")
 	var dt disabledTools
 	dt.addFlags()
@@ -136,7 +146,9 @@ func main() {
 	gc.addFlags()
 	flag.Parse()
 
-	if err := run(transport, *addr, *basePath, parseLevel(*logLevel), dt, gc); err != nil {
+	grafanaConfig := mcpgrafana.GrafanaConfig{Debug: gc.debug}
+
+	if err := run(transport, *addr, *basePath, *endpointPath, parseLevel(*logLevel), dt, grafanaConfig); err != nil {
 		panic(err)
 	}
 }
