@@ -31,8 +31,11 @@ func createCloudTestContext(t *testing.T, testName, urlEnv, apiKeyEnv string) co
 
 	client := mcpgrafana.NewGrafanaClient(ctx, grafanaURL, grafanaApiKey)
 
-	ctx = mcpgrafana.WithGrafanaURL(ctx, grafanaURL)
-	ctx = mcpgrafana.WithGrafanaAPIKey(ctx, grafanaApiKey)
+	config := mcpgrafana.GrafanaConfig{
+		URL:    grafanaURL,
+		APIKey: grafanaApiKey,
+	}
+	ctx = mcpgrafana.WithGrafanaConfig(ctx, config)
 	ctx = mcpgrafana.WithGrafanaClient(ctx, client)
 
 	return ctx

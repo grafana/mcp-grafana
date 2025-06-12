@@ -18,9 +18,11 @@ import (
 
 func setupMockAssertsServer(handler http.HandlerFunc) (*httptest.Server, context.Context) {
 	server := httptest.NewServer(handler)
-	ctx := context.Background()
-	ctx = mcpgrafana.WithGrafanaURL(ctx, server.URL)
-	ctx = mcpgrafana.WithGrafanaAPIKey(ctx, "test-api-key")
+	config := mcpgrafana.GrafanaConfig{
+		URL:    server.URL,
+		APIKey: "test-api-key",
+	}
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), config)
 	return server, ctx
 }
 
@@ -95,7 +97,7 @@ func TestAssertTools(t *testing.T) {
 						"type": "Service",
 						"name": "mongodb",
 						"scope": map[string]interface{}{
-							"env":       "asserts-demo",
+							"env": "asserts-demo",
 						},
 					},
 				},
@@ -121,5 +123,5 @@ func TestAssertTools(t *testing.T) {
 		require.NoError(t, err)
 		assert.NotNil(t, result)
 		assert.Equal(t, `{"summary": "test summary"}`, result)
-	})	
+	})
 }

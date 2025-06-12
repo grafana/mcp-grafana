@@ -33,33 +33,46 @@ func urlAndAPIKeyFromEnv() (string, string) {
 }
 
 func urlAndAPIKeyFromHeaders(req *http.Request) (string, string) {
-	u := req.Header.Get(grafanaURLHeader)
+	u := strings.TrimRight(req.Header.Get(grafanaURLHeader), "/")
 	apiKey := req.Header.Get(grafanaAPIKeyHeader)
 	return u, apiKey
 }
 
-type grafanaURLKey struct{}
-type grafanaAPIKeyKey struct{}
-type grafanaAccessTokenKey struct{}
+// grafanaConfigKey is the context key for Grafana configuration.
+type grafanaConfigKey struct{}
 
-// grafanaDebugKey is the context key for the Grafana transport's debug flag.
-type grafanaDebugKey struct{}
+// GrafanaConfig represents the full configuration for Grafana clients.
+type GrafanaConfig struct {
+	// Debug enables debug mode for the Grafana client.
+	Debug bool
 
-// WithGrafanaDebug adds the Grafana debug flag to the context.
-func WithGrafanaDebug(ctx context.Context, debug bool) context.Context {
-	if debug {
-		slog.Info("Grafana transport debug mode enabled")
-	}
-	return context.WithValue(ctx, grafanaDebugKey{}, debug)
+	// URL is the URL of the Grafana instance.
+	URL string
+
+	// APIKey is the API key or service account token for the Grafana instance.
+	// It may be empty if we are using on-behalf-of auth.
+	APIKey string
+
+	// AccessToken is the Grafana Cloud access policy token used for on-behalf-of auth in Grafana Cloud.
+	AccessToken string
+	// IDToken is an ID token identifying the user for the current request.
+	// It comes from the `X-Grafana-Id` header sent from Grafana to plugin backends.
+	// It is used for on-behalf-of auth in Grafana Cloud.
+	IDToken string
 }
 
-// GrafanaDebugFromContext extracts the Grafana debug flag from the context.
-// If the flag is not set, it returns false.
-func GrafanaDebugFromContext(ctx context.Context) bool {
-	if debug, ok := ctx.Value(grafanaDebugKey{}).(bool); ok {
-		return debug
+// WithGrafanaConfig adds Grafana configuration to the context.
+func WithGrafanaConfig(ctx context.Context, config GrafanaConfig) context.Context {
+	return context.WithValue(ctx, grafanaConfigKey{}, config)
+}
+
+// GrafanaConfigFromContext extracts Grafana configuration from the context.
+// If no config is found, returns a zero-value GrafanaConfig.
+func GrafanaConfigFromContext(ctx context.Context) GrafanaConfig {
+	if config, ok := ctx.Value(grafanaConfigKey{}).(GrafanaConfig); ok {
+		return config
 	}
-	return false
+	return GrafanaConfig{}
 }
 
 // ExtractGrafanaInfoFromEnv is a StdioContextFunc that extracts Grafana configuration
@@ -74,7 +87,13 @@ var ExtractGrafanaInfoFromEnv server.StdioContextFunc = func(ctx context.Context
 		panic(fmt.Errorf("invalid Grafana URL %s: %w", u, err))
 	}
 	slog.Info("Using Grafana configuration", "url", parsedURL.Redacted(), "api_key_set", apiKey != "")
-	return WithGrafanaURL(WithGrafanaAPIKey(ctx, apiKey), u)
+
+	// Get existing config or create a new one.
+	// This will respect the existing debug flag, if set.
+	config := GrafanaConfigFromContext(ctx)
+	config.URL = u
+	config.APIKey = apiKey
+	return WithGrafanaConfig(ctx, config)
 }
 
 // httpContextFunc is a function that can be used as a `server.HTTPContextFunc` or a
@@ -96,61 +115,35 @@ var ExtractGrafanaInfoFromHeaders httpContextFunc = func(ctx context.Context, re
 	if apiKey == "" {
 		apiKey = apiKeyEnv
 	}
-	return WithGrafanaURL(WithGrafanaAPIKey(ctx, apiKey), u)
-}
 
-// WithGrafanaURL adds the Grafana URL to the context.
-func WithGrafanaURL(ctx context.Context, url string) context.Context {
-	return context.WithValue(ctx, grafanaURLKey{}, url)
-}
-
-// WithGrafanaAPIKey adds the Grafana API key to the context.
-func WithGrafanaAPIKey(ctx context.Context, apiKey string) context.Context {
-	return context.WithValue(ctx, grafanaAPIKeyKey{}, apiKey)
+	// Get existing config or create a new one.
+	// This will respect the existing debug flag, if set.
+	config := GrafanaConfigFromContext(ctx)
+	config.URL = u
+	config.APIKey = apiKey
+	return WithGrafanaConfig(ctx, config)
 }
 
 // WithOnBehalfOfAuth adds the Grafana access token and user token to the
-// context. These tokens are used for on-behalf-of auth in Grafana Cloud.
+// Grafana config. These tokens are used for on-behalf-of auth in Grafana Cloud.
 func WithOnBehalfOfAuth(ctx context.Context, accessToken, userToken string) (context.Context, error) {
 	if accessToken == "" || userToken == "" {
 		return nil, fmt.Errorf("neither accessToken nor userToken can be empty")
 	}
-	return context.WithValue(ctx, grafanaAccessTokenKey{}, []string{accessToken, userToken}), nil
+	cfg := GrafanaConfigFromContext(ctx)
+	cfg.AccessToken = accessToken
+	cfg.IDToken = userToken
+	return WithGrafanaConfig(ctx, cfg), nil
 }
 
 // MustWithOnBehalfOfAuth adds the access and user tokens to the context,
-// panicing if either are empty.
+// panicking if either are empty.
 func MustWithOnBehalfOfAuth(ctx context.Context, accessToken, userToken string) context.Context {
 	ctx, err := WithOnBehalfOfAuth(ctx, accessToken, userToken)
 	if err != nil {
 		panic(err)
 	}
 	return ctx
-}
-
-// GrafanaURLFromContext extracts the Grafana URL from the context.
-func GrafanaURLFromContext(ctx context.Context) string {
-	if u, ok := ctx.Value(grafanaURLKey{}).(string); ok {
-		return u
-	}
-	return defaultGrafanaURL
-}
-
-// GrafanaAPIKeyFromContext extracts the Grafana API key from the context.
-func GrafanaAPIKeyFromContext(ctx context.Context) string {
-	if k, ok := ctx.Value(grafanaAPIKeyKey{}).(string); ok {
-		return k
-	}
-	return ""
-}
-
-// OnBehalfOfAuthFromContext extracts the Grafana access and user tokens from
-// the context. These tokens are used for on-behalf-of auth in Grafana Cloud.
-func OnBehalfOfAuthFromContext(ctx context.Context) (string, string) {
-	if k, ok := ctx.Value(grafanaAccessTokenKey{}).([]string); ok {
-		return k[0], k[1]
-	}
-	return "", ""
 }
 
 type grafanaClientKey struct{}
@@ -188,7 +181,8 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string) *client.Gr
 		cfg.APIKey = apiKey
 	}
 
-	cfg.Debug = GrafanaDebugFromContext(ctx)
+	config := GrafanaConfigFromContext(ctx)
+	cfg.Debug = config.Debug
 
 	slog.Debug("Creating Grafana client", "url", parsedURL.Redacted(), "api_key_set", apiKey != "")
 	return client.NewHTTPClientWithConfig(strfmt.Default, cfg)
@@ -258,6 +252,7 @@ var ExtractIncidentClientFromEnv server.StdioContextFunc = func(ctx context.Cont
 	}
 	slog.Debug("Creating Incident client", "url", parsedURL.Redacted(), "api_key_set", apiKey != "")
 	client := incident.NewClient(incidentURL, apiKey)
+
 	return context.WithValue(ctx, incidentClientKey{}, client)
 }
 
@@ -275,6 +270,7 @@ var ExtractIncidentClientFromHeaders httpContextFunc = func(ctx context.Context,
 	}
 	incidentURL := fmt.Sprintf("%s/api/plugins/grafana-irm-app/resources/api/v1/", grafanaURL)
 	client := incident.NewClient(incidentURL, apiKey)
+
 	return context.WithValue(ctx, incidentClientKey{}, client)
 }
 
@@ -322,10 +318,10 @@ func ComposeHTTPContextFuncs(funcs ...httpContextFunc) server.HTTPContextFunc {
 
 // ComposedStdioContextFunc returns a StdioContextFunc that comprises all predefined StdioContextFuncs,
 // as well as the Grafana debug flag.
-func ComposedStdioContextFunc(debug bool) server.StdioContextFunc {
+func ComposedStdioContextFunc(config GrafanaConfig) server.StdioContextFunc {
 	return ComposeStdioContextFuncs(
 		func(ctx context.Context) context.Context {
-			return WithGrafanaDebug(ctx, debug)
+			return WithGrafanaConfig(ctx, config)
 		},
 		ExtractGrafanaInfoFromEnv,
 		ExtractGrafanaClientFromEnv,
@@ -334,10 +330,10 @@ func ComposedStdioContextFunc(debug bool) server.StdioContextFunc {
 }
 
 // ComposedSSEContextFunc is a SSEContextFunc that comprises all predefined SSEContextFuncs.
-func ComposedSSEContextFunc(debug bool) server.SSEContextFunc {
+func ComposedSSEContextFunc(config GrafanaConfig) server.SSEContextFunc {
 	return ComposeSSEContextFuncs(
 		func(ctx context.Context, req *http.Request) context.Context {
-			return WithGrafanaDebug(ctx, debug)
+			return WithGrafanaConfig(ctx, config)
 		},
 		ExtractGrafanaInfoFromHeaders,
 		ExtractGrafanaClientFromHeaders,
@@ -346,10 +342,10 @@ func ComposedSSEContextFunc(debug bool) server.SSEContextFunc {
 }
 
 // ComposedHTTPContextFunc is a HTTPContextFunc that comprises all predefined HTTPContextFuncs.
-func ComposedHTTPContextFunc(debug bool) server.HTTPContextFunc {
+func ComposedHTTPContextFunc(config GrafanaConfig) server.HTTPContextFunc {
 	return ComposeHTTPContextFuncs(
 		func(ctx context.Context, req *http.Request) context.Context {
-			return WithGrafanaDebug(ctx, debug)
+			return WithGrafanaConfig(ctx, config)
 		},
 		ExtractGrafanaInfoFromHeaders,
 		ExtractGrafanaClientFromHeaders,

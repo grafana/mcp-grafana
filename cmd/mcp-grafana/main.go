@@ -87,19 +87,19 @@ func newServer(dt disabledTools) *server.MCPServer {
 	return s
 }
 
-func run(transport, addr, basePath string, endpointPath string, logLevel slog.Level, dt disabledTools, gc grafanaConfig) error {
+func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt disabledTools, gc mcpgrafana.GrafanaConfig) error {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})))
 	s := newServer(dt)
 
 	switch transport {
 	case "stdio":
 		srv := server.NewStdioServer(s)
-		srv.SetContextFunc(mcpgrafana.ComposedStdioContextFunc(gc.debug))
+		srv.SetContextFunc(mcpgrafana.ComposedStdioContextFunc(gc))
 		slog.Info("Starting Grafana MCP server using stdio transport")
 		return srv.Listen(context.Background(), os.Stdin, os.Stdout)
 	case "sse":
 		srv := server.NewSSEServer(s,
-			server.WithSSEContextFunc(mcpgrafana.ComposedSSEContextFunc(gc.debug)),
+			server.WithSSEContextFunc(mcpgrafana.ComposedSSEContextFunc(gc)),
 			server.WithStaticBasePath(basePath),
 		)
 		slog.Info("Starting Grafana MCP server using SSE transport", "address", addr, "basePath", basePath)
@@ -107,7 +107,7 @@ func run(transport, addr, basePath string, endpointPath string, logLevel slog.Le
 			return fmt.Errorf("Server error: %v", err)
 		}
 	case "streamable-http":
-		srv := server.NewStreamableHTTPServer(s, server.WithHTTPContextFunc(mcpgrafana.ComposedHTTPContextFunc(gc.debug)),
+		srv := server.NewStreamableHTTPServer(s, server.WithHTTPContextFunc(mcpgrafana.ComposedHTTPContextFunc(gc)),
 			server.WithStateLess(true),
 			server.WithEndpointPath(endpointPath),
 		)
@@ -143,7 +143,9 @@ func main() {
 	gc.addFlags()
 	flag.Parse()
 
-	if err := run(transport, *addr, *basePath, *endpointPath, parseLevel(*logLevel), dt, gc); err != nil {
+	grafanaConfig := mcpgrafana.GrafanaConfig{Debug: gc.debug}
+
+	if err := run(transport, *addr, *basePath, *endpointPath, parseLevel(*logLevel), dt, grafanaConfig); err != nil {
 		panic(err)
 	}
 }

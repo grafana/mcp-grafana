@@ -102,8 +102,11 @@ func TestAlertingClient_GetRules_Error(t *testing.T) {
 }
 
 func TestNewAlertingClientFromContext(t *testing.T) {
-	ctx := mcpgrafana.WithGrafanaURL(context.Background(), "http://localhost:3000/")
-	ctx = mcpgrafana.WithGrafanaAPIKey(ctx, "test-api-key")
+	config := mcpgrafana.GrafanaConfig{
+		URL:    "http://localhost:3000/",
+		APIKey: "test-api-key",
+	}
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), config)
 
 	client, err := newAlertingClientFromContext(ctx)
 	require.NoError(t, err)

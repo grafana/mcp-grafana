@@ -45,7 +45,15 @@ func newTestContext() context.Context {
 	}
 
 	client := client.NewHTTPClientWithConfig(strfmt.Default, cfg)
-	return mcpgrafana.WithGrafanaClient(context.Background(), client)
+
+	grafanaCfg := mcpgrafana.GrafanaConfig{
+		Debug:  true,
+		URL:    "http://localhost:3000",
+		APIKey: cfg.APIKey,
+	}
+
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), grafanaCfg)
+	return mcpgrafana.WithGrafanaClient(ctx, client)
 }
 
 func TestDatasourcesTools(t *testing.T) {

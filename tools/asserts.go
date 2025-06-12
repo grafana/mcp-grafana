@@ -16,15 +16,14 @@ import (
 )
 
 func newAssertsClient(ctx context.Context) (*Client, error) {
-	grafanaURL, apiKey := mcpgrafana.GrafanaURLFromContext(ctx), mcpgrafana.GrafanaAPIKeyFromContext(ctx)
-	url := fmt.Sprintf("%s/api/plugins/grafana-asserts-app/resources/asserts/api-server", strings.TrimRight(grafanaURL, "/"))
-	accessToken, userToken := mcpgrafana.OnBehalfOfAuthFromContext(ctx)
+	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
+	url := fmt.Sprintf("%s/api/plugins/grafana-asserts-app/resources/asserts/api-server", strings.TrimRight(cfg.URL, "/"))
 
 	client := &http.Client{
 		Transport: &authRoundTripper{
-			apiKey:      apiKey,
-			accessToken: accessToken,
-			userToken:   userToken,
+			apiKey:      cfg.APIKey,
+			accessToken: cfg.AccessToken,
+			idToken:     cfg.IDToken,
 			underlying:  http.DefaultTransport,
 		},
 	}
