@@ -138,7 +138,7 @@ func listPyroscopeLabelValues(ctx context.Context, args ListPyroscopeLabelValues
 }
 
 var ListPyroscopeProfileTypes = mcpgrafana.MustTool(
-	"list_pyroscope_label_values",
+	"list_pyroscope_profile_types",
 	"Lists all available profile types available in a specified Pyroscope datasource and time range. Returns a list of all available profile types (example profile type: \"process_cpu:cpu:nanoseconds:cpu:nanoseconds\"). A profile type has the following structure: <name>:<sample type>:<sample unit>:<period type>:<period unit>. Not all profile types are available for every service. If the time range is not provided, it defaults to the last hour.",
 	listPyroscopeProfileTypes,
 	mcp.WithTitleAnnotation("List Pyroscope profile types"),
