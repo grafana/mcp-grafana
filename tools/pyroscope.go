@@ -191,7 +191,7 @@ func listPyroscopeProfileTypes(ctx context.Context, args ListPyroscopeProfileTyp
 
 var FetchPyroscopeProfile = mcpgrafana.MustTool(
 	"fetch_pyroscope_profile",
-	"Fetches a profile from a Pyroscope data source for a given time range. By default, the time range is tha past 1 hour. The profile type is required, available profile types can be fetched via the list_pyroscope_profile_types tool. Not all profile types are available for every service. Expect some queries to return empty result sets, this indicates the profile type does not exist for that query. In such a case, consider trying a related profile type or giving up. Matchers are generally used to select an application by the service_name label (e.g. `service_name=\"foo\"`). The returned profile is in DOT format.",
+	"Fetches a profile from a Pyroscope data source for a given time range. By default, the time range is tha past 1 hour. The profile type is required, available profile types can be fetched via the list_pyroscope_profile_types tool. Not all profile types are available for every service. Expect some queries to return empty result sets, this indicates the profile type does not exist for that query. In such a case, consider trying a related profile type or giving up. Matchers are not required, but highly recommended, they are generally used to select an application by the service_name label (e.g. `service_name=\"foo\"`). Use the list_pyroscope_label_names tool to fetch available label names, and the list_pyroscope_label_values tool to fetch available label values. The returned profile is in DOT format.",
 	fetchPyroscopeProfile,
 	mcp.WithTitleAnnotation("Fetch Pyroscope profile"),
 	mcp.WithIdempotentHintAnnotation(true),
