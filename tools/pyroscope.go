@@ -26,9 +26,16 @@ func AddPyroscopeTools(mcp *server.MCPServer) {
 	FetchPyroscopeProfile.Register(mcp)
 }
 
+const listPyroscopeLabelNamesToolPrompt = `
+Lists all available label names (keys) found in profiles within a specified Pyroscope datasource, time range, and
+optional label matchers. Label matchers are typically used to qualify a service name ({service_name="foo"}). Returns a
+list of unique label strings (e.g., ["app", "env", "pod"]). Label names with double underscores (e.g. __name__) are
+internal and rarely useful to users. If the time range is not provided, it defaults to the last hour.
+`
+
 var ListPyroscopeLabelNames = mcpgrafana.MustTool(
 	"list_pyroscope_label_names",
-	"Lists all available label names (keys) found in profiles within a specified Pyroscope datasource, time range, and optional label matchers. Label matchers are typically used to qualify a service name ({service_name=\"foo\"}). Returns a list of unique label strings (e.g., `[\"app\", \"env\", \"pod\"]`). Label names with double underscores (e.g. __name__) are internal and rarely useful to users. If the time range is not provided, it defaults to the last hour.",
+	listPyroscopeLabelNamesToolPrompt,
 	listPyroscopeLabelNames,
 	mcp.WithTitleAnnotation("List Pyroscope label names"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -78,9 +85,16 @@ func listPyroscopeLabelNames(ctx context.Context, args ListPyroscopeLabelNamesPa
 	return res.Msg.Names, nil
 }
 
+const listPyroscopeLabelValuesToolPrompt = `
+Lists all available label values for a particular label name found in profiles within a specified Pyroscope datasource,
+time range, and optional label matchers. Label matchers are typically used to qualify a service name ({service_name="foo"}).
+Returns a list of unique label strings (e.g. for label name "env": ["dev", "staging", "prod"]). If the time range
+is not provided, it defaults to the last hour.
+`
+
 var ListPyroscopeLabelValues = mcpgrafana.MustTool(
 	"list_pyroscope_label_values",
-	"Lists all available label values for a particular label name found in profiles within a specified Pyroscope datasource, time range, and optional label matchers. Label matchers are typically used to qualify a service name ({service_name=\"foo\"}). Returns a list of unique label strings (e.g. for label name \"env\", [\"dev\", \"staging\", \"prod\"]). If the time range is not provided, it defaults to the last hour.",
+	listPyroscopeLabelValuesToolPrompt,
 	listPyroscopeLabelValues,
 	mcp.WithTitleAnnotation("List Pyroscope label values"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -137,9 +151,16 @@ func listPyroscopeLabelValues(ctx context.Context, args ListPyroscopeLabelValues
 	return res.Msg.Names, nil
 }
 
+const listPyroscopeProfileTypesToolPrompt = `
+Lists all available profile types available in a specified Pyroscope datasource and time range. Returns a list of all
+available profile types (example profile type: "process_cpu:cpu:nanoseconds:cpu:nanoseconds"). A profile type has the
+following structure: <name>:<sample type>:<sample unit>:<period type>:<period unit>. Not all profile types are available
+for every service. If the time range is not provided, it defaults to the last hour.
+`
+
 var ListPyroscopeProfileTypes = mcpgrafana.MustTool(
 	"list_pyroscope_profile_types",
-	"Lists all available profile types available in a specified Pyroscope datasource and time range. Returns a list of all available profile types (example profile type: \"process_cpu:cpu:nanoseconds:cpu:nanoseconds\"). A profile type has the following structure: <name>:<sample type>:<sample unit>:<period type>:<period unit>. Not all profile types are available for every service. If the time range is not provided, it defaults to the last hour.",
+	listPyroscopeProfileTypesToolPrompt,
 	listPyroscopeProfileTypes,
 	mcp.WithTitleAnnotation("List Pyroscope profile types"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -189,9 +210,19 @@ func listPyroscopeProfileTypes(ctx context.Context, args ListPyroscopeProfileTyp
 	return profileTypes, nil
 }
 
+const fetchPyroscopeProfileToolPrompt = `
+Fetches a profile from a Pyroscope data source for a given time range. By default, the time range is tha past 1 hour.
+The profile type is required, available profile types can be fetched via the list_pyroscope_profile_types tool. Not all
+profile types are available for every service. Expect some queries to return empty result sets, this indicates the
+profile type does not exist for that query. In such a case, consider trying a related profile type or giving up.
+Matchers are not required, but highly recommended, they are generally used to select an application by the service_name
+label (e.g. {service_name="foo"}). Use the list_pyroscope_label_names tool to fetch available label names, and the
+list_pyroscope_label_values tool to fetch available label values. The returned profile is in DOT format.
+`
+
 var FetchPyroscopeProfile = mcpgrafana.MustTool(
 	"fetch_pyroscope_profile",
-	"Fetches a profile from a Pyroscope data source for a given time range. By default, the time range is tha past 1 hour. The profile type is required, available profile types can be fetched via the list_pyroscope_profile_types tool. Not all profile types are available for every service. Expect some queries to return empty result sets, this indicates the profile type does not exist for that query. In such a case, consider trying a related profile type or giving up. Matchers are not required, but highly recommended, they are generally used to select an application by the service_name label (e.g. `service_name=\"foo\"`). Use the list_pyroscope_label_names tool to fetch available label names, and the list_pyroscope_label_values tool to fetch available label values. The returned profile is in DOT format.",
+	fetchPyroscopeProfileToolPrompt,
 	fetchPyroscopeProfile,
 	mcp.WithTitleAnnotation("Fetch Pyroscope profile"),
 	mcp.WithIdempotentHintAnnotation(true),
