@@ -37,7 +37,10 @@ test-integration: ## Run only the Docker-based integration tests (requires docke
 
 .PHONY: test-cloud
 test-cloud: ## Run only the cloud-based tests (requires cloud Grafana instance and credentials).
-	go test -v -tags cloud ./tools
+ifeq ($(origin GRAFANA_API_KEY), undefined)
+	$(error GRAFANA_API_KEY is not set. Please 'export GRAFANA_API_KEY=...' or use a tool like direnv to load it from .envrc)
+endif
+	GRAFANA_URL=https://mcptests.grafana-dev.net go test -v -count=1 -tags cloud ./tools
 
 .PHONY: test-python-e2e
 test-python-e2e: ## Run Python E2E tests (requires docker-compose services and SSE server to be running, use `make run-test-services` and `make run-sse` to start them).
