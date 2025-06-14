@@ -122,7 +122,7 @@ the OnCall tools, use `--disable-oncall`.
      docker pull mcp/grafana
      docker run --rm -p 8000:8000 -e GRAFANA_URL=http://localhost:3000 -e GRAFANA_API_KEY=<your service account token> mcp/grafana
      ```
-     
+
      3. **Streamable HTTP Mode**: In this mode, the server operates as an independent process that can handle multiple client connections. You must expose port 8000 using the `-p` flag: For this mode you must explicitly override the default with `-t streamable-http`
 
      ```bash
@@ -258,6 +258,124 @@ To use debug mode with the Claude Desktop configuration, update your config as f
 ```
 
 > Note: As with the standard configuration, the `-t stdio` argument is required to override the default SSE mode in the Docker image.
+
+### TLS Configuration
+
+If your Grafana instance is behind mTLS or requires custom TLS certificates, you can configure the MCP server to use custom certificates. The server supports the following TLS configuration options:
+
+- `--tls-cert-file`: Path to TLS certificate file for client authentication
+- `--tls-key-file`: Path to TLS private key file for client authentication
+- `--tls-ca-file`: Path to TLS CA certificate file for server verification
+- `--tls-skip-verify`: Skip TLS certificate verification (insecure, use only for testing)
+
+**Example with client certificate authentication:**
+
+```json
+{
+  "mcpServers": {
+    "grafana": {
+      "command": "mcp-grafana",
+      "args": [
+        "--tls-cert-file", "/path/to/client.crt",
+        "--tls-key-file", "/path/to/client.key",
+        "--tls-ca-file", "/path/to/ca.crt"
+      ],
+      "env": {
+        "GRAFANA_URL": "https://secure-grafana.example.com",
+        "GRAFANA_API_KEY": "<your service account token>"
+      }
+    }
+  }
+}
+```
+
+**Example with Docker:**
+
+```json
+{
+  "mcpServers": {
+    "grafana": {
+      "command": "docker",
+      "args": [
+        "run",
+        "--rm",
+        "-i",
+        "-v", "/path/to/certs:/certs:ro",
+        "-e", "GRAFANA_URL",
+        "-e", "GRAFANA_API_KEY",
+        "mcp/grafana",
+        "-t", "stdio",
+        "--tls-cert-file", "/certs/client.crt",
+        "--tls-key-file", "/certs/client.key",
+        "--tls-ca-file", "/certs/ca.crt"
+      ],
+      "env": {
+        "GRAFANA_URL": "https://secure-grafana.example.com",
+        "GRAFANA_API_KEY": "<your service account token>"
+      }
+    }
+  }
+}
+```
+
+The TLS configuration is applied to all HTTP clients used by the MCP server, including:
+- The main Grafana OpenAPI client
+- Prometheus datasource clients
+- Loki datasource clients
+- Incident management clients
+- Sift investigation clients
+- Alerting clients
+- Asserts clients
+
+**Direct CLI Usage Examples:**
+
+For testing with self-signed certificates:
+```bash
+./mcp-grafana --tls-skip-verify -debug
+```
+
+With client certificate authentication:
+```bash
+./mcp-grafana \
+  --tls-cert-file /path/to/client.crt \
+  --tls-key-file /path/to/client.key \
+  --tls-ca-file /path/to/ca.crt \
+  -debug
+```
+
+With custom CA certificate only:
+```bash
+./mcp-grafana --tls-ca-file /path/to/ca.crt
+```
+
+**Programmatic Usage:**
+
+If you're using this library programmatically, you can also create TLS-enabled context functions:
+
+```go
+// Using struct literals
+tlsConfig := &mcpgrafana.TLSConfig{
+    CertFile: "/path/to/client.crt",
+    KeyFile:  "/path/to/client.key",
+    CAFile:   "/path/to/ca.crt",
+}
+grafanaConfig := mcpgrafana.GrafanaConfig{
+    Debug:     true,
+    TLSConfig: tlsConfig,
+}
+contextFunc := mcpgrafana.ComposedStdioContextFunc(grafanaConfig)
+
+// Or inline
+grafanaConfig := mcpgrafana.GrafanaConfig{
+    Debug: true,
+    TLSConfig: &mcpgrafana.TLSConfig{
+        CertFile: "/path/to/client.crt",
+        KeyFile:  "/path/to/client.key",
+        CAFile:   "/path/to/ca.crt",
+    },
+}
+contextFunc := mcpgrafana.ComposedStdioContextFunc(grafanaConfig)
+```
 
 ## Development
 

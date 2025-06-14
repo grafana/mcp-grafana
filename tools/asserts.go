@@ -19,12 +19,22 @@ func newAssertsClient(ctx context.Context) (*Client, error) {
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
 	url := fmt.Sprintf("%s/api/plugins/grafana-asserts-app/resources/asserts/api-server", strings.TrimRight(cfg.URL, "/"))
 
+	// Create custom transport with TLS configuration if available
+	var transport http.RoundTripper = http.DefaultTransport
+	if tlsConfig := cfg.TLSConfig; tlsConfig != nil {
+		var err error
+		transport, err = tlsConfig.HTTPTransport(transport.(*http.Transport))
+		if err != nil {
+			return nil, fmt.Errorf("failed to create custom transport: %w", err)
+		}
+	}
+
 	client := &http.Client{
 		Transport: &authRoundTripper{
 			apiKey:      cfg.APIKey,
 			accessToken: cfg.AccessToken,
 			idToken:     cfg.IDToken,
-			underlying:  http.DefaultTransport,
+			underlying:  transport,
 		},
 	}
 

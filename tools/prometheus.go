@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"regexp"
 	"strings"
 	"time"
@@ -38,7 +39,16 @@ func promClientFromContext(ctx context.Context, uid string) (promv1.API, error) 
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
 	url := fmt.Sprintf("%s/api/datasources/proxy/uid/%s", strings.TrimRight(cfg.URL, "/"), uid)
 
+	// Create custom transport with TLS configuration if available
 	rt := api.DefaultRoundTripper
+	if tlsConfig := cfg.TLSConfig; tlsConfig != nil {
+		customTransport, err := tlsConfig.HTTPTransport(rt.(*http.Transport))
+		if err != nil {
+			return nil, fmt.Errorf("failed to create custom transport: %w", err)
+		}
+		rt = customTransport
+	}
+
 	if cfg.AccessToken != "" && cfg.IDToken != "" {
 		rt = config.NewHeadersRoundTripper(&config.Headers{
 			Headers: map[string]config.Header{

@@ -54,12 +54,22 @@ func newLokiClient(ctx context.Context, uid string) (*Client, error) {
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
 	url := fmt.Sprintf("%s/api/datasources/proxy/uid/%s", strings.TrimRight(cfg.URL, "/"), uid)
 
+	// Create custom transport with TLS configuration if available
+	var transport http.RoundTripper = http.DefaultTransport
+	if tlsConfig := cfg.TLSConfig; tlsConfig != nil {
+		var err error
+		transport, err = tlsConfig.HTTPTransport(transport.(*http.Transport))
+		if err != nil {
+			return nil, fmt.Errorf("failed to create custom transport: %w", err)
+		}
+	}
+
 	client := &http.Client{
 		Transport: &authRoundTripper{
 			accessToken: cfg.AccessToken,
 			idToken:     cfg.IDToken,
 			apiKey:      cfg.APIKey,
-			underlying:  http.DefaultTransport,
+			underlying:  transport,
 		},
 	}
 

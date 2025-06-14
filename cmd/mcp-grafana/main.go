@@ -42,6 +42,12 @@ type disabledTools struct {
 type grafanaConfig struct {
 	// Whether to enable debug mode for the Grafana transport.
 	debug bool
+
+	// TLS configuration
+	tlsCertFile   string
+	tlsKeyFile    string
+	tlsCAFile     string
+	tlsSkipVerify bool
 }
 
 func (dt *disabledTools) addFlags() {
@@ -63,6 +69,12 @@ func (dt *disabledTools) addFlags() {
 
 func (gc *grafanaConfig) addFlags() {
 	flag.BoolVar(&gc.debug, "debug", false, "Enable debug mode for the Grafana transport")
+
+	// TLS configuration flags
+	flag.StringVar(&gc.tlsCertFile, "tls-cert-file", "", "Path to TLS certificate file for client authentication")
+	flag.StringVar(&gc.tlsKeyFile, "tls-key-file", "", "Path to TLS private key file for client authentication")
+	flag.StringVar(&gc.tlsCAFile, "tls-ca-file", "", "Path to TLS CA certificate file for server verification")
+	flag.BoolVar(&gc.tlsSkipVerify, "tls-skip-verify", false, "Skip TLS certificate verification (insecure)")
 }
 
 func (dt *disabledTools) addTools(s *server.MCPServer) {
@@ -146,7 +158,16 @@ func main() {
 	gc.addFlags()
 	flag.Parse()
 
+	// Convert local grafanaConfig to mcpgrafana.GrafanaConfig
 	grafanaConfig := mcpgrafana.GrafanaConfig{Debug: gc.debug}
+	if gc.tlsCertFile != "" || gc.tlsKeyFile != "" || gc.tlsCAFile != "" || gc.tlsSkipVerify {
+		grafanaConfig.TLSConfig = &mcpgrafana.TLSConfig{
+			CertFile:   gc.tlsCertFile,
+			KeyFile:    gc.tlsKeyFile,
+			CAFile:     gc.tlsCAFile,
+			SkipVerify: gc.tlsSkipVerify,
+		}
+	}
 
 	if err := run(transport, *addr, *basePath, *endpointPath, parseLevel(*logLevel), dt, grafanaConfig); err != nil {
 		panic(err)
