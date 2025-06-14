@@ -5,6 +5,7 @@ go 1.24.1
 toolchain go1.24.2
 
 require (
+	connectrpc.com/connect v1.16.2
 	github.com/go-openapi/runtime v0.28.0
 	github.com/go-openapi/strfmt v0.23.0
 	github.com/google/uuid v1.6.0
@@ -12,6 +13,7 @@ require (
 	github.com/grafana/grafana-openapi-client-go v0.0.0-20250108132429-8d7e1f158f65
 	github.com/grafana/grafana-plugin-sdk-go v0.277.1
 	github.com/grafana/incident-go v0.0.0-20250211094540-dc6a98fdae43
+	github.com/grafana/pyroscope/api v1.2.0
 	github.com/invopop/jsonschema v0.13.0
 	github.com/mark3labs/mcp-go v0.32.0
 	github.com/prometheus/client_golang v1.22.0
@@ -52,6 +54,7 @@ require (
 	github.com/google/flatbuffers v25.2.10+incompatible // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/go-querystring v1.1.0 // indirect
+	github.com/gopherjs/gopherjs v0.0.0-20190430165422-3e4dfb77656c // indirect
 	github.com/gorilla/mux v1.8.0 // indirect
 	github.com/grafana/otel-profiling-go v0.5.1 // indirect
 	github.com/grafana/pyroscope-go/godeltaprof v0.1.8 // indirect
@@ -90,11 +93,14 @@ require (
 	github.com/opentracing/opentracing-go v1.2.0 // indirect
 	github.com/perimeterx/marshmallow v1.1.5 // indirect
 	github.com/pierrec/lz4/v4 v4.1.22 // indirect
+	github.com/planetscale/vtprotobuf v0.6.1-0.20240319094008-0393e58bdf10 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/prometheus/client_model v0.6.2 // indirect
 	github.com/prometheus/procfs v0.15.1 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect
+	github.com/smartystreets/assertions v1.0.1 // indirect
+	github.com/smartystreets/goconvey v0.0.0-20190731233626-505e41936337 // indirect
 	github.com/spf13/cast v1.7.1 // indirect
 	github.com/unknwon/bra v0.0.0-20200517080246-1e3013ecaff8 // indirect
 	github.com/unknwon/com v1.0.1 // indirect

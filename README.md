@@ -92,6 +92,10 @@ the OnCall tools, use `--disable-oncall`.
 | `list_investigations`             | Sift        | Retrieve a list of Sift investigations with an optional limit      |
 | `find_error_pattern_logs`         | Sift        | Finds elevated error patterns in Loki logs.                        |
 | `find_slow_requests`              | Sift        | Finds slow requests from the relevant tempo datasources.           |
+| `list_pyroscope_label_names`      | Pyroscope   | List label names matching a selector                               |
+| `list_pyroscope_label_values`     | Pyroscope   | List label values matching a selector for a label name             |
+| `list_pyroscope_profile_types`    | Pyroscope   | List available profile types                                       |
+| `fetch_pyroscope_profile`         | Pyroscope   | Fetches a profile in DOT format for analysis                       |
 
 ## Usage
 
