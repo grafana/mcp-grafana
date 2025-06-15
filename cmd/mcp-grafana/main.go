@@ -119,23 +119,23 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 			return fmt.Errorf("Server error: %v", err)
 		}
 	default:
-			   return fmt.Errorf(
-					   "Invalid transport type: %s. Must be 'stdio', 'sse' or 'streamable-http'",
-					   transport,
-			   )
+		return fmt.Errorf(
+			"Invalid transport type: %s. Must be 'stdio', 'sse' or 'streamable-http'",
+			transport,
+		)
 	}
 	return nil
 }
 
 func main() {
 	var transport string
-	   flag.StringVar(&transport, "t", "stdio", "Transport type (stdio, sse or streamable-http)")
-	   flag.StringVar(
-			   &transport,
-			   "transport",
-			   "stdio",
-			   "Transport type (stdio, sse or streamable-http)",
-	   )
+	flag.StringVar(&transport, "t", "stdio", "Transport type (stdio, sse or streamable-http)")
+	flag.StringVar(
+		&transport,
+		"transport",
+		"stdio",
+		"Transport type (stdio, sse or streamable-http)",
+	)
 	addr := flag.String("address", "localhost:8000", "The host and port to start the sse server on")
 	basePath := flag.String("base-path", "", "Base path for the sse server")
 	endpointPath := flag.String("endpoint-path", "/mcp", "Endpoint path for the streamable-http server")
