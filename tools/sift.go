@@ -110,26 +110,38 @@ type siftClient struct {
 	url    string
 }
 
-func newSiftClient(url, accessToken, idToken, apiKey string) *siftClient {
+func newSiftClient(cfg mcpgrafana.GrafanaConfig) (*siftClient, error) {
+	// Create custom transport with TLS configuration if available
+	var transport http.RoundTripper = http.DefaultTransport
+	if tlsConfig := cfg.TLSConfig; tlsConfig != nil {
+		var err error
+		transport, err = tlsConfig.HTTPTransport(transport.(*http.Transport))
+		if err != nil {
+			return nil, fmt.Errorf("failed to create custom transport: %w", err)
+		}
+	}
+
 	client := &http.Client{
 		Transport: &authRoundTripper{
-			accessToken: accessToken,
-			idToken:     idToken,
-			apiKey:      apiKey,
-			underlying:  http.DefaultTransport,
+			accessToken: cfg.AccessToken,
+			idToken:     cfg.IDToken,
+			apiKey:      cfg.APIKey,
+			underlying:  transport,
 		},
 	}
 	return &siftClient{
 		client: client,
-		url:    url,
-	}
+		url:    cfg.URL,
+	}, nil
 }
 
 func siftClientFromContext(ctx context.Context) (*siftClient, error) {
 	// Get the standard Grafana URL and API key
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
-	client := newSiftClient(cfg.URL, cfg.AccessToken, cfg.IDToken, cfg.APIKey)
-
+	client, err := newSiftClient(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("creating Sift client: %w", err)
+	}
 	return client, nil
 }
 
