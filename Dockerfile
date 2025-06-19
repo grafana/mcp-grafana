@@ -38,4 +38,4 @@ USER mcp-grafana
 EXPOSE 8000
 
 # Run the application
-ENTRYPOINT ["/app/mcp-grafana", "--transport", "sse", "--sse-address", "0.0.0.0:8000"]
+ENTRYPOINT ["/app/mcp-grafana", "--transport", "sse", "--address", "0.0.0.0:8000"]
