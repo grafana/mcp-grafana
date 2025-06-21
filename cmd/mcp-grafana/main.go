@@ -97,6 +97,7 @@ func newServer(dt disabledTools) *server.MCPServer {
 	s := server.NewMCPServer(
 		"mcp-grafana",
 		"0.1.0",
+		server.WithInstructions("This serverprovides access to your Grafana instance and the surrounding ecosystem."),
 	)
 	dt.addTools(s)
 	return s
