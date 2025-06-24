@@ -1,0 +1,42 @@
+kind: Pod
+apiVersion: v1
+metadata:
+  name: k8s-mcp
+  namespace: my-app
+  labels:
+    app: k8s-mcp
+spec:
+  restartPolicy: Always
+  containers:
+    - name: mcp-grafana
+      image: 'quay.io/grafana/mcp-grafana:dev'
+      command: ["/app/mcp-grafana"]
+      args:
+        - '-transport=streamable-http'
+        - '-address=localhost:8000'
+        - '-endpoint-path=/mcp'
+        - '-use-grafana-config=false'
+        - '-enabled-tools=prometheus,loki'
+        - '-log-level=debug'
+      env:
+        - name: LOKI_URL
+          value: http://loki.my-app.svc:3100
+        - name: PROM_URL
+          value: http://prom.my-app.svc:9091
+---
+kind: Service
+apiVersion: v1
+metadata:
+  name: k8s-mcp
+  namespace: my-app
+  labels:
+    app: k8s-mcp
+spec:
+  ports:
+    - protocol: TCP
+      port: 8000
+      targetPort: 8000
+  internalTrafficPolicy: Cluster
+  type: ClusterIP
+  selector:
+    app: k8s-mcp
