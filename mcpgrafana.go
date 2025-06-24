@@ -21,6 +21,10 @@ const (
 	defaultGrafanaHost = "localhost:3000"
 	defaultGrafanaURL  = "http://" + defaultGrafanaHost
 
+	lokiURL    = "LOKI_URL"
+	lokiSecret = "LOKI_SECRET"
+	lokiCAPath = "LOKI_CA_PATH"
+
 	promURL    = "PROM_URL"
 	promSecret = "PROM_SECRET"
 	promCAPath = "PROM_CA_PATH"
@@ -64,6 +68,13 @@ type TLSConfig struct {
 
 // LocalConfig represents the full configuration for local usage.
 type LocalConfig struct {
+	// LokiURL is the URL of the Lokietheus instance.
+	LokiURL string
+	// LokiSecret is the authorization credentials provided to the round tripper
+	// when Authorization header is not set
+	LokiSecret string
+	// LokiCAPath is the path of the Lokietheus CA certificate file.
+	LokiCAPath string
 	// PromURL is the URL of the prometheus instance.
 	PromURL string
 	// PromSecret is the authorization credentials provided to the round tripper
@@ -202,6 +213,9 @@ func (tc *TLSConfig) HTTPTransport(defaultTransport *http.Transport) (http.Round
 // from environment variables and injects a configured client into the context.
 var ExtractStdioLocalInfoFromEnv server.StdioContextFunc = func(ctx context.Context) context.Context {
 	return WithLocalConfig(ctx, LocalConfig{
+		LokiURL:    os.Getenv(lokiURL),
+		LokiSecret: os.Getenv(lokiSecret),
+		LokiCAPath: os.Getenv(lokiCAPath),
 		PromURL:    os.Getenv(promURL),
 		PromSecret: os.Getenv(promSecret),
 		PromCAPath: os.Getenv(promCAPath),
@@ -212,6 +226,9 @@ var ExtractStdioLocalInfoFromEnv server.StdioContextFunc = func(ctx context.Cont
 // from environment variables and injects a configured client into the context.
 var ExtractHttpLocalInfoFromEnv httpContextFunc = func(ctx context.Context, req *http.Request) context.Context {
 	return WithLocalConfig(ctx, LocalConfig{
+		LokiURL:    os.Getenv(lokiURL),
+		LokiSecret: os.Getenv(lokiSecret),
+		LokiCAPath: os.Getenv(lokiCAPath),
 		PromURL:    os.Getenv(promURL),
 		PromSecret: os.Getenv(promSecret),
 		PromCAPath: os.Getenv(promCAPath),

@@ -37,7 +37,6 @@ const (
 )
 
 func promClientFromContext(ctx context.Context, uid string) (promv1.API, error) {
-	// TODO: allow override from ENV
 	url := defaultPrometheusURL
 	var rt http.RoundTripper
 

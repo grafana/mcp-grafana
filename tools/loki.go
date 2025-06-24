@@ -3,11 +3,15 @@ package tools
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -18,6 +22,8 @@ import (
 )
 
 const (
+	defaultLokiURL = "https://localhost:3100/"
+
 	// DefaultLokiLogLimit is the default number of log lines to return if not specified
 	DefaultLokiLogLimit = 10
 
@@ -28,6 +34,7 @@ const (
 type Client struct {
 	httpClient *http.Client
 	baseURL    string
+	headers    map[string][]string
 }
 
 // LabelResponse represents the http json response to a label query
@@ -45,37 +52,80 @@ type Stats struct {
 }
 
 func newLokiClient(ctx context.Context, uid string) (*Client, error) {
-	// First check if the datasource exists
-	_, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: uid})
-	if err != nil {
-		return nil, err
-	}
+	url := defaultLokiURL
+	client := &http.Client{}
+	headers := map[string][]string{}
 
-	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
-	url := fmt.Sprintf("%s/api/datasources/proxy/uid/%s", strings.TrimRight(cfg.URL, "/"), uid)
-
-	// Create custom transport with TLS configuration if available
-	var transport http.RoundTripper = http.DefaultTransport
-	if tlsConfig := cfg.TLSConfig; tlsConfig != nil {
-		var err error
-		transport, err = tlsConfig.HTTPTransport(transport.(*http.Transport))
+	if mcpgrafana.HasGrafanaClient(ctx) {
+		// First check if the datasource exists
+		_, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: uid})
 		if err != nil {
-			return nil, fmt.Errorf("failed to create custom transport: %w", err)
+			return nil, err
 		}
-	}
 
-	client := &http.Client{
-		Transport: &authRoundTripper{
+		cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
+		url = fmt.Sprintf("%s/api/datasources/proxy/uid/%s", strings.TrimRight(cfg.URL, "/"), uid)
+
+		// Create custom transport with TLS configuration if available
+		var transport http.RoundTripper = http.DefaultTransport
+		if tlsConfig := cfg.TLSConfig; tlsConfig != nil {
+			var err error
+			transport, err = tlsConfig.HTTPTransport(transport.(*http.Transport))
+			if err != nil {
+				return nil, fmt.Errorf("failed to create custom transport: %w", err)
+			}
+		}
+
+		client.Transport = &authRoundTripper{
 			accessToken: cfg.AccessToken,
 			idToken:     cfg.IDToken,
 			apiKey:      cfg.APIKey,
 			underlying:  transport,
-		},
+		}
+	} else {
+		transport := http.Transport{}
+
+		// read local config
+		if mcpgrafana.HasLocalConfig(ctx) {
+			config := mcpgrafana.LocalConfigFromContext(ctx)
+			if len(config.LokiURL) > 0 {
+				url = config.LokiURL
+			}
+
+			if len(config.LokiSecret) > 0 {
+				headers["Authorization"] = []string{config.LokiSecret}
+			}
+
+			if len(config.LokiCAPath) > 0 {
+				caCert, err := os.ReadFile(config.LokiCAPath)
+				if err != nil {
+					return nil, fmt.Errorf("reading Loki ca: %w", err)
+				} else {
+					pool := x509.NewCertPool()
+					pool.AppendCertsFromPEM(caCert)
+					transport.TLSClientConfig = &tls.Config{
+						RootCAs: pool,
+					}
+				}
+			}
+		}
+
+		// set secret from token if provided
+		if mcpgrafana.HasAuthorization(ctx) {
+			headers["Authorization"] = []string{mcpgrafana.AuthorizationFromContext(ctx)}
+		}
+
+		// set transport
+		if transport.TLSClientConfig == nil {
+			transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+		}
+		client.Transport = &transport
 	}
 
 	return &Client{
 		httpClient: client,
 		baseURL:    url,
+		headers:    headers,
 	}, nil
 }
 
@@ -108,6 +158,9 @@ func (c *Client) makeRequest(ctx context.Context, method, urlPath string, params
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
+
+	// Forward headers
+	maps.Copy(req.Header, c.headers)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
