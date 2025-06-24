@@ -102,30 +102,53 @@ func newServer(dt disabledTools) *server.MCPServer {
 	return s
 }
 
-func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt disabledTools, gc mcpgrafana.GrafanaConfig) error {
+func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt disabledTools, gc *mcpgrafana.GrafanaConfig) error {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})))
 	s := newServer(dt)
+
+	if gc == nil {
+		slog.Info("Skipping grafana config")
+	}
 
 	switch transport {
 	case "stdio":
 		srv := server.NewStdioServer(s)
-		srv.SetContextFunc(mcpgrafana.ComposedStdioContextFunc(gc))
+		if gc != nil {
+			srv.SetContextFunc(mcpgrafana.ComposedStdioContextFunc(gc))
+		} else {
+			srv.SetContextFunc(mcpgrafana.ComposeStdioContextFuncs(mcpgrafana.ExtractStdioLocalInfoFromEnv))
+		}
 		slog.Info("Starting Grafana MCP server using stdio transport")
 		return srv.Listen(context.Background(), os.Stdin, os.Stdout)
 	case "sse":
-		srv := server.NewSSEServer(s,
-			server.WithSSEContextFunc(mcpgrafana.ComposedSSEContextFunc(gc)),
-			server.WithStaticBasePath(basePath),
-		)
+		opts := []server.SSEOption{server.WithStaticBasePath(basePath)}
+		if gc != nil {
+			opts = append(opts, server.WithSSEContextFunc(mcpgrafana.ComposedSSEContextFunc(gc)))
+		} else {
+			opts = append(opts, server.WithSSEContextFunc(mcpgrafana.ComposeSSEContextFuncs(
+				mcpgrafana.ExtractHttpLocalInfoFromEnv,
+				mcpgrafana.ExtractAuthorizationFromHeaders,
+			)))
+		}
+		srv := server.NewSSEServer(s, opts...)
 		slog.Info("Starting Grafana MCP server using SSE transport", "address", addr, "basePath", basePath)
 		if err := srv.Start(addr); err != nil {
 			return fmt.Errorf("Server error: %v", err)
 		}
 	case "streamable-http":
-		srv := server.NewStreamableHTTPServer(s, server.WithHTTPContextFunc(mcpgrafana.ComposedHTTPContextFunc(gc)),
+		opts := []server.StreamableHTTPOption{
 			server.WithStateLess(true),
 			server.WithEndpointPath(endpointPath),
-		)
+		}
+		if gc != nil {
+			opts = append(opts, server.WithHTTPContextFunc(mcpgrafana.ComposedHTTPContextFunc(gc)))
+		} else {
+			opts = append(opts, server.WithHTTPContextFunc(mcpgrafana.ComposeHTTPContextFuncs(
+				mcpgrafana.ExtractHttpLocalInfoFromEnv,
+				mcpgrafana.ExtractAuthorizationFromHeaders,
+			)))
+		}
+		srv := server.NewStreamableHTTPServer(s, opts...)
 		slog.Info("Starting Grafana MCP server using StreamableHTTP transport", "address", addr, "endpointPath", endpointPath)
 		if err := srv.Start(addr); err != nil {
 			return fmt.Errorf("Server error: %v", err)
@@ -152,24 +175,28 @@ func main() {
 	basePath := flag.String("base-path", "", "Base path for the sse server")
 	endpointPath := flag.String("endpoint-path", "/mcp", "Endpoint path for the streamable-http server")
 	logLevel := flag.String("log-level", "info", "Log level (debug, info, warn, error)")
+	useGrafanaConfig := flag.Bool("use-grafana-config", true, "Use grafana config")
 	var dt disabledTools
 	dt.addFlags()
 	var gc grafanaConfig
 	gc.addFlags()
 	flag.Parse()
 
-	// Convert local grafanaConfig to mcpgrafana.GrafanaConfig
-	grafanaConfig := mcpgrafana.GrafanaConfig{Debug: gc.debug}
-	if gc.tlsCertFile != "" || gc.tlsKeyFile != "" || gc.tlsCAFile != "" || gc.tlsSkipVerify {
-		grafanaConfig.TLSConfig = &mcpgrafana.TLSConfig{
-			CertFile:   gc.tlsCertFile,
-			KeyFile:    gc.tlsKeyFile,
-			CAFile:     gc.tlsCAFile,
-			SkipVerify: gc.tlsSkipVerify,
+	var config *mcpgrafana.GrafanaConfig
+	if *useGrafanaConfig {
+		// Convert local grafanaConfig to mcpgrafana.GrafanaConfig
+		config = &mcpgrafana.GrafanaConfig{Debug: gc.debug}
+		if gc.tlsCertFile != "" || gc.tlsKeyFile != "" || gc.tlsCAFile != "" || gc.tlsSkipVerify {
+			config.TLSConfig = &mcpgrafana.TLSConfig{
+				CertFile:   gc.tlsCertFile,
+				KeyFile:    gc.tlsKeyFile,
+				CAFile:     gc.tlsCAFile,
+				SkipVerify: gc.tlsSkipVerify,
+			}
 		}
 	}
 
-	if err := run(transport, *addr, *basePath, *endpointPath, parseLevel(*logLevel), dt, grafanaConfig); err != nil {
+	if err := run(transport, *addr, *basePath, *endpointPath, parseLevel(*logLevel), dt, config); err != nil {
 		panic(err)
 	}
 }

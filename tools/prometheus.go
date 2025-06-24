@@ -2,8 +2,11 @@ package tools
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"net/http"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -29,42 +32,92 @@ var (
 	}
 )
 
+const (
+	defaultPrometheusURL = "https://localhost:9090/"
+)
+
 func promClientFromContext(ctx context.Context, uid string) (promv1.API, error) {
-	// First check if the datasource exists
-	_, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: uid})
-	if err != nil {
-		return nil, err
-	}
+	// TODO: allow override from ENV
+	url := defaultPrometheusURL
+	var rt http.RoundTripper
 
-	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
-	url := fmt.Sprintf("%s/api/datasources/proxy/uid/%s", strings.TrimRight(cfg.URL, "/"), uid)
-
-	// Create custom transport with TLS configuration if available
-	rt := api.DefaultRoundTripper
-	if tlsConfig := cfg.TLSConfig; tlsConfig != nil {
-		customTransport, err := tlsConfig.HTTPTransport(rt.(*http.Transport))
+	if mcpgrafana.HasGrafanaClient(ctx) {
+		// First check if the datasource exists
+		_, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: uid})
 		if err != nil {
-			return nil, fmt.Errorf("failed to create custom transport: %w", err)
+			return nil, err
 		}
-		rt = customTransport
+
+		cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
+		url = fmt.Sprintf("%s/api/datasources/proxy/uid/%s", strings.TrimRight(cfg.URL, "/"), uid)
+
+		// Create custom transport with TLS configuration if available
+		rt := api.DefaultRoundTripper
+		if tlsConfig := cfg.TLSConfig; tlsConfig != nil {
+			customTransport, err := tlsConfig.HTTPTransport(rt.(*http.Transport))
+			if err != nil {
+				return nil, fmt.Errorf("failed to create custom transport: %w", err)
+			}
+			rt = customTransport
+		}
+
+		if cfg.AccessToken != "" && cfg.IDToken != "" {
+			rt = config.NewHeadersRoundTripper(&config.Headers{
+				Headers: map[string]config.Header{
+					"X-Access-Token": {
+						Secrets: []config.Secret{config.Secret(cfg.AccessToken)},
+					},
+					"X-Grafana-Id": {
+						Secrets: []config.Secret{config.Secret(cfg.IDToken)},
+					},
+				},
+			}, rt)
+		} else if cfg.APIKey != "" {
+			rt = config.NewAuthorizationCredentialsRoundTripper(
+				"Bearer", config.NewInlineSecret(cfg.APIKey), rt,
+			)
+		}
+	} else {
+		secret := ""
+		transport := http.Transport{}
+
+		// read local config
+		if mcpgrafana.HasLocalConfig(ctx) {
+			config := mcpgrafana.LocalConfigFromContext(ctx)
+			if len(config.PromURL) > 0 {
+				url = config.PromURL
+			}
+
+			if len(config.PromSecret) > 0 {
+				secret = config.PromSecret
+			}
+
+			if len(config.PromCAPath) > 0 {
+				caCert, err := os.ReadFile(config.PromCAPath)
+				if err != nil {
+					return nil, fmt.Errorf("reading Prometheus ca: %w", err)
+				} else {
+					pool := x509.NewCertPool()
+					pool.AppendCertsFromPEM(caCert)
+					transport.TLSClientConfig = &tls.Config{
+						RootCAs: pool,
+					}
+				}
+			}
+		}
+
+		// set secret from token if provided
+		if mcpgrafana.HasAuthorization(ctx) {
+			secret = strings.TrimPrefix(mcpgrafana.AuthorizationFromContext(ctx), "Bearer ")
+		}
+
+		// create round tripper
+		if transport.TLSClientConfig == nil {
+			transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+		}
+		rt = config.NewAuthorizationCredentialsRoundTripper("Bearer", config.NewInlineSecret(secret), &transport)
 	}
 
-	if cfg.AccessToken != "" && cfg.IDToken != "" {
-		rt = config.NewHeadersRoundTripper(&config.Headers{
-			Headers: map[string]config.Header{
-				"X-Access-Token": {
-					Secrets: []config.Secret{config.Secret(cfg.AccessToken)},
-				},
-				"X-Grafana-Id": {
-					Secrets: []config.Secret{config.Secret(cfg.IDToken)},
-				},
-			},
-		}, rt)
-	} else if cfg.APIKey != "" {
-		rt = config.NewAuthorizationCredentialsRoundTripper(
-			"Bearer", config.NewInlineSecret(cfg.APIKey), rt,
-		)
-	}
 	c, err := api.NewClient(api.Config{
 		Address:      url,
 		RoundTripper: rt,
