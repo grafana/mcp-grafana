@@ -43,7 +43,7 @@ func basicTLSExample() {
 	}
 
 	// Create a context function that includes TLS configuration
-	contextFunc := mcpgrafana.ComposedStdioContextFunc(grafanaConfig)
+	contextFunc := mcpgrafana.ComposedStdioContextFunc(&grafanaConfig)
 
 	// Test the context function
 	ctx := contextFunc(context.Background())
@@ -85,9 +85,9 @@ func fullTLSExample() {
 	fmt.Printf("  - Debug mode: %v\n", grafanaConfig.Debug)
 
 	// Create context functions for different transport types
-	stdioFunc := mcpgrafana.ComposedStdioContextFunc(grafanaConfig)
-	sseFunc := mcpgrafana.ComposedSSEContextFunc(grafanaConfig)
-	httpFunc := mcpgrafana.ComposedHTTPContextFunc(grafanaConfig)
+	stdioFunc := mcpgrafana.ComposedStdioContextFunc(&grafanaConfig)
+	sseFunc := mcpgrafana.ComposedSSEContextFunc(&grafanaConfig)
+	httpFunc := mcpgrafana.ComposedHTTPContextFunc(&grafanaConfig)
 
 	fmt.Printf("✓ Context functions created for all transport types\n")
 
@@ -154,7 +154,7 @@ func runServerWithTLS() {
 
 	// Create stdio server with TLS-enabled context function
 	srv := server.NewStdioServer(s)
-	srv.SetContextFunc(mcpgrafana.ComposedStdioContextFunc(grafanaConfig))
+	srv.SetContextFunc(mcpgrafana.ComposedStdioContextFunc(&grafanaConfig))
 
 	fmt.Printf("Starting MCP Grafana server with TLS support...\n")
 	fmt.Printf("Grafana URL: %s\n", os.Getenv("GRAFANA_URL"))

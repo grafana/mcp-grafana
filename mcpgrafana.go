@@ -21,9 +21,14 @@ const (
 	defaultGrafanaHost = "localhost:3000"
 	defaultGrafanaURL  = "http://" + defaultGrafanaHost
 
+	promURL    = "PROM_URL"
+	promSecret = "PROM_SECRET"
+	promCAPath = "PROM_CA_PATH"
+
 	grafanaURLEnvVar = "GRAFANA_URL"
 	grafanaAPIEnvVar = "GRAFANA_API_KEY"
 
+	authorizationHeader = "Authorization"
 	grafanaURLHeader    = "X-Grafana-URL"
 	grafanaAPIKeyHeader = "X-Grafana-API-Key"
 )
@@ -40,6 +45,12 @@ func urlAndAPIKeyFromHeaders(req *http.Request) (string, string) {
 	return u, apiKey
 }
 
+// grafanaConfigKey is the context key for local configuration.
+type localConfigKey struct{}
+
+// authorizationKey is the context key for Authorization header.
+type authorizationKey struct{}
+
 // grafanaConfigKey is the context key for Grafana configuration.
 type grafanaConfigKey struct{}
 
@@ -49,6 +60,17 @@ type TLSConfig struct {
 	KeyFile    string
 	CAFile     string
 	SkipVerify bool
+}
+
+// LocalConfig represents the full configuration for local usage.
+type LocalConfig struct {
+	// PromURL is the URL of the prometheus instance.
+	PromURL string
+	// PromSecret is the authorization credentials provided to the round tripper
+	// when Authorization header is not set
+	PromSecret string
+	// PromCAPath is the path of the prometheus CA certificate file.
+	PromCAPath string
 }
 
 // GrafanaConfig represents the full configuration for Grafana clients.
@@ -72,6 +94,44 @@ type GrafanaConfig struct {
 
 	// TLSConfig holds TLS configuration for all Grafana clients.
 	TLSConfig *TLSConfig
+}
+
+// WithAuthorization adds Authorization header to the context.
+func WithAuthorization(ctx context.Context, authorization string) context.Context {
+	return context.WithValue(ctx, authorizationKey{}, authorization)
+}
+
+// AuthorizationFromContext retrieves the Authorization header from the context.
+func AuthorizationFromContext(ctx context.Context) string {
+	c, ok := ctx.Value(authorizationKey{}).(string)
+	if !ok {
+		return ""
+	}
+	return c
+}
+
+func HasAuthorization(ctx context.Context) bool {
+	_, ok := ctx.Value(authorizationKey{}).(string)
+	return ok
+}
+
+// LocalConfigFromContext retrieves the Authorization header from the context.
+func LocalConfigFromContext(ctx context.Context) LocalConfig {
+	c, ok := ctx.Value(localConfigKey{}).(LocalConfig)
+	if !ok {
+		return LocalConfig{}
+	}
+	return c
+}
+
+// WithLocalConfig adds local configuration to the context.
+func WithLocalConfig(ctx context.Context, config LocalConfig) context.Context {
+	return context.WithValue(ctx, localConfigKey{}, config)
+}
+
+func HasLocalConfig(ctx context.Context) bool {
+	_, ok := ctx.Value(localConfigKey{}).(LocalConfig)
+	return ok
 }
 
 // WithGrafanaConfig adds Grafana configuration to the context.
@@ -138,6 +198,26 @@ func (tc *TLSConfig) HTTPTransport(defaultTransport *http.Transport) (http.Round
 	return transport, nil
 }
 
+// ExtractStdioLocalInfoFromEnv is a StdioContextFunc that extracts local configuration
+// from environment variables and injects a configured client into the context.
+var ExtractStdioLocalInfoFromEnv server.StdioContextFunc = func(ctx context.Context) context.Context {
+	return WithLocalConfig(ctx, LocalConfig{
+		PromURL:    os.Getenv(promURL),
+		PromSecret: os.Getenv(promSecret),
+		PromCAPath: os.Getenv(promCAPath),
+	})
+}
+
+// ExtractHttpLocalInfoFromEnv is a StdioContextFunc that extracts local configuration
+// from environment variables and injects a configured client into the context.
+var ExtractHttpLocalInfoFromEnv httpContextFunc = func(ctx context.Context, req *http.Request) context.Context {
+	return WithLocalConfig(ctx, LocalConfig{
+		PromURL:    os.Getenv(promURL),
+		PromSecret: os.Getenv(promSecret),
+		PromCAPath: os.Getenv(promCAPath),
+	})
+}
+
 // ExtractGrafanaInfoFromEnv is a StdioContextFunc that extracts Grafana configuration
 // from environment variables and injects a configured client into the context.
 var ExtractGrafanaInfoFromEnv server.StdioContextFunc = func(ctx context.Context) context.Context {
@@ -163,6 +243,12 @@ var ExtractGrafanaInfoFromEnv server.StdioContextFunc = func(ctx context.Context
 // `server.SSEContextFunc`. It is necessary because, while the two types are functionally
 // identical, they have distinct types and cannot be passed around interchangeably.
 type httpContextFunc func(ctx context.Context, req *http.Request) context.Context
+
+// ExtractAuthorizationFromHeaders is a HTTPContextFunc that extracts Authorization
+// from request headers and injects a configured client into the context.
+var ExtractAuthorizationFromHeaders httpContextFunc = func(ctx context.Context, req *http.Request) context.Context {
+	return WithAuthorization(ctx, req.Header.Get(authorizationHeader))
+}
 
 // ExtractGrafanaInfoFromHeaders is a HTTPContextFunc that extracts Grafana configuration
 // from request headers and injects a configured client into the context.
@@ -314,6 +400,11 @@ func GrafanaClientFromContext(ctx context.Context) *client.GrafanaHTTPAPI {
 	return c
 }
 
+func HasGrafanaClient(ctx context.Context) bool {
+	_, ok := ctx.Value(grafanaClientKey{}).(*client.GrafanaHTTPAPI)
+	return ok
+}
+
 type incidentClientKey struct{}
 
 var ExtractIncidentClientFromEnv server.StdioContextFunc = func(ctx context.Context) context.Context {
@@ -422,10 +513,10 @@ func ComposeHTTPContextFuncs(funcs ...httpContextFunc) server.HTTPContextFunc {
 
 // ComposedStdioContextFunc returns a StdioContextFunc that comprises all predefined StdioContextFuncs,
 // as well as the Grafana debug flag and TLS configuration.
-func ComposedStdioContextFunc(config GrafanaConfig) server.StdioContextFunc {
+func ComposedStdioContextFunc(config *GrafanaConfig) server.StdioContextFunc {
 	return ComposeStdioContextFuncs(
 		func(ctx context.Context) context.Context {
-			return WithGrafanaConfig(ctx, config)
+			return WithGrafanaConfig(ctx, *config)
 		},
 		ExtractGrafanaInfoFromEnv,
 		ExtractGrafanaClientFromEnv,
@@ -434,10 +525,10 @@ func ComposedStdioContextFunc(config GrafanaConfig) server.StdioContextFunc {
 }
 
 // ComposedSSEContextFunc is a SSEContextFunc that comprises all predefined SSEContextFuncs.
-func ComposedSSEContextFunc(config GrafanaConfig) server.SSEContextFunc {
+func ComposedSSEContextFunc(config *GrafanaConfig) server.SSEContextFunc {
 	return ComposeSSEContextFuncs(
 		func(ctx context.Context, req *http.Request) context.Context {
-			return WithGrafanaConfig(ctx, config)
+			return WithGrafanaConfig(ctx, *config)
 		},
 		ExtractGrafanaInfoFromHeaders,
 		ExtractGrafanaClientFromHeaders,
@@ -446,10 +537,10 @@ func ComposedSSEContextFunc(config GrafanaConfig) server.SSEContextFunc {
 }
 
 // ComposedHTTPContextFunc is a HTTPContextFunc that comprises all predefined HTTPContextFuncs.
-func ComposedHTTPContextFunc(config GrafanaConfig) server.HTTPContextFunc {
+func ComposedHTTPContextFunc(config *GrafanaConfig) server.HTTPContextFunc {
 	return ComposeHTTPContextFuncs(
 		func(ctx context.Context, req *http.Request) context.Context {
-			return WithGrafanaConfig(ctx, config)
+			return WithGrafanaConfig(ctx, *config)
 		},
 		ExtractGrafanaInfoFromHeaders,
 		ExtractGrafanaClientFromHeaders,
