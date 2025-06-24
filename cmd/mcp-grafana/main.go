@@ -6,14 +6,29 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"runtime/debug"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/mark3labs/mcp-go/server"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/grafana/mcp-grafana/tools"
 )
+
+// version returns the version of the mcp-grafana binary.
+// It is populated by the `runtime/debug` package which
+// fetches git information from the build directory.
+var version = sync.OnceValue(func() string {
+	// Default version string returned by `runtime/debug` if built
+	// from the source repository rather than with `go install`.
+	v := "(devel)"
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		v = bi.Main.Version
+	}
+	return v
+})
 
 func maybeAddTools(s *server.MCPServer, tf func(*server.MCPServer), enabledTools []string, disable bool, category string) {
 	if !slices.Contains(enabledTools, category) {
@@ -94,10 +109,7 @@ func (dt *disabledTools) addTools(s *server.MCPServer) {
 }
 
 func newServer(dt disabledTools) *server.MCPServer {
-	s := server.NewMCPServer(
-		"mcp-grafana",
-		"0.1.0",
-	)
+	s := server.NewMCPServer("mcp-grafana", version())
 	dt.addTools(s)
 	return s
 }
@@ -110,14 +122,14 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 	case "stdio":
 		srv := server.NewStdioServer(s)
 		srv.SetContextFunc(mcpgrafana.ComposedStdioContextFunc(gc))
-		slog.Info("Starting Grafana MCP server using stdio transport")
+		slog.Info("Starting Grafana MCP server using stdio transport", "version", version())
 		return srv.Listen(context.Background(), os.Stdin, os.Stdout)
 	case "sse":
 		srv := server.NewSSEServer(s,
 			server.WithSSEContextFunc(mcpgrafana.ComposedSSEContextFunc(gc)),
 			server.WithStaticBasePath(basePath),
 		)
-		slog.Info("Starting Grafana MCP server using SSE transport", "address", addr, "basePath", basePath)
+		slog.Info("Starting Grafana MCP server using SSE transport", "version", version(), "address", addr, "basePath", basePath)
 		if err := srv.Start(addr); err != nil {
 			return fmt.Errorf("Server error: %v", err)
 		}
@@ -126,7 +138,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 			server.WithStateLess(true),
 			server.WithEndpointPath(endpointPath),
 		)
-		slog.Info("Starting Grafana MCP server using StreamableHTTP transport", "address", addr, "endpointPath", endpointPath)
+		slog.Info("Starting Grafana MCP server using StreamableHTTP transport", "version", version(), "address", addr, "endpointPath", endpointPath)
 		if err := srv.Start(addr); err != nil {
 			return fmt.Errorf("Server error: %v", err)
 		}
@@ -152,11 +164,17 @@ func main() {
 	basePath := flag.String("base-path", "", "Base path for the sse server")
 	endpointPath := flag.String("endpoint-path", "/mcp", "Endpoint path for the streamable-http server")
 	logLevel := flag.String("log-level", "info", "Log level (debug, info, warn, error)")
+	showVersion := flag.Bool("version", false, "Print the version and exit")
 	var dt disabledTools
 	dt.addFlags()
 	var gc grafanaConfig
 	gc.addFlags()
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Println(version())
+		os.Exit(0)
+	}
 
 	// Convert local grafanaConfig to mcpgrafana.GrafanaConfig
 	grafanaConfig := mcpgrafana.GrafanaConfig{Debug: gc.debug}
