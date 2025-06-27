@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/grafana/grafana-plugin-sdk-go/backend/gtime"
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -17,6 +18,10 @@ import (
 	"github.com/prometheus/common/config"
 	"github.com/prometheus/common/model"
 	"github.com/prometheus/prometheus/model/labels"
+)
+
+const (
+	defaultPrometheusAADResource = "https://prometheus.monitor.azure.com"
 )
 
 var (
@@ -31,13 +36,25 @@ var (
 
 func promClientFromContext(ctx context.Context, uid string) (promv1.API, error) {
 	// First check if the datasource exists
-	_, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: uid})
+	datasource, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: uid})
 	if err != nil {
 		return nil, err
 	}
 
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
 	url := fmt.Sprintf("%s/api/datasources/proxy/uid/%s", strings.TrimRight(cfg.URL, "/"), uid)
+
+	// if using AADCredential directly go to prometheus url
+	if cfg.AADCredential != nil {
+		url = datasource.URL
+		cred, err := cfg.AADCredential.GetToken(ctx, policy.TokenRequestOptions{
+			Scopes: []string{defaultPrometheusAADResource},
+		})
+		if err != nil {
+			return nil, fmt.Errorf("getting AAD token for Prometheus: %w", err)
+		}
+		cfg.APIKey = cred.Token
+	}
 
 	// Create custom transport with TLS configuration if available
 	rt := api.DefaultRoundTripper
