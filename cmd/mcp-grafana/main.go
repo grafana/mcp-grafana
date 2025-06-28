@@ -109,7 +109,7 @@ func (dt *disabledTools) addTools(s *server.MCPServer) {
 }
 
 func newServer(dt disabledTools) *server.MCPServer {
-	s := server.NewMCPServer("mcp-grafana", version())
+	s := server.NewMCPServer("mcp-grafana", version(), server.WithInstructions("This server provides access to your Grafana instance and the surrounding ecosystem."))
 	dt.addTools(s)
 	return s
 }
