@@ -17,7 +17,7 @@ require (
 	github.com/invopop/jsonschema v0.13.0
 	github.com/mark3labs/mcp-go v0.32.0
 	github.com/prometheus/client_golang v1.22.0
-	github.com/prometheus/common v0.64.0
+	github.com/prometheus/common v0.65.0
 	github.com/prometheus/prometheus v0.304.1
 	github.com/stretchr/testify v1.10.0
 )
