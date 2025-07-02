@@ -109,7 +109,20 @@ func (dt *disabledTools) addTools(s *server.MCPServer) {
 }
 
 func newServer(dt disabledTools) *server.MCPServer {
-	s := server.NewMCPServer("mcp-grafana", version())
+	s := server.NewMCPServer("mcp-grafana", version(), server.WithInstructions(`
+	This server provides access to your Grafana instance and the surrounding ecosystem.
+
+	Available Capabilities:
+	- Dashboards: Search, retrieve, update, and create dashboards. Extract panel queries and datasource information.
+	- Datasources: List and fetch details for datasources.
+	- Prometheus & Loki: Run PromQL and LogQL queries, retrieve metric/log metadata, and explore label names/values.
+	- Incidents: Search, create, update, and resolve incidents in Grafana Incident.
+	- Sift Investigations: Start and manage Sift investigations, analyze logs/traces, find error patterns, and detect slow requests.
+	- Alerting: List and fetch alert rules and notification contact points.
+	- OnCall: View and manage on-call schedules, shifts, teams, and users.
+	- Admin: List teams and perform administrative tasks.
+	- Pyroscope: Profile applications and fetch profiling data.
+	`))
 	dt.addTools(s)
 	return s
 }
