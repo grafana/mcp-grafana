@@ -11,8 +11,9 @@ _The following features are currently available in MCP server. This list is for 
 ### Dashboards
 - **Search for dashboards:** Find dashboards by title or other metadata
 - **Get dashboard by UID:** Retrieve full dashboard details using its unique identifier
-- **Update or create a dashboard:** Modify existing dashboards or create new ones. _Note: Use with caution due to context window limitations; see [issue #101](https://github.com/grafana/mcp-grafana/issues/101)_
+- **Smart dashboard update:** Intelligently update dashboards with automatic GitOps detection - uses file management for provisioned dashboards and direct API for regular dashboards. _Note: Use with caution due to context window limitations; see [issue #101](https://github.com/grafana/mcp-grafana/issues/101)_
 - **Get panel queries and datasource info:** Get the title, query string, and datasource information (including UID and type, if available) from every panel in a dashboard
+- **Get dashboard manager:** Retrieve GitOps management information for dashboards to understand their source control setup
 
 ### Datasources
 - **List and fetch datasource information:** View all configured datasources and retrieve detailed information about each.
@@ -50,6 +51,24 @@ _The following features are currently available in MCP server. This list is for 
 ### Admin
 - **List teams:** View all configured teams in Grafana.
 
+### GitOps and Provisioning
+- **Repository Management:** List, inspect, and manage Git repositories configured for GitOps workflows
+- **Branch Operations:** List and filter repository branches and refs for different configuration versions
+- **File Operations:** Create, read, update, and delete configuration files in repositories with full version control
+- **File History:** View Git commit history for specific files to track configuration evolution
+- **Pull Request Management:** Automatically create pull requests for managed repositories to enable code review workflows
+- **Manual GitHub PR Creation:** Open GitHub pull request creation pages in the browser for provisioning repositories with pre-filled title, body, and branch information
+- **Dashboard Manager Integration:** Understand how dashboards are managed through GitOps and locate their source files
+
+The GitOps features enable complete Infrastructure-as-Code workflows for Grafana configurations, including dashboards, datasources, alerting rules, and more. All changes are tracked in Git with full audit trails, rollback capabilities, and collaborative code review processes.
+
+**Smart Dashboard Management:** The `update_dashboard` tool automatically detects whether a dashboard is managed through GitOps or not:
+- **Provisioned dashboards:** Automatically routes updates through the Git repository using file management, ensuring changes are version-controlled and maintaining GitOps compliance
+- **Regular dashboards:** Uses the standard Grafana API for direct updates
+- **New dashboards:** Always created using the standard API, can later be moved to GitOps management
+
+This intelligent routing ensures that your GitOps workflows are preserved while providing a unified interface for dashboard management.
+
 The list of tools is configurable, so you can choose which tools you want to make available to the MCP client.
 This is useful if you don't use certain functionality or if you don't want to take up too much of the context window.
 To disable a category of tools, use the `--disable-<category>` flag when starting the server. For example, to disable
@@ -64,6 +83,7 @@ the OnCall tools, use `--disable-oncall`.
 | `get_dashboard_by_uid`            | Dashboard   | Get a dashboard by uid                                             |
 | `update_dashboard`                | Dashboard   | Update or create a new dashboard                                   |
 | `get_dashboard_panel_queries`     | Dashboard   | Get panel title, queries, datasource UID and type from a dashboard |
+| `get_dashboard_manager`           | Dashboard   | Get dashboard manager details and GitOps source information        |
 | `list_datasources`                | Datasources | List datasources                                                   |
 | `get_datasource_by_uid`           | Datasources | Get a datasource by uid                                            |
 | `get_datasource_by_name`          | Datasources | Get a datasource by name                                           |
@@ -96,6 +116,16 @@ the OnCall tools, use `--disable-oncall`.
 | `list_pyroscope_label_values`     | Pyroscope   | List label values matching a selector for a label name             |
 | `list_pyroscope_profile_types`    | Pyroscope   | List available profile types                                       |
 | `fetch_pyroscope_profile`         | Pyroscope   | Fetches a profile in DOT format for analysis                       |
+| `list_provisioning_repositories`  | GitSync     | List Git repositories configured for GitOps management             |
+| `list_provisioning_repository_branches` | GitSync | List branches and refs in a specific repository                    |
+| `get_provisioning_repository`     | GitSync     | Get detailed information about a specific repository               |
+| `list_provisioning_repository_files` | GitSync  | List files in a repository with optional path filtering            |
+| `get_provisioning_repository_file_content` | GitSync | Get the actual content of a file from a repository               |
+| `get_provisioning_repository_file_history` | GitSync | Get Git commit history for a specific file                       |
+| `manage_provisioning_repository_file` | GitSync   | Create, update, or delete files in repositories with version control |
+| `manage_file` | GitSync   | Direct file management tool for GitOps workflows with automatic version control |
+| `create_provisioning_repository_pr` | GitSync    | Create pull requests for managed repositories                      |
+| `manual_submit_github_pull_request` | GitSync    | Open GitHub pull request creation page in browser for provisioning repositories |
 
 ## Usage
 
