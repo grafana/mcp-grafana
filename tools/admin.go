@@ -16,7 +16,10 @@ type ListTeamsParams struct {
 }
 
 func listTeams(ctx context.Context, args ListTeamsParams) (*models.SearchTeamQueryResult, error) {
-	c := mcpgrafana.GrafanaClientFromContext(ctx)
+	c, err := mcpgrafana.GrafanaClientFromContext(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list teams: %w", err)
+	}
 	params := teams.NewSearchTeamsParamsWithContext(ctx)
 	if args.Query != "" {
 		params.SetQuery(&args.Query)

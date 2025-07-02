@@ -259,6 +259,26 @@ To use debug mode with the Claude Desktop configuration, update your config as f
 
 > Note: As with the standard configuration, the `-t stdio` argument is required to override the default SSE mode in the Docker image.
 
+### AAD Configuration
+If you wish to use AAD auth to authenticate to a grafana instance.
+
+   **If using the binary:**
+
+   ```json
+   {
+     "mcpServers": {
+       "grafana": {
+         "command": "mcp-grafana",
+         "args": [],
+         "env": {
+           "GRAFANA_URL": "https://<your-base-url>.grafana.azure.com/",
+           "USE_AAD_AUTH": "true",
+         }
+       }
+     }
+   }
+   ```
+
 ### TLS Configuration
 
 If your Grafana instance is behind mTLS or requires custom TLS certificates, you can configure the MCP server to use custom certificates. The server supports the following TLS configuration options:
