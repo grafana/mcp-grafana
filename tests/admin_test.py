@@ -101,3 +101,30 @@ async def test_list_teams_tool(
         )
     )
     expect(input=prompt, output=content).to_pass(panel_queries_checker)
+
+
+@pytest.mark.parametrize("model", models)
+@pytest.mark.flaky(max_runs=3)
+async def test_list_users_by_org_tool(model: str, mcp_client: ClientSession):
+    tools = await get_converted_tools(mcp_client)
+    prompt = "Can you list the users in Grafana?"
+
+    messages = [
+        Message(role="system", content="You are a helpful assistant."),
+        Message(role="user", content=prompt),
+    ]
+
+    # 1. Call the list_users_by_org tool
+    messages = await llm_tool_call_sequence(
+        model, messages, tools, mcp_client, "list_users_by_org"
+    )
+
+    # 2. Final LLM response
+    response = await acompletion(model=model, messages=messages, tools=tools)
+    content = response.choices[0].message.content
+    user_checker = CustomLLMBooleanEvaluator(
+        settings=CustomLLMBooleanSettings(
+            prompt="Does the response contain specific information about users in Grafana, such as usernames, emails, or roles?",
+        )
+    )
+    expect(input=prompt, output=content).to_pass(user_checker)
