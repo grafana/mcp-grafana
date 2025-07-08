@@ -61,7 +61,7 @@ the OnCall tools, use `--disable-oncall`.
 | Tool                              | Category    | Description                                                        |
 | --------------------------------- | ----------- | ------------------------------------------------------------------ |
 | `list_teams`                      | Admin       | List all teams                                                     |
-| `list_users_by_org`               | Admin       | List all users in an organization                                   |
+| `list_users_by_org`               | Admin       | List all users in an organization                                  |
 | `search_dashboards`               | Search      | Search for dashboards                                              |
 | `get_dashboard_by_uid`            | Dashboard   | Get a dashboard by uid                                             |
 | `update_dashboard`                | Dashboard   | Update or create a new dashboard                                   |
