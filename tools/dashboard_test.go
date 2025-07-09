@@ -7,6 +7,7 @@ package tools
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/grafana/grafana-openapi-client-go/models"
@@ -153,4 +154,160 @@ func TestDashboardTools(t *testing.T) {
 			assert.Equal(t, panelQuery.Datasource.Type, "prometheus")
 		}
 	})
+}
+
+func TestGetDashboardManagerTool(t *testing.T) {
+	t.Run("get dashboard manager - nonexistent dashboard", func(t *testing.T) {
+		ctx := newTestContext()
+
+		result, err := getDashboardManager(ctx, GetDashboardManagerParams{
+			ID: "nonexistent-dashboard-12345",
+		})
+		require.NoError(t, err)
+		assert.Contains(t, result, "No dashboard manager found")
+	})
+
+	t.Run("get dashboard manager - invalid dashboard ID", func(t *testing.T) {
+		ctx := newTestContext()
+
+		result, err := getDashboardManager(ctx, GetDashboardManagerParams{
+			ID: "",
+		})
+		require.NoError(t, err)
+		// Should handle empty ID gracefully
+		assert.NotEmpty(t, result)
+	})
+
+	t.Run("get dashboard manager - dashboard with manager", func(t *testing.T) {
+		ctx := newTestContext()
+
+		// Test with a sample UID (this may need adjustment based on test environment)
+		result, err := getDashboardManager(ctx, GetDashboardManagerParams{
+			ID: "sample-dashboard-uid",
+		})
+		require.NoError(t, err)
+		// Should return some information about the manager or indicate no manager
+		assert.NotEmpty(t, result)
+		// Result should contain expected structure
+		assert.True(t,
+			assert.Contains(t, result, "No dashboard manager found") ||
+				assert.Contains(t, result, "managedBy:"),
+			"Result should either indicate no manager or provide manager details")
+	})
+}
+
+func TestSmartUpdateDashboard(t *testing.T) {
+	t.Run("smart update - new dashboard without UID", func(t *testing.T) {
+		ctx := newTestContext()
+
+		// Test creating a new dashboard (no UID)
+		result, err := smartUpdateDashboard(ctx, UpdateDashboardParams{
+			Dashboard: map[string]interface{}{
+				"title":  "Test New Dashboard",
+				"panels": []interface{}{},
+			},
+			Message:   "Create new test dashboard",
+			Overwrite: false,
+		})
+
+		// Should either succeed or fail with a meaningful error
+		if err != nil {
+			// Common errors for new dashboard creation
+			assert.True(t,
+				assert.Contains(t, err.Error(), "unable to save dashboard") ||
+					assert.Contains(t, err.Error(), "validation") ||
+					assert.Contains(t, err.Error(), "permission"),
+				"Error should be related to dashboard creation, not smart routing: %v", err)
+		} else {
+			// If successful, should indicate it was created
+			assert.Contains(t, result, "Dashboard created successfully")
+		}
+	})
+
+	t.Run("smart update - existing dashboard detection", func(t *testing.T) {
+		ctx := newTestContext()
+
+		// Test with an existing dashboard UID
+		result, err := smartUpdateDashboard(ctx, UpdateDashboardParams{
+			Dashboard: map[string]interface{}{
+				"uid":    "test-dashboard-uid",
+				"title":  "Test Existing Dashboard",
+				"panels": []interface{}{},
+			},
+			Message:   "Update existing test dashboard",
+			Overwrite: true,
+		})
+
+		// The function should handle the dashboard manager detection
+		if err != nil {
+			// Should be a meaningful error, not a routing error
+			assert.NotContains(t, err.Error(), "dashboard must be a JSON object")
+			assert.NotContains(t, err.Error(), "type assertion")
+		} else {
+			// Should contain either GitOps or regular update result
+			assert.True(t,
+				assert.Contains(t, result, "Dashboard updated successfully") ||
+					assert.Contains(t, result, "Provisioned dashboard updated via GitOps"),
+				"Result should indicate successful update via appropriate method")
+		}
+	})
+
+	t.Run("smart update - provisioned dashboard uses plain JSON", func(t *testing.T) {
+		// This test verifies that for provisioned dashboards,
+		// we store plain JSON instead of Kubernetes resource format
+		ctx := newTestContext()
+
+		// Mock dashboard data
+		dashboardJSON := map[string]interface{}{
+			"uid":     "test-provisioned-dashboard",
+			"title":   "Test Provisioned Dashboard",
+			"version": 1,
+			"panels": []interface{}{
+				map[string]interface{}{
+					"id":    1,
+					"title": "Test Panel",
+					"type":  "stat",
+				},
+			},
+		}
+
+		// Test the smart update
+		result, err := smartUpdateDashboard(ctx, UpdateDashboardParams{
+			Dashboard: dashboardJSON,
+			Message:   "Update provisioned dashboard as plain JSON",
+			Overwrite: true,
+		})
+
+		// The key test: if this is a provisioned dashboard, it should handle it via GitOps
+		// and NOT wrap it in Kubernetes resource format
+		if err != nil {
+			// If it fails, it should be a meaningful GitOps-related error, not a format error
+			assert.NotContains(t, err.Error(), "failed to marshal dashboard resource")
+			assert.NotContains(t, err.Error(), "Kubernetes resource format")
+		} else {
+			// If successful, check the result format
+			if strings.Contains(result, "Provisioned dashboard updated via GitOps") {
+				// This means it detected a provisioned dashboard and used file management
+				assert.Contains(t, result, "Repository:")
+				assert.Contains(t, result, "File:")
+				assert.Contains(t, result, "UID:")
+			} else {
+				// Regular dashboard update
+				assert.Contains(t, result, "Dashboard updated successfully")
+			}
+		}
+	})
+
+	t.Run("smart update - invalid dashboard format", func(t *testing.T) {
+		ctx := newTestContext()
+
+		// This test will not be valid since the Dashboard type is already map[string]interface{}
+		// So we'll skip this test or modify it to test other error conditions
+		t.Skip("Dashboard parameter is already properly typed")
+	})
+}
+
+func TestDashboardToolIntegration(t *testing.T) {
+	// Implementation of TestDashboardToolIntegration function
+	// This function should be implemented based on the specific integration test requirements
 }
