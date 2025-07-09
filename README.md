@@ -49,6 +49,7 @@ _The following features are currently available in MCP server. This list is for 
 
 ### Admin
 - **List teams:** View all configured teams in Grafana.
+- **List Users:** View all users in an organization in Grafana.
 
 The list of tools is configurable, so you can choose which tools you want to make available to the MCP client.
 This is useful if you don't use certain functionality or if you don't want to take up too much of the context window.
@@ -60,6 +61,7 @@ the OnCall tools, use `--disable-oncall`.
 | Tool                              | Category    | Description                                                        |
 | --------------------------------- | ----------- | ------------------------------------------------------------------ |
 | `list_teams`                      | Admin       | List all teams                                                     |
+| `list_users_by_org`               | Admin       | List all users in an organization                                  |
 | `search_dashboards`               | Search      | Search for dashboards                                              |
 | `get_dashboard_by_uid`            | Dashboard   | Get a dashboard by uid                                             |
 | `update_dashboard`                | Dashboard   | Update or create a new dashboard                                   |

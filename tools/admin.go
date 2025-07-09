@@ -34,6 +34,25 @@ var ListTeams = mcpgrafana.MustTool(
 	listTeams,
 )
 
+type ListUsersByOrgParams struct{}
+
+func listUsersByOrg(ctx context.Context, args ListUsersByOrgParams) ([]*models.OrgUserDTO, error) {
+	c := mcpgrafana.GrafanaClientFromContext(ctx)
+
+	search, err := c.Org.GetOrgUsersForCurrentOrg()
+	if err != nil {
+		return nil, fmt.Errorf("search users: %w", err)
+	}
+	return search.Payload, nil
+}
+
+var ListUsersByOrg = mcpgrafana.MustTool(
+	"list_users_by_org",
+	"List users by organization. Returns a list of users with details like userid, email, role etc.",
+	listUsersByOrg,
+)
+
 func AddAdminTools(mcp *server.MCPServer) {
 	ListTeams.Register(mcp)
+	ListUsersByOrg.Register(mcp)
 }
