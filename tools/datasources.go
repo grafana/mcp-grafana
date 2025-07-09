@@ -25,7 +25,10 @@ type dataSourceSummary struct {
 }
 
 func listDatasources(ctx context.Context, args ListDatasourcesParams) ([]dataSourceSummary, error) {
-	c := mcpgrafana.GrafanaClientFromContext(ctx)
+	c, err := mcpgrafana.GrafanaClientFromContext(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list datasources: %w", err)
+	}
 	resp, err := c.Datasources.GetDataSources()
 	if err != nil {
 		return nil, fmt.Errorf("list datasources: %w", err)
@@ -78,7 +81,10 @@ type GetDatasourceByUIDParams struct {
 }
 
 func getDatasourceByUID(ctx context.Context, args GetDatasourceByUIDParams) (*models.DataSource, error) {
-	c := mcpgrafana.GrafanaClientFromContext(ctx)
+	c, err := mcpgrafana.GrafanaClientFromContext(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("get datasource by uid %s: %w", args.UID, err)
+	}
 	datasource, err := c.Datasources.GetDataSourceByUID(args.UID)
 	if err != nil {
 		// Check if it's a 404 Not Found Error
@@ -104,7 +110,10 @@ type GetDatasourceByNameParams struct {
 }
 
 func getDatasourceByName(ctx context.Context, args GetDatasourceByNameParams) (*models.DataSource, error) {
-	c := mcpgrafana.GrafanaClientFromContext(ctx)
+	c, err := mcpgrafana.GrafanaClientFromContext(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("get datasource by name %s: %w", args.Name, err)
+	}
 	datasource, err := c.Datasources.GetDataSourceByName(args.Name)
 	if err != nil {
 		return nil, fmt.Errorf("get datasource by name %s: %w", args.Name, err)
