@@ -60,7 +60,7 @@ jobs:
       # Do this early so that it can start up in time for the tests to run.
       # We may need to add a wait here.
       - name: Start docker-compose services
-        uses: hoverkraft-tech/compose-action@8be2d741e891ac9b8ac20825e6f3904149599925
+        uses: hoverkraft-tech/compose-action@40041ff1b97dbf152cd2361138c2b03fa29139df
         with:
           compose-file: "docker-compose.yaml"
 
@@ -146,7 +146,7 @@ jobs:
             OPENAI_API_KEY=openai:api-key
 
       - name: Start docker-compose services
-        uses: hoverkraft-tech/compose-action@8be2d741e891ac9b8ac20825e6f3904149599925
+        uses: hoverkraft-tech/compose-action@40041ff1b97dbf152cd2361138c2b03fa29139df
         with:
           compose-file: "docker-compose.yaml"
 
