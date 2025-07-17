@@ -213,13 +213,45 @@ You can enable debug mode for the Grafana transport by adding the `-debug` flag 
 
 ### OpenTelemetry Tracing
 
-The MCP server includes OpenTelemetry instrumentation that automatically creates spans for each tool execution when a consuming application has tracing configured. This provides detailed observability into:
+The MCP server includes OpenTelemetry instrumentation that automatically creates spans for each tool execution when a consuming application has tracing configured.
 
-- Tool execution timing and success/failure status
-- Error attribution and stack traces
-- Tool names and descriptions
+## **Setting Up Tracing in Your Application**
 
-**Privacy Note**: By default, tool arguments are **not** logged in traces to prevent accidental PII exposure. If you need to log arguments for debugging (and you're certain they don't contain sensitive data), you can enable this with:
+1. **Configure OpenTelemetry infrastructure** (one-time setup):
+
+```go
+import (
+    "go.opentelemetry.io/otel"
+    "go.opentelemetry.io/otel/exporters/jaeger"  // or your preferred exporter
+    "go.opentelemetry.io/otel/sdk/trace"
+)
+
+// Set up tracer provider
+exporter, _ := jaeger.New(jaeger.WithCollectorEndpoint())
+tp := trace.NewTracerProvider(
+    trace.WithBatcher(exporter),
+    trace.WithResource(resource.NewWithAttributes(
+        semconv.ServiceName("my-app"),
+    )),
+)
+otel.SetTracerProvider(tp)
+```
+
+2. **Configure MCP server context**:
+
+```go
+grafanaConfig := mcpgrafana.GrafanaConfig{
+    URL:    "http://localhost:3000",
+    APIKey: "your-api-key",
+    LogTraceArguments: false, // Default: safe (no PII logging)
+}
+
+srv.SetContextFunc(mcpgrafana.ComposedStdioContextFunc(grafanaConfig))
+```
+
+## **Enabling Argument Logging**
+
+**⚠️ Privacy Warning:** Tool arguments may contain PII (emails, names, API tokens). Only enable when safe:
 
 ```go
 config := mcpgrafana.GrafanaConfig{
@@ -227,14 +259,28 @@ config := mcpgrafana.GrafanaConfig{
 }
 ```
 
-**Example trace output:**
+## **What You Get**
+
+**Automatic tracing for every tool call:**
 
 ```
-Application Request
+Your Application
+├── your.business.logic
 ├── mcp.tool.list_teams (150ms, status=OK)
 ├── mcp.tool.query_prometheus (2.3s, status=ERROR)
 │   └── error: "datasource not found"
 └── mcp.tool.search_dashboards (45ms, status=OK)
+```
+
+**With argument logging enabled:**
+
+```
+mcp.tool.query_prometheus
+├── attributes: {
+│   ├── mcp.tool.name: "query_prometheus"
+│   ├── mcp.tool.description: "Query Prometheus using PromQL..."
+│   └── mcp.tool.arguments: "{\"expr\":\"up\",\"datasourceUID\":\"abc123\"}"
+│   }
 ```
 
 To use debug mode with the Claude Desktop configuration, update your config as follows:
