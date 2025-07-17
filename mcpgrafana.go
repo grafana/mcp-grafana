@@ -56,6 +56,11 @@ type GrafanaConfig struct {
 	// Debug enables debug mode for the Grafana client.
 	Debug bool
 
+	// LogTraceArguments enables logging of tool arguments in OpenTelemetry spans.
+	// This should only be enabled in non-production environments or when you're
+	// certain the arguments don't contain PII. Defaults to false for safety.
+	LogTraceArguments bool
+
 	// URL is the URL of the Grafana instance.
 	URL string
 

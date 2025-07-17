@@ -211,6 +211,32 @@ If you're using VSCode and running the MCP server in SSE mode (which is the defa
 
 You can enable debug mode for the Grafana transport by adding the `-debug` flag to the command. This will provide detailed logging of HTTP requests and responses between the MCP server and the Grafana API, which can be helpful for troubleshooting.
 
+### OpenTelemetry Tracing
+
+The MCP server includes OpenTelemetry instrumentation that automatically creates spans for each tool execution when a consuming application has tracing configured. This provides detailed observability into:
+
+- Tool execution timing and success/failure status
+- Error attribution and stack traces
+- Tool names and descriptions
+
+**Privacy Note**: By default, tool arguments are **not** logged in traces to prevent accidental PII exposure. If you need to log arguments for debugging (and you're certain they don't contain sensitive data), you can enable this with:
+
+```go
+config := mcpgrafana.GrafanaConfig{
+    LogTraceArguments: true, // Enable argument logging (use cautiously)
+}
+```
+
+**Example trace output:**
+
+```
+Application Request
+├── mcp.tool.list_teams (150ms, status=OK)
+├── mcp.tool.query_prometheus (2.3s, status=ERROR)
+│   └── error: "datasource not found"
+└── mcp.tool.search_dashboards (45ms, status=OK)
+```
+
 To use debug mode with the Claude Desktop configuration, update your config as follows:
 
 **If using the binary:**
