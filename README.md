@@ -244,10 +244,38 @@ grafanaConfig := mcpgrafana.GrafanaConfig{
     URL:    "http://localhost:3000",
     APIKey: "your-api-key",
     LogTraceArguments: false, // Default: safe (no PII logging)
+    EnableHTTPTracing: false, // Default: minimal dependencies
 }
 
 srv.SetContextFunc(mcpgrafana.ComposedStdioContextFunc(grafanaConfig))
 ```
+
+## **Enabling HTTP Request Tracing**
+
+For **perfect trace correlation** between tool-level spans and HTTP requests:
+
+```go
+config := mcpgrafana.GrafanaConfig{
+    EnableHTTPTracing: true, // Creates HTTP spans for each Grafana API call
+}
+```
+
+**Result:** Individual HTTP requests get their own spans as children of tool spans:
+
+```
+mcp.tool.query_prometheus [trace: abc123]
+├── http.request [trace: abc123, span: def456]
+│   ├── method: POST
+│   ├── url: /api/datasources/proxy/uid/abc123/api/v1/query
+│   └── status: 404
+└── error: "datasource not found"
+```
+
+This enables you to:
+
+- ✅ **Correlate debug logs with traces** using trace/span IDs
+- ✅ **See exact HTTP timing** for each API call  
+- ✅ **Debug HTTP-level issues** within specific tool executions
 
 ## **Enabling Argument Logging**
 

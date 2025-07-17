@@ -11,10 +11,12 @@ import (
 	"os"
 	"strings"
 
+	rtclient "github.com/go-openapi/runtime/client"
 	"github.com/go-openapi/strfmt"
 	"github.com/grafana/grafana-openapi-client-go/client"
 	"github.com/grafana/incident-go"
 	"github.com/mark3labs/mcp-go/server"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 const (
@@ -60,6 +62,11 @@ type GrafanaConfig struct {
 	// This should only be enabled in non-production environments or when you're
 	// certain the arguments don't contain PII. Defaults to false for safety.
 	LogTraceArguments bool
+
+	// EnableHTTPTracing enables OpenTelemetry instrumentation for HTTP requests
+	// to Grafana APIs, providing detailed spans for each HTTP call and perfect
+	// correlation with tool-level tracing. Defaults to false for minimal dependencies.
+	EnableHTTPTracing bool
 
 	// URL is the URL of the Grafana instance.
 	URL string
@@ -266,7 +273,17 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string) *client.Gr
 	}
 
 	slog.Debug("Creating Grafana client", "url", parsedURL.Redacted(), "api_key_set", apiKey != "")
-	return client.NewHTTPClientWithConfig(strfmt.Default, cfg)
+	grafanaClient := client.NewHTTPClientWithConfig(strfmt.Default, cfg)
+
+	// Enable HTTP tracing if configured (modify client after creation)
+	if config.EnableHTTPTracing {
+		if runtime, ok := grafanaClient.Transport.(*rtclient.Runtime); ok {
+			runtime.Transport = otelhttp.NewTransport(runtime.Transport)
+			slog.Debug("HTTP tracing enabled for Grafana client")
+		}
+	}
+
+	return grafanaClient
 }
 
 // ExtractGrafanaClientFromEnv is a StdioContextFunc that extracts Grafana configuration

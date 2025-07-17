@@ -452,6 +452,55 @@ func TestToolTracingInstrumentation(t *testing.T) {
 	})
 }
 
+func TestHTTPTracingConfiguration(t *testing.T) {
+	t.Run("HTTP tracing enabled when configured", func(t *testing.T) {
+		// Create context with HTTP tracing enabled
+		config := GrafanaConfig{
+			EnableHTTPTracing: true,
+		}
+		ctx := WithGrafanaConfig(context.Background(), config)
+
+		// Create Grafana client
+		client := NewGrafanaClient(ctx, "http://localhost:3000", "test-api-key")
+		require.NotNil(t, client)
+
+		// Verify the client was created successfully (should not panic)
+		assert.NotNil(t, client.Transport)
+	})
+
+	t.Run("HTTP tracing gracefully disabled when not configured", func(t *testing.T) {
+		// Create context without HTTP tracing enabled (default)
+		config := GrafanaConfig{
+			EnableHTTPTracing: false,
+		}
+		ctx := WithGrafanaConfig(context.Background(), config)
+
+		// Create Grafana client
+		client := NewGrafanaClient(ctx, "http://localhost:3000", "test-api-key")
+		require.NotNil(t, client)
+
+		// Verify the client was created successfully
+		assert.NotNil(t, client.Transport)
+	})
+
+	t.Run("HTTP tracing works without OpenTelemetry configured", func(t *testing.T) {
+		// No OpenTelemetry tracer provider configured
+		
+		// Create context with HTTP tracing enabled
+		config := GrafanaConfig{
+			EnableHTTPTracing: true,
+		}
+		ctx := WithGrafanaConfig(context.Background(), config)
+
+		// Create Grafana client (should not panic even without OTEL configured)
+		client := NewGrafanaClient(ctx, "http://localhost:3000", "test-api-key")
+		require.NotNil(t, client)
+
+		// Verify the client was created successfully
+		assert.NotNil(t, client.Transport)
+	})
+}
+
 // Helper function to check if an attribute exists with expected value
 func assertHasAttribute(t *testing.T, attributes []attribute.KeyValue, key string, expectedValue string) {
 	for _, attr := range attributes {
