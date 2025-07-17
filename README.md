@@ -243,24 +243,24 @@ otel.SetTracerProvider(tp)
 grafanaConfig := mcpgrafana.GrafanaConfig{
     URL:    "http://localhost:3000",
     APIKey: "your-api-key",
-    LogTraceArguments: false, // Default: safe (no PII logging)
-    EnableHTTPTracing: false, // Default: minimal dependencies
+    EnableTracing: false,        // Default: no tracing overhead
+    LogTraceArguments: false,    // Default: safe (no PII logging)
 }
 
 srv.SetContextFunc(mcpgrafana.ComposedStdioContextFunc(grafanaConfig))
 ```
 
-## **Enabling HTTP Request Tracing**
+## **Enabling Complete Tracing**
 
-For **perfect trace correlation** between tool-level spans and HTTP requests:
+To get **full observability** (tool spans + HTTP request spans):
 
 ```go
 config := mcpgrafana.GrafanaConfig{
-    EnableHTTPTracing: true, // Creates HTTP spans for each Grafana API call
+    EnableTracing: true,  // Enables both tool and HTTP tracing
 }
 ```
 
-**Result:** Individual HTTP requests get their own spans as children of tool spans:
+**Result:** Complete trace hierarchy with perfect correlation:
 
 ```
 mcp.tool.query_prometheus [trace: abc123]
@@ -271,19 +271,41 @@ mcp.tool.query_prometheus [trace: abc123]
 └── error: "datasource not found"
 ```
 
-This enables you to:
-
-- ✅ **Correlate debug logs with traces** using trace/span IDs
-- ✅ **See exact HTTP timing** for each API call  
-- ✅ **Debug HTTP-level issues** within specific tool executions
-
 ## **Enabling Argument Logging**
 
 **⚠️ Privacy Warning:** Tool arguments may contain PII (emails, names, API tokens). Only enable when safe:
 
 ```go
 config := mcpgrafana.GrafanaConfig{
-    LogTraceArguments: true, // Enable argument logging (use cautiously)
+    EnableTracing: true,        // Required for any tracing
+    LogTraceArguments: true,    // Enable argument logging (use cautiously)
+}
+```
+
+## **Configuration Examples**
+
+**Production (safe):**
+
+```go
+config := mcpgrafana.GrafanaConfig{
+    EnableTracing: true,         // Full observability
+    LogTraceArguments: false,    // Keep it safe (default)
+}
+```
+
+**Development/debugging:**
+
+```go
+config := mcpgrafana.GrafanaConfig{
+    EnableTracing: true,         // Full observability
+    LogTraceArguments: true,     // Debug with arguments (when safe)
+}
+```
+
+**No tracing (default):**
+```go
+config := mcpgrafana.GrafanaConfig{
+    EnableTracing: false,        // Minimal overhead (default)
 }
 ```
 

@@ -91,28 +91,32 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 		// Create OpenTelemetry span for tool execution (safely, with fallback)
 		var span trace.Span
 		
-		// Safely attempt to create a span - if it fails, continue without tracing
-		func() {
-			defer func() {
-				if r := recover(); r != nil {
-					// If tracer creation panics, just continue without tracing
-					span = nil
-				}
+		// Only create spans if tracing is explicitly enabled
+		config := GrafanaConfigFromContext(ctx)
+		if config.EnableTracing {
+			// Safely attempt to create a span - if it fails, continue without tracing
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						// If tracer creation panics, just continue without tracing
+						span = nil
+					}
+				}()
+				
+				tracer := otel.Tracer("mcp-grafana")
+				ctx, span = tracer.Start(ctx, fmt.Sprintf("mcp.tool.%s", name))
 			}()
 			
-			tracer := otel.Tracer("mcp-grafana")
-			ctx, span = tracer.Start(ctx, fmt.Sprintf("mcp.tool.%s", name))
-		}()
-		
-		// Set up span cleanup if we successfully created one
-		if span != nil {
-			defer span.End()
-			
-			// Add tool metadata as span attributes
-			span.SetAttributes(
-				attribute.String("mcp.tool.name", name),
-				attribute.String("mcp.tool.description", description),
-			)
+			// Set up span cleanup if we successfully created one
+			if span != nil {
+				defer span.End()
+				
+				// Add tool metadata as span attributes
+				span.SetAttributes(
+					attribute.String("mcp.tool.name", name),
+					attribute.String("mcp.tool.description", description),
+				)
+			}
 		}
 
 		argBytes, err := json.Marshal(request.Params.Arguments)
@@ -124,12 +128,9 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 			return nil, fmt.Errorf("marshal args: %w", err)
 		}
 		
-		// Add arguments as span attribute only if explicitly enabled (PII safety)
-		if span != nil {
-			config := GrafanaConfigFromContext(ctx)
-			if config.LogTraceArguments {
-				span.SetAttributes(attribute.String("mcp.tool.arguments", string(argBytes)))
-			}
+		// Add arguments as span attribute only if tracing and argument logging are both enabled
+		if span != nil && config.LogTraceArguments {
+			span.SetAttributes(attribute.String("mcp.tool.arguments", string(argBytes)))
 		}
 
 		unmarshaledArgs := reflect.New(argType).Interface()
