@@ -129,7 +129,7 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 		}
 		
 		// Add arguments as span attribute only if tracing and argument logging are both enabled
-		if span != nil && config.LogTraceArguments {
+		if span != nil && config.IncludeArgumentsInSpans {
 			span.SetAttributes(attribute.String("mcp.tool.arguments", string(argBytes)))
 		}
 
