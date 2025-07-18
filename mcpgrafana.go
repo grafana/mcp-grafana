@@ -9,9 +9,9 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"reflect"
 	"strings"
 
-	rtclient "github.com/go-openapi/runtime/client"
 	"github.com/go-openapi/strfmt"
 	"github.com/grafana/grafana-openapi-client-go/client"
 	"github.com/grafana/incident-go"
@@ -273,9 +273,20 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string) *client.Gr
 	grafanaClient := client.NewHTTPClientWithConfig(strfmt.Default, cfg)
 
 	// Always enable HTTP tracing for context propagation (no-op when no exporter configured)
-	if runtime, ok := grafanaClient.Transport.(*rtclient.Runtime); ok {
-		runtime.Transport = otelhttp.NewTransport(runtime.Transport)
-		slog.Debug("HTTP tracing enabled for Grafana client")
+	// Use reflection to wrap the transport without importing the runtime client package
+	v := reflect.ValueOf(grafanaClient.Transport)
+	if v.Kind() == reflect.Ptr && !v.IsNil() {
+		v = v.Elem()
+		if v.Kind() == reflect.Struct {
+			transportField := v.FieldByName("Transport")
+			if transportField.IsValid() && transportField.CanSet() {
+				if rt, ok := transportField.Interface().(http.RoundTripper); ok {
+					wrapped := otelhttp.NewTransport(rt)
+					transportField.Set(reflect.ValueOf(wrapped))
+					slog.Debug("HTTP tracing enabled for Grafana client")
+				}
+			}
+		}
 	}
 
 	return grafanaClient
