@@ -209,6 +209,8 @@ If you're using VSCode and running the MCP server in SSE mode (which is the defa
 
 ### Debug Mode
 
+You can enable debug mode for the Grafana transport by adding the `-debug` flag to the command. This will provide detailed logging of HTTP requests and responses between the MCP server and the Grafana API, which can be helpful for troubleshooting.
+
 To use debug mode with the Claude Desktop configuration, update your config as follows:
 
 **If using the binary:**

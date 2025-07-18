@@ -126,7 +126,7 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 			return nil, fmt.Errorf("marshal args: %w", err)
 		}
 		
-		// Add arguments as span attribute only if addinng args to trace attributes is enabled
+		   // Add arguments as span attribute only if adding args to trace attributes is enabled
 		if span != nil && config.IncludeArgumentsInSpans {
 			span.SetAttributes(attribute.String("mcp.tool.arguments", string(argBytes)))
 		}
