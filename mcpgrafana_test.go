@@ -246,10 +246,9 @@ func TestToolTracingInstrumentation(t *testing.T) {
 		// Create tool using MustTool (this applies our instrumentation)
 		tool := MustTool("test_tool", "A test tool for tracing", testHandler)
 
-		// Create context with tracing and argument logging enabled
+		// Create context with argument logging enabled
 		config := GrafanaConfig{
-			EnableTracing: true,
-			LogTraceArguments: true,
+			IncludeArgumentsInSpans: true,
 		}
 		ctx := WithGrafanaConfig(context.Background(), config)
 
@@ -306,8 +305,8 @@ func TestToolTracingInstrumentation(t *testing.T) {
 		// Create tool
 		tool := MustTool("failing_tool", "A tool that can fail", testHandler)
 
-		// Create context with tracing enabled
-		config := GrafanaConfig{EnableTracing: true}
+		// Create context (spans always created)
+		config := GrafanaConfig{}
 		ctx := WithGrafanaConfig(context.Background(), config)
 
 		// Create a mock MCP request that will cause failure
@@ -350,7 +349,7 @@ func TestToolTracingInstrumentation(t *testing.T) {
 		assert.True(t, hasErrorEvent, "Expected error event to be recorded on span")
 	})
 
-	t.Run("no spans created when tracing disabled (default)", func(t *testing.T) {
+	t.Run("spans always created for context propagation", func(t *testing.T) {
 		// Clear any previous spans
 		spanRecorder.Reset()
 
@@ -364,10 +363,10 @@ func TestToolTracingInstrumentation(t *testing.T) {
 		}
 
 		// Create tool
-		tool := MustTool("no_trace_tool", "A tool without tracing", testHandler)
+		tool := MustTool("context_prop_tool", "A tool for context propagation", testHandler)
 
-		// Create context with tracing disabled (default)
-		config := GrafanaConfig{EnableTracing: false}
+		// Create context with default config (no special flags)
+		config := GrafanaConfig{}
 		ctx := WithGrafanaConfig(context.Background(), config)
 
 		// Create a mock MCP request
@@ -377,24 +376,28 @@ func TestToolTracingInstrumentation(t *testing.T) {
 				Arguments any       `json:"arguments,omitempty"`
 				Meta      *mcp.Meta `json:"_meta,omitempty"`
 			}{
-				Name: "no_trace_tool",
+				Name: "context_prop_tool",
 				Arguments: map[string]interface{}{
 					"message": "test",
 				},
 			},
 		}
 
-		// Execute the tool (should work but create no spans)
+		// Execute the tool (should always create spans for context propagation)
 		result, err := tool.Handler(ctx, request)
 		require.NoError(t, err)
 		require.NotNil(t, result)
 
-		// Verify NO spans were created
+		// Verify spans ARE always created
 		spans := spanRecorder.Ended()
-		assert.Len(t, spans, 0)
+		require.Len(t, spans, 1)
+
+		span := spans[0]
+		assert.Equal(t, "mcp.tool.context_prop_tool", span.Name())
+		assert.Equal(t, codes.Ok, span.Status().Code)
 	})
 
-	t.Run("arguments not logged by default even when tracing enabled (PII safety)", func(t *testing.T) {
+	t.Run("arguments not logged by default (PII safety)", func(t *testing.T) {
 		// Clear any previous spans
 		spanRecorder.Reset()
 
@@ -410,10 +413,9 @@ func TestToolTracingInstrumentation(t *testing.T) {
 		// Create tool
 		tool := MustTool("sensitive_tool", "A tool with sensitive data", testHandler)
 
-		// Create context with tracing enabled but argument logging disabled (default)
+		// Create context with argument logging disabled (default)
 		config := GrafanaConfig{
-			EnableTracing: true,
-			LogTraceArguments: false, // Default: safe
+			IncludeArgumentsInSpans: false, // Default: safe
 		}
 		ctx := WithGrafanaConfig(context.Background(), config)
 
@@ -455,7 +457,7 @@ func TestToolTracingInstrumentation(t *testing.T) {
 		}
 	})
 
-	t.Run("arguments logged when both tracing and argument logging enabled", func(t *testing.T) {
+	t.Run("arguments logged when argument logging enabled", func(t *testing.T) {
 		// Clear any previous spans
 		spanRecorder.Reset()
 
@@ -471,10 +473,9 @@ func TestToolTracingInstrumentation(t *testing.T) {
 		// Create tool
 		tool := MustTool("debug_tool", "A tool for debugging", testHandler)
 
-		// Create context with both tracing and argument logging enabled
+		// Create context with argument logging enabled
 		config := GrafanaConfig{
-			EnableTracing: true,
-			LogTraceArguments: true,
+			IncludeArgumentsInSpans: true,
 		}
 		ctx := WithGrafanaConfig(context.Background(), config)
 
@@ -492,7 +493,7 @@ func TestToolTracingInstrumentation(t *testing.T) {
 			},
 		}
 
-		// Execute the tool (arguments SHOULD be logged when both flags enabled)
+		// Execute the tool (arguments SHOULD be logged when flag enabled)
 		result, err := tool.Handler(ctx, request)
 		require.NoError(t, err)
 		require.NotNil(t, result)
@@ -505,7 +506,7 @@ func TestToolTracingInstrumentation(t *testing.T) {
 		assert.Equal(t, "mcp.tool.debug_tool", span.Name())
 		assert.Equal(t, codes.Ok, span.Status().Code)
 
-		// Check that arguments ARE logged when both flags enabled
+		// Check that arguments ARE logged when flag enabled
 		attributes := span.Attributes()
 		assertHasAttribute(t, attributes, "mcp.tool.name", "debug_tool")
 		assertHasAttribute(t, attributes, "mcp.tool.description", "A tool for debugging")
@@ -514,11 +515,9 @@ func TestToolTracingInstrumentation(t *testing.T) {
 }
 
 func TestHTTPTracingConfiguration(t *testing.T) {
-	t.Run("HTTP tracing enabled when EnableTracing configured", func(t *testing.T) {
-		// Create context with tracing enabled (includes HTTP tracing)
-		config := GrafanaConfig{
-			EnableTracing: true,
-		}
+	t.Run("HTTP tracing always enabled for context propagation", func(t *testing.T) {
+		// Create context (HTTP tracing always enabled)
+		config := GrafanaConfig{}
 		ctx := WithGrafanaConfig(context.Background(), config)
 
 		// Create Grafana client
@@ -529,28 +528,11 @@ func TestHTTPTracingConfiguration(t *testing.T) {
 		assert.NotNil(t, client.Transport)
 	})
 
-	t.Run("HTTP tracing disabled when EnableTracing disabled (default)", func(t *testing.T) {
-		// Create context with tracing disabled (default)
-		config := GrafanaConfig{
-			EnableTracing: false,
-		}
-		ctx := WithGrafanaConfig(context.Background(), config)
-
-		// Create Grafana client
-		client := NewGrafanaClient(ctx, "http://localhost:3000", "test-api-key")
-		require.NotNil(t, client)
-
-		// Verify the client was created successfully
-		assert.NotNil(t, client.Transport)
-	})
-
 	t.Run("tracing works gracefully without OpenTelemetry configured", func(t *testing.T) {
 		// No OpenTelemetry tracer provider configured
 		
-		// Create context with tracing enabled
-		config := GrafanaConfig{
-			EnableTracing: true,
-		}
+		// Create context (tracing always enabled for context propagation)
+		config := GrafanaConfig{}
 		ctx := WithGrafanaConfig(context.Background(), config)
 
 		// Create Grafana client (should not panic even without OTEL configured)

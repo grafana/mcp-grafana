@@ -58,15 +58,11 @@ type GrafanaConfig struct {
 	// Debug enables debug mode for the Grafana client.
 	Debug bool
 
-	// EnableTracing enables OpenTelemetry instrumentation for both tool execution
-	// and HTTP requests, providing complete observability with perfect correlation
-	// between tool spans and HTTP request spans. Defaults to false for minimal overhead.
-	EnableTracing bool
-
-	// IncludeArgumentsInSpans enables logging of tool arguments in OpenTelemetry spans
-	// when tracing is enabled. This should only be enabled in non-production 
-	// environments or when you're certain the arguments don't contain PII. 
-	// Defaults to false for safety. Requires EnableTracing to be true.
+	// IncludeArgumentsInSpans enables logging of tool arguments in OpenTelemetry spans.
+	// This should only be enabled in non-production environments or when you're certain 
+	// the arguments don't contain PII. Defaults to false for safety.
+	// Note: OpenTelemetry spans are always created for context propagation, but arguments
+	// are only included when this flag is enabled.
 	IncludeArgumentsInSpans bool
 
 	// URL is the URL of the Grafana instance.
@@ -276,12 +272,10 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string) *client.Gr
 	slog.Debug("Creating Grafana client", "url", parsedURL.Redacted(), "api_key_set", apiKey != "")
 	grafanaClient := client.NewHTTPClientWithConfig(strfmt.Default, cfg)
 
-	// Enable HTTP tracing if configured (modify client after creation)
-	if config.EnableTracing {
-		if runtime, ok := grafanaClient.Transport.(*rtclient.Runtime); ok {
-			runtime.Transport = otelhttp.NewTransport(runtime.Transport)
-			slog.Debug("HTTP tracing enabled for Grafana client")
-		}
+	// Always enable HTTP tracing for context propagation (no-op when no exporter configured)
+	if runtime, ok := grafanaClient.Transport.(*rtclient.Runtime); ok {
+		runtime.Transport = otelhttp.NewTransport(runtime.Transport)
+		slog.Debug("HTTP tracing enabled for Grafana client")
 	}
 
 	return grafanaClient
