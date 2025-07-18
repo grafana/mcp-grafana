@@ -91,9 +91,9 @@ the OnCall tools, use `--disable-oncall`.
 | `get_current_oncall_users`        | OnCall      | Get users currently on-call for a specific schedule                |
 | `list_oncall_teams`               | OnCall      | List teams from Grafana OnCall                                     |
 | `list_oncall_users`               | OnCall      | List users from Grafana OnCall                                     |
-| `get_investigation`               | Sift        | Retrieve an existing Sift investigation by its UUID                |
-| `get_analysis`                    | Sift        | Retrieve a specific analysis from a Sift investigation             |
-| `list_investigations`             | Sift        | Retrieve a list of Sift investigations with an optional limit      |
+| `get_sift_investigation`          | Sift        | Retrieve an existing Sift investigation by its UUID                |
+| `get_sift_analysis`               | Sift        | Retrieve a specific analysis from a Sift investigation             |
+| `list_sift_investigations`        | Sift        | Retrieve a list of Sift investigations with an optional limit      |
 | `find_error_pattern_logs`         | Sift        | Finds elevated error patterns in Loki logs.                        |
 | `find_slow_requests`              | Sift        | Finds slow requests from the relevant tempo datasources.           |
 | `list_pyroscope_label_names`      | Pyroscope   | List label names matching a selector                               |
