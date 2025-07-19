@@ -9,7 +9,12 @@ wheels/
 .vscode/
 .env
 .cursor/
+.idea
 
 # Virtual environments
 .venv
 .envrc
+
+# Air development files
+tmp/
+build-errors.log
