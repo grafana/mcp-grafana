@@ -9,12 +9,14 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"reflect"
 	"strings"
 
 	"github.com/go-openapi/strfmt"
 	"github.com/grafana/grafana-openapi-client-go/client"
 	"github.com/grafana/incident-go"
 	"github.com/mark3labs/mcp-go/server"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 const (
@@ -55,6 +57,13 @@ type TLSConfig struct {
 type GrafanaConfig struct {
 	// Debug enables debug mode for the Grafana client.
 	Debug bool
+
+	// IncludeArgumentsInSpans enables logging of tool arguments in OpenTelemetry spans.
+	// This should only be enabled in non-production environments or when you're certain 
+	// the arguments don't contain PII. Defaults to false for safety.
+	// Note: OpenTelemetry spans are always created for context propagation, but arguments
+	// are only included when this flag is enabled.
+	IncludeArgumentsInSpans bool
 
 	// URL is the URL of the Grafana instance.
 	URL string
@@ -261,7 +270,26 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string) *client.Gr
 	}
 
 	slog.Debug("Creating Grafana client", "url", parsedURL.Redacted(), "api_key_set", apiKey != "")
-	return client.NewHTTPClientWithConfig(strfmt.Default, cfg)
+	grafanaClient := client.NewHTTPClientWithConfig(strfmt.Default, cfg)
+
+	// Always enable HTTP tracing for context propagation (no-op when no exporter configured)
+	// Use reflection to wrap the transport without importing the runtime client package
+	v := reflect.ValueOf(grafanaClient.Transport)
+	if v.Kind() == reflect.Ptr && !v.IsNil() {
+		v = v.Elem()
+		if v.Kind() == reflect.Struct {
+			transportField := v.FieldByName("Transport")
+			if transportField.IsValid() && transportField.CanSet() {
+				if rt, ok := transportField.Interface().(http.RoundTripper); ok {
+					wrapped := otelhttp.NewTransport(rt)
+					transportField.Set(reflect.ValueOf(wrapped))
+					slog.Debug("HTTP tracing enabled for Grafana client")
+				}
+			}
+		}
+	}
+
+	return grafanaClient
 }
 
 // ExtractGrafanaClientFromEnv is a StdioContextFunc that extracts Grafana configuration
