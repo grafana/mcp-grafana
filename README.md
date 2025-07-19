@@ -27,10 +27,11 @@ _The following features are currently available in MCP server. This list is for 
 - **Query Loki metadata:** Retrieve label names, label values, and stream statistics from Loki datasources.
 
 ### Incidents
-- **Search, create, update, and close incidents:** Manage incidents in Grafana Incident, including searching, creating, updating, and resolving incidents.
+
+- **Search, create, and update incidents:** Manage incidents in Grafana Incident, including searching, creating, and adding activities to incidents.
 
 ### Sift Investigations
-- **Create Sift investigations:** Start a new Sift investigation for analyzing logs or traces.
+
 - **List Sift investigations:** Retrieve a list of Sift investigations, with support for a limit parameter.
 - **Get Sift investigation:** Retrieve details of a specific Sift investigation by its UUID.
 - **Get Sift analyses:** Retrieve a specific analysis from a Sift investigation.
@@ -77,27 +78,29 @@ the OnCall tools, use `--disable-oncall`.
 | `list_incidents`                  | Incident    | List incidents in Grafana Incident                                 |
 | `create_incident`                 | Incident    | Create an incident in Grafana Incident                             |
 | `add_activity_to_incident`        | Incident    | Add an activity item to an incident in Grafana Incident            |
-| `resolve_incident`                | Incident    | Resolve an incident in Grafana Incident                            |
+| `get_incident`                    | Incident    | Get a single incident by ID                                         |
 | `query_loki_logs`                 | Loki        | Query and retrieve logs using LogQL (either log or metric queries) |
 | `list_loki_label_names`           | Loki        | List all available label names in logs                             |
 | `list_loki_label_values`          | Loki        | List values for a specific log label                               |
 | `query_loki_stats`                | Loki        | Get statistics about log streams                                   |
 | `list_alert_rules`                | Alerting    | List alert rules                                                   |
 | `get_alert_rule_by_uid`           | Alerting    | Get alert rule by UID                                              |
+| `list_contact_points`             | Alerting    | List notification contact points                                   |
 | `list_oncall_schedules`           | OnCall      | List schedules from Grafana OnCall                                 |
 | `get_oncall_shift`                | OnCall      | Get details for a specific OnCall shift                            |
 | `get_current_oncall_users`        | OnCall      | Get users currently on-call for a specific schedule                |
 | `list_oncall_teams`               | OnCall      | List teams from Grafana OnCall                                     |
 | `list_oncall_users`               | OnCall      | List users from Grafana OnCall                                     |
-| `get_investigation`               | Sift        | Retrieve an existing Sift investigation by its UUID                |
-| `get_analysis`                    | Sift        | Retrieve a specific analysis from a Sift investigation             |
-| `list_investigations`             | Sift        | Retrieve a list of Sift investigations with an optional limit      |
+| `get_sift_investigation`          | Sift        | Retrieve an existing Sift investigation by its UUID                |
+| `get_sift_analysis`               | Sift        | Retrieve a specific analysis from a Sift investigation             |
+| `list_sift_investigations`        | Sift        | Retrieve a list of Sift investigations with an optional limit      |
 | `find_error_pattern_logs`         | Sift        | Finds elevated error patterns in Loki logs.                        |
 | `find_slow_requests`              | Sift        | Finds slow requests from the relevant tempo datasources.           |
 | `list_pyroscope_label_names`      | Pyroscope   | List label names matching a selector                               |
 | `list_pyroscope_label_values`     | Pyroscope   | List label values matching a selector for a label name             |
 | `list_pyroscope_profile_types`    | Pyroscope   | List available profile types                                       |
 | `fetch_pyroscope_profile`         | Pyroscope   | Fetches a profile in DOT format for analysis                       |
+| `get_assertions`                  | Asserts     | Get assertion summary for a given entity                           |
 
 ## Usage
 
