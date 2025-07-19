@@ -16,7 +16,10 @@ type GetDashboardByUIDParams struct {
 }
 
 func getDashboardByUID(ctx context.Context, args GetDashboardByUIDParams) (*models.DashboardFullWithMeta, error) {
-	c := mcpgrafana.GrafanaClientFromContext(ctx)
+	c, err := mcpgrafana.GrafanaClientFromContext(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("get dashboard by uid %s: %w", args.UID, err)
+	}
 	dashboard, err := c.Dashboards.GetDashboardByUID(args.UID)
 	if err != nil {
 		return nil, fmt.Errorf("get dashboard by uid %s: %w", args.UID, err)
@@ -36,7 +39,10 @@ type UpdateDashboardParams struct {
 // DISCLAIMER: Large-sized dashboard JSON can exhaust context windows. We will
 // implement features that address this in https://github.com/grafana/mcp-grafana/issues/101.
 func updateDashboard(ctx context.Context, args UpdateDashboardParams) (*models.PostDashboardOKBody, error) {
-	c := mcpgrafana.GrafanaClientFromContext(ctx)
+	c, err := mcpgrafana.GrafanaClientFromContext(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("update dashboard: %w", err)
+	}
 	cmd := &models.SaveDashboardCommand{
 		Dashboard: args.Dashboard,
 		FolderUID: args.FolderUID,
