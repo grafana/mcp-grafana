@@ -9,20 +9,24 @@ This provides access to your Grafana instance and the surrounding ecosystem.
 _The following features are currently available in MCP server. This list is for informational purposes only and does not represent a roadmap or commitment to future features._
 
 ### Dashboards
+
 - **Search for dashboards:** Find dashboards by title or other metadata
 - **Get dashboard by UID:** Retrieve full dashboard details using its unique identifier
 - **Update or create a dashboard:** Modify existing dashboards or create new ones. _Note: Use with caution due to context window limitations; see [issue #101](https://github.com/grafana/mcp-grafana/issues/101)_
 - **Get panel queries and datasource info:** Get the title, query string, and datasource information (including UID and type, if available) from every panel in a dashboard
 
 ### Datasources
+
 - **List and fetch datasource information:** View all configured datasources and retrieve detailed information about each.
-    - _Supported datasource types: Prometheus, Loki._
+  - _Supported datasource types: Prometheus, Loki._
 
 ### Prometheus Querying
+
 - **Query Prometheus:** Execute PromQL queries (supports both instant and range metric queries) against Prometheus datasources.
 - **Query Prometheus metadata:** Retrieve metric metadata, metric names, label names, and label values from Prometheus datasources.
 
 ### Loki Querying
+
 - **Query Loki logs and metrics:** Run both log queries and metric queries using LogQL against Loki datasources.
 - **Query Loki metadata:** Retrieve label names, label values, and stream statistics from Loki datasources.
 
@@ -39,16 +43,19 @@ _The following features are currently available in MCP server. This list is for 
 - **Find slow requests:** Detect slow requests using Sift (Tempo).
 
 ### Alerting
+
 - **List and fetch alert rule information:** View alert rules and their statuses (firing/normal/error/etc.) in Grafana.
 - **List contact points:** View configured notification contact points in Grafana.
 
 ### Grafana OnCall
+
 - **List and manage schedules:** View and manage on-call schedules in Grafana OnCall.
 - **Get shift details:** Retrieve detailed information about specific on-call shifts.
 - **Get current on-call users:** See which users are currently on call for a schedule.
 - **List teams and users:** View all OnCall teams and users.
 
 ### Admin
+
 - **List teams:** View all configured teams in Grafana.
 - **List Users:** View all users in an organization in Grafana.
 
@@ -57,50 +64,105 @@ This is useful if you don't use certain functionality or if you don't want to ta
 To disable a category of tools, use the `--disable-<category>` flag when starting the server. For example, to disable
 the OnCall tools, use `--disable-oncall`.
 
+#### RBAC Permissions
+
+Each tool requires specific RBAC permissions to function properly. When creating a service account for the MCP server, ensure it has the necessary permissions based on which tools you plan to use. The permissions listed are the minimum required actions - you may also need appropriate scopes (e.g., `datasources:*`, `dashboards:*`, `folders:*`) depending on your use case.
+
+**Note:** Grafana Incident and Sift tools use basic Grafana roles instead of fine-grained RBAC permissions:
+- **Viewer role:** Required for read-only operations (list incidents, get investigations)  
+- **Editor role:** Required for write operations (create incidents, modify investigations)
+
+For more information about Grafana RBAC, see the [official documentation](https://grafana.com/docs/grafana/latest/administration/roles-and-permissions/access-control/).
+
+#### RBAC Scopes
+
+Scopes define the specific resources that permissions apply to. Each action requires both the appropriate permission and scope combination.
+
+**Common Scope Patterns:**
+
+- **Broad access:** Use `*` wildcards for organization-wide access
+
+  - `datasources:*` - Access to all datasources
+  - `dashboards:*` - Access to all dashboards
+  - `folders:*` - Access to all folders
+  - `teams:*` - Access to all teams
+
+- **Limited access:** Use specific UIDs or IDs to restrict access to individual resources
+  - `datasources:uid:prometheus-uid` - Access only to a specific Prometheus datasource
+  - `dashboards:uid:abc123` - Access only to dashboard with UID `abc123`
+  - `folders:uid:xyz789` - Access only to folder with UID `xyz789`
+  - `teams:id:5` - Access only to team with ID `5`
+  - `global.users:id:123` - Access only to user with ID `123`
+
+**Examples:**
+
+- **Full MCP server access:** Grant broad permissions for all tools
+
+  ```
+  datasources:* (datasources:read, datasources:query)
+  dashboards:* (dashboards:read, dashboards:create, dashboards:write)
+  folders:* (for dashboard creation and alert rules)
+  teams:* (teams:read)
+  global.users:* (users:read)
+  ```
+
+- **Limited datasource access:** Only query specific Prometheus and Loki instances
+
+  ```
+  datasources:uid:prometheus-prod (datasources:query)
+  datasources:uid:loki-prod (datasources:query)
+  ```
+
+- **Dashboard-specific access:** Read only specific dashboards
+  ```
+  dashboards:uid:monitoring-dashboard (dashboards:read)
+  dashboards:uid:alerts-dashboard (dashboards:read)
+  ```
+
 ### Tools
 
-| Tool                              | Category    | Description                                                        |
-| --------------------------------- | ----------- | ------------------------------------------------------------------ |
-| `list_teams`                      | Admin       | List all teams                                                     |
-| `list_users_by_org`               | Admin       | List all users in an organization                                  |
-| `search_dashboards`               | Search      | Search for dashboards                                              |
-| `get_dashboard_by_uid`            | Dashboard   | Get a dashboard by uid                                             |
-| `update_dashboard`                | Dashboard   | Update or create a new dashboard                                   |
-| `get_dashboard_panel_queries`     | Dashboard   | Get panel title, queries, datasource UID and type from a dashboard |
-| `list_datasources`                | Datasources | List datasources                                                   |
-| `get_datasource_by_uid`           | Datasources | Get a datasource by uid                                            |
-| `get_datasource_by_name`          | Datasources | Get a datasource by name                                           |
-| `query_prometheus`                | Prometheus  | Execute a query against a Prometheus datasource                    |
-| `list_prometheus_metric_metadata` | Prometheus  | List metric metadata                                               |
-| `list_prometheus_metric_names`    | Prometheus  | List available metric names                                        |
-| `list_prometheus_label_names`     | Prometheus  | List label names matching a selector                               |
-| `list_prometheus_label_values`    | Prometheus  | List values for a specific label                                   |
-| `list_incidents`                  | Incident    | List incidents in Grafana Incident                                 |
-| `create_incident`                 | Incident    | Create an incident in Grafana Incident                             |
-| `add_activity_to_incident`        | Incident    | Add an activity item to an incident in Grafana Incident            |
-| `get_incident`                    | Incident    | Get a single incident by ID                                         |
-| `query_loki_logs`                 | Loki        | Query and retrieve logs using LogQL (either log or metric queries) |
-| `list_loki_label_names`           | Loki        | List all available label names in logs                             |
-| `list_loki_label_values`          | Loki        | List values for a specific log label                               |
-| `query_loki_stats`                | Loki        | Get statistics about log streams                                   |
-| `list_alert_rules`                | Alerting    | List alert rules                                                   |
-| `get_alert_rule_by_uid`           | Alerting    | Get alert rule by UID                                              |
-| `list_contact_points`             | Alerting    | List notification contact points                                   |
-| `list_oncall_schedules`           | OnCall      | List schedules from Grafana OnCall                                 |
-| `get_oncall_shift`                | OnCall      | Get details for a specific OnCall shift                            |
-| `get_current_oncall_users`        | OnCall      | Get users currently on-call for a specific schedule                |
-| `list_oncall_teams`               | OnCall      | List teams from Grafana OnCall                                     |
-| `list_oncall_users`               | OnCall      | List users from Grafana OnCall                                     |
-| `get_sift_investigation`          | Sift        | Retrieve an existing Sift investigation by its UUID                |
-| `get_sift_analysis`               | Sift        | Retrieve a specific analysis from a Sift investigation             |
-| `list_sift_investigations`        | Sift        | Retrieve a list of Sift investigations with an optional limit      |
-| `find_error_pattern_logs`         | Sift        | Finds elevated error patterns in Loki logs.                        |
-| `find_slow_requests`              | Sift        | Finds slow requests from the relevant tempo datasources.           |
-| `list_pyroscope_label_names`      | Pyroscope   | List label names matching a selector                               |
-| `list_pyroscope_label_values`     | Pyroscope   | List label values matching a selector for a label name             |
-| `list_pyroscope_profile_types`    | Pyroscope   | List available profile types                                       |
-| `fetch_pyroscope_profile`         | Pyroscope   | Fetches a profile in DOT format for analysis                       |
-| `get_assertions`                  | Asserts     | Get assertion summary for a given entity                           |
+| Tool                              | Category    | Description                                                        | Required RBAC Permissions               | Required Scopes                                     |
+| --------------------------------- | ----------- | ------------------------------------------------------------------ | --------------------------------------- | --------------------------------------------------- |
+| `list_teams`                      | Admin       | List all teams                                                     | `teams:read`                            | `teams:*` or `teams:id:1`                           |
+| `list_users_by_org`               | Admin       | List all users in an organization                                  | `users:read`                            | `global.users:*` or `global.users:id:123`           |
+| `search_dashboards`               | Search      | Search for dashboards                                              | `dashboards:read`                       | `dashboards:*` or `dashboards:uid:abc123`           |
+| `get_dashboard_by_uid`            | Dashboard   | Get a dashboard by uid                                             | `dashboards:read`                       | `dashboards:uid:abc123`                             |
+| `update_dashboard`                | Dashboard   | Update or create a new dashboard                                   | `dashboards:create`, `dashboards:write` | `dashboards:*`, `folders:*` or `folders:uid:xyz789` |
+| `get_dashboard_panel_queries`     | Dashboard   | Get panel title, queries, datasource UID and type from a dashboard | `dashboards:read`                       | `dashboards:uid:abc123`                             |
+| `list_datasources`                | Datasources | List datasources                                                   | `datasources:read`                      | `datasources:*`                                     |
+| `get_datasource_by_uid`           | Datasources | Get a datasource by uid                                            | `datasources:read`                      | `datasources:uid:prometheus-uid`                    |
+| `get_datasource_by_name`          | Datasources | Get a datasource by name                                           | `datasources:read`                      | `datasources:*` or `datasources:uid:loki-uid`       |
+| `query_prometheus`                | Prometheus  | Execute a query against a Prometheus datasource                    | `datasources:query`                     | `datasources:uid:prometheus-uid`                    |
+| `list_prometheus_metric_metadata` | Prometheus  | List metric metadata                                               | `datasources:query`                     | `datasources:uid:prometheus-uid`                    |
+| `list_prometheus_metric_names`    | Prometheus  | List available metric names                                        | `datasources:query`                     | `datasources:uid:prometheus-uid`                    |
+| `list_prometheus_label_names`     | Prometheus  | List label names matching a selector                               | `datasources:query`                     | `datasources:uid:prometheus-uid`                    |
+| `list_prometheus_label_values`    | Prometheus  | List values for a specific label                                   | `datasources:query`                     | `datasources:uid:prometheus-uid`                    |
+| `list_incidents`                  | Incident    | List incidents in Grafana Incident                                 | Viewer role                             | N/A                                                 |
+| `create_incident`                 | Incident    | Create an incident in Grafana Incident                             | Editor role                             | N/A                                                 |
+| `add_activity_to_incident`        | Incident    | Add an activity item to an incident in Grafana Incident            | Editor role                             | N/A                                                 |
+| `get_incident`                    | Incident    | Get a single incident by ID                                        | Viewer role                             | N/A                                                 |
+| `query_loki_logs`                 | Loki        | Query and retrieve logs using LogQL (either log or metric queries) | `datasources:query`                     | `datasources:uid:loki-uid`                          |
+| `list_loki_label_names`           | Loki        | List all available label names in logs                             | `datasources:query`                     | `datasources:uid:loki-uid`                          |
+| `list_loki_label_values`          | Loki        | List values for a specific log label                               | `datasources:query`                     | `datasources:uid:loki-uid`                          |
+| `query_loki_stats`                | Loki        | Get statistics about log streams                                   | `datasources:query`                     | `datasources:uid:loki-uid`                          |
+| `list_alert_rules`                | Alerting    | List alert rules                                                   | `alert.rules:read`                      | `folders:*` or `folders:uid:alerts-folder`          |
+| `get_alert_rule_by_uid`           | Alerting    | Get alert rule by UID                                              | `alert.rules:read`                      | `folders:uid:alerts-folder`                         |
+| `list_contact_points`             | Alerting    | List notification contact points                                   | `alert.notifications:read`              | Global scope                                        |
+| `list_oncall_schedules`           | OnCall      | List schedules from Grafana OnCall                                 | `grafana-oncall-app.schedules:read`     | Plugin-specific scopes                              |
+| `get_oncall_shift`                | OnCall      | Get details for a specific OnCall shift                            | `grafana-oncall-app.schedules:read`     | Plugin-specific scopes                              |
+| `get_current_oncall_users`        | OnCall      | Get users currently on-call for a specific schedule                | `grafana-oncall-app.schedules:read`     | Plugin-specific scopes                              |
+| `list_oncall_teams`               | OnCall      | List teams from Grafana OnCall                                     | `grafana-oncall-app.user-settings:read` | Plugin-specific scopes                              |
+| `list_oncall_users`               | OnCall      | List users from Grafana OnCall                                     | `grafana-oncall-app.user-settings:read` | Plugin-specific scopes                              |
+| `get_sift_investigation`          | Sift        | Retrieve an existing Sift investigation by its UUID                | Viewer role                             | N/A                                                 |
+| `get_sift_analysis`               | Sift        | Retrieve a specific analysis from a Sift investigation             | Viewer role                             | N/A                                                 |
+| `list_sift_investigations`        | Sift        | Retrieve a list of Sift investigations with an optional limit      | Viewer role                             | N/A                                                 |
+| `find_error_pattern_logs`         | Sift        | Finds elevated error patterns in Loki logs.                        | Editor role                             | N/A                                                 |
+| `find_slow_requests`              | Sift        | Finds slow requests from the relevant tempo datasources.           | Editor role                             | N/A                                                 |
+| `list_pyroscope_label_names`      | Pyroscope   | List label names matching a selector                               | `datasources:query`                     | `datasources:uid:pyroscope-uid`                     |
+| `list_pyroscope_label_values`     | Pyroscope   | List label values matching a selector for a label name             | `datasources:query`                     | `datasources:uid:pyroscope-uid`                     |
+| `list_pyroscope_profile_types`    | Pyroscope   | List available profile types                                       | `datasources:query`                     | `datasources:uid:pyroscope-uid`                     |
+| `fetch_pyroscope_profile`         | Pyroscope   | Fetches a profile in DOT format for analysis                       | `datasources:query`                     | `datasources:uid:pyroscope-uid`                     |
+| `get_assertions`                  | Asserts     | Get assertion summary for a given entity                           | Plugin-specific permissions             | Plugin-specific scopes                              |
 
 ## Usage
 
@@ -165,35 +227,35 @@ the OnCall tools, use `--disable-oncall`.
 
 > Note: if you see `Error: spawn mcp-grafana ENOENT` in Claude Desktop, you need to specify the full path to `mcp-grafana`.
 
-   **If using Docker:**
+**If using Docker:**
 
-   ```json
-   {
-     "mcpServers": {
-       "grafana": {
-         "command": "docker",
-         "args": [
-           "run",
-           "--rm",
-           "-i",
-           "-e",
-           "GRAFANA_URL",
-           "-e",
-           "GRAFANA_API_KEY",
-           "mcp/grafana",
-           "-t",
-           "stdio"
-         ],
-         "env": {
-           "GRAFANA_URL": "http://localhost:3000",
-           "GRAFANA_API_KEY": "<your service account token>"
-         }
-       }
-     }
-   }
-   ```
+```json
+{
+  "mcpServers": {
+    "grafana": {
+      "command": "docker",
+      "args": [
+        "run",
+        "--rm",
+        "-i",
+        "-e",
+        "GRAFANA_URL",
+        "-e",
+        "GRAFANA_API_KEY",
+        "mcp/grafana",
+        "-t",
+        "stdio"
+      ],
+      "env": {
+        "GRAFANA_URL": "http://localhost:3000",
+        "GRAFANA_API_KEY": "<your service account token>"
+      }
+    }
+  }
+}
+```
 
-   > Note: The `-t stdio` argument is essential here because it overrides the default SSE mode in the Docker image.
+> Note: The `-t stdio` argument is essential here because it overrides the default SSE mode in the Docker image.
 
 **Using VSCode with remote MCP server**
 
@@ -281,9 +343,12 @@ If your Grafana instance is behind mTLS or requires custom TLS certificates, you
     "grafana": {
       "command": "mcp-grafana",
       "args": [
-        "--tls-cert-file", "/path/to/client.crt",
-        "--tls-key-file", "/path/to/client.key",
-        "--tls-ca-file", "/path/to/ca.crt"
+        "--tls-cert-file",
+        "/path/to/client.crt",
+        "--tls-key-file",
+        "/path/to/client.key",
+        "--tls-ca-file",
+        "/path/to/ca.crt"
       ],
       "env": {
         "GRAFANA_URL": "https://secure-grafana.example.com",
@@ -305,14 +370,21 @@ If your Grafana instance is behind mTLS or requires custom TLS certificates, you
         "run",
         "--rm",
         "-i",
-        "-v", "/path/to/certs:/certs:ro",
-        "-e", "GRAFANA_URL",
-        "-e", "GRAFANA_API_KEY",
+        "-v",
+        "/path/to/certs:/certs:ro",
+        "-e",
+        "GRAFANA_URL",
+        "-e",
+        "GRAFANA_API_KEY",
         "mcp/grafana",
-        "-t", "stdio",
-        "--tls-cert-file", "/certs/client.crt",
-        "--tls-key-file", "/certs/client.key",
-        "--tls-ca-file", "/certs/ca.crt"
+        "-t",
+        "stdio",
+        "--tls-cert-file",
+        "/certs/client.crt",
+        "--tls-key-file",
+        "/certs/client.key",
+        "--tls-ca-file",
+        "/certs/ca.crt"
       ],
       "env": {
         "GRAFANA_URL": "https://secure-grafana.example.com",
@@ -324,6 +396,7 @@ If your Grafana instance is behind mTLS or requires custom TLS certificates, you
 ```
 
 The TLS configuration is applied to all HTTP clients used by the MCP server, including:
+
 - The main Grafana OpenAPI client
 - Prometheus datasource clients
 - Loki datasource clients
@@ -335,11 +408,13 @@ The TLS configuration is applied to all HTTP clients used by the MCP server, inc
 **Direct CLI Usage Examples:**
 
 For testing with self-signed certificates:
+
 ```bash
 ./mcp-grafana --tls-skip-verify -debug
 ```
 
 With client certificate authentication:
+
 ```bash
 ./mcp-grafana \
   --tls-cert-file /path/to/client.crt \
@@ -349,6 +424,7 @@ With client certificate authentication:
 ```
 
 With custom CA certificate only:
+
 ```bash
 ./mcp-grafana --tls-ca-file /path/to/ca.crt
 ```
