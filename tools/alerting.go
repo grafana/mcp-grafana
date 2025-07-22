@@ -171,7 +171,10 @@ func getAlertRuleByUID(ctx context.Context, args GetAlertRuleByUIDParams) (*mode
 		return nil, fmt.Errorf("get alert rule by uid: %w", err)
 	}
 
-	c := mcpgrafana.GrafanaClientFromContext(ctx)
+	c, err := mcpgrafana.GrafanaClientFromContext(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("get alert rule by uid %s: %w", args.UID, err)
+	}
 	alertRule, err := c.Provisioning.GetAlertRule(args.UID)
 	if err != nil {
 		return nil, fmt.Errorf("get alert rule by uid %s: %w", args.UID, err)
@@ -211,7 +214,10 @@ func listContactPoints(ctx context.Context, args ListContactPointsParams) ([]con
 		return nil, fmt.Errorf("list contact points: %w", err)
 	}
 
-	c := mcpgrafana.GrafanaClientFromContext(ctx)
+	c, err := mcpgrafana.GrafanaClientFromContext(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list contact points: %w", err)
+	}
 
 	params := provisioning.NewGetContactpointsParams().WithContext(ctx)
 	if args.Name != nil {

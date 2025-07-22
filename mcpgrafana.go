@@ -10,7 +10,10 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
+	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/go-openapi/strfmt"
 	"github.com/grafana/grafana-openapi-client-go/client"
 	"github.com/grafana/incident-go"
@@ -23,9 +26,13 @@ const (
 
 	grafanaURLEnvVar = "GRAFANA_URL"
 	grafanaAPIEnvVar = "GRAFANA_API_KEY"
+	useAADEnvVar     = "USE_AAD_AUTH"
 
 	grafanaURLHeader    = "X-Grafana-URL"
 	grafanaAPIKeyHeader = "X-Grafana-API-Key"
+
+	// Default AAD Resources
+	defaultGrafanaAADResource = "ce34e7e5-485f-4d76-964f-b3d2b16d1e4f"
 )
 
 func urlAndAPIKeyFromEnv() (string, string) {
@@ -38,6 +45,28 @@ func urlAndAPIKeyFromHeaders(req *http.Request) (string, string) {
 	u := strings.TrimRight(req.Header.Get(grafanaURLHeader), "/")
 	apiKey := req.Header.Get(grafanaAPIKeyHeader)
 	return u, apiKey
+}
+
+// isAADEnabled checks if AAD authentication is enabled via environment variable
+func isAADEnabled() bool {
+	val := os.Getenv(useAADEnvVar)
+	return strings.ToLower(val) == "true" || val == "1"
+}
+
+// createAADConfigFromEnv creates a DefaultAzureCredential instance
+// if AAD authentication is enabled via environment variable.
+func createAADConfigFromEnv() *azidentity.DefaultAzureCredential {
+	if !isAADEnabled() {
+		return nil
+	}
+	// Create a new DefaultAzureCredential instance
+	// This will use the environment variables set by Azure CLI or Managed Identity
+	// if available, otherwise it will fall back to other authentication methods.
+	cred, err := azidentity.NewDefaultAzureCredential(nil)
+	if err != nil {
+		panic(fmt.Errorf("failed to create Azure AD credential: %w", err))
+	}
+	return cred
 }
 
 // grafanaConfigKey is the context key for Grafana configuration.
@@ -72,6 +101,8 @@ type GrafanaConfig struct {
 
 	// TLSConfig holds TLS configuration for all Grafana clients.
 	TLSConfig *TLSConfig
+
+	AADCredential *azidentity.DefaultAzureCredential // credential to use Azure AD authentication for Grafana API calls.
 }
 
 // WithGrafanaConfig adds Grafana configuration to the context.
@@ -156,6 +187,8 @@ var ExtractGrafanaInfoFromEnv server.StdioContextFunc = func(ctx context.Context
 	config := GrafanaConfigFromContext(ctx)
 	config.URL = u
 	config.APIKey = apiKey
+	config.AADCredential = createAADConfigFromEnv()
+
 	return WithGrafanaConfig(ctx, config)
 }
 
@@ -184,6 +217,7 @@ var ExtractGrafanaInfoFromHeaders httpContextFunc = func(ctx context.Context, re
 	config := GrafanaConfigFromContext(ctx)
 	config.URL = u
 	config.APIKey = apiKey
+	config.AADCredential = createAADConfigFromEnv()
 	return WithGrafanaConfig(ctx, config)
 }
 
@@ -209,7 +243,7 @@ func MustWithOnBehalfOfAuth(ctx context.Context, accessToken, userToken string) 
 	return ctx
 }
 
-type grafanaClientKey struct{}
+type grafanaClientFunctorKey struct{}
 
 func makeBasePath(path string) string {
 	return strings.Join([]string{strings.TrimRight(path, "/"), "api"}, "/")
@@ -274,8 +308,12 @@ var ExtractGrafanaClientFromEnv server.StdioContextFunc = func(ctx context.Conte
 	}
 	apiKey := os.Getenv(grafanaAPIEnvVar)
 
-	grafanaClient := NewGrafanaClient(ctx, grafanaURL, apiKey)
-	return context.WithValue(ctx, grafanaClientKey{}, grafanaClient)
+	if isAADEnabled() {
+		return WithAADGrafanaClientFunc(ctx)
+	} else {
+		grafanaClient := NewGrafanaClient(ctx, grafanaURL, apiKey)
+		return WithGrafanaClient(ctx, grafanaClient)
+	}
 }
 
 // ExtractGrafanaClientFromHeaders is a HTTPContextFunc that extracts Grafana configuration
@@ -294,24 +332,68 @@ var ExtractGrafanaClientFromHeaders httpContextFunc = func(ctx context.Context, 
 		apiKey = apiKeyEnv
 	}
 
-	grafanaClient := NewGrafanaClient(ctx, u, apiKey)
-	return WithGrafanaClient(ctx, grafanaClient)
+	if isAADEnabled() {
+		return WithAADGrafanaClientFunc(ctx)
+	} else {
+		grafanaClient := NewGrafanaClient(ctx, u, apiKey)
+		return WithGrafanaClient(ctx, grafanaClient)
+	}
 }
 
 // WithGrafanaClient sets the Grafana client in the context.
 //
 // It can be retrieved using GrafanaClientFromContext.
-func WithGrafanaClient(ctx context.Context, client *client.GrafanaHTTPAPI) context.Context {
-	return context.WithValue(ctx, grafanaClientKey{}, client)
+func WithGrafanaClient(ctx context.Context, clientParam *client.GrafanaHTTPAPI) context.Context {
+	return context.WithValue(ctx, grafanaClientFunctorKey{}, func() (*client.GrafanaHTTPAPI, error) { return clientParam, nil })
+}
+
+func WithAADGrafanaClientFunc(ctx context.Context) context.Context {
+	var mutex sync.Mutex // protects the cached token and cached client
+	config := GrafanaConfigFromContext(ctx)
+	cred := config.AADCredential
+	cachedToken, err := cred.GetToken(ctx, policy.TokenRequestOptions{
+		Scopes: []string{defaultGrafanaAADResource},
+	})
+	if err != nil {
+		panic(fmt.Errorf("failed to get AAD token for Grafana: %w", err))
+	}
+	cachedGrafanaClient := NewGrafanaClient(ctx, config.URL, cachedToken.Token)
+
+	slog.Debug("Constructed cached Grafana client with AAD authentication")
+	var functor func() (*client.GrafanaHTTPAPI, error) = func() (*client.GrafanaHTTPAPI, error) {
+
+		funcCred, funcErr := cred.GetToken(ctx, policy.TokenRequestOptions{
+			Scopes: []string{defaultGrafanaAADResource},
+		})
+		// TODO: do error handling here, and update functor to return errors
+		if funcErr != nil {
+			return nil, fmt.Errorf("failed to get AAD token for Grafana: %w", funcErr)
+		}
+		// Use the cached client if the token is still valid, otherwise create a new one
+		mutex.Lock()
+		defer mutex.Unlock()
+		if cachedToken == funcCred {
+			// If the cached token is still valid, return the cached client
+			return cachedGrafanaClient, nil
+		}
+
+		slog.Debug("Cached client didn't match need to refresh it.")
+
+		cachedToken = funcCred
+		cachedGrafanaClient = NewGrafanaClient(ctx, config.URL, cachedToken.Token)
+		return cachedGrafanaClient, nil
+	}
+
+	return context.WithValue(ctx, grafanaClientFunctorKey{}, functor)
 }
 
 // GrafanaClientFromContext retrieves the Grafana client from the context.
-func GrafanaClientFromContext(ctx context.Context) *client.GrafanaHTTPAPI {
-	c, ok := ctx.Value(grafanaClientKey{}).(*client.GrafanaHTTPAPI)
+func GrafanaClientFromContext(ctx context.Context) (*client.GrafanaHTTPAPI, error) {
+	c, ok := ctx.Value(grafanaClientFunctorKey{}).(func() (*client.GrafanaHTTPAPI, error))
 	if !ok {
-		return nil
+		return nil, fmt.Errorf("grafana client not found in context")
 	}
-	return c
+	return c()
 }
 
 type incidentClientKey struct{}

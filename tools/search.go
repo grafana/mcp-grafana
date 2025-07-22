@@ -19,7 +19,10 @@ type SearchDashboardsParams struct {
 }
 
 func searchDashboards(ctx context.Context, args SearchDashboardsParams) (models.HitList, error) {
-	c := mcpgrafana.GrafanaClientFromContext(ctx)
+	c, err := mcpgrafana.GrafanaClientFromContext(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("search dashboards: %w", err)
+	}
 	params := search.NewSearchParamsWithContext(ctx)
 	if args.Query != "" {
 		params.SetQuery(&args.Query)
