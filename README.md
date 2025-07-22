@@ -4,6 +4,10 @@ A [Model Context Protocol][mcp] (MCP) server for Grafana.
 
 This provides access to your Grafana instance and the surrounding ecosystem.
 
+## Requirements
+
+- **Grafana version 9.0 or later** is required for full functionality. Some features, particularly datasource-related operations, may not work correctly with earlier versions due to missing API endpoints.
+
 ## Features
 
 _The following features are currently available in MCP server. This list is for informational purposes only and does not represent a roadmap or commitment to future features._
@@ -457,6 +461,20 @@ grafanaConfig := mcpgrafana.GrafanaConfig{
 }
 contextFunc := mcpgrafana.ComposedStdioContextFunc(grafanaConfig)
 ```
+
+## Troubleshooting
+
+### Grafana Version Compatibility
+
+If you encounter the following error when using datasource-related tools:
+
+```
+get datasource by uid : [GET /datasources/uid/{uid}][400] getDataSourceByUidBadRequest {"message":"id is invalid"}
+```
+
+This typically indicates that you are using a Grafana version earlier than 9.0. The `/datasources/uid/{uid}` API endpoint was introduced in Grafana 9.0, and datasource operations will fail on earlier versions.
+
+**Solution:** Upgrade your Grafana instance to version 9.0 or later to resolve this issue.
 
 ## Development
 
