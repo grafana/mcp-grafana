@@ -88,34 +88,16 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 	}
 
 	handler := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		// Always create OpenTelemetry span for tool execution (safely, with fallback)
-		var span trace.Span
-		
-		// Always create spans for context propagation (no-op when no exporter configured)
+		// Create OpenTelemetry span for tool execution (no-op when no exporter configured)
 		config := GrafanaConfigFromContext(ctx)
-		// Safely attempt to create a span - if it fails, continue without tracing
-		func() {
-			defer func() {
-				if r := recover(); r != nil {
-					// If tracer creation panics, just continue without tracing
-					span = nil
-				}
-			}()
-			
-			tracer := otel.Tracer("mcp-grafana")
-			ctx, span = tracer.Start(ctx, fmt.Sprintf("mcp.tool.%s", name))
-		}()
+		ctx, span = otel.Tracer("mcp-grafana").Start(ctx, fmt.Sprintf("mcp.tool.%s", name))
+		defer span.End()
 		
-		// Set up span cleanup if we successfully created one
-		if span != nil {
-			defer span.End()
-			
-			// Add tool metadata as span attributes
-			span.SetAttributes(
-				attribute.String("mcp.tool.name", name),
-				attribute.String("mcp.tool.description", description),
-			)
-		}
+		// Add tool metadata as span attributes
+		span.SetAttributes(
+			attribute.String("mcp.tool.name", name),
+			attribute.String("mcp.tool.description", description),
+		)
 
 		argBytes, err := json.Marshal(request.Params.Arguments)
 		if err != nil {
