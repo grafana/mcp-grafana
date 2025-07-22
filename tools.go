@@ -13,7 +13,6 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
-	"go.opentelemetry.io/otel/trace"
 )
 
 // Tool is a struct that represents a tool definition and the function used
@@ -90,7 +89,7 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 	handler := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		// Create OpenTelemetry span for tool execution (no-op when no exporter configured)
 		config := GrafanaConfigFromContext(ctx)
-		ctx, span = otel.Tracer("mcp-grafana").Start(ctx, fmt.Sprintf("mcp.tool.%s", name))
+		ctx, span := otel.Tracer("mcp-grafana").Start(ctx, fmt.Sprintf("mcp.tool.%s", name))
 		defer span.End()
 		
 		// Add tool metadata as span attributes
@@ -101,24 +100,20 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 
 		argBytes, err := json.Marshal(request.Params.Arguments)
 		if err != nil {
-			if span != nil {
-				span.RecordError(err)
-				span.SetStatus(codes.Error, "failed to marshal arguments")
-			}
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "failed to marshal arguments")
 			return nil, fmt.Errorf("marshal args: %w", err)
 		}
 		
 		   // Add arguments as span attribute only if adding args to trace attributes is enabled
-		if span != nil && config.IncludeArgumentsInSpans {
+		if config.IncludeArgumentsInSpans {
 			span.SetAttributes(attribute.String("mcp.tool.arguments", string(argBytes)))
 		}
 
 		unmarshaledArgs := reflect.New(argType).Interface()
 		if err := json.Unmarshal(argBytes, unmarshaledArgs); err != nil {
-			if span != nil {
-				span.RecordError(err)
-				span.SetStatus(codes.Error, "failed to unmarshal arguments")
-			}
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "failed to unmarshal arguments")
 			return nil, fmt.Errorf("unmarshal args: %s", err)
 		}
 
@@ -126,10 +121,8 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 		of := reflect.ValueOf(unmarshaledArgs)
 		if of.Kind() != reflect.Ptr || !of.Elem().CanInterface() {
 			err := errors.New("arguments must be a struct")
-			if span != nil {
-				span.RecordError(err)
-				span.SetStatus(codes.Error, "invalid arguments structure")
-			}
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "invalid arguments structure")
 			return nil, err
 		}
 
@@ -139,18 +132,14 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 		output := handlerValue.Call(args)
 		if len(output) != 2 {
 			err := errors.New("tool handler must return 2 values")
-			if span != nil {
-				span.RecordError(err)
-				span.SetStatus(codes.Error, "invalid tool handler return")
-			}
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "invalid tool handler return")
 			return nil, err
 		}
 		if !output[0].CanInterface() {
 			err := errors.New("tool handler first return value must be interfaceable")
-			if span != nil {
-				span.RecordError(err)
-				span.SetStatus(codes.Error, "tool handler return value not interfaceable")
-			}
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "tool handler return value not interfaceable")
 			return nil, err
 		}
 
@@ -161,27 +150,21 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 			handlerErr, ok = output[1].Interface().(error)
 			if !ok {
 				err := errors.New("tool handler second return value must be error")
-				if span != nil {
-					span.RecordError(err)
-					span.SetStatus(codes.Error, "invalid error return type")
-				}
+				span.RecordError(err)
+				span.SetStatus(codes.Error, "invalid error return type")
 				return nil, err
 			}
 		}
 
 		// If there's an error, record it and return
 		if handlerErr != nil {
-			if span != nil {
-				span.RecordError(handlerErr)
-				span.SetStatus(codes.Error, handlerErr.Error())
-			}
+			span.RecordError(handlerErr)
+			span.SetStatus(codes.Error, handlerErr.Error())
 			return nil, handlerErr
 		}
 
 		// Tool execution completed successfully
-		if span != nil {
-			span.SetStatus(codes.Ok, "tool execution completed")
-		}
+		span.SetStatus(codes.Ok, "tool execution completed")
 
 		// Check if the first return value is nil (only for pointer, interface, map, etc.)
 		isNilable := output[0].Kind() == reflect.Ptr ||

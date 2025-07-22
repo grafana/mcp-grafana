@@ -227,8 +227,9 @@ func TestToolTracingInstrumentation(t *testing.T) {
 	tracerProvider := sdktrace.NewTracerProvider(
 		sdktrace.WithSpanProcessor(spanRecorder),
 	)
+	originalProvider := otel.GetTracerProvider()
 	otel.SetTracerProvider(tracerProvider)
-	defer otel.SetTracerProvider(nil) // Reset after test
+	defer otel.SetTracerProvider(originalProvider) // Restore original provider
 
 	t.Run("successful tool execution creates span with correct attributes", func(t *testing.T) {
 		// Clear any previous spans
