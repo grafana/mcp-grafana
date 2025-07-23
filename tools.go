@@ -10,6 +10,9 @@ import (
 	"github.com/invopop/jsonschema"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 )
 
 // Tool is a struct that represents a tool definition and the function used
@@ -84,31 +87,60 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 	}
 
 	handler := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		// Create OpenTelemetry span for tool execution (no-op when no exporter configured)
+		config := GrafanaConfigFromContext(ctx)
+		ctx, span := otel.Tracer("mcp-grafana").Start(ctx, fmt.Sprintf("mcp.tool.%s", name))
+		defer span.End()
+		
+		// Add tool metadata as span attributes
+		span.SetAttributes(
+			attribute.String("mcp.tool.name", name),
+			attribute.String("mcp.tool.description", description),
+		)
 
-		s, err := json.Marshal(request.Params.Arguments)
+		argBytes, err := json.Marshal(request.Params.Arguments)
 		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "failed to marshal arguments")
 			return nil, fmt.Errorf("marshal args: %w", err)
+		}
+		
+		   // Add arguments as span attribute only if adding args to trace attributes is enabled
+		if config.IncludeArgumentsInSpans {
+			span.SetAttributes(attribute.String("mcp.tool.arguments", string(argBytes)))
 		}
 
 		unmarshaledArgs := reflect.New(argType).Interface()
-		if err := json.Unmarshal([]byte(s), unmarshaledArgs); err != nil {
+		if err := json.Unmarshal(argBytes, unmarshaledArgs); err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "failed to unmarshal arguments")
 			return nil, fmt.Errorf("unmarshal args: %s", err)
 		}
 
 		// Need to dereference the unmarshaled arguments
 		of := reflect.ValueOf(unmarshaledArgs)
 		if of.Kind() != reflect.Ptr || !of.Elem().CanInterface() {
-			return nil, errors.New("arguments must be a struct")
+			err := errors.New("arguments must be a struct")
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "invalid arguments structure")
+			return nil, err
 		}
 
+		// Pass the instrumented context to the tool handler
 		args := []reflect.Value{reflect.ValueOf(ctx), of.Elem()}
 
 		output := handlerValue.Call(args)
 		if len(output) != 2 {
-			return nil, errors.New("tool handler must return 2 values")
+			err := errors.New("tool handler must return 2 values")
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "invalid tool handler return")
+			return nil, err
 		}
 		if !output[0].CanInterface() {
-			return nil, errors.New("tool handler first return value must be interfaceable")
+			err := errors.New("tool handler first return value must be interfaceable")
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "tool handler return value not interfaceable")
+			return nil, err
 		}
 
 		// Handle the error return value first
@@ -117,14 +149,22 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 		if output[1].Kind() == reflect.Interface && !output[1].IsNil() {
 			handlerErr, ok = output[1].Interface().(error)
 			if !ok {
-				return nil, errors.New("tool handler second return value must be error")
+				err := errors.New("tool handler second return value must be error")
+				span.RecordError(err)
+				span.SetStatus(codes.Error, "invalid error return type")
+				return nil, err
 			}
 		}
 
-		// If there's an error, return nil result and the error
+		// If there's an error, record it and return
 		if handlerErr != nil {
+			span.RecordError(handlerErr)
+			span.SetStatus(codes.Error, handlerErr.Error())
 			return nil, handlerErr
 		}
+
+		// Tool execution completed successfully
+		span.SetStatus(codes.Ok, "tool execution completed")
 
 		// Check if the first return value is nil (only for pointer, interface, map, etc.)
 		isNilable := output[0].Kind() == reflect.Ptr ||
@@ -168,12 +208,12 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 		}
 
 		// Case 4: Any other type - marshal to JSON
-		jsonBytes, err := json.Marshal(returnVal)
+		returnBytes, err := json.Marshal(returnVal)
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal return value: %s", err)
 		}
 
-		return mcp.NewToolResultText(string(jsonBytes)), nil
+		return mcp.NewToolResultText(string(returnBytes)), nil
 	}
 
 	jsonSchema := createJSONSchemaFromHandler(toolHandler)
