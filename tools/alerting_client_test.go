@@ -24,11 +24,11 @@ var (
 				Name:      "Test Alert Rule",
 				UID:       "test-rule-uid",
 				FolderUID: "test-folder",
-				Labels:    labels.Labels{{Name: "severity", Value: "critical"}},
+				Labels:    labels.New(labels.Label{Name: "severity", Value: "critical"}),
 				Alerts: []alert{
 					{
-						Labels:      labels.Labels{{Name: "instance", Value: "test-instance"}},
-						Annotations: labels.Labels{{Name: "summary", Value: "Test alert firing"}},
+						Labels:      labels.New(labels.Label{Name: "instance", Value: "test-instance"}),
+						Annotations: labels.New(labels.Label{Name: "summary", Value: "Test alert firing"}),
 						State:       "firing",
 						Value:       "1",
 					},
