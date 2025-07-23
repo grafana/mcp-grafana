@@ -18,7 +18,7 @@ build: ## Build the binary.
 
 .PHONY: lint lint-jsonschema lint-jsonschema-fix
 lint: lint-jsonschema ## Lint the Go code.
-	go tool -modfile go.tools.mod golangci-lint run
+	golangci-lint run
 
 lint-jsonschema: ## Lint for unescaped commas in jsonschema tags.
 	go run ./cmd/linters/jsonschema --path .

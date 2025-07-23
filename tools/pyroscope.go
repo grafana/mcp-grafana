@@ -370,14 +370,16 @@ func (c *pyroscopeClient) get(ctx context.Context, path string, params url.Value
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
-	defer res.Body.Close()
+	defer func() {
+		_ = res.Body.Close() //nolint:errcheck // Ignore close error in defer
+	}()
 
 	if res.StatusCode < 200 || res.StatusCode > 299 {
 		body, err := io.ReadAll(res.Body)
 		if err != nil {
-			return nil, fmt.Errorf("Pyroscope API failed with status code %d", res.StatusCode)
+			return nil, fmt.Errorf("pyroscope API failed with status code %d", res.StatusCode)
 		}
-		return nil, fmt.Errorf("Pyroscope API failed with status code %d: %s", res.StatusCode, string(body))
+		return nil, fmt.Errorf("pyroscope API failed with status code %d: %s", res.StatusCode, string(body))
 	}
 
 	const limit = 1 << 25 // 32 MiB
@@ -387,11 +389,11 @@ func (c *pyroscopeClient) get(ctx context.Context, path string, params url.Value
 	}
 
 	if len(body) == 0 {
-		return nil, fmt.Errorf("Pyroscope API returned an empty response")
+		return nil, fmt.Errorf("pyroscope API returned an empty response")
 	}
 
 	if strings.Contains(string(body), "Showing nodes accounting for 0, 0% of 0 total") {
-		return nil, fmt.Errorf("Pyroscope API returned a empty profile")
+		return nil, fmt.Errorf("pyroscope API returned a empty profile")
 	}
 	return body, nil
 }

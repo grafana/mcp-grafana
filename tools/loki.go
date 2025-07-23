@@ -55,7 +55,7 @@ func newLokiClient(ctx context.Context, uid string) (*Client, error) {
 	url := fmt.Sprintf("%s/api/datasources/proxy/uid/%s", strings.TrimRight(cfg.URL, "/"), uid)
 
 	// Create custom transport with TLS configuration if available
-	var transport http.RoundTripper = http.DefaultTransport
+	var transport = http.DefaultTransport
 	if tlsConfig := cfg.TLSConfig; tlsConfig != nil {
 		var err error
 		transport, err = tlsConfig.HTTPTransport(transport.(*http.Transport))
@@ -113,12 +113,14 @@ func (c *Client) makeRequest(ctx context.Context, method, urlPath string, params
 	if err != nil {
 		return nil, fmt.Errorf("executing request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close() //nolint:errcheck // Ignore close error in defer
+	}()
 
 	// Check for non-200 status code
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("Loki API returned status code %d: %s", resp.StatusCode, string(bodyBytes))
+		return nil, fmt.Errorf("loki API returned status code %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
 	// Read the response body with a limit to prevent memory issues
@@ -159,7 +161,7 @@ func (c *Client) fetchData(ctx context.Context, urlPath string, startRFC3339, en
 	}
 
 	if labelResponse.Status != "success" {
-		return nil, fmt.Errorf("Loki API returned unexpected response format: %s", string(bodyBytes))
+		return nil, fmt.Errorf("loki API returned unexpected response format: %s", string(bodyBytes))
 	}
 
 	// Check if Data is nil or empty and handle it explicitly
@@ -356,7 +358,7 @@ func (c *Client) fetchLogs(ctx context.Context, query, startRFC3339, endRFC3339 
 	}
 
 	if queryResponse.Status != "success" {
-		return nil, fmt.Errorf("Loki API returned unexpected response format: %s", string(bodyBytes))
+		return nil, fmt.Errorf("loki API returned unexpected response format: %s", string(bodyBytes))
 	}
 
 	return queryResponse.Data.Result, nil

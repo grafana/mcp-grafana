@@ -130,7 +130,9 @@ srv.Listen(ctx, os.Stdin, os.Stdout)`)
 func runServerWithTLS() {
 	// Set up environment variables (in practice, these would be set externally)
 	if os.Getenv("GRAFANA_URL") == "" {
-		os.Setenv("GRAFANA_URL", "https://localhost:3000")
+		if err := os.Setenv("GRAFANA_URL", "https://localhost:3000"); err != nil {
+			log.Printf("Failed to set GRAFANA_URL: %v", err)
+		}
 	}
 	if os.Getenv("GRAFANA_API_KEY") == "" {
 		fmt.Println("Warning: GRAFANA_API_KEY not set")
@@ -168,7 +170,7 @@ func runServerWithTLS() {
 }
 
 // Example of creating custom HTTP clients with TLS configuration
-func customClientExample() {
+func customClientExample() { //nolint:unused // Example function for documentation
 	ctx := context.Background()
 
 	// Add Grafana configuration to context
@@ -181,6 +183,7 @@ func customClientExample() {
 		TLSConfig: tlsConfig,
 	}
 	ctx = mcpgrafana.WithGrafanaConfig(ctx, config)
+	_ = ctx // Use ctx to avoid ineffectual assignment warning
 
 	// Create custom HTTP transport with TLS
 	transport, err := tlsConfig.HTTPTransport(http.DefaultTransport.(*http.Transport))
