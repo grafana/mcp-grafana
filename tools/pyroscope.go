@@ -371,7 +371,7 @@ func (c *pyroscopeClient) get(ctx context.Context, path string, params url.Value
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
 	defer func() {
-		_ = res.Body.Close() //nolint:errcheck // Ignore close error in defer
+		_ = res.Body.Close() //nolint:errcheck
 	}()
 
 	if res.StatusCode < 200 || res.StatusCode > 299 {

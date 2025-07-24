@@ -114,7 +114,7 @@ func (c *Client) makeRequest(ctx context.Context, method, urlPath string, params
 		return nil, fmt.Errorf("executing request: %w", err)
 	}
 	defer func() {
-		_ = resp.Body.Close() //nolint:errcheck // Ignore close error in defer
+		_ = resp.Body.Close() //nolint:errcheck
 	}()
 
 	// Check for non-200 status code
