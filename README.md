@@ -214,7 +214,7 @@ Scopes define the specific resources that permissions apply to. Each action requ
 
      ```bash
      helm repo add grafana https://grafana.github.io/helm-charts
-     helm install --set grafana.apiKey=<Grafana_ApiKey> my-release grafana/grafana-mcp
+     helm install --set grafana.apiKey=<Grafana_ApiKey> --set grafana.url=<GrafanaUrl> my-release grafana/grafana-mcp
      ```
 
 
