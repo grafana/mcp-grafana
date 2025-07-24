@@ -210,7 +210,7 @@ Scopes define the specific resources that permissions apply to. Each action requ
      GOBIN="$HOME/go/bin" go install github.com/grafana/mcp-grafana/cmd/mcp-grafana@latest
      ```
 
-   - **Deploy to k8s using helm chart**: use the helm chart of [mcp-grafana](https://github.com/grafana/helm-charts/tree/main/charts/grafana-mcp)
+   - **Deploy to Kubernetes using Helm**: use the [Helm chart from the Grafana helm-charts repository](https://github.com/grafana/helm-charts/tree/main/charts/grafana-mcp)
 
      ```bash
      helm repo add grafana https://grafana.github.io/helm-charts
