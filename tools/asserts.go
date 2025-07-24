@@ -91,7 +91,7 @@ func (c *Client) fetchAssertsData(ctx context.Context, urlPath string, method st
 		return "", fmt.Errorf("failed to execute request: %w", err)
 	}
 	defer func() {
-		_ = resp.Body.Close() //nolint:errcheck // Ignore close error in defer
+		_ = resp.Body.Close() //nolint:errcheck
 	}()
 
 	body, err := io.ReadAll(resp.Body)

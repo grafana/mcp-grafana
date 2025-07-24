@@ -450,7 +450,7 @@ func (c *siftClient) makeRequest(ctx context.Context, method, path string, body 
 		return nil, fmt.Errorf("executing request: %w", err)
 	}
 	defer func() {
-		_ = response.Body.Close() //nolint:errcheck // Ignore close error in defer
+		_ = response.Body.Close() //nolint:errcheck
 	}()
 
 	// Check for non-200 status code (matching Loki client's logic)

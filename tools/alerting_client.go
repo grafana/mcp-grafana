@@ -82,7 +82,7 @@ func (c *alertingClient) makeRequest(ctx context.Context, path string) (*http.Re
 	}
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
-		_ = resp.Body.Close() //nolint:errcheck // Ignore close error in error handling path
+		_ = resp.Body.Close() //nolint:errcheck
 		return nil, fmt.Errorf("grafana API returned status code %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
@@ -95,7 +95,7 @@ func (c *alertingClient) GetRules(ctx context.Context) (*rulesResponse, error) {
 		return nil, fmt.Errorf("failed to get alert rules from Grafana API: %w", err)
 	}
 	defer func() {
-		_ = resp.Body.Close() //nolint:errcheck // Ignore close error in defer
+		_ = resp.Body.Close() //nolint:errcheck
 	}()
 
 	var rulesResponse rulesResponse

@@ -34,7 +34,7 @@ func getOnCallURLFromSettings(ctx context.Context, grafanaURL, grafanaAPIKey str
 		return "", fmt.Errorf("fetching settings: %w", err)
 	}
 	defer func() {
-		_ = resp.Body.Close() //nolint:errcheck // Ignore close error in defer
+		_ = resp.Body.Close() //nolint:errcheck
 	}()
 
 	if resp.StatusCode != http.StatusOK {
