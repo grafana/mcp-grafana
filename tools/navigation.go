@@ -31,7 +31,7 @@ func generateDeeplink(ctx context.Context, args GenerateDeeplinkParams) (string,
 	baseURL := strings.TrimRight(config.URL, "/")
 
 	if baseURL == "" {
-		return "", fmt.Errorf("Grafana URL not configured. Please set GRAFANA_URL environment variable or X-Grafana-URL header")
+		return "", fmt.Errorf("grafana url not configured. Please set GRAFANA_URL environment variable or X-Grafana-URL header")
 	}
 
 	var deeplink string

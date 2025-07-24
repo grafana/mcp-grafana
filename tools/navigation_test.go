@@ -99,7 +99,7 @@ func TestGenerateDeeplink(t *testing.T) {
 		}
 		_, err := generateDeeplink(emptyCtx, params)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "Grafana URL not configured")
+		assert.Contains(t, err.Error(), "grafana url not configured")
 
 		params.ResourceType = "unsupported"
 		_, err = generateDeeplink(ctx, params)
