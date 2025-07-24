@@ -73,7 +73,7 @@ the OnCall tools, use `--disable-oncall`.
 Each tool requires specific RBAC permissions to function properly. When creating a service account for the MCP server, ensure it has the necessary permissions based on which tools you plan to use. The permissions listed are the minimum required actions - you may also need appropriate scopes (e.g., `datasources:*`, `dashboards:*`, `folders:*`) depending on your use case.
 
 **Note:** Grafana Incident and Sift tools use basic Grafana roles instead of fine-grained RBAC permissions:
-- **Viewer role:** Required for read-only operations (list incidents, get investigations)  
+- **Viewer role:** Required for read-only operations (list incidents, get investigations)
 - **Editor role:** Required for write operations (create incidents, modify investigations)
 
 For more information about Grafana RBAC, see the [official documentation](https://grafana.com/docs/grafana/latest/administration/roles-and-permissions/access-control/).
@@ -209,6 +209,14 @@ Scopes define the specific resources that permissions apply to. Each action requ
      ```bash
      GOBIN="$HOME/go/bin" go install github.com/grafana/mcp-grafana/cmd/mcp-grafana@latest
      ```
+
+   - **Deploy to Kubernetes using Helm**: use the [Helm chart from the Grafana helm-charts repository](https://github.com/grafana/helm-charts/tree/main/charts/grafana-mcp)
+
+     ```bash
+     helm repo add grafana https://grafana.github.io/helm-charts
+     helm install --set grafana.apiKey=<Grafana_ApiKey> --set grafana.url=<GrafanaUrl> my-release grafana/grafana-mcp
+     ```
+
 
 3. Add the server configuration to your client configuration file. For example, for Claude Desktop:
 
