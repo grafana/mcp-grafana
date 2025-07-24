@@ -112,7 +112,7 @@ type siftClient struct {
 
 func newSiftClient(cfg mcpgrafana.GrafanaConfig) (*siftClient, error) {
 	// Create custom transport with TLS configuration if available
-	var transport http.RoundTripper = http.DefaultTransport
+	var transport = http.DefaultTransport
 	if tlsConfig := cfg.TLSConfig; tlsConfig != nil {
 		var err error
 		transport, err = tlsConfig.HTTPTransport(transport.(*http.Transport))
@@ -449,7 +449,9 @@ func (c *siftClient) makeRequest(ctx context.Context, method, path string, body 
 	if err != nil {
 		return nil, fmt.Errorf("executing request: %w", err)
 	}
-	defer response.Body.Close()
+	defer func() {
+		_ = response.Body.Close() //nolint:errcheck // Ignore close error in defer
+	}()
 
 	// Check for non-200 status code (matching Loki client's logic)
 	if response.StatusCode != http.StatusOK {

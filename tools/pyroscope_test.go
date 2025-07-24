@@ -83,6 +83,6 @@ func TestPyroscopeTools(t *testing.T) {
 			ProfileType:   "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
 			Matchers:      `{service_name="pyroscope", label_does_not_exit="missing"}`,
 		})
-		require.EqualError(t, err, "failed to call Pyroscope API: Pyroscope API returned a empty profile")
+		require.EqualError(t, err, "failed to call Pyroscope API: pyroscope API returned a empty profile")
 	})
 }

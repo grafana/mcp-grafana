@@ -144,7 +144,8 @@ func queryPrometheus(ctx context.Context, args QueryPrometheusParams) (model.Val
 		return nil, fmt.Errorf("parsing start time: %w", err)
 	}
 
-	if queryType == "range" {
+	switch queryType {
+	case "range":
 		if args.StepSeconds == 0 {
 			return nil, fmt.Errorf("stepSeconds must be provided when queryType is 'range'")
 		}
@@ -165,7 +166,7 @@ func queryPrometheus(ctx context.Context, args QueryPrometheusParams) (model.Val
 			return nil, fmt.Errorf("querying Prometheus range: %w", err)
 		}
 		return result, nil
-	} else if queryType == "instant" {
+	case "instant":
 		result, _, err := promClient.Query(ctx, args.Expr, startTime)
 		if err != nil {
 			return nil, fmt.Errorf("querying Prometheus instant: %w", err)

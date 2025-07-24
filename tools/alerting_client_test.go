@@ -86,7 +86,7 @@ func TestAlertingClient_GetRules_Error(t *testing.T) {
 		rules, err := client.GetRules(context.Background())
 		require.Error(t, err)
 		require.Nil(t, rules)
-		require.ErrorContains(t, err, "Grafana API returned status code 500: internal server error")
+		require.ErrorContains(t, err, "grafana API returned status code 500: internal server error")
 	})
 
 	t.Run("network error", func(t *testing.T) {
