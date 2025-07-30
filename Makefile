@@ -61,4 +61,4 @@ run-streamable-http: ## Run the MCP server in StreamableHTTP mode.
 
 .PHONY: run-test-services
 run-test-services: ## Run the docker-compose services required for the unit and integration tests.
-	docker compose up -d --build
+	docker-compose up -d --build

@@ -10,6 +10,11 @@ import (
 	mcpgrafana "github.com/grafana/mcp-grafana"
 )
 
+// Helper function to create string pointers
+func stringPtr(s string) *string {
+	return &s
+}
+
 func TestGenerateDeeplink(t *testing.T) {
 	grafanaCfg := mcpgrafana.GrafanaConfig{
 		URL: "http://localhost:3000",
@@ -19,7 +24,7 @@ func TestGenerateDeeplink(t *testing.T) {
 	t.Run("Dashboard deeplink", func(t *testing.T) {
 		params := GenerateDeeplinkParams{
 			ResourceType: "dashboard",
-			UID:          "abc123",
+			DashboardUID: stringPtr("abc123"),
 		}
 
 		result, err := generateDeeplink(ctx, params)
@@ -28,12 +33,10 @@ func TestGenerateDeeplink(t *testing.T) {
 	})
 
 	t.Run("Panel deeplink", func(t *testing.T) {
-		dashboardUID := "dash-123"
 		panelID := 5
 		params := GenerateDeeplinkParams{
 			ResourceType: "panel",
-			UID:          "panel-uid",
-			DashboardUID: &dashboardUID,
+			DashboardUID: stringPtr("dash-123"),
 			PanelID:      &panelID,
 		}
 
@@ -44,8 +47,8 @@ func TestGenerateDeeplink(t *testing.T) {
 
 	t.Run("Explore deeplink", func(t *testing.T) {
 		params := GenerateDeeplinkParams{
-			ResourceType: "explore",
-			UID:          "prometheus-uid",
+			ResourceType:  "explore",
+			DatasourceUID: stringPtr("prometheus-uid"),
 		}
 
 		result, err := generateDeeplink(ctx, params)
@@ -57,7 +60,7 @@ func TestGenerateDeeplink(t *testing.T) {
 	t.Run("With time range", func(t *testing.T) {
 		params := GenerateDeeplinkParams{
 			ResourceType: "dashboard",
-			UID:          "abc123",
+			DashboardUID: stringPtr("abc123"),
 			TimeRange: &TimeRange{
 				From: "now-1h",
 				To:   "now",
@@ -74,7 +77,7 @@ func TestGenerateDeeplink(t *testing.T) {
 	t.Run("With additional query params", func(t *testing.T) {
 		params := GenerateDeeplinkParams{
 			ResourceType: "dashboard",
-			UID:          "abc123",
+			DashboardUID: stringPtr("abc123"),
 			QueryParams: map[string]string{
 				"var-datasource": "prometheus",
 				"refresh":        "30s",
@@ -95,7 +98,7 @@ func TestGenerateDeeplink(t *testing.T) {
 		emptyCtx := mcpgrafana.WithGrafanaConfig(context.Background(), emptyGrafanaCfg)
 		params := GenerateDeeplinkParams{
 			ResourceType: "dashboard",
-			UID:          "abc123",
+			DashboardUID: stringPtr("abc123"),
 		}
 		_, err := generateDeeplink(emptyCtx, params)
 		assert.Error(t, err)
@@ -106,22 +109,37 @@ func TestGenerateDeeplink(t *testing.T) {
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "unsupported resource type")
 
+		// Test missing dashboardUid for dashboard
 		params = GenerateDeeplinkParams{
-			ResourceType: "panel",
-			UID:          "panel-uid",
+			ResourceType: "dashboard",
 		}
 		_, err = generateDeeplink(ctx, params)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "dashboardUid is required")
 
-		dashboardUID := "dash-123"
+		// Test missing dashboardUid for panel
 		params = GenerateDeeplinkParams{
 			ResourceType: "panel",
-			UID:          "panel-uid",
-			DashboardUID: &dashboardUID,
+		}
+		_, err = generateDeeplink(ctx, params)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "dashboardUid is required")
+
+		// Test missing panelId for panel
+		params = GenerateDeeplinkParams{
+			ResourceType: "panel",
+			DashboardUID: stringPtr("dash-123"),
 		}
 		_, err = generateDeeplink(ctx, params)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "panelId is required")
+
+		// Test missing datasourceUid for explore
+		params = GenerateDeeplinkParams{
+			ResourceType: "explore",
+		}
+		_, err = generateDeeplink(ctx, params)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "datasourceUid is required")
 	})
 }

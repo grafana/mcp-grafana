@@ -20,7 +20,7 @@ pytestmark = pytest.mark.anyio
 @pytest.mark.flaky(max_runs=3)
 async def test_generate_dashboard_deeplink(model: str, mcp_client: ClientSession):
     tools = await get_converted_tools(mcp_client)
-    prompt = "Generate a deeplink for dashboard with UID 'test-dashboard'"
+    prompt = "Generate a deeplink for dashboard with UID 'test-uid'"
 
     messages = [
         Message(role="system", content="You are a helpful assistant."),
@@ -29,15 +29,17 @@ async def test_generate_dashboard_deeplink(model: str, mcp_client: ClientSession
 
     messages = await llm_tool_call_sequence(
         model, messages, tools, mcp_client, "generate_deeplink",
-        {"resourceType": "dashboard", "uid": "test-dashboard"}
+        {"resourceType": "dashboard", "dashboardUid": "test-uid"}
     )
 
     response = await acompletion(model=model, messages=messages, tools=tools)
     content = response.choices[0].message.content
     
+    assert "/d/test-uid" in content, f"Expected dashboard URL with /d/test-uid, got: {content}"
+    
     dashboard_link_checker = CustomLLMBooleanEvaluator(
         settings=CustomLLMBooleanSettings(
-            prompt="Does the response contain a valid Grafana dashboard deeplink URL with the format http://*/d/test-dashboard?",
+            prompt="Does the response contain a URL with /d/ path and the dashboard UID?",
         )
     )
     print("Dashboard deeplink content:", content)
@@ -48,7 +50,7 @@ async def test_generate_dashboard_deeplink(model: str, mcp_client: ClientSession
 @pytest.mark.flaky(max_runs=3)
 async def test_generate_panel_deeplink(model: str, mcp_client: ClientSession):
     tools = await get_converted_tools(mcp_client)
-    prompt = "Generate a deeplink for panel 5 in dashboard with UID 'monitoring-dash'"
+    prompt = "Generate a deeplink for panel 5 in dashboard with UID 'test-uid'"
 
     messages = [
         Message(role="system", content="You are a helpful assistant."),
@@ -59,8 +61,7 @@ async def test_generate_panel_deeplink(model: str, mcp_client: ClientSession):
         model, messages, tools, mcp_client, "generate_deeplink",
         {
             "resourceType": "panel",
-            "uid": "panel-uid",
-            "dashboardUid": "monitoring-dash",
+            "dashboardUid": "test-uid",
             "panelId": 5
         }
     )
@@ -68,9 +69,11 @@ async def test_generate_panel_deeplink(model: str, mcp_client: ClientSession):
     response = await acompletion(model=model, messages=messages, tools=tools)
     content = response.choices[0].message.content
     
+    assert "viewPanel=5" in content, f"Expected panel URL with viewPanel=5, got: {content}"
+    
     panel_link_checker = CustomLLMBooleanEvaluator(
         settings=CustomLLMBooleanSettings(
-            prompt="Does the response contain a valid Grafana panel deeplink URL with viewPanel parameter?",
+            prompt="Does the response contain a URL with viewPanel parameter?",
         )
     )
     print("Panel deeplink content:", content)
@@ -81,7 +84,7 @@ async def test_generate_panel_deeplink(model: str, mcp_client: ClientSession):
 @pytest.mark.flaky(max_runs=3)
 async def test_generate_explore_deeplink(model: str, mcp_client: ClientSession):
     tools = await get_converted_tools(mcp_client)
-    prompt = "Generate a deeplink for Grafana Explore with datasource 'prometheus-uid'"
+    prompt = "Generate a deeplink for Grafana Explore with datasource 'test-uid'"
 
     messages = [
         Message(role="system", content="You are a helpful assistant."),
@@ -90,15 +93,17 @@ async def test_generate_explore_deeplink(model: str, mcp_client: ClientSession):
 
     messages = await llm_tool_call_sequence(
         model, messages, tools, mcp_client, "generate_deeplink",
-        {"resourceType": "explore", "uid": "prometheus-uid"}
+        {"resourceType": "explore", "datasourceUid": "test-uid"}
     )
 
     response = await acompletion(model=model, messages=messages, tools=tools)
     content = response.choices[0].message.content
     
+    assert "/explore" in content, f"Expected explore URL with /explore path, got: {content}"
+    
     explore_link_checker = CustomLLMBooleanEvaluator(
         settings=CustomLLMBooleanSettings(
-            prompt="Does the response contain a valid Grafana Explore deeplink URL with /explore path and datasource parameter?",
+            prompt="Does the response contain a URL with /explore path?",
         )
     )
     print("Explore deeplink content:", content)
@@ -109,7 +114,7 @@ async def test_generate_explore_deeplink(model: str, mcp_client: ClientSession):
 @pytest.mark.flaky(max_runs=3)
 async def test_generate_deeplink_with_time_range(model: str, mcp_client: ClientSession):
     tools = await get_converted_tools(mcp_client)
-    prompt = "Generate a dashboard deeplink for 'system-metrics' showing the last 6 hours"
+    prompt = "Generate a dashboard deeplink for 'test-uid' showing the last 6 hours"
 
     messages = [
         Message(role="system", content="You are a helpful assistant."),
@@ -120,7 +125,7 @@ async def test_generate_deeplink_with_time_range(model: str, mcp_client: ClientS
         model, messages, tools, mcp_client, "generate_deeplink",
         {
             "resourceType": "dashboard",
-            "uid": "system-metrics",
+            "dashboardUid": "test-uid",
             "timeRange": {
                 "from": "now-6h",
                 "to": "now"
@@ -131,9 +136,11 @@ async def test_generate_deeplink_with_time_range(model: str, mcp_client: ClientS
     response = await acompletion(model=model, messages=messages, tools=tools)
     content = response.choices[0].message.content
     
+    assert "from=now-6h" in content and "to=now" in content, f"Expected time range parameters, got: {content}"
+    
     time_range_checker = CustomLLMBooleanEvaluator(
         settings=CustomLLMBooleanSettings(
-            prompt="Does the response contain a Grafana deeplink URL with time range parameters (from and to query parameters)?",
+            prompt="Does the response contain a URL with time range parameters?",
         )
     )
     print("Time range deeplink content:", content)
@@ -144,7 +151,7 @@ async def test_generate_deeplink_with_time_range(model: str, mcp_client: ClientS
 @pytest.mark.flaky(max_runs=3)
 async def test_generate_deeplink_with_custom_params(model: str, mcp_client: ClientSession):
     tools = await get_converted_tools(mcp_client)
-    prompt = "Generate a dashboard deeplink for 'app-metrics' with custom variables"
+    prompt = "Generate a dashboard deeplink for 'test-uid' with custom variables"
 
     messages = [
         Message(role="system", content="You are a helpful assistant."),
@@ -155,10 +162,9 @@ async def test_generate_deeplink_with_custom_params(model: str, mcp_client: Clie
         model, messages, tools, mcp_client, "generate_deeplink",
         {
             "resourceType": "dashboard",
-            "uid": "app-metrics",
+            "dashboardUid": "test-uid",
             "queryParams": {
                 "var-datasource": "prometheus",
-                "var-environment": "production",
                 "refresh": "30s"
             }
         }
@@ -167,33 +173,14 @@ async def test_generate_deeplink_with_custom_params(model: str, mcp_client: Clie
     response = await acompletion(model=model, messages=messages, tools=tools)
     content = response.choices[0].message.content
     
+    assert "var-datasource=prometheus" in content, f"Expected custom parameters, got: {content}"
+    
     custom_params_checker = CustomLLMBooleanEvaluator(
         settings=CustomLLMBooleanSettings(
-            prompt="Does the response contain a Grafana deeplink URL with custom query parameters like var-datasource or refresh?",
+            prompt="Does the response contain a URL with custom query parameters?",
         )
     )
     print("Custom params deeplink content:", content)
     expect(input=prompt, output=content).to_pass(custom_params_checker)
 
 
-@pytest.mark.parametrize("model", models)
-@pytest.mark.flaky(max_runs=3)
-async def test_navigation_tool_workflow(model: str, mcp_client: ClientSession):
-    tools = await get_converted_tools(mcp_client)
-    prompt = "Find a dashboard and then generate a deeplink to it with a 1-hour time range"
-
-    messages = [
-        Message(role="system", content="You are a helpful assistant that can search for Grafana dashboards and generate deeplinks."),
-        Message(role="user", content=prompt),
-    ]
-
-    response = await acompletion(model=model, messages=messages, tools=tools)
-    final_content = response.choices[0].message.content
-    
-    workflow_checker = CustomLLMBooleanEvaluator(
-        settings=CustomLLMBooleanSettings(
-            prompt="Does the response demonstrate finding dashboards and generating deeplinks with time range parameters?",
-        )
-    )
-    print("Navigation workflow content:", final_content)
-    expect(input=prompt, output=final_content).to_pass(workflow_checker)

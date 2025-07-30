@@ -13,12 +13,12 @@ import (
 )
 
 type GenerateDeeplinkParams struct {
-	ResourceType string            `json:"resourceType" jsonschema:"required,description=Type of resource: dashboard\\, panel\\, or explore"`
-	UID          string            `json:"uid" jsonschema:"required,description=UID of the resource"`
-	PanelID      *int              `json:"panelId,omitempty" jsonschema:"description=Panel ID for panel-specific links"`
-	DashboardUID *string           `json:"dashboardUid,omitempty" jsonschema:"description=Dashboard UID when linking to panels"`
-	QueryParams  map[string]string `json:"queryParams,omitempty" jsonschema:"description=Additional query parameters"`
-	TimeRange    *TimeRange        `json:"timeRange,omitempty" jsonschema:"description=Time range for the link"`
+	ResourceType  string            `json:"resourceType" jsonschema:"required,description=Type of resource: dashboard\\, panel\\, or explore"`
+	DashboardUID  *string           `json:"dashboardUid,omitempty" jsonschema:"description=Dashboard UID (required for dashboard and panel types)"`
+	DatasourceUID *string           `json:"datasourceUid,omitempty" jsonschema:"description=Datasource UID (required for explore type)"`
+	PanelID       *int              `json:"panelId,omitempty" jsonschema:"description=Panel ID (required for panel type)"`
+	QueryParams   map[string]string `json:"queryParams,omitempty" jsonschema:"description=Additional query parameters"`
+	TimeRange     *TimeRange        `json:"timeRange,omitempty" jsonschema:"description=Time range for the link"`
 }
 
 type TimeRange struct {
@@ -38,7 +38,10 @@ func generateDeeplink(ctx context.Context, args GenerateDeeplinkParams) (string,
 
 	switch strings.ToLower(args.ResourceType) {
 	case "dashboard":
-		deeplink = fmt.Sprintf("%s/d/%s", baseURL, args.UID)
+		if args.DashboardUID == nil {
+			return "", fmt.Errorf("dashboardUid is required for dashboard links")
+		}
+		deeplink = fmt.Sprintf("%s/d/%s", baseURL, *args.DashboardUID)
 	case "panel":
 		if args.DashboardUID == nil {
 			return "", fmt.Errorf("dashboardUid is required for panel links")
@@ -48,8 +51,11 @@ func generateDeeplink(ctx context.Context, args GenerateDeeplinkParams) (string,
 		}
 		deeplink = fmt.Sprintf("%s/d/%s?viewPanel=%d", baseURL, *args.DashboardUID, *args.PanelID)
 	case "explore":
+		if args.DatasourceUID == nil {
+			return "", fmt.Errorf("datasourceUid is required for explore links")
+		}
 		params := url.Values{}
-		exploreState := fmt.Sprintf(`{"datasource":"%s"}`, args.UID)
+		exploreState := fmt.Sprintf(`{"datasource":"%s"}`, *args.DatasourceUID)
 		params.Set("left", exploreState)
 		deeplink = fmt.Sprintf("%s/explore?%s", baseURL, params.Encode())
 	default:
@@ -90,7 +96,7 @@ func generateDeeplink(ctx context.Context, args GenerateDeeplinkParams) (string,
 
 var GenerateDeeplink = mcpgrafana.MustTool(
 	"generate_deeplink",
-	"Generate deeplink URLs for Grafana resources. Supports dashboards (requires UID), panels (requires dashboardUid and panelId), and Explore queries (requires datasource UID). Optionally accepts time range and additional query parameters.",
+	"Generate deeplink URLs for Grafana resources. Supports dashboards (requires dashboardUid), panels (requires dashboardUid and panelId), and Explore queries (requires datasourceUid). Optionally accepts time range and additional query parameters.",
 	generateDeeplink,
 	mcp.WithTitleAnnotation("Generate navigation deeplink"),
 	mcp.WithIdempotentHintAnnotation(true),
