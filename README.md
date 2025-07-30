@@ -63,10 +63,19 @@ _The following features are currently available in MCP server. This list is for 
 - **List teams:** View all configured teams in Grafana.
 - **List Users:** View all users in an organization in Grafana.
 
+### Navigation
+
+- **Generate deeplinks:** Create accurate deeplink URLs for Grafana resources instead of relying on LLM URL guessing.
+  - **Dashboard links:** Generate direct links to dashboards using their UID (e.g., `http://localhost:3000/d/dashboard-uid`)
+  - **Panel links:** Create links to specific panels within dashboards with viewPanel parameter (e.g., `http://localhost:3000/d/dashboard-uid?viewPanel=5`)
+  - **Explore links:** Generate links to Grafana Explore with pre-configured datasources (e.g., `http://localhost:3000/explore?left={"datasource":"prometheus-uid"}`)
+  - **Time range support:** Add time range parameters to links (`from=now-1h&to=now`)
+  - **Custom parameters:** Include additional query parameters like dashboard variables or refresh intervals
+
 The list of tools is configurable, so you can choose which tools you want to make available to the MCP client.
 This is useful if you don't use certain functionality or if you don't want to take up too much of the context window.
 To disable a category of tools, use the `--disable-<category>` flag when starting the server. For example, to disable
-the OnCall tools, use `--disable-oncall`.
+the OnCall tools, use `--disable-oncall`, or to disable navigation deeplink generation, use `--disable-navigation`.
 
 #### RBAC Permissions
 
@@ -167,6 +176,7 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `list_pyroscope_profile_types`    | Pyroscope   | List available profile types                                       | `datasources:query`                     | `datasources:uid:pyroscope-uid`                     |
 | `fetch_pyroscope_profile`         | Pyroscope   | Fetches a profile in DOT format for analysis                       | `datasources:query`                     | `datasources:uid:pyroscope-uid`                     |
 | `get_assertions`                  | Asserts     | Get assertion summary for a given entity                           | Plugin-specific permissions             | Plugin-specific scopes                              |
+| `generate_deeplink`               | Navigation  | Generate accurate deeplink URLs for Grafana resources              | None (read-only URL generation)         | N/A                                                 |
 
 ## Usage
 
