@@ -10,7 +10,9 @@ import (
 	"net/url"
 	"os"
 	"reflect"
+	"runtime/debug"
 	"strings"
+	"sync"
 
 	"github.com/go-openapi/strfmt"
 	"github.com/grafana/grafana-openapi-client-go/client"
@@ -59,7 +61,7 @@ type GrafanaConfig struct {
 	Debug bool
 
 	// IncludeArgumentsInSpans enables logging of tool arguments in OpenTelemetry spans.
-	// This should only be enabled in non-production environments or when you're certain 
+	// This should only be enabled in non-production environments or when you're certain
 	// the arguments don't contain PII. Defaults to false for safety.
 	// Note: OpenTelemetry spans are always created for context propagation, but arguments
 	// are only included when this flag is enabled.
@@ -145,6 +147,65 @@ func (tc *TLSConfig) HTTPTransport(defaultTransport *http.Transport) (http.Round
 	}
 
 	return transport, nil
+}
+
+// UserAgentTransport wraps an http.RoundTripper to add a custom User-Agent header
+type UserAgentTransport struct {
+	rt        http.RoundTripper
+	UserAgent string
+}
+
+func (t *UserAgentTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	// Clone the request to avoid modifying the original
+	clonedReq := req.Clone(req.Context())
+
+	// Add or update the User-Agent header
+	if clonedReq.Header.Get("User-Agent") == "" {
+		clonedReq.Header.Set("User-Agent", t.UserAgent)
+	}
+
+	return t.rt.RoundTrip(clonedReq)
+}
+
+// Version returns the version of the mcp-grafana binary.
+// It is populated by the `runtime/debug` package which
+// fetches git information from the build directory.
+var Version = sync.OnceValue(func() string {
+	// Default version string returned by `runtime/debug` if built
+	// from the source repository rather than with `go install`.
+	v := "(devel)"
+	if bi, ok := debug.ReadBuildInfo(); ok && bi.Main.Version != "" {
+		v = bi.Main.Version
+	}
+	return v
+})
+
+// UserAgent returns the user agent string for HTTP requests
+func UserAgent() string {
+	return fmt.Sprintf("mcp-grafana/%s", Version())
+}
+
+// NewUserAgentTransport creates a new UserAgentTransport with the specified user agent.
+// If no user agent is provided, uses the default UserAgent().
+func NewUserAgentTransport(rt http.RoundTripper, userAgent ...string) *UserAgentTransport {
+	if rt == nil {
+		rt = http.DefaultTransport
+	}
+
+	ua := UserAgent() // default
+	if len(userAgent) > 0 {
+		ua = userAgent[0]
+	}
+
+	return &UserAgentTransport{
+		rt:        rt,
+		UserAgent: ua,
+	}
+}
+
+// wrapWithUserAgent wraps an http.RoundTripper with user agent tracking
+func wrapWithUserAgent(rt http.RoundTripper) http.RoundTripper {
+	return NewUserAgentTransport(rt)
 }
 
 // ExtractGrafanaInfoFromEnv is a StdioContextFunc that extracts Grafana configuration
@@ -281,9 +342,11 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string) *client.Gr
 			transportField := v.FieldByName("Transport")
 			if transportField.IsValid() && transportField.CanSet() {
 				if rt, ok := transportField.Interface().(http.RoundTripper); ok {
-					wrapped := otelhttp.NewTransport(rt)
+					// Wrap with user agent first, then otel
+					userAgentWrapped := wrapWithUserAgent(rt)
+					wrapped := otelhttp.NewTransport(userAgentWrapped)
 					transportField.Set(reflect.ValueOf(wrapped))
-					slog.Debug("HTTP tracing enabled for Grafana client")
+					slog.Debug("HTTP tracing and user agent tracking enabled for Grafana client")
 				}
 			}
 		}
@@ -363,12 +426,15 @@ var ExtractIncidentClientFromEnv server.StdioContextFunc = func(ctx context.Cont
 		if err != nil {
 			slog.Error("Failed to create custom transport for incident client, using default", "error", err)
 		} else {
-			client.HTTPClient.Transport = transport
-			slog.Debug("Using custom TLS configuration for incident client",
+			client.HTTPClient.Transport = wrapWithUserAgent(transport)
+			slog.Debug("Using custom TLS configuration and user agent for incident client",
 				"cert_file", tlsConfig.CertFile,
 				"ca_file", tlsConfig.CAFile,
 				"skip_verify", tlsConfig.SkipVerify)
 		}
+	} else {
+		// No custom TLS, but still add user agent
+		client.HTTPClient.Transport = wrapWithUserAgent(http.DefaultTransport)
 	}
 
 	return context.WithValue(ctx, incidentClientKey{}, client)
@@ -395,12 +461,15 @@ var ExtractIncidentClientFromHeaders httpContextFunc = func(ctx context.Context,
 		if err != nil {
 			slog.Error("Failed to create custom transport for incident client, using default", "error", err)
 		} else {
-			client.HTTPClient.Transport = transport
-			slog.Debug("Using custom TLS configuration for incident client",
+			client.HTTPClient.Transport = wrapWithUserAgent(transport)
+			slog.Debug("Using custom TLS configuration and user agent for incident client",
 				"cert_file", tlsConfig.CertFile,
 				"ca_file", tlsConfig.CAFile,
 				"skip_verify", tlsConfig.SkipVerify)
 		}
+	} else {
+		// No custom TLS, but still add user agent
+		client.HTTPClient.Transport = wrapWithUserAgent(http.DefaultTransport)
 	}
 
 	return context.WithValue(ctx, incidentClientKey{}, client)

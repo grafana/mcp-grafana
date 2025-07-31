@@ -52,6 +52,15 @@ func newAlertingClientFromContext(ctx context.Context) (*alertingClient, error) 
 		if err != nil {
 			return nil, fmt.Errorf("failed to create custom transport: %w", err)
 		}
+		// Wrap with user agent
+		client.httpClient.Transport = mcpgrafana.NewUserAgentTransport(
+			client.httpClient.Transport,
+		)
+	} else {
+		// No custom TLS, but still add user agent
+		client.httpClient.Transport = mcpgrafana.NewUserAgentTransport(
+			http.DefaultTransport,
+		)
 	}
 
 	return client, nil

@@ -286,13 +286,17 @@ func fetchPyroscopeProfile(ctx context.Context, args FetchPyroscopeProfileParams
 
 func newPyroscopeClient(ctx context.Context, uid string) (*pyroscopeClient, error) {
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
+	authTransport := &authRoundTripper{
+		accessToken: cfg.AccessToken,
+		idToken:     cfg.IDToken,
+		apiKey:      cfg.APIKey,
+		underlying:  http.DefaultTransport,
+	}
+
 	httpClient := &http.Client{
-		Transport: &authRoundTripper{
-			accessToken: cfg.AccessToken,
-			idToken:     cfg.IDToken,
-			apiKey:      cfg.APIKey,
-			underlying:  http.DefaultTransport,
-		},
+		Transport: mcpgrafana.NewUserAgentTransport(
+			authTransport,
+		),
 		Timeout: 10 * time.Second,
 	}
 
