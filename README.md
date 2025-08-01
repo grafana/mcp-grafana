@@ -72,6 +72,12 @@ _The following features are currently available in MCP server. This list is for 
   - **Time range support:** Add time range parameters to links (`from=now-1h&to=now`)
   - **Custom parameters:** Include additional query parameters like dashboard variables or refresh intervals
 
+### Proxied Tools
+
+- **Dynamic tool discovery:** Automatically discover and expose tools from external MCP servers connected as Grafana datasources
+- **Tempo support:** Query traces and perform trace analysis through Tempo datasources that have MCP capabilities
+- **Extensible architecture:** Support for additional datasource types can be added by implementing the ProxyHandler interface
+
 The list of tools is configurable, so you can choose which tools you want to make available to the MCP client.
 This is useful if you don't use certain functionality or if you don't want to take up too much of the context window.
 To disable a category of tools, use the `--disable-<category>` flag when starting the server. For example, to disable
