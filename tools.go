@@ -91,7 +91,7 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 		config := GrafanaConfigFromContext(ctx)
 		ctx, span := otel.Tracer("mcp-grafana").Start(ctx, fmt.Sprintf("mcp.tool.%s", name))
 		defer span.End()
-		
+
 		// Add tool metadata as span attributes
 		span.SetAttributes(
 			attribute.String("mcp.tool.name", name),
@@ -104,8 +104,8 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 			span.SetStatus(codes.Error, "failed to marshal arguments")
 			return nil, fmt.Errorf("marshal args: %w", err)
 		}
-		
-		   // Add arguments as span attribute only if adding args to trace attributes is enabled
+
+		// Add arguments as span attribute only if adding args to trace attributes is enabled
 		if config.IncludeArgumentsInSpans {
 			span.SetAttributes(attribute.String("mcp.tool.arguments", string(argBytes)))
 		}

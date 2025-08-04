@@ -64,13 +64,17 @@ func newLokiClient(ctx context.Context, uid string) (*Client, error) {
 		}
 	}
 
+	authTransport := &authRoundTripper{
+		accessToken: cfg.AccessToken,
+		idToken:     cfg.IDToken,
+		apiKey:      cfg.APIKey,
+		underlying:  transport,
+	}
+
 	client := &http.Client{
-		Transport: &authRoundTripper{
-			accessToken: cfg.AccessToken,
-			idToken:     cfg.IDToken,
-			apiKey:      cfg.APIKey,
-			underlying:  transport,
-		},
+		Transport: mcpgrafana.NewUserAgentTransport(
+			authTransport,
+		),
 	}
 
 	return &Client{

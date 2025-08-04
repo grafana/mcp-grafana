@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"reflect"
 	"strings"
 
 	aapi "github.com/grafana/amixr-api-go-client"
@@ -28,6 +29,9 @@ func getOnCallURLFromSettings(ctx context.Context, grafanaURL, grafanaAPIKey str
 	if grafanaAPIKey != "" {
 		req.Header.Set("Authorization", "Bearer "+grafanaAPIKey)
 	}
+
+	// Add user agent for tracking
+	req.Header.Set("User-Agent", mcpgrafana.UserAgent())
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -74,6 +78,34 @@ func oncallClientFromContext(ctx context.Context) (*aapi.Client, error) {
 	client, err := aapi.NewWithGrafanaURL(grafanaOnCallURL, cfg.APIKey, cfg.URL)
 	if err != nil {
 		return nil, fmt.Errorf("creating OnCall client: %w", err)
+	}
+
+	// Try to customize the HTTP client with user agent using reflection
+	// since the OnCall client doesn't expose its HTTP client directly
+	clientValue := reflect.ValueOf(client)
+	if clientValue.Kind() == reflect.Ptr && !clientValue.IsNil() {
+		clientValue = clientValue.Elem()
+		if clientValue.Kind() == reflect.Struct {
+			httpClientField := clientValue.FieldByName("HTTPClient")
+			if !httpClientField.IsValid() {
+				// Try alternative field names
+				httpClientField = clientValue.FieldByName("HttpClient")
+			}
+			if !httpClientField.IsValid() {
+				httpClientField = clientValue.FieldByName("Client")
+			}
+			if httpClientField.IsValid() && httpClientField.CanSet() {
+				if httpClient, ok := httpClientField.Interface().(*http.Client); ok {
+					// Wrap the transport with user agent
+					if httpClient.Transport == nil {
+						httpClient.Transport = http.DefaultTransport
+					}
+					httpClient.Transport = mcpgrafana.NewUserAgentTransport(
+						httpClient.Transport,
+					)
+				}
+			}
+		}
 	}
 
 	return client, nil

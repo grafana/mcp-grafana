@@ -80,7 +80,7 @@ func TestExtractGrafanaInfoFromHeaders(t *testing.T) {
 		// Explicitly clear environment variables to ensure test isolation
 		t.Setenv("GRAFANA_URL", "")
 		t.Setenv("GRAFANA_API_KEY", "")
-		
+
 		req, err := http.NewRequest("GET", "http://example.com", nil)
 		require.NoError(t, err)
 		ctx := ExtractGrafanaInfoFromHeaders(context.Background(), req)
@@ -239,7 +239,7 @@ func TestToolTracingInstrumentation(t *testing.T) {
 		type TestParams struct {
 			Message string `json:"message" jsonschema:"description=Test message"`
 		}
-		
+
 		testHandler := func(ctx context.Context, args TestParams) (string, error) {
 			return "Hello " + args.Message, nil
 		}
@@ -295,7 +295,7 @@ func TestToolTracingInstrumentation(t *testing.T) {
 		type TestParams struct {
 			ShouldFail bool `json:"shouldFail" jsonschema:"description=Whether to fail"`
 		}
-		
+
 		testHandler := func(ctx context.Context, args TestParams) (string, error) {
 			if args.ShouldFail {
 				return "", assert.AnError
@@ -358,7 +358,7 @@ func TestToolTracingInstrumentation(t *testing.T) {
 		type TestParams struct {
 			Message string `json:"message" jsonschema:"description=Test message"`
 		}
-		
+
 		testHandler := func(ctx context.Context, args TestParams) (string, error) {
 			return "processed", nil
 		}
@@ -406,7 +406,7 @@ func TestToolTracingInstrumentation(t *testing.T) {
 		type TestParams struct {
 			SensitiveData string `json:"sensitiveData" jsonschema:"description=Potentially sensitive data"`
 		}
-		
+
 		testHandler := func(ctx context.Context, args TestParams) (string, error) {
 			return "processed", nil
 		}
@@ -451,7 +451,7 @@ func TestToolTracingInstrumentation(t *testing.T) {
 		attributes := span.Attributes()
 		assertHasAttribute(t, attributes, "mcp.tool.name", "sensitive_tool")
 		assertHasAttribute(t, attributes, "mcp.tool.description", "A tool with sensitive data")
-		
+
 		// Verify arguments are NOT present
 		for _, attr := range attributes {
 			assert.NotEqual(t, "mcp.tool.arguments", string(attr.Key), "Arguments should not be logged by default for PII safety")
@@ -466,7 +466,7 @@ func TestToolTracingInstrumentation(t *testing.T) {
 		type TestParams struct {
 			SafeData string `json:"safeData" jsonschema:"description=Non-sensitive data"`
 		}
-		
+
 		testHandler := func(ctx context.Context, args TestParams) (string, error) {
 			return "processed", nil
 		}
@@ -531,7 +531,7 @@ func TestHTTPTracingConfiguration(t *testing.T) {
 
 	t.Run("tracing works gracefully without OpenTelemetry configured", func(t *testing.T) {
 		// No OpenTelemetry tracer provider configured
-		
+
 		// Create context (tracing always enabled for context propagation)
 		config := GrafanaConfig{}
 		ctx := WithGrafanaConfig(context.Background(), config)
