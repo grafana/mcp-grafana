@@ -9,14 +9,14 @@ require (
 	github.com/go-openapi/runtime v0.28.0
 	github.com/go-openapi/strfmt v0.23.0
 	github.com/google/uuid v1.6.0
-	github.com/grafana/amixr-api-go-client v0.0.24
+	github.com/grafana/amixr-api-go-client v0.0.25
 	github.com/grafana/grafana-openapi-client-go v0.0.0-20250108132429-8d7e1f158f65
 	github.com/grafana/grafana-plugin-sdk-go v0.278.0
 	github.com/grafana/incident-go v0.0.0-20250211094540-dc6a98fdae43
 	github.com/grafana/pyroscope/api v1.2.0
 	github.com/invopop/jsonschema v0.13.0
 	github.com/mark3labs/mcp-go v0.36.0
-	github.com/prometheus/client_golang v1.22.0
+	github.com/prometheus/client_golang v1.23.0
 	github.com/prometheus/common v0.65.0
 	github.com/prometheus/prometheus v0.305.0
 	github.com/stretchr/testify v1.10.0
@@ -102,7 +102,7 @@ require (
 	github.com/planetscale/vtprotobuf v0.6.1-0.20240319094008-0393e58bdf10 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/prometheus/client_model v0.6.2 // indirect
-	github.com/prometheus/procfs v0.15.1 // indirect
+	github.com/prometheus/procfs v0.16.1 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect
 	github.com/smartystreets/assertions v1.0.1 // indirect
