@@ -48,6 +48,7 @@ func urlAndAPIKeyFromHeaders(req *http.Request) (string, string) {
 type grafanaConfigKey struct{}
 
 // TLSConfig holds TLS configuration for Grafana clients.
+// It supports mutual TLS authentication with client certificates, custom CA certificates for server verification, and development options like skipping certificate verification.
 type TLSConfig struct {
 	CertFile   string
 	KeyFile    string
@@ -56,6 +57,7 @@ type TLSConfig struct {
 }
 
 // GrafanaConfig represents the full configuration for Grafana clients.
+// It includes connection details, authentication credentials, debug settings, and TLS options used throughout the MCP server's lifecycle.
 type GrafanaConfig struct {
 	// Debug enables debug mode for the Grafana client.
 	Debug bool
@@ -86,12 +88,13 @@ type GrafanaConfig struct {
 }
 
 // WithGrafanaConfig adds Grafana configuration to the context.
+// This configuration includes API credentials, debug settings, and TLS options that will be used by all Grafana clients created from this context.
 func WithGrafanaConfig(ctx context.Context, config GrafanaConfig) context.Context {
 	return context.WithValue(ctx, grafanaConfigKey{}, config)
 }
 
 // GrafanaConfigFromContext extracts Grafana configuration from the context.
-// If no config is found, returns a zero-value GrafanaConfig.
+// If no config is found, returns a zero-value GrafanaConfig. This function is typically used by internal components to access configuration set earlier in the request lifecycle.
 func GrafanaConfigFromContext(ctx context.Context) GrafanaConfig {
 	if config, ok := ctx.Value(grafanaConfigKey{}).(GrafanaConfig); ok {
 		return config
@@ -100,6 +103,7 @@ func GrafanaConfigFromContext(ctx context.Context) GrafanaConfig {
 }
 
 // CreateTLSConfig creates a *tls.Config from TLSConfig.
+// It supports client certificates, custom CA certificates, and the option to skip TLS verification for development environments.
 func (tc *TLSConfig) CreateTLSConfig() (*tls.Config, error) {
 	if tc == nil {
 		return nil, nil
@@ -135,6 +139,7 @@ func (tc *TLSConfig) CreateTLSConfig() (*tls.Config, error) {
 }
 
 // HTTPTransport creates an HTTP transport with custom TLS configuration.
+// It clones the provided transport and applies the TLS settings, preserving other transport configurations like timeouts and connection pools.
 func (tc *TLSConfig) HTTPTransport(defaultTransport *http.Transport) (http.RoundTripper, error) {
 	transport := defaultTransport.Clone()
 
@@ -149,7 +154,8 @@ func (tc *TLSConfig) HTTPTransport(defaultTransport *http.Transport) (http.Round
 	return transport, nil
 }
 
-// UserAgentTransport wraps an http.RoundTripper to add a custom User-Agent header
+// UserAgentTransport wraps an http.RoundTripper to add a custom User-Agent header.
+// This ensures all HTTP requests from the MCP server are properly identified with version information for debugging and analytics.
 type UserAgentTransport struct {
 	rt        http.RoundTripper
 	UserAgent string
@@ -168,8 +174,8 @@ func (t *UserAgentTransport) RoundTrip(req *http.Request) (*http.Response, error
 }
 
 // Version returns the version of the mcp-grafana binary.
-// It is populated by the `runtime/debug` package which
-// fetches git information from the build directory.
+// It uses runtime/debug to fetch version information from the build, returning "(devel)" for local development builds.
+// The version is computed once and cached for performance.
 var Version = sync.OnceValue(func() string {
 	// Default version string returned by `runtime/debug` if built
 	// from the source repository rather than with `go install`.
@@ -180,13 +186,15 @@ var Version = sync.OnceValue(func() string {
 	return v
 })
 
-// UserAgent returns the user agent string for HTTP requests
+// UserAgent returns the user agent string for HTTP requests.
+// It includes the mcp-grafana identifier and version number for proper request attribution and debugging.
 func UserAgent() string {
 	return fmt.Sprintf("mcp-grafana/%s", Version())
 }
 
 // NewUserAgentTransport creates a new UserAgentTransport with the specified user agent.
-// If no user agent is provided, uses the default UserAgent().
+// If no user agent is provided, it uses the default UserAgent() with version information.
+// The transport wraps the provided RoundTripper, defaulting to http.DefaultTransport if nil.
 func NewUserAgentTransport(rt http.RoundTripper, userAgent ...string) *UserAgentTransport {
 	if rt == nil {
 		rt = http.DefaultTransport
@@ -208,8 +216,8 @@ func wrapWithUserAgent(rt http.RoundTripper) http.RoundTripper {
 	return NewUserAgentTransport(rt)
 }
 
-// ExtractGrafanaInfoFromEnv is a StdioContextFunc that extracts Grafana configuration
-// from environment variables and injects a configured client into the context.
+// ExtractGrafanaInfoFromEnv is a StdioContextFunc that extracts Grafana configuration from environment variables.
+// It reads GRAFANA_URL and GRAFANA_API_KEY environment variables and adds the configuration to the context for use by Grafana clients.
 var ExtractGrafanaInfoFromEnv server.StdioContextFunc = func(ctx context.Context) context.Context {
 	u, apiKey := urlAndAPIKeyFromEnv()
 	if u == "" {
@@ -234,8 +242,8 @@ var ExtractGrafanaInfoFromEnv server.StdioContextFunc = func(ctx context.Context
 // identical, they have distinct types and cannot be passed around interchangeably.
 type httpContextFunc func(ctx context.Context, req *http.Request) context.Context
 
-// ExtractGrafanaInfoFromHeaders is a HTTPContextFunc that extracts Grafana configuration
-// from request headers and injects a configured client into the context.
+// ExtractGrafanaInfoFromHeaders is a HTTPContextFunc that extracts Grafana configuration from HTTP request headers.
+// It reads X-Grafana-URL and X-Grafana-API-Key headers, falling back to environment variables if headers are not present.
 var ExtractGrafanaInfoFromHeaders httpContextFunc = func(ctx context.Context, req *http.Request) context.Context {
 	u, apiKey := urlAndAPIKeyFromHeaders(req)
 	uEnv, apiKeyEnv := urlAndAPIKeyFromEnv()
@@ -257,8 +265,8 @@ var ExtractGrafanaInfoFromHeaders httpContextFunc = func(ctx context.Context, re
 	return WithGrafanaConfig(ctx, config)
 }
 
-// WithOnBehalfOfAuth adds the Grafana access token and user token to the
-// Grafana config. These tokens are used for on-behalf-of auth in Grafana Cloud.
+// WithOnBehalfOfAuth adds the Grafana access token and user token to the Grafana config.
+// These tokens enable on-behalf-of authentication in Grafana Cloud, allowing the MCP server to act on behalf of a specific user with their permissions.
 func WithOnBehalfOfAuth(ctx context.Context, accessToken, userToken string) (context.Context, error) {
 	if accessToken == "" || userToken == "" {
 		return nil, fmt.Errorf("neither accessToken nor userToken can be empty")
@@ -269,8 +277,8 @@ func WithOnBehalfOfAuth(ctx context.Context, accessToken, userToken string) (con
 	return WithGrafanaConfig(ctx, cfg), nil
 }
 
-// MustWithOnBehalfOfAuth adds the access and user tokens to the context,
-// panicking if either are empty.
+// MustWithOnBehalfOfAuth adds the access and user tokens to the context, panicking if either are empty.
+// This is a convenience wrapper around WithOnBehalfOfAuth for cases where token validation has already occurred.
 func MustWithOnBehalfOfAuth(ctx context.Context, accessToken, userToken string) context.Context {
 	ctx, err := WithOnBehalfOfAuth(ctx, accessToken, userToken)
 	if err != nil {
@@ -285,8 +293,8 @@ func makeBasePath(path string) string {
 	return strings.Join([]string{strings.TrimRight(path, "/"), "api"}, "/")
 }
 
-// NewGrafanaClient creates a Grafana client with the provided URL and API key,
-// configured to use the correct scheme, debug mode, and TLS configuration.
+// NewGrafanaClient creates a Grafana client with the provided URL and API key.
+// The client is automatically configured with the correct HTTP scheme, debug settings from context, custom TLS configuration if present, and OpenTelemetry instrumentation for distributed tracing.
 func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string) *client.GrafanaHTTPAPI {
 	cfg := client.DefaultTransportConfig()
 
@@ -355,8 +363,8 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string) *client.Gr
 	return grafanaClient
 }
 
-// ExtractGrafanaClientFromEnv is a StdioContextFunc that extracts Grafana configuration
-// from environment variables and injects a configured client into the context.
+// ExtractGrafanaClientFromEnv is a StdioContextFunc that creates and injects a Grafana client into the context.
+// It uses configuration from GRAFANA_URL and GRAFANA_API_KEY environment variables to initialize the client with proper authentication.
 var ExtractGrafanaClientFromEnv server.StdioContextFunc = func(ctx context.Context) context.Context {
 	// Extract transport config from env vars
 	grafanaURL, ok := os.LookupEnv(grafanaURLEnvVar)
@@ -369,8 +377,8 @@ var ExtractGrafanaClientFromEnv server.StdioContextFunc = func(ctx context.Conte
 	return context.WithValue(ctx, grafanaClientKey{}, grafanaClient)
 }
 
-// ExtractGrafanaClientFromHeaders is a HTTPContextFunc that extracts Grafana configuration
-// from request headers and injects a configured client into the context.
+// ExtractGrafanaClientFromHeaders is a HTTPContextFunc that creates and injects a Grafana client into the context.
+// It prioritizes configuration from HTTP headers (X-Grafana-URL, X-Grafana-API-Key) over environment variables for multi-tenant scenarios.
 var ExtractGrafanaClientFromHeaders httpContextFunc = func(ctx context.Context, req *http.Request) context.Context {
 	// Extract transport config from request headers, and set it on the context.
 	u, apiKey := urlAndAPIKeyFromHeaders(req)
@@ -390,13 +398,13 @@ var ExtractGrafanaClientFromHeaders httpContextFunc = func(ctx context.Context, 
 }
 
 // WithGrafanaClient sets the Grafana client in the context.
-//
-// It can be retrieved using GrafanaClientFromContext.
+// The client can be retrieved using GrafanaClientFromContext and will be used by all Grafana-related tools in the MCP server.
 func WithGrafanaClient(ctx context.Context, client *client.GrafanaHTTPAPI) context.Context {
 	return context.WithValue(ctx, grafanaClientKey{}, client)
 }
 
 // GrafanaClientFromContext retrieves the Grafana client from the context.
+// Returns nil if no client has been set, which tools should handle gracefully with appropriate error messages.
 func GrafanaClientFromContext(ctx context.Context) *client.GrafanaHTTPAPI {
 	c, ok := ctx.Value(grafanaClientKey{}).(*client.GrafanaHTTPAPI)
 	if !ok {
@@ -407,6 +415,8 @@ func GrafanaClientFromContext(ctx context.Context) *client.GrafanaHTTPAPI {
 
 type incidentClientKey struct{}
 
+// ExtractIncidentClientFromEnv is a StdioContextFunc that creates and injects a Grafana Incident client into the context.
+// It configures the client using environment variables and applies any custom TLS settings from the context.
 var ExtractIncidentClientFromEnv server.StdioContextFunc = func(ctx context.Context) context.Context {
 	grafanaURL, apiKey := urlAndAPIKeyFromEnv()
 	if grafanaURL == "" {
@@ -440,6 +450,8 @@ var ExtractIncidentClientFromEnv server.StdioContextFunc = func(ctx context.Cont
 	return context.WithValue(ctx, incidentClientKey{}, client)
 }
 
+// ExtractIncidentClientFromHeaders is a HTTPContextFunc that creates and injects a Grafana Incident client into the context.
+// It uses HTTP headers for configuration with environment variable fallbacks, enabling per-request incident management configuration.
 var ExtractIncidentClientFromHeaders httpContextFunc = func(ctx context.Context, req *http.Request) context.Context {
 	grafanaURL, apiKey := urlAndAPIKeyFromHeaders(req)
 	grafanaURLEnv, apiKeyEnv := urlAndAPIKeyFromEnv()
@@ -475,10 +487,14 @@ var ExtractIncidentClientFromHeaders httpContextFunc = func(ctx context.Context,
 	return context.WithValue(ctx, incidentClientKey{}, client)
 }
 
+// WithIncidentClient sets the Grafana Incident client in the context.
+// This client is used for managing incidents, activities, and other IRM (Incident Response Management) operations.
 func WithIncidentClient(ctx context.Context, client *incident.Client) context.Context {
 	return context.WithValue(ctx, incidentClientKey{}, client)
 }
 
+// IncidentClientFromContext retrieves the Grafana Incident client from the context.
+// Returns nil if no client has been set, indicating that incident management features are not available.
 func IncidentClientFromContext(ctx context.Context) *incident.Client {
 	c, ok := ctx.Value(incidentClientKey{}).(*incident.Client)
 	if !ok {
@@ -488,6 +504,7 @@ func IncidentClientFromContext(ctx context.Context) *incident.Client {
 }
 
 // ComposeStdioContextFuncs composes multiple StdioContextFuncs into a single one.
+// Functions are applied in order, allowing each to modify the context before passing it to the next.
 func ComposeStdioContextFuncs(funcs ...server.StdioContextFunc) server.StdioContextFunc {
 	return func(ctx context.Context) context.Context {
 		for _, f := range funcs {
@@ -498,6 +515,7 @@ func ComposeStdioContextFuncs(funcs ...server.StdioContextFunc) server.StdioCont
 }
 
 // ComposeSSEContextFuncs composes multiple SSEContextFuncs into a single one.
+// This enables chaining of context modifications for Server-Sent Events transport, such as extracting headers and setting up clients.
 func ComposeSSEContextFuncs(funcs ...httpContextFunc) server.SSEContextFunc {
 	return func(ctx context.Context, req *http.Request) context.Context {
 		for _, f := range funcs {
@@ -508,6 +526,7 @@ func ComposeSSEContextFuncs(funcs ...httpContextFunc) server.SSEContextFunc {
 }
 
 // ComposeHTTPContextFuncs composes multiple HTTPContextFuncs into a single one.
+// This enables chaining of context modifications for HTTP transport, allowing modular setup of authentication, clients, and configuration.
 func ComposeHTTPContextFuncs(funcs ...httpContextFunc) server.HTTPContextFunc {
 	return func(ctx context.Context, req *http.Request) context.Context {
 		for _, f := range funcs {
@@ -517,8 +536,8 @@ func ComposeHTTPContextFuncs(funcs ...httpContextFunc) server.HTTPContextFunc {
 	}
 }
 
-// ComposedStdioContextFunc returns a StdioContextFunc that comprises all predefined StdioContextFuncs,
-// as well as the Grafana debug flag and TLS configuration.
+// ComposedStdioContextFunc returns a StdioContextFunc that comprises all predefined StdioContextFuncs.
+// It sets up the complete context for stdio transport including Grafana configuration, client initialization from environment variables, and incident management support.
 func ComposedStdioContextFunc(config GrafanaConfig) server.StdioContextFunc {
 	return ComposeStdioContextFuncs(
 		func(ctx context.Context) context.Context {
@@ -530,7 +549,8 @@ func ComposedStdioContextFunc(config GrafanaConfig) server.StdioContextFunc {
 	)
 }
 
-// ComposedSSEContextFunc is a SSEContextFunc that comprises all predefined SSEContextFuncs.
+// ComposedSSEContextFunc returns a SSEContextFunc that comprises all predefined SSEContextFuncs.
+// It sets up the complete context for SSE transport, extracting configuration from HTTP headers with environment variable fallbacks.
 func ComposedSSEContextFunc(config GrafanaConfig) server.SSEContextFunc {
 	return ComposeSSEContextFuncs(
 		func(ctx context.Context, req *http.Request) context.Context {
@@ -542,7 +562,8 @@ func ComposedSSEContextFunc(config GrafanaConfig) server.SSEContextFunc {
 	)
 }
 
-// ComposedHTTPContextFunc is a HTTPContextFunc that comprises all predefined HTTPContextFuncs.
+// ComposedHTTPContextFunc returns a HTTPContextFunc that comprises all predefined HTTPContextFuncs.
+// It provides the complete context setup for HTTP transport, including header-based authentication and client configuration.
 func ComposedHTTPContextFunc(config GrafanaConfig) server.HTTPContextFunc {
 	return ComposeHTTPContextFuncs(
 		func(ctx context.Context, req *http.Request) context.Context {
