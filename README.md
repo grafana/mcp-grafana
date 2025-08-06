@@ -1,8 +1,8 @@
 # Grafana MCP server
 
-[![MCP Catalog](https://archestra.ai/mcp-catalog/api/badge/quality/grafana/mcp-grafana)](https://archestra.ai/mcp-catalog/grafana__mcp-grafana)
 [![Go CI](https://github.com/grafana/mcp-grafana/actions/workflows/go.yml/badge.svg)](https://github.com/grafana/mcp-grafana/actions/workflows/go.yml)
 [![Go Reference](https://pkg.go.dev/badge/github.com/grafana/mcp-grafana.svg)](https://pkg.go.dev/github.com/grafana/mcp-grafana)
+[![MCP Catalog](https://archestra.ai/mcp-catalog/api/badge/quality/grafana/mcp-grafana)](https://archestra.ai/mcp-catalog/grafana__mcp-grafana)
 
 A [Model Context Protocol][mcp] (MCP) server for Grafana.
 
