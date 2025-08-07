@@ -12,7 +12,7 @@ from mcp import ClientSession
 from conftest import models
 from utils import (
     get_converted_tools,
-    llm_tool_call_sequence,
+    flexible_tool_call,
 )
 
 pytestmark = pytest.mark.anyio
@@ -30,7 +30,7 @@ async def test_loki_logs_tool(model: str, mcp_client: ClientSession):
     ]
 
     # 1. List datasources
-    messages = await llm_tool_call_sequence(
+    messages = await flexible_tool_call(
         model, messages, tools, mcp_client, "list_datasources"
     )
     datasources_response = messages[-1].content
@@ -39,8 +39,9 @@ async def test_loki_logs_tool(model: str, mcp_client: ClientSession):
     print(f"\nFound Loki datasource: {loki_ds['name']} (uid: {loki_ds['uid']})")
 
     # 2. Query logs
-    messages = await llm_tool_call_sequence(
-        model, messages, tools, mcp_client, "query_loki_logs", {"datasourceUid": loki_ds["uid"], "logql": "{container=\"mcp-grafana-grafana-1\"}"}
+    messages = await flexible_tool_call(
+        model, messages, tools, mcp_client, "query_loki_logs",
+        required_params={"datasourceUid": loki_ds["uid"]}
     )
 
     # 3. Final LLM response
@@ -66,7 +67,7 @@ async def test_loki_container_labels(model: str, mcp_client: ClientSession):
     ]
 
     # 1. List datasources
-    messages = await llm_tool_call_sequence(
+    messages = await flexible_tool_call(
         model, messages, tools, mcp_client, "list_datasources"
     )
     datasources_response = messages[-1].content
@@ -75,9 +76,9 @@ async def test_loki_container_labels(model: str, mcp_client: ClientSession):
     print(f"\nFound Loki datasource: {loki_ds['name']} (uid: {loki_ds['uid']})")
 
     # 2. List label values for 'container'
-    messages = await llm_tool_call_sequence(
+    messages = await flexible_tool_call(
         model, messages, tools, mcp_client, "list_loki_label_values",
-        {"datasourceUid": loki_ds["uid"], "labelName": "container"}
+        required_params={"datasourceUid": loki_ds["uid"], "labelName": "container"}
     )
 
     # 3. Final LLM response

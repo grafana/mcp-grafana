@@ -13,6 +13,7 @@ from conftest import models
 from utils import (
     get_converted_tools,
     llm_tool_call_sequence,
+    flexible_tool_call,
 )
 
 pytestmark = pytest.mark.anyio
@@ -160,27 +161,11 @@ async def test_generate_deeplink_with_query_params(model: str, mcp_client: Clien
         Message(role="user", content=prompt),
     ]
 
-    # More flexible test - just verify the tool is called correctly
-    response = await acompletion(model=model, messages=messages, tools=tools)
-
-    # Check that a tool call was made
-    assert response.choices[0].message.tool_calls is not None, "Expected at least one tool call"
-    assert len(response.choices[0].message.tool_calls) >= 1, "Expected at least one tool call"
-
-    tool_call = response.choices[0].message.tool_calls[0]
-    assert tool_call.function.name == "generate_deeplink", f"Expected generate_deeplink tool, got {tool_call.function.name}"
-
-    arguments = json.loads(tool_call.function.arguments)
-    assert arguments.get("resourceType") == "dashboard", f"Expected dashboard resourceType, got {arguments.get('resourceType')}"
-    assert arguments.get("dashboardUid") == "test-uid", f"Expected test-uid dashboardUid, got {arguments.get('dashboardUid')}"
-
-    # Call the tool to verify it works
-    result = await mcp_client.call_tool(tool_call.function.name, arguments)
-    assert len(result.content) == 1
-    assert isinstance(result.content[0], TextContent)
-    
-    messages.append(response.choices[0].message)
-    messages.append(Message(role="tool", tool_call_id=tool_call.id, content=result.content[0].text))
+    # Use flexible tool call with required parameters
+    messages = await flexible_tool_call(
+        model, messages, tools, mcp_client, "generate_deeplink",
+        required_params={"resourceType": "dashboard", "dashboardUid": "test-uid"}
+    )
 
     response = await acompletion(model=model, messages=messages, tools=tools)
     content = response.choices[0].message.content
