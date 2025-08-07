@@ -1,5 +1,7 @@
 import pytest
 import os
+import asyncio
+import gc
 from dotenv import load_dotenv
 from mcp.client.sse import sse_client
 from mcp.client.stdio import stdio_client
@@ -18,6 +20,16 @@ models = ["gpt-4o", "claude-3-5-sonnet-20240620"]
 @pytest.fixture
 def anyio_backend():
     return "asyncio"
+
+
+@pytest.fixture(autouse=True)
+async def cleanup_sessions():
+    """Clean up any lingering HTTP sessions after each test."""
+    yield
+    # Force garbage collection to clean up any unclosed sessions
+    gc.collect()
+    # Give a brief moment for cleanup
+    await asyncio.sleep(0.01)
 
 
 @pytest.fixture
