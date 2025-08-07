@@ -1,3 +1,4 @@
+import json
 import pytest
 from langevals import expect
 from langevals_langevals.llm_boolean import (
@@ -6,11 +7,13 @@ from langevals_langevals.llm_boolean import (
 )
 from litellm import Message, acompletion
 from mcp import ClientSession
+from mcp.types import TextContent
 
 from conftest import models
 from utils import (
     get_converted_tools,
     llm_tool_call_sequence,
+    flexible_tool_call,
 )
 
 pytestmark = pytest.mark.anyio
@@ -149,31 +152,27 @@ async def test_generate_deeplink_with_time_range(model: str, mcp_client: ClientS
 
 @pytest.mark.parametrize("model", models)
 @pytest.mark.flaky(max_runs=3)
-async def test_generate_deeplink_with_custom_params(model: str, mcp_client: ClientSession):
+async def test_generate_deeplink_with_query_params(model: str, mcp_client: ClientSession):
     tools = await get_converted_tools(mcp_client)
-    prompt = "Generate a dashboard deeplink for 'test-uid' with custom variables"
+    prompt = "Use the generate_deeplink tool to create a dashboard link for UID 'test-uid' with var-datasource=prometheus and refresh=30s as query parameters"
 
     messages = [
         Message(role="system", content="You are a helpful assistant."),
         Message(role="user", content=prompt),
     ]
 
-    messages = await llm_tool_call_sequence(
+    # Use flexible tool call with required parameters
+    messages = await flexible_tool_call(
         model, messages, tools, mcp_client, "generate_deeplink",
-        {
-            "resourceType": "dashboard",
-            "dashboardUid": "test-uid",
-            "queryParams": {
-                "var-datasource": "prometheus",
-                "refresh": "30s"
-            }
-        }
+        required_params={"resourceType": "dashboard", "dashboardUid": "test-uid"}
     )
 
     response = await acompletion(model=model, messages=messages, tools=tools)
     content = response.choices[0].message.content
     
-    assert "var-datasource=prometheus" in content, f"Expected custom parameters, got: {content}"
+    # Verify both specific query parameters are in the final URL
+    assert "var-datasource=prometheus" in content, f"Expected var-datasource=prometheus in URL, got: {content}"
+    assert "refresh=30s" in content, f"Expected refresh=30s in URL, got: {content}"
     
     custom_params_checker = CustomLLMBooleanEvaluator(
         settings=CustomLLMBooleanSettings(
