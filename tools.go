@@ -15,22 +15,18 @@ import (
 	"go.opentelemetry.io/otel/codes"
 )
 
-// Tool is a struct that represents a tool definition and the function used
-// to handle tool calls.
-//
-// The simplest way to create a Tool is to use `MustTool`, or `ConvertTool`
-// if you wish to create tools at runtime and need to handle errors without
-// panicking.
+// Tool represents a tool definition and its handler function for the MCP server.
+// It encapsulates both the tool metadata (name, description, schema) and the function that executes when the tool is called.
+// The simplest way to create a Tool is to use MustTool for compile-time tool creation,
+// or ConvertTool if you need runtime tool creation with proper error handling.
 type Tool struct {
 	Tool    mcp.Tool
 	Handler server.ToolHandlerFunc
 }
 
 // Register adds the Tool to the given MCPServer.
-//
-// It is a convenience method that calls `server.MCPServer.Register` with the
-// Tool's Tool and Handler fields, allowing you to add the tool in a single
-// statement:
+// It is a convenience method that calls server.MCPServer.AddTool with the Tool's metadata and handler,
+// allowing fluent tool registration in a single statement:
 //
 //	mcpgrafana.MustTool(name, description, toolHandler).Register(server)
 func (t *Tool) Register(mcp *server.MCPServer) {
@@ -38,7 +34,7 @@ func (t *Tool) Register(mcp *server.MCPServer) {
 }
 
 // MustTool creates a new Tool from the given name, description, and toolHandler.
-// It panics if the tool cannot be created.
+// It panics if the tool cannot be created, making it suitable for compile-time tool definitions where creation errors indicate programming mistakes.
 func MustTool[T any, R any](
 	name, description string,
 	toolHandler ToolHandlerFunc[T, R],
@@ -52,14 +48,13 @@ func MustTool[T any, R any](
 }
 
 // ToolHandlerFunc is the type of a handler function for a tool.
+// T is the request parameter type (must be a struct with jsonschema tags), and R is the response type which can be a string, struct, or *mcp.CallToolResult.
 type ToolHandlerFunc[T any, R any] = func(ctx context.Context, request T) (R, error)
 
-// ConvertTool converts a toolHandler function to a Tool and ToolHandlerFunc.
-//
-// The toolHandler function must have two arguments: a context.Context and a struct
-// to be used as the parameters for the tool. The second argument must not be a pointer,
-// should be marshalable to JSON, and the fields should have a `jsonschema` tag with the
-// description of the parameter.
+// ConvertTool converts a toolHandler function to an MCP Tool and ToolHandlerFunc.
+// The toolHandler must accept a context.Context and a struct with jsonschema tags for parameter documentation.
+// The struct fields define the tool's input schema, while the return value can be a string, struct, or *mcp.CallToolResult.
+// This function automatically generates JSON schema from the struct type and wraps the handler with OpenTelemetry instrumentation.
 func ConvertTool[T any, R any](name, description string, toolHandler ToolHandlerFunc[T, R], options ...mcp.ToolOption) (mcp.Tool, server.ToolHandlerFunc, error) {
 	zero := mcp.Tool{}
 	handlerValue := reflect.ValueOf(toolHandler)

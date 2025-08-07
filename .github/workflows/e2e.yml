@@ -1,0 +1,75 @@
+name: E2E Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 0 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  test-python-e2e:
+    name: Python E2E Tests (${{ matrix.transport }})
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        transport: [stdio, sse, streamable-http]
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6.4.3
+
+      - name: Set up Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: "1.24"
+          cache: true
+
+      - name: Install Python dependencies
+        run: |
+          cd tests
+          uv sync --all-groups
+
+      - id: get-secrets
+        uses: grafana/shared-workflows/actions/get-vault-secrets@5d7e361bc7e0a183cde8afe9899fb7b596d2659b # get-vault-secrets-v1.2.0
+        with:
+          # Secrets placed in the ci/repo/grafana/mcp-grafana/<path> path in Vault
+          repo_secrets: |
+            ANTHROPIC_API_KEY=anthropic:api-key
+            OPENAI_API_KEY=openai:api-key
+
+      - name: Start docker-compose services
+        uses: hoverkraft-tech/compose-action@40041ff1b97dbf152cd2361138c2b03fa29139df
+        with:
+          compose-file: "docker-compose.yaml"
+
+      - name: Wait for Grafana server and Prometheus server to start and scrape
+        run: sleep 30
+
+      - name: Build mcp-grafana
+        run: go build -o dist/mcp-grafana ./cmd/mcp-grafana
+
+      - name: Start MCP server in background
+        if: matrix.transport != 'stdio'
+        run: nohup ./dist/mcp-grafana -t ${{ matrix.transport }} > mcp.log 2>&1 &
+
+      - name: Run Python e2e tests
+        env:
+          MCP_GRAFANA_PATH: ../dist/mcp-grafana
+          MCP_TRANSPORT: ${{ matrix.transport }}
+        run: |
+          cd tests
+          uv run pytest
+
+      - if: failure() && matrix.transport != 'stdio'
+        name: Print MCP logs
+        run: cat mcp.log

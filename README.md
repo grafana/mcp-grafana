@@ -1,5 +1,9 @@
 # Grafana MCP server
 
+[![Unit Tests](https://github.com/grafana/mcp-grafana/actions/workflows/unit.yml/badge.svg)](https://github.com/grafana/mcp-grafana/actions/workflows/unit.yml)
+[![Integration Tests](https://github.com/grafana/mcp-grafana/actions/workflows/integration.yml/badge.svg)](https://github.com/grafana/mcp-grafana/actions/workflows/integration.yml)
+[![E2E Tests](https://github.com/grafana/mcp-grafana/actions/workflows/e2e.yml/badge.svg)](https://github.com/grafana/mcp-grafana/actions/workflows/e2e.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/grafana/mcp-grafana.svg)](https://pkg.go.dev/github.com/grafana/mcp-grafana)
 [![MCP Catalog](https://archestra.ai/mcp-catalog/api/badge/quality/grafana/mcp-grafana)](https://archestra.ai/mcp-catalog/grafana__mcp-grafana)
 
 A [Model Context Protocol][mcp] (MCP) server for Grafana.
