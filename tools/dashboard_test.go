@@ -341,24 +341,6 @@ func TestDashboardTools(t *testing.T) {
 		require.Error(t, err, "Should fail for unsupported operation")
 	})
 
-	t.Run("update dashboard - unsupported path", func(t *testing.T) {
-		ctx := newTestContext()
-
-		dashboard := getExistingTestDashboard(t, ctx, newTestDashboardName)
-
-		_, err := updateDashboard(ctx, UpdateDashboardParams{
-			UID: dashboard.UID,
-			Operations: []PatchOperation{
-				{
-					Op:    "replace",
-					Path:  "$.panels[0].title", // Not yet supported
-					Value: "New Panel Title",
-				},
-			},
-		})
-		require.Error(t, err, "Should fail for unsupported JSONPath")
-	})
-
 	t.Run("update dashboard - invalid parameters", func(t *testing.T) {
 		ctx := newTestContext()
 

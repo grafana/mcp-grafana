@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
+	"strconv"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -104,7 +106,7 @@ func updateDashboardWithPatches(ctx context.Context, args UpdateDashboardParams)
 		Dashboard: dashboardMap,
 		FolderUID: folderUID,
 		Message:   args.Message,
-		Overwrite: true, // Always overwrite when patching
+		Overwrite: true,
 		UserID:    args.UserID,
 	})
 }
@@ -324,82 +326,28 @@ func getDashboardSummary(ctx context.Context, args GetDashboardSummaryParams) (*
 		Meta: dashboard.Meta,
 	}
 
-	// Extract basic info
-	if title, ok := db["title"].(string); ok {
-		summary.Title = title
-	}
-	if desc, ok := db["description"].(string); ok {
-		summary.Description = desc
-	}
-	if tags, ok := db["tags"].([]interface{}); ok {
-		for _, tag := range tags {
-			if tagStr, ok := tag.(string); ok {
-				summary.Tags = append(summary.Tags, tagStr)
-			}
-		}
-	}
-	if refresh, ok := db["refresh"].(string); ok {
-		summary.Refresh = refresh
-	}
+	// Extract basic info using helper functions
+	extractBasicDashboardInfo(db, summary)
 
 	// Extract time range
-	if timeObj, ok := db["time"].(map[string]interface{}); ok {
-		if from, ok := timeObj["from"].(string); ok {
-			summary.TimeRange.From = from
-		}
-		if to, ok := timeObj["to"].(string); ok {
-			summary.TimeRange.To = to
-		}
-	}
+	summary.TimeRange = extractTimeRange(db)
 
 	// Extract panel summaries
-	if panels, ok := db["panels"].([]interface{}); ok {
+	if panels := safeArray(db, "panels"); panels != nil {
 		summary.PanelCount = len(panels)
 		for _, p := range panels {
-			if panel, ok := p.(map[string]interface{}); ok {
-				panelSummary := PanelSummary{}
-
-				if id, ok := panel["id"].(float64); ok {
-					panelSummary.ID = int(id)
-				}
-				if title, ok := panel["title"].(string); ok {
-					panelSummary.Title = title
-				}
-				if panelType, ok := panel["type"].(string); ok {
-					panelSummary.Type = panelType
-				}
-				if desc, ok := panel["description"].(string); ok {
-					panelSummary.Description = desc
-				}
-
-				// Count queries
-				if targets, ok := panel["targets"].([]interface{}); ok {
-					panelSummary.QueryCount = len(targets)
-				}
-
-				summary.Panels = append(summary.Panels, panelSummary)
+			if panelObj, ok := p.(map[string]interface{}); ok {
+				summary.Panels = append(summary.Panels, extractPanelSummary(panelObj))
 			}
 		}
 	}
 
 	// Extract variable summaries
-	if templating, ok := db["templating"].(map[string]interface{}); ok {
-		if list, ok := templating["list"].([]interface{}); ok {
+	if templating := safeObject(db, "templating"); templating != nil {
+		if list := safeArray(templating, "list"); list != nil {
 			for _, v := range list {
 				if variable, ok := v.(map[string]interface{}); ok {
-					varSummary := VariableSummary{}
-
-					if name, ok := variable["name"].(string); ok {
-						varSummary.Name = name
-					}
-					if varType, ok := variable["type"].(string); ok {
-						varSummary.Type = varType
-					}
-					if label, ok := variable["label"].(string); ok {
-						varSummary.Label = label
-					}
-
-					summary.Variables = append(summary.Variables, varSummary)
+					summary.Variables = append(summary.Variables, extractVariableSummary(variable))
 				}
 			}
 		}
@@ -473,76 +421,59 @@ func (s JSONPathSegment) String() string {
 }
 
 // parseJSONPath parses a JSONPath string into segments
+// Supports paths like "panels[0].targets[1].expr", "title", "templating.list[0].name"
 func parseJSONPath(path string) []JSONPathSegment {
 	var segments []JSONPathSegment
 
-	// Simple parser for paths like "panels[0].targets[1].expr"
-	i := 0
-	for i < len(path) {
-		// Find the key part
-		keyStart := i
-		for i < len(path) && path[i] != '[' && path[i] != '.' {
-			i++
-		}
+	// Handle empty path
+	if path == "" {
+		return segments
+	}
 
-		if keyStart == i {
-			// Skip dots
-			if i < len(path) && path[i] == '.' {
-				i++
-			}
-			continue
-		}
+	// Use regex for more robust parsing
+	re := regexp.MustCompile(`([^.\[\]]+)(?:\[(\d+)\])?`)
+	matches := re.FindAllStringSubmatch(path, -1)
 
-		key := path[keyStart:i]
-
-		// Check if this is an array access
-		if i < len(path) && path[i] == '[' {
-			i++ // skip '['
-			indexStart := i
-			for i < len(path) && path[i] != ']' {
-				i++
-			}
-			if i >= len(path) {
-				break // malformed
+	for _, match := range matches {
+		if len(match) >= 2 && match[1] != "" {
+			segment := JSONPathSegment{
+				Key:     match[1],
+				IsArray: len(match) >= 3 && match[2] != "",
 			}
 
-			indexStr := path[indexStart:i]
-			index := 0
-			if n, err := fmt.Sscanf(indexStr, "%d", &index); n == 1 && err == nil {
-				segments = append(segments, JSONPathSegment{
-					Key:     key,
-					Index:   index,
-					IsArray: true,
-				})
+			if segment.IsArray {
+				if index, err := strconv.Atoi(match[2]); err == nil {
+					segment.Index = index
+				}
 			}
-			i++ // skip ']'
-		} else {
-			segments = append(segments, JSONPathSegment{
-				Key:     key,
-				IsArray: false,
-			})
-		}
 
-		// Skip dots
-		if i < len(path) && path[i] == '.' {
-			i++
+			segments = append(segments, segment)
 		}
 	}
 
 	return segments
 }
 
+// validateArrayAccess validates array access for a segment
+func validateArrayAccess(current map[string]interface{}, segment JSONPathSegment) ([]interface{}, error) {
+	arr, ok := current[segment.Key].([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("field '%s' is not an array", segment.Key)
+	}
+
+	if segment.Index < 0 || segment.Index >= len(arr) {
+		return nil, fmt.Errorf("index %d out of bounds for array '%s' (length %d)", segment.Index, segment.Key, len(arr))
+	}
+
+	return arr, nil
+}
+
 // navigateSegment navigates to the next level in the JSON structure
 func navigateSegment(current map[string]interface{}, segment JSONPathSegment) (map[string]interface{}, error) {
 	if segment.IsArray {
-		// Get the array
-		arr, ok := current[segment.Key].([]interface{})
-		if !ok {
-			return nil, fmt.Errorf("field '%s' is not an array", segment.Key)
-		}
-
-		if segment.Index < 0 || segment.Index >= len(arr) {
-			return nil, fmt.Errorf("index %d out of bounds for array '%s' (length %d)", segment.Index, segment.Key, len(arr))
+		arr, err := validateArrayAccess(current, segment)
+		if err != nil {
+			return nil, err
 		}
 
 		// Get the object at the index
@@ -552,47 +483,133 @@ func navigateSegment(current map[string]interface{}, segment JSONPathSegment) (m
 		}
 
 		return obj, nil
-	} else {
-		// Get the object
-		obj, ok := current[segment.Key].(map[string]interface{})
-		if !ok {
-			return nil, fmt.Errorf("field '%s' is not an object", segment.Key)
-		}
-
-		return obj, nil
 	}
+
+	// Get the object
+	obj, ok := current[segment.Key].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("field '%s' is not an object", segment.Key)
+	}
+
+	return obj, nil
 }
 
 // setAtSegment sets a value at the final segment
 func setAtSegment(current map[string]interface{}, segment JSONPathSegment, value interface{}) error {
 	if segment.IsArray {
-		// Get the array
-		arr, ok := current[segment.Key].([]interface{})
-		if !ok {
-			return fmt.Errorf("field '%s' is not an array", segment.Key)
-		}
-
-		if segment.Index < 0 || segment.Index >= len(arr) {
-			return fmt.Errorf("index %d out of bounds for array '%s' (length %d)", segment.Index, segment.Key, len(arr))
+		arr, err := validateArrayAccess(current, segment)
+		if err != nil {
+			return err
 		}
 
 		// Set the value in the array
 		arr[segment.Index] = value
 		return nil
-	} else {
-		// Set the value directly
-		current[segment.Key] = value
-		return nil
 	}
+
+	// Set the value directly
+	current[segment.Key] = value
+	return nil
 }
 
 // removeAtSegment removes a value at the final segment
 func removeAtSegment(current map[string]interface{}, segment JSONPathSegment) error {
 	if segment.IsArray {
 		return fmt.Errorf("cannot remove array element %s[%d] (not supported)", segment.Key, segment.Index)
-	} else {
-		delete(current, segment.Key)
-		return nil
+	}
+
+	delete(current, segment.Key)
+	return nil
+}
+
+// Helper functions for safe type conversions and field extraction
+
+// safeGet safely extracts a value from a map with type conversion
+func safeGet[T any](data map[string]interface{}, key string, defaultVal T) T {
+	if val, ok := data[key]; ok {
+		if typedVal, ok := val.(T); ok {
+			return typedVal
+		}
+	}
+	return defaultVal
+}
+
+func safeString(data map[string]interface{}, key string) string {
+	return safeGet(data, key, "")
+}
+
+func safeStringSlice(data map[string]interface{}, key string) []string {
+	var result []string
+	if arr := safeArray(data, key); arr != nil {
+		for _, item := range arr {
+			if str, ok := item.(string); ok {
+				result = append(result, str)
+			}
+		}
+	}
+	return result
+}
+
+func safeFloat64(data map[string]interface{}, key string) float64 {
+	return safeGet(data, key, 0.0)
+}
+
+func safeInt(data map[string]interface{}, key string) int {
+	return int(safeFloat64(data, key))
+}
+
+func safeObject(data map[string]interface{}, key string) map[string]interface{} {
+	return safeGet(data, key, map[string]interface{}(nil))
+}
+
+func safeArray(data map[string]interface{}, key string) []interface{} {
+	return safeGet(data, key, []interface{}(nil))
+}
+
+// extractBasicDashboardInfo extracts common dashboard fields
+func extractBasicDashboardInfo(db map[string]interface{}, summary *DashboardSummary) {
+	summary.Title = safeString(db, "title")
+	summary.Description = safeString(db, "description")
+	summary.Tags = safeStringSlice(db, "tags")
+	summary.Refresh = safeString(db, "refresh")
+}
+
+// extractTimeRange extracts time range information
+func extractTimeRange(db map[string]interface{}) TimeRangeSummary {
+	timeObj := safeObject(db, "time")
+	if timeObj == nil {
+		return TimeRangeSummary{}
+	}
+
+	return TimeRangeSummary{
+		From: safeString(timeObj, "from"),
+		To:   safeString(timeObj, "to"),
+	}
+}
+
+// extractPanelSummary creates a panel summary from panel data
+func extractPanelSummary(panel map[string]interface{}) PanelSummary {
+	summary := PanelSummary{
+		ID:          safeInt(panel, "id"),
+		Title:       safeString(panel, "title"),
+		Type:        safeString(panel, "type"),
+		Description: safeString(panel, "description"),
+	}
+
+	// Count queries
+	if targets := safeArray(panel, "targets"); targets != nil {
+		summary.QueryCount = len(targets)
+	}
+
+	return summary
+}
+
+// extractVariableSummary creates a variable summary from variable data
+func extractVariableSummary(variable map[string]interface{}) VariableSummary {
+	return VariableSummary{
+		Name:  safeString(variable, "name"),
+		Type:  safeString(variable, "type"),
+		Label: safeString(variable, "label"),
 	}
 }
 
