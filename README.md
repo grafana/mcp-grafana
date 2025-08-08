@@ -186,6 +186,8 @@ Scopes define the specific resources that permissions apply to. Each action requ
 
 ## Usage
 
+This MCP server works with both local Grafana instances and Grafana Cloud. For Grafana Cloud, use your instance URL (e.g., `https://myinstance.grafana.net`) instead of `http://localhost:3000` in the configuration examples below.
+
 1. Create a service account in Grafana with enough permissions to use the tools you want to use,
    generate a service account token, and copy it to the clipboard for use in the configuration file.
    Follow the [Grafana documentation][service-account] for details.
@@ -200,7 +202,10 @@ Scopes define the specific resources that permissions apply to. Each action requ
 
      ```bash
      docker pull mcp/grafana
+     # For local Grafana:
      docker run --rm -i -e GRAFANA_URL=http://localhost:3000 -e GRAFANA_API_KEY=<your service account token> mcp/grafana -t stdio
+     # For Grafana Cloud:
+     docker run --rm -i -e GRAFANA_URL=https://myinstance.grafana.net -e GRAFANA_API_KEY=<your service account token> mcp/grafana -t stdio
      ```
 
      2. **SSE Mode**: In this mode, the server runs as an HTTP server that clients connect to. You must expose port 8000 using the `-p` flag:
@@ -245,7 +250,7 @@ Scopes define the specific resources that permissions apply to. Each action requ
          "command": "mcp-grafana",
          "args": [],
          "env": {
-           "GRAFANA_URL": "http://localhost:3000",
+           "GRAFANA_URL": "http://localhost:3000",  // Or "https://myinstance.grafana.net" for Grafana Cloud
            "GRAFANA_API_KEY": "<your service account token>"
          }
        }
@@ -275,7 +280,7 @@ Scopes define the specific resources that permissions apply to. Each action requ
         "stdio"
       ],
       "env": {
-        "GRAFANA_URL": "http://localhost:3000",
+        "GRAFANA_URL": "http://localhost:3000",  // Or "https://myinstance.grafana.net" for Grafana Cloud
         "GRAFANA_API_KEY": "<your service account token>"
       }
     }
@@ -315,7 +320,7 @@ To use debug mode with the Claude Desktop configuration, update your config as f
       "command": "mcp-grafana",
       "args": ["-debug"],
       "env": {
-        "GRAFANA_URL": "http://localhost:3000",
+        "GRAFANA_URL": "http://localhost:3000",  // Or "https://myinstance.grafana.net" for Grafana Cloud
         "GRAFANA_API_KEY": "<your service account token>"
       }
     }
@@ -344,7 +349,7 @@ To use debug mode with the Claude Desktop configuration, update your config as f
         "-debug"
       ],
       "env": {
-        "GRAFANA_URL": "http://localhost:3000",
+        "GRAFANA_URL": "http://localhost:3000",  // Or "https://myinstance.grafana.net" for Grafana Cloud
         "GRAFANA_API_KEY": "<your service account token>"
       }
     }
