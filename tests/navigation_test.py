@@ -23,7 +23,8 @@ pytestmark = pytest.mark.anyio
 @pytest.mark.flaky(max_runs=3)
 async def test_generate_dashboard_deeplink(model: str, mcp_client: ClientSession):
     tools = await get_converted_tools(mcp_client)
-    prompt = "Generate a deeplink for dashboard with UID 'test-uid'"
+
+    prompt = """Please create a dashboard deeplink for dashboard with UID 'test-uid'."""
 
     messages = [
         Message(role="system", content="You are a helpful assistant."),
