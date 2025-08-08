@@ -311,7 +311,7 @@ type TimeRangeSummary struct {
 
 // getDashboardSummary provides a compact overview of a dashboard to help with context management
 func getDashboardSummary(ctx context.Context, args GetDashboardSummaryParams) (*DashboardSummary, error) {
-	dashboard, err := getDashboardByUID(ctx, GetDashboardByUIDParams{UID: args.UID})
+	dashboard, err := getDashboardByUID(ctx, GetDashboardByUIDParams(args))
 	if err != nil {
 		return nil, fmt.Errorf("get dashboard by uid: %w", err)
 	}
