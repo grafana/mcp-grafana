@@ -83,11 +83,11 @@ func updateDashboardWithPatches(ctx context.Context, args UpdateDashboardParams)
 	for i, op := range args.Operations {
 		switch op.Op {
 		case "replace", "add":
-			if err := setValueAtPath(dashboardMap, op.Path, op.Value); err != nil {
+			if err := applyJSONPath(dashboardMap, op.Path, op.Value, false); err != nil {
 				return nil, fmt.Errorf("operation %d (%s at %s): %w", i, op.Op, op.Path, err)
 			}
 		case "remove":
-			if err := removeValueAtPath(dashboardMap, op.Path); err != nil {
+			if err := applyJSONPath(dashboardMap, op.Path, nil, true); err != nil {
 				return nil, fmt.Errorf("operation %d (%s at %s): %w", i, op.Op, op.Path, err)
 			}
 		default:
@@ -364,16 +364,6 @@ var GetDashboardSummary = mcpgrafana.MustTool(
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
 )
-
-// Helper function to set a value at a JSONPath
-func setValueAtPath(data map[string]interface{}, path string, value interface{}) error {
-	return applyJSONPath(data, path, value, false)
-}
-
-// Helper function to remove a value at a JSONPath
-func removeValueAtPath(data map[string]interface{}, path string) error {
-	return applyJSONPath(data, path, nil, true)
-}
 
 // applyJSONPath applies a value to a JSONPath or removes it if remove=true
 func applyJSONPath(data map[string]interface{}, path string, value interface{}, remove bool) error {
