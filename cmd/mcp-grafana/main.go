@@ -48,6 +48,9 @@ type grafanaConfig struct {
 	tlsKeyFile    string
 	tlsCAFile     string
 	tlsSkipVerify bool
+
+	// allowedHeadersToPassThrough is a comma-separated list of headers that should be passed through in the HTTP request.
+	allowedHeadersToPassThrough string
 }
 
 func (dt *disabledTools) addFlags() {
@@ -76,6 +79,9 @@ func (gc *grafanaConfig) addFlags() {
 	flag.StringVar(&gc.tlsKeyFile, "tls-key-file", "", "Path to TLS private key file for client authentication")
 	flag.StringVar(&gc.tlsCAFile, "tls-ca-file", "", "Path to TLS CA certificate file for server verification")
 	flag.BoolVar(&gc.tlsSkipVerify, "tls-skip-verify", false, "Skip TLS certificate verification (insecure)")
+
+	// Custom header flags
+	flag.StringVar(&gc.allowedHeadersToPassThrough, "allowed-headers-to-pass-through", "", "Comma-separated list of headers to pass through in the HTTP request")
 }
 
 func (dt *disabledTools) addTools(s *server.MCPServer) {
@@ -177,8 +183,13 @@ func main() {
 		os.Exit(0)
 	}
 
+	var allowedHeadersToPassThrough []string
+	if strings.TrimSpace(gc.allowedHeadersToPassThrough) != "" {
+		allowedHeadersToPassThrough = strings.Split(strings.Join(strings.Fields(gc.allowedHeadersToPassThrough), ""), ",")
+	}
+
 	// Convert local grafanaConfig to mcpgrafana.GrafanaConfig
-	grafanaConfig := mcpgrafana.GrafanaConfig{Debug: gc.debug}
+	grafanaConfig := mcpgrafana.GrafanaConfig{Debug: gc.debug, AllowedHeadersToPassThrough: allowedHeadersToPassThrough}
 	if gc.tlsCertFile != "" || gc.tlsKeyFile != "" || gc.tlsCAFile != "" || gc.tlsSkipVerify {
 		grafanaConfig.TLSConfig = &mcpgrafana.TLSConfig{
 			CertFile:   gc.tlsCertFile,

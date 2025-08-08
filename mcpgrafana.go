@@ -30,6 +30,8 @@ const (
 
 	grafanaURLHeader    = "X-Grafana-URL"
 	grafanaAPIKeyHeader = "X-Grafana-API-Key"
+
+	passThroughHeaderPrefix = "GRAFANA_PASS_THROUGH_HEADER_"
 )
 
 func urlAndAPIKeyFromEnv() (string, string) {
@@ -85,6 +87,9 @@ type GrafanaConfig struct {
 
 	// TLSConfig holds TLS configuration for all Grafana clients.
 	TLSConfig *TLSConfig
+
+	// AllowedHeadersToPassThrough is a list of headers that should be passed through in the HTTP request.
+	AllowedHeadersToPassThrough []string
 }
 
 // WithGrafanaConfig adds Grafana configuration to the context.
@@ -295,8 +300,13 @@ func makeBasePath(path string) string {
 
 // NewGrafanaClient creates a Grafana client with the provided URL and API key.
 // The client is automatically configured with the correct HTTP scheme, debug settings from context, custom TLS configuration if present, and OpenTelemetry instrumentation for distributed tracing.
-func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string) *client.GrafanaHTTPAPI {
+// It accepts customHeaders to send custom HTTP headers to Grafana.
+func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, customHeaders map[string]string) *client.GrafanaHTTPAPI {
 	cfg := client.DefaultTransportConfig()
+
+	if customHeaders != nil {
+		cfg.HTTPHeaders = customHeaders
+	}
 
 	var parsedURL *url.URL
 	var err error
@@ -373,13 +383,30 @@ var ExtractGrafanaClientFromEnv server.StdioContextFunc = func(ctx context.Conte
 	}
 	apiKey := os.Getenv(grafanaAPIEnvVar)
 
-	grafanaClient := NewGrafanaClient(ctx, grafanaURL, apiKey)
+	var customHeaders map[string]string
+	for _, e := range os.Environ() {
+		pair := strings.SplitN(e, "=", 2)
+		if strings.HasPrefix(pair[0], passThroughHeaderPrefix) {
+			headerName := strings.TrimPrefix(pair[0], passThroughHeaderPrefix)
+			headerName = strings.ReplaceAll(headerName, "_", "-")
+			if headerValue := pair[1]; headerValue != "" {
+				slog.Debug("Passing through header from env", "header", headerName, "value", headerValue)
+				// Add the header to the custom headers map
+				if customHeaders == nil {
+					customHeaders = make(map[string]string)
+				}
+				customHeaders[headerName] = headerValue
+			}
+		}
+	}
+
+	grafanaClient := NewGrafanaClient(ctx, grafanaURL, apiKey, customHeaders)
 	return context.WithValue(ctx, grafanaClientKey{}, grafanaClient)
 }
 
 // ExtractGrafanaClientFromHeaders is a HTTPContextFunc that creates and injects a Grafana client into the context.
 // It prioritizes configuration from HTTP headers (X-Grafana-URL, X-Grafana-API-Key) over environment variables for multi-tenant scenarios.
-var ExtractGrafanaClientFromHeaders httpContextFunc = func(ctx context.Context, req *http.Request) context.Context {
+func ExtractGrafanaClientFromHeaders(ctx context.Context, req *http.Request, config GrafanaConfig) context.Context {
 	// Extract transport config from request headers, and set it on the context.
 	u, apiKey := urlAndAPIKeyFromHeaders(req)
 	uEnv, apiKeyEnv := urlAndAPIKeyFromEnv()
@@ -393,7 +420,15 @@ var ExtractGrafanaClientFromHeaders httpContextFunc = func(ctx context.Context, 
 		apiKey = apiKeyEnv
 	}
 
-	grafanaClient := NewGrafanaClient(ctx, u, apiKey)
+	customHeaders := map[string]string{}
+	for _, header := range config.AllowedHeadersToPassThrough {
+		if headerValue := req.Header.Get(header); headerValue != "" {
+			slog.Debug("Passing through header", "header", header)
+			customHeaders[header] = headerValue
+		}
+	}
+
+	grafanaClient := NewGrafanaClient(ctx, u, apiKey, customHeaders)
 	return WithGrafanaClient(ctx, grafanaClient)
 }
 
@@ -557,7 +592,9 @@ func ComposedSSEContextFunc(config GrafanaConfig) server.SSEContextFunc {
 			return WithGrafanaConfig(ctx, config)
 		},
 		ExtractGrafanaInfoFromHeaders,
-		ExtractGrafanaClientFromHeaders,
+		func(ctx context.Context, req *http.Request) context.Context {
+			return ExtractGrafanaClientFromHeaders(ctx, req, config)
+		},
 		ExtractIncidentClientFromHeaders,
 	)
 }
@@ -570,7 +607,9 @@ func ComposedHTTPContextFunc(config GrafanaConfig) server.HTTPContextFunc {
 			return WithGrafanaConfig(ctx, config)
 		},
 		ExtractGrafanaInfoFromHeaders,
-		ExtractGrafanaClientFromHeaders,
+		func(ctx context.Context, req *http.Request) context.Context {
+			return ExtractGrafanaClientFromHeaders(ctx, req, config)
+		},
 		ExtractIncidentClientFromHeaders,
 	)
 }

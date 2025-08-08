@@ -6,6 +6,7 @@ package mcpgrafana
 import (
 	"context"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/go-openapi/runtime/client"
@@ -176,7 +177,7 @@ func TestExtractGrafanaClientFromHeaders(t *testing.T) {
 	t.Run("no headers, no env", func(t *testing.T) {
 		req, err := http.NewRequest("GET", "http://example.com", nil)
 		require.NoError(t, err)
-		ctx := ExtractGrafanaClientFromHeaders(context.Background(), req)
+		ctx := ExtractGrafanaClientFromHeaders(context.Background(), req, GrafanaConfig{})
 		c := GrafanaClientFromContext(ctx)
 		url := minURLFromClient(c)
 		assert.Equal(t, "localhost:3000", url.host)
@@ -188,7 +189,7 @@ func TestExtractGrafanaClientFromHeaders(t *testing.T) {
 
 		req, err := http.NewRequest("GET", "http://example.com", nil)
 		require.NoError(t, err)
-		ctx := ExtractGrafanaClientFromHeaders(context.Background(), req)
+		ctx := ExtractGrafanaClientFromHeaders(context.Background(), req, GrafanaConfig{})
 		c := GrafanaClientFromContext(ctx)
 		url := minURLFromClient(c)
 		assert.Equal(t, "my-test-url.grafana.com", url.host)
@@ -199,7 +200,7 @@ func TestExtractGrafanaClientFromHeaders(t *testing.T) {
 		req, err := http.NewRequest("GET", "http://example.com", nil)
 		require.NoError(t, err)
 		req.Header.Set(grafanaURLHeader, "http://my-test-url.grafana.com")
-		ctx := ExtractGrafanaClientFromHeaders(context.Background(), req)
+		ctx := ExtractGrafanaClientFromHeaders(context.Background(), req, GrafanaConfig{})
 		c := GrafanaClientFromContext(ctx)
 		url := minURLFromClient(c)
 		assert.Equal(t, "my-test-url.grafana.com", url.host)
@@ -213,11 +214,33 @@ func TestExtractGrafanaClientFromHeaders(t *testing.T) {
 		req, err := http.NewRequest("GET", "http://example.com", nil)
 		require.NoError(t, err)
 		req.Header.Set(grafanaURLHeader, "http://my-test-url.grafana.com")
-		ctx := ExtractGrafanaClientFromHeaders(context.Background(), req)
+		ctx := ExtractGrafanaClientFromHeaders(context.Background(), req, GrafanaConfig{})
 		c := GrafanaClientFromContext(ctx)
 		url := minURLFromClient(c)
 		assert.Equal(t, "my-test-url.grafana.com", url.host)
 		assert.Equal(t, "/api", url.basePath)
+	})
+
+	t.Run("with headers from upstream request", func(t *testing.T) {
+		var capturedHeaders http.Header
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			capturedHeaders = r.Header
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{}`))
+		}))
+		defer ts.Close()
+
+		req, err := http.NewRequest("GET", "http://example.com", nil)
+		req.Header.Set("This-Should-Not-Be-Used", "will-not-be-used")
+		req.Header.Set("This-Should-Be-Used", "will-be-used")
+		require.NoError(t, err)
+		req.Header.Set(grafanaURLHeader, ts.URL)
+		ctx := ExtractGrafanaClientFromHeaders(context.Background(), req, GrafanaConfig{AllowedHeadersToPassThrough: []string{"This-Should-Be-Used"}})
+		c := GrafanaClientFromContext(ctx)
+		_, _ = c.Admin.AdminGetStats(nil)
+
+		assert.Equal(t, "will-be-used", capturedHeaders.Get("This-Should-Be-Used"))
+		assert.Empty(t, capturedHeaders.Get("This-Should-Not-Be-Used"))
 	})
 }
 
@@ -522,7 +545,7 @@ func TestHTTPTracingConfiguration(t *testing.T) {
 		ctx := WithGrafanaConfig(context.Background(), config)
 
 		// Create Grafana client
-		client := NewGrafanaClient(ctx, "http://localhost:3000", "test-api-key")
+		client := NewGrafanaClient(ctx, "http://localhost:3000", "test-api-key", nil)
 		require.NotNil(t, client)
 
 		// Verify the client was created successfully (should not panic)
@@ -537,7 +560,7 @@ func TestHTTPTracingConfiguration(t *testing.T) {
 		ctx := WithGrafanaConfig(context.Background(), config)
 
 		// Create Grafana client (should not panic even without OTEL configured)
-		client := NewGrafanaClient(ctx, "http://localhost:3000", "test-api-key")
+		client := NewGrafanaClient(ctx, "http://localhost:3000", "test-api-key", nil)
 		require.NotNil(t, client)
 
 		// Verify the client was created successfully
