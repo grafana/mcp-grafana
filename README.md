@@ -34,7 +34,6 @@ The dashboard tools now include several strategies to manage context window usag
 
 - **Use `get_dashboard_summary`** for dashboard overview and planning modifications
 - **Use `get_dashboard_property`** with JSONPath when you only need specific dashboard parts
-- **Use `patch_dashboard`** for making small targeted changes instead of `update_dashboard`
 - **Avoid `get_dashboard_by_uid`** unless you specifically need the complete dashboard JSON
 
 ### Datasources
