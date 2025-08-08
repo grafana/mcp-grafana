@@ -59,6 +59,8 @@ jobs:
         run: go build -o dist/mcp-grafana ./cmd/mcp-grafana
 
       - name: Start MCP server in background
+        env:
+          GRAFANA_URL: http://localhost:3000
         if: matrix.transport != 'stdio'
         run: nohup ./dist/mcp-grafana -t ${{ matrix.transport }} > mcp.log 2>&1 &
 

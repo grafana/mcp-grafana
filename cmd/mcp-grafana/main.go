@@ -6,8 +6,11 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/signal"
 	"slices"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/mark3labs/mcp-go/server"
 
@@ -35,7 +38,7 @@ type disabledTools struct {
 	search, datasource, incident,
 	prometheus, loki, alerting,
 	dashboard, oncall, asserts, sift, admin,
-	pyroscope, navigation bool
+	pyroscope, navigation, proxied bool
 }
 
 // Configuration for the Grafana client.
@@ -51,8 +54,7 @@ type grafanaConfig struct {
 }
 
 func (dt *disabledTools) addFlags() {
-	flag.StringVar(&dt.enabledTools, "enabled-tools", "search,datasource,incident,prometheus,loki,alerting,dashboard,oncall,asserts,sift,admin,pyroscope,navigation", "A comma separated list of tools enabled for this server. Can be overwritten entirely or by disabling specific components, e.g. --disable-search.")
-
+	flag.StringVar(&dt.enabledTools, "enabled-tools", "search,datasource,incident,prometheus,loki,alerting,dashboard,oncall,asserts,sift,admin,pyroscope,navigation,proxied", "A comma separated list of tools enabled for this server. Can be overwritten entirely or by disabling specific components, e.g. --disable-search.")
 	flag.BoolVar(&dt.search, "disable-search", false, "Disable search tools")
 	flag.BoolVar(&dt.datasource, "disable-datasource", false, "Disable datasource tools")
 	flag.BoolVar(&dt.incident, "disable-incident", false, "Disable incident tools")
@@ -66,6 +68,7 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.admin, "disable-admin", false, "Disable admin tools")
 	flag.BoolVar(&dt.pyroscope, "disable-pyroscope", false, "Disable pyroscope tools")
 	flag.BoolVar(&dt.navigation, "disable-navigation", false, "Disable navigation tools")
+	flag.BoolVar(&dt.proxied, "disable-proxied", false, "Disable proxied tools (tools from external MCP servers)")
 }
 
 func (gc *grafanaConfig) addFlags() {
@@ -93,6 +96,7 @@ func (dt *disabledTools) addTools(s *server.MCPServer) {
 	maybeAddTools(s, tools.AddAdminTools, enabledTools, dt.admin, "admin")
 	maybeAddTools(s, tools.AddPyroscopeTools, enabledTools, dt.pyroscope, "pyroscope")
 	maybeAddTools(s, tools.AddNavigationTools, enabledTools, dt.navigation, "navigation")
+	maybeAddTools(s, tools.AddProxiedTools, enabledTools, dt.proxied, "proxied")
 }
 
 func newServer(dt disabledTools) *server.MCPServer {
@@ -110,6 +114,7 @@ func newServer(dt disabledTools) *server.MCPServer {
 	- Admin: List teams and perform administrative tasks.
 	- Pyroscope: Profile applications and fetch profiling data.
 	- Navigation: Generate deeplink URLs for Grafana resources like dashboards, panels, and Explore queries.
+	- Proxied Tools: Access tools from external MCP servers (like Tempo) through dynamic discovery.
 	`))
 	dt.addTools(s)
 	return s
@@ -119,6 +124,23 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})))
 	s := newServer(dt)
 
+	// Create a context that will be cancelled on shutdown
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	
+	// Set up signal handling for graceful shutdown
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	
+	// Handle shutdown in a goroutine
+	go func() {
+		<-sigChan
+		slog.Info("Received shutdown signal, cleaning up...")
+		cancel() // This will cause servers to stop
+	}()
+
+	// Start the appropriate server
+	var serverErr error
 	switch transport {
 	case "stdio":
 		srv := server.NewStdioServer(s)
@@ -134,6 +156,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		if err := srv.Start(addr); err != nil {
 			return fmt.Errorf("server error: %v", err)
 		}
+		<-ctx.Done()
 	case "streamable-http":
 		srv := server.NewStreamableHTTPServer(s, server.WithHTTPContextFunc(mcpgrafana.ComposedHTTPContextFunc(gc)),
 			server.WithStateLess(true),
@@ -143,13 +166,18 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		if err := srv.Start(addr); err != nil {
 			return fmt.Errorf("server error: %v", err)
 		}
+		<-ctx.Done()
 	default:
-		return fmt.Errorf(
-			"invalid transport type: %s. Must be 'stdio', 'sse' or 'streamable-http'",
-			transport,
-		)
+		return fmt.Errorf("invalid transport type: %s. Must be 'stdio', 'sse' or 'streamable-http'", transport)
 	}
-	return nil
+	
+	// Cleanup after server stops
+	tools.StopProxiedTools()
+	
+	// Give a bit of time for cleanup and log flushing
+	time.Sleep(100 * time.Millisecond)
+	
+	return serverErr
 }
 
 func main() {
