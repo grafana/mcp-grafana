@@ -6,6 +6,7 @@ import (
 
 	"github.com/mark3labs/mcp-go/server"
 
+	"github.com/grafana/grafana-openapi-client-go/client/org"
 	"github.com/grafana/grafana-openapi-client-go/client/teams"
 	"github.com/grafana/grafana-openapi-client-go/models"
 	mcpgrafana "github.com/grafana/mcp-grafana"
@@ -39,7 +40,8 @@ type ListUsersByOrgParams struct{}
 func listUsersByOrg(ctx context.Context, args ListUsersByOrgParams) ([]*models.OrgUserDTO, error) {
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
 
-	search, err := c.Org.GetOrgUsersForCurrentOrg()
+	params := org.NewGetOrgUsersForCurrentOrgParamsWithContext(ctx)
+	search, err := c.Org.GetOrgUsersForCurrentOrg(params)
 	if err != nil {
 		return nil, fmt.Errorf("search users: %w", err)
 	}
