@@ -47,6 +47,11 @@ test-python-e2e: ## Run Python E2E tests (requires docker-compose services and S
 	cd tests && uv sync --all-groups
 	cd tests && uv run pytest
 
+.PHONY: test-python-e2e-local
+test-python-e2e-local: ## Run Python E2E tests excluding those requiring external API keys (claude model tests).
+	cd tests && uv sync --all-groups
+	cd tests && uv run pytest -k "not claude" --tb=short
+
 .PHONY: run
 run: ## Run the MCP server in stdio mode.
 	go run ./cmd/mcp-grafana
@@ -61,4 +66,32 @@ run-streamable-http: ## Run the MCP server in StreamableHTTP mode.
 
 .PHONY: run-test-services
 run-test-services: ## Run the docker-compose services required for the unit and integration tests.
-	docker-compose up -d --build
+	docker compose up -d --build
+
+.PHONY: test-e2e-full
+test-e2e-full: ## Run full E2E test workflow: start services, rebuild server, run tests.
+	@echo "Starting full E2E test workflow..."
+	@mkdir -p .tmp
+	@echo "Ensuring Docker services are running..."
+	$(MAKE) run-test-services
+	@echo "Stopping any existing MCP server processes..."
+	-pkill -f "mcp-grafana.*sse" || true
+	@echo "Building fresh MCP server binary..."
+	$(MAKE) build
+	@echo "Starting MCP server in background..."
+	@GRAFANA_URL=http://localhost:3000 ./dist/mcp-grafana --transport sse --log-level debug --debug > .tmp/server.log 2>&1 & echo $$! > .tmp/mcp-server.pid
+	@sleep 5
+	@echo "Running Python E2E tests..."
+	@$(MAKE) test-python-e2e-local; \
+	test_result=$$?; \
+	echo "Cleaning up MCP server..."; \
+	kill `cat .tmp/mcp-server.pid 2>/dev/null` 2>/dev/null || true; \
+	rm -rf .tmp; \
+	exit $$test_result
+
+.PHONY: test-e2e-cleanup
+test-e2e-cleanup: ## Clean up any leftover E2E test processes and files.
+	@echo "Cleaning up any leftover E2E test processes and files..."
+	-pkill -f "mcp-grafana.*sse" || true
+	-rm -rf .tmp
+	@echo "Cleanup complete."
