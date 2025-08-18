@@ -7,9 +7,10 @@ import (
 	"regexp"
 	"strconv"
 
+	"github.com/PaesslerAG/gval"
+	"github.com/PaesslerAG/jsonpath"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
-	"github.com/oliveagle/jsonpath"
 
 	"github.com/grafana/grafana-openapi-client-go/models"
 	mcpgrafana "github.com/grafana/mcp-grafana"
@@ -254,7 +255,13 @@ func getDashboardProperty(ctx context.Context, args GetDashboardPropertyParams) 
 	}
 
 	// Apply JSONPath expression
-	result, err := jsonpath.JsonPathLookup(dashboardData, args.JSONPath)
+	builder := gval.Full(jsonpath.Language())
+	path, err := builder.NewEvaluable(args.JSONPath)
+	if err != nil {
+		return nil, fmt.Errorf("create JSONPath evaluable '%s': %w", args.JSONPath, err)
+	}
+
+	result, err := path(ctx, dashboardData)
 	if err != nil {
 		return nil, fmt.Errorf("apply JSONPath '%s': %w", args.JSONPath, err)
 	}
