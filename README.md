@@ -21,9 +21,20 @@ _The following features are currently available in MCP server. This list is for 
 ### Dashboards
 
 - **Search for dashboards:** Find dashboards by title or other metadata
-- **Get dashboard by UID:** Retrieve full dashboard details using its unique identifier
-- **Update or create a dashboard:** Modify existing dashboards or create new ones. _Note: Use with caution due to context window limitations; see [issue #101](https://github.com/grafana/mcp-grafana/issues/101)_
+- **Get dashboard by UID:** Retrieve full dashboard details using its unique identifier. _Warning: Large dashboards can consume significant context window space._
+- **Get dashboard summary:** Get a compact overview of a dashboard including title, panel count, panel types, variables, and metadata without the full JSON to minimize context window usage
+- **Get dashboard property:** Extract specific parts of a dashboard using JSONPath expressions (e.g., `$.title`, `$.panels[*].title`) to fetch only needed data and reduce context window consumption
+- **Update or create a dashboard:** Modify existing dashboards or create new ones. _Warning: Requires full dashboard JSON which can consume large amounts of context window space._
+- **Patch dashboard:** Apply specific changes to a dashboard without requiring the full JSON, significantly reducing context window usage for targeted modifications
 - **Get panel queries and datasource info:** Get the title, query string, and datasource information (including UID and type, if available) from every panel in a dashboard
+
+#### Context Window Management
+
+The dashboard tools now include several strategies to manage context window usage effectively ([issue #101](https://github.com/grafana/mcp-grafana/issues/101)):
+
+- **Use `get_dashboard_summary`** for dashboard overview and planning modifications
+- **Use `get_dashboard_property`** with JSONPath when you only need specific dashboard parts
+- **Avoid `get_dashboard_by_uid`** unless you specifically need the complete dashboard JSON
 
 ### Datasources
 
@@ -148,6 +159,8 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `get_dashboard_by_uid`            | Dashboard   | Get a dashboard by uid                                             | `dashboards:read`                       | `dashboards:uid:abc123`                             |
 | `update_dashboard`                | Dashboard   | Update or create a new dashboard                                   | `dashboards:create`, `dashboards:write` | `dashboards:*`, `folders:*` or `folders:uid:xyz789` |
 | `get_dashboard_panel_queries`     | Dashboard   | Get panel title, queries, datasource UID and type from a dashboard | `dashboards:read`                       | `dashboards:uid:abc123`                             |
+| `get_dashboard_property`          | Dashboard   | Extract specific parts of a dashboard using JSONPath expressions   | `dashboards:read`                       | `dashboards:uid:abc123`                             |
+| `get_dashboard_summary`           | Dashboard   | Get a compact summary of a dashboard without full JSON             | `dashboards:read`                       | `dashboards:uid:abc123`                             |
 | `list_datasources`                | Datasources | List datasources                                                   | `datasources:read`                      | `datasources:*`                                     |
 | `get_datasource_by_uid`           | Datasources | Get a datasource by uid                                            | `datasources:read`                      | `datasources:uid:prometheus-uid`                    |
 | `get_datasource_by_name`          | Datasources | Get a datasource by name                                           | `datasources:read`                      | `datasources:*` or `datasources:uid:loki-uid`       |
