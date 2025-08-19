@@ -33,7 +33,7 @@ type disabledTools struct {
 	enabledTools string
 
 	search, datasource, incident,
-	prometheus, loki, alerting,
+	prometheus, loki, clickhouse, alerting,
 	dashboard, oncall, asserts, sift, admin,
 	pyroscope, navigation bool
 }
@@ -51,13 +51,14 @@ type grafanaConfig struct {
 }
 
 func (dt *disabledTools) addFlags() {
-	flag.StringVar(&dt.enabledTools, "enabled-tools", "search,datasource,incident,prometheus,loki,alerting,dashboard,oncall,asserts,sift,admin,pyroscope,navigation", "A comma separated list of tools enabled for this server. Can be overwritten entirely or by disabling specific components, e.g. --disable-search.")
+	flag.StringVar(&dt.enabledTools, "enabled-tools", "search,datasource,incident,prometheus,loki,clickhouse,alerting,dashboard,oncall,asserts,sift,admin,pyroscope,navigation", "A comma separated list of tools enabled for this server. Can be overwritten entirely or by disabling specific components, e.g. --disable-search.")
 
 	flag.BoolVar(&dt.search, "disable-search", false, "Disable search tools")
 	flag.BoolVar(&dt.datasource, "disable-datasource", false, "Disable datasource tools")
 	flag.BoolVar(&dt.incident, "disable-incident", false, "Disable incident tools")
 	flag.BoolVar(&dt.prometheus, "disable-prometheus", false, "Disable prometheus tools")
 	flag.BoolVar(&dt.loki, "disable-loki", false, "Disable loki tools")
+	flag.BoolVar(&dt.clickhouse, "disable-clickhouse", false, "Disable clickhouse tools")
 	flag.BoolVar(&dt.alerting, "disable-alerting", false, "Disable alerting tools")
 	flag.BoolVar(&dt.dashboard, "disable-dashboard", false, "Disable dashboard tools")
 	flag.BoolVar(&dt.oncall, "disable-oncall", false, "Disable oncall tools")
@@ -85,6 +86,7 @@ func (dt *disabledTools) addTools(s *server.MCPServer) {
 	maybeAddTools(s, tools.AddIncidentTools, enabledTools, dt.incident, "incident")
 	maybeAddTools(s, tools.AddPrometheusTools, enabledTools, dt.prometheus, "prometheus")
 	maybeAddTools(s, tools.AddLokiTools, enabledTools, dt.loki, "loki")
+	maybeAddTools(s, tools.AddClickHouseTools, enabledTools, dt.clickhouse, "clickhouse")
 	maybeAddTools(s, tools.AddAlertingTools, enabledTools, dt.alerting, "alerting")
 	maybeAddTools(s, tools.AddDashboardTools, enabledTools, dt.dashboard, "dashboard")
 	maybeAddTools(s, tools.AddOnCallTools, enabledTools, dt.oncall, "oncall")
@@ -102,7 +104,7 @@ func newServer(dt disabledTools) *server.MCPServer {
 	Available Capabilities:
 	- Dashboards: Search, retrieve, update, and create dashboards. Extract panel queries and datasource information.
 	- Datasources: List and fetch details for datasources.
-	- Prometheus & Loki: Run PromQL and LogQL queries, retrieve metric/log metadata, and explore label names/values.
+	- Prometheus & Loki & ClickHouse: Run PromQL, LogQL, and SQL queries, retrieve metric/log/table metadata, and explore label names/values and database schemas.
 	- Incidents: Search, create, update, and resolve incidents in Grafana Incident.
 	- Sift Investigations: Start and manage Sift investigations, analyze logs/traces, find error patterns, and detect slow requests.
 	- Alerting: List and fetch alert rules and notification contact points.
