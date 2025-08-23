@@ -28,6 +28,9 @@ const (
 	grafanaURLEnvVar = "GRAFANA_URL"
 	grafanaAPIEnvVar = "GRAFANA_API_KEY"
 
+	grafanaUsernameEnvVar = "GRAFANA_USERNAME"
+	grafanaPasswordEnvVar = "GRAFANA_PASSWORD"
+
 	grafanaURLHeader    = "X-Grafana-URL"
 	grafanaAPIKeyHeader = "X-Grafana-API-Key"
 )
@@ -36,6 +39,12 @@ func urlAndAPIKeyFromEnv() (string, string) {
 	u := strings.TrimRight(os.Getenv(grafanaURLEnvVar), "/")
 	apiKey := os.Getenv(grafanaAPIEnvVar)
 	return u, apiKey
+}
+
+func userAndPassFromEnv() (string, string) {
+	username := os.Getenv(grafanaUsernameEnvVar)
+	password := os.Getenv(grafanaPasswordEnvVar)
+	return username, password
 }
 
 func urlAndAPIKeyFromHeaders(req *http.Request) (string, string) {
@@ -75,6 +84,10 @@ type GrafanaConfig struct {
 	// APIKey is the API key or service account token for the Grafana instance.
 	// It may be empty if we are using on-behalf-of auth.
 	APIKey string
+
+	// Credentials if user is using basic auth
+	Username string
+	Password string
 
 	// AccessToken is the Grafana Cloud access policy token used for on-behalf-of auth in Grafana Cloud.
 	AccessToken string
@@ -227,13 +240,18 @@ var ExtractGrafanaInfoFromEnv server.StdioContextFunc = func(ctx context.Context
 	if err != nil {
 		panic(fmt.Errorf("invalid Grafana URL %s: %w", u, err))
 	}
-	slog.Info("Using Grafana configuration", "url", parsedURL.Redacted(), "api_key_set", apiKey != "")
+
+	username, password := userAndPassFromEnv()
+
+	slog.Info("Using Grafana configuration", "url", parsedURL.Redacted(), "api_key_set", apiKey != "", "basic_creds_set", username != "" && password != "")
 
 	// Get existing config or create a new one.
 	// This will respect the existing debug flag, if set.
 	config := GrafanaConfigFromContext(ctx)
 	config.URL = u
 	config.APIKey = apiKey
+	config.Username = username
+	config.Password = password
 	return WithGrafanaConfig(ctx, config)
 }
 
@@ -256,12 +274,15 @@ var ExtractGrafanaInfoFromHeaders httpContextFunc = func(ctx context.Context, re
 	if apiKey == "" {
 		apiKey = apiKeyEnv
 	}
+	username, password, _ := req.BasicAuth()
 
 	// Get existing config or create a new one.
 	// This will respect the existing debug flag, if set.
 	config := GrafanaConfigFromContext(ctx)
 	config.URL = u
 	config.APIKey = apiKey
+	config.Username = username
+	config.Password = password
 	return WithGrafanaConfig(ctx, config)
 }
 
