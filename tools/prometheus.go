@@ -64,6 +64,9 @@ func promClientFromContext(ctx context.Context, uid string) (promv1.API, error) 
 		rt = config.NewAuthorizationCredentialsRoundTripper(
 			"Bearer", config.NewInlineSecret(cfg.APIKey), rt,
 		)
+	} else if cfg.BasicAuth != nil {
+		password, _ := cfg.BasicAuth.Password()
+		rt = config.NewBasicAuthRoundTripper(config.NewInlineSecret(cfg.BasicAuth.Username()), config.NewInlineSecret(password), rt)
 	}
 	c, err := api.NewClient(api.Config{
 		Address:      url,
