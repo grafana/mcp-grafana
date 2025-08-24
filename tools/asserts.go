@@ -33,6 +33,7 @@ func newAssertsClient(ctx context.Context) (*Client, error) {
 		apiKey:      cfg.APIKey,
 		accessToken: cfg.AccessToken,
 		idToken:     cfg.IDToken,
+		basicAuth:   cfg.BasicAuth,
 		underlying:  transport,
 	}
 

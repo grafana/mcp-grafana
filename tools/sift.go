@@ -126,6 +126,7 @@ func newSiftClient(cfg mcpgrafana.GrafanaConfig) (*siftClient, error) {
 			accessToken: cfg.AccessToken,
 			idToken:     cfg.IDToken,
 			apiKey:      cfg.APIKey,
+			basicAuth:   cfg.BasicAuth,
 			underlying:  transport,
 		},
 	}

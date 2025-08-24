@@ -68,6 +68,7 @@ func newLokiClient(ctx context.Context, uid string) (*Client, error) {
 		accessToken: cfg.AccessToken,
 		idToken:     cfg.IDToken,
 		apiKey:      cfg.APIKey,
+		basicAuth:   cfg.BasicAuth,
 		underlying:  transport,
 	}
 
