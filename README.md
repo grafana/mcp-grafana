@@ -201,7 +201,7 @@ Scopes define the specific resources that permissions apply to. Each action requ
 
 This MCP server works with both local Grafana instances and Grafana Cloud. For Grafana Cloud, use your instance URL (e.g., `https://myinstance.grafana.net`) instead of `http://localhost:3000` in the configuration examples below.
 
-1. Create a service account in Grafana with enough permissions to use the tools you want to use,
+1. If using API key authentication, create a service account in Grafana with enough permissions to use the tools you want to use,
    generate a service account token, and copy it to the clipboard for use in the configuration file.
    Follow the [Grafana documentation][service-account] for details.
 
@@ -264,7 +264,10 @@ This MCP server works with both local Grafana instances and Grafana Cloud. For G
          "args": [],
          "env": {
            "GRAFANA_URL": "http://localhost:3000",  // Or "https://myinstance.grafana.net" for Grafana Cloud
-           "GRAFANA_API_KEY": "<your service account token>"
+           "GRAFANA_API_KEY": "<your service account token>",
+           // If using username/password authentication
+           "GRAFANA_USERNAME": "<your username>",
+           "GRAFANA_PASSWORD": "<your password>"
          }
        }
      }
@@ -294,7 +297,10 @@ This MCP server works with both local Grafana instances and Grafana Cloud. For G
       ],
       "env": {
         "GRAFANA_URL": "http://localhost:3000",  // Or "https://myinstance.grafana.net" for Grafana Cloud
-        "GRAFANA_API_KEY": "<your service account token>"
+        "GRAFANA_API_KEY": "<your service account token>",
+        // If using username/password authentication
+        "GRAFANA_USERNAME": "<your username>",
+        "GRAFANA_PASSWORD": "<your password>"
       }
     }
   }

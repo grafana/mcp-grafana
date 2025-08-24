@@ -68,6 +68,7 @@ func newLokiClient(ctx context.Context, uid string) (*Client, error) {
 		accessToken: cfg.AccessToken,
 		idToken:     cfg.IDToken,
 		apiKey:      cfg.APIKey,
+		basicAuth:   cfg.BasicAuth,
 		underlying:  transport,
 	}
 
@@ -185,6 +186,7 @@ type authRoundTripper struct {
 	accessToken string
 	idToken     string
 	apiKey      string
+	basicAuth   *url.Userinfo
 	underlying  http.RoundTripper
 }
 
@@ -194,6 +196,9 @@ func (rt *authRoundTripper) RoundTrip(req *http.Request) (*http.Response, error)
 		req.Header.Set("X-Grafana-Id", rt.idToken)
 	} else if rt.apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+rt.apiKey)
+	} else if rt.basicAuth != nil {
+		password, _ := rt.basicAuth.Password()
+		req.SetBasicAuth(rt.basicAuth.Username(), password)
 	}
 
 	resp, err := rt.underlying.RoundTrip(req)

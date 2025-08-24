@@ -290,6 +290,7 @@ func newPyroscopeClient(ctx context.Context, uid string) (*pyroscopeClient, erro
 		accessToken: cfg.AccessToken,
 		idToken:     cfg.IDToken,
 		apiKey:      cfg.APIKey,
+		basicAuth:   cfg.BasicAuth,
 		underlying:  http.DefaultTransport,
 	}
 

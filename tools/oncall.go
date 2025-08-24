@@ -18,16 +18,19 @@ import (
 // It makes a GET request to <grafana-url>/api/plugins/grafana-irm-app/settings and extracts
 // the OnCall URL from the jsonData.onCallApiUrl field in the response.
 // Returns the OnCall URL if found, or an error if the URL cannot be retrieved.
-func getOnCallURLFromSettings(ctx context.Context, grafanaURL, grafanaAPIKey string) (string, error) {
-	settingsURL := fmt.Sprintf("%s/api/plugins/grafana-irm-app/settings", strings.TrimRight(grafanaURL, "/"))
+func getOnCallURLFromSettings(ctx context.Context, cfg mcpgrafana.GrafanaConfig) (string, error) {
+	settingsURL := fmt.Sprintf("%s/api/plugins/grafana-irm-app/settings", strings.TrimRight(cfg.URL, "/"))
 
 	req, err := http.NewRequestWithContext(ctx, "GET", settingsURL, nil)
 	if err != nil {
 		return "", fmt.Errorf("creating settings request: %w", err)
 	}
 
-	if grafanaAPIKey != "" {
-		req.Header.Set("Authorization", "Bearer "+grafanaAPIKey)
+	if cfg.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
+	} else if cfg.BasicAuth != nil {
+		password, _ := cfg.BasicAuth.Password()
+		req.SetBasicAuth(cfg.BasicAuth.Username(), password)
 	}
 
 	// Add user agent for tracking
@@ -67,7 +70,7 @@ func oncallClientFromContext(ctx context.Context) (*aapi.Client, error) {
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
 
 	// Try to get OnCall URL from settings endpoint
-	grafanaOnCallURL, err := getOnCallURLFromSettings(ctx, cfg.URL, cfg.APIKey)
+	grafanaOnCallURL, err := getOnCallURLFromSettings(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("getting OnCall URL from settings: %w", err)
 	}
