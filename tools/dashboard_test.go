@@ -349,4 +349,95 @@ func TestDashboardTools(t *testing.T) {
 		})
 		require.Error(t, err, "Should fail when no valid parameters provided")
 	})
+
+	t.Run("update dashboard - append to panels array", func(t *testing.T) {
+		ctx := newTestContext()
+
+		// Get our test dashboard
+		dashboard := getExistingTestDashboard(t, ctx, newTestDashboardName)
+
+		// Create a new panel to append
+		newPanel := map[string]interface{}{
+			"id":    999,
+			"title": "New Appended Panel",
+			"type":  "stat",
+			"targets": []interface{}{
+				map[string]interface{}{
+					"expr": "up",
+				},
+			},
+			"gridPos": map[string]interface{}{
+				"h": 8,
+				"w": 12,
+				"x": 0,
+				"y": 8,
+			},
+		}
+
+		_, err := updateDashboard(ctx, UpdateDashboardParams{
+			UID: dashboard.UID,
+			Operations: []PatchOperation{
+				{
+					Op:    "add",
+					Path:  "$.panels/-",
+					Value: newPanel,
+				},
+			},
+			Message: "Appended new panel via /- syntax",
+		})
+		require.NoError(t, err)
+
+		// Verify the panel was appended
+		updatedDashboard, err := getDashboardByUID(ctx, GetDashboardByUIDParams{
+			UID: dashboard.UID,
+		})
+		require.NoError(t, err)
+
+		dashboardMap, ok := updatedDashboard.Dashboard.(map[string]interface{})
+		require.True(t, ok, "Dashboard should be a map")
+
+		panels, ok := dashboardMap["panels"].([]interface{})
+		require.True(t, ok, "Panels should be an array")
+
+		// Check that the new panel was appended (should be the last panel)
+		lastPanel, ok := panels[len(panels)-1].(map[string]interface{})
+		require.True(t, ok, "Last panel should be an object")
+		assert.Equal(t, "New Appended Panel", lastPanel["title"])
+		assert.Equal(t, float64(999), lastPanel["id"]) // JSON unmarshaling converts to float64
+	})
+
+	t.Run("update dashboard - remove with append syntax should fail", func(t *testing.T) {
+		ctx := newTestContext()
+
+		dashboard := getExistingTestDashboard(t, ctx, newTestDashboardName)
+
+		_, err := updateDashboard(ctx, UpdateDashboardParams{
+			UID: dashboard.UID,
+			Operations: []PatchOperation{
+				{
+					Op:   "remove",
+					Path: "$.panels/-", // Invalid: remove with append syntax
+				},
+			},
+		})
+		require.Error(t, err, "Should fail when using remove operation with append syntax")
+	})
+
+	t.Run("update dashboard - append to non-array should fail", func(t *testing.T) {
+		ctx := newTestContext()
+
+		dashboard := getExistingTestDashboard(t, ctx, newTestDashboardName)
+
+		_, err := updateDashboard(ctx, UpdateDashboardParams{
+			UID: dashboard.UID,
+			Operations: []PatchOperation{
+				{
+					Op:    "add",
+					Path:  "$.title/-", // Invalid: title is not an array
+					Value: "Invalid",
+				},
+			},
+		})
+		require.Error(t, err, "Should fail when trying to append to non-array field")
+	})
 }
