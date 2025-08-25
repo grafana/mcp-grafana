@@ -32,7 +32,7 @@ func getDashboardByUID(ctx context.Context, args GetDashboardByUIDParams) (*mode
 // PatchOperation represents a single patch operation
 type PatchOperation struct {
 	Op    string      `json:"op" jsonschema:"required,description=Operation type: 'replace'\\, 'add'\\, 'remove'"`
-	Path  string      `json:"path" jsonschema:"required,description=JSONPath to the property to modify. Supports: '$.title'\\, '$.panels[0].title'\\, '$.panels[0].targets[0].expr'\\, '$.panels[1].targets[0].datasource'\\, etc."`
+	Path  string      `json:"path" jsonschema:"required,description=JSONPath to the property to modify. Supports: '$.title'\\, '$.panels[0].title'\\, '$.panels[0].targets[0].expr'\\, '$.panels[1].targets[0].datasource'\\, etc. For appending to arrays\\, use '/- ' syntax: '$.panels/- ' (append to panels array) or '$.panels[2]/- ' (append to nested array at index 2)."`
 	Value interface{} `json:"value,omitempty" jsonschema:"description=New value for replace/add operations"`
 }
 
@@ -140,7 +140,7 @@ var GetDashboardByUID = mcpgrafana.MustTool(
 
 var UpdateDashboard = mcpgrafana.MustTool(
 	"update_dashboard",
-	"Create or update a dashboard using either full JSON or efficient patch operations. For new dashboards\\, provide the 'dashboard' field. For updating existing dashboards\\, use 'uid' + 'operations' for better context window efficiency. Patch operations support complex JSONPaths like '$.panels[0].targets[0].expr'\\, '$.panels[1].title'\\, '$.panels[2].targets[0].datasource'\\, etc.",
+	"Create or update a dashboard using either full JSON or efficient patch operations. For new dashboards\\, provide the 'dashboard' field. For updating existing dashboards\\, use 'uid' + 'operations' for better context window efficiency. Patch operations support complex JSONPaths like '$.panels[0].targets[0].expr'\\, '$.panels[1].title'\\, '$.panels[2].targets[0].datasource'\\, etc. Supports appending to arrays using '/- ' syntax: '$.panels/- ' appends to panels array\\, '$.panels[2]/- ' appends to nested array at index 2.",
 	updateDashboard,
 	mcp.WithTitleAnnotation("Create or update dashboard"),
 	mcp.WithDestructiveHintAnnotation(true),
@@ -405,12 +405,16 @@ func applyJSONPath(data map[string]interface{}, path string, value interface{}, 
 
 // JSONPathSegment represents a segment of a JSONPath
 type JSONPathSegment struct {
-	Key     string
-	Index   int
-	IsArray bool
+	Key      string
+	Index    int
+	IsArray  bool
+	IsAppend bool // true when using /- syntax to append to array
 }
 
 func (s JSONPathSegment) String() string {
+	if s.IsAppend {
+		return fmt.Sprintf("%s/-", s.Key)
+	}
 	if s.IsArray {
 		return fmt.Sprintf("%s[%d]", s.Key, s.Index)
 	}
@@ -419,6 +423,7 @@ func (s JSONPathSegment) String() string {
 
 // parseJSONPath parses a JSONPath string into segments
 // Supports paths like "panels[0].targets[1].expr", "title", "templating.list[0].name"
+// Also supports append syntax: "panels/-" or "panels[2]/-"
 func parseJSONPath(path string) []JSONPathSegment {
 	var segments []JSONPathSegment
 
@@ -427,18 +432,20 @@ func parseJSONPath(path string) []JSONPathSegment {
 		return segments
 	}
 
-	// Use regex for more robust parsing
-	re := regexp.MustCompile(`([^.\[\]]+)(?:\[(\d+)\])?`)
+	// Enhanced regex to handle /- append syntax
+	// Matches: key, key[index], key/-, key[index]/-
+	re := regexp.MustCompile(`([^.\[\]\/]+)(?:\[(\d+)\])?(?:(\/-))?`)
 	matches := re.FindAllStringSubmatch(path, -1)
 
 	for _, match := range matches {
 		if len(match) >= 2 && match[1] != "" {
 			segment := JSONPathSegment{
-				Key:     match[1],
-				IsArray: len(match) >= 3 && match[2] != "",
+				Key:      match[1],
+				IsArray:  len(match) >= 3 && match[2] != "",
+				IsAppend: len(match) >= 4 && match[3] == "/-",
 			}
 
-			if segment.IsArray {
+			if segment.IsArray && !segment.IsAppend {
 				if index, err := strconv.Atoi(match[2]); err == nil {
 					segment.Index = index
 				}
@@ -458,6 +465,11 @@ func validateArrayAccess(current map[string]interface{}, segment JSONPathSegment
 		return nil, fmt.Errorf("field '%s' is not an array", segment.Key)
 	}
 
+	// For append operations, we don't need to validate index bounds
+	if segment.IsAppend {
+		return arr, nil
+	}
+
 	if segment.Index < 0 || segment.Index >= len(arr) {
 		return nil, fmt.Errorf("index %d out of bounds for array '%s' (length %d)", segment.Index, segment.Key, len(arr))
 	}
@@ -467,6 +479,11 @@ func validateArrayAccess(current map[string]interface{}, segment JSONPathSegment
 
 // navigateSegment navigates to the next level in the JSON structure
 func navigateSegment(current map[string]interface{}, segment JSONPathSegment) (map[string]interface{}, error) {
+	// Append operations can only be at the final segment
+	if segment.IsAppend {
+		return nil, fmt.Errorf("append operation (/- ) can only be used at the final path segment")
+	}
+
 	if segment.IsArray {
 		arr, err := validateArrayAccess(current, segment)
 		if err != nil {
@@ -493,6 +510,19 @@ func navigateSegment(current map[string]interface{}, segment JSONPathSegment) (m
 
 // setAtSegment sets a value at the final segment
 func setAtSegment(current map[string]interface{}, segment JSONPathSegment, value interface{}) error {
+	if segment.IsAppend {
+		// Handle append operation: add to the end of the array
+		arr, err := validateArrayAccess(current, segment)
+		if err != nil {
+			return err
+		}
+
+		// Append the value to the array
+		arr = append(arr, value)
+		current[segment.Key] = arr
+		return nil
+	}
+
 	if segment.IsArray {
 		arr, err := validateArrayAccess(current, segment)
 		if err != nil {
@@ -511,6 +541,10 @@ func setAtSegment(current map[string]interface{}, segment JSONPathSegment, value
 
 // removeAtSegment removes a value at the final segment
 func removeAtSegment(current map[string]interface{}, segment JSONPathSegment) error {
+	if segment.IsAppend {
+		return fmt.Errorf("cannot use remove operation with append syntax (/- ) at %s", segment.Key)
+	}
+
 	if segment.IsArray {
 		return fmt.Errorf("cannot remove array element %s[%d] (not supported)", segment.Key, segment.Index)
 	}
