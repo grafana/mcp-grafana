@@ -87,7 +87,7 @@ func TestExtractGrafanaInfoFromHeaders(t *testing.T) {
 		config := GrafanaConfigFromContext(ctx)
 		assert.Equal(t, defaultGrafanaURL, config.URL)
 		assert.Equal(t, "", config.APIKey)
-		assert.Equal(t, nil, config.BasicAuth)
+		assert.Nil(t, config.BasicAuth)
 	})
 
 	t.Run("no headers, with env", func(t *testing.T) {
@@ -128,7 +128,7 @@ func TestExtractGrafanaInfoFromHeaders(t *testing.T) {
 		assert.Equal(t, "my-test-api-key", config.APIKey)
 	})
 
-	t.run("no headers, with env", func(t *testing.T) {
+	t.Run("no headers, with env", func(t *testing.T) {
 		t.Setenv("GRAFANA_USERNAME", "foo")
 		t.Setenv("GRAFANA_PASSWORD", "bar")
 
@@ -137,30 +137,33 @@ func TestExtractGrafanaInfoFromHeaders(t *testing.T) {
 		ctx := ExtractGrafanaInfoFromHeaders(context.Background(), req)
 		config := GrafanaConfigFromContext(ctx)
 		assert.Equal(t, "foo", config.BasicAuth.Username())
-		assert.Equal(t, "bar", config.BasicAuth.Password()[0])
+		password, _ := config.BasicAuth.Password()
+		assert.Equal(t, "bar", password)
 	})
 
-	t.run("with headers, no env", func(t *testing.T) {
+	t.Run("user auth with headers, no env", func(t *testing.T) {
 		req, err := http.NewRequest("GET", "http://example.com", nil)
-		req.setHeader("foo", "bar")
+		req.SetBasicAuth("foo", "bar")
 		require.NoError(t, err)
 		ctx := ExtractGrafanaInfoFromHeaders(context.Background(), req)
 		config := GrafanaConfigFromContext(ctx)
 		assert.Equal(t, "foo", config.BasicAuth.Username())
-		assert.Equal(t, "bar", config.BasicAuth.Password()[0])
+		password, _ := config.BasicAuth.Password()
+		assert.Equal(t, "bar", password)
 	})
 
-	t.run("with headers, with env", func(t *testing.T) {
+	t.Run("user auth with headers, with env", func(t *testing.T) {
 		t.Setenv("GRAFANA_USERNAME", "will-not-be-used")
 		t.Setenv("GRAFANA_PASSWORD", "will-not-be-used")
 
 		req, err := http.NewRequest("GET", "http://example.com", nil)
-		req.setHeader("foo", "bar")
+		req.SetBasicAuth("foo", "bar")
 		require.NoError(t, err)
 		ctx := ExtractGrafanaInfoFromHeaders(context.Background(), req)
 		config := GrafanaConfigFromContext(ctx)
 		assert.Equal(t, "foo", config.BasicAuth.Username())
-		assert.Equal(t, "bar", config.BasicAuth.Password()[0])
+		password, _ := config.BasicAuth.Password()
+		assert.Equal(t, "bar", password)
 	})
 }
 
@@ -558,7 +561,7 @@ func TestHTTPTracingConfiguration(t *testing.T) {
 		ctx := WithGrafanaConfig(context.Background(), config)
 
 		// Create Grafana client
-		client := NewGrafanaClient(ctx, "http://localhost:3000", "test-api-key")
+		client := NewGrafanaClient(ctx, "http://localhost:3000", "test-api-key", nil)
 		require.NotNil(t, client)
 
 		// Verify the client was created successfully (should not panic)
@@ -573,7 +576,7 @@ func TestHTTPTracingConfiguration(t *testing.T) {
 		ctx := WithGrafanaConfig(context.Background(), config)
 
 		// Create Grafana client (should not panic even without OTEL configured)
-		client := NewGrafanaClient(ctx, "http://localhost:3000", "test-api-key")
+		client := NewGrafanaClient(ctx, "http://localhost:3000", "test-api-key", nil)
 		require.NotNil(t, client)
 
 		// Verify the client was created successfully
