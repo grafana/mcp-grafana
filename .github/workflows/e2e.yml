@@ -21,6 +21,10 @@ jobs:
     permissions:
       id-token: write
       contents: read
+    env:
+      # Set auth here so stdio transport and background process pick them up
+      GRAFANA_USERNAME: admin
+      GRAFANA_PASSWORD: admin
     steps:
       - name: Checkout code
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
