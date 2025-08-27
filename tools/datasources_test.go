@@ -42,14 +42,17 @@ func newTestContext() context.Context {
 
 	if apiKey := os.Getenv("GRAFANA_API_KEY"); apiKey != "" {
 		cfg.APIKey = apiKey
+	} else {
+		cfg.BasicAuth = url.UserPassword("admin", "admin")
 	}
 
 	client := client.NewHTTPClientWithConfig(strfmt.Default, cfg)
 
 	grafanaCfg := mcpgrafana.GrafanaConfig{
-		Debug:  true,
-		URL:    "http://localhost:3000",
-		APIKey: cfg.APIKey,
+		Debug:     true,
+		URL:       "http://localhost:3000",
+		APIKey:    cfg.APIKey,
+		BasicAuth: cfg.BasicAuth,
 	}
 
 	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), grafanaCfg)

@@ -25,6 +25,7 @@ type alertingClient struct {
 	accessToken string
 	idToken     string
 	apiKey      string
+	basicAuth   *url.Userinfo
 	httpClient  *http.Client
 }
 
@@ -41,6 +42,7 @@ func newAlertingClientFromContext(ctx context.Context) (*alertingClient, error) 
 		accessToken: cfg.AccessToken,
 		idToken:     cfg.IDToken,
 		apiKey:      cfg.APIKey,
+		basicAuth:   cfg.BasicAuth,
 		httpClient: &http.Client{
 			Timeout: defaultTimeout,
 		},
@@ -83,6 +85,9 @@ func (c *alertingClient) makeRequest(ctx context.Context, path string) (*http.Re
 		req.Header.Set("X-Grafana-Id", c.idToken)
 	} else if c.apiKey != "" {
 		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.apiKey))
+	} else if c.basicAuth != nil {
+		password, _ := c.basicAuth.Password()
+		req.SetBasicAuth(c.basicAuth.Username(), password)
 	}
 
 	resp, err := c.httpClient.Do(req)
