@@ -2,6 +2,7 @@ import pytest
 import os
 import asyncio
 import gc
+import base64
 from dotenv import load_dotenv
 from mcp.client.sse import sse_client
 from mcp.client.stdio import stdio_client
@@ -47,6 +48,9 @@ def grafana_env():
     env = {"GRAFANA_URL": os.environ.get("GRAFANA_URL", DEFAULT_GRAFANA_URL)}
     if key := os.environ.get("GRAFANA_API_KEY"):
         env["GRAFANA_API_KEY"] = key
+    elif (username := os.environ.get("GRAFANA_USERNAME")) and (password := os.environ.get("GRAFANA_USERNAME")):
+        env["GRAFANA_USERNAME"] = username
+        env["GRAFANA_PASSWORD"] = password
     return env
 
 
@@ -57,6 +61,9 @@ def grafana_headers():
     }
     if key := os.environ.get("GRAFANA_API_KEY"):
         headers["X-Grafana-API-Key"] = key
+    elif (username := os.environ.get("GRAFANA_USERNAME")) and (password := os.environ.get("GRAFANA_PASSWORD")):
+        credentials = f"{username}:{password}"
+        headers["Authorization"] = "Basic " + base64.b64encode(credentials.encode("utf-8")).decode()
     return headers
 
 

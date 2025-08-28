@@ -28,6 +28,9 @@ const (
 	grafanaURLEnvVar = "GRAFANA_URL"
 	grafanaAPIEnvVar = "GRAFANA_API_KEY"
 
+	grafanaUsernameEnvVar = "GRAFANA_USERNAME"
+	grafanaPasswordEnvVar = "GRAFANA_PASSWORD"
+
 	grafanaURLHeader    = "X-Grafana-URL"
 	grafanaAPIKeyHeader = "X-Grafana-API-Key"
 )
@@ -36,6 +39,18 @@ func urlAndAPIKeyFromEnv() (string, string) {
 	u := strings.TrimRight(os.Getenv(grafanaURLEnvVar), "/")
 	apiKey := os.Getenv(grafanaAPIEnvVar)
 	return u, apiKey
+}
+
+func userAndPassFromEnv() *url.Userinfo {
+	username := os.Getenv(grafanaUsernameEnvVar)
+	password, exists := os.LookupEnv(grafanaPasswordEnvVar)
+	if username == "" && password == "" {
+		return nil
+	}
+	if !exists {
+		return url.User(username)
+	}
+	return url.UserPassword(username, password)
 }
 
 func urlAndAPIKeyFromHeaders(req *http.Request) (string, string) {
@@ -75,6 +90,9 @@ type GrafanaConfig struct {
 	// APIKey is the API key or service account token for the Grafana instance.
 	// It may be empty if we are using on-behalf-of auth.
 	APIKey string
+
+	// Credentials if user is using basic auth
+	BasicAuth *url.Userinfo
 
 	// AccessToken is the Grafana Cloud access policy token used for on-behalf-of auth in Grafana Cloud.
 	AccessToken string
@@ -216,24 +234,59 @@ func wrapWithUserAgent(rt http.RoundTripper) http.RoundTripper {
 	return NewUserAgentTransport(rt)
 }
 
+// Gets info from environment
+func extractKeyGrafanaInfoFromEnv() (url, apiKey string, auth *url.Userinfo) {
+	url, apiKey = urlAndAPIKeyFromEnv()
+	if url == "" {
+		url = defaultGrafanaURL
+	}
+	auth = userAndPassFromEnv()
+	return
+}
+
+// Tries to get grafana info from a request.
+// Gets info from environment if it can't get it from request
+func extractKeyGrafanaInfoFromReq(req *http.Request) (grafanaUrl, apiKey string, auth *url.Userinfo) {
+	eUrl, eApiKey, eAuth := extractKeyGrafanaInfoFromEnv()
+	username, password, _ := req.BasicAuth()
+
+	grafanaUrl, apiKey = urlAndAPIKeyFromHeaders(req)
+	// If anything is missing, check if we can get it from the environment
+	if grafanaUrl == "" {
+		grafanaUrl = eUrl
+	}
+
+	if apiKey == "" {
+		apiKey = eApiKey
+	}
+
+	// Use environment configured auth if nothing was passed in request
+	if username == "" && password == "" {
+		auth = eAuth
+	} else {
+		auth = url.UserPassword(username, password)
+	}
+
+	return
+}
+
 // ExtractGrafanaInfoFromEnv is a StdioContextFunc that extracts Grafana configuration from environment variables.
 // It reads GRAFANA_URL and GRAFANA_API_KEY environment variables and adds the configuration to the context for use by Grafana clients.
 var ExtractGrafanaInfoFromEnv server.StdioContextFunc = func(ctx context.Context) context.Context {
-	u, apiKey := urlAndAPIKeyFromEnv()
-	if u == "" {
-		u = defaultGrafanaURL
-	}
+	u, apiKey, basicAuth := extractKeyGrafanaInfoFromEnv()
 	parsedURL, err := url.Parse(u)
 	if err != nil {
 		panic(fmt.Errorf("invalid Grafana URL %s: %w", u, err))
 	}
-	slog.Info("Using Grafana configuration", "url", parsedURL.Redacted(), "api_key_set", apiKey != "")
+
+	slog.Info("Using Grafana configuration", "url", parsedURL.Redacted(), "api_key_set", apiKey != "", "basic_auth_set", basicAuth != nil)
 
 	// Get existing config or create a new one.
 	// This will respect the existing debug flag, if set.
 	config := GrafanaConfigFromContext(ctx)
 	config.URL = u
 	config.APIKey = apiKey
+	config.BasicAuth = basicAuth
 	return WithGrafanaConfig(ctx, config)
 }
 
@@ -245,23 +298,14 @@ type httpContextFunc func(ctx context.Context, req *http.Request) context.Contex
 // ExtractGrafanaInfoFromHeaders is a HTTPContextFunc that extracts Grafana configuration from HTTP request headers.
 // It reads X-Grafana-URL and X-Grafana-API-Key headers, falling back to environment variables if headers are not present.
 var ExtractGrafanaInfoFromHeaders httpContextFunc = func(ctx context.Context, req *http.Request) context.Context {
-	u, apiKey := urlAndAPIKeyFromHeaders(req)
-	uEnv, apiKeyEnv := urlAndAPIKeyFromEnv()
-	if u == "" {
-		u = uEnv
-	}
-	if u == "" {
-		u = defaultGrafanaURL
-	}
-	if apiKey == "" {
-		apiKey = apiKeyEnv
-	}
+	u, apiKey, basicAuth := extractKeyGrafanaInfoFromReq(req)
 
 	// Get existing config or create a new one.
 	// This will respect the existing debug flag, if set.
 	config := GrafanaConfigFromContext(ctx)
 	config.URL = u
 	config.APIKey = apiKey
+	config.BasicAuth = basicAuth
 	return WithGrafanaConfig(ctx, config)
 }
 
@@ -295,7 +339,7 @@ func makeBasePath(path string) string {
 
 // NewGrafanaClient creates a Grafana client with the provided URL and API key.
 // The client is automatically configured with the correct HTTP scheme, debug settings from context, custom TLS configuration if present, and OpenTelemetry instrumentation for distributed tracing.
-func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string) *client.GrafanaHTTPAPI {
+func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.Userinfo) *client.GrafanaHTTPAPI {
 	cfg := client.DefaultTransportConfig()
 
 	var parsedURL *url.URL
@@ -322,6 +366,10 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string) *client.Gr
 		cfg.APIKey = apiKey
 	}
 
+	if auth != nil {
+		cfg.BasicAuth = auth
+	}
+
 	config := GrafanaConfigFromContext(ctx)
 	cfg.Debug = config.Debug
 
@@ -338,7 +386,7 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string) *client.Gr
 			"skip_verify", tlsConfig.SkipVerify)
 	}
 
-	slog.Debug("Creating Grafana client", "url", parsedURL.Redacted(), "api_key_set", apiKey != "")
+	slog.Debug("Creating Grafana client", "url", parsedURL.Redacted(), "api_key_set", apiKey != "", "basic_auth_set", config.BasicAuth != nil)
 	grafanaClient := client.NewHTTPClientWithConfig(strfmt.Default, cfg)
 
 	// Always enable HTTP tracing for context propagation (no-op when no exporter configured)
@@ -364,7 +412,8 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string) *client.Gr
 }
 
 // ExtractGrafanaClientFromEnv is a StdioContextFunc that creates and injects a Grafana client into the context.
-// It uses configuration from GRAFANA_URL and GRAFANA_API_KEY environment variables to initialize the client with proper authentication.
+// It uses configuration from GRAFANA_URL, GRAFANA_API_KEY, GRAFANA_USERNAME/PASSWORD environment variables to initialize
+// the client with proper authentication.
 var ExtractGrafanaClientFromEnv server.StdioContextFunc = func(ctx context.Context) context.Context {
 	// Extract transport config from env vars
 	grafanaURL, ok := os.LookupEnv(grafanaURLEnvVar)
@@ -372,8 +421,8 @@ var ExtractGrafanaClientFromEnv server.StdioContextFunc = func(ctx context.Conte
 		grafanaURL = defaultGrafanaURL
 	}
 	apiKey := os.Getenv(grafanaAPIEnvVar)
-
-	grafanaClient := NewGrafanaClient(ctx, grafanaURL, apiKey)
+	auth := userAndPassFromEnv()
+	grafanaClient := NewGrafanaClient(ctx, grafanaURL, apiKey, auth)
 	return context.WithValue(ctx, grafanaClientKey{}, grafanaClient)
 }
 
@@ -381,19 +430,9 @@ var ExtractGrafanaClientFromEnv server.StdioContextFunc = func(ctx context.Conte
 // It prioritizes configuration from HTTP headers (X-Grafana-URL, X-Grafana-API-Key) over environment variables for multi-tenant scenarios.
 var ExtractGrafanaClientFromHeaders httpContextFunc = func(ctx context.Context, req *http.Request) context.Context {
 	// Extract transport config from request headers, and set it on the context.
-	u, apiKey := urlAndAPIKeyFromHeaders(req)
-	uEnv, apiKeyEnv := urlAndAPIKeyFromEnv()
-	if u == "" {
-		u = uEnv
-	}
-	if u == "" {
-		u = defaultGrafanaURL
-	}
-	if apiKey == "" {
-		apiKey = apiKeyEnv
-	}
+	u, apiKey, basicAuth := extractKeyGrafanaInfoFromReq(req)
 
-	grafanaClient := NewGrafanaClient(ctx, u, apiKey)
+	grafanaClient := NewGrafanaClient(ctx, u, apiKey, basicAuth)
 	return WithGrafanaClient(ctx, grafanaClient)
 }
 
@@ -453,17 +492,7 @@ var ExtractIncidentClientFromEnv server.StdioContextFunc = func(ctx context.Cont
 // ExtractIncidentClientFromHeaders is a HTTPContextFunc that creates and injects a Grafana Incident client into the context.
 // It uses HTTP headers for configuration with environment variable fallbacks, enabling per-request incident management configuration.
 var ExtractIncidentClientFromHeaders httpContextFunc = func(ctx context.Context, req *http.Request) context.Context {
-	grafanaURL, apiKey := urlAndAPIKeyFromHeaders(req)
-	grafanaURLEnv, apiKeyEnv := urlAndAPIKeyFromEnv()
-	if grafanaURL == "" {
-		grafanaURL = grafanaURLEnv
-	}
-	if grafanaURL == "" {
-		grafanaURL = defaultGrafanaURL
-	}
-	if apiKey == "" {
-		apiKey = apiKeyEnv
-	}
+	grafanaURL, apiKey, _ := extractKeyGrafanaInfoFromReq(req)
 	incidentURL := fmt.Sprintf("%s/api/plugins/grafana-irm-app/resources/api/v1/", grafanaURL)
 	client := incident.NewClient(incidentURL, apiKey)
 
