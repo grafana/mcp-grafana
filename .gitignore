@@ -13,3 +13,6 @@ wheels/
 # Virtual environments
 .venv
 .envrc
+
+# Temporary test files
+.tmp
