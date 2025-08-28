@@ -45,7 +45,7 @@ endif
 .PHONY: test-python-e2e
 test-python-e2e: ## Run Python E2E tests (requires docker-compose services and SSE server to be running, use `make run-test-services` and `make run-sse` to start them).
 	cd tests && uv sync --all-groups
-	cd tests && uv run pytest
+	cd tests && GRAFANA_USERNAME=admin GRAFANA_PASSWORD=admin uv run pytest
 
 .PHONY: run
 run: ## Run the MCP server in stdio mode.
