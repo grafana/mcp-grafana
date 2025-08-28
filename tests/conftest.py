@@ -61,7 +61,7 @@ def grafana_headers():
     }
     if key := os.environ.get("GRAFANA_API_KEY"):
         headers["X-Grafana-API-Key"] = key
-    elif (username := os.environ.get("USERNAME")) and (password := os.environ.get("PASSWORD")):
+    elif (username := os.environ.get("GRAFANA_USERNAME")) and (password := os.environ.get("GRAFANA_PASSWORD")):
         credentials = f"{username}:{password}"
         headers["Authorization"] = "Basic " + base64.b64encode(credentials.encode("utf-8")).decode()
     return headers
