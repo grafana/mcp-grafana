@@ -39,7 +39,7 @@ The dashboard tools now include several strategies to manage context window usag
 ### Datasources
 
 - **List and fetch datasource information:** View all configured datasources and retrieve detailed information about each.
-  - _Supported datasource types: Prometheus, Loki._
+  - _Supported datasource types: Prometheus, Loki, ClickHouse._
 
 ### Prometheus Querying
 
@@ -50,6 +50,12 @@ The dashboard tools now include several strategies to manage context window usag
 
 - **Query Loki logs and metrics:** Run both log queries and metric queries using LogQL against Loki datasources.
 - **Query Loki metadata:** Retrieve label names, label values, and stream statistics from Loki datasources.
+
+### ClickHouse Querying
+
+- **Query ClickHouse:** Execute SQL queries against ClickHouse datasources (SELECT, SHOW, and DESCRIBE queries only for safety).
+- **Query ClickHouse metadata:** Retrieve database lists, table information with detailed metadata (engine, row count, size), and table schemas.
+- **Database exploration:** List databases, tables with filtering support, and describe table structures including column types and comments.
 
 ### Incidents
 
@@ -177,6 +183,10 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `list_loki_label_names`           | Loki        | List all available label names in logs                             | `datasources:query`                     | `datasources:uid:loki-uid`                          |
 | `list_loki_label_values`          | Loki        | List values for a specific log label                               | `datasources:query`                     | `datasources:uid:loki-uid`                          |
 | `query_loki_stats`                | Loki        | Get statistics about log streams                                   | `datasources:query`                     | `datasources:uid:loki-uid`                          |
+| `query_clickhouse`                | ClickHouse  | Execute SQL queries against a ClickHouse datasource                | `datasources:query`                     | `datasources:uid:clickhouse-uid`                    |
+| `list_clickhouse_databases`       | ClickHouse  | List all available databases in a ClickHouse datasource            | `datasources:query`                     | `datasources:uid:clickhouse-uid`                    |
+| `list_clickhouse_tables`          | ClickHouse  | List tables in a database with detailed metadata                   | `datasources:query`                     | `datasources:uid:clickhouse-uid`                    |
+| `describe_clickhouse_table`       | ClickHouse  | Describe table structure with column types and comments            | `datasources:query`                     | `datasources:uid:clickhouse-uid`                    |
 | `list_alert_rules`                | Alerting    | List alert rules                                                   | `alert.rules:read`                      | `folders:*` or `folders:uid:alerts-folder`          |
 | `get_alert_rule_by_uid`           | Alerting    | Get alert rule by UID                                              | `alert.rules:read`                      | `folders:uid:alerts-folder`                         |
 | `list_contact_points`             | Alerting    | List notification contact points                                   | `alert.notifications:read`              | Global scope                                        |
