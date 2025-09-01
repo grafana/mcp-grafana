@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
+	"os"
 	"reflect"
 
 	"github.com/invopop/jsonschema"
@@ -82,6 +84,15 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 	}
 
 	handler := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		// Minimal shared-secret enforcement for HTTP/SSE transports.
+		if expected := os.Getenv("MCP_SHARED_SECRET"); expected != "" {
+			if caller := CallerSharedSecretFromContext(ctx); caller != expected {
+				// Log denial without revealing secrets
+				slog.Warn("Unauthorized tool call: shared secret mismatch")
+				return nil, fmt.Errorf("unauthorized: invalid shared secret; supply Authorization: Bearer <token>")
+			}
+		}
+
 		// Create OpenTelemetry span for tool execution (no-op when no exporter configured)
 		config := GrafanaConfigFromContext(ctx)
 		ctx, span := otel.Tracer("mcp-grafana").Start(ctx, fmt.Sprintf("mcp.tool.%s", name))

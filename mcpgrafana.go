@@ -309,6 +309,22 @@ var ExtractGrafanaInfoFromHeaders httpContextFunc = func(ctx context.Context, re
 	return WithGrafanaConfig(ctx, config)
 }
 
+// ExtractSharedSecretFromHeaders extracts the shared secret header and stores it in context
+var ExtractSharedSecretFromHeaders httpContextFunc = func(ctx context.Context, req *http.Request) context.Context {
+	// Prefer Authorization: Bearer <token>
+	authHeader := strings.TrimSpace(req.Header.Get("Authorization"))
+	if authHeader != "" {
+		parts := strings.Fields(authHeader)
+		if len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") {
+			secret := strings.TrimSpace(parts[1])
+			if secret != "" {
+				return WithCallerSharedSecret(ctx, secret)
+			}
+		}
+	}
+	return ctx
+}
+
 // WithOnBehalfOfAuth adds the Grafana access token and user token to the Grafana config.
 // These tokens enable on-behalf-of authentication in Grafana Cloud, allowing the MCP server to act on behalf of a specific user with their permissions.
 func WithOnBehalfOfAuth(ctx context.Context, accessToken, userToken string) (context.Context, error) {
@@ -335,6 +351,20 @@ type grafanaClientKey struct{}
 
 func makeBasePath(path string) string {
 	return strings.Join([]string{strings.TrimRight(path, "/"), "api"}, "/")
+}
+
+// sharedSecretKey is the context key for the caller-provided shared secret
+type sharedSecretKey struct{}
+
+// WithCallerSharedSecret sets the caller-provided shared secret in context
+func WithCallerSharedSecret(ctx context.Context, secret string) context.Context {
+	return context.WithValue(ctx, sharedSecretKey{}, secret)
+}
+
+// CallerSharedSecretFromContext retrieves the caller-provided shared secret from context
+func CallerSharedSecretFromContext(ctx context.Context) string {
+	v, _ := ctx.Value(sharedSecretKey{}).(string)
+	return v
 }
 
 // NewGrafanaClient creates a Grafana client with the provided URL and API key.
@@ -585,6 +615,7 @@ func ComposedSSEContextFunc(config GrafanaConfig) server.SSEContextFunc {
 		func(ctx context.Context, req *http.Request) context.Context {
 			return WithGrafanaConfig(ctx, config)
 		},
+		ExtractSharedSecretFromHeaders,
 		ExtractGrafanaInfoFromHeaders,
 		ExtractGrafanaClientFromHeaders,
 		ExtractIncidentClientFromHeaders,
@@ -598,6 +629,7 @@ func ComposedHTTPContextFunc(config GrafanaConfig) server.HTTPContextFunc {
 		func(ctx context.Context, req *http.Request) context.Context {
 			return WithGrafanaConfig(ctx, config)
 		},
+		ExtractSharedSecretFromHeaders,
 		ExtractGrafanaInfoFromHeaders,
 		ExtractGrafanaClientFromHeaders,
 		ExtractIncidentClientFromHeaders,
