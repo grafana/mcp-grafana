@@ -115,7 +115,16 @@ func newServer(dt disabledTools) *server.MCPServer {
 	return s
 }
 
-func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt disabledTools, gc mcpgrafana.GrafanaConfig) error {
+type tlsConfig struct {
+	certFile, keyFile string
+}
+
+func (tc *tlsConfig) addFlags() {
+	flag.StringVar(&tc.certFile, "server.tls-cert-file", "", "Path to TLS certificate file for server HTTPS (required for TLS)")
+	flag.StringVar(&tc.keyFile, "server.tls-key-file", "", "Path to TLS private key file for server HTTPS (required for TLS)")
+}
+
+func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt disabledTools, gc mcpgrafana.GrafanaConfig, tls tlsConfig) error {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})))
 	s := newServer(dt)
 
@@ -135,10 +144,15 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 			return fmt.Errorf("server error: %v", err)
 		}
 	case "streamable-http":
-		srv := server.NewStreamableHTTPServer(s, server.WithHTTPContextFunc(mcpgrafana.ComposedHTTPContextFunc(gc)),
+		opts := []server.StreamableHTTPOption{
+			server.WithHTTPContextFunc(mcpgrafana.ComposedHTTPContextFunc(gc)),
 			server.WithStateLess(true),
 			server.WithEndpointPath(endpointPath),
-		)
+		}
+		if tls.certFile != "" || tls.keyFile != "" {
+			opts = append(opts, server.WithTLSCert(tls.certFile, tls.keyFile))
+		}
+		srv := server.NewStreamableHTTPServer(s, opts...)
 		slog.Info("Starting Grafana MCP server using StreamableHTTP transport", "version", mcpgrafana.Version(), "address", addr, "endpointPath", endpointPath)
 		if err := srv.Start(addr); err != nil {
 			return fmt.Errorf("server error: %v", err)
@@ -170,6 +184,8 @@ func main() {
 	dt.addFlags()
 	var gc grafanaConfig
 	gc.addFlags()
+	var tls tlsConfig
+	tls.addFlags()
 	flag.Parse()
 
 	if *showVersion {
@@ -188,7 +204,7 @@ func main() {
 		}
 	}
 
-	if err := run(transport, *addr, *basePath, *endpointPath, parseLevel(*logLevel), dt, grafanaConfig); err != nil {
+	if err := run(transport, *addr, *basePath, *endpointPath, parseLevel(*logLevel), dt, grafanaConfig, tls); err != nil {
 		panic(err)
 	}
 }
