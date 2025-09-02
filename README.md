@@ -197,6 +197,45 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `get_assertions`                  | Asserts     | Get assertion summary for a given entity                           | Plugin-specific permissions             | Plugin-specific scopes                              |
 | `generate_deeplink`               | Navigation  | Generate accurate deeplink URLs for Grafana resources              | None (read-only URL generation)         | N/A                                                 |
 
+## CLI Flags Reference
+
+The `mcp-grafana` binary supports various command-line flags for configuration:
+
+**Transport Options:**
+- `-t, --transport`: Transport type (`stdio`, `sse`, or `streamable-http`) - default: `stdio`
+- `--address`: The host and port for SSE/streamable-http server - default: `localhost:8000`
+- `--base-path`: Base path for the SSE/streamable-http server
+- `--endpoint-path`: Endpoint path for the streamable-http server - default: `/`
+
+**Debug and Logging:**
+- `--debug`: Enable debug mode for detailed HTTP request/response logging
+
+**Tool Configuration:**
+- `--enabled-tools`: Comma-separated list of enabled tools - default: all tools enabled
+- `--disable-search`: Disable search tools
+- `--disable-datasource`: Disable datasource tools
+- `--disable-incident`: Disable incident tools
+- `--disable-prometheus`: Disable prometheus tools
+- `--disable-loki`: Disable loki tools
+- `--disable-alerting`: Disable alerting tools
+- `--disable-dashboard`: Disable dashboard tools
+- `--disable-oncall`: Disable oncall tools
+- `--disable-asserts`: Disable asserts tools
+- `--disable-sift`: Disable sift tools
+- `--disable-admin`: Disable admin tools
+- `--disable-pyroscope`: Disable pyroscope tools
+- `--disable-navigation`: Disable navigation tools
+
+**Client TLS Configuration (for Grafana connections):**
+- `--tls-cert-file`: Path to TLS certificate file for client authentication
+- `--tls-key-file`: Path to TLS private key file for client authentication
+- `--tls-ca-file`: Path to TLS CA certificate file for server verification
+- `--tls-skip-verify`: Skip TLS certificate verification (insecure)
+
+**Server TLS Configuration (streamable-http transport only):**
+- `--server.tls-cert-file`: Path to TLS certificate file for server HTTPS
+- `--server.tls-key-file`: Path to TLS private key file for server HTTPS
+
 ## Usage
 
 This MCP server works with both local Grafana instances and Grafana Cloud. For Grafana Cloud, use your instance URL (e.g., `https://myinstance.grafana.net`) instead of `http://localhost:3000` in the configuration examples below.
@@ -233,6 +272,21 @@ This MCP server works with both local Grafana instances and Grafana Cloud. For G
      ```bash
      docker pull mcp/grafana
      docker run --rm -p 8000:8000 -e GRAFANA_URL=http://localhost:3000 -e GRAFANA_API_KEY=<your service account token> mcp/grafana -t streamable-http
+     ```
+
+     For HTTPS streamable HTTP mode with server TLS certificates:
+
+     ```bash
+     docker pull mcp/grafana
+     docker run --rm -p 8443:8443 \
+       -v /path/to/certs:/certs:ro \
+       -e GRAFANA_URL=http://localhost:3000 \
+       -e GRAFANA_API_KEY=<your service account token> \
+       mcp/grafana \
+       -t streamable-http \
+       -addr :8443 \
+       --server.tls-cert-file /certs/server.crt \
+       --server.tls-key-file /certs/server.key
      ```
 
    - **Download binary**: Download the latest release of `mcp-grafana` from the [releases page](https://github.com/grafana/mcp-grafana/releases) and place it in your `$PATH`.
@@ -319,6 +373,19 @@ If you're using VSCode and running the MCP server in SSE mode (which is the defa
     "grafana": {
       "type": "sse",
       "url": "http://localhost:8000/sse"
+    }
+  }
+}
+```
+
+For HTTPS streamable HTTP mode with server TLS certificates:
+
+```json
+"mcp": {
+  "servers": {
+    "grafana": {
+      "type": "sse",
+      "url": "https://localhost:8443/sse"
     }
   }
 }
@@ -508,6 +575,43 @@ grafanaConfig := mcpgrafana.GrafanaConfig{
     },
 }
 contextFunc := mcpgrafana.ComposedStdioContextFunc(grafanaConfig)
+```
+
+### Server TLS Configuration (Streamable HTTP Transport Only)
+
+When using the streamable HTTP transport (`-t streamable-http`), you can configure the MCP server to serve HTTPS instead of HTTP. This is useful when you need to secure the connection between your MCP client and the server itself.
+
+The server supports the following TLS configuration options for the streamable HTTP transport:
+
+- `--server.tls-cert-file`: Path to TLS certificate file for server HTTPS (required for TLS)
+- `--server.tls-key-file`: Path to TLS private key file for server HTTPS (required for TLS)
+
+**Note**: These flags are completely separate from the client TLS flags documented above. The client TLS flags configure how the MCP server connects to Grafana, while these server TLS flags configure how clients connect to the MCP server when using streamable HTTP transport.
+
+**Example with HTTPS streamable HTTP server:**
+
+```bash
+./mcp-grafana \
+  -t streamable-http \
+  --server.tls-cert-file /path/to/server.crt \
+  --server.tls-key-file /path/to/server.key \
+  -addr :8443
+```
+
+This would start the MCP server on HTTPS port 8443. Clients would then connect to `https://localhost:8443/` instead of `http://localhost:8000/`.
+
+**Docker example with server TLS:**
+
+```bash
+docker run --rm -p 8443:8443 \
+  -v /path/to/certs:/certs:ro \
+  -e GRAFANA_URL=http://localhost:3000 \
+  -e GRAFANA_API_KEY=<your service account token> \
+  mcp/grafana \
+  -t streamable-http \
+  -addr :8443 \
+  --server.tls-cert-file /certs/server.crt \
+  --server.tls-key-file /certs/server.key
 ```
 
 ## Troubleshooting
