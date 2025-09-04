@@ -46,9 +46,20 @@ def mcp_url():
 @pytest.fixture
 def grafana_env():
     env = {"GRAFANA_URL": os.environ.get("GRAFANA_URL", DEFAULT_GRAFANA_URL)}
-    if key := os.environ.get("GRAFANA_API_KEY"):
+    # Check for the new service account token environment variable first
+    if key := os.environ.get("GRAFANA_SERVICE_ACCOUNT_TOKEN"):
+        env["GRAFANA_SERVICE_ACCOUNT_TOKEN"] = key
+    elif key := os.environ.get("GRAFANA_API_KEY"):
         env["GRAFANA_API_KEY"] = key
-    elif (username := os.environ.get("GRAFANA_USERNAME")) and (password := os.environ.get("GRAFANA_USERNAME")):
+        import warnings
+
+        warnings.warn(
+            "GRAFANA_API_KEY is deprecated, please use GRAFANA_SERVICE_ACCOUNT_TOKEN instead. See https://grafana.com/docs/grafana/latest/administration/service-accounts/#add-a-token-to-a-service-account-in-grafana for details on creating service account tokens.",
+            DeprecationWarning,
+        )
+    elif (username := os.environ.get("GRAFANA_USERNAME")) and (
+        password := os.environ.get("GRAFANA_PASSWORD")
+    ):
         env["GRAFANA_USERNAME"] = username
         env["GRAFANA_PASSWORD"] = password
     return env
@@ -59,11 +70,24 @@ def grafana_headers():
     headers = {
         "X-Grafana-URL": os.environ.get("GRAFANA_URL", DEFAULT_GRAFANA_URL),
     }
-    if key := os.environ.get("GRAFANA_API_KEY"):
+    # Check for the new service account token environment variable first
+    if key := os.environ.get("GRAFANA_SERVICE_ACCOUNT_TOKEN"):
         headers["X-Grafana-API-Key"] = key
-    elif (username := os.environ.get("GRAFANA_USERNAME")) and (password := os.environ.get("GRAFANA_PASSWORD")):
+    elif key := os.environ.get("GRAFANA_API_KEY"):
+        headers["X-Grafana-API-Key"] = key
+        import warnings
+
+        warnings.warn(
+            "GRAFANA_API_KEY is deprecated, please use GRAFANA_SERVICE_ACCOUNT_TOKEN instead. See https://grafana.com/docs/grafana/latest/administration/service-accounts/#add-a-token-to-a-service-account-in-grafana for details on creating service account tokens.",
+            DeprecationWarning,
+        )
+    elif (username := os.environ.get("GRAFANA_USERNAME")) and (
+        password := os.environ.get("GRAFANA_PASSWORD")
+    ):
         credentials = f"{username}:{password}"
-        headers["Authorization"] = "Basic " + base64.b64encode(credentials.encode("utf-8")).decode()
+        headers["Authorization"] = (
+            "Basic " + base64.b64encode(credentials.encode("utf-8")).decode()
+        )
     return headers
 
 

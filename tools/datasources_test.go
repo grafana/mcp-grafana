@@ -19,8 +19,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// newTestContext creates a new context with the Grafana URL and API key
-// from the environment variables GRAFANA_URL and GRAFANA_API_KEY.
+// newTestContext creates a new context with the Grafana URL and service account token
+// from the environment variables GRAFANA_URL and GRAFANA_SERVICE_ACCOUNT_TOKEN (or deprecated GRAFANA_API_KEY).
 // TODO: move this to a shared file.
 func newTestContext() context.Context {
 	cfg := client.DefaultTransportConfig()
@@ -40,7 +40,11 @@ func newTestContext() context.Context {
 		}
 	}
 
-	if apiKey := os.Getenv("GRAFANA_API_KEY"); apiKey != "" {
+	// Check for the new service account token environment variable first
+	if apiKey := os.Getenv("GRAFANA_SERVICE_ACCOUNT_TOKEN"); apiKey != "" {
+		cfg.APIKey = apiKey
+	} else if apiKey := os.Getenv("GRAFANA_API_KEY"); apiKey != "" {
+		// Fall back to the deprecated API key environment variable
 		cfg.APIKey = apiKey
 	} else {
 		cfg.BasicAuth = url.UserPassword("admin", "admin")
