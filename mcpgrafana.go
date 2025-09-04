@@ -25,8 +25,9 @@ const (
 	defaultGrafanaHost = "localhost:3000"
 	defaultGrafanaURL  = "http://" + defaultGrafanaHost
 
-	grafanaURLEnvVar = "GRAFANA_URL"
-	grafanaAPIEnvVar = "GRAFANA_API_KEY"
+	grafanaURLEnvVar                 = "GRAFANA_URL"
+	grafanaServiceAccountTokenEnvVar = "GRAFANA_SERVICE_ACCOUNT_TOKEN"
+	grafanaAPIEnvVar                 = "GRAFANA_API_KEY" // Deprecated: use GRAFANA_SERVICE_ACCOUNT_TOKEN instead
 
 	grafanaUsernameEnvVar = "GRAFANA_USERNAME"
 	grafanaPasswordEnvVar = "GRAFANA_PASSWORD"
@@ -37,7 +38,19 @@ const (
 
 func urlAndAPIKeyFromEnv() (string, string) {
 	u := strings.TrimRight(os.Getenv(grafanaURLEnvVar), "/")
-	apiKey := os.Getenv(grafanaAPIEnvVar)
+
+	// Check for the new service account token environment variable first
+	apiKey := os.Getenv(grafanaServiceAccountTokenEnvVar)
+	if apiKey != "" {
+		return u, apiKey
+	}
+
+	// Fall back to the deprecated API key environment variable
+	apiKey = os.Getenv(grafanaAPIEnvVar)
+	if apiKey != "" {
+		slog.Warn("GRAFANA_API_KEY is deprecated, please use GRAFANA_SERVICE_ACCOUNT_TOKEN instead. See https://grafana.com/docs/grafana/latest/administration/service-accounts/#add-a-token-to-a-service-account-in-grafana for details on creating service account tokens.")
+	}
+
 	return u, apiKey
 }
 
@@ -271,7 +284,7 @@ func extractKeyGrafanaInfoFromReq(req *http.Request) (grafanaUrl, apiKey string,
 }
 
 // ExtractGrafanaInfoFromEnv is a StdioContextFunc that extracts Grafana configuration from environment variables.
-// It reads GRAFANA_URL and GRAFANA_API_KEY environment variables and adds the configuration to the context for use by Grafana clients.
+// It reads GRAFANA_URL and GRAFANA_SERVICE_ACCOUNT_TOKEN (or deprecated GRAFANA_API_KEY) environment variables and adds the configuration to the context for use by Grafana clients.
 var ExtractGrafanaInfoFromEnv server.StdioContextFunc = func(ctx context.Context) context.Context {
 	u, apiKey, basicAuth := extractKeyGrafanaInfoFromEnv()
 	parsedURL, err := url.Parse(u)
@@ -412,7 +425,7 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 }
 
 // ExtractGrafanaClientFromEnv is a StdioContextFunc that creates and injects a Grafana client into the context.
-// It uses configuration from GRAFANA_URL, GRAFANA_API_KEY, GRAFANA_USERNAME/PASSWORD environment variables to initialize
+// It uses configuration from GRAFANA_URL, GRAFANA_SERVICE_ACCOUNT_TOKEN (or deprecated GRAFANA_API_KEY), GRAFANA_USERNAME/PASSWORD environment variables to initialize
 // the client with proper authentication.
 var ExtractGrafanaClientFromEnv server.StdioContextFunc = func(ctx context.Context) context.Context {
 	// Extract transport config from env vars

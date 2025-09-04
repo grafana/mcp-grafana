@@ -134,8 +134,13 @@ func runServerWithTLS() {
 			log.Printf("Failed to set GRAFANA_URL: %v", err)
 		}
 	}
-	if os.Getenv("GRAFANA_API_KEY") == "" {
-		fmt.Println("Warning: GRAFANA_API_KEY not set")
+	// Check for service account token first, then fall back to deprecated API key
+	if os.Getenv("GRAFANA_SERVICE_ACCOUNT_TOKEN") == "" {
+		if os.Getenv("GRAFANA_API_KEY") == "" {
+			fmt.Println("Warning: Neither GRAFANA_SERVICE_ACCOUNT_TOKEN nor GRAFANA_API_KEY is set")
+		} else {
+			fmt.Println("Warning: GRAFANA_API_KEY is deprecated, please use GRAFANA_SERVICE_ACCOUNT_TOKEN instead")
+		}
 	}
 
 	// Create TLS configuration that skips verification for demo purposes

@@ -2,9 +2,9 @@
 // +build cloud
 
 // This file contains cloud integration tests that run against a dedicated test instance
-// connected to a Grafana instance at (ASSERTS_GRAFANA_URL, ASSERTS_GRAFANA_API_KEY).
+// connected to a Grafana instance at (ASSERTS_GRAFANA_URL, ASSERTS_GRAFANA_SERVICE_ACCOUNT_TOKEN or ASSERTS_GRAFANA_API_KEY).
 // These tests expect this configuration to exist and will skip if the required
-// environment variables are not set.
+// environment variables are not set. The ASSERTS_GRAFANA_API_KEY variable is deprecated.
 
 package tools
 

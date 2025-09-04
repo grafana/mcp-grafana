@@ -64,8 +64,8 @@ jobs:
         with:
           # Secrets placed in the ci/repo/grafana/mcp-grafana/<path> path in Vault
           repo_secrets: |
-            GRAFANA_API_KEY=mcptests-grafana:api-key
-            ASSERTS_GRAFANA_API_KEY=dev-grafana:api-key
+            GRAFANA_SERVICE_ACCOUNT_TOKEN=mcptests-grafana:api-key
+            ASSERTS_GRAFANA_SERVICE_ACCOUNT_TOKEN=dev-grafana:api-key
 
       - name: Run cloud tests
         env:

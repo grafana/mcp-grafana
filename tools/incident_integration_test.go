@@ -7,7 +7,8 @@
 // at mcptests.grafana-dev.net. This instance is configured with a minimal setup on the Incident side
 // with two incidents created, one minor and one major, and both of them resolved.
 // These tests expect this configuration to exist and will skip if the required
-// environment variables (GRAFANA_URL, GRAFANA_API_KEY) are not set.
+// environment variables (GRAFANA_URL, GRAFANA_SERVICE_ACCOUNT_TOKEN or GRAFANA_API_KEY) are not set.
+// The GRAFANA_API_KEY variable is deprecated.
 
 package tools
 

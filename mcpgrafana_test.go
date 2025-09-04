@@ -80,6 +80,7 @@ func TestExtractGrafanaInfoFromHeaders(t *testing.T) {
 		// Explicitly clear environment variables to ensure test isolation
 		t.Setenv("GRAFANA_URL", "")
 		t.Setenv("GRAFANA_API_KEY", "")
+		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN", "")
 
 		req, err := http.NewRequest("GET", "http://example.com", nil)
 		require.NoError(t, err)
@@ -102,6 +103,31 @@ func TestExtractGrafanaInfoFromHeaders(t *testing.T) {
 		assert.Equal(t, "my-test-api-key", config.APIKey)
 	})
 
+	t.Run("no headers, with service account token", func(t *testing.T) {
+		t.Setenv("GRAFANA_URL", "http://my-test-url.grafana.com")
+		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN", "my-service-account-token")
+
+		req, err := http.NewRequest("GET", "http://example.com", nil)
+		require.NoError(t, err)
+		ctx := ExtractGrafanaInfoFromHeaders(context.Background(), req)
+		config := GrafanaConfigFromContext(ctx)
+		assert.Equal(t, "http://my-test-url.grafana.com", config.URL)
+		assert.Equal(t, "my-service-account-token", config.APIKey)
+	})
+
+	t.Run("no headers, service account token takes precedence over api key", func(t *testing.T) {
+		t.Setenv("GRAFANA_URL", "http://my-test-url.grafana.com")
+		t.Setenv("GRAFANA_API_KEY", "my-deprecated-api-key")
+		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN", "my-service-account-token")
+
+		req, err := http.NewRequest("GET", "http://example.com", nil)
+		require.NoError(t, err)
+		ctx := ExtractGrafanaInfoFromHeaders(context.Background(), req)
+		config := GrafanaConfigFromContext(ctx)
+		assert.Equal(t, "http://my-test-url.grafana.com", config.URL)
+		assert.Equal(t, "my-service-account-token", config.APIKey)
+	})
+
 	t.Run("with headers, no env", func(t *testing.T) {
 		req, err := http.NewRequest("GET", "http://example.com", nil)
 		require.NoError(t, err)
@@ -117,6 +143,7 @@ func TestExtractGrafanaInfoFromHeaders(t *testing.T) {
 		// Env vars should be ignored if headers are present.
 		t.Setenv("GRAFANA_URL", "will-not-be-used")
 		t.Setenv("GRAFANA_API_KEY", "will-not-be-used")
+		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN", "will-not-be-used")
 
 		req, err := http.NewRequest("GET", "http://example.com", nil)
 		require.NoError(t, err)

@@ -240,9 +240,11 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 
 This MCP server works with both local Grafana instances and Grafana Cloud. For Grafana Cloud, use your instance URL (e.g., `https://myinstance.grafana.net`) instead of `http://localhost:3000` in the configuration examples below.
 
-1. If using API key authentication, create a service account in Grafana with enough permissions to use the tools you want to use,
+1. If using service account token authentication, create a service account in Grafana with enough permissions to use the tools you want to use,
    generate a service account token, and copy it to the clipboard for use in the configuration file.
-   Follow the [Grafana documentation][service-account] for details.
+   Follow the [Grafana service account documentation][service-account] for details on creating service account tokens.
+
+   > **Note:** The environment variable `GRAFANA_API_KEY` is deprecated and will be removed in a future version. Please migrate to using `GRAFANA_SERVICE_ACCOUNT_TOKEN` instead. The old variable name will continue to work for backward compatibility but will show deprecation warnings.
 
 2. You have several options to install `mcp-grafana`:
 
@@ -255,23 +257,23 @@ This MCP server works with both local Grafana instances and Grafana Cloud. For G
      ```bash
      docker pull mcp/grafana
      # For local Grafana:
-     docker run --rm -i -e GRAFANA_URL=http://localhost:3000 -e GRAFANA_API_KEY=<your service account token> mcp/grafana -t stdio
+     docker run --rm -i -e GRAFANA_URL=http://localhost:3000 -e GRAFANA_SERVICE_ACCOUNT_TOKEN=<your service account token> mcp/grafana -t stdio
      # For Grafana Cloud:
-     docker run --rm -i -e GRAFANA_URL=https://myinstance.grafana.net -e GRAFANA_API_KEY=<your service account token> mcp/grafana -t stdio
+     docker run --rm -i -e GRAFANA_URL=https://myinstance.grafana.net -e GRAFANA_SERVICE_ACCOUNT_TOKEN=<your service account token> mcp/grafana -t stdio
      ```
 
      2. **SSE Mode**: In this mode, the server runs as an HTTP server that clients connect to. You must expose port 8000 using the `-p` flag:
 
      ```bash
      docker pull mcp/grafana
-     docker run --rm -p 8000:8000 -e GRAFANA_URL=http://localhost:3000 -e GRAFANA_API_KEY=<your service account token> mcp/grafana
+     docker run --rm -p 8000:8000 -e GRAFANA_URL=http://localhost:3000 -e GRAFANA_SERVICE_ACCOUNT_TOKEN=<your service account token> mcp/grafana
      ```
 
      3. **Streamable HTTP Mode**: In this mode, the server operates as an independent process that can handle multiple client connections. You must expose port 8000 using the `-p` flag: For this mode you must explicitly override the default with `-t streamable-http`
 
      ```bash
      docker pull mcp/grafana
-     docker run --rm -p 8000:8000 -e GRAFANA_URL=http://localhost:3000 -e GRAFANA_API_KEY=<your service account token> mcp/grafana -t streamable-http
+     docker run --rm -p 8000:8000 -e GRAFANA_URL=http://localhost:3000 -e GRAFANA_SERVICE_ACCOUNT_TOKEN=<your service account token> mcp/grafana -t streamable-http
      ```
 
      For HTTPS streamable HTTP mode with server TLS certificates:
@@ -281,7 +283,7 @@ This MCP server works with both local Grafana instances and Grafana Cloud. For G
      docker run --rm -p 8443:8443 \
        -v /path/to/certs:/certs:ro \
        -e GRAFANA_URL=http://localhost:3000 \
-       -e GRAFANA_API_KEY=<your service account token> \
+       -e GRAFANA_SERVICE_ACCOUNT_TOKEN=<your service account token> \
        mcp/grafana \
        -t streamable-http \
        -addr :8443 \
@@ -318,7 +320,7 @@ This MCP server works with both local Grafana instances and Grafana Cloud. For G
          "args": [],
          "env": {
            "GRAFANA_URL": "http://localhost:3000",  // Or "https://myinstance.grafana.net" for Grafana Cloud
-           "GRAFANA_API_KEY": "<your service account token>",
+           "GRAFANA_SERVICE_ACCOUNT_TOKEN": "<your service account token>",
            // If using username/password authentication
            "GRAFANA_USERNAME": "<your username>",
            "GRAFANA_PASSWORD": "<your password>"
@@ -344,14 +346,14 @@ This MCP server works with both local Grafana instances and Grafana Cloud. For G
         "-e",
         "GRAFANA_URL",
         "-e",
-        "GRAFANA_API_KEY",
+        "GRAFANA_SERVICE_ACCOUNT_TOKEN",
         "mcp/grafana",
         "-t",
         "stdio"
       ],
       "env": {
         "GRAFANA_URL": "http://localhost:3000",  // Or "https://myinstance.grafana.net" for Grafana Cloud
-        "GRAFANA_API_KEY": "<your service account token>",
+        "GRAFANA_SERVICE_ACCOUNT_TOKEN": "<your service account token>",
         // If using username/password authentication
         "GRAFANA_USERNAME": "<your username>",
         "GRAFANA_PASSWORD": "<your password>"
@@ -407,7 +409,7 @@ To use debug mode with the Claude Desktop configuration, update your config as f
       "args": ["-debug"],
       "env": {
         "GRAFANA_URL": "http://localhost:3000",  // Or "https://myinstance.grafana.net" for Grafana Cloud
-        "GRAFANA_API_KEY": "<your service account token>"
+        "GRAFANA_SERVICE_ACCOUNT_TOKEN": "<your service account token>"
       }
     }
   }
@@ -428,7 +430,7 @@ To use debug mode with the Claude Desktop configuration, update your config as f
         "-e",
         "GRAFANA_URL",
         "-e",
-        "GRAFANA_API_KEY",
+        "GRAFANA_SERVICE_ACCOUNT_TOKEN",
         "mcp/grafana",
         "-t",
         "stdio",
@@ -436,7 +438,7 @@ To use debug mode with the Claude Desktop configuration, update your config as f
       ],
       "env": {
         "GRAFANA_URL": "http://localhost:3000",  // Or "https://myinstance.grafana.net" for Grafana Cloud
-        "GRAFANA_API_KEY": "<your service account token>"
+        "GRAFANA_SERVICE_ACCOUNT_TOKEN": "<your service account token>"
       }
     }
   }
@@ -471,7 +473,7 @@ If your Grafana instance is behind mTLS or requires custom TLS certificates, you
       ],
       "env": {
         "GRAFANA_URL": "https://secure-grafana.example.com",
-        "GRAFANA_API_KEY": "<your service account token>"
+        "GRAFANA_SERVICE_ACCOUNT_TOKEN": "<your service account token>"
       }
     }
   }
@@ -494,7 +496,7 @@ If your Grafana instance is behind mTLS or requires custom TLS certificates, you
         "-e",
         "GRAFANA_URL",
         "-e",
-        "GRAFANA_API_KEY",
+        "GRAFANA_SERVICE_ACCOUNT_TOKEN",
         "mcp/grafana",
         "-t",
         "stdio",
@@ -507,7 +509,7 @@ If your Grafana instance is behind mTLS or requires custom TLS certificates, you
       ],
       "env": {
         "GRAFANA_URL": "https://secure-grafana.example.com",
-        "GRAFANA_API_KEY": "<your service account token>"
+        "GRAFANA_SERVICE_ACCOUNT_TOKEN": "<your service account token>"
       }
     }
   }
@@ -606,7 +608,7 @@ This would start the MCP server on HTTPS port 8443. Clients would then connect t
 docker run --rm -p 8443:8443 \
   -v /path/to/certs:/certs:ro \
   -e GRAFANA_URL=http://localhost:3000 \
-  -e GRAFANA_API_KEY=<your service account token> \
+  -e GRAFANA_SERVICE_ACCOUNT_TOKEN=<your service account token> \
   mcp/grafana \
   -t streamable-http \
   -addr :8443 \
@@ -729,4 +731,4 @@ See the [JSONSchema Linter documentation](internal/linter/jsonschema/README.md) 
 This project is licensed under the [Apache License, Version 2.0](LICENSE).
 
 [mcp]: https://modelcontextprotocol.io/
-[service-account]: https://grafana.com/docs/grafana/latest/administration/service-accounts/
+[service-account]: https://grafana.com/docs/grafana/latest/administration/service-accounts/#add-a-token-to-a-service-account-in-grafana

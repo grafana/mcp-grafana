@@ -37,8 +37,12 @@ test-integration: ## Run only the Docker-based integration tests (requires docke
 
 .PHONY: test-cloud
 test-cloud: ## Run only the cloud-based tests (requires cloud Grafana instance and credentials).
-ifeq ($(origin GRAFANA_API_KEY), undefined)
-	$(error GRAFANA_API_KEY is not set. Please 'export GRAFANA_API_KEY=...' or use a tool like direnv to load it from .envrc)
+ifeq ($(origin GRAFANA_SERVICE_ACCOUNT_TOKEN), undefined)
+	ifeq ($(origin GRAFANA_API_KEY), undefined)
+		$(error Neither GRAFANA_SERVICE_ACCOUNT_TOKEN nor GRAFANA_API_KEY is set. Please 'export GRAFANA_SERVICE_ACCOUNT_TOKEN=...' or use a tool like direnv to load it from .envrc. See https://grafana.com/docs/grafana/latest/administration/service-accounts/#add-a-token-to-a-service-account-in-grafana for details on creating service account tokens.)
+	else
+		$(warning GRAFANA_API_KEY is deprecated, please use GRAFANA_SERVICE_ACCOUNT_TOKEN instead)
+	endif
 endif
 	GRAFANA_URL=https://mcptests.grafana-dev.net go test -v -count=1 -tags cloud ./tools
 
