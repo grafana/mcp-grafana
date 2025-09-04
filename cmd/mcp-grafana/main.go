@@ -2,12 +2,17 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
+	"os/signal"
 	"slices"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/mark3labs/mcp-go/server"
 
@@ -124,25 +129,99 @@ func (tc *tlsConfig) addFlags() {
 	flag.StringVar(&tc.keyFile, "server.tls-key-file", "", "Path to TLS private key file for server HTTPS (required for TLS)")
 }
 
+// httpServer represents a server with Start and Shutdown methods
+type httpServer interface {
+	Start(addr string) error
+	Shutdown(ctx context.Context) error
+}
+
+// runHTTPServer handles the common logic for running HTTP-based servers
+func runHTTPServer(ctx context.Context, srv httpServer, addr, transportName string) error {
+	// Start server in a goroutine
+	serverErr := make(chan error, 1)
+	go func() {
+		if err := srv.Start(addr); err != nil {
+			serverErr <- err
+		}
+		close(serverErr)
+	}()
+
+	// Wait for either server error or shutdown signal
+	select {
+	case err := <-serverErr:
+		return err
+	case <-ctx.Done():
+		slog.Info(fmt.Sprintf("%s server shutting down...", transportName))
+
+		// Create a timeout context for shutdown
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
+
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			return fmt.Errorf("shutdown error: %v", err)
+		}
+
+		// Wait for server to finish
+		select {
+		case err := <-serverErr:
+			// http.ErrServerClosed is expected when shutting down
+			if err != nil && !errors.Is(err, http.ErrServerClosed) {
+				return fmt.Errorf("server error during shutdown: %v", err)
+			}
+		case <-shutdownCtx.Done():
+			slog.Warn(fmt.Sprintf("%s server did not stop gracefully within timeout", transportName))
+		}
+	}
+
+	return nil
+}
+
 func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt disabledTools, gc mcpgrafana.GrafanaConfig, tls tlsConfig) error {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})))
 	s := newServer(dt)
 
+	// Create a context that will be cancelled on shutdown
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Set up signal handling for graceful shutdown
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigChan)
+
+	// Handle shutdown signals
+	go func() {
+		<-sigChan
+		slog.Info("Received shutdown signal")
+		cancel()
+
+		// For stdio, close stdin to unblock the Listen call
+		if transport == "stdio" {
+			_ = os.Stdin.Close()
+		}
+	}()
+
+	// Start the appropriate server based on transport
 	switch transport {
 	case "stdio":
 		srv := server.NewStdioServer(s)
 		srv.SetContextFunc(mcpgrafana.ComposedStdioContextFunc(gc))
 		slog.Info("Starting Grafana MCP server using stdio transport", "version", mcpgrafana.Version())
-		return srv.Listen(context.Background(), os.Stdin, os.Stdout)
+
+		err := srv.Listen(ctx, os.Stdin, os.Stdout)
+		if err != nil && err != context.Canceled {
+			return fmt.Errorf("server error: %v", err)
+		}
+		return nil
+
 	case "sse":
 		srv := server.NewSSEServer(s,
 			server.WithSSEContextFunc(mcpgrafana.ComposedSSEContextFunc(gc)),
 			server.WithStaticBasePath(basePath),
 		)
-		slog.Info("Starting Grafana MCP server using SSE transport", "version", mcpgrafana.Version(), "address", addr, "basePath", basePath)
-		if err := srv.Start(addr); err != nil {
-			return fmt.Errorf("server error: %v", err)
-		}
+		slog.Info("Starting Grafana MCP server using SSE transport",
+			"version", mcpgrafana.Version(), "address", addr, "basePath", basePath)
+		return runHTTPServer(ctx, srv, addr, "SSE")
 	case "streamable-http":
 		opts := []server.StreamableHTTPOption{
 			server.WithHTTPContextFunc(mcpgrafana.ComposedHTTPContextFunc(gc)),
@@ -153,17 +232,15 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 			opts = append(opts, server.WithTLSCert(tls.certFile, tls.keyFile))
 		}
 		srv := server.NewStreamableHTTPServer(s, opts...)
-		slog.Info("Starting Grafana MCP server using StreamableHTTP transport", "version", mcpgrafana.Version(), "address", addr, "endpointPath", endpointPath)
-		if err := srv.Start(addr); err != nil {
-			return fmt.Errorf("server error: %v", err)
-		}
+		slog.Info("Starting Grafana MCP server using StreamableHTTP transport",
+			"version", mcpgrafana.Version(), "address", addr, "endpointPath", endpointPath)
+		return runHTTPServer(ctx, srv, addr, "StreamableHTTP")
 	default:
 		return fmt.Errorf(
 			"invalid transport type: %s. Must be 'stdio', 'sse' or 'streamable-http'",
 			transport,
 		)
 	}
-	return nil
 }
 
 func main() {
