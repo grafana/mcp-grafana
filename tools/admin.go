@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
 	"github.com/grafana/grafana-openapi-client-go/client/org"
@@ -33,6 +34,9 @@ var ListTeams = mcpgrafana.MustTool(
 	"list_teams",
 	"Search for Grafana teams by a query string. Returns a list of matching teams with details like name, ID, and URL.",
 	listTeams,
+	mcp.WithTitleAnnotation("List teams"),
+	mcp.WithIdempotentHintAnnotation(true),
+	mcp.WithReadOnlyHintAnnotation(true),
 )
 
 type ListUsersByOrgParams struct{}
@@ -52,6 +56,9 @@ var ListUsersByOrg = mcpgrafana.MustTool(
 	"list_users_by_org",
 	"List users by organization. Returns a list of users with details like userid, email, role etc.",
 	listUsersByOrg,
+	mcp.WithTitleAnnotation("List users by org"),
+	mcp.WithIdempotentHintAnnotation(true),
+	mcp.WithReadOnlyHintAnnotation(true),
 )
 
 func AddAdminTools(mcp *server.MCPServer) {
