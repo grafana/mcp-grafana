@@ -429,11 +429,10 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 // the client with proper authentication.
 var ExtractGrafanaClientFromEnv server.StdioContextFunc = func(ctx context.Context) context.Context {
 	// Extract transport config from env vars
-	grafanaURL, ok := os.LookupEnv(grafanaURLEnvVar)
-	if !ok {
+	grafanaURL, apiKey := urlAndAPIKeyFromEnv()
+	if grafanaURL == "" {
 		grafanaURL = defaultGrafanaURL
 	}
-	apiKey := os.Getenv(grafanaAPIEnvVar)
 	auth := userAndPassFromEnv()
 	grafanaClient := NewGrafanaClient(ctx, grafanaURL, apiKey, auth)
 	return context.WithValue(ctx, grafanaClientKey{}, grafanaClient)
