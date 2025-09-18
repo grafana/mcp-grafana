@@ -51,7 +51,10 @@ func promClientFromContext(ctx context.Context, uid string) (promv1.API, error) 
 		if jsonDataMap, ok := datasource.JSONData.(map[string]interface{}); ok {
 			if _, hasAzureAuthType := jsonDataMap["azureAuthType"]; hasAzureAuthType {
 				requiresAADAuth = true
-				slog.Debug("Prometheus datasource requires AAD auth", "uid", uid)
+				slog.Debug("Prometheus datasource requires AAD auth (azureAuthType)", "uid", uid)
+			} else if _, hasAzureAuth := jsonDataMap["azureAuth"]; hasAzureAuth {
+				requiresAADAuth = true
+				slog.Debug("Prometheus datasource requires AAD auth (azureAuth)", "uid", uid)
 			}
 		}
 	}
