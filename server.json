@@ -1,0 +1,51 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json",
+  "name": "io.github.grafana/mcp-grafana",
+  "description": "An MCP server giving access to Grafana dashboards, data and more.",
+  "repository": {
+    "url": "https://github.com/grafana/mcp-grafana",
+    "source": "github"
+  },
+  "version": "0.6.5",
+  "packages": [
+    {
+      "registryType": "oci",
+      "registryBaseUrl": "https://docker.io",
+      "identifier": "grafana/mcp-grafana",
+      "version": "0.6.5",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "description": "URL to your Grafana instance",
+          "isRequired": true,
+          "format": "string",
+          "isSecret": false,
+          "name": "GRAFANA_URL"
+        },
+        {
+          "description": "Service account token used to authenticate with your Grafana instance",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": true,
+          "name": "GRAFANA_SERVICE_ACCOUNT_TOKEN"
+        },
+        {
+          "description": "Username to authenticate with your Grafana instance",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": false,
+          "name": "GRAFANA_USERNAME"
+        },
+        {
+          "description": "Password to authenticate with your Grafana instance",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": true,
+          "name": "GRAFANA_PASSWORD"
+        }
+      ]
+    }
+  ]
+}
