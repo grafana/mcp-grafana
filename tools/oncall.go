@@ -466,7 +466,7 @@ func listAlertGroups(ctx context.Context, args ListAlertGroupsParams) ([]*aapi.A
 
 var ListAlertGroups = mcpgrafana.MustTool(
 	"list_alert_groups",
-	"List alert groups from Grafana OnCall with optional filtering. Supports filtering by alert group ID, route ID, integration ID, state, team ID, time range, labels, and name. Returns a list of alert group objects with their details. Supports pagination.",
+	"List alert groups from Grafana OnCall with filtering options. Supports filtering by alert group ID, route ID, integration ID, state (new, acknowledged, resolved, silenced), team ID, time range, labels, and name. For time ranges, use format 'YYYY-MM-DDThh:mm:ss_YYYY-MM-DDThh:mm:ss' (e.g., '2025-01-19T00:00:00_2025-01-19T23:59:59' for today). For labels, use format 'key:value' (e.g., ['env:prod', 'severity:high']). Retgourns a list of alert group objects with their details. Supports pagination.",
 	listAlertGroups,
 	mcp.WithTitleAnnotation("List alert groups"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -477,29 +477,28 @@ type GetAlertGroupParams struct {
 	AlertGroupID string `json:"alertGroupId" jsonschema:"required,description=The ID of the alert group to retrieve"`
 }
 
-// TODO: Uncomment once GetAlertGroup method is available in the API client after PR https://github.com/grafana/amixr-api-go-client/pull/35 is merged
-// func getAlertGroup(ctx context.Context, args GetAlertGroupParams) (*aapi.AlertGroup, error) {
-// 	alertGroupService, err := getAlertGroupServiceFromContext(ctx)
-// 	if err != nil {
-// 		return nil, fmt.Errorf("getting OnCall alert group service: %w", err)
-// 	}
-//
-// 	alertGroup, _, err := alertGroupService.GetAlertGroup(args.AlertGroupID, &aapi.GetAlertGroupOptions{})
-// 	if err != nil {
-// 		return nil, fmt.Errorf("getting OnCall alert group %s: %w", args.AlertGroupID, err)
-// 	}
-//
-// 	return alertGroup, nil
-// }
+func getAlertGroup(ctx context.Context, args GetAlertGroupParams) (*aapi.AlertGroup, error) {
+	alertGroupService, err := getAlertGroupServiceFromContext(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("getting OnCall alert group service: %w", err)
+	}
 
-// var GetAlertGroup = mcpgrafana.MustTool(
-// 	"get_alert_group",
-// 	"Get a specific alert group from Grafana OnCall by its ID. Returns the full alert group details.",
-// 	getAlertGroup,
-// 	mcp.WithTitleAnnotation("Get alert group"),
-// 	mcp.WithIdempotentHintAnnotation(true),
-// 	mcp.WithReadOnlyHintAnnotation(true),
-// )
+	alertGroup, _, err := alertGroupService.GetAlertGroup(args.AlertGroupID)
+	if err != nil {
+		return nil, fmt.Errorf("getting OnCall alert group %s: %w", args.AlertGroupID, err)
+	}
+
+	return alertGroup, nil
+}
+
+var GetAlertGroup = mcpgrafana.MustTool(
+	"get_alert_group",
+	"Get a specific alert group from Grafana OnCall by its ID. Returns the full alert group details.",
+	getAlertGroup,
+	mcp.WithTitleAnnotation("Get alert group"),
+	mcp.WithIdempotentHintAnnotation(true),
+	mcp.WithReadOnlyHintAnnotation(true),
+)
 
 func AddOnCallTools(mcp *server.MCPServer) {
 	ListOnCallSchedules.Register(mcp)
@@ -508,5 +507,5 @@ func AddOnCallTools(mcp *server.MCPServer) {
 	ListOnCallTeams.Register(mcp)
 	ListOnCallUsers.Register(mcp)
 	ListAlertGroups.Register(mcp)
-	// GetAlertGroup.Register(mcp)
+	GetAlertGroup.Register(mcp)
 }
