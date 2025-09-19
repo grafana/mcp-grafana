@@ -400,10 +400,84 @@ var ListOnCallUsers = mcpgrafana.MustTool(
 	mcp.WithReadOnlyHintAnnotation(true),
 )
 
+func getAlertGroupServiceFromContext(ctx context.Context) (*aapi.AlertGroupService, error) {
+	client, err := oncallClientFromContext(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("getting OnCall client: %w", err)
+	}
+
+	return aapi.NewAlertGroupService(client), nil
+}
+
+type ListAlertGroupsParams struct {
+	Page          int      `json:"page,omitempty" jsonschema:"description=The page number to return"`
+	AlertGroupID  string   `json:"id,omitempty" jsonschema:"description=Filter by specific alert group ID"`
+	RouteID       string   `json:"routeId,omitempty" jsonschema:"description=Filter by route ID"`
+	IntegrationID string   `json:"integrationId,omitempty" jsonschema:"description=Filter by integration ID"`
+	State         string   `json:"state,omitempty" jsonschema:"description=Filter by alert group state (one of: new, acknowledged, resolved, silenced)"`
+	TeamID        string   `json:"teamId,omitempty" jsonschema:"description=Filter by team ID"`
+	StartedAt     string   `json:"startedAt,omitempty" jsonschema:"description=Filter by time range in format YYYY-MM-DDThh:mm:ss_YYYY-MM-DDThh:mm:ss"`
+	Labels        []string `json:"labels,omitempty" jsonschema:"description=Filter by labels in format key:value (e.g., ['env:prod', 'severity:high'])"`
+	Name          string   `json:"name,omitempty" jsonschema:"description=Filter by alert group name"`
+}
+
+func listAlertGroups(ctx context.Context, args ListAlertGroupsParams) ([]*aapi.AlertGroup, error) {
+	alertGroupService, err := getAlertGroupServiceFromContext(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("getting OnCall alert group service: %w", err)
+	}
+
+	listOptions := &aapi.ListAlertGroupOptions{}
+	if args.Page > 0 {
+		listOptions.Page = args.Page
+	}
+	if args.AlertGroupID != "" {
+		listOptions.AlertGroupID = args.AlertGroupID
+	}
+	if args.RouteID != "" {
+		listOptions.RouteID = args.RouteID
+	}
+	if args.IntegrationID != "" {
+		listOptions.IntegrationID = args.IntegrationID
+	}
+	if args.State != "" {
+		listOptions.State = args.State
+	}
+	if args.TeamID != "" {
+		listOptions.TeamID = args.TeamID
+	}
+	if args.StartedAt != "" {
+		listOptions.StartedAt = args.StartedAt
+	}
+	if len(args.Labels) > 0 {
+		listOptions.Labels = args.Labels
+	}
+	if args.Name != "" {
+		listOptions.Name = args.Name
+	}
+
+	response, _, err := alertGroupService.ListAlertGroups(listOptions)
+	if err != nil {
+		return nil, fmt.Errorf("listing OnCall alert groups: %w", err)
+	}
+
+	return response.AlertGroups, nil
+}
+
+var ListAlertGroups = mcpgrafana.MustTool(
+	"list_alert_groups",
+	"List alert groups from Grafana OnCall with optional filtering. Supports filtering by alert group ID, route ID, integration ID, state, team ID, time range, labels, and name. Returns a list of alert group objects with their details. Supports pagination.",
+	listAlertGroups,
+	mcp.WithTitleAnnotation("List alert groups"),
+	mcp.WithIdempotentHintAnnotation(true),
+	mcp.WithReadOnlyHintAnnotation(true),
+)
+
 func AddOnCallTools(mcp *server.MCPServer) {
 	ListOnCallSchedules.Register(mcp)
 	GetOnCallShift.Register(mcp)
 	GetCurrentOnCallUsers.Register(mcp)
 	ListOnCallTeams.Register(mcp)
 	ListOnCallUsers.Register(mcp)
+	ListAlertGroups.Register(mcp)
 }
