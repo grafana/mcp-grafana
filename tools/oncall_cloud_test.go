@@ -253,34 +253,31 @@ func TestCloudOnCallUsers(t *testing.T) {
 	})
 }
 
-// TODO: Add TestCloudGetAlertGroup test once the GetAlertGroup method is available
-// in the API client after PR https://github.com/grafana/amixr-api-go-client/pull/35 is merged
-//
-// func TestCloudGetAlertGroup(t *testing.T) {
-//     ctx := createCloudTestContext(t, "OnCall", "GRAFANA_URL", "GRAFANA_API_KEY")
-//
-//     // First, get a list of alert groups to find a valid ID to test with
-//     alertGroups, err := listAlertGroups(ctx, ListAlertGroupsParams{})
-//     require.NoError(t, err, "Should not error when listing alert groups")
-//     require.NotEmpty(t, alertGroups, "Should have at least one alert group to test with")
-//
-//     alertGroupID := alertGroups[0].ID
-//
-//     t.Run("get alert group by ID", func(t *testing.T) {
-//         result, err := getAlertGroup(ctx, GetAlertGroupParams{
-//             AlertGroupID: alertGroupID,
-//         })
-//         require.NoError(t, err, "Should not error when getting alert group by ID")
-//         assert.NotNil(t, result, "Result should not be nil")
-//         assert.Equal(t, alertGroupID, result.ID, "Should return the correct alert group")
-//         assert.NotEmpty(t, result.Title, "Alert group should have a title")
-//         assert.NotEmpty(t, result.State, "Alert group should have a state")
-//     })
-//
-//     t.Run("get alert group with invalid ID", func(t *testing.T) {
-//         _, err := getAlertGroup(ctx, GetAlertGroupParams{
-//             AlertGroupID: "invalid-alert-group-id",
-//         })
-//         assert.Error(t, err, "Should error when getting alert group with invalid ID")
-//     })
-// }
+func TestCloudGetAlertGroup(t *testing.T) {
+	ctx := createCloudTestContext(t, "OnCall", "GRAFANA_URL", "GRAFANA_API_KEY")
+
+	// First, get a list of alert groups to find a valid ID to test with
+	alertGroups, err := listAlertGroups(ctx, ListAlertGroupsParams{})
+	require.NoError(t, err, "Should not error when listing alert groups")
+	require.NotEmpty(t, alertGroups, "Should have at least one alert group to test with")
+
+	alertGroupID := alertGroups[0].ID
+
+	t.Run("get alert group by ID", func(t *testing.T) {
+		result, err := getAlertGroup(ctx, GetAlertGroupParams{
+			AlertGroupID: alertGroupID,
+		})
+		require.NoError(t, err, "Should not error when getting alert group by ID")
+		assert.NotNil(t, result, "Result should not be nil")
+		assert.Equal(t, alertGroupID, result.ID, "Should return the correct alert group")
+		assert.NotEmpty(t, result.Title, "Alert group should have a title")
+		assert.NotEmpty(t, result.State, "Alert group should have a state")
+	})
+
+	t.Run("get alert group with invalid ID", func(t *testing.T) {
+		_, err := getAlertGroup(ctx, GetAlertGroupParams{
+			AlertGroupID: "invalid-alert-group-id",
+		})
+		assert.Error(t, err, "Should error when getting alert group with invalid ID")
+	})
+}
