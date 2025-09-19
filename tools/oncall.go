@@ -414,10 +414,10 @@ type ListAlertGroupsParams struct {
 	AlertGroupID  string   `json:"id,omitempty" jsonschema:"description=Filter by specific alert group ID"`
 	RouteID       string   `json:"routeId,omitempty" jsonschema:"description=Filter by route ID"`
 	IntegrationID string   `json:"integrationId,omitempty" jsonschema:"description=Filter by integration ID"`
-	State         string   `json:"state,omitempty" jsonschema:"description=Filter by alert group state (one of: new, acknowledged, resolved, silenced)"`
+	State         string   `json:"state,omitempty" jsonschema:"description=Filter by alert group state (one of: new\\, acknowledged\\, resolved\\, silenced)"`
 	TeamID        string   `json:"teamId,omitempty" jsonschema:"description=Filter by team ID"`
 	StartedAt     string   `json:"startedAt,omitempty" jsonschema:"description=Filter by time range in format YYYY-MM-DDThh:mm:ss_YYYY-MM-DDThh:mm:ss"`
-	Labels        []string `json:"labels,omitempty" jsonschema:"description=Filter by labels in format key:value (e.g., ['env:prod', 'severity:high'])"`
+	Labels        []string `json:"labels,omitempty" jsonschema:"description=Filter by labels in format key:value (e.g.\\, ['env:prod'\\, 'severity:high'])"`
 	Name          string   `json:"name,omitempty" jsonschema:"description=Filter by alert group name"`
 }
 
