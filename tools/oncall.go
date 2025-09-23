@@ -495,7 +495,7 @@ var GetAlertGroup = mcpgrafana.MustTool(
 	"get_alert_group",
 	"Get a specific alert group from Grafana OnCall by its ID. Returns the full alert group details.",
 	getAlertGroup,
-	mcp.WithTitleAnnotation("Get alert group"),
+	mcp.WithTitleAnnotation("Get IRM alert group"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
 )
