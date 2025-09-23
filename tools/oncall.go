@@ -466,7 +466,7 @@ func listAlertGroups(ctx context.Context, args ListAlertGroupsParams) ([]*aapi.A
 
 var ListAlertGroups = mcpgrafana.MustTool(
 	"list_alert_groups",
-	"List alert groups from Grafana OnCall with filtering options. Supports filtering by alert group ID, route ID, integration ID, state (new, acknowledged, resolved, silenced), team ID, time range, labels, and name. For time ranges, use format 'YYYY-MM-DDThh:mm:ss_YYYY-MM-DDThh:mm:ss' (e.g., '2025-01-19T00:00:00_2025-01-19T23:59:59' for today). For labels, use format 'key:value' (e.g., ['env:prod', 'severity:high']). Retgourns a list of alert group objects with their details. Supports pagination.",
+	"List alert groups from Grafana OnCall with filtering options. Supports filtering by alert group ID, route ID, integration ID, state (new, acknowledged, resolved, silenced), team ID, time range, labels, and name. For time ranges, use format 'YYYY-MM-DDThh:mm:ss_YYYY-MM-DDThh:mm:ss' (e.g., '2025-01-19T00:00:00_2025-01-19T23:59:59' for a full day's range). For labels, use format 'key:value' (e.g., ['env:prod', 'severity:high']). Returns a list of alert group objects with their details. Supports pagination.",
 	listAlertGroups,
 	mcp.WithTitleAnnotation("List alert groups"),
 	mcp.WithIdempotentHintAnnotation(true),
