@@ -416,7 +416,7 @@ type ListAlertGroupsParams struct {
 	IntegrationID string   `json:"integrationId,omitempty" jsonschema:"description=Filter by integration ID"`
 	State         string   `json:"state,omitempty" jsonschema:"description=Filter by alert group state (one of: new\\, acknowledged\\, resolved\\, silenced)"`
 	TeamID        string   `json:"teamId,omitempty" jsonschema:"description=Filter by team ID"`
-	StartedAt     string   `json:"startedAt,omitempty" jsonschema:"description=Filter by time range in format YYYY-MM-DDThh:mm:ss_YYYY-MM-DDThh:mm:ss"`
+	StartedAt     string   `json:"startedAt,omitempty" jsonschema:"description=Filter by time range in format '{start}_{end}' ISO 8601 timestamp range (e.g., '2025-01-19T00:00:00_2025-01-19T23:59:59')"`
 	Labels        []string `json:"labels,omitempty" jsonschema:"description=Filter by labels in format key:value (e.g.\\, ['env:prod'\\, 'severity:high'])"`
 	Name          string   `json:"name,omitempty" jsonschema:"description=Filter by alert group name"`
 }
@@ -466,7 +466,7 @@ func listAlertGroups(ctx context.Context, args ListAlertGroupsParams) ([]*aapi.A
 
 var ListAlertGroups = mcpgrafana.MustTool(
 	"list_alert_groups",
-	"List alert groups from Grafana OnCall with filtering options. Supports filtering by alert group ID, route ID, integration ID, state (new, acknowledged, resolved, silenced), team ID, time range, labels, and name. For time ranges, use format 'YYYY-MM-DDThh:mm:ss_YYYY-MM-DDThh:mm:ss' (e.g., '2025-01-19T00:00:00_2025-01-19T23:59:59' for a full day's range). For labels, use format 'key:value' (e.g., ['env:prod', 'severity:high']). Returns a list of alert group objects with their details. Supports pagination.",
+	"List alert groups from Grafana OnCall with filtering options. Supports filtering by alert group ID, route ID, integration ID, state (new, acknowledged, resolved, silenced), team ID, time range, labels, and name. For time ranges, use format '{start}_{end}' ISO 8601 timestamp range (e.g., '2025-01-19T00:00:00_2025-01-19T23:59:59' for a specific day). For labels, use format 'key:value' (e.g., ['env:prod', 'severity:high']). Returns a list of alert group objects with their details. Supports pagination.",
 	listAlertGroups,
 	mcp.WithTitleAnnotation("List IRM alert groups"),
 	mcp.WithIdempotentHintAnnotation(true),
