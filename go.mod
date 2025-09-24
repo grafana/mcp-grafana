@@ -9,7 +9,7 @@ require (
 	github.com/go-openapi/runtime v0.28.0
 	github.com/go-openapi/strfmt v0.23.0
 	github.com/google/uuid v1.6.0
-	github.com/grafana/amixr-api-go-client v0.0.25
+	github.com/grafana/amixr-api-go-client v0.0.26
 	github.com/grafana/grafana-openapi-client-go v0.0.0-20250617151817-c0f8cbb88d5c
 	github.com/grafana/grafana-plugin-sdk-go v0.279.0
 	github.com/grafana/incident-go v0.0.0-20250211094540-dc6a98fdae43
