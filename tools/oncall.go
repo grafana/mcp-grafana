@@ -416,7 +416,7 @@ type ListAlertGroupsParams struct {
 	IntegrationID string   `json:"integrationId,omitempty" jsonschema:"description=Filter by integration ID"`
 	State         string   `json:"state,omitempty" jsonschema:"description=Filter by alert group state (one of: new\\, acknowledged\\, resolved\\, silenced)"`
 	TeamID        string   `json:"teamId,omitempty" jsonschema:"description=Filter by team ID"`
-	StartedAt     string   `json:"startedAt,omitempty" jsonschema:"description=Filter by time range in format '{start}_{end}' ISO 8601 timestamp range (e.g.\\, '2025-01-19T00:00:00_2025-01-19T23:59:59')"`
+	StartedAt     string   `json:"startedAt,omitempty" jsonschema:"description=Filter by time range in format '{start}_{end}' ISO 8601 timestamp range (UTC assumed\\, no timezone indicator needed) (e.g.\\, '2025-01-19T00:00:00_2025-01-19T23:59:59')"`
 	Labels        []string `json:"labels,omitempty" jsonschema:"description=Filter by labels in format key:value (e.g.\\, ['env:prod'\\, 'severity:high'])"`
 	Name          string   `json:"name,omitempty" jsonschema:"description=Filter by alert group name"`
 }
