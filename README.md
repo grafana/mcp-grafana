@@ -74,6 +74,8 @@ The dashboard tools now include several strategies to manage context window usag
 - **Get shift details:** Retrieve detailed information about specific on-call shifts.
 - **Get current on-call users:** See which users are currently on call for a schedule.
 - **List teams and users:** View all OnCall teams and users.
+- **List alert groups:** View and filter alert groups from Grafana OnCall by various criteria including state, integration, labels, and time range.
+- **Get alert group details:** Retrieve detailed information about a specific alert group by its ID.
 
 ### Admin
 
@@ -185,6 +187,8 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `get_current_oncall_users`        | OnCall      | Get users currently on-call for a specific schedule                | `grafana-oncall-app.schedules:read`     | Plugin-specific scopes                              |
 | `list_oncall_teams`               | OnCall      | List teams from Grafana OnCall                                     | `grafana-oncall-app.user-settings:read` | Plugin-specific scopes                              |
 | `list_oncall_users`               | OnCall      | List users from Grafana OnCall                                     | `grafana-oncall-app.user-settings:read` | Plugin-specific scopes                              |
+| `list_alert_groups`               | OnCall      | List alert groups from Grafana OnCall with filtering options       | `grafana-oncall-app.alert-groups:read`  | Plugin-specific scopes                              |
+| `get_alert_group`                 | OnCall      | Get a specific alert group from Grafana OnCall by its ID           | `grafana-oncall-app.alert-groups:read`  | Plugin-specific scopes                              |
 | `get_sift_investigation`          | Sift        | Retrieve an existing Sift investigation by its UUID                | Viewer role                             | N/A                                                 |
 | `get_sift_analysis`               | Sift        | Retrieve a specific analysis from a Sift investigation             | Viewer role                             | N/A                                                 |
 | `list_sift_investigations`        | Sift        | Retrieve a list of Sift investigations with an optional limit      | Viewer role                             | N/A                                                 |
