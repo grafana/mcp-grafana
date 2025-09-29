@@ -23,4 +23,14 @@ func TestSearchTools(t *testing.T) {
 		assert.Len(t, result, 1)
 		assert.Equal(t, models.HitType("dash-db"), result[0].Type)
 	})
+
+	t.Run("search folders", func(t *testing.T) {
+		ctx := newTestContext()
+		result, err := searchFolders(ctx, SearchFoldersParams{
+			Query: "General",
+		})
+		require.NoError(t, err)
+		assert.NotEmpty(t, result)
+		assert.Equal(t, models.HitType("dash-folder"), result[0].Type)
+	})
 }
