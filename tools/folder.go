@@ -12,8 +12,9 @@ import (
 )
 
 type CreateFolderParams struct {
-	Title string `json:"title" jsonschema:"required,description=The title of the folder."`
-	UID   string `json:"uid,omitempty" jsonschema:"description=Optional folder UID. If omitted, Grafana will generate one."`
+	Title     string `json:"title" jsonschema:"required,description=The title of the folder."`
+	UID       string `json:"uid,omitempty" jsonschema:"description=Optional folder UID. If omitted, Grafana will generate one."`
+	ParentUID string `json:"parentUid,omitempty" jsonschema:"description=Optional parent folder UID. If set, the folder will be created under this parent."`
 }
 
 func createFolder(ctx context.Context, args CreateFolderParams) (*models.Folder, error) {
@@ -25,6 +26,9 @@ func createFolder(ctx context.Context, args CreateFolderParams) (*models.Folder,
 	cmd := &models.CreateFolderCommand{Title: args.Title}
 	if args.UID != "" {
 		cmd.UID = args.UID
+	}
+	if args.ParentUID != "" {
+		cmd.ParentUID = args.ParentUID
 	}
 
 	resp, err := c.Folders.CreateFolder(cmd)
