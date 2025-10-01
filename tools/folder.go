@@ -12,7 +12,7 @@ import (
 )
 
 type CreateFolderParams struct {
-	Title string `json:"title" jsonschema:"required,description=Folder title to create"`
+	Title string `json:"title" jsonschema:"required,description=The title of the folder."`
 	UID   string `json:"uid,omitempty" jsonschema:"description=Optional folder UID. If omitted, Grafana will generate one."`
 }
 
