@@ -39,7 +39,7 @@ type disabledTools struct {
 
 	search, datasource, incident,
 	prometheus, loki, alerting,
-	dashboard, oncall, asserts, sift, admin,
+	dashboard, folder, oncall, asserts, sift, admin,
 	pyroscope, navigation bool
 }
 
@@ -56,7 +56,7 @@ type grafanaConfig struct {
 }
 
 func (dt *disabledTools) addFlags() {
-	flag.StringVar(&dt.enabledTools, "enabled-tools", "search,datasource,incident,prometheus,loki,alerting,dashboard,oncall,asserts,sift,admin,pyroscope,navigation", "A comma separated list of tools enabled for this server. Can be overwritten entirely or by disabling specific components, e.g. --disable-search.")
+	flag.StringVar(&dt.enabledTools, "enabled-tools", "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,admin,pyroscope,navigation", "A comma separated list of tools enabled for this server. Can be overwritten entirely or by disabling specific components, e.g. --disable-search.")
 
 	flag.BoolVar(&dt.search, "disable-search", false, "Disable search tools")
 	flag.BoolVar(&dt.datasource, "disable-datasource", false, "Disable datasource tools")
@@ -65,6 +65,7 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.loki, "disable-loki", false, "Disable loki tools")
 	flag.BoolVar(&dt.alerting, "disable-alerting", false, "Disable alerting tools")
 	flag.BoolVar(&dt.dashboard, "disable-dashboard", false, "Disable dashboard tools")
+	flag.BoolVar(&dt.folder, "disable-folder", false, "Disable folder tools")
 	flag.BoolVar(&dt.oncall, "disable-oncall", false, "Disable oncall tools")
 	flag.BoolVar(&dt.asserts, "disable-asserts", false, "Disable asserts tools")
 	flag.BoolVar(&dt.sift, "disable-sift", false, "Disable sift tools")
@@ -92,6 +93,7 @@ func (dt *disabledTools) addTools(s *server.MCPServer) {
 	maybeAddTools(s, tools.AddLokiTools, enabledTools, dt.loki, "loki")
 	maybeAddTools(s, tools.AddAlertingTools, enabledTools, dt.alerting, "alerting")
 	maybeAddTools(s, tools.AddDashboardTools, enabledTools, dt.dashboard, "dashboard")
+	maybeAddTools(s, tools.AddFolderTools, enabledTools, dt.folder, "folder")
 	maybeAddTools(s, tools.AddOnCallTools, enabledTools, dt.oncall, "oncall")
 	maybeAddTools(s, tools.AddAssertsTools, enabledTools, dt.asserts, "asserts")
 	maybeAddTools(s, tools.AddSiftTools, enabledTools, dt.sift, "sift")
