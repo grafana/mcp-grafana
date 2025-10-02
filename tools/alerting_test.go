@@ -495,3 +495,309 @@ func TestAlertingTools_ListContactPoints(t *testing.T) {
 		require.Empty(t, result)
 	})
 }
+
+func TestAlertingTools_CreateAlertRule(t *testing.T) {
+	t.Run("create alert rule with valid parameters", func(t *testing.T) {
+		ctx := newTestContext()
+
+		// Sample query data that matches Grafana's expected format
+		sampleData := []interface{}{
+			map[string]interface{}{
+				"refId":     "A",
+				"queryType": "",
+				"relativeTimeRange": map[string]interface{}{
+					"from": 600,
+					"to":   0,
+				},
+				"datasourceUid": "prometheus-uid",
+				"model": map[string]interface{}{
+					"expr":          "up",
+					"hide":          false,
+					"intervalMs":    1000,
+					"maxDataPoints": 43200,
+					"refId":         "A",
+				},
+			},
+			map[string]interface{}{
+				"refId":     "B",
+				"queryType": "",
+				"relativeTimeRange": map[string]interface{}{
+					"from": 0,
+					"to":   0,
+				},
+				"datasourceUid": "__expr__",
+				"model": map[string]interface{}{
+					"conditions": []interface{}{
+						map[string]interface{}{
+							"evaluator": map[string]interface{}{
+								"params": []interface{}{1},
+								"type":   "gt",
+							},
+							"operator": map[string]interface{}{
+								"type": "and",
+							},
+							"query": map[string]interface{}{
+								"params": []interface{}{"A"},
+							},
+							"reducer": map[string]interface{}{
+								"params": []interface{}{},
+								"type":   "last",
+							},
+							"type": "query",
+						},
+					},
+					"datasource": map[string]interface{}{
+						"type": "__expr__",
+						"uid":  "__expr__",
+					},
+					"hide":          false,
+					"intervalMs":    1000,
+					"maxDataPoints": 43200,
+					"refId":         "B",
+					"type":          "classic_conditions",
+				},
+			},
+		}
+
+		testUID := "test_create_alert_rule"
+		params := CreateAlertRuleParams{
+			Title:        "Test Created Alert Rule",
+			RuleGroup:    "test-group",
+			FolderUID:    "beyglvfuqlo8we",
+			Condition:    "B",
+			Data:         sampleData,
+			NoDataState:  "OK",
+			ExecErrState: "OK",
+			For:          "5m",
+			Annotations: map[string]string{
+				"summary": "Test alert rule created via API",
+			},
+			Labels: map[string]string{
+				"team": "test-team",
+			},
+			UID:   &testUID,
+			OrgID: 1,
+		}
+
+		result, err := createAlertRule(ctx, params)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		require.Equal(t, testUID, result.UID)
+		require.Equal(t, "Test Created Alert Rule", *result.Title)
+		require.Equal(t, "test-group", *result.RuleGroup)
+
+		// Clean up: delete the created rule
+		_, cleanupErr := deleteAlertRule(ctx, DeleteAlertRuleParams{UID: testUID})
+		require.NoError(t, cleanupErr)
+	})
+
+	t.Run("create alert rule with missing required fields", func(t *testing.T) {
+		ctx := newTestContext()
+
+		params := CreateAlertRuleParams{
+			Title: "Incomplete Rule",
+			// Missing other required fields
+		}
+
+		result, err := createAlertRule(ctx, params)
+		require.Error(t, err)
+		require.Nil(t, result)
+		require.Contains(t, err.Error(), "ruleGroup is required")
+	})
+
+	t.Run("create alert rule with empty title", func(t *testing.T) {
+		ctx := newTestContext()
+
+		params := CreateAlertRuleParams{
+			Title: "",
+		}
+
+		result, err := createAlertRule(ctx, params)
+		require.Error(t, err)
+		require.Nil(t, result)
+		require.Contains(t, err.Error(), "title is required")
+	})
+}
+
+func TestAlertingTools_UpdateAlertRule(t *testing.T) {
+	t.Run("update existing alert rule", func(t *testing.T) {
+		ctx := newTestContext()
+
+		// First create a rule to update
+		sampleData := []interface{}{
+			map[string]interface{}{
+				"refId":     "A",
+				"queryType": "",
+				"relativeTimeRange": map[string]interface{}{
+					"from": 600,
+					"to":   0,
+				},
+				"datasourceUid": "prometheus-uid",
+				"model": map[string]interface{}{
+					"expr":          "up",
+					"hide":          false,
+					"intervalMs":    1000,
+					"maxDataPoints": 43200,
+					"refId":         "A",
+				},
+			},
+		}
+
+		testUID := "test_update_alert_rule"
+		createParams := CreateAlertRuleParams{
+			Title:        "Original Title",
+			RuleGroup:    "test-group",
+			FolderUID:    "beyglvfuqlo8we",
+			Condition:    "A",
+			Data:         sampleData,
+			NoDataState:  "OK",
+			ExecErrState: "OK",
+			For:          "5m",
+			UID:          &testUID,
+			OrgID:        1,
+		}
+
+		// Create the rule
+		created, err := createAlertRule(ctx, createParams)
+		require.NoError(t, err)
+		require.NotNil(t, created)
+
+		// Now update it
+		updateParams := UpdateAlertRuleParams{
+			UID:          testUID,
+			Title:        "Updated Title",
+			RuleGroup:    "test-group",
+			FolderUID:    "beyglvfuqlo8we",
+			Condition:    "A",
+			Data:         sampleData,
+			NoDataState:  "Alerting",
+			ExecErrState: "Alerting",
+			For:          "10m",
+			Annotations: map[string]string{
+				"summary": "Updated alert rule",
+			},
+			Labels: map[string]string{
+				"team": "updated-team",
+			},
+			OrgID: 1,
+		}
+
+		result, err := updateAlertRule(ctx, updateParams)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		require.Equal(t, testUID, result.UID)
+		require.Equal(t, "Updated Title", *result.Title)
+		require.Equal(t, "Alerting", *result.NoDataState)
+
+		// Clean up: delete the rule
+		_, cleanupErr := deleteAlertRule(ctx, DeleteAlertRuleParams{UID: testUID})
+		require.NoError(t, cleanupErr)
+	})
+
+	t.Run("update non-existent alert rule", func(t *testing.T) {
+		ctx := newTestContext()
+
+		params := UpdateAlertRuleParams{
+			UID:          "non-existent-uid",
+			Title:        "Updated Title",
+			RuleGroup:    "test-group",
+			FolderUID:    "beyglvfuqlo8we",
+			Condition:    "A",
+			Data:         []interface{}{},
+			NoDataState:  "OK",
+			ExecErrState: "OK",
+			For:          "5m",
+			OrgID:        1,
+		}
+
+		result, err := updateAlertRule(ctx, params)
+		require.Error(t, err)
+		require.Nil(t, result)
+	})
+
+	t.Run("update alert rule with empty UID", func(t *testing.T) {
+		ctx := newTestContext()
+
+		params := UpdateAlertRuleParams{
+			UID: "",
+		}
+
+		result, err := updateAlertRule(ctx, params)
+		require.Error(t, err)
+		require.Nil(t, result)
+		require.Contains(t, err.Error(), "uid is required")
+	})
+}
+
+func TestAlertingTools_DeleteAlertRule(t *testing.T) {
+	t.Run("delete existing alert rule", func(t *testing.T) {
+		ctx := newTestContext()
+
+		// First create a rule to delete
+		sampleData := []interface{}{
+			map[string]interface{}{
+				"refId":     "A",
+				"queryType": "",
+				"relativeTimeRange": map[string]interface{}{
+					"from": 600,
+					"to":   0,
+				},
+				"datasourceUid": "prometheus-uid",
+				"model": map[string]interface{}{
+					"expr":          "up",
+					"hide":          false,
+					"intervalMs":    1000,
+					"maxDataPoints": 43200,
+					"refId":         "A",
+				},
+			},
+		}
+
+		testUID := "test_delete_alert_rule"
+		createParams := CreateAlertRuleParams{
+			Title:        "Rule to Delete",
+			RuleGroup:    "test-group",
+			FolderUID:    "beyglvfuqlo8we",
+			Condition:    "A",
+			Data:         sampleData,
+			NoDataState:  "OK",
+			ExecErrState: "OK",
+			For:          "5m",
+			UID:          &testUID,
+			OrgID:        1,
+		}
+
+		// Create the rule
+		created, err := createAlertRule(ctx, createParams)
+		require.NoError(t, err)
+		require.NotNil(t, created)
+
+		// Now delete it
+		result, err := deleteAlertRule(ctx, DeleteAlertRuleParams{UID: testUID})
+		require.NoError(t, err)
+		require.Contains(t, result, "deleted successfully")
+		require.Contains(t, result, testUID)
+
+		// Verify it's gone by trying to get it
+		_, getErr := getAlertRuleByUID(ctx, GetAlertRuleByUIDParams{UID: testUID})
+		require.Error(t, getErr)
+	})
+
+	t.Run("delete non-existent alert rule", func(t *testing.T) {
+		ctx := newTestContext()
+
+		result, err := deleteAlertRule(ctx, DeleteAlertRuleParams{UID: "non-existent-uid"})
+		require.NoError(t, err) // DELETE is idempotent - success even if rule doesn't exist
+		require.Contains(t, result, "deleted successfully")
+		require.Contains(t, result, "non-existent-uid")
+	})
+
+	t.Run("delete alert rule with empty UID", func(t *testing.T) {
+		ctx := newTestContext()
+
+		result, err := deleteAlertRule(ctx, DeleteAlertRuleParams{UID: ""})
+		require.Error(t, err)
+		require.Empty(t, result)
+		require.Contains(t, err.Error(), "uid is required")
+	})
+}
