@@ -27,7 +27,7 @@ func TestSearchTools(t *testing.T) {
 	t.Run("search folders", func(t *testing.T) {
 		ctx := newTestContext()
 		result, err := searchFolders(ctx, SearchFoldersParams{
-			Query: "General",
+			Query: "Tests",
 		})
 		require.NoError(t, err)
 		assert.NotEmpty(t, result)
