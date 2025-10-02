@@ -26,175 +26,218 @@
   "tools": [
     {
       "name": "list_teams",
-      "description": "List all teams"
+      "description": "List all teams",
+      "readOnlyHint": true
     },
     {
       "name": "list_users_by_org",
-      "description": "List all users in an organization"
+      "description": "List all users in an organization",
+      "readOnlyHint": true
     },
     {
       "name": "search_dashboards",
-      "description": "Search for dashboards"
+      "description": "Search for dashboards",
+      "readOnlyHint": true
     },
     {
       "name": "get_dashboard_by_uid",
-      "description": "Get a dashboard by uid"
+      "description": "Get a dashboard by uid",
+      "readOnlyHint": true
     },
     {
       "name": "update_dashboard",
-      "description": "Update or create a new dashboard"
+      "description": "Update or create a new dashboard",
+      "destructiveHint": true
     },
     {
       "name": "get_dashboard_panel_queries",
-      "description": "Get panel title, queries, datasource UID and type from a dashboard"
+      "description": "Get panel title, queries, datasource UID and type from a dashboard",
+      "readOnlyHint": true
     },
     {
       "name": "get_dashboard_property",
-      "description": "Extract specific parts of a dashboard using JSONPath expressions"
+      "description": "Extract specific parts of a dashboard using JSONPath expressions",
+      "readOnlyHint": true
     },
     {
       "name": "get_dashboard_summary",
-      "description": "Get a compact summary of a dashboard without full JSON"
+      "description": "Get a compact summary of a dashboard without full JSON",
+      "readOnlyHint": true
     },
     {
       "name": "list_datasources",
-      "description": "List datasources"
+      "description": "List datasources",
+      "readOnlyHint": true
     },
     {
       "name": "get_datasource_by_uid",
-      "description": "Get a datasource by uid"
+      "description": "Get a datasource by uid",
+      "readOnlyHint": true
     },
     {
       "name": "get_datasource_by_name",
-      "description": "Get a datasource by name"
+      "description": "Get a datasource by name",
+      "readOnlyHint": true
     },
     {
       "name": "query_prometheus",
-      "description": "Execute a query against a Prometheus datasource"
+      "description": "Execute a query against a Prometheus datasource",
+      "readOnlyHint": true
     },
     {
       "name": "list_prometheus_metric_metadata",
-      "description": "List metric metadata"
+      "description": "List metric metadata",
+      "readOnlyHint": true
     },
     {
       "name": "list_prometheus_metric_names",
-      "description": "List available metric names"
+      "description": "List available metric names",
+      "readOnlyHint": true
     },
     {
       "name": "list_prometheus_label_names",
-      "description": "List label names matching a selector"
+      "description": "List label names matching a selector",
+      "readOnlyHint": true
     },
     {
       "name": "list_prometheus_label_values",
-      "description": "List values for a specific label"
+      "description": "List values for a specific label",
+      "readOnlyHint": true
     },
     {
       "name": "list_incidents",
-      "description": "List incidents in Grafana Incident"
+      "description": "List incidents in Grafana Incident",
+      "readOnlyHint": true
     },
     {
       "name": "create_incident",
-      "description": "Create an incident in Grafana Incident"
+      "description": "Create an incident in Grafana Incident",
+      "destructiveHint": true
     },
     {
       "name": "add_activity_to_incident",
-      "description": "Add an activity item to an incident in Grafana Incident"
+      "description": "Add an activity item to an incident in Grafana Incident",
+      "destructiveHint": true
     },
     {
       "name": "get_incident",
-      "description": "Get a single incident by ID"
+      "description": "Get a single incident by ID",
+      "readOnlyHint": true
     },
     {
       "name": "query_loki_logs",
-      "description": "Query and retrieve logs using LogQL (either log or metric queries)"
+      "description": "Query and retrieve logs using LogQL (either log or metric queries)",
+      "readOnlyHint": true
     },
     {
       "name": "list_loki_label_names",
-      "description": "List all available label names in logs"
+      "description": "List all available label names in logs",
+      "readOnlyHint": true
     },
     {
       "name": "list_loki_label_values",
-      "description": "List values for a specific log label"
+      "description": "List values for a specific log label",
+      "readOnlyHint": true
     },
     {
       "name": "query_loki_stats",
-      "description": "Get statistics about log streams"
+      "description": "Get statistics about log streams",
+      "readOnlyHint": true
     },
     {
       "name": "list_alert_rules",
-      "description": "List alert rules"
+      "description": "List alert rules",
+      "readOnlyHint": true
     },
     {
       "name": "get_alert_rule_by_uid",
-      "description": "Get alert rule by UID"
+      "description": "Get alert rule by UID",
+      "readOnlyHint": true
     },
     {
       "name": "list_contact_points",
-      "description": "List notification contact points"
+      "description": "List notification contact points",
+      "readOnlyHint": true
     },
     {
       "name": "list_oncall_schedules",
-      "description": "List schedules from Grafana OnCall"
+      "description": "List schedules from Grafana OnCall",
+      "readOnlyHint": true
     },
     {
       "name": "get_oncall_shift",
-      "description": "Get details for a specific OnCall shift"
+      "description": "Get details for a specific OnCall shift",
+      "readOnlyHint": true
     },
     {
       "name": "get_current_oncall_users",
-      "description": "Get users currently on-call for a specific schedule"
+      "description": "Get users currently on-call for a specific schedule",
+      "readOnlyHint": true
     },
     {
       "name": "list_oncall_teams",
-      "description": "List teams from Grafana OnCall"
+      "description": "List teams from Grafana OnCall",
+      "readOnlyHint": true
     },
     {
       "name": "list_oncall_users",
-      "description": "List users from Grafana OnCall"
+      "description": "List users from Grafana OnCall",
+      "readOnlyHint": true
     },
     {
       "name": "get_sift_investigation",
-      "description": "Retrieve an existing Sift investigation by its UUID"
+      "description": "Retrieve an existing Sift investigation by its UUID",
+      "readOnlyHint": true
     },
     {
       "name": "get_sift_analysis",
-      "description": "Retrieve a specific analysis from a Sift investigation"
+      "description": "Retrieve a specific analysis from a Sift investigation",
+      "readOnlyHint": true
     },
     {
       "name": "list_sift_investigations",
-      "description": "Retrieve a list of Sift investigations with an optional limit"
+      "description": "Retrieve a list of Sift investigations with an optional limit",
+      "readOnlyHint": true
     },
     {
       "name": "find_error_pattern_logs",
-      "description": "Finds elevated error patterns in Loki logs."
+      "description": "Finds elevated error patterns in Loki logs.",
+      "readOnlyHint": true
     },
     {
       "name": "find_slow_requests",
-      "description": "Finds slow requests from the relevant tempo datasources."
+      "description": "Finds slow requests from the relevant tempo datasources.",
+      "readOnlyHint": true
     },
     {
       "name": "list_pyroscope_label_names",
-      "description": "List label names matching a selector"
+      "description": "List label names matching a selector",
+      "readOnlyHint": true
     },
     {
       "name": "list_pyroscope_label_values",
-      "description": "List label values matching a selector for a label name"
+      "description": "List label values matching a selector for a label name",
+      "readOnlyHint": true
     },
     {
       "name": "list_pyroscope_profile_types",
-      "description": "List available profile types"
+      "description": "List available profile types",
+      "readOnlyHint": true
     },
     {
       "name": "fetch_pyroscope_profile",
-      "description": "Fetches a profile in DOT format for analysis"
+      "description": "Fetches a profile in DOT format for analysis",
+      "readOnlyHint": true
     },
     {
       "name": "get_assertions",
-      "description": "Get assertion summary for a given entity"
+      "description": "Get assertion summary for a given entity",
+      "readOnlyHint": true
     },
     {
       "name": "generate_deeplink",
-      "description": "Generate accurate deeplink URLs for Grafana resources"
+      "description": "Generate accurate deeplink URLs for Grafana resources",
+      "readOnlyHint": true
     }
   ],
   "user_config": {
@@ -229,6 +272,7 @@
   },
   "keywords": ["grafana", "observability", "instrumentation"],
   "license": "Apache-2.0",
+  "privacy_policies": [],
   "repository": {
     "type": "git",
     "url": "https://github.com/grafana/mcp-grafana"
