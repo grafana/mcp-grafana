@@ -62,7 +62,10 @@ func (dtm *DynamicToolManager) EnableToolset(ctx context.Context, name string) e
 	// when AddTool is called (via the Register method), so we don't need to manually
 	// send notifications here. This happens because WithToolCapabilities(true) was set
 	// during server initialization.
+<<<<<<< HEAD
 
+=======
+>>>>>>> 4df4345 (add a comment on where the dynamic tool capability is triggered)
 	if toolset.AddFunc != nil {
 		toolset.AddFunc(dtm.server)
 	}
@@ -166,6 +169,7 @@ func (dtm *DynamicToolManager) getToolsetInfo(name string) *Toolset {
 	defer dtm.mu.RUnlock()
 	return dtm.toolsets[name]
 }
+<<<<<<< HEAD
 
 // sendToolListChangedNotification sends a proper MCP ToolListChangedNotification
 func (dtm *DynamicToolManager) sendToolListChangedNotification(ctx context.Context) {
@@ -186,3 +190,5 @@ func (dtm *DynamicToolManager) sendToolListChangedNotification(ctx context.Conte
 
 	slog.Info("Sent tool list changed notification to clients")
 }
+=======
+>>>>>>> 4df4345 (add a comment on where the dynamic tool capability is triggered)
