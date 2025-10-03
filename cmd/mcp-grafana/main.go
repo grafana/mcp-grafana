@@ -107,6 +107,61 @@ func (dt *disabledTools) addTools(s *server.MCPServer) {
 	maybeAddTools(s, func(mcp *server.MCPServer) { tools.AddAnnotationTools(mcp, enableWriteTools) }, enabledTools, dt.annotations, "annotations")
 }
 
+// addToolsDynamically sets up dynamic tool discovery
+func (dt *disabledTools) addToolsDynamically(s *server.MCPServer) *mcpgrafana.DynamicToolManager {
+	dtm := mcpgrafana.NewDynamicToolManager(s)
+
+	// Parse enabled tools list
+	enabledTools := strings.Split(dt.enabledTools, ",")
+
+	// Helper function to check if a tool is enabled
+	isEnabled := func(toolName string) bool {
+		// If enabledTools is empty string, no tools should be available
+		if dt.enabledTools == "" {
+			return false
+		}
+		return slices.Contains(enabledTools, toolName)
+	}
+
+	// Define all available toolsets
+	allToolsets := []struct {
+		name        string
+		description string
+		addFunc     func(*server.MCPServer)
+	}{
+		{"search", "Tools for searching dashboards, folders, and other Grafana resources", tools.AddSearchTools},
+		{"datasource", "Tools for listing and fetching datasource details", tools.AddDatasourceTools},
+		{"incident", "Tools for managing Grafana Incident (create, update, search incidents)", tools.AddIncidentTools},
+		{"prometheus", "Tools for querying Prometheus metrics and metadata", tools.AddPrometheusTools},
+		{"loki", "Tools for querying Loki logs and labels", tools.AddLokiTools},
+		{"alerting", "Tools for managing alert rules and notification contact points", tools.AddAlertingTools},
+		{"dashboard", "Tools for managing Grafana dashboards (get, update, extract queries)", tools.AddDashboardTools},
+		{"folder", "Tools for managing Grafana folders", tools.AddFolderTools},
+		{"oncall", "Tools for managing OnCall schedules, shifts, teams, and users", tools.AddOnCallTools},
+		{"asserts", "Tools for Grafana Asserts cloud functionality", tools.AddAssertsTools},
+		{"sift", "Tools for Sift investigations (analyze logs/traces, find errors, detect slow requests)", tools.AddSiftTools},
+		{"admin", "Tools for administrative tasks (list teams, manage users)", tools.AddAdminTools},
+		{"pyroscope", "Tools for profiling applications with Pyroscope", tools.AddPyroscopeTools},
+		{"navigation", "Tools for generating deeplink URLs to Grafana resources", tools.AddNavigationTools},
+	}
+
+	// Only register toolsets that are enabled
+	for _, toolset := range allToolsets {
+		if isEnabled(toolset.name) {
+			dtm.RegisterToolset(&mcpgrafana.Toolset{
+				Name:        toolset.name,
+				Description: toolset.description,
+				AddFunc:     toolset.addFunc,
+			})
+		}
+	}
+
+	// Add the dynamic discovery tools themselves
+	mcpgrafana.AddDynamicDiscoveryTools(dtm, s)
+
+	return dtm
+}
+
 func newServer(transport string, dt disabledTools) (*server.MCPServer, *mcpgrafana.ToolManager) {
 	sm := mcpgrafana.NewSessionManager()
 
