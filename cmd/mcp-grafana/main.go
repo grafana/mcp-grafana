@@ -175,6 +175,7 @@ Note that some of these capabilities may be disabled. Do not try to use features
 		// Tools will be added dynamically when toolsets are enabled
 		dt.addToolsDynamically(s)
 	} else {
+		// Use static tool registration
 		dt.addTools(s)
 	}
 
@@ -373,6 +374,14 @@ func main() {
 	if err := run(transport, *addr, *basePath, *endpointPath, parseLevel(*logLevel), dt, grafanaConfig, tls); err != nil {
 		panic(err)
 	}
+}
+
+// getEnvBool reads a boolean from an environment variable
+func getEnvBool(key string, defaultValue bool) bool {
+	if value, exists := os.LookupEnv(key); exists {
+		return value == "1" || strings.ToLower(value) == "true"
+	}
+	return defaultValue
 }
 
 func parseLevel(level string) slog.Level {
