@@ -170,7 +170,14 @@ Note that some of these capabilities may be disabled. Do not try to use features
 	// Initialize ToolManager now that server is created
 	stm = mcpgrafana.NewToolManager(sm, s, mcpgrafana.WithProxiedTools(!dt.proxied))
 
-	dt.addTools(s)
+	if dt.dynamicTools {
+		// For dynamic toolsets, start with only discovery tools
+		// Tools will be added dynamically when toolsets are enabled
+		dt.addToolsDynamically(s)
+	} else {
+		dt.addTools(s)
+	}
+
 	return s, stm
 }
 
