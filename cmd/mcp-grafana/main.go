@@ -14,7 +14,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/mark3labs/mcp-go/server"
+		"github.com/mark3labs/mcp-go/server"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/grafana/mcp-grafana/tools"
@@ -108,90 +108,50 @@ func (dt *disabledTools) addTools(s *server.MCPServer) {
 func (dt *disabledTools) addToolsDynamically(s *server.MCPServer) *mcpgrafana.DynamicToolManager {
 	dtm := mcpgrafana.NewDynamicToolManager(s)
 
-	// Register all available toolsets
-	dtm.RegisterToolset(&mcpgrafana.Toolset{
-		Name:        "search",
-		Description: "Tools for searching dashboards, folders, and other Grafana resources",
-		AddFunc:     tools.AddSearchTools,
-	})
+	// Parse enabled tools list
+	enabledTools := strings.Split(dt.enabledTools, ",")
 
-	dtm.RegisterToolset(&mcpgrafana.Toolset{
-		Name:        "datasource",
-		Description: "Tools for listing and fetching datasource details",
-		AddFunc:     tools.AddDatasourceTools,
-	})
+	// Helper function to check if a tool is enabled
+	isEnabled := func(toolName string) bool {
+		// If enabledTools is empty string, no tools should be available
+		if dt.enabledTools == "" {
+			return false
+		}
+		return slices.Contains(enabledTools, toolName)
+	}
 
-	dtm.RegisterToolset(&mcpgrafana.Toolset{
-		Name:        "incident",
-		Description: "Tools for managing Grafana Incident (create, update, search incidents)",
-		AddFunc:     tools.AddIncidentTools,
-	})
+	// Define all available toolsets
+	allToolsets := []struct {
+		name        string
+		description string
+		addFunc     func(*server.MCPServer)
+	}{
+		{"search", "Tools for searching dashboards, folders, and other Grafana resources", tools.AddSearchTools},
+		{"datasource", "Tools for listing and fetching datasource details", tools.AddDatasourceTools},
+		{"incident", "Tools for managing Grafana Incident (create, update, search incidents)", tools.AddIncidentTools},
+		{"prometheus", "Tools for querying Prometheus metrics and metadata", tools.AddPrometheusTools},
+		{"loki", "Tools for querying Loki logs and labels", tools.AddLokiTools},
+		{"alerting", "Tools for managing alert rules and notification contact points", tools.AddAlertingTools},
+		{"dashboard", "Tools for managing Grafana dashboards (get, update, extract queries)", tools.AddDashboardTools},
+		{"folder", "Tools for managing Grafana folders", tools.AddFolderTools},
+		{"oncall", "Tools for managing OnCall schedules, shifts, teams, and users", tools.AddOnCallTools},
+		{"asserts", "Tools for Grafana Asserts cloud functionality", tools.AddAssertsTools},
+		{"sift", "Tools for Sift investigations (analyze logs/traces, find errors, detect slow requests)", tools.AddSiftTools},
+		{"admin", "Tools for administrative tasks (list teams, manage users)", tools.AddAdminTools},
+		{"pyroscope", "Tools for profiling applications with Pyroscope", tools.AddPyroscopeTools},
+		{"navigation", "Tools for generating deeplink URLs to Grafana resources", tools.AddNavigationTools},
+	}
 
-	dtm.RegisterToolset(&mcpgrafana.Toolset{
-		Name:        "prometheus",
-		Description: "Tools for querying Prometheus metrics and metadata",
-		AddFunc:     tools.AddPrometheusTools,
-	})
-
-	dtm.RegisterToolset(&mcpgrafana.Toolset{
-		Name:        "loki",
-		Description: "Tools for querying Loki logs and labels",
-		AddFunc:     tools.AddLokiTools,
-	})
-
-	dtm.RegisterToolset(&mcpgrafana.Toolset{
-		Name:        "alerting",
-		Description: "Tools for managing alert rules and notification contact points",
-		AddFunc:     tools.AddAlertingTools,
-	})
-
-	dtm.RegisterToolset(&mcpgrafana.Toolset{
-		Name:        "dashboard",
-		Description: "Tools for managing Grafana dashboards (get, update, extract queries)",
-		AddFunc:     tools.AddDashboardTools,
-	})
-
-	dtm.RegisterToolset(&mcpgrafana.Toolset{
-		Name:        "folder",
-		Description: "Tools for managing Grafana folders",
-		AddFunc:     tools.AddFolderTools,
-	})
-
-	dtm.RegisterToolset(&mcpgrafana.Toolset{
-		Name:        "oncall",
-		Description: "Tools for managing OnCall schedules, shifts, teams, and users",
-		AddFunc:     tools.AddOnCallTools,
-	})
-
-	dtm.RegisterToolset(&mcpgrafana.Toolset{
-		Name:        "asserts",
-		Description: "Tools for Grafana Asserts cloud functionality",
-		AddFunc:     tools.AddAssertsTools,
-	})
-
-	dtm.RegisterToolset(&mcpgrafana.Toolset{
-		Name:        "sift",
-		Description: "Tools for Sift investigations (analyze logs/traces, find errors, detect slow requests)",
-		AddFunc:     tools.AddSiftTools,
-	})
-
-	dtm.RegisterToolset(&mcpgrafana.Toolset{
-		Name:        "admin",
-		Description: "Tools for administrative tasks (list teams, manage users)",
-		AddFunc:     tools.AddAdminTools,
-	})
-
-	dtm.RegisterToolset(&mcpgrafana.Toolset{
-		Name:        "pyroscope",
-		Description: "Tools for profiling applications with Pyroscope",
-		AddFunc:     tools.AddPyroscopeTools,
-	})
-
-	dtm.RegisterToolset(&mcpgrafana.Toolset{
-		Name:        "navigation",
-		Description: "Tools for generating deeplink URLs to Grafana resources",
-		AddFunc:     tools.AddNavigationTools,
-	})
+	// Only register toolsets that are enabled
+	for _, toolset := range allToolsets {
+		if isEnabled(toolset.name) {
+			dtm.RegisterToolset(&mcpgrafana.Toolset{
+				Name:        toolset.name,
+				Description: toolset.description,
+				AddFunc:     toolset.addFunc,
+			})
+		}
+	}
 
 	// Add the dynamic discovery tools themselves
 	mcpgrafana.AddDynamicDiscoveryTools(dtm, s)
