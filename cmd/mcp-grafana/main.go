@@ -212,7 +212,6 @@ func newServer(dt disabledTools) *server.MCPServer {
 		// Tools will be added dynamically when toolsets are enabled
 		dt.addToolsDynamically(s)
 	} else {
-		// Use static tool registration
 		dt.addTools(s)
 	}
 
