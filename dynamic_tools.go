@@ -62,12 +62,17 @@ func (dtm *DynamicToolManager) EnableToolset(ctx context.Context, name string) e
 	// when AddTool is called (via the Register method), so we don't need to manually
 	// send notifications here. This happens because WithToolCapabilities(true) was set
 	// during server initialization.
+
 	if toolset.AddFunc != nil {
 		toolset.AddFunc(dtm.server)
 	}
 
 	dtm.enabled[name] = true
 	slog.Info("Enabled toolset", "name", name)
+
+	// Log the current state
+	slog.Info("Toolset enabled successfully", "name", name, "total_enabled", len(dtm.enabled))
+
 	return nil
 }
 
@@ -111,7 +116,10 @@ type ToolsetInfo struct {
 
 // AddDynamicDiscoveryTools adds the list and enable toolset tools to the server
 func AddDynamicDiscoveryTools(dtm *DynamicToolManager, srv *server.MCPServer) {
-	type ListToolsetsRequest struct{}
+	// Tool to list all available toolsets
+	type ListToolsetsRequest struct {
+		// Empty struct for tools that don't need parameters
+	}
 
 	listToolsetsHandler := func(ctx context.Context, request ListToolsetsRequest) ([]ToolsetInfo, error) {
 		return dtm.ListToolsets(), nil
@@ -157,4 +165,24 @@ func (dtm *DynamicToolManager) getToolsetInfo(name string) *Toolset {
 	dtm.mu.RLock()
 	defer dtm.mu.RUnlock()
 	return dtm.toolsets[name]
+}
+
+// sendToolListChangedNotification sends a proper MCP ToolListChangedNotification
+func (dtm *DynamicToolManager) sendToolListChangedNotification(ctx context.Context) {
+	// Create notification parameters as map[string]any
+	params := map[string]any{
+		"_meta": map[string]any{
+			"message": "Tool list has been updated. New tools are now available.",
+		},
+	}
+
+	// Send notification to all connected clients
+	dtm.server.SendNotificationToAllClients("tools/list_changed", params)
+
+	// Also try to send to the current context if available
+	if err := dtm.server.SendNotificationToClient(ctx, "tools/list_changed", params); err != nil {
+		slog.Debug("Failed to send notification to client", "error", err)
+	}
+
+	slog.Info("Sent tool list changed notification to clients")
 }
