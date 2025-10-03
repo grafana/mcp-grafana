@@ -14,7 +14,7 @@ import (
 	"syscall"
 	"time"
 
-		"github.com/mark3labs/mcp-go/server"
+	"github.com/mark3labs/mcp-go/server"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/grafana/mcp-grafana/tools"
@@ -58,7 +58,7 @@ type grafanaConfig struct {
 
 func (dt *disabledTools) addFlags() {
 	flag.StringVar(&dt.enabledTools, "enabled-tools", "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,admin,pyroscope,navigation", "A comma separated list of tools enabled for this server. Can be overwritten entirely or by disabling specific components, e.g. --disable-search.")
-	flag.BoolVar(&dt.dynamicTools, "dynamic-toolsets", getEnvBool("GRAFANA_DYNAMIC_TOOLSETS", false), "Enable dynamic tool discovery. When enabled, only discovery tools are registered initially, and other toolsets can be enabled on-demand.")
+	flag.BoolVar(&dt.dynamicTools, "dynamic-toolsets", false, "Enable dynamic tool discovery. When enabled, only discovery tools are registered initially, and other toolsets can be enabled on-demand.")
 
 	flag.BoolVar(&dt.search, "disable-search", false, "Disable search tools")
 	flag.BoolVar(&dt.datasource, "disable-datasource", false, "Disable datasource tools")
@@ -104,14 +104,12 @@ func (dt *disabledTools) addTools(s *server.MCPServer) {
 	maybeAddTools(s, tools.AddNavigationTools, enabledTools, dt.navigation, "navigation")
 }
 
-// NEW: addToolsDynamically sets up dynamic tool discovery
+// addToolsDynamically sets up dynamic tool discovery
 func (dt *disabledTools) addToolsDynamically(s *server.MCPServer) *mcpgrafana.DynamicToolManager {
 	dtm := mcpgrafana.NewDynamicToolManager(s)
 
-	// Parse enabled tools list
 	enabledTools := strings.Split(dt.enabledTools, ",")
 
-	// Helper function to check if a tool is enabled
 	isEnabled := func(toolName string) bool {
 		// If enabledTools is empty string, no tools should be available
 		if dt.enabledTools == "" {
@@ -207,7 +205,7 @@ func newServer(dt disabledTools) *server.MCPServer {
 	// Create server with tool capabilities enabled for dynamic tool discovery
 	s := server.NewMCPServer("mcp-grafana", mcpgrafana.Version(),
 		server.WithInstructions(instructions),
-		server.WithToolCapabilities(true)) // Enable listChanged notifications
+		server.WithToolCapabilities(true))
 
 	if dt.dynamicTools {
 		// For dynamic toolsets, start with only discovery tools
@@ -385,14 +383,6 @@ func main() {
 	if err := run(transport, *addr, *basePath, *endpointPath, parseLevel(*logLevel), dt, grafanaConfig, tls); err != nil {
 		panic(err)
 	}
-}
-
-// getEnvBool reads a boolean from an environment variable
-func getEnvBool(key string, defaultValue bool) bool {
-	if value, exists := os.LookupEnv(key); exists {
-		return value == "1" || strings.ToLower(value) == "true"
-	}
-	return defaultValue
 }
 
 func parseLevel(level string) slog.Level {
