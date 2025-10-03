@@ -111,10 +111,8 @@ func (dt *disabledTools) addTools(s *server.MCPServer) {
 func (dt *disabledTools) addToolsDynamically(s *server.MCPServer) *mcpgrafana.DynamicToolManager {
 	dtm := mcpgrafana.NewDynamicToolManager(s)
 
-	// Parse enabled tools list
 	enabledTools := strings.Split(dt.enabledTools, ",")
 
-	// Helper function to check if a tool is enabled
 	isEnabled := func(toolName string) bool {
 		// If enabledTools is empty string, no tools should be available
 		if dt.enabledTools == "" {
