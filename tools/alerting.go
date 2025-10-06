@@ -43,8 +43,14 @@ type alertRuleSummary struct {
 	Title string `json:"title"`
 	// State can be one of: pending, firing, error, recovering, inactive.
 	// "inactive" means the alert state is normal, not firing.
-	State  string            `json:"state"`
-	Labels map[string]string `json:"labels,omitempty"`
+	State          string            `json:"state"`
+	Health         string            `json:"health,omitempty"`
+	FolderUID      string            `json:"folderUID,omitempty"`
+	RuleGroup      string            `json:"ruleGroup,omitempty"`
+	For            string            `json:"for,omitempty"`
+	LastEvaluation string            `json:"lastEvaluation,omitempty"`
+	Labels         map[string]string `json:"labels,omitempty"`
+	Annotations    map[string]string `json:"annotations,omitempty"`
 }
 
 func listAlertRules(ctx context.Context, args ListAlertRulesParams) ([]alertRuleSummary, error) {
@@ -160,9 +166,9 @@ func mergeAlertRuleData(provisionedRules []*models.ProvisionedAlertRule, runtime
 		if runtime, found := runtimeByName[title]; found {
 			mergedRule.State = runtime.State
 			mergedRule.Health = runtime.Health
-			mergedRule.LastEvaluation = runtime.LastEvaluation.Format("2006-01-02 15:04:05")
+			mergedRule.LastEvaluation = runtime.LastEvaluation.Format(time.RFC3339)
 			if runtime.ActiveAt != nil {
-				mergedRule.ActiveAt = runtime.ActiveAt.Format("2006-01-02 15:04:05")
+				mergedRule.ActiveAt = runtime.ActiveAt.Format(time.RFC3339)
 			}
 		}
 
@@ -220,10 +226,16 @@ func summarizeMergedAlertRules(alertRules []mergedAlertRule) []alertRuleSummary 
 	result := make([]alertRuleSummary, 0, len(alertRules))
 	for _, r := range alertRules {
 		result = append(result, alertRuleSummary{
-			UID:    r.UID,
-			Title:  r.Title,
-			State:  r.State, // Now we have runtime state from the merged data!
-			Labels: r.Labels,
+			UID:            r.UID,
+			Title:          r.Title,
+			State:          r.State,
+			Health:         r.Health,
+			FolderUID:      r.FolderUID,
+			RuleGroup:      r.RuleGroup,
+			For:            r.For,
+			LastEvaluation: r.LastEvaluation,
+			Labels:         r.Labels,
+			Annotations:    r.Annotations,
 		})
 	}
 	return result
