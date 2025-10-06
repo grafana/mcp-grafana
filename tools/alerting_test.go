@@ -569,7 +569,7 @@ func TestAlertingTools_CreateAlertRule(t *testing.T) {
 		params := CreateAlertRuleParams{
 			Title:        "Test Created Alert Rule",
 			RuleGroup:    "test-group",
-			FolderUID:    "beyglvfuqlo8we",
+			FolderUID:    "tests",
 			Condition:    "B",
 			Data:         sampleData,
 			NoDataState:  "OK",
@@ -630,16 +630,16 @@ func TestAlertingTools_UpdateAlertRule(t *testing.T) {
 		ctx := newTestContext()
 
 		// First create a rule to update
-		sampleData := []interface{}{
-			map[string]interface{}{
+		sampleData := []any{
+			map[string]any{
 				"refId":     "A",
 				"queryType": "",
-				"relativeTimeRange": map[string]interface{}{
+				"relativeTimeRange": map[string]any{
 					"from": 600,
 					"to":   0,
 				},
 				"datasourceUid": "prometheus-uid",
-				"model": map[string]interface{}{
+				"model": map[string]any{
 					"expr":          "up",
 					"hide":          false,
 					"intervalMs":    1000,
@@ -653,7 +653,7 @@ func TestAlertingTools_UpdateAlertRule(t *testing.T) {
 		createParams := CreateAlertRuleParams{
 			Title:        "Original Title",
 			RuleGroup:    "test-group",
-			FolderUID:    "beyglvfuqlo8we",
+			FolderUID:    "tests",
 			Condition:    "A",
 			Data:         sampleData,
 			NoDataState:  "OK",
@@ -673,7 +673,7 @@ func TestAlertingTools_UpdateAlertRule(t *testing.T) {
 			UID:          testUID,
 			Title:        "Updated Title",
 			RuleGroup:    "test-group",
-			FolderUID:    "beyglvfuqlo8we",
+			FolderUID:    "tests",
 			Condition:    "A",
 			Data:         sampleData,
 			NoDataState:  "Alerting",
@@ -707,9 +707,9 @@ func TestAlertingTools_UpdateAlertRule(t *testing.T) {
 			UID:          "non-existent-uid",
 			Title:        "Updated Title",
 			RuleGroup:    "test-group",
-			FolderUID:    "beyglvfuqlo8we",
+			FolderUID:    "tests",
 			Condition:    "A",
-			Data:         []interface{}{},
+			Data:         []any{},
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
@@ -740,16 +740,16 @@ func TestAlertingTools_DeleteAlertRule(t *testing.T) {
 		ctx := newTestContext()
 
 		// First create a rule to delete
-		sampleData := []interface{}{
-			map[string]interface{}{
+		sampleData := []any{
+			map[string]any{
 				"refId":     "A",
 				"queryType": "",
-				"relativeTimeRange": map[string]interface{}{
+				"relativeTimeRange": map[string]any{
 					"from": 600,
 					"to":   0,
 				},
 				"datasourceUid": "prometheus-uid",
-				"model": map[string]interface{}{
+				"model": map[string]any{
 					"expr":          "up",
 					"hide":          false,
 					"intervalMs":    1000,
@@ -763,7 +763,7 @@ func TestAlertingTools_DeleteAlertRule(t *testing.T) {
 		createParams := CreateAlertRuleParams{
 			Title:        "Rule to Delete",
 			RuleGroup:    "test-group",
-			FolderUID:    "beyglvfuqlo8we",
+			FolderUID:    "tests",
 			Condition:    "A",
 			Data:         sampleData,
 			NoDataState:  "OK",
