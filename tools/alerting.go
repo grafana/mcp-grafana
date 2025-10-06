@@ -387,7 +387,7 @@ type CreateAlertRuleParams struct {
 	RuleGroup    string            `json:"ruleGroup" jsonschema:"required,description=The rule group name"`
 	FolderUID    string            `json:"folderUID" jsonschema:"required,description=The folder UID where the rule will be created"`
 	Condition    string            `json:"condition" jsonschema:"required,description=The query condition identifier (e.g. 'A'\\, 'B')"`
-	Data         interface{}       `json:"data" jsonschema:"required,description=Array of query data objects"`
+	Data         any               `json:"data" jsonschema:"required,description=Array of query data objects"`
 	NoDataState  string            `json:"noDataState" jsonschema:"required,description=State when no data (NoData\\, Alerting\\, OK)"`
 	ExecErrState string            `json:"execErrState" jsonschema:"required,description=State on execution error (NoData\\, Alerting\\, OK)"`
 	For          string            `json:"for" jsonschema:"required,description=Duration before alert fires (e.g. '5m')"`
@@ -470,6 +470,11 @@ func createAlertRule(ctx context.Context, args CreateAlertRuleParams) (*models.P
 
 	if args.UID != nil {
 		rule.UID = *args.UID
+	}
+
+	// Validate the rule using the built-in OpenAPI validation
+	if err := rule.Validate(strfmt.Default); err != nil {
+		return nil, fmt.Errorf("create alert rule: invalid rule configuration: %w", err)
 	}
 
 	params := provisioning.NewPostAlertRuleParams().WithContext(ctx).WithBody(rule)
@@ -576,6 +581,11 @@ func updateAlertRule(ctx context.Context, args UpdateAlertRuleParams) (*models.P
 		Annotations:  args.Annotations,
 		Labels:       args.Labels,
 		OrgID:        &args.OrgID,
+	}
+
+	// Validate the rule using the built-in OpenAPI validation
+	if err := rule.Validate(strfmt.Default); err != nil {
+		return nil, fmt.Errorf("update alert rule: invalid rule configuration: %w", err)
 	}
 
 	params := provisioning.NewPutAlertRuleParams().WithContext(ctx).WithUID(args.UID).WithBody(rule)

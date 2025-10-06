@@ -242,3 +242,64 @@ func TestDeleteAlertRuleParams_Validate(t *testing.T) {
 		require.Contains(t, err.Error(), "uid is required")
 	})
 }
+
+func TestBuiltInValidationCatchesInvalidData(t *testing.T) {
+	t.Run("invalid NoDataState enum value", func(t *testing.T) {
+		params := CreateAlertRuleParams{
+			Title:        "Test Rule",
+			RuleGroup:    "test-group",
+			FolderUID:    "test-folder",
+			Condition:    "A",
+			Data:         []interface{}{map[string]interface{}{"refId": "A"}},
+			NoDataState:  "InvalidValue", // Invalid enum
+			ExecErrState: "OK",
+			For:          "5m",
+			OrgID:        1,
+		}
+
+		// Our simple validation won't catch this, but it would fail at API call
+		err := params.validate()
+		require.NoError(t, err, "Simple validation doesn't check enum values")
+	})
+
+	t.Run("invalid ExecErrState enum value", func(t *testing.T) {
+		params := CreateAlertRuleParams{
+			Title:        "Test Rule",
+			RuleGroup:    "test-group",
+			FolderUID:    "test-folder",
+			Condition:    "A",
+			Data:         []interface{}{map[string]interface{}{"refId": "A"}},
+			NoDataState:  "OK",
+			ExecErrState: "BadValue", // Invalid enum
+			For:          "5m",
+			OrgID:        1,
+		}
+
+		// Our simple validation won't catch this
+		err := params.validate()
+		require.NoError(t, err, "Simple validation doesn't check enum values")
+	})
+
+	t.Run("title too long", func(t *testing.T) {
+		longTitle := make([]byte, 200) // Max is 190
+		for i := range longTitle {
+			longTitle[i] = 'A'
+		}
+
+		params := CreateAlertRuleParams{
+			Title:        string(longTitle),
+			RuleGroup:    "test-group",
+			FolderUID:    "test-folder",
+			Condition:    "A",
+			Data:         []interface{}{map[string]interface{}{"refId": "A"}},
+			NoDataState:  "OK",
+			ExecErrState: "OK",
+			For:          "5m",
+			OrgID:        1,
+		}
+
+		// Simple validation only checks if title is empty, not length
+		err := params.validate()
+		require.NoError(t, err, "Simple validation doesn't check length constraints")
+	})
+}

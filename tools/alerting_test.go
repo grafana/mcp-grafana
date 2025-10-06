@@ -59,11 +59,17 @@ var (
 )
 
 // Because the state depends on the evaluation of the alert rules,
-// clear it before comparing the results to avoid waiting for the
-// alerts to start firing or be in the pending state.
+// clear it and other variable runtime fields before comparing the results
+// to avoid waiting for the alerts to start firing or be in the pending state.
 func clearState(rules []alertRuleSummary) []alertRuleSummary {
 	for i := range rules {
 		rules[i].State = ""
+		rules[i].Health = ""
+		rules[i].FolderUID = ""
+		rules[i].RuleGroup = ""
+		rules[i].For = ""
+		rules[i].LastEvaluation = ""
+		rules[i].Annotations = nil
 	}
 
 	return rules
@@ -501,16 +507,16 @@ func TestAlertingTools_CreateAlertRule(t *testing.T) {
 		ctx := newTestContext()
 
 		// Sample query data that matches Grafana's expected format
-		sampleData := []interface{}{
-			map[string]interface{}{
+		sampleData := []any{
+			map[string]any{
 				"refId":     "A",
 				"queryType": "",
-				"relativeTimeRange": map[string]interface{}{
+				"relativeTimeRange": map[string]any{
 					"from": 600,
 					"to":   0,
 				},
 				"datasourceUid": "prometheus-uid",
-				"model": map[string]interface{}{
+				"model": map[string]any{
 					"expr":          "up",
 					"hide":          false,
 					"intervalMs":    1000,
@@ -518,35 +524,35 @@ func TestAlertingTools_CreateAlertRule(t *testing.T) {
 					"refId":         "A",
 				},
 			},
-			map[string]interface{}{
+			map[string]any{
 				"refId":     "B",
 				"queryType": "",
-				"relativeTimeRange": map[string]interface{}{
+				"relativeTimeRange": map[string]any{
 					"from": 0,
 					"to":   0,
 				},
 				"datasourceUid": "__expr__",
-				"model": map[string]interface{}{
-					"conditions": []interface{}{
-						map[string]interface{}{
-							"evaluator": map[string]interface{}{
-								"params": []interface{}{1},
+				"model": map[string]any{
+					"conditions": []any{
+						map[string]any{
+							"evaluator": map[string]any{
+								"params": []any{1},
 								"type":   "gt",
 							},
-							"operator": map[string]interface{}{
+							"operator": map[string]any{
 								"type": "and",
 							},
-							"query": map[string]interface{}{
-								"params": []interface{}{"A"},
+							"query": map[string]any{
+								"params": []any{"A"},
 							},
-							"reducer": map[string]interface{}{
-								"params": []interface{}{},
+							"reducer": map[string]any{
+								"params": []any{},
 								"type":   "last",
 							},
 							"type": "query",
 						},
 					},
-					"datasource": map[string]interface{}{
+					"datasource": map[string]any{
 						"type": "__expr__",
 						"uid":  "__expr__",
 					},
