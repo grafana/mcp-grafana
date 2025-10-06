@@ -183,6 +183,8 @@ Scopes define the specific resources that permissions apply to. Each action requ
 
 | Tool                              | Category    | Description                                                         | Required RBAC Permissions               | Required Scopes                                     |
 | --------------------------------- | ----------- | ------------------------------------------------------------------- | --------------------------------------- | --------------------------------------------------- |
+| `grafana_list_toolsets`           | Meta        | List available toolsets for [dynamic discovery](#dynamic-toolset-discovery) | None (meta-tool)                        | N/A                                                 |
+| `grafana_enable_toolset`          | Meta        | Enable a specific toolset [dynamically](#dynamic-toolset-discovery) | None (meta-tool)                        | N/A                                                 |
 | `list_teams`                      | Admin       | List all teams                                                      | `teams:read`                            | `teams:*` or `teams:id:1`                           |
 | `list_users_by_org`               | Admin       | List all users in an organization                                   | `users:read`                            | `global.users:*` or `global.users:id:123`           |
 | `list_all_roles`          | Admin    | List all Grafana roles                              | `roles:read`              | `roles:*`                         |
@@ -261,7 +263,8 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 - `--debug`: Enable debug mode for detailed HTTP request/response logging
 
 **Tool Configuration:**
-- `--enabled-tools`: Comma-separated list of enabled categories - default: all categories except `admin`, to enable admin tools, add `admin` to the list (e.g., `"search,datasource,...,admin"`)
+- `--enabled-tools`: Comma-separated list of enabled categories - default: all categories enabled - example: "loki,datasources"
+- `--dynamic-toolsets`: Enable dynamic toolset discovery mode (tools loaded on-demand, reduces context window usage)
 - `--disable-search`: Disable search tools
 - `--disable-datasource`: Disable datasource tools
 - `--disable-incident`: Disable incident tools
@@ -324,6 +327,60 @@ All read operations remain available, allowing you to query dashboards, run Prom
 **Server TLS Configuration (streamable-http transport only):**
 - `--server.tls-cert-file`: Path to TLS certificate file for server HTTPS
 - `--server.tls-key-file`: Path to TLS private key file for server HTTPS
+
+### Dynamic Toolset Discovery
+
+For even more efficient context window usage, you can enable **dynamic toolset discovery** mode with the `--dynamic-toolsets` flag. In this mode, tools are not loaded at startup. Instead, clients can discover available toolsets and selectively enable only the ones they need at runtime.
+
+**Benefits:**
+- Significantly reduces initial context window usage by not loading tool descriptions upfront
+- Tools are loaded on-demand only when needed
+- Preserves context space for more important data
+
+**How it works:**
+1. Start the server with `--dynamic-toolsets` flag
+2. Use `grafana_list_toolsets` to discover available toolset categories
+3. Use `grafana_enable_toolset` to load specific toolsets (e.g., "datasource", "dashboard")
+4. The client receives a `tools/list_changed` notification and refreshes its tool list
+
+**Integration with `--enabled-tools`:**
+- No flag → all toolsets are discoverable
+- `--enabled-tools=""` → no toolsets are discoverable
+- `--enabled-tools="datasource,dashboard"` → only specified toolsets are discoverable
+
+**Example configuration for Cursor/VS Code:**
+```json
+{
+  "mcpServers": {
+    "grafana": {
+      "command": "mcp-grafana",
+      "args": ["--dynamic-toolsets"],
+      "env": {
+        "GRAFANA_URL": "http://localhost:3000",
+        "GRAFANA_SERVICE_ACCOUNT_TOKEN": "<your service account token>"
+      }
+    }
+  }
+}
+```
+
+**Limitations and Client Compatibility:**
+
+Protocol Support:
+- ✅ **stdio protocol** - Fully supported
+- ❌ **SSE (Server-Sent Events)** - Not yet supported
+- ❌ **Streamable HTTP** - Not yet supported
+
+Client Support:
+- ✅ **Cursor** - Fully supported (supports notifications via stdio)
+- ✅ **VS Code** - Fully supported (supports notifications via stdio)
+- ❌ **Claude Desktop** - Not yet supported (no notification support, but open issues exist)
+- ❌ **Claude Code** - Not yet supported (no notification support, but open issues exist)
+
+**Known Behavior:**
+There may be a few seconds of delay between calling `grafana_enable_toolset` and the tools becoming available in the client, as the client needs to receive and process the `tools/list_changed` notification.
+
+**Note:** This is an opt-in feature via the `--dynamic-toolsets` flag. Existing static tool registration remains the default behavior for maximum compatibility.
 
 ## Usage
 
