@@ -4,8 +4,6 @@ on:
   push:
     tags:
       - 'v*.*.*'
-  pull_request:
-    branches: [ add-docker-action ]
   release:
     types: [published]
 
