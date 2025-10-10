@@ -9,11 +9,13 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
   docker:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v4
       
@@ -31,6 +33,9 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     needs: docker
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
