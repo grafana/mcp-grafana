@@ -1,0 +1,77 @@
+name: Release Docker Image and Publish to MCP Registry
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  docker:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Build and Push to Docker Hub
+        uses: grafana/shared-workflows/actions/build-push-to-dockerhub@main
+        with:
+          context: .
+          file: ./Dockerfile
+          repository: grafana/mcp-grafana
+          tags: |
+            latest
+            ${{ github.ref_name }}
+          push: true
+
+  publish:
+    runs-on: ubuntu-latest
+    needs: docker
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          # Get the tag from the triggering workflow
+          TAG=$(git describe --tags --exact-match HEAD 2>/dev/null || echo "")
+          if [ -z "$TAG" ]; then
+            echo "No tag found at HEAD"
+            exit 1
+          fi
+          echo "VERSION=$TAG" >> $GITHUB_OUTPUT
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update && sudo apt-get install -y jq
+          curl -L "https://github.com/modelcontextprotocol/registry/releases/download/v1.2.3/mcp-publisher_1.2.3_linux_amd64.tar.gz" | tar xz mcp-publisher
+          chmod +x mcp-publisher
+          sudo mv mcp-publisher /usr/local/bin/
+
+      - name: Update server.json with Docker image
+        run: |
+          # Update the server.json with the correct Docker image reference
+          jq --arg version "${{ steps.version.outputs.VERSION }}" \
+             --arg image "grafana/mcp-grafana:${{ steps.version.outputs.VERSION }}" \
+             '.packages[0].version = $version | 
+              .packages[0].identifier = $image |
+              .version = $version' server.json > server.json.tmp
+          mv server.json.tmp server.json
+
+      - name: Login to MCP Registry
+        run: mcp-publisher login github-oidc
+
+      - name: Publish to MCP Registry
+        run: mcp-publisher publish

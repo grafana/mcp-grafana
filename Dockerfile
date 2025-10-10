@@ -1,7 +1,7 @@
 # Build stage
 FROM golang:1.24-bullseye AS builder
 
-LABEL io.modelcontextprotocol.server.name="grafana/mcp-grafana"
+LABEL io.modelcontextprotocol.server.name="io.github.grafana/mcp-grafana"
 
 # Set the working directory
 WORKDIR /app
