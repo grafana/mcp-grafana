@@ -1,18 +1,36 @@
-name: Publish to MCP Registry
+name: Release Docker Image and Publish to MCP Registry
 
 on:
-  workflow_run:
-    workflows: ["Build and Push Docker Image"]
-    types: [completed]
-    branches: [main]
+  push:
+    tags:
+      - 'v*.*.*'
+  release:
+    types: [published]
 
 permissions:
-  id-token: write  # Required for OIDC authentication
   contents: read
+  id-token: write
 
 jobs:
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Build and Push to Docker Hub
+        uses: grafana/shared-workflows/actions/build-push-to-dockerhub@main
+        with:
+          context: .
+          file: ./Dockerfile
+          repository: grafana/mcp-grafana
+          tags: |
+            latest
+            ${{ github.ref_name }}
+          push: true
+
   publish:
     runs-on: ubuntu-latest
+    needs: docker
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
