@@ -1,0 +1,29 @@
+name: Build and Push Docker Image
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Build and Push to Docker Hub
+        uses: grafana/shared-workflows/actions/build-push-to-dockerhub@main
+        with:
+          context: .
+          file: ./Dockerfile
+          repository: grafana/mcp-grafana
+          tags: |
+            latest
+            ${{ github.ref_name }}
+          push: true
