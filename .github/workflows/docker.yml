@@ -3,7 +3,7 @@ name: Build and Push Docker Image
 on:
   push:
     tags:
-      - 'v*'
+      - 'v*.*.*'
   pull_request:
     branches: [ add-docker-action ]
   release:
