@@ -3,7 +3,7 @@ apiVersion: 1
 groups:
   - orgId: 1
     name: Test Alert Rules
-    folder: Test Alerts
+    folder: Tests
     interval: 1m
     rules:
       - uid: test_alert_rule_1

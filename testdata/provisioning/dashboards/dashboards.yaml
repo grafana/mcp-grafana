@@ -4,7 +4,7 @@ providers:
   - name: "docker-compose"
     orgId: 1
     folder: "Tests"
-    folderUid: ""
+    folderUid: "tests"
     type: file
     disableDeletion: true
     updateIntervalSeconds: 60
