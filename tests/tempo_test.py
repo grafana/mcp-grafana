@@ -1,8 +1,23 @@
 from mcp import ClientSession
 import pytest
+from langevals import expect
+from langevals_langevals.llm_boolean import (
+    CustomLLMBooleanEvaluator,
+    CustomLLMBooleanSettings,
+)
+from litellm import Message, acompletion
+from mcp import ClientSession
+
+from conftest import models
+from utils import (
+    get_converted_tools,
+    llm_tool_call_sequence,
+)
+
+pytestmark = pytest.mark.anyio
 
 
-class TestTempoProxiedTools:
+class TestTempoProxiedToolsBasic:
     """Test Tempo proxied MCP tools functionality.
 
     These tests verify that Tempo datasources with MCP support are discovered
@@ -189,3 +204,47 @@ class TestTempoProxiedTools:
                 assert (
                     "not found" not in error_msg or datasource_uid not in error_msg
                 ), f"Datasource {datasource_uid} should be accessible: {e}"
+
+
+class TestTempoProxiedToolsWithLLM:
+    """LLM integration tests for Tempo proxied tools."""
+
+    @pytest.mark.parametrize("model", models)
+    @pytest.mark.flaky(max_runs=3)
+    async def test_llm_can_list_trace_attributes(
+        self, model: str, mcp_client: ClientSession
+    ):
+        """Test that an LLM can list available trace attributes from Tempo."""
+        tools = await get_converted_tools(mcp_client)
+        # prompt = (
+        #     "Use the tempo tools to get a list of all available trace attribute names "
+        #     "from the datasource with UID 'tempo'. I want to know what attributes "
+        #     "I can use in my TraceQL queries."
+        # )
+        prompt = "what trace attributes are available in the tempo datasource?"
+
+        messages = [
+            Message(role="system", content="You are a helpful assistant."),
+            Message(role="user", content=prompt),
+        ]
+
+        # LLM should call tempo_get-attribute-names with datasourceUid
+        messages = await llm_tool_call_sequence(
+            model,
+            messages,
+            tools,
+            mcp_client,
+            "tempo_get-attribute-names",
+            {"datasourceUid": "tempo"},
+        )
+
+        # Final LLM response should mention attributes
+        response = await acompletion(model=model, messages=messages, tools=tools)
+        content = response.choices[0].message.content
+
+        attributes_checker = CustomLLMBooleanEvaluator(
+            settings=CustomLLMBooleanSettings(
+                prompt="Does the response list or describe trace attributes that are available for querying?",
+            )
+        )
+        expect(input=prompt, output=content).to_pass(attributes_checker)
