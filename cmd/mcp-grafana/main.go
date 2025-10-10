@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
@@ -40,7 +41,7 @@ type disabledTools struct {
 	search, datasource, incident,
 	prometheus, loki, alerting,
 	dashboard, folder, oncall, asserts, sift, admin,
-	pyroscope, navigation bool
+	pyroscope, navigation, proxied bool
 }
 
 // Configuration for the Grafana client.
@@ -56,8 +57,7 @@ type grafanaConfig struct {
 }
 
 func (dt *disabledTools) addFlags() {
-	flag.StringVar(&dt.enabledTools, "enabled-tools", "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,admin,pyroscope,navigation", "A comma separated list of tools enabled for this server. Can be overwritten entirely or by disabling specific components, e.g. --disable-search.")
-
+	flag.StringVar(&dt.enabledTools, "enabled-tools", "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,admin,pyroscope,navigation,proxied", "A comma separated list of tools enabled for this server. Can be overwritten entirely or by disabling specific components, e.g. --disable-search.")
 	flag.BoolVar(&dt.search, "disable-search", false, "Disable search tools")
 	flag.BoolVar(&dt.datasource, "disable-datasource", false, "Disable datasource tools")
 	flag.BoolVar(&dt.incident, "disable-incident", false, "Disable incident tools")
@@ -72,6 +72,7 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.admin, "disable-admin", false, "Disable admin tools")
 	flag.BoolVar(&dt.pyroscope, "disable-pyroscope", false, "Disable pyroscope tools")
 	flag.BoolVar(&dt.navigation, "disable-navigation", false, "Disable navigation tools")
+	flag.BoolVar(&dt.proxied, "disable-proxied", false, "Disable proxied tools (tools from external MCP servers)")
 }
 
 func (gc *grafanaConfig) addFlags() {
@@ -103,21 +104,66 @@ func (dt *disabledTools) addTools(s *server.MCPServer) {
 }
 
 func newServer(dt disabledTools) *server.MCPServer {
-	s := server.NewMCPServer("mcp-grafana", mcpgrafana.Version(), server.WithInstructions(`
-	This server provides access to your Grafana instance and the surrounding ecosystem.
+	sm := mcpgrafana.NewSessionManager()
 
-	Available Capabilities:
-	- Dashboards: Search, retrieve, update, and create dashboards. Extract panel queries and datasource information.
-	- Datasources: List and fetch details for datasources.
-	- Prometheus & Loki: Run PromQL and LogQL queries, retrieve metric/log metadata, and explore label names/values.
-	- Incidents: Search, create, update, and resolve incidents in Grafana Incident.
-	- Sift Investigations: Start and manage Sift investigations, analyze logs/traces, find error patterns, and detect slow requests.
-	- Alerting: List and fetch alert rules and notification contact points.
-	- OnCall: View and manage on-call schedules, shifts, teams, and users.
-	- Admin: List teams and perform administrative tasks.
-	- Pyroscope: Profile applications and fetch profiling data.
-	- Navigation: Generate deeplink URLs for Grafana resources like dashboards, panels, and Explore queries.
-	`))
+	// Declare variable for SessionToolManager that will be initialized after server creation
+	var stm *mcpgrafana.SessionToolManager
+
+	// Create hooks
+	hooks := &server.Hooks{
+		OnRegisterSession:   []server.OnRegisterSessionHookFunc{sm.CreateSession},
+		OnUnregisterSession: []server.OnUnregisterSessionHookFunc{sm.RemoveSession},
+	}
+
+	// Add proxied tools hooks if enabled
+	if !dt.proxied {
+		// OnBeforeListTools: Discover, connect, and register tools
+		hooks.OnBeforeListTools = []server.OnBeforeListToolsFunc{
+			func(ctx context.Context, id any, request *mcp.ListToolsRequest) {
+				if stm != nil {
+					if session := server.ClientSessionFromContext(ctx); session != nil {
+						stm.InitializeAndRegisterProxiedTools(ctx, session)
+					}
+				}
+			},
+		}
+
+		// OnBeforeCallTool: Fallback in case client calls tool without listing first
+		hooks.OnBeforeCallTool = []server.OnBeforeCallToolFunc{
+			func(ctx context.Context, id any, request *mcp.CallToolRequest) {
+				if stm != nil {
+					if session := server.ClientSessionFromContext(ctx); session != nil {
+						stm.InitializeAndRegisterProxiedTools(ctx, session)
+					}
+				}
+			},
+		}
+	}
+	s := server.NewMCPServer("mcp-grafana", mcpgrafana.Version(),
+		server.WithInstructions(`
+This server provides access to your Grafana instance and the surrounding ecosystem.
+
+Available Capabilities:
+- Dashboards: Search, retrieve, update, and create dashboards. Extract panel queries and datasource information.
+- Datasources: List and fetch details for datasources.
+- Prometheus & Loki: Run PromQL and LogQL queries, retrieve metric/log metadata, and explore label names/values.
+- Incidents: Search, create, update, and resolve incidents in Grafana Incident.
+- Sift Investigations: Start and manage Sift investigations, analyze logs/traces, find error patterns, and detect slow requests.
+- Alerting: List and fetch alert rules and notification contact points.
+- OnCall: View and manage on-call schedules, shifts, teams, and users.
+- Admin: List teams and perform administrative tasks.
+- Pyroscope: Profile applications and fetch profiling data.
+- Navigation: Generate deeplink URLs for Grafana resources like dashboards, panels, and Explore queries.
+- Proxied Tools: Access tools from external MCP servers (like Tempo) through dynamic discovery.
+
+Note that some of these capabilities may be disabled. Do not try to use features that are not available via tools.
+`),
+		server.WithHooks(hooks),
+	)
+
+	// Initialize SessionToolManager now that server is created
+	stm = mcpgrafana.NewSessionToolManager(sm, s, mcpgrafana.WithProxiedTools(!dt.proxied))
+
 	dt.addTools(s)
 	return s
 }
@@ -162,6 +208,7 @@ func runHTTPServer(ctx context.Context, srv httpServer, addr, transportName stri
 		if err := srv.Shutdown(shutdownCtx); err != nil {
 			return fmt.Errorf("shutdown error: %v", err)
 		}
+		slog.Debug("Shutdown called, waiting for connections to close...")
 
 		// Wait for server to finish
 		select {
@@ -227,7 +274,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 	case "streamable-http":
 		opts := []server.StreamableHTTPOption{
 			server.WithHTTPContextFunc(mcpgrafana.ComposedHTTPContextFunc(gc)),
-			server.WithStateLess(true),
+			server.WithStateLess(dt.proxied), // Stateful when proxied tools enabled (requires sessions)
 			server.WithEndpointPath(endpointPath),
 		}
 		if tls.certFile != "" || tls.keyFile != "" {
@@ -238,10 +285,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 			"version", mcpgrafana.Version(), "address", addr, "endpointPath", endpointPath)
 		return runHTTPServer(ctx, srv, addr, "StreamableHTTP")
 	default:
-		return fmt.Errorf(
-			"invalid transport type: %s. Must be 'stdio', 'sse' or 'streamable-http'",
-			transport,
-		)
+		return fmt.Errorf("invalid transport type: %s. Must be 'stdio', 'sse' or 'streamable-http'", transport)
 	}
 }
 
