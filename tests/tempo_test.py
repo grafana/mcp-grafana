@@ -216,12 +216,11 @@ class TestTempoProxiedToolsWithLLM:
     ):
         """Test that an LLM can list available trace attributes from Tempo."""
         tools = await get_converted_tools(mcp_client)
-        # prompt = (
-        #     "Use the tempo tools to get a list of all available trace attribute names "
-        #     "from the datasource with UID 'tempo'. I want to know what attributes "
-        #     "I can use in my TraceQL queries."
-        # )
-        prompt = "what trace attributes are available in the tempo datasource?"
+        prompt = (
+            "Use the tempo tools to get a list of all available trace attribute names "
+            "from the datasource with UID 'tempo'. I want to know what attributes "
+            "I can use in my TraceQL queries."
+        )
 
         messages = [
             Message(role="system", content="You are a helpful assistant."),

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/go-openapi/runtime"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -127,49 +128,122 @@ func parseProxiedToolName(toolName string) (string, string, error) {
 	return parts[0], parts[1], nil
 }
 
-// SessionToolManager manages session-specific proxied tools
-type SessionToolManager struct {
+// ToolManager manages proxied tools (either per-session or server-wide)
+type ToolManager struct {
 	sm     *SessionManager
 	server *server.MCPServer
 
 	// Whether to enable proxied tools.
 	enableProxiedTools bool
+
+	// For stdio transport: store clients at manager level (single-tenant).
+	// These will be unused for HTTP/SSE transports.
+	serverMode    bool // true if using server-wide tools (stdio), false for per-session (HTTP/SSE)
+	serverClients map[string]*ProxiedClient
+	clientsMutex  sync.RWMutex
 }
 
-// NewSessionToolManager creates a new SessionToolManager
-func NewSessionToolManager(sm *SessionManager, mcpServer *server.MCPServer, opts ...sessionToolManagerOption) *SessionToolManager {
-	stm := &SessionToolManager{
-		sm:     sm,
-		server: mcpServer,
+// NewToolManager creates a new ToolManager
+func NewToolManager(sm *SessionManager, mcpServer *server.MCPServer, opts ...toolManagerOption) *ToolManager {
+	tm := &ToolManager{
+		sm:            sm,
+		server:        mcpServer,
+		serverClients: make(map[string]*ProxiedClient),
 	}
 	for _, opt := range opts {
-		opt(stm)
+		opt(tm)
 	}
-	return stm
+	return tm
 }
 
-type sessionToolManagerOption func(*SessionToolManager)
+type toolManagerOption func(*ToolManager)
 
 // WithProxiedTools sets whether proxied tools are enabled
-func WithProxiedTools(enabled bool) sessionToolManagerOption {
-	return func(stm *SessionToolManager) {
-		stm.enableProxiedTools = enabled
+func WithProxiedTools(enabled bool) toolManagerOption {
+	return func(tm *ToolManager) {
+		tm.enableProxiedTools = enabled
 	}
 }
 
-// InitializeAndRegisterProxiedTools discovers datasources, creates clients, and registers tools
-// This should be called in OnBeforeListTools and OnBeforeCallTool hooks
-func (stm *SessionToolManager) InitializeAndRegisterProxiedTools(ctx context.Context, session server.ClientSession) {
-	if !stm.enableProxiedTools {
+// InitializeAndRegisterServerTools discovers datasources and registers tools on the server (for stdio transport)
+// This should be called once at server startup for single-tenant stdio servers
+func (tm *ToolManager) InitializeAndRegisterServerTools(ctx context.Context) error {
+	if !tm.enableProxiedTools {
+		return nil
+	}
+
+	// Mark as server mode (stdio transport)
+	tm.serverMode = true
+
+	// Discover datasources with MCP support
+	discovered, err := discoverMCPDatasources(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to discover MCP datasources: %w", err)
+	}
+
+	if len(discovered) == 0 {
+		slog.Info("no MCP datasources discovered")
+		return nil
+	}
+
+	// Connect to each datasource and store in manager
+	tm.clientsMutex.Lock()
+	for _, ds := range discovered {
+		client, err := NewProxiedClient(ctx, ds.UID, ds.Name, ds.Type, ds.MCPURL)
+		if err != nil {
+			slog.Error("failed to create proxied client", "datasource", ds.UID, "error", err)
+			continue
+		}
+		key := ds.Type + "_" + ds.UID
+		tm.serverClients[key] = client
+	}
+	clientCount := len(tm.serverClients)
+	tm.clientsMutex.Unlock()
+
+	if clientCount == 0 {
+		slog.Warn("no proxied clients created")
+		return nil
+	}
+
+	slog.Info("connected to proxied MCP servers", "datasources", clientCount)
+
+	// Collect and register all unique tools
+	tm.clientsMutex.RLock()
+	toolMap := make(map[string]mcp.Tool)
+	for _, client := range tm.serverClients {
+		for _, tool := range client.ListTools() {
+			toolName := client.DatasourceType + "_" + tool.Name
+			if _, exists := toolMap[toolName]; !exists {
+				modifiedTool := addDatasourceUidParameter(tool, client.DatasourceType)
+				toolMap[toolName] = modifiedTool
+			}
+		}
+	}
+	tm.clientsMutex.RUnlock()
+
+	// Register tools on the server (not per-session)
+	for toolName, tool := range toolMap {
+		handler := NewProxiedToolHandler(tm.sm, tm, toolName)
+		tm.server.AddTool(tool, handler.Handle)
+	}
+
+	slog.Info("registered proxied tools on server", "tools", len(toolMap))
+	return nil
+}
+
+// InitializeAndRegisterProxiedTools discovers datasources, creates clients, and registers tools per-session
+// This should be called in OnBeforeListTools and OnBeforeCallTool hooks for HTTP/SSE transports
+func (tm *ToolManager) InitializeAndRegisterProxiedTools(ctx context.Context, session server.ClientSession) {
+	if !tm.enableProxiedTools {
 		return
 	}
 
 	sessionID := session.SessionID()
-	state, exists := stm.sm.GetSession(sessionID)
+	state, exists := tm.sm.GetSession(sessionID)
 	if !exists {
 		// Session exists in server context but not in our SessionManager yet
-		stm.sm.CreateSession(ctx, session)
-		state, exists = stm.sm.GetSession(sessionID)
+		tm.sm.CreateSession(ctx, session)
+		state, exists = tm.sm.GetSession(sessionID)
 		if !exists {
 			slog.Error("failed to create session in SessionManager", "sessionID", sessionID)
 			return
@@ -257,7 +331,7 @@ func (stm *SessionToolManager) InitializeAndRegisterProxiedTools(ctx context.Con
 	// Second pass: register all unique tools at once (reduces listChanged notifications)
 	var serverTools []server.ServerTool
 	for toolName, tool := range toolMap {
-		handler := NewProxiedToolHandler(stm.sm, toolName)
+		handler := NewProxiedToolHandler(tm.sm, tm, toolName)
 		serverTools = append(serverTools, server.ServerTool{
 			Tool:    tool,
 			Handler: handler.Handle,
@@ -265,9 +339,34 @@ func (stm *SessionToolManager) InitializeAndRegisterProxiedTools(ctx context.Con
 		state.proxiedTools = append(state.proxiedTools, tool)
 	}
 
-	if err := stm.server.AddSessionTools(sessionID, serverTools...); err != nil {
+	if err := tm.server.AddSessionTools(sessionID, serverTools...); err != nil {
 		slog.Warn("failed to add session tools", "session", sessionID, "error", err)
 	} else {
 		slog.Info("registered proxied tools", "session", sessionID, "tools", len(state.proxiedTools))
 	}
+}
+
+// GetServerClient retrieves a proxied client from server-level storage (for stdio transport)
+func (tm *ToolManager) GetServerClient(datasourceType, datasourceUID string) (*ProxiedClient, error) {
+	tm.clientsMutex.RLock()
+	defer tm.clientsMutex.RUnlock()
+
+	key := datasourceType + "_" + datasourceUID
+	client, exists := tm.serverClients[key]
+	if !exists {
+		// List available datasources to help with debugging
+		var availableUIDs []string
+		for _, c := range tm.serverClients {
+			if c.DatasourceType == datasourceType {
+				availableUIDs = append(availableUIDs, c.DatasourceUID)
+			}
+		}
+
+		if len(availableUIDs) > 0 {
+			return nil, fmt.Errorf("datasource '%s' not found. Available %s datasources: %v", datasourceUID, datasourceType, availableUIDs)
+		}
+		return nil, fmt.Errorf("datasource '%s' not found. No %s datasources with MCP support are configured", datasourceUID, datasourceType)
+	}
+
+	return client, nil
 }

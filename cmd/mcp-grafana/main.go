@@ -103,11 +103,11 @@ func (dt *disabledTools) addTools(s *server.MCPServer) {
 	maybeAddTools(s, tools.AddNavigationTools, enabledTools, dt.navigation, "navigation")
 }
 
-func newServer(dt disabledTools) *server.MCPServer {
+func newServer(transport string, dt disabledTools) (*server.MCPServer, *mcpgrafana.ToolManager) {
 	sm := mcpgrafana.NewSessionManager()
 
-	// Declare variable for SessionToolManager that will be initialized after server creation
-	var stm *mcpgrafana.SessionToolManager
+	// Declare variable for ToolManager that will be initialized after server creation
+	var stm *mcpgrafana.ToolManager
 
 	// Create hooks
 	hooks := &server.Hooks{
@@ -115,8 +115,10 @@ func newServer(dt disabledTools) *server.MCPServer {
 		OnUnregisterSession: []server.OnUnregisterSessionHookFunc{sm.RemoveSession},
 	}
 
-	// Add proxied tools hooks if enabled
-	if !dt.proxied {
+	// Add proxied tools hooks if enabled and we're not running in stdio mode.
+	// (stdio mode is handled by InitializeAndRegisterServerTools; per-session tools
+	// are not supported).
+	if transport != "stdio" && !dt.proxied {
 		// OnBeforeListTools: Discover, connect, and register tools
 		hooks.OnBeforeListTools = []server.OnBeforeListToolsFunc{
 			func(ctx context.Context, id any, request *mcp.ListToolsRequest) {
@@ -161,11 +163,11 @@ Note that some of these capabilities may be disabled. Do not try to use features
 		server.WithHooks(hooks),
 	)
 
-	// Initialize SessionToolManager now that server is created
-	stm = mcpgrafana.NewSessionToolManager(sm, s, mcpgrafana.WithProxiedTools(!dt.proxied))
+	// Initialize ToolManager now that server is created
+	stm = mcpgrafana.NewToolManager(sm, s, mcpgrafana.WithProxiedTools(!dt.proxied))
 
 	dt.addTools(s)
-	return s
+	return s, stm
 }
 
 type tlsConfig struct {
@@ -227,7 +229,7 @@ func runHTTPServer(ctx context.Context, srv httpServer, addr, transportName stri
 
 func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt disabledTools, gc mcpgrafana.GrafanaConfig, tls tlsConfig) error {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})))
-	s := newServer(dt)
+	s, tm := newServer(transport, dt)
 
 	// Create a context that will be cancelled on shutdown
 	ctx, cancel := context.WithCancel(context.Background())
@@ -254,7 +256,17 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 	switch transport {
 	case "stdio":
 		srv := server.NewStdioServer(s)
-		srv.SetContextFunc(mcpgrafana.ComposedStdioContextFunc(gc))
+		cf := mcpgrafana.ComposedStdioContextFunc(gc)
+		srv.SetContextFunc(cf)
+
+		// For stdio (single-tenant), initialize proxied tools on the server directly
+		if !dt.proxied {
+			stdioCtx := cf(ctx)
+			if err := tm.InitializeAndRegisterServerTools(stdioCtx); err != nil {
+				slog.Error("failed to initialize proxied tools for stdio", "error", err)
+			}
+		}
+
 		slog.Info("Starting Grafana MCP server using stdio transport", "version", mcpgrafana.Version())
 
 		err := srv.Listen(ctx, os.Stdin, os.Stdout)

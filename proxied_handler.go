@@ -11,13 +11,15 @@ import (
 // ProxiedToolHandler implements the CallToolHandler interface for proxied tools
 type ProxiedToolHandler struct {
 	sessionManager *SessionManager
+	toolManager    *ToolManager
 	toolName       string
 }
 
 // NewProxiedToolHandler creates a new handler for a proxied tool
-func NewProxiedToolHandler(sm *SessionManager, toolName string) *ProxiedToolHandler {
+func NewProxiedToolHandler(sm *SessionManager, tm *ToolManager, toolName string) *ProxiedToolHandler {
 	return &ProxiedToolHandler{
 		sessionManager: sm,
+		toolManager:    tm,
 		toolName:       toolName,
 	}
 }
@@ -54,7 +56,20 @@ func (h *ProxiedToolHandler) Handle(ctx context.Context, request mcp.CallToolReq
 	}
 
 	// Get the proxied client for this datasource
-	client, err := h.sessionManager.GetProxiedClient(ctx, datasourceType, datasourceUID)
+	var client *ProxiedClient
+
+	if h.toolManager.serverMode {
+		// Server mode (stdio): clients stored at manager level
+		client, err = h.toolManager.GetServerClient(datasourceType, datasourceUID)
+	} else {
+		// Session mode (HTTP/SSE): clients stored per-session
+		client, err = h.sessionManager.GetProxiedClient(ctx, datasourceType, datasourceUID)
+		if err != nil {
+			// Fallback to server-level in case of mixed mode
+			client, err = h.toolManager.GetServerClient(datasourceType, datasourceUID)
+		}
+	}
+
 	if err != nil {
 		return nil, fmt.Errorf("datasource '%s' not found or not accessible. Ensure the datasource exists and you have permission to access it", datasourceUID)
 	}

@@ -330,7 +330,7 @@ func TestEndToEndProxiedToolsFlow(t *testing.T) {
 		assert.Equal(t, client, retrievedClient, "Should retrieve the same client from session")
 
 		// Step 7: Test ProxiedToolHandler flow
-		handler := NewProxiedToolHandler(sm, modifiedTool.Name)
+		handler := NewProxiedToolHandler(sm, nil, modifiedTool.Name)
 		assert.NotNil(t, handler)
 
 		// Note: We can't actually call the tool without knowing what arguments it expects
