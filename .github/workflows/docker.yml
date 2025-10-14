@@ -22,7 +22,7 @@ jobs:
         run: echo "version=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
 
       - name: Build and Push to Docker Hub
-        uses: grafana/shared-workflows/actions/build-push-to-dockerhub@d3406054b466eed0423efa5a9a2bfa5dca71dab0
+        uses: grafana/shared-workflows/actions/build-push-to-dockerhub@7ffbacebba7bbc589a7735f3c88bca97688deda8
         with:
           context: .
           file: ./Dockerfile
