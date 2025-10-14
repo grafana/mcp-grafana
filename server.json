@@ -6,13 +6,13 @@
     "url": "https://github.com/grafana/mcp-grafana",
     "source": "github"
   },
-  "version": "0.6.5",
+  "version": "$VERSION",
   "packages": [
     {
       "registryType": "oci",
       "registryBaseUrl": "https://docker.io",
       "identifier": "grafana/mcp-grafana",
-      "version": "0.6.5",
+      "version": "$VERSION",
       "transport": {
         "type": "stdio"
       },
