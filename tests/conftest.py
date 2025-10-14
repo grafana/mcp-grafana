@@ -17,6 +17,8 @@ DEFAULT_MCP_TRANSPORT = "sse"
 
 models = ["gpt-4o", "claude-3-5-sonnet-20240620"]
 
+pytestmark = pytest.mark.anyio
+
 
 @pytest.fixture
 def anyio_backend():

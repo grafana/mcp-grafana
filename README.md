@@ -620,6 +620,28 @@ docker run --rm -p 8443:8443 \
   --server.tls-key-file /certs/server.key
 ```
 
+### Health Check Endpoint
+
+When using the SSE (`-t sse`) or streamable HTTP (`-t streamable-http`) transports, the MCP server exposes a health check endpoint at `/healthz`. This endpoint can be used by load balancers, monitoring systems, or orchestration platforms to verify that the server is running and accepting connections.
+
+**Endpoint:** `GET /healthz`
+
+**Response:**
+- Status Code: `200 OK`
+- Body: `ok`
+
+**Example usage:**
+
+```bash
+# For streamable HTTP or SSE transport on default port
+curl http://localhost:8000/healthz
+
+# With custom address
+curl http://localhost:9090/healthz
+```
+
+**Note:** The health check endpoint is only available when using SSE or streamable HTTP transports. It is not available when using the stdio transport (`-t stdio`), as stdio does not expose an HTTP server.
+
 ## Troubleshooting
 
 ### Grafana Version Compatibility
