@@ -178,6 +178,11 @@ func runHTTPServer(ctx context.Context, srv httpServer, addr, transportName stri
 	return nil
 }
 
+func handleHealthz(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("ok"))
+}
+
 func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt disabledTools, gc mcpgrafana.GrafanaConfig, tls tlsConfig) error {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})))
 	s := newServer(dt)
@@ -217,23 +222,38 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		return nil
 
 	case "sse":
+		httpSrv := &http.Server{Addr: addr}
 		srv := server.NewSSEServer(s,
 			server.WithSSEContextFunc(mcpgrafana.ComposedSSEContextFunc(gc)),
 			server.WithStaticBasePath(basePath),
+			server.WithHTTPServer(httpSrv),
 		)
+		mux := http.NewServeMux()
+		if basePath == "" {
+			basePath = "/"
+		}
+		mux.Handle(basePath, srv)
+		mux.HandleFunc("/healthz", handleHealthz)
+		httpSrv.Handler = mux
 		slog.Info("Starting Grafana MCP server using SSE transport",
 			"version", mcpgrafana.Version(), "address", addr, "basePath", basePath)
 		return runHTTPServer(ctx, srv, addr, "SSE")
 	case "streamable-http":
+		httpSrv := &http.Server{Addr: addr}
 		opts := []server.StreamableHTTPOption{
 			server.WithHTTPContextFunc(mcpgrafana.ComposedHTTPContextFunc(gc)),
 			server.WithStateLess(true),
 			server.WithEndpointPath(endpointPath),
+			server.WithStreamableHTTPServer(httpSrv),
 		}
 		if tls.certFile != "" || tls.keyFile != "" {
 			opts = append(opts, server.WithTLSCert(tls.certFile, tls.keyFile))
 		}
 		srv := server.NewStreamableHTTPServer(s, opts...)
+		mux := http.NewServeMux()
+		mux.Handle(endpointPath, srv)
+		mux.HandleFunc("/healthz", handleHealthz)
+		httpSrv.Handler = mux
 		slog.Info("Starting Grafana MCP server using StreamableHTTP transport",
 			"version", mcpgrafana.Version(), "address", addr, "endpointPath", endpointPath)
 		return runHTTPServer(ctx, srv, addr, "StreamableHTTP")
