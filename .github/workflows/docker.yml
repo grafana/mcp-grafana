@@ -56,6 +56,12 @@ jobs:
           fi
           echo "VERSION=$TAG" >> $GITHUB_OUTPUT
 
+      - name: Extract image tag from version
+        id: image-tag
+        run: |
+          # Extract the image tag from the version
+          echo "IMAGE_TAG=${IMAGE_TAG#v}" >> $GITHUB_OUTPUT
+
       - name: Install dependencies
         run: |
           sudo apt-get update && sudo apt-get install -y jq
@@ -68,7 +74,7 @@ jobs:
           # Update the server.json with the correct Docker image reference
           # (note the image tag does not include the "v" prefix)
           jq --arg version "${{ steps.version.outputs.VERSION }}" \
-             --arg image "grafana/mcp-grafana:${{ steps.version.outputs.VERSION#v }}" \
+             --arg image "grafana/mcp-grafana:${{ steps.image-tag.outputs.IMAGE_TAG }}" \
              '.packages[0].version = $version |
               .packages[0].identifier = $image |
               .version = $version' server.json > server.json.tmp
