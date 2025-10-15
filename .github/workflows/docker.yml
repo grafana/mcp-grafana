@@ -60,7 +60,8 @@ jobs:
         id: image-tag
         run: |
           # Extract the image tag from the version
-          echo "IMAGE_TAG=${IMAGE_TAG#v}" >> $GITHUB_OUTPUT
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          echo "IMAGE_TAG=${VERSION#v}" >> $GITHUB_OUTPUT
 
       - name: Install dependencies
         run: |
