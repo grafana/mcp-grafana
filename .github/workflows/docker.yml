@@ -20,7 +20,15 @@ jobs:
 
       - name: Process tag name
         id: tag
-        run: echo "version=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          # Check if this is a stable release (no rc, alpha, beta, etc.)
+          if [[ ! "$VERSION" =~ (rc|alpha|beta|pre|dev) ]]; then
+            echo "is_stable=true" >> $GITHUB_OUTPUT
+          else
+            echo "is_stable=false" >> $GITHUB_OUTPUT
+          fi
 
       - name: Build and Push to Docker Hub
         uses: grafana/shared-workflows/actions/build-push-to-dockerhub@7ffbacebba7bbc589a7735f3c88bca97688deda8
@@ -29,7 +37,7 @@ jobs:
           file: ./Dockerfile
           repository: grafana/mcp-grafana
           tags: |
-            latest
+            ${{ steps.tag.outputs.is_stable == 'true' && 'latest' || '' }}
             ${{ steps.tag.outputs.version }}
           push: true
 
