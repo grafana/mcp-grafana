@@ -75,7 +75,8 @@ jobs:
           # Update the server.json with the correct Docker image reference
           # (note the image tag does not include the "v" prefix)
           jq --arg image "docker.io/grafana/mcp-grafana:${{ steps.image-tag.outputs.IMAGE_TAG }}" \
-             '.packages[0].identifier = $image' server.json > server.json.tmp
+             --arg version "${{ steps.image-tag.outputs.IMAGE_TAG }}" \
+             '.packages[0].identifier = $image | .packages[0].version = $version' server.json > server.json.tmp
           mv server.json.tmp server.json
 
       - name: Login to MCP Registry
