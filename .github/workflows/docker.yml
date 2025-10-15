@@ -66,7 +66,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update && sudo apt-get install -y jq
-          curl -L "https://github.com/modelcontextprotocol/registry/releases/download/v1.2.3/mcp-publisher_1.2.3_linux_amd64.tar.gz" | tar xz mcp-publisher
+          curl -L "https://github.com/modelcontextprotocol/registry/releases/download/v1.3.0/mcp-publisher_1.3.0_linux_amd64.tar.gz" | tar xz mcp-publisher
           chmod +x mcp-publisher
           sudo mv mcp-publisher /usr/local/bin/
 
@@ -74,7 +74,9 @@ jobs:
         run: |
           # Update the server.json with the correct Docker image reference
           # (note the image tag does not include the "v" prefix)
-          jq --arg image "docker.io/grafana/mcp-grafana:${{ steps.image-tag.outputs.IMAGE_TAG }}" \
+          jq --arg version "${{ steps.version.outputs.VERSION }}" \
+            --arg image "docker.io/grafana/mcp-grafana:${{ steps.image-tag.outputs.IMAGE_TAG }}" \
+             '.version = $version' \
              '.packages[0].identifier = $image' server.json > server.json.tmp
           mv server.json.tmp server.json
 
