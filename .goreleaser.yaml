@@ -6,6 +6,9 @@ before:
   hooks:
     - go mod tidy
 
+git:
+  prerelease_suffix: "-rc"
+
 builds:
   - id: default
     env:
