@@ -10,8 +10,7 @@
   "packages": [
     {
       "registryType": "oci",
-      "registryBaseUrl": "https://docker.io",
-      "identifier": "grafana/mcp-grafana",
+      "identifier": "docker.io/grafana/mcp-grafana",
       "version": "$VERSION",
       "transport": {
         "type": "stdio"
