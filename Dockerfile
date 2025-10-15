@@ -1,8 +1,6 @@
 # Build stage
 FROM golang:1.24-bullseye AS builder
 
-LABEL io.modelcontextprotocol.server.name="io.github.grafana/mcp-grafana"
-
 # Set the working directory
 WORKDIR /app
 
@@ -20,6 +18,8 @@ RUN go build -o mcp-grafana ./cmd/mcp-grafana
 
 # Final stage
 FROM debian:bullseye-slim
+
+LABEL io.modelcontextprotocol.server.name="io.modelcontextprotocol.anonymous/mcp-grafana"
 
 # Install ca-certificates for HTTPS requests
 RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
