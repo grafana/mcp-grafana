@@ -10,7 +10,6 @@
     {
       "registryType": "oci",
       "identifier": "docker.io/grafana/mcp-grafana",
-      "version": "$VERSION",
       "transport": {
         "type": "stdio"
       },
