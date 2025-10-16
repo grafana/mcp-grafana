@@ -125,4 +125,5 @@ func AddDatasourceTools(mcp *server.MCPServer) {
 	ListDatasources.Register(mcp)
 	GetDatasourceByUID.Register(mcp)
 	GetDatasourceByName.Register(mcp)
+	QueryDataSource.Register(mcp)
 }
