@@ -1,0 +1,280 @@
+{
+  "manifest_version": "0.1",
+  "name": "grafana",
+  "version": "0.6.5",
+  "description": "An MCP server giving access to Grafana dashboards, data and more.",
+  "author": {
+    "name": "Ben Sully",
+    "email": "ben.sully@grafana.com"
+  },
+  "support": "https://github.com/grafana/mcp-grafana/issues",
+  "icon": "img/grafana_icon.svg",
+  "server": {
+    "type": "binary",
+    "entry_point": "dist/mcp-grafana",
+    "mcp_config": {
+      "command": "${__dirname}/dist/mcp-grafana",
+      "args": [],
+      "env": {
+        "GRAFANA_URL": "${user_config.grafana_url}",
+        "GRAFANA_SERVICE_ACCOUNT_TOKEN": "${user_config.grafana_service_account_token}",
+        "GRAFANA_USERNAME": "${user_config.grafana_username}",
+        "GRAFANA_PASSWORD": "${user_config.grafana_password}"
+      }
+    }
+  },
+  "tools": [
+    {
+      "name": "list_teams",
+      "description": "List all teams",
+      "readOnlyHint": true
+    },
+    {
+      "name": "list_users_by_org",
+      "description": "List all users in an organization",
+      "readOnlyHint": true
+    },
+    {
+      "name": "search_dashboards",
+      "description": "Search for dashboards",
+      "readOnlyHint": true
+    },
+    {
+      "name": "get_dashboard_by_uid",
+      "description": "Get a dashboard by uid",
+      "readOnlyHint": true
+    },
+    {
+      "name": "update_dashboard",
+      "description": "Update or create a new dashboard",
+      "destructiveHint": true
+    },
+    {
+      "name": "get_dashboard_panel_queries",
+      "description": "Get panel title, queries, datasource UID and type from a dashboard",
+      "readOnlyHint": true
+    },
+    {
+      "name": "get_dashboard_property",
+      "description": "Extract specific parts of a dashboard using JSONPath expressions",
+      "readOnlyHint": true
+    },
+    {
+      "name": "get_dashboard_summary",
+      "description": "Get a compact summary of a dashboard without full JSON",
+      "readOnlyHint": true
+    },
+    {
+      "name": "list_datasources",
+      "description": "List datasources",
+      "readOnlyHint": true
+    },
+    {
+      "name": "get_datasource_by_uid",
+      "description": "Get a datasource by uid",
+      "readOnlyHint": true
+    },
+    {
+      "name": "get_datasource_by_name",
+      "description": "Get a datasource by name",
+      "readOnlyHint": true
+    },
+    {
+      "name": "query_prometheus",
+      "description": "Execute a query against a Prometheus datasource",
+      "readOnlyHint": true
+    },
+    {
+      "name": "list_prometheus_metric_metadata",
+      "description": "List metric metadata",
+      "readOnlyHint": true
+    },
+    {
+      "name": "list_prometheus_metric_names",
+      "description": "List available metric names",
+      "readOnlyHint": true
+    },
+    {
+      "name": "list_prometheus_label_names",
+      "description": "List label names matching a selector",
+      "readOnlyHint": true
+    },
+    {
+      "name": "list_prometheus_label_values",
+      "description": "List values for a specific label",
+      "readOnlyHint": true
+    },
+    {
+      "name": "list_incidents",
+      "description": "List incidents in Grafana Incident",
+      "readOnlyHint": true
+    },
+    {
+      "name": "create_incident",
+      "description": "Create an incident in Grafana Incident",
+      "destructiveHint": true
+    },
+    {
+      "name": "add_activity_to_incident",
+      "description": "Add an activity item to an incident in Grafana Incident",
+      "destructiveHint": true
+    },
+    {
+      "name": "get_incident",
+      "description": "Get a single incident by ID",
+      "readOnlyHint": true
+    },
+    {
+      "name": "query_loki_logs",
+      "description": "Query and retrieve logs using LogQL (either log or metric queries)",
+      "readOnlyHint": true
+    },
+    {
+      "name": "list_loki_label_names",
+      "description": "List all available label names in logs",
+      "readOnlyHint": true
+    },
+    {
+      "name": "list_loki_label_values",
+      "description": "List values for a specific log label",
+      "readOnlyHint": true
+    },
+    {
+      "name": "query_loki_stats",
+      "description": "Get statistics about log streams",
+      "readOnlyHint": true
+    },
+    {
+      "name": "list_alert_rules",
+      "description": "List alert rules",
+      "readOnlyHint": true
+    },
+    {
+      "name": "get_alert_rule_by_uid",
+      "description": "Get alert rule by UID",
+      "readOnlyHint": true
+    },
+    {
+      "name": "list_contact_points",
+      "description": "List notification contact points",
+      "readOnlyHint": true
+    },
+    {
+      "name": "list_oncall_schedules",
+      "description": "List schedules from Grafana OnCall",
+      "readOnlyHint": true
+    },
+    {
+      "name": "get_oncall_shift",
+      "description": "Get details for a specific OnCall shift",
+      "readOnlyHint": true
+    },
+    {
+      "name": "get_current_oncall_users",
+      "description": "Get users currently on-call for a specific schedule",
+      "readOnlyHint": true
+    },
+    {
+      "name": "list_oncall_teams",
+      "description": "List teams from Grafana OnCall",
+      "readOnlyHint": true
+    },
+    {
+      "name": "list_oncall_users",
+      "description": "List users from Grafana OnCall",
+      "readOnlyHint": true
+    },
+    {
+      "name": "get_sift_investigation",
+      "description": "Retrieve an existing Sift investigation by its UUID",
+      "readOnlyHint": true
+    },
+    {
+      "name": "get_sift_analysis",
+      "description": "Retrieve a specific analysis from a Sift investigation",
+      "readOnlyHint": true
+    },
+    {
+      "name": "list_sift_investigations",
+      "description": "Retrieve a list of Sift investigations with an optional limit",
+      "readOnlyHint": true
+    },
+    {
+      "name": "find_error_pattern_logs",
+      "description": "Finds elevated error patterns in Loki logs.",
+      "readOnlyHint": true
+    },
+    {
+      "name": "find_slow_requests",
+      "description": "Finds slow requests from the relevant tempo datasources.",
+      "readOnlyHint": true
+    },
+    {
+      "name": "list_pyroscope_label_names",
+      "description": "List label names matching a selector",
+      "readOnlyHint": true
+    },
+    {
+      "name": "list_pyroscope_label_values",
+      "description": "List label values matching a selector for a label name",
+      "readOnlyHint": true
+    },
+    {
+      "name": "list_pyroscope_profile_types",
+      "description": "List available profile types",
+      "readOnlyHint": true
+    },
+    {
+      "name": "fetch_pyroscope_profile",
+      "description": "Fetches a profile in DOT format for analysis",
+      "readOnlyHint": true
+    },
+    {
+      "name": "get_assertions",
+      "description": "Get assertion summary for a given entity",
+      "readOnlyHint": true
+    },
+    {
+      "name": "generate_deeplink",
+      "description": "Generate accurate deeplink URLs for Grafana resources",
+      "readOnlyHint": true
+    }
+  ],
+  "user_config": {
+    "grafana_url": {
+      "type": "string",
+      "title": "Grafana URL",
+      "description": "URL to your Grafana instance",
+      "required": true,
+      "sensitive": false
+    },
+    "grafana_service_account_token": {
+      "type": "string",
+      "title": "Grafana service account token",
+      "description": "Service account token used to authenticate with your Grafana instance",
+      "required": false,
+      "sensitive": true
+    },
+    "grafana_username": {
+      "type": "string",
+      "title": "Grafana username",
+      "description": "Username to authenticate with your Grafana instance",
+      "required": false,
+      "sensitive": false
+    },
+    "grafana_password": {
+      "type": "string",
+      "title": "Grafana password",
+      "description": "Password to authenticate with your Grafana instance",
+      "required": false,
+      "sensitive": true
+    }
+  },
+  "keywords": ["grafana", "observability", "instrumentation"],
+  "license": "Apache-2.0",
+  "privacy_policies": [],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/grafana/mcp-grafana"
+  }
+}
