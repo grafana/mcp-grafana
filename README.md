@@ -251,8 +251,8 @@ This MCP server works with both local Grafana instances and Grafana Cloud. For G
    > **Note:** The environment variable `GRAFANA_API_KEY` is deprecated and will be removed in a future version. Please migrate to using `GRAFANA_SERVICE_ACCOUNT_TOKEN` instead. The old variable name will continue to work for backward compatibility but will show deprecation warnings.
 
 ### Multi-Organization Support
-
-If you are using **basic authentication** (username and password) with a Grafana instance that has multiple organizations, you can specify which organization to interact with using either:
+ 
+You can specify which organization to interact with using either:
 
 - **Environment variable:** Set `GRAFANA_ORG_ID` to the numeric organization ID
 - **HTTP header:** Set `X-Grafana-Org-Id` when using SSE or streamable HTTP transports (header takes precedence over environment variable - meaning you can set a default org as well).
