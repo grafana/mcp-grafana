@@ -64,17 +64,12 @@ func newLokiClient(ctx context.Context, uid string) (*Client, error) {
 		}
 	}
 
-	authTransport := &authRoundTripper{
-		accessToken: cfg.AccessToken,
-		idToken:     cfg.IDToken,
-		apiKey:      cfg.APIKey,
-		basicAuth:   cfg.BasicAuth,
-		underlying:  transport,
-	}
+	transport = NewAuthRoundTripper(transport, cfg.AccessToken, cfg.IDToken, cfg.APIKey, cfg.BasicAuth)
+	transport = mcpgrafana.NewOrgIDRoundTripper(transport, cfg.OrgID)
 
 	client := &http.Client{
 		Transport: mcpgrafana.NewUserAgentTransport(
-			authTransport,
+			transport,
 		),
 	}
 
@@ -180,6 +175,16 @@ func (c *Client) fetchData(ctx context.Context, urlPath string, startRFC3339, en
 	}
 
 	return labelResponse.Data, nil
+}
+
+func NewAuthRoundTripper(rt http.RoundTripper, accessToken, idToken, apiKey string, basicAuth *url.Userinfo) *authRoundTripper {
+	return &authRoundTripper{
+		accessToken: accessToken,
+		idToken:     idToken,
+		apiKey:      apiKey,
+		basicAuth:   basicAuth,
+		underlying:  rt,
+	}
 }
 
 type authRoundTripper struct {

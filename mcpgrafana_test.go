@@ -192,6 +192,55 @@ func TestExtractGrafanaInfoFromHeaders(t *testing.T) {
 		password, _ := config.BasicAuth.Password()
 		assert.Equal(t, "bar", password)
 	})
+
+	t.Run("orgID from env", func(t *testing.T) {
+		t.Setenv("GRAFANA_ORG_ID", "123")
+
+		req, err := http.NewRequest("GET", "http://example.com", nil)
+		require.NoError(t, err)
+		ctx := ExtractGrafanaInfoFromHeaders(context.Background(), req)
+		config := GrafanaConfigFromContext(ctx)
+		assert.Equal(t, int64(123), config.OrgID)
+	})
+
+	t.Run("orgID from header", func(t *testing.T) {
+		req, err := http.NewRequest("GET", "http://example.com", nil)
+		require.NoError(t, err)
+		req.Header.Set("X-Grafana-Org-Id", "456")
+		ctx := ExtractGrafanaInfoFromHeaders(context.Background(), req)
+		config := GrafanaConfigFromContext(ctx)
+		assert.Equal(t, int64(456), config.OrgID)
+	})
+
+	t.Run("orgID header takes precedence over env", func(t *testing.T) {
+		t.Setenv("GRAFANA_ORG_ID", "123")
+
+		req, err := http.NewRequest("GET", "http://example.com", nil)
+		require.NoError(t, err)
+		req.Header.Set("X-Grafana-Org-Id", "456")
+		ctx := ExtractGrafanaInfoFromHeaders(context.Background(), req)
+		config := GrafanaConfigFromContext(ctx)
+		assert.Equal(t, int64(456), config.OrgID)
+	})
+
+	t.Run("invalid orgID from env ignored", func(t *testing.T) {
+		t.Setenv("GRAFANA_ORG_ID", "not-a-number")
+
+		req, err := http.NewRequest("GET", "http://example.com", nil)
+		require.NoError(t, err)
+		ctx := ExtractGrafanaInfoFromHeaders(context.Background(), req)
+		config := GrafanaConfigFromContext(ctx)
+		assert.Equal(t, int64(0), config.OrgID)
+	})
+
+	t.Run("invalid orgID from header ignored", func(t *testing.T) {
+		req, err := http.NewRequest("GET", "http://example.com", nil)
+		require.NoError(t, err)
+		req.Header.Set("X-Grafana-Org-Id", "invalid")
+		ctx := ExtractGrafanaInfoFromHeaders(context.Background(), req)
+		config := GrafanaConfigFromContext(ctx)
+		assert.Equal(t, int64(0), config.OrgID)
+	})
 }
 
 func TestExtractGrafanaClientPath(t *testing.T) {
@@ -588,7 +637,7 @@ func TestHTTPTracingConfiguration(t *testing.T) {
 		ctx := WithGrafanaConfig(context.Background(), config)
 
 		// Create Grafana client
-		client := NewGrafanaClient(ctx, "http://localhost:3000", "test-api-key", nil)
+		client := NewGrafanaClient(ctx, "http://localhost:3000", "test-api-key", nil, 0)
 		require.NotNil(t, client)
 
 		// Verify the client was created successfully (should not panic)
@@ -603,7 +652,7 @@ func TestHTTPTracingConfiguration(t *testing.T) {
 		ctx := WithGrafanaConfig(context.Background(), config)
 
 		// Create Grafana client (should not panic even without OTEL configured)
-		client := NewGrafanaClient(ctx, "http://localhost:3000", "test-api-key", nil)
+		client := NewGrafanaClient(ctx, "http://localhost:3000", "test-api-key", nil, 0)
 		require.NotNil(t, client)
 
 		// Verify the client was created successfully
