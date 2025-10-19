@@ -112,7 +112,7 @@ type siftClient struct {
 
 func newSiftClient(cfg mcpgrafana.GrafanaConfig) (*siftClient, error) {
 	// Create custom transport with TLS configuration if available
-	var transport http.RoundTripper = http.DefaultTransport
+	var transport = http.DefaultTransport
 	if tlsConfig := cfg.TLSConfig; tlsConfig != nil {
 		var err error
 		transport, err = tlsConfig.HTTPTransport(transport.(*http.Transport))
