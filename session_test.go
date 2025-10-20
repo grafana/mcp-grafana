@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/go-openapi/strfmt"
@@ -229,6 +230,87 @@ func TestSessionStateLifecycle(t *testing.T) {
 	})
 }
 
+func TestConcurrentInitializationRaceCondition(t *testing.T) {
+	t.Run("concurrent initialization calls should be safe", func(t *testing.T) {
+		sm := NewSessionManager()
+		mockSession := &mockClientSession{id: "race-test-session"}
+		sm.CreateSession(context.Background(), mockSession)
+
+		state, exists := sm.GetSession("race-test-session")
+		require.True(t, exists)
+
+		// Track how many times the initialization logic runs
+		var initCount int
+		var initCountMutex sync.Mutex
+
+		// Create a custom initOnce to track calls
+		state.initOnce = sync.Once{}
+
+		// Simulate the initialization work that should run exactly once
+		initWork := func() {
+			initCountMutex.Lock()
+			initCount++
+			initCountMutex.Unlock()
+			// Simulate some work
+			state.mutex.Lock()
+			state.proxiedToolsInitialized = true
+			state.proxiedClients["tempo_test"] = &ProxiedClient{
+				DatasourceUID:  "test",
+				DatasourceName: "Test",
+				DatasourceType: "tempo",
+			}
+			state.mutex.Unlock()
+		}
+
+		// Launch multiple goroutines that all try to initialize concurrently
+		const numGoroutines = 10
+		var wg sync.WaitGroup
+		wg.Add(numGoroutines)
+
+		for i := 0; i < numGoroutines; i++ {
+			go func() {
+				defer wg.Done()
+				// This should be the pattern used in InitializeAndRegisterProxiedTools
+				state.initOnce.Do(initWork)
+			}()
+		}
+
+		wg.Wait()
+
+		// Verify initialization ran exactly once
+		assert.Equal(t, 1, initCount, "Initialization should run exactly once despite concurrent calls")
+		assert.True(t, state.proxiedToolsInitialized, "State should be initialized")
+		assert.Len(t, state.proxiedClients, 1, "Should have exactly one client")
+	})
+
+	t.Run("sync.Once prevents double initialization", func(t *testing.T) {
+		sm := NewSessionManager()
+		mockSession := &mockClientSession{id: "double-init-test"}
+		sm.CreateSession(context.Background(), mockSession)
+
+		state, _ := sm.GetSession("double-init-test")
+
+		callCount := 0
+
+		// First call
+		state.initOnce.Do(func() {
+			callCount++
+		})
+
+		// Second call should not execute
+		state.initOnce.Do(func() {
+			callCount++
+		})
+
+		// Third call should also not execute
+		state.initOnce.Do(func() {
+			callCount++
+		})
+
+		assert.Equal(t, 1, callCount, "sync.Once should ensure function runs exactly once")
+	})
+}
+
 func TestProxiedClientLifecycle(t *testing.T) {
 	ctx := newProxiedToolsTestContext(t)
 
@@ -390,30 +472,4 @@ func TestEndToEndProxiedToolsFlow(t *testing.T) {
 
 		t.Logf("Successfully managed %d datasources in single session", connectedCount)
 	})
-}
-
-// mockClientSession implements server.ClientSession for testing
-type mockClientSession struct {
-	id            string
-	notifChannel  chan mcp.JSONRPCNotification
-	isInitialized bool
-}
-
-func (m *mockClientSession) SessionID() string {
-	return m.id
-}
-
-func (m *mockClientSession) NotificationChannel() chan<- mcp.JSONRPCNotification {
-	if m.notifChannel == nil {
-		m.notifChannel = make(chan mcp.JSONRPCNotification, 10)
-	}
-	return m.notifChannel
-}
-
-func (m *mockClientSession) Initialize() {
-	m.isInitialized = true
-}
-
-func (m *mockClientSession) Initialized() bool {
-	return m.isInitialized
 }

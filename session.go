@@ -13,6 +13,7 @@ import (
 // SessionState holds the state for a single client session
 type SessionState struct {
 	// Proxied tools state
+	initOnce                sync.Once
 	proxiedToolsInitialized bool
 	proxiedTools            []mcp.Tool
 	proxiedClients          map[string]*ProxiedClient // key: datasourceType_datasourceUID

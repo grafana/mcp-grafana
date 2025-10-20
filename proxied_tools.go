@@ -250,19 +250,8 @@ func (tm *ToolManager) InitializeAndRegisterProxiedTools(ctx context.Context, se
 		}
 	}
 
-	state.mutex.Lock()
-	// Check if already initialized and registered
-	if state.proxiedToolsInitialized && len(state.proxiedTools) > 0 {
-		state.mutex.Unlock()
-		return
-	}
-
-	// If already initialized but not registered, skip discovery
-	alreadyDiscovered := state.proxiedToolsInitialized
-	state.mutex.Unlock()
-
-	// Step 1: Discover and connect (if not already done)
-	if !alreadyDiscovered {
+	// Step 1: Discover and connect (guaranteed to run exactly once per session)
+	state.initOnce.Do(func() {
 		// Discover datasources with MCP support
 		discovered, err := discoverMCPDatasources(ctx)
 		if err != nil {
@@ -290,7 +279,7 @@ func (tm *ToolManager) InitializeAndRegisterProxiedTools(ctx context.Context, se
 		state.mutex.Unlock()
 
 		slog.Info("connected to proxied MCP servers", "session", sessionID, "datasources", len(state.proxiedClients))
-	}
+	})
 
 	// Step 2: Register tools with the MCP server
 	state.mutex.Lock()
