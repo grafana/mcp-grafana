@@ -53,15 +53,15 @@ test-python-e2e: ## Run Python E2E tests (requires docker-compose services and S
 
 .PHONY: run
 run: ## Run the MCP server in stdio mode.
-	go run ./cmd/mcp-grafana
+	GRAFANA_USERNAME=admin GRAFANA_PASSWORD=admin go run ./cmd/mcp-grafana
 
 .PHONY: run-sse
 run-sse: ## Run the MCP server in SSE mode.
-	go run ./cmd/mcp-grafana --transport sse --log-level debug --debug
+	GRAFANA_USERNAME=admin GRAFANA_PASSWORD=admin go run ./cmd/mcp-grafana --transport sse --log-level debug --debug
 
 PHONY: run-streamable-http
 run-streamable-http: ## Run the MCP server in StreamableHTTP mode.
-	go run ./cmd/mcp-grafana --transport streamable-http --log-level debug --debug
+	GRAFANA_USERNAME=admin GRAFANA_PASSWORD=admin go run ./cmd/mcp-grafana --transport streamable-http --log-level debug --debug
 
 .PHONY: run-test-services
 run-test-services: ## Run the docker-compose services required for the unit and integration tests.
