@@ -356,7 +356,7 @@ When an organization ID is provided, the MCP server will set the `X-Grafana-Org-
            // If using username/password authentication
            "GRAFANA_USERNAME": "<your username>",
            "GRAFANA_PASSWORD": "<your password>",
-           // Optional: specify organization ID for multi-org support (only with basic auth)
+           // Optional: specify organization ID for multi-org support
            "GRAFANA_ORG_ID": "1"
          }
        }
@@ -391,7 +391,7 @@ When an organization ID is provided, the MCP server will set the `X-Grafana-Org-
         // If using username/password authentication
         "GRAFANA_USERNAME": "<your username>",
         "GRAFANA_PASSWORD": "<your password>",
-        // Optional: specify organization ID for multi-org support (only with basic auth)
+        // Optional: specify organization ID for multi-org support
         "GRAFANA_ORG_ID": "1"
       }
     }
