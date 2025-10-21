@@ -12,7 +12,7 @@ require (
 	github.com/grafana/amixr-api-go-client v0.0.26
 	github.com/grafana/grafana-openapi-client-go v0.0.0-20250617151817-c0f8cbb88d5c
 	github.com/grafana/grafana-plugin-sdk-go v0.280.0
-	github.com/grafana/incident-go v0.0.0-20250211094540-dc6a98fdae43
+	github.com/grafana/incident-go v0.0.0-20251003115753-d71681611ddd
 	github.com/grafana/pyroscope/api v1.2.0
 	github.com/invopop/jsonschema v0.13.0
 	github.com/mark3labs/mcp-go v0.41.1
