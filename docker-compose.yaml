@@ -1,6 +1,6 @@
 services:
   grafana:
-    image: grafana/grafana
+    image: grafana/grafana@sha256:74144189b38447facf737dfd0f3906e42e0776212bf575dc3334c3609183adf7
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "false"
       GF_LOG_LEVEL: debug
@@ -12,7 +12,7 @@ services:
       - ./testdata/dashboards:/var/lib/grafana/dashboards
 
   prometheus:
-    image: prom/prometheus
+    image: prom/prometheus@sha256:ff7e389acbe064a4823212a500393d40a28a8f362e4b05cbf6742a9a3ef736b2
     ports:
       - "9090:9090"
     entrypoint: /etc/prometheus/entrypoint.sh
@@ -22,7 +22,7 @@ services:
       - ./testdata/prometheus-entrypoint.sh:/etc/prometheus/entrypoint.sh
 
   loki:
-    image: grafana/loki:2.6.0
+    image: grafana/loki:2.6.0@sha256:a71b24036726609b436844746dc469382c5164fb43a75ac0951989f8b3b279c9
     ports:
       - "3100:3100"
     command: -config.file=/etc/loki/loki-config.yml
@@ -30,7 +30,7 @@ services:
       - ./testdata/loki-config.yml:/etc/loki/loki-config.yml
 
   promtail:
-    image: grafana/promtail:2.6.0
+    image: grafana/promtail:2.6.0@sha256:27ee34e7c5b908facba87aba3126391651e3ba7b241138af2ce592536043b4c0
     volumes:
       - ./testdata/promtail-config.yml:/etc/promtail/config.yml
       - /var/log:/var/log
@@ -40,12 +40,12 @@ services:
       - loki
 
   pyroscope:
-    image: grafana/pyroscope:1.13.4
+    image: grafana/pyroscope:1.13.4@sha256:7e8f1911cbe9353f5c2433b81ff494d5c728c773e76ae9e886d2c009b0a28ada
     ports:
       - 4040:4040
 
   tempo:
-    image: grafana/tempo:2.9.0-rc.0
+    image: grafana/tempo:2.9.0-rc.0@sha256:5517ee34d335dedb9ad43028bd8f72edd0bb98b744ea5847a7572755d93d9866
     command: ["-config.file=/etc/tempo/tempo-config.yaml"]
     volumes:
       - ./testdata/tempo-config.yaml:/etc/tempo/tempo-config.yaml
@@ -53,7 +53,7 @@ services:
       - "3200:3200" # tempo
 
   tempo2:
-    image: grafana/tempo:2.9.0-rc.0
+    image: grafana/tempo:2.9.0-rc.0@sha256:5517ee34d335dedb9ad43028bd8f72edd0bb98b744ea5847a7572755d93d9866
     command: ["-config.file=/etc/tempo/tempo-config.yaml"]
     volumes:
       - ./testdata/tempo-config-2.yaml:/etc/tempo/tempo-config.yaml
