@@ -30,7 +30,7 @@ services:
       - ./testdata/loki-config.yml:/etc/loki/loki-config.yml
 
   promtail:
-    image: grafana/promtail:2.6.0@sha256:27ee34e7c5b908facba87aba3126391651e3ba7b241138af2ce592536043b4c0
+    image: grafana/promtail:2.9.15@sha256:466ba2fac4448ed2dc509b267995a3c13511d69f6bba01800ca7b38d9953f899
     volumes:
       - ./testdata/promtail-config.yml:/etc/promtail/config.yml
       - /var/log:/var/log
