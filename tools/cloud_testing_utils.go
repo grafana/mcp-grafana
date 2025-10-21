@@ -42,7 +42,7 @@ func createCloudTestContext(t *testing.T, testName, urlEnv, apiKeyEnv string) co
 		t.Skipf("Neither %s nor %s environment variables are set, skipping cloud %s integration tests", serviceAccountTokenEnv, apiKeyEnv, testName)
 	}
 
-	client := mcpgrafana.NewGrafanaClient(ctx, grafanaURL, grafanaApiKey, nil)
+	client := mcpgrafana.NewGrafanaClient(ctx, grafanaURL, grafanaApiKey, nil, 0)
 
 	config := mcpgrafana.GrafanaConfig{
 		URL:    grafanaURL,
