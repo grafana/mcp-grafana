@@ -510,7 +510,7 @@ var ExtractGrafanaClientFromEnv server.StdioContextFunc = func(ctx context.Conte
 	auth := userAndPassFromEnv()
 	orgId := orgIdFromEnv()
 	grafanaClient := NewGrafanaClient(ctx, grafanaURL, apiKey, auth, orgId)
-	return context.WithValue(ctx, grafanaClientKey{}, grafanaClient)
+	return WithGrafanaClient(ctx, grafanaClient)
 }
 
 // ExtractGrafanaClientFromHeaders is a HTTPContextFunc that creates and injects a Grafana client into the context.
@@ -518,6 +518,7 @@ var ExtractGrafanaClientFromEnv server.StdioContextFunc = func(ctx context.Conte
 var ExtractGrafanaClientFromHeaders httpContextFunc = func(ctx context.Context, req *http.Request) context.Context {
 	// Extract transport config from request headers, and set it on the context.
 	u, apiKey, basicAuth, orgId := extractKeyGrafanaInfoFromReq(req)
+	slog.Debug("Creating Grafana client", "url", u, "api_key_set", apiKey != "", "basic_auth_set", basicAuth != nil)
 
 	grafanaClient := NewGrafanaClient(ctx, u, apiKey, basicAuth, orgId)
 	return WithGrafanaClient(ctx, grafanaClient)
