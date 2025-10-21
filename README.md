@@ -250,6 +250,34 @@ This MCP server works with both local Grafana instances and Grafana Cloud. For G
 
    > **Note:** The environment variable `GRAFANA_API_KEY` is deprecated and will be removed in a future version. Please migrate to using `GRAFANA_SERVICE_ACCOUNT_TOKEN` instead. The old variable name will continue to work for backward compatibility but will show deprecation warnings.
 
+### Multi-Organization Support
+ 
+You can specify which organization to interact with using either:
+
+- **Environment variable:** Set `GRAFANA_ORG_ID` to the numeric organization ID
+- **HTTP header:** Set `X-Grafana-Org-Id` when using SSE or streamable HTTP transports (header takes precedence over environment variable - meaning you can set a default org as well).
+
+When an organization ID is provided, the MCP server will set the `X-Grafana-Org-Id` header on all requests to Grafana, ensuring that operations are performed within the specified organization context.
+
+**Example with organization ID:**
+
+```json
+{
+  "mcpServers": {
+    "grafana": {
+      "command": "mcp-grafana",
+      "args": [],
+      "env": {
+        "GRAFANA_URL": "http://localhost:3000",
+        "GRAFANA_USERNAME": "<your username>",
+        "GRAFANA_PASSWORD": "<your password>",
+        "GRAFANA_ORG_ID": "2"
+      }
+    }
+  }
+}
+```
+
 2. You have several options to install `mcp-grafana`:
 
    - **Docker image**: Use the pre-built Docker image from Docker Hub.
@@ -327,7 +355,9 @@ This MCP server works with both local Grafana instances and Grafana Cloud. For G
            "GRAFANA_SERVICE_ACCOUNT_TOKEN": "<your service account token>",
            // If using username/password authentication
            "GRAFANA_USERNAME": "<your username>",
-           "GRAFANA_PASSWORD": "<your password>"
+           "GRAFANA_PASSWORD": "<your password>",
+           // Optional: specify organization ID for multi-org support
+           "GRAFANA_ORG_ID": "1"
          }
        }
      }
@@ -360,7 +390,9 @@ This MCP server works with both local Grafana instances and Grafana Cloud. For G
         "GRAFANA_SERVICE_ACCOUNT_TOKEN": "<your service account token>",
         // If using username/password authentication
         "GRAFANA_USERNAME": "<your username>",
-        "GRAFANA_PASSWORD": "<your password>"
+        "GRAFANA_PASSWORD": "<your password>",
+        // Optional: specify organization ID for multi-org support
+        "GRAFANA_ORG_ID": "1"
       }
     }
   }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
+	"strconv"
 	"strings"
 
 	aapi "github.com/grafana/amixr-api-go-client"
@@ -31,6 +32,11 @@ func getOnCallURLFromSettings(ctx context.Context, cfg mcpgrafana.GrafanaConfig)
 	} else if cfg.BasicAuth != nil {
 		password, _ := cfg.BasicAuth.Password()
 		req.SetBasicAuth(cfg.BasicAuth.Username(), password)
+	}
+
+	// Add org ID header for multi-org support
+	if cfg.OrgID > 0 {
+		req.Header.Set("X-Scope-OrgId", strconv.FormatInt(cfg.OrgID, 10))
 	}
 
 	// Add user agent for tracking
