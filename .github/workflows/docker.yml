@@ -31,7 +31,7 @@ jobs:
           fi
 
       - name: Build and Push to Docker Hub
-        uses: grafana/shared-workflows/actions/build-push-to-dockerhub@7ffbacebba7bbc589a7735f3c88bca97688deda8
+        uses: grafana/shared-workflows/actions/build-push-to-dockerhub@eed69781bdf177e1c126172712690dae79b0bc11
         with:
           context: .
           file: ./Dockerfile

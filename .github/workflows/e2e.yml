@@ -44,7 +44,7 @@ jobs:
           uv sync --all-groups
 
       - id: get-secrets
-        uses: grafana/shared-workflows/actions/get-vault-secrets@7ffbacebba7bbc589a7735f3c88bca97688deda8 # get-vault-secrets-v1.2.0
+        uses: grafana/shared-workflows/actions/get-vault-secrets@5d7e361bc7e0a183cde8afe9899fb7b596d2659b # get-vault-secrets-v1.2.0
         with:
           # Secrets placed in the ci/repo/grafana/mcp-grafana/<path> path in Vault
           repo_secrets: |
