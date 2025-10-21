@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -26,6 +27,7 @@ type alertingClient struct {
 	idToken     string
 	apiKey      string
 	basicAuth   *url.Userinfo
+	orgID       int64
 	httpClient  *http.Client
 }
 
@@ -43,6 +45,7 @@ func newAlertingClientFromContext(ctx context.Context) (*alertingClient, error) 
 		idToken:     cfg.IDToken,
 		apiKey:      cfg.APIKey,
 		basicAuth:   cfg.BasicAuth,
+		orgID:       cfg.OrgID,
 		httpClient: &http.Client{
 			Timeout: defaultTimeout,
 		},
@@ -88,6 +91,11 @@ func (c *alertingClient) makeRequest(ctx context.Context, path string) (*http.Re
 	} else if c.basicAuth != nil {
 		password, _ := c.basicAuth.Password()
 		req.SetBasicAuth(c.basicAuth.Username(), password)
+	}
+
+	// Add org ID header for multi-org support
+	if c.orgID > 0 {
+		req.Header.Set("X-Scope-OrgId", strconv.FormatInt(c.orgID, 10))
 	}
 
 	resp, err := c.httpClient.Do(req)

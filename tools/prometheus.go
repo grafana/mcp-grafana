@@ -68,6 +68,10 @@ func promClientFromContext(ctx context.Context, uid string) (promv1.API, error) 
 		password, _ := cfg.BasicAuth.Password()
 		rt = config.NewBasicAuthRoundTripper(config.NewInlineSecret(cfg.BasicAuth.Username()), config.NewInlineSecret(password), rt)
 	}
+
+	// Wrap with org ID support
+	rt = mcpgrafana.NewOrgIDRoundTripper(rt, cfg.OrgID)
+
 	c, err := api.NewClient(api.Config{
 		Address:      url,
 		RoundTripper: rt,
