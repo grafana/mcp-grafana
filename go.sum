@@ -118,8 +118,8 @@ github.com/grafana/grafana-openapi-client-go v0.0.0-20250617151817-c0f8cbb88d5c 
 github.com/grafana/grafana-openapi-client-go v0.0.0-20250617151817-c0f8cbb88d5c/go.mod h1:AOzHLStinAJHJmcih1eEbIRImxpT6enYUsZLnnOvhbo=
 github.com/grafana/grafana-plugin-sdk-go v0.280.0 h1:QahmLvtM56evdxJSuGu+osnd0ejBmdxnTwqAOk8h22c=
 github.com/grafana/grafana-plugin-sdk-go v0.280.0/go.mod h1:Z15Wiq3c4I0tzHYrLYpOqrO8u3+2RJ+HN2Q9uiZTILA=
-github.com/grafana/incident-go v0.0.0-20250211094540-dc6a98fdae43 h1:+MCsOKi5BJ1wO3PRj3eDNxCScYwE2IcKNW1t8OcTarE=
-github.com/grafana/incident-go v0.0.0-20250211094540-dc6a98fdae43/go.mod h1:3QDfdZOWKRxNhMJFL+0C/+12+jLNHDlt0VKNr/i9Daw=
+github.com/grafana/incident-go v0.0.0-20251003115753-d71681611ddd h1:y8uJA/UmFHjwNWAvppxDRq+w9zIQmb0z79YVV2vS96g=
+github.com/grafana/incident-go v0.0.0-20251003115753-d71681611ddd/go.mod h1:3QDfdZOWKRxNhMJFL+0C/+12+jLNHDlt0VKNr/i9Daw=
 github.com/grafana/otel-profiling-go v0.5.1 h1:stVPKAFZSa7eGiqbYuG25VcqYksR6iWvF3YH66t4qL8=
 github.com/grafana/otel-profiling-go v0.5.1/go.mod h1:ftN/t5A/4gQI19/8MoWurBEtC6gFw8Dns1sJZ9W4Tls=
 github.com/grafana/pyroscope-go/godeltaprof v0.1.9 h1:c1Us8i6eSmkW+Ez05d3co8kasnuOY813tbMN8i/a3Og=
