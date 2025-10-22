@@ -100,6 +100,8 @@ the OnCall tools, use `--disable-oncall`, or to disable navigation deeplink gene
 
 Each tool requires specific RBAC permissions to function properly. When creating a service account for the MCP server, ensure it has the necessary permissions based on which tools you plan to use. The permissions listed are the minimum required actions - you may also need appropriate scopes (e.g., `datasources:*`, `dashboards:*`, `folders:*`) depending on your use case.
 
+Tip: If you're not familiar with Grafana RBAC or you want a quicker, simpler setup instead of configuring many granular scopes, you can assign a built-in role such as `Editor` to the service account. The `Editor` role grants broad read/write access that will allow most MCP server operations; it is less granular (and therefore less restrictive) than manually-applied scopes, so use it only when convenience is more important than strict least-privilege access.
+
 **Note:** Grafana Incident and Sift tools use basic Grafana roles instead of fine-grained RBAC permissions:
 - **Viewer role:** Required for read-only operations (list incidents, get investigations)
 - **Editor role:** Required for write operations (create incidents, modify investigations)
@@ -247,6 +249,7 @@ This MCP server works with both local Grafana instances and Grafana Cloud. For G
 1. If using service account token authentication, create a service account in Grafana with enough permissions to use the tools you want to use,
    generate a service account token, and copy it to the clipboard for use in the configuration file.
    Follow the [Grafana service account documentation][service-account] for details on creating service account tokens.
+   Tip: If you're not comfortable configuring fine-grained RBAC scopes, a simpler (but less restrictive) option is to assign the built-in `Editor` role to the service account. This grants broad read/write access that covers most MCP server operations — use it when convenience outweighs strict least-privilege requirements.
 
    > **Note:** The environment variable `GRAFANA_API_KEY` is deprecated and will be removed in a future version. Please migrate to using `GRAFANA_SERVICE_ACCOUNT_TOKEN` instead. The old variable name will continue to work for backward compatibility but will show deprecation warnings.
 
