@@ -50,9 +50,13 @@ esac
 
 # Get latest version from GitHub API
 LATEST_API_URL="https://api.github.com/repos/grafana/mcp-grafana/releases/latest"
-VERSION=$(curl -fsSL "${LATEST_API_URL}" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+if command -v jq >/dev/null 2>&1; then
+    VERSION=$(curl -fsSL "${LATEST_API_URL}" | jq -r '.tag_name')
+else
+    VERSION=$(curl -fsSL "${LATEST_API_URL}" | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed -E 's/.*"([^"]+)"$/\1/')
+fi
 
-if [ -z "${VERSION}" ]; then
+if [ -z "${VERSION}" ] || [ "${VERSION}" = "null" ]; then
     echo "Error: Failed to fetch latest version from GitHub" >&2
     exit 1
 fi
@@ -73,7 +77,8 @@ if [ ! -f "${BINARY_PATH}" ] || [ ! -f "${VERSION_FILE}" ] || [ "$(cat ${VERSION
     curl -fsSL "${DOWNLOAD_URL}" -o "${ARCHIVE_PATH}"
 
     # Download and verify checksums
-    CHECKSUMS_URL="https://github.com/grafana/mcp-grafana/releases/latest/download/checksums.txt"
+    VERSION_NUMBER="${VERSION#v}" # Remove 'v' prefix
+    CHECKSUMS_URL="https://github.com/grafana/mcp-grafana/releases/download/${VERSION}/mcp-grafana_${VERSION_NUMBER}_checksums.txt"
     CHECKSUMS_PATH="${TEMP_DIR}/checksums.txt"
     curl -fsSL "${CHECKSUMS_URL}" -o "${CHECKSUMS_PATH}"
 
