@@ -62,7 +62,15 @@ BINARY_PATH = join(PLUGIN_ROOT, BINARY_NAME);
 
 // Fetch latest version from GitHub API
 async function getLatestVersion() {
-  const response = await fetch('https://api.github.com/repos/grafana/mcp-grafana/releases/latest');
+  const headers = {};
+  // Use GitHub token if available (for CI environments)
+  if (process.env.GITHUB_TOKEN) {
+    headers['Authorization'] = `Bearer ${process.env.GITHUB_TOKEN}`;
+  }
+
+  const response = await fetch('https://api.github.com/repos/grafana/mcp-grafana/releases/latest', {
+    headers
+  });
   if (!response.ok) {
     throw new Error(`Failed to fetch latest version: ${response.statusText}`);
   }

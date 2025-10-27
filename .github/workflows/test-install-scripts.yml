@@ -26,6 +26,8 @@ jobs:
 
       - name: Test bash install script
         shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TEMP_DIR=$(mktemp -d)
           export CLAUDE_PLUGIN_ROOT="${TEMP_DIR}"
@@ -63,6 +65,8 @@ jobs:
       - name: Test Node.js install script (Unix)
         if: runner.os != 'Windows'
         shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TEMP_DIR=$(mktemp -d)
           export CLAUDE_PLUGIN_ROOT="${TEMP_DIR}"
@@ -84,6 +88,8 @@ jobs:
       - name: Test Node.js install script (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           $TempDir = New-Item -ItemType Directory -Path (Join-Path $env:TEMP ([System.IO.Path]::GetRandomFileName()))
           $env:CLAUDE_PLUGIN_ROOT = $TempDir.FullName
@@ -117,6 +123,8 @@ jobs:
 
       - name: Test checksum verification with bash
         shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TEMP_DIR=$(mktemp -d)
           export CLAUDE_PLUGIN_ROOT="${TEMP_DIR}"
@@ -135,6 +143,8 @@ jobs:
 
       - name: Test checksum verification with Node.js
         shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TEMP_DIR=$(mktemp -d)
           export CLAUDE_PLUGIN_ROOT="${TEMP_DIR}"
@@ -165,6 +175,8 @@ jobs:
 
       - name: Test version update detection
         shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TEMP_DIR=$(mktemp -d)
           export CLAUDE_PLUGIN_ROOT="${TEMP_DIR}"

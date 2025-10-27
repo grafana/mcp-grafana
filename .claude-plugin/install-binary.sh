@@ -50,10 +50,17 @@ esac
 
 # Get latest version from GitHub API
 LATEST_API_URL="https://api.github.com/repos/grafana/mcp-grafana/releases/latest"
+
+# Use GitHub token if available (for CI environments)
+CURL_ARGS=(-fsSL)
+if [ -n "${GITHUB_TOKEN:-}" ]; then
+    CURL_ARGS+=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
+fi
+
 if command -v jq >/dev/null 2>&1; then
-    VERSION=$(curl -fsSL "${LATEST_API_URL}" | jq -r '.tag_name')
+    VERSION=$(curl "${CURL_ARGS[@]}" "${LATEST_API_URL}" | jq -r '.tag_name')
 else
-    VERSION=$(curl -fsSL "${LATEST_API_URL}" | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed -E 's/.*"([^"]+)"$/\1/')
+    VERSION=$(curl "${CURL_ARGS[@]}" "${LATEST_API_URL}" | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed -E 's/.*"([^"]+)"$/\1/')
 fi
 
 if [ -z "${VERSION}" ] || [ "${VERSION}" = "null" ]; then
