@@ -64,6 +64,23 @@ if [ ! -f "${BINARY_PATH}" ] || [ ! -f "${VERSION_FILE}" ] || [ "$(cat ${VERSION
     ARCHIVE_PATH="${TEMP_DIR}/${ARCHIVE_NAME}"
     curl -fsSL "${DOWNLOAD_URL}" -o "${ARCHIVE_PATH}"
 
+    # Download and verify checksums
+    CHECKSUMS_URL="https://github.com/grafana/mcp-grafana/releases/download/${VERSION}/checksums.txt"
+    CHECKSUMS_PATH="${TEMP_DIR}/checksums.txt"
+    curl -fsSL "${CHECKSUMS_URL}" -o "${CHECKSUMS_PATH}"
+
+    # Verify checksum
+    echo "Verifying checksum..." >&2
+    cd "${TEMP_DIR}"
+    if command -v sha256sum >/dev/null 2>&1; then
+        grep "${ARCHIVE_NAME}" "${CHECKSUMS_PATH}" | sha256sum -c -
+    elif command -v shasum >/dev/null 2>&1; then
+        grep "${ARCHIVE_NAME}" "${CHECKSUMS_PATH}" | shasum -a 256 -c -
+    else
+        echo "Warning: Neither sha256sum nor shasum found, skipping checksum verification" >&2
+    fi
+    cd - >/dev/null
+
     # Extract archive
     if [ "${EXT}" = "tar.gz" ]; then
         tar -xzf "${ARCHIVE_PATH}" -C "${TEMP_DIR}"
