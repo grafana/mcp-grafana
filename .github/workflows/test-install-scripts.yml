@@ -130,9 +130,11 @@ jobs:
           export CLAUDE_PLUGIN_ROOT="${TEMP_DIR}"
 
           echo "Testing checksum verification..."
-          bash .claude-plugin/install-binary.sh --version 2>&1 | grep -q "Verifying checksum"
+          OUTPUT=$(bash .claude-plugin/install-binary.sh --version 2>&1)
+          echo "Script output:"
+          echo "$OUTPUT"
 
-          if [ $? -eq 0 ]; then
+          if echo "$OUTPUT" | grep -q "Verifying checksum"; then
             echo "✓ Checksum verification executed"
           else
             echo "Error: Checksum verification not executed"
@@ -150,9 +152,11 @@ jobs:
           export CLAUDE_PLUGIN_ROOT="${TEMP_DIR}"
 
           echo "Testing checksum verification..."
-          node .claude-plugin/install-binary.mjs --version 2>&1 | grep -q "Checksum verified"
+          OUTPUT=$(node .claude-plugin/install-binary.mjs --version 2>&1)
+          echo "Script output:"
+          echo "$OUTPUT"
 
-          if [ $? -eq 0 ]; then
+          if echo "$OUTPUT" | grep -q "Checksum verified"; then
             echo "✓ Checksum verification executed"
           else
             echo "Error: Checksum verification not executed"
