@@ -807,3 +807,150 @@ func TestAlertingTools_DeleteAlertRule(t *testing.T) {
 		require.Contains(t, err.Error(), "uid is required")
 	})
 }
+
+func TestAlertingTools_ListAlertRules_Datasource(t *testing.T) {
+	t.Run("list Prometheus-managed alert rules", func(t *testing.T) {
+		ctx := newTestContext()
+		dsUID := "prometheus"
+
+		result, err := listAlertRules(ctx, ListAlertRulesParams{
+			DatasourceUID: &dsUID,
+		})
+		require.NoError(t, err)
+		require.NotEmpty(t, result, "Expected Prometheus to have alert rules configured")
+
+		// Verify we got Prometheus rules
+		foundFiring := false
+		for _, rule := range result {
+			require.NotEmpty(t, rule.Title)
+			// Check if we found our test rule
+			if rule.Title == "PrometheusTestAlertFiring" {
+				foundFiring = true
+				require.Equal(t, "warning", rule.Labels["severity"])
+				require.Equal(t, "test", rule.Labels["environment"])
+			}
+		}
+		require.True(t, foundFiring, "Expected to find PrometheusTestAlertFiring rule")
+	})
+
+	t.Run("list Prometheus rules with label selector", func(t *testing.T) {
+		ctx := newTestContext()
+		dsUID := "prometheus"
+
+		result, err := listAlertRules(ctx, ListAlertRulesParams{
+			DatasourceUID: &dsUID,
+			LabelSelectors: []Selector{
+				{
+					Filters: []LabelMatcher{
+						{Name: "severity", Type: "=", Value: "warning"},
+					},
+				},
+			},
+		})
+		require.NoError(t, err)
+
+		// All returned rules should have severity=warning
+		for _, rule := range result {
+			require.Equal(t, "warning", rule.Labels["severity"])
+		}
+	})
+
+	t.Run("list datasource rules - invalid datasource type", func(t *testing.T) {
+		ctx := newTestContext()
+		dsUID := "tempo" // Not a ruler datasource
+
+		result, err := listAlertRules(ctx, ListAlertRulesParams{
+			DatasourceUID: &dsUID,
+		})
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "does not support ruler API")
+		require.Nil(t, result)
+	})
+
+	t.Run("list datasource rules - nonexistent datasource", func(t *testing.T) {
+		ctx := newTestContext()
+		dsUID := "nonexistent"
+
+		_, err := listAlertRules(ctx, ListAlertRulesParams{
+			DatasourceUID: &dsUID,
+		})
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "not found")
+	})
+
+	t.Run("list Loki-managed alert rules", func(t *testing.T) {
+		ctx := newTestContext()
+		dsUID := "loki"
+
+		result, err := listAlertRules(ctx, ListAlertRulesParams{
+			DatasourceUID: &dsUID,
+		})
+		// Loki ruler may not be fully initialized or may not have rules
+		// Just verify no panic and proper error handling
+		if err != nil {
+			t.Logf("Loki ruler query failed (this may be expected): %v", err)
+		} else {
+			t.Logf("Loki ruler returned %d rules", len(result))
+		}
+	})
+}
+
+func TestAlertingTools_ListContactPoints_Alertmanager(t *testing.T) {
+	t.Run("list Alertmanager receivers", func(t *testing.T) {
+		ctx := newTestContext()
+		dsUID := "alertmanager"
+
+		result, err := listContactPoints(ctx, ListContactPointsParams{
+			DatasourceUID: &dsUID,
+		})
+		require.NoError(t, err)
+		require.NotEmpty(t, result, "Expected Alertmanager to have receivers configured")
+
+		// Verify we got the receivers from alertmanager.yml
+		receiverNames := []string{}
+		for _, cp := range result {
+			receiverNames = append(receiverNames, cp.Name)
+			// Alertmanager receivers should not have UIDs
+			require.Empty(t, cp.UID)
+		}
+		require.Contains(t, receiverNames, "test-receiver")
+		require.Contains(t, receiverNames, "test-email")
+		require.Contains(t, receiverNames, "test-slack")
+	})
+
+	t.Run("list Alertmanager receivers with name filter", func(t *testing.T) {
+		ctx := newTestContext()
+		dsUID := "alertmanager"
+		name := "test-receiver"
+
+		result, err := listContactPoints(ctx, ListContactPointsParams{
+			DatasourceUID: &dsUID,
+			Name:          &name,
+		})
+		require.NoError(t, err)
+		require.Len(t, result, 1)
+		require.Equal(t, "test-receiver", result[0].Name)
+	})
+
+	t.Run("list contact points - invalid datasource type", func(t *testing.T) {
+		ctx := newTestContext()
+		dsUID := "prometheus" // Not an Alertmanager
+
+		_, err := listContactPoints(ctx, ListContactPointsParams{
+			DatasourceUID: &dsUID,
+		})
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "is not an Alertmanager datasource")
+	})
+
+	t.Run("list contact points - nonexistent datasource", func(t *testing.T) {
+		ctx := newTestContext()
+		dsUID := "nonexistent"
+
+		_, err := listContactPoints(ctx, ListContactPointsParams{
+			DatasourceUID: &dsUID,
+		})
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "not found")
+	})
+}

@@ -38,3 +38,23 @@ storage_config:
     shared_store: filesystem
   filesystem:
     directory: /loki/chunks
+
+ruler:
+  enable_api: true
+  enable_sharding: false
+  storage:
+    type: local
+    local:
+      directory: /loki/rules
+  rule_path: /loki/rules-temp
+  alertmanager_url: http://alertmanager:9093
+  ring:
+    kvstore:
+      store: inmemory
+  remote_write:
+    enabled: false
+
+limits_config:
+  ruler_evaluation_delay_duration: 0s
+  ruler_max_rules_per_rule_group: 100
+  ruler_max_rule_groups_per_tenant: 100
