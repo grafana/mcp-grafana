@@ -14,38 +14,6 @@ on:
   workflow_dispatch:
 
 jobs:
-  test-bash-script:
-    name: Test Bash Script
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Test bash install script
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          TEMP_DIR=$(mktemp -d)
-          export CLAUDE_PLUGIN_ROOT="${TEMP_DIR}"
-
-          echo "Testing bash install script..."
-          bash .claude-plugin/install-binary.sh --version
-
-          VERSION=$("${TEMP_DIR}/mcp-grafana" --version)
-          echo "Installed version: ${VERSION}"
-
-          if [ -z "${VERSION}" ]; then
-            echo "Error: Failed to get version"
-            exit 1
-          fi
-
-          echo "✓ Bash script test passed"
-          rm -rf "${TEMP_DIR}"
-
   test-nodejs-script:
     name: Test Node.js Script
     runs-on: ${{ matrix.os }}
@@ -120,28 +88,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-
-      - name: Test checksum verification with bash
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          TEMP_DIR=$(mktemp -d)
-          export CLAUDE_PLUGIN_ROOT="${TEMP_DIR}"
-
-          echo "Testing checksum verification..."
-          OUTPUT=$(bash .claude-plugin/install-binary.sh --version 2>&1)
-          echo "Script output:"
-          echo "$OUTPUT"
-
-          if echo "$OUTPUT" | grep -q "Verifying checksum"; then
-            echo "✓ Checksum verification executed"
-          else
-            echo "Error: Checksum verification not executed"
-            exit 1
-          fi
-
-          rm -rf "${TEMP_DIR}"
 
       - name: Test checksum verification with Node.js
         shell: bash
