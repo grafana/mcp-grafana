@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	aapi "github.com/grafana/amixr-api-go-client"
+	"github.com/grafana/grafana-openapi-client-go/client"
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -36,7 +37,7 @@ func getOnCallURLFromSettings(ctx context.Context, cfg mcpgrafana.GrafanaConfig)
 
 	// Add org ID header for multi-org support
 	if cfg.OrgID > 0 {
-		req.Header.Set("X-Scope-OrgId", strconv.FormatInt(cfg.OrgID, 10))
+		req.Header.Set(client.OrgIDHeader, strconv.FormatInt(cfg.OrgID, 10))
 	}
 
 	// Add user agent for tracking

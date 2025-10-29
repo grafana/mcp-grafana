@@ -17,6 +17,7 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 	"gopkg.in/yaml.v3"
 
+	"github.com/grafana/grafana-openapi-client-go/client"
 	mcpgrafana "github.com/grafana/mcp-grafana"
 )
 
@@ -99,7 +100,7 @@ func (c *alertingClient) makeRequest(ctx context.Context, path string) (*http.Re
 
 	// Add org ID header for multi-org support
 	if c.orgID > 0 {
-		req.Header.Set("X-Scope-OrgId", strconv.FormatInt(c.orgID, 10))
+		req.Header.Set(client.OrgIDHeader, strconv.FormatInt(c.orgID, 10))
 	}
 
 	resp, err := c.httpClient.Do(req)
