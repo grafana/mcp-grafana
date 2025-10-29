@@ -262,8 +262,8 @@ func (c *alertingClient) GetAlertmanagerConfig(ctx context.Context, datasourceUI
 	}
 
 	var mimirResp struct {
-		TemplateFiles      []string `yaml:"template_files"`
-		AlertmanagerConfig string   `yaml:"alertmanager_config"` // Nested YAML string
+		TemplateFiles      any    `yaml:"template_files"`
+		AlertmanagerConfig string `yaml:"alertmanager_config"` // Nested YAML string
 	}
 	if err := yaml.Unmarshal(bodyBytes, &mimirResp); err != nil {
 		return nil, fmt.Errorf("failed to decode Mimir alertmanager response: %w", err)
