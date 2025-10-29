@@ -30,7 +30,7 @@ jobs:
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
 
       - name: Install uv
-        uses: astral-sh/setup-uv@2ddd2b9cb38ad8efd50337e8ab201519a34c9f24 # v7.1.1
+        uses: astral-sh/setup-uv@85856786d1ce8acfbcc2f13a5f3fbd6b938f9f41 # v7.1.2
 
       - name: Set up Go
         uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0
@@ -44,7 +44,7 @@ jobs:
           uv sync --all-groups
 
       - id: get-secrets
-        uses: grafana/shared-workflows/actions/get-vault-secrets@5d7e361bc7e0a183cde8afe9899fb7b596d2659b # get-vault-secrets-v1.2.0
+        uses: grafana/shared-workflows/actions/get-vault-secrets@c8ac4a279df46ebd1f85064119a0835098b88092 # get-vault-secrets-v1.2.0
         with:
           # Secrets placed in the ci/repo/grafana/mcp-grafana/<path> path in Vault
           repo_secrets: |
