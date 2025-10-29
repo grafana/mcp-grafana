@@ -65,8 +65,8 @@ The dashboard tools now include several strategies to manage context window usag
 
 ### Alerting
 
-- **List and fetch alert rule information:** View alert rules and their statuses (firing/normal/error/etc.) in Grafana.
-- **List contact points:** View configured notification contact points in Grafana.
+- **List and fetch alert rule information:** View alert rules and their statuses (firing/normal/error/etc.) in Grafana. Supports both Grafana-managed rules and datasource-managed rules from Prometheus or Loki datasources.
+- **List contact points:** View configured notification contact points in Grafana. Supports both Grafana-managed contact points and receivers from external Alertmanager datasources (Prometheus Alertmanager, Mimir, Cortex).
 
 ### Grafana OnCall
 
@@ -183,7 +183,7 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `query_loki_stats`                | Loki        | Get statistics about log streams                                   | `datasources:query`                     | `datasources:uid:loki-uid`                          |
 | `list_alert_rules`                | Alerting    | List alert rules                                                   | `alert.rules:read`                      | `folders:*` or `folders:uid:alerts-folder`          |
 | `get_alert_rule_by_uid`           | Alerting    | Get alert rule by UID                                              | `alert.rules:read`                      | `folders:uid:alerts-folder`                         |
-| `list_contact_points`             | Alerting    | List notification contact points                                   | `alert.notifications:read`              | Global scope                                        |
+| `list_contact_points`             | Alerting    | List notification contact points (supports Grafana-managed and Alertmanager datasources) | `alert.notifications:read`              | Global scope                                        |
 | `list_oncall_schedules`           | OnCall      | List schedules from Grafana OnCall                                 | `grafana-oncall-app.schedules:read`     | Plugin-specific scopes                              |
 | `get_oncall_shift`                | OnCall      | Get details for a specific OnCall shift                            | `grafana-oncall-app.schedules:read`     | Plugin-specific scopes                              |
 | `get_current_oncall_users`        | OnCall      | Get users currently on-call for a specific schedule                | `grafana-oncall-app.schedules:read`     | Plugin-specific scopes                              |
