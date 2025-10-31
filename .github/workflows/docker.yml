@@ -36,6 +36,7 @@ jobs:
           context: .
           file: ./Dockerfile
           repository: grafana/mcp-grafana
+          platforms: linux/amd64,linux/arm64
           tags: |
             ${{ steps.tag.outputs.is_stable == 'true' && 'latest' || '' }}
             ${{ steps.tag.outputs.version }}
