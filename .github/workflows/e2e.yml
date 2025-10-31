@@ -41,6 +41,13 @@ jobs:
       - name: Install Python dependencies
         run: |
           cd tests
+          # Remove lock file if it has cached paths - uv will regenerate it with git sources
+          if grep -q "\.cache/uv/git-v0/checkouts" uv.lock 2>/dev/null; then
+            echo "Lock file contains cached paths, removing to regenerate..."
+            rm -f uv.lock
+          fi
+          # Clear uv cache to ensure git dependencies are fetched fresh
+          uv cache clean
           uv sync --all-groups
 
       - id: get-secrets
