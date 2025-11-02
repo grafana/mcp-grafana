@@ -68,10 +68,6 @@ func (dtm *DynamicToolManager) EnableToolset(ctx context.Context, name string) e
 
 	dtm.enabled[name] = true
 	slog.Info("Enabled toolset", "name", name)
-
-	// Log the current state
-	slog.Info("Toolset enabled successfully", "name", name, "total_enabled", len(dtm.enabled))
-
 	return nil
 }
 
@@ -116,9 +112,7 @@ type ToolsetInfo struct {
 // AddDynamicDiscoveryTools adds the list and enable toolset tools to the server
 func AddDynamicDiscoveryTools(dtm *DynamicToolManager, srv *server.MCPServer) {
 	// Tool to list all available toolsets
-	type ListToolsetsRequest struct {
-		// Empty struct for tools that don't need parameters
-	}
+	type ListToolsetsRequest struct{}
 
 	listToolsetsHandler := func(ctx context.Context, request ListToolsetsRequest) ([]ToolsetInfo, error) {
 		return dtm.ListToolsets(), nil
