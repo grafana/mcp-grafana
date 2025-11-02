@@ -96,6 +96,16 @@ This is useful if you don't use certain functionality or if you don't want to ta
 To disable a category of tools, use the `--disable-<category>` flag when starting the server. For example, to disable
 the OnCall tools, use `--disable-oncall`, or to disable navigation deeplink generation, use `--disable-navigation`.
 
+### Annotations
+
+- **Get Annotations:** Query annotations with filters. Supports time range, dashboard UID, tags, and match mode.
+- **Create Annotation:** Create a new annotation on a dashboard or panel.
+- **Create Graphite Annotation:** Create annotations using Graphite format (`what`, `when`, `tags`, `data`).
+- **Update Annotation:** Replace all fields of an existing annotation (full update).
+- **Patch Annotation:** Update only specific fields of an annotation (partial update).
+- **Get Annotation Tags:** List available annotation tags with optional filtering.
+
+
 #### RBAC Permissions
 
 Each tool requires specific RBAC permissions to function properly. When creating a service account for the MCP server, ensure it has the necessary permissions based on which tools you plan to use. The permissions listed are the minimum required actions - you may also need appropriate scopes (e.g., `datasources:*`, `dashboards:*`, `folders:*`) depending on your use case.
@@ -201,7 +211,13 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `list_pyroscope_profile_types`    | Pyroscope   | List available profile types                                       | `datasources:query`                     | `datasources:uid:pyroscope-uid`                     |
 | `fetch_pyroscope_profile`         | Pyroscope   | Fetches a profile in DOT format for analysis                       | `datasources:query`                     | `datasources:uid:pyroscope-uid`                     |
 | `get_assertions`                  | Asserts     | Get assertion summary for a given entity                           | Plugin-specific permissions             | Plugin-specific scopes                              |
-| `generate_deeplink`               | Navigation  | Generate accurate deeplink URLs for Grafana resources              | None (read-only URL generation)         | N/A                                                 |
+| `generate_deeplink`               | Navigation  | Generate accurate deeplink URLs for Grafana resources              | None (read-only URL generation)         | N/A   | `get_annotations`                 | Annotations | Fetch annotations with filters                                      | `annotations:read`                      | `annotations:*` or `annotations:id:123`            |
+| `create_annotation`               | Annotations | Create a new annotation on a dashboard or panel                     | `annotations:write`                     | `annotations:*`                                    |
+| `create_graphite_annotation`      | Annotations | Create an annotation using Graphite format                          | `annotations:write`                     | `annotations:*`                                    |
+| `update_annotation`               | Annotations | Replace all fields of an annotation (full update)                   | `annotations:write`                     | `annotations:*`                                    |
+| `patch_annotation`                | Annotations | Update only specific fields of an annotation (partial update)       | `annotations:write`                     | `annotations:*`                                    |
+| `get_annotation_tags`             | Annotations | List annotation tags with optional filtering                        | `annotations:read`                      | `annotations:*`                                    |
+                                              |
 
 ## CLI Flags Reference
 
