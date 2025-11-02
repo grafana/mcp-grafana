@@ -31,6 +31,7 @@ func TestRegisterAndListToolsets(t *testing.T) {
 		Name:        "test_toolset",
 		Description: "A test toolset for unit testing",
 		Tools:       []Tool{},
+		ToolNames:   []string{"test_tool_1", "test_tool_2"},
 		AddFunc: func(s *server.MCPServer) {
 			// Mock add function
 		},
@@ -44,7 +45,8 @@ func TestRegisterAndListToolsets(t *testing.T) {
 	require.Len(t, toolsets, 1)
 	assert.Equal(t, "test_toolset", toolsets[0].Name)
 	assert.Equal(t, "A test toolset for unit testing", toolsets[0].Description)
-	assert.False(t, toolsets[0].Enabled) // Should be disabled by default
+	assert.False(t, toolsets[0].Enabled)                                           // Should be disabled by default
+	assert.Equal(t, []string{"test_tool_1", "test_tool_2"}, toolsets[0].ToolNames) // Should include tool names when specified
 }
 
 func TestEnableToolset(t *testing.T) {
