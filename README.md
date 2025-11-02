@@ -368,12 +368,12 @@ For even more efficient context window usage, you can enable **dynamic toolset d
 
 Protocol Support:
 - ✅ **stdio protocol** - Fully supported
-- ❌ **SSE (Server-Sent Events)** - Not yet supported
-- ❌ **Streamable HTTP** - Not yet supported
+- ✅ **SSE (Server-Sent Events)** - Fully supported
+- ✅ **Streamable HTTP** - Fully supported
 
 Client Support:
-- ✅ **Cursor** - Fully supported (supports notifications via stdio)
-- ✅ **VS Code** - Fully supported (supports notifications via stdio)
+- ✅ **Cursor** - Fully supported (supports notifications via stdio, SSE, and streamable-http)
+- ✅ **VS Code** - Fully supported (supports notifications via stdio, SSE, and streamable-http)
 - ❌ **Claude Desktop** - Not yet supported (no notification support, but open issues exist)
 - ❌ **Claude Code** - Not yet supported (no notification support, but open issues exist)
 
