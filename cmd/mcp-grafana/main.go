@@ -127,22 +127,23 @@ func (dt *disabledTools) addToolsDynamically(s *server.MCPServer) *mcpgrafana.Dy
 	allToolsets := []struct {
 		name        string
 		description string
+		toolNames   []string
 		addFunc     func(*server.MCPServer)
 	}{
-		{"search", "Tools for searching dashboards, folders, and other Grafana resources", tools.AddSearchTools},
-		{"datasource", "Tools for listing and fetching datasource details", tools.AddDatasourceTools},
-		{"incident", "Tools for managing Grafana Incident (create, update, search incidents)", tools.AddIncidentTools},
-		{"prometheus", "Tools for querying Prometheus metrics and metadata", tools.AddPrometheusTools},
-		{"loki", "Tools for querying Loki logs and labels", tools.AddLokiTools},
-		{"alerting", "Tools for managing alert rules and notification contact points", tools.AddAlertingTools},
-		{"dashboard", "Tools for managing Grafana dashboards (get, update, extract queries)", tools.AddDashboardTools},
-		{"folder", "Tools for managing Grafana folders", tools.AddFolderTools},
-		{"oncall", "Tools for managing OnCall schedules, shifts, teams, and users", tools.AddOnCallTools},
-		{"asserts", "Tools for Grafana Asserts cloud functionality", tools.AddAssertsTools},
-		{"sift", "Tools for Sift investigations (analyze logs/traces, find errors, detect slow requests)", tools.AddSiftTools},
-		{"admin", "Tools for administrative tasks (list teams, manage users)", tools.AddAdminTools},
-		{"pyroscope", "Tools for profiling applications with Pyroscope", tools.AddPyroscopeTools},
-		{"navigation", "Tools for generating deeplink URLs to Grafana resources", tools.AddNavigationTools},
+		{"search", "Tools for searching dashboards, folders, and other Grafana resources", []string{"search_dashboards", "search_folders"}, tools.AddSearchTools},
+		{"datasource", "Tools for listing and fetching datasource details", []string{"list_datasources", "get_datasource_by_uid", "get_datasource_by_name"}, tools.AddDatasourceTools},
+		{"incident", "Tools for managing Grafana Incident (create, update, search incidents)", []string{"list_incidents", "create_incident", "add_activity_to_incident", "get_incident"}, tools.AddIncidentTools},
+		{"prometheus", "Tools for querying Prometheus metrics and metadata", []string{"list_prometheus_metric_metadata", "query_prometheus", "list_prometheus_metric_names", "list_prometheus_label_names", "list_prometheus_label_values"}, tools.AddPrometheusTools},
+		{"loki", "Tools for querying Loki logs and labels", []string{"list_loki_label_names", "list_loki_label_values", "query_loki_stats", "query_loki_logs"}, tools.AddLokiTools},
+		{"alerting", "Tools for managing alert rules and notification contact points", []string{"list_alert_rules", "get_alert_rule_by_uid", "list_contact_points", "create_alert_rule", "update_alert_rule", "delete_alert_rule"}, tools.AddAlertingTools},
+		{"dashboard", "Tools for managing Grafana dashboards (get, update, extract queries)", []string{"get_dashboard_by_uid", "update_dashboard", "get_dashboard_panel_queries", "get_dashboard_property", "get_dashboard_summary"}, tools.AddDashboardTools},
+		{"folder", "Tools for managing Grafana folders", []string{"create_folder"}, tools.AddFolderTools},
+		{"oncall", "Tools for managing OnCall schedules, shifts, teams, and users", []string{"list_oncall_schedules", "get_oncall_shift", "get_current_oncall_users", "list_oncall_teams", "list_oncall_users", "list_alert_groups", "get_alert_group"}, tools.AddOnCallTools},
+		{"asserts", "Tools for Grafana Asserts cloud functionality", []string{"get_assertions"}, tools.AddAssertsTools},
+		{"sift", "Tools for Sift investigations (analyze logs/traces, find errors, detect slow requests)", []string{"get_sift_investigation", "get_sift_analysis", "list_sift_investigations", "find_error_pattern_logs", "find_slow_requests"}, tools.AddSiftTools},
+		{"admin", "Tools for administrative tasks (list teams, manage users)", []string{"list_teams", "list_users_by_org"}, tools.AddAdminTools},
+		{"pyroscope", "Tools for profiling applications with Pyroscope", []string{"list_pyroscope_label_names", "list_pyroscope_label_values", "list_pyroscope_profile_types", "fetch_pyroscope_profile"}, tools.AddPyroscopeTools},
+		{"navigation", "Tools for generating deeplink URLs to Grafana resources", []string{"generate_deeplink"}, tools.AddNavigationTools},
 	}
 
 	// Only register toolsets that are enabled
@@ -151,6 +152,7 @@ func (dt *disabledTools) addToolsDynamically(s *server.MCPServer) *mcpgrafana.Dy
 			dtm.RegisterToolset(&mcpgrafana.Toolset{
 				Name:        toolset.name,
 				Description: toolset.description,
+				ToolNames:   toolset.toolNames,
 				AddFunc:     toolset.addFunc,
 			})
 		}
