@@ -109,7 +109,7 @@ type ToolsetInfo struct {
 	Name        string   `json:"name" jsonschema:"required,description=The name of the toolset"`
 	Description string   `json:"description" jsonschema:"description=Description of what the toolset provides"`
 	Enabled     bool     `json:"enabled" jsonschema:"description=Whether the toolset is currently enabled"`
-	ToolNames   []string `json:"toolNames" jsonschema:"description=List of tool names provided by this toolset (e.g., ['grafana_query_prometheus', 'grafana_list_prometheus_metric_metadata'])"`
+	ToolNames   []string `json:"toolNames" jsonschema:"description=List of tool names provided by this toolset (e.g.\\, ['grafana_query_prometheus'\\, 'grafana_list_prometheus_metric_metadata'])"`
 }
 
 // AddDynamicDiscoveryTools adds the list and enable toolset tools to the server
