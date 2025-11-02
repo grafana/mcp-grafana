@@ -37,6 +37,7 @@ func maybeAddTools(s *server.MCPServer, tf func(*server.MCPServer), enabledTools
 // disabledTools indicates whether each category of tools should be disabled.
 type disabledTools struct {
 	enabledTools string
+	dynamicTools bool
 
 	search, datasource, incident,
 	prometheus, loki, alerting,
@@ -58,6 +59,7 @@ type grafanaConfig struct {
 
 func (dt *disabledTools) addFlags() {
 	flag.StringVar(&dt.enabledTools, "enabled-tools", "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,admin,pyroscope,navigation,proxied,annotations", "A comma separated list of tools enabled for this server. Can be overwritten entirely or by disabling specific components, e.g. --disable-search.")
+	flag.BoolVar(&dt.dynamicTools, "dynamic-toolsets", getEnvBool("GRAFANA_DYNAMIC_TOOLSETS", false), "Enable dynamic tool discovery. When enabled, only discovery tools are registered initially, and other toolsets can be enabled on-demand.")
 	flag.BoolVar(&dt.search, "disable-search", false, "Disable search tools")
 	flag.BoolVar(&dt.datasource, "disable-datasource", false, "Disable datasource tools")
 	flag.BoolVar(&dt.incident, "disable-incident", false, "Disable incident tools")
@@ -198,8 +200,39 @@ func newServer(transport string, dt disabledTools) (*server.MCPServer, *mcpgrafa
 			},
 		}
 	}
-	s := server.NewMCPServer("mcp-grafana", mcpgrafana.Version(),
-		server.WithInstructions(`
+
+	// Build instructions based on configuration
+	var instructions string
+	if dt.dynamicTools {
+		instructions = `
+This server provides access to your Grafana instance and the surrounding ecosystem with dynamic tool discovery.
+
+Getting Started:
+1. Use 'grafana_list_toolsets' to see all available toolsets
+2. Use 'grafana_enable_toolset' to enable specific functionality you need
+3. Once enabled, the toolset's tools will be available for use
+
+Available Toolset Categories:
+- search: Search dashboards, folders, and resources
+- datasource: Manage datasources
+- prometheus: Query Prometheus metrics
+- loki: Query Loki logs
+- dashboard: Manage dashboards
+- folder: Manage folders
+- incident: Manage incidents
+- alerting: Manage alerts
+- oncall: Manage OnCall schedules
+- asserts: Grafana Asserts functionality
+- sift: Sift investigations
+- admin: Administrative tasks
+- pyroscope: Application profiling
+- navigation: Generate deeplinks
+- proxied: Access tools from external MCP servers (like Tempo) through dynamic discovery
+
+Note that some of these capabilities may be disabled. Do not try to use features that are not available via tools.
+`
+	} else {
+		instructions = `
 This server provides access to your Grafana instance and the surrounding ecosystem.
 
 Available Capabilities:
@@ -216,8 +249,16 @@ Available Capabilities:
 - Proxied Tools: Access tools from external MCP servers (like Tempo) through dynamic discovery.
 
 Note that some of these capabilities may be disabled. Do not try to use features that are not available via tools.
-`),
+`
+	}
+
+	// Determine if we need tool capabilities enabled (for dynamic toolsets or proxied tools)
+	toolCapabilitiesEnabled := dt.dynamicTools || (!dt.proxied && transport != "stdio")
+
+	s := server.NewMCPServer("mcp-grafana", mcpgrafana.Version(),
+		server.WithInstructions(instructions),
 		server.WithHooks(hooks),
+		server.WithToolCapabilities(toolCapabilitiesEnabled),
 	)
 
 	// Initialize ToolManager now that server is created
@@ -228,7 +269,6 @@ Note that some of these capabilities may be disabled. Do not try to use features
 		// Tools will be added dynamically when toolsets are enabled
 		dt.addToolsDynamically(s)
 	} else {
-		// Use static tool registration
 		dt.addTools(s)
 	}
 
