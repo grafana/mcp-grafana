@@ -15,10 +15,10 @@ require (
 	github.com/grafana/incident-go v0.0.0-20250211094540-dc6a98fdae43
 	github.com/grafana/pyroscope/api v1.2.0
 	github.com/invopop/jsonschema v0.13.0
-	github.com/mark3labs/mcp-go v0.42.0
+	github.com/mark3labs/mcp-go v0.43.0
 	github.com/prometheus/client_golang v1.23.2
-	github.com/prometheus/common v0.67.1
-	github.com/prometheus/prometheus v0.307.2
+	github.com/prometheus/common v0.67.2
+	github.com/prometheus/prometheus v0.307.3
 	github.com/stretchr/testify v1.11.1
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.63.0
 	go.opentelemetry.io/otel v1.38.0
@@ -121,12 +121,12 @@ require (
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/exp v0.0.0-20251002181428-27f1f14c8bb9 // indirect
 	golang.org/x/mod v0.28.0 // indirect
-	golang.org/x/net v0.44.0 // indirect
+	golang.org/x/net v0.46.0 // indirect
 	golang.org/x/oauth2 v0.32.0 // indirect
 	golang.org/x/sync v0.17.0 // indirect
 	golang.org/x/sys v0.37.0 // indirect
 	golang.org/x/telemetry v0.0.0-20250908211612-aef8a434d053 // indirect
-	golang.org/x/text v0.29.0 // indirect
+	golang.org/x/text v0.30.0 // indirect
 	golang.org/x/tools v0.37.0 // indirect
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20250929231259-57b25ae835d4 // indirect
