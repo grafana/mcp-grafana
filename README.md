@@ -217,7 +217,7 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 - `--debug`: Enable debug mode for detailed HTTP request/response logging
 
 **Tool Configuration:**
-- `--enabled-tools`: Comma-separated list of enabled tools - default: all tools enabled
+- `--enabled-tools`: Comma-separated list of enabled categories - default: all categories enabled - example: "loki,datasources"
 - `--disable-search`: Disable search tools
 - `--disable-datasource`: Disable datasource tools
 - `--disable-incident`: Disable incident tools
