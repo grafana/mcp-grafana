@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -29,7 +30,15 @@ func newAssertsClient(ctx context.Context) (*Client, error) {
 		}
 	}
 
-	transport = NewAuthRoundTripper(transport, cfg.AccessToken, cfg.IDToken, cfg.APIKey, cfg.BasicAuth)
+	// Get IAP token from config, or execute command if set
+	iapToken := cfg.IAPToken
+	if iapToken == "" && cfg.IAPTokenCommand != "" {
+		output, err := exec.Command("sh", "-c", cfg.IAPTokenCommand).Output()
+		if err == nil {
+			iapToken = strings.TrimSpace(string(output))
+		}
+	}
+	transport = NewAuthRoundTripper(transport, cfg.AccessToken, cfg.IDToken, cfg.APIKey, cfg.BasicAuth, iapToken)
 	transport = mcpgrafana.NewOrgIDRoundTripper(transport, cfg.OrgID)
 
 	client := &http.Client{

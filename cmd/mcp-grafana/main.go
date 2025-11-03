@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -232,8 +233,28 @@ func handleHealthz(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte("ok"))
 }
 
-func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt disabledTools, gc mcpgrafana.GrafanaConfig, tls tlsConfig) error {
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})))
+func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, logFile string, dt disabledTools, gc mcpgrafana.GrafanaConfig, tls tlsConfig) error {
+	var writer io.Writer = os.Stderr
+	var logFileHandle *os.File
+	if logFile != "" {
+		file, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		if err != nil {
+			return fmt.Errorf("failed to open log file %s: %w", logFile, err)
+		}
+		logFileHandle = file
+		// Write to both stderr and file
+		writer = io.MultiWriter(os.Stderr, file)
+	}
+	slog.SetDefault(slog.New(slog.NewTextHandler(writer, &slog.HandlerOptions{Level: logLevel})))
+	if logFile != "" {
+		slog.Info("Logging to file", "file", logFile)
+		// Close file when function exits
+		defer func() {
+			if logFileHandle != nil {
+				_ = logFileHandle.Close()
+			}
+		}()
+	}
 	s, tm := newServer(transport, dt)
 
 	// Create a context that will be cancelled on shutdown
@@ -334,6 +355,7 @@ func main() {
 	basePath := flag.String("base-path", "", "Base path for the sse server")
 	endpointPath := flag.String("endpoint-path", "/mcp", "Endpoint path for the streamable-http server")
 	logLevel := flag.String("log-level", "info", "Log level (debug, info, warn, error)")
+	logFile := flag.String("log-file", "", "Optional file path to write logs to (in addition to stderr)")
 	showVersion := flag.Bool("version", false, "Print the version and exit")
 	var dt disabledTools
 	dt.addFlags()
@@ -359,7 +381,7 @@ func main() {
 		}
 	}
 
-	if err := run(transport, *addr, *basePath, *endpointPath, parseLevel(*logLevel), dt, grafanaConfig, tls); err != nil {
+	if err := run(transport, *addr, *basePath, *endpointPath, parseLevel(*logLevel), *logFile, dt, grafanaConfig, tls); err != nil {
 		panic(err)
 	}
 }

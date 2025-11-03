@@ -29,7 +29,17 @@ func NewProxiedClient(ctx context.Context, datasourceUID, datasourceName, dataso
 
 	// Build headers for authentication
 	headers := make(map[string]string)
-	if config.APIKey != "" {
+	
+	// Get IAP token from config, or execute command if set
+	iapToken := config.IAPToken
+	if iapToken == "" {
+		iapToken = getIAPToken() // Try to get from cache/env
+	}
+	
+	// IAP token takes highest precedence
+	if iapToken != "" {
+		headers["Authorization"] = "Bearer " + iapToken
+	} else if config.APIKey != "" {
 		headers["Authorization"] = "Bearer " + config.APIKey
 	} else if config.BasicAuth != nil {
 		auth := config.BasicAuth.String()

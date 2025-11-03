@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
+	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -64,7 +66,18 @@ func newLokiClient(ctx context.Context, uid string) (*Client, error) {
 		}
 	}
 
-	transport = NewAuthRoundTripper(transport, cfg.AccessToken, cfg.IDToken, cfg.APIKey, cfg.BasicAuth)
+	// Get IAP token from config, or execute command if set
+	iapToken := cfg.IAPToken
+	if iapToken == "" && cfg.IAPTokenCommand != "" {
+		// Execute command to get token (simple approach for tools package)
+		// Note: This doesn't use caching. For cached tokens, use GRAFANA_IAP_TOKEN_COMMAND env var
+		// which is handled by ExtractGrafanaInfoFromEnv in mcpgrafana package
+		output, err := exec.Command("sh", "-c", cfg.IAPTokenCommand).Output()
+		if err == nil {
+			iapToken = strings.TrimSpace(string(output))
+		}
+	}
+	transport = NewAuthRoundTripper(transport, cfg.AccessToken, cfg.IDToken, cfg.APIKey, cfg.BasicAuth, iapToken)
 	transport = mcpgrafana.NewOrgIDRoundTripper(transport, cfg.OrgID)
 
 	client := &http.Client{
@@ -177,12 +190,13 @@ func (c *Client) fetchData(ctx context.Context, urlPath string, startRFC3339, en
 	return labelResponse.Data, nil
 }
 
-func NewAuthRoundTripper(rt http.RoundTripper, accessToken, idToken, apiKey string, basicAuth *url.Userinfo) *authRoundTripper {
+func NewAuthRoundTripper(rt http.RoundTripper, accessToken, idToken, apiKey string, basicAuth *url.Userinfo, iapToken string) *authRoundTripper {
 	return &authRoundTripper{
 		accessToken: accessToken,
 		idToken:     idToken,
 		apiKey:      apiKey,
 		basicAuth:   basicAuth,
+		iapToken:    iapToken,
 		underlying:  rt,
 	}
 }
@@ -192,23 +206,86 @@ type authRoundTripper struct {
 	idToken     string
 	apiKey      string
 	basicAuth   *url.Userinfo
+	iapToken    string
 	underlying  http.RoundTripper
 }
 
 func (rt *authRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
-	if rt.accessToken != "" && rt.idToken != "" {
-		req.Header.Set("X-Access-Token", rt.accessToken)
-		req.Header.Set("X-Grafana-Id", rt.idToken)
+	// Clone the request to avoid modifying the original
+	clonedReq := req.Clone(req.Context())
+
+	// Determine auth method being used
+	authMethod := "none"
+	authHeaderValue := ""
+	
+	// Only set Authorization header if we have valid credentials
+	// This allows requests to proceed without auth when endpoints don't require it
+	// IAP token takes highest precedence
+	if rt.iapToken != "" {
+		clonedReq.Header.Set("Authorization", "Bearer "+rt.iapToken)
+		authMethod = "IAP token"
+		if len(rt.iapToken) > 20 {
+			authHeaderValue = "Bearer " + rt.iapToken[:20] + "..."
+		} else {
+			authHeaderValue = "Bearer " + rt.iapToken[:len(rt.iapToken)]
+		}
+	} else if rt.accessToken != "" && rt.idToken != "" {
+		clonedReq.Header.Set("X-Access-Token", rt.accessToken)
+		clonedReq.Header.Set("X-Grafana-Id", rt.idToken)
+		authMethod = "AccessToken/IDToken"
 	} else if rt.apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+rt.apiKey)
+		clonedReq.Header.Set("Authorization", "Bearer "+rt.apiKey)
+		authMethod = "APIKey"
+		if len(rt.apiKey) > 20 {
+			authHeaderValue = "Bearer " + rt.apiKey[:20] + "..."
+		} else {
+			authHeaderValue = "Bearer " + rt.apiKey[:len(rt.apiKey)]
+		}
 	} else if rt.basicAuth != nil {
 		password, _ := rt.basicAuth.Password()
-		req.SetBasicAuth(rt.basicAuth.Username(), password)
+		clonedReq.SetBasicAuth(rt.basicAuth.Username(), password)
+		authMethod = "BasicAuth"
+	}
+	// If no auth credentials are provided, don't set any Authorization header
+	// This allows endpoints that don't require auth to work
+
+	// Debug log request details
+	slog.Debug("HTTP request",
+		"method", clonedReq.Method,
+		"url", clonedReq.URL.String(),
+		"auth_method", authMethod,
+		"auth_header_preview", authHeaderValue,
+		"org_id", clonedReq.Header.Get("X-Grafana-Org-Id"),
+	)
+
+	resp, err := rt.underlying.RoundTrip(clonedReq)
+	if err != nil {
+		slog.Debug("HTTP request failed",
+			"method", clonedReq.Method,
+			"url", clonedReq.URL.String(),
+			"error", err,
+		)
+		return nil, err
 	}
 
-	resp, err := rt.underlying.RoundTrip(req)
-	if err != nil {
-		return nil, err
+	// Debug log response details
+	logAttrs := []any{
+		"method", clonedReq.Method,
+		"url", clonedReq.URL.String(),
+		"status", resp.StatusCode,
+		"status_text", resp.Status,
+	}
+	
+	// Log headers for error responses at Warn level
+	if resp.StatusCode >= 400 {
+		logAttrs = append(logAttrs, "content_type", resp.Header.Get("Content-Type"))
+		logAttrs = append(logAttrs, "content_length", resp.ContentLength)
+		if resp.StatusCode == 401 || resp.StatusCode == 403 {
+			logAttrs = append(logAttrs, "www_authenticate", resp.Header.Get("WWW-Authenticate"))
+		}
+		slog.Warn("HTTP error response", logAttrs...)
+	} else {
+		slog.Debug("HTTP response", logAttrs...)
 	}
 
 	return resp, nil

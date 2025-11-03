@@ -9,11 +9,13 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"reflect"
 	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/go-openapi/strfmt"
 	"github.com/grafana/grafana-openapi-client-go/client"
@@ -33,6 +35,9 @@ const (
 
 	grafanaUsernameEnvVar = "GRAFANA_USERNAME"
 	grafanaPasswordEnvVar = "GRAFANA_PASSWORD"
+
+	grafanaIAPTokenEnvVar        = "GRAFANA_IAP_TOKEN"
+	grafanaIAPTokenCommandEnvVar = "GRAFANA_IAP_TOKEN_COMMAND"
 
 	grafanaURLHeader    = "X-Grafana-URL"
 	grafanaAPIKeyHeader = "X-Grafana-API-Key"
@@ -79,6 +84,83 @@ func orgIdFromEnv() int64 {
 		return 0
 	}
 	return orgID
+}
+
+// iapTokenFromEnv retrieves the IAP token from environment variables.
+// Checks GRAFANA_IAP_TOKEN first, then falls back to executing GRAFANA_IAP_TOKEN_COMMAND if set.
+func iapTokenFromEnv() string {
+	// Check for static token first
+	if token := os.Getenv(grafanaIAPTokenEnvVar); token != "" {
+		return token
+	}
+
+	// Check for command to execute
+	if cmd := os.Getenv(grafanaIAPTokenCommandEnvVar); cmd != "" {
+		// Execute command and return output
+		output, err := exec.Command("sh", "-c", cmd).Output()
+		if err != nil {
+			slog.Warn("Failed to execute IAP token command", "error", err, "command", cmd)
+			return ""
+		}
+		return strings.TrimSpace(string(output))
+	}
+
+	return ""
+}
+
+// IAPTokenCache manages cached IAP tokens with expiration.
+type IAPTokenCache struct {
+	token     string
+	expiresAt time.Time
+	command   string
+	mutex     sync.RWMutex
+}
+
+var iapTokenCache = &IAPTokenCache{}
+
+// getIAPToken returns a valid IAP token, refreshing if necessary.
+func getIAPToken() string {
+	iapTokenCache.mutex.RLock()
+	cached := iapTokenCache.token != "" && time.Now().Before(iapTokenCache.expiresAt)
+	token := iapTokenCache.token
+	command := iapTokenCache.command
+	iapTokenCache.mutex.RUnlock()
+
+	if cached {
+		return token
+	}
+
+	// Need to refresh token
+	if command == "" {
+		// Check static token from env
+		return iapTokenFromEnv()
+	}
+
+	// Execute command to get fresh token
+	output, err := exec.Command("sh", "-c", command).Output()
+	if err != nil {
+		slog.Warn("Failed to execute IAP token command", "error", err, "command", command)
+		return ""
+	}
+
+	newToken := strings.TrimSpace(string(output))
+
+	// Cache for 50 minutes (tokens expire after 1 hour)
+	iapTokenCache.mutex.Lock()
+	iapTokenCache.token = newToken
+	iapTokenCache.expiresAt = time.Now().Add(50 * time.Minute)
+	iapTokenCache.mutex.Unlock()
+
+	return newToken
+}
+
+// initializeIAPTokenCache initializes the token cache from environment variables.
+func initializeIAPTokenCache() {
+	if cmd := os.Getenv(grafanaIAPTokenCommandEnvVar); cmd != "" {
+		iapTokenCache.mutex.Lock()
+		iapTokenCache.command = cmd
+		iapTokenCache.mutex.Unlock()
+	}
 }
 
 func orgIdFromHeaders(req *http.Request) int64 {
@@ -146,6 +228,17 @@ type GrafanaConfig struct {
 	// It comes from the `X-Grafana-Id` header sent from Grafana to plugin backends.
 	// It is used for on-behalf-of auth in Grafana Cloud.
 	IDToken string
+
+	// IAPToken is the GCP IAP identity token for authentication behind IAP.
+	// This token can be obtained via: gcloud auth print-identity-token --impersonate-service-account=...
+	// When set, this token takes precedence over APIKey and BasicAuth for IAP-protected resources.
+	IAPToken string
+
+	// IAPTokenCommand is an optional command to execute to generate a fresh IAP token.
+	// This command will be executed periodically to refresh expired tokens.
+	// Example: "gcloud auth print-identity-token --impersonate-service-account=grafana-iap@project.iam.gserviceaccount.com --audiences=CLIENT_ID"
+	// If both IAPToken and IAPTokenCommand are set, IAPTokenCommand takes precedence.
+	IAPTokenCommand string
 
 	// TLSConfig holds TLS configuration for all Grafana clients.
 	TLSConfig *TLSConfig
@@ -308,21 +401,53 @@ func NewOrgIDRoundTripper(rt http.RoundTripper, orgID int64) *OrgIDRoundTripper 
 	}
 }
 
+// IAPRoundTripper wraps an http.RoundTripper to add the GCP IAP identity token.
+// This RoundTripper should be wrapped as the outermost layer to ensure IAP tokens
+// override any Authorization headers set by the Grafana OpenAPI client.
+type IAPRoundTripper struct {
+	underlying http.RoundTripper
+	iapToken   string
+}
+
+func (t *IAPRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	// Clone the request to avoid modifying the original
+	clonedReq := req.Clone(req.Context())
+
+	if t.iapToken != "" {
+		// IAP token takes precedence over other auth methods
+		clonedReq.Header.Set("Authorization", "Bearer "+t.iapToken)
+	}
+
+	return t.underlying.RoundTrip(clonedReq)
+}
+
+func NewIAPRoundTripper(rt http.RoundTripper, iapToken string) *IAPRoundTripper {
+	if rt == nil {
+		rt = http.DefaultTransport
+	}
+
+	return &IAPRoundTripper{
+		underlying: rt,
+		iapToken:   iapToken,
+	}
+}
+
 // Gets info from environment
-func extractKeyGrafanaInfoFromEnv() (url, apiKey string, auth *url.Userinfo, orgId int64) {
+func extractKeyGrafanaInfoFromEnv() (url, apiKey string, auth *url.Userinfo, orgId int64, iapToken string) {
 	url, apiKey = urlAndAPIKeyFromEnv()
 	if url == "" {
 		url = defaultGrafanaURL
 	}
 	auth = userAndPassFromEnv()
 	orgId = orgIdFromEnv()
+	iapToken = iapTokenFromEnv()
 	return
 }
 
 // Tries to get grafana info from a request.
 // Gets info from environment if it can't get it from request
-func extractKeyGrafanaInfoFromReq(req *http.Request) (grafanaUrl, apiKey string, auth *url.Userinfo, orgId int64) {
-	eUrl, eApiKey, eAuth, eOrgId := extractKeyGrafanaInfoFromEnv()
+func extractKeyGrafanaInfoFromReq(req *http.Request) (grafanaUrl, apiKey string, auth *url.Userinfo, orgId int64, iapToken string) {
+	eUrl, eApiKey, eAuth, eOrgId, eIAPToken := extractKeyGrafanaInfoFromEnv()
 	username, password, _ := req.BasicAuth()
 
 	grafanaUrl, apiKey = urlAndAPIKeyFromHeaders(req)
@@ -348,19 +473,28 @@ func extractKeyGrafanaInfoFromReq(req *http.Request) (grafanaUrl, apiKey string,
 		orgId = eOrgId
 	}
 
+	// extract IAP token from header, fall back to environment
+	iapToken = req.Header.Get("X-Grafana-IAP-Token")
+	if iapToken == "" {
+		iapToken = eIAPToken
+	}
+
 	return
 }
 
 // ExtractGrafanaInfoFromEnv is a StdioContextFunc that extracts Grafana configuration from environment variables.
 // It reads GRAFANA_URL and GRAFANA_SERVICE_ACCOUNT_TOKEN (or deprecated GRAFANA_API_KEY) environment variables and adds the configuration to the context for use by Grafana clients.
 var ExtractGrafanaInfoFromEnv server.StdioContextFunc = func(ctx context.Context) context.Context {
-	u, apiKey, basicAuth, orgID := extractKeyGrafanaInfoFromEnv()
+	u, apiKey, basicAuth, orgID, iapToken := extractKeyGrafanaInfoFromEnv()
 	parsedURL, err := url.Parse(u)
 	if err != nil {
 		panic(fmt.Errorf("invalid Grafana URL %s: %w", u, err))
 	}
 
-	slog.Info("Using Grafana configuration", "url", parsedURL.Redacted(), "api_key_set", apiKey != "", "basic_auth_set", basicAuth != nil, "org_id", orgID)
+	// Initialize token cache if command is set
+	initializeIAPTokenCache()
+
+	slog.Info("Using Grafana configuration", "url", parsedURL.Redacted(), "api_key_set", apiKey != "", "basic_auth_set", basicAuth != nil, "org_id", orgID, "iap_token_set", iapToken != "")
 
 	// Get existing config or create a new one.
 	// This will respect the existing debug flag, if set.
@@ -369,6 +503,10 @@ var ExtractGrafanaInfoFromEnv server.StdioContextFunc = func(ctx context.Context
 	config.APIKey = apiKey
 	config.BasicAuth = basicAuth
 	config.OrgID = orgID
+	config.IAPToken = iapToken
+	if cmd := os.Getenv(grafanaIAPTokenCommandEnvVar); cmd != "" {
+		config.IAPTokenCommand = cmd
+	}
 	return WithGrafanaConfig(ctx, config)
 }
 
@@ -380,7 +518,7 @@ type httpContextFunc func(ctx context.Context, req *http.Request) context.Contex
 // ExtractGrafanaInfoFromHeaders is a HTTPContextFunc that extracts Grafana configuration from HTTP request headers.
 // It reads X-Grafana-URL and X-Grafana-API-Key headers, falling back to environment variables if headers are not present.
 var ExtractGrafanaInfoFromHeaders httpContextFunc = func(ctx context.Context, req *http.Request) context.Context {
-	u, apiKey, basicAuth, orgID := extractKeyGrafanaInfoFromReq(req)
+	u, apiKey, basicAuth, orgID, iapToken := extractKeyGrafanaInfoFromReq(req)
 
 	// Get existing config or create a new one.
 	// This will respect the existing debug flag, if set.
@@ -389,6 +527,10 @@ var ExtractGrafanaInfoFromHeaders httpContextFunc = func(ctx context.Context, re
 	config.APIKey = apiKey
 	config.BasicAuth = basicAuth
 	config.OrgID = orgID
+	config.IAPToken = iapToken
+	if cmd := os.Getenv(grafanaIAPTokenCommandEnvVar); cmd != "" {
+		config.IAPTokenCommand = cmd
+	}
 	return WithGrafanaConfig(ctx, config)
 }
 
@@ -473,7 +615,7 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 			"skip_verify", tlsConfig.SkipVerify)
 	}
 
-	slog.Debug("Creating Grafana client", "url", parsedURL.Redacted(), "api_key_set", apiKey != "", "basic_auth_set", config.BasicAuth != nil, "org_id", cfg.OrgID)
+	slog.Debug("Creating Grafana client", "url", parsedURL.Redacted(), "api_key_set", apiKey != "", "basic_auth_set", config.BasicAuth != nil, "org_id", cfg.OrgID, "iap_token_set", config.IAPToken != "")
 	grafanaClient := client.NewHTTPClientWithConfig(strfmt.Default, cfg)
 
 	// Always enable HTTP tracing for context propagation (no-op when no exporter configured)
@@ -485,10 +627,22 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 			transportField := v.FieldByName("Transport")
 			if transportField.IsValid() && transportField.CanSet() {
 				if rt, ok := transportField.Interface().(http.RoundTripper); ok {
-					// Wrap with user agent first, then otel
+					// Wrap with user agent first, then otel, then IAP (IAP must be outermost)
 					userAgentWrapped := wrapWithUserAgent(rt)
-					wrapped := otelhttp.NewTransport(userAgentWrapped)
-					transportField.Set(reflect.ValueOf(wrapped))
+					otelWrapped := otelhttp.NewTransport(userAgentWrapped)
+
+					// Apply IAP token if configured (must be outermost to override OpenAPI client's Authorization header)
+					iapToken := config.IAPToken
+					if iapToken == "" {
+						iapToken = getIAPToken() // Try to get from cache/env
+					}
+					if iapToken != "" {
+						iapWrapped := NewIAPRoundTripper(otelWrapped, iapToken)
+						transportField.Set(reflect.ValueOf(iapWrapped))
+						slog.Debug("IAP authentication enabled for Grafana client")
+					} else {
+						transportField.Set(reflect.ValueOf(otelWrapped))
+					}
 					slog.Debug("HTTP tracing and user agent tracking enabled for Grafana client")
 				}
 			}
@@ -517,7 +671,7 @@ var ExtractGrafanaClientFromEnv server.StdioContextFunc = func(ctx context.Conte
 // It prioritizes configuration from HTTP headers (X-Grafana-URL, X-Grafana-API-Key) over environment variables for multi-tenant scenarios.
 var ExtractGrafanaClientFromHeaders httpContextFunc = func(ctx context.Context, req *http.Request) context.Context {
 	// Extract transport config from request headers, and set it on the context.
-	u, apiKey, basicAuth, orgId := extractKeyGrafanaInfoFromReq(req)
+	u, apiKey, basicAuth, orgId, _ := extractKeyGrafanaInfoFromReq(req)
 	slog.Debug("Creating Grafana client", "url", u, "api_key_set", apiKey != "", "basic_auth_set", basicAuth != nil)
 
 	grafanaClient := NewGrafanaClient(ctx, u, apiKey, basicAuth, orgId)
@@ -583,7 +737,7 @@ var ExtractIncidentClientFromEnv server.StdioContextFunc = func(ctx context.Cont
 // ExtractIncidentClientFromHeaders is a HTTPContextFunc that creates and injects a Grafana Incident client into the context.
 // It uses HTTP headers for configuration with environment variable fallbacks, enabling per-request incident management configuration.
 var ExtractIncidentClientFromHeaders httpContextFunc = func(ctx context.Context, req *http.Request) context.Context {
-	grafanaURL, apiKey, _, orgID := extractKeyGrafanaInfoFromReq(req)
+	grafanaURL, apiKey, _, orgID, _ := extractKeyGrafanaInfoFromReq(req)
 	incidentURL := fmt.Sprintf("%s/api/plugins/grafana-irm-app/resources/api/v1/", grafanaURL)
 	client := incident.NewClient(incidentURL, apiKey)
 

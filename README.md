@@ -589,6 +589,99 @@ With custom CA certificate only:
 ./mcp-grafana --tls-ca-file /path/to/ca.crt
 ```
 
+### GCP IAP Authentication
+
+If your Grafana instance is protected by Google Cloud Platform's Identity-Aware Proxy (IAP), you can authenticate using IAP identity tokens. The MCP server supports both static tokens and command-based token generation with automatic caching.
+
+**Environment Variables:**
+
+- `GRAFANA_IAP_TOKEN`: Static IAP identity token (optional, for short-term use)
+- `GRAFANA_IAP_TOKEN_COMMAND`: Command to execute to generate a fresh IAP token (recommended for production)
+
+**Using Static Token:**
+
+```json
+{
+  "mcpServers": {
+    "grafana": {
+      "command": "mcp-grafana",
+      "args": [],
+      "env": {
+        "GRAFANA_URL": "https://your-grafana-instance.com",
+        "GRAFANA_IAP_TOKEN": "<your IAP identity token>"
+      }
+    }
+  }
+}
+```
+
+**Using Command-Based Token Generation (Recommended):**
+
+The command-based approach automatically refreshes tokens before they expire (tokens are cached for 50 minutes, refreshed before the 1-hour expiration):
+
+```json
+{
+  "mcpServers": {
+    "grafana": {
+      "command": "mcp-grafana",
+      "args": [],
+      "env": {
+        "GRAFANA_URL": "https://your-grafana-instance.com",
+        "GRAFANA_IAP_TOKEN_COMMAND": "gcloud auth print-identity-token --impersonate-service-account=grafana-iap@project.iam.gserviceaccount.com --audiences=CLIENT_ID"
+      }
+    }
+  }
+}
+```
+
+**Example with Docker:**
+
+```json
+{
+  "mcpServers": {
+    "grafana": {
+      "command": "docker",
+      "args": [
+        "run",
+        "--rm",
+        "-i",
+        "-e",
+        "GRAFANA_URL",
+        "-e",
+        "GRAFANA_IAP_TOKEN_COMMAND",
+        "mcp/grafana",
+        "-t",
+        "stdio"
+      ],
+      "env": {
+        "GRAFANA_URL": "https://your-grafana-instance.com",
+        "GRAFANA_IAP_TOKEN_COMMAND": "gcloud auth print-identity-token --impersonate-service-account=grafana-iap@project.iam.gserviceaccount.com --audiences=CLIENT_ID"
+      }
+    }
+  }
+}
+```
+
+**Authentication Precedence:**
+
+When IAP authentication is configured, it takes precedence over all other authentication methods (API keys, service account tokens, and basic auth). This ensures that IAP-protected resources are properly authenticated.
+
+**Token Expiration:**
+
+IAP identity tokens typically expire after 1 hour. When using `GRAFANA_IAP_TOKEN_COMMAND`, the MCP server automatically caches tokens and refreshes them before expiration (at 50 minutes) to ensure uninterrupted access.
+
+**Troubleshooting:**
+
+- If you receive 401/403 errors, verify that:
+  - The service account has `roles/iap.httpsResourceAccessor` on the IAP-protected resource
+  - The service account email is allowed in IAP access control policies
+  - The OAuth client ID in `--audiences` matches your IAP configuration
+  - Your user account has `roles/iam.serviceAccountTokenCreator` on the service account
+- For command-based token generation, ensure `gcloud` is installed and configured in your environment
+- Check logs for token generation errors if using `GRAFANA_IAP_TOKEN_COMMAND`
+
+For detailed GCP IAP setup instructions, see [docs/IAP_SETUP.md](docs/IAP_SETUP.md).
+
 **Programmatic Usage:**
 
 If you're using this library programmatically, you can also create TLS-enabled context functions:

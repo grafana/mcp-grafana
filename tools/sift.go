@@ -8,6 +8,8 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -121,7 +123,15 @@ func newSiftClient(cfg mcpgrafana.GrafanaConfig) (*siftClient, error) {
 		}
 	}
 
-	transport = NewAuthRoundTripper(transport, cfg.AccessToken, cfg.IDToken, cfg.APIKey, cfg.BasicAuth)
+	// Get IAP token from config, or execute command if set
+	iapToken := cfg.IAPToken
+	if iapToken == "" && cfg.IAPTokenCommand != "" {
+		output, err := exec.Command("sh", "-c", cfg.IAPTokenCommand).Output()
+		if err == nil {
+			iapToken = strings.TrimSpace(string(output))
+		}
+	}
+	transport = NewAuthRoundTripper(transport, cfg.AccessToken, cfg.IDToken, cfg.APIKey, cfg.BasicAuth, iapToken)
 	transport = mcpgrafana.NewOrgIDRoundTripper(transport, cfg.OrgID)
 
 	client := &http.Client{

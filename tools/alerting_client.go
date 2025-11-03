@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -27,6 +28,7 @@ type alertingClient struct {
 	idToken     string
 	apiKey      string
 	basicAuth   *url.Userinfo
+	iapToken    string
 	orgID       int64
 	httpClient  *http.Client
 }
@@ -39,12 +41,22 @@ func newAlertingClientFromContext(ctx context.Context) (*alertingClient, error) 
 		return nil, fmt.Errorf("invalid Grafana base URL %q: %w", baseURL, err)
 	}
 
+	// Get IAP token from config, or execute command if set
+	iapToken := cfg.IAPToken
+	if iapToken == "" && cfg.IAPTokenCommand != "" {
+		output, err := exec.Command("sh", "-c", cfg.IAPTokenCommand).Output()
+		if err == nil {
+			iapToken = strings.TrimSpace(string(output))
+		}
+	}
+
 	client := &alertingClient{
 		baseURL:     parsedBaseURL,
 		accessToken: cfg.AccessToken,
 		idToken:     cfg.IDToken,
 		apiKey:      cfg.APIKey,
 		basicAuth:   cfg.BasicAuth,
+		iapToken:    iapToken,
 		orgID:       cfg.OrgID,
 		httpClient: &http.Client{
 			Timeout: defaultTimeout,
@@ -82,8 +94,10 @@ func (c *alertingClient) makeRequest(ctx context.Context, path string) (*http.Re
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/json")
 
-	// If accessToken is set we use that first and fall back to normal Authorization.
-	if c.accessToken != "" && c.idToken != "" {
+	// IAP token takes highest precedence
+	if c.iapToken != "" {
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.iapToken))
+	} else if c.accessToken != "" && c.idToken != "" {
 		req.Header.Set("X-Access-Token", c.accessToken)
 		req.Header.Set("X-Grafana-Id", c.idToken)
 	} else if c.apiKey != "" {
