@@ -24,7 +24,7 @@ jobs:
       # Do this early so that it can start up in time for the tests to run.
       # We may need to add a wait here.
       - name: Start docker-compose services
-        uses: hoverkraft-tech/compose-action@ccd64b05f85e42d4fa426d34ecb5884c99537eb4
+        uses: hoverkraft-tech/compose-action@d626027cf5576c47558b8eced8e7b3a55c811e30
         with:
           compose-file: "docker-compose.yaml"
 
@@ -60,7 +60,7 @@ jobs:
           cache: true
 
       - id: get-secrets
-        uses: grafana/shared-workflows/actions/get-vault-secrets@5d7e361bc7e0a183cde8afe9899fb7b596d2659b # get-vault-secrets-v1.2.0
+        uses: grafana/shared-workflows/actions/get-vault-secrets@28095b7a6becc6eaba6a46729d847dec3924ae22 # get-vault-secrets-v1.2.0
         with:
           # Secrets placed in the ci/repo/grafana/mcp-grafana/<path> path in Vault
           repo_secrets: |
