@@ -261,33 +261,25 @@ type ListLokiLabelValuesParams struct {
 
 // listLokiLabelValues lists all values for a specific label in a Loki datasource
 func listLokiLabelValues(ctx context.Context, args ListLokiLabelValuesParams) ([]string, error) {
-	// Create a Loki client from the datasource UID
 	client, err := newLokiClient(ctx, args.DatasourceUID)
 	if err != nil {
 		return nil, fmt.Errorf("creating Loki client: %w", err)
 	}
 
-	// Loki API endpoint for label values
 	urlPath := fmt.Sprintf("/loki/api/v1/label/%s/values", args.LabelName)
 
-	// Prepare query parameters
-	params := map[string]string{
-		"start": args.StartRFC3339,
-		"end":   args.EndRFC3339,
-	}
-
-	// Include matchers (label filters) if provided
+	// Manually include matchers in query string if provided
 	if args.Matchers != "" {
-		params["query"] = args.Matchers
+		encoded := url.QueryEscape(args.Matchers)
+		urlPath = fmt.Sprintf("%s?query=%s", urlPath, encoded)
 	}
 
-	// Fetch data from Loki using the client’s method
-	result, err := client.fetchData(ctx, urlPath, params)
+	// Call the original fetchData with start/end as before
+	result, err := client.fetchData(ctx, urlPath, args.StartRFC3339, args.EndRFC3339)
 	if err != nil {
 		return nil, fmt.Errorf("fetching label values: %w", err)
 	}
 
-	// Return an empty slice (not nil) for consistency
 	if len(result) == 0 {
 		return []string{}, nil
 	}
