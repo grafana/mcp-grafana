@@ -139,22 +139,7 @@ func (c *Client) makeRequest(ctx context.Context, method, urlPath string, params
 	return bytes.TrimSpace(bodyBytes), nil
 }
 
-// fetchData is a generic method to fetch data from Loki API
-func (c *Client) fetchData(ctx context.Context, urlPath string, startRFC3339, endRFC3339 string, optionals ...string) ([]string, error) {
-	params := url.Values{}
-	var optional string
-    if len(optionals) > 0 {
-        optional = optional[0]
-    }
-	if startRFC3339 != "" {
-		params.Add("start", startRFC3339)
-	}
-	if endRFC3339 != "" {
-		params.Add("end", endRFC3339)
-	}
-	if optional != "" {
-		params.Add("query", optional)
-	}
+func (c *Client) handleAPICall(ctx context.Context, params url.Values, urlPath string) ([]string, error) {
 	fullURL := fmt.Sprintf("%s?%s", urlPath, params.Encode())
 	fmt.Println("Final request URL:", fullURL)
 
@@ -187,6 +172,37 @@ func (c *Client) fetchData(ctx context.Context, urlPath string, startRFC3339, en
 	fmt.Println("Loki Full Response:\n", string(pretty))
 
 	return labelResponse.Data, nil
+}
+
+// fetchData is a generic method to fetch data from Loki API
+func (c *Client) fetchLabels(ctx context.Context, urlPath string, startRFC3339, endRFC3339 string, matchers ...string) ([]string, error) {
+	params := url.Values{}
+	var matcher string
+    if len(matchers) > 0 {
+        matcher = matchers[0]
+    }
+	if startRFC3339 != "" {
+		params.Add("start", startRFC3339)
+	}
+	if endRFC3339 != "" {
+		params.Add("end", endRFC3339)
+	}
+	if matcher != "" {
+		params.Add("query", matcher)
+	}
+	return c.handleAPICall(ctx, urlPath, params)
+}
+
+// fetchData is a generic method to fetch data from Loki API
+func (c *Client) fetchData(ctx context.Context, urlPath string, startRFC3339, endRFC3339 string) ([]string, error) {
+	params := url.Values{}
+	if startRFC3339 != "" {
+		params.Add("start", startRFC3339)
+	}
+	if endRFC3339 != "" {
+		params.Add("end", endRFC3339)
+	}
+	return c.handleAPICall(ctx, urlPath, params)
 }
 
 func NewAuthRoundTripper(rt http.RoundTripper, accessToken, idToken, apiKey string, basicAuth *url.Userinfo) *authRoundTripper {
