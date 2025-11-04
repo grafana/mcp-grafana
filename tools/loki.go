@@ -280,13 +280,14 @@ func listLokiLabelValues(ctx context.Context, args ListLokiLabelValuesParams) ([
 
 	urlPath := fmt.Sprintf("/loki/api/v1/label/%s/values", args.LabelName)
 
-	// Call the original fetchData with start/end as before
+	// Use the client's fetchData method
 	result, err := client.fetchData(ctx, urlPath, args.StartRFC3339, args.EndRFC3339, args.Matchers)
 	if err != nil {
 		return nil, err
 	}
 
 	if len(result) == 0 {
+		// Return empty slice instead of nil
 		return []string{}, nil
 	}
 
