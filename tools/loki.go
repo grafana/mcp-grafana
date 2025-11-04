@@ -297,7 +297,7 @@ func listLokiLabelValues(ctx context.Context, args ListLokiLabelValuesParams) ([
 	urlPath := fmt.Sprintf("/loki/api/v1/label/%s/values", args.LabelName)
 
 	// Use the client's fetchData method
-	result, err := client.fetchData(ctx, urlPath, args.StartRFC3339, args.EndRFC3339, args.Matchers)
+	result, err := client.fetchLabels(ctx, urlPath, args.StartRFC3339, args.EndRFC3339, args.Matchers)
 	if err != nil {
 		return nil, err
 	}
