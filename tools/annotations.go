@@ -83,17 +83,17 @@ func createAnnotation(ctx context.Context, args CreateAnnotationInput) (*annotat
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
 
 	req := models.PostAnnotationsCmd{
-        DashboardID:  args.DashboardID,
-        DashboardUID: args.DashboardUID,
-        PanelID:      args.PanelID,
-        Time:         args.Time,
-        TimeEnd:      args.TimeEnd,
-        Tags:         args.Tags,
-        Text:         &args.Text,
-        Data:         args.Data,
-    }
+		DashboardID:  args.DashboardID,
+		DashboardUID: args.DashboardUID,
+		PanelID:      args.PanelID,
+		Time:         args.Time,
+		TimeEnd:      args.TimeEnd,
+		Tags:         args.Tags,
+		Text:         &args.Text,
+		Data:         args.Data,
+	}
 
-    resp, err := c.Annotations.PostAnnotation(&req)
+	resp, err := c.Annotations.PostAnnotation(&req)
 	if err != nil {
 		return nil, fmt.Errorf("create annotation: %w", err)
 	}
@@ -111,10 +111,10 @@ var CreateAnnotationTool = mcpgrafana.MustTool(
 
 // CreateGraphiteAnnotationInput represents the payload format for creating a Graphite-style annotation.
 type CreateGraphiteAnnotationInput struct {
-	What string      `json:"what"  jsonschema:"description=Annotation text"`
-	When int64       `json:"when"  jsonschema:"description=Epoch ms timestamp"`
-	Tags []string    `json:"tags,omitempty" jsonschema:"description=Optional list of tags"`
-	Data string      `json:"data,omitempty" jsonschema:"description=Optional payload"`
+	What string   `json:"what"  jsonschema:"description=Annotation text"`
+	When int64    `json:"when"  jsonschema:"description=Epoch ms timestamp"`
+	Tags []string `json:"tags,omitempty" jsonschema:"description=Optional list of tags"`
+	Data string   `json:"data,omitempty" jsonschema:"description=Optional payload"`
 }
 
 // createAnnotationGraphiteFormat creates an annotation using the Graphite annotation format.
@@ -146,11 +146,11 @@ var CreateGraphiteAnnotationTool = mcpgrafana.MustTool(
 
 // UpdateAnnotationInput represents the payload used to update an existing annotation by ID.
 type UpdateAnnotationInput struct {
-	ID      int64    `json:"id"       jsonschema:"description=Annotation ID to update"`
-	Time    int64    `json:"time,omitempty"    jsonschema:"description=Start time epoch ms"`
-	TimeEnd int64    `json:"timeEnd,omitempty" jsonschema:"description=End time epoch ms"`
-	Text    string   `json:"text,omitempty"    jsonschema:"description=Annotation text"`
-	Tags    []string `json:"tags,omitempty"    jsonschema:"description=Tags to replace existing tags"`
+	ID      int64          `json:"id"       jsonschema:"description=Annotation ID to update"`
+	Time    int64          `json:"time,omitempty"    jsonschema:"description=Start time epoch ms"`
+	TimeEnd int64          `json:"timeEnd,omitempty" jsonschema:"description=End time epoch ms"`
+	Text    string         `json:"text,omitempty"    jsonschema:"description=Annotation text"`
+	Tags    []string       `json:"tags,omitempty"    jsonschema:"description=Tags to replace existing tags"`
 	Data    map[string]any `json:"data,omitempty" jsonschema:"description=Optional JSON payload"`
 }
 
@@ -197,8 +197,7 @@ func patchAnnotation(ctx context.Context, args PatchAnnotationInput) (*annotatio
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
 	id := strconv.FormatInt(args.ID, 10)
 
-	body := &models.PatchAnnotationsCmd{
-	}
+	body := &models.PatchAnnotationsCmd{}
 
 	if args.Text != nil {
 		body.Text = *args.Text
@@ -241,8 +240,8 @@ func getAnnotationTags(ctx context.Context, args GetAnnotationTagsInput) (*annot
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
 
 	req := annotations.GetAnnotationTagsParams{
-		Tag:    args.Tag,
-		Limit:  args.Limit,
+		Tag:     args.Tag,
+		Limit:   args.Limit,
 		Context: ctx,
 	}
 

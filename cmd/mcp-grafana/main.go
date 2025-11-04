@@ -73,7 +73,7 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.pyroscope, "disable-pyroscope", false, "Disable pyroscope tools")
 	flag.BoolVar(&dt.navigation, "disable-navigation", false, "Disable navigation tools")
 	flag.BoolVar(&dt.proxied, "disable-proxied", false, "Disable proxied tools (tools from external MCP servers)")
-	flag.BoolVar(&dt.annotations,"disable-annotations",false,"Disable annotation tools")
+	flag.BoolVar(&dt.annotations, "disable-annotations", false, "Disable annotation tools")
 }
 
 func (gc *grafanaConfig) addFlags() {
