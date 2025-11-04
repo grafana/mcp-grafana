@@ -222,6 +222,7 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 - `--disable-datasource`: Disable datasource tools
 - `--disable-incident`: Disable incident tools
 - `--disable-prometheus`: Disable prometheus tools
+- `--disable-write`: Disable write tools (create/update operations)
 - `--disable-loki`: Disable loki tools
 - `--disable-alerting`: Disable alerting tools
 - `--disable-dashboard`: Disable dashboard tools
