@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"time"
 
@@ -294,16 +293,22 @@ var ListLokiLabelValues = mcpgrafana.MustTool(
 // LogStream represents a stream of log entries from Loki
 type LogStream struct {
 	Stream map[string]string   `json:"stream"`
+	Metric map[string]string   `json:"metric"`
+	Value  []json.RawMessage   `json:"value"`
 	Values [][]json.RawMessage `json:"values"` // [timestamp, value] where value can be string or number
+
+}
+
+// QueryData represents the data from a Loki query
+type QueryData struct {
+	ResultType string      `json:"resultType"`
+	Result     []LogStream `json:"result"`
 }
 
 // QueryRangeResponse represents the response from Loki's query_range API
 type QueryRangeResponse struct {
-	Status string `json:"status"`
-	Data   struct {
-		ResultType string      `json:"resultType"`
-		Result     []LogStream `json:"result"`
-	} `json:"data"`
+	Status string    `json:"status"`
+	Data   QueryData `json:"data"`
 }
 
 // addTimeRangeParams adds start and end time parameters to the URL values
@@ -343,39 +348,80 @@ func getDefaultTimeRange(startRFC3339, endRFC3339 string) (string, string) {
 }
 
 // fetchLogs is a method to fetch logs from Loki API
-func (c *Client) fetchLogs(ctx context.Context, query, startRFC3339, endRFC3339 string, limit int, direction string) ([]LogStream, error) {
+func (c *Client) fetchLogs(ctx context.Context, query, startRFC3339, endRFC3339 string, limit int, direction string, queryType string, stepSecond int) (*QueryData, error) {
 	params := url.Values{}
 	params.Add("query", query)
 
-	// Add time range parameters
-	if err := addTimeRangeParams(params, startRFC3339, endRFC3339); err != nil {
-		return nil, err
+	// Default queryType to range to match Prometheus behavior for metrics
+	if queryType == "" {
+		queryType = "range"
 	}
 
-	if limit > 0 {
-		params.Add("limit", fmt.Sprintf("%d", limit))
+	switch queryType {
+	case "instant":
+		// Instant queries use the /query endpoint with a single timestamp
+		// Prefer end time if provided, else start time
+		var tsStr string
+		if endRFC3339 != "" {
+			tsStr = endRFC3339
+		} else {
+			tsStr = startRFC3339
+		}
+
+		if tsStr != "" {
+			t, err := time.Parse(time.RFC3339, tsStr)
+			if err != nil {
+				return nil, fmt.Errorf("parsing instant time: %w", err)
+			}
+			params.Add("time", fmt.Sprintf("%d", t.UnixNano()))
+		}
+
+		bodyBytes, err := c.makeRequest(ctx, "GET", "/loki/api/v1/query", params)
+		if err != nil {
+			return nil, err
+		}
+
+		var queryResponse QueryRangeResponse
+		if err := json.Unmarshal(bodyBytes, &queryResponse); err != nil {
+			return nil, fmt.Errorf("unmarshalling response (content: %s): %w", string(bodyBytes), err)
+		}
+		if queryResponse.Status != "success" {
+			return nil, fmt.Errorf("loki API returned unexpected response format: %s", string(bodyBytes))
+		}
+		return &queryResponse.Data, nil
+
+	case "range":
+		// Range queries use /query_range with start/end and optional step
+		if err := addTimeRangeParams(params, startRFC3339, endRFC3339); err != nil {
+			return nil, err
+		}
+
+		if limit > 0 {
+			params.Add("limit", fmt.Sprintf("%d", limit))
+		}
+		if direction != "" {
+			params.Add("direction", direction)
+		}
+		if stepSecond > 0 {
+			params.Add("step", fmt.Sprintf("%d", stepSecond))
+		}
+
+		bodyBytes, err := c.makeRequest(ctx, "GET", "/loki/api/v1/query_range", params)
+		if err != nil {
+			return nil, err
+		}
+
+		var queryResponse QueryRangeResponse
+		if err := json.Unmarshal(bodyBytes, &queryResponse); err != nil {
+			return nil, fmt.Errorf("unmarshalling response (content: %s): %w", string(bodyBytes), err)
+		}
+		if queryResponse.Status != "success" {
+			return nil, fmt.Errorf("loki API returned unexpected response format: %s", string(bodyBytes))
+		}
+		return &queryResponse.Data, nil
 	}
 
-	if direction != "" {
-		params.Add("direction", direction)
-	}
-
-	bodyBytes, err := c.makeRequest(ctx, "GET", "/loki/api/v1/query_range", params)
-	if err != nil {
-		return nil, err
-	}
-
-	var queryResponse QueryRangeResponse
-	err = json.Unmarshal(bodyBytes, &queryResponse)
-	if err != nil {
-		return nil, fmt.Errorf("unmarshalling response (content: %s): %w", string(bodyBytes), err)
-	}
-
-	if queryResponse.Status != "success" {
-		return nil, fmt.Errorf("loki API returned unexpected response format: %s", string(bodyBytes))
-	}
-
-	return queryResponse.Data.Result, nil
+	return nil, fmt.Errorf("invalid query type: %s", queryType)
 }
 
 // QueryLokiLogsParams defines the parameters for querying Loki logs
@@ -386,14 +432,17 @@ type QueryLokiLogsParams struct {
 	EndRFC3339    string `json:"endRfc3339,omitempty" jsonschema:"description=Optionally\\, the end time of the query in RFC3339 format"`
 	Limit         int    `json:"limit,omitempty" jsonschema:"description=Optionally\\, the maximum number of log lines to return (default: 10\\, max: 100)"`
 	Direction     string `json:"direction,omitempty" jsonschema:"description=Optionally\\, the direction of the query: 'forward' (oldest first) or 'backward' (newest first\\, default)"`
+	StepSeconds   int    `json:"stepSeconds,omitempty" jsonschema:"description=Optionally\\, the time series step size in seconds. only used for metric type LogQL queries. Required if queryType is 'range'\\, ignored if queryType is 'instant'"`
+	QueryType     string `json:"queryType,omitempty" jsonschema:"description=Optionally\\, the type of query to use. only used for metric type LogQL queries. Either 'range' or 'instant'"`
 }
 
 // LogEntry represents a single log entry or metric sample with metadata
 type LogEntry struct {
-	Timestamp string            `json:"timestamp"`
-	Line      string            `json:"line,omitempty"`  // For log queries
-	Value     *float64          `json:"value,omitempty"` // For metric queries
-	Labels    map[string]string `json:"labels"`
+	Timestamp string              `json:"timestamp"`
+	Line      string              `json:"line,omitempty"` // For log queries
+	Value     []json.RawMessage   `json:"value,omitempty"`
+	Values    [][]json.RawMessage `json:"values,omitempty"` // For metric queries
+	Labels    map[string]string   `json:"labels"`
 }
 
 // enforceLogLimit ensures a log limit value is within acceptable bounds
@@ -414,8 +463,14 @@ func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) ([]LogEntry, e
 		return nil, fmt.Errorf("creating Loki client: %w", err)
 	}
 
-	// Get default time range if not provided
-	startTime, endTime := getDefaultTimeRange(args.StartRFC3339, args.EndRFC3339)
+	var startTime, endTime string
+	if args.QueryType == "instant" {
+		startTime = args.StartRFC3339
+		endTime = args.EndRFC3339
+	} else {
+		// Range queries keep the existing defaulting behavior
+		startTime, endTime = getDefaultTimeRange(args.StartRFC3339, args.EndRFC3339)
+	}
 
 	// Apply limit constraints
 	limit := enforceLogLimit(args.Limit)
@@ -426,48 +481,41 @@ func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) ([]LogEntry, e
 		direction = "backward" // Most recent logs first
 	}
 
-	streams, err := client.fetchLogs(ctx, args.LogQL, startTime, endTime, limit, direction)
+	// Execute query using instant or range depending on queryType; stepSeconds only applies to metric queries
+	streams, err := client.fetchLogs(ctx, args.LogQL, startTime, endTime, limit, direction, args.QueryType, args.StepSeconds)
 	if err != nil {
 		return nil, err
 	}
 
 	// Handle empty results
-	if len(streams) == 0 {
+	if len(streams.Result) == 0 {
 		return []LogEntry{}, nil
 	}
 
 	// Convert the streams to a flat list of log entries
 	var entries []LogEntry
-	for _, stream := range streams {
-		for _, value := range stream.Values {
-			if len(value) >= 2 {
-				entry := LogEntry{
-					Timestamp: string(value[0]),
-					Labels:    stream.Stream,
-				}
-
-				// Handle metric queries (numeric values) vs log queries
-				if stream.Stream["__type__"] == "metrics" {
-					// For metric queries, parse the value as a number
-					var numStr string
-					if err := json.Unmarshal(value[1], &numStr); err == nil {
-						if v, err := strconv.ParseFloat(numStr, 64); err == nil {
-							entry.Value = &v
-						} else {
-							// Skip invalid numeric values
-							continue
-						}
-					} else {
-						// Try direct number parsing if string parsing fails
-						var v float64
-						if err := json.Unmarshal(value[1], &v); err == nil {
-							entry.Value = &v
-						} else {
-							// Skip invalid values
-							continue
-						}
+	for _, stream := range streams.Result {
+		switch streams.ResultType {
+		case "vector":
+			entry := LogEntry{
+				Labels: stream.Metric,
+				Value:  stream.Value,
+			}
+			entries = append(entries, entry)
+		case "matrix":
+			entry := LogEntry{
+				Labels: stream.Metric,
+				Values: stream.Values,
+			}
+			entries = append(entries, entry)
+		default:
+			for _, value := range stream.Values {
+				if len(value) >= 2 {
+					entry := LogEntry{
+						Timestamp: string(value[0]),
+						Labels:    stream.Stream,
 					}
-				} else {
+
 					// For log queries, parse the value as a string
 					var logLine string
 					if err := json.Unmarshal(value[1], &logLine); err == nil {
@@ -476,9 +524,9 @@ func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) ([]LogEntry, e
 						// Skip invalid log lines
 						continue
 					}
-				}
 
-				entries = append(entries, entry)
+					entries = append(entries, entry)
+				}
 			}
 		}
 	}
