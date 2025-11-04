@@ -140,14 +140,23 @@ func (c *Client) makeRequest(ctx context.Context, method, urlPath string, params
 }
 
 // fetchData is a generic method to fetch data from Loki API
-func (c *Client) fetchData(ctx context.Context, urlPath string, startRFC3339, endRFC3339 string) ([]string, error) {
+func (c *Client) fetchData(ctx context.Context, urlPath string, startRFC3339, endRFC3339 string, optionals ...string) ([]string, error) {
 	params := url.Values{}
+	var optional string
+    if len(optionals) > 0 {
+        optional = optional[0]
+    }
 	if startRFC3339 != "" {
 		params.Add("start", startRFC3339)
 	}
 	if endRFC3339 != "" {
 		params.Add("end", endRFC3339)
 	}
+	if optional != "" {
+		params.Add("query", optional)
+	}
+	fullURL := fmt.Sprintf("%s?%s", urlPath, params.Encode())
+	fmt.Println("Final request URL:", fullURL)
 
 	bodyBytes, err := c.makeRequest(ctx, "GET", urlPath, params)
 	if err != nil {
@@ -173,6 +182,9 @@ func (c *Client) fetchData(ctx context.Context, urlPath string, startRFC3339, en
 	if len(labelResponse.Data) == 0 {
 		return []string{}, nil
 	}
+
+	pretty, _ := json.MarshalIndent(labelResponse, "", "  ")
+	fmt.Println("Loki Full Response:\n", string(pretty))
 
 	return labelResponse.Data, nil
 }
@@ -256,7 +268,7 @@ type ListLokiLabelValuesParams struct {
 	LabelName     string `json:"labelName" jsonschema:"required,description=The name of the label to retrieve values for (e.g. 'app'\\, 'env'\\, 'pod')"`
 	StartRFC3339  string `json:"startRfc3339,omitempty" jsonschema:"description=Optionally\\, the start time of the query in RFC3339 format (defaults to 1 hour ago)"`
 	EndRFC3339    string `json:"endRfc3339,omitempty" jsonschema:"description=Optionally\\, the end time of the query in RFC3339 format (defaults to now)"`
-	Matchers      string `json:"matchers"`
+	Matchers      string `json:"matchers,omitempty" jsonschema:"description=Optionally\\, the optional filters such as app, namespace wrapped up with curly braces {"app"="<app-name>", "namespace"="<namespace>"} (defaults to {})"`
 }
 
 // listLokiLabelValues lists all values for a specific label in a Loki datasource
@@ -268,16 +280,10 @@ func listLokiLabelValues(ctx context.Context, args ListLokiLabelValuesParams) ([
 
 	urlPath := fmt.Sprintf("/loki/api/v1/label/%s/values", args.LabelName)
 
-	// Manually include matchers in query string if provided
-	if args.Matchers != "" {
-		encoded := url.QueryEscape(args.Matchers)
-		urlPath = fmt.Sprintf("%s?query=%s", urlPath, encoded)
-	}
-
 	// Call the original fetchData with start/end as before
-	result, err := client.fetchData(ctx, urlPath, args.StartRFC3339, args.EndRFC3339)
+	result, err := client.fetchData(ctx, urlPath, args.StartRFC3339, args.EndRFC3339, args.Matchers)
 	if err != nil {
-		return nil, fmt.Errorf("fetching label values: %w", err)
+		return nil, err
 	}
 
 	if len(result) == 0 {
