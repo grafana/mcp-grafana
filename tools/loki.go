@@ -256,25 +256,39 @@ type ListLokiLabelValuesParams struct {
 	LabelName     string `json:"labelName" jsonschema:"required,description=The name of the label to retrieve values for (e.g. 'app'\\, 'env'\\, 'pod')"`
 	StartRFC3339  string `json:"startRfc3339,omitempty" jsonschema:"description=Optionally\\, the start time of the query in RFC3339 format (defaults to 1 hour ago)"`
 	EndRFC3339    string `json:"endRfc3339,omitempty" jsonschema:"description=Optionally\\, the end time of the query in RFC3339 format (defaults to now)"`
+	Matchers      string `json:"matchers"`
 }
 
 // listLokiLabelValues lists all values for a specific label in a Loki datasource
 func listLokiLabelValues(ctx context.Context, args ListLokiLabelValuesParams) ([]string, error) {
+	// Create a Loki client from the datasource UID
 	client, err := newLokiClient(ctx, args.DatasourceUID)
 	if err != nil {
 		return nil, fmt.Errorf("creating Loki client: %w", err)
 	}
 
-	// Use the client's fetchData method
+	// Loki API endpoint for label values
 	urlPath := fmt.Sprintf("/loki/api/v1/label/%s/values", args.LabelName)
 
-	result, err := client.fetchData(ctx, urlPath, args.StartRFC3339, args.EndRFC3339)
-	if err != nil {
-		return nil, err
+	// Prepare query parameters
+	params := map[string]string{
+		"start": args.StartRFC3339,
+		"end":   args.EndRFC3339,
 	}
 
+	// Include matchers (label filters) if provided
+	if args.Matchers != "" {
+		params["query"] = args.Matchers
+	}
+
+	// Fetch data from Loki using the client’s method
+	result, err := client.fetchData(ctx, urlPath, params)
+	if err != nil {
+		return nil, fmt.Errorf("fetching label values: %w", err)
+	}
+
+	// Return an empty slice (not nil) for consistency
 	if len(result) == 0 {
-		// Return empty slice instead of nil
 		return []string{}, nil
 	}
 
