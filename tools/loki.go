@@ -190,7 +190,7 @@ func (c *Client) fetchLabels(ctx context.Context, urlPath string, startRFC3339, 
 	if matcher != "" {
 		params.Add("query", matcher)
 	}
-	return c.handleAPICall(ctx, urlPath, params)
+	return c.handleAPICall(ctx, params, urlPath)
 }
 
 // fetchData is a generic method to fetch data from Loki API
@@ -202,7 +202,7 @@ func (c *Client) fetchData(ctx context.Context, urlPath string, startRFC3339, en
 	if endRFC3339 != "" {
 		params.Add("end", endRFC3339)
 	}
-	return c.handleAPICall(ctx, urlPath, params)
+	return c.handleAPICall(ctx, params, urlPath)
 }
 
 func NewAuthRoundTripper(rt http.RoundTripper, accessToken, idToken, apiKey string, basicAuth *url.Userinfo) *authRoundTripper {
@@ -247,6 +247,7 @@ type ListLokiLabelNamesParams struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the datasource to query"`
 	StartRFC3339  string `json:"startRfc3339,omitempty" jsonschema:"description=Optionally\\, the start time of the query in RFC3339 format (defaults to 1 hour ago)"`
 	EndRFC3339    string `json:"endRfc3339,omitempty" jsonschema:"description=Optionally\\, the end time of the query in RFC3339 format (defaults to now)"`
+	Matchers      string `json:"matchers,omitempty" jsonschema:"description=Optionally\\, the optional filters such as app, namespace wrapped up with curly braces {"app"="<app-name>", "namespace"="<namespace>"} (defaults to {})"`
 }
 
 // listLokiLabelNames lists all label names in a Loki datasource
@@ -256,7 +257,7 @@ func listLokiLabelNames(ctx context.Context, args ListLokiLabelNamesParams) ([]s
 		return nil, fmt.Errorf("creating Loki client: %w", err)
 	}
 
-	result, err := client.fetchData(ctx, "/loki/api/v1/labels", args.StartRFC3339, args.EndRFC3339)
+	result, err := client.fetchLabels(ctx, "/loki/api/v1/labels", args.StartRFC3339, args.EndRFC3339, args.Matchers)
 	if err != nil {
 		return nil, err
 	}
