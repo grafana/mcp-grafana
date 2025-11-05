@@ -101,7 +101,6 @@ The dashboard tools now include several strategies to manage context window usag
 - **Get Annotation Tags:** List available annotation tags with optional filtering.
 
 
-#### Configuring tool availability
 The list of tools is configurable, so you can choose which tools you want to make available to the MCP client.
 This is useful if you don't use certain functionality or if you don't want to take up too much of the context window.
 To disable a category of tools, use the `--disable-<category>` flag when starting the server. For example, to disable

@@ -1,15 +1,6 @@
-//go:build cloud
-// +build cloud
-
-// This file contains cloud integration tests for the annotation tools.
-// The tests run against a real Grafana instance specified by:
-//   - GRAFANA_URL
-//   - GRAFANA_SERVICE_ACCOUNT_TOKEN  (preferred)
-//   - GRAFANA_API_KEY               (deprecated)
-//
-// Tests will be skipped automatically if the required environment variables
-// are not set. These tests verify end-to-end behavior of annotation tooling
-// against a live Grafana server (no mocks).
+// Requires a Grafana instance running on localhost:3000,
+// Run with `go test -tags integration`.
+//go:build integration
 
 package tools
 
@@ -21,23 +12,46 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestCloudAnnotationTools(t *testing.T) {
-	ctx := createCloudTestContext(t, "Annotations", "GRAFANA_URL", "GRAFANA_API_KEY")
+func TestAnnotationTools(t *testing.T) {
+	ctx := newTestContext()
 
-	// create, update and patch
+	// get existing provisioned dashboard.
+	orig := getExistingTestDashboard(t, ctx, "")
+	origMap := getTestDashboardJSON(t, ctx, orig)
+
+	// remove identifiers so grafana treats it as a new dashboard
+	delete(origMap, "uid")
+	delete(origMap, "id")
+	origMap["title"] = "Integration Test for Annotations"
+
+	// create new dashboard.
+	result, err := updateDashboard(ctx, UpdateDashboardParams{
+		Dashboard: origMap,
+		Message:   "creating new dashboard for Annotations Tool Test",
+		Overwrite: false,
+		UserID:    1,
+	})
+
+	require.NoError(t, err)
+
+	// new UID for the test dashboard.
+	newUID := result.UID
+
+	// create, update and patch.
 	t.Run("create, update and patch annotation", func(t *testing.T) {
-		// 1. create annotation
+		// 1. create annotation.
 		created, err := createAnnotation(ctx, CreateAnnotationInput{
-			Time: time.Now().UnixMilli(),
-			Text: "integration-test-update-initial",
-			Tags: []string{"init"},
+			DashboardUID: *newUID,
+			Time:         time.Now().UnixMilli(),
+			Text:         "integration-test-update-initial",
+			Tags:         []string{"init"},
 		})
 		require.NoError(t, err)
 		require.NotNil(t, created)
 
 		id := created.Payload.ID // *int64
 
-		// 2. update annotation (PUT)
+		// 2. update annotation (PUT).
 		_, err = updateAnnotation(ctx, UpdateAnnotationInput{
 			ID:   *id,
 			Time: time.Now().UnixMilli(),
@@ -46,7 +60,7 @@ func TestCloudAnnotationTools(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		// 3. patch annotation (PATCH)
+		// 3. patch annotation (PATCH).
 		newText := "patched"
 		_, err = patchAnnotation(ctx, PatchAnnotationInput{
 			ID:   *id,
@@ -55,7 +69,7 @@ func TestCloudAnnotationTools(t *testing.T) {
 		require.NoError(t, err)
 	})
 
-	// create graphite annotation
+	// create graphite annotation.
 	t.Run("create graphite annotation", func(t *testing.T) {
 		resp, err := createAnnotationGraphiteFormat(ctx, CreateGraphiteAnnotationInput{
 			What: "integration-test-graphite",
@@ -66,15 +80,18 @@ func TestCloudAnnotationTools(t *testing.T) {
 		require.NotNil(t, resp)
 	})
 
-	// list all annotations
+	// list all annotations.
 	t.Run("list annotations", func(t *testing.T) {
 		limit := int64(1)
-		out, err := getAnnotations(ctx, GetAnnotationsInput{Limit: &limit})
+		out, err := getAnnotations(ctx, GetAnnotationsInput{
+			DashboardUID: newUID,
+			Limit:        &limit,
+		})
 		require.NoError(t, err)
 		assert.NotNil(t, out)
 	})
 
-	// list all tags
+	// list all tags.
 	t.Run("list annotation tags", func(t *testing.T) {
 		out, err := getAnnotationTags(ctx, GetAnnotationTagsInput{})
 		require.NoError(t, err)
