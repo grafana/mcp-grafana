@@ -233,6 +233,38 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 - `--disable-pyroscope`: Disable pyroscope tools
 - `--disable-navigation`: Disable navigation tools
 
+### Read-Only Mode
+
+The `--disable-write` flag provides a way to run the MCP server in read-only mode, preventing any write operations to your Grafana instance. This is useful for scenarios where you want to provide safe, read-only access such as:
+
+- Using service accounts with limited read-only permissions
+- Providing AI assistants with observability data without modification capabilities
+- Running in production environments where write access should be restricted
+- Testing and development scenarios where you want to prevent accidental modifications
+
+When `--disable-write` is enabled, the following write operations are disabled:
+
+**Dashboard Tools:**
+- `update_dashboard`
+
+**Folder Tools:**
+- `create_folder`
+
+**Incident Tools:**
+- `create_incident`
+- `add_activity_to_incident`
+
+**Alerting Tools:**
+- `create_alert_rule`
+- `update_alert_rule`
+- `delete_alert_rule`
+
+**Sift Tools:**
+- `find_error_pattern_logs` (creates investigations)
+- `find_slow_requests` (creates investigations)
+
+All read operations remain available, allowing you to query dashboards, run PromQL/LogQL queries, list resources, and retrieve data.
+
 **Client TLS Configuration (for Grafana connections):**
 - `--tls-cert-file`: Path to TLS certificate file for client authentication
 - `--tls-key-file`: Path to TLS private key file for client authentication
