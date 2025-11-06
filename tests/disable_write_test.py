@@ -41,6 +41,10 @@ async def test_disable_write_flag_disables_write_tools(grafana_env):
                 "create_alert_rule",
                 "update_alert_rule",
                 "delete_alert_rule",
+                "create_annotation",
+                "create_graphite_annotation",
+                "update_annotation",
+                "patch_annotation",
                 "find_error_pattern_logs",
                 "find_slow_requests",
             ]
@@ -57,6 +61,8 @@ async def test_disable_write_flag_disables_write_tools(grafana_env):
                 "list_incidents",
                 "get_incident",
                 "get_sift_investigation",
+                "get_annotations",
+                "get_annotation_tags",
             ]
             
             for tool in read_tools:
@@ -87,6 +93,10 @@ async def test_without_disable_write_flag_enables_write_tools(grafana_env):
                 "create_alert_rule",
                 "update_alert_rule",
                 "delete_alert_rule",
+                "create_annotation",
+                "create_graphite_annotation",
+                "update_annotation",
+                "patch_annotation",
                 "find_error_pattern_logs",
                 "find_slow_requests",
             ]
@@ -103,6 +113,8 @@ async def test_without_disable_write_flag_enables_write_tools(grafana_env):
                 "list_incidents",
                 "get_incident",
                 "get_sift_investigation",
+                "get_annotations",
+                "get_annotation_tags",
             ]
             
             for tool in read_tools:

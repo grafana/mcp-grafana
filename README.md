@@ -277,6 +277,12 @@ When `--disable-write` is enabled, the following write operations are disabled:
 - `update_alert_rule`
 - `delete_alert_rule`
 
+**Annotation Tools:**
+- `create_annotation`
+- `create_graphite_annotation`
+- `update_annotation`
+- `patch_annotation`
+
 **Sift Tools:**
 - `find_error_pattern_logs` (creates investigations)
 - `find_slow_requests` (creates investigations)
