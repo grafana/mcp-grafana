@@ -417,12 +417,14 @@ var FindSlowRequests = mcpgrafana.MustTool(
 )
 
 // AddSiftTools registers all Sift tools with the MCP server
-func AddSiftTools(mcp *server.MCPServer) {
+func AddSiftTools(mcp *server.MCPServer, enableWriteTools bool) {
 	GetSiftInvestigation.Register(mcp)
 	GetSiftAnalysis.Register(mcp)
 	ListSiftInvestigations.Register(mcp)
-	FindErrorPatternLogs.Register(mcp)
-	FindSlowRequests.Register(mcp)
+	if enableWriteTools {
+		FindErrorPatternLogs.Register(mcp)
+		FindSlowRequests.Register(mcp)
+	}
 }
 
 // makeRequest is a helper method to make HTTP requests and handle common response patterns

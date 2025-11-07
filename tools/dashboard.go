@@ -644,9 +644,11 @@ func extractVariableSummary(variable map[string]interface{}) VariableSummary {
 	}
 }
 
-func AddDashboardTools(mcp *server.MCPServer) {
+func AddDashboardTools(mcp *server.MCPServer, enableWriteTools bool) {
 	GetDashboardByUID.Register(mcp)
-	UpdateDashboard.Register(mcp)
+	if enableWriteTools {
+		UpdateDashboard.Register(mcp)
+	}
 	GetDashboardPanelQueries.Register(mcp)
 	GetDashboardProperty.Register(mcp)
 	GetDashboardSummary.Register(mcp)

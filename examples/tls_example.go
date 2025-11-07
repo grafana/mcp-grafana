@@ -157,7 +157,7 @@ func runServerWithTLS() {
 	// Add some basic tools
 	tools.AddSearchTools(s)
 	tools.AddDatasourceTools(s)
-	tools.AddDashboardTools(s)
+	tools.AddDashboardTools(s, false) // Read-only mode (no write tools)
 
 	// Create stdio server with TLS-enabled context function
 	srv := server.NewStdioServer(s)

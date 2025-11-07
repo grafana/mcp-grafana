@@ -638,11 +638,13 @@ var DeleteAlertRule = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("Delete alert rule"),
 )
 
-func AddAlertingTools(mcp *server.MCPServer) {
+func AddAlertingTools(mcp *server.MCPServer, enableWriteTools bool) {
 	ListAlertRules.Register(mcp)
 	GetAlertRuleByUID.Register(mcp)
-	CreateAlertRule.Register(mcp)
-	UpdateAlertRule.Register(mcp)
-	DeleteAlertRule.Register(mcp)
+	if enableWriteTools {
+		CreateAlertRule.Register(mcp)
+		UpdateAlertRule.Register(mcp)
+		DeleteAlertRule.Register(mcp)
+	}
 	ListContactPoints.Register(mcp)
 }

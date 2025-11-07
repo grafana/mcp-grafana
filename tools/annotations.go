@@ -262,11 +262,13 @@ var GetAnnotationTagsTool = mcpgrafana.MustTool(
 	mcp.WithReadOnlyHintAnnotation(true),
 )
 
-func AddAnnotationTools(mcp *server.MCPServer) {
+func AddAnnotationTools(mcp *server.MCPServer, enableWriteTools bool) {
 	GetAnnotationsTool.Register(mcp)
-	CreateAnnotationTool.Register(mcp)
-	CreateGraphiteAnnotationTool.Register(mcp)
-	UpdateAnnotationTool.Register(mcp)
-	PatchAnnotationTool.Register(mcp)
+	if enableWriteTools {
+		CreateAnnotationTool.Register(mcp)
+		CreateGraphiteAnnotationTool.Register(mcp)
+		UpdateAnnotationTool.Register(mcp)
+		PatchAnnotationTool.Register(mcp)
+	}
 	GetAnnotationTagsTool.Register(mcp)
 }

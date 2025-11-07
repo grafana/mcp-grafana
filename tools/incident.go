@@ -120,10 +120,12 @@ var AddActivityToIncident = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("Add activity to incident"),
 )
 
-func AddIncidentTools(mcp *server.MCPServer) {
+func AddIncidentTools(mcp *server.MCPServer, enableWriteTools bool) {
 	ListIncidents.Register(mcp)
-	CreateIncident.Register(mcp)
-	AddActivityToIncident.Register(mcp)
+	if enableWriteTools {
+		CreateIncident.Register(mcp)
+		AddActivityToIncident.Register(mcp)
+	}
 	GetIncident.Register(mcp)
 }
 

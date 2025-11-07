@@ -41,7 +41,7 @@ type disabledTools struct {
 	search, datasource, incident,
 	prometheus, loki, alerting,
 	dashboard, folder, oncall, asserts, sift, admin,
-	pyroscope, navigation, proxied, annotations bool
+	pyroscope, navigation, proxied, annotations, write bool
 }
 
 // Configuration for the Grafana client.
@@ -73,6 +73,7 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.pyroscope, "disable-pyroscope", false, "Disable pyroscope tools")
 	flag.BoolVar(&dt.navigation, "disable-navigation", false, "Disable navigation tools")
 	flag.BoolVar(&dt.proxied, "disable-proxied", false, "Disable proxied tools (tools from external MCP servers)")
+	flag.BoolVar(&dt.write, "disable-write", false, "Disable write tools (create/update operations)")
 	flag.BoolVar(&dt.annotations, "disable-annotations", false, "Disable annotation tools")
 }
 
@@ -88,21 +89,22 @@ func (gc *grafanaConfig) addFlags() {
 
 func (dt *disabledTools) addTools(s *server.MCPServer) {
 	enabledTools := strings.Split(dt.enabledTools, ",")
+	enableWriteTools := !dt.write
 	maybeAddTools(s, tools.AddSearchTools, enabledTools, dt.search, "search")
 	maybeAddTools(s, tools.AddDatasourceTools, enabledTools, dt.datasource, "datasource")
-	maybeAddTools(s, tools.AddIncidentTools, enabledTools, dt.incident, "incident")
+	maybeAddTools(s, func(mcp *server.MCPServer) { tools.AddIncidentTools(mcp, enableWriteTools) }, enabledTools, dt.incident, "incident")
 	maybeAddTools(s, tools.AddPrometheusTools, enabledTools, dt.prometheus, "prometheus")
 	maybeAddTools(s, tools.AddLokiTools, enabledTools, dt.loki, "loki")
-	maybeAddTools(s, tools.AddAlertingTools, enabledTools, dt.alerting, "alerting")
-	maybeAddTools(s, tools.AddDashboardTools, enabledTools, dt.dashboard, "dashboard")
-	maybeAddTools(s, tools.AddFolderTools, enabledTools, dt.folder, "folder")
+	maybeAddTools(s, func(mcp *server.MCPServer) { tools.AddAlertingTools(mcp, enableWriteTools) }, enabledTools, dt.alerting, "alerting")
+	maybeAddTools(s, func(mcp *server.MCPServer) { tools.AddDashboardTools(mcp, enableWriteTools) }, enabledTools, dt.dashboard, "dashboard")
+	maybeAddTools(s, func(mcp *server.MCPServer) { tools.AddFolderTools(mcp, enableWriteTools) }, enabledTools, dt.folder, "folder")
 	maybeAddTools(s, tools.AddOnCallTools, enabledTools, dt.oncall, "oncall")
 	maybeAddTools(s, tools.AddAssertsTools, enabledTools, dt.asserts, "asserts")
-	maybeAddTools(s, tools.AddSiftTools, enabledTools, dt.sift, "sift")
+	maybeAddTools(s, func(mcp *server.MCPServer) { tools.AddSiftTools(mcp, enableWriteTools) }, enabledTools, dt.sift, "sift")
 	maybeAddTools(s, tools.AddAdminTools, enabledTools, dt.admin, "admin")
 	maybeAddTools(s, tools.AddPyroscopeTools, enabledTools, dt.pyroscope, "pyroscope")
 	maybeAddTools(s, tools.AddNavigationTools, enabledTools, dt.navigation, "navigation")
-	maybeAddTools(s, tools.AddAnnotationTools, enabledTools, dt.annotations, "annotations")
+	maybeAddTools(s, func(mcp *server.MCPServer) { tools.AddAnnotationTools(mcp, enableWriteTools) }, enabledTools, dt.annotations, "annotations")
 }
 
 func newServer(transport string, dt disabledTools) (*server.MCPServer, *mcpgrafana.ToolManager) {
