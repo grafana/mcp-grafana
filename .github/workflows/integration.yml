@@ -60,7 +60,7 @@ jobs:
           cache: true
 
       - id: get-secrets
-        uses: grafana/shared-workflows/actions/get-vault-secrets@2dd0b0349e130ca5ccf86b3a61250589a840bdb2 # get-vault-secrets-v1.2.0
+        uses: grafana/shared-workflows/actions/get-vault-secrets@a37de51f3d713a30a9e4b21bcdfbd38170020593 # get-vault-secrets/v1.3.0
         with:
           # Secrets placed in the ci/repo/grafana/mcp-grafana/<path> path in Vault
           repo_secrets: |
