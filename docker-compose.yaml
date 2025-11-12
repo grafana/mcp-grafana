@@ -12,7 +12,7 @@ services:
       - ./testdata/dashboards:/var/lib/grafana/dashboards
 
   prometheus:
-    image: prom/prometheus@sha256:ff7e389acbe064a4823212a500393d40a28a8f362e4b05cbf6742a9a3ef736b2
+    image: prom/prometheus@sha256:49214755b6153f90a597adcbff0252cc61069f8ab69ce8411285cd4a560e8038
     ports:
       - "9090:9090"
     entrypoint: /etc/prometheus/entrypoint.sh
