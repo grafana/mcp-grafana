@@ -216,16 +216,24 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 	for pair := jsonSchema.Properties.Oldest(); pair != nil; pair = pair.Next() {
 		properties[pair.Key] = pair.Value
 	}
-	inputSchema := mcp.ToolInputSchema{
+	// Use RawInputSchema with ToolArgumentsSchema to work around a Go limitation where type aliases
+	// don't inherit custom MarshalJSON methods. This ensures empty properties are included in the schema.
+	argumentsSchema := mcp.ToolArgumentsSchema{
 		Type:       jsonSchema.Type,
 		Properties: properties,
 		Required:   jsonSchema.Required,
 	}
 
+	// Marshal the schema to preserve empty properties
+	schemaBytes, err := json.Marshal(argumentsSchema)
+	if err != nil {
+		return zero, nil, fmt.Errorf("failed to marshal input schema: %w", err)
+	}
+
 	t := mcp.Tool{
-		Name:        name,
-		Description: description,
-		InputSchema: inputSchema,
+		Name:           name,
+		Description:    description,
+		RawInputSchema: schemaBytes,
 	}
 	for _, option := range options {
 		option(&t)

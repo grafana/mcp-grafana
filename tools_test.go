@@ -5,6 +5,7 @@ package mcpgrafana
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -98,11 +99,23 @@ func TestConvertTool(t *testing.T) {
 		assert.Equal(t, "test_tool", tool.Name)
 		assert.Equal(t, "A test tool", tool.Description)
 
-		// Check schema properties
-		assert.Equal(t, "object", tool.InputSchema.Type)
-		assert.Contains(t, tool.InputSchema.Properties, "name")
-		assert.Contains(t, tool.InputSchema.Properties, "value")
-		assert.Contains(t, tool.InputSchema.Properties, "optional")
+		// Check schema properties by marshaling the tool
+		toolJSON, err := json.Marshal(tool)
+		require.NoError(t, err)
+
+		var toolData map[string]any
+		err = json.Unmarshal(toolJSON, &toolData)
+		require.NoError(t, err)
+
+		inputSchema, ok := toolData["inputSchema"].(map[string]any)
+		require.True(t, ok, "inputSchema should be a map")
+		assert.Equal(t, "object", inputSchema["type"])
+
+		properties, ok := inputSchema["properties"].(map[string]any)
+		require.True(t, ok, "properties should be a map")
+		assert.Contains(t, properties, "name")
+		assert.Contains(t, properties, "value")
+		assert.Contains(t, properties, "optional")
 
 		// Test handler execution
 		ctx := context.Background()
@@ -158,9 +171,21 @@ func TestConvertTool(t *testing.T) {
 		assert.Equal(t, "empty", tool.Name)
 		assert.Equal(t, "description", tool.Description)
 
-		// Check schema properties
-		assert.Equal(t, "object", tool.InputSchema.Type)
-		assert.Len(t, tool.InputSchema.Properties, 0)
+		// Check schema properties by marshaling the tool
+		toolJSON, err := json.Marshal(tool)
+		require.NoError(t, err)
+
+		var toolData map[string]any
+		err = json.Unmarshal(toolJSON, &toolData)
+		require.NoError(t, err)
+
+		inputSchema, ok := toolData["inputSchema"].(map[string]any)
+		require.True(t, ok, "inputSchema should be a map")
+		assert.Equal(t, "object", inputSchema["type"])
+
+		properties, ok := inputSchema["properties"].(map[string]any)
+		require.True(t, ok, "properties should be a map")
+		assert.Len(t, properties, 0)
 
 		// Test handler execution
 		ctx := context.Background()
@@ -523,4 +548,41 @@ func TestCreateJSONSchemaFromHandler(t *testing.T) {
 	assert.True(t, ok)
 	assert.Equal(t, "boolean", optionalProperty.Type)
 	assert.Equal(t, "An optional parameter", optionalProperty.Description)
+}
+
+func TestEmptyStructJSONSchema(t *testing.T) {
+	// Test that empty structs generate correct JSON schema with empty properties object
+	tool, _, err := ConvertTool("empty_tool", "An empty tool", emptyToolHandler)
+	require.NoError(t, err)
+
+	// Marshal the entire Tool to JSON
+	jsonBytes, err := json.Marshal(tool)
+	require.NoError(t, err)
+	t.Logf("Marshaled Tool JSON: %s", string(jsonBytes))
+
+	// Unmarshal to verify structure
+	var unmarshaled map[string]any
+	err = json.Unmarshal(jsonBytes, &unmarshaled)
+	require.NoError(t, err)
+
+	// Verify that inputSchema exists
+	inputSchema, exists := unmarshaled["inputSchema"]
+	assert.True(t, exists, "inputSchema field should exist in tool JSON")
+	assert.NotNil(t, inputSchema, "inputSchema should not be nil")
+
+	// Verify inputSchema structure
+	inputSchemaMap, ok := inputSchema.(map[string]any)
+	assert.True(t, ok, "inputSchema should be a map")
+
+	// Verify type is object
+	assert.Equal(t, "object", inputSchemaMap["type"], "inputSchema type should be object")
+
+	// Verify that properties key exists and is an empty object
+	properties, exists := inputSchemaMap["properties"]
+	assert.True(t, exists, "properties field should exist in inputSchema")
+	assert.NotNil(t, properties, "properties should not be nil")
+
+	propertiesMap, ok := properties.(map[string]any)
+	assert.True(t, ok, "properties should be a map")
+	assert.Len(t, propertiesMap, 0, "properties should be an empty map")
 }
