@@ -22,8 +22,8 @@ const (
 )
 
 type ListAlertRulesParams struct {
-	Limit          int        `json:"limit,omitempty" jsonschema:"description=The maximum number of results to return. Default is 100."`
-	Page           int        `json:"page,omitempty" jsonschema:"description=The page number to return."`
+	Limit          int        `json:"limit,omitempty" jsonschema:"default=100,description=The maximum number of results to return"`
+	Page           int        `json:"page,omitempty" jsonschema:"default=1,description=The page number to return"`
 	LabelSelectors []Selector `json:"label_selectors,omitempty" jsonschema:"description=Optionally\\, a list of matchers to filter alert rules by labels"`
 }
 
@@ -307,7 +307,7 @@ var GetAlertRuleByUID = mcpgrafana.MustTool(
 )
 
 type ListContactPointsParams struct {
-	Limit int     `json:"limit,omitempty" jsonschema:"description=The maximum number of results to return. Default is 100."`
+	Limit int     `json:"limit,omitempty" jsonschema:"default=100,description=The maximum number of results to return"`
 	Name  *string `json:"name,omitempty" jsonschema:"description=Filter contact points by name"`
 }
 
