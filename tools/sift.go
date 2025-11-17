@@ -231,7 +231,7 @@ var GetSiftAnalysis = mcpgrafana.MustTool(
 
 // ListSiftInvestigationsParams defines the parameters for retrieving investigations
 type ListSiftInvestigationsParams struct {
-	Limit int `json:"limit,omitempty" jsonschema:"description=Maximum number of investigations to return. Defaults to 10 if not specified."`
+	Limit int `json:"limit,omitempty" jsonschema:"default=10,description=Maximum number of investigations to return"`
 }
 
 // listSiftInvestigations retrieves a list of investigations with an optional limit

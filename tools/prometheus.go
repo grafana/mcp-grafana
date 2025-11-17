@@ -85,7 +85,7 @@ func promClientFromContext(ctx context.Context, uid string) (promv1.API, error) 
 
 type ListPrometheusMetricMetadataParams struct {
 	DatasourceUID  string `json:"datasourceUid" jsonschema:"required,description=The UID of the datasource to query"`
-	Limit          int    `json:"limit" jsonschema:"description=The maximum number of metrics to return"`
+	Limit          int    `json:"limit" jsonschema:"default=10,description=The maximum number of metrics to return"`
 	LimitPerMetric int    `json:"limitPerMetric" jsonschema:"description=The maximum number of metrics to return per metric"`
 	Metric         string `json:"metric" jsonschema:"description=The metric to query"`
 }
@@ -196,8 +196,8 @@ var QueryPrometheus = mcpgrafana.MustTool(
 type ListPrometheusMetricNamesParams struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the datasource to query"`
 	Regex         string `json:"regex" jsonschema:"description=The regex to match against the metric names"`
-	Limit         int    `json:"limit,omitempty" jsonschema:"description=The maximum number of results to return"`
-	Page          int    `json:"page,omitempty" jsonschema:"description=The page number to return"`
+	Limit         int    `json:"limit,omitempty" jsonschema:"default=10,description=The maximum number of results to return"`
+	Page          int    `json:"page,omitempty" jsonschema:"default=1,description=The page number to return"`
 }
 
 func listPrometheusMetricNames(ctx context.Context, args ListPrometheusMetricNamesParams) ([]string, error) {
@@ -315,7 +315,7 @@ type ListPrometheusLabelNamesParams struct {
 	Matches       []Selector `json:"matches,omitempty" jsonschema:"description=Optionally\\, a list of label matchers to filter the results by"`
 	StartRFC3339  string     `json:"startRfc3339,omitempty" jsonschema:"description=Optionally\\, the start time of the time range to filter the results by"`
 	EndRFC3339    string     `json:"endRfc3339,omitempty" jsonschema:"description=Optionally\\, the end time of the time range to filter the results by"`
-	Limit         int        `json:"limit,omitempty" jsonschema:"description=Optionally\\, the maximum number of results to return"`
+	Limit         int        `json:"limit,omitempty" jsonschema:"default=100,description=Optionally\\, the maximum number of results to return"`
 }
 
 func listPrometheusLabelNames(ctx context.Context, args ListPrometheusLabelNamesParams) ([]string, error) {
@@ -374,7 +374,7 @@ type ListPrometheusLabelValuesParams struct {
 	Matches       []Selector `json:"matches,omitempty" jsonschema:"description=Optionally\\, a list of selectors to filter the results by"`
 	StartRFC3339  string     `json:"startRfc3339,omitempty" jsonschema:"description=Optionally\\, the start time of the query"`
 	EndRFC3339    string     `json:"endRfc3339,omitempty" jsonschema:"description=Optionally\\, the end time of the query"`
-	Limit         int        `json:"limit,omitempty" jsonschema:"description=Optionally\\, the maximum number of results to return"`
+	Limit         int        `json:"limit,omitempty" jsonschema:"default=100,description=Optionally\\, the maximum number of results to return"`
 }
 
 func listPrometheusLabelValues(ctx context.Context, args ListPrometheusLabelValuesParams) (model.LabelValues, error) {
