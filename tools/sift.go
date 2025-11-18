@@ -231,7 +231,7 @@ var GetSiftAnalysis = mcpgrafana.MustTool(
 
 // ListSiftInvestigationsParams defines the parameters for retrieving investigations
 type ListSiftInvestigationsParams struct {
-	Limit int `json:"limit,omitempty" jsonschema:"description=Maximum number of investigations to return. Defaults to 10 if not specified."`
+	Limit int `json:"limit,omitempty" jsonschema:"default=10,description=Maximum number of investigations to return"`
 }
 
 // listSiftInvestigations retrieves a list of investigations with an optional limit
@@ -417,12 +417,14 @@ var FindSlowRequests = mcpgrafana.MustTool(
 )
 
 // AddSiftTools registers all Sift tools with the MCP server
-func AddSiftTools(mcp *server.MCPServer) {
+func AddSiftTools(mcp *server.MCPServer, enableWriteTools bool) {
 	GetSiftInvestigation.Register(mcp)
 	GetSiftAnalysis.Register(mcp)
 	ListSiftInvestigations.Register(mcp)
-	FindErrorPatternLogs.Register(mcp)
-	FindSlowRequests.Register(mcp)
+	if enableWriteTools {
+		FindErrorPatternLogs.Register(mcp)
+		FindSlowRequests.Register(mcp)
+	}
 }
 
 // makeRequest is a helper method to make HTTP requests and handle common response patterns

@@ -12,7 +12,7 @@ services:
       - ./testdata/dashboards:/var/lib/grafana/dashboards
 
   prometheus:
-    image: prom/prometheus@sha256:ff7e389acbe064a4823212a500393d40a28a8f362e4b05cbf6742a9a3ef736b2
+    image: prom/prometheus@sha256:49214755b6153f90a597adcbff0252cc61069f8ab69ce8411285cd4a560e8038
     ports:
       - "9090:9090"
     entrypoint: /etc/prometheus/entrypoint.sh
@@ -22,7 +22,7 @@ services:
       - ./testdata/prometheus-entrypoint.sh:/etc/prometheus/entrypoint.sh
 
   loki:
-    image: grafana/loki:2.6.0@sha256:a71b24036726609b436844746dc469382c5164fb43a75ac0951989f8b3b279c9
+    image: grafana/loki:2.9.15@sha256:2fde6baaa4743a6870acb9ab5f15633de35adced3c0e3d61effd2a5f1008f1c3
     ports:
       - "3100:3100"
     command: -config.file=/etc/loki/loki-config.yml
@@ -31,7 +31,7 @@ services:
       - ./testdata/loki-rules.yml:/loki/rules/fake/loki-rules.yml
 
   promtail:
-    image: grafana/promtail:2.6.0@sha256:27ee34e7c5b908facba87aba3126391651e3ba7b241138af2ce592536043b4c0
+    image: grafana/promtail:2.9.15@sha256:466ba2fac4448ed2dc509b267995a3c13511d69f6bba01800ca7b38d9953f899
     volumes:
       - ./testdata/promtail-config.yml:/etc/promtail/config.yml
       - /var/log:/var/log
@@ -41,7 +41,7 @@ services:
       - loki
 
   pyroscope:
-    image: grafana/pyroscope:1.13.4@sha256:7e8f1911cbe9353f5c2433b81ff494d5c728c773e76ae9e886d2c009b0a28ada
+    image: grafana/pyroscope:1.15.0@sha256:5fba997646c53584799b6beca768dae6358e807020aa98c04cb7db11f0d55681
     ports:
       - 4040:4040
 

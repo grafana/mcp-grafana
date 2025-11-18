@@ -91,10 +91,21 @@ The dashboard tools now include several strategies to manage context window usag
   - **Time range support:** Add time range parameters to links (`from=now-1h&to=now`)
   - **Custom parameters:** Include additional query parameters like dashboard variables or refresh intervals
 
+### Annotations
+
+- **Get Annotations:** Query annotations with filters. Supports time range, dashboard UID, tags, and match mode.
+- **Create Annotation:** Create a new annotation on a dashboard or panel.
+- **Create Graphite Annotation:** Create annotations using Graphite format (`what`, `when`, `tags`, `data`).
+- **Update Annotation:** Replace all fields of an existing annotation (full update).
+- **Patch Annotation:** Update only specific fields of an annotation (partial update).
+- **Get Annotation Tags:** List available annotation tags with optional filtering.
+
+
 The list of tools is configurable, so you can choose which tools you want to make available to the MCP client.
 This is useful if you don't use certain functionality or if you don't want to take up too much of the context window.
 To disable a category of tools, use the `--disable-<category>` flag when starting the server. For example, to disable
 the OnCall tools, use `--disable-oncall`, or to disable navigation deeplink generation, use `--disable-navigation`.
+
 
 #### RBAC Permissions
 
@@ -201,7 +212,14 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `list_pyroscope_profile_types`    | Pyroscope   | List available profile types                                       | `datasources:query`                     | `datasources:uid:pyroscope-uid`                     |
 | `fetch_pyroscope_profile`         | Pyroscope   | Fetches a profile in DOT format for analysis                       | `datasources:query`                     | `datasources:uid:pyroscope-uid`                     |
 | `get_assertions`                  | Asserts     | Get assertion summary for a given entity                           | Plugin-specific permissions             | Plugin-specific scopes                              |
-| `generate_deeplink`               | Navigation  | Generate accurate deeplink URLs for Grafana resources              | None (read-only URL generation)         | N/A                                                 |
+| `generate_deeplink`               | Navigation  | Generate accurate deeplink URLs for Grafana resources              | None (read-only URL generation)         | N/A
+| `get_annotations`                 | Annotations | Fetch annotations with filters                                      | `annotations:read`                      | `annotations:*` or `annotations:id:123`            |
+| `create_annotation`               | Annotations | Create a new annotation on a dashboard or panel                     | `annotations:write`                     | `annotations:*`                                    |
+| `create_graphite_annotation`      | Annotations | Create an annotation using Graphite format                          | `annotations:write`                     | `annotations:*`                                    |
+| `update_annotation`               | Annotations | Replace all fields of an annotation (full update)                   | `annotations:write`                     | `annotations:*`                                    |
+| `patch_annotation`                | Annotations | Update only specific fields of an annotation (partial update)       | `annotations:write`                     | `annotations:*`                                    |
+| `get_annotation_tags`             | Annotations | List annotation tags with optional filtering                        | `annotations:read`                      | `annotations:*`                                    |
+                                              |
 
 ## CLI Flags Reference
 
@@ -217,11 +235,12 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 - `--debug`: Enable debug mode for detailed HTTP request/response logging
 
 **Tool Configuration:**
-- `--enabled-tools`: Comma-separated list of enabled tools - default: all tools enabled
+- `--enabled-tools`: Comma-separated list of enabled categories - default: all categories enabled - example: "loki,datasources"
 - `--disable-search`: Disable search tools
 - `--disable-datasource`: Disable datasource tools
 - `--disable-incident`: Disable incident tools
 - `--disable-prometheus`: Disable prometheus tools
+- `--disable-write`: Disable write tools (create/update operations)
 - `--disable-loki`: Disable loki tools
 - `--disable-alerting`: Disable alerting tools
 - `--disable-dashboard`: Disable dashboard tools
@@ -231,6 +250,44 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 - `--disable-admin`: Disable admin tools
 - `--disable-pyroscope`: Disable pyroscope tools
 - `--disable-navigation`: Disable navigation tools
+
+### Read-Only Mode
+
+The `--disable-write` flag provides a way to run the MCP server in read-only mode, preventing any write operations to your Grafana instance. This is useful for scenarios where you want to provide safe, read-only access such as:
+
+- Using service accounts with limited read-only permissions
+- Providing AI assistants with observability data without modification capabilities
+- Running in production environments where write access should be restricted
+- Testing and development scenarios where you want to prevent accidental modifications
+
+When `--disable-write` is enabled, the following write operations are disabled:
+
+**Dashboard Tools:**
+- `update_dashboard`
+
+**Folder Tools:**
+- `create_folder`
+
+**Incident Tools:**
+- `create_incident`
+- `add_activity_to_incident`
+
+**Alerting Tools:**
+- `create_alert_rule`
+- `update_alert_rule`
+- `delete_alert_rule`
+
+**Annotation Tools:**
+- `create_annotation`
+- `create_graphite_annotation`
+- `update_annotation`
+- `patch_annotation`
+
+**Sift Tools:**
+- `find_error_pattern_logs` (creates investigations)
+- `find_slow_requests` (creates investigations)
+
+All read operations remain available, allowing you to query dashboards, run PromQL/LogQL queries, list resources, and retrieve data.
 
 **Client TLS Configuration (for Grafana connections):**
 - `--tls-cert-file`: Path to TLS certificate file for client authentication
