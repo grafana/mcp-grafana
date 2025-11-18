@@ -410,8 +410,9 @@ var GetAlertRuleByUID = mcpgrafana.MustTool(
 )
 
 type ListContactPointsParams struct {
-	Limit int     `json:"limit,omitempty" jsonschema:"description=The maximum number of results to return. Default is 100."`
-	Name  *string `json:"name,omitempty" jsonschema:"description=Filter contact points by name"`
+	DatasourceUID *string `json:"datasourceUid,omitempty" jsonschema:"description=Optional: UID of an Alertmanager-compatible datasource to query for receivers. If omitted, returns Grafana-managed contact points."`
+	Limit         int     `json:"limit,omitempty" jsonschema:"description=The maximum number of results to return. Default is 100."`
+	Name          *string `json:"name,omitempty" jsonschema:"description=Filter contact points by name"`
 }
 
 func (p ListContactPointsParams) validate() error {
