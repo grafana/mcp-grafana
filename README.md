@@ -65,8 +65,8 @@ The dashboard tools now include several strategies to manage context window usag
 
 ### Alerting
 
-- **List and fetch alert rule information:** View alert rules and their statuses (firing/normal/error/etc.) in Grafana.
-- **List contact points:** View configured notification contact points in Grafana.
+- **List and fetch alert rule information:** View alert rules and their statuses (firing/normal/error/etc.) in Grafana. Supports both Grafana-managed rules and datasource-managed rules from Prometheus or Loki datasources.
+- **List contact points:** View configured notification contact points in Grafana. Supports both Grafana-managed contact points and receivers from external Alertmanager datasources (Prometheus Alertmanager, Mimir, Cortex).
 
 ### Grafana OnCall
 
@@ -166,60 +166,59 @@ Scopes define the specific resources that permissions apply to. Each action requ
 
 ### Tools
 
-| Tool                              | Category    | Description                                                        | Required RBAC Permissions               | Required Scopes                                     |
-| --------------------------------- | ----------- | ------------------------------------------------------------------ | --------------------------------------- | --------------------------------------------------- |
-| `list_teams`                      | Admin       | List all teams                                                     | `teams:read`                            | `teams:*` or `teams:id:1`                           |
-| `list_users_by_org`               | Admin       | List all users in an organization                                  | `users:read`                            | `global.users:*` or `global.users:id:123`           |
-| `search_dashboards`               | Search      | Search for dashboards                                              | `dashboards:read`                       | `dashboards:*` or `dashboards:uid:abc123`           |
-| `get_dashboard_by_uid`            | Dashboard   | Get a dashboard by uid                                             | `dashboards:read`                       | `dashboards:uid:abc123`                             |
-| `update_dashboard`                | Dashboard   | Update or create a new dashboard                                   | `dashboards:create`, `dashboards:write` | `dashboards:*`, `folders:*` or `folders:uid:xyz789` |
-| `get_dashboard_panel_queries`     | Dashboard   | Get panel title, queries, datasource UID and type from a dashboard | `dashboards:read`                       | `dashboards:uid:abc123`                             |
-| `get_dashboard_property`          | Dashboard   | Extract specific parts of a dashboard using JSONPath expressions   | `dashboards:read`                       | `dashboards:uid:abc123`                             |
-| `get_dashboard_summary`           | Dashboard   | Get a compact summary of a dashboard without full JSON             | `dashboards:read`                       | `dashboards:uid:abc123`                             |
-| `list_datasources`                | Datasources | List datasources                                                   | `datasources:read`                      | `datasources:*`                                     |
-| `get_datasource_by_uid`           | Datasources | Get a datasource by uid                                            | `datasources:read`                      | `datasources:uid:prometheus-uid`                    |
-| `get_datasource_by_name`          | Datasources | Get a datasource by name                                           | `datasources:read`                      | `datasources:*` or `datasources:uid:loki-uid`       |
-| `query_prometheus`                | Prometheus  | Execute a query against a Prometheus datasource                    | `datasources:query`                     | `datasources:uid:prometheus-uid`                    |
-| `list_prometheus_metric_metadata` | Prometheus  | List metric metadata                                               | `datasources:query`                     | `datasources:uid:prometheus-uid`                    |
-| `list_prometheus_metric_names`    | Prometheus  | List available metric names                                        | `datasources:query`                     | `datasources:uid:prometheus-uid`                    |
-| `list_prometheus_label_names`     | Prometheus  | List label names matching a selector                               | `datasources:query`                     | `datasources:uid:prometheus-uid`                    |
-| `list_prometheus_label_values`    | Prometheus  | List values for a specific label                                   | `datasources:query`                     | `datasources:uid:prometheus-uid`                    |
-| `list_incidents`                  | Incident    | List incidents in Grafana Incident                                 | Viewer role                             | N/A                                                 |
-| `create_incident`                 | Incident    | Create an incident in Grafana Incident                             | Editor role                             | N/A                                                 |
-| `add_activity_to_incident`        | Incident    | Add an activity item to an incident in Grafana Incident            | Editor role                             | N/A                                                 |
-| `get_incident`                    | Incident    | Get a single incident by ID                                        | Viewer role                             | N/A                                                 |
-| `query_loki_logs`                 | Loki        | Query and retrieve logs using LogQL (either log or metric queries) | `datasources:query`                     | `datasources:uid:loki-uid`                          |
-| `list_loki_label_names`           | Loki        | List all available label names in logs                             | `datasources:query`                     | `datasources:uid:loki-uid`                          |
-| `list_loki_label_values`          | Loki        | List values for a specific log label                               | `datasources:query`                     | `datasources:uid:loki-uid`                          |
-| `query_loki_stats`                | Loki        | Get statistics about log streams                                   | `datasources:query`                     | `datasources:uid:loki-uid`                          |
-| `list_alert_rules`                | Alerting    | List alert rules                                                   | `alert.rules:read`                      | `folders:*` or `folders:uid:alerts-folder`          |
-| `get_alert_rule_by_uid`           | Alerting    | Get alert rule by UID                                              | `alert.rules:read`                      | `folders:uid:alerts-folder`                         |
-| `list_contact_points`             | Alerting    | List notification contact points                                   | `alert.notifications:read`              | Global scope                                        |
-| `list_oncall_schedules`           | OnCall      | List schedules from Grafana OnCall                                 | `grafana-oncall-app.schedules:read`     | Plugin-specific scopes                              |
-| `get_oncall_shift`                | OnCall      | Get details for a specific OnCall shift                            | `grafana-oncall-app.schedules:read`     | Plugin-specific scopes                              |
-| `get_current_oncall_users`        | OnCall      | Get users currently on-call for a specific schedule                | `grafana-oncall-app.schedules:read`     | Plugin-specific scopes                              |
-| `list_oncall_teams`               | OnCall      | List teams from Grafana OnCall                                     | `grafana-oncall-app.user-settings:read` | Plugin-specific scopes                              |
-| `list_oncall_users`               | OnCall      | List users from Grafana OnCall                                     | `grafana-oncall-app.user-settings:read` | Plugin-specific scopes                              |
-| `list_alert_groups`               | OnCall      | List alert groups from Grafana OnCall with filtering options       | `grafana-oncall-app.alert-groups:read`  | Plugin-specific scopes                              |
-| `get_alert_group`                 | OnCall      | Get a specific alert group from Grafana OnCall by its ID           | `grafana-oncall-app.alert-groups:read`  | Plugin-specific scopes                              |
-| `get_sift_investigation`          | Sift        | Retrieve an existing Sift investigation by its UUID                | Viewer role                             | N/A                                                 |
-| `get_sift_analysis`               | Sift        | Retrieve a specific analysis from a Sift investigation             | Viewer role                             | N/A                                                 |
-| `list_sift_investigations`        | Sift        | Retrieve a list of Sift investigations with an optional limit      | Viewer role                             | N/A                                                 |
-| `find_error_pattern_logs`         | Sift        | Finds elevated error patterns in Loki logs.                        | Editor role                             | N/A                                                 |
-| `find_slow_requests`              | Sift        | Finds slow requests from the relevant tempo datasources.           | Editor role                             | N/A                                                 |
-| `list_pyroscope_label_names`      | Pyroscope   | List label names matching a selector                               | `datasources:query`                     | `datasources:uid:pyroscope-uid`                     |
-| `list_pyroscope_label_values`     | Pyroscope   | List label values matching a selector for a label name             | `datasources:query`                     | `datasources:uid:pyroscope-uid`                     |
-| `list_pyroscope_profile_types`    | Pyroscope   | List available profile types                                       | `datasources:query`                     | `datasources:uid:pyroscope-uid`                     |
-| `fetch_pyroscope_profile`         | Pyroscope   | Fetches a profile in DOT format for analysis                       | `datasources:query`                     | `datasources:uid:pyroscope-uid`                     |
-| `get_assertions`                  | Asserts     | Get assertion summary for a given entity                           | Plugin-specific permissions             | Plugin-specific scopes                              |
-| `generate_deeplink`               | Navigation  | Generate accurate deeplink URLs for Grafana resources              | None (read-only URL generation)         | N/A
-| `get_annotations`                 | Annotations | Fetch annotations with filters                                      | `annotations:read`                      | `annotations:*` or `annotations:id:123`            |
-| `create_annotation`               | Annotations | Create a new annotation on a dashboard or panel                     | `annotations:write`                     | `annotations:*`                                    |
-| `create_graphite_annotation`      | Annotations | Create an annotation using Graphite format                          | `annotations:write`                     | `annotations:*`                                    |
-| `update_annotation`               | Annotations | Replace all fields of an annotation (full update)                   | `annotations:write`                     | `annotations:*`                                    |
-| `patch_annotation`                | Annotations | Update only specific fields of an annotation (partial update)       | `annotations:write`                     | `annotations:*`                                    |
-| `get_annotation_tags`             | Annotations | List annotation tags with optional filtering                        | `annotations:read`                      | `annotations:*`                                    |
-                                              |
+| Tool                              | Category    | Description                                                         | Required RBAC Permissions               | Required Scopes                                     |
+| --------------------------------- | ----------- | ------------------------------------------------------------------- | --------------------------------------- | --------------------------------------------------- |
+| `list_teams`                      | Admin       | List all teams                                                      | `teams:read`                            | `teams:*` or `teams:id:1`                           |
+| `list_users_by_org`               | Admin       | List all users in an organization                                   | `users:read`                            | `global.users:*` or `global.users:id:123`           |
+| `search_dashboards`               | Search      | Search for dashboards                                               | `dashboards:read`                       | `dashboards:*` or `dashboards:uid:abc123`           |
+| `get_dashboard_by_uid`            | Dashboard   | Get a dashboard by uid                                              | `dashboards:read`                       | `dashboards:uid:abc123`                             |
+| `update_dashboard`                | Dashboard   | Update or create a new dashboard                                    | `dashboards:create`, `dashboards:write` | `dashboards:*`, `folders:*` or `folders:uid:xyz789` |
+| `get_dashboard_panel_queries`     | Dashboard   | Get panel title, queries, datasource UID and type from a dashboard  | `dashboards:read`                       | `dashboards:uid:abc123`                             |
+| `get_dashboard_property`          | Dashboard   | Extract specific parts of a dashboard using JSONPath expressions    | `dashboards:read`                       | `dashboards:uid:abc123`                             |
+| `get_dashboard_summary`           | Dashboard   | Get a compact summary of a dashboard without full JSON              | `dashboards:read`                       | `dashboards:uid:abc123`                             |
+| `list_datasources`                | Datasources | List datasources                                                    | `datasources:read`                      | `datasources:*`                                     |
+| `get_datasource_by_uid`           | Datasources | Get a datasource by uid                                             | `datasources:read`                      | `datasources:uid:prometheus-uid`                    |
+| `get_datasource_by_name`          | Datasources | Get a datasource by name                                            | `datasources:read`                      | `datasources:*` or `datasources:uid:loki-uid`       |
+| `query_prometheus`                | Prometheus  | Execute a query against a Prometheus datasource                     | `datasources:query`                     | `datasources:uid:prometheus-uid`                    |
+| `list_prometheus_metric_metadata` | Prometheus  | List metric metadata                                                | `datasources:query`                     | `datasources:uid:prometheus-uid`                    |
+| `list_prometheus_metric_names`    | Prometheus  | List available metric names                                         | `datasources:query`                     | `datasources:uid:prometheus-uid`                    |
+| `list_prometheus_label_names`     | Prometheus  | List label names matching a selector                                | `datasources:query`                     | `datasources:uid:prometheus-uid`                    |
+| `list_prometheus_label_values`    | Prometheus  | List values for a specific label                                    | `datasources:query`                     | `datasources:uid:prometheus-uid`                    |
+| `list_incidents`                  | Incident    | List incidents in Grafana Incident                                  | Viewer role                             | N/A                                                 |
+| `create_incident`                 | Incident    | Create an incident in Grafana Incident                              | Editor role                             | N/A                                                 |
+| `add_activity_to_incident`        | Incident    | Add an activity item to an incident in Grafana Incident             | Editor role                             | N/A                                                 |
+| `get_incident`                    | Incident    | Get a single incident by ID                                         | Viewer role                             | N/A                                                 |
+| `query_loki_logs`                 | Loki        | Query and retrieve logs using LogQL (either log or metric queries)  | `datasources:query`                     | `datasources:uid:loki-uid`                          |
+| `list_loki_label_names`           | Loki        | List all available label names in logs                              | `datasources:query`                     | `datasources:uid:loki-uid`                          |
+| `list_loki_label_values`          | Loki        | List values for a specific log label                                | `datasources:query`                     | `datasources:uid:loki-uid`                          |
+| `query_loki_stats`                | Loki        | Get statistics about log streams                                    | `datasources:query`                     | `datasources:uid:loki-uid`                          |
+| `list_alert_rules`                | Alerting    | List alert rules                                                    | `alert.rules:read`                      | `folders:*` or `folders:uid:alerts-folder`          |
+| `get_alert_rule_by_uid`           | Alerting    | Get alert rule by UID                                               | `alert.rules:read`                      | `folders:uid:alerts-folder`                         |
+| `list_contact_points`             | Alerting    | List notification contact points (Grafana-managed and Alertmanager) | `alert.notifications:read`              | Global scope                                        |
+| `list_oncall_schedules`           | OnCall      | List schedules from Grafana OnCall                                  | `grafana-oncall-app.schedules:read`     | Plugin-specific scopes                              |
+| `get_oncall_shift`                | OnCall      | Get details for a specific OnCall shift                             | `grafana-oncall-app.schedules:read`     | Plugin-specific scopes                              |
+| `get_current_oncall_users`        | OnCall      | Get users currently on-call for a specific schedule                 | `grafana-oncall-app.schedules:read`     | Plugin-specific scopes                              |
+| `list_oncall_teams`               | OnCall      | List teams from Grafana OnCall                                      | `grafana-oncall-app.user-settings:read` | Plugin-specific scopes                              |
+| `list_oncall_users`               | OnCall      | List users from Grafana OnCall                                      | `grafana-oncall-app.user-settings:read` | Plugin-specific scopes                              |
+| `list_alert_groups`               | OnCall      | List alert groups from Grafana OnCall with filtering options        | `grafana-oncall-app.alert-groups:read`  | Plugin-specific scopes                              |
+| `get_alert_group`                 | OnCall      | Get a specific alert group from Grafana OnCall by its ID            | `grafana-oncall-app.alert-groups:read`  | Plugin-specific scopes                              |
+| `get_sift_investigation`          | Sift        | Retrieve an existing Sift investigation by its UUID                 | Viewer role                             | N/A                                                 |
+| `get_sift_analysis`               | Sift        | Retrieve a specific analysis from a Sift investigation              | Viewer role                             | N/A                                                 |
+| `list_sift_investigations`        | Sift        | Retrieve a list of Sift investigations with an optional limit       | Viewer role                             | N/A                                                 |
+| `find_error_pattern_logs`         | Sift        | Finds elevated error patterns in Loki logs.                         | Editor role                             | N/A                                                 |
+| `find_slow_requests`              | Sift        | Finds slow requests from the relevant tempo datasources.            | Editor role                             | N/A                                                 |
+| `list_pyroscope_label_names`      | Pyroscope   | List label names matching a selector                                | `datasources:query`                     | `datasources:uid:pyroscope-uid`                     |
+| `list_pyroscope_label_values`     | Pyroscope   | List label values matching a selector for a label name              | `datasources:query`                     | `datasources:uid:pyroscope-uid`                     |
+| `list_pyroscope_profile_types`    | Pyroscope   | List available profile types                                        | `datasources:query`                     | `datasources:uid:pyroscope-uid`                     |
+| `fetch_pyroscope_profile`         | Pyroscope   | Fetches a profile in DOT format for analysis                        | `datasources:query`                     | `datasources:uid:pyroscope-uid`                     |
+| `get_assertions`                  | Asserts     | Get assertion summary for a given entity                            | Plugin-specific permissions             | Plugin-specific scopes                              |
+| `generate_deeplink`               | Navigation  | Generate accurate deeplink URLs for Grafana resources               | None (read-only URL generation)         | N/A                                                 |
+| `get_annotations`                 | Annotations | Fetch annotations with filters                                      | `annotations:read`                      | `annotations:*` or `annotations:id:123`             |
+| `create_annotation`               | Annotations | Create a new annotation on a dashboard or panel                     | `annotations:write`                     | `annotations:*`                                     |
+| `create_graphite_annotation`      | Annotations | Create an annotation using Graphite format                          | `annotations:write`                     | `annotations:*`                                     |
+| `update_annotation`               | Annotations | Replace all fields of an annotation (full update)                   | `annotations:write`                     | `annotations:*`                                     |
+| `patch_annotation`                | Annotations | Update only specific fields of an annotation (partial update)       | `annotations:write`                     | `annotations:*`                                     |
+| `get_annotation_tags`             | Annotations | List annotation tags with optional filtering                        | `annotations:read`                      | `annotations:*`                                     |
 
 ## CLI Flags Reference
 

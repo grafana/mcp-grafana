@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/go-openapi/strfmt"
@@ -11,6 +12,8 @@ import (
 	"github.com/grafana/grafana-openapi-client-go/models"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"github.com/prometheus/alertmanager/config"
+	v1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	"github.com/prometheus/prometheus/model/labels"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
@@ -24,6 +27,7 @@ const (
 type ListAlertRulesParams struct {
 	Limit          int        `json:"limit,omitempty" jsonschema:"default=100,description=The maximum number of results to return"`
 	Page           int        `json:"page,omitempty" jsonschema:"default=1,description=The page number to return"`
+	DatasourceUID  *string    `json:"datasourceUid,omitempty" jsonschema:"description=Optional: UID of a Prometheus or Loki datasource to query for datasource-managed alert rules. If omitted\\, returns Grafana-managed rules."`
 	LabelSelectors []Selector `json:"label_selectors,omitempty" jsonschema:"description=Optionally\\, a list of matchers to filter alert rules by labels"`
 }
 
@@ -56,6 +60,11 @@ type alertRuleSummary struct {
 func listAlertRules(ctx context.Context, args ListAlertRulesParams) ([]alertRuleSummary, error) {
 	if err := args.validate(); err != nil {
 		return nil, fmt.Errorf("list alert rules: %w", err)
+	}
+
+	// If datasourceUID provided, query datasource rules instead
+	if args.DatasourceUID != nil && *args.DatasourceUID != "" {
+		return listDatasourceAlertRules(ctx, args)
 	}
 
 	// Get configuration data from provisioning API (has UIDs, configuration)
@@ -263,9 +272,103 @@ func applyPaginationToMerged(items []mergedAlertRule, limit, page int) ([]merged
 	return items[start:end], nil
 }
 
+// listDatasourceAlertRules queries a Prometheus/Loki datasource for its alert rules
+func listDatasourceAlertRules(ctx context.Context, args ListAlertRulesParams) ([]alertRuleSummary, error) {
+	dsUID := *args.DatasourceUID
+
+	// verify datasource exists, get its type
+	ds, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: dsUID})
+	if err != nil {
+		return nil, fmt.Errorf("datasource %s: %w", dsUID, err)
+	}
+
+	// check if datasource type supports ruler API
+	if !isRulerDatasource(ds.Type) {
+		return nil, fmt.Errorf("datasource %s (type: %s) does not support ruler API. Supported types: prometheus, loki", dsUID, ds.Type)
+	}
+
+	client, err := newAlertingClientFromContext(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("creating alerting client: %w", err)
+	}
+
+	rulesResp, err := client.GetDatasourceRules(ctx, dsUID)
+	if err != nil {
+		return nil, fmt.Errorf("querying datasource %s rules: %w", dsUID, err)
+	}
+
+	mergedRules := convertPrometheusRulesToMerged(rulesResp)
+	filteredRules, err := filterMergedAlertRules(mergedRules, args.LabelSelectors)
+	if err != nil {
+		return nil, fmt.Errorf("filtering rules: %w", err)
+	}
+	paginatedRules, err := applyPaginationToMerged(filteredRules, args.Limit, args.Page)
+	if err != nil {
+		return nil, fmt.Errorf("pagination: %w", err)
+	}
+
+	return summarizeMergedAlertRules(paginatedRules), nil
+}
+
+// isRulerDatasource checks if datasource type supports Prometheus ruler API (currently Prometheus/Loki)
+func isRulerDatasource(dsType string) bool {
+	dsType = strings.ToLower(dsType)
+	return strings.Contains(dsType, "prometheus") ||
+		strings.Contains(dsType, "loki")
+}
+
+// convertPrometheusRulesToMerged converts Prometheus ruler API response to mergedAlertRule format
+func convertPrometheusRulesToMerged(result *v1.RulesResult) []mergedAlertRule {
+	var rules []mergedAlertRule
+
+	for _, group := range result.Groups {
+		for _, rule := range group.Rules {
+			switch r := rule.(type) {
+			case v1.AlertingRule:
+				labels := make(map[string]string)
+				for k, v := range r.Labels {
+					labels[string(k)] = string(v)
+				}
+				annotations := make(map[string]string)
+				for k, v := range r.Annotations {
+					annotations[string(k)] = string(v)
+				}
+
+				merged := mergedAlertRule{
+					Title:          r.Name,
+					RuleGroup:      group.Name,
+					Labels:         labels,
+					Annotations:    annotations,
+					State:          string(r.State),
+					Health:         string(r.Health),
+					LastEvaluation: r.LastEvaluation.Format(time.RFC3339),
+					For:            formatDuration(r.Duration),
+					// note: datasource rules don't have all fields, including:
+					// FolderUID, Condition, NoDataState, ExecErrState, UID
+				}
+
+				rules = append(rules, merged)
+			case v1.RecordingRule:
+				// skip recording rules
+				continue
+			}
+		}
+	}
+
+	return rules
+}
+
+func formatDuration(seconds float64) string {
+	if seconds == 0 {
+		return ""
+	}
+	d := time.Duration(seconds * float64(time.Second))
+	return d.String()
+}
+
 var ListAlertRules = mcpgrafana.MustTool(
 	"list_alert_rules",
-	"Lists Grafana alert rules, returning a summary including UID, title, current state (e.g., 'pending', 'firing', 'inactive'), and labels. Supports filtering by labels using selectors and pagination. Example label selector: `[{'name': 'severity', 'type': '=', 'value': 'critical'}]`. Inactive state means the alert state is normal, not firing",
+	"Lists Grafana alert rules, returning a summary including UID, title, current state (e.g., 'pending', 'firing', 'inactive'), and labels. Optionally query datasource-managed rules from Prometheus or Loki by providing datasourceUid. Supports filtering by labels using selectors and pagination. Example label selector: `[{'name': 'severity', 'type': '=', 'value': 'critical'}]`. Inactive state means the alert state is normal, not firing",
 	listAlertRules,
 	mcp.WithTitleAnnotation("List alert rules"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -307,8 +410,9 @@ var GetAlertRuleByUID = mcpgrafana.MustTool(
 )
 
 type ListContactPointsParams struct {
-	Limit int     `json:"limit,omitempty" jsonschema:"default=100,description=The maximum number of results to return"`
-	Name  *string `json:"name,omitempty" jsonschema:"description=Filter contact points by name"`
+	DatasourceUID *string `json:"datasourceUid,omitempty" jsonschema:"description=Optional: UID of an Alertmanager-compatible datasource to query for receivers. If omitted\\, returns Grafana-managed contact points."`
+	Limit         int     `json:"limit,omitempty" jsonschema:"description=The maximum number of results to return. Default is 100."`
+	Name          *string `json:"name,omitempty" jsonschema:"description=Filter contact points by name"`
 }
 
 func (p ListContactPointsParams) validate() error {
@@ -327,6 +431,11 @@ type contactPointSummary struct {
 func listContactPoints(ctx context.Context, args ListContactPointsParams) ([]contactPointSummary, error) {
 	if err := args.validate(); err != nil {
 		return nil, fmt.Errorf("list contact points: %w", err)
+	}
+
+	// If datasourceUID provided, query Alertmanager receivers
+	if args.DatasourceUID != nil && *args.DatasourceUID != "" {
+		return listAlertmanagerReceivers(ctx, args)
 	}
 
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
@@ -373,9 +482,87 @@ func applyLimitToContactPoints(items []*models.EmbeddedContactPoint, limit int) 
 	return items[:limit], nil
 }
 
+// listAlertmanagerReceivers queries an Alertmanager datasource for its receivers
+func listAlertmanagerReceivers(ctx context.Context, args ListContactPointsParams) ([]contactPointSummary, error) {
+	dsUID := *args.DatasourceUID
+
+	// verify datasource exists and is Alertmanager type
+	ds, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: dsUID})
+	if err != nil {
+		return nil, fmt.Errorf("datasource %s: %w", dsUID, err)
+	}
+
+	if !isAlertmanagerDatasource(ds.Type) {
+		return nil, fmt.Errorf("datasource %s (type: %s) is not an Alertmanager datasource", dsUID, ds.Type)
+	}
+
+	implementation := "prometheus" // default
+	if ds.JSONData != nil {
+		if jsonDataMap, ok := ds.JSONData.(map[string]interface{}); ok {
+			if impl, ok := jsonDataMap["implementation"].(string); ok && impl != "" {
+				implementation = impl
+			}
+		}
+	}
+
+	client, err := newAlertingClientFromContext(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("creating alerting client: %w", err)
+	}
+
+	cfg, err := client.GetAlertmanagerConfig(ctx, dsUID, implementation)
+	if err != nil {
+		return nil, fmt.Errorf("querying Alertmanager config: %w", err)
+	}
+
+	receivers := convertReceiversToContactPoints(cfg.Receivers)
+
+	if args.Name != nil && *args.Name != "" {
+		receivers = filterContactPointsByName(receivers, *args.Name)
+	}
+
+	if args.Limit > 0 && len(receivers) > args.Limit {
+		receivers = receivers[:args.Limit]
+	} else if args.Limit == 0 && len(receivers) > DefaultListContactPointsLimit {
+		receivers = receivers[:DefaultListContactPointsLimit]
+	}
+
+	return receivers, nil
+}
+
+// isAlertmanagerDatasource checks if datasource type is Alertmanager
+func isAlertmanagerDatasource(dsType string) bool {
+	dsType = strings.ToLower(dsType)
+	return strings.Contains(dsType, "alertmanager")
+}
+
+// convertReceiversToContactPoints converts Alertmanager receivers to contact point summaries
+// note: not really that useful, it's only giving the receiver name. We should refactor
+// contactPointSummary to include more data (url, email address)
+func convertReceiversToContactPoints(receivers []config.Receiver) []contactPointSummary {
+	result := make([]contactPointSummary, 0, len(receivers))
+	for _, r := range receivers {
+		result = append(result, contactPointSummary{
+			Name: r.Name,
+		})
+	}
+	return result
+}
+
+// filterContactPointsByName filters contact points by exact name match
+func filterContactPointsByName(cps []contactPointSummary, name string) []contactPointSummary {
+	var filtered []contactPointSummary
+	for _, cp := range cps {
+		if cp.Name == name {
+			filtered = append(filtered, cp)
+		}
+	}
+	return filtered
+}
+
 var ListContactPoints = mcpgrafana.MustTool(
 	"list_contact_points",
-	"Lists Grafana notification contact points, returning a summary including UID, name, and type for each. Supports filtering by name - exact match - and limiting the number of results.",
+	"Lists Grafana notification contact points, returning a summary including UID, name, and type for each. Optionally query Alertmanager receivers by providing datasourceUid. Supports filtering by name - exact match - and limiting the number of results.",
 	listContactPoints,
 	mcp.WithTitleAnnotation("List notification contact points"),
 	mcp.WithIdempotentHintAnnotation(true),

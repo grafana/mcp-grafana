@@ -28,6 +28,7 @@ services:
     command: -config.file=/etc/loki/loki-config.yml
     volumes:
       - ./testdata/loki-config.yml:/etc/loki/loki-config.yml
+      - ./testdata/loki-rules.yml:/loki/rules/fake/loki-rules.yml
 
   promtail:
     image: grafana/promtail:2.9.15@sha256:466ba2fac4448ed2dc509b267995a3c13511d69f6bba01800ca7b38d9953f899
@@ -46,7 +47,7 @@ services:
 
   tempo:
     image: grafana/tempo:2.9.0-rc.0@sha256:5517ee34d335dedb9ad43028bd8f72edd0bb98b744ea5847a7572755d93d9866
-    command: ["-config.file=/etc/tempo/tempo-config.yaml"]
+    command: [ "-config.file=/etc/tempo/tempo-config.yaml" ]
     volumes:
       - ./testdata/tempo-config.yaml:/etc/tempo/tempo-config.yaml
     ports:
@@ -54,8 +55,18 @@ services:
 
   tempo2:
     image: grafana/tempo:2.9.0-rc.0@sha256:5517ee34d335dedb9ad43028bd8f72edd0bb98b744ea5847a7572755d93d9866
-    command: ["-config.file=/etc/tempo/tempo-config.yaml"]
+    command: [ "-config.file=/etc/tempo/tempo-config.yaml" ]
     volumes:
       - ./testdata/tempo-config-2.yaml:/etc/tempo/tempo-config.yaml
     ports:
       - "3201:3201" # tempo instance 2
+
+  alertmanager:
+    image: prom/alertmanager:v0.28.1
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./testdata/alertmanager.yml:/etc/alertmanager/alertmanager.yml
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
