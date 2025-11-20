@@ -136,7 +136,7 @@ type GrafanaConfig struct {
 	BasicAuth *url.Userinfo
 
 	// OrgID is the organization ID to use for multi-org support.
-	// When set, it will be sent as X-Scope-OrgId header regardless of authentication method.
+	// When set, it will be sent as X-Grafana-Org-Id header regardless of authentication method.
 	// Works with service account tokens, API keys, and basic authentication.
 	OrgID int64
 

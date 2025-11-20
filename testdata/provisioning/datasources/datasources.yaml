@@ -41,3 +41,13 @@ datasources:
     access: proxy
     url: http://tempo2:3201
     isDefault: false
+  - name: Alertmanager
+    id: 6
+    uid: alertmanager
+    type: alertmanager
+    access: proxy
+    url: http://alertmanager:9093
+    jsonData:
+      implementation: prometheus
+    isDefault: false
+    editable: false
