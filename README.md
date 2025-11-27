@@ -100,12 +100,10 @@ The dashboard tools now include several strategies to manage context window usag
 - **Patch Annotation:** Update only specific fields of an annotation (partial update).
 - **Get Annotation Tags:** List available annotation tags with optional filtering.
 
-
 The list of tools is configurable, so you can choose which tools you want to make available to the MCP client.
 This is useful if you don't use certain functionality or if you don't want to take up too much of the context window.
 To disable a category of tools, use the `--disable-<category>` flag when starting the server. For example, to disable
 the OnCall tools, use `--disable-oncall`, or to disable navigation deeplink generation, use `--disable-navigation`.
-
 
 #### RBAC Permissions
 
@@ -114,6 +112,7 @@ Each tool requires specific RBAC permissions to function properly. When creating
 Tip: If you're not familiar with Grafana RBAC or you want a quicker, simpler setup instead of configuring many granular scopes, you can assign a built-in role such as `Editor` to the service account. The `Editor` role grants broad read/write access that will allow most MCP server operations; it is less granular (and therefore less restrictive) than manually-applied scopes, so use it only when convenience is more important than strict least-privilege access.
 
 **Note:** Grafana Incident and Sift tools use basic Grafana roles instead of fine-grained RBAC permissions:
+
 - **Viewer role:** Required for read-only operations (list incidents, get investigations)
 - **Editor role:** Required for write operations (create incidents, modify investigations)
 
@@ -159,6 +158,7 @@ Scopes define the specific resources that permissions apply to. Each action requ
   ```
 
 - **Dashboard-specific access:** Read only specific dashboards
+
   ```
   dashboards:uid:monitoring-dashboard (dashboards:read)
   dashboards:uid:alerts-dashboard (dashboards:read)
@@ -225,15 +225,18 @@ Scopes define the specific resources that permissions apply to. Each action requ
 The `mcp-grafana` binary supports various command-line flags for configuration:
 
 **Transport Options:**
+
 - `-t, --transport`: Transport type (`stdio`, `sse`, or `streamable-http`) - default: `stdio`
 - `--address`: The host and port for SSE/streamable-http server - default: `localhost:8000`
 - `--base-path`: Base path for the SSE/streamable-http server
 - `--endpoint-path`: Endpoint path for the streamable-http server - default: `/`
 
 **Debug and Logging:**
+
 - `--debug`: Enable debug mode for detailed HTTP request/response logging
 
 **Tool Configuration:**
+
 - `--enabled-tools`: Comma-separated list of enabled categories - default: all categories enabled - example: "loki,datasources"
 - `--disable-search`: Disable search tools
 - `--disable-datasource`: Disable datasource tools
@@ -262,39 +265,47 @@ The `--disable-write` flag provides a way to run the MCP server in read-only mod
 When `--disable-write` is enabled, the following write operations are disabled:
 
 **Dashboard Tools:**
+
 - `update_dashboard`
 
 **Folder Tools:**
+
 - `create_folder`
 
 **Incident Tools:**
+
 - `create_incident`
 - `add_activity_to_incident`
 
 **Alerting Tools:**
+
 - `create_alert_rule`
 - `update_alert_rule`
 - `delete_alert_rule`
 
 **Annotation Tools:**
+
 - `create_annotation`
 - `create_graphite_annotation`
 - `update_annotation`
 - `patch_annotation`
 
 **Sift Tools:**
+
 - `find_error_pattern_logs` (creates investigations)
 - `find_slow_requests` (creates investigations)
 
 All read operations remain available, allowing you to query dashboards, run PromQL/LogQL queries, list resources, and retrieve data.
 
 **Client TLS Configuration (for Grafana connections):**
+
 - `--tls-cert-file`: Path to TLS certificate file for client authentication
 - `--tls-key-file`: Path to TLS private key file for client authentication
 - `--tls-ca-file`: Path to TLS CA certificate file for server verification
 - `--tls-skip-verify`: Skip TLS certificate verification (insecure)
 
 **Server TLS Configuration (streamable-http transport only):**
+
 - `--server.tls-cert-file`: Path to TLS certificate file for server HTTPS
 - `--server.tls-key-file`: Path to TLS private key file for server HTTPS
 
@@ -310,7 +321,7 @@ This MCP server works with both local Grafana instances and Grafana Cloud. For G
    > **Note:** The environment variable `GRAFANA_API_KEY` is deprecated and will be removed in a future version. Please migrate to using `GRAFANA_SERVICE_ACCOUNT_TOKEN` instead. The old variable name will continue to work for backward compatibility but will show deprecation warnings.
 
 ### Multi-Organization Support
- 
+
 You can specify which organization to interact with using either:
 
 - **Environment variable:** Set `GRAFANA_ORG_ID` to the numeric organization ID
@@ -397,7 +408,6 @@ When an organization ID is provided, the MCP server will set the `X-Grafana-Org-
      helm repo add grafana https://grafana.github.io/helm-charts
      helm install --set grafana.apiKey=<Grafana_ApiKey> --set grafana.url=<GrafanaUrl> my-release grafana/grafana-mcp
      ```
-
 
 3. Add the server configuration to your client configuration file. For example, for Claude Desktop:
 
@@ -718,6 +728,7 @@ When using the SSE (`-t sse`) or streamable HTTP (`-t streamable-http`) transpor
 **Endpoint:** `GET /healthz`
 
 **Response:**
+
 - Status Code: `200 OK`
 - Body: `ok`
 
