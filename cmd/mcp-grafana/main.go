@@ -37,6 +37,7 @@ func maybeAddTools(s *server.MCPServer, tf func(*server.MCPServer), enabledTools
 // disabledTools indicates whether each category of tools should be disabled.
 type disabledTools struct {
 	enabledTools string
+	dynamicTools bool
 
 	search, datasource, incident,
 	prometheus, loki, alerting,
@@ -58,6 +59,7 @@ type grafanaConfig struct {
 
 func (dt *disabledTools) addFlags() {
 	flag.StringVar(&dt.enabledTools, "enabled-tools", "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,admin,pyroscope,navigation,proxied,annotations", "A comma separated list of tools enabled for this server. Can be overwritten entirely or by disabling specific components, e.g. --disable-search.")
+	flag.BoolVar(&dt.dynamicTools, "dynamic-toolsets", getEnvBool("GRAFANA_DYNAMIC_TOOLSETS", false), "Enable dynamic tool discovery. When enabled, only discovery tools are registered initially, and other toolsets can be enabled on-demand.")
 	flag.BoolVar(&dt.search, "disable-search", false, "Disable search tools")
 	flag.BoolVar(&dt.datasource, "disable-datasource", false, "Disable datasource tools")
 	flag.BoolVar(&dt.incident, "disable-incident", false, "Disable incident tools")
@@ -107,6 +109,61 @@ func (dt *disabledTools) addTools(s *server.MCPServer) {
 	maybeAddTools(s, func(mcp *server.MCPServer) { tools.AddAnnotationTools(mcp, enableWriteTools) }, enabledTools, dt.annotations, "annotations")
 }
 
+// addToolsDynamically sets up dynamic tool discovery
+func (dt *disabledTools) addToolsDynamically(s *server.MCPServer) *mcpgrafana.DynamicToolManager {
+	dtm := mcpgrafana.NewDynamicToolManager(s)
+
+	enabledTools := strings.Split(dt.enabledTools, ",")
+
+	isEnabled := func(toolName string) bool {
+		// If enabledTools is empty string, no tools should be available
+		if dt.enabledTools == "" {
+			return false
+		}
+		return slices.Contains(enabledTools, toolName)
+	}
+
+	// Define all available toolsets
+	allToolsets := []struct {
+		name        string
+		description string
+		toolNames   []string
+		addFunc     func(*server.MCPServer)
+	}{
+		{"search", "Tools for searching dashboards, folders, and other Grafana resources", []string{"search_dashboards", "search_folders"}, tools.AddSearchTools},
+		{"datasource", "Tools for listing and fetching datasource details", []string{"list_datasources", "get_datasource_by_uid", "get_datasource_by_name"}, tools.AddDatasourceTools},
+		{"incident", "Tools for managing Grafana Incident (create, update, search incidents)", []string{"list_incidents", "create_incident", "add_activity_to_incident", "get_incident"}, tools.AddIncidentTools},
+		{"prometheus", "Tools for querying Prometheus metrics and metadata", []string{"list_prometheus_metric_metadata", "query_prometheus", "list_prometheus_metric_names", "list_prometheus_label_names", "list_prometheus_label_values"}, tools.AddPrometheusTools},
+		{"loki", "Tools for querying Loki logs and labels", []string{"list_loki_label_names", "list_loki_label_values", "query_loki_stats", "query_loki_logs"}, tools.AddLokiTools},
+		{"alerting", "Tools for managing alert rules and notification contact points", []string{"list_alert_rules", "get_alert_rule_by_uid", "list_contact_points", "create_alert_rule", "update_alert_rule", "delete_alert_rule"}, tools.AddAlertingTools},
+		{"dashboard", "Tools for managing Grafana dashboards (get, update, extract queries)", []string{"get_dashboard_by_uid", "update_dashboard", "get_dashboard_panel_queries", "get_dashboard_property", "get_dashboard_summary"}, tools.AddDashboardTools},
+		{"folder", "Tools for managing Grafana folders", []string{"create_folder"}, tools.AddFolderTools},
+		{"oncall", "Tools for managing OnCall schedules, shifts, teams, and users", []string{"list_oncall_schedules", "get_oncall_shift", "get_current_oncall_users", "list_oncall_teams", "list_oncall_users", "list_alert_groups", "get_alert_group"}, tools.AddOnCallTools},
+		{"asserts", "Tools for Grafana Asserts cloud functionality", []string{"get_assertions"}, tools.AddAssertsTools},
+		{"sift", "Tools for Sift investigations (analyze logs/traces, find errors, detect slow requests)", []string{"get_sift_investigation", "get_sift_analysis", "list_sift_investigations", "find_error_pattern_logs", "find_slow_requests"}, tools.AddSiftTools},
+		{"admin", "Tools for administrative tasks (list teams, manage users)", []string{"list_teams", "list_users_by_org"}, tools.AddAdminTools},
+		{"pyroscope", "Tools for profiling applications with Pyroscope", []string{"list_pyroscope_label_names", "list_pyroscope_label_values", "list_pyroscope_profile_types", "fetch_pyroscope_profile"}, tools.AddPyroscopeTools},
+		{"navigation", "Tools for generating deeplink URLs to Grafana resources", []string{"generate_deeplink"}, tools.AddNavigationTools},
+	}
+
+	// Only register toolsets that are enabled
+	for _, toolset := range allToolsets {
+		if isEnabled(toolset.name) {
+			dtm.RegisterToolset(&mcpgrafana.Toolset{
+				Name:        toolset.name,
+				Description: toolset.description,
+				ToolNames:   toolset.toolNames,
+				AddFunc:     toolset.addFunc,
+			})
+		}
+	}
+
+	// Add the dynamic discovery tools themselves
+	mcpgrafana.AddDynamicDiscoveryTools(dtm, s)
+
+	return dtm
+}
+
 func newServer(transport string, dt disabledTools) (*server.MCPServer, *mcpgrafana.ToolManager) {
 	sm := mcpgrafana.NewSessionManager()
 
@@ -145,8 +202,39 @@ func newServer(transport string, dt disabledTools) (*server.MCPServer, *mcpgrafa
 			},
 		}
 	}
-	s := server.NewMCPServer("mcp-grafana", mcpgrafana.Version(),
-		server.WithInstructions(`
+
+	// Build instructions based on configuration
+	var instructions string
+	if dt.dynamicTools {
+		instructions = `
+This server provides access to your Grafana instance and the surrounding ecosystem with dynamic tool discovery.
+
+Getting Started:
+1. Use 'grafana_list_toolsets' to see all available toolsets
+2. Use 'grafana_enable_toolset' to enable specific functionality you need
+3. Once enabled, the toolset's tools will be available for use
+
+Available Toolset Categories:
+- search: Search dashboards, folders, and resources
+- datasource: Manage datasources
+- prometheus: Query Prometheus metrics
+- loki: Query Loki logs
+- dashboard: Manage dashboards
+- folder: Manage folders
+- incident: Manage incidents
+- alerting: Manage alerts
+- oncall: Manage OnCall schedules
+- asserts: Grafana Asserts functionality
+- sift: Sift investigations
+- admin: Administrative tasks
+- pyroscope: Application profiling
+- navigation: Generate deeplinks
+- proxied: Access tools from external MCP servers (like Tempo) through dynamic discovery
+
+Note that some of these capabilities may be disabled. Do not try to use features that are not available via tools.
+`
+	} else {
+		instructions = `
 This server provides access to your Grafana instance and the surrounding ecosystem.
 
 Available Capabilities:
@@ -163,14 +251,29 @@ Available Capabilities:
 - Proxied Tools: Access tools from external MCP servers (like Tempo) through dynamic discovery.
 
 Note that some of these capabilities may be disabled. Do not try to use features that are not available via tools.
-`),
+`
+	}
+
+	// Determine if we need tool capabilities enabled (for dynamic toolsets or proxied tools)
+	toolCapabilitiesEnabled := dt.dynamicTools || (!dt.proxied && transport != "stdio")
+
+	s := server.NewMCPServer("mcp-grafana", mcpgrafana.Version(),
+		server.WithInstructions(instructions),
 		server.WithHooks(hooks),
+		server.WithToolCapabilities(toolCapabilitiesEnabled),
 	)
 
 	// Initialize ToolManager now that server is created
 	stm = mcpgrafana.NewToolManager(sm, s, mcpgrafana.WithProxiedTools(!dt.proxied))
 
-	dt.addTools(s)
+	if dt.dynamicTools {
+		// For dynamic toolsets, start with only discovery tools
+		// Tools will be added dynamically when toolsets are enabled
+		dt.addToolsDynamically(s)
+	} else {
+		dt.addTools(s)
+	}
+
 	return s, stm
 }
 
@@ -366,6 +469,14 @@ func main() {
 	if err := run(transport, *addr, *basePath, *endpointPath, parseLevel(*logLevel), dt, grafanaConfig, tls); err != nil {
 		panic(err)
 	}
+}
+
+// getEnvBool reads a boolean from an environment variable
+func getEnvBool(key string, defaultValue bool) bool {
+	if value, exists := os.LookupEnv(key); exists {
+		return value == "1" || strings.ToLower(value) == "true"
+	}
+	return defaultValue
 }
 
 func parseLevel(level string) slog.Level {
