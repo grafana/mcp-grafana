@@ -62,7 +62,7 @@ services:
       - "3201:3201" # tempo instance 2
 
   alertmanager:
-    image: prom/alertmanager:v0.28.1
+    image: prom/alertmanager:v0.28.1@sha256:27c475db5fb156cab31d5c18a4251ac7ed567746a2483ff264516437a39b15ba
     ports:
       - "9093:9093"
     volumes:
