@@ -36,7 +36,12 @@ func NewProxiedClient(ctx context.Context, datasourceUID, datasourceName, dataso
 		headers["Authorization"] = "Basic " + base64.StdEncoding.EncodeToString([]byte(auth))
 	}
 
-	// Create HTTP transport with authentication headers
+	// Add org ID header if configured
+	if config.OrgID != 0 {
+		headers["X-Grafana-Org-Id"] = fmt.Sprintf("%d", config.OrgID)
+	}
+
+	// Create HTTP transport with authentication and org ID headers
 	slog.DebugContext(ctx, "connecting to MCP server", "datasource", datasourceUID, "url", mcpEndpoint)
 	httpTransport, err := transport.NewStreamableHTTP(
 		mcpEndpoint,
