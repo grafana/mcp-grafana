@@ -22,7 +22,7 @@ services:
       - ./testdata/prometheus-entrypoint.sh:/etc/prometheus/entrypoint.sh
 
   loki:
-    image: grafana/loki:2.9.15@sha256:2fde6baaa4743a6870acb9ab5f15633de35adced3c0e3d61effd2a5f1008f1c3
+    image: grafana/loki:3.5.7@sha256:0eaee7bf39cc83aaef46914fb58f287d4f4c4be6ec96b86c2ed55719a75e49c8
     ports:
       - "3100:3100"
     command: -config.file=/etc/loki/loki-config.yml
