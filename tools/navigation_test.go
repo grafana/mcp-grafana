@@ -32,6 +32,23 @@ func TestGenerateDeeplink(t *testing.T) {
 		assert.Equal(t, "http://localhost:3000/d/abc123", result)
 	})
 
+	t.Run("Dashboard deeplink with public URL", func(t *testing.T) {
+		grafanaCfg := mcpgrafana.GrafanaConfig{
+			URL:       "http://localhost:3000",
+			PublicURL: "https://grafana.example.com",
+		}
+		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), grafanaCfg)
+
+		params := GenerateDeeplinkParams{
+			ResourceType: "dashboard",
+			DashboardUID: stringPtr("abc123"),
+		}
+
+		result, err := generateDeeplink(ctx, params)
+		require.NoError(t, err)
+		assert.Equal(t, "https://grafana.example.com/d/abc123", result)
+	})
+
 	t.Run("Panel deeplink", func(t *testing.T) {
 		panelID := 5
 		params := GenerateDeeplinkParams{
