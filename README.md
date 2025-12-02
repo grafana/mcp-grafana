@@ -352,43 +352,43 @@ When an organization ID is provided, the MCP server will set the `X-Grafana-Org-
 
    - **Docker image**: Use the pre-built Docker image from Docker Hub.
 
-     **Important**: The Docker image's entrypoint is configured to run the MCP server in SSE mode by default, but most users will want to use STDIO mode for direct integration with AI assistants like Claude Desktop:
+     The Docker image defaults to **stdio mode**, which is ideal for direct integration with AI assistants like Claude Desktop via the MCP Registry.
 
-     1. **STDIO Mode**: For stdio mode you must explicitly override the default with `-t stdio` and include the `-i` flag to keep stdin open:
+     1. **STDIO Mode** (default): Include the `-i` flag to keep stdin open:
 
      ```bash
-     docker pull mcp/grafana
+     docker pull grafana/mcp-grafana
      # For local Grafana:
-     docker run --rm -i -e GRAFANA_URL=http://localhost:3000 -e GRAFANA_SERVICE_ACCOUNT_TOKEN=<your service account token> mcp/grafana -t stdio
+     docker run --rm -i -e GRAFANA_URL=http://localhost:3000 -e GRAFANA_SERVICE_ACCOUNT_TOKEN=<your service account token> grafana/mcp-grafana
      # For Grafana Cloud:
-     docker run --rm -i -e GRAFANA_URL=https://myinstance.grafana.net -e GRAFANA_SERVICE_ACCOUNT_TOKEN=<your service account token> mcp/grafana -t stdio
+     docker run --rm -i -e GRAFANA_URL=https://myinstance.grafana.net -e GRAFANA_SERVICE_ACCOUNT_TOKEN=<your service account token> grafana/mcp-grafana
      ```
 
-     2. **SSE Mode**: In this mode, the server runs as an HTTP server that clients connect to. You must expose port 8000 using the `-p` flag:
+     2. **SSE Mode**: Run as an HTTP server. You must specify `-t sse`, bind to `0.0.0.0`, and expose port 8000:
 
      ```bash
-     docker pull mcp/grafana
-     docker run --rm -p 8000:8000 -e GRAFANA_URL=http://localhost:3000 -e GRAFANA_SERVICE_ACCOUNT_TOKEN=<your service account token> mcp/grafana
+     docker pull grafana/mcp-grafana
+     docker run --rm -p 8000:8000 -e GRAFANA_URL=http://localhost:3000 -e GRAFANA_SERVICE_ACCOUNT_TOKEN=<your service account token> grafana/mcp-grafana -t sse --address 0.0.0.0:8000
      ```
 
-     3. **Streamable HTTP Mode**: In this mode, the server operates as an independent process that can handle multiple client connections. You must expose port 8000 using the `-p` flag: For this mode you must explicitly override the default with `-t streamable-http`
+     3. **Streamable HTTP Mode**: For multiple client connections. Specify `-t streamable-http`, bind to `0.0.0.0`, and expose port 8000:
 
      ```bash
-     docker pull mcp/grafana
-     docker run --rm -p 8000:8000 -e GRAFANA_URL=http://localhost:3000 -e GRAFANA_SERVICE_ACCOUNT_TOKEN=<your service account token> mcp/grafana -t streamable-http
+     docker pull grafana/mcp-grafana
+     docker run --rm -p 8000:8000 -e GRAFANA_URL=http://localhost:3000 -e GRAFANA_SERVICE_ACCOUNT_TOKEN=<your service account token> grafana/mcp-grafana -t streamable-http --address 0.0.0.0:8000
      ```
 
      For HTTPS streamable HTTP mode with server TLS certificates:
 
      ```bash
-     docker pull mcp/grafana
+     docker pull grafana/mcp-grafana
      docker run --rm -p 8443:8443 \
        -v /path/to/certs:/certs:ro \
        -e GRAFANA_URL=http://localhost:3000 \
        -e GRAFANA_SERVICE_ACCOUNT_TOKEN=<your service account token> \
-       mcp/grafana \
+       grafana/mcp-grafana \
        -t streamable-http \
-       -addr :8443 \
+       --address 0.0.0.0:8443 \
        --server.tls-cert-file /certs/server.crt \
        --server.tls-key-file /certs/server.key
      ```
@@ -400,6 +400,22 @@ When an organization ID is provided, the MCP server will set the `X-Grafana-Org-
 
      ```bash
      GOBIN="$HOME/go/bin" go install github.com/grafana/mcp-grafana/cmd/mcp-grafana@latest
+     ```
+
+   - **Build container image with ko**: For local development or custom container builds, you can use [ko](https://ko.build/) to build a container image directly from source:
+
+     ```bash
+     # Install ko (if not already installed)
+     go install github.com/google/ko@latest
+
+     # Build and load into local Docker daemon
+     KO_DOCKER_REPO=ko.local ko build ./cmd/mcp-grafana --bare
+
+     # Build for a specific registry
+     KO_DOCKER_REPO=ghcr.io/myorg/mcp-grafana ko build ./cmd/mcp-grafana --bare -t latest
+
+     # Build multi-platform image
+     KO_DOCKER_REPO=docker.io/myorg/mcp-grafana ko build ./cmd/mcp-grafana --platform linux/amd64,linux/arm64 --bare -t v1.0.0
      ```
 
    - **Deploy to Kubernetes using Helm**: use the [Helm chart from the Grafana helm-charts repository](https://github.com/grafana/helm-charts/tree/main/charts/grafana-mcp)
@@ -450,9 +466,7 @@ When an organization ID is provided, the MCP server will set the `X-Grafana-Org-
         "GRAFANA_URL",
         "-e",
         "GRAFANA_SERVICE_ACCOUNT_TOKEN",
-        "mcp/grafana",
-        "-t",
-        "stdio"
+        "grafana/mcp-grafana"
       ],
       "env": {
         "GRAFANA_URL": "http://localhost:3000",  // Or "https://myinstance.grafana.net" for Grafana Cloud
@@ -468,11 +482,9 @@ When an organization ID is provided, the MCP server will set the `X-Grafana-Org-
 }
 ```
 
-> Note: The `-t stdio` argument is essential here because it overrides the default SSE mode in the Docker image.
-
 **Using VSCode with remote MCP server**
 
-If you're using VSCode and running the MCP server in SSE mode (which is the default when using the Docker image without overriding the transport), make sure your `.vscode/settings.json` includes the following:
+If you're running the MCP server in SSE mode, make sure your `.vscode/settings.json` includes the following:
 
 ```json
 "mcp": {
@@ -536,9 +548,7 @@ To use debug mode with the Claude Desktop configuration, update your config as f
         "GRAFANA_URL",
         "-e",
         "GRAFANA_SERVICE_ACCOUNT_TOKEN",
-        "mcp/grafana",
-        "-t",
-        "stdio",
+        "grafana/mcp-grafana",
         "-debug"
       ],
       "env": {
@@ -549,8 +559,6 @@ To use debug mode with the Claude Desktop configuration, update your config as f
   }
 }
 ```
-
-> Note: As with the standard configuration, the `-t stdio` argument is required to override the default SSE mode in the Docker image.
 
 ### TLS Configuration
 
@@ -602,9 +610,7 @@ If your Grafana instance is behind mTLS or requires custom TLS certificates, you
         "GRAFANA_URL",
         "-e",
         "GRAFANA_SERVICE_ACCOUNT_TOKEN",
-        "mcp/grafana",
-        "-t",
-        "stdio",
+        "grafana/mcp-grafana",
         "--tls-cert-file",
         "/certs/client.crt",
         "--tls-key-file",
@@ -714,9 +720,9 @@ docker run --rm -p 8443:8443 \
   -v /path/to/certs:/certs:ro \
   -e GRAFANA_URL=http://localhost:3000 \
   -e GRAFANA_SERVICE_ACCOUNT_TOKEN=<your service account token> \
-  mcp/grafana \
+  grafana/mcp-grafana \
   -t streamable-http \
-  -addr :8443 \
+  --address 0.0.0.0:8443 \
   --server.tls-cert-file /certs/server.crt \
   --server.tls-key-file /certs/server.key
 ```
