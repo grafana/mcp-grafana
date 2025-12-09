@@ -79,6 +79,7 @@ The dashboard tools now include several strategies to manage context window usag
 
 ### Admin
 
+> **Note:** Admin tools are **disabled by default**. To enable them, include `admin` in your `--enabled-tools` flag.
 - **List teams:** View all configured teams in Grafana.
 - **List Users:** View all users in an organization in Grafana.
 - **List all roles:** List all Grafana roles, with an optional filter for delegatable roles.
@@ -248,7 +249,7 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 - `--debug`: Enable debug mode for detailed HTTP request/response logging
 
 **Tool Configuration:**
-- `--enabled-tools`: Comma-separated list of enabled categories - default: all categories enabled - example: "loki,datasources"
+- `--enabled-tools`: Comma-separated list of enabled categories - default: all categories except `admin`, to enable admin tools, add `admin` to the list (e.g., `"search,datasource,...,admin"`)
 - `--disable-search`: Disable search tools
 - `--disable-datasource`: Disable datasource tools
 - `--disable-incident`: Disable incident tools
@@ -263,7 +264,6 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 - `--disable-admin`: Disable admin tools
 - `--disable-pyroscope`: Disable pyroscope tools
 - `--disable-navigation`: Disable navigation tools
-
 ### Read-Only Mode
 
 The `--disable-write` flag provides a way to run the MCP server in read-only mode, preventing any write operations to your Grafana instance. This is useful for scenarios where you want to provide safe, read-only access such as:
