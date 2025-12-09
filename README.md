@@ -79,8 +79,16 @@ The dashboard tools now include several strategies to manage context window usag
 
 ### Admin
 
+> **Note:** Admin tools are **disabled by default**. To enable them, include `admin` in your `--enabled-tools` flag.
 - **List teams:** View all configured teams in Grafana.
 - **List Users:** View all users in an organization in Grafana.
+- **List all roles:** List all Grafana roles, with an optional filter for delegatable roles.
+- **Get role details:** Get details for a specific Grafana role by UID.
+- **List assignments for a role:** List all users, teams, and service accounts assigned to a role.
+- **List roles for users:** List all roles assigned to one or more users.
+- **List roles for teams:** List all roles assigned to one or more teams.
+- **List permissions for a resource:** List all permissions defined for a specific resource (dashboard, datasource, folder, etc.).
+- **Describe a Grafana resource:** List available permissions and assignment capabilities for a resource type.
 
 ### Navigation
 
@@ -170,6 +178,13 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | --------------------------------- | ----------- | ------------------------------------------------------------------- | --------------------------------------- | --------------------------------------------------- |
 | `list_teams`                      | Admin       | List all teams                                                      | `teams:read`                            | `teams:*` or `teams:id:1`                           |
 | `list_users_by_org`               | Admin       | List all users in an organization                                   | `users:read`                            | `global.users:*` or `global.users:id:123`           |
+| `list_all_roles`          | Admin    | List all Grafana roles                              | `roles:read`              | `roles:*`                         |
+| `get_role_details`        | Admin    | Get details for a Grafana role                      | `roles:read`              | `roles:uid:editor`                |
+| `get_role_assignments`    | Admin    | List assignments for a role                         | `roles:read`              | `roles:uid:editor`                |
+| `list_user_roles`         | Admin    | List roles for users                                | `roles:read`              | `global.users:id:123`             |
+| `list_team_roles`         | Admin    | List roles for teams                                | `roles:read`              | `teams:id:7`                      |
+| `get_resource_permissions`| Admin    | List permissions for a resource                     | `permissions:read`        | `dashboards:uid:abcd1234`         |
+| `get_resource_description`| Admin    | Describe a Grafana resource type                    | `permissions:read`        | `dashboards:*`                    |
 | `search_dashboards`               | Search      | Search for dashboards                                               | `dashboards:read`                       | `dashboards:*` or `dashboards:uid:abc123`           |
 | `get_dashboard_by_uid`            | Dashboard   | Get a dashboard by uid                                              | `dashboards:read`                       | `dashboards:uid:abc123`                             |
 | `update_dashboard`                | Dashboard   | Update or create a new dashboard                                    | `dashboards:create`, `dashboards:write` | `dashboards:*`, `folders:*` or `folders:uid:xyz789` |
@@ -234,7 +249,7 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 - `--debug`: Enable debug mode for detailed HTTP request/response logging
 
 **Tool Configuration:**
-- `--enabled-tools`: Comma-separated list of enabled categories - default: all categories enabled - example: "loki,datasources"
+- `--enabled-tools`: Comma-separated list of enabled categories - default: all categories except `admin`, to enable admin tools, add `admin` to the list (e.g., `"search,datasource,...,admin"`)
 - `--disable-search`: Disable search tools
 - `--disable-datasource`: Disable datasource tools
 - `--disable-incident`: Disable incident tools
@@ -249,7 +264,6 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 - `--disable-admin`: Disable admin tools
 - `--disable-pyroscope`: Disable pyroscope tools
 - `--disable-navigation`: Disable navigation tools
-
 ### Read-Only Mode
 
 The `--disable-write` flag provides a way to run the MCP server in read-only mode, preventing any write operations to your Grafana instance. This is useful for scenarios where you want to provide safe, read-only access such as:
