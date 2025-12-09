@@ -23,6 +23,7 @@ func TestAdminToolsUnit(t *testing.T) {
 		require.NotNil(t, ListUserRoles, "ListUserRoles tool should be defined")
 		require.NotNil(t, GetResourcePermissions, "GetResourcePermissions tool should be defined")
 		require.NotNil(t, GetResourceDescription, "GetResourceDescription tool should be defined")
+		require.NotNil(t, ListTeamRoles, "ListTeamRoles tool should be defined")
 
 		// Verify tool metadata
 		assert.Equal(t, "list_users_by_org", ListUsersByOrg.Tool.Name)
