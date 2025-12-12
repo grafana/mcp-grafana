@@ -43,7 +43,7 @@ jobs:
             ANTHROPIC_API_KEY=anthropic:api-key
 
       - name: Analyze tokens
-        uses: sd2k/mcp-tokens-action@882f9342130b9e4c9f3e308c4343fadae7c791bd
+        uses: sd2k/mcp-tokens-action@cc16099a4815fe23d902419de92fadf61b20e67d
 
         with:
           command: ./dist/mcp-grafana
