@@ -135,7 +135,7 @@ func discoverMCPDatasources(ctx context.Context) ([]DiscoveredDatasource, error)
 				slog.DebugContext(ctx, "MCP probe failed", "datasource", c.uid, "error", err)
 				return
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			// MCP is enabled if we get a 200 response
 			if resp.StatusCode == http.StatusOK {
