@@ -7,10 +7,16 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
-	"github.com/go-openapi/runtime"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+)
+
+const (
+	// mcpProbeTimeout is the timeout for probing a single datasource's MCP endpoint.
+	// This is kept short to avoid slow startup when datasources are unreachable.
+	mcpProbeTimeout = 5 * time.Second
 )
 
 // MCPDatasourceConfig defines configuration for a datasource type that supports MCP
@@ -56,42 +62,111 @@ func discoverMCPDatasources(ctx context.Context) ([]DiscoveredDatasource, error)
 	}
 	grafanaBaseURL := config.URL
 
-	// Filter for datasources that support MCP
+	// Filter for datasources that support MCP and collect candidates
+	type candidate struct {
+		uid      string
+		name     string
+		dsType   string
+		dsConfig MCPDatasourceConfig
+	}
+	var candidates []candidate
 	for _, ds := range resp.Payload {
 		// Check if this datasource type supports MCP
 		dsConfig, supported := mcpEnabledDatasources[ds.Type]
 		if !supported {
 			continue
 		}
-
-		// Check if the datasource instance has MCP enabled
-		// We use a DELETE request to probe the MCP endpoint since:
-		// - GET would start an event stream and hang
-		// - POST doesn't work with the Grafana OpenAPI client
-		// - DELETE returns 200 if MCP is enabled, 404 if not
-		_, err := gc.Datasources.DatasourceProxyDELETEByUIDcalls(ds.UID, strings.TrimPrefix(dsConfig.EndpointPath, "/"))
-		if err == nil {
-			// Something strange happened - the server should never return a 202 for this really. Skip.
-			continue
-		}
-		if apiErr, ok := err.(*runtime.APIError); !ok || (ok && !apiErr.IsCode(http.StatusOK)) {
-			// Not a 200 response, MCP not enabled
-			continue
-		}
-
-		// Build the MCP endpoint URL using Grafana's datasource proxy API
-		// Format: <grafana URL>/api/datasources/proxy/uid/<uid><endpoint_path>
-		mcpURL := fmt.Sprintf("%s/api/datasources/proxy/uid/%s%s", grafanaBaseURL, ds.UID, dsConfig.EndpointPath)
-
-		discovered = append(discovered, DiscoveredDatasource{
-			UID:    ds.UID,
-			Name:   ds.Name,
-			Type:   ds.Type,
-			MCPURL: mcpURL,
+		candidates = append(candidates, candidate{
+			uid:      ds.UID,
+			name:     ds.Name,
+			dsType:   ds.Type,
+			dsConfig: dsConfig,
 		})
 	}
 
-	slog.DebugContext(ctx, "discovered MCP datasources", "count", len(discovered))
+	if len(candidates) == 0 {
+		slog.DebugContext(ctx, "no candidate MCP datasources found")
+		return nil, nil
+	}
+
+	// Probe candidates in parallel with timeout
+	type probeResult struct {
+		ds      DiscoveredDatasource
+		enabled bool
+	}
+	results := make(chan probeResult, len(candidates))
+	var wg sync.WaitGroup
+
+	for _, c := range candidates {
+		wg.Add(1)
+		go func(c candidate) {
+			defer wg.Done()
+
+			// Create a context with timeout for this probe
+			probeCtx, cancel := context.WithTimeout(ctx, mcpProbeTimeout)
+			defer cancel()
+
+			// Check if the datasource instance has MCP enabled
+			// We use a DELETE request to probe the MCP endpoint since:
+			// - GET would start an event stream and hang
+			// - POST doesn't work with the Grafana OpenAPI client
+			// - DELETE returns 200 if MCP is enabled, 404 if not
+			//
+			// Note: We create a new client with the probe context to respect the timeout.
+			// The existing client doesn't pass context to HTTP requests properly.
+			probeURL := fmt.Sprintf("%s/api/datasources/proxy/uid/%s%s", grafanaBaseURL, c.uid, c.dsConfig.EndpointPath)
+			req, err := http.NewRequestWithContext(probeCtx, http.MethodDelete, probeURL, nil)
+			if err != nil {
+				slog.DebugContext(ctx, "failed to create probe request", "datasource", c.uid, "error", err)
+				return
+			}
+
+			// Add authentication headers from the Grafana config
+			if config.APIKey != "" {
+				req.Header.Set("Authorization", "Bearer "+config.APIKey)
+			} else if config.BasicAuth != nil {
+				password, _ := config.BasicAuth.Password()
+				req.SetBasicAuth(config.BasicAuth.Username(), password)
+			}
+
+			httpClient := &http.Client{Timeout: mcpProbeTimeout}
+			resp, err := httpClient.Do(req)
+			if err != nil {
+				slog.DebugContext(ctx, "MCP probe failed", "datasource", c.uid, "error", err)
+				return
+			}
+			defer func() { _ = resp.Body.Close() }()
+
+			// MCP is enabled if we get a 200 response
+			if resp.StatusCode == http.StatusOK {
+				mcpURL := fmt.Sprintf("%s/api/datasources/proxy/uid/%s%s", grafanaBaseURL, c.uid, c.dsConfig.EndpointPath)
+				results <- probeResult{
+					ds: DiscoveredDatasource{
+						UID:    c.uid,
+						Name:   c.name,
+						Type:   c.dsType,
+						MCPURL: mcpURL,
+					},
+					enabled: true,
+				}
+			}
+		}(c)
+	}
+
+	// Wait for all probes to complete and close results channel
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	// Collect results
+	for result := range results {
+		if result.enabled {
+			discovered = append(discovered, result.ds)
+		}
+	}
+
+	slog.DebugContext(ctx, "discovered MCP datasources", "count", len(discovered), "candidates", len(candidates))
 	return discovered, nil
 }
 
