@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/go-openapi/strfmt"
 	"github.com/grafana/grafana-openapi-client-go/client"
@@ -149,7 +151,17 @@ type GrafanaConfig struct {
 
 	// TLSConfig holds TLS configuration for all Grafana clients.
 	TLSConfig *TLSConfig
+
+	// Timeout specifies a time limit for requests made by the Grafana client.
+	// A Timeout of zero means no timeout.
+	// Default is 10 seconds.
+	Timeout time.Duration
 }
+
+const (
+	// DefaultGrafanaClientTimeout is the default timeout for Grafana HTTP client requests.
+	DefaultGrafanaClientTimeout = 10 * time.Second
+)
 
 // WithGrafanaConfig adds Grafana configuration to the context.
 // This configuration includes API credentials, debug settings, and TLS options that will be used by all Grafana clients created from this context.
@@ -473,7 +485,13 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 			"skip_verify", tlsConfig.SkipVerify)
 	}
 
-	slog.Debug("Creating Grafana client", "url", parsedURL.Redacted(), "api_key_set", apiKey != "", "basic_auth_set", config.BasicAuth != nil, "org_id", cfg.OrgID)
+	// Determine timeout - use config value if set, otherwise use default
+	timeout := config.Timeout
+	if timeout == 0 {
+		timeout = DefaultGrafanaClientTimeout
+	}
+
+	slog.Debug("Creating Grafana client", "url", parsedURL.Redacted(), "api_key_set", apiKey != "", "basic_auth_set", config.BasicAuth != nil, "org_id", cfg.OrgID, "timeout", timeout)
 	grafanaClient := client.NewHTTPClientWithConfig(strfmt.Default, cfg)
 
 	// Always enable HTTP tracing for context propagation (no-op when no exporter configured)
@@ -484,12 +502,28 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 		if v.Kind() == reflect.Struct {
 			transportField := v.FieldByName("Transport")
 			if transportField.IsValid() && transportField.CanSet() {
-				if rt, ok := transportField.Interface().(http.RoundTripper); ok {
-					// Wrap with user agent first, then otel
-					userAgentWrapped := wrapWithUserAgent(rt)
+				if _, ok := transportField.Interface().(http.RoundTripper); ok {
+					// Wrap with timeout transport, then user agent, then otel
+					timeoutTransport := &http.Transport{
+						DialContext: (&net.Dialer{
+							Timeout:   timeout,
+							KeepAlive: 30 * time.Second,
+						}).DialContext,
+						TLSHandshakeTimeout:   timeout,
+						ResponseHeaderTimeout: timeout,
+						ExpectContinueTimeout: 1 * time.Second,
+						ForceAttemptHTTP2:     true,
+						MaxIdleConns:          100,
+						IdleConnTimeout:       90 * time.Second,
+					}
+					// Copy TLS config if present
+					if cfg.TLSConfig != nil {
+						timeoutTransport.TLSClientConfig = cfg.TLSConfig
+					}
+					userAgentWrapped := wrapWithUserAgent(timeoutTransport)
 					wrapped := otelhttp.NewTransport(userAgentWrapped)
 					transportField.Set(reflect.ValueOf(wrapped))
-					slog.Debug("HTTP tracing and user agent tracking enabled for Grafana client")
+					slog.Debug("HTTP tracing, user agent tracking, and timeout enabled for Grafana client", "timeout", timeout)
 				}
 			}
 		}
