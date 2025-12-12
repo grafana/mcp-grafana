@@ -31,6 +31,7 @@ jobs:
           branch: main
           name: token-baseline
           path: baseline
+          workflow: token-baseline.yml
           if_no_artifact_found: warn
 
       - name: Get secrets
