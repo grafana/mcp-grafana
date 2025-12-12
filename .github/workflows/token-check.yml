@@ -1,0 +1,50 @@
+name: Token Analysis
+
+on:
+  pull_request:
+
+permissions: {}
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Build server
+        run: make build
+
+      - name: Download baseline
+        id: download-baseline
+        uses: dawidd6/action-download-artifact@688efa90a08f3552e7c1420c8313e215164e8b14
+        with:
+          branch: main
+          name: token-baseline
+          path: baseline
+          if_no_artifact_found: warn
+
+      - name: Get secrets
+        id: get-secrets
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        uses: grafana/shared-workflows/actions/get-vault-secrets@a37de51f3d713a30a9e4b21bcdfbd38170020593 # get-vault-secrets/v1.3.0
+        with:
+          # Secrets placed in the ci/repo/grafana/mcp-grafana/<path> path in Vault
+          repo_secrets: |
+            ANTHROPIC_API_KEY=anthropic:api-key
+
+      - name: Analyze tokens
+        uses: sd2k/mcp-tokens-action@0d681121919261929ee3bd667efe6c1e36b882e4
+        with:
+          command: ./dist/mcp-grafana
+          anthropic-api-key: ${{ env.ANTHROPIC_API_KEY }}
+          baseline: ${{ steps.download-baseline.outputs.found_artifact == 'true' && 'baseline/token-baseline.json' || '' }}
+          threshold-percent: "5"
