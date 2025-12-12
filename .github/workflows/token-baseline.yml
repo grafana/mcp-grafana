@@ -35,7 +35,7 @@ jobs:
             ANTHROPIC_API_KEY=anthropic:api-key
 
       - name: Generate token baseline
-        uses: sd2k/mcp-tokens-action@cc16099a4815fe23d902419de92fadf61b20e67d
+        uses: sd2k/mcp-tokens-action@df95d01ebeb7f1cbad6d675fd8f30a448be23f12
         with:
           command: ./dist/mcp-grafana
           anthropic-api-key: ${{ env.ANTHROPIC_API_KEY }}
