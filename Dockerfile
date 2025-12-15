@@ -17,7 +17,7 @@ COPY . .
 RUN go build -o mcp-grafana ./cmd/mcp-grafana
 
 # Final stage
-FROM debian:bullseye-slim@sha256:52927eff8153b563244f98cdc802ba97918afcdf67f9e4867cbf1f7afb3d147b
+FROM debian:bullseye-slim@sha256:5fc1d68d490d6e22a8b182f67d2b9ed800e6dd49e997dd595a46977fe7cece46
 
 LABEL io.modelcontextprotocol.server.name="io.github.grafana/mcp-grafana"
 
