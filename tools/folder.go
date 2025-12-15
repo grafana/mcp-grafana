@@ -12,7 +12,7 @@ import (
 )
 
 type CreateFolderParams struct {
-	Title     string `json:"title" jsonschema:"required,description=The title of the folder. This is a test to check whether the token checker in CI is working correctly. It should pick up a slight increase in tokens. Ideally it would flag the exact tool but I guess that's a lot to ask right now. We can always update it later."`
+	Title     string `json:"title" jsonschema:"required,description=The title of the folder."`
 	UID       string `json:"uid,omitempty" jsonschema:"description=Optional folder UID. If omitted\\, Grafana will generate one."`
 	ParentUID string `json:"parentUid,omitempty" jsonschema:"description=Optional parent folder UID. If set\\, the folder will be created under this parent."`
 }
