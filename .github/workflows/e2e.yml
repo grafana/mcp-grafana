@@ -30,10 +30,10 @@ jobs:
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
 
       - name: Install uv
-        uses: astral-sh/setup-uv@85856786d1ce8acfbcc2f13a5f3fbd6b938f9f41 # v7.1.2
+        uses: astral-sh/setup-uv@681c641aba71e4a1c380be3ab5e12ad51f415867 # v7.1.6
 
       - name: Set up Go
-        uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0
+        uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
         with:
           go-version: "1.24"
           cache: true
@@ -52,7 +52,7 @@ jobs:
             OPENAI_API_KEY=openai:api-key
 
       - name: Start docker-compose services
-        uses: hoverkraft-tech/compose-action@2c655a3602eeee00c12d1f4edd41f7af43baf2e9
+        uses: hoverkraft-tech/compose-action@b7900497f35917d28c6c6635a1ec1cae39f5d7cd
         with:
           compose-file: "docker-compose.yaml"
 
