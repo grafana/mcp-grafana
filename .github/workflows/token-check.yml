@@ -53,5 +53,4 @@ jobs:
           baseline: ${{ steps.download-baseline.outputs.found_artifact == 'true' && 'baseline/token-baseline.json' || '' }}
           threshold-percent: "5"
           comment: true
-          comment-on-pass: true
           github-token: ${{ secrets.GITHUB_TOKEN }}
