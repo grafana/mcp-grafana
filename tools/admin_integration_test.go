@@ -28,12 +28,12 @@ func TestAdminToolsIntegration(t *testing.T) {
 		assert.NotEmpty(t, roles, "Should return at least one role")
 
 		firstRole := roles[0]
-		details, err := getRoleDetails(ctx, GetRoleDetailsParams{RoleUID: firstRole.UID})
+		details, err := getRoleDetails(ctx, GetRoleDetailsParams{RoleUID: *firstRole.UID})
 		require.NoError(t, err)
 		assert.NotNil(t, details)
 		assert.Equal(t, firstRole.UID, details.UID)
 
-		assignments, err := getRoleAssignments(ctx, GetRoleAssignmentsParams{RoleUID: firstRole.UID})
+		assignments, err := getRoleAssignments(ctx, GetRoleAssignmentsParams{RoleUID: *firstRole.UID})
 		require.NoError(t, err)
 		assert.NotNil(t, assignments)
 	})
@@ -60,7 +60,7 @@ func TestAdminToolsIntegration(t *testing.T) {
 
 		if len(teams.Teams) > 0 {
 			firstTeam := teams.Teams[0]
-			teamRoles, err := listTeamRoles(ctx, ListTeamRolesParams{TeamIDs: []int64{firstTeam.ID}})
+			teamRoles, err := listTeamRoles(ctx, ListTeamRolesParams{TeamIDs: []int64{*firstTeam.ID}})
 			require.NoError(t, err)
 			assert.NotNil(t, teamRoles)
 		}
