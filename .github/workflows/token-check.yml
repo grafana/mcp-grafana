@@ -11,6 +11,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
+      pull-requests: write
     steps:
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
@@ -31,6 +32,7 @@ jobs:
           branch: main
           name: token-baseline
           path: baseline
+          workflow: token-baseline.yml
           if_no_artifact_found: warn
 
       - name: Get secrets
@@ -43,10 +45,12 @@ jobs:
             ANTHROPIC_API_KEY=anthropic:api-key
 
       - name: Analyze tokens
-        uses: sd2k/mcp-tokens-action@cc16099a4815fe23d902419de92fadf61b20e67d
+        uses: sd2k/mcp-tokens-action@df95d01ebeb7f1cbad6d675fd8f30a448be23f12
 
         with:
           command: ./dist/mcp-grafana
           anthropic-api-key: ${{ env.ANTHROPIC_API_KEY }}
           baseline: ${{ steps.download-baseline.outputs.found_artifact == 'true' && 'baseline/token-baseline.json' || '' }}
           threshold-percent: "5"
+          comment: true
+          github-token: ${{ secrets.GITHUB_TOKEN }}
