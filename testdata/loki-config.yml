@@ -20,22 +20,29 @@ ingester:
 compactor:
   working_directory: /loki/compactor
 
+common:
+  instance_addr: 127.0.0.1
+  path_prefix: /loki
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
 schema_config:
   configs:
     - from: 2020-10-24
-      store: boltdb-shipper
+      store: tsdb
       object_store: filesystem
-      schema: v11
+      schema: v13
       index:
         prefix: index_
         period: 24h
 
 storage_config:
-  boltdb_shipper:
-    active_index_directory: /loki/boltdb-shipper-active
-    cache_location: /loki/boltdb-shipper-cache
-    cache_ttl: 24h
-    shared_store: filesystem
   filesystem:
     directory: /loki/chunks
 
@@ -55,6 +62,5 @@ ruler:
     enabled: false
 
 limits_config:
-  ruler_evaluation_delay_duration: 0s
   ruler_max_rules_per_rule_group: 100
   ruler_max_rule_groups_per_tenant: 100
