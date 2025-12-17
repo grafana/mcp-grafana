@@ -41,6 +41,13 @@ jobs:
       - name: Install Python dependencies
         run: |
           cd tests
+          # Remove lock file if it has cached paths - uv will regenerate it with git sources
+          if grep -q "\.cache/uv/git-v0/checkouts" uv.lock 2>/dev/null; then
+            echo "Lock file contains cached paths, removing to regenerate..."
+            rm -f uv.lock
+          fi
+          # Clear uv cache to ensure git dependencies are fetched fresh
+          uv cache clean
           uv sync --all-groups
 
       - id: get-secrets
@@ -64,7 +71,12 @@ jobs:
 
       - name: Start MCP server in background
         if: matrix.transport != 'stdio'
-        run: nohup ./dist/mcp-grafana -t ${{ matrix.transport }} > mcp.log 2>&1 &
+        run: |
+          nohup ./dist/mcp-grafana -t ${{ matrix.transport }} > mcp.log 2>&1 &
+          sleep 2  # Give server time to start and create log file
+          if [ ! -f mcp.log ]; then
+            echo "Warning: mcp.log was not created. Server may have failed to start."
+          fi
 
       - name: Run Python e2e tests
         env:
@@ -76,4 +88,4 @@ jobs:
 
       - if: failure() && matrix.transport != 'stdio'
         name: Print MCP logs
-        run: cat mcp.log
+        run: cat mcp.log 2>/dev/null || echo "No log file found (mcp.log)"
