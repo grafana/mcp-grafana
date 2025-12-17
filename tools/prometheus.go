@@ -135,6 +135,11 @@ func parseTime(timeStr string) (time.Time, error) {
 }
 
 func queryPrometheus(ctx context.Context, args QueryPrometheusParams) (model.Value, error) {
+	// Validate PromQL syntax before executing
+	if err := ValidatePromQL(args.Expr); err != nil {
+		return nil, err
+	}
+
 	promClient, err := promClientFromContext(ctx, args.DatasourceUID)
 	if err != nil {
 		return nil, fmt.Errorf("getting Prometheus client: %w", err)
