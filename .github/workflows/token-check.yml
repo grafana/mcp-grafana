@@ -27,7 +27,7 @@ jobs:
 
       - name: Download baseline
         id: download-baseline
-        uses: dawidd6/action-download-artifact@688efa90a08f3552e7c1420c8313e215164e8b14
+        uses: dawidd6/action-download-artifact@0ad3579bfb84ad8f64e7144efd7b21925c40c9eb
         with:
           branch: main
           name: token-baseline
