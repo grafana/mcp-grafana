@@ -678,6 +678,7 @@ var CreateAlertRule = mcpgrafana.MustTool(
 	"Creates a new Grafana alert rule with the specified configuration. Requires title, rule group, folder UID, condition, query data, no data state, execution error state, and duration settings.",
 	createAlertRule,
 	mcp.WithTitleAnnotation("Create alert rule"),
+	mcp.WithDestructiveHintAnnotation(true),
 )
 
 type UpdateAlertRuleParams struct {
@@ -789,6 +790,7 @@ var UpdateAlertRule = mcpgrafana.MustTool(
 	"Updates an existing Grafana alert rule identified by its UID. Requires all the same parameters as creating a new rule.",
 	updateAlertRule,
 	mcp.WithTitleAnnotation("Update alert rule"),
+	mcp.WithDestructiveHintAnnotation(true),
 )
 
 type DeleteAlertRuleParams struct {
@@ -823,6 +825,7 @@ var DeleteAlertRule = mcpgrafana.MustTool(
 	"Deletes a Grafana alert rule by its UID. This action cannot be undone.",
 	deleteAlertRule,
 	mcp.WithTitleAnnotation("Delete alert rule"),
+	mcp.WithDestructiveHintAnnotation(true),
 )
 
 func AddAlertingTools(mcp *server.MCPServer, enableWriteTools bool) {

@@ -106,6 +106,7 @@ var CreateAnnotationTool = mcpgrafana.MustTool(
 	"Create a new annotation on a dashboard or panel.",
 	createAnnotation,
 	mcp.WithTitleAnnotation("Create Annotation"),
+	mcp.WithDestructiveHintAnnotation(true),
 	mcp.WithIdempotentHintAnnotation(false),
 )
 
@@ -141,6 +142,7 @@ var CreateGraphiteAnnotationTool = mcpgrafana.MustTool(
 	"Create an annotation using Graphite annotation format.",
 	createAnnotationGraphiteFormat,
 	mcp.WithTitleAnnotation("Create Graphite Annotation"),
+	mcp.WithDestructiveHintAnnotation(true),
 	mcp.WithIdempotentHintAnnotation(false),
 )
 
@@ -179,6 +181,7 @@ var UpdateAnnotationTool = mcpgrafana.MustTool(
 	"Updates all properties of an annotation that matches the specified ID. Sends a full update (PUT). For partial updates, use patch_annotation instead.",
 	updateAnnotation,
 	mcp.WithTitleAnnotation("Update Annotation"),
+	mcp.WithDestructiveHintAnnotation(true),
 	mcp.WithIdempotentHintAnnotation(false),
 )
 
@@ -227,6 +230,7 @@ var PatchAnnotationTool = mcpgrafana.MustTool(
 	"Updates only the provided properties of an annotation. Fields omitted are not modified. Use update_annotation for full replacement.",
 	patchAnnotation,
 	mcp.WithTitleAnnotation("Patch Annotation"),
+	mcp.WithDestructiveHintAnnotation(true),
 	mcp.WithIdempotentHintAnnotation(false),
 )
 
