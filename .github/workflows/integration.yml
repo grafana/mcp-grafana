@@ -24,7 +24,7 @@ jobs:
       # Do this early so that it can start up in time for the tests to run.
       # We may need to add a wait here.
       - name: Start docker-compose services
-        uses: hoverkraft-tech/compose-action@b7900497f35917d28c6c6635a1ec1cae39f5d7cd
+        uses: hoverkraft-tech/compose-action@d6adfd48d36c17a0e5bf8e46a9264478074ca152
         with:
           compose-file: "docker-compose.yaml"
 
