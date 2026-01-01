@@ -120,6 +120,9 @@ func getPanelImage(ctx context.Context, args GetPanelImageParams) (*mcp.CallTool
 }
 
 func buildRenderURL(baseURL string, args GetPanelImageParams) (string, error) {
+	// Strip trailing slashes from base URL for consistent URL construction
+	baseURL = strings.TrimRight(baseURL, "/")
+
 	// Build the render path
 	renderPath := fmt.Sprintf("/render/d/%s", args.DashboardUID)
 

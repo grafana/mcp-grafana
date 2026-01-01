@@ -115,7 +115,7 @@ func TestBuildRenderURL(t *testing.T) {
 				DashboardUID: "abc123",
 			},
 			contains: []string{
-				"http://localhost:3000//render/d/abc123",
+				"http://localhost:3000/render/d/abc123",
 			},
 		},
 	}
