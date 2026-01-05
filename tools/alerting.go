@@ -678,7 +678,6 @@ var CreateAlertRule = mcpgrafana.MustTool(
 	"Creates a new Grafana alert rule with the specified configuration. Requires title, rule group, folder UID, condition, query data, no data state, execution error state, and duration settings.",
 	createAlertRule,
 	mcp.WithTitleAnnotation("Create alert rule"),
-	mcp.WithDestructiveHintAnnotation(true),
 )
 
 type UpdateAlertRuleParams struct {

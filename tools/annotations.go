@@ -106,8 +106,6 @@ var CreateAnnotationTool = mcpgrafana.MustTool(
 	"Create a new annotation on a dashboard or panel.",
 	createAnnotation,
 	mcp.WithTitleAnnotation("Create Annotation"),
-	mcp.WithDestructiveHintAnnotation(true),
-	mcp.WithIdempotentHintAnnotation(false),
 )
 
 // CreateGraphiteAnnotationInput represents the payload format for creating a Graphite-style annotation.
@@ -142,8 +140,6 @@ var CreateGraphiteAnnotationTool = mcpgrafana.MustTool(
 	"Create an annotation using Graphite annotation format.",
 	createAnnotationGraphiteFormat,
 	mcp.WithTitleAnnotation("Create Graphite Annotation"),
-	mcp.WithDestructiveHintAnnotation(true),
-	mcp.WithIdempotentHintAnnotation(false),
 )
 
 // UpdateAnnotationInput represents the payload used to update an existing annotation by ID.
