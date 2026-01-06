@@ -1,6 +1,6 @@
 services:
   grafana:
-    image: grafana/grafana@sha256:adaf2d6b44c7e2b711b931b98be153778d313806582a24eab21178804fac2976
+    image: grafana/grafana@sha256:2175aaa91c96733d86d31cf270d5310b278654b03f5718c59de12a865380a31f
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "false"
       GF_LOG_LEVEL: debug
