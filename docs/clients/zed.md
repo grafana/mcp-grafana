@@ -1,6 +1,6 @@
 # Zed
 
-Quick start for mcp-grafana with Zed editor.
+This guide helps you set up the `mcp-grafana` server for the Zed editor.
 
 ## Prerequisites
 
@@ -10,16 +10,16 @@ Quick start for mcp-grafana with Zed editor.
 
 ## Configuration
 
-Zed uses `context_servers` in settings.json, not `mcpServers`.
+Zed uses `context_servers` in `settings.json`, not `mcpServers`.
 
-### Add via UI
+### Add using the UI
 
 1. Open Agent Panel (Cmd+Shift+A)
 2. Click Settings (gear icon)
 3. Click "Add Custom Server"
 4. Fill in command and args
 
-### Manual config
+### Manual configuration
 
 Open Zed settings (Cmd+,) and add:
 
@@ -38,9 +38,9 @@ Open Zed settings (Cmd+,) and add:
 }
 ```
 
-Note: Zed uses `context_servers`, not `mcpServers`.
+**Note:** Zed uses `context_servers`, not `mcpServers`.
 
-## Docker config
+## Docker configuration
 
 ```json
 {
@@ -48,9 +48,13 @@ Note: Zed uses `context_servers`, not `mcpServers`.
     "grafana": {
       "command": "docker",
       "args": [
-        "run", "--rm", "-i",
-        "-e", "GRAFANA_URL",
-        "-e", "GRAFANA_SERVICE_ACCOUNT_TOKEN",
+        "run",
+        "--rm",
+        "-i",
+        "-e",
+        "GRAFANA_URL",
+        "-e",
+        "GRAFANA_SERVICE_ACCOUNT_TOKEN",
         "mcp/grafana"
       ],
       "env": {
@@ -62,7 +66,7 @@ Note: Zed uses `context_servers`, not `mcpServers`.
 }
 ```
 
-## Debug Mode
+## Debug mode
 
 ```json
 {
@@ -79,7 +83,7 @@ Note: Zed uses `context_servers`, not `mcpServers`.
 }
 ```
 
-## Verify
+## Verify configuration
 
 1. Open Agent Panel settings
 2. Check indicator next to "grafana"
@@ -88,9 +92,9 @@ Note: Zed uses `context_servers`, not `mcpServers`.
 3. Open Agent Panel chat
 4. Ask: "List my Grafana dashboards"
 
-Tip: Mention "grafana" in your prompt to help the model pick the right tools.
+**Tip:** Mention "grafana" in your prompt to help the model pick the right tools.
 
-## Tool Permissions
+## Tool permissions
 
 By default, Zed asks permission for each tool call. To auto-allow:
 
@@ -102,16 +106,18 @@ By default, Zed asks permission for each tool call. To auto-allow:
 }
 ```
 
-Use with caution — this enables all MCP tools without confirmation.
+Use with caution - this enables all MCP tools without confirmation.
 
 ## Troubleshooting
 
 **Server not starting:**
-- Check Zed logs: Cmd+Shift+P → "zed: open logs"
+
+- Check Zed logs: Cmd+Shift+P -> "zed: open logs"
 - Verify binary path: `which mcp-grafana`
-- Restart Zed after config changes
+- Restart Zed after configuration changes
 
 **Tools not appearing:**
+
 - Zed supports both stdio and HTTP transports
 - For remote servers, use native URL syntax or `mcp-remote` shim
 
@@ -131,13 +137,14 @@ Zed supports direct URL connections for remote MCP servers:
 ```
 
 First start the server:
+
 ```bash
 mcp-grafana --transport sse --address localhost:8000
 ```
 
 **Remote server (mcp-remote fallback):**
 
-Alternative using mcp-remote shim:
+Alternative using `mcp-remote` shim:
 
 ```json
 {
@@ -150,7 +157,7 @@ Alternative using mcp-remote shim:
 }
 ```
 
-## Read-Only Mode
+## Read-only mode
 
 ```json
 {

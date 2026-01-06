@@ -1,6 +1,6 @@
-# VS Code + GitHub Copilot
+# VS Code and GitHub Copilot
 
-Quick start for mcp-grafana with VS Code and GitHub Copilot agent mode.
+This guide helps you set up the `mcp-grafana` server for VS Code with GitHub Copilot agent mode.
 
 ## Prerequisites
 
@@ -10,7 +10,7 @@ Quick start for mcp-grafana with VS Code and GitHub Copilot agent mode.
 
 ## Important
 
-GitHub Copilot in VS Code uses **SSE transport**, not stdio. You need to run mcp-grafana as an HTTP server.
+GitHub Copilot in VS Code uses **SSE transport**, not stdio. You need to run `mcp-grafana` as an HTTP server.
 
 ## Setup
 
@@ -47,7 +47,7 @@ Add to your VS Code settings (`settings.json`):
 
 Or use workspace settings (`.vscode/settings.json`) for project-specific config.
 
-## Debug Mode
+## Debug mode
 
 Start the server with debug logging:
 
@@ -55,9 +55,9 @@ Start the server with debug logging:
 mcp-grafana --transport sse --address localhost:8000 -debug
 ```
 
-## Verify
+## Verify configuration
 
-1. Restart VS Code after config changes
+1. Restart VS Code after configuration changes
 2. Open Copilot Chat (Ctrl+Shift+I)
 3. Type: `@grafana list dashboards`
 4. If tools are available, Copilot will query Grafana
@@ -65,15 +65,17 @@ mcp-grafana --transport sse --address localhost:8000 -debug
 ## Troubleshooting
 
 **Server not connecting:**
+
 - Verify server is running: `curl http://localhost:8000/sse`
 - Check firewall allows port 8000
-- Restart VS Code after config changes
+- Restart VS Code after configuration changes
 
 **Tools not appearing:**
+
 - GitHub Copilot agent mode required (may need Copilot Chat enabled)
 - Check VS Code output panel for MCP errors
 
-## Running as a Service
+## Running as a service
 
 For persistent server, create a systemd unit or launchd plist.
 
@@ -95,11 +97,12 @@ WantedBy=default.target
 ```
 
 Enable with:
+
 ```bash
 systemctl --user enable --now mcp-grafana
 ```
 
-## Read-Only Mode
+## Read-only mode
 
 ```bash
 mcp-grafana --transport sse --address localhost:8000 --disable-write

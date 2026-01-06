@@ -1,6 +1,6 @@
 # Claude Desktop
 
-Quick start for mcp-grafana with Claude Desktop.
+This guide helps you set up the `mcp-grafana` server for Claude Desktop.
 
 ## Prerequisites
 
@@ -22,19 +22,19 @@ Get the latest release from [GitHub Releases](https://github.com/grafana/mcp-gra
 
 ### Option 3: Docker
 
-No installation needed — use Docker in the config below.
+No installation needed - use Docker in the configuration below.
 
 ## Configuration
 
-Edit your Claude Desktop config file:
+Edit your Claude Desktop configuration file:
 
-| OS | Path |
-|----|------|
-| macOS | `~/Library/Application Support/Claude/claude_desktop_config.json` |
-| Windows | `%APPDATA%\Claude\claude_desktop_config.json` |
-| Linux | `~/.config/Claude/claude_desktop_config.json` |
+| OS      | Path                                                              |
+| :------ | :---------------------------------------------------------------- |
+| macOS   | `~/Library/Application Support/Claude/claude_desktop_config.json` |
+| Windows | `%APPDATA%\Claude\claude_desktop_config.json`                     |
+| Linux   | `~/.config/Claude/claude_desktop_config.json`                     |
 
-### Binary config
+### Binary configuration
 
 ```json
 {
@@ -68,7 +68,7 @@ If you get `ENOENT`, use the full path:
 }
 ```
 
-### Docker config
+### Docker configuration
 
 ```json
 {
@@ -76,9 +76,13 @@ If you get `ENOENT`, use the full path:
     "grafana": {
       "command": "docker",
       "args": [
-        "run", "--rm", "-i",
-        "-e", "GRAFANA_URL",
-        "-e", "GRAFANA_SERVICE_ACCOUNT_TOKEN",
+        "run",
+        "--rm",
+        "-i",
+        "-e",
+        "GRAFANA_URL",
+        "-e",
+        "GRAFANA_SERVICE_ACCOUNT_TOKEN",
         "mcp/grafana"
       ],
       "env": {
@@ -90,7 +94,7 @@ If you get `ENOENT`, use the full path:
 }
 ```
 
-## Debug Mode
+## Debug mode
 
 Add `-debug` to args for verbose logging:
 
@@ -109,7 +113,7 @@ Add `-debug` to args for verbose logging:
 }
 ```
 
-## Verify
+## Verify configuration
 
 1. Fully quit Claude Desktop (Cmd+Q on macOS)
 2. Restart Claude Desktop
@@ -118,7 +122,7 @@ Add `-debug` to args for verbose logging:
 
 If it works, you'll see dashboard names. If not, check logs at `~/Library/Logs/Claude/mcp*.log` (macOS).
 
-## Read-Only Mode
+## Read-only mode
 
 Prevent accidental modifications:
 
@@ -137,7 +141,7 @@ Prevent accidental modifications:
 }
 ```
 
-## TLS Client Certificates
+## TLS client certificates
 
 For Grafana instances requiring mTLS:
 
@@ -147,9 +151,12 @@ For Grafana instances requiring mTLS:
     "grafana": {
       "command": "mcp-grafana",
       "args": [
-        "--tls-cert-file", "/path/to/client.crt",
-        "--tls-key-file", "/path/to/client.key",
-        "--tls-ca-file", "/path/to/ca.crt"
+        "--tls-cert-file",
+        "/path/to/client.crt",
+        "--tls-key-file",
+        "/path/to/client.key",
+        "--tls-ca-file",
+        "/path/to/ca.crt"
       ],
       "env": {
         "GRAFANA_URL": "https://secure-grafana.example.com",

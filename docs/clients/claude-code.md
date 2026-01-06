@@ -1,6 +1,6 @@
 # Claude Code
 
-Quick start for mcp-grafana with Claude Code CLI.
+This guide helps you set up the `mcp-grafana` server for the Claude Code CLI.
 
 ## Prerequisites
 
@@ -8,15 +8,15 @@ Quick start for mcp-grafana with Claude Code CLI.
 - Grafana 9.0+ with a service account token
 - `mcp-grafana` binary in your PATH
 
-## One-Command Setup
+## One-command setup
 
 ```bash
 claude mcp add-json "grafana" '{"command":"mcp-grafana","args":[],"env":{"GRAFANA_URL":"http://localhost:3000","GRAFANA_SERVICE_ACCOUNT_TOKEN":"<your-token>"}}'
 ```
 
-## Manual Configuration
+## Manual configuration
 
-Claude Code stores MCP config alongside other settings. Use the CLI to manage servers:
+Claude Code stores MCP configuration alongside other settings. Use the CLI to manage servers.
 
 ```bash
 # List configured servers
@@ -29,15 +29,15 @@ claude mcp add grafana -- mcp-grafana
 claude mcp remove grafana
 ```
 
-## Scope Options
+## Scope options
 
 Claude Code supports three scopes for MCP servers:
 
-| Scope | Description |
-|-------|-------------|
+| Scope             | Description                              |
+| :---------------- | :--------------------------------------- |
 | `local` (default) | Available only to you in current project |
-| `project` | Shared with team via `.mcp.json` file |
-| `user` | Available to you across all projects |
+| `project`         | Shared with team via `.mcp.json` file    |
+| `user`            | Available to you across all projects     |
 
 ```bash
 # Add for all your projects
@@ -47,7 +47,7 @@ claude mcp add grafana --scope user -- mcp-grafana
 claude mcp add grafana --scope local -- mcp-grafana
 ```
 
-## Full Config with Environment Variables
+## Full configuration with environment variables
 
 ```bash
 claude mcp add-json "grafana" '{
@@ -60,7 +60,7 @@ claude mcp add-json "grafana" '{
 }'
 ```
 
-## Docker Setup
+## Docker setup
 
 ```bash
 claude mcp add-json "grafana" '{
@@ -73,7 +73,7 @@ claude mcp add-json "grafana" '{
 }'
 ```
 
-## Debug Mode
+## Debug mode
 
 ```bash
 claude mcp add-json "grafana" '{
@@ -87,20 +87,23 @@ claude mcp add-json "grafana" '{
 ```
 
 Then run Claude Code with debug output:
+
 ```bash
 claude --debug
 ```
 
-## Verify
+## Verify configuration
 
-1. Start a new Claude Code session:
-   ```bash
-   claude
-   ```
-2. Ask: "List my Grafana dashboards"
-3. Claude should use the Grafana MCP tools automatically
+1.  Start a new Claude Code session:
 
-## View Current Config
+    ```bash
+    claude
+    ```
+
+2.  Ask: "List my Grafana dashboards"
+3.  Claude should use the Grafana MCP tools automatically
+
+## View current configuration
 
 ```bash
 claude mcp list --json
@@ -109,14 +112,16 @@ claude mcp list --json
 ## Troubleshooting
 
 **Server not found:**
+
 - Verify binary path: `which mcp-grafana`
-- Use full path in config if needed
+- Use full path in configuration if needed
 
 **Permission errors:**
+
 - Check Grafana service account token
 - Verify token has required RBAC permissions
 
-## Read-Only Mode
+## Read-only mode
 
 ```bash
 claude mcp add-json "grafana" '{

@@ -1,6 +1,6 @@
 # Gemini CLI
 
-Quick start for mcp-grafana with Google Gemini CLI.
+This guide helps you set up the `mcp-grafana` server for the Google Gemini CLI.
 
 ## Prerequisites
 
@@ -10,9 +10,9 @@ Quick start for mcp-grafana with Google Gemini CLI.
 
 ## Configuration
 
-Gemini CLI stores MCP config in `~/.gemini/settings.json`.
+Gemini CLI stores MCP configuration in `~/.gemini/settings.json`.
 
-### Manual config
+### Manual configuration
 
 Create or edit `~/.gemini/settings.json`:
 
@@ -41,7 +41,7 @@ gemini mcp list
 gemini mcp remove grafana
 ```
 
-## Docker config
+## Docker configuration
 
 ```json
 {
@@ -49,9 +49,13 @@ gemini mcp remove grafana
     "grafana": {
       "command": "docker",
       "args": [
-        "run", "--rm", "-i",
-        "-e", "GRAFANA_URL",
-        "-e", "GRAFANA_SERVICE_ACCOUNT_TOKEN",
+        "run",
+        "--rm",
+        "-i",
+        "-e",
+        "GRAFANA_URL",
+        "-e",
+        "GRAFANA_SERVICE_ACCOUNT_TOKEN",
         "mcp/grafana"
       ],
       "env": {
@@ -63,7 +67,7 @@ gemini mcp remove grafana
 }
 ```
 
-## Debug Mode
+## Debug mode
 
 ```json
 {
@@ -80,7 +84,7 @@ gemini mcp remove grafana
 }
 ```
 
-## Verify
+## Verify configuration
 
 1. Start Gemini CLI:
    ```bash
@@ -89,18 +93,19 @@ gemini mcp remove grafana
 2. Run `/mcp` to see available tools
 3. Ask: "List my Grafana dashboards"
 
-## SSE Transport (Remote Server)
+## SSE transport (remote server)
 
 For HTTP-based connection:
 
-1. Start mcp-grafana as HTTP server:
+1. Start `mcp-grafana` as an HTTP server:
+
    ```bash
    export GRAFANA_URL="http://localhost:3000"
    export GRAFANA_SERVICE_ACCOUNT_TOKEN="<your-token>"
    mcp-grafana --transport sse --address localhost:8000
    ```
 
-2. Configure in settings.json:
+2. Configure in `settings.json`:
    ```json
    {
      "mcpServers": {
@@ -114,15 +119,17 @@ For HTTP-based connection:
 ## Troubleshooting
 
 **Tools not appearing:**
+
 - Run `/mcp` in Gemini CLI to check registered tools
-- Verify settings.json syntax
+- Verify `settings.json` syntax
 - Check binary path: `which mcp-grafana`
 
 **Connection errors:**
-- Verify GRAFANA_URL is reachable
+
+- Verify `GRAFANA_URL` is reachable
 - Check token permissions in Grafana
 
-## Read-Only Mode
+## Read-only mode
 
 ```json
 {

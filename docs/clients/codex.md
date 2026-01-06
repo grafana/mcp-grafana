@@ -1,6 +1,6 @@
 # Codex CLI
 
-Quick start for mcp-grafana with OpenAI Codex CLI.
+This guide helps you set up the `mcp-grafana` server for the OpenAI Codex CLI.
 
 ## Prerequisites
 
@@ -8,9 +8,9 @@ Quick start for mcp-grafana with OpenAI Codex CLI.
 - Grafana 9.0+ with a service account token
 - `mcp-grafana` binary in your PATH
 
-## Important: TOML Format
+## Important: TOML format
 
-Codex uses **TOML** config, not JSON. Config file: `~/.codex/config.toml`
+Codex uses **TOML** configuration, not JSON. Configuration file: `~/.codex/config.toml`
 
 ## Configuration
 
@@ -21,6 +21,7 @@ codex mcp add grafana -- mcp-grafana
 ```
 
 Add environment variables:
+
 ```bash
 codex mcp add grafana \
   --env GRAFANA_URL=http://localhost:3000 \
@@ -28,7 +29,7 @@ codex mcp add grafana \
   -- mcp-grafana
 ```
 
-### Manual config
+### Manual configuration
 
 Create or edit `~/.codex/config.toml`:
 
@@ -39,9 +40,9 @@ args = []
 env = { GRAFANA_URL = "http://localhost:3000", GRAFANA_SERVICE_ACCOUNT_TOKEN = "<your-token>" }
 ```
 
-Note: Use `mcp_servers` (underscore, not hyphen).
+**Note:** Use `mcp_servers` (underscore, not hyphen).
 
-## Debug Mode
+## Debug mode
 
 ```toml
 [mcp_servers.grafana]
@@ -50,7 +51,7 @@ args = ["-debug"]
 env = { GRAFANA_URL = "http://localhost:3000", GRAFANA_SERVICE_ACCOUNT_TOKEN = "<your-token>" }
 ```
 
-## Docker Setup
+## Docker setup
 
 ```toml
 [mcp_servers.grafana]
@@ -59,7 +60,7 @@ args = ["run", "--rm", "-i", "-e", "GRAFANA_URL", "-e", "GRAFANA_SERVICE_ACCOUNT
 env = { GRAFANA_URL = "http://host.docker.internal:3000", GRAFANA_SERVICE_ACCOUNT_TOKEN = "<your-token>" }
 ```
 
-## Verify
+## Verify configuration
 
 ```bash
 # List configured servers
@@ -74,7 +75,7 @@ codex
 
 Then ask: "List my Grafana dashboards"
 
-## Timeout Settings
+## Timeout settings
 
 If Grafana operations take time, increase timeout:
 
@@ -90,14 +91,16 @@ tool_timeout_ms = 120000
 ## Troubleshooting
 
 **Server not found in Codex:**
+
 - Verify TOML syntax (no trailing commas, use `=` not `:`)
 - Check key is `mcp_servers` not `mcp-servers`
-- Restart Codex after config changes
+- Restart Codex after configuration changes
 
 **Config shared across CLI and IDE:**
 Codex CLI and VS Code extension share `~/.codex/config.toml`. A syntax error breaks both.
 
 **Common TOML mistakes:**
+
 ```toml
 # Wrong - JSON-style
 env = {"GRAFANA_URL": "http://localhost:3000"}
@@ -106,7 +109,7 @@ env = {"GRAFANA_URL": "http://localhost:3000"}
 env = { GRAFANA_URL = "http://localhost:3000" }
 ```
 
-## Read-Only Mode
+## Read-only mode
 
 ```toml
 [mcp_servers.grafana]

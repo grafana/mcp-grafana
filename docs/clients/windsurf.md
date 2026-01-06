@@ -1,6 +1,6 @@
 # Windsurf
 
-Quick start for mcp-grafana with Windsurf.
+This guide helps you set up the `mcp-grafana` server for Windsurf.
 
 ## Prerequisites
 
@@ -10,20 +10,20 @@ Quick start for mcp-grafana with Windsurf.
 
 ## Configuration
 
-Config file location:
+Configuration file location:
 
-| OS | Path |
-|----|------|
-| macOS/Linux | `~/.codeium/windsurf/mcp_config.json` |
-| Windows | `%USERPROFILE%\.codeium\windsurf\mcp_config.json` |
+| OS          | Path                                              |
+| :---------- | :------------------------------------------------ |
+| macOS/Linux | `~/.codeium/windsurf/mcp_config.json`             |
+| Windows     | `%USERPROFILE%\.codeium\windsurf\mcp_config.json` |
 
-### Add via UI
+### Add using the UI
 
-1. Open Windsurf Settings (Cmd+Shift+P → "Open Windsurf Settings")
+1. Open Windsurf Settings (Cmd+Shift+P -> "Open Windsurf Settings")
 2. Scroll to Cascade section
 3. Click "Add Server" or "View raw config"
 
-### Manual config
+### Manual configuration
 
 Create or edit `~/.codeium/windsurf/mcp_config.json`:
 
@@ -42,7 +42,7 @@ Create or edit `~/.codeium/windsurf/mcp_config.json`:
 }
 ```
 
-### Docker config
+### Docker configuration
 
 ```json
 {
@@ -50,9 +50,13 @@ Create or edit `~/.codeium/windsurf/mcp_config.json`:
     "grafana": {
       "command": "docker",
       "args": [
-        "run", "--rm", "-i",
-        "-e", "GRAFANA_URL",
-        "-e", "GRAFANA_SERVICE_ACCOUNT_TOKEN",
+        "run",
+        "--rm",
+        "-i",
+        "-e",
+        "GRAFANA_URL",
+        "-e",
+        "GRAFANA_SERVICE_ACCOUNT_TOKEN",
         "mcp/grafana"
       ],
       "env": {
@@ -64,7 +68,7 @@ Create or edit `~/.codeium/windsurf/mcp_config.json`:
 }
 ```
 
-## Debug Mode
+## Debug mode
 
 ```json
 {
@@ -81,7 +85,7 @@ Create or edit `~/.codeium/windsurf/mcp_config.json`:
 }
 ```
 
-## Verify
+## Verify configuration
 
 1. Click the refresh button after adding the server
 2. Open Cascade view
@@ -89,17 +93,18 @@ Create or edit `~/.codeium/windsurf/mcp_config.json`:
 4. Grafana should show green status
 5. Ask: "List my Grafana dashboards"
 
-## Tool Limit
+## Tool limit
 
 Windsurf limits total MCP tools to 100. If you hit the limit:
 
-1. Go to Windsurf Settings → Manage plugins
+1. Go to Windsurf Settings -> Manage plugins
 2. Disable unused servers
 3. Toggle off individual tools you don't need
 
 ## Troubleshooting
 
 **Server not connecting:**
+
 - Press refresh button in Cascade settings
 - Check JSON syntax
 - Verify binary exists: `which mcp-grafana`
@@ -124,7 +129,7 @@ Then configure with `serverUrl`:
 }
 ```
 
-## Read-Only Mode
+## Read-only mode
 
 ```json
 {
