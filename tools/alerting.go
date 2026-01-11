@@ -570,18 +570,19 @@ var ListContactPoints = mcpgrafana.MustTool(
 )
 
 type CreateAlertRuleParams struct {
-	Title        string            `json:"title" jsonschema:"required,description=The title of the alert rule"`
-	RuleGroup    string            `json:"ruleGroup" jsonschema:"required,description=The rule group name"`
-	FolderUID    string            `json:"folderUID" jsonschema:"required,description=The folder UID where the rule will be created"`
-	Condition    string            `json:"condition" jsonschema:"required,description=The query condition identifier (e.g. 'A'\\, 'B')"`
-	Data         any               `json:"data" jsonschema:"required,description=Array of query data objects"`
-	NoDataState  string            `json:"noDataState" jsonschema:"required,description=State when no data (NoData\\, Alerting\\, OK)"`
-	ExecErrState string            `json:"execErrState" jsonschema:"required,description=State on execution error (NoData\\, Alerting\\, OK)"`
-	For          string            `json:"for" jsonschema:"required,description=Duration before alert fires (e.g. '5m')"`
-	Annotations  map[string]string `json:"annotations,omitempty" jsonschema:"description=Optional annotations"`
-	Labels       map[string]string `json:"labels,omitempty" jsonschema:"description=Optional labels"`
-	UID          *string           `json:"uid,omitempty" jsonschema:"description=Optional UID for the alert rule"`
-	OrgID        int64             `json:"orgID" jsonschema:"required,description=The organization ID"`
+	Title             string            `json:"title" jsonschema:"required,description=The title of the alert rule"`
+	RuleGroup         string            `json:"ruleGroup" jsonschema:"required,description=The rule group name"`
+	FolderUID         string            `json:"folderUID" jsonschema:"required,description=The folder UID where the rule will be created"`
+	Condition         string            `json:"condition" jsonschema:"required,description=The query condition identifier (e.g. 'A'\\, 'B')"`
+	Data              any               `json:"data" jsonschema:"required,description=Array of query data objects"`
+	NoDataState       string            `json:"noDataState" jsonschema:"required,description=State when no data (NoData\\, Alerting\\, OK)"`
+	ExecErrState      string            `json:"execErrState" jsonschema:"required,description=State on execution error (NoData\\, Alerting\\, OK)"`
+	For               string            `json:"for" jsonschema:"required,description=Duration before alert fires (e.g. '5m')"`
+	Annotations       map[string]string `json:"annotations,omitempty" jsonschema:"description=Optional annotations"`
+	Labels            map[string]string `json:"labels,omitempty" jsonschema:"description=Optional labels"`
+	UID               *string           `json:"uid,omitempty" jsonschema:"description=Optional UID for the alert rule"`
+	OrgID             int64             `json:"orgID" jsonschema:"required,description=The organization ID"`
+	DisableProvenance *bool             `json:"disableProvenance,omitempty" jsonschema:"description=If true\\, the alert will remain editable in the Grafana UI (sets X-Disable-Provenance header). If false\\, the alert will be marked with provenance 'api' and locked from UI editing. Defaults to true."`
 }
 
 func (p CreateAlertRuleParams) validate() error {
@@ -665,6 +666,17 @@ func createAlertRule(ctx context.Context, args CreateAlertRuleParams) (*models.P
 	}
 
 	params := provisioning.NewPostAlertRuleParams().WithContext(ctx).WithBody(rule)
+
+	// Default to disabling provenance so alerts remain UI-editable
+	disableProvenance := true
+	if args.DisableProvenance != nil {
+		disableProvenance = *args.DisableProvenance
+	}
+	if disableProvenance {
+		header := "true"
+		params = params.WithXDisableProvenance(&header)
+	}
+
 	response, err := c.Provisioning.PostAlertRule(params)
 	if err != nil {
 		return nil, fmt.Errorf("create alert rule: %w", err)
@@ -681,18 +693,19 @@ var CreateAlertRule = mcpgrafana.MustTool(
 )
 
 type UpdateAlertRuleParams struct {
-	UID          string            `json:"uid" jsonschema:"required,description=The UID of the alert rule to update"`
-	Title        string            `json:"title" jsonschema:"required,description=The title of the alert rule"`
-	RuleGroup    string            `json:"ruleGroup" jsonschema:"required,description=The rule group name"`
-	FolderUID    string            `json:"folderUID" jsonschema:"required,description=The folder UID where the rule will be created"`
-	Condition    string            `json:"condition" jsonschema:"required,description=The query condition identifier (e.g. 'A'\\, 'B')"`
-	Data         any               `json:"data" jsonschema:"required,description=Array of query data objects"`
-	NoDataState  string            `json:"noDataState" jsonschema:"required,description=State when no data (NoData\\, Alerting\\, OK)"`
-	ExecErrState string            `json:"execErrState" jsonschema:"required,description=State on execution error (NoData\\, Alerting\\, OK)"`
-	For          string            `json:"for" jsonschema:"required,description=Duration before alert fires (e.g. '5m')"`
-	Annotations  map[string]string `json:"annotations,omitempty" jsonschema:"description=Optional annotations"`
-	Labels       map[string]string `json:"labels,omitempty" jsonschema:"description=Optional labels"`
-	OrgID        int64             `json:"orgID" jsonschema:"required,description=The organization ID"`
+	UID               string            `json:"uid" jsonschema:"required,description=The UID of the alert rule to update"`
+	Title             string            `json:"title" jsonschema:"required,description=The title of the alert rule"`
+	RuleGroup         string            `json:"ruleGroup" jsonschema:"required,description=The rule group name"`
+	FolderUID         string            `json:"folderUID" jsonschema:"required,description=The folder UID where the rule will be created"`
+	Condition         string            `json:"condition" jsonschema:"required,description=The query condition identifier (e.g. 'A'\\, 'B')"`
+	Data              any               `json:"data" jsonschema:"required,description=Array of query data objects"`
+	NoDataState       string            `json:"noDataState" jsonschema:"required,description=State when no data (NoData\\, Alerting\\, OK)"`
+	ExecErrState      string            `json:"execErrState" jsonschema:"required,description=State on execution error (NoData\\, Alerting\\, OK)"`
+	For               string            `json:"for" jsonschema:"required,description=Duration before alert fires (e.g. '5m')"`
+	Annotations       map[string]string `json:"annotations,omitempty" jsonschema:"description=Optional annotations"`
+	Labels            map[string]string `json:"labels,omitempty" jsonschema:"description=Optional labels"`
+	OrgID             int64             `json:"orgID" jsonschema:"required,description=The organization ID"`
+	DisableProvenance *bool             `json:"disableProvenance,omitempty" jsonschema:"description=If true\\, the alert will remain editable in the Grafana UI (sets X-Disable-Provenance header). If false\\, the alert will be marked with provenance 'api' and locked from UI editing. Defaults to true."`
 }
 
 func (p UpdateAlertRuleParams) validate() error {
@@ -776,6 +789,17 @@ func updateAlertRule(ctx context.Context, args UpdateAlertRuleParams) (*models.P
 	}
 
 	params := provisioning.NewPutAlertRuleParams().WithContext(ctx).WithUID(args.UID).WithBody(rule)
+
+	// Default to disabling provenance so alerts remain UI-editable
+	disableProvenance := true
+	if args.DisableProvenance != nil {
+		disableProvenance = *args.DisableProvenance
+	}
+	if disableProvenance {
+		header := "true"
+		params = params.WithXDisableProvenance(&header)
+	}
+
 	response, err := c.Provisioning.PutAlertRule(params)
 	if err != nil {
 		return nil, fmt.Errorf("update alert rule %s: %w", args.UID, err)
