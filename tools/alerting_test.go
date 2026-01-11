@@ -8,6 +8,7 @@ package tools
 import (
 	"testing"
 
+	"github.com/grafana/grafana-openapi-client-go/models"
 	"github.com/stretchr/testify/require"
 )
 
@@ -805,6 +806,604 @@ func TestAlertingTools_DeleteAlertRule(t *testing.T) {
 		require.Error(t, err)
 		require.Empty(t, result)
 		require.Contains(t, err.Error(), "uid is required")
+	})
+}
+
+func TestAlertingTools_DisableProvenance(t *testing.T) {
+	t.Run("create alert rule with disableProvenance true (default)", func(t *testing.T) {
+		ctx := newTestContext()
+
+		sampleData := []any{
+			map[string]any{
+				"refId":     "A",
+				"queryType": "",
+				"model": map[string]any{
+					"expr":          "vector(1)",
+					"intervalMs":    1000,
+					"maxDataPoints": 43200,
+					"refId":         "A",
+				},
+				"datasourceUid": "prometheus",
+				"relativeTimeRange": map[string]any{
+					"from": 600,
+					"to":   0,
+				},
+			},
+			map[string]any{
+				"refId":         "B",
+				"queryType":     "",
+				"datasourceUid": "__expr__",
+				"conditions": []any{
+					map[string]any{
+						"evaluator": map[string]any{
+							"params": []any{0, 0},
+							"type":   "gt",
+						},
+						"operator": map[string]any{
+							"type": "and",
+						},
+						"query": map[string]any{
+							"params": []any{},
+						},
+						"reducer": map[string]any{
+							"params": []any{},
+							"type":   "avg",
+						},
+						"type": "query",
+					},
+				},
+				"expression": "A",
+				"model": map[string]any{
+					"conditions": []any{
+						map[string]any{
+							"evaluator": map[string]any{
+								"params": []any{0, 0},
+								"type":   "gt",
+							},
+							"operator": map[string]any{
+								"type": "and",
+							},
+							"query": map[string]any{
+								"params": []any{},
+							},
+							"reducer": map[string]any{
+								"params": []any{},
+								"type":   "avg",
+							},
+							"type": "query",
+						},
+					},
+					"datasource": map[string]any{
+						"name": "Expression",
+						"type": "__expr__",
+						"uid":  "__expr__",
+					},
+					"expression":    "A",
+					"intervalMs":    1000,
+					"maxDataPoints": 43200,
+					"refId":         "B",
+					"type":          "classic_conditions",
+				},
+			},
+		}
+
+		testUID := "test_provenance_default"
+		params := CreateAlertRuleParams{
+			Title:        "Test Provenance Default",
+			RuleGroup:    "test-group",
+			FolderUID:    "tests",
+			Condition:    "B",
+			Data:         sampleData,
+			NoDataState:  "OK",
+			ExecErrState: "OK",
+			For:          "5m",
+			UID:          &testUID,
+			OrgID:        1,
+			// DisableProvenance not set - should default to true
+		}
+
+		result, err := createAlertRule(ctx, params)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		require.Equal(t, testUID, result.UID)
+
+		// Verify the alert was created without provenance (should be empty string)
+		require.Empty(t, result.Provenance, "expected empty provenance when disableProvenance defaults to true")
+
+		// Clean up
+		_, cleanupErr := deleteAlertRule(ctx, DeleteAlertRuleParams{UID: testUID})
+		require.NoError(t, cleanupErr)
+	})
+
+	t.Run("create alert rule with disableProvenance explicitly true", func(t *testing.T) {
+		ctx := newTestContext()
+
+		sampleData := []any{
+			map[string]any{
+				"refId":     "A",
+				"queryType": "",
+				"model": map[string]any{
+					"expr":          "vector(1)",
+					"intervalMs":    1000,
+					"maxDataPoints": 43200,
+					"refId":         "A",
+				},
+				"datasourceUid": "prometheus",
+				"relativeTimeRange": map[string]any{
+					"from": 600,
+					"to":   0,
+				},
+			},
+			map[string]any{
+				"refId":         "B",
+				"queryType":     "",
+				"datasourceUid": "__expr__",
+				"expression":    "A",
+				"model": map[string]any{
+					"conditions": []any{
+						map[string]any{
+							"evaluator": map[string]any{
+								"params": []any{0, 0},
+								"type":   "gt",
+							},
+							"operator": map[string]any{
+								"type": "and",
+							},
+							"query": map[string]any{
+								"params": []any{},
+							},
+							"reducer": map[string]any{
+								"params": []any{},
+								"type":   "avg",
+							},
+							"type": "query",
+						},
+					},
+					"datasource": map[string]any{
+						"name": "Expression",
+						"type": "__expr__",
+						"uid":  "__expr__",
+					},
+					"expression":    "A",
+					"intervalMs":    1000,
+					"maxDataPoints": 43200,
+					"refId":         "B",
+					"type":          "classic_conditions",
+				},
+			},
+		}
+
+		disableProvenance := true
+		testUID := "test_provenance_true"
+		params := CreateAlertRuleParams{
+			Title:             "Test Provenance True",
+			RuleGroup:         "test-group",
+			FolderUID:         "tests",
+			Condition:         "B",
+			Data:              sampleData,
+			NoDataState:       "OK",
+			ExecErrState:      "OK",
+			For:               "5m",
+			UID:               &testUID,
+			OrgID:             1,
+			DisableProvenance: &disableProvenance,
+		}
+
+		result, err := createAlertRule(ctx, params)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		require.Equal(t, testUID, result.UID)
+
+		// Verify the alert was created without provenance (should be empty string)
+		require.Empty(t, result.Provenance, "expected empty provenance when disableProvenance is true")
+
+		// Clean up
+		_, cleanupErr := deleteAlertRule(ctx, DeleteAlertRuleParams{UID: testUID})
+		require.NoError(t, cleanupErr)
+	})
+
+	t.Run("create alert rule with disableProvenance false", func(t *testing.T) {
+		ctx := newTestContext()
+
+		sampleData := []any{
+			map[string]any{
+				"refId":     "A",
+				"queryType": "",
+				"model": map[string]any{
+					"expr":          "vector(1)",
+					"intervalMs":    1000,
+					"maxDataPoints": 43200,
+					"refId":         "A",
+				},
+				"datasourceUid": "prometheus",
+				"relativeTimeRange": map[string]any{
+					"from": 600,
+					"to":   0,
+				},
+			},
+			map[string]any{
+				"refId":         "B",
+				"queryType":     "",
+				"datasourceUid": "__expr__",
+				"expression":    "A",
+				"model": map[string]any{
+					"conditions": []any{
+						map[string]any{
+							"evaluator": map[string]any{
+								"params": []any{0, 0},
+								"type":   "gt",
+							},
+							"operator": map[string]any{
+								"type": "and",
+							},
+							"query": map[string]any{
+								"params": []any{},
+							},
+							"reducer": map[string]any{
+								"params": []any{},
+								"type":   "avg",
+							},
+							"type": "query",
+						},
+					},
+					"datasource": map[string]any{
+						"name": "Expression",
+						"type": "__expr__",
+						"uid":  "__expr__",
+					},
+					"expression":    "A",
+					"intervalMs":    1000,
+					"maxDataPoints": 43200,
+					"refId":         "B",
+					"type":          "classic_conditions",
+				},
+			},
+		}
+
+		disableProvenance := false
+		testUID := "test_provenance_false"
+		params := CreateAlertRuleParams{
+			Title:             "Test Provenance False",
+			RuleGroup:         "test-group",
+			FolderUID:         "tests",
+			Condition:         "B",
+			Data:              sampleData,
+			NoDataState:       "OK",
+			ExecErrState:      "OK",
+			For:               "5m",
+			UID:               &testUID,
+			OrgID:             1,
+			DisableProvenance: &disableProvenance,
+		}
+
+		result, err := createAlertRule(ctx, params)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		require.Equal(t, testUID, result.UID)
+
+		// Verify the alert was created with provenance set to "api" (locked from UI editing)
+		require.Equal(t, models.Provenance("api"), result.Provenance, "expected provenance 'api' when disableProvenance is false")
+
+		// Clean up
+		_, cleanupErr := deleteAlertRule(ctx, DeleteAlertRuleParams{UID: testUID})
+		require.NoError(t, cleanupErr)
+	})
+
+	t.Run("update alert rule with disableProvenance true (default)", func(t *testing.T) {
+		ctx := newTestContext()
+
+		sampleData := []any{
+			map[string]any{
+				"refId":     "A",
+				"queryType": "",
+				"model": map[string]any{
+					"expr":          "vector(1)",
+					"intervalMs":    1000,
+					"maxDataPoints": 43200,
+					"refId":         "A",
+				},
+				"datasourceUid": "prometheus",
+				"relativeTimeRange": map[string]any{
+					"from": 600,
+					"to":   0,
+				},
+			},
+			map[string]any{
+				"refId":         "B",
+				"queryType":     "",
+				"datasourceUid": "__expr__",
+				"expression":    "A",
+				"model": map[string]any{
+					"conditions": []any{
+						map[string]any{
+							"evaluator": map[string]any{
+								"params": []any{0, 0},
+								"type":   "gt",
+							},
+							"operator": map[string]any{
+								"type": "and",
+							},
+							"query": map[string]any{
+								"params": []any{},
+							},
+							"reducer": map[string]any{
+								"params": []any{},
+								"type":   "avg",
+							},
+							"type": "query",
+						},
+					},
+					"datasource": map[string]any{
+						"name": "Expression",
+						"type": "__expr__",
+						"uid":  "__expr__",
+					},
+					"expression":    "A",
+					"intervalMs":    1000,
+					"maxDataPoints": 43200,
+					"refId":         "B",
+					"type":          "classic_conditions",
+				},
+			},
+		}
+
+		// First create an alert
+		testUID := "test_update_provenance_default"
+		createParams := CreateAlertRuleParams{
+			Title:        "Test Update Provenance Default",
+			RuleGroup:    "test-group",
+			FolderUID:    "tests",
+			Condition:    "B",
+			Data:         sampleData,
+			NoDataState:  "OK",
+			ExecErrState: "OK",
+			For:          "5m",
+			UID:          &testUID,
+			OrgID:        1,
+		}
+
+		created, err := createAlertRule(ctx, createParams)
+		require.NoError(t, err)
+		require.NotNil(t, created)
+
+		// Now update it without setting disableProvenance (should default to true)
+		updateParams := UpdateAlertRuleParams{
+			UID:          testUID,
+			Title:        "Test Update Provenance Default - Updated",
+			RuleGroup:    "test-group",
+			FolderUID:    "tests",
+			Condition:    "B",
+			Data:         sampleData,
+			NoDataState:  "OK",
+			ExecErrState: "OK",
+			For:          "10m",
+			OrgID:        1,
+			// DisableProvenance not set - should default to true
+		}
+
+		updated, err := updateAlertRule(ctx, updateParams)
+		require.NoError(t, err)
+		require.NotNil(t, updated)
+		require.Equal(t, "Test Update Provenance Default - Updated", *updated.Title)
+
+		// Verify the alert was updated without provenance (should be empty string)
+		require.Empty(t, updated.Provenance, "expected empty provenance when disableProvenance defaults to true")
+
+		// Clean up
+		_, cleanupErr := deleteAlertRule(ctx, DeleteAlertRuleParams{UID: testUID})
+		require.NoError(t, cleanupErr)
+	})
+
+	t.Run("update alert rule with disableProvenance explicitly true", func(t *testing.T) {
+		ctx := newTestContext()
+
+		sampleData := []any{
+			map[string]any{
+				"refId":     "A",
+				"queryType": "",
+				"model": map[string]any{
+					"expr":          "vector(1)",
+					"intervalMs":    1000,
+					"maxDataPoints": 43200,
+					"refId":         "A",
+				},
+				"datasourceUid": "prometheus",
+				"relativeTimeRange": map[string]any{
+					"from": 600,
+					"to":   0,
+				},
+			},
+			map[string]any{
+				"refId":         "B",
+				"queryType":     "",
+				"datasourceUid": "__expr__",
+				"expression":    "A",
+				"model": map[string]any{
+					"conditions": []any{
+						map[string]any{
+							"evaluator": map[string]any{
+								"params": []any{0, 0},
+								"type":   "gt",
+							},
+							"operator": map[string]any{
+								"type": "and",
+							},
+							"query": map[string]any{
+								"params": []any{},
+							},
+							"reducer": map[string]any{
+								"params": []any{},
+								"type":   "avg",
+							},
+							"type": "query",
+						},
+					},
+					"datasource": map[string]any{
+						"name": "Expression",
+						"type": "__expr__",
+						"uid":  "__expr__",
+					},
+					"expression":    "A",
+					"intervalMs":    1000,
+					"maxDataPoints": 43200,
+					"refId":         "B",
+					"type":          "classic_conditions",
+				},
+			},
+		}
+
+		// First create an alert
+		testUID := "test_update_provenance"
+		createParams := CreateAlertRuleParams{
+			Title:        "Test Update Provenance",
+			RuleGroup:    "test-group",
+			FolderUID:    "tests",
+			Condition:    "B",
+			Data:         sampleData,
+			NoDataState:  "OK",
+			ExecErrState: "OK",
+			For:          "5m",
+			UID:          &testUID,
+			OrgID:        1,
+		}
+
+		created, err := createAlertRule(ctx, createParams)
+		require.NoError(t, err)
+		require.NotNil(t, created)
+
+		// Now update it with disableProvenance true
+		disableProvenance := true
+		updateParams := UpdateAlertRuleParams{
+			UID:               testUID,
+			Title:             "Test Update Provenance - Updated",
+			RuleGroup:         "test-group",
+			FolderUID:         "tests",
+			Condition:         "B",
+			Data:              sampleData,
+			NoDataState:       "OK",
+			ExecErrState:      "OK",
+			For:               "10m",
+			OrgID:             1,
+			DisableProvenance: &disableProvenance,
+		}
+
+		updated, err := updateAlertRule(ctx, updateParams)
+		require.NoError(t, err)
+		require.NotNil(t, updated)
+		require.Equal(t, "Test Update Provenance - Updated", *updated.Title)
+
+		// Verify the alert was updated without provenance (should be empty string)
+		require.Empty(t, updated.Provenance, "expected empty provenance when disableProvenance is true")
+
+		// Clean up
+		_, cleanupErr := deleteAlertRule(ctx, DeleteAlertRuleParams{UID: testUID})
+		require.NoError(t, cleanupErr)
+	})
+
+	t.Run("update alert rule with disableProvenance false", func(t *testing.T) {
+		ctx := newTestContext()
+
+		sampleData := []any{
+			map[string]any{
+				"refId":     "A",
+				"queryType": "",
+				"model": map[string]any{
+					"expr":          "vector(1)",
+					"intervalMs":    1000,
+					"maxDataPoints": 43200,
+					"refId":         "A",
+				},
+				"datasourceUid": "prometheus",
+				"relativeTimeRange": map[string]any{
+					"from": 600,
+					"to":   0,
+				},
+			},
+			map[string]any{
+				"refId":         "B",
+				"queryType":     "",
+				"datasourceUid": "__expr__",
+				"expression":    "A",
+				"model": map[string]any{
+					"conditions": []any{
+						map[string]any{
+							"evaluator": map[string]any{
+								"params": []any{0, 0},
+								"type":   "gt",
+							},
+							"operator": map[string]any{
+								"type": "and",
+							},
+							"query": map[string]any{
+								"params": []any{},
+							},
+							"reducer": map[string]any{
+								"params": []any{},
+								"type":   "avg",
+							},
+							"type": "query",
+						},
+					},
+					"datasource": map[string]any{
+						"name": "Expression",
+						"type": "__expr__",
+						"uid":  "__expr__",
+					},
+					"expression":    "A",
+					"intervalMs":    1000,
+					"maxDataPoints": 43200,
+					"refId":         "B",
+					"type":          "classic_conditions",
+				},
+			},
+		}
+
+		// First create an alert without provenance
+		testUID := "test_update_provenance_false"
+		createParams := CreateAlertRuleParams{
+			Title:        "Test Update Provenance False",
+			RuleGroup:    "test-group",
+			FolderUID:    "tests",
+			Condition:    "B",
+			Data:         sampleData,
+			NoDataState:  "OK",
+			ExecErrState: "OK",
+			For:          "5m",
+			UID:          &testUID,
+			OrgID:        1,
+		}
+
+		created, err := createAlertRule(ctx, createParams)
+		require.NoError(t, err)
+		require.NotNil(t, created)
+
+		// Now update it with disableProvenance false (should set provenance to "api")
+		disableProvenance := false
+		updateParams := UpdateAlertRuleParams{
+			UID:               testUID,
+			Title:             "Test Update Provenance False - Updated",
+			RuleGroup:         "test-group",
+			FolderUID:         "tests",
+			Condition:         "B",
+			Data:              sampleData,
+			NoDataState:       "OK",
+			ExecErrState:      "OK",
+			For:               "10m",
+			OrgID:             1,
+			DisableProvenance: &disableProvenance,
+		}
+
+		updated, err := updateAlertRule(ctx, updateParams)
+		require.NoError(t, err)
+		require.NotNil(t, updated)
+		require.Equal(t, "Test Update Provenance False - Updated", *updated.Title)
+
+		// Verify the alert was updated with provenance set to "api" (locked from UI editing)
+		require.Equal(t, models.Provenance("api"), updated.Provenance, "expected provenance 'api' when disableProvenance is false")
+
+		// Clean up
+		_, cleanupErr := deleteAlertRule(ctx, DeleteAlertRuleParams{UID: testUID})
+		require.NoError(t, cleanupErr)
 	})
 }
 
