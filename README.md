@@ -66,7 +66,7 @@ The dashboard tools now include several strategies to manage context window usag
 ### Alerting
 
 - **List and fetch alert rule information:** View alert rules and their statuses (firing/normal/error/etc.) in Grafana. Supports both Grafana-managed rules and datasource-managed rules from Prometheus or Loki datasources.
-- **Create and update alert rules:** Create new alert rules or modify existing ones. By default, alerts created via MCP remain editable in the Grafana UI. Set `disableProvenance: false` to mark alerts as API-provisioned (locked from UI editing).
+- **Create and update alert rules:** Create new alert rules or modify existing ones.
 - **Delete alert rules:** Remove alert rules by UID.
 - **List contact points:** View configured notification contact points in Grafana. Supports both Grafana-managed contact points and receivers from external Alertmanager datasources (Prometheus Alertmanager, Mimir, Cortex).
 
