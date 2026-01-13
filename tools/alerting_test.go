@@ -8,6 +8,7 @@ package tools
 import (
 	"testing"
 
+	"github.com/grafana/grafana-openapi-client-go/models"
 	"github.com/stretchr/testify/require"
 )
 
@@ -507,16 +508,16 @@ func TestAlertingTools_CreateAlertRule(t *testing.T) {
 		ctx := newTestContext()
 
 		// Sample query data that matches Grafana's expected format
-		sampleData := []any{
-			map[string]any{
-				"refId":     "A",
-				"queryType": "",
-				"relativeTimeRange": map[string]any{
-					"from": 600,
-					"to":   0,
+		sampleData := []*models.AlertQuery{
+			{
+				RefID:     "A",
+				QueryType: "",
+				RelativeTimeRange: &models.RelativeTimeRange{
+					From: 600,
+					To:   0,
 				},
-				"datasourceUid": "prometheus-uid",
-				"model": map[string]any{
+				DatasourceUID: "prometheus-uid",
+				Model: map[string]any{
 					"expr":          "up",
 					"hide":          false,
 					"intervalMs":    1000,
@@ -524,15 +525,15 @@ func TestAlertingTools_CreateAlertRule(t *testing.T) {
 					"refId":         "A",
 				},
 			},
-			map[string]any{
-				"refId":     "B",
-				"queryType": "",
-				"relativeTimeRange": map[string]any{
-					"from": 0,
-					"to":   0,
+			{
+				RefID:     "B",
+				QueryType: "",
+				RelativeTimeRange: &models.RelativeTimeRange{
+					From: 0,
+					To:   0,
 				},
-				"datasourceUid": "__expr__",
-				"model": map[string]any{
+				DatasourceUID: "__expr__",
+				Model: map[string]any{
 					"conditions": []any{
 						map[string]any{
 							"evaluator": map[string]any{
@@ -630,16 +631,16 @@ func TestAlertingTools_UpdateAlertRule(t *testing.T) {
 		ctx := newTestContext()
 
 		// First create a rule to update
-		sampleData := []any{
-			map[string]any{
-				"refId":     "A",
-				"queryType": "",
-				"relativeTimeRange": map[string]any{
-					"from": 600,
-					"to":   0,
+		sampleData := []*models.AlertQuery{
+			{
+				RefID:     "A",
+				QueryType: "",
+				RelativeTimeRange: &models.RelativeTimeRange{
+					From: 600,
+					To:   0,
 				},
-				"datasourceUid": "prometheus-uid",
-				"model": map[string]any{
+				DatasourceUID: "prometheus-uid",
+				Model: map[string]any{
 					"expr":          "up",
 					"hide":          false,
 					"intervalMs":    1000,
@@ -709,7 +710,7 @@ func TestAlertingTools_UpdateAlertRule(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "tests",
 			Condition:    "A",
-			Data:         []any{},
+			Data:         []*models.AlertQuery{},
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
@@ -740,16 +741,16 @@ func TestAlertingTools_DeleteAlertRule(t *testing.T) {
 		ctx := newTestContext()
 
 		// First create a rule to delete
-		sampleData := []any{
-			map[string]any{
-				"refId":     "A",
-				"queryType": "",
-				"relativeTimeRange": map[string]any{
-					"from": 600,
-					"to":   0,
+		sampleData := []*models.AlertQuery{
+			{
+				RefID:     "A",
+				QueryType: "",
+				RelativeTimeRange: &models.RelativeTimeRange{
+					From: 600,
+					To:   0,
 				},
-				"datasourceUid": "prometheus-uid",
-				"model": map[string]any{
+				DatasourceUID: "prometheus-uid",
+				Model: map[string]any{
 					"expr":          "up",
 					"hide":          false,
 					"intervalMs":    1000,
