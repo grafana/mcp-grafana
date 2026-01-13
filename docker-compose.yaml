@@ -1,15 +1,22 @@
 services:
   grafana:
-    image: grafana/grafana@sha256:adaf2d6b44c7e2b711b931b98be153778d313806582a24eab21178804fac2976
+    image: grafana/grafana@sha256:2175aaa91c96733d86d31cf270d5310b278654b03f5718c59de12a865380a31f
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "false"
       GF_LOG_LEVEL: debug
       GF_SERVER_ROUTER_LOGGING: "true"
+      GF_RENDERING_SERVER_URL: http://renderer:8081/render
+      GF_RENDERING_CALLBACK_URL: http://grafana:3000/
     ports:
       - 3000:3000/tcp
     volumes:
       - ./testdata/provisioning:/etc/grafana/provisioning
       - ./testdata/dashboards:/var/lib/grafana/dashboards
+
+  renderer:
+    image: grafana/grafana-image-renderer:latest
+    ports:
+      - 8081
 
   prometheus:
     image: prom/prometheus@sha256:2b6f734e372c1b4717008f7d0a0152316aedd4d13ae17ef1e3268dbfaf68041b
@@ -31,7 +38,7 @@ services:
       - ./testdata/loki-rules.yml:/loki/rules/fake/loki-rules.yml
 
   promtail:
-    image: grafana/promtail:2.9.17@sha256:b28495fdab552b183428c5b5cebbf258231fc5f00be7724be2bc091ad21ac390
+    image: grafana/promtail:3.6.3@sha256:130b6dd63277d99ce87560c0266c0c30d07bc15ba0a8a590d42215465d4f5363
     volumes:
       - ./testdata/promtail-config.yml:/etc/promtail/config.yml
       - /var/run/docker.sock:/var/run/docker.sock
