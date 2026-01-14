@@ -792,6 +792,7 @@ var UpdateAlertRule = mcpgrafana.MustTool(
 	"Updates an existing Grafana alert rule identified by its UID. Requires all the same parameters as creating a new rule.",
 	updateAlertRule,
 	mcp.WithTitleAnnotation("Update alert rule"),
+	mcp.WithDestructiveHintAnnotation(true),
 )
 
 type DeleteAlertRuleParams struct {
@@ -826,6 +827,7 @@ var DeleteAlertRule = mcpgrafana.MustTool(
 	"Deletes a Grafana alert rule by its UID. This action cannot be undone.",
 	deleteAlertRule,
 	mcp.WithTitleAnnotation("Delete alert rule"),
+	mcp.WithDestructiveHintAnnotation(true),
 )
 
 func AddAlertingTools(mcp *server.MCPServer, enableWriteTools bool) {
