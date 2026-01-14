@@ -94,7 +94,7 @@ func getPanelImage(ctx context.Context, args GetPanelImageParams) (*mcp.CallTool
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		if resp.StatusCode == http.StatusNotFound {
-			return nil, fmt.Errorf("image renderer not available. Ensure the Grafana Image Renderer plugin is installed and configured. See https://grafana.com/docs/grafana/latest/setup-grafana/image-rendering/")
+			return nil, fmt.Errorf("image renderer not available. Ensure the Grafana Image Renderer service is installed and configured. See https://grafana.com/docs/grafana/latest/setup-grafana/image-rendering/")
 		}
 		return nil, fmt.Errorf("failed to render image: HTTP %d - %s", resp.StatusCode, string(body))
 	}
@@ -197,7 +197,7 @@ func createHTTPClient(config mcpgrafana.GrafanaConfig) (*http.Client, error) {
 
 var GetPanelImage = mcpgrafana.MustTool(
 	"get_panel_image",
-	"Render a Grafana dashboard panel or full dashboard as a PNG image. Returns the image as base64 encoded data. Requires the Grafana Image Renderer plugin to be installed. Use this for generating visual snapshots of dashboards for reports\\, alerts\\, or presentations.",
+	"Render a Grafana dashboard panel or full dashboard as a PNG image. Returns the image as base64 encoded data. Requires the Grafana Image Renderer service to be installed. Use this for generating visual snapshots of dashboards for reports\\, alerts\\, or presentations.",
 	getPanelImage,
 	mcp.WithTitleAnnotation("Get panel or dashboard image"),
 	mcp.WithIdempotentHintAnnotation(true),

@@ -108,6 +108,10 @@ The dashboard tools now include several strategies to manage context window usag
 - **Patch Annotation:** Update only specific fields of an annotation (partial update).
 - **Get Annotation Tags:** List available annotation tags with optional filtering.
 
+### Rendering
+
+- **Get panel or dashboard image:** Render a Grafana dashboard panel or full dashboard as a PNG image. Returns the image as base64 encoded data for use in reports, alerts, or presentations. Supports customizing dimensions, time range, theme, scale, and dashboard variables.
+  - _Note: Requires the [Grafana Image Renderer](https://grafana.com/docs/grafana/latest/setup-grafana/image-rendering/) service to be installed and configured._
 
 The list of tools is configurable, so you can choose which tools you want to make available to the MCP client.
 This is useful if you don't use certain functionality or if you don't want to take up too much of the context window.
@@ -234,6 +238,7 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `update_annotation`               | Annotations | Replace all fields of an annotation (full update)                   | `annotations:write`                     | `annotations:*`                                     |
 | `patch_annotation`                | Annotations | Update only specific fields of an annotation (partial update)       | `annotations:write`                     | `annotations:*`                                     |
 | `get_annotation_tags`             | Annotations | List annotation tags with optional filtering                        | `annotations:read`                      | `annotations:*`                                     |
+| `get_panel_image`                 | Rendering   | Render a dashboard panel or full dashboard as a PNG image           | `dashboards:read`                       | `dashboards:uid:abc123`                             |
 
 ## CLI Flags Reference
 
@@ -264,6 +269,7 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 - `--disable-admin`: Disable admin tools
 - `--disable-pyroscope`: Disable pyroscope tools
 - `--disable-navigation`: Disable navigation tools
+- `--disable-rendering`: Disable rendering tools (panel/dashboard image export)
 ### Read-Only Mode
 
 The `--disable-write` flag provides a way to run the MCP server in read-only mode, preventing any write operations to your Grafana instance. This is useful for scenarios where you want to provide safe, read-only access such as:
