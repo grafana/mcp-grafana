@@ -3,9 +3,10 @@ package tools
 import (
 	"context"
 	"fmt"
+	"strconv"
+
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
-	"strconv"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
 
@@ -106,6 +107,7 @@ var CreateAnnotationTool = mcpgrafana.MustTool(
 	"Create a new annotation on a dashboard or panel.",
 	createAnnotation,
 	mcp.WithTitleAnnotation("Create Annotation"),
+	mcp.WithIdempotentHintAnnotation(false),
 )
 
 // CreateGraphiteAnnotationInput represents the payload format for creating a Graphite-style annotation.
@@ -140,6 +142,7 @@ var CreateGraphiteAnnotationTool = mcpgrafana.MustTool(
 	"Create an annotation using Graphite annotation format.",
 	createAnnotationGraphiteFormat,
 	mcp.WithTitleAnnotation("Create Graphite Annotation"),
+	mcp.WithIdempotentHintAnnotation(false),
 )
 
 // UpdateAnnotationInput represents the payload used to update an existing annotation by ID.

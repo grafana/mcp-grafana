@@ -43,6 +43,7 @@ var CreateFolder = mcpgrafana.MustTool(
 	"Create a Grafana folder. Provide a title and optional UID. Returns the created folder.",
 	createFolder,
 	mcp.WithTitleAnnotation("Create folder"),
+	mcp.WithIdempotentHintAnnotation(false),
 )
 
 func AddFolderTools(mcp *server.MCPServer, enableWriteTools bool) {
