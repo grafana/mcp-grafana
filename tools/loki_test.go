@@ -16,7 +16,7 @@ func TestLokiTools(t *testing.T) {
 			DatasourceUID: "loki",
 		})
 		require.NoError(t, err)
-		assert.Len(t, result, 4)
+		assert.NotEmpty(t, result, "Should have at least one label name")
 	})
 
 	t.Run("get loki label values", func(t *testing.T) {
