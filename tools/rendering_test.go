@@ -255,7 +255,7 @@ func TestGetPanelImage(t *testing.T) {
 
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "image renderer not available")
-		assert.Contains(t, err.Error(), "Grafana Image Renderer plugin")
+		assert.Contains(t, err.Error(), "Grafana Image Renderer service")
 	})
 
 	t.Run("Server error returns error message", func(t *testing.T) {
