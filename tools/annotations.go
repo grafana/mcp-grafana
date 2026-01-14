@@ -3,9 +3,10 @@ package tools
 import (
 	"context"
 	"fmt"
+	"strconv"
+
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
-	"strconv"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
 
@@ -179,6 +180,7 @@ var UpdateAnnotationTool = mcpgrafana.MustTool(
 	"Updates all properties of an annotation that matches the specified ID. Sends a full update (PUT). For partial updates, use patch_annotation instead.",
 	updateAnnotation,
 	mcp.WithTitleAnnotation("Update Annotation"),
+	mcp.WithDestructiveHintAnnotation(true),
 	mcp.WithIdempotentHintAnnotation(false),
 )
 
@@ -227,6 +229,7 @@ var PatchAnnotationTool = mcpgrafana.MustTool(
 	"Updates only the provided properties of an annotation. Fields omitted are not modified. Use update_annotation for full replacement.",
 	patchAnnotation,
 	mcp.WithTitleAnnotation("Patch Annotation"),
+	mcp.WithDestructiveHintAnnotation(true),
 	mcp.WithIdempotentHintAnnotation(false),
 )
 

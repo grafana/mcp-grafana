@@ -44,7 +44,6 @@ var CreateFolder = mcpgrafana.MustTool(
 	createFolder,
 	mcp.WithTitleAnnotation("Create folder"),
 	mcp.WithIdempotentHintAnnotation(false),
-	mcp.WithReadOnlyHintAnnotation(false),
 )
 
 func AddFolderTools(mcp *server.MCPServer, enableWriteTools bool) {
