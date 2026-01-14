@@ -508,16 +508,16 @@ func TestAlertingTools_CreateAlertRule(t *testing.T) {
 		ctx := newTestContext()
 
 		// Sample query data that matches Grafana's expected format
-		sampleData := []any{
-			map[string]any{
-				"refId":     "A",
-				"queryType": "",
-				"relativeTimeRange": map[string]any{
-					"from": 600,
-					"to":   0,
+		sampleData := []*models.AlertQuery{
+			{
+				RefID:     "A",
+				QueryType: "",
+				RelativeTimeRange: &models.RelativeTimeRange{
+					From: 600,
+					To:   0,
 				},
-				"datasourceUid": "prometheus-uid",
-				"model": map[string]any{
+				DatasourceUID: "prometheus-uid",
+				Model: map[string]any{
 					"expr":          "up",
 					"hide":          false,
 					"intervalMs":    1000,
@@ -525,15 +525,15 @@ func TestAlertingTools_CreateAlertRule(t *testing.T) {
 					"refId":         "A",
 				},
 			},
-			map[string]any{
-				"refId":     "B",
-				"queryType": "",
-				"relativeTimeRange": map[string]any{
-					"from": 0,
-					"to":   0,
+			{
+				RefID:     "B",
+				QueryType: "",
+				RelativeTimeRange: &models.RelativeTimeRange{
+					From: 0,
+					To:   0,
 				},
-				"datasourceUid": "__expr__",
-				"model": map[string]any{
+				DatasourceUID: "__expr__",
+				Model: map[string]any{
 					"conditions": []any{
 						map[string]any{
 							"evaluator": map[string]any{
@@ -631,16 +631,16 @@ func TestAlertingTools_UpdateAlertRule(t *testing.T) {
 		ctx := newTestContext()
 
 		// First create a rule to update
-		sampleData := []any{
-			map[string]any{
-				"refId":     "A",
-				"queryType": "",
-				"relativeTimeRange": map[string]any{
-					"from": 600,
-					"to":   0,
+		sampleData := []*models.AlertQuery{
+			{
+				RefID:     "A",
+				QueryType: "",
+				RelativeTimeRange: &models.RelativeTimeRange{
+					From: 600,
+					To:   0,
 				},
-				"datasourceUid": "prometheus-uid",
-				"model": map[string]any{
+				DatasourceUID: "prometheus-uid",
+				Model: map[string]any{
 					"expr":          "up",
 					"hide":          false,
 					"intervalMs":    1000,
@@ -710,7 +710,7 @@ func TestAlertingTools_UpdateAlertRule(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "tests",
 			Condition:    "A",
-			Data:         []any{},
+			Data:         []*models.AlertQuery{},
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
@@ -741,16 +741,16 @@ func TestAlertingTools_DeleteAlertRule(t *testing.T) {
 		ctx := newTestContext()
 
 		// First create a rule to delete
-		sampleData := []any{
-			map[string]any{
-				"refId":     "A",
-				"queryType": "",
-				"relativeTimeRange": map[string]any{
-					"from": 600,
-					"to":   0,
+		sampleData := []*models.AlertQuery{
+			{
+				RefID:     "A",
+				QueryType: "",
+				RelativeTimeRange: &models.RelativeTimeRange{
+					From: 600,
+					To:   0,
 				},
-				"datasourceUid": "prometheus-uid",
-				"model": map[string]any{
+				DatasourceUID: "prometheus-uid",
+				Model: map[string]any{
 					"expr":          "up",
 					"hide":          false,
 					"intervalMs":    1000,
@@ -809,83 +809,72 @@ func TestAlertingTools_DeleteAlertRule(t *testing.T) {
 	})
 }
 
-func TestAlertingTools_DisableProvenance(t *testing.T) {
-	t.Run("create alert rule with disableProvenance true (default)", func(t *testing.T) {
-		ctx := newTestContext()
-
-		sampleData := []any{
-			map[string]any{
-				"refId":     "A",
-				"queryType": "",
-				"model": map[string]any{
-					"expr":          "vector(1)",
-					"intervalMs":    1000,
-					"maxDataPoints": 43200,
-					"refId":         "A",
-				},
-				"datasourceUid": "prometheus",
-				"relativeTimeRange": map[string]any{
-					"from": 600,
-					"to":   0,
-				},
+// createTestAlertQueries creates sample alert query data for testing DisableProvenance
+func createTestAlertQueries() []*models.AlertQuery {
+	return []*models.AlertQuery{
+		{
+			RefID:     "A",
+			QueryType: "",
+			RelativeTimeRange: &models.RelativeTimeRange{
+				From: 600,
+				To:   0,
 			},
-			map[string]any{
-				"refId":         "B",
-				"queryType":     "",
-				"datasourceUid": "__expr__",
+			DatasourceUID: "prometheus",
+			Model: map[string]any{
+				"expr":          "vector(1)",
+				"hide":          false,
+				"intervalMs":    1000,
+				"maxDataPoints": 43200,
+				"refId":         "A",
+			},
+		},
+		{
+			RefID:     "B",
+			QueryType: "",
+			RelativeTimeRange: &models.RelativeTimeRange{
+				From: 0,
+				To:   0,
+			},
+			DatasourceUID: "__expr__",
+			Model: map[string]any{
 				"conditions": []any{
 					map[string]any{
 						"evaluator": map[string]any{
-							"params": []any{0, 0},
+							"params": []any{0},
 							"type":   "gt",
 						},
 						"operator": map[string]any{
 							"type": "and",
 						},
 						"query": map[string]any{
-							"params": []any{},
+							"params": []any{"A"},
 						},
 						"reducer": map[string]any{
 							"params": []any{},
-							"type":   "avg",
+							"type":   "last",
 						},
 						"type": "query",
 					},
 				},
-				"expression": "A",
-				"model": map[string]any{
-					"conditions": []any{
-						map[string]any{
-							"evaluator": map[string]any{
-								"params": []any{0, 0},
-								"type":   "gt",
-							},
-							"operator": map[string]any{
-								"type": "and",
-							},
-							"query": map[string]any{
-								"params": []any{},
-							},
-							"reducer": map[string]any{
-								"params": []any{},
-								"type":   "avg",
-							},
-							"type": "query",
-						},
-					},
-					"datasource": map[string]any{
-						"name": "Expression",
-						"type": "__expr__",
-						"uid":  "__expr__",
-					},
-					"expression":    "A",
-					"intervalMs":    1000,
-					"maxDataPoints": 43200,
-					"refId":         "B",
-					"type":          "classic_conditions",
+				"datasource": map[string]any{
+					"type": "__expr__",
+					"uid":  "__expr__",
 				},
+				"hide":          false,
+				"intervalMs":    1000,
+				"maxDataPoints": 43200,
+				"refId":         "B",
+				"type":          "classic_conditions",
 			},
-		}
+		},
+	}
+}
+
+func TestAlertingTools_DisableProvenance(t *testing.T) {
+	t.Run("create alert rule with disableProvenance true (default)", func(t *testing.T) {
+		ctx := newTestContext()
+
+		sampleData := createTestAlertQueries()
 
 		testUID := "test_provenance_default"
 		params := CreateAlertRuleParams{
@@ -918,60 +907,7 @@ func TestAlertingTools_DisableProvenance(t *testing.T) {
 	t.Run("create alert rule with disableProvenance explicitly true", func(t *testing.T) {
 		ctx := newTestContext()
 
-		sampleData := []any{
-			map[string]any{
-				"refId":     "A",
-				"queryType": "",
-				"model": map[string]any{
-					"expr":          "vector(1)",
-					"intervalMs":    1000,
-					"maxDataPoints": 43200,
-					"refId":         "A",
-				},
-				"datasourceUid": "prometheus",
-				"relativeTimeRange": map[string]any{
-					"from": 600,
-					"to":   0,
-				},
-			},
-			map[string]any{
-				"refId":         "B",
-				"queryType":     "",
-				"datasourceUid": "__expr__",
-				"expression":    "A",
-				"model": map[string]any{
-					"conditions": []any{
-						map[string]any{
-							"evaluator": map[string]any{
-								"params": []any{0, 0},
-								"type":   "gt",
-							},
-							"operator": map[string]any{
-								"type": "and",
-							},
-							"query": map[string]any{
-								"params": []any{},
-							},
-							"reducer": map[string]any{
-								"params": []any{},
-								"type":   "avg",
-							},
-							"type": "query",
-						},
-					},
-					"datasource": map[string]any{
-						"name": "Expression",
-						"type": "__expr__",
-						"uid":  "__expr__",
-					},
-					"expression":    "A",
-					"intervalMs":    1000,
-					"maxDataPoints": 43200,
-					"refId":         "B",
-					"type":          "classic_conditions",
-				},
-			},
-		}
+		sampleData := createTestAlertQueries()
 
 		disableProvenance := true
 		testUID := "test_provenance_true"
@@ -1005,60 +941,7 @@ func TestAlertingTools_DisableProvenance(t *testing.T) {
 	t.Run("create alert rule with disableProvenance false", func(t *testing.T) {
 		ctx := newTestContext()
 
-		sampleData := []any{
-			map[string]any{
-				"refId":     "A",
-				"queryType": "",
-				"model": map[string]any{
-					"expr":          "vector(1)",
-					"intervalMs":    1000,
-					"maxDataPoints": 43200,
-					"refId":         "A",
-				},
-				"datasourceUid": "prometheus",
-				"relativeTimeRange": map[string]any{
-					"from": 600,
-					"to":   0,
-				},
-			},
-			map[string]any{
-				"refId":         "B",
-				"queryType":     "",
-				"datasourceUid": "__expr__",
-				"expression":    "A",
-				"model": map[string]any{
-					"conditions": []any{
-						map[string]any{
-							"evaluator": map[string]any{
-								"params": []any{0, 0},
-								"type":   "gt",
-							},
-							"operator": map[string]any{
-								"type": "and",
-							},
-							"query": map[string]any{
-								"params": []any{},
-							},
-							"reducer": map[string]any{
-								"params": []any{},
-								"type":   "avg",
-							},
-							"type": "query",
-						},
-					},
-					"datasource": map[string]any{
-						"name": "Expression",
-						"type": "__expr__",
-						"uid":  "__expr__",
-					},
-					"expression":    "A",
-					"intervalMs":    1000,
-					"maxDataPoints": 43200,
-					"refId":         "B",
-					"type":          "classic_conditions",
-				},
-			},
-		}
+		sampleData := createTestAlertQueries()
 
 		disableProvenance := false
 		testUID := "test_provenance_false"
@@ -1092,60 +975,7 @@ func TestAlertingTools_DisableProvenance(t *testing.T) {
 	t.Run("update alert rule with disableProvenance true (default)", func(t *testing.T) {
 		ctx := newTestContext()
 
-		sampleData := []any{
-			map[string]any{
-				"refId":     "A",
-				"queryType": "",
-				"model": map[string]any{
-					"expr":          "vector(1)",
-					"intervalMs":    1000,
-					"maxDataPoints": 43200,
-					"refId":         "A",
-				},
-				"datasourceUid": "prometheus",
-				"relativeTimeRange": map[string]any{
-					"from": 600,
-					"to":   0,
-				},
-			},
-			map[string]any{
-				"refId":         "B",
-				"queryType":     "",
-				"datasourceUid": "__expr__",
-				"expression":    "A",
-				"model": map[string]any{
-					"conditions": []any{
-						map[string]any{
-							"evaluator": map[string]any{
-								"params": []any{0, 0},
-								"type":   "gt",
-							},
-							"operator": map[string]any{
-								"type": "and",
-							},
-							"query": map[string]any{
-								"params": []any{},
-							},
-							"reducer": map[string]any{
-								"params": []any{},
-								"type":   "avg",
-							},
-							"type": "query",
-						},
-					},
-					"datasource": map[string]any{
-						"name": "Expression",
-						"type": "__expr__",
-						"uid":  "__expr__",
-					},
-					"expression":    "A",
-					"intervalMs":    1000,
-					"maxDataPoints": 43200,
-					"refId":         "B",
-					"type":          "classic_conditions",
-				},
-			},
-		}
+		sampleData := createTestAlertQueries()
 
 		// First create an alert
 		testUID := "test_update_provenance_default"
@@ -1197,60 +1027,7 @@ func TestAlertingTools_DisableProvenance(t *testing.T) {
 	t.Run("update alert rule with disableProvenance explicitly true", func(t *testing.T) {
 		ctx := newTestContext()
 
-		sampleData := []any{
-			map[string]any{
-				"refId":     "A",
-				"queryType": "",
-				"model": map[string]any{
-					"expr":          "vector(1)",
-					"intervalMs":    1000,
-					"maxDataPoints": 43200,
-					"refId":         "A",
-				},
-				"datasourceUid": "prometheus",
-				"relativeTimeRange": map[string]any{
-					"from": 600,
-					"to":   0,
-				},
-			},
-			map[string]any{
-				"refId":         "B",
-				"queryType":     "",
-				"datasourceUid": "__expr__",
-				"expression":    "A",
-				"model": map[string]any{
-					"conditions": []any{
-						map[string]any{
-							"evaluator": map[string]any{
-								"params": []any{0, 0},
-								"type":   "gt",
-							},
-							"operator": map[string]any{
-								"type": "and",
-							},
-							"query": map[string]any{
-								"params": []any{},
-							},
-							"reducer": map[string]any{
-								"params": []any{},
-								"type":   "avg",
-							},
-							"type": "query",
-						},
-					},
-					"datasource": map[string]any{
-						"name": "Expression",
-						"type": "__expr__",
-						"uid":  "__expr__",
-					},
-					"expression":    "A",
-					"intervalMs":    1000,
-					"maxDataPoints": 43200,
-					"refId":         "B",
-					"type":          "classic_conditions",
-				},
-			},
-		}
+		sampleData := createTestAlertQueries()
 
 		// First create an alert
 		testUID := "test_update_provenance"
@@ -1303,60 +1080,7 @@ func TestAlertingTools_DisableProvenance(t *testing.T) {
 	t.Run("update alert rule with disableProvenance false", func(t *testing.T) {
 		ctx := newTestContext()
 
-		sampleData := []any{
-			map[string]any{
-				"refId":     "A",
-				"queryType": "",
-				"model": map[string]any{
-					"expr":          "vector(1)",
-					"intervalMs":    1000,
-					"maxDataPoints": 43200,
-					"refId":         "A",
-				},
-				"datasourceUid": "prometheus",
-				"relativeTimeRange": map[string]any{
-					"from": 600,
-					"to":   0,
-				},
-			},
-			map[string]any{
-				"refId":         "B",
-				"queryType":     "",
-				"datasourceUid": "__expr__",
-				"expression":    "A",
-				"model": map[string]any{
-					"conditions": []any{
-						map[string]any{
-							"evaluator": map[string]any{
-								"params": []any{0, 0},
-								"type":   "gt",
-							},
-							"operator": map[string]any{
-								"type": "and",
-							},
-							"query": map[string]any{
-								"params": []any{},
-							},
-							"reducer": map[string]any{
-								"params": []any{},
-								"type":   "avg",
-							},
-							"type": "query",
-						},
-					},
-					"datasource": map[string]any{
-						"name": "Expression",
-						"type": "__expr__",
-						"uid":  "__expr__",
-					},
-					"expression":    "A",
-					"intervalMs":    1000,
-					"maxDataPoints": 43200,
-					"refId":         "B",
-					"type":          "classic_conditions",
-				},
-			},
-		}
+		sampleData := createTestAlertQueries()
 
 		// First create an alert without provenance
 		testUID := "test_update_provenance_false"
