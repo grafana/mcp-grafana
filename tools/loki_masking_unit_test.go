@@ -1513,3 +1513,312 @@ func TestMaskingConfig_FieldValidation(t *testing.T) {
 		assert.True(t, config.HidePatternType)
 	})
 }
+
+// =============================================================================
+// Task 4: Loki Query Integration Tests (Tasks 4.1, 4.2)
+// =============================================================================
+
+// TestQueryLokiLogsParams_MaskingField tests that QueryLokiLogsParams includes Masking field (Task 4.1)
+func TestQueryLokiLogsParams_MaskingField(t *testing.T) {
+	t.Run("params with nil masking config", func(t *testing.T) {
+		params := QueryLokiLogsParams{
+			DatasourceUID: "loki",
+			LogQL:         `{app="test"}`,
+			Masking:       nil,
+		}
+
+		// Serialize to JSON
+		data, err := json.Marshal(params)
+		require.NoError(t, err)
+
+		// Deserialize back
+		var decoded QueryLokiLogsParams
+		err = json.Unmarshal(data, &decoded)
+		require.NoError(t, err)
+
+		assert.Equal(t, "loki", decoded.DatasourceUID)
+		assert.Equal(t, `{app="test"}`, decoded.LogQL)
+		assert.Nil(t, decoded.Masking)
+	})
+
+	t.Run("params with masking config - builtin patterns", func(t *testing.T) {
+		params := QueryLokiLogsParams{
+			DatasourceUID: "loki",
+			LogQL:         `{app="test"}`,
+			Masking: &MaskingConfig{
+				BuiltinPatterns: []string{"email", "phone"},
+			},
+		}
+
+		// Serialize to JSON
+		data, err := json.Marshal(params)
+		require.NoError(t, err)
+
+		// Deserialize back
+		var decoded QueryLokiLogsParams
+		err = json.Unmarshal(data, &decoded)
+		require.NoError(t, err)
+
+		require.NotNil(t, decoded.Masking)
+		assert.Equal(t, []string{"email", "phone"}, decoded.Masking.BuiltinPatterns)
+	})
+
+	t.Run("params with masking config - custom patterns", func(t *testing.T) {
+		params := QueryLokiLogsParams{
+			DatasourceUID: "loki",
+			LogQL:         `{app="test"}`,
+			Masking: &MaskingConfig{
+				CustomPatterns: []MaskingPattern{
+					{Pattern: `secret-\w+`, Replacement: "[SECRET]"},
+				},
+			},
+		}
+
+		// Serialize to JSON
+		data, err := json.Marshal(params)
+		require.NoError(t, err)
+
+		// Deserialize back
+		var decoded QueryLokiLogsParams
+		err = json.Unmarshal(data, &decoded)
+		require.NoError(t, err)
+
+		require.NotNil(t, decoded.Masking)
+		require.Len(t, decoded.Masking.CustomPatterns, 1)
+		assert.Equal(t, `secret-\w+`, decoded.Masking.CustomPatterns[0].Pattern)
+		assert.Equal(t, "[SECRET]", decoded.Masking.CustomPatterns[0].Replacement)
+	})
+
+	t.Run("params with full masking config", func(t *testing.T) {
+		globalReplacement := "[REDACTED]"
+		params := QueryLokiLogsParams{
+			DatasourceUID: "loki",
+			LogQL:         `{app="test"}`,
+			Limit:         50,
+			Direction:     "forward",
+			Masking: &MaskingConfig{
+				BuiltinPatterns: []string{"email", "credit_card"},
+				CustomPatterns: []MaskingPattern{
+					{Pattern: `token-[a-z0-9]+`},
+				},
+				GlobalReplacement: &globalReplacement,
+				HidePatternType:   true,
+			},
+		}
+
+		// Serialize to JSON
+		data, err := json.Marshal(params)
+		require.NoError(t, err)
+
+		// Deserialize back
+		var decoded QueryLokiLogsParams
+		err = json.Unmarshal(data, &decoded)
+		require.NoError(t, err)
+
+		assert.Equal(t, "loki", decoded.DatasourceUID)
+		assert.Equal(t, `{app="test"}`, decoded.LogQL)
+		assert.Equal(t, 50, decoded.Limit)
+		assert.Equal(t, "forward", decoded.Direction)
+
+		require.NotNil(t, decoded.Masking)
+		assert.Equal(t, []string{"email", "credit_card"}, decoded.Masking.BuiltinPatterns)
+		require.Len(t, decoded.Masking.CustomPatterns, 1)
+		require.NotNil(t, decoded.Masking.GlobalReplacement)
+		assert.Equal(t, "[REDACTED]", *decoded.Masking.GlobalReplacement)
+		assert.True(t, decoded.Masking.HidePatternType)
+	})
+}
+
+// TestApplyMaskingToEntries tests the masking integration helper function (Task 4.2)
+func TestApplyMaskingToEntries(t *testing.T) {
+	t.Run("nil masking config returns unchanged entries", func(t *testing.T) {
+		entries := []LogEntry{
+			{Timestamp: "1234567890", Line: "user@example.com logged in", Labels: map[string]string{"app": "test"}},
+		}
+
+		result, err := applyMaskingToEntries(entries, nil)
+		require.NoError(t, err)
+
+		require.Len(t, result, 1)
+		assert.Equal(t, "user@example.com logged in", result[0].Line)
+	})
+
+	t.Run("empty masking config returns unchanged entries", func(t *testing.T) {
+		entries := []LogEntry{
+			{Timestamp: "1234567890", Line: "user@example.com logged in", Labels: map[string]string{"app": "test"}},
+		}
+
+		result, err := applyMaskingToEntries(entries, &MaskingConfig{})
+		require.NoError(t, err)
+
+		require.Len(t, result, 1)
+		assert.Equal(t, "user@example.com logged in", result[0].Line)
+	})
+
+	t.Run("applies builtin email masking", func(t *testing.T) {
+		entries := []LogEntry{
+			{Timestamp: "1234567890", Line: "User user@example.com logged in", Labels: map[string]string{"app": "test"}},
+		}
+
+		result, err := applyMaskingToEntries(entries, &MaskingConfig{
+			BuiltinPatterns: []string{"email"},
+		})
+		require.NoError(t, err)
+
+		require.Len(t, result, 1)
+		assert.Equal(t, "User [MASKED:email] logged in", result[0].Line)
+	})
+
+	t.Run("applies multiple builtin patterns", func(t *testing.T) {
+		entries := []LogEntry{
+			{Timestamp: "1234567890", Line: "User user@example.com from 192.168.1.100", Labels: map[string]string{"app": "test"}},
+		}
+
+		result, err := applyMaskingToEntries(entries, &MaskingConfig{
+			BuiltinPatterns: []string{"email", "ip_address"},
+		})
+		require.NoError(t, err)
+
+		require.Len(t, result, 1)
+		assert.Contains(t, result[0].Line, "[MASKED:email]")
+		assert.Contains(t, result[0].Line, "[MASKED:ip_address]")
+	})
+
+	t.Run("applies custom pattern masking", func(t *testing.T) {
+		entries := []LogEntry{
+			{Timestamp: "1234567890", Line: "Found secret-abc123 in request", Labels: map[string]string{"app": "test"}},
+		}
+
+		result, err := applyMaskingToEntries(entries, &MaskingConfig{
+			CustomPatterns: []MaskingPattern{
+				{Pattern: `secret-\w+`, Replacement: "[SECRET]"},
+			},
+		})
+		require.NoError(t, err)
+
+		require.Len(t, result, 1)
+		assert.Equal(t, "Found [SECRET] in request", result[0].Line)
+	})
+
+	t.Run("applies global replacement", func(t *testing.T) {
+		entries := []LogEntry{
+			{Timestamp: "1234567890", Line: "user@example.com and +819012345678", Labels: map[string]string{"app": "test"}},
+		}
+
+		globalReplacement := "***"
+		result, err := applyMaskingToEntries(entries, &MaskingConfig{
+			BuiltinPatterns:   []string{"email", "phone"},
+			GlobalReplacement: &globalReplacement,
+		})
+		require.NoError(t, err)
+
+		require.Len(t, result, 1)
+		assert.Equal(t, "*** and ***", result[0].Line)
+	})
+
+	t.Run("handles empty entries slice", func(t *testing.T) {
+		result, err := applyMaskingToEntries([]LogEntry{}, &MaskingConfig{
+			BuiltinPatterns: []string{"email"},
+		})
+		require.NoError(t, err)
+		assert.Empty(t, result)
+	})
+
+	t.Run("masks multiple entries", func(t *testing.T) {
+		entries := []LogEntry{
+			{Timestamp: "1", Line: "first@email.com"},
+			{Timestamp: "2", Line: "no email here"},
+			{Timestamp: "3", Line: "third@email.org"},
+		}
+
+		result, err := applyMaskingToEntries(entries, &MaskingConfig{
+			BuiltinPatterns: []string{"email"},
+		})
+		require.NoError(t, err)
+
+		require.Len(t, result, 3)
+		assert.Equal(t, "[MASKED:email]", result[0].Line)
+		assert.Equal(t, "no email here", result[1].Line)
+		assert.Equal(t, "[MASKED:email]", result[2].Line)
+	})
+
+	t.Run("preserves other entry fields during masking", func(t *testing.T) {
+		entries := []LogEntry{
+			{
+				Timestamp: "2024-01-01T00:00:00Z",
+				Line:      "user@example.com",
+				Labels:    map[string]string{"app": "test", "env": "prod"},
+			},
+		}
+
+		result, err := applyMaskingToEntries(entries, &MaskingConfig{
+			BuiltinPatterns: []string{"email"},
+		})
+		require.NoError(t, err)
+
+		require.Len(t, result, 1)
+		assert.Equal(t, "2024-01-01T00:00:00Z", result[0].Timestamp)
+		assert.Equal(t, "[MASKED:email]", result[0].Line)
+		assert.Equal(t, map[string]string{"app": "test", "env": "prod"}, result[0].Labels)
+	})
+
+	t.Run("returns error for invalid builtin pattern", func(t *testing.T) {
+		entries := []LogEntry{
+			{Timestamp: "1", Line: "test"},
+		}
+
+		_, err := applyMaskingToEntries(entries, &MaskingConfig{
+			BuiltinPatterns: []string{"invalid_pattern"},
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid builtin pattern")
+	})
+
+	t.Run("returns error for invalid regex pattern", func(t *testing.T) {
+		entries := []LogEntry{
+			{Timestamp: "1", Line: "test"},
+		}
+
+		_, err := applyMaskingToEntries(entries, &MaskingConfig{
+			CustomPatterns: []MaskingPattern{
+				{Pattern: `[invalid`},
+			},
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid regex pattern")
+	})
+
+	t.Run("returns error for too many patterns", func(t *testing.T) {
+		entries := []LogEntry{
+			{Timestamp: "1", Line: "test"},
+		}
+
+		// Create 21 patterns to exceed the limit
+		patterns := make([]MaskingPattern, 21)
+		for i := range patterns {
+			patterns[i] = MaskingPattern{Pattern: fmt.Sprintf("pattern%d", i)}
+		}
+
+		_, err := applyMaskingToEntries(entries, &MaskingConfig{
+			CustomPatterns: patterns,
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "too many")
+	})
+
+	t.Run("metric entries are not masked (Value field)", func(t *testing.T) {
+		v := 42.5
+		entries := []LogEntry{
+			{Timestamp: "1", Value: &v, Labels: map[string]string{"__type__": "metrics"}},
+		}
+
+		result, err := applyMaskingToEntries(entries, &MaskingConfig{
+			BuiltinPatterns: []string{"email"},
+		})
+		require.NoError(t, err)
+
+		require.Len(t, result, 1)
+		assert.Equal(t, 42.5, *result[0].Value)
+		assert.Empty(t, result[0].Line) // Line should still be empty
+	})
+}
