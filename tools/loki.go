@@ -380,13 +380,12 @@ func (c *Client) fetchLogs(ctx context.Context, query, startRFC3339, endRFC3339 
 
 // QueryLokiLogsParams defines the parameters for querying Loki logs
 type QueryLokiLogsParams struct {
-	DatasourceUID string         `json:"datasourceUid" jsonschema:"required,description=The UID of the datasource to query"`
-	LogQL         string         `json:"logql" jsonschema:"required,description=The LogQL query to execute against Loki. This can be a simple label matcher or a complex query with filters\\, parsers\\, and expressions. Supports full LogQL syntax including label matchers\\, filter operators\\, pattern expressions\\, and pipeline operations."`
-	StartRFC3339  string         `json:"startRfc3339,omitempty" jsonschema:"description=Optionally\\, the start time of the query in RFC3339 format"`
-	EndRFC3339    string         `json:"endRfc3339,omitempty" jsonschema:"description=Optionally\\, the end time of the query in RFC3339 format"`
-	Limit         int            `json:"limit,omitempty" jsonschema:"default=10,description=Optionally\\, the maximum number of log lines to return (max: 100)"`
-	Direction     string         `json:"direction,omitempty" jsonschema:"description=Optionally\\, the direction of the query: 'forward' (oldest first) or 'backward' (newest first\\, default)"`
-	Masking       *MaskingConfig `json:"masking,omitempty" jsonschema:"description=Optional masking configuration to redact sensitive data from log lines"`
+	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the datasource to query"`
+	LogQL         string `json:"logql" jsonschema:"required,description=The LogQL query to execute against Loki. This can be a simple label matcher or a complex query with filters\\, parsers\\, and expressions. Supports full LogQL syntax including label matchers\\, filter operators\\, pattern expressions\\, and pipeline operations."`
+	StartRFC3339  string `json:"startRfc3339,omitempty" jsonschema:"description=Optionally\\, the start time of the query in RFC3339 format"`
+	EndRFC3339    string `json:"endRfc3339,omitempty" jsonschema:"description=Optionally\\, the end time of the query in RFC3339 format"`
+	Limit         int    `json:"limit,omitempty" jsonschema:"default=10,description=Optionally\\, the maximum number of log lines to return (max: 100)"`
+	Direction     string `json:"direction,omitempty" jsonschema:"description=Optionally\\, the direction of the query: 'forward' (oldest first) or 'backward' (newest first\\, default)"`
 }
 
 // LogEntry represents a single log entry or metric sample with metadata
@@ -426,12 +425,6 @@ func applyMaskingToEntries(entries []LogEntry, config *MaskingConfig) ([]LogEntr
 }
 
 func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) ([]LogEntry, error) {
-	if args.Masking != nil {
-		if err := ValidateMaskingConfig(args.Masking); err != nil {
-			return nil, fmt.Errorf("validating masking config: %w", err)
-		}
-	}
-
 	client, err := newLokiClient(ctx, args.DatasourceUID)
 	if err != nil {
 		return nil, fmt.Errorf("creating Loki client: %w", err)
@@ -509,13 +502,6 @@ func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) ([]LogEntry, e
 	// If we processed all streams but still have no entries, return an empty slice
 	if len(entries) == 0 {
 		return []LogEntry{}, nil
-	}
-
-	if args.Masking != nil {
-		entries, err = applyMaskingToEntries(entries, args.Masking)
-		if err != nil {
-			return nil, fmt.Errorf("applying masking: %w", err)
-		}
 	}
 
 	return entries, nil
