@@ -58,11 +58,10 @@ type grafanaConfig struct {
 
 // lokiMaskingConfig holds Loki log masking configuration from CLI flags.
 type lokiMaskingConfig struct {
-	enabled         bool
-	enabledSet      bool // tracks if CLI flag was explicitly set
-	patterns        []string
-	patternsSet     bool // tracks if CLI flag was explicitly set
-	patternsRawFlag string
+	enabled     bool
+	enabledSet  bool // tracks if CLI flag was explicitly set
+	patterns    []string
+	patternsSet bool // tracks if CLI flag was explicitly set
 }
 
 func (lmc *lokiMaskingConfig) addFlags() {

@@ -407,23 +407,6 @@ func enforceLogLimit(requestedLimit int) int {
 	return requestedLimit
 }
 
-func applyMaskingToEntries(entries []LogEntry, config *MaskingConfig) ([]LogEntry, error) {
-	if config == nil {
-		return entries, nil
-	}
-
-	masker, err := NewLogMasker(config)
-	if err != nil {
-		return nil, err
-	}
-
-	if masker == nil {
-		return entries, nil
-	}
-
-	return masker.MaskEntries(entries), nil
-}
-
 func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) ([]LogEntry, error) {
 	client, err := newLokiClient(ctx, args.DatasourceUID)
 	if err != nil {
