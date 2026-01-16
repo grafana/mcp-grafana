@@ -25,17 +25,17 @@ func TestLokiTools(t *testing.T) {
 		ctx := newTestContext()
 		result, err := listLokiLabelValues(ctx, ListLokiLabelValuesParams{
 			DatasourceUID: "loki",
-			LabelName:     "container",
+			LabelName:     "job",
 		})
 		require.NoError(t, err)
-		assert.NotEmpty(t, result, "Should have at least one container label value")
+		assert.NotEmpty(t, result, "Should have at least one job label value")
 	})
 
 	t.Run("query loki stats", func(t *testing.T) {
 		ctx := newTestContext()
 		result, err := queryLokiStats(ctx, QueryLokiStatsParams{
 			DatasourceUID: "loki",
-			LogQL:         `{container="grafana"}`,
+			LogQL:         `{job=~".+"}`,
 		})
 		require.NoError(t, err)
 		assert.NotNil(t, result, "Should return a result")
@@ -52,7 +52,7 @@ func TestLokiTools(t *testing.T) {
 		ctx := newTestContext()
 		result, err := queryLokiLogs(ctx, QueryLokiLogsParams{
 			DatasourceUID: "loki",
-			LogQL:         `{container=~".+"}`,
+			LogQL:         `{job=~".+"}`,
 			Limit:         10,
 		})
 		require.NoError(t, err)
@@ -71,7 +71,7 @@ func TestLokiTools(t *testing.T) {
 		// Use a query that's unlikely to match any logs
 		result, err := queryLokiLogs(ctx, QueryLokiLogsParams{
 			DatasourceUID: "loki",
-			LogQL:         `{container="non-existent-container-name-123456789"}`,
+			LogQL:         `{job="non-existent-job-name-123456789"}`,
 			Limit:         10,
 		})
 		require.NoError(t, err)
@@ -86,7 +86,7 @@ func TestLokiTools(t *testing.T) {
 
 		result, err := queryLokiLogs(ctx, QueryLokiLogsParams{
 			DatasourceUID: "loki",
-			LogQL:         `{container=~".+"}`,
+			LogQL:         `{job=~".+"}`,
 			Limit:         10,
 		})
 		require.NoError(t, err)
@@ -104,7 +104,7 @@ func TestLokiTools(t *testing.T) {
 
 		result, err := queryLokiLogs(ctx, QueryLokiLogsParams{
 			DatasourceUID: "loki",
-			LogQL:         `{container=~".+"}`,
+			LogQL:         `{job=~".+"}`,
 			Limit:         10,
 		})
 		require.NoError(t, err)
@@ -121,7 +121,7 @@ func TestLokiTools(t *testing.T) {
 
 		result, err := queryLokiLogs(ctx, QueryLokiLogsParams{
 			DatasourceUID: "loki",
-			LogQL:         `{container=~".+"}`,
+			LogQL:         `{job=~".+"}`,
 			Limit:         5,
 			Direction:     "backward",
 		})
@@ -147,7 +147,7 @@ func TestLokiTools(t *testing.T) {
 
 		result, err := queryLokiLogs(ctx, QueryLokiLogsParams{
 			DatasourceUID: "loki",
-			LogQL:         `{container=~".+"}`,
+			LogQL:         `{job=~".+"}`,
 			Limit:         10,
 		})
 		require.NoError(t, err)
@@ -171,7 +171,7 @@ func TestLokiTools(t *testing.T) {
 
 		result, err := queryLokiLogs(ctx, QueryLokiLogsParams{
 			DatasourceUID: "loki",
-			LogQL:         `{container=~".+"}`,
+			LogQL:         `{job=~".+"}`,
 			Limit:         10,
 		})
 		require.NoError(t, err)
@@ -198,7 +198,7 @@ func TestLokiTools(t *testing.T) {
 
 		result, err := queryLokiLogs(ctx, QueryLokiLogsParams{
 			DatasourceUID: "loki",
-			LogQL:         `{container=~".+"}`,
+			LogQL:         `{job=~".+"}`,
 			Limit:         10,
 		})
 		require.NoError(t, err)
@@ -221,7 +221,7 @@ func TestLokiTools(t *testing.T) {
 
 		result, err := queryLokiLogs(ctx, QueryLokiLogsParams{
 			DatasourceUID: "loki",
-			LogQL:         `{container=~".+"}`,
+			LogQL:         `{job=~".+"}`,
 			Limit:         5,
 		})
 		require.NoError(t, err)
@@ -245,7 +245,7 @@ func TestLokiTools(t *testing.T) {
 
 		result, err := queryLokiLogs(ctx, QueryLokiLogsParams{
 			DatasourceUID: "loki",
-			LogQL:         `{container="non-existent-masking-test-12345"}`,
+			LogQL:         `{job="non-existent-masking-test-12345"}`,
 			Limit:         10,
 		})
 		require.NoError(t, err)
@@ -266,7 +266,7 @@ func TestLokiTools(t *testing.T) {
 
 		result, err := queryLokiLogs(ctx, QueryLokiLogsParams{
 			DatasourceUID: "loki",
-			LogQL:         `{container=~".+"}`,
+			LogQL:         `{job=~".+"}`,
 			Limit:         50,
 		})
 		require.NoError(t, err)
