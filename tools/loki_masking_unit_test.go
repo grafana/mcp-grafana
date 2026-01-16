@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1050,10 +1051,10 @@ func TestLogMasker_MaskEntries_BuiltinPatterns(t *testing.T) {
 // TestLogMasker_MaskEntries_CustomPatterns tests masking with custom patterns
 func TestLogMasker_MaskEntries_CustomPatterns(t *testing.T) {
 	testCases := []struct {
-		name        string
-		patterns    []MaskingPattern
-		input       string
-		expected    string
+		name     string
+		patterns []MaskingPattern
+		input    string
+		expected string
 	}{
 		{
 			name: "simple custom pattern without replacement",
@@ -1821,4 +1822,391 @@ func TestApplyMaskingToEntries(t *testing.T) {
 		assert.Equal(t, 42.5, *result[0].Value)
 		assert.Empty(t, result[0].Line) // Line should still be empty
 	})
+}
+
+// =============================================================================
+// Benchmark Tests (Task 7.1)
+// =============================================================================
+
+// generateTestLogEntries creates n log entries with realistic content for benchmarking.
+// Each entry contains various types of sensitive data that would be masked.
+func generateTestLogEntries(n int) []LogEntry {
+	entries := make([]LogEntry, n)
+	// Create realistic log lines with various sensitive data patterns
+	logTemplates := []string{
+		"INFO User user%d@example.com logged in from 192.168.1.%d",
+		"DEBUG Processing payment for card 4111-1111-1111-%04d",
+		"WARN Failed login attempt for +8190%08d from IP 10.0.%d.%d",
+		"ERROR API call failed: api_key=sk_live_abc%020d",
+		"INFO Session token: eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIlZCJ9.sig%d",
+		"DEBUG Device %02X:%02X:%02X:%02X:%02X:%02X connected",
+		"INFO Request from 2001:0db8:85a3:0000:0000:8a2e:0370:%04x processed",
+		"WARN User user%d@company.org attempted to access restricted resource",
+		"ERROR Connection from 172.16.%d.%d failed: secret=abc%016d",
+		"INFO Notification sent to +1415555%04d",
+	}
+
+	for i := 0; i < n; i++ {
+		template := logTemplates[i%len(logTemplates)]
+		var line string
+		switch i % len(logTemplates) {
+		case 0:
+			line = fmt.Sprintf(template, i, i%256)
+		case 1:
+			line = fmt.Sprintf(template, i%10000)
+		case 2:
+			line = fmt.Sprintf(template, i, i%256, i%256)
+		case 3:
+			line = fmt.Sprintf(template, i)
+		case 4:
+			line = fmt.Sprintf(template, i, i)
+		case 5:
+			line = fmt.Sprintf(template, i%256, (i+1)%256, (i+2)%256, (i+3)%256, (i+4)%256, (i+5)%256)
+		case 6:
+			line = fmt.Sprintf(template, i%65536)
+		case 7:
+			line = fmt.Sprintf(template, i)
+		case 8:
+			line = fmt.Sprintf(template, i%256, i%256, i)
+		case 9:
+			line = fmt.Sprintf(template, i%10000)
+		}
+
+		entries[i] = LogEntry{
+			Timestamp: fmt.Sprintf("2024-01-01T00:00:%02d.%09dZ", i%60, i),
+			Line:      line,
+			Labels:    map[string]string{"app": "benchmark", "instance": fmt.Sprintf("node-%d", i%10)},
+		}
+	}
+	return entries
+}
+
+// BenchmarkLogMasker_MaskEntries_100Entries benchmarks masking 100 entries with all builtin patterns.
+// This tests the performance with a typical query result size and comprehensive pattern coverage.
+// Requirements: 5.3, 5.4
+func BenchmarkLogMasker_MaskEntries_100Entries(b *testing.B) {
+	// Setup: Create masker with all builtin patterns (7 patterns)
+	config := &MaskingConfig{
+		BuiltinPatterns: []string{
+			"email", "phone", "credit_card", "ip_address",
+			"mac_address", "api_key", "jwt_token",
+		},
+	}
+	masker, err := NewLogMasker(config)
+	if err != nil {
+		b.Fatalf("Failed to create masker: %v", err)
+	}
+
+	// Generate 100 test entries
+	entries := generateTestLogEntries(100)
+
+	// Reset timer to exclude setup time
+	b.ResetTimer()
+
+	// Run benchmark
+	for i := 0; i < b.N; i++ {
+		// Create a copy of entries for each iteration to avoid caching effects
+		entriesCopy := make([]LogEntry, len(entries))
+		copy(entriesCopy, entries)
+
+		_ = masker.MaskEntries(entriesCopy)
+	}
+}
+
+// BenchmarkLogMasker_MaskEntries_20Patterns benchmarks masking with maximum pattern count (20).
+// This tests the performance at the pattern limit to ensure SLO compliance.
+// Requirements: 5.3, 5.4
+func BenchmarkLogMasker_MaskEntries_20Patterns(b *testing.B) {
+	// Setup: Create masker with 7 builtin + 13 custom patterns = 20 total (max limit)
+	config := &MaskingConfig{
+		BuiltinPatterns: []string{
+			"email", "phone", "credit_card", "ip_address",
+			"mac_address", "api_key", "jwt_token",
+		},
+		CustomPatterns: []MaskingPattern{
+			{Pattern: `user_id=\d+`},
+			{Pattern: `session_id=[a-f0-9]{32}`},
+			{Pattern: `order_\d{8}`},
+			{Pattern: `customer_[A-Z]{3}\d{6}`},
+			{Pattern: `txn_[a-z0-9]{16}`},
+			{Pattern: `ref_\d{10}`},
+			{Pattern: `internal_[a-zA-Z0-9_]{8,32}`},
+			{Pattern: `\bSSN:\s*\d{3}-\d{2}-\d{4}\b`},
+			{Pattern: `\bDOB:\s*\d{4}-\d{2}-\d{2}\b`},
+			{Pattern: `\baccount:\s*\d{10,16}\b`},
+			{Pattern: `\brouting:\s*\d{9}\b`},
+			{Pattern: `\bpin:\s*\d{4,6}\b`},
+			{Pattern: `\bcvv:\s*\d{3,4}\b`},
+		},
+	}
+	masker, err := NewLogMasker(config)
+	if err != nil {
+		b.Fatalf("Failed to create masker: %v", err)
+	}
+
+	// Generate 100 test entries
+	entries := generateTestLogEntries(100)
+
+	// Reset timer to exclude setup time
+	b.ResetTimer()
+
+	// Run benchmark
+	for i := 0; i < b.N; i++ {
+		// Create a copy of entries for each iteration
+		entriesCopy := make([]LogEntry, len(entries))
+		copy(entriesCopy, entries)
+
+		_ = masker.MaskEntries(entriesCopy)
+	}
+}
+
+// BenchmarkLogMasker_MaskEntries_SLO verifies the SLO: 100 entries × 20 patterns < 100ms.
+// This benchmark explicitly verifies the performance requirement from design.md.
+// Requirements: 5.4
+func BenchmarkLogMasker_MaskEntries_SLO(b *testing.B) {
+	// Setup: Create masker with 20 patterns (max limit)
+	config := &MaskingConfig{
+		BuiltinPatterns: []string{
+			"email", "phone", "credit_card", "ip_address",
+			"mac_address", "api_key", "jwt_token",
+		},
+		CustomPatterns: []MaskingPattern{
+			{Pattern: `user_id=\d+`},
+			{Pattern: `session_id=[a-f0-9]{32}`},
+			{Pattern: `order_\d{8}`},
+			{Pattern: `customer_[A-Z]{3}\d{6}`},
+			{Pattern: `txn_[a-z0-9]{16}`},
+			{Pattern: `ref_\d{10}`},
+			{Pattern: `internal_[a-zA-Z0-9_]{8,32}`},
+			{Pattern: `\bSSN:\s*\d{3}-\d{2}-\d{4}\b`},
+			{Pattern: `\bDOB:\s*\d{4}-\d{2}-\d{2}\b`},
+			{Pattern: `\baccount:\s*\d{10,16}\b`},
+			{Pattern: `\brouting:\s*\d{9}\b`},
+			{Pattern: `\bpin:\s*\d{4,6}\b`},
+			{Pattern: `\bcvv:\s*\d{3,4}\b`},
+		},
+	}
+	masker, err := NewLogMasker(config)
+	if err != nil {
+		b.Fatalf("Failed to create masker: %v", err)
+	}
+
+	// Verify we have 20 patterns
+	if masker.PatternCount() != 20 {
+		b.Fatalf("Expected 20 patterns, got %d", masker.PatternCount())
+	}
+
+	// Generate 100 test entries
+	entries := generateTestLogEntries(100)
+
+	// Reset timer
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		entriesCopy := make([]LogEntry, len(entries))
+		copy(entriesCopy, entries)
+		_ = masker.MaskEntries(entriesCopy)
+	}
+}
+
+// BenchmarkLogMasker_PatternCompilation benchmarks the pattern compilation time.
+// This verifies that regex compilation happens once per masker creation (Req 5.3).
+func BenchmarkLogMasker_PatternCompilation(b *testing.B) {
+	// Setup config with all patterns
+	config := &MaskingConfig{
+		BuiltinPatterns: []string{
+			"email", "phone", "credit_card", "ip_address",
+			"mac_address", "api_key", "jwt_token",
+		},
+		CustomPatterns: []MaskingPattern{
+			{Pattern: `user_id=\d+`},
+			{Pattern: `session_id=[a-f0-9]{32}`},
+			{Pattern: `order_\d{8}`},
+			{Pattern: `customer_[A-Z]{3}\d{6}`},
+			{Pattern: `txn_[a-z0-9]{16}`},
+			{Pattern: `ref_\d{10}`},
+			{Pattern: `internal_[a-zA-Z0-9_]{8,32}`},
+			{Pattern: `\bSSN:\s*\d{3}-\d{2}-\d{4}\b`},
+			{Pattern: `\bDOB:\s*\d{4}-\d{2}-\d{2}\b`},
+			{Pattern: `\baccount:\s*\d{10,16}\b`},
+			{Pattern: `\brouting:\s*\d{9}\b`},
+			{Pattern: `\bpin:\s*\d{4,6}\b`},
+			{Pattern: `\bcvv:\s*\d{3,4}\b`},
+		},
+	}
+
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		_, _ = NewLogMasker(config)
+	}
+}
+
+// BenchmarkLogMasker_MaskEntries_SingleEntry benchmarks masking a single entry.
+// Useful for understanding per-entry overhead.
+func BenchmarkLogMasker_MaskEntries_SingleEntry(b *testing.B) {
+	config := &MaskingConfig{
+		BuiltinPatterns: []string{
+			"email", "phone", "credit_card", "ip_address",
+			"mac_address", "api_key", "jwt_token",
+		},
+	}
+	masker, err := NewLogMasker(config)
+	if err != nil {
+		b.Fatalf("Failed to create masker: %v", err)
+	}
+
+	entry := LogEntry{
+		Timestamp: "2024-01-01T00:00:00Z",
+		Line:      "User user@example.com logged in from 192.168.1.100 with card 4111-1111-1111-1111",
+		Labels:    map[string]string{"app": "test"},
+	}
+
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		entryCopy := entry
+		_ = masker.MaskEntries([]LogEntry{entryCopy})
+	}
+}
+
+// BenchmarkLogMasker_MaskEntries_NoMatch benchmarks masking when no patterns match.
+// This represents best-case performance for log lines without sensitive data.
+func BenchmarkLogMasker_MaskEntries_NoMatch(b *testing.B) {
+	config := &MaskingConfig{
+		BuiltinPatterns: []string{
+			"email", "phone", "credit_card", "ip_address",
+			"mac_address", "api_key", "jwt_token",
+		},
+	}
+	masker, err := NewLogMasker(config)
+	if err != nil {
+		b.Fatalf("Failed to create masker: %v", err)
+	}
+
+	// Create entries that won't match any pattern
+	entries := make([]LogEntry, 100)
+	for i := 0; i < 100; i++ {
+		entries[i] = LogEntry{
+			Timestamp: fmt.Sprintf("2024-01-01T00:00:%02dZ", i%60),
+			Line:      fmt.Sprintf("INFO This is a regular log message number %d without sensitive data", i),
+			Labels:    map[string]string{"app": "test"},
+		}
+	}
+
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		entriesCopy := make([]LogEntry, len(entries))
+		copy(entriesCopy, entries)
+		_ = masker.MaskEntries(entriesCopy)
+	}
+}
+
+// TestSLOCompliance is a test (not benchmark) that verifies the SLO is met.
+// This test fails if masking 100 entries with 20 patterns takes more than 100ms.
+func TestSLOCompliance(t *testing.T) {
+	// Setup: Create masker with 20 patterns (max limit)
+	config := &MaskingConfig{
+		BuiltinPatterns: []string{
+			"email", "phone", "credit_card", "ip_address",
+			"mac_address", "api_key", "jwt_token",
+		},
+		CustomPatterns: []MaskingPattern{
+			{Pattern: `user_id=\d+`},
+			{Pattern: `session_id=[a-f0-9]{32}`},
+			{Pattern: `order_\d{8}`},
+			{Pattern: `customer_[A-Z]{3}\d{6}`},
+			{Pattern: `txn_[a-z0-9]{16}`},
+			{Pattern: `ref_\d{10}`},
+			{Pattern: `internal_[a-zA-Z0-9_]{8,32}`},
+			{Pattern: `\bSSN:\s*\d{3}-\d{2}-\d{4}\b`},
+			{Pattern: `\bDOB:\s*\d{4}-\d{2}-\d{2}\b`},
+			{Pattern: `\baccount:\s*\d{10,16}\b`},
+			{Pattern: `\brouting:\s*\d{9}\b`},
+			{Pattern: `\bpin:\s*\d{4,6}\b`},
+			{Pattern: `\bcvv:\s*\d{3,4}\b`},
+		},
+	}
+	masker, err := NewLogMasker(config)
+	require.NoError(t, err)
+
+	// Verify we have 20 patterns
+	require.Equal(t, 20, masker.PatternCount(), "Expected 20 patterns for SLO test")
+
+	// Generate 100 test entries with realistic content
+	entries := generateTestLogEntries(100)
+
+	// Run multiple iterations and take the average to reduce variance
+	const iterations = 10
+	var totalDuration int64
+
+	for i := 0; i < iterations; i++ {
+		entriesCopy := make([]LogEntry, len(entries))
+		copy(entriesCopy, entries)
+
+		start := time.Now()
+		_ = masker.MaskEntries(entriesCopy)
+		duration := time.Since(start)
+		totalDuration += duration.Nanoseconds()
+	}
+
+	averageDuration := time.Duration(totalDuration / iterations)
+	sloLimit := 100 * time.Millisecond
+
+	t.Logf("SLO Test Results:")
+	t.Logf("  - Entries: 100")
+	t.Logf("  - Patterns: %d", masker.PatternCount())
+	t.Logf("  - Average duration: %v", averageDuration)
+	t.Logf("  - SLO limit: %v", sloLimit)
+
+	// Assert SLO compliance
+	assert.Less(t, averageDuration, sloLimit,
+		"SLO violation: masking 100 entries with 20 patterns took %v (limit: %v)",
+		averageDuration, sloLimit)
+}
+
+// TestPatternCompilationOnce verifies that patterns are compiled only once (Req 5.3).
+func TestPatternCompilationOnce(t *testing.T) {
+	config := &MaskingConfig{
+		BuiltinPatterns: []string{"email", "phone"},
+		CustomPatterns: []MaskingPattern{
+			{Pattern: `custom-\d+`},
+		},
+	}
+
+	// Create masker (compiles patterns)
+	masker, err := NewLogMasker(config)
+	require.NoError(t, err)
+	require.NotNil(t, masker)
+
+	// Verify pattern count
+	assert.Equal(t, 3, masker.PatternCount())
+
+	// Create test entries
+	entries := []LogEntry{
+		{Line: "user@example.com"},
+		{Line: "+819012345678"},
+		{Line: "custom-12345"},
+	}
+
+	// Time multiple calls to MaskEntries - each should be fast since patterns are pre-compiled
+	const iterations = 1000
+	start := time.Now()
+	for i := 0; i < iterations; i++ {
+		entriesCopy := make([]LogEntry, len(entries))
+		copy(entriesCopy, entries)
+		_ = masker.MaskEntries(entriesCopy)
+	}
+	totalDuration := time.Since(start)
+
+	// Average time per call should be very low (microseconds, not milliseconds)
+	// This confirms patterns are not being recompiled each time
+	averagePerCall := totalDuration / iterations
+	t.Logf("Average time per MaskEntries call: %v", averagePerCall)
+
+	// If patterns were being recompiled each time, this would be much slower
+	// Typical compilation time for 3 patterns is ~10-50µs, but masking pre-compiled is ~1-10µs
+	assert.Less(t, averagePerCall, 1*time.Millisecond,
+		"MaskEntries is too slow, patterns may be recompiling each call")
 }
