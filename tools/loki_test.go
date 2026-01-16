@@ -3,6 +3,7 @@
 package tools
 
 import (
+	"strings"
 	"testing"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
@@ -97,7 +98,44 @@ func TestLokiTools(t *testing.T) {
 		}
 	})
 
-	t.Run("query loki logs with masker in context", func(t *testing.T) {
+	t.Run("query loki logs backward compatibility - nil masker explicitly set", func(t *testing.T) {
+		ctx := newTestContext()
+		ctx = mcpgrafana.WithMasker(ctx, nil)
+
+		result, err := queryLokiLogs(ctx, QueryLokiLogsParams{
+			DatasourceUID: "loki",
+			LogQL:         `{container=~".+"}`,
+			Limit:         10,
+		})
+		require.NoError(t, err)
+
+		for _, entry := range result {
+			assert.NotEmpty(t, entry.Timestamp, "Log entry should have a timestamp")
+			assert.NotNil(t, entry.Labels, "Log entry should have labels")
+			assert.NotContains(t, entry.Line, "[MASKED:", "Logs should not be masked when nil masker in context")
+		}
+	})
+
+	t.Run("query loki logs backward compatibility - query returns same structure", func(t *testing.T) {
+		ctx := newTestContext()
+
+		result, err := queryLokiLogs(ctx, QueryLokiLogsParams{
+			DatasourceUID: "loki",
+			LogQL:         `{container=~".+"}`,
+			Limit:         5,
+			Direction:     "backward",
+		})
+		require.NoError(t, err)
+
+		if len(result) > 0 {
+			entry := result[0]
+			assert.NotEmpty(t, entry.Timestamp, "Timestamp should be set")
+			assert.NotNil(t, entry.Labels, "Labels should not be nil")
+			assert.Nil(t, entry.Value, "Value should be nil for log queries")
+		}
+	})
+
+	t.Run("query loki logs with masker in context - single pattern", func(t *testing.T) {
 		config := &MaskingConfig{
 			BuiltinPatterns: []string{"ip_address"},
 		}
@@ -117,6 +155,128 @@ func TestLokiTools(t *testing.T) {
 		for _, entry := range result {
 			assert.NotEmpty(t, entry.Timestamp, "Log entry should have a timestamp")
 			assert.NotNil(t, entry.Labels, "Log entry should have labels")
+		}
+	})
+
+	t.Run("query loki logs with masker in context - multiple patterns", func(t *testing.T) {
+		config := &MaskingConfig{
+			BuiltinPatterns: []string{"email", "ip_address", "mac_address"},
+		}
+		masker, err := NewLogMasker(config)
+		require.NoError(t, err)
+		assert.Equal(t, 3, masker.PatternCount(), "Should have 3 patterns configured")
+
+		ctx := newTestContext()
+		ctx = mcpgrafana.WithMasker(ctx, masker)
+
+		result, err := queryLokiLogs(ctx, QueryLokiLogsParams{
+			DatasourceUID: "loki",
+			LogQL:         `{container=~".+"}`,
+			Limit:         10,
+		})
+		require.NoError(t, err)
+
+		for _, entry := range result {
+			assert.NotEmpty(t, entry.Timestamp, "Log entry should have a timestamp")
+			assert.NotNil(t, entry.Labels, "Log entry should have labels")
+		}
+	})
+
+	t.Run("query loki logs with masker in context - all builtin patterns", func(t *testing.T) {
+		config := &MaskingConfig{
+			BuiltinPatterns: []string{
+				"email", "phone", "credit_card", "ip_address",
+				"mac_address", "api_key", "jwt_token",
+			},
+		}
+		masker, err := NewLogMasker(config)
+		require.NoError(t, err)
+		assert.Equal(t, 7, masker.PatternCount(), "Should have all 7 builtin patterns")
+
+		ctx := newTestContext()
+		ctx = mcpgrafana.WithMasker(ctx, masker)
+
+		result, err := queryLokiLogs(ctx, QueryLokiLogsParams{
+			DatasourceUID: "loki",
+			LogQL:         `{container=~".+"}`,
+			Limit:         10,
+		})
+		require.NoError(t, err)
+
+		for _, entry := range result {
+			assert.NotEmpty(t, entry.Timestamp, "Log entry should have a timestamp")
+			assert.NotNil(t, entry.Labels, "Log entry should have labels")
+		}
+	})
+
+	t.Run("query loki logs with masker - preserves entry fields", func(t *testing.T) {
+		config := &MaskingConfig{
+			BuiltinPatterns: []string{"ip_address"},
+		}
+		masker, err := NewLogMasker(config)
+		require.NoError(t, err)
+
+		ctx := newTestContext()
+		ctx = mcpgrafana.WithMasker(ctx, masker)
+
+		result, err := queryLokiLogs(ctx, QueryLokiLogsParams{
+			DatasourceUID: "loki",
+			LogQL:         `{container=~".+"}`,
+			Limit:         5,
+		})
+		require.NoError(t, err)
+
+		for _, entry := range result {
+			assert.NotEmpty(t, entry.Timestamp, "Timestamp should be preserved")
+			assert.NotNil(t, entry.Labels, "Labels should be preserved")
+			assert.Nil(t, entry.Value, "Value should remain nil for log queries")
+		}
+	})
+
+	t.Run("query loki logs with masker - empty entries handled", func(t *testing.T) {
+		config := &MaskingConfig{
+			BuiltinPatterns: []string{"email"},
+		}
+		masker, err := NewLogMasker(config)
+		require.NoError(t, err)
+
+		ctx := newTestContext()
+		ctx = mcpgrafana.WithMasker(ctx, masker)
+
+		result, err := queryLokiLogs(ctx, QueryLokiLogsParams{
+			DatasourceUID: "loki",
+			LogQL:         `{container="non-existent-masking-test-12345"}`,
+			Limit:         10,
+		})
+		require.NoError(t, err)
+
+		assert.NotNil(t, result, "Empty results should be an empty slice, not nil")
+		assert.Equal(t, 0, len(result), "Empty results should have length 0")
+	})
+
+	t.Run("query loki logs with masker - masking format validation", func(t *testing.T) {
+		config := &MaskingConfig{
+			BuiltinPatterns: []string{"ip_address"},
+		}
+		masker, err := NewLogMasker(config)
+		require.NoError(t, err)
+
+		ctx := newTestContext()
+		ctx = mcpgrafana.WithMasker(ctx, masker)
+
+		result, err := queryLokiLogs(ctx, QueryLokiLogsParams{
+			DatasourceUID: "loki",
+			LogQL:         `{container=~".+"}`,
+			Limit:         50,
+		})
+		require.NoError(t, err)
+
+		// If any entry contains [MASKED:, verify the format is valid
+		for _, entry := range result {
+			if strings.Contains(entry.Line, "[MASKED:") {
+				assert.NotContains(t, entry.Line, "[MASKED:]", "Should not have empty pattern type")
+				assert.NotContains(t, entry.Line, "[MASKED: ", "Should not have trailing space in mask")
+			}
 		}
 	})
 }
