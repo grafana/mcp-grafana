@@ -380,16 +380,13 @@ func (c *Client) fetchLogs(ctx context.Context, query, startRFC3339, endRFC3339 
 
 // QueryLokiLogsParams defines the parameters for querying Loki logs
 type QueryLokiLogsParams struct {
-	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the datasource to query"`
-	LogQL         string `json:"logql" jsonschema:"required,description=The LogQL query to execute against Loki. This can be a simple label matcher or a complex query with filters\\, parsers\\, and expressions. Supports full LogQL syntax including label matchers\\, filter operators\\, pattern expressions\\, and pipeline operations."`
-	StartRFC3339  string `json:"startRfc3339,omitempty" jsonschema:"description=Optionally\\, the start time of the query in RFC3339 format"`
-	EndRFC3339    string `json:"endRfc3339,omitempty" jsonschema:"description=Optionally\\, the end time of the query in RFC3339 format"`
-	Limit         int    `json:"limit,omitempty" jsonschema:"default=10,description=Optionally\\, the maximum number of log lines to return (max: 100)"`
-	Direction     string `json:"direction,omitempty" jsonschema:"description=Optionally\\, the direction of the query: 'forward' (oldest first) or 'backward' (newest first\\, default)"`
-
-	// Masking is an optional configuration to redact sensitive data from log lines.
-	// When specified, matching patterns will be replaced with mask strings before returning results.
-	Masking *MaskingConfig `json:"masking,omitempty" jsonschema:"description=Optional masking configuration to redact sensitive data from log lines"`
+	DatasourceUID string         `json:"datasourceUid" jsonschema:"required,description=The UID of the datasource to query"`
+	LogQL         string         `json:"logql" jsonschema:"required,description=The LogQL query to execute against Loki. This can be a simple label matcher or a complex query with filters\\, parsers\\, and expressions. Supports full LogQL syntax including label matchers\\, filter operators\\, pattern expressions\\, and pipeline operations."`
+	StartRFC3339  string         `json:"startRfc3339,omitempty" jsonschema:"description=Optionally\\, the start time of the query in RFC3339 format"`
+	EndRFC3339    string         `json:"endRfc3339,omitempty" jsonschema:"description=Optionally\\, the end time of the query in RFC3339 format"`
+	Limit         int            `json:"limit,omitempty" jsonschema:"default=10,description=Optionally\\, the maximum number of log lines to return (max: 100)"`
+	Direction     string         `json:"direction,omitempty" jsonschema:"description=Optionally\\, the direction of the query: 'forward' (oldest first) or 'backward' (newest first\\, default)"`
+	Masking       *MaskingConfig `json:"masking,omitempty" jsonschema:"description=Optional masking configuration to redact sensitive data from log lines"`
 }
 
 // LogEntry represents a single log entry or metric sample with metadata
@@ -411,34 +408,24 @@ func enforceLogLimit(requestedLimit int) int {
 	return requestedLimit
 }
 
-// applyMaskingToEntries applies masking configuration to log entries.
-// Returns the masked entries and any error from validation or masking.
-// If config is nil or empty, entries are returned unchanged.
 func applyMaskingToEntries(entries []LogEntry, config *MaskingConfig) ([]LogEntry, error) {
-	// nil or empty config means no masking
 	if config == nil {
 		return entries, nil
 	}
 
-	// Create masker (this validates the config)
 	masker, err := NewLogMasker(config)
 	if err != nil {
 		return nil, err
 	}
 
-	// nil masker means empty config (no patterns to apply)
 	if masker == nil {
 		return entries, nil
 	}
 
-	// Apply masking to all entries
 	return masker.MaskEntries(entries), nil
 }
 
-// queryLokiLogs queries logs from a Loki datasource using LogQL
 func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) ([]LogEntry, error) {
-	// Validate masking configuration early (before fetching logs)
-	// This ensures we fail fast on invalid configs and never return unmasked data
 	if args.Masking != nil {
 		if err := ValidateMaskingConfig(args.Masking); err != nil {
 			return nil, fmt.Errorf("validating masking config: %w", err)
@@ -524,12 +511,9 @@ func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) ([]LogEntry, e
 		return []LogEntry{}, nil
 	}
 
-	// Apply masking to log entries if configured
-	// This happens after log retrieval, before returning to the client
 	if args.Masking != nil {
 		entries, err = applyMaskingToEntries(entries, args.Masking)
 		if err != nil {
-			// Return error without unmasked data (security requirement)
 			return nil, fmt.Errorf("applying masking: %w", err)
 		}
 	}

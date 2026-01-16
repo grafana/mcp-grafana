@@ -82,11 +82,9 @@ func TestLokiTools(t *testing.T) {
 }
 
 // =============================================================================
-// Task 6: Integration Tests for Log Masking
+// Integration Tests for Log Masking
 // =============================================================================
 
-// TestQueryLokiLogs_WithMasking tests masking functionality with real Loki datasource (Task 6.1)
-// Requirements: 1.1, 2.4
 func TestQueryLokiLogs_WithMasking(t *testing.T) {
 	ctx := newTestContext()
 

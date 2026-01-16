@@ -14,13 +14,11 @@ import (
 )
 
 // =============================================================================
-// Builtin Pattern Tests (Task 2.1)
+// Builtin Pattern Tests
 // =============================================================================
 
-// TestBuiltinPatternConstants tests that all builtin pattern constants are defined
 func TestBuiltinPatternConstants(t *testing.T) {
 	t.Run("all pattern constants are defined", func(t *testing.T) {
-		// Verify all constants are defined with expected values
 		assert.Equal(t, BuiltinPatternID("email"), PatternEmail)
 		assert.Equal(t, BuiltinPatternID("phone"), PatternPhone)
 		assert.Equal(t, BuiltinPatternID("credit_card"), PatternCreditCard)
@@ -31,7 +29,6 @@ func TestBuiltinPatternConstants(t *testing.T) {
 	})
 }
 
-// TestBuiltinPatternsRegistry tests that all builtin patterns are registered
 func TestBuiltinPatternsRegistry(t *testing.T) {
 	t.Run("all patterns are registered in builtinPatterns map", func(t *testing.T) {
 		expectedPatterns := []BuiltinPatternID{
@@ -76,7 +73,6 @@ func TestBuiltinPatternsRegistry(t *testing.T) {
 	})
 }
 
-// TestBuiltinPatternEmail tests the email pattern matching
 func TestBuiltinPatternEmail(t *testing.T) {
 	regex := builtinPatterns[PatternEmail]
 	require.NotNil(t, regex)
@@ -105,7 +101,6 @@ func TestBuiltinPatternEmail(t *testing.T) {
 	}
 }
 
-// TestBuiltinPatternPhone tests the phone pattern matching (E.164 format only)
 func TestBuiltinPatternPhone(t *testing.T) {
 	regex := builtinPatterns[PatternPhone]
 	require.NotNil(t, regex)
@@ -138,7 +133,6 @@ func TestBuiltinPatternPhone(t *testing.T) {
 	}
 }
 
-// TestBuiltinPatternCreditCard tests the credit card pattern matching
 func TestBuiltinPatternCreditCard(t *testing.T) {
 	regex := builtinPatterns[PatternCreditCard]
 	require.NotNil(t, regex)
@@ -165,7 +159,6 @@ func TestBuiltinPatternCreditCard(t *testing.T) {
 	}
 }
 
-// TestBuiltinPatternIPAddress tests the IP address pattern matching (IPv4 and IPv6)
 func TestBuiltinPatternIPAddress(t *testing.T) {
 	regex := builtinPatterns[PatternIPAddress]
 	require.NotNil(t, regex)
@@ -199,7 +192,6 @@ func TestBuiltinPatternIPAddress(t *testing.T) {
 	}
 }
 
-// TestBuiltinPatternMACAddress tests the MAC address pattern matching
 func TestBuiltinPatternMACAddress(t *testing.T) {
 	regex := builtinPatterns[PatternMACAddress]
 	require.NotNil(t, regex)
@@ -228,7 +220,6 @@ func TestBuiltinPatternMACAddress(t *testing.T) {
 	}
 }
 
-// TestBuiltinPatternAPIKey tests the API key pattern matching
 func TestBuiltinPatternAPIKey(t *testing.T) {
 	regex := builtinPatterns[PatternAPIKey]
 	require.NotNil(t, regex)
@@ -258,7 +249,6 @@ func TestBuiltinPatternAPIKey(t *testing.T) {
 	}
 }
 
-// TestBuiltinPatternJWTToken tests the JWT token pattern matching
 func TestBuiltinPatternJWTToken(t *testing.T) {
 	regex := builtinPatterns[PatternJWTToken]
 	require.NotNil(t, regex)
@@ -295,7 +285,6 @@ func TestBuiltinPatternJWTToken(t *testing.T) {
 // GetBuiltinPattern Tests
 // =============================================================================
 
-// TestGetBuiltinPattern tests the GetBuiltinPattern helper function
 func TestGetBuiltinPattern(t *testing.T) {
 	t.Run("returns regex for valid pattern ID", func(t *testing.T) {
 		validIDs := []BuiltinPatternID{
@@ -328,7 +317,6 @@ func TestGetBuiltinPattern(t *testing.T) {
 	})
 }
 
-// TestIsValidBuiltinPattern tests the IsValidBuiltinPattern helper function
 func TestIsValidBuiltinPattern(t *testing.T) {
 	t.Run("returns true for valid pattern IDs", func(t *testing.T) {
 		validIDs := []string{
@@ -353,7 +341,6 @@ func TestIsValidBuiltinPattern(t *testing.T) {
 	})
 }
 
-// TestMaskingConfig_JSONSerialization tests that MaskingConfig can be properly serialized/deserialized
 func TestMaskingConfig_JSONSerialization(t *testing.T) {
 	t.Run("full config with all fields", func(t *testing.T) {
 		globalReplacement := "[REDACTED]"
@@ -460,7 +447,6 @@ func TestMaskingConfig_JSONSerialization(t *testing.T) {
 	})
 }
 
-// TestMaskingPattern_JSONSerialization tests that MaskingPattern can be properly serialized/deserialized
 func TestMaskingPattern_JSONSerialization(t *testing.T) {
 	t.Run("pattern with replacement", func(t *testing.T) {
 		pattern := MaskingPattern{
@@ -514,10 +500,9 @@ func TestMaskingPattern_JSONSerialization(t *testing.T) {
 }
 
 // =============================================================================
-// ValidateMaskingConfig Tests (Task 3.1)
+// ValidateMaskingConfig Tests
 // =============================================================================
 
-// TestValidateMaskingConfig_ValidConfig tests validation with valid configurations
 func TestValidateMaskingConfig_ValidConfig(t *testing.T) {
 	testCases := []struct {
 		name   string
@@ -606,7 +591,6 @@ func TestValidateMaskingConfig_ValidConfig(t *testing.T) {
 	}
 }
 
-// TestValidateMaskingConfig_InvalidBuiltinPattern tests validation with invalid builtin pattern identifiers
 func TestValidateMaskingConfig_InvalidBuiltinPattern(t *testing.T) {
 	testCases := []struct {
 		name           string
@@ -654,7 +638,6 @@ func TestValidateMaskingConfig_InvalidBuiltinPattern(t *testing.T) {
 	}
 }
 
-// TestValidateMaskingConfig_InvalidRegex tests validation with invalid regex patterns
 func TestValidateMaskingConfig_InvalidRegex(t *testing.T) {
 	testCases := []struct {
 		name           string
@@ -718,7 +701,6 @@ func TestValidateMaskingConfig_InvalidRegex(t *testing.T) {
 	}
 }
 
-// TestValidateMaskingConfig_TooManyPatterns tests validation with pattern count exceeding limit
 func TestValidateMaskingConfig_TooManyPatterns(t *testing.T) {
 	t.Run("exceeds max pattern limit with builtin only", func(t *testing.T) {
 		// Create 21 builtin patterns (only 7 valid, but test the count check)
@@ -780,7 +762,6 @@ func TestValidateMaskingConfig_TooManyPatterns(t *testing.T) {
 	})
 }
 
-// TestValidateMaskingConfig_VeryLongRegex tests validation with very long regex patterns
 func TestValidateMaskingConfig_VeryLongRegex(t *testing.T) {
 	t.Run("accepts very long valid regex", func(t *testing.T) {
 		// Create a long but valid regex
@@ -797,10 +778,9 @@ func TestValidateMaskingConfig_VeryLongRegex(t *testing.T) {
 }
 
 // =============================================================================
-// NewLogMasker Tests (Task 3.2)
+// NewLogMasker Tests
 // =============================================================================
 
-// TestNewLogMasker_ValidConfig tests creating LogMasker with valid configurations
 func TestNewLogMasker_ValidConfig(t *testing.T) {
 	testCases := []struct {
 		name   string
@@ -866,7 +846,6 @@ func TestNewLogMasker_ValidConfig(t *testing.T) {
 	}
 }
 
-// TestNewLogMasker_InvalidConfig tests creating LogMasker with invalid configurations
 func TestNewLogMasker_InvalidConfig(t *testing.T) {
 	testCases := []struct {
 		name           string
@@ -908,7 +887,6 @@ func TestNewLogMasker_InvalidConfig(t *testing.T) {
 	}
 }
 
-// TestNewLogMasker_PatternOrder tests that patterns are compiled in the correct order
 func TestNewLogMasker_PatternOrder(t *testing.T) {
 	t.Run("builtin patterns come before custom patterns", func(t *testing.T) {
 		config := &MaskingConfig{
@@ -928,7 +906,6 @@ func TestNewLogMasker_PatternOrder(t *testing.T) {
 	})
 }
 
-// TestNewLogMasker_GlobalReplacementHandling tests global replacement configuration
 func TestNewLogMasker_GlobalReplacementHandling(t *testing.T) {
 	t.Run("nil global replacement uses pattern-specific", func(t *testing.T) {
 		config := &MaskingConfig{
@@ -970,10 +947,9 @@ func strPtr(s string) *string {
 }
 
 // =============================================================================
-// MaskEntries Tests (Task 3.3)
+// MaskEntries Tests
 // =============================================================================
 
-// TestLogMasker_MaskEntries_BuiltinPatterns tests masking with builtin patterns
 func TestLogMasker_MaskEntries_BuiltinPatterns(t *testing.T) {
 	testCases := []struct {
 		name     string
@@ -1048,7 +1024,6 @@ func TestLogMasker_MaskEntries_BuiltinPatterns(t *testing.T) {
 	}
 }
 
-// TestLogMasker_MaskEntries_CustomPatterns tests masking with custom patterns
 func TestLogMasker_MaskEntries_CustomPatterns(t *testing.T) {
 	testCases := []struct {
 		name     string
@@ -1100,7 +1075,6 @@ func TestLogMasker_MaskEntries_CustomPatterns(t *testing.T) {
 	}
 }
 
-// TestLogMasker_MaskEntries_PatternTypeDisplay tests HidePatternType behavior
 func TestLogMasker_MaskEntries_PatternTypeDisplay(t *testing.T) {
 	t.Run("default shows pattern type", func(t *testing.T) {
 		config := &MaskingConfig{
@@ -1149,7 +1123,6 @@ func TestLogMasker_MaskEntries_PatternTypeDisplay(t *testing.T) {
 	})
 }
 
-// TestLogMasker_MaskEntries_GlobalReplacement tests GlobalReplacement override
 func TestLogMasker_MaskEntries_GlobalReplacement(t *testing.T) {
 	t.Run("global replacement overrides all patterns", func(t *testing.T) {
 		config := &MaskingConfig{
@@ -1170,7 +1143,6 @@ func TestLogMasker_MaskEntries_GlobalReplacement(t *testing.T) {
 	})
 }
 
-// TestLogMasker_MaskEntries_EmptyReplacement tests empty string replacement (deletion)
 func TestLogMasker_MaskEntries_EmptyReplacement(t *testing.T) {
 	t.Run("empty global replacement deletes matches", func(t *testing.T) {
 		emptyStr := ""
@@ -1222,7 +1194,6 @@ func TestLogMasker_MaskEntries_EmptyReplacement(t *testing.T) {
 	})
 }
 
-// TestLogMasker_MaskEntries_PatternOrder tests pattern application order
 func TestLogMasker_MaskEntries_PatternOrder(t *testing.T) {
 	t.Run("builtin patterns applied before custom patterns", func(t *testing.T) {
 		// The email pattern should match first, so custom pattern won't find email
@@ -1244,7 +1215,6 @@ func TestLogMasker_MaskEntries_PatternOrder(t *testing.T) {
 	})
 }
 
-// TestLogMasker_MaskEntries_NoBackReference tests that back-references are disabled
 func TestLogMasker_MaskEntries_NoBackReference(t *testing.T) {
 	t.Run("$1 in replacement is literal", func(t *testing.T) {
 		config := &MaskingConfig{
@@ -1264,7 +1234,6 @@ func TestLogMasker_MaskEntries_NoBackReference(t *testing.T) {
 	})
 }
 
-// TestLogMasker_MaskEntries_EmptyConfig tests masking with empty configuration
 func TestLogMasker_MaskEntries_EmptyConfig(t *testing.T) {
 	t.Run("empty config does not modify entries", func(t *testing.T) {
 		config := &MaskingConfig{}
@@ -1289,7 +1258,6 @@ func TestLogMasker_MaskEntries_EmptyConfig(t *testing.T) {
 	})
 }
 
-// TestLogMasker_MaskEntries_IPv6Address tests IPv6 address masking
 func TestLogMasker_MaskEntries_IPv6Address(t *testing.T) {
 	config := &MaskingConfig{
 		BuiltinPatterns: []string{"ip_address"},
@@ -1305,7 +1273,6 @@ func TestLogMasker_MaskEntries_IPv6Address(t *testing.T) {
 	})
 }
 
-// TestLogMasker_MaskEntries_EdgeCases tests edge cases
 func TestLogMasker_MaskEntries_EdgeCases(t *testing.T) {
 	t.Run("empty log line", func(t *testing.T) {
 		config := &MaskingConfig{
@@ -1391,7 +1358,6 @@ func TestLogMasker_MaskEntries_EdgeCases(t *testing.T) {
 	})
 }
 
-// TestLogMasker_MaskEntries_LocalPhoneNotMatched tests that local phone formats don't match
 func TestLogMasker_MaskEntries_LocalPhoneNotMatched(t *testing.T) {
 	config := &MaskingConfig{
 		BuiltinPatterns: []string{"phone"},
@@ -1421,7 +1387,6 @@ func TestLogMasker_MaskEntries_LocalPhoneNotMatched(t *testing.T) {
 	}
 }
 
-// TestLogMasker_MaskEntries_E164PhoneNumber tests E.164 phone number masking
 func TestLogMasker_MaskEntries_E164PhoneNumber(t *testing.T) {
 	config := &MaskingConfig{
 		BuiltinPatterns: []string{"phone"},
@@ -1448,7 +1413,6 @@ func TestLogMasker_MaskEntries_E164PhoneNumber(t *testing.T) {
 	}
 }
 
-// TestLogMasker_MaskEntries_OverlappingPatterns tests behavior with overlapping patterns
 func TestLogMasker_MaskEntries_OverlappingPatterns(t *testing.T) {
 	t.Run("first pattern wins on same text", func(t *testing.T) {
 		config := &MaskingConfig{
@@ -1468,7 +1432,6 @@ func TestLogMasker_MaskEntries_OverlappingPatterns(t *testing.T) {
 	})
 }
 
-// TestMaskingConfig_FieldValidation tests the structure requirements
 func TestMaskingConfig_FieldValidation(t *testing.T) {
 	t.Run("builtin patterns accepts valid identifiers", func(t *testing.T) {
 		validPatterns := []string{
@@ -1516,10 +1479,9 @@ func TestMaskingConfig_FieldValidation(t *testing.T) {
 }
 
 // =============================================================================
-// Task 4: Loki Query Integration Tests (Tasks 4.1, 4.2)
+// Loki Query Integration Tests
 // =============================================================================
 
-// TestQueryLokiLogsParams_MaskingField tests that QueryLokiLogsParams includes Masking field (Task 4.1)
 func TestQueryLokiLogsParams_MaskingField(t *testing.T) {
 	t.Run("params with nil masking config", func(t *testing.T) {
 		params := QueryLokiLogsParams{
@@ -1630,7 +1592,6 @@ func TestQueryLokiLogsParams_MaskingField(t *testing.T) {
 	})
 }
 
-// TestApplyMaskingToEntries tests the masking integration helper function (Task 4.2)
 func TestApplyMaskingToEntries(t *testing.T) {
 	t.Run("nil masking config returns unchanged entries", func(t *testing.T) {
 		entries := []LogEntry{
@@ -1825,11 +1786,9 @@ func TestApplyMaskingToEntries(t *testing.T) {
 }
 
 // =============================================================================
-// Benchmark Tests (Task 7.1)
+// Benchmark Tests
 // =============================================================================
 
-// generateTestLogEntries creates n log entries with realistic content for benchmarking.
-// Each entry contains various types of sensitive data that would be masked.
 func generateTestLogEntries(n int) []LogEntry {
 	entries := make([]LogEntry, n)
 	// Create realistic log lines with various sensitive data patterns
@@ -1881,9 +1840,6 @@ func generateTestLogEntries(n int) []LogEntry {
 	return entries
 }
 
-// BenchmarkLogMasker_MaskEntries_100Entries benchmarks masking 100 entries with all builtin patterns.
-// This tests the performance with a typical query result size and comprehensive pattern coverage.
-// Requirements: 5.3, 5.4
 func BenchmarkLogMasker_MaskEntries_100Entries(b *testing.B) {
 	// Setup: Create masker with all builtin patterns (7 patterns)
 	config := &MaskingConfig{
@@ -1913,9 +1869,6 @@ func BenchmarkLogMasker_MaskEntries_100Entries(b *testing.B) {
 	}
 }
 
-// BenchmarkLogMasker_MaskEntries_20Patterns benchmarks masking with maximum pattern count (20).
-// This tests the performance at the pattern limit to ensure SLO compliance.
-// Requirements: 5.3, 5.4
 func BenchmarkLogMasker_MaskEntries_20Patterns(b *testing.B) {
 	// Setup: Create masker with 7 builtin + 13 custom patterns = 20 total (max limit)
 	config := &MaskingConfig{
@@ -1960,9 +1913,6 @@ func BenchmarkLogMasker_MaskEntries_20Patterns(b *testing.B) {
 	}
 }
 
-// BenchmarkLogMasker_MaskEntries_SLO verifies the SLO: 100 entries × 20 patterns < 100ms.
-// This benchmark explicitly verifies the performance requirement from design.md.
-// Requirements: 5.4
 func BenchmarkLogMasker_MaskEntries_SLO(b *testing.B) {
 	// Setup: Create masker with 20 patterns (max limit)
 	config := &MaskingConfig{
@@ -2009,8 +1959,6 @@ func BenchmarkLogMasker_MaskEntries_SLO(b *testing.B) {
 	}
 }
 
-// BenchmarkLogMasker_PatternCompilation benchmarks the pattern compilation time.
-// This verifies that regex compilation happens once per masker creation (Req 5.3).
 func BenchmarkLogMasker_PatternCompilation(b *testing.B) {
 	// Setup config with all patterns
 	config := &MaskingConfig{
@@ -2042,8 +1990,6 @@ func BenchmarkLogMasker_PatternCompilation(b *testing.B) {
 	}
 }
 
-// BenchmarkLogMasker_MaskEntries_SingleEntry benchmarks masking a single entry.
-// Useful for understanding per-entry overhead.
 func BenchmarkLogMasker_MaskEntries_SingleEntry(b *testing.B) {
 	config := &MaskingConfig{
 		BuiltinPatterns: []string{
@@ -2070,8 +2016,6 @@ func BenchmarkLogMasker_MaskEntries_SingleEntry(b *testing.B) {
 	}
 }
 
-// BenchmarkLogMasker_MaskEntries_NoMatch benchmarks masking when no patterns match.
-// This represents best-case performance for log lines without sensitive data.
 func BenchmarkLogMasker_MaskEntries_NoMatch(b *testing.B) {
 	config := &MaskingConfig{
 		BuiltinPatterns: []string{
@@ -2103,8 +2047,6 @@ func BenchmarkLogMasker_MaskEntries_NoMatch(b *testing.B) {
 	}
 }
 
-// TestSLOCompliance is a test (not benchmark) that verifies the SLO is met.
-// This test fails if masking 100 entries with 20 patterns takes more than 100ms.
 func TestSLOCompliance(t *testing.T) {
 	// Setup: Create masker with 20 patterns (max limit)
 	config := &MaskingConfig{
@@ -2166,7 +2108,6 @@ func TestSLOCompliance(t *testing.T) {
 		averageDuration, sloLimit)
 }
 
-// TestPatternCompilationOnce verifies that patterns are compiled only once (Req 5.3).
 func TestPatternCompilationOnce(t *testing.T) {
 	config := &MaskingConfig{
 		BuiltinPatterns: []string{"email", "phone"},
