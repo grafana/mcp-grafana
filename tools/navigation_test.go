@@ -45,7 +45,7 @@ func TestGenerateDeeplink(t *testing.T) {
 		assert.Equal(t, "http://localhost:3000/d/dash-123?viewPanel=5", result)
 	})
 
-	t.Run("Explore deeplink", func(t *testing.T) {
+	t.Run("Explore deeplink - new format", func(t *testing.T) {
 		params := GenerateDeeplinkParams{
 			ResourceType:  "explore",
 			DatasourceUID: stringPtr("prometheus-uid"),
@@ -53,8 +53,42 @@ func TestGenerateDeeplink(t *testing.T) {
 
 		result, err := generateDeeplink(ctx, params)
 		require.NoError(t, err)
+		assert.Contains(t, result, "http://localhost:3000/explore?")
+		assert.Contains(t, result, "schemaVersion=1")
+		assert.Contains(t, result, "panes=")
+		assert.Contains(t, result, "prometheus-uid")
+	})
+
+	t.Run("Explore deeplink - legacy format", func(t *testing.T) {
+		useLegacy := true
+		params := GenerateDeeplinkParams{
+			ResourceType:        "explore",
+			DatasourceUID:       stringPtr("prometheus-uid"),
+			UseLegacyExploreURL: &useLegacy,
+		}
+
+		result, err := generateDeeplink(ctx, params)
+		require.NoError(t, err)
 		assert.Contains(t, result, "http://localhost:3000/explore?left=")
 		assert.Contains(t, result, "prometheus-uid")
+		assert.NotContains(t, result, "schemaVersion")
+	})
+
+	t.Run("Explore deeplink - with query", func(t *testing.T) {
+		query := "up{job=\"prometheus\"}"
+		params := GenerateDeeplinkParams{
+			ResourceType:  "explore",
+			DatasourceUID: stringPtr("prometheus-uid"),
+			ExploreQuery:  &query,
+		}
+
+		result, err := generateDeeplink(ctx, params)
+		require.NoError(t, err)
+		assert.Contains(t, result, "http://localhost:3000/explore?")
+		assert.Contains(t, result, "schemaVersion=1")
+		assert.Contains(t, result, "prometheus-uid")
+		// The query should be URL-encoded in the panes JSON
+		assert.Contains(t, result, "panes=")
 	})
 
 	t.Run("With time range", func(t *testing.T) {
