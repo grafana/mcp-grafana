@@ -291,7 +291,8 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})))
 	s, tm := newServer(transport, dt)
 
-	// Validate and log Loki masking configuration
+	// Create LogMasker from LokiMaskingConfig if enabled
+	var masker any
 	if lmc.Enabled {
 		invalidPatterns := lmc.Validate()
 		if len(invalidPatterns) > 0 {
@@ -299,10 +300,24 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 				"invalid_patterns", invalidPatterns)
 		}
 		validPatterns := lmc.FilterValidPatterns()
-		slog.Info("Loki log masking enabled",
-			"enabled", lmc.Enabled,
-			"pattern_count", len(validPatterns),
-			"patterns", validPatterns)
+
+		if len(validPatterns) > 0 {
+			// Create masking config for tools.NewLogMasker
+			maskingConfig := &tools.MaskingConfig{
+				BuiltinPatterns: validPatterns,
+			}
+			var err error
+			masker, err = tools.NewLogMasker(maskingConfig)
+			if err != nil {
+				slog.Error("Failed to create log masker", "error", err)
+				return fmt.Errorf("failed to create log masker: %w", err)
+			}
+			slog.Info("Loki log masking enabled",
+				"pattern_count", len(validPatterns),
+				"patterns", validPatterns)
+		} else {
+			slog.Warn("Loki log masking enabled but no valid patterns configured")
+		}
 	} else {
 		slog.Debug("Loki log masking disabled")
 	}
@@ -332,7 +347,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 	switch transport {
 	case "stdio":
 		srv := server.NewStdioServer(s)
-		cf := mcpgrafana.ComposedStdioContextFunc(gc)
+		cf := mcpgrafana.ComposedStdioContextFunc(gc, masker)
 		srv.SetContextFunc(cf)
 
 		// For stdio (single-tenant), initialize proxied tools on the server directly
@@ -354,7 +369,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 	case "sse":
 		httpSrv := &http.Server{Addr: addr}
 		srv := server.NewSSEServer(s,
-			server.WithSSEContextFunc(mcpgrafana.ComposedSSEContextFunc(gc)),
+			server.WithSSEContextFunc(mcpgrafana.ComposedSSEContextFunc(gc, masker)),
 			server.WithStaticBasePath(basePath),
 			server.WithHTTPServer(httpSrv),
 		)
@@ -371,7 +386,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 	case "streamable-http":
 		httpSrv := &http.Server{Addr: addr}
 		opts := []server.StreamableHTTPOption{
-			server.WithHTTPContextFunc(mcpgrafana.ComposedHTTPContextFunc(gc)),
+			server.WithHTTPContextFunc(mcpgrafana.ComposedHTTPContextFunc(gc, masker)),
 			server.WithStateLess(dt.proxied), // Stateful when proxied tools enabled (requires sessions)
 			server.WithEndpointPath(endpointPath),
 			server.WithStreamableHTTPServer(httpSrv),

@@ -184,6 +184,23 @@ func isValidLokiMaskingPattern(id string) bool {
 	return validLokiMaskingPatterns[id]
 }
 
+// maskerContextKey is the context key for the LogMasker.
+type maskerContextKey struct{}
+
+// WithMasker adds a LogMasker to the context.
+// The masker is used by Loki log queries to mask sensitive data.
+// The masker should be a *tools.LogMasker but is stored as any to avoid import cycles.
+func WithMasker(ctx context.Context, masker any) context.Context {
+	return context.WithValue(ctx, maskerContextKey{}, masker)
+}
+
+// MaskerFromContext retrieves the LogMasker from context.
+// Returns nil if masking is disabled or not configured.
+// The caller should type assert to *tools.LogMasker.
+func MaskerFromContext(ctx context.Context) any {
+	return ctx.Value(maskerContextKey{})
+}
+
 // grafanaConfigKey is the context key for Grafana configuration.
 type grafanaConfigKey struct{}
 
@@ -776,8 +793,9 @@ func ComposeHTTPContextFuncs(funcs ...httpContextFunc) server.HTTPContextFunc {
 }
 
 // ComposedStdioContextFunc returns a StdioContextFunc that comprises all predefined StdioContextFuncs.
-// It sets up the complete context for stdio transport including Grafana configuration, client initialization from environment variables, and incident management support.
-func ComposedStdioContextFunc(config GrafanaConfig) server.StdioContextFunc {
+// It sets up the complete context for stdio transport including Grafana configuration, client initialization from environment variables, incident management support, and optional log masking.
+// The masker parameter is optional and can be nil if masking is disabled.
+func ComposedStdioContextFunc(config GrafanaConfig, masker any) server.StdioContextFunc {
 	return ComposeStdioContextFuncs(
 		func(ctx context.Context) context.Context {
 			return WithGrafanaConfig(ctx, config)
@@ -785,12 +803,19 @@ func ComposedStdioContextFunc(config GrafanaConfig) server.StdioContextFunc {
 		ExtractGrafanaInfoFromEnv,
 		ExtractGrafanaClientFromEnv,
 		ExtractIncidentClientFromEnv,
+		func(ctx context.Context) context.Context {
+			if masker != nil {
+				return WithMasker(ctx, masker)
+			}
+			return ctx
+		},
 	)
 }
 
 // ComposedSSEContextFunc returns a SSEContextFunc that comprises all predefined SSEContextFuncs.
-// It sets up the complete context for SSE transport, extracting configuration from HTTP headers with environment variable fallbacks.
-func ComposedSSEContextFunc(config GrafanaConfig) server.SSEContextFunc {
+// It sets up the complete context for SSE transport, extracting configuration from HTTP headers with environment variable fallbacks and optional log masking.
+// The masker parameter is optional and can be nil if masking is disabled.
+func ComposedSSEContextFunc(config GrafanaConfig, masker any) server.SSEContextFunc {
 	return ComposeSSEContextFuncs(
 		func(ctx context.Context, req *http.Request) context.Context {
 			return WithGrafanaConfig(ctx, config)
@@ -798,12 +823,19 @@ func ComposedSSEContextFunc(config GrafanaConfig) server.SSEContextFunc {
 		ExtractGrafanaInfoFromHeaders,
 		ExtractGrafanaClientFromHeaders,
 		ExtractIncidentClientFromHeaders,
+		func(ctx context.Context, req *http.Request) context.Context {
+			if masker != nil {
+				return WithMasker(ctx, masker)
+			}
+			return ctx
+		},
 	)
 }
 
 // ComposedHTTPContextFunc returns a HTTPContextFunc that comprises all predefined HTTPContextFuncs.
-// It provides the complete context setup for HTTP transport, including header-based authentication and client configuration.
-func ComposedHTTPContextFunc(config GrafanaConfig) server.HTTPContextFunc {
+// It provides the complete context setup for HTTP transport, including header-based authentication, client configuration, and optional log masking.
+// The masker parameter is optional and can be nil if masking is disabled.
+func ComposedHTTPContextFunc(config GrafanaConfig, masker any) server.HTTPContextFunc {
 	return ComposeHTTPContextFuncs(
 		func(ctx context.Context, req *http.Request) context.Context {
 			return WithGrafanaConfig(ctx, config)
@@ -811,5 +843,11 @@ func ComposedHTTPContextFunc(config GrafanaConfig) server.HTTPContextFunc {
 		ExtractGrafanaInfoFromHeaders,
 		ExtractGrafanaClientFromHeaders,
 		ExtractIncidentClientFromHeaders,
+		func(ctx context.Context, req *http.Request) context.Context {
+			if masker != nil {
+				return WithMasker(ctx, masker)
+			}
+			return ctx
+		},
 	)
 }

@@ -858,3 +858,74 @@ func TestLokiMaskingConfig_FilterValidPatterns_NilPatterns(t *testing.T) {
 
 	assert.Nil(t, validPatterns)
 }
+
+// Tests for LogMasker Context functions
+
+// mockMasker is a test mock for LogMasker
+type mockMasker struct {
+	patternCount int
+}
+
+func (m *mockMasker) PatternCount() int {
+	return m.patternCount
+}
+
+func TestWithMasker_And_MaskerFromContext_RoundTrip(t *testing.T) {
+	// Create a mock masker
+	masker := &mockMasker{patternCount: 1}
+
+	// Add masker to context
+	ctx := WithMasker(context.Background(), masker)
+
+	// Retrieve masker from context
+	retrieved := MaskerFromContext(ctx)
+	assert.NotNil(t, retrieved)
+
+	// Type assert to *mockMasker
+	retrievedMasker, ok := retrieved.(*mockMasker)
+	assert.True(t, ok)
+	assert.Equal(t, masker, retrievedMasker)
+	assert.Equal(t, 1, retrievedMasker.PatternCount())
+}
+
+func TestMaskerFromContext_NilMasker(t *testing.T) {
+	// Add nil masker to context
+	ctx := WithMasker(context.Background(), nil)
+
+	// Retrieve masker from context
+	retrieved := MaskerFromContext(ctx)
+
+	assert.Nil(t, retrieved)
+}
+
+func TestMaskerFromContext_NoMaskerInContext(t *testing.T) {
+	// Empty context without masker
+	ctx := context.Background()
+
+	// Retrieve masker from context
+	retrieved := MaskerFromContext(ctx)
+
+	assert.Nil(t, retrieved)
+}
+
+func TestMaskerFromContext_WithOtherContextValues(t *testing.T) {
+	// Create a mock masker
+	masker := &mockMasker{patternCount: 2}
+
+	// Add multiple values to context
+	ctx := context.Background()
+	ctx = WithGrafanaConfig(ctx, GrafanaConfig{Debug: true})
+	ctx = WithMasker(ctx, masker)
+
+	// Retrieve masker from context and type assert
+	retrieved := MaskerFromContext(ctx)
+	assert.NotNil(t, retrieved)
+
+	retrievedMasker, ok := retrieved.(*mockMasker)
+	assert.True(t, ok)
+	assert.Equal(t, 2, retrievedMasker.PatternCount())
+
+	// Ensure other context values are preserved
+	grafanaConfig := GrafanaConfigFromContext(ctx)
+	assert.True(t, grafanaConfig.Debug)
+}

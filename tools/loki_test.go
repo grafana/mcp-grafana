@@ -3,7 +3,6 @@
 package tools
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -80,4 +79,3 @@ func TestLokiTools(t *testing.T) {
 		assert.Equal(t, 0, len(result), "Empty results should have length 0")
 	})
 }
-
