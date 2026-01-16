@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 )
@@ -131,4 +132,190 @@ type MaskingPattern struct {
 	// If empty, defaults to [MASKED:custom].
 	// Back-references ($1, $2, etc.) are NOT supported - the entire match is replaced with this literal string.
 	Replacement string `json:"replacement,omitempty" jsonschema:"description=Custom replacement string. Defaults to [MASKED:custom] if empty. Back-references not supported."`
+}
+
+// MaxMaskingPatterns is the maximum number of masking patterns allowed (builtin + custom combined).
+const MaxMaskingPatterns = 20
+
+// Error types for masking operations.
+var (
+	// ErrInvalidBuiltinPattern indicates an unknown builtin pattern identifier was specified.
+	ErrInvalidBuiltinPattern = errors.New("invalid builtin pattern identifier")
+
+	// ErrInvalidRegexPattern indicates a custom pattern has invalid regex syntax.
+	ErrInvalidRegexPattern = errors.New("invalid regex pattern")
+
+	// ErrTooManyPatterns indicates the total number of patterns exceeds the limit.
+	ErrTooManyPatterns = errors.New("too many masking patterns")
+
+	// ErrMaskingFailed indicates an internal error occurred during masking operation.
+	ErrMaskingFailed = errors.New("masking operation failed: internal error")
+)
+
+// ValidateMaskingConfig validates the masking configuration.
+// Returns nil if config is nil or valid.
+// Returns error with details if validation fails.
+func ValidateMaskingConfig(config *MaskingConfig) error {
+	// nil config means no masking - this is valid
+	if config == nil {
+		return nil
+	}
+
+	// Check total pattern count (builtin + custom)
+	totalPatterns := len(config.BuiltinPatterns) + len(config.CustomPatterns)
+	if totalPatterns > MaxMaskingPatterns {
+		return fmt.Errorf("%w: got %d patterns, maximum is %d",
+			ErrTooManyPatterns, totalPatterns, MaxMaskingPatterns)
+	}
+
+	// Validate builtin pattern identifiers
+	for _, id := range config.BuiltinPatterns {
+		if !IsValidBuiltinPattern(id) {
+			return fmt.Errorf("%w: %q (available: %v)",
+				ErrInvalidBuiltinPattern, id, validBuiltinPatterns)
+		}
+	}
+
+	// Validate custom regex patterns
+	for _, pattern := range config.CustomPatterns {
+		_, err := regexp.Compile(pattern.Pattern)
+		if err != nil {
+			return fmt.Errorf("%w: pattern %q: %v",
+				ErrInvalidRegexPattern, pattern.Pattern, err)
+		}
+	}
+
+	return nil
+}
+
+// compiledPattern holds a compiled regex pattern with its replacement string.
+type compiledPattern struct {
+	regex       *regexp.Regexp
+	replacement string // pattern-specific replacement (used if globalReplacement is nil)
+}
+
+// LogMasker provides log masking functionality.
+// It holds pre-compiled patterns and applies them to log entries.
+type LogMasker struct {
+	patterns          []*compiledPattern
+	globalReplacement *string // nil means use pattern-specific replacements
+	hideType          bool
+}
+
+// NewLogMasker creates a new LogMasker from MaskingConfig.
+// Returns nil if config is nil (no masking needed).
+// Returns error if config validation fails or pattern compilation fails.
+func NewLogMasker(config *MaskingConfig) (*LogMasker, error) {
+	// nil config means no masking
+	if config == nil {
+		return nil, nil
+	}
+
+	// Validate configuration first
+	if err := ValidateMaskingConfig(config); err != nil {
+		return nil, err
+	}
+
+	masker := &LogMasker{
+		patterns:          make([]*compiledPattern, 0, len(config.BuiltinPatterns)+len(config.CustomPatterns)),
+		globalReplacement: config.GlobalReplacement,
+		hideType:          config.HidePatternType,
+	}
+
+	// Add builtin patterns first (in order)
+	for _, id := range config.BuiltinPatterns {
+		regex, err := GetBuiltinPattern(id)
+		if err != nil {
+			// This shouldn't happen since we validated, but be defensive
+			return nil, err
+		}
+
+		replacement := fmt.Sprintf("[MASKED:%s]", id)
+		if config.HidePatternType {
+			replacement = "[MASKED]"
+		}
+
+		masker.patterns = append(masker.patterns, &compiledPattern{
+			regex:       regex,
+			replacement: replacement,
+		})
+	}
+
+	// Add custom patterns (in order)
+	for _, pattern := range config.CustomPatterns {
+		regex, err := regexp.Compile(pattern.Pattern)
+		if err != nil {
+			// This shouldn't happen since we validated, but be defensive
+			return nil, fmt.Errorf("%w: pattern %q: %v",
+				ErrInvalidRegexPattern, pattern.Pattern, err)
+		}
+
+		replacement := pattern.Replacement
+		if replacement == "" {
+			replacement = "[MASKED:custom]"
+			if config.HidePatternType {
+				replacement = "[MASKED]"
+			}
+		}
+
+		masker.patterns = append(masker.patterns, &compiledPattern{
+			regex:       regex,
+			replacement: replacement,
+		})
+	}
+
+	return masker, nil
+}
+
+// PatternCount returns the number of compiled patterns.
+func (m *LogMasker) PatternCount() int {
+	if m == nil {
+		return 0
+	}
+	return len(m.patterns)
+}
+
+// HasGlobalReplacement returns true if a global replacement string is configured.
+func (m *LogMasker) HasGlobalReplacement() bool {
+	if m == nil {
+		return false
+	}
+	return m.globalReplacement != nil
+}
+
+// MaskEntries applies masking to all log entries.
+// Modifies entries in place and returns the same slice.
+// If masker is nil or has no patterns, entries are returned unchanged.
+func (m *LogMasker) MaskEntries(entries []LogEntry) []LogEntry {
+	// nil masker means no masking
+	if m == nil || len(m.patterns) == 0 {
+		return entries
+	}
+
+	for i := range entries {
+		entries[i].Line = m.maskLine(entries[i].Line)
+	}
+
+	return entries
+}
+
+// maskLine applies all patterns to a single line.
+func (m *LogMasker) maskLine(line string) string {
+	if line == "" {
+		return line
+	}
+
+	for _, pattern := range m.patterns {
+		replacement := pattern.replacement
+		// Global replacement overrides pattern-specific replacement
+		if m.globalReplacement != nil {
+			replacement = *m.globalReplacement
+		}
+
+		// Use ReplaceAllLiteralString to disable back-references
+		// This ensures $1, $2, etc. in replacement are treated as literal strings
+		line = pattern.regex.ReplaceAllLiteralString(line, replacement)
+	}
+
+	return line
 }

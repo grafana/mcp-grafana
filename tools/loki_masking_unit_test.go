@@ -4,6 +4,8 @@ package tools
 
 import (
 	"encoding/json"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -507,6 +509,961 @@ func TestMaskingPattern_JSONSerialization(t *testing.T) {
 
 		assert.Equal(t, pattern.Pattern, decoded.Pattern)
 		assert.Equal(t, "", decoded.Replacement)
+	})
+}
+
+// =============================================================================
+// ValidateMaskingConfig Tests (Task 3.1)
+// =============================================================================
+
+// TestValidateMaskingConfig_ValidConfig tests validation with valid configurations
+func TestValidateMaskingConfig_ValidConfig(t *testing.T) {
+	testCases := []struct {
+		name   string
+		config *MaskingConfig
+	}{
+		{
+			name:   "nil config is valid (no masking)",
+			config: nil,
+		},
+		{
+			name:   "empty config is valid",
+			config: &MaskingConfig{},
+		},
+		{
+			name: "config with single builtin pattern",
+			config: &MaskingConfig{
+				BuiltinPatterns: []string{"email"},
+			},
+		},
+		{
+			name: "config with all builtin patterns",
+			config: &MaskingConfig{
+				BuiltinPatterns: []string{
+					"email", "phone", "credit_card", "ip_address",
+					"mac_address", "api_key", "jwt_token",
+				},
+			},
+		},
+		{
+			name: "config with single custom pattern",
+			config: &MaskingConfig{
+				CustomPatterns: []MaskingPattern{
+					{Pattern: `\d{4}-\d{4}`},
+				},
+			},
+		},
+		{
+			name: "config with builtin and custom patterns",
+			config: &MaskingConfig{
+				BuiltinPatterns: []string{"email", "phone"},
+				CustomPatterns: []MaskingPattern{
+					{Pattern: `secret-\w+`},
+				},
+			},
+		},
+		{
+			name: "config at max pattern limit (20)",
+			config: &MaskingConfig{
+				BuiltinPatterns: []string{
+					"email", "phone", "credit_card", "ip_address",
+					"mac_address", "api_key", "jwt_token",
+				},
+				CustomPatterns: []MaskingPattern{
+					{Pattern: `pattern1`},
+					{Pattern: `pattern2`},
+					{Pattern: `pattern3`},
+					{Pattern: `pattern4`},
+					{Pattern: `pattern5`},
+					{Pattern: `pattern6`},
+					{Pattern: `pattern7`},
+					{Pattern: `pattern8`},
+					{Pattern: `pattern9`},
+					{Pattern: `pattern10`},
+					{Pattern: `pattern11`},
+					{Pattern: `pattern12`},
+					{Pattern: `pattern13`},
+				},
+			},
+		},
+		{
+			name: "config with complex valid regex",
+			config: &MaskingConfig{
+				CustomPatterns: []MaskingPattern{
+					{Pattern: `(?i)password[=:\s]["']?[a-zA-Z0-9_\-]{8,}`},
+					{Pattern: `\b[A-Z]{2}\d{6}[A-Z]?\b`},
+				},
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateMaskingConfig(tc.config)
+			assert.NoError(t, err)
+		})
+	}
+}
+
+// TestValidateMaskingConfig_InvalidBuiltinPattern tests validation with invalid builtin pattern identifiers
+func TestValidateMaskingConfig_InvalidBuiltinPattern(t *testing.T) {
+	testCases := []struct {
+		name           string
+		config         *MaskingConfig
+		expectedErrMsg string
+	}{
+		{
+			name: "unknown pattern identifier",
+			config: &MaskingConfig{
+				BuiltinPatterns: []string{"unknown"},
+			},
+			expectedErrMsg: "invalid builtin pattern identifier",
+		},
+		{
+			name: "case-sensitive - uppercase EMAIL",
+			config: &MaskingConfig{
+				BuiltinPatterns: []string{"EMAIL"},
+			},
+			expectedErrMsg: "invalid builtin pattern identifier",
+		},
+		{
+			name: "mixed valid and invalid patterns",
+			config: &MaskingConfig{
+				BuiltinPatterns: []string{"email", "invalid", "phone"},
+			},
+			expectedErrMsg: "invalid builtin pattern identifier",
+		},
+		{
+			name: "empty string as pattern identifier",
+			config: &MaskingConfig{
+				BuiltinPatterns: []string{""},
+			},
+			expectedErrMsg: "invalid builtin pattern identifier",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateMaskingConfig(tc.config)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.expectedErrMsg)
+			// Should include available patterns in error
+			assert.Contains(t, err.Error(), "available")
+		})
+	}
+}
+
+// TestValidateMaskingConfig_InvalidRegex tests validation with invalid regex patterns
+func TestValidateMaskingConfig_InvalidRegex(t *testing.T) {
+	testCases := []struct {
+		name           string
+		config         *MaskingConfig
+		expectedErrMsg string
+	}{
+		{
+			name: "invalid regex - unclosed bracket",
+			config: &MaskingConfig{
+				CustomPatterns: []MaskingPattern{
+					{Pattern: `[a-z`},
+				},
+			},
+			expectedErrMsg: "invalid regex pattern",
+		},
+		{
+			name: "invalid regex - unclosed parenthesis",
+			config: &MaskingConfig{
+				CustomPatterns: []MaskingPattern{
+					{Pattern: `(abc`},
+				},
+			},
+			expectedErrMsg: "invalid regex pattern",
+		},
+		{
+			name: "invalid regex - bad escape",
+			config: &MaskingConfig{
+				CustomPatterns: []MaskingPattern{
+					{Pattern: `\`},
+				},
+			},
+			expectedErrMsg: "invalid regex pattern",
+		},
+		{
+			name: "invalid regex - invalid quantifier",
+			config: &MaskingConfig{
+				CustomPatterns: []MaskingPattern{
+					{Pattern: `a{2,1}`}, // min > max
+				},
+			},
+			expectedErrMsg: "invalid regex pattern",
+		},
+		{
+			name: "mixed valid and invalid regex",
+			config: &MaskingConfig{
+				CustomPatterns: []MaskingPattern{
+					{Pattern: `valid-pattern`},
+					{Pattern: `[invalid`},
+				},
+			},
+			expectedErrMsg: "invalid regex pattern",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateMaskingConfig(tc.config)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.expectedErrMsg)
+		})
+	}
+}
+
+// TestValidateMaskingConfig_TooManyPatterns tests validation with pattern count exceeding limit
+func TestValidateMaskingConfig_TooManyPatterns(t *testing.T) {
+	t.Run("exceeds max pattern limit with builtin only", func(t *testing.T) {
+		// Create 21 builtin patterns (only 7 valid, but test the count check)
+		patterns := make([]string, 21)
+		for i := 0; i < 21; i++ {
+			patterns[i] = "email" // duplicate, but count is what matters
+		}
+		config := &MaskingConfig{
+			BuiltinPatterns: patterns,
+		}
+
+		err := ValidateMaskingConfig(config)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "too many")
+		assert.Contains(t, err.Error(), "20")
+	})
+
+	t.Run("exceeds max pattern limit with custom only", func(t *testing.T) {
+		patterns := make([]MaskingPattern, 21)
+		for i := 0; i < 21; i++ {
+			patterns[i] = MaskingPattern{Pattern: fmt.Sprintf("pattern%d", i)}
+		}
+		config := &MaskingConfig{
+			CustomPatterns: patterns,
+		}
+
+		err := ValidateMaskingConfig(config)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "too many")
+	})
+
+	t.Run("exceeds max pattern limit with combined builtin and custom", func(t *testing.T) {
+		config := &MaskingConfig{
+			BuiltinPatterns: []string{
+				"email", "phone", "credit_card", "ip_address",
+				"mac_address", "api_key", "jwt_token",
+			},
+			CustomPatterns: []MaskingPattern{
+				{Pattern: `pattern1`},
+				{Pattern: `pattern2`},
+				{Pattern: `pattern3`},
+				{Pattern: `pattern4`},
+				{Pattern: `pattern5`},
+				{Pattern: `pattern6`},
+				{Pattern: `pattern7`},
+				{Pattern: `pattern8`},
+				{Pattern: `pattern9`},
+				{Pattern: `pattern10`},
+				{Pattern: `pattern11`},
+				{Pattern: `pattern12`},
+				{Pattern: `pattern13`},
+				{Pattern: `pattern14`}, // This makes 21 total (7 + 14)
+			},
+		}
+
+		err := ValidateMaskingConfig(config)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "too many")
+	})
+}
+
+// TestValidateMaskingConfig_VeryLongRegex tests validation with very long regex patterns
+func TestValidateMaskingConfig_VeryLongRegex(t *testing.T) {
+	t.Run("accepts very long valid regex", func(t *testing.T) {
+		// Create a long but valid regex
+		longPattern := strings.Repeat(`[a-z]`, 100)
+		config := &MaskingConfig{
+			CustomPatterns: []MaskingPattern{
+				{Pattern: longPattern},
+			},
+		}
+
+		err := ValidateMaskingConfig(config)
+		assert.NoError(t, err)
+	})
+}
+
+// =============================================================================
+// NewLogMasker Tests (Task 3.2)
+// =============================================================================
+
+// TestNewLogMasker_ValidConfig tests creating LogMasker with valid configurations
+func TestNewLogMasker_ValidConfig(t *testing.T) {
+	testCases := []struct {
+		name   string
+		config *MaskingConfig
+	}{
+		{
+			name:   "nil config returns nil masker",
+			config: nil,
+		},
+		{
+			name:   "empty config returns masker with no patterns",
+			config: &MaskingConfig{},
+		},
+		{
+			name: "config with builtin patterns",
+			config: &MaskingConfig{
+				BuiltinPatterns: []string{"email", "phone"},
+			},
+		},
+		{
+			name: "config with custom patterns",
+			config: &MaskingConfig{
+				CustomPatterns: []MaskingPattern{
+					{Pattern: `\d{4}-\d{4}`},
+				},
+			},
+		},
+		{
+			name: "config with builtin and custom patterns",
+			config: &MaskingConfig{
+				BuiltinPatterns: []string{"email"},
+				CustomPatterns: []MaskingPattern{
+					{Pattern: `secret-\w+`, Replacement: "[SECRET]"},
+				},
+			},
+		},
+		{
+			name: "config with global replacement",
+			config: &MaskingConfig{
+				BuiltinPatterns:   []string{"email"},
+				GlobalReplacement: strPtr("[REDACTED]"),
+			},
+		},
+		{
+			name: "config with hide pattern type",
+			config: &MaskingConfig{
+				BuiltinPatterns: []string{"email"},
+				HidePatternType: true,
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			masker, err := NewLogMasker(tc.config)
+			assert.NoError(t, err)
+			if tc.config == nil {
+				assert.Nil(t, masker)
+			} else {
+				assert.NotNil(t, masker)
+			}
+		})
+	}
+}
+
+// TestNewLogMasker_InvalidConfig tests creating LogMasker with invalid configurations
+func TestNewLogMasker_InvalidConfig(t *testing.T) {
+	testCases := []struct {
+		name           string
+		config         *MaskingConfig
+		expectedErrMsg string
+	}{
+		{
+			name: "invalid builtin pattern",
+			config: &MaskingConfig{
+				BuiltinPatterns: []string{"invalid"},
+			},
+			expectedErrMsg: "invalid builtin pattern",
+		},
+		{
+			name: "invalid regex pattern",
+			config: &MaskingConfig{
+				CustomPatterns: []MaskingPattern{
+					{Pattern: `[invalid`},
+				},
+			},
+			expectedErrMsg: "invalid regex pattern",
+		},
+		{
+			name: "too many patterns",
+			config: &MaskingConfig{
+				BuiltinPatterns: make([]string, 21), // Will fail count check
+			},
+			expectedErrMsg: "too many",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			masker, err := NewLogMasker(tc.config)
+			require.Error(t, err)
+			assert.Nil(t, masker)
+			assert.Contains(t, err.Error(), tc.expectedErrMsg)
+		})
+	}
+}
+
+// TestNewLogMasker_PatternOrder tests that patterns are compiled in the correct order
+func TestNewLogMasker_PatternOrder(t *testing.T) {
+	t.Run("builtin patterns come before custom patterns", func(t *testing.T) {
+		config := &MaskingConfig{
+			BuiltinPatterns: []string{"email", "phone"},
+			CustomPatterns: []MaskingPattern{
+				{Pattern: `custom1`},
+				{Pattern: `custom2`},
+			},
+		}
+
+		masker, err := NewLogMasker(config)
+		require.NoError(t, err)
+		require.NotNil(t, masker)
+
+		// Verify pattern count: 2 builtin + 2 custom = 4
+		assert.Equal(t, 4, masker.PatternCount())
+	})
+}
+
+// TestNewLogMasker_GlobalReplacementHandling tests global replacement configuration
+func TestNewLogMasker_GlobalReplacementHandling(t *testing.T) {
+	t.Run("nil global replacement uses pattern-specific", func(t *testing.T) {
+		config := &MaskingConfig{
+			BuiltinPatterns: []string{"email"},
+		}
+
+		masker, err := NewLogMasker(config)
+		require.NoError(t, err)
+		assert.False(t, masker.HasGlobalReplacement())
+	})
+
+	t.Run("empty string global replacement for deletion", func(t *testing.T) {
+		emptyStr := ""
+		config := &MaskingConfig{
+			BuiltinPatterns:   []string{"email"},
+			GlobalReplacement: &emptyStr,
+		}
+
+		masker, err := NewLogMasker(config)
+		require.NoError(t, err)
+		assert.True(t, masker.HasGlobalReplacement())
+	})
+
+	t.Run("non-empty global replacement", func(t *testing.T) {
+		config := &MaskingConfig{
+			BuiltinPatterns:   []string{"email"},
+			GlobalReplacement: strPtr("[REDACTED]"),
+		}
+
+		masker, err := NewLogMasker(config)
+		require.NoError(t, err)
+		assert.True(t, masker.HasGlobalReplacement())
+	})
+}
+
+// strPtr is a helper function to create a pointer to a string
+func strPtr(s string) *string {
+	return &s
+}
+
+// =============================================================================
+// MaskEntries Tests (Task 3.3)
+// =============================================================================
+
+// TestLogMasker_MaskEntries_BuiltinPatterns tests masking with builtin patterns
+func TestLogMasker_MaskEntries_BuiltinPatterns(t *testing.T) {
+	testCases := []struct {
+		name     string
+		patterns []string
+		input    string
+		expected string
+	}{
+		{
+			name:     "email pattern",
+			patterns: []string{"email"},
+			input:    "User login: user@example.com",
+			expected: "User login: [MASKED:email]",
+		},
+		{
+			name:     "phone pattern (E.164)",
+			patterns: []string{"phone"},
+			input:    "Contact: +819012345678",
+			expected: "Contact: [MASKED:phone]",
+		},
+		{
+			name:     "credit card pattern",
+			patterns: []string{"credit_card"},
+			input:    "Payment with 4111-1111-1111-1111",
+			expected: "Payment with [MASKED:credit_card]",
+		},
+		{
+			name:     "ip address pattern (IPv4)",
+			patterns: []string{"ip_address"},
+			input:    "Server IP: 192.168.1.100",
+			expected: "Server IP: [MASKED:ip_address]",
+		},
+		{
+			name:     "mac address pattern",
+			patterns: []string{"mac_address"},
+			input:    "Device MAC: 00:1A:2B:3C:4D:5E",
+			expected: "Device MAC: [MASKED:mac_address]",
+		},
+		{
+			name:     "api key pattern",
+			patterns: []string{"api_key"},
+			input:    "api_key=abc123def456ghi789jkl",
+			expected: "[MASKED:api_key]",
+		},
+		{
+			name:     "jwt token pattern",
+			patterns: []string{"jwt_token"},
+			input:    "Token: eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.signature",
+			expected: "Token: [MASKED:jwt_token]",
+		},
+		{
+			name:     "multiple emails in one line",
+			patterns: []string{"email"},
+			input:    "From: sender@mail.com To: receiver@mail.com",
+			expected: "From: [MASKED:email] To: [MASKED:email]",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			config := &MaskingConfig{
+				BuiltinPatterns: tc.patterns,
+			}
+			masker, err := NewLogMasker(config)
+			require.NoError(t, err)
+
+			entries := []LogEntry{{Line: tc.input}}
+			result := masker.MaskEntries(entries)
+
+			require.Len(t, result, 1)
+			assert.Equal(t, tc.expected, result[0].Line)
+		})
+	}
+}
+
+// TestLogMasker_MaskEntries_CustomPatterns tests masking with custom patterns
+func TestLogMasker_MaskEntries_CustomPatterns(t *testing.T) {
+	testCases := []struct {
+		name        string
+		patterns    []MaskingPattern
+		input       string
+		expected    string
+	}{
+		{
+			name: "simple custom pattern without replacement",
+			patterns: []MaskingPattern{
+				{Pattern: `secret-\w+`},
+			},
+			input:    "Found secret-abc123 in log",
+			expected: "Found [MASKED:custom] in log",
+		},
+		{
+			name: "custom pattern with replacement",
+			patterns: []MaskingPattern{
+				{Pattern: `user_id=\d+`, Replacement: "[USER_ID]"},
+			},
+			input:    "Request from user_id=12345",
+			expected: "Request from [USER_ID]",
+		},
+		{
+			name: "multiple custom patterns",
+			patterns: []MaskingPattern{
+				{Pattern: `secret-\w+`, Replacement: "[SECRET]"},
+				{Pattern: `token-[a-z0-9]+`, Replacement: "[TOKEN]"},
+			},
+			input:    "secret-xyz123 and token-abc456",
+			expected: "[SECRET] and [TOKEN]",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			config := &MaskingConfig{
+				CustomPatterns: tc.patterns,
+			}
+			masker, err := NewLogMasker(config)
+			require.NoError(t, err)
+
+			entries := []LogEntry{{Line: tc.input}}
+			result := masker.MaskEntries(entries)
+
+			require.Len(t, result, 1)
+			assert.Equal(t, tc.expected, result[0].Line)
+		})
+	}
+}
+
+// TestLogMasker_MaskEntries_PatternTypeDisplay tests HidePatternType behavior
+func TestLogMasker_MaskEntries_PatternTypeDisplay(t *testing.T) {
+	t.Run("default shows pattern type", func(t *testing.T) {
+		config := &MaskingConfig{
+			BuiltinPatterns: []string{"email"},
+			HidePatternType: false,
+		}
+		masker, err := NewLogMasker(config)
+		require.NoError(t, err)
+
+		entries := []LogEntry{{Line: "Email: user@example.com"}}
+		result := masker.MaskEntries(entries)
+
+		assert.Contains(t, result[0].Line, "[MASKED:email]")
+	})
+
+	t.Run("hide pattern type uses generic mask", func(t *testing.T) {
+		config := &MaskingConfig{
+			BuiltinPatterns: []string{"email"},
+			HidePatternType: true,
+		}
+		masker, err := NewLogMasker(config)
+		require.NoError(t, err)
+
+		entries := []LogEntry{{Line: "Email: user@example.com"}}
+		result := masker.MaskEntries(entries)
+
+		assert.Contains(t, result[0].Line, "[MASKED]")
+		assert.NotContains(t, result[0].Line, "[MASKED:email]")
+	})
+
+	t.Run("hide pattern type affects custom patterns too", func(t *testing.T) {
+		config := &MaskingConfig{
+			CustomPatterns: []MaskingPattern{
+				{Pattern: `secret-\w+`}, // No explicit replacement
+			},
+			HidePatternType: true,
+		}
+		masker, err := NewLogMasker(config)
+		require.NoError(t, err)
+
+		entries := []LogEntry{{Line: "Found secret-abc123"}}
+		result := masker.MaskEntries(entries)
+
+		assert.Contains(t, result[0].Line, "[MASKED]")
+		assert.NotContains(t, result[0].Line, "[MASKED:custom]")
+	})
+}
+
+// TestLogMasker_MaskEntries_GlobalReplacement tests GlobalReplacement override
+func TestLogMasker_MaskEntries_GlobalReplacement(t *testing.T) {
+	t.Run("global replacement overrides all patterns", func(t *testing.T) {
+		config := &MaskingConfig{
+			BuiltinPatterns: []string{"email", "phone"},
+			CustomPatterns: []MaskingPattern{
+				{Pattern: `secret-\w+`, Replacement: "[SECRET]"},
+			},
+			GlobalReplacement: strPtr("[REDACTED]"),
+		}
+		masker, err := NewLogMasker(config)
+		require.NoError(t, err)
+
+		entries := []LogEntry{{Line: "email@test.com +819012345678 secret-abc"}}
+		result := masker.MaskEntries(entries)
+
+		// All should be replaced with global replacement
+		assert.Equal(t, "[REDACTED] [REDACTED] [REDACTED]", result[0].Line)
+	})
+}
+
+// TestLogMasker_MaskEntries_EmptyReplacement tests empty string replacement (deletion)
+func TestLogMasker_MaskEntries_EmptyReplacement(t *testing.T) {
+	t.Run("empty global replacement deletes matches", func(t *testing.T) {
+		emptyStr := ""
+		config := &MaskingConfig{
+			BuiltinPatterns:   []string{"email"},
+			GlobalReplacement: &emptyStr,
+		}
+		masker, err := NewLogMasker(config)
+		require.NoError(t, err)
+
+		entries := []LogEntry{{Line: "Contact: user@example.com for info"}}
+		result := masker.MaskEntries(entries)
+
+		assert.Equal(t, "Contact:  for info", result[0].Line)
+	})
+
+	t.Run("empty custom replacement uses default mask", func(t *testing.T) {
+		// Note: Empty string in MaskingPattern.Replacement defaults to [MASKED:custom]
+		// Deletion via empty replacement is only available through GlobalReplacement
+		config := &MaskingConfig{
+			CustomPatterns: []MaskingPattern{
+				{Pattern: `debug:.*`, Replacement: ""}, // Defaults to [MASKED:custom]
+			},
+		}
+		masker, err := NewLogMasker(config)
+		require.NoError(t, err)
+
+		entries := []LogEntry{{Line: "Info message debug: some debug info"}}
+		result := masker.MaskEntries(entries)
+
+		assert.Equal(t, "Info message [MASKED:custom]", result[0].Line)
+	})
+
+	t.Run("deletion via global replacement works for custom patterns", func(t *testing.T) {
+		emptyStr := ""
+		config := &MaskingConfig{
+			CustomPatterns: []MaskingPattern{
+				{Pattern: `\s*debug:.*`},
+			},
+			GlobalReplacement: &emptyStr,
+		}
+		masker, err := NewLogMasker(config)
+		require.NoError(t, err)
+
+		entries := []LogEntry{{Line: "Info message debug: some debug info"}}
+		result := masker.MaskEntries(entries)
+
+		assert.Equal(t, "Info message", result[0].Line)
+	})
+}
+
+// TestLogMasker_MaskEntries_PatternOrder tests pattern application order
+func TestLogMasker_MaskEntries_PatternOrder(t *testing.T) {
+	t.Run("builtin patterns applied before custom patterns", func(t *testing.T) {
+		// The email pattern should match first, so custom pattern won't find email
+		config := &MaskingConfig{
+			BuiltinPatterns: []string{"email"},
+			CustomPatterns: []MaskingPattern{
+				{Pattern: `user@example\.com`, Replacement: "[SPECIFIC_EMAIL]"},
+			},
+		}
+		masker, err := NewLogMasker(config)
+		require.NoError(t, err)
+
+		entries := []LogEntry{{Line: "Contact: user@example.com"}}
+		result := masker.MaskEntries(entries)
+
+		// Email builtin pattern should match first
+		assert.Contains(t, result[0].Line, "[MASKED:email]")
+		assert.NotContains(t, result[0].Line, "[SPECIFIC_EMAIL]")
+	})
+}
+
+// TestLogMasker_MaskEntries_NoBackReference tests that back-references are disabled
+func TestLogMasker_MaskEntries_NoBackReference(t *testing.T) {
+	t.Run("$1 in replacement is literal", func(t *testing.T) {
+		config := &MaskingConfig{
+			CustomPatterns: []MaskingPattern{
+				{Pattern: `user_(\d+)`, Replacement: "user_$1_masked"},
+			},
+		}
+		masker, err := NewLogMasker(config)
+		require.NoError(t, err)
+
+		entries := []LogEntry{{Line: "Found user_12345"}}
+		result := masker.MaskEntries(entries)
+
+		// $1 should be literal, not a back-reference
+		// The replacement uses ReplaceAllLiteralString which treats $1 as literal
+		assert.Equal(t, "Found user_$1_masked", result[0].Line)
+	})
+}
+
+// TestLogMasker_MaskEntries_EmptyConfig tests masking with empty configuration
+func TestLogMasker_MaskEntries_EmptyConfig(t *testing.T) {
+	t.Run("empty config does not modify entries", func(t *testing.T) {
+		config := &MaskingConfig{}
+		masker, err := NewLogMasker(config)
+		require.NoError(t, err)
+
+		original := "This contains user@example.com and 192.168.1.1"
+		entries := []LogEntry{{Line: original}}
+		result := masker.MaskEntries(entries)
+
+		assert.Equal(t, original, result[0].Line)
+	})
+
+	t.Run("nil masker returns unchanged entries", func(t *testing.T) {
+		var masker *LogMasker = nil
+
+		original := "This contains user@example.com"
+		entries := []LogEntry{{Line: original}}
+		result := masker.MaskEntries(entries)
+
+		assert.Equal(t, original, result[0].Line)
+	})
+}
+
+// TestLogMasker_MaskEntries_IPv6Address tests IPv6 address masking
+func TestLogMasker_MaskEntries_IPv6Address(t *testing.T) {
+	config := &MaskingConfig{
+		BuiltinPatterns: []string{"ip_address"},
+	}
+	masker, err := NewLogMasker(config)
+	require.NoError(t, err)
+
+	t.Run("full IPv6 address", func(t *testing.T) {
+		entries := []LogEntry{{Line: "Server: 2001:0db8:85a3:0000:0000:8a2e:0370:7334"}}
+		result := masker.MaskEntries(entries)
+
+		assert.Contains(t, result[0].Line, "[MASKED:ip_address]")
+	})
+}
+
+// TestLogMasker_MaskEntries_EdgeCases tests edge cases
+func TestLogMasker_MaskEntries_EdgeCases(t *testing.T) {
+	t.Run("empty log line", func(t *testing.T) {
+		config := &MaskingConfig{
+			BuiltinPatterns: []string{"email"},
+		}
+		masker, err := NewLogMasker(config)
+		require.NoError(t, err)
+
+		entries := []LogEntry{{Line: ""}}
+		result := masker.MaskEntries(entries)
+
+		assert.Equal(t, "", result[0].Line)
+	})
+
+	t.Run("empty entries slice", func(t *testing.T) {
+		config := &MaskingConfig{
+			BuiltinPatterns: []string{"email"},
+		}
+		masker, err := NewLogMasker(config)
+		require.NoError(t, err)
+
+		entries := []LogEntry{}
+		result := masker.MaskEntries(entries)
+
+		assert.Empty(t, result)
+	})
+
+	t.Run("unicode content preserved", func(t *testing.T) {
+		config := &MaskingConfig{
+			BuiltinPatterns: []string{"email"},
+		}
+		masker, err := NewLogMasker(config)
+		require.NoError(t, err)
+
+		entries := []LogEntry{{Line: "メッセージ: user@example.com から送信 🎉"}}
+		result := masker.MaskEntries(entries)
+
+		assert.Contains(t, result[0].Line, "メッセージ:")
+		assert.Contains(t, result[0].Line, "[MASKED:email]")
+		assert.Contains(t, result[0].Line, "から送信 🎉")
+	})
+
+	t.Run("multiple entries processed", func(t *testing.T) {
+		config := &MaskingConfig{
+			BuiltinPatterns: []string{"email"},
+		}
+		masker, err := NewLogMasker(config)
+		require.NoError(t, err)
+
+		entries := []LogEntry{
+			{Line: "First: a@b.com"},
+			{Line: "Second: no email here"},
+			{Line: "Third: c@d.org"},
+		}
+		result := masker.MaskEntries(entries)
+
+		require.Len(t, result, 3)
+		assert.Contains(t, result[0].Line, "[MASKED:email]")
+		assert.Equal(t, "Second: no email here", result[1].Line)
+		assert.Contains(t, result[2].Line, "[MASKED:email]")
+	})
+
+	t.Run("preserves other entry fields", func(t *testing.T) {
+		config := &MaskingConfig{
+			BuiltinPatterns: []string{"email"},
+		}
+		masker, err := NewLogMasker(config)
+		require.NoError(t, err)
+
+		entries := []LogEntry{
+			{
+				Timestamp: "2024-01-01T00:00:00Z",
+				Line:      "user@example.com",
+				Labels:    map[string]string{"app": "test"},
+			},
+		}
+		result := masker.MaskEntries(entries)
+
+		require.Len(t, result, 1)
+		assert.Equal(t, "2024-01-01T00:00:00Z", result[0].Timestamp)
+		assert.Equal(t, map[string]string{"app": "test"}, result[0].Labels)
+		assert.Contains(t, result[0].Line, "[MASKED:email]")
+	})
+}
+
+// TestLogMasker_MaskEntries_LocalPhoneNotMatched tests that local phone formats don't match
+func TestLogMasker_MaskEntries_LocalPhoneNotMatched(t *testing.T) {
+	config := &MaskingConfig{
+		BuiltinPatterns: []string{"phone"},
+	}
+	masker, err := NewLogMasker(config)
+	require.NoError(t, err)
+
+	testCases := []struct {
+		name  string
+		input string
+	}{
+		{"Japanese local format with dashes", "090-1234-5678"},
+		{"Japanese local format without dashes", "09012345678"},
+		{"US local format", "(415) 555-1234"},
+		{"US format with dashes", "415-555-1234"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			entries := []LogEntry{{Line: fmt.Sprintf("Contact: %s", tc.input)}}
+			result := masker.MaskEntries(entries)
+
+			// Local formats should NOT be masked by the phone builtin pattern
+			assert.NotContains(t, result[0].Line, "[MASKED:phone]")
+			assert.Contains(t, result[0].Line, tc.input)
+		})
+	}
+}
+
+// TestLogMasker_MaskEntries_E164PhoneNumber tests E.164 phone number masking
+func TestLogMasker_MaskEntries_E164PhoneNumber(t *testing.T) {
+	config := &MaskingConfig{
+		BuiltinPatterns: []string{"phone"},
+	}
+	masker, err := NewLogMasker(config)
+	require.NoError(t, err)
+
+	testCases := []struct {
+		name  string
+		input string
+	}{
+		{"Japanese mobile E.164", "+819012345678"},
+		{"US E.164", "+14155551234"},
+		{"UK E.164", "+442071234567"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			entries := []LogEntry{{Line: fmt.Sprintf("Contact: %s", tc.input)}}
+			result := masker.MaskEntries(entries)
+
+			assert.Contains(t, result[0].Line, "[MASKED:phone]")
+		})
+	}
+}
+
+// TestLogMasker_MaskEntries_OverlappingPatterns tests behavior with overlapping patterns
+func TestLogMasker_MaskEntries_OverlappingPatterns(t *testing.T) {
+	t.Run("first pattern wins on same text", func(t *testing.T) {
+		config := &MaskingConfig{
+			BuiltinPatterns: []string{"email"},
+			CustomPatterns: []MaskingPattern{
+				{Pattern: `@example\.com`, Replacement: "[DOMAIN]"},
+			},
+		}
+		masker, err := NewLogMasker(config)
+		require.NoError(t, err)
+
+		entries := []LogEntry{{Line: "user@example.com"}}
+		result := masker.MaskEntries(entries)
+
+		// Email pattern matches first and replaces the whole thing
+		assert.Equal(t, "[MASKED:email]", result[0].Line)
 	})
 }
 
