@@ -38,6 +38,10 @@ const (
 
 	grafanaURLHeader    = "X-Grafana-URL"
 	grafanaAPIKeyHeader = "X-Grafana-API-Key"
+
+	// Loki masking environment variables
+	lokiMaskingEnabledEnvVar  = "LOKI_MASKING_ENABLED"
+	lokiMaskingPatternsEnvVar = "LOKI_MASKING_PATTERNS"
 )
 
 func urlAndAPIKeyFromEnv() (string, string) {
@@ -100,6 +104,84 @@ func urlAndAPIKeyFromHeaders(req *http.Request) (string, string) {
 	u := strings.TrimRight(req.Header.Get(grafanaURLHeader), "/")
 	apiKey := req.Header.Get(grafanaAPIKeyHeader)
 	return u, apiKey
+}
+
+// LokiMaskingConfig holds the server-level masking configuration
+// for Loki log queries. This configuration is set at server startup
+// and cannot be modified by AI/LLM through tool calls.
+type LokiMaskingConfig struct {
+	// Enabled controls whether masking is active.
+	// When false, no masking is applied to any queries.
+	Enabled bool
+
+	// Patterns is a list of builtin pattern identifiers to apply.
+	// Available: email, phone, credit_card, ip_address, mac_address, api_key, jwt_token
+	Patterns []string
+}
+
+// ExtractLokiMaskingFromEnv reads masking config from environment variables.
+// LOKI_MASKING_ENABLED: "true" or "false" (case insensitive), default: false
+// LOKI_MASKING_PATTERNS: comma-separated list of pattern identifiers
+func ExtractLokiMaskingFromEnv() LokiMaskingConfig {
+	config := LokiMaskingConfig{}
+
+	// LOKI_MASKING_ENABLED (default: false)
+	if v := os.Getenv(lokiMaskingEnabledEnvVar); v != "" {
+		config.Enabled = strings.EqualFold(v, "true")
+	}
+
+	// LOKI_MASKING_PATTERNS (comma-separated)
+	if v := os.Getenv(lokiMaskingPatternsEnvVar); v != "" {
+		config.Patterns = strings.Split(v, ",")
+	}
+
+	return config
+}
+
+// Validate checks if all specified patterns are valid builtin patterns.
+// Returns list of invalid patterns for error reporting (Req 5.1).
+// Whitespace is trimmed from pattern identifiers before validation.
+func (lmc *LokiMaskingConfig) Validate() []string {
+	var invalidPatterns []string
+	for _, p := range lmc.Patterns {
+		p = strings.TrimSpace(p)
+		if !isValidLokiMaskingPattern(p) {
+			invalidPatterns = append(invalidPatterns, p)
+		}
+	}
+	return invalidPatterns
+}
+
+// FilterValidPatterns removes invalid patterns and returns valid ones only.
+// Whitespace is trimmed from pattern identifiers.
+func (lmc *LokiMaskingConfig) FilterValidPatterns() []string {
+	if lmc.Patterns == nil {
+		return nil
+	}
+	var validPatterns []string
+	for _, p := range lmc.Patterns {
+		p = strings.TrimSpace(p)
+		if isValidLokiMaskingPattern(p) {
+			validPatterns = append(validPatterns, p)
+		}
+	}
+	return validPatterns
+}
+
+// validLokiMaskingPatterns is the list of valid builtin pattern identifiers.
+var validLokiMaskingPatterns = map[string]bool{
+	"email":       true,
+	"phone":       true,
+	"credit_card": true,
+	"ip_address":  true,
+	"mac_address": true,
+	"api_key":     true,
+	"jwt_token":   true,
+}
+
+// isValidLokiMaskingPattern checks if the given pattern identifier is valid.
+func isValidLokiMaskingPattern(id string) bool {
+	return validLokiMaskingPatterns[id]
 }
 
 // grafanaConfigKey is the context key for Grafana configuration.

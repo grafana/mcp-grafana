@@ -670,3 +670,191 @@ func assertHasAttribute(t *testing.T, attributes []attribute.KeyValue, key strin
 	}
 	t.Errorf("Expected attribute %s with value %s not found", key, expectedValue)
 }
+
+// Tests for LokiMaskingConfig
+
+func TestExtractLokiMaskingFromEnv_BothSet(t *testing.T) {
+	t.Setenv("LOKI_MASKING_ENABLED", "true")
+	t.Setenv("LOKI_MASKING_PATTERNS", "email,credit_card,ip_address")
+
+	config := ExtractLokiMaskingFromEnv()
+
+	assert.True(t, config.Enabled)
+	assert.Equal(t, []string{"email", "credit_card", "ip_address"}, config.Patterns)
+}
+
+func TestExtractLokiMaskingFromEnv_EnabledOnly(t *testing.T) {
+	t.Setenv("LOKI_MASKING_ENABLED", "true")
+	// LOKI_MASKING_PATTERNS not set
+
+	config := ExtractLokiMaskingFromEnv()
+
+	assert.True(t, config.Enabled)
+	assert.Nil(t, config.Patterns)
+}
+
+func TestExtractLokiMaskingFromEnv_PatternsOnly(t *testing.T) {
+	// LOKI_MASKING_ENABLED not set
+	t.Setenv("LOKI_MASKING_PATTERNS", "email,phone")
+
+	config := ExtractLokiMaskingFromEnv()
+
+	assert.False(t, config.Enabled)
+	assert.Equal(t, []string{"email", "phone"}, config.Patterns)
+}
+
+func TestExtractLokiMaskingFromEnv_NotSet(t *testing.T) {
+	// No environment variables set
+
+	config := ExtractLokiMaskingFromEnv()
+
+	assert.False(t, config.Enabled)
+	assert.Nil(t, config.Patterns)
+}
+
+func TestExtractLokiMaskingFromEnv_CaseInsensitiveEnabled(t *testing.T) {
+	testCases := []struct {
+		name     string
+		value    string
+		expected bool
+	}{
+		{"lowercase true", "true", true},
+		{"uppercase TRUE", "TRUE", true},
+		{"mixed case True", "True", true},
+		{"lowercase false", "false", false},
+		{"uppercase FALSE", "FALSE", false},
+		{"invalid value", "yes", false},
+		{"empty value", "", false},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("LOKI_MASKING_ENABLED", tc.value)
+
+			config := ExtractLokiMaskingFromEnv()
+
+			assert.Equal(t, tc.expected, config.Enabled)
+		})
+	}
+}
+
+func TestExtractLokiMaskingFromEnv_WhitespaceTrim(t *testing.T) {
+	t.Setenv("LOKI_MASKING_ENABLED", "true")
+	t.Setenv("LOKI_MASKING_PATTERNS", " email , credit_card , ip_address ")
+
+	config := ExtractLokiMaskingFromEnv()
+
+	// Note: The function should return raw strings, trimming is done in FilterValidPatterns
+	assert.Equal(t, []string{" email ", " credit_card ", " ip_address "}, config.Patterns)
+}
+
+func TestLokiMaskingConfig_Validate_ValidPatterns(t *testing.T) {
+	config := LokiMaskingConfig{
+		Enabled:  true,
+		Patterns: []string{"email", "phone", "credit_card", "ip_address", "mac_address", "api_key", "jwt_token"},
+	}
+
+	invalidPatterns := config.Validate()
+
+	assert.Empty(t, invalidPatterns)
+}
+
+func TestLokiMaskingConfig_Validate_InvalidPatterns(t *testing.T) {
+	config := LokiMaskingConfig{
+		Enabled:  true,
+		Patterns: []string{"email", "invalid_pattern", "credit_card", "unknown"},
+	}
+
+	invalidPatterns := config.Validate()
+
+	assert.Equal(t, []string{"invalid_pattern", "unknown"}, invalidPatterns)
+}
+
+func TestLokiMaskingConfig_Validate_EmptyPatterns(t *testing.T) {
+	config := LokiMaskingConfig{
+		Enabled:  true,
+		Patterns: []string{},
+	}
+
+	invalidPatterns := config.Validate()
+
+	assert.Empty(t, invalidPatterns)
+}
+
+func TestLokiMaskingConfig_Validate_WithWhitespace(t *testing.T) {
+	config := LokiMaskingConfig{
+		Enabled:  true,
+		Patterns: []string{" email ", "credit_card", " phone"},
+	}
+
+	invalidPatterns := config.Validate()
+
+	// Validate should trim whitespace before checking
+	assert.Empty(t, invalidPatterns)
+}
+
+func TestLokiMaskingConfig_FilterValidPatterns_AllValid(t *testing.T) {
+	config := LokiMaskingConfig{
+		Enabled:  true,
+		Patterns: []string{"email", "phone", "credit_card"},
+	}
+
+	validPatterns := config.FilterValidPatterns()
+
+	assert.Equal(t, []string{"email", "phone", "credit_card"}, validPatterns)
+}
+
+func TestLokiMaskingConfig_FilterValidPatterns_MixedValidity(t *testing.T) {
+	config := LokiMaskingConfig{
+		Enabled:  true,
+		Patterns: []string{"email", "invalid", "credit_card", "unknown"},
+	}
+
+	validPatterns := config.FilterValidPatterns()
+
+	assert.Equal(t, []string{"email", "credit_card"}, validPatterns)
+}
+
+func TestLokiMaskingConfig_FilterValidPatterns_AllInvalid(t *testing.T) {
+	config := LokiMaskingConfig{
+		Enabled:  true,
+		Patterns: []string{"invalid1", "invalid2"},
+	}
+
+	validPatterns := config.FilterValidPatterns()
+
+	assert.Empty(t, validPatterns)
+}
+
+func TestLokiMaskingConfig_FilterValidPatterns_TrimsWhitespace(t *testing.T) {
+	config := LokiMaskingConfig{
+		Enabled:  true,
+		Patterns: []string{" email ", " phone", "credit_card "},
+	}
+
+	validPatterns := config.FilterValidPatterns()
+
+	assert.Equal(t, []string{"email", "phone", "credit_card"}, validPatterns)
+}
+
+func TestLokiMaskingConfig_FilterValidPatterns_EmptyPatterns(t *testing.T) {
+	config := LokiMaskingConfig{
+		Enabled:  true,
+		Patterns: []string{},
+	}
+
+	validPatterns := config.FilterValidPatterns()
+
+	assert.Empty(t, validPatterns)
+}
+
+func TestLokiMaskingConfig_FilterValidPatterns_NilPatterns(t *testing.T) {
+	config := LokiMaskingConfig{
+		Enabled:  true,
+		Patterns: nil,
+	}
+
+	validPatterns := config.FilterValidPatterns()
+
+	assert.Nil(t, validPatterns)
+}

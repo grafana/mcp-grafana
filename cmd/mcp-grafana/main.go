@@ -56,6 +56,54 @@ type grafanaConfig struct {
 	tlsSkipVerify bool
 }
 
+// lokiMaskingConfig holds Loki log masking configuration from CLI flags.
+type lokiMaskingConfig struct {
+	enabled         bool
+	enabledSet      bool // tracks if CLI flag was explicitly set
+	patterns        []string
+	patternsSet     bool // tracks if CLI flag was explicitly set
+	patternsRawFlag string
+}
+
+func (lmc *lokiMaskingConfig) addFlags() {
+	flag.BoolVar(&lmc.enabled, "loki-masking-enabled", false,
+		"Enable Loki log masking (env: LOKI_MASKING_ENABLED)")
+	flag.Func("loki-masking-patterns",
+		"Comma-separated list of builtin masking patterns (env: LOKI_MASKING_PATTERNS). "+
+			"Available: email, phone, credit_card, ip_address, mac_address, api_key, jwt_token",
+		func(s string) error {
+			lmc.patternsSet = true
+			if s != "" {
+				lmc.patterns = strings.Split(s, ",")
+			}
+			return nil
+		})
+}
+
+// toMCPConfig converts the CLI config to mcpgrafana.LokiMaskingConfig,
+// merging with environment variables (CLI takes precedence).
+func (lmc *lokiMaskingConfig) toMCPConfig() mcpgrafana.LokiMaskingConfig {
+	// Start with environment variables
+	config := mcpgrafana.ExtractLokiMaskingFromEnv()
+
+	// CLI flags override environment variables if explicitly set
+	// Check if enabled flag was set via CLI by comparing with flag default and checking Visit
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "loki-masking-enabled" {
+			lmc.enabledSet = true
+		}
+	})
+
+	if lmc.enabledSet {
+		config.Enabled = lmc.enabled
+	}
+	if lmc.patternsSet {
+		config.Patterns = lmc.patterns
+	}
+
+	return config
+}
+
 func (dt *disabledTools) addFlags() {
 	flag.StringVar(&dt.enabledTools, "enabled-tools", "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering", "A comma separated list of tools enabled for this server. Can be overwritten entirely or by disabling specific components, e.g. --disable-search.")
 	flag.BoolVar(&dt.search, "disable-search", false, "Disable search tools")
@@ -239,9 +287,25 @@ func handleHealthz(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte("ok"))
 }
 
-func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt disabledTools, gc mcpgrafana.GrafanaConfig, tls tlsConfig) error {
+func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt disabledTools, gc mcpgrafana.GrafanaConfig, tls tlsConfig, lmc mcpgrafana.LokiMaskingConfig) error {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})))
 	s, tm := newServer(transport, dt)
+
+	// Validate and log Loki masking configuration
+	if lmc.Enabled {
+		invalidPatterns := lmc.Validate()
+		if len(invalidPatterns) > 0 {
+			slog.Warn("Invalid Loki masking patterns detected, they will be ignored",
+				"invalid_patterns", invalidPatterns)
+		}
+		validPatterns := lmc.FilterValidPatterns()
+		slog.Info("Loki log masking enabled",
+			"enabled", lmc.Enabled,
+			"pattern_count", len(validPatterns),
+			"patterns", validPatterns)
+	} else {
+		slog.Debug("Loki log masking disabled")
+	}
 
 	// Create a context that will be cancelled on shutdown
 	ctx, cancel := context.WithCancel(context.Background())
@@ -348,6 +412,8 @@ func main() {
 	gc.addFlags()
 	var tls tlsConfig
 	tls.addFlags()
+	var lmc lokiMaskingConfig
+	lmc.addFlags()
 	flag.Parse()
 
 	if *showVersion {
@@ -366,7 +432,10 @@ func main() {
 		}
 	}
 
-	if err := run(transport, *addr, *basePath, *endpointPath, parseLevel(*logLevel), dt, grafanaConfig, tls); err != nil {
+	// Convert CLI lokiMaskingConfig to mcpgrafana.LokiMaskingConfig
+	lokiMaskingConfig := lmc.toMCPConfig()
+
+	if err := run(transport, *addr, *basePath, *endpointPath, parseLevel(*logLevel), dt, grafanaConfig, tls, lokiMaskingConfig); err != nil {
 		panic(err)
 	}
 }
