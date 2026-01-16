@@ -5,6 +5,7 @@ package tools
 import (
 	"testing"
 
+	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -77,5 +78,45 @@ func TestLokiTools(t *testing.T) {
 		// Should return an empty slice, not nil
 		assert.NotNil(t, result, "Empty results should be an empty slice, not nil")
 		assert.Equal(t, 0, len(result), "Empty results should have length 0")
+	})
+
+	t.Run("query loki logs backward compatibility - no masker in context", func(t *testing.T) {
+		ctx := newTestContext()
+
+		result, err := queryLokiLogs(ctx, QueryLokiLogsParams{
+			DatasourceUID: "loki",
+			LogQL:         `{container=~".+"}`,
+			Limit:         10,
+		})
+		require.NoError(t, err)
+
+		for _, entry := range result {
+			assert.NotEmpty(t, entry.Timestamp, "Log entry should have a timestamp")
+			assert.NotNil(t, entry.Labels, "Log entry should have labels")
+			assert.NotContains(t, entry.Line, "[MASKED:", "Logs should not be masked when no masker in context")
+		}
+	})
+
+	t.Run("query loki logs with masker in context", func(t *testing.T) {
+		config := &MaskingConfig{
+			BuiltinPatterns: []string{"ip_address"},
+		}
+		masker, err := NewLogMasker(config)
+		require.NoError(t, err)
+
+		ctx := newTestContext()
+		ctx = mcpgrafana.WithMasker(ctx, masker)
+
+		result, err := queryLokiLogs(ctx, QueryLokiLogsParams{
+			DatasourceUID: "loki",
+			LogQL:         `{container=~".+"}`,
+			Limit:         10,
+		})
+		require.NoError(t, err)
+
+		for _, entry := range result {
+			assert.NotEmpty(t, entry.Timestamp, "Log entry should have a timestamp")
+			assert.NotNil(t, entry.Labels, "Log entry should have labels")
+		}
 	})
 }

@@ -3,11 +3,13 @@
 package tools
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
 
+	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -1324,4 +1326,163 @@ func TestPatternCompilationOnce(t *testing.T) {
 	// Typical compilation time for 2 patterns is ~10-50µs, but masking pre-compiled is ~1-10µs
 	assert.Less(t, averagePerCall, 1*time.Millisecond,
 		"MaskEntries is too slow, patterns may be recompiling each call")
+}
+
+// =============================================================================
+// Context Integration Tests
+// =============================================================================
+
+func TestMaskerContext_RoundTrip(t *testing.T) {
+	t.Run("WithMasker and MaskerFromContext round trip", func(t *testing.T) {
+		config := &MaskingConfig{
+			BuiltinPatterns: []string{"email", "phone"},
+		}
+		masker, err := NewLogMasker(config)
+		require.NoError(t, err)
+		require.NotNil(t, masker)
+
+		ctx := context.Background()
+		ctx = mcpgrafana.WithMasker(ctx, masker)
+
+		retrieved := mcpgrafana.MaskerFromContext(ctx)
+		require.NotNil(t, retrieved)
+
+		retrievedMasker, ok := retrieved.(*LogMasker)
+		require.True(t, ok)
+		assert.Equal(t, masker.PatternCount(), retrievedMasker.PatternCount())
+	})
+
+	t.Run("MaskerFromContext returns nil when not set", func(t *testing.T) {
+		ctx := context.Background()
+		retrieved := mcpgrafana.MaskerFromContext(ctx)
+		assert.Nil(t, retrieved)
+	})
+
+	t.Run("nil masker can be stored and retrieved", func(t *testing.T) {
+		ctx := context.Background()
+		ctx = mcpgrafana.WithMasker(ctx, nil)
+		retrieved := mcpgrafana.MaskerFromContext(ctx)
+		assert.Nil(t, retrieved)
+	})
+}
+
+func TestMaskerFromContext_WithMasking(t *testing.T) {
+	t.Run("masker from context applies masking to entries", func(t *testing.T) {
+		config := &MaskingConfig{
+			BuiltinPatterns: []string{"email"},
+		}
+		masker, err := NewLogMasker(config)
+		require.NoError(t, err)
+
+		ctx := context.Background()
+		ctx = mcpgrafana.WithMasker(ctx, masker)
+
+		retrieved := mcpgrafana.MaskerFromContext(ctx)
+		require.NotNil(t, retrieved)
+
+		retrievedMasker, ok := retrieved.(*LogMasker)
+		require.True(t, ok)
+
+		entries := []LogEntry{
+			{Timestamp: "1234567890", Line: "User user@example.com logged in", Labels: map[string]string{"app": "test"}},
+		}
+		result := retrievedMasker.MaskEntries(entries)
+
+		require.Len(t, result, 1)
+		assert.Contains(t, result[0].Line, "[MASKED:email]")
+		assert.NotContains(t, result[0].Line, "user@example.com")
+	})
+}
+
+func TestBackwardCompatibility_NoMaskerInContext(t *testing.T) {
+	t.Run("entries unchanged when no masker in context", func(t *testing.T) {
+		ctx := context.Background()
+		maskerValue := mcpgrafana.MaskerFromContext(ctx)
+
+		entries := []LogEntry{
+			{Timestamp: "1234567890", Line: "User user@example.com logged in", Labels: map[string]string{"app": "test"}},
+		}
+
+		if maskerValue != nil {
+			if masker, ok := maskerValue.(*LogMasker); ok && masker != nil {
+				entries = masker.MaskEntries(entries)
+			}
+		}
+
+		require.Len(t, entries, 1)
+		assert.Equal(t, "User user@example.com logged in", entries[0].Line)
+	})
+
+	t.Run("entries unchanged when nil masker in context", func(t *testing.T) {
+		ctx := context.Background()
+		ctx = mcpgrafana.WithMasker(ctx, nil)
+		maskerValue := mcpgrafana.MaskerFromContext(ctx)
+
+		entries := []LogEntry{
+			{Timestamp: "1234567890", Line: "User user@example.com logged in", Labels: map[string]string{"app": "test"}},
+		}
+
+		if maskerValue != nil {
+			if masker, ok := maskerValue.(*LogMasker); ok && masker != nil {
+				entries = masker.MaskEntries(entries)
+			}
+		}
+
+		require.Len(t, entries, 1)
+		assert.Equal(t, "User user@example.com logged in", entries[0].Line)
+	})
+}
+
+func TestMaskingAppliedViaContext(t *testing.T) {
+	t.Run("simulates queryLokiLogs masking behavior", func(t *testing.T) {
+		config := &MaskingConfig{
+			BuiltinPatterns: []string{"email", "ip_address"},
+		}
+		masker, err := NewLogMasker(config)
+		require.NoError(t, err)
+
+		ctx := context.Background()
+		ctx = mcpgrafana.WithMasker(ctx, masker)
+
+		entries := []LogEntry{
+			{
+				Timestamp: "1705234567890000000",
+				Line:      "User user@example.com logged in from 192.168.1.100",
+				Labels:    map[string]string{"app": "myapp", "env": "prod"},
+			},
+			{
+				Timestamp: "1705234567891000000",
+				Line:      "Request processed successfully",
+				Labels:    map[string]string{"app": "myapp", "env": "prod"},
+			},
+			{
+				Timestamp: "1705234567892000000",
+				Line:      "Error from admin@company.org: connection to 10.0.0.1 failed",
+				Labels:    map[string]string{"app": "myapp", "env": "prod"},
+			},
+		}
+
+		if maskerValue := mcpgrafana.MaskerFromContext(ctx); maskerValue != nil {
+			if m, ok := maskerValue.(*LogMasker); ok && m != nil {
+				entries = m.MaskEntries(entries)
+			}
+		}
+
+		require.Len(t, entries, 3)
+
+		assert.Contains(t, entries[0].Line, "[MASKED:email]")
+		assert.Contains(t, entries[0].Line, "[MASKED:ip_address]")
+		assert.NotContains(t, entries[0].Line, "user@example.com")
+		assert.NotContains(t, entries[0].Line, "192.168.1.100")
+
+		assert.Equal(t, "Request processed successfully", entries[1].Line)
+
+		assert.Contains(t, entries[2].Line, "[MASKED:email]")
+		assert.Contains(t, entries[2].Line, "[MASKED:ip_address]")
+		assert.NotContains(t, entries[2].Line, "admin@company.org")
+		assert.NotContains(t, entries[2].Line, "10.0.0.1")
+
+		assert.Equal(t, "1705234567890000000", entries[0].Timestamp)
+		assert.Equal(t, map[string]string{"app": "myapp", "env": "prod"}, entries[0].Labels)
+	})
 }
