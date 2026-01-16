@@ -407,6 +407,7 @@ func enforceLogLimit(requestedLimit int) int {
 	return requestedLimit
 }
 
+// queryLokiLogs queries logs from a Loki datasource using LogQL
 func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) ([]LogEntry, error) {
 	client, err := newLokiClient(ctx, args.DatasourceUID)
 	if err != nil {
