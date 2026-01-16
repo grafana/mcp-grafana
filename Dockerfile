@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:1.24-bookworm@sha256:656be510c8b4d33acf4eac8575b7f04a3e30b705c152dc6bde112dbe1a87b602 AS builder
+FROM golang:1.24-bookworm@sha256:1c64c586e1cf9dc4c394c5896ec574659c792a0840f4fa0eb54a88de146e978b AS builder
 
 # Set the working directory
 WORKDIR /app
