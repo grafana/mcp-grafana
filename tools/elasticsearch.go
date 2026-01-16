@@ -102,27 +102,51 @@ func (c *ElasticsearchClient) buildURL(urlPath string) string {
 	return fullURL + urlPath
 }
 
-// search performs a search query against Elasticsearch
+// MsearchResponse represents the response from Elasticsearch _msearch API
+type MsearchResponse struct {
+	Took      int                     `json:"took"`
+	Responses []ElasticsearchResponse `json:"responses"`
+}
+
+// search performs a search query against Elasticsearch using the _msearch API.
+// Grafana's datasource proxy only allows POST requests to /_msearch for Elasticsearch.
 func (c *ElasticsearchClient) search(ctx context.Context, index, query string, startTime, endTime *time.Time, size int) (*ElasticsearchResponse, error) {
 	// Build the search query
 	searchQuery := buildElasticsearchQuery(query, startTime, endTime, size)
 
-	// Serialize the query to JSON
+	// Build NDJSON payload for _msearch API
+	// Format: header line (index info) + newline + body line (query) + newline
+	header := map[string]interface{}{
+		"index":              index,
+		"ignore_unavailable": true,
+	}
+	headerBytes, err := json.Marshal(header)
+	if err != nil {
+		return nil, fmt.Errorf("marshalling header: %w", err)
+	}
+
 	queryBytes, err := json.Marshal(searchQuery)
 	if err != nil {
 		return nil, fmt.Errorf("marshalling query: %w", err)
 	}
 
-	// Build the URL path
-	urlPath := fmt.Sprintf("/%s/_search", index)
-	fullURL := c.buildURL(urlPath)
+	// NDJSON format: each JSON object on its own line, ending with newline
+	var payload bytes.Buffer
+	payload.Write(headerBytes)
+	payload.WriteByte('\n')
+	payload.Write(queryBytes)
+	payload.WriteByte('\n')
+
+	// Use _msearch endpoint (the only POST endpoint allowed by Grafana's proxy)
+	fullURL := c.buildURL("/_msearch")
 
 	// Create the HTTP request
-	req, err := http.NewRequestWithContext(ctx, "POST", fullURL, bytes.NewReader(queryBytes))
+	req, err := http.NewRequestWithContext(ctx, "POST", fullURL, &payload)
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/json")
+	// _msearch requires application/x-ndjson content type
+	req.Header.Set("Content-Type", "application/x-ndjson")
 
 	// Execute the request
 	resp, err := c.httpClient.Do(req)
@@ -146,13 +170,18 @@ func (c *ElasticsearchClient) search(ctx context.Context, index, query string, s
 		return nil, fmt.Errorf("reading response body: %w", err)
 	}
 
-	// Parse the response
-	var esResponse ElasticsearchResponse
-	if err := json.Unmarshal(bodyBytes, &esResponse); err != nil {
+	// Parse the _msearch response (contains array of responses)
+	var msearchResponse MsearchResponse
+	if err := json.Unmarshal(bodyBytes, &msearchResponse); err != nil {
 		return nil, fmt.Errorf("unmarshalling response: %w", err)
 	}
 
-	return &esResponse, nil
+	// We only send one query, so we expect one response
+	if len(msearchResponse.Responses) == 0 {
+		return nil, fmt.Errorf("no responses returned from _msearch")
+	}
+
+	return &msearchResponse.Responses[0], nil
 }
 
 // buildElasticsearchQuery constructs an Elasticsearch query DSL JSON object
