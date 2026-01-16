@@ -55,17 +55,10 @@ func IsValidBuiltinPattern(id string) bool {
 }
 
 // MaskingConfig defines the masking configuration for log queries
+// This is a simplified configuration that only supports builtin patterns.
+// Custom patterns are not supported for security and simplicity reasons.
 type MaskingConfig struct {
-	BuiltinPatterns   []string         `json:"builtinPatterns,omitempty" jsonschema:"description=List of builtin pattern identifiers to apply (email\\, phone\\, credit_card\\, ip_address\\, mac_address\\, api_key\\, jwt_token)"`
-	CustomPatterns    []MaskingPattern `json:"customPatterns,omitempty" jsonschema:"description=List of custom regex patterns to apply"`
-	GlobalReplacement *string          `json:"globalReplacement,omitempty" jsonschema:"description=Custom replacement string for all patterns. Overrides pattern-specific defaults. Empty string removes matched content."`
-	HidePatternType   bool             `json:"hidePatternType,omitempty" jsonschema:"description=When true\\, uses generic [MASKED] instead of [MASKED:type]"`
-}
-
-// MaskingPattern defines a custom masking pattern
-type MaskingPattern struct {
-	Pattern     string `json:"pattern" jsonschema:"required,description=RE2 regular expression pattern to match"`
-	Replacement string `json:"replacement,omitempty" jsonschema:"description=Custom replacement string. Defaults to [MASKED:custom] if empty. Back-references not supported."`
+	BuiltinPatterns []string `json:"builtinPatterns,omitempty" jsonschema:"description=List of builtin pattern identifiers to apply (email\\, phone\\, credit_card\\, ip_address\\, mac_address\\, api_key\\, jwt_token)"`
 }
 
 const MaxMaskingPatterns = 20
@@ -82,24 +75,15 @@ func ValidateMaskingConfig(config *MaskingConfig) error {
 		return nil
 	}
 
-	totalPatterns := len(config.BuiltinPatterns) + len(config.CustomPatterns)
-	if totalPatterns > MaxMaskingPatterns {
+	if len(config.BuiltinPatterns) > MaxMaskingPatterns {
 		return fmt.Errorf("%w: got %d patterns, maximum is %d",
-			ErrTooManyPatterns, totalPatterns, MaxMaskingPatterns)
+			ErrTooManyPatterns, len(config.BuiltinPatterns), MaxMaskingPatterns)
 	}
 
 	for _, id := range config.BuiltinPatterns {
 		if !IsValidBuiltinPattern(id) {
 			return fmt.Errorf("%w: %q (available: %v)",
 				ErrInvalidBuiltinPattern, id, validBuiltinPatterns)
-		}
-	}
-
-	for _, pattern := range config.CustomPatterns {
-		_, err := regexp.Compile(pattern.Pattern)
-		if err != nil {
-			return fmt.Errorf("%w: pattern %q: %v",
-				ErrInvalidRegexPattern, pattern.Pattern, err)
 		}
 	}
 
@@ -112,10 +96,9 @@ type compiledPattern struct {
 }
 
 // LogMasker provides log masking functionality
+// Patterns are precompiled at creation time for performance.
 type LogMasker struct {
-	patterns          []*compiledPattern
-	globalReplacement *string
-	hideType          bool
+	patterns []*compiledPattern
 }
 
 func NewLogMasker(config *MaskingConfig) (*LogMasker, error) {
@@ -128,9 +111,7 @@ func NewLogMasker(config *MaskingConfig) (*LogMasker, error) {
 	}
 
 	masker := &LogMasker{
-		patterns:          make([]*compiledPattern, 0, len(config.BuiltinPatterns)+len(config.CustomPatterns)),
-		globalReplacement: config.GlobalReplacement,
-		hideType:          config.HidePatternType,
+		patterns: make([]*compiledPattern, 0, len(config.BuiltinPatterns)),
 	}
 
 	for _, id := range config.BuiltinPatterns {
@@ -139,31 +120,8 @@ func NewLogMasker(config *MaskingConfig) (*LogMasker, error) {
 			return nil, err
 		}
 
+		// Fixed replacement format: [MASKED:<pattern_id>]
 		replacement := fmt.Sprintf("[MASKED:%s]", id)
-		if config.HidePatternType {
-			replacement = "[MASKED]"
-		}
-
-		masker.patterns = append(masker.patterns, &compiledPattern{
-			regex:       regex,
-			replacement: replacement,
-		})
-	}
-
-	for _, pattern := range config.CustomPatterns {
-		regex, err := regexp.Compile(pattern.Pattern)
-		if err != nil {
-			return nil, fmt.Errorf("%w: pattern %q: %v",
-				ErrInvalidRegexPattern, pattern.Pattern, err)
-		}
-
-		replacement := pattern.Replacement
-		if replacement == "" {
-			replacement = "[MASKED:custom]"
-			if config.HidePatternType {
-				replacement = "[MASKED]"
-			}
-		}
 
 		masker.patterns = append(masker.patterns, &compiledPattern{
 			regex:       regex,
@@ -179,13 +137,6 @@ func (m *LogMasker) PatternCount() int {
 		return 0
 	}
 	return len(m.patterns)
-}
-
-func (m *LogMasker) HasGlobalReplacement() bool {
-	if m == nil {
-		return false
-	}
-	return m.globalReplacement != nil
 }
 
 func (m *LogMasker) MaskEntries(entries []LogEntry) []LogEntry {
@@ -206,11 +157,7 @@ func (m *LogMasker) maskLine(line string) string {
 	}
 
 	for _, pattern := range m.patterns {
-		replacement := pattern.replacement
-		if m.globalReplacement != nil {
-			replacement = *m.globalReplacement
-		}
-		line = pattern.regex.ReplaceAllLiteralString(line, replacement)
+		line = pattern.regex.ReplaceAllLiteralString(line, pattern.replacement)
 	}
 
 	return line
