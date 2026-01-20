@@ -3,6 +3,7 @@ package tools
 import (
 	"testing"
 
+	"github.com/grafana/grafana-openapi-client-go/models"
 	"github.com/stretchr/testify/require"
 )
 
@@ -14,7 +15,7 @@ func TestCreateAlertRuleParams_Validate(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "test-folder",
 			Condition:    "A",
-			Data:         []interface{}{map[string]interface{}{"refId": "A"}},
+			Data:         []*models.AlertQuery{{RefID: "A"}},
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
@@ -29,7 +30,7 @@ func TestCreateAlertRuleParams_Validate(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "test-folder",
 			Condition:    "A",
-			Data:         []interface{}{map[string]interface{}{"refId": "A"}},
+			Data:         []*models.AlertQuery{{RefID: "A"}},
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
@@ -45,7 +46,7 @@ func TestCreateAlertRuleParams_Validate(t *testing.T) {
 			Title:        "Test Rule",
 			FolderUID:    "test-folder",
 			Condition:    "A",
-			Data:         []interface{}{map[string]interface{}{"refId": "A"}},
+			Data:         []*models.AlertQuery{{RefID: "A"}},
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
@@ -61,7 +62,7 @@ func TestCreateAlertRuleParams_Validate(t *testing.T) {
 			Title:        "Test Rule",
 			RuleGroup:    "test-group",
 			Condition:    "A",
-			Data:         []interface{}{map[string]interface{}{"refId": "A"}},
+			Data:         []*models.AlertQuery{{RefID: "A"}},
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
@@ -77,7 +78,7 @@ func TestCreateAlertRuleParams_Validate(t *testing.T) {
 			Title:        "Test Rule",
 			RuleGroup:    "test-group",
 			FolderUID:    "test-folder",
-			Data:         []interface{}{map[string]interface{}{"refId": "A"}},
+			Data:         []*models.AlertQuery{{RefID: "A"}},
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
@@ -110,7 +111,7 @@ func TestCreateAlertRuleParams_Validate(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "test-folder",
 			Condition:    "A",
-			Data:         []interface{}{map[string]interface{}{"refId": "A"}},
+			Data:         []*models.AlertQuery{{RefID: "A"}},
 			ExecErrState: "OK",
 			For:          "5m",
 			OrgID:        1,
@@ -126,7 +127,7 @@ func TestCreateAlertRuleParams_Validate(t *testing.T) {
 			RuleGroup:   "test-group",
 			FolderUID:   "test-folder",
 			Condition:   "A",
-			Data:        []interface{}{map[string]interface{}{"refId": "A"}},
+			Data:        []*models.AlertQuery{{RefID: "A"}},
 			NoDataState: "OK",
 			For:         "5m",
 			OrgID:       1,
@@ -142,7 +143,7 @@ func TestCreateAlertRuleParams_Validate(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "test-folder",
 			Condition:    "A",
-			Data:         []interface{}{map[string]interface{}{"refId": "A"}},
+			Data:         []*models.AlertQuery{{RefID: "A"}},
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			OrgID:        1,
@@ -158,7 +159,7 @@ func TestCreateAlertRuleParams_Validate(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "test-folder",
 			Condition:    "A",
-			Data:         []interface{}{map[string]interface{}{"refId": "A"}},
+			Data:         []*models.AlertQuery{{RefID: "A"}},
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
@@ -167,6 +168,59 @@ func TestCreateAlertRuleParams_Validate(t *testing.T) {
 		err := params.validate()
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "orgID is required and must be greater than 0")
+	})
+
+	t.Run("with disableProvenance true", func(t *testing.T) {
+		disableProvenance := true
+		params := CreateAlertRuleParams{
+			Title:             "Test Rule",
+			RuleGroup:         "test-group",
+			FolderUID:         "test-folder",
+			Condition:         "A",
+			Data:              []*models.AlertQuery{{RefID: "A"}},
+			NoDataState:       "OK",
+			ExecErrState:      "OK",
+			For:               "5m",
+			OrgID:             1,
+			DisableProvenance: &disableProvenance,
+		}
+		err := params.validate()
+		require.NoError(t, err)
+	})
+
+	t.Run("with disableProvenance false", func(t *testing.T) {
+		disableProvenance := false
+		params := CreateAlertRuleParams{
+			Title:             "Test Rule",
+			RuleGroup:         "test-group",
+			FolderUID:         "test-folder",
+			Condition:         "A",
+			Data:              []*models.AlertQuery{{RefID: "A"}},
+			NoDataState:       "OK",
+			ExecErrState:      "OK",
+			For:               "5m",
+			OrgID:             1,
+			DisableProvenance: &disableProvenance,
+		}
+		err := params.validate()
+		require.NoError(t, err)
+	})
+
+	t.Run("with disableProvenance nil (default)", func(t *testing.T) {
+		params := CreateAlertRuleParams{
+			Title:             "Test Rule",
+			RuleGroup:         "test-group",
+			FolderUID:         "test-folder",
+			Condition:         "A",
+			Data:              []*models.AlertQuery{{RefID: "A"}},
+			NoDataState:       "OK",
+			ExecErrState:      "OK",
+			For:               "5m",
+			OrgID:             1,
+			DisableProvenance: nil,
+		}
+		err := params.validate()
+		require.NoError(t, err)
 	})
 }
 
@@ -178,7 +232,7 @@ func TestUpdateAlertRuleParams_Validate(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "test-folder",
 			Condition:    "A",
-			Data:         []interface{}{map[string]interface{}{"refId": "A"}},
+			Data:         []*models.AlertQuery{{RefID: "A"}},
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
@@ -194,7 +248,7 @@ func TestUpdateAlertRuleParams_Validate(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "test-folder",
 			Condition:    "A",
-			Data:         []interface{}{map[string]interface{}{"refId": "A"}},
+			Data:         []*models.AlertQuery{{RefID: "A"}},
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
@@ -212,7 +266,7 @@ func TestUpdateAlertRuleParams_Validate(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "test-folder",
 			Condition:    "A",
-			Data:         []interface{}{map[string]interface{}{"refId": "A"}},
+			Data:         []*models.AlertQuery{{RefID: "A"}},
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
@@ -221,6 +275,62 @@ func TestUpdateAlertRuleParams_Validate(t *testing.T) {
 		err := params.validate()
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "orgID is required and must be greater than 0")
+	})
+
+	t.Run("with disableProvenance true", func(t *testing.T) {
+		disableProvenance := true
+		params := UpdateAlertRuleParams{
+			UID:               "test-uid",
+			Title:             "Test Rule",
+			RuleGroup:         "test-group",
+			FolderUID:         "test-folder",
+			Condition:         "A",
+			Data:              []*models.AlertQuery{{RefID: "A"}},
+			NoDataState:       "OK",
+			ExecErrState:      "OK",
+			For:               "5m",
+			OrgID:             1,
+			DisableProvenance: &disableProvenance,
+		}
+		err := params.validate()
+		require.NoError(t, err)
+	})
+
+	t.Run("with disableProvenance false", func(t *testing.T) {
+		disableProvenance := false
+		params := UpdateAlertRuleParams{
+			UID:               "test-uid",
+			Title:             "Test Rule",
+			RuleGroup:         "test-group",
+			FolderUID:         "test-folder",
+			Condition:         "A",
+			Data:              []*models.AlertQuery{{RefID: "A"}},
+			NoDataState:       "OK",
+			ExecErrState:      "OK",
+			For:               "5m",
+			OrgID:             1,
+			DisableProvenance: &disableProvenance,
+		}
+		err := params.validate()
+		require.NoError(t, err)
+	})
+
+	t.Run("with disableProvenance nil (default)", func(t *testing.T) {
+		params := UpdateAlertRuleParams{
+			UID:               "test-uid",
+			Title:             "Test Rule",
+			RuleGroup:         "test-group",
+			FolderUID:         "test-folder",
+			Condition:         "A",
+			Data:              []*models.AlertQuery{{RefID: "A"}},
+			NoDataState:       "OK",
+			ExecErrState:      "OK",
+			For:               "5m",
+			OrgID:             1,
+			DisableProvenance: nil,
+		}
+		err := params.validate()
+		require.NoError(t, err)
 	})
 }
 
@@ -250,7 +360,7 @@ func TestBuiltInValidationCatchesInvalidData(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "test-folder",
 			Condition:    "A",
-			Data:         []interface{}{map[string]interface{}{"refId": "A"}},
+			Data:         []*models.AlertQuery{{RefID: "A"}},
 			NoDataState:  "InvalidValue", // Invalid enum
 			ExecErrState: "OK",
 			For:          "5m",
@@ -268,7 +378,7 @@ func TestBuiltInValidationCatchesInvalidData(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "test-folder",
 			Condition:    "A",
-			Data:         []interface{}{map[string]interface{}{"refId": "A"}},
+			Data:         []*models.AlertQuery{{RefID: "A"}},
 			NoDataState:  "OK",
 			ExecErrState: "BadValue", // Invalid enum
 			For:          "5m",
@@ -291,7 +401,7 @@ func TestBuiltInValidationCatchesInvalidData(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "test-folder",
 			Condition:    "A",
-			Data:         []interface{}{map[string]interface{}{"refId": "A"}},
+			Data:         []*models.AlertQuery{{RefID: "A"}},
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",

@@ -37,7 +37,7 @@ func promClientFromContext(ctx context.Context, uid string) (promv1.API, error) 
 	}
 
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
-	url := fmt.Sprintf("%s/api/datasources/proxy/uid/%s", strings.TrimRight(cfg.URL, "/"), uid)
+	url := fmt.Sprintf("%s/api/datasources/uid/%s/resources", strings.TrimRight(cfg.URL, "/"), uid)
 
 	// Create custom transport with TLS configuration if available
 	rt := api.DefaultRoundTripper

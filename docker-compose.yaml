@@ -1,18 +1,25 @@
 services:
   grafana:
-    image: grafana/grafana@sha256:35c41e0fd0295f5d0ee5db7e780cf33506abfaf47686196f825364889dee878b
+    image: grafana/grafana@sha256:2175aaa91c96733d86d31cf270d5310b278654b03f5718c59de12a865380a31f
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "false"
       GF_LOG_LEVEL: debug
       GF_SERVER_ROUTER_LOGGING: "true"
+      GF_RENDERING_SERVER_URL: http://renderer:8081/render
+      GF_RENDERING_CALLBACK_URL: http://grafana:3000/
     ports:
       - 3000:3000/tcp
     volumes:
       - ./testdata/provisioning:/etc/grafana/provisioning
       - ./testdata/dashboards:/var/lib/grafana/dashboards
 
+  renderer:
+    image: grafana/grafana-image-renderer:latest
+    ports:
+      - 8081
+
   prometheus:
-    image: prom/prometheus@sha256:49214755b6153f90a597adcbff0252cc61069f8ab69ce8411285cd4a560e8038
+    image: prom/prometheus@sha256:1f0f50f06acaceb0f5670d2c8a658a599affe7b0d8e78b898c1035653849a702
     ports:
       - "9090:9090"
     entrypoint: /etc/prometheus/entrypoint.sh
@@ -22,7 +29,7 @@ services:
       - ./testdata/prometheus-entrypoint.sh:/etc/prometheus/entrypoint.sh
 
   loki:
-    image: grafana/loki:2.9.15@sha256:2fde6baaa4743a6870acb9ab5f15633de35adced3c0e3d61effd2a5f1008f1c3
+    image: grafana/loki:3.6.3@sha256:cd6e176883a90c21755f0315688668991634143423f75bdedfef41441b0fdc3c
     ports:
       - "3100:3100"
     command: -config.file=/etc/loki/loki-config.yml
@@ -31,23 +38,22 @@ services:
       - ./testdata/loki-rules.yml:/loki/rules/fake/loki-rules.yml
 
   promtail:
-    image: grafana/promtail:2.9.15@sha256:466ba2fac4448ed2dc509b267995a3c13511d69f6bba01800ca7b38d9953f899
+    image: grafana/promtail:3.6.3@sha256:130b6dd63277d99ce87560c0266c0c30d07bc15ba0a8a590d42215465d4f5363
     volumes:
       - ./testdata/promtail-config.yml:/etc/promtail/config.yml
-      - /var/log:/var/log
       - /var/run/docker.sock:/var/run/docker.sock
     command: -config.file=/etc/promtail/config.yml
     depends_on:
       - loki
 
   pyroscope:
-    image: grafana/pyroscope:1.15.0@sha256:5fba997646c53584799b6beca768dae6358e807020aa98c04cb7db11f0d55681
+    image: grafana/pyroscope:1.17.0@sha256:f6e3caa6cade1dea53dd39db6117668e92cf9e43fbc097dda2096368b14f1cd1
     ports:
       - 4040:4040
 
   tempo:
     image: grafana/tempo:2.9.0-rc.0@sha256:5517ee34d335dedb9ad43028bd8f72edd0bb98b744ea5847a7572755d93d9866
-    command: [ "-config.file=/etc/tempo/tempo-config.yaml" ]
+    command: ["-config.file=/etc/tempo/tempo-config.yaml"]
     volumes:
       - ./testdata/tempo-config.yaml:/etc/tempo/tempo-config.yaml
     ports:
@@ -55,18 +61,18 @@ services:
 
   tempo2:
     image: grafana/tempo:2.9.0-rc.0@sha256:5517ee34d335dedb9ad43028bd8f72edd0bb98b744ea5847a7572755d93d9866
-    command: [ "-config.file=/etc/tempo/tempo-config.yaml" ]
+    command: ["-config.file=/etc/tempo/tempo-config.yaml"]
     volumes:
       - ./testdata/tempo-config-2.yaml:/etc/tempo/tempo-config.yaml
     ports:
       - "3201:3201" # tempo instance 2
 
   alertmanager:
-    image: prom/alertmanager:v0.28.1
+    image: prom/alertmanager:v0.30.0@sha256:abb750ac7b63116761c16dd481ae92496fbe04721686c0920f0fa4d0728cd4a6
     ports:
       - "9093:9093"
     volumes:
       - ./testdata/alertmanager.yml:/etc/alertmanager/alertmanager.yml
     command:
-      - '--config.file=/etc/alertmanager/alertmanager.yml'
-      - '--storage.path=/alertmanager'
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+      - "--storage.path=/alertmanager"

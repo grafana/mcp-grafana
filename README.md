@@ -70,6 +70,8 @@ The dashboard tools now include several strategies to manage context window usag
 ### Alerting
 
 - **List and fetch alert rule information:** View alert rules and their statuses (firing/normal/error/etc.) in Grafana. Supports both Grafana-managed rules and datasource-managed rules from Prometheus or Loki datasources.
+- **Create and update alert rules:** Create new alert rules or modify existing ones.
+- **Delete alert rules:** Remove alert rules by UID.
 - **List contact points:** View configured notification contact points in Grafana. Supports both Grafana-managed contact points and receivers from external Alertmanager datasources (Prometheus Alertmanager, Mimir, Cortex).
 
 ### Grafana OnCall
@@ -112,6 +114,10 @@ The dashboard tools now include several strategies to manage context window usag
 - **Patch Annotation:** Update only specific fields of an annotation (partial update).
 - **Get Annotation Tags:** List available annotation tags with optional filtering.
 
+### Rendering
+
+- **Get panel or dashboard image:** Render a Grafana dashboard panel or full dashboard as a PNG image. Returns the image as base64 encoded data for use in reports, alerts, or presentations. Supports customizing dimensions, time range, theme, scale, and dashboard variables.
+  - _Note: Requires the [Grafana Image Renderer](https://grafana.com/docs/grafana/latest/setup-grafana/image-rendering/) service to be installed and configured._
 
 The list of tools is configurable, so you can choose which tools you want to make available to the MCP client.
 This is useful if you don't use certain functionality or if you don't want to take up too much of the context window.
@@ -217,6 +223,9 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `query_loki_stats`                | Loki        | Get statistics about log streams                                    | `datasources:query`                     | `datasources:uid:loki-uid`                          |
 | `list_alert_rules`                | Alerting    | List alert rules                                                    | `alert.rules:read`                      | `folders:*` or `folders:uid:alerts-folder`          |
 | `get_alert_rule_by_uid`           | Alerting    | Get alert rule by UID                                               | `alert.rules:read`                      | `folders:uid:alerts-folder`                         |
+| `create_alert_rule`               | Alerting    | Create a new alert rule                                             | `alert.rules:write`                     | `folders:*` or `folders:uid:alerts-folder`          |
+| `update_alert_rule`               | Alerting    | Update an existing alert rule                                       | `alert.rules:write`                     | `folders:uid:alerts-folder`                         |
+| `delete_alert_rule`               | Alerting    | Delete an alert rule by UID                                         | `alert.rules:write`                     | `folders:uid:alerts-folder`                         |
 | `list_contact_points`             | Alerting    | List notification contact points (Grafana-managed and Alertmanager) | `alert.notifications:read`              | Global scope                                        |
 | `list_oncall_schedules`           | OnCall      | List schedules from Grafana OnCall                                  | `grafana-oncall-app.schedules:read`     | Plugin-specific scopes                              |
 | `get_oncall_shift`                | OnCall      | Get details for a specific OnCall shift                             | `grafana-oncall-app.schedules:read`     | Plugin-specific scopes                              |
@@ -242,6 +251,7 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `update_annotation`               | Annotations | Replace all fields of an annotation (full update)                   | `annotations:write`                     | `annotations:*`                                     |
 | `patch_annotation`                | Annotations | Update only specific fields of an annotation (partial update)       | `annotations:write`                     | `annotations:*`                                     |
 | `get_annotation_tags`             | Annotations | List annotation tags with optional filtering                        | `annotations:read`                      | `annotations:*`                                     |
+| `get_panel_image`                 | Rendering   | Render a dashboard panel or full dashboard as a PNG image           | `dashboards:read`                       | `dashboards:uid:abc123`                             |
 
 ## CLI Flags Reference
 
@@ -272,6 +282,7 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 - `--disable-admin`: Disable admin tools
 - `--disable-pyroscope`: Disable pyroscope tools
 - `--disable-navigation`: Disable navigation tools
+- `--disable-rendering`: Disable rendering tools (panel/dashboard image export)
 ### Read-Only Mode
 
 The `--disable-write` flag provides a way to run the MCP server in read-only mode, preventing any write operations to your Grafana instance. This is useful for scenarios where you want to provide safe, read-only access such as:
@@ -368,36 +379,36 @@ When an organization ID is provided, the MCP server will set the `X-Grafana-Org-
      1. **STDIO Mode**: For stdio mode you must explicitly override the default with `-t stdio` and include the `-i` flag to keep stdin open:
 
      ```bash
-     docker pull mcp/grafana
+     docker pull grafana/mcp-grafana
      # For local Grafana:
-     docker run --rm -i -e GRAFANA_URL=http://localhost:3000 -e GRAFANA_SERVICE_ACCOUNT_TOKEN=<your service account token> mcp/grafana -t stdio
+     docker run --rm -i -e GRAFANA_URL=http://localhost:3000 -e GRAFANA_SERVICE_ACCOUNT_TOKEN=<your service account token> grafana/mcp-grafana -t stdio
      # For Grafana Cloud:
-     docker run --rm -i -e GRAFANA_URL=https://myinstance.grafana.net -e GRAFANA_SERVICE_ACCOUNT_TOKEN=<your service account token> mcp/grafana -t stdio
+     docker run --rm -i -e GRAFANA_URL=https://myinstance.grafana.net -e GRAFANA_SERVICE_ACCOUNT_TOKEN=<your service account token> grafana/mcp-grafana -t stdio
      ```
 
      2. **SSE Mode**: In this mode, the server runs as an HTTP server that clients connect to. You must expose port 8000 using the `-p` flag:
 
      ```bash
-     docker pull mcp/grafana
-     docker run --rm -p 8000:8000 -e GRAFANA_URL=http://localhost:3000 -e GRAFANA_SERVICE_ACCOUNT_TOKEN=<your service account token> mcp/grafana
+     docker pull grafana/mcp-grafana
+     docker run --rm -p 8000:8000 -e GRAFANA_URL=http://localhost:3000 -e GRAFANA_SERVICE_ACCOUNT_TOKEN=<your service account token> grafana/mcp-grafana
      ```
 
      3. **Streamable HTTP Mode**: In this mode, the server operates as an independent process that can handle multiple client connections. You must expose port 8000 using the `-p` flag: For this mode you must explicitly override the default with `-t streamable-http`
 
      ```bash
-     docker pull mcp/grafana
-     docker run --rm -p 8000:8000 -e GRAFANA_URL=http://localhost:3000 -e GRAFANA_SERVICE_ACCOUNT_TOKEN=<your service account token> mcp/grafana -t streamable-http
+     docker pull grafana/mcp-grafana
+     docker run --rm -p 8000:8000 -e GRAFANA_URL=http://localhost:3000 -e GRAFANA_SERVICE_ACCOUNT_TOKEN=<your service account token> grafana/mcp-grafana -t streamable-http
      ```
 
      For HTTPS streamable HTTP mode with server TLS certificates:
 
      ```bash
-     docker pull mcp/grafana
+     docker pull grafana/mcp-grafana
      docker run --rm -p 8443:8443 \
        -v /path/to/certs:/certs:ro \
        -e GRAFANA_URL=http://localhost:3000 \
        -e GRAFANA_SERVICE_ACCOUNT_TOKEN=<your service account token> \
-       mcp/grafana \
+       grafana/mcp-grafana \
        -t streamable-http \
        -addr :8443 \
        --server.tls-cert-file /certs/server.crt \
@@ -462,7 +473,7 @@ When an organization ID is provided, the MCP server will set the `X-Grafana-Org-
         "GRAFANA_URL",
         "-e",
         "GRAFANA_SERVICE_ACCOUNT_TOKEN",
-        "mcp/grafana",
+        "grafana/mcp-grafana",
         "-t",
         "stdio"
       ],
@@ -548,7 +559,7 @@ To use debug mode with the Claude Desktop configuration, update your config as f
         "GRAFANA_URL",
         "-e",
         "GRAFANA_SERVICE_ACCOUNT_TOKEN",
-        "mcp/grafana",
+        "grafana/mcp-grafana",
         "-t",
         "stdio",
         "-debug"
@@ -614,7 +625,7 @@ If your Grafana instance is behind mTLS or requires custom TLS certificates, you
         "GRAFANA_URL",
         "-e",
         "GRAFANA_SERVICE_ACCOUNT_TOKEN",
-        "mcp/grafana",
+        "grafana/mcp-grafana",
         "-t",
         "stdio",
         "--tls-cert-file",
@@ -726,7 +737,7 @@ docker run --rm -p 8443:8443 \
   -v /path/to/certs:/certs:ro \
   -e GRAFANA_URL=http://localhost:3000 \
   -e GRAFANA_SERVICE_ACCOUNT_TOKEN=<your service account token> \
-  mcp/grafana \
+  grafana/mcp-grafana \
   -t streamable-http \
   -addr :8443 \
   --server.tls-cert-file /certs/server.crt \

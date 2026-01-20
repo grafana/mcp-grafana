@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:1.24-bullseye@sha256:2cdc80dc25edcb96ada1654f73092f2928045d037581fa4aa7c40d18af7dd85a AS builder
+FROM golang:1.24-bookworm@sha256:1c64c586e1cf9dc4c394c5896ec574659c792a0840f4fa0eb54a88de146e978b AS builder
 
 # Set the working directory
 WORKDIR /app
@@ -17,7 +17,7 @@ COPY . .
 RUN go build -o mcp-grafana ./cmd/mcp-grafana
 
 # Final stage
-FROM debian:bullseye-slim@sha256:52927eff8153b563244f98cdc802ba97918afcdf67f9e4867cbf1f7afb3d147b
+FROM debian:bookworm-slim@sha256:56ff6d36d4eb3db13a741b342ec466f121480b5edded42e4b7ee850ce7a418ee
 
 LABEL io.modelcontextprotocol.server.name="io.github.grafana/mcp-grafana"
 
