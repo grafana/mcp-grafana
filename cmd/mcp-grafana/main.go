@@ -115,13 +115,18 @@ func (dt *disabledTools) addTools(s *server.MCPServer) {
 func (dt *disabledTools) addToolsDynamically(s *server.MCPServer) *mcpgrafana.DynamicToolManager {
 	dtm := mcpgrafana.NewDynamicToolManager(s)
 
-	enabledTools := strings.Split(dt.enabledTools, ",")
+	// Split and clean up the enabled tools list (trim whitespace, filter empty strings)
+	rawTools := strings.Split(dt.enabledTools, ",")
+	enabledTools := make([]string, 0, len(rawTools))
+	for _, tool := range rawTools {
+		trimmed := strings.TrimSpace(tool)
+		if trimmed != "" {
+			enabledTools = append(enabledTools, trimmed)
+		}
+	}
+	enableWriteTools := !dt.write
 
 	isEnabled := func(toolName string) bool {
-		// If enabledTools is empty string, no tools should be available
-		if dt.enabledTools == "" {
-			return false
-		}
 		return slices.Contains(enabledTools, toolName)
 	}
 
@@ -134,18 +139,20 @@ func (dt *disabledTools) addToolsDynamically(s *server.MCPServer) *mcpgrafana.Dy
 	}{
 		{"search", "Tools for searching dashboards, folders, and other Grafana resources", []string{"search_dashboards", "search_folders"}, tools.AddSearchTools},
 		{"datasource", "Tools for listing and fetching datasource details", []string{"list_datasources", "get_datasource_by_uid", "get_datasource_by_name"}, tools.AddDatasourceTools},
-		{"incident", "Tools for managing Grafana Incident (create, update, search incidents)", []string{"list_incidents", "create_incident", "add_activity_to_incident", "get_incident"}, tools.AddIncidentTools},
+		{"incident", "Tools for managing Grafana Incident (create, update, search incidents)", []string{"list_incidents", "create_incident", "add_activity_to_incident", "get_incident"}, func(mcp *server.MCPServer) { tools.AddIncidentTools(mcp, enableWriteTools) }},
 		{"prometheus", "Tools for querying Prometheus metrics and metadata", []string{"list_prometheus_metric_metadata", "query_prometheus", "list_prometheus_metric_names", "list_prometheus_label_names", "list_prometheus_label_values"}, tools.AddPrometheusTools},
 		{"loki", "Tools for querying Loki logs and labels", []string{"list_loki_label_names", "list_loki_label_values", "query_loki_stats", "query_loki_logs"}, tools.AddLokiTools},
-		{"alerting", "Tools for managing alert rules and notification contact points", []string{"list_alert_rules", "get_alert_rule_by_uid", "list_contact_points", "create_alert_rule", "update_alert_rule", "delete_alert_rule"}, tools.AddAlertingTools},
-		{"dashboard", "Tools for managing Grafana dashboards (get, update, extract queries)", []string{"get_dashboard_by_uid", "update_dashboard", "get_dashboard_panel_queries", "get_dashboard_property", "get_dashboard_summary"}, tools.AddDashboardTools},
-		{"folder", "Tools for managing Grafana folders", []string{"create_folder"}, tools.AddFolderTools},
+		{"alerting", "Tools for managing alert rules and notification contact points", []string{"list_alert_rules", "get_alert_rule_by_uid", "list_contact_points", "create_alert_rule", "update_alert_rule", "delete_alert_rule"}, func(mcp *server.MCPServer) { tools.AddAlertingTools(mcp, enableWriteTools) }},
+		{"dashboard", "Tools for managing Grafana dashboards (get, update, extract queries)", []string{"get_dashboard_by_uid", "update_dashboard", "get_dashboard_panel_queries", "get_dashboard_property", "get_dashboard_summary"}, func(mcp *server.MCPServer) { tools.AddDashboardTools(mcp, enableWriteTools) }},
+		{"folder", "Tools for managing Grafana folders", []string{"create_folder"}, func(mcp *server.MCPServer) { tools.AddFolderTools(mcp, enableWriteTools) }},
 		{"oncall", "Tools for managing OnCall schedules, shifts, teams, and users", []string{"list_oncall_schedules", "get_oncall_shift", "get_current_oncall_users", "list_oncall_teams", "list_oncall_users", "list_alert_groups", "get_alert_group"}, tools.AddOnCallTools},
 		{"asserts", "Tools for Grafana Asserts cloud functionality", []string{"get_assertions"}, tools.AddAssertsTools},
-		{"sift", "Tools for Sift investigations (analyze logs/traces, find errors, detect slow requests)", []string{"get_sift_investigation", "get_sift_analysis", "list_sift_investigations", "find_error_pattern_logs", "find_slow_requests"}, tools.AddSiftTools},
+		{"sift", "Tools for Sift investigations (analyze logs/traces, find errors, detect slow requests)", []string{"get_sift_investigation", "get_sift_analysis", "list_sift_investigations", "find_error_pattern_logs", "find_slow_requests"}, func(mcp *server.MCPServer) { tools.AddSiftTools(mcp, enableWriteTools) }},
 		{"admin", "Tools for administrative tasks (list teams, manage users)", []string{"list_teams", "list_users_by_org"}, tools.AddAdminTools},
 		{"pyroscope", "Tools for profiling applications with Pyroscope", []string{"list_pyroscope_label_names", "list_pyroscope_label_values", "list_pyroscope_profile_types", "fetch_pyroscope_profile"}, tools.AddPyroscopeTools},
 		{"navigation", "Tools for generating deeplink URLs to Grafana resources", []string{"generate_deeplink"}, tools.AddNavigationTools},
+		{"annotations", "Tools for managing annotations", []string{"get_annotations", "create_annotation", "create_graphite_annotation", "update_annotation", "patch_annotation", "get_annotation_tags"}, func(mcp *server.MCPServer) { tools.AddAnnotationTools(mcp, enableWriteTools) }},
+		{"rendering", "Tools for rendering dashboard panels as images", []string{"get_panel_image"}, tools.AddRenderingTools},
 	}
 
 	// Only register toolsets that are enabled
@@ -270,11 +277,6 @@ Note that some of these capabilities may be disabled. Do not try to use features
 	stm = mcpgrafana.NewToolManager(sm, s, mcpgrafana.WithProxiedTools(!dt.proxied))
 
 	if dt.dynamicTools {
-		// Validate that enabled-tools is not empty when using dynamic toolsets
-		// An empty list would result in a non-functional server with no toolsets to enable
-		if dt.enabledTools == "" {
-			return nil, nil, errors.New("--enabled-tools cannot be empty when using --dynamic-toolsets (would result in no toolsets available)")
-		}
 		// For dynamic toolsets, start with only discovery tools
 		// Tools will be added dynamically when toolsets are enabled
 		dt.addToolsDynamically(s)
@@ -349,6 +351,13 @@ func handleHealthz(w http.ResponseWriter, r *http.Request) {
 
 func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt disabledTools, gc mcpgrafana.GrafanaConfig, tls tlsConfig) error {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})))
+
+	// Validate that enabled-tools is not empty when using dynamic toolsets
+	// An empty list would result in a non-functional server with no toolsets to enable
+	if dt.dynamicTools && dt.enabledTools == "" {
+		return errors.New("--enabled-tools cannot be empty when using --dynamic-toolsets (would result in no toolsets available)")
+	}
+
 	s, tm := newServer(transport, dt)
 
 	// Create a context that will be cancelled on shutdown
