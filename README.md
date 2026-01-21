@@ -330,7 +330,7 @@ All read operations remain available, allowing you to query dashboards, run Prom
 
 ### Dynamic Toolset Discovery
 
-For even more efficient context window usage, you can enable **dynamic toolset discovery** mode with the `--dynamic-toolsets` flag. In this mode, tools are not loaded at startup. Instead, clients can discover available toolsets and selectively enable only the ones they need at runtime.
+For more efficient context window usage, you can enable **dynamic toolset discovery** mode with the `--dynamic-toolsets` flag. In this mode, tools are not loaded at startup. Instead, clients can discover available toolsets and selectively enable only the ones they need at runtime.
 
 **Benefits:**
 - Significantly reduces initial context window usage by not loading tool descriptions upfront
