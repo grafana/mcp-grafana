@@ -270,6 +270,11 @@ Note that some of these capabilities may be disabled. Do not try to use features
 	stm = mcpgrafana.NewToolManager(sm, s, mcpgrafana.WithProxiedTools(!dt.proxied))
 
 	if dt.dynamicTools {
+		// Validate that enabled-tools is not empty when using dynamic toolsets
+		// An empty list would result in a non-functional server with no toolsets to enable
+		if dt.enabledTools == "" {
+			return nil, nil, errors.New("--enabled-tools cannot be empty when using --dynamic-toolsets (would result in no toolsets available)")
+		}
 		// For dynamic toolsets, start with only discovery tools
 		// Tools will be added dynamically when toolsets are enabled
 		dt.addToolsDynamically(s)
