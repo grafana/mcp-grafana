@@ -78,4 +78,21 @@ func TestLokiTools(t *testing.T) {
 		assert.NotNil(t, result, "Empty results should be an empty slice, not nil")
 		assert.Equal(t, 0, len(result), "Empty results should have length 0")
 	})
+
+	t.Run("query loki patterns", func(t *testing.T) {
+		ctx := newTestContext()
+		result, err := queryLokiPatterns(ctx, QueryLokiPatternsParams{
+			DatasourceUID: "loki",
+			LogQL:         `{container=~".+"}`,
+		})
+		require.NoError(t, err)
+		assert.NotNil(t, result, "Should return a result (may be empty if no patterns detected)")
+
+		// If we got patterns, check that they have the expected structure
+		for _, pattern := range result {
+			assert.NotEmpty(t, pattern.Pattern, "Pattern should have a pattern string")
+			// TotalCount should be non-negative
+			assert.GreaterOrEqual(t, pattern.TotalCount, int64(0), "TotalCount should be non-negative")
+		}
+	})
 }
