@@ -183,8 +183,8 @@ Scopes define the specific resources that permissions apply to. Each action requ
 
 | Tool                              | Category    | Description                                                         | Required RBAC Permissions               | Required Scopes                                     |
 | --------------------------------- | ----------- | ------------------------------------------------------------------- | --------------------------------------- | --------------------------------------------------- |
-| `grafana_list_toolsets`           | Meta        | List available toolsets for [dynamic discovery](#dynamic-toolset-discovery) | None (meta-tool)                        | N/A                                                 |
-| `grafana_enable_toolset`          | Meta        | Enable a specific toolset [dynamically](#dynamic-toolset-discovery) | None (meta-tool)                        | N/A                                                 |
+| `grafana_list_toolsets`           | Meta        | List available toolsets for [dynamic discovery](#dynamic-toolset-discovery) | None (meta-tool)                        | N/A                                                              |
+| `grafana_enable_toolset`          | Meta        | Enable a specific toolset [dynamically](#dynamic-toolset-discovery)        | None (meta-tool)                        | N/A                                                              |
 | `list_teams`                      | Admin       | List all teams                                                      | `teams:read`                            | `teams:*` or `teams:id:1`                           |
 | `list_users_by_org`               | Admin       | List all users in an organization                                   | `users:read`                            | `global.users:*` or `global.users:id:123`           |
 | `list_all_roles`          | Admin    | List all Grafana roles                              | `roles:read`              | `roles:*`                         |
@@ -338,15 +338,14 @@ For more efficient context window usage, you can enable **dynamic toolset discov
 - Preserves context space for more important data
 
 **How it works:**
-1. Start the server with `--dynamic-toolsets` flag
-2. Use `grafana_list_toolsets` to discover available toolset categories
-3. Use `grafana_enable_toolset` to load specific toolsets (e.g., "datasource", "dashboard")
-4. The client receives a `tools/list_changed` notification and refreshes its tool list
+Start the server with the `--dynamic-toolsets` flag.
+
+**Note:** After this, the LLM automatically handles discovery and toolset enabling - no further user action is needed. The LLM will use `grafana_list_toolsets` to discover available toolset categories and `grafana_enable_toolset` to load specific toolsets as needed (e.g., "datasource", "dashboard"). The client automatically receives `tools/list_changed` notifications and refreshes its tool list.
 
 **Integration with `--enabled-tools`:**
 - No flag → all toolsets are discoverable
-- `--enabled-tools=""` → no toolsets are discoverable
 - `--enabled-tools="datasource,dashboard"` → only specified toolsets are discoverable
+- `--enabled-tools=""` → **error** (results in a non-functional server with no toolsets to enable)
 
 **Example configuration for Cursor/VS Code:**
 ```json
