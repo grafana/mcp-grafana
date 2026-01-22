@@ -19,7 +19,7 @@ services:
       - 8081
 
   prometheus:
-    image: prom/prometheus@sha256:1f0f50f06acaceb0f5670d2c8a658a599affe7b0d8e78b898c1035653849a702
+    image: prom/prometheus@sha256:38c3b05c3bc744ff1b0b7b4eb82196026442845e62a1e2073795565da506d7a2
     ports:
       - "9090:9090"
     entrypoint: /etc/prometheus/entrypoint.sh
