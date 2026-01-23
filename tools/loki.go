@@ -44,6 +44,21 @@ type Stats struct {
 	Bytes   int `json:"bytes"`
 }
 
+// patternsAPIResponse represents the raw response from Loki's patterns API
+type patternsAPIResponse struct {
+	Status string `json:"status"`
+	Data   []struct {
+		Pattern string     `json:"pattern"`
+		Samples [][2]int64 `json:"samples"` // [[timestamp, value], ...]
+	} `json:"data"`
+}
+
+// Pattern represents a detected log pattern with summarized count
+type Pattern struct {
+	Pattern    string `json:"pattern"`
+	TotalCount int64  `json:"totalCount"`
+}
+
 func newLokiClient(ctx context.Context, uid string) (*Client, error) {
 	// First check if the datasource exists
 	_, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: uid})
@@ -525,6 +540,55 @@ func (c *Client) fetchStats(ctx context.Context, query, startRFC3339, endRFC3339
 	return &stats, nil
 }
 
+// fetchPatterns is a method to fetch pattern data from Loki API
+func (c *Client) fetchPatterns(ctx context.Context, query, startRFC3339, endRFC3339, step string) ([]Pattern, error) {
+	params := url.Values{}
+	params.Add("query", query)
+
+	// Add time range parameters
+	if err := addTimeRangeParams(params, startRFC3339, endRFC3339); err != nil {
+		return nil, err
+	}
+
+	if step != "" {
+		params.Add("step", step)
+	}
+
+	bodyBytes, err := c.makeRequest(ctx, "GET", "/loki/api/v1/patterns", params)
+	if err != nil {
+		return nil, err
+	}
+
+	var patternsResponse patternsAPIResponse
+	err = json.Unmarshal(bodyBytes, &patternsResponse)
+	if err != nil {
+		return nil, fmt.Errorf("unmarshalling response (content: %s): %w", string(bodyBytes), err)
+	}
+
+	if patternsResponse.Status != "success" {
+		return nil, fmt.Errorf("loki API returned unexpected response format: %s", string(bodyBytes))
+	}
+
+	if patternsResponse.Data == nil {
+		return []Pattern{}, nil
+	}
+
+	// Convert API response to summarized patterns
+	patterns := make([]Pattern, len(patternsResponse.Data))
+	for i, p := range patternsResponse.Data {
+		var total int64
+		for _, s := range p.Samples {
+			total += s[1] // s[0] is timestamp, s[1] is value
+		}
+		patterns[i] = Pattern{
+			Pattern:    p.Pattern,
+			TotalCount: total,
+		}
+	}
+
+	return patterns, nil
+}
+
 // QueryLokiStatsParams defines the parameters for querying Loki stats
 type QueryLokiStatsParams struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the datasource to query"`
@@ -561,10 +625,48 @@ var QueryLokiStats = mcpgrafana.MustTool(
 	mcp.WithReadOnlyHintAnnotation(true),
 )
 
+// QueryLokiPatternsParams defines the parameters for querying Loki patterns
+type QueryLokiPatternsParams struct {
+	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the datasource to query"`
+	LogQL         string `json:"logql" jsonschema:"required,description=A LogQL stream selector to identify the logs to analyze for patterns (e.g. {job=\"foo\"\\, namespace=\"bar\"})"`
+	StartRFC3339  string `json:"startRfc3339,omitempty" jsonschema:"description=Optionally\\, the start time of the query in RFC3339 format (defaults to 1 hour ago)"`
+	EndRFC3339    string `json:"endRfc3339,omitempty" jsonschema:"description=Optionally\\, the end time of the query in RFC3339 format (defaults to now)"`
+	Step          string `json:"step,omitempty" jsonschema:"description=Optionally\\, the query resolution step (e.g. '5m')"`
+}
+
+// queryLokiPatterns queries detected log patterns from a Loki datasource
+func queryLokiPatterns(ctx context.Context, args QueryLokiPatternsParams) ([]Pattern, error) {
+	client, err := newLokiClient(ctx, args.DatasourceUID)
+	if err != nil {
+		return nil, fmt.Errorf("creating Loki client: %w", err)
+	}
+
+	// Get default time range if not provided
+	startTime, endTime := getDefaultTimeRange(args.StartRFC3339, args.EndRFC3339)
+
+	patterns, err := client.fetchPatterns(ctx, args.LogQL, startTime, endTime, args.Step)
+	if err != nil {
+		return nil, err
+	}
+
+	return patterns, nil
+}
+
+// QueryLokiPatterns is a tool for querying detected log patterns from Loki
+var QueryLokiPatterns = mcpgrafana.MustTool(
+	"query_loki_patterns",
+	"Retrieves detected log patterns from a Loki datasource for a given stream selector and time range. Returns a list of patterns, each containing a pattern string and a total count of occurrences. Patterns help identify common log structures and anomalies. The `logql` parameter must be a stream selector (e.g., `{job=\"nginx\"}`) and does not support line filters or aggregations. Defaults to the last hour if the time range is omitted.",
+	queryLokiPatterns,
+	mcp.WithTitleAnnotation("Query Loki patterns"),
+	mcp.WithIdempotentHintAnnotation(true),
+	mcp.WithReadOnlyHintAnnotation(true),
+)
+
 // AddLokiTools registers all Loki tools with the MCP server
 func AddLokiTools(mcp *server.MCPServer) {
 	ListLokiLabelNames.Register(mcp)
 	ListLokiLabelValues.Register(mcp)
 	QueryLokiStats.Register(mcp)
 	QueryLokiLogs.Register(mcp)
+	QueryLokiPatterns.Register(mcp)
 }

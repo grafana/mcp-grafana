@@ -259,16 +259,21 @@ func TestPrometheusQueries(t *testing.T) {
 
 	t.Run("query prometheus instant", func(t *testing.T) {
 		ctx := newTestContext()
+		beforeQuery := model.TimeFromUnix(time.Now().Unix())
 		result, err := queryPrometheus(ctx, QueryPrometheusParams{
 			DatasourceUID: "prometheus",
 			Expr:          "up",
 			StartTime:     time.Now().Format(time.RFC3339),
 			QueryType:     "instant",
 		})
+		afterQuery := model.TimeFromUnix(time.Now().Unix())
 		require.NoError(t, err)
 		scalar := result.(model.Vector)
 		assert.Equal(t, scalar[0].Value, model.SampleValue(1))
-		assert.Equal(t, scalar[0].Timestamp, model.TimeFromUnix(time.Now().Unix()))
+		assert.True(t, scalar[0].Timestamp >= beforeQuery,
+			"Result timestamp should be after or equal to the time before the query")
+		assert.True(t, scalar[0].Timestamp <= afterQuery.Add(time.Second),
+			"Result timestamp should be before or equal to the time after the query (with 1s buffer)")
 		assert.Equal(t, scalar[0].Metric["__name__"], model.LabelValue("up"))
 	})
 
