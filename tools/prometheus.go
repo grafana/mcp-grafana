@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -90,7 +91,7 @@ type ListPrometheusMetricMetadataParams struct {
 	Metric         string `json:"metric" jsonschema:"description=The metric to query"`
 }
 
-func listPrometheusMetricMetadata(ctx context.Context, args ListPrometheusMetricMetadataParams) (map[string][]promv1.Metadata, error) {
+func listPrometheusMetricMetadata(ctx context.Context, args ListPrometheusMetricMetadataParams) (*mcp.CallToolResult, error) {
 	promClient, err := promClientFromContext(ctx, args.DatasourceUID)
 	if err != nil {
 		return nil, fmt.Errorf("getting Prometheus client: %w", err)
@@ -103,9 +104,21 @@ func listPrometheusMetricMetadata(ctx context.Context, args ListPrometheusMetric
 
 	metadata, err := promClient.Metadata(ctx, args.Metric, fmt.Sprintf("%d", limit))
 	if err != nil {
+		// Check if this is a user validation error (bad input)
+		if IsPrometheusValidationError(err) {
+			return NewValidationErrorResult(err, "Prometheus metric metadata query"), nil
+		}
+		// System errors (network, auth, etc.) still return as Go errors
 		return nil, fmt.Errorf("listing Prometheus metric metadata: %w", err)
 	}
-	return metadata, nil
+
+	// Marshal the result to JSON
+	resultBytes, err := json.Marshal(metadata)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling results: %w", err)
+	}
+
+	return mcp.NewToolResultText(string(resultBytes)), nil
 }
 
 var ListPrometheusMetricMetadata = mcpgrafana.MustTool(
@@ -134,7 +147,7 @@ func parseTime(timeStr string) (time.Time, error) {
 	return tr.ParseFrom()
 }
 
-func queryPrometheus(ctx context.Context, args QueryPrometheusParams) (model.Value, error) {
+func queryPrometheus(ctx context.Context, args QueryPrometheusParams) (*mcp.CallToolResult, error) {
 	promClient, err := promClientFromContext(ctx, args.DatasourceUID)
 	if err != nil {
 		return nil, fmt.Errorf("getting Prometheus client: %w", err)
@@ -151,6 +164,9 @@ func queryPrometheus(ctx context.Context, args QueryPrometheusParams) (model.Val
 		return nil, fmt.Errorf("parsing start time: %w", err)
 	}
 
+	var result model.Value
+	var queryErr error
+
 	switch queryType {
 	case "range":
 		if args.StepSeconds == 0 {
@@ -164,24 +180,35 @@ func queryPrometheus(ctx context.Context, args QueryPrometheusParams) (model.Val
 		}
 
 		step := time.Duration(args.StepSeconds) * time.Second
-		result, _, err := promClient.QueryRange(ctx, args.Expr, promv1.Range{
+		result, _, queryErr = promClient.QueryRange(ctx, args.Expr, promv1.Range{
 			Start: startTime,
 			End:   endTime,
 			Step:  step,
 		})
-		if err != nil {
-			return nil, fmt.Errorf("querying Prometheus range: %w", err)
-		}
-		return result, nil
 	case "instant":
-		result, _, err := promClient.Query(ctx, args.Expr, startTime)
-		if err != nil {
-			return nil, fmt.Errorf("querying Prometheus instant: %w", err)
-		}
-		return result, nil
+		result, _, queryErr = promClient.Query(ctx, args.Expr, startTime)
+	default:
+		return nil, fmt.Errorf("invalid query type: %s", queryType)
 	}
 
-	return nil, fmt.Errorf("invalid query type: %s", queryType)
+	// Check if it's a validation error
+	if queryErr != nil {
+		if IsPrometheusValidationError(queryErr) {
+			// Return validation error as successful response with IsError=true
+			// This allows LLMs to see the error and retry with corrected syntax
+			return NewValidationErrorResult(queryErr, "Prometheus query"), nil
+		}
+		// System errors (network, auth, etc.) still return as Go errors
+		return nil, fmt.Errorf("querying Prometheus: %w", queryErr)
+	}
+
+	// Marshal successful result to JSON
+	resultBytes, err := json.Marshal(result)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling result: %w", err)
+	}
+
+	return mcp.NewToolResultText(string(resultBytes)), nil
 }
 
 var QueryPrometheus = mcpgrafana.MustTool(
@@ -200,7 +227,7 @@ type ListPrometheusMetricNamesParams struct {
 	Page          int    `json:"page,omitempty" jsonschema:"default=1,description=The page number to return"`
 }
 
-func listPrometheusMetricNames(ctx context.Context, args ListPrometheusMetricNamesParams) ([]string, error) {
+func listPrometheusMetricNames(ctx context.Context, args ListPrometheusMetricNamesParams) (*mcp.CallToolResult, error) {
 	promClient, err := promClientFromContext(ctx, args.DatasourceUID)
 	if err != nil {
 		return nil, fmt.Errorf("getting Prometheus client: %w", err)
@@ -219,6 +246,11 @@ func listPrometheusMetricNames(ctx context.Context, args ListPrometheusMetricNam
 	// Get all metric names by querying for __name__ label values
 	labelValues, _, err := promClient.LabelValues(ctx, "__name__", nil, time.Time{}, time.Time{})
 	if err != nil {
+		// Check if this is a user validation error (bad input)
+		if IsPrometheusValidationError(err) {
+			return NewValidationErrorResult(err, "Prometheus metric names query"), nil
+		}
+		// System errors (network, auth, etc.) still return as Go errors
 		return nil, fmt.Errorf("listing Prometheus metric names: %w", err)
 	}
 
@@ -251,7 +283,13 @@ func listPrometheusMetricNames(ctx context.Context, args ListPrometheusMetricNam
 		matches = matches[start:end]
 	}
 
-	return matches, nil
+	// Marshal the result to JSON
+	resultBytes, err := json.Marshal(matches)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling results: %w", err)
+	}
+
+	return mcp.NewToolResultText(string(resultBytes)), nil
 }
 
 var ListPrometheusMetricNames = mcpgrafana.MustTool(
@@ -318,7 +356,7 @@ type ListPrometheusLabelNamesParams struct {
 	Limit         int        `json:"limit,omitempty" jsonschema:"default=100,description=Optionally\\, the maximum number of results to return"`
 }
 
-func listPrometheusLabelNames(ctx context.Context, args ListPrometheusLabelNamesParams) ([]string, error) {
+func listPrometheusLabelNames(ctx context.Context, args ListPrometheusLabelNamesParams) (*mcp.CallToolResult, error) {
 	promClient, err := promClientFromContext(ctx, args.DatasourceUID)
 	if err != nil {
 		return nil, fmt.Errorf("getting Prometheus client: %w", err)
@@ -348,6 +386,11 @@ func listPrometheusLabelNames(ctx context.Context, args ListPrometheusLabelNames
 
 	labelNames, _, err := promClient.LabelNames(ctx, matchers, startTime, endTime)
 	if err != nil {
+		// Check if this is a user validation error (bad input)
+		if IsPrometheusValidationError(err) {
+			return NewValidationErrorResult(err, "Prometheus label names query"), nil
+		}
+		// System errors (network, auth, etc.) still return as Go errors
 		return nil, fmt.Errorf("listing Prometheus label names: %w", err)
 	}
 
@@ -356,7 +399,13 @@ func listPrometheusLabelNames(ctx context.Context, args ListPrometheusLabelNames
 		labelNames = labelNames[:limit]
 	}
 
-	return labelNames, nil
+	// Marshal the result to JSON
+	resultBytes, err := json.Marshal(labelNames)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling results: %w", err)
+	}
+
+	return mcp.NewToolResultText(string(resultBytes)), nil
 }
 
 var ListPrometheusLabelNames = mcpgrafana.MustTool(
@@ -377,7 +426,7 @@ type ListPrometheusLabelValuesParams struct {
 	Limit         int        `json:"limit,omitempty" jsonschema:"default=100,description=Optionally\\, the maximum number of results to return"`
 }
 
-func listPrometheusLabelValues(ctx context.Context, args ListPrometheusLabelValuesParams) (model.LabelValues, error) {
+func listPrometheusLabelValues(ctx context.Context, args ListPrometheusLabelValuesParams) (*mcp.CallToolResult, error) {
 	promClient, err := promClientFromContext(ctx, args.DatasourceUID)
 	if err != nil {
 		return nil, fmt.Errorf("getting Prometheus client: %w", err)
@@ -407,6 +456,11 @@ func listPrometheusLabelValues(ctx context.Context, args ListPrometheusLabelValu
 
 	labelValues, _, err := promClient.LabelValues(ctx, args.LabelName, matchers, startTime, endTime)
 	if err != nil {
+		// Check if this is a user validation error (bad input)
+		if IsPrometheusValidationError(err) {
+			return NewValidationErrorResult(err, "Prometheus label values query"), nil
+		}
+		// System errors (network, auth, etc.) still return as Go errors
 		return nil, fmt.Errorf("listing Prometheus label values: %w", err)
 	}
 
@@ -415,7 +469,13 @@ func listPrometheusLabelValues(ctx context.Context, args ListPrometheusLabelValu
 		labelValues = labelValues[:limit]
 	}
 
-	return labelValues, nil
+	// Marshal the result to JSON
+	resultBytes, err := json.Marshal(labelValues)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling results: %w", err)
+	}
+
+	return mcp.NewToolResultText(string(resultBytes)), nil
 }
 
 var ListPrometheusLabelValues = mcpgrafana.MustTool(
