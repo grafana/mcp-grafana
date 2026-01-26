@@ -259,6 +259,11 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 
 **Debug and Logging:**
 - `--debug`: Enable debug mode for detailed HTTP request/response logging
+- `--log-level`: Log level (`debug`, `info`, `warn`, `error`) - default: `info`
+
+**Observability:**
+- `--metrics`: Enable Prometheus metrics endpoint at `/metrics`
+- `--metrics-address`: Separate address for metrics server (e.g., `:9090`). If empty, metrics are served on the main server
 
 **Tool Configuration:**
 - `--enabled-tools`: Comma-separated list of enabled categories - default: all categories except `admin`, to enable admin tools, add `admin` to the list (e.g., `"search,datasource,...,admin"`)
@@ -759,6 +764,55 @@ curl http://localhost:9090/healthz
 ```
 
 **Note:** The health check endpoint is only available when using SSE or streamable HTTP transports. It is not available when using the stdio transport (`-t stdio`), as stdio does not expose an HTTP server.
+
+### Observability
+
+When using the SSE or streamable HTTP transports, the MCP server can expose Prometheus metrics for monitoring. Enable metrics with the `--metrics` flag.
+
+**Enabling Metrics:**
+
+```bash
+# Metrics served on the main server at /metrics
+./mcp-grafana -t streamable-http --metrics
+
+# Metrics served on a separate address
+./mcp-grafana -t streamable-http --metrics --metrics-address :9090
+```
+
+**Available Metrics:**
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `mcp_requests_total` | Counter | Total number of MCP requests (labels: `method`, `status`) |
+| `mcp_request_duration_seconds` | Histogram | Duration of MCP requests (labels: `method`) |
+| `mcp_tool_calls_total` | Counter | Total number of MCP tool calls (labels: `tool`, `error`) |
+| `mcp_tool_call_duration_seconds` | Histogram | Duration of MCP tool calls (labels: `tool`, `error`) |
+| `mcp_sessions_active` | Gauge | Number of active MCP sessions |
+| `http_server_request_duration_seconds` | Histogram | Duration of HTTP server requests (from otelhttp) |
+
+**Histogram Implementation:**
+
+The server uses OpenTelemetry exponential histograms which are converted to Prometheus native histograms. For best results, configure Prometheus to scrape with protobuf protocol:
+
+```yaml
+scrape_configs:
+  - job_name: 'mcp-grafana'
+    scrape_protocols: [PrometheusProto, OpenMetricsText1.0.0, PrometheusText0.0.4]
+    static_configs:
+      - targets: ['localhost:8000']
+```
+
+**Docker example with metrics:**
+
+```bash
+docker run --rm -p 8000:8000 \
+  -e GRAFANA_URL=http://localhost:3000 \
+  -e GRAFANA_SERVICE_ACCOUNT_TOKEN=<your token> \
+  grafana/mcp-grafana \
+  -t streamable-http --metrics
+```
+
+**Note:** Metrics are only available when using SSE or streamable HTTP transports. They are not available with the stdio transport.
 
 ## Troubleshooting
 
