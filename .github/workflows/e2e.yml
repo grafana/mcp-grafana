@@ -41,13 +41,11 @@ jobs:
       - name: Install Python dependencies
         run: |
           cd tests
-          # Remove lock file if it has cached paths - uv will regenerate it with git sources
-          if grep -q "\.cache/uv/git-v0/checkouts" uv.lock 2>/dev/null; then
-            echo "Lock file contains cached paths, removing to regenerate..."
-            rm -f uv.lock
-          fi
-          # Clear uv cache to ensure git dependencies are fetched fresh
-          uv cache clean
+          # Regenerate lock file: uv stores git sub-packages as local directory paths
+          # which don't exist in CI. Regenerating creates paths valid for CI environment.
+          # The committed lock file is kept for local development speed.
+          rm -f uv.lock
+          uv lock
           uv sync --all-groups
 
       - id: get-secrets
