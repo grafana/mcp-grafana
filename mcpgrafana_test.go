@@ -441,8 +441,9 @@ func TestToolTracingInstrumentation(t *testing.T) {
 
 		// Execute the tool (should fail)
 		result, err := tool.Handler(ctx, request)
-		assert.Error(t, err)
-		assert.Nil(t, result)
+		assert.NoError(t, err)
+		require.NotNil(t, result)
+		assert.True(t, result.IsError)
 
 		// Verify span was created and marked as error
 		spans := spanRecorder.Ended()

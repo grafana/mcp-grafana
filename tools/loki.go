@@ -25,23 +25,6 @@ const (
 	MaxLokiLogLimit = 100
 )
 
-// LokiAPIError represents a typed error from the Loki API.
-// This allows us to inspect the HTTP status code without string parsing.
-type LokiAPIError struct {
-	StatusCode int
-	Message    string
-}
-
-func (e *LokiAPIError) Error() string {
-	return fmt.Sprintf("loki API returned status code %d: %s", e.StatusCode, e.Message)
-}
-
-// HTTPStatusCode returns the HTTP status code from the Loki API response.
-// This implements the httpStatusCodeError interface defined in errors.go.
-func (e *LokiAPIError) HTTPStatusCode() int {
-	return e.StatusCode
-}
-
 type Client struct {
 	httpClient *http.Client
 	baseURL    string
@@ -152,10 +135,7 @@ func (c *Client) makeRequest(ctx context.Context, method, urlPath string, params
 	// Check for non-200 status code
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
-		return nil, &LokiAPIError{
-			StatusCode: resp.StatusCode,
-			Message:    string(bodyBytes),
-		}
+		return nil, fmt.Errorf("loki API returned status code %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
 	// Read the response body with a limit to prevent memory issues
@@ -443,7 +423,7 @@ func enforceLogLimit(requestedLimit int) int {
 }
 
 // queryLokiLogs queries logs from a Loki datasource using LogQL
-func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) (*mcp.CallToolResult, error) {
+func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) ([]LogEntry, error) {
 	client, err := newLokiClient(ctx, args.DatasourceUID)
 	if err != nil {
 		return nil, fmt.Errorf("creating Loki client: %w", err)
@@ -463,23 +443,12 @@ func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) (*mcp.CallTool
 
 	streams, err := client.fetchLogs(ctx, args.LogQL, startTime, endTime, limit, direction)
 	if err != nil {
-		// Check if it's a validation error
-		if IsLokiValidationError(err) {
-			// Return validation error as successful response with IsError=true
-			// This allows LLMs to see the error and retry with corrected syntax
-			return NewValidationErrorResult(err, "Loki query"), nil
-		}
-		// System errors (network, auth, etc.) still return as Go errors
 		return nil, err
 	}
 
 	// Handle empty results
 	if len(streams) == 0 {
-		resultBytes, err := json.Marshal([]LogEntry{})
-		if err != nil {
-			return nil, fmt.Errorf("marshaling empty results: %w", err)
-		}
-		return mcp.NewToolResultText(string(resultBytes)), nil
+		return []LogEntry{}, nil
 	}
 
 	// Convert the streams to a flat list of log entries
@@ -529,13 +498,12 @@ func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) (*mcp.CallTool
 		}
 	}
 
-	// Marshal the entries to JSON
-	resultBytes, err := json.Marshal(entries)
-	if err != nil {
-		return nil, fmt.Errorf("marshaling results: %w", err)
+	// If we processed all streams but still have no entries, return an empty slice
+	if len(entries) == 0 {
+		return []LogEntry{}, nil
 	}
 
-	return mcp.NewToolResultText(string(resultBytes)), nil
+	return entries, nil
 }
 
 // QueryLokiLogs is a tool for querying logs from Loki
@@ -630,7 +598,7 @@ type QueryLokiStatsParams struct {
 }
 
 // queryLokiStats queries stats from a Loki datasource using LogQL
-func queryLokiStats(ctx context.Context, args QueryLokiStatsParams) (*mcp.CallToolResult, error) {
+func queryLokiStats(ctx context.Context, args QueryLokiStatsParams) (*Stats, error) {
 	client, err := newLokiClient(ctx, args.DatasourceUID)
 	if err != nil {
 		return nil, fmt.Errorf("creating Loki client: %w", err)
@@ -641,20 +609,10 @@ func queryLokiStats(ctx context.Context, args QueryLokiStatsParams) (*mcp.CallTo
 
 	stats, err := client.fetchStats(ctx, args.LogQL, startTime, endTime)
 	if err != nil {
-		// Check if it's a validation error
-		if IsLokiValidationError(err) {
-			return NewValidationErrorResult(err, "Loki stats query"), nil
-		}
 		return nil, err
 	}
 
-	// Marshal stats to JSON
-	resultBytes, err := json.Marshal(stats)
-	if err != nil {
-		return nil, fmt.Errorf("marshaling stats: %w", err)
-	}
-
-	return mcp.NewToolResultText(string(resultBytes)), nil
+	return stats, nil
 }
 
 // QueryLokiStats is a tool for querying stats from Loki
@@ -677,7 +635,7 @@ type QueryLokiPatternsParams struct {
 }
 
 // queryLokiPatterns queries detected log patterns from a Loki datasource
-func queryLokiPatterns(ctx context.Context, args QueryLokiPatternsParams) (*mcp.CallToolResult, error) {
+func queryLokiPatterns(ctx context.Context, args QueryLokiPatternsParams) ([]Pattern, error) {
 	client, err := newLokiClient(ctx, args.DatasourceUID)
 	if err != nil {
 		return nil, fmt.Errorf("creating Loki client: %w", err)
@@ -688,20 +646,10 @@ func queryLokiPatterns(ctx context.Context, args QueryLokiPatternsParams) (*mcp.
 
 	patterns, err := client.fetchPatterns(ctx, args.LogQL, startTime, endTime, args.Step)
 	if err != nil {
-		// Check if it's a validation error
-		if IsLokiValidationError(err) {
-			return NewValidationErrorResult(err, "Loki patterns query"), nil
-		}
 		return nil, err
 	}
 
-	// Marshal patterns to JSON
-	resultBytes, err := json.Marshal(patterns)
-	if err != nil {
-		return nil, fmt.Errorf("marshaling patterns: %w", err)
-	}
-
-	return mcp.NewToolResultText(string(resultBytes)), nil
+	return patterns, nil
 }
 
 // QueryLokiPatterns is a tool for querying detected log patterns from Loki

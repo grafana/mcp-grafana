@@ -24,6 +24,21 @@ type Tool struct {
 	Handler server.ToolHandlerFunc
 }
 
+// HardError wraps an error to indicate it should propagate as a JSON-RPC protocol
+// error rather than being converted to CallToolResult with IsError=true.
+// Use sparingly for non-recoverable failures (e.g., missing auth).
+type HardError struct {
+	Err error
+}
+
+func (e *HardError) Error() string {
+	return e.Err.Error()
+}
+
+func (e *HardError) Unwrap() error {
+	return e.Err
+}
+
 // Register adds the Tool to the given MCPServer.
 // It is a convenience method that calls server.MCPServer.AddTool with the Tool's metadata and handler,
 // allowing fluent tool registration in a single statement:
@@ -155,7 +170,19 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 		if handlerErr != nil {
 			span.RecordError(handlerErr)
 			span.SetStatus(codes.Error, handlerErr.Error())
-			return nil, handlerErr
+			var hardErr *HardError
+			if errors.As(handlerErr, &hardErr) {
+				return nil, hardErr.Err
+			}
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{
+					mcp.TextContent{
+						Type: "text",
+						Text: handlerErr.Error(),
+					},
+				},
+				IsError: true,
+			}, nil
 		}
 
 		// Tool execution completed successfully

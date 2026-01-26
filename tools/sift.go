@@ -629,7 +629,7 @@ func (c *siftClient) listSiftInvestigations(ctx context.Context, limit int) ([]I
 
 func fetchErrorPatternLogExamples(ctx context.Context, patternMap map[string]any, datasourceUID string) ([]string, error) {
 	query, _ := patternMap["query"].(string)
-	result, err := queryLokiLogs(ctx, QueryLokiLogsParams{
+	logEntries, err := queryLokiLogs(ctx, QueryLokiLogsParams{
 		DatasourceUID: datasourceUID,
 		LogQL:         query,
 		Limit:         errorPatternLogExampleLimit,
@@ -637,29 +637,6 @@ func fetchErrorPatternLogExamples(ctx context.Context, patternMap map[string]any
 	if err != nil {
 		return nil, fmt.Errorf("querying Loki: %w", err)
 	}
-	
-	// Check if the result is an error
-	if result.IsError {
-		// Extract error message from content
-		var errMsg string
-		if len(result.Content) > 0 {
-			if textContent, ok := result.Content[0].(mcp.TextContent); ok {
-				errMsg = textContent.Text
-			}
-		}
-		return nil, fmt.Errorf("loki query failed: %s", errMsg)
-	}
-	
-	// Unmarshal the JSON result back to []LogEntry
-	var logEntries []LogEntry
-	if len(result.Content) > 0 {
-		if textContent, ok := result.Content[0].(mcp.TextContent); ok {
-			if err := json.Unmarshal([]byte(textContent.Text), &logEntries); err != nil {
-				return nil, fmt.Errorf("unmarshaling log entries: %w", err)
-			}
-		}
-	}
-	
 	var examples []string
 	for _, entry := range logEntries {
 		if entry.Line != "" {
