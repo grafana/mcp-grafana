@@ -155,9 +155,13 @@ func TestConvertTool(t *testing.T) {
 			},
 		}
 
-		_, err = handler(ctx, errorRequest)
-		assert.Error(t, err)
-		assert.Equal(t, "test error", err.Error())
+		result, err = handler(ctx, errorRequest)
+		assert.NoError(t, err)
+		require.NotNil(t, result)
+		assert.True(t, result.IsError)
+		resultString, ok = result.Content[0].(mcp.TextContent)
+		require.True(t, ok)
+		assert.Equal(t, "test error", resultString.Text)
 	})
 
 	t.Run("empty handler params", func(t *testing.T) {
@@ -268,9 +272,13 @@ func TestConvertTool(t *testing.T) {
 			},
 		}
 
-		_, err = handler(ctx, errorRequest)
-		assert.Error(t, err)
-		assert.Equal(t, "test error", err.Error())
+		result, err = handler(ctx, errorRequest)
+		assert.NoError(t, err)
+		require.NotNil(t, result)
+		assert.True(t, result.IsError)
+		resultString, ok = result.Content[0].(mcp.TextContent)
+		require.True(t, ok)
+		assert.Equal(t, "test error", resultString.Text)
 	})
 
 	t.Run("string pointer return type", func(t *testing.T) {
@@ -354,9 +362,13 @@ func TestConvertTool(t *testing.T) {
 			},
 		}
 
-		_, err = handler(ctx, errorRequest)
-		assert.Error(t, err)
-		assert.Equal(t, "test error", err.Error())
+		result, err = handler(ctx, errorRequest)
+		assert.NoError(t, err)
+		require.NotNil(t, result)
+		assert.True(t, result.IsError)
+		resultString, ok = result.Content[0].(mcp.TextContent)
+		require.True(t, ok)
+		assert.Equal(t, "test error", resultString.Text)
 	})
 
 	t.Run("struct return type", func(t *testing.T) {
@@ -403,9 +415,13 @@ func TestConvertTool(t *testing.T) {
 			},
 		}
 
-		_, err = handler(ctx, errorRequest)
-		assert.Error(t, err)
-		assert.Equal(t, "test error", err.Error())
+		result, err = handler(ctx, errorRequest)
+		assert.NoError(t, err)
+		require.NotNil(t, result)
+		assert.True(t, result.IsError)
+		resultString, ok = result.Content[0].(mcp.TextContent)
+		require.True(t, ok)
+		assert.Equal(t, "test error", resultString.Text)
 	})
 
 	t.Run("struct pointer return type", func(t *testing.T) {
@@ -471,9 +487,13 @@ func TestConvertTool(t *testing.T) {
 			},
 		}
 
-		_, err = handler(ctx, errorRequest)
-		assert.Error(t, err)
-		assert.Equal(t, "test error", err.Error())
+		result, err = handler(ctx, errorRequest)
+		assert.NoError(t, err)
+		require.NotNil(t, result)
+		assert.True(t, result.IsError)
+		resultString, ok = result.Content[0].(mcp.TextContent)
+		require.True(t, ok)
+		assert.Equal(t, "test error", resultString.Text)
 	})
 
 	t.Run("invalid handler types", func(t *testing.T) {
