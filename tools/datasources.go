@@ -12,8 +12,15 @@ import (
 	mcpgrafana "github.com/grafana/mcp-grafana"
 )
 
+const (
+	// DefaultListDatasourcesLimit is the default number of results to return
+	DefaultListDatasourcesLimit = 100
+)
+
 type ListDatasourcesParams struct {
-	Type string `json:"type,omitempty" jsonschema:"description=The type of datasources to search for. For example\\, 'prometheus'\\, 'loki'\\, 'tempo'\\, etc..."`
+	Type  string `json:"type,omitempty" jsonschema:"description=Filter by datasource type (e.g. prometheus\\, loki\\, cloudwatch)"`
+	Limit int    `json:"limit,omitempty" jsonschema:"description=Maximum number of results to return (default: 100)"`
+	Page  int    `json:"page,omitempty" jsonschema:"description=Page number for pagination (1-indexed). Default: 1"`
 }
 
 type dataSourceSummary struct {
@@ -31,7 +38,32 @@ func listDatasources(ctx context.Context, args ListDatasourcesParams) ([]dataSou
 		return nil, fmt.Errorf("list datasources: %w", err)
 	}
 	datasources := filterDatasources(resp.Payload, args.Type)
-	return summarizeDatasources(datasources), nil
+	summaries := summarizeDatasources(datasources)
+
+	// Apply client-side pagination
+	return applyDatasourcePagination(summaries, args.Limit, args.Page), nil
+}
+
+// applyDatasourcePagination applies pagination to the list of datasources.
+func applyDatasourcePagination(items []dataSourceSummary, limit, page int) []dataSourceSummary {
+	if limit <= 0 {
+		limit = DefaultListDatasourcesLimit
+	}
+	if page <= 0 {
+		page = 1
+	}
+
+	start := (page - 1) * limit
+	end := start + limit
+
+	if start >= len(items) {
+		return []dataSourceSummary{}
+	}
+	if end > len(items) {
+		end = len(items)
+	}
+
+	return items[start:end]
 }
 
 // filterDatasources returns only datasources of the specified type `t`. If `t`
@@ -66,7 +98,7 @@ func summarizeDatasources(dataSources models.DataSourceList) []dataSourceSummary
 
 var ListDatasources = mcpgrafana.MustTool(
 	"list_datasources",
-	"List available Grafana datasources. Optionally filter by datasource type (e.g., 'prometheus', 'loki'). Returns a summary list including ID, UID, name, type, and default status.",
+	"List all configured datasources in Grafana. Use this to discover available Prometheus, Loki, and CloudWatch datasources and their UIDs. Supports filtering by type and pagination.",
 	listDatasources,
 	mcp.WithTitleAnnotation("List datasources"),
 	mcp.WithIdempotentHintAnnotation(true),
