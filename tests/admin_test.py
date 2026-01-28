@@ -111,7 +111,7 @@ async def test_list_teams_tool(
 @pytest.mark.flaky(max_runs=3)
 async def test_list_users_by_org_tool(model: str, mcp_client: ClientSession):
     tools = await get_converted_tools(mcp_client)
-    prompt = "Can you list the users in Grafana?"
+    prompt = "Can you list all users who are members of the Grafana organization?"
 
     messages = [
         Message(role="system", content="You are a helpful assistant."),
@@ -129,5 +129,5 @@ async def test_list_users_by_org_tool(model: str, mcp_client: ClientSession):
     assert_llm_output_passes(
         prompt,
         content,
-        "Does the response contain specific information about users in Grafana, such as usernames, emails, or roles?",
+        "Does the response contain specific information about organization users in Grafana, such as usernames, emails, or roles?",
     )
