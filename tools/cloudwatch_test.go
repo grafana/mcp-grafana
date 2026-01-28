@@ -180,6 +180,58 @@ func TestCloudWatchQueryResult_Hints(t *testing.T) {
 	assert.Equal(t, "Hint 1", result.Hints[0])
 }
 
+func TestParseCloudWatchResourceResponse(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       string
+		expected    []string
+		expectError bool
+	}{
+		{
+			name:     "valid response with multiple items",
+			input:    `[{"text":"AWS/ECS","value":"AWS/ECS"},{"text":"AWS/EC2","value":"AWS/EC2"},{"text":"ECS/ContainerInsights","value":"ECS/ContainerInsights"}]`,
+			expected: []string{"AWS/ECS", "AWS/EC2", "ECS/ContainerInsights"},
+		},
+		{
+			name:     "empty response",
+			input:    `[]`,
+			expected: []string{},
+		},
+		{
+			name:     "single item",
+			input:    `[{"text":"CPUUtilization","value":"CPUUtilization"}]`,
+			expected: []string{"CPUUtilization"},
+		},
+		{
+			name:     "text and value differ",
+			input:    `[{"text":"Display Name","value":"actual_value"}]`,
+			expected: []string{"actual_value"},
+		},
+		{
+			name:        "invalid JSON",
+			input:       `not json`,
+			expectError: true,
+		},
+		{
+			name:        "wrong structure (plain strings)",
+			input:       `["AWS/ECS","AWS/EC2"]`,
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := parseCloudWatchResourceResponse([]byte(tt.input))
+			if tt.expectError {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
 func TestApplyDatasourcePagination(t *testing.T) {
 	// Create test data
 	items := make([]dataSourceSummary, 25)

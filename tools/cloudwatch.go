@@ -393,6 +393,27 @@ type ListCloudWatchNamespacesParams struct {
 	Region        string `json:"region,omitempty" jsonschema:"description=AWS region (uses datasource default if not specified)"`
 }
 
+// cloudWatchResourceItem represents an item returned by CloudWatch resource APIs
+// The Grafana CloudWatch API returns arrays of objects with text and value fields
+type cloudWatchResourceItem struct {
+	Text  string `json:"text"`
+	Value string `json:"value"`
+}
+
+// parseCloudWatchResourceResponse extracts values from CloudWatch resource API response
+func parseCloudWatchResourceResponse(bodyBytes []byte) ([]string, error) {
+	var items []cloudWatchResourceItem
+	if err := json.Unmarshal(bodyBytes, &items); err != nil {
+		return nil, fmt.Errorf("unmarshaling response: %w", err)
+	}
+
+	result := make([]string, len(items))
+	for i, item := range items {
+		result[i] = item.Value
+	}
+	return result, nil
+}
+
 // listCloudWatchNamespaces lists available CloudWatch namespaces
 func listCloudWatchNamespaces(ctx context.Context, args ListCloudWatchNamespacesParams) ([]string, error) {
 	client, err := newCloudWatchClient(ctx, args.DatasourceUID)
@@ -429,12 +450,7 @@ func listCloudWatchNamespaces(ctx context.Context, args ListCloudWatchNamespaces
 		return nil, fmt.Errorf("reading response body: %w", err)
 	}
 
-	var namespaces []string
-	if err := json.Unmarshal(bodyBytes, &namespaces); err != nil {
-		return nil, fmt.Errorf("unmarshaling response: %w", err)
-	}
-
-	return namespaces, nil
+	return parseCloudWatchResourceResponse(bodyBytes)
 }
 
 // ListCloudWatchNamespaces is a tool for listing CloudWatch namespaces
@@ -490,12 +506,7 @@ func listCloudWatchMetrics(ctx context.Context, args ListCloudWatchMetricsParams
 		return nil, fmt.Errorf("reading response body: %w", err)
 	}
 
-	var metrics []string
-	if err := json.Unmarshal(bodyBytes, &metrics); err != nil {
-		return nil, fmt.Errorf("unmarshaling response: %w", err)
-	}
-
-	return metrics, nil
+	return parseCloudWatchResourceResponse(bodyBytes)
 }
 
 // ListCloudWatchMetrics is a tool for listing CloudWatch metrics
@@ -552,12 +563,7 @@ func listCloudWatchDimensions(ctx context.Context, args ListCloudWatchDimensions
 		return nil, fmt.Errorf("reading response body: %w", err)
 	}
 
-	var dimensions []string
-	if err := json.Unmarshal(bodyBytes, &dimensions); err != nil {
-		return nil, fmt.Errorf("unmarshaling response: %w", err)
-	}
-
-	return dimensions, nil
+	return parseCloudWatchResourceResponse(bodyBytes)
 }
 
 // ListCloudWatchDimensions is a tool for listing CloudWatch dimension keys

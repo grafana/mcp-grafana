@@ -501,8 +501,12 @@ func describeClickHouseTable(ctx context.Context, args DescribeClickHouseTablePa
 		database = "default"
 	}
 
-	// Build the DESCRIBE query
-	query := fmt.Sprintf("DESCRIBE TABLE %s.%s", database, args.Table)
+	// Query system.columns instead of using DESCRIBE TABLE
+	// This avoids the LIMIT clause issue with DESCRIBE statements
+	query := fmt.Sprintf(`SELECT name, type, default_kind as default_type, default_expression, comment
+FROM system.columns
+WHERE database = '%s' AND table = '%s'
+ORDER BY position`, database, args.Table)
 
 	// Use the existing query infrastructure
 	result, err := queryClickHouse(ctx, ClickHouseQueryParams{
