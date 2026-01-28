@@ -473,6 +473,12 @@ type LogEntry struct {
 	Labels    map[string]string `json:"labels"`
 }
 
+// LokiQueryResult wraps log entries with optional hints
+type LokiQueryResult struct {
+	Entries []LogEntry `json:"entries"`
+	Hints   []string   `json:"hints,omitempty"`
+}
+
 // enforceLogLimit ensures a log limit value is within acceptable bounds
 func enforceLogLimit(requestedLimit int) int {
 	if requestedLimit <= 0 {
@@ -512,7 +518,7 @@ func parseMetricTimestamp(raw json.RawMessage) (string, error) {
 }
 
 // queryLokiLogs queries logs from a Loki datasource using LogQL
-func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) ([]LogEntry, error) {
+func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) (*LokiQueryResult, error) {
 	client, err := newLokiClient(ctx, args.DatasourceUID)
 	if err != nil {
 		return nil, fmt.Errorf("creating Loki client: %w", err)
@@ -648,12 +654,18 @@ func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) ([]LogEntry, e
 		return nil, fmt.Errorf("unsupported result type: %s", response.Data.ResultType)
 	}
 
-	// Return empty slice if no entries found
-	if entries == nil {
-		return []LogEntry{}, nil
+	// Build the result
+	result := &LokiQueryResult{
+		Entries: entries,
 	}
 
-	return entries, nil
+	// Return empty slice if no entries found and add hints
+	if entries == nil || len(entries) == 0 {
+		result.Entries = []LogEntry{}
+		result.Hints = GenerateEmptyResultHints("loki")
+	}
+
+	return result, nil
 }
 
 // QueryLokiLogs is a tool for querying logs from Loki
@@ -812,10 +824,58 @@ var QueryLokiPatterns = mcpgrafana.MustTool(
 	mcp.WithReadOnlyHintAnnotation(true),
 )
 
+// ListLokiMetricNamesParams defines the parameters for listing Loki metric names
+type ListLokiMetricNamesParams struct {
+	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the datasource to query"`
+	StartRFC3339  string `json:"startRfc3339,omitempty" jsonschema:"description=Optionally\\, the start time of the query in RFC3339 format (defaults to 6 hours ago)"`
+	EndRFC3339    string `json:"endRfc3339,omitempty" jsonschema:"description=Optionally\\, the end time of the query in RFC3339 format (defaults to now)"`
+}
+
+// listLokiMetricNames lists all metric names available in a Loki datasource
+func listLokiMetricNames(ctx context.Context, args ListLokiMetricNamesParams) ([]string, error) {
+	client, err := newLokiClient(ctx, args.DatasourceUID)
+	if err != nil {
+		return nil, fmt.Errorf("creating Loki client: %w", err)
+	}
+
+	// Apply longer default time range for metric discovery (6 hours)
+	startTime := args.StartRFC3339
+	endTime := args.EndRFC3339
+	if startTime == "" {
+		startTime = time.Now().Add(-6 * time.Hour).Format(time.RFC3339)
+	}
+	if endTime == "" {
+		endTime = time.Now().Format(time.RFC3339)
+	}
+
+	// Query the __name__ label to get metric names
+	result, err := client.fetchData(ctx, "/loki/api/v1/label/__name__/values", startTime, endTime)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(result) == 0 {
+		return []string{}, nil
+	}
+
+	return result, nil
+}
+
+// ListLokiMetricNames is a tool for listing Loki metric names
+var ListLokiMetricNames = mcpgrafana.MustTool(
+	"list_loki_metric_names",
+	"Lists all available metric names (stored in the __name__ label) from a Loki datasource. Useful for discovering metrics that can be queried with LogQL metric queries like rate() or count_over_time(). Defaults to a 6-hour time range if not specified.",
+	listLokiMetricNames,
+	mcp.WithTitleAnnotation("List Loki metric names"),
+	mcp.WithIdempotentHintAnnotation(true),
+	mcp.WithReadOnlyHintAnnotation(true),
+)
+
 // AddLokiTools registers all Loki tools with the MCP server
 func AddLokiTools(mcp *server.MCPServer) {
 	ListLokiLabelNames.Register(mcp)
 	ListLokiLabelValues.Register(mcp)
+	ListLokiMetricNames.Register(mcp)
 	QueryLokiStats.Register(mcp)
 	QueryLokiLogs.Register(mcp)
 	QueryLokiPatterns.Register(mcp)

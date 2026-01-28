@@ -126,6 +126,12 @@ type QueryPrometheusParams struct {
 	QueryType     string `json:"queryType,omitempty" jsonschema:"description=The type of query to use. Either 'range' or 'instant'"`
 }
 
+// PrometheusQueryResult wraps the query result with optional hints
+type PrometheusQueryResult struct {
+	Result model.Value `json:"result"`
+	Hints  []string    `json:"hints,omitempty"`
+}
+
 func parseTime(timeStr string) (time.Time, error) {
 	tr := gtime.TimeRange{
 		From: timeStr,
@@ -134,7 +140,7 @@ func parseTime(timeStr string) (time.Time, error) {
 	return tr.ParseFrom()
 }
 
-func queryPrometheus(ctx context.Context, args QueryPrometheusParams) (model.Value, error) {
+func queryPrometheus(ctx context.Context, args QueryPrometheusParams) (*PrometheusQueryResult, error) {
 	promClient, err := promClientFromContext(ctx, args.DatasourceUID)
 	if err != nil {
 		return nil, fmt.Errorf("getting Prometheus client: %w", err)
@@ -151,6 +157,8 @@ func queryPrometheus(ctx context.Context, args QueryPrometheusParams) (model.Val
 		return nil, fmt.Errorf("parsing start time: %w", err)
 	}
 
+	var result model.Value
+
 	switch queryType {
 	case "range":
 		if args.StepSeconds == 0 {
@@ -164,7 +172,7 @@ func queryPrometheus(ctx context.Context, args QueryPrometheusParams) (model.Val
 		}
 
 		step := time.Duration(args.StepSeconds) * time.Second
-		result, _, err := promClient.QueryRange(ctx, args.Expr, promv1.Range{
+		result, _, err = promClient.QueryRange(ctx, args.Expr, promv1.Range{
 			Start: startTime,
 			End:   endTime,
 			Step:  step,
@@ -172,16 +180,38 @@ func queryPrometheus(ctx context.Context, args QueryPrometheusParams) (model.Val
 		if err != nil {
 			return nil, fmt.Errorf("querying Prometheus range: %w", err)
 		}
-		return result, nil
 	case "instant":
-		result, _, err := promClient.Query(ctx, args.Expr, startTime)
+		result, _, err = promClient.Query(ctx, args.Expr, startTime)
 		if err != nil {
 			return nil, fmt.Errorf("querying Prometheus instant: %w", err)
 		}
-		return result, nil
+	default:
+		return nil, fmt.Errorf("invalid query type: %s", queryType)
 	}
 
-	return nil, fmt.Errorf("invalid query type: %s", queryType)
+	// Build result with hints
+	queryResult := &PrometheusQueryResult{
+		Result: result,
+	}
+
+	// Check if result is empty and add hints
+	isEmpty := false
+	switch v := result.(type) {
+	case model.Vector:
+		isEmpty = len(v) == 0
+	case model.Matrix:
+		isEmpty = len(v) == 0
+	case *model.Scalar:
+		// Scalar values are never "empty"
+	case *model.String:
+		// String values are never "empty"
+	}
+
+	if isEmpty {
+		queryResult.Hints = GenerateEmptyResultHints("prometheus")
+	}
+
+	return queryResult, nil
 }
 
 var QueryPrometheus = mcpgrafana.MustTool(

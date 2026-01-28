@@ -42,7 +42,7 @@ type disabledTools struct {
 	prometheus, loki, alerting,
 	dashboard, folder, oncall, asserts, sift, admin,
 	pyroscope, navigation, proxied, annotations, rendering, write,
-	clickhouse, cloudwatch bool
+	clickhouse, cloudwatch, helpers bool
 }
 
 // Configuration for the Grafana client.
@@ -58,7 +58,7 @@ type grafanaConfig struct {
 }
 
 func (dt *disabledTools) addFlags() {
-	flag.StringVar(&dt.enabledTools, "enabled-tools", "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering,clickhouse,cloudwatch", "A comma separated list of tools enabled for this server. Can be overwritten entirely or by disabling specific components, e.g. --disable-search.")
+	flag.StringVar(&dt.enabledTools, "enabled-tools", "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering,clickhouse,cloudwatch,helpers", "A comma separated list of tools enabled for this server. Can be overwritten entirely or by disabling specific components, e.g. --disable-search.")
 	flag.BoolVar(&dt.search, "disable-search", false, "Disable search tools")
 	flag.BoolVar(&dt.datasource, "disable-datasource", false, "Disable datasource tools")
 	flag.BoolVar(&dt.incident, "disable-incident", false, "Disable incident tools")
@@ -79,6 +79,7 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.rendering, "disable-rendering", false, "Disable rendering tools (panel/dashboard image export)")
 	flag.BoolVar(&dt.clickhouse, "disable-clickhouse", false, "Disable ClickHouse tools")
 	flag.BoolVar(&dt.cloudwatch, "disable-cloudwatch", false, "Disable CloudWatch tools")
+	flag.BoolVar(&dt.helpers, "disable-helpers", false, "Disable helper tools (histogram queries, examples)")
 }
 
 func (gc *grafanaConfig) addFlags() {
@@ -112,6 +113,7 @@ func (dt *disabledTools) addTools(s *server.MCPServer) {
 	maybeAddTools(s, tools.AddRenderingTools, enabledTools, dt.rendering, "rendering")
 	maybeAddTools(s, tools.AddClickHouseTools, enabledTools, dt.clickhouse, "clickhouse")
 	maybeAddTools(s, tools.AddCloudWatchTools, enabledTools, dt.cloudwatch, "cloudwatch")
+	maybeAddTools(s, tools.AddHelperTools, enabledTools, dt.helpers, "helpers")
 }
 
 func newServer(transport string, dt disabledTools) (*server.MCPServer, *mcpgrafana.ToolManager) {

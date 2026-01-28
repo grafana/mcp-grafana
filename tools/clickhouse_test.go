@@ -49,8 +49,8 @@ func TestSubstituteClickHouseMacros(t *testing.T) {
 			expected: "SELECT * FROM logs WHERE interval_ms = 3000",
 		},
 		{
-			name:  "multiple macros in same query",
-			query: "SELECT * FROM logs WHERE $__timeFilter(ts) AND bucket = $__interval_ms",
+			name:     "multiple macros in same query",
+			query:    "SELECT * FROM logs WHERE $__timeFilter(ts) AND bucket = $__interval_ms",
 			expected: "SELECT * FROM logs WHERE ts >= toDateTime(1705312800) AND ts <= toDateTime(1705316400) AND bucket = 3000",
 		},
 		{
@@ -361,9 +361,9 @@ func TestClickHouseQueryResult_Structure(t *testing.T) {
 func TestSubstituteClickHouseMacros_IntervalCalculation(t *testing.T) {
 	// Test with different time ranges to verify interval calculation
 	tests := []struct {
-		name              string
-		rangeHours        int
-		expectedInterval  string
+		name             string
+		rangeHours       int
+		expectedInterval string
 	}{
 		{
 			name:             "1 hour range",
@@ -391,4 +391,74 @@ func TestSubstituteClickHouseMacros_IntervalCalculation(t *testing.T) {
 			assert.Equal(t, tt.expectedInterval, result)
 		})
 	}
+}
+
+func TestListClickHouseTablesParams_Structure(t *testing.T) {
+	params := ListClickHouseTablesParams{
+		DatasourceUID: "test-uid",
+		Database:      "my_database",
+	}
+
+	assert.Equal(t, "test-uid", params.DatasourceUID)
+	assert.Equal(t, "my_database", params.Database)
+}
+
+func TestDescribeClickHouseTableParams_Structure(t *testing.T) {
+	params := DescribeClickHouseTableParams{
+		DatasourceUID: "test-uid",
+		Table:         "my_table",
+		Database:      "my_database",
+	}
+
+	assert.Equal(t, "test-uid", params.DatasourceUID)
+	assert.Equal(t, "my_table", params.Table)
+	assert.Equal(t, "my_database", params.Database)
+}
+
+func TestClickHouseTableInfo_Structure(t *testing.T) {
+	info := ClickHouseTableInfo{
+		Database:   "default",
+		Name:       "events",
+		Engine:     "MergeTree",
+		TotalRows:  1000000,
+		TotalBytes: 52428800,
+	}
+
+	assert.Equal(t, "default", info.Database)
+	assert.Equal(t, "events", info.Name)
+	assert.Equal(t, "MergeTree", info.Engine)
+	assert.Equal(t, int64(1000000), info.TotalRows)
+	assert.Equal(t, int64(52428800), info.TotalBytes)
+}
+
+func TestClickHouseColumnInfo_Structure(t *testing.T) {
+	col := ClickHouseColumnInfo{
+		Name:              "timestamp",
+		Type:              "DateTime64",
+		DefaultType:       "DEFAULT",
+		DefaultExpression: "now()",
+		Comment:           "Event timestamp",
+	}
+
+	assert.Equal(t, "timestamp", col.Name)
+	assert.Equal(t, "DateTime64", col.Type)
+	assert.Equal(t, "DEFAULT", col.DefaultType)
+	assert.Equal(t, "now()", col.DefaultExpression)
+	assert.Equal(t, "Event timestamp", col.Comment)
+}
+
+func TestClickHouseQueryResult_Hints(t *testing.T) {
+	result := ClickHouseQueryResult{
+		Columns:  []string{"id", "name"},
+		Rows:     []map[string]interface{}{},
+		RowCount: 0,
+		Hints: []string{
+			"No data found",
+			"Try a different query",
+		},
+	}
+
+	assert.Len(t, result.Hints, 2)
+	assert.Equal(t, "No data found", result.Hints[0])
+	assert.Equal(t, 0, result.RowCount)
 }

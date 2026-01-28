@@ -44,6 +44,7 @@ type CloudWatchQueryResult struct {
 	Timestamps []int64            `json:"timestamps"`
 	Values     []float64          `json:"values"`
 	Statistics map[string]float64 `json:"statistics,omitempty"`
+	Hints      []string           `json:"hints,omitempty"`
 }
 
 // cloudWatchQueryResponse represents the raw API response from Grafana's /api/ds/query
@@ -225,7 +226,7 @@ func queryCloudWatch(ctx context.Context, args CloudWatchQueryParams) (*CloudWat
 	// Parse time range
 	now := time.Now()
 	fromTime := now.Add(-1 * time.Hour) // Default: 1 hour ago
-	toTime := now                        // Default: now
+	toTime := now                       // Default: now
 
 	if args.Start != "" {
 		parsed, err := parseCloudWatchTime(args.Start)
@@ -355,6 +356,11 @@ func queryCloudWatch(ctx context.Context, args CloudWatchQueryParams) (*CloudWat
 		}
 	}
 
+	// Add hints if no data was found
+	if len(result.Values) == 0 {
+		result.Hints = GenerateEmptyResultHints("cloudwatch")
+	}
+
 	return result, nil
 }
 
@@ -381,7 +387,193 @@ Example dimensions:
 	mcp.WithReadOnlyHintAnnotation(true),
 )
 
+// ListCloudWatchNamespacesParams defines the parameters for listing CloudWatch namespaces
+type ListCloudWatchNamespacesParams struct {
+	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the CloudWatch datasource"`
+	Region        string `json:"region,omitempty" jsonschema:"description=AWS region (uses datasource default if not specified)"`
+}
+
+// listCloudWatchNamespaces lists available CloudWatch namespaces
+func listCloudWatchNamespaces(ctx context.Context, args ListCloudWatchNamespacesParams) ([]string, error) {
+	client, err := newCloudWatchClient(ctx, args.DatasourceUID)
+	if err != nil {
+		return nil, fmt.Errorf("creating CloudWatch client: %w", err)
+	}
+
+	// Build query parameters
+	params := ""
+	if args.Region != "" {
+		params = "?region=" + args.Region
+	}
+
+	url := client.baseURL + "/api/datasources/uid/" + args.DatasourceUID + "/resources/namespaces" + params
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating request: %w", err)
+	}
+
+	resp, err := client.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("executing request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("CloudWatch namespaces returned status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	body := io.LimitReader(resp.Body, 1024*1024) // 1MB limit
+	bodyBytes, err := io.ReadAll(body)
+	if err != nil {
+		return nil, fmt.Errorf("reading response body: %w", err)
+	}
+
+	var namespaces []string
+	if err := json.Unmarshal(bodyBytes, &namespaces); err != nil {
+		return nil, fmt.Errorf("unmarshaling response: %w", err)
+	}
+
+	return namespaces, nil
+}
+
+// ListCloudWatchNamespaces is a tool for listing CloudWatch namespaces
+var ListCloudWatchNamespaces = mcpgrafana.MustTool(
+	"list_cloudwatch_namespaces",
+	"List available AWS CloudWatch namespaces for a datasource. Common namespaces include AWS/EC2, AWS/ECS, AWS/RDS, AWS/Lambda, AWS/SQS, ECS/ContainerInsights.",
+	listCloudWatchNamespaces,
+	mcp.WithTitleAnnotation("List CloudWatch namespaces"),
+	mcp.WithIdempotentHintAnnotation(true),
+	mcp.WithReadOnlyHintAnnotation(true),
+)
+
+// ListCloudWatchMetricsParams defines the parameters for listing CloudWatch metrics
+type ListCloudWatchMetricsParams struct {
+	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the CloudWatch datasource"`
+	Namespace     string `json:"namespace" jsonschema:"required,description=CloudWatch namespace (e.g. AWS/ECS\\, AWS/EC2)"`
+	Region        string `json:"region,omitempty" jsonschema:"description=AWS region (uses datasource default if not specified)"`
+}
+
+// listCloudWatchMetrics lists available metrics for a CloudWatch namespace
+func listCloudWatchMetrics(ctx context.Context, args ListCloudWatchMetricsParams) ([]string, error) {
+	client, err := newCloudWatchClient(ctx, args.DatasourceUID)
+	if err != nil {
+		return nil, fmt.Errorf("creating CloudWatch client: %w", err)
+	}
+
+	// Build query parameters
+	params := "?namespace=" + args.Namespace
+	if args.Region != "" {
+		params += "&region=" + args.Region
+	}
+
+	url := client.baseURL + "/api/datasources/uid/" + args.DatasourceUID + "/resources/metrics" + params
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating request: %w", err)
+	}
+
+	resp, err := client.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("executing request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("CloudWatch metrics returned status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	body := io.LimitReader(resp.Body, 1024*1024) // 1MB limit
+	bodyBytes, err := io.ReadAll(body)
+	if err != nil {
+		return nil, fmt.Errorf("reading response body: %w", err)
+	}
+
+	var metrics []string
+	if err := json.Unmarshal(bodyBytes, &metrics); err != nil {
+		return nil, fmt.Errorf("unmarshaling response: %w", err)
+	}
+
+	return metrics, nil
+}
+
+// ListCloudWatchMetrics is a tool for listing CloudWatch metrics
+var ListCloudWatchMetrics = mcpgrafana.MustTool(
+	"list_cloudwatch_metrics",
+	"List available metrics for a CloudWatch namespace. Use list_cloudwatch_namespaces first to find available namespaces.",
+	listCloudWatchMetrics,
+	mcp.WithTitleAnnotation("List CloudWatch metrics"),
+	mcp.WithIdempotentHintAnnotation(true),
+	mcp.WithReadOnlyHintAnnotation(true),
+)
+
+// ListCloudWatchDimensionsParams defines the parameters for listing CloudWatch dimensions
+type ListCloudWatchDimensionsParams struct {
+	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the CloudWatch datasource"`
+	Namespace     string `json:"namespace" jsonschema:"required,description=CloudWatch namespace (e.g. AWS/ECS)"`
+	MetricName    string `json:"metricName" jsonschema:"required,description=Metric name (e.g. CPUUtilization)"`
+	Region        string `json:"region,omitempty" jsonschema:"description=AWS region (uses datasource default if not specified)"`
+}
+
+// listCloudWatchDimensions lists available dimension keys for a CloudWatch metric
+func listCloudWatchDimensions(ctx context.Context, args ListCloudWatchDimensionsParams) ([]string, error) {
+	client, err := newCloudWatchClient(ctx, args.DatasourceUID)
+	if err != nil {
+		return nil, fmt.Errorf("creating CloudWatch client: %w", err)
+	}
+
+	// Build query parameters
+	params := "?namespace=" + args.Namespace + "&metricName=" + args.MetricName
+	if args.Region != "" {
+		params += "&region=" + args.Region
+	}
+
+	url := client.baseURL + "/api/datasources/uid/" + args.DatasourceUID + "/resources/dimension-keys" + params
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating request: %w", err)
+	}
+
+	resp, err := client.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("executing request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("CloudWatch dimensions returned status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	body := io.LimitReader(resp.Body, 1024*1024) // 1MB limit
+	bodyBytes, err := io.ReadAll(body)
+	if err != nil {
+		return nil, fmt.Errorf("reading response body: %w", err)
+	}
+
+	var dimensions []string
+	if err := json.Unmarshal(bodyBytes, &dimensions); err != nil {
+		return nil, fmt.Errorf("unmarshaling response: %w", err)
+	}
+
+	return dimensions, nil
+}
+
+// ListCloudWatchDimensions is a tool for listing CloudWatch dimension keys
+var ListCloudWatchDimensions = mcpgrafana.MustTool(
+	"list_cloudwatch_dimensions",
+	"List available dimension keys for a CloudWatch metric. Use this to discover valid dimension names before querying metrics.",
+	listCloudWatchDimensions,
+	mcp.WithTitleAnnotation("List CloudWatch dimensions"),
+	mcp.WithIdempotentHintAnnotation(true),
+	mcp.WithReadOnlyHintAnnotation(true),
+)
+
 // AddCloudWatchTools registers all CloudWatch tools with the MCP server
 func AddCloudWatchTools(mcp *server.MCPServer) {
 	QueryCloudWatch.Register(mcp)
+	ListCloudWatchNamespaces.Register(mcp)
+	ListCloudWatchMetrics.Register(mcp)
+	ListCloudWatchDimensions.Register(mcp)
 }

@@ -128,6 +128,58 @@ func TestDefaultCloudWatchValues(t *testing.T) {
 	assert.Equal(t, "cloudwatch", CloudWatchDatasourceType)
 }
 
+func TestListCloudWatchNamespacesParams_Structure(t *testing.T) {
+	params := ListCloudWatchNamespacesParams{
+		DatasourceUID: "test-uid",
+		Region:        "us-west-2",
+	}
+
+	assert.Equal(t, "test-uid", params.DatasourceUID)
+	assert.Equal(t, "us-west-2", params.Region)
+}
+
+func TestListCloudWatchMetricsParams_Structure(t *testing.T) {
+	params := ListCloudWatchMetricsParams{
+		DatasourceUID: "test-uid",
+		Namespace:     "AWS/EC2",
+		Region:        "eu-west-1",
+	}
+
+	assert.Equal(t, "test-uid", params.DatasourceUID)
+	assert.Equal(t, "AWS/EC2", params.Namespace)
+	assert.Equal(t, "eu-west-1", params.Region)
+}
+
+func TestListCloudWatchDimensionsParams_Structure(t *testing.T) {
+	params := ListCloudWatchDimensionsParams{
+		DatasourceUID: "test-uid",
+		Namespace:     "AWS/RDS",
+		MetricName:    "DatabaseConnections",
+		Region:        "ap-southeast-1",
+	}
+
+	assert.Equal(t, "test-uid", params.DatasourceUID)
+	assert.Equal(t, "AWS/RDS", params.Namespace)
+	assert.Equal(t, "DatabaseConnections", params.MetricName)
+	assert.Equal(t, "ap-southeast-1", params.Region)
+}
+
+func TestCloudWatchQueryResult_Hints(t *testing.T) {
+	// Test that hints field can be populated
+	result := CloudWatchQueryResult{
+		Label:      "Test",
+		Timestamps: []int64{},
+		Values:     []float64{},
+		Hints: []string{
+			"Hint 1",
+			"Hint 2",
+		},
+	}
+
+	assert.Len(t, result.Hints, 2)
+	assert.Equal(t, "Hint 1", result.Hints[0])
+}
+
 func TestApplyDatasourcePagination(t *testing.T) {
 	// Create test data
 	items := make([]dataSourceSummary, 25)

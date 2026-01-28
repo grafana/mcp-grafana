@@ -41,9 +41,10 @@ type ClickHouseQueryParams struct {
 
 // ClickHouseQueryResult represents the result of a ClickHouse query
 type ClickHouseQueryResult struct {
-	Columns []string                 `json:"columns"`
-	Rows    []map[string]interface{} `json:"rows"`
-	RowCount int                     `json:"rowCount"`
+	Columns  []string                 `json:"columns"`
+	Rows     []map[string]interface{} `json:"rows"`
+	RowCount int                      `json:"rowCount"`
+	Hints    []string                 `json:"hints,omitempty"`
 }
 
 // clickHouseQueryResponse represents the raw API response from Grafana's /api/ds/query
@@ -292,7 +293,7 @@ func queryClickHouse(ctx context.Context, args ClickHouseQueryParams) (*ClickHou
 	// Parse time range
 	now := time.Now()
 	fromTime := now.Add(-1 * time.Hour) // Default: 1 hour ago
-	toTime := now                        // Default: now
+	toTime := now                       // Default: now
 
 	if args.Start != "" {
 		parsed, err := parseClickHouseTime(args.Start)
@@ -372,6 +373,12 @@ func queryClickHouse(ctx context.Context, args ClickHouseQueryParams) (*ClickHou
 	}
 
 	result.RowCount = len(result.Rows)
+
+	// Add hints if no data was found
+	if result.RowCount == 0 {
+		result.Hints = GenerateEmptyResultHints("clickhouse")
+	}
+
 	return result, nil
 }
 
@@ -400,7 +407,151 @@ ORDER BY TimestampTime DESC`,
 	mcp.WithReadOnlyHintAnnotation(true),
 )
 
+// ListClickHouseTablesParams defines the parameters for listing ClickHouse tables
+type ListClickHouseTablesParams struct {
+	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the ClickHouse datasource"`
+	Database      string `json:"database,omitempty" jsonschema:"description=Database name to filter tables (lists all non-system databases if not specified)"`
+}
+
+// ClickHouseTableInfo represents information about a ClickHouse table
+type ClickHouseTableInfo struct {
+	Database   string `json:"database"`
+	Name       string `json:"name"`
+	Engine     string `json:"engine"`
+	TotalRows  int64  `json:"totalRows"`
+	TotalBytes int64  `json:"totalBytes"`
+}
+
+// listClickHouseTables lists tables from a ClickHouse datasource
+func listClickHouseTables(ctx context.Context, args ListClickHouseTablesParams) ([]ClickHouseTableInfo, error) {
+	// Build the query to list tables
+	query := `SELECT database, name, engine, total_rows, total_bytes
+FROM system.tables
+WHERE database NOT IN ('system', 'INFORMATION_SCHEMA', 'information_schema')`
+	if args.Database != "" {
+		query += fmt.Sprintf(" AND database = '%s'", args.Database)
+	}
+	query += " ORDER BY database, name LIMIT 500"
+
+	// Use the existing query infrastructure
+	result, err := queryClickHouse(ctx, ClickHouseQueryParams{
+		DatasourceUID: args.DatasourceUID,
+		Query:         query,
+		Limit:         500,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert rows to table info
+	tables := make([]ClickHouseTableInfo, 0, len(result.Rows))
+	for _, row := range result.Rows {
+		table := ClickHouseTableInfo{}
+		if v, ok := row["database"].(string); ok {
+			table.Database = v
+		}
+		if v, ok := row["name"].(string); ok {
+			table.Name = v
+		}
+		if v, ok := row["engine"].(string); ok {
+			table.Engine = v
+		}
+		if v, ok := row["total_rows"].(float64); ok {
+			table.TotalRows = int64(v)
+		}
+		if v, ok := row["total_bytes"].(float64); ok {
+			table.TotalBytes = int64(v)
+		}
+		tables = append(tables, table)
+	}
+
+	return tables, nil
+}
+
+// ListClickHouseTables is a tool for listing ClickHouse tables
+var ListClickHouseTables = mcpgrafana.MustTool(
+	"list_clickhouse_tables",
+	"List available tables in a ClickHouse datasource. Returns table name, database, engine, row count, and size. Excludes system tables.",
+	listClickHouseTables,
+	mcp.WithTitleAnnotation("List ClickHouse tables"),
+	mcp.WithIdempotentHintAnnotation(true),
+	mcp.WithReadOnlyHintAnnotation(true),
+)
+
+// DescribeClickHouseTableParams defines the parameters for describing a ClickHouse table
+type DescribeClickHouseTableParams struct {
+	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the ClickHouse datasource"`
+	Table         string `json:"table" jsonschema:"required,description=Table name to describe"`
+	Database      string `json:"database,omitempty" jsonschema:"description=Database name (defaults to 'default')"`
+}
+
+// ClickHouseColumnInfo represents information about a ClickHouse column
+type ClickHouseColumnInfo struct {
+	Name              string `json:"name"`
+	Type              string `json:"type"`
+	DefaultType       string `json:"defaultType,omitempty"`
+	DefaultExpression string `json:"defaultExpression,omitempty"`
+	Comment           string `json:"comment,omitempty"`
+}
+
+// describeClickHouseTable describes a ClickHouse table schema
+func describeClickHouseTable(ctx context.Context, args DescribeClickHouseTableParams) ([]ClickHouseColumnInfo, error) {
+	database := args.Database
+	if database == "" {
+		database = "default"
+	}
+
+	// Build the DESCRIBE query
+	query := fmt.Sprintf("DESCRIBE TABLE %s.%s", database, args.Table)
+
+	// Use the existing query infrastructure
+	result, err := queryClickHouse(ctx, ClickHouseQueryParams{
+		DatasourceUID: args.DatasourceUID,
+		Query:         query,
+		Limit:         1000,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert rows to column info
+	columns := make([]ClickHouseColumnInfo, 0, len(result.Rows))
+	for _, row := range result.Rows {
+		col := ClickHouseColumnInfo{}
+		if v, ok := row["name"].(string); ok {
+			col.Name = v
+		}
+		if v, ok := row["type"].(string); ok {
+			col.Type = v
+		}
+		if v, ok := row["default_type"].(string); ok {
+			col.DefaultType = v
+		}
+		if v, ok := row["default_expression"].(string); ok {
+			col.DefaultExpression = v
+		}
+		if v, ok := row["comment"].(string); ok {
+			col.Comment = v
+		}
+		columns = append(columns, col)
+	}
+
+	return columns, nil
+}
+
+// DescribeClickHouseTable is a tool for describing a ClickHouse table schema
+var DescribeClickHouseTable = mcpgrafana.MustTool(
+	"describe_clickhouse_table",
+	"Describe the schema of a ClickHouse table. Returns column names, types, default values, and comments.",
+	describeClickHouseTable,
+	mcp.WithTitleAnnotation("Describe ClickHouse table"),
+	mcp.WithIdempotentHintAnnotation(true),
+	mcp.WithReadOnlyHintAnnotation(true),
+)
+
 // AddClickHouseTools registers all ClickHouse tools with the MCP server
 func AddClickHouseTools(mcp *server.MCPServer) {
 	QueryClickHouse.Register(mcp)
+	ListClickHouseTables.Register(mcp)
+	DescribeClickHouseTable.Register(mcp)
 }
