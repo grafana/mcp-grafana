@@ -1,15 +1,11 @@
 import json
 import pytest
-from langevals import expect
-from langevals_langevals.llm_boolean import (
-    CustomLLMBooleanEvaluator,
-    CustomLLMBooleanSettings,
-)
 from litellm import Message, acompletion
 from mcp import ClientSession
 
 from conftest import models
 from utils import (
+    assert_llm_output_passes,
     get_converted_tools,
     llm_tool_call_sequence,
 )
@@ -36,13 +32,12 @@ async def test_dashboard_panel_queries_tool(model: str, mcp_client: ClientSessio
     # 2. Final LLM response
     response = await acompletion(model=model, messages=messages, tools=tools)
     content = response.choices[0].message.content
-    panel_queries_checker = CustomLLMBooleanEvaluator(
-        settings=CustomLLMBooleanSettings(
-            prompt="Does the response contain specific information about the panel queries and titles for a grafana dashboard?",
-        )
-    )
     print("content", content)
-    expect(input=prompt, output=content).to_pass(panel_queries_checker)
+    assert_llm_output_passes(
+        prompt,
+        content,
+        "Does the response contain specific information about the panel queries and titles for a grafana dashboard?",
+    )
 
 
 @pytest.mark.parametrize("model", models)

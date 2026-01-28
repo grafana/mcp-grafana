@@ -1,10 +1,5 @@
 from typing import Dict
 import pytest
-from langevals import expect
-from langevals_langevals.llm_boolean import (
-    CustomLLMBooleanEvaluator,
-    CustomLLMBooleanSettings,
-)
 from litellm import Message, acompletion
 from mcp import ClientSession
 import aiohttp
@@ -14,6 +9,7 @@ from conftest import DEFAULT_GRAFANA_URL
 
 from conftest import models
 from utils import (
+    assert_llm_output_passes,
     get_converted_tools,
     llm_tool_call_sequence,
 )
@@ -100,16 +96,15 @@ async def test_list_teams_tool(
     # 2. Final LLM response
     response = await acompletion(model=model, messages=messages, tools=tools)
     content = response.choices[0].message.content
-    panel_queries_checker = CustomLLMBooleanEvaluator(
-        settings=CustomLLMBooleanSettings(
-            prompt=(
-                "Does the response contain specific information about "
-                "the teams in Grafana?"
-                f"There should be a team named {team_name}. "
-            ),
-        )
+    assert_llm_output_passes(
+        prompt,
+        content,
+        (
+            "Does the response contain specific information about "
+            "the teams in Grafana? "
+            f"There should be a team named {team_name}."
+        ),
     )
-    expect(input=prompt, output=content).to_pass(panel_queries_checker)
 
 
 @pytest.mark.parametrize("model", models)
@@ -131,9 +126,8 @@ async def test_list_users_by_org_tool(model: str, mcp_client: ClientSession):
     # 2. Final LLM response
     response = await acompletion(model=model, messages=messages, tools=tools)
     content = response.choices[0].message.content
-    user_checker = CustomLLMBooleanEvaluator(
-        settings=CustomLLMBooleanSettings(
-            prompt="Does the response contain specific information about users in Grafana, such as usernames, emails, or roles?",
-        )
+    assert_llm_output_passes(
+        prompt,
+        content,
+        "Does the response contain specific information about users in Grafana, such as usernames, emails, or roles?",
     )
-    expect(input=prompt, output=content).to_pass(user_checker)

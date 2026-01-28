@@ -1,16 +1,12 @@
 import json
 
 import pytest
-from langevals import expect
-from langevals_langevals.llm_boolean import (
-    CustomLLMBooleanEvaluator,
-    CustomLLMBooleanSettings,
-)
 from litellm import Message, acompletion
 from mcp import ClientSession
 
 from conftest import models
 from utils import (
+    assert_llm_output_passes,
     get_converted_tools,
     flexible_tool_call,
 )
@@ -47,12 +43,11 @@ async def test_loki_logs_tool(model: str, mcp_client: ClientSession):
     # 3. Final LLM response
     response = await acompletion(model=model, messages=messages, tools=tools)
     content = response.choices[0].message.content
-    log_lines_checker = CustomLLMBooleanEvaluator(
-        settings=CustomLLMBooleanSettings(
-            prompt="Does the response contain specific information that could only come from a Loki datasource? This could be actual log lines with timestamps, container names, or a summary that references specific log data. The response should show evidence of real data rather than generic statements.",
-        )
+    assert_llm_output_passes(
+        prompt,
+        content,
+        "Does the response contain specific information that could only come from a Loki datasource? This could be actual log lines with timestamps, container names, or a summary that references specific log data. The response should show evidence of real data rather than generic statements.",
     )
-    expect(input=prompt, output=content).to_pass(log_lines_checker)
 
 
 @pytest.mark.parametrize("model", models)
@@ -84,12 +79,11 @@ async def test_loki_container_labels(model: str, mcp_client: ClientSession):
     # 3. Final LLM response
     response = await acompletion(model=model, messages=messages, tools=tools)
     content = response.choices[0].message.content
-    label_checker = CustomLLMBooleanEvaluator(
-        settings=CustomLLMBooleanSettings(
-            prompt="Does the response provide a clear and organized list of container names found in the logs? It should present the container names in a readable format and may include additional context about their usage.",
-        )
+    assert_llm_output_passes(
+        prompt,
+        content,
+        "Does the response provide a clear and organized list of container names found in the logs? It should present the container names in a readable format and may include additional context about their usage.",
     )
-    expect(input=prompt, output=content).to_pass(label_checker)
 
 def get_first_loki_datasource(datasources_data):
     """

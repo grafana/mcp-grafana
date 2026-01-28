@@ -15,7 +15,9 @@ DEFAULT_GRAFANA_URL = "http://localhost:3000"
 DEFAULT_MCP_URL = "http://localhost:8000"
 DEFAULT_MCP_TRANSPORT = "sse"
 
-models = ["gpt-4o", "claude-3-5-sonnet-20240620"]
+# litellm requires provider prefix for Claude models
+# Claude Sonnet 4.5
+models = ["gpt-4o", "anthropic/claude-sonnet-4-5-20250929"]
 
 pytestmark = pytest.mark.anyio
 

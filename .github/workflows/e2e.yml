@@ -64,7 +64,12 @@ jobs:
 
       - name: Start MCP server in background
         if: matrix.transport != 'stdio'
-        run: nohup ./dist/mcp-grafana -t ${{ matrix.transport }} > mcp.log 2>&1 &
+        run: |
+          nohup ./dist/mcp-grafana -t ${{ matrix.transport }} > mcp.log 2>&1 &
+          sleep 2  # Give server time to start and create log file
+          if [ ! -f mcp.log ]; then
+            echo "Warning: mcp.log was not created. Server may have failed to start."
+          fi
 
       - name: Run Python e2e tests
         env:
@@ -76,4 +81,4 @@ jobs:
 
       - if: failure() && matrix.transport != 'stdio'
         name: Print MCP logs
-        run: cat mcp.log
+        run: cat mcp.log 2>/dev/null || echo "No log file found (mcp.log)"

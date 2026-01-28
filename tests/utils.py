@@ -188,3 +188,22 @@ async def flexible_tool_call(
     )
 
     return messages
+
+
+def assert_llm_output_passes(input_text: str, actual_output: str, criteria: str):
+    """
+    Assert that an LLM output satisfies the given criteria using DeepEval's GEval (LLM-as-judge).
+    Replaces the previous langevals expect(...).to_pass(...) pattern.
+    """
+    from deepeval import assert_test
+    from deepeval.metrics import GEval
+    from deepeval.test_case import LLMTestCase, LLMTestCaseParams
+
+    metric = GEval(
+        name="CriteriaCheck",
+        criteria=criteria,
+        evaluation_params=[LLMTestCaseParams.INPUT, LLMTestCaseParams.ACTUAL_OUTPUT],
+        threshold=0.5,
+    )
+    test_case = LLMTestCase(input=input_text, actual_output=actual_output)
+    assert_test(test_case, [metric])
