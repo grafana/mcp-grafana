@@ -1,15 +1,11 @@
 from mcp import ClientSession
 import pytest
-from langevals import expect
-from langevals_langevals.llm_boolean import (
-    CustomLLMBooleanEvaluator,
-    CustomLLMBooleanSettings,
-)
 from litellm import Message, acompletion
 from mcp import ClientSession
 
 from conftest import models
 from utils import (
+    assert_llm_output_passes,
     get_converted_tools,
     llm_tool_call_sequence,
 )
@@ -241,9 +237,8 @@ class TestTempoProxiedToolsWithLLM:
         response = await acompletion(model=model, messages=messages, tools=tools)
         content = response.choices[0].message.content
 
-        attributes_checker = CustomLLMBooleanEvaluator(
-            settings=CustomLLMBooleanSettings(
-                prompt="Does the response list or describe trace attributes that are available for querying?",
-            )
+        assert_llm_output_passes(
+            prompt,
+            content,
+            "Does the response list or describe trace attributes that are available for querying?",
         )
-        expect(input=prompt, output=content).to_pass(attributes_checker)

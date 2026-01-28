@@ -1,16 +1,12 @@
 import json
 import pytest
-from langevals import expect
-from langevals_langevals.llm_boolean import (
-    CustomLLMBooleanEvaluator,
-    CustomLLMBooleanSettings,
-)
 from litellm import Message, acompletion
 from mcp import ClientSession
 from mcp.types import TextContent
 
 from conftest import models
 from utils import (
+    assert_llm_output_passes,
     get_converted_tools,
     llm_tool_call_sequence,
     flexible_tool_call,
@@ -40,14 +36,12 @@ async def test_generate_dashboard_deeplink(model: str, mcp_client: ClientSession
     content = response.choices[0].message.content
     
     assert "/d/test-uid" in content, f"Expected dashboard URL with /d/test-uid, got: {content}"
-    
-    dashboard_link_checker = CustomLLMBooleanEvaluator(
-        settings=CustomLLMBooleanSettings(
-            prompt="Does the response contain a URL with /d/ path and the dashboard UID?",
-        )
-    )
     print("Dashboard deeplink content:", content)
-    expect(input=prompt, output=content).to_pass(dashboard_link_checker)
+    assert_llm_output_passes(
+        prompt,
+        content,
+        "Does the response contain a URL with /d/ path and the dashboard UID?",
+    )
 
 
 @pytest.mark.parametrize("model", models)
@@ -74,14 +68,12 @@ async def test_generate_panel_deeplink(model: str, mcp_client: ClientSession):
     content = response.choices[0].message.content
     
     assert "viewPanel=5" in content, f"Expected panel URL with viewPanel=5, got: {content}"
-    
-    panel_link_checker = CustomLLMBooleanEvaluator(
-        settings=CustomLLMBooleanSettings(
-            prompt="Does the response contain a URL with viewPanel parameter?",
-        )
-    )
     print("Panel deeplink content:", content)
-    expect(input=prompt, output=content).to_pass(panel_link_checker)
+    assert_llm_output_passes(
+        prompt,
+        content,
+        "Does the response contain a URL with viewPanel parameter?",
+    )
 
 
 @pytest.mark.parametrize("model", models)
@@ -104,14 +96,12 @@ async def test_generate_explore_deeplink(model: str, mcp_client: ClientSession):
     content = response.choices[0].message.content
     
     assert "/explore" in content, f"Expected explore URL with /explore path, got: {content}"
-    
-    explore_link_checker = CustomLLMBooleanEvaluator(
-        settings=CustomLLMBooleanSettings(
-            prompt="Does the response contain a URL with /explore path?",
-        )
-    )
     print("Explore deeplink content:", content)
-    expect(input=prompt, output=content).to_pass(explore_link_checker)
+    assert_llm_output_passes(
+        prompt,
+        content,
+        "Does the response contain a URL with /explore path?",
+    )
 
 
 @pytest.mark.parametrize("model", models)
@@ -141,14 +131,12 @@ async def test_generate_deeplink_with_time_range(model: str, mcp_client: ClientS
     content = response.choices[0].message.content
     
     assert "from=now-6h" in content and "to=now" in content, f"Expected time range parameters, got: {content}"
-    
-    time_range_checker = CustomLLMBooleanEvaluator(
-        settings=CustomLLMBooleanSettings(
-            prompt="Does the response contain a URL with time range parameters?",
-        )
-    )
     print("Time range deeplink content:", content)
-    expect(input=prompt, output=content).to_pass(time_range_checker)
+    assert_llm_output_passes(
+        prompt,
+        content,
+        "Does the response contain a URL with time range parameters?",
+    )
 
 
 @pytest.mark.parametrize("model", models)
@@ -174,13 +162,11 @@ async def test_generate_deeplink_with_query_params(model: str, mcp_client: Clien
     # Verify both specific query parameters are in the final URL
     assert "var-datasource=prometheus" in content, f"Expected var-datasource=prometheus in URL, got: {content}"
     assert "refresh=30s" in content, f"Expected refresh=30s in URL, got: {content}"
-    
-    custom_params_checker = CustomLLMBooleanEvaluator(
-        settings=CustomLLMBooleanSettings(
-            prompt="Does the response contain a URL with custom query parameters?",
-        )
-    )
     print("Custom params deeplink content:", content)
-    expect(input=prompt, output=content).to_pass(custom_params_checker)
+    assert_llm_output_passes(
+        prompt,
+        content,
+        "Does the response contain a URL with custom query parameters?",
+    )
 
 
