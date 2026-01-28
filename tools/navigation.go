@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"net/url"
@@ -28,7 +29,7 @@ type TimeRange struct {
 
 func generateDeeplink(ctx context.Context, args GenerateDeeplinkParams) (string, error) {
 	config := mcpgrafana.GrafanaConfigFromContext(ctx)
-	baseURL := strings.TrimRight(config.URL, "/")
+	baseURL := strings.TrimRight(cmp.Or(config.PublicURL, config.URL), "/")
 
 	if baseURL == "" {
 		return "", fmt.Errorf("grafana url not configured. Please set GRAFANA_URL environment variable or X-Grafana-URL header")

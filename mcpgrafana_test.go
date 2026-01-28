@@ -81,18 +81,21 @@ func TestExtractGrafanaInfoFromHeaders(t *testing.T) {
 		t.Setenv("GRAFANA_URL", "")
 		t.Setenv("GRAFANA_API_KEY", "")
 		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN", "")
+		t.Setenv("GRAFANA_PUBLIC_URL", "")
 
 		req, err := http.NewRequest("GET", "http://example.com", nil)
 		require.NoError(t, err)
 		ctx := ExtractGrafanaInfoFromHeaders(context.Background(), req)
 		config := GrafanaConfigFromContext(ctx)
 		assert.Equal(t, defaultGrafanaURL, config.URL)
+		assert.Equal(t, defaultGrafanaURL, config.PublicURL)
 		assert.Equal(t, "", config.APIKey)
 		assert.Nil(t, config.BasicAuth)
 	})
 
 	t.Run("no headers, with env", func(t *testing.T) {
 		t.Setenv("GRAFANA_URL", "http://my-test-url.grafana.com")
+		t.Setenv("GRAFANA_PUBLIC_URL", "https://my-test-url.grafana.public.com")
 		t.Setenv("GRAFANA_API_KEY", "my-test-api-key")
 
 		req, err := http.NewRequest("GET", "http://example.com", nil)
@@ -100,11 +103,13 @@ func TestExtractGrafanaInfoFromHeaders(t *testing.T) {
 		ctx := ExtractGrafanaInfoFromHeaders(context.Background(), req)
 		config := GrafanaConfigFromContext(ctx)
 		assert.Equal(t, "http://my-test-url.grafana.com", config.URL)
+		assert.Equal(t, "https://my-test-url.grafana.public.com", config.PublicURL)
 		assert.Equal(t, "my-test-api-key", config.APIKey)
 	})
 
 	t.Run("no headers, with service account token", func(t *testing.T) {
 		t.Setenv("GRAFANA_URL", "http://my-test-url.grafana.com")
+		t.Setenv("GRAFANA_PUBLIC_URL", "")
 		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN", "my-service-account-token")
 
 		req, err := http.NewRequest("GET", "http://example.com", nil)
@@ -112,11 +117,13 @@ func TestExtractGrafanaInfoFromHeaders(t *testing.T) {
 		ctx := ExtractGrafanaInfoFromHeaders(context.Background(), req)
 		config := GrafanaConfigFromContext(ctx)
 		assert.Equal(t, "http://my-test-url.grafana.com", config.URL)
+		assert.Equal(t, "http://my-test-url.grafana.com", config.PublicURL)
 		assert.Equal(t, "my-service-account-token", config.APIKey)
 	})
 
 	t.Run("no headers, service account token takes precedence over api key", func(t *testing.T) {
 		t.Setenv("GRAFANA_URL", "http://my-test-url.grafana.com")
+		t.Setenv("GRAFANA_PUBLIC_URL", "")
 		t.Setenv("GRAFANA_API_KEY", "my-deprecated-api-key")
 		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN", "my-service-account-token")
 
@@ -133,15 +140,18 @@ func TestExtractGrafanaInfoFromHeaders(t *testing.T) {
 		require.NoError(t, err)
 		req.Header.Set(grafanaURLHeader, "http://my-test-url.grafana.com")
 		req.Header.Set(grafanaAPIKeyHeader, "my-test-api-key")
+		req.Header.Set(grafanaPublicURLHeader, "https://my-test-url.grafana.public.com")
 		ctx := ExtractGrafanaInfoFromHeaders(context.Background(), req)
 		config := GrafanaConfigFromContext(ctx)
 		assert.Equal(t, "http://my-test-url.grafana.com", config.URL)
+		assert.Equal(t, "https://my-test-url.grafana.public.com", config.PublicURL)
 		assert.Equal(t, "my-test-api-key", config.APIKey)
 	})
 
 	t.Run("with headers, with env", func(t *testing.T) {
 		// Env vars should be ignored if headers are present.
 		t.Setenv("GRAFANA_URL", "will-not-be-used")
+		t.Setenv("GRAFANA_PUBLIC_URL", "will-not-be-used")
 		t.Setenv("GRAFANA_API_KEY", "will-not-be-used")
 		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN", "will-not-be-used")
 
@@ -152,6 +162,7 @@ func TestExtractGrafanaInfoFromHeaders(t *testing.T) {
 		ctx := ExtractGrafanaInfoFromHeaders(context.Background(), req)
 		config := GrafanaConfigFromContext(ctx)
 		assert.Equal(t, "http://my-test-url.grafana.com", config.URL)
+		assert.Equal(t, "http://my-test-url.grafana.com", config.PublicURL)
 		assert.Equal(t, "my-test-api-key", config.APIKey)
 	})
 
