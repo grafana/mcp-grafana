@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"strings"
@@ -19,6 +20,11 @@ type GenerateDeeplinkParams struct {
 	PanelID       *int              `json:"panelId,omitempty" jsonschema:"description=Panel ID (required for panel type)"`
 	QueryParams   map[string]string `json:"queryParams,omitempty" jsonschema:"description=Additional query parameters"`
 	TimeRange     *TimeRange        `json:"timeRange,omitempty" jsonschema:"description=Time range for the link"`
+	// ExploreQuery is an optional PromQL/LogQL query expression for explore links
+	ExploreQuery *string `json:"exploreQuery,omitempty" jsonschema:"description=Query expression (e.g. PromQL or LogQL) for explore links"`
+	// UseLegacyExploreURL forces use of the legacy explore URL format (left= parameter).
+	// By default\\, the new schemaVersion=1 format is used for Grafana 10+.
+	UseLegacyExploreURL *bool `json:"useLegacyExploreUrl,omitempty" jsonschema:"description=Force legacy explore URL format (left= parameter). Default uses new schemaVersion=1 format."`
 }
 
 type TimeRange struct {
@@ -54,10 +60,23 @@ func generateDeeplink(ctx context.Context, args GenerateDeeplinkParams) (string,
 		if args.DatasourceUID == nil {
 			return "", fmt.Errorf("datasourceUid is required for explore links")
 		}
-		params := url.Values{}
-		exploreState := fmt.Sprintf(`{"datasource":"%s"}`, *args.DatasourceUID)
-		params.Set("left", exploreState)
-		deeplink = fmt.Sprintf("%s/explore?%s", baseURL, params.Encode())
+
+		// Determine whether to use legacy or new URL format
+		useLegacy := false
+		if args.UseLegacyExploreURL != nil {
+			useLegacy = *args.UseLegacyExploreURL
+		}
+
+		if useLegacy {
+			// Legacy format: /explore?left={"datasource":"uid"}
+			params := url.Values{}
+			exploreState := fmt.Sprintf(`{"datasource":"%s"}`, *args.DatasourceUID)
+			params.Set("left", exploreState)
+			deeplink = fmt.Sprintf("%s/explore?%s", baseURL, params.Encode())
+		} else {
+			// New format (Grafana 10+): /explore?schemaVersion=1&panes={...}
+			deeplink = generateExploreDeeplinkNew(baseURL, *args.DatasourceUID, args.ExploreQuery)
+		}
 	default:
 		return "", fmt.Errorf("unsupported resource type: %s. Supported types are: dashboard, panel, explore", args.ResourceType)
 	}
@@ -105,4 +124,64 @@ var GenerateDeeplink = mcpgrafana.MustTool(
 
 func AddNavigationTools(mcp *server.MCPServer) {
 	GenerateDeeplink.Register(mcp)
+}
+
+// explorePane represents a single pane in the explore view for the new URL format
+type explorePane struct {
+	Datasource string           `json:"datasource"`
+	Queries    []exploreQuery   `json:"queries"`
+	Range      explorePaneRange `json:"range"`
+}
+
+// exploreQuery represents a query within an explore pane
+type exploreQuery struct {
+	Refid      string `json:"refId"`
+	Datasource struct {
+		UID  string `json:"uid"`
+		Type string `json:"type,omitempty"`
+	} `json:"datasource"`
+	Expr string `json:"expr,omitempty"`
+}
+
+// explorePaneRange represents the time range for an explore pane
+type explorePaneRange struct {
+	From string `json:"from"`
+	To   string `json:"to"`
+}
+
+// generateExploreDeeplinkNew creates an explore URL using the new schemaVersion=1 format (Grafana 10+)
+func generateExploreDeeplinkNew(baseURL, datasourceUID string, query *string) string {
+	// Build the query object
+	q := exploreQuery{
+		Refid: "A",
+	}
+	q.Datasource.UID = datasourceUID
+	if query != nil {
+		q.Expr = *query
+	}
+
+	// Build the pane
+	pane := explorePane{
+		Datasource: datasourceUID,
+		Queries:    []exploreQuery{q},
+		Range: explorePaneRange{
+			From: "now-1h",
+			To:   "now",
+		},
+	}
+
+	// Build the panes object with a single pane
+	panes := map[string]explorePane{
+		"pane1": pane,
+	}
+
+	// Encode to JSON
+	panesJSON, _ := json.Marshal(panes)
+
+	// Build the URL
+	params := url.Values{}
+	params.Set("schemaVersion", "1")
+	params.Set("panes", string(panesJSON))
+
+	return fmt.Sprintf("%s/explore?%s", baseURL, params.Encode())
 }
