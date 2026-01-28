@@ -47,7 +47,7 @@ services:
       - loki
 
   pyroscope:
-    image: grafana/pyroscope:1.17.0@sha256:f6e3caa6cade1dea53dd39db6117668e92cf9e43fbc097dda2096368b14f1cd1
+    image: grafana/pyroscope:1.17.1@sha256:0a1af64455e81771401a0b4bb323c0fa63c97621cbdeb7f5b5b021daf62766f1
     ports:
       - 4040:4040
 
