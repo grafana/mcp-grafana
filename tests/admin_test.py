@@ -19,11 +19,10 @@ from utils import (
     assert_expected_tools_called,
     make_mcp_server,
     call_tool_and_record,
-    make_test_case,
 )
 from deepeval import assert_test
 from deepeval.metrics import MCPUseMetric, GEval
-from deepeval.test_case import LLMTestCaseParams
+from deepeval.test_case import LLMTestCase, LLMTestCaseParams
 
 
 pytestmark = pytest.mark.anyio
@@ -123,7 +122,7 @@ async def test_list_users_by_org(
     final_content = final_response.choices[0].message.content or ""
 
     assert_expected_tools_called(tools_called, "list_users_by_org")
-    test_case = make_test_case(prompt, final_content, mcp_server, tools_called)
+    test_case = LLMTestCase(input=prompt, actual_output=final_content, mcp_servers=[mcp_server], mcp_tools_called=tools_called)
 
     mcp_metric = MCPUseMetric(threshold=MCP_EVAL_THRESHOLD)
     output_metric = GEval(
@@ -183,7 +182,7 @@ async def test_list_teams(
     final_content = final_response.choices[0].message.content or ""
 
     assert_expected_tools_called(tools_called, "list_teams")
-    test_case = make_test_case(prompt, final_content, mcp_server, tools_called)
+    test_case = LLMTestCase(input=prompt, actual_output=final_content, mcp_servers=[mcp_server], mcp_tools_called=tools_called)
 
     mcp_metric = MCPUseMetric(threshold=MCP_EVAL_THRESHOLD)
     output_metric = GEval(

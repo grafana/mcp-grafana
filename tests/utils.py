@@ -3,7 +3,7 @@ from typing import List, Union
 
 from mcp import ClientSession
 from mcp.types import TextContent, ImageContent, CallToolResult, Tool
-from deepeval.test_case import MCPServer, MCPToolCall, LLMTestCase
+from deepeval.test_case import MCPServer, MCPToolCall
 
 # Default threshold for MCPUseMetric and GEval (0–1). Used by all MCP eval tests.
 MCP_EVAL_THRESHOLD = 0.6
@@ -66,21 +66,6 @@ async def call_tool_and_record(
                 break
     tool_call = MCPToolCall(name=tool_name, args=args, result=result)
     return result_text, tool_call
-
-
-def make_test_case(
-    input_text: str,
-    actual_output: str,
-    mcp_server: MCPServer,
-    tools_called: List[MCPToolCall],
-) -> LLMTestCase:
-    """Build LLMTestCase for DeepEval from prompt, final output, server, and recorded tool calls."""
-    return LLMTestCase(
-        input=input_text,
-        actual_output=actual_output,
-        mcp_servers=[mcp_server],
-        mcp_tools_called=tools_called,
-    )
 
 
 def assert_expected_tools_called(

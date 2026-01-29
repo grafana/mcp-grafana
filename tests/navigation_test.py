@@ -10,11 +10,10 @@ from utils import (
     assert_expected_tools_called,
     make_mcp_server,
     call_tool_and_record,
-    make_test_case,
 )
 from deepeval import assert_test
 from deepeval.metrics import MCPUseMetric, GEval
-from deepeval.test_case import LLMTestCaseParams
+from deepeval.test_case import LLMTestCase, LLMTestCaseParams
 
 
 pytestmark = pytest.mark.anyio
@@ -86,7 +85,7 @@ async def _run_deeplink_test_with_expected_args(
             assert substring in final_content, f"Expected {desc}, got: {final_content}"
 
     assert_expected_tools_called(tools_called, "generate_deeplink")
-    test_case = make_test_case(prompt, final_content, mcp_server, tools_called)
+    test_case = LLMTestCase(input=prompt, actual_output=final_content, mcp_servers=[mcp_server], mcp_tools_called=tools_called)
 
     mcp_metric = MCPUseMetric(threshold=MCP_EVAL_THRESHOLD)
     output_metric = GEval(
@@ -189,7 +188,6 @@ async def test_generate_deeplink_with_query_params(
     mcp_client: ClientSession,
     mcp_transport: str,
 ):
-    """Query params test: require dashboard + UID; LLM may add queryParams (var-datasource, refresh)."""
     prompt = (
         "Use the generate_deeplink tool to create a dashboard link for UID 'test-uid' "
         "with var-datasource=prometheus and refresh=30s as query parameters"
@@ -226,17 +224,12 @@ async def test_generate_deeplink_with_query_params(
     final_response = await acompletion(model=model, messages=messages, tools=tools)
     final_content = final_response.choices[0].message.content or ""
 
+    assert "/d/test-uid" in final_content, f"Expected dashboard URL with /d/test-uid, got: {final_content}"
     assert "var-datasource=prometheus" in final_content, f"Expected var-datasource=prometheus in URL, got: {final_content}"
     assert "refresh=30s" in final_content, f"Expected refresh=30s in URL, got: {final_content}"
 
     assert_expected_tools_called(tools_called, "generate_deeplink")
-    test_case = make_test_case(prompt, final_content, mcp_server, tools_called)
+    test_case = LLMTestCase(input=prompt, actual_output=final_content, mcp_servers=[mcp_server], mcp_tools_called=tools_called)
 
     mcp_metric = MCPUseMetric(threshold=MCP_EVAL_THRESHOLD)
-    output_metric = GEval(
-        name="OutputQuality",
-        criteria="Does the response contain a URL with custom query parameters?",
-        evaluation_params=[LLMTestCaseParams.INPUT, LLMTestCaseParams.ACTUAL_OUTPUT],
-        threshold=MCP_EVAL_THRESHOLD,
-    )
-    assert_test(test_case, [mcp_metric, output_metric])
+    assert_test(test_case, [mcp_metric])

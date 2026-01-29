@@ -10,11 +10,10 @@ from utils import (
     assert_expected_tools_called,
     make_mcp_server,
     call_tool_and_record,
-    make_test_case,
 )
 from deepeval import assert_test
 from deepeval.metrics import MCPUseMetric, GEval
-from deepeval.test_case import LLMTestCaseParams
+from deepeval.test_case import LLMTestCase, LLMTestCaseParams
 
 
 pytestmark = pytest.mark.anyio
@@ -66,7 +65,7 @@ async def test_loki_logs_tool(
     # Require the Loki tool that fetches logs; LLM may discover datasource via
     # list_datasources, search_dashboards, or a known UID (e.g. loki-datasource).
     assert_expected_tools_called(tools_called, "query_loki_logs")
-    test_case = make_test_case(prompt, final_content, mcp_server, tools_called)
+    test_case = LLMTestCase(input=prompt, actual_output=final_content, mcp_servers=[mcp_server], mcp_tools_called=tools_called)
 
     mcp_metric = MCPUseMetric(threshold=MCP_EVAL_THRESHOLD)
     output_metric = GEval(
@@ -127,7 +126,7 @@ async def test_loki_container_labels(
         else ""
     )
 
-    test_case = make_test_case(prompt, final_content, mcp_server, tools_called)
+    test_case = LLMTestCase(input=prompt, actual_output=final_content, mcp_servers=[mcp_server], mcp_tools_called=tools_called)
 
     # LLMs often discover Loki via search_dashboards/get_dashboard_panel_queries first;
     # MCPUseMetric penalizes that (score ~0.5). Use threshold 0.5 so exploratory tool use still passes.

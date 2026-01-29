@@ -11,11 +11,10 @@ from utils import (
     assert_expected_tools_called,
     make_mcp_server,
     call_tool_and_record,
-    make_test_case,
 )
 from deepeval import assert_test
 from deepeval.metrics import MCPUseMetric, GEval
-from deepeval.test_case import LLMTestCaseParams
+from deepeval.test_case import LLMTestCase, LLMTestCaseParams
 
 
 pytestmark = pytest.mark.anyio
@@ -71,7 +70,7 @@ async def test_get_panel_image(
     final_content = final_response.choices[0].message.content or ""
 
     assert_expected_tools_called(tools_called, "get_panel_image")
-    test_case = make_test_case(prompt, final_content, mcp_server, tools_called)
+    test_case = LLMTestCase(input=prompt, actual_output=final_content, mcp_servers=[mcp_server], mcp_tools_called=tools_called)
 
     mcp_metric = MCPUseMetric(threshold=MCP_EVAL_THRESHOLD)
     output_metric = GEval(
