@@ -13,7 +13,7 @@ import aiohttp
 import uuid
 import os
 from conftest import models, DEFAULT_GRAFANA_URL
-from mcp_eval_utils import (
+from utils import (
     get_converted_tools,
     MCP_EVAL_THRESHOLD,
     assert_expected_tools_called,
@@ -89,13 +89,12 @@ async def test_list_users_by_org(
     mcp_client: ClientSession,
     mcp_transport: str,
 ):
-    """
-    Test list_users_by_org using DeepEval MCP evaluation.
-    Run LLM with MCP tools, record tool calls, then evaluate with MCPUseMetric + GEval.
-    """
     mcp_server = await make_mcp_server(mcp_client, transport=mcp_transport)
     tools = await get_converted_tools(mcp_client)
-    prompt = "Can you list all users who are members of the Grafana organization?"
+    prompt = (
+        "List all users in the current Grafana organization: I need the full list of "
+        "organization members with their userid, email, and role."
+    )
 
     messages = [
         Message(role="system", content="You are a helpful assistant."),

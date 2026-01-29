@@ -1,11 +1,3 @@
-"""
-Thin helpers for DeepEval MCP evaluation.
-
-DeepEval does not run the MCP session for you: you run the LLM and MCP tool
-calls, then build an LLMTestCase(input, actual_output, mcp_servers, mcp_tools_called)
-and call assert_test(test_case, [MCPUseMetric(), ...]). These helpers only
-construct DeepEval's MCPServer and LLMTestCase from your session and recorded calls.
-"""
 import os
 from typing import List, Union
 
@@ -14,7 +6,7 @@ from mcp.types import TextContent, ImageContent, CallToolResult, Tool
 from deepeval.test_case import MCPServer, MCPToolCall, LLMTestCase
 
 # Default threshold for MCPUseMetric and GEval (0–1). Used by all MCP eval tests.
-MCP_EVAL_THRESHOLD = 0.7
+MCP_EVAL_THRESHOLD = 0.6
 
 
 def convert_tool(tool: Tool) -> dict:

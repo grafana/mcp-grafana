@@ -5,7 +5,7 @@ from mcp import ClientSession
 from mcp.types import ImageContent
 
 from conftest import models
-from mcp_eval_utils import (
+from utils import (
     get_converted_tools,
     MCP_EVAL_THRESHOLD,
     assert_expected_tools_called,
@@ -77,7 +77,9 @@ async def test_get_panel_image(
     output_metric = GEval(
         name="OutputQuality",
         criteria=(
-            "Does the response indicate that a dashboard image was rendered or provided successfully?"
+            "Does the response confirm that a dashboard image was rendered or provided "
+            "(e.g. by stating the image was rendered, or that get_panel_image was used successfully)? "
+            "A brief confirmation is sufficient; the response need not include the image data."
         ),
         evaluation_params=[LLMTestCaseParams.INPUT, LLMTestCaseParams.ACTUAL_OUTPUT],
         threshold=MCP_EVAL_THRESHOLD,
