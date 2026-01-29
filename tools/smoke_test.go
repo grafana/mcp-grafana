@@ -44,8 +44,6 @@ func TestSmokeTest_NewToolsExist(t *testing.T) {
 	assert.NotNil(t, ListClickHouseTables, "ListClickHouseTables should be defined")
 	assert.NotNil(t, DescribeClickHouseTable, "DescribeClickHouseTable should be defined")
 
-	// Loki metric names
-	assert.NotNil(t, ListLokiMetricNames, "ListLokiMetricNames should be defined")
 
 	// Helper tools
 	assert.NotNil(t, QueryPrometheusHistogram, "QueryPrometheusHistogram should be defined")

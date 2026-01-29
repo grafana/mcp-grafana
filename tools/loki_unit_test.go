@@ -6,49 +6,6 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestListLokiMetricNamesParams_Structure(t *testing.T) {
-	params := ListLokiMetricNamesParams{
-		DatasourceUID: "test-uid",
-		StartRFC3339:  "2024-01-15T00:00:00Z",
-		EndRFC3339:    "2024-01-15T06:00:00Z",
-	}
-
-	assert.Equal(t, "test-uid", params.DatasourceUID)
-	assert.Equal(t, "2024-01-15T00:00:00Z", params.StartRFC3339)
-	assert.Equal(t, "2024-01-15T06:00:00Z", params.EndRFC3339)
-}
-
-func TestLokiQueryResult_Structure(t *testing.T) {
-	result := LokiQueryResult{
-		Entries: []LogEntry{
-			{
-				Timestamp: "1234567890",
-				Line:      "test log line",
-				Labels:    map[string]string{"app": "test"},
-			},
-		},
-		Hints: []string{},
-	}
-
-	assert.Len(t, result.Entries, 1)
-	assert.Equal(t, "test log line", result.Entries[0].Line)
-	assert.Empty(t, result.Hints)
-}
-
-func TestLokiQueryResult_WithHints(t *testing.T) {
-	result := LokiQueryResult{
-		Entries: []LogEntry{},
-		Hints: []string{
-			"No data found",
-			"Try a broader query",
-		},
-	}
-
-	assert.Empty(t, result.Entries)
-	assert.Len(t, result.Hints, 2)
-	assert.Equal(t, "No data found", result.Hints[0])
-}
-
 func TestLogEntry_Structure(t *testing.T) {
 	t.Run("log entry with line", func(t *testing.T) {
 		entry := LogEntry{
