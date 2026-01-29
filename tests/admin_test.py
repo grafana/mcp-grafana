@@ -13,8 +13,8 @@ import aiohttp
 import uuid
 import os
 from conftest import models, DEFAULT_GRAFANA_URL
-from utils import get_converted_tools
 from mcp_eval_utils import (
+    get_converted_tools,
     MCP_EVAL_THRESHOLD,
     assert_expected_tools_called,
     make_mcp_server,

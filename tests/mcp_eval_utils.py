@@ -10,11 +10,32 @@ import os
 from typing import List, Union
 
 from mcp import ClientSession
-from mcp.types import TextContent, ImageContent, CallToolResult
+from mcp.types import TextContent, ImageContent, CallToolResult, Tool
 from deepeval.test_case import MCPServer, MCPToolCall, LLMTestCase
 
 # Default threshold for MCPUseMetric and GEval (0–1). Used by all MCP eval tests.
 MCP_EVAL_THRESHOLD = 0.7
+
+
+def convert_tool(tool: Tool) -> dict:
+    """Convert an MCP Tool to OpenAI-style function schema for the LLM."""
+    return {
+        "type": "function",
+        "function": {
+            "name": tool.name,
+            "description": tool.description,
+            "parameters": {
+                **tool.inputSchema,
+                "properties": tool.inputSchema.get("properties", {}),
+            },
+        },
+    }
+
+
+async def get_converted_tools(client: ClientSession) -> list:
+    """List MCP tools and return them as OpenAI-style function list for the LLM."""
+    tool_list = await client.list_tools()
+    return [convert_tool(t) for t in tool_list.tools]
 
 
 async def make_mcp_server(client: ClientSession, transport: str = "sse") -> MCPServer:

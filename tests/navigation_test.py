@@ -4,8 +4,8 @@ from litellm import Message, acompletion
 from mcp import ClientSession
 
 from conftest import models
-from utils import get_converted_tools
 from mcp_eval_utils import (
+    get_converted_tools,
     MCP_EVAL_THRESHOLD,
     assert_expected_tools_called,
     make_mcp_server,
