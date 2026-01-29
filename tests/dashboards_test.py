@@ -4,108 +4,161 @@ from litellm import Message, acompletion
 from mcp import ClientSession
 
 from conftest import models
-from utils import (
-    assert_llm_output_passes,
-    get_converted_tools,
-    llm_tool_call_sequence,
+from utils import get_converted_tools
+from mcp_eval_utils import (
+    MCP_EVAL_THRESHOLD,
+    assert_expected_tools_called,
+    make_mcp_server,
+    call_tool_and_record,
+    make_test_case,
 )
+from deepeval import assert_test
+from deepeval.metrics import MCPUseMetric, GEval
+from deepeval.test_case import LLMTestCaseParams
+
 
 pytestmark = pytest.mark.anyio
 
+
 @pytest.mark.parametrize("model", models)
 @pytest.mark.flaky(max_runs=3)
-async def test_dashboard_panel_queries_tool(model: str, mcp_client: ClientSession):
+async def test_dashboard_panel_queries_tool(
+    model: str,
+    mcp_client: ClientSession,
+    mcp_transport: str,
+):
+    mcp_server = await make_mcp_server(mcp_client, transport=mcp_transport)
     tools = await get_converted_tools(mcp_client)
-    prompt = "Can you list the panel queries for the dashboard with UID fe9gm6guyzi0wd?"
+    dashboard_uid = "fe9gm6guyzi0wd"
+    prompt = f"Can you list the panel queries for the dashboard with UID {dashboard_uid}?"
 
     messages = [
         Message(role="system", content="You are a helpful assistant."),
         Message(role="user", content=prompt),
     ]
+    tools_called: list = []
 
-    # 1. Call the dashboard panel queries tool
-    messages = await llm_tool_call_sequence(
-        model, messages, tools, mcp_client, "get_dashboard_panel_queries",
-        {"uid": "fe9gm6guyzi0wd"}
+    response = await acompletion(
+        model=model,
+        messages=messages,
+        tools=tools,
     )
 
-    # 2. Final LLM response
-    response = await acompletion(model=model, messages=messages, tools=tools)
-    content = response.choices[0].message.content
-    print("content", content)
-    assert_llm_output_passes(
-        prompt,
-        content,
-        "Does the response contain specific information about the panel queries and titles for a grafana dashboard?",
+    if response.choices and response.choices[0].message.tool_calls:
+        for tool_call in response.choices[0].message.tool_calls:
+            tool_name = tool_call.function.name
+            args = json.loads(tool_call.function.arguments) if tool_call.function.arguments else {}
+            if tool_name == "get_dashboard_panel_queries":
+                assert args.get("uid") == dashboard_uid, (
+                    f"Expected uid={dashboard_uid!r}, got {args.get('uid')!r}"
+                )
+            result_text, mcp_tc = await call_tool_and_record(mcp_client, tool_name, args)
+            tools_called.append(mcp_tc)
+            messages.append(response.choices[0].message)
+            messages.append(
+                Message(role="tool", tool_call_id=tool_call.id, content=result_text)
+            )
+
+    final_response = await acompletion(model=model, messages=messages, tools=tools)
+    final_content = final_response.choices[0].message.content or ""
+
+    assert_expected_tools_called(tools_called, "get_dashboard_panel_queries")
+    test_case = make_test_case(prompt, final_content, mcp_server, tools_called)
+
+    mcp_metric = MCPUseMetric(threshold=MCP_EVAL_THRESHOLD)
+    output_metric = GEval(
+        name="OutputQuality",
+        criteria=(
+            "Does the response contain specific information about panel queries and titles "
+            "for the Grafana dashboard (e.g. at least one panel name and its query)? "
+        ),
+        evaluation_params=[LLMTestCaseParams.INPUT, LLMTestCaseParams.ACTUAL_OUTPUT],
+        threshold=MCP_EVAL_THRESHOLD,
     )
+
+    assert_test(test_case, [mcp_metric, output_metric])
 
 
 @pytest.mark.parametrize("model", models)
 @pytest.mark.flaky(max_runs=3)
-async def test_dashboard_update_with_patch_operations(model: str, mcp_client: ClientSession):
-    """Test that LLMs naturally use patch operations for dashboard updates"""
+async def test_dashboard_update_with_patch_operations(
+    model: str,
+    mcp_client: ClientSession,
+    mcp_transport: str,
+):
     tools = await get_converted_tools(mcp_client)
 
-    # First, create a non-provisioned test dashboard by copying the demo dashboard
-    # 1. Get the demo dashboard JSON
+    # Create a non-provisioned test dashboard by copying the demo dashboard
     demo_result = await mcp_client.call_tool("get_dashboard_by_uid", {"uid": "fe9gm6guyzi0wd"})
     demo_data = json.loads(demo_result.content[0].text)
-    dashboard_json = demo_data["dashboard"]
+    dashboard_json = demo_data["dashboard"].copy()
 
-    # 2. Remove uid and id to create a new dashboard
     if "uid" in dashboard_json:
         del dashboard_json["uid"]
     if "id" in dashboard_json:
         del dashboard_json["id"]
 
-    # 3. Set a new title
-    title = f"Test Dashboard"
+    title = "Test Dashboard"
     dashboard_json["title"] = title
     dashboard_json["tags"] = ["python-integration-test"]
 
-    # 4. Create the dashboard in Grafana
-    create_result = await mcp_client.call_tool("update_dashboard", {
-        "dashboard": dashboard_json,
-        "folderUid": "",
-        "overwrite": False
-    })
+    create_result = await mcp_client.call_tool(
+        "update_dashboard",
+        {"dashboard": dashboard_json, "folderUid": "", "overwrite": False},
+    )
     create_data = json.loads(create_result.content[0].text)
     created_dashboard_uid = create_data["uid"]
 
-    # 5. Update the dashboard title
-    updated_title = f"Updated {title}"
-    title_prompt = f"Update the title of the Test Dashboard to {updated_title}. Search for the dashboard by title first."
+    updated_title = "Updated Test Dashboard"
+    prompt = (
+        f"Update the title of the Test Dashboard to {updated_title}. "
+        "Search for the dashboard by title first."
+    )
 
+    mcp_server = await make_mcp_server(mcp_client, transport=mcp_transport)
     messages = [
-        Message(role="system", content="You are a helpful assistant"),
-        Message(role="user", content=title_prompt),
+        Message(role="system", content="You are a helpful assistant."),
+        Message(role="user", content=prompt),
     ]
+    tools_called: list = []
 
-    # 6. Search for the test dashboard
-    messages = await llm_tool_call_sequence(
-        model, messages, tools, mcp_client, "search_dashboards",
-        {"query": title}
+    response = await acompletion(
+        model=model,
+        messages=messages,
+        tools=tools,
     )
 
-    # 7. Update the dashboard using patch operations
-    messages = await llm_tool_call_sequence(
-        model, messages, tools, mcp_client, "update_dashboard",
-        {
-            "uid": created_dashboard_uid,
-            "operations": [
-                {
-                    "op": "replace",
-                    "path": "$.title",
-                    "value": updated_title
-                }
-            ]
-        }
+    while response.choices and response.choices[0].message.tool_calls:
+        for tool_call in response.choices[0].message.tool_calls:
+            tool_name = tool_call.function.name
+            args = json.loads(tool_call.function.arguments) if tool_call.function.arguments else {}
+            result_text, mcp_tc = await call_tool_and_record(mcp_client, tool_name, args)
+            tools_called.append(mcp_tc)
+            messages.append(response.choices[0].message)
+            messages.append(
+                Message(role="tool", tool_call_id=tool_call.id, content=result_text)
+            )
+        response = await acompletion(model=model, messages=messages, tools=tools)
+
+    final_content = (
+        (response.choices[0].message.content or "")
+        if response.choices
+        else ""
     )
 
-    # 8. Final LLM response - just verify it completes successfully
-    response = await acompletion(model=model, messages=messages, tools=tools)
-    content = response.choices[0].message.content
+    assert_expected_tools_called(
+        tools_called, ["search_dashboards", "update_dashboard"]
+    )
+    test_case = make_test_case(prompt, final_content, mcp_server, tools_called)
 
-    # Test passes if we get here - the tool call sequence worked correctly
-    assert len(content) > 0, "LLM should provide a response after updating the dashboard"
+    mcp_metric = MCPUseMetric(threshold=MCP_EVAL_THRESHOLD)
+    output_metric = GEval(
+        name="OutputQuality",
+        criteria=(
+            "Does the response indicate the dashboard was found and its title was updated successfully?"
+        ),
+        evaluation_params=[LLMTestCaseParams.INPUT, LLMTestCaseParams.ACTUAL_OUTPUT],
+        threshold=MCP_EVAL_THRESHOLD,
+    )
 
+    assert_test(test_case, [mcp_metric, output_metric])

@@ -10,7 +10,7 @@ import os
 from typing import List, Union
 
 from mcp import ClientSession
-from mcp.types import TextContent, CallToolResult
+from mcp.types import TextContent, ImageContent, CallToolResult
 from deepeval.test_case import MCPServer, MCPToolCall, LLMTestCase
 
 # Default threshold for MCPUseMetric and GEval (0–1). Used by all MCP eval tests.
@@ -47,6 +47,9 @@ async def call_tool_and_record(
         for content_item in result.content:
             if isinstance(content_item, TextContent):
                 result_text = content_item.text
+                break
+            if isinstance(content_item, ImageContent):
+                result_text = "[Image content]"
                 break
     tool_call = MCPToolCall(name=tool_name, args=args, result=result)
     return result_text, tool_call

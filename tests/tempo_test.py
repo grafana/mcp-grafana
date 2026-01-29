@@ -1,14 +1,20 @@
+import json
 from mcp import ClientSession
 import pytest
 from litellm import Message, acompletion
-from mcp import ClientSession
 
 from conftest import models
-from utils import (
-    assert_llm_output_passes,
-    get_converted_tools,
-    llm_tool_call_sequence,
+from utils import get_converted_tools
+from mcp_eval_utils import (
+    MCP_EVAL_THRESHOLD,
+    assert_expected_tools_called,
+    make_mcp_server,
+    call_tool_and_record,
+    make_test_case,
 )
+from deepeval import assert_test
+from deepeval.metrics import MCPUseMetric, GEval
+from deepeval.test_case import LLMTestCaseParams
 
 pytestmark = pytest.mark.anyio
 
@@ -208,9 +214,10 @@ class TestTempoProxiedToolsWithLLM:
     @pytest.mark.parametrize("model", models)
     @pytest.mark.flaky(max_runs=3)
     async def test_llm_can_list_trace_attributes(
-        self, model: str, mcp_client: ClientSession
+        self, model: str, mcp_client: ClientSession, mcp_transport: str
     ):
         """Test that an LLM can list available trace attributes from Tempo."""
+        mcp_server = await make_mcp_server(mcp_client, transport=mcp_transport)
         tools = await get_converted_tools(mcp_client)
         prompt = (
             "Use the tempo tools to get a list of all available trace attribute names "
@@ -222,23 +229,44 @@ class TestTempoProxiedToolsWithLLM:
             Message(role="system", content="You are a helpful assistant."),
             Message(role="user", content=prompt),
         ]
+        tools_called: list = []
 
-        # LLM should call tempo_get-attribute-names with datasourceUid
-        messages = await llm_tool_call_sequence(
-            model,
-            messages,
-            tools,
-            mcp_client,
-            "tempo_get-attribute-names",
-            {"datasourceUid": "tempo"},
+        response = await acompletion(
+            model=model,
+            messages=messages,
+            tools=tools,
         )
 
-        # Final LLM response should mention attributes
-        response = await acompletion(model=model, messages=messages, tools=tools)
-        content = response.choices[0].message.content
+        datasource_uid = "tempo"
+        if response.choices and response.choices[0].message.tool_calls:
+            for tool_call in response.choices[0].message.tool_calls:
+                tool_name = tool_call.function.name
+                args = json.loads(tool_call.function.arguments) if tool_call.function.arguments else {}
+                if tool_name == "tempo_get-attribute-names":
+                    assert args.get("datasourceUid") == datasource_uid, (
+                        f"Expected datasourceUid={datasource_uid!r}, got {args.get('datasourceUid')!r}"
+                    )
+                result_text, mcp_tc = await call_tool_and_record(mcp_client, tool_name, args)
+                tools_called.append(mcp_tc)
+                messages.append(response.choices[0].message)
+                messages.append(
+                    Message(role="tool", tool_call_id=tool_call.id, content=result_text)
+                )
 
-        assert_llm_output_passes(
-            prompt,
-            content,
-            "Does the response list or describe trace attributes that are available for querying?",
+        final_response = await acompletion(model=model, messages=messages, tools=tools)
+        final_content = final_response.choices[0].message.content or ""
+
+        assert_expected_tools_called(tools_called, "tempo_get-attribute-names")
+        test_case = make_test_case(prompt, final_content, mcp_server, tools_called)
+
+        mcp_metric = MCPUseMetric(threshold=MCP_EVAL_THRESHOLD)
+        output_metric = GEval(
+            name="OutputQuality",
+            criteria=(
+                "Does the response list or describe trace attributes that are available for querying?"
+            ),
+            evaluation_params=[LLMTestCaseParams.INPUT, LLMTestCaseParams.ACTUAL_OUTPUT],
+            threshold=MCP_EVAL_THRESHOLD,
         )
+
+        assert_test(test_case, [mcp_metric, output_metric])

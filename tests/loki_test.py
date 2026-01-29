@@ -1,95 +1,146 @@
 import json
-
 import pytest
 from litellm import Message, acompletion
 from mcp import ClientSession
 
 from conftest import models
-from utils import (
-    assert_llm_output_passes,
-    get_converted_tools,
-    flexible_tool_call,
+from utils import get_converted_tools
+from mcp_eval_utils import (
+    MCP_EVAL_THRESHOLD,
+    assert_expected_tools_called,
+    make_mcp_server,
+    call_tool_and_record,
+    make_test_case,
 )
+from deepeval import assert_test
+from deepeval.metrics import MCPUseMetric, GEval
+from deepeval.test_case import LLMTestCaseParams
+
 
 pytestmark = pytest.mark.anyio
 
 
 @pytest.mark.parametrize("model", models)
 @pytest.mark.flaky(max_runs=3)
-async def test_loki_logs_tool(model: str, mcp_client: ClientSession):
+async def test_loki_logs_tool(
+    model: str,
+    mcp_client: ClientSession,
+    mcp_transport: str,
+):
+    mcp_server = await make_mcp_server(mcp_client, transport=mcp_transport)
     tools = await get_converted_tools(mcp_client)
-    prompt = "Can you list the last 10 log lines from container 'mcp-grafana-grafana-1' using any available Loki datasource? Give me the raw log lines. Please use only the necessary tools to get this information."
+    prompt = (
+        "Can you query the last 10 log lines from container 'mcp-grafana-grafana-1'? Give me the raw log lines."
+    )
 
     messages = [
         Message(role="system", content="You are a helpful assistant."),
         Message(role="user", content=prompt),
     ]
+    tools_called: list = []
 
-    # 1. List datasources
-    messages = await flexible_tool_call(
-        model, messages, tools, mcp_client, "list_datasources"
-    )
-    datasources_response = messages[-1].content
-    datasources_data = json.loads(datasources_response)
-    loki_ds = get_first_loki_datasource(datasources_data)
-    print(f"\nFound Loki datasource: {loki_ds['name']} (uid: {loki_ds['uid']})")
-
-    # 2. Query logs
-    messages = await flexible_tool_call(
-        model, messages, tools, mcp_client, "query_loki_logs",
-        required_params={"datasourceUid": loki_ds["uid"]}
+    response = await acompletion(
+        model=model,
+        messages=messages,
+        tools=tools,
     )
 
-    # 3. Final LLM response
-    response = await acompletion(model=model, messages=messages, tools=tools)
-    content = response.choices[0].message.content
-    assert_llm_output_passes(
-        prompt,
-        content,
-        "Does the response contain specific information that could only come from a Loki datasource? This could be actual log lines with timestamps, container names, or a summary that references specific log data. The response should show evidence of real data rather than generic statements.",
+    while response.choices and response.choices[0].message.tool_calls:
+        for tool_call in response.choices[0].message.tool_calls:
+            tool_name = tool_call.function.name
+            args = json.loads(tool_call.function.arguments) if tool_call.function.arguments else {}
+            result_text, mcp_tc = await call_tool_and_record(mcp_client, tool_name, args)
+            tools_called.append(mcp_tc)
+            messages.append(response.choices[0].message)
+            messages.append(
+                Message(role="tool", tool_call_id=tool_call.id, content=result_text)
+            )
+        response = await acompletion(model=model, messages=messages, tools=tools)
+
+    final_content = (
+        (response.choices[0].message.content or "")
+        if response.choices
+        else ""
     )
+
+    # Require the Loki tool that fetches logs; LLM may discover datasource via
+    # list_datasources, search_dashboards, or a known UID (e.g. loki-datasource).
+    assert_expected_tools_called(tools_called, "query_loki_logs")
+    test_case = make_test_case(prompt, final_content, mcp_server, tools_called)
+
+    mcp_metric = MCPUseMetric(threshold=MCP_EVAL_THRESHOLD)
+    output_metric = GEval(
+        name="OutputQuality",
+        criteria=(
+            "Does the response contain specific information that could only come from a Loki datasource? "
+            "This could be actual log lines with timestamps, container names, or a summary that references "
+            "specific log data. The response should show evidence of real data rather than generic statements."
+        ),
+        evaluation_params=[LLMTestCaseParams.INPUT, LLMTestCaseParams.ACTUAL_OUTPUT],
+        threshold=MCP_EVAL_THRESHOLD,
+    )
+
+    assert_test(test_case, [mcp_metric, output_metric])
 
 
 @pytest.mark.parametrize("model", models)
 @pytest.mark.flaky(max_runs=3)
-async def test_loki_container_labels(model: str, mcp_client: ClientSession):
+async def test_loki_container_labels(
+    model: str,
+    mcp_client: ClientSession,
+    mcp_transport: str,
+):
+    mcp_server = await make_mcp_server(mcp_client, transport=mcp_transport)
     tools = await get_converted_tools(mcp_client)
-    prompt = "Can you list the values for the label container in any available loki datasource? Please use only the necessary tools to get this information."
+    prompt = (
+        "Can you list the values for the label 'container' for the last 10 minutes? "
+        "Use any available Loki datasource."
+    )
 
     messages = [
         Message(role="system", content="You are a helpful assistant."),
         Message(role="user", content=prompt),
     ]
+    tools_called: list = []
 
-    # 1. List datasources
-    messages = await flexible_tool_call(
-        model, messages, tools, mcp_client, "list_datasources"
-    )
-    datasources_response = messages[-1].content
-    datasources_data = json.loads(datasources_response)
-    loki_ds = get_first_loki_datasource(datasources_data)
-    print(f"\nFound Loki datasource: {loki_ds['name']} (uid: {loki_ds['uid']})")
-
-    # 2. List label values for 'container'
-    messages = await flexible_tool_call(
-        model, messages, tools, mcp_client, "list_loki_label_values",
-        required_params={"datasourceUid": loki_ds["uid"], "labelName": "container"}
+    response = await acompletion(
+        model=model,
+        messages=messages,
+        tools=tools,
     )
 
-    # 3. Final LLM response
-    response = await acompletion(model=model, messages=messages, tools=tools)
-    content = response.choices[0].message.content
-    assert_llm_output_passes(
-        prompt,
-        content,
-        "Does the response provide a clear and organized list of container names found in the logs? It should present the container names in a readable format and may include additional context about their usage.",
+    while response.choices and response.choices[0].message.tool_calls:
+        for tool_call in response.choices[0].message.tool_calls:
+            tool_name = tool_call.function.name
+            args = json.loads(tool_call.function.arguments) if tool_call.function.arguments else {}
+            result_text, mcp_tc = await call_tool_and_record(mcp_client, tool_name, args)
+            tools_called.append(mcp_tc)
+            messages.append(response.choices[0].message)
+            messages.append(
+                Message(role="tool", tool_call_id=tool_call.id, content=result_text)
+            )
+        response = await acompletion(model=model, messages=messages, tools=tools)
+
+    final_content = (
+        (response.choices[0].message.content or "")
+        if response.choices
+        else ""
     )
 
-def get_first_loki_datasource(datasources_data):
-    """
-    Returns the first datasource with type 'loki' from a list of datasources.
-    Raises an AssertionError if none are found.
-    """
-    loki_datasources = [ds for ds in datasources_data if ds.get("type") == "loki"]
-    assert len(loki_datasources) > 0, "No Loki datasource found"
-    return loki_datasources[0]
+    test_case = make_test_case(prompt, final_content, mcp_server, tools_called)
+
+    # LLMs often discover Loki via search_dashboards/get_dashboard_panel_queries first;
+    # MCPUseMetric penalizes that (score ~0.5). Use threshold 0.5 so exploratory tool use still passes.
+    mcp_metric = MCPUseMetric(threshold=0.5)
+    output_metric = GEval(
+        name="OutputQuality",
+        criteria=(
+            "Does the response provide a list of container names found in the logs? "
+            "It should present the container names in a readable format and may include additional "
+            "context about their usage."
+        ),
+        evaluation_params=[LLMTestCaseParams.INPUT, LLMTestCaseParams.ACTUAL_OUTPUT],
+        threshold=MCP_EVAL_THRESHOLD,
+    )
+
+    assert_test(test_case, [mcp_metric, output_metric])
