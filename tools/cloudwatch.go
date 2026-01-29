@@ -31,7 +31,7 @@ type CloudWatchQueryParams struct {
 	Namespace     string            `json:"namespace" jsonschema:"required,description=CloudWatch namespace (e.g. AWS/ECS\\, AWS/EC2\\, AWS/RDS\\, AWS/Lambda)"`
 	MetricName    string            `json:"metricName" jsonschema:"required,description=Metric name (e.g. CPUUtilization\\, MemoryUtilization\\, Invocations)"`
 	Dimensions    map[string]string `json:"dimensions,omitempty" jsonschema:"description=Dimensions as key-value pairs (e.g. {\"ClusterName\": \"my-cluster\"})"`
-	Statistic     string            `json:"statistic,omitempty" jsonschema:"description=Statistic type: Average\\, Sum\\, Maximum\\, Minimum\\, SampleCount. Default: Average,enum=Average,enum=Sum,enum=Maximum,enum=Minimum,enum=SampleCount"`
+	Statistic     string            `json:"statistic,omitempty" jsonschema:"enum=Average,enum=Sum,enum=Maximum,enum=Minimum,enum=SampleCount,description=Statistic type: Average\\, Sum\\, Maximum\\, Minimum\\, SampleCount. Default: Average"`
 	Period        int               `json:"period,omitempty" jsonschema:"description=Period in seconds (default: 300)"`
 	Start         string            `json:"start,omitempty" jsonschema:"description=Start time (e.g. now-1h\\, now-6h\\, ISO timestamp). Default: now-1h"`
 	End           string            `json:"end,omitempty" jsonschema:"description=End time (e.g. now). Default: now"`

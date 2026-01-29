@@ -8,6 +8,7 @@ import (
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"github.com/prometheus/common/model"
 )
 
 // QueryPrometheusHistogramParams defines the parameters for querying histogram percentiles
@@ -23,7 +24,7 @@ type QueryPrometheusHistogramParams struct {
 }
 
 // queryPrometheusHistogram generates and executes a histogram percentile query
-func queryPrometheusHistogram(ctx context.Context, args QueryPrometheusHistogramParams) (*PrometheusQueryResult, error) {
+func queryPrometheusHistogram(ctx context.Context, args QueryPrometheusHistogramParams) (model.Value, error) {
 	// Set defaults
 	rateInterval := args.RateInterval
 	if rateInterval == "" {
@@ -95,7 +96,7 @@ Generates histogram_quantile PromQL. Example: metric='http_duration', percentile
 // GetQueryExamplesParams defines the parameters for getting query examples
 type GetQueryExamplesParams struct {
 	DatasourceUID  string `json:"datasourceUid,omitempty" jsonschema:"description=Optional datasource UID to get examples for a specific datasource"`
-	DatasourceType string `json:"datasourceType,omitempty" jsonschema:"description=Datasource type to get examples for,enum=prometheus,enum=loki,enum=cloudwatch,enum=clickhouse"`
+	DatasourceType string `json:"datasourceType,omitempty" jsonschema:"enum=prometheus,enum=loki,enum=cloudwatch,enum=clickhouse,description=Datasource type to get examples for"`
 }
 
 // QueryExample represents a query example

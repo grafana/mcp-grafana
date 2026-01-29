@@ -518,7 +518,7 @@ func parseMetricTimestamp(raw json.RawMessage) (string, error) {
 }
 
 // queryLokiLogs queries logs from a Loki datasource using LogQL
-func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) (*LokiQueryResult, error) {
+func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) ([]LogEntry, error) {
 	client, err := newLokiClient(ctx, args.DatasourceUID)
 	if err != nil {
 		return nil, fmt.Errorf("creating Loki client: %w", err)
@@ -654,24 +654,18 @@ func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) (*LokiQueryRes
 		return nil, fmt.Errorf("unsupported result type: %s", response.Data.ResultType)
 	}
 
-	// Build the result
-	result := &LokiQueryResult{
-		Entries: entries,
+	// Return empty slice if no entries found
+	if entries == nil {
+		return []LogEntry{}, nil
 	}
 
-	// Return empty slice if no entries found and add hints
-	if entries == nil || len(entries) == 0 {
-		result.Entries = []LogEntry{}
-		result.Hints = GenerateEmptyResultHints("loki")
-	}
-
-	return result, nil
+	return entries, nil
 }
 
 // QueryLokiLogs is a tool for querying logs from Loki
 var QueryLokiLogs = mcpgrafana.MustTool(
 	"query_loki_logs",
-	"Executes a LogQL query against a Loki datasource to retrieve log entries or metric values. Returns an object with 'entries' (list of results\\, each containing a timestamp\\, labels\\, and either a log line or numeric metric value) and optional 'hints' for troubleshooting empty results. Defaults to the last hour\\, a limit of 10 entries\\, and 'backward' direction (newest first). Supports full LogQL syntax for log and metric queries (e.g.\\, `{app=\"foo\"} |= \"error\"`\\, `rate({app=\"bar\"}[1m])`). Prefer using `query_loki_stats` first to check stream size and `list_loki_label_names` and `list_loki_label_values` to verify labels exist.",
+	"Executes a LogQL query against a Loki datasource to retrieve log entries or metric values. Returns a list of results, each containing a timestamp, labels, and either a log line (`line`) or a numeric metric value (`value`). Defaults to the last hour, a limit of 10 entries, and 'backward' direction (newest first). Supports full LogQL syntax for log and metric queries (e.g., `{app=\"foo\"} |= \"error\"`, `rate({app=\"bar\"}[1m])`). Prefer using `query_loki_stats` first to check stream size and `list_loki_label_names` and `list_loki_label_values` to verify labels exist.",
 	queryLokiLogs,
 	mcp.WithTitleAnnotation("Query Loki logs"),
 	mcp.WithIdempotentHintAnnotation(true),
