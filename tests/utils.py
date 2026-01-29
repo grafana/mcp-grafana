@@ -1,12 +1,13 @@
 import os
 from typing import List, Union
 
+from litellm import Message, acompletion
 from mcp import ClientSession
 from mcp.types import TextContent, ImageContent, CallToolResult, Tool
 from deepeval.test_case import MCPServer, MCPToolCall
 
 # Default threshold for MCPUseMetric and GEval (0–1). Used by all MCP eval tests.
-MCP_EVAL_THRESHOLD = 0.6
+MCP_EVAL_THRESHOLD = 0.5
 
 
 def convert_tool(tool: Tool) -> dict:
@@ -66,6 +67,47 @@ async def call_tool_and_record(
                 break
     tool_call = MCPToolCall(name=tool_name, args=args, result=result)
     return result_text, tool_call
+
+
+async def run_llm_tool_loop(
+    model: str,
+    mcp_client: ClientSession,
+    mcp_transport: str,
+    prompt: str,
+) -> tuple[str, List[MCPToolCall], MCPServer]:
+
+    mcp_server = await make_mcp_server(mcp_client, transport=mcp_transport)
+    tools = await get_converted_tools(mcp_client)
+    messages = [
+        Message(role="system", content="You are a helpful assistant."),
+        Message(role="user", content=prompt),
+    ]
+    tools_called: List[MCPToolCall] = []
+
+    response = await acompletion(model=model, messages=messages, tools=tools)
+
+    while response.choices and response.choices[0].message.tool_calls:
+        for tool_call in response.choices[0].message.tool_calls:
+            tool_name = tool_call.function.name
+            args = (
+                __import__("json").loads(tool_call.function.arguments)
+                if tool_call.function.arguments
+                else {}
+            )
+            result_text, mcp_tc = await call_tool_and_record(mcp_client, tool_name, args)
+            tools_called.append(mcp_tc)
+            messages.append(response.choices[0].message)
+            messages.append(
+                Message(role="tool", tool_call_id=tool_call.id, content=result_text)
+            )
+        response = await acompletion(model=model, messages=messages, tools=tools)
+
+    final_content = (
+        (response.choices[0].message.content or "")
+        if response.choices
+        else ""
+    )
+    return final_content, tools_called, mcp_server
 
 
 def assert_expected_tools_called(

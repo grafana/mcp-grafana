@@ -10,6 +10,7 @@ from utils import (
     assert_expected_tools_called,
     make_mcp_server,
     call_tool_and_record,
+    run_llm_tool_loop,
 )
 from deepeval import assert_test
 from deepeval.metrics import MCPUseMetric, GEval
@@ -85,8 +86,6 @@ async def test_dashboard_update_with_patch_operations(
     mcp_client: ClientSession,
     mcp_transport: str,
 ):
-    tools = await get_converted_tools(mcp_client)
-
     # Create a non-provisioned test dashboard by copying the demo dashboard
     demo_result = await mcp_client.call_tool("get_dashboard_by_uid", {"uid": "fe9gm6guyzi0wd"})
     demo_data = json.loads(demo_result.content[0].text)
@@ -113,36 +112,8 @@ async def test_dashboard_update_with_patch_operations(
         f"Update the title of the Test Dashboard to {updated_title}. "
         "Search for the dashboard by title first."
     )
-
-    mcp_server = await make_mcp_server(mcp_client, transport=mcp_transport)
-    messages = [
-        Message(role="system", content="You are a helpful assistant."),
-        Message(role="user", content=prompt),
-    ]
-    tools_called: list = []
-
-    response = await acompletion(
-        model=model,
-        messages=messages,
-        tools=tools,
-    )
-
-    while response.choices and response.choices[0].message.tool_calls:
-        for tool_call in response.choices[0].message.tool_calls:
-            tool_name = tool_call.function.name
-            args = json.loads(tool_call.function.arguments) if tool_call.function.arguments else {}
-            result_text, mcp_tc = await call_tool_and_record(mcp_client, tool_name, args)
-            tools_called.append(mcp_tc)
-            messages.append(response.choices[0].message)
-            messages.append(
-                Message(role="tool", tool_call_id=tool_call.id, content=result_text)
-            )
-        response = await acompletion(model=model, messages=messages, tools=tools)
-
-    final_content = (
-        (response.choices[0].message.content or "")
-        if response.choices
-        else ""
+    final_content, tools_called, mcp_server = await run_llm_tool_loop(
+        model, mcp_client, mcp_transport, prompt
     )
 
     assert_expected_tools_called(

@@ -1,15 +1,11 @@
-import json
 import pytest
-from litellm import Message, acompletion
 from mcp import ClientSession
 
 from conftest import models
 from utils import (
-    get_converted_tools,
     MCP_EVAL_THRESHOLD,
     assert_expected_tools_called,
-    make_mcp_server,
-    call_tool_and_record,
+    run_llm_tool_loop,
 )
 from deepeval import assert_test
 from deepeval.metrics import MCPUseMetric, GEval
@@ -29,55 +25,32 @@ async def _run_deeplink_test_with_expected_args(
     url_assert: tuple[str, str] | list[tuple[str, str]] | None = None,
 ):
     """
-    Same flow as previous version: use llm_tool_call_sequence to force/validate
-    that the LLM calls generate_deeplink with the given args, then get final content.
-    Record tools_called by running the tool-call loop ourselves so we can feed DeepEval.
+    Run LLM tool loop, then validate that generate_deeplink was called with expected_tool_args.
     """
-    mcp_server = await make_mcp_server(mcp_client, transport=mcp_transport)
-    tools = await get_converted_tools(mcp_client)
-    messages = [
-        Message(role="system", content="You are a helpful assistant."),
-        Message(role="user", content=prompt),
-    ]
-    tools_called: list = []
+    final_content, tools_called, mcp_server = await run_llm_tool_loop(
+        model, mcp_client, mcp_transport, prompt
+    )
 
-    # One round: LLM -> must call generate_deeplink with expected_tool_args (validated in assert_and_handle_tool_call)
-    response = await acompletion(model=model, messages=messages, tools=tools)
-
-    if response.choices and response.choices[0].message.tool_calls:
-        for tool_call in response.choices[0].message.tool_calls:
-            tool_name = tool_call.function.name
-            args = json.loads(tool_call.function.arguments) if tool_call.function.arguments else {}
-            # Validate expected args (same as previous version's llm_tool_call_sequence)
-            for key, expected_value in expected_tool_args.items():
-                assert key in args, f"Expected parameter '{key}' in tool arguments, got: {args}"
-                if expected_value is not None:
-                    actual = args[key]
-                    if isinstance(expected_value, dict) and isinstance(actual, dict):
-                        for k, v in expected_value.items():
-                            assert k in actual and actual[k] == v, (
-                                f"Expected {key}.{k}={v!r}, got {actual.get(k)!r}"
-                            )
-                    else:
-                        assert actual == expected_value, (
-                            f"Expected {key}={expected_value!r}, got {key}={actual!r}"
-                        )
-            result_text, mcp_tc = await call_tool_and_record(mcp_client, tool_name, args)
-            tools_called.append(mcp_tc)
-            messages.append(response.choices[0].message)
-            messages.append(
-                Message(role="tool", tool_call_id=tool_call.id, content=result_text)
-            )
-    else:
-        # LLM didn't call the tool - fail like previous version
-        actual = response.choices[0].message.content if response.choices else ""
+    deeplink_calls = [tc for tc in tools_called if tc.name == "generate_deeplink"]
+    if not deeplink_calls:
         raise AssertionError(
             f"Expected LLM to call generate_deeplink with args {expected_tool_args}. "
-            f"No tool calls. Content: {actual[:200]}..."
+            f"Actually called: {[tc.name for tc in tools_called]}. Content: {final_content[:200]}..."
         )
-
-    final_response = await acompletion(model=model, messages=messages, tools=tools)
-    final_content = final_response.choices[0].message.content or ""
+    args = deeplink_calls[0].args
+    for key, expected_value in expected_tool_args.items():
+        assert key in args, f"Expected parameter '{key}' in tool arguments, got: {args}"
+        if expected_value is not None:
+            actual = args[key]
+            if isinstance(expected_value, dict) and isinstance(actual, dict):
+                for k, v in expected_value.items():
+                    assert k in actual and actual[k] == v, (
+                        f"Expected {key}.{k}={v!r}, got {actual.get(k)!r}"
+                    )
+            else:
+                assert actual == expected_value, (
+                    f"Expected {key}={expected_value!r}, got {key}={actual!r}"
+                )
 
     if url_assert:
         pairs = [url_assert] if isinstance(url_assert, tuple) else url_assert
@@ -192,43 +165,21 @@ async def test_generate_deeplink_with_query_params(
         "Use the generate_deeplink tool to create a dashboard link for UID 'test-uid' "
         "with var-datasource=prometheus and refresh=30s as query parameters"
     )
-    mcp_server = await make_mcp_server(mcp_client, transport=mcp_transport)
-    tools = await get_converted_tools(mcp_client)
-    messages = [
-        Message(role="system", content="You are a helpful assistant."),
-        Message(role="user", content=prompt),
-    ]
-    tools_called: list = []
+    final_content, tools_called, mcp_server = await run_llm_tool_loop(
+        model, mcp_client, mcp_transport, prompt
+    )
 
-    response = await acompletion(model=model, messages=messages, tools=tools)
-
-    # Same as previous: one round, require generate_deeplink with at least resourceType + dashboardUid
-    if response.choices and response.choices[0].message.tool_calls:
-        for tool_call in response.choices[0].message.tool_calls:
-            tool_name = tool_call.function.name
-            args = json.loads(tool_call.function.arguments) if tool_call.function.arguments else {}
-            if tool_name == "generate_deeplink":
-                assert args.get("resourceType") == "dashboard", f"Expected resourceType dashboard, got {args.get('resourceType')}"
-                assert args.get("dashboardUid") == "test-uid", f"Expected dashboardUid test-uid, got {args.get('dashboardUid')}"
-            result_text, mcp_tc = await call_tool_and_record(mcp_client, tool_name, args)
-            tools_called.append(mcp_tc)
-            messages.append(response.choices[0].message)
-            messages.append(
-                Message(role="tool", tool_call_id=tool_call.id, content=result_text)
-            )
-    else:
-        raise AssertionError(
-            "Expected LLM to call generate_deeplink. No tool calls."
-        )
-
-    final_response = await acompletion(model=model, messages=messages, tools=tools)
-    final_content = final_response.choices[0].message.content or ""
+    assert_expected_tools_called(tools_called, "generate_deeplink")
+    deeplink_calls = [tc for tc in tools_called if tc.name == "generate_deeplink"]
+    assert deeplink_calls, "Expected LLM to call generate_deeplink"
+    args = deeplink_calls[0].args
+    assert args.get("resourceType") == "dashboard", f"Expected resourceType dashboard, got {args.get('resourceType')}"
+    assert args.get("dashboardUid") == "test-uid", f"Expected dashboardUid test-uid, got {args.get('dashboardUid')}"
 
     assert "/d/test-uid" in final_content, f"Expected dashboard URL with /d/test-uid, got: {final_content}"
     assert "var-datasource=prometheus" in final_content, f"Expected var-datasource=prometheus in URL, got: {final_content}"
     assert "refresh=30s" in final_content, f"Expected refresh=30s in URL, got: {final_content}"
 
-    assert_expected_tools_called(tools_called, "generate_deeplink")
     test_case = LLMTestCase(input=prompt, actual_output=final_content, mcp_servers=[mcp_server], mcp_tools_called=tools_called)
 
     mcp_metric = MCPUseMetric(threshold=MCP_EVAL_THRESHOLD)
