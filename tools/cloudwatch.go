@@ -367,20 +367,11 @@ func queryCloudWatch(ctx context.Context, args CloudWatchQueryParams) (*CloudWat
 // QueryCloudWatch is a tool for querying CloudWatch datasources via Grafana
 var QueryCloudWatch = mcpgrafana.MustTool(
 	"query_cloudwatch",
-	`Query AWS CloudWatch metrics via Grafana. Use list_datasources to find CloudWatch datasource UIDs.
+	`Query AWS CloudWatch metrics via Grafana. DISCOVER FIRST: Use list_cloudwatch_namespaces -> list_cloudwatch_metrics -> list_cloudwatch_dimensions to find valid parameters.
 
-Common namespaces:
-- ECS/ContainerInsights: ECS container metrics (CpuUtilized, MemoryUtilized, NetworkRxBytes)
-- AWS/ECS: ECS service metrics (CPUUtilization, MemoryUtilization)
-- AWS/EC2: Instance metrics (CPUUtilization, NetworkIn, NetworkOut)
-- AWS/RDS: Database metrics (CPUUtilization, DatabaseConnections)
-- AWS/Lambda: Function metrics (Invocations, Duration, Errors)
-- AWS/SQS: Queue metrics (NumberOfMessagesReceived, ApproximateNumberOfMessagesVisible)
+Common namespaces: AWS/EC2, AWS/ECS, AWS/RDS, AWS/Lambda, ECS/ContainerInsights
 
-Example dimensions:
-- ECS: {"ClusterName": "my-cluster", "ServiceName": "my-service"}
-- EC2: {"InstanceId": "i-1234567890abcdef0"}
-- RDS: {"DBInstanceIdentifier": "my-database"}`,
+Example dimensions: ECS: {ClusterName, ServiceName}, EC2: {InstanceId}`,
 	queryCloudWatch,
 	mcp.WithTitleAnnotation("Query CloudWatch"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -479,7 +470,7 @@ func listCloudWatchNamespaces(ctx context.Context, args ListCloudWatchNamespaces
 // ListCloudWatchNamespaces is a tool for listing CloudWatch namespaces
 var ListCloudWatchNamespaces = mcpgrafana.MustTool(
 	"list_cloudwatch_namespaces",
-	"List available AWS CloudWatch namespaces for a datasource. Common namespaces include AWS/EC2, AWS/ECS, AWS/RDS, AWS/Lambda, AWS/SQS, ECS/ContainerInsights.",
+	"START HERE for CloudWatch: List available namespaces (AWS/EC2, AWS/ECS, AWS/RDS, etc.). NEXT: Use list_cloudwatch_metrics with a namespace.",
 	listCloudWatchNamespaces,
 	mcp.WithTitleAnnotation("List CloudWatch namespaces"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -535,7 +526,7 @@ func listCloudWatchMetrics(ctx context.Context, args ListCloudWatchMetricsParams
 // ListCloudWatchMetrics is a tool for listing CloudWatch metrics
 var ListCloudWatchMetrics = mcpgrafana.MustTool(
 	"list_cloudwatch_metrics",
-	"List available metrics for a CloudWatch namespace. Use list_cloudwatch_namespaces first to find available namespaces.",
+	"List metrics for a CloudWatch namespace. Use after list_cloudwatch_namespaces. NEXT: Use list_cloudwatch_dimensions, then query_cloudwatch.",
 	listCloudWatchMetrics,
 	mcp.WithTitleAnnotation("List CloudWatch metrics"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -592,7 +583,7 @@ func listCloudWatchDimensions(ctx context.Context, args ListCloudWatchDimensions
 // ListCloudWatchDimensions is a tool for listing CloudWatch dimension keys
 var ListCloudWatchDimensions = mcpgrafana.MustTool(
 	"list_cloudwatch_dimensions",
-	"List available dimension keys for a CloudWatch metric. Use this to discover valid dimension names before querying metrics.",
+	"List dimension keys for a CloudWatch metric. Use after list_cloudwatch_metrics. NEXT: Use query_cloudwatch with discovered dimensions.",
 	listCloudWatchDimensions,
 	mcp.WithTitleAnnotation("List CloudWatch dimensions"),
 	mcp.WithIdempotentHintAnnotation(true),

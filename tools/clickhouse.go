@@ -385,22 +385,11 @@ func queryClickHouse(ctx context.Context, args ClickHouseQueryParams) (*ClickHou
 // QueryClickHouse is a tool for querying ClickHouse datasources via Grafana
 var QueryClickHouse = mcpgrafana.MustTool(
 	"query_clickhouse",
-	`Query ClickHouse datasource via Grafana using raw SQL. Supports ClickHouse macros and template variable substitution.
+	`Query ClickHouse via Grafana. DISCOVER FIRST: Use list_clickhouse_tables to find tables, then describe_clickhouse_table to see column schemas.
 
-Supported macros:
-- $__timeFilter(column): Expands to "column >= toDateTime(X) AND column <= toDateTime(Y)"
-- $__from: Unix timestamp in milliseconds for the start time
-- $__to: Unix timestamp in milliseconds for the end time
-- $__interval: Calculated interval string based on time range (e.g., "60s")
-- $__interval_ms: Calculated interval in milliseconds
+Supports macros: $__timeFilter(column), $__from, $__to, $__interval, ${varname}
 
-Template variables can be referenced as ${varname} or $varname in the query.
-
-Example query for OTel logs:
-SELECT TimestampTime, ServiceName, SeverityText, Body
-FROM otel_logs
-WHERE $__timeFilter(TimestampTime) AND ServiceName = '${service}'
-ORDER BY TimestampTime DESC`,
+Example: SELECT Timestamp, Body FROM otel_logs WHERE $__timeFilter(Timestamp)`,
 	queryClickHouse,
 	mcp.WithTitleAnnotation("Query ClickHouse"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -471,7 +460,7 @@ WHERE database NOT IN ('system', 'INFORMATION_SCHEMA', 'information_schema')`
 // ListClickHouseTables is a tool for listing ClickHouse tables
 var ListClickHouseTables = mcpgrafana.MustTool(
 	"list_clickhouse_tables",
-	"List available tables in a ClickHouse datasource. Returns table name, database, engine, row count, and size. Excludes system tables.",
+	"START HERE for ClickHouse: List available tables (name, database, engine, row count, size). NEXT: Use describe_clickhouse_table to see column schemas.",
 	listClickHouseTables,
 	mcp.WithTitleAnnotation("List ClickHouse tables"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -546,7 +535,7 @@ ORDER BY position`, database, args.Table)
 // DescribeClickHouseTable is a tool for describing a ClickHouse table schema
 var DescribeClickHouseTable = mcpgrafana.MustTool(
 	"describe_clickhouse_table",
-	"Describe the schema of a ClickHouse table. Returns column names, types, default values, and comments.",
+	"Get column schema for a ClickHouse table. Use after list_clickhouse_tables. NEXT: Use query_clickhouse with discovered column names.",
 	describeClickHouseTable,
 	mcp.WithTitleAnnotation("Describe ClickHouse table"),
 	mcp.WithIdempotentHintAnnotation(true),
