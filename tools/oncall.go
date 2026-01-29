@@ -400,7 +400,7 @@ func listOnCallUsers(ctx context.Context, args ListOnCallUsersParams) ([]*aapi.U
 
 var ListOnCallUsers = mcpgrafana.MustTool(
 	"list_oncall_users",
-	"List users from Grafana OnCall. Can retrieve all users, a specific user by ID, or filter by username. Returns a list of user objects with their details. Supports pagination.",
+	"List users from Grafana OnCall (IRM plugin). Can retrieve all on call users, a specific user by ID, or filter by username. Returns a list of user objects with their details. Supports pagination.",
 	listOnCallUsers,
 	mcp.WithTitleAnnotation("List OnCall users"),
 	mcp.WithIdempotentHintAnnotation(true),
