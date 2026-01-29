@@ -535,7 +535,7 @@ ORDER BY position`, database, args.Table)
 // DescribeClickHouseTable is a tool for describing a ClickHouse table schema
 var DescribeClickHouseTable = mcpgrafana.MustTool(
 	"describe_clickhouse_table",
-	"Get column schema for a ClickHouse table. Use after list_clickhouse_tables. NEXT: Use query_clickhouse with discovered column names.",
+	"Get column schema for a ClickHouse table. Pass the database from list_clickhouse_tables results. NEXT: Use query_clickhouse with discovered column names.",
 	describeClickHouseTable,
 	mcp.WithTitleAnnotation("Describe ClickHouse table"),
 	mcp.WithIdempotentHintAnnotation(true),
