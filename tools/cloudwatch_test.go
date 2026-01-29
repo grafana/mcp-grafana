@@ -232,6 +232,48 @@ func TestParseCloudWatchResourceResponse(t *testing.T) {
 	}
 }
 
+func TestParseCloudWatchMetricsResponse(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       string
+		expected    []string
+		expectError bool
+	}{
+		{
+			name:     "valid metrics response",
+			input:    `[{"value":{"name":"CPUUtilization","namespace":"AWS/ECS"}},{"value":{"name":"MemoryUtilization","namespace":"AWS/ECS"}}]`,
+			expected: []string{"CPUUtilization", "MemoryUtilization"},
+		},
+		{
+			name:     "empty response",
+			input:    `[]`,
+			expected: []string{},
+		},
+		{
+			name:     "single metric",
+			input:    `[{"value":{"name":"CPUReservation","namespace":"AWS/ECS"}}]`,
+			expected: []string{"CPUReservation"},
+		},
+		{
+			name:        "invalid JSON",
+			input:       `not json`,
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := parseCloudWatchMetricsResponse([]byte(tt.input))
+			if tt.expectError {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
 func TestApplyDatasourcePagination(t *testing.T) {
 	// Create test data
 	items := make([]dataSourceSummary, 25)

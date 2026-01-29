@@ -400,6 +400,15 @@ type cloudWatchResourceItem struct {
 	Value string `json:"value"`
 }
 
+// cloudWatchMetricItem represents an item returned by CloudWatch metrics API
+// The metrics API returns a different format: [{value: {name: "...", namespace: "..."}}]
+type cloudWatchMetricItem struct {
+	Value struct {
+		Name      string `json:"name"`
+		Namespace string `json:"namespace"`
+	} `json:"value"`
+}
+
 // parseCloudWatchResourceResponse extracts values from CloudWatch resource API response
 func parseCloudWatchResourceResponse(bodyBytes []byte) ([]string, error) {
 	var items []cloudWatchResourceItem
@@ -410,6 +419,20 @@ func parseCloudWatchResourceResponse(bodyBytes []byte) ([]string, error) {
 	result := make([]string, len(items))
 	for i, item := range items {
 		result[i] = item.Value
+	}
+	return result, nil
+}
+
+// parseCloudWatchMetricsResponse extracts metric names from CloudWatch metrics API response
+func parseCloudWatchMetricsResponse(bodyBytes []byte) ([]string, error) {
+	var items []cloudWatchMetricItem
+	if err := json.Unmarshal(bodyBytes, &items); err != nil {
+		return nil, fmt.Errorf("unmarshaling response: %w", err)
+	}
+
+	result := make([]string, len(items))
+	for i, item := range items {
+		result[i] = item.Value.Name
 	}
 	return result, nil
 }
@@ -506,7 +529,7 @@ func listCloudWatchMetrics(ctx context.Context, args ListCloudWatchMetricsParams
 		return nil, fmt.Errorf("reading response body: %w", err)
 	}
 
-	return parseCloudWatchResourceResponse(bodyBytes)
+	return parseCloudWatchMetricsResponse(bodyBytes)
 }
 
 // ListCloudWatchMetrics is a tool for listing CloudWatch metrics
