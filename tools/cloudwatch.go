@@ -27,9 +27,9 @@ const (
 
 // CloudWatchQueryParams defines the parameters for querying CloudWatch
 type CloudWatchQueryParams struct {
-	DatasourceUID string            `json:"datasource_uid" jsonschema:"required,description=The UID of the CloudWatch datasource to query. Use list_datasources to find available UIDs."`
+	DatasourceUID string            `json:"datasourceUid" jsonschema:"required,description=The UID of the CloudWatch datasource to query. Use list_datasources to find available UIDs."`
 	Namespace     string            `json:"namespace" jsonschema:"required,description=CloudWatch namespace (e.g. AWS/ECS\\, AWS/EC2\\, AWS/RDS\\, AWS/Lambda)"`
-	MetricName    string            `json:"metric_name" jsonschema:"required,description=Metric name (e.g. CPUUtilization\\, MemoryUtilization\\, Invocations)"`
+	MetricName    string            `json:"metricName" jsonschema:"required,description=Metric name (e.g. CPUUtilization\\, MemoryUtilization\\, Invocations)"`
 	Dimensions    map[string]string `json:"dimensions,omitempty" jsonschema:"description=Dimensions as key-value pairs (e.g. {\"ClusterName\": \"my-cluster\"})"`
 	Statistic     string            `json:"statistic,omitempty" jsonschema:"description=Statistic type: Average\\, Sum\\, Maximum\\, Minimum\\, SampleCount. Default: Average,enum=Average,enum=Sum,enum=Maximum,enum=Minimum,enum=SampleCount"`
 	Period        int               `json:"period,omitempty" jsonschema:"description=Period in seconds (default: 300)"`
@@ -203,8 +203,8 @@ func (c *cloudWatchClient) query(ctx context.Context, args CloudWatchQueryParams
 	return &queryResp, nil
 }
 
-// parseCloudWatchTime parses time strings in various formats
-func parseCloudWatchTime(timeStr string) (time.Time, error) {
+// parseCloudWatchStartTime parses start time strings in various formats
+func parseCloudWatchStartTime(timeStr string) (time.Time, error) {
 	if timeStr == "" {
 		return time.Time{}, nil
 	}
@@ -214,6 +214,20 @@ func parseCloudWatchTime(timeStr string) (time.Time, error) {
 		Now:  time.Now(),
 	}
 	return tr.ParseFrom()
+}
+
+// parseCloudWatchEndTime parses end time strings in various formats
+// For end times, date-only strings resolve to end of day rather than start
+func parseCloudWatchEndTime(timeStr string) (time.Time, error) {
+	if timeStr == "" {
+		return time.Time{}, nil
+	}
+
+	tr := gtime.TimeRange{
+		To:  timeStr,
+		Now: time.Now(),
+	}
+	return tr.ParseTo()
 }
 
 // queryCloudWatch executes a CloudWatch query via Grafana
@@ -229,7 +243,7 @@ func queryCloudWatch(ctx context.Context, args CloudWatchQueryParams) (*CloudWat
 	toTime := now                       // Default: now
 
 	if args.Start != "" {
-		parsed, err := parseCloudWatchTime(args.Start)
+		parsed, err := parseCloudWatchStartTime(args.Start)
 		if err != nil {
 			return nil, fmt.Errorf("parsing start time: %w", err)
 		}
@@ -239,7 +253,7 @@ func queryCloudWatch(ctx context.Context, args CloudWatchQueryParams) (*CloudWat
 	}
 
 	if args.End != "" {
-		parsed, err := parseCloudWatchTime(args.End)
+		parsed, err := parseCloudWatchEndTime(args.End)
 		if err != nil {
 			return nil, fmt.Errorf("parsing end time: %w", err)
 		}

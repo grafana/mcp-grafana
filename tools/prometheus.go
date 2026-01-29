@@ -216,7 +216,7 @@ func queryPrometheus(ctx context.Context, args QueryPrometheusParams) (*Promethe
 
 var QueryPrometheus = mcpgrafana.MustTool(
 	"query_prometheus",
-	"Query Prometheus using PromQL. DISCOVER FIRST: Use list_prometheus_metric_names to find metrics, list_prometheus_label_names and list_prometheus_label_values for valid selectors. Supports RFC3339 or relative times (now, now-1h).",
+	"Query Prometheus using PromQL. Returns an object with 'result' (the PromQL query result) and optional 'hints' for troubleshooting empty results. DISCOVER FIRST: Use list_prometheus_metric_names to find metrics\\, list_prometheus_label_names and list_prometheus_label_values for valid selectors. Supports RFC3339 or relative times (now\\, now-1h).",
 	queryPrometheus,
 	mcp.WithTitleAnnotation("Query Prometheus metrics"),
 	mcp.WithIdempotentHintAnnotation(true),

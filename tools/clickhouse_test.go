@@ -58,6 +58,27 @@ func TestSubstituteClickHouseMacros(t *testing.T) {
 			query:    "SELECT * FROM logs WHERE timestamp > '2024-01-01'",
 			expected: "SELECT * FROM logs WHERE timestamp > '2024-01-01'",
 		},
+		// Tests for improved regex matching dotted and quoted column names
+		{
+			name:     "timeFilter macro with dotted column name",
+			query:    "SELECT * FROM logs WHERE $__timeFilter(table.ts)",
+			expected: "SELECT * FROM logs WHERE table.ts >= toDateTime(1705312800) AND table.ts <= toDateTime(1705316400)",
+		},
+		{
+			name:     "timeFilter macro with double-quoted column",
+			query:    `SELECT * FROM logs WHERE $__timeFilter("timestamp")`,
+			expected: `SELECT * FROM logs WHERE "timestamp" >= toDateTime(1705312800) AND "timestamp" <= toDateTime(1705316400)`,
+		},
+		{
+			name:     "timeFilter macro with backtick-quoted column",
+			query:    "SELECT * FROM logs WHERE $__timeFilter(`Timestamp`)",
+			expected: "SELECT * FROM logs WHERE `Timestamp` >= toDateTime(1705312800) AND `Timestamp` <= toDateTime(1705316400)",
+		},
+		{
+			name:     "timeFilter macro with spaces around column",
+			query:    "SELECT * FROM logs WHERE $__timeFilter( ts )",
+			expected: "SELECT * FROM logs WHERE ts >= toDateTime(1705312800) AND ts <= toDateTime(1705316400)",
+		},
 	}
 
 	for _, tt := range tests {
@@ -242,7 +263,7 @@ func TestEnforceClickHouseLimit(t *testing.T) {
 	}
 }
 
-func TestParseClickHouseTime(t *testing.T) {
+func TestParseClickHouseStartTime(t *testing.T) {
 	tests := []struct {
 		name        string
 		input       string
@@ -308,7 +329,61 @@ func TestParseClickHouseTime(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := parseClickHouseTime(tt.input)
+			result, err := parseClickHouseStartTime(tt.input)
+			if tt.expectError {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			if tt.checkFunc != nil {
+				tt.checkFunc(t, result)
+			}
+		})
+	}
+}
+
+func TestParseClickHouseEndTime(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       string
+		expectError bool
+		checkFunc   func(t *testing.T, result time.Time)
+	}{
+		{
+			name:  "empty string returns zero time",
+			input: "",
+			checkFunc: func(t *testing.T, result time.Time) {
+				assert.True(t, result.IsZero())
+			},
+		},
+		{
+			name:  "now returns current time",
+			input: "now",
+			checkFunc: func(t *testing.T, result time.Time) {
+				assert.WithinDuration(t, time.Now(), result, 5*time.Second)
+			},
+		},
+		{
+			name:  "now-1h returns time 1 hour ago",
+			input: "now-1h",
+			checkFunc: func(t *testing.T, result time.Time) {
+				expected := time.Now().Add(-1 * time.Hour)
+				assert.WithinDuration(t, expected, result, 5*time.Second)
+			},
+		},
+		{
+			name:  "RFC3339 format",
+			input: "2024-01-15T10:00:00Z",
+			checkFunc: func(t *testing.T, result time.Time) {
+				expected := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
+				assert.Equal(t, expected, result)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := parseClickHouseEndTime(tt.input)
 			if tt.expectError {
 				require.Error(t, err)
 				return

@@ -60,7 +60,7 @@ func TestCloudWatchQueryResult_Structure(t *testing.T) {
 	assert.Equal(t, 30.2, result.Statistics["max"])
 }
 
-func TestParseCloudWatchTime(t *testing.T) {
+func TestParseCloudWatchStartTime(t *testing.T) {
 	tests := []struct {
 		name        string
 		input       string
@@ -109,7 +109,61 @@ func TestParseCloudWatchTime(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := parseCloudWatchTime(tt.input)
+			result, err := parseCloudWatchStartTime(tt.input)
+			if tt.expectError {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			if tt.checkFunc != nil {
+				tt.checkFunc(t, result)
+			}
+		})
+	}
+}
+
+func TestParseCloudWatchEndTime(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       string
+		expectError bool
+		checkFunc   func(t *testing.T, result time.Time)
+	}{
+		{
+			name:  "empty string returns zero time",
+			input: "",
+			checkFunc: func(t *testing.T, result time.Time) {
+				assert.True(t, result.IsZero())
+			},
+		},
+		{
+			name:  "now returns current time",
+			input: "now",
+			checkFunc: func(t *testing.T, result time.Time) {
+				assert.WithinDuration(t, time.Now(), result, 5*time.Second)
+			},
+		},
+		{
+			name:  "now-1h returns time 1 hour ago",
+			input: "now-1h",
+			checkFunc: func(t *testing.T, result time.Time) {
+				expected := time.Now().Add(-1 * time.Hour)
+				assert.WithinDuration(t, expected, result, 5*time.Second)
+			},
+		},
+		{
+			name:  "RFC3339 format",
+			input: "2024-01-15T10:00:00Z",
+			checkFunc: func(t *testing.T, result time.Time) {
+				expected := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
+				assert.Equal(t, expected, result)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := parseCloudWatchEndTime(tt.input)
 			if tt.expectError {
 				require.Error(t, err)
 				return

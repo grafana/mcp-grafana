@@ -172,9 +172,9 @@ func (c *clickHouseClient) query(ctx context.Context, datasourceUID, rawSQL stri
 	return &queryResp, nil
 }
 
-// parseClickHouseTime parses time strings in various formats
+// parseClickHouseStartTime parses start time strings in various formats
 // Supports: "now", "now-Xs/m/h/d/w", RFC3339, ISO dates, and Unix timestamps
-func parseClickHouseTime(timeStr string) (time.Time, error) {
+func parseClickHouseStartTime(timeStr string) (time.Time, error) {
 	if timeStr == "" {
 		return time.Time{}, nil
 	}
@@ -184,6 +184,20 @@ func parseClickHouseTime(timeStr string) (time.Time, error) {
 		Now:  time.Now(),
 	}
 	return tr.ParseFrom()
+}
+
+// parseClickHouseEndTime parses end time strings in various formats
+// For end times, date-only strings resolve to end of day rather than start
+func parseClickHouseEndTime(timeStr string) (time.Time, error) {
+	if timeStr == "" {
+		return time.Time{}, nil
+	}
+
+	tr := gtime.TimeRange{
+		To:  timeStr,
+		Now: time.Now(),
+	}
+	return tr.ParseTo()
 }
 
 // substituteClickHouseMacros replaces ClickHouse-specific macros in the query
@@ -207,11 +221,14 @@ func substituteClickHouseMacros(query string, from, to time.Time) string {
 	}
 
 	// $__timeFilter(column) -> column >= toDateTime(X) AND column <= toDateTime(Y)
-	timeFilterRe := regexp.MustCompile(`\$__timeFilter\((\w+)\)`)
+	// Supports simple identifiers (ts), dotted identifiers (table.ts), and quoted identifiers ("timestamp", `Timestamp`)
+	timeFilterRe := regexp.MustCompile(`\$__timeFilter\(([^)]+)\)`)
 	query = timeFilterRe.ReplaceAllStringFunc(query, func(match string) string {
 		submatch := timeFilterRe.FindStringSubmatch(match)
 		if len(submatch) > 1 {
-			column := submatch[1]
+			column := strings.TrimSpace(submatch[1])
+			// Remove surrounding quotes/backticks if present for the comparison
+			// but keep the original column reference for the query
 			return fmt.Sprintf("%s >= toDateTime(%d) AND %s <= toDateTime(%d)", column, fromSeconds, column, toSeconds)
 		}
 		return match
@@ -296,7 +313,7 @@ func queryClickHouse(ctx context.Context, args ClickHouseQueryParams) (*ClickHou
 	toTime := now                       // Default: now
 
 	if args.Start != "" {
-		parsed, err := parseClickHouseTime(args.Start)
+		parsed, err := parseClickHouseStartTime(args.Start)
 		if err != nil {
 			return nil, fmt.Errorf("parsing start time: %w", err)
 		}
@@ -306,7 +323,7 @@ func queryClickHouse(ctx context.Context, args ClickHouseQueryParams) (*ClickHou
 	}
 
 	if args.End != "" {
-		parsed, err := parseClickHouseTime(args.End)
+		parsed, err := parseClickHouseEndTime(args.End)
 		if err != nil {
 			return nil, fmt.Errorf("parsing end time: %w", err)
 		}
