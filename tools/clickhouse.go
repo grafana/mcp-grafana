@@ -33,8 +33,8 @@ const (
 type ClickHouseQueryParams struct {
 	DatasourceUID string            `json:"datasourceUid" jsonschema:"required,description=The UID of the ClickHouse datasource to query. Use list_datasources to find available UIDs."`
 	Query         string            `json:"query" jsonschema:"required,description=Raw SQL query. Supports ClickHouse macros: $__timeFilter(column) for time filtering\\, $__from/$__to for millisecond timestamps\\, $__interval/$__interval_ms for calculated intervals\\, and ${varname} for variable substitution."`
-	Start         string            `json:"start,omitempty" jsonschema:"description=Start time for the query. Supports RFC3339\\, relative times (now-1h\\, now-6h)\\, or Unix timestamps. Defaults to 1 hour ago."`
-	End           string            `json:"end,omitempty" jsonschema:"description=End time for the query. Supports RFC3339\\, relative times (now)\\, or Unix timestamps. Defaults to now."`
+	Start         string            `json:"start,omitempty" jsonschema:"description=Start time for the query. Supports RFC3339\\, relative times (now-1h\\, now-6h)\\, or Unix milliseconds. Defaults to 1 hour ago."`
+	End           string            `json:"end,omitempty" jsonschema:"description=End time for the query. Supports RFC3339\\, relative times (now)\\, or Unix milliseconds. Defaults to now."`
 	Variables     map[string]string `json:"variables,omitempty" jsonschema:"description=Template variable substitutions as key-value pairs. Variables can be referenced as ${varname} or $varname in the query."`
 	Limit         int               `json:"limit,omitempty" jsonschema:"description=Maximum number of rows to return. Default: 100\\, Max: 1000. If query doesn't contain LIMIT\\, one will be appended."`
 }
