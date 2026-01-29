@@ -52,6 +52,24 @@ The dashboard tools now include several strategies to manage context window usag
 - **Query Loki metadata:** Retrieve label names, label values, and stream statistics from Loki datasources.
 - **Query Loki patterns:** Retrieve log patterns detected by Loki to identify common log structures and anomalies.
 
+### CloudWatch Querying
+
+- **List CloudWatch namespaces:** Discover available AWS namespaces (AWS/EC2, AWS/ECS, AWS/RDS, etc.) in a CloudWatch datasource.
+- **List CloudWatch metrics:** Find available metrics within a namespace, with optional dimension filtering.
+- **List CloudWatch dimensions:** Discover dimension keys and values for a specific metric.
+- **Query CloudWatch metrics:** Execute CloudWatch metric queries with support for statistics (Average, Sum, Maximum, Minimum, SampleCount) and time ranges.
+
+### ClickHouse Querying
+
+- **List ClickHouse tables:** Discover available tables and databases in a ClickHouse datasource.
+- **Describe ClickHouse table:** Get column names, types, and table schema for query planning.
+- **Query ClickHouse:** Execute SQL queries with support for Grafana macros ($__timeFilter, $__from, $__to, $__interval) and template variables.
+
+### Helper Tools
+
+- **Query Prometheus histogram percentiles:** Simplified tool for histogram_quantile queries - specify metric name and percentile (e.g., 95) instead of writing complex PromQL.
+- **Get query examples:** Retrieve example queries for Prometheus, Loki, CloudWatch, and ClickHouse to help with query syntax.
+
 ### Incidents
 
 - **Search, create, and update incidents:** Manage incidents in Grafana Incident, including searching, creating, and adding activities to incidents.
