@@ -4,21 +4,17 @@ Admin tests using DeepEval MCP evaluation.
 Assert which tool(s) were called (expected tool must be among calls; multiple allowed),
 then evaluate output quality with GEval + MCPUseMetric (tool-use effectiveness).
 """
-import json
 import pytest
 from typing import Dict
-from litellm import Message, acompletion
 from mcp import ClientSession
 import aiohttp
 import uuid
 import os
 from conftest import models, DEFAULT_GRAFANA_URL
 from utils import (
-    get_converted_tools,
     MCP_EVAL_THRESHOLD,
     assert_expected_tools_called,
-    make_mcp_server,
-    call_tool_and_record,
+    run_llm_tool_loop,
 )
 from deepeval import assert_test
 from deepeval.metrics import MCPUseMetric, GEval
@@ -88,38 +84,13 @@ async def test_list_users_by_org(
     mcp_client: ClientSession,
     mcp_transport: str,
 ):
-    mcp_server = await make_mcp_server(mcp_client, transport=mcp_transport)
-    tools = await get_converted_tools(mcp_client)
     prompt = (
         "List all users in the current Grafana organization: I need the full list of "
         "organization members with their userid, email, and role."
     )
-
-    messages = [
-        Message(role="system", content="You are a helpful assistant."),
-        Message(role="user", content=prompt),
-    ]
-    tools_called: list = []
-
-    response = await acompletion(
-        model=model,
-        messages=messages,
-        tools=tools,
+    final_content, tools_called, mcp_server = await run_llm_tool_loop(
+        model, mcp_client, mcp_transport, prompt
     )
-
-    if response.choices and response.choices[0].message.tool_calls:
-        for tool_call in response.choices[0].message.tool_calls:
-            tool_name = tool_call.function.name
-            args = json.loads(tool_call.function.arguments) if tool_call.function.arguments else {}
-            result_text, mcp_tc = await call_tool_and_record(mcp_client, tool_name, args)
-            tools_called.append(mcp_tc)
-            messages.append(response.choices[0].message)
-            messages.append(
-                Message(role="tool", tool_call_id=tool_call.id, content=result_text)
-            )
-
-    final_response = await acompletion(model=model, messages=messages, tools=tools)
-    final_content = final_response.choices[0].message.content or ""
 
     assert_expected_tools_called(tools_called, "list_users_by_org")
     test_case = LLMTestCase(input=prompt, actual_output=final_content, mcp_servers=[mcp_server], mcp_tools_called=tools_called)
@@ -150,36 +121,11 @@ async def test_list_teams(
     Test list_teams using DeepEval MCP evaluation.
     Asserts list_teams was called, evaluates tool usage (MCPUseMetric) and output quality (GEval).
     """
-    mcp_server = await make_mcp_server(mcp_client, transport=mcp_transport)
-    tools = await get_converted_tools(mcp_client)
     team_name = grafana_team["name"]
     prompt = "Can you list the teams in Grafana?"
-
-    messages = [
-        Message(role="system", content="You are a helpful assistant."),
-        Message(role="user", content=prompt),
-    ]
-    tools_called: list = []
-
-    response = await acompletion(
-        model=model,
-        messages=messages,
-        tools=tools,
+    final_content, tools_called, mcp_server = await run_llm_tool_loop(
+        model, mcp_client, mcp_transport, prompt
     )
-
-    if response.choices and response.choices[0].message.tool_calls:
-        for tool_call in response.choices[0].message.tool_calls:
-            tool_name = tool_call.function.name
-            args = json.loads(tool_call.function.arguments) if tool_call.function.arguments else {}
-            result_text, mcp_tc = await call_tool_and_record(mcp_client, tool_name, args)
-            tools_called.append(mcp_tc)
-            messages.append(response.choices[0].message)
-            messages.append(
-                Message(role="tool", tool_call_id=tool_call.id, content=result_text)
-            )
-
-    final_response = await acompletion(model=model, messages=messages, tools=tools)
-    final_content = final_response.choices[0].message.content or ""
 
     assert_expected_tools_called(tools_called, "list_teams")
     test_case = LLMTestCase(input=prompt, actual_output=final_content, mcp_servers=[mcp_server], mcp_tools_called=tools_called)

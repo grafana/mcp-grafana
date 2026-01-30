@@ -1,15 +1,11 @@
 import json
 import pytest
-from litellm import Message, acompletion
 from mcp import ClientSession
 
 from conftest import models
 from utils import (
-    get_converted_tools,
     MCP_EVAL_THRESHOLD,
     assert_expected_tools_called,
-    make_mcp_server,
-    call_tool_and_record,
     run_llm_tool_loop,
 )
 from deepeval import assert_test
@@ -27,42 +23,19 @@ async def test_dashboard_panel_queries_tool(
     mcp_client: ClientSession,
     mcp_transport: str,
 ):
-    mcp_server = await make_mcp_server(mcp_client, transport=mcp_transport)
-    tools = await get_converted_tools(mcp_client)
     dashboard_uid = "fe9gm6guyzi0wd"
     prompt = f"Can you list the panel queries for the dashboard with UID {dashboard_uid}?"
-
-    messages = [
-        Message(role="system", content="You are a helpful assistant."),
-        Message(role="user", content=prompt),
-    ]
-    tools_called: list = []
-
-    response = await acompletion(
-        model=model,
-        messages=messages,
-        tools=tools,
+    final_content, tools_called, mcp_server = await run_llm_tool_loop(
+        model, mcp_client, mcp_transport, prompt
     )
 
-    if response.choices and response.choices[0].message.tool_calls:
-        for tool_call in response.choices[0].message.tool_calls:
-            tool_name = tool_call.function.name
-            args = json.loads(tool_call.function.arguments) if tool_call.function.arguments else {}
-            if tool_name == "get_dashboard_panel_queries":
-                assert args.get("uid") == dashboard_uid, (
-                    f"Expected uid={dashboard_uid!r}, got {args.get('uid')!r}"
-                )
-            result_text, mcp_tc = await call_tool_and_record(mcp_client, tool_name, args)
-            tools_called.append(mcp_tc)
-            messages.append(response.choices[0].message)
-            messages.append(
-                Message(role="tool", tool_call_id=tool_call.id, content=result_text)
-            )
-
-    final_response = await acompletion(model=model, messages=messages, tools=tools)
-    final_content = final_response.choices[0].message.content or ""
-
     assert_expected_tools_called(tools_called, "get_dashboard_panel_queries")
+    panel_calls = [tc for tc in tools_called if tc.name == "get_dashboard_panel_queries"]
+    assert panel_calls, "get_dashboard_panel_queries was not in tools_called"
+    assert panel_calls[0].args.get("uid") == dashboard_uid, (
+        f"Expected uid={dashboard_uid!r}, got {panel_calls[0].args.get('uid')!r}"
+    )
+
     test_case = LLMTestCase(input=prompt, actual_output=final_content, mcp_servers=[mcp_server], mcp_tools_called=tools_called)
 
     mcp_metric = MCPUseMetric(threshold=MCP_EVAL_THRESHOLD)
