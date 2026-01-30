@@ -2,14 +2,7 @@ from mcp import ClientSession
 import pytest
 
 from conftest import models
-from utils import (
-    MCP_EVAL_THRESHOLD,
-    assert_expected_tools_called,
-    run_llm_tool_loop,
-)
-from deepeval import assert_test
-from deepeval.metrics import MCPUseMetric, GEval
-from deepeval.test_case import LLMTestCase, LLMTestCaseParams
+from utils import assert_mcp_eval, run_llm_tool_loop
 
 pytestmark = pytest.mark.anyio
 
@@ -221,24 +214,18 @@ class TestTempoProxiedToolsWithLLM:
             model, mcp_client, mcp_transport, prompt
         )
 
-        assert_expected_tools_called(tools_called, "tempo_get-attribute-names")
-        datasource_uid = "tempo"
         attr_calls = [tc for tc in tools_called if tc.name == "tempo_get-attribute-names"]
         assert attr_calls, "tempo_get-attribute-names was not in tools_called"
         args = attr_calls[0].args
-        assert args.get("datasourceUid") == datasource_uid, (
-            f"Expected datasourceUid={datasource_uid!r}, got {args.get('datasourceUid')!r}"
-        )
-        test_case = LLMTestCase(input=prompt, actual_output=final_content, mcp_servers=[mcp_server], mcp_tools_called=tools_called)
-
-        mcp_metric = MCPUseMetric(threshold=MCP_EVAL_THRESHOLD)
-        output_metric = GEval(
-            name="OutputQuality",
-            criteria=(
-                "Does the response list or describe trace attributes that are available for querying?"
-            ),
-            evaluation_params=[LLMTestCaseParams.INPUT, LLMTestCaseParams.ACTUAL_OUTPUT],
-            threshold=MCP_EVAL_THRESHOLD,
+        assert args.get("datasourceUid") == "tempo", (
+            f"Expected datasourceUid='tempo', got {args.get('datasourceUid')!r}"
         )
 
-        assert_test(test_case, [mcp_metric, output_metric])
+        assert_mcp_eval(
+            prompt,
+            final_content,
+            tools_called,
+            mcp_server,
+            "Does the response list or describe trace attributes that are available for querying?",
+            expected_tools="tempo_get-attribute-names",
+        )

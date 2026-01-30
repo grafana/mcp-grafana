@@ -1,10 +1,12 @@
 import os
-from typing import List, Union
+from typing import List, Optional, Union
 
 from litellm import Message, acompletion
 from mcp import ClientSession
 from mcp.types import TextContent, ImageContent, CallToolResult, Tool
-from deepeval.test_case import MCPServer, MCPToolCall
+from deepeval import assert_test
+from deepeval.metrics import MCPUseMetric, GEval
+from deepeval.test_case import MCPServer, MCPToolCall, LLMTestCase, LLMTestCaseParams
 
 # Default threshold for MCPUseMetric and GEval (0–1). Used by all MCP eval tests.
 MCP_EVAL_THRESHOLD = 0.5
@@ -124,3 +126,33 @@ def assert_expected_tools_called(
         assert name in called_names, (
             f"Expected tool {name!r} to be called. Actually called: {called_names}"
         )
+
+
+def assert_mcp_eval(
+    prompt: str,
+    final_content: str,
+    tools_called: List[MCPToolCall],
+    mcp_server: MCPServer,
+    output_criteria: Optional[str] = None,
+    expected_tools: Optional[Union[str, List[str]]] = None,
+    mcp_threshold: float = MCP_EVAL_THRESHOLD,
+) -> None:
+    if expected_tools is not None:
+        assert_expected_tools_called(tools_called, expected_tools)
+    test_case = LLMTestCase(
+        input=prompt,
+        actual_output=final_content,
+        mcp_servers=[mcp_server],
+        mcp_tools_called=tools_called,
+    )
+    mcp_metric = MCPUseMetric(threshold=mcp_threshold)
+    metrics: list = [mcp_metric]
+    if output_criteria is not None:
+        output_metric = GEval(
+            name="OutputQuality",
+            criteria=output_criteria,
+            evaluation_params=[LLMTestCaseParams.INPUT, LLMTestCaseParams.ACTUAL_OUTPUT],
+            threshold=MCP_EVAL_THRESHOLD,
+        )
+        metrics.append(output_metric)
+    assert_test(test_case, metrics)

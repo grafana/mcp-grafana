@@ -2,14 +2,7 @@ import pytest
 from mcp import ClientSession
 
 from conftest import models
-from utils import (
-    MCP_EVAL_THRESHOLD,
-    assert_expected_tools_called,
-    run_llm_tool_loop,
-)
-from deepeval import assert_test
-from deepeval.metrics import MCPUseMetric, GEval
-from deepeval.test_case import LLMTestCase, LLMTestCaseParams
+from utils import assert_mcp_eval, run_llm_tool_loop
 
 
 pytestmark = pytest.mark.anyio
@@ -57,17 +50,14 @@ async def _run_deeplink_test_with_expected_args(
         for substring, desc in pairs:
             assert substring in final_content, f"Expected {desc}, got: {final_content}"
 
-    assert_expected_tools_called(tools_called, "generate_deeplink")
-    test_case = LLMTestCase(input=prompt, actual_output=final_content, mcp_servers=[mcp_server], mcp_tools_called=tools_called)
-
-    mcp_metric = MCPUseMetric(threshold=MCP_EVAL_THRESHOLD)
-    output_metric = GEval(
-        name="OutputQuality",
-        criteria=criteria,
-        evaluation_params=[LLMTestCaseParams.INPUT, LLMTestCaseParams.ACTUAL_OUTPUT],
-        threshold=MCP_EVAL_THRESHOLD,
+    assert_mcp_eval(
+        prompt,
+        final_content,
+        tools_called,
+        mcp_server,
+        criteria,
+        expected_tools="generate_deeplink",
     )
-    assert_test(test_case, [mcp_metric, output_metric])
 
 
 @pytest.mark.parametrize("model", models)
@@ -180,7 +170,10 @@ async def test_generate_deeplink_with_query_params(
     assert "var-datasource=prometheus" in final_content, f"Expected var-datasource=prometheus in URL, got: {final_content}"
     assert "refresh=30s" in final_content, f"Expected refresh=30s in URL, got: {final_content}"
 
-    test_case = LLMTestCase(input=prompt, actual_output=final_content, mcp_servers=[mcp_server], mcp_tools_called=tools_called)
-
-    mcp_metric = MCPUseMetric(threshold=MCP_EVAL_THRESHOLD)
-    assert_test(test_case, [mcp_metric])
+    assert_mcp_eval(
+        prompt,
+        final_content,
+        tools_called,
+        mcp_server,
+        expected_tools="generate_deeplink",
+    )

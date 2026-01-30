@@ -3,14 +3,7 @@ from mcp import ClientSession
 from mcp.types import ImageContent
 
 from conftest import models
-from utils import (
-    MCP_EVAL_THRESHOLD,
-    assert_expected_tools_called,
-    run_llm_tool_loop,
-)
-from deepeval import assert_test
-from deepeval.metrics import MCPUseMetric, GEval
-from deepeval.test_case import LLMTestCase, LLMTestCaseParams
+from utils import assert_mcp_eval, run_llm_tool_loop
 
 
 pytestmark = pytest.mark.anyio
@@ -32,7 +25,6 @@ async def test_get_panel_image(
         model, mcp_client, mcp_transport, prompt
     )
 
-    assert_expected_tools_called(tools_called, "get_panel_image")
     panel_calls = [tc for tc in tools_called if tc.name == "get_panel_image"]
     assert panel_calls, "get_panel_image was not in tools_called"
     args = panel_calls[0].args
@@ -46,18 +38,14 @@ async def test_get_panel_image(
         assert content_item.type == "image"
         assert content_item.mimeType == "image/png"
         assert len(content_item.data) > 0
-    test_case = LLMTestCase(input=prompt, actual_output=final_content, mcp_servers=[mcp_server], mcp_tools_called=tools_called)
 
-    mcp_metric = MCPUseMetric(threshold=MCP_EVAL_THRESHOLD)
-    output_metric = GEval(
-        name="OutputQuality",
-        criteria=(
-            "Does the response confirm that a dashboard image was rendered or provided "
-            "(e.g. by stating the image was rendered, or that get_panel_image was used successfully)? "
-            "A brief confirmation is sufficient; the response need not include the image data."
-        ),
-        evaluation_params=[LLMTestCaseParams.INPUT, LLMTestCaseParams.ACTUAL_OUTPUT],
-        threshold=MCP_EVAL_THRESHOLD,
+    assert_mcp_eval(
+        prompt,
+        final_content,
+        tools_called,
+        mcp_server,
+        "Does the response confirm that a dashboard image was rendered or provided "
+        "(e.g. by stating the image was rendered, or that get_panel_image was used successfully)? "
+        "A brief confirmation is sufficient; the response need not include the image data.",
+        expected_tools="get_panel_image",
     )
-
-    assert_test(test_case, [mcp_metric, output_metric])

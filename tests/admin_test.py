@@ -11,14 +11,7 @@ import aiohttp
 import uuid
 import os
 from conftest import models, DEFAULT_GRAFANA_URL
-from utils import (
-    MCP_EVAL_THRESHOLD,
-    assert_expected_tools_called,
-    run_llm_tool_loop,
-)
-from deepeval import assert_test
-from deepeval.metrics import MCPUseMetric, GEval
-from deepeval.test_case import LLMTestCase, LLMTestCaseParams
+from utils import assert_mcp_eval, run_llm_tool_loop
 
 
 pytestmark = pytest.mark.anyio
@@ -92,21 +85,15 @@ async def test_list_users_by_org(
         model, mcp_client, mcp_transport, prompt
     )
 
-    assert_expected_tools_called(tools_called, "list_users_by_org")
-    test_case = LLMTestCase(input=prompt, actual_output=final_content, mcp_servers=[mcp_server], mcp_tools_called=tools_called)
-
-    mcp_metric = MCPUseMetric(threshold=MCP_EVAL_THRESHOLD)
-    output_metric = GEval(
-        name="OutputQuality",
-        criteria=(
-            "Does the response contain specific information about organization users "
-            "in Grafana, such as usernames, emails, or roles?"
-        ),
-        evaluation_params=[LLMTestCaseParams.INPUT, LLMTestCaseParams.ACTUAL_OUTPUT],
-        threshold=MCP_EVAL_THRESHOLD,
+    assert_mcp_eval(
+        prompt,
+        final_content,
+        tools_called,
+        mcp_server,
+        "Does the response contain specific information about organization users "
+        "in Grafana, such as usernames, emails, or roles?",
+        expected_tools="list_users_by_org",
     )
-
-    assert_test(test_case, [mcp_metric, output_metric])
 
 
 @pytest.mark.parametrize("model", models)
@@ -127,19 +114,15 @@ async def test_list_teams(
         model, mcp_client, mcp_transport, prompt
     )
 
-    assert_expected_tools_called(tools_called, "list_teams")
-    test_case = LLMTestCase(input=prompt, actual_output=final_content, mcp_servers=[mcp_server], mcp_tools_called=tools_called)
-
-    mcp_metric = MCPUseMetric(threshold=MCP_EVAL_THRESHOLD)
-    output_metric = GEval(
-        name="OutputQuality",
-        criteria=(
+    assert_mcp_eval(
+        prompt,
+        final_content,
+        tools_called,
+        mcp_server,
+        (
             "Does the response contain specific information about "
             "the teams in Grafana? "
             f"There should be a team named {team_name}."
         ),
-        evaluation_params=[LLMTestCaseParams.INPUT, LLMTestCaseParams.ACTUAL_OUTPUT],
-        threshold=MCP_EVAL_THRESHOLD,
+        expected_tools="list_teams",
     )
-
-    assert_test(test_case, [mcp_metric, output_metric])
