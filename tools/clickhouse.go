@@ -27,6 +27,9 @@ const (
 
 	// ClickHouseDatasourceType is the type identifier for ClickHouse datasources
 	ClickHouseDatasourceType = "grafana-clickhouse-datasource"
+
+	// ClickHouseFormatTable is the format value for table/tabular query results
+	ClickHouseFormatTable = 1
 )
 
 // ClickHouseQueryParams defines the parameters for querying ClickHouse
@@ -127,7 +130,7 @@ func (c *clickHouseClient) query(ctx context.Context, datasourceUID, rawSQL stri
 				},
 				"rawSql": rawSQL,
 				"refId":  "A",
-				"format": 1, // Table format
+				"format": ClickHouseFormatTable,
 			},
 		},
 		"from": strconv.FormatInt(from.UnixMilli(), 10),
