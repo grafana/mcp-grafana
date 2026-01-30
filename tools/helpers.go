@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
@@ -10,6 +11,13 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/prometheus/common/model"
 )
+
+// PrometheusHistogramResult wraps histogram query results with debugging info
+type PrometheusHistogramResult struct {
+	Result model.Value `json:"result"`
+	Query  string      `json:"query"` // Generated PromQL for debugging
+	Hints  []string    `json:"hints,omitempty"`
+}
 
 // QueryPrometheusHistogramParams defines the parameters for querying histogram percentiles
 type QueryPrometheusHistogramParams struct {
@@ -24,7 +32,7 @@ type QueryPrometheusHistogramParams struct {
 }
 
 // queryPrometheusHistogram generates and executes a histogram percentile query
-func queryPrometheusHistogram(ctx context.Context, args QueryPrometheusHistogramParams) (model.Value, error) {
+func queryPrometheusHistogram(ctx context.Context, args QueryPrometheusHistogramParams) (*PrometheusHistogramResult, error) {
 	// Set defaults
 	rateInterval := args.RateInterval
 	if rateInterval == "" {
@@ -71,7 +79,7 @@ func queryPrometheusHistogram(ctx context.Context, args QueryPrometheusHistogram
 	}
 
 	// Execute the query using the existing queryPrometheus function
-	return queryPrometheus(ctx, QueryPrometheusParams{
+	result, err := queryPrometheus(ctx, QueryPrometheusParams{
 		DatasourceUID: args.DatasourceUID,
 		Expr:          expr,
 		StartTime:     startTime,
@@ -79,6 +87,63 @@ func queryPrometheusHistogram(ctx context.Context, args QueryPrometheusHistogram
 		StepSeconds:   stepSeconds,
 		QueryType:     "range",
 	})
+	if err != nil {
+		return nil, err
+	}
+
+	// Generate hints if result is empty or contains NaN
+	var hints []string
+	if isPrometheusResultEmptyOrNaN(result) {
+		hints = []string{
+			"No data found or result is NaN. Possible reasons:",
+			"- Histogram metric may not exist - use list_prometheus_metric_names with regex='.*_bucket$'",
+			"- Label selector may not match any series - verify labels with list_prometheus_label_values",
+			"- Time range may have no data - try extending with startTime",
+			"- Metric may not be a histogram (missing _bucket suffix)",
+		}
+	}
+
+	return &PrometheusHistogramResult{
+		Result: result,
+		Query:  expr,
+		Hints:  hints,
+	}, nil
+}
+
+// isPrometheusResultEmptyOrNaN checks if a Prometheus result is empty or contains only NaN values
+func isPrometheusResultEmptyOrNaN(v model.Value) bool {
+	switch val := v.(type) {
+	case model.Matrix:
+		if len(val) == 0 {
+			return true
+		}
+		// Check if all values are NaN
+		allNaN := true
+		for _, ss := range val {
+			for _, sp := range ss.Values {
+				if !math.IsNaN(float64(sp.Value)) {
+					allNaN = false
+					break
+				}
+			}
+			if !allNaN {
+				break
+			}
+		}
+		return allNaN
+	case model.Vector:
+		if len(val) == 0 {
+			return true
+		}
+		// Check if all values are NaN
+		for _, s := range val {
+			if !math.IsNaN(float64(s.Value)) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
 }
 
 // QueryPrometheusHistogram is a tool for querying histogram percentiles
