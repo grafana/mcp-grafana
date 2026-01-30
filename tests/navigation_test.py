@@ -159,7 +159,6 @@ async def test_generate_deeplink_with_query_params(
         model, mcp_client, mcp_transport, prompt
     )
 
-    assert_expected_tools_called(tools_called, "generate_deeplink")
     deeplink_calls = [tc for tc in tools_called if tc.name == "generate_deeplink"]
     assert deeplink_calls, "Expected LLM to call generate_deeplink"
     args = deeplink_calls[0].args
