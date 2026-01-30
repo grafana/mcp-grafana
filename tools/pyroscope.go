@@ -287,9 +287,9 @@ func fetchPyroscopeProfile(ctx context.Context, args FetchPyroscopeProfileParams
 func newPyroscopeClient(ctx context.Context, uid string) (*pyroscopeClient, error) {
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
 
-	var transport http.RoundTripper = http.DefaultTransport
-	if len(cfg.ExtraHeaders) > 0 {
-		transport = mcpgrafana.NewExtraHeadersRoundTripper(transport, cfg.ExtraHeaders)
+	transport, err := mcpgrafana.BuildTransport(&cfg, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create custom transport: %w", err)
 	}
 	transport = NewAuthRoundTripper(transport, cfg.AccessToken, cfg.IDToken, cfg.APIKey, cfg.BasicAuth)
 	transport = mcpgrafana.NewOrgIDRoundTripper(transport, cfg.OrgID)
@@ -301,7 +301,7 @@ func newPyroscopeClient(ctx context.Context, uid string) (*pyroscopeClient, erro
 		Timeout: 10 * time.Second,
 	}
 
-	_, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: uid})
+	_, err = getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: uid})
 	if err != nil {
 		return nil, err
 	}
