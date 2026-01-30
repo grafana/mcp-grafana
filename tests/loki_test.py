@@ -44,9 +44,7 @@ async def test_loki_container_labels(
     mcp_transport: str,
 ):
     prompt = (
-        "List the values for the label 'container' for the last 10 minutes using Loki. "
-        "If you don't have a Loki datasource UID, use list_datasources with type 'loki' first to get one, "
-        "then use list_loki_label_values with that datasourceUid and labelName 'container'. Return the list of container names."
+        "List the values for the label 'container' for the last 10 minutes from the Loki datasource."
     )
     final_content, tools_called, mcp_server = await run_llm_tool_loop(
         model, mcp_client, mcp_transport, prompt

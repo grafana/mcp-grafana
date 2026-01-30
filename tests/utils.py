@@ -1,3 +1,4 @@
+import json
 import os
 from typing import List, Optional, Union
 
@@ -92,7 +93,7 @@ async def run_llm_tool_loop(
         for tool_call in response.choices[0].message.tool_calls:
             tool_name = tool_call.function.name
             args = (
-                __import__("json").loads(tool_call.function.arguments)
+                json.loads(tool_call.function.arguments)
                 if tool_call.function.arguments
                 else {}
             )
