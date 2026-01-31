@@ -52,7 +52,7 @@ services:
       - 4040:4040
 
   tempo:
-    image: grafana/tempo:2.9.0-rc.0@sha256:5517ee34d335dedb9ad43028bd8f72edd0bb98b744ea5847a7572755d93d9866
+    image: grafana/tempo:2.10.0-rc.0@sha256:ab73a4fa3586e866be3322507491b66d49c9607592128b72b3aad80e3b355a12
     command: ["-config.file=/etc/tempo/tempo-config.yaml"]
     volumes:
       - ./testdata/tempo-config.yaml:/etc/tempo/tempo-config.yaml
@@ -60,7 +60,7 @@ services:
       - "3200:3200" # tempo
 
   tempo2:
-    image: grafana/tempo:2.9.0-rc.0@sha256:5517ee34d335dedb9ad43028bd8f72edd0bb98b744ea5847a7572755d93d9866
+    image: grafana/tempo:2.10.0-rc.0@sha256:ab73a4fa3586e866be3322507491b66d49c9607592128b72b3aad80e3b355a12
     command: ["-config.file=/etc/tempo/tempo-config.yaml"]
     volumes:
       - ./testdata/tempo-config-2.yaml:/etc/tempo/tempo-config.yaml
