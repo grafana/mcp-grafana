@@ -532,6 +532,50 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 	return grafanaClient
 }
 
+// NewHTTPClient creates an HTTP client configured with the provided settings.
+// It applies TLS configuration, user agent, org ID headers, and OpenTelemetry instrumentation.
+func NewHTTPClient(ctx context.Context, config GrafanaConfig) *http.Client {
+	// Determine timeout - use config value if set, otherwise use default
+	timeout := config.Timeout
+	if timeout == 0 {
+		timeout = DefaultGrafanaClientTimeout
+	}
+
+	transport := &http.Transport{
+		DialContext: (&net.Dialer{
+			Timeout:   timeout,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		TLSHandshakeTimeout:   timeout,
+		ResponseHeaderTimeout: timeout,
+		ExpectContinueTimeout: 1 * time.Second,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		IdleConnTimeout:       90 * time.Second,
+	}
+
+	// Configure TLS if custom TLS configuration is provided
+	if tlsConfig := config.TLSConfig; tlsConfig != nil {
+		tlsCfg, err := tlsConfig.CreateTLSConfig()
+		if err != nil {
+			slog.Error("Failed to create TLS config for HTTP client", "error", err)
+		} else {
+			transport.TLSClientConfig = tlsCfg
+		}
+	}
+
+	// Wrap with user agent, org ID, and otel
+	var rt http.RoundTripper = transport
+	rt = wrapWithUserAgent(rt)
+	rt = NewOrgIDRoundTripper(rt, config.OrgID)
+	rt = otelhttp.NewTransport(rt)
+
+	return &http.Client{
+		Transport: rt,
+		Timeout:   timeout,
+	}
+}
+
 // ExtractGrafanaClientFromEnv is a StdioContextFunc that creates and injects a Grafana client into the context.
 // It uses configuration from GRAFANA_URL, GRAFANA_SERVICE_ACCOUNT_TOKEN (or deprecated GRAFANA_API_KEY), GRAFANA_USERNAME/PASSWORD environment variables to initialize
 // the client with proper authentication.
@@ -572,6 +616,26 @@ func GrafanaClientFromContext(ctx context.Context) *client.GrafanaHTTPAPI {
 		return nil
 	}
 	return c
+}
+
+// ExtractGrafanaInstanceFromEnv is a StdioContextFunc that creates and injects a GrafanaInstance into the context.
+// It uses the same environment variables as ExtractGrafanaClientFromEnv but creates a capability-aware instance.
+var ExtractGrafanaInstanceFromEnv server.StdioContextFunc = func(ctx context.Context) context.Context {
+	config := GrafanaConfigFromContext(ctx)
+	legacyClient := GrafanaClientFromContext(ctx)
+	httpClient := NewHTTPClient(ctx, config)
+	instance := NewGrafanaInstance(config, legacyClient, httpClient)
+	return WithGrafanaInstance(ctx, instance)
+}
+
+// ExtractGrafanaInstanceFromHeaders is a HTTPContextFunc that creates and injects a GrafanaInstance into the context.
+// It uses HTTP headers for configuration with environment variable fallbacks.
+var ExtractGrafanaInstanceFromHeaders httpContextFunc = func(ctx context.Context, req *http.Request) context.Context {
+	config := GrafanaConfigFromContext(ctx)
+	legacyClient := GrafanaClientFromContext(ctx)
+	httpClient := NewHTTPClient(ctx, config)
+	instance := NewGrafanaInstance(config, legacyClient, httpClient)
+	return WithGrafanaInstance(ctx, instance)
 }
 
 type incidentClientKey struct{}
@@ -702,6 +766,7 @@ func ComposedStdioContextFunc(config GrafanaConfig) server.StdioContextFunc {
 		},
 		ExtractGrafanaInfoFromEnv,
 		ExtractGrafanaClientFromEnv,
+		ExtractGrafanaInstanceFromEnv,
 		ExtractIncidentClientFromEnv,
 	)
 }
@@ -715,6 +780,7 @@ func ComposedSSEContextFunc(config GrafanaConfig) server.SSEContextFunc {
 		},
 		ExtractGrafanaInfoFromHeaders,
 		ExtractGrafanaClientFromHeaders,
+		ExtractGrafanaInstanceFromHeaders,
 		ExtractIncidentClientFromHeaders,
 	)
 }
@@ -728,6 +794,7 @@ func ComposedHTTPContextFunc(config GrafanaConfig) server.HTTPContextFunc {
 		},
 		ExtractGrafanaInfoFromHeaders,
 		ExtractGrafanaClientFromHeaders,
+		ExtractGrafanaInstanceFromHeaders,
 		ExtractIncidentClientFromHeaders,
 	)
 }
