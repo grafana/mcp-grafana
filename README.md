@@ -437,11 +437,14 @@ When an organization ID is provided, the MCP server will set the `X-Grafana-Org-
          "command": "mcp-grafana",
          "args": [],
          "env": {
-           "GRAFANA_URL": "http://localhost:3000",  // Or "https://myinstance.grafana.net" for Grafana Cloud
+           // URL of the Grafana instance used for connection. "https://myinstance.grafana.net" for Grafana Cloud.
+           "GRAFANA_URL": "http://localhost:3000",
            "GRAFANA_SERVICE_ACCOUNT_TOKEN": "<your service account token>",
            // If using username/password authentication
            "GRAFANA_USERNAME": "<your username>",
            "GRAFANA_PASSWORD": "<your password>",
+           // Optional: public URL of the Grafana instance used for generating links, if different from GRAFANA_URL.
+           "GRAFANA_PUBLIC_URL": "https://grafana.example.com",
            // Optional: specify organization ID for multi-org support
            "GRAFANA_ORG_ID": "1"
          }
@@ -472,11 +475,14 @@ When an organization ID is provided, the MCP server will set the `X-Grafana-Org-
         "stdio"
       ],
       "env": {
-        "GRAFANA_URL": "http://localhost:3000",  // Or "https://myinstance.grafana.net" for Grafana Cloud
+        // URL of the Grafana instance used for connection. "https://myinstance.grafana.net" for Grafana Cloud.
+        "GRAFANA_URL": "http://localhost:3000",
         "GRAFANA_SERVICE_ACCOUNT_TOKEN": "<your service account token>",
         // If using username/password authentication
         "GRAFANA_USERNAME": "<your username>",
         "GRAFANA_PASSWORD": "<your password>",
+        // Optional: public URL of the Grafana instance used for generating links, if different from GRAFANA_URL.
+        "GRAFANA_PUBLIC_URL": "https://grafana.example.com",
         // Optional: specify organization ID for multi-org support
         "GRAFANA_ORG_ID": "1"
       }
