@@ -15,8 +15,15 @@ import (
 var dashboardTypeStr = "dash-db"
 var folderTypeStr = "dash-folder"
 
+const (
+	// DefaultSearchLimit is the default number of results to return
+	DefaultSearchLimit = 100
+)
+
 type SearchDashboardsParams struct {
-	Query string `json:"query" jsonschema:"description=The query to search for"`
+	Query string `json:"query,omitempty" jsonschema:"description=Search query to filter dashboards by name"`
+	Limit int    `json:"limit,omitempty" jsonschema:"description=Maximum number of results to return (default: 100\\, max: 5000)"`
+	Page  int    `json:"page,omitempty" jsonschema:"description=Page number for pagination (1-indexed). Default: 1"`
 }
 
 func searchDashboards(ctx context.Context, args SearchDashboardsParams) (models.HitList, error) {
@@ -24,18 +31,31 @@ func searchDashboards(ctx context.Context, args SearchDashboardsParams) (models.
 	params := search.NewSearchParamsWithContext(ctx)
 	if args.Query != "" {
 		params.SetQuery(&args.Query)
-		params.SetType(&dashboardTypeStr)
 	}
-	search, err := c.Search.Search(params)
+	params.SetType(&dashboardTypeStr)
+
+	// Apply pagination
+	limit := int64(args.Limit)
+	if limit <= 0 {
+		limit = DefaultSearchLimit
+	}
+	params.SetLimit(&limit)
+
+	if args.Page > 0 {
+		page := int64(args.Page)
+		params.SetPage(&page)
+	}
+
+	searchResult, err := c.Search.Search(params)
 	if err != nil {
 		return nil, fmt.Errorf("search dashboards for %+v: %w", c, err)
 	}
-	return search.Payload, nil
+	return searchResult.Payload, nil
 }
 
 var SearchDashboards = mcpgrafana.MustTool(
 	"search_dashboards",
-	"Search for Grafana dashboards by a query string. Returns a list of matching dashboards with details like title, UID, folder, tags, and URL.",
+	"Search and list Grafana dashboards. Returns dashboard names, UIDs, and URLs. Supports pagination with limit and page parameters.",
 	searchDashboards,
 	mcp.WithTitleAnnotation("Search dashboards"),
 	mcp.WithIdempotentHintAnnotation(true),
