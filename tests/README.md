@@ -36,8 +36,10 @@ Tests are using [`uv`] to manage dependencies. Install uv following the instruct
 
 4. Start the MCP server in SSE mode; from the root of the project:
    ```bash
-   go run ./cmd/mcp-grafana -t sse
+   go run ./cmd/mcp-grafana -t sse --enabled-tools admin,search,dashboard,loki,navigation,rendering,proxied
    ```
+
+   **Note:** This command enables only the tool categories that are tested in the e2e test suite: `admin` (for admin tests), `search` (for dashboard search), `dashboard`, `loki`, `navigation`, `rendering`, and `proxied` (for Tempo tests). Admin tools are disabled by default, so they must be explicitly included in `--enabled-tools` for admin tests to pass.
 
 5. Run the tests:
    ```bash

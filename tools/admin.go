@@ -55,7 +55,7 @@ func listUsersByOrg(ctx context.Context, args ListUsersByOrgParams) ([]*models.O
 
 var ListUsersByOrg = mcpgrafana.MustTool(
 	"list_users_by_org",
-	"List users by organization. Returns a list of users with details like userid, email, role etc.",
+	"List users in the Grafana organization. Returns a list of organization users with details like userid, email, role etc.",
 	listUsersByOrg,
 	mcp.WithTitleAnnotation("List users by org"),
 	mcp.WithIdempotentHintAnnotation(true),
