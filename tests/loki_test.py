@@ -1,95 +1,65 @@
-import json
-
 import pytest
-from litellm import Message, acompletion
 from mcp import ClientSession
 
 from conftest import models
-from utils import (
-    assert_llm_output_passes,
-    get_converted_tools,
-    flexible_tool_call,
-)
+from utils import assert_mcp_eval, run_llm_tool_loop
+
 
 pytestmark = pytest.mark.anyio
 
 
 @pytest.mark.parametrize("model", models)
 @pytest.mark.flaky(max_runs=3)
-async def test_loki_logs_tool(model: str, mcp_client: ClientSession):
-    tools = await get_converted_tools(mcp_client)
-    prompt = "Can you list the last 10 log lines from container 'mcp-grafana-grafana-1' using any available Loki datasource? Give me the raw log lines. Please use only the necessary tools to get this information."
-
-    messages = [
-        Message(role="system", content="You are a helpful assistant."),
-        Message(role="user", content=prompt),
-    ]
-
-    # 1. List datasources
-    messages = await flexible_tool_call(
-        model, messages, tools, mcp_client, "list_datasources"
+async def test_loki_logs_tool(
+    model: str,
+    mcp_client: ClientSession,
+    mcp_transport: str,
+):
+    prompt = (
+        "Can you query the last 10 log lines from container 'mcp-grafana-grafana-1'? Give me the raw log lines."
     )
-    datasources_response = messages[-1].content
-    datasources_data = json.loads(datasources_response)
-    loki_ds = get_first_loki_datasource(datasources_data)
-    print(f"\nFound Loki datasource: {loki_ds['name']} (uid: {loki_ds['uid']})")
-
-    # 2. Query logs
-    messages = await flexible_tool_call(
-        model, messages, tools, mcp_client, "query_loki_logs",
-        required_params={"datasourceUid": loki_ds["uid"]}
+    final_content, tools_called, mcp_server = await run_llm_tool_loop(
+        model, mcp_client, mcp_transport, prompt
     )
 
-    # 3. Final LLM response
-    response = await acompletion(model=model, messages=messages, tools=tools)
-    content = response.choices[0].message.content
-    assert_llm_output_passes(
+    # Require the Loki tool that fetches logs; LLM may discover datasource via
+    # list_datasources, search_dashboards, or a known UID (e.g. loki-datasource).
+    assert_mcp_eval(
         prompt,
-        content,
-        "Does the response contain specific information that could only come from a Loki datasource? This could be actual log lines with timestamps, container names, or a summary that references specific log data. The response should show evidence of real data rather than generic statements.",
+        final_content,
+        tools_called,
+        mcp_server,
+        "Does the response contain specific information that could only come from a Loki datasource? "
+        "This could be actual log lines with timestamps, container names, or a summary that references "
+        "specific log data. The response should show evidence of real data rather than generic statements.",
+        expected_tools="query_loki_logs",
     )
 
 
 @pytest.mark.parametrize("model", models)
 @pytest.mark.flaky(max_runs=3)
-async def test_loki_container_labels(model: str, mcp_client: ClientSession):
-    tools = await get_converted_tools(mcp_client)
-    prompt = "Can you list the values for the label container in any available loki datasource? Please use only the necessary tools to get this information."
-
-    messages = [
-        Message(role="system", content="You are a helpful assistant."),
-        Message(role="user", content=prompt),
-    ]
-
-    # 1. List datasources
-    messages = await flexible_tool_call(
-        model, messages, tools, mcp_client, "list_datasources"
+async def test_loki_container_labels(
+    model: str,
+    mcp_client: ClientSession,
+    mcp_transport: str,
+):
+    prompt = (
+        "List the values for the label 'container' for the last 10 minutes from the Loki datasource."
     )
-    datasources_response = messages[-1].content
-    datasources_data = json.loads(datasources_response)
-    loki_ds = get_first_loki_datasource(datasources_data)
-    print(f"\nFound Loki datasource: {loki_ds['name']} (uid: {loki_ds['uid']})")
-
-    # 2. List label values for 'container'
-    messages = await flexible_tool_call(
-        model, messages, tools, mcp_client, "list_loki_label_values",
-        required_params={"datasourceUid": loki_ds["uid"], "labelName": "container"}
+    final_content, tools_called, mcp_server = await run_llm_tool_loop(
+        model, mcp_client, mcp_transport, prompt
     )
 
-    # 3. Final LLM response
-    response = await acompletion(model=model, messages=messages, tools=tools)
-    content = response.choices[0].message.content
-    assert_llm_output_passes(
+    # LLMs often discover Loki via search_dashboards/get_dashboard_panel_queries first;
+    # MCPUseMetric penalizes that (score ~0.5). Use threshold 0.5 so exploratory tool use still passes.
+    assert_mcp_eval(
         prompt,
-        content,
-        "Does the response provide a clear and organized list of container names found in the logs? It should present the container names in a readable format and may include additional context about their usage.",
+        final_content,
+        tools_called,
+        mcp_server,
+        "Does the response provide a list of container names found in the logs? "
+        "It should present the container names in a readable format and may include additional "
+        "context about their usage.",
+        expected_tools=None,
+        mcp_threshold=0.5,
     )
-
-def get_first_loki_datasource(datasources_data):
-    """
-    Returns the first datasource with type 'loki' from a list of datasources.
-    Raises an AssertionError if none are found.
-    """
-    loki_datasources = [ds for ds in datasources_data if ds.get("type") == "loki"]
-    assert len(loki_datasources) > 0, "No Loki datasource found"
-    return loki_datasources[0]

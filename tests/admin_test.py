@@ -1,18 +1,18 @@
-from typing import Dict
+"""
+Admin tests using DeepEval MCP evaluation.
+
+Assert which tool(s) were called (expected tool must be among calls; multiple allowed),
+then evaluate output quality with GEval + MCPUseMetric (tool-use effectiveness).
+"""
 import pytest
-from litellm import Message, acompletion
+from typing import Dict
 from mcp import ClientSession
 import aiohttp
 import uuid
 import os
-from conftest import DEFAULT_GRAFANA_URL
+from conftest import models, DEFAULT_GRAFANA_URL
+from utils import assert_mcp_eval, run_llm_tool_loop
 
-from conftest import models
-from utils import (
-    assert_llm_output_passes,
-    get_converted_tools,
-    llm_tool_call_sequence,
-)
 
 pytestmark = pytest.mark.anyio
 
@@ -72,62 +72,57 @@ async def grafana_team():
 
 @pytest.mark.parametrize("model", models)
 @pytest.mark.flaky(max_runs=3)
-async def test_list_teams_tool(
-    model: str, mcp_client: ClientSession, grafana_team: Dict[str, str]
+async def test_list_users_by_org(
+    model: str,
+    mcp_client: ClientSession,
+    mcp_transport: str,
 ):
-    tools = await get_converted_tools(mcp_client)
-    team_name = grafana_team["name"]
-    prompt = "Can you list the teams in Grafana?"
-
-    messages = [
-        Message(role="system", content="You are a helpful assistant."),
-        Message(role="user", content=prompt),
-    ]
-
-    # 1. Call the list teams tool
-    messages = await llm_tool_call_sequence(
-        model,
-        messages,
-        tools,
-        mcp_client,
-        "list_teams",
+    prompt = (
+        "List all users in the current Grafana organization: I need the full list of "
+        "organization members with their userid, email, and role."
+    )
+    final_content, tools_called, mcp_server = await run_llm_tool_loop(
+        model, mcp_client, mcp_transport, prompt
     )
 
-    # 2. Final LLM response
-    response = await acompletion(model=model, messages=messages, tools=tools)
-    content = response.choices[0].message.content
-    assert_llm_output_passes(
+    assert_mcp_eval(
         prompt,
-        content,
-        (
-            "Does the response contain specific information about "
-            "the teams in Grafana? "
-            f"There should be a team named {team_name}."
-        ),
+        final_content,
+        tools_called,
+        mcp_server,
+        "Does the response contain specific information about organization users "
+        "in Grafana, such as usernames, emails, or roles?",
+        expected_tools="list_users_by_org",
     )
 
 
 @pytest.mark.parametrize("model", models)
 @pytest.mark.flaky(max_runs=3)
-async def test_list_users_by_org_tool(model: str, mcp_client: ClientSession):
-    tools = await get_converted_tools(mcp_client)
-    prompt = "Can you list the users in Grafana?"
-
-    messages = [
-        Message(role="system", content="You are a helpful assistant."),
-        Message(role="user", content=prompt),
-    ]
-
-    # 1. Call the list_users_by_org tool
-    messages = await llm_tool_call_sequence(
-        model, messages, tools, mcp_client, "list_users_by_org"
+async def test_list_teams(
+    model: str,
+    mcp_client: ClientSession,
+    mcp_transport: str,
+    grafana_team: Dict[str, str],
+):
+    """
+    Test list_teams using DeepEval MCP evaluation.
+    Asserts list_teams was called, evaluates tool usage (MCPUseMetric) and output quality (GEval).
+    """
+    team_name = grafana_team["name"]
+    prompt = "Can you list the teams in Grafana?"
+    final_content, tools_called, mcp_server = await run_llm_tool_loop(
+        model, mcp_client, mcp_transport, prompt
     )
 
-    # 2. Final LLM response
-    response = await acompletion(model=model, messages=messages, tools=tools)
-    content = response.choices[0].message.content
-    assert_llm_output_passes(
+    assert_mcp_eval(
         prompt,
-        content,
-        "Does the response contain specific information about users in Grafana, such as usernames, emails, or roles?",
+        final_content,
+        tools_called,
+        mcp_server,
+        (
+            "Does the response contain specific information about "
+            "the teams in Grafana? "
+            f"There should be a team named {team_name}."
+        ),
+        expected_tools="list_teams",
     )
