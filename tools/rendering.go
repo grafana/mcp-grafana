@@ -180,19 +180,14 @@ func buildRenderURL(baseURL string, args GetPanelImageParams) (string, error) {
 }
 
 func createHTTPClient(config mcpgrafana.GrafanaConfig) (*http.Client, error) {
-	client := &http.Client{}
-
-	if config.TLSConfig != nil {
-		tlsConfig, err := config.TLSConfig.CreateTLSConfig()
-		if err != nil {
-			return nil, err
-		}
-		client.Transport = &http.Transport{
-			TLSClientConfig: tlsConfig,
-		}
+	transport, err := mcpgrafana.BuildTransport(&config, nil)
+	if err != nil {
+		return nil, err
 	}
+	transport = mcpgrafana.NewOrgIDRoundTripper(transport, config.OrgID)
+	transport = mcpgrafana.NewUserAgentTransport(transport)
 
-	return client, nil
+	return &http.Client{Transport: transport}, nil
 }
 
 var GetPanelImage = mcpgrafana.MustTool(
