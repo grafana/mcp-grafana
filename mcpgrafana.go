@@ -36,8 +36,9 @@ const (
 	grafanaUsernameEnvVar = "GRAFANA_USERNAME"
 	grafanaPasswordEnvVar = "GRAFANA_PASSWORD"
 
-	grafanaURLHeader    = "X-Grafana-URL"
-	grafanaAPIKeyHeader = "X-Grafana-API-Key"
+	grafanaURLHeader                    = "X-Grafana-URL"
+	grafanaServiceAccountTokenHeader    = "X-Grafana-Service-Account-Token"
+	grafanaAPIKeyHeader                 = "X-Grafana-API-Key" // Deprecated: use X-Grafana-Service-Account-Token instead
 )
 
 func urlAndAPIKeyFromEnv() (string, string) {
@@ -98,7 +99,15 @@ func orgIdFromHeaders(req *http.Request) int64 {
 
 func urlAndAPIKeyFromHeaders(req *http.Request) (string, string) {
 	u := strings.TrimRight(req.Header.Get(grafanaURLHeader), "/")
-	apiKey := req.Header.Get(grafanaAPIKeyHeader)
+	
+	// Check for the new service account token header first
+	apiKey := req.Header.Get(grafanaServiceAccountTokenHeader)
+	if apiKey != "" {
+		return u, apiKey
+	}
+	
+	// Fall back to the deprecated API key header
+	apiKey = req.Header.Get(grafanaAPIKeyHeader)
 	return u, apiKey
 }
 
