@@ -50,6 +50,13 @@
           "format": "string",
           "isSecret": false,
           "name": "GRAFANA_ORG_ID"
+        },
+        {
+          "description": "JSON object of additional HTTP headers to send with all Grafana API requests",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": false,
+          "name": "GRAFANA_EXTRA_HEADERS"
         }
       ]
     }

@@ -3,7 +3,6 @@ package tools
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"regexp"
 	"strings"
 	"time"
@@ -40,13 +39,9 @@ func promClientFromContext(ctx context.Context, uid string) (promv1.API, error) 
 	url := fmt.Sprintf("%s/api/datasources/uid/%s/resources", strings.TrimRight(cfg.URL, "/"), uid)
 
 	// Create custom transport with TLS configuration if available
-	rt := api.DefaultRoundTripper
-	if tlsConfig := cfg.TLSConfig; tlsConfig != nil {
-		customTransport, err := tlsConfig.HTTPTransport(rt.(*http.Transport))
-		if err != nil {
-			return nil, fmt.Errorf("failed to create custom transport: %w", err)
-		}
-		rt = customTransport
+	rt, err := mcpgrafana.BuildTransport(&cfg, api.DefaultRoundTripper)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create custom transport: %w", err)
 	}
 
 	if cfg.AccessToken != "" && cfg.IDToken != "" {
