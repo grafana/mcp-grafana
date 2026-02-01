@@ -110,9 +110,11 @@ func oncallClientFromContext(ctx context.Context) (*aapi.Client, error) {
 					if httpClient.Transport == nil {
 						httpClient.Transport = http.DefaultTransport
 					}
-					httpClient.Transport = mcpgrafana.NewUserAgentTransport(
-						httpClient.Transport,
-					)
+					transport := httpClient.Transport
+					if len(cfg.ExtraHeaders) > 0 {
+						transport = mcpgrafana.NewExtraHeadersRoundTripper(transport, cfg.ExtraHeaders)
+					}
+					httpClient.Transport = mcpgrafana.NewUserAgentTransport(transport)
 				}
 			}
 		}
