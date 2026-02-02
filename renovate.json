@@ -13,5 +13,12 @@
     ],
     "prConcurrentLimit": 5,
     "minimumReleaseAge": "14 days",
-    "rebaseWhen": "behind-base-branch"
+    "rebaseWhen": "behind-base-branch",
+    "packageRules": [
+        {
+            "description": "Group all GitHub Actions updates together",
+            "matchManagers": ["github-actions"],
+            "groupName": "github-actions"
+        }
+    ]
 }
