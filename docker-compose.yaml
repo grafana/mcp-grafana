@@ -14,7 +14,7 @@ services:
       - ./testdata/dashboards:/var/lib/grafana/dashboards
 
   renderer:
-    image: grafana/grafana-image-renderer:latest
+    image: grafana/grafana-image-renderer:latest@sha256:a3e58eb1fe07482c96d5a7e19eda1c1f272732f29b4d7d20c11a73c889efaed2
     ports:
       - 8081
 
