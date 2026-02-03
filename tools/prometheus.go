@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"math"
 	"net/http"
 	"regexp"
 	"strings"
@@ -427,9 +428,158 @@ var ListPrometheusLabelValues = mcpgrafana.MustTool(
 	mcp.WithReadOnlyHintAnnotation(true),
 )
 
+// PrometheusHistogramResult wraps histogram query results with debugging info
+type PrometheusHistogramResult struct {
+	Result model.Value `json:"result"`
+	Query  string      `json:"query"` // Generated PromQL for debugging
+	Hints  []string    `json:"hints,omitempty"`
+}
+
+// QueryPrometheusHistogramParams defines the parameters for querying histogram percentiles
+type QueryPrometheusHistogramParams struct {
+	DatasourceUID string  `json:"datasourceUid" jsonschema:"required,description=The UID of the Prometheus datasource"`
+	Metric        string  `json:"metric" jsonschema:"required,description=Base histogram metric name (without _bucket suffix)"`
+	Percentile    float64 `json:"percentile" jsonschema:"required,description=Percentile to calculate (e.g. 50\\, 90\\, 95\\, 99)"`
+	Labels        string  `json:"labels,omitempty" jsonschema:"description=Label selector (e.g. job=\"api\"\\, service=\"gateway\")"`
+	RateInterval  string  `json:"rateInterval,omitempty" jsonschema:"description=Rate interval for the query (default: 5m)"`
+	StartTime     string  `json:"startTime,omitempty" jsonschema:"description=Start time (default: now-1h). Supports RFC3339\\, relative (now-1h)\\, or Unix ms."`
+	EndTime       string  `json:"endTime,omitempty" jsonschema:"description=End time (default: now). Supports RFC3339\\, relative\\, or Unix ms."`
+	StepSeconds   int     `json:"stepSeconds,omitempty" jsonschema:"description=Step size in seconds for range query (default: 60)"`
+}
+
+// queryPrometheusHistogram generates and executes a histogram percentile query
+func queryPrometheusHistogram(ctx context.Context, args QueryPrometheusHistogramParams) (*PrometheusHistogramResult, error) {
+	// Set defaults
+	rateInterval := args.RateInterval
+	if rateInterval == "" {
+		rateInterval = "5m"
+	}
+
+	startTime := args.StartTime
+	if startTime == "" {
+		startTime = "now-1h"
+	}
+
+	endTime := args.EndTime
+	if endTime == "" {
+		endTime = "now"
+	}
+
+	stepSeconds := args.StepSeconds
+	if stepSeconds == 0 {
+		stepSeconds = 60
+	}
+
+	// Convert percentile to quantile (e.g., 95 -> 0.95)
+	quantile := args.Percentile / 100.0
+
+	// Build the label selector
+	labelSelector := ""
+	if args.Labels != "" {
+		labelSelector = args.Labels
+	}
+
+	// Build the PromQL expression for histogram_quantile
+	// histogram_quantile(0.95, sum(rate(metric_bucket{labels}[5m])) by (le))
+	var expr string
+	if labelSelector != "" {
+		expr = fmt.Sprintf(
+			"histogram_quantile(%g, sum(rate(%s_bucket{%s}[%s])) by (le))",
+			quantile, args.Metric, labelSelector, rateInterval,
+		)
+	} else {
+		expr = fmt.Sprintf(
+			"histogram_quantile(%g, sum(rate(%s_bucket[%s])) by (le))",
+			quantile, args.Metric, rateInterval,
+		)
+	}
+
+	// Execute the query using the existing queryPrometheus function
+	result, err := queryPrometheus(ctx, QueryPrometheusParams{
+		DatasourceUID: args.DatasourceUID,
+		Expr:          expr,
+		StartTime:     startTime,
+		EndTime:       endTime,
+		StepSeconds:   stepSeconds,
+		QueryType:     "range",
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// Generate hints if result is empty or contains NaN
+	var hints []string
+	if isPrometheusResultEmptyOrNaN(result) {
+		hints = []string{
+			"No data found or result is NaN. Possible reasons:",
+			"- Histogram metric may not exist - use list_prometheus_metric_names with regex='.*_bucket$'",
+			"- Label selector may not match any series - verify labels with list_prometheus_label_values",
+			"- Time range may have no data - try extending with startTime",
+			"- Metric may not be a histogram (missing _bucket suffix)",
+		}
+	}
+
+	return &PrometheusHistogramResult{
+		Result: result,
+		Query:  expr,
+		Hints:  hints,
+	}, nil
+}
+
+// isPrometheusResultEmptyOrNaN checks if a Prometheus result is empty or contains only NaN values
+func isPrometheusResultEmptyOrNaN(v model.Value) bool {
+	switch val := v.(type) {
+	case model.Matrix:
+		if len(val) == 0 {
+			return true
+		}
+		// Check if all values are NaN
+		allNaN := true
+		for _, ss := range val {
+			for _, sp := range ss.Values {
+				if !math.IsNaN(float64(sp.Value)) {
+					allNaN = false
+					break
+				}
+			}
+			if !allNaN {
+				break
+			}
+		}
+		return allNaN
+	case model.Vector:
+		if len(val) == 0 {
+			return true
+		}
+		// Check if all values are NaN
+		for _, s := range val {
+			if !math.IsNaN(float64(s.Value)) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+// QueryPrometheusHistogram is a tool for querying histogram percentiles
+var QueryPrometheusHistogram = mcpgrafana.MustTool(
+	"query_prometheus_histogram",
+	`Query Prometheus histogram percentiles. DISCOVER FIRST: Use list_prometheus_metric_names with regex='.*_bucket$' to find histograms.
+
+Generates histogram_quantile PromQL. Example: metric='http_duration', percentile=95, labels='job="api"'
+
+Time formats: 'now-1h', '2026-02-02T19:00:00Z', '1738519200000' (Unix ms)`,
+	queryPrometheusHistogram,
+	mcp.WithTitleAnnotation("Query Prometheus histogram percentile"),
+	mcp.WithIdempotentHintAnnotation(true),
+	mcp.WithReadOnlyHintAnnotation(true),
+)
+
 func AddPrometheusTools(mcp *server.MCPServer) {
 	ListPrometheusMetricMetadata.Register(mcp)
 	QueryPrometheus.Register(mcp)
+	QueryPrometheusHistogram.Register(mcp)
 	ListPrometheusMetricNames.Register(mcp)
 	ListPrometheusLabelNames.Register(mcp)
 	ListPrometheusLabelValues.Register(mcp)
