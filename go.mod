@@ -16,7 +16,7 @@ require (
 	github.com/grafana/pyroscope/api v1.2.0
 	github.com/invopop/jsonschema v0.13.0
 	github.com/mark3labs/mcp-go v0.43.2
-	github.com/prometheus/alertmanager v0.30.0
+	github.com/prometheus/alertmanager v0.30.1
 	github.com/prometheus/client_golang v1.23.2
 	github.com/prometheus/common v0.67.5
 	github.com/prometheus/prometheus v0.309.1
