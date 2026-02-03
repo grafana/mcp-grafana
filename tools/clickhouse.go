@@ -48,7 +48,7 @@ type ClickHouseQueryResult struct {
 	Rows           []map[string]interface{} `json:"rows"`
 	RowCount       int                      `json:"rowCount"`
 	ProcessedQuery string                   `json:"processedQuery,omitempty"`
-	Hints          []string                 `json:"hints,omitempty"`
+	Hints          *EmptyResultHints        `json:"hints,omitempty"`
 }
 
 // clickHouseQueryResponse represents the raw API response from Grafana's /api/ds/query
@@ -304,18 +304,6 @@ func enforceClickHouseLimit(query string, requestedLimit int) string {
 	return fmt.Sprintf("%s LIMIT %d", query, limit)
 }
 
-// generateClickHouseEmptyResultHints generates helpful hints when a ClickHouse query returns no data
-func generateClickHouseEmptyResultHints() []string {
-	return []string{
-		"No data found. Possible reasons:",
-		"- Table may not exist - use list_clickhouse_tables to discover available tables",
-		"- Column names may be incorrect - use describe_clickhouse_table to check schema",
-		"- WHERE clause may be too restrictive - try removing some conditions",
-		"- Time filter may not match any rows - verify the timestamp column name and format",
-		"- Database name may be wrong - check the database parameter",
-	}
-}
-
 // queryClickHouse executes a ClickHouse query via Grafana
 func queryClickHouse(ctx context.Context, args ClickHouseQueryParams) (*ClickHouseQueryResult, error) {
 	client, err := newClickHouseClient(ctx, args.DatasourceUID)
@@ -410,7 +398,13 @@ func queryClickHouse(ctx context.Context, args ClickHouseQueryParams) (*ClickHou
 
 	// Add hints if no data was found
 	if result.RowCount == 0 {
-		result.Hints = generateClickHouseEmptyResultHints()
+		result.Hints = GenerateEmptyResultHints(HintContext{
+			DatasourceType: "clickhouse",
+			Query:          args.Query,
+			ProcessedQuery: processedQuery,
+			StartTime:      fromTime,
+			EndTime:        toTime,
+		})
 	}
 
 	return result, nil

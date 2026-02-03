@@ -532,26 +532,30 @@ func TestClickHouseQueryResult_Hints(t *testing.T) {
 		Columns:  []string{"id", "name"},
 		Rows:     []map[string]interface{}{},
 		RowCount: 0,
-		Hints: []string{
-			"No data found",
-			"Try a different query",
+		Hints: &EmptyResultHints{
+			Summary:          "No data found",
+			PossibleCauses:   []string{"Table may not exist"},
+			SuggestedActions: []string{"Try a different query"},
 		},
 	}
 
-	assert.Len(t, result.Hints, 2)
-	assert.Equal(t, "No data found", result.Hints[0])
+	assert.NotNil(t, result.Hints)
+	assert.Equal(t, "No data found", result.Hints.Summary)
 	assert.Equal(t, 0, result.RowCount)
 }
 
 func TestGenerateClickHouseEmptyResultHints(t *testing.T) {
-	hints := generateClickHouseEmptyResultHints()
+	hints := GenerateEmptyResultHints(HintContext{
+		DatasourceType: "clickhouse",
+		Query:          "SELECT * FROM test",
+	})
 
-	assert.NotEmpty(t, hints)
-	assert.Contains(t, hints[0], "No data found")
+	assert.NotNil(t, hints)
+	assert.Contains(t, hints.Summary, "ClickHouse")
 	// Verify helpful suggestions are included
 	found := false
-	for _, hint := range hints {
-		if strings.Contains(hint, "list_clickhouse_tables") {
+	for _, action := range hints.SuggestedActions {
+		if strings.Contains(action, "list_clickhouse_tables") {
 			found = true
 			break
 		}
