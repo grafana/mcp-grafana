@@ -46,7 +46,7 @@ jobs:
           fi
 
       - name: Build and Push to Docker Hub
-        uses: grafana/shared-workflows/actions/build-push-to-dockerhub@051f0a1cef0e1ef9f92fbe57c65b1eec029c3904
+        uses: grafana/shared-workflows/actions/build-push-to-dockerhub@ac5193564bb463032623a9a0ba23716f866f309c
         with:
           context: .
           file: ./Dockerfile
@@ -66,7 +66,7 @@ jobs:
       id-token: write
     steps:
       - name: Checkout code
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           fetch-depth: 0
 

@@ -52,7 +52,7 @@ jobs:
             OPENAI_API_KEY=openai:api-key
 
       - name: Start docker-compose services
-        uses: hoverkraft-tech/compose-action@bb5664383c049fdd7cda33425c2364acdccd8c02
+        uses: hoverkraft-tech/compose-action@b160464f2ea59d4c7be918e457514639ad7c7f9f
         with:
           compose-file: "docker-compose.yaml"
 
