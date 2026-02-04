@@ -35,7 +35,7 @@ type CloudWatchQueryParams struct {
 	Period        int               `json:"period,omitempty" jsonschema:"description=Period in seconds (default: 300)"`
 	Start         string            `json:"start,omitempty" jsonschema:"description=Start time. Formats: 'now-1h'\\, '2026-02-02T19:00:00Z'\\, '1738519200000' (Unix ms). Default: now-1h"`
 	End           string            `json:"end,omitempty" jsonschema:"description=End time. Formats: 'now'\\, '2026-02-02T20:00:00Z'\\, '1738522800000' (Unix ms). Default: now"`
-	Region        string            `json:"region,omitempty" jsonschema:"description=AWS region (e.g. us-east-1). Uses datasource default if not specified."`
+	Region        string            `json:"region" jsonschema:"required,description=AWS region (e.g. us-east-1)"`
 }
 
 // CloudWatchQueryResult represents the result of a CloudWatch query
@@ -393,7 +393,7 @@ func generateCloudWatchEmptyResultHints() []string {
 // QueryCloudWatch is a tool for querying CloudWatch datasources via Grafana
 var QueryCloudWatch = mcpgrafana.MustTool(
 	"query_cloudwatch",
-	`Query AWS CloudWatch metrics via Grafana.
+	`Query AWS CloudWatch metrics via Grafana. Requires region.
 
 REQUIRED FIRST: Use list_cloudwatch_namespaces -> list_cloudwatch_metrics -> list_cloudwatch_dimensions -> then query.
 
@@ -411,7 +411,7 @@ Example dimensions: ECS: {ClusterName, ServiceName}, EC2: {InstanceId}`,
 // ListCloudWatchNamespacesParams defines the parameters for listing CloudWatch namespaces
 type ListCloudWatchNamespacesParams struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the CloudWatch datasource"`
-	Region        string `json:"region,omitempty" jsonschema:"description=AWS region (uses datasource default if not specified)"`
+	Region        string `json:"region" jsonschema:"required,description=AWS region (e.g. us-east-1)"`
 }
 
 // cloudWatchResourceItem represents an item returned by CloudWatch resource APIs
@@ -500,7 +500,7 @@ func listCloudWatchNamespaces(ctx context.Context, args ListCloudWatchNamespaces
 // ListCloudWatchNamespaces is a tool for listing CloudWatch namespaces
 var ListCloudWatchNamespaces = mcpgrafana.MustTool(
 	"list_cloudwatch_namespaces",
-	"START HERE for CloudWatch: List available namespaces (AWS/EC2, AWS/ECS, AWS/RDS, etc.). NEXT: Use list_cloudwatch_metrics with a namespace.",
+	"START HERE for CloudWatch: List available namespaces (AWS/EC2, AWS/ECS, AWS/RDS, etc.). Requires region. NEXT: Use list_cloudwatch_metrics with a namespace.",
 	listCloudWatchNamespaces,
 	mcp.WithTitleAnnotation("List CloudWatch namespaces"),
 	mcp.WithIdempotentHintAnnotation(true),

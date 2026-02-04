@@ -16,6 +16,7 @@ func TestCloudWatchIntegration_ListNamespaces(t *testing.T) {
 
 	result, err := listCloudWatchNamespaces(ctx, ListCloudWatchNamespacesParams{
 		DatasourceUID: cloudwatchTestDatasourceUID,
+		Region:        "us-east-1",
 	})
 
 	require.NoError(t, err)
@@ -66,6 +67,7 @@ func TestCloudWatchIntegration_QueryMetrics(t *testing.T) {
 		Statistic:     "Average",
 		Start:         "now-1h",
 		End:           "now",
+		Region:        "us-east-1",
 	})
 
 	require.NoError(t, err)
@@ -84,6 +86,7 @@ func TestCloudWatchIntegration_QueryEmptyResult(t *testing.T) {
 		Statistic:     "Average",
 		Start:         "now-1h",
 		End:           "now",
+		Region:        "us-east-1",
 	})
 
 	require.NoError(t, err)
@@ -101,6 +104,7 @@ func TestCloudWatchIntegration_InvalidDatasource(t *testing.T) {
 		DatasourceUID: "nonexistent-datasource",
 		Namespace:     "AWS/EC2",
 		MetricName:    "CPUUtilization",
+		Region:        "us-east-1",
 	})
 
 	require.Error(t, err, "Should error with invalid datasource")
@@ -114,6 +118,7 @@ func TestCloudWatchIntegration_WrongDatasourceType(t *testing.T) {
 		DatasourceUID: "prometheus",
 		Namespace:     "AWS/EC2",
 		MetricName:    "CPUUtilization",
+		Region:        "us-east-1",
 	})
 
 	require.Error(t, err, "Should error with wrong datasource type")
