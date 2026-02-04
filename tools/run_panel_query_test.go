@@ -234,7 +234,7 @@ func TestExtractPanelInfo(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			info, err := extractPanelInfo(tt.panel)
+			info, err := extractPanelInfo(tt.panel, 0) // queryIndex=0 for first query
 			if tt.wantErr {
 				assert.Error(t, err)
 				if tt.errContains != "" {

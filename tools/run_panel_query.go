@@ -17,6 +17,7 @@ import (
 type RunPanelQueryParams struct {
 	DashboardUID string            `json:"dashboardUid" jsonschema:"required,description=Dashboard UID"`
 	PanelID      int               `json:"panelId" jsonschema:"required,description=Panel ID to execute"`
+	QueryIndex   *int              `json:"queryIndex,omitempty" jsonschema:"description=Index of the query to execute (0-based). Defaults to 0 (first query). Use get_dashboard_panel_queries to see all queries in a panel."`
 	Start        string            `json:"start" jsonschema:"description=Override start time (e.g. 'now-1h'\\, RFC3339\\, Unix ms)"`
 	End          string            `json:"end" jsonschema:"description=Override end time (e.g. 'now'\\, RFC3339\\, Unix ms)"`
 	Variables    map[string]string `json:"variables" jsonschema:"description=Override dashboard variables (e.g. {\"job\": \"api-server\"})"`
@@ -69,7 +70,11 @@ func runPanelQuery(ctx context.Context, args RunPanelQueryParams) (*RunPanelQuer
 	}
 
 	// Step 3: Extract query and datasource info from the panel
-	panelData, err := extractPanelInfo(panel)
+	queryIndex := 0
+	if args.QueryIndex != nil {
+		queryIndex = *args.QueryIndex
+	}
+	panelData, err := extractPanelInfo(panel, queryIndex)
 	if err != nil {
 		return nil, fmt.Errorf("extracting panel info: %w", err)
 	}
@@ -191,7 +196,7 @@ func findPanelByID(db map[string]interface{}, panelID int) (map[string]interface
 }
 
 // extractPanelInfo extracts query and datasource information from a panel
-func extractPanelInfo(panel map[string]interface{}) (*panelInfo, error) {
+func extractPanelInfo(panel map[string]interface{}, queryIndex int) (*panelInfo, error) {
 	info := &panelInfo{
 		ID:    safeInt(panel, "id"),
 		Title: safeString(panel, "title"),
@@ -209,8 +214,13 @@ func extractPanelInfo(panel map[string]interface{}) (*panelInfo, error) {
 		return nil, fmt.Errorf("panel has no query targets")
 	}
 
-	// Get the first target
-	target, ok := targets[0].(map[string]interface{})
+	// Bounds check for queryIndex
+	if queryIndex < 0 || queryIndex >= len(targets) {
+		return nil, fmt.Errorf("queryIndex %d out of range (panel has %d queries, valid range: 0-%d)", queryIndex, len(targets), len(targets)-1)
+	}
+
+	// Get the target at the specified index
+	target, ok := targets[queryIndex].(map[string]interface{})
 	if !ok {
 		return nil, fmt.Errorf("invalid target format")
 	}
