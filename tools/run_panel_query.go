@@ -85,12 +85,12 @@ func runPanelQuery(ctx context.Context, args RunPanelQueryParams) (*RunPanelQuer
 	datasourceUID := panelData.DatasourceUID
 	datasourceType := panelData.DatasourceType
 
-	if strings.HasPrefix(datasourceUID, "$") {
-		varName := strings.TrimPrefix(datasourceUID, "$")
+	if isVariableReference(datasourceUID) {
+		varName := extractVariableName(datasourceUID)
 		if resolvedUID, ok := variables[varName]; ok {
 			datasourceUID = resolvedUID
 		} else {
-			return nil, fmt.Errorf("datasource variable '%s' not found or not resolvable", varName)
+			return nil, fmt.Errorf("datasource variable '%s' not found in dashboard variables. Available variables: %v", datasourceUID, getVariableNames(variables))
 		}
 	}
 
@@ -124,8 +124,12 @@ func runPanelQuery(ctx context.Context, args RunPanelQueryParams) (*RunPanelQuer
 		results, err = executePrometheusQuery(ctx, datasourceUID, query, start, end)
 	case strings.Contains(strings.ToLower(datasourceType), "loki"):
 		results, err = executeLokiQuery(ctx, datasourceUID, query, start, end)
+	case strings.Contains(strings.ToLower(datasourceType), "clickhouse"):
+		// ClickHouse support requires PR #535 (ClickHouse tools) to be merged first
+		// For now, return a helpful error directing users to query_clickhouse
+		return nil, fmt.Errorf("ClickHouse panels are not yet supported by run_panel_query; use query_clickhouse directly with the query: %s", query)
 	default:
-		return nil, fmt.Errorf("datasource type '%s' is not supported by run_panel_query; use the native query tool (e.g. query_prometheus\\, query_loki_logs) directly", datasourceType)
+		return nil, fmt.Errorf("datasource type '%s' is not supported by run_panel_query; use the native query tool (e.g. query_prometheus\\, query_loki_logs\\, query_clickhouse) directly", datasourceType)
 	}
 
 	if err != nil {
@@ -213,13 +217,10 @@ func extractPanelInfo(panel map[string]interface{}) (*panelInfo, error) {
 	}
 
 	// Try to get query expression - different datasources use different field names
-	// Prometheus uses "expr", Loki uses "expr", some use "query"
-	query := safeString(target, "expr")
+	// Prometheus/Loki use "expr", some use "query", ClickHouse uses "rawSql", etc.
+	query := extractQueryExpression(target)
 	if query == "" {
-		query = safeString(target, "query")
-	}
-	if query == "" {
-		return nil, fmt.Errorf("could not extract query from panel target")
+		return nil, fmt.Errorf("could not extract query from panel target (checked: expr, query, expression, rawSql, rawQuery)")
 	}
 	info.Query = query
 
@@ -337,6 +338,48 @@ func executeLokiQuery(ctx context.Context, datasourceUID, query, start, end stri
 		Direction:     "backward",
 		QueryType:     "range",
 	})
+}
+
+// isVariableReference checks if a string is a Grafana variable reference
+// Supports: $varname, ${varname}, [[varname]]
+func isVariableReference(s string) bool {
+	return strings.HasPrefix(s, "$") || strings.HasPrefix(s, "[[")
+}
+
+// extractVariableName extracts the variable name from different reference formats
+// $varname -> varname, ${varname} -> varname, [[varname]] -> varname
+func extractVariableName(s string) string {
+	if strings.HasPrefix(s, "${") && strings.HasSuffix(s, "}") {
+		return s[2 : len(s)-1]
+	}
+	if strings.HasPrefix(s, "[[") && strings.HasSuffix(s, "]]") {
+		return s[2 : len(s)-2]
+	}
+	if strings.HasPrefix(s, "$") {
+		return strings.TrimPrefix(s, "$")
+	}
+	return s
+}
+
+// getVariableNames returns a list of variable names from a map
+func getVariableNames(vars map[string]string) []string {
+	names := make([]string, 0, len(vars))
+	for k := range vars {
+		names = append(names, k)
+	}
+	return names
+}
+
+// extractQueryExpression tries multiple field names to extract the query expression
+func extractQueryExpression(target map[string]any) string {
+	// Check fields in order of priority - different datasources use different field names
+	queryFields := []string{"expr", "query", "expression", "rawSql", "rawQuery"}
+	for _, field := range queryFields {
+		if q := safeString(target, field); q != "" {
+			return q
+		}
+	}
+	return ""
 }
 
 // RunPanelQuery is the tool definition for running a panel's query

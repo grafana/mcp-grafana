@@ -482,3 +482,111 @@ func TestQueryTimeRange(t *testing.T) {
 	assert.Equal(t, "2024-01-01T00:00:00Z", tr.Start)
 	assert.Equal(t, "2024-01-01T01:00:00Z", tr.End)
 }
+
+func TestIsVariableReference(t *testing.T) {
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		{"$datasource", true},
+		{"${datasource}", true},
+		{"[[datasource]]", true},
+		{"prometheus-uid", false},
+		{"", false},
+		{"abc$def", false}, // $ not at start
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := isVariableReference(tt.input)
+			assert.Equal(t, tt.want, got, "isVariableReference(%q)", tt.input)
+		})
+	}
+}
+
+func TestExtractVariableName(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"$datasource", "datasource"},
+		{"${datasource}", "datasource"},
+		{"[[datasource]]", "datasource"},
+		{"$ds", "ds"},
+		{"${ds}", "ds"},
+		{"[[ds]]", "ds"},
+		{"prometheus-uid", "prometheus-uid"}, // Not a variable, returns as-is
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := extractVariableName(tt.input)
+			assert.Equal(t, tt.want, got, "extractVariableName(%q)", tt.input)
+		})
+	}
+}
+
+func TestGetVariableNames(t *testing.T) {
+	vars := map[string]string{
+		"job":       "api-server",
+		"namespace": "production",
+		"instance":  "localhost:9090",
+	}
+
+	names := getVariableNames(vars)
+	assert.Len(t, names, 3)
+	assert.Contains(t, names, "job")
+	assert.Contains(t, names, "namespace")
+	assert.Contains(t, names, "instance")
+}
+
+func TestExtractQueryExpression(t *testing.T) {
+	tests := []struct {
+		name   string
+		target map[string]any
+		want   string
+	}{
+		{
+			name:   "expr field (Prometheus/Loki)",
+			target: map[string]any{"expr": "rate(http_requests_total[5m])"},
+			want:   "rate(http_requests_total[5m])",
+		},
+		{
+			name:   "query field (generic)",
+			target: map[string]any{"query": "SELECT * FROM logs"},
+			want:   "SELECT * FROM logs",
+		},
+		{
+			name:   "expression field",
+			target: map[string]any{"expression": "some_expression"},
+			want:   "some_expression",
+		},
+		{
+			name:   "rawSql field (ClickHouse)",
+			target: map[string]any{"rawSql": "SELECT * FROM otel_logs WHERE $__timeFilter(Timestamp)"},
+			want:   "SELECT * FROM otel_logs WHERE $__timeFilter(Timestamp)",
+		},
+		{
+			name:   "rawQuery field",
+			target: map[string]any{"rawQuery": "raw query text"},
+			want:   "raw query text",
+		},
+		{
+			name:   "priority order - expr takes precedence",
+			target: map[string]any{"expr": "up", "query": "down", "rawSql": "other"},
+			want:   "up",
+		},
+		{
+			name:   "no query fields",
+			target: map[string]any{"refId": "A", "datasource": "prometheus"},
+			want:   "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractQueryExpression(tt.target)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
