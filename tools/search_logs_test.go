@@ -263,12 +263,14 @@ func TestGenerateClickHouseLogQuery(t *testing.T) {
 		name     string
 		pattern  string
 		limit    int
+		useRegex bool
 		contains []string // Substrings that must be present
 	}{
 		{
-			name:    "simple text query",
-			pattern: "error",
-			limit:   100,
+			name:     "simple text query",
+			pattern:  "error",
+			limit:    100,
+			useRegex: false,
 			contains: []string{
 				"SELECT",
 				"Timestamp",
@@ -281,27 +283,50 @@ func TestGenerateClickHouseLogQuery(t *testing.T) {
 			},
 		},
 		{
-			name:    "pattern with special SQL chars",
-			pattern: "it's an error",
-			limit:   50,
+			name:     "pattern with special SQL chars",
+			pattern:  "it's an error",
+			limit:    50,
+			useRegex: false,
 			contains: []string{
 				"ILIKE '%it''s an error%'",
 				"LIMIT 50",
 			},
 		},
 		{
-			name:    "pattern with ILIKE special chars",
-			pattern: "100% done",
-			limit:   100,
+			name:     "pattern with ILIKE special chars",
+			pattern:  "100% done",
+			limit:    100,
+			useRegex: false,
 			contains: []string{
 				`ILIKE '%100\% done%'`,
+			},
+		},
+		{
+			name:     "regex pattern with match()",
+			pattern:  "timeout|connection.*refused",
+			limit:    100,
+			useRegex: true,
+			contains: []string{
+				"match(Body, 'timeout|connection.*refused')",
+				"$__timeFilter(Timestamp)",
+				"LIMIT 100",
+			},
+		},
+		{
+			name:     "regex pattern with single quotes",
+			pattern:  "it's.*error",
+			limit:    50,
+			useRegex: true,
+			contains: []string{
+				"match(Body, 'it''s.*error')",
+				"LIMIT 50",
 			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := generateClickHouseLogQuery(tt.pattern, tt.limit)
+			result := generateClickHouseLogQuery(tt.pattern, tt.limit, tt.useRegex)
 			for _, substr := range tt.contains {
 				assert.Contains(t, result, substr)
 			}

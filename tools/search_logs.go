@@ -101,12 +101,21 @@ func generateLokiQuery(pattern string) string {
 
 // generateClickHouseLogQuery generates a SQL query for searching logs in ClickHouse
 // This function assumes OpenTelemetry log table structure (otel_logs)
-func generateClickHouseLogQuery(pattern string, limit int) string {
-	escapedPattern := escapeClickHousePattern(pattern)
-	// Use ILIKE for case-insensitive matching
+// When useRegex is true, uses ClickHouse match() function for regex patterns
+func generateClickHouseLogQuery(pattern string, limit int, useRegex bool) string {
+	var whereClause string
+	if useRegex {
+		// Use ClickHouse's match() function for regex - escape single quotes for SQL
+		escapedPattern := strings.ReplaceAll(pattern, `'`, `''`)
+		whereClause = fmt.Sprintf("match(Body, '%s')", escapedPattern)
+	} else {
+		// Use ILIKE for case-insensitive substring matching
+		escapedPattern := escapeClickHousePattern(pattern)
+		whereClause = fmt.Sprintf("Body ILIKE '%%%s%%'", escapedPattern)
+	}
 	return fmt.Sprintf(
-		`SELECT Timestamp, Body, ServiceName, SeverityText, ResourceAttributes, LogAttributes FROM otel_logs WHERE Body ILIKE '%%%s%%' AND $__timeFilter(Timestamp) ORDER BY Timestamp DESC LIMIT %d`,
-		escapedPattern, limit,
+		`SELECT Timestamp, Body, ServiceName, SeverityText, ResourceAttributes, LogAttributes FROM otel_logs WHERE %s AND $__timeFilter(Timestamp) ORDER BY Timestamp DESC LIMIT %d`,
+		whereClause, limit,
 	)
 }
 
@@ -171,7 +180,9 @@ func searchLogsInLoki(ctx context.Context, args SearchLogsParams, limit int, sta
 
 // searchLogsInClickHouse searches logs in a ClickHouse datasource
 func searchLogsInClickHouse(ctx context.Context, args SearchLogsParams, limit int) (*SearchLogsResult, error) {
-	query := generateClickHouseLogQuery(args.Pattern, limit)
+	// Detect if pattern contains regex metacharacters
+	useRegex := isRegexPattern(args.Pattern)
+	query := generateClickHouseLogQuery(args.Pattern, limit, useRegex)
 
 	// Query ClickHouse using existing infrastructure
 	chResult, err := queryClickHouse(ctx, ClickHouseQueryParams{
