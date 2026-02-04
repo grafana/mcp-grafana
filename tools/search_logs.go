@@ -27,6 +27,7 @@ const (
 type SearchLogsParams struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of a ClickHouse or Loki datasource"`
 	Pattern       string `json:"pattern" jsonschema:"required,description=Text pattern or regex to search for in log messages"`
+	Table         string `json:"table,omitempty" jsonschema:"description=Table name for ClickHouse queries (default: 'otel_logs'). Use list_clickhouse_tables to discover available tables. Ignored for Loki."`
 	Start         string `json:"start,omitempty" jsonschema:"description=Start time (e.g. 'now-1h'\\, '2026-02-02T19:00:00Z'\\, Unix ms). Defaults to 'now-1h'"`
 	End           string `json:"end,omitempty" jsonschema:"description=End time (e.g. 'now'\\, RFC3339\\, Unix ms). Defaults to 'now'"`
 	Limit         int    `json:"limit,omitempty" jsonschema:"default=100,description=Maximum number of log entries to return (max 1000)"`
@@ -100,9 +101,12 @@ func generateLokiQuery(pattern string) string {
 }
 
 // generateClickHouseLogQuery generates a SQL query for searching logs in ClickHouse
-// This function assumes OpenTelemetry log table structure (otel_logs)
+// This function assumes OpenTelemetry log table structure by default
 // When useRegex is true, uses ClickHouse match() function for regex patterns
-func generateClickHouseLogQuery(pattern string, limit int, useRegex bool) string {
+func generateClickHouseLogQuery(table, pattern string, limit int, useRegex bool) string {
+	if table == "" {
+		table = "otel_logs"
+	}
 	var whereClause string
 	if useRegex {
 		// Use ClickHouse's match() function for regex - escape single quotes for SQL
@@ -114,8 +118,8 @@ func generateClickHouseLogQuery(pattern string, limit int, useRegex bool) string
 		whereClause = fmt.Sprintf("Body ILIKE '%%%s%%'", escapedPattern)
 	}
 	return fmt.Sprintf(
-		`SELECT Timestamp, Body, ServiceName, SeverityText, ResourceAttributes, LogAttributes FROM otel_logs WHERE %s AND $__timeFilter(Timestamp) ORDER BY Timestamp DESC LIMIT %d`,
-		whereClause, limit,
+		`SELECT Timestamp, Body, ServiceName, SeverityText, ResourceAttributes, LogAttributes FROM %s WHERE %s AND $__timeFilter(Timestamp) ORDER BY Timestamp DESC LIMIT %d`,
+		table, whereClause, limit,
 	)
 }
 
@@ -182,7 +186,7 @@ func searchLogsInLoki(ctx context.Context, args SearchLogsParams, limit int, sta
 func searchLogsInClickHouse(ctx context.Context, args SearchLogsParams, limit int) (*SearchLogsResult, error) {
 	// Detect if pattern contains regex metacharacters
 	useRegex := isRegexPattern(args.Pattern)
-	query := generateClickHouseLogQuery(args.Pattern, limit, useRegex)
+	query := generateClickHouseLogQuery(args.Table, args.Pattern, limit, useRegex)
 
 	// Query ClickHouse using existing infrastructure
 	chResult, err := queryClickHouse(ctx, ClickHouseQueryParams{

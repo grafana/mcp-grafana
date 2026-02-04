@@ -326,7 +326,7 @@ func TestGenerateClickHouseLogQuery(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := generateClickHouseLogQuery(tt.pattern, tt.limit, tt.useRegex)
+			result := generateClickHouseLogQuery("", tt.pattern, tt.limit, tt.useRegex) // empty table = default otel_logs
 			for _, substr := range tt.contains {
 				assert.Contains(t, result, substr)
 			}
