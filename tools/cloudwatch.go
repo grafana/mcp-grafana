@@ -511,7 +511,7 @@ var ListCloudWatchNamespaces = mcpgrafana.MustTool(
 type ListCloudWatchMetricsParams struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the CloudWatch datasource"`
 	Namespace     string `json:"namespace" jsonschema:"required,description=CloudWatch namespace (e.g. AWS/ECS\\, AWS/EC2)"`
-	Region        string `json:"region,omitempty" jsonschema:"description=AWS region (uses datasource default if not specified)"`
+	Region        string `json:"region" jsonschema:"required,description=AWS region (e.g. us-east-1)"`
 }
 
 // listCloudWatchMetrics lists available metrics for a CloudWatch namespace
@@ -556,7 +556,7 @@ func listCloudWatchMetrics(ctx context.Context, args ListCloudWatchMetricsParams
 // ListCloudWatchMetrics is a tool for listing CloudWatch metrics
 var ListCloudWatchMetrics = mcpgrafana.MustTool(
 	"list_cloudwatch_metrics",
-	"List metrics for a CloudWatch namespace. Use after list_cloudwatch_namespaces. NEXT: Use list_cloudwatch_dimensions, then query_cloudwatch.",
+	"List metrics for a CloudWatch namespace. Requires region. Use after list_cloudwatch_namespaces. NEXT: Use list_cloudwatch_dimensions\\, then query_cloudwatch.",
 	listCloudWatchMetrics,
 	mcp.WithTitleAnnotation("List CloudWatch metrics"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -568,7 +568,7 @@ type ListCloudWatchDimensionsParams struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the CloudWatch datasource"`
 	Namespace     string `json:"namespace" jsonschema:"required,description=CloudWatch namespace (e.g. AWS/ECS)"`
 	MetricName    string `json:"metricName" jsonschema:"required,description=Metric name (e.g. CPUUtilization)"`
-	Region        string `json:"region,omitempty" jsonschema:"description=AWS region (uses datasource default if not specified)"`
+	Region        string `json:"region" jsonschema:"required,description=AWS region (e.g. us-east-1)"`
 }
 
 // listCloudWatchDimensions lists available dimension keys for a CloudWatch metric
@@ -613,7 +613,7 @@ func listCloudWatchDimensions(ctx context.Context, args ListCloudWatchDimensions
 // ListCloudWatchDimensions is a tool for listing CloudWatch dimension keys
 var ListCloudWatchDimensions = mcpgrafana.MustTool(
 	"list_cloudwatch_dimensions",
-	"List dimension keys for a CloudWatch metric. Use after list_cloudwatch_metrics. NEXT: Use query_cloudwatch with discovered dimensions.",
+	"List dimension keys for a CloudWatch metric. Requires region. Use after list_cloudwatch_metrics. NEXT: Use query_cloudwatch with discovered dimensions.",
 	listCloudWatchDimensions,
 	mcp.WithTitleAnnotation("List CloudWatch dimensions"),
 	mcp.WithIdempotentHintAnnotation(true),
