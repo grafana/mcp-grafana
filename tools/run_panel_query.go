@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -125,9 +126,7 @@ func runPanelQuery(ctx context.Context, args RunPanelQueryParams) (*RunPanelQuer
 	case strings.Contains(strings.ToLower(datasourceType), "loki"):
 		results, err = executeLokiQuery(ctx, datasourceUID, query, start, end)
 	case strings.Contains(strings.ToLower(datasourceType), "clickhouse"):
-		// ClickHouse support requires PR #535 (ClickHouse tools) to be merged first
-		// For now, return a helpful error directing users to query_clickhouse
-		return nil, fmt.Errorf("ClickHouse panels are not yet supported by run_panel_query; use query_clickhouse directly with the query: %s", query)
+		results, err = executeClickHouseQuery(ctx, datasourceUID, query, start, end, variables)
 	default:
 		return nil, fmt.Errorf("datasource type '%s' is not supported by run_panel_query; use the native query tool (e.g. query_prometheus\\, query_loki_logs\\, query_clickhouse) directly", datasourceType)
 	}
@@ -307,6 +306,19 @@ func substituteVariables(query string, variables map[string]string) string {
 
 // executePrometheusQuery runs a Prometheus query using the existing queryPrometheus function
 func executePrometheusQuery(ctx context.Context, datasourceUID, query, start, end string) (model.Value, error) {
+	// Parse time range for macro substitution
+	startTime, err := parseTime(start)
+	if err != nil {
+		return nil, fmt.Errorf("parsing start time: %w", err)
+	}
+	endTime, err := parseTime(end)
+	if err != nil {
+		return nil, fmt.Errorf("parsing end time: %w", err)
+	}
+
+	// Substitute Prometheus macros ($__range, $__rate_interval, $__interval)
+	query = substitutePrometheusMacros(query, startTime, endTime)
+
 	return queryPrometheus(ctx, QueryPrometheusParams{
 		DatasourceUID: datasourceUID,
 		Expr:          query,
@@ -338,6 +350,68 @@ func executeLokiQuery(ctx context.Context, datasourceUID, query, start, end stri
 		Direction:     "backward",
 		QueryType:     "range",
 	})
+}
+
+// executeClickHouseQuery runs a ClickHouse query using the existing queryClickHouse function
+// NOTE: Do NOT substitute macros here - queryClickHouse() handles them internally
+// via substituteClickHouseMacros() which properly handles $__timeFilter(column),
+// $__from, $__to, $__interval, $__interval_ms
+func executeClickHouseQuery(ctx context.Context, datasourceUID, query, start, end string, variables map[string]string) (*ClickHouseQueryResult, error) {
+	return queryClickHouse(ctx, ClickHouseQueryParams{
+		DatasourceUID: datasourceUID,
+		Query:         query,
+		Start:         start,
+		End:           end,
+		Variables:     variables,
+	})
+}
+
+// substitutePrometheusMacros substitutes Grafana temporal macros for Prometheus queries
+// Handles: $__range, $__rate_interval, $__interval, $__interval_ms, ${__interval}
+func substitutePrometheusMacros(query string, start, end time.Time) string {
+	duration := end.Sub(start)
+
+	// $__range - total time range as duration string (e.g., "14m", "1h30m")
+	rangeStr := formatPrometheusDuration(duration)
+	query = strings.ReplaceAll(query, "$__range", rangeStr)
+
+	// $__rate_interval - typically scrape_interval * 4, default to "1m"
+	// This is a reasonable default for most Prometheus setups
+	query = strings.ReplaceAll(query, "$__rate_interval", "1m")
+
+	// Calculate interval based on time range / max data points (~100 points)
+	interval := duration / 100
+	if interval < time.Second {
+		interval = time.Second
+	}
+
+	// IMPORTANT: Substitute $__interval_ms BEFORE $__interval to avoid partial replacement
+	// ($__interval is a substring of $__interval_ms)
+	intervalMs := int64(interval / time.Millisecond)
+	query = strings.ReplaceAll(query, "$__interval_ms", fmt.Sprintf("%d", intervalMs))
+
+	// $__interval - duration string
+	intervalStr := formatPrometheusDuration(interval)
+	query = strings.ReplaceAll(query, "${__interval}", intervalStr)
+	query = strings.ReplaceAll(query, "$__interval", intervalStr)
+
+	return query
+}
+
+// formatPrometheusDuration formats a duration for Prometheus (e.g., "14m", "1h30m", "36s")
+func formatPrometheusDuration(d time.Duration) string {
+	if d < time.Minute {
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	}
+	hours := int(d.Hours())
+	mins := int(d.Minutes()) % 60
+	if mins == 0 {
+		return fmt.Sprintf("%dh", hours)
+	}
+	return fmt.Sprintf("%dh%dm", hours, mins)
 }
 
 // isVariableReference checks if a string is a Grafana variable reference
@@ -385,7 +459,7 @@ func extractQueryExpression(target map[string]any) string {
 // RunPanelQuery is the tool definition for running a panel's query
 var RunPanelQuery = mcpgrafana.MustTool(
 	"run_panel_query",
-	"Executes a dashboard panel's query with optional time range and variable overrides. Fetches the dashboard\\, extracts the query from the specified panel\\, substitutes template variables\\, and routes to the appropriate datasource (Prometheus or Loki). Returns query results in the datasource's native format. Use get_dashboard_summary first to find panel IDs.",
+	"Executes a dashboard panel's query with optional time range and variable overrides. Fetches the dashboard\\, extracts the query from the specified panel\\, substitutes template variables and Grafana macros ($__range\\, $__rate_interval\\, $__interval)\\, and routes to the appropriate datasource (Prometheus\\, Loki\\, or ClickHouse). Returns query results in the datasource's native format. Use get_dashboard_summary first to find panel IDs.",
 	runPanelQuery,
 	mcp.WithTitleAnnotation("Run panel query"),
 	mcp.WithIdempotentHintAnnotation(true),

@@ -4,6 +4,7 @@ package tools
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -587,6 +588,108 @@ func TestExtractQueryExpression(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got := extractQueryExpression(tt.target)
 			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestSubstitutePrometheusMacros(t *testing.T) {
+	tests := []struct {
+		name     string
+		query    string
+		duration time.Duration
+		expected string
+	}{
+		{
+			name:     "range_14_minutes",
+			query:    "increase(requests[$__range])",
+			duration: 14 * time.Minute,
+			expected: "increase(requests[14m])",
+		},
+		{
+			name:     "range_1_hour",
+			query:    "increase(requests[$__range])",
+			duration: time.Hour,
+			expected: "increase(requests[1h])",
+		},
+		{
+			name:     "range_90_minutes",
+			query:    "increase(requests[$__range])",
+			duration: 90 * time.Minute,
+			expected: "increase(requests[1h30m])",
+		},
+		{
+			name:     "rate_interval",
+			query:    "rate(requests[$__rate_interval])",
+			duration: time.Hour,
+			expected: "rate(requests[1m])",
+		},
+		{
+			name:     "interval_1_hour",
+			query:    "rate(requests[$__interval])",
+			duration: time.Hour,
+			expected: "rate(requests[36s])", // 3600/100 = 36s
+		},
+		{
+			name:     "interval_braced",
+			query:    "rate(requests[${__interval}])",
+			duration: time.Hour,
+			expected: "rate(requests[36s])",
+		},
+		{
+			name:     "interval_ms",
+			query:    "timestamp(up) - $__interval_ms",
+			duration: time.Hour,
+			expected: "timestamp(up) - 36000", // 36s = 36000ms
+		},
+		{
+			name:     "multiple_macros",
+			query:    "increase(x[$__range]) / rate(y[$__rate_interval])",
+			duration: 30 * time.Minute,
+			expected: "increase(x[30m]) / rate(y[1m])",
+		},
+		{
+			name:     "no_macros",
+			query:    "up{job='api'}",
+			duration: time.Hour,
+			expected: "up{job='api'}",
+		},
+		{
+			name:     "short_duration_floor_to_1s",
+			query:    "rate(x[$__interval])",
+			duration: 30 * time.Second, // 30s/100 = 0.3s, floors to 1s
+			expected: "rate(x[1s])",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			start := time.Now()
+			end := start.Add(tt.duration)
+			result := substitutePrometheusMacros(tt.query, start, end)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestFormatPrometheusDuration(t *testing.T) {
+	tests := []struct {
+		name     string
+		duration time.Duration
+		expected string
+	}{
+		{"seconds", 45 * time.Second, "45s"},
+		{"one_minute", time.Minute, "1m"},
+		{"minutes", 14 * time.Minute, "14m"},
+		{"one_hour", time.Hour, "1h"},
+		{"hours_only", 3 * time.Hour, "3h"},
+		{"hours_and_minutes", 90 * time.Minute, "1h30m"},
+		{"complex", 2*time.Hour + 15*time.Minute, "2h15m"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := formatPrometheusDuration(tt.duration)
+			assert.Equal(t, tt.expected, result)
 		})
 	}
 }
