@@ -159,7 +159,9 @@ func isPrometheusResultEmpty(result model.Value) bool {
 	}
 }
 
-func queryPrometheus(ctx context.Context, args QueryPrometheusParams) (*QueryPrometheusResult, error) {
+// queryPrometheus executes a PromQL query and returns raw results.
+// This is the internal function - use queryPrometheusWithHints for MCP tools.
+func queryPrometheus(ctx context.Context, args QueryPrometheusParams) (model.Value, error) {
 	promClient, err := promClientFromContext(ctx, args.DatasourceUID)
 	if err != nil {
 		return nil, fmt.Errorf("getting Prometheus client: %w", err)
@@ -177,7 +179,6 @@ func queryPrometheus(ctx context.Context, args QueryPrometheusParams) (*QueryPro
 	}
 
 	var result model.Value
-	var endTime time.Time
 
 	switch queryType {
 	case "range":
@@ -185,7 +186,7 @@ func queryPrometheus(ctx context.Context, args QueryPrometheusParams) (*QueryPro
 			return nil, fmt.Errorf("stepSeconds must be provided when queryType is 'range'")
 		}
 
-		endTime, err = parseTime(args.EndTime)
+		endTime, err := parseTime(args.EndTime)
 		if err != nil {
 			return nil, fmt.Errorf("parsing end time: %w", err)
 		}
@@ -200,7 +201,6 @@ func queryPrometheus(ctx context.Context, args QueryPrometheusParams) (*QueryPro
 			return nil, fmt.Errorf("querying Prometheus range: %w", err)
 		}
 	case "instant":
-		endTime = startTime // For instant queries, end time is the same as start time
 		result, _, err = promClient.Query(ctx, args.Expr, startTime)
 		if err != nil {
 			return nil, fmt.Errorf("querying Prometheus instant: %w", err)
@@ -209,13 +209,25 @@ func queryPrometheus(ctx context.Context, args QueryPrometheusParams) (*QueryPro
 		return nil, fmt.Errorf("invalid query type: %s", queryType)
 	}
 
-	// Build the response
+	return result, nil
+}
+
+// queryPrometheusWithHints wraps queryPrometheus and adds hints for empty results.
+// This is the MCP tool handler - hints are added at this layer, not in the internal function.
+func queryPrometheusWithHints(ctx context.Context, args QueryPrometheusParams) (*QueryPrometheusResult, error) {
+	result, err := queryPrometheus(ctx, args)
+	if err != nil {
+		return nil, err
+	}
+
 	response := &QueryPrometheusResult{
 		Data: result,
 	}
 
 	// Add hints if the result is empty
 	if isPrometheusResultEmpty(result) {
+		startTime, _ := parseTime(args.StartTime)
+		endTime, _ := parseTime(args.EndTime)
 		response.Hints = GenerateEmptyResultHints(HintContext{
 			DatasourceType: "prometheus",
 			Query:          args.Expr,
@@ -230,7 +242,7 @@ func queryPrometheus(ctx context.Context, args QueryPrometheusParams) (*QueryPro
 var QueryPrometheus = mcpgrafana.MustTool(
 	"query_prometheus",
 	"Query Prometheus using a PromQL expression. Supports both instant queries (at a single point in time) and range queries (over a time range). Time can be specified either in RFC3339 format or as relative time expressions like 'now', 'now-1h', 'now-30m', etc.",
-	queryPrometheus,
+	queryPrometheusWithHints,
 	mcp.WithTitleAnnotation("Query Prometheus metrics"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
