@@ -8,4 +8,4 @@ rules:
   # trusted code from main) has write permissions.
   dangerous-triggers:
     ignore:
-      - workflows/token-comment.yml
+      - token-comment.yml
