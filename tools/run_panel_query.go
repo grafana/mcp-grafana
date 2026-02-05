@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/grafana/grafana-openapi-client-go/client/datasources"
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -17,12 +19,14 @@ import (
 
 // RunPanelQueryParams defines parameters for running a panel's query
 type RunPanelQueryParams struct {
-	DashboardUID string            `json:"dashboardUid" jsonschema:"required,description=Dashboard UID"`
-	PanelID      int               `json:"panelId" jsonschema:"required,description=Panel ID to execute"`
-	QueryIndex   *int              `json:"queryIndex,omitempty" jsonschema:"description=Index of the query to execute (0-based). Defaults to 0 (first query). Use get_dashboard_panel_queries to see all queries in a panel."`
-	Start        string            `json:"start" jsonschema:"description=Override start time (e.g. 'now-1h'\\, RFC3339\\, Unix ms)"`
-	End          string            `json:"end" jsonschema:"description=Override end time (e.g. 'now'\\, RFC3339\\, Unix ms)"`
-	Variables    map[string]string `json:"variables" jsonschema:"description=Override dashboard variables (e.g. {\"job\": \"api-server\"})"`
+	DashboardUID   string            `json:"dashboardUid" jsonschema:"required,description=Dashboard UID"`
+	PanelID        int               `json:"panelId" jsonschema:"required,description=Panel ID to execute"`
+	QueryIndex     *int              `json:"queryIndex,omitempty" jsonschema:"description=Index of the query to execute (0-based). Defaults to 0 (first query). Use get_dashboard_panel_queries to see all queries in a panel."`
+	Start          string            `json:"start" jsonschema:"description=Override start time (e.g. 'now-1h'\\, RFC3339\\, Unix ms)"`
+	End            string            `json:"end" jsonschema:"description=Override end time (e.g. 'now'\\, RFC3339\\, Unix ms)"`
+	Variables      map[string]string `json:"variables" jsonschema:"description=Override dashboard variables (e.g. {\"job\": \"api-server\"})"`
+	DatasourceUID  string            `json:"datasourceUid,omitempty" jsonschema:"description=Override datasource UID. Use when panel uses a template variable datasource you cannot access."`
+	DatasourceType string            `json:"datasourceType,omitempty" jsonschema:"description=Override datasource type (prometheus\\, loki\\, grafana-clickhouse-datasource\\, cloudwatch). Recommended when datasourceUid is provided to skip permission lookup."`
 }
 
 // QueryTimeRange represents the actual time range used for a panel query
@@ -91,24 +95,44 @@ func runPanelQuery(ctx context.Context, args RunPanelQueryParams) (*RunPanelQuer
 		variables[name] = value
 	}
 
-	// Step 6: Resolve datasource UID if it's a variable reference
+	// Step 6: Resolve datasource UID and type
 	datasourceUID := panelData.DatasourceUID
 	datasourceType := panelData.DatasourceType
 
-	if isVariableReference(datasourceUID) {
+	// Apply explicit datasource overrides (highest priority)
+	if args.DatasourceUID != "" {
+		datasourceUID = args.DatasourceUID
+		if args.DatasourceType != "" {
+			datasourceType = args.DatasourceType
+		}
+		// Note: if datasourceType not provided, we'll try to look it up below
+	} else if isVariableReference(datasourceUID) {
+		// Resolve variable reference only if no explicit override
 		varName := extractVariableName(datasourceUID)
 		if resolvedUID, ok := variables[varName]; ok {
 			datasourceUID = resolvedUID
 		} else {
-			return nil, fmt.Errorf("datasource variable '%s' not found in dashboard variables. Available variables: %v", datasourceUID, getVariableNames(variables))
+			return nil, fmt.Errorf("datasource variable '%s' not found in dashboard variables. Available variables: %v. Hint: Use 'datasourceUid' and 'datasourceType' parameters to override", datasourceUID, getVariableNames(variables))
 		}
 	}
+	// Note: datasourceType without datasourceUID is ignored (type without UID is meaningless)
 
-	// If we don't have the datasource type, look it up
+	// If we still need the datasource type, look it up with type-safe error handling
 	if datasourceType == "" && datasourceUID != "" {
 		ds, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: datasourceUID})
 		if err != nil {
-			return nil, fmt.Errorf("fetching datasource info: %w", err)
+			// Type-safe error checking using OpenAPI client types
+			var forbiddenErr *datasources.GetDataSourceByUIDForbidden
+			var notFoundErr *datasources.GetDataSourceByUIDNotFound
+
+			switch {
+			case errors.As(err, &forbiddenErr):
+				return nil, fmt.Errorf("permission denied for datasource '%s'. Hint: Provide both 'datasourceUid' and 'datasourceType' parameters to bypass permission check", datasourceUID)
+			case errors.As(err, &notFoundErr):
+				return nil, fmt.Errorf("datasource '%s' not found. Hint: Use list_datasources to find available datasources", datasourceUID)
+			default:
+				return nil, fmt.Errorf("fetching datasource info: %w", err)
+			}
 		}
 		datasourceType = ds.Type
 	}
@@ -315,7 +339,7 @@ func executeLokiQuery(ctx context.Context, datasourceUID, query, start, end stri
 		return nil, fmt.Errorf("parsing end time: %w", err)
 	}
 
-	result, err := queryLokiLogs(ctx, QueryLokiLogsParams{
+	return queryLokiLogs(ctx, QueryLokiLogsParams{
 		DatasourceUID: datasourceUID,
 		LogQL:         query,
 		StartRFC3339:  startTime.Format("2006-01-02T15:04:05Z07:00"),
@@ -324,10 +348,6 @@ func executeLokiQuery(ctx context.Context, datasourceUID, query, start, end stri
 		Direction:     "backward",
 		QueryType:     "range",
 	})
-	if err != nil {
-		return nil, err
-	}
-	return result.Data, nil
 }
 
 // executeClickHouseQuery runs a ClickHouse query using the existing queryClickHouse function
@@ -643,7 +663,7 @@ func truncateString(s string, maxLen int) string {
 // RunPanelQuery is the tool definition for running a panel's query
 var RunPanelQuery = mcpgrafana.MustTool(
 	"run_panel_query",
-	"Executes a dashboard panel's query with optional time range and variable overrides. Fetches the dashboard\\, extracts the query from the specified panel\\, substitutes template variables and Grafana macros ($__range\\, $__rate_interval\\, $__interval)\\, and routes to the appropriate datasource (Prometheus\\, Loki\\, ClickHouse\\, or CloudWatch). Returns query results in the datasource's native format. Use get_dashboard_summary first to find panel IDs. Note: CloudWatch math expression panels are not supported - use query_cloudwatch directly for the underlying metrics.",
+	"Executes a dashboard panel's query with optional time range and variable overrides. Fetches the dashboard\\, extracts the query from the specified panel\\, substitutes template variables and Grafana macros ($__range\\, $__rate_interval\\, $__interval)\\, and routes to the appropriate datasource (Prometheus\\, Loki\\, ClickHouse\\, or CloudWatch). Returns query results in the datasource's native format. Use get_dashboard_summary first to find panel IDs. If panel uses a template variable datasource you cannot access\\, provide datasourceUid and datasourceType to override. Note: CloudWatch math expression panels are not supported - use query_cloudwatch directly for the underlying metrics.",
 	runPanelQuery,
 	mcp.WithTitleAnnotation("Run panel query"),
 	mcp.WithIdempotentHintAnnotation(true),

@@ -23,11 +23,11 @@ type ClickHouseQueryParams struct {
 
 // ClickHouseQueryResult stub - actual implementation in PR #535
 type ClickHouseQueryResult struct {
-	Columns        []string        `json:"columns"`
-	Rows           [][]interface{} `json:"rows"`
-	RowCount       int             `json:"rowCount"`
-	ProcessedQuery string          `json:"processedQuery,omitempty"`
-	Hints          []string        `json:"hints,omitempty"`
+	Columns        []string                 `json:"columns"`
+	Rows           []map[string]interface{} `json:"rows"`
+	RowCount       int                      `json:"rowCount"`
+	ProcessedQuery string                   `json:"processedQuery,omitempty"`
+	Hints          []string                 `json:"hints,omitempty"`
 }
 
 // queryClickHouse stub - returns error until PR #535 is merged
