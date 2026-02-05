@@ -181,7 +181,7 @@ func (c *cloudWatchClient) query(ctx context.Context, args CloudWatchQueryParams
 	if err != nil {
 		return nil, fmt.Errorf("executing request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
@@ -285,11 +285,12 @@ func queryCloudWatch(ctx context.Context, args CloudWatchQueryParams) (*CloudWat
 		// Process frames
 		for _, frame := range r.Frames {
 			// Find time and value columns
-			var timeColIdx, valueColIdx int = -1, -1
+			var timeColIdx, valueColIdx = -1, -1
 			for i, field := range frame.Schema.Fields {
-				if field.Type == "time" {
+				switch field.Type {
+				case "time":
 					timeColIdx = i
-				} else if field.Type == "number" {
+				case "number":
 					valueColIdx = i
 					// Update label if available from field config
 					if field.Config != nil {
@@ -481,7 +482,7 @@ func listCloudWatchNamespaces(ctx context.Context, args ListCloudWatchNamespaces
 	if err != nil {
 		return nil, fmt.Errorf("executing request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
@@ -537,7 +538,7 @@ func listCloudWatchMetrics(ctx context.Context, args ListCloudWatchMetricsParams
 	if err != nil {
 		return nil, fmt.Errorf("executing request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
@@ -594,7 +595,7 @@ func listCloudWatchDimensions(ctx context.Context, args ListCloudWatchDimensions
 	if err != nil {
 		return nil, fmt.Errorf("executing request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
