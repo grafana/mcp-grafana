@@ -1,9 +1,11 @@
 package tools
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
-	"regexp"
+	"net/http"
 	"strings"
 	"time"
 
@@ -39,6 +41,7 @@ type RunPanelQueryResult struct {
 	Query          string         `json:"query"`     // The query that was executed
 	TimeRange      QueryTimeRange `json:"timeRange"` // Actual time range used
 	Results        interface{}    `json:"results"`   // Results in datasource-native format
+	Hints          []string       `json:"hints,omitempty"` // Hints when results are empty
 }
 
 // panelInfo contains extracted information about a panel
@@ -48,6 +51,7 @@ type panelInfo struct {
 	DatasourceUID  string
 	DatasourceType string
 	Query          string
+	RawTarget      map[string]interface{} // For CloudWatch and other complex query types
 }
 
 // runPanelQuery executes a dashboard panel's query with optional time range and variable overrides
@@ -132,12 +136,20 @@ func runPanelQuery(ctx context.Context, args RunPanelQueryParams) (*RunPanelQuer
 		results, err = executeLokiQuery(ctx, datasourceUID, query, start, end)
 	case strings.Contains(strings.ToLower(datasourceType), "clickhouse"):
 		results, err = executeClickHouseQuery(ctx, datasourceUID, query, start, end, variables)
+	case strings.Contains(strings.ToLower(datasourceType), "cloudwatch"):
+		results, err = executeCloudWatchPanelQuery(ctx, datasourceUID, panelData, start, end, variables)
 	default:
-		return nil, fmt.Errorf("datasource type '%s' is not supported by run_panel_query; use the native query tool (e.g. query_prometheus\\, query_loki_logs\\, query_clickhouse) directly", datasourceType)
+		return nil, fmt.Errorf("datasource type '%s' is not supported by run_panel_query; use the native query tool (e.g. query_prometheus\\, query_loki_logs\\, query_clickhouse\\, query_cloudwatch) directly", datasourceType)
 	}
 
 	if err != nil {
 		return nil, fmt.Errorf("executing query: %w", err)
+	}
+
+	// Check for empty results and generate hints
+	var hints []string
+	if isEmptyPanelResult(results) {
+		hints = generatePanelQueryHints(datasourceType, query, start, end)
 	}
 
 	return &RunPanelQueryResult{
@@ -152,48 +164,10 @@ func runPanelQuery(ctx context.Context, args RunPanelQueryParams) (*RunPanelQuer
 			End:   end,
 		},
 		Results: results,
+		Hints:   hints,
 	}, nil
 }
 
-// findPanelByID searches for a panel by ID, including nested panels in rows
-func findPanelByID(db map[string]interface{}, panelID int) (map[string]interface{}, error) {
-	panels, ok := db["panels"].([]interface{})
-	if !ok {
-		return nil, fmt.Errorf("dashboard has no panels")
-	}
-
-	// Search top-level panels
-	for _, p := range panels {
-		panel, ok := p.(map[string]interface{})
-		if !ok {
-			continue
-		}
-
-		// Check if this panel matches
-		id := safeInt(panel, "id")
-		if id == panelID {
-			return panel, nil
-		}
-
-		// Check nested panels (for row panels)
-		panelType := safeString(panel, "type")
-		if panelType == "row" {
-			nestedPanels := safeArray(panel, "panels")
-			for _, np := range nestedPanels {
-				nestedPanel, ok := np.(map[string]interface{})
-				if !ok {
-					continue
-				}
-				nestedID := safeInt(nestedPanel, "id")
-				if nestedID == panelID {
-					return nestedPanel, nil
-				}
-			}
-		}
-	}
-
-	return nil, fmt.Errorf("panel with ID %d not found", panelID)
-}
 
 // extractPanelInfo extracts query and datasource information from a panel
 func extractPanelInfo(panel map[string]interface{}, queryIndex int) (*panelInfo, error) {
@@ -225,13 +199,8 @@ func extractPanelInfo(panel map[string]interface{}, queryIndex int) (*panelInfo,
 		return nil, fmt.Errorf("invalid target format")
 	}
 
-	// Try to get query expression - different datasources use different field names
-	// Prometheus/Loki use "expr", some use "query", ClickHouse uses "rawSql", etc.
-	query := extractQueryExpression(target)
-	if query == "" {
-		return nil, fmt.Errorf("could not extract query from panel target (checked: expr, query, expression, rawSql, rawQuery)")
-	}
-	info.Query = query
+	// Store raw target for CloudWatch and other complex query types
+	info.RawTarget = target
 
 	// If datasource not set at panel level, try target level
 	if info.DatasourceUID == "" {
@@ -244,6 +213,17 @@ func extractPanelInfo(panel map[string]interface{}, queryIndex int) (*panelInfo,
 	if info.DatasourceUID == "" {
 		return nil, fmt.Errorf("could not determine datasource for panel")
 	}
+
+	// Try to get query expression - different datasources use different field names
+	// Prometheus/Loki use "expr", some use "query", ClickHouse uses "rawSql", etc.
+	query := extractQueryExpression(target)
+
+	// CloudWatch panels use structured targets (namespace, metrics, dimensions) rather than string expressions
+	// Allow empty query for CloudWatch - we'll use the RawTarget instead
+	if query == "" && !strings.Contains(strings.ToLower(info.DatasourceType), "cloudwatch") {
+		return nil, fmt.Errorf("could not extract query from panel target (checked: expr, query, expression, rawSql, rawQuery)")
+	}
+	info.Query = query
 
 	return info, nil
 }
@@ -298,22 +278,6 @@ func extractTemplateVariables(db map[string]interface{}) map[string]string {
 	return variables
 }
 
-// substituteVariables replaces $varname and ${varname} patterns with actual values
-func substituteVariables(query string, variables map[string]string) string {
-	result := query
-
-	for name, value := range variables {
-		// Replace ${varname} pattern
-		result = strings.ReplaceAll(result, "${"+name+"}", value)
-		// Replace $varname pattern (word boundary aware)
-		// Use regex to avoid partial matches like $jobname when we want $job
-		pattern := regexp.MustCompile(`\$` + regexp.QuoteMeta(name) + `\b`)
-		result = pattern.ReplaceAllString(result, value)
-	}
-
-	return result
-}
-
 // executePrometheusQuery runs a Prometheus query using the existing queryPrometheus function
 func executePrometheusQuery(ctx context.Context, datasourceUID, query, start, end string) (model.Value, error) {
 	// Parse time range for macro substitution
@@ -351,7 +315,7 @@ func executeLokiQuery(ctx context.Context, datasourceUID, query, start, end stri
 		return nil, fmt.Errorf("parsing end time: %w", err)
 	}
 
-	return queryLokiLogs(ctx, QueryLokiLogsParams{
+	result, err := queryLokiLogs(ctx, QueryLokiLogsParams{
 		DatasourceUID: datasourceUID,
 		LogQL:         query,
 		StartRFC3339:  startTime.Format("2006-01-02T15:04:05Z07:00"),
@@ -360,6 +324,10 @@ func executeLokiQuery(ctx context.Context, datasourceUID, query, start, end stri
 		Direction:     "backward",
 		QueryType:     "range",
 	})
+	if err != nil {
+		return nil, err
+	}
+	return result.Data, nil
 }
 
 // executeClickHouseQuery runs a ClickHouse query using the existing queryClickHouse function
@@ -374,6 +342,149 @@ func executeClickHouseQuery(ctx context.Context, datasourceUID, query, start, en
 		End:           end,
 		Variables:     variables,
 	})
+}
+
+// executeCloudWatchPanelQuery runs a CloudWatch query using Grafana's /api/ds/query endpoint
+// CloudWatch panels have structured targets (namespace, metrics, dimensions) rather than string expressions
+func executeCloudWatchPanelQuery(ctx context.Context, datasourceUID string, panelData *panelInfo, start, end string, variables map[string]string) (interface{}, error) {
+	if panelData.RawTarget == nil {
+		return nil, fmt.Errorf("CloudWatch panel target not available")
+	}
+
+	// Check for math expression panels (type: __expr__ or expression)
+	// These require executing multiple queries which we don't support yet
+	if dsField := safeObject(panelData.RawTarget, "datasource"); dsField != nil {
+		if dsType := safeString(dsField, "type"); dsType == "__expr__" || dsType == "expression" {
+			return nil, fmt.Errorf("math expression panels require executing multiple queries; use query_cloudwatch directly for the underlying metrics")
+		}
+	}
+
+	// Parse time range
+	startTime, err := parseTime(start)
+	if err != nil {
+		return nil, fmt.Errorf("parsing start time: %w", err)
+	}
+	endTime, err := parseTime(end)
+	if err != nil {
+		return nil, fmt.Errorf("parsing end time: %w", err)
+	}
+
+	// Deep copy and substitute variables in target fields
+	target := substituteVariablesInMap(panelData.RawTarget, variables)
+
+	// Ensure datasource is set correctly
+	target["datasource"] = map[string]interface{}{"uid": datasourceUID, "type": "cloudwatch"}
+
+	// Ensure refId is set
+	if safeString(target, "refId") == "" {
+		target["refId"] = "A"
+	}
+
+	// Build /api/ds/query payload
+	payload := map[string]interface{}{
+		"queries": []map[string]interface{}{target},
+		"from":    fmt.Sprintf("%d", startTime.UnixMilli()),
+		"to":      fmt.Sprintf("%d", endTime.UnixMilli()),
+	}
+
+	return executeGrafanaDSQuery(ctx, payload)
+}
+
+// substituteVariablesInMap recursively substitutes variables in a map's string values
+func substituteVariablesInMap(target map[string]interface{}, variables map[string]string) map[string]interface{} {
+	result := make(map[string]interface{})
+	for k, v := range target {
+		switch val := v.(type) {
+		case string:
+			result[k] = substituteVariables(val, variables)
+		case map[string]interface{}:
+			result[k] = substituteVariablesInMap(val, variables)
+		case []interface{}:
+			result[k] = substituteVariablesInSlice(val, variables)
+		default:
+			result[k] = v
+		}
+	}
+	return result
+}
+
+// substituteVariablesInSlice recursively substitutes variables in a slice
+func substituteVariablesInSlice(slice []interface{}, variables map[string]string) []interface{} {
+	result := make([]interface{}, len(slice))
+	for i, v := range slice {
+		switch val := v.(type) {
+		case string:
+			result[i] = substituteVariables(val, variables)
+		case map[string]interface{}:
+			result[i] = substituteVariablesInMap(val, variables)
+		case []interface{}:
+			result[i] = substituteVariablesInSlice(val, variables)
+		default:
+			result[i] = v
+		}
+	}
+	return result
+}
+
+// executeGrafanaDSQuery executes a query through Grafana's /api/ds/query endpoint
+func executeGrafanaDSQuery(ctx context.Context, payload map[string]interface{}) (interface{}, error) {
+	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
+	baseURL := strings.TrimRight(cfg.URL, "/")
+
+	// Create custom transport with TLS configuration if available
+	var transport = http.DefaultTransport
+	if tlsConfig := cfg.TLSConfig; tlsConfig != nil {
+		var err error
+		transport, err = tlsConfig.HTTPTransport(transport.(*http.Transport))
+		if err != nil {
+			return nil, fmt.Errorf("failed to create custom transport: %w", err)
+		}
+	}
+
+	// Add authentication
+	transport = NewAuthRoundTripper(transport, cfg.AccessToken, cfg.IDToken, cfg.APIKey, cfg.BasicAuth)
+	transport = mcpgrafana.NewOrgIDRoundTripper(transport, cfg.OrgID)
+
+	client := &http.Client{
+		Transport: mcpgrafana.NewUserAgentTransport(transport),
+	}
+
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling query payload: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", baseURL+"/api/ds/query", bytes.NewReader(payloadBytes))
+	if err != nil {
+		return nil, fmt.Errorf("creating request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("executing query: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var result map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decoding response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		// Try to extract error message from response
+		if errMsg, ok := result["message"].(string); ok {
+			return nil, fmt.Errorf("query failed: %s", errMsg)
+		}
+		return nil, fmt.Errorf("query failed with status %d: %v", resp.StatusCode, result)
+	}
+
+	// Return the results from the response
+	if results, ok := result["results"].(map[string]interface{}); ok {
+		return results, nil
+	}
+
+	return result, nil
 }
 
 // substitutePrometheusMacros substitutes Grafana temporal macros for Prometheus queries
@@ -454,22 +565,85 @@ func getVariableNames(vars map[string]string) []string {
 	return names
 }
 
-// extractQueryExpression tries multiple field names to extract the query expression
-func extractQueryExpression(target map[string]any) string {
-	// Check fields in order of priority - different datasources use different field names
-	queryFields := []string{"expr", "query", "expression", "rawSql", "rawQuery"}
-	for _, field := range queryFields {
-		if q := safeString(target, field); q != "" {
-			return q
+// isEmptyPanelResult checks if the query result is empty
+func isEmptyPanelResult(results interface{}) bool {
+	if results == nil {
+		return true
+	}
+	switch v := results.(type) {
+	case []interface{}:
+		return len(v) == 0
+	case []LogEntry:
+		return len(v) == 0
+	case *ClickHouseQueryResult:
+		return v == nil || len(v.Rows) == 0
+	case model.Value:
+		switch m := v.(type) {
+		case model.Matrix:
+			return len(m) == 0
+		case model.Vector:
+			return len(m) == 0
 		}
 	}
-	return ""
+	return false
+}
+
+// generatePanelQueryHints generates helpful hints when panel query returns no data
+func generatePanelQueryHints(datasourceType, query, start, end string) []string {
+	hints := []string{"No data found for the panel query. Possible reasons:"}
+
+	// Add time range hint
+	hints = append(hints, "- Time range may have no data - try extending with start='now-6h' or start='now-24h'")
+
+	// Add datasource-specific hints
+	switch {
+	case strings.Contains(strings.ToLower(datasourceType), "prometheus"):
+		hints = append(hints,
+			"- Metric may not exist - use list_prometheus_metric_names to discover available metrics",
+			"- Label selectors may be too restrictive - try removing some filters",
+			"- Prometheus may not have scraped data for this time range",
+		)
+	case strings.Contains(strings.ToLower(datasourceType), "loki"):
+		hints = append(hints,
+			"- Log stream selectors may not match any streams - use list_loki_label_names to discover labels",
+			"- Pipeline filters may be filtering out all logs - try simplifying the query",
+			"- Use query_loki_stats to check if logs exist in this time range",
+		)
+	case strings.Contains(strings.ToLower(datasourceType), "clickhouse"):
+		hints = append(hints,
+			"- Table may be empty for this time range - use query_clickhouse with a COUNT(*) to verify",
+			"- Column names or WHERE clause may not match - use describe_clickhouse_table to check schema",
+			"- Time filter may not match the actual timestamp column format",
+		)
+	case strings.Contains(strings.ToLower(datasourceType), "cloudwatch"):
+		hints = append(hints,
+			"- Namespace or metric name may be incorrect - use list_cloudwatch_namespaces and list_cloudwatch_metrics to discover available options",
+			"- Dimension filters may not match any resources - use list_cloudwatch_dimensions to check available dimensions",
+			"- AWS region may be incorrect - verify the region setting in the datasource",
+			"- CloudWatch metrics may have longer retention periods than the selected time range",
+		)
+	}
+
+	// Add query-specific hint
+	if query != "" {
+		hints = append(hints, "- Query executed: "+truncateString(query, 100))
+	}
+
+	return hints
+}
+
+// truncateString truncates a string to maxLen and adds ellipsis if needed
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen-3] + "..."
 }
 
 // RunPanelQuery is the tool definition for running a panel's query
 var RunPanelQuery = mcpgrafana.MustTool(
 	"run_panel_query",
-	"Executes a dashboard panel's query with optional time range and variable overrides. Fetches the dashboard\\, extracts the query from the specified panel\\, substitutes template variables and Grafana macros ($__range\\, $__rate_interval\\, $__interval)\\, and routes to the appropriate datasource (Prometheus\\, Loki\\, or ClickHouse). Returns query results in the datasource's native format. Use get_dashboard_summary first to find panel IDs.",
+	"Executes a dashboard panel's query with optional time range and variable overrides. Fetches the dashboard\\, extracts the query from the specified panel\\, substitutes template variables and Grafana macros ($__range\\, $__rate_interval\\, $__interval)\\, and routes to the appropriate datasource (Prometheus\\, Loki\\, ClickHouse\\, or CloudWatch). Returns query results in the datasource's native format. Use get_dashboard_summary first to find panel IDs. Note: CloudWatch math expression panels are not supported - use query_cloudwatch directly for the underlying metrics.",
 	runPanelQuery,
 	mcp.WithTitleAnnotation("Run panel query"),
 	mcp.WithIdempotentHintAnnotation(true),

@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestFindPanelByID(t *testing.T) {
+func TestFindPanelByIDForRunPanelQuery(t *testing.T) {
 	tests := []struct {
 		name      string
 		dashboard map[string]interface{}
@@ -367,7 +367,7 @@ func TestExtractTemplateVariables(t *testing.T) {
 	}
 }
 
-func TestSubstituteVariables(t *testing.T) {
+func TestSubstituteVariablesForRunPanelQuery(t *testing.T) {
 	tests := []struct {
 		name      string
 		query     string
@@ -541,56 +541,7 @@ func TestGetVariableNames(t *testing.T) {
 	assert.Contains(t, names, "instance")
 }
 
-func TestExtractQueryExpression(t *testing.T) {
-	tests := []struct {
-		name   string
-		target map[string]any
-		want   string
-	}{
-		{
-			name:   "expr field (Prometheus/Loki)",
-			target: map[string]any{"expr": "rate(http_requests_total[5m])"},
-			want:   "rate(http_requests_total[5m])",
-		},
-		{
-			name:   "query field (generic)",
-			target: map[string]any{"query": "SELECT * FROM logs"},
-			want:   "SELECT * FROM logs",
-		},
-		{
-			name:   "expression field",
-			target: map[string]any{"expression": "some_expression"},
-			want:   "some_expression",
-		},
-		{
-			name:   "rawSql field (ClickHouse)",
-			target: map[string]any{"rawSql": "SELECT * FROM otel_logs WHERE $__timeFilter(Timestamp)"},
-			want:   "SELECT * FROM otel_logs WHERE $__timeFilter(Timestamp)",
-		},
-		{
-			name:   "rawQuery field",
-			target: map[string]any{"rawQuery": "raw query text"},
-			want:   "raw query text",
-		},
-		{
-			name:   "priority order - expr takes precedence",
-			target: map[string]any{"expr": "up", "query": "down", "rawSql": "other"},
-			want:   "up",
-		},
-		{
-			name:   "no query fields",
-			target: map[string]any{"refId": "A", "datasource": "prometheus"},
-			want:   "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := extractQueryExpression(tt.target)
-			assert.Equal(t, tt.want, got)
-		})
-	}
-}
+// Note: TestExtractQueryExpression is in dashboard_helpers_test.go
 
 func TestSubstitutePrometheusMacros(t *testing.T) {
 	tests := []struct {
@@ -692,4 +643,324 @@ func TestFormatPrometheusDuration(t *testing.T) {
 			assert.Equal(t, tt.expected, result)
 		})
 	}
+}
+
+func TestIsEmptyPanelResult(t *testing.T) {
+	tests := []struct {
+		name     string
+		results  interface{}
+		expected bool
+	}{
+		{
+			name:     "nil result",
+			results:  nil,
+			expected: true,
+		},
+		{
+			name:     "empty interface slice",
+			results:  []interface{}{},
+			expected: true,
+		},
+		{
+			name:     "non-empty interface slice",
+			results:  []interface{}{"data"},
+			expected: false,
+		},
+		{
+			name:     "empty LogEntry slice",
+			results:  []LogEntry{},
+			expected: true,
+		},
+		{
+			name: "non-empty LogEntry slice",
+			results: []LogEntry{
+				{Timestamp: "2024-01-01T00:00:00Z", Line: "test"},
+			},
+			expected: false,
+		},
+		{
+			name:     "nil ClickHouseQueryResult",
+			results:  (*ClickHouseQueryResult)(nil),
+			expected: true,
+		},
+		{
+			name:     "empty ClickHouseQueryResult",
+			results:  &ClickHouseQueryResult{Rows: []map[string]interface{}{}},
+			expected: true,
+		},
+		{
+			name: "non-empty ClickHouseQueryResult",
+			results: &ClickHouseQueryResult{
+				Rows: []map[string]interface{}{{"value": 1}},
+			},
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := isEmptyPanelResult(tt.results)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestGeneratePanelQueryHints(t *testing.T) {
+	tests := []struct {
+		name           string
+		datasourceType string
+		query          string
+		containsHints  []string
+	}{
+		{
+			name:           "prometheus hints",
+			datasourceType: "prometheus",
+			query:          "rate(http_requests[5m])",
+			containsHints: []string{
+				"No data found",
+				"Time range",
+				"list_prometheus_metric_names",
+				"Label selectors",
+			},
+		},
+		{
+			name:           "loki hints",
+			datasourceType: "loki",
+			query:          "{job=\"app\"} |= \"error\"",
+			containsHints: []string{
+				"No data found",
+				"Time range",
+				"list_loki_label_names",
+				"query_loki_stats",
+			},
+		},
+		{
+			name:           "clickhouse hints",
+			datasourceType: "grafana-clickhouse-datasource",
+			query:          "SELECT * FROM logs WHERE Body ILIKE '%error%'",
+			containsHints: []string{
+				"No data found",
+				"Time range",
+				"describe_clickhouse_table",
+				"COUNT(*)",
+			},
+		},
+		{
+			name:           "includes query in hints",
+			datasourceType: "prometheus",
+			query:          "up{job=\"api\"}",
+			containsHints: []string{
+				"Query executed:",
+				"up{job=\"api\"}",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			hints := generatePanelQueryHints(tt.datasourceType, tt.query, "now-1h", "now")
+			hintsStr := ""
+			for _, h := range hints {
+				hintsStr += h + " "
+			}
+			for _, expected := range tt.containsHints {
+				assert.Contains(t, hintsStr, expected)
+			}
+		})
+	}
+}
+
+func TestTruncateString(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		maxLen   int
+		expected string
+	}{
+		{
+			name:     "short string unchanged",
+			input:    "short",
+			maxLen:   10,
+			expected: "short",
+		},
+		{
+			name:     "exact length unchanged",
+			input:    "exactly10!",
+			maxLen:   10,
+			expected: "exactly10!",
+		},
+		{
+			name:     "long string truncated",
+			input:    "this is a very long string that should be truncated",
+			maxLen:   20,
+			expected: "this is a very lo...",
+		},
+		{
+			name:     "empty string",
+			input:    "",
+			maxLen:   10,
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := truncateString(tt.input, tt.maxLen)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestRunPanelQueryResult_WithHints(t *testing.T) {
+	// Test that hints field is properly included in result
+	result := RunPanelQueryResult{
+		DashboardUID:   "test-uid",
+		PanelID:        5,
+		PanelTitle:     "Empty Panel",
+		DatasourceType: "prometheus",
+		DatasourceUID:  "prom-uid",
+		Query:          "nonexistent_metric",
+		TimeRange: QueryTimeRange{
+			Start: "now-1h",
+			End:   "now",
+		},
+		Results: []interface{}{},
+		Hints: []string{
+			"No data found for the panel query.",
+			"- Time range may have no data",
+		},
+	}
+
+	assert.NotNil(t, result.Hints)
+	assert.Len(t, result.Hints, 2)
+	assert.Contains(t, result.Hints[0], "No data found")
+}
+
+func TestExtractPanelInfo_CloudWatch(t *testing.T) {
+	tests := []struct {
+		name       string
+		panel      map[string]interface{}
+		wantDSUID  string
+		wantDSType string
+		wantErr    bool
+	}{
+		{
+			name: "cloudwatch panel with structured target (no expr)",
+			panel: map[string]interface{}{
+				"id":    1,
+				"title": "CloudWatch CPU",
+				"datasource": map[string]interface{}{
+					"uid":  "cloudwatch-uid",
+					"type": "cloudwatch",
+				},
+				"targets": []interface{}{
+					map[string]interface{}{
+						"namespace":  "AWS/ECS",
+						"metricName": "CPUUtilization",
+						"dimensions": map[string]interface{}{
+							"ClusterName": []interface{}{"my-cluster"},
+						},
+						"region": "us-east-1",
+						"refId":  "A",
+					},
+				},
+			},
+			wantDSUID:  "cloudwatch-uid",
+			wantDSType: "cloudwatch",
+			wantErr:    false,
+		},
+		{
+			name: "cloudwatch panel stores raw target",
+			panel: map[string]interface{}{
+				"id":    2,
+				"title": "CloudWatch Memory",
+				"datasource": map[string]interface{}{
+					"uid":  "cloudwatch-uid",
+					"type": "cloudwatch",
+				},
+				"targets": []interface{}{
+					map[string]interface{}{
+						"namespace":  "AWS/ECS",
+						"metricName": "MemoryUtilization",
+						"refId":      "B",
+					},
+				},
+			},
+			wantDSUID:  "cloudwatch-uid",
+			wantDSType: "cloudwatch",
+			wantErr:    false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			info, err := extractPanelInfo(tt.panel, 0)
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantDSUID, info.DatasourceUID)
+			assert.Equal(t, tt.wantDSType, info.DatasourceType)
+			// CloudWatch panels should have empty Query but valid RawTarget
+			assert.Empty(t, info.Query, "CloudWatch panels should have empty query string")
+			assert.NotNil(t, info.RawTarget, "CloudWatch panels should have RawTarget set")
+			assert.NotEmpty(t, info.RawTarget["namespace"], "RawTarget should contain CloudWatch fields")
+		})
+	}
+}
+
+func TestSubstituteVariablesInMap(t *testing.T) {
+	tests := []struct {
+		name      string
+		target    map[string]interface{}
+		variables map[string]string
+		checkKey  string
+		wantValue string
+	}{
+		{
+			name: "substitute string value",
+			target: map[string]interface{}{
+				"namespace": "$namespace",
+			},
+			variables: map[string]string{"namespace": "AWS/ECS"},
+			checkKey:  "namespace",
+			wantValue: "AWS/ECS",
+		},
+		{
+			name: "substitute braced variable",
+			target: map[string]interface{}{
+				"region": "${region}",
+			},
+			variables: map[string]string{"region": "us-west-2"},
+			checkKey:  "region",
+			wantValue: "us-west-2",
+		},
+		{
+			name: "preserve non-variable strings",
+			target: map[string]interface{}{
+				"metricName": "CPUUtilization",
+			},
+			variables: map[string]string{"other": "value"},
+			checkKey:  "metricName",
+			wantValue: "CPUUtilization",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := substituteVariablesInMap(tt.target, tt.variables)
+			assert.Equal(t, tt.wantValue, result[tt.checkKey])
+		})
+	}
+}
+
+func TestSubstituteVariablesInSlice(t *testing.T) {
+	variables := map[string]string{"cluster": "my-cluster"}
+	slice := []interface{}{"$cluster", "static-value"}
+
+	result := substituteVariablesInSlice(slice, variables)
+
+	assert.Equal(t, "my-cluster", result[0])
+	assert.Equal(t, "static-value", result[1])
 }
