@@ -184,9 +184,15 @@ func searchLogsInLoki(ctx context.Context, args SearchLogsParams, limit int, sta
 
 // searchLogsInClickHouse searches logs in a ClickHouse datasource
 func searchLogsInClickHouse(ctx context.Context, args SearchLogsParams, limit int) (*SearchLogsResult, error) {
+	// Determine table name (default to otel_logs)
+	table := args.Table
+	if table == "" {
+		table = "otel_logs"
+	}
+
 	// Detect if pattern contains regex metacharacters
 	useRegex := isRegexPattern(args.Pattern)
-	query := generateClickHouseLogQuery(args.Table, args.Pattern, limit, useRegex)
+	query := generateClickHouseLogQuery(table, args.Pattern, limit, useRegex)
 
 	// Query ClickHouse using existing infrastructure
 	chResult, err := queryClickHouse(ctx, ClickHouseQueryParams{
@@ -197,7 +203,7 @@ func searchLogsInClickHouse(ctx context.Context, args SearchLogsParams, limit in
 		Limit:         limit,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("querying ClickHouse: %w", err)
+		return nil, enhanceClickHouseLogError(err, table)
 	}
 
 	// Convert ClickHouse rows to normalized LogResult format
@@ -280,6 +286,30 @@ func generateSearchLogsHints(datasourceType, pattern string) []string {
 	return hints
 }
 
+// enhanceClickHouseLogError adds contextual hints to ClickHouse errors.
+// Keeps error handling separate from search logic (Single Responsibility Principle).
+func enhanceClickHouseLogError(err error, table string) error {
+	errStr := err.Error()
+
+	// Column not found - likely not an OTel log table
+	// ClickHouse errors: "Missing columns", "UNKNOWN_IDENTIFIER", "no such column"
+	if strings.Contains(errStr, "Missing columns") ||
+		strings.Contains(errStr, "UNKNOWN_IDENTIFIER") ||
+		strings.Contains(errStr, "no such column") {
+		return fmt.Errorf("query failed: %w. Hint: Table '%s' may not have OpenTelemetry log columns (Timestamp, Body). Use query_clickhouse for custom table schemas", err, table)
+	}
+
+	// Table not found
+	// ClickHouse errors: "UNKNOWN_TABLE", "doesn't exist"
+	if strings.Contains(errStr, "UNKNOWN_TABLE") ||
+		(strings.Contains(errStr, "Table") && strings.Contains(errStr, "doesn't exist")) {
+		return fmt.Errorf("query failed: %w. Hint: Use list_clickhouse_tables to discover available tables", err)
+	}
+
+	// Default: preserve original error with context
+	return fmt.Errorf("querying ClickHouse: %w", err)
+}
+
 // searchLogs searches for log entries matching a pattern across supported datasources
 func searchLogs(ctx context.Context, args SearchLogsParams) (*SearchLogsResult, error) {
 	// Get datasource info to determine type
@@ -337,16 +367,16 @@ var SearchLogs = mcpgrafana.MustTool(
 	"search_logs",
 	`Search for log entries matching a text pattern across ClickHouse and Loki datasources.
 
-This is a high-level abstraction that automatically generates the appropriate query (LogQL or SQL) based on the datasource type.
+Automatically generates LogQL (Loki) or SQL (ClickHouse) based on datasource type.
 
-For simple text searches, use a plain string pattern. For regex matching, include regex characters in the pattern.
+For ClickHouse: Expects OpenTelemetry log table structure (Timestamp\\, Body columns). Use query_clickhouse for tables with custom schemas.
 
 Examples:
-- Pattern "error" searches for logs containing "error" (case-insensitive for ClickHouse)
-- Pattern "timeout|connection refused" uses regex matching
-- Pattern "failed to connect" searches for exact phrase
+- Pattern "error" - case-insensitive substring match
+- Pattern "timeout|refused" - regex match
+- Pattern "failed to connect" - exact phrase
 
-For more control over queries, use query_loki_logs or query_clickhouse directly.`,
+For more control\\, use query_loki_logs or query_clickhouse directly.`,
 	searchLogs,
 	mcp.WithTitleAnnotation("Search logs"),
 	mcp.WithIdempotentHintAnnotation(true),
