@@ -13,7 +13,9 @@ import (
 )
 
 type ListDatasourcesParams struct {
-	Type string `json:"type,omitempty" jsonschema:"description=The type of datasources to search for. For example\\, 'prometheus'\\, 'loki'\\, 'tempo'\\, etc..."`
+	Type   string `json:"type,omitempty" jsonschema:"description=The type of datasources to search for. For example\\, 'prometheus'\\, 'loki'\\, 'tempo'\\, etc..."`
+	Limit  int    `json:"limit,omitempty" jsonschema:"default=50,description=Maximum number of datasources to return (max 100)"`
+	Offset int    `json:"offset,omitempty" jsonschema:"default=0,description=Number of datasources to skip for pagination"`
 }
 
 type dataSourceSummary struct {
@@ -24,14 +26,57 @@ type dataSourceSummary struct {
 	IsDefault bool   `json:"isDefault"`
 }
 
-func listDatasources(ctx context.Context, args ListDatasourcesParams) ([]dataSourceSummary, error) {
+type ListDatasourcesResult struct {
+	Datasources []dataSourceSummary `json:"datasources"`
+	Total       int                 `json:"total"`   // Total count before pagination
+	HasMore     bool                `json:"hasMore"` // Whether more results exist
+}
+
+func listDatasources(ctx context.Context, args ListDatasourcesParams) (*ListDatasourcesResult, error) {
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
 	resp, err := c.Datasources.GetDataSources()
 	if err != nil {
 		return nil, fmt.Errorf("list datasources: %w", err)
 	}
+
+	// Filter by type if specified
 	datasources := filterDatasources(resp.Payload, args.Type)
-	return summarizeDatasources(datasources), nil
+	total := len(datasources)
+
+	// Apply default limit if not specified
+	limit := args.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+	// Cap at maximum
+	if limit > 100 {
+		limit = 100
+	}
+
+	offset := args.Offset
+	if offset < 0 {
+		offset = 0
+	}
+
+	// Apply pagination
+	var paginated models.DataSourceList
+	if offset >= len(datasources) {
+		paginated = models.DataSourceList{}
+	} else {
+		end := offset + limit
+		if end > len(datasources) {
+			end = len(datasources)
+		}
+		paginated = datasources[offset:end]
+	}
+
+	hasMore := offset+len(paginated) < total
+
+	return &ListDatasourcesResult{
+		Datasources: summarizeDatasources(paginated),
+		Total:       total,
+		HasMore:     hasMore,
+	}, nil
 }
 
 // filterDatasources returns only datasources of the specified type `t`. If `t`
@@ -66,7 +111,7 @@ func summarizeDatasources(dataSources models.DataSourceList) []dataSourceSummary
 
 var ListDatasources = mcpgrafana.MustTool(
 	"list_datasources",
-	"List available Grafana datasources. Optionally filter by datasource type (e.g., 'prometheus', 'loki'). Returns a summary list including ID, UID, name, type, and default status.",
+	"List all configured datasources in Grafana. Use this to discover available datasources and their UIDs. Supports filtering by type and pagination.",
 	listDatasources,
 	mcp.WithTitleAnnotation("List datasources"),
 	mcp.WithIdempotentHintAnnotation(true),

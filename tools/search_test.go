@@ -20,8 +20,8 @@ func TestSearchTools(t *testing.T) {
 			Query: "Demo",
 		})
 		require.NoError(t, err)
-		assert.Len(t, result, 1)
-		assert.Equal(t, models.HitType("dash-db"), result[0].Type)
+		assert.Len(t, result.Dashboards, 1)
+		assert.Equal(t, models.HitType("dash-db"), result.Dashboards[0].Type)
 	})
 
 	t.Run("search folders", func(t *testing.T) {
