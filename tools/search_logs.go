@@ -27,7 +27,7 @@ const (
 type SearchLogsParams struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of a ClickHouse or Loki datasource"`
 	Pattern       string `json:"pattern" jsonschema:"required,description=Text pattern or regex to search for in log messages"`
-	Table         string `json:"table,omitempty" jsonschema:"description=Table name for ClickHouse queries (default: 'otel_logs'). Use list_clickhouse_tables to discover available tables. Ignored for Loki."`
+	Table         string `json:"table,omitempty" jsonschema:"description=Table name for ClickHouse queries. DISCOVERY REQUIRED: Run list_clickhouse_tables first to find available tables. Default 'otel_logs' assumes OpenTelemetry log schema and may not exist. Ignored for Loki."`
 	Start         string `json:"start,omitempty" jsonschema:"description=Start time (e.g. 'now-1h'\\, '2026-02-02T19:00:00Z'\\, Unix ms). Defaults to 'now-1h'"`
 	End           string `json:"end,omitempty" jsonschema:"description=End time (e.g. 'now'\\, RFC3339\\, Unix ms). Defaults to 'now'"`
 	Limit         int    `json:"limit,omitempty" jsonschema:"default=100,description=Maximum number of log entries to return (max 1000)"`
@@ -269,9 +269,9 @@ func generateSearchLogsHints(datasourceType, pattern string) []string {
 		}
 	case ClickHouseDatasourceType:
 		hints = append(hints,
+			"- IMPORTANT: Run list_clickhouse_tables first to verify table exists - default 'otel_logs' may not be available",
 			"- Pattern may not match any log content - try a simpler pattern",
 			"- Time range may have no logs - try extending with start='now-6h' or start='now-24h'",
-			"- The query targets the 'otel_logs' table - use list_clickhouse_tables to verify table exists",
 			"- Column names may differ - use describe_clickhouse_table to check the actual schema",
 			"- Pattern matching is case-insensitive (ILIKE) but may still not match",
 		)
@@ -366,6 +366,8 @@ func searchLogs(ctx context.Context, args SearchLogsParams) (*SearchLogsResult, 
 var SearchLogs = mcpgrafana.MustTool(
 	"search_logs",
 	`Search for log entries matching a text pattern across ClickHouse and Loki datasources.
+
+IMPORTANT for ClickHouse: Run list_clickhouse_tables FIRST to discover available log tables. The default table 'otel_logs' may not exist in your datasource.
 
 Automatically generates LogQL (Loki) or SQL (ClickHouse) based on datasource type.
 
