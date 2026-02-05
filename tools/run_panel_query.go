@@ -112,7 +112,9 @@ func runPanelQuery(ctx context.Context, args RunPanelQueryParams) (*RunPanelQuer
 		if resolvedUID, ok := variables[varName]; ok {
 			datasourceUID = resolvedUID
 		} else {
-			return nil, fmt.Errorf("datasource variable '%s' not found in dashboard variables. Available variables: %v. Hint: Use 'datasourceUid' and 'datasourceType' parameters to override", datasourceUID, getVariableNames(variables))
+			// Provide helpful hint with available datasources of the expected type
+			availableDS := getAvailableDatasourceUIDs(ctx, panelData.DatasourceType)
+			return nil, fmt.Errorf("datasource variable '%s' not found. Hint: Use 'datasourceUid' and 'datasourceType' to override. Available %s datasources: %v", datasourceUID, panelData.DatasourceType, availableDS)
 		}
 	}
 	// Note: datasourceType without datasourceUID is ignored (type without UID is meaningless)
@@ -127,9 +129,11 @@ func runPanelQuery(ctx context.Context, args RunPanelQueryParams) (*RunPanelQuer
 
 			switch {
 			case errors.As(err, &forbiddenErr):
-				return nil, fmt.Errorf("permission denied for datasource '%s'. Hint: Provide both 'datasourceUid' and 'datasourceType' parameters to bypass permission check", datasourceUID)
+				availableDS := getAvailableDatasourceUIDs(ctx, "")
+				return nil, fmt.Errorf("permission denied for datasource '%s'. Hint: Provide both 'datasourceUid' and 'datasourceType' to override. Available datasources: %v", datasourceUID, availableDS)
 			case errors.As(err, &notFoundErr):
-				return nil, fmt.Errorf("datasource '%s' not found. Hint: Use list_datasources to find available datasources", datasourceUID)
+				availableDS := getAvailableDatasourceUIDs(ctx, "")
+				return nil, fmt.Errorf("datasource '%s' not found. Available datasources: %v", datasourceUID, availableDS)
 			default:
 				return nil, fmt.Errorf("fetching datasource info: %w", err)
 			}
@@ -585,6 +589,26 @@ func getVariableNames(vars map[string]string) []string {
 	return names
 }
 
+// getAvailableDatasourceUIDs returns UIDs of datasources matching the given type
+// Used to provide helpful hints when datasource resolution fails
+func getAvailableDatasourceUIDs(ctx context.Context, dsType string) []string {
+	datasources, err := listDatasources(ctx, ListDatasourcesParams{Type: dsType})
+	if err != nil {
+		return nil
+	}
+	// Limit to first 10 to avoid very long error messages
+	limit := 10
+	if len(datasources) < limit {
+		limit = len(datasources)
+	}
+	uids := make([]string, 0, limit)
+	for i := 0; i < limit; i++ {
+		ds := datasources[i]
+		uids = append(uids, fmt.Sprintf("%s (%s)", ds.Name, ds.UID))
+	}
+	return uids
+}
+
 // isEmptyPanelResult checks if the query result is empty
 func isEmptyPanelResult(results interface{}) bool {
 	if results == nil {
@@ -670,7 +694,87 @@ var RunPanelQuery = mcpgrafana.MustTool(
 	mcp.WithReadOnlyHintAnnotation(true),
 )
 
+// RunPanelQueriesParams defines parameters for running multiple panel queries
+type RunPanelQueriesParams struct {
+	DashboardUID   string            `json:"dashboardUid" jsonschema:"required,description=Dashboard UID"`
+	PanelIDs       []int             `json:"panelIds" jsonschema:"required,description=Array of panel IDs to execute"`
+	Start          string            `json:"start" jsonschema:"description=Override start time (e.g. 'now-1h'\\, RFC3339\\, Unix ms)"`
+	End            string            `json:"end" jsonschema:"description=Override end time (e.g. 'now'\\, RFC3339\\, Unix ms)"`
+	Variables      map[string]string `json:"variables" jsonschema:"description=Override dashboard variables (e.g. {\"job\": \"api-server\"})"`
+	DatasourceUID  string            `json:"datasourceUid,omitempty" jsonschema:"description=Override datasource UID for all panels"`
+	DatasourceType string            `json:"datasourceType,omitempty" jsonschema:"description=Override datasource type for all panels"`
+}
+
+// RunPanelQueriesResult contains the results of running multiple panel queries
+type RunPanelQueriesResult struct {
+	DashboardUID string                          `json:"dashboardUid"`
+	Results      map[int]*RunPanelQueryResult    `json:"results"`        // Successful results by panel ID
+	Errors       map[int]string                  `json:"errors,omitempty"` // Errors by panel ID
+	TimeRange    QueryTimeRange                  `json:"timeRange"`
+}
+
+// runPanelQueries executes multiple dashboard panel queries in a single call
+func runPanelQueries(ctx context.Context, args RunPanelQueriesParams) (*RunPanelQueriesResult, error) {
+	if len(args.PanelIDs) == 0 {
+		return nil, fmt.Errorf("panelIds is required and must not be empty")
+	}
+
+	// Determine time range defaults
+	start := args.Start
+	end := args.End
+	if start == "" {
+		start = "now-1h"
+	}
+	if end == "" {
+		end = "now"
+	}
+
+	results := make(map[int]*RunPanelQueryResult)
+	errors := make(map[int]string)
+
+	// Execute each panel query sequentially
+	for _, panelID := range args.PanelIDs {
+		result, err := runPanelQuery(ctx, RunPanelQueryParams{
+			DashboardUID:   args.DashboardUID,
+			PanelID:        panelID,
+			Start:          start,
+			End:            end,
+			Variables:      args.Variables,
+			DatasourceUID:  args.DatasourceUID,
+			DatasourceType: args.DatasourceType,
+		})
+
+		if err != nil {
+			// Partial failure: capture error but continue with other panels
+			errors[panelID] = err.Error()
+		} else {
+			results[panelID] = result
+		}
+	}
+
+	return &RunPanelQueriesResult{
+		DashboardUID: args.DashboardUID,
+		Results:      results,
+		Errors:       errors,
+		TimeRange: QueryTimeRange{
+			Start: start,
+			End:   end,
+		},
+	}, nil
+}
+
+// RunPanelQueries is the tool definition for running multiple panel queries
+var RunPanelQueries = mcpgrafana.MustTool(
+	"run_panel_queries",
+	"Executes multiple dashboard panel queries in a single call. Reduces API round-trips when analyzing multiple panels. Fetches dashboard once\\, then executes queries for each specified panel ID. Returns results and errors keyed by panel ID - partial failures are allowed (some panels can succeed while others fail). Use get_dashboard_summary to find panel IDs.",
+	runPanelQueries,
+	mcp.WithTitleAnnotation("Run multiple panel queries"),
+	mcp.WithIdempotentHintAnnotation(true),
+	mcp.WithReadOnlyHintAnnotation(true),
+)
+
 // AddRunPanelQueryTools registers run panel query tools with the MCP server
 func AddRunPanelQueryTools(mcp *server.MCPServer) {
 	RunPanelQuery.Register(mcp)
+	RunPanelQueries.Register(mcp)
 }
