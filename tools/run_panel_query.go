@@ -488,7 +488,7 @@ func executeGrafanaDSQuery(ctx context.Context, payload map[string]interface{}) 
 	if err != nil {
 		return nil, fmt.Errorf("executing query: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var result map[string]interface{}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
@@ -578,15 +578,6 @@ func extractVariableName(s string) string {
 		return strings.TrimPrefix(s, "$")
 	}
 	return s
-}
-
-// getVariableNames returns a list of variable names from a map
-func getVariableNames(vars map[string]string) []string {
-	names := make([]string, 0, len(vars))
-	for k := range vars {
-		names = append(names, k)
-	}
-	return names
 }
 
 // getAvailableDatasourceUIDs returns UIDs of datasources matching the given type

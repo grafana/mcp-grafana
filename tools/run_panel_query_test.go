@@ -527,20 +527,6 @@ func TestExtractVariableName(t *testing.T) {
 	}
 }
 
-func TestGetVariableNames(t *testing.T) {
-	vars := map[string]string{
-		"job":       "api-server",
-		"namespace": "production",
-		"instance":  "localhost:9090",
-	}
-
-	names := getVariableNames(vars)
-	assert.Len(t, names, 3)
-	assert.Contains(t, names, "job")
-	assert.Contains(t, names, "namespace")
-	assert.Contains(t, names, "instance")
-}
-
 // Note: TestExtractQueryExpression is in dashboard_helpers_test.go
 
 func TestSubstitutePrometheusMacros(t *testing.T) {

@@ -9,6 +9,7 @@ package tools
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -69,14 +70,17 @@ func extractQueryExpression(target map[string]interface{}) string {
 
 // substituteVariables stub - replaces template variables in a query
 func substituteVariables(query string, variables map[string]string) string {
-	result := query
+	if variables == nil {
+		return query
+	}
 	for name, value := range variables {
 		// Replace ${varname}
-		result = strings.ReplaceAll(result, "${"+name+"}", value)
-		// Replace $varname (followed by non-word character)
-		result = strings.ReplaceAll(result, "$"+name, value)
+		query = strings.ReplaceAll(query, "${"+name+"}", value)
 		// Replace [[varname]]
-		result = strings.ReplaceAll(result, "[["+name+"]]", value)
+		query = strings.ReplaceAll(query, "[["+name+"]]", value)
+		// Replace $varname with word boundary to avoid partial matches
+		varRe := regexp.MustCompile(fmt.Sprintf(`\$%s\b`, regexp.QuoteMeta(name)))
+		query = varRe.ReplaceAllString(query, value)
 	}
-	return result
+	return query
 }
