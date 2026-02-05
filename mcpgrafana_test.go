@@ -671,3 +671,105 @@ func assertHasAttribute(t *testing.T, attributes []attribute.KeyValue, key strin
 	}
 	t.Errorf("Expected attribute %s with value %s not found", key, expectedValue)
 }
+
+
+func TestExtraHeadersFromEnv(t *testing.T) {
+	t.Run("empty env returns nil", func(t *testing.T) {
+		t.Setenv("GRAFANA_EXTRA_HEADERS", "")
+		headers := extraHeadersFromEnv()
+		assert.Nil(t, headers)
+	})
+
+	t.Run("valid JSON", func(t *testing.T) {
+		t.Setenv("GRAFANA_EXTRA_HEADERS", `{"X-Custom-Header": "custom-value", "X-Another": "another-value"}`)
+		headers := extraHeadersFromEnv()
+		assert.Equal(t, map[string]string{
+			"X-Custom-Header": "custom-value",
+			"X-Another":       "another-value",
+		}, headers)
+	})
+
+	t.Run("invalid JSON returns nil", func(t *testing.T) {
+		t.Setenv("GRAFANA_EXTRA_HEADERS", "not-json")
+		headers := extraHeadersFromEnv()
+		assert.Nil(t, headers)
+	})
+
+	t.Run("empty object", func(t *testing.T) {
+		t.Setenv("GRAFANA_EXTRA_HEADERS", "{}")
+		headers := extraHeadersFromEnv()
+		assert.Equal(t, map[string]string{}, headers)
+	})
+}
+
+func TestExtraHeadersRoundTripper(t *testing.T) {
+	t.Run("adds headers to request", func(t *testing.T) {
+		var capturedReq *http.Request
+		mockRT := &extraHeadersMockRT{
+			fn: func(req *http.Request) (*http.Response, error) {
+				capturedReq = req
+				return &http.Response{StatusCode: 200}, nil
+			},
+		}
+
+		rt := NewExtraHeadersRoundTripper(mockRT, map[string]string{
+			"X-Custom":  "value1",
+			"X-Another": "value2",
+		})
+
+		req, _ := http.NewRequest("GET", "http://example.com", nil)
+		_, err := rt.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Equal(t, "value1", capturedReq.Header.Get("X-Custom"))
+		assert.Equal(t, "value2", capturedReq.Header.Get("X-Another"))
+	})
+
+	t.Run("does not modify original request", func(t *testing.T) {
+		mockRT := &extraHeadersMockRT{
+			fn: func(req *http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: 200}, nil
+			},
+		}
+
+		rt := NewExtraHeadersRoundTripper(mockRT, map[string]string{
+			"X-Custom": "value",
+		})
+
+		req, _ := http.NewRequest("GET", "http://example.com", nil)
+		_, err := rt.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Equal(t, "", req.Header.Get("X-Custom"))
+	})
+
+	t.Run("nil transport uses default", func(t *testing.T) {
+		rt := NewExtraHeadersRoundTripper(nil, map[string]string{})
+		assert.NotNil(t, rt.underlying)
+	})
+}
+
+type extraHeadersMockRT struct {
+	fn func(*http.Request) (*http.Response, error)
+}
+
+func (m *extraHeadersMockRT) RoundTrip(req *http.Request) (*http.Response, error) {
+	return m.fn(req)
+}
+
+func TestExtractGrafanaInfoWithExtraHeaders(t *testing.T) {
+	t.Run("extra headers from env in ExtractGrafanaInfoFromEnv", func(t *testing.T) {
+		t.Setenv("GRAFANA_EXTRA_HEADERS", `{"X-Tenant-ID": "tenant-123"}`)
+		ctx := ExtractGrafanaInfoFromEnv(context.Background())
+		config := GrafanaConfigFromContext(ctx)
+		assert.Equal(t, map[string]string{"X-Tenant-ID": "tenant-123"}, config.ExtraHeaders)
+	})
+
+	t.Run("extra headers from env in ExtractGrafanaInfoFromHeaders", func(t *testing.T) {
+		t.Setenv("GRAFANA_EXTRA_HEADERS", `{"X-Tenant-ID": "tenant-456"}`)
+		req, _ := http.NewRequest("GET", "http://example.com", nil)
+		ctx := ExtractGrafanaInfoFromHeaders(context.Background(), req)
+		config := GrafanaConfigFromContext(ctx)
+		assert.Equal(t, map[string]string{"X-Tenant-ID": "tenant-456"}, config.ExtraHeaders)
+	})
+}
