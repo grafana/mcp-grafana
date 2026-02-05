@@ -1,0 +1,11 @@
+# Zizmor configuration for mcp-grafana
+# See: https://docs.zizmor.sh/configuration/
+
+rules:
+  # The token-comment workflow intentionally uses workflow_run as part of the
+  # secure pattern for posting comments on fork PRs. The fork's code runs
+  # with read-only permissions, and only the workflow_run workflow (which runs
+  # trusted code from main) has write permissions.
+  dangerous-triggers:
+    ignore:
+      - workflows/token-comment.yml
