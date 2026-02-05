@@ -1,0 +1,81 @@
+name: Post Token Analysis Comment
+
+on:
+  workflow_run:
+    workflows: ["Token Analysis"]
+    types: [completed]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  comment:
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.event == 'pull_request'
+    steps:
+      - name: Download analysis results
+        uses: dawidd6/action-download-artifact@9dde25e7413c6123b6062d4c9fc954d6ff005cfc
+        with:
+          run_id: ${{ github.event.workflow_run.id }}
+          name: token-analysis-.*
+          name_is_regexp: true
+          path: results
+
+      - name: Post PR comment
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+
+            // Find the results directory
+            const dirs = fs.readdirSync('results');
+            const resultDir = dirs.find(d => d.startsWith('token-analysis-'));
+            if (!resultDir) {
+              console.log('No analysis results found');
+              return;
+            }
+
+            const metadata = JSON.parse(fs.readFileSync(path.join('results', resultDir, 'metadata.json'), 'utf8'));
+            const commentBody = fs.readFileSync(path.join('results', resultDir, 'comment.md'), 'utf8');
+
+            const prNumber = parseInt(metadata.pr_number);
+            if (!prNumber) {
+              console.log('No PR number found');
+              return;
+            }
+
+            // Find and minimize previous comments
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+            });
+
+            const signature = '## MCP Token Analysis';
+            for (const comment of comments) {
+              if (comment.body.startsWith(signature)) {
+                try {
+                  await github.graphql(`
+                    mutation($id: ID!) {
+                      minimizeComment(input: {subjectId: $id, classifier: OUTDATED}) {
+                        minimizedComment { isMinimized }
+                      }
+                    }
+                  `, { id: comment.node_id });
+                  console.log(`Minimized comment ${comment.id}`);
+                } catch (e) {
+                  console.log(`Failed to minimize comment ${comment.id}: ${e.message}`);
+                }
+              }
+            }
+
+            // Post new comment
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              body: commentBody,
+            });
+
+            console.log(`Posted comment on PR #${prNumber}`);

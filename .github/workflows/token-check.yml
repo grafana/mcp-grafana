@@ -11,7 +11,6 @@ jobs:
     permissions:
       contents: read
       id-token: write
-      pull-requests: write
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -45,13 +44,36 @@ jobs:
             ANTHROPIC_API_KEY=anthropic:api-key
 
       - name: Analyze tokens
-        uses: sd2k/mcp-tokens-action@014db1a0f233c4559d5b056983855b0b71c99fa2
-
+        id: analyze
+        uses: sd2k/mcp-tokens-action@758f47acdc72d23c277dac822099c515e663cb99
         with:
           command: ./dist/mcp-grafana
           anthropic-api-key: ${{ env.ANTHROPIC_API_KEY }}
           baseline: ${{ steps.download-baseline.outputs.found_artifact == 'true' && 'baseline/token-baseline.json' || '' }}
           threshold-percent: "5"
-          comment: true
           comment-on-pass: true
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # Save results as artifacts for the workflow_run comment workflow
+      # This pattern supports fork PRs where GITHUB_TOKEN has read-only permissions
+      - name: Save analysis results
+        if: always()
+        run: |
+          mkdir -p results
+          echo '${{ steps.analyze.outputs.analysis-json }}' > results/analysis.json
+          cat > results/metadata.json << 'INNEREOF'
+          {
+            "pr_number": "${{ github.event.pull_request.number }}",
+            "passed": "${{ steps.analyze.outputs.passed }}"
+          }
+          INNEREOF
+          cat > results/comment.md << 'INNEREOF'
+          ${{ steps.analyze.outputs.comment-body }}
+          INNEREOF
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: token-analysis-${{ github.event.pull_request.number }}
+          path: results/
+          retention-days: 1
