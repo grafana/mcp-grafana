@@ -387,6 +387,28 @@ When an organization ID is provided, the MCP server will set the `X-Grafana-Org-
 }
 ```
 
+### Custom HTTP Headers
+
+You can add arbitrary HTTP headers to all Grafana API requests using the `GRAFANA_EXTRA_HEADERS` environment variable. The value should be a JSON object mapping header names to values.
+
+**Example with custom headers:**
+
+```json
+{
+  "mcpServers": {
+    "grafana": {
+      "command": "mcp-grafana",
+      "args": [],
+      "env": {
+        "GRAFANA_URL": "http://localhost:3000",
+        "GRAFANA_SERVICE_ACCOUNT_TOKEN": "<your token>",
+        "GRAFANA_EXTRA_HEADERS": "{\"X-Custom-Header\": \"custom-value\", \"X-Tenant-ID\": \"tenant-123\"}"
+      }
+    }
+  }
+}
+```
+
 2. You have several options to install `mcp-grafana`:
 
    - **Docker image**: Use the pre-built Docker image from Docker Hub.

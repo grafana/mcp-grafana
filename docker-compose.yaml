@@ -14,7 +14,7 @@ services:
       - ./testdata/dashboards:/var/lib/grafana/dashboards
 
   renderer:
-    image: grafana/grafana-image-renderer:latest
+    image: grafana/grafana-image-renderer:latest@sha256:a3e58eb1fe07482c96d5a7e19eda1c1f272732f29b4d7d20c11a73c889efaed2
     ports:
       - 8081
 
@@ -47,7 +47,7 @@ services:
       - loki
 
   pyroscope:
-    image: grafana/pyroscope:1.17.0@sha256:f6e3caa6cade1dea53dd39db6117668e92cf9e43fbc097dda2096368b14f1cd1
+    image: grafana/pyroscope:1.18.0@sha256:e7edae4fd99dbb8695a1e03d7db96ab247630cf83842407908922b2f66aafc6a
     ports:
       - 4040:4040
 
