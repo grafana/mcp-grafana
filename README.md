@@ -39,7 +39,7 @@ The dashboard tools now include several strategies to manage context window usag
 ### Datasources
 
 - **List and fetch datasource information:** View all configured datasources and retrieve detailed information about each.
-  - _Supported datasource types: Prometheus, Loki._
+  - _Supported datasource types: Prometheus, Loki, ClickHouse._
 
 ### Prometheus Querying
 
@@ -51,6 +51,20 @@ The dashboard tools now include several strategies to manage context window usag
 - **Query Loki logs and metrics:** Run both log queries and metric queries using LogQL against Loki datasources.
 - **Query Loki metadata:** Retrieve label names, label values, and stream statistics from Loki datasources.
 - **Query Loki patterns:** Retrieve log patterns detected by Loki to identify common log structures and anomalies.
+
+### ClickHouse Querying
+
+> **Note:** ClickHouse tools are **disabled by default**. To enable them, add `clickhouse` to your `--enabled-tools` flag.
+
+- **List ClickHouse tables:** List all tables in a ClickHouse database with row counts and sizes.
+- **Describe table schema:** Get column names, types, and metadata for a ClickHouse table.
+- **Query ClickHouse:** Execute SQL queries with Grafana macro and variable substitution support.
+
+### Log Search
+
+> **Note:** Search logs tools are **disabled by default**. To enable them, add `searchlogs` to your `--enabled-tools` flag.
+
+- **Search logs:** High-level log search across ClickHouse (OTel format) and Loki datasources.
 
 ### Incidents
 
@@ -215,6 +229,10 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `list_loki_label_values`          | Loki        | List values for a specific log label                                | `datasources:query`                     | `datasources:uid:loki-uid`                          |
 | `query_loki_stats`                | Loki        | Get statistics about log streams                                    | `datasources:query`                     | `datasources:uid:loki-uid`                          |
 | `query_loki_patterns`             | Loki        | Query detected log patterns to identify common structures           | `datasources:query`                     | `datasources:uid:loki-uid`                          |
+| `list_clickhouse_tables`          | ClickHouse  | List tables in a ClickHouse database                                | `datasources:query`                     | `datasources:uid:*`                                 |
+| `describe_clickhouse_table`       | ClickHouse  | Get table schema with column types                                  | `datasources:query`                     | `datasources:uid:*`                                 |
+| `query_clickhouse`                | ClickHouse  | Execute SQL queries with macro substitution                         | `datasources:query`                     | `datasources:uid:*`                                 |
+| `search_logs`                     | SearchLogs  | Search logs across ClickHouse and Loki                              | `datasources:query`                     | `datasources:uid:*`                                 |
 | `list_alert_rules`                | Alerting    | List alert rules                                                    | `alert.rules:read`                      | `folders:*` or `folders:uid:alerts-folder`          |
 | `get_alert_rule_by_uid`           | Alerting    | Get alert rule by UID                                               | `alert.rules:read`                      | `folders:uid:alerts-folder`                         |
 | `create_alert_rule`               | Alerting    | Create a new alert rule                                             | `alert.rules:write`                     | `folders:*` or `folders:uid:alerts-folder`          |
@@ -277,6 +295,9 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 - `--disable-pyroscope`: Disable pyroscope tools
 - `--disable-navigation`: Disable navigation tools
 - `--disable-rendering`: Disable rendering tools (panel/dashboard image export)
+- `--disable-clickhouse`: Disable ClickHouse tools
+- `--disable-searchlogs`: Disable search_logs tool
+
 ### Read-Only Mode
 
 The `--disable-write` flag provides a way to run the MCP server in read-only mode, preventing any write operations to your Grafana instance. This is useful for scenarios where you want to provide safe, read-only access such as:
