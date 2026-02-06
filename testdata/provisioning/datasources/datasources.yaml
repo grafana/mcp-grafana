@@ -60,6 +60,7 @@ datasources:
     jsonData:
       defaultDatabase: test
       port: 9000
+      protocol: native
       server: clickhouse
       username: default
     isDefault: false

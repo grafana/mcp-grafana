@@ -3,6 +3,7 @@ services:
     image: grafana/grafana@sha256:2175aaa91c96733d86d31cf270d5310b278654b03f5718c59de12a865380a31f
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_INSTALL_PLUGINS: grafana-clickhouse-datasource
       GF_LOG_LEVEL: debug
       GF_SERVER_ROUTER_LOGGING: "true"
       GF_RENDERING_SERVER_URL: http://renderer:8081/render
@@ -84,6 +85,7 @@ services:
       - "9000:9000"
     volumes:
       - ./testdata/clickhouse-init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./testdata/clickhouse-users.xml:/etc/clickhouse-server/users.d/default-user.xml
     healthcheck:
       test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
       interval: 10s
