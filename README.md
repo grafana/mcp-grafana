@@ -202,7 +202,7 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `get_dashboard_by_uid`            | Dashboard   | Get a dashboard by uid                                              | `dashboards:read`                       | `dashboards:uid:abc123`                             |
 | `update_dashboard`                | Dashboard   | Update or create a new dashboard                                    | `dashboards:create`, `dashboards:write` | `dashboards:*`, `folders:*` or `folders:uid:xyz789` |
 | `get_dashboard_panel_queries`     | Dashboard   | Get panel title, queries, datasource UID and type from a dashboard  | `dashboards:read`                       | `dashboards:uid:abc123`                             |
-| `run_panel_query`                 | RunPanelQuery | Execute a dashboard panel's query                                 | `dashboards:read`, `datasources:query`  | `dashboards:uid:*`, `datasources:uid:*`             |
+| `run_panel_query`                 | RunPanelQuery* | Execute a dashboard panel's query                                 | `dashboards:read`, `datasources:query`  | `dashboards:uid:*`, `datasources:uid:*`             |
 | `get_dashboard_property`          | Dashboard   | Extract specific parts of a dashboard using JSONPath expressions    | `dashboards:read`                       | `dashboards:uid:abc123`                             |
 | `get_dashboard_summary`           | Dashboard   | Get a compact summary of a dashboard without full JSON              | `dashboards:read`                       | `dashboards:uid:abc123`                             |
 | `list_datasources`                | Datasources | List datasources                                                    | `datasources:read`                      | `datasources:*`                                     |
@@ -253,6 +253,8 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `patch_annotation`                | Annotations | Update only specific fields of an annotation (partial update)       | `annotations:write`                     | `annotations:*`                                     |
 | `get_annotation_tags`             | Annotations | List annotation tags with optional filtering                        | `annotations:read`                      | `annotations:*`                                     |
 | `get_panel_image`                 | Rendering   | Render a dashboard panel or full dashboard as a PNG image           | `dashboards:read`                       | `dashboards:uid:abc123`                             |
+
+_* Disabled by default. Add category to `--enabled-tools` to enable._
 
 ## CLI Flags Reference
 
