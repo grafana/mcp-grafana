@@ -465,6 +465,11 @@ func queryPrometheusHistogram(ctx context.Context, args QueryPrometheusHistogram
 		stepSeconds = 60
 	}
 
+	// Validate percentile is in valid range
+	if args.Percentile < 0 || args.Percentile > 100 {
+		return nil, fmt.Errorf("percentile must be between 0 and 100, got %g", args.Percentile)
+	}
+
 	// Convert percentile to quantile (e.g., 95 -> 0.95)
 	quantile := args.Percentile / 100.0
 

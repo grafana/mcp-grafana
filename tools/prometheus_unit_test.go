@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"context"
 	"math"
 	"testing"
 	"time"
@@ -301,4 +302,32 @@ func TestPrometheusHistogramResult(t *testing.T) {
 		assert.Nil(t, result.Hints)
 		assert.NotNil(t, result.Result)
 	})
+}
+
+func TestQueryPrometheusHistogramPercentileValidation(t *testing.T) {
+	t.Parallel()
+	testCases := []struct {
+		name       string
+		percentile float64
+		wantErr    bool
+		errMsg     string
+	}{
+		{name: "invalid negative", percentile: -1, wantErr: true, errMsg: "percentile must be between 0 and 100"},
+		{name: "invalid over 100", percentile: 101, wantErr: true, errMsg: "percentile must be between 0 and 100"},
+		{name: "invalid large negative", percentile: -50, wantErr: true, errMsg: "percentile must be between 0 and 100"},
+		{name: "invalid large positive", percentile: 200, wantErr: true, errMsg: "percentile must be between 0 and 100"},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			args := QueryPrometheusHistogramParams{
+				DatasourceUID: "test-prometheus",
+				Metric:        "http_request_duration_seconds",
+				Percentile:    tc.percentile,
+			}
+			_, err := queryPrometheusHistogram(ctx, args)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.errMsg)
+		})
+	}
 }
