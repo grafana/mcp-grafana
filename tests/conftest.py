@@ -33,8 +33,12 @@ async def cleanup_sessions():
     yield
     # Force garbage collection to clean up any unclosed sessions
     gc.collect()
-    # Give a brief moment for cleanup
-    await asyncio.sleep(0.01)
+    # Give a brief moment for cleanup (skip if event loop already closed
+    try:
+        await asyncio.sleep(0.01)
+    except RuntimeError as e:
+        if "Event loop is closed" not in str(e):
+            raise
 
 
 @pytest.fixture
