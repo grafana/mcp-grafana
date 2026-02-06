@@ -40,6 +40,7 @@ The dashboard tools now include several strategies to manage context window usag
 
 - **List and fetch datasource information:** View all configured datasources and retrieve detailed information about each.
   - _Supported datasource types: Prometheus, Loki._
+- **Get query examples:** Retrieve example queries for different datasource types to learn query syntax.
 
 ### Prometheus Querying
 
@@ -201,6 +202,7 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `list_datasources`                | Datasources | List datasources                                                    | `datasources:read`                      | `datasources:*`                                     |
 | `get_datasource_by_uid`           | Datasources | Get a datasource by uid                                             | `datasources:read`                      | `datasources:uid:prometheus-uid`                    |
 | `get_datasource_by_name`          | Datasources | Get a datasource by name                                            | `datasources:read`                      | `datasources:*` or `datasources:uid:loki-uid`       |
+| `get_query_examples`              | Datasources | Get example queries for a datasource type                           | `datasources:read`                      | `datasources:*`                                     |
 | `query_prometheus`                | Prometheus  | Execute a query against a Prometheus datasource                     | `datasources:query`                     | `datasources:uid:prometheus-uid`                    |
 | `list_prometheus_metric_metadata` | Prometheus  | List metric metadata                                                | `datasources:query`                     | `datasources:uid:prometheus-uid`                    |
 | `list_prometheus_metric_names`    | Prometheus  | List available metric names                                         | `datasources:query`                     | `datasources:uid:prometheus-uid`                    |
