@@ -224,10 +224,10 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `list_loki_label_values`          | Loki        | List values for a specific log label                                | `datasources:query`                     | `datasources:uid:loki-uid`                          |
 | `query_loki_stats`                | Loki        | Get statistics about log streams                                    | `datasources:query`                     | `datasources:uid:loki-uid`                          |
 | `query_loki_patterns`             | Loki        | Query detected log patterns to identify common structures           | `datasources:query`                     | `datasources:uid:loki-uid`                          |
-| `list_cloudwatch_namespaces`      | CloudWatch  | List available AWS CloudWatch namespaces                            | `datasources:query`                     | `datasources:uid:*`                                 |
-| `list_cloudwatch_metrics`         | CloudWatch  | List metrics in a namespace                                         | `datasources:query`                     | `datasources:uid:*`                                 |
-| `list_cloudwatch_dimensions`      | CloudWatch  | List dimensions for a metric                                        | `datasources:query`                     | `datasources:uid:*`                                 |
-| `query_cloudwatch`                | CloudWatch  | Execute CloudWatch metric queries                                   | `datasources:query`                     | `datasources:uid:*`                                 |
+| `list_cloudwatch_namespaces`      | CloudWatch* | List available AWS CloudWatch namespaces                            | `datasources:query`                     | `datasources:uid:*`                                 |
+| `list_cloudwatch_metrics`         | CloudWatch* | List metrics in a namespace                                         | `datasources:query`                     | `datasources:uid:*`                                 |
+| `list_cloudwatch_dimensions`      | CloudWatch* | List dimensions for a metric                                        | `datasources:query`                     | `datasources:uid:*`                                 |
+| `query_cloudwatch`                | CloudWatch* | Execute CloudWatch metric queries                                   | `datasources:query`                     | `datasources:uid:*`                                 |
 | `list_alert_rules`                | Alerting    | List alert rules                                                    | `alert.rules:read`                      | `folders:*` or `folders:uid:alerts-folder`          |
 | `get_alert_rule_by_uid`           | Alerting    | Get alert rule by UID                                               | `alert.rules:read`                      | `folders:uid:alerts-folder`                         |
 | `create_alert_rule`               | Alerting    | Create a new alert rule                                             | `alert.rules:write`                     | `folders:*` or `folders:uid:alerts-folder`          |
@@ -259,6 +259,8 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `patch_annotation`                | Annotations | Update only specific fields of an annotation (partial update)       | `annotations:write`                     | `annotations:*`                                     |
 | `get_annotation_tags`             | Annotations | List annotation tags with optional filtering                        | `annotations:read`                      | `annotations:*`                                     |
 | `get_panel_image`                 | Rendering   | Render a dashboard panel or full dashboard as a PNG image           | `dashboards:read`                       | `dashboards:uid:abc123`                             |
+
+_* Disabled by default. Add category to `--enabled-tools` to enable._
 
 ## CLI Flags Reference
 
