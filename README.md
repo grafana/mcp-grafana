@@ -207,7 +207,7 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `list_datasources`                | Datasources | List datasources                                                    | `datasources:read`                      | `datasources:*`                                     |
 | `get_datasource_by_uid`           | Datasources | Get a datasource by uid                                             | `datasources:read`                      | `datasources:uid:prometheus-uid`                    |
 | `get_datasource_by_name`          | Datasources | Get a datasource by name                                            | `datasources:read`                      | `datasources:*` or `datasources:uid:loki-uid`       |
-| `get_query_examples`              | Examples    | Get example queries for a datasource type                           | `datasources:read`                      | `datasources:*`                                     |
+| `get_query_examples`              | Examples*   | Get example queries for a datasource type                           | `datasources:read`                      | `datasources:*`                                     |
 | `query_prometheus`                | Prometheus  | Execute a query against a Prometheus datasource                     | `datasources:query`                     | `datasources:uid:prometheus-uid`                    |
 | `list_prometheus_metric_metadata` | Prometheus  | List metric metadata                                                | `datasources:query`                     | `datasources:uid:prometheus-uid`                    |
 | `list_prometheus_metric_names`    | Prometheus  | List available metric names                                         | `datasources:query`                     | `datasources:uid:prometheus-uid`                    |
@@ -253,6 +253,8 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `patch_annotation`                | Annotations | Update only specific fields of an annotation (partial update)       | `annotations:write`                     | `annotations:*`                                     |
 | `get_annotation_tags`             | Annotations | List annotation tags with optional filtering                        | `annotations:read`                      | `annotations:*`                                     |
 | `get_panel_image`                 | Rendering   | Render a dashboard panel or full dashboard as a PNG image           | `dashboards:read`                       | `dashboards:uid:abc123`                             |
+
+_* Disabled by default. Add category to `--enabled-tools` to enable._
 
 ## CLI Flags Reference
 
