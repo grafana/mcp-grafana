@@ -39,7 +39,7 @@ The dashboard tools now include several strategies to manage context window usag
 ### Datasources
 
 - **List and fetch datasource information:** View all configured datasources and retrieve detailed information about each.
-  - _Supported datasource types: Prometheus, Loki._
+  - _Supported datasource types: Prometheus, Loki, CloudWatch._
 
 ### Prometheus Querying
 
@@ -51,6 +51,15 @@ The dashboard tools now include several strategies to manage context window usag
 - **Query Loki logs and metrics:** Run both log queries and metric queries using LogQL against Loki datasources.
 - **Query Loki metadata:** Retrieve label names, label values, and stream statistics from Loki datasources.
 - **Query Loki patterns:** Retrieve log patterns detected by Loki to identify common log structures and anomalies.
+
+### CloudWatch Querying
+
+> **Note:** CloudWatch tools are **disabled by default**. To enable them, add `cloudwatch` to your `--enabled-tools` flag.
+
+- **List CloudWatch namespaces:** Discover available AWS CloudWatch namespaces.
+- **List CloudWatch metrics:** List metrics available in a specific namespace.
+- **List CloudWatch dimensions:** Get dimensions for filtering metric queries.
+- **Query CloudWatch:** Execute CloudWatch metric queries with time range support.
 
 ### Incidents
 
@@ -215,6 +224,10 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `list_loki_label_values`          | Loki        | List values for a specific log label                                | `datasources:query`                     | `datasources:uid:loki-uid`                          |
 | `query_loki_stats`                | Loki        | Get statistics about log streams                                    | `datasources:query`                     | `datasources:uid:loki-uid`                          |
 | `query_loki_patterns`             | Loki        | Query detected log patterns to identify common structures           | `datasources:query`                     | `datasources:uid:loki-uid`                          |
+| `list_cloudwatch_namespaces`      | CloudWatch  | List available AWS CloudWatch namespaces                            | `datasources:query`                     | `datasources:uid:*`                                 |
+| `list_cloudwatch_metrics`         | CloudWatch  | List metrics in a namespace                                         | `datasources:query`                     | `datasources:uid:*`                                 |
+| `list_cloudwatch_dimensions`      | CloudWatch  | List dimensions for a metric                                        | `datasources:query`                     | `datasources:uid:*`                                 |
+| `query_cloudwatch`                | CloudWatch  | Execute CloudWatch metric queries                                   | `datasources:query`                     | `datasources:uid:*`                                 |
 | `list_alert_rules`                | Alerting    | List alert rules                                                    | `alert.rules:read`                      | `folders:*` or `folders:uid:alerts-folder`          |
 | `get_alert_rule_by_uid`           | Alerting    | Get alert rule by UID                                               | `alert.rules:read`                      | `folders:uid:alerts-folder`                         |
 | `create_alert_rule`               | Alerting    | Create a new alert rule                                             | `alert.rules:write`                     | `folders:*` or `folders:uid:alerts-folder`          |
@@ -277,6 +290,8 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 - `--disable-pyroscope`: Disable pyroscope tools
 - `--disable-navigation`: Disable navigation tools
 - `--disable-rendering`: Disable rendering tools (panel/dashboard image export)
+- `--disable-cloudwatch`: Disable CloudWatch tools
+
 ### Read-Only Mode
 
 The `--disable-write` flag provides a way to run the MCP server in read-only mode, preventing any write operations to your Grafana instance. This is useful for scenarios where you want to provide safe, read-only access such as:
