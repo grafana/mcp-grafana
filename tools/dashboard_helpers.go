@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
 )
@@ -282,6 +281,13 @@ func extractQueryExpression(target map[string]interface{}) string {
 // Matches: $varname, ${varname}, ${varname:option}, [[varname]]
 var variableRegex = regexp.MustCompile(`\$\{([a-zA-Z_][a-zA-Z0-9_]*)(?::[^}]*)?\}|\$([a-zA-Z_][a-zA-Z0-9_]*)|\[\[([a-zA-Z_][a-zA-Z0-9_]*)\]\]`)
 
+// Pre-compiled regex patterns for substituteVariables
+var (
+	dollarBraceVarRegex   = regexp.MustCompile(`\$\{([a-zA-Z_][a-zA-Z0-9_]*)(?::[^}]*)?\}`)
+	dollarBraceNameRegex  = regexp.MustCompile(`\$\{([a-zA-Z_][a-zA-Z0-9_]*)`)
+	doubleBracketVarRegex = regexp.MustCompile(`\[\[([a-zA-Z_][a-zA-Z0-9_]*)\]\]`)
+)
+
 // findVariablesInQuery extracts all variable references from a query
 func findVariablesInQuery(query string, dashboardVars map[string]VariableInfo, overrides map[string]string) []VariableInfo {
 	var variables []VariableInfo
@@ -350,10 +356,9 @@ func substituteVariables(query string, variables map[string]string) string {
 	result := query
 
 	// Replace ${varname:option} and ${varname} patterns
-	result = regexp.MustCompile(`\$\{([a-zA-Z_][a-zA-Z0-9_]*)(?::[^}]*)?\}`).ReplaceAllStringFunc(result, func(match string) string {
+	result = dollarBraceVarRegex.ReplaceAllStringFunc(result, func(match string) string {
 		// Extract variable name
-		re := regexp.MustCompile(`\$\{([a-zA-Z_][a-zA-Z0-9_]*)`)
-		m := re.FindStringSubmatch(match)
+		m := dollarBraceNameRegex.FindStringSubmatch(match)
 		if len(m) > 1 {
 			if val, ok := variables[m[1]]; ok {
 				return val
@@ -366,12 +371,13 @@ func substituteVariables(query string, variables map[string]string) string {
 	// Be careful not to match variable names that are part of other words
 	for name, value := range variables {
 		// Match $varname that is followed by non-word character or end of string
+		// This pattern must remain dynamic since it depends on runtime variable names
 		pattern := regexp.MustCompile(`\$` + regexp.QuoteMeta(name) + `(?:\b|$)`)
 		result = pattern.ReplaceAllString(result, value)
 	}
 
 	// Replace [[varname]] patterns
-	result = regexp.MustCompile(`\[\[([a-zA-Z_][a-zA-Z0-9_]*)\]\]`).ReplaceAllStringFunc(result, func(match string) string {
+	result = doubleBracketVarRegex.ReplaceAllStringFunc(result, func(match string) string {
 		name := match[2 : len(match)-2]
 		if val, ok := variables[name]; ok {
 			return val
@@ -391,7 +397,3 @@ var GetPanelQueriesWithVariables = mcpgrafana.MustTool(
 	mcp.WithReadOnlyHintAnnotation(true),
 )
 
-// AddDashboardHelperTools registers dashboard helper tools with the MCP server
-func AddDashboardHelperTools(mcp *server.MCPServer) {
-	GetPanelQueriesWithVariables.Register(mcp)
-}
