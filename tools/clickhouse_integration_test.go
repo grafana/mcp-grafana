@@ -3,10 +3,8 @@
 package tools
 
 import (
-	"context"
 	"testing"
 
-	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -14,9 +12,7 @@ import (
 const clickhouseTestDatasourceUID = "clickhouse"
 
 func TestClickHouseIntegration_ListTables(t *testing.T) {
-	ctx := context.Background()
-	ctx = mcpgrafana.WithGrafanaConfig(ctx, testGrafanaConfig())
-	ctx = mcpgrafana.WithGrafanaClient(ctx, testGrafanaClient(t, ctx))
+	ctx := newTestContext()
 
 	result, err := listClickHouseTables(ctx, ListClickHouseTablesParams{
 		DatasourceUID: clickhouseTestDatasourceUID,
@@ -37,9 +33,7 @@ func TestClickHouseIntegration_ListTables(t *testing.T) {
 }
 
 func TestClickHouseIntegration_ListTablesFilteredByDatabase(t *testing.T) {
-	ctx := context.Background()
-	ctx = mcpgrafana.WithGrafanaConfig(ctx, testGrafanaConfig())
-	ctx = mcpgrafana.WithGrafanaClient(ctx, testGrafanaClient(t, ctx))
+	ctx := newTestContext()
 
 	result, err := listClickHouseTables(ctx, ListClickHouseTablesParams{
 		DatasourceUID: clickhouseTestDatasourceUID,
@@ -56,9 +50,7 @@ func TestClickHouseIntegration_ListTablesFilteredByDatabase(t *testing.T) {
 }
 
 func TestClickHouseIntegration_DescribeTable(t *testing.T) {
-	ctx := context.Background()
-	ctx = mcpgrafana.WithGrafanaConfig(ctx, testGrafanaConfig())
-	ctx = mcpgrafana.WithGrafanaClient(ctx, testGrafanaClient(t, ctx))
+	ctx := newTestContext()
 
 	result, err := describeClickHouseTable(ctx, DescribeClickHouseTableParams{
 		DatasourceUID: clickhouseTestDatasourceUID,
@@ -92,9 +84,7 @@ func TestClickHouseIntegration_DescribeTable(t *testing.T) {
 }
 
 func TestClickHouseIntegration_Query(t *testing.T) {
-	ctx := context.Background()
-	ctx = mcpgrafana.WithGrafanaConfig(ctx, testGrafanaConfig())
-	ctx = mcpgrafana.WithGrafanaClient(ctx, testGrafanaClient(t, ctx))
+	ctx := newTestContext()
 
 	result, err := queryClickHouse(ctx, ClickHouseQueryParams{
 		DatasourceUID: clickhouseTestDatasourceUID,
@@ -113,9 +103,7 @@ func TestClickHouseIntegration_Query(t *testing.T) {
 }
 
 func TestClickHouseIntegration_QueryWithTimeFilter(t *testing.T) {
-	ctx := context.Background()
-	ctx = mcpgrafana.WithGrafanaConfig(ctx, testGrafanaConfig())
-	ctx = mcpgrafana.WithGrafanaClient(ctx, testGrafanaClient(t, ctx))
+	ctx := newTestContext()
 
 	result, err := queryClickHouse(ctx, ClickHouseQueryParams{
 		DatasourceUID: clickhouseTestDatasourceUID,
@@ -134,9 +122,7 @@ func TestClickHouseIntegration_QueryWithTimeFilter(t *testing.T) {
 }
 
 func TestClickHouseIntegration_QueryWithVariables(t *testing.T) {
-	ctx := context.Background()
-	ctx = mcpgrafana.WithGrafanaConfig(ctx, testGrafanaConfig())
-	ctx = mcpgrafana.WithGrafanaClient(ctx, testGrafanaClient(t, ctx))
+	ctx := newTestContext()
 
 	result, err := queryClickHouse(ctx, ClickHouseQueryParams{
 		DatasourceUID: clickhouseTestDatasourceUID,
@@ -156,9 +142,7 @@ func TestClickHouseIntegration_QueryWithVariables(t *testing.T) {
 }
 
 func TestClickHouseIntegration_QueryEmptyResult(t *testing.T) {
-	ctx := context.Background()
-	ctx = mcpgrafana.WithGrafanaConfig(ctx, testGrafanaConfig())
-	ctx = mcpgrafana.WithGrafanaClient(ctx, testGrafanaClient(t, ctx))
+	ctx := newTestContext()
 
 	result, err := queryClickHouse(ctx, ClickHouseQueryParams{
 		DatasourceUID: clickhouseTestDatasourceUID,
@@ -175,9 +159,7 @@ func TestClickHouseIntegration_QueryEmptyResult(t *testing.T) {
 }
 
 func TestClickHouseIntegration_InvalidDatasource(t *testing.T) {
-	ctx := context.Background()
-	ctx = mcpgrafana.WithGrafanaConfig(ctx, testGrafanaConfig())
-	ctx = mcpgrafana.WithGrafanaClient(ctx, testGrafanaClient(t, ctx))
+	ctx := newTestContext()
 
 	_, err := queryClickHouse(ctx, ClickHouseQueryParams{
 		DatasourceUID: "nonexistent-datasource",
@@ -188,9 +170,7 @@ func TestClickHouseIntegration_InvalidDatasource(t *testing.T) {
 }
 
 func TestClickHouseIntegration_WrongDatasourceType(t *testing.T) {
-	ctx := context.Background()
-	ctx = mcpgrafana.WithGrafanaConfig(ctx, testGrafanaConfig())
-	ctx = mcpgrafana.WithGrafanaClient(ctx, testGrafanaClient(t, ctx))
+	ctx := newTestContext()
 
 	// Try to use a Prometheus datasource as ClickHouse
 	_, err := queryClickHouse(ctx, ClickHouseQueryParams{
