@@ -57,7 +57,9 @@ services:
     volumes:
       - ./testdata/tempo-config.yaml:/etc/tempo/tempo-config.yaml
     ports:
-      - "3200:3200" # tempo
+      - "3200:3200"   # tempo HTTP API
+      - "4317:4317"   # OTLP gRPC receiver
+      - "4318:4318"   # OTLP HTTP receiver
 
   tempo2:
     image: grafana/tempo:2.9.0-rc.0@sha256:5517ee34d335dedb9ad43028bd8f72edd0bb98b744ea5847a7572755d93d9866

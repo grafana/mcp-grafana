@@ -1,13 +1,14 @@
 // Package observability provides OpenTelemetry-based metrics and tracing
 // for the MCP Grafana server.
 //
-// Metrics are exposed via a Prometheus endpoint at /metrics when enabled.
+// Metrics follow the OTel MCP semantic conventions using the mcpconv package.
 // Tracing is configured via standard OTEL_* environment variables.
 package observability
 
 import (
 	"context"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 
@@ -18,9 +19,13 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/exporters/prometheus"
-	"go.opentelemetry.io/otel/metric"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	sdkresource "go.opentelemetry.io/otel/sdk/resource"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	semconv "go.opentelemetry.io/otel/semconv/v1.39.0"
+	"go.opentelemetry.io/otel/semconv/v1.39.0/mcpconv"
 )
 
 // Config holds configuration for observability features.
@@ -31,37 +36,41 @@ type Config struct {
 	// MetricsAddress is an optional separate address for the metrics server.
 	// If empty, metrics are served on the main server.
 	MetricsAddress string
+
+	// NetworkTransport is the transport protocol used ("pipe" for stdio, "tcp" for HTTP).
+	NetworkTransport mcpconv.NetworkTransportAttr
+
+	// ServerName is the service name for OTel resource identification (e.g. "mcp-grafana").
+	ServerName string
+
+	// ServerVersion is the service version for OTel resource identification.
+	ServerVersion string
+}
+
+// sessionMeta holds per-session metadata for enriching metrics.
+type sessionMeta struct {
+	startTime       time.Time
+	protocolVersion string
 }
 
 // Observability manages the OpenTelemetry providers and Prometheus handler.
 type Observability struct {
-	meterProvider *sdkmetric.MeterProvider
-	promHandler   http.Handler
+	meterProvider  *sdkmetric.MeterProvider
+	tracerProvider *sdktrace.TracerProvider
+	promHandler    http.Handler
 
-	// MCP protocol metrics
-	mcpRequestsTotal    metric.Int64Counter
-	mcpRequestDuration  metric.Float64Histogram
-	mcpToolCallsTotal   metric.Int64Counter
-	mcpToolCallDuration metric.Float64Histogram
-	mcpSessionsActive   metric.Int64UpDownCounter
+	// Semconv MCP metrics
+	operationDuration mcpconv.ServerOperationDuration
+	sessionDuration   mcpconv.ServerSessionDuration
+
+	// Network transport for attribute enrichment
+	networkTransport mcpconv.NetworkTransportAttr
 
 	// Track request start times for duration calculation
 	requestStartTimes sync.Map // map[any]time.Time keyed by request ID
-	toolStartTimes    sync.Map // map[any]time.Time keyed by request ID for tool calls
-}
 
-// nativeHistogramAggregationSelector returns an AggregationSelector that uses
-// native (exponential) histograms for all histogram instruments.
-func nativeHistogramAggregationSelector(ik sdkmetric.InstrumentKind) sdkmetric.Aggregation {
-	switch ik {
-	case sdkmetric.InstrumentKindHistogram:
-		return sdkmetric.AggregationBase2ExponentialHistogram{
-			MaxSize:  160,
-			MaxScale: 20,
-		}
-	default:
-		return sdkmetric.DefaultAggregationSelector(ik)
-	}
+	// Per-session metadata (protocol version, start time)
+	sessions sync.Map // map[string]*sessionMeta keyed by session ID
 }
 
 // Setup initializes the observability providers based on the configuration.
@@ -72,22 +81,56 @@ func nativeHistogramAggregationSelector(ik sdkmetric.InstrumentKind) sdkmetric.A
 // Tracing configuration is handled via standard OTEL_* environment variables
 // (e.g., OTEL_EXPORTER_OTLP_ENDPOINT, OTEL_TRACES_SAMPLER).
 func Setup(cfg Config) (*Observability, error) {
-	obs := &Observability{}
+	obs := &Observability{
+		networkTransport: cfg.NetworkTransport,
+	}
 
 	if !cfg.MetricsEnabled {
 		return obs, nil
 	}
 
-	// Create Prometheus exporter with native histogram support
-	exporter, err := prometheus.New(
-		prometheus.WithAggregationSelector(nativeHistogramAggregationSelector),
+	// Create Prometheus exporter using default aggregation so that
+	// explicit bucket boundaries from the semconv spec are preserved.
+	exporter, err := prometheus.New()
+	if err != nil {
+		return nil, err
+	}
+
+	// Build OTel resource with service identity
+	res, err := sdkresource.Merge(
+		sdkresource.Default(),
+		sdkresource.NewWithAttributes(
+			semconv.SchemaURL,
+			semconv.ServiceName(cfg.ServerName),
+			semconv.ServiceVersion(cfg.ServerVersion),
+		),
 	)
 	if err != nil {
 		return nil, err
 	}
 
-	// Create MeterProvider with the Prometheus exporter
-	provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(exporter))
+	// Set up OTLP trace exporter when OTEL_EXPORTER_OTLP_ENDPOINT is configured.
+	// The gRPC exporter respects standard OTEL_* env vars for endpoint, headers, etc.
+	if os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") != "" {
+		traceExporter, traceErr := otlptracegrpc.New(context.Background(),
+			otlptracegrpc.WithInsecure(),
+		)
+		if traceErr != nil {
+			return nil, traceErr
+		}
+		tp := sdktrace.NewTracerProvider(
+			sdktrace.WithBatcher(traceExporter),
+			sdktrace.WithResource(res),
+		)
+		otel.SetTracerProvider(tp)
+		obs.tracerProvider = tp
+	}
+
+	// Create MeterProvider with the Prometheus exporter and resource
+	provider := sdkmetric.NewMeterProvider(
+		sdkmetric.WithReader(exporter),
+		sdkmetric.WithResource(res),
+	)
 
 	// Register as global MeterProvider so otelhttp instrumentation uses it
 	otel.SetMeterProvider(provider)
@@ -99,40 +142,15 @@ func Setup(cfg Config) (*Observability, error) {
 		promhttp.HandlerOpts{EnableOpenMetrics: true},
 	)
 
-	// Create MCP protocol metrics
+	// Create MCP protocol metrics using semconv types with explicit bucket boundaries
 	meter := provider.Meter("mcp-grafana")
 
-	obs.mcpRequestsTotal, err = meter.Int64Counter("mcp_requests_total",
-		metric.WithDescription("Total number of MCP requests"),
-		metric.WithUnit("{request}"))
+	obs.operationDuration, err = mcpconv.NewServerOperationDuration(meter, mcpHistogramBuckets)
 	if err != nil {
 		return nil, err
 	}
 
-	obs.mcpRequestDuration, err = meter.Float64Histogram("mcp_request_duration_seconds",
-		metric.WithDescription("Duration of MCP requests in seconds"),
-		metric.WithUnit("s"))
-	if err != nil {
-		return nil, err
-	}
-
-	obs.mcpToolCallsTotal, err = meter.Int64Counter("mcp_tool_calls_total",
-		metric.WithDescription("Total number of MCP tool calls"),
-		metric.WithUnit("{call}"))
-	if err != nil {
-		return nil, err
-	}
-
-	obs.mcpToolCallDuration, err = meter.Float64Histogram("mcp_tool_call_duration_seconds",
-		metric.WithDescription("Duration of MCP tool calls in seconds"),
-		metric.WithUnit("s"))
-	if err != nil {
-		return nil, err
-	}
-
-	obs.mcpSessionsActive, err = meter.Int64UpDownCounter("mcp_sessions_active",
-		metric.WithDescription("Number of active MCP sessions"),
-		metric.WithUnit("{session}"))
+	obs.sessionDuration, err = mcpconv.NewServerSessionDuration(meter, mcpHistogramBuckets)
 	if err != nil {
 		return nil, err
 	}
@@ -142,6 +160,11 @@ func Setup(cfg Config) (*Observability, error) {
 
 // Shutdown gracefully shuts down the observability providers.
 func (o *Observability) Shutdown(ctx context.Context) error {
+	if o.tracerProvider != nil {
+		if err := o.tracerProvider.Shutdown(ctx); err != nil {
+			return err
+		}
+	}
 	if o.meterProvider != nil {
 		return o.meterProvider.Shutdown(ctx)
 	}
@@ -165,10 +188,60 @@ func WrapHandler(h http.Handler, operation string) http.Handler {
 	return otelhttp.NewHandler(h, operation)
 }
 
+// metricsEnabled returns true if semconv metrics have been initialized.
+func (o *Observability) metricsEnabled() bool {
+	return o.operationDuration.Inst() != nil
+}
+
+// buildOperationAttrs assembles semconv attributes for an operation duration recording.
+func (o *Observability) buildOperationAttrs(ctx context.Context, method mcp.MCPMethod, message any, err error) []attribute.KeyValue {
+	var attrs []attribute.KeyValue
+
+	// gen_ai.tool.name for tools/call method
+	if method == "tools/call" {
+		if req, ok := message.(*mcp.CallToolRequest); ok && req != nil {
+			attrs = append(attrs, o.operationDuration.AttrGenAIToolName(req.Params.Name))
+		}
+	}
+
+	// error.type when there's an error
+	if err != nil {
+		attrs = append(attrs, o.operationDuration.AttrErrorType(mcpconv.ErrorTypeAttr(errorTypeName(err))))
+	}
+
+	// network.transport
+	if o.networkTransport != "" {
+		attrs = append(attrs, o.operationDuration.AttrNetworkTransport(o.networkTransport))
+	}
+
+	// mcp.protocol.version from session context
+	// Note: mcp.session.id is a span-only attribute (not on metrics) to avoid cardinality explosion.
+	if session := server.ClientSessionFromContext(ctx); session != nil {
+		if meta, ok := o.sessions.Load(session.SessionID()); ok {
+			if sm := meta.(*sessionMeta); sm.protocolVersion != "" {
+				attrs = append(attrs, o.operationDuration.AttrProtocolVersion(sm.protocolVersion))
+			}
+		}
+	}
+
+	return attrs
+}
+
+// errorTypeName returns a descriptive error type string from an error.
+func errorTypeName(err error) string {
+	type errorTyper interface {
+		ErrorType() string
+	}
+	if et, ok := err.(errorTyper); ok {
+		return et.ErrorType()
+	}
+	return "_OTHER"
+}
+
 // MCPHooks returns server.Hooks that record MCP protocol metrics.
 // These hooks should be merged with any existing hooks using MergeHooks.
 func (o *Observability) MCPHooks() *server.Hooks {
-	if o.mcpRequestsTotal == nil {
+	if !o.metricsEnabled() {
 		// Metrics not enabled, return empty hooks
 		return &server.Hooks{}
 	}
@@ -176,78 +249,60 @@ func (o *Observability) MCPHooks() *server.Hooks {
 	return &server.Hooks{
 		OnRegisterSession: []server.OnRegisterSessionHookFunc{
 			func(ctx context.Context, session server.ClientSession) {
-				o.mcpSessionsActive.Add(ctx, 1)
+				o.sessions.Store(session.SessionID(), &sessionMeta{
+					startTime: time.Now(),
+				})
 			},
 		},
 		OnUnregisterSession: []server.OnUnregisterSessionHookFunc{
 			func(ctx context.Context, session server.ClientSession) {
-				o.mcpSessionsActive.Add(ctx, -1)
+				sid := session.SessionID()
+				if meta, ok := o.sessions.LoadAndDelete(sid); ok {
+					sm := meta.(*sessionMeta)
+					duration := time.Since(sm.startTime).Seconds()
+					var attrs []attribute.KeyValue
+					if o.networkTransport != "" {
+						attrs = append(attrs, o.sessionDuration.AttrNetworkTransport(o.networkTransport))
+					}
+					if sm.protocolVersion != "" {
+						attrs = append(attrs, o.sessionDuration.AttrProtocolVersion(sm.protocolVersion))
+					}
+					o.sessionDuration.Record(ctx, duration, attrs...)
+				}
+			},
+		},
+		OnAfterInitialize: []server.OnAfterInitializeFunc{
+			func(ctx context.Context, id any, message *mcp.InitializeRequest, result *mcp.InitializeResult) {
+				if result == nil {
+					return
+				}
+				if session := server.ClientSessionFromContext(ctx); session != nil {
+					if meta, ok := o.sessions.Load(session.SessionID()); ok {
+						meta.(*sessionMeta).protocolVersion = result.ProtocolVersion
+					}
+				}
 			},
 		},
 		OnBeforeAny: []server.BeforeAnyHookFunc{
 			func(ctx context.Context, id any, method mcp.MCPMethod, message any) {
-				// Store start time for duration calculation
 				o.requestStartTimes.Store(id, time.Now())
 			},
 		},
 		OnSuccess: []server.OnSuccessHookFunc{
 			func(ctx context.Context, id any, method mcp.MCPMethod, message any, result any) {
-				attrs := metric.WithAttributes(
-					attribute.String("method", string(method)),
-					attribute.String("status", "success"),
-				)
-				o.mcpRequestsTotal.Add(ctx, 1, attrs)
-
 				if startTime, ok := o.requestStartTimes.LoadAndDelete(id); ok {
 					duration := time.Since(startTime.(time.Time)).Seconds()
-					o.mcpRequestDuration.Record(ctx, duration, metric.WithAttributes(
-						attribute.String("method", string(method)),
-					))
+					attrs := o.buildOperationAttrs(ctx, method, message, nil)
+					o.operationDuration.Record(ctx, duration, mcpconv.MethodNameAttr(method), attrs...)
 				}
 			},
 		},
 		OnError: []server.OnErrorHookFunc{
 			func(ctx context.Context, id any, method mcp.MCPMethod, message any, err error) {
-				attrs := metric.WithAttributes(
-					attribute.String("method", string(method)),
-					attribute.String("status", "error"),
-				)
-				o.mcpRequestsTotal.Add(ctx, 1, attrs)
-
 				if startTime, ok := o.requestStartTimes.LoadAndDelete(id); ok {
 					duration := time.Since(startTime.(time.Time)).Seconds()
-					o.mcpRequestDuration.Record(ctx, duration, metric.WithAttributes(
-						attribute.String("method", string(method)),
-					))
-				}
-			},
-		},
-		OnBeforeCallTool: []server.OnBeforeCallToolFunc{
-			func(ctx context.Context, id any, message *mcp.CallToolRequest) {
-				// Store start time for tool duration calculation
-				o.toolStartTimes.Store(id, time.Now())
-			},
-		},
-		OnAfterCallTool: []server.OnAfterCallToolFunc{
-			func(ctx context.Context, id any, message *mcp.CallToolRequest, result *mcp.CallToolResult) {
-				toolName := ""
-				if message != nil {
-					toolName = message.Params.Name
-				}
-				isError := result != nil && result.IsError
-
-				o.mcpToolCallsTotal.Add(ctx, 1, metric.WithAttributes(
-					attribute.String("tool", toolName),
-					attribute.Bool("error", isError),
-				))
-
-				// Record tool-specific duration
-				if startTime, ok := o.toolStartTimes.LoadAndDelete(id); ok {
-					duration := time.Since(startTime.(time.Time)).Seconds()
-					o.mcpToolCallDuration.Record(ctx, duration, metric.WithAttributes(
-						attribute.String("tool", toolName),
-						attribute.Bool("error", isError),
-					))
+					attrs := o.buildOperationAttrs(ctx, method, message, err)
+					o.operationDuration.Record(ctx, duration, mcpconv.MethodNameAttr(method), attrs...)
 				}
 			},
 		},

@@ -18,6 +18,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/trace"
 )
 
 func TestExtractIncidentClientFromEnv(t *testing.T) {
@@ -392,14 +393,14 @@ func TestToolTracingInstrumentation(t *testing.T) {
 		require.Len(t, spans, 1)
 
 		span := spans[0]
-		assert.Equal(t, "mcp.tool.test_tool", span.Name())
+		assert.Equal(t, "tools/call test_tool", span.Name())
 		assert.Equal(t, codes.Ok, span.Status().Code)
 
-		// Check attributes
+		// Check semconv attributes
 		attributes := span.Attributes()
-		assertHasAttribute(t, attributes, "mcp.tool.name", "test_tool")
-		assertHasAttribute(t, attributes, "mcp.tool.description", "A test tool for tracing")
-		assertHasAttribute(t, attributes, "mcp.tool.arguments", `{"message":"world"}`)
+		assertHasAttribute(t, attributes, "gen_ai.tool.name", "test_tool")
+		assertHasAttribute(t, attributes, "mcp.method.name", "tools/call")
+		assertHasAttribute(t, attributes, "gen_ai.tool.call.arguments", `{"message":"world"}`)
 	})
 
 	t.Run("tool execution error records error on span", func(t *testing.T) {
@@ -450,7 +451,7 @@ func TestToolTracingInstrumentation(t *testing.T) {
 		require.Len(t, spans, 1)
 
 		span := spans[0]
-		assert.Equal(t, "mcp.tool.failing_tool", span.Name())
+		assert.Equal(t, "tools/call failing_tool", span.Name())
 		assert.Equal(t, codes.Error, span.Status().Code)
 		assert.Equal(t, assert.AnError.Error(), span.Status().Description)
 
@@ -510,7 +511,7 @@ func TestToolTracingInstrumentation(t *testing.T) {
 		require.Len(t, spans, 1)
 
 		span := spans[0]
-		assert.Equal(t, "mcp.tool.context_prop_tool", span.Name())
+		assert.Equal(t, "tools/call context_prop_tool", span.Name())
 		assert.Equal(t, codes.Ok, span.Status().Code)
 	})
 
@@ -560,17 +561,17 @@ func TestToolTracingInstrumentation(t *testing.T) {
 		require.Len(t, spans, 1)
 
 		span := spans[0]
-		assert.Equal(t, "mcp.tool.sensitive_tool", span.Name())
+		assert.Equal(t, "tools/call sensitive_tool", span.Name())
 		assert.Equal(t, codes.Ok, span.Status().Code)
 
 		// Check that arguments are NOT logged (PII safety)
 		attributes := span.Attributes()
-		assertHasAttribute(t, attributes, "mcp.tool.name", "sensitive_tool")
-		assertHasAttribute(t, attributes, "mcp.tool.description", "A tool with sensitive data")
+		assertHasAttribute(t, attributes, "gen_ai.tool.name", "sensitive_tool")
+		assertHasAttribute(t, attributes, "mcp.method.name", "tools/call")
 
 		// Verify arguments are NOT present
 		for _, attr := range attributes {
-			assert.NotEqual(t, "mcp.tool.arguments", string(attr.Key), "Arguments should not be logged by default for PII safety")
+			assert.NotEqual(t, "gen_ai.tool.call.arguments", string(attr.Key), "Arguments should not be logged by default for PII safety")
 		}
 	})
 
@@ -620,14 +621,14 @@ func TestToolTracingInstrumentation(t *testing.T) {
 		require.Len(t, spans, 1)
 
 		span := spans[0]
-		assert.Equal(t, "mcp.tool.debug_tool", span.Name())
+		assert.Equal(t, "tools/call debug_tool", span.Name())
 		assert.Equal(t, codes.Ok, span.Status().Code)
 
 		// Check that arguments ARE logged when flag enabled
 		attributes := span.Attributes()
-		assertHasAttribute(t, attributes, "mcp.tool.name", "debug_tool")
-		assertHasAttribute(t, attributes, "mcp.tool.description", "A tool for debugging")
-		assertHasAttribute(t, attributes, "mcp.tool.arguments", `{"safeData":"debug-value"}`)
+		assertHasAttribute(t, attributes, "gen_ai.tool.name", "debug_tool")
+		assertHasAttribute(t, attributes, "mcp.method.name", "tools/call")
+		assertHasAttribute(t, attributes, "gen_ai.tool.call.arguments", `{"safeData":"debug-value"}`)
 	})
 }
 
@@ -658,6 +659,52 @@ func TestHTTPTracingConfiguration(t *testing.T) {
 
 		// Verify the client was created successfully
 		assert.NotNil(t, client.Transport)
+	})
+}
+
+func TestExtractTraceContext(t *testing.T) {
+	t.Run("no meta returns original context", func(t *testing.T) {
+		ctx := context.Background()
+		request := mcp.CallToolRequest{}
+		result := extractTraceContext(ctx, request)
+		assert.Equal(t, ctx, result)
+	})
+
+	t.Run("empty meta returns original context", func(t *testing.T) {
+		ctx := context.Background()
+		request := mcp.CallToolRequest{}
+		request.Params.Meta = &mcp.Meta{}
+		result := extractTraceContext(ctx, request)
+		assert.Equal(t, ctx, result)
+	})
+
+	t.Run("valid traceparent extracts span context", func(t *testing.T) {
+		ctx := context.Background()
+		request := mcp.CallToolRequest{}
+		request.Params.Meta = &mcp.Meta{
+			AdditionalFields: map[string]any{
+				"traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+			},
+		}
+		result := extractTraceContext(ctx, request)
+		// Should have extracted a span context
+		sc := trace.SpanContextFromContext(result)
+		assert.True(t, sc.IsValid())
+		assert.Equal(t, "4bf92f3577b34da6a3ce929d0e0e4736", sc.TraceID().String())
+		assert.Equal(t, "00f067aa0ba902b7", sc.SpanID().String())
+	})
+
+	t.Run("invalid traceparent returns context unchanged", func(t *testing.T) {
+		ctx := context.Background()
+		request := mcp.CallToolRequest{}
+		request.Params.Meta = &mcp.Meta{
+			AdditionalFields: map[string]any{
+				"traceparent": "not-a-valid-traceparent",
+			},
+		}
+		result := extractTraceContext(ctx, request)
+		sc := trace.SpanContextFromContext(result)
+		assert.False(t, sc.IsValid())
 	})
 }
 

@@ -17,7 +17,8 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+
+	"go.opentelemetry.io/otel/semconv/v1.39.0/mcpconv"
 )
 
 func TestSetup(t *testing.T) {
@@ -67,6 +68,21 @@ func TestSetup(t *testing.T) {
 
 		// MetricsAddress is just stored in config, doesn't affect Setup
 		assert.NotNil(t, obs.MetricsHandler())
+
+		err = obs.Shutdown(context.Background())
+		assert.NoError(t, err)
+	})
+
+	t.Run("network transport stored from config", func(t *testing.T) {
+		cfg := Config{
+			MetricsEnabled:   true,
+			NetworkTransport: mcpconv.NetworkTransportTCP,
+		}
+
+		obs, err := Setup(cfg)
+		require.NoError(t, err)
+		require.NotNil(t, obs)
+		assert.Equal(t, mcpconv.NetworkTransportTCP, obs.networkTransport)
 
 		err = obs.Shutdown(context.Background())
 		assert.NoError(t, err)
@@ -134,6 +150,7 @@ func TestMCPHooks_MetricsDisabled(t *testing.T) {
 	// Hooks should be empty when metrics disabled
 	assert.Empty(t, hooks.OnRegisterSession)
 	assert.Empty(t, hooks.OnUnregisterSession)
+	assert.Empty(t, hooks.OnAfterInitialize)
 	assert.Empty(t, hooks.OnBeforeAny)
 	assert.Empty(t, hooks.OnSuccess)
 	assert.Empty(t, hooks.OnError)
@@ -156,11 +173,14 @@ func TestMCPHooks_MetricsEnabled(t *testing.T) {
 	// Hooks should be populated when metrics enabled
 	assert.Len(t, hooks.OnRegisterSession, 1)
 	assert.Len(t, hooks.OnUnregisterSession, 1)
+	assert.Len(t, hooks.OnAfterInitialize, 1)
 	assert.Len(t, hooks.OnBeforeAny, 1)
 	assert.Len(t, hooks.OnSuccess, 1)
 	assert.Len(t, hooks.OnError, 1)
-	assert.Len(t, hooks.OnBeforeCallTool, 1)
-	assert.Len(t, hooks.OnAfterCallTool, 1)
+
+	// Tool-specific hooks removed (absorbed into operation duration)
+	assert.Empty(t, hooks.OnBeforeCallTool)
+	assert.Empty(t, hooks.OnAfterCallTool)
 }
 
 // mockClientSession implements server.ClientSession for testing
@@ -173,7 +193,8 @@ func (m *mockClientSession) Initialized() bool                                  
 
 func TestMCPHooks_SessionTracking(t *testing.T) {
 	cfg := Config{
-		MetricsEnabled: true,
+		MetricsEnabled:   true,
+		NetworkTransport: mcpconv.NetworkTransportTCP,
 	}
 
 	obs, err := Setup(cfg)
@@ -184,10 +205,56 @@ func TestMCPHooks_SessionTracking(t *testing.T) {
 	ctx := context.Background()
 	session := &mockClientSession{}
 
-	// Test session registration - should not panic
+	// Test session registration stores metadata
 	hooks.OnRegisterSession[0](ctx, session)
 
-	// Test session unregistration - should not panic
+	meta, ok := obs.sessions.Load("test-session")
+	require.True(t, ok)
+	sm := meta.(*sessionMeta)
+	assert.False(t, sm.startTime.IsZero())
+
+	// Test session unregistration records duration and cleans up
+	hooks.OnUnregisterSession[0](ctx, session)
+
+	_, ok = obs.sessions.Load("test-session")
+	assert.False(t, ok, "session should be cleaned up after unregister")
+}
+
+func TestMCPHooks_SessionDuration(t *testing.T) {
+	cfg := Config{
+		MetricsEnabled:   true,
+		NetworkTransport: mcpconv.NetworkTransportPipe,
+	}
+
+	obs, err := Setup(cfg)
+	require.NoError(t, err)
+	defer obs.Shutdown(context.Background())
+
+	hooks := obs.MCPHooks()
+	ctx := context.Background()
+	session := &mockClientSession{}
+
+	// Register session
+	hooks.OnRegisterSession[0](ctx, session)
+
+	// Simulate OnAfterInitialize to set protocol version
+	initResult := &mcp.InitializeResult{
+		ProtocolVersion: "2024-11-05",
+	}
+	// Create context with session using MCPServer.WithContext
+	mcpServer := server.NewMCPServer("test", "1.0.0")
+	sessionCtx := mcpServer.WithContext(ctx, session)
+	hooks.OnAfterInitialize[0](sessionCtx, "init-1", nil, initResult)
+
+	// Verify protocol version was stored
+	meta, _ := obs.sessions.Load("test-session")
+	sm := meta.(*sessionMeta)
+	assert.Equal(t, "2024-11-05", sm.protocolVersion)
+
+	// Small delay to ensure measurable duration
+	time.Sleep(1 * time.Millisecond)
+
+	// Unregister session (records session duration)
 	hooks.OnUnregisterSession[0](ctx, session)
 }
 
@@ -215,9 +282,6 @@ func TestMCPHooks_RequestTracking(t *testing.T) {
 
 		// Call OnSuccess - should not panic and should clean up start time
 		hooks.OnSuccess[0](ctx, requestID, method, nil, nil)
-
-		// Verify start time was cleaned up by checking the map is empty
-		// (We can't directly access the map, but we can verify no panic on double-call)
 	})
 
 	t.Run("error request", func(t *testing.T) {
@@ -238,61 +302,6 @@ func TestMCPHooks_RequestTracking(t *testing.T) {
 		// Calling OnSuccess without OnBeforeAny should not panic
 		hooks.OnSuccess[0](ctx, "unknown-id", mcp.MCPMethod("test"), nil, nil)
 		hooks.OnError[0](ctx, "unknown-id-2", mcp.MCPMethod("test"), nil, errors.New("error"))
-	})
-}
-
-func TestMCPHooks_ToolCallTracking(t *testing.T) {
-	cfg := Config{
-		MetricsEnabled: true,
-	}
-
-	obs, err := Setup(cfg)
-	require.NoError(t, err)
-	defer obs.Shutdown(context.Background())
-
-	hooks := obs.MCPHooks()
-	ctx := context.Background()
-
-	t.Run("successful tool call", func(t *testing.T) {
-		requestID := "tool-req-1"
-		toolRequest := &mcp.CallToolRequest{}
-		toolRequest.Params.Name = "test_tool"
-
-		// Call OnBeforeCallTool
-		hooks.OnBeforeCallTool[0](ctx, requestID, toolRequest)
-
-		// Small delay
-		time.Sleep(1 * time.Millisecond)
-
-		// Call OnAfterCallTool with success
-		result := &mcp.CallToolResult{IsError: false}
-		hooks.OnAfterCallTool[0](ctx, requestID, toolRequest, result)
-	})
-
-	t.Run("error tool call", func(t *testing.T) {
-		requestID := "tool-req-2"
-		toolRequest := &mcp.CallToolRequest{}
-		toolRequest.Params.Name = "failing_tool"
-
-		// Call OnBeforeCallTool
-		hooks.OnBeforeCallTool[0](ctx, requestID, toolRequest)
-
-		// Call OnAfterCallTool with error
-		result := &mcp.CallToolResult{IsError: true}
-		hooks.OnAfterCallTool[0](ctx, requestID, toolRequest, result)
-	})
-
-	t.Run("tool call with nil message", func(t *testing.T) {
-		requestID := "tool-req-3"
-
-		// Call with nil message - should not panic
-		hooks.OnBeforeCallTool[0](ctx, requestID, nil)
-		hooks.OnAfterCallTool[0](ctx, requestID, nil, &mcp.CallToolResult{})
-	})
-
-	t.Run("tool call without start time", func(t *testing.T) {
-		// Calling OnAfterCallTool without OnBeforeCallTool should not panic
-		hooks.OnAfterCallTool[0](ctx, "unknown-tool-id", &mcp.CallToolRequest{}, &mcp.CallToolResult{})
 	})
 }
 
@@ -438,35 +447,11 @@ func TestMergeHooks(t *testing.T) {
 	})
 }
 
-func TestNativeHistogramAggregationSelector(t *testing.T) {
-	t.Run("histogram instrument returns exponential aggregation", func(t *testing.T) {
-		agg := nativeHistogramAggregationSelector(sdkmetric.InstrumentKindHistogram)
-		_, ok := agg.(sdkmetric.AggregationBase2ExponentialHistogram)
-		assert.True(t, ok, "should return AggregationBase2ExponentialHistogram for histogram instruments")
-	})
-
-	t.Run("counter instrument returns default aggregation", func(t *testing.T) {
-		agg := nativeHistogramAggregationSelector(sdkmetric.InstrumentKindCounter)
-		expected := sdkmetric.DefaultAggregationSelector(sdkmetric.InstrumentKindCounter)
-		assert.Equal(t, expected, agg)
-	})
-
-	t.Run("gauge instrument returns default aggregation", func(t *testing.T) {
-		agg := nativeHistogramAggregationSelector(sdkmetric.InstrumentKindGauge)
-		expected := sdkmetric.DefaultAggregationSelector(sdkmetric.InstrumentKindGauge)
-		assert.Equal(t, expected, agg)
-	})
-
-	t.Run("updown counter instrument returns default aggregation", func(t *testing.T) {
-		agg := nativeHistogramAggregationSelector(sdkmetric.InstrumentKindUpDownCounter)
-		expected := sdkmetric.DefaultAggregationSelector(sdkmetric.InstrumentKindUpDownCounter)
-		assert.Equal(t, expected, agg)
-	})
-}
 
 func TestMetricsEndpointContent(t *testing.T) {
 	cfg := Config{
-		MetricsEnabled: true,
+		MetricsEnabled:   true,
+		NetworkTransport: mcpconv.NetworkTransportTCP,
 	}
 
 	obs, err := Setup(cfg)
@@ -477,19 +462,14 @@ func TestMetricsEndpointContent(t *testing.T) {
 	hooks := obs.MCPHooks()
 	ctx := context.Background()
 
-	// Simulate a session registration (to trigger sessions_active metric)
+	// Simulate a session lifecycle (register -> unregister to record session duration)
 	session := &mockClientSession{}
 	hooks.OnRegisterSession[0](ctx, session)
+	hooks.OnUnregisterSession[0](ctx, session)
 
 	// Simulate a request
 	hooks.OnBeforeAny[0](ctx, "test-id", mcp.MCPMethod("tools/list"), nil)
 	hooks.OnSuccess[0](ctx, "test-id", mcp.MCPMethod("tools/list"), nil, nil)
-
-	// Simulate a tool call
-	toolReq := &mcp.CallToolRequest{}
-	toolReq.Params.Name = "test_tool"
-	hooks.OnBeforeCallTool[0](ctx, "tool-id", toolReq)
-	hooks.OnAfterCallTool[0](ctx, "tool-id", toolReq, &mcp.CallToolResult{IsError: false})
 
 	// Fetch metrics
 	handler := obs.MetricsHandler()
@@ -499,17 +479,90 @@ func TestMetricsEndpointContent(t *testing.T) {
 
 	body := rec.Body.String()
 
-	// Check for MCP metrics
-	assert.True(t, strings.Contains(body, "mcp_requests"), "should contain mcp_requests metric")
-	assert.True(t, strings.Contains(body, "mcp_request_duration_seconds"), "should contain mcp_request_duration_seconds metric")
-	assert.True(t, strings.Contains(body, "mcp_tool_calls"), "should contain mcp_tool_calls metric")
-	assert.True(t, strings.Contains(body, "mcp_tool_call_duration_seconds"), "should contain mcp_tool_call_duration_seconds metric")
-	assert.True(t, strings.Contains(body, "mcp_sessions_active"), "should contain mcp_sessions_active metric")
+	// Check for semconv MCP metrics
+	assert.True(t, strings.Contains(body, "mcp_server_operation_duration"), "should contain mcp_server_operation_duration metric")
+	assert.True(t, strings.Contains(body, "mcp_server_session_duration"), "should contain mcp_server_session_duration metric")
 
-	// Check for expected labels
-	assert.True(t, strings.Contains(body, `method="tools/list"`), "should contain method label")
-	assert.True(t, strings.Contains(body, `tool="test_tool"`), "should contain tool label")
+	// Check for semconv attribute names
+	assert.True(t, strings.Contains(body, `mcp_method_name="tools/list"`), "should contain mcp.method.name label")
 }
+
+func TestBuildOperationAttrs(t *testing.T) {
+	cfg := Config{
+		MetricsEnabled:   true,
+		NetworkTransport: mcpconv.NetworkTransportPipe,
+	}
+
+	obs, err := Setup(cfg)
+	require.NoError(t, err)
+	defer obs.Shutdown(context.Background())
+
+	t.Run("basic method attrs", func(t *testing.T) {
+		ctx := context.Background()
+		attrs := obs.buildOperationAttrs(ctx, "tools/list", nil, nil)
+
+		// Should have network.transport
+		found := false
+		for _, a := range attrs {
+			if string(a.Key) == "network.transport" {
+				assert.Equal(t, "pipe", a.Value.AsString())
+				found = true
+			}
+		}
+		assert.True(t, found, "should have network.transport attribute")
+	})
+
+	t.Run("tools/call includes gen_ai.tool.name", func(t *testing.T) {
+		ctx := context.Background()
+		req := &mcp.CallToolRequest{}
+		req.Params.Name = "search_dashboards"
+
+		attrs := obs.buildOperationAttrs(ctx, "tools/call", req, nil)
+
+		found := false
+		for _, a := range attrs {
+			if string(a.Key) == "gen_ai.tool.name" {
+				assert.Equal(t, "search_dashboards", a.Value.AsString())
+				found = true
+			}
+		}
+		assert.True(t, found, "should have gen_ai.tool.name attribute for tools/call")
+	})
+
+	t.Run("error includes error.type", func(t *testing.T) {
+		ctx := context.Background()
+		testErr := errors.New("something failed")
+		attrs := obs.buildOperationAttrs(ctx, "tools/call", nil, testErr)
+
+		found := false
+		for _, a := range attrs {
+			if string(a.Key) == "error.type" {
+				found = true
+				assert.Equal(t, "_OTHER", a.Value.AsString())
+			}
+		}
+		assert.True(t, found, "should have error.type attribute when error is present")
+	})
+}
+
+func TestErrorTypeName(t *testing.T) {
+	t.Run("plain error returns _OTHER", func(t *testing.T) {
+		assert.Equal(t, "_OTHER", errorTypeName(errors.New("generic")))
+	})
+
+	t.Run("error with ErrorType method", func(t *testing.T) {
+		e := &typedError{msg: "bad request", errType: "BadRequest"}
+		assert.Equal(t, "BadRequest", errorTypeName(e))
+	})
+}
+
+type typedError struct {
+	msg     string
+	errType string
+}
+
+func (e *typedError) Error() string      { return e.msg }
+func (e *typedError) ErrorType() string   { return e.errType }
 
 func TestShutdown(t *testing.T) {
 	t.Run("shutdown with metrics enabled", func(t *testing.T) {

@@ -20,6 +20,7 @@ import (
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/grafana/mcp-grafana/observability"
 	"github.com/grafana/mcp-grafana/tools"
+	"go.opentelemetry.io/otel/semconv/v1.39.0/mcpconv"
 )
 
 func maybeAddTools(s *server.MCPServer, tf func(*server.MCPServer), enabledTools []string, disable bool, category string) {
@@ -410,6 +411,18 @@ func main() {
 			CAFile:     gc.tlsCAFile,
 			SkipVerify: gc.tlsSkipVerify,
 		}
+	}
+
+	// Set OTel resource identity
+	obs.ServerName = "mcp-grafana"
+	obs.ServerVersion = mcpgrafana.Version()
+
+	// Map transport flag to semconv network.transport values
+	switch transport {
+	case "stdio":
+		obs.NetworkTransport = mcpconv.NetworkTransportPipe
+	case "sse", "streamable-http":
+		obs.NetworkTransport = mcpconv.NetworkTransportTCP
 	}
 
 	if err := run(transport, *addr, *basePath, *endpointPath, parseLevel(*logLevel), dt, grafanaConfig, tls, obs); err != nil {
