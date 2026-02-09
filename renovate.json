@@ -1,24 +1,43 @@
 {
     "ignorePresets": [
-            "github>grafana/grafana-renovate-config//presets/base",
-            "github>grafana/grafana-renovate-config//presets/automerge",
-            "github>grafana/grafana-renovate-config//presets/labels",
-            "github>grafana/grafana-renovate-config//presets/npm"
+        "github>grafana/grafana-renovate-config//presets/base",
+        "github>grafana/grafana-renovate-config//presets/automerge",
+        "github>grafana/grafana-renovate-config//presets/labels",
+        "github>grafana/grafana-renovate-config//presets/npm"
     ],
     "extends": [
         "config:best-practices",
         ":disableDependencyDashboard",
         ":preserveSemverRanges",
+        "schedule:weekly",
+        "group:allNonMajor",
         "github>grafana/grafana-renovate-config//presets/plugin-ci-workflows"
     ],
-    "prConcurrentLimit": 5,
     "minimumReleaseAge": "14 days",
-    "rebaseWhen": "behind-base-branch",
+    "rebaseWhen": "conflicted",
+    "separateMajorMinor": true,
     "packageRules": [
         {
-            "description": "Group all GitHub Actions updates together",
-            "matchManagers": ["github-actions"],
-            "groupName": "github-actions"
+            "description": "Group all non-major updates into a single PR",
+            "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
+            "groupName": "all non-major dependencies"
+        },
+        {
+            "description": "Major updates get individual PRs for careful review",
+            "matchUpdateTypes": ["major"],
+            "groupName": null
+        },
+        {
+            "description": "Group Docker digest updates and automerge",
+            "matchDatasources": ["docker"],
+            "matchUpdateTypes": ["digest"],
+            "groupName": "docker digest updates",
+            "automerge": true
+        },
+        {
+            "description": "Automerge patch-level updates",
+            "matchUpdateTypes": ["patch", "pin"],
+            "automerge": true
         }
     ]
 }
