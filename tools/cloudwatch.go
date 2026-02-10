@@ -7,11 +7,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/grafana/grafana-plugin-sdk-go/backend/gtime"
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -203,33 +203,6 @@ func (c *cloudWatchClient) query(ctx context.Context, args CloudWatchQueryParams
 	return &queryResp, nil
 }
 
-// parseCloudWatchStartTime parses start time strings in various formats
-func parseCloudWatchStartTime(timeStr string) (time.Time, error) {
-	if timeStr == "" {
-		return time.Time{}, nil
-	}
-
-	tr := gtime.TimeRange{
-		From: timeStr,
-		Now:  time.Now(),
-	}
-	return tr.ParseFrom()
-}
-
-// parseCloudWatchEndTime parses end time strings in various formats
-// For end times, date-only strings resolve to end of day rather than start
-func parseCloudWatchEndTime(timeStr string) (time.Time, error) {
-	if timeStr == "" {
-		return time.Time{}, nil
-	}
-
-	tr := gtime.TimeRange{
-		To:  timeStr,
-		Now: time.Now(),
-	}
-	return tr.ParseTo()
-}
-
 // queryCloudWatch executes a CloudWatch query via Grafana
 func queryCloudWatch(ctx context.Context, args CloudWatchQueryParams) (*CloudWatchQueryResult, error) {
 	client, err := newCloudWatchClient(ctx, args.DatasourceUID)
@@ -243,7 +216,7 @@ func queryCloudWatch(ctx context.Context, args CloudWatchQueryParams) (*CloudWat
 	toTime := now                       // Default: now
 
 	if args.Start != "" {
-		parsed, err := parseCloudWatchStartTime(args.Start)
+		parsed, err := parseStartTime(args.Start)
 		if err != nil {
 			return nil, fmt.Errorf("parsing start time: %w", err)
 		}
@@ -253,7 +226,7 @@ func queryCloudWatch(ctx context.Context, args CloudWatchQueryParams) (*CloudWat
 	}
 
 	if args.End != "" {
-		parsed, err := parseCloudWatchEndTime(args.End)
+		parsed, err := parseEndTime(args.End)
 		if err != nil {
 			return nil, fmt.Errorf("parsing end time: %w", err)
 		}
@@ -282,7 +255,11 @@ func queryCloudWatch(ctx context.Context, args CloudWatchQueryParams) (*CloudWat
 			return nil, fmt.Errorf("query error (refId=%s): %s", refID, r.Error)
 		}
 
-		// Process frames
+		// Process frames - accumulate statistics across all frames
+		var sum, min, max float64
+		var count int64
+		first := true
+
 		for _, frame := range r.Frames {
 			// Find time and value columns
 			var timeColIdx, valueColIdx = -1, -1
@@ -309,10 +286,6 @@ func queryCloudWatch(ctx context.Context, args CloudWatchQueryParams) (*CloudWat
 			if len(frame.Data.Values) > timeColIdx && len(frame.Data.Values) > valueColIdx {
 				timeValues := frame.Data.Values[timeColIdx]
 				metricValues := frame.Data.Values[valueColIdx]
-
-				var sum, min, max float64
-				var count int64
-				first := true
 
 				for i := 0; i < len(timeValues) && i < len(metricValues); i++ {
 					// Parse timestamp (can be float64 or int64 from JSON)
@@ -358,16 +331,16 @@ func queryCloudWatch(ctx context.Context, args CloudWatchQueryParams) (*CloudWat
 						}
 					}
 				}
-
-				// Add computed statistics
-				if count > 0 {
-					result.Statistics["sum"] = sum
-					result.Statistics["min"] = min
-					result.Statistics["max"] = max
-					result.Statistics["avg"] = sum / float64(count)
-					result.Statistics["count"] = float64(count)
-				}
 			}
+		}
+
+		// Add computed statistics across all frames
+		if count > 0 {
+			result.Statistics["sum"] = sum
+			result.Statistics["min"] = min
+			result.Statistics["max"] = max
+			result.Statistics["avg"] = sum / float64(count)
+			result.Statistics["count"] = float64(count)
 		}
 	}
 
@@ -467,13 +440,16 @@ func listCloudWatchNamespaces(ctx context.Context, args ListCloudWatchNamespaces
 	}
 
 	// Build query parameters
-	params := ""
+	params := url.Values{}
 	if args.Region != "" {
-		params = "?region=" + args.Region
+		params.Set("region", args.Region)
 	}
 
-	url := client.baseURL + "/api/datasources/uid/" + args.DatasourceUID + "/resources/namespaces" + params
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	resourceURL := client.baseURL + "/api/datasources/uid/" + args.DatasourceUID + "/resources/namespaces"
+	if len(params) > 0 {
+		resourceURL += "?" + params.Encode()
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, resourceURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
@@ -523,13 +499,14 @@ func listCloudWatchMetrics(ctx context.Context, args ListCloudWatchMetricsParams
 	}
 
 	// Build query parameters
-	params := "?namespace=" + args.Namespace
+	params := url.Values{}
+	params.Set("namespace", args.Namespace)
 	if args.Region != "" {
-		params += "&region=" + args.Region
+		params.Set("region", args.Region)
 	}
 
-	url := client.baseURL + "/api/datasources/uid/" + args.DatasourceUID + "/resources/metrics" + params
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	resourceURL := client.baseURL + "/api/datasources/uid/" + args.DatasourceUID + "/resources/metrics?" + params.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, resourceURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
@@ -580,13 +557,15 @@ func listCloudWatchDimensions(ctx context.Context, args ListCloudWatchDimensions
 	}
 
 	// Build query parameters
-	params := "?namespace=" + args.Namespace + "&metricName=" + args.MetricName
+	params := url.Values{}
+	params.Set("namespace", args.Namespace)
+	params.Set("metricName", args.MetricName)
 	if args.Region != "" {
-		params += "&region=" + args.Region
+		params.Set("region", args.Region)
 	}
 
-	url := client.baseURL + "/api/datasources/uid/" + args.DatasourceUID + "/resources/dimension-keys" + params
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	resourceURL := client.baseURL + "/api/datasources/uid/" + args.DatasourceUID + "/resources/dimension-keys?" + params.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, resourceURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
