@@ -395,7 +395,10 @@ func BuildTransport(cfg *GrafanaConfig, base http.RoundTripper) (http.RoundTripp
 		transport = NewExtraHeadersRoundTripper(transport, cfg.ExtraHeaders)
 	}
 
-	if cfg.CloudAccessPolicyToken != "" {
+	// Add cloud access policy token header only when on-behalf-of auth is not
+	// active. OBO auth also uses X-Access-Token (set by authRoundTripper in
+	// tool-specific clients) and should take precedence.
+	if cfg.CloudAccessPolicyToken != "" && cfg.AccessToken == "" {
 		transport = NewExtraHeadersRoundTripper(transport, map[string]string{
 			"X-Access-Token": "Bearer " + cfg.CloudAccessPolicyToken,
 		})
@@ -620,7 +623,7 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 					if len(config.ExtraHeaders) > 0 {
 						rt = NewExtraHeadersRoundTripper(rt, config.ExtraHeaders)
 					}
-					if config.CloudAccessPolicyToken != "" {
+					if config.CloudAccessPolicyToken != "" && config.AccessToken == "" {
 						rt = NewExtraHeadersRoundTripper(rt, map[string]string{
 							"X-Access-Token": "Bearer " + config.CloudAccessPolicyToken,
 						})

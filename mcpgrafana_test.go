@@ -846,6 +846,30 @@ func TestCloudAccessPolicyTokenTransport(t *testing.T) {
 		assert.Equal(t, "", capturedReq.Header.Get("X-Access-Token"))
 	})
 
+	t.Run("skipped when on-behalf-of auth is active", func(t *testing.T) {
+		var capturedReq *http.Request
+		mockRT := &extraHeadersMockRT{
+			fn: func(req *http.Request) (*http.Response, error) {
+				capturedReq = req
+				return &http.Response{StatusCode: 200}, nil
+			},
+		}
+
+		cfg := &GrafanaConfig{
+			CloudAccessPolicyToken: "glc_my-token",
+			AccessToken:            "obo-access-token",
+		}
+		transport, err := BuildTransport(cfg, mockRT)
+		require.NoError(t, err)
+
+		req, _ := http.NewRequest("GET", "http://example.com", nil)
+		_, err = transport.RoundTrip(req)
+		require.NoError(t, err)
+
+		// Cloud access policy token should NOT be set when OBO auth is active
+		assert.Equal(t, "", capturedReq.Header.Get("X-Access-Token"))
+	})
+
 	t.Run("works alongside extra headers", func(t *testing.T) {
 		var capturedReq *http.Request
 		mockRT := &extraHeadersMockRT{
