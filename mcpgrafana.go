@@ -39,8 +39,11 @@ const (
 
 	grafanaExtraHeadersEnvVar = "GRAFANA_EXTRA_HEADERS"
 
-	grafanaURLHeader    = "X-Grafana-URL"
-	grafanaAPIKeyHeader = "X-Grafana-API-Key"
+	grafanaCloudAccessPolicyTokenEnvVar = "GRAFANA_CLOUD_ACCESS_POLICY_TOKEN"
+
+	grafanaURLHeader                    = "X-Grafana-URL"
+	grafanaAPIKeyHeader                 = "X-Grafana-API-Key"
+	grafanaCloudAccessPolicyTokenHeader = "X-Cloud-Access-Policy-Token"
 )
 
 func urlAndAPIKeyFromEnv() (string, string) {
@@ -157,6 +160,12 @@ type GrafanaConfig struct {
 	// When set, it will be sent as X-Grafana-Org-Id header regardless of authentication method.
 	// Works with service account tokens, API keys, and basic authentication.
 	OrgID int64
+
+	// CloudAccessPolicyToken is a Grafana Cloud access policy token used for
+	// authenticating with a Grafana instance. When set, it is sent as the
+	// X-Access-Token header. This is an alternative to using service account
+	// tokens or API keys.
+	CloudAccessPolicyToken string
 
 	// AccessToken is the Grafana Cloud access policy token used for on-behalf-of auth in Grafana Cloud.
 	AccessToken string
@@ -386,6 +395,12 @@ func BuildTransport(cfg *GrafanaConfig, base http.RoundTripper) (http.RoundTripp
 		transport = NewExtraHeadersRoundTripper(transport, cfg.ExtraHeaders)
 	}
 
+	if cfg.CloudAccessPolicyToken != "" {
+		transport = NewExtraHeadersRoundTripper(transport, map[string]string{
+			"X-Access-Token": "Bearer " + cfg.CloudAccessPolicyToken,
+		})
+	}
+
 	return transport, nil
 }
 
@@ -442,7 +457,8 @@ var ExtractGrafanaInfoFromEnv server.StdioContextFunc = func(ctx context.Context
 	}
 
 	extraHeaders := extraHeadersFromEnv()
-	slog.Info("Using Grafana configuration", "url", parsedURL.Redacted(), "api_key_set", apiKey != "", "basic_auth_set", basicAuth != nil, "org_id", orgID, "extra_headers_count", len(extraHeaders))
+	cloudAccessPolicyToken := os.Getenv(grafanaCloudAccessPolicyTokenEnvVar)
+	slog.Info("Using Grafana configuration", "url", parsedURL.Redacted(), "api_key_set", apiKey != "", "basic_auth_set", basicAuth != nil, "org_id", orgID, "extra_headers_count", len(extraHeaders), "cloud_access_policy_token_set", cloudAccessPolicyToken != "")
 
 	// Get existing config or create a new one.
 	// This will respect the existing debug flag, if set.
@@ -452,6 +468,7 @@ var ExtractGrafanaInfoFromEnv server.StdioContextFunc = func(ctx context.Context
 	config.BasicAuth = basicAuth
 	config.OrgID = orgID
 	config.ExtraHeaders = extraHeaders
+	config.CloudAccessPolicyToken = cloudAccessPolicyToken
 	return WithGrafanaConfig(ctx, config)
 }
 
@@ -465,6 +482,12 @@ type httpContextFunc func(ctx context.Context, req *http.Request) context.Contex
 var ExtractGrafanaInfoFromHeaders httpContextFunc = func(ctx context.Context, req *http.Request) context.Context {
 	u, apiKey, basicAuth, orgID := extractKeyGrafanaInfoFromReq(req)
 
+	// Check for cloud access policy token from header, fall back to env
+	cloudAccessPolicyToken := req.Header.Get(grafanaCloudAccessPolicyTokenHeader)
+	if cloudAccessPolicyToken == "" {
+		cloudAccessPolicyToken = os.Getenv(grafanaCloudAccessPolicyTokenEnvVar)
+	}
+
 	// Get existing config or create a new one.
 	// This will respect the existing debug flag, if set.
 	config := GrafanaConfigFromContext(ctx)
@@ -473,6 +496,7 @@ var ExtractGrafanaInfoFromHeaders httpContextFunc = func(ctx context.Context, re
 	config.BasicAuth = basicAuth
 	config.OrgID = orgID
 	config.ExtraHeaders = extraHeadersFromEnv()
+	config.CloudAccessPolicyToken = cloudAccessPolicyToken
 	return WithGrafanaConfig(ctx, config)
 }
 
@@ -595,6 +619,11 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 					var rt http.RoundTripper = timeoutTransport
 					if len(config.ExtraHeaders) > 0 {
 						rt = NewExtraHeadersRoundTripper(rt, config.ExtraHeaders)
+					}
+					if config.CloudAccessPolicyToken != "" {
+						rt = NewExtraHeadersRoundTripper(rt, map[string]string{
+							"X-Access-Token": "Bearer " + config.CloudAccessPolicyToken,
+						})
 					}
 					userAgentWrapped := wrapWithUserAgent(rt)
 					wrapped := otelhttp.NewTransport(userAgentWrapped)
