@@ -367,7 +367,7 @@ func TestExtractTemplateVariables(t *testing.T) {
 	}
 }
 
-func TestSubstituteVariablesForRunPanelQuery(t *testing.T) {
+func TestSubstituteTemplateVariables(t *testing.T) {
 	tests := []struct {
 		name      string
 		query     string
@@ -423,7 +423,7 @@ func TestSubstituteVariablesForRunPanelQuery(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := substituteVariables(tt.query, tt.variables)
+			got := substituteTemplateVariables(tt.query, tt.variables)
 			assert.Equal(t, tt.want, got)
 		})
 	}
@@ -433,7 +433,7 @@ func TestRunPanelQueryParams(t *testing.T) {
 	// Test that the params struct has the expected fields
 	params := RunPanelQueryParams{
 		DashboardUID: "test-uid",
-		PanelID:      5,
+		PanelIDs:     []int{5},
 		Start:        "now-1h",
 		End:          "now",
 		Variables: map[string]string{
@@ -442,7 +442,7 @@ func TestRunPanelQueryParams(t *testing.T) {
 	}
 
 	assert.Equal(t, "test-uid", params.DashboardUID)
-	assert.Equal(t, 5, params.PanelID)
+	assert.Equal(t, []int{5}, params.PanelIDs)
 	assert.Equal(t, "now-1h", params.Start)
 	assert.Equal(t, "now", params.End)
 	assert.Equal(t, "api-server", params.Variables["job"])
@@ -451,25 +451,29 @@ func TestRunPanelQueryParams(t *testing.T) {
 func TestRunPanelQueryResult(t *testing.T) {
 	// Test that the result struct has the expected fields
 	result := RunPanelQueryResult{
-		DashboardUID:   "test-uid",
-		PanelID:        5,
-		PanelTitle:     "Test Panel",
-		DatasourceType: "prometheus",
-		DatasourceUID:  "prom-uid",
-		Query:          "rate(http_requests_total[5m])",
+		DashboardUID: "test-uid",
+		Results: map[int]*PanelQueryResult{
+			5: {
+				PanelID:        5,
+				PanelTitle:     "Test Panel",
+				DatasourceType: "prometheus",
+				DatasourceUID:  "prom-uid",
+				Query:          "rate(http_requests_total[5m])",
+				Results:        []interface{}{"sample data"},
+			},
+		},
 		TimeRange: QueryTimeRange{
 			Start: "now-1h",
 			End:   "now",
 		},
-		Results: []interface{}{"sample data"},
 	}
 
 	assert.Equal(t, "test-uid", result.DashboardUID)
-	assert.Equal(t, 5, result.PanelID)
-	assert.Equal(t, "Test Panel", result.PanelTitle)
-	assert.Equal(t, "prometheus", result.DatasourceType)
-	assert.Equal(t, "prom-uid", result.DatasourceUID)
-	assert.Equal(t, "rate(http_requests_total[5m])", result.Query)
+	assert.Contains(t, result.Results, 5)
+	assert.Equal(t, "Test Panel", result.Results[5].PanelTitle)
+	assert.Equal(t, "prometheus", result.Results[5].DatasourceType)
+	assert.Equal(t, "prom-uid", result.Results[5].DatasourceUID)
+	assert.Equal(t, "rate(http_requests_total[5m])", result.Results[5].Query)
 	assert.Equal(t, "now-1h", result.TimeRange.Start)
 	assert.Equal(t, "now", result.TimeRange.End)
 }
@@ -526,8 +530,6 @@ func TestExtractVariableName(t *testing.T) {
 		})
 	}
 }
-
-// Note: TestExtractQueryExpression is in dashboard_helpers_test.go
 
 func TestSubstitutePrometheusMacros(t *testing.T) {
 	tests := []struct {
@@ -798,28 +800,33 @@ func TestTruncateString(t *testing.T) {
 }
 
 func TestRunPanelQueryResult_WithHints(t *testing.T) {
-	// Test that hints field is properly included in result
+	// Test that hints field is properly included in per-panel result
 	result := RunPanelQueryResult{
-		DashboardUID:   "test-uid",
-		PanelID:        5,
-		PanelTitle:     "Empty Panel",
-		DatasourceType: "prometheus",
-		DatasourceUID:  "prom-uid",
-		Query:          "nonexistent_metric",
+		DashboardUID: "test-uid",
+		Results: map[int]*PanelQueryResult{
+			5: {
+				PanelID:        5,
+				PanelTitle:     "Empty Panel",
+				DatasourceType: "prometheus",
+				DatasourceUID:  "prom-uid",
+				Query:          "nonexistent_metric",
+				Results:        []interface{}{},
+				Hints: []string{
+					"No data found for the panel query.",
+					"- Time range may have no data",
+				},
+			},
+		},
 		TimeRange: QueryTimeRange{
 			Start: "now-1h",
 			End:   "now",
 		},
-		Results: []interface{}{},
-		Hints: []string{
-			"No data found for the panel query.",
-			"- Time range may have no data",
-		},
 	}
 
-	assert.NotNil(t, result.Hints)
-	assert.Len(t, result.Hints, 2)
-	assert.Contains(t, result.Hints[0], "No data found")
+	panelResult := result.Results[5]
+	assert.NotNil(t, panelResult.Hints)
+	assert.Len(t, panelResult.Hints, 2)
+	assert.Contains(t, panelResult.Hints[0], "No data found")
 }
 
 func TestExtractPanelInfo_CloudWatch(t *testing.T) {
@@ -896,7 +903,7 @@ func TestExtractPanelInfo_CloudWatch(t *testing.T) {
 	}
 }
 
-func TestSubstituteVariablesInMap(t *testing.T) {
+func TestSubstituteTemplateVariablesInMap(t *testing.T) {
 	tests := []struct {
 		name      string
 		target    map[string]interface{}
@@ -935,17 +942,17 @@ func TestSubstituteVariablesInMap(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := substituteVariablesInMap(tt.target, tt.variables)
+			result := substituteTemplateVariablesInMap(tt.target, tt.variables)
 			assert.Equal(t, tt.wantValue, result[tt.checkKey])
 		})
 	}
 }
 
-func TestSubstituteVariablesInSlice(t *testing.T) {
+func TestSubstituteTemplateVariablesInSlice(t *testing.T) {
 	variables := map[string]string{"cluster": "my-cluster"}
 	slice := []interface{}{"$cluster", "static-value"}
 
-	result := substituteVariablesInSlice(slice, variables)
+	result := substituteTemplateVariablesInSlice(slice, variables)
 
 	assert.Equal(t, "my-cluster", result[0])
 	assert.Equal(t, "static-value", result[1])
