@@ -15,7 +15,7 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
 
@@ -35,7 +35,7 @@ jobs:
             ANTHROPIC_API_KEY=anthropic:api-key
 
       - name: Generate token baseline
-        uses: sd2k/mcp-tokens-action@54ab17c1487473ed158665a4d72307631ca13e42
+        uses: sd2k/mcp-tokens-action@014db1a0f233c4559d5b056983855b0b71c99fa2
         with:
           command: ./dist/mcp-grafana
           anthropic-api-key: ${{ env.ANTHROPIC_API_KEY }}
@@ -43,7 +43,7 @@ jobs:
           output: token-baseline.json
 
       - name: Upload baseline artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: token-baseline
           path: token-baseline.json

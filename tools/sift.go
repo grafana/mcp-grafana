@@ -111,18 +111,13 @@ type siftClient struct {
 }
 
 func newSiftClient(cfg mcpgrafana.GrafanaConfig) (*siftClient, error) {
-	// Create custom transport with TLS configuration if available
-	var transport = http.DefaultTransport
-	if tlsConfig := cfg.TLSConfig; tlsConfig != nil {
-		var err error
-		transport, err = tlsConfig.HTTPTransport(transport.(*http.Transport))
-		if err != nil {
-			return nil, fmt.Errorf("failed to create custom transport: %w", err)
-		}
+	transport, err := mcpgrafana.BuildTransport(&cfg, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create custom transport: %w", err)
 	}
-
 	transport = NewAuthRoundTripper(transport, cfg.AccessToken, cfg.IDToken, cfg.APIKey, cfg.BasicAuth)
 	transport = mcpgrafana.NewOrgIDRoundTripper(transport, cfg.OrgID)
+	transport = mcpgrafana.NewUserAgentTransport(transport)
 
 	client := &http.Client{
 		Transport: transport,
@@ -638,7 +633,7 @@ func fetchErrorPatternLogExamples(ctx context.Context, patternMap map[string]any
 		return nil, fmt.Errorf("querying Loki: %w", err)
 	}
 	var examples []string
-	for _, entry := range logEntries {
+	for _, entry := range logEntries.Data {
 		if entry.Line != "" {
 			examples = append(examples, entry.Line)
 		}

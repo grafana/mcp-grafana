@@ -41,7 +41,8 @@ type disabledTools struct {
 	search, datasource, incident,
 	prometheus, loki, alerting,
 	dashboard, folder, oncall, asserts, sift, admin,
-	pyroscope, navigation, proxied, annotations, rendering, cloudwatch, write bool
+	pyroscope, navigation, proxied, annotations, rendering, cloudwatch, write,
+	clickhouse, searchlogs bool
 }
 
 // Configuration for the Grafana client.
@@ -77,6 +78,8 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.annotations, "disable-annotations", false, "Disable annotation tools")
 	flag.BoolVar(&dt.rendering, "disable-rendering", false, "Disable rendering tools (panel/dashboard image export)")
 	flag.BoolVar(&dt.cloudwatch, "disable-cloudwatch", false, "Disable CloudWatch tools")
+	flag.BoolVar(&dt.clickhouse, "disable-clickhouse", false, "Disable ClickHouse tools")
+	flag.BoolVar(&dt.searchlogs, "disable-searchlogs", false, "Disable search logs tools")
 }
 
 func (gc *grafanaConfig) addFlags() {
@@ -109,6 +112,8 @@ func (dt *disabledTools) addTools(s *server.MCPServer) {
 	maybeAddTools(s, func(mcp *server.MCPServer) { tools.AddAnnotationTools(mcp, enableWriteTools) }, enabledTools, dt.annotations, "annotations")
 	maybeAddTools(s, tools.AddRenderingTools, enabledTools, dt.rendering, "rendering")
 	maybeAddTools(s, tools.AddCloudWatchTools, enabledTools, dt.cloudwatch, "cloudwatch")
+	maybeAddTools(s, tools.AddClickHouseTools, enabledTools, dt.clickhouse, "clickhouse")
+	maybeAddTools(s, tools.AddSearchLogsTools, enabledTools, dt.searchlogs, "searchlogs")
 }
 
 func newServer(transport string, dt disabledTools) (*server.MCPServer, *mcpgrafana.ToolManager) {
@@ -157,6 +162,7 @@ Available Capabilities:
 - Dashboards: Search, retrieve, update, and create dashboards. Extract panel queries and datasource information.
 - Datasources: List and fetch details for datasources.
 - Prometheus & Loki: Run PromQL and LogQL queries, retrieve metric/log metadata, and explore label names/values.
+- ClickHouse: Query ClickHouse datasources via Grafana with macro and variable substitution support.
 - Incidents: Search, create, update, and resolve incidents in Grafana Incident.
 - Sift Investigations: Start and manage Sift investigations, analyze logs/traces, find error patterns, and detect slow requests.
 - Alerting: List and fetch alert rules and notification contact points.

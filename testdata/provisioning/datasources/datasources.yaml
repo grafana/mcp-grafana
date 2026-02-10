@@ -51,8 +51,21 @@ datasources:
       implementation: prometheus
     isDefault: false
     editable: false
-  - name: CloudWatch
+  - name: ClickHouse
     id: 7
+    uid: clickhouse
+    type: grafana-clickhouse-datasource
+    access: proxy
+    url: http://clickhouse:8123
+    jsonData:
+      defaultDatabase: test
+      port: 9000
+      protocol: native
+      server: clickhouse
+      username: default
+    isDefault: false
+  - name: CloudWatch
+    id: 8
     uid: cloudwatch
     type: cloudwatch
     access: proxy
