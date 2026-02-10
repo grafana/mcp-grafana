@@ -3,6 +3,7 @@ services:
     image: grafana/grafana@sha256:ba93c9d192e58b23e064c7f501d453426ccf4a85065bf25b705ab1e98602bfb1
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_INSTALL_PLUGINS: grafana-clickhouse-datasource
       GF_LOG_LEVEL: debug
       GF_SERVER_ROUTER_LOGGING: "true"
       GF_RENDERING_SERVER_URL: http://renderer:8081/render
@@ -76,3 +77,17 @@ services:
     command:
       - "--config.file=/etc/alertmanager/alertmanager.yml"
       - "--storage.path=/alertmanager"
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    volumes:
+      - ./testdata/clickhouse-init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./testdata/clickhouse-users.xml:/etc/clickhouse-server/users.d/default-user.xml
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5

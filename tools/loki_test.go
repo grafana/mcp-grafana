@@ -58,7 +58,7 @@ func TestLokiTools(t *testing.T) {
 		// We can't assert on specific log content as it will vary,
 		// but we can check that the structure is correct
 		// If we got logs, check that they have the expected structure
-		for _, entry := range result {
+		for _, entry := range result.Data {
 			assert.NotEmpty(t, entry.Timestamp, "Log entry should have a timestamp")
 			assert.NotNil(t, entry.Labels, "Log entry should have labels")
 		}
@@ -74,9 +74,9 @@ func TestLokiTools(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		// Should return an empty slice, not nil
-		assert.NotNil(t, result, "Empty results should be an empty slice, not nil")
-		assert.Equal(t, 0, len(result), "Empty results should have length 0")
+		// Should return an empty result, not nil
+		assert.NotNil(t, result, "Result should not be nil")
+		assert.Equal(t, 0, len(result.Data), "Empty results should have length 0")
 	})
 
 	t.Run("query loki patterns", func(t *testing.T) {
@@ -108,7 +108,7 @@ func TestLokiTools(t *testing.T) {
 		assert.NotNil(t, result, "Result should not be nil")
 
 		// If we got results, verify the structure
-		for _, entry := range result {
+		for _, entry := range result.Data {
 			assert.NotNil(t, entry.Labels, "Metric sample should have labels")
 			assert.NotNil(t, entry.Value, "Instant metric should have a single value")
 			assert.Nil(t, entry.Values, "Instant metric should not have Values array")
@@ -129,7 +129,7 @@ func TestLokiTools(t *testing.T) {
 		assert.NotNil(t, result, "Result should not be nil")
 
 		// If we got results, verify the structure
-		for _, entry := range result {
+		for _, entry := range result.Data {
 			assert.NotNil(t, entry.Labels, "Metric series should have labels")
 			assert.NotEmpty(t, entry.Values, "Range metric should have Values array")
 			assert.Nil(t, entry.Value, "Range metric should not have single Value")
@@ -155,7 +155,7 @@ func TestLokiTools(t *testing.T) {
 		assert.NotNil(t, result, "Result should not be nil")
 
 		// Verify log entries have expected structure
-		for _, entry := range result {
+		for _, entry := range result.Data {
 			assert.NotEmpty(t, entry.Timestamp, "Log entry should have timestamp")
 			assert.NotEmpty(t, entry.Line, "Log entry should have log line")
 			assert.NotNil(t, entry.Labels, "Log entry should have labels")
