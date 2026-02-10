@@ -869,6 +869,36 @@ func TestCloudAccessPolicyTokenTransport(t *testing.T) {
 		assert.Equal(t, "Bearer glc_my-token", capturedReq.Header.Get("X-Access-Token"))
 		assert.Equal(t, "value", capturedReq.Header.Get("X-Custom"))
 	})
+
+	t.Run("on-behalf-of auth takes precedence over cloud token", func(t *testing.T) {
+		// When AccessToken is set (on-behalf-of auth), CloudAccessPolicyToken should NOT
+		// be added by BuildTransport. This allows the outer authRoundTripper to set
+		// X-Access-Token without being silently overridden by the cloud token.
+		var capturedReq *http.Request
+		mockRT := &extraHeadersMockRT{
+			fn: func(req *http.Request) (*http.Response, error) {
+				capturedReq = req
+				return &http.Response{StatusCode: 200}, nil
+			},
+		}
+
+		cfg := &GrafanaConfig{
+			CloudAccessPolicyToken: "glc_cloud-token",
+			AccessToken:            "on-behalf-of-token",
+			IDToken:                "user-id-token",
+		}
+		transport, err := BuildTransport(cfg, mockRT)
+		require.NoError(t, err)
+
+		req, _ := http.NewRequest("GET", "http://example.com", nil)
+		// Simulate what authRoundTripper does: set X-Access-Token for on-behalf-of auth
+		req.Header.Set("X-Access-Token", cfg.AccessToken)
+		_, err = transport.RoundTrip(req)
+		require.NoError(t, err)
+
+		// The on-behalf-of token should NOT be overwritten by the cloud token
+		assert.Equal(t, "on-behalf-of-token", capturedReq.Header.Get("X-Access-Token"))
+	})
 }
 
 func TestExtractGrafanaInfoWithExtraHeaders(t *testing.T) {

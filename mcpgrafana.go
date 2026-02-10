@@ -395,7 +395,11 @@ func BuildTransport(cfg *GrafanaConfig, base http.RoundTripper) (http.RoundTripp
 		transport = NewExtraHeadersRoundTripper(transport, cfg.ExtraHeaders)
 	}
 
-	if cfg.CloudAccessPolicyToken != "" {
+	// Only add CloudAccessPolicyToken if on-behalf-of auth is not being used.
+	// When AccessToken is set, on-behalf-of auth takes precedence and the outer
+	// auth layer (e.g., authRoundTripper) will set X-Access-Token. Adding it here
+	// would cause the cloud token to silently override the on-behalf-of token.
+	if cfg.CloudAccessPolicyToken != "" && cfg.AccessToken == "" {
 		transport = NewExtraHeadersRoundTripper(transport, map[string]string{
 			"X-Access-Token": "Bearer " + cfg.CloudAccessPolicyToken,
 		})
@@ -620,7 +624,9 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 					if len(config.ExtraHeaders) > 0 {
 						rt = NewExtraHeadersRoundTripper(rt, config.ExtraHeaders)
 					}
-					if config.CloudAccessPolicyToken != "" {
+					// Only add CloudAccessPolicyToken if on-behalf-of auth is not being used.
+					// When AccessToken is set, on-behalf-of auth takes precedence.
+					if config.CloudAccessPolicyToken != "" && config.AccessToken == "" {
 						rt = NewExtraHeadersRoundTripper(rt, map[string]string{
 							"X-Access-Token": "Bearer " + config.CloudAccessPolicyToken,
 						})
