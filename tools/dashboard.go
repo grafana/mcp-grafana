@@ -648,6 +648,360 @@ func extractVariableSummary(variable map[string]interface{}) VariableSummary {
 	}
 }
 
+// ListPanelsByTypeParams defines parameters for listing panels by type
+type ListPanelsByTypeParams struct {
+	UID       string `json:"uid" jsonschema:"required,description=The UID of the dashboard"`
+	PanelType string `json:"panelType" jsonschema:"required,description=The panel visualization type to filter by (e.g.\\, 'graph'\\, 'table'\\, 'stat'\\, 'gauge'\\, 'timeseries'\\, 'bargauge'\\, 'piechart'\\, 'heatmap')"`
+}
+
+// PanelDetail provides detailed information about a panel
+type PanelDetail struct {
+	ID          int                    `json:"id"`
+	Title       string                 `json:"title"`
+	Type        string                 `json:"type"`
+	Description string                 `json:"description,omitempty"`
+	Targets     []interface{}          `json:"targets,omitempty"`
+	Datasource  *datasourceInfo        `json:"datasource,omitempty"`
+	GridPos     map[string]interface{} `json:"gridPos,omitempty"`
+	Options     map[string]interface{} `json:"options,omitempty"`
+}
+
+// listPanelsByType returns panels filtered by visualization type
+func listPanelsByType(ctx context.Context, args ListPanelsByTypeParams) ([]PanelDetail, error) {
+	dashboard, err := getDashboardByUID(ctx, GetDashboardByUIDParams{UID: args.UID})
+	if err != nil {
+		return nil, fmt.Errorf("get dashboard by uid: %w", err)
+	}
+
+	db, ok := dashboard.Dashboard.(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("dashboard is not a JSON object")
+	}
+
+	panels := safeArray(db, "panels")
+	if panels == nil {
+		return []PanelDetail{}, nil
+	}
+
+	var matchingPanels []PanelDetail
+	for _, p := range panels {
+		panel, ok := p.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		// Check for row panels with nested panels
+		if panelType := safeString(panel, "type"); panelType == "row" {
+			if nestedPanels := safeArray(panel, "panels"); nestedPanels != nil {
+				for _, np := range nestedPanels {
+					if nestedPanel, ok := np.(map[string]interface{}); ok {
+						if nestedType := safeString(nestedPanel, "type"); nestedType == args.PanelType {
+							matchingPanels = append(matchingPanels, extractPanelDetail(nestedPanel))
+						}
+					}
+				}
+			}
+			continue
+		}
+
+		// Check regular panels
+		if panelType := safeString(panel, "type"); panelType == args.PanelType {
+			matchingPanels = append(matchingPanels, extractPanelDetail(panel))
+		}
+	}
+
+	return matchingPanels, nil
+}
+
+var ListPanelsByType = mcpgrafana.MustTool(
+	"list_panels_by_type",
+	"Filter and list all panels of a specific visualization type from a dashboard. Useful for finding all panels of a particular type like 'graph'\\, 'table'\\, 'stat'\\, 'gauge'\\, 'timeseries'\\, 'bargauge'\\, 'piechart'\\, or 'heatmap'. Returns panel details including ID\\, title\\, type\\, targets\\, and configuration.",
+	listPanelsByType,
+	mcp.WithTitleAnnotation("List panels by type"),
+	mcp.WithIdempotentHintAnnotation(true),
+	mcp.WithReadOnlyHintAnnotation(true),
+)
+
+// GetPanelTransformationsParams defines parameters for getting panel transformations
+type GetPanelTransformationsParams struct {
+	UID     string `json:"uid" jsonschema:"required,description=The UID of the dashboard"`
+	PanelID int    `json:"panelId" jsonschema:"required,description=The ID of the panel"`
+}
+
+// PanelTransformationsResult contains panel transformation information
+type PanelTransformationsResult struct {
+	PanelID          int           `json:"panelId"`
+	PanelTitle       string        `json:"panelTitle"`
+	PanelType        string        `json:"panelType"`
+	Transformations  []interface{} `json:"transformations"`
+	HasTransformations bool        `json:"hasTransformations"`
+}
+
+// getPanelTransformations retrieves transformations for a specific panel
+func getPanelTransformations(ctx context.Context, args GetPanelTransformationsParams) (*PanelTransformationsResult, error) {
+	dashboard, err := getDashboardByUID(ctx, GetDashboardByUIDParams{UID: args.UID})
+	if err != nil {
+		return nil, fmt.Errorf("get dashboard by uid: %w", err)
+	}
+
+	db, ok := dashboard.Dashboard.(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("dashboard is not a JSON object")
+	}
+
+	// Find the panel
+	panel, err := findPanelByID(db, args.PanelID)
+	if err != nil {
+		return nil, err
+	}
+
+	transformations := safeArray(panel, "transformations")
+	if transformations == nil {
+		transformations = []interface{}{}
+	}
+
+	return &PanelTransformationsResult{
+		PanelID:            args.PanelID,
+		PanelTitle:         safeString(panel, "title"),
+		PanelType:          safeString(panel, "type"),
+		Transformations:    transformations,
+		HasTransformations: len(transformations) > 0,
+	}, nil
+}
+
+var GetPanelTransformations = mcpgrafana.MustTool(
+	"get_panel_transformations",
+	"Retrieve data transformations applied to a specific panel. Transformations modify query results before visualization (e.g.\\, filtering\\, calculations\\, renaming fields). Returns panel ID\\, title\\, type\\, and the list of transformation configurations.",
+	getPanelTransformations,
+	mcp.WithTitleAnnotation("Get panel transformations"),
+	mcp.WithIdempotentHintAnnotation(true),
+	mcp.WithReadOnlyHintAnnotation(true),
+)
+
+// SearchDashboardPanelsParams defines parameters for searching panels
+type SearchDashboardPanelsParams struct {
+	UID        string `json:"uid" jsonschema:"required,description=The UID of the dashboard"`
+	SearchTerm string `json:"searchTerm" jsonschema:"required,description=Term to search for in panel titles\\, descriptions\\, and queries"`
+}
+
+// PanelSearchResult represents a panel that matched the search
+type PanelSearchResult struct {
+	ID          int      `json:"id"`
+	Title       string   `json:"title"`
+	Type        string   `json:"type"`
+	Description string   `json:"description,omitempty"`
+	MatchReason []string `json:"matchReason"`
+}
+
+// searchDashboardPanels searches for panels by title, description, or query content
+func searchDashboardPanels(ctx context.Context, args SearchDashboardPanelsParams) ([]PanelSearchResult, error) {
+	dashboard, err := getDashboardByUID(ctx, GetDashboardByUIDParams{UID: args.UID})
+	if err != nil {
+		return nil, fmt.Errorf("get dashboard by uid: %w", err)
+	}
+
+	db, ok := dashboard.Dashboard.(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("dashboard is not a JSON object")
+	}
+
+	panels := safeArray(db, "panels")
+	if panels == nil {
+		return []PanelSearchResult{}, nil
+	}
+
+	searchLower := strings.ToLower(args.SearchTerm)
+	var matchingPanels []PanelSearchResult
+
+	for _, p := range panels {
+		panel, ok := p.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		// Handle row panels with nested panels
+		if panelType := safeString(panel, "type"); panelType == "row" {
+			if nestedPanels := safeArray(panel, "panels"); nestedPanels != nil {
+				for _, np := range nestedPanels {
+					if nestedPanel, ok := np.(map[string]interface{}); ok {
+						if match := checkPanelMatchReason(nestedPanel, searchLower); len(match.MatchReason) > 0 {
+							matchingPanels = append(matchingPanels, match)
+						}
+					}
+				}
+			}
+			continue
+		}
+
+		// Check regular panels
+		if match := checkPanelMatchReason(panel, searchLower); len(match.MatchReason) > 0 {
+			matchingPanels = append(matchingPanels, match)
+		}
+	}
+
+	return matchingPanels, nil
+}
+
+var SearchDashboardPanels = mcpgrafana.MustTool(
+	"search_dashboard_panels",
+	"Search for panels within a dashboard by matching text in panel titles\\, descriptions\\, or query expressions. Returns matching panels with information about where the search term was found (title\\, description\\, or query).",
+	searchDashboardPanels,
+	mcp.WithTitleAnnotation("Search dashboard panels"),
+	mcp.WithIdempotentHintAnnotation(true),
+	mcp.WithReadOnlyHintAnnotation(true),
+)
+
+// GetPanelFieldConfigParams defines parameters for getting panel field config
+type GetPanelFieldConfigParams struct {
+	UID     string `json:"uid" jsonschema:"required,description=The UID of the dashboard"`
+	PanelID int    `json:"panelId" jsonschema:"required,description=The ID of the panel"`
+}
+
+// PanelFieldConfigResult contains panel field configuration
+type PanelFieldConfigResult struct {
+	PanelID     int                    `json:"panelId"`
+	PanelTitle  string                 `json:"panelTitle"`
+	PanelType   string                 `json:"panelType"`
+	FieldConfig map[string]interface{} `json:"fieldConfig,omitempty"`
+}
+
+// getPanelFieldConfig retrieves field configuration including thresholds and overrides
+func getPanelFieldConfig(ctx context.Context, args GetPanelFieldConfigParams) (*PanelFieldConfigResult, error) {
+	dashboard, err := getDashboardByUID(ctx, GetDashboardByUIDParams{UID: args.UID})
+	if err != nil {
+		return nil, fmt.Errorf("get dashboard by uid: %w", err)
+	}
+
+	db, ok := dashboard.Dashboard.(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("dashboard is not a JSON object")
+	}
+
+	// Find the panel
+	panel, err := findPanelByID(db, args.PanelID)
+	if err != nil {
+		return nil, err
+	}
+
+	fieldConfig := safeObject(panel, "fieldConfig")
+
+	return &PanelFieldConfigResult{
+		PanelID:     args.PanelID,
+		PanelTitle:  safeString(panel, "title"),
+		PanelType:   safeString(panel, "type"),
+		FieldConfig: fieldConfig,
+	}, nil
+}
+
+var GetPanelFieldConfig = mcpgrafana.MustTool(
+	"get_panel_field_config",
+	"Retrieve field configuration for a specific panel\\, including units\\, decimals\\, thresholds\\, value mappings\\, and field overrides. Field config controls how data is displayed and formatted in visualizations.",
+	getPanelFieldConfig,
+	mcp.WithTitleAnnotation("Get panel field config"),
+	mcp.WithIdempotentHintAnnotation(true),
+	mcp.WithReadOnlyHintAnnotation(true),
+)
+
+// Helper function to extract detailed panel information
+func extractPanelDetail(panel map[string]interface{}) PanelDetail {
+	detail := PanelDetail{
+		ID:          safeInt(panel, "id"),
+		Title:       safeString(panel, "title"),
+		Type:        safeString(panel, "type"),
+		Description: safeString(panel, "description"),
+		Targets:     safeArray(panel, "targets"),
+		GridPos:     safeObject(panel, "gridPos"),
+		Options:     safeObject(panel, "options"),
+	}
+
+	// Extract datasource info if present
+	if dsField := safeObject(panel, "datasource"); dsField != nil {
+		detail.Datasource = &datasourceInfo{
+			UID:  safeString(dsField, "uid"),
+			Type: safeString(dsField, "type"),
+		}
+	}
+
+	return detail
+}
+
+// Helper function to find a panel by ID
+func findPanelByID(dashboard map[string]interface{}, panelID int) (map[string]interface{}, error) {
+	panels := safeArray(dashboard, "panels")
+	if panels == nil {
+		return nil, fmt.Errorf("no panels found in dashboard")
+	}
+
+	for _, p := range panels {
+		panel, ok := p.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		// Check direct panel match
+		if safeInt(panel, "id") == panelID {
+			return panel, nil
+		}
+
+		// Check nested panels in rows
+		if panelType := safeString(panel, "type"); panelType == "row" {
+			if nestedPanels := safeArray(panel, "panels"); nestedPanels != nil {
+				for _, np := range nestedPanels {
+					if nestedPanel, ok := np.(map[string]interface{}); ok {
+						if safeInt(nestedPanel, "id") == panelID {
+							return nestedPanel, nil
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("panel %d not found in dashboard", panelID)
+}
+
+// Helper function to check if a panel matches search criteria and return match reasons
+func checkPanelMatchReason(panel map[string]interface{}, searchLower string) PanelSearchResult {
+	result := PanelSearchResult{
+		ID:          safeInt(panel, "id"),
+		Title:       safeString(panel, "title"),
+		Type:        safeString(panel, "type"),
+		Description: safeString(panel, "description"),
+		MatchReason: []string{},
+	}
+
+	// Check title
+	if strings.Contains(strings.ToLower(result.Title), searchLower) {
+		result.MatchReason = append(result.MatchReason, "title")
+	}
+
+	// Check description
+	if strings.Contains(strings.ToLower(result.Description), searchLower) {
+		result.MatchReason = append(result.MatchReason, "description")
+	}
+
+	// Check queries
+	if targets := safeArray(panel, "targets"); targets != nil {
+		for _, t := range targets {
+			if target, ok := t.(map[string]interface{}); ok {
+				// Check various query types
+				expr := safeString(target, "expr")
+				query := safeString(target, "query")
+				rawSQL := safeString(target, "rawSql")
+
+				if strings.Contains(strings.ToLower(expr), searchLower) ||
+					strings.Contains(strings.ToLower(query), searchLower) ||
+					strings.Contains(strings.ToLower(rawSQL), searchLower) {
+					result.MatchReason = append(result.MatchReason, "query")
+					break
+				}
+			}
+		}
+	}
+
+	return result
+}
+
 func AddDashboardTools(mcp *server.MCPServer, enableWriteTools bool) {
 	GetDashboardByUID.Register(mcp)
 	if enableWriteTools {
@@ -656,4 +1010,8 @@ func AddDashboardTools(mcp *server.MCPServer, enableWriteTools bool) {
 	GetDashboardPanelQueries.Register(mcp)
 	GetDashboardProperty.Register(mcp)
 	GetDashboardSummary.Register(mcp)
+	ListPanelsByType.Register(mcp)
+	GetPanelTransformations.Register(mcp)
+	SearchDashboardPanels.Register(mcp)
+	GetPanelFieldConfig.Register(mcp)
 }

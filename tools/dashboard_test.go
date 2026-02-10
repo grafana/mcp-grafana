@@ -440,4 +440,179 @@ func TestDashboardTools(t *testing.T) {
 		})
 		require.Error(t, err, "Should fail when trying to append to non-array field")
 	})
+
+	t.Run("list panels by type", func(t *testing.T) {
+		ctx := newTestContext()
+
+		dashboard := getExistingTestDashboard(t, ctx, "")
+
+		// Test listing panels by a specific type (e.g., 'graph' or 'timeseries')
+		result, err := listPanelsByType(ctx, ListPanelsByTypeParams{
+			UID:       dashboard.UID,
+			PanelType: "timeseries",
+		})
+		require.NoError(t, err)
+		assert.NotNil(t, result)
+
+		// Verify all returned panels are of the requested type
+		for _, panel := range result {
+			assert.Equal(t, "timeseries", panel.Type)
+			assert.NotEmpty(t, panel.Title)
+			assert.GreaterOrEqual(t, panel.ID, 0)
+		}
+	})
+
+	t.Run("list panels by type - no matches", func(t *testing.T) {
+		ctx := newTestContext()
+
+		dashboard := getExistingTestDashboard(t, ctx, "")
+
+		// Test with a panel type that doesn't exist
+		result, err := listPanelsByType(ctx, ListPanelsByTypeParams{
+			UID:       dashboard.UID,
+			PanelType: "non-existent-type",
+		})
+		require.NoError(t, err)
+		assert.Empty(t, result)
+	})
+
+	t.Run("get panel transformations", func(t *testing.T) {
+		ctx := newTestContext()
+
+		dashboard := getExistingTestDashboard(t, ctx, "")
+		dashboardFull, err := getDashboardByUID(ctx, GetDashboardByUIDParams{UID: dashboard.UID})
+		require.NoError(t, err)
+
+		// Get first panel ID
+		db, ok := dashboardFull.Dashboard.(map[string]interface{})
+		require.True(t, ok)
+		panels, ok := db["panels"].([]interface{})
+		require.True(t, ok)
+		require.Greater(t, len(panels), 0)
+
+		firstPanel, ok := panels[0].(map[string]interface{})
+		require.True(t, ok)
+		panelID := int(firstPanel["id"].(float64))
+
+		// Get transformations for the panel
+		result, err := getPanelTransformations(ctx, GetPanelTransformationsParams{
+			UID:     dashboard.UID,
+			PanelID: panelID,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, panelID, result.PanelID)
+		assert.NotEmpty(t, result.PanelTitle)
+		assert.NotEmpty(t, result.PanelType)
+		assert.NotNil(t, result.Transformations)
+		// HasTransformations will depend on the test dashboard
+	})
+
+	t.Run("get panel transformations - invalid panel", func(t *testing.T) {
+		ctx := newTestContext()
+
+		dashboard := getExistingTestDashboard(t, ctx, "")
+
+		// Test with non-existent panel ID
+		_, err := getPanelTransformations(ctx, GetPanelTransformationsParams{
+			UID:     dashboard.UID,
+			PanelID: 99999,
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
+
+	t.Run("search dashboard panels", func(t *testing.T) {
+		ctx := newTestContext()
+
+		dashboard := getExistingTestDashboard(t, ctx, "")
+		dashboardFull, err := getDashboardByUID(ctx, GetDashboardByUIDParams{UID: dashboard.UID})
+		require.NoError(t, err)
+
+		// Get a panel title to search for
+		db, ok := dashboardFull.Dashboard.(map[string]interface{})
+		require.True(t, ok)
+		panels, ok := db["panels"].([]interface{})
+		require.True(t, ok)
+		require.Greater(t, len(panels), 0)
+
+		firstPanel, ok := panels[0].(map[string]interface{})
+		require.True(t, ok)
+		title, _ := firstPanel["title"].(string)
+		require.NotEmpty(t, title)
+
+		// Search for part of the title
+		searchTerm := title[:3] // Use first 3 characters
+
+		result, err := searchDashboardPanels(ctx, SearchDashboardPanelsParams{
+			UID:        dashboard.UID,
+			SearchTerm: searchTerm,
+		})
+		require.NoError(t, err)
+		assert.NotEmpty(t, result)
+
+		// Verify match reasons are populated
+		for _, match := range result {
+			assert.NotEmpty(t, match.MatchReason)
+			assert.NotEmpty(t, match.Title)
+			assert.NotEmpty(t, match.Type)
+		}
+	})
+
+	t.Run("search dashboard panels - no matches", func(t *testing.T) {
+		ctx := newTestContext()
+
+		dashboard := getExistingTestDashboard(t, ctx, "")
+
+		// Search for something that definitely won't match
+		result, err := searchDashboardPanels(ctx, SearchDashboardPanelsParams{
+			UID:        dashboard.UID,
+			SearchTerm: "xyznonexistentterm123",
+		})
+		require.NoError(t, err)
+		assert.Empty(t, result)
+	})
+
+	t.Run("get panel field config", func(t *testing.T) {
+		ctx := newTestContext()
+
+		dashboard := getExistingTestDashboard(t, ctx, "")
+		dashboardFull, err := getDashboardByUID(ctx, GetDashboardByUIDParams{UID: dashboard.UID})
+		require.NoError(t, err)
+
+		// Get first panel ID
+		db, ok := dashboardFull.Dashboard.(map[string]interface{})
+		require.True(t, ok)
+		panels, ok := db["panels"].([]interface{})
+		require.True(t, ok)
+		require.Greater(t, len(panels), 0)
+
+		firstPanel, ok := panels[0].(map[string]interface{})
+		require.True(t, ok)
+		panelID := int(firstPanel["id"].(float64))
+
+		// Get field config for the panel
+		result, err := getPanelFieldConfig(ctx, GetPanelFieldConfigParams{
+			UID:     dashboard.UID,
+			PanelID: panelID,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, panelID, result.PanelID)
+		assert.NotEmpty(t, result.PanelTitle)
+		assert.NotEmpty(t, result.PanelType)
+		// FieldConfig may or may not be present depending on the panel
+	})
+
+	t.Run("get panel field config - invalid panel", func(t *testing.T) {
+		ctx := newTestContext()
+
+		dashboard := getExistingTestDashboard(t, ctx, "")
+
+		// Test with non-existent panel ID
+		_, err := getPanelFieldConfig(ctx, GetPanelFieldConfigParams{
+			UID:     dashboard.UID,
+			PanelID: 99999,
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
 }
