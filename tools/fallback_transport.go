@@ -45,7 +45,7 @@ func (t *datasourceFallbackTransport) RoundTrip(req *http.Request) (*http.Respon
 	if req.Body != nil {
 		var err error
 		bodyBytes, err = io.ReadAll(req.Body)
-		req.Body.Close()
+		req.Body.Close() //nolint:errcheck
 		if err != nil {
 			return nil, fmt.Errorf("buffering request body for fallback: %w", err)
 		}
@@ -62,7 +62,7 @@ func (t *datasourceFallbackTransport) RoundTrip(req *http.Request) (*http.Respon
 	}
 
 	// Got 403 or 500 — try the fallback endpoint.
-	resp.Body.Close()
+	resp.Body.Close() //nolint:errcheck
 
 	retryReq := t.rewriteRequest(req, t.primaryBase, t.fallbackBase)
 	if bodyBytes != nil {
