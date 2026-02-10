@@ -277,8 +277,14 @@ func (o *Observability) MCPHooks() *server.Hooks {
 					return
 				}
 				if session := server.ClientSessionFromContext(ctx); session != nil {
-					if meta, ok := o.sessions.Load(session.SessionID()); ok {
-						meta.(*sessionMeta).protocolVersion = result.ProtocolVersion
+					sid := session.SessionID()
+					if meta, ok := o.sessions.Load(sid); ok {
+						sm := meta.(*sessionMeta)
+						// Store a new sessionMeta to avoid data race with concurrent readers
+						o.sessions.Store(sid, &sessionMeta{
+							startTime:       sm.startTime,
+							protocolVersion: result.ProtocolVersion,
+						})
 					}
 				}
 			},
