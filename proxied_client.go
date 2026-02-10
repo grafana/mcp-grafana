@@ -36,8 +36,10 @@ func NewProxiedClient(ctx context.Context, datasourceUID, datasourceName, dataso
 		headers["Authorization"] = "Basic " + base64.StdEncoding.EncodeToString([]byte(auth))
 	}
 
-	// Add cloud access policy token header if configured
-	if config.CloudAccessPolicyToken != "" {
+	// Add cloud access policy token header only when on-behalf-of auth is not
+	// active. OBO auth also uses X-Access-Token (set by authRoundTripper in
+	// tool-specific clients) and should take precedence.
+	if config.CloudAccessPolicyToken != "" && config.AccessToken == "" {
 		headers["X-Access-Token"] = "Bearer " + config.CloudAccessPolicyToken
 	}
 
