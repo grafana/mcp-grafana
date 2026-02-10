@@ -67,7 +67,9 @@ func newLokiClient(ctx context.Context, uid string) (*Client, error) {
 	}
 
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
-	url := fmt.Sprintf("%s/api/datasources/proxy/uid/%s", strings.TrimRight(cfg.URL, "/"), uid)
+	grafanaURL := strings.TrimRight(cfg.URL, "/")
+	resourcesBase, proxyBase := datasourceProxyPaths(uid)
+	url := grafanaURL + proxyBase
 
 	// Create custom transport with TLS configuration if available
 	transport, err := mcpgrafana.BuildTransport(&cfg, nil)
@@ -77,10 +79,13 @@ func newLokiClient(ctx context.Context, uid string) (*Client, error) {
 	transport = NewAuthRoundTripper(transport, cfg.AccessToken, cfg.IDToken, cfg.APIKey, cfg.BasicAuth)
 	transport = mcpgrafana.NewOrgIDRoundTripper(transport, cfg.OrgID)
 
+	// Wrap with fallback transport: try /proxy first, fall back to /resources
+	// on 403/500 for compatibility with different managed Grafana deployments.
+	var rt http.RoundTripper = mcpgrafana.NewUserAgentTransport(transport)
+	rt = newDatasourceFallbackTransport(rt, proxyBase, resourcesBase)
+
 	client := &http.Client{
-		Transport: mcpgrafana.NewUserAgentTransport(
-			transport,
-		),
+		Transport: rt,
 	}
 
 	return &Client{
