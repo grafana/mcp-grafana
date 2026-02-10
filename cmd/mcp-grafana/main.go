@@ -328,7 +328,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		if basePath == "" {
 			basePath = "/"
 		}
-		mux.Handle(basePath, observability.WrapHandler(srv, "mcp-sse"))
+		mux.Handle(basePath, observability.WrapHandler(srv, basePath))
 		mux.HandleFunc("/healthz", handleHealthz)
 		if obs.MetricsEnabled {
 			if obs.MetricsAddress == "" {
@@ -354,7 +354,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		}
 		srv := server.NewStreamableHTTPServer(s, opts...)
 		mux := http.NewServeMux()
-		mux.Handle(endpointPath, observability.WrapHandler(srv, "mcp-http"))
+		mux.Handle(endpointPath, observability.WrapHandler(srv, endpointPath))
 		mux.HandleFunc("/healthz", handleHealthz)
 		if obs.MetricsEnabled {
 			if obs.MetricsAddress == "" {
