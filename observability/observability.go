@@ -85,18 +85,7 @@ func Setup(cfg Config) (*Observability, error) {
 		networkTransport: cfg.NetworkTransport,
 	}
 
-	if !cfg.MetricsEnabled {
-		return obs, nil
-	}
-
-	// Create Prometheus exporter using default aggregation so that
-	// explicit bucket boundaries from the semconv spec are preserved.
-	exporter, err := prometheus.New()
-	if err != nil {
-		return nil, err
-	}
-
-	// Build OTel resource with service identity
+	// Build OTel resource with service identity (shared by tracing and metrics)
 	res, err := sdkresource.Merge(
 		sdkresource.Default(),
 		sdkresource.NewWithAttributes(
@@ -110,11 +99,10 @@ func Setup(cfg Config) (*Observability, error) {
 	}
 
 	// Set up OTLP trace exporter when OTEL_EXPORTER_OTLP_ENDPOINT is configured.
-	// The gRPC exporter respects standard OTEL_* env vars for endpoint, headers, etc.
+	// The gRPC exporter respects standard OTEL_* env vars for endpoint, headers,
+	// TLS settings (OTEL_EXPORTER_OTLP_INSECURE), etc.
 	if os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") != "" {
-		traceExporter, traceErr := otlptracegrpc.New(context.Background(),
-			otlptracegrpc.WithInsecure(),
-		)
+		traceExporter, traceErr := otlptracegrpc.New(context.Background())
 		if traceErr != nil {
 			return nil, traceErr
 		}
@@ -124,6 +112,17 @@ func Setup(cfg Config) (*Observability, error) {
 		)
 		otel.SetTracerProvider(tp)
 		obs.tracerProvider = tp
+	}
+
+	if !cfg.MetricsEnabled {
+		return obs, nil
+	}
+
+	// Create Prometheus exporter using default aggregation so that
+	// explicit bucket boundaries from the semconv spec are preserved.
+	exporter, err := prometheus.New()
+	if err != nil {
+		return nil, err
 	}
 
 	// Create MeterProvider with the Prometheus exporter and resource
