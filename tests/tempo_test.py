@@ -1,18 +1,8 @@
 from mcp import ClientSession
 import pytest
-from langevals import expect
-from langevals_langevals.llm_boolean import (
-    CustomLLMBooleanEvaluator,
-    CustomLLMBooleanSettings,
-)
-from litellm import Message, acompletion
-from mcp import ClientSession
 
 from conftest import models
-from utils import (
-    get_converted_tools,
-    llm_tool_call_sequence,
-)
+from utils import assert_mcp_eval, run_llm_tool_loop
 
 pytestmark = pytest.mark.anyio
 
@@ -212,38 +202,30 @@ class TestTempoProxiedToolsWithLLM:
     @pytest.mark.parametrize("model", models)
     @pytest.mark.flaky(max_runs=3)
     async def test_llm_can_list_trace_attributes(
-        self, model: str, mcp_client: ClientSession
+        self, model: str, mcp_client: ClientSession, mcp_transport: str
     ):
         """Test that an LLM can list available trace attributes from Tempo."""
-        tools = await get_converted_tools(mcp_client)
         prompt = (
             "Use the tempo tools to get a list of all available trace attribute names "
             "from the datasource with UID 'tempo'. I want to know what attributes "
             "I can use in my TraceQL queries."
         )
-
-        messages = [
-            Message(role="system", content="You are a helpful assistant."),
-            Message(role="user", content=prompt),
-        ]
-
-        # LLM should call tempo_get-attribute-names with datasourceUid
-        messages = await llm_tool_call_sequence(
-            model,
-            messages,
-            tools,
-            mcp_client,
-            "tempo_get-attribute-names",
-            {"datasourceUid": "tempo"},
+        final_content, tools_called, mcp_server = await run_llm_tool_loop(
+            model, mcp_client, mcp_transport, prompt
         )
 
-        # Final LLM response should mention attributes
-        response = await acompletion(model=model, messages=messages, tools=tools)
-        content = response.choices[0].message.content
-
-        attributes_checker = CustomLLMBooleanEvaluator(
-            settings=CustomLLMBooleanSettings(
-                prompt="Does the response list or describe trace attributes that are available for querying?",
-            )
+        attr_calls = [tc for tc in tools_called if tc.name == "tempo_get-attribute-names"]
+        assert attr_calls, "tempo_get-attribute-names was not in tools_called"
+        args = attr_calls[0].args
+        assert args.get("datasourceUid") == "tempo", (
+            f"Expected datasourceUid='tempo', got {args.get('datasourceUid')!r}"
         )
-        expect(input=prompt, output=content).to_pass(attributes_checker)
+
+        assert_mcp_eval(
+            prompt,
+            final_content,
+            tools_called,
+            mcp_server,
+            "Does the response list or describe trace attributes that are available for querying?",
+            expected_tools="tempo_get-attribute-names",
+        )

@@ -30,8 +30,8 @@ func getExistingTestDashboard(t *testing.T, ctx context.Context, dashboardName s
 		Query: dashboardName,
 	})
 	require.NoError(t, err)
-	require.Greater(t, len(searchResults), 0, "No dashboards found")
-	return searchResults[0]
+	require.Greater(t, len(searchResults.Dashboards), 0, "No dashboards found")
+	return searchResults.Dashboards[0]
 }
 
 // getExistingTestDashboardJSON will fetch the JSON map for an existing

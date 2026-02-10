@@ -110,9 +110,11 @@ func oncallClientFromContext(ctx context.Context) (*aapi.Client, error) {
 					if httpClient.Transport == nil {
 						httpClient.Transport = http.DefaultTransport
 					}
-					httpClient.Transport = mcpgrafana.NewUserAgentTransport(
-						httpClient.Transport,
-					)
+					transport := httpClient.Transport
+					if len(cfg.ExtraHeaders) > 0 {
+						transport = mcpgrafana.NewExtraHeadersRoundTripper(transport, cfg.ExtraHeaders)
+					}
+					httpClient.Transport = mcpgrafana.NewUserAgentTransport(transport)
 				}
 			}
 		}
@@ -400,7 +402,7 @@ func listOnCallUsers(ctx context.Context, args ListOnCallUsersParams) ([]*aapi.U
 
 var ListOnCallUsers = mcpgrafana.MustTool(
 	"list_oncall_users",
-	"List users from Grafana OnCall. Can retrieve all users, a specific user by ID, or filter by username. Returns a list of user objects with their details. Supports pagination.",
+	"List users from Grafana OnCall. These are OnCall users (separate from Grafana users). Can retrieve all users in the OnCall directory, a specific user by ID, or filter by username. Returns a list of user objects with their details. Supports pagination.",
 	listOnCallUsers,
 	mcp.WithTitleAnnotation("List OnCall users"),
 	mcp.WithIdempotentHintAnnotation(true),

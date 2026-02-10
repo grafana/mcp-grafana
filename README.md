@@ -39,7 +39,7 @@ The dashboard tools now include several strategies to manage context window usag
 ### Datasources
 
 - **List and fetch datasource information:** View all configured datasources and retrieve detailed information about each.
-  - _Supported datasource types: Prometheus, Loki._
+  - _Supported datasource types: Prometheus, Loki, ClickHouse._
 
 ### Query Examples
 
@@ -51,12 +51,27 @@ The dashboard tools now include several strategies to manage context window usag
 
 - **Query Prometheus:** Execute PromQL queries (supports both instant and range metric queries) against Prometheus datasources.
 - **Query Prometheus metadata:** Retrieve metric metadata, metric names, label names, and label values from Prometheus datasources.
+- **Query histogram percentiles:** Calculate histogram percentile values (p50, p90, p95, p99) using histogram_quantile.
 
 ### Loki Querying
 
 - **Query Loki logs and metrics:** Run both log queries and metric queries using LogQL against Loki datasources.
 - **Query Loki metadata:** Retrieve label names, label values, and stream statistics from Loki datasources.
 - **Query Loki patterns:** Retrieve log patterns detected by Loki to identify common log structures and anomalies.
+
+### ClickHouse Querying
+
+> **Note:** ClickHouse tools are **disabled by default**. To enable them, add `clickhouse` to your `--enabled-tools` flag.
+
+- **List ClickHouse tables:** List all tables in a ClickHouse database with row counts and sizes.
+- **Describe table schema:** Get column names, types, and metadata for a ClickHouse table.
+- **Query ClickHouse:** Execute SQL queries with Grafana macro and variable substitution support.
+
+### Log Search
+
+> **Note:** Search logs tools are **disabled by default**. To enable them, add `searchlogs` to your `--enabled-tools` flag.
+
+- **Search logs:** High-level log search across ClickHouse (OTel format) and Loki datasources.
 
 ### Incidents
 
@@ -213,6 +228,7 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `list_prometheus_metric_names`    | Prometheus  | List available metric names                                         | `datasources:query`                     | `datasources:uid:prometheus-uid`                    |
 | `list_prometheus_label_names`     | Prometheus  | List label names matching a selector                                | `datasources:query`                     | `datasources:uid:prometheus-uid`                    |
 | `list_prometheus_label_values`    | Prometheus  | List values for a specific label                                    | `datasources:query`                     | `datasources:uid:prometheus-uid`                    |
+| `query_prometheus_histogram`      | Prometheus  | Calculate histogram percentile values                               | `datasources:query`                     | `datasources:uid:prometheus-uid`                    |
 | `list_incidents`                  | Incident    | List incidents in Grafana Incident                                  | Viewer role                             | N/A                                                 |
 | `create_incident`                 | Incident    | Create an incident in Grafana Incident                              | Editor role                             | N/A                                                 |
 | `add_activity_to_incident`        | Incident    | Add an activity item to an incident in Grafana Incident             | Editor role                             | N/A                                                 |
@@ -222,6 +238,10 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `list_loki_label_values`          | Loki        | List values for a specific log label                                | `datasources:query`                     | `datasources:uid:loki-uid`                          |
 | `query_loki_stats`                | Loki        | Get statistics about log streams                                    | `datasources:query`                     | `datasources:uid:loki-uid`                          |
 | `query_loki_patterns`             | Loki        | Query detected log patterns to identify common structures           | `datasources:query`                     | `datasources:uid:loki-uid`                          |
+| `list_clickhouse_tables`          | ClickHouse* | List tables in a ClickHouse database                                | `datasources:query`                     | `datasources:uid:*`                                 |
+| `describe_clickhouse_table`       | ClickHouse* | Get table schema with column types                                  | `datasources:query`                     | `datasources:uid:*`                                 |
+| `query_clickhouse`                | ClickHouse* | Execute SQL queries with macro substitution                         | `datasources:query`                     | `datasources:uid:*`                                 |
+| `search_logs`                     | SearchLogs* | Search logs across ClickHouse and Loki                              | `datasources:query`                     | `datasources:uid:*`                                 |
 | `list_alert_rules`                | Alerting    | List alert rules                                                    | `alert.rules:read`                      | `folders:*` or `folders:uid:alerts-folder`          |
 | `get_alert_rule_by_uid`           | Alerting    | Get alert rule by UID                                               | `alert.rules:read`                      | `folders:uid:alerts-folder`                         |
 | `create_alert_rule`               | Alerting    | Create a new alert rule                                             | `alert.rules:write`                     | `folders:*` or `folders:uid:alerts-folder`          |
@@ -287,6 +307,8 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 - `--disable-navigation`: Disable navigation tools
 - `--disable-rendering`: Disable rendering tools (panel/dashboard image export)
 - `--disable-examples`: Disable query examples tools
+- `--disable-clickhouse`: Disable ClickHouse tools
+- `--disable-searchlogs`: Disable search_logs tool
 
 ### Read-Only Mode
 
@@ -369,6 +391,28 @@ When an organization ID is provided, the MCP server will set the `X-Grafana-Org-
         "GRAFANA_USERNAME": "<your username>",
         "GRAFANA_PASSWORD": "<your password>",
         "GRAFANA_ORG_ID": "2"
+      }
+    }
+  }
+}
+```
+
+### Custom HTTP Headers
+
+You can add arbitrary HTTP headers to all Grafana API requests using the `GRAFANA_EXTRA_HEADERS` environment variable. The value should be a JSON object mapping header names to values.
+
+**Example with custom headers:**
+
+```json
+{
+  "mcpServers": {
+    "grafana": {
+      "command": "mcp-grafana",
+      "args": [],
+      "env": {
+        "GRAFANA_URL": "http://localhost:3000",
+        "GRAFANA_SERVICE_ACCOUNT_TOKEN": "<your token>",
+        "GRAFANA_EXTRA_HEADERS": "{\"X-Custom-Header\": \"custom-value\", \"X-Tenant-ID\": \"tenant-123\"}"
       }
     }
   }
