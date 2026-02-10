@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
+	"strings"
 
 	"github.com/PaesslerAG/gval"
 	"github.com/PaesslerAG/jsonpath"
@@ -374,6 +375,9 @@ var GetDashboardSummary = mcpgrafana.MustTool(
 
 // applyJSONPath applies a value to a JSONPath or removes it if remove=true
 func applyJSONPath(data map[string]interface{}, path string, value interface{}, remove bool) error {
+	// Trim whitespace to handle paths like "$.panels/- " (trailing space)
+	path = strings.TrimSpace(path)
+
 	// Remove the leading "$." if present
 	if len(path) > 2 && path[:2] == "$." {
 		path = path[2:]
