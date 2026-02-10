@@ -459,6 +459,12 @@ type QueryLokiLogsParams struct {
 	StepSeconds   int    `json:"stepSeconds,omitempty" jsonschema:"description=Resolution step in seconds for range metric queries. When running metric queries with queryType='range'\\, this controls the time resolution of the returned data points."`
 }
 
+// QueryLokiLogsResult wraps the Loki query result with optional hints
+type QueryLokiLogsResult struct {
+	Data  []LogEntry        `json:"data"`
+	Hints *EmptyResultHints `json:"hints,omitempty"`
+}
+
 // LogEntry represents a single log entry or metric sample with metadata
 type LogEntry struct {
 	Timestamp string            `json:"timestamp,omitempty"`
@@ -507,7 +513,7 @@ func parseMetricTimestamp(raw json.RawMessage) (string, error) {
 }
 
 // queryLokiLogs queries logs from a Loki datasource using LogQL
-func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) ([]LogEntry, error) {
+func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) (*QueryLokiLogsResult, error) {
 	client, err := newLokiClient(ctx, args.DatasourceUID)
 	if err != nil {
 		return nil, fmt.Errorf("creating Loki client: %w", err)
@@ -643,12 +649,36 @@ func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) ([]LogEntry, e
 		return nil, fmt.Errorf("unsupported result type: %s", response.Data.ResultType)
 	}
 
-	// Return empty slice if no entries found
+	// Ensure entries is not nil
 	if entries == nil {
-		return []LogEntry{}, nil
+		entries = []LogEntry{}
 	}
 
-	return entries, nil
+	// Build the response
+	result := &QueryLokiLogsResult{
+		Data: entries,
+	}
+
+	// Add hints if the result is empty
+	if len(entries) == 0 {
+		// Parse time strings for hints
+		var parsedStartTime, parsedEndTime time.Time
+		if startTime != "" {
+			parsedStartTime, _ = time.Parse(time.RFC3339, startTime)
+		}
+		if endTime != "" {
+			parsedEndTime, _ = time.Parse(time.RFC3339, endTime)
+		}
+
+		result.Hints = GenerateEmptyResultHints(HintContext{
+			DatasourceType: "loki",
+			Query:          args.LogQL,
+			StartTime:      parsedStartTime,
+			EndTime:        parsedEndTime,
+		})
+	}
+
+	return result, nil
 }
 
 // QueryLokiLogs is a tool for querying logs from Loki

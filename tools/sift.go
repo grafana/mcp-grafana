@@ -633,7 +633,7 @@ func fetchErrorPatternLogExamples(ctx context.Context, patternMap map[string]any
 		return nil, fmt.Errorf("querying Loki: %w", err)
 	}
 	var examples []string
-	for _, entry := range logEntries {
+	for _, entry := range logEntries.Data {
 		if entry.Line != "" {
 			examples = append(examples, entry.Line)
 		}
