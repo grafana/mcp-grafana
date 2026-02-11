@@ -249,7 +249,7 @@ func TestMCPHooks_SessionDuration(t *testing.T) {
 	// Verify protocol version was stored
 	meta, _ := obs.sessions.Load("test-session")
 	sm := meta.(*sessionMeta)
-	assert.Equal(t, "2024-11-05", sm.protocolVersion)
+	assert.Equal(t, "2024-11-05", sm.protocolVersion.Load().(string))
 
 	// Small delay to ensure measurable duration
 	time.Sleep(1 * time.Millisecond)

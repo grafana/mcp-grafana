@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -48,9 +49,11 @@ type Config struct {
 }
 
 // sessionMeta holds per-session metadata for enriching metrics.
+// The protocolVersion field is set atomically via sync.Map.Store to avoid
+// data races between OnAfterInitialize (writer) and OnSuccess/OnError (readers).
 type sessionMeta struct {
 	startTime       time.Time
-	protocolVersion string
+	protocolVersion atomic.Value // stores string
 }
 
 // Observability manages the OpenTelemetry providers and Prometheus handler.
@@ -218,8 +221,9 @@ func (o *Observability) buildOperationAttrs(ctx context.Context, method mcp.MCPM
 	// Note: mcp.session.id is a span-only attribute (not on metrics) to avoid cardinality explosion.
 	if session := server.ClientSessionFromContext(ctx); session != nil {
 		if meta, ok := o.sessions.Load(session.SessionID()); ok {
-			if sm := meta.(*sessionMeta); sm.protocolVersion != "" {
-				attrs = append(attrs, o.operationDuration.AttrProtocolVersion(sm.protocolVersion))
+			sm := meta.(*sessionMeta)
+			if pv, ok := sm.protocolVersion.Load().(string); ok && pv != "" {
+				attrs = append(attrs, o.operationDuration.AttrProtocolVersion(pv))
 			}
 		}
 	}
@@ -264,8 +268,8 @@ func (o *Observability) MCPHooks() *server.Hooks {
 					if o.networkTransport != "" {
 						attrs = append(attrs, o.sessionDuration.AttrNetworkTransport(o.networkTransport))
 					}
-					if sm.protocolVersion != "" {
-						attrs = append(attrs, o.sessionDuration.AttrProtocolVersion(sm.protocolVersion))
+					if pv, ok := sm.protocolVersion.Load().(string); ok && pv != "" {
+						attrs = append(attrs, o.sessionDuration.AttrProtocolVersion(pv))
 					}
 					o.sessionDuration.Record(ctx, duration, attrs...)
 				}
@@ -278,7 +282,7 @@ func (o *Observability) MCPHooks() *server.Hooks {
 				}
 				if session := server.ClientSessionFromContext(ctx); session != nil {
 					if meta, ok := o.sessions.Load(session.SessionID()); ok {
-						meta.(*sessionMeta).protocolVersion = result.ProtocolVersion
+						meta.(*sessionMeta).protocolVersion.Store(result.ProtocolVersion)
 					}
 				}
 			},

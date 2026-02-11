@@ -767,9 +767,11 @@ curl http://localhost:9090/healthz
 
 ### Observability
 
-When using the SSE or streamable HTTP transports, the MCP server can expose Prometheus metrics for monitoring. Enable metrics with the `--metrics` flag.
+The MCP server supports Prometheus metrics and OpenTelemetry distributed tracing, following the [OTel MCP semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/mcp/).
 
-**Enabling Metrics:**
+#### Metrics
+
+When using the SSE or streamable HTTP transports, enable Prometheus metrics with the `--metrics` flag:
 
 ```bash
 # Metrics served on the main server at /metrics
@@ -783,36 +785,41 @@ When using the SSE or streamable HTTP transports, the MCP server can expose Prom
 
 | Metric | Type | Description |
 |--------|------|-------------|
-| `mcp_requests_total` | Counter | Total number of MCP requests (labels: `method`, `status`) |
-| `mcp_request_duration_seconds` | Histogram | Duration of MCP requests (labels: `method`) |
-| `mcp_tool_calls_total` | Counter | Total number of MCP tool calls (labels: `tool`, `error`) |
-| `mcp_tool_call_duration_seconds` | Histogram | Duration of MCP tool calls (labels: `tool`, `error`) |
-| `mcp_sessions_active` | Gauge | Number of active MCP sessions |
+| `mcp_server_operation_duration_seconds` | Histogram | Duration of MCP operations (labels: `mcp_method_name`, `gen_ai_tool_name`, `error_type`, `network_transport`, `mcp_protocol_version`) |
+| `mcp_server_session_duration_seconds` | Histogram | Duration of MCP client sessions (labels: `network_transport`, `mcp_protocol_version`) |
 | `http_server_request_duration_seconds` | Histogram | Duration of HTTP server requests (from otelhttp) |
 
-**Histogram Implementation:**
+**Note:** Metrics are only available when using SSE or streamable HTTP transports. They are not available with the stdio transport.
 
-The server uses OpenTelemetry exponential histograms which are converted to Prometheus native histograms. For best results, configure Prometheus to scrape with protobuf protocol:
+#### Tracing
 
-```yaml
-scrape_configs:
-  - job_name: 'mcp-grafana'
-    scrape_protocols: [PrometheusProto, OpenMetricsText1.0.0, PrometheusText0.0.4]
-    static_configs:
-      - targets: ['localhost:8000']
+Distributed tracing is configured via standard `OTEL_*` environment variables and works independently of the `--metrics` flag. When `OTEL_EXPORTER_OTLP_ENDPOINT` is set, the server exports traces via OTLP/gRPC:
+
+```bash
+# Send traces to a local Tempo instance
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317 \
+OTEL_EXPORTER_OTLP_INSECURE=true \
+./mcp-grafana -t streamable-http
+
+# Send traces to Grafana Cloud with authentication
+OTEL_EXPORTER_OTLP_ENDPOINT=https://tempo-us-central1.grafana.net:443 \
+OTEL_EXPORTER_OTLP_HEADERS="Authorization=Basic ..." \
+./mcp-grafana -t streamable-http
 ```
 
-**Docker example with metrics:**
+Tool call spans follow semconv naming (`tools/call <tool_name>`) and include attributes like `gen_ai.tool.name`, `mcp.method.name`, and `mcp.session.id`. The server also supports W3C trace context propagation from the `_meta` field of tool call requests.
+
+**Docker example with metrics and tracing:**
 
 ```bash
 docker run --rm -p 8000:8000 \
   -e GRAFANA_URL=http://localhost:3000 \
   -e GRAFANA_SERVICE_ACCOUNT_TOKEN=<your token> \
+  -e OTEL_EXPORTER_OTLP_ENDPOINT=http://tempo:4317 \
+  -e OTEL_EXPORTER_OTLP_INSECURE=true \
   grafana/mcp-grafana \
   -t streamable-http --metrics
 ```
-
-**Note:** Metrics are only available when using SSE or streamable HTTP transports. They are not available with the stdio transport.
 
 ## Troubleshooting
 
