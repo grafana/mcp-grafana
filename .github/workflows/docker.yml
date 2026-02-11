@@ -16,13 +16,13 @@ permissions:
   contents: read
 
 jobs:
-  docker:
+  prepare:
     runs-on: ubuntu-latest
-    permissions:
-      id-token: write
+    outputs:
+      is_tag: ${{ steps.check.outputs.is_tag }}
+      version: ${{ steps.tag.outputs.version }}
+      is_stable: ${{ steps.tag.outputs.is_stable }}
     steps:
-      - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98
-
       - name: Check if tag push
         id: check
         run: |
@@ -44,6 +44,14 @@ jobs:
           else
             echo "is_stable=false" >> $GITHUB_OUTPUT
           fi
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: prepare
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98
 
       - name: Build and Push to Docker Hub
         uses: grafana/shared-workflows/actions/build-push-to-dockerhub@7f983a8135eb58eaec83c96d8b842b2092e110e3
@@ -53,38 +61,17 @@ jobs:
           repository: grafana/mcp-grafana
           platforms: linux/amd64,linux/arm64
           tags: |
-            ${{ steps.check.outputs.is_tag == 'true' && steps.tag.outputs.is_stable == 'true' && 'latest' || '' }}
-            ${{ steps.check.outputs.is_tag == 'true' && steps.tag.outputs.version || '' }}
-          push: ${{ steps.check.outputs.is_tag == 'true' }}
+            ${{ needs.prepare.outputs.is_tag == 'true' && needs.prepare.outputs.is_stable == 'true' && 'latest' || '' }}
+            ${{ needs.prepare.outputs.is_tag == 'true' && needs.prepare.outputs.version || '' }}
+          push: ${{ needs.prepare.outputs.is_tag == 'true' }}
 
   docker-alpine:
     runs-on: ubuntu-latest
+    needs: prepare
     permissions:
       id-token: write
     steps:
       - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98
-
-      - name: Check if tag push
-        id: check
-        run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            echo "is_tag=true" >> $GITHUB_OUTPUT
-          else
-            echo "is_tag=false" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Process tag name
-        id: tag
-        if: steps.check.outputs.is_tag == 'true'
-        run: |
-          VERSION=${GITHUB_REF_NAME#v}
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          # Check if this is a stable release (no rc, alpha, beta, etc.)
-          if [[ ! "$VERSION" =~ (rc|alpha|beta|pre|dev) ]]; then
-            echo "is_stable=true" >> $GITHUB_OUTPUT
-          else
-            echo "is_stable=false" >> $GITHUB_OUTPUT
-          fi
 
       - name: Build and Push Alpine to Docker Hub
         uses: grafana/shared-workflows/actions/build-push-to-dockerhub@7f983a8135eb58eaec83c96d8b842b2092e110e3
@@ -94,13 +81,13 @@ jobs:
           repository: grafana/mcp-grafana
           platforms: linux/amd64,linux/arm64
           tags: |
-            ${{ steps.check.outputs.is_tag == 'true' && steps.tag.outputs.is_stable == 'true' && 'alpine' || '' }}
-            ${{ steps.check.outputs.is_tag == 'true' && format('{0}-alpine', steps.tag.outputs.version) || '' }}
-          push: ${{ steps.check.outputs.is_tag == 'true' }}
+            ${{ needs.prepare.outputs.is_tag == 'true' && needs.prepare.outputs.is_stable == 'true' && 'alpine' || '' }}
+            ${{ needs.prepare.outputs.is_tag == 'true' && format('{0}-alpine', needs.prepare.outputs.version) || '' }}
+          push: ${{ needs.prepare.outputs.is_tag == 'true' }}
 
   mcp-registry:
     runs-on: ubuntu-latest
-    needs: [docker, docker-alpine]
+    needs: docker
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: read
