@@ -75,6 +75,8 @@ The dashboard tools now include several strategies to manage context window usag
 
 ### Elasticsearch Querying
 
+> **Note:** Elasticsearch tools are **disabled by default**. To enable them, add `elasticsearch` to your `--enabled-tools` flag.
+
 - **Query Elasticsearch:** Execute search queries against Elasticsearch datasources using either Lucene query syntax or Elasticsearch Query DSL. Supports filtering by time range and retrieving logs, metrics, or any indexed data. Returns documents with their index, ID, source fields, and optional relevance score.
 
 ### Incidents
