@@ -314,9 +314,14 @@ func queryElasticsearch(ctx context.Context, args QueryElasticsearchParams) ([]E
 	documents := make([]ElasticsearchDocument, 0, len(response.Hits.Hits))
 	for _, hit := range response.Hits.Hits {
 		doc := ElasticsearchDocument{
-			Index:  hit["_index"].(string),
-			ID:     hit["_id"].(string),
 			Source: make(map[string]interface{}),
+		}
+
+		if index, ok := hit["_index"].(string); ok {
+			doc.Index = index
+		}
+		if id, ok := hit["_id"].(string); ok {
+			doc.ID = id
 		}
 
 		if score, ok := hit["_score"].(float64); ok {
@@ -325,9 +330,15 @@ func queryElasticsearch(ctx context.Context, args QueryElasticsearchParams) ([]E
 
 		if source, ok := hit["_source"].(map[string]interface{}); ok {
 			doc.Source = source
-			// Extract timestamp if present
-			if ts, ok := source["@timestamp"].(string); ok {
+			// Extract timestamp if present (can be string or numeric epoch millis)
+			switch ts := source["@timestamp"].(type) {
+			case string:
 				doc.Timestamp = ts
+			case float64:
+				// Convert epoch milliseconds to RFC3339
+				sec := int64(ts) / 1000
+				nsec := (int64(ts) % 1000) * int64(time.Millisecond)
+				doc.Timestamp = time.Unix(sec, nsec).UTC().Format(time.RFC3339Nano)
 			}
 		}
 
