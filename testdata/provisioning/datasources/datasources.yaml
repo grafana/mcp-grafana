@@ -64,3 +64,14 @@ datasources:
       server: clickhouse
       username: default
     isDefault: false
+  - name: Elasticsearch
+    id: 8
+    uid: elasticsearch
+    type: elasticsearch
+    access: proxy
+    url: http://elasticsearch:9200
+    jsonData:
+      index: test-logs-*
+      timeField: "@timestamp"
+      esVersion: 8.17.0
+    isDefault: false
