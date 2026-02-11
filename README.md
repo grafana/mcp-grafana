@@ -41,6 +41,12 @@ The dashboard tools now include several strategies to manage context window usag
 - **List and fetch datasource information:** View all configured datasources and retrieve detailed information about each.
   - _Supported datasource types: Prometheus, Loki, ClickHouse, CloudWatch._
 
+### Query Examples
+
+> **Note:** Query examples tools are **disabled by default**. To enable them, add `examples` to your `--enabled-tools` flag.
+
+- **Get query examples:** Retrieve example queries for different datasource types to learn query syntax.
+
 ### Prometheus Querying
 
 - **Query Prometheus:** Execute PromQL queries (supports both instant and range metric queries) against Prometheus datasources.
@@ -225,6 +231,7 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `list_datasources`                | Datasources | List datasources                                                    | `datasources:read`                      | `datasources:*`                                     |
 | `get_datasource_by_uid`           | Datasources | Get a datasource by uid                                             | `datasources:read`                      | `datasources:uid:prometheus-uid`                    |
 | `get_datasource_by_name`          | Datasources | Get a datasource by name                                            | `datasources:read`                      | `datasources:*` or `datasources:uid:loki-uid`       |
+| `get_query_examples`              | Examples*   | Get example queries for a datasource type                           | `datasources:read`                      | `datasources:*`                                     |
 | `query_prometheus`                | Prometheus  | Execute a query against a Prometheus datasource                     | `datasources:query`                     | `datasources:uid:prometheus-uid`                    |
 | `list_prometheus_metric_metadata` | Prometheus  | List metric metadata                                                | `datasources:query`                     | `datasources:uid:prometheus-uid`                    |
 | `list_prometheus_metric_names`    | Prometheus  | List available metric names                                         | `datasources:query`                     | `datasources:uid:prometheus-uid`                    |
@@ -294,6 +301,11 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 
 **Debug and Logging:**
 - `--debug`: Enable debug mode for detailed HTTP request/response logging
+- `--log-level`: Log level (`debug`, `info`, `warn`, `error`) - default: `info`
+
+**Observability:**
+- `--metrics`: Enable Prometheus metrics endpoint at `/metrics`
+- `--metrics-address`: Separate address for metrics server (e.g., `:9090`). If empty, metrics are served on the main server
 
 **Tool Configuration:**
 - `--enabled-tools`: Comma-separated list of enabled categories - default: all categories except `admin`, to enable admin tools, add `admin` to the list (e.g., `"search,datasource,...,admin"`)
@@ -313,6 +325,7 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 - `--disable-navigation`: Disable navigation tools
 - `--disable-rendering`: Disable rendering tools (panel/dashboard image export)
 - `--disable-cloudwatch`: Disable CloudWatch tools
+- `--disable-examples`: Disable query examples tools
 - `--disable-clickhouse`: Disable ClickHouse tools
 - `--disable-searchlogs`: Disable search_logs tool
 
@@ -820,6 +833,62 @@ curl http://localhost:9090/healthz
 ```
 
 **Note:** The health check endpoint is only available when using SSE or streamable HTTP transports. It is not available when using the stdio transport (`-t stdio`), as stdio does not expose an HTTP server.
+
+### Observability
+
+The MCP server supports Prometheus metrics and OpenTelemetry distributed tracing, following the [OTel MCP semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/mcp/).
+
+#### Metrics
+
+When using the SSE or streamable HTTP transports, enable Prometheus metrics with the `--metrics` flag:
+
+```bash
+# Metrics served on the main server at /metrics
+./mcp-grafana -t streamable-http --metrics
+
+# Metrics served on a separate address
+./mcp-grafana -t streamable-http --metrics --metrics-address :9090
+```
+
+**Available Metrics:**
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `mcp_server_operation_duration_seconds` | Histogram | Duration of MCP operations (labels: `mcp_method_name`, `gen_ai_tool_name`, `error_type`, `network_transport`, `mcp_protocol_version`) |
+| `mcp_server_session_duration_seconds` | Histogram | Duration of MCP client sessions (labels: `network_transport`, `mcp_protocol_version`) |
+| `http_server_request_duration_seconds` | Histogram | Duration of HTTP server requests (from otelhttp) |
+
+**Note:** Metrics are only available when using SSE or streamable HTTP transports. They are not available with the stdio transport.
+
+#### Tracing
+
+Distributed tracing is configured via standard `OTEL_*` environment variables and works independently of the `--metrics` flag. When `OTEL_EXPORTER_OTLP_ENDPOINT` is set, the server exports traces via OTLP/gRPC:
+
+```bash
+# Send traces to a local Tempo instance
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317 \
+OTEL_EXPORTER_OTLP_INSECURE=true \
+./mcp-grafana -t streamable-http
+
+# Send traces to Grafana Cloud with authentication
+OTEL_EXPORTER_OTLP_ENDPOINT=https://tempo-us-central1.grafana.net:443 \
+OTEL_EXPORTER_OTLP_HEADERS="Authorization=Basic ..." \
+./mcp-grafana -t streamable-http
+```
+
+Tool call spans follow semconv naming (`tools/call <tool_name>`) and include attributes like `gen_ai.tool.name`, `mcp.method.name`, and `mcp.session.id`. The server also supports W3C trace context propagation from the `_meta` field of tool call requests.
+
+**Docker example with metrics and tracing:**
+
+```bash
+docker run --rm -p 8000:8000 \
+  -e GRAFANA_URL=http://localhost:3000 \
+  -e GRAFANA_SERVICE_ACCOUNT_TOKEN=<your token> \
+  -e OTEL_EXPORTER_OTLP_ENDPOINT=http://tempo:4317 \
+  -e OTEL_EXPORTER_OTLP_INSECURE=true \
+  grafana/mcp-grafana \
+  -t streamable-http --metrics
+```
 
 ## Troubleshooting
 

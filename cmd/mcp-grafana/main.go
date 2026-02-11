@@ -18,7 +18,9 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
+	"github.com/grafana/mcp-grafana/observability"
 	"github.com/grafana/mcp-grafana/tools"
+	"go.opentelemetry.io/otel/semconv/v1.39.0/mcpconv"
 )
 
 func maybeAddTools(s *server.MCPServer, tf func(*server.MCPServer), enabledTools []string, disable bool, category string) {
@@ -42,7 +44,7 @@ type disabledTools struct {
 	prometheus, loki, alerting,
 	dashboard, folder, oncall, asserts, sift, admin,
 	pyroscope, navigation, proxied, annotations, rendering, cloudwatch, write,
-	clickhouse, searchlogs bool
+	examples, clickhouse, searchlogs bool
 }
 
 // Configuration for the Grafana client.
@@ -78,6 +80,7 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.annotations, "disable-annotations", false, "Disable annotation tools")
 	flag.BoolVar(&dt.rendering, "disable-rendering", false, "Disable rendering tools (panel/dashboard image export)")
 	flag.BoolVar(&dt.cloudwatch, "disable-cloudwatch", false, "Disable CloudWatch tools")
+	flag.BoolVar(&dt.examples, "disable-examples", false, "Disable query examples tools")
 	flag.BoolVar(&dt.clickhouse, "disable-clickhouse", false, "Disable ClickHouse tools")
 	flag.BoolVar(&dt.searchlogs, "disable-searchlogs", false, "Disable search logs tools")
 }
@@ -112,11 +115,12 @@ func (dt *disabledTools) addTools(s *server.MCPServer) {
 	maybeAddTools(s, func(mcp *server.MCPServer) { tools.AddAnnotationTools(mcp, enableWriteTools) }, enabledTools, dt.annotations, "annotations")
 	maybeAddTools(s, tools.AddRenderingTools, enabledTools, dt.rendering, "rendering")
 	maybeAddTools(s, tools.AddCloudWatchTools, enabledTools, dt.cloudwatch, "cloudwatch")
+	maybeAddTools(s, tools.AddExamplesTools, enabledTools, dt.examples, "examples")
 	maybeAddTools(s, tools.AddClickHouseTools, enabledTools, dt.clickhouse, "clickhouse")
 	maybeAddTools(s, tools.AddSearchLogsTools, enabledTools, dt.searchlogs, "searchlogs")
 }
 
-func newServer(transport string, dt disabledTools) (*server.MCPServer, *mcpgrafana.ToolManager) {
+func newServer(transport string, dt disabledTools, obs *observability.Observability) (*server.MCPServer, *mcpgrafana.ToolManager) {
 	sm := mcpgrafana.NewSessionManager()
 
 	// Declare variable for ToolManager that will be initialized after server creation
@@ -154,6 +158,10 @@ func newServer(transport string, dt disabledTools) (*server.MCPServer, *mcpgrafa
 			},
 		}
 	}
+
+	// Merge observability hooks with existing hooks
+	hooks = observability.MergeHooks(hooks, obs.MCPHooks())
+
 	s := server.NewMCPServer("mcp-grafana", mcpgrafana.Version(),
 		server.WithInstructions(`
 This server provides access to your Grafana instance and the surrounding ecosystem.
@@ -247,9 +255,33 @@ func handleHealthz(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte("ok"))
 }
 
-func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt disabledTools, gc mcpgrafana.GrafanaConfig, tls tlsConfig) error {
+// runMetricsServer starts a separate HTTP server for metrics.
+func runMetricsServer(addr string, o *observability.Observability) {
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", o.MetricsHandler())
+	slog.Info("Starting metrics server", "address", addr)
+	if err := http.ListenAndServe(addr, mux); err != nil {
+		slog.Error("metrics server error", "error", err)
+	}
+}
+
+func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt disabledTools, gc mcpgrafana.GrafanaConfig, tls tlsConfig, obs observability.Config) error {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})))
-	s, tm := newServer(transport, dt)
+
+	// Set up observability (metrics and tracing)
+	o, err := observability.Setup(obs)
+	if err != nil {
+		return fmt.Errorf("failed to setup observability: %w", err)
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := o.Shutdown(shutdownCtx); err != nil {
+			slog.Error("failed to shutdown observability", "error", err)
+		}
+	}()
+
+	s, tm := newServer(transport, dt, o)
 
 	// Create a context that will be cancelled on shutdown
 	ctx, cancel := context.WithCancel(context.Background())
@@ -306,11 +338,18 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		if basePath == "" {
 			basePath = "/"
 		}
-		mux.Handle(basePath, srv)
+		mux.Handle(basePath, observability.WrapHandler(srv, basePath))
 		mux.HandleFunc("/healthz", handleHealthz)
+		if obs.MetricsEnabled {
+			if obs.MetricsAddress == "" {
+				mux.Handle("/metrics", o.MetricsHandler())
+			} else {
+				go runMetricsServer(obs.MetricsAddress, o)
+			}
+		}
 		httpSrv.Handler = mux
 		slog.Info("Starting Grafana MCP server using SSE transport",
-			"version", mcpgrafana.Version(), "address", addr, "basePath", basePath)
+			"version", mcpgrafana.Version(), "address", addr, "basePath", basePath, "metrics", obs.MetricsEnabled)
 		return runHTTPServer(ctx, srv, addr, "SSE")
 	case "streamable-http":
 		httpSrv := &http.Server{Addr: addr}
@@ -325,11 +364,18 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		}
 		srv := server.NewStreamableHTTPServer(s, opts...)
 		mux := http.NewServeMux()
-		mux.Handle(endpointPath, srv)
+		mux.Handle(endpointPath, observability.WrapHandler(srv, endpointPath))
 		mux.HandleFunc("/healthz", handleHealthz)
+		if obs.MetricsEnabled {
+			if obs.MetricsAddress == "" {
+				mux.Handle("/metrics", o.MetricsHandler())
+			} else {
+				go runMetricsServer(obs.MetricsAddress, o)
+			}
+		}
 		httpSrv.Handler = mux
 		slog.Info("Starting Grafana MCP server using StreamableHTTP transport",
-			"version", mcpgrafana.Version(), "address", addr, "endpointPath", endpointPath)
+			"version", mcpgrafana.Version(), "address", addr, "endpointPath", endpointPath, "metrics", obs.MetricsEnabled)
 		return runHTTPServer(ctx, srv, addr, "StreamableHTTP")
 	default:
 		return fmt.Errorf("invalid transport type: %s. Must be 'stdio', 'sse' or 'streamable-http'", transport)
@@ -356,6 +402,9 @@ func main() {
 	gc.addFlags()
 	var tls tlsConfig
 	tls.addFlags()
+	var obs observability.Config
+	flag.BoolVar(&obs.MetricsEnabled, "metrics", false, "Enable Prometheus metrics endpoint")
+	flag.StringVar(&obs.MetricsAddress, "metrics-address", "", "Separate address for metrics server (e.g., :9090). If empty, metrics are served on the main server at /metrics")
 	flag.Parse()
 
 	if *showVersion {
@@ -374,7 +423,19 @@ func main() {
 		}
 	}
 
-	if err := run(transport, *addr, *basePath, *endpointPath, parseLevel(*logLevel), dt, grafanaConfig, tls); err != nil {
+	// Set OTel resource identity
+	obs.ServerName = "mcp-grafana"
+	obs.ServerVersion = mcpgrafana.Version()
+
+	// Map transport flag to semconv network.transport values
+	switch transport {
+	case "stdio":
+		obs.NetworkTransport = mcpconv.NetworkTransportPipe
+	case "sse", "streamable-http":
+		obs.NetworkTransport = mcpconv.NetworkTransportTCP
+	}
+
+	if err := run(transport, *addr, *basePath, *endpointPath, parseLevel(*logLevel), dt, grafanaConfig, tls, obs); err != nil {
 		panic(err)
 	}
 }
