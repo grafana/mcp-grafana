@@ -33,6 +33,8 @@ type ElasticsearchClient struct {
 type ElasticsearchResponse struct {
 	Took     int                    `json:"took"`
 	TimedOut bool                   `json:"timed_out"`
+	Status   int                    `json:"status"`
+	Error    interface{}            `json:"error,omitempty"`
 	Shards   map[string]interface{} `json:"_shards"`
 	Hits     struct {
 		Total struct {
@@ -181,7 +183,12 @@ func (c *ElasticsearchClient) search(ctx context.Context, index, query string, s
 		return nil, fmt.Errorf("no responses returned from _msearch")
 	}
 
-	return &msearchResponse.Responses[0], nil
+	esResp := &msearchResponse.Responses[0]
+	if esResp.Error != nil {
+		return nil, fmt.Errorf("elasticsearch query error: %v", esResp.Error)
+	}
+
+	return esResp, nil
 }
 
 // buildElasticsearchQuery constructs an Elasticsearch query DSL JSON object
@@ -312,8 +319,8 @@ func queryElasticsearch(ctx context.Context, args QueryElasticsearchParams) ([]E
 			Source: make(map[string]interface{}),
 		}
 
-		if score, ok := hit["_score"].(*float64); ok {
-			doc.Score = score
+		if score, ok := hit["_score"].(float64); ok {
+			doc.Score = &score
 		}
 
 		if source, ok := hit["_source"].(map[string]interface{}); ok {
