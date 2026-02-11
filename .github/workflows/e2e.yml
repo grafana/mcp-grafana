@@ -65,7 +65,7 @@ jobs:
       - name: Start MCP server in background
         if: matrix.transport != 'stdio'
         run: |
-          nohup ./dist/mcp-grafana -t ${{ matrix.transport }} --enabled-tools search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering,admin > mcp.log 2>&1 &
+          nohup ./dist/mcp-grafana -t ${{ matrix.transport }} --enabled-tools search,datasource,incident,prometheus,loki,elasticsearch,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering,admin > mcp.log 2>&1 &
           sleep 2  # Give server time to start and create log file
           if [ ! -f mcp.log ]; then
             echo "Warning: mcp.log was not created. Server may have failed to start."
