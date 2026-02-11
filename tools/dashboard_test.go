@@ -7,6 +7,7 @@ package tools
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/grafana/grafana-openapi-client-go/models"
@@ -439,5 +440,93 @@ func TestDashboardTools(t *testing.T) {
 			},
 		})
 		require.Error(t, err, "Should fail when trying to append to non-array field")
+	})
+
+	t.Run("update dashboard - remove panel by index", func(t *testing.T) {
+		ctx := newTestContext()
+
+		// Get our test dashboard
+		dashboard := getExistingTestDashboard(t, ctx, newTestDashboardName)
+		dashboardMap := getTestDashboardJSON(t, ctx, dashboard)
+
+		// Get current panel count
+		panels, ok := dashboardMap["panels"].([]interface{})
+		require.True(t, ok, "Panels should be an array")
+		originalCount := len(panels)
+
+		// Append a panel first so we have something to remove
+		newPanel := map[string]interface{}{
+			"id":    998,
+			"title": "Panel To Remove",
+			"type":  "stat",
+			"targets": []interface{}{
+				map[string]interface{}{
+					"expr": "up",
+				},
+			},
+			"gridPos": map[string]interface{}{
+				"h": 8,
+				"w": 12,
+				"x": 0,
+				"y": 16,
+			},
+		}
+
+		_, err := updateDashboard(ctx, UpdateDashboardParams{
+			UID: dashboard.UID,
+			Operations: []PatchOperation{
+				{
+					Op:    "add",
+					Path:  "$.panels/-",
+					Value: newPanel,
+				},
+			},
+			Message: "Appended panel for removal test",
+		})
+		require.NoError(t, err)
+
+		// Verify the panel was appended
+		updatedDashboard, err := getDashboardByUID(ctx, GetDashboardByUIDParams{
+			UID: dashboard.UID,
+		})
+		require.NoError(t, err)
+		updatedMap, ok := updatedDashboard.Dashboard.(map[string]interface{})
+		require.True(t, ok)
+		updatedPanels, ok := updatedMap["panels"].([]interface{})
+		require.True(t, ok)
+		require.Equal(t, originalCount+1, len(updatedPanels))
+
+		// Now remove the last panel by index
+		removeIndex := len(updatedPanels) - 1
+		_, err = updateDashboard(ctx, UpdateDashboardParams{
+			UID: dashboard.UID,
+			Operations: []PatchOperation{
+				{
+					Op:   "remove",
+					Path: fmt.Sprintf("$.panels[%d]", removeIndex),
+				},
+			},
+			Message: "Removed panel by index",
+		})
+		require.NoError(t, err)
+
+		// Verify the panel was removed
+		finalDashboard, err := getDashboardByUID(ctx, GetDashboardByUIDParams{
+			UID: dashboard.UID,
+		})
+		require.NoError(t, err)
+		finalMap, ok := finalDashboard.Dashboard.(map[string]interface{})
+		require.True(t, ok)
+		finalPanels, ok := finalMap["panels"].([]interface{})
+		require.True(t, ok)
+		assert.Equal(t, originalCount, len(finalPanels))
+
+		// Verify the removed panel is not present
+		for _, p := range finalPanels {
+			panel, ok := p.(map[string]interface{})
+			if ok {
+				assert.NotEqual(t, "Panel To Remove", panel["title"])
+			}
+		}
 	})
 }
