@@ -253,22 +253,10 @@ func substituteClickHouseMacros(query string, from, to time.Time) string {
 	return query
 }
 
-// substituteVariables replaces template variables in the query
-// Supports both ${varname} and $varname patterns
+// substituteVariables replaces template variables in the query.
+// Delegates to substituteTemplateVariables for consistent behavior.
 func substituteVariables(query string, variables map[string]string) string {
-	if variables == nil {
-		return query
-	}
-
-	for name, value := range variables {
-		// Replace ${varname} pattern
-		query = strings.ReplaceAll(query, fmt.Sprintf("${%s}", name), value)
-		// Replace $varname pattern (with word boundary)
-		varRe := regexp.MustCompile(fmt.Sprintf(`\$%s\b`, regexp.QuoteMeta(name)))
-		query = varRe.ReplaceAllString(query, value)
-	}
-
-	return query
+	return substituteTemplateVariables(query, variables)
 }
 
 // enforceClickHouseLimit ensures the query has a LIMIT clause and enforces max limit

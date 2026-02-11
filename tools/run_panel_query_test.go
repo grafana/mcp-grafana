@@ -217,6 +217,54 @@ func TestExtractPanelInfo(t *testing.T) {
 			errContains: "could not extract query",
 		},
 		{
+			name: "mixed datasource panel uses target-level datasource",
+			panel: map[string]interface{}{
+				"id":    10,
+				"title": "Mixed Panel",
+				"datasource": map[string]interface{}{
+					"uid":  "-- Mixed --",
+					"type": "datasource",
+				},
+				"targets": []interface{}{
+					map[string]interface{}{
+						"expr": "rate(http_requests_total[5m])",
+						"datasource": map[string]interface{}{
+							"uid":  "prometheus-uid",
+							"type": "prometheus",
+						},
+					},
+				},
+			},
+			wantQuery:  "rate(http_requests_total[5m])",
+			wantDSUID:  "prometheus-uid",
+			wantDSType: "prometheus",
+			wantErr:    false,
+		},
+		{
+			name: "target-level datasource overrides panel-level",
+			panel: map[string]interface{}{
+				"id":    11,
+				"title": "Override Panel",
+				"datasource": map[string]interface{}{
+					"uid":  "default-prom",
+					"type": "prometheus",
+				},
+				"targets": []interface{}{
+					map[string]interface{}{
+						"expr": "up",
+						"datasource": map[string]interface{}{
+							"uid":  "specific-prom",
+							"type": "prometheus",
+						},
+					},
+				},
+			},
+			wantQuery:  "up",
+			wantDSUID:  "specific-prom",
+			wantDSType: "prometheus",
+			wantErr:    false,
+		},
+		{
 			name: "panel with no datasource",
 			panel: map[string]interface{}{
 				"id":    7,
@@ -419,6 +467,12 @@ func TestSubstituteTemplateVariables(t *testing.T) {
 			variables: map[string]string{},
 			want:      "up{job=\"$job\"}",
 		},
+		{
+			name:      "value containing dollar sign",
+			query:     "metric{label=\"$var\"}",
+			variables: map[string]string{"var": "price$1"},
+			want:      "metric{label=\"price$1\"}",
+		},
 	}
 
 	for _, tt := range tests {
@@ -597,6 +651,24 @@ func TestSubstitutePrometheusMacros(t *testing.T) {
 			query:    "rate(x[$__interval])",
 			duration: 30 * time.Second, // 30s/100 = 0.3s, floors to 1s
 			expected: "rate(x[1s])",
+		},
+		{
+			name:     "range_s_macro",
+			query:    "increase(requests[$__range_s])",
+			duration: time.Hour,
+			expected: "increase(requests[3600])",
+		},
+		{
+			name:     "range_ms_macro",
+			query:    "timestamp(up) - $__range_ms",
+			duration: time.Hour,
+			expected: "timestamp(up) - 3600000",
+		},
+		{
+			name:     "range_s_and_ms_not_corrupted_by_range",
+			query:    "increase(x[$__range]) + $__range_s + $__range_ms",
+			duration: 30 * time.Minute,
+			expected: "increase(x[30m]) + 1800 + 1800000",
 		},
 	}
 

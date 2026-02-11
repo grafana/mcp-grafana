@@ -293,7 +293,7 @@ func substituteTemplateVariables(query string, variables map[string]string) stri
 		query = strings.ReplaceAll(query, "[["+name+"]]", value)
 		// Replace $varname with word boundary to avoid partial matches
 		varRe := regexp.MustCompile(fmt.Sprintf(`\$%s\b`, regexp.QuoteMeta(name)))
-		query = varRe.ReplaceAllString(query, value)
+		query = varRe.ReplaceAllLiteralString(query, value)
 	}
 	return query
 }
@@ -341,12 +341,6 @@ func extractPanelInfo(panel map[string]interface{}, queryIndex int) (*panelInfo,
 		Title: safeString(panel, "title"),
 	}
 
-	// Extract datasource from panel-level if present
-	if dsField := safeObject(panel, "datasource"); dsField != nil {
-		info.DatasourceUID = safeString(dsField, "uid")
-		info.DatasourceType = safeString(dsField, "type")
-	}
-
 	// Extract query from targets
 	targets := safeArray(panel, "targets")
 	if len(targets) == 0 {
@@ -367,11 +361,18 @@ func extractPanelInfo(panel map[string]interface{}, queryIndex int) (*panelInfo,
 	// Store raw target for CloudWatch and other complex query types
 	info.RawTarget = target
 
-	// If datasource not set at panel level, try target level
+	// Extract datasource - prefer target-level (more specific) over panel-level.
+	// This handles "Mixed" datasource panels where each target specifies its own datasource.
+	if targetDS := safeObject(target, "datasource"); targetDS != nil {
+		info.DatasourceUID = safeString(targetDS, "uid")
+		info.DatasourceType = safeString(targetDS, "type")
+	}
+
+	// Fall back to panel-level datasource
 	if info.DatasourceUID == "" {
-		if targetDS := safeObject(target, "datasource"); targetDS != nil {
-			info.DatasourceUID = safeString(targetDS, "uid")
-			info.DatasourceType = safeString(targetDS, "type")
+		if dsField := safeObject(panel, "datasource"); dsField != nil {
+			info.DatasourceUID = safeString(dsField, "uid")
+			info.DatasourceType = safeString(dsField, "type")
 		}
 	}
 
@@ -607,6 +608,12 @@ func executeGrafanaDSQuery(ctx context.Context, payload map[string]interface{}) 
 // substitutePrometheusMacros substitutes Grafana temporal macros for Prometheus queries
 func substitutePrometheusMacros(query string, start, end time.Time) string {
 	duration := end.Sub(start)
+
+	// Substitute $__range_ms and $__range_s BEFORE $__range to avoid partial replacement
+	rangeSec := int64(duration.Seconds())
+	rangeMs := duration.Milliseconds()
+	query = strings.ReplaceAll(query, "$__range_ms", fmt.Sprintf("%d", rangeMs))
+	query = strings.ReplaceAll(query, "$__range_s", fmt.Sprintf("%d", rangeSec))
 
 	// $__range - total time range as duration string
 	rangeStr := formatPrometheusDuration(duration)
