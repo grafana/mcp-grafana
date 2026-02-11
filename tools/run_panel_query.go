@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"regexp"
 	"strings"
@@ -158,6 +159,8 @@ func runSinglePanelQuery(ctx context.Context, _ interface{}, db map[string]inter
 		varName := extractVariableName(datasourceUID)
 		if resolvedUID, ok := vars[varName]; ok {
 			datasourceUID = resolvedUID
+			// Reset type so it gets looked up from the resolved datasource
+			datasourceType = ""
 		} else {
 			availableDS := getAvailableDatasourceUIDs(ctx, panelData.DatasourceType)
 			return nil, fmt.Errorf("datasource variable '%s' not found. Hint: Use 'datasourceUid' and 'datasourceType' to override. Available %s datasources: %v", datasourceUID, panelData.DatasourceType, availableDS)
@@ -420,11 +423,13 @@ func extractTemplateVariables(db map[string]interface{}) map[string]string {
 			if val, ok := current["value"]; ok {
 				switch v := val.(type) {
 				case string:
-					variables[name] = v
+					if v != "$__all" {
+						variables[name] = v
+					}
 				case []interface{}:
 					// Multi-value - take first value for simplicity
 					if len(v) > 0 {
-						if str, ok := v[0].(string); ok {
+						if str, ok := v[0].(string); ok && str != "$__all" {
 							variables[name] = str
 						}
 					}
@@ -502,7 +507,7 @@ func executeClickHouseQuery(ctx context.Context, datasourceUID, query, start, en
 		Query:         query,
 		Start:         start,
 		End:           end,
-		Variables:     variables,
+		Variables:     nil, // Variables already substituted by runSinglePanelQuery
 	})
 }
 
@@ -585,16 +590,25 @@ func executeGrafanaDSQuery(ctx context.Context, payload map[string]interface{}) 
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	var result map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("decoding response: %w", err)
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("reading response: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		if errMsg, ok := result["message"].(string); ok {
-			return nil, fmt.Errorf("query failed: %s", errMsg)
+		// Try to extract error message from JSON response
+		var errResult map[string]interface{}
+		if json.Unmarshal(bodyBytes, &errResult) == nil {
+			if errMsg, ok := errResult["message"].(string); ok {
+				return nil, fmt.Errorf("query failed: %s", errMsg)
+			}
 		}
-		return nil, fmt.Errorf("query failed with status %d: %v", resp.StatusCode, result)
+		return nil, fmt.Errorf("query failed with status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(bodyBytes, &result); err != nil {
+		return nil, fmt.Errorf("decoding response: %w", err)
 	}
 
 	// Return the results from the response

@@ -405,6 +405,40 @@ func TestExtractTemplateVariables(t *testing.T) {
 			},
 			want: map[string]string{},
 		},
+		{
+			name: "skip $__all sentinel in string value",
+			dashboard: map[string]interface{}{
+				"templating": map[string]interface{}{
+					"list": []interface{}{
+						map[string]interface{}{
+							"name": "cluster",
+							"current": map[string]interface{}{
+								"value": "$__all",
+								"text":  "All",
+							},
+						},
+					},
+				},
+			},
+			want: map[string]string{},
+		},
+		{
+			name: "skip $__all sentinel in array value",
+			dashboard: map[string]interface{}{
+				"templating": map[string]interface{}{
+					"list": []interface{}{
+						map[string]interface{}{
+							"name": "instance",
+							"current": map[string]interface{}{
+								"value": []interface{}{"$__all"},
+								"text":  "All",
+							},
+						},
+					},
+				},
+			},
+			want: map[string]string{},
+		},
 	}
 
 	for _, tt := range tests {
