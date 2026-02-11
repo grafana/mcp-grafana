@@ -29,7 +29,8 @@ backfill() {
 
 # Start Prometheus with the regular configuration, this is needed for backfilling
 /bin/prometheus \
-    --config.file=/etc/prometheus/prometheus.yml &
+    --config.file=/etc/prometheus/prometheus.yml \
+    --web.enable-remote-write-receiver &
 
 backfill
 
@@ -39,5 +40,6 @@ kill %1
 echo "Starting Prometheus server..."
 # Start Prometheus with the regular configuration
 /bin/prometheus \
-    --config.file=/etc/prometheus/prometheus.yml
+    --config.file=/etc/prometheus/prometheus.yml \
+    --web.enable-remote-write-receiver
 
