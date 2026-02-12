@@ -581,6 +581,7 @@ type CreateAlertRuleParams struct {
 	Labels            map[string]string    `json:"labels,omitempty" jsonschema:"description=Optional labels"`
 	UID               *string              `json:"uid,omitempty" jsonschema:"description=Optional UID for the alert rule"`
 	OrgID             int64                `json:"orgID" jsonschema:"required,description=The organization ID"`
+	NotificationSettings *models.AlertRuleNotificationSettings `json:"notification_settings,omitempty" jsonschema:"description=Optional notification routing settings including receiver (contact point) name"`
 	DisableProvenance *bool                `json:"disableProvenance,omitempty" jsonschema:"description=If true\\, the alert will remain editable in the Grafana UI (sets X-Disable-Provenance header). If false\\, the alert will be marked with provenance 'api' and locked from UI editing. Defaults to true."`
 }
 
@@ -643,6 +644,7 @@ func createAlertRule(ctx context.Context, args CreateAlertRuleParams) (*models.P
 		Annotations:  args.Annotations,
 		Labels:       args.Labels,
 		OrgID:        &args.OrgID,
+		NotificationSettings: args.NotificationSettings,
 	}
 
 	if args.UID != nil {
@@ -694,6 +696,7 @@ type UpdateAlertRuleParams struct {
 	Annotations       map[string]string    `json:"annotations,omitempty" jsonschema:"description=Optional annotations"`
 	Labels            map[string]string    `json:"labels,omitempty" jsonschema:"description=Optional labels"`
 	OrgID             int64                `json:"orgID" jsonschema:"required,description=The organization ID"`
+	NotificationSettings *models.AlertRuleNotificationSettings `json:"notification_settings,omitempty" jsonschema:"description=Optional notification routing settings including receiver (contact point) name"`
 	DisableProvenance *bool                `json:"disableProvenance,omitempty" jsonschema:"description=If true\\, the alert will remain editable in the Grafana UI (sets X-Disable-Provenance header). If false\\, the alert will be marked with provenance 'api' and locked from UI editing. Defaults to true."`
 }
 
@@ -760,6 +763,7 @@ func updateAlertRule(ctx context.Context, args UpdateAlertRuleParams) (*models.P
 		Annotations:  args.Annotations,
 		Labels:       args.Labels,
 		OrgID:        &args.OrgID,
+		NotificationSettings: args.NotificationSettings,
 	}
 
 	// Validate the rule using the built-in OpenAPI validation
