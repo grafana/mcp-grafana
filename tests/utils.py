@@ -90,6 +90,9 @@ async def run_llm_tool_loop(
     response = await acompletion(model=model, messages=messages, tools=tools)
 
     while response.choices and response.choices[0].message.tool_calls:
+        # Append the assistant message once (it may contain multiple tool calls)
+        messages.append(response.choices[0].message)
+        # Process each tool call and append tool results
         for tool_call in response.choices[0].message.tool_calls:
             tool_name = tool_call.function.name
             args = (
@@ -99,7 +102,6 @@ async def run_llm_tool_loop(
             )
             result_text, mcp_tc = await call_tool_and_record(mcp_client, tool_name, args)
             tools_called.append(mcp_tc)
-            messages.append(response.choices[0].message)
             messages.append(
                 Message(role="tool", tool_call_id=tool_call.id, content=result_text)
             )
