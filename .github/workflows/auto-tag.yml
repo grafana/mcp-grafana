@@ -20,6 +20,9 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
+          # Use a PAT to allow the tag push to trigger downstream workflows.
+          # Events created by GITHUB_TOKEN do not trigger new workflow runs.
+          token: ${{ secrets.RELEASE_PAT }}
 
       - name: Create and push tag
         env:
