@@ -317,11 +317,13 @@ func GetDashboardPanelQueriesTool(ctx context.Context, args DashboardPanelQuerie
 			if !ok {
 				continue
 			}
-			expr, _ := target["expr"].(string)
-			if expr != "" {
+			// Use extractQueryExpression to support all datasource types:
+			// expr (Prometheus), query (Loki), expression (CloudWatch), rawSql (ClickHouse), rawQuery (fallback)
+			query := extractQueryExpression(target)
+			if query != "" {
 				result = append(result, panelQuery{
 					Title:      title,
-					Query:      expr,
+					Query:      query,
 					Datasource: datasourceInfo,
 				})
 			}
@@ -771,4 +773,5 @@ func AddDashboardTools(mcp *server.MCPServer, enableWriteTools bool) {
 	GetDashboardPanelQueries.Register(mcp)
 	GetDashboardProperty.Register(mcp)
 	GetDashboardSummary.Register(mcp)
+	GetPanelQueriesWithVariables.Register(mcp)
 }
