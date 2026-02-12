@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"sync"
 
+	"github.com/grafana/authlib/authn"
 	mcp_client "github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/client/transport"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -36,10 +37,17 @@ func NewProxiedClient(ctx context.Context, datasourceUID, datasourceName, dataso
 		headers["Authorization"] = "Basic " + base64.StdEncoding.EncodeToString([]byte(auth))
 	}
 
-	// Add cloud access policy token header if configured, but not when
-	// on-behalf-of auth is active (OBO also uses X-Access-Token).
-	if config.CloudAccessPolicyToken != "" && config.AccessToken == "" {
-		headers["X-Access-Token"] = "Bearer " + config.CloudAccessPolicyToken
+	// Exchange CAP token for a signed access token if configured, but not
+	// when on-behalf-of auth is active (OBO also uses X-Access-Token).
+	if config.TokenExchanger != nil && config.AccessToken == "" {
+		resp, err := config.TokenExchanger.Exchange(ctx, authn.TokenExchangeRequest{
+			Namespace: config.TokenExchangeNamespace,
+			Audiences: []string{"grafana"},
+		})
+		if err != nil {
+			return nil, fmt.Errorf("token exchange failed: %w", err)
+		}
+		headers["X-Access-Token"] = resp.Token
 	}
 
 	// Add org ID header if configured

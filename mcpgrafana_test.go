@@ -5,10 +5,12 @@ package mcpgrafana
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"testing"
 
 	"github.com/go-openapi/runtime/client"
+	"github.com/grafana/authlib/authn"
 	grafana_client "github.com/grafana/grafana-openapi-client-go/client"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/stretchr/testify/assert"
@@ -803,8 +805,8 @@ func TestCloudAccessPolicyTokenFromHeaders(t *testing.T) {
 	})
 }
 
-func TestCloudAccessPolicyTokenTransport(t *testing.T) {
-	t.Run("adds X-Access-Token header via BuildTransport", func(t *testing.T) {
+func TestTokenExchangeTransport(t *testing.T) {
+	t.Run("exchanges token and sets X-Access-Token header via BuildTransport", func(t *testing.T) {
 		var capturedReq *http.Request
 		mockRT := &extraHeadersMockRT{
 			fn: func(req *http.Request) (*http.Response, error) {
@@ -815,6 +817,8 @@ func TestCloudAccessPolicyTokenTransport(t *testing.T) {
 
 		cfg := &GrafanaConfig{
 			CloudAccessPolicyToken: "glc_my-token",
+			TokenExchanger:         authn.NewStaticTokenExchanger("exchanged-access-token"),
+			TokenExchangeNamespace: "stack-123",
 		}
 		transport, err := BuildTransport(cfg, mockRT)
 		require.NoError(t, err)
@@ -823,10 +827,11 @@ func TestCloudAccessPolicyTokenTransport(t *testing.T) {
 		_, err = transport.RoundTrip(req)
 		require.NoError(t, err)
 
-		assert.Equal(t, "Bearer glc_my-token", capturedReq.Header.Get("X-Access-Token"))
+		// The exchanged token (not the raw CAP token) should be in X-Access-Token
+		assert.Equal(t, "exchanged-access-token", capturedReq.Header.Get("X-Access-Token"))
 	})
 
-	t.Run("no X-Access-Token when token not set", func(t *testing.T) {
+	t.Run("no X-Access-Token when no exchanger configured", func(t *testing.T) {
 		var capturedReq *http.Request
 		mockRT := &extraHeadersMockRT{
 			fn: func(req *http.Request) (*http.Response, error) {
@@ -857,6 +862,8 @@ func TestCloudAccessPolicyTokenTransport(t *testing.T) {
 
 		cfg := &GrafanaConfig{
 			CloudAccessPolicyToken: "glc_my-token",
+			TokenExchanger:         authn.NewStaticTokenExchanger("exchanged-access-token"),
+			TokenExchangeNamespace: "stack-123",
 			AccessToken:            "obo-access-token",
 		}
 		transport, err := BuildTransport(cfg, mockRT)
@@ -866,7 +873,7 @@ func TestCloudAccessPolicyTokenTransport(t *testing.T) {
 		_, err = transport.RoundTrip(req)
 		require.NoError(t, err)
 
-		// Cloud access policy token should NOT be set when OBO auth is active
+		// Token exchange should NOT happen when OBO auth is active
 		assert.Equal(t, "", capturedReq.Header.Get("X-Access-Token"))
 	})
 
@@ -881,6 +888,8 @@ func TestCloudAccessPolicyTokenTransport(t *testing.T) {
 
 		cfg := &GrafanaConfig{
 			CloudAccessPolicyToken: "glc_my-token",
+			TokenExchanger:         authn.NewStaticTokenExchanger("exchanged-access-token"),
+			TokenExchangeNamespace: "stack-123",
 			ExtraHeaders:           map[string]string{"X-Custom": "value"},
 		}
 		transport, err := BuildTransport(cfg, mockRT)
@@ -890,10 +899,54 @@ func TestCloudAccessPolicyTokenTransport(t *testing.T) {
 		_, err = transport.RoundTrip(req)
 		require.NoError(t, err)
 
-		assert.Equal(t, "Bearer glc_my-token", capturedReq.Header.Get("X-Access-Token"))
+		assert.Equal(t, "exchanged-access-token", capturedReq.Header.Get("X-Access-Token"))
 		assert.Equal(t, "value", capturedReq.Header.Get("X-Custom"))
 	})
+
+	t.Run("exchange error is propagated", func(t *testing.T) {
+		mockRT := &extraHeadersMockRT{
+			fn: func(req *http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: 200}, nil
+			},
+		}
+
+		cfg := &GrafanaConfig{
+			TokenExchanger:         &failingTokenExchanger{err: errors.New("auth service unavailable")},
+			TokenExchangeNamespace: "stack-123",
+		}
+		transport, err := BuildTransport(cfg, mockRT)
+		require.NoError(t, err)
+
+		req, _ := http.NewRequest("GET", "http://example.com", nil)
+		_, err = transport.RoundTrip(req)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "token exchange failed")
+		assert.Contains(t, err.Error(), "auth service unavailable")
+	})
+
+	t.Run("no exchanger created when exchange URL missing", func(t *testing.T) {
+		// newTokenExchanger returns nil when exchange URL is empty
+		exchanger := newTokenExchanger("glc_my-token", "")
+		assert.Nil(t, exchanger)
+	})
+
+	t.Run("no exchanger created when CAP token missing", func(t *testing.T) {
+		exchanger := newTokenExchanger("", "https://auth-api.grafana.net/v1/sign-access-token")
+		assert.Nil(t, exchanger)
+	})
 }
+
+// failingTokenExchanger is a test helper that always returns an error.
+type failingTokenExchanger struct {
+	err error
+}
+
+func (f *failingTokenExchanger) Exchange(_ context.Context, _ authn.TokenExchangeRequest) (*authn.TokenExchangeResponse, error) {
+	return nil, f.err
+}
+
+// Ensure failingTokenExchanger implements authn.TokenExchanger at compile time.
+var _ authn.TokenExchanger = (*failingTokenExchanger)(nil)
 
 func TestExtractGrafanaInfoWithExtraHeaders(t *testing.T) {
 	t.Run("extra headers from env in ExtractGrafanaInfoFromEnv", func(t *testing.T) {

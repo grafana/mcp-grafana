@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/go-openapi/strfmt"
+	"github.com/grafana/authlib/authn"
 	"github.com/grafana/grafana-openapi-client-go/client"
 	"github.com/grafana/incident-go"
 	"github.com/mark3labs/mcp-go/server"
@@ -40,10 +41,14 @@ const (
 	grafanaExtraHeadersEnvVar = "GRAFANA_EXTRA_HEADERS"
 
 	grafanaCloudAccessPolicyTokenEnvVar = "GRAFANA_CLOUD_ACCESS_POLICY_TOKEN"
+	grafanaTokenExchangeURLEnvVar       = "GRAFANA_TOKEN_EXCHANGE_URL"
+	grafanaTokenExchangeNamespaceEnvVar = "GRAFANA_TOKEN_EXCHANGE_NAMESPACE"
 
 	grafanaURLHeader                    = "X-Grafana-URL"
 	grafanaAPIKeyHeader                 = "X-Grafana-API-Key"
 	grafanaCloudAccessPolicyTokenHeader = "X-Cloud-Access-Policy-Token"
+	grafanaTokenExchangeURLHeader       = "X-Token-Exchange-URL"
+	grafanaTokenExchangeNamespaceHeader = "X-Token-Exchange-Namespace"
 )
 
 func urlAndAPIKeyFromEnv() (string, string) {
@@ -162,10 +167,17 @@ type GrafanaConfig struct {
 	OrgID int64
 
 	// CloudAccessPolicyToken is a Grafana Cloud access policy token used for
-	// authenticating with a Grafana instance. When set, it is sent as the
-	// X-Access-Token header. This is an alternative to using service account
-	// tokens or API keys.
+	// authenticating with a Grafana instance. When a TokenExchanger is configured,
+	// this token is exchanged for a signed access token via the Auth API.
 	CloudAccessPolicyToken string
+
+	// TokenExchanger performs CAP token → signed access token exchange.
+	// When set, it is used to obtain access tokens for the X-Access-Token header
+	// instead of sending the CAP token directly.
+	TokenExchanger authn.TokenExchanger
+
+	// TokenExchangeNamespace is the namespace for the signed token (e.g. "stack-123").
+	TokenExchangeNamespace string
 
 	// AccessToken is the Grafana Cloud access policy token used for on-behalf-of auth in Grafana Cloud.
 	AccessToken string
@@ -372,6 +384,27 @@ func NewExtraHeadersRoundTripper(rt http.RoundTripper, headers map[string]string
 	}
 }
 
+// tokenExchangeRoundTripper wraps an http.RoundTripper to exchange a CAP token
+// for a signed access token on each request. The underlying TokenExchanger
+// handles caching (TTL from JWT expiry - 15s), singleflight dedup, and retry.
+type tokenExchangeRoundTripper struct {
+	exchanger  authn.TokenExchanger
+	namespace  string
+	underlying http.RoundTripper
+}
+
+func (rt *tokenExchangeRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := rt.exchanger.Exchange(req.Context(), authn.TokenExchangeRequest{
+		Namespace: rt.namespace,
+		Audiences: []string{"grafana"},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("token exchange failed: %w", err)
+	}
+	cloned := req.Clone(req.Context())
+	cloned.Header.Set("X-Access-Token", resp.Token)
+	return rt.underlying.RoundTrip(cloned)
+}
 
 func BuildTransport(cfg *GrafanaConfig, base http.RoundTripper) (http.RoundTripper, error) {
 	if base == nil {
@@ -395,13 +428,15 @@ func BuildTransport(cfg *GrafanaConfig, base http.RoundTripper) (http.RoundTripp
 		transport = NewExtraHeadersRoundTripper(transport, cfg.ExtraHeaders)
 	}
 
-	// Add cloud access policy token header only when on-behalf-of auth is not
-	// active. OBO auth also uses X-Access-Token (set by authRoundTripper in
-	// tool-specific clients) and should take precedence.
-	if cfg.CloudAccessPolicyToken != "" && cfg.AccessToken == "" {
-		transport = NewExtraHeadersRoundTripper(transport, map[string]string{
-			"X-Access-Token": "Bearer " + cfg.CloudAccessPolicyToken,
-		})
+	// Use token exchange to obtain signed access tokens only when on-behalf-of
+	// auth is not active. OBO auth also uses X-Access-Token (set by
+	// authRoundTripper in tool-specific clients) and should take precedence.
+	if cfg.TokenExchanger != nil && cfg.AccessToken == "" {
+		transport = &tokenExchangeRoundTripper{
+			exchanger:  cfg.TokenExchanger,
+			namespace:  cfg.TokenExchangeNamespace,
+			underlying: transport,
+		}
 	}
 
 	return transport, nil
@@ -450,6 +485,23 @@ func extractKeyGrafanaInfoFromReq(req *http.Request) (grafanaUrl, apiKey string,
 	return
 }
 
+// newTokenExchanger creates a TokenExchanger from a CAP token and exchange URL.
+// Returns nil if either value is empty.
+func newTokenExchanger(capToken, exchangeURL string) authn.TokenExchanger {
+	if capToken == "" || exchangeURL == "" {
+		return nil
+	}
+	exchanger, err := authn.NewTokenExchangeClient(authn.TokenExchangeConfig{
+		Token:            capToken,
+		TokenExchangeURL: exchangeURL,
+	})
+	if err != nil {
+		slog.Error("Failed to create token exchange client", "error", err)
+		return nil
+	}
+	return exchanger
+}
+
 // ExtractGrafanaInfoFromEnv is a StdioContextFunc that extracts Grafana configuration from environment variables.
 // It reads GRAFANA_URL and GRAFANA_SERVICE_ACCOUNT_TOKEN (or deprecated GRAFANA_API_KEY) environment variables and adds the configuration to the context for use by Grafana clients.
 var ExtractGrafanaInfoFromEnv server.StdioContextFunc = func(ctx context.Context) context.Context {
@@ -461,7 +513,9 @@ var ExtractGrafanaInfoFromEnv server.StdioContextFunc = func(ctx context.Context
 
 	extraHeaders := extraHeadersFromEnv()
 	cloudAccessPolicyToken := os.Getenv(grafanaCloudAccessPolicyTokenEnvVar)
-	slog.Info("Using Grafana configuration", "url", parsedURL.Redacted(), "api_key_set", apiKey != "", "basic_auth_set", basicAuth != nil, "org_id", orgID, "extra_headers_count", len(extraHeaders), "cloud_access_policy_token_set", cloudAccessPolicyToken != "")
+	tokenExchangeURL := os.Getenv(grafanaTokenExchangeURLEnvVar)
+	tokenExchangeNamespace := os.Getenv(grafanaTokenExchangeNamespaceEnvVar)
+	slog.Info("Using Grafana configuration", "url", parsedURL.Redacted(), "api_key_set", apiKey != "", "basic_auth_set", basicAuth != nil, "org_id", orgID, "extra_headers_count", len(extraHeaders), "cloud_access_policy_token_set", cloudAccessPolicyToken != "", "token_exchange_url_set", tokenExchangeURL != "")
 
 	// Get existing config or create a new one.
 	// This will respect the existing debug flag, if set.
@@ -472,6 +526,8 @@ var ExtractGrafanaInfoFromEnv server.StdioContextFunc = func(ctx context.Context
 	config.OrgID = orgID
 	config.ExtraHeaders = extraHeaders
 	config.CloudAccessPolicyToken = cloudAccessPolicyToken
+	config.TokenExchanger = newTokenExchanger(cloudAccessPolicyToken, tokenExchangeURL)
+	config.TokenExchangeNamespace = tokenExchangeNamespace
 	return WithGrafanaConfig(ctx, config)
 }
 
@@ -491,6 +547,16 @@ var ExtractGrafanaInfoFromHeaders httpContextFunc = func(ctx context.Context, re
 		cloudAccessPolicyToken = os.Getenv(grafanaCloudAccessPolicyTokenEnvVar)
 	}
 
+	// Check for token exchange config from headers, fall back to env
+	tokenExchangeURL := req.Header.Get(grafanaTokenExchangeURLHeader)
+	if tokenExchangeURL == "" {
+		tokenExchangeURL = os.Getenv(grafanaTokenExchangeURLEnvVar)
+	}
+	tokenExchangeNamespace := req.Header.Get(grafanaTokenExchangeNamespaceHeader)
+	if tokenExchangeNamespace == "" {
+		tokenExchangeNamespace = os.Getenv(grafanaTokenExchangeNamespaceEnvVar)
+	}
+
 	// Get existing config or create a new one.
 	// This will respect the existing debug flag, if set.
 	config := GrafanaConfigFromContext(ctx)
@@ -500,6 +566,8 @@ var ExtractGrafanaInfoFromHeaders httpContextFunc = func(ctx context.Context, re
 	config.OrgID = orgID
 	config.ExtraHeaders = extraHeadersFromEnv()
 	config.CloudAccessPolicyToken = cloudAccessPolicyToken
+	config.TokenExchanger = newTokenExchanger(cloudAccessPolicyToken, tokenExchangeURL)
+	config.TokenExchangeNamespace = tokenExchangeNamespace
 	return WithGrafanaConfig(ctx, config)
 }
 
@@ -623,10 +691,12 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 					if len(config.ExtraHeaders) > 0 {
 						rt = NewExtraHeadersRoundTripper(rt, config.ExtraHeaders)
 					}
-					if config.CloudAccessPolicyToken != "" && config.AccessToken == "" {
-						rt = NewExtraHeadersRoundTripper(rt, map[string]string{
-							"X-Access-Token": "Bearer " + config.CloudAccessPolicyToken,
-						})
+					if config.TokenExchanger != nil && config.AccessToken == "" {
+						rt = &tokenExchangeRoundTripper{
+							exchanger:  config.TokenExchanger,
+							namespace:  config.TokenExchangeNamespace,
+							underlying: rt,
+						}
 					}
 					userAgentWrapped := wrapWithUserAgent(rt)
 					wrapped := otelhttp.NewTransport(userAgentWrapped)
