@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/grafana/grafana-plugin-sdk-go/backend/gtime"
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -176,34 +175,6 @@ func (c *clickHouseClient) query(ctx context.Context, datasourceUID, rawSQL stri
 	return &queryResp, nil
 }
 
-// parseClickHouseStartTime parses start time strings in various formats
-// Supports: "now", "now-Xs/m/h/d/w", RFC3339, ISO dates, and Unix timestamps
-func parseClickHouseStartTime(timeStr string) (time.Time, error) {
-	if timeStr == "" {
-		return time.Time{}, nil
-	}
-
-	tr := gtime.TimeRange{
-		From: timeStr,
-		Now:  time.Now(),
-	}
-	return tr.ParseFrom()
-}
-
-// parseClickHouseEndTime parses end time strings in various formats
-// For end times, date-only strings resolve to end of day rather than start
-func parseClickHouseEndTime(timeStr string) (time.Time, error) {
-	if timeStr == "" {
-		return time.Time{}, nil
-	}
-
-	tr := gtime.TimeRange{
-		To:  timeStr,
-		Now: time.Now(),
-	}
-	return tr.ParseTo()
-}
-
 // substituteClickHouseMacros replaces ClickHouse-specific macros in the query
 // Supported macros:
 //   - $__timeFilter(column) -> column >= toDateTime(X) AND column <= toDateTime(Y)
@@ -317,7 +288,7 @@ func queryClickHouse(ctx context.Context, args ClickHouseQueryParams) (*ClickHou
 	toTime := now                       // Default: now
 
 	if args.Start != "" {
-		parsed, err := parseClickHouseStartTime(args.Start)
+		parsed, err := parseStartTime(args.Start)
 		if err != nil {
 			return nil, fmt.Errorf("parsing start time: %w", err)
 		}
@@ -327,7 +298,7 @@ func queryClickHouse(ctx context.Context, args ClickHouseQueryParams) (*ClickHou
 	}
 
 	if args.End != "" {
-		parsed, err := parseClickHouseEndTime(args.End)
+		parsed, err := parseEndTime(args.End)
 		if err != nil {
 			return nil, fmt.Errorf("parsing end time: %w", err)
 		}
