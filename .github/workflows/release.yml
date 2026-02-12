@@ -19,6 +19,27 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Extract release notes from CHANGELOG.md
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          # Extract the section for this version from CHANGELOG.md.
+          # Matches from "## [X.Y.Z]" until the next "## [" or end of file,
+          # excluding the heading itself and any trailing link references.
+          awk -v ver="$VERSION" '
+            /^## \[/ {
+              if (found) exit
+              if ($0 ~ "## \\[" ver "\\]") found=1
+              next
+            }
+            /^\[.*\]: https:\/\// { next }
+            found { print }
+          ' CHANGELOG.md > /tmp/release-notes.md
+
+          # If we didn't find a matching section, create a minimal note
+          if [ ! -s /tmp/release-notes.md ]; then
+            echo "Release ${GITHUB_REF_NAME}" > /tmp/release-notes.md
+          fi
+
       - name: Set up Go
         uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
         with:
@@ -32,6 +53,6 @@ jobs:
           distribution: goreleaser
           # 'latest', 'nightly', or a semver
           version: "~> v2"
-          args: release --clean
+          args: release --clean --release-notes=/tmp/release-notes.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
