@@ -149,6 +149,19 @@ func TestElasticsearchTools(t *testing.T) {
 		require.Error(t, err, "Should return error for invalid datasource")
 	})
 
+	t.Run("query elasticsearch with wrong datasource type", func(t *testing.T) {
+		ctx := newTestContext()
+		// Use the Prometheus datasource UID which exists but is not Elasticsearch
+		_, err := queryElasticsearch(ctx, QueryElasticsearchParams{
+			DatasourceUID: "prometheus",
+			Index:         "test-logs-*",
+			Query:         "*",
+			Limit:         10,
+		})
+		require.Error(t, err, "Should return error for wrong datasource type")
+		assert.Contains(t, err.Error(), "not elasticsearch", "Error should mention wrong type")
+	})
+
 	t.Run("query elasticsearch respects limit", func(t *testing.T) {
 		ctx := newTestContext()
 		limit := 3

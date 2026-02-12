@@ -21,6 +21,9 @@ const (
 
 	// MaxElasticsearchLimit is the maximum number of documents that can be requested
 	MaxElasticsearchLimit = 100
+
+	// ElasticsearchDatasourceType is the type identifier for Elasticsearch datasources
+	ElasticsearchDatasourceType = "elasticsearch"
 )
 
 // ElasticsearchClient handles queries to an Elasticsearch datasource via Grafana proxy
@@ -58,25 +61,23 @@ type ElasticsearchDocument struct {
 }
 
 func newElasticsearchClient(ctx context.Context, uid string) (*ElasticsearchClient, error) {
-	// First check if the datasource exists
-	_, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: uid})
+	// Check if the datasource exists and is the correct type
+	ds, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: uid})
 	if err != nil {
 		return nil, err
+	}
+	if ds.Type != ElasticsearchDatasourceType {
+		return nil, fmt.Errorf("datasource %s is of type %s, not %s", uid, ds.Type, ElasticsearchDatasourceType)
 	}
 
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
 	url := fmt.Sprintf("%s/api/datasources/proxy/uid/%s", strings.TrimRight(cfg.URL, "/"), uid)
 
-	// Create custom transport with TLS configuration if available
-	var transport = http.DefaultTransport
-	if tlsConfig := cfg.TLSConfig; tlsConfig != nil {
-		var err error
-		transport, err = tlsConfig.HTTPTransport(transport.(*http.Transport))
-		if err != nil {
-			return nil, fmt.Errorf("failed to create custom transport: %w", err)
-		}
+	// Create custom transport with TLS configuration and extra headers
+	transport, err := mcpgrafana.BuildTransport(&cfg, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create custom transport: %w", err)
 	}
-
 	transport = NewAuthRoundTripper(transport, cfg.AccessToken, cfg.IDToken, cfg.APIKey, cfg.BasicAuth)
 	transport = mcpgrafana.NewOrgIDRoundTripper(transport, cfg.OrgID)
 
