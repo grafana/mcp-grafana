@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"context"
 	"fmt"
 	"math/rand"
 	"testing"
@@ -444,4 +445,31 @@ func TestSortArrayRemovesDescending_SameIndexMultipleTimes(t *testing.T) {
 	_, err := sortArrayRemovesDescending(ops)
 	require.Error(t, err, "Same index multiple times should be rejected")
 	assert.Contains(t, err.Error(), "duplicate remove")
+}
+
+func TestUpdateDashboard_ValidationErrors(t *testing.T) {
+	t.Run("uid without operations", func(t *testing.T) {
+		_, err := updateDashboard(context.Background(), UpdateDashboardParams{
+			UID: "some-uid",
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "'uid' was provided without 'operations'")
+	})
+
+	t.Run("operations without uid", func(t *testing.T) {
+		_, err := updateDashboard(context.Background(), UpdateDashboardParams{
+			Operations: []PatchOperation{
+				{Op: "replace", Path: "$.title", Value: "New Title"},
+			},
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "'operations' were provided without 'uid'")
+	})
+
+	t.Run("empty params", func(t *testing.T) {
+		_, err := updateDashboard(context.Background(), UpdateDashboardParams{})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "no dashboard content provided")
+		assert.Contains(t, err.Error(), "Do NOT retry")
+	})
 }
