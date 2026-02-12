@@ -374,6 +374,34 @@ This MCP server works with both local Grafana instances and Grafana Cloud. For G
 
    > **Note:** The environment variable `GRAFANA_API_KEY` is deprecated and will be removed in a future version. Please migrate to using `GRAFANA_SERVICE_ACCOUNT_TOKEN` instead. The old variable name will continue to work for backward compatibility but will show deprecation warnings.
 
+### Cloud Access Policy Tokens
+
+As an alternative to service account tokens, you can authenticate using [Grafana Cloud access policy tokens](https://grafana.com/docs/grafana-cloud/account-management/authentication-and-permissions/access-policies/). Set the `GRAFANA_CLOUD_ACCESS_POLICY_TOKEN` environment variable, and the token will be sent via the `X-Access-Token` header.
+
+The access policy used to create the token must:
+- Have `grafana` as the audience
+- Have a wildcard namespace (`*`) or a stack namespace matching the target stack
+- Be configured with appropriate permissions (Grafana RBAC role names)
+
+**Example:**
+
+```json
+{
+  "mcpServers": {
+    "grafana": {
+      "command": "mcp-grafana",
+      "args": [],
+      "env": {
+        "GRAFANA_URL": "https://myinstance.grafana.net",
+        "GRAFANA_CLOUD_ACCESS_POLICY_TOKEN": "<your cloud access policy token>"
+      }
+    }
+  }
+}
+```
+
+When using SSE or streamable HTTP transports, the token can also be passed via the `X-Cloud-Access-Policy-Token` header (which takes precedence over the environment variable).
+
 ### Multi-Organization Support
  
 You can specify which organization to interact with using either:

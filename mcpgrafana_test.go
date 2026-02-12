@@ -804,6 +804,144 @@ func (m *extraHeadersMockRT) RoundTrip(req *http.Request) (*http.Response, error
 	return m.fn(req)
 }
 
+func TestCloudAccessPolicyTokenFromEnv(t *testing.T) {
+	t.Run("token set in env", func(t *testing.T) {
+		t.Setenv("GRAFANA_CLOUD_ACCESS_POLICY_TOKEN", "glc_test-token-123")
+		ctx := ExtractGrafanaInfoFromEnv(context.Background())
+		config := GrafanaConfigFromContext(ctx)
+		assert.Equal(t, "glc_test-token-123", config.CloudAccessPolicyToken)
+	})
+
+	t.Run("token not set", func(t *testing.T) {
+		t.Setenv("GRAFANA_CLOUD_ACCESS_POLICY_TOKEN", "")
+		ctx := ExtractGrafanaInfoFromEnv(context.Background())
+		config := GrafanaConfigFromContext(ctx)
+		assert.Equal(t, "", config.CloudAccessPolicyToken)
+	})
+}
+
+func TestCloudAccessPolicyTokenFromHeaders(t *testing.T) {
+	t.Run("token from header", func(t *testing.T) {
+		req, err := http.NewRequest("GET", "http://example.com", nil)
+		require.NoError(t, err)
+		req.Header.Set(grafanaCloudAccessPolicyTokenHeader, "glc_header-token")
+		ctx := ExtractGrafanaInfoFromHeaders(context.Background(), req)
+		config := GrafanaConfigFromContext(ctx)
+		assert.Equal(t, "glc_header-token", config.CloudAccessPolicyToken)
+	})
+
+	t.Run("token from env when no header", func(t *testing.T) {
+		t.Setenv("GRAFANA_CLOUD_ACCESS_POLICY_TOKEN", "glc_env-token")
+		req, err := http.NewRequest("GET", "http://example.com", nil)
+		require.NoError(t, err)
+		ctx := ExtractGrafanaInfoFromHeaders(context.Background(), req)
+		config := GrafanaConfigFromContext(ctx)
+		assert.Equal(t, "glc_env-token", config.CloudAccessPolicyToken)
+	})
+
+	t.Run("header takes precedence over env", func(t *testing.T) {
+		t.Setenv("GRAFANA_CLOUD_ACCESS_POLICY_TOKEN", "glc_env-token")
+		req, err := http.NewRequest("GET", "http://example.com", nil)
+		require.NoError(t, err)
+		req.Header.Set(grafanaCloudAccessPolicyTokenHeader, "glc_header-token")
+		ctx := ExtractGrafanaInfoFromHeaders(context.Background(), req)
+		config := GrafanaConfigFromContext(ctx)
+		assert.Equal(t, "glc_header-token", config.CloudAccessPolicyToken)
+	})
+}
+
+func TestCloudAccessPolicyTokenTransport(t *testing.T) {
+	t.Run("adds X-Access-Token header via BuildTransport", func(t *testing.T) {
+		var capturedReq *http.Request
+		mockRT := &extraHeadersMockRT{
+			fn: func(req *http.Request) (*http.Response, error) {
+				capturedReq = req
+				return &http.Response{StatusCode: 200}, nil
+			},
+		}
+
+		cfg := &GrafanaConfig{
+			CloudAccessPolicyToken: "glc_my-token",
+		}
+		transport, err := BuildTransport(cfg, mockRT)
+		require.NoError(t, err)
+
+		req, _ := http.NewRequest("GET", "http://example.com", nil)
+		_, err = transport.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Equal(t, "Bearer glc_my-token", capturedReq.Header.Get("X-Access-Token"))
+	})
+
+	t.Run("no X-Access-Token when token not set", func(t *testing.T) {
+		var capturedReq *http.Request
+		mockRT := &extraHeadersMockRT{
+			fn: func(req *http.Request) (*http.Response, error) {
+				capturedReq = req
+				return &http.Response{StatusCode: 200}, nil
+			},
+		}
+
+		cfg := &GrafanaConfig{}
+		transport, err := BuildTransport(cfg, mockRT)
+		require.NoError(t, err)
+
+		req, _ := http.NewRequest("GET", "http://example.com", nil)
+		_, err = transport.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Equal(t, "", capturedReq.Header.Get("X-Access-Token"))
+	})
+
+	t.Run("skipped when on-behalf-of auth is active", func(t *testing.T) {
+		var capturedReq *http.Request
+		mockRT := &extraHeadersMockRT{
+			fn: func(req *http.Request) (*http.Response, error) {
+				capturedReq = req
+				return &http.Response{StatusCode: 200}, nil
+			},
+		}
+
+		cfg := &GrafanaConfig{
+			CloudAccessPolicyToken: "glc_my-token",
+			AccessToken:            "obo-access-token",
+		}
+		transport, err := BuildTransport(cfg, mockRT)
+		require.NoError(t, err)
+
+		req, _ := http.NewRequest("GET", "http://example.com", nil)
+		_, err = transport.RoundTrip(req)
+		require.NoError(t, err)
+
+		// Cloud access policy token should NOT be set when OBO auth is active
+		assert.Equal(t, "", capturedReq.Header.Get("X-Access-Token"))
+	})
+
+	t.Run("works alongside extra headers", func(t *testing.T) {
+		var capturedReq *http.Request
+		mockRT := &extraHeadersMockRT{
+			fn: func(req *http.Request) (*http.Response, error) {
+				capturedReq = req
+				return &http.Response{StatusCode: 200}, nil
+			},
+		}
+
+		cfg := &GrafanaConfig{
+			CloudAccessPolicyToken: "glc_my-token",
+			ExtraHeaders:           map[string]string{"X-Custom": "value"},
+		}
+		transport, err := BuildTransport(cfg, mockRT)
+		require.NoError(t, err)
+
+		req, _ := http.NewRequest("GET", "http://example.com", nil)
+		_, err = transport.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Equal(t, "Bearer glc_my-token", capturedReq.Header.Get("X-Access-Token"))
+		assert.Equal(t, "value", capturedReq.Header.Get("X-Custom"))
+	})
+}
+
 func TestExtractGrafanaInfoWithExtraHeaders(t *testing.T) {
 	t.Run("extra headers from env in ExtractGrafanaInfoFromEnv", func(t *testing.T) {
 		t.Setenv("GRAFANA_EXTRA_HEADERS", `{"X-Tenant-ID": "tenant-123"}`)
