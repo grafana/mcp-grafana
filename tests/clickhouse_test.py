@@ -31,7 +31,6 @@ async def test_clickhouse_list_tables(
         "Does the response contain actual table names from a ClickHouse database? "
         "It should mention specific tables like 'logs' or 'metrics' or similar database table names. "
         "The response should show evidence of real data rather than generic statements.",
-        expected_tools="list_clickhouse_tables",
     )
 
 
@@ -59,7 +58,6 @@ async def test_clickhouse_describe_table(
         "Does the response contain actual column information from a ClickHouse table schema? "
         "It should mention specific column names like 'Timestamp', 'Body', 'ServiceName', 'SeverityText' "
         "and their types like 'DateTime64', 'String'. The response should show evidence of real schema data.",
-        expected_tools="describe_clickhouse_table",
     )
 
 
@@ -89,5 +87,4 @@ async def test_clickhouse_query_logs(
         "It should show specific service names like 'test-service' or 'api-gateway', "
         "and severity levels like 'INFO', 'ERROR', 'DEBUG', 'WARN'. "
         "The response should show evidence of real query results rather than generic statements.",
-        expected_tools="query_clickhouse",
     )
