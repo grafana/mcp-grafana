@@ -317,11 +317,34 @@ func GetDashboardPanelQueriesTool(ctx context.Context, args DashboardPanelQuerie
 			if !ok {
 				continue
 			}
-			expr, _ := target["expr"].(string)
-			if expr != "" {
+			
+			// Try to extract query content from multiple possible fields.
+			// Different datasources use different field names for queries.
+			var query string
+
+			// Common query fields, ordered by priority.
+			queryFields := []string{
+				"expr",     // Prometheus
+				"target",   // Some datasources use 'target' field
+				"query",    // Generic query field
+				"rawSql",   // SQL datasource
+				"statement", // Some database datasources
+				"text",     // Text query
+			}
+			
+			for _, field := range queryFields {
+				if val, exists := target[field]; exists && val != nil {
+					if str, ok := val.(string); ok && str != "" {
+						query = str
+						break
+					}
+				}
+			}
+			
+			if query != "" {
 				result = append(result, panelQuery{
 					Title:      title,
-					Query:      expr,
+					Query:      query,
 					Datasource: datasourceInfo,
 				})
 			}
