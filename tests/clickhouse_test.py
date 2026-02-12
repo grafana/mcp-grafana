@@ -70,6 +70,12 @@ async def test_clickhouse_describe_table(
     assert args.get("datasourceUid") == "clickhouse", (
         f"Expected datasourceUid='clickhouse', got {args.get('datasourceUid')!r}"
     )
+    assert args.get("table") == "logs", (
+        f"Expected table='logs', got {args.get('table')!r}"
+    )
+    assert args.get("database") == "test", (
+        f"Expected database='test', got {args.get('database')!r}"
+    )
 
     assert_mcp_eval(
         prompt,
