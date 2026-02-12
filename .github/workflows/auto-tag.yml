@@ -22,6 +22,8 @@ jobs:
           fetch-depth: 0
 
       - name: Create and push tag
+        env:
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
         run: |
           # Extract version from branch name: release/v0.11.0 -> v0.11.0
           VERSION="${GITHUB_HEAD_REF#release/}"
@@ -38,7 +40,6 @@ jobs:
           fi
 
           # Tag the merge commit (HEAD of main after the PR merge)
-          MERGE_SHA="${{ github.event.pull_request.merge_commit_sha }}"
           git tag "$VERSION" "$MERGE_SHA"
           git push origin "$VERSION"
 
