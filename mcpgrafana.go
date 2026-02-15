@@ -363,7 +363,6 @@ func NewExtraHeadersRoundTripper(rt http.RoundTripper, headers map[string]string
 	}
 }
 
-
 func BuildTransport(cfg *GrafanaConfig, base http.RoundTripper) (http.RoundTripper, error) {
 	if base == nil {
 		base = http.DefaultTransport
@@ -577,6 +576,7 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 				if _, ok := transportField.Interface().(http.RoundTripper); ok {
 					// Wrap with timeout transport, then user agent, then otel
 					timeoutTransport := &http.Transport{
+						Proxy: http.ProxyFromEnvironment,
 						DialContext: (&net.Dialer{
 							Timeout:   timeout,
 							KeepAlive: 30 * time.Second,
