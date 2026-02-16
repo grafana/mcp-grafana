@@ -619,7 +619,7 @@ func TestExtractVariableName(t *testing.T) {
 	}
 }
 
-func TestSubstitutePrometheusMacros(t *testing.T) {
+func TestSubstituteGrafanaMacros(t *testing.T) {
 	tests := []struct {
 		name     string
 		query    string
@@ -704,13 +704,37 @@ func TestSubstitutePrometheusMacros(t *testing.T) {
 			duration: 30 * time.Minute,
 			expected: "increase(x[30m]) + 1800 + 1800000",
 		},
+		{
+			name:     "range_braced",
+			query:    "increase(requests[${__range}])",
+			duration: 14 * time.Minute,
+			expected: "increase(requests[14m])",
+		},
+		{
+			name:     "rate_interval_braced",
+			query:    "rate(requests[${__rate_interval}])",
+			duration: time.Hour,
+			expected: "rate(requests[1m])",
+		},
+		{
+			name:     "range_ms_braced",
+			query:    "timestamp(up) - ${__range_ms}",
+			duration: time.Hour,
+			expected: "timestamp(up) - 3600000",
+		},
+		{
+			name:     "interval_ms_braced",
+			query:    "timestamp(up) - ${__interval_ms}",
+			duration: time.Hour,
+			expected: "timestamp(up) - 36000",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			start := time.Now()
 			end := start.Add(tt.duration)
-			result := substitutePrometheusMacros(tt.query, start, end)
+			result := substituteGrafanaMacros(tt.query, start, end)
 			assert.Equal(t, tt.expected, result)
 		})
 	}

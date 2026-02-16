@@ -480,8 +480,8 @@ func executePrometheusQuery(ctx context.Context, datasourceUID, query, start, en
 		return nil, fmt.Errorf("parsing end time: %w", err)
 	}
 
-	// Substitute Prometheus macros ($__range, $__rate_interval, $__interval)
-	query = substitutePrometheusMacros(query, startTime, endTime)
+	// Substitute Grafana temporal macros ($__range, $__rate_interval, $__interval)
+	query = substituteGrafanaMacros(query, startTime, endTime)
 
 	return queryPrometheus(ctx, QueryPrometheusParams{
 		DatasourceUID: datasourceUID,
@@ -504,6 +504,9 @@ func executeLokiQuery(ctx context.Context, datasourceUID, query, start, end stri
 	if err != nil {
 		return nil, fmt.Errorf("parsing end time: %w", err)
 	}
+
+	// Substitute Grafana temporal macros ($__range, $__rate_interval, $__interval)
+	query = substituteGrafanaMacros(query, startTime, endTime)
 
 	result, err := queryLokiLogs(ctx, QueryLokiLogsParams{
 		DatasourceUID: datasourceUID,
@@ -640,21 +643,26 @@ func executeGrafanaDSQuery(ctx context.Context, payload map[string]interface{}) 
 	return result, nil
 }
 
-// substitutePrometheusMacros substitutes Grafana temporal macros for Prometheus queries
-func substitutePrometheusMacros(query string, start, end time.Time) string {
+// substituteGrafanaMacros substitutes Grafana temporal macros ($__range, $__rate_interval, $__interval)
+// used across datasource types (Prometheus, Loki, etc.)
+func substituteGrafanaMacros(query string, start, end time.Time) string {
 	duration := end.Sub(start)
 
 	// Substitute $__range_ms and $__range_s BEFORE $__range to avoid partial replacement
 	rangeSec := int64(duration.Seconds())
 	rangeMs := duration.Milliseconds()
+	query = strings.ReplaceAll(query, "${__range_ms}", fmt.Sprintf("%d", rangeMs))
 	query = strings.ReplaceAll(query, "$__range_ms", fmt.Sprintf("%d", rangeMs))
+	query = strings.ReplaceAll(query, "${__range_s}", fmt.Sprintf("%d", rangeSec))
 	query = strings.ReplaceAll(query, "$__range_s", fmt.Sprintf("%d", rangeSec))
 
 	// $__range - total time range as duration string
 	rangeStr := formatPrometheusDuration(duration)
+	query = strings.ReplaceAll(query, "${__range}", rangeStr)
 	query = strings.ReplaceAll(query, "$__range", rangeStr)
 
 	// $__rate_interval - default to "1m"
+	query = strings.ReplaceAll(query, "${__rate_interval}", "1m")
 	query = strings.ReplaceAll(query, "$__rate_interval", "1m")
 
 	// Calculate interval based on time range / max data points (~100 points)
@@ -665,6 +673,7 @@ func substitutePrometheusMacros(query string, start, end time.Time) string {
 
 	// Substitute $__interval_ms BEFORE $__interval to avoid partial replacement
 	intervalMs := int64(interval / time.Millisecond)
+	query = strings.ReplaceAll(query, "${__interval_ms}", fmt.Sprintf("%d", intervalMs))
 	query = strings.ReplaceAll(query, "$__interval_ms", fmt.Sprintf("%d", intervalMs))
 
 	// $__interval - duration string
