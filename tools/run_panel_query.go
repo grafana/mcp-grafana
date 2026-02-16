@@ -221,7 +221,7 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 	case "loki":
 		results, err = executeLokiQuery(ctx, datasourceUID, query, params.Start, params.End)
 	case "clickhouse":
-		results, err = executeClickHouseQuery(ctx, datasourceUID, query, params.Start, params.End, vars)
+		results, err = executeClickHouseQuery(ctx, datasourceUID, query, params.Start, params.End)
 	case "cloudwatch":
 		results, err = executeCloudWatchPanelQuery(ctx, datasourceUID, panelData, params.Start, params.End, vars)
 	default:
@@ -522,7 +522,7 @@ func executeLokiQuery(ctx context.Context, datasourceUID, query, start, end stri
 
 // executeClickHouseQuery runs a ClickHouse query using the existing queryClickHouse function
 // NOTE: Do NOT substitute macros here - queryClickHouse() handles them internally
-func executeClickHouseQuery(ctx context.Context, datasourceUID, query, start, end string, variables map[string]string) (*ClickHouseQueryResult, error) {
+func executeClickHouseQuery(ctx context.Context, datasourceUID, query, start, end string) (*ClickHouseQueryResult, error) {
 	return queryClickHouse(ctx, ClickHouseQueryParams{
 		DatasourceUID: datasourceUID,
 		Query:         query,
