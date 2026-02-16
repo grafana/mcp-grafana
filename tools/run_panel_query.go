@@ -56,6 +56,18 @@ type RunPanelQueryResult struct {
 	TimeRange    QueryTimeRange           `json:"timeRange"`
 }
 
+// singlePanelQueryParams holds the parameters for running a single panel query.
+type singlePanelQueryParams struct {
+	DB         map[string]interface{}
+	PanelID    int
+	QueryIndex int
+	Start      string
+	End        string
+	Variables  map[string]string
+	DsUID      string
+	DsType     string
+}
+
 // panelInfo contains extracted information about a panel
 type panelInfo struct {
 	ID             int
@@ -103,7 +115,16 @@ func runPanelQuery(ctx context.Context, args RunPanelQueryParams) (*RunPanelQuer
 
 	// Execute each panel query
 	for _, panelID := range args.PanelIDs {
-		result, err := runSinglePanelQuery(ctx, dashboard, db, panelID, queryIndex, start, end, args.Variables, args.DatasourceUID, args.DatasourceType)
+		result, err := runSinglePanelQuery(ctx, singlePanelQueryParams{
+			DB:         db,
+			PanelID:    panelID,
+			QueryIndex: queryIndex,
+			Start:      start,
+			End:        end,
+			Variables:  args.Variables,
+			DsUID:      args.DatasourceUID,
+			DsType:     args.DatasourceType,
+		})
 		if err != nil {
 			errs[panelID] = err.Error()
 		} else {
@@ -123,24 +144,24 @@ func runPanelQuery(ctx context.Context, args RunPanelQueryParams) (*RunPanelQuer
 }
 
 // runSinglePanelQuery executes a single panel's query within a dashboard
-func runSinglePanelQuery(ctx context.Context, _ interface{}, db map[string]interface{}, panelID int, queryIndex int, start, end string, variables map[string]string, dsUID, dsType string) (*PanelQueryResult, error) {
+func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*PanelQueryResult, error) {
 	// Find the panel by ID
-	panel, err := findPanelByID(db, panelID)
+	panel, err := findPanelByID(params.DB, params.PanelID)
 	if err != nil {
 		return nil, fmt.Errorf("finding panel: %w", err)
 	}
 
 	// Extract query and datasource info from the panel
-	panelData, err := extractPanelInfo(panel, queryIndex)
+	panelData, err := extractPanelInfo(panel, params.QueryIndex)
 	if err != nil {
 		return nil, fmt.Errorf("extracting panel info: %w", err)
 	}
 
 	// Extract template variables from dashboard
-	vars := extractTemplateVariables(db)
+	vars := extractTemplateVariables(params.DB)
 
 	// Apply variable overrides from user
-	for name, value := range variables {
+	for name, value := range params.Variables {
 		vars[name] = value
 	}
 
@@ -149,10 +170,10 @@ func runSinglePanelQuery(ctx context.Context, _ interface{}, db map[string]inter
 	datasourceType := panelData.DatasourceType
 
 	// Apply explicit datasource overrides (highest priority)
-	if dsUID != "" {
-		datasourceUID = dsUID
-		if dsType != "" {
-			datasourceType = dsType
+	if params.DsUID != "" {
+		datasourceUID = params.DsUID
+		if params.DsType != "" {
+			datasourceType = params.DsType
 		}
 	} else if isVariableReference(datasourceUID) {
 		// Resolve variable reference only if no explicit override
@@ -194,15 +215,15 @@ func runSinglePanelQuery(ctx context.Context, _ interface{}, db map[string]inter
 	// Route to appropriate datasource and execute query
 	var results interface{}
 
-	switch {
-	case strings.Contains(strings.ToLower(datasourceType), "prometheus"):
-		results, err = executePrometheusQuery(ctx, datasourceUID, query, start, end)
-	case strings.Contains(strings.ToLower(datasourceType), "loki"):
-		results, err = executeLokiQuery(ctx, datasourceUID, query, start, end)
-	case strings.Contains(strings.ToLower(datasourceType), "clickhouse"):
-		results, err = executeClickHouseQuery(ctx, datasourceUID, query, start, end, vars)
-	case strings.Contains(strings.ToLower(datasourceType), "cloudwatch"):
-		results, err = executeCloudWatchPanelQuery(ctx, datasourceUID, panelData, start, end, vars)
+	switch normalizeDatasourceType(datasourceType) {
+	case "prometheus":
+		results, err = executePrometheusQuery(ctx, datasourceUID, query, params.Start, params.End)
+	case "loki":
+		results, err = executeLokiQuery(ctx, datasourceUID, query, params.Start, params.End)
+	case "clickhouse":
+		results, err = executeClickHouseQuery(ctx, datasourceUID, query, params.Start, params.End, vars)
+	case "cloudwatch":
+		results, err = executeCloudWatchPanelQuery(ctx, datasourceUID, panelData, params.Start, params.End, vars)
 	default:
 		return nil, fmt.Errorf("datasource type '%s' is not supported by run_panel_query; use the native query tool (e.g. query_prometheus\\, query_loki_logs\\, query_clickhouse\\, query_cloudwatch) directly", datasourceType)
 	}
@@ -214,11 +235,11 @@ func runSinglePanelQuery(ctx context.Context, _ interface{}, db map[string]inter
 	// Check for empty results and generate hints
 	var hints []string
 	if isEmptyPanelResult(results) {
-		hints = generatePanelQueryHints(datasourceType, query, start, end)
+		hints = generatePanelQueryHints(datasourceType, query)
 	}
 
 	return &PanelQueryResult{
-		PanelID:        panelID,
+		PanelID:        params.PanelID,
 		PanelTitle:     panelData.Title,
 		DatasourceType: datasourceType,
 		DatasourceUID:  datasourceUID,
@@ -387,7 +408,7 @@ func extractPanelInfo(panel map[string]interface{}, queryIndex int) (*panelInfo,
 	query := extractQueryExpression(target)
 
 	// CloudWatch panels use structured targets rather than string expressions
-	if query == "" && !strings.Contains(strings.ToLower(info.DatasourceType), "cloudwatch") {
+	if query == "" && normalizeDatasourceType(info.DatasourceType) != "cloudwatch" {
 		return nil, fmt.Errorf("could not extract query from panel target (checked: expr, query, expression, rawSql, rawQuery)")
 	}
 	info.Query = query
@@ -709,6 +730,25 @@ func getAvailableDatasourceUIDs(ctx context.Context, dsType string) []string {
 	return uids
 }
 
+// normalizeDatasourceType maps a datasource API type to a canonical short name.
+// Prometheus, Loki, and CloudWatch use exact (case-insensitive) matching;
+// ClickHouse uses substring matching because the API type is "grafana-clickhouse-datasource".
+func normalizeDatasourceType(dsType string) string {
+	lower := strings.ToLower(dsType)
+	switch {
+	case lower == "prometheus":
+		return "prometheus"
+	case lower == "loki":
+		return "loki"
+	case lower == "cloudwatch":
+		return "cloudwatch"
+	case strings.Contains(lower, "clickhouse"):
+		return "clickhouse"
+	default:
+		return lower
+	}
+}
+
 // isEmptyPanelResult checks if the query result is empty
 func isEmptyPanelResult(results interface{}) bool {
 	if results == nil {
@@ -733,31 +773,31 @@ func isEmptyPanelResult(results interface{}) bool {
 }
 
 // generatePanelQueryHints generates helpful hints when panel query returns no data
-func generatePanelQueryHints(datasourceType, query, start, end string) []string {
+func generatePanelQueryHints(datasourceType, query string) []string {
 	hints := []string{"No data found for the panel query. Possible reasons:"}
 
 	hints = append(hints, "- Time range may have no data - try extending with start='now-6h' or start='now-24h'")
 
-	switch {
-	case strings.Contains(strings.ToLower(datasourceType), "prometheus"):
+	switch normalizeDatasourceType(datasourceType) {
+	case "prometheus":
 		hints = append(hints,
 			"- Metric may not exist - use list_prometheus_metric_names to discover available metrics",
 			"- Label selectors may be too restrictive - try removing some filters",
 			"- Prometheus may not have scraped data for this time range",
 		)
-	case strings.Contains(strings.ToLower(datasourceType), "loki"):
+	case "loki":
 		hints = append(hints,
 			"- Log stream selectors may not match any streams - use list_loki_label_names to discover labels",
 			"- Pipeline filters may be filtering out all logs - try simplifying the query",
 			"- Use query_loki_stats to check if logs exist in this time range",
 		)
-	case strings.Contains(strings.ToLower(datasourceType), "clickhouse"):
+	case "clickhouse":
 		hints = append(hints,
 			"- Table may be empty for this time range - use query_clickhouse with a COUNT(*) to verify",
 			"- Column names or WHERE clause may not match - use describe_clickhouse_table to check schema",
 			"- Time filter may not match the actual timestamp column format",
 		)
-	case strings.Contains(strings.ToLower(datasourceType), "cloudwatch"):
+	case "cloudwatch":
 		hints = append(hints,
 			"- Namespace or metric name may be incorrect - use list_cloudwatch_namespaces and list_cloudwatch_metrics to discover available options",
 			"- Dimension filters may not match any resources - use list_cloudwatch_dimensions to check available dimensions",

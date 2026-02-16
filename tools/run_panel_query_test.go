@@ -852,7 +852,7 @@ func TestGeneratePanelQueryHints(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			hints := generatePanelQueryHints(tt.datasourceType, tt.query, "now-1h", "now")
+			hints := generatePanelQueryHints(tt.datasourceType, tt.query)
 			hintsStr := ""
 			for _, h := range hints {
 				hintsStr += h + " "
@@ -901,6 +901,33 @@ func TestTruncateString(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			result := truncateString(tt.input, tt.maxLen)
 			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestNormalizeDatasourceType(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"prometheus", "prometheus"},
+		{"Prometheus", "prometheus"},
+		{"PROMETHEUS", "prometheus"},
+		{"loki", "loki"},
+		{"Loki", "loki"},
+		{"cloudwatch", "cloudwatch"},
+		{"CloudWatch", "cloudwatch"},
+		{"grafana-clickhouse-datasource", "clickhouse"},
+		{"clickhouse", "clickhouse"},
+		{"ClickHouse", "clickhouse"},
+		{"some-other-type", "some-other-type"},
+		{"", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := normalizeDatasourceType(tt.input)
+			assert.Equal(t, tt.want, got, "normalizeDatasourceType(%q)", tt.input)
 		})
 	}
 }
