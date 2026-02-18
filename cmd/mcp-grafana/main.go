@@ -120,6 +120,113 @@ func (dt *disabledTools) addTools(s *server.MCPServer) {
 	maybeAddTools(s, tools.AddSearchLogsTools, enabledTools, dt.searchlogs, "searchlogs")
 }
 
+func (dt *disabledTools) isEnabled(category string) bool {
+	enabledTools := strings.Split(dt.enabledTools, ",")
+	if !slices.Contains(enabledTools, category) {
+		return false
+	}
+	switch category {
+	case "search":
+		return !dt.search
+	case "datasource":
+		return !dt.datasource
+	case "incident":
+		return !dt.incident
+	case "prometheus":
+		return !dt.prometheus
+	case "loki":
+		return !dt.loki
+	case "alerting":
+		return !dt.alerting
+	case "dashboard":
+		return !dt.dashboard
+	case "folder":
+		return !dt.folder
+	case "oncall":
+		return !dt.oncall
+	case "asserts":
+		return !dt.asserts
+	case "sift":
+		return !dt.sift
+	case "admin":
+		return !dt.admin
+	case "pyroscope":
+		return !dt.pyroscope
+	case "navigation":
+		return !dt.navigation
+	case "proxied":
+		return !dt.proxied
+	case "annotations":
+		return !dt.annotations
+	case "rendering":
+		return !dt.rendering
+	case "clickhouse":
+		return !dt.clickhouse
+	case "searchlogs":
+		return !dt.searchlogs
+	default:
+		return false
+	}
+}
+
+func (dt *disabledTools) buildInstructions() string {
+	var capabilities []string
+
+	if dt.isEnabled("dashboard") {
+		capabilities = append(capabilities, "- Dashboards: Search, retrieve, update, and create dashboards. Extract panel queries and datasource information.")
+	}
+	if dt.isEnabled("datasource") {
+		capabilities = append(capabilities, "- Datasources: List and fetch details for datasources.")
+	}
+
+	// Build Prometheus & Loki line dynamically
+	promEnabled := dt.isEnabled("prometheus")
+	lokiEnabled := dt.isEnabled("loki")
+	if promEnabled && lokiEnabled {
+		capabilities = append(capabilities, "- Prometheus & Loki: Run PromQL and LogQL queries, retrieve metric/log metadata, and explore label names/values.")
+	} else if promEnabled {
+		capabilities = append(capabilities, "- Prometheus: Run PromQL queries, retrieve metric metadata, and explore label names/values.")
+	} else if lokiEnabled {
+		capabilities = append(capabilities, "- Loki: Run LogQL queries, retrieve log metadata, and explore label names/values.")
+	}
+
+	if dt.isEnabled("clickhouse") {
+		capabilities = append(capabilities, "- ClickHouse: Query ClickHouse datasources via Grafana with macro and variable substitution support.")
+	}
+	if dt.isEnabled("incident") {
+		capabilities = append(capabilities, "- Incidents: Search, create, update, and resolve incidents in Grafana Incident.")
+	}
+	if dt.isEnabled("sift") {
+		capabilities = append(capabilities, "- Sift Investigations: Start and manage Sift investigations, analyze logs/traces, find error patterns, and detect slow requests.")
+	}
+	if dt.isEnabled("alerting") {
+		capabilities = append(capabilities, "- Alerting: List and fetch alert rules and notification contact points.")
+	}
+	if dt.isEnabled("oncall") {
+		capabilities = append(capabilities, "- OnCall: View and manage on-call schedules, shifts, teams, and users.")
+	}
+	if dt.isEnabled("admin") {
+		capabilities = append(capabilities, "- Admin: List teams and perform administrative tasks.")
+	}
+	if dt.isEnabled("pyroscope") {
+		capabilities = append(capabilities, "- Pyroscope: Profile applications and fetch profiling data.")
+	}
+	if dt.isEnabled("navigation") {
+		capabilities = append(capabilities, "- Navigation: Generate deeplink URLs for Grafana resources like dashboards, panels, and Explore queries.")
+	}
+	if dt.isEnabled("rendering") {
+		capabilities = append(capabilities, "- Rendering: Export dashboard panels or full dashboards as PNG images (requires Grafana Image Renderer plugin).")
+	}
+	if dt.isEnabled("proxied") {
+		capabilities = append(capabilities, "- Proxied Tools: Access tools from external MCP servers (like Tempo) through dynamic discovery.")
+	}
+
+	instructions := "This server provides access to your Grafana instance and the surrounding ecosystem.\n\nAvailable Capabilities:\n"
+	instructions += strings.Join(capabilities, "\n")
+
+	return instructions
+}
+
 func newServer(transport string, dt disabledTools, obs *observability.Observability) (*server.MCPServer, *mcpgrafana.ToolManager) {
 	sm := mcpgrafana.NewSessionManager()
 
@@ -163,26 +270,7 @@ func newServer(transport string, dt disabledTools, obs *observability.Observabil
 	hooks = observability.MergeHooks(hooks, obs.MCPHooks())
 
 	s := server.NewMCPServer("mcp-grafana", mcpgrafana.Version(),
-		server.WithInstructions(`
-This server provides access to your Grafana instance and the surrounding ecosystem.
-
-Available Capabilities:
-- Dashboards: Search, retrieve, update, and create dashboards. Extract panel queries and datasource information.
-- Datasources: List and fetch details for datasources.
-- Prometheus & Loki: Run PromQL and LogQL queries, retrieve metric/log metadata, and explore label names/values.
-- ClickHouse: Query ClickHouse datasources via Grafana with macro and variable substitution support.
-- Incidents: Search, create, update, and resolve incidents in Grafana Incident.
-- Sift Investigations: Start and manage Sift investigations, analyze logs/traces, find error patterns, and detect slow requests.
-- Alerting: List and fetch alert rules and notification contact points.
-- OnCall: View and manage on-call schedules, shifts, teams, and users.
-- Admin: List teams and perform administrative tasks.
-- Pyroscope: Profile applications and fetch profiling data.
-- Navigation: Generate deeplink URLs for Grafana resources like dashboards, panels, and Explore queries.
-- Rendering: Export dashboard panels or full dashboards as PNG images (requires Grafana Image Renderer plugin).
-- Proxied Tools: Access tools from external MCP servers (like Tempo) through dynamic discovery.
-
-Note that some of these capabilities may be disabled. Do not try to use features that are not available via tools.
-`),
+		server.WithInstructions(dt.buildInstructions()),
 		server.WithHooks(hooks),
 	)
 
