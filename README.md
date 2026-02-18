@@ -39,7 +39,7 @@ The dashboard tools now include several strategies to manage context window usag
 ### Datasources
 
 - **List and fetch datasource information:** View all configured datasources and retrieve detailed information about each.
-  - _Supported datasource types: Prometheus, Loki, ClickHouse, Elasticsearch._
+  - _Supported datasource types: Prometheus, Loki, ClickHouse, CloudWatch, Elasticsearch._
 
 ### Query Examples
 
@@ -66,6 +66,15 @@ The dashboard tools now include several strategies to manage context window usag
 - **List ClickHouse tables:** List all tables in a ClickHouse database with row counts and sizes.
 - **Describe table schema:** Get column names, types, and metadata for a ClickHouse table.
 - **Query ClickHouse:** Execute SQL queries with Grafana macro and variable substitution support.
+
+### CloudWatch Querying
+
+> **Note:** CloudWatch tools are **disabled by default**. To enable them, add `cloudwatch` to your `--enabled-tools` flag.
+
+- **List CloudWatch namespaces:** Discover available AWS CloudWatch namespaces.
+- **List CloudWatch metrics:** List metrics available in a specific namespace.
+- **List CloudWatch dimensions:** Get dimensions for filtering metric queries.
+- **Query CloudWatch:** Execute CloudWatch metric queries with time range support.
 
 ### Log Search
 
@@ -247,6 +256,10 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `list_clickhouse_tables`          | ClickHouse* | List tables in a ClickHouse database                                | `datasources:query`                     | `datasources:uid:*`                                 |
 | `describe_clickhouse_table`       | ClickHouse* | Get table schema with column types                                  | `datasources:query`                     | `datasources:uid:*`                                 |
 | `query_clickhouse`                | ClickHouse* | Execute SQL queries with macro substitution                         | `datasources:query`                     | `datasources:uid:*`                                 |
+| `list_cloudwatch_namespaces`      | CloudWatch* | List available AWS CloudWatch namespaces                            | `datasources:query`                     | `datasources:uid:*`                                 |
+| `list_cloudwatch_metrics`         | CloudWatch* | List metrics in a namespace                                         | `datasources:query`                     | `datasources:uid:*`                                 |
+| `list_cloudwatch_dimensions`      | CloudWatch* | List dimensions for a metric                                        | `datasources:query`                     | `datasources:uid:*`                                 |
+| `query_cloudwatch`                | CloudWatch* | Execute CloudWatch metric queries                                   | `datasources:query`                     | `datasources:uid:*`                                 |
 | `search_logs`                     | SearchLogs* | Search logs across ClickHouse and Loki                              | `datasources:query`                     | `datasources:uid:*`                                 |
 | `query_elasticsearch`             | Elasticsearch* | Query Elasticsearch using Lucene syntax or Query DSL              | `datasources:query`                     | `datasources:uid:elasticsearch-uid`                 |
 | `list_alert_rules`                | Alerting    | List alert rules                                                    | `alert.rules:read`                      | `folders:*` or `folders:uid:alerts-folder`          |
@@ -319,6 +332,7 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 - `--disable-pyroscope`: Disable pyroscope tools
 - `--disable-navigation`: Disable navigation tools
 - `--disable-rendering`: Disable rendering tools (panel/dashboard image export)
+- `--disable-cloudwatch`: Disable CloudWatch tools
 - `--disable-examples`: Disable query examples tools
 - `--disable-clickhouse`: Disable ClickHouse tools
 - `--disable-searchlogs`: Disable search_logs tool
