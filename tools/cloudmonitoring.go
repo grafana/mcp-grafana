@@ -269,7 +269,7 @@ func framesToVector(frames []cloudMonitoringFrame) (model.Vector, error) {
 
 		metric := buildMetric(frame.Schema.Fields[valueIdx].Labels, frame.Schema.Name)
 
-		lastIdx := len(timeValues) - 1
+		lastIdx := min(len(timeValues), len(metricValues)) - 1
 		ts, ok := toMilliseconds(timeValues[lastIdx])
 		if !ok {
 			continue
@@ -369,6 +369,9 @@ func queryCloudMonitoringPromQL(ctx context.Context, args QueryCloudMonitoringPr
 	case "range":
 		if args.StepSeconds == 0 {
 			return nil, fmt.Errorf("stepSeconds must be provided when queryType is 'range'")
+		}
+		if args.EndTime == "" {
+			return nil, fmt.Errorf("endTime must be provided when queryType is 'range'")
 		}
 		endTime, err = parseEndTime(args.EndTime)
 		if err != nil {
