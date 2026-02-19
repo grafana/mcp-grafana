@@ -16,8 +16,8 @@ async def test_cloudwatch_list_namespaces(
 ):
     """Test that the LLM can list CloudWatch namespaces."""
     prompt = (
-        "I have a CloudWatch datasource configured in Grafana. "
-        "Can you list the actual CloudWatch namespaces it has access to?"
+        "List all CloudWatch namespaces available on the CloudWatch datasource in Grafana. "
+        "I need to know which AWS services are reporting metrics."
     )
     final_content, tools_called, mcp_server = await run_llm_tool_loop(
         model, mcp_client, mcp_transport, prompt
@@ -45,8 +45,8 @@ async def test_cloudwatch_list_metrics(
 ):
     """Test that the LLM can list CloudWatch metrics for a namespace."""
     prompt = (
-        "I'd like to see what metrics exist in the 'Test/Application' namespace "
-        "on my CloudWatch datasource. Can you list them?"
+        "List the CloudWatch metrics available in the 'Test/Application' namespace. "
+        "I want to know which metrics I can monitor for this application."
     )
     final_content, tools_called, mcp_server = await run_llm_tool_loop(
         model, mcp_client, mcp_transport, prompt
@@ -74,9 +74,8 @@ async def test_cloudwatch_query_metrics(
 ):
     """Test that the LLM can query CloudWatch metrics."""
     prompt = (
-        "I need to check the CPUUtilization for the 'test-service' in CloudWatch. "
-        "Query the 'Test/Application' namespace using the ServiceName dimension "
-        "and show me the data from the last hour."
+        "Query the CloudWatch CPUUtilization metric from the 'Test/Application' namespace "
+        "for the 'test-service' ServiceName dimension over the last hour."
     )
     final_content, tools_called, mcp_server = await run_llm_tool_loop(
         model, mcp_client, mcp_transport, prompt
