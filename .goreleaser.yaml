@@ -88,15 +88,13 @@ archives:
         formats: zip
 
 changelog:
+  # In CI, release notes are extracted from CHANGELOG.md and passed via
+  # --release-notes, which overrides auto-generation entirely.
+  # These filters are a fallback for local goreleaser runs.
   sort: asc
   filters:
     exclude:
       - "^docs:"
       - "^test:"
-
-release:
-  footer: >-
-
-    ---
-
-    Released by [GoReleaser](https://github.com/goreleaser/goreleaser).
+      - "^ci:"
+      - "^chore\\(deps\\)"
