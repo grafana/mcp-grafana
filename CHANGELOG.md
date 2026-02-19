@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] - 2026-02-19
+
+### Added
+
+- Elasticsearch datasource support with Lucene and Query DSL syntax, time range filtering, and configurable result limits ([#424](https://github.com/grafana/mcp-grafana/pull/424))
+- CloudWatch datasource support with namespace, metric, and dimension discovery tools plus a guided query workflow ([#536](https://github.com/grafana/mcp-grafana/pull/536))
+
+### Fixed
+
+- Support standard HTTP proxy environment variables (`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`) for connecting through corporate proxies ([#578](https://github.com/grafana/mcp-grafana/pull/578))
+
 ## [0.10.0] - 2026-02-12
 
 ### Added
@@ -28,4 +39,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Upgrade Docker base image packages to resolve critical OpenSSL CVE-2025-15467 (CVSS 9.8) ([#551](https://github.com/grafana/mcp-grafana/pull/551))
 
+[0.11.0]: https://github.com/grafana/mcp-grafana/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/grafana/mcp-grafana/compare/v0.9.0...v0.10.0
