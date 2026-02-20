@@ -367,7 +367,7 @@ func queryCloudMonitoringPromQL(ctx context.Context, args QueryCloudMonitoringPr
 	var endTime time.Time
 	switch queryType {
 	case "range":
-		if args.StepSeconds == 0 {
+		if args.StepSeconds <= 0 {
 			return nil, fmt.Errorf("stepSeconds must be provided when queryType is 'range'")
 		}
 		if args.EndTime == "" {
