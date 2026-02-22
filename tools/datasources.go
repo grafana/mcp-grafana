@@ -32,7 +32,7 @@ type ListDatasourcesResult struct {
 	HasMore     bool                `json:"hasMore"` // Whether more results exist
 }
 
-func listDatasources(ctx context.Context, args ListDatasourcesParams) (*ListDatasourcesResult, error) {
+func ListDatasourcesHandler(ctx context.Context, args ListDatasourcesParams) (*ListDatasourcesResult, error) {
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
 	resp, err := c.Datasources.GetDataSources()
 	if err != nil {
@@ -112,7 +112,7 @@ func summarizeDatasources(dataSources models.DataSourceList) []dataSourceSummary
 var ListDatasources = mcpgrafana.MustTool(
 	"list_datasources",
 	"List all configured datasources in Grafana. Use this to discover available datasources and their UIDs. Supports filtering by type and pagination.",
-	listDatasources,
+	ListDatasourcesHandler,
 	mcp.WithTitleAnnotation("List datasources"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),

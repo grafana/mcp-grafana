@@ -837,6 +837,18 @@ var QueryLokiPatterns = mcpgrafana.MustTool(
 	mcp.WithReadOnlyHintAnnotation(true),
 )
 
+var lokiTools = []*mcpgrafana.Tool{
+	&ListLokiLabelNames,
+	&ListLokiLabelValues,
+	&QueryLokiStats,
+	&QueryLokiLogs,
+	&QueryLokiPatterns,
+}
+
+func GetLokiTools() *[]*mcpgrafana.Tool {
+	return &lokiTools
+}
+
 // AddLokiTools registers all Loki tools with the MCP server
 func AddLokiTools(mcp *server.MCPServer) {
 	ListLokiLabelNames.Register(mcp)

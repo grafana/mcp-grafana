@@ -363,6 +363,14 @@ var QueryElasticsearch = mcpgrafana.MustTool(
 	mcp.WithReadOnlyHintAnnotation(true),
 )
 
+var elasticSearchTools = []*mcpgrafana.Tool{
+	&QueryElasticsearch,
+}
+
+func GetElasticSearchTools() *[]*mcpgrafana.Tool {
+	return &elasticSearchTools
+}
+
 // AddElasticsearchTools registers all Elasticsearch tools with the MCP server
 func AddElasticsearchTools(mcp *server.MCPServer) {
 	QueryElasticsearch.Register(mcp)

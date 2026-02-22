@@ -233,6 +233,13 @@ type ToolManager struct {
 	serverMode    bool // true if using server-wide tools (stdio), false for per-session (HTTP/SSE)
 	serverClients map[string]*ProxiedClient
 	clientsMutex  sync.RWMutex
+
+	//option to add only tools which are connected to graphana ,
+	connectedOnly bool
+	enabledTools  []string
+	disabledTools map[string]bool
+	//resolves tools per category
+	categoryTools map[string]func() *[]*Tool
 }
 
 // NewToolManager creates a new ToolManager
@@ -242,6 +249,8 @@ func NewToolManager(sm *SessionManager, mcpServer *server.MCPServer, opts ...too
 		server:        mcpServer,
 		serverClients: make(map[string]*ProxiedClient),
 	}
+	//if enabled by manager , we maintain list
+
 	for _, opt := range opts {
 		opt(tm)
 	}
@@ -254,6 +263,22 @@ type toolManagerOption func(*ToolManager)
 func WithProxiedTools(enabled bool) toolManagerOption {
 	return func(tm *ToolManager) {
 		tm.enableProxiedTools = enabled
+	}
+}
+
+// TODO
+func buildMappedTools() map[string]func() *[]*Tool {
+	return map[string]func() *[]*Tool{}
+}
+
+// WithConnectedOnlyTools initializes ToolManager variables specific to enabled Tools when connectedOnly is true
+func WithConnectedOnlyTools(connectedOnly bool, toolsState func() ([]string, map[string]bool)) toolManagerOption {
+	return func(tm *ToolManager) {
+		if connectedOnly {
+			tm.connectedOnly = true
+			tm.enabledTools, tm.disabledTools = toolsState()
+			tm.categoryTools = buildMappedTools()
+		}
 	}
 }
 
@@ -426,6 +451,11 @@ func (tm *ToolManager) InitializeAndRegisterProxiedTools(ctx context.Context, se
 		slog.Info("registered proxied tools", "session", sessionID, "tools", len(state.proxiedTools))
 	}
 }
+
+//premap the functions of getdatasource ,
+//and calls the functions for dynamic resolution for tools [category]func()Tools
+//get tools from each datasource
+//merge tools and register
 
 // GetServerClient retrieves a proxied client from server-level storage (for stdio transport)
 func (tm *ToolManager) GetServerClient(datasourceType, datasourceUID string) (*ProxiedClient, error) {

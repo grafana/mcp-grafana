@@ -48,6 +48,11 @@ type disabledTools struct {
 	runpanelquery bool
 }
 
+type toolConfig struct {
+	//if enabled , initializes only tools of connected datasources in grafana instance
+	onlyConnected bool
+}
+
 // Configuration for the Grafana client.
 type grafanaConfig struct {
 	// Whether to enable debug mode for the Grafana transport.
@@ -58,6 +63,10 @@ type grafanaConfig struct {
 	tlsKeyFile    string
 	tlsCAFile     string
 	tlsSkipVerify bool
+}
+
+func (tc *toolConfig) addFlags() {
+	flag.BoolVar(&tc.onlyConnected, "connected-only", true, "Enable Tools of all connected datasources in graphana instance , disables rest. Tool specific toogle flags (ex:disable-tool) take precedense")
 }
 
 func (dt *disabledTools) addFlags() {
@@ -98,7 +107,7 @@ func (gc *grafanaConfig) addFlags() {
 	flag.BoolVar(&gc.tlsSkipVerify, "tls-skip-verify", false, "Skip TLS certificate verification (insecure)")
 }
 
-func (dt *disabledTools) addTools(s *server.MCPServer) {
+func (dt *disabledTools) addTools(s *server.MCPServer, tc toolConfig) {
 	enabledTools := strings.Split(dt.enabledTools, ",")
 	enableWriteTools := !dt.write
 	maybeAddTools(s, tools.AddSearchTools, enabledTools, dt.search, "search")
@@ -125,7 +134,7 @@ func (dt *disabledTools) addTools(s *server.MCPServer) {
 	maybeAddTools(s, tools.AddRunPanelQueryTools, enabledTools, dt.runpanelquery, "runpanelquery")
 }
 
-func newServer(transport string, dt disabledTools, obs *observability.Observability) (*server.MCPServer, *mcpgrafana.ToolManager) {
+func newServer(transport string, dt disabledTools, tc toolConfig, obs *observability.Observability) (*server.MCPServer, *mcpgrafana.ToolManager) {
 	sm := mcpgrafana.NewSessionManager()
 
 	// Declare variable for ToolManager that will be initialized after server creation
@@ -193,10 +202,64 @@ Note that some of these capabilities may be disabled. Do not try to use features
 	)
 
 	// Initialize ToolManager now that server is created
-	stm = mcpgrafana.NewToolManager(sm, s, mcpgrafana.WithProxiedTools(!dt.proxied))
+	stm = mcpgrafana.NewToolManager(
+		sm, s,
+		mcpgrafana.WithProxiedTools(!dt.proxied),
+		mcpgrafana.WithConnectedOnlyTools(tc.onlyConnected, func() ([]string, map[string]bool) {
+			return toolsState(&dt, &tc)
+		}),
+	)
 
-	dt.addTools(s)
+	dt.addTools(s, tc)
+
 	return s, stm
+}
+
+func mayIncludeTool(category string, exclude bool, tools *[]string, enabledMap map[string]bool, disabledMap *map[string]bool) {
+	if exclude {
+		(*disabledMap)[category] = true
+		return
+	}
+	//explicit tool listing is required
+	found, _ := enabledMap[category]
+	if !found {
+		return
+	}
+
+	*tools = append(*tools, category)
+}
+func toolsState(dt *disabledTools, tc *toolConfig) ([]string, map[string]bool) {
+	enabledTools := strings.Split(dt.enabledTools, ",")
+	enabledMap := map[string]bool{}
+	disabledMap := map[string]bool{}
+	for _, tool := range enabledTools {
+		enabledMap[tool] = true
+	}
+
+	tools := make([]string, len(enabledTools))
+	mayIncludeTool("search", dt.search, &tools, enabledMap, &disabledMap)
+	mayIncludeTool("datasource", dt.datasource, &tools, enabledMap, &disabledMap)
+	mayIncludeTool("incident", dt.incident, &tools, enabledMap, &disabledMap)
+	mayIncludeTool("prometheus", dt.prometheus, &tools, enabledMap, &disabledMap)
+	mayIncludeTool("loki", dt.loki, &tools, enabledMap, &disabledMap)
+	mayIncludeTool("elasticsearch", dt.elasticsearch, &tools, enabledMap, &disabledMap)
+	mayIncludeTool("alerting", dt.alerting, &tools, enabledMap, &disabledMap)
+	mayIncludeTool("dashboard", dt.dashboard, &tools, enabledMap, &disabledMap)
+	mayIncludeTool("folder", dt.folder, &tools, enabledMap, &disabledMap)
+	mayIncludeTool("oncall", dt.oncall, &tools, enabledMap, &disabledMap)
+	mayIncludeTool("asserts", dt.asserts, &tools, enabledMap, &disabledMap)
+	mayIncludeTool("sift", dt.sift, &tools, enabledMap, &disabledMap)
+	mayIncludeTool("admin", dt.admin, &tools, enabledMap, &disabledMap)
+	mayIncludeTool("pyroscope", dt.pyroscope, &tools, enabledMap, &disabledMap)
+	mayIncludeTool("navigation", dt.navigation, &tools, enabledMap, &disabledMap)
+	mayIncludeTool("annotations", dt.annotations, &tools, enabledMap, &disabledMap)
+	mayIncludeTool("rendering", dt.rendering, &tools, enabledMap, &disabledMap)
+	mayIncludeTool("cloudwatch", dt.cloudwatch, &tools, enabledMap, &disabledMap)
+	mayIncludeTool("examples", dt.examples, &tools, enabledMap, &disabledMap)
+	mayIncludeTool("clickhouse", dt.clickhouse, &tools, enabledMap, &disabledMap)
+	mayIncludeTool("searchlogs", dt.searchlogs, &tools, enabledMap, &disabledMap)
+	mayIncludeTool("runpanelquery", dt.runpanelquery, &tools, enabledMap, &disabledMap)
+	return enabledTools, disabledMap
 }
 
 type tlsConfig struct {
@@ -252,7 +315,6 @@ func runHTTPServer(ctx context.Context, srv httpServer, addr, transportName stri
 			slog.Warn(fmt.Sprintf("%s server did not stop gracefully within timeout", transportName))
 		}
 	}
-
 	return nil
 }
 
@@ -271,7 +333,7 @@ func runMetricsServer(addr string, o *observability.Observability) {
 	}
 }
 
-func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt disabledTools, gc mcpgrafana.GrafanaConfig, tls tlsConfig, obs observability.Config) error {
+func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt disabledTools, tc toolConfig, gc mcpgrafana.GrafanaConfig, tls tlsConfig, obs observability.Config) error {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})))
 
 	// Set up observability (metrics and tracing)
@@ -287,7 +349,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		}
 	}()
 
-	s, tm := newServer(transport, dt, o)
+	s, tm := newServer(transport, dt, tc, o)
 
 	// Create a context that will be cancelled on shutdown
 	ctx, cancel := context.WithCancel(context.Background())
@@ -402,6 +464,8 @@ func main() {
 	endpointPath := flag.String("endpoint-path", "/mcp", "Endpoint path for the streamable-http server")
 	logLevel := flag.String("log-level", "info", "Log level (debug, info, warn, error)")
 	showVersion := flag.Bool("version", false, "Print the version and exit")
+	var tc toolConfig
+	tc.addFlags()
 	var dt disabledTools
 	dt.addFlags()
 	var gc grafanaConfig
@@ -441,7 +505,7 @@ func main() {
 		obs.NetworkTransport = mcpconv.NetworkTransportTCP
 	}
 
-	if err := run(transport, *addr, *basePath, *endpointPath, parseLevel(*logLevel), dt, grafanaConfig, tls, obs); err != nil {
+	if err := run(transport, *addr, *basePath, *endpointPath, parseLevel(*logLevel), dt, tc, grafanaConfig, tls, obs); err != nil {
 		panic(err)
 	}
 }

@@ -600,6 +600,17 @@ var ListCloudWatchDimensions = mcpgrafana.MustTool(
 	mcp.WithReadOnlyHintAnnotation(true),
 )
 
+var cloudWatchTools = []*mcpgrafana.Tool{
+	&QueryCloudWatch,
+	&ListCloudWatchNamespaces,
+	&ListCloudWatchMetrics,
+	&ListCloudWatchDimensions,
+}
+
+func GetCloudWatchTools() *[]*mcpgrafana.Tool {
+	return &cloudWatchTools
+}
+
 // AddCloudWatchTools registers all CloudWatch tools with the MCP server
 func AddCloudWatchTools(mcp *server.MCPServer) {
 	QueryCloudWatch.Register(mcp)

@@ -28,6 +28,10 @@ type Tool struct {
 	Handler server.ToolHandlerFunc
 }
 
+func (t Tool) Register(mcp *server.MCPServer) {
+	panic("unimplemented")
+}
+
 // HardError wraps an error to indicate it should propagate as a JSON-RPC protocol
 // error rather than being converted to CallToolResult with IsError=true.
 // Use sparingly for non-recoverable failures (e.g., missing auth).
@@ -47,9 +51,13 @@ func (e *HardError) Unwrap() error {
 // It is a convenience method that calls server.MCPServer.AddTool with the Tool's metadata and handler,
 // allowing fluent tool registration in a single statement:
 //
-//	mcpgrafana.MustTool(name, description, toolHandler).Register(server)
-func (t *Tool) Register(mcp *server.MCPServer) {
-	mcp.AddTool(t.Tool, t.Handler)
+// mcpgrafana.MustTool(name, description, toolHandler).Register(server)
+//
+//	func (t *Tool) Register(mcp *server.MCPServer) {
+//		mcp.AddTool(t.Tool, t.Handler)
+//	}
+func (tm *ToolManager) InitializePerSessionDataSourceTools(ctx context.Context, session server.ClientSession) {
+	//tool manager stores , maintain map of (toolresolvers -> )
 }
 
 // MustTool creates a new Tool from the given name, description, and toolHandler.
