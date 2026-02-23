@@ -24,14 +24,14 @@ jobs:
       # Do this early so that it can start up in time for the tests to run.
       # We may need to add a wait here.
       - name: Start docker-compose services
-        uses: hoverkraft-tech/compose-action@b160464f2ea59d4c7be918e457514639ad7c7f9f
+        uses: hoverkraft-tech/compose-action@387ab0a78ff05b9a5cb1291d3ca06a791c151ec7
         with:
           compose-file: "docker-compose.yaml"
 
       - name: Set up Go
         uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
         with:
-          go-version: "1.24"
+          go-version: "1.25"
           cache: true
 
       - name: Wait for Grafana server and Prometheus server to start and scrape
@@ -56,7 +56,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
         with:
-          go-version: "1.24"
+          go-version: "1.25"
           cache: true
 
       - id: get-secrets
