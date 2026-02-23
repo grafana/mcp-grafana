@@ -191,22 +191,22 @@ func (c *cloudMonitoringClient) queryPromQL(ctx context.Context, expr, queryType
 }
 
 func framesToPrometheusValue(resp *cloudMonitoringQueryResponse, queryType string) (model.Value, error) {
-	// We only send a single query with refId "A", so we process the first result only.
-	for refID, r := range resp.Results {
-		if r.Error != "" {
-			return nil, fmt.Errorf("query error (refId=%s): %s", refID, r.Error)
-		}
-
+	r, ok := resp.Results["A"]
+	if !ok {
 		if queryType == "instant" {
-			return framesToVector(r.Frames)
+			return model.Vector{}, nil
 		}
-		return framesToMatrix(r.Frames)
+		return model.Matrix{}, nil
+	}
+
+	if r.Error != "" {
+		return nil, fmt.Errorf("query error (refId=A): %s", r.Error)
 	}
 
 	if queryType == "instant" {
-		return model.Vector{}, nil
+		return framesToVector(r.Frames)
 	}
-	return model.Matrix{}, nil
+	return framesToMatrix(r.Frames)
 }
 
 func framesToMatrix(frames []cloudMonitoringFrame) (model.Matrix, error) {
