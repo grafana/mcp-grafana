@@ -845,8 +845,8 @@ var lokiTools = []*mcpgrafana.Tool{
 	&QueryLokiPatterns,
 }
 
-func GetLokiTools() *[]*mcpgrafana.Tool {
-	return &lokiTools
+func GetLokiTools() []*mcpgrafana.Tool {
+	return lokiTools
 }
 
 // AddLokiTools registers all Loki tools with the MCP server

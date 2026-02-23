@@ -367,8 +367,8 @@ var elasticSearchTools = []*mcpgrafana.Tool{
 	&QueryElasticsearch,
 }
 
-func GetElasticSearchTools() *[]*mcpgrafana.Tool {
-	return &elasticSearchTools
+func GetElasticSearchTools() []*mcpgrafana.Tool {
+	return elasticSearchTools
 }
 
 // AddElasticsearchTools registers all Elasticsearch tools with the MCP server

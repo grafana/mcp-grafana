@@ -537,8 +537,8 @@ var clickHouseTools = []*mcpgrafana.Tool{
 	&DescribeClickHouseTable,
 }
 
-func GetClickHouseReadTools() *[]*mcpgrafana.Tool {
-	return &clickHouseTools
+func GetClickHouseTools() []*mcpgrafana.Tool {
+	return clickHouseTools
 }
 
 // AddClickHouseTools registers all ClickHouse tools with the MCP server

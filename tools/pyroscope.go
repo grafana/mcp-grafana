@@ -459,8 +459,8 @@ var pyroscopeTools = []*mcpgrafana.Tool{
 	&FetchPyroscopeProfile,
 }
 
-func GetPyroscopeTools() *[]*mcpgrafana.Tool {
-	return &pyroscopeTools
+func GetPyroscopeTools() []*mcpgrafana.Tool {
+	return pyroscopeTools
 }
 
 func AddPyroscopeTools(mcp *server.MCPServer) {

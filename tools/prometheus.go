@@ -639,8 +639,8 @@ var promtheuesTools = []*mcpgrafana.Tool{
 	&ListPrometheusLabelValues,
 }
 
-func GetPromethuesTools() *[]*mcpgrafana.Tool {
-	return &promtheuesTools
+func GetPromethuesTools() []*mcpgrafana.Tool {
+	return promtheuesTools
 }
 
 func AddPrometheusTools(mcp *server.MCPServer) {

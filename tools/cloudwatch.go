@@ -607,8 +607,8 @@ var cloudWatchTools = []*mcpgrafana.Tool{
 	&ListCloudWatchDimensions,
 }
 
-func GetCloudWatchTools() *[]*mcpgrafana.Tool {
-	return &cloudWatchTools
+func GetCloudWatchTools() []*mcpgrafana.Tool {
+	return cloudWatchTools
 }
 
 // AddCloudWatchTools registers all CloudWatch tools with the MCP server
