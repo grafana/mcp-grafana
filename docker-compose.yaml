@@ -30,7 +30,7 @@ services:
       - ./testdata/prometheus-entrypoint.sh:/etc/prometheus/entrypoint.sh
 
   loki:
-    image: grafana/loki:3.6.4@sha256:be31579ac047e9f78b81e48f3b69d3af709e7299b431d5aa78bcda43382f9511
+    image: grafana/loki:3.6.5@sha256:847c287ada0e12603910589f42038c5cdaaad04e248bd1dc6c6e0920a235f427
     ports:
       - "3100:3100"
     command: -config.file=/etc/loki/loki-config.yml
@@ -39,7 +39,7 @@ services:
       - ./testdata/loki-rules.yml:/loki/rules/fake/loki-rules.yml
 
   promtail:
-    image: grafana/promtail:3.6.3@sha256:130b6dd63277d99ce87560c0266c0c30d07bc15ba0a8a590d42215465d4f5363
+    image: grafana/promtail:3.6.5@sha256:6140a3158fddd7ef2276908bd321ad5265ee6ad2abd9fb3c937394827df3ea4d
     volumes:
       - ./testdata/promtail-config.yml:/etc/promtail/config.yml
       - /var/run/docker.sock:/var/run/docker.sock
@@ -71,7 +71,7 @@ services:
       - "3201:3201" # tempo instance 2
 
   alertmanager:
-    image: prom/alertmanager:v0.30.1@sha256:286ad8838533a5a01d89bd09643f43d2b68b65203123b5700e54a8f80ff9c1f4
+    image: prom/alertmanager:v0.31.0@sha256:cc54cc450174ada901b32eb2538de5fc70ee259a1ac551ed38023f2ca2ad00e3
     ports:
       - "9093:9093"
     volumes:
@@ -95,7 +95,7 @@ services:
       retries: 10
 
   elasticsearch-seed:
-    image: curlimages/curl:8.12.1
+    image: curlimages/curl:8.18.0@sha256:d94d07ba9e7d6de898b6d96c1a072f6f8266c687af78a74f380087a0addf5d17
     depends_on:
       elasticsearch:
         condition: service_healthy
@@ -104,7 +104,7 @@ services:
     entrypoint: ["sh", "/seed.sh"]
 
   localstack:
-    image: localstack/localstack:3.0
+    image: localstack/localstack:3.8@sha256:b279c01f4cfb8f985a482e4014cabc1e2697b9d7a6c8c8db2e40f4d9f93687c7
     ports:
       - "4566:4566"
     environment:
@@ -120,7 +120,7 @@ services:
       retries: 5
 
   clickhouse:
-    image: clickhouse/clickhouse-server:24.8
+    image: clickhouse/clickhouse-server:24.12@sha256:a65ca89ddbe8e04a05036dd7d7110a203256293b407b9359130ed5e4333f45ff
     ports:
       - "8123:8123"
       - "9000:9000"
