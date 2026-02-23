@@ -104,7 +104,7 @@ services:
     entrypoint: ["sh", "/seed.sh"]
 
   localstack:
-    image: localstack/localstack:3.0
+    image: localstack/localstack:4.13@sha256:46302bcb91a7e8008e6394be8afafdbfa40fb77a54d4046a38be35992042d5de
     ports:
       - "4566:4566"
     environment:
