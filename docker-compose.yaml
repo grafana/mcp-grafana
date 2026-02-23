@@ -120,7 +120,7 @@ services:
       retries: 5
 
   clickhouse:
-    image: clickhouse/clickhouse-server:24.8
+    image: clickhouse/clickhouse-server:25.10@sha256:8d1a479c36a4556eeb0556ad36141b194cf6a4a4020f9def391c1570fd1570b7
     ports:
       - "8123:8123"
       - "9000:9000"
