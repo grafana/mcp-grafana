@@ -54,18 +54,19 @@ test-python-e2e: ## Run Python E2E tests (requires docker-compose services and S
 # Common environment variables for run targets
 GRAFANA_ENV = GRAFANA_USERNAME=admin GRAFANA_PASSWORD=admin
 OTEL_ENV = OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317 OTEL_EXPORTER_OTLP_INSECURE=true
+ENABLED_TOOLS = search,datasource,incident,prometheus,loki,elasticsearch,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering,admin,clickhouse,cloudwatch
 
 .PHONY: run
 run: ## Run the MCP server in stdio mode.
-	$(GRAFANA_ENV) go run ./cmd/mcp-grafana
+	$(GRAFANA_ENV) go run ./cmd/mcp-grafana --enabled-tools $(ENABLED_TOOLS)
 
 .PHONY: run-sse
 run-sse: ## Run the MCP server in SSE mode.
-	$(GRAFANA_ENV) $(OTEL_ENV) go run ./cmd/mcp-grafana --transport sse --log-level debug --debug --metrics
+	$(GRAFANA_ENV) $(OTEL_ENV) go run ./cmd/mcp-grafana --transport sse --log-level debug --debug --metrics --enabled-tools $(ENABLED_TOOLS)
 
 PHONY: run-streamable-http
 run-streamable-http: ## Run the MCP server in StreamableHTTP mode.
-	$(GRAFANA_ENV) $(OTEL_ENV) go run ./cmd/mcp-grafana --transport streamable-http --log-level debug --debug --metrics
+	$(GRAFANA_ENV) $(OTEL_ENV) go run ./cmd/mcp-grafana --transport streamable-http --log-level debug --debug --metrics --enabled-tools $(ENABLED_TOOLS)
 
 .PHONY: run-test-services
 run-test-services: ## Run the docker-compose services required for the unit and integration tests.

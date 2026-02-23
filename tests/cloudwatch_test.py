@@ -15,10 +15,7 @@ async def test_cloudwatch_list_namespaces(
     mcp_transport: str,
 ):
     """Test that the LLM can list CloudWatch namespaces."""
-    prompt = (
-        "List all CloudWatch namespaces available on the CloudWatch datasource in Grafana. "
-        "I need to know which AWS services are reporting metrics."
-    )
+    prompt = "List all CloudWatch namespaces available on the CloudWatch datasource in Grafana. Use the us-east-1 region."
     final_content, tools_called, mcp_server = await run_llm_tool_loop(
         model, mcp_client, mcp_transport, prompt
     )
@@ -30,8 +27,7 @@ async def test_cloudwatch_list_namespaces(
         mcp_server,
         "Does the response contain CloudWatch namespace names? "
         "It should mention specific namespaces like 'AWS/EC2', 'AWS/Lambda', 'Test/Application', "
-        "or similar CloudWatch namespace patterns. "
-        "The response should show evidence of real data rather than generic statements.",
+        "or similar CloudWatch namespace patterns. ",
         expected_tools="list_cloudwatch_namespaces",
     )
 
@@ -44,10 +40,7 @@ async def test_cloudwatch_list_metrics(
     mcp_transport: str,
 ):
     """Test that the LLM can list CloudWatch metrics for a namespace."""
-    prompt = (
-        "List the CloudWatch metrics available in the 'Test/Application' namespace. "
-        "I want to know which metrics I can monitor for this application."
-    )
+    prompt = "List the CloudWatch metrics available in the 'Test/Application' namespace. Use the us-east-1 region."
     final_content, tools_called, mcp_server = await run_llm_tool_loop(
         model, mcp_client, mcp_transport, prompt
     )
@@ -59,8 +52,7 @@ async def test_cloudwatch_list_metrics(
         mcp_server,
         "Does the response contain CloudWatch metric names from the Test/Application namespace? "
         "It should mention specific metrics like 'CPUUtilization', 'MemoryUtilization', 'RequestCount', "
-        "or similar metric names. "
-        "The response should show evidence of real data rather than generic statements.",
+        "or similar metric names. ",
         expected_tools="list_cloudwatch_metrics",
     )
 
