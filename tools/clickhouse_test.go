@@ -184,6 +184,14 @@ func TestSubstituteVariables(t *testing.T) {
 			},
 			expected: "SELECT * FROM logs WHERE servicename = 'test'",
 		},
+		{
+			name:  "value containing dollar sign treated literally",
+			query: "SELECT * FROM logs WHERE tag = '$tag'",
+			variables: map[string]string{
+				"tag": "price$1",
+			},
+			expected: "SELECT * FROM logs WHERE tag = 'price$1'",
+		},
 	}
 
 	for _, tt := range tests {
