@@ -81,7 +81,7 @@ services:
       - "--storage.path=/alertmanager"
 
   elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:8.17.0
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.17.0@sha256:2f602552550869fb29b6fd5848c5118d3ef3a2e1d5d45802e3ab9088cb2de8e2
     environment:
       - discovery.type=single-node
       - xpack.security.enabled=false
@@ -95,7 +95,7 @@ services:
       retries: 10
 
   elasticsearch-seed:
-    image: curlimages/curl:8.12.1
+    image: curlimages/curl:8.12.1@sha256:94e9e444bcba979c2ea12e27ae39bee4cd10bc7041a472c4727a558e213744e6
     depends_on:
       elasticsearch:
         condition: service_healthy
@@ -104,7 +104,7 @@ services:
     entrypoint: ["sh", "/seed.sh"]
 
   localstack:
-    image: localstack/localstack:3.0
+    image: localstack/localstack:3.0@sha256:e606c4421419030b12d63a59f1211f57f5b0fbf7e9ce769e6250ee62ff4f9293
     ports:
       - "4566:4566"
     environment:
@@ -120,7 +120,7 @@ services:
       retries: 5
 
   clickhouse:
-    image: clickhouse/clickhouse-server:24.8
+    image: clickhouse/clickhouse-server:24.8@sha256:1ffa82edee000a42c09313bd9f1293d94c570aee74babc1b3ca9983a35fa597b
     ports:
       - "8123:8123"
       - "9000:9000"
