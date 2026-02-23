@@ -2,12 +2,12 @@ import json
 import os
 from typing import List, Optional, Union
 
+from deepeval import assert_test
+from deepeval.metrics import GEval, MCPUseMetric
+from deepeval.test_case import LLMTestCase, LLMTestCaseParams, MCPServer, MCPToolCall
 from litellm import Message, acompletion
 from mcp import ClientSession
-from mcp.types import TextContent, ImageContent, CallToolResult, Tool
-from deepeval import assert_test
-from deepeval.metrics import MCPUseMetric, GEval
-from deepeval.test_case import MCPServer, MCPToolCall, LLMTestCase, LLMTestCaseParams
+from mcp.types import CallToolResult, ImageContent, TextContent, Tool
 
 # Default threshold for MCPUseMetric and GEval (0–1). Used by all MCP eval tests.
 MCP_EVAL_THRESHOLD = 0.5
@@ -97,7 +97,9 @@ async def run_llm_tool_loop(
                 if tool_call.function.arguments
                 else {}
             )
-            result_text, mcp_tc = await call_tool_and_record(mcp_client, tool_name, args)
+            result_text, mcp_tc = await call_tool_and_record(
+                mcp_client, tool_name, args
+            )
             tools_called.append(mcp_tc)
             messages.append(response.choices[0].message)
             messages.append(
@@ -106,9 +108,7 @@ async def run_llm_tool_loop(
         response = await acompletion(model=model, messages=messages, tools=tools)
 
     final_content = (
-        (response.choices[0].message.content or "")
-        if response.choices
-        else ""
+        (response.choices[0].message.content or "") if response.choices else ""
     )
     return final_content, tools_called, mcp_server
 
@@ -152,7 +152,10 @@ def assert_mcp_eval(
         output_metric = GEval(
             name="OutputQuality",
             criteria=output_criteria,
-            evaluation_params=[LLMTestCaseParams.INPUT, LLMTestCaseParams.ACTUAL_OUTPUT],
+            evaluation_params=[
+                LLMTestCaseParams.INPUT,
+                LLMTestCaseParams.ACTUAL_OUTPUT,
+            ],
             threshold=MCP_EVAL_THRESHOLD,
         )
         metrics.append(output_metric)
