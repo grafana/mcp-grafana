@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:1.24-alpine@sha256:8bee1901f1e530bfb4a7850aa7a479d17ae3a18beb6e09064ed54cfd245b7191 AS builder
+FROM --platform=$BUILDPLATFORM golang:1.24-alpine@sha256:8bee1901f1e530bfb4a7850aa7a479d17ae3a18beb6e09064ed54cfd245b7191 AS builder
 
 # Set the working directory
 WORKDIR /app
@@ -13,8 +13,11 @@ RUN go mod download
 # Copy the source code
 COPY . .
 
-# Build the application
-RUN go build -o mcp-grafana ./cmd/mcp-grafana
+# Build the application using cross-compilation instead of QEMU emulation.
+# TARGETOS and TARGETARCH are automatically set by Docker BuildKit.
+ARG TARGETOS
+ARG TARGETARCH
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-s -w" -o mcp-grafana ./cmd/mcp-grafana
 
 # Final stage
 FROM alpine:3.23@sha256:25109184c71bdad752c8312a8623239686a9a2071e8825f20acb8f2198c3f659
