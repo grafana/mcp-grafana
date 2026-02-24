@@ -160,6 +160,11 @@ func (c *CapabilityCache) SetAPICapability(grafanaURL, apiGroup string, capabili
 		entry.perAPICapability = make(map[string]APICapability)
 	}
 	entry.perAPICapability[apiGroup] = capability
+
+	// Ensure hasKubernetesAPIs is true if we know at least one API uses kubernetes
+	if capability == APICapabilityKubernetes {
+		entry.hasKubernetesAPIs = true
+	}
 }
 
 // GetAPICapability returns the capability for a specific API group.
@@ -194,10 +199,10 @@ func (c *CapabilityCache) Invalidate(grafanaURL string) {
 	delete(c.entries, grafanaURL)
 }
 
-// DiscoverAPIs fetches the /apis endpoint and parses the response.
+// discoverAPIs fetches the /apis endpoint and parses the response.
 // Returns a cache entry with the discovered capabilities.
 // If /apis returns 404, it means kubernetes-style APIs aren't available.
-func DiscoverAPIs(ctx context.Context, httpClient *http.Client, baseURL string) (*capabilityCacheEntry, error) {
+func discoverAPIs(ctx context.Context, httpClient *http.Client, baseURL string) (*capabilityCacheEntry, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/apis", nil)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
