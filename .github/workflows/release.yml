@@ -86,7 +86,7 @@ jobs:
           VERSION=${GITHUB_REF_NAME#v}
           # TODO: switch to `uvx go-to-wheel` once --package-path is released
           # (see https://github.com/simonw/go-to-wheel/pull/5)
-          uvx --from "go-to-wheel @ git+https://github.com/nikaro/go-to-wheel@feat/go-cmd" \
+          uvx --from "go-to-wheel @ git+https://github.com/nikaro/go-to-wheel@f7939c6868e195204eae1370f899933e555513e3" \
             go-to-wheel . \
             --package-path ./cmd/mcp-grafana \
             --name mcp-grafana \
