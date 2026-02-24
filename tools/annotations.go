@@ -79,7 +79,7 @@ type CreateAnnotationInput struct {
 	Data         map[string]any `json:"data,omitempty"         jsonschema:"description=Optional JSON payload"`
 
 	// Graphite-specific fields
-	Format       string `json:"format,omitempty"       jsonschema:"description=Set to 'graphite' to create a Graphite-format annotation,enum=graphite"`
+	Format       string `json:"format,omitempty"       jsonschema:"enum=graphite,description=Set to 'graphite' to create a Graphite-format annotation"`
 	What         string `json:"what,omitempty"          jsonschema:"description=Annotation text for Graphite format (required when format is graphite)"`
 	When         int64  `json:"when,omitempty"          jsonschema:"description=Epoch ms timestamp for Graphite format"`
 	GraphiteData string `json:"graphiteData,omitempty"  jsonschema:"description=Optional string payload for Graphite format"`
