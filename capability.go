@@ -151,6 +151,9 @@ func (c *CapabilityCache) SetAPICapability(grafanaURL, apiGroup string, capabili
 			detectedAt:        time.Now(),
 		}
 		c.entries[grafanaURL] = entry
+	} else if time.Since(entry.detectedAt) > c.ttl {
+		// Refresh detectedAt if entry is expired so this update is observable
+		entry.detectedAt = time.Now()
 	}
 
 	if entry.perAPICapability == nil {
