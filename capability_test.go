@@ -87,11 +87,13 @@ func TestCapabilityCacheAPICapability(t *testing.T) {
 	cap := cache.GetAPICapability("http://localhost:3000", APIGroupDashboard)
 	assert.Equal(t, APICapabilityUnknown, cap)
 
-	// Test SetAPICapability creates entry if needed
+	// Test SetAPICapability does NOT create entry if none exists
+	// This prevents poisoning hasKubernetesAPIs before proper discovery
 	cache.SetAPICapability("http://localhost:3000", APIGroupDashboard, APICapabilityKubernetes)
 
+	// Should still be unknown because no entry was created
 	cap = cache.GetAPICapability("http://localhost:3000", APIGroupDashboard)
-	assert.Equal(t, APICapabilityKubernetes, cap)
+	assert.Equal(t, APICapabilityUnknown, cap)
 
 	// Test SetAPICapability on existing entry
 	testEntry := &capabilityCacheEntry{
@@ -105,6 +107,18 @@ func TestCapabilityCacheAPICapability(t *testing.T) {
 
 	cap = cache.GetAPICapability("http://other:3000", APIGroupFolder)
 	assert.Equal(t, APICapabilityLegacy, cap)
+
+	// Now test that SetAPICapability works after entry exists
+	cache.Set("http://localhost:3000", &capabilityCacheEntry{
+		hasKubernetesAPIs: true,
+		apiGroups:         make(map[string]*APIGroupInfo),
+		perAPICapability:  make(map[string]APICapability),
+		detectedAt:        time.Now(),
+	})
+	cache.SetAPICapability("http://localhost:3000", APIGroupDashboard, APICapabilityKubernetes)
+
+	cap = cache.GetAPICapability("http://localhost:3000", APIGroupDashboard)
+	assert.Equal(t, APICapabilityKubernetes, cap)
 }
 
 func TestCapabilityCacheClear(t *testing.T) {
@@ -150,7 +164,7 @@ func TestCapabilityCacheInvalidate(t *testing.T) {
 	assert.NotNil(t, cache.Get("http://other:3000"))
 }
 
-func TestDiscoverAPIs_Success(t *testing.T) {
+func Test_discoverAPIs_Success(t *testing.T) {
 	// Create test server that returns a valid APIGroupList
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/apis", r.URL.Path)
@@ -190,7 +204,7 @@ func TestDiscoverAPIs_Success(t *testing.T) {
 	defer server.Close()
 
 	ctx := context.Background()
-	entry, err := DiscoverAPIs(ctx, server.Client(), server.URL)
+	entry, err := discoverAPIs(ctx, server.Client(), server.URL)
 
 	require.NoError(t, err)
 	require.NotNil(t, entry)
@@ -212,7 +226,7 @@ func TestDiscoverAPIs_Success(t *testing.T) {
 	assert.Equal(t, "v1beta1", folderInfo.PreferredVersion)
 }
 
-func TestDiscoverAPIs_NotFound(t *testing.T) {
+func Test_discoverAPIs_NotFound(t *testing.T) {
 	// Create test server that returns 404
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
@@ -220,7 +234,7 @@ func TestDiscoverAPIs_NotFound(t *testing.T) {
 	defer server.Close()
 
 	ctx := context.Background()
-	entry, err := DiscoverAPIs(ctx, server.Client(), server.URL)
+	entry, err := discoverAPIs(ctx, server.Client(), server.URL)
 
 	require.NoError(t, err)
 	require.NotNil(t, entry)
@@ -228,7 +242,7 @@ func TestDiscoverAPIs_NotFound(t *testing.T) {
 	assert.Empty(t, entry.apiGroups)
 }
 
-func TestDiscoverAPIs_Error(t *testing.T) {
+func Test_discoverAPIs_Error(t *testing.T) {
 	// Create test server that returns an error status
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -237,14 +251,14 @@ func TestDiscoverAPIs_Error(t *testing.T) {
 	defer server.Close()
 
 	ctx := context.Background()
-	entry, err := DiscoverAPIs(ctx, server.Client(), server.URL)
+	entry, err := discoverAPIs(ctx, server.Client(), server.URL)
 
 	require.Error(t, err)
 	assert.Nil(t, entry)
 	assert.Contains(t, err.Error(), "unexpected status from /apis: 500")
 }
 
-func TestDiscoverAPIs_InvalidJSON(t *testing.T) {
+func Test_discoverAPIs_InvalidJSON(t *testing.T) {
 	// Create test server that returns invalid JSON
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -253,7 +267,7 @@ func TestDiscoverAPIs_InvalidJSON(t *testing.T) {
 	defer server.Close()
 
 	ctx := context.Background()
-	entry, err := DiscoverAPIs(ctx, server.Client(), server.URL)
+	entry, err := discoverAPIs(ctx, server.Client(), server.URL)
 
 	require.Error(t, err)
 	assert.Nil(t, entry)

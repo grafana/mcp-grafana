@@ -170,12 +170,31 @@ func TestGrafanaInstance_APICapability(t *testing.T) {
 	// Reset global cache before test
 	ResetGlobalCapabilityCache()
 
-	config := GrafanaConfig{URL: "http://localhost:3000"}
-	instance := NewGrafanaInstance(config, nil, &http.Client{})
+	// Create a test server that returns API groups so discovery works
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/apis" {
+			response := APIGroupList{
+				Kind:   "APIGroupList",
+				Groups: []APIGroup{},
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(response)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	config := GrafanaConfig{URL: server.URL}
+	instance := NewGrafanaInstance(config, nil, server.Client())
 
 	// Initially unknown
 	cap := instance.GetAPICapability(APIGroupDashboard)
 	assert.Equal(t, APICapabilityUnknown, cap)
+
+	// SetAPICapability requires an existing cache entry, so discover first
+	err := instance.DiscoverCapabilities(context.Background())
+	require.NoError(t, err)
 
 	// Set to kubernetes
 	instance.SetAPICapability(APIGroupDashboard, APICapabilityKubernetes)
@@ -421,10 +440,29 @@ func TestGrafanaInstance_CacheSharing(t *testing.T) {
 	// Reset global cache before test
 	ResetGlobalCapabilityCache()
 
+	// Create a test server that returns API groups so discovery works
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/apis" {
+			response := APIGroupList{
+				Kind:   "APIGroupList",
+				Groups: []APIGroup{},
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(response)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
 	// Create two instances pointing to the same URL
-	config := GrafanaConfig{URL: "http://localhost:3000"}
-	instance1 := NewGrafanaInstance(config, nil, &http.Client{})
-	instance2 := NewGrafanaInstance(config, nil, &http.Client{})
+	config := GrafanaConfig{URL: server.URL}
+	instance1 := NewGrafanaInstance(config, nil, server.Client())
+	instance2 := NewGrafanaInstance(config, nil, server.Client())
+
+	// SetAPICapability requires an existing cache entry, so discover first
+	err := instance1.DiscoverCapabilities(context.Background())
+	require.NoError(t, err)
 
 	// Set capability on instance1
 	instance1.SetAPICapability(APIGroupDashboard, APICapabilityKubernetes)

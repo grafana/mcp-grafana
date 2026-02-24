@@ -137,21 +137,23 @@ func (c *CapabilityCache) Set(grafanaURL string, entry *capabilityCacheEntry) {
 
 // SetAPICapability updates the capability for a specific API group.
 // This is used when we receive a 406 and need to switch to kubernetes APIs.
+// Note: This only updates existing cache entries. If no entry exists, the
+// capability is not stored. This prevents poisoning the cache's hasKubernetesAPIs
+// field before proper discovery has been performed.
 func (c *CapabilityCache) SetAPICapability(grafanaURL, apiGroup string, capability APICapability) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	entry, ok := c.entries[grafanaURL]
 	if !ok {
-		// Create a minimal entry if none exists
-		entry = &capabilityCacheEntry{
-			hasKubernetesAPIs: capability == APICapabilityKubernetes,
-			apiGroups:         make(map[string]*APIGroupInfo),
-			perAPICapability:  make(map[string]APICapability),
-			detectedAt:        time.Now(),
-		}
-		c.entries[grafanaURL] = entry
-	} else if time.Since(entry.detectedAt) > c.ttl {
+		// Don't create a new entry here. Creating an entry would require setting
+		// hasKubernetesAPIs, but we can't know the correct value without proper
+		// discovery. Let DiscoverCapabilities create the entry with the correct
+		// hasKubernetesAPIs value.
+		return
+	}
+
+	if time.Since(entry.detectedAt) > c.ttl {
 		// Refresh detectedAt if entry is expired so this update is observable
 		entry.detectedAt = time.Now()
 	}
@@ -194,10 +196,12 @@ func (c *CapabilityCache) Invalidate(grafanaURL string) {
 	delete(c.entries, grafanaURL)
 }
 
-// DiscoverAPIs fetches the /apis endpoint and parses the response.
+// discoverAPIs fetches the /apis endpoint and parses the response.
 // Returns a cache entry with the discovered capabilities.
 // If /apis returns 404, it means kubernetes-style APIs aren't available.
-func DiscoverAPIs(ctx context.Context, httpClient *http.Client, baseURL string) (*capabilityCacheEntry, error) {
+// Note: This is an unauthenticated helper primarily for testing. Production code
+// should use GrafanaInstance.discoverAPIsAuthenticated which includes proper auth.
+func discoverAPIs(ctx context.Context, httpClient *http.Client, baseURL string) (*capabilityCacheEntry, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/apis", nil)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
