@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.1] - 2026-02-24
+
+### Added
+
+- New `run_panel_query` tool that executes dashboard panel queries directly, with support for Prometheus, Loki, ClickHouse, and CloudWatch datasources, template variable substitution, Grafana macro expansion, and batch multi-panel queries ([#542](https://github.com/grafana/mcp-grafana/pull/542))
+
+### Changed
+
+- Merge near-duplicate MCP tools to reduce overall tool count, making it easier for LLMs to select the right tool ([#596](https://github.com/grafana/mcp-grafana/pull/596))
+
 ## [0.11.0] - 2026-02-19
 
 ### Added
@@ -39,5 +49,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Upgrade Docker base image packages to resolve critical OpenSSL CVE-2025-15467 (CVSS 9.8) ([#551](https://github.com/grafana/mcp-grafana/pull/551))
 
+[0.11.1]: https://github.com/grafana/mcp-grafana/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/grafana/mcp-grafana/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/grafana/mcp-grafana/compare/v0.9.0...v0.10.0
