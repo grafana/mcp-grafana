@@ -55,9 +55,9 @@ func getDashboardByUID(ctx context.Context, args GetDashboardByUIDParams) (*mode
 			"uid", args.UID,
 			"error", err.Error())
 
-		// Parse the error to get the suggested API version
+		// Parse the error to get the suggested API version and namespace
 		errMsg := err.Error()
-		apiGroup, version, ok := mcpgrafana.Parse406Error(errMsg)
+		apiGroup, version, namespace, _, ok := mcpgrafana.ParseKubernetesAPIPath(errMsg)
 		if !ok {
 			// Couldn't parse version from error, try to discover it
 			version, err = instance.GetPreferredVersion(ctx, mcpgrafana.APIGroupDashboard)
@@ -65,6 +65,7 @@ func getDashboardByUID(ctx context.Context, args GetDashboardByUIDParams) (*mode
 				return nil, fmt.Errorf("get dashboard by uid %s: legacy API returned 406 but couldn't determine kubernetes API version: %w", args.UID, err)
 			}
 			apiGroup = mcpgrafana.APIGroupDashboard
+			namespace = "default"
 		}
 
 		// Mark that we should use kubernetes API for dashboards from now on
@@ -72,10 +73,11 @@ func getDashboardByUID(ctx context.Context, args GetDashboardByUIDParams) (*mode
 
 		slog.Debug("Using kubernetes dashboard API",
 			"apiGroup", apiGroup,
-			"version", version)
+			"version", version,
+			"namespace", namespace)
 
-		// Use the version from 406 error directly
-		return getDashboardByUIDKubernetesWithVersion(ctx, instance, args, version)
+		// Use the version and namespace from 406 error directly
+		return getDashboardByUIDKubernetesWithVersion(ctx, instance, args, version, namespace)
 	}
 
 	// Some other error, return it
@@ -104,14 +106,14 @@ func getDashboardByUIDKubernetes(ctx context.Context, instance *mcpgrafana.Grafa
 		return nil, fmt.Errorf("get dashboard by uid %s: couldn't determine kubernetes API version: %w", args.UID, err)
 	}
 
-	return getDashboardByUIDKubernetesWithVersion(ctx, instance, args, version)
+	return getDashboardByUIDKubernetesWithVersion(ctx, instance, args, version, "")
 }
 
 // getDashboardByUIDKubernetesWithVersion retrieves a dashboard using the kubernetes-style API
-// with a specific version.
-func getDashboardByUIDKubernetesWithVersion(ctx context.Context, instance *mcpgrafana.GrafanaInstance, args GetDashboardByUIDParams, version string) (*models.DashboardFullWithMeta, error) {
+// with a specific version. If namespace is empty, it defaults to "default".
+func getDashboardByUIDKubernetesWithVersion(ctx context.Context, instance *mcpgrafana.GrafanaInstance, args GetDashboardByUIDParams, version, namespace string) (*models.DashboardFullWithMeta, error) {
 	// Fetch using kubernetes API
-	k8sDashboard, err := instance.GetDashboardKubernetes(ctx, args.UID, version, "default")
+	k8sDashboard, err := instance.GetDashboardKubernetes(ctx, args.UID, version, namespace)
 	if err != nil {
 		return nil, fmt.Errorf("get dashboard by uid %s: %w", args.UID, err)
 	}

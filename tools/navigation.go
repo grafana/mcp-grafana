@@ -114,7 +114,10 @@ func generateDeeplink(ctx context.Context, args GenerateDeeplinkParams) (string,
 			args.TimeRange = nil
 		} else {
 			// New format (Grafana 10+): /explore?schemaVersion=1&panes={...}
-			deeplink = generateExploreDeeplinkNew(baseURL, *args.DatasourceUID, args.ExploreQuery)
+			// Time range is embedded in the panes JSON, so we pass it here
+			// and clear it to avoid double-encoding as query params below.
+			deeplink = generateExploreDeeplinkNew(baseURL, *args.DatasourceUID, args.ExploreQuery, args.TimeRange)
+			args.TimeRange = nil
 		}
 
 	default:
@@ -190,7 +193,7 @@ type explorePaneRange struct {
 }
 
 // generateExploreDeeplinkNew creates an explore URL using the new schemaVersion=1 format (Grafana 10+)
-func generateExploreDeeplinkNew(baseURL, datasourceUID string, query *string) string {
+func generateExploreDeeplinkNew(baseURL, datasourceUID string, query *string, timeRange *TimeRange) string {
 	// Build the query object
 	q := exploreQuery{
 		Refid: "A",
@@ -200,14 +203,25 @@ func generateExploreDeeplinkNew(baseURL, datasourceUID string, query *string) st
 		q.Expr = *query
 	}
 
+	// Use provided time range or default to now-1h/now
+	paneRange := explorePaneRange{
+		From: "now-1h",
+		To:   "now",
+	}
+	if timeRange != nil {
+		if timeRange.From != "" {
+			paneRange.From = timeRange.From
+		}
+		if timeRange.To != "" {
+			paneRange.To = timeRange.To
+		}
+	}
+
 	// Build the pane
 	pane := explorePane{
 		Datasource: datasourceUID,
 		Queries:    []exploreQuery{q},
-		Range: explorePaneRange{
-			From: "now-1h",
-			To:   "now",
-		},
+		Range:      paneRange,
 	}
 
 	// Build the panes object with a single pane
