@@ -356,9 +356,8 @@ func (tm *ToolManager) DiscoverAndRegisterToolsSession(ctx context.Context, sess
 			return
 		}
 	}
-
+	//discover datasources and register tools once per session
 	state.initDiscoveryOnce.Do(func() {
-		//discover datasources and register tools
 		grafana := GrafanaClientFromContext(ctx)
 		discoveredSources, err := grafana.Datasources.GetDataSources()
 
@@ -409,7 +408,7 @@ func (tm *ToolManager) DiscoverAndRegisterToolsSession(ctx context.Context, sess
 	})
 }
 
-// discovers connected categories and register associated tools
+// discovers connected datasources and register tools (called by stdio transport) 
 func (tm *ToolManager) InitDiscoverAndRegister(ctx context.Context) error {
 	//if this is called once globally
 	if !tm.connectedOnly {

@@ -237,7 +237,7 @@ type ToolManager struct {
 	//option to add only tools which are connected to graphana ,
 	connectedOnly bool
 	enabledTools  map[string]bool
-	//resolves tools per category
+	//resolves tools of category(datasource)
 	categoryTools map[string]func() []*Tool
 }
 
@@ -265,7 +265,7 @@ func WithProxiedTools(enabled bool) toolManagerOption {
 	}
 }
 
-// WithConnectedOnlyTools initializes ToolManager variables specific to enabled Tools when connectedOnly is true
+// WithConnectedOnlyTools initializes ToolManager internal state for enabled Tools when connectedOnly is true
 func WithConnectedOnlyTools(
 	connectedOnly bool,
 	toolsState func() map[string]bool,
@@ -447,14 +447,7 @@ func (tm *ToolManager) InitializeAndRegisterProxiedTools(ctx context.Context, se
 	} else {
 		slog.Info("registered proxied tools", "session", sessionID, "tools", len(state.proxiedTools))
 	}
-
-	//we add tools
 }
-
-//premap the functions of getdatasource ,
-//and calls the functions for dynamic resolution for tools [category]func()Tools
-//get tools from each datasource
-//merge tools and register
 
 // GetServerClient retrieves a proxied client from server-level storage (for stdio transport)
 func (tm *ToolManager) GetServerClient(datasourceType, datasourceUID string) (*ProxiedClient, error) {

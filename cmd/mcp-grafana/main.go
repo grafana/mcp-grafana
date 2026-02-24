@@ -66,7 +66,7 @@ type grafanaConfig struct {
 }
 
 func (tc *toolConfig) addFlags() {
-	flag.BoolVar(&tc.onlyConnected, "connected-only", false, "Enable Tools of all connected datasources in graphana instance , disables rest. Tool specific toogle flags (ex:disable-tool) take precedense")
+	flag.BoolVar(&tc.onlyConnected, "connected-only", false, "Enable Tools of connected datasources in graphana instance ,non connected sources are skipped from tool broadcast.")
 }
 
 func (dt *disabledTools) addFlags() {
@@ -127,8 +127,8 @@ func (dt *disabledTools) addTools(s *server.MCPServer, tc toolConfig) {
 	maybeAddTools(s, tools.AddSearchLogsTools, enabledTools, dt.searchlogs, "searchlogs")
 	maybeAddTools(s, tools.AddRunPanelQueryTools, enabledTools, dt.runpanelquery, "runpanelquery")
 
-	//include datasources during startup when discovery is not enabled
-	//when discovery is enabled datasources are included by InitDiscoverAndRegister , DiscoverAndRegisterToolsSession
+	//datasources are included by InitDiscoverAndRegister , DiscoverAndRegisterToolsSession when discovery is enabled
+	//if not include at startup
 	if !tc.onlyConnected {
 		maybeAddTools(s, tools.AddPrometheusTools, enabledTools, dt.prometheus, "prometheus")
 		maybeAddTools(s, tools.AddLokiTools, enabledTools, dt.loki, "loki")
@@ -151,7 +151,7 @@ func newServer(transport string, dt disabledTools, tc toolConfig, obs *observabi
 		OnUnregisterSession: []server.OnUnregisterSessionHookFunc{sm.RemoveSession},
 	}
 
-	// Add tools dynamically for (proxy tool,discover sources) hooks if enabled and we're not running in stdio mode.
+	// Add  (proxy tool hooks,datasource tools) dynamically if enabled and we're not running in stdio mode.
 	// (stdio mode is handled by InitializeAndRegisterServerTools , InitDiscoverAndRegister; per-session
 	// tools are not supported).
 	if transport != "stdio" && (dt.proxied || tc.onlyConnected) {
@@ -224,7 +224,7 @@ Note that some of these capabilities may be disabled. Do not try to use features
 		sm, s,
 		mcpgrafana.WithProxiedTools(!dt.proxied),
 		mcpgrafana.WithConnectedOnlyTools(tc.onlyConnected, func() map[string]bool {
-			return toolsState(&dt, &tc)
+			return toolsState(&dt)
 		}, buildMappedTools),
 	)
 
@@ -232,7 +232,7 @@ Note that some of these capabilities may be disabled. Do not try to use features
 	return s, stm
 }
 
-func mayIncludeTool(category string, exclude bool, enabledMap *map[string]bool, enabled []string) {
+func mayBeEnabledTool(category string, exclude bool, enabledMap *map[string]bool, enabled []string) {
 	if exclude {
 		return
 	}
@@ -242,8 +242,8 @@ func mayIncludeTool(category string, exclude bool, enabledMap *map[string]bool, 
 	}
 }
 
+// returns tools map for datasources
 func buildMappedTools() map[string]func() []*mcpgrafana.Tool {
-	//it applies only tools that are relavant like
 	return map[string]func() []*mcpgrafana.Tool{
 		"loki":          tools.GetLokiTools,
 		"prometheus":    tools.GetPromethuesTools,
@@ -254,16 +254,16 @@ func buildMappedTools() map[string]func() []*mcpgrafana.Tool {
 	}
 }
 
-func toolsState(dt *disabledTools, tc *toolConfig) map[string]bool {
+func toolsState(dt *disabledTools) map[string]bool {
 	enabledTools := strings.Split(dt.enabledTools, ",")
 	enabledMap := map[string]bool{}
 
-	mayIncludeTool("prometheus", dt.prometheus, &enabledMap, enabledTools)
-	mayIncludeTool("loki", dt.loki, &enabledMap, enabledTools)
-	mayIncludeTool("elasticsearch", dt.elasticsearch, &enabledMap, enabledTools)
-	mayIncludeTool("pyroscope", dt.pyroscope, &enabledMap, enabledTools)
-	mayIncludeTool("cloudwatch", dt.cloudwatch, &enabledMap, enabledTools)
-	mayIncludeTool("clickhouse", dt.clickhouse, &enabledMap, enabledTools)
+	mayBeEnabledTool("prometheus", dt.prometheus, &enabledMap, enabledTools)
+	mayBeEnabledTool("loki", dt.loki, &enabledMap, enabledTools)
+	mayBeEnabledTool("elasticsearch", dt.elasticsearch, &enabledMap, enabledTools)
+	mayBeEnabledTool("pyroscope", dt.pyroscope, &enabledMap, enabledTools)
+	mayBeEnabledTool("cloudwatch", dt.cloudwatch, &enabledMap, enabledTools)
+	mayBeEnabledTool("clickhouse", dt.clickhouse, &enabledMap, enabledTools)
 
 	return enabledMap
 }
@@ -391,7 +391,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 			if err := tm.InitializeAndRegisterServerTools(stdioCtx); err != nil {
 				slog.Error("failed to initialize proxied tools for stdio", "error", err)
 			}
-			//discover enabled ,register on server directly for stdio
+			//discover enabled , find and register connected tools on server directly for stdio
 			if tc.onlyConnected {
 				if err := tm.InitDiscoverAndRegister(stdioCtx); err != nil {
 					slog.Error("failed to perform discovery of datasources for stdio", "error", err)
