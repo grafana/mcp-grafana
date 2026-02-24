@@ -190,7 +190,7 @@ func TestDiscoverAPIs_Success(t *testing.T) {
 	defer server.Close()
 
 	ctx := context.Background()
-	entry, err := discoverAPIs(ctx, server.Client(), server.URL)
+	entry, err := DiscoverAPIs(ctx, server.Client(), server.URL)
 
 	require.NoError(t, err)
 	require.NotNil(t, entry)
@@ -220,7 +220,7 @@ func TestDiscoverAPIs_NotFound(t *testing.T) {
 	defer server.Close()
 
 	ctx := context.Background()
-	entry, err := discoverAPIs(ctx, server.Client(), server.URL)
+	entry, err := DiscoverAPIs(ctx, server.Client(), server.URL)
 
 	require.NoError(t, err)
 	require.NotNil(t, entry)
@@ -237,7 +237,7 @@ func TestDiscoverAPIs_Error(t *testing.T) {
 	defer server.Close()
 
 	ctx := context.Background()
-	entry, err := discoverAPIs(ctx, server.Client(), server.URL)
+	entry, err := DiscoverAPIs(ctx, server.Client(), server.URL)
 
 	require.Error(t, err)
 	assert.Nil(t, entry)
@@ -253,7 +253,7 @@ func TestDiscoverAPIs_InvalidJSON(t *testing.T) {
 	defer server.Close()
 
 	ctx := context.Background()
-	entry, err := discoverAPIs(ctx, server.Client(), server.URL)
+	entry, err := DiscoverAPIs(ctx, server.Client(), server.URL)
 
 	require.Error(t, err)
 	assert.Nil(t, entry)
