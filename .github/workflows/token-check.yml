@@ -54,4 +54,5 @@ jobs:
           threshold-percent: "5"
           comment: true
           comment-on-pass: true
+          max-tool-changes: "10"
           github-token: ${{ secrets.GITHUB_TOKEN }}

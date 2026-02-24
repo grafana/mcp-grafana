@@ -135,15 +135,6 @@ func getDatasourceByUID(ctx context.Context, args GetDatasourceByUIDParams) (*mo
 	return datasource.Payload, nil
 }
 
-var GetDatasourceByUID = mcpgrafana.MustTool(
-	"get_datasource_by_uid",
-	"Retrieves detailed information about a specific datasource using its UID. Returns the full datasource model, including name, type, URL, access settings, JSON data, and secure JSON field status.",
-	getDatasourceByUID,
-	mcp.WithTitleAnnotation("Get datasource by UID"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-)
-
 type GetDatasourceByNameParams struct {
 	Name string `json:"name" jsonschema:"required,description=The name of the datasource"`
 }
@@ -157,17 +148,32 @@ func getDatasourceByName(ctx context.Context, args GetDatasourceByNameParams) (*
 	return datasource.Payload, nil
 }
 
-var GetDatasourceByName = mcpgrafana.MustTool(
-	"get_datasource_by_name",
-	"Retrieves detailed information about a specific datasource using its name. Returns the full datasource model, including UID, type, URL, access settings, JSON data, and secure JSON field status.",
-	getDatasourceByName,
-	mcp.WithTitleAnnotation("Get datasource by name"),
+// GetDatasourceParams accepts either a UID or Name to look up a datasource.
+type GetDatasourceParams struct {
+	UID  string `json:"uid,omitempty" jsonschema:"description=The UID of the datasource. If provided\\, takes priority over name."`
+	Name string `json:"name,omitempty" jsonschema:"description=The name of the datasource. Used if UID is not provided."`
+}
+
+func getDatasource(ctx context.Context, args GetDatasourceParams) (*models.DataSource, error) {
+	if args.UID != "" {
+		return getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: args.UID})
+	}
+	if args.Name != "" {
+		return getDatasourceByName(ctx, GetDatasourceByNameParams{Name: args.Name})
+	}
+	return nil, fmt.Errorf("either uid or name must be provided")
+}
+
+var GetDatasource = mcpgrafana.MustTool(
+	"get_datasource",
+	"Retrieves detailed information about a specific datasource by UID or name. Returns the full datasource model, including name, type, URL, access settings, JSON data, and secure JSON field status. Provide either uid or name; uid takes priority if both are given.",
+	getDatasource,
+	mcp.WithTitleAnnotation("Get datasource"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
 )
 
 func AddDatasourceTools(mcp *server.MCPServer) {
 	ListDatasources.Register(mcp)
-	GetDatasourceByUID.Register(mcp)
-	GetDatasourceByName.Register(mcp)
+	GetDatasource.Register(mcp)
 }
