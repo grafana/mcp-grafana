@@ -74,7 +74,7 @@ func TestGetAnnotations_PropagatesError(t *testing.T) {
 	assert.Contains(t, err.Error(), "get annotations:")
 }
 
-func TestCreateAnnotationGraphiteFormat_SendsCorrectBody_Minimal(t *testing.T) {
+func TestCreateAnnotation_GraphiteFormat_Minimal(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/api/annotations/graphite", r.URL.Path)
 		assert.Equal(t, "POST", r.Method)
@@ -95,14 +95,15 @@ func TestCreateAnnotationGraphiteFormat_SendsCorrectBody_Minimal(t *testing.T) {
 
 	ctx := mockCtxWithClient(server)
 
-	_, err := createAnnotationGraphiteFormat(ctx, CreateGraphiteAnnotationInput{
-		What: "deploy",
-		When: 1710000000000,
+	_, err := createAnnotation(ctx, CreateAnnotationInput{
+		Format: "graphite",
+		What:   "deploy",
+		When:   1710000000000,
 	})
 	require.NoError(t, err)
 }
 
-func TestCreateAnnotationGraphiteFormat_SendsCorrectBody_WithTagsAndData(t *testing.T) {
+func TestCreateAnnotation_GraphiteFormat_WithTagsAndData(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/api/annotations/graphite", r.URL.Path)
 		assert.Equal(t, "POST", r.Method)
@@ -123,11 +124,12 @@ func TestCreateAnnotationGraphiteFormat_SendsCorrectBody_WithTagsAndData(t *test
 
 	ctx := mockCtxWithClient(server)
 
-	_, err := createAnnotationGraphiteFormat(ctx, CreateGraphiteAnnotationInput{
-		What: "incident",
-		When: 1720000000000,
-		Tags: []string{"sev1", "network"},
-		Data: "context",
+	_, err := createAnnotation(ctx, CreateAnnotationInput{
+		Format:       "graphite",
+		What:         "incident",
+		When:         1720000000000,
+		Tags:         []string{"sev1", "network"},
+		GraphiteData: "context",
 	})
 	require.NoError(t, err)
 }
@@ -171,7 +173,7 @@ func TestCreateAnnotation_ErrorWrapped(t *testing.T) {
 	assert.Contains(t, err.Error(), "create annotation:")
 }
 
-func TestCreateAnnotationGraphiteFormat_HTTPError(t *testing.T) {
+func TestCreateAnnotation_GraphiteFormat_HTTPError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = w.Write([]byte(`internal error`))
@@ -180,20 +182,53 @@ func TestCreateAnnotationGraphiteFormat_HTTPError(t *testing.T) {
 
 	ctx := mockCtxWithClient(server)
 
-	_, err := createAnnotationGraphiteFormat(ctx, CreateGraphiteAnnotationInput{
-		What: "bad",
-		When: 1700000000000,
+	_, err := createAnnotation(ctx, CreateAnnotationInput{
+		Format: "graphite",
+		What:   "bad",
+		When:   1700000000000,
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "create graphite annotation")
 }
 
-func TestUpdateAnnotation_SendsCorrectBodyAndPath(t *testing.T) {
+func TestCreateAnnotation_MissingText(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Fatal("should not make any HTTP request")
+	}))
+	defer server.Close()
+
+	ctx := mockCtxWithClient(server)
+
+	_, err := createAnnotation(ctx, CreateAnnotationInput{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "'text' is required")
+}
+
+func TestCreateAnnotation_GraphiteFormat_MissingWhat(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Fatal("should not make any HTTP request")
+	}))
+	defer server.Close()
+
+	ctx := mockCtxWithClient(server)
+
+	_, err := createAnnotation(ctx, CreateAnnotationInput{
+		Format: "graphite",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "'what' is required")
+}
+
+func TestUpdateAnnotation_UsesPatchMethod(t *testing.T) {
+	text := "hello"
+	time := int64(111)
+	timeEnd := int64(222)
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/api/annotations/"+strconv.Itoa(55), r.URL.Path)
-		assert.Equal(t, "PUT", r.Method)
+		assert.Equal(t, "PATCH", r.Method)
 
-		var body models.UpdateAnnotationsCmd
+		var body models.PatchAnnotationsCmd
 		_ = json.NewDecoder(r.Body).Decode(&body)
 
 		assert.Equal(t, int64(111), body.Time)
@@ -211,15 +246,15 @@ func TestUpdateAnnotation_SendsCorrectBodyAndPath(t *testing.T) {
 
 	_, err := updateAnnotation(ctx, UpdateAnnotationInput{
 		ID:      55,
-		Time:    111,
-		TimeEnd: 222,
-		Text:    "hello",
+		Time:    &time,
+		TimeEnd: &timeEnd,
+		Text:    &text,
 		Tags:    []string{"a", "b"},
 	})
 	require.NoError(t, err)
 }
 
-func TestPatchAnnotation_SendsOnlyProvidedFields(t *testing.T) {
+func TestUpdateAnnotation_SendsOnlyProvidedFields(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/api/annotations/"+strconv.Itoa(9), r.URL.Path)
 		assert.Equal(t, "PATCH", r.Method)
@@ -241,7 +276,7 @@ func TestPatchAnnotation_SendsOnlyProvidedFields(t *testing.T) {
 	ctx := mockCtxWithClient(server)
 	text := "patched"
 
-	_, err := patchAnnotation(ctx, PatchAnnotationInput{
+	_, err := updateAnnotation(ctx, UpdateAnnotationInput{
 		ID:   9,
 		Text: &text,
 		Tags: []string{"x"},
