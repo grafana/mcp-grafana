@@ -402,7 +402,9 @@ func (tm *ToolManager) DiscoverAndRegisterToolsSession(ctx context.Context, sess
 			tools = updatedTools
 		}
 
-		tm.server.AddSessionTools(sessionID, tools...)
+		if len(tools) > 0 {
+			tm.server.AddSessionTools(sessionID, tools...)
+		}
 		slog.Info("Registered Tools of discovered datasources for session ", "sessionId", sessionID, "count", len(tools))
 	})
 }
