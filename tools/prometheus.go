@@ -19,6 +19,11 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 )
 
+const (
+	//PrometheusDataSourceType is the type identifier for prometheus data sources
+	PrometheusDataSourceType = "prometheus"
+)
+
 var (
 	matchTypeMap = map[string]labels.MatchType{
 		"":   labels.MatchEqual,
@@ -635,6 +640,7 @@ var promtheuesTools = []*mcpgrafana.Tool{
 	&ListPrometheusMetricMetadata,
 	&QueryPrometheus,
 	&QueryPrometheusHistogram,
+	&ListPrometheusMetricNames,
 	&ListPrometheusLabelNames,
 	&ListPrometheusLabelValues,
 }

@@ -154,13 +154,13 @@ func newServer(transport string, dt disabledTools, tc toolConfig, obs *observabi
 	// Add  (proxy tool hooks,datasource tools) dynamically if enabled and we're not running in stdio mode.
 	// (stdio mode is handled by InitializeAndRegisterServerTools , InitDiscoverAndRegister; per-session
 	// tools are not supported).
-	if transport != "stdio" && (dt.proxied || tc.onlyConnected) {
+	if transport != "stdio" && (!dt.proxied || tc.onlyConnected) {
 		// OnBeforeListTools: Discover, connect, and register tools
 		hooks.OnBeforeListTools = []server.OnBeforeListToolsFunc{
 			func(ctx context.Context, id any, request *mcp.ListToolsRequest) {
 				if stm != nil {
 					if session := server.ClientSessionFromContext(ctx); session != nil {
-						if dt.proxied {
+						if !dt.proxied {
 							stm.InitializeAndRegisterProxiedTools(ctx, session)
 						}
 						//discover enabled
@@ -178,7 +178,7 @@ func newServer(transport string, dt disabledTools, tc toolConfig, obs *observabi
 			func(ctx context.Context, id any, request *mcp.CallToolRequest) {
 				if stm != nil {
 					if session := server.ClientSessionFromContext(ctx); session != nil {
-						if dt.proxied {
+						if !dt.proxied {
 							stm.InitializeAndRegisterProxiedTools(ctx, session)
 						}
 						//discover enabled
@@ -245,12 +245,12 @@ func mayBeEnabledTool(category string, exclude bool, enabledMap *map[string]bool
 // returns tools map for datasources
 func buildMappedTools() map[string]func() []*mcpgrafana.Tool {
 	return map[string]func() []*mcpgrafana.Tool{
-		"loki":          tools.GetLokiTools,
-		"prometheus":    tools.GetPromethuesTools,
-		"pyroscope":     tools.GetPyroscopeTools,
-		"clickhouse":    tools.GetClickHouseTools,
-		"cloudwatch":    tools.GetCloudWatchTools,
-		"elasticsearch": tools.GetElasticSearchTools,
+		tools.LokiDatasourceType:          tools.GetLokiTools,
+		tools.PrometheusDataSourceType:    tools.GetPromethuesTools,
+		tools.PyroscopeDataSourceType:     tools.GetPyroscopeTools,
+		tools.ClickHouseDatasourceType:    tools.GetClickHouseTools,
+		tools.CloudWatchDatasourceType:    tools.GetCloudWatchTools,
+		tools.ElasticsearchDatasourceType: tools.GetElasticSearchTools,
 	}
 }
 
@@ -258,12 +258,12 @@ func toolsState(dt *disabledTools) map[string]bool {
 	enabledTools := strings.Split(dt.enabledTools, ",")
 	enabledMap := map[string]bool{}
 
-	mayBeEnabledTool("prometheus", dt.prometheus, &enabledMap, enabledTools)
-	mayBeEnabledTool("loki", dt.loki, &enabledMap, enabledTools)
-	mayBeEnabledTool("elasticsearch", dt.elasticsearch, &enabledMap, enabledTools)
-	mayBeEnabledTool("pyroscope", dt.pyroscope, &enabledMap, enabledTools)
-	mayBeEnabledTool("cloudwatch", dt.cloudwatch, &enabledMap, enabledTools)
-	mayBeEnabledTool("clickhouse", dt.clickhouse, &enabledMap, enabledTools)
+	mayBeEnabledTool(tools.PrometheusDataSourceType, dt.prometheus, &enabledMap, enabledTools)
+	mayBeEnabledTool(tools.LokiDatasourceType, dt.loki, &enabledMap, enabledTools)
+	mayBeEnabledTool(tools.ElasticsearchDatasourceType, dt.elasticsearch, &enabledMap, enabledTools)
+	mayBeEnabledTool(tools.PyroscopeDataSourceType, dt.pyroscope, &enabledMap, enabledTools)
+	mayBeEnabledTool(tools.CloudWatchDatasourceType, dt.cloudwatch, &enabledMap, enabledTools)
+	mayBeEnabledTool(tools.ClickHouseDatasourceType, dt.clickhouse, &enabledMap, enabledTools)
 
 	return enabledMap
 }
@@ -386,11 +386,15 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		srv.SetContextFunc(cf)
 
 		// For stdio (single-tenant), initialize proxied tools on the server directly
-		if !dt.proxied {
+		if !dt.proxied || tc.onlyConnected {
 			stdioCtx := cf(ctx)
-			if err := tm.InitializeAndRegisterServerTools(stdioCtx); err != nil {
-				slog.Error("failed to initialize proxied tools for stdio", "error", err)
+
+			if !dt.proxied {
+				if err := tm.InitializeAndRegisterServerTools(stdioCtx); err != nil {
+					slog.Error("failed to initialize proxied tools for stdio", "error", err)
+				}
 			}
+
 			//discover enabled , find and register connected tools on server directly for stdio
 			if tc.onlyConnected {
 				if err := tm.InitDiscoverAndRegister(stdioCtx); err != nil {

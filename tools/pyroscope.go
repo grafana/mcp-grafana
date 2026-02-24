@@ -19,6 +19,10 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 )
 
+const (
+	// PyroscopeDataSourceType is the type identifier for Pyroscope datasources
+	PyroscopeDataSourceType = "grafana-pyroscope-datasource"
+)
 const listPyroscopeLabelNamesToolPrompt = `
 Lists all available label names (keys) found in profiles within a specified Pyroscope datasource, time range, and
 optional label matchers. Label matchers are typically used to qualify a service name ({service_name="foo"}). Returns a
@@ -453,7 +457,7 @@ func cleanupDotProfile(profile string) string {
 }
 
 var pyroscopeTools = []*mcpgrafana.Tool{
-	&ListPrometheusLabelNames,
+	&ListPyroscopeLabelNames,
 	&ListPyroscopeLabelValues,
 	&ListPyroscopeProfileTypes,
 	&FetchPyroscopeProfile,
