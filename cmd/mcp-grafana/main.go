@@ -66,7 +66,7 @@ type grafanaConfig struct {
 }
 
 func (tc *toolConfig) addFlags() {
-	flag.BoolVar(&tc.onlyConnected, "connected-only", true, "Enable Tools of all connected datasources in graphana instance , disables rest. Tool specific toogle flags (ex:disable-tool) take precedense")
+	flag.BoolVar(&tc.onlyConnected, "connected-only", false, "Enable Tools of all connected datasources in graphana instance , disables rest. Tool specific toogle flags (ex:disable-tool) take precedense")
 }
 
 func (dt *disabledTools) addFlags() {
