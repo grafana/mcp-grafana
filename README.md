@@ -242,8 +242,7 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `get_dashboard_property`          | Dashboard   | Extract specific parts of a dashboard using JSONPath expressions    | `dashboards:read`                       | `dashboards:uid:abc123`                             |
 | `get_dashboard_summary`           | Dashboard   | Get a compact summary of a dashboard without full JSON              | `dashboards:read`                       | `dashboards:uid:abc123`                             |
 | `list_datasources`                | Datasources | List datasources                                                    | `datasources:read`                      | `datasources:*`                                     |
-| `get_datasource_by_uid`           | Datasources | Get a datasource by uid                                             | `datasources:read`                      | `datasources:uid:prometheus-uid`                    |
-| `get_datasource_by_name`          | Datasources | Get a datasource by name                                            | `datasources:read`                      | `datasources:*` or `datasources:uid:loki-uid`       |
+| `get_datasource`                  | Datasources | Get a datasource by UID or name                                     | `datasources:read`                      | `datasources:uid:prometheus-uid`                    |
 | `get_query_examples`              | Examples*   | Get example queries for a datasource type                           | `datasources:read`                      | `datasources:*`                                     |
 | `query_prometheus`                | Prometheus  | Execute a query against a Prometheus datasource                     | `datasources:query`                     | `datasources:uid:prometheus-uid`                    |
 | `list_prometheus_metric_metadata` | Prometheus  | List metric metadata                                                | `datasources:query`                     | `datasources:uid:prometheus-uid`                    |
@@ -294,10 +293,8 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `get_assertions`                  | Asserts     | Get assertion summary for a given entity                            | Plugin-specific permissions             | Plugin-specific scopes                              |
 | `generate_deeplink`               | Navigation  | Generate accurate deeplink URLs for Grafana resources               | None (read-only URL generation)         | N/A                                                 |
 | `get_annotations`                 | Annotations | Fetch annotations with filters                                      | `annotations:read`                      | `annotations:*` or `annotations:id:123`             |
-| `create_annotation`               | Annotations | Create a new annotation on a dashboard or panel                     | `annotations:write`                     | `annotations:*`                                     |
-| `create_graphite_annotation`      | Annotations | Create an annotation using Graphite format                          | `annotations:write`                     | `annotations:*`                                     |
-| `update_annotation`               | Annotations | Replace all fields of an annotation (full update)                   | `annotations:write`                     | `annotations:*`                                     |
-| `patch_annotation`                | Annotations | Update only specific fields of an annotation (partial update)       | `annotations:write`                     | `annotations:*`                                     |
+| `create_annotation`               | Annotations | Create a new annotation (standard or Graphite format)               | `annotations:write`                     | `annotations:*`                                     |
+| `update_annotation`               | Annotations | Update specific fields of an annotation (partial update)            | `annotations:write`                     | `annotations:*`                                     |
 | `get_annotation_tags`             | Annotations | List annotation tags with optional filtering                        | `annotations:read`                      | `annotations:*`                                     |
 | `get_panel_image`                 | Rendering   | Render a dashboard panel or full dashboard as a PNG image           | `dashboards:read`                       | `dashboards:uid:abc123`                             |
 
@@ -373,9 +370,7 @@ When `--disable-write` is enabled, the following write operations are disabled:
 
 **Annotation Tools:**
 - `create_annotation`
-- `create_graphite_annotation`
 - `update_annotation`
-- `patch_annotation`
 
 **Sift Tools:**
 - `find_error_pattern_logs` (creates investigations)

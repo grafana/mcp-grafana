@@ -143,3 +143,87 @@ func TestListDatasources_TypeFilter(t *testing.T) {
 		assert.Equal(t, "prom-2", result.Datasources[0].UID)
 	})
 }
+
+func TestGetDatasource_RoutesToUID(t *testing.T) {
+	mockDS := &models.DataSource{
+		ID:   1,
+		UID:  "test-uid",
+		Name: "Test DS",
+		Type: "prometheus",
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/datasources/uid/test-uid", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(mockDS)
+	}))
+	defer server.Close()
+
+	ctx := mockDatasourcesCtx(server)
+
+	result, err := getDatasource(ctx, GetDatasourceParams{UID: "test-uid"})
+	require.NoError(t, err)
+	assert.Equal(t, "Test DS", result.Name)
+}
+
+func TestGetDatasource_RoutesToName(t *testing.T) {
+	mockDS := &models.DataSource{
+		ID:   1,
+		UID:  "test-uid",
+		Name: "Test DS",
+		Type: "prometheus",
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/datasources/name/Test DS", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(mockDS)
+	}))
+	defer server.Close()
+
+	ctx := mockDatasourcesCtx(server)
+
+	result, err := getDatasource(ctx, GetDatasourceParams{Name: "Test DS"})
+	require.NoError(t, err)
+	assert.Equal(t, "test-uid", result.UID)
+}
+
+func TestGetDatasource_UIDTakesPriority(t *testing.T) {
+	mockDS := &models.DataSource{
+		ID:   1,
+		UID:  "test-uid",
+		Name: "Test DS",
+		Type: "prometheus",
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Should use UID path, not name path
+		assert.Equal(t, "/api/datasources/uid/test-uid", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(mockDS)
+	}))
+	defer server.Close()
+
+	ctx := mockDatasourcesCtx(server)
+
+	result, err := getDatasource(ctx, GetDatasourceParams{UID: "test-uid", Name: "Test DS"})
+	require.NoError(t, err)
+	assert.Equal(t, "Test DS", result.Name)
+}
+
+func TestGetDatasource_ErrorWhenNeitherProvided(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Fatal("should not make any HTTP request")
+	}))
+	defer server.Close()
+
+	ctx := mockDatasourcesCtx(server)
+
+	result, err := getDatasource(ctx, GetDatasourceParams{})
+	require.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "either uid or name must be provided")
+}

@@ -223,7 +223,7 @@ func getQueryExamples(_ context.Context, args GetQueryExamplesParams) (*GetQuery
 // GetQueryExamples is the MCP tool that provides example queries for each datasource type.
 var GetQueryExamples = mcpgrafana.MustTool(
 	"get_query_examples",
-	"Get example queries for a specific datasource type. Provides sample queries with descriptions for Prometheus (PromQL), Loki (LogQL), ClickHouse (SQL with Grafana macros), and CloudWatch (metric configurations). Use this to understand query syntax and common patterns for each datasource. TIP: Use list_datasources to find datasource UIDs, or get_datasource_by_name if you know the exact name.",
+	"Get example queries for a specific datasource type. Provides sample queries with descriptions for Prometheus (PromQL), Loki (LogQL), ClickHouse (SQL with Grafana macros), and CloudWatch (metric configurations). Use this to understand query syntax and common patterns for each datasource. TIP: Use list_datasources to find datasource UIDs, or get_datasource if you know the exact name.",
 	getQueryExamples,
 	mcp.WithTitleAnnotation("Get query examples"),
 	mcp.WithIdempotentHintAnnotation(true),
