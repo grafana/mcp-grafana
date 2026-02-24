@@ -168,13 +168,18 @@ func (c *CapabilityCache) SetAPICapability(grafanaURL, apiGroup string, capabili
 }
 
 // GetAPICapability returns the capability for a specific API group.
-// Returns APICapabilityUnknown if not set.
+// Returns APICapabilityUnknown if not set or if the cache entry has expired.
 func (c *CapabilityCache) GetAPICapability(grafanaURL, apiGroup string) APICapability {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
 	entry, ok := c.entries[grafanaURL]
 	if !ok {
+		return APICapabilityUnknown
+	}
+
+	// Check if entry has expired
+	if time.Since(entry.detectedAt) > c.ttl {
 		return APICapabilityUnknown
 	}
 

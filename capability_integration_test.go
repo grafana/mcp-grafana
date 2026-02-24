@@ -107,7 +107,7 @@ func TestDiscoverAPIs_Integration(t *testing.T) {
 	err := instance.DiscoverCapabilities(ctx)
 	require.NoError(t, err)
 
-	entry := instance.cache.Get(config.URL)
+	entry := instance.cache.Get(instance.BaseURL())
 	require.NoError(t, err)
 	require.NotNil(t, entry)
 
