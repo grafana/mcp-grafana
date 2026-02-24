@@ -272,6 +272,12 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 		return zero, nil, fmt.Errorf("failed to marshal input schema: %w", err)
 	}
 
+	// Sanitize bare boolean schemas for LLM provider compatibility
+	schemaBytes, err = sanitizeBooleanSchemas(schemaBytes)
+	if err != nil {
+		return zero, nil, fmt.Errorf("failed to sanitize input schema: %w", err)
+	}
+
 	t := mcp.Tool{
 		Name:           name,
 		Description:    description,
@@ -337,3 +343,96 @@ var (
 		CommentMap:                 nil,
 	}
 )
+
+// sanitizeBooleanSchemas replaces bare boolean JSON Schema values (true/false)
+// with equivalent object schemas ({} / {"not": {}}). The invopop/jsonschema
+// library emits bare `true` for Go interface{} types, which is valid per the
+// JSON Schema spec but rejected by some LLM providers (e.g., Fireworks AI).
+// See: https://github.com/grafana/mcp-grafana/issues/594
+func sanitizeBooleanSchemas(data []byte) ([]byte, error) {
+	var raw any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, err
+	}
+	sanitizeSchemaNode(raw)
+	return json.Marshal(raw)
+}
+
+// JSON Schema keywords whose values are single sub-schemas.
+var schemaValuedKeys = []string{
+	"items", "additionalProperties", "not",
+	"if", "then", "else",
+	"contains", "propertyNames",
+	"unevaluatedItems", "unevaluatedProperties",
+}
+
+// JSON Schema keywords whose values are maps of sub-schemas.
+var schemaMapKeys = []string{
+	"properties", "patternProperties",
+	"$defs", "definitions",
+}
+
+// JSON Schema keywords whose values are arrays of sub-schemas.
+var schemaArrayKeys = []string{
+	"allOf", "anyOf", "oneOf", "prefixItems",
+}
+
+// sanitizeSchemaNode recursively walks a JSON value representing a JSON Schema
+// and replaces bare boolean sub-schemas with object equivalents in positions
+// where sub-schemas are expected.
+func sanitizeSchemaNode(v any) {
+	obj, ok := v.(map[string]any)
+	if !ok {
+		return
+	}
+
+	// Replace bare booleans in single-schema-valued keys
+	for _, key := range schemaValuedKeys {
+		if val, exists := obj[key]; exists {
+			obj[key] = replaceBooleanSchema(val)
+		}
+	}
+
+	// Replace bare booleans in schema-map-valued keys
+	for _, key := range schemaMapKeys {
+		if mapVal, ok := obj[key].(map[string]any); ok {
+			for k, v := range mapVal {
+				mapVal[k] = replaceBooleanSchema(v)
+			}
+		}
+	}
+
+	// Replace bare booleans in schema-array-valued keys
+	for _, key := range schemaArrayKeys {
+		if arrVal, ok := obj[key].([]any); ok {
+			for i, v := range arrVal {
+				arrVal[i] = replaceBooleanSchema(v)
+			}
+		}
+	}
+
+	// Recurse into all nested objects and arrays
+	for _, val := range obj {
+		switch v := val.(type) {
+		case map[string]any:
+			sanitizeSchemaNode(v)
+		case []any:
+			for _, item := range v {
+				sanitizeSchemaNode(item)
+			}
+		}
+	}
+}
+
+// replaceBooleanSchema converts a bare boolean JSON Schema value to an
+// equivalent object schema. Non-boolean values are returned unchanged.
+func replaceBooleanSchema(v any) any {
+	b, ok := v.(bool)
+	if !ok {
+		return v
+	}
+	if b {
+		return map[string]any{} // true → {} (accept any value)
+	}
+	return map[string]any{"not": map[string]any{}} // false → {"not": {}} (reject all values)
+}

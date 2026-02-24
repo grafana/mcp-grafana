@@ -606,3 +606,218 @@ func TestEmptyStructJSONSchema(t *testing.T) {
 	assert.True(t, ok, "properties should be a map")
 	assert.Len(t, propertiesMap, 0, "properties should be an empty map")
 }
+
+func TestSanitizeBooleanSchemas(t *testing.T) {
+	t.Run("replaces bare true in properties", func(t *testing.T) {
+		input := `{"type":"object","properties":{"model":true,"name":{"type":"string"}}}`
+		result, err := sanitizeBooleanSchemas([]byte(input))
+		require.NoError(t, err)
+
+		var parsed map[string]any
+		err = json.Unmarshal(result, &parsed)
+		require.NoError(t, err)
+
+		props := parsed["properties"].(map[string]any)
+		// "model": true should become "model": {}
+		model, ok := props["model"].(map[string]any)
+		require.True(t, ok, "model should be an object, not a boolean")
+		assert.Len(t, model, 0, "model should be an empty object")
+		// "name" should be unchanged
+		name := props["name"].(map[string]any)
+		assert.Equal(t, "string", name["type"])
+	})
+
+	t.Run("replaces bare false in properties", func(t *testing.T) {
+		input := `{"type":"object","properties":{"blocked":false}}`
+		result, err := sanitizeBooleanSchemas([]byte(input))
+		require.NoError(t, err)
+
+		var parsed map[string]any
+		err = json.Unmarshal(result, &parsed)
+		require.NoError(t, err)
+
+		props := parsed["properties"].(map[string]any)
+		blocked, ok := props["blocked"].(map[string]any)
+		require.True(t, ok, "blocked should be an object, not a boolean")
+		_, hasNot := blocked["not"]
+		assert.True(t, hasNot, "blocked should have a 'not' key")
+	})
+
+	t.Run("replaces bare true in additionalProperties", func(t *testing.T) {
+		input := `{"type":"object","properties":{},"additionalProperties":true}`
+		result, err := sanitizeBooleanSchemas([]byte(input))
+		require.NoError(t, err)
+
+		var parsed map[string]any
+		err = json.Unmarshal(result, &parsed)
+		require.NoError(t, err)
+
+		ap, ok := parsed["additionalProperties"].(map[string]any)
+		require.True(t, ok, "additionalProperties should be an object")
+		assert.Len(t, ap, 0, "additionalProperties should be an empty object")
+	})
+
+	t.Run("replaces bare true in items", func(t *testing.T) {
+		input := `{"type":"array","items":true}`
+		result, err := sanitizeBooleanSchemas([]byte(input))
+		require.NoError(t, err)
+
+		var parsed map[string]any
+		err = json.Unmarshal(result, &parsed)
+		require.NoError(t, err)
+
+		items, ok := parsed["items"].(map[string]any)
+		require.True(t, ok, "items should be an object")
+		assert.Len(t, items, 0)
+	})
+
+	t.Run("handles nested schemas recursively", func(t *testing.T) {
+		// Simulates the actual alert rule schema structure:
+		// properties -> data -> items -> properties -> model: true
+		input := `{
+			"type": "object",
+			"properties": {
+				"data": {
+					"type": "array",
+					"items": {
+						"type": "object",
+						"properties": {
+							"model": true,
+							"refId": {"type": "string"}
+						}
+					}
+				}
+			}
+		}`
+		result, err := sanitizeBooleanSchemas([]byte(input))
+		require.NoError(t, err)
+
+		var parsed map[string]any
+		err = json.Unmarshal(result, &parsed)
+		require.NoError(t, err)
+
+		// Navigate to the nested model property
+		props := parsed["properties"].(map[string]any)
+		data := props["data"].(map[string]any)
+		items := data["items"].(map[string]any)
+		innerProps := items["properties"].(map[string]any)
+
+		model, ok := innerProps["model"].(map[string]any)
+		require.True(t, ok, "nested model should be an object, not a boolean")
+		assert.Len(t, model, 0, "nested model should be an empty object")
+
+		// refId should be unchanged
+		refID := innerProps["refId"].(map[string]any)
+		assert.Equal(t, "string", refID["type"])
+	})
+
+	t.Run("preserves non-boolean schema values", func(t *testing.T) {
+		input := `{
+			"type": "object",
+			"properties": {
+				"name": {"type": "string", "description": "A name"},
+				"count": {"type": "integer"},
+				"tags": {"type": "array", "items": {"type": "string"}}
+			},
+			"required": ["name"]
+		}`
+		result, err := sanitizeBooleanSchemas([]byte(input))
+		require.NoError(t, err)
+
+		var parsed map[string]any
+		err = json.Unmarshal(result, &parsed)
+		require.NoError(t, err)
+
+		props := parsed["properties"].(map[string]any)
+		name := props["name"].(map[string]any)
+		assert.Equal(t, "string", name["type"])
+		assert.Equal(t, "A name", name["description"])
+
+		count := props["count"].(map[string]any)
+		assert.Equal(t, "integer", count["type"])
+	})
+
+	t.Run("handles allOf/anyOf/oneOf with boolean schemas", func(t *testing.T) {
+		input := `{"allOf":[true,{"type":"string"}],"anyOf":[false,{"type":"integer"}]}`
+		result, err := sanitizeBooleanSchemas([]byte(input))
+		require.NoError(t, err)
+
+		var parsed map[string]any
+		err = json.Unmarshal(result, &parsed)
+		require.NoError(t, err)
+
+		allOf := parsed["allOf"].([]any)
+		allOfFirst, ok := allOf[0].(map[string]any)
+		require.True(t, ok, "allOf[0] should be an object")
+		assert.Len(t, allOfFirst, 0)
+
+		anyOf := parsed["anyOf"].([]any)
+		anyOfFirst, ok := anyOf[0].(map[string]any)
+		require.True(t, ok, "anyOf[0] should be an object")
+		_, hasNot := anyOfFirst["not"]
+		assert.True(t, hasNot)
+	})
+
+	t.Run("does not modify non-schema boolean values", func(t *testing.T) {
+		// "uniqueItems": true is a non-schema boolean that should be preserved
+		input := `{"type":"array","items":{"type":"string"},"uniqueItems":true}`
+		result, err := sanitizeBooleanSchemas([]byte(input))
+		require.NoError(t, err)
+
+		var parsed map[string]any
+		err = json.Unmarshal(result, &parsed)
+		require.NoError(t, err)
+
+		// uniqueItems is not in the schema-valued keys list, so it should remain a boolean
+		uniqueItems, ok := parsed["uniqueItems"].(bool)
+		require.True(t, ok, "uniqueItems should still be a boolean")
+		assert.True(t, uniqueItems)
+	})
+
+	t.Run("passthrough for schema without booleans", func(t *testing.T) {
+		input := `{"type":"object","properties":{"x":{"type":"string"}}}`
+		result, err := sanitizeBooleanSchemas([]byte(input))
+		require.NoError(t, err)
+
+		var parsed map[string]any
+		err = json.Unmarshal(result, &parsed)
+		require.NoError(t, err)
+
+		props := parsed["properties"].(map[string]any)
+		x := props["x"].(map[string]any)
+		assert.Equal(t, "string", x["type"])
+	})
+
+	t.Run("invalid JSON returns error", func(t *testing.T) {
+		_, err := sanitizeBooleanSchemas([]byte(`{invalid`))
+		assert.Error(t, err)
+	})
+}
+
+// interfaceFieldParams tests that tools with interface{} fields produce
+// sanitized schemas without bare boolean values.
+type interfaceFieldParams struct {
+	Name  string `json:"name" jsonschema:"required,description=A name"`
+	Model any    `json:"model" jsonschema:"description=An arbitrary model"`
+}
+
+func interfaceFieldHandler(ctx context.Context, params interfaceFieldParams) (string, error) {
+	return params.Name, nil
+}
+
+func TestConvertToolSanitizesInterfaceFields(t *testing.T) {
+	tool, _, err := ConvertTool("interface_tool", "Tool with interface field", interfaceFieldHandler)
+	require.NoError(t, err)
+
+	// The RawInputSchema should not contain bare true/false for the model field
+	var schema map[string]any
+	err = json.Unmarshal(tool.RawInputSchema, &schema)
+	require.NoError(t, err)
+
+	props := schema["properties"].(map[string]any)
+	model := props["model"]
+	// model should be an object (empty schema {}), not a boolean
+	modelObj, ok := model.(map[string]any)
+	require.True(t, ok, "model property should be an object schema, got %T", model)
+	t.Logf("model schema: %v", modelObj)
+}
