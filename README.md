@@ -10,6 +10,27 @@ A [Model Context Protocol][mcp] (MCP) server for Grafana.
 
 This provides access to your Grafana instance and the surrounding ecosystem.
 
+## Quick Start
+
+Requires [uv](https://docs.astral.sh/uv/getting-started/installation/). Add the following to your MCP client configuration (e.g. Claude Desktop, Cursor):
+
+```json
+{
+  "mcpServers": {
+    "grafana": {
+      "command": "uvx",
+      "args": ["mcp-grafana"],
+      "env": {
+        "GRAFANA_URL": "http://localhost:3000",
+        "GRAFANA_SERVICE_ACCOUNT_TOKEN": "<your service account token>"
+      }
+    }
+  }
+}
+```
+
+For Grafana Cloud, replace `GRAFANA_URL` with your instance URL (e.g. `https://myinstance.grafana.net`). See [Usage](#usage) for more installation options including Docker, binary, and Helm.
+
 ## Requirements
 
 - **Grafana version 9.0 or later** is required for full functionality. Some features, particularly datasource-related operations, may not work correctly with earlier versions due to missing API endpoints.
