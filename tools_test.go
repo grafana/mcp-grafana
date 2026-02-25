@@ -7,7 +7,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/stretchr/testify/assert"
@@ -30,6 +33,7 @@ func testToolHandler(ctx context.Context, params testToolParams) (*mcp.CallToolR
 type emptyToolParams struct{}
 
 func emptyToolHandler(ctx context.Context, params emptyToolParams) (*mcp.CallToolResult, error) {
+
 	return mcp.NewToolResultText("empty"), nil
 }
 
@@ -605,4 +609,59 @@ func TestEmptyStructJSONSchema(t *testing.T) {
 	propertiesMap, ok := properties.(map[string]any)
 	assert.True(t, ok, "properties should be a map")
 	assert.Len(t, propertiesMap, 0, "properties should be an empty map")
+}
+
+func TestDiscoverConcurrency(t *testing.T) {
+
+	//concurrency test for DiscoverAndRegisterToolsSession
+	t.Run("concurrent initialization with sync.Once is safe", func(t *testing.T) {
+		state := newSessionState()
+
+		var initCounter int32
+		var wg sync.WaitGroup
+
+		// Launch 100 goroutines that all try to initialize at once
+		const numGoroutines = 100
+		wg.Add(numGoroutines)
+
+		for i := 0; i < numGoroutines; i++ {
+			go func() {
+				defer wg.Done()
+				state.initDiscoveryOnce.Do(func() {
+					// Simulate initialization work
+					atomic.AddInt32(&initCounter, 1)
+					time.Sleep(10 * time.Millisecond) // Simulate some work
+				})
+			}()
+		}
+
+		wg.Wait()
+
+		// Verify initialization happened exactly once
+		assert.Equal(t, int32(1), atomic.LoadInt32(&initCounter),
+			"Initialization should run exactly once despite 100 concurrent calls")
+	})
+}
+
+func TestInitOnceDiscovery(t *testing.T) {
+	t.Run("verify single execution for initDiscoveryOnce when called multiple times sequentially", func(t *testing.T) {
+		state := newSessionState()
+
+		var initCounter int32
+
+		// Launch 100 trails one by one
+		const noOfTrails = 100
+
+		for range noOfTrails {
+			state.initDiscoveryOnce.Do(func() {
+				// Simulate initialization work
+				atomic.AddInt32(&initCounter, 1)
+			})
+			time.Sleep(10 * time.Millisecond) // delay for sequence
+		}
+
+		// Verify initialization happened exactly once
+		assert.Equal(t, int32(1), atomic.LoadInt32(&initCounter),
+			"Initialization should run exactly once despite 100 sequential calls")
+	})
 }
