@@ -606,3 +606,123 @@ func TestEmptyStructJSONSchema(t *testing.T) {
 	assert.True(t, ok, "properties should be a map")
 	assert.Len(t, propertiesMap, 0, "properties should be an empty map")
 }
+
+func TestValidateNoBooleanSchemas(t *testing.T) {
+	t.Run("rejects bare true in properties", func(t *testing.T) {
+		input := `{"type":"object","properties":{"model":true,"name":{"type":"string"}}}`
+		err := validateNoBooleanSchemas("test_tool", []byte(input))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "bare boolean schema")
+		assert.Contains(t, err.Error(), "test_tool")
+		assert.Contains(t, err.Error(), "properties.model")
+	})
+
+	t.Run("rejects bare false in properties", func(t *testing.T) {
+		input := `{"type":"object","properties":{"blocked":false}}`
+		err := validateNoBooleanSchemas("test_tool", []byte(input))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "bare boolean schema")
+	})
+
+	t.Run("rejects bare true in additionalProperties", func(t *testing.T) {
+		input := `{"type":"object","properties":{},"additionalProperties":true}`
+		err := validateNoBooleanSchemas("test_tool", []byte(input))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "additionalProperties")
+	})
+
+	t.Run("rejects bare true in items", func(t *testing.T) {
+		input := `{"type":"array","items":true}`
+		err := validateNoBooleanSchemas("test_tool", []byte(input))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "items")
+	})
+
+	t.Run("rejects nested bare booleans", func(t *testing.T) {
+		// Simulates the alert rule schema: properties -> data -> items -> properties -> model: true
+		input := `{
+			"type": "object",
+			"properties": {
+				"data": {
+					"type": "array",
+					"items": {
+						"type": "object",
+						"properties": {
+							"model": true,
+							"refId": {"type": "string"}
+						}
+					}
+				}
+			}
+		}`
+		err := validateNoBooleanSchemas("test_tool", []byte(input))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "model")
+	})
+
+	t.Run("rejects bare booleans in allOf/anyOf/oneOf", func(t *testing.T) {
+		input := `{"allOf":[true,{"type":"string"}]}`
+		err := validateNoBooleanSchemas("test_tool", []byte(input))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "allOf")
+	})
+
+	t.Run("accepts valid schemas without bare booleans", func(t *testing.T) {
+		input := `{
+			"type": "object",
+			"properties": {
+				"name": {"type": "string", "description": "A name"},
+				"count": {"type": "integer"},
+				"tags": {"type": "array", "items": {"type": "string"}}
+			},
+			"required": ["name"]
+		}`
+		err := validateNoBooleanSchemas("test_tool", []byte(input))
+		assert.NoError(t, err)
+	})
+
+	t.Run("does not flag non-schema boolean values", func(t *testing.T) {
+		// uniqueItems: true is a non-schema boolean — should be allowed
+		input := `{"type":"array","items":{"type":"string"},"uniqueItems":true}`
+		err := validateNoBooleanSchemas("test_tool", []byte(input))
+		assert.NoError(t, err)
+	})
+
+	t.Run("error message points to Mapper as the fix", func(t *testing.T) {
+		input := `{"type":"object","properties":{"data":true}}`
+		err := validateNoBooleanSchemas("my_tool", []byte(input))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "my_tool")
+		assert.Contains(t, err.Error(), "Mapper")
+		assert.Contains(t, err.Error(), "interface{}")
+	})
+}
+
+// interfaceFieldParams tests that tools with interface{} fields produce
+// valid schemas (the Mapper converts them to empty object schemas).
+type interfaceFieldParams struct {
+	Name  string `json:"name" jsonschema:"required,description=A name"`
+	Model any    `json:"model" jsonschema:"description=An arbitrary model"`
+}
+
+func interfaceFieldHandler(ctx context.Context, params interfaceFieldParams) (string, error) {
+	return params.Name, nil
+}
+
+func TestConvertToolHandlesInterfaceFields(t *testing.T) {
+	// The Mapper in the reflector should convert interface{}/any fields to
+	// empty object schemas {}, so ConvertTool should succeed (not error).
+	tool, _, err := ConvertTool("interface_tool", "Tool with interface field", interfaceFieldHandler)
+	require.NoError(t, err)
+
+	// Verify the schema contains an object for the model field, not bare true
+	var schema map[string]any
+	err = json.Unmarshal(tool.RawInputSchema, &schema)
+	require.NoError(t, err)
+
+	props := schema["properties"].(map[string]any)
+	model := props["model"]
+	modelObj, ok := model.(map[string]any)
+	require.True(t, ok, "model property should be an object schema, got %T", model)
+	t.Logf("model schema: %v", modelObj)
+}
