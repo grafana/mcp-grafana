@@ -3,7 +3,9 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"slices"
 	"sort"
@@ -15,6 +17,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
+	"github.com/grafana/grafana-openapi-client-go/client/dashboards"
 	"github.com/grafana/grafana-openapi-client-go/models"
 	mcpgrafana "github.com/grafana/mcp-grafana"
 )
@@ -23,13 +26,138 @@ type GetDashboardByUIDParams struct {
 	UID string `json:"uid" jsonschema:"required,description=The UID of the dashboard"`
 }
 
+// getDashboardByUID retrieves a dashboard using capability detection.
+// It tries the legacy API first, and if it receives a 406 error (indicating
+// the legacy API is disabled), it automatically falls back to the kubernetes-style API.
 func getDashboardByUID(ctx context.Context, args GetDashboardByUIDParams) (*models.DashboardFullWithMeta, error) {
+	instance := mcpgrafana.GrafanaInstanceFromContext(ctx)
+
+	// If no GrafanaInstance available, fall back to legacy-only behavior
+	if instance == nil {
+		return getDashboardByUIDLegacy(ctx, args)
+	}
+
+	// Check if we already know to use kubernetes API
+	if instance.ShouldUseKubernetesAPI(mcpgrafana.APIGroupDashboard) {
+		return getDashboardByUIDKubernetes(ctx, instance, args)
+	}
+
+	// Try legacy API first (most compatible)
+	dashboard, err := getDashboardByUIDLegacy(ctx, args)
+	if err == nil {
+		return dashboard, nil
+	}
+
+	// Check if this is a 406 error indicating we need to use kubernetes API
+	var notAcceptable *dashboards.GetDashboardByUIDNotAcceptable
+	if errors.As(err, &notAcceptable) {
+		slog.Debug("Received 406 from legacy dashboard API, switching to kubernetes API",
+			"uid", args.UID,
+			"error", err.Error())
+
+		// Parse the error to get the suggested API version and namespace
+		errMsg := err.Error()
+		apiGroup, version, namespace, _, ok := mcpgrafana.ParseKubernetesAPIPath(errMsg)
+		if !ok {
+			// Couldn't parse version from error, try to discover it
+			version, err = instance.GetPreferredVersion(ctx, mcpgrafana.APIGroupDashboard)
+			if err != nil {
+				return nil, fmt.Errorf("get dashboard by uid %s: legacy API returned 406 but couldn't determine kubernetes API version: %w", args.UID, err)
+			}
+			apiGroup = mcpgrafana.APIGroupDashboard
+			namespace = "default"
+		}
+
+		// Mark that we should use kubernetes API for dashboards from now on
+		instance.SetAPICapability(apiGroup, mcpgrafana.APICapabilityKubernetes)
+
+		// Update the preferred version so subsequent cached-capability calls
+		// use the version from the 406 (e.g. v2beta1) instead of the /apis
+		// discovery preferred version (e.g. v1beta1).
+		instance.SetPreferredVersion(apiGroup, version)
+
+		slog.Debug("Using kubernetes dashboard API",
+			"apiGroup", apiGroup,
+			"version", version,
+			"namespace", namespace)
+
+		// Use the version and namespace from 406 error directly
+		return getDashboardByUIDKubernetesWithVersion(ctx, instance, args, version, namespace)
+	}
+
+	// Some other error, return it
+	return nil, err
+}
+
+// getDashboardByUIDLegacy retrieves a dashboard using the legacy /api/dashboards/uid endpoint.
+func getDashboardByUIDLegacy(ctx context.Context, args GetDashboardByUIDParams) (*models.DashboardFullWithMeta, error) {
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
+	if c == nil {
+		return nil, fmt.Errorf("no Grafana client available in context")
+	}
 	dashboard, err := c.Dashboards.GetDashboardByUID(args.UID)
 	if err != nil {
 		return nil, fmt.Errorf("get dashboard by uid %s: %w", args.UID, err)
 	}
 	return dashboard.Payload, nil
+}
+
+// getDashboardByUIDKubernetes retrieves a dashboard using the kubernetes-style API.
+// It discovers the preferred API version automatically.
+func getDashboardByUIDKubernetes(ctx context.Context, instance *mcpgrafana.GrafanaInstance, args GetDashboardByUIDParams) (*models.DashboardFullWithMeta, error) {
+	// Get the API version to use
+	version, err := instance.GetPreferredVersion(ctx, mcpgrafana.APIGroupDashboard)
+	if err != nil {
+		return nil, fmt.Errorf("get dashboard by uid %s: couldn't determine kubernetes API version: %w", args.UID, err)
+	}
+
+	return getDashboardByUIDKubernetesWithVersion(ctx, instance, args, version, "")
+}
+
+// getDashboardByUIDKubernetesWithVersion retrieves a dashboard using the kubernetes-style API
+// with a specific version. If namespace is empty, it defaults to "default".
+func getDashboardByUIDKubernetesWithVersion(ctx context.Context, instance *mcpgrafana.GrafanaInstance, args GetDashboardByUIDParams, version, namespace string) (*models.DashboardFullWithMeta, error) {
+	// Fetch using kubernetes API
+	k8sDashboard, err := instance.GetDashboardKubernetes(ctx, args.UID, version, namespace)
+	if err != nil {
+		return nil, fmt.Errorf("get dashboard by uid %s: %w", args.UID, err)
+	}
+
+	// Convert kubernetes response to legacy format for compatibility
+	return convertKubernetesDashboardToLegacy(k8sDashboard)
+}
+
+// convertKubernetesDashboardToLegacy converts a kubernetes-style dashboard response
+// to the legacy DashboardFullWithMeta format for compatibility with existing code.
+func convertKubernetesDashboardToLegacy(k8sDashboard *mcpgrafana.KubernetesDashboard) (*models.DashboardFullWithMeta, error) {
+	// The spec contains the actual dashboard JSON
+	dashboardJSON := k8sDashboard.Spec
+
+	// Add UID to the dashboard spec if not present
+	if dashboardJSON != nil {
+		if _, hasUID := dashboardJSON["uid"]; !hasUID {
+			dashboardJSON["uid"] = k8sDashboard.Metadata.Name
+		}
+	}
+
+	// Extract folder UID from annotations
+	var folderUID string
+	if k8sDashboard.Metadata.Annotations != nil {
+		folderUID = k8sDashboard.Metadata.Annotations["grafana.app/folder"]
+	}
+
+	// Build the meta object
+	meta := &models.DashboardMeta{
+		FolderUID: folderUID,
+		Slug:      k8sDashboard.Metadata.Name,
+		// Note: Some meta fields aren't available in k8s response
+		// but the most important ones for our tools are covered
+	}
+
+	return &models.DashboardFullWithMeta{
+		Dashboard: dashboardJSON,
+		Meta:      meta,
+	}, nil
 }
 
 // PatchOperation represents a single patch operation
