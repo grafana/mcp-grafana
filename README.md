@@ -472,6 +472,12 @@ You can add arbitrary HTTP headers to all Grafana API requests using the `GRAFAN
 
 2. You have several options to install `mcp-grafana`:
 
+   - **uvx (recommended)**: If you have [uv](https://docs.astral.sh/uv/getting-started/installation/) installed, no extra setup is needed — `uvx` will automatically download and run the server:
+
+     ```bash
+     uvx mcp-grafana
+     ```
+
    - **Docker image**: Use the pre-built Docker image from Docker Hub.
 
      **Important**: The Docker image's entrypoint is configured to run the MCP server in SSE mode by default, but most users will want to use STDIO mode for direct integration with AI assistants like Claude Desktop:
@@ -533,6 +539,23 @@ You can add arbitrary HTTP headers to all Grafana API requests using the `GRAFAN
 
 
 3. Add the server configuration to your client configuration file. For example, for Claude Desktop:
+
+   **If using uvx:**
+
+   ```json
+   {
+     "mcpServers": {
+       "grafana": {
+         "command": "uvx",
+         "args": ["mcp-grafana"],
+         "env": {
+           "GRAFANA_URL": "http://localhost:3000",
+           "GRAFANA_SERVICE_ACCOUNT_TOKEN": "<your service account token>"
+         }
+       }
+     }
+   }
+   ```
 
    **If using the binary:**
 
