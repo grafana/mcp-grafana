@@ -121,6 +121,39 @@ func TestDiscoverAPIs_Integration(t *testing.T) {
 	}
 }
 
+func TestCapabilityDetection_LegacyGrafanaUsesLegacyPath(t *testing.T) {
+	// This test verifies that when connected to a legacy Grafana instance
+	// (the docker-compose one used in CI), the capability detection correctly
+	// determines that kubernetes APIs are either unavailable or that legacy
+	// APIs should be used (no 406 received).
+	ResetGlobalCapabilityCache()
+
+	config := getTestConfig()
+
+	ctx := WithGrafanaConfig(context.Background(), config)
+	httpClient := NewHTTPClient(ctx, config)
+
+	instance := NewGrafanaInstance(config, nil, httpClient)
+
+	// Discover capabilities from the real Grafana
+	err := instance.DiscoverCapabilities(ctx)
+	require.NoError(t, err)
+
+	// In a legacy Grafana, ShouldUseKubernetesAPI should return false for all API groups
+	// because no 406 has been received to trigger the switch.
+	assert.False(t, instance.ShouldUseKubernetesAPI(APIGroupDashboard),
+		"legacy Grafana should not use kubernetes API for dashboards (no 406 received)")
+	assert.False(t, instance.ShouldUseKubernetesAPI(APIGroupFolder),
+		"legacy Grafana should not use kubernetes API for folders (no 406 received)")
+
+	// The capability for all API groups should be unknown (default),
+	// meaning legacy is used as the first-choice path.
+	assert.Equal(t, APICapabilityUnknown, instance.GetAPICapability(APIGroupDashboard),
+		"dashboard capability should be unknown (legacy is default)")
+	assert.Equal(t, APICapabilityUnknown, instance.GetAPICapability(APIGroupFolder),
+		"folder capability should be unknown (legacy is default)")
+}
+
 func TestGetDashboardKubernetes_Integration(t *testing.T) {
 	// Reset global cache before test
 	ResetGlobalCapabilityCache()
