@@ -167,6 +167,35 @@ func (c *CapabilityCache) SetAPICapability(grafanaURL, apiGroup string, capabili
 	}
 }
 
+// SetPreferredVersion overrides the preferred version for a specific API group.
+// This is used when a 406 error indicates a version that differs from what
+// /apis discovery reported (e.g. the 406 says v2beta1 but /apis prefers v1beta1).
+func (c *CapabilityCache) SetPreferredVersion(grafanaURL, apiGroup, version string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	entry, ok := c.entries[grafanaURL]
+	if !ok {
+		return
+	}
+
+	if entry.apiGroups == nil {
+		entry.apiGroups = make(map[string]*APIGroupInfo)
+	}
+
+	info, ok := entry.apiGroups[apiGroup]
+	if !ok {
+		entry.apiGroups[apiGroup] = &APIGroupInfo{
+			Available:        true,
+			PreferredVersion: version,
+			AllVersions:      []string{version},
+		}
+		return
+	}
+
+	info.PreferredVersion = version
+}
+
 // GetAPICapability returns the capability for a specific API group.
 // Returns APICapabilityUnknown if not set.
 func (c *CapabilityCache) GetAPICapability(grafanaURL, apiGroup string) APICapability {

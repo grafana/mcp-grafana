@@ -148,6 +148,17 @@ func (g *GrafanaInstance) SetAPICapability(apiGroup string, capability APICapabi
 		"capability", capability)
 }
 
+// SetPreferredVersion overrides the preferred version for an API group.
+// This is called when a 406 error includes a specific version (e.g. v2beta1)
+// that differs from the version reported by /apis discovery.
+func (g *GrafanaInstance) SetPreferredVersion(apiGroup, version string) {
+	g.cache.SetPreferredVersion(g.baseURL, apiGroup, version)
+	slog.Debug("Updated preferred API version from 406",
+		"url", g.baseURL,
+		"apiGroup", apiGroup,
+		"version", version)
+}
+
 // ShouldUseKubernetesAPI determines whether to use kubernetes-style APIs for the given API group.
 // Returns true if we've detected that legacy APIs are not available (406 received).
 func (g *GrafanaInstance) ShouldUseKubernetesAPI(apiGroup string) bool {
