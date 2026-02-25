@@ -10,6 +10,27 @@ A [Model Context Protocol][mcp] (MCP) server for Grafana.
 
 This provides access to your Grafana instance and the surrounding ecosystem.
 
+## Quick Start
+
+Requires [uv](https://docs.astral.sh/uv/getting-started/installation/). Add the following to your MCP client configuration (e.g. Claude Desktop, Cursor):
+
+```json
+{
+  "mcpServers": {
+    "grafana": {
+      "command": "uvx",
+      "args": ["mcp-grafana"],
+      "env": {
+        "GRAFANA_URL": "http://localhost:3000",
+        "GRAFANA_SERVICE_ACCOUNT_TOKEN": "<your service account token>"
+      }
+    }
+  }
+}
+```
+
+For Grafana Cloud, replace `GRAFANA_URL` with your instance URL (e.g. `https://myinstance.grafana.net`). See [Usage](#usage) for more installation options including Docker, binary, and Helm.
+
 ## Requirements
 
 - **Grafana version 9.0 or later** is required for full functionality. Some features, particularly datasource-related operations, may not work correctly with earlier versions due to missing API endpoints.
@@ -451,6 +472,12 @@ You can add arbitrary HTTP headers to all Grafana API requests using the `GRAFAN
 
 2. You have several options to install `mcp-grafana`:
 
+   - **uvx (recommended)**: If you have [uv](https://docs.astral.sh/uv/getting-started/installation/) installed, no extra setup is needed — `uvx` will automatically download and run the server:
+
+     ```bash
+     uvx mcp-grafana
+     ```
+
    - **Docker image**: Use the pre-built Docker image from Docker Hub.
 
      **Important**: The Docker image's entrypoint is configured to run the MCP server in SSE mode by default, but most users will want to use STDIO mode for direct integration with AI assistants like Claude Desktop:
@@ -512,6 +539,23 @@ You can add arbitrary HTTP headers to all Grafana API requests using the `GRAFAN
 
 
 3. Add the server configuration to your client configuration file. For example, for Claude Desktop:
+
+   **If using uvx:**
+
+   ```json
+   {
+     "mcpServers": {
+       "grafana": {
+         "command": "uvx",
+         "args": ["mcp-grafana"],
+         "env": {
+           "GRAFANA_URL": "http://localhost:3000",
+           "GRAFANA_SERVICE_ACCOUNT_TOKEN": "<your service account token>"
+         }
+       }
+     }
+   }
+   ```
 
    **If using the binary:**
 
