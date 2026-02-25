@@ -338,6 +338,49 @@ var (
 	}
 )
 
+func (tm *ToolManager) discoverTools(ctx context.Context) (*[]server.ServerTool, error) {
+	grafana := GrafanaClientFromContext(ctx)
+	discoveredSources, err := grafana.Datasources.GetDataSources()
+
+	if err != nil {
+		return nil, err
+	}
+
+	tools := make([]server.ServerTool, 0)
+	categoryIncluded := map[string]bool{}
+
+	for _, datasource := range discoveredSources.Payload {
+		if !tm.enabledTools[datasource.Type] {
+			slog.Info("skipping tool broadcast for excluded category", "datasource", datasource.Type)
+			continue
+		}
+
+		if categoryIncluded[datasource.Type] {
+			//skip tools for included sources
+			continue
+		}
+		categoryIncluded[datasource.Type] = true
+
+		toolsFc, found := tm.categoryTools[datasource.Type]
+		if !found {
+			slog.Info("skipping tool broadcast for unidentified datasource", "type", datasource.Type)
+			continue
+		}
+
+		dsTools := toolsFc()
+		updatedTools := make([]server.ServerTool, len(tools), len(tools)+len(dsTools))
+		copy(updatedTools, tools)
+		for _, tool := range dsTools {
+			updatedTools = append(updatedTools, server.ServerTool{
+				Tool:    tool.Tool,
+				Handler: tool.Handler,
+			})
+		}
+		tools = updatedTools
+	}
+	return &tools, nil
+}
+
 // discovers connected datasources and register tools per sessions
 func (tm *ToolManager) DiscoverAndRegisterToolsSession(ctx context.Context, session server.ClientSession) {
 	//detection of connected tools disabled
@@ -358,109 +401,34 @@ func (tm *ToolManager) DiscoverAndRegisterToolsSession(ctx context.Context, sess
 	}
 	//discover datasources and register tools once per session
 	state.initDiscoveryOnce.Do(func() {
-		grafana := GrafanaClientFromContext(ctx)
-		discoveredSources, err := grafana.Datasources.GetDataSources()
+		tools, err := tm.discoverTools(ctx)
 
 		if err != nil {
 			slog.Error("failed to discover MCP datasources", "error", err)
 			return
 		}
 
-		slog.Info("Discovered datasources for session", "sessionId", sessionID, "count", len(discoveredSources.Payload))
-
-		tools := make([]server.ServerTool, 0)
-		categoryIncluded := map[string]bool{}
-
-		for _, datasource := range discoveredSources.Payload {
-			if !tm.enabledTools[datasource.Type] {
-				slog.Info("skipping tool broadcast for excluded category", "datasource", datasource.Type)
-				continue
-			}
-
-			if categoryIncluded[datasource.Type] {
-				//skip tools for included sources
-				continue
-			}
-			categoryIncluded[datasource.Type] = true
-
-			toolsFc, found := tm.categoryTools[datasource.Type]
-			if !found {
-				slog.Info("skipping tool broadcast for unimplemented datasource", "type", datasource.Type)
-				continue
-			}
-
-			dsTools := toolsFc()
-			updatedTools := make([]server.ServerTool, len(tools), len(tools)+len(dsTools))
-			copy(updatedTools, tools)
-			for _, tool := range dsTools {
-				updatedTools = append(updatedTools, server.ServerTool{
-					Tool:    tool.Tool,
-					Handler: tool.Handler,
-				})
-			}
-			tools = updatedTools
+		if len(*tools) > 0 {
+			tm.server.AddSessionTools(sessionID, *tools...)
 		}
-
-		if len(tools) > 0 {
-			tm.server.AddSessionTools(sessionID, tools...)
-		}
-		slog.Info("Registered Tools of discovered datasources for session ", "sessionId", sessionID, "count", len(tools))
+		slog.Info("Registered Tools of discovered datasources for session ", "sessionId", sessionID, "count", len(*tools))
 	})
 }
 
-// discovers connected datasources and register tools (called by stdio transport) 
+// discovers connected datasources and register tools (called by stdio transport)
 func (tm *ToolManager) InitDiscoverAndRegister(ctx context.Context) error {
 	//if this is called once globally
 	if !tm.connectedOnly {
 		return nil
 	}
 
-	grafana := GrafanaClientFromContext(ctx)
-	discoveredSources, err := grafana.Datasources.GetDataSources()
-
+	tools, err := tm.discoverTools(ctx)
 	if err != nil {
 		slog.Error("failed to discover MCP datasources", "error", err)
 		return err
 	}
 
-	tools := make([]server.ServerTool, 0)
-
-	slog.Info("Discovered datasources", "count", len(discoveredSources.Payload))
-	categoryIncluded := map[string]bool{}
-
-	for _, datasource := range discoveredSources.Payload {
-
-		if !tm.enabledTools[datasource.Type] {
-			slog.Info("skipping tool broadcast for excluded category", "datasource", datasource.Type)
-			continue
-		}
-
-		if categoryIncluded[datasource.Type] {
-			//skip tools for included sources
-			continue
-		}
-		categoryIncluded[datasource.Type] = true
-
-		toolsFc, found := tm.categoryTools[datasource.Type]
-		if !found {
-			slog.Info("skipping tool broadcast for unimplemented datasource", "type", datasource.Type)
-			continue
-		}
-
-		dsTools := toolsFc()
-		updatedTools := make([]server.ServerTool, len(tools), len(tools)+len(dsTools))
-		copy(updatedTools, tools)
-		for _, tool := range dsTools {
-			updatedTools = append(updatedTools, server.ServerTool{
-				Tool:    tool.Tool,
-				Handler: tool.Handler,
-			})
-		}
-
-		tools = updatedTools
-	}
-
-	tm.server.AddTools(tools...)
-	slog.Info("Registered Tools of discovered datasources", "count", len(tools))
+	tm.server.AddTools(*tools...)
+	slog.Info("Registered Tools of discovered datasources", "count", len(*tools))
 	return nil
 }

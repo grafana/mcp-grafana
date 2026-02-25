@@ -635,6 +635,8 @@ func TestDiscoverConcurrency(t *testing.T) {
 			}()
 		}
 
+		wg.Wait()
+
 		// Verify initialization happened exactly once
 		assert.Equal(t, int32(1), atomic.LoadInt32(&initCounter),
 			"Initialization should run exactly once despite 100 concurrent calls")
