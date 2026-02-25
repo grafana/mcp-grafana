@@ -71,6 +71,11 @@ func getDashboardByUID(ctx context.Context, args GetDashboardByUIDParams) (*mode
 		// Mark that we should use kubernetes API for dashboards from now on
 		instance.SetAPICapability(apiGroup, mcpgrafana.APICapabilityKubernetes)
 
+		// Update the preferred version so subsequent cached-capability calls
+		// use the version from the 406 (e.g. v2beta1) instead of the /apis
+		// discovery preferred version (e.g. v1beta1).
+		instance.SetPreferredVersion(apiGroup, version)
+
 		slog.Debug("Using kubernetes dashboard API",
 			"apiGroup", apiGroup,
 			"version", version,
