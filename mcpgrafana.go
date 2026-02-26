@@ -640,8 +640,11 @@ func NewHTTPClient(ctx context.Context, config GrafanaConfig) *http.Client {
 		}
 	}
 
-	// Wrap with user agent, org ID, and otel
+	// Wrap with extra headers, user agent, org ID, and otel
 	var rt http.RoundTripper = transport
+	if len(config.ExtraHeaders) > 0 {
+		rt = NewExtraHeadersRoundTripper(rt, config.ExtraHeaders)
+	}
 	rt = wrapWithUserAgent(rt)
 	rt = NewOrgIDRoundTripper(rt, config.OrgID)
 	rt = otelhttp.NewTransport(rt)

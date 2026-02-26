@@ -247,7 +247,10 @@ func (g *GrafanaInstance) doKubernetesRequest(ctx context.Context, method, path 
 	}
 
 	// Add authentication headers
-	if g.config.APIKey != "" {
+	if g.config.AccessToken != "" && g.config.IDToken != "" {
+		req.Header.Set("X-Access-Token", g.config.AccessToken)
+		req.Header.Set("X-Grafana-Id", g.config.IDToken)
+	} else if g.config.APIKey != "" {
 		req.Header.Set("Authorization", "Bearer "+g.config.APIKey)
 	} else if g.config.BasicAuth != nil {
 		password, _ := g.config.BasicAuth.Password()
