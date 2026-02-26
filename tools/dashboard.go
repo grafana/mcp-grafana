@@ -258,7 +258,9 @@ var UpdateDashboard = mcpgrafana.MustTool(
 )
 
 type DashboardPanelQueriesParams struct {
-	UID string `json:"uid" jsonschema:"required,description=The UID of the dashboard"`
+	UID       string            `json:"uid" jsonschema:"required,description=The UID of the dashboard"`
+	PanelID   *int              `json:"panelId,omitempty" jsonschema:"description=Optional panel ID to filter to a specific panel"`
+	Variables map[string]string `json:"variables,omitempty" jsonschema:"description=Optional variable substitutions (e.g.\\, {\"job\": \"api-server\"})"`
 }
 
 type datasourceInfo struct {
@@ -267,65 +269,47 @@ type datasourceInfo struct {
 }
 
 type panelQuery struct {
-	Title      string         `json:"title"`
-	Query      string         `json:"query"`
-	Datasource datasourceInfo `json:"datasource"`
+	Title             string         `json:"title"`
+	Query             string         `json:"query"`
+	ProcessedQuery    string         `json:"processedQuery,omitempty"`
+	Datasource        datasourceInfo `json:"datasource"`
+	RefID             string         `json:"refId,omitempty"`
+	RequiredVariables []VariableInfo `json:"requiredVariables,omitempty"`
 }
 
 func GetDashboardPanelQueriesTool(ctx context.Context, args DashboardPanelQueriesParams) ([]panelQuery, error) {
-	result := make([]panelQuery, 0)
-
-	dashboard, err := getDashboardByUID(ctx, GetDashboardByUIDParams(args))
+	dashboard, err := getDashboardByUID(ctx, GetDashboardByUIDParams{UID: args.UID})
 	if err != nil {
-		return result, fmt.Errorf("get dashboard by uid: %w", err)
+		return nil, fmt.Errorf("get dashboard by uid: %w", err)
 	}
 
 	db, ok := dashboard.Dashboard.(map[string]any)
 	if !ok {
-		return result, fmt.Errorf("dashboard is not a JSON object")
-	}
-	panels, ok := db["panels"].([]any)
-	if !ok {
-		return result, fmt.Errorf("panels is not a JSON array")
+		return nil, fmt.Errorf("dashboard is not a JSON object")
 	}
 
-	for _, p := range panels {
-		panel, ok := p.(map[string]any)
-		if !ok {
-			continue
-		}
-		title, _ := panel["title"].(string)
+	// Determine if variable processing is needed
+	var dashboardVars map[string]VariableInfo
+	if args.Variables != nil {
+		dashboardVars = extractDashboardVariables(db)
+	}
 
-		var datasourceInfo datasourceInfo
-		if dsField, dsExists := panel["datasource"]; dsExists && dsField != nil {
-			if dsMap, ok := dsField.(map[string]any); ok {
-				if uid, ok := dsMap["uid"].(string); ok {
-					datasourceInfo.UID = uid
-				}
-				if dsType, ok := dsMap["type"].(string); ok {
-					datasourceInfo.Type = dsType
-				}
-			}
+	// Determine which panels to process
+	var panels []map[string]interface{}
+	if args.PanelID != nil {
+		panel, err := findPanelByID(db, *args.PanelID)
+		if err != nil {
+			return nil, err
 		}
+		panels = []map[string]interface{}{panel}
+	} else {
+		panels = collectAllPanels(db)
+	}
 
-		targets, ok := panel["targets"].([]any)
-		if !ok {
-			continue
-		}
-		for _, t := range targets {
-			target, ok := t.(map[string]any)
-			if !ok {
-				continue
-			}
-			expr, _ := target["expr"].(string)
-			if expr != "" {
-				result = append(result, panelQuery{
-					Title:      title,
-					Query:      expr,
-					Datasource: datasourceInfo,
-				})
-			}
-		}
+	var result []panelQuery
+	for _, panel := range panels {
+		queries := extractPanelQueries(panel, dashboardVars, args.Variables)
+		result = append(result, queries...)
 	}
 
 	return result, nil
@@ -333,7 +317,7 @@ func GetDashboardPanelQueriesTool(ctx context.Context, args DashboardPanelQuerie
 
 var GetDashboardPanelQueries = mcpgrafana.MustTool(
 	"get_dashboard_panel_queries",
-	"Use this tool to retrieve panel queries and information from a Grafana dashboard. When asked about panel queries, queries in a dashboard, or what queries a dashboard contains, call this tool with the dashboard UID. The datasource is an object with fields `uid` (which may be a concrete UID or a template variable like \"$datasource\") and `type`. If the datasource UID is a template variable, it won't be usable directly for queries. Returns an array of objects, each representing a panel, with fields: title, query, and datasource (an object with uid and type).",
+	"Retrieve panel queries from a Grafana dashboard. Supports all datasource types (Prometheus, Loki, CloudWatch, SQL, etc.) and row-nested panels. Optionally filter to a specific panel by ID with `panelId`. Optionally provide `variables` for template variable substitution, which populates `processedQuery` and `requiredVariables` fields. Returns an array of objects with fields: title, query (raw expression), datasource (object with uid and type), and optionally processedQuery, refId, and requiredVariables.",
 	GetDashboardPanelQueriesTool,
 	mcp.WithTitleAnnotation("Get dashboard panel queries"),
 	mcp.WithIdempotentHintAnnotation(true),
