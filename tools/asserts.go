@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -101,6 +102,137 @@ func (c *Client) fetchAssertsData(ctx context.Context, urlPath string, method st
 	return string(body), nil
 }
 
+func (c *Client) fetchAssertsDataGet(ctx context.Context, urlPath string, params url.Values) (string, error) {
+	u, err := url.Parse(c.baseURL + urlPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse URL: %w", err)
+	}
+	if params != nil {
+		u.RawQuery = params.Encode()
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to execute request: %w", err)
+	}
+	defer func() {
+		_ = resp.Body.Close() //nolint:errcheck
+	}()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	return string(body), nil
+}
+
+// slimEntity is a compact entity representation for LLM context efficiency.
+type slimEntity struct {
+	Type            string            `json:"type"`
+	Name            string            `json:"name"`
+	ID              json.Number       `json:"id,omitempty"`
+	Env             string            `json:"env,omitempty"`
+	Site            string            `json:"site,omitempty"`
+	Namespace       string            `json:"namespace,omitempty"`
+	Active          bool              `json:"active"`
+	AssertionCount  int               `json:"assertionCount,omitempty"`
+	ConnectedTypes  map[string]int    `json:"connectedTypes,omitempty"`
+	Properties      map[string]any    `json:"properties,omitempty"`
+}
+
+// graphEntityResponse matches the shape of GET /v1/entity/info.
+// Scope fields are unwrapped (flat) at the top level.
+type graphEntityResponse struct {
+	ID                   int64                  `json:"id"`
+	Type                 string                 `json:"type"`
+	Name                 string                 `json:"name"`
+	Active               bool                   `json:"active"`
+	Env                  string                 `json:"env,omitempty"`
+	Site                 string                 `json:"site,omitempty"`
+	Namespace            string                 `json:"namespace,omitempty"`
+	ConnectedEntityTypes map[string]int         `json:"connectedEntityTypes,omitempty"`
+	Properties           map[string]any         `json:"properties,omitempty"`
+	Assertion            json.RawMessage        `json:"assertion,omitempty"`
+	ConnectedAssertion   json.RawMessage        `json:"connectedAssertion,omitempty"`
+	AssertionCount       int                    `json:"assertionCount"`
+}
+
+func (g *graphEntityResponse) toSlim() slimEntity {
+	return slimEntity{
+		Type:           g.Type,
+		Name:           g.Name,
+		ID:             json.Number(fmt.Sprintf("%d", g.ID)),
+		Env:            g.Env,
+		Site:           g.Site,
+		Namespace:      g.Namespace,
+		Active:         g.Active,
+		AssertionCount: g.AssertionCount,
+		ConnectedTypes: g.ConnectedEntityTypes,
+	}
+}
+
+// entitySummaryResponse matches the shape of GET /public/v1/entities items.
+type entitySummaryResponse struct {
+	ID         string            `json:"id"`
+	Type       string            `json:"type"`
+	Name       string            `json:"name"`
+	Active     bool              `json:"active"`
+	Scope      map[string]string `json:"scope,omitempty"`
+	Properties map[string]any    `json:"properties,omitempty"`
+}
+
+func (e *entitySummaryResponse) toSlim() slimEntity {
+	s := slimEntity{
+		Type:   e.Type,
+		Name:   e.Name,
+		ID:     json.Number(e.ID),
+		Active: e.Active,
+	}
+	if e.Scope != nil {
+		s.Env = e.Scope["env"]
+		s.Site = e.Scope["site"]
+		s.Namespace = e.Scope["namespace"]
+	}
+	return s
+}
+
+// resolveEntityInfo fetches entity details and returns the parsed response.
+func (c *Client) resolveEntityInfo(ctx context.Context, entityType, entityName, env, site, namespace string) (*graphEntityResponse, error) {
+	params := url.Values{}
+	params.Set("entity_type", entityType)
+	params.Set("entity_name", entityName)
+	if env != "" {
+		params.Set("entityEnv", env)
+	}
+	if site != "" {
+		params.Set("entitySite", site)
+	}
+	if namespace != "" {
+		params.Set("entityNs", namespace)
+	}
+
+	data, err := c.fetchAssertsDataGet(ctx, "/v1/entity/info", params)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve entity info: %w", err)
+	}
+
+	var entity graphEntityResponse
+	if err := json.Unmarshal([]byte(data), &entity); err != nil {
+		return nil, fmt.Errorf("failed to parse entity info: %w", err)
+	}
+	return &entity, nil
+}
+
 func getAssertions(ctx context.Context, args GetAssertionsParams) (string, error) {
 	client, err := newAssertsClient(ctx)
 	if err != nil {
@@ -149,6 +281,19 @@ var GetAssertions = mcpgrafana.MustTool(
 	mcp.WithReadOnlyHintAnnotation(true),
 )
 
-func AddAssertsTools(mcp *server.MCPServer) {
-	GetAssertions.Register(mcp)
+func AddAssertsTools(s *server.MCPServer) {
+	GetAssertions.Register(s)
+	GetGraphSchema.Register(s)
+	SearchEntities.Register(s)
+	GetEntity.Register(s)
+	GetConnectedEntities.Register(s)
+	ListEntities.Register(s)
+	CountEntities.Register(s)
+	GetAssertionSummary.Register(s)
+	SearchRcaPatterns.Register(s)
+	GetEntityMetrics.Register(s)
+	GetEntityLogs.Register(s)
+	GetEntityTraces.Register(s)
+	FindEntitiesSemantic.Register(s)
+	AddAssertsStreamingTools(s)
 }
