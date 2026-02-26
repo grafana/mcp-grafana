@@ -249,61 +249,6 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 	}, nil
 }
 
-// findPanelByID searches for a panel by ID in the dashboard, including nested panels in rows
-func findPanelByID(db map[string]interface{}, panelID int) (map[string]interface{}, error) {
-	panels := safeArray(db, "panels")
-	if panels == nil {
-		return nil, fmt.Errorf("dashboard has no panels")
-	}
-
-	for _, p := range panels {
-		panel, ok := p.(map[string]interface{})
-		if !ok {
-			continue
-		}
-
-		id := safeInt(panel, "id")
-		if id == panelID {
-			return panel, nil
-		}
-
-		// Check for nested panels in row type
-		if safeString(panel, "type") == "row" {
-			nestedPanels := safeArray(panel, "panels")
-			for _, np := range nestedPanels {
-				nestedPanel, ok := np.(map[string]interface{})
-				if !ok {
-					continue
-				}
-				if safeInt(nestedPanel, "id") == panelID {
-					return nestedPanel, nil
-				}
-			}
-		}
-	}
-
-	return nil, fmt.Errorf("panel with ID %d not found", panelID)
-}
-
-// extractQueryExpression extracts query string from a target
-func extractQueryExpression(target map[string]interface{}) string {
-	queryFields := []string{
-		"expr",       // Prometheus
-		"query",      // Loki, ClickHouse, generic
-		"expression", // CloudWatch
-		"rawSql",     // SQL databases
-		"rawQuery",   // Some datasources
-	}
-
-	for _, field := range queryFields {
-		if val := safeString(target, field); val != "" {
-			return val
-		}
-	}
-
-	return ""
-}
-
 // substituteTemplateVariables replaces template variables in a query string
 // Supports ${varname}, [[varname]], and $varname (with word boundary) patterns
 func substituteTemplateVariables(query string, variables map[string]string) string {
