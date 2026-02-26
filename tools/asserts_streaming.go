@@ -24,15 +24,16 @@ type assertsSubscriptionManager struct {
 }
 
 type assertionSubscription struct {
-	ID         string    `json:"id"`
-	SessionID  string    `json:"sessionId"`
-	EntityType string    `json:"entityType"`
-	EntityName string    `json:"entityName"`
-	Env        string    `json:"env,omitempty"`
-	Site       string    `json:"site,omitempty"`
-	Namespace  string    `json:"namespace,omitempty"`
-	CreatedAt  time.Time `json:"createdAt"`
-	LastCheck  time.Time `json:"lastCheck"`
+	ID            string                    `json:"id"`
+	SessionID     string                    `json:"sessionId"`
+	EntityType    string                    `json:"entityType"`
+	EntityName    string                    `json:"entityName"`
+	Env           string                    `json:"env,omitempty"`
+	Site          string                    `json:"site,omitempty"`
+	Namespace     string                    `json:"namespace,omitempty"`
+	CreatedAt     time.Time                 `json:"createdAt"`
+	LastCheck     time.Time                 `json:"lastCheck"`
+	GrafanaConfig mcpgrafana.GrafanaConfig  `json:"-"`
 }
 
 var (
@@ -89,8 +90,12 @@ func (m *assertsSubscriptionManager) pollLoop() {
 	defer ticker.Stop()
 
 	for {
+		m.mu.Lock()
+		stopCh := m.stopCh
+		m.mu.Unlock()
+
 		select {
-		case <-m.stopCh:
+		case <-stopCh:
 			return
 		case <-ticker.C:
 			m.checkAssertions()
@@ -110,8 +115,7 @@ func (m *assertsSubscriptionManager) checkAssertions() {
 		now := time.Now()
 		ctx := context.Background()
 
-		cfg := mcpgrafana.GrafanaConfig{}
-		ctx = mcpgrafana.WithGrafanaConfig(ctx, cfg)
+		ctx = mcpgrafana.WithGrafanaConfig(ctx, sub.GrafanaConfig)
 
 		client, err := newAssertsClient(ctx)
 		if err != nil {
@@ -188,18 +192,21 @@ func subscribeEntityAssertions(ctx context.Context, args SubscribeEntityAssertio
 		sessionID = sid
 	}
 
-	subID := fmt.Sprintf("%s/%s/%s/%s", args.EntityType, args.EntityName, args.Env, args.Namespace)
+	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
+
+	subID := fmt.Sprintf("%s/%s/%s/%s/%s", args.EntityType, args.EntityName, args.Env, args.Site, args.Namespace)
 
 	sub := &assertionSubscription{
-		ID:         subID,
-		SessionID:  sessionID,
-		EntityType: args.EntityType,
-		EntityName: args.EntityName,
-		Env:        args.Env,
-		Site:       args.Site,
-		Namespace:  args.Namespace,
-		CreatedAt:  time.Now(),
-		LastCheck:  time.Now(),
+		ID:            subID,
+		SessionID:     sessionID,
+		EntityType:    args.EntityType,
+		EntityName:    args.EntityName,
+		Env:           args.Env,
+		Site:          args.Site,
+		Namespace:     args.Namespace,
+		CreatedAt:     time.Now(),
+		LastCheck:     time.Now(),
+		GrafanaConfig: cfg,
 	}
 
 	globalSubManager.subscribe(sub)

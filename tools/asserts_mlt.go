@@ -94,7 +94,7 @@ var entityLabelMapping = map[string]struct {
 var defaultMetrics = map[string][]string{
 	"Service": {
 		`rate(http_server_requests_seconds_count%s[5m])`,
-		`sum(rate(http_server_requests_seconds_count{status=~"5.."}%s[5m]))`,
+		`sum(rate(http_server_requests_seconds_count{status=~"5.."%s}[5m]))`,
 		`histogram_quantile(0.99, sum(rate(http_server_requests_seconds_bucket%s[5m])) by (le))`,
 	},
 	"Node": {
