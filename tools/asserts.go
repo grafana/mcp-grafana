@@ -282,24 +282,18 @@ var GetAssertions = mcpgrafana.MustTool(
 )
 
 func AddAssertsTools(s *server.MCPServer) {
-	// Existing
 	GetAssertions.Register(s)
-	// KG navigation (Phase 1)
 	GetGraphSchema.Register(s)
 	SearchEntities.Register(s)
 	GetEntity.Register(s)
 	GetConnectedEntities.Register(s)
 	ListEntities.Register(s)
 	CountEntities.Register(s)
-	// Assertions (Phase 1)
 	GetAssertionSummary.Register(s)
 	SearchRcaPatterns.Register(s)
-	// MLT gateway (Phase 2)
 	GetEntityMetrics.Register(s)
 	GetEntityLogs.Register(s)
 	GetEntityTraces.Register(s)
-	// Semantic search (Phase 3)
 	FindEntitiesSemantic.Register(s)
-	// Streaming (Phase 5)
 	AddAssertsStreamingTools(s)
 }
