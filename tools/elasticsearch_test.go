@@ -159,7 +159,7 @@ func TestElasticsearchTools(t *testing.T) {
 			Limit:         10,
 		})
 		require.Error(t, err, "Should return error for wrong datasource type")
-		assert.Contains(t, err.Error(), "not elasticsearch", "Error should mention wrong type")
+		assert.Contains(t, err.Error(), "expected elasticsearch or opensearch compatible type", "Error should mention wrong type")
 	})
 
 	t.Run("query elasticsearch respects limit", func(t *testing.T) {
