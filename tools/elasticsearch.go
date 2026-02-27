@@ -24,7 +24,24 @@ const (
 
 	// ElasticsearchDatasourceType is the type identifier for Elasticsearch datasources
 	ElasticsearchDatasourceType = "elasticsearch"
+
+	// OpenSearchDatasourceType is the type identifier for OpenSearch datasources
+	OpenSearchDatasourceType = "opensearch"
+
+	// GrafanaOpenSearchDatasourceType is the Grafana plugin type for OpenSearch datasources
+	GrafanaOpenSearchDatasourceType = "grafana-opensearch-datasource"
 )
+
+// isElasticsearchCompatibleType returns true if the datasource type is
+// Elasticsearch or OpenSearch compatible (they share the same _msearch API).
+func isElasticsearchCompatibleType(dsType string) bool {
+	switch dsType {
+	case ElasticsearchDatasourceType, OpenSearchDatasourceType, GrafanaOpenSearchDatasourceType:
+		return true
+	default:
+		return false
+	}
+}
 
 // ElasticsearchClient handles queries to an Elasticsearch datasource via Grafana proxy
 type ElasticsearchClient struct {
@@ -66,8 +83,8 @@ func newElasticsearchClient(ctx context.Context, uid string) (*ElasticsearchClie
 	if err != nil {
 		return nil, err
 	}
-	if ds.Type != ElasticsearchDatasourceType {
-		return nil, fmt.Errorf("datasource %s is of type %s, not %s", uid, ds.Type, ElasticsearchDatasourceType)
+	if !isElasticsearchCompatibleType(ds.Type) {
+		return nil, fmt.Errorf("datasource %s is of type %s, expected elasticsearch or opensearch compatible type", uid, ds.Type)
 	}
 
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
