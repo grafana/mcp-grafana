@@ -13,7 +13,7 @@ jobs:
       id-token: write
       pull-requests: write
     steps:
-      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
 
@@ -27,7 +27,7 @@ jobs:
 
       - name: Download baseline
         id: download-baseline
-        uses: dawidd6/action-download-artifact@9e12ab9856b6504e4969c60998d8fc619347a175
+        uses: dawidd6/action-download-artifact@9dde25e7413c6123b6062d4c9fc954d6ff005cfc
         with:
           branch: main
           name: token-baseline
@@ -45,7 +45,7 @@ jobs:
             ANTHROPIC_API_KEY=anthropic:api-key
 
       - name: Analyze tokens
-        uses: sd2k/mcp-tokens-action@54ab17c1487473ed158665a4d72307631ca13e42
+        uses: sd2k/mcp-tokens-action@014db1a0f233c4559d5b056983855b0b71c99fa2
 
         with:
           command: ./dist/mcp-grafana
@@ -54,4 +54,5 @@ jobs:
           threshold-percent: "5"
           comment: true
           comment-on-pass: true
+          max-tool-changes: "10"
           github-token: ${{ secrets.GITHUB_TOKEN }}

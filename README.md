@@ -10,6 +10,27 @@ A [Model Context Protocol][mcp] (MCP) server for Grafana.
 
 This provides access to your Grafana instance and the surrounding ecosystem.
 
+## Quick Start
+
+Requires [uv](https://docs.astral.sh/uv/getting-started/installation/). Add the following to your MCP client configuration (e.g. Claude Desktop, Cursor):
+
+```json
+{
+  "mcpServers": {
+    "grafana": {
+      "command": "uvx",
+      "args": ["mcp-grafana"],
+      "env": {
+        "GRAFANA_URL": "http://localhost:3000",
+        "GRAFANA_SERVICE_ACCOUNT_TOKEN": "<your service account token>"
+      }
+    }
+  }
+}
+```
+
+For Grafana Cloud, replace `GRAFANA_URL` with your instance URL (e.g. `https://myinstance.grafana.net`). See [Usage](#usage) for more installation options including Docker, binary, and Helm.
+
 ## Requirements
 
 - **Grafana version 9.0 or later** is required for full functionality. Some features, particularly datasource-related operations, may not work correctly with earlier versions due to missing API endpoints.
@@ -28,6 +49,12 @@ _The following features are currently available in MCP server. This list is for 
 - **Patch dashboard:** Apply specific changes to a dashboard without requiring the full JSON, significantly reducing context window usage for targeted modifications
 - **Get panel queries and datasource info:** Get the title, query string, and datasource information (including UID and type, if available) from every panel in a dashboard
 
+### Run Panel Query
+
+> **Note:** Run panel query tools are **disabled by default**. To enable them, add `runpanelquery` to your `--enabled-tools` flag.
+
+- **Run panel query:** Execute a dashboard panel's query with custom time ranges and variable overrides.
+
 #### Context Window Management
 
 The dashboard tools now include several strategies to manage context window usage effectively ([issue #101](https://github.com/grafana/mcp-grafana/issues/101)):
@@ -39,18 +66,55 @@ The dashboard tools now include several strategies to manage context window usag
 ### Datasources
 
 - **List and fetch datasource information:** View all configured datasources and retrieve detailed information about each.
-  - _Supported datasource types: Prometheus, Loki._
+  - _Supported datasource types: Prometheus, Loki, ClickHouse, CloudWatch, Elasticsearch._
+
+### Query Examples
+
+> **Note:** Query examples tools are **disabled by default**. To enable them, add `examples` to your `--enabled-tools` flag.
+
+- **Get query examples:** Retrieve example queries for different datasource types to learn query syntax.
 
 ### Prometheus Querying
 
 - **Query Prometheus:** Execute PromQL queries (supports both instant and range metric queries) against Prometheus datasources.
 - **Query Prometheus metadata:** Retrieve metric metadata, metric names, label names, and label values from Prometheus datasources.
+- **Query histogram percentiles:** Calculate histogram percentile values (p50, p90, p95, p99) using histogram_quantile.
 
 ### Loki Querying
 
 - **Query Loki logs and metrics:** Run both log queries and metric queries using LogQL against Loki datasources.
 - **Query Loki metadata:** Retrieve label names, label values, and stream statistics from Loki datasources.
 - **Log masking:** Automatically mask sensitive data (email, credit cards, API keys, etc.) in log results. See [Loki Log Masking](#loki-log-masking) for configuration.
+- **Query Loki patterns:** Retrieve log patterns detected by Loki to identify common log structures and anomalies.
+
+### ClickHouse Querying
+
+> **Note:** ClickHouse tools are **disabled by default**. To enable them, add `clickhouse` to your `--enabled-tools` flag.
+
+- **List ClickHouse tables:** List all tables in a ClickHouse database with row counts and sizes.
+- **Describe table schema:** Get column names, types, and metadata for a ClickHouse table.
+- **Query ClickHouse:** Execute SQL queries with Grafana macro and variable substitution support.
+
+### CloudWatch Querying
+
+> **Note:** CloudWatch tools are **disabled by default**. To enable them, add `cloudwatch` to your `--enabled-tools` flag.
+
+- **List CloudWatch namespaces:** Discover available AWS CloudWatch namespaces.
+- **List CloudWatch metrics:** List metrics available in a specific namespace.
+- **List CloudWatch dimensions:** Get dimensions for filtering metric queries.
+- **Query CloudWatch:** Execute CloudWatch metric queries with time range support.
+
+### Log Search
+
+> **Note:** Search logs tools are **disabled by default**. To enable them, add `searchlogs` to your `--enabled-tools` flag.
+
+- **Search logs:** High-level log search across ClickHouse (OTel format) and Loki datasources.
+
+### Elasticsearch Querying
+
+> **Note:** Elasticsearch tools are **disabled by default**. To enable them, add `elasticsearch` to your `--enabled-tools` flag.
+
+- **Query Elasticsearch:** Execute search queries against Elasticsearch datasources using either Lucene query syntax or Elasticsearch Query DSL. Supports filtering by time range and retrieving logs, metrics, or any indexed data. Returns documents with their index, ID, source fields, and optional relevance score.
 
 ### Incidents
 
@@ -196,16 +260,18 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `get_dashboard_by_uid`            | Dashboard   | Get a dashboard by uid                                              | `dashboards:read`                       | `dashboards:uid:abc123`                             |
 | `update_dashboard`                | Dashboard   | Update or create a new dashboard                                    | `dashboards:create`, `dashboards:write` | `dashboards:*`, `folders:*` or `folders:uid:xyz789` |
 | `get_dashboard_panel_queries`     | Dashboard   | Get panel title, queries, datasource UID and type from a dashboard  | `dashboards:read`                       | `dashboards:uid:abc123`                             |
+| `run_panel_query`                 | RunPanelQuery* | Execute one or more dashboard panel queries                       | `dashboards:read`, `datasources:query`  | `dashboards:uid:*`, `datasources:uid:*`             |
 | `get_dashboard_property`          | Dashboard   | Extract specific parts of a dashboard using JSONPath expressions    | `dashboards:read`                       | `dashboards:uid:abc123`                             |
 | `get_dashboard_summary`           | Dashboard   | Get a compact summary of a dashboard without full JSON              | `dashboards:read`                       | `dashboards:uid:abc123`                             |
 | `list_datasources`                | Datasources | List datasources                                                    | `datasources:read`                      | `datasources:*`                                     |
-| `get_datasource_by_uid`           | Datasources | Get a datasource by uid                                             | `datasources:read`                      | `datasources:uid:prometheus-uid`                    |
-| `get_datasource_by_name`          | Datasources | Get a datasource by name                                            | `datasources:read`                      | `datasources:*` or `datasources:uid:loki-uid`       |
+| `get_datasource`                  | Datasources | Get a datasource by UID or name                                     | `datasources:read`                      | `datasources:uid:prometheus-uid`                    |
+| `get_query_examples`              | Examples*   | Get example queries for a datasource type                           | `datasources:read`                      | `datasources:*`                                     |
 | `query_prometheus`                | Prometheus  | Execute a query against a Prometheus datasource                     | `datasources:query`                     | `datasources:uid:prometheus-uid`                    |
 | `list_prometheus_metric_metadata` | Prometheus  | List metric metadata                                                | `datasources:query`                     | `datasources:uid:prometheus-uid`                    |
 | `list_prometheus_metric_names`    | Prometheus  | List available metric names                                         | `datasources:query`                     | `datasources:uid:prometheus-uid`                    |
 | `list_prometheus_label_names`     | Prometheus  | List label names matching a selector                                | `datasources:query`                     | `datasources:uid:prometheus-uid`                    |
 | `list_prometheus_label_values`    | Prometheus  | List values for a specific label                                    | `datasources:query`                     | `datasources:uid:prometheus-uid`                    |
+| `query_prometheus_histogram`      | Prometheus  | Calculate histogram percentile values                               | `datasources:query`                     | `datasources:uid:prometheus-uid`                    |
 | `list_incidents`                  | Incident    | List incidents in Grafana Incident                                  | Viewer role                             | N/A                                                 |
 | `create_incident`                 | Incident    | Create an incident in Grafana Incident                              | Editor role                             | N/A                                                 |
 | `add_activity_to_incident`        | Incident    | Add an activity item to an incident in Grafana Incident             | Editor role                             | N/A                                                 |
@@ -214,6 +280,16 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `list_loki_label_names`           | Loki        | List all available label names in logs                              | `datasources:query`                     | `datasources:uid:loki-uid`                          |
 | `list_loki_label_values`          | Loki        | List values for a specific log label                                | `datasources:query`                     | `datasources:uid:loki-uid`                          |
 | `query_loki_stats`                | Loki        | Get statistics about log streams                                    | `datasources:query`                     | `datasources:uid:loki-uid`                          |
+| `query_loki_patterns`             | Loki        | Query detected log patterns to identify common structures           | `datasources:query`                     | `datasources:uid:loki-uid`                          |
+| `list_clickhouse_tables`          | ClickHouse* | List tables in a ClickHouse database                                | `datasources:query`                     | `datasources:uid:*`                                 |
+| `describe_clickhouse_table`       | ClickHouse* | Get table schema with column types                                  | `datasources:query`                     | `datasources:uid:*`                                 |
+| `query_clickhouse`                | ClickHouse* | Execute SQL queries with macro substitution                         | `datasources:query`                     | `datasources:uid:*`                                 |
+| `list_cloudwatch_namespaces`      | CloudWatch* | List available AWS CloudWatch namespaces                            | `datasources:query`                     | `datasources:uid:*`                                 |
+| `list_cloudwatch_metrics`         | CloudWatch* | List metrics in a namespace                                         | `datasources:query`                     | `datasources:uid:*`                                 |
+| `list_cloudwatch_dimensions`      | CloudWatch* | List dimensions for a metric                                        | `datasources:query`                     | `datasources:uid:*`                                 |
+| `query_cloudwatch`                | CloudWatch* | Execute CloudWatch metric queries                                   | `datasources:query`                     | `datasources:uid:*`                                 |
+| `search_logs`                     | SearchLogs* | Search logs across ClickHouse and Loki                              | `datasources:query`                     | `datasources:uid:*`                                 |
+| `query_elasticsearch`             | Elasticsearch* | Query Elasticsearch using Lucene syntax or Query DSL              | `datasources:query`                     | `datasources:uid:elasticsearch-uid`                 |
 | `list_alert_rules`                | Alerting    | List alert rules                                                    | `alert.rules:read`                      | `folders:*` or `folders:uid:alerts-folder`          |
 | `get_alert_rule_by_uid`           | Alerting    | Get alert rule by UID                                               | `alert.rules:read`                      | `folders:uid:alerts-folder`                         |
 | `create_alert_rule`               | Alerting    | Create a new alert rule                                             | `alert.rules:write`                     | `folders:*` or `folders:uid:alerts-folder`          |
@@ -239,12 +315,12 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `get_assertions`                  | Asserts     | Get assertion summary for a given entity                            | Plugin-specific permissions             | Plugin-specific scopes                              |
 | `generate_deeplink`               | Navigation  | Generate accurate deeplink URLs for Grafana resources               | None (read-only URL generation)         | N/A                                                 |
 | `get_annotations`                 | Annotations | Fetch annotations with filters                                      | `annotations:read`                      | `annotations:*` or `annotations:id:123`             |
-| `create_annotation`               | Annotations | Create a new annotation on a dashboard or panel                     | `annotations:write`                     | `annotations:*`                                     |
-| `create_graphite_annotation`      | Annotations | Create an annotation using Graphite format                          | `annotations:write`                     | `annotations:*`                                     |
-| `update_annotation`               | Annotations | Replace all fields of an annotation (full update)                   | `annotations:write`                     | `annotations:*`                                     |
-| `patch_annotation`                | Annotations | Update only specific fields of an annotation (partial update)       | `annotations:write`                     | `annotations:*`                                     |
+| `create_annotation`               | Annotations | Create a new annotation (standard or Graphite format)               | `annotations:write`                     | `annotations:*`                                     |
+| `update_annotation`               | Annotations | Update specific fields of an annotation (partial update)            | `annotations:write`                     | `annotations:*`                                     |
 | `get_annotation_tags`             | Annotations | List annotation tags with optional filtering                        | `annotations:read`                      | `annotations:*`                                     |
 | `get_panel_image`                 | Rendering   | Render a dashboard panel or full dashboard as a PNG image           | `dashboards:read`                       | `dashboards:uid:abc123`                             |
+
+_* Disabled by default. Add category to `--enabled-tools` to enable._
 
 ## CLI Flags Reference
 
@@ -258,6 +334,11 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 
 **Debug and Logging:**
 - `--debug`: Enable debug mode for detailed HTTP request/response logging
+- `--log-level`: Log level (`debug`, `info`, `warn`, `error`) - default: `info`
+
+**Observability:**
+- `--metrics`: Enable Prometheus metrics endpoint at `/metrics`
+- `--metrics-address`: Separate address for metrics server (e.g., `:9090`). If empty, metrics are served on the main server
 
 **Tool Configuration:**
 - `--enabled-tools`: Comma-separated list of enabled categories - default: all categories except `admin`, to enable admin tools, add `admin` to the list (e.g., `"search,datasource,...,admin"`)
@@ -267,6 +348,7 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 - `--disable-prometheus`: Disable prometheus tools
 - `--disable-write`: Disable write tools (create/update operations)
 - `--disable-loki`: Disable loki tools
+- `--disable-elasticsearch`: Disable elasticsearch tools
 - `--disable-alerting`: Disable alerting tools
 - `--disable-dashboard`: Disable dashboard tools
 - `--disable-oncall`: Disable oncall tools
@@ -276,6 +358,11 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 - `--disable-pyroscope`: Disable pyroscope tools
 - `--disable-navigation`: Disable navigation tools
 - `--disable-rendering`: Disable rendering tools (panel/dashboard image export)
+- `--disable-cloudwatch`: Disable CloudWatch tools
+- `--disable-examples`: Disable query examples tools
+- `--disable-clickhouse`: Disable ClickHouse tools
+- `--disable-searchlogs`: Disable search_logs tool
+- `--disable-runpanelquery`: Disable run panel query tools
 
 **Loki Log Masking:**
 - `--loki-masking-enabled`: Enable Loki log masking (env: `LOKI_MASKING_ENABLED`) - default: `false`
@@ -309,9 +396,7 @@ When `--disable-write` is enabled, the following write operations are disabled:
 
 **Annotation Tools:**
 - `create_annotation`
-- `create_graphite_annotation`
 - `update_annotation`
-- `patch_annotation`
 
 **Sift Tools:**
 - `find_error_pattern_logs` (creates investigations)
@@ -388,7 +473,35 @@ When an organization ID is provided, the MCP server will set the `X-Grafana-Org-
 }
 ```
 
+### Custom HTTP Headers
+
+You can add arbitrary HTTP headers to all Grafana API requests using the `GRAFANA_EXTRA_HEADERS` environment variable. The value should be a JSON object mapping header names to values.
+
+**Example with custom headers:**
+
+```json
+{
+  "mcpServers": {
+    "grafana": {
+      "command": "mcp-grafana",
+      "args": [],
+      "env": {
+        "GRAFANA_URL": "http://localhost:3000",
+        "GRAFANA_SERVICE_ACCOUNT_TOKEN": "<your token>",
+        "GRAFANA_EXTRA_HEADERS": "{\"X-Custom-Header\": \"custom-value\", \"X-Tenant-ID\": \"tenant-123\"}"
+      }
+    }
+  }
+}
+```
+
 2. You have several options to install `mcp-grafana`:
+
+   - **uvx (recommended)**: If you have [uv](https://docs.astral.sh/uv/getting-started/installation/) installed, no extra setup is needed — `uvx` will automatically download and run the server:
+
+     ```bash
+     uvx mcp-grafana
+     ```
 
    - **Docker image**: Use the pre-built Docker image from Docker Hub.
 
@@ -451,6 +564,23 @@ When an organization ID is provided, the MCP server will set the `X-Grafana-Org-
 
 
 3. Add the server configuration to your client configuration file. For example, for Claude Desktop:
+
+   **If using uvx:**
+
+   ```json
+   {
+     "mcpServers": {
+       "grafana": {
+         "command": "uvx",
+         "args": ["mcp-grafana"],
+         "env": {
+           "GRAFANA_URL": "http://localhost:3000",
+           "GRAFANA_SERVICE_ACCOUNT_TOKEN": "<your service account token>"
+         }
+       }
+     }
+   }
+   ```
 
    **If using the binary:**
 
@@ -783,6 +913,62 @@ curl http://localhost:9090/healthz
 ```
 
 **Note:** The health check endpoint is only available when using SSE or streamable HTTP transports. It is not available when using the stdio transport (`-t stdio`), as stdio does not expose an HTTP server.
+
+### Observability
+
+The MCP server supports Prometheus metrics and OpenTelemetry distributed tracing, following the [OTel MCP semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/mcp/).
+
+#### Metrics
+
+When using the SSE or streamable HTTP transports, enable Prometheus metrics with the `--metrics` flag:
+
+```bash
+# Metrics served on the main server at /metrics
+./mcp-grafana -t streamable-http --metrics
+
+# Metrics served on a separate address
+./mcp-grafana -t streamable-http --metrics --metrics-address :9090
+```
+
+**Available Metrics:**
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `mcp_server_operation_duration_seconds` | Histogram | Duration of MCP operations (labels: `mcp_method_name`, `gen_ai_tool_name`, `error_type`, `network_transport`, `mcp_protocol_version`) |
+| `mcp_server_session_duration_seconds` | Histogram | Duration of MCP client sessions (labels: `network_transport`, `mcp_protocol_version`) |
+| `http_server_request_duration_seconds` | Histogram | Duration of HTTP server requests (from otelhttp) |
+
+**Note:** Metrics are only available when using SSE or streamable HTTP transports. They are not available with the stdio transport.
+
+#### Tracing
+
+Distributed tracing is configured via standard `OTEL_*` environment variables and works independently of the `--metrics` flag. When `OTEL_EXPORTER_OTLP_ENDPOINT` is set, the server exports traces via OTLP/gRPC:
+
+```bash
+# Send traces to a local Tempo instance
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317 \
+OTEL_EXPORTER_OTLP_INSECURE=true \
+./mcp-grafana -t streamable-http
+
+# Send traces to Grafana Cloud with authentication
+OTEL_EXPORTER_OTLP_ENDPOINT=https://tempo-us-central1.grafana.net:443 \
+OTEL_EXPORTER_OTLP_HEADERS="Authorization=Basic ..." \
+./mcp-grafana -t streamable-http
+```
+
+Tool call spans follow semconv naming (`tools/call <tool_name>`) and include attributes like `gen_ai.tool.name`, `mcp.method.name`, and `mcp.session.id`. The server also supports W3C trace context propagation from the `_meta` field of tool call requests.
+
+**Docker example with metrics and tracing:**
+
+```bash
+docker run --rm -p 8000:8000 \
+  -e GRAFANA_URL=http://localhost:3000 \
+  -e GRAFANA_SERVICE_ACCOUNT_TOKEN=<your token> \
+  -e OTEL_EXPORTER_OTLP_ENDPOINT=http://tempo:4317 \
+  -e OTEL_EXPORTER_OTLP_INSECURE=true \
+  grafana/mcp-grafana \
+  -t streamable-http --metrics
+```
 
 ## Troubleshooting
 

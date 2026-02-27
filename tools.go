@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"reflect"
 
 	"github.com/invopop/jsonschema"
@@ -13,6 +14,9 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/propagation"
+	semconv "go.opentelemetry.io/otel/semconv/v1.39.0"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // Tool represents a tool definition and its handler function for the MCP server.
@@ -22,6 +26,21 @@ import (
 type Tool struct {
 	Tool    mcp.Tool
 	Handler server.ToolHandlerFunc
+}
+
+// HardError wraps an error to indicate it should propagate as a JSON-RPC protocol
+// error rather than being converted to CallToolResult with IsError=true.
+// Use sparingly for non-recoverable failures (e.g., missing auth).
+type HardError struct {
+	Err error
+}
+
+func (e *HardError) Error() string {
+	return e.Err.Error()
+}
+
+func (e *HardError) Unwrap() error {
+	return e.Err
 }
 
 // Register adds the Tool to the given MCPServer.
@@ -82,16 +101,26 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 	}
 
 	handler := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		// Create OpenTelemetry span for tool execution (no-op when no exporter configured)
 		config := GrafanaConfigFromContext(ctx)
-		ctx, span := otel.Tracer("mcp-grafana").Start(ctx, fmt.Sprintf("mcp.tool.%s", name))
+
+		// Extract W3C trace context from request _meta if present
+		ctx = extractTraceContext(ctx, request)
+
+		// Create span following MCP semconv: "{method} {target}" with SpanKindServer
+		ctx, span := otel.Tracer("mcp-grafana").Start(ctx,
+			fmt.Sprintf("tools/call %s", name),
+			trace.WithSpanKind(trace.SpanKindServer),
+		)
 		defer span.End()
 
-		// Add tool metadata as span attributes
+		// Add semconv attributes
 		span.SetAttributes(
-			attribute.String("mcp.tool.name", name),
-			attribute.String("mcp.tool.description", description),
+			semconv.GenAIToolName(name),
+			attribute.String("mcp.method.name", "tools/call"),
 		)
+		if session := server.ClientSessionFromContext(ctx); session != nil {
+			span.SetAttributes(semconv.McpSessionID(session.SessionID()))
+		}
 
 		argBytes, err := json.Marshal(request.Params.Arguments)
 		if err != nil {
@@ -102,7 +131,7 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 
 		// Add arguments as span attribute only if adding args to trace attributes is enabled
 		if config.IncludeArgumentsInSpans {
-			span.SetAttributes(attribute.String("mcp.tool.arguments", string(argBytes)))
+			span.SetAttributes(attribute.String("gen_ai.tool.call.arguments", string(argBytes)))
 		}
 
 		unmarshaledArgs := reflect.New(argType).Interface()
@@ -155,7 +184,20 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 		if handlerErr != nil {
 			span.RecordError(handlerErr)
 			span.SetStatus(codes.Error, handlerErr.Error())
-			return nil, handlerErr
+			span.SetAttributes(semconv.ErrorType(handlerErr))
+			var hardErr *HardError
+			if errors.As(handlerErr, &hardErr) {
+				return nil, hardErr.Err
+			}
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{
+					mcp.TextContent{
+						Type: "text",
+						Text: handlerErr.Error(),
+					},
+				},
+				IsError: true,
+			}, nil
 		}
 
 		// Tool execution completed successfully
@@ -239,6 +281,32 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 		option(&t)
 	}
 	return t, handler, nil
+}
+
+// extractTraceContext checks the request's _meta for W3C trace context headers
+// (traceparent/tracestate) and returns a context with the extracted span context
+// so that the tool span becomes a child of the caller's trace.
+func extractTraceContext(ctx context.Context, request mcp.CallToolRequest) context.Context {
+	if request.Params.Meta == nil {
+		return ctx
+	}
+	fields := request.Params.Meta.AdditionalFields
+	if len(fields) == 0 {
+		return ctx
+	}
+	// Build a minimal carrier from _meta fields
+	carrier := make(http.Header)
+	if tp, ok := fields["traceparent"].(string); ok && tp != "" {
+		carrier.Set("traceparent", tp)
+	}
+	if ts, ok := fields["tracestate"].(string); ok && ts != "" {
+		carrier.Set("tracestate", ts)
+	}
+	if len(carrier) == 0 {
+		return ctx
+	}
+	prop := propagation.TraceContext{}
+	return prop.Extract(ctx, propagation.HeaderCarrier(carrier))
 }
 
 // Creates a full JSON schema from a user provided handler by introspecting the arguments

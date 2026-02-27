@@ -16,13 +16,14 @@ permissions:
   contents: read
 
 jobs:
-  docker:
+  prepare:
     runs-on: ubuntu-latest
-    permissions:
-      id-token: write
+    outputs:
+      is_tag: ${{ steps.check.outputs.is_tag }}
+      version: ${{ steps.tag.outputs.version }}
+      is_stable: ${{ steps.tag.outputs.is_stable }}
+      platforms: ${{ steps.platforms.outputs.platforms }}
     steps:
-      - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98
-
       - name: Check if tag push
         id: check
         run: |
@@ -45,17 +46,55 @@ jobs:
             echo "is_stable=false" >> $GITHUB_OUTPUT
           fi
 
+      - name: Determine platforms
+        id: platforms
+        run: |
+          # Only build multi-arch on pushes/tags/releases, not on PRs
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            echo "platforms=linux/amd64" >> $GITHUB_OUTPUT
+          else
+            echo "platforms=linux/amd64,linux/arm64" >> $GITHUB_OUTPUT
+          fi
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: prepare
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98
+
       - name: Build and Push to Docker Hub
-        uses: grafana/shared-workflows/actions/build-push-to-dockerhub@8c07a88248e6c5a067e77b39b114219173f8c4b0
+        uses: grafana/shared-workflows/actions/build-push-to-dockerhub@7f983a8135eb58eaec83c96d8b842b2092e110e3
         with:
           context: .
           file: ./Dockerfile
           repository: grafana/mcp-grafana
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ needs.prepare.outputs.platforms }}
           tags: |
-            ${{ steps.check.outputs.is_tag == 'true' && steps.tag.outputs.is_stable == 'true' && 'latest' || '' }}
-            ${{ steps.check.outputs.is_tag == 'true' && steps.tag.outputs.version || '' }}
-          push: ${{ steps.check.outputs.is_tag == 'true' }}
+            ${{ needs.prepare.outputs.is_tag == 'true' && needs.prepare.outputs.is_stable == 'true' && 'latest' || '' }}
+            ${{ needs.prepare.outputs.is_tag == 'true' && needs.prepare.outputs.version || '' }}
+          push: ${{ needs.prepare.outputs.is_tag == 'true' }}
+
+  docker-alpine:
+    runs-on: ubuntu-latest
+    needs: prepare
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98
+
+      - name: Build and Push Alpine to Docker Hub
+        uses: grafana/shared-workflows/actions/build-push-to-dockerhub@7f983a8135eb58eaec83c96d8b842b2092e110e3
+        with:
+          context: .
+          file: ./Dockerfile.alpine
+          repository: grafana/mcp-grafana
+          platforms: ${{ needs.prepare.outputs.platforms }}
+          tags: |
+            ${{ needs.prepare.outputs.is_tag == 'true' && needs.prepare.outputs.is_stable == 'true' && 'alpine' || '' }}
+            ${{ needs.prepare.outputs.is_tag == 'true' && format('{0}-alpine', needs.prepare.outputs.version) || '' }}
+          push: ${{ needs.prepare.outputs.is_tag == 'true' }}
 
   mcp-registry:
     runs-on: ubuntu-latest
@@ -66,7 +105,7 @@ jobs:
       id-token: write
     steps:
       - name: Checkout code
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           fetch-depth: 0
 

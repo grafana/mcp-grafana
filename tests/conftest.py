@@ -15,7 +15,9 @@ DEFAULT_GRAFANA_URL = "http://localhost:3000"
 DEFAULT_MCP_URL = "http://localhost:8000"
 DEFAULT_MCP_TRANSPORT = "sse"
 
-models = ["gpt-4o", "claude-3-5-sonnet-20240620"]
+# litellm requires provider prefix for Claude models
+# Claude Sonnet 4.5
+models = ["gpt-4o", "anthropic/claude-sonnet-4-5-20250929"]
 
 pytestmark = pytest.mark.anyio
 
@@ -96,9 +98,10 @@ def grafana_headers():
 @pytest.fixture
 async def mcp_client(mcp_transport, mcp_url, grafana_env, grafana_headers):
     if mcp_transport == "stdio":
+        enabled_tools = "search,datasource,incident,prometheus,loki,elasticsearch,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering,admin,clickhouse,cloudwatch"
         params = StdioServerParameters(
             command=os.environ.get("MCP_GRAFANA_PATH", "../dist/mcp-grafana"),
-            args=["--debug", "--log-level", "debug"],
+            args=["--debug", "--log-level", "debug", "--enabled-tools", enabled_tools],
             env=grafana_env,
         )
         async with stdio_client(params) as (read, write):

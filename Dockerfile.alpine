@@ -1,0 +1,47 @@
+# Build stage
+FROM --platform=$BUILDPLATFORM golang:1.24-alpine@sha256:8bee1901f1e530bfb4a7850aa7a479d17ae3a18beb6e09064ed54cfd245b7191 AS builder
+
+# Set the working directory
+WORKDIR /app
+
+# Copy go.mod and go.sum files
+COPY go.mod go.sum ./
+
+# Download dependencies
+RUN go mod download
+
+# Copy the source code
+COPY . .
+
+# Build the application using cross-compilation instead of QEMU emulation.
+# TARGETOS and TARGETARCH are automatically set by Docker BuildKit.
+ARG TARGETOS
+ARG TARGETARCH
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-s -w" -o mcp-grafana ./cmd/mcp-grafana
+
+# Final stage
+FROM alpine:3.23@sha256:25109184c71bdad752c8312a8623239686a9a2071e8825f20acb8f2198c3f659
+
+LABEL io.modelcontextprotocol.server.name="io.github.grafana/mcp-grafana"
+
+# Install ca-certificates for HTTPS requests and upgrade existing packages
+# to pick up security fixes newer than the base image snapshot
+RUN apk upgrade --no-cache && apk add --no-cache ca-certificates
+
+# Create a non-root user
+RUN adduser -D -u 1000 mcp-grafana
+
+# Set the working directory
+WORKDIR /app
+
+# Copy the binary from the builder stage
+COPY --from=builder --chown=1000:1000 /app/mcp-grafana /app/
+
+# Use the non-root user
+USER mcp-grafana
+
+# Expose the port the app runs on
+EXPOSE 8000
+
+# Run the application
+ENTRYPOINT ["/app/mcp-grafana", "--transport", "sse", "--address", "0.0.0.0:8000"]

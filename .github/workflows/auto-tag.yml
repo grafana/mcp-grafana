@@ -1,0 +1,55 @@
+name: Auto-tag release
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  tag:
+    # Only run when a release/* PR is merged (not just closed)
+    if: >-
+      github.event.pull_request.merged == true &&
+      startsWith(github.event.pull_request.head.ref, 'release/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: grafana/shared-workflows/actions/create-github-app-token@580590a644e82e79bb2598bdaba0be245a14dda0 # create-github-app-token/v0.2.2
+        with:
+          github_app: grafana-mcp-delivery-bot
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Create and push tag
+        env:
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+        run: |
+          # Extract version from branch name: release/v0.11.0 -> v0.11.0
+          VERSION="${GITHUB_HEAD_REF#release/}"
+
+          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Invalid version format: $VERSION"
+            exit 1
+          fi
+
+          # Check the tag doesn't already exist
+          if git rev-parse "$VERSION" >/dev/null 2>&1; then
+            echo "::error::Tag $VERSION already exists"
+            exit 1
+          fi
+
+          # Tag the merge commit (HEAD of main after the PR merge)
+          git tag "$VERSION" "$MERGE_SHA"
+          git push origin "$VERSION"
+
+          echo "### Tagged $VERSION" >> "$GITHUB_STEP_SUMMARY"
+          echo "Commit: \`$MERGE_SHA\`" >> "$GITHUB_STEP_SUMMARY"

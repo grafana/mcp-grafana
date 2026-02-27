@@ -18,6 +18,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/trace"
 )
 
 func TestExtractIncidentClientFromEnv(t *testing.T) {
@@ -392,14 +393,14 @@ func TestToolTracingInstrumentation(t *testing.T) {
 		require.Len(t, spans, 1)
 
 		span := spans[0]
-		assert.Equal(t, "mcp.tool.test_tool", span.Name())
+		assert.Equal(t, "tools/call test_tool", span.Name())
 		assert.Equal(t, codes.Ok, span.Status().Code)
 
-		// Check attributes
+		// Check semconv attributes
 		attributes := span.Attributes()
-		assertHasAttribute(t, attributes, "mcp.tool.name", "test_tool")
-		assertHasAttribute(t, attributes, "mcp.tool.description", "A test tool for tracing")
-		assertHasAttribute(t, attributes, "mcp.tool.arguments", `{"message":"world"}`)
+		assertHasAttribute(t, attributes, "gen_ai.tool.name", "test_tool")
+		assertHasAttribute(t, attributes, "mcp.method.name", "tools/call")
+		assertHasAttribute(t, attributes, "gen_ai.tool.call.arguments", `{"message":"world"}`)
 	})
 
 	t.Run("tool execution error records error on span", func(t *testing.T) {
@@ -441,15 +442,16 @@ func TestToolTracingInstrumentation(t *testing.T) {
 
 		// Execute the tool (should fail)
 		result, err := tool.Handler(ctx, request)
-		assert.Error(t, err)
-		assert.Nil(t, result)
+		assert.NoError(t, err)
+		require.NotNil(t, result)
+		assert.True(t, result.IsError)
 
 		// Verify span was created and marked as error
 		spans := spanRecorder.Ended()
 		require.Len(t, spans, 1)
 
 		span := spans[0]
-		assert.Equal(t, "mcp.tool.failing_tool", span.Name())
+		assert.Equal(t, "tools/call failing_tool", span.Name())
 		assert.Equal(t, codes.Error, span.Status().Code)
 		assert.Equal(t, assert.AnError.Error(), span.Status().Description)
 
@@ -509,7 +511,7 @@ func TestToolTracingInstrumentation(t *testing.T) {
 		require.Len(t, spans, 1)
 
 		span := spans[0]
-		assert.Equal(t, "mcp.tool.context_prop_tool", span.Name())
+		assert.Equal(t, "tools/call context_prop_tool", span.Name())
 		assert.Equal(t, codes.Ok, span.Status().Code)
 	})
 
@@ -559,17 +561,17 @@ func TestToolTracingInstrumentation(t *testing.T) {
 		require.Len(t, spans, 1)
 
 		span := spans[0]
-		assert.Equal(t, "mcp.tool.sensitive_tool", span.Name())
+		assert.Equal(t, "tools/call sensitive_tool", span.Name())
 		assert.Equal(t, codes.Ok, span.Status().Code)
 
 		// Check that arguments are NOT logged (PII safety)
 		attributes := span.Attributes()
-		assertHasAttribute(t, attributes, "mcp.tool.name", "sensitive_tool")
-		assertHasAttribute(t, attributes, "mcp.tool.description", "A tool with sensitive data")
+		assertHasAttribute(t, attributes, "gen_ai.tool.name", "sensitive_tool")
+		assertHasAttribute(t, attributes, "mcp.method.name", "tools/call")
 
 		// Verify arguments are NOT present
 		for _, attr := range attributes {
-			assert.NotEqual(t, "mcp.tool.arguments", string(attr.Key), "Arguments should not be logged by default for PII safety")
+			assert.NotEqual(t, "gen_ai.tool.call.arguments", string(attr.Key), "Arguments should not be logged by default for PII safety")
 		}
 	})
 
@@ -619,14 +621,14 @@ func TestToolTracingInstrumentation(t *testing.T) {
 		require.Len(t, spans, 1)
 
 		span := spans[0]
-		assert.Equal(t, "mcp.tool.debug_tool", span.Name())
+		assert.Equal(t, "tools/call debug_tool", span.Name())
 		assert.Equal(t, codes.Ok, span.Status().Code)
 
 		// Check that arguments ARE logged when flag enabled
 		attributes := span.Attributes()
-		assertHasAttribute(t, attributes, "mcp.tool.name", "debug_tool")
-		assertHasAttribute(t, attributes, "mcp.tool.description", "A tool for debugging")
-		assertHasAttribute(t, attributes, "mcp.tool.arguments", `{"safeData":"debug-value"}`)
+		assertHasAttribute(t, attributes, "gen_ai.tool.name", "debug_tool")
+		assertHasAttribute(t, attributes, "mcp.method.name", "tools/call")
+		assertHasAttribute(t, attributes, "gen_ai.tool.call.arguments", `{"safeData":"debug-value"}`)
 	})
 }
 
@@ -657,6 +659,52 @@ func TestHTTPTracingConfiguration(t *testing.T) {
 
 		// Verify the client was created successfully
 		assert.NotNil(t, client.Transport)
+	})
+}
+
+func TestExtractTraceContext(t *testing.T) {
+	t.Run("no meta returns original context", func(t *testing.T) {
+		ctx := context.Background()
+		request := mcp.CallToolRequest{}
+		result := extractTraceContext(ctx, request)
+		assert.Equal(t, ctx, result)
+	})
+
+	t.Run("empty meta returns original context", func(t *testing.T) {
+		ctx := context.Background()
+		request := mcp.CallToolRequest{}
+		request.Params.Meta = &mcp.Meta{}
+		result := extractTraceContext(ctx, request)
+		assert.Equal(t, ctx, result)
+	})
+
+	t.Run("valid traceparent extracts span context", func(t *testing.T) {
+		ctx := context.Background()
+		request := mcp.CallToolRequest{}
+		request.Params.Meta = &mcp.Meta{
+			AdditionalFields: map[string]any{
+				"traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+			},
+		}
+		result := extractTraceContext(ctx, request)
+		// Should have extracted a span context
+		sc := trace.SpanContextFromContext(result)
+		assert.True(t, sc.IsValid())
+		assert.Equal(t, "4bf92f3577b34da6a3ce929d0e0e4736", sc.TraceID().String())
+		assert.Equal(t, "00f067aa0ba902b7", sc.SpanID().String())
+	})
+
+	t.Run("invalid traceparent returns context unchanged", func(t *testing.T) {
+		ctx := context.Background()
+		request := mcp.CallToolRequest{}
+		request.Params.Meta = &mcp.Meta{
+			AdditionalFields: map[string]any{
+				"traceparent": "not-a-valid-traceparent",
+			},
+		}
+		result := extractTraceContext(ctx, request)
+		sc := trace.SpanContextFromContext(result)
+		assert.False(t, sc.IsValid())
 	})
 }
 
@@ -928,4 +976,105 @@ func TestMaskerFromContext_WithOtherContextValues(t *testing.T) {
 	// Ensure other context values are preserved
 	grafanaConfig := GrafanaConfigFromContext(ctx)
 	assert.True(t, grafanaConfig.Debug)
+}
+
+func TestExtraHeadersFromEnv(t *testing.T) {
+	t.Run("empty env returns nil", func(t *testing.T) {
+		t.Setenv("GRAFANA_EXTRA_HEADERS", "")
+		headers := extraHeadersFromEnv()
+		assert.Nil(t, headers)
+	})
+
+	t.Run("valid JSON", func(t *testing.T) {
+		t.Setenv("GRAFANA_EXTRA_HEADERS", `{"X-Custom-Header": "custom-value", "X-Another": "another-value"}`)
+		headers := extraHeadersFromEnv()
+		assert.Equal(t, map[string]string{
+			"X-Custom-Header": "custom-value",
+			"X-Another":       "another-value",
+		}, headers)
+	})
+
+	t.Run("invalid JSON returns nil", func(t *testing.T) {
+		t.Setenv("GRAFANA_EXTRA_HEADERS", "not-json")
+		headers := extraHeadersFromEnv()
+		assert.Nil(t, headers)
+	})
+
+	t.Run("empty object", func(t *testing.T) {
+		t.Setenv("GRAFANA_EXTRA_HEADERS", "{}")
+		headers := extraHeadersFromEnv()
+		assert.Equal(t, map[string]string{}, headers)
+	})
+}
+
+func TestExtraHeadersRoundTripper(t *testing.T) {
+	t.Run("adds headers to request", func(t *testing.T) {
+		var capturedReq *http.Request
+		mockRT := &extraHeadersMockRT{
+			fn: func(req *http.Request) (*http.Response, error) {
+				capturedReq = req
+				return &http.Response{StatusCode: 200}, nil
+			},
+		}
+
+		rt := NewExtraHeadersRoundTripper(mockRT, map[string]string{
+			"X-Custom":  "value1",
+			"X-Another": "value2",
+		})
+
+		req, _ := http.NewRequest("GET", "http://example.com", nil)
+		_, err := rt.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Equal(t, "value1", capturedReq.Header.Get("X-Custom"))
+		assert.Equal(t, "value2", capturedReq.Header.Get("X-Another"))
+	})
+
+	t.Run("does not modify original request", func(t *testing.T) {
+		mockRT := &extraHeadersMockRT{
+			fn: func(req *http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: 200}, nil
+			},
+		}
+
+		rt := NewExtraHeadersRoundTripper(mockRT, map[string]string{
+			"X-Custom": "value",
+		})
+
+		req, _ := http.NewRequest("GET", "http://example.com", nil)
+		_, err := rt.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Equal(t, "", req.Header.Get("X-Custom"))
+	})
+
+	t.Run("nil transport uses default", func(t *testing.T) {
+		rt := NewExtraHeadersRoundTripper(nil, map[string]string{})
+		assert.NotNil(t, rt.underlying)
+	})
+}
+
+type extraHeadersMockRT struct {
+	fn func(*http.Request) (*http.Response, error)
+}
+
+func (m *extraHeadersMockRT) RoundTrip(req *http.Request) (*http.Response, error) {
+	return m.fn(req)
+}
+
+func TestExtractGrafanaInfoWithExtraHeaders(t *testing.T) {
+	t.Run("extra headers from env in ExtractGrafanaInfoFromEnv", func(t *testing.T) {
+		t.Setenv("GRAFANA_EXTRA_HEADERS", `{"X-Tenant-ID": "tenant-123"}`)
+		ctx := ExtractGrafanaInfoFromEnv(context.Background())
+		config := GrafanaConfigFromContext(ctx)
+		assert.Equal(t, map[string]string{"X-Tenant-ID": "tenant-123"}, config.ExtraHeaders)
+	})
+
+	t.Run("extra headers from env in ExtractGrafanaInfoFromHeaders", func(t *testing.T) {
+		t.Setenv("GRAFANA_EXTRA_HEADERS", `{"X-Tenant-ID": "tenant-456"}`)
+		req, _ := http.NewRequest("GET", "http://example.com", nil)
+		ctx := ExtractGrafanaInfoFromHeaders(context.Background(), req)
+		config := GrafanaConfigFromContext(ctx)
+		assert.Equal(t, map[string]string{"X-Tenant-ID": "tenant-456"}, config.ExtraHeaders)
+	})
 }

@@ -17,8 +17,9 @@ func TestDatasourcesTools(t *testing.T) {
 		ctx := newTestContext()
 		result, err := listDatasources(ctx, ListDatasourcesParams{})
 		require.NoError(t, err)
-		// Seven datasources are provisioned in the test environment (Prometheus, Prometheus Demo, Loki, Pyroscope, Tempo, Tempo Secondary and Alertmanager).
-		assert.Len(t, result, 7)
+
+		// Ten datasources are provisioned in the test environment (Prometheus, Prometheus Demo, Loki, Pyroscope, Tempo, Tempo Secondary, Alertmanager, ClickHouse and CloudWatch).
+		assert.Len(t, result.Datasources, 10)
 	})
 
 	t.Run("list datasources for type", func(t *testing.T) {
@@ -26,12 +27,12 @@ func TestDatasourcesTools(t *testing.T) {
 		result, err := listDatasources(ctx, ListDatasourcesParams{Type: "Prometheus"})
 		require.NoError(t, err)
 		// Only two Prometheus datasources are provisioned in the test environment.
-		assert.Len(t, result, 2)
+		assert.Len(t, result.Datasources, 2)
 	})
 
 	t.Run("get datasource by uid", func(t *testing.T) {
 		ctx := newTestContext()
-		result, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{
+		result, err := getDatasource(ctx, GetDatasourceParams{
 			UID: "prometheus",
 		})
 		require.NoError(t, err)
@@ -40,7 +41,7 @@ func TestDatasourcesTools(t *testing.T) {
 
 	t.Run("get datasource by uid - not found", func(t *testing.T) {
 		ctx := newTestContext()
-		result, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{
+		result, err := getDatasource(ctx, GetDatasourceParams{
 			UID: "non-existent-datasource",
 		})
 		require.Error(t, err)
@@ -50,10 +51,18 @@ func TestDatasourcesTools(t *testing.T) {
 
 	t.Run("get datasource by name", func(t *testing.T) {
 		ctx := newTestContext()
-		result, err := getDatasourceByName(ctx, GetDatasourceByNameParams{
+		result, err := getDatasource(ctx, GetDatasourceParams{
 			Name: "Prometheus",
 		})
 		require.NoError(t, err)
 		assert.Equal(t, "Prometheus", result.Name)
+	})
+
+	t.Run("get datasource - neither provided", func(t *testing.T) {
+		ctx := newTestContext()
+		result, err := getDatasource(ctx, GetDatasourceParams{})
+		require.Error(t, err)
+		require.Nil(t, result)
+		assert.Contains(t, err.Error(), "either uid or name must be provided")
 	})
 }

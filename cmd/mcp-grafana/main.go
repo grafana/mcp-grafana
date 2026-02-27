@@ -18,7 +18,9 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
+	"github.com/grafana/mcp-grafana/observability"
 	"github.com/grafana/mcp-grafana/tools"
+	"go.opentelemetry.io/otel/semconv/v1.39.0/mcpconv"
 )
 
 func maybeAddTools(s *server.MCPServer, tf func(*server.MCPServer), enabledTools []string, disable bool, category string) {
@@ -39,9 +41,11 @@ type disabledTools struct {
 	enabledTools string
 
 	search, datasource, incident,
-	prometheus, loki, alerting,
+	prometheus, loki, elasticsearch, alerting,
 	dashboard, folder, oncall, asserts, sift, admin,
-	pyroscope, navigation, proxied, annotations, rendering, write bool
+	pyroscope, navigation, proxied, annotations, rendering, cloudwatch, write,
+	examples, clickhouse, searchlogs,
+	runpanelquery bool
 }
 
 // Configuration for the Grafana client.
@@ -110,6 +114,7 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.incident, "disable-incident", false, "Disable incident tools")
 	flag.BoolVar(&dt.prometheus, "disable-prometheus", false, "Disable prometheus tools")
 	flag.BoolVar(&dt.loki, "disable-loki", false, "Disable loki tools")
+	flag.BoolVar(&dt.elasticsearch, "disable-elasticsearch", false, "Disable elasticsearch tools")
 	flag.BoolVar(&dt.alerting, "disable-alerting", false, "Disable alerting tools")
 	flag.BoolVar(&dt.dashboard, "disable-dashboard", false, "Disable dashboard tools")
 	flag.BoolVar(&dt.folder, "disable-folder", false, "Disable folder tools")
@@ -123,6 +128,11 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.write, "disable-write", false, "Disable write tools (create/update operations)")
 	flag.BoolVar(&dt.annotations, "disable-annotations", false, "Disable annotation tools")
 	flag.BoolVar(&dt.rendering, "disable-rendering", false, "Disable rendering tools (panel/dashboard image export)")
+	flag.BoolVar(&dt.cloudwatch, "disable-cloudwatch", false, "Disable CloudWatch tools")
+	flag.BoolVar(&dt.examples, "disable-examples", false, "Disable query examples tools")
+	flag.BoolVar(&dt.clickhouse, "disable-clickhouse", false, "Disable ClickHouse tools")
+	flag.BoolVar(&dt.searchlogs, "disable-searchlogs", false, "Disable search logs tools")
+	flag.BoolVar(&dt.runpanelquery, "disable-runpanelquery", false, "Disable run panel query tools")
 }
 
 func (gc *grafanaConfig) addFlags() {
@@ -143,6 +153,7 @@ func (dt *disabledTools) addTools(s *server.MCPServer) {
 	maybeAddTools(s, func(mcp *server.MCPServer) { tools.AddIncidentTools(mcp, enableWriteTools) }, enabledTools, dt.incident, "incident")
 	maybeAddTools(s, tools.AddPrometheusTools, enabledTools, dt.prometheus, "prometheus")
 	maybeAddTools(s, tools.AddLokiTools, enabledTools, dt.loki, "loki")
+	maybeAddTools(s, tools.AddElasticsearchTools, enabledTools, dt.elasticsearch, "elasticsearch")
 	maybeAddTools(s, func(mcp *server.MCPServer) { tools.AddAlertingTools(mcp, enableWriteTools) }, enabledTools, dt.alerting, "alerting")
 	maybeAddTools(s, func(mcp *server.MCPServer) { tools.AddDashboardTools(mcp, enableWriteTools) }, enabledTools, dt.dashboard, "dashboard")
 	maybeAddTools(s, func(mcp *server.MCPServer) { tools.AddFolderTools(mcp, enableWriteTools) }, enabledTools, dt.folder, "folder")
@@ -154,9 +165,14 @@ func (dt *disabledTools) addTools(s *server.MCPServer) {
 	maybeAddTools(s, tools.AddNavigationTools, enabledTools, dt.navigation, "navigation")
 	maybeAddTools(s, func(mcp *server.MCPServer) { tools.AddAnnotationTools(mcp, enableWriteTools) }, enabledTools, dt.annotations, "annotations")
 	maybeAddTools(s, tools.AddRenderingTools, enabledTools, dt.rendering, "rendering")
+	maybeAddTools(s, tools.AddCloudWatchTools, enabledTools, dt.cloudwatch, "cloudwatch")
+	maybeAddTools(s, tools.AddExamplesTools, enabledTools, dt.examples, "examples")
+	maybeAddTools(s, tools.AddClickHouseTools, enabledTools, dt.clickhouse, "clickhouse")
+	maybeAddTools(s, tools.AddSearchLogsTools, enabledTools, dt.searchlogs, "searchlogs")
+	maybeAddTools(s, tools.AddRunPanelQueryTools, enabledTools, dt.runpanelquery, "runpanelquery")
 }
 
-func newServer(transport string, dt disabledTools) (*server.MCPServer, *mcpgrafana.ToolManager) {
+func newServer(transport string, dt disabledTools, obs *observability.Observability) (*server.MCPServer, *mcpgrafana.ToolManager) {
 	sm := mcpgrafana.NewSessionManager()
 
 	// Declare variable for ToolManager that will be initialized after server creation
@@ -194,6 +210,10 @@ func newServer(transport string, dt disabledTools) (*server.MCPServer, *mcpgrafa
 			},
 		}
 	}
+
+	// Merge observability hooks with existing hooks
+	hooks = observability.MergeHooks(hooks, obs.MCPHooks())
+
 	s := server.NewMCPServer("mcp-grafana", mcpgrafana.Version(),
 		server.WithInstructions(`
 This server provides access to your Grafana instance and the surrounding ecosystem.
@@ -202,6 +222,8 @@ Available Capabilities:
 - Dashboards: Search, retrieve, update, and create dashboards. Extract panel queries and datasource information.
 - Datasources: List and fetch details for datasources.
 - Prometheus & Loki: Run PromQL and LogQL queries, retrieve metric/log metadata, and explore label names/values.
+- ClickHouse: Query ClickHouse datasources via Grafana with macro and variable substitution support.
+- Elasticsearch: Query Elasticsearch datasources using Lucene syntax or Query DSL for logs and metrics.
 - Incidents: Search, create, update, and resolve incidents in Grafana Incident.
 - Sift Investigations: Start and manage Sift investigations, analyze logs/traces, find error patterns, and detect slow requests.
 - Alerting: List and fetch alert rules and notification contact points.
@@ -286,9 +308,33 @@ func handleHealthz(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte("ok"))
 }
 
-func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt disabledTools, gc mcpgrafana.GrafanaConfig, tls tlsConfig, lmc mcpgrafana.LokiMaskingConfig) error {
+// runMetricsServer starts a separate HTTP server for metrics.
+func runMetricsServer(addr string, o *observability.Observability) {
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", o.MetricsHandler())
+	slog.Info("Starting metrics server", "address", addr)
+	if err := http.ListenAndServe(addr, mux); err != nil {
+		slog.Error("metrics server error", "error", err)
+	}
+}
+
+func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt disabledTools, gc mcpgrafana.GrafanaConfig, tls tlsConfig, lmc mcpgrafana.LokiMaskingConfig, obs observability.Config) error {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})))
-	s, tm := newServer(transport, dt)
+
+	// Set up observability (metrics and tracing)
+	o, err := observability.Setup(obs)
+	if err != nil {
+		return fmt.Errorf("failed to setup observability: %w", err)
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := o.Shutdown(shutdownCtx); err != nil {
+			slog.Error("failed to shutdown observability", "error", err)
+		}
+	}()
+
+	s, tm := newServer(transport, dt, o)
 
 	// Create LogMasker from LokiMaskingConfig if enabled
 	var masker any
@@ -376,11 +422,18 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		if basePath == "" {
 			basePath = "/"
 		}
-		mux.Handle(basePath, srv)
+		mux.Handle(basePath, observability.WrapHandler(srv, basePath))
 		mux.HandleFunc("/healthz", handleHealthz)
+		if obs.MetricsEnabled {
+			if obs.MetricsAddress == "" {
+				mux.Handle("/metrics", o.MetricsHandler())
+			} else {
+				go runMetricsServer(obs.MetricsAddress, o)
+			}
+		}
 		httpSrv.Handler = mux
 		slog.Info("Starting Grafana MCP server using SSE transport",
-			"version", mcpgrafana.Version(), "address", addr, "basePath", basePath)
+			"version", mcpgrafana.Version(), "address", addr, "basePath", basePath, "metrics", obs.MetricsEnabled)
 		return runHTTPServer(ctx, srv, addr, "SSE")
 	case "streamable-http":
 		httpSrv := &http.Server{Addr: addr}
@@ -395,11 +448,18 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		}
 		srv := server.NewStreamableHTTPServer(s, opts...)
 		mux := http.NewServeMux()
-		mux.Handle(endpointPath, srv)
+		mux.Handle(endpointPath, observability.WrapHandler(srv, endpointPath))
 		mux.HandleFunc("/healthz", handleHealthz)
+		if obs.MetricsEnabled {
+			if obs.MetricsAddress == "" {
+				mux.Handle("/metrics", o.MetricsHandler())
+			} else {
+				go runMetricsServer(obs.MetricsAddress, o)
+			}
+		}
 		httpSrv.Handler = mux
 		slog.Info("Starting Grafana MCP server using StreamableHTTP transport",
-			"version", mcpgrafana.Version(), "address", addr, "endpointPath", endpointPath)
+			"version", mcpgrafana.Version(), "address", addr, "endpointPath", endpointPath, "metrics", obs.MetricsEnabled)
 		return runHTTPServer(ctx, srv, addr, "StreamableHTTP")
 	default:
 		return fmt.Errorf("invalid transport type: %s. Must be 'stdio', 'sse' or 'streamable-http'", transport)
@@ -428,6 +488,9 @@ func main() {
 	tls.addFlags()
 	var lmc lokiMaskingConfig
 	lmc.addFlags()
+	var obs observability.Config
+	flag.BoolVar(&obs.MetricsEnabled, "metrics", false, "Enable Prometheus metrics endpoint")
+	flag.StringVar(&obs.MetricsAddress, "metrics-address", "", "Separate address for metrics server (e.g., :9090). If empty, metrics are served on the main server at /metrics")
 	flag.Parse()
 
 	if *showVersion {
@@ -449,7 +512,19 @@ func main() {
 	// Convert CLI lokiMaskingConfig to mcpgrafana.LokiMaskingConfig
 	lokiMaskingConfig := lmc.toMCPConfig()
 
-	if err := run(transport, *addr, *basePath, *endpointPath, parseLevel(*logLevel), dt, grafanaConfig, tls, lokiMaskingConfig); err != nil {
+	// Set OTel resource identity
+	obs.ServerName = "mcp-grafana"
+	obs.ServerVersion = mcpgrafana.Version()
+
+	// Map transport flag to semconv network.transport values
+	switch transport {
+	case "stdio":
+		obs.NetworkTransport = mcpconv.NetworkTransportPipe
+	case "sse", "streamable-http":
+		obs.NetworkTransport = mcpconv.NetworkTransportTCP
+	}
+
+	if err := run(transport, *addr, *basePath, *endpointPath, parseLevel(*logLevel), dt, grafanaConfig, tls, lokiMaskingConfig, obs); err != nil {
 		panic(err)
 	}
 }

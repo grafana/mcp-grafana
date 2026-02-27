@@ -51,3 +51,39 @@ datasources:
       implementation: prometheus
     isDefault: false
     editable: false
+  - name: ClickHouse
+    id: 7
+    uid: clickhouse
+    type: grafana-clickhouse-datasource
+    access: proxy
+    url: http://clickhouse:8123
+    jsonData:
+      defaultDatabase: test
+      port: 9000
+      protocol: native
+      server: clickhouse
+      username: default
+    isDefault: false
+  - name: Elasticsearch
+    id: 8
+    uid: elasticsearch
+    type: elasticsearch
+    access: proxy
+    url: http://elasticsearch:9200
+    jsonData:
+      index: test-logs-*
+      timeField: "@timestamp"
+      esVersion: 8.17.0
+  - name: CloudWatch
+    id: 8
+    uid: cloudwatch
+    type: cloudwatch
+    access: proxy
+    jsonData:
+      defaultRegion: us-east-1
+      authType: keys
+      endpoint: http://localstack:4566
+    secureJsonData:
+      accessKey: test
+      secretKey: test
+    isDefault: false

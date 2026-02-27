@@ -6,18 +6,40 @@ on:
     tags:
       - "v*"
 
-permissions:
-  contents: write
-
 jobs:
   goreleaser:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Extract release notes from CHANGELOG.md
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          # Extract the section for this version from CHANGELOG.md.
+          # Matches from "## [X.Y.Z]" until the next "## [" or end of file,
+          # excluding the heading itself and any trailing link references.
+          if [ -f CHANGELOG.md ]; then
+            awk -v ver="$VERSION" '
+              /^## \[/ {
+                if (found) exit
+                if ($0 ~ "## \\[" ver "\\]") found=1
+                next
+              }
+              /^\[.*\]: https:\/\// { next }
+              found { print }
+            ' CHANGELOG.md > /tmp/release-notes.md
+          fi
+
+          # If CHANGELOG.md is missing or has no section for this version, fall back
+          if [ ! -s /tmp/release-notes.md ]; then
+            echo "Release ${GITHUB_REF_NAME}" > /tmp/release-notes.md
+          fi
 
       - name: Set up Go
         uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
@@ -27,11 +49,54 @@ jobs:
           cache: false
 
       - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@d31d51ab5501a8d6d0f08c7a080136a1d0adb7a3
+        uses: goreleaser/goreleaser-action@4247c53b304edb39a4e6a0808f415d3eebad450a
         with:
           distribution: goreleaser
           # 'latest', 'nightly', or a semver
           version: "~> v2"
-          args: release --clean
+          args: release --clean --release-notes=/tmp/release-notes.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  pypi:
+    runs-on: ubuntu-latest
+    needs: [goreleaser]
+    permissions:
+      id-token: write # Trusted publishing to PyPI
+    environment:
+      name: pypi
+      url: https://pypi.org/p/mcp-grafana
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up Go
+        uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
+        with:
+          go-version: stable
+          cache: false
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@803947b9bd8e9f986429fa0c5a41c367cd732b41 # v7.2.1
+        with:
+          enable-cache: false
+
+      - name: Build wheels
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          # TODO: switch to `uvx go-to-wheel` once --package-path is released
+          # (see https://github.com/simonw/go-to-wheel/pull/5)
+          uvx --from "go-to-wheel @ git+https://github.com/nikaro/go-to-wheel@f7939c6868e195204eae1370f899933e555513e3" \
+            go-to-wheel . \
+            --package-path ./cmd/mcp-grafana \
+            --name mcp-grafana \
+            --version "$VERSION" \
+            --description "Grafana MCP server - interact with Grafana via the Model Context Protocol" \
+            --url "https://github.com/grafana/mcp-grafana" \
+            --license Apache-2.0 \
+            --readme README.md
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@ed0c53931b1dc9bd32cbe73a98c7f6766f8a527e # v1.13.0
+        with:
+          skip-existing: true

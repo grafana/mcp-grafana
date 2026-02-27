@@ -27,10 +27,10 @@ jobs:
       GRAFANA_PASSWORD: admin
     steps:
       - name: Checkout code
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Install uv
-        uses: astral-sh/setup-uv@61cb8a9741eeb8a550a1b8544337180c0fc8476b # v7.2.0
+        uses: astral-sh/setup-uv@803947b9bd8e9f986429fa0c5a41c367cd732b41 # v7.2.1
 
       - name: Set up Go
         uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
@@ -52,7 +52,7 @@ jobs:
             OPENAI_API_KEY=openai:api-key
 
       - name: Start docker-compose services
-        uses: hoverkraft-tech/compose-action@78862a9492935a130fdcfd753b137abf3fe0c82b
+        uses: hoverkraft-tech/compose-action@b160464f2ea59d4c7be918e457514639ad7c7f9f
         with:
           compose-file: "docker-compose.yaml"
 
@@ -64,7 +64,12 @@ jobs:
 
       - name: Start MCP server in background
         if: matrix.transport != 'stdio'
-        run: nohup ./dist/mcp-grafana -t ${{ matrix.transport }} > mcp.log 2>&1 &
+        run: |
+          nohup ./dist/mcp-grafana -t ${{ matrix.transport }} --enabled-tools search,datasource,incident,prometheus,loki,elasticsearch,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering,admin,clickhouse,cloudwatch > mcp.log 2>&1 &
+          sleep 2  # Give server time to start and create log file
+          if [ ! -f mcp.log ]; then
+            echo "Warning: mcp.log was not created. Server may have failed to start."
+          fi
 
       - name: Run Python e2e tests
         env:
@@ -76,4 +81,4 @@ jobs:
 
       - if: failure() && matrix.transport != 'stdio'
         name: Print MCP logs
-        run: cat mcp.log
+        run: cat mcp.log 2>/dev/null || echo "No log file found (mcp.log)"

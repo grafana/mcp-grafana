@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net"
@@ -35,6 +36,8 @@ const (
 
 	grafanaUsernameEnvVar = "GRAFANA_USERNAME"
 	grafanaPasswordEnvVar = "GRAFANA_PASSWORD"
+
+	grafanaExtraHeadersEnvVar = "GRAFANA_EXTRA_HEADERS"
 
 	grafanaURLHeader    = "X-Grafana-URL"
 	grafanaAPIKeyHeader = "X-Grafana-API-Key"
@@ -85,6 +88,19 @@ func orgIdFromEnv() int64 {
 		return 0
 	}
 	return orgID
+}
+
+func extraHeadersFromEnv() map[string]string {
+	headersJSON := os.Getenv(grafanaExtraHeadersEnvVar)
+	if headersJSON == "" {
+		return nil
+	}
+	var headers map[string]string
+	if err := json.Unmarshal([]byte(headersJSON), &headers); err != nil {
+		slog.Warn("invalid GRAFANA_EXTRA_HEADERS value, ignoring", "value", headersJSON, "error", err)
+		return nil
+	}
+	return headers
 }
 
 func orgIdFromHeaders(req *http.Request) int64 {
@@ -255,6 +271,10 @@ type GrafanaConfig struct {
 	// A Timeout of zero means no timeout.
 	// Default is 10 seconds.
 	Timeout time.Duration
+
+	// ExtraHeaders contains additional HTTP headers to send with all Grafana API requests.
+	// Parsed from GRAFANA_EXTRA_HEADERS environment variable as JSON object.
+	ExtraHeaders map[string]string
 }
 
 const (
@@ -419,6 +439,54 @@ func NewOrgIDRoundTripper(rt http.RoundTripper, orgID int64) *OrgIDRoundTripper 
 	}
 }
 
+type ExtraHeadersRoundTripper struct {
+	underlying http.RoundTripper
+	headers    map[string]string
+}
+
+func (t *ExtraHeadersRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	clonedReq := req.Clone(req.Context())
+	for k, v := range t.headers {
+		clonedReq.Header.Set(k, v)
+	}
+	return t.underlying.RoundTrip(clonedReq)
+}
+
+func NewExtraHeadersRoundTripper(rt http.RoundTripper, headers map[string]string) *ExtraHeadersRoundTripper {
+	if rt == nil {
+		rt = http.DefaultTransport
+	}
+	return &ExtraHeadersRoundTripper{
+		underlying: rt,
+		headers:    headers,
+	}
+}
+
+func BuildTransport(cfg *GrafanaConfig, base http.RoundTripper) (http.RoundTripper, error) {
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	transport := base
+
+	if cfg.TLSConfig != nil {
+		t, ok := base.(*http.Transport)
+		if !ok {
+			t = http.DefaultTransport.(*http.Transport).Clone()
+		}
+		var err error
+		transport, err = cfg.TLSConfig.HTTPTransport(t)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create TLS transport: %w", err)
+		}
+	}
+
+	if len(cfg.ExtraHeaders) > 0 {
+		transport = NewExtraHeadersRoundTripper(transport, cfg.ExtraHeaders)
+	}
+
+	return transport, nil
+}
+
 // Gets info from environment
 func extractKeyGrafanaInfoFromEnv() (url, apiKey string, auth *url.Userinfo, orgId int64) {
 	url, apiKey = urlAndAPIKeyFromEnv()
@@ -471,7 +539,8 @@ var ExtractGrafanaInfoFromEnv server.StdioContextFunc = func(ctx context.Context
 		panic(fmt.Errorf("invalid Grafana URL %s: %w", u, err))
 	}
 
-	slog.Info("Using Grafana configuration", "url", parsedURL.Redacted(), "api_key_set", apiKey != "", "basic_auth_set", basicAuth != nil, "org_id", orgID)
+	extraHeaders := extraHeadersFromEnv()
+	slog.Info("Using Grafana configuration", "url", parsedURL.Redacted(), "api_key_set", apiKey != "", "basic_auth_set", basicAuth != nil, "org_id", orgID, "extra_headers_count", len(extraHeaders))
 
 	// Get existing config or create a new one.
 	// This will respect the existing debug flag, if set.
@@ -480,6 +549,7 @@ var ExtractGrafanaInfoFromEnv server.StdioContextFunc = func(ctx context.Context
 	config.APIKey = apiKey
 	config.BasicAuth = basicAuth
 	config.OrgID = orgID
+	config.ExtraHeaders = extraHeaders
 	return WithGrafanaConfig(ctx, config)
 }
 
@@ -500,6 +570,7 @@ var ExtractGrafanaInfoFromHeaders httpContextFunc = func(ctx context.Context, re
 	config.APIKey = apiKey
 	config.BasicAuth = basicAuth
 	config.OrgID = orgID
+	config.ExtraHeaders = extraHeadersFromEnv()
 	return WithGrafanaConfig(ctx, config)
 }
 
@@ -590,7 +661,7 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 		timeout = DefaultGrafanaClientTimeout
 	}
 
-	slog.Debug("Creating Grafana client", "url", parsedURL.Redacted(), "api_key_set", apiKey != "", "basic_auth_set", config.BasicAuth != nil, "org_id", cfg.OrgID, "timeout", timeout)
+	slog.Debug("Creating Grafana client", "url", parsedURL.Redacted(), "api_key_set", apiKey != "", "basic_auth_set", config.BasicAuth != nil, "org_id", cfg.OrgID, "timeout", timeout, "extra_headers_count", len(config.ExtraHeaders))
 	grafanaClient := client.NewHTTPClientWithConfig(strfmt.Default, cfg)
 
 	// Always enable HTTP tracing for context propagation (no-op when no exporter configured)
@@ -604,6 +675,7 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 				if _, ok := transportField.Interface().(http.RoundTripper); ok {
 					// Wrap with timeout transport, then user agent, then otel
 					timeoutTransport := &http.Transport{
+						Proxy: http.ProxyFromEnvironment,
 						DialContext: (&net.Dialer{
 							Timeout:   timeout,
 							KeepAlive: 30 * time.Second,
@@ -619,7 +691,11 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 					if cfg.TLSConfig != nil {
 						timeoutTransport.TLSClientConfig = cfg.TLSConfig
 					}
-					userAgentWrapped := wrapWithUserAgent(timeoutTransport)
+					var rt http.RoundTripper = timeoutTransport
+					if len(config.ExtraHeaders) > 0 {
+						rt = NewExtraHeadersRoundTripper(rt, config.ExtraHeaders)
+					}
+					userAgentWrapped := wrapWithUserAgent(rt)
 					wrapped := otelhttp.NewTransport(userAgentWrapped)
 					transportField.Set(reflect.ValueOf(wrapped))
 					slog.Debug("HTTP tracing, user agent tracking, and timeout enabled for Grafana client", "timeout", timeout)
@@ -691,23 +767,18 @@ var ExtractIncidentClientFromEnv server.StdioContextFunc = func(ctx context.Cont
 	client := incident.NewClient(incidentURL, apiKey)
 
 	config := GrafanaConfigFromContext(ctx)
-	// Configure custom TLS if available
-	if tlsConfig := config.TLSConfig; tlsConfig != nil {
-		transport, err := tlsConfig.HTTPTransport(http.DefaultTransport.(*http.Transport))
-		if err != nil {
-			slog.Error("Failed to create custom transport for incident client, using default", "error", err)
-		} else {
-			orgIDWrapped := NewOrgIDRoundTripper(transport, config.OrgID)
-			client.HTTPClient.Transport = wrapWithUserAgent(orgIDWrapped)
-			slog.Debug("Using custom TLS configuration, user agent, and org ID support for incident client",
-				"cert_file", tlsConfig.CertFile,
-				"ca_file", tlsConfig.CAFile,
-				"skip_verify", tlsConfig.SkipVerify)
-		}
+	transport, err := BuildTransport(&config, nil)
+	if err != nil {
+		slog.Error("Failed to create custom transport for incident client, using default", "error", err)
 	} else {
-		// No custom TLS, but still add org ID and user agent
-		orgIDWrapped := NewOrgIDRoundTripper(http.DefaultTransport, config.OrgID)
+		orgIDWrapped := NewOrgIDRoundTripper(transport, config.OrgID)
 		client.HTTPClient.Transport = wrapWithUserAgent(orgIDWrapped)
+		if config.TLSConfig != nil {
+			slog.Debug("Using custom TLS configuration, user agent, and org ID support for incident client",
+				"cert_file", config.TLSConfig.CertFile,
+				"ca_file", config.TLSConfig.CAFile,
+				"skip_verify", config.TLSConfig.SkipVerify)
+		}
 	}
 
 	return context.WithValue(ctx, incidentClientKey{}, client)
@@ -721,23 +792,18 @@ var ExtractIncidentClientFromHeaders httpContextFunc = func(ctx context.Context,
 	client := incident.NewClient(incidentURL, apiKey)
 
 	config := GrafanaConfigFromContext(ctx)
-	// Configure custom TLS if available
-	if tlsConfig := config.TLSConfig; tlsConfig != nil {
-		transport, err := tlsConfig.HTTPTransport(http.DefaultTransport.(*http.Transport))
-		if err != nil {
-			slog.Error("Failed to create custom transport for incident client, using default", "error", err)
-		} else {
-			orgIDWrapped := NewOrgIDRoundTripper(transport, orgID)
-			client.HTTPClient.Transport = wrapWithUserAgent(orgIDWrapped)
-			slog.Debug("Using custom TLS configuration, user agent, and org ID support for incident client",
-				"cert_file", tlsConfig.CertFile,
-				"ca_file", tlsConfig.CAFile,
-				"skip_verify", tlsConfig.SkipVerify)
-		}
+	transport, err := BuildTransport(&config, nil)
+	if err != nil {
+		slog.Error("Failed to create custom transport for incident client, using default", "error", err)
 	} else {
-		// No custom TLS, but still add org ID and user agent
-		orgIDWrapped := NewOrgIDRoundTripper(http.DefaultTransport, orgID)
+		orgIDWrapped := NewOrgIDRoundTripper(transport, orgID)
 		client.HTTPClient.Transport = wrapWithUserAgent(orgIDWrapped)
+		if config.TLSConfig != nil {
+			slog.Debug("Using custom TLS configuration, user agent, and org ID support for incident client",
+				"cert_file", config.TLSConfig.CertFile,
+				"ca_file", config.TLSConfig.CAFile,
+				"skip_verify", config.TLSConfig.SkipVerify)
+		}
 	}
 
 	return context.WithValue(ctx, incidentClientKey{}, client)

@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"slices"
+	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/PaesslerAG/gval"
 	"github.com/PaesslerAG/jsonpath"
@@ -41,7 +44,7 @@ type UpdateDashboardParams struct {
 	Dashboard map[string]interface{} `json:"dashboard,omitempty" jsonschema:"description=The full dashboard JSON. Use for creating new dashboards or complete updates. Large dashboards consume significant context - consider using patches for small changes."`
 
 	// For targeted updates using patch operations (preferred for existing dashboards)
-	UID        string           `json:"uid,omitempty" jsonschema:"description=UID of existing dashboard to update. Required when using patch operations."`
+	UID        string           `json:"uid,omitempty" jsonschema:"description=UID of existing dashboard to update. Must be used together with 'operations'. Providing 'uid' without 'operations' will fail."`
 	Operations []PatchOperation `json:"operations,omitempty" jsonschema:"description=Array of patch operations for targeted updates. More efficient than full dashboard JSON for small changes."`
 
 	// Common parameters
@@ -61,13 +64,24 @@ func updateDashboard(ctx context.Context, args UpdateDashboardParams) (*models.P
 	} else if args.Dashboard != nil {
 		// Full dashboard update: use the provided JSON
 		return updateDashboardWithFullJSON(ctx, args)
+	} else if args.UID != "" && len(args.Operations) == 0 {
+		return nil, fmt.Errorf("'uid' was provided without 'operations'. To update an existing dashboard, provide both 'uid' and 'operations' (array of patch operations). To replace a dashboard entirely, provide 'dashboard' (full JSON) instead")
+	} else if len(args.Operations) > 0 && args.UID == "" {
+		return nil, fmt.Errorf("'operations' were provided without 'uid'. To apply patch operations, provide the 'uid' of the existing dashboard to update along with the 'operations' array")
 	} else {
-		return nil, fmt.Errorf("either dashboard JSON or (uid + operations) must be provided")
+		return nil, fmt.Errorf("no dashboard content provided. You must use one of two modes: (1) Patch mode (preferred for existing dashboards): provide 'uid' + 'operations' array with targeted changes. (2) Full JSON mode: provide 'dashboard' with the complete dashboard object. Do NOT retry this same call — choose a mode and provide the required fields")
 	}
 }
 
 // updateDashboardWithPatches applies patch operations to an existing dashboard
 func updateDashboardWithPatches(ctx context.Context, args UpdateDashboardParams) (*models.PostDashboardOKBody, error) {
+	// Sort array element remove operations from highest to lowest index to avoid index-shifting issues
+	sortedOps, err := sortArrayRemovesDescending(args.Operations)
+	if err != nil {
+		return nil, err
+	}
+	args.Operations = sortedOps
+
 	// Get the current dashboard
 	dashboard, err := getDashboardByUID(ctx, GetDashboardByUIDParams{UID: args.UID})
 	if err != nil {
@@ -129,6 +143,103 @@ func updateDashboardWithFullJSON(ctx context.Context, args UpdateDashboardParams
 	return dashboard.Payload, nil
 }
 
+// sortArrayRemovesDescending reorders remove operations on the same array
+// from highest index to lowest. This prevents the index-shifting footgun
+// where removing a lower index first causes subsequent operations to target wrong elements.
+// It also rejects duplicate indices on the same array (likely an LLM mistake).
+func sortArrayRemovesDescending(operations []PatchOperation) ([]PatchOperation, error) {
+	type arrayRemoveInfo struct {
+		arrayPath string
+		index     int
+		opIndex   int
+	}
+
+	// Collect array remove operations grouped by array path
+	removesByArray := make(map[string][]arrayRemoveInfo)
+
+	for i, op := range operations {
+		if op.Op != "remove" {
+			continue
+		}
+
+		// Parse the path to check if it's an array element removal
+		path := op.Path
+		if len(path) > 2 && path[:2] == "$." {
+			path = path[2:]
+		}
+
+		segments := parseJSONPath(path)
+		if len(segments) == 0 {
+			continue
+		}
+
+		// Check if the final segment is an array access
+		finalSeg := segments[len(segments)-1]
+		if !finalSeg.IsArray || finalSeg.IsAppend {
+			continue
+		}
+
+		// Build the array path (everything except the index)
+		arrayPath := ""
+		for j, seg := range segments {
+			if j > 0 {
+				arrayPath += "."
+			}
+			arrayPath += seg.Key
+			if seg.IsArray && j < len(segments)-1 {
+				arrayPath += fmt.Sprintf("[%d]", seg.Index)
+			}
+		}
+
+		removesByArray[arrayPath] = append(removesByArray[arrayPath], arrayRemoveInfo{
+			arrayPath: arrayPath,
+			index:     finalSeg.Index,
+			opIndex:   i,
+		})
+	}
+
+	// Check for duplicate indices and sort each group descending
+	for arrayPath, removes := range removesByArray {
+		// Check for duplicate indices
+		seen := make(map[int]bool)
+		for _, r := range removes {
+			if seen[r.index] {
+				return nil, fmt.Errorf("duplicate remove at index %d on '%s'; each index should only be removed once", r.index, arrayPath)
+			}
+			seen[r.index] = true
+		}
+
+		// Sort descending by index
+		sort.Slice(removes, func(i, j int) bool {
+			return removes[i].index > removes[j].index
+		})
+		removesByArray[arrayPath] = removes
+	}
+
+	// Rebuild the operations slice with array removes reordered
+	result := make([]PatchOperation, len(operations))
+	copy(result, operations)
+
+	for _, removes := range removesByArray {
+		if len(removes) <= 1 {
+			continue
+		}
+		// Collect the original positions of these remove ops
+		positions := make([]int, len(removes))
+		for i, r := range removes {
+			positions[i] = r.opIndex
+		}
+		// Sort positions ascending so we can place sorted removes in order
+		sort.Ints(positions)
+		// Place the sorted (descending by index) removes into the original positions
+		for i, pos := range positions {
+			result[pos] = operations[removes[i].opIndex]
+		}
+	}
+
+	return result, nil
+}
+
 var GetDashboardByUID = mcpgrafana.MustTool(
 	"get_dashboard_by_uid",
 	"Retrieves the complete dashboard, including panels, variables, and settings, for a specific dashboard identified by its UID. WARNING: Large dashboards can consume significant context window space. Consider using get_dashboard_summary for overview or get_dashboard_property for specific data instead.",
@@ -140,7 +251,7 @@ var GetDashboardByUID = mcpgrafana.MustTool(
 
 var UpdateDashboard = mcpgrafana.MustTool(
 	"update_dashboard",
-	"Create or update a dashboard using either full JSON or efficient patch operations. For new dashboards\\, provide the 'dashboard' field. For updating existing dashboards\\, use 'uid' + 'operations' for better context window efficiency. Patch operations support complex JSONPaths like '$.panels[0].targets[0].expr'\\, '$.panels[1].title'\\, '$.panels[2].targets[0].datasource'\\, etc. Supports appending to arrays using '/- ' syntax: '$.panels/- ' appends to panels array\\, '$.panels[2]/- ' appends to nested array at index 2.",
+	"Create or update a dashboard. Two modes: (1) Full JSON — provide 'dashboard' for new dashboards or complete replacements. (2) Patch — provide 'uid' + 'operations' to make targeted changes to an existing dashboard. One of these two modes is required; 'folderUid'\\, 'message'\\, and 'overwrite' are supplementary and do nothing on their own. Patch operations support JSONPaths like '$.panels[0].targets[0].expr'\\, '$.panels[1].title'\\, '$.panels[2].targets[0].datasource'. Append to arrays with '/- ' syntax: '$.panels/- '. Remove by index: {\"op\": \"remove\"\\, \"path\": \"$.panels[2]\"}. Multiple removes on the same array are automatically reordered to avoid index-shifting issues.",
 	updateDashboard,
 	mcp.WithTitleAnnotation("Create or update dashboard"),
 	mcp.WithDestructiveHintAnnotation(true),
@@ -374,6 +485,9 @@ var GetDashboardSummary = mcpgrafana.MustTool(
 
 // applyJSONPath applies a value to a JSONPath or removes it if remove=true
 func applyJSONPath(data map[string]interface{}, path string, value interface{}, remove bool) error {
+	// Trim whitespace to handle paths like "$.panels/- " (trailing space)
+	path = strings.TrimSpace(path)
+
 	// Remove the leading "$." if present
 	if len(path) > 2 && path[:2] == "$." {
 		path = path[2:]
@@ -546,7 +660,12 @@ func removeAtSegment(current map[string]interface{}, segment JSONPathSegment) er
 	}
 
 	if segment.IsArray {
-		return fmt.Errorf("cannot remove array element %s[%d] (not supported)", segment.Key, segment.Index)
+		arr, err := validateArrayAccess(current, segment)
+		if err != nil {
+			return err
+		}
+		current[segment.Key] = slices.Delete(arr, segment.Index, segment.Index+1)
+		return nil
 	}
 
 	delete(current, segment.Key)
