@@ -49,6 +49,32 @@ type ElasticsearchClient struct {
 	baseURL    string
 }
 
+// HitsTotal handles both Elasticsearch 7+ format {"value": N, "relation": "eq"}
+// and older Elasticsearch/OpenSearch format where total is just a number N.
+type HitsTotal struct {
+	Value    int    `json:"value"`
+	Relation string `json:"relation"`
+}
+
+func (ht *HitsTotal) UnmarshalJSON(data []byte) error {
+	// Try as a plain number first (OpenSearch / ES 6.x format)
+	var num int
+	if err := json.Unmarshal(data, &num); err == nil {
+		ht.Value = num
+		ht.Relation = "eq"
+		return nil
+	}
+	// Otherwise parse as object (ES 7+ format)
+	type hitsTotalObj HitsTotal
+	var obj hitsTotalObj
+	if err := json.Unmarshal(data, &obj); err != nil {
+		return err
+	}
+	ht.Value = obj.Value
+	ht.Relation = obj.Relation
+	return nil
+}
+
 // ElasticsearchResponse represents a generic Elasticsearch search response
 type ElasticsearchResponse struct {
 	Took     int                    `json:"took"`
@@ -57,10 +83,7 @@ type ElasticsearchResponse struct {
 	Error    interface{}            `json:"error,omitempty"`
 	Shards   map[string]interface{} `json:"_shards"`
 	Hits     struct {
-		Total struct {
-			Value    int    `json:"value"`
-			Relation string `json:"relation"`
-		} `json:"total"`
+		Total    HitsTotal                `json:"total"`
 		MaxScore *float64                 `json:"max_score"`
 		Hits     []map[string]interface{} `json:"hits"`
 	} `json:"hits"`
