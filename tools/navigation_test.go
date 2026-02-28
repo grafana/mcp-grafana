@@ -91,6 +91,39 @@ func TestGenerateDeeplink(t *testing.T) {
 		assert.Contains(t, result, "refresh=30s")
 	})
 
+	t.Run("PublicURL takes precedence over URL", func(t *testing.T) {
+		publicCfg := mcpgrafana.GrafanaConfig{
+			URL:       "http://localhost:3000",
+			PublicURL: "https://grafana.example.com",
+		}
+		publicCtx := mcpgrafana.WithGrafanaConfig(context.Background(), publicCfg)
+
+		params := GenerateDeeplinkParams{
+			ResourceType: "dashboard",
+			DashboardUID: stringPtr("abc123"),
+		}
+
+		result, err := generateDeeplink(publicCtx, params)
+		require.NoError(t, err)
+		assert.Equal(t, "https://grafana.example.com/d/abc123", result)
+	})
+
+	t.Run("Falls back to URL when PublicURL is not set", func(t *testing.T) {
+		fallbackCfg := mcpgrafana.GrafanaConfig{
+			URL: "http://localhost:3000",
+		}
+		fallbackCtx := mcpgrafana.WithGrafanaConfig(context.Background(), fallbackCfg)
+
+		params := GenerateDeeplinkParams{
+			ResourceType: "dashboard",
+			DashboardUID: stringPtr("abc123"),
+		}
+
+		result, err := generateDeeplink(fallbackCtx, params)
+		require.NoError(t, err)
+		assert.Equal(t, "http://localhost:3000/d/abc123", result)
+	})
+
 	t.Run("Error cases", func(t *testing.T) {
 		emptyGrafanaCfg := mcpgrafana.GrafanaConfig{
 			URL: "",

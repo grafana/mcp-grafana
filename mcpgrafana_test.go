@@ -242,6 +242,36 @@ func TestExtractGrafanaInfoFromHeaders(t *testing.T) {
 		config := GrafanaConfigFromContext(ctx)
 		assert.Equal(t, int64(0), config.OrgID)
 	})
+
+	t.Run("publicURL from env", func(t *testing.T) {
+		t.Setenv("GRAFANA_PUBLIC_URL", "https://grafana.example.com")
+
+		req, err := http.NewRequest("GET", "http://example.com", nil)
+		require.NoError(t, err)
+		ctx := ExtractGrafanaInfoFromHeaders(context.Background(), req)
+		config := GrafanaConfigFromContext(ctx)
+		assert.Equal(t, "https://grafana.example.com", config.PublicURL)
+	})
+
+	t.Run("publicURL from header", func(t *testing.T) {
+		req, err := http.NewRequest("GET", "http://example.com", nil)
+		require.NoError(t, err)
+		req.Header.Set("X-Grafana-Public-URL", "https://grafana.example.com")
+		ctx := ExtractGrafanaInfoFromHeaders(context.Background(), req)
+		config := GrafanaConfigFromContext(ctx)
+		assert.Equal(t, "https://grafana.example.com", config.PublicURL)
+	})
+
+	t.Run("publicURL header takes precedence over env", func(t *testing.T) {
+		t.Setenv("GRAFANA_PUBLIC_URL", "https://env.grafana.com")
+
+		req, err := http.NewRequest("GET", "http://example.com", nil)
+		require.NoError(t, err)
+		req.Header.Set("X-Grafana-Public-URL", "https://header.grafana.com")
+		ctx := ExtractGrafanaInfoFromHeaders(context.Background(), req)
+		config := GrafanaConfigFromContext(ctx)
+		assert.Equal(t, "https://header.grafana.com", config.PublicURL)
+	})
 }
 
 func TestExtractGrafanaClientPath(t *testing.T) {
