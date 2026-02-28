@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -23,17 +22,21 @@ import (
 	"go.opentelemetry.io/otel/semconv/v1.39.0/mcpconv"
 )
 
-func maybeAddTools(s *server.MCPServer, tf func(*server.MCPServer), enabledTools []string, disable bool, category string) {
-	if !slices.Contains(enabledTools, category) {
-		slog.Debug("Not enabling tools", "category", category)
-		return
+// defaultEnabledTools is the default set of tool categories enabled for the server and CLI.
+const defaultEnabledTools = "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering"
+
+// effectiveEnabledTools computes the final list of enabled tool categories
+// by removing any that are explicitly disabled via --disable-* flags.
+func effectiveEnabledTools(enabledTools []string, disabledCategories map[string]bool) []string {
+	var result []string
+	for _, category := range enabledTools {
+		if disabledCategories[category] {
+			slog.Info("Disabling tools", "category", category)
+			continue
+		}
+		result = append(result, category)
 	}
-	if disable {
-		slog.Info("Disabling tools", "category", category)
-		return
-	}
-	slog.Debug("Enabling tools", "category", category)
-	tf(s)
+	return result
 }
 
 // disabledTools indicates whether each category of tools should be disabled.
@@ -61,7 +64,7 @@ type grafanaConfig struct {
 }
 
 func (dt *disabledTools) addFlags() {
-	flag.StringVar(&dt.enabledTools, "enabled-tools", "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering", "A comma separated list of tools enabled for this server. Can be overwritten entirely or by disabling specific components, e.g. --disable-search.")
+	flag.StringVar(&dt.enabledTools, "enabled-tools", defaultEnabledTools, "A comma separated list of tools enabled for this server. Can be overwritten entirely or by disabling specific components, e.g. --disable-search.")
 	flag.BoolVar(&dt.search, "disable-search", false, "Disable search tools")
 	flag.BoolVar(&dt.datasource, "disable-datasource", false, "Disable datasource tools")
 	flag.BoolVar(&dt.incident, "disable-incident", false, "Disable incident tools")
@@ -88,41 +91,59 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.runpanelquery, "disable-runpanelquery", false, "Disable run panel query tools")
 }
 
-func (gc *grafanaConfig) addFlags() {
-	flag.BoolVar(&gc.debug, "debug", false, "Enable debug mode for the Grafana transport")
-
-	// TLS configuration flags
-	flag.StringVar(&gc.tlsCertFile, "tls-cert-file", "", "Path to TLS certificate file for client authentication")
-	flag.StringVar(&gc.tlsKeyFile, "tls-key-file", "", "Path to TLS private key file for client authentication")
-	flag.StringVar(&gc.tlsCAFile, "tls-ca-file", "", "Path to TLS CA certificate file for server verification")
-	flag.BoolVar(&gc.tlsSkipVerify, "tls-skip-verify", false, "Skip TLS certificate verification (insecure)")
+func (gc *grafanaConfig) addFlags(fs *flag.FlagSet) {
+	fs.BoolVar(&gc.debug, "debug", false, "Enable debug mode for the Grafana transport")
+	fs.StringVar(&gc.tlsCertFile, "tls-cert-file", "", "Path to TLS certificate file for client authentication")
+	fs.StringVar(&gc.tlsKeyFile, "tls-key-file", "", "Path to TLS private key file for client authentication")
+	fs.StringVar(&gc.tlsCAFile, "tls-ca-file", "", "Path to TLS CA certificate file for server verification")
+	fs.BoolVar(&gc.tlsSkipVerify, "tls-skip-verify", false, "Skip TLS certificate verification (insecure)")
 }
 
-func (dt *disabledTools) addTools(s *server.MCPServer) {
-	enabledTools := strings.Split(dt.enabledTools, ",")
-	enableWriteTools := !dt.write
-	maybeAddTools(s, tools.AddSearchTools, enabledTools, dt.search, "search")
-	maybeAddTools(s, tools.AddDatasourceTools, enabledTools, dt.datasource, "datasource")
-	maybeAddTools(s, func(mcp *server.MCPServer) { tools.AddIncidentTools(mcp, enableWriteTools) }, enabledTools, dt.incident, "incident")
-	maybeAddTools(s, tools.AddPrometheusTools, enabledTools, dt.prometheus, "prometheus")
-	maybeAddTools(s, tools.AddLokiTools, enabledTools, dt.loki, "loki")
-	maybeAddTools(s, tools.AddElasticsearchTools, enabledTools, dt.elasticsearch, "elasticsearch")
-	maybeAddTools(s, func(mcp *server.MCPServer) { tools.AddAlertingTools(mcp, enableWriteTools) }, enabledTools, dt.alerting, "alerting")
-	maybeAddTools(s, func(mcp *server.MCPServer) { tools.AddDashboardTools(mcp, enableWriteTools) }, enabledTools, dt.dashboard, "dashboard")
-	maybeAddTools(s, func(mcp *server.MCPServer) { tools.AddFolderTools(mcp, enableWriteTools) }, enabledTools, dt.folder, "folder")
-	maybeAddTools(s, tools.AddOnCallTools, enabledTools, dt.oncall, "oncall")
-	maybeAddTools(s, tools.AddAssertsTools, enabledTools, dt.asserts, "asserts")
-	maybeAddTools(s, func(mcp *server.MCPServer) { tools.AddSiftTools(mcp, enableWriteTools) }, enabledTools, dt.sift, "sift")
-	maybeAddTools(s, tools.AddAdminTools, enabledTools, dt.admin, "admin")
-	maybeAddTools(s, tools.AddPyroscopeTools, enabledTools, dt.pyroscope, "pyroscope")
-	maybeAddTools(s, tools.AddNavigationTools, enabledTools, dt.navigation, "navigation")
-	maybeAddTools(s, func(mcp *server.MCPServer) { tools.AddAnnotationTools(mcp, enableWriteTools) }, enabledTools, dt.annotations, "annotations")
-	maybeAddTools(s, tools.AddRenderingTools, enabledTools, dt.rendering, "rendering")
-	maybeAddTools(s, tools.AddCloudWatchTools, enabledTools, dt.cloudwatch, "cloudwatch")
-	maybeAddTools(s, tools.AddExamplesTools, enabledTools, dt.examples, "examples")
-	maybeAddTools(s, tools.AddClickHouseTools, enabledTools, dt.clickhouse, "clickhouse")
-	maybeAddTools(s, tools.AddSearchLogsTools, enabledTools, dt.searchlogs, "searchlogs")
-	maybeAddTools(s, tools.AddRunPanelQueryTools, enabledTools, dt.runpanelquery, "runpanelquery")
+func (gc *grafanaConfig) toGrafanaConfig() mcpgrafana.GrafanaConfig {
+	cfg := mcpgrafana.GrafanaConfig{Debug: gc.debug}
+	if gc.tlsCertFile != "" || gc.tlsKeyFile != "" || gc.tlsCAFile != "" || gc.tlsSkipVerify {
+		cfg.TLSConfig = &mcpgrafana.TLSConfig{
+			CertFile:   gc.tlsCertFile,
+			KeyFile:    gc.tlsKeyFile,
+			CAFile:     gc.tlsCAFile,
+			SkipVerify: gc.tlsSkipVerify,
+		}
+	}
+	return cfg
+}
+
+func (dt *disabledTools) addTools(adder mcpgrafana.ToolAdder) {
+	enabled := effectiveEnabledTools(strings.Split(dt.enabledTools, ","), dt.disabledCategories())
+	tools.CollectAllTools(adder, enabled, !dt.write)
+}
+
+// disabledCategories returns a map of category names to their disabled state,
+// derived from the --disable-* flags.
+func (dt *disabledTools) disabledCategories() map[string]bool {
+	return map[string]bool{
+		"search":        dt.search,
+		"datasource":    dt.datasource,
+		"incident":      dt.incident,
+		"prometheus":    dt.prometheus,
+		"loki":          dt.loki,
+		"elasticsearch": dt.elasticsearch,
+		"alerting":      dt.alerting,
+		"dashboard":     dt.dashboard,
+		"folder":        dt.folder,
+		"oncall":        dt.oncall,
+		"asserts":       dt.asserts,
+		"sift":          dt.sift,
+		"admin":         dt.admin,
+		"pyroscope":     dt.pyroscope,
+		"navigation":    dt.navigation,
+		"annotations":   dt.annotations,
+		"rendering":     dt.rendering,
+		"cloudwatch":    dt.cloudwatch,
+		"examples":      dt.examples,
+		"clickhouse":    dt.clickhouse,
+		"searchlogs":    dt.searchlogs,
+		"runpanelquery": dt.runpanelquery,
+	}
 }
 
 func newServer(transport string, dt disabledTools, obs *observability.Observability) (*server.MCPServer, *mcpgrafana.ToolManager) {
@@ -389,6 +410,11 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 }
 
 func main() {
+	// Detect "cli" subcommand before flag.Parse() to avoid flag conflicts.
+	if len(os.Args) > 1 && os.Args[1] == "cli" {
+		os.Exit(runCLI(os.Args[2:]))
+	}
+
 	var transport string
 	flag.StringVar(&transport, "t", "stdio", "Transport type (stdio, sse or streamable-http)")
 	flag.StringVar(
@@ -405,7 +431,7 @@ func main() {
 	var dt disabledTools
 	dt.addFlags()
 	var gc grafanaConfig
-	gc.addFlags()
+	gc.addFlags(flag.CommandLine)
 	var tls tlsConfig
 	tls.addFlags()
 	var obs observability.Config
@@ -418,16 +444,7 @@ func main() {
 		os.Exit(0)
 	}
 
-	// Convert local grafanaConfig to mcpgrafana.GrafanaConfig
-	grafanaConfig := mcpgrafana.GrafanaConfig{Debug: gc.debug}
-	if gc.tlsCertFile != "" || gc.tlsKeyFile != "" || gc.tlsCAFile != "" || gc.tlsSkipVerify {
-		grafanaConfig.TLSConfig = &mcpgrafana.TLSConfig{
-			CertFile:   gc.tlsCertFile,
-			KeyFile:    gc.tlsKeyFile,
-			CAFile:     gc.tlsCAFile,
-			SkipVerify: gc.tlsSkipVerify,
-		}
-	}
+	grafanaConfig := gc.toGrafanaConfig()
 
 	// Set OTel resource identity
 	obs.ServerName = "mcp-grafana"

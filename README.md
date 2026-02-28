@@ -321,6 +321,24 @@ Scopes define the specific resources that permissions apply to. Each action requ
 
 _* Disabled by default. Add category to `--enabled-tools` to enable._
 
+## CLI Mode
+
+The `cli` subcommand lets you invoke any registered MCP tool directly from the command line, without starting a server:
+
+```bash
+mcp-grafana cli <tool-name> '{"param":"value"}'
+```
+
+Parameters can also be passed via stdin:
+
+```bash
+echo '{"datasourceUid":"prometheus","expr":"up"}' | mcp-grafana cli query_prometheus
+```
+
+Use `mcp-grafana cli` to list all available tools, or `mcp-grafana cli <tool-name> --help` for per-tool parameter details.
+
+The `--enabled-tools` and `--disable-write` flags are supported to control which tools are available.
+
 ## CLI Flags Reference
 
 The `mcp-grafana` binary supports various command-line flags for configuration:
