@@ -14,7 +14,6 @@ import (
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
 )
 
 const (
@@ -532,8 +531,8 @@ var DescribeClickHouseTable = mcpgrafana.MustTool(
 )
 
 // AddClickHouseTools registers all ClickHouse tools with the MCP server
-func AddClickHouseTools(mcp *server.MCPServer) {
-	QueryClickHouse.Register(mcp)
-	ListClickHouseTables.Register(mcp)
-	DescribeClickHouseTable.Register(mcp)
+func AddClickHouseTools(adder mcpgrafana.ToolAdder) {
+	QueryClickHouse.Register(adder)
+	ListClickHouseTables.Register(adder)
+	DescribeClickHouseTable.Register(adder)
 }

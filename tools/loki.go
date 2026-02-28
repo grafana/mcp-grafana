@@ -14,7 +14,6 @@ import (
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
 )
 
 const (
@@ -838,10 +837,10 @@ var QueryLokiPatterns = mcpgrafana.MustTool(
 )
 
 // AddLokiTools registers all Loki tools with the MCP server
-func AddLokiTools(mcp *server.MCPServer) {
-	ListLokiLabelNames.Register(mcp)
-	ListLokiLabelValues.Register(mcp)
-	QueryLokiStats.Register(mcp)
-	QueryLokiLogs.Register(mcp)
-	QueryLokiPatterns.Register(mcp)
+func AddLokiTools(adder mcpgrafana.ToolAdder) {
+	ListLokiLabelNames.Register(adder)
+	ListLokiLabelValues.Register(adder)
+	QueryLokiStats.Register(adder)
+	QueryLokiLogs.Register(adder)
+	QueryLokiPatterns.Register(adder)
 }

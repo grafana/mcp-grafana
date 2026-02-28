@@ -13,7 +13,6 @@ import (
 	"github.com/grafana/grafana-openapi-client-go/client"
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
 )
 
 // getOnCallURLFromSettings retrieves the OnCall API URL from the Grafana settings endpoint.
@@ -509,12 +508,12 @@ var GetAlertGroup = mcpgrafana.MustTool(
 	mcp.WithReadOnlyHintAnnotation(true),
 )
 
-func AddOnCallTools(mcp *server.MCPServer) {
-	ListOnCallSchedules.Register(mcp)
-	GetOnCallShift.Register(mcp)
-	GetCurrentOnCallUsers.Register(mcp)
-	ListOnCallTeams.Register(mcp)
-	ListOnCallUsers.Register(mcp)
-	ListAlertGroups.Register(mcp)
-	GetAlertGroup.Register(mcp)
+func AddOnCallTools(adder mcpgrafana.ToolAdder) {
+	ListOnCallSchedules.Register(adder)
+	GetOnCallShift.Register(adder)
+	GetCurrentOnCallUsers.Register(adder)
+	ListOnCallTeams.Register(adder)
+	ListOnCallUsers.Register(adder)
+	ListAlertGroups.Register(adder)
+	GetAlertGroup.Register(adder)
 }

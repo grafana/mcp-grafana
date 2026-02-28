@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
 
 	"github.com/grafana/grafana-openapi-client-go/client/access_control"
 	"github.com/grafana/grafana-openapi-client-go/client/org"
@@ -241,14 +240,14 @@ var GetResourceDescription = mcpgrafana.MustTool(
 	mcp.WithReadOnlyHintAnnotation(true),
 )
 
-func AddAdminTools(mcp *server.MCPServer) {
-	ListTeams.Register(mcp)
-	ListUsersByOrg.Register(mcp)
-	ListAllRoles.Register(mcp)
-	GetRoleDetails.Register(mcp)
-	GetRoleAssignments.Register(mcp)
-	ListUserRoles.Register(mcp)
-	ListTeamRoles.Register(mcp)
-	GetResourcePermissions.Register(mcp)
-	GetResourceDescription.Register(mcp)
+func AddAdminTools(adder mcpgrafana.ToolAdder) {
+	ListTeams.Register(adder)
+	ListUsersByOrg.Register(adder)
+	ListAllRoles.Register(adder)
+	GetRoleDetails.Register(adder)
+	GetRoleAssignments.Register(adder)
+	ListUserRoles.Register(adder)
+	ListTeamRoles.Register(adder)
+	GetResourcePermissions.Register(adder)
+	GetResourceDescription.Register(adder)
 }

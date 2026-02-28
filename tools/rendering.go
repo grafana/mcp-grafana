@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
 )
@@ -199,6 +198,6 @@ var GetPanelImage = mcpgrafana.MustTool(
 	mcp.WithReadOnlyHintAnnotation(true),
 )
 
-func AddRenderingTools(mcp *server.MCPServer) {
-	GetPanelImage.Register(mcp)
+func AddRenderingTools(adder mcpgrafana.ToolAdder) {
+	GetPanelImage.Register(adder)
 }

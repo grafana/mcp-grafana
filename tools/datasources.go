@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
 
 	"github.com/grafana/grafana-openapi-client-go/models"
 	mcpgrafana "github.com/grafana/mcp-grafana"
@@ -173,7 +172,7 @@ var GetDatasource = mcpgrafana.MustTool(
 	mcp.WithReadOnlyHintAnnotation(true),
 )
 
-func AddDatasourceTools(mcp *server.MCPServer) {
-	ListDatasources.Register(mcp)
-	GetDatasource.Register(mcp)
+func AddDatasourceTools(adder mcpgrafana.ToolAdder) {
+	ListDatasources.Register(adder)
+	GetDatasource.Register(adder)
 }
