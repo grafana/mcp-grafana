@@ -132,3 +132,43 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+  influxdb3:
+    build:
+      dockerfile_inline: |
+        FROM influxdb:3-core@sha256:255268d2a5f42b8c38d373864a4ba72956d91e14a3361019706bfad2f7c039ab
+        COPY --chmod=777 ./testdata/tools/influxdb/influxdb3-seed.sh /init.sh
+    ports:
+      - "8181:8181"
+    command: >
+      /bin/bash -c "/init.sh & influxdb3 serve --node-id=node0 --object-store=file --data-dir=/var/lib/influxdb3 --admin-token-file=/run/secrets/admin-token"
+    secrets:
+      - admin-token
+  influxdb2:
+    image: influxdb:2
+    restart: unless-stopped
+    ports:
+      - "8086:8086"
+    volumes:
+      - ./tools/influxdb/influxdb-2-seed.sh:/docker-entrypoint-initdb.d/init.sh
+    environment:
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME_FILE: /run/secrets/influxdb2-admin-username
+      DOCKER_INFLUXDB_INIT_PASSWORD_FILE: /run/secrets/influxdb2-admin-password
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN_FILE: /run/secrets/influxdb2-admin-token
+      DOCKER_INFLUXDB_INIT_ORG: system-logs
+      DOCKER_INFLUXDB_INIT_BUCKET: b-system-logs
+    secrets:
+      - influxdb2-admin-username
+      - influxdb2-admin-password
+      - influxdb2-admin-token
+    
+secrets:
+  influxdb2-admin-username:
+    file: ./testdata/tools/influxdb/.env.influxdb2-admin-username
+  influxdb2-admin-password:
+    file: ./testdata/tools/influxdb/.env.influxdb2-admin-password
+  influxdb2-admin-token:
+    file: ./testdata/tools/influxdb/.env.influxdb2-admin-token
+  admin-token:
+    file: ./testdata/tools/influxdb/admin-token.json
+    
