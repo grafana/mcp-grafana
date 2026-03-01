@@ -4,12 +4,10 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
-
 	"github.com/grafana/grafana-openapi-client-go/client/search"
 	"github.com/grafana/grafana-openapi-client-go/models"
 	mcpgrafana "github.com/grafana/mcp-grafana"
+	"github.com/mark3labs/mcp-go/mcp"
 )
 
 var dashboardTypeStr = "dash-db"
@@ -105,7 +103,7 @@ var SearchFolders = mcpgrafana.MustTool(
 	mcp.WithReadOnlyHintAnnotation(true),
 )
 
-func AddSearchTools(mcp *server.MCPServer) {
-	SearchDashboards.Register(mcp)
-	SearchFolders.Register(mcp)
+func AddSearchTools(adder mcpgrafana.ToolAdder) {
+	SearchDashboards.Register(adder)
+	SearchFolders.Register(adder)
 }

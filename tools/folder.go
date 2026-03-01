@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
 
 	"github.com/grafana/grafana-openapi-client-go/models"
 	mcpgrafana "github.com/grafana/mcp-grafana"
@@ -46,8 +45,8 @@ var CreateFolder = mcpgrafana.MustTool(
 	mcp.WithIdempotentHintAnnotation(false),
 )
 
-func AddFolderTools(mcp *server.MCPServer, enableWriteTools bool) {
+func AddFolderTools(adder mcpgrafana.ToolAdder, enableWriteTools bool) {
 	if enableWriteTools {
-		CreateFolder.Register(mcp)
+		CreateFolder.Register(adder)
 	}
 }

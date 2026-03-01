@@ -43,13 +43,16 @@ func (e *HardError) Unwrap() error {
 	return e.Err
 }
 
-// Register adds the Tool to the given MCPServer.
-// It is a convenience method that calls server.MCPServer.AddTool with the Tool's metadata and handler,
-// allowing fluent tool registration in a single statement:
+// ToolAdder accepts tool registrations.
+type ToolAdder interface {
+	AddTool(tool mcp.Tool, handler server.ToolHandlerFunc)
+}
+
+// Register adds the Tool to the given ToolAdder.
 //
-//	mcpgrafana.MustTool(name, description, toolHandler).Register(server)
-func (t *Tool) Register(mcp *server.MCPServer) {
-	mcp.AddTool(t.Tool, t.Handler)
+//	mcpgrafana.MustTool(name, description, toolHandler).Register(adder)
+func (t *Tool) Register(adder ToolAdder) {
+	adder.AddTool(t.Tool, t.Handler)
 }
 
 // MustTool creates a new Tool from the given name, description, and toolHandler.

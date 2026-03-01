@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
 )
@@ -103,6 +102,6 @@ var GenerateDeeplink = mcpgrafana.MustTool(
 	mcp.WithReadOnlyHintAnnotation(true),
 )
 
-func AddNavigationTools(mcp *server.MCPServer) {
-	GenerateDeeplink.Register(mcp)
+func AddNavigationTools(adder mcpgrafana.ToolAdder) {
+	GenerateDeeplink.Register(adder)
 }

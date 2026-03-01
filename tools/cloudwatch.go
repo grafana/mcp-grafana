@@ -14,7 +14,6 @@ import (
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
 )
 
 const (
@@ -601,9 +600,9 @@ var ListCloudWatchDimensions = mcpgrafana.MustTool(
 )
 
 // AddCloudWatchTools registers all CloudWatch tools with the MCP server
-func AddCloudWatchTools(mcp *server.MCPServer) {
-	QueryCloudWatch.Register(mcp)
-	ListCloudWatchNamespaces.Register(mcp)
-	ListCloudWatchMetrics.Register(mcp)
-	ListCloudWatchDimensions.Register(mcp)
+func AddCloudWatchTools(adder mcpgrafana.ToolAdder) {
+	QueryCloudWatch.Register(adder)
+	ListCloudWatchNamespaces.Register(adder)
+	ListCloudWatchMetrics.Register(adder)
+	ListCloudWatchDimensions.Register(adder)
 }

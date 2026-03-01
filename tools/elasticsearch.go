@@ -12,7 +12,6 @@ import (
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
 )
 
 const (
@@ -364,6 +363,6 @@ var QueryElasticsearch = mcpgrafana.MustTool(
 )
 
 // AddElasticsearchTools registers all Elasticsearch tools with the MCP server
-func AddElasticsearchTools(mcp *server.MCPServer) {
-	QueryElasticsearch.Register(mcp)
+func AddElasticsearchTools(adder mcpgrafana.ToolAdder) {
+	QueryElasticsearch.Register(adder)
 }

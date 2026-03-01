@@ -12,7 +12,6 @@ import (
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
 )
 
 func newAssertsClient(ctx context.Context) (*Client, error) {
@@ -149,6 +148,6 @@ var GetAssertions = mcpgrafana.MustTool(
 	mcp.WithReadOnlyHintAnnotation(true),
 )
 
-func AddAssertsTools(mcp *server.MCPServer) {
-	GetAssertions.Register(mcp)
+func AddAssertsTools(adder mcpgrafana.ToolAdder) {
+	GetAssertions.Register(adder)
 }
