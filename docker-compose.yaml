@@ -136,7 +136,7 @@ services:
     build:
       dockerfile_inline: |
         FROM influxdb:3-core@sha256:255268d2a5f42b8c38d373864a4ba72956d91e14a3361019706bfad2f7c039ab
-        COPY --chmod=777 ./testdata/tools/influxdb/influxdb3-seed.sh /init.sh
+        COPY --chmod=777 ./testdata/tools/influxdb/influxdbv3-seed.sh /init.sh
     ports:
       - "8181:8181"
     command: >
@@ -144,12 +144,12 @@ services:
     secrets:
       - admin-token
   influxdb2:
-    image: influxdb:2
-    restart: unless-stopped
+    build:
+      dockerfile_inline: |
+        FROM influxdb:2
+        COPY --chmod=777 ./testdata/tools/influxdb/influxdbv2-seed.sh /docker-entrypoint-initdb.d/init.sh
     ports:
       - "8086:8086"
-    volumes:
-      - ./tools/influxdb/influxdb-2-seed.sh:/docker-entrypoint-initdb.d/init.sh
     environment:
       DOCKER_INFLUXDB_INIT_MODE: setup
       DOCKER_INFLUXDB_INIT_USERNAME_FILE: /run/secrets/influxdb2-admin-username
