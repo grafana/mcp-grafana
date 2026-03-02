@@ -28,8 +28,8 @@ const (
 	InfluxDBMeasurementsMaxLimit     uint = 1000
 
 	//limit applied to fields, tags
-	InfluxDbTagsDefaultLimit uint = 100
-	InfluxDbTagsMaxLimit     uint = 1000
+	InfluxDBTagsDefaultLimit uint = 100
+	InfluxDBTagsMaxLimit     uint = 1000
 )
 
 const (
@@ -138,10 +138,10 @@ type influxQueryResponse struct {
 }
 
 type InfluxQueryResFrame struct {
-	Name     string
-	Columns  []string
-	Rows     []map[string]any
-	RowCount uint
+	Name     string           `json:"name"`
+	Columns  []string         `json:"columns"`
+	Rows     []map[string]any `json:"rows"`
+	RowCount uint             `json:"rowCount"`
 }
 type InfluxQueryResult struct {
 	Frames      []*InfluxQueryResFrame
@@ -195,8 +195,6 @@ func (ic *influxDBClient) Query(ctx context.Context, args InfluxQueryArgs, from,
 		"to":   strconv.FormatInt(to.UnixMilli(), 10),
 	}
 
-	fmt.Println(payload)
-
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("marshaling query payload: %w", err)
@@ -221,12 +219,11 @@ func (ic *influxDBClient) Query(ctx context.Context, args InfluxQueryArgs, from,
 	}
 
 	// Read and parse response
-	body := io.LimitReader(resp.Body, 1024*1024*60) // 48MB limit
+	body := io.LimitReader(resp.Body, 1024*1024*48) // 48MB limit
 	bodyBytes, err := io.ReadAll(body)
 	if err != nil {
 		return nil, fmt.Errorf("reading response body: %w", err)
 	}
-	fmt.Println(len(bodyBytes))
 	var queryResp influxQueryResponse
 	if err := json.Unmarshal(bodyBytes, &queryResp); err != nil {
 		return nil, fmt.Errorf("unmarshaling response: %w", err)
@@ -269,7 +266,7 @@ func enforceQueryLimit(args *InfluxQueryArgs) {
 	case FluxQueryType:
 		//A query can execute selection of multiple tables
 		//flux |>limit() operator applies limit per table or group
-		args.Query = strings.TrimSpace(args.Query) + fmt.Sprintf("|>limit(n:%d)", limit)
+		args.Query = strings.TrimSpace(args.Query) + fmt.Sprintf("\n|>limit(n:%d)", limit)
 	}
 
 }
@@ -296,7 +293,7 @@ func parseTimeRange(start string, end string) (*time.Time, *time.Time, error) {
 			toTime = fromTime.Add(defaultPeriod)
 		}
 	}
-	//only pass start time , how does grafana default the end time
+
 	if end != "" {
 		parsed, err := parseEndTime(end)
 		if err != nil {
@@ -434,6 +431,13 @@ type ListBucketResult struct {
 	Hints       *EmptyResultHints `json:"hints,omitempty"`
 }
 
+/*
+*
+
+	Exctracts Values from response of string type columns
+
+*
+*/
 func extractColValues(resp *influxQueryResponse, colName string) (*[]string, error) {
 	fieldValues := make([]string, 0)
 
@@ -467,7 +471,11 @@ func extractColValues(resp *influxQueryResponse, colName string) (*[]string, err
 			fieldValues = resizedFieldValues
 
 			for _, name := range frame.Data.Values[fieldColIdx] {
-				fieldValues = append(fieldValues, name.(string))
+				if s, ok := name.(string); ok {
+					fieldValues = append(fieldValues, s)
+				} else {
+					return nil, errors.New("expected column to be string type")
+				}
 			}
 		}
 	}
@@ -477,14 +485,10 @@ func extractColValues(resp *influxQueryResponse, colName string) (*[]string, err
 
 func listBuckets(ctx context.Context, args ListBucketArgs) (*ListBucketResult, error) {
 	queryType := FluxQueryType
-	client, _, err := newInfluxDBClient(ctx, args.DatasourceUID, &queryType)
+	client, sourceQueryType, err := newInfluxDBClient(ctx, args.DatasourceUID, &queryType)
 
 	if err != nil {
-		pattern := `^datasource \S+ is configured with querytype \S+, not \S+$`
-
-		matched, _ := regexp.MatchString(pattern, err.Error())
-
-		if matched {
+		if sourceQueryType != "" && sourceQueryType != queryType {
 			return nil, fmt.Errorf("Datasource is not configured with FluxQL, bucket listing is explicit to FluxQL linked datasources")
 		}
 		return nil, err
@@ -511,7 +515,7 @@ func listBuckets(ctx context.Context, args ListBucketArgs) (*ListBucketResult, e
 	if len(*buckets) == 0 {
 		//return empty result hints
 		result.Hints = GenerateEmptyResultHints(HintContext{
-			DatasourceType: FluxQueryType,
+			DatasourceType: InfluxDBDataSourceType,
 			Query:          query,
 			ProcessedQuery: query,
 			StartTime:      refTime,
@@ -598,7 +602,7 @@ func listMeasurements(ctx context.Context, args ListMeasurementsArgs) (*ListMeas
 	if len(*measurements) == 0 {
 		//add empty results hints
 		result.Hints = GenerateEmptyResultHints(HintContext{
-			DatasourceType: FluxQueryType,
+			DatasourceType: InfluxDBDataSourceType,
 			Query:          query,
 			ProcessedQuery: query,
 			StartTime:      refTime,
@@ -634,11 +638,11 @@ type ListTagKeysResult struct {
 }
 
 func enforceTagKeysLimit(args *ListTagKeysArgs) {
-	if args.Limit > InfluxDbTagsMaxLimit {
-		args.Limit = InfluxDbTagsMaxLimit
+	if args.Limit > InfluxDBTagsMaxLimit {
+		args.Limit = InfluxDBTagsMaxLimit
 	}
 	if args.Limit == 0 {
-		args.Limit = InfluxDbTagsDefaultLimit
+		args.Limit = InfluxDBTagsDefaultLimit
 	}
 }
 
@@ -649,6 +653,10 @@ func listTagKeys(ctx context.Context, args ListTagKeysArgs) (*ListTagKeysResult,
 
 	if err != nil {
 		return nil, err
+	}
+
+	if queryType == FluxQueryType && args.Bucket == "" {
+		return nil, fmt.Errorf("Bucket is required for %s linked InfluxDB Datasources", FluxQueryType)
 	}
 
 	var tagColumnKey string
@@ -685,7 +693,7 @@ func listTagKeys(ctx context.Context, args ListTagKeysArgs) (*ListTagKeysResult,
 	if len(*tags) == 0 {
 		//add empty results hints
 		result.Hints = GenerateEmptyResultHints(HintContext{
-			DatasourceType: FluxQueryType,
+			DatasourceType: InfluxDBDataSourceType,
 			Query:          query,
 			ProcessedQuery: query,
 			StartTime:      refTime,
@@ -723,11 +731,11 @@ type ListFieldKeysResult struct {
 
 // field keys, tag key use same variable for limits
 func enforceFieldKeysLimit(args *ListFieldKeysArgs) {
-	if args.Limit > InfluxDbTagsMaxLimit {
-		args.Limit = InfluxDbTagsMaxLimit
+	if args.Limit > InfluxDBTagsMaxLimit {
+		args.Limit = InfluxDBTagsMaxLimit
 	}
 	if args.Limit == 0 {
-		args.Limit = InfluxDbTagsDefaultLimit
+		args.Limit = InfluxDBTagsDefaultLimit
 	}
 }
 
@@ -738,6 +746,10 @@ func listFieldKeys(ctx context.Context, args ListFieldKeysArgs) (*ListFieldKeysR
 
 	if err != nil {
 		return nil, err
+	}
+
+	if queryType == FluxQueryType && args.Bucket == "" {
+		return nil, fmt.Errorf("Bucket is required for %s linked InfluxDB Datasources", FluxQueryType)
 	}
 
 	var fieldColumnKey string
@@ -763,7 +775,7 @@ func listFieldKeys(ctx context.Context, args ListFieldKeysArgs) (*ListFieldKeysR
 		return nil, err
 	}
 
-	tags, err := extractColValues(response, fieldColumnKey)
+	fieldKeys, err := extractColValues(response, fieldColumnKey)
 
 	if err != nil {
 		return nil, err
@@ -771,10 +783,10 @@ func listFieldKeys(ctx context.Context, args ListFieldKeysArgs) (*ListFieldKeysR
 
 	result := ListFieldKeysResult{}
 
-	if len(*tags) == 0 {
+	if len(*fieldKeys) == 0 {
 		//add empty results hints
 		result.Hints = GenerateEmptyResultHints(HintContext{
-			DatasourceType: FluxQueryType,
+			DatasourceType: InfluxDBDataSourceType,
 			Query:          query,
 			ProcessedQuery: query,
 			StartTime:      refTime,
@@ -783,8 +795,8 @@ func listFieldKeys(ctx context.Context, args ListFieldKeysArgs) (*ListFieldKeysR
 		})
 	}
 
-	result.FieldKeysCount = uint(len(*tags))
-	result.FieldKeys = tags
+	result.FieldKeysCount = uint(len(*fieldKeys))
+	result.FieldKeys = fieldKeys
 	return &result, nil
 }
 
