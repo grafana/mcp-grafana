@@ -607,9 +607,9 @@ type ListTagKeysArgs struct {
 	Limit         uint   `json:"limit"`
 }
 type ListTagKeysResult struct {
-	Tags     *[]string         `json:"tags"`
-	TagCount uint              `json:"tagCount"`
-	Hints    *EmptyResultHints `json:"hints,omitempty"`
+	TagKeys      *[]string         `json:"tags"`
+	TagKeysCount uint              `json:"tagCount"`
+	Hints        *EmptyResultHints `json:"hints,omitempty"`
 }
 
 func enforeTagKeysLimit(args *ListTagKeysArgs) {
@@ -635,8 +635,9 @@ func listTagKeys(ctx context.Context, args ListTagKeysArgs) (*ListTagKeysResult,
 
 	switch queryType {
 	case SQLQueryType:
+		//TODO : Escape '-' for measurement name 
 		//data_type 'Dictionary%%' distiguishes tags from fields for SQL QURIES
-		query = fmt.Sprintf("SELECT column_name FROM information_schema.columns WHERE table_schema = 'iox' AND table_name = '%s' AND data_type LIKE 'Dictionary%%' ORDER BY column_name LIMIT %d", args.Measurement, args.Limit)
+		query = fmt.Sprintf(`SELECT column_name FROM information_schema.columns WHERE table_schema = 'iox' AND table_name = '%s' AND data_type LIKE 'Dictionary%%' ORDER BY column_name LIMIT %d`, args.Bucket, args.Limit)
 		tagColumnKey = "column_name"
 	case FluxQueryType:
 		query = fmt.Sprintf(`import "influxdata/influxdb/schema" schema.measurementTagKeys(bucket: "%s", measurement: "%s")|> limit(n: %d)`, args.Bucket, args.Measurement, args.Limit)
@@ -673,8 +674,8 @@ func listTagKeys(ctx context.Context, args ListTagKeysArgs) (*ListTagKeysResult,
 		})
 	}
 
-	result.TagCount = uint(len(*tags))
-	result.Tags = tags
+	result.TagKeysCount = uint(len(*tags))
+	result.TagKeys = tags
 	return &result, nil
 }
 
@@ -695,9 +696,9 @@ type ListFieldKeysArgs struct {
 }
 
 type ListFieldKeysResult struct {
-	Fields     *[]string         `json:"fields"`
-	FieldCount uint              `json:"fieldCount"`
-	Hints      *EmptyResultHints `json:"hints,omitempty"`
+	FieldKeys      *[]string         `json:"fields"`
+	FieldKeysCount uint              `json:"fieldCount"`
+	Hints          *EmptyResultHints `json:"hints,omitempty"`
 }
 
 // field keys, tag key use same variable for limits
@@ -762,8 +763,8 @@ func listFieldKeys(ctx context.Context, args ListFieldKeysArgs) (*ListFieldKeysR
 		})
 	}
 
-	result.FieldCount = uint(len(*tags))
-	result.Fields = tags
+	result.FieldKeysCount = uint(len(*tags))
+	result.FieldKeys = tags
 	return &result, nil
 }
 
@@ -775,6 +776,7 @@ var ListFieldKeys = mcpgrafana.MustTool(
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
 )
+
 
 func AddInfluxTools(mcp *server.MCPServer) {
 	QueryInflux.Register(mcp)
