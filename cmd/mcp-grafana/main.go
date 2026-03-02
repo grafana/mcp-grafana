@@ -60,6 +60,53 @@ type grafanaConfig struct {
 	tlsSkipVerify bool
 }
 
+// lokiMaskingConfig holds Loki log masking configuration from CLI flags.
+type lokiMaskingConfig struct {
+	enabled     bool
+	enabledSet  bool // tracks if CLI flag was explicitly set
+	patterns    []string
+	patternsSet bool // tracks if CLI flag was explicitly set
+}
+
+func (lmc *lokiMaskingConfig) addFlags() {
+	flag.BoolVar(&lmc.enabled, "loki-masking-enabled", false,
+		"Enable Loki log masking (env: LOKI_MASKING_ENABLED)")
+	flag.Func("loki-masking-patterns",
+		"Comma-separated list of builtin masking patterns (env: LOKI_MASKING_PATTERNS). "+
+			"Available: email, phone, credit_card, ip_address, mac_address, api_key, jwt_token",
+		func(s string) error {
+			lmc.patternsSet = true
+			if s != "" {
+				lmc.patterns = strings.Split(s, ",")
+			}
+			return nil
+		})
+}
+
+// toMCPConfig converts the CLI config to mcpgrafana.LokiMaskingConfig,
+// merging with environment variables (CLI takes precedence).
+func (lmc *lokiMaskingConfig) toMCPConfig() mcpgrafana.LokiMaskingConfig {
+	// Start with environment variables
+	config := mcpgrafana.ExtractLokiMaskingFromEnv()
+
+	// CLI flags override environment variables if explicitly set
+	// Check if enabled flag was set via CLI by comparing with flag default and checking Visit
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "loki-masking-enabled" {
+			lmc.enabledSet = true
+		}
+	})
+
+	if lmc.enabledSet {
+		config.Enabled = lmc.enabled
+	}
+	if lmc.patternsSet {
+		config.Patterns = lmc.patterns
+	}
+
+	return config
+}
+
 func (dt *disabledTools) addFlags() {
 	flag.StringVar(&dt.enabledTools, "enabled-tools", "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering", "A comma separated list of tools enabled for this server. Can be overwritten entirely or by disabling specific components, e.g. --disable-search.")
 	flag.BoolVar(&dt.search, "disable-search", false, "Disable search tools")
@@ -271,7 +318,7 @@ func runMetricsServer(addr string, o *observability.Observability) {
 	}
 }
 
-func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt disabledTools, gc mcpgrafana.GrafanaConfig, tls tlsConfig, obs observability.Config) error {
+func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt disabledTools, gc mcpgrafana.GrafanaConfig, tls tlsConfig, lmc mcpgrafana.LokiMaskingConfig, obs observability.Config) error {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})))
 
 	// Set up observability (metrics and tracing)
@@ -288,6 +335,37 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 	}()
 
 	s, tm := newServer(transport, dt, o)
+
+	// Create LogMasker from LokiMaskingConfig if enabled
+	var masker any
+	if lmc.Enabled {
+		invalidPatterns := lmc.Validate()
+		if len(invalidPatterns) > 0 {
+			slog.Warn("Invalid Loki masking patterns detected, they will be ignored",
+				"invalid_patterns", invalidPatterns)
+		}
+		validPatterns := lmc.FilterValidPatterns()
+
+		if len(validPatterns) > 0 {
+			// Create masking config for tools.NewLogMasker
+			maskingConfig := &tools.MaskingConfig{
+				BuiltinPatterns: validPatterns,
+			}
+			var err error
+			masker, err = tools.NewLogMasker(maskingConfig)
+			if err != nil {
+				slog.Error("Failed to create log masker", "error", err)
+				return fmt.Errorf("failed to create log masker: %w", err)
+			}
+			slog.Info("Loki log masking enabled",
+				"pattern_count", len(validPatterns),
+				"patterns", validPatterns)
+		} else {
+			slog.Warn("Loki log masking enabled but no valid patterns configured")
+		}
+	} else {
+		slog.Debug("Loki log masking disabled")
+	}
 
 	// Create a context that will be cancelled on shutdown
 	ctx, cancel := context.WithCancel(context.Background())
@@ -314,7 +392,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 	switch transport {
 	case "stdio":
 		srv := server.NewStdioServer(s)
-		cf := mcpgrafana.ComposedStdioContextFunc(gc)
+		cf := mcpgrafana.ComposedStdioContextFunc(gc, masker)
 		srv.SetContextFunc(cf)
 
 		// For stdio (single-tenant), initialize proxied tools on the server directly
@@ -336,7 +414,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 	case "sse":
 		httpSrv := &http.Server{Addr: addr}
 		srv := server.NewSSEServer(s,
-			server.WithSSEContextFunc(mcpgrafana.ComposedSSEContextFunc(gc)),
+			server.WithSSEContextFunc(mcpgrafana.ComposedSSEContextFunc(gc, masker)),
 			server.WithStaticBasePath(basePath),
 			server.WithHTTPServer(httpSrv),
 		)
@@ -360,7 +438,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 	case "streamable-http":
 		httpSrv := &http.Server{Addr: addr}
 		opts := []server.StreamableHTTPOption{
-			server.WithHTTPContextFunc(mcpgrafana.ComposedHTTPContextFunc(gc)),
+			server.WithHTTPContextFunc(mcpgrafana.ComposedHTTPContextFunc(gc, masker)),
 			server.WithStateLess(dt.proxied), // Stateful when proxied tools enabled (requires sessions)
 			server.WithEndpointPath(endpointPath),
 			server.WithStreamableHTTPServer(httpSrv),
@@ -408,6 +486,8 @@ func main() {
 	gc.addFlags()
 	var tls tlsConfig
 	tls.addFlags()
+	var lmc lokiMaskingConfig
+	lmc.addFlags()
 	var obs observability.Config
 	flag.BoolVar(&obs.MetricsEnabled, "metrics", false, "Enable Prometheus metrics endpoint")
 	flag.StringVar(&obs.MetricsAddress, "metrics-address", "", "Separate address for metrics server (e.g., :9090). If empty, metrics are served on the main server at /metrics")
@@ -429,6 +509,9 @@ func main() {
 		}
 	}
 
+	// Convert CLI lokiMaskingConfig to mcpgrafana.LokiMaskingConfig
+	lokiMaskingConfig := lmc.toMCPConfig()
+
 	// Set OTel resource identity
 	obs.ServerName = "mcp-grafana"
 	obs.ServerVersion = mcpgrafana.Version()
@@ -441,7 +524,7 @@ func main() {
 		obs.NetworkTransport = mcpconv.NetworkTransportTCP
 	}
 
-	if err := run(transport, *addr, *basePath, *endpointPath, parseLevel(*logLevel), dt, grafanaConfig, tls, obs); err != nil {
+	if err := run(transport, *addr, *basePath, *endpointPath, parseLevel(*logLevel), dt, grafanaConfig, tls, lokiMaskingConfig, obs); err != nil {
 		panic(err)
 	}
 }

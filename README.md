@@ -84,6 +84,7 @@ The dashboard tools now include several strategies to manage context window usag
 
 - **Query Loki logs and metrics:** Run both log queries and metric queries using LogQL against Loki datasources.
 - **Query Loki metadata:** Retrieve label names, label values, and stream statistics from Loki datasources.
+- **Log masking:** Automatically mask sensitive data (email, credit cards, API keys, etc.) in log results. See [Loki Log Masking](#loki-log-masking) for configuration.
 - **Query Loki patterns:** Retrieve log patterns detected by Loki to identify common log structures and anomalies.
 
 ### ClickHouse Querying
@@ -363,6 +364,10 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 - `--disable-searchlogs`: Disable search_logs tool
 - `--disable-runpanelquery`: Disable run panel query tools
 
+**Loki Log Masking:**
+- `--loki-masking-enabled`: Enable Loki log masking (env: `LOKI_MASKING_ENABLED`) - default: `false`
+- `--loki-masking-patterns`: Comma-separated list of builtin masking patterns (env: `LOKI_MASKING_PATTERNS`). Available patterns: `email`, `phone`, `credit_card`, `ip_address`, `mac_address`, `api_key`, `jwt_token`
+
 ### Read-Only Mode
 
 The `--disable-write` flag provides a way to run the MCP server in read-only mode, preventing any write operations to your Grafana instance. This is useful for scenarios where you want to provide safe, read-only access such as:
@@ -398,6 +403,26 @@ When `--disable-write` is enabled, the following write operations are disabled:
 - `find_slow_requests` (creates investigations)
 
 All read operations remain available, allowing you to query dashboards, run PromQL/LogQL queries, list resources, and retrieve data.
+
+### Loki Log Masking
+
+Enable automatic masking of sensitive data in Loki log query results. When enabled, patterns like email addresses, credit card numbers, and API keys are replaced with `[MASKED:<type>]` placeholders before being returned to AI assistants.
+
+| Pattern | Description |
+|---------|-------------|
+| `email` | Email addresses |
+| `phone` | International phone numbers (E.164: `+` prefix) |
+| `credit_card` | Credit card numbers |
+| `ip_address` | IPv4 and IPv6 addresses |
+| `mac_address` | MAC addresses |
+| `api_key` | API keys and secrets |
+| `jwt_token` | JWT tokens |
+
+**Example:**
+```bash
+export LOKI_MASKING_ENABLED=true
+export LOKI_MASKING_PATTERNS=email,credit_card,api_key
+```
 
 **Client TLS Configuration (for Grafana connections):**
 - `--tls-cert-file`: Path to TLS certificate file for client authentication
