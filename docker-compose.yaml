@@ -1,6 +1,6 @@
 services:
   grafana:
-    image: grafana/grafana@sha256:ba93c9d192e58b23e064c7f501d453426ccf4a85065bf25b705ab1e98602bfb1
+    image: grafana/grafana@sha256:b0ae311af06228bcfd4a620504b653db80f5b91e94dc3dc2a5b7dab202bcde20
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "false"
       GF_INSTALL_PLUGINS: grafana-clickhouse-datasource
@@ -15,12 +15,12 @@ services:
       - ./testdata/dashboards:/var/lib/grafana/dashboards
 
   renderer:
-    image: grafana/grafana-image-renderer:latest@sha256:a3e58eb1fe07482c96d5a7e19eda1c1f272732f29b4d7d20c11a73c889efaed2
+    image: grafana/grafana-image-renderer:latest@sha256:28f588919418468bcd656bbcd64cecf766a667262290378825f57961b52bb796
     ports:
       - 8081
 
   prometheus:
-    image: prom/prometheus@sha256:1f0f50f06acaceb0f5670d2c8a658a599affe7b0d8e78b898c1035653849a702
+    image: prom/prometheus@sha256:4a61322ac1103a0e3aea2a61ef1718422a48fa046441f299d71e660a3bc71ae9
     ports:
       - "9090:9090"
     entrypoint: /etc/prometheus/entrypoint.sh
