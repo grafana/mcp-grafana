@@ -27,7 +27,7 @@ const (
 	InfluxDBMeasurementsDefaultLimit uint = 100
 	InfluxDBMeasurementsMaxLimit     uint = 1000
 
-	//limit applied to fields , tags
+	//limit applied to fields, tags
 	InfluxDbTagsDefaultLimit uint = 100
 	InfluxDbTagsMaxLimit     uint = 1000
 )
@@ -44,8 +44,8 @@ type influxDBClient struct {
 }
 
 // newInfluxDBClient creates a new InfluxDB client for the given datasource
-// queryType: when non-nil used to restict the datasource to have same queryType
-// returns client along with querytype of datasource
+// queryType: when non-nil used to restrict the datasource to have same queryType
+// returns client along with query type of datasource
 func newInfluxDBClient(ctx context.Context, uid string, queryType *string) (*influxDBClient, string, error) {
 	// Verify the datasource exists and is a InfluxDB datasource
 	ds, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: uid})
@@ -57,7 +57,7 @@ func newInfluxDBClient(ctx context.Context, uid string, queryType *string) (*inf
 		return nil, "", fmt.Errorf("datasource %s is of type %s, not %s", uid, ds.Type, InfluxDBDataSourceType)
 	}
 
-	//verify the query lang specified is the one confgured with datasource
+	//verify the query lang specified is the one configured with datasource
 	dsQueryType := InfluxQLQueryType
 
 	if jsonMap, ok := ds.JSONData.(map[string]interface{}); ok {
@@ -102,11 +102,11 @@ func newInfluxDBClient(ctx context.Context, uid string, queryType *string) (*inf
 type InfluxQueryArgs struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the InfluxDB datasource to query. Use list_datasources to find available UIDs."`
 	Query         string `json:"query" jsonschema:"required,description=SQL/Flux/InfluxQL query. Supports SQL macros: $__timeFilter for time filtering\\, $__timeFrom/$__timeTo for millisecond timestamps\\, $__interval for calculated intervals\\, $__dateBin(<column>)/$__dateBinAlias(<column>) to apply date_bin for timestamp columns. Supports Flux macros : v.timeRangeStart\\, v.timeRangeStop\\, v.windowPeriod (Grafana-calculated interval)\\, v.defaultBucket (configured default bucket)\\, v.organization (configured organization)\\."`
-	QueryType     string `json:"query_type" jsonschema:"required,enum=SQL,enum=Flux,enum=InfluxQL,description=QueryType of Datasource one of the specified options"`
+	QueryType     string `json:"query_type" jsonschema:"required,enum=SQL,enum=Flux,enum=InfluxQL,description=QueryType of Datasource. One of the specified options"`
 	Start         string `json:"start,omitempty" jsonschema:"description=Start time. Formats: 'now-1h'\\, '2026-02-02T19:00:00Z'\\, '1738519200000' (Unix ms). Default: now-1h"`
 	End           string `json:"end,omitempty" jsonschema:"description=End time. Formats: 'now'\\, '2026-02-02T20:00:00Z'\\, '1738522800000' (Unix ms). Default: now"`
-	IntervalMs    uint
-	Limit         uint `json:"limit"`
+	IntervalMs    uint   `json:"interval_ms,omitempty" jsonschema:"description=Interval in milliseconds"`
+	Limit         uint   `json:"limit,omitempty" jsonschema:"description=Limit number of records per table (or group)"`
 }
 
 // influxQueryResponse represents the raw API response from Grafana's /api/ds/query
@@ -126,6 +126,7 @@ type influxQueryResponse struct {
 					TypeInfo struct {
 						Frame string `json:"frame,omitempty"`
 					} `json:"typeInfo,omitempty"`
+					Config map[string]interface{} `json:"config,omitempty"`
 				} `json:"fields"`
 			} `json:"schema,omitempty"`
 			Data struct {
@@ -164,7 +165,7 @@ func (ic *influxDBClient) Query(ctx context.Context, args InfluxQueryArgs, from,
 	queryPayloadKey, err := queryTypePayloadKey(args.QueryType)
 
 	if err != nil {
-		//pass errors
+		// Pass errors
 		return nil, err
 	}
 	format := "time_series"
@@ -235,7 +236,7 @@ func (ic *influxDBClient) Query(ctx context.Context, args InfluxQueryArgs, from,
 }
 
 func enforceQueryLimit(args *InfluxQueryArgs) {
-	//flux , influxql limits per measurement(influxql) , table(flux) level so no of measurments * limit is final records
+	//flux, influxql limits per measurement(influxql), table(flux) level so number of measurements * limit is final records
 	//sql limit applies on final records level
 
 	limit := InfluxDBDefaultLimit
@@ -245,18 +246,32 @@ func enforceQueryLimit(args *InfluxQueryArgs) {
 	} else if args.Limit > 0 {
 		limit = args.Limit
 	}
+	switch args.QueryType {
 
-	if args.QueryType == SQLQueryType {
+	case SQLQueryType:
 		//wrap query and apply limit
 		query := strings.TrimSuffix(args.Query, ";")
 		args.Query = "(" + query + ")" + fmt.Sprintf(" LIMIT %d", limit)
+	case InfluxQLQueryType:
+		//InfluxQL query supports limits in the format
+		//LIMIT %d | LIMIT %d OFFSET %d, Unsupported: LIMIT %d,%d (from manually testing queries)
+		limitWithOffset := regexp.MustCompile(`(?i)(limit\s+)\d+(\s+offset\s+\d+)?(\s*$)`)
+
+		if limitWithOffset.Match([]byte(args.Query)) {
+
+			replacement := fmt.Sprintf("${1}%d${2}${3}", limit)
+			args.Query = limitWithOffset.ReplaceAllString(args.Query, replacement)
+
+		} else {
+			args.Query = args.Query + fmt.Sprintf(" LIMIT %d", limit)
+		}
+
+	case FluxQueryType:
+		//A query can execute selection of multiple tables
+		//flux |>limit() operator applies limit per table or group
+		args.Query = strings.TrimSpace(args.Query) + fmt.Sprintf("|>limit(n:%d)", limit)
 	}
-	if args.QueryType == InfluxQLQueryType {
-		//TODO : apply limit , idea :  from end of string by overriding existing
-	}
-	if args.QueryType == FluxQueryType {
-		//TODO : apply limits for flux query type
-	}
+
 }
 
 func parseTimeRange(start string, end string) (*time.Time, *time.Time, error) {
@@ -281,7 +296,7 @@ func parseTimeRange(start string, end string) (*time.Time, *time.Time, error) {
 			toTime = fromTime.Add(defaultPeriod)
 		}
 	}
-
+	//only pass start time , how does grafana default the end time
 	if end != "" {
 		parsed, err := parseEndTime(end)
 		if err != nil {
@@ -335,14 +350,14 @@ func queryInflux(ctx context.Context, args InfluxQueryArgs) (*InfluxQueryResult,
 
 			noOfCol := len(frame.Schema.Fields)
 			if noOfCol == 0 {
-				//no columns for frame , skip frame
+				//no columns for frame, skip frame
 				continue
 			}
 
 			resFrame := InfluxQueryResFrame{}
 			resFrame.Columns = make([]string, 0, noOfCol)
 
-			//no of rows count derived from count of values of first column
+			//Number of rows count derived from count of values of first column
 			rowCount := (len(frame.Data.Values[0]))
 			resFrame.RowCount = uint(rowCount)
 			resFrame.Rows = make([]map[string]any, 0, rowCount)
@@ -355,6 +370,12 @@ func queryInflux(ctx context.Context, args InfluxQueryArgs) (*InfluxQueryResult,
 				if field.Labels.Field != "" && field.Name == "_value" {
 					//use field name for column values of flux queries
 					fieldName = field.Labels.Field
+				}
+				//influxql query with 'time_series' format query
+				if field.Config != nil {
+					if displayName, ok := field.Config["displayNameFromDS"].(string); ok && displayName != "" {
+						fieldName = displayName
+					}
 				}
 
 				resFrame.Columns = append(resFrame.Columns, fieldName)
@@ -378,8 +399,8 @@ func queryInflux(ctx context.Context, args InfluxQueryArgs) (*InfluxQueryResult,
 	result.FramesCount = len(result.Frames)
 
 	/*
-		InfluxQL Query has a frame for each column selection , ( different selection set result in varying row count for each frame)
-		SQL Query results in a single frame , selected columsn are mapped in frame.columns
+		InfluxQL Query has a frame for each column selection, (different selection sets result in varying row count for each frame)
+		SQL Query results in a single frame , selected columns are mapped in frame.columns
 	*/
 
 	if !hasResults {
@@ -397,7 +418,7 @@ func queryInflux(ctx context.Context, args InfluxQueryArgs) (*InfluxQueryResult,
 
 var QueryInflux = mcpgrafana.MustTool(
 	"query_influx",
-	"Queries influxdb of a datasource , supports one of flux , sql , influxql associated with datasource ",
+	"Queries InfluxDB datasource, supports one of Flux, SQL, or InfluxQL query languages configured with the datasource.",
 	queryInflux,
 	mcp.WithTitleAnnotation("Query InfluxDB"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -464,7 +485,7 @@ func listBuckets(ctx context.Context, args ListBucketArgs) (*ListBucketResult, e
 		matched, _ := regexp.MatchString(pattern, err.Error())
 
 		if matched {
-			return nil, fmt.Errorf("Datasource is not configured with FluxQL , bucket listing is explicit to FluxQL linked datasources")
+			return nil, fmt.Errorf("Datasource is not configured with FluxQL, bucket listing is explicit to FluxQL linked datasources")
 		}
 		return nil, err
 	}
@@ -495,7 +516,7 @@ func listBuckets(ctx context.Context, args ListBucketArgs) (*ListBucketResult, e
 			ProcessedQuery: query,
 			StartTime:      refTime,
 			EndTime:        refTime,
-			Error:          fmt.Errorf("Empty results , check is buckets exist for connected datasources"),
+			Error:          fmt.Errorf("Empty results, check if buckets exist for connected datasources"),
 		})
 	}
 
@@ -506,7 +527,7 @@ func listBuckets(ctx context.Context, args ListBucketArgs) (*ListBucketResult, e
 
 var ListBucketsInflux = mcpgrafana.MustTool(
 	"list_buckets_influxdb",
-	"Lists buckets of a InfluxDB Datasource identified with DataSourceId , requires the datasources to be linked with FluxQL , use in order list_datasources -> get_datasources -> list_buckets_influxdb",
+	"Lists buckets of an InfluxDB datasource identified by its UID. Requires the datasource to be configured with FluxQL. Use in order: list_datasources -> get_datasource -> list_buckets_influxdb",
 	listBuckets,
 	mcp.WithTitleAnnotation("List Buckets InfluxDB"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -515,7 +536,7 @@ var ListBucketsInflux = mcpgrafana.MustTool(
 
 type ListMeasurementsArgs struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the InfluxDB datasource. Use list_datasources to find available UIDs."`
-	Bucket        string `json:"bucket,omitempty" jsonschema:"optional,description=Bucket Name of target bucket to fetch from,only required for FluxQL linked datasources."`
+	Bucket        string `json:"bucket,omitempty" jsonschema:"optional,description=Bucket Name of target bucket to fetch from; required only for FluxQL linked datasources."`
 	Limit         uint   `json:"limit"`
 }
 
@@ -525,7 +546,7 @@ type ListMeasurementResult struct {
 	Hints            *EmptyResultHints `json:"hints,omitempty"`
 }
 
-func enforeMeasurementsLimit(args *ListMeasurementsArgs) {
+func enforceMeasurementsLimit(args *ListMeasurementsArgs) {
 	if args.Limit > InfluxDBMeasurementsMaxLimit {
 		args.Limit = InfluxDBMeasurementsMaxLimit
 	}
@@ -539,13 +560,13 @@ func listMeasurements(ctx context.Context, args ListMeasurementsArgs) (*ListMeas
 		return nil, err
 	}
 
-	enforeMeasurementsLimit(&args)
+	enforceMeasurementsLimit(&args)
 
 	if queryType == FluxQueryType && args.Bucket == "" {
-		return nil, fmt.Errorf("Bucket is required for %s linked InfluxDb Datasources", FluxQueryType)
+		return nil, fmt.Errorf("Bucket is required for %s linked InfluxDB Datasources", FluxQueryType)
 	}
 	var query string
-	//represents column key of measurment in response
+	//represents column key of measurement in response
 	var colKey string
 	switch queryType {
 	case SQLQueryType:
@@ -582,7 +603,7 @@ func listMeasurements(ctx context.Context, args ListMeasurementsArgs) (*ListMeas
 			ProcessedQuery: query,
 			StartTime:      refTime,
 			EndTime:        refTime,
-			Error:          fmt.Errorf("No measurements found , verify at datasource"),
+			Error:          fmt.Errorf("No measurements found, verify at datasource"),
 		})
 	}
 
@@ -593,7 +614,7 @@ func listMeasurements(ctx context.Context, args ListMeasurementsArgs) (*ListMeas
 
 var ListMeasurements = mcpgrafana.MustTool(
 	"list_measurements_influxdb",
-	"Lists Measurments of a InfluxDB Datasource identified with DataSourceId , use in order list_datasources -> get_datasources -> list_buckets_influxdb(only for fluxql linked datasource) -> list_measurements_influxdb",
+	"Lists Measurements of an InfluxDB datasource identified by its UID. Use in order: list_datasources -> get_datasource -> list_buckets_influxdb (required only for FluxQL linked datasource) -> list_measurements_influxdb",
 	listMeasurements,
 	mcp.WithTitleAnnotation("List Measurements InfluxDB"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -602,7 +623,7 @@ var ListMeasurements = mcpgrafana.MustTool(
 
 type ListTagKeysArgs struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the InfluxDB datasource. Use list_datasources to find available UIDs."`
-	Bucket        string `json:"bucket,omitempty" jsonschema:"optional,description=Bucket Name of target bucket to fetch from,only required for FluxQL linked datasources."`
+	Bucket        string `json:"bucket,omitempty" jsonschema:"optional,description=Bucket Name of target bucket to fetch from,required only for FluxQL linked datasources."`
 	Measurement   string `json:"measurement" jsonschema:"required,description=Filter by measurement"`
 	Limit         uint   `json:"limit"`
 }
@@ -612,7 +633,7 @@ type ListTagKeysResult struct {
 	Hints        *EmptyResultHints `json:"hints,omitempty"`
 }
 
-func enforeTagKeysLimit(args *ListTagKeysArgs) {
+func enforceTagKeysLimit(args *ListTagKeysArgs) {
 	if args.Limit > InfluxDbTagsMaxLimit {
 		args.Limit = InfluxDbTagsMaxLimit
 	}
@@ -622,7 +643,7 @@ func enforeTagKeysLimit(args *ListTagKeysArgs) {
 }
 
 func listTagKeys(ctx context.Context, args ListTagKeysArgs) (*ListTagKeysResult, error) {
-	enforeTagKeysLimit(&args)
+	enforceTagKeysLimit(&args)
 
 	client, queryType, err := newInfluxDBClient(ctx, args.DatasourceUID, nil)
 
@@ -635,15 +656,14 @@ func listTagKeys(ctx context.Context, args ListTagKeysArgs) (*ListTagKeysResult,
 
 	switch queryType {
 	case SQLQueryType:
-		//TODO : Escape '-' for measurement name 
-		//data_type 'Dictionary%%' distiguishes tags from fields for SQL QURIES
-		query = fmt.Sprintf(`SELECT column_name FROM information_schema.columns WHERE table_schema = 'iox' AND table_name = '%s' AND data_type LIKE 'Dictionary%%' ORDER BY column_name LIMIT %d`, args.Bucket, args.Limit)
+		//data_type 'Dictionary%%' distinguishes tags from fields for SQL QUERIES
+		query = fmt.Sprintf("SELECT column_name FROM information_schema.columns WHERE table_schema = 'iox' AND table_name = '%s' AND data_type LIKE 'Dictionary%%' ORDER BY column_name LIMIT %d", args.Measurement, args.Limit)
 		tagColumnKey = "column_name"
 	case FluxQueryType:
 		query = fmt.Sprintf(`import "influxdata/influxdb/schema" schema.measurementTagKeys(bucket: "%s", measurement: "%s")|> limit(n: %d)`, args.Bucket, args.Measurement, args.Limit)
 		tagColumnKey = "_value"
 	case InfluxQLQueryType:
-		query = fmt.Sprintf(`SHOW TAG KEYS FROM %s LIMIT %d`, args.Measurement, args.Limit)
+		query = fmt.Sprintf(`SHOW TAG KEYS FROM "%s" LIMIT %d`, args.Measurement, args.Limit)
 		tagColumnKey = "Value"
 	}
 
@@ -670,7 +690,7 @@ func listTagKeys(ctx context.Context, args ListTagKeysArgs) (*ListTagKeysResult,
 			ProcessedQuery: query,
 			StartTime:      refTime,
 			EndTime:        refTime,
-			Error:          fmt.Errorf("No tags found , verify at datasource"),
+			Error:          fmt.Errorf("No tags found, verify at datasource"),
 		})
 	}
 
@@ -681,7 +701,7 @@ func listTagKeys(ctx context.Context, args ListTagKeysArgs) (*ListTagKeysResult,
 
 var ListTagKeys = mcpgrafana.MustTool(
 	"list_tag_keys_influxdb",
-	"Lists Tag Keys of a InfluxDB Datasource identified with DataSourceId , use in order list_datasources -> get_datasources -> list_buckets_influxdb -> list_measurements_influxdb -> list_tag_keys_influxdb",
+	"Lists Tag Keys of an InfluxDB datasource identified by its UID. Use in order: list_datasources -> get_datasource -> list_buckets_influxdb (required only for FluxQL linked datasource) -> list_measurements_influxdb -> list_tag_keys_influxdb",
 	listTagKeys,
 	mcp.WithTitleAnnotation("List Tag Keys InfluxDB"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -690,7 +710,7 @@ var ListTagKeys = mcpgrafana.MustTool(
 
 type ListFieldKeysArgs struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the InfluxDB datasource. Use list_datasources to find available UIDs."`
-	Bucket        string `json:"bucket,omitempty" jsonschema:"optional,description=Bucket Name of target bucket to fetch from,only required for FluxQL linked datasources."`
+	Bucket        string `json:"bucket,omitempty" jsonschema:"optional,description=Bucket Name of target bucket to fetch from,required only for FluxQL linked datasources."`
 	Measurement   string `json:"measurement" jsonschema:"required,description=Filter by measurement"`
 	Limit         uint   `json:"limit"`
 }
@@ -702,7 +722,7 @@ type ListFieldKeysResult struct {
 }
 
 // field keys, tag key use same variable for limits
-func enforeFieldKeysLimit(args *ListFieldKeysArgs) {
+func enforceFieldKeysLimit(args *ListFieldKeysArgs) {
 	if args.Limit > InfluxDbTagsMaxLimit {
 		args.Limit = InfluxDbTagsMaxLimit
 	}
@@ -712,7 +732,7 @@ func enforeFieldKeysLimit(args *ListFieldKeysArgs) {
 }
 
 func listFieldKeys(ctx context.Context, args ListFieldKeysArgs) (*ListFieldKeysResult, error) {
-	enforeFieldKeysLimit(&args)
+	enforceFieldKeysLimit(&args)
 
 	client, queryType, err := newInfluxDBClient(ctx, args.DatasourceUID, nil)
 
@@ -725,14 +745,14 @@ func listFieldKeys(ctx context.Context, args ListFieldKeysArgs) (*ListFieldKeysR
 
 	switch queryType {
 	case SQLQueryType:
-		//data_type 'Dictionary%%' distiguishes tags from fields for SQL QURIES
+		//data_type 'Dictionary%%' distinguishes tags from fields for SQL QUERIES
 		query = fmt.Sprintf("SELECT column_name FROM information_schema.columns WHERE table_schema = 'iox' AND table_name = '%s' AND data_type NOT LIKE 'Dictionary%%' ORDER BY column_name LIMIT %d", args.Measurement, args.Limit)
 		fieldColumnKey = "column_name"
 	case FluxQueryType:
 		query = fmt.Sprintf(`import "influxdata/influxdb/schema" schema.measurementFieldKeys(bucket: "%s", measurement: "%s")|> limit(n: %d)`, args.Bucket, args.Measurement, args.Limit)
 		fieldColumnKey = "_value"
 	case InfluxQLQueryType:
-		query = fmt.Sprintf(`SHOW FIELD KEYS FROM %s LIMIT %d`, args.Measurement, args.Limit)
+		query = fmt.Sprintf(`SHOW FIELD KEYS FROM "%s" LIMIT %d`, args.Measurement, args.Limit)
 		fieldColumnKey = "Value"
 	}
 
@@ -759,7 +779,7 @@ func listFieldKeys(ctx context.Context, args ListFieldKeysArgs) (*ListFieldKeysR
 			ProcessedQuery: query,
 			StartTime:      refTime,
 			EndTime:        refTime,
-			Error:          fmt.Errorf("No tags found , verify at datasource"),
+			Error:          fmt.Errorf("No fields found, verify at datasource"),
 		})
 	}
 
@@ -770,13 +790,12 @@ func listFieldKeys(ctx context.Context, args ListFieldKeysArgs) (*ListFieldKeysR
 
 var ListFieldKeys = mcpgrafana.MustTool(
 	"list_field_keys_influxdb",
-	"Lists Field Keys of a InfluxDB Datasource identified with DataSourceId , use in order list_datasources -> get_datasources -> list_buckets_influxdb -> list_measurements_influxdb -> list_field_keys_influxdb",
+	"Lists Field Keys of an InfluxDB datasource identified by its UID. Use in order: list_datasources -> get_datasource -> list_buckets_influxdb (required only for FluxQL linked datasource) -> list_measurements_influxdb -> list_field_keys_influxdb",
 	listFieldKeys,
 	mcp.WithTitleAnnotation("List Field Keys InfluxDB"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
 )
-
 
 func AddInfluxTools(mcp *server.MCPServer) {
 	QueryInflux.Register(mcp)
