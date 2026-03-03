@@ -36,6 +36,7 @@ type CloudWatchQueryParams struct {
 	Start         string            `json:"start,omitempty" jsonschema:"description=Start time. Formats: 'now-1h'\\, '2026-02-02T19:00:00Z'\\, '1738519200000' (Unix ms). Default: now-1h"`
 	End           string            `json:"end,omitempty" jsonschema:"description=End time. Formats: 'now'\\, '2026-02-02T20:00:00Z'\\, '1738522800000' (Unix ms). Default: now"`
 	Region        string            `json:"region" jsonschema:"required,description=AWS region (e.g. us-east-1)"`
+	AccountId     string            `json:"accountId,omitempty" jsonschema:"description=AWS account ID for cross-account monitoring. Specify an account ID to query metrics from a specific source account\\, or 'all' to query all accounts the monitoring account is permitted to query. Only relevant when using a CloudWatch monitoring account datasource."`
 }
 
 // CloudWatchQueryResult represents the result of a CloudWatch query
@@ -143,26 +144,30 @@ func (c *cloudWatchClient) query(ctx context.Context, args CloudWatchQueryParams
 	}
 
 	// Build the query payload
-	payload := map[string]interface{}{
-		"queries": []map[string]interface{}{
-			{
-				"datasource": map[string]string{
-					"uid":  args.DatasourceUID,
-					"type": CloudWatchDatasourceType,
-				},
-				"refId":      "A",
-				"type":       "timeSeriesQuery",
-				"namespace":  args.Namespace,
-				"metricName": args.MetricName,
-				"dimensions": dimensions,
-				"statistic":  statistic,
-				"period":     strconv.Itoa(period),
-				"region":     region,
-				"matchExact": true,
-			},
+	query := map[string]interface{}{
+		"datasource": map[string]string{
+			"uid":  args.DatasourceUID,
+			"type": CloudWatchDatasourceType,
 		},
-		"from": strconv.FormatInt(from.UnixMilli(), 10),
-		"to":   strconv.FormatInt(to.UnixMilli(), 10),
+		"refId":      "A",
+		"type":       "timeSeriesQuery",
+		"namespace":  args.Namespace,
+		"metricName": args.MetricName,
+		"dimensions": dimensions,
+		"statistic":  statistic,
+		"period":     strconv.Itoa(period),
+		"region":     region,
+		"matchExact": true,
+	}
+
+	if args.AccountId != "" {
+		query["accountId"] = args.AccountId
+	}
+
+	payload := map[string]interface{}{
+		"queries": []map[string]interface{}{query},
+		"from":    strconv.FormatInt(from.UnixMilli(), 10),
+		"to":      strconv.FormatInt(to.UnixMilli(), 10),
 	}
 
 	payloadBytes, err := json.Marshal(payload)
@@ -375,7 +380,9 @@ Time formats: 'now-1h', '2026-02-02T19:00:00Z', '1738519200000' (Unix ms)
 
 Common namespaces: AWS/EC2, AWS/ECS, AWS/RDS, AWS/Lambda, ECS/ContainerInsights
 
-Example dimensions: ECS: {ClusterName, ServiceName}, EC2: {InstanceId}`,
+Example dimensions: ECS: {ClusterName, ServiceName}, EC2: {InstanceId}
+
+Cross-account monitoring: Use accountId to query metrics from a specific source account (e.g. '123456789012') or 'all' to query all linked accounts. Only applicable when using a CloudWatch monitoring account datasource.`,
 	queryCloudWatch,
 	mcp.WithTitleAnnotation("Query CloudWatch"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -386,6 +393,7 @@ Example dimensions: ECS: {ClusterName, ServiceName}, EC2: {InstanceId}`,
 type ListCloudWatchNamespacesParams struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the CloudWatch datasource"`
 	Region        string `json:"region" jsonschema:"required,description=AWS region (e.g. us-east-1)"`
+	AccountId     string `json:"accountId,omitempty" jsonschema:"description=AWS account ID for cross-account monitoring. Specify an account ID to filter namespaces from a specific source account\\, or 'all' for all linked accounts."`
 }
 
 // cloudWatchResourceItem represents an item returned by CloudWatch resource APIs
@@ -444,6 +452,9 @@ func listCloudWatchNamespaces(ctx context.Context, args ListCloudWatchNamespaces
 	if args.Region != "" {
 		params.Set("region", args.Region)
 	}
+	if args.AccountId != "" {
+		params.Set("accountId", args.AccountId)
+	}
 
 	resourceURL := client.baseURL + "/api/datasources/uid/" + args.DatasourceUID + "/resources/namespaces"
 	if len(params) > 0 {
@@ -477,7 +488,7 @@ func listCloudWatchNamespaces(ctx context.Context, args ListCloudWatchNamespaces
 // ListCloudWatchNamespaces is a tool for listing CloudWatch namespaces
 var ListCloudWatchNamespaces = mcpgrafana.MustTool(
 	"list_cloudwatch_namespaces",
-	"START HERE for CloudWatch: List available namespaces (AWS/EC2, AWS/ECS, AWS/RDS, etc.). Requires region. NEXT: Use list_cloudwatch_metrics with a namespace.",
+	"START HERE for CloudWatch: List available namespaces (AWS/EC2, AWS/ECS, AWS/RDS, etc.). Requires region. Supports cross-account monitoring via optional accountId parameter. NEXT: Use list_cloudwatch_metrics with a namespace.",
 	listCloudWatchNamespaces,
 	mcp.WithTitleAnnotation("List CloudWatch namespaces"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -489,6 +500,7 @@ type ListCloudWatchMetricsParams struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the CloudWatch datasource"`
 	Namespace     string `json:"namespace" jsonschema:"required,description=CloudWatch namespace (e.g. AWS/ECS\\, AWS/EC2)"`
 	Region        string `json:"region" jsonschema:"required,description=AWS region (e.g. us-east-1)"`
+	AccountId     string `json:"accountId,omitempty" jsonschema:"description=AWS account ID for cross-account monitoring. Specify an account ID to filter metrics from a specific source account\\, or 'all' for all linked accounts."`
 }
 
 // listCloudWatchMetrics lists available metrics for a CloudWatch namespace
@@ -503,6 +515,9 @@ func listCloudWatchMetrics(ctx context.Context, args ListCloudWatchMetricsParams
 	params.Set("namespace", args.Namespace)
 	if args.Region != "" {
 		params.Set("region", args.Region)
+	}
+	if args.AccountId != "" {
+		params.Set("accountId", args.AccountId)
 	}
 
 	resourceURL := client.baseURL + "/api/datasources/uid/" + args.DatasourceUID + "/resources/metrics?" + params.Encode()
@@ -534,7 +549,7 @@ func listCloudWatchMetrics(ctx context.Context, args ListCloudWatchMetricsParams
 // ListCloudWatchMetrics is a tool for listing CloudWatch metrics
 var ListCloudWatchMetrics = mcpgrafana.MustTool(
 	"list_cloudwatch_metrics",
-	"List metrics for a CloudWatch namespace. Requires region. Use after list_cloudwatch_namespaces. NEXT: Use list_cloudwatch_dimensions\\, then query_cloudwatch.",
+	"List metrics for a CloudWatch namespace. Requires region. Supports cross-account monitoring via optional accountId parameter. Use after list_cloudwatch_namespaces. NEXT: Use list_cloudwatch_dimensions\\, then query_cloudwatch.",
 	listCloudWatchMetrics,
 	mcp.WithTitleAnnotation("List CloudWatch metrics"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -547,6 +562,7 @@ type ListCloudWatchDimensionsParams struct {
 	Namespace     string `json:"namespace" jsonschema:"required,description=CloudWatch namespace (e.g. AWS/ECS)"`
 	MetricName    string `json:"metricName" jsonschema:"required,description=Metric name (e.g. CPUUtilization)"`
 	Region        string `json:"region" jsonschema:"required,description=AWS region (e.g. us-east-1)"`
+	AccountId     string `json:"accountId,omitempty" jsonschema:"description=AWS account ID for cross-account monitoring. Specify an account ID to filter dimensions from a specific source account\\, or 'all' for all linked accounts."`
 }
 
 // listCloudWatchDimensions lists available dimension keys for a CloudWatch metric
@@ -562,6 +578,9 @@ func listCloudWatchDimensions(ctx context.Context, args ListCloudWatchDimensions
 	params.Set("metricName", args.MetricName)
 	if args.Region != "" {
 		params.Set("region", args.Region)
+	}
+	if args.AccountId != "" {
+		params.Set("accountId", args.AccountId)
 	}
 
 	resourceURL := client.baseURL + "/api/datasources/uid/" + args.DatasourceUID + "/resources/dimension-keys?" + params.Encode()
@@ -593,7 +612,7 @@ func listCloudWatchDimensions(ctx context.Context, args ListCloudWatchDimensions
 // ListCloudWatchDimensions is a tool for listing CloudWatch dimension keys
 var ListCloudWatchDimensions = mcpgrafana.MustTool(
 	"list_cloudwatch_dimensions",
-	"List dimension keys for a CloudWatch metric. Requires region. Use after list_cloudwatch_metrics. NEXT: Use query_cloudwatch with discovered dimensions.",
+	"List dimension keys for a CloudWatch metric. Requires region. Supports cross-account monitoring via optional accountId parameter. Use after list_cloudwatch_metrics. NEXT: Use query_cloudwatch with discovered dimensions.",
 	listCloudWatchDimensions,
 	mcp.WithTitleAnnotation("List CloudWatch dimensions"),
 	mcp.WithIdempotentHintAnnotation(true),
