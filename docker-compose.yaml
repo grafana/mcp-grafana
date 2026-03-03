@@ -3,7 +3,7 @@ services:
     image: grafana/grafana@sha256:ba93c9d192e58b23e064c7f501d453426ccf4a85065bf25b705ab1e98602bfb1
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "false"
-      GF_INSTALL_PLUGINS: grafana-clickhouse-datasource
+      GF_INSTALL_PLUGINS: grafana-clickhouse-datasource,grafana-opensearch-datasource
       GF_LOG_LEVEL: debug
       GF_SERVER_ROUTER_LOGGING: "true"
       GF_RENDERING_SERVER_URL: http://renderer:8081/render
@@ -101,6 +101,30 @@ services:
         condition: service_healthy
     volumes:
       - ./testdata/elasticsearch-seed.sh:/seed.sh
+    entrypoint: ["sh", "/seed.sh"]
+
+  opensearch:
+    image: opensearchproject/opensearch:2.19.0
+    environment:
+      - discovery.type=single-node
+      - DISABLE_SECURITY_PLUGIN=true
+      - DISABLE_INSTALL_DEMO_CONFIG=true
+      - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"
+    ports:
+      - "9201:9200"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health | grep -q '\"status\":\"green\"\\|\"status\":\"yellow\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  opensearch-seed:
+    image: curlimages/curl:8.12.1
+    depends_on:
+      opensearch:
+        condition: service_healthy
+    volumes:
+      - ./testdata/opensearch-seed.sh:/seed.sh
     entrypoint: ["sh", "/seed.sh"]
 
   localstack:

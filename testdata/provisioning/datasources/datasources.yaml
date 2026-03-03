@@ -74,6 +74,18 @@ datasources:
       index: test-logs-*
       timeField: "@timestamp"
       esVersion: 8.17.0
+  - name: OpenSearch
+    id: 9
+    uid: opensearch
+    type: grafana-opensearch-datasource
+    access: proxy
+    url: http://opensearch:9200
+    jsonData:
+      database: test-logs-*
+      timeField: "@timestamp"
+      version: "2.19.0"
+      flavor: opensearch
+      pplEnabled: true
   - name: CloudWatch
     id: 8
     uid: cloudwatch
