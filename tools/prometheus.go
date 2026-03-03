@@ -11,7 +11,6 @@ import (
 	"github.com/grafana/grafana-plugin-sdk-go/backend/gtime"
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
 	"github.com/prometheus/client_golang/api"
 	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	"github.com/prometheus/common/config"
@@ -631,11 +630,11 @@ Time formats: 'now-1h', '2026-02-02T19:00:00Z', '1738519200000' (Unix ms)`,
 	mcp.WithReadOnlyHintAnnotation(true),
 )
 
-func AddPrometheusTools(mcp *server.MCPServer) {
-	ListPrometheusMetricMetadata.Register(mcp)
-	QueryPrometheus.Register(mcp)
-	QueryPrometheusHistogram.Register(mcp)
-	ListPrometheusMetricNames.Register(mcp)
-	ListPrometheusLabelNames.Register(mcp)
-	ListPrometheusLabelValues.Register(mcp)
+func AddPrometheusTools(adder mcpgrafana.ToolAdder) {
+	ListPrometheusMetricMetadata.Register(adder)
+	QueryPrometheus.Register(adder)
+	QueryPrometheusHistogram.Register(adder)
+	ListPrometheusMetricNames.Register(adder)
+	ListPrometheusLabelNames.Register(adder)
+	ListPrometheusLabelValues.Register(adder)
 }

@@ -7,7 +7,6 @@ import (
 	"github.com/grafana/incident-go"
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
 )
 
 type ListIncidentsParams struct {
@@ -120,13 +119,13 @@ var AddActivityToIncident = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("Add activity to incident"),
 )
 
-func AddIncidentTools(mcp *server.MCPServer, enableWriteTools bool) {
-	ListIncidents.Register(mcp)
+func AddIncidentTools(adder mcpgrafana.ToolAdder, enableWriteTools bool) {
+	ListIncidents.Register(adder)
 	if enableWriteTools {
-		CreateIncident.Register(mcp)
-		AddActivityToIncident.Register(mcp)
+		CreateIncident.Register(adder)
+		AddActivityToIncident.Register(adder)
 	}
-	GetIncident.Register(mcp)
+	GetIncident.Register(adder)
 }
 
 type GetIncidentParams struct {

@@ -13,7 +13,6 @@ import (
 	"github.com/google/uuid"
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
 )
 
 type investigationStatus string
@@ -412,13 +411,13 @@ var FindSlowRequests = mcpgrafana.MustTool(
 )
 
 // AddSiftTools registers all Sift tools with the MCP server
-func AddSiftTools(mcp *server.MCPServer, enableWriteTools bool) {
-	GetSiftInvestigation.Register(mcp)
-	GetSiftAnalysis.Register(mcp)
-	ListSiftInvestigations.Register(mcp)
+func AddSiftTools(adder mcpgrafana.ToolAdder, enableWriteTools bool) {
+	GetSiftInvestigation.Register(adder)
+	GetSiftAnalysis.Register(adder)
+	ListSiftInvestigations.Register(adder)
 	if enableWriteTools {
-		FindErrorPatternLogs.Register(mcp)
-		FindSlowRequests.Register(mcp)
+		FindErrorPatternLogs.Register(adder)
+		FindSlowRequests.Register(adder)
 	}
 }
 

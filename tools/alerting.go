@@ -10,7 +10,6 @@ import (
 	"github.com/grafana/grafana-openapi-client-go/client/provisioning"
 	"github.com/grafana/grafana-openapi-client-go/models"
 	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
 	"github.com/prometheus/alertmanager/config"
 	v1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	"github.com/prometheus/prometheus/model/labels"
@@ -830,13 +829,13 @@ var DeleteAlertRule = mcpgrafana.MustTool(
 	mcp.WithDestructiveHintAnnotation(true),
 )
 
-func AddAlertingTools(mcp *server.MCPServer, enableWriteTools bool) {
-	ListAlertRules.Register(mcp)
-	GetAlertRuleByUID.Register(mcp)
+func AddAlertingTools(adder mcpgrafana.ToolAdder, enableWriteTools bool) {
+	ListAlertRules.Register(adder)
+	GetAlertRuleByUID.Register(adder)
 	if enableWriteTools {
-		CreateAlertRule.Register(mcp)
-		UpdateAlertRule.Register(mcp)
-		DeleteAlertRule.Register(mcp)
+		CreateAlertRule.Register(adder)
+		UpdateAlertRule.Register(adder)
+		DeleteAlertRule.Register(adder)
 	}
-	ListContactPoints.Register(mcp)
+	ListContactPoints.Register(adder)
 }

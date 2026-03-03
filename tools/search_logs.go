@@ -9,7 +9,6 @@ import (
 	"github.com/grafana/grafana-plugin-sdk-go/backend/gtime"
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
 )
 
 const (
@@ -386,6 +385,6 @@ For more control\\, use query_loki_logs or query_clickhouse directly.`,
 )
 
 // AddSearchLogsTools registers all search logs tools with the MCP server
-func AddSearchLogsTools(mcp *server.MCPServer) {
-	SearchLogs.Register(mcp)
+func AddSearchLogsTools(adder mcpgrafana.ToolAdder) {
+	SearchLogs.Register(adder)
 }

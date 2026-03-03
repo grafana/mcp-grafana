@@ -16,14 +16,13 @@ import (
 	"github.com/grafana/pyroscope/api/gen/proto/go/querier/v1/querierv1connect"
 	typesv1 "github.com/grafana/pyroscope/api/gen/proto/go/types/v1"
 	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
 )
 
-func AddPyroscopeTools(mcp *server.MCPServer) {
-	ListPyroscopeLabelNames.Register(mcp)
-	ListPyroscopeLabelValues.Register(mcp)
-	ListPyroscopeProfileTypes.Register(mcp)
-	FetchPyroscopeProfile.Register(mcp)
+func AddPyroscopeTools(adder mcpgrafana.ToolAdder) {
+	ListPyroscopeLabelNames.Register(adder)
+	ListPyroscopeLabelValues.Register(adder)
+	ListPyroscopeProfileTypes.Register(adder)
+	FetchPyroscopeProfile.Register(adder)
 }
 
 const listPyroscopeLabelNamesToolPrompt = `

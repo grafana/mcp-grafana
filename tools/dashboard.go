@@ -13,7 +13,6 @@ import (
 	"github.com/PaesslerAG/gval"
 	"github.com/PaesslerAG/jsonpath"
 	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
 
 	"github.com/grafana/grafana-openapi-client-go/models"
 	mcpgrafana "github.com/grafana/mcp-grafana"
@@ -763,12 +762,12 @@ func extractVariableSummary(variable map[string]interface{}) VariableSummary {
 	}
 }
 
-func AddDashboardTools(mcp *server.MCPServer, enableWriteTools bool) {
-	GetDashboardByUID.Register(mcp)
+func AddDashboardTools(adder mcpgrafana.ToolAdder, enableWriteTools bool) {
+	GetDashboardByUID.Register(adder)
 	if enableWriteTools {
-		UpdateDashboard.Register(mcp)
+		UpdateDashboard.Register(adder)
 	}
-	GetDashboardPanelQueries.Register(mcp)
-	GetDashboardProperty.Register(mcp)
-	GetDashboardSummary.Register(mcp)
+	GetDashboardPanelQueries.Register(adder)
+	GetDashboardProperty.Register(adder)
+	GetDashboardSummary.Register(adder)
 }

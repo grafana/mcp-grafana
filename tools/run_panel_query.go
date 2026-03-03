@@ -15,7 +15,6 @@ import (
 	"github.com/grafana/grafana-openapi-client-go/client/datasources"
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
 	"github.com/prometheus/common/model"
 )
 
@@ -841,6 +840,6 @@ var RunPanelQuery = mcpgrafana.MustTool(
 )
 
 // AddRunPanelQueryTools registers run panel query tools with the MCP server
-func AddRunPanelQueryTools(mcp *server.MCPServer) {
-	RunPanelQuery.Register(mcp)
+func AddRunPanelQueryTools(adder mcpgrafana.ToolAdder) {
+	RunPanelQuery.Register(adder)
 }

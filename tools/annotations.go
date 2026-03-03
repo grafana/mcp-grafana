@@ -6,7 +6,6 @@ import (
 	"strconv"
 
 	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
 
@@ -219,11 +218,11 @@ var GetAnnotationTagsTool = mcpgrafana.MustTool(
 	mcp.WithReadOnlyHintAnnotation(true),
 )
 
-func AddAnnotationTools(mcp *server.MCPServer, enableWriteTools bool) {
-	GetAnnotationsTool.Register(mcp)
+func AddAnnotationTools(adder mcpgrafana.ToolAdder, enableWriteTools bool) {
+	GetAnnotationsTool.Register(adder)
 	if enableWriteTools {
-		CreateAnnotationTool.Register(mcp)
-		UpdateAnnotationTool.Register(mcp)
+		CreateAnnotationTool.Register(adder)
+		UpdateAnnotationTool.Register(adder)
 	}
-	GetAnnotationTagsTool.Register(mcp)
+	GetAnnotationTagsTool.Register(adder)
 }
