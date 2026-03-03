@@ -304,9 +304,9 @@ func buildElasticsearchQuery(query string, startTime, endTime *time.Time, size i
 
 // QueryElasticsearchParams defines the parameters for querying Elasticsearch
 type QueryElasticsearchParams struct {
-	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the Elasticsearch datasource to query"`
+	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the Elasticsearch or OpenSearch datasource to query"`
 	Index         string `json:"index" jsonschema:"required,description=The index pattern to search (e.g.\\, 'logs-*'\\, 'filebeat-*'\\, or a specific index name)"`
-	Query         string `json:"query" jsonschema:"required,description=The search query. Can be either Lucene query syntax (e.g.\\, 'status:200 AND host:server1') or Elasticsearch Query DSL JSON (for advanced queries with aggregations)"`
+	Query         string `json:"query" jsonschema:"required,description=The search query. Can be either Lucene query syntax (e.g.\\, 'status:200 AND host:server1') or Elasticsearch/OpenSearch Query DSL JSON (for advanced queries with aggregations)"`
 	StartTime     string `json:"startTime,omitempty" jsonschema:"description=Optionally\\, the start time in RFC3339 format (e.g.\\, '2024-01-01T00:00:00Z'). Filters results to documents with @timestamp >= this value"`
 	EndTime       string `json:"endTime,omitempty" jsonschema:"description=Optionally\\, the end time in RFC3339 format (e.g.\\, '2024-01-01T23:59:59Z'). Filters results to documents with @timestamp <= this value"`
 	Limit         int    `json:"limit,omitempty" jsonschema:"default=10,description=Optionally\\, the maximum number of documents to return (max: 100\\, default: 10)"`
@@ -396,9 +396,9 @@ func queryElasticsearch(ctx context.Context, args QueryElasticsearchParams) ([]E
 // QueryElasticsearch is a tool for querying Elasticsearch datasources
 var QueryElasticsearch = mcpgrafana.MustTool(
 	"query_elasticsearch",
-	"Executes a search query against an Elasticsearch datasource and retrieves matching documents. Supports both Lucene query syntax (e.g., 'status:200 AND host:server1') and Elasticsearch Query DSL JSON for complex queries. Returns a list of documents with their index, ID, source fields, and optional score. Use this to search logs, metrics, or any indexed data stored in Elasticsearch. Defaults to 10 results and sorts by @timestamp in descending order (newest first).",
+	"Executes a search query against an Elasticsearch or OpenSearch datasource and retrieves matching documents. Supports both Lucene query syntax (e.g., 'status:200 AND host:server1') and Elasticsearch/OpenSearch Query DSL JSON for complex queries. Returns a list of documents with their index, ID, source fields, and optional score. Use this to search logs, metrics, or any indexed data stored in Elasticsearch or OpenSearch. Defaults to 10 results and sorts by @timestamp in descending order (newest first).",
 	queryElasticsearch,
-	mcp.WithTitleAnnotation("Query Elasticsearch"),
+	mcp.WithTitleAnnotation("Query Elasticsearch / OpenSearch"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
 )
