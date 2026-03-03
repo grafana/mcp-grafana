@@ -403,7 +403,7 @@ var QueryElasticsearch = mcpgrafana.MustTool(
 	mcp.WithReadOnlyHintAnnotation(true),
 )
 
-// AddElasticsearchTools registers all Elasticsearch tools with the MCP server
+// AddElasticsearchTools registers Elasticsearch and OpenSearch tools with the MCP server
 func AddElasticsearchTools(mcp *server.MCPServer) {
 	QueryElasticsearch.Register(mcp)
 }

@@ -57,4 +57,11 @@ func TestHitsTotalUnmarshalJSON(t *testing.T) {
 		assert.Equal(t, 0, ht.Value)
 		assert.Equal(t, "eq", ht.Relation)
 	})
+
+	t.Run("invalid input", func(t *testing.T) {
+		data := []byte(`"not a number or object"`)
+		var ht HitsTotal
+		err := json.Unmarshal(data, &ht)
+		require.Error(t, err)
+	})
 }
