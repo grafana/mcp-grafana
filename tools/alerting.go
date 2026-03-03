@@ -78,7 +78,7 @@ func listAlertRules(ctx context.Context, args ListAlertRulesParams) ([]alertRule
 	if err != nil {
 		return nil, fmt.Errorf("list alert rules (alerting client): %w", err)
 	}
-	runtimeResponse, err := alertingClient.GetRules(ctx)
+	runtimeResponse, err := alertingClient.GetRules(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("list alert rules (runtime): %w", err)
 	}

@@ -18,6 +18,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/grafana/grafana-openapi-client-go/client"
+	grafanaModels "github.com/grafana/grafana-openapi-client-go/models"
 	mcpgrafana "github.com/grafana/mcp-grafana"
 )
 
@@ -66,8 +67,12 @@ func newAlertingClientFromContext(ctx context.Context) (*alertingClient, error) 
 	return client, nil
 }
 
-func (c *alertingClient) makeRequest(ctx context.Context, path string) (*http.Response, error) {
-	p := c.baseURL.JoinPath(path).String()
+func (c *alertingClient) makeRequest(ctx context.Context, path string, params url.Values) (*http.Response, error) {
+	u := c.baseURL.JoinPath(path)
+	if len(params) > 0 {
+		u.RawQuery = params.Encode()
+	}
+	p := u.String()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p, nil)
 	if err != nil {
@@ -106,8 +111,82 @@ func (c *alertingClient) makeRequest(ctx context.Context, path string) (*http.Re
 	return resp, nil
 }
 
-func (c *alertingClient) GetRules(ctx context.Context) (*rulesResponse, error) {
-	resp, err := c.makeRequest(ctx, rulesEndpointPath)
+const (
+	// maxRulesLimit is the hard limit on the number of rules to return.
+	maxRulesLimit = 200
+	// maxAlertsLimit is the hard limit on the number of alert instances per rule.
+	maxAlertsLimit = 200
+)
+
+// GetRulesOpts contains optional server-side filtering parameters for the
+// Prometheus rules API endpoint.
+// FolderUID, RuleGroup, RuleType, States, LimitAlerts are available since Grafana 10.0.
+// RuleName, SearchFolder, RuleLimit, Matcher require Grafana 12.4+.
+type GetRulesOpts struct {
+	FolderUID    string   // Filter by folder UID
+	SearchFolder string   // Search folders by full path using partial matching
+	RuleGroup    string   // Filter by exact rule group name
+	RuleName     string   // Search by rule name (substring match)
+	RuleType     string   // Filter by rule type (e.g. "alerting", "recording")
+	States       []string // Filter by rule state (e.g. "firing", "pending", "normal", "nodata", "error")
+	RuleLimit    int      // Maximum number of rules to return (max 200)
+	LimitAlerts int // Maximum number of alert instances per rule (max 200)
+	// Matchers filters alert instances by labels. Each matcher is JSON-encoded
+	// as a Prometheus matcher object (e.g. {"type":0,"name":"severity","value":"critical"}).
+	// Multiple matchers are AND-ed together.
+	Matchers []*labels.Matcher
+}
+
+func (o *GetRulesOpts) queryValues() url.Values {
+	params := url.Values{}
+	if o.FolderUID != "" {
+		params.Set("folder_uid", o.FolderUID)
+	}
+	if o.SearchFolder != "" {
+		params.Set("search.folder", o.SearchFolder)
+	}
+	if o.RuleGroup != "" {
+		params.Set("rule_group", o.RuleGroup)
+	}
+	if o.RuleName != "" {
+		params.Set("search.rule_name", o.RuleName)
+	}
+	if o.RuleType != "" {
+		params.Set("rule_type", o.RuleType)
+	}
+	for _, s := range o.States {
+		params.Add("state", s)
+	}
+	ruleLimit := o.RuleLimit
+	if ruleLimit > maxRulesLimit {
+		ruleLimit = maxRulesLimit
+	}
+	if ruleLimit > 0 {
+		params.Set("rule_limit", strconv.Itoa(ruleLimit))
+	}
+	limitAlerts := o.LimitAlerts
+	if limitAlerts > maxAlertsLimit {
+		limitAlerts = maxAlertsLimit
+	}
+	if limitAlerts > 0 {
+		params.Set("limit_alerts", strconv.Itoa(limitAlerts))
+	}
+	for _, m := range o.Matchers {
+		b, err := json.Marshal(m)
+		if err != nil {
+			continue
+		}
+		params.Add("matcher", string(b))
+	}
+	return params
+}
+
+func (c *alertingClient) GetRules(ctx context.Context, opts *GetRulesOpts) (*rulesResponse, error) {
+	var params url.Values
+	if opts != nil {
+		params = opts.queryValues()
+	}
+	resp, err := c.makeRequest(ctx, rulesEndpointPath, params)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get alert rules from Grafana API: %w", err)
 	}
@@ -175,7 +254,7 @@ func (c *alertingClient) GetDatasourceRules(ctx context.Context, datasourceUID s
 	// use the Grafana unified endpoint - maybe we need to use the datasource proxy endpoint in the future as this
 	// is an api for internal use
 	path := fmt.Sprintf("/api/prometheus/%s/api/v1/rules", datasourceUID)
-	resp, err := c.makeRequest(ctx, path)
+	resp, err := c.makeRequest(ctx, path, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get datasource rules: %w", err)
 	}
@@ -220,7 +299,7 @@ func (c *alertingClient) GetAlertmanagerConfig(ctx context.Context, datasourceUI
 	}
 
 	path := fmt.Sprintf("/api/datasources/proxy/uid/%s%s", datasourceUID, apiPath)
-	resp, err := c.makeRequest(ctx, path)
+	resp, err := c.makeRequest(ctx, path, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get Alertmanager config: %w", err)
 	}
@@ -266,4 +345,24 @@ func (c *alertingClient) GetAlertmanagerConfig(ctx context.Context, datasourceUI
 	}
 
 	return &cfg, nil
+}
+
+// GetRuleVersions fetches the version history for a Grafana-managed alert rule.
+// The endpoint may not exist on older Grafana versions; callers should handle errors.
+func (c *alertingClient) GetRuleVersions(ctx context.Context, ruleUID string) ([]grafanaModels.GettableExtendedRuleNode, error) {
+	path := fmt.Sprintf("/api/ruler/grafana/api/v1/rule/%s/versions", ruleUID)
+	resp, err := c.makeRequest(ctx, path, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get rule versions: %w", err)
+	}
+	defer func() {
+		_ = resp.Body.Close() //nolint:errcheck
+	}()
+
+	var versions []grafanaModels.GettableExtendedRuleNode
+	if err := json.NewDecoder(resp.Body).Decode(&versions); err != nil {
+		return nil, fmt.Errorf("failed to decode rule versions response: %w", err)
+	}
+
+	return versions, nil
 }
