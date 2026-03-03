@@ -1,3 +1,4 @@
+#!/bin/bash
 set -e
 
 echo "Seeding CloudWatch test data..."

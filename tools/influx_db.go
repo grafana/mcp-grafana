@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -341,18 +342,24 @@ func queryInflux(ctx context.Context, args InfluxQueryArgs) (*InfluxQueryResult,
 			return nil, fmt.Errorf("query error (refId=%s): %s", refID, r.Error)
 		}
 
-		result.Frames = make([]*InfluxQueryResFrame, 0, len(r.Frames))
+		clonedFrames := make([]*InfluxQueryResFrame, 0, len(result.Frames)+len(r.Frames))
+		copy(clonedFrames, result.Frames)
+		result.Frames = clonedFrames
 
 		for _, frame := range r.Frames {
 
 			noOfCol := len(frame.Schema.Fields)
 			if noOfCol == 0 {
-				//no columns for frame, skip frame
+				//columns not found for frame, skip frame
 				continue
 			}
 
 			resFrame := InfluxQueryResFrame{}
 			resFrame.Columns = make([]string, 0, noOfCol)
+
+			if len(frame.Data.Values) == 0 {
+				continue
+			}
 
 			//Number of rows count derived from count of values of first column
 			rowCount := (len(frame.Data.Values[0]))
@@ -392,6 +399,7 @@ func queryInflux(ctx context.Context, args InfluxQueryArgs) (*InfluxQueryResult,
 			}
 		}
 	}
+	result.Frames = slices.Clip(result.Frames)
 
 	result.FramesCount = len(result.Frames)
 
@@ -809,10 +817,10 @@ var ListFieldKeys = mcpgrafana.MustTool(
 	mcp.WithReadOnlyHintAnnotation(true),
 )
 
-func AddInfluxTools(mcp *server.MCPServer) {
-	QueryInflux.Register(mcp)
-	ListBucketsInflux.Register(mcp)
-	ListMeasurements.Register(mcp)
-	ListTagKeys.Register(mcp)
-	ListFieldKeys.Register(mcp)
+func AddInfluxTools(server *server.MCPServer) {
+	QueryInflux.Register(server)
+	ListBucketsInflux.Register(server)
+	ListMeasurements.Register(server)
+	ListTagKeys.Register(server)
+	ListFieldKeys.Register(server)
 }
