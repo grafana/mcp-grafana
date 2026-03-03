@@ -213,3 +213,101 @@ func TestElasticsearchTools(t *testing.T) {
 		}
 	})
 }
+
+func TestOpenSearchTools(t *testing.T) {
+	t.Run("query opensearch with match all", func(t *testing.T) {
+		ctx := newTestContext()
+		result, err := queryElasticsearch(ctx, QueryElasticsearchParams{
+			DatasourceUID: "opensearch",
+			Index:         "test-logs-*",
+			Query:         "*",
+			Limit:         10,
+		})
+		require.NoError(t, err)
+		assert.NotNil(t, result, "Should return a result")
+		assert.NotEmpty(t, result, "Should return at least one document from seeded data")
+
+		for _, doc := range result {
+			assert.NotEmpty(t, doc.Index, "Document should have an index")
+			assert.NotEmpty(t, doc.ID, "Document should have an ID")
+			assert.NotNil(t, doc.Source, "Document should have source fields")
+			assert.Contains(t, doc.Source, "message", "Document should have a message field")
+			assert.Contains(t, doc.Source, "level", "Document should have a level field")
+			assert.Contains(t, doc.Source, "service", "Document should have a service field")
+		}
+	})
+
+	t.Run("query opensearch with lucene query", func(t *testing.T) {
+		ctx := newTestContext()
+		result, err := queryElasticsearch(ctx, QueryElasticsearchParams{
+			DatasourceUID: "opensearch",
+			Index:         "test-logs-*",
+			Query:         "level:error",
+			Limit:         10,
+		})
+		require.NoError(t, err)
+		assert.NotNil(t, result, "Should return a result")
+		assert.NotEmpty(t, result, "Should find error-level log entries")
+
+		for _, doc := range result {
+			level, ok := doc.Source["level"].(string)
+			assert.True(t, ok, "level field should be a string")
+			assert.Equal(t, "error", level, "All results should have level=error")
+		}
+	})
+
+	t.Run("query opensearch with time range", func(t *testing.T) {
+		ctx := newTestContext()
+		now := time.Now().UTC()
+		startTime := now.Add(-1 * time.Hour).Format(time.RFC3339)
+		endTime := now.Add(1 * time.Hour).Format(time.RFC3339)
+
+		result, err := queryElasticsearch(ctx, QueryElasticsearchParams{
+			DatasourceUID: "opensearch",
+			Index:         "test-logs-*",
+			Query:         "*",
+			StartTime:     startTime,
+			EndTime:       endTime,
+			Limit:         10,
+		})
+		require.NoError(t, err)
+		assert.NotNil(t, result, "Should return a result")
+		assert.NotEmpty(t, result, "Should return documents within the time range")
+	})
+
+	t.Run("query opensearch with query dsl json", func(t *testing.T) {
+		ctx := newTestContext()
+		queryDSL := `{"bool":{"must":[{"term":{"level":"error"}}]}}`
+		result, err := queryElasticsearch(ctx, QueryElasticsearchParams{
+			DatasourceUID: "opensearch",
+			Index:         "test-logs-*",
+			Query:         queryDSL,
+			Limit:         10,
+		})
+		require.NoError(t, err)
+		assert.NotNil(t, result, "Should return a result")
+		assert.NotEmpty(t, result, "Should find error-level documents via Query DSL")
+
+		for _, doc := range result {
+			level, ok := doc.Source["level"].(string)
+			assert.True(t, ok, "level field should be a string")
+			assert.Equal(t, "error", level, "All results should have level=error")
+		}
+	})
+
+	t.Run("query opensearch documents have timestamps", func(t *testing.T) {
+		ctx := newTestContext()
+		result, err := queryElasticsearch(ctx, QueryElasticsearchParams{
+			DatasourceUID: "opensearch",
+			Index:         "test-logs-*",
+			Query:         "*",
+			Limit:         5,
+		})
+		require.NoError(t, err)
+		assert.NotEmpty(t, result, "Should return documents")
+
+		for _, doc := range result {
+			assert.NotEmpty(t, doc.Timestamp, "Documents with @timestamp should have Timestamp set")
+		}
+	})
+}
