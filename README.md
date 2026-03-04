@@ -289,11 +289,7 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `query_cloudwatch`                | CloudWatch* | Execute CloudWatch metric queries                                   | `datasources:query`                     | `datasources:uid:*`                                 |
 | `search_logs`                     | SearchLogs* | Search logs across ClickHouse and Loki                              | `datasources:query`                     | `datasources:uid:*`                                 |
 | `query_elasticsearch`             | Elasticsearch* | Query Elasticsearch using Lucene syntax or Query DSL              | `datasources:query`                     | `datasources:uid:elasticsearch-uid`                 |
-| `list_alert_rules`                | Alerting    | List alert rules                                                    | `alert.rules:read`                      | `folders:*` or `folders:uid:alerts-folder`          |
-| `get_alert_rule_by_uid`           | Alerting    | Get alert rule by UID                                               | `alert.rules:read`                      | `folders:uid:alerts-folder`                         |
-| `create_alert_rule`               | Alerting    | Create a new alert rule                                             | `alert.rules:write`                     | `folders:*` or `folders:uid:alerts-folder`          |
-| `update_alert_rule`               | Alerting    | Update an existing alert rule                                       | `alert.rules:write`                     | `folders:uid:alerts-folder`                         |
-| `delete_alert_rule`               | Alerting    | Delete an alert rule by UID                                         | `alert.rules:write`                     | `folders:uid:alerts-folder`                         |
+| `alerting_manage_rules`           | Alerting    | Manage alert rules (list, get, versions, create, update, delete)    | `alert.rules:read` + `alert.rules:write` for mutations | `folders:*` or `folders:uid:alerts-folder` |
 | `alerting_manage_routing`         | Alerting    | Manage notification policies, contact points, and time intervals    | `alert.notifications:read`              | Global scope                                        |
 | `list_oncall_schedules`           | OnCall      | List schedules from Grafana OnCall                                  | `grafana-oncall-app.schedules:read`     | Plugin-specific scopes                              |
 | `get_oncall_shift`                | OnCall      | Get details for a specific OnCall shift                             | `grafana-oncall-app.schedules:read`     | Plugin-specific scopes                              |
@@ -385,9 +381,7 @@ When `--disable-write` is enabled, the following write operations are disabled:
 - `add_activity_to_incident`
 
 **Alerting Tools:**
-- `create_alert_rule`
-- `update_alert_rule`
-- `delete_alert_rule`
+- `alerting_manage_rules` (create, update, delete operations)
 
 **Annotation Tools:**
 - `create_annotation`
