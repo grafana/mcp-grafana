@@ -408,10 +408,15 @@ func (tm *ToolManager) DiscoverAndRegisterToolsSession(ctx context.Context, sess
 			return
 		}
 
-		if len(*tools) > 0 {
-			tm.server.AddSessionTools(sessionID, *tools...)
+		if len(*tools) == 0 {
+			return
 		}
-		slog.Info("Registered Tools of discovered datasources for session ", "sessionId", sessionID, "count", len(*tools))
+
+		if err := tm.server.AddSessionTools(sessionID, *tools...); err != nil {
+			slog.Warn("failed to add session tools", "session", sessionID, "error", err)
+		} else {
+			slog.Info("Registered Tools of discovered datasources for session ", "sessionId", sessionID, "count", len(*tools))
+		}
 	})
 }
 

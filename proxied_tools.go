@@ -443,7 +443,7 @@ func (tm *ToolManager) InitializeAndRegisterProxiedTools(ctx context.Context, se
 	}
 
 	if err := tm.server.AddSessionTools(sessionID, serverTools...); err != nil {
-		slog.Warn("failed to add session tools", "session", sessionID, "error", err)
+		slog.Warn("failed to add session proxy tools", "session", sessionID, "error", err)
 	} else {
 		slog.Info("registered proxied tools", "session", sessionID, "tools", len(state.proxiedTools))
 	}
