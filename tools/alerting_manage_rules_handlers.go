@@ -28,12 +28,7 @@ func manageRulesRead(ctx context.Context, args ManageRulesReadParams) (any, erro
 				LabelSelectors: args.LabelSelectors,
 			})
 		}
-		return listGrafanaRules(ctx, &GetRulesOpts{
-			RuleLimit:    args.RuleLimit,
-			LimitAlerts:  args.LimitAlerts,
-			FolderUID:    args.FolderUID,
-			SearchFolder: args.SearchFolder,
-		}, args.LabelSelectors)
+		return listGrafanaRules(ctx, args.toGetRulesOpts(), args.LabelSelectors)
 	case "get":
 		return getAlertRuleDetail(ctx, args.RuleUID, args.LimitAlerts)
 	case "versions":
@@ -57,12 +52,7 @@ func manageRulesReadWrite(ctx context.Context, args ManageRulesReadWriteParams) 
 				LabelSelectors: args.LabelSelectors,
 			})
 		}
-		return listGrafanaRules(ctx, &GetRulesOpts{
-			RuleLimit:    args.RuleLimit,
-			LimitAlerts:  args.LimitAlerts,
-			FolderUID:    args.FolderUID,
-			SearchFolder: args.SearchFolder,
-		}, args.LabelSelectors)
+		return listGrafanaRules(ctx, args.toGetRulesOpts(), args.LabelSelectors)
 	case "get":
 		return getAlertRuleDetail(ctx, args.RuleUID, args.LimitAlerts)
 	case "versions":
@@ -92,7 +82,15 @@ func getAlertRuleDetail(ctx context.Context, uid string, limitAlerts int) (*aler
 		return nil, fmt.Errorf("creating alerting client for rule %s: %w", uid, err)
 	}
 
-	rulesResp, err := ac.GetRules(ctx, &GetRulesOpts{LimitAlerts: limitAlerts})
+	opts := &GetRulesOpts{LimitAlerts: limitAlerts}
+	if alertRule.Payload.FolderUID != nil {
+		opts.FolderUID = *alertRule.Payload.FolderUID
+	}
+	if alertRule.Payload.RuleGroup != nil {
+		opts.RuleGroup = *alertRule.Payload.RuleGroup
+	}
+
+	rulesResp, err := ac.GetRules(ctx, opts)
 	if err != nil {
 		slog.WarnContext(ctx, "failed to fetch runtime state for alert rule",
 			"uid", uid, "error", err)
@@ -225,6 +223,12 @@ func listGrafanaRules(ctx context.Context, opts *GetRulesOpts, labelSelectors []
 		if err != nil {
 			return nil, fmt.Errorf("filtering alert rules: %w", err)
 		}
+	}
+
+	// Server-side rule_limit returns complete groups, so it may exceed the
+	// requested limit. Enforce the limit client-side as well.
+	if opts != nil && opts.RuleLimit > 0 && len(summaries) > opts.RuleLimit {
+		summaries = summaries[:opts.RuleLimit]
 	}
 
 	return summaries, nil

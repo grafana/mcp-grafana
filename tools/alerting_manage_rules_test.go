@@ -106,18 +106,20 @@ func TestManageRules_List(t *testing.T) {
 	t.Run("list alert rules with selectors that match", func(t *testing.T) {
 		ctx := newTestContext()
 		result, err := manageRulesRead(ctx, ManageRulesReadParams{
-			Operation: "list",
-			LabelSelectors: []Selector{
-				{
-					Filters: []LabelMatcher{
-						{
-							Name:  "severity",
-							Value: "info",
-							Type:  "=",
+			listFilterParams: listFilterParams{
+				LabelSelectors: []Selector{
+					{
+						Filters: []LabelMatcher{
+							{
+								Name:  "severity",
+								Value: "info",
+								Type:  "=",
+							},
 						},
 					},
 				},
 			},
+			Operation: "list",
 		})
 		require.NoError(t, err)
 
@@ -129,18 +131,20 @@ func TestManageRules_List(t *testing.T) {
 	t.Run("list alert rules with selectors that don't match", func(t *testing.T) {
 		ctx := newTestContext()
 		result, err := manageRulesRead(ctx, ManageRulesReadParams{
-			Operation: "list",
-			LabelSelectors: []Selector{
-				{
-					Filters: []LabelMatcher{
-						{
-							Name:  "severity",
-							Value: "critical",
-							Type:  "=",
+			listFilterParams: listFilterParams{
+				LabelSelectors: []Selector{
+					{
+						Filters: []LabelMatcher{
+							{
+								Name:  "severity",
+								Value: "critical",
+								Type:  "=",
+							},
 						},
 					},
 				},
 			},
+			Operation: "list",
 		})
 		require.NoError(t, err)
 
@@ -152,27 +156,29 @@ func TestManageRules_List(t *testing.T) {
 	t.Run("list alert rules with multiple selectors", func(t *testing.T) {
 		ctx := newTestContext()
 		result, err := manageRulesRead(ctx, ManageRulesReadParams{
-			Operation: "list",
-			LabelSelectors: []Selector{
-				{
-					Filters: []LabelMatcher{
-						{
-							Name:  "severity",
-							Value: "info",
-							Type:  "=",
+			listFilterParams: listFilterParams{
+				LabelSelectors: []Selector{
+					{
+						Filters: []LabelMatcher{
+							{
+								Name:  "severity",
+								Value: "info",
+								Type:  "=",
+							},
 						},
 					},
-				},
-				{
-					Filters: []LabelMatcher{
-						{
-							Name:  "rule",
-							Value: "second",
-							Type:  "=",
+					{
+						Filters: []LabelMatcher{
+							{
+								Name:  "rule",
+								Value: "second",
+								Type:  "=",
+							},
 						},
 					},
 				},
 			},
+			Operation: "list",
 		})
 		require.NoError(t, err)
 
@@ -184,18 +190,20 @@ func TestManageRules_List(t *testing.T) {
 	t.Run("list alert rules with regex matcher", func(t *testing.T) {
 		ctx := newTestContext()
 		result, err := manageRulesRead(ctx, ManageRulesReadParams{
-			Operation: "list",
-			LabelSelectors: []Selector{
-				{
-					Filters: []LabelMatcher{
-						{
-							Name:  "rule",
-							Value: "fi.*",
-							Type:  "=~",
+			listFilterParams: listFilterParams{
+				LabelSelectors: []Selector{
+					{
+						Filters: []LabelMatcher{
+							{
+								Name:  "rule",
+								Value: "fi.*",
+								Type:  "=~",
+							},
 						},
 					},
 				},
 			},
+			Operation: "list",
 		})
 		require.NoError(t, err)
 
@@ -207,18 +215,20 @@ func TestManageRules_List(t *testing.T) {
 	t.Run("list alert rules with not equals operator", func(t *testing.T) {
 		ctx := newTestContext()
 		result, err := manageRulesRead(ctx, ManageRulesReadParams{
-			Operation: "list",
-			LabelSelectors: []Selector{
-				{
-					Filters: []LabelMatcher{
-						{
-							Name:  "severity",
-							Value: "critical",
-							Type:  "!=",
+			listFilterParams: listFilterParams{
+				LabelSelectors: []Selector{
+					{
+						Filters: []LabelMatcher{
+							{
+								Name:  "severity",
+								Value: "critical",
+								Type:  "!=",
+							},
 						},
 					},
 				},
 			},
+			Operation: "list",
 		})
 		require.NoError(t, err)
 
@@ -230,18 +240,20 @@ func TestManageRules_List(t *testing.T) {
 	t.Run("list alert rules with not matches operator", func(t *testing.T) {
 		ctx := newTestContext()
 		result, err := manageRulesRead(ctx, ManageRulesReadParams{
-			Operation: "list",
-			LabelSelectors: []Selector{
-				{
-					Filters: []LabelMatcher{
-						{
-							Name:  "severity",
-							Value: "crit.*",
-							Type:  "!~",
+			listFilterParams: listFilterParams{
+				LabelSelectors: []Selector{
+					{
+						Filters: []LabelMatcher{
+							{
+								Name:  "severity",
+								Value: "crit.*",
+								Type:  "!~",
+							},
 						},
 					},
 				},
 			},
+			Operation: "list",
 		})
 		require.NoError(t, err)
 
@@ -253,18 +265,20 @@ func TestManageRules_List(t *testing.T) {
 	t.Run("list alert rules with non-existent label", func(t *testing.T) {
 		ctx := newTestContext()
 		result, err := manageRulesRead(ctx, ManageRulesReadParams{
-			Operation: "list",
-			LabelSelectors: []Selector{
-				{
-					Filters: []LabelMatcher{
-						{
-							Name:  "nonexistent",
-							Value: "value",
-							Type:  "=",
+			listFilterParams: listFilterParams{
+				LabelSelectors: []Selector{
+					{
+						Filters: []LabelMatcher{
+							{
+								Name:  "nonexistent",
+								Value: "value",
+								Type:  "=",
+							},
 						},
 					},
 				},
 			},
+			Operation: "list",
 		})
 		require.NoError(t, err)
 
@@ -276,18 +290,20 @@ func TestManageRules_List(t *testing.T) {
 	t.Run("list alert rules with non-existent label and inequality", func(t *testing.T) {
 		ctx := newTestContext()
 		result, err := manageRulesRead(ctx, ManageRulesReadParams{
-			Operation: "list",
-			LabelSelectors: []Selector{
-				{
-					Filters: []LabelMatcher{
-						{
-							Name:  "nonexistent",
-							Value: "value",
-							Type:  "!=",
+			listFilterParams: listFilterParams{
+				LabelSelectors: []Selector{
+					{
+						Filters: []LabelMatcher{
+							{
+								Name:  "nonexistent",
+								Value: "value",
+								Type:  "!=",
+							},
 						},
 					},
 				},
 			},
+			Operation: "list",
 		})
 		require.NoError(t, err)
 
@@ -299,8 +315,8 @@ func TestManageRules_List(t *testing.T) {
 	t.Run("list alert rules with a large rule_limit", func(t *testing.T) {
 		ctx := newTestContext()
 		result, err := manageRulesRead(ctx, ManageRulesReadParams{
-			Operation: "list",
-			RuleLimit: 1000,
+			listFilterParams: listFilterParams{RuleLimit: 1000},
+			Operation:        "list",
 		})
 		require.NoError(t, err)
 
@@ -312,8 +328,8 @@ func TestManageRules_List(t *testing.T) {
 	t.Run("list alert rules with negative rule_limit", func(t *testing.T) {
 		ctx := newTestContext()
 		_, err := manageRulesRead(ctx, ManageRulesReadParams{
-			Operation: "list",
-			RuleLimit: -1,
+			listFilterParams: listFilterParams{RuleLimit: -1},
+			Operation:        "list",
 		})
 		require.Error(t, err)
 	})
@@ -360,6 +376,71 @@ func TestManageRules_List(t *testing.T) {
 		require.Empty(t, rules)
 	})
 
+	t.Run("list with non-matching rule_group", func(t *testing.T) {
+		ctx := newTestContext()
+		result, err := manageRulesRead(ctx, ManageRulesReadParams{
+			Operation: "list",
+			RuleGroup: "nonexistent-group",
+		})
+		require.NoError(t, err)
+
+		rules, ok := result.([]alertRuleSummary)
+		require.True(t, ok)
+		require.Empty(t, rules)
+	})
+
+	t.Run("list with search_rule_name partial match", func(t *testing.T) {
+		ctx := newTestContext()
+		result, err := manageRulesRead(ctx, ManageRulesReadParams{
+			listFilterParams: listFilterParams{SearchRuleName: "Paused"},
+			Operation:        "list",
+		})
+		require.NoError(t, err)
+
+		rules, ok := result.([]alertRuleSummary)
+		require.True(t, ok)
+		require.Len(t, rules, 1)
+		require.Equal(t, rulePausedUID, rules[0].UID)
+	})
+
+	t.Run("list with search_rule_name matching nothing", func(t *testing.T) {
+		ctx := newTestContext()
+		result, err := manageRulesRead(ctx, ManageRulesReadParams{
+			listFilterParams: listFilterParams{SearchRuleName: "zzz-no-match"},
+			Operation:        "list",
+		})
+		require.NoError(t, err)
+
+		rules, ok := result.([]alertRuleSummary)
+		require.True(t, ok)
+		require.Empty(t, rules)
+	})
+
+	t.Run("list with rule_type recording returns empty", func(t *testing.T) {
+		ctx := newTestContext()
+		result, err := manageRulesRead(ctx, ManageRulesReadParams{
+			listFilterParams: listFilterParams{RuleType: "recording"},
+			Operation:        "list",
+		})
+		require.NoError(t, err)
+
+		rules, ok := result.([]alertRuleSummary)
+		require.True(t, ok)
+		require.Empty(t, rules)
+	})
+
+	t.Run("list with rule_limit limits results", func(t *testing.T) {
+		ctx := newTestContext()
+		result, err := manageRulesRead(ctx, ManageRulesReadParams{
+			listFilterParams: listFilterParams{RuleLimit: 1},
+			Operation:        "list",
+		})
+		require.NoError(t, err)
+
+		rules, ok := result.([]alertRuleSummary)
+		require.True(t, ok)
+		require.Len(t, rules, 1)
+	})
 }
 
 func TestManageRules_Get(t *testing.T) {
@@ -440,9 +521,9 @@ func TestManageRules_Get(t *testing.T) {
 	t.Run("get with limit_alerts caps alert instances", func(t *testing.T) {
 		ctx := newTestContext()
 		result, err := manageRulesRead(ctx, ManageRulesReadParams{
-			Operation:   "get",
-			RuleUID:     rule1UID,
-			LimitAlerts: 1,
+			listFilterParams: listFilterParams{LimitAlerts: 1},
+			Operation:        "get",
+			RuleUID:          rule1UID,
 		})
 		require.NoError(t, err)
 		detail, ok := result.(*alertRuleDetail)
@@ -1202,15 +1283,17 @@ func TestManageRules_List_Datasource(t *testing.T) {
 		dsUID := "prometheus"
 
 		result, err := manageRulesRead(ctx, ManageRulesReadParams{
-			Operation:     "list",
-			DatasourceUID: &dsUID,
-			LabelSelectors: []Selector{
-				{
-					Filters: []LabelMatcher{
-						{Name: "severity", Type: "=", Value: "warning"},
+			listFilterParams: listFilterParams{
+				LabelSelectors: []Selector{
+					{
+						Filters: []LabelMatcher{
+							{Name: "severity", Type: "=", Value: "warning"},
+						},
 					},
 				},
 			},
+			Operation:     "list",
+			DatasourceUID: &dsUID,
 		})
 		require.NoError(t, err)
 
@@ -1430,8 +1513,8 @@ func TestManageRules_SearchFolder(t *testing.T) {
 	t.Run("list with search_folder", func(t *testing.T) {
 		ctx := newTestContext()
 		result, err := manageRulesRead(ctx, ManageRulesReadParams{
-			Operation:    "list",
-			SearchFolder: "Test",
+			listFilterParams: listFilterParams{SearchFolder: "Test"},
+			Operation:        "list",
 		})
 		require.NoError(t, err)
 		// Should not error regardless of whether the folder exists
@@ -1443,11 +1526,12 @@ func TestManageRules_SearchFolder(t *testing.T) {
 	t.Run("mutual exclusion validation", func(t *testing.T) {
 		ctx := newTestContext()
 		_, err := manageRulesRead(ctx, ManageRulesReadParams{
-			Operation:    "list",
-			FolderUID:    "folder-1",
-			SearchFolder: "Production",
+			listFilterParams: listFilterParams{SearchFolder: "Production"},
+			Operation:        "list",
+			FolderUID:        "folder-1",
 		})
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "mutually exclusive")
 	})
 }
+
