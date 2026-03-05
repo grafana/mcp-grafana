@@ -1730,6 +1730,7 @@ dev = [
     { name = "litellm" },
     { name = "mcp" },
     { name = "pytest" },
+    { name = "pytest-rerunfailures" },
     { name = "python-dotenv" },
 ]
 
@@ -1742,6 +1743,7 @@ dev = [
     { name = "litellm", specifier = ">=1.63.12" },
     { name = "mcp", specifier = ">=1.9.3" },
     { name = "pytest", specifier = ">=8.3.5" },
+    { name = "pytest-rerunfailures", specifier = ">=15.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
 ]
 
