@@ -44,6 +44,10 @@ func getGraphSchema(ctx context.Context, _ GetGraphSchemaParams) (string, error)
 		return "", fmt.Errorf("failed to create Asserts client: %w", err)
 	}
 
+	if cached, ok := graphSchemaCache.get(client.baseURL); ok {
+		return cached, nil
+	}
+
 	data, err := client.fetchAssertsDataGet(ctx, "/v1/entity_type", nil)
 	if err != nil {
 		return "", fmt.Errorf("failed to fetch entity types: %w", err)
@@ -74,7 +78,10 @@ func getGraphSchema(ctx context.Context, _ GetGraphSchemaParams) (string, error)
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal schema: %w", err)
 	}
-	return string(result), nil
+
+	out := string(result)
+	graphSchemaCache.set(client.baseURL, out)
+	return out, nil
 }
 
 var GetGraphSchema = mcpgrafana.MustTool(
@@ -89,14 +96,17 @@ var GetGraphSchema = mcpgrafana.MustTool(
 // --- search_entities ---
 
 type SearchEntitiesParams struct {
-	EntityType    string `json:"entityType" jsonschema:"required,description=Entity type to search (e.g. Service\\, Node\\, Pod). Use get_graph_schema to see available types."`
-	SearchText    string `json:"searchText,omitempty" jsonschema:"description=Text to search in entity names"`
-	Env           string `json:"env,omitempty" jsonschema:"description=Filter by environment"`
+	Mode          string `json:"mode,omitempty" jsonschema:"description=Search mode: 'search' (default) for structured search via /v1/search\\, 'list' for paginated listing via public API\\, 'count' for entity type counts\\, 'semantic' for natural language search via vector similarity,enum=search,enum=list,enum=count,enum=semantic"`
+	EntityType    string `json:"entityType,omitempty" jsonschema:"description=Entity type (e.g. Service\\, Node\\, Pod). Required for search/list modes. Use get_graph_schema to see available types."`
+	SearchText    string `json:"searchText,omitempty" jsonschema:"description=Text to search for. In search mode: matches entity names (CONTAINS). In semantic mode: natural language query (e.g. 'the database handling payment orders')."`
+	Env           string `json:"env,omitempty" jsonschema:"description=Filter by environment. In list mode supports RHS filter syntax (e.g. eq:production)."`
 	Site          string `json:"site,omitempty" jsonschema:"description=Filter by site"`
-	Namespace     string `json:"namespace,omitempty" jsonschema:"description=Filter by namespace"`
-	HasAssertions bool   `json:"hasAssertions,omitempty" jsonschema:"description=Only return entities with active assertions"`
-	StartTime     time.Time `json:"startTime" jsonschema:"required,description=Start time in RFC3339 format"`
-	EndTime       time.Time `json:"endTime" jsonschema:"required,description=End time in RFC3339 format"`
+	Namespace     string `json:"namespace,omitempty" jsonschema:"description=Filter by namespace. In list mode supports RHS filter syntax."`
+	HasAssertions bool   `json:"hasAssertions,omitempty" jsonschema:"description=Only return entities with active assertions (search mode only)"`
+	Limit         int    `json:"limit,omitempty" jsonschema:"description=Max results to return (default 25 for list\\, 10 for semantic)"`
+	Offset        int    `json:"offset,omitempty" jsonschema:"description=Pagination offset (list mode only)"`
+	StartTime     time.Time `json:"startTime,omitempty" jsonschema:"description=Start time in RFC3339 format (required for search and count modes)"`
+	EndTime       time.Time `json:"endTime,omitempty" jsonschema:"description=End time in RFC3339 format (required for search and count modes)"`
 }
 
 type searchRequestDTO struct {
@@ -127,7 +137,54 @@ type propertyMatcherDTO struct {
 	Op    string `json:"op"`
 }
 
+// searchResponseDTO matches the shape of POST /v1/search when type=graph.
+type searchResponseDTO struct {
+	Type string `json:"type"`
+	Data struct {
+		PageNum                  int                    `json:"pageNum"`
+		LastPage                 bool                   `json:"lastPage"`
+		SearchResultsMaxLimitHit bool                   `json:"searchResultsMaxLimitHit"`
+		Entities                 []graphEntityResponse  `json:"entities"`
+		Edges                    []searchEdgeDTO        `json:"edges"`
+	} `json:"data"`
+}
+
+type searchEdgeDTO struct {
+	Source      int64  `json:"source"`
+	Destination int64  `json:"destination"`
+	Type        string `json:"type"`
+}
+
+type slimSearchEdge struct {
+	Source      int64  `json:"source"`
+	Destination int64  `json:"destination"`
+	Type        string `json:"type"`
+}
+
+type entityCountRequestDTO struct {
+	TimeCriteria  timeCriteriaDTO   `json:"timeCriteria"`
+	ScopeCriteria *scopeCriteriaDTO `json:"scopeCriteria,omitempty"`
+}
+
 func searchEntities(ctx context.Context, args SearchEntitiesParams) (string, error) {
+	mode := args.Mode
+	if mode == "" {
+		mode = "search"
+	}
+
+	switch mode {
+	case "list":
+		return searchEntitiesList(ctx, args)
+	case "count":
+		return searchEntitiesCount(ctx, args)
+	case "semantic":
+		return searchEntitiesSemantic(ctx, args)
+	default:
+		return searchEntitiesDefault(ctx, args)
+	}
+}
+
+func searchEntitiesDefault(ctx context.Context, args SearchEntitiesParams) (string, error) {
 	client, err := newAssertsClient(ctx)
 	if err != nil {
 		return "", fmt.Errorf("failed to create Asserts client: %w", err)
@@ -172,12 +229,153 @@ func searchEntities(ctx context.Context, args SearchEntitiesParams) (string, err
 		return "", fmt.Errorf("failed to search entities: %w", err)
 	}
 
+	var resp searchResponseDTO
+	if err := json.Unmarshal([]byte(data), &resp); err != nil {
+		return data, nil
+	}
+
+	slimEntities := make([]slimEntity, 0, len(resp.Data.Entities))
+	for i := range resp.Data.Entities {
+		slimEntities = append(slimEntities, resp.Data.Entities[i].toSlim())
+	}
+
+	edges := make([]slimSearchEdge, 0, len(resp.Data.Edges))
+	for _, e := range resp.Data.Edges {
+		edges = append(edges, slimSearchEdge{
+			Source:      e.Source,
+			Destination: e.Destination,
+			Type:        e.Type,
+		})
+	}
+
+	result, err := json.Marshal(map[string]any{
+		"mode":     "search",
+		"entities": slimEntities,
+		"edges":    edges,
+		"pageNum":  resp.Data.PageNum,
+		"lastPage": resp.Data.LastPage,
+		"limitHit": resp.Data.SearchResultsMaxLimitHit,
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal search results: %w", err)
+	}
+	return string(result), nil
+}
+
+func searchEntitiesList(ctx context.Context, args SearchEntitiesParams) (string, error) {
+	client, err := newAssertsClient(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to create Asserts client: %w", err)
+	}
+
+	params := url.Values{}
+	if args.Env != "" {
+		params.Set("scope.env", args.Env)
+	}
+	if args.Namespace != "" {
+		params.Set("scope.namespace", args.Namespace)
+	}
+	if args.SearchText != "" {
+		params.Set("name", args.SearchText)
+	}
+	limit := args.Limit
+	if limit <= 0 {
+		limit = 25
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	params.Set("pagination.limit", fmt.Sprintf("%d", limit))
+	if args.Offset > 0 {
+		params.Set("pagination.offset", fmt.Sprintf("%d", args.Offset))
+	}
+
+	path := fmt.Sprintf("/public/v1/entities/%s", url.PathEscape(args.EntityType))
+	data, err := client.fetchAssertsDataGet(ctx, path, params)
+	if err != nil {
+		return "", fmt.Errorf("failed to list entities: %w", err)
+	}
+
+	var page struct {
+		Items      []entitySummaryResponse `json:"items"`
+		Pagination struct {
+			Limit  int `json:"limit"`
+			Offset int `json:"offset"`
+		} `json:"pagination"`
+	}
+	if err := json.Unmarshal([]byte(data), &page); err != nil {
+		return data, nil
+	}
+
+	slimItems := make([]slimEntity, 0, len(page.Items))
+	for i := range page.Items {
+		slimItems = append(slimItems, page.Items[i].toSlim())
+	}
+
+	result, err := json.Marshal(map[string]any{
+		"mode":       "list",
+		"entities":   slimItems,
+		"pagination": page.Pagination,
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal entities: %w", err)
+	}
+	return string(result), nil
+}
+
+func searchEntitiesCount(ctx context.Context, args SearchEntitiesParams) (string, error) {
+	client, err := newAssertsClient(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to create Asserts client: %w", err)
+	}
+
+	reqBody := entityCountRequestDTO{
+		TimeCriteria: timeCriteriaDTO{
+			Start: args.StartTime.UnixMilli(),
+			End:   args.EndTime.UnixMilli(),
+		},
+	}
+
+	scopeVals := make(map[string][]string)
+	if args.Env != "" {
+		scopeVals["env"] = []string{args.Env}
+	}
+	if args.Site != "" {
+		scopeVals["site"] = []string{args.Site}
+	}
+	if args.Namespace != "" {
+		scopeVals["namespace"] = []string{args.Namespace}
+	}
+	if len(scopeVals) > 0 {
+		reqBody.ScopeCriteria = &scopeCriteriaDTO{NameAndValues: scopeVals}
+	}
+
+	data, err := client.fetchAssertsData(ctx, "/v1/entity_type/count", "POST", reqBody)
+	if err != nil {
+		return "", fmt.Errorf("failed to count entities: %w", err)
+	}
+
 	return data, nil
+}
+
+func searchEntitiesSemantic(ctx context.Context, args SearchEntitiesParams) (string, error) {
+	limit := args.Limit
+	if limit <= 0 {
+		limit = 10
+	}
+
+	semanticArgs := FindEntitiesSemanticParams{
+		Query:     args.SearchText,
+		Limit:     limit,
+		Env:       args.Env,
+		Namespace: args.Namespace,
+	}
+	return findEntitiesSemantic(ctx, semanticArgs)
 }
 
 var SearchEntities = mcpgrafana.MustTool(
 	"search_entities",
-	"Search the Knowledge Graph for entities by type, name, scope, and assertion status. Returns a list of matching entities with their properties.",
+	"Search the Knowledge Graph for entities. Supports four modes: 'search' (default) for structured search by type/name/scope, 'list' for paginated entity listing, 'count' for entity type counts, 'semantic' for natural language search via vector similarity. Use get_graph_schema first to understand available entity types.",
 	searchEntities,
 	mcp.WithTitleAnnotation("Search KG entities"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -201,7 +399,7 @@ func getEntity(ctx context.Context, args GetEntityParams) (string, error) {
 		return "", fmt.Errorf("failed to create Asserts client: %w", err)
 	}
 
-	entity, err := client.resolveEntityInfo(ctx, args.EntityType, args.EntityName, args.Env, args.Site, args.Namespace)
+	entity, err := client.resolveEntityInfoCached(ctx, args.EntityType, args.EntityName, args.Env, args.Site, args.Namespace)
 	if err != nil {
 		return "", err
 	}
@@ -249,7 +447,7 @@ func getConnectedEntities(ctx context.Context, args GetConnectedEntitiesParams) 
 		return "", fmt.Errorf("failed to create Asserts client: %w", err)
 	}
 
-	entity, err := client.resolveEntityInfo(ctx, args.EntityType, args.EntityName, args.Env, args.Site, args.Namespace)
+	entity, err := client.resolveEntityInfoCached(ctx, args.EntityType, args.EntityName, args.Env, args.Site, args.Namespace)
 	if err != nil {
 		return "", err
 	}
@@ -304,144 +502,6 @@ var GetConnectedEntities = mcpgrafana.MustTool(
 	mcp.WithReadOnlyHintAnnotation(true),
 )
 
-// --- list_entities ---
-
-type ListEntitiesParams struct {
-	EntityType string `json:"entityType" jsonschema:"required,description=Entity type to list"`
-	Env        string `json:"env,omitempty" jsonschema:"description=Filter by environment (RHS filter\\, e.g. eq:production)"`
-	Namespace  string `json:"namespace,omitempty" jsonschema:"description=Filter by namespace (RHS filter\\, e.g. eq:default)"`
-	Name       string `json:"name,omitempty" jsonschema:"description=Filter by name (RHS filter\\, e.g. contains:checkout)"`
-	Limit      int    `json:"limit,omitempty" jsonschema:"description=Max results (default 25\\, max 100)"`
-	Offset     int    `json:"offset,omitempty" jsonschema:"description=Pagination offset (default 0)"`
-}
-
-func listEntities(ctx context.Context, args ListEntitiesParams) (string, error) {
-	client, err := newAssertsClient(ctx)
-	if err != nil {
-		return "", fmt.Errorf("failed to create Asserts client: %w", err)
-	}
-
-	params := url.Values{}
-	if args.Env != "" {
-		params.Set("scope.env", args.Env)
-	}
-	if args.Namespace != "" {
-		params.Set("scope.namespace", args.Namespace)
-	}
-	if args.Name != "" {
-		params.Set("name", args.Name)
-	}
-	limit := args.Limit
-	if limit <= 0 {
-		limit = 25
-	}
-	if limit > 100 {
-		limit = 100
-	}
-	params.Set("pagination.limit", fmt.Sprintf("%d", limit))
-	if args.Offset > 0 {
-		params.Set("pagination.offset", fmt.Sprintf("%d", args.Offset))
-	}
-
-	path := fmt.Sprintf("/public/v1/entities/%s", url.PathEscape(args.EntityType))
-	data, err := client.fetchAssertsDataGet(ctx, path, params)
-	if err != nil {
-		return "", fmt.Errorf("failed to list entities: %w", err)
-	}
-
-	var page struct {
-		Items      []entitySummaryResponse `json:"items"`
-		Pagination struct {
-			Limit  int `json:"limit"`
-			Offset int `json:"offset"`
-		} `json:"pagination"`
-	}
-	if err := json.Unmarshal([]byte(data), &page); err != nil {
-		return data, nil
-	}
-
-	slimItems := make([]slimEntity, 0, len(page.Items))
-	for i := range page.Items {
-		slimItems = append(slimItems, page.Items[i].toSlim())
-	}
-
-	result, err := json.Marshal(map[string]any{
-		"entities":   slimItems,
-		"pagination": page.Pagination,
-	})
-	if err != nil {
-		return "", fmt.Errorf("failed to marshal entities: %w", err)
-	}
-	return string(result), nil
-}
-
-var ListEntities = mcpgrafana.MustTool(
-	"list_entities",
-	"List entities of a given type in the Knowledge Graph with optional scope and name filters. Supports pagination.",
-	listEntities,
-	mcp.WithTitleAnnotation("List KG entities"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-)
-
-// --- count_entities ---
-
-type CountEntitiesParams struct {
-	Env       string `json:"env,omitempty" jsonschema:"description=Filter by environment"`
-	Site      string `json:"site,omitempty" jsonschema:"description=Filter by site"`
-	Namespace string `json:"namespace,omitempty" jsonschema:"description=Filter by namespace"`
-	StartTime time.Time `json:"startTime" jsonschema:"required,description=Start time in RFC3339 format"`
-	EndTime   time.Time `json:"endTime" jsonschema:"required,description=End time in RFC3339 format"`
-}
-
-type entityCountRequestDTO struct {
-	TimeCriteria  timeCriteriaDTO   `json:"timeCriteria"`
-	ScopeCriteria *scopeCriteriaDTO `json:"scopeCriteria,omitempty"`
-}
-
-func countEntities(ctx context.Context, args CountEntitiesParams) (string, error) {
-	client, err := newAssertsClient(ctx)
-	if err != nil {
-		return "", fmt.Errorf("failed to create Asserts client: %w", err)
-	}
-
-	reqBody := entityCountRequestDTO{
-		TimeCriteria: timeCriteriaDTO{
-			Start: args.StartTime.UnixMilli(),
-			End:   args.EndTime.UnixMilli(),
-		},
-	}
-
-	scopeVals := make(map[string][]string)
-	if args.Env != "" {
-		scopeVals["env"] = []string{args.Env}
-	}
-	if args.Site != "" {
-		scopeVals["site"] = []string{args.Site}
-	}
-	if args.Namespace != "" {
-		scopeVals["namespace"] = []string{args.Namespace}
-	}
-	if len(scopeVals) > 0 {
-		reqBody.ScopeCriteria = &scopeCriteriaDTO{NameAndValues: scopeVals}
-	}
-
-	data, err := client.fetchAssertsData(ctx, "/v1/entity_type/count", "POST", reqBody)
-	if err != nil {
-		return "", fmt.Errorf("failed to count entities: %w", err)
-	}
-
-	return data, nil
-}
-
-var CountEntities = mcpgrafana.MustTool(
-	"count_entities",
-	"Get entity counts by type in the Knowledge Graph. Returns a map of entity type to count. Useful for understanding graph size without fetching full records.",
-	countEntities,
-	mcp.WithTitleAnnotation("Count KG entities"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-)
 
 // --- get_assertion_summary ---
 

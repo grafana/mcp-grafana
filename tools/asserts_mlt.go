@@ -94,7 +94,7 @@ var entityLabelMapping = map[string]struct {
 var defaultMetrics = map[string][]string{
 	"Service": {
 		`rate(http_server_requests_seconds_count%s[5m])`,
-		`sum(rate(http_server_requests_seconds_count{status=~"5.."}%s[5m]))`,
+		`sum(rate(http_server_requests_seconds_count{status=~"5.."%s}[5m]))`,
 		`histogram_quantile(0.99, sum(rate(http_server_requests_seconds_bucket%s[5m])) by (le))`,
 	},
 	"Node": {
@@ -168,18 +168,60 @@ type GetEntityMetricsParams struct {
 	StepSeconds   int       `json:"stepSeconds,omitempty" jsonschema:"description=Step interval in seconds for range queries (default 60)"`
 }
 
+// resolvePromLabels attempts to use the tenant's drilldown config for label
+// mapping, falling back to hardcoded defaults if unavailable.
+func resolvePromLabels(ctx context.Context, client *Client, entity *graphEntityResponse) string {
+	configs := fetchDrilldownConfigs(ctx, client, "log")
+	if configs != nil {
+		if cfg := findDrilldownForEntity(configs, entity.Type); cfg != nil && len(cfg.PromMapping) > 0 {
+			if labels := buildLabelsFromMapping(cfg.PromMapping, entity, ", "); labels != "" {
+				return labels
+			}
+		}
+	}
+	return buildPromLabels(entity.Type, entity.Name, entity.Env, entity.Site, entity.Namespace)
+}
+
+// resolveLokiLabels attempts to use the tenant's log drilldown config,
+// falling back to hardcoded defaults if unavailable.
+func resolveLokiLabels(ctx context.Context, client *Client, entity *graphEntityResponse) string {
+	configs := fetchDrilldownConfigs(ctx, client, "log")
+	if configs != nil {
+		if cfg := findDrilldownForEntity(configs, entity.Type); cfg != nil && len(cfg.LogMapping) > 0 {
+			if labels := buildLabelsFromMapping(cfg.LogMapping, entity, ", "); labels != "" {
+				return labels
+			}
+		}
+	}
+	return buildLokiLabels(entity.Type, entity.Name, entity.Env, entity.Site, entity.Namespace)
+}
+
+// resolveTraceAttrs attempts to use the tenant's trace drilldown config,
+// falling back to hardcoded defaults if unavailable.
+func resolveTraceAttrs(ctx context.Context, client *Client, entity *graphEntityResponse) string {
+	configs := fetchDrilldownConfigs(ctx, client, "trace")
+	if configs != nil {
+		if cfg := findDrilldownForEntity(configs, entity.Type); cfg != nil && len(cfg.TraceMapping) > 0 {
+			if labels := buildLabelsFromMapping(cfg.TraceMapping, entity, " && "); labels != "" {
+				return labels
+			}
+		}
+	}
+	return buildTraceAttrs(entity.Type, entity.Name, entity.Env, entity.Site, entity.Namespace)
+}
+
 func getEntityMetrics(ctx context.Context, args GetEntityMetricsParams) (string, error) {
 	assertsClient, err := newAssertsClient(ctx)
 	if err != nil {
 		return "", fmt.Errorf("failed to create Asserts client: %w", err)
 	}
 
-	entity, err := assertsClient.resolveEntityInfo(ctx, args.EntityType, args.EntityName, args.Env, args.Site, args.Namespace)
+	entity, err := assertsClient.resolveEntityInfoCached(ctx, args.EntityType, args.EntityName, args.Env, args.Site, args.Namespace)
 	if err != nil {
 		return "", fmt.Errorf("failed to resolve entity: %w", err)
 	}
 
-	labels := buildPromLabels(args.EntityType, entity.Name, entity.Env, entity.Site, entity.Namespace)
+	labels := resolvePromLabels(ctx, assertsClient, entity)
 
 	step := args.StepSeconds
 	if step <= 0 {
@@ -270,12 +312,12 @@ func getEntityLogs(ctx context.Context, args GetEntityLogsParams) (string, error
 		return "", fmt.Errorf("failed to create Asserts client: %w", err)
 	}
 
-	entity, err := assertsClient.resolveEntityInfo(ctx, args.EntityType, args.EntityName, args.Env, args.Site, args.Namespace)
+	entity, err := assertsClient.resolveEntityInfoCached(ctx, args.EntityType, args.EntityName, args.Env, args.Site, args.Namespace)
 	if err != nil {
 		return "", fmt.Errorf("failed to resolve entity: %w", err)
 	}
 
-	streamSelector := buildLokiLabels(args.EntityType, entity.Name, entity.Env, entity.Site, entity.Namespace)
+	streamSelector := resolveLokiLabels(ctx, assertsClient, entity)
 
 	query := streamSelector
 	if args.Filter != "" {
@@ -347,12 +389,12 @@ func getEntityTraces(ctx context.Context, args GetEntityTracesParams) (string, e
 		return "", fmt.Errorf("failed to create Asserts client: %w", err)
 	}
 
-	entity, err := assertsClient.resolveEntityInfo(ctx, args.EntityType, args.EntityName, args.Env, args.Site, args.Namespace)
+	entity, err := assertsClient.resolveEntityInfoCached(ctx, args.EntityType, args.EntityName, args.Env, args.Site, args.Namespace)
 	if err != nil {
 		return "", fmt.Errorf("failed to resolve entity: %w", err)
 	}
 
-	traceSelector := buildTraceAttrs(args.EntityType, entity.Name, entity.Env, entity.Site, entity.Namespace)
+	traceSelector := resolveTraceAttrs(ctx, assertsClient, entity)
 	query := traceSelector
 	if args.MinDuration != "" {
 		query = fmt.Sprintf(`%s | duration > %s`, traceSelector, args.MinDuration)
@@ -384,7 +426,7 @@ func getEntityTraces(ctx context.Context, args GetEntityTracesParams) (string, e
 	params.Set("start", fmt.Sprintf("%d", args.StartTime.Unix()))
 	params.Set("end", fmt.Sprintf("%d", args.EndTime.Unix()))
 
-	data, err := tempoClient.fetchAssertsDataGet(ctx, "/tempo/api/search", params)
+	data, err := tempoClient.fetchAssertsDataGet(ctx, "/api/search", params)
 	if err != nil {
 		output := map[string]any{
 			"entity":  entity.toSlim(),

@@ -9,7 +9,7 @@ import (
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	mcpserver "github.com/mark3labs/mcp-go/server"
 )
 
 // assertsSubscriptionManager tracks entity assertion subscriptions and
@@ -17,22 +17,23 @@ import (
 // Requires SSE or StreamableHTTP transport.
 type assertsSubscriptionManager struct {
 	mu            sync.Mutex
-	mcpServer     *server.MCPServer
+	mcpServer     *mcpserver.MCPServer
 	subscriptions map[string]*assertionSubscription
 	stopCh        chan struct{}
 	running       bool
 }
 
 type assertionSubscription struct {
-	ID         string    `json:"id"`
-	SessionID  string    `json:"sessionId"`
-	EntityType string    `json:"entityType"`
-	EntityName string    `json:"entityName"`
-	Env        string    `json:"env,omitempty"`
-	Site       string    `json:"site,omitempty"`
-	Namespace  string    `json:"namespace,omitempty"`
-	CreatedAt  time.Time `json:"createdAt"`
-	LastCheck  time.Time `json:"lastCheck"`
+	ID         string                   `json:"id"`
+	SessionID  string                   `json:"sessionId"`
+	EntityType string                   `json:"entityType"`
+	EntityName string                   `json:"entityName"`
+	Env        string                   `json:"env,omitempty"`
+	Site       string                   `json:"site,omitempty"`
+	Namespace  string                   `json:"namespace,omitempty"`
+	CreatedAt  time.Time                `json:"createdAt"`
+	LastCheck  time.Time                `json:"lastCheck"`
+	grafanaCfg mcpgrafana.GrafanaConfig `json:"-"`
 }
 
 var (
@@ -40,7 +41,7 @@ var (
 	globalSubManagerOnce sync.Once
 )
 
-func getOrCreateSubManager(s *server.MCPServer) *assertsSubscriptionManager {
+func getOrCreateSubManager(s *mcpserver.MCPServer) *assertsSubscriptionManager {
 	globalSubManagerOnce.Do(func() {
 		globalSubManager = &assertsSubscriptionManager{
 			mcpServer:     s,
@@ -89,8 +90,12 @@ func (m *assertsSubscriptionManager) pollLoop() {
 	defer ticker.Stop()
 
 	for {
+		m.mu.Lock()
+		stopCh := m.stopCh
+		m.mu.Unlock()
+
 		select {
-		case <-m.stopCh:
+		case <-stopCh:
 			return
 		case <-ticker.C:
 			m.checkAssertions()
@@ -108,10 +113,7 @@ func (m *assertsSubscriptionManager) checkAssertions() {
 
 	for _, sub := range subs {
 		now := time.Now()
-		ctx := context.Background()
-
-		cfg := mcpgrafana.GrafanaConfig{}
-		ctx = mcpgrafana.WithGrafanaConfig(ctx, cfg)
+		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), sub.grafanaCfg)
 
 		client, err := newAssertsClient(ctx)
 		if err != nil {
@@ -184,11 +186,13 @@ func subscribeEntityAssertions(ctx context.Context, args SubscribeEntityAssertio
 	}
 
 	sessionID := ""
-	if sid, ok := ctx.Value(sessionIDKey).(string); ok {
-		sessionID = sid
+	if session := mcpserver.ClientSessionFromContext(ctx); session != nil {
+		sessionID = session.SessionID()
 	}
 
-	subID := fmt.Sprintf("%s/%s/%s/%s", args.EntityType, args.EntityName, args.Env, args.Namespace)
+	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
+
+	subID := fmt.Sprintf("%s/%s/%s/%s/%s", args.EntityType, args.EntityName, args.Env, args.Site, args.Namespace)
 
 	sub := &assertionSubscription{
 		ID:         subID,
@@ -200,6 +204,7 @@ func subscribeEntityAssertions(ctx context.Context, args SubscribeEntityAssertio
 		Namespace:  args.Namespace,
 		CreatedAt:  time.Now(),
 		LastCheck:  time.Now(),
+		grafanaCfg: cfg,
 	}
 
 	globalSubManager.subscribe(sub)
@@ -215,10 +220,6 @@ func subscribeEntityAssertions(ctx context.Context, args SubscribeEntityAssertio
 	}
 	return string(result), nil
 }
-
-type contextKey string
-
-const sessionIDKey contextKey = "mcp_session_id"
 
 var SubscribeEntityAssertions = mcpgrafana.MustTool(
 	"subscribe_entity_assertions",
@@ -290,12 +291,12 @@ var ListAssertionSubscriptions = mcpgrafana.MustTool(
 
 // InitAssertsStreaming initializes the streaming subscription manager.
 // Call this from AddAssertsTools when the MCP server supports SSE or StreamableHTTP.
-func InitAssertsStreaming(s *server.MCPServer) {
+func InitAssertsStreaming(s *mcpserver.MCPServer) {
 	getOrCreateSubManager(s)
 }
 
 // AddAssertsStreamingTools registers the streaming tools.
-func AddAssertsStreamingTools(s *server.MCPServer) {
+func AddAssertsStreamingTools(s *mcpserver.MCPServer) {
 	InitAssertsStreaming(s)
 	SubscribeEntityAssertions.Register(s)
 	UnsubscribeEntityAssertions.Register(s)

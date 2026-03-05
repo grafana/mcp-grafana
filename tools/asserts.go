@@ -287,13 +287,9 @@ func AddAssertsTools(s *server.MCPServer) {
 	SearchEntities.Register(s)
 	GetEntity.Register(s)
 	GetConnectedEntities.Register(s)
-	ListEntities.Register(s)
-	CountEntities.Register(s)
 	GetAssertionSummary.Register(s)
 	SearchRcaPatterns.Register(s)
 	GetEntityMetrics.Register(s)
 	GetEntityLogs.Register(s)
 	GetEntityTraces.Register(s)
-	FindEntitiesSemantic.Register(s)
-	AddAssertsStreamingTools(s)
 }

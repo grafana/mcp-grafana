@@ -100,7 +100,7 @@ func TestSearchEntities(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"entities": [{"type": "Service", "name": "checkout"}]}`))
+		_, _ = w.Write([]byte(`{"type":"graph","data":{"entities":[{"type":"Service","name":"checkout","active":true}],"edges":[],"pageNum":0,"lastPage":true}}`))
 	})
 	defer srv.Close()
 
@@ -128,7 +128,7 @@ func TestSearchEntitiesWithScope(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"entities": []}`))
+		_, _ = w.Write([]byte(`{"type":"graph","data":{"entities":[],"edges":[],"pageNum":0,"lastPage":true}}`))
 	})
 	defer srv.Close()
 
@@ -157,7 +157,7 @@ func TestSearchEntitiesWithSearchText(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"entities": [{"type": "Service", "name": "checkout-service"}]}`))
+		_, _ = w.Write([]byte(`{"type":"graph","data":{"entities":[{"type":"Service","name":"checkout-service","active":true}],"edges":[],"pageNum":0,"lastPage":true}}`))
 	})
 	defer srv.Close()
 
@@ -285,7 +285,7 @@ func TestGetConnectedEntities(t *testing.T) {
 	assert.Equal(t, "checkout-abc123", parsed.Connected[0].Name)
 }
 
-func TestListEntities(t *testing.T) {
+func TestSearchEntitiesListMode(t *testing.T) {
 	srv, ctx := setupMockAssertsKGServer(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "GET", r.Method)
 		require.Contains(t, r.URL.Path, "/public/v1/entities/Service")
@@ -304,13 +304,15 @@ func TestListEntities(t *testing.T) {
 	})
 	defer srv.Close()
 
-	result, err := listEntities(ctx, ListEntitiesParams{
+	result, err := searchEntities(ctx, SearchEntitiesParams{
+		Mode:       "list",
 		EntityType: "Service",
 		Env:        "eq:production",
 	})
 	require.NoError(t, err)
 
 	var parsed struct {
+		Mode       string       `json:"mode"`
 		Entities   []slimEntity `json:"entities"`
 		Pagination struct {
 			Limit  int `json:"limit"`
@@ -318,11 +320,12 @@ func TestListEntities(t *testing.T) {
 		} `json:"pagination"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(result), &parsed))
+	assert.Equal(t, "list", parsed.Mode)
 	assert.Len(t, parsed.Entities, 2)
 	assert.Equal(t, "api-gateway", parsed.Entities[0].Name)
 }
 
-func TestCountEntities(t *testing.T) {
+func TestSearchEntitiesCountMode(t *testing.T) {
 	startTime := time.Date(2026, 2, 25, 10, 0, 0, 0, time.UTC)
 	endTime := time.Date(2026, 2, 25, 11, 0, 0, 0, time.UTC)
 
@@ -340,7 +343,8 @@ func TestCountEntities(t *testing.T) {
 	})
 	defer srv.Close()
 
-	result, err := countEntities(ctx, CountEntitiesParams{
+	result, err := searchEntities(ctx, SearchEntitiesParams{
+		Mode:      "count",
 		StartTime: startTime,
 		EndTime:   endTime,
 	})

@@ -9,14 +9,13 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
-	"github.com/mark3labs/mcp-go/mcp"
 )
 
 const (
 	entityCollectionName = "kg-entities"
-	defaultEmbedder      = "vertex/gemini-embedding-001"
 	defaultSearchLimit   = 10
 )
 
@@ -111,7 +110,7 @@ type FindEntitiesSemanticParams struct {
 func findEntitiesSemantic(ctx context.Context, args FindEntitiesSemanticParams) (string, error) {
 	client, err := newSearchServiceClient(ctx)
 	if err != nil {
-		return "", err
+		return findEntitiesFallback(ctx, args)
 	}
 
 	limit := args.Limit
@@ -138,7 +137,7 @@ func findEntitiesSemantic(ctx context.Context, args FindEntitiesSemanticParams) 
 		Filter: filterPtr,
 	})
 	if err != nil {
-		return "", fmt.Errorf("semantic search failed: %w", err)
+		return findEntitiesFallback(ctx, args)
 	}
 
 	type semanticResult struct {
@@ -152,7 +151,7 @@ func findEntitiesSemantic(ctx context.Context, args FindEntitiesSemanticParams) 
 	for _, r := range resp.Results {
 		sr := semanticResult{
 			Content: r.Content,
-			Score:   1 - r.Distance, // cosine distance → similarity
+			Score:   1 - r.Distance,
 		}
 		if r.Metadata != nil {
 			if v, ok := r.Metadata["entityType"].(string); ok {
@@ -166,7 +165,8 @@ func findEntitiesSemantic(ctx context.Context, args FindEntitiesSemanticParams) 
 	}
 
 	output, err := json.Marshal(map[string]any{
-		"query":   args.Query,
+		"query":  args.Query,
+		"mode":   "semantic",
 		"results": results,
 	})
 	if err != nil {
@@ -175,11 +175,75 @@ func findEntitiesSemantic(ctx context.Context, args FindEntitiesSemanticParams) 
 	return string(output), nil
 }
 
-var FindEntitiesSemantic = mcpgrafana.MustTool(
-	"find_entities_semantic",
-	"Find Knowledge Graph entities using natural language search. Uses vector similarity to match entity descriptions. Requires GRAFANA_SEARCH_SERVICE_URL to be set. Example: 'the database handling payment orders'.",
-	findEntitiesSemantic,
-	mcp.WithTitleAnnotation("Find KG entities by meaning"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-)
+// findEntitiesFallback uses deterministic name search via /v1/search when
+// the semantic search service is unavailable. Less powerful but still useful
+// for queries like "find the payment service".
+func findEntitiesFallback(ctx context.Context, args FindEntitiesSemanticParams) (string, error) {
+	assertsClient, err := newAssertsClient(ctx)
+	if err != nil {
+		return "", fmt.Errorf("semantic search unavailable and fallback failed: %w", err)
+	}
+
+	now := time.Now()
+	matcher := entityMatcherDTO{
+		PropertyMatchers: []propertyMatcherDTO{
+			{Name: "name", Value: args.Query, Op: "CONTAINS"},
+		},
+	}
+
+	reqBody := searchRequestDTO{
+		TimeCriteria: timeCriteriaDTO{
+			Start: now.Add(-24 * time.Hour).UnixMilli(),
+			End:   now.UnixMilli(),
+		},
+		FilterCriteria: []entityMatcherDTO{matcher},
+	}
+
+	scopeVals := make(map[string][]string)
+	if args.Env != "" {
+		scopeVals["env"] = []string{args.Env}
+	}
+	if args.Namespace != "" {
+		scopeVals["namespace"] = []string{args.Namespace}
+	}
+	if len(scopeVals) > 0 {
+		reqBody.ScopeCriteria = &scopeCriteriaDTO{NameAndValues: scopeVals}
+	}
+
+	data, err := assertsClient.fetchAssertsData(ctx, "/v1/search", "POST", reqBody)
+	if err != nil {
+		return "", fmt.Errorf("fallback search failed: %w", err)
+	}
+
+	var resp searchResponseDTO
+	if err := json.Unmarshal([]byte(data), &resp); err != nil {
+		return data, nil
+	}
+
+	limit := args.Limit
+	if limit <= 0 {
+		limit = defaultSearchLimit
+	}
+
+	entities := resp.Data.Entities
+	if len(entities) > limit {
+		entities = entities[:limit]
+	}
+
+	slimEntities := make([]slimEntity, 0, len(entities))
+	for i := range entities {
+		slimEntities = append(slimEntities, entities[i].toSlim())
+	}
+
+	output, err := json.Marshal(map[string]any{
+		"query":    args.Query,
+		"mode":     "deterministic_fallback",
+		"note":     "Semantic search unavailable. Results are from deterministic name matching.",
+		"results":  slimEntities,
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal fallback results: %w", err)
+	}
+	return string(output), nil
+}
+
