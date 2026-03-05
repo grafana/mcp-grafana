@@ -76,3 +76,4 @@ run-test-services: ## Run the docker-compose services required for the unit and 
 
 setup-dev: #setup dev environment , initializaes git hooks 
 	git config core.hooksPath .githooks
+	@echo "Dev setup completed"
