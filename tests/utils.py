@@ -90,6 +90,7 @@ async def run_llm_tool_loop(
     response = await acompletion(model=model, messages=messages, tools=tools)
 
     while response.choices and response.choices[0].message.tool_calls:
+        messages.append(response.choices[0].message)
         for tool_call in response.choices[0].message.tool_calls:
             tool_name = tool_call.function.name
             args = (
@@ -101,7 +102,6 @@ async def run_llm_tool_loop(
                 mcp_client, tool_name, args
             )
             tools_called.append(mcp_tc)
-            messages.append(response.choices[0].message)
             messages.append(
                 Message(role="tool", tool_call_id=tool_call.id, content=result_text)
             )
