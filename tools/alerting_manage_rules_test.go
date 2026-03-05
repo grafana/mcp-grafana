@@ -380,7 +380,7 @@ func TestManageRules_Get(t *testing.T) {
 		require.NotEmpty(t, detail.FolderUID)
 		require.Equal(t, testRuleGroup, detail.RuleGroup)
 		require.Equal(t, "B", detail.Condition)
-		require.Equal(t, "1m0s", detail.For)
+		require.Equal(t, "0s", detail.For)
 		require.Equal(t, "NoData", detail.NoDataState)
 		require.Equal(t, "Error", detail.ExecErrState)
 		require.False(t, detail.IsPaused)
