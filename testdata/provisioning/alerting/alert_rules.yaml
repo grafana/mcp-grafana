@@ -3,7 +3,7 @@ apiVersion: 1
 groups:
   - orgId: 1
     name: Test Alert Rules
-    folder: Tests
+    folder: Test Alerts
     interval: 1m
     rules:
       - uid: test_alert_rule_1
@@ -53,7 +53,7 @@ groups:
               type: threshold
         noDataState: NoData
         execErrState: Error
-        for: 1m
+        for: 0s
         keepFiringFor: 0s
         annotations:
           description: This is a test alert rule that is always firing

@@ -12,3 +12,14 @@ providers:
     options:
       # <string, required> path to dashboard files on disk. Required when using the 'file' type
       path: /var/lib/grafana/dashboards
+
+  - name: "empty-alerts-folder"
+    orgId: 1
+    folder: "Empty Alerts Folder"
+    folderUid: "empty-alerts-folder"
+    type: file
+    disableDeletion: true
+    updateIntervalSeconds: 60
+    allowUiUpdates: false
+    options:
+      path: /var/lib/grafana/empty-alerts-folder
