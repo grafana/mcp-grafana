@@ -90,7 +90,7 @@ func (c *Client) fetchAssertsData(ctx context.Context, urlPath string, method st
 		_ = resp.Body.Close() //nolint:errcheck
 	}()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1024*1024*48))
 	if err != nil {
 		return "", fmt.Errorf("failed to read response body: %w", err)
 	}
@@ -124,7 +124,7 @@ func (c *Client) fetchAssertsDataGet(ctx context.Context, urlPath string, params
 		_ = resp.Body.Close() //nolint:errcheck
 	}()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1024*1024*48))
 	if err != nil {
 		return "", fmt.Errorf("failed to read response body: %w", err)
 	}

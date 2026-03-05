@@ -321,7 +321,8 @@ func getEntityLogs(ctx context.Context, args GetEntityLogsParams) (string, error
 
 	query := streamSelector
 	if args.Filter != "" {
-		query = fmt.Sprintf(`%s |~ "%s"`, streamSelector, args.Filter)
+		escaped := strings.NewReplacer(`"`, `\"`, `\`, `\\`).Replace(args.Filter)
+		query = fmt.Sprintf(`%s |~ "%s"`, streamSelector, escaped)
 	}
 
 	limit := args.Limit

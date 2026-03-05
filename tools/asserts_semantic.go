@@ -104,6 +104,7 @@ type FindEntitiesSemanticParams struct {
 	Query     string `json:"query" jsonschema:"required,description=Natural language query to find entities (e.g. 'the database handling payment orders'\\, 'services with high latency')"`
 	Limit     int    `json:"limit,omitempty" jsonschema:"description=Max results to return (default 10)"`
 	Env       string `json:"env,omitempty" jsonschema:"description=Filter by environment"`
+	Site      string `json:"site,omitempty" jsonschema:"description=Filter by site"`
 	Namespace string `json:"namespace,omitempty" jsonschema:"description=Filter by namespace"`
 }
 
@@ -202,6 +203,9 @@ func findEntitiesFallback(ctx context.Context, args FindEntitiesSemanticParams) 
 	scopeVals := make(map[string][]string)
 	if args.Env != "" {
 		scopeVals["env"] = []string{args.Env}
+	}
+	if args.Site != "" {
+		scopeVals["site"] = []string{args.Site}
 	}
 	if args.Namespace != "" {
 		scopeVals["namespace"] = []string{args.Namespace}

@@ -173,6 +173,8 @@ func searchEntities(ctx context.Context, args SearchEntitiesParams) (string, err
 	}
 
 	switch mode {
+	case "search":
+		return searchEntitiesDefault(ctx, args)
 	case "list":
 		return searchEntitiesList(ctx, args)
 	case "count":
@@ -180,7 +182,7 @@ func searchEntities(ctx context.Context, args SearchEntitiesParams) (string, err
 	case "semantic":
 		return searchEntitiesSemantic(ctx, args)
 	default:
-		return searchEntitiesDefault(ctx, args)
+		return "", fmt.Errorf("unknown search mode: %q (valid: search, list, count, semantic)", mode)
 	}
 }
 
@@ -271,6 +273,9 @@ func searchEntitiesList(ctx context.Context, args SearchEntitiesParams) (string,
 	params := url.Values{}
 	if args.Env != "" {
 		params.Set("scope.env", args.Env)
+	}
+	if args.Site != "" {
+		params.Set("scope.site", args.Site)
 	}
 	if args.Namespace != "" {
 		params.Set("scope.namespace", args.Namespace)
@@ -368,6 +373,7 @@ func searchEntitiesSemantic(ctx context.Context, args SearchEntitiesParams) (str
 		Query:     args.SearchText,
 		Limit:     limit,
 		Env:       args.Env,
+		Site:      args.Site,
 		Namespace: args.Namespace,
 	}
 	return findEntitiesSemantic(ctx, semanticArgs)
