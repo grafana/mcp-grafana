@@ -53,7 +53,7 @@ groups:
               type: threshold
         noDataState: NoData
         execErrState: Error
-        for: 1m
+        for: 0s
         keepFiringFor: 0s
         annotations:
           description: This is a test alert rule that is always firing
