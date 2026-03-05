@@ -210,6 +210,14 @@ func resolveTraceAttrs(ctx context.Context, client *Client, entity *graphEntityR
 	return buildTraceAttrs(entity.Type, entity.Name, entity.Env, entity.Site, entity.Namespace)
 }
 
+// isBareMetricName checks if the query is a simple metric name without PromQL operators.
+// Bare metric names (like "up" or "http_requests_total") can have labels appended,
+// but complex expressions (like "rate(metric[5m])") cannot.
+func isBareMetricName(query string) bool {
+	promQLChars := "()[]{}+-*/%^<>=!~| \t\n\r"
+	return !strings.ContainsAny(query, promQLChars)
+}
+
 func getEntityMetrics(ctx context.Context, args GetEntityMetricsParams) (string, error) {
 	assertsClient, err := newAssertsClient(ctx)
 	if err != nil {
@@ -231,7 +239,7 @@ func getEntityMetrics(ctx context.Context, args GetEntityMetricsParams) (string,
 	var queries []string
 	if args.MetricName != "" {
 		query := args.MetricName
-		if !strings.Contains(query, "{") {
+		if isBareMetricName(query) {
 			query = query + labels
 		}
 		queries = []string{query}

@@ -172,3 +172,64 @@ func TestInjectLabels(t *testing.T) {
 		})
 	}
 }
+
+func TestIsBareMetricName(t *testing.T) {
+	tests := []struct {
+		name  string
+		query string
+		want  bool
+	}{
+		{
+			name:  "simple metric name",
+			query: "up",
+			want:  true,
+		},
+		{
+			name:  "metric name with underscores",
+			query: "http_requests_total",
+			want:  true,
+		},
+		{
+			name:  "metric name with colon",
+			query: "node:cpu:ratio",
+			want:  true,
+		},
+		{
+			name:  "rate function",
+			query: "rate(http_requests_total[5m])",
+			want:  false,
+		},
+		{
+			name:  "sum aggregation",
+			query: "sum(container_cpu_usage_seconds_total) by (pod)",
+			want:  false,
+		},
+		{
+			name:  "metric with label selector",
+			query: "http_requests_total{job=\"api\"}",
+			want:  false,
+		},
+		{
+			name:  "binary operation",
+			query: "metric_a / metric_b",
+			want:  false,
+		},
+		{
+			name:  "comparison",
+			query: "metric > 100",
+			want:  false,
+		},
+		{
+			name:  "histogram quantile",
+			query: "histogram_quantile(0.99, rate(metric_bucket[5m]))",
+			want:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isBareMetricName(tt.query)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
