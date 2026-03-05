@@ -216,7 +216,7 @@ type ManageRulesReadWriteParams struct {
 	RuleGroup         string               `json:"rule_group,omitempty" jsonschema:"description=The rule group name (required for 'create'\\, 'update')"`
 	FolderUID         string               `json:"folder_uid,omitempty" jsonschema:"description=The folder UID. For 'list': filter by exact folder UID (mutually exclusive with search_folder). For 'create'/'update': the folder to store the rule in (required)."`
 	Condition         string               `json:"condition,omitempty" jsonschema:"description=The query condition identifier\\, e.g. 'A'\\, 'B' (required for 'create'\\, 'update')"`
-	Data              []*models.AlertQuery `json:"data,omitempty" jsonschema:"description=Array of query data objects (required for 'create'\\, 'update')"`
+	Data              []*models.AlertQuery `json:"data,omitempty" jsonschema:"description=Array of alert query objects (required for 'create' and 'update'). Example: [{refId: 'A'\\, datasourceUid: 'prometheus'\\, relativeTimeRange: {from: 600\\, to: 0}\\, model: {expr: 'vector(1)'\\, refId: 'A'}}]. Use datasourceUid '__expr__' for server-side expressions. The 'condition' field must reference one of the refIds."`
 	NoDataState       string               `json:"no_data_state,omitempty" jsonschema:"description=State when no data: NoData\\, Alerting\\, OK (required for 'create'\\, 'update')"`
 	ExecErrState      string               `json:"exec_err_state,omitempty" jsonschema:"description=State on execution error: NoData\\, Alerting\\, OK (required for 'create'\\, 'update')"`
 	For               string               `json:"for,omitempty" jsonschema:"description=Duration before alert fires\\, e.g. '5m' (required for 'create'\\, 'update')"`
