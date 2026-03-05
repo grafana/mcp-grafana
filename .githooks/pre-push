@@ -1,0 +1,43 @@
+#!/bin/sh
+
+exit_with_error() {
+    msg="$1"
+
+    echo -e "\033[31m$msg\033[0m"
+    exit 1
+}
+
+# lint-jsonschema with auto fix 
+
+lint_json_schema(){
+	make lint-jsonschema
+	if [ $? -ne 0 ]; then
+		exit_with_error "json-schema lint checks failed"
+	fi
+	echo "-json-schema lint checks passed"
+}
+
+output=$(make lint-jsonschema-fix 2>&1)
+
+if [ $? -ne 0 ]; then
+	if echo "$output" | grep -q "error scanning files"; then
+		echo "json-schema auto fix failed: error scanning files"
+		lint_json_schema
+	else 
+	    echo "$output"
+		exit_with_error "json-schema lint checks failed"
+	fi
+	exit 1
+fi
+
+echo "- json-schema lint checks passed"
+
+# lint-go
+make lint-go
+
+if [ $? -ne 0 ]; then
+    exit_with_error "go lint checks failed"
+fi
+
+echo "-go lint checks passed"
+

@@ -17,8 +17,10 @@ build: ## Build the binary.
 	go build -o dist/mcp-grafana ./cmd/mcp-grafana
 
 .PHONY: lint lint-jsonschema lint-jsonschema-fix
-lint: lint-jsonschema ## Lint the Go code.
-	golangci-lint run
+lint: lint-jsonschema lint-go
+lint-go: 
+	go mod download -modfile=golangci-lint.mod
+	go tool -modfile=golangci-lint.mod golangci-lint run
 
 lint-jsonschema: ## Lint for unescaped commas in jsonschema tags.
 	go run ./cmd/linters/jsonschema --path .
@@ -71,3 +73,6 @@ run-streamable-http: ## Run the MCP server in StreamableHTTP mode.
 .PHONY: run-test-services
 run-test-services: ## Run the docker-compose services required for the unit and integration tests.
 	docker-compose up -d --build
+
+setup-dev: #setup dev environment , initializaes git hooks 
+	git config core.hooksPath .githooks
