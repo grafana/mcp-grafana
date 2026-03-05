@@ -15,7 +15,6 @@ dependencies = []
 dev = [
     "anyio>=4.9.0",
     "deepeval>=1.0.0",
-    "flaky>=3.8.1",
     "litellm>=1.63.12",
     "mcp>=1.9.3",
     "pytest>=8.3.5",
@@ -23,3 +22,4 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
+addopts = "-p no:flaky"

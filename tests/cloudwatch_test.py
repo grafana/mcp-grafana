@@ -8,7 +8,7 @@ pytestmark = pytest.mark.anyio
 
 
 @pytest.mark.parametrize("model", models)
-@pytest.mark.flaky(max_runs=3)
+@pytest.mark.flaky(reruns=2)
 async def test_cloudwatch_list_namespaces(
     model: str,
     mcp_client: ClientSession,
@@ -33,7 +33,7 @@ async def test_cloudwatch_list_namespaces(
 
 
 @pytest.mark.parametrize("model", models)
-@pytest.mark.flaky(max_runs=3)
+@pytest.mark.flaky(reruns=2)
 async def test_cloudwatch_list_metrics(
     model: str,
     mcp_client: ClientSession,
@@ -58,7 +58,7 @@ async def test_cloudwatch_list_metrics(
 
 
 @pytest.mark.parametrize("model", models)
-@pytest.mark.flaky(max_runs=3)
+@pytest.mark.flaky(reruns=2)
 async def test_cloudwatch_query_metrics(
     model: str,
     mcp_client: ClientSession,
