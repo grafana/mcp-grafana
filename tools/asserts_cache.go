@@ -7,6 +7,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	mcpgrafana "github.com/grafana/mcp-grafana"
 )
 
 type cacheEntry[T any] struct {
@@ -41,9 +43,21 @@ func (c *ttlCache[T]) get(key string) (T, bool) {
 func (c *ttlCache[T]) set(key string, value T) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	now := time.Now()
+
+	// Evict expired entries periodically (every 100 writes or when cache is large)
+	if len(c.entries) > 100 {
+		for k, e := range c.entries {
+			if now.After(e.expiresAt) {
+				delete(c.entries, k)
+			}
+		}
+	}
+
 	c.entries[key] = cacheEntry[T]{
 		value:     value,
-		expiresAt: time.Now().Add(c.ttl),
+		expiresAt: now.Add(c.ttl),
 	}
 }
 
@@ -54,15 +68,20 @@ var (
 	drilldownTraceCache = newTTLCache[[]drilldownConfigEntry](15 * time.Minute)
 )
 
-func entityCacheKey(baseURL, entityType, entityName, env, site, ns string) string {
-	return fmt.Sprintf("%s|%s|%s|%s|%s|%s", baseURL, entityType, entityName, env, site, ns)
+func tenantCacheKey(baseURL string, orgID int64) string {
+	return fmt.Sprintf("%s|%d", baseURL, orgID)
+}
+
+func entityCacheKey(baseURL string, orgID int64, entityType, entityName, env, site, ns string) string {
+	return fmt.Sprintf("%s|%d|%s|%s|%s|%s|%s", baseURL, orgID, entityType, entityName, env, site, ns)
 }
 
 // resolveEntityInfoCached wraps resolveEntityInfo with a short-TTL cache
 // to avoid redundant /v1/entity/info calls when multiple tools operate on
 // the same entity within a session.
 func (c *Client) resolveEntityInfoCached(ctx context.Context, entityType, entityName, env, site, namespace string) (*graphEntityResponse, error) {
-	key := entityCacheKey(c.baseURL, entityType, entityName, env, site, namespace)
+	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
+	key := entityCacheKey(c.baseURL, cfg.OrgID, entityType, entityName, env, site, namespace)
 
 	if cached, ok := entityInfoCache.get(key); ok {
 		return cached, nil
@@ -125,7 +144,10 @@ func fetchDrilldownConfigs(ctx context.Context, client *Client, mode string) []d
 		return nil
 	}
 
-	if cached, ok := cache.get(client.baseURL); ok {
+	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
+	cacheKey := tenantCacheKey(client.baseURL, cfg.OrgID)
+
+	if cached, ok := cache.get(cacheKey); ok {
 		return cached
 	}
 
@@ -139,7 +161,7 @@ func fetchDrilldownConfigs(ctx context.Context, client *Client, mode string) []d
 		return nil
 	}
 
-	cache.set(client.baseURL, configs)
+	cache.set(cacheKey, configs)
 	return configs
 }
 

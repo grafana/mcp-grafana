@@ -113,10 +113,12 @@ func (m *assertsSubscriptionManager) checkAssertions() {
 
 	for _, sub := range subs {
 		now := time.Now()
-		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), sub.grafanaCfg)
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		ctx = mcpgrafana.WithGrafanaConfig(ctx, sub.grafanaCfg)
 
 		client, err := newAssertsClient(ctx)
 		if err != nil {
+			cancel()
 			continue
 		}
 
@@ -144,6 +146,7 @@ func (m *assertsSubscriptionManager) checkAssertions() {
 		}
 
 		data, err := client.fetchAssertsData(ctx, "/v1/assertions/summary", "POST", reqBody)
+		cancel()
 		if err != nil {
 			continue
 		}
@@ -192,7 +195,7 @@ func subscribeEntityAssertions(ctx context.Context, args SubscribeEntityAssertio
 
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
 
-	subID := fmt.Sprintf("%s/%s/%s/%s/%s", args.EntityType, args.EntityName, args.Env, args.Site, args.Namespace)
+	subID := fmt.Sprintf("%s/%s/%s/%s/%s/%s", sessionID, args.EntityType, args.EntityName, args.Env, args.Site, args.Namespace)
 
 	sub := &assertionSubscription{
 		ID:         subID,

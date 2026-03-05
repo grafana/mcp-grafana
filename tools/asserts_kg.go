@@ -44,7 +44,10 @@ func getGraphSchema(ctx context.Context, _ GetGraphSchemaParams) (string, error)
 		return "", fmt.Errorf("failed to create Asserts client: %w", err)
 	}
 
-	if cached, ok := graphSchemaCache.get(client.baseURL); ok {
+	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
+	cacheKey := tenantCacheKey(client.baseURL, cfg.OrgID)
+
+	if cached, ok := graphSchemaCache.get(cacheKey); ok {
 		return cached, nil
 	}
 
@@ -80,7 +83,7 @@ func getGraphSchema(ctx context.Context, _ GetGraphSchemaParams) (string, error)
 	}
 
 	out := string(result)
-	graphSchemaCache.set(client.baseURL, out)
+	graphSchemaCache.set(cacheKey, out)
 	return out, nil
 }
 
@@ -150,12 +153,6 @@ type searchResponseDTO struct {
 }
 
 type searchEdgeDTO struct {
-	Source      int64  `json:"source"`
-	Destination int64  `json:"destination"`
-	Type        string `json:"type"`
-}
-
-type slimSearchEdge struct {
 	Source      int64  `json:"source"`
 	Destination int64  `json:"destination"`
 	Type        string `json:"type"`
@@ -233,7 +230,7 @@ func searchEntitiesDefault(ctx context.Context, args SearchEntitiesParams) (stri
 
 	var resp searchResponseDTO
 	if err := json.Unmarshal([]byte(data), &resp); err != nil {
-		return data, nil
+		return "", fmt.Errorf("failed to parse search response: %w", err)
 	}
 
 	slimEntities := make([]slimEntity, 0, len(resp.Data.Entities))
@@ -241,19 +238,10 @@ func searchEntitiesDefault(ctx context.Context, args SearchEntitiesParams) (stri
 		slimEntities = append(slimEntities, resp.Data.Entities[i].toSlim())
 	}
 
-	edges := make([]slimSearchEdge, 0, len(resp.Data.Edges))
-	for _, e := range resp.Data.Edges {
-		edges = append(edges, slimSearchEdge{
-			Source:      e.Source,
-			Destination: e.Destination,
-			Type:        e.Type,
-		})
-	}
-
 	result, err := json.Marshal(map[string]any{
 		"mode":     "search",
 		"entities": slimEntities,
-		"edges":    edges,
+		"edges":    resp.Data.Edges,
 		"pageNum":  resp.Data.PageNum,
 		"lastPage": resp.Data.LastPage,
 		"limitHit": resp.Data.SearchResultsMaxLimitHit,
@@ -309,7 +297,7 @@ func searchEntitiesList(ctx context.Context, args SearchEntitiesParams) (string,
 		} `json:"pagination"`
 	}
 	if err := json.Unmarshal([]byte(data), &page); err != nil {
-		return data, nil
+		return "", fmt.Errorf("failed to parse list response: %w", err)
 	}
 
 	slimItems := make([]slimEntity, 0, len(page.Items))
@@ -481,7 +469,7 @@ func getConnectedEntities(ctx context.Context, args GetConnectedEntitiesParams) 
 		Items []entitySummaryResponse `json:"items"`
 	}
 	if err := json.Unmarshal([]byte(data), &page); err != nil {
-		return data, nil
+		return "", fmt.Errorf("failed to parse connected entities response: %w", err)
 	}
 
 	slimItems := make([]slimEntity, 0, len(page.Items))

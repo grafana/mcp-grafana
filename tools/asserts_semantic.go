@@ -123,6 +123,9 @@ func findEntitiesSemantic(ctx context.Context, args FindEntitiesSemanticParams) 
 	if args.Env != "" {
 		filter["env"] = args.Env
 	}
+	if args.Site != "" {
+		filter["site"] = args.Site
+	}
 	if args.Namespace != "" {
 		filter["namespace"] = args.Namespace
 	}
@@ -221,7 +224,7 @@ func findEntitiesFallback(ctx context.Context, args FindEntitiesSemanticParams) 
 
 	var resp searchResponseDTO
 	if err := json.Unmarshal([]byte(data), &resp); err != nil {
-		return data, nil
+		return "", fmt.Errorf("failed to parse fallback search response: %w", err)
 	}
 
 	limit := args.Limit
