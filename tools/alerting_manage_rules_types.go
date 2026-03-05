@@ -8,7 +8,6 @@ import (
 
 type ListAlertRulesParams struct {
 	Limit          int        `json:"limit,omitempty" jsonschema:"default=200,description=The maximum number of results to return"`
-	Page           int        `json:"page,omitempty" jsonschema:"default=1,description=The page number to return"`
 	DatasourceUID  *string    `json:"datasourceUid,omitempty" jsonschema:"description=Optional: UID of a Prometheus or Loki datasource to query for datasource-managed alert rules. If omitted\\, returns Grafana-managed rules."`
 	LabelSelectors []Selector `json:"label_selectors,omitempty" jsonschema:"description=Optionally\\, a list of matchers to filter alert rules by labels"`
 }
