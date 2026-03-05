@@ -429,11 +429,11 @@ func TestManageRulesReadParams_Validate(t *testing.T) {
 		},
 		{
 			name:   "list operation with rule_limit",
-			params: ManageRulesReadParams{Operation: "list", RuleLimit: 50},
+			params: ManageRulesReadParams{listFilterParams: listFilterParams{RuleLimit: 50}, Operation: "list"},
 		},
 		{
 			name:    "list operation with negative rule_limit",
-			params:  ManageRulesReadParams{Operation: "list", RuleLimit: -1},
+			params:  ManageRulesReadParams{listFilterParams: listFilterParams{RuleLimit: -1}, Operation: "list"},
 			wantErr: "invalid rule_limit",
 		},
 		{
@@ -442,11 +442,11 @@ func TestManageRulesReadParams_Validate(t *testing.T) {
 		},
 		{
 			name:   "list operation with search_folder",
-			params: ManageRulesReadParams{Operation: "list", SearchFolder: "Production"},
+			params: ManageRulesReadParams{listFilterParams: listFilterParams{SearchFolder: "Production"}, Operation: "list"},
 		},
 		{
 			name:    "list operation with folder_uid and search_folder",
-			params:  ManageRulesReadParams{Operation: "list", FolderUID: "folder-1", SearchFolder: "Production"},
+			params:  ManageRulesReadParams{listFilterParams: listFilterParams{SearchFolder: "Production"}, Operation: "list", FolderUID: "folder-1"},
 			wantErr: "mutually exclusive",
 		},
 		{
@@ -481,6 +481,20 @@ func TestManageRulesReadParams_Validate(t *testing.T) {
 			name:    "versions operation without rule_uid",
 			params:  ManageRulesReadParams{Operation: "versions"},
 			wantErr: "rule_uid is required",
+		},
+		{
+			name:    "list with invalid matcher type",
+			params:  ManageRulesReadParams{listFilterParams: listFilterParams{Matchers: []LabelMatcher{{Name: "severity", Type: ">>", Value: "critical"}}}, Operation: "list"},
+			wantErr: "invalid matcher type",
+		},
+		{
+			name:   "list with valid matcher",
+			params: ManageRulesReadParams{listFilterParams: listFilterParams{Matchers: []LabelMatcher{{Name: "severity", Type: "=", Value: "critical"}}}, Operation: "list"},
+		},
+		{
+			name:    "list with invalid regex matcher value",
+			params:  ManageRulesReadParams{listFilterParams: listFilterParams{Matchers: []LabelMatcher{{Name: "severity", Type: "=~", Value: "[invalid"}}}, Operation: "list"},
+			wantErr: "invalid matcher",
 		},
 	}
 
@@ -536,21 +550,35 @@ func TestManageRulesReadWriteParams_Validate(t *testing.T) {
 		},
 		{
 			name:   "list operation with rule_limit",
-			params: ManageRulesReadWriteParams{Operation: "list", RuleLimit: 50},
+			params: ManageRulesReadWriteParams{listFilterParams: listFilterParams{RuleLimit: 50}, Operation: "list"},
 		},
 		{
 			name:    "list operation with negative rule_limit",
-			params:  ManageRulesReadWriteParams{Operation: "list", RuleLimit: -1},
+			params:  ManageRulesReadWriteParams{listFilterParams: listFilterParams{RuleLimit: -1}, Operation: "list"},
 			wantErr: "invalid rule_limit",
 		},
 		{
 			name:   "list operation with search_folder",
-			params: ManageRulesReadWriteParams{Operation: "list", SearchFolder: "Production"},
+			params: ManageRulesReadWriteParams{listFilterParams: listFilterParams{SearchFolder: "Production"}, Operation: "list"},
 		},
 		{
 			name:    "list operation with folder_uid and search_folder",
-			params:  ManageRulesReadWriteParams{Operation: "list", FolderUID: "folder-1", SearchFolder: "Production"},
+			params:  ManageRulesReadWriteParams{listFilterParams: listFilterParams{SearchFolder: "Production"}, Operation: "list", FolderUID: "folder-1"},
 			wantErr: "mutually exclusive",
+		},
+		{
+			name:    "list with invalid matcher type",
+			params:  ManageRulesReadWriteParams{listFilterParams: listFilterParams{Matchers: []LabelMatcher{{Name: "severity", Type: ">>", Value: "critical"}}}, Operation: "list"},
+			wantErr: "invalid matcher type",
+		},
+		{
+			name:   "list with valid matcher",
+			params: ManageRulesReadWriteParams{listFilterParams: listFilterParams{Matchers: []LabelMatcher{{Name: "severity", Type: "=", Value: "critical"}}}, Operation: "list"},
+		},
+		{
+			name:    "list with invalid regex matcher value",
+			params:  ManageRulesReadWriteParams{listFilterParams: listFilterParams{Matchers: []LabelMatcher{{Name: "severity", Type: "=~", Value: "[invalid"}}}, Operation: "list"},
+			wantErr: "invalid matcher",
 		},
 		{
 			name:   "get operation with rule_uid",
@@ -742,6 +770,101 @@ func TestManageRulesReadWriteParams_ToUpdateParams(t *testing.T) {
 		require.Equal(t, int64(2), result.OrgID)
 		require.NotNil(t, result.DisableProvenance)
 		require.False(t, *result.DisableProvenance)
+	})
+}
+
+func TestToGetRulesOpts(t *testing.T) {
+	tests := []struct {
+		name     string
+		params   ManageRulesReadParams
+		expected GetRulesOpts
+	}{
+		{
+			name:     "empty params produce empty opts",
+			params:   ManageRulesReadParams{Operation: "list"},
+			expected: GetRulesOpts{},
+		},
+		{
+			name: "all filter fields are mapped",
+			params: ManageRulesReadParams{
+				listFilterParams: listFilterParams{
+					RuleLimit:      50,
+					SearchRuleName: "high-cpu",
+					States:         []string{"firing", "pending"},
+					RuleType:       "alerting",
+					LimitAlerts:    10,
+					Matchers:       []LabelMatcher{{Name: "severity", Type: "=", Value: "critical"}},
+				},
+				Operation: "list",
+				FolderUID: "folder-abc",
+				RuleGroup: "infra-alerts",
+			},
+			expected: GetRulesOpts{
+				FolderUID:   "folder-abc",
+				RuleGroup:   "infra-alerts",
+				RuleName:    "high-cpu",
+				RuleType:    "alerting",
+				States:      []string{"firing", "pending"},
+				RuleLimit:   50,
+				LimitAlerts: 10,
+				Matchers:    []*labels.Matcher{labels.MustNewMatcher(labels.MatchEqual, "severity", "critical")},
+			},
+		},
+		{
+			name: "single filter only",
+			params: ManageRulesReadParams{
+				Operation: "list",
+				FolderUID: "my-folder",
+			},
+			expected: GetRulesOpts{
+				FolderUID: "my-folder",
+			},
+		},
+		{
+			name: "search_folder is mapped",
+			params: ManageRulesReadParams{
+				listFilterParams: listFilterParams{SearchFolder: "Production/Infra"},
+				Operation:        "list",
+			},
+			expected: GetRulesOpts{
+				SearchFolder: "Production/Infra",
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := tc.params.toGetRulesOpts()
+			require.Equal(t, tc.expected, *got)
+		})
+	}
+
+	t.Run("read-write params map shared fields", func(t *testing.T) {
+		params := ManageRulesReadWriteParams{
+			listFilterParams: listFilterParams{
+				RuleLimit:      25,
+				SearchRuleName: "latency",
+				States:         []string{"inactive"},
+				RuleType:       "alerting",
+				LimitAlerts:    3,
+				Matchers:       []LabelMatcher{{Name: "team", Type: "=", Value: "backend"}},
+			},
+			Operation: "list",
+			FolderUID: "prod-folder",
+			RuleGroup: "slo-group",
+		}
+		got := params.toGetRulesOpts()
+		expected := GetRulesOpts{
+			FolderUID:   "prod-folder",
+			RuleGroup:   "slo-group",
+			RuleName:    "latency",
+			RuleType:    "alerting",
+			States:      []string{"inactive"},
+			RuleLimit:   25,
+			LimitAlerts: 3,
+			Matchers:    []*labels.Matcher{labels.MustNewMatcher(labels.MatchEqual, "team", "backend")},
+		}
+		require.Equal(t, expected, *got)
 	})
 }
 
