@@ -10,7 +10,7 @@ pytestmark = pytest.mark.anyio
 
 
 @pytest.mark.parametrize("model", models)
-@pytest.mark.flaky(max_runs=3)
+@pytest.mark.flaky(reruns=2)
 async def test_get_panel_image(
     model: str,
     mcp_client: ClientSession,

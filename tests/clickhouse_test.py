@@ -8,7 +8,7 @@ pytestmark = pytest.mark.anyio
 
 
 @pytest.mark.parametrize("model", models)
-@pytest.mark.flaky(max_runs=3)
+@pytest.mark.flaky(reruns=2)
 async def test_clickhouse_list_tables(
     model: str,
     mcp_client: ClientSession,
@@ -36,7 +36,7 @@ async def test_clickhouse_list_tables(
 
 
 @pytest.mark.parametrize("model", models)
-@pytest.mark.flaky(max_runs=3)
+@pytest.mark.flaky(reruns=2)
 async def test_clickhouse_describe_table(
     model: str,
     mcp_client: ClientSession,
@@ -64,7 +64,7 @@ async def test_clickhouse_describe_table(
 
 
 @pytest.mark.parametrize("model", models)
-@pytest.mark.flaky(max_runs=3)
+@pytest.mark.flaky(reruns=2)
 async def test_clickhouse_query_logs(
     model: str,
     mcp_client: ClientSession,

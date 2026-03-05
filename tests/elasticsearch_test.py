@@ -9,7 +9,7 @@ pytestmark = pytest.mark.anyio
 
 
 @pytest.mark.parametrize("model", models)
-@pytest.mark.flaky(max_runs=3)
+@pytest.mark.flaky(reruns=2)
 async def test_elasticsearch_query_logs(
     model: str,
     mcp_client: ClientSession,
@@ -37,7 +37,7 @@ async def test_elasticsearch_query_logs(
 
 
 @pytest.mark.parametrize("model", models)
-@pytest.mark.flaky(max_runs=3)
+@pytest.mark.flaky(reruns=2)
 async def test_elasticsearch_query_errors(
     model: str,
     mcp_client: ClientSession,
