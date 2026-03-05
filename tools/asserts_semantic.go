@@ -165,8 +165,8 @@ func findEntitiesSemantic(ctx context.Context, args FindEntitiesSemanticParams) 
 	}
 
 	output, err := json.Marshal(map[string]any{
-		"query":  args.Query,
-		"mode":   "semantic",
+		"query":   args.Query,
+		"mode":    "semantic",
 		"results": results,
 	})
 	if err != nil {
@@ -236,14 +236,13 @@ func findEntitiesFallback(ctx context.Context, args FindEntitiesSemanticParams) 
 	}
 
 	output, err := json.Marshal(map[string]any{
-		"query":    args.Query,
-		"mode":     "deterministic_fallback",
-		"note":     "Semantic search unavailable. Results are from deterministic name matching.",
-		"results":  slimEntities,
+		"query":   args.Query,
+		"mode":    "deterministic_fallback",
+		"note":    "Semantic search unavailable. Results are from deterministic name matching.",
+		"results": slimEntities,
 	})
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal fallback results: %w", err)
 	}
 	return string(output), nil
 }
-

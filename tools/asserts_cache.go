@@ -54,15 +54,15 @@ var (
 	drilldownTraceCache = newTTLCache[[]drilldownConfigEntry](15 * time.Minute)
 )
 
-func entityCacheKey(baseURL, entityType, entityName, env, site, ns string) string {
-	return fmt.Sprintf("%s|%s|%s|%s|%s|%s", baseURL, entityType, entityName, env, site, ns)
+func entityCacheKey(baseURL string, orgID int64, entityType, entityName, env, site, ns string) string {
+	return fmt.Sprintf("%s|%d|%s|%s|%s|%s|%s", baseURL, orgID, entityType, entityName, env, site, ns)
 }
 
 // resolveEntityInfoCached wraps resolveEntityInfo with a short-TTL cache
 // to avoid redundant /v1/entity/info calls when multiple tools operate on
 // the same entity within a session.
 func (c *Client) resolveEntityInfoCached(ctx context.Context, entityType, entityName, env, site, namespace string) (*graphEntityResponse, error) {
-	key := entityCacheKey(c.baseURL, entityType, entityName, env, site, namespace)
+	key := entityCacheKey(c.baseURL, c.orgID, entityType, entityName, env, site, namespace)
 
 	if cached, ok := entityInfoCache.get(key); ok {
 		return cached, nil
@@ -80,14 +80,14 @@ func (c *Client) resolveEntityInfoCached(ctx context.Context, entityType, entity
 // drilldownConfigEntry is the parsed representation of a single drilldown
 // config from /v1/config/log-drilldown or /v1/config/trace-drilldown.
 type drilldownConfigEntry struct {
-	Name           string              `json:"name"`
-	Priority       int                 `json:"priority"`
-	MatchRules     []drilldownMatchRule `json:"entityPropertyMatchRules"`
-	PromMapping    map[string]string   `json:"entityPropertyToLabelMapping,omitempty"`
-	LogMapping     map[string]string   `json:"entityPropertyToLogLabelMapping,omitempty"`
-	TraceMapping   map[string]string   `json:"entityPropertyToTraceLabelMapping,omitempty"`
-	DefaultConfig  bool                `json:"defaultConfig"`
-	DataSourceUID  string              `json:"dataSourceUid,omitempty"`
+	Name          string               `json:"name"`
+	Priority      int                  `json:"priority"`
+	MatchRules    []drilldownMatchRule `json:"entityPropertyMatchRules"`
+	PromMapping   map[string]string    `json:"entityPropertyToLabelMapping,omitempty"`
+	LogMapping    map[string]string    `json:"entityPropertyToLogLabelMapping,omitempty"`
+	TraceMapping  map[string]string    `json:"entityPropertyToTraceLabelMapping,omitempty"`
+	DefaultConfig bool                 `json:"defaultConfig"`
+	DataSourceUID string               `json:"dataSourceUid,omitempty"`
 }
 
 type drilldownMatchRule struct {
@@ -125,7 +125,8 @@ func fetchDrilldownConfigs(ctx context.Context, client *Client, mode string) []d
 		return nil
 	}
 
-	if cached, ok := cache.get(client.baseURL); ok {
+	cacheKey := fmt.Sprintf("%s|%d", client.baseURL, client.orgID)
+	if cached, ok := cache.get(cacheKey); ok {
 		return cached
 	}
 
@@ -139,7 +140,7 @@ func fetchDrilldownConfigs(ctx context.Context, client *Client, mode string) []d
 		return nil
 	}
 
-	cache.set(client.baseURL, configs)
+	cache.set(cacheKey, configs)
 	return configs
 }
 

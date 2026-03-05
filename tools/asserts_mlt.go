@@ -418,6 +418,7 @@ func getEntityTraces(ctx context.Context, args GetEntityTracesParams) (string, e
 	tempoClient := &Client{
 		httpClient: &http.Client{Transport: mcpgrafana.NewUserAgentTransport(transport)},
 		baseURL:    tempoBaseURL,
+		orgID:      cfg.OrgID,
 	}
 
 	params := url.Values{}

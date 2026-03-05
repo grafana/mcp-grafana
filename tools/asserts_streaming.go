@@ -192,7 +192,7 @@ func subscribeEntityAssertions(ctx context.Context, args SubscribeEntityAssertio
 
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
 
-	subID := fmt.Sprintf("%s/%s/%s/%s/%s", args.EntityType, args.EntityName, args.Env, args.Site, args.Namespace)
+	subID := fmt.Sprintf("%s/%s/%s/%s/%s/%s", sessionID, args.EntityType, args.EntityName, args.Env, args.Site, args.Namespace)
 
 	sub := &assertionSubscription{
 		ID:         subID,

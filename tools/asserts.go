@@ -37,6 +37,7 @@ func newAssertsClient(ctx context.Context) (*Client, error) {
 	return &Client{
 		httpClient: client,
 		baseURL:    url,
+		orgID:      cfg.OrgID,
 	}, nil
 }
 
@@ -138,33 +139,33 @@ func (c *Client) fetchAssertsDataGet(ctx context.Context, urlPath string, params
 
 // slimEntity is a compact entity representation for LLM context efficiency.
 type slimEntity struct {
-	Type            string            `json:"type"`
-	Name            string            `json:"name"`
-	ID              json.Number       `json:"id,omitempty"`
-	Env             string            `json:"env,omitempty"`
-	Site            string            `json:"site,omitempty"`
-	Namespace       string            `json:"namespace,omitempty"`
-	Active          bool              `json:"active"`
-	AssertionCount  int               `json:"assertionCount,omitempty"`
-	ConnectedTypes  map[string]int    `json:"connectedTypes,omitempty"`
-	Properties      map[string]any    `json:"properties,omitempty"`
+	Type           string         `json:"type"`
+	Name           string         `json:"name"`
+	ID             json.Number    `json:"id,omitempty"`
+	Env            string         `json:"env,omitempty"`
+	Site           string         `json:"site,omitempty"`
+	Namespace      string         `json:"namespace,omitempty"`
+	Active         bool           `json:"active"`
+	AssertionCount int            `json:"assertionCount,omitempty"`
+	ConnectedTypes map[string]int `json:"connectedTypes,omitempty"`
+	Properties     map[string]any `json:"properties,omitempty"`
 }
 
 // graphEntityResponse matches the shape of GET /v1/entity/info.
 // Scope fields are unwrapped (flat) at the top level.
 type graphEntityResponse struct {
-	ID                   int64                  `json:"id"`
-	Type                 string                 `json:"type"`
-	Name                 string                 `json:"name"`
-	Active               bool                   `json:"active"`
-	Env                  string                 `json:"env,omitempty"`
-	Site                 string                 `json:"site,omitempty"`
-	Namespace            string                 `json:"namespace,omitempty"`
-	ConnectedEntityTypes map[string]int         `json:"connectedEntityTypes,omitempty"`
-	Properties           map[string]any         `json:"properties,omitempty"`
-	Assertion            json.RawMessage        `json:"assertion,omitempty"`
-	ConnectedAssertion   json.RawMessage        `json:"connectedAssertion,omitempty"`
-	AssertionCount       int                    `json:"assertionCount"`
+	ID                   int64           `json:"id"`
+	Type                 string          `json:"type"`
+	Name                 string          `json:"name"`
+	Active               bool            `json:"active"`
+	Env                  string          `json:"env,omitempty"`
+	Site                 string          `json:"site,omitempty"`
+	Namespace            string          `json:"namespace,omitempty"`
+	ConnectedEntityTypes map[string]int  `json:"connectedEntityTypes,omitempty"`
+	Properties           map[string]any  `json:"properties,omitempty"`
+	Assertion            json.RawMessage `json:"assertion,omitempty"`
+	ConnectedAssertion   json.RawMessage `json:"connectedAssertion,omitempty"`
+	AssertionCount       int             `json:"assertionCount"`
 }
 
 func (g *graphEntityResponse) toSlim() slimEntity {

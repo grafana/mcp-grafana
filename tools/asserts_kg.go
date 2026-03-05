@@ -44,7 +44,8 @@ func getGraphSchema(ctx context.Context, _ GetGraphSchemaParams) (string, error)
 		return "", fmt.Errorf("failed to create Asserts client: %w", err)
 	}
 
-	if cached, ok := graphSchemaCache.get(client.baseURL); ok {
+	cacheKey := fmt.Sprintf("%s|%d", client.baseURL, client.orgID)
+	if cached, ok := graphSchemaCache.get(cacheKey); ok {
 		return cached, nil
 	}
 
@@ -80,7 +81,7 @@ func getGraphSchema(ctx context.Context, _ GetGraphSchemaParams) (string, error)
 	}
 
 	out := string(result)
-	graphSchemaCache.set(client.baseURL, out)
+	graphSchemaCache.set(cacheKey, out)
 	return out, nil
 }
 
@@ -96,15 +97,15 @@ var GetGraphSchema = mcpgrafana.MustTool(
 // --- search_entities ---
 
 type SearchEntitiesParams struct {
-	Mode          string `json:"mode,omitempty" jsonschema:"description=Search mode: 'search' (default) for structured search via /v1/search\\, 'list' for paginated listing via public API\\, 'count' for entity type counts\\, 'semantic' for natural language search via vector similarity,enum=search,enum=list,enum=count,enum=semantic"`
-	EntityType    string `json:"entityType,omitempty" jsonschema:"description=Entity type (e.g. Service\\, Node\\, Pod). Required for search/list modes. Use get_graph_schema to see available types."`
-	SearchText    string `json:"searchText,omitempty" jsonschema:"description=Text to search for. In search mode: matches entity names (CONTAINS). In semantic mode: natural language query (e.g. 'the database handling payment orders')."`
-	Env           string `json:"env,omitempty" jsonschema:"description=Filter by environment. In list mode supports RHS filter syntax (e.g. eq:production)."`
-	Site          string `json:"site,omitempty" jsonschema:"description=Filter by site"`
-	Namespace     string `json:"namespace,omitempty" jsonschema:"description=Filter by namespace. In list mode supports RHS filter syntax."`
-	HasAssertions bool   `json:"hasAssertions,omitempty" jsonschema:"description=Only return entities with active assertions (search mode only)"`
-	Limit         int    `json:"limit,omitempty" jsonschema:"description=Max results to return (default 25 for list\\, 10 for semantic)"`
-	Offset        int    `json:"offset,omitempty" jsonschema:"description=Pagination offset (list mode only)"`
+	Mode          string    `json:"mode,omitempty" jsonschema:"description=Search mode: 'search' (default) for structured search via /v1/search\\, 'list' for paginated listing via public API\\, 'count' for entity type counts\\, 'semantic' for natural language search via vector similarity,enum=search,enum=list,enum=count,enum=semantic"`
+	EntityType    string    `json:"entityType,omitempty" jsonschema:"description=Entity type (e.g. Service\\, Node\\, Pod). Required for search/list modes. Use get_graph_schema to see available types."`
+	SearchText    string    `json:"searchText,omitempty" jsonschema:"description=Text to search for. In search mode: matches entity names (CONTAINS). In semantic mode: natural language query (e.g. 'the database handling payment orders')."`
+	Env           string    `json:"env,omitempty" jsonschema:"description=Filter by environment. In list mode supports RHS filter syntax (e.g. eq:production)."`
+	Site          string    `json:"site,omitempty" jsonschema:"description=Filter by site"`
+	Namespace     string    `json:"namespace,omitempty" jsonschema:"description=Filter by namespace. In list mode supports RHS filter syntax."`
+	HasAssertions bool      `json:"hasAssertions,omitempty" jsonschema:"description=Only return entities with active assertions (search mode only)"`
+	Limit         int       `json:"limit,omitempty" jsonschema:"description=Max results to return (default 25 for list\\, 10 for semantic)"`
+	Offset        int       `json:"offset,omitempty" jsonschema:"description=Pagination offset (list mode only)"`
 	StartTime     time.Time `json:"startTime,omitempty" jsonschema:"description=Start time in RFC3339 format (required for search and count modes)"`
 	EndTime       time.Time `json:"endTime,omitempty" jsonschema:"description=End time in RFC3339 format (required for search and count modes)"`
 }
@@ -126,9 +127,9 @@ type scopeCriteriaDTO struct {
 }
 
 type entityMatcherDTO struct {
-	EntityType      string               `json:"entityType"`
+	EntityType       string               `json:"entityType"`
 	PropertyMatchers []propertyMatcherDTO `json:"propertyMatchers,omitempty"`
-	HavingAssertion bool                 `json:"havingAssertion"`
+	HavingAssertion  bool                 `json:"havingAssertion"`
 }
 
 type propertyMatcherDTO struct {
@@ -141,21 +142,15 @@ type propertyMatcherDTO struct {
 type searchResponseDTO struct {
 	Type string `json:"type"`
 	Data struct {
-		PageNum                  int                    `json:"pageNum"`
-		LastPage                 bool                   `json:"lastPage"`
-		SearchResultsMaxLimitHit bool                   `json:"searchResultsMaxLimitHit"`
-		Entities                 []graphEntityResponse  `json:"entities"`
-		Edges                    []searchEdgeDTO        `json:"edges"`
+		PageNum                  int                   `json:"pageNum"`
+		LastPage                 bool                  `json:"lastPage"`
+		SearchResultsMaxLimitHit bool                  `json:"searchResultsMaxLimitHit"`
+		Entities                 []graphEntityResponse `json:"entities"`
+		Edges                    []searchEdgeDTO       `json:"edges"`
 	} `json:"data"`
 }
 
 type searchEdgeDTO struct {
-	Source      int64  `json:"source"`
-	Destination int64  `json:"destination"`
-	Type        string `json:"type"`
-}
-
-type slimSearchEdge struct {
 	Source      int64  `json:"source"`
 	Destination int64  `json:"destination"`
 	Type        string `json:"type"`
@@ -239,19 +234,10 @@ func searchEntitiesDefault(ctx context.Context, args SearchEntitiesParams) (stri
 		slimEntities = append(slimEntities, resp.Data.Entities[i].toSlim())
 	}
 
-	edges := make([]slimSearchEdge, 0, len(resp.Data.Edges))
-	for _, e := range resp.Data.Edges {
-		edges = append(edges, slimSearchEdge{
-			Source:      e.Source,
-			Destination: e.Destination,
-			Type:        e.Type,
-		})
-	}
-
 	result, err := json.Marshal(map[string]any{
 		"mode":     "search",
 		"entities": slimEntities,
-		"edges":    edges,
+		"edges":    resp.Data.Edges,
 		"pageNum":  resp.Data.PageNum,
 		"lastPage": resp.Data.LastPage,
 		"limitHit": resp.Data.SearchResultsMaxLimitHit,
@@ -501,7 +487,6 @@ var GetConnectedEntities = mcpgrafana.MustTool(
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
 )
-
 
 // --- get_assertion_summary ---
 

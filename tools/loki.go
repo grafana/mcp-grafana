@@ -28,6 +28,7 @@ const (
 type Client struct {
 	httpClient *http.Client
 	baseURL    string
+	orgID      int64
 }
 
 // LabelResponse represents the http json response to a label query
@@ -86,6 +87,7 @@ func newLokiClient(ctx context.Context, uid string) (*Client, error) {
 	return &Client{
 		httpClient: client,
 		baseURL:    url,
+		orgID:      cfg.OrgID,
 	}, nil
 }
 
