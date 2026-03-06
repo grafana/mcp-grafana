@@ -219,6 +219,46 @@ func (c *CapabilityCache) GetAPICapability(grafanaURL, apiGroup string) APICapab
 	return entry.perAPICapability[apiGroup]
 }
 
+// HasKubernetesAPIs returns whether the given Grafana URL supports kubernetes-style APIs.
+// The check is performed under the read lock to avoid races with concurrent writes.
+func (c *CapabilityCache) HasKubernetesAPIs(grafanaURL string) (hasAPIs bool, found bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	entry, ok := c.entries[grafanaURL]
+	if !ok || time.Since(entry.detectedAt) > c.ttl {
+		return false, false
+	}
+	return entry.hasKubernetesAPIs, true
+}
+
+// GetAPIGroupInfo returns a copy of the API group info for the given group.
+// The copy is performed under the read lock to avoid races with concurrent writes.
+func (c *CapabilityCache) GetAPIGroupInfo(grafanaURL, apiGroup string) (*APIGroupInfo, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	entry, ok := c.entries[grafanaURL]
+	if !ok || time.Since(entry.detectedAt) > c.ttl {
+		return nil, false
+	}
+	if !entry.hasKubernetesAPIs || entry.apiGroups == nil {
+		return nil, true
+	}
+	info, ok := entry.apiGroups[apiGroup]
+	if !ok || info == nil {
+		return nil, true
+	}
+	// Return a copy to avoid races on the caller side
+	infoCopy := &APIGroupInfo{
+		Available:        info.Available,
+		PreferredVersion: info.PreferredVersion,
+		AllVersions:      make([]string, len(info.AllVersions)),
+	}
+	copy(infoCopy.AllVersions, info.AllVersions)
+	return infoCopy, true
+}
+
 // Clear removes all entries from the cache.
 func (c *CapabilityCache) Clear() {
 	c.mu.Lock()
