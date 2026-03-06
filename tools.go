@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
+	"strconv"
 
 	"github.com/invopop/jsonschema"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -69,6 +70,87 @@ func MustTool[T any, R any](
 // ToolHandlerFunc is the type of a handler function for a tool.
 // T is the request parameter type (must be a struct with jsonschema tags), and R is the response type which can be a string, struct, or *mcp.CallToolResult.
 type ToolHandlerFunc[T any, R any] = func(ctx context.Context, request T) (R, error)
+
+// unmarshalWithIntConversion unmarshals JSON data into a target struct,
+// automatically converting string values to int for all int-typed fields.
+// This allows MCP tool parameters to accept both string and int values for int fields.
+func unmarshalWithIntConversion(data []byte, target interface{}) error {
+	// First, unmarshal into a map to inspect the data
+	var raw map[string]interface{}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	// Get the type information of the target
+	targetVal := reflect.ValueOf(target)
+	if targetVal.Kind() != reflect.Ptr {
+		return errors.New("target must be a pointer")
+	}
+	targetVal = targetVal.Elem()
+	if targetVal.Kind() != reflect.Struct {
+		return errors.New("target must be a pointer to a struct")
+	}
+	targetType := targetVal.Type()
+
+	// Convert string values to int for int-typed fields
+	for i := 0; i < targetType.NumField(); i++ {
+		field := targetType.Field(i)
+		jsonTag := field.Tag.Get("json")
+		if jsonTag == "" || jsonTag == "-" {
+			continue
+		}
+
+		// Extract the JSON field name (before any comma)
+		jsonName := jsonTag
+		if commaIdx := len(jsonTag); commaIdx > 0 {
+			for idx, char := range jsonTag {
+				if char == ',' {
+					commaIdx = idx
+					break
+				}
+			}
+			jsonName = jsonTag[:commaIdx]
+		}
+
+		// Check if this field exists in the raw data and needs conversion
+		if rawValue, exists := raw[jsonName]; exists && rawValue != nil {
+			fieldKind := field.Type.Kind()
+
+			// Handle int types (int, *int)
+			if fieldKind == reflect.Int {
+				if strVal, ok := rawValue.(string); ok {
+					// Convert string to int
+					intVal, err := strconv.Atoi(strVal)
+					if err != nil {
+						return fmt.Errorf("failed to convert string '%s' to int for field '%s': %w", strVal, jsonName, err)
+					}
+					raw[jsonName] = intVal
+				}
+			} else if fieldKind == reflect.Ptr && field.Type.Elem().Kind() == reflect.Int {
+				if strVal, ok := rawValue.(string); ok {
+					// Convert string to int for pointer type
+					intVal, err := strconv.Atoi(strVal)
+					if err != nil {
+						return fmt.Errorf("failed to convert string '%s' to int for field '%s': %w", strVal, jsonName, err)
+					}
+					raw[jsonName] = intVal
+				}
+			}
+		}
+	}
+
+	// Re-marshal the modified data and unmarshal into the target
+	modifiedData, err := json.Marshal(raw)
+	if err != nil {
+		return fmt.Errorf("failed to re-marshal modified data: %w", err)
+	}
+
+	if err := json.Unmarshal(modifiedData, target); err != nil {
+		return err
+	}
+
+	return nil
+}
 
 // ConvertTool converts a toolHandler function to an MCP Tool and ToolHandlerFunc.
 // The toolHandler must accept a context.Context and a struct with jsonschema tags for parameter documentation.
@@ -135,7 +217,7 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 		}
 
 		unmarshaledArgs := reflect.New(argType).Interface()
-		if err := json.Unmarshal(argBytes, unmarshaledArgs); err != nil {
+		if err := unmarshalWithIntConversion(argBytes, unmarshaledArgs); err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, "failed to unmarshal arguments")
 			return nil, fmt.Errorf("unmarshal args: %s", err)
@@ -318,22 +400,20 @@ func createJSONSchemaFromHandler(handler any) *jsonschema.Schema {
 	return inputSchema
 }
 
-var (
-	jsonSchemaReflector = jsonschema.Reflector{
-		BaseSchemaID:               "",
-		Anonymous:                  true,
-		AssignAnchor:               false,
-		AllowAdditionalProperties:  true,
-		RequiredFromJSONSchemaTags: true,
-		DoNotReference:             true,
-		ExpandedStruct:             true,
-		FieldNameTag:               "",
-		IgnoredTypes:               nil,
-		Lookup:                     nil,
-		Mapper:                     nil,
-		Namer:                      nil,
-		KeyNamer:                   nil,
-		AdditionalFields:           nil,
-		CommentMap:                 nil,
-	}
-)
+var jsonSchemaReflector = jsonschema.Reflector{
+	BaseSchemaID:               "",
+	Anonymous:                  true,
+	AssignAnchor:               false,
+	AllowAdditionalProperties:  true,
+	RequiredFromJSONSchemaTags: true,
+	DoNotReference:             true,
+	ExpandedStruct:             true,
+	FieldNameTag:               "",
+	IgnoredTypes:               nil,
+	Lookup:                     nil,
+	Mapper:                     nil,
+	Namer:                      nil,
+	KeyNamer:                   nil,
+	AdditionalFields:           nil,
+	CommentMap:                 nil,
+}
