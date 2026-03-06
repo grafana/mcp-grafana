@@ -1,6 +1,7 @@
 package mcpgrafana
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -75,10 +76,15 @@ type ToolHandlerFunc[T any, R any] = func(ctx context.Context, request T) (R, er
 // automatically converting string values to integer types for all integer-typed fields.
 // This allows MCP tool parameters to accept both string and integer values for integer fields.
 // Supports: int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64 and their pointer types.
+// Uses json.Number to preserve precision for large integers that would otherwise lose precision as float64.
 func unmarshalWithIntConversion(data []byte, target interface{}) error {
-	// First, unmarshal into a map to inspect the data
+	// Use json.NewDecoder with UseNumber() to preserve numeric precision
+	// Without this, all JSON numbers become float64, which only has 53 bits of mantissa precision.
+	// For int64/uint64 values larger than 2^53, precision would be silently lost.
 	var raw map[string]interface{}
-	if err := json.Unmarshal(data, &raw); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(&raw); err != nil {
 		return err
 	}
 
@@ -93,7 +99,7 @@ func unmarshalWithIntConversion(data []byte, target interface{}) error {
 	}
 	targetType := targetVal.Type()
 
-	// Convert string values to appropriate integer types for integer-typed fields
+	// Convert string values and json.Number to appropriate integer types for integer-typed fields
 	for i := 0; i < targetType.NumField(); i++ {
 		field := targetType.Field(i)
 		jsonTag := field.Tag.Get("json")
@@ -125,16 +131,29 @@ func unmarshalWithIntConversion(data []byte, target interface{}) error {
 				fieldKind = fieldType.Kind()
 			}
 
-			// Convert string to appropriate integer type
-			if strVal, ok := rawValue.(string); ok {
+			// Convert string or json.Number to appropriate integer type
+			var strVal string
+			var needsConversion bool
+
+			switch v := rawValue.(type) {
+			case string:
+				strVal = v
+				needsConversion = true
+			case json.Number:
+				// json.Number preserves the original numeric string without precision loss
+				strVal = v.String()
+				needsConversion = true
+			}
+
+			if needsConversion {
 				var convertedVal interface{}
 				var err error
 
 				switch fieldKind {
 				case reflect.Int:
-					var v int
-					v, err = strconv.Atoi(strVal)
-					convertedVal = v
+					var v int64
+					v, err = strconv.ParseInt(strVal, 10, 0)
+					convertedVal = int(v)
 				case reflect.Int8:
 					var v int64
 					v, err = strconv.ParseInt(strVal, 10, 8)
@@ -174,7 +193,7 @@ func unmarshalWithIntConversion(data []byte, target interface{}) error {
 				}
 
 				if err != nil {
-					return fmt.Errorf("failed to convert string '%s' to %s for field '%s': %w", strVal, fieldKind, jsonName, err)
+					return fmt.Errorf("failed to convert '%s' to %s for field '%s': %w", strVal, fieldKind, jsonName, err)
 				}
 
 				if convertedVal != nil {
