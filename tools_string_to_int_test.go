@@ -17,6 +17,21 @@ type testIntParams struct {
 	OptionalInt *int   `json:"optionalInt,omitempty" jsonschema:"description=Optional int pointer"`
 }
 
+// Test struct with all integer types
+type testAllIntTypesParams struct {
+	Int8Field   int8    `json:"int8Field" jsonschema:"description=Int8 field"`
+	Int16Field  int16   `json:"int16Field" jsonschema:"description=Int16 field"`
+	Int32Field  int32   `json:"int32Field" jsonschema:"description=Int32 field"`
+	Int64Field  int64   `json:"int64Field" jsonschema:"description=Int64 field"`
+	UintField   uint    `json:"uintField" jsonschema:"description=Uint field"`
+	Uint8Field  uint8   `json:"uint8Field" jsonschema:"description=Uint8 field"`
+	Uint16Field uint16  `json:"uint16Field" jsonschema:"description=Uint16 field"`
+	Uint32Field uint32  `json:"uint32Field" jsonschema:"description=Uint32 field"`
+	Uint64Field uint64  `json:"uint64Field" jsonschema:"description=Uint64 field"`
+	PtrInt64    *int64  `json:"ptrInt64,omitempty" jsonschema:"description=Pointer to int64"`
+	PtrUint32   *uint32 `json:"ptrUint32,omitempty" jsonschema:"description=Pointer to uint32"`
+}
+
 // Test handler
 func testIntHandler(ctx context.Context, params testIntParams) (string, error) {
 	return "success", nil
@@ -193,5 +208,174 @@ func TestConvertToolWithStringToIntConversion(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		assert.False(t, result.IsError)
+	})
+}
+
+func TestUnmarshalWithAllIntegerTypes(t *testing.T) {
+	t.Run("converts strings to all signed integer types", func(t *testing.T) {
+		data := []byte(`{
+			"int8Field": "127",
+			"int16Field": "32767",
+			"int32Field": "2147483647",
+			"int64Field": "9223372036854775807",
+			"uintField": "42",
+			"uint8Field": "255",
+			"uint16Field": "65535",
+			"uint32Field": "4294967295",
+			"uint64Field": "18446744073709551615"
+		}`)
+		var params testAllIntTypesParams
+
+		err := unmarshalWithIntConversion(data, &params)
+		require.NoError(t, err)
+
+		assert.Equal(t, int8(127), params.Int8Field)
+		assert.Equal(t, int16(32767), params.Int16Field)
+		assert.Equal(t, int32(2147483647), params.Int32Field)
+		assert.Equal(t, int64(9223372036854775807), params.Int64Field)
+		assert.Equal(t, uint(42), params.UintField)
+		assert.Equal(t, uint8(255), params.Uint8Field)
+		assert.Equal(t, uint16(65535), params.Uint16Field)
+		assert.Equal(t, uint32(4294967295), params.Uint32Field)
+		assert.Equal(t, uint64(18446744073709551615), params.Uint64Field)
+	})
+
+	t.Run("accepts native values for all integer types", func(t *testing.T) {
+		data := []byte(`{
+			"int8Field": 127,
+			"int16Field": 32767,
+			"int32Field": 2147483647,
+			"int64Field": 123456789012345,
+			"uintField": 42,
+			"uint8Field": 255,
+			"uint16Field": 65535,
+			"uint32Field": 4294967295,
+			"uint64Field": 123456789012345
+		}`)
+		var params testAllIntTypesParams
+
+		err := unmarshalWithIntConversion(data, &params)
+		require.NoError(t, err)
+
+		assert.Equal(t, int8(127), params.Int8Field)
+		assert.Equal(t, int16(32767), params.Int16Field)
+		assert.Equal(t, int32(2147483647), params.Int32Field)
+		assert.Equal(t, int64(123456789012345), params.Int64Field)
+		assert.Equal(t, uint(42), params.UintField)
+		assert.Equal(t, uint8(255), params.Uint8Field)
+		assert.Equal(t, uint16(65535), params.Uint16Field)
+		assert.Equal(t, uint32(4294967295), params.Uint32Field)
+		assert.Equal(t, uint64(123456789012345), params.Uint64Field)
+	})
+
+	t.Run("handles pointer integer types with strings", func(t *testing.T) {
+		data := []byte(`{
+			"int8Field": "1",
+			"int16Field": "1",
+			"int32Field": "1",
+			"int64Field": "9223372036854775807",
+			"uintField": "1",
+			"uint8Field": "1",
+			"uint16Field": "1",
+			"uint32Field": "4294967295",
+			"uint64Field": "1",
+			"ptrInt64": "123456789",
+			"ptrUint32": "987654321"
+		}`)
+		var params testAllIntTypesParams
+
+		err := unmarshalWithIntConversion(data, &params)
+		require.NoError(t, err)
+
+		require.NotNil(t, params.PtrInt64)
+		assert.Equal(t, int64(123456789), *params.PtrInt64)
+		require.NotNil(t, params.PtrUint32)
+		assert.Equal(t, uint32(987654321), *params.PtrUint32)
+	})
+
+	t.Run("handles negative values for signed types", func(t *testing.T) {
+		data := []byte(`{
+			"int8Field": "-128",
+			"int16Field": "-32768",
+			"int32Field": "-2147483648",
+			"int64Field": "-9223372036854775808",
+			"uintField": "0",
+			"uint8Field": "0",
+			"uint16Field": "0",
+			"uint32Field": "0",
+			"uint64Field": "0"
+		}`)
+		var params testAllIntTypesParams
+
+		err := unmarshalWithIntConversion(data, &params)
+		require.NoError(t, err)
+
+		assert.Equal(t, int8(-128), params.Int8Field)
+		assert.Equal(t, int16(-32768), params.Int16Field)
+		assert.Equal(t, int32(-2147483648), params.Int32Field)
+		assert.Equal(t, int64(-9223372036854775808), params.Int64Field)
+	})
+
+	t.Run("returns error for int8 overflow", func(t *testing.T) {
+		data := []byte(`{"int8Field": "128", "int16Field": "1", "int32Field": "1", "int64Field": "1", "uintField": "1", "uint8Field": "1", "uint16Field": "1", "uint32Field": "1", "uint64Field": "1"}`)
+		var params testAllIntTypesParams
+
+		err := unmarshalWithIntConversion(data, &params)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to convert")
+	})
+
+	t.Run("returns error for int16 overflow", func(t *testing.T) {
+		data := []byte(`{"int8Field": "1", "int16Field": "32768", "int32Field": "1", "int64Field": "1", "uintField": "1", "uint8Field": "1", "uint16Field": "1", "uint32Field": "1", "uint64Field": "1"}`)
+		var params testAllIntTypesParams
+
+		err := unmarshalWithIntConversion(data, &params)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to convert")
+	})
+
+	t.Run("returns error for int32 overflow", func(t *testing.T) {
+		data := []byte(`{"int8Field": "1", "int16Field": "1", "int32Field": "2147483648", "int64Field": "1", "uintField": "1", "uint8Field": "1", "uint16Field": "1", "uint32Field": "1", "uint64Field": "1"}`)
+		var params testAllIntTypesParams
+
+		err := unmarshalWithIntConversion(data, &params)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to convert")
+	})
+
+	t.Run("returns error for uint8 overflow", func(t *testing.T) {
+		data := []byte(`{"int8Field": "1", "int16Field": "1", "int32Field": "1", "int64Field": "1", "uintField": "1", "uint8Field": "256", "uint16Field": "1", "uint32Field": "1", "uint64Field": "1"}`)
+		var params testAllIntTypesParams
+
+		err := unmarshalWithIntConversion(data, &params)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to convert")
+	})
+
+	t.Run("returns error for negative uint values", func(t *testing.T) {
+		data := []byte(`{"int8Field": "1", "int16Field": "1", "int32Field": "1", "int64Field": "1", "uintField": "-1", "uint8Field": "1", "uint16Field": "1", "uint32Field": "1", "uint64Field": "1"}`)
+		var params testAllIntTypesParams
+
+		err := unmarshalWithIntConversion(data, &params)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to convert")
+	})
+
+	t.Run("handles real-world case with OrgID int64", func(t *testing.T) {
+		// Simulates the CreateAlertRuleParams/UpdateAlertRuleParams use case
+		type alertParams struct {
+			Title string `json:"title"`
+			OrgID int64  `json:"orgID"`
+		}
+
+		// Test with string value (which MCP clients might send)
+		data := []byte(`{"title": "Test Alert", "orgID": "1"}`)
+		var params alertParams
+
+		err := unmarshalWithIntConversion(data, &params)
+		require.NoError(t, err)
+
+		assert.Equal(t, "Test Alert", params.Title)
+		assert.Equal(t, int64(1), params.OrgID)
 	})
 }
