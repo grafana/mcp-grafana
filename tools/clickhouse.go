@@ -531,6 +531,16 @@ var DescribeClickHouseTable = mcpgrafana.MustTool(
 	mcp.WithReadOnlyHintAnnotation(true),
 )
 
+var clickHouseTools = []*mcpgrafana.Tool{
+	&QueryClickHouse,
+	&ListClickHouseTables,
+	&DescribeClickHouseTable,
+}
+
+func GetClickHouseTools() []*mcpgrafana.Tool {
+	return clickHouseTools
+}
+
 // AddClickHouseTools registers all ClickHouse tools with the MCP server
 func AddClickHouseTools(mcp *server.MCPServer) {
 	QueryClickHouse.Register(mcp)
