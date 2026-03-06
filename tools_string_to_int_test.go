@@ -445,4 +445,93 @@ func TestUnmarshalWithAllIntegerTypes(t *testing.T) {
 		// because float64 cannot represent 9007199254740993 exactly
 		assert.Equal(t, int64(9007199254740993), params.Value)
 	})
+
+	t.Run("handles embedded struct fields with string-to-int conversion", func(t *testing.T) {
+		// Test that embedded (anonymous) struct fields are processed correctly
+		type EmbeddedParams struct {
+			ID    int64 `json:"id"`
+			Count int   `json:"count"`
+		}
+
+		type ParentParams struct {
+			Name string `json:"name"`
+			EmbeddedParams
+			Limit int `json:"limit"`
+		}
+
+		// Test with string values in embedded struct fields
+		data := []byte(`{"name": "test", "id": "9223372036854775807", "count": "42", "limit": "100"}`)
+		var params ParentParams
+
+		err := unmarshalWithIntConversion(data, &params)
+		require.NoError(t, err)
+
+		assert.Equal(t, "test", params.Name)
+		assert.Equal(t, int64(9223372036854775807), params.ID)
+		assert.Equal(t, 42, params.Count)
+		assert.Equal(t, 100, params.Limit)
+	})
+
+	t.Run("handles embedded struct fields with native int values", func(t *testing.T) {
+		type EmbeddedParams struct {
+			ID    int64 `json:"id"`
+			Count int   `json:"count"`
+		}
+
+		type ParentParams struct {
+			Name string `json:"name"`
+			EmbeddedParams
+		}
+
+		// Test with native JSON numbers in embedded struct fields
+		data := []byte(`{"name": "test", "id": 9223372036854775807, "count": 42}`)
+		var params ParentParams
+
+		err := unmarshalWithIntConversion(data, &params)
+		require.NoError(t, err)
+
+		assert.Equal(t, "test", params.Name)
+		assert.Equal(t, int64(9223372036854775807), params.ID)
+		assert.Equal(t, 42, params.Count)
+	})
+
+	t.Run("does not convert string fields to integers", func(t *testing.T) {
+		// Verify that string fields containing numeric strings are not converted
+		type ParamsWithStrings struct {
+			Name    string `json:"name"`
+			ZipCode string `json:"zipCode"`
+			Count   int    `json:"count"`
+		}
+
+		data := []byte(`{"name": "test", "zipCode": "90210", "count": "42"}`)
+		var params ParamsWithStrings
+
+		err := unmarshalWithIntConversion(data, &params)
+		require.NoError(t, err)
+
+		assert.Equal(t, "test", params.Name)
+		assert.Equal(t, "90210", params.ZipCode) // Should remain a string
+		assert.Equal(t, 42, params.Count)        // Should be converted to int
+	})
+
+	t.Run("does not convert float fields", func(t *testing.T) {
+		// Verify that float fields are not affected by integer conversion logic
+		type ParamsWithFloats struct {
+			Name   string  `json:"name"`
+			Price  float64 `json:"price"`
+			Rating float32 `json:"rating"`
+			Count  int     `json:"count"`
+		}
+
+		data := []byte(`{"name": "test", "price": 19.99, "rating": 4.5, "count": "42"}`)
+		var params ParamsWithFloats
+
+		err := unmarshalWithIntConversion(data, &params)
+		require.NoError(t, err)
+
+		assert.Equal(t, "test", params.Name)
+		assert.InDelta(t, 19.99, params.Price, 0.001)
+		assert.InDelta(t, 4.5, params.Rating, 0.001)
+		assert.Equal(t, 42, params.Count)
+	})
 }

@@ -97,11 +97,49 @@ func unmarshalWithIntConversion(data []byte, target interface{}) error {
 	if targetVal.Kind() != reflect.Struct {
 		return errors.New("target must be a pointer to a struct")
 	}
-	targetType := targetVal.Type()
 
-	// Convert string values and json.Number to appropriate integer types for integer-typed fields
-	for i := 0; i < targetType.NumField(); i++ {
-		field := targetType.Field(i)
+	// Process all fields including embedded structs
+	if err := processFieldsForIntConversion(raw, targetVal.Type()); err != nil {
+		return err
+	}
+
+	// Re-marshal the modified data and unmarshal into the target
+	modifiedData, err := json.Marshal(raw)
+	if err != nil {
+		return fmt.Errorf("failed to re-marshal modified data: %w", err)
+	}
+
+	if err := json.Unmarshal(modifiedData, target); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// isIntegerKind returns true if the given Kind represents an integer type
+func isIntegerKind(kind reflect.Kind) bool {
+	switch kind {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return true
+	}
+	return false
+}
+
+// processFieldsForIntConversion processes struct fields recursively, converting string/json.Number
+// values to integer types for integer-typed fields. It handles embedded structs.
+func processFieldsForIntConversion(raw map[string]interface{}, structType reflect.Type) error {
+	for i := 0; i < structType.NumField(); i++ {
+		field := structType.Field(i)
+
+		// Handle embedded (anonymous) structs recursively
+		if field.Anonymous && field.Type.Kind() == reflect.Struct {
+			if err := processFieldsForIntConversion(raw, field.Type); err != nil {
+				return err
+			}
+			continue
+		}
+
 		jsonTag := field.Tag.Get("json")
 		if jsonTag == "" || jsonTag == "-" {
 			continue
@@ -119,101 +157,104 @@ func unmarshalWithIntConversion(data []byte, target interface{}) error {
 			jsonName = jsonTag[:commaIdx]
 		}
 
-		// Check if this field exists in the raw data and needs conversion
-		if rawValue, exists := raw[jsonName]; exists && rawValue != nil {
-			fieldType := field.Type
-			fieldKind := fieldType.Kind()
-
-			// Handle pointer types by unwrapping to the element type
-			isPtr := fieldKind == reflect.Ptr
-			if isPtr {
-				fieldType = fieldType.Elem()
-				fieldKind = fieldType.Kind()
-			}
-
-			// Convert string or json.Number to appropriate integer type
-			var strVal string
-			var needsConversion bool
-
-			switch v := rawValue.(type) {
-			case string:
-				strVal = v
-				needsConversion = true
-			case json.Number:
-				// json.Number preserves the original numeric string without precision loss
-				strVal = v.String()
-				needsConversion = true
-			}
-
-			if needsConversion {
-				var convertedVal interface{}
-				var err error
-
-				switch fieldKind {
-				case reflect.Int:
-					var v int64
-					v, err = strconv.ParseInt(strVal, 10, 0)
-					convertedVal = int(v)
-				case reflect.Int8:
-					var v int64
-					v, err = strconv.ParseInt(strVal, 10, 8)
-					convertedVal = int8(v)
-				case reflect.Int16:
-					var v int64
-					v, err = strconv.ParseInt(strVal, 10, 16)
-					convertedVal = int16(v)
-				case reflect.Int32:
-					var v int64
-					v, err = strconv.ParseInt(strVal, 10, 32)
-					convertedVal = int32(v)
-				case reflect.Int64:
-					var v int64
-					v, err = strconv.ParseInt(strVal, 10, 64)
-					convertedVal = v
-				case reflect.Uint:
-					var v uint64
-					v, err = strconv.ParseUint(strVal, 10, 0)
-					convertedVal = uint(v)
-				case reflect.Uint8:
-					var v uint64
-					v, err = strconv.ParseUint(strVal, 10, 8)
-					convertedVal = uint8(v)
-				case reflect.Uint16:
-					var v uint64
-					v, err = strconv.ParseUint(strVal, 10, 16)
-					convertedVal = uint16(v)
-				case reflect.Uint32:
-					var v uint64
-					v, err = strconv.ParseUint(strVal, 10, 32)
-					convertedVal = uint32(v)
-				case reflect.Uint64:
-					var v uint64
-					v, err = strconv.ParseUint(strVal, 10, 64)
-					convertedVal = v
-				}
-
-				if err != nil {
-					return fmt.Errorf("failed to convert '%s' to %s for field '%s': %w", strVal, fieldKind, jsonName, err)
-				}
-
-				if convertedVal != nil {
-					raw[jsonName] = convertedVal
-				}
-			}
+		// Check if this field exists in the raw data
+		rawValue, exists := raw[jsonName]
+		if !exists || rawValue == nil {
+			continue
 		}
-	}
 
-	// Re-marshal the modified data and unmarshal into the target
-	modifiedData, err := json.Marshal(raw)
-	if err != nil {
-		return fmt.Errorf("failed to re-marshal modified data: %w", err)
-	}
+		fieldType := field.Type
+		fieldKind := fieldType.Kind()
 
-	if err := json.Unmarshal(modifiedData, target); err != nil {
-		return err
+		// Handle pointer types by unwrapping to the element type
+		if fieldKind == reflect.Ptr {
+			fieldType = fieldType.Elem()
+			fieldKind = fieldType.Kind()
+		}
+
+		// Only process if the target field is an integer type
+		if !isIntegerKind(fieldKind) {
+			continue
+		}
+
+		// Extract string value from either string or json.Number
+		var strVal string
+		switch v := rawValue.(type) {
+		case string:
+			strVal = v
+		case json.Number:
+			// json.Number preserves the original numeric string without precision loss
+			strVal = v.String()
+		default:
+			// Not a string or json.Number, skip conversion
+			continue
+		}
+
+		// Convert to appropriate integer type
+		convertedVal, err := convertToIntegerType(strVal, fieldKind, jsonName)
+		if err != nil {
+			return err
+		}
+
+		raw[jsonName] = convertedVal
 	}
 
 	return nil
+}
+
+// convertToIntegerType converts a string value to the specified integer type
+func convertToIntegerType(strVal string, fieldKind reflect.Kind, jsonName string) (interface{}, error) {
+	var err error
+	var convertedVal interface{}
+
+	switch fieldKind {
+	case reflect.Int:
+		var v int64
+		v, err = strconv.ParseInt(strVal, 10, 0)
+		convertedVal = int(v)
+	case reflect.Int8:
+		var v int64
+		v, err = strconv.ParseInt(strVal, 10, 8)
+		convertedVal = int8(v)
+	case reflect.Int16:
+		var v int64
+		v, err = strconv.ParseInt(strVal, 10, 16)
+		convertedVal = int16(v)
+	case reflect.Int32:
+		var v int64
+		v, err = strconv.ParseInt(strVal, 10, 32)
+		convertedVal = int32(v)
+	case reflect.Int64:
+		var v int64
+		v, err = strconv.ParseInt(strVal, 10, 64)
+		convertedVal = v
+	case reflect.Uint:
+		var v uint64
+		v, err = strconv.ParseUint(strVal, 10, 0)
+		convertedVal = uint(v)
+	case reflect.Uint8:
+		var v uint64
+		v, err = strconv.ParseUint(strVal, 10, 8)
+		convertedVal = uint8(v)
+	case reflect.Uint16:
+		var v uint64
+		v, err = strconv.ParseUint(strVal, 10, 16)
+		convertedVal = uint16(v)
+	case reflect.Uint32:
+		var v uint64
+		v, err = strconv.ParseUint(strVal, 10, 32)
+		convertedVal = uint32(v)
+	case reflect.Uint64:
+		var v uint64
+		v, err = strconv.ParseUint(strVal, 10, 64)
+		convertedVal = v
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert '%s' to %s for field '%s': %w", strVal, fieldKind, jsonName, err)
+	}
+
+	return convertedVal, nil
 }
 
 // ConvertTool converts a toolHandler function to an MCP Tool and ToolHandlerFunc.
