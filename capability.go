@@ -219,6 +219,61 @@ func (c *CapabilityCache) GetAPICapability(grafanaURL, apiGroup string) APICapab
 	return entry.perAPICapability[apiGroup]
 }
 
+// GetHasKubernetesAPIs returns whether a Grafana instance supports kubernetes-style APIs.
+// Returns (hasKubernetesAPIs, found) where found indicates if a valid cache entry exists.
+func (c *CapabilityCache) GetHasKubernetesAPIs(grafanaURL string) (bool, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	entry, ok := c.entries[grafanaURL]
+	if !ok {
+		return false, false
+	}
+
+	// Respect TTL — expired entries should not influence routing decisions
+	if time.Since(entry.detectedAt) > c.ttl {
+		return false, false
+	}
+
+	return entry.hasKubernetesAPIs, true
+}
+
+// GetAPIGroupInfo returns information about a specific API group.
+// Returns nil if not found, expired, or kubernetes APIs are not supported.
+// The returned APIGroupInfo is a copy, safe for concurrent use.
+func (c *CapabilityCache) GetAPIGroupInfo(grafanaURL, apiGroup string) *APIGroupInfo {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	entry, ok := c.entries[grafanaURL]
+	if !ok {
+		return nil
+	}
+
+	// Respect TTL — expired entries should not influence routing decisions
+	if time.Since(entry.detectedAt) > c.ttl {
+		return nil
+	}
+
+	if !entry.hasKubernetesAPIs || entry.apiGroups == nil {
+		return nil
+	}
+
+	info, ok := entry.apiGroups[apiGroup]
+	if !ok || info == nil {
+		return nil
+	}
+
+	// Return a copy to avoid concurrent access issues
+	infoCopy := &APIGroupInfo{
+		Available:        info.Available,
+		PreferredVersion: info.PreferredVersion,
+		AllVersions:      make([]string, len(info.AllVersions)),
+	}
+	copy(infoCopy.AllVersions, info.AllVersions)
+	return infoCopy
+}
+
 // Clear removes all entries from the cache.
 func (c *CapabilityCache) Clear() {
 	c.mu.Lock()
