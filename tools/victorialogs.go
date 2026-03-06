@@ -164,22 +164,6 @@ func parseNDJSON(data []byte) ([]json.RawMessage, error) {
 	return results, nil
 }
 
-// victoriaLogsDefaultTimeRange returns default start and end times if not provided.
-func victoriaLogsDefaultTimeRange(startRFC3339, endRFC3339 string) (string, string) {
-	if startRFC3339 == "" {
-		startRFC3339 = time.Now().Add(-1 * time.Hour).Format(time.RFC3339)
-	}
-	if endRFC3339 == "" {
-		endRFC3339 = time.Now().Format(time.RFC3339)
-	}
-	return startRFC3339, endRFC3339
-}
-
-// VictoriaLogsLogEntry represents a single log entry returned by VictoriaLogs.
-type VictoriaLogsLogEntry struct {
-	Fields map[string]string `json:"fields"`
-}
-
 // QueryVictoriaLogsParams defines the parameters for querying VictoriaLogs.
 type QueryVictoriaLogsParams struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the VictoriaLogs datasource to query"`
@@ -202,7 +186,7 @@ func queryVictoriaLogs(ctx context.Context, args QueryVictoriaLogsParams) (*Quer
 		return nil, fmt.Errorf("creating VictoriaLogs client: %w", err)
 	}
 
-	startTime, endTime := victoriaLogsDefaultTimeRange(args.StartRFC3339, args.EndRFC3339)
+	startTime, endTime := getDefaultTimeRange(args.StartRFC3339, args.EndRFC3339)
 
 	// Apply limit constraints
 	limit := args.Limit
@@ -214,8 +198,7 @@ func queryVictoriaLogs(ctx context.Context, args QueryVictoriaLogsParams) (*Quer
 	}
 
 	// Build the query with limit pipe
-	query := args.Query
-	query = fmt.Sprintf("%s | limit %d", query, limit)
+	query := fmt.Sprintf("%s | limit %d", args.Query, limit)
 
 	params := url.Values{}
 	params.Set("query", query)
@@ -227,7 +210,7 @@ func queryVictoriaLogs(ctx context.Context, args QueryVictoriaLogsParams) (*Quer
 		return nil, err
 	}
 
-	// Parse NDJSON response
+	// Parse NDJSON response — /select/logsql/query returns one JSON object per line
 	var entries []map[string]string
 	if len(bodyBytes) > 0 {
 		lines, err := parseNDJSON(bodyBytes)
@@ -290,9 +273,17 @@ var QueryVictoriaLogs = mcpgrafana.MustTool(
 	mcp.WithReadOnlyHintAnnotation(true),
 )
 
-// VictoriaLogsFieldName represents a field name entry from VictoriaLogs.
-type VictoriaLogsFieldName struct {
-	Field string `json:"field"`
+// victoriaLogsValuesResponse represents the JSON response from VictoriaLogs
+// endpoints that return a {"values": [...]} wrapper (field_names, field_values, streams).
+type victoriaLogsValuesResponse struct {
+	Values []json.RawMessage `json:"values"`
+}
+
+// VictoriaLogsFieldValue represents a field value entry with hit count.
+// Used by field_names, field_values, and streams endpoints.
+type VictoriaLogsFieldValue struct {
+	Value string `json:"value"`
+	Hits  int64  `json:"hits"`
 }
 
 // ListVictoriaLogsFieldNamesParams defines the parameters for listing field names.
@@ -310,7 +301,7 @@ func listVictoriaLogsFieldNames(ctx context.Context, args ListVictoriaLogsFieldN
 		return nil, fmt.Errorf("creating VictoriaLogs client: %w", err)
 	}
 
-	startTime, endTime := victoriaLogsDefaultTimeRange(args.StartRFC3339, args.EndRFC3339)
+	startTime, endTime := getDefaultTimeRange(args.StartRFC3339, args.EndRFC3339)
 
 	params := url.Values{}
 	if args.Query != "" {
@@ -324,26 +315,23 @@ func listVictoriaLogsFieldNames(ctx context.Context, args ListVictoriaLogsFieldN
 		return nil, err
 	}
 
-	var fieldNames []string
+	// Response is JSON: {"values": [{"value": "field_name", "hits": N}, ...]}
+	var resp victoriaLogsValuesResponse
 	if len(bodyBytes) > 0 {
-		lines, err := parseNDJSON(bodyBytes)
-		if err != nil {
-			return nil, fmt.Errorf("parsing NDJSON response: %w", err)
-		}
-
-		for _, line := range lines {
-			var entry VictoriaLogsFieldName
-			if err := json.Unmarshal(line, &entry); err != nil {
-				continue
-			}
-			if entry.Field != "" {
-				fieldNames = append(fieldNames, entry.Field)
-			}
+		if err := json.Unmarshal(bodyBytes, &resp); err != nil {
+			return nil, fmt.Errorf("unmarshalling field_names response: %w", err)
 		}
 	}
 
-	if fieldNames == nil {
-		fieldNames = []string{}
+	fieldNames := make([]string, 0, len(resp.Values))
+	for _, raw := range resp.Values {
+		var entry VictoriaLogsFieldValue
+		if err := json.Unmarshal(raw, &entry); err != nil {
+			continue
+		}
+		if entry.Value != "" {
+			fieldNames = append(fieldNames, entry.Value)
+		}
 	}
 
 	return fieldNames, nil
@@ -358,12 +346,6 @@ var ListVictoriaLogsFieldNames = mcpgrafana.MustTool(
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
 )
-
-// VictoriaLogsFieldValue represents a field value entry with hit count.
-type VictoriaLogsFieldValue struct {
-	Value string `json:"value"`
-	Hits  int64  `json:"hits"`
-}
 
 // ListVictoriaLogsFieldValuesParams defines the parameters for listing field values.
 type ListVictoriaLogsFieldValuesParams struct {
@@ -382,7 +364,7 @@ func listVictoriaLogsFieldValues(ctx context.Context, args ListVictoriaLogsField
 		return nil, fmt.Errorf("creating VictoriaLogs client: %w", err)
 	}
 
-	startTime, endTime := victoriaLogsDefaultTimeRange(args.StartRFC3339, args.EndRFC3339)
+	startTime, endTime := getDefaultTimeRange(args.StartRFC3339, args.EndRFC3339)
 
 	params := url.Values{}
 	params.Set("field", args.FieldName)
@@ -400,24 +382,21 @@ func listVictoriaLogsFieldValues(ctx context.Context, args ListVictoriaLogsField
 		return nil, err
 	}
 
-	var fieldValues []VictoriaLogsFieldValue
+	// Response is JSON: {"values": [{"value": "val", "hits": N}, ...]}
+	var resp victoriaLogsValuesResponse
 	if len(bodyBytes) > 0 {
-		lines, err := parseNDJSON(bodyBytes)
-		if err != nil {
-			return nil, fmt.Errorf("parsing NDJSON response: %w", err)
-		}
-
-		for _, line := range lines {
-			var entry VictoriaLogsFieldValue
-			if err := json.Unmarshal(line, &entry); err != nil {
-				continue
-			}
-			fieldValues = append(fieldValues, entry)
+		if err := json.Unmarshal(bodyBytes, &resp); err != nil {
+			return nil, fmt.Errorf("unmarshalling field_values response: %w", err)
 		}
 	}
 
-	if fieldValues == nil {
-		fieldValues = []VictoriaLogsFieldValue{}
+	fieldValues := make([]VictoriaLogsFieldValue, 0, len(resp.Values))
+	for _, raw := range resp.Values {
+		var entry VictoriaLogsFieldValue
+		if err := json.Unmarshal(raw, &entry); err != nil {
+			continue
+		}
+		fieldValues = append(fieldValues, entry)
 	}
 
 	return fieldValues, nil
@@ -433,10 +412,25 @@ var ListVictoriaLogsFieldValues = mcpgrafana.MustTool(
 	mcp.WithReadOnlyHintAnnotation(true),
 )
 
-// VictoriaLogsHit represents a hit count for a time bucket.
+// victoriaLogsHitsResponse represents the JSON response from /select/logsql/hits.
+// Response format: {"hits": [{"fields": {...}, "timestamps": [...], "values": [...], "total": N}]}
+type victoriaLogsHitsResponse struct {
+	Hits []victoriaLogsHitEntry `json:"hits"`
+}
+
+type victoriaLogsHitEntry struct {
+	Fields     map[string]string `json:"fields"`
+	Timestamps []string          `json:"timestamps"`
+	Values     []int64           `json:"values"`
+	Total      int64             `json:"total"`
+}
+
+// VictoriaLogsHit represents a hit count series for the MCP tool response.
 type VictoriaLogsHit struct {
-	Fields map[string]string `json:"fields"`
-	Hits   int64             `json:"hits"`
+	Fields     map[string]string `json:"fields"`
+	Timestamps []string          `json:"timestamps"`
+	Values     []int64           `json:"values"`
+	Total      int64             `json:"total"`
 }
 
 // QueryVictoriaLogsHitsParams defines the parameters for querying log volume hits.
@@ -460,7 +454,7 @@ func queryVictoriaLogsHits(ctx context.Context, args QueryVictoriaLogsHitsParams
 		return nil, fmt.Errorf("creating VictoriaLogs client: %w", err)
 	}
 
-	startTime, endTime := victoriaLogsDefaultTimeRange(args.StartRFC3339, args.EndRFC3339)
+	startTime, endTime := getDefaultTimeRange(args.StartRFC3339, args.EndRFC3339)
 
 	params := url.Values{}
 	params.Set("query", args.Query)
@@ -475,24 +469,22 @@ func queryVictoriaLogsHits(ctx context.Context, args QueryVictoriaLogsHitsParams
 		return nil, err
 	}
 
-	var hits []VictoriaLogsHit
+	// Response is JSON: {"hits": [{"fields": {...}, "timestamps": [...], "values": [...], "total": N}]}
+	var resp victoriaLogsHitsResponse
 	if len(bodyBytes) > 0 {
-		lines, err := parseNDJSON(bodyBytes)
-		if err != nil {
-			return nil, fmt.Errorf("parsing NDJSON response: %w", err)
-		}
-
-		for _, line := range lines {
-			var entry VictoriaLogsHit
-			if err := json.Unmarshal(line, &entry); err != nil {
-				continue
-			}
-			hits = append(hits, entry)
+		if err := json.Unmarshal(bodyBytes, &resp); err != nil {
+			return nil, fmt.Errorf("unmarshalling hits response: %w", err)
 		}
 	}
 
-	if hits == nil {
-		hits = []VictoriaLogsHit{}
+	hits := make([]VictoriaLogsHit, 0, len(resp.Hits))
+	for _, entry := range resp.Hits {
+		hits = append(hits, VictoriaLogsHit{
+			Fields:     entry.Fields,
+			Timestamps: entry.Timestamps,
+			Values:     entry.Values,
+			Total:      entry.Total,
+		})
 	}
 
 	return &QueryVictoriaLogsHitsResult{Data: hits}, nil
@@ -501,18 +493,12 @@ func queryVictoriaLogsHits(ctx context.Context, args QueryVictoriaLogsHitsParams
 // QueryVictoriaLogsHits is a tool for querying log volume from VictoriaLogs.
 var QueryVictoriaLogsHits = mcpgrafana.MustTool(
 	"query_victorialogs_hits",
-	"Queries log volume over time from a VictoriaLogs datasource. Returns hit counts bucketed by time intervals\\, useful for understanding log volume trends and identifying spikes. The step parameter controls the bucket size. Defaults to the last hour if the time range is not provided.",
+	"Queries log volume over time from a VictoriaLogs datasource. Returns hit count series bucketed by time intervals\\, each with timestamps\\, values\\, and a total count. Useful for understanding log volume trends and identifying spikes. The step parameter controls the bucket size. Defaults to the last hour if the time range is not provided.",
 	queryVictoriaLogsHits,
 	mcp.WithTitleAnnotation("Query VictoriaLogs hits"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
 )
-
-// VictoriaLogsStream represents a log stream with its hit count.
-type VictoriaLogsStream struct {
-	Value string `json:"value"`
-	Hits  int64  `json:"hits"`
-}
 
 // QueryVictoriaLogsStreamsParams defines the parameters for querying log streams.
 type QueryVictoriaLogsStreamsParams struct {
@@ -521,6 +507,12 @@ type QueryVictoriaLogsStreamsParams struct {
 	StartRFC3339  string `json:"startRfc3339,omitempty" jsonschema:"description=Optionally\\, the start time of the query in RFC3339 format (defaults to 1 hour ago)"`
 	EndRFC3339    string `json:"endRfc3339,omitempty" jsonschema:"description=Optionally\\, the end time of the query in RFC3339 format (defaults to now)"`
 	Limit         int    `json:"limit,omitempty" jsonschema:"description=Optionally\\, the maximum number of streams to return"`
+}
+
+// VictoriaLogsStream represents a log stream with its hit count.
+type VictoriaLogsStream struct {
+	Value string `json:"value"`
+	Hits  int64  `json:"hits"`
 }
 
 // QueryVictoriaLogsStreamsResult wraps the streams query result.
@@ -535,7 +527,7 @@ func queryVictoriaLogsStreams(ctx context.Context, args QueryVictoriaLogsStreams
 		return nil, fmt.Errorf("creating VictoriaLogs client: %w", err)
 	}
 
-	startTime, endTime := victoriaLogsDefaultTimeRange(args.StartRFC3339, args.EndRFC3339)
+	startTime, endTime := getDefaultTimeRange(args.StartRFC3339, args.EndRFC3339)
 
 	params := url.Values{}
 	params.Set("query", args.Query)
@@ -550,24 +542,21 @@ func queryVictoriaLogsStreams(ctx context.Context, args QueryVictoriaLogsStreams
 		return nil, err
 	}
 
-	var streams []VictoriaLogsStream
+	// Response is JSON: {"values": [{"value": "{stream}", "hits": N}, ...]}
+	var resp victoriaLogsValuesResponse
 	if len(bodyBytes) > 0 {
-		lines, err := parseNDJSON(bodyBytes)
-		if err != nil {
-			return nil, fmt.Errorf("parsing NDJSON response: %w", err)
-		}
-
-		for _, line := range lines {
-			var entry VictoriaLogsStream
-			if err := json.Unmarshal(line, &entry); err != nil {
-				continue
-			}
-			streams = append(streams, entry)
+		if err := json.Unmarshal(bodyBytes, &resp); err != nil {
+			return nil, fmt.Errorf("unmarshalling streams response: %w", err)
 		}
 	}
 
-	if streams == nil {
-		streams = []VictoriaLogsStream{}
+	streams := make([]VictoriaLogsStream, 0, len(resp.Values))
+	for _, raw := range resp.Values {
+		var entry VictoriaLogsStream
+		if err := json.Unmarshal(raw, &entry); err != nil {
+			continue
+		}
+		streams = append(streams, entry)
 	}
 
 	return &QueryVictoriaLogsStreamsResult{Data: streams}, nil

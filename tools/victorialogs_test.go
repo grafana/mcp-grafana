@@ -74,7 +74,10 @@ func TestVictoriaLogsTools(t *testing.T) {
 
 		// If we got results, check that they have the expected structure
 		for _, entry := range result.Data {
-			assert.GreaterOrEqual(t, entry.Hits, int64(0), "Hits should be non-negative")
+			assert.GreaterOrEqual(t, entry.Total, int64(0), "Total should be non-negative")
+			assert.NotNil(t, entry.Timestamps, "Timestamps should not be nil")
+			assert.NotNil(t, entry.Values, "Values should not be nil")
+			assert.Equal(t, len(entry.Timestamps), len(entry.Values), "Timestamps and Values should have same length")
 		}
 	})
 
