@@ -72,8 +72,9 @@ func MustTool[T any, R any](
 type ToolHandlerFunc[T any, R any] = func(ctx context.Context, request T) (R, error)
 
 // unmarshalWithIntConversion unmarshals JSON data into a target struct,
-// automatically converting string values to int for all int-typed fields.
-// This allows MCP tool parameters to accept both string and int values for int fields.
+// automatically converting string values to integer types for all integer-typed fields.
+// This allows MCP tool parameters to accept both string and integer values for integer fields.
+// Supports: int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64 and their pointer types.
 func unmarshalWithIntConversion(data []byte, target interface{}) error {
 	// First, unmarshal into a map to inspect the data
 	var raw map[string]interface{}
@@ -92,7 +93,7 @@ func unmarshalWithIntConversion(data []byte, target interface{}) error {
 	}
 	targetType := targetVal.Type()
 
-	// Convert string values to int for int-typed fields
+	// Convert string values to appropriate integer types for integer-typed fields
 	for i := 0; i < targetType.NumField(); i++ {
 		field := targetType.Field(i)
 		jsonTag := field.Tag.Get("json")
@@ -114,26 +115,70 @@ func unmarshalWithIntConversion(data []byte, target interface{}) error {
 
 		// Check if this field exists in the raw data and needs conversion
 		if rawValue, exists := raw[jsonName]; exists && rawValue != nil {
-			fieldKind := field.Type.Kind()
+			fieldType := field.Type
+			fieldKind := fieldType.Kind()
 
-			// Handle int types (int, *int)
-			if fieldKind == reflect.Int {
-				if strVal, ok := rawValue.(string); ok {
-					// Convert string to int
-					intVal, err := strconv.Atoi(strVal)
-					if err != nil {
-						return fmt.Errorf("failed to convert string '%s' to int for field '%s': %w", strVal, jsonName, err)
-					}
-					raw[jsonName] = intVal
+			// Handle pointer types by unwrapping to the element type
+			isPtr := fieldKind == reflect.Ptr
+			if isPtr {
+				fieldType = fieldType.Elem()
+				fieldKind = fieldType.Kind()
+			}
+
+			// Convert string to appropriate integer type
+			if strVal, ok := rawValue.(string); ok {
+				var convertedVal interface{}
+				var err error
+
+				switch fieldKind {
+				case reflect.Int:
+					var v int
+					v, err = strconv.Atoi(strVal)
+					convertedVal = v
+				case reflect.Int8:
+					var v int64
+					v, err = strconv.ParseInt(strVal, 10, 8)
+					convertedVal = int8(v)
+				case reflect.Int16:
+					var v int64
+					v, err = strconv.ParseInt(strVal, 10, 16)
+					convertedVal = int16(v)
+				case reflect.Int32:
+					var v int64
+					v, err = strconv.ParseInt(strVal, 10, 32)
+					convertedVal = int32(v)
+				case reflect.Int64:
+					var v int64
+					v, err = strconv.ParseInt(strVal, 10, 64)
+					convertedVal = v
+				case reflect.Uint:
+					var v uint64
+					v, err = strconv.ParseUint(strVal, 10, 0)
+					convertedVal = uint(v)
+				case reflect.Uint8:
+					var v uint64
+					v, err = strconv.ParseUint(strVal, 10, 8)
+					convertedVal = uint8(v)
+				case reflect.Uint16:
+					var v uint64
+					v, err = strconv.ParseUint(strVal, 10, 16)
+					convertedVal = uint16(v)
+				case reflect.Uint32:
+					var v uint64
+					v, err = strconv.ParseUint(strVal, 10, 32)
+					convertedVal = uint32(v)
+				case reflect.Uint64:
+					var v uint64
+					v, err = strconv.ParseUint(strVal, 10, 64)
+					convertedVal = v
 				}
-			} else if fieldKind == reflect.Ptr && field.Type.Elem().Kind() == reflect.Int {
-				if strVal, ok := rawValue.(string); ok {
-					// Convert string to int for pointer type
-					intVal, err := strconv.Atoi(strVal)
-					if err != nil {
-						return fmt.Errorf("failed to convert string '%s' to int for field '%s': %w", strVal, jsonName, err)
-					}
-					raw[jsonName] = intVal
+
+				if err != nil {
+					return fmt.Errorf("failed to convert string '%s' to %s for field '%s': %w", strVal, fieldKind, jsonName, err)
+				}
+
+				if convertedVal != nil {
+					raw[jsonName] = convertedVal
 				}
 			}
 		}
