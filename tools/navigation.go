@@ -28,7 +28,14 @@ type TimeRange struct {
 
 func generateDeeplink(ctx context.Context, args GenerateDeeplinkParams) (string, error) {
 	config := mcpgrafana.GrafanaConfigFromContext(ctx)
-	baseURL := strings.TrimRight(config.URL, "/")
+
+	var baseURL string
+	if config.PublicURL != "" {
+		baseURL = config.PublicURL
+	} else {
+		baseURL = config.URL
+	}
+	baseURL = strings.TrimRight(baseURL, "/")
 
 	if baseURL == "" {
 		return "", fmt.Errorf("grafana url not configured. Please set GRAFANA_URL environment variable or X-Grafana-URL header")
