@@ -18,7 +18,7 @@ func TestCreateAlertRuleParams_Validate(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "test-folder",
 			Condition:    "A",
-			Data:         []*models.AlertQuery{{RefID: "A"}},
+			Data:         []*AlertQuery{{RefID: "A"}},
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
@@ -33,7 +33,7 @@ func TestCreateAlertRuleParams_Validate(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "test-folder",
 			Condition:    "A",
-			Data:         []*models.AlertQuery{{RefID: "A"}},
+			Data:         []*AlertQuery{{RefID: "A"}},
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
@@ -49,7 +49,7 @@ func TestCreateAlertRuleParams_Validate(t *testing.T) {
 			Title:        "Test Rule",
 			FolderUID:    "test-folder",
 			Condition:    "A",
-			Data:         []*models.AlertQuery{{RefID: "A"}},
+			Data:         []*AlertQuery{{RefID: "A"}},
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
@@ -65,7 +65,7 @@ func TestCreateAlertRuleParams_Validate(t *testing.T) {
 			Title:        "Test Rule",
 			RuleGroup:    "test-group",
 			Condition:    "A",
-			Data:         []*models.AlertQuery{{RefID: "A"}},
+			Data:         []*AlertQuery{{RefID: "A"}},
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
@@ -81,7 +81,7 @@ func TestCreateAlertRuleParams_Validate(t *testing.T) {
 			Title:        "Test Rule",
 			RuleGroup:    "test-group",
 			FolderUID:    "test-folder",
-			Data:         []*models.AlertQuery{{RefID: "A"}},
+			Data:         []*AlertQuery{{RefID: "A"}},
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
@@ -114,7 +114,7 @@ func TestCreateAlertRuleParams_Validate(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "test-folder",
 			Condition:    "A",
-			Data:         []*models.AlertQuery{{RefID: "A"}},
+			Data:         []*AlertQuery{{RefID: "A"}},
 			ExecErrState: "OK",
 			For:          "5m",
 			OrgID:        1,
@@ -130,7 +130,7 @@ func TestCreateAlertRuleParams_Validate(t *testing.T) {
 			RuleGroup:   "test-group",
 			FolderUID:   "test-folder",
 			Condition:   "A",
-			Data:        []*models.AlertQuery{{RefID: "A"}},
+			Data:        []*AlertQuery{{RefID: "A"}},
 			NoDataState: "OK",
 			For:         "5m",
 			OrgID:       1,
@@ -146,7 +146,7 @@ func TestCreateAlertRuleParams_Validate(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "test-folder",
 			Condition:    "A",
-			Data:         []*models.AlertQuery{{RefID: "A"}},
+			Data:         []*AlertQuery{{RefID: "A"}},
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			OrgID:        1,
@@ -162,7 +162,7 @@ func TestCreateAlertRuleParams_Validate(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "test-folder",
 			Condition:    "A",
-			Data:         []*models.AlertQuery{{RefID: "A"}},
+			Data:         []*AlertQuery{{RefID: "A"}},
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
@@ -180,7 +180,7 @@ func TestCreateAlertRuleParams_Validate(t *testing.T) {
 			RuleGroup:         "test-group",
 			FolderUID:         "test-folder",
 			Condition:         "A",
-			Data:              []*models.AlertQuery{{RefID: "A"}},
+			Data:              []*AlertQuery{{RefID: "A"}},
 			NoDataState:       "OK",
 			ExecErrState:      "OK",
 			For:               "5m",
@@ -198,7 +198,7 @@ func TestCreateAlertRuleParams_Validate(t *testing.T) {
 			RuleGroup:         "test-group",
 			FolderUID:         "test-folder",
 			Condition:         "A",
-			Data:              []*models.AlertQuery{{RefID: "A"}},
+			Data:              []*AlertQuery{{RefID: "A"}},
 			NoDataState:       "OK",
 			ExecErrState:      "OK",
 			For:               "5m",
@@ -215,7 +215,7 @@ func TestCreateAlertRuleParams_Validate(t *testing.T) {
 			RuleGroup:         "test-group",
 			FolderUID:         "test-folder",
 			Condition:         "A",
-			Data:              []*models.AlertQuery{{RefID: "A"}},
+			Data:              []*AlertQuery{{RefID: "A"}},
 			NoDataState:       "OK",
 			ExecErrState:      "OK",
 			For:               "5m",
@@ -235,7 +235,7 @@ func TestUpdateAlertRuleParams_Validate(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "test-folder",
 			Condition:    "A",
-			Data:         []*models.AlertQuery{{RefID: "A"}},
+			Data:         []*AlertQuery{{RefID: "A"}},
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
@@ -251,7 +251,7 @@ func TestUpdateAlertRuleParams_Validate(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "test-folder",
 			Condition:    "A",
-			Data:         []*models.AlertQuery{{RefID: "A"}},
+			Data:         []*AlertQuery{{RefID: "A"}},
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
@@ -269,7 +269,7 @@ func TestUpdateAlertRuleParams_Validate(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "test-folder",
 			Condition:    "A",
-			Data:         []*models.AlertQuery{{RefID: "A"}},
+			Data:         []*AlertQuery{{RefID: "A"}},
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
@@ -288,7 +288,7 @@ func TestUpdateAlertRuleParams_Validate(t *testing.T) {
 			RuleGroup:         "test-group",
 			FolderUID:         "test-folder",
 			Condition:         "A",
-			Data:              []*models.AlertQuery{{RefID: "A"}},
+			Data:              []*AlertQuery{{RefID: "A"}},
 			NoDataState:       "OK",
 			ExecErrState:      "OK",
 			For:               "5m",
@@ -307,7 +307,7 @@ func TestUpdateAlertRuleParams_Validate(t *testing.T) {
 			RuleGroup:         "test-group",
 			FolderUID:         "test-folder",
 			Condition:         "A",
-			Data:              []*models.AlertQuery{{RefID: "A"}},
+			Data:              []*AlertQuery{{RefID: "A"}},
 			NoDataState:       "OK",
 			ExecErrState:      "OK",
 			For:               "5m",
@@ -325,7 +325,7 @@ func TestUpdateAlertRuleParams_Validate(t *testing.T) {
 			RuleGroup:         "test-group",
 			FolderUID:         "test-folder",
 			Condition:         "A",
-			Data:              []*models.AlertQuery{{RefID: "A"}},
+			Data:              []*AlertQuery{{RefID: "A"}},
 			NoDataState:       "OK",
 			ExecErrState:      "OK",
 			For:               "5m",
@@ -363,7 +363,7 @@ func TestBuiltInValidationCatchesInvalidData(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "test-folder",
 			Condition:    "A",
-			Data:         []*models.AlertQuery{{RefID: "A"}},
+			Data:         []*AlertQuery{{RefID: "A"}},
 			NoDataState:  "InvalidValue", // Invalid enum
 			ExecErrState: "OK",
 			For:          "5m",
@@ -381,7 +381,7 @@ func TestBuiltInValidationCatchesInvalidData(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "test-folder",
 			Condition:    "A",
-			Data:         []*models.AlertQuery{{RefID: "A"}},
+			Data:         []*AlertQuery{{RefID: "A"}},
 			NoDataState:  "OK",
 			ExecErrState: "BadValue", // Invalid enum
 			For:          "5m",
@@ -404,7 +404,7 @@ func TestBuiltInValidationCatchesInvalidData(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "test-folder",
 			Condition:    "A",
-			Data:         []*models.AlertQuery{{RefID: "A"}},
+			Data:         []*AlertQuery{{RefID: "A"}},
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
@@ -504,7 +504,7 @@ func TestManageRulesReadWriteParams_Validate(t *testing.T) {
 		RuleGroup:    "test-group",
 		FolderUID:    "test-folder",
 		Condition:    "A",
-		Data:         []*models.AlertQuery{{RefID: "A"}},
+		Data:         []*AlertQuery{{RefID: "A"}},
 		NoDataState:  "OK",
 		ExecErrState: "OK",
 		For:          "5m",
@@ -518,7 +518,7 @@ func TestManageRulesReadWriteParams_Validate(t *testing.T) {
 		RuleGroup:    "test-group",
 		FolderUID:    "test-folder",
 		Condition:    "A",
-		Data:         []*models.AlertQuery{{RefID: "A"}},
+		Data:         []*AlertQuery{{RefID: "A"}},
 		NoDataState:  "OK",
 		ExecErrState: "OK",
 		For:          "5m",
@@ -572,7 +572,7 @@ func TestManageRulesReadWriteParams_Validate(t *testing.T) {
 				RuleGroup:    "test-group",
 				FolderUID:    "test-folder",
 				Condition:    "A",
-				Data:         []*models.AlertQuery{{RefID: "A"}},
+				Data:         []*AlertQuery{{RefID: "A"}},
 				NoDataState:  "OK",
 				ExecErrState: "OK",
 				For:          "5m",
@@ -587,7 +587,7 @@ func TestManageRulesReadWriteParams_Validate(t *testing.T) {
 				Title:        "Test Rule",
 				FolderUID:    "test-folder",
 				Condition:    "A",
-				Data:         []*models.AlertQuery{{RefID: "A"}},
+				Data:         []*AlertQuery{{RefID: "A"}},
 				NoDataState:  "OK",
 				ExecErrState: "OK",
 				For:          "5m",
@@ -607,7 +607,7 @@ func TestManageRulesReadWriteParams_Validate(t *testing.T) {
 				RuleGroup:    "test-group",
 				FolderUID:    "test-folder",
 				Condition:    "A",
-				Data:         []*models.AlertQuery{{RefID: "A"}},
+				Data:         []*AlertQuery{{RefID: "A"}},
 				NoDataState:  "OK",
 				ExecErrState: "OK",
 				For:          "5m",
@@ -668,7 +668,7 @@ func TestManageRulesReadWriteParams_ToCreateParams(t *testing.T) {
 			RuleGroup:         "test-group",
 			FolderUID:         "test-folder",
 			Condition:         "B",
-			Data:              []*models.AlertQuery{{RefID: "A"}, {RefID: "B"}},
+			Data:              []*AlertQuery{{RefID: "A"}, {RefID: "B"}},
 			NoDataState:       "Alerting",
 			ExecErrState:      "OK",
 			For:               "10m",
@@ -717,7 +717,7 @@ func TestManageRulesReadWriteParams_ToUpdateParams(t *testing.T) {
 			RuleGroup:         "updated-group",
 			FolderUID:         "updated-folder",
 			Condition:         "A",
-			Data:              []*models.AlertQuery{{RefID: "A"}},
+			Data:              []*AlertQuery{{RefID: "A"}},
 			NoDataState:       "NoData",
 			ExecErrState:      "Alerting",
 			For:               "15m",
@@ -1124,5 +1124,125 @@ func TestFindRuleInResponse(t *testing.T) {
 		require.Equal(t, "Modified", resp.Data.RuleGroups[0].Rules[1].Name)
 		// Restore
 		resp.Data.RuleGroups[0].Rules[1].Name = "Rule Two"
+	})
+}
+
+func TestConvertAlertQueries(t *testing.T) {
+	t.Run("auto-assigns RefID from index when empty", func(t *testing.T) {
+		queries := []*AlertQuery{
+			{DatasourceUID: "prometheus", Model: AlertQueryModel{Expr: "up"}},
+			{DatasourceUID: "__expr__", Model: AlertQueryModel{Type: "math", Expression: "$A > 0"}},
+		}
+		result, err := convertAlertQueries(queries)
+		require.NoError(t, err)
+		require.Len(t, result, 2)
+		require.Equal(t, "A", result[0].RefID)
+		require.Equal(t, "B", result[1].RefID)
+	})
+
+	t.Run("preserves explicit RefID", func(t *testing.T) {
+		queries := []*AlertQuery{
+			{RefID: "X", DatasourceUID: "prometheus", Model: AlertQueryModel{Expr: "up"}},
+		}
+		result, err := convertAlertQueries(queries)
+		require.NoError(t, err)
+		require.Equal(t, "X", result[0].RefID)
+	})
+
+	t.Run("defaults RelativeTimeRange for non-expression queries", func(t *testing.T) {
+		queries := []*AlertQuery{
+			{DatasourceUID: "prometheus", Model: AlertQueryModel{Expr: "up"}},
+		}
+		result, err := convertAlertQueries(queries)
+		require.NoError(t, err)
+		require.NotNil(t, result[0].RelativeTimeRange)
+		require.Equal(t, models.Duration(600), result[0].RelativeTimeRange.From)
+		require.Equal(t, models.Duration(0), result[0].RelativeTimeRange.To)
+	})
+
+	t.Run("does not default RelativeTimeRange for __expr__ queries", func(t *testing.T) {
+		queries := []*AlertQuery{
+			{DatasourceUID: "__expr__", Model: AlertQueryModel{Type: "math", Expression: "$A > 0"}},
+		}
+		result, err := convertAlertQueries(queries)
+		require.NoError(t, err)
+		require.Nil(t, result[0].RelativeTimeRange)
+	})
+
+	t.Run("handles empty model", func(t *testing.T) {
+		queries := []*AlertQuery{
+			{DatasourceUID: "prometheus", Model: AlertQueryModel{}},
+		}
+		result, err := convertAlertQueries(queries)
+		require.NoError(t, err)
+		require.Len(t, result, 1)
+		require.Equal(t, "A", result[0].RefID)
+	})
+
+	t.Run("mixed data source and expression queries", func(t *testing.T) {
+		queries := []*AlertQuery{
+			{
+				DatasourceUID:     "prometheus",
+				RelativeTimeRange: &RelativeTimeRange{From: 300, To: 0},
+				Model:             AlertQueryModel{Expr: "up{job=\"api\"}"},
+			},
+			{
+				DatasourceUID: "__expr__",
+				Model: AlertQueryModel{
+					Type:       "reduce",
+					Expression: "A",
+					Reducer:    "last",
+				},
+			},
+			{
+				DatasourceUID: "__expr__",
+				Model: AlertQueryModel{
+					Type:       "threshold",
+					Expression: "B",
+					Conditions: []AlertCondition{
+						{Evaluator: ConditionEvaluator{Type: "gt", Params: []float64{0.95}}},
+					},
+				},
+			},
+		}
+		result, err := convertAlertQueries(queries)
+		require.NoError(t, err)
+		require.Len(t, result, 3)
+
+		// Data source query
+		require.Equal(t, "A", result[0].RefID)
+		require.Equal(t, "prometheus", result[0].DatasourceUID)
+		require.NotNil(t, result[0].RelativeTimeRange)
+		require.Equal(t, models.Duration(300), result[0].RelativeTimeRange.From)
+
+		// Reduce expression
+		require.Equal(t, "B", result[1].RefID)
+		require.Equal(t, "__expr__", result[1].DatasourceUID)
+		require.Nil(t, result[1].RelativeTimeRange)
+
+		// Threshold expression
+		require.Equal(t, "C", result[2].RefID)
+		require.Equal(t, "__expr__", result[2].DatasourceUID)
+	})
+
+	t.Run("empty input returns empty output", func(t *testing.T) {
+		result, err := convertAlertQueries(nil)
+		require.NoError(t, err)
+		require.Empty(t, result)
+	})
+
+	t.Run("preserves explicit RelativeTimeRange", func(t *testing.T) {
+		queries := []*AlertQuery{
+			{
+				DatasourceUID:     "prometheus",
+				RelativeTimeRange: &RelativeTimeRange{From: 3600, To: 1800},
+				Model:             AlertQueryModel{Expr: "up"},
+			},
+		}
+		result, err := convertAlertQueries(queries)
+		require.NoError(t, err)
+		require.NotNil(t, result[0].RelativeTimeRange)
+		require.Equal(t, models.Duration(3600), result[0].RelativeTimeRange.From)
+		require.Equal(t, models.Duration(1800), result[0].RelativeTimeRange.To)
 	})
 }
