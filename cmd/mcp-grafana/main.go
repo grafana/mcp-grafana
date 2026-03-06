@@ -45,7 +45,7 @@ type disabledTools struct {
 	dashboard, folder, oncall, asserts, sift, admin,
 	pyroscope, navigation, proxied, annotations, rendering, cloudwatch, write,
 	examples, clickhouse, searchlogs,
-	runpanelquery bool
+	runpanelquery, influxdb bool
 }
 
 // Configuration for the Grafana client.
@@ -86,6 +86,7 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.clickhouse, "disable-clickhouse", false, "Disable ClickHouse tools")
 	flag.BoolVar(&dt.searchlogs, "disable-searchlogs", false, "Disable search logs tools")
 	flag.BoolVar(&dt.runpanelquery, "disable-runpanelquery", false, "Disable run panel query tools")
+	flag.BoolVar(&dt.influxdb, "disable-influxdb", false, "Disable InfluxDb tools")
 }
 
 func (gc *grafanaConfig) addFlags() {
@@ -123,6 +124,7 @@ func (dt *disabledTools) addTools(s *server.MCPServer) {
 	maybeAddTools(s, tools.AddClickHouseTools, enabledTools, dt.clickhouse, "clickhouse")
 	maybeAddTools(s, tools.AddSearchLogsTools, enabledTools, dt.searchlogs, "searchlogs")
 	maybeAddTools(s, tools.AddRunPanelQueryTools, enabledTools, dt.runpanelquery, "runpanelquery")
+	maybeAddTools(s, tools.AddInfluxTools, enabledTools, dt.influxdb, "influxdb")
 }
 
 func newServer(transport string, dt disabledTools, obs *observability.Observability) (*server.MCPServer, *mcpgrafana.ToolManager) {
@@ -177,6 +179,7 @@ Available Capabilities:
 - Prometheus & Loki: Run PromQL and LogQL queries, retrieve metric/log metadata, and explore label names/values.
 - ClickHouse: Query ClickHouse datasources via Grafana with macro and variable substitution support.
 - Elasticsearch: Query Elasticsearch datasources using Lucene syntax or Query DSL for logs and metrics.
+- InfluxDB : Query InfluxDB datasourcs with SQL , InfluxQL , Flux languages 
 - Incidents: Search, create, update, and resolve incidents in Grafana Incident.
 - Sift Investigations: Start and manage Sift investigations, analyze logs/traces, find error patterns, and detect slow requests.
 - Alerting: List and fetch alert rules and notification contact points.
