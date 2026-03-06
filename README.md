@@ -989,6 +989,13 @@ If you need to run it in STDIO mode instead, override the transport setting:
 docker run -it --rm mcp-grafana:latest -t stdio
 ```
 
+Setup local development environment 
+```bash
+make setup-dev
+```
+This will
+-configure git hooks
+
 ### Testing
 
 There are three types of tests available:
