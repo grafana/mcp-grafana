@@ -415,14 +415,7 @@ var ListVictoriaLogsFieldValues = mcpgrafana.MustTool(
 // victoriaLogsHitsResponse represents the JSON response from /select/logsql/hits.
 // Response format: {"hits": [{"fields": {...}, "timestamps": [...], "values": [...], "total": N}]}
 type victoriaLogsHitsResponse struct {
-	Hits []victoriaLogsHitEntry `json:"hits"`
-}
-
-type victoriaLogsHitEntry struct {
-	Fields     map[string]string `json:"fields"`
-	Timestamps []string          `json:"timestamps"`
-	Values     []int64           `json:"values"`
-	Total      int64             `json:"total"`
+	Hits []VictoriaLogsHit `json:"hits"`
 }
 
 // VictoriaLogsHit represents a hit count series for the MCP tool response.
@@ -477,17 +470,7 @@ func queryVictoriaLogsHits(ctx context.Context, args QueryVictoriaLogsHitsParams
 		}
 	}
 
-	hits := make([]VictoriaLogsHit, 0, len(resp.Hits))
-	for _, entry := range resp.Hits {
-		hits = append(hits, VictoriaLogsHit{
-			Fields:     entry.Fields,
-			Timestamps: entry.Timestamps,
-			Values:     entry.Values,
-			Total:      entry.Total,
-		})
-	}
-
-	return &QueryVictoriaLogsHitsResult{Data: hits}, nil
+	return &QueryVictoriaLogsHitsResult{Data: resp.Hits}, nil
 }
 
 // QueryVictoriaLogsHits is a tool for querying log volume from VictoriaLogs.
