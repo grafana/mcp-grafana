@@ -106,7 +106,7 @@ func TestUnmarshalWithIntConversion(t *testing.T) {
 
 		err := unmarshalWithIntConversion(data, &params)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to convert string")
+		assert.Contains(t, err.Error(), "failed to convert")
 	})
 
 	t.Run("handles zero values as strings", func(t *testing.T) {
@@ -377,5 +377,72 @@ func TestUnmarshalWithAllIntegerTypes(t *testing.T) {
 
 		assert.Equal(t, "Test Alert", params.Title)
 		assert.Equal(t, int64(1), params.OrgID)
+	})
+
+	t.Run("preserves precision for large int64 values beyond float64 precision", func(t *testing.T) {
+		// Test values larger than 2^53 (9007199254740992)
+		// These would lose precision if converted through float64
+		type largeIntParams struct {
+			LargeInt64  int64  `json:"largeInt64"`
+			LargeUint64 uint64 `json:"largeUint64"`
+			Timestamp   int64  `json:"timestamp"` // epoch milliseconds
+		}
+
+		// Values that would be corrupted by float64 round-trip:
+		// - 9223372036854775807 is max int64
+		// - 18446744073709551615 is max uint64
+		// - 1709676543210 is a realistic epoch millisecond timestamp
+		data := []byte(`{
+			"largeInt64": 9223372036854775807,
+			"largeUint64": 18446744073709551615,
+			"timestamp": 1709676543210
+		}`)
+		var params largeIntParams
+
+		err := unmarshalWithIntConversion(data, &params)
+		require.NoError(t, err)
+
+		// Verify exact values without precision loss
+		assert.Equal(t, int64(9223372036854775807), params.LargeInt64)
+		assert.Equal(t, uint64(18446744073709551615), params.LargeUint64)
+		assert.Equal(t, int64(1709676543210), params.Timestamp)
+	})
+
+	t.Run("preserves precision for large int64 values as strings", func(t *testing.T) {
+		type largeIntParams struct {
+			LargeInt64  int64  `json:"largeInt64"`
+			LargeUint64 uint64 `json:"largeUint64"`
+		}
+
+		// Test with string representations
+		data := []byte(`{
+			"largeInt64": "9223372036854775807",
+			"largeUint64": "18446744073709551615"
+		}`)
+		var params largeIntParams
+
+		err := unmarshalWithIntConversion(data, &params)
+		require.NoError(t, err)
+
+		assert.Equal(t, int64(9223372036854775807), params.LargeInt64)
+		assert.Equal(t, uint64(18446744073709551615), params.LargeUint64)
+	})
+
+	t.Run("preserves precision for values just above float64 precision boundary", func(t *testing.T) {
+		// 2^53 + 1 = 9007199254740993
+		// This is the smallest integer that would lose precision in float64
+		type precisionParams struct {
+			Value int64 `json:"value"`
+		}
+
+		data := []byte(`{"value": 9007199254740993}`)
+		var params precisionParams
+
+		err := unmarshalWithIntConversion(data, &params)
+		require.NoError(t, err)
+
+		// This would fail with the old implementation using raw json.Unmarshal
+		// because float64 cannot represent 9007199254740993 exactly
+		assert.Equal(t, int64(9007199254740993), params.Value)
 	})
 }
