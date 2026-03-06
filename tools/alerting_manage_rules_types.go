@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/grafana/grafana-openapi-client-go/models"
@@ -40,9 +41,9 @@ type alertRuleDetail struct {
 	Annotations  map[string]string `json:"annotations,omitempty"`
 	Labels       map[string]string `json:"labels,omitempty"`
 
-	IsPaused             bool                                      `json:"is_paused"`
-	NotificationSettings *models.AlertRuleNotificationSettings      `json:"notification_settings,omitempty"`
-	Queries              []querySummary                             `json:"queries,omitempty"`
+	IsPaused             bool                                  `json:"is_paused"`
+	NotificationSettings *models.AlertRuleNotificationSettings `json:"notification_settings,omitempty"`
+	Queries              []querySummary                        `json:"queries,omitempty"`
 
 	State          string  `json:"state"`
 	Health         string  `json:"health"`
@@ -58,20 +59,113 @@ type querySummary struct {
 	Expression    string `json:"expression,omitempty"`
 }
 
+type RelativeTimeRange struct {
+	From int64 `json:"from" jsonschema:"description=Seconds before eval time (e.g. 600 = 10m ago)"`
+	To   int64 `json:"to" jsonschema:"description=Seconds before eval time (0 = now)"`
+}
+
+type AlertQuery struct {
+	RefID             string             `json:"refId,omitempty" jsonschema:"description=Query identifier (e.g. 'A'). Auto-assigned from position if omitted."`
+	DatasourceUID     string             `json:"datasourceUid" jsonschema:"required,description=Datasource UID (e.g. 'grafanacloud-prom'\\, 'grafanacloud-logs') for data queries\\, or '__expr__' for expressions that transform other queries (reduce\\, threshold\\, math)."`
+	RelativeTimeRange *RelativeTimeRange `json:"relativeTimeRange,omitempty" jsonschema:"description=Time range relative to eval time. Defaults to {from:600\\,to:0} for non-expression queries."`
+	QueryType         string             `json:"queryType,omitempty" jsonschema:"description=Optional datasource-specific query type (e.g. 'instant'\\, 'range'). Usually left empty."`
+	Model             AlertQueryModel    `json:"model" jsonschema:"required,description=Query model. For data sources: set expr. For expressions: set type and expression."`
+}
+
+type AlertQueryModel struct {
+	Expr string `json:"expr,omitempty" jsonschema:"description=Query expression (PromQL\\, LogQL\\, etc.)"`
+
+	// Server-side expressions only (when datasourceUid is __expr__).
+	Type       string           `json:"type,omitempty" jsonschema:"description=Expression type (only for __expr__ datasource): math\\, reduce\\, threshold"`
+	Expression string           `json:"expression,omitempty" jsonschema:"description=Expression ref or formula. For reduce/threshold: ref like 'A'. For math: '$A > 0'."`
+	Reducer    string           `json:"reducer,omitempty" jsonschema:"description=Reducer for reduce expressions: last\\, mean\\, min\\, max\\, sum\\, count"`
+	Conditions []AlertCondition `json:"conditions,omitempty" jsonschema:"description=Conditions for threshold expressions"`
+}
+
+type AlertCondition struct {
+	Evaluator ConditionEvaluator `json:"evaluator" jsonschema:"description=Threshold evaluator"`
+}
+
+type ConditionEvaluator struct {
+	Type   string    `json:"type" jsonschema:"required,description=Evaluator: gt\\, lt\\, within_range\\, outside_range\\, no_value"`
+	Params []float64 `json:"params" jsonschema:"required,description=Threshold value(s)"`
+}
+
+// indexToRefID converts a zero-based index to a letter-based representation,
+// matching the Grafana UI logic.
+// 0 -> "A", 1 -> "B", ..., 25 -> "Z", 26 -> "AA", 27 -> "AB", ...
+func indexToRefID(i int) string {
+	result := ""
+	for {
+		result = string(rune('A'+i%26)) + result
+		i = i/26 - 1
+		if i < 0 {
+			break
+		}
+	}
+	return result
+}
+
+// convertAlertQueries converts typed AlertQuery slice to the models.AlertQuery
+// slice expected by the Grafana API. It auto-assigns RefIDs and default RelativeTimeRange.
+func convertAlertQueries(queries []*AlertQuery) ([]*models.AlertQuery, error) {
+	result := make([]*models.AlertQuery, 0, len(queries))
+	for i, q := range queries {
+		if q == nil {
+			return nil, fmt.Errorf("query at index %d is nil", i)
+		}
+		refID := q.RefID
+		if refID == "" {
+			refID = indexToRefID(i)
+		}
+
+		var rtr *models.RelativeTimeRange
+		if q.RelativeTimeRange != nil {
+			rtr = &models.RelativeTimeRange{
+				From: models.Duration(q.RelativeTimeRange.From),
+				To:   models.Duration(q.RelativeTimeRange.To),
+			}
+		} else if q.DatasourceUID != "__expr__" {
+			rtr = &models.RelativeTimeRange{
+				From: 600,
+				To:   0,
+			}
+		}
+
+		modelBytes, err := json.Marshal(q.Model)
+		if err != nil {
+			return nil, fmt.Errorf("marshal model for query %s: %w", refID, err)
+		}
+		modelMap := make(map[string]any)
+		if err := json.Unmarshal(modelBytes, &modelMap); err != nil {
+			return nil, fmt.Errorf("unmarshal model for query %s: %w", refID, err)
+		}
+
+		result = append(result, &models.AlertQuery{
+			RefID:             refID,
+			DatasourceUID:     q.DatasourceUID,
+			RelativeTimeRange: rtr,
+			QueryType:         q.QueryType,
+			Model:             modelMap,
+		})
+	}
+	return result, nil
+}
+
 type CreateAlertRuleParams struct {
-	Title             string               `json:"title" jsonschema:"required,description=The title of the alert rule"`
-	RuleGroup         string               `json:"ruleGroup" jsonschema:"required,description=The rule group name"`
-	FolderUID         string               `json:"folderUID" jsonschema:"required,description=The folder UID where the rule will be created"`
-	Condition         string               `json:"condition" jsonschema:"required,description=The query condition identifier (e.g. 'A'\\, 'B')"`
-	Data              []*models.AlertQuery `json:"data" jsonschema:"required,description=Array of query data objects"`
-	NoDataState       string               `json:"noDataState" jsonschema:"required,description=State when no data (NoData\\, Alerting\\, OK)"`
-	ExecErrState      string               `json:"execErrState" jsonschema:"required,description=State on execution error (NoData\\, Alerting\\, OK)"`
-	For               string               `json:"for" jsonschema:"required,description=Duration before alert fires (e.g. '5m')"`
-	Annotations       map[string]string    `json:"annotations,omitempty" jsonschema:"description=Optional annotations"`
-	Labels            map[string]string    `json:"labels,omitempty" jsonschema:"description=Optional labels"`
-	UID               *string              `json:"uid,omitempty" jsonschema:"description=Optional UID for the alert rule"`
-	OrgID             int64                `json:"orgID" jsonschema:"required,description=The organization ID"`
-	DisableProvenance *bool                `json:"disableProvenance,omitempty" jsonschema:"description=If true\\, the alert will remain editable in the Grafana UI (sets X-Disable-Provenance header). If false\\, the alert will be marked with provenance 'api' and locked from UI editing. Defaults to true."`
+	Title             string            `json:"title" jsonschema:"required,description=The title of the alert rule"`
+	RuleGroup         string            `json:"ruleGroup" jsonschema:"required,description=The rule group name"`
+	FolderUID         string            `json:"folderUID" jsonschema:"required,description=The folder UID where the rule will be created"`
+	Condition         string            `json:"condition" jsonschema:"required,description=The query condition identifier (e.g. 'A'\\, 'B')"`
+	Data              []*AlertQuery     `json:"data" jsonschema:"required,description=Array of alert query objects. Example: [{datasourceUid: 'prometheus'\\, model: {expr: 'vector(1)'}}\\, {datasourceUid: '__expr__'\\, model: {type: 'threshold'\\, expression: 'A'\\, conditions: [{evaluator: {type: 'gt'\\, params: [1]}}]}}]. RefID and relativeTimeRange are auto-assigned if omitted."`
+	NoDataState       string            `json:"noDataState" jsonschema:"required,description=State when no data (NoData\\, Alerting\\, OK)"`
+	ExecErrState      string            `json:"execErrState" jsonschema:"required,description=State on execution error (NoData\\, Alerting\\, OK)"`
+	For               string            `json:"for" jsonschema:"required,description=Duration before alert fires (e.g. '5m')"`
+	Annotations       map[string]string `json:"annotations,omitempty" jsonschema:"description=Optional annotations"`
+	Labels            map[string]string `json:"labels,omitempty" jsonschema:"description=Optional labels"`
+	UID               *string           `json:"uid,omitempty" jsonschema:"description=Optional UID for the alert rule"`
+	OrgID             int64             `json:"orgID" jsonschema:"required,description=The organization ID"`
+	DisableProvenance *bool             `json:"disableProvenance,omitempty" jsonschema:"description=If true\\, the alert will remain editable in the Grafana UI (sets X-Disable-Provenance header). If false\\, the alert will be marked with provenance 'api' and locked from UI editing. Defaults to true."`
 }
 
 func (p CreateAlertRuleParams) validate() error {
@@ -106,19 +200,19 @@ func (p CreateAlertRuleParams) validate() error {
 }
 
 type UpdateAlertRuleParams struct {
-	UID               string               `json:"uid" jsonschema:"required,description=The UID of the alert rule to update"`
-	Title             string               `json:"title" jsonschema:"required,description=The title of the alert rule"`
-	RuleGroup         string               `json:"ruleGroup" jsonschema:"required,description=The rule group name"`
-	FolderUID         string               `json:"folderUID" jsonschema:"required,description=The folder UID where the rule will be created"`
-	Condition         string               `json:"condition" jsonschema:"required,description=The query condition identifier (e.g. 'A'\\, 'B')"`
-	Data              []*models.AlertQuery `json:"data" jsonschema:"required,description=Array of query data objects"`
-	NoDataState       string               `json:"noDataState" jsonschema:"required,description=State when no data (NoData\\, Alerting\\, OK)"`
-	ExecErrState      string               `json:"execErrState" jsonschema:"required,description=State on execution error (NoData\\, Alerting\\, OK)"`
-	For               string               `json:"for" jsonschema:"required,description=Duration before alert fires (e.g. '5m')"`
-	Annotations       map[string]string    `json:"annotations,omitempty" jsonschema:"description=Optional annotations"`
-	Labels            map[string]string    `json:"labels,omitempty" jsonschema:"description=Optional labels"`
-	OrgID             int64                `json:"orgID" jsonschema:"required,description=The organization ID"`
-	DisableProvenance *bool                `json:"disableProvenance,omitempty" jsonschema:"description=If true\\, the alert will remain editable in the Grafana UI (sets X-Disable-Provenance header). If false\\, the alert will be marked with provenance 'api' and locked from UI editing. Defaults to true."`
+	UID               string            `json:"uid" jsonschema:"required,description=The UID of the alert rule to update"`
+	Title             string            `json:"title" jsonschema:"required,description=The title of the alert rule"`
+	RuleGroup         string            `json:"ruleGroup" jsonschema:"required,description=The rule group name"`
+	FolderUID         string            `json:"folderUID" jsonschema:"required,description=The folder UID where the rule will be created"`
+	Condition         string            `json:"condition" jsonschema:"required,description=The query condition identifier (e.g. 'A'\\, 'B')"`
+	Data              []*AlertQuery     `json:"data" jsonschema:"required,description=Array of alert query objects. RefID and relativeTimeRange are auto-assigned if omitted."`
+	NoDataState       string            `json:"noDataState" jsonschema:"required,description=State when no data (NoData\\, Alerting\\, OK)"`
+	ExecErrState      string            `json:"execErrState" jsonschema:"required,description=State on execution error (NoData\\, Alerting\\, OK)"`
+	For               string            `json:"for" jsonschema:"required,description=Duration before alert fires (e.g. '5m')"`
+	Annotations       map[string]string `json:"annotations,omitempty" jsonschema:"description=Optional annotations"`
+	Labels            map[string]string `json:"labels,omitempty" jsonschema:"description=Optional labels"`
+	OrgID             int64             `json:"orgID" jsonschema:"required,description=The organization ID"`
+	DisableProvenance *bool             `json:"disableProvenance,omitempty" jsonschema:"description=If true\\, the alert will remain editable in the Grafana UI (sets X-Disable-Provenance header). If false\\, the alert will be marked with provenance 'api' and locked from UI editing. Defaults to true."`
 }
 
 func (p UpdateAlertRuleParams) validate() error {
@@ -205,25 +299,25 @@ func (p ManageRulesReadParams) validate() error {
 
 // ManageRulesReadWriteParams is the param struct for the read-write version of alerting_manage_rules.
 type ManageRulesReadWriteParams struct {
-	Operation         string               `json:"operation" jsonschema:"required,enum=list,enum=get,enum=versions,enum=create,enum=update,enum=delete,description=The operation to perform: 'list'\\, 'get'\\, 'versions'\\, 'create'\\, 'update'\\, or 'delete'. To create a rule\\, use operation 'create' and provide all required fields in a single call. To update a rule\\, first use 'get' to retrieve its full configuration\\, then 'update' with all required fields plus your changes."`
-	RuleUID           string               `json:"rule_uid,omitempty" jsonschema:"description=The UID of the alert rule (required for 'get'\\, 'versions'\\, 'update'\\, 'delete'; optional for 'create')"`
-	RuleLimit         int                  `json:"rule_limit,omitempty" jsonschema:"default=200,description=Maximum number of rules to return (default 200\\, max 200). Requires Grafana 12.4+ (for 'list' operation)"`
-	DatasourceUID     *string              `json:"datasource_uid,omitempty" jsonschema:"description=Optional: UID of a Prometheus or Loki datasource to query for datasource-managed alert rules (for 'list' operation)"`
-	LabelSelectors    []Selector           `json:"label_selectors,omitempty" jsonschema:"description=Label matchers to filter alert rules (for 'list' operation)"`
-	LimitAlerts       int                  `json:"limit_alerts,omitempty" jsonschema:"description=Limit alert instances per rule. For list: 0 omits alerts. For get: <=0 defaults to 200. Max 200."`
-	SearchFolder      string               `json:"search_folder,omitempty" jsonschema:"description=Search folders by path using partial matching (for 'list' operation). Requires Grafana 12.4+. Mutually exclusive with folder_uid when used for filtering."`
-	Title             string               `json:"title,omitempty" jsonschema:"description=The title of the alert rule (required for 'create'\\, 'update')"`
-	RuleGroup         string               `json:"rule_group,omitempty" jsonschema:"description=The rule group name (required for 'create'\\, 'update')"`
-	FolderUID         string               `json:"folder_uid,omitempty" jsonschema:"description=The folder UID. For 'list': filter by exact folder UID (mutually exclusive with search_folder). For 'create'/'update': the folder to store the rule in (required)."`
-	Condition         string               `json:"condition,omitempty" jsonschema:"description=The query condition identifier\\, e.g. 'A'\\, 'B' (required for 'create'\\, 'update')"`
-	Data              []*models.AlertQuery `json:"data,omitempty" jsonschema:"description=Array of alert query objects (required for 'create' and 'update'). Example: [{refId: 'A'\\, datasourceUid: 'prometheus'\\, relativeTimeRange: {from: 600\\, to: 0}\\, model: {expr: 'vector(1)'\\, refId: 'A'}}]. Use datasourceUid '__expr__' for server-side expressions. The 'condition' field must reference one of the refIds."`
-	NoDataState       string               `json:"no_data_state,omitempty" jsonschema:"description=State when no data: NoData\\, Alerting\\, OK (required for 'create'\\, 'update')"`
-	ExecErrState      string               `json:"exec_err_state,omitempty" jsonschema:"description=State on execution error: NoData\\, Alerting\\, OK (required for 'create'\\, 'update')"`
-	For               string               `json:"for,omitempty" jsonschema:"description=Duration before alert fires\\, e.g. '5m' (required for 'create'\\, 'update')"`
-	Annotations       map[string]string    `json:"annotations,omitempty" jsonschema:"description=Optional annotations for the alert rule"`
-	Labels            map[string]string    `json:"labels,omitempty" jsonschema:"description=Optional labels for the alert rule"`
-	OrgID             int64                `json:"org_id,omitempty" jsonschema:"description=The organization ID (required for 'create'\\, 'update')"`
-	DisableProvenance *bool                `json:"disable_provenance,omitempty" jsonschema:"description=If true\\, the alert remains editable in the Grafana UI (sets X-Disable-Provenance header). Defaults to true."`
+	Operation         string            `json:"operation" jsonschema:"required,enum=list,enum=get,enum=versions,enum=create,enum=update,enum=delete,description=The operation to perform: 'list'\\, 'get'\\, 'versions'\\, 'create'\\, 'update'\\, or 'delete'. To create a rule\\, use operation 'create' and provide all required fields in a single call. To update a rule\\, first use 'get' to retrieve its full configuration\\, then 'update' with all required fields plus your changes."`
+	RuleUID           string            `json:"rule_uid,omitempty" jsonschema:"description=The UID of the alert rule (required for 'get'\\, 'versions'\\, 'update'\\, 'delete'; optional for 'create')"`
+	RuleLimit         int               `json:"rule_limit,omitempty" jsonschema:"default=200,description=Maximum number of rules to return (default 200\\, max 200). Requires Grafana 12.4+ (for 'list' operation)"`
+	DatasourceUID     *string           `json:"datasource_uid,omitempty" jsonschema:"description=Optional: UID of a Prometheus or Loki datasource to query for datasource-managed alert rules (for 'list' operation)"`
+	LabelSelectors    []Selector        `json:"label_selectors,omitempty" jsonschema:"description=Label matchers to filter alert rules (for 'list' operation)"`
+	LimitAlerts       int               `json:"limit_alerts,omitempty" jsonschema:"description=Limit alert instances per rule. For list: 0 omits alerts. For get: <=0 defaults to 200. Max 200."`
+	SearchFolder      string            `json:"search_folder,omitempty" jsonschema:"description=Search folders by path using partial matching (for 'list' operation). Requires Grafana 12.4+. Mutually exclusive with folder_uid when used for filtering."`
+	Title             string            `json:"title,omitempty" jsonschema:"description=The title of the alert rule (required for 'create'\\, 'update')"`
+	RuleGroup         string            `json:"rule_group,omitempty" jsonschema:"description=The rule group name (required for 'create'\\, 'update')"`
+	FolderUID         string            `json:"folder_uid,omitempty" jsonschema:"description=The folder UID. For 'list': filter by exact folder UID (mutually exclusive with search_folder). For 'create'/'update': the folder to store the rule in (required)."`
+	Condition         string            `json:"condition,omitempty" jsonschema:"description=The query condition identifier\\, e.g. 'A'\\, 'B' (required for 'create'\\, 'update')"`
+	Data              []*AlertQuery     `json:"data,omitempty" jsonschema:"description=Array of alert query objects (required for 'create' and 'update'). Example: [{datasourceUid: 'prometheus'\\, model: {expr: 'vector(1)'}}\\, {datasourceUid: '__expr__'\\, model: {type: 'threshold'\\, expression: 'A'\\, conditions: [{evaluator: {type: 'gt'\\, params: [1]}}]}}]. RefID and relativeTimeRange are auto-assigned if omitted. Use datasourceUid '__expr__' for server-side expressions. The 'condition' field must reference one of the refIds."`
+	NoDataState       string            `json:"no_data_state,omitempty" jsonschema:"description=State when no data: NoData\\, Alerting\\, OK (required for 'create'\\, 'update')"`
+	ExecErrState      string            `json:"exec_err_state,omitempty" jsonschema:"description=State on execution error: NoData\\, Alerting\\, OK (required for 'create'\\, 'update')"`
+	For               string            `json:"for,omitempty" jsonschema:"description=Duration before alert fires\\, e.g. '5m' (required for 'create'\\, 'update')"`
+	Annotations       map[string]string `json:"annotations,omitempty" jsonschema:"description=Optional annotations for the alert rule"`
+	Labels            map[string]string `json:"labels,omitempty" jsonschema:"description=Optional labels for the alert rule"`
+	OrgID             int64             `json:"org_id,omitempty" jsonschema:"description=The organization ID (required for 'create'\\, 'update')"`
+	DisableProvenance *bool             `json:"disable_provenance,omitempty" jsonschema:"description=If true\\, the alert remains editable in the Grafana UI (sets X-Disable-Provenance header). Defaults to true."`
 }
 
 func (p ManageRulesReadWriteParams) validate() error {
@@ -298,4 +392,3 @@ func (p ManageRulesReadWriteParams) toUpdateParams() UpdateAlertRuleParams {
 		DisableProvenance: p.DisableProvenance,
 	}
 }
-
