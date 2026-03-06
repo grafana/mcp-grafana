@@ -197,13 +197,18 @@ func (c *CapabilityCache) SetPreferredVersion(grafanaURL, apiGroup, version stri
 }
 
 // GetAPICapability returns the capability for a specific API group.
-// Returns APICapabilityUnknown if not set.
+// Returns APICapabilityUnknown if not set or if the entry has expired.
 func (c *CapabilityCache) GetAPICapability(grafanaURL, apiGroup string) APICapability {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
 	entry, ok := c.entries[grafanaURL]
 	if !ok {
+		return APICapabilityUnknown
+	}
+
+	// Respect TTL — expired entries should not influence routing decisions
+	if time.Since(entry.detectedAt) > c.ttl {
 		return APICapabilityUnknown
 	}
 

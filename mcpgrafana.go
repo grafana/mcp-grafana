@@ -800,6 +800,11 @@ func NewHTTPClient(ctx context.Context, config GrafanaConfig) *http.Client {
 	rt = NewOrgIDRoundTripper(rt, config.OrgID)
 	rt = otelhttp.NewTransport(rt)
 
+	// Apply extra headers if configured (matches NewGrafanaClient behavior)
+	if len(config.ExtraHeaders) > 0 {
+		rt = NewExtraHeadersRoundTripper(rt, config.ExtraHeaders)
+	}
+
 	return &http.Client{
 		Transport: rt,
 		Timeout:   timeout,
