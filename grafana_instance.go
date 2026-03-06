@@ -99,37 +99,30 @@ func (g *GrafanaInstance) DiscoverCapabilities(ctx context.Context) error {
 // HasKubernetesAPIs returns whether this Grafana instance supports kubernetes-style APIs.
 // It fetches /apis if the capability hasn't been discovered yet.
 func (g *GrafanaInstance) HasKubernetesAPIs(ctx context.Context) (bool, error) {
-	entry := g.cache.Get(g.baseURL)
-	if entry == nil {
+	hasAPIs, found := g.cache.HasKubernetesAPIs(g.baseURL)
+	if !found {
 		if err := g.DiscoverCapabilities(ctx); err != nil {
 			return false, err
 		}
-		entry = g.cache.Get(g.baseURL)
+		hasAPIs, found = g.cache.HasKubernetesAPIs(g.baseURL)
+		if !found {
+			return false, nil
+		}
 	}
-
-	if entry == nil {
-		return false, nil
-	}
-
-	return entry.hasKubernetesAPIs, nil
+	return hasAPIs, nil
 }
 
 // GetAPIGroupInfo returns information about a specific API group.
 // Returns nil if the API group is not available or kubernetes APIs aren't supported.
 func (g *GrafanaInstance) GetAPIGroupInfo(ctx context.Context, apiGroup string) (*APIGroupInfo, error) {
-	entry := g.cache.Get(g.baseURL)
-	if entry == nil {
+	info, found := g.cache.GetAPIGroupInfo(g.baseURL, apiGroup)
+	if !found {
 		if err := g.DiscoverCapabilities(ctx); err != nil {
 			return nil, err
 		}
-		entry = g.cache.Get(g.baseURL)
+		info, _ = g.cache.GetAPIGroupInfo(g.baseURL, apiGroup)
 	}
-
-	if entry == nil || !entry.hasKubernetesAPIs {
-		return nil, nil
-	}
-
-	return entry.apiGroups[apiGroup], nil
+	return info, nil
 }
 
 // GetAPICapability returns the current capability setting for a specific API group.

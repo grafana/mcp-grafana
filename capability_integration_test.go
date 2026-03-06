@@ -107,17 +107,20 @@ func TestDiscoverAPIs_Integration(t *testing.T) {
 	err := instance.DiscoverCapabilities(ctx)
 	require.NoError(t, err)
 
-	// Use baseURL (trimmed) to match the key used by DiscoverCapabilities
-	entry := instance.cache.Get(instance.baseURL)
-	require.NoError(t, err)
-	require.NotNil(t, entry)
+	// Use the locked accessor to check kubernetes API support
+	hasAPIs, found := instance.cache.HasKubernetesAPIs(instance.baseURL)
+	require.True(t, found, "cache entry should exist after DiscoverCapabilities")
 
-	t.Logf("Has kubernetes APIs: %v", entry.hasKubernetesAPIs)
+	t.Logf("Has kubernetes APIs: %v", hasAPIs)
 
-	if entry.hasKubernetesAPIs {
-		t.Logf("Discovered %d API groups:", len(entry.apiGroups))
-		for name, info := range entry.apiGroups {
-			t.Logf("  - %s: preferred=%s, versions=%v", name, info.PreferredVersion, info.AllVersions)
+	if hasAPIs {
+		// Use instance.GetAPIGroupInfo (which uses locked accessors) to inspect groups
+		for _, groupName := range []string{APIGroupDashboard, APIGroupFolder} {
+			info, err := instance.GetAPIGroupInfo(ctx, groupName)
+			require.NoError(t, err)
+			if info != nil {
+				t.Logf("  - %s: preferred=%s, versions=%v", groupName, info.PreferredVersion, info.AllVersions)
+			}
 		}
 	}
 }
