@@ -678,6 +678,13 @@ func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) (*QueryLokiLog
 		})
 	}
 
+	// Apply masking if masker is configured in context
+	if maskerValue := mcpgrafana.MaskerFromContext(ctx); maskerValue != nil {
+		if masker, ok := maskerValue.(*LogMasker); ok && masker != nil {
+			result.Data = masker.MaskEntries(result.Data)
+		}
+	}
+
 	return result, nil
 }
 
