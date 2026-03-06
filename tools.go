@@ -1,12 +1,14 @@
 package mcpgrafana
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"reflect"
+	"strconv"
 
 	"github.com/invopop/jsonschema"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -69,6 +71,191 @@ func MustTool[T any, R any](
 // ToolHandlerFunc is the type of a handler function for a tool.
 // T is the request parameter type (must be a struct with jsonschema tags), and R is the response type which can be a string, struct, or *mcp.CallToolResult.
 type ToolHandlerFunc[T any, R any] = func(ctx context.Context, request T) (R, error)
+
+// unmarshalWithIntConversion unmarshals JSON data into a target struct,
+// automatically converting string values to integer types for all integer-typed fields.
+// This allows MCP tool parameters to accept both string and integer values for integer fields.
+// Supports: int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64 and their pointer types.
+// Uses json.Number to preserve precision for large integers that would otherwise lose precision as float64.
+func unmarshalWithIntConversion(data []byte, target interface{}) error {
+	// Use json.NewDecoder with UseNumber() to preserve numeric precision
+	// Without this, all JSON numbers become float64, which only has 53 bits of mantissa precision.
+	// For int64/uint64 values larger than 2^53, precision would be silently lost.
+	var raw map[string]interface{}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(&raw); err != nil {
+		return err
+	}
+
+	// Get the type information of the target
+	targetVal := reflect.ValueOf(target)
+	if targetVal.Kind() != reflect.Ptr {
+		return errors.New("target must be a pointer")
+	}
+	targetVal = targetVal.Elem()
+	if targetVal.Kind() != reflect.Struct {
+		return errors.New("target must be a pointer to a struct")
+	}
+
+	// Process all fields including embedded structs
+	if err := processFieldsForIntConversion(raw, targetVal.Type()); err != nil {
+		return err
+	}
+
+	// Re-marshal the modified data and unmarshal into the target
+	modifiedData, err := json.Marshal(raw)
+	if err != nil {
+		return fmt.Errorf("failed to re-marshal modified data: %w", err)
+	}
+
+	if err := json.Unmarshal(modifiedData, target); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// isIntegerKind returns true if the given Kind represents an integer type
+func isIntegerKind(kind reflect.Kind) bool {
+	switch kind {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return true
+	}
+	return false
+}
+
+// processFieldsForIntConversion processes struct fields recursively, converting string/json.Number
+// values to integer types for integer-typed fields. It handles embedded structs.
+func processFieldsForIntConversion(raw map[string]interface{}, structType reflect.Type) error {
+	for i := 0; i < structType.NumField(); i++ {
+		field := structType.Field(i)
+
+		// Handle embedded (anonymous) structs recursively
+		if field.Anonymous && field.Type.Kind() == reflect.Struct {
+			if err := processFieldsForIntConversion(raw, field.Type); err != nil {
+				return err
+			}
+			continue
+		}
+
+		jsonTag := field.Tag.Get("json")
+		if jsonTag == "" || jsonTag == "-" {
+			continue
+		}
+
+		// Extract the JSON field name (before any comma)
+		jsonName := jsonTag
+		if commaIdx := len(jsonTag); commaIdx > 0 {
+			for idx, char := range jsonTag {
+				if char == ',' {
+					commaIdx = idx
+					break
+				}
+			}
+			jsonName = jsonTag[:commaIdx]
+		}
+
+		// Check if this field exists in the raw data
+		rawValue, exists := raw[jsonName]
+		if !exists || rawValue == nil {
+			continue
+		}
+
+		fieldType := field.Type
+		fieldKind := fieldType.Kind()
+
+		// Handle pointer types by unwrapping to the element type
+		if fieldKind == reflect.Ptr {
+			fieldType = fieldType.Elem()
+			fieldKind = fieldType.Kind()
+		}
+
+		// Only process if the target field is an integer type
+		if !isIntegerKind(fieldKind) {
+			continue
+		}
+
+		// Extract string value from either string or json.Number
+		var strVal string
+		switch v := rawValue.(type) {
+		case string:
+			strVal = v
+		case json.Number:
+			// json.Number preserves the original numeric string without precision loss
+			strVal = v.String()
+		default:
+			// Not a string or json.Number, skip conversion
+			continue
+		}
+
+		// Convert to appropriate integer type
+		convertedVal, err := convertToIntegerType(strVal, fieldKind, jsonName)
+		if err != nil {
+			return err
+		}
+
+		raw[jsonName] = convertedVal
+	}
+
+	return nil
+}
+
+// convertToIntegerType converts a string value to the specified integer type
+func convertToIntegerType(strVal string, fieldKind reflect.Kind, jsonName string) (interface{}, error) {
+	var err error
+	var convertedVal interface{}
+
+	switch fieldKind {
+	case reflect.Int:
+		var v int64
+		v, err = strconv.ParseInt(strVal, 10, 0)
+		convertedVal = int(v)
+	case reflect.Int8:
+		var v int64
+		v, err = strconv.ParseInt(strVal, 10, 8)
+		convertedVal = int8(v)
+	case reflect.Int16:
+		var v int64
+		v, err = strconv.ParseInt(strVal, 10, 16)
+		convertedVal = int16(v)
+	case reflect.Int32:
+		var v int64
+		v, err = strconv.ParseInt(strVal, 10, 32)
+		convertedVal = int32(v)
+	case reflect.Int64:
+		var v int64
+		v, err = strconv.ParseInt(strVal, 10, 64)
+		convertedVal = v
+	case reflect.Uint:
+		var v uint64
+		v, err = strconv.ParseUint(strVal, 10, 0)
+		convertedVal = uint(v)
+	case reflect.Uint8:
+		var v uint64
+		v, err = strconv.ParseUint(strVal, 10, 8)
+		convertedVal = uint8(v)
+	case reflect.Uint16:
+		var v uint64
+		v, err = strconv.ParseUint(strVal, 10, 16)
+		convertedVal = uint16(v)
+	case reflect.Uint32:
+		var v uint64
+		v, err = strconv.ParseUint(strVal, 10, 32)
+		convertedVal = uint32(v)
+	case reflect.Uint64:
+		var v uint64
+		v, err = strconv.ParseUint(strVal, 10, 64)
+		convertedVal = v
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert '%s' to %s for field '%s': %w", strVal, fieldKind, jsonName, err)
+	}
+
+	return convertedVal, nil
+}
 
 // ConvertTool converts a toolHandler function to an MCP Tool and ToolHandlerFunc.
 // The toolHandler must accept a context.Context and a struct with jsonschema tags for parameter documentation.
@@ -135,7 +322,7 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 		}
 
 		unmarshaledArgs := reflect.New(argType).Interface()
-		if err := json.Unmarshal(argBytes, unmarshaledArgs); err != nil {
+		if err := unmarshalWithIntConversion(argBytes, unmarshaledArgs); err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, "failed to unmarshal arguments")
 			return nil, fmt.Errorf("unmarshal args: %s", err)
@@ -318,22 +505,20 @@ func createJSONSchemaFromHandler(handler any) *jsonschema.Schema {
 	return inputSchema
 }
 
-var (
-	jsonSchemaReflector = jsonschema.Reflector{
-		BaseSchemaID:               "",
-		Anonymous:                  true,
-		AssignAnchor:               false,
-		AllowAdditionalProperties:  true,
-		RequiredFromJSONSchemaTags: true,
-		DoNotReference:             true,
-		ExpandedStruct:             true,
-		FieldNameTag:               "",
-		IgnoredTypes:               nil,
-		Lookup:                     nil,
-		Mapper:                     nil,
-		Namer:                      nil,
-		KeyNamer:                   nil,
-		AdditionalFields:           nil,
-		CommentMap:                 nil,
-	}
-)
+var jsonSchemaReflector = jsonschema.Reflector{
+	BaseSchemaID:               "",
+	Anonymous:                  true,
+	AssignAnchor:               false,
+	AllowAdditionalProperties:  true,
+	RequiredFromJSONSchemaTags: true,
+	DoNotReference:             true,
+	ExpandedStruct:             true,
+	FieldNameTag:               "",
+	IgnoredTypes:               nil,
+	Lookup:                     nil,
+	Mapper:                     nil,
+	Namer:                      nil,
+	KeyNamer:                   nil,
+	AdditionalFields:           nil,
+	CommentMap:                 nil,
+}
