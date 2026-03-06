@@ -86,6 +86,11 @@ type capabilityCacheEntry struct {
 	// Key is the API group name.
 	perAPICapability map[string]APICapability
 
+	// perAPINamespace tracks the namespace to use for each API area.
+	// This is extracted from 406 error messages for multi-org Grafana setups.
+	// Key is the API group name.
+	perAPINamespace map[string]string
+
 	// detectedAt is when this entry was created.
 	detectedAt time.Time
 }
@@ -194,6 +199,46 @@ func (c *CapabilityCache) SetPreferredVersion(grafanaURL, apiGroup, version stri
 	}
 
 	info.PreferredVersion = version
+}
+
+// SetNamespace sets the namespace for a specific API group.
+// This is used when a 406 error indicates a namespace (e.g. in multi-org Grafana setups).
+func (c *CapabilityCache) SetNamespace(grafanaURL, apiGroup, namespace string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	entry, ok := c.entries[grafanaURL]
+	if !ok {
+		return
+	}
+
+	if entry.perAPINamespace == nil {
+		entry.perAPINamespace = make(map[string]string)
+	}
+
+	entry.perAPINamespace[apiGroup] = namespace
+}
+
+// GetNamespace returns the cached namespace for a specific API group.
+// Returns an empty string if not set or if the entry has expired.
+func (c *CapabilityCache) GetNamespace(grafanaURL, apiGroup string) string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	entry, ok := c.entries[grafanaURL]
+	if !ok {
+		return ""
+	}
+
+	if time.Since(entry.detectedAt) > c.ttl {
+		return ""
+	}
+
+	if entry.perAPINamespace == nil {
+		return ""
+	}
+
+	return entry.perAPINamespace[apiGroup]
 }
 
 // GetAPICapability returns the capability for a specific API group.

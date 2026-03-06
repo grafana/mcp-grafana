@@ -152,6 +152,22 @@ func (g *GrafanaInstance) SetPreferredVersion(apiGroup, version string) {
 		"version", version)
 }
 
+// SetNamespace sets the namespace for an API group.
+// This is called when a 406 error indicates a namespace (e.g. in multi-org Grafana setups).
+func (g *GrafanaInstance) SetNamespace(apiGroup, namespace string) {
+	g.cache.SetNamespace(g.baseURL, apiGroup, namespace)
+	slog.Debug("Updated API namespace from 406",
+		"url", g.baseURL,
+		"apiGroup", apiGroup,
+		"namespace", namespace)
+}
+
+// GetNamespace returns the cached namespace for an API group.
+// Returns an empty string if not set.
+func (g *GrafanaInstance) GetNamespace(apiGroup string) string {
+	return g.cache.GetNamespace(g.baseURL, apiGroup)
+}
+
 // ShouldUseKubernetesAPI determines whether to use kubernetes-style APIs for the given API group.
 // Returns true if we've detected that legacy APIs are not available (406 received).
 func (g *GrafanaInstance) ShouldUseKubernetesAPI(apiGroup string) bool {

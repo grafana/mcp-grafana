@@ -76,6 +76,10 @@ func getDashboardByUID(ctx context.Context, args GetDashboardByUIDParams) (*mode
 		// discovery preferred version (e.g. v1beta1).
 		instance.SetPreferredVersion(apiGroup, version)
 
+		// Cache the namespace so subsequent calls use the correct namespace
+		// (important for multi-org Grafana setups where namespace differs from "default").
+		instance.SetNamespace(apiGroup, namespace)
+
 		slog.Debug("Using kubernetes dashboard API",
 			"apiGroup", apiGroup,
 			"version", version,
@@ -111,7 +115,10 @@ func getDashboardByUIDKubernetes(ctx context.Context, instance *mcpgrafana.Grafa
 		return nil, fmt.Errorf("get dashboard by uid %s: couldn't determine kubernetes API version: %w", args.UID, err)
 	}
 
-	return getDashboardByUIDKubernetesWithVersion(ctx, instance, args, version, "")
+	// Get the cached namespace (may be empty, which defaults to "default")
+	namespace := instance.GetNamespace(mcpgrafana.APIGroupDashboard)
+
+	return getDashboardByUIDKubernetesWithVersion(ctx, instance, args, version, namespace)
 }
 
 // getDashboardByUIDKubernetesWithVersion retrieves a dashboard using the kubernetes-style API
