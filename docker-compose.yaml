@@ -134,3 +134,12 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+  mysql:
+    image: mysql:8.0.45-debian@sha256:1ae7ba07e714856c61aa0d559a8f1a788eb8f25bd0b5b71738a1bdd6798bc022
+    restart: always
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: password
+    volumes:
+      - ./testdata/datasources/mysql-seed.sql:/docker-entrypoint-initdb.d/seed.sql

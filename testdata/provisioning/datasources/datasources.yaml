@@ -87,3 +87,14 @@ datasources:
       accessKey: test
       secretKey: test
     isDefault: false
+  - name: MySQL 
+    uid: mysql
+    type: mysql
+    url: mysql:3306
+    user: grafana
+    jsonData:
+      database: infrastructure_logs
+      tlsSkipVerify: true
+    secureJsonData:
+      password: password
+    isDefault: false
