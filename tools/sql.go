@@ -285,11 +285,10 @@ func listSQLTableSchema(ctx context.Context, args GetSQLTableSchemaArgs) (*ListS
 type SQLQueryArgs struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the SQL datasource"`
 	Database      string `json:"database,omitempty" jsonschema:"description=Database name to filter tables (lists default database if not specified)"`
-	//TODO: update macros for each datasource
-	Query string `json:"query" jsonschema:"required,description=Raw SQL query. Supports  macros: $__timeFilter(column) for time filtering\\, $__from/$__to for millisecond timestamps\\, $__interval/$__interval_ms for calculated intervals\\, and ${varname} for variable substitution."`
-	Start string `json:"start,omitempty" jsonschema:"description=Start time for the query. Time formats: 'now-1h'\\, '2026-02-02T19:00:00Z'\\, '1738519200000' (Unix ms). Defaults to 1 hour ago."`
-	End   string `json:"end,omitempty" jsonschema:"description=End time for the query. Time formats: 'now'\\, '2026-02-02T19:00:00Z'\\, '1738519200000' (Unix ms). Defaults to now."`
-	Limit uint   `json:"limit,omitempty" jsonschema:"description=Maximum number of rows to return. Default: 100\\, Max: 1000. If query doesn't contain LIMIT\\, one will be appended."`
+	Query         string `json:"query" jsonschema:"required,description=Raw SQL query. Supports Grafana macros for time-series queries including $__time(column), $__timeEpoch(column), $__timeFilter(column), $__timeFrom(), $__timeTo(), $__timeGroup(column\\,'interval'\\,[fill]), $__timeGroupAlias(column\\,'interval'), $__unixEpochFilter(column), $__unixEpochFrom(), $__unixEpochTo(), $__unixEpochNanoFilter(column), $__unixEpochNanoFrom(), $__unixEpochNanoTo(), $__unixEpochGroup(column\\,'interval'\\,[fill]), $__unixEpochGroupAlias(column\\,'interval'\\,[fill]). Also supports $__from/$__to (time range in ms), $__interval/$__interval_ms (auto interval), and ${varname} for variable substitution. Macro expansion depends on the SQL datasource (MySQL, PostgreSQL, MSSQL)."`
+	Start         string `json:"start,omitempty" jsonschema:"description=Start time for the query. Time formats: 'now-1h'\\, '2026-02-02T19:00:00Z'\\, '1738519200000' (Unix ms). Defaults to 1 hour ago."`
+	End           string `json:"end,omitempty" jsonschema:"description=End time for the query. Time formats: 'now'\\, '2026-02-02T19:00:00Z'\\, '1738519200000' (Unix ms). Defaults to now."`
+	Limit         uint   `json:"limit,omitempty" jsonschema:"description=Maximum number of rows to return. Default: 100\\, Max: 1000. If query doesn't contain LIMIT\\, one will be appended."`
 }
 
 type SQLQueryResponse struct {
@@ -350,8 +349,8 @@ func sqlQuery(ctx context.Context, args SQLQueryArgs) (*SQLQueryResponse, error)
 			Query:          args.Query,
 			ProcessedQuery: query,
 		})
-		result.ProcessedQuery = query
 	}
+	result.ProcessedQuery = query
 
 	return &result, nil
 }

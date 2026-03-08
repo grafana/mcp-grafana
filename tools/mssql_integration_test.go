@@ -9,14 +9,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const mysqlTestDatasourceUID = "mysql"
+const mssqlTestDatasourceUID = "mssql"
 
-func TestMySQLIntegration_ListDatabases(t *testing.T) {
+func TestMSSQLIntegration_ListDatabases(t *testing.T) {
 	ctx := newTestContext()
-	t.Logf("Testing ListDatabases on datasource: %s", mysqlTestDatasourceUID)
+	t.Logf("Testing ListDatabases on datasource: %s", mssqlTestDatasourceUID)
 
 	result, err := listSQLDatabases(ctx, ListSQLDatabaseArgs{
-		DatasourceUID: mysqlTestDatasourceUID,
+		DatasourceUID: mssqlTestDatasourceUID,
 	})
 
 	require.NoError(t, err)
@@ -26,79 +26,70 @@ func TestMySQLIntegration_ListDatabases(t *testing.T) {
 
 	found := false
 	for _, dbName := range result.Databases {
-		if dbName == "infrastructure_logs" {
+		if dbName == "shop_performance" || dbName == "infrastructure_logs" {
 			found = true
 			break
 		}
 	}
-	assert.True(t, found, "Should find 'infrastructure_logs' database in %v", result.Databases)
+	assert.True(t, found, "Should find at least one seeded database name in %v", result.Databases)
 }
 
-func TestMySQLIntegration_InvalidDatasource(t *testing.T) {
+func TestMSSQLIntegration_ListTables(t *testing.T) {
 	ctx := newTestContext()
-	uid := "nonexistent-datasource"
-	t.Logf("Testing InvalidDatasource with UID: %s", uid)
 
-	_, err := listSQLDatabases(ctx, ListSQLDatabaseArgs{
-		DatasourceUID: uid,
-	})
+	t.Run("Default Schema", func(t *testing.T) {
+		db := "infrastructure_logs"
+		t.Logf("Testing ListTables on database: %s", db)
+		result, err := listSQLTables(ctx, ListSQLTablesArgs{
+			DatasourceUID: mssqlTestDatasourceUID,
+			Database:      db,
+		})
 
-	require.Error(t, err, "Should error with invalid datasource")
-	t.Logf("Received expected error: %v", err)
-}
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		t.Logf("Found %d tables in %s: %v", len(result.Tables), db, result.Tables)
 
-func TestMySQLIntegration_WrongDatasourceType(t *testing.T) {
-	ctx := newTestContext()
-	uid := "prometheus"
-	t.Logf("Testing WrongDatasourceType with UID: %s", uid)
-
-	// Use Prometheus which is not an SQL datasource
-	_, err := listSQLDatabases(ctx, ListSQLDatabaseArgs{
-		DatasourceUID: uid,
-	})
-
-	require.Error(t, err, "Should error with wrong datasource type")
-	assert.Contains(t, err.Error(), "is not an SQL Datasource")
-	t.Logf("Received expected error: %v", err)
-}
-
-func TestMySQLIntegration_ListTables(t *testing.T) {
-	ctx := newTestContext()
-	db := "infrastructure_logs"
-	t.Logf("Testing ListTables on database: %s", db)
-
-	result, err := listSQLTables(ctx, ListSQLTablesArgs{
-		DatasourceUID: mysqlTestDatasourceUID,
-		Database:      db,
-	})
-
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	t.Logf("Found %d tables in %s: %v", len(result.Tables), db, result.Tables)
-
-	// Should find 'logs' and 'host_metrics' tables
-	foundLogs := false
-	foundHostMetrics := false
-	for _, tableName := range result.Tables {
-		if tableName == "logs" {
-			foundLogs = true
+		foundLogs := false
+		for _, tableName := range result.Tables {
+			if tableName == "dbo.logs" {
+				foundLogs = true
+				break
+			}
 		}
-		if tableName == "host_metrics" {
-			foundHostMetrics = true
+		assert.True(t, foundLogs, "Should find 'dbo.logs' table in %v", result.Tables)
+	})
+
+	t.Run("Custom Schema", func(t *testing.T) {
+		db := "shop_performance"
+		t.Logf("Testing ListTables on database: %s", db)
+		result, err := listSQLTables(ctx, ListSQLTablesArgs{
+			DatasourceUID: mssqlTestDatasourceUID,
+			Database:      db,
+		})
+
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		t.Logf("Found %d tables in %s: %v", len(result.Tables), db, result.Tables)
+
+		foundSales := false
+		for _, tableName := range result.Tables {
+			if tableName == "reporting.sales" {
+				foundSales = true
+				break
+			}
 		}
-	}
-	assert.True(t, foundLogs, "Should find 'logs' table in %v", result.Tables)
-	assert.True(t, foundHostMetrics, "Should find 'host_metrics' table in %v", result.Tables)
+		assert.True(t, foundSales, "Should find 'reporting.sales' table in %v", result.Tables)
+	})
 }
 
-func TestMySQLIntegration_ListTableSchemas(t *testing.T) {
+func TestMSSQLIntegration_ListTableSchemas(t *testing.T) {
 	ctx := newTestContext()
-	db := "infrastructure_logs"
-	table := "logs"
+	db := "shop_performance"
+	table := "reporting.sales"
 	t.Logf("Testing ListTableSchema for table: %s.%s", db, table)
 
 	result, err := listSQLTableSchema(ctx, GetSQLTableSchemaArgs{
-		DatasourceUID: mysqlTestDatasourceUID,
+		DatasourceUID: mssqlTestDatasourceUID,
 		Database:      db,
 		Tables:        table,
 	})
@@ -113,11 +104,10 @@ func TestMySQLIntegration_ListTableSchemas(t *testing.T) {
 	t.Logf("Fields for %s: %v", table, schema.Fields)
 	assert.Equal(t, table, schema.Name)
 
-	// Verify required columns are present in schema
-	assert.Subset(t, schema.Fields, []string{"id", "timestamp", "body", "service_name", "severity_text", "trace_id"})
+	assert.Subset(t, schema.Fields, []string{"id", "timestamp", "product_name", "amount"})
 }
 
-func TestMySQLIntegration_ExecuteQuery(t *testing.T) {
+func TestMSSQLIntegration_ExecuteQuery(t *testing.T) {
 	ctx := newTestContext()
 
 	queries := []struct {
@@ -126,19 +116,19 @@ func TestMySQLIntegration_ExecuteQuery(t *testing.T) {
 	}{
 		{
 			name:  "Simple Select",
-			query: "SELECT * FROM infrastructure_logs.logs LIMIT 5",
+			query: "SELECT * FROM infrastructure_logs.dbo.logs",
 		},
 		{
-			name:  "Join",
-			query: "SELECT l.id, h.host FROM infrastructure_logs.logs l JOIN infrastructure_logs.host_metrics h ON l.id = h.id LIMIT 5",
+			name:  "Cross Schema Query",
+			query: "SELECT s.product_name, s.amount FROM shop_performance.reporting.sales s",
 		},
 		{
-			name:  "Union",
-			query: "SELECT id FROM infrastructure_logs.logs UNION SELECT id FROM infrastructure_logs.host_metrics LIMIT 5",
+			name:  "Join Across Databases",
+			query: "SELECT l.id, h.host FROM infrastructure_logs.dbo.logs l JOIN infrastructure_logs.dbo.host_metrics h ON l.id = h.id",
 		},
 		{
-			name:  "CTE",
-			query: "WITH service_logs AS (SELECT * FROM infrastructure_logs.logs) SELECT * FROM service_logs LIMIT 5",
+			name:  "Union Across Schemas",
+			query: "SELECT product_name FROM shop_performance.reporting.sales UNION SELECT service_name FROM shop_performance.dbo.api_metrics",
 		},
 	}
 
@@ -146,100 +136,64 @@ func TestMySQLIntegration_ExecuteQuery(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Logf("Executing Query: %s", tc.query)
 			result, err := sqlQuery(ctx, SQLQueryArgs{
-				DatasourceUID: mysqlTestDatasourceUID,
+				DatasourceUID: mssqlTestDatasourceUID,
 				Query:         tc.query,
+				Limit:         5,
 			})
 
 			require.NoError(t, err)
 			require.NotNil(t, result)
-
 			require.NotNil(t, result.SQLQueryResult)
-			require.Empty(t, result.Error, "should not have an error: %s", result.Error)
-			require.NotEmpty(t, result.Frames, "should have at least one frame")
+			require.Empty(t, result.Error, "Should not have query error: %s", result.Error)
 			t.Logf("Received %d frames, first frame has %d rows", len(result.Frames), len(result.Frames[0].Rows))
+			require.NotEmpty(t, result.Frames)
 		})
 	}
 }
 
-func TestMySQLIntegration_TimeRangeQuery(t *testing.T) {
+func TestMSSQLIntegration_TimeRangeQuery(t *testing.T) {
 	ctx := newTestContext()
+	query := "SELECT host, [timestamp] as time FROM infrastructure_logs.dbo.host_metrics WHERE $__timeFilter([timestamp])"
+	t.Logf("Executing TimeRangeQuery: %s", query)
 
-	t.Run("Standard Time Filter", func(t *testing.T) {
-		query := "SELECT * FROM infrastructure_logs.logs WHERE $__timeFilter(timestamp) LIMIT 10"
-		t.Logf("Executing Standard Time Filter: %s", query)
-		result, err := sqlQuery(ctx, SQLQueryArgs{
-			DatasourceUID: mysqlTestDatasourceUID,
-			Query:         query,
-			Start:         "now-6h",
-			End:           "now",
-		})
-		require.NoError(t, err)
-		require.NotNil(t, result)
-		require.NotNil(t, result.SQLQueryResult)
-		require.Empty(t, result.Error)
-		require.NotEmpty(t, result.Frames)
-		t.Logf("Processed query: %s", result.ProcessedQuery)
+	result, err := sqlQuery(ctx, SQLQueryArgs{
+		DatasourceUID: mssqlTestDatasourceUID,
+		Query:         query,
+		Start:         "now-1d",
+		End:           "now",
+		Limit:         5,
 	})
 
-	t.Run("Time Alias Filter", func(t *testing.T) {
-		query := "SELECT host, timestamp as time FROM infrastructure_logs.host_metrics WHERE $__timeFilter(timestamp) LIMIT 5"
-		t.Logf("Executing Time Alias Filter: %s", query)
-		result, err := sqlQuery(ctx, SQLQueryArgs{
-			DatasourceUID: mysqlTestDatasourceUID,
-			Query:         query,
-			Start:         "now-1d",
-			End:           "now",
-		})
-		require.NoError(t, err)
-		require.NotNil(t, result)
-		require.NotNil(t, result.SQLQueryResult)
-		require.Empty(t, result.Error)
-		require.NotEmpty(t, result.Frames)
-		t.Logf("Processed query: %s", result.ProcessedQuery)
-
-		if len(result.Frames) > 0 {
-			frame := result.Frames[0]
-			// Verify columns contain "host" and "time"
-			foundHost := false
-			foundTime := false
-			for _, col := range frame.Columns {
-				if col == "host" {
-					foundHost = true
-				}
-				if col == "time" {
-					foundTime = true
-				}
-			}
-			assert.True(t, foundHost, "should have found 'host' column in %v", frame.Columns)
-			assert.True(t, foundTime, "should have found 'time' column in %v", frame.Columns)
-		}
-	})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.NotNil(t, result.SQLQueryResult)
+	require.Empty(t, result.Error)
+	require.NotEmpty(t, result.Frames)
+	t.Logf("Processed query: %s", result.ProcessedQuery)
 }
 
-func TestMySQLIntegration_LimitTests(t *testing.T) {
+func TestMSSQLIntegration_LimitTests(t *testing.T) {
 	ctx := newTestContext()
 
 	t.Run("Default Limit", func(t *testing.T) {
-		query := "SELECT * FROM infrastructure_logs.logs"
+		query := "SELECT * FROM infrastructure_logs.dbo.logs"
 		t.Logf("Testing Default Limit for: %s", query)
 		result, err := sqlQuery(ctx, SQLQueryArgs{
-			DatasourceUID: mysqlTestDatasourceUID,
-			Query:         query, // No limit in query
+			DatasourceUID: mssqlTestDatasourceUID,
+			Query:         query,
 		})
-
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		t.Logf("Processed Query: %s", result.ProcessedQuery)
-		// ProcessedQuery should contain limit 100 by default (wrapper logic)
-		assert.Contains(t, result.ProcessedQuery, "LIMIT 100")
+		assert.Contains(t, result.ProcessedQuery, "TOP 100", "Default limit 100 should be applied")
 	})
 
-	t.Run("Applied Explicit Limit", func(t *testing.T) {
-		limit := uint(5)
-		query := "SELECT * FROM infrastructure_logs.logs"
+	t.Run("Manual Limit", func(t *testing.T) {
+		limit := uint(2)
+		query := "SELECT * FROM infrastructure_logs.dbo.logs"
 		t.Logf("Testing Manual Limit (%d) for: %s", limit, query)
 		result, err := sqlQuery(ctx, SQLQueryArgs{
-			DatasourceUID: mysqlTestDatasourceUID,
+			DatasourceUID: mssqlTestDatasourceUID,
 			Query:         query,
 			Limit:         limit,
 		})
@@ -247,21 +201,21 @@ func TestMySQLIntegration_LimitTests(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		t.Logf("Processed Query: %s", result.ProcessedQuery)
-
+		assert.Contains(t, result.ProcessedQuery, "TOP 2", "Manual limit 2 should be applied")
 		if len(result.Frames) > 0 {
 			assert.LessOrEqual(t, len(result.Frames[0].Rows), int(limit))
 		}
 	})
 }
 
-func TestMySQLIntegration_ResponseFormat(t *testing.T) {
+func TestMSSQLIntegration_ResponseFormat(t *testing.T) {
 	ctx := newTestContext()
 
 	t.Run("Frame Structure", func(t *testing.T) {
-		query := "SELECT id, severity_text, service_name FROM infrastructure_logs.logs LIMIT 3"
+		query := "SELECT TOP 3 id, severity_text, service_name FROM infrastructure_logs.dbo.logs"
 		t.Logf("Executing query for frame structure validation: %s", query)
 		result, err := sqlQuery(ctx, SQLQueryArgs{
-			DatasourceUID: mysqlTestDatasourceUID,
+			DatasourceUID: mssqlTestDatasourceUID,
 			Query:         query,
 		})
 
@@ -296,10 +250,10 @@ func TestMySQLIntegration_ResponseFormat(t *testing.T) {
 	})
 
 	t.Run("Numeric And String Types", func(t *testing.T) {
-		query := "SELECT id, cpu_usage, host FROM infrastructure_logs.host_metrics LIMIT 2"
+		query := "SELECT TOP 2 id, cpu_usage, host FROM infrastructure_logs.dbo.host_metrics"
 		t.Logf("Executing query for type validation: %s", query)
 		result, err := sqlQuery(ctx, SQLQueryArgs{
-			DatasourceUID: mysqlTestDatasourceUID,
+			DatasourceUID: mssqlTestDatasourceUID,
 			Query:         query,
 		})
 
@@ -327,11 +281,12 @@ func TestMySQLIntegration_ResponseFormat(t *testing.T) {
 	})
 
 	t.Run("Cross Database Join Response", func(t *testing.T) {
-		query := "SELECT l.id, h.host, h.cpu_usage FROM infrastructure_logs.logs l JOIN infrastructure_logs.host_metrics h ON l.id = h.id LIMIT 5"
+		query := "SELECT l.id, h.host, h.cpu_usage FROM infrastructure_logs.dbo.logs l JOIN infrastructure_logs.dbo.host_metrics h ON l.id = h.id"
 		t.Logf("Executing cross-database join query: %s", query)
 		result, err := sqlQuery(ctx, SQLQueryArgs{
-			DatasourceUID: mysqlTestDatasourceUID,
+			DatasourceUID: mssqlTestDatasourceUID,
 			Query:         query,
+			Limit:         5,
 		})
 
 		require.NoError(t, err)
@@ -351,10 +306,10 @@ func TestMySQLIntegration_ResponseFormat(t *testing.T) {
 	})
 
 	t.Run("Error Response Format", func(t *testing.T) {
-		query := "SELECT * FROM nonexistent_db.nonexistent_table"
+		query := "SELECT * FROM nonexistent_db.dbo.nonexistent_table"
 		t.Logf("Executing invalid query to test error format: %s", query)
 		result, err := sqlQuery(ctx, SQLQueryArgs{
-			DatasourceUID: mysqlTestDatasourceUID,
+			DatasourceUID: mssqlTestDatasourceUID,
 			Query:         query,
 			Limit:         1,
 		})
@@ -370,15 +325,15 @@ func TestMySQLIntegration_ResponseFormat(t *testing.T) {
 	})
 }
 
-func TestMySQLIntegration_MultiTableSchema(t *testing.T) {
+func TestMSSQLIntegration_MultiTableSchema(t *testing.T) {
 	ctx := newTestContext()
 
 	t.Run("Two Tables Same Database", func(t *testing.T) {
-		tables := "logs, host_metrics"
+		tables := "dbo.logs, dbo.host_metrics"
 		db := "infrastructure_logs"
 		t.Logf("Testing multi-table schema for: %s in database: %s", tables, db)
 		result, err := listSQLTableSchema(ctx, GetSQLTableSchemaArgs{
-			DatasourceUID: mysqlTestDatasourceUID,
+			DatasourceUID: mssqlTestDatasourceUID,
 			Database:      db,
 			Tables:        tables,
 		})
@@ -388,27 +343,27 @@ func TestMySQLIntegration_MultiTableSchema(t *testing.T) {
 		require.Empty(t, result.Errors, "Should have no errors, got: %v", result.Errors)
 		t.Logf("Schemas returned: %d", len(result.Schemas))
 
-		// Validate logs schema
-		logsSchema, ok := result.Schemas["logs"]
-		require.True(t, ok, "Should have schema for logs in %v", result.Schemas)
-		t.Logf("logs fields: %v", logsSchema.Fields)
-		assert.Equal(t, "logs", logsSchema.Name)
-		assert.Subset(t, logsSchema.Fields, []string{"id", "timestamp", "body", "severity_text", "trace_id"})
+		// Validate dbo.logs schema
+		logsSchema, ok := result.Schemas["dbo.logs"]
+		require.True(t, ok, "Should have schema for dbo.logs in %v", result.Schemas)
+		t.Logf("dbo.logs fields: %v", logsSchema.Fields)
+		assert.Equal(t, "dbo.logs", logsSchema.Name)
+		assert.Subset(t, logsSchema.Fields, []string{"id", "timestamp", "body", "severity_text"})
 
-		// Validate host_metrics schema
-		metricsSchema, ok := result.Schemas["host_metrics"]
-		require.True(t, ok, "Should have schema for host_metrics in %v", result.Schemas)
-		t.Logf("host_metrics fields: %v", metricsSchema.Fields)
-		assert.Equal(t, "host_metrics", metricsSchema.Name)
+		// Validate dbo.host_metrics schema
+		metricsSchema, ok := result.Schemas["dbo.host_metrics"]
+		require.True(t, ok, "Should have schema for dbo.host_metrics in %v", result.Schemas)
+		t.Logf("dbo.host_metrics fields: %v", metricsSchema.Fields)
+		assert.Equal(t, "dbo.host_metrics", metricsSchema.Name)
 		assert.Subset(t, metricsSchema.Fields, []string{"id", "host", "cpu_usage", "mem_usage"})
 	})
 
-	t.Run("Tables From Different Database", func(t *testing.T) {
-		tables := "api_metrics"
+	t.Run("Cross Schema Tables", func(t *testing.T) {
+		tables := "dbo.api_metrics, reporting.sales"
 		db := "shop_performance"
-		t.Logf("Testing multi-table schema for: %s in database: %s", tables, db)
+		t.Logf("Testing multi-table schema across schemas: %s in database: %s", tables, db)
 		result, err := listSQLTableSchema(ctx, GetSQLTableSchemaArgs{
-			DatasourceUID: mysqlTestDatasourceUID,
+			DatasourceUID: mssqlTestDatasourceUID,
 			Database:      db,
 			Tables:        tables,
 		})
@@ -417,20 +372,27 @@ func TestMySQLIntegration_MultiTableSchema(t *testing.T) {
 		require.NotNil(t, result)
 		require.Empty(t, result.Errors, "Should have no errors, got: %v", result.Errors)
 		t.Logf("Total schemas returned: %d", len(result.Schemas))
+		assert.Equal(t, 2, len(result.Schemas), "Should have 2 schemas")
 
-		// Validate api_metrics schema from shop_performance
-		apiSchema, ok := result.Schemas["api_metrics"]
-		require.True(t, ok, "Should have schema for api_metrics")
-		t.Logf("api_metrics fields: %v", apiSchema.Fields)
-		assert.Subset(t, apiSchema.Fields, []string{"endpoint", "status_code", "latency_ms", "service_name"})
+		// Validate dbo.api_metrics schema
+		apiSchema, ok := result.Schemas["dbo.api_metrics"]
+		require.True(t, ok, "Should have schema for dbo.api_metrics")
+		t.Logf("dbo.api_metrics fields: %v", apiSchema.Fields)
+		assert.Subset(t, apiSchema.Fields, []string{"endpoint", "status_code", "latency_ms"})
+
+		// Validate reporting.sales schema
+		salesSchema, ok := result.Schemas["reporting.sales"]
+		require.True(t, ok, "Should have schema for reporting.sales")
+		t.Logf("reporting.sales fields: %v", salesSchema.Fields)
+		assert.Subset(t, salesSchema.Fields, []string{"product_name", "amount"})
 	})
 
 	t.Run("Field Types Validation", func(t *testing.T) {
-		table := "logs"
-		db := "infrastructure_logs"
+		table := "dbo.api_metrics"
+		db := "shop_performance"
 		t.Logf("Testing field type information for: %s in %s", table, db)
 		result, err := listSQLTableSchema(ctx, GetSQLTableSchemaArgs{
-			DatasourceUID: mysqlTestDatasourceUID,
+			DatasourceUID: mssqlTestDatasourceUID,
 			Database:      db,
 			Tables:        table,
 		})
@@ -447,16 +409,16 @@ func TestMySQLIntegration_MultiTableSchema(t *testing.T) {
 			assert.NotEmpty(t, field.Type, "Field %s should have a type", fieldName)
 		}
 
-		// Validate specific MySQL types
-		assert.Subset(t, schema.Fields, []string{"id", "body", "severity_text"})
+		// Validate specific MSSQL types
+		assert.Subset(t, schema.Fields, []string{"latency_ms", "endpoint", "status_code"})
 	})
 
 	t.Run("Mixed Valid And Invalid Tables", func(t *testing.T) {
-		tables := "logs, nonexistent_table"
+		tables := "dbo.logs, dbo.nonexistent_table"
 		db := "infrastructure_logs"
 		t.Logf("Testing multi-table with invalid table: %s in %s", tables, db)
 		result, err := listSQLTableSchema(ctx, GetSQLTableSchemaArgs{
-			DatasourceUID: mysqlTestDatasourceUID,
+			DatasourceUID: mssqlTestDatasourceUID,
 			Database:      db,
 			Tables:        tables,
 		})
@@ -466,12 +428,12 @@ func TestMySQLIntegration_MultiTableSchema(t *testing.T) {
 		t.Logf("Schemas: %d, Errors: %v", len(result.Schemas), result.Errors)
 
 		// Valid table should still return its schema
-		logsSchema, ok := result.Schemas["logs"]
+		logsSchema, ok := result.Schemas["dbo.logs"]
 		if ok {
-			t.Logf("logs schema returned successfully with %d fields", len(logsSchema.Fields))
+			t.Logf("dbo.logs schema returned successfully with %d fields", len(logsSchema.Fields))
 			assert.NotEmpty(t, logsSchema.Fields)
 		} else {
-			t.Logf("logs schema not present (may be affected by batch error)")
+			t.Logf("dbo.logs schema not present (may be affected by batch error)")
 		}
 	})
 }
