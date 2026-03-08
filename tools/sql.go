@@ -21,6 +21,7 @@ var (
 var SQLDatasourceTypes = []string{
 	sql.MySQLDatasourceType,
 	sql.MSSQLDatasourceType,
+	sql.PostgresDatasourceType,
 }
 
 type ListSQLDatabaseArgs struct {
@@ -73,6 +74,8 @@ func sqlDataSource(ctx context.Context, uid string) (sql.SQLDataSource, error) {
 		return sql.NewMySqlDataSource(), nil
 	case sql.MSSQLDatasourceType:
 		return sql.NewMSSqlDataSource(), nil
+	case sql.PostgresDatasourceType:
+		return sql.NewPostgresDataSource(), nil
 	default:
 		return nil, fmt.Errorf("datasource %s of type %s,is not an SQL Datasource", uid, ds.Type)
 	}
@@ -111,7 +114,7 @@ func listSQLDatabases(ctx context.Context, args ListSQLDatabaseArgs) (*ListSQLDa
 
 	if len(result.Frames) > 0 {
 		frame := result.Frames[0]
-		databases = make([]string, len(frame.Rows))
+		databases = make([]string, 0, len(frame.Rows))
 		for _, row := range frame.Rows {
 			if database, ok := row[sql.DatabaseNameColumn].(string); ok && database != "" {
 				databases = append(databases, database)
@@ -171,7 +174,7 @@ func listSQLTables(ctx context.Context, args ListSQLTablesArgs) (*ListSQLTableRe
 
 	if len(result.Frames) > 0 {
 		frame := result.Frames[0]
-		tables = make([]string, len(frame.Rows))
+		tables = make([]string, 0, len(frame.Rows))
 		for _, row := range frame.Rows {
 			if table, ok := row[sql.TableNameColumn].(string); ok && table != "" {
 				tables = append(tables, table)
@@ -215,6 +218,9 @@ func listSQLTableSchema(ctx context.Context, args GetSQLTableSchemaArgs) (*ListS
 	}
 
 	tables := strings.Split(args.Tables, ",")
+	for i := range tables {
+		tables[i] = strings.TrimSpace(tables[i])
+	}
 
 	//limit is applied at no
 	tablesLen := withSQLTablesLimit(uint(len(tables)))
