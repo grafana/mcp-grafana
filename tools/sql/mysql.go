@@ -18,7 +18,10 @@ func NewMySqlDataSource() *MySQLDataSource {
 func (ds *MySQLDataSource) Type() string { return MySQLDatasourceType }
 
 func (ds *MySQLDataSource) GetDatabaseQuery() string {
-	return "SELECT DISTINCT TABLE_SCHEMA from information_schema.TABLES where TABLE_TYPE != 'SYSTEM VIEW' ORDER BY TABLE_SCHEMA"
+	return fmt.Sprintf(
+		"SELECT DISTINCT TABLE_SCHEMA as %s from information_schema.TABLES where TABLE_TYPE != 'SYSTEM VIEW' ORDER BY database_name",
+		DatabaseNameColumn,
+	)
 }
 
 func (ds *MySQLDataSource) GetTablesQuery(dbName string) string {
@@ -30,13 +33,18 @@ func (ds *MySQLDataSource) GetTablesQuery(dbName string) string {
 		database = QuoteIdentAsLiteral(database)
 	}
 
-	return fmt.Sprintf("SELECT table_name FROM information_schema.tables WHERE table_schema = %s ORDER BY table_name", database)
+	return fmt.Sprintf(
+		"SELECT table_name as %s FROM information_schema.tables WHERE table_schema = %s ORDER BY table_name",
+		TableNameColumn,
+		database,
+	)
+
 }
 
 // tableName : supports schema.table format
 // optional dbName defaults to default configured database
 func (ds *MySQLDataSource) GetSchemaQuery(tableName string, dbName string) string {
-	query := "SELECT column_name, data_type FROM information_schema.columns WHERE "
+	query := fmt.Sprintf("SELECT column_name as %s, data_type as %s FROM information_schema.columns WHERE ", ColNameColumn, ColTypeColumn)
 	query += buildTableConstraint(tableName, dbName)
 	query += " ORDER BY column_name"
 	return query

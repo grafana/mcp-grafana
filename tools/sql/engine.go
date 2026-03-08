@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -60,7 +61,7 @@ type QueryBatchArgs struct {
 	To   time.Time
 }
 
-// clickHouseQueryResponse represents the raw API response from Grafana's /api/ds/query
+// DSQueryResponse represents the raw API response from Grafana's /api/ds/query
 type DSQueryResponse struct {
 	Results map[string]struct {
 		Status int `json:"status,omitempty"`
@@ -84,12 +85,30 @@ type DSQueryResponse struct {
 	} `json:"results"`
 }
 
-/*
- reducing the data transfer inbetween
-*/
+type JsonFrame struct {
+	Name     string           `json:"name"`
+	Columns  []string         `json:"columns"`
+	Rows     []map[string]any `json:"rows"`
+	RowCount uint             `json:"rowCount"`
+}
+
+type JsonObject struct {
+	Status int          `json:"status,omitempty"`
+	Error  string       `json:"error,omitempty"`
+	Frames []*JsonFrame `json:"frames"`
+}
+
+type SQLQueryResult struct {
+	*JsonObject
+}
+
+type SQLQueryBatchResult struct {
+	Results    map[string]*SQLQueryResult `json:"results"`
+	ErrorCount uint
+}
 
 // executes gives
-func (en *sqlEngine) QueryBatch(ctx context.Context, queries []SQLQuery, args QueryBatchArgs) (any, error) {
+func (en *sqlEngine) QueryBatch(ctx context.Context, queries []SQLQuery, args QueryBatchArgs) (*SQLQueryBatchResult, error) {
 	payload := map[string]interface{}{
 		"queries": queries,
 		"from":    strconv.FormatInt(args.From.UnixMilli(), 10),
@@ -126,14 +145,74 @@ func (en *sqlEngine) QueryBatch(ctx context.Context, queries []SQLQuery, args Qu
 		return nil, fmt.Errorf("reading response body: %w", err)
 	}
 
-	var queryResp DSQueryResponse
-	if err := json.Unmarshal(bodyBytes, &queryResp); err != nil {
+	var response DSQueryResponse
+	if err := json.Unmarshal(bodyBytes, &response); err != nil {
 		return nil, fmt.Errorf("unmarshaling response: %w", err)
 	}
 
-	//TODO : implement response formatter
+	result := SQLQueryBatchResult{
+		Results: make(map[string]*SQLQueryResult),
+	}
 
-	return &queryResp, nil
+	for refID, r := range response.Results {
+
+		frames := make([]*JsonFrame, 0, len(r.Frames))
+
+		for _, frame := range r.Frames {
+
+			noOfCol := len(frame.Schema.Fields)
+			if noOfCol == 0 {
+				//columns not found for frame, skip frame
+				continue
+			}
+
+			if len(frame.Data.Values) == 0 {
+				//len(frame.Data.Values) equals len(frame.Schema.Fields)
+				//this case shoudn't occur
+				continue
+			}
+
+			//Number of rows count derived from count of values of first column
+			noOfRows := (len(frame.Data.Values[0]))
+
+			resFrame := JsonFrame{}
+			resFrame.Name = frame.Schema.Name
+			resFrame.Columns = make([]string, 0, noOfCol)
+			resFrame.Rows = make([]map[string]any, 0, noOfRows)
+
+			for colNo, field := range frame.Schema.Fields {
+
+				fieldName := field.Name
+
+				resFrame.Columns = append(resFrame.Columns, fieldName)
+
+				for rowId, colValue := range frame.Data.Values[colNo] {
+					if len(resFrame.Rows) < (rowId + 1) {
+						resFrame.Rows = append(resFrame.Rows, make(map[string]any))
+					}
+
+					resFrame.Rows[rowId][fieldName] = colValue
+				}
+			}
+
+			frames = append(frames, &resFrame)
+		}
+		frames = slices.Clip(frames)
+
+		result.Results[refID] = &SQLQueryResult{
+			&JsonObject{
+				Status: r.Status,
+				Error:  r.Error,
+				Frames: frames,
+			},
+		}
+		if r.Error != "" {
+			result.ErrorCount++
+		}
+
+	}
+
+	return &result, nil
 }
 
 func NewSQLEngine(ctx context.Context) (*sqlEngine, error) {
@@ -162,8 +241,3 @@ func NewSQLEngine(ctx context.Context) (*sqlEngine, error) {
 		grafanaClient:     *httpClient,
 	}, nil
 }
-
-//pool -> maintain datasource client mapped to type
-//central to all datasources
-//map[string]any //datasource -> datasource
-//pkg -> datasource
