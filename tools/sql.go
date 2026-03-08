@@ -20,6 +20,7 @@ var (
 )
 var SQLDatasourceTypes = []string{
 	sql.MySQLDatasourceType,
+	sql.MSSQLDatasourceType,
 }
 
 type ListSQLDatabaseArgs struct {
@@ -70,6 +71,8 @@ func sqlDataSource(ctx context.Context, uid string) (sql.SQLDataSource, error) {
 	switch ds.Type {
 	case sql.MySQLDatasourceType:
 		return sql.NewMySqlDataSource(), nil
+	case sql.MSSQLDatasourceType:
+		return sql.NewMSSqlDataSource(), nil
 	default:
 		return nil, fmt.Errorf("datasource %s of type %s,is not an SQL Datasource", uid, ds.Type)
 	}

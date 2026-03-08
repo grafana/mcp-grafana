@@ -51,7 +51,7 @@ func (*sqlEngine) BuildQuery(args BuildQueryArgs) SQLQuery {
 		"refId":      args.RefID,
 		"datasource": ds,
 		"rawSql":     args.Query,
-		"format":     "table",
+		"format":     "table", //time_series ca
 		"intervalMs": args.IntervalMs,
 	}
 }
@@ -179,6 +179,7 @@ func (en *sqlEngine) QueryBatch(ctx context.Context, queries []SQLQuery, args Qu
 			resFrame.Name = frame.Schema.Name
 			resFrame.Columns = make([]string, 0, noOfCol)
 			resFrame.Rows = make([]map[string]any, 0, noOfRows)
+			resFrame.RowCount = uint(noOfRows)
 
 			for colNo, field := range frame.Schema.Fields {
 
