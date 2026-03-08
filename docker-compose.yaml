@@ -156,4 +156,14 @@ services:
       - ./testdata/datasources/mssql-entrypoint.sh:/entrypoint.sh
     entrypoint: ["/bin/bash", "/entrypoint.sh"]
 
- 
+  postgres:
+    image: postgres:16.13@sha256:20edbde7749f822887a1a022ad526fde0a47d6b2be9a8364433605cf65099416
+    restart: always
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: infrastructure_logs
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+    volumes:
+      - ./testdata/datasources/postgres-seed.sql:/docker-entrypoint-initdb.d/seed.sql

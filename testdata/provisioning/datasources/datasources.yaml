@@ -98,3 +98,25 @@ datasources:
     secureJsonData:
       password: password
     isDefault: false
+  - name: MSSQL
+    uid: mssql
+    type: mssql
+    url: mssql:1433
+    user: grafana
+    jsonData:
+      database: infrastructure_logs
+      encrypt: 'false'
+    secureJsonData:
+      password: T3st@SqlServer
+    isDefault: false
+  - name: PostgreSQL
+    uid: postgres
+    type: postgres
+    url: postgres:5432
+    user: grafana
+    jsonData:
+      database: infrastructure_logs
+      sslmode: disable
+    secureJsonData:
+      password: password
+    isDefault: false
