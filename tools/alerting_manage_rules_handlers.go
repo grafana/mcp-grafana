@@ -298,12 +298,17 @@ func createAlertRule(ctx context.Context, args CreateAlertRuleParams) (*models.P
 		return nil, fmt.Errorf("create alert rule: invalid duration format %q: %w", args.For, err)
 	}
 
+	convertedData, err := convertAlertQueries(args.Data)
+	if err != nil {
+		return nil, fmt.Errorf("create alert rule: %w", err)
+	}
+
 	rule := &models.ProvisionedAlertRule{
 		Title:        &args.Title,
 		RuleGroup:    &args.RuleGroup,
 		FolderUID:    &args.FolderUID,
 		Condition:    &args.Condition,
-		Data:         args.Data,
+		Data:         convertedData,
 		NoDataState:  &args.NoDataState,
 		ExecErrState: &args.ExecErrState,
 		For:          func() *strfmt.Duration { d := strfmt.Duration(duration); return &d }(),
@@ -351,13 +356,18 @@ func updateAlertRule(ctx context.Context, args UpdateAlertRuleParams) (*models.P
 		return nil, fmt.Errorf("update alert rule: invalid duration format %q: %w", args.For, err)
 	}
 
+	convertedData, err := convertAlertQueries(args.Data)
+	if err != nil {
+		return nil, fmt.Errorf("update alert rule: %w", err)
+	}
+
 	rule := &models.ProvisionedAlertRule{
 		UID:          args.UID,
 		Title:        &args.Title,
 		RuleGroup:    &args.RuleGroup,
 		FolderUID:    &args.FolderUID,
 		Condition:    &args.Condition,
-		Data:         args.Data,
+		Data:         convertedData,
 		NoDataState:  &args.NoDataState,
 		ExecErrState: &args.ExecErrState,
 		For:          func() *strfmt.Duration { d := strfmt.Duration(duration); return &d }(),
