@@ -143,3 +143,17 @@ services:
       MYSQL_ROOT_PASSWORD: password
     volumes:
       - ./testdata/datasources/mysql-seed.sql:/docker-entrypoint-initdb.d/seed.sql
+  mssql:
+    image: mcr.microsoft.com/mssql/server:2025-latest
+    restart: always
+    ports:
+      - "1433:1433"
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "T3st@SqlServer"
+    volumes:
+      - ./testdata/datasources/mssql-seed.sql:/init.sql
+      - ./testdata/datasources/mssql-entrypoint.sh:/entrypoint.sh
+    entrypoint: ["/bin/bash", "/entrypoint.sh"]
+
+ 
