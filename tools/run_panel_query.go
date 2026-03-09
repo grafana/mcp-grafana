@@ -751,6 +751,8 @@ func normalizeDatasourceType(dsType string) string {
 		return "loki"
 	case lower == "cloudwatch":
 		return "cloudwatch"
+	case lower == "stackdriver":
+		return "prometheus" // stackdriver supports PromQL, route through Prometheus query path
 	case strings.Contains(lower, "clickhouse"):
 		return "clickhouse"
 	default:

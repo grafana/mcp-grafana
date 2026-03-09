@@ -30,12 +30,29 @@ var (
 )
 
 func promClientFromContext(ctx context.Context, uid string) (promv1.API, error) {
-	// First check if the datasource exists
-	_, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: uid})
+	// Fetch the datasource to check its type
+	ds, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: uid})
 	if err != nil {
 		return nil, err
 	}
 
+	dsType := ds.Type
+
+	// Route based on datasource type
+	if isNativePrometheusType(dsType) {
+		return createNativePromClient(ctx, uid)
+	}
+	if supportsPromQLViaBackend(dsType) {
+		return newBackendPromClient(ctx, uid, dsType)
+	}
+
+	return nil, fmt.Errorf("datasource type %q does not support PromQL; supported native types: prometheus, mimir, cortex, thanos; supported backend types: stackdriver", dsType)
+}
+
+// createNativePromClient creates a Prometheus API client that queries via
+// the datasource's resource proxy (/api/datasources/uid/{uid}/resources),
+// which implements the standard Prometheus HTTP API.
+func createNativePromClient(ctx context.Context, uid string) (promv1.API, error) {
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
 	url := fmt.Sprintf("%s/api/datasources/uid/%s/resources", strings.TrimRight(cfg.URL, "/"), uid)
 
