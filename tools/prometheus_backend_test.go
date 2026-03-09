@@ -1,6 +1,9 @@
+//go:build unit
+
 package tools
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"testing"
@@ -277,20 +280,22 @@ func TestBackendPromClientMetadataErrors(t *testing.T) {
 		datasourceType: "stackdriver",
 	}
 
+	ctx := context.Background()
+
 	t.Run("LabelNames returns error", func(t *testing.T) {
-		_, _, err := c.LabelNames(nil, nil, time.Time{}, time.Time{})
+		_, _, err := c.LabelNames(ctx, nil, time.Time{}, time.Time{})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not supported for stackdriver")
 	})
 
 	t.Run("LabelValues returns error", func(t *testing.T) {
-		_, _, err := c.LabelValues(nil, "__name__", nil, time.Time{}, time.Time{})
+		_, _, err := c.LabelValues(ctx, "__name__", nil, time.Time{}, time.Time{})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not supported for stackdriver")
 	})
 
 	t.Run("Metadata returns error", func(t *testing.T) {
-		_, err := c.Metadata(nil, "", "10")
+		_, err := c.Metadata(ctx, "", "10")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not supported for stackdriver")
 	})
