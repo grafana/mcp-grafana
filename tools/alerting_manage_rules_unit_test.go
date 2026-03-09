@@ -866,6 +866,18 @@ func TestToGetRulesOpts(t *testing.T) {
 		}
 		require.Equal(t, expected, *got)
 	})
+
+	t.Run("invalid matchers are ignored", func(t *testing.T) {
+		params := ManageRulesReadParams{
+			listFilterParams: listFilterParams{
+				Matchers: []LabelMatcher{{Name: "severity", Type: "=~", Value: "["}},
+			},
+			Operation: "list",
+		}
+
+		got := params.toGetRulesOpts()
+		require.Empty(t, got.Matchers)
+	})
 }
 
 func TestMergeRuleDetail(t *testing.T) {

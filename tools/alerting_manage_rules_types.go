@@ -294,8 +294,14 @@ func buildGetRulesOpts(f listFilterParams, folderUID, ruleGroup string) *GetRule
 		LimitAlerts:  f.LimitAlerts,
 	}
 	for _, m := range f.Matchers {
-		matchType := matchTypeMap[m.Type]
-		lm, _ := labels.NewMatcher(matchType, m.Name, m.Value)
+		matchType, ok := matchTypeMap[m.Type]
+		if !ok {
+			continue
+		}
+		lm, err := labels.NewMatcher(matchType, m.Name, m.Value)
+		if err != nil {
+			continue
+		}
 		opts.Matchers = append(opts.Matchers, lm)
 	}
 	return opts
