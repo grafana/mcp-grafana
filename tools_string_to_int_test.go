@@ -106,7 +106,7 @@ func TestUnmarshalWithIntConversion(t *testing.T) {
 
 		err := unmarshalWithIntConversion(data, &params)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to convert")
+		assert.Contains(t, err.Error(), "cannot parse")
 	})
 
 	t.Run("handles zero values as strings", func(t *testing.T) {
@@ -322,7 +322,7 @@ func TestUnmarshalWithAllIntegerTypes(t *testing.T) {
 
 		err := unmarshalWithIntConversion(data, &params)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to convert")
+		assert.Contains(t, err.Error(), "cannot parse")
 	})
 
 	t.Run("returns error for int16 overflow", func(t *testing.T) {
@@ -331,7 +331,7 @@ func TestUnmarshalWithAllIntegerTypes(t *testing.T) {
 
 		err := unmarshalWithIntConversion(data, &params)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to convert")
+		assert.Contains(t, err.Error(), "cannot parse")
 	})
 
 	t.Run("returns error for int32 overflow", func(t *testing.T) {
@@ -340,7 +340,7 @@ func TestUnmarshalWithAllIntegerTypes(t *testing.T) {
 
 		err := unmarshalWithIntConversion(data, &params)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to convert")
+		assert.Contains(t, err.Error(), "cannot parse")
 	})
 
 	t.Run("returns error for uint8 overflow", func(t *testing.T) {
@@ -349,7 +349,7 @@ func TestUnmarshalWithAllIntegerTypes(t *testing.T) {
 
 		err := unmarshalWithIntConversion(data, &params)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to convert")
+		assert.Contains(t, err.Error(), "cannot parse")
 	})
 
 	t.Run("returns error for negative uint values", func(t *testing.T) {
@@ -358,7 +358,7 @@ func TestUnmarshalWithAllIntegerTypes(t *testing.T) {
 
 		err := unmarshalWithIntConversion(data, &params)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to convert")
+		assert.Contains(t, err.Error(), "cannot parse")
 	})
 
 	t.Run("handles real-world case with OrgID int64", func(t *testing.T) {
