@@ -32,6 +32,28 @@ type testAllIntTypesParams struct {
 	PtrUint32   *uint32 `json:"ptrUint32,omitempty" jsonschema:"description=Pointer to uint32"`
 }
 
+// Test struct with embedded struct (must be exported for pointer embedding)
+type EmbeddedIntFields struct {
+	EmbeddedCount int `json:"embeddedCount" jsonschema:"description=Embedded count field"`
+}
+
+// Test struct with embedded pointer-to-struct
+type testEmbeddedParams struct {
+	Name string `json:"name" jsonschema:"required,description=Name parameter"`
+	*EmbeddedIntFields
+}
+
+// Test struct with regular embedded struct (can use lowercase for value embedding)
+type embeddedIntFieldsValue struct {
+	EmbeddedCount int `json:"embeddedCount" jsonschema:"description=Embedded count field"`
+}
+
+// Test struct with regular embedded struct
+type testRegularEmbeddedParams struct {
+	Name string `json:"name" jsonschema:"required,description=Name parameter"`
+	embeddedIntFieldsValue
+}
+
 // Test handler
 func testIntHandler(ctx context.Context, params testIntParams) (string, error) {
 	return "success", nil
@@ -106,8 +128,58 @@ func TestUnmarshalWithIntConversion(t *testing.T) {
 
 		err := unmarshalWithIntConversion(data, &params)
 		require.Error(t, err)
-		// Standard json.Unmarshal error for invalid syntax
-		assert.Contains(t, err.Error(), "invalid")
+		// Standard json.Unmarshal error for type mismatch
+		assert.Contains(t, err.Error(), "cannot unmarshal")
+	})
+
+	t.Run("rejects string null for int fields", func(t *testing.T) {
+		data := []byte(`{"name":"test","count":"null"}`)
+		var params testIntParams
+
+		err := unmarshalWithIntConversion(data, &params)
+		require.Error(t, err)
+		// Should get an error from json.Unmarshal for type mismatch
+		assert.Contains(t, err.Error(), "cannot unmarshal")
+	})
+
+	t.Run("rejects string null for pointer int fields", func(t *testing.T) {
+		data := []byte(`{"name":"test","count":"42","optionalInt":"null"}`)
+		var params testIntParams
+
+		err := unmarshalWithIntConversion(data, &params)
+		require.Error(t, err)
+		// Should get an error from json.Unmarshal for type mismatch
+		assert.Contains(t, err.Error(), "cannot unmarshal")
+	})
+
+	t.Run("accepts JSON null for pointer int fields", func(t *testing.T) {
+		data := []byte(`{"name":"test","count":"42","optionalInt":null}`)
+		var params testIntParams
+
+		err := unmarshalWithIntConversion(data, &params)
+		require.NoError(t, err)
+
+		assert.Equal(t, "test", params.Name)
+		assert.Equal(t, 42, params.Count)
+		assert.Nil(t, params.OptionalInt) // null is valid for pointer fields
+	})
+
+	t.Run("rejects string true for int fields", func(t *testing.T) {
+		data := []byte(`{"name":"test","count":"true"}`)
+		var params testIntParams
+
+		err := unmarshalWithIntConversion(data, &params)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "cannot unmarshal")
+	})
+
+	t.Run("rejects string false for int fields", func(t *testing.T) {
+		data := []byte(`{"name":"test","count":"false"}`)
+		var params testIntParams
+
+		err := unmarshalWithIntConversion(data, &params)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "cannot unmarshal")
 	})
 
 	t.Run("handles zero values as strings", func(t *testing.T) {
@@ -132,6 +204,38 @@ func TestUnmarshalWithIntConversion(t *testing.T) {
 		assert.Equal(t, "test", params.Name)
 		assert.Equal(t, -42, params.Count)
 		assert.Equal(t, -100, params.Limit)
+	})
+
+	t.Run("handles embedded pointer-to-struct with int fields", func(t *testing.T) {
+		data := []byte(`{"name":"test","embeddedCount":"42"}`)
+		var params testEmbeddedParams
+
+		err := unmarshalWithIntConversion(data, &params)
+		require.NoError(t, err)
+
+		assert.Equal(t, "test", params.Name)
+		require.NotNil(t, params.EmbeddedIntFields)
+		assert.Equal(t, 42, params.EmbeddedCount)
+	})
+
+	t.Run("handles regular embedded struct with int fields", func(t *testing.T) {
+		data := []byte(`{"name":"test","embeddedCount":"99"}`)
+		var params testRegularEmbeddedParams
+
+		err := unmarshalWithIntConversion(data, &params)
+		require.NoError(t, err)
+
+		assert.Equal(t, "test", params.Name)
+		assert.Equal(t, 99, params.EmbeddedCount)
+	})
+
+	t.Run("rejects string null in embedded pointer-to-struct int fields", func(t *testing.T) {
+		data := []byte(`{"name":"test","embeddedCount":"null"}`)
+		var params testEmbeddedParams
+
+		err := unmarshalWithIntConversion(data, &params)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "cannot unmarshal")
 	})
 }
 
