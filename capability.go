@@ -336,7 +336,7 @@ func DiscoverAPIs(ctx context.Context, httpClient *http.Client, baseURL string) 
 // k8sAPIPattern matches kubernetes-style API paths in error messages.
 // Groups: 1=apiGroup, 2=version, 3=namespace, 4=resource
 var k8sAPIPattern = regexp.MustCompile(
-	`/apis/([a-z.]+)/(v[0-9]+(?:alpha|beta)?[0-9]*)/namespaces/([^/]+)/([^/\s]+)`,
+	`/apis/([a-z.]+)/(v[0-9]+[a-z0-9]*)/namespaces/([^/]+)/([^/\s]+)`,
 )
 
 // ParseKubernetesAPIPath extracts API information from a kubernetes-style API path.
