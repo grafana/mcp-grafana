@@ -68,10 +68,27 @@ func generateDeeplink(ctx context.Context, args GenerateDeeplinkParams) (string,
 		}
 
 		if useLegacy {
-			// Legacy format: /explore?left={"datasource":"uid"}
+			// Legacy format: /explore?left={"datasource":"uid","queries":[...]}
+			type legacyQuery struct {
+				RefId string `json:"refId"`
+				Expr  string `json:"expr,omitempty"`
+			}
+			type legacyState struct {
+				Datasource string        `json:"datasource"`
+				Queries    []legacyQuery `json:"queries,omitempty"`
+			}
+			state := legacyState{
+				Datasource: *args.DatasourceUID,
+			}
+			if args.ExploreQuery != nil && *args.ExploreQuery != "" {
+				state.Queries = []legacyQuery{{RefId: "A", Expr: *args.ExploreQuery}}
+			}
+			stateJSON, err := json.Marshal(state)
+			if err != nil {
+				return "", fmt.Errorf("marshal legacy explore state: %w", err)
+			}
 			params := url.Values{}
-			exploreState := fmt.Sprintf(`{"datasource":"%s"}`, *args.DatasourceUID)
-			params.Set("left", exploreState)
+			params.Set("left", string(stateJSON))
 			deeplink = fmt.Sprintf("%s/explore?%s", baseURL, params.Encode())
 		} else {
 			// New format (Grafana 10+): /explore?schemaVersion=1&panes={...}

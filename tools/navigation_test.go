@@ -74,6 +74,25 @@ func TestGenerateDeeplink(t *testing.T) {
 		assert.NotContains(t, result, "schemaVersion")
 	})
 
+	t.Run("Explore deeplink - legacy format with query", func(t *testing.T) {
+		useLegacy := true
+		query := "up{job=\"prometheus\"}"
+		params := GenerateDeeplinkParams{
+			ResourceType:        "explore",
+			DatasourceUID:       stringPtr("prometheus-uid"),
+			UseLegacyExploreURL: &useLegacy,
+			ExploreQuery:        &query,
+		}
+
+		result, err := generateDeeplink(ctx, params)
+		require.NoError(t, err)
+		assert.Contains(t, result, "http://localhost:3000/explore?left=")
+		assert.Contains(t, result, "prometheus-uid")
+		assert.Contains(t, result, "up")
+		assert.Contains(t, result, "refId")
+		assert.NotContains(t, result, "schemaVersion")
+	})
+
 	t.Run("Explore deeplink - with query", func(t *testing.T) {
 		query := "up{job=\"prometheus\"}"
 		params := GenerateDeeplinkParams{
