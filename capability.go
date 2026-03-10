@@ -302,7 +302,7 @@ func DiscoverAPIs(ctx context.Context, httpClient *http.Client, baseURL string) 
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20)) // 1MB limit
 		return nil, fmt.Errorf("unexpected status from /apis: %d, body: %s", resp.StatusCode, string(body))
 	}
 
