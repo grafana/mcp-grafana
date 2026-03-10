@@ -104,8 +104,18 @@ func unmarshalWithIntConversion(data []byte, target interface{}) error {
 		}
 		// Check if value is a quoted string: "..."
 		if rawVal[0] == '"' && rawVal[len(rawVal)-1] == '"' {
+			// Extract the inner content
+			inner := rawVal[1 : len(rawVal)-1]
+
+			// Validate that the inner content is numeric (not "null" or other non-numeric strings)
+			if !isValidNumericString(inner) {
+				// Don't strip quotes for non-numeric strings like "null"
+				// Let json.Unmarshal handle it and produce an appropriate error
+				continue
+			}
+
 			// Strip quotes to convert "42" → 42
-			raw[fieldName] = rawVal[1 : len(rawVal)-1]
+			raw[fieldName] = inner
 			changed = true
 		}
 	}
@@ -138,9 +148,17 @@ func collectIntFieldNamesRecursive(structType reflect.Type, intFields map[string
 		field := structType.Field(i)
 
 		// Handle embedded (anonymous) structs recursively
-		if field.Anonymous && field.Type.Kind() == reflect.Struct {
-			collectIntFieldNamesRecursive(field.Type, intFields)
-			continue
+		if field.Anonymous {
+			embeddedType := field.Type
+			// If it's a pointer to struct, dereference it
+			if embeddedType.Kind() == reflect.Ptr {
+				embeddedType = embeddedType.Elem()
+			}
+			// Recurse into embedded struct
+			if embeddedType.Kind() == reflect.Struct {
+				collectIntFieldNamesRecursive(embeddedType, intFields)
+				continue
+			}
 		}
 
 		// Get JSON field name from tag
@@ -178,6 +196,45 @@ func isIntegerKind(kind reflect.Kind) bool {
 		return true
 	}
 	return false
+}
+
+// isValidNumericString returns true if the byte slice represents a valid numeric string
+// that can be parsed as an integer. It rejects special JSON keywords like "null", "true", "false"
+// and other non-numeric strings.
+func isValidNumericString(data []byte) bool {
+	if len(data) == 0 {
+		return false
+	}
+
+	// Reject JSON keywords that would be valid JSON but aren't numeric
+	str := string(data)
+	if str == "null" || str == "true" || str == "false" {
+		return false
+	}
+
+	// Check if it looks like a number: optional minus, followed by digits
+	i := 0
+	if data[i] == '-' || data[i] == '+' {
+		i++
+	}
+
+	if i >= len(data) {
+		return false // Just a sign with no digits
+	}
+
+	// Must have at least one digit
+	hasDigit := false
+	for i < len(data) {
+		if data[i] >= '0' && data[i] <= '9' {
+			hasDigit = true
+			i++
+		} else {
+			// Invalid character for an integer
+			return false
+		}
+	}
+
+	return hasDigit
 }
 
 // ConvertTool converts a toolHandler function to an MCP Tool and ToolHandlerFunc.
