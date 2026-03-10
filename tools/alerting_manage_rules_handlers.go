@@ -15,10 +15,6 @@ import (
 )
 
 func manageRulesRead(ctx context.Context, args ManageRulesReadParams) (any, error) {
-	if err := args.validate(); err != nil {
-		return nil, fmt.Errorf("alerting_manage_rules: %w", err)
-	}
-
 	switch args.Operation {
 	case "list":
 		opts, err := args.toGetRulesOpts()
@@ -30,19 +26,21 @@ func manageRulesRead(ctx context.Context, args ManageRulesReadParams) (any, erro
 		}
 		return listGrafanaRules(ctx, opts, args.LabelSelectors)
 	case "get":
+		if err := args.validate(); err != nil {
+			return nil, fmt.Errorf("alerting_manage_rules: %w", err)
+		}
 		return getAlertRuleDetail(ctx, args.RuleUID, args.LimitAlerts)
 	case "versions":
+		if err := args.validate(); err != nil {
+			return nil, fmt.Errorf("alerting_manage_rules: %w", err)
+		}
 		return getAlertRuleVersions(ctx, args.RuleUID)
 	default:
-		return nil, fmt.Errorf("alerting_manage_rules: unknown operation %q", args.Operation)
+		return nil, fmt.Errorf("alerting_manage_rules: %w", args.validate())
 	}
 }
 
 func manageRulesReadWrite(ctx context.Context, args ManageRulesReadWriteParams) (any, error) {
-	if err := args.validate(); err != nil {
-		return nil, fmt.Errorf("alerting_manage_rules: %w", err)
-	}
-
 	switch args.Operation {
 	case "list":
 		opts, err := args.toGetRulesOpts()
@@ -54,19 +52,34 @@ func manageRulesReadWrite(ctx context.Context, args ManageRulesReadWriteParams) 
 		}
 		return listGrafanaRules(ctx, opts, args.LabelSelectors)
 	case "get":
+		if err := args.validate(); err != nil {
+			return nil, fmt.Errorf("alerting_manage_rules: %w", err)
+		}
 		return getAlertRuleDetail(ctx, args.RuleUID, args.LimitAlerts)
 	case "versions":
+		if err := args.validate(); err != nil {
+			return nil, fmt.Errorf("alerting_manage_rules: %w", err)
+		}
 		return getAlertRuleVersions(ctx, args.RuleUID)
 	case "create":
+		if err := args.validate(); err != nil {
+			return nil, fmt.Errorf("alerting_manage_rules: %w", err)
+		}
 		return createAlertRule(ctx, args.toCreateParams())
 	case "update":
+		if err := args.validate(); err != nil {
+			return nil, fmt.Errorf("alerting_manage_rules: %w", err)
+		}
 		return updateAlertRule(ctx, args.toUpdateParams())
 	case "delete":
+		if err := args.validate(); err != nil {
+			return nil, fmt.Errorf("alerting_manage_rules: %w", err)
+		}
 		return deleteAlertRule(ctx, DeleteAlertRuleParams{
 			UID: args.RuleUID,
 		})
 	default:
-		return nil, fmt.Errorf("alerting_manage_rules: unknown operation %q", args.Operation)
+		return nil, fmt.Errorf("alerting_manage_rules: %w", args.validate())
 	}
 }
 
