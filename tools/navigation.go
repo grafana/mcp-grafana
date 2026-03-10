@@ -77,7 +77,11 @@ func generateDeeplink(ctx context.Context, args GenerateDeeplinkParams) (string,
 			// New format (Grafana 10+): /explore?schemaVersion=1&panes={...}
 			// Time range is embedded in the panes JSON, so we pass it here
 			// and clear it to avoid double-encoding as query params below.
-			deeplink = generateExploreDeeplinkNew(baseURL, *args.DatasourceUID, args.ExploreQuery, args.TimeRange)
+			var err error
+			deeplink, err = generateExploreDeeplinkNew(baseURL, *args.DatasourceUID, args.ExploreQuery, args.TimeRange)
+			if err != nil {
+				return "", err
+			}
 			args.TimeRange = nil
 		}
 	default:
@@ -153,7 +157,7 @@ type explorePaneRange struct {
 }
 
 // generateExploreDeeplinkNew creates an explore URL using the new schemaVersion=1 format (Grafana 10+)
-func generateExploreDeeplinkNew(baseURL, datasourceUID string, query *string, timeRange *TimeRange) string {
+func generateExploreDeeplinkNew(baseURL, datasourceUID string, query *string, timeRange *TimeRange) (string, error) {
 	// Build the query object
 	q := exploreQuery{
 		Refid: "A",
@@ -190,12 +194,15 @@ func generateExploreDeeplinkNew(baseURL, datasourceUID string, query *string, ti
 	}
 
 	// Encode to JSON
-	panesJSON, _ := json.Marshal(panes)
+	panesJSON, err := json.Marshal(panes)
+	if err != nil {
+		return "", fmt.Errorf("marshal explore panes: %w", err)
+	}
 
 	// Build the URL
 	params := url.Values{}
 	params.Set("schemaVersion", "1")
 	params.Set("panes", string(panesJSON))
 
-	return fmt.Sprintf("%s/explore?%s", baseURL, params.Encode())
+	return fmt.Sprintf("%s/explore?%s", baseURL, params.Encode()), nil
 }

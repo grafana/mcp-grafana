@@ -250,11 +250,6 @@ func (g *GrafanaInstance) doKubernetesRequest(ctx context.Context, method, path 
 		req.SetBasicAuth(g.config.BasicAuth.Username(), password)
 	}
 
-	// Add org ID header if set
-	if g.config.OrgID > 0 {
-		req.Header.Set(client.OrgIDHeader, fmt.Sprintf("%d", g.config.OrgID))
-	}
-
 	return g.httpClient.Do(req)
 }
 
@@ -301,7 +296,7 @@ func (g *GrafanaInstance) GetDashboardKubernetes(ctx context.Context, uid, versi
 	}()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20)) // 1MB limit
 		return nil, fmt.Errorf("get dashboard failed: status %d, body: %s", resp.StatusCode, string(body))
 	}
 
