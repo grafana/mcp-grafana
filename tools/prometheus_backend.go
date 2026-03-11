@@ -51,11 +51,15 @@ type backendPromClient struct {
 	httpClient     *http.Client
 	baseURL        string
 	datasourceUID  string
+	datasourceID   int64  // numeric datasource ID
 	datasourceType string
+	projectName    string // GCP project name for stackdriver datasources
 }
 
 // newBackendPromClient creates a backendPromClient for the given datasource.
-func newBackendPromClient(ctx context.Context, uid, dsType string) (*backendPromClient, error) {
+// The jsonData parameter should be the datasource's JSONData field, used to
+// extract configuration like the GCP project name for stackdriver datasources.
+func newBackendPromClient(ctx context.Context, uid string, dsID int64, dsType string, jsonData interface{}) (*backendPromClient, error) {
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
 	baseURL := strings.TrimRight(cfg.URL, "/")
 
@@ -71,11 +75,21 @@ func newBackendPromClient(ctx context.Context, uid, dsType string) (*backendProm
 		Timeout:   30 * time.Second,
 	}
 
+	// Extract projectName from datasource jsonData for stackdriver datasources.
+	var projectName string
+	if jsonDataMap, ok := jsonData.(map[string]interface{}); ok {
+		if p, ok := jsonDataMap["defaultProject"].(string); ok {
+			projectName = p
+		}
+	}
+
 	return &backendPromClient{
 		httpClient:     client,
 		baseURL:        baseURL,
 		datasourceUID:  uid,
+		datasourceID:   dsID,
 		datasourceType: dsType,
+		projectName:    projectName,
 	}, nil
 }
 
@@ -115,16 +129,32 @@ type dsQueryFrameData struct {
 }
 
 // buildDSQueryPayload constructs the /api/ds/query request body.
+// For stackdriver datasources, the query is wrapped in a promQLQuery object
+// with queryType "promQL" to match the format the Grafana UI uses.
 func (c *backendPromClient) buildDSQueryPayload(expr string, start, end time.Time, step time.Duration) map[string]interface{} {
 	query := map[string]interface{}{
 		"datasource": map[string]string{
 			"uid":  c.datasourceUID,
 			"type": c.datasourceType,
 		},
+		"datasourceId":  c.datasourceID,
 		"refId":         "A",
-		"expr":          expr,
+		"queryType":     "promQL",
 		"intervalMs":    int64(step / time.Millisecond),
 		"maxDataPoints": 1000,
+		"promQLQuery": map[string]interface{}{
+			"expr":        expr,
+			"projectName": c.projectName,
+			"step":        fmt.Sprintf("%ds", int64(step.Seconds())),
+		},
+		// timeSeriesList is required by the Cloud Monitoring plugin even for
+		// PromQL queries — the plugin unconditionally deserializes this field
+		// and errors without it. The values here are not used for PromQL routing.
+		"timeSeriesList": map[string]interface{}{
+			"projectName": c.projectName,
+			"filters":     []string{},
+			"groupBys":    []string{},
+		},
 	}
 
 	return map[string]interface{}{
@@ -141,11 +171,14 @@ func (c *backendPromClient) executeDSQuery(ctx context.Context, payload map[stri
 		return nil, fmt.Errorf("marshaling query payload: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/api/ds/query", bytes.NewReader(payloadBytes))
+	reqURL := fmt.Sprintf("%s/api/ds/query?ds_type=%s", c.baseURL, c.datasourceType)
+	req, err := http.NewRequestWithContext(ctx, "POST", reqURL, bytes.NewReader(payloadBytes))
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Datasource-Uid", c.datasourceUID)
+	req.Header.Set("X-Plugin-Id", c.datasourceType)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {

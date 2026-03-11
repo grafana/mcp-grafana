@@ -59,7 +59,9 @@ func TestSupportsPromQLViaBackend(t *testing.T) {
 func TestBackendPromClientBuildPayload(t *testing.T) {
 	c := &backendPromClient{
 		datasourceUID:  "test-uid",
+		datasourceID:   21,
 		datasourceType: "stackdriver",
+		projectName:    "my-gcp-project",
 	}
 
 	start := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -74,10 +76,17 @@ func TestBackendPromClientBuildPayload(t *testing.T) {
 	require.Len(t, queries, 1)
 
 	q := queries[0]
-	assert.Equal(t, "up{job='test'}", q["expr"])
 	assert.Equal(t, "A", q["refId"])
+	assert.Equal(t, "promQL", q["queryType"])
 	assert.Equal(t, int64(15000), q["intervalMs"])
 	assert.Equal(t, 1000, q["maxDataPoints"])
+
+	// Verify promQLQuery nested object
+	promQLQuery, ok := q["promQLQuery"].(map[string]interface{})
+	require.True(t, ok, "promQLQuery should be a map")
+	assert.Equal(t, "up{job='test'}", promQLQuery["expr"])
+	assert.Equal(t, "my-gcp-project", promQLQuery["projectName"])
+	assert.Equal(t, "15s", promQLQuery["step"])
 
 	ds, ok := q["datasource"].(map[string]string)
 	require.True(t, ok)

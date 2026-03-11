@@ -43,7 +43,7 @@ func promClientFromContext(ctx context.Context, uid string) (promv1.API, error) 
 		return createNativePromClient(ctx, uid)
 	}
 	if supportsPromQLViaBackend(dsType) {
-		return newBackendPromClient(ctx, uid, dsType)
+		return newBackendPromClient(ctx, uid, ds.ID, dsType, ds.JSONData)
 	}
 
 	return nil, fmt.Errorf("datasource type %q does not support PromQL; supported native types: prometheus, mimir, cortex, thanos; supported backend types: stackdriver", dsType)
