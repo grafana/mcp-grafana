@@ -567,7 +567,7 @@ func (tm *ToolManager) DiscoverAndRegisterToolsSession(ctx context.Context, sess
 }
 
 // Discovers connected tool categories(datasources, plugins) and registers tools (called by stdio transport)
-// Only called once on startu
+// Only called once on startup
 func (tm *ToolManager) DiscoverAndRegisterToolsStdio(ctx context.Context) error {
 	// If this is called once globally
 	if !tm.connectedOnly {

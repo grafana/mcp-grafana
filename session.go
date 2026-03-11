@@ -20,7 +20,7 @@ type SessionState struct {
 	toolToDatasources       map[string][]string       // key: toolName, value: list of datasource keys that support it
 	mutex                   sync.RWMutex
 
-	// Discovery of connected categories (datasources)
+	// Discovery of connected categories (datasources,plugin categories)
 	initDiscoveryOnce sync.Once
 }
 

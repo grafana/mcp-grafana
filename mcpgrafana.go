@@ -73,7 +73,7 @@ func userAndPassFromEnv() *url.Userinfo {
 	return url.UserPassword(username, password)
 }
 
-func orgIDFromEnv() int64 {
+func orgIdFromEnv() int64 {
 	orgIDStr := os.Getenv(grafanaOrgIDEnvVar)
 	if orgIDStr == "" {
 		return 0
@@ -99,7 +99,7 @@ func extraHeadersFromEnv() map[string]string {
 	return headers
 }
 
-func orgIDFromHeaders(req *http.Request) int64 {
+func orgIdFromHeaders(req *http.Request) int64 {
 	orgIDStr := req.Header.Get(client.OrgIDHeader)
 	if orgIDStr == "" {
 		return 0
@@ -389,26 +389,26 @@ func BuildTransport(cfg *GrafanaConfig, base http.RoundTripper) (http.RoundTripp
 }
 
 // Gets info from environment.
-func extractKeyGrafanaInfoFromEnv() (url, apiKey string, auth *url.Userinfo, orgID int64) {
+func extractKeyGrafanaInfoFromEnv() (url, apiKey string, auth *url.Userinfo, orgId int64) {
 	url, apiKey = urlAndAPIKeyFromEnv()
 	if url == "" {
 		url = defaultGrafanaURL
 	}
 	auth = userAndPassFromEnv()
-	orgID = orgIDFromEnv()
+	orgId = orgIdFromEnv()
 	return
 }
 
-// Tries to get Grafana info from a request.
+// Tries to get grafana info from a request.
 // Gets info from environment if it can't get it from request.
-func extractKeyGrafanaInfoFromReq(req *http.Request) (grafanaURL, apiKey string, auth *url.Userinfo, orgID int64) {
-	eUrl, eApiKey, eAuth, eOrgID := extractKeyGrafanaInfoFromEnv()
+func extractKeyGrafanaInfoFromReq(req *http.Request) (grafanaUrl, apiKey string, auth *url.Userinfo, orgId int64) {
+	eUrl, eApiKey, eAuth, eOrgId := extractKeyGrafanaInfoFromEnv()
 	username, password, _ := req.BasicAuth()
 
-	grafanaURL, apiKey = urlAndAPIKeyFromHeaders(req)
+	grafanaUrl, apiKey = urlAndAPIKeyFromHeaders(req)
 	// If anything is missing, check if we can get it from the environment
-	if grafanaURL == "" {
-		grafanaURL = eUrl
+	if grafanaUrl == "" {
+		grafanaUrl = eUrl
 	}
 
 	if apiKey == "" {
@@ -422,10 +422,10 @@ func extractKeyGrafanaInfoFromReq(req *http.Request) (grafanaURL, apiKey string,
 		auth = url.UserPassword(username, password)
 	}
 
-	// Extract org ID from header, fall back to environment
-	orgID = orgIDFromHeaders(req)
-	if orgID == 0 {
-		orgID = eOrgID
+	// extract org ID from header, fall back to environment
+	orgId = orgIdFromHeaders(req)
+	if orgId == 0 {
+		orgId = eOrgId
 	}
 
 	return
@@ -505,7 +505,7 @@ func makeBasePath(path string) string {
 
 // NewGrafanaClient creates a Grafana client with the provided URL and API key.
 // The client is automatically configured with the correct HTTP scheme, debug settings from context, custom TLS configuration if present, and OpenTelemetry instrumentation for distributed tracing.
-func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.Userinfo, orgID int64) *client.GrafanaHTTPAPI {
+func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.Userinfo, orgId int64) *client.GrafanaHTTPAPI {
 	cfg := client.DefaultTransportConfig()
 
 	var parsedURL *url.URL
@@ -618,8 +618,8 @@ var ExtractGrafanaClientFromEnv server.StdioContextFunc = func(ctx context.Conte
 		grafanaURL = defaultGrafanaURL
 	}
 	auth := userAndPassFromEnv()
-	orgID := orgIDFromEnv()
-	grafanaClient := NewGrafanaClient(ctx, grafanaURL, apiKey, auth, orgID)
+	orgId := orgIdFromEnv()
+	grafanaClient := NewGrafanaClient(ctx, grafanaURL, apiKey, auth, orgId)
 	return WithGrafanaClient(ctx, grafanaClient)
 }
 
@@ -627,10 +627,10 @@ var ExtractGrafanaClientFromEnv server.StdioContextFunc = func(ctx context.Conte
 // It prioritizes configuration from HTTP headers (X-Grafana-URL, X-Grafana-API-Key) over environment variables for multi-tenant scenarios.
 var ExtractGrafanaClientFromHeaders httpContextFunc = func(ctx context.Context, req *http.Request) context.Context {
 	// Extract transport config from request headers, and set it on the context.
-	u, apiKey, basicAuth, orgID := extractKeyGrafanaInfoFromReq(req)
+	u, apiKey, basicAuth, orgId := extractKeyGrafanaInfoFromReq(req)
 	slog.Debug("Creating Grafana client", "url", u, "api_key_set", apiKey != "", "basic_auth_set", basicAuth != nil)
 
-	grafanaClient := NewGrafanaClient(ctx, u, apiKey, basicAuth, orgID)
+	grafanaClient := NewGrafanaClient(ctx, u, apiKey, basicAuth, orgId)
 	return WithGrafanaClient(ctx, grafanaClient)
 }
 
