@@ -17,6 +17,11 @@ import (
 	mcpgrafana "github.com/grafana/mcp-grafana"
 )
 
+const (
+	// Category Identifier for the rendering category.
+	Rendering = "rendering"
+)
+
 type GetPanelImageParams struct {
 	DashboardUID string            `json:"dashboardUid" jsonschema:"required,description=The UID of the dashboard containing the panel"`
 	PanelID      *int              `json:"panelId,omitempty" jsonschema:"description=The ID of the panel to render. If omitted\\, the entire dashboard is rendered"`
@@ -201,4 +206,12 @@ var GetPanelImage = mcpgrafana.MustTool(
 
 func AddRenderingTools(mcp *server.MCPServer) {
 	GetPanelImage.Register(mcp)
+}
+
+var renderingTools = []*mcpgrafana.Tool{
+	&GetPanelImage,
+}
+
+func GetRenderingTools() []*mcpgrafana.Tool {
+	return renderingTools
 }

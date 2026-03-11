@@ -234,11 +234,13 @@ type ToolManager struct {
 	serverClients map[string]*ProxiedClient
 	clientsMutex  sync.RWMutex
 
-	//option to add only tools which are connected to graphana ,
+	// Option to add only tools which are connected to Grafana,
 	connectedOnly bool
 	enabledTools  map[string]bool
-	//resolves tools of category(datasource)
+	// Resolves tools of category(datasource)
 	categoryTools map[string]func() []*Tool
+	// Tool categories of a plugin
+	pluginCategories map[string][]string
 }
 
 // NewToolManager creates a new ToolManager
@@ -248,7 +250,7 @@ func NewToolManager(sm *SessionManager, mcpServer *server.MCPServer, opts ...too
 		server:        mcpServer,
 		serverClients: make(map[string]*ProxiedClient),
 	}
-	//if enabled by manager , we maintain list
+	// If enabled by manager, we maintain list
 
 	for _, opt := range opts {
 		opt(tm)
@@ -269,12 +271,15 @@ func WithProxiedTools(enabled bool) toolManagerOption {
 func WithConnectedOnlyTools(
 	connectedOnly bool,
 	toolsState func() map[string]bool,
-	categoryTools func() map[string]func() []*Tool) toolManagerOption {
+	categoryTools func() map[string]func() []*Tool,
+	pluginCategories func() map[string][]string,
+) toolManagerOption {
 	return func(tm *ToolManager) {
 		if connectedOnly {
 			tm.connectedOnly = true
 			tm.enabledTools = toolsState()
 			tm.categoryTools = categoryTools()
+			tm.pluginCategories = pluginCategories()
 		}
 	}
 }

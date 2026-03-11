@@ -649,10 +649,10 @@ func TestInitOnceDiscovery(t *testing.T) {
 
 		var initCounter int32
 
-		// Launch 100 trails one by one
-		const noOfTrails = 100
+		// Launch 100 trials one by one
+		const noOfTrials = 100
 
-		for range noOfTrails {
+		for range noOfTrials {
 			state.initDiscoveryOnce.Do(func() {
 				// Simulate initialization work
 				atomic.AddInt32(&initCounter, 1)

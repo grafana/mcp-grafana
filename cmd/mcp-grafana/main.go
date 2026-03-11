@@ -49,7 +49,7 @@ type disabledTools struct {
 }
 
 type toolConfig struct {
-	//if enabled , initializes only tools of connected datasources
+	// If enabled, only initializes tools applicable to the targeted Grafana instance.
 	onlyConnected bool
 }
 
@@ -66,7 +66,7 @@ type grafanaConfig struct {
 }
 
 func (tc *toolConfig) addFlags() {
-	flag.BoolVar(&tc.onlyConnected, "connected-only", false, "Enable Tools of connected datasources in graphana instance ,non connected sources are skipped from tool broadcast.")
+	flag.BoolVar(&tc.onlyConnected, "connected-only", false, "Only enable tools applicable to the targeted Grafana instance")
 }
 
 func (dt *disabledTools) addFlags() {
@@ -112,23 +112,19 @@ func (dt *disabledTools) addTools(s *server.MCPServer, tc toolConfig) {
 	enableWriteTools := !dt.write
 	maybeAddTools(s, tools.AddSearchTools, enabledTools, dt.search, "search")
 	maybeAddTools(s, tools.AddDatasourceTools, enabledTools, dt.datasource, "datasource")
-	maybeAddTools(s, func(mcp *server.MCPServer) { tools.AddIncidentTools(mcp, enableWriteTools) }, enabledTools, dt.incident, "incident")
 	maybeAddTools(s, func(mcp *server.MCPServer) { tools.AddAlertingTools(mcp, enableWriteTools) }, enabledTools, dt.alerting, "alerting")
 	maybeAddTools(s, func(mcp *server.MCPServer) { tools.AddDashboardTools(mcp, enableWriteTools) }, enabledTools, dt.dashboard, "dashboard")
 	maybeAddTools(s, func(mcp *server.MCPServer) { tools.AddFolderTools(mcp, enableWriteTools) }, enabledTools, dt.folder, "folder")
-	maybeAddTools(s, tools.AddOnCallTools, enabledTools, dt.oncall, "oncall")
 	maybeAddTools(s, tools.AddAssertsTools, enabledTools, dt.asserts, "asserts")
-	maybeAddTools(s, func(mcp *server.MCPServer) { tools.AddSiftTools(mcp, enableWriteTools) }, enabledTools, dt.sift, "sift")
 	maybeAddTools(s, tools.AddAdminTools, enabledTools, dt.admin, "admin")
 	maybeAddTools(s, tools.AddNavigationTools, enabledTools, dt.navigation, "navigation")
 	maybeAddTools(s, func(mcp *server.MCPServer) { tools.AddAnnotationTools(mcp, enableWriteTools) }, enabledTools, dt.annotations, "annotations")
-	maybeAddTools(s, tools.AddRenderingTools, enabledTools, dt.rendering, "rendering")
 	maybeAddTools(s, tools.AddExamplesTools, enabledTools, dt.examples, "examples")
 	maybeAddTools(s, tools.AddSearchLogsTools, enabledTools, dt.searchlogs, "searchlogs")
 	maybeAddTools(s, tools.AddRunPanelQueryTools, enabledTools, dt.runpanelquery, "runpanelquery")
 
-	//datasources are included by InitDiscoverAndRegister , DiscoverAndRegisterToolsSession when discovery is enabled
-	//if not include at startup
+	// Plugin Categories are included by DiscoverAndRegisterToolsStdio, DiscoverAndRegisterToolsSession when discovery is enabled
+	// Otherwise, include at startup
 	if !tc.onlyConnected {
 		maybeAddTools(s, tools.AddPrometheusTools, enabledTools, dt.prometheus, "prometheus")
 		maybeAddTools(s, tools.AddLokiTools, enabledTools, dt.loki, "loki")
@@ -136,6 +132,11 @@ func (dt *disabledTools) addTools(s *server.MCPServer, tc toolConfig) {
 		maybeAddTools(s, tools.AddPyroscopeTools, enabledTools, dt.pyroscope, "pyroscope")
 		maybeAddTools(s, tools.AddCloudWatchTools, enabledTools, dt.cloudwatch, "cloudwatch")
 		maybeAddTools(s, tools.AddClickHouseTools, enabledTools, dt.clickhouse, "clickhouse")
+
+		maybeAddTools(s, tools.AddOnCallTools, enabledTools, dt.oncall, "oncall")
+		maybeAddTools(s, func(mcp *server.MCPServer) { tools.AddIncidentTools(mcp, enableWriteTools) }, enabledTools, dt.incident, "incident")
+		maybeAddTools(s, tools.AddRenderingTools, enabledTools, dt.rendering, "rendering")
+		maybeAddTools(s, func(mcp *server.MCPServer) { tools.AddSiftTools(mcp, enableWriteTools) }, enabledTools, dt.sift, "sift")
 	}
 }
 
@@ -151,8 +152,8 @@ func newServer(transport string, dt disabledTools, tc toolConfig, obs *observabi
 		OnUnregisterSession: []server.OnUnregisterSessionHookFunc{sm.RemoveSession},
 	}
 
-	// Add  (proxy tool hooks,datasource tools) dynamically if enabled and we're not running in stdio mode.
-	// (stdio mode is handled by InitializeAndRegisterServerTools , InitDiscoverAndRegister; per-session
+	// Add (proxy tool hooks, datasource tools) dynamically if enabled and we're not running in stdio mode.
+	// (Stdio mode is handled by InitializeAndRegisterServerTools, InitDiscoverAndRegister; per-session
 	// tools are not supported).
 	if transport != "stdio" && (!dt.proxied || tc.onlyConnected) {
 		// OnBeforeListTools: Discover, connect, and register tools
@@ -225,14 +226,14 @@ Note that some of these capabilities may be disabled. Do not try to use features
 		mcpgrafana.WithProxiedTools(!dt.proxied),
 		mcpgrafana.WithConnectedOnlyTools(tc.onlyConnected, func() map[string]bool {
 			return toolsState(&dt)
-		}, buildMappedTools),
+		}, buildMappedTools, registryPluginCategories),
 	)
 
 	dt.addTools(s, tc)
 	return s, stm
 }
 
-func mayBeEnabledTool(category string, exclude bool, enabledMap *map[string]bool, enabled []string) {
+func maybeEnabledTool(category string, exclude bool, enabledMap *map[string]bool, enabled []string) {
 	if exclude {
 		return
 	}
@@ -242,15 +243,28 @@ func mayBeEnabledTool(category string, exclude bool, enabledMap *map[string]bool
 	}
 }
 
+// registryPluginCategories returns the mapping of plugin IDs to their supported tool categories.
+func registryPluginCategories() map[string][]string {
+	return map[string][]string{
+		"grafana-ml-app":         {tools.Sift},
+		"grafana-irm-app":        {tools.OnCall, tools.Incident},
+		"grafana-image-renderer": {tools.Rendering},
+	}
+}
+
 // returns tools map for datasources
 func buildMappedTools() map[string]func() []*mcpgrafana.Tool {
 	return map[string]func() []*mcpgrafana.Tool{
 		tools.LokiDatasourceType:          tools.GetLokiTools,
-		tools.PrometheusDataSourceType:    tools.GetPromethuesTools,
+		tools.PrometheusDataSourceType:    tools.GetPrometheusTools,
 		tools.PyroscopeDataSourceType:     tools.GetPyroscopeTools,
 		tools.ClickHouseDatasourceType:    tools.GetClickHouseTools,
 		tools.CloudWatchDatasourceType:    tools.GetCloudWatchTools,
 		tools.ElasticsearchDatasourceType: tools.GetElasticSearchTools,
+		tools.Incident:                    tools.GetIncidentTools,
+		tools.Sift:                        tools.GetSiftTools,
+		tools.Rendering:                   tools.GetRenderingTools,
+		tools.OnCall:                      tools.GetOnCallTools,
 	}
 }
 
@@ -258,12 +272,16 @@ func toolsState(dt *disabledTools) map[string]bool {
 	enabledTools := strings.Split(dt.enabledTools, ",")
 	enabledMap := map[string]bool{}
 
-	mayBeEnabledTool(tools.PrometheusDataSourceType, dt.prometheus, &enabledMap, enabledTools)
-	mayBeEnabledTool(tools.LokiDatasourceType, dt.loki, &enabledMap, enabledTools)
-	mayBeEnabledTool(tools.ElasticsearchDatasourceType, dt.elasticsearch, &enabledMap, enabledTools)
-	mayBeEnabledTool(tools.PyroscopeDataSourceType, dt.pyroscope, &enabledMap, enabledTools)
-	mayBeEnabledTool(tools.CloudWatchDatasourceType, dt.cloudwatch, &enabledMap, enabledTools)
-	mayBeEnabledTool(tools.ClickHouseDatasourceType, dt.clickhouse, &enabledMap, enabledTools)
+	maybeEnabledTool(tools.PrometheusDataSourceType, dt.prometheus, &enabledMap, enabledTools)
+	maybeEnabledTool(tools.LokiDatasourceType, dt.loki, &enabledMap, enabledTools)
+	maybeEnabledTool(tools.ElasticsearchDatasourceType, dt.elasticsearch, &enabledMap, enabledTools)
+	maybeEnabledTool(tools.PyroscopeDataSourceType, dt.pyroscope, &enabledMap, enabledTools)
+	maybeEnabledTool(tools.CloudWatchDatasourceType, dt.cloudwatch, &enabledMap, enabledTools)
+	maybeEnabledTool(tools.ClickHouseDatasourceType, dt.clickhouse, &enabledMap, enabledTools)
+	maybeEnabledTool(tools.Incident, dt.incident, &enabledMap, enabledTools)
+	maybeEnabledTool(tools.Sift, dt.sift, &enabledMap, enabledTools)
+	maybeEnabledTool(tools.Rendering, dt.rendering, &enabledMap, enabledTools)
+	maybeEnabledTool(tools.OnCall, dt.oncall, &enabledMap, enabledTools)
 
 	return enabledMap
 }
@@ -395,9 +413,9 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 				}
 			}
 
-			//discover enabled , find and register connected tools on server directly for stdio
+			// Discover enabled, find and register connected tools on server directly for stdio
 			if tc.onlyConnected {
-				if err := tm.InitDiscoverAndRegister(stdioCtx); err != nil {
+				if err := tm.DiscoverAndRegisterToolsStdio(stdioCtx); err != nil {
 					slog.Error("failed to perform discovery of datasources for stdio", "error", err)
 				}
 			}

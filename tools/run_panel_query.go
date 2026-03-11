@@ -50,10 +50,10 @@ type PanelQueryResult struct {
 
 // RunPanelQueryResult contains the result of running panel queries
 type RunPanelQueryResult struct {
-	DashboardUID string                   `json:"dashboardUid"`
+	DashboardUID string                    `json:"dashboardUid"`
 	Results      map[int]*PanelQueryResult `json:"results"`
-	Errors       map[int]string           `json:"errors,omitempty"`
-	TimeRange    QueryTimeRange           `json:"timeRange"`
+	Errors       map[int]string            `json:"errors,omitempty"`
+	TimeRange    QueryTimeRange            `json:"timeRange"`
 }
 
 // singlePanelQueryParams holds the parameters for running a single panel query.
@@ -589,7 +589,7 @@ func executeGrafanaDSQuery(ctx context.Context, payload map[string]interface{}) 
 	if err != nil {
 		return nil, fmt.Errorf("failed to create transport: %w", err)
 	}
-	transport = NewAuthRoundTripper(transport, cfg.AccessToken, cfg.IDToken, cfg.APIKey, cfg.BasicAuth)
+	transport = mcpgrafana.NewAuthRoundTripper(transport, cfg.AccessToken, cfg.IDToken, cfg.APIKey, cfg.BasicAuth)
 	transport = mcpgrafana.NewOrgIDRoundTripper(transport, cfg.OrgID)
 
 	client := &http.Client{
