@@ -216,7 +216,7 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 	var results interface{}
 
 	switch normalizeDatasourceType(datasourceType) {
-	case "prometheus":
+	case "prometheus", "stackdriver":
 		results, err = executePrometheusQuery(ctx, datasourceUID, query, params.Start, params.End)
 	case "loki":
 		results, err = executeLokiQuery(ctx, datasourceUID, query, params.Start, params.End)
@@ -752,7 +752,7 @@ func normalizeDatasourceType(dsType string) string {
 	case lower == "cloudwatch":
 		return "cloudwatch"
 	case lower == "stackdriver":
-		return "prometheus" // stackdriver supports PromQL, route through Prometheus query path
+		return "stackdriver" // stackdriver supports PromQL but needs its own hints
 	case strings.Contains(lower, "clickhouse"):
 		return "clickhouse"
 	default:
@@ -807,6 +807,13 @@ func generatePanelQueryHints(datasourceType, query string) []string {
 			"- Table may be empty for this time range - use query_clickhouse with a COUNT(*) to verify",
 			"- Column names or WHERE clause may not match - use describe_clickhouse_table to check schema",
 			"- Time filter may not match the actual timestamp column format",
+		)
+	case "stackdriver":
+		hints = append(hints,
+			"- PromQL query may reference a metric not available in Cloud Monitoring",
+			"- Label selectors (project_id, cluster, location) may not match any time series",
+			"- Cloud Monitoring PromQL has limitations vs native Prometheus - verify the query works in the Grafana Explore UI",
+			"- Use query_prometheus with the stackdriver datasource UID to test queries directly",
 		)
 	case "cloudwatch":
 		hints = append(hints,

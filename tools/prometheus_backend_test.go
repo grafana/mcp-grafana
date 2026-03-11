@@ -311,6 +311,6 @@ func TestBackendPromClientMetadataErrors(t *testing.T) {
 }
 
 func TestNormalizeDatasourceTypeStackdriver(t *testing.T) {
-	assert.Equal(t, "prometheus", normalizeDatasourceType("stackdriver"))
-	assert.Equal(t, "prometheus", normalizeDatasourceType("Stackdriver"))
+	assert.Equal(t, "stackdriver", normalizeDatasourceType("stackdriver"))
+	assert.Equal(t, "stackdriver", normalizeDatasourceType("Stackdriver"))
 }
