@@ -468,16 +468,15 @@ func (tm *ToolManager) discoverTools(ctx context.Context) ([]server.ServerTool, 
 	}
 
 	for pluginId, categories := range tm.pluginCategories {
-		tools = maybeAddPluginCategories(pluginId, categories, categoryIncluded, enabledPlugins, tm, tools)
+		tools = maybeAddPluginTools(pluginId, categories, categoryIncluded, enabledPlugins, tm, tools)
 	}
 	tools = slices.Clip(tools)
 
 	return tools, nil
 }
 
-//enabled category
-
-func maybeAddPluginCategories(
+// includes plugin tools when plugin is enabled
+func maybeAddPluginTools(
 	pluginID string,
 	categories []string,
 	categoryIncluded map[string]bool,
@@ -495,7 +494,7 @@ func maybeAddPluginCategories(
 	return tools
 }
 
-// addCategoryTools appends tools of a category when enabled by the user and returns the updated slice.
+// addCategoryTools appends tools of a category when enabled and returns the updated slice.
 func addCategoryTools(category string, categoryIncluded map[string]bool, tm *ToolManager, tools []server.ServerTool) []server.ServerTool {
 
 	if !tm.enabledTools[category] {

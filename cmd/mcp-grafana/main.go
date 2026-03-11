@@ -227,7 +227,7 @@ Note that some of these capabilities may be disabled. Do not try to use features
 		mcpgrafana.WithConnectedOnlyTools(tc.onlyConnected, func() map[string]bool {
 			return toolsState(&dt)
 		}, func() map[string]func() []*mcpgrafana.Tool {
-			return buildMappedTools(dt.write)
+			return buildMappedTools(!dt.write)
 		}, registryPluginCategories),
 	)
 
