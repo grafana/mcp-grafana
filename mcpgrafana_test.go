@@ -6,6 +6,7 @@ package mcpgrafana
 import (
 	"context"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/go-openapi/runtime/client"
@@ -630,6 +631,37 @@ func TestToolTracingInstrumentation(t *testing.T) {
 		assertHasAttribute(t, attributes, "mcp.method.name", "tools/call")
 		assertHasAttribute(t, attributes, "gen_ai.tool.call.arguments", `{"safeData":"debug-value"}`)
 	})
+}
+
+func TestTextMimeConsumerOverride(t *testing.T) {
+	// Verify that NewGrafanaClient overrides text/plain and text/html consumers
+	// with JSON consumers so that responses with incorrect content-type headers
+	// (e.g. from Grafana v12 or reverse proxies) are still parsed correctly.
+	// See: https://github.com/grafana/mcp-grafana/issues/635
+	ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{})
+	c := NewGrafanaClient(ctx, "http://localhost:3000", "test-api-key", nil, 0)
+	require.NotNil(t, c)
+
+	rt, ok := c.Transport.(*client.Runtime)
+	require.True(t, ok, "expected Transport to be *client.Runtime")
+
+	// The text/plain and text/html consumers should no longer be the default
+	// TextConsumer. Verify by checking they can consume a JSON object into a
+	// map (TextConsumer would fail on this).
+	for _, mime := range []string{"text/plain", "text/html"} {
+		consumer, exists := rt.Consumers[mime]
+		require.True(t, exists, "consumer for %s should exist", mime)
+		require.NotNil(t, consumer, "consumer for %s should not be nil", mime)
+
+		// JSONConsumer can unmarshal into a map; TextConsumer cannot.
+		var result map[string]interface{}
+		err := consumer.Consume(
+			strings.NewReader(`{"status":"ok"}`),
+			&result,
+		)
+		assert.NoError(t, err, "consumer for %s should parse JSON", mime)
+		assert.Equal(t, "ok", result["status"], "consumer for %s should return parsed value", mime)
+	}
 }
 
 func TestHTTPTracingConfiguration(t *testing.T) {
