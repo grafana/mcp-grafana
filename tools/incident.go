@@ -161,13 +161,20 @@ func AddIncidentTools(mcp *server.MCPServer, enableWriteTools bool) {
 	}
 }
 
-var incidentTools = []*mcpgrafana.Tool{
+var incidentReadTools = []*mcpgrafana.Tool{
 	&ListIncidents,
 	&GetIncident,
+}
+
+var incidentWriteTools = []*mcpgrafana.Tool{
 	&CreateIncident,
 	&AddActivityToIncident,
 }
 
-func GetIncidentTools() []*mcpgrafana.Tool {
-	return incidentTools
+func GetIncidentTools(enableWriteTools bool) []*mcpgrafana.Tool {
+	tools := incidentReadTools
+	if enableWriteTools {
+		tools = append(tools, incidentWriteTools...)
+	}
+	return tools
 }

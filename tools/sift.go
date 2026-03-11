@@ -657,8 +657,10 @@ var siftWriteTools = []*mcpgrafana.Tool{
 	&FindSlowRequests,
 }
 
-var siftTools = append(siftReadTools, siftWriteTools...)
-
-func GetSiftTools() []*mcpgrafana.Tool {
-	return siftTools
+func GetSiftTools(enableWriteTools bool) []*mcpgrafana.Tool {
+	tools := siftReadTools
+	if enableWriteTools {
+		tools = append(tools, siftWriteTools...)
+	}
+	return tools
 }

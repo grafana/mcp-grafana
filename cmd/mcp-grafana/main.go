@@ -226,20 +226,22 @@ Note that some of these capabilities may be disabled. Do not try to use features
 		mcpgrafana.WithProxiedTools(!dt.proxied),
 		mcpgrafana.WithConnectedOnlyTools(tc.onlyConnected, func() map[string]bool {
 			return toolsState(&dt)
-		}, buildMappedTools, registryPluginCategories),
+		}, func() map[string]func() []*mcpgrafana.Tool {
+			return buildMappedTools(dt.write)
+		}, registryPluginCategories),
 	)
 
 	dt.addTools(s, tc)
 	return s, stm
 }
 
-func maybeEnabledTool(category string, exclude bool, enabledMap *map[string]bool, enabled []string) {
+func maybeEnabledTool(category string, exclude bool, enabledMap map[string]bool, enabled []string) {
 	if exclude {
 		return
 	}
 
 	if slices.Contains(enabled, category) {
-		(*enabledMap)[category] = true
+		enabledMap[category] = true
 	}
 }
 
@@ -253,7 +255,7 @@ func registryPluginCategories() map[string][]string {
 }
 
 // returns tools map for datasources
-func buildMappedTools() map[string]func() []*mcpgrafana.Tool {
+func buildMappedTools(enableWriteTools bool) map[string]func() []*mcpgrafana.Tool {
 	return map[string]func() []*mcpgrafana.Tool{
 		tools.LokiDatasourceType:          tools.GetLokiTools,
 		tools.PrometheusDataSourceType:    tools.GetPrometheusTools,
@@ -261,10 +263,14 @@ func buildMappedTools() map[string]func() []*mcpgrafana.Tool {
 		tools.ClickHouseDatasourceType:    tools.GetClickHouseTools,
 		tools.CloudWatchDatasourceType:    tools.GetCloudWatchTools,
 		tools.ElasticsearchDatasourceType: tools.GetElasticSearchTools,
-		tools.Incident:                    tools.GetIncidentTools,
-		tools.Sift:                        tools.GetSiftTools,
-		tools.Rendering:                   tools.GetRenderingTools,
-		tools.OnCall:                      tools.GetOnCallTools,
+		tools.Incident: func() []*mcpgrafana.Tool {
+			return tools.GetIncidentTools(enableWriteTools)
+		},
+		tools.Sift: func() []*mcpgrafana.Tool {
+			return tools.GetSiftTools(enableWriteTools)
+		},
+		tools.Rendering: tools.GetRenderingTools,
+		tools.OnCall:    tools.GetOnCallTools,
 	}
 }
 
@@ -272,16 +278,16 @@ func toolsState(dt *disabledTools) map[string]bool {
 	enabledTools := strings.Split(dt.enabledTools, ",")
 	enabledMap := map[string]bool{}
 
-	maybeEnabledTool(tools.PrometheusDataSourceType, dt.prometheus, &enabledMap, enabledTools)
-	maybeEnabledTool(tools.LokiDatasourceType, dt.loki, &enabledMap, enabledTools)
-	maybeEnabledTool(tools.ElasticsearchDatasourceType, dt.elasticsearch, &enabledMap, enabledTools)
-	maybeEnabledTool(tools.PyroscopeDataSourceType, dt.pyroscope, &enabledMap, enabledTools)
-	maybeEnabledTool(tools.CloudWatchDatasourceType, dt.cloudwatch, &enabledMap, enabledTools)
-	maybeEnabledTool(tools.ClickHouseDatasourceType, dt.clickhouse, &enabledMap, enabledTools)
-	maybeEnabledTool(tools.Incident, dt.incident, &enabledMap, enabledTools)
-	maybeEnabledTool(tools.Sift, dt.sift, &enabledMap, enabledTools)
-	maybeEnabledTool(tools.Rendering, dt.rendering, &enabledMap, enabledTools)
-	maybeEnabledTool(tools.OnCall, dt.oncall, &enabledMap, enabledTools)
+	maybeEnabledTool(tools.PrometheusDataSourceType, dt.prometheus, enabledMap, enabledTools)
+	maybeEnabledTool(tools.LokiDatasourceType, dt.loki, enabledMap, enabledTools)
+	maybeEnabledTool(tools.ElasticsearchDatasourceType, dt.elasticsearch, enabledMap, enabledTools)
+	maybeEnabledTool(tools.PyroscopeDataSourceType, dt.pyroscope, enabledMap, enabledTools)
+	maybeEnabledTool(tools.CloudWatchDatasourceType, dt.cloudwatch, enabledMap, enabledTools)
+	maybeEnabledTool(tools.ClickHouseDatasourceType, dt.clickhouse, enabledMap, enabledTools)
+	maybeEnabledTool(tools.Incident, dt.incident, enabledMap, enabledTools)
+	maybeEnabledTool(tools.Sift, dt.sift, enabledMap, enabledTools)
+	maybeEnabledTool(tools.Rendering, dt.rendering, enabledMap, enabledTools)
+	maybeEnabledTool(tools.OnCall, dt.oncall, enabledMap, enabledTools)
 
 	return enabledMap
 }
