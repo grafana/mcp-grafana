@@ -598,14 +598,20 @@ func extractLabelValuesFromFrames(resp *dsQueryResponse, labelName string) []str
 
 // --- Helpers ---
 
-// extractNameMatcher looks for a __name__="..." style matcher in the matchers list.
+// extractNameMatcher looks for a __name__="..." exact equality matcher in the matchers list.
+// Regex matchers (__name__=~"...") are skipped since they cannot be used as
+// literal metric type filters in Cloud Monitoring queries.
 func extractNameMatcher(matchers []string) string {
 	for _, m := range matchers {
 		m = strings.TrimSpace(m)
 		m = strings.Trim(m, "{}")
 		for _, part := range strings.Split(m, ",") {
 			part = strings.TrimSpace(part)
-			if strings.HasPrefix(part, "__name__=") || strings.HasPrefix(part, `__name__="`) {
+			// Skip regex and negative matchers — only exact equality is usable.
+			if strings.HasPrefix(part, "__name__=~") || strings.HasPrefix(part, "__name__!") {
+				continue
+			}
+			if strings.HasPrefix(part, "__name__=") {
 				val := strings.TrimPrefix(part, "__name__=")
 				val = strings.Trim(val, `"'`)
 				return val

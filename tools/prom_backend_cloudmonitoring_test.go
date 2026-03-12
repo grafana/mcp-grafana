@@ -202,6 +202,9 @@ func TestExtractNameMatcher(t *testing.T) {
 		{"exact match", []string{`{__name__="up"}`}, "up"},
 		{"unquoted", []string{`{__name__=up}`}, "up"},
 		{"with other matchers", []string{`{__name__="cpu_total", job="node"}`}, "cpu_total"},
+		{"regex matcher skipped", []string{`{__name__=~"cpu.*"}`}, ""},
+		{"negative matcher skipped", []string{`{__name__!="up"}`}, ""},
+		{"negative regex skipped", []string{`{__name__!~"cpu.*"}`}, ""},
 	}
 
 	for _, tc := range tests {
