@@ -107,6 +107,11 @@ func (p *prometheusDatasourceHTTPMethodRoundTripper) RoundTrip(req *http.Request
 		return p.base.RoundTrip(req)
 	}
 
+	contentType := strings.ToLower(req.Header.Get("Content-Type"))
+	if req.Body != nil && contentType != "" && !strings.HasPrefix(contentType, "application/x-www-form-urlencoded") {
+		return p.base.RoundTrip(req)
+	}
+
 	bodyBytes := []byte{}
 	if req.Body != nil {
 		var err error
@@ -122,19 +127,21 @@ func (p *prometheusDatasourceHTTPMethodRoundTripper) RoundTrip(req *http.Request
 	converted.Body = nil
 	converted.GetBody = nil
 	converted.ContentLength = 0
-	converted.Header = req.Header.Clone()
 	converted.Header.Del("Content-Type")
 	converted.Header.Del("Content-Length")
 
-	query := converted.URL.Query()
-	if values, parseErr := url.ParseQuery(string(bodyBytes)); parseErr == nil {
-		for key, vals := range values {
-			for _, val := range vals {
-				query.Add(key, val)
-			}
-		}
-		converted.URL.RawQuery = query.Encode()
+	values, parseErr := url.ParseQuery(string(bodyBytes))
+	if parseErr != nil {
+		return nil, fmt.Errorf("parsing form body for GET conversion: %w", parseErr)
 	}
+
+	query := converted.URL.Query()
+	for key, vals := range values {
+		for _, val := range vals {
+			query.Add(key, val)
+		}
+	}
+	converted.URL.RawQuery = query.Encode()
 
 	return p.base.RoundTrip(converted)
 }

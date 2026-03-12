@@ -32,31 +32,98 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
 
 func TestPrometheusDatasourceHTTPMethodRoundTripper(t *testing.T) {
-	var gotMethod string
-	var gotQuery string
+	t.Run("converts form POST body into GET query", func(t *testing.T) {
+		var gotMethod string
+		var gotQuery string
 
-	rt := &prometheusDatasourceHTTPMethodRoundTripper{base: roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		gotMethod = r.Method
-		gotQuery = r.URL.RawQuery
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Body:       io.NopCloser(strings.NewReader("ok")),
-			Header:     make(http.Header),
-		}, nil
-	})}
+		rt := &prometheusDatasourceHTTPMethodRoundTripper{base: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			gotMethod = r.Method
+			gotQuery = r.URL.RawQuery
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader("ok")),
+				Header:     make(http.Header),
+			}, nil
+		})}
 
-	req, err := http.NewRequest(http.MethodPost, "http://example.test/api/datasources/uid/abc/resources/api/v1/query", strings.NewReader("query=up&time=1234"))
-	require.NoError(t, err)
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req, err := http.NewRequest(http.MethodPost, "http://example.test/api/datasources/uid/abc/resources/api/v1/query", strings.NewReader("query=up&time=1234"))
+		require.NoError(t, err)
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	resp, err := rt.RoundTrip(req)
-	require.NoError(t, err)
-	defer resp.Body.Close()
-	_, _ = io.ReadAll(resp.Body)
+		resp, err := rt.RoundTrip(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		_, _ = io.ReadAll(resp.Body)
 
-	assert.Equal(t, http.MethodGet, gotMethod)
-	assert.Contains(t, gotQuery, "query=up")
-	assert.Contains(t, gotQuery, "time=1234")
+		assert.Equal(t, http.MethodGet, gotMethod)
+		assert.Contains(t, gotQuery, "query=up")
+		assert.Contains(t, gotQuery, "time=1234")
+	})
+
+	t.Run("keeps non-form POST requests unchanged", func(t *testing.T) {
+		var gotMethod string
+
+		rt := &prometheusDatasourceHTTPMethodRoundTripper{base: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			gotMethod = r.Method
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader("ok")),
+				Header:     make(http.Header),
+			}, nil
+		})}
+
+		req, err := http.NewRequest(http.MethodPost, "http://example.test/api/datasources/uid/abc/resources/api/v1/query", strings.NewReader(`{"query":"up"}`))
+		require.NoError(t, err)
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := rt.RoundTrip(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		_, _ = io.ReadAll(resp.Body)
+
+		assert.Equal(t, http.MethodPost, gotMethod)
+	})
+
+	t.Run("converts nil-body POST to GET", func(t *testing.T) {
+		var gotMethod string
+
+		rt := &prometheusDatasourceHTTPMethodRoundTripper{base: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			gotMethod = r.Method
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader("ok")),
+				Header:     make(http.Header),
+			}, nil
+		})}
+
+		req, err := http.NewRequest(http.MethodPost, "http://example.test/api/datasources/uid/abc/resources/api/v1/query", nil)
+		require.NoError(t, err)
+
+		resp, err := rt.RoundTrip(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		_, _ = io.ReadAll(resp.Body)
+
+		assert.Equal(t, http.MethodGet, gotMethod)
+	})
+
+	t.Run("returns clear parse error for invalid form body", func(t *testing.T) {
+		rt := &prometheusDatasourceHTTPMethodRoundTripper{base: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader("ok")),
+				Header:     make(http.Header),
+			}, nil
+		})}
+
+		req, err := http.NewRequest(http.MethodPost, "http://example.test/api/datasources/uid/abc/resources/api/v1/query", strings.NewReader("query=%zz"))
+		require.NoError(t, err)
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+		_, err = rt.RoundTrip(req)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "parsing form body for GET conversion")
+	})
 }
 
 func TestParseRelativeTime(t *testing.T) {
