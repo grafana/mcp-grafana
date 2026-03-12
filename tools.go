@@ -420,7 +420,7 @@ type Plugin struct {
 	Type    string `json:"type"`
 	Enabled bool   `json:"enabled"`
 }
-
+// GetEnabledPlugins returns enabled plugins accessible to the authenticated session.
 func (gc *grafanaHTTPClient) GetEnabledPlugins(ctx context.Context) ([]Plugin, error) {
 	response, err := gc.makeRequest(ctx, "GET", "/api/plugins?enabled=1", nil)
 	if err != nil {
@@ -435,6 +435,9 @@ func (gc *grafanaHTTPClient) GetEnabledPlugins(ctx context.Context) ([]Plugin, e
 	return result, nil
 }
 
+// discoverTools discovers an authenticated session's accessible resources of the grafana instance 
+// returns the discovered tools
+// A discoverTools is safe to be called concurrently 
 func (tm *ToolManager) discoverTools(ctx context.Context) ([]server.ServerTool, error) {
 	grafana := GrafanaClientFromContext(ctx)
 	discoveredSources, err := grafana.Datasources.GetDataSources()
@@ -475,7 +478,8 @@ func (tm *ToolManager) discoverTools(ctx context.Context) ([]server.ServerTool, 
 	return tools, nil
 }
 
-// includes plugin tools when plugin is enabled
+// maybeAddPluginTools appends tools with all category tools of a plugin resource
+// if the plugin resource is enabled. It returns the updated slice
 func maybeAddPluginTools(
 	pluginID string,
 	categories []string,
@@ -526,7 +530,9 @@ func addCategoryTools(category string, categoryIncluded map[string]bool, tm *Too
 	return tools
 }
 
-// DiscoverAndRegisterToolsSession discovers connected datasources and registers tools per session.
+// DiscoverAndRegisterToolsSession discovers an authenticated session's accessible resources of connected grafana instance
+// and registers tools for a session
+// A DiscoverAndRegisterToolsSession call is concurrent safe across varying or identical sessions
 func (tm *ToolManager) DiscoverAndRegisterToolsSession(ctx context.Context, session server.ClientSession) {
 	// Detection of connected tools disabled
 	if !tm.connectedOnly {
@@ -565,8 +571,8 @@ func (tm *ToolManager) DiscoverAndRegisterToolsSession(ctx context.Context, sess
 	})
 }
 
-// Discovers connected tool categories(datasources, plugins) and registers tools (called by stdio transport)
-// Only called once on startup
+// DiscoverAndRegisterToolsStdio discovers resources of connected grafana instance and registers tools globally.
+// Expected to be used for global tool registry when server is configured with stdio transport
 func (tm *ToolManager) DiscoverAndRegisterToolsStdio(ctx context.Context) error {
 	// If this is called once globally
 	if !tm.connectedOnly {
