@@ -3,7 +3,10 @@ package tools
 import (
 	"context"
 	"fmt"
+	"io"
 	"math"
+	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -31,7 +34,7 @@ var (
 
 func promClientFromContext(ctx context.Context, uid string) (promv1.API, error) {
 	// First check if the datasource exists
-	_, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: uid})
+	ds, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: uid})
 	if err != nil {
 		return nil, err
 	}
@@ -68,6 +71,10 @@ func promClientFromContext(ctx context.Context, uid string) (promv1.API, error) 
 	// Wrap with org ID support
 	rt = mcpgrafana.NewOrgIDRoundTripper(rt, cfg.OrgID)
 
+	if datasourcePrometheusHTTPMethod(ds.JSONData) == http.MethodGet {
+		rt = &prometheusDatasourceHTTPMethodRoundTripper{base: rt}
+	}
+
 	c, err := api.NewClient(api.Config{
 		Address:      url,
 		RoundTripper: rt,
@@ -77,6 +84,66 @@ func promClientFromContext(ctx context.Context, uid string) (promv1.API, error) 
 	}
 
 	return promv1.NewAPI(c), nil
+}
+
+func datasourcePrometheusHTTPMethod(jsonData any) string {
+	data, ok := jsonData.(map[string]any)
+	if !ok {
+		return http.MethodPost
+	}
+	method, _ := data["httpMethod"].(string)
+	if strings.EqualFold(method, http.MethodGet) {
+		return http.MethodGet
+	}
+	return http.MethodPost
+}
+
+type prometheusDatasourceHTTPMethodRoundTripper struct {
+	base http.RoundTripper
+}
+
+func (p *prometheusDatasourceHTTPMethodRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.Method != http.MethodPost {
+		return p.base.RoundTrip(req)
+	}
+
+	contentType := strings.ToLower(req.Header.Get("Content-Type"))
+	if req.Body != nil && contentType != "" && !strings.HasPrefix(contentType, "application/x-www-form-urlencoded") {
+		return p.base.RoundTrip(req)
+	}
+
+	bodyBytes := []byte{}
+	if req.Body != nil {
+		var err error
+		bodyBytes, err = io.ReadAll(req.Body)
+		if err != nil {
+			return nil, err
+		}
+		_ = req.Body.Close()
+	}
+
+	converted := req.Clone(req.Context())
+	converted.Method = http.MethodGet
+	converted.Body = nil
+	converted.GetBody = nil
+	converted.ContentLength = 0
+	converted.Header.Del("Content-Type")
+	converted.Header.Del("Content-Length")
+
+	values, parseErr := url.ParseQuery(string(bodyBytes))
+	if parseErr != nil {
+		return nil, fmt.Errorf("parsing form body for GET conversion: %w", parseErr)
+	}
+
+	query := converted.URL.Query()
+	for key, vals := range values {
+		for _, val := range vals {
+			query.Add(key, val)
+		}
+	}
+	converted.URL.RawQuery = query.Encode()
+
+	return p.base.RoundTrip(converted)
 }
 
 type ListPrometheusMetricMetadataParams struct {
