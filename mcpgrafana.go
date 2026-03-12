@@ -615,6 +615,9 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 					if len(config.ExtraHeaders) > 0 {
 						rt = NewExtraHeadersRoundTripper(rt, config.ExtraHeaders)
 					}
+					if config.OrgID > 0 {
+						rt = NewOrgIDRoundTripper(rt, config.OrgID)
+					}
 					userAgentWrapped := wrapWithUserAgent(rt)
 					var wrapped http.RoundTripper = otelhttp.NewTransport(userAgentWrapped)
 					if config.BrowserAuth {
