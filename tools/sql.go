@@ -19,9 +19,9 @@ var (
 	MaxSQLTablesLimit     = uint(100)
 )
 var SQLDatasourceTypes = []string{
-	sql.MySQLDatasourceType,
-	sql.MSSQLDatasourceType,
-	sql.PostgresDatasourceType,
+	sql.MySQLType,
+	sql.MSSQLType,
+	sql.PostgresType,
 }
 
 type ListSQLDatabaseArgs struct {
@@ -63,19 +63,19 @@ func withSQLDefaultLimits() uint {
 
 // validates datasourceUID to be one of supported datasource types
 // return non nil error for failed validation
-func sqlDataSource(ctx context.Context, uid string) (sql.SQLDataSource, error) {
+func sqlDataSource(ctx context.Context, uid string) (sql.SQLDatabase, error) {
 	ds, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: uid})
 	if err != nil {
 		return nil, err
 	}
 
 	switch ds.Type {
-	case sql.MySQLDatasourceType:
-		return sql.NewMySqlDataSource(), nil
-	case sql.MSSQLDatasourceType:
-		return sql.NewMSSqlDataSource(), nil
-	case sql.PostgresDatasourceType:
-		return sql.NewPostgresDataSource(), nil
+	case sql.MySQLType:
+		return sql.NewMySQL(), nil
+	case sql.MSSQLType:
+		return sql.NewMSSQL(), nil
+	case sql.PostgresType:
+		return sql.NewPostgres(), nil
 	default:
 		return nil, fmt.Errorf("datasource %s of type %s,is not an SQL Datasource", uid, ds.Type)
 	}

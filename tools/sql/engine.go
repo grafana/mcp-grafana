@@ -16,16 +16,28 @@ import (
 	"github.com/grafana/mcp-grafana/pkg/auth"
 )
 
-type SQLDataSource interface {
+// SQLDatabase interface for metadata queries
+type SQLDatabase interface {
+	// Type returns the Database Type
 	Type() string
+
+	// GetDatabaseQuery builds a query to retrieve databases excluding any internal databases
 	GetDatabaseQuery() string
+
+	// GetTablesQuery builds a query to retrieve table names of a database excluding internal tables
+	// dbName is optional. It uses default database when empty
 	GetTablesQuery(dbName string) string
+
+	// GetSchemaQuery builds a query to retrieve table schema with optional dbName
 	GetSchemaQuery(tableName string, dbName string) string
-	//query with limits , indicating wheather limit has been applied
+
+	// QueryWithLimit wraps query to enforce limit on rows
+	// It returns query , boolean indicating if wrapping was successful
 	QueryWithLimit(query string, limit uint) (string, bool)
+
+	GetInfoQuery() string
 }
 
-// SQL Implements sql engine execute
 type sqlEngine struct {
 	grafanaAPIBaseURL string
 	grafanaClient     http.Client
@@ -35,7 +47,7 @@ type BuildQueryArgs struct {
 	RefID         string
 	DatasourceUId string
 	Query         string
-	DB            *SQLDataSource
+	DB            *SQLDatabase
 	IntervalMs    uint //optional : not applicable for meta queries
 }
 
@@ -107,7 +119,6 @@ type SQLQueryBatchResult struct {
 	ErrorCount uint
 }
 
-// executes gives
 func (en *sqlEngine) QueryBatch(ctx context.Context, queries []SQLQuery, args QueryBatchArgs) (*SQLQueryBatchResult, error) {
 	payload := map[string]interface{}{
 		"queries": queries,

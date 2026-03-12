@@ -6,31 +6,34 @@ import (
 )
 
 const (
-	MySQLDatasourceType = "mysql"
+	MySQLType = "mysql"
 )
 
-type MySQLDataSource struct{}
+// MYSQL implements SQLDatabase
+//
+// INFO : Database and Schema are synonyms in MYSQL
+type MySQL struct{}
 
-func NewMySqlDataSource() *MySQLDataSource {
-	return &MySQLDataSource{}
+func NewMySQL() *MySQL {
+	return &MySQL{}
 }
 
-func (ds *MySQLDataSource) Type() string { return MySQLDatasourceType }
+func (*MySQL) Type() string { return MySQLType }
 
-func (ds *MySQLDataSource) GetDatabaseQuery() string {
+func (*MySQL) GetDatabaseQuery() string {
 	return fmt.Sprintf(
 		"SELECT DISTINCT TABLE_SCHEMA as %s from information_schema.TABLES where TABLE_TYPE != 'SYSTEM VIEW' ORDER BY database_name",
 		DatabaseNameColumn,
 	)
 }
 
-func (ds *MySQLDataSource) GetTablesQuery(dbName string) string {
+func (*MySQL) GetTablesQuery(dbName string) string {
 	database := dbName
 
 	if database == "" {
 		database = "database()"
 	} else {
-		database = QuoteIdentAsLiteral(database)
+		database = quoteIdentAsLiteral(database)
 	}
 
 	return fmt.Sprintf(
@@ -38,28 +41,33 @@ func (ds *MySQLDataSource) GetTablesQuery(dbName string) string {
 		TableNameColumn,
 		database,
 	)
-
 }
 
-// tableName : supports schema.table format
-// optional dbName defaults to default configured database
-func (ds *MySQLDataSource) GetSchemaQuery(tableName string, dbName string) string {
+// GetSchemaQuery bulids query to retrieve table schema with optional dbName
+// tableName supports database qualified tableName Ex: db.table
+func (*MySQL) GetSchemaQuery(tableName string, dbName string) string {
 	query := fmt.Sprintf("SELECT column_name as %s, data_type as %s FROM information_schema.columns WHERE ", ColNameColumn, ColTypeColumn)
 	query += buildTableConstraint(tableName, dbName)
-	query += " ORDER BY column_name"
+	query += fmt.Sprintf(" ORDER BY %s", ColNameColumn)
 	return query
 }
 
-// enforces limit : wraps the query  with`( )`  + appends limit clause `LIMIT X`
-func (ds *MySQLDataSource) QueryWithLimit(query string, limit uint) (string, bool) {
+func (*MySQL) QueryWithLimit(query string, limit uint) (string, bool) {
 	query = strings.TrimSuffix(query, ";")
 	queryWithLimit := fmt.Sprintf(`( %s ) LIMIT %d`, query, limit)
 	return queryWithLimit, true
 }
 
-func buildTableConstraint(table string, dbName string) string {
-	var query string
+// GetInfoQuery builds a query to retrieve mysql version
+func (*MySQL) GetInfoQuery() string {
+	query := fmt.Sprintf("SELECT VERSION() AS %s", DBVersionColumn)
+	return query
+}
 
+// buildTableConstraint builds a contraint to select table from default database
+// when not using database qualified table names
+// It returns the contraint query
+func buildTableConstraint(table string, dbName string) string {
 	// check for schema qualified table
 	if strings.Contains(table, ".") {
 		parts := strings.SplitN(table, ".", 2)
@@ -69,14 +77,14 @@ func buildTableConstraint(table string, dbName string) string {
 	}
 
 	if dbName != "" {
-		dbName = QuoteIdentAsLiteral(dbName)
+		dbName = quoteIdentAsLiteral(dbName)
 	} else {
 		dbName = "database()"
 	}
 
-	table = QuoteIdentAsLiteral(table)
+	table = quoteIdentAsLiteral(table)
 
-	query = fmt.Sprintf("table_schema = %s AND table_name = %s",
+	query := fmt.Sprintf("table_schema = %s AND table_name = %s",
 		dbName,
 		table,
 	)
@@ -84,8 +92,9 @@ func buildTableConstraint(table string, dbName string) string {
 	return query
 }
 
-// remove identifier quoting from identifier to use in metadata queries
-func UnquoteIdentifier(value string) string {
+// UnquoteIdentifier removes identifier quoting
+// It returns unquoted identifier
+func unquoteIdentifier(value string) string {
 	if len(value) < 2 {
 		return value
 	}
@@ -100,10 +109,11 @@ func UnquoteIdentifier(value string) string {
 	return value
 }
 
-func QuoteLiteral(value string) string {
+// QuoteLiteral applies identifier quoting with 'single quotes
+func quoteLiteral(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
 }
 
-func QuoteIdentAsLiteral(value string) string {
-	return QuoteLiteral(UnquoteIdentifier(value))
+func quoteIdentAsLiteral(value string) string {
+	return quoteLiteral(unquoteIdentifier(value))
 }

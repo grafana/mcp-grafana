@@ -6,28 +6,30 @@ import (
 )
 
 const (
-	MSSQLDatasourceType = "mssql"
+	MSSQLType = "mssql"
 )
 
-type MSSQLDataSource struct{}
+// MSSQL implements SQLDatabase
+type MSSQL struct{}
 
-func NewMSSqlDataSource() *MSSQLDataSource {
-	return &MSSQLDataSource{}
+func NewMSSQL() *MSSQL {
+	return &MSSQL{}
 }
 
-func (ds *MSSQLDataSource) Type() string { return MSSQLDatasourceType }
+func (*MSSQL) Type() string { return MSSQLType }
 
-func (ds *MSSQLDataSource) GetDatabaseQuery() string {
+func (*MSSQL) GetDatabaseQuery() string {
 	return fmt.Sprintf(
 		"SELECT name as %s FROM sys.databases WHERE name NOT IN ('master', 'tempdb', 'model', 'msdb');",
 		DatabaseNameColumn,
 	)
 }
 
-func (ds *MSSQLDataSource) GetTablesQuery(dbName string) string {
+func (*MSSQL) GetTablesQuery(dbName string) string {
 	database := dbName
 
 	if database != "" {
+		//append . to dbName to use as prefix in fully qualified name
 		database = fmt.Sprintf(`[%s].`, strings.Trim(dbName, " "))
 	}
 
@@ -41,9 +43,7 @@ func (ds *MSSQLDataSource) GetTablesQuery(dbName string) string {
 	)
 }
 
-//supports schema.table | table format for tableName
-//optional dbName defaults to default configured database
-func (ds *MSSQLDataSource) GetSchemaQuery(tableName string, dbName string) string {
+func (*MSSQL) GetSchemaQuery(tableName string, dbName string) string {
 
 	databaseContraint := ""
 
@@ -51,7 +51,6 @@ func (ds *MSSQLDataSource) GetSchemaQuery(tableName string, dbName string) strin
 		databaseContraint = fmt.Sprintf("USE [%s] ", dbName)
 	}
 
-	//TABLE_SCHEMA = 'dbo' AND
 	splitTableName := strings.SplitN(tableName, ".", 2)
 
 	schema := ""
@@ -74,12 +73,18 @@ func (ds *MSSQLDataSource) GetSchemaQuery(tableName string, dbName string) strin
 		FROM INFORMATION_SCHEMA.COLUMNS WHERE %s TABLE_NAME='%s';
 	`, databaseContraint, ColNameColumn, ColTypeColumn, schemaContraint, table,
 	)
+
 	return query
 }
 
-// enforces limit on rows selected through `SELECT TOP x`
-func (ds *MSSQLDataSource) QueryWithLimit(query string, limit uint) (string, bool) {
+func (*MSSQL) QueryWithLimit(query string, limit uint) (string, bool) {
 	query = strings.TrimRight(query, ";")
 	queryWithLimit := fmt.Sprintf(`SELECT TOP %d * FROM ( %s ) AS query_with_limit`, limit, query)
 	return queryWithLimit, true
+}
+
+// GetInfoQuery builds query to retrieve mssql version
+func (*MSSQL) GetInfoQuery() string {
+	query := fmt.Sprintf(`SELECT CAST(SERVERPROPERTY('ProductVersion') AS VARCHAR) AS %s`, DBVersionColumn)
+	return query
 }

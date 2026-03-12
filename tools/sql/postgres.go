@@ -6,18 +6,18 @@ import (
 )
 
 const (
-	PostgresDatasourceType = "grafana-postgresql-datasource"
+	PostgresType = "grafana-postgresql-datasource"
 )
 
-type PostgresDataSource struct{}
+type Postgres struct{}
 
-func NewPostgresDataSource() *PostgresDataSource {
-	return &PostgresDataSource{}
+func NewPostgres() *Postgres {
+	return &Postgres{}
 }
 
-func (ds *PostgresDataSource) Type() string { return PostgresDatasourceType }
+func (*Postgres) Type() string { return PostgresType }
 
-func (ds *PostgresDataSource) GetDatabaseQuery() string {
+func (*Postgres) GetDatabaseQuery() string {
 	return fmt.Sprintf(
 		`SELECT datname as %s
 		FROM pg_database
@@ -28,9 +28,9 @@ func (ds *PostgresDataSource) GetDatabaseQuery() string {
 	)
 }
 
-func (ds *PostgresDataSource) GetTablesQuery(dbName string) string {
+func (*Postgres) GetTablesQuery(dbName string) string {
 	// PostgreSQL tables are usually queried within the connected database
-	// swithching database through sql query is not supported in postgres
+	// switching database through an sql query is not supported in postgres
 	constraint := buildSchemaConstraint()
 	return fmt.Sprintf(
 		`SELECT
@@ -54,9 +54,9 @@ func (ds *PostgresDataSource) GetTablesQuery(dbName string) string {
 	)
 }
 
-func (ds *PostgresDataSource) GetSchemaQuery(tableName string, dbName string) string {
-	// we will put table-name between single-quotes, so we need to escape single-quotes
-	// in the table-name
+func (*Postgres) GetSchemaQuery(tableName string, dbName string) string {
+	// we will put table-name between single-quotes,
+	// and escape single-quotes in the table-name
 	table := "'" + strings.ReplaceAll(tableName, "'", "''") + "'"
 	constraint := buildSchemaConstraint()
 
@@ -76,13 +76,29 @@ func (ds *PostgresDataSource) GetSchemaQuery(tableName string, dbName string) st
 	)
 }
 
-// enforces limit on no of records through wrapping with `SELECT * FROM _query_ LIMIT x`
-func (ds *PostgresDataSource) QueryWithLimit(query string, limit uint) (string, bool) {
+// QueryWithLimit enforces limit on no of records through wrapping with `SELECT * FROM _query_ LIMIT x`
+func (*Postgres) QueryWithLimit(query string, limit uint) (string, bool) {
 	query = strings.TrimSuffix(query, ";")
 	queryWithLimit := fmt.Sprintf(`SELECT * FROM ( %s ) AS subquery LIMIT %d`, query, limit)
 	return queryWithLimit, true
 }
 
+// GetInfoQuery builds query to retrieve postgresdb , timescaledb ext version
+func (*Postgres) GetInfoQuery() string {
+	query := fmt.Sprintf(`SELECT
+				current_setting('server_version_num')::int / 100 AS %s,
+				extversion AS %s
+			FROM pg_extension
+			WHERE extname = 'timescaledb'`, DBVersionColumn, TimeScaleDbVersionColumn)
+	return query
+}
+
+// buildSchemaConstraint build's contraint to list default schemas from configured search path
+// It returns the query
+//
+// Example usecase :
+// A statment queries a table without using a qualified schema in table
+// table is queried only when its schema is under searchpath
 func buildSchemaConstraint() string {
 	return `
 	 quote_ident(table_schema) IN (
