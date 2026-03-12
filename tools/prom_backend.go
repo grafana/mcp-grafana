@@ -8,7 +8,6 @@ import (
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/prometheus/client_golang/api"
 	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
-	"github.com/prometheus/common/config"
 	"github.com/prometheus/common/model"
 )
 
@@ -60,26 +59,7 @@ func newPrometheusBackend(ctx context.Context, uid string) (*prometheusBackend, 
 		return nil, fmt.Errorf("failed to create custom transport: %w", err)
 	}
 
-	if cfg.AccessToken != "" && cfg.IDToken != "" {
-		rt = config.NewHeadersRoundTripper(&config.Headers{
-			Headers: map[string]config.Header{
-				"X-Access-Token": {
-					Secrets: []config.Secret{config.Secret(cfg.AccessToken)},
-				},
-				"X-Grafana-Id": {
-					Secrets: []config.Secret{config.Secret(cfg.IDToken)},
-				},
-			},
-		}, rt)
-	} else if cfg.APIKey != "" {
-		rt = config.NewAuthorizationCredentialsRoundTripper(
-			"Bearer", config.NewInlineSecret(cfg.APIKey), rt,
-		)
-	} else if cfg.BasicAuth != nil {
-		password, _ := cfg.BasicAuth.Password()
-		rt = config.NewBasicAuthRoundTripper(config.NewInlineSecret(cfg.BasicAuth.Username()), config.NewInlineSecret(password), rt)
-	}
-
+	rt = NewAuthRoundTripper(rt, cfg.AccessToken, cfg.IDToken, cfg.APIKey, cfg.BasicAuth)
 	rt = mcpgrafana.NewOrgIDRoundTripper(rt, cfg.OrgID)
 
 	c, err := api.NewClient(api.Config{
