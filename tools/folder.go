@@ -40,7 +40,7 @@ func createFolder(ctx context.Context, args CreateFolderParams) (*models.Folder,
 
 var CreateFolder = mcpgrafana.MustTool(
 	"create_folder",
-	"Create a Grafana folder. Provide a title and optional UID. Returns the created folder.",
+	"Create a new folder in Grafana to organize dashboards and other resources. Use when the user wants to establish a new organizational structure or group related dashboards together. Accepts `title` (required string) and `uid` (optional unique identifier). e.g., title=\"Production Monitoring\" or uid=\"prod-folder-001\". Returns the created folder object with its assigned ID and metadata. Raises an error if the folder title already exists or the provided UID is already in use. Do not use when you need to list existing folders or modify folder permissions (use appropriate folder management tools instead).",
 	createFolder,
 	mcp.WithTitleAnnotation("Create folder"),
 	mcp.WithIdempotentHintAnnotation(false),

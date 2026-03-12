@@ -242,7 +242,7 @@ func sortArrayRemovesDescending(operations []PatchOperation) ([]PatchOperation, 
 
 var GetDashboardByUID = mcpgrafana.MustTool(
 	"get_dashboard_by_uid",
-	"Retrieves the complete dashboard, including panels, variables, and settings, for a specific dashboard identified by its UID. WARNING: Large dashboards can consume significant context window space. Consider using get_dashboard_summary for overview or get_dashboard_property for specific data instead.",
+	"Retrieve the complete dashboard configuration including all panels, variables, and settings for a specific dashboard. Use when the user wants to examine the full structure, export dashboard JSON, or analyze complex dashboard configurations in detail. Accepts `uid` (required string), e.g., \"abc123def\" or \"dashboard-uid-456\". Do not use when you only need basic dashboard information like title or tags (use get_dashboard_summary instead) or when you want a specific property (use get_dashboard_property instead). Returns error if the dashboard UID does not exist or access is denied. WARNING: Large dashboards consume significant context window space.",
 	getDashboardByUID,
 	mcp.WithTitleAnnotation("Get dashboard details"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -251,7 +251,7 @@ var GetDashboardByUID = mcpgrafana.MustTool(
 
 var UpdateDashboard = mcpgrafana.MustTool(
 	"update_dashboard",
-	"Create or update a dashboard. Two modes: (1) Full JSON — provide 'dashboard' for new dashboards or complete replacements. (2) Patch — provide 'uid' + 'operations' to make targeted changes to an existing dashboard. One of these two modes is required; 'folderUid'\\, 'message'\\, and 'overwrite' are supplementary and do nothing on their own. Patch operations support JSONPaths like '$.panels[0].targets[0].expr'\\, '$.panels[1].title'\\, '$.panels[2].targets[0].datasource'. Append to arrays with '/- ' syntax: '$.panels/- '. Remove by index: {\"op\": \"remove\"\\, \"path\": \"$.panels[2]\"}. Multiple removes on the same array are automatically reordered to avoid index-shifting issues.",
+	"Create or update a Grafana dashboard using full JSON replacement or targeted patch operations. Use when the user wants to modify existing dashboard configurations, update panel settings, or apply specific changes to dashboard elements. Accepts `dashboard` (complete JSON object for new/replacement dashboards) or `uid` + `operations` (for JSONPath-based patches), plus optional `folderUid`, `message`, and `overwrite` parameters. Patch operations support JSONPaths like `$.panels[0].targets[0].expr` or `$.panels[1].title`, with array append syntax `$.panels/-`. Do not use when you need to create standalone annotations on dashboards (use create_annotation instead). e.g., uid=\"abc123\", operations=[{\"op\": \"replace\", \"path\": \"$.title\", \"value\": \"Updated Dashboard\"}]. Raises an error if the dashboard UID does not exist or JSONPath syntax is invalid."op\": \"remove\"\\, \"path\": \"$.panels[2]\"}. Multiple removes on the same array are automatically reordered to avoid index-shifting issues.",
 	updateDashboard,
 	mcp.WithTitleAnnotation("Create or update dashboard"),
 	mcp.WithDestructiveHintAnnotation(true),
@@ -366,7 +366,7 @@ func getDashboardProperty(ctx context.Context, args GetDashboardPropertyParams) 
 
 var GetDashboardProperty = mcpgrafana.MustTool(
 	"get_dashboard_property",
-	"Get specific parts of a dashboard using JSONPath expressions to minimize context window usage. Common paths: '$.title' (title)\\, '$.panels[*].title' (all panel titles)\\, '$.panels[0]' (first panel)\\, '$.templating.list' (variables)\\, '$.tags' (tags)\\, '$.panels[*].targets[*].expr' (all queries). Use this instead of get_dashboard_by_uid when you only need specific dashboard properties.",
+	"Query specific parts of a Grafana dashboard using JSONPath expressions to minimize context window usage. Use when the user wants to extract targeted dashboard properties like titles, panel configurations, or variables without retrieving the entire dashboard. Accepts `dashboard_uid` (required) and `json_path` (required JSONPath expression). Common paths include `$.title` for dashboard title, `$.panels[*].title` for all panel titles, or `$.templating.list` for variables, e.g., json_path=\"$.panels[0].targets[*].expr\" to get first panel's queries. Do not use when you need the complete dashboard structure (use get_dashboard_by_uid instead). Raises an error if the dashboard UID does not exist or the JSONPath expression is invalid.",
 	getDashboardProperty,
 	mcp.WithTitleAnnotation("Get dashboard property"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -460,7 +460,7 @@ func getDashboardSummary(ctx context.Context, args GetDashboardSummaryParams) (*
 
 var GetDashboardSummary = mcpgrafana.MustTool(
 	"get_dashboard_summary",
-	"Get a compact summary of a dashboard including title\\, panel count\\, panel types\\, variables\\, and other metadata without the full JSON. Use this for dashboard overview and planning modifications without consuming large context windows.",
+	"Get a compact summary of a dashboard including title, panel count, panel types, variables, and other metadata without the full JSON. Use when the user wants to quickly review dashboard structure or plan modifications without loading complete dashboard data. Do not use when you need to fetch detailed annotations from the dashboard (use get_annotations instead). Accepts `dashboard_id` or `dashboard_uid` (required). e.g., dashboard_uid=\"abc123def\" or dashboard_id=42. Raises an error if the dashboard does not exist or user lacks view permissions.",
 	getDashboardSummary,
 	mcp.WithTitleAnnotation("Get dashboard summary"),
 	mcp.WithIdempotentHintAnnotation(true),

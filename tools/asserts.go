@@ -142,7 +142,7 @@ func getAssertions(ctx context.Context, args GetAssertionsParams) (string, error
 
 var GetAssertions = mcpgrafana.MustTool(
 	"get_assertions",
-	"Get assertion summary for a given entity with its type, name, env, site, namespace, and a time range",
+	"Retrieve assertion summary for a given entity with its type, name, environment, site, namespace, and time range. Use when the user wants to analyze or review assertion data for specific entities within defined parameters and timeframes. Accepts `entity_type`, `entity_name`, `env`, `site`, `namespace` (all required), and `time_range` parameters. e.g., entity_type=\"service\", entity_name=\"user-api\", env=\"production\". Do not use when you need to fetch general annotations or dashboard data (use get_annotations instead). Raises an error if the specified entity or namespace does not exist.",
 	getAssertions,
 	mcp.WithTitleAnnotation("Get assertions summary"),
 	mcp.WithIdempotentHintAnnotation(true),

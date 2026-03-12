@@ -356,7 +356,7 @@ func queryElasticsearch(ctx context.Context, args QueryElasticsearchParams) ([]E
 // QueryElasticsearch is a tool for querying Elasticsearch datasources
 var QueryElasticsearch = mcpgrafana.MustTool(
 	"query_elasticsearch",
-	"Executes a search query against an Elasticsearch datasource and retrieves matching documents. Supports both Lucene query syntax (e.g., 'status:200 AND host:server1') and Elasticsearch Query DSL JSON for complex queries. Returns a list of documents with their index, ID, source fields, and optional score. Use this to search logs, metrics, or any indexed data stored in Elasticsearch. Defaults to 10 results and sorts by @timestamp in descending order (newest first).",
+	"Query Elasticsearch to search and retrieve matching documents from indexed data. Use when the user wants to find logs, metrics, or documents using search criteria, filters, or complex queries. Supports both Lucene query syntax and Elasticsearch Query DSL JSON. Accepts `query` (required string), `index` (optional), `size` (optional, defaults to 10), and `sort` (optional, defaults to @timestamp descending). e.g., query=\"status:200 AND host:server1\" or complex JSON DSL queries. Do not use when you need to manage Grafana resources like teams or users (use the respective Grafana tools instead). Returns error if the Elasticsearch cluster is unreachable or query syntax is invalid.",
 	queryElasticsearch,
 	mcp.WithTitleAnnotation("Query Elasticsearch"),
 	mcp.WithIdempotentHintAnnotation(true),

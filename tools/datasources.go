@@ -111,7 +111,7 @@ func summarizeDatasources(dataSources models.DataSourceList) []dataSourceSummary
 
 var ListDatasources = mcpgrafana.MustTool(
 	"list_datasources",
-	"List all configured datasources in Grafana. Use this to discover available datasources and their UIDs. Supports filtering by type and pagination.",
+	"List all configured datasources in Grafana to discover available data connections and their unique identifiers. Use when the user wants to explore what datasources are available, find specific datasource UIDs, or audit the current datasource configuration. Accepts `type` (optional filter by datasource type) and pagination parameters `page` and `limit`. e.g., type=\"prometheus\" or type=\"mysql\". Do not use when you need to examine specific table structures within a datasource (use list_clickhouse_tables instead). Returns an error if the user lacks datasource read permissions.",
 	listDatasources,
 	mcp.WithTitleAnnotation("List datasources"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -166,7 +166,7 @@ func getDatasource(ctx context.Context, args GetDatasourceParams) (*models.DataS
 
 var GetDatasource = mcpgrafana.MustTool(
 	"get_datasource",
-	"Retrieves detailed information about a specific datasource by UID or name. Returns the full datasource model, including name, type, URL, access settings, JSON data, and secure JSON field status. Provide either uid or name; uid takes priority if both are given.",
+	"Retrieve detailed information about a specific Grafana datasource by unique identifier or name. Use when the user wants to inspect datasource configuration, connection settings, or authentication details for troubleshooting or auditing purposes. Accepts `uid` (string, takes priority) or `name` (string, required if uid not provided), e.g., uid=\"prometheus-uid\" or name=\"Prometheus Production\". Returns complete datasource model including type, URL, access settings, JSON data, and secure field status. Raises an error if the datasource does not exist or user lacks read permissions. Do not use when you need to list multiple datasources (use list_datasources instead).",
 	getDatasource,
 	mcp.WithTitleAnnotation("Get datasource"),
 	mcp.WithIdempotentHintAnnotation(true),

@@ -96,7 +96,7 @@ func generateDeeplink(ctx context.Context, args GenerateDeeplinkParams) (string,
 
 var GenerateDeeplink = mcpgrafana.MustTool(
 	"generate_deeplink",
-	"Generate deeplink URLs for Grafana resources. Supports dashboards (requires dashboardUid), panels (requires dashboardUid and panelId), and Explore queries (requires datasourceUid). Optionally accepts time range and additional query parameters.",
+	"Generate deeplink URLs for Grafana resources including dashboards, panels, and Explore queries. Use when the user wants to create shareable links to specific Grafana views or visualizations. Accepts `dashboardUid` (required for dashboards/panels), `panelId` (required for panels), `datasourceUid` (required for Explore), and optional `timeRange` parameters. e.g., dashboardUid=\"abc123\" with panelId=\"5\" for a specific panel link. Raises an error if required UIDs are missing or invalid. Do not use when you need to fetch actual dashboard data or annotations (use other Grafana tools instead).",
 	generateDeeplink,
 	mcp.WithTitleAnnotation("Generate navigation deeplink"),
 	mcp.WithIdempotentHintAnnotation(true),

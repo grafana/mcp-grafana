@@ -192,7 +192,7 @@ func createHTTPClient(config mcpgrafana.GrafanaConfig) (*http.Client, error) {
 
 var GetPanelImage = mcpgrafana.MustTool(
 	"get_panel_image",
-	"Render a Grafana dashboard panel or full dashboard as a PNG image. Returns the image as base64 encoded data. Requires the Grafana Image Renderer service to be installed. Use this for generating visual snapshots of dashboards for reports\\, alerts\\, or presentations.",
+	"Render a Grafana dashboard panel or full dashboard as a PNG image and return base64-encoded data. Use when the user wants to generate visual snapshots of dashboards for reports, alerts, presentations, or documentation. Do not use when you need to fetch dashboard metadata or configuration (use other dashboard tools instead). Accepts `dashboard_uid` (required), `panel_id` (optional for single panel), `width` and `height` (optional dimensions), and `theme` (optional: \"light\" or \"dark\"). e.g., dashboard_uid=\"abc123\", panel_id=5, width=1200, height=800. Raises an error if the Grafana Image Renderer service is not installed or the dashboard does not exist.",
 	getPanelImage,
 	mcp.WithTitleAnnotation("Get panel or dashboard image"),
 	mcp.WithIdempotentHintAnnotation(true),
