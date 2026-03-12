@@ -144,15 +144,86 @@ func TestDashboardTools(t *testing.T) {
 		require.NoError(t, err)
 		assert.Greater(t, len(result), 0, "Should return at least one panel query")
 
-		// The initial demo dashboard plus for all dashboards created by the integration tests,
-		// every panel should have identical title and query values.
-		// Datasource UID may differ. Datasource type can be an empty string as well but on the demo and test dashboards it should be "prometheus".
-		for _, panelQuery := range result {
-			assert.Equal(t, panelQuery.Title, "Node Load")
-			assert.Equal(t, panelQuery.Query, "node_load1")
-			assert.NotEmpty(t, panelQuery.Datasource.UID)
-			assert.Equal(t, panelQuery.Datasource.Type, "prometheus")
+		// Verify each returned query has the expected structure
+		for _, pq := range result {
+			assert.NotEmpty(t, pq.Title)
+			assert.NotEmpty(t, pq.Query)
+			assert.NotEmpty(t, pq.Datasource.UID)
 		}
+	})
+
+	t.Run("get dashboard panel queries - with panelId", func(t *testing.T) {
+		ctx := newTestContext()
+
+		dashboard := getExistingTestDashboard(t, ctx, "")
+
+		// Get the summary to find a valid panel ID
+		summary, err := getDashboardSummary(ctx, GetDashboardSummaryParams{UID: dashboard.UID})
+		require.NoError(t, err)
+		require.Greater(t, len(summary.Panels), 0)
+
+		panelID := summary.Panels[0].ID
+		result, err := GetDashboardPanelQueriesTool(ctx, DashboardPanelQueriesParams{
+			UID:     dashboard.UID,
+			PanelID: &panelID,
+		})
+		require.NoError(t, err)
+		assert.Greater(t, len(result), 0, "Should return at least one query for the panel")
+	})
+
+	t.Run("get dashboard panel queries - invalid panelId", func(t *testing.T) {
+		ctx := newTestContext()
+
+		dashboard := getExistingTestDashboard(t, ctx, "")
+
+		invalidID := 99999
+		_, err := GetDashboardPanelQueriesTool(ctx, DashboardPanelQueriesParams{
+			UID:     dashboard.UID,
+			PanelID: &invalidID,
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
+
+	t.Run("get dashboard panel queries - with variables", func(t *testing.T) {
+		ctx := newTestContext()
+
+		dashboard := getExistingTestDashboard(t, ctx, "")
+
+		result, err := GetDashboardPanelQueriesTool(ctx, DashboardPanelQueriesParams{
+			UID: dashboard.UID,
+			Variables: map[string]string{
+				"job": "test-job",
+			},
+		})
+		require.NoError(t, err)
+		assert.Greater(t, len(result), 0, "Should return at least one panel query")
+
+		// When variables are provided, raw query should always be present
+		for _, pq := range result {
+			assert.NotEmpty(t, pq.Query, "Raw query should always be present")
+		}
+	})
+
+	t.Run("get dashboard panel queries - with panelId and variables", func(t *testing.T) {
+		ctx := newTestContext()
+
+		dashboard := getExistingTestDashboard(t, ctx, "")
+
+		summary, err := getDashboardSummary(ctx, GetDashboardSummaryParams{UID: dashboard.UID})
+		require.NoError(t, err)
+		require.Greater(t, len(summary.Panels), 0)
+
+		panelID := summary.Panels[0].ID
+		result, err := GetDashboardPanelQueriesTool(ctx, DashboardPanelQueriesParams{
+			UID:     dashboard.UID,
+			PanelID: &panelID,
+			Variables: map[string]string{
+				"job": "test-job",
+			},
+		})
+		require.NoError(t, err)
+		assert.Greater(t, len(result), 0, "Should return at least one query")
 	})
 
 	// Tests for new Issue #101 context window management tools

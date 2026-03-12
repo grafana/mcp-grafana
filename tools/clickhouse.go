@@ -224,12 +224,6 @@ func substituteClickHouseMacros(query string, from, to time.Time) string {
 	return query
 }
 
-// substituteVariables replaces template variables in the query.
-// Delegates to substituteTemplateVariables for consistent behavior.
-func substituteVariables(query string, variables map[string]string) string {
-	return substituteTemplateVariables(query, variables)
-}
-
 // enforceClickHouseLimit ensures the query has a LIMIT clause and enforces max limit
 func enforceClickHouseLimit(query string, requestedLimit int) string {
 	limit := requestedLimit
