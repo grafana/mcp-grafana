@@ -37,7 +37,9 @@ func promClientFromContext(ctx context.Context, uid string) (promv1.API, error) 
 	}
 
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
-	url := fmt.Sprintf("%s/api/datasources/uid/%s/resources", strings.TrimRight(cfg.URL, "/"), uid)
+	grafanaURL := strings.TrimRight(cfg.URL, "/")
+	resourcesBase, proxyBase := datasourceProxyPaths(uid)
+	url := grafanaURL + resourcesBase
 
 	// Create custom transport with TLS configuration if available
 	rt, err := mcpgrafana.BuildTransport(&cfg, api.DefaultRoundTripper)
@@ -67,6 +69,10 @@ func promClientFromContext(ctx context.Context, uid string) (promv1.API, error) 
 
 	// Wrap with org ID support
 	rt = mcpgrafana.NewOrgIDRoundTripper(rt, cfg.OrgID)
+
+	// Wrap with fallback transport: try /resources first, fall back to /proxy
+	// on 403/500 for compatibility with different managed Grafana deployments.
+	rt = newDatasourceFallbackTransport(rt, resourcesBase, proxyBase)
 
 	c, err := api.NewClient(api.Config{
 		Address:      url,
