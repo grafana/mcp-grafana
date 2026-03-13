@@ -27,7 +27,7 @@ func TestSQLQueryResponseMarshaling(t *testing.T) {
 	}
 
 	response := &SQLQueryResponse{
-		SQLQueryResult: result,
+		Result:         result,
 		ProcessedQuery: "SELECT * FROM logs LIMIT 100",
 		Hints: &EmptyResultHints{
 			SuggestedActions: []string{"test action"},
