@@ -70,6 +70,173 @@ func MustTool[T any, R any](
 // T is the request parameter type (must be a struct with jsonschema tags), and R is the response type which can be a string, struct, or *mcp.CallToolResult.
 type ToolHandlerFunc[T any, R any] = func(ctx context.Context, request T) (R, error)
 
+// unmarshalWithIntConversion unmarshals JSON data into a target struct,
+// automatically converting string values to integer types for integer-typed fields.
+// This allows MCP tool parameters to accept both string and integer values for integer fields.
+// The implementation preprocesses the JSON to unwrap quoted numeric strings (e.g., "42" → 42)
+// for integer fields, then delegates to standard json.Unmarshal which respects custom
+// UnmarshalJSON methods, handles overflow detection, and maintains type safety.
+func unmarshalWithIntConversion(data []byte, target interface{}) error {
+	targetType := reflect.TypeOf(target)
+	if targetType.Kind() != reflect.Ptr || targetType.Elem().Kind() != reflect.Struct {
+		return json.Unmarshal(data, target)
+	}
+
+	// Collect JSON field names that map to integer types
+	intFields := collectIntFieldNames(targetType.Elem())
+	if len(intFields) == 0 {
+		// Fast path: no integer fields, use standard unmarshal
+		return json.Unmarshal(data, target)
+	}
+
+	// Parse JSON into raw messages to manipulate individual fields
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	// Convert string-wrapped integers by stripping quotes
+	changed := false
+	for fieldName := range intFields {
+		rawVal, ok := raw[fieldName]
+		if !ok || len(rawVal) < 2 {
+			continue
+		}
+		// Check if value is a quoted string: "..."
+		if rawVal[0] == '"' && rawVal[len(rawVal)-1] == '"' {
+			// Extract the inner content
+			inner := rawVal[1 : len(rawVal)-1]
+
+			// Validate that the inner content is numeric (not "null" or other non-numeric strings)
+			if !isValidNumericString(inner) {
+				// Don't strip quotes for non-numeric strings like "null"
+				// Let json.Unmarshal handle it and produce an appropriate error
+				continue
+			}
+
+			// Strip quotes to convert "42" → 42
+			raw[fieldName] = inner
+			changed = true
+		}
+	}
+
+	if !changed {
+		// Fast path: no conversions needed, use standard unmarshal
+		return json.Unmarshal(data, target)
+	}
+
+	// Re-serialize the modified JSON and unmarshal into target
+	// This ensures custom UnmarshalJSON methods are called
+	fixed, err := json.Marshal(raw)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(fixed, target)
+}
+
+// collectIntFieldNames walks a struct type (including embedded structs) and returns
+// a set of JSON field names that map to integer types.
+func collectIntFieldNames(structType reflect.Type) map[string]bool {
+	intFields := make(map[string]bool)
+	collectIntFieldNamesRecursive(structType, intFields)
+	return intFields
+}
+
+// collectIntFieldNamesRecursive recursively collects integer field names from a struct type.
+func collectIntFieldNamesRecursive(structType reflect.Type, intFields map[string]bool) {
+	for i := 0; i < structType.NumField(); i++ {
+		field := structType.Field(i)
+
+		// Handle embedded (anonymous) structs recursively
+		if field.Anonymous {
+			embeddedType := field.Type
+			// If it's a pointer to struct, dereference it
+			if embeddedType.Kind() == reflect.Ptr {
+				embeddedType = embeddedType.Elem()
+			}
+			// Recurse into embedded struct
+			if embeddedType.Kind() == reflect.Struct {
+				collectIntFieldNamesRecursive(embeddedType, intFields)
+				continue
+			}
+		}
+
+		// Get JSON field name from tag
+		jsonTag := field.Tag.Get("json")
+		if jsonTag == "" || jsonTag == "-" {
+			continue
+		}
+
+		// Extract field name (before comma)
+		jsonName := jsonTag
+		for idx, char := range jsonTag {
+			if char == ',' {
+				jsonName = jsonTag[:idx]
+				break
+			}
+		}
+
+		// Check if field type is an integer (or pointer to integer)
+		fieldType := field.Type
+		if fieldType.Kind() == reflect.Ptr {
+			fieldType = fieldType.Elem()
+		}
+
+		if isIntegerKind(fieldType.Kind()) {
+			intFields[jsonName] = true
+		}
+	}
+}
+
+// isIntegerKind returns true if the given Kind represents an integer type.
+func isIntegerKind(kind reflect.Kind) bool {
+	switch kind {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return true
+	}
+	return false
+}
+
+// isValidNumericString returns true if the byte slice represents a valid numeric string
+// that can be parsed as an integer. It rejects special JSON keywords like "null", "true", "false"
+// and other non-numeric strings.
+func isValidNumericString(data []byte) bool {
+	if len(data) == 0 {
+		return false
+	}
+
+	// Reject JSON keywords that would be valid JSON but aren't numeric
+	str := string(data)
+	if str == "null" || str == "true" || str == "false" {
+		return false
+	}
+
+	// Check if it looks like a number: optional minus, followed by digits
+	i := 0
+	if data[i] == '-' || data[i] == '+' {
+		i++
+	}
+
+	if i >= len(data) {
+		return false // Just a sign with no digits
+	}
+
+	// Must have at least one digit
+	hasDigit := false
+	for i < len(data) {
+		if data[i] >= '0' && data[i] <= '9' {
+			hasDigit = true
+			i++
+		} else {
+			// Invalid character for an integer
+			return false
+		}
+	}
+
+	return hasDigit
+}
+
 // ConvertTool converts a toolHandler function to an MCP Tool and ToolHandlerFunc.
 // The toolHandler must accept a context.Context and a struct with jsonschema tags for parameter documentation.
 // The struct fields define the tool's input schema, while the return value can be a string, struct, or *mcp.CallToolResult.
@@ -135,7 +302,7 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 		}
 
 		unmarshaledArgs := reflect.New(argType).Interface()
-		if err := json.Unmarshal(argBytes, unmarshaledArgs); err != nil {
+		if err := unmarshalWithIntConversion(argBytes, unmarshaledArgs); err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, "failed to unmarshal arguments")
 			return nil, fmt.Errorf("unmarshal args: %s", err)
@@ -318,22 +485,20 @@ func createJSONSchemaFromHandler(handler any) *jsonschema.Schema {
 	return inputSchema
 }
 
-var (
-	jsonSchemaReflector = jsonschema.Reflector{
-		BaseSchemaID:               "",
-		Anonymous:                  true,
-		AssignAnchor:               false,
-		AllowAdditionalProperties:  true,
-		RequiredFromJSONSchemaTags: true,
-		DoNotReference:             true,
-		ExpandedStruct:             true,
-		FieldNameTag:               "",
-		IgnoredTypes:               nil,
-		Lookup:                     nil,
-		Mapper:                     nil,
-		Namer:                      nil,
-		KeyNamer:                   nil,
-		AdditionalFields:           nil,
-		CommentMap:                 nil,
-	}
-)
+var jsonSchemaReflector = jsonschema.Reflector{
+	BaseSchemaID:               "",
+	Anonymous:                  true,
+	AssignAnchor:               false,
+	AllowAdditionalProperties:  true,
+	RequiredFromJSONSchemaTags: true,
+	DoNotReference:             true,
+	ExpandedStruct:             true,
+	FieldNameTag:               "",
+	IgnoredTypes:               nil,
+	Lookup:                     nil,
+	Mapper:                     nil,
+	Namer:                      nil,
+	KeyNamer:                   nil,
+	AdditionalFields:           nil,
+	CommentMap:                 nil,
+}
