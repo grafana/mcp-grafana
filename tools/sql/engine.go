@@ -1,46 +1,40 @@
 package sql
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
-	"fmt"
-	"io"
-	"net/http"
 	"slices"
 	"strconv"
-	"strings"
 	"time"
 
-	mcpgrafana "github.com/grafana/mcp-grafana"
-	"github.com/grafana/mcp-grafana/pkg/auth"
+	client "github.com/grafana/mcp-grafana/pkg/grafana"
 )
 
-// SQLDatabase interface for metadata queries
+// SQLDatabase represents the interface for metadata queries
 type SQLDatabase interface {
-	// Type returns the Database Type
+	// Type returns the database engine type (e.g., "mysql", "mssql").
 	Type() string
 
-	// GetDatabaseQuery builds a query to retrieve databases excluding any internal databases
+	// GetDatabaseQuery builds a query to retrieve database names, excluding system/internal databases.
 	GetDatabaseQuery() string
 
 	// GetTablesQuery builds a query to retrieve table names of a database excluding internal tables
 	// dbName is optional. It uses default database when empty
 	GetTablesQuery(dbName string) string
 
-	// GetSchemaQuery builds a query to retrieve table schema with optional dbName
+	// GetSchemaQuery builds a query to retrieve the schema for a specific table.
+	// The dbName is optional and can be used to qualify the table.
 	GetSchemaQuery(tableName string, dbName string) string
 
-	// QueryWithLimit wraps query to enforce limit on rows
-	// It returns query , boolean indicating if wrapping was successful
+	// QueryWithLimit wraps the provided query to enforce a row limit.
+	// It returns the modified query and a boolean indicating if wrapping was successful.
 	QueryWithLimit(query string, limit uint) (string, bool)
 
+	// GetInfoQuery builds a query to retrieve database version and system information.
 	GetInfoQuery() string
 }
 
 type sqlEngine struct {
-	grafanaAPIBaseURL string
-	grafanaClient     http.Client
+	grafanaClient *client.GrafanaClient
 }
 
 type BuildQueryArgs struct {
@@ -51,8 +45,10 @@ type BuildQueryArgs struct {
 	IntervalMs    uint //optional : not applicable for meta queries
 }
 
+// SQLQuery represents a formatted query object for the Grafana API.
 type SQLQuery map[string]any
 
+// BuildQuery constructs a query map suitable for Grafana's /api/ds/query endpoint.
 func (*sqlEngine) BuildQuery(args BuildQueryArgs) SQLQuery {
 	ds := map[string]any{
 		"uid":  args.DatasourceUId,
@@ -63,7 +59,7 @@ func (*sqlEngine) BuildQuery(args BuildQueryArgs) SQLQuery {
 		"refId":      args.RefID,
 		"datasource": ds,
 		"rawSql":     args.Query,
-		"format":     "table", //time_series ca
+		"format":     "table",
 		"intervalMs": args.IntervalMs,
 	}
 }
@@ -73,7 +69,7 @@ type QueryBatchArgs struct {
 	To   time.Time
 }
 
-// DSQueryResponse represents the raw API response from Grafana's /api/ds/query
+// DSQueryResponse represents the raw API response from Grafana's /api/ds/query.
 type DSQueryResponse struct {
 	Results map[string]struct {
 		Status int `json:"status,omitempty"`
@@ -97,6 +93,10 @@ type DSQueryResponse struct {
 	} `json:"results"`
 }
 
+// JsonFrame converts tabular data in a key-value format when used with json.Marshal
+//
+// This format is more verbose than Grafana's native wide timeframe format but is
+// easier for LLMs to consume as input.
 type JsonFrame struct {
 	Name     string           `json:"name"`
 	Columns  []string         `json:"columns"`
@@ -119,6 +119,7 @@ type SQLQueryBatchResult struct {
 	ErrorCount uint
 }
 
+// QueryBatch executes multiple SQL queries against the Grafana API in a single request.
 func (en *sqlEngine) QueryBatch(ctx context.Context, queries []SQLQuery, args QueryBatchArgs) (*SQLQueryBatchResult, error) {
 	payload := map[string]interface{}{
 		"queries": queries,
@@ -126,39 +127,10 @@ func (en *sqlEngine) QueryBatch(ctx context.Context, queries []SQLQuery, args Qu
 		"to":      strconv.FormatInt(args.To.UnixMilli(), 10),
 	}
 
-	payloadBytes, err := json.Marshal(payload)
-	if err != nil {
-		return nil, fmt.Errorf("marshaling query payload: %w", err)
-	}
-
-	url := en.grafanaAPIBaseURL + "/api/ds/query"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payloadBytes))
-	if err != nil {
-		return nil, fmt.Errorf("creating request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := en.grafanaClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("executing request: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("sql query returned status %d: %s", resp.StatusCode, string(bodyBytes))
-	}
-
-	// Read and parse response
-	body := io.LimitReader(resp.Body, 1024*1024*48) // 48MB limit
-	bodyBytes, err := io.ReadAll(body)
-	if err != nil {
-		return nil, fmt.Errorf("reading response body: %w", err)
-	}
-
 	var response DSQueryResponse
-	if err := json.Unmarshal(bodyBytes, &response); err != nil {
-		return nil, fmt.Errorf("unmarshaling response: %w", err)
+	err := en.grafanaClient.Post(ctx, "/api/ds/query", payload, &response)
+	if err != nil {
+		return nil, err
 	}
 
 	result := SQLQueryBatchResult{
@@ -173,17 +145,17 @@ func (en *sqlEngine) QueryBatch(ctx context.Context, queries []SQLQuery, args Qu
 
 			noOfCol := len(frame.Schema.Fields)
 			if noOfCol == 0 {
-				//columns not found for frame, skip frame
+				// columns not found for frame, skip frame
 				continue
 			}
 
 			if len(frame.Data.Values) == 0 {
-				//len(frame.Data.Values) equals len(frame.Schema.Fields)
-				//this case shoudn't occur
+				// len(frame.Data.Values) equals len(frame.Schema.Fields)
+				// this case shouldn't occur
 				continue
 			}
 
-			//Number of rows count derived from count of values of first column
+			// Number of rows count derived from count of values of first column
 			noOfRows := (len(frame.Data.Values[0]))
 
 			resFrame := JsonFrame{}
@@ -228,28 +200,11 @@ func (en *sqlEngine) QueryBatch(ctx context.Context, queries []SQLQuery, args Qu
 }
 
 func NewSQLEngine(ctx context.Context) (*sqlEngine, error) {
-	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
-	baseURL := strings.TrimRight(cfg.URL, "/")
-
-	// Create custom transport with TLS configuration if available
-	var transport = http.DefaultTransport
-	if tlsConfig := cfg.TLSConfig; tlsConfig != nil {
-		var err error
-		transport, err = tlsConfig.HTTPTransport(transport.(*http.Transport))
-		if err != nil {
-			return nil, fmt.Errorf("failed to create custom transport: %w", err)
-		}
+	grafanaClient, err := client.NewGrafanaClient(ctx)
+	if err != nil {
+		return nil, err
 	}
-
-	transport = auth.NewAuthRoundTripper(transport, cfg.AccessToken, cfg.IDToken, cfg.APIKey, cfg.BasicAuth)
-	transport = mcpgrafana.NewOrgIDRoundTripper(transport, cfg.OrgID)
-
-	httpClient := &http.Client{
-		Transport: mcpgrafana.NewUserAgentTransport(transport),
-	}
-
 	return &sqlEngine{
-		grafanaAPIBaseURL: baseURL,
-		grafanaClient:     *httpClient,
+		grafanaClient: grafanaClient,
 	}, nil
 }
