@@ -2,7 +2,11 @@ package tools
 
 import (
 	"context"
+	"io"
 	"math"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -301,6 +305,121 @@ func TestPrometheusHistogramResult(t *testing.T) {
 
 		assert.Nil(t, result.Hints)
 		assert.NotNil(t, result.Result)
+	})
+}
+
+func TestPostToGetRoundTripper(t *testing.T) {
+	t.Run("converts POST with form body to GET with query string", func(t *testing.T) {
+		var receivedReq *http.Request
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			receivedReq = r
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer server.Close()
+
+		rt := &postToGetRoundTripper{underlying: http.DefaultTransport}
+
+		body := strings.NewReader("query=up&time=1234")
+		req, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/query", body)
+		require.NoError(t, err)
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+		resp, err := rt.RoundTrip(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.MethodGet, receivedReq.Method)
+		assert.Equal(t, "up", receivedReq.URL.Query().Get("query"))
+		assert.Equal(t, "1234", receivedReq.URL.Query().Get("time"))
+		assert.Empty(t, receivedReq.Header.Get("Content-Type"))
+	})
+
+	t.Run("passes GET requests through unchanged", func(t *testing.T) {
+		var receivedReq *http.Request
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			receivedReq = r
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer server.Close()
+
+		rt := &postToGetRoundTripper{underlying: http.DefaultTransport}
+
+		req, err := http.NewRequest(http.MethodGet, server.URL+"/api/v1/query?query=up", nil)
+		require.NoError(t, err)
+
+		resp, err := rt.RoundTrip(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.MethodGet, receivedReq.Method)
+		assert.Equal(t, "up", receivedReq.URL.Query().Get("query"))
+	})
+
+	t.Run("merges body params with existing query params", func(t *testing.T) {
+		var receivedReq *http.Request
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			receivedReq = r
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer server.Close()
+
+		rt := &postToGetRoundTripper{underlying: http.DefaultTransport}
+
+		body := strings.NewReader("query=up")
+		req, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/query?existing=param", body)
+		require.NoError(t, err)
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+		resp, err := rt.RoundTrip(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.MethodGet, receivedReq.Method)
+		assert.Equal(t, "param", receivedReq.URL.Query().Get("existing"))
+		assert.Equal(t, "up", receivedReq.URL.Query().Get("query"))
+	})
+
+	t.Run("does not modify original request", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer server.Close()
+
+		rt := &postToGetRoundTripper{underlying: http.DefaultTransport}
+
+		body := strings.NewReader("query=up")
+		req, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/query", body)
+		require.NoError(t, err)
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+		resp, err := rt.RoundTrip(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		// Original request should still be POST
+		assert.Equal(t, http.MethodPost, req.Method)
+	})
+
+	t.Run("handles POST with nil body", func(t *testing.T) {
+		var receivedReq *http.Request
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			receivedReq = r
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer server.Close()
+
+		rt := &postToGetRoundTripper{underlying: http.DefaultTransport}
+
+		req, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/query", nil)
+		require.NoError(t, err)
+
+		resp, err := rt.RoundTrip(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.MethodGet, receivedReq.Method)
+		receivedBody, _ := io.ReadAll(receivedReq.Body)
+		assert.Empty(t, receivedBody)
 	})
 }
 

@@ -3,7 +3,10 @@ package tools
 import (
 	"context"
 	"fmt"
+	"io"
 	"math"
+	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -28,6 +31,54 @@ var (
 		"!~": labels.MatchNotRegexp,
 	}
 )
+
+// postToGetRoundTripper converts POST requests to GET requests by moving the
+// URL-encoded form body to the query string. This is needed because the
+// Prometheus client library's DoGetFallback sends POST first and only falls
+// back to GET on 405/501 responses, but Grafana's datasource resources API
+// returns 500 for POST requests to datasources configured with httpMethod: GET.
+// Since Prometheus and Thanos accept GET for all query endpoints, we
+// unconditionally convert POST to GET to avoid this incompatibility.
+type postToGetRoundTripper struct {
+	underlying http.RoundTripper
+}
+
+func (rt *postToGetRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.Method != http.MethodPost {
+		return rt.underlying.RoundTrip(req)
+	}
+
+	cloned := req.Clone(req.Context())
+	cloned.Method = http.MethodGet
+
+	// Move URL-encoded form body to query string
+	if req.Body != nil && req.Header.Get("Content-Type") == "application/x-www-form-urlencoded" {
+		body, err := io.ReadAll(req.Body)
+		if err != nil {
+			return nil, fmt.Errorf("reading request body: %w", err)
+		}
+
+		params, err := url.ParseQuery(string(body))
+		if err != nil {
+			return nil, fmt.Errorf("parsing request body: %w", err)
+		}
+
+		// Merge body params into query string
+		q := cloned.URL.Query()
+		for k, vs := range params {
+			for _, v := range vs {
+				q.Add(k, v)
+			}
+		}
+		cloned.URL.RawQuery = q.Encode()
+	}
+
+	cloned.Body = nil
+	cloned.ContentLength = 0
+	cloned.Header.Del("Content-Type")
+
+	return rt.underlying.RoundTrip(cloned)
+}
 
 func promClientFromContext(ctx context.Context, uid string) (promv1.API, error) {
 	// First check if the datasource exists
@@ -67,6 +118,10 @@ func promClientFromContext(ctx context.Context, uid string) (promv1.API, error) 
 
 	// Wrap with org ID support
 	rt = mcpgrafana.NewOrgIDRoundTripper(rt, cfg.OrgID)
+
+	// Wrap with POST-to-GET conversion for compatibility with datasources
+	// configured with httpMethod: GET. See https://github.com/grafana/mcp-grafana/issues/632
+	rt = &postToGetRoundTripper{underlying: rt}
 
 	c, err := api.NewClient(api.Config{
 		Address:      url,
