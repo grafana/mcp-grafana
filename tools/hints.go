@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/grafana/mcp-grafana/tools/sql"
 )
 
 // HintContext provides context for generating helpful hints
@@ -72,7 +74,18 @@ func GenerateEmptyResultHints(ctx HintContext) *EmptyResultHints {
 		hints.Summary = "The CloudWatch query returned no data for the specified time range."
 		hints.PossibleCauses = getCloudWatchCauses(ctx)
 		hints.SuggestedActions = getCloudWatchActions(ctx)
-
+	case sql.MSSQLType:
+		hints.Summary = "The MSSQL query returned no rows for the specified parameters."
+		hints.PossibleCauses = getSQLCauses(ctx)
+		hints.SuggestedActions = getSQLActions(ctx)
+	case sql.MySQLType:
+		hints.Summary = "The MySQL query returned no rows for the specified parameters."
+		hints.PossibleCauses = getSQLCauses(ctx)
+		hints.SuggestedActions = getSQLActions(ctx)
+	case sql.PostgresType:
+		hints.Summary = "The Postgres query returned no data for the specified parameters."
+		hints.PossibleCauses = getSQLCauses(ctx)
+		hints.SuggestedActions = getSQLActions(ctx)
 	default:
 		hints.Summary = "The query returned no data for the specified parameters."
 		hints.PossibleCauses = getGenericCauses()
@@ -177,6 +190,26 @@ func getClickHouseActions(ctx HintContext) []string {
 		"Use describe_clickhouse_table to check column names and types",
 		"Try removing WHERE clause filters to see if the table contains data",
 		"Verify time parameters are in Unix milliseconds format",
+	}
+}
+
+// getSQLCauses returns possible causes for empty SQL results across MySQL, MSSQL, and Postgres.
+func getSQLCauses(ctx HintContext) []string {
+	return []string{
+		"The table may not contain data for the specified time range or parameters",
+		"The WHERE clause filters may be too restrictive and matching no rows",
+		"Macro expansion (like $__timeFilter) may be filtering out all results",
+		"The connected database/schema might not contain the targeted table",
+	}
+}
+
+// getSQLActions returns suggested actions for empty SQL results.
+func getSQLActions(ctx HintContext) []string {
+	return []string{
+		"Use list_tables_sql to verify the table exists",
+		"Use list_table_schemas_sql to check column names and types",
+		"Try removing WHERE clause filters to see if the table contains data",
+		"Verify that the time range (start/end) includes the expected data points",
 	}
 }
 
