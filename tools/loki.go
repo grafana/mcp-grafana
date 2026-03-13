@@ -149,15 +149,9 @@ func (c *Client) makeRequest(ctx context.Context, method, urlPath string, params
 	return bytes.TrimSpace(bodyBytes), nil
 }
 
-// fetchData is a generic method to fetch data from Loki API
-func (c *Client) fetchData(ctx context.Context, urlPath string, startRFC3339, endRFC3339 string) ([]string, error) {
-	params := url.Values{}
-	if startRFC3339 != "" {
-		params.Add("start", startRFC3339)
-	}
-	if endRFC3339 != "" {
-		params.Add("end", endRFC3339)
-	}
+func (c *Client) handleAPICall(ctx context.Context, params url.Values, urlPath string) ([]string, error) {
+	fullURL := fmt.Sprintf("%s?%s", urlPath, params.Encode())
+	fmt.Println("Final request URL:", fullURL)
 
 	bodyBytes, err := c.makeRequest(ctx, "GET", urlPath, params)
 	if err != nil {
@@ -184,7 +178,41 @@ func (c *Client) fetchData(ctx context.Context, urlPath string, startRFC3339, en
 		return []string{}, nil
 	}
 
+	pretty, _ := json.MarshalIndent(labelResponse, "", "  ")
+	fmt.Println("Loki Full Response:\n", string(pretty))
+
 	return labelResponse.Data, nil
+}
+
+// fetchData is a generic method to fetch data from Loki API
+func (c *Client) fetchLabels(ctx context.Context, urlPath string, startRFC3339, endRFC3339 string, matchers ...string) ([]string, error) {
+	params := url.Values{}
+	var matcher string
+    if len(matchers) > 0 {
+        matcher = matchers[0]
+    }
+	if startRFC3339 != "" {
+		params.Add("start", startRFC3339)
+	}
+	if endRFC3339 != "" {
+		params.Add("end", endRFC3339)
+	}
+	if matcher != "" {
+		params.Add("query", matcher)
+	}
+	return c.handleAPICall(ctx, params, urlPath)
+}
+
+// fetchData is a generic method to fetch data from Loki API
+func (c *Client) fetchData(ctx context.Context, urlPath string, startRFC3339, endRFC3339 string) ([]string, error) {
+	params := url.Values{}
+	if startRFC3339 != "" {
+		params.Add("start", startRFC3339)
+	}
+	if endRFC3339 != "" {
+		params.Add("end", endRFC3339)
+	}
+	return c.handleAPICall(ctx, params, urlPath)
 }
 
 func NewAuthRoundTripper(rt http.RoundTripper, accessToken, idToken, apiKey string, basicAuth *url.Userinfo) *authRoundTripper {
@@ -229,6 +257,7 @@ type ListLokiLabelNamesParams struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the datasource to query"`
 	StartRFC3339  string `json:"startRfc3339,omitempty" jsonschema:"description=Optionally\\, the start time of the query in RFC3339 format (defaults to 1 hour ago)"`
 	EndRFC3339    string `json:"endRfc3339,omitempty" jsonschema:"description=Optionally\\, the end time of the query in RFC3339 format (defaults to now)"`
+	Matchers      string `json:"matchers,omitempty" jsonschema:"description=Optionally\\, the optional filters such as app, namespace wrapped up with curly braces {"app"="<app-name>", "namespace"="<namespace>"} (defaults to {})"`
 }
 
 // listLokiLabelNames lists all label names in a Loki datasource
@@ -238,7 +267,7 @@ func listLokiLabelNames(ctx context.Context, args ListLokiLabelNamesParams) ([]s
 		return nil, fmt.Errorf("creating Loki client: %w", err)
 	}
 
-	result, err := client.fetchData(ctx, "/loki/api/v1/labels", args.StartRFC3339, args.EndRFC3339)
+	result, err := client.fetchLabels(ctx, "/loki/api/v1/labels", args.StartRFC3339, args.EndRFC3339, args.Matchers)
 	if err != nil {
 		return nil, err
 	}
@@ -266,6 +295,7 @@ type ListLokiLabelValuesParams struct {
 	LabelName     string `json:"labelName" jsonschema:"required,description=The name of the label to retrieve values for (e.g. 'app'\\, 'env'\\, 'pod')"`
 	StartRFC3339  string `json:"startRfc3339,omitempty" jsonschema:"description=Optionally\\, the start time of the query in RFC3339 format (defaults to 1 hour ago)"`
 	EndRFC3339    string `json:"endRfc3339,omitempty" jsonschema:"description=Optionally\\, the end time of the query in RFC3339 format (defaults to now)"`
+	Matchers      string `json:"matchers,omitempty" jsonschema:"description=Optionally\\, the optional filters such as app, namespace wrapped up with curly braces {"app"="<app-name>", "namespace"="<namespace>"} (defaults to {})"`
 }
 
 // listLokiLabelValues lists all values for a specific label in a Loki datasource
@@ -275,10 +305,10 @@ func listLokiLabelValues(ctx context.Context, args ListLokiLabelValuesParams) ([
 		return nil, fmt.Errorf("creating Loki client: %w", err)
 	}
 
-	// Use the client's fetchData method
 	urlPath := fmt.Sprintf("/loki/api/v1/label/%s/values", args.LabelName)
 
-	result, err := client.fetchData(ctx, urlPath, args.StartRFC3339, args.EndRFC3339)
+	// Use the client's fetchData method
+	result, err := client.fetchLabels(ctx, urlPath, args.StartRFC3339, args.EndRFC3339, args.Matchers)
 	if err != nil {
 		return nil, err
 	}
