@@ -42,15 +42,16 @@ func TestSQLQueryResponseMarshaling(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify SQLQueryResult fields (from embedded JsonObject)
-	assert.Equal(t, float64(200), m["status"])
-	assert.Contains(t, m, "frames")
+	resMap := m["Result"].(map[string]any)
+	assert.Equal(t, float64(200), resMap["status"])
+	assert.Contains(t, resMap, "frames")
 
 	// Verify SQLQueryResponse specific fields
 	assert.Equal(t, "SELECT * FROM logs LIMIT 100", m["processedQuery"])
 	assert.Contains(t, m, "hints")
 
 	// Verify frame structure
-	frames := m["frames"].([]any)
+	frames := resMap["frames"].([]any)
 	f := frames[0].(map[string]any)
 	assert.Equal(t, []any{"id", "val"}, f["columns"])
 	assert.Contains(t, f, "rows")
