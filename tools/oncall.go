@@ -16,6 +16,11 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 )
 
+const (
+	// OnCall is the identifier for the oncall category.
+	OnCall = "oncall"
+)
+
 // getOnCallURLFromSettings retrieves the OnCall API URL from the Grafana settings endpoint.
 // It makes a GET request to <grafana-url>/api/plugins/grafana-irm-app/settings and extracts
 // the OnCall URL from the jsonData.onCallApiUrl field in the response.
@@ -517,4 +522,18 @@ func AddOnCallTools(mcp *server.MCPServer) {
 	ListOnCallUsers.Register(mcp)
 	ListAlertGroups.Register(mcp)
 	GetAlertGroup.Register(mcp)
+}
+
+var onCallTools = []*mcpgrafana.Tool{
+	&ListOnCallSchedules,
+	&GetOnCallShift,
+	&GetCurrentOnCallUsers,
+	&ListOnCallTeams,
+	&ListOnCallUsers,
+	&ListAlertGroups,
+	&GetAlertGroup,
+}
+
+func GetOnCallTools() []*mcpgrafana.Tool {
+	return onCallTools
 }
