@@ -87,3 +87,9 @@ datasources:
       accessKey: test
       secretKey: test
     isDefault: false
+  - name: VictoriaLogs
+    uid: victorialogs
+    type: victoriametrics-logs-datasource
+    access: proxy
+    url: http://victorialogs:9428
+    isDefault: false
