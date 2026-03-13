@@ -5,10 +5,11 @@ import (
 	"strings"
 )
 
+// PostgresType is the identifier for PostgreSQL datasources in Grafana.
 const (
 	PostgresType = "grafana-postgresql-datasource"
 )
-
+// Postgres implements [SQLDatabase]
 type Postgres struct{}
 
 func NewPostgres() *Postgres {
@@ -16,7 +17,7 @@ func NewPostgres() *Postgres {
 }
 
 func (*Postgres) Type() string { return PostgresType }
-
+// GetDatabaseQuery implements [SQLDatabase.GetDatabaseQuery]
 func (*Postgres) GetDatabaseQuery() string {
 	return fmt.Sprintf(
 		`SELECT datname as %s
@@ -28,6 +29,8 @@ func (*Postgres) GetDatabaseQuery() string {
 	)
 }
 
+// GetTablesQuery builds a query to retrieve table names.
+// dbName is not appicable for postgres database
 func (*Postgres) GetTablesQuery(dbName string) string {
 	// PostgreSQL tables are usually queried within the connected database
 	// switching database through an sql query is not supported in postgres
@@ -76,14 +79,14 @@ func (*Postgres) GetSchemaQuery(tableName string, dbName string) string {
 	)
 }
 
-// QueryWithLimit enforces limit on no of records through wrapping with `SELECT * FROM _query_ LIMIT x`
+// QueryWithLimit builds a wrapped query to enforce a row limit.
 func (*Postgres) QueryWithLimit(query string, limit uint) (string, bool) {
 	query = strings.TrimSuffix(query, ";")
 	queryWithLimit := fmt.Sprintf(`SELECT * FROM ( %s ) AS subquery LIMIT %d`, query, limit)
 	return queryWithLimit, true
 }
 
-// GetInfoQuery builds query to retrieve postgresdb , timescaledb ext version
+// GetInfoQuery builds a query to retrieve PostgreSQL and TimescaleDB extension versions.
 func (*Postgres) GetInfoQuery() string {
 	query := fmt.Sprintf(`SELECT
 				current_setting('server_version_num')::int / 100 AS %s,
@@ -93,7 +96,7 @@ func (*Postgres) GetInfoQuery() string {
 	return query
 }
 
-// buildSchemaConstraint build's contraint to list default schemas from configured search path
+// buildSchemaConstraint constructs a constraint to filter schemas based on the search_path.
 // It returns the query
 //
 // Example usecase :

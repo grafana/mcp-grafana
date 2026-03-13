@@ -9,13 +9,14 @@ const (
 	MSSQLType = "mssql"
 )
 
-// MSSQL implements SQLDatabase
+// MSSQL implements [SQLDatabase]
 type MSSQL struct{}
 
 func NewMSSQL() *MSSQL {
 	return &MSSQL{}
 }
 
+// Type returns the engine type identifier.
 func (*MSSQL) Type() string { return MSSQLType }
 
 func (*MSSQL) GetDatabaseQuery() string {
@@ -29,7 +30,7 @@ func (*MSSQL) GetTablesQuery(dbName string) string {
 	database := dbName
 
 	if database != "" {
-		//append . to dbName to use as prefix in fully qualified name
+		// append . to dbName to use as prefix in fully qualified name
 		database = fmt.Sprintf(`[%s].`, strings.Trim(dbName, " "))
 	}
 
@@ -83,7 +84,7 @@ func (*MSSQL) QueryWithLimit(query string, limit uint) (string, bool) {
 	return queryWithLimit, true
 }
 
-// GetInfoQuery builds query to retrieve mssql version
+// GetInfoQuery builds a query to retrieve the SQL Server product version.
 func (*MSSQL) GetInfoQuery() string {
 	query := fmt.Sprintf(`SELECT CAST(SERVERPROPERTY('ProductVersion') AS VARCHAR) AS %s`, DBVersionColumn)
 	return query

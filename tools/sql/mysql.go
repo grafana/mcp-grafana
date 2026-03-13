@@ -5,13 +5,14 @@ import (
 	"strings"
 )
 
+// MySQLType is the identifier for MySQL datasources in Grafana.
 const (
 	MySQLType = "mysql"
 )
 
-// MYSQL implements SQLDatabase
+// MYSQL implements [SQLDatabase]
 //
-// INFO : Database and Schema are synonyms in MYSQL
+// In MySQL, "Database" and "Schema" are synonyms.
 type MySQL struct{}
 
 func NewMySQL() *MySQL {
@@ -43,8 +44,8 @@ func (*MySQL) GetTablesQuery(dbName string) string {
 	)
 }
 
-// GetSchemaQuery bulids query to retrieve table schema with optional dbName
-// tableName supports database qualified tableName Ex: db.table
+// GetSchemaQuery builds a query to retrieve column names and types for a specific table.
+// The tableName can be schema-qualified (e.g., "db.table").
 func (*MySQL) GetSchemaQuery(tableName string, dbName string) string {
 	query := fmt.Sprintf("SELECT column_name as %s, data_type as %s FROM information_schema.columns WHERE ", ColNameColumn, ColTypeColumn)
 	query += buildTableConstraint(tableName, dbName)
@@ -58,7 +59,7 @@ func (*MySQL) QueryWithLimit(query string, limit uint) (string, bool) {
 	return queryWithLimit, true
 }
 
-// GetInfoQuery builds a query to retrieve mysql version
+// GetInfoQuery builds a query to retrieve the MySQL server version.
 func (*MySQL) GetInfoQuery() string {
 	query := fmt.Sprintf("SELECT VERSION() AS %s", DBVersionColumn)
 	return query
@@ -92,8 +93,7 @@ func buildTableConstraint(table string, dbName string) string {
 	return query
 }
 
-// UnquoteIdentifier removes identifier quoting
-// It returns unquoted identifier
+// unquoteIdentifier removes quotes (double or backticks) from a MySQL identifier.
 func unquoteIdentifier(value string) string {
 	if len(value) < 2 {
 		return value
@@ -109,7 +109,7 @@ func unquoteIdentifier(value string) string {
 	return value
 }
 
-// QuoteLiteral applies identifier quoting with 'single quotes
+// quoteLiteral wraps a string in single quotes and escapes existing single quotes.
 func quoteLiteral(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
 }

@@ -18,6 +18,8 @@ var (
 	DefaultSQLTablesLimit = uint(10)
 	MaxSQLTablesLimit     = uint(100)
 )
+
+// SQLDatasourceTypes lists the supported SQL datasource identifiers in Grafana.
 var SQLDatasourceTypes = []string{
 	sql.MySQLType,
 	sql.MSSQLType,
@@ -32,7 +34,7 @@ type ListSQLDatabaseResult struct {
 	Databases []string `json:"databases"`
 }
 
-// limit conditioned with max , default limits
+// withSQLQueryLimit applies default and maximum constraints to a query row limit.
 func withSQLQueryLimit(limit uint) uint {
 	if limit == 0 {
 		limit = DefaultSQLQueryLimit
@@ -44,7 +46,7 @@ func withSQLQueryLimit(limit uint) uint {
 	return limit
 }
 
-// limit conditioned with max , default limits
+// withSQLTablesLimit applies default and maximum constraints to the table list limit.
 func withSQLTablesLimit(limit uint) uint {
 	if limit == 0 {
 		limit = DefaultSQLTablesLimit
@@ -56,13 +58,13 @@ func withSQLTablesLimit(limit uint) uint {
 	return limit
 }
 
+// withSQLDefaultLimits returns the default row limit.
 func withSQLDefaultLimits() uint {
-	//0 applies default limits
+	// 0 applies default limits
 	return withSQLQueryLimit(0)
 }
 
-// validates datasourceUID to be one of supported datasource types
-// return non nil error for failed validation
+// sqlDataSource identifies and initializes the appropriate SQL engine for a datasource UID.
 func sqlDataSource(ctx context.Context, uid string) (sql.SQLDatabase, error) {
 	ds, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: uid})
 	if err != nil {
@@ -169,7 +171,7 @@ func listSQLTables(ctx context.Context, args ListSQLTablesArgs) (*ListSQLTableRe
 		return nil, fmt.Errorf("downstream error : %s", result.Error)
 	}
 
-	//query returns only one frame
+	// query returns only one frame
 	var tables []string
 
 	if len(result.Frames) > 0 {
@@ -222,7 +224,7 @@ func listSQLTableSchema(ctx context.Context, args GetSQLTableSchemaArgs) (*ListS
 		tables[i] = strings.TrimSpace(tables[i])
 	}
 
-	//limit is applied at no
+	// limit is applied at no
 	tablesLen := withSQLTablesLimit(uint(len(tables)))
 
 	queries := make([]sql.SQLQuery, 0, tablesLen)
@@ -292,11 +294,12 @@ type SQLQueryArgs struct {
 }
 
 type SQLQueryResponse struct {
-	Hints *EmptyResultHints `json:"hints,omitempty"`
-	*sql.SQLQueryResult
+	Hints          *EmptyResultHints `json:"hints,omitempty"`
+	Result         *sql.SQLQueryResult
 	ProcessedQuery string `json:"processedQuery,omitempty"`
 }
 
+// sqlQuery handles the query_sql_datasource tool implementation.
 func sqlQuery(ctx context.Context, args SQLQueryArgs) (*SQLQueryResponse, error) {
 	datasource, err := sqlDataSource(ctx, args.DatasourceUID)
 	if err != nil {
@@ -339,11 +342,10 @@ func sqlQuery(ctx context.Context, args SQLQueryArgs) (*SQLQueryResponse, error)
 	response := batchResult.Results[refID]
 
 	result := SQLQueryResponse{
-		SQLQueryResult: response,
+		Result: response,
 	}
 
-	if len(result.Frames) == 0 {
-		//todo , implement hints for sql
+	if len(result.Result.Frames) == 0 {
 		result.Hints = GenerateEmptyResultHints(HintContext{
 			DatasourceType: datasource.Type(),
 			Query:          args.Query,
@@ -391,7 +393,7 @@ var QuerySQLDatasource = mcpgrafana.MustTool(
 	mcp.WithReadOnlyHintAnnotation(true),
 )
 
-// AddSQLTools registers all SQL tools with the MCP server
+// AddSQLTools registers all SQL-related tools with the MCP server.
 func AddSQLTools(mcp *server.MCPServer) {
 	ListSQLDatabases.Register(mcp)
 	ListSQLTables.Register(mcp)
