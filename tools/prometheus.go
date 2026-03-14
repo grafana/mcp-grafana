@@ -106,7 +106,7 @@ func listPrometheusMetricMetadata(ctx context.Context, args ListPrometheusMetric
 
 var ListPrometheusMetricMetadata = mcpgrafana.MustTool(
 	"list_prometheus_metric_metadata",
-	"List Prometheus metric metadata. Returns metadata about metrics currently scraped from targets. Note: This endpoint is experimental.",
+	"List Prometheus metric metadata including names, types, help text, and units for currently scraped metrics. Use when the user wants to explore available metrics, understand metric definitions, or inspect metadata before querying. Do not use when you need to query actual metric values or time series data (use Prometheus query tools instead). Accepts optional filtering parameters such as `metric` (specific metric name) and `limit` (maximum results). e.g., metric=\"http_requests_total\" to get metadata for a specific counter. Returns error if Prometheus server is unreachable or the experimental API is disabled.",
 	listPrometheusMetricMetadata,
 	mcp.WithTitleAnnotation("List Prometheus metric metadata"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -237,7 +237,7 @@ func queryPrometheusWithHints(ctx context.Context, args QueryPrometheusParams) (
 
 var QueryPrometheus = mcpgrafana.MustTool(
 	"query_prometheus",
-	"WORKFLOW: list_prometheus_metric_names -> list_prometheus_label_values -> query_prometheus. Query Prometheus using a PromQL expression. Supports instant queries (single point) and range queries (time range). Time: RFC3339 or relative expressions like 'now'\\, 'now-1h'.",
+	"Query Prometheus using a PromQL expression to retrieve metrics data. Use when the user wants to fetch time-series data, analyze metrics, or create custom queries for monitoring dashboards. Supports instant queries (single point in time) and range queries (time series over a period). Accepts `query` (required PromQL string), `time` (optional, RFC3339 format or relative like \"now-1h\"), `start` and `end` (for range queries), and `step` (query resolution). e.g., query=\"up\", time=\"now-5m\" or query=\"rate(http_requests_total[5m])\", start=\"now-1h\", end=\"now\". Do not use when you need to discover available metrics first (use list_prometheus_metric_names instead). Raises an error if the PromQL syntax is invalid or the Prometheus server is unreachable.",
 	queryPrometheusWithHints,
 	mcp.WithTitleAnnotation("Query Prometheus metrics"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -307,7 +307,7 @@ func listPrometheusMetricNames(ctx context.Context, args ListPrometheusMetricNam
 
 var ListPrometheusMetricNames = mcpgrafana.MustTool(
 	"list_prometheus_metric_names",
-	"DISCOVERY: Call this first to find available metrics before querying. Lists metric names in a Prometheus datasource. Retrieves all metric names and filters them using the provided regex. Supports pagination.",
+	"List all available metric names from a Prometheus datasource with optional regex filtering and pagination support. Use when the user wants to discover what metrics are available before querying specific data or when exploring the metric catalog. Accepts `regex` (optional string for filtering metric names) and pagination parameters. e.g., regex=\"cpu_.*\" to find CPU-related metrics or \"memory_usage_bytes\" for exact matches. Returns an error if the Prometheus datasource is unreachable or authentication fails. Do not use when you need to query actual metric values or time series data (use appropriate query tools instead).",
 	listPrometheusMetricNames,
 	mcp.WithTitleAnnotation("List Prometheus metric names"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -412,7 +412,7 @@ func listPrometheusLabelNames(ctx context.Context, args ListPrometheusLabelNames
 
 var ListPrometheusLabelNames = mcpgrafana.MustTool(
 	"list_prometheus_label_names",
-	"List label names in a Prometheus datasource. Allows filtering by series selectors and time range.",
+	"List available label names from a Prometheus datasource with optional filtering capabilities. Use when the user wants to explore metric labels, discover available dimensions, or filter labels by series patterns and time ranges. Accepts `series_selectors` (optional string for filtering specific metrics) and `time_range` parameters (optional start/end timestamps). e.g., series_selectors=\"cpu_usage\" or time_range with specific timestamps. Do not use when you need to query actual metric values or time series data (use appropriate query tools instead). Raises an error if the Prometheus datasource is unreachable or authentication fails.",
 	listPrometheusLabelNames,
 	mcp.WithTitleAnnotation("List Prometheus label names"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -471,7 +471,7 @@ func listPrometheusLabelValues(ctx context.Context, args ListPrometheusLabelValu
 
 var ListPrometheusLabelValues = mcpgrafana.MustTool(
 	"list_prometheus_label_values",
-	"Use after list_prometheus_metric_names to find label values for filtering queries. Gets the values for a specific label name in Prometheus. Allows filtering by series selectors and time range.",
+	"List available values for a specific Prometheus label name to help build precise metric queries. Use when the user wants to discover possible label values for filtering or grouping Prometheus metrics. Accepts `label_name` (required string) and optional `match[]` series selectors and time range parameters for filtering results. e.g., label_name=\"instance\" or label_name=\"job\" with match[]='up{job=\"prometheus\"}'. Returns an error if the label name does not exist in the current dataset. Do not use when you need to discover available metric names first (use list_prometheus_metric_names instead).",
 	listPrometheusLabelValues,
 	mcp.WithTitleAnnotation("List Prometheus label values"),
 	mcp.WithIdempotentHintAnnotation(true),

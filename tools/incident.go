@@ -48,7 +48,7 @@ func listIncidents(ctx context.Context, args ListIncidentsParams) (*incident.Que
 
 var ListIncidents = mcpgrafana.MustTool(
 	"list_incidents",
-	"List Grafana incidents. Allows filtering by status ('active', 'resolved') and optionally including drill incidents. Returns a preview list with basic details.",
+	"List Grafana incidents with filtering options to view active or resolved cases. Use when the user wants to review, monitor, or investigate incident status across the Grafana system. Accepts `status` (optional: \"active\" or \"resolved\") and `include_drill` (optional boolean to include drill incidents). e.g., status=\"active\" to show only ongoing incidents. Returns a preview list with basic incident details. Raises an error if the Grafana API is unreachable or authentication fails. Do not use when you need to create a new incident (use create_incident instead).",
 	listIncidents,
 	mcp.WithTitleAnnotation("List incidents"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -87,7 +87,7 @@ func createIncident(ctx context.Context, args CreateIncidentParams) (*incident.I
 
 var CreateIncident = mcpgrafana.MustTool(
 	"create_incident",
-	"Create a new Grafana incident. Requires title, severity, and room prefix. Allows setting status and labels. This tool should be used judiciously and sparingly, and only after confirmation from the user, as it may notify or alarm lots of people.",
+	"Create a new Grafana incident to alert teams about system issues or outages. Use when the user wants to formally escalate a problem that requires immediate attention from on-call engineers or incident response teams. Accepts `title` (required), `severity` (required), `room_prefix` (required for communication channels), `status` (optional), and `labels` (optional for categorization). e.g., title=\"Database Connection Timeout\", severity=\"high\", room_prefix=\"prod-db\". Do not use when you need to create simple notifications or logs (use create_annotation instead). Raises an error if the severity level is invalid or room prefix conflicts with existing channels. This tool triggers alerts and notifications to multiple team members.",
 	createIncident,
 	mcp.WithTitleAnnotation("Create incident"),
 )
@@ -115,7 +115,7 @@ func addActivityToIncident(ctx context.Context, args AddActivityToIncidentParams
 
 var AddActivityToIncident = mcpgrafana.MustTool(
 	"add_activity_to_incident",
-	"Add a note (userNote activity) to an existing incident's timeline using its ID. The note body can include URLs which will be attached as context. Use this to add context to an incident.",
+	"Add a note or comment to an existing incident's timeline for documentation and context. Use when the user wants to record observations, updates, or additional information about an ongoing or resolved incident. Accepts `incident_id` (required) and `note_body` (required string that can include URLs for attachments). e.g., incident_id=\"INC-12345\", note_body=\"Root cause identified: database connection timeout\". Do not use when you need to create a new incident or modify incident properties (use appropriate incident management tools instead). Raises an error if the incident ID does not exist or is inaccessible.",
 	addActivityToIncident,
 	mcp.WithTitleAnnotation("Add activity to incident"),
 )
@@ -149,7 +149,7 @@ func getIncident(ctx context.Context, args GetIncidentParams) (*incident.Inciden
 
 var GetIncident = mcpgrafana.MustTool(
 	"get_incident",
-	"Get a single incident by ID. Returns the full incident details including title, status, severity, labels, timestamps, and other metadata.",
+	"Retrieve a single incident by its unique identifier and return complete details including title, status, severity, labels, and timestamps. Use when the user wants to examine specific incident information, investigate a particular issue, or get full metadata for one incident. Accepts `incident_id` (required string or number). e.g., incident_id=\"INC-12345\" or incident_id=67890. Returns an error if the incident ID does not exist or access is denied. Do not use when you need to search for multiple incidents or browse incident lists (use list_incidents instead).",
 	getIncident,
 	mcp.WithTitleAnnotation("Get incident details"),
 	mcp.WithIdempotentHintAnnotation(true),

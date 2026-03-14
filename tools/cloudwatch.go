@@ -488,7 +488,7 @@ func listCloudWatchNamespaces(ctx context.Context, args ListCloudWatchNamespaces
 // ListCloudWatchNamespaces is a tool for listing CloudWatch namespaces
 var ListCloudWatchNamespaces = mcpgrafana.MustTool(
 	"list_cloudwatch_namespaces",
-	"START HERE for CloudWatch: List available namespaces (AWS/EC2, AWS/ECS, AWS/RDS, etc.). Requires region. Supports cross-account monitoring via optional accountId parameter. NEXT: Use list_cloudwatch_metrics with a namespace.",
+	"List available CloudWatch namespaces for AWS services in a specified region. Use when the user wants to discover which AWS services have metrics available for monitoring or analysis. Accepts `region` (required) and `accountId` (optional for cross-account access), e.g., region=\"us-east-1\" or accountId=\"123456789012\". Returns namespaces such as \"AWS/EC2\", \"AWS/RDS\", \"AWS/Lambda\". Do not use when you already know the namespace and need specific metrics (use list_cloudwatch_metrics instead). Raises an error if the region is invalid or AWS credentials lack CloudWatch permissions.",
 	listCloudWatchNamespaces,
 	mcp.WithTitleAnnotation("List CloudWatch namespaces"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -549,7 +549,7 @@ func listCloudWatchMetrics(ctx context.Context, args ListCloudWatchMetricsParams
 // ListCloudWatchMetrics is a tool for listing CloudWatch metrics
 var ListCloudWatchMetrics = mcpgrafana.MustTool(
 	"list_cloudwatch_metrics",
-	"List metrics for a CloudWatch namespace. Requires region. Supports cross-account monitoring via optional accountId parameter. Use after list_cloudwatch_namespaces. NEXT: Use list_cloudwatch_dimensions\\, then query_cloudwatch.",
+	"List available CloudWatch metrics within a specified namespace and region. Use when the user wants to discover what metrics are available for monitoring AWS services or custom applications. Accepts `namespace` (required), `region` (required), and `accountId` (optional for cross-account access), e.g., namespace=\"AWS/EC2\", region=\"us-east-1\". Do not use when you need to see metric dimensions or query actual metric data (use list_cloudwatch_dimensions or query_cloudwatch instead). Raises an error if the specified region is invalid or credentials lack CloudWatch read permissions.",
 	listCloudWatchMetrics,
 	mcp.WithTitleAnnotation("List CloudWatch metrics"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -612,7 +612,7 @@ func listCloudWatchDimensions(ctx context.Context, args ListCloudWatchDimensions
 // ListCloudWatchDimensions is a tool for listing CloudWatch dimension keys
 var ListCloudWatchDimensions = mcpgrafana.MustTool(
 	"list_cloudwatch_dimensions",
-	"List dimension keys for a CloudWatch metric. Requires region. Supports cross-account monitoring via optional accountId parameter. Use after list_cloudwatch_metrics. NEXT: Use query_cloudwatch with discovered dimensions.",
+	"List dimension keys available for a specific CloudWatch metric in a given region. Use when the user wants to discover what dimensions can be used to filter or group CloudWatch metric data before querying. Accepts `region` (required), `namespace` (required), `metric_name` (required), and `account_id` (optional for cross-account access). e.g., region=\"us-east-1\", namespace=\"AWS/EC2\", metric_name=\"CPUUtilization\". Do not use when you need to list available tables in ClickHouse (use list_clickhouse_tables instead). Raises an error if the metric does not exist in the specified namespace or region.",
 	listCloudWatchDimensions,
 	mcp.WithTitleAnnotation("List CloudWatch dimensions"),
 	mcp.WithIdempotentHintAnnotation(true),

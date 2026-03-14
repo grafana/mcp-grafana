@@ -71,7 +71,7 @@ func searchDashboards(ctx context.Context, args SearchDashboardsParams) (*Search
 
 var SearchDashboards = mcpgrafana.MustTool(
 	"search_dashboards",
-	"Search for Grafana dashboards by a query string. Returns a list of matching dashboards with details like title, UID, folder, tags, and URL.",
+	"Search for Grafana dashboards by query string and return matching results with title, UID, folder, tags, and URL. Use when the user wants to find specific dashboards by name, keyword, or content across the Grafana instance. Accepts `query` (required string) for search terms, e.g., \"monitoring\" or \"kubernetes dashboard\". Do not use when you need to list users or teams (use list_users_by_org or list_teams instead). Returns an error if the Grafana API is unreachable or authentication fails.",
 	searchDashboards,
 	mcp.WithTitleAnnotation("Search dashboards"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -98,7 +98,7 @@ func searchFolders(ctx context.Context, args SearchFoldersParams) (models.HitLis
 
 var SearchFolders = mcpgrafana.MustTool(
 	"search_folders",
-	"Search for Grafana folders by a query string. Returns matching folders with details like title, UID, and URL.",
+	"Search for Grafana folders by query string and return matching folders with details like title, UID, and URL. Use when the user wants to find specific folders by name or partial text match within the Grafana instance. Accepts `query` (required string) for the search term, e.g., \"dashboard\" or \"prod-metrics\". Do not use when you need to browse all available folders without filtering (use a general listing tool instead). Returns an error if the Grafana API is unreachable or authentication fails.",
 	searchFolders,
 	mcp.WithTitleAnnotation("Search folders"),
 	mcp.WithIdempotentHintAnnotation(true),

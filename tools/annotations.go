@@ -60,7 +60,7 @@ func getAnnotations(ctx context.Context, args GetAnnotationsInput) (*annotations
 
 var GetAnnotationsTool = mcpgrafana.MustTool(
 	"get_annotations",
-	"Fetch Grafana annotations using filters such as dashboard UID, time range and tags.",
+	"Fetch Grafana annotations using filters such as dashboard UID, time range, and tags. Use when the user wants to retrieve existing annotations for analysis, debugging, or review purposes. Do not use when you need to create a new annotation (use create_annotation instead). Accepts `dashboardUID` (optional), `from` and `to` (optional time range), `tags` (optional array), and `limit` (optional). e.g., dashboardUID=\"abc123\", from=1609459200000, to=1609545600000, tags=[\"deployment\", \"alert\"]. Raises an error if the time range is invalid or the dashboard UID does not exist.",
 	getAnnotations,
 	mcp.WithTitleAnnotation("Get Annotations"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -132,7 +132,7 @@ func createAnnotation(ctx context.Context, args CreateAnnotationInput) (any, err
 
 var CreateAnnotationTool = mcpgrafana.MustTool(
 	"create_annotation",
-	"Create a new annotation on a dashboard or panel. Set format to 'graphite' and provide 'what' for Graphite-format annotations.",
+	"Create a new annotation on a Grafana dashboard or panel to mark events, deployments, or incidents. Use when the user wants to add timestamped notes or markers to visualize important events on charts. Do not use when you need to retrieve existing annotations (use get_annotations instead). Accepts `dashboardUID` (optional), `panelId` (optional), `time` (required timestamp), `text` (required description), and `tags` (optional array). For Graphite-format annotations, set `format` to 'graphite' and provide `what` parameter. e.g., text=\"Deploy v2.1.0\", tags=[\"deployment\", \"production\"]. Raises an error if the dashboard or panel ID is invalid or if required authentication is missing.",
 	createAnnotation,
 	mcp.WithTitleAnnotation("Create Annotation"),
 	mcp.WithIdempotentHintAnnotation(false),
@@ -180,7 +180,7 @@ func updateAnnotation(ctx context.Context, args UpdateAnnotationInput) (*annotat
 
 var UpdateAnnotationTool = mcpgrafana.MustTool(
 	"update_annotation",
-	"Updates the provided properties of an annotation by ID. Only fields included in the request are modified; omitted fields are left unchanged.",
+	"Update an existing Grafana annotation by modifying specific properties while leaving other fields unchanged. Use when the user wants to edit, correct, or enhance annotation details like text, tags, or time ranges. Do not use when you need to create a new annotation (use create_annotation instead). Accepts `annotation_id` (required), `text` (optional), `tags` (optional array), `time` and `timeEnd` (optional timestamps), e.g., annotation_id=\"12345\", text=\"Updated deployment note\", tags=[\"production\", \"release\"]. Raises an error if the annotation ID does not exist or you lack edit permissions.",
 	updateAnnotation,
 	mcp.WithTitleAnnotation("Update Annotation"),
 	mcp.WithDestructiveHintAnnotation(true),
@@ -212,7 +212,7 @@ func getAnnotationTags(ctx context.Context, args GetAnnotationTagsInput) (*annot
 
 var GetAnnotationTagsTool = mcpgrafana.MustTool(
 	"get_annotation_tags",
-	"Returns annotation tags with optional filtering by tag name. Only the provided filters are applied.",
+	"Retrieve annotation tags from Grafana with optional filtering capabilities. Use when the user wants to browse, search, or filter available annotation tags by name or pattern. Accepts `tag` (optional string filter) to narrow results to specific tag names, e.g., \"deployment\" or \"incident\". Do not use when you need to fetch the actual annotations themselves (use get_annotations instead). Returns a list of matching tag names that can be used for annotation filtering. Raises an error if the Grafana API is unreachable or authentication fails.",
 	getAnnotationTags,
 	mcp.WithTitleAnnotation("Get Annotation Tags"),
 	mcp.WithIdempotentHintAnnotation(true),

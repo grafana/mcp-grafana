@@ -443,7 +443,7 @@ WHERE database NOT IN ('system', 'INFORMATION_SCHEMA', 'information_schema')`
 // ListClickHouseTables is a tool for listing ClickHouse tables
 var ListClickHouseTables = mcpgrafana.MustTool(
 	"list_clickhouse_tables",
-	"START HERE for ClickHouse: List available tables (name, database, engine, row count, size). NEXT: Use describe_clickhouse_table to see column schemas.",
+	"List available ClickHouse tables with metadata including name, database, engine, row count, and size. Use when the user wants to explore the database structure, find specific tables, or get an overview of available data sources. Do not use when you need detailed column schemas for a specific table (use describe_clickhouse_table instead). Accepts optional `database` parameter to filter results to a specific database, e.g., database=\"analytics\" or database=\"logs\". Returns an error if the ClickHouse connection is not established or authentication fails.",
 	listClickHouseTables,
 	mcp.WithTitleAnnotation("List ClickHouse tables"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -518,7 +518,7 @@ ORDER BY position`, database, args.Table)
 // DescribeClickHouseTable is a tool for describing a ClickHouse table schema
 var DescribeClickHouseTable = mcpgrafana.MustTool(
 	"describe_clickhouse_table",
-	"Get column schema for a ClickHouse table. Pass the database from list_clickhouse_tables results. NEXT: Use query_clickhouse with discovered column names.",
+	"Get the column schema and data types for a specific ClickHouse table. Use when the user wants to understand table structure, column names, or data types before writing queries. Accepts `database` (required) and `table` (required) parameters, e.g., database=\"analytics\", table=\"user_events\". Do not use when you need to see available tables first (use list_clickhouse_tables instead). Raises an error if the table does not exist in the specified database.",
 	describeClickHouseTable,
 	mcp.WithTitleAnnotation("Describe ClickHouse table"),
 	mcp.WithIdempotentHintAnnotation(true),

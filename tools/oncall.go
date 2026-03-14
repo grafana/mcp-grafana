@@ -234,7 +234,7 @@ func listOnCallSchedules(ctx context.Context, args ListOnCallSchedulesParams) ([
 
 var ListOnCallSchedules = mcpgrafana.MustTool(
 	"list_oncall_schedules",
-	"List Grafana OnCall schedules, optionally filtering by team ID. If a specific schedule ID is provided, retrieves details for only that schedule. Returns a list of schedule summaries including ID, name, team ID, timezone, and shift IDs. Supports pagination.",
+	"List Grafana OnCall schedules with optional filtering and pagination support. Use when the user wants to browse available on-call schedules, find schedules by team, or retrieve specific schedule details. Accepts `team_id` (optional filter), `schedule_id` (optional for single schedule lookup), and pagination parameters. Returns schedule summaries including ID, name, team ID, timezone, and shift IDs, e.g., schedule \"Primary Support\" with team_id=5 and timezone=\"UTC\". Do not use when you need to find team information first (use list_teams instead). Raises an error if the specified schedule_id does not exist or access is denied.",
 	listOnCallSchedules,
 	mcp.WithTitleAnnotation("List OnCall schedules"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -261,7 +261,7 @@ func getOnCallShift(ctx context.Context, args GetOnCallShiftParams) (*aapi.OnCal
 
 var GetOnCallShift = mcpgrafana.MustTool(
 	"get_oncall_shift",
-	"Get detailed information for a specific Grafana OnCall shift using its ID. A shift represents a designated time period within a schedule when users are actively on-call. Returns the full shift details.",
+	"Retrieve detailed information for a specific Grafana OnCall shift using its unique identifier. Use when the user wants to inspect shift details, verify on-call assignments, or troubleshoot scheduling issues for a particular time period. Accepts `shift_id` (required string identifier). e.g., shift_id=\"shift_12345abc\" or \"oncall_weekend_2024\". Returns comprehensive shift data including time boundaries, assigned users, and schedule context. Raises an error if the shift ID does not exist or access is denied. Do not use when you need to list multiple shifts or browse schedules (use appropriate listing tools instead).",
 	getOnCallShift,
 	mcp.WithTitleAnnotation("Get OnCall shift"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -324,7 +324,7 @@ func getCurrentOnCallUsers(ctx context.Context, args GetCurrentOnCallUsersParams
 
 var GetCurrentOnCallUsers = mcpgrafana.MustTool(
 	"get_current_oncall_users",
-	"Get the list of users currently on-call for a specific Grafana OnCall schedule ID. Returns the schedule ID, name, and a list of detailed user objects for those currently on call.",
+	"Retrieve the list of users currently on-call for a specific Grafana OnCall schedule. Use when the user wants to identify who is actively handling incidents or alerts for a particular schedule. Accepts `schedule_id` (required) to specify which OnCall schedule to query. Returns the schedule ID, name, and detailed user objects including contact information for current on-call personnel. e.g., schedule_id=\"sched_abc123\" for the primary support rotation. Raises an error if the schedule ID does not exist or access is denied. Do not use when you need to search for teams or users generally (use list_teams or list_users_by_org instead).",
 	getCurrentOnCallUsers,
 	mcp.WithTitleAnnotation("Get current on-call users"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -356,7 +356,7 @@ func listOnCallTeams(ctx context.Context, args ListOnCallTeamsParams) ([]*aapi.T
 
 var ListOnCallTeams = mcpgrafana.MustTool(
 	"list_oncall_teams",
-	"List teams configured in Grafana OnCall. Returns a list of team objects with their details. Supports pagination.",
+	"List teams configured in Grafana OnCall with their details and metadata. Use when the user wants to view or browse OnCall-specific team configurations, schedules, or incident response setups. Do not use when you need general Grafana teams (use list_teams instead). Supports `page` and `page_size` parameters for pagination control. e.g., page=1, page_size=50 to retrieve the first 50 teams. Returns an error if the OnCall plugin is not installed or configured in the Grafana instance.",
 	listOnCallTeams,
 	mcp.WithTitleAnnotation("List OnCall teams"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -402,7 +402,7 @@ func listOnCallUsers(ctx context.Context, args ListOnCallUsersParams) ([]*aapi.U
 
 var ListOnCallUsers = mcpgrafana.MustTool(
 	"list_oncall_users",
-	"List users from Grafana OnCall. These are OnCall users (separate from Grafana users). Can retrieve all users in the OnCall directory, a specific user by ID, or filter by username. Returns a list of user objects with their details. Supports pagination.",
+	"List users from the Grafana OnCall directory with optional filtering and pagination. Use when the user wants to browse OnCall team members, find specific users by username, or retrieve user details for scheduling purposes. Do not use when you need regular Grafana organization users (use list_users_by_org instead). Accepts `user_id` (optional, specific user lookup), `username` (optional, filter string), and pagination parameters `limit` and `offset`. e.g., username=\"john.doe\" or user_id=\"U123ABC456\". Returns error if the OnCall integration is not configured or user lacks OnCall read permissions.",
 	listOnCallUsers,
 	mcp.WithTitleAnnotation("List OnCall users"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -475,7 +475,7 @@ func listAlertGroups(ctx context.Context, args ListAlertGroupsParams) ([]*aapi.A
 
 var ListAlertGroups = mcpgrafana.MustTool(
 	"list_alert_groups",
-	"List alert groups from Grafana OnCall with filtering options. Supports filtering by alert group ID, route ID, integration ID, state (new, acknowledged, resolved, silenced), team ID, time range, labels, and name. For time ranges, use format '{start}_{end}' ISO 8601 timestamp range (e.g., '2025-01-19T00:00:00_2025-01-19T23:59:59' for a specific day). For labels, use format 'key:value' (e.g., ['env:prod', 'severity:high']). Returns a list of alert group objects with their details. Supports pagination.",
+	"List alert groups from Grafana OnCall with comprehensive filtering capabilities. Use when the user wants to browse, search, or monitor existing alert incidents by status, team, integration, or time period. Accepts `alert_group_id`, `route_id`, `integration_id`, `state` (\"new\", \"acknowledged\", \"resolved\", \"silenced\"), `team_id`, `time_range` (ISO 8601 format like \"2025-01-19T00:00:00_2025-01-19T23:59:59\"), `labels` (key:value pairs), and `name` parameters. Do not use when you need team information without alert context (use list_teams instead). e.g., state=\"acknowledged\", labels=[\"env:prod\", \"severity:high\"]. Raises an error if the time range format is invalid or the specified team/integration does not exist.",
 	listAlertGroups,
 	mcp.WithTitleAnnotation("List IRM alert groups"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -502,7 +502,7 @@ func getAlertGroup(ctx context.Context, args GetAlertGroupParams) (*aapi.AlertGr
 
 var GetAlertGroup = mcpgrafana.MustTool(
 	"get_alert_group",
-	"Get a specific alert group from Grafana OnCall by its ID. Returns the full alert group details.",
+	"Retrieve a specific alert group from Grafana OnCall by its unique identifier. Use when the user wants to inspect detailed information about a particular alert group including its status, incidents, and metadata. Accepts `alert_group_id` (required string). e.g., \"ag_12345\" or \"alert-group-abc123\". Do not use when you need to search for multiple alert groups or list all groups (use appropriate list tools instead). Raises an error if the alert group ID does not exist or access is denied.",
 	getAlertGroup,
 	mcp.WithTitleAnnotation("Get IRM alert group"),
 	mcp.WithIdempotentHintAnnotation(true),
