@@ -253,7 +253,7 @@ func listLokiLabelNames(ctx context.Context, args ListLokiLabelNamesParams) ([]s
 // ListLokiLabelNames is a tool for listing Loki label names
 var ListLokiLabelNames = mcpgrafana.MustTool(
 	"list_loki_label_names",
-	"List all available label names (keys) found in logs within a specified Loki datasource and time range. Use when the user wants to discover what log labels are available for filtering or querying before building LogQL queries. Accepts `datasource` (required), `start` and `end` time parameters (optional). Returns a list of unique label strings, e.g., `[\"job\", \"instance\", \"level\", \"service\"]`. Do not use when you need to get label values for a specific label name (use a label values query instead). Raises an error if the datasource is unreachable or the time range is invalid."app\", \"env\", \"pod\"]`). If the time range is not provided, it defaults to the last hour.",
+	"List all available label names (keys) found in logs within a specified Loki datasource and time range. Use when the user wants to discover what log labels are available for filtering or querying before building LogQL queries. Accepts `datasource` (required), `start` and `end` time parameters (optional). Returns a list of unique label strings, e.g., `[\"job\", \"instance\", \"level\", \"service\"]`. Do not use when you need to get label values for a specific label name (use a label values query instead). Raises an error if the datasource is unreachable or the time range is invalid.",
 	listLokiLabelNames,
 	mcp.WithTitleAnnotation("List Loki label names"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -294,7 +294,7 @@ func listLokiLabelValues(ctx context.Context, args ListLokiLabelValuesParams) ([
 // ListLokiLabelValues is a tool for listing Loki label values
 var ListLokiLabelValues = mcpgrafana.MustTool(
 	"list_loki_label_values",
-	"Retrieve all unique values for a specific label name within a Loki datasource and time range. Use when the user wants to explore available label values for filtering or building log queries. Accepts `labelName` (required string) and optional time range parameters. e.g., labelName=\"service\" returns [\"api\", \"web\", \"worker\"]. Do not use when you need to query actual log entries (use appropriate log query tools instead). Raises an error if the label name does not exist in the specified time range or datasource is unreachable."env\"`, might return `[\"prod\", \"staging\", \"dev\"]`). Useful for discovering filter options. Defaults to the last hour if the time range is omitted.",
+	"Retrieve all unique values for a specific label name within a Loki datasource and time range. Use when the user wants to explore available label values for filtering or building log queries. Accepts `labelName` (required string) and optional time range parameters. e.g., labelName=\"service\" returns [\"api\", \"web\", \"worker\"]. Do not use when you need to query actual log entries (use appropriate log query tools instead). Raises an error if the label name does not exist in the specified time range or datasource is unreachable.",
 	listLokiLabelValues,
 	mcp.WithTitleAnnotation("List Loki label values"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -684,7 +684,7 @@ func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) (*QueryLokiLog
 // QueryLokiLogs is a tool for querying logs from Loki
 var QueryLokiLogs = mcpgrafana.MustTool(
 	"query_loki_logs",
-	"Query a Loki datasource using LogQL syntax to retrieve log entries or metric values. Use when the user wants to search, filter, or analyze logs from applications, services, or infrastructure components. Accepts `query` (required LogQL string), `start_time` and `end_time` (optional timestamps), `limit` (optional, defaults to 10), and `direction` (optional: \"forward\" or \"backward\", defaults to \"backward\"). Returns results with timestamp, labels, and either `line` (log text) or `value` (metric number). e.g., `{app=\"nginx\"} |= \"error\"` or `rate({service=\"api\"}[5m])`. Do not use when you need to create annotations or manage Grafana resources (use create_annotation or other Grafana tools instead). Raises an error if the LogQL syntax is invalid or the Loki datasource is unreachable."foo\"} |= \"error\"`, `rate({app=\"bar\"}[1m])`). Prefer using `query_loki_stats` first to check stream size and `list_loki_label_names` and `list_loki_label_values` to verify labels exist.",
+	"Query a Loki datasource using LogQL syntax to retrieve log entries or metric values. Use when the user wants to search, filter, or analyze logs from applications, services, or infrastructure components. Accepts `query` (required LogQL string), `start_time` and `end_time` (optional timestamps), `limit` (optional, defaults to 10), and `direction` (optional: \"forward\" or \"backward\", defaults to \"backward\"). Returns results with timestamp, labels, and either `line` (log text) or `value` (metric number). e.g., `{app=\"nginx\"} |= \"error\"` or `rate({service=\"api\"}[5m])`. Do not use when you need to create annotations or manage Grafana resources (use create_annotation or other Grafana tools instead). Raises an error if the LogQL syntax is invalid or the Loki datasource is unreachable.",
 	queryLokiLogs,
 	mcp.WithTitleAnnotation("Query Loki logs"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -793,7 +793,7 @@ func queryLokiStats(ctx context.Context, args QueryLokiStatsParams) (*Stats, err
 // QueryLokiStats is a tool for querying stats from Loki
 var QueryLokiStats = mcpgrafana.MustTool(
 	"query_loki_stats",
-	"Query Loki log stream statistics using LogQL selectors within a specified time range. Use when the user wants to analyze log volume metrics, storage usage, or stream distribution patterns in Loki. Accepts `selector` (required LogQL selector string), `start` and `end` (time range), and `datasource` (optional). Returns counts of streams, chunks, entries, and total bytes, e.g., `{\"streams\": 42, \"chunks\": 1337, \"entries\": 50000, \"bytes\": 2048576}`. Do not use when you need to retrieve actual log content or entries (use appropriate log query tools instead). Raises an error if the LogQL selector syntax is invalid or the time range is malformed."streams\": 5, \"chunks\": 50, \"entries\": 10000, \"bytes\": 512000}`). The `logql` parameter **must** be a simple label selector (e.g., `{app=\"nginx\", env=\"prod\"}`) and does not support line filters, parsers, or aggregations. Defaults to the last hour if the time range is omitted.",
+	"Query Loki log stream statistics using LogQL selectors within a specified time range. Use when the user wants to analyze log volume metrics, storage usage, or stream distribution patterns in Loki. Accepts `selector` (required LogQL selector string), `start` and `end` (time range), and `datasource` (optional). Returns counts of streams, chunks, entries, and total bytes, e.g., `{\"streams\": 42, \"chunks\": 1337, \"entries\": 50000, \"bytes\": 2048576}`. Do not use when you need to retrieve actual log content or entries (use appropriate log query tools instead). Raises an error if the LogQL selector syntax is invalid or the time range is malformed.",
 	queryLokiStats,
 	mcp.WithTitleAnnotation("Get Loki log statistics"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -830,7 +830,7 @@ func queryLokiPatterns(ctx context.Context, args QueryLokiPatternsParams) ([]Pat
 // QueryLokiPatterns is a tool for querying detected log patterns from Loki
 var QueryLokiPatterns = mcpgrafana.MustTool(
 	"query_loki_patterns",
-	"Query detected log patterns from a Loki datasource for a given stream selector and time range. Use when the user wants to analyze log structures, identify common patterns, or detect anomalies in log data. Returns a list of patterns with pattern strings and occurrence counts. Accepts `logql` (required stream selector), `start_time`, and `end_time` parameters. e.g., `{job=\"nginx\"}` or `{service=\"api\", level=\"error\"}`. Do not use when you need to retrieve raw log entries (use a log query tool instead). Raises an error if the stream selector syntax is invalid or the time range is too broad."nginx\"}`) and does not support line filters or aggregations. Defaults to the last hour if the time range is omitted.",
+	"Query detected log patterns from a Loki datasource for a given stream selector and time range. Use when the user wants to analyze log structures, identify common patterns, or detect anomalies in log data. Returns a list of patterns with pattern strings and occurrence counts. Accepts `logql` (required stream selector), `start_time`, and `end_time` parameters. e.g., `{job=\"nginx\"}` or `{service=\"api\", level=\"error\"}`. Do not use when you need to retrieve raw log entries (use a log query tool instead). Raises an error if the stream selector syntax is invalid or the time range is too broad.",
 	queryLokiPatterns,
 	mcp.WithTitleAnnotation("Query Loki patterns"),
 	mcp.WithIdempotentHintAnnotation(true),
