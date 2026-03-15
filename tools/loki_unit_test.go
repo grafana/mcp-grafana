@@ -63,6 +63,12 @@ func TestEnforceLogLimit(t *testing.T) {
 			requestedLimit: 150,
 			expectedLimit:  MaxLokiLogLimit, // 100
 		},
+		{
+			name:           "default limit capped to maxLimit when maxLimit is lower",
+			maxLokiLimit:   5,
+			requestedLimit: 0,
+			expectedLimit:  5, // DefaultLokiLogLimit (10) > maxLimit (5), so use maxLimit
+		},
 	}
 
 	for _, tc := range tests {

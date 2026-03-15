@@ -498,6 +498,10 @@ func enforceLogLimit(ctx context.Context, requestedLimit int) int {
 	}
 
 	if requestedLimit <= 0 {
+		// Cap default to maxLimit in case admin configured a lower max
+		if DefaultLokiLogLimit > maxLimit {
+			return maxLimit
+		}
 		return DefaultLokiLogLimit
 	}
 	if requestedLimit > maxLimit {
@@ -678,10 +682,15 @@ func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) (*QueryLokiLog
 		entries = []LogEntry{}
 	}
 
-	// Detect truncation and trim to actual limit
-	truncated := len(entries) > limit
-	if truncated {
-		entries = entries[:limit]
+	// Detect truncation and trim to actual limit (only for log queries, not metrics).
+	// For metric queries (vector/matrix), Loki doesn't receive a limit parameter,
+	// so we preserve the old behavior of returning all results.
+	truncated := false
+	if response.Data.ResultType == "streams" { // streams = log queries
+		truncated = len(entries) > limit
+		if truncated {
+			entries = entries[:limit]
+		}
 	}
 
 	// Get lines scanned from stats (nil if stats unavailable, 0 if actually zero)
