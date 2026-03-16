@@ -19,13 +19,6 @@ var (
 	MaxSQLTablesLimit     = uint(100)
 )
 
-// SQLDatasourceTypes lists the supported SQL datasource identifiers in Grafana.
-var SQLDatasourceTypes = []string{
-	sql.MySQLType,
-	sql.MSSQLType,
-	sql.PostgresType,
-}
-
 type ListSQLDatabaseArgs struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the SQL datasource"`
 }
@@ -111,6 +104,10 @@ func listSQLDatabases(ctx context.Context, args ListSQLDatabaseArgs) (*ListSQLDa
 	}
 
 	result := batchResult.Results[refID]
+
+	if result.Error != "" {
+		return nil, fmt.Errorf("downstream error : %s", result.Error)
+	}
 
 	var databases []string
 
@@ -340,6 +337,10 @@ func sqlQuery(ctx context.Context, args SQLQueryArgs) (*SQLQueryResponse, error)
 	}
 
 	response := batchResult.Results[refID]
+
+	if response.Error != "" {
+		return nil, fmt.Errorf("downstream error : %s", response.Error)
+	}
 
 	result := SQLQueryResponse{
 		Result: response,
