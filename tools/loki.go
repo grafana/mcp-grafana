@@ -678,6 +678,11 @@ func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) (*QueryLokiLog
 		})
 	}
 
+	// Apply masking if masker is configured in context
+	if masker := MaskerFromContext(ctx); masker != nil {
+		result.Data = masker.MaskEntries(result.Data)
+	}
+
 	return result, nil
 }
 
