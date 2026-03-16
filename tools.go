@@ -343,7 +343,7 @@ var (
 
 // grafanaHTTPClient is a generic http client for raw requests to grafana api
 type grafanaHTTPClient struct {
-	*http.Client
+	Client *http.Client
 	URL string
 }
 
