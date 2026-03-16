@@ -193,8 +193,8 @@ func (c *cloudWatchClient) query(ctx context.Context, args CloudWatchQueryParams
 		return nil, fmt.Errorf("CloudWatch query returned status %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
+	// Limit size of response read
 	var bytesLimit int64 = 1024 * 1024 * 10 // 10MB limit
-	// Read and parse response
 	body := io.LimitReader(resp.Body, bytesLimit)
 	bodyBytes, err := io.ReadAll(body)
 	if err != nil {
@@ -202,7 +202,7 @@ func (c *cloudWatchClient) query(ctx context.Context, args CloudWatchQueryParams
 	}
 
 	var queryResp cloudWatchQueryResponse
-	if err := UnmarshalWithLimitMsg(bodyBytes, &queryResp, int(bytesLimit)); err != nil {
+	if err := unmarshalJSONWithLimitMsg(bodyBytes, &queryResp, int(bytesLimit)); err != nil {
 		return nil, err
 	}
 
@@ -416,7 +416,7 @@ type cloudWatchMetricItem struct {
 // parseCloudWatchResourceResponse extracts values from CloudWatch resource API response
 func parseCloudWatchResourceResponse(bodyBytes []byte, bytesLimit int) ([]string, error) {
 	var items []cloudWatchResourceItem
-	if err := UnmarshalWithLimitMsg(bodyBytes, &items, bytesLimit); err != nil {
+	if err := unmarshalJSONWithLimitMsg(bodyBytes, &items, bytesLimit); err != nil {
 		return nil, err
 	}
 
@@ -430,7 +430,7 @@ func parseCloudWatchResourceResponse(bodyBytes []byte, bytesLimit int) ([]string
 // parseCloudWatchMetricsResponse extracts metric names from CloudWatch metrics API response
 func parseCloudWatchMetricsResponse(bodyBytes []byte, bytesLimit int) ([]string, error) {
 	var items []cloudWatchMetricItem
-	if err := UnmarshalWithLimitMsg(bodyBytes, &items, bytesLimit); err != nil {
+	if err := unmarshalJSONWithLimitMsg(bodyBytes, &items, bytesLimit); err != nil {
 		return nil, err
 	}
 

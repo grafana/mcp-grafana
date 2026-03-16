@@ -457,7 +457,7 @@ func (c *siftClient) makeRequest(ctx context.Context, method, path string, body 
 	}
 
 	// Read the response body with a limit to prevent memory issues
-	reader := io.LimitReader(response.Body, int64(siftResponseLimitBytes))
+	reader := io.LimitReader(response.Body, siftResponseLimitBytes)
 	buf, err := io.ReadAll(reader)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response body: %w", err)
@@ -484,7 +484,7 @@ func (c *siftClient) getSiftInvestigation(ctx context.Context, id uuid.UUID) (*I
 		Data   Investigation `json:"data"`
 	}{}
 
-	if err := UnmarshalWithLimitMsg(buf, &investigationResponse, siftResponseLimitBytes); err != nil {
+	if err := unmarshalJSONWithLimitMsg(buf, &investigationResponse, siftResponseLimitBytes); err != nil {
 		return nil, err
 	}
 
@@ -526,7 +526,7 @@ func (c *siftClient) createSiftInvestigation(ctx context.Context, investigation 
 		Data   Investigation `json:"data"`
 	}{}
 
-	if err := UnmarshalWithLimitMsg(buf, &investigationResponse, siftResponseLimitBytes); err != nil {
+	if err := unmarshalJSONWithLimitMsg(buf, &investigationResponse, siftResponseLimitBytes); err != nil {
 		return nil, err
 	}
 
@@ -573,7 +573,7 @@ func (c *siftClient) getSiftAnalyses(ctx context.Context, investigationID uuid.U
 		Data   []analysis `json:"data"`
 	}
 
-	if err := UnmarshalWithLimitMsg(buf, &response, siftResponseLimitBytes); err != nil {
+	if err := unmarshalJSONWithLimitMsg(buf, &response, siftResponseLimitBytes); err != nil {
 		return nil, err
 	}
 
@@ -617,7 +617,7 @@ func (c *siftClient) listSiftInvestigations(ctx context.Context, limit int) ([]I
 		Data   []Investigation `json:"data"`
 	}
 
-	if err := UnmarshalWithLimitMsg(buf, &response, siftResponseLimitBytes); err != nil {
+	if err := unmarshalJSONWithLimitMsg(buf, &response, siftResponseLimitBytes); err != nil {
 		return nil, err
 	}
 
