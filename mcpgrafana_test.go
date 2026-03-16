@@ -947,7 +947,7 @@ func TestExtractGrafanaInfoFromHeadersForwardedHeaders(t *testing.T) {
 
 		ctx := ExtractGrafanaInfoFromHeaders(context.Background(), req)
 		config := GrafanaConfigFromContext(ctx)
-		assert.Equal(t, map[string]string{"X-Tenant-Id": "tenant-789"}, config.ExtraHeaders)
+		assert.Equal(t, map[string]string{"X-Tenant-ID": "tenant-789"}, config.ExtraHeaders)
 	})
 
 	t.Run("forward header not present in request", func(t *testing.T) {

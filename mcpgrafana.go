@@ -137,13 +137,20 @@ func forwardedHeadersFromRequest(req *http.Request) map[string]string {
 }
 
 // mergeHeaders returns a new map containing all entries from base, with entries
-// from override taking precedence. Header names are canonicalized (via
-// textproto.CanonicalMIMEHeaderKey) so that case-insensitive matches are
-// merged correctly and the documented guarantee—incoming request wins—is upheld.
-// Returns nil only when both inputs are nil/empty.
+// from override taking precedence. When both maps are non-empty, header names
+// are canonicalized (via textproto.CanonicalMIMEHeaderKey) so that
+// case-insensitive matches are merged correctly and the documented
+// guarantee—incoming request wins—is upheld. When only one side is present the
+// original key casing is preserved.
 func mergeHeaders(base, override map[string]string) map[string]string {
 	if len(base) == 0 && len(override) == 0 {
 		return nil
+	}
+	if len(override) == 0 {
+		return base
+	}
+	if len(base) == 0 {
+		return override
 	}
 	merged := make(map[string]string, len(base)+len(override))
 	for k, v := range base {
