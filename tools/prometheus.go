@@ -37,8 +37,6 @@ var (
 // Prometheus client library's DoGetFallback sends POST first and only falls
 // back to GET on 405/501 responses, but Grafana's datasource resources API
 // returns 500 for POST requests to datasources configured with httpMethod: GET.
-// Since Prometheus and Thanos accept GET for all query endpoints, we
-// unconditionally convert POST to GET to avoid this incompatibility.
 type postToGetRoundTripper struct {
 	underlying http.RoundTripper
 }
@@ -52,7 +50,7 @@ func (rt *postToGetRoundTripper) RoundTrip(req *http.Request) (*http.Response, e
 	cloned.Method = http.MethodGet
 
 	// Move URL-encoded form body to query string
-	if req.Body != nil && req.Header.Get("Content-Type") == "application/x-www-form-urlencoded" {
+	if req.Body != nil && strings.HasPrefix(req.Header.Get("Content-Type"), "application/x-www-form-urlencoded") {
 		body, err := io.ReadAll(req.Body)
 		if err != nil {
 			return nil, fmt.Errorf("reading request body: %w", err)
@@ -71,18 +69,18 @@ func (rt *postToGetRoundTripper) RoundTrip(req *http.Request) (*http.Response, e
 			}
 		}
 		cloned.URL.RawQuery = q.Encode()
-	}
 
-	cloned.Body = nil
-	cloned.ContentLength = 0
-	cloned.Header.Del("Content-Type")
+		cloned.Body = nil
+		cloned.ContentLength = 0
+		cloned.Header.Del("Content-Type")
+	}
 
 	return rt.underlying.RoundTrip(cloned)
 }
 
 func promClientFromContext(ctx context.Context, uid string) (promv1.API, error) {
-	// First check if the datasource exists
-	_, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: uid})
+	// First check if the datasource exists and get its configuration
+	ds, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: uid})
 	if err != nil {
 		return nil, err
 	}
@@ -119,9 +117,13 @@ func promClientFromContext(ctx context.Context, uid string) (promv1.API, error) 
 	// Wrap with org ID support
 	rt = mcpgrafana.NewOrgIDRoundTripper(rt, cfg.OrgID)
 
-	// Wrap with POST-to-GET conversion for compatibility with datasources
-	// configured with httpMethod: GET. See https://github.com/grafana/mcp-grafana/issues/632
-	rt = &postToGetRoundTripper{underlying: rt}
+	// Only convert POST→GET if the datasource is configured to use GET.
+	// See https://github.com/grafana/mcp-grafana/issues/632
+	if jsonData, ok := ds.JSONData.(map[string]interface{}); ok {
+		if httpMethod, ok := jsonData["httpMethod"].(string); ok && strings.EqualFold(httpMethod, "GET") {
+			rt = &postToGetRoundTripper{underlying: rt}
+		}
+	}
 
 	c, err := api.NewClient(api.Config{
 		Address:      url,

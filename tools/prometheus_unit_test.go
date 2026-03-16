@@ -400,6 +400,31 @@ func TestPostToGetRoundTripper(t *testing.T) {
 		assert.Equal(t, http.MethodPost, req.Method)
 	})
 
+	t.Run("handles content-type with charset parameter", func(t *testing.T) {
+		var receivedReq *http.Request
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			receivedReq = r
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer server.Close()
+
+		rt := &postToGetRoundTripper{underlying: http.DefaultTransport}
+
+		body := strings.NewReader("query=up&time=1234")
+		req, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/query", body)
+		require.NoError(t, err)
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=utf-8")
+
+		resp, err := rt.RoundTrip(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.MethodGet, receivedReq.Method)
+		assert.Equal(t, "up", receivedReq.URL.Query().Get("query"))
+		assert.Equal(t, "1234", receivedReq.URL.Query().Get("time"))
+		assert.Empty(t, receivedReq.Header.Get("Content-Type"))
+	})
+
 	t.Run("handles POST with nil body", func(t *testing.T) {
 		var receivedReq *http.Request
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
