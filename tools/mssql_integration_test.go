@@ -34,7 +34,6 @@ func TestMSSQLDatabaseQuery(t *testing.T) {
 				break
 			}
 		}
-		//GPT : use assert.subset
 
 		assert.True(t, found, "should contain infrastructure_logs database")
 	})
@@ -50,6 +49,10 @@ func TestMSSQLDatabaseQuery(t *testing.T) {
 
 		require.Error(t, err, "should return error for invalid datasource")
 	})
+}
+
+func TestMSSQLTablesQuery(t *testing.T) {
+	ctx := newTestContext()
 
 	t.Run("should list tables from database", func(t *testing.T) {
 
@@ -64,11 +67,8 @@ func TestMSSQLDatabaseQuery(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, result)
 
-		//GPT: assert.subset
-
 		assert.Subset(t, result.Tables, []string{"dbo.logs", "dbo.host_metrics"}, "should contain expected tables")
 	})
-
 }
 
 func TestMSSQLRawQuery(t *testing.T) {

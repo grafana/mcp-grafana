@@ -31,9 +31,10 @@ func (*MSSQL) GetTablesQuery(dbName string) string {
 
 	if database != "" {
 		// append . to dbName to use as prefix in fully qualified name
-		database = fmt.Sprintf(`[%s].`, strings.Trim(dbName, " "))
+		database = fmt.Sprintf("%s.", quoteIdentifier(strings.Trim(dbName, " ")))
 	}
 
+	//TODO : apply quoting with quote identifier outside
 	return fmt.Sprintf(
 		`
 		SELECT TABLE_SCHEMA + '.' + TABLE_NAME as %s
@@ -65,14 +66,14 @@ func (*MSSQL) GetSchemaQuery(tableName string, dbName string) string {
 	schemaContraint := ""
 
 	if schema != "" {
-		schemaContraint = fmt.Sprintf(` TABLE_SCHEMA = '%s' AND `, schema)
+		schemaContraint = fmt.Sprintf(` TABLE_SCHEMA = '%s' AND `, escapeSingleQuotes(schema))
 	}
 
 	query := fmt.Sprintf(
 		`%s
 		SELECT COLUMN_NAME as %s,DATA_TYPE as %s
-		FROM INFORMATION_SCHEMA.COLUMNS WHERE %s TABLE_NAME='%s';
-	`, databaseContraint, ColNameColumn, ColTypeColumn, schemaContraint, table,
+		FROM INFORMATION_SCHEMA.COLUMNS WHERE %s TABLE_NAME = '%s';
+	`, databaseContraint, ColNameColumn, ColTypeColumn, schemaContraint, escapeSingleQuotes(table),
 	)
 
 	return query
@@ -88,4 +89,13 @@ func (*MSSQL) QueryWithLimit(query string, limit uint) (string, bool) {
 func (*MSSQL) GetInfoQuery() string {
 	query := fmt.Sprintf(`SELECT CAST(SERVERPROPERTY('ProductVersion') AS VARCHAR) AS %s`, DBVersionColumn)
 	return query
+}
+
+func quoteIdentifier(name string) string {
+	return "[" + strings.ReplaceAll(name, "]", "]]") + "]"
+}
+
+// escapeSingleQuotes escapes ' from value
+func escapeSingleQuotes(value string) string {
+	return strings.ReplaceAll(value, "'", "''")
 }

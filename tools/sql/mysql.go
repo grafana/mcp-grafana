@@ -23,8 +23,8 @@ func (*MySQL) Type() string { return MySQLType }
 
 func (*MySQL) GetDatabaseQuery() string {
 	return fmt.Sprintf(
-		"SELECT DISTINCT TABLE_SCHEMA as %s from information_schema.TABLES where TABLE_TYPE != 'SYSTEM VIEW' ORDER BY database_name",
-		DatabaseNameColumn,
+		"SELECT DISTINCT TABLE_SCHEMA as %s from information_schema.TABLES where TABLE_TYPE != 'SYSTEM VIEW' ORDER BY %s",
+		DatabaseNameColumn, DatabaseNameColumn,
 	)
 }
 
