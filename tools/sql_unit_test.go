@@ -103,3 +103,4 @@ func TestListSQLTableSchemaResultMarshaling(t *testing.T) {
 	id := fields["id"].(map[string]any)
 	assert.Equal(t, "int", id["type"])
 }
+
