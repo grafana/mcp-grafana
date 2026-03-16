@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/textproto"
 	"net/url"
 	"os"
 	"reflect"
@@ -136,17 +137,20 @@ func forwardedHeadersFromRequest(req *http.Request) map[string]string {
 }
 
 // mergeHeaders returns a new map containing all entries from base, with entries
-// from override taking precedence. Returns nil only when both inputs are nil/empty.
+// from override taking precedence. Header names are canonicalized (via
+// textproto.CanonicalMIMEHeaderKey) so that case-insensitive matches are
+// merged correctly and the documented guarantee—incoming request wins—is upheld.
+// Returns nil only when both inputs are nil/empty.
 func mergeHeaders(base, override map[string]string) map[string]string {
 	if len(base) == 0 && len(override) == 0 {
 		return nil
 	}
 	merged := make(map[string]string, len(base)+len(override))
 	for k, v := range base {
-		merged[k] = v
+		merged[textproto.CanonicalMIMEHeaderKey(k)] = v
 	}
 	for k, v := range override {
-		merged[k] = v
+		merged[textproto.CanonicalMIMEHeaderKey(k)] = v
 	}
 	return merged
 }

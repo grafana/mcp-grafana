@@ -903,6 +903,14 @@ func TestMergeHeaders(t *testing.T) {
 		result := mergeHeaders(base, override)
 		assert.Equal(t, map[string]string{"A": "1", "B": "override", "C": "3"}, result)
 	})
+
+	t.Run("case-insensitive header merge: override wins", func(t *testing.T) {
+		base := map[string]string{"cookie": "static"}
+		override := map[string]string{"Cookie": "from-request"}
+		result := mergeHeaders(base, override)
+		assert.Len(t, result, 1)
+		assert.Equal(t, "from-request", result["Cookie"], "forwarded request value must win over extra header")
+	})
 }
 
 func TestExtractGrafanaInfoFromHeadersForwardedHeaders(t *testing.T) {
@@ -915,7 +923,7 @@ func TestExtractGrafanaInfoFromHeadersForwardedHeaders(t *testing.T) {
 		ctx := ExtractGrafanaInfoFromHeaders(context.Background(), req)
 		config := GrafanaConfigFromContext(ctx)
 		assert.Equal(t, map[string]string{
-			"X-Tenant-ID": "tenant-123",
+			"X-Tenant-Id": "tenant-123",
 			"Cookie":      "session=user1",
 		}, config.ExtraHeaders)
 	})
@@ -939,7 +947,7 @@ func TestExtractGrafanaInfoFromHeadersForwardedHeaders(t *testing.T) {
 
 		ctx := ExtractGrafanaInfoFromHeaders(context.Background(), req)
 		config := GrafanaConfigFromContext(ctx)
-		assert.Equal(t, map[string]string{"X-Tenant-ID": "tenant-789"}, config.ExtraHeaders)
+		assert.Equal(t, map[string]string{"X-Tenant-Id": "tenant-789"}, config.ExtraHeaders)
 	})
 
 	t.Run("forward header not present in request", func(t *testing.T) {
@@ -950,6 +958,18 @@ func TestExtractGrafanaInfoFromHeadersForwardedHeaders(t *testing.T) {
 		ctx := ExtractGrafanaInfoFromHeaders(context.Background(), req)
 		config := GrafanaConfigFromContext(ctx)
 		assert.Nil(t, config.ExtraHeaders)
+	})
+
+	t.Run("forwarded Cookie wins when extra headers has lowercase cookie", func(t *testing.T) {
+		t.Setenv("GRAFANA_EXTRA_HEADERS", `{"cookie": "static"}`)
+		t.Setenv("GRAFANA_FORWARD_HEADERS", "Cookie")
+		req, _ := http.NewRequest("GET", "http://example.com", nil)
+		req.Header.Set("Cookie", "session=user2")
+
+		ctx := ExtractGrafanaInfoFromHeaders(context.Background(), req)
+		config := GrafanaConfigFromContext(ctx)
+		assert.Len(t, config.ExtraHeaders, 1)
+		assert.Equal(t, "session=user2", config.ExtraHeaders["Cookie"], "incoming request must take precedence regardless of extra header key case")
 	})
 }
 
