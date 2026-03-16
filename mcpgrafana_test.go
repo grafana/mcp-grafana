@@ -825,6 +825,134 @@ func TestExtractGrafanaInfoWithExtraHeaders(t *testing.T) {
 	})
 }
 
+func TestForwardHeaderNamesFromEnv(t *testing.T) {
+	t.Run("empty env returns nil", func(t *testing.T) {
+		t.Setenv("GRAFANA_FORWARD_HEADERS", "")
+		names := forwardHeaderNamesFromEnv()
+		assert.Nil(t, names)
+	})
+
+	t.Run("single header", func(t *testing.T) {
+		t.Setenv("GRAFANA_FORWARD_HEADERS", "Cookie")
+		names := forwardHeaderNamesFromEnv()
+		assert.Equal(t, []string{"Cookie"}, names)
+	})
+
+	t.Run("multiple headers with spaces", func(t *testing.T) {
+		t.Setenv("GRAFANA_FORWARD_HEADERS", " Cookie , X-Session-Id , X-Request-Id ")
+		names := forwardHeaderNamesFromEnv()
+		assert.Equal(t, []string{"Cookie", "X-Session-Id", "X-Request-Id"}, names)
+	})
+
+	t.Run("trailing comma ignored", func(t *testing.T) {
+		t.Setenv("GRAFANA_FORWARD_HEADERS", "Cookie,")
+		names := forwardHeaderNamesFromEnv()
+		assert.Equal(t, []string{"Cookie"}, names)
+	})
+}
+
+func TestForwardedHeadersFromRequest(t *testing.T) {
+	t.Run("no env returns nil", func(t *testing.T) {
+		t.Setenv("GRAFANA_FORWARD_HEADERS", "")
+		req, _ := http.NewRequest("GET", "http://example.com", nil)
+		req.Header.Set("Cookie", "session=abc")
+		assert.Nil(t, forwardedHeadersFromRequest(req))
+	})
+
+	t.Run("header present in request", func(t *testing.T) {
+		t.Setenv("GRAFANA_FORWARD_HEADERS", "Cookie")
+		req, _ := http.NewRequest("GET", "http://example.com", nil)
+		req.Header.Set("Cookie", "session=abc")
+		forwarded := forwardedHeadersFromRequest(req)
+		assert.Equal(t, map[string]string{"Cookie": "session=abc"}, forwarded)
+	})
+
+	t.Run("header missing from request returns nil", func(t *testing.T) {
+		t.Setenv("GRAFANA_FORWARD_HEADERS", "Cookie")
+		req, _ := http.NewRequest("GET", "http://example.com", nil)
+		assert.Nil(t, forwardedHeadersFromRequest(req))
+	})
+
+	t.Run("multiple headers partial match", func(t *testing.T) {
+		t.Setenv("GRAFANA_FORWARD_HEADERS", "Cookie,X-Session-Id")
+		req, _ := http.NewRequest("GET", "http://example.com", nil)
+		req.Header.Set("Cookie", "session=abc")
+		forwarded := forwardedHeadersFromRequest(req)
+		assert.Equal(t, map[string]string{"Cookie": "session=abc"}, forwarded)
+	})
+}
+
+func TestMergeHeaders(t *testing.T) {
+	t.Run("both nil", func(t *testing.T) {
+		assert.Nil(t, mergeHeaders(nil, nil))
+	})
+
+	t.Run("base only", func(t *testing.T) {
+		result := mergeHeaders(map[string]string{"A": "1"}, nil)
+		assert.Equal(t, map[string]string{"A": "1"}, result)
+	})
+
+	t.Run("override only", func(t *testing.T) {
+		result := mergeHeaders(nil, map[string]string{"B": "2"})
+		assert.Equal(t, map[string]string{"B": "2"}, result)
+	})
+
+	t.Run("override wins on conflict", func(t *testing.T) {
+		base := map[string]string{"A": "1", "B": "2"}
+		override := map[string]string{"B": "override", "C": "3"}
+		result := mergeHeaders(base, override)
+		assert.Equal(t, map[string]string{"A": "1", "B": "override", "C": "3"}, result)
+	})
+}
+
+func TestExtractGrafanaInfoFromHeadersForwardedHeaders(t *testing.T) {
+	t.Run("forwarded headers merged into config", func(t *testing.T) {
+		t.Setenv("GRAFANA_EXTRA_HEADERS", `{"X-Tenant-ID": "tenant-123"}`)
+		t.Setenv("GRAFANA_FORWARD_HEADERS", "Cookie")
+		req, _ := http.NewRequest("GET", "http://example.com", nil)
+		req.Header.Set("Cookie", "session=user1")
+
+		ctx := ExtractGrafanaInfoFromHeaders(context.Background(), req)
+		config := GrafanaConfigFromContext(ctx)
+		assert.Equal(t, map[string]string{
+			"X-Tenant-ID": "tenant-123",
+			"Cookie":      "session=user1",
+		}, config.ExtraHeaders)
+	})
+
+	t.Run("forwarded header overrides extra header with same name", func(t *testing.T) {
+		t.Setenv("GRAFANA_EXTRA_HEADERS", `{"Cookie": "static-cookie"}`)
+		t.Setenv("GRAFANA_FORWARD_HEADERS", "Cookie")
+		req, _ := http.NewRequest("GET", "http://example.com", nil)
+		req.Header.Set("Cookie", "dynamic-cookie")
+
+		ctx := ExtractGrafanaInfoFromHeaders(context.Background(), req)
+		config := GrafanaConfigFromContext(ctx)
+		assert.Equal(t, "dynamic-cookie", config.ExtraHeaders["Cookie"])
+	})
+
+	t.Run("no forward env uses only extra headers", func(t *testing.T) {
+		t.Setenv("GRAFANA_EXTRA_HEADERS", `{"X-Tenant-ID": "tenant-789"}`)
+		t.Setenv("GRAFANA_FORWARD_HEADERS", "")
+		req, _ := http.NewRequest("GET", "http://example.com", nil)
+		req.Header.Set("Cookie", "session=ignored")
+
+		ctx := ExtractGrafanaInfoFromHeaders(context.Background(), req)
+		config := GrafanaConfigFromContext(ctx)
+		assert.Equal(t, map[string]string{"X-Tenant-ID": "tenant-789"}, config.ExtraHeaders)
+	})
+
+	t.Run("forward header not present in request", func(t *testing.T) {
+		t.Setenv("GRAFANA_EXTRA_HEADERS", "")
+		t.Setenv("GRAFANA_FORWARD_HEADERS", "Cookie")
+		req, _ := http.NewRequest("GET", "http://example.com", nil)
+
+		ctx := ExtractGrafanaInfoFromHeaders(context.Background(), req)
+		config := GrafanaConfigFromContext(ctx)
+		assert.Nil(t, config.ExtraHeaders)
+	})
+}
+
 func TestOrgIDRoundTripper(t *testing.T) {
 	t.Run("adds org ID header to request", func(t *testing.T) {
 		var capturedReq *http.Request
