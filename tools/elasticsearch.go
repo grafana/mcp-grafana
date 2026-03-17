@@ -78,7 +78,7 @@ func newElasticsearchClient(ctx context.Context, uid string) (*ElasticsearchClie
 	if err != nil {
 		return nil, fmt.Errorf("failed to create custom transport: %w", err)
 	}
-	transport = NewAuthRoundTripper(transport, cfg.AccessToken, cfg.IDToken, cfg.APIKey, cfg.BasicAuth)
+	transport = mcpgrafana.NewAuthRoundTripper(transport, cfg.AccessToken, cfg.IDToken, cfg.APIKey, cfg.BasicAuth)
 	transport = mcpgrafana.NewOrgIDRoundTripper(transport, cfg.OrgID)
 
 	client := &http.Client{
@@ -362,6 +362,14 @@ var QueryElasticsearch = mcpgrafana.MustTool(
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
 )
+
+var elasticSearchTools = []*mcpgrafana.Tool{
+	&QueryElasticsearch,
+}
+
+func GetElasticSearchTools() []*mcpgrafana.Tool {
+	return elasticSearchTools
+}
 
 // AddElasticsearchTools registers all Elasticsearch tools with the MCP server
 func AddElasticsearchTools(mcp *server.MCPServer) {

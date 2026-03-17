@@ -233,6 +233,14 @@ type ToolManager struct {
 	serverMode    bool // true if using server-wide tools (stdio), false for per-session (HTTP/SSE)
 	serverClients map[string]*ProxiedClient
 	clientsMutex  sync.RWMutex
+
+	// Option to add only tools which are connected to Grafana,
+	connectedOnly bool
+	enabledTools  map[string]bool
+	// Resolves tools of category(datasource)
+	categoryTools map[string]func() []*Tool
+	// Tool categories of a plugin
+	pluginCategories map[string][]string
 }
 
 // NewToolManager creates a new ToolManager
@@ -242,6 +250,8 @@ func NewToolManager(sm *SessionManager, mcpServer *server.MCPServer, opts ...too
 		server:        mcpServer,
 		serverClients: make(map[string]*ProxiedClient),
 	}
+	//if enabled by manager, we maintain list
+
 	for _, opt := range opts {
 		opt(tm)
 	}
@@ -254,6 +264,23 @@ type toolManagerOption func(*ToolManager)
 func WithProxiedTools(enabled bool) toolManagerOption {
 	return func(tm *ToolManager) {
 		tm.enableProxiedTools = enabled
+	}
+}
+
+// WithConnectedOnlyTools initializes ToolManager internal state for enabled Tools when connectedOnly is true
+func WithConnectedOnlyTools(
+	connectedOnly bool,
+	toolsState func() map[string]bool,
+	categoryTools func() map[string]func() []*Tool,
+	pluginCategories func() map[string][]string,
+) toolManagerOption {
+	return func(tm *ToolManager) {
+		if connectedOnly {
+			tm.connectedOnly = true
+			tm.enabledTools = toolsState()
+			tm.categoryTools = categoryTools()
+			tm.pluginCategories = pluginCategories()
+		}
 	}
 }
 
@@ -421,7 +448,7 @@ func (tm *ToolManager) InitializeAndRegisterProxiedTools(ctx context.Context, se
 	}
 
 	if err := tm.server.AddSessionTools(sessionID, serverTools...); err != nil {
-		slog.Warn("failed to add session tools", "session", sessionID, "error", err)
+		slog.Warn("failed to add session proxy tools", "session", sessionID, "error", err)
 	} else {
 		slog.Info("registered proxied tools", "session", sessionID, "tools", len(state.proxiedTools))
 	}

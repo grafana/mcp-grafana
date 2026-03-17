@@ -388,7 +388,7 @@ func BuildTransport(cfg *GrafanaConfig, base http.RoundTripper) (http.RoundTripp
 	return transport, nil
 }
 
-// Gets info from environment
+// Gets info from environment.
 func extractKeyGrafanaInfoFromEnv() (url, apiKey string, auth *url.Userinfo, orgId int64) {
 	url, apiKey = urlAndAPIKeyFromEnv()
 	if url == "" {
@@ -400,7 +400,7 @@ func extractKeyGrafanaInfoFromEnv() (url, apiKey string, auth *url.Userinfo, org
 }
 
 // Tries to get grafana info from a request.
-// Gets info from environment if it can't get it from request
+// Gets info from environment if it can't get it from request.
 func extractKeyGrafanaInfoFromReq(req *http.Request) (grafanaUrl, apiKey string, auth *url.Userinfo, orgId int64) {
 	eUrl, eApiKey, eAuth, eOrgId := extractKeyGrafanaInfoFromEnv()
 	username, password, _ := req.BasicAuth()

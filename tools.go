@@ -1,12 +1,16 @@
 package mcpgrafana
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"net/http"
 	"reflect"
+	"slices"
 
 	"github.com/invopop/jsonschema"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -46,8 +50,7 @@ func (e *HardError) Unwrap() error {
 // Register adds the Tool to the given MCPServer.
 // It is a convenience method that calls server.MCPServer.AddTool with the Tool's metadata and handler,
 // allowing fluent tool registration in a single statement:
-//
-//	mcpgrafana.MustTool(name, description, toolHandler).Register(server)
+// mcpgrafana.MustTool(name, description, toolHandler).Register(server)
 func (t *Tool) Register(mcp *server.MCPServer) {
 	mcp.AddTool(t.Tool, t.Handler)
 }
@@ -337,3 +340,252 @@ var (
 		CommentMap:                 nil,
 	}
 )
+
+// grafanaHTTPClient is a generic http client for raw requests to grafana api
+type grafanaHTTPClient struct {
+	Client *http.Client
+	URL string
+}
+
+func newGrafanaHttpClient(cfg GrafanaConfig) (*grafanaHTTPClient, error) {
+	transport, err := BuildTransport(&cfg, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create custom transport: %w", err)
+	}
+	transport = NewAuthRoundTripper(transport, cfg.AccessToken, cfg.IDToken, cfg.APIKey, cfg.BasicAuth)
+	transport = NewOrgIDRoundTripper(transport, cfg.OrgID)
+	transport = NewUserAgentTransport(transport)
+
+	client := &http.Client{
+		Transport: transport,
+	}
+
+	return &grafanaHTTPClient{
+		URL:    cfg.URL,
+		Client: client,
+	}, nil
+}
+
+// makeRequest is a helper method to make HTTP requests and handle common response patterns
+func (c *grafanaHTTPClient) makeRequest(ctx context.Context, method, path string, body []byte) ([]byte, error) {
+	var req *http.Request
+	var err error
+
+	if body != nil {
+		req, err = http.NewRequestWithContext(ctx, method, c.URL+path, bytes.NewBuffer(body))
+		if err != nil {
+			return nil, fmt.Errorf("creating request: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+	} else {
+		req, err = http.NewRequestWithContext(ctx, method, c.URL+path, nil)
+		if err != nil {
+			return nil, fmt.Errorf("creating request: %w", err)
+		}
+	}
+
+	response, err := c.Client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("executing request: %w", err)
+	}
+	defer func() {
+		_ = response.Body.Close() //nolint:errcheck
+	}()
+
+	// Check for non-200 status code
+	if response.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(response.Body) // Read full body on error
+		return nil, fmt.Errorf("API request returned status code %d: %s", response.StatusCode, string(bodyBytes))
+	}
+
+	// Read the response body with a limit to prevent memory issues
+	reader := io.LimitReader(response.Body, 1024*1024*48) // 48MB limit
+	buf, err := io.ReadAll(reader)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	// Check if the response is empty
+	if len(buf) == 0 {
+		return nil, fmt.Errorf("empty response from API")
+	}
+
+	// Trim any whitespace that might cause JSON parsing issues
+	return bytes.TrimSpace(buf), nil
+}
+
+type Plugin struct {
+	Name    string `json:"name"`
+	ID      string `json:"id"`
+	Type    string `json:"type"`
+	Enabled bool   `json:"enabled"`
+}
+// GetEnabledPlugins returns enabled plugins accessible to the authenticated session.
+func (gc *grafanaHTTPClient) GetEnabledPlugins(ctx context.Context) ([]Plugin, error) {
+	response, err := gc.makeRequest(ctx, "GET", "/api/plugins?enabled=1", nil)
+	if err != nil {
+		return nil, err
+	}
+	var result []Plugin
+	// TODO: apply unmarshalling with limit message when https://github.com/grafana/mcp-grafana/pull/622 is merged
+	err = json.Unmarshal(response, &result)
+	if err != nil {
+		return nil, fmt.Errorf("unmarshalling response : %w", err)
+	}
+	return result, nil
+}
+
+// discoverTools discovers an authenticated session's accessible resources of the grafana instance 
+// returns the discovered tools
+// A discoverTools is safe to be called concurrently 
+func (tm *ToolManager) discoverTools(ctx context.Context) ([]server.ServerTool, error) {
+	grafana := GrafanaClientFromContext(ctx)
+	discoveredSources, err := grafana.Datasources.GetDataSources()
+
+	if err != nil {
+		return nil, err
+	}
+
+	tools := make([]server.ServerTool, 0)
+	categoryIncluded := map[string]bool{}
+
+	for _, datasource := range discoveredSources.Payload {
+		tools = addCategoryTools(datasource.Type, categoryIncluded, tm, tools)
+	}
+
+	cfg := GrafanaConfigFromContext(ctx)
+	httpClient, err := newGrafanaHttpClient(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	plugins, err := httpClient.GetEnabledPlugins(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	enabledPlugins := map[string]bool{}
+
+	for _, plugin := range plugins {
+		enabledPlugins[plugin.ID] = true
+	}
+
+	for pluginId, categories := range tm.pluginCategories {
+		tools = maybeAddPluginTools(pluginId, categories, categoryIncluded, enabledPlugins, tm, tools)
+	}
+	tools = slices.Clip(tools)
+
+	return tools, nil
+}
+
+// maybeAddPluginTools appends tools with all category tools of a plugin resource
+// if the plugin resource is enabled. It returns the updated slice
+func maybeAddPluginTools(
+	pluginID string,
+	categories []string,
+	categoryIncluded map[string]bool,
+	enabledPlugins map[string]bool,
+	tm *ToolManager,
+	tools []server.ServerTool,
+) []server.ServerTool {
+	if !enabledPlugins[pluginID] {
+		return tools
+	}
+
+	for _, category := range categories {
+		tools = addCategoryTools(category, categoryIncluded, tm, tools)
+	}
+	return tools
+}
+
+// addCategoryTools appends tools of a category when enabled and returns the updated slice.
+func addCategoryTools(category string, categoryIncluded map[string]bool, tm *ToolManager, tools []server.ServerTool) []server.ServerTool {
+
+	if !tm.enabledTools[category] {
+		slog.Info("skipping tool broadcast for excluded category", "category", category)
+		return tools
+	}
+
+	if categoryIncluded[category] {
+		// Skip tools for included sources
+		return tools
+	}
+
+	categoryIncluded[category] = true
+
+	toolsFc, found := tm.categoryTools[category]
+	if !found {
+		slog.Info("skipping tool broadcast for unidentified category", "category", category)
+		return tools
+	}
+
+	dsTools := toolsFc()
+	for _, tool := range dsTools {
+		tools = append(tools, server.ServerTool{
+			Tool:    tool.Tool,
+			Handler: tool.Handler,
+		})
+	}
+
+	return tools
+}
+
+// DiscoverAndRegisterToolsSession discovers an authenticated session's accessible resources of connected grafana instance
+// and registers tools for a session
+// A DiscoverAndRegisterToolsSession call is concurrent safe across varying or identical sessions
+func (tm *ToolManager) DiscoverAndRegisterToolsSession(ctx context.Context, session server.ClientSession) {
+	// Detection of connected tools disabled
+	if !tm.connectedOnly {
+		return
+	}
+
+	sessionID := session.SessionID()
+	state, exists := tm.sm.GetSession(sessionID)
+	if !exists {
+		// Session exists in server context but not in our SessionManager yet
+		tm.sm.CreateSession(ctx, session)
+		state, exists = tm.sm.GetSession(sessionID)
+		if !exists {
+			slog.Error("failed to create session in SessionManager", "sessionID", sessionID)
+			return
+		}
+	}
+	// Discover datasources and register tools once per session
+	state.initDiscoveryOnce.Do(func() {
+		tools, err := tm.discoverTools(ctx)
+
+		if err != nil {
+			slog.Error("failed to discover MCP datasources", "error", err)
+			return
+		}
+
+		if len(tools) == 0 {
+			return
+		}
+
+		if err := tm.server.AddSessionTools(sessionID, tools...); err != nil {
+			slog.Warn("failed to add session tools", "session", sessionID, "error", err)
+		} else {
+			slog.Info("Registered tools of discovered datasources for session", "sessionId", sessionID, "count", len(tools))
+		}
+	})
+}
+
+// DiscoverAndRegisterToolsStdio discovers resources of connected grafana instance and registers tools globally.
+// Expected to be used for global tool registry when server is configured with stdio transport
+func (tm *ToolManager) DiscoverAndRegisterToolsStdio(ctx context.Context) error {
+	// If this is called once globally
+	if !tm.connectedOnly {
+		return nil
+	}
+
+	tools, err := tm.discoverTools(ctx)
+	if err != nil {
+		slog.Error("failed to discover MCP datasources", "error", err)
+		return err
+	}
+
+	tm.server.AddTools(tools...)
+	slog.Info("Registered tools of discovered datasources", "count", len(tools))
+	return nil
+}
