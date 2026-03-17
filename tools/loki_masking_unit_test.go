@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"testing"
 	"time"
 
@@ -233,6 +234,84 @@ func TestBuiltinPatternMACAddress(t *testing.T) {
 			assert.Equal(t, tc.matches, match, "input: %s", tc.input)
 		})
 	}
+}
+
+func TestMACAddressConsistentHashing(t *testing.T) {
+	config := &MaskingConfig{
+		BuiltinPatterns: []string{"mac_address"},
+	}
+	masker, err := NewLogMasker(config)
+	require.NoError(t, err)
+
+	maskedHashRe := regexp.MustCompile(`\[MASKED:mac_address:([0-9a-f]{8})\]`)
+
+	extractHash := func(line string) string {
+		matches := maskedHashRe.FindStringSubmatch(line)
+		require.Len(t, matches, 2, "expected hash in masked output: %s", line)
+		return matches[1]
+	}
+
+	t.Run("same MAC address produces same hash", func(t *testing.T) {
+		entries := []LogEntry{
+			{Line: "first: 00:1A:2B:3C:4D:5E"},
+			{Line: "second: 00:1A:2B:3C:4D:5E"},
+		}
+		result := masker.MaskEntries(entries)
+
+		hash1 := extractHash(result[0].Line)
+		hash2 := extractHash(result[1].Line)
+		assert.Equal(t, hash1, hash2, "same MAC should produce same hash")
+	})
+
+	t.Run("different MAC addresses produce different hashes", func(t *testing.T) {
+		entries := []LogEntry{
+			{Line: "a: 00:1A:2B:3C:4D:5E"},
+			{Line: "b: AA:BB:CC:DD:EE:FF"},
+		}
+		result := masker.MaskEntries(entries)
+
+		hash1 := extractHash(result[0].Line)
+		hash2 := extractHash(result[1].Line)
+		assert.NotEqual(t, hash1, hash2, "different MACs should produce different hashes")
+	})
+
+	t.Run("same MAC in different formats produces same hash", func(t *testing.T) {
+		// All representations of the same MAC: 00:1a:2b:3c:4d:5e
+		formats := []string{
+			"00:1A:2B:3C:4D:5E", // colon uppercase
+			"00:1a:2b:3c:4d:5e", // colon lowercase
+			"00-1A-2B-3C-4D-5E", // dash uppercase
+			"00-1a-2b-3c-4d-5e", // dash lowercase
+			"001A2B3C4D5E",      // no separator uppercase
+			"001a2b3c4d5e",      // no separator lowercase
+			"001A.2B3C.4D5E",    // Cisco format uppercase
+			"001a.2b3c.4d5e",    // Cisco format lowercase
+		}
+
+		var hashes []string
+		for _, mac := range formats {
+			entries := []LogEntry{{Line: mac}}
+			result := masker.MaskEntries(entries)
+			hashes = append(hashes, extractHash(result[0].Line))
+		}
+
+		// All hashes should be identical
+		for i := 1; i < len(hashes); i++ {
+			assert.Equal(t, hashes[0], hashes[i],
+				"format %q should produce same hash as %q", formats[i], formats[0])
+		}
+	})
+
+	t.Run("multiple MACs in same line are individually hashed", func(t *testing.T) {
+		entries := []LogEntry{
+			{Line: "src=00:1A:2B:3C:4D:5E dst=AA:BB:CC:DD:EE:FF"},
+		}
+		result := masker.MaskEntries(entries)
+
+		allMatches := maskedHashRe.FindAllStringSubmatch(result[0].Line, -1)
+		require.Len(t, allMatches, 2, "should have 2 masked MACs")
+		assert.NotEqual(t, allMatches[0][1], allMatches[1][1], "different MACs should have different hashes")
+	})
 }
 
 func TestBuiltinPatternAPIKey(t *testing.T) {
@@ -619,7 +698,7 @@ func TestLogMasker_MaskEntries_BuiltinPatterns(t *testing.T) {
 			name:     "mac address pattern",
 			patterns: []string{"mac_address"},
 			input:    "Device MAC: 00:1A:2B:3C:4D:5E",
-			expected: "Device MAC: [MASKED:mac_address]",
+			expected: "", // MAC uses consistent hashing, checked separately
 		},
 		{
 			name:     "api key pattern",
@@ -653,7 +732,13 @@ func TestLogMasker_MaskEntries_BuiltinPatterns(t *testing.T) {
 			result := masker.MaskEntries(entries)
 
 			require.Len(t, result, 1)
-			assert.Equal(t, tc.expected, result[0].Line)
+			if tc.expected == "" {
+				// For patterns with consistent hashing (e.g., MAC address),
+				// just verify the masked format is present
+				assert.Regexp(t, regexp.MustCompile(`\[MASKED:`+tc.patterns[0]+`:[0-9a-f]{8}\]`), result[0].Line)
+			} else {
+				assert.Equal(t, tc.expected, result[0].Line)
+			}
 		})
 	}
 }
