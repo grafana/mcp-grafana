@@ -66,9 +66,11 @@ jobs:
           repo_secrets: |
             GRAFANA_SERVICE_ACCOUNT_TOKEN=mcptests-grafana:api-key
             ASSERTS_GRAFANA_SERVICE_ACCOUNT_TOKEN=dev-grafana:api-key
+            DATASOURCEDEV_GRAFANA_SERVICE_ACCOUNT_TOKEN=datasourcedev-grafana:api-key
 
       - name: Run cloud tests
         env:
           GRAFANA_URL: ${{ vars.CLOUD_GRAFANA_URL }}
           ASSERTS_GRAFANA_URL: ${{ vars.ASSERTS_GRAFANA_URL }}
+          DATASOURCEDEV_GRAFANA_URL: ${{ vars.DATASOURCEDEV_GRAFANA_URL }}
         run: make test-cloud
