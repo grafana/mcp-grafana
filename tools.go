@@ -234,15 +234,12 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 
 		// Case 3: String or *string
 		if str, ok := returnVal.(string); ok {
-			if str == "" {
-				return nil, nil
-			}
 			return mcp.NewToolResultText(str), nil
 		}
 
 		if strPtr, ok := returnVal.(*string); ok {
-			if strPtr == nil || *strPtr == "" {
-				return nil, nil
+			if strPtr == nil {
+				return mcp.NewToolResultText(""), nil
 			}
 			return mcp.NewToolResultText(*strPtr), nil
 		}

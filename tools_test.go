@@ -268,7 +268,11 @@ func TestConvertTool(t *testing.T) {
 
 		result, err = handler(ctx, emptyRequest)
 		require.NoError(t, err)
-		assert.Nil(t, result)
+		require.NotNil(t, result, "empty string should return non-nil result to prevent mcp-go crash")
+		require.Len(t, result.Content, 1)
+		emptyText, ok := result.Content[0].(mcp.TextContent)
+		require.True(t, ok)
+		assert.Equal(t, "", emptyText.Text)
 
 		// Test error return
 		errorRequest := mcp.CallToolRequest{
@@ -362,7 +366,11 @@ func TestConvertTool(t *testing.T) {
 
 		result, err = handler(ctx, emptyRequest)
 		require.NoError(t, err)
-		assert.Nil(t, result)
+		require.NotNil(t, result, "empty *string should return non-nil result to prevent mcp-go crash")
+		require.Len(t, result.Content, 1)
+		emptyText, ok := result.Content[0].(mcp.TextContent)
+		require.True(t, ok)
+		assert.Equal(t, "", emptyText.Text)
 
 		// Test error return
 		errorRequest := mcp.CallToolRequest{
