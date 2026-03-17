@@ -53,6 +53,9 @@ type grafanaConfig struct {
 	// Whether to enable debug mode for the Grafana transport.
 	debug bool
 
+	// BrowserAuth enables browser-based SSO login instead of token auth.
+	browserAuth bool
+
 	// TLS configuration
 	tlsCertFile   string
 	tlsKeyFile    string
@@ -90,6 +93,7 @@ func (dt *disabledTools) addFlags() {
 
 func (gc *grafanaConfig) addFlags() {
 	flag.BoolVar(&gc.debug, "debug", false, "Enable debug mode for the Grafana transport")
+	flag.BoolVar(&gc.browserAuth, "browser-auth", false, "Enable browser-based SSO authentication (opens browser to capture session cookie)")
 
 	// TLS configuration flags
 	flag.StringVar(&gc.tlsCertFile, "tls-cert-file", "", "Path to TLS certificate file for client authentication")
@@ -419,7 +423,7 @@ func main() {
 	}
 
 	// Convert local grafanaConfig to mcpgrafana.GrafanaConfig
-	grafanaConfig := mcpgrafana.GrafanaConfig{Debug: gc.debug}
+	grafanaConfig := mcpgrafana.GrafanaConfig{Debug: gc.debug, BrowserAuth: gc.browserAuth}
 	if gc.tlsCertFile != "" || gc.tlsKeyFile != "" || gc.tlsCAFile != "" || gc.tlsSkipVerify {
 		grafanaConfig.TLSConfig = &mcpgrafana.TLSConfig{
 			CertFile:   gc.tlsCertFile,
