@@ -25,7 +25,7 @@ var builtinPatterns = map[BuiltinPatternID]*regexp.Regexp{
 	PatternPhone:      regexp.MustCompile(`\+[1-9]\d{6,14}`),
 	PatternCreditCard: regexp.MustCompile(`\b(?:\d{4}[-\s]?){3}\d{4}\b`),
 	PatternIPAddress:  regexp.MustCompile(`\b(?:\d{1,3}\.){3}\d{1,3}\b|\b(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}\b`),
-	PatternMACAddress: regexp.MustCompile(`\b(?:[0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}\b`),
+	PatternMACAddress: regexp.MustCompile(`(?i)\b(?:[0-9a-f]{2}[:\-]){5}[0-9a-f]{2}\b|\b(?:[0-9a-f]{2}[:\-]){7}[0-9a-f]{2}\b|\b[0-9a-f]{4}\.[0-9a-f]{4}\.[0-9a-f]{4}\b|\b[0-9a-f]{12}\b|\b[0-9a-f]{4}\.[0-9a-f]{4}\.[0-9a-f]{4}\.[0-9a-f]{4}\b|\b[0-9a-f]{16}\b`),
 	PatternAPIKey:     regexp.MustCompile(`(?i)(?:api[_-]?key|apikey|token|secret|password|auth)[=:\s]["']?[a-zA-Z0-9_\-]{16,}`),
 	PatternJWTToken:   regexp.MustCompile(`eyJ[a-zA-Z0-9_-]*\.eyJ[a-zA-Z0-9_-]*\.[a-zA-Z0-9_-]*`),
 }

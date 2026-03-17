@@ -201,14 +201,29 @@ func TestBuiltinPatternMACAddress(t *testing.T) {
 		matches bool
 		desc    string
 	}{
+		// EUI-48 colon-separated
 		{"00:1A:2B:3C:4D:5E", true, "uppercase with colons"},
 		{"00:1a:2b:3c:4d:5e", true, "lowercase with colons"},
+		// EUI-48 dash-separated
 		{"00-1A-2B-3C-4D-5E", true, "uppercase with dashes"},
 		{"00-1a-2b-3c-4d-5e", true, "lowercase with dashes"},
-		{"001A2B3C4D5E", false, "no separators"},
+		// EUI-48 no separators
+		{"001A2B3C4D5E", true, "no separators uppercase"},
+		{"001a2b3c4d5e", true, "no separators lowercase"},
+		// EUI-48 dot-separated (Cisco format)
+		{"001A.2B3C.4D5E", true, "Cisco format uppercase"},
+		{"001a.2b3c.4d5e", true, "Cisco format lowercase"},
+		// EUI-64 colon-separated
+		{"00:1A:2B:3C:4D:5E:6F:70", true, "EUI-64 with colons"},
+		{"00:1a:2b:3c:4d:5e:6f:70", true, "EUI-64 lowercase with colons"},
+		// EUI-64 dash-separated
+		{"00-1A-2B-3C-4D-5E-6F-70", true, "EUI-64 with dashes"},
+		// EUI-64 no separators
+		{"001A2B3C4D5E6F70", true, "EUI-64 no separators"},
+		// EUI-64 dot-separated
+		{"001A.2B3C.4D5E.6F70", true, "EUI-64 Cisco format"},
+		// Invalid
 		{"00:1A:2B:3C:4D", false, "too short"},
-		// Note: 7-octet string contains valid 6-octet MAC pattern for masking
-		{"00:1A:2B:3C:4D:5E:6F", true, "contains valid MAC pattern"},
 		{"GG:HH:II:JJ:KK:LL", false, "invalid hex characters"},
 	}
 
