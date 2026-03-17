@@ -87,6 +87,19 @@ func structPtrToolHandler(ctx context.Context, params testToolParams) (*TestResu
 	}, nil
 }
 
+func sliceToolHandler(ctx context.Context, params testToolParams) ([]TestResult, error) {
+	if params.Name == "error" {
+		return nil, errors.New("test error")
+	}
+	if params.Name == "nil" {
+		return nil, nil
+	}
+	if params.Name == "empty" {
+		return []TestResult{}, nil
+	}
+	return []TestResult{{Name: params.Name, Value: params.Value}}, nil
+}
+
 func TestConvertTool(t *testing.T) {
 	t.Run("valid handler conversion", func(t *testing.T) {
 		tool, handler, err := ConvertTool("test_tool", "A test tool", testToolHandler)
@@ -326,7 +339,11 @@ func TestConvertTool(t *testing.T) {
 
 		result, err = handler(ctx, nilRequest)
 		require.NoError(t, err)
-		assert.Nil(t, result)
+		require.NotNil(t, result, "nil pointer should return a non-nil result to prevent mcp-go crash")
+		require.Len(t, result.Content, 1)
+		nullText, ok := result.Content[0].(mcp.TextContent)
+		require.True(t, ok)
+		assert.Equal(t, "null", nullText.Text)
 
 		// Test empty string pointer return
 		emptyRequest := mcp.CallToolRequest{
@@ -470,7 +487,11 @@ func TestConvertTool(t *testing.T) {
 
 		result, err = handler(ctx, nilRequest)
 		require.NoError(t, err)
-		assert.Nil(t, result)
+		require.NotNil(t, result, "nil pointer should return a non-nil result to prevent mcp-go crash")
+		require.Len(t, result.Content, 1)
+		nullText, ok := result.Content[0].(mcp.TextContent)
+		require.True(t, ok)
+		assert.Equal(t, "null", nullText.Text)
 
 		// Test error return
 		errorRequest := mcp.CallToolRequest{
@@ -494,6 +515,81 @@ func TestConvertTool(t *testing.T) {
 		resultString, ok = result.Content[0].(mcp.TextContent)
 		require.True(t, ok)
 		assert.Equal(t, "test error", resultString.Text)
+	})
+
+	t.Run("slice return type - nil slice returns non-nil result", func(t *testing.T) {
+		// This test verifies the fix for https://github.com/grafana/mcp-grafana/issues/660
+		// where a nil slice return caused a nil pointer dereference in mcp-go.
+		_, handler, err := ConvertTool("slice_tool", "A slice tool", sliceToolHandler)
+		require.NoError(t, err)
+
+		ctx := context.Background()
+
+		// Test nil slice return - must NOT return nil result (causes mcp-go crash)
+		nilRequest := mcp.CallToolRequest{
+			Params: struct {
+				Name      string    `json:"name"`
+				Arguments any       `json:"arguments,omitempty"`
+				Meta      *mcp.Meta `json:"_meta,omitempty"`
+			}{
+				Name: "slice_tool",
+				Arguments: map[string]any{
+					"name":  "nil",
+					"value": 1,
+				},
+			},
+		}
+
+		result, err := handler(ctx, nilRequest)
+		require.NoError(t, err)
+		require.NotNil(t, result, "nil slice must return non-nil result to prevent mcp-go nil pointer dereference")
+
+		// Test empty slice return - should return valid JSON array
+		emptyRequest := mcp.CallToolRequest{
+			Params: struct {
+				Name      string    `json:"name"`
+				Arguments any       `json:"arguments,omitempty"`
+				Meta      *mcp.Meta `json:"_meta,omitempty"`
+			}{
+				Name: "slice_tool",
+				Arguments: map[string]any{
+					"name":  "empty",
+					"value": 1,
+				},
+			},
+		}
+
+		result, err = handler(ctx, emptyRequest)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		require.Len(t, result.Content, 1)
+		resultString, ok := result.Content[0].(mcp.TextContent)
+		require.True(t, ok)
+		assert.Equal(t, "[]", resultString.Text)
+
+		// Test normal slice return
+		normalRequest := mcp.CallToolRequest{
+			Params: struct {
+				Name      string    `json:"name"`
+				Arguments any       `json:"arguments,omitempty"`
+				Meta      *mcp.Meta `json:"_meta,omitempty"`
+			}{
+				Name: "slice_tool",
+				Arguments: map[string]any{
+					"name":  "test",
+					"value": 42,
+				},
+			},
+		}
+
+		result, err = handler(ctx, normalRequest)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		require.Len(t, result.Content, 1)
+		resultString, ok = result.Content[0].(mcp.TextContent)
+		require.True(t, ok)
+		assert.Contains(t, resultString.Text, `"name":"test"`)
+		assert.Contains(t, resultString.Text, `"value":42`)
 	})
 
 	t.Run("invalid handler types", func(t *testing.T) {

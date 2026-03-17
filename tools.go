@@ -212,7 +212,10 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 			output[0].Kind() == reflect.Func
 
 		if isNilable && output[0].IsNil() {
-			return nil, nil
+			// Return an empty text result instead of nil to avoid a nil pointer
+			// dereference in mcp-go's request_handler.go when it dereferences
+			// the *CallToolResult. A nil slice/map is a valid "no results" response.
+			return mcp.NewToolResultText("null"), nil
 		}
 
 		returnVal := output[0].Interface()
