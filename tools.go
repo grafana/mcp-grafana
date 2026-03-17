@@ -232,20 +232,17 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 			return &callResult, nil
 		}
 
-		// Case 3: String or *string
-		if str, ok := returnVal.(string); ok {
-			if str == "" {
-				return nil, nil
-			}
-			return mcp.NewToolResultText(str), nil
-		}
+	// Case 3: String or *string
+	if str, ok := returnVal.(string); ok {
+		return mcp.NewToolResultText(str), nil
+	}
 
-		if strPtr, ok := returnVal.(*string); ok {
-			if strPtr == nil || *strPtr == "" {
-				return nil, nil
-			}
-			return mcp.NewToolResultText(*strPtr), nil
+	if strPtr, ok := returnVal.(*string); ok {
+		if strPtr == nil {
+			return mcp.NewToolResultText(""), nil
 		}
+		return mcp.NewToolResultText(*strPtr), nil
+	}
 
 		// Case 4: Any other type - marshal to JSON
 		returnBytes, err := json.Marshal(returnVal)

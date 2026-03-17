@@ -251,7 +251,7 @@ func TestConvertTool(t *testing.T) {
 		require.True(t, ok)
 		assert.Equal(t, "test: A", resultString.Text)
 
-		// Test empty string return
+		// Test empty string return - must NOT return nil result (causes mcp-go crash)
 		emptyRequest := mcp.CallToolRequest{
 			Params: struct {
 				Name      string    `json:"name"`
@@ -268,7 +268,11 @@ func TestConvertTool(t *testing.T) {
 
 		result, err = handler(ctx, emptyRequest)
 		require.NoError(t, err)
-		assert.Nil(t, result)
+		require.NotNil(t, result, "empty string must return non-nil result to prevent mcp-go nil pointer dereference")
+		require.Len(t, result.Content, 1)
+		emptyText, ok := result.Content[0].(mcp.TextContent)
+		require.True(t, ok)
+		assert.Equal(t, "", emptyText.Text)
 
 		// Test error return
 		errorRequest := mcp.CallToolRequest{
@@ -345,7 +349,7 @@ func TestConvertTool(t *testing.T) {
 		require.True(t, ok)
 		assert.Equal(t, "null", nullText.Text)
 
-		// Test empty string pointer return
+		// Test empty string pointer return - must NOT return nil result (causes mcp-go crash)
 		emptyRequest := mcp.CallToolRequest{
 			Params: struct {
 				Name      string    `json:"name"`
@@ -362,7 +366,11 @@ func TestConvertTool(t *testing.T) {
 
 		result, err = handler(ctx, emptyRequest)
 		require.NoError(t, err)
-		assert.Nil(t, result)
+		require.NotNil(t, result, "empty string pointer must return non-nil result to prevent mcp-go nil pointer dereference")
+		require.Len(t, result.Content, 1)
+		emptyText, ok := result.Content[0].(mcp.TextContent)
+		require.True(t, ok)
+		assert.Equal(t, "", emptyText.Text)
 
 		// Test error return
 		errorRequest := mcp.CallToolRequest{
