@@ -176,6 +176,10 @@ type GrafanaConfig struct {
 	// ExtraHeaders contains additional HTTP headers to send with all Grafana API requests.
 	// Parsed from GRAFANA_EXTRA_HEADERS environment variable as JSON object.
 	ExtraHeaders map[string]string
+
+	// MaxLokiLogLimit is the maximum number of log lines that can be returned
+	// from Loki queries.
+	MaxLokiLogLimit int
 }
 
 const (
