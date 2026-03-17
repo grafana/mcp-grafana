@@ -33,7 +33,7 @@ func listTeams(ctx context.Context, args ListTeamsParams) (*models.SearchTeamQue
 
 var ListTeams = mcpgrafana.MustTool(
 	"list_teams",
-	"Search for Grafana teams by a query string. Returns a list of matching teams with details like name, ID, and URL.",
+	"Search for Grafana teams by query string and return matching teams with details like name, ID, and URL. Use when the user wants to find specific teams by name or filter the team list based on search criteria. Do not use when you need to view role assignments for teams (use list_team_roles instead). Accepts `query` parameter (optional string) to filter teams, e.g., \"frontend\" or \"admin\". Raises an error if the Grafana API is unreachable or authentication fails.",
 	listTeams,
 	mcp.WithTitleAnnotation("List teams"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -55,7 +55,7 @@ func listUsersByOrg(ctx context.Context, args ListUsersByOrgParams) ([]*models.O
 
 var ListUsersByOrg = mcpgrafana.MustTool(
 	"list_users_by_org",
-	"List users in the Grafana organization. Returns a list of organization users with details like userid, email, role etc.",
+	"List users in the Grafana organization with their details including userid, email, and role assignments. Use when the user wants to review organization membership, audit user access levels, or manage team composition within a specific organization. Accepts `org_id` (optional, defaults to current organization) and `limit` (optional, for pagination). e.g., org_id=1, limit=50. Do not use when you need to search for teams by name or query (use list_teams instead). Raises an error if the organization ID does not exist or you lack admin permissions.",
 	listUsersByOrg,
 	mcp.WithTitleAnnotation("List users by org"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -84,7 +84,7 @@ func listAllRoles(ctx context.Context, args ListAllRolesParams) ([]*models.RoleD
 
 var ListAllRoles = mcpgrafana.MustTool(
 	"list_all_roles",
-	"List all roles in Grafana. Optionally filter to show only roles that can be delegated by the current user. Returns role details including UID, name, permissions, and metadata.",
+	"List all roles available in the Grafana instance with their permissions and metadata. Use when the user wants to browse, audit, or review the complete role hierarchy and access control structure. Do not use when you need details about a specific role (use get_role_details instead) or role assignments (use get_role_assignments instead). Accepts `delegatable` (optional boolean) to filter only roles that can be delegated by the current user. e.g., delegatable=true to show only roles you can assign to others. Returns an error if the user lacks sufficient permissions to view role information.",
 	listAllRoles,
 	mcp.WithTitleAnnotation("List all roles"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -108,7 +108,7 @@ func getRoleDetails(ctx context.Context, args GetRoleDetailsParams) (*models.Rol
 
 var GetRoleDetails = mcpgrafana.MustTool(
 	"get_role_details",
-	"Get detailed information about a specific Grafana role by its UID, including permissions, metadata, and configuration.",
+	"Retrieve detailed information about a specific Grafana role by its UID, including permissions, metadata, and configuration. Use when the user wants to examine the complete details and capabilities of a particular role. Accepts `uid` (required string), e.g., \"basic:editor\" or \"custom:data-analyst\". Do not use when you need to see all available roles (use list_all_roles instead) or check which users/teams have a role (use get_role_assignments instead). Raises an error if the role UID does not exist or access is denied.",
 	getRoleDetails,
 	mcp.WithTitleAnnotation("Get role details"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -132,7 +132,7 @@ func getRoleAssignments(ctx context.Context, args GetRoleAssignmentsParams) (*mo
 
 var GetRoleAssignments = mcpgrafana.MustTool(
 	"get_role_assignments",
-	"List all assignments for a specific role, showing which users, teams, and service accounts have been assigned this role.",
+	"List all assignments for a specific role, showing which users, teams, and service accounts have been assigned this role. Use when the user wants to audit role membership or review who has access to specific permissions within a role. Do not use when you need to see all roles for a specific user or team (use list_user_roles or list_team_roles instead). Accepts `role_id` or `role_name` (required), e.g., role_name=\"Editor\" or role_id=\"123\". Returns error if the role does not exist or you lack permission to view role assignments.",
 	getRoleAssignments,
 	mcp.WithTitleAnnotation("Get role assignments"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -157,7 +157,7 @@ func listUserRoles(ctx context.Context, args ListUserRolesParams) (map[string][]
 
 var ListUserRoles = mcpgrafana.MustTool(
 	"list_user_roles",
-	"List all roles assigned to one or more users. Returns a map of user IDs to their assigned roles, excluding built-in roles and team-inherited roles.",
+	"List all roles assigned to one or more users in Grafana. Use when the user wants to audit user permissions, review role assignments, or check what access specific users have. Do not use when you need to see team-inherited roles or built-in system roles (use get_role_assignments instead). Accepts `user_ids` (required array of user IDs) and returns a map of user IDs to their directly assigned custom roles, e.g., user_ids=[\"123\", \"456\"] returns {\"123\": [\"editor\", \"viewer\"], \"456\": [\"admin\"]}. Raises an error if any specified user ID does not exist in the organization.",
 	listUserRoles,
 	mcp.WithTitleAnnotation("List user roles"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -182,7 +182,7 @@ func listTeamRoles(ctx context.Context, args ListTeamRolesParams) (map[string][]
 
 var ListTeamRoles = mcpgrafana.MustTool(
 	"list_team_roles",
-	"List all roles assigned to one or more teams. Returns a map of team IDs to their assigned roles.",
+	"List all roles assigned to one or more teams in Grafana. Use when the user wants to audit team permissions, review role assignments, or understand what access levels teams have across the system. Do not use when you need to see which users or service accounts have a specific role (use get_role_assignments instead). Accepts `team_ids` (optional array of team IDs to filter results). Returns a map where each team ID maps to an array of assigned role objects. e.g., team_ids=[1, 5] to check roles for specific teams, or omit to see all team role assignments. Raises an error if any specified team ID does not exist in the organization.",
 	listTeamRoles,
 	mcp.WithTitleAnnotation("List team roles"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -207,7 +207,7 @@ func getResourcePermissions(ctx context.Context, args GetResourcePermissionsPara
 
 var GetResourcePermissions = mcpgrafana.MustTool(
 	"get_resource_permissions",
-	"List all permissions set on a specific Grafana resource (e.g., dashboard, datasource, folder) by its type and ID.",
+	"List all permissions set on a specific Grafana resource by its type and ID. Use when the user wants to audit access controls, review who can view or edit a dashboard, datasource, or folder. Do not use when you need to see role assignments for users or teams (use get_role_assignments instead). Accepts `resource_type` (required: \"dashboard\", \"datasource\", or \"folder\") and `resource_id` (required), e.g., resource_type=\"dashboard\", resource_id=\"abc123\". Raises an error if the resource does not exist or you lack admin permissions to view its access controls.",
 	getResourcePermissions,
 	mcp.WithTitleAnnotation("Get resource permissions"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -234,7 +234,7 @@ func getResourceDescription(ctx context.Context, args GetResourceDescriptionPara
 
 var GetResourceDescription = mcpgrafana.MustTool(
 	"get_resource_description",
-	"List available permissions and assignment capabilities for a Grafana resource type.",
+	"List available permissions and assignment capabilities for a Grafana resource type. Use when the user wants to understand what permissions can be granted on a specific resource type before configuring access controls. Do not use when you need to see actual permissions on a specific resource instance (use get_resource_permissions instead). Accepts `resource_type` (required), e.g., \"dashboards\", \"folders\", or \"datasources\". Returns error if the resource type is not recognized by Grafana's permission system.",
 	getResourceDescription,
 	mcp.WithTitleAnnotation("Get resource description"),
 	mcp.WithIdempotentHintAnnotation(true),

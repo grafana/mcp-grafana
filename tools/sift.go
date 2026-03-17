@@ -175,7 +175,7 @@ func getSiftInvestigation(ctx context.Context, args GetSiftInvestigationParams) 
 // GetSiftInvestigation is a tool for retrieving an existing investigation
 var GetSiftInvestigation = mcpgrafana.MustTool(
 	"get_sift_investigation",
-	"Retrieves an existing Sift investigation by its UUID. The ID should be provided as a string in UUID format (e.g. '02adab7c-bf5b-45f2-9459-d71a2c29e11b').",
+	"Retrieve detailed information about a specific Sift investigation by its unique identifier. Use when the user wants to examine, review, or analyze the details of an existing fraud investigation case. Accepts `investigation_id` (required UUID string), e.g., \"02adab7c-bf5b-45f2-9459-d71a2c29e11b\". Do not use when you need to search for investigations by criteria or list multiple investigations (use list_sift_investigations instead). Raises an error if the investigation UUID does not exist or is malformed.",
 	getSiftInvestigation,
 	mcp.WithTitleAnnotation("Get Sift investigation"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -217,7 +217,7 @@ func getSiftAnalysis(ctx context.Context, args GetSiftAnalysisParams) (*analysis
 // GetSiftAnalysis is a tool for retrieving a specific analysis from an investigation
 var GetSiftAnalysis = mcpgrafana.MustTool(
 	"get_sift_analysis",
-	"Retrieves a specific analysis from an investigation by its UUID. The investigation ID and analysis ID should be provided as strings in UUID format.",
+	"Retrieve a specific analysis from a Sift investigation by its unique identifier. Use when the user wants to examine detailed results, findings, or data from a previously completed analysis within an investigation. Accepts `investigation_id` (required UUID string) and `analysis_id` (required UUID string), e.g., investigation_id=\"550e8400-e29b-41d4-a716-446655440000\", analysis_id=\"6ba7b810-9dad-11d1-80b4-00c04fd430c8\". Returns error if either UUID is malformed or the analysis does not exist in the specified investigation. Do not use when you need to create new annotations on dashboards (use create_annotation instead).",
 	getSiftAnalysis,
 	mcp.WithTitleAnnotation("Get Sift analysis"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -252,7 +252,7 @@ func listSiftInvestigations(ctx context.Context, args ListSiftInvestigationsPara
 // ListSiftInvestigations is a tool for retrieving a list of investigations
 var ListSiftInvestigations = mcpgrafana.MustTool(
 	"list_sift_investigations",
-	"Retrieves a list of Sift investigations with an optional limit. If no limit is specified, defaults to 10 investigations.",
+	"List Sift investigations from your account with optional result limiting. Use when the user wants to browse, review, or analyze existing fraud investigations or security incidents. Accepts `limit` (optional integer, defaults to 10) to control the number of investigations returned, e.g., limit=25 for more results or limit=5 for a quick overview. Do not use when you need to search for specific investigation details by ID or create new investigations (use other Sift tools instead). Returns an error if the Sift API credentials are invalid or the account lacks investigation access permissions.",
 	listSiftInvestigations,
 	mcp.WithTitleAnnotation("List Sift investigations"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -339,7 +339,7 @@ func findErrorPatternLogs(ctx context.Context, args FindErrorPatternLogsParams) 
 // FindErrorPatternLogs is a tool for running an ErrorPatternLogs check
 var FindErrorPatternLogs = mcpgrafana.MustTool(
 	"find_error_pattern_logs",
-	"Searches Loki logs for elevated error patterns compared to the last day's average, waits for the analysis to complete, and returns the results including any patterns found.",
+	"Search Loki logs for elevated error patterns compared to the last day's average and return analysis results. Use when the user wants to detect anomalous error spikes or investigate unusual system behavior patterns. Waits for the analysis to complete before returning results including any patterns found. Do not use when you need to retrieve specific log entries or raw log data (use standard log query tools instead). Accepts `threshold` (optional pattern detection sensitivity), `time_window` (optional analysis period), and `baseline_hours` (optional historical comparison period), e.g., threshold=2.0 for 2x normal error rates. Raises an error if Loki is unreachable or insufficient historical data exists for comparison.",
 	findErrorPatternLogs,
 	mcp.WithTitleAnnotation("Find error patterns in logs"),
 	mcp.WithReadOnlyHintAnnotation(true),
@@ -405,7 +405,7 @@ func findSlowRequests(ctx context.Context, args FindSlowRequestsParams) (*analys
 // FindSlowRequests is a tool for running an SlowRequests check
 var FindSlowRequests = mcpgrafana.MustTool(
 	"find_slow_requests",
-	"Searches relevant Tempo datasources for slow requests, waits for the analysis to complete, and returns the results.",
+	"Search Tempo datasources to identify and analyze slow requests across distributed traces. Use when the user wants to investigate performance bottlenecks, troubleshoot latency issues, or find requests exceeding response time thresholds. Do not use when you need to examine specific trace details or spans (use other tracing tools instead). Accepts `service`, `time_range`, and `latency_threshold` parameters for filtering, e.g., service=\"api-gateway\", latency_threshold=\">5s\". Returns detailed analysis results after processing completes. Raises an error if Tempo datasources are unavailable or the query syntax is invalid.",
 	findSlowRequests,
 	mcp.WithTitleAnnotation("Find slow requests"),
 	mcp.WithReadOnlyHintAnnotation(true),
