@@ -306,7 +306,7 @@ func GetDashboardPanelQueriesTool(ctx context.Context, args DashboardPanelQuerie
 		panels = collectAllPanels(db)
 	}
 
-	var result []panelQuery
+	result := make([]panelQuery, 0)
 	for _, panel := range panels {
 		queries := extractPanelQueries(panel, dashboardVars, args.Variables)
 		result = append(result, queries...)
