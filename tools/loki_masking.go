@@ -93,10 +93,9 @@ func ValidateMaskingConfig(config *MaskingConfig) error {
 }
 
 type compiledPattern struct {
-	regex       *regexp.Regexp
-	replacement string
-	id          string
-	normalizer  func(string) string // if non-nil, enables consistent hashing for same-value identification
+	regex      *regexp.Regexp
+	id         string
+	normalizer func(string) string // if non-nil, normalizes matched value before hashing (e.g., MAC address format normalization)
 }
 
 // normalizeMACAddress strips all separators and lowercases the MAC address
@@ -137,14 +136,10 @@ func NewLogMasker(config *MaskingConfig) (*LogMasker, error) {
 			return nil, err
 		}
 
-		// Fixed replacement format: [MASKED:<pattern_id>]
-		replacement := fmt.Sprintf("[MASKED:%s]", id)
-
 		masker.patterns = append(masker.patterns, &compiledPattern{
-			regex:       regex,
-			replacement: replacement,
-			id:          id,
-			normalizer:  patternNormalizers[BuiltinPatternID(id)],
+			regex:      regex,
+			id:         id,
+			normalizer: patternNormalizers[BuiltinPatternID(id)],
 		})
 	}
 
@@ -176,15 +171,14 @@ func (m *LogMasker) maskLine(line string) string {
 	}
 
 	for _, pattern := range m.patterns {
-		if pattern.normalizer != nil {
-			line = pattern.regex.ReplaceAllStringFunc(line, func(match string) string {
-				normalized := pattern.normalizer(match)
-				h := sha256.Sum256([]byte(normalized))
-				return fmt.Sprintf("[MASKED:%s:%s]", pattern.id, hex.EncodeToString(h[:4]))
-			})
-		} else {
-			line = pattern.regex.ReplaceAllLiteralString(line, pattern.replacement)
-		}
+		line = pattern.regex.ReplaceAllStringFunc(line, func(match string) string {
+			input := match
+			if pattern.normalizer != nil {
+				input = pattern.normalizer(input)
+			}
+			h := sha256.Sum256([]byte(input))
+			return fmt.Sprintf("[MASKED:%s:%s]", pattern.id, hex.EncodeToString(h[:4]))
+		})
 	}
 
 	return line

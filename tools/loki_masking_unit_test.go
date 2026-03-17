@@ -668,55 +668,41 @@ func TestLogMasker_MaskEntries_BuiltinPatterns(t *testing.T) {
 		name     string
 		patterns []string
 		input    string
-		expected string
 	}{
 		{
 			name:     "email pattern",
 			patterns: []string{"email"},
 			input:    "User login: user@example.com",
-			expected: "User login: [MASKED:email]",
 		},
 		{
 			name:     "phone pattern (E.164)",
 			patterns: []string{"phone"},
 			input:    "Contact: +819012345678",
-			expected: "Contact: [MASKED:phone]",
 		},
 		{
 			name:     "credit card pattern",
 			patterns: []string{"credit_card"},
 			input:    "Payment with 4111-1111-1111-1111",
-			expected: "Payment with [MASKED:credit_card]",
 		},
 		{
 			name:     "ip address pattern (IPv4)",
 			patterns: []string{"ip_address"},
 			input:    "Server IP: 192.168.1.100",
-			expected: "Server IP: [MASKED:ip_address]",
 		},
 		{
 			name:     "mac address pattern",
 			patterns: []string{"mac_address"},
 			input:    "Device MAC: 00:1A:2B:3C:4D:5E",
-			expected: "", // MAC uses consistent hashing, checked separately
 		},
 		{
 			name:     "api key pattern",
 			patterns: []string{"api_key"},
 			input:    "api_key=abc123def456ghi789jkl",
-			expected: "[MASKED:api_key]",
 		},
 		{
 			name:     "jwt token pattern",
 			patterns: []string{"jwt_token"},
 			input:    "Token: eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.signature",
-			expected: "Token: [MASKED:jwt_token]",
-		},
-		{
-			name:     "multiple emails in one line",
-			patterns: []string{"email"},
-			input:    "From: sender@mail.com To: receiver@mail.com",
-			expected: "From: [MASKED:email] To: [MASKED:email]",
 		},
 	}
 
@@ -732,19 +718,74 @@ func TestLogMasker_MaskEntries_BuiltinPatterns(t *testing.T) {
 			result := masker.MaskEntries(entries)
 
 			require.Len(t, result, 1)
-			if tc.expected == "" {
-				// For patterns with consistent hashing (e.g., MAC address),
-				// just verify the masked format is present
-				assert.Regexp(t, regexp.MustCompile(`\[MASKED:`+tc.patterns[0]+`:[0-9a-f]{8}\]`), result[0].Line)
-			} else {
-				assert.Equal(t, tc.expected, result[0].Line)
-			}
+			// All patterns use consistent hashing: [MASKED:<id>:<8hex>]
+			assert.Regexp(t, regexp.MustCompile(`\[MASKED:`+tc.patterns[0]+`:[0-9a-f]{8}\]`), result[0].Line)
 		})
 	}
 }
 
+func TestLogMasker_MaskEntries_ConsistentHashing(t *testing.T) {
+	maskedRe := func(patternID string) *regexp.Regexp {
+		return regexp.MustCompile(`\[MASKED:` + patternID + `:([0-9a-f]{8})\]`)
+	}
+
+	t.Run("same value produces same hash", func(t *testing.T) {
+		config := &MaskingConfig{BuiltinPatterns: []string{"email"}}
+		masker, err := NewLogMasker(config)
+		require.NoError(t, err)
+
+		entries := []LogEntry{
+			{Line: "a: user@example.com"},
+			{Line: "b: user@example.com"},
+		}
+		result := masker.MaskEntries(entries)
+
+		re := maskedRe("email")
+		h1 := re.FindStringSubmatch(result[0].Line)
+		h2 := re.FindStringSubmatch(result[1].Line)
+		require.Len(t, h1, 2)
+		require.Len(t, h2, 2)
+		assert.Equal(t, h1[1], h2[1], "same email should produce same hash")
+	})
+
+	t.Run("different values produce different hashes", func(t *testing.T) {
+		config := &MaskingConfig{BuiltinPatterns: []string{"email"}}
+		masker, err := NewLogMasker(config)
+		require.NoError(t, err)
+
+		entries := []LogEntry{
+			{Line: "a: sender@mail.com"},
+			{Line: "b: receiver@mail.com"},
+		}
+		result := masker.MaskEntries(entries)
+
+		re := maskedRe("email")
+		h1 := re.FindStringSubmatch(result[0].Line)
+		h2 := re.FindStringSubmatch(result[1].Line)
+		require.Len(t, h1, 2)
+		require.Len(t, h2, 2)
+		assert.NotEqual(t, h1[1], h2[1], "different emails should produce different hashes")
+	})
+
+	t.Run("multiple same values in one line get same hash", func(t *testing.T) {
+		config := &MaskingConfig{BuiltinPatterns: []string{"email"}}
+		masker, err := NewLogMasker(config)
+		require.NoError(t, err)
+
+		entries := []LogEntry{
+			{Line: "From: user@mail.com To: user@mail.com"},
+		}
+		result := masker.MaskEntries(entries)
+
+		re := maskedRe("email")
+		all := re.FindAllStringSubmatch(result[0].Line, -1)
+		require.Len(t, all, 2)
+		assert.Equal(t, all[0][1], all[1][1], "same email in same line should have same hash")
+	})
+}
+
 func TestLogMasker_MaskEntries_FixedMaskFormat(t *testing.T) {
-	t.Run("uses fixed [MASKED:pattern_id] format", func(t *testing.T) {
+	t.Run("uses [MASKED:pattern_id:hash] format", func(t *testing.T) {
 		config := &MaskingConfig{
 			BuiltinPatterns: []string{"email"},
 		}
@@ -754,7 +795,7 @@ func TestLogMasker_MaskEntries_FixedMaskFormat(t *testing.T) {
 		entries := []LogEntry{{Line: "Email: user@example.com"}}
 		result := masker.MaskEntries(entries)
 
-		assert.Contains(t, result[0].Line, "[MASKED:email]")
+		assert.Regexp(t, regexp.MustCompile(`\[MASKED:email:[0-9a-f]{8}\]`), result[0].Line)
 	})
 }
 
@@ -793,7 +834,7 @@ func TestLogMasker_MaskEntries_IPv6Address(t *testing.T) {
 		entries := []LogEntry{{Line: "Server: 2001:0db8:85a3:0000:0000:8a2e:0370:7334"}}
 		result := masker.MaskEntries(entries)
 
-		assert.Contains(t, result[0].Line, "[MASKED:ip_address]")
+		assert.Contains(t, result[0].Line, "[MASKED:ip_address:")
 	})
 }
 
@@ -835,7 +876,7 @@ func TestLogMasker_MaskEntries_EdgeCases(t *testing.T) {
 		result := masker.MaskEntries(entries)
 
 		assert.Contains(t, result[0].Line, "メッセージ:")
-		assert.Contains(t, result[0].Line, "[MASKED:email]")
+		assert.Contains(t, result[0].Line, "[MASKED:email:")
 		assert.Contains(t, result[0].Line, "から送信 🎉")
 	})
 
@@ -854,9 +895,9 @@ func TestLogMasker_MaskEntries_EdgeCases(t *testing.T) {
 		result := masker.MaskEntries(entries)
 
 		require.Len(t, result, 3)
-		assert.Contains(t, result[0].Line, "[MASKED:email]")
+		assert.Contains(t, result[0].Line, "[MASKED:email:")
 		assert.Equal(t, "Second: no email here", result[1].Line)
-		assert.Contains(t, result[2].Line, "[MASKED:email]")
+		assert.Contains(t, result[2].Line, "[MASKED:email:")
 	})
 
 	t.Run("preserves other entry fields", func(t *testing.T) {
@@ -878,7 +919,7 @@ func TestLogMasker_MaskEntries_EdgeCases(t *testing.T) {
 		require.Len(t, result, 1)
 		assert.Equal(t, "2024-01-01T00:00:00Z", result[0].Timestamp)
 		assert.Equal(t, map[string]string{"app": "test"}, result[0].Labels)
-		assert.Contains(t, result[0].Line, "[MASKED:email]")
+		assert.Contains(t, result[0].Line, "[MASKED:email:")
 	})
 }
 
@@ -905,7 +946,7 @@ func TestLogMasker_MaskEntries_LocalPhoneNotMatched(t *testing.T) {
 			result := masker.MaskEntries(entries)
 
 			// Local formats should NOT be masked by the phone builtin pattern
-			assert.NotContains(t, result[0].Line, "[MASKED:phone]")
+			assert.NotContains(t, result[0].Line, "[MASKED:phone:")
 			assert.Contains(t, result[0].Line, tc.input)
 		})
 	}
@@ -932,7 +973,7 @@ func TestLogMasker_MaskEntries_E164PhoneNumber(t *testing.T) {
 			entries := []LogEntry{{Line: fmt.Sprintf("Contact: %s", tc.input)}}
 			result := masker.MaskEntries(entries)
 
-			assert.Contains(t, result[0].Line, "[MASKED:phone]")
+			assert.Contains(t, result[0].Line, "[MASKED:phone:")
 		})
 	}
 }
@@ -948,8 +989,8 @@ func TestLogMasker_MaskEntries_MultipleBuiltinPatterns(t *testing.T) {
 		entries := []LogEntry{{Line: "user@example.com from 192.168.1.100"}}
 		result := masker.MaskEntries(entries)
 
-		assert.Contains(t, result[0].Line, "[MASKED:email]")
-		assert.Contains(t, result[0].Line, "[MASKED:ip_address]")
+		assert.Contains(t, result[0].Line, "[MASKED:email:")
+		assert.Contains(t, result[0].Line, "[MASKED:ip_address:")
 	})
 }
 
@@ -1335,7 +1376,7 @@ func TestMaskerFromContext_WithMasking(t *testing.T) {
 		result := retrieved.MaskEntries(entries)
 
 		require.Len(t, result, 1)
-		assert.Contains(t, result[0].Line, "[MASKED:email]")
+		assert.Contains(t, result[0].Line, "[MASKED:email:")
 		assert.NotContains(t, result[0].Line, "user@example.com")
 	})
 }
@@ -1410,15 +1451,15 @@ func TestMaskingAppliedViaContext(t *testing.T) {
 
 		require.Len(t, entries, 3)
 
-		assert.Contains(t, entries[0].Line, "[MASKED:email]")
-		assert.Contains(t, entries[0].Line, "[MASKED:ip_address]")
+		assert.Contains(t, entries[0].Line, "[MASKED:email:")
+		assert.Contains(t, entries[0].Line, "[MASKED:ip_address:")
 		assert.NotContains(t, entries[0].Line, "user@example.com")
 		assert.NotContains(t, entries[0].Line, "192.168.1.100")
 
 		assert.Equal(t, "Request processed successfully", entries[1].Line)
 
-		assert.Contains(t, entries[2].Line, "[MASKED:email]")
-		assert.Contains(t, entries[2].Line, "[MASKED:ip_address]")
+		assert.Contains(t, entries[2].Line, "[MASKED:email:")
+		assert.Contains(t, entries[2].Line, "[MASKED:ip_address:")
 		assert.NotContains(t, entries[2].Line, "admin@company.org")
 		assert.NotContains(t, entries[2].Line, "10.0.0.1")
 
