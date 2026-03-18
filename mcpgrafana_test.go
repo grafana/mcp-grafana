@@ -7,6 +7,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 
 	"github.com/go-openapi/runtime/client"
@@ -284,7 +285,7 @@ type minURL struct {
 }
 
 // minURLFromClient extracts some minimal amount of URL info from a Grafana client.
-func minURLFromClient(c *grafana_client.GrafanaHTTPAPI) minURL {
+func minURLFromClient(c *GrafanaClient) minURL {
 	rt := c.Transport.(*client.Runtime)
 	return minURL{rt.Host, rt.BasePath}
 }
@@ -930,4 +931,117 @@ func newTestHTTPServer(t *testing.T, handler http.HandlerFunc) *httptest.Server 
 	ts := httptest.NewServer(handler)
 	t.Cleanup(ts.Close)
 	return ts
+}
+
+func TestFetchPublicURL(t *testing.T) {
+	t.Run("fetches appUrl from frontend settings", func(t *testing.T) {
+		ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/api/frontend/settings" {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"appUrl": "https://grafana.example.com/"}`))
+				return
+			}
+			w.WriteHeader(http.StatusNotFound)
+		})
+
+		publicURL := fetchPublicURL(context.Background(), ts.URL, "test-key", nil, nil)
+		assert.Equal(t, "https://grafana.example.com", publicURL)
+	})
+
+	t.Run("returns empty string when endpoint returns error", func(t *testing.T) {
+		ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+		})
+
+		publicURL := fetchPublicURL(context.Background(), ts.URL, "test-key", nil, nil)
+		assert.Equal(t, "", publicURL)
+	})
+
+	t.Run("returns empty string when appUrl is empty", func(t *testing.T) {
+		ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"appUrl": ""}`))
+		})
+
+		publicURL := fetchPublicURL(context.Background(), ts.URL, "test-key", nil, nil)
+		assert.Equal(t, "", publicURL)
+	})
+
+	t.Run("returns empty string for invalid JSON", func(t *testing.T) {
+		ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`not json`))
+		})
+
+		publicURL := fetchPublicURL(context.Background(), ts.URL, "test-key", nil, nil)
+		assert.Equal(t, "", publicURL)
+	})
+
+	t.Run("sends authorization header with API key", func(t *testing.T) {
+		var capturedAuth string
+		ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+			capturedAuth = r.Header.Get("Authorization")
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"appUrl": "https://grafana.example.com"}`))
+		})
+
+		fetchPublicURL(context.Background(), ts.URL, "my-token", nil, nil)
+		assert.Equal(t, "Bearer my-token", capturedAuth)
+	})
+
+	t.Run("sends basic auth credentials", func(t *testing.T) {
+		var capturedUser, capturedPass string
+		ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+			capturedUser, capturedPass, _ = r.BasicAuth()
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"appUrl": "https://grafana.example.com"}`))
+		})
+
+		auth := url.UserPassword("admin", "secret")
+		fetchPublicURL(context.Background(), ts.URL, "", auth, nil)
+		assert.Equal(t, "admin", capturedUser)
+		assert.Equal(t, "secret", capturedPass)
+	})
+
+	t.Run("trims trailing slash from appUrl", func(t *testing.T) {
+		ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"appUrl": "https://grafana.example.com/"}`))
+		})
+
+		publicURL := fetchPublicURL(context.Background(), ts.URL, "", nil, nil)
+		assert.Equal(t, "https://grafana.example.com", publicURL)
+	})
+}
+
+func TestNewGrafanaClientFetchesPublicURL(t *testing.T) {
+	t.Run("stores public URL from frontend settings", func(t *testing.T) {
+		ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/api/frontend/settings" {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"appUrl": "https://public.grafana.example.com/"}`))
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`[]`))
+		})
+
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{})
+		gc := NewGrafanaClient(ctx, ts.URL, "test-key", nil, 0)
+		assert.Equal(t, "https://public.grafana.example.com", gc.PublicURL)
+	})
+
+	t.Run("public URL is empty when fetch fails", func(t *testing.T) {
+		ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/api/frontend/settings" {
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`[]`))
+		})
+
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{})
+		gc := NewGrafanaClient(ctx, ts.URL, "test-key", nil, 0)
+		assert.Equal(t, "", gc.PublicURL)
+	})
 }
