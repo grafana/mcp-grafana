@@ -295,26 +295,41 @@ func createAlertRule(ctx context.Context, args CreateAlertRuleParams) (*models.P
 
 	duration, err := time.ParseDuration(args.For)
 	if err != nil {
-		return nil, fmt.Errorf("create alert rule: invalid duration format %q: %w", args.For, err)
+		return nil, fmt.Errorf("update alert rule: invalid duration format for parameter for: %q: %w", args.For, err)
 	}
 
 	convertedData, err := convertAlertQueries(args.Data)
 	if err != nil {
 		return nil, fmt.Errorf("create alert rule: %w", err)
 	}
+	keepFiringFor := time.Duration(0)
+	if args.KeepFiringFor != "" {
+		keepFiringFor, err = time.ParseDuration(args.KeepFiringFor)
+		if err != nil {
+			return nil, fmt.Errorf("create alert rule: invalid duration format for parameter keepFiringFor: %q: %w", args.KeepFiringFor, err)
+		}
+	}
+
+	notificationSettings := convertNotificationSettings(args.NotificationSettings)
+	record := convertRecord(args.Record)
 
 	rule := &models.ProvisionedAlertRule{
-		Title:        &args.Title,
-		RuleGroup:    &args.RuleGroup,
-		FolderUID:    &args.FolderUID,
-		Condition:    &args.Condition,
-		Data:         convertedData,
-		NoDataState:  &args.NoDataState,
-		ExecErrState: &args.ExecErrState,
-		For:          func() *strfmt.Duration { d := strfmt.Duration(duration); return &d }(),
-		Annotations:  args.Annotations,
-		Labels:       args.Labels,
-		OrgID:        &args.OrgID,
+		Title:                       &args.Title,
+		RuleGroup:                   &args.RuleGroup,
+		FolderUID:                   &args.FolderUID,
+		Condition:                   &args.Condition,
+		Data:                        convertedData,
+		NoDataState:                 &args.NoDataState,
+		ExecErrState:                &args.ExecErrState,
+		For:                         func() *strfmt.Duration { d := strfmt.Duration(duration); return &d }(),
+		Annotations:                 args.Annotations,
+		Labels:                      args.Labels,
+		OrgID:                       &args.OrgID,
+		IsPaused:                    args.IsPaused,
+		KeepFiringFor:               func() strfmt.Duration { d := strfmt.Duration(keepFiringFor); return d }(),
+		MissingSeriesEvalsToResolve: args.MissingSeriesEvalsToResolve,
+		NotificationSettings:        notificationSettings,
+		Record:                      record,
 	}
 
 	if args.UID != nil {
@@ -335,7 +350,6 @@ func createAlertRule(ctx context.Context, args CreateAlertRuleParams) (*models.P
 		header := "true"
 		params = params.WithXDisableProvenance(&header)
 	}
-
 	response, err := c.Provisioning.PostAlertRule(params)
 	if err != nil {
 		return nil, fmt.Errorf("create alert rule: %w", err)
@@ -353,7 +367,7 @@ func updateAlertRule(ctx context.Context, args UpdateAlertRuleParams) (*models.P
 
 	duration, err := time.ParseDuration(args.For)
 	if err != nil {
-		return nil, fmt.Errorf("update alert rule: invalid duration format %q: %w", args.For, err)
+		return nil, fmt.Errorf("update alert rule: invalid duration format for parameter for: %q: %w", args.For, err)
 	}
 
 	convertedData, err := convertAlertQueries(args.Data)
@@ -361,19 +375,37 @@ func updateAlertRule(ctx context.Context, args UpdateAlertRuleParams) (*models.P
 		return nil, fmt.Errorf("update alert rule: %w", err)
 	}
 
+	keepFiringFor := time.Duration(0)
+	if args.KeepFiringFor != "" {
+		keepFiringFor, err = time.ParseDuration(args.KeepFiringFor)
+		if err != nil {
+			return nil, fmt.Errorf("update alert rule: invalid duration format for parameter keepFiringFor: %q: %w", args.KeepFiringFor, err)
+		}
+	}
+
+	notificationSettings := convertNotificationSettings(args.NotificationSettings)
+
+	record := convertRecord(args.Record)
+
+	// MissingSeriesEvalsToResolve, Provenance are set to defaults
 	rule := &models.ProvisionedAlertRule{
-		UID:          args.UID,
-		Title:        &args.Title,
-		RuleGroup:    &args.RuleGroup,
-		FolderUID:    &args.FolderUID,
-		Condition:    &args.Condition,
-		Data:         convertedData,
-		NoDataState:  &args.NoDataState,
-		ExecErrState: &args.ExecErrState,
-		For:          func() *strfmt.Duration { d := strfmt.Duration(duration); return &d }(),
-		Annotations:  args.Annotations,
-		Labels:       args.Labels,
-		OrgID:        &args.OrgID,
+		UID:                         args.UID,
+		Title:                       &args.Title,
+		RuleGroup:                   &args.RuleGroup,
+		FolderUID:                   &args.FolderUID,
+		Condition:                   &args.Condition,
+		Data:                        convertedData,
+		NoDataState:                 &args.NoDataState,
+		ExecErrState:                &args.ExecErrState,
+		For:                         func() *strfmt.Duration { d := strfmt.Duration(duration); return &d }(),
+		Annotations:                 args.Annotations,
+		Labels:                      args.Labels,
+		OrgID:                       &args.OrgID,
+		IsPaused:                    args.IsPaused,
+		MissingSeriesEvalsToResolve: args.MissingSeriesEvalsToResolve,
+		KeepFiringFor:               func() strfmt.Duration { d := strfmt.Duration(keepFiringFor); return d }(),
+		NotificationSettings:        notificationSettings,
+		Record:                      record,
 	}
 
 	if err := rule.Validate(strfmt.Default); err != nil {

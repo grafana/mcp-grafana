@@ -416,7 +416,45 @@ func TestBuiltInValidationCatchesInvalidData(t *testing.T) {
 		require.NoError(t, err, "Simple validation doesn't check length constraints")
 	})
 }
+func TestRecord_Validate(t *testing.T) {
+	from := "A"
+	metric := "my_metric"
 
+	t.Run("valid record", func(t *testing.T) {
+		r := &Record{From: &from, Metric: &metric}
+		require.NoError(t, r.validate())
+	})
+
+	t.Run("nil From", func(t *testing.T) {
+		r := &Record{From: nil, Metric: &metric}
+		err := r.validate()
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "record.from is required")
+	})
+
+	t.Run("empty From", func(t *testing.T) {
+		empty := ""
+		r := &Record{From: &empty, Metric: &metric}
+		err := r.validate()
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "record.from is required")
+	})
+
+	t.Run("nil Metric", func(t *testing.T) {
+		r := &Record{From: &from, Metric: nil}
+		err := r.validate()
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "record.metric is required")
+	})
+
+	t.Run("empty Metric", func(t *testing.T) {
+		empty := ""
+		r := &Record{From: &from, Metric: &empty}
+		err := r.validate()
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "record.metric is required")
+	})
+}
 func TestManageRulesReadParams_Validate(t *testing.T) {
 	tests := []struct {
 		name    string

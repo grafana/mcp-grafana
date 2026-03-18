@@ -7,7 +7,9 @@ package tools
 
 import (
 	"testing"
+	"time"
 
+	"github.com/go-openapi/strfmt"
 	"github.com/grafana/grafana-openapi-client-go/models"
 	"github.com/stretchr/testify/require"
 )
@@ -874,7 +876,7 @@ func TestManageRules_Update(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		// Now update it
+		// Update basic fields 
 		result, err := manageRulesReadWrite(ctx, ManageRulesReadWriteParams{
 			Operation:    "update",
 			RuleUID:      testUID,
@@ -892,7 +894,10 @@ func TestManageRules_Update(t *testing.T) {
 			Labels: map[string]string{
 				"team": "updated-team",
 			},
-			OrgID: 1,
+			KeepFiringFor:               "5m",
+			IsPaused:                    false,
+			MissingSeriesEvalsToResolve: 2,
+			OrgID:                       1,
 		})
 		require.NoError(t, err)
 
@@ -901,6 +906,157 @@ func TestManageRules_Update(t *testing.T) {
 		require.Equal(t, testUID, updated.UID)
 		require.Equal(t, "Updated Title", *updated.Title)
 		require.Equal(t, "Alerting", *updated.NoDataState)
+		require.Equal(t, "Alerting", *updated.ExecErrState)
+		require.Equal(t, strfmt.Duration(5*time.Minute), updated.KeepFiringFor)
+		require.False(t, updated.IsPaused)
+		require.Equal(t, int64(2), updated.MissingSeriesEvalsToResolve)
+	})
+
+	t.Run("update notification settings of existing alert", func(t *testing.T) {
+		ctx := newTestContext()
+
+		sampleData := []*AlertQuery{
+			{
+				RefID:         "A",
+				DatasourceUID: "prometheus",
+				RelativeTimeRange: &RelativeTimeRange{
+					From: 600,
+					To:   0,
+				},
+				Model: AlertQueryModel{
+					Expr: "up",
+				},
+			},
+		}
+
+		testUID := "test_update_notification_settings"
+		t.Cleanup(func() {
+			manageRulesReadWrite(ctx, ManageRulesReadWriteParams{Operation: "delete", RuleUID: testUID}) //nolint:errcheck
+		})
+
+		_, err := manageRulesReadWrite(ctx, ManageRulesReadWriteParams{
+			Operation:    "create",
+			RuleUID:      testUID,
+			Title:        "Notification Settings Test Rule",
+			RuleGroup:    "test-group",
+			FolderUID:    "tests",
+			Condition:    "A",
+			Data:         sampleData,
+			NoDataState:  "OK",
+			ExecErrState: "OK",
+			For:          "5m",
+			OrgID:        1,
+		})
+		require.NoError(t, err)
+
+		// Update rule with notification settings
+		result, err := manageRulesReadWrite(ctx, ManageRulesReadWriteParams{
+			Operation:    "update",
+			RuleUID:      testUID,
+			Title:        "Notification Settings Test Rule",
+			RuleGroup:    "test-group",
+			FolderUID:    "tests",
+			Condition:    "A",
+			Data:         sampleData,
+			NoDataState:  "OK",
+			ExecErrState: "OK",
+			For:          "5m",
+			NotificationSettings: &NotificationSettings{
+				Receiver:          ptrString("Email1"),
+				GroupBy:           []string{"alertname", "grafana_folder"},
+				GroupWait:         "30s",
+				GroupInterval:     "5m",
+				RepeatInterval:    "4h",
+				MuteTimeIntervals: []string{"weekends"},
+			},
+			OrgID: 1,
+		})
+		require.NoError(t, err)
+
+		updated, ok := result.(*models.ProvisionedAlertRule)
+		require.True(t, ok)
+		require.Equal(t, testUID, updated.UID)
+
+		// NotificationSettings
+		require.NotNil(t, updated.NotificationSettings)
+		require.Equal(t, "Email1", *updated.NotificationSettings.Receiver)
+		require.ElementsMatch(t, []string{"alertname", "grafana_folder"}, updated.NotificationSettings.GroupBy)
+		require.Equal(t, "30s", updated.NotificationSettings.GroupWait)
+		require.Equal(t, "5m", updated.NotificationSettings.GroupInterval)
+		require.Equal(t, "4h", updated.NotificationSettings.RepeatInterval)
+		require.ElementsMatch(t, []string{"weekends"}, updated.NotificationSettings.MuteTimeIntervals)
+	})
+
+	t.Run("should record", func(t *testing.T) {
+		ctx := newTestContext()
+
+		sampleData := []*AlertQuery{
+			{
+				RefID:         "A",
+				DatasourceUID: "prometheus",
+				RelativeTimeRange: &RelativeTimeRange{
+					From: 600,
+					To:   0,
+				},
+				Model: AlertQueryModel{
+					Expr: "up",
+				},
+			},
+		}
+
+		testUID := "test_update_record"
+		t.Cleanup(func() {
+			manageRulesReadWrite(ctx, ManageRulesReadWriteParams{Operation: "delete", RuleUID: testUID}) //nolint:errcheck
+		})
+
+		// Create initial rule (alerting rule)
+		_, err := manageRulesReadWrite(ctx, ManageRulesReadWriteParams{
+			Operation:    "create",
+			RuleUID:      testUID,
+			Title:        "Record Test Rule",
+			RuleGroup:    "test-group",
+			FolderUID:    "tests",
+			Condition:    "A",
+			Data:         sampleData,
+			NoDataState:  "OK",
+			ExecErrState: "OK",
+			For:          "5m",
+			OrgID:        1,
+		})
+		require.NoError(t, err)
+
+		// Update rule with Record (converts to recording rule).
+		// Grafana ignores NoDataState/ExecErrState for recording rules, but our
+		// validator requires them, so we pass dummy values.
+		result, err := manageRulesReadWrite(ctx, ManageRulesReadWriteParams{
+			Operation:    "update",
+			RuleUID:      testUID,
+			Title:        "Record Test Rule",
+			RuleGroup:    "test-group",
+			FolderUID:    "tests",
+			Condition:    "A",
+			Data:         sampleData,
+			NoDataState:  "OK",
+			ExecErrState: "OK",
+			For:          "5m",
+			Record: &Record{
+				From:                ptrString("A"),
+				Metric:              ptrString("test_metric_record"),
+				TargetDatasourceUID: "prometheus",
+			},
+			OrgID: 1,
+		})
+		require.NoError(t, err)
+
+		updated, ok := result.(*models.ProvisionedAlertRule)
+		require.True(t, ok)
+		require.Equal(t, testUID, updated.UID)
+
+		// Record
+		require.NotNil(t, updated.Record)
+		require.Equal(t, "A", *updated.Record.From)
+		require.Equal(t, "test_metric_record", *updated.Record.Metric)
+		require.Equal(t, "prometheus", updated.Record.TargetDatasourceUID)
 	})
 
 	t.Run("update non-existent alert rule", func(t *testing.T) {
@@ -1584,3 +1740,4 @@ func TestManageRules_SearchFolder(t *testing.T) {
 		require.Contains(t, err.Error(), "mutually exclusive")
 	})
 }
+func ptrString(s string) *string { return &s }
