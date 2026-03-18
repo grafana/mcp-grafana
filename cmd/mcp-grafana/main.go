@@ -145,6 +145,8 @@ func (dt *disabledTools) toolCategories() []toolCategory {
 		{tools.AddClickHouseTools, dt.clickhouse, "clickhouse", "- ClickHouse: Query ClickHouse datasources via Grafana with macro and variable substitution support."},
 		{tools.AddSearchLogsTools, dt.searchlogs, "searchlogs", ""},
 		{tools.AddRunPanelQueryTools, dt.runpanelquery, "runpanelquery", ""},
+		// Proxied tools are registered separately in newServer, so addFunc is nil.
+		{nil, dt.proxied, "proxied", "- Proxied Tools: Access tools from external MCP servers (like Tempo) through dynamic discovery."},
 	}
 }
 
@@ -163,6 +165,9 @@ func (dt *disabledTools) isEnabled(category string) bool {
 func (dt *disabledTools) addTools(s *server.MCPServer) {
 	enabledTools := strings.Split(dt.enabledTools, ",")
 	for _, cat := range dt.toolCategories() {
+		if cat.addFunc == nil {
+			continue
+		}
 		maybeAddTools(s, cat.addFunc, enabledTools, cat.disabled, cat.category)
 	}
 }
