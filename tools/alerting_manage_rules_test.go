@@ -987,7 +987,7 @@ func TestManageRules_Update(t *testing.T) {
 		require.ElementsMatch(t, []string{"weekends"}, updated.NotificationSettings.MuteTimeIntervals)
 	})
 
-	t.Run("should record", func(t *testing.T) {
+	t.Run("update an alert rule to recording type", func(t *testing.T) {
 		ctx := newTestContext()
 
 		sampleData := []*AlertQuery{
