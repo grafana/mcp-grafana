@@ -536,6 +536,16 @@ func fetchPublicURL(ctx context.Context, grafanaURL, apiKey string, auth *url.Us
 		return cached.(string)
 	}
 
+	publicURL := doFetchPublicURL(ctx, grafanaURL, apiKey, auth, tlsConfig, extraHeaders)
+
+	// Cache the result (even empty string to avoid repeated failed/timeout requests)
+	publicURLCache.Store(grafanaURL, publicURL)
+
+	return publicURL
+}
+
+// doFetchPublicURL performs the actual HTTP request to fetch the public URL.
+func doFetchPublicURL(ctx context.Context, grafanaURL, apiKey string, auth *url.Userinfo, tlsConfig *TLSConfig, extraHeaders map[string]string) string {
 	settingsURL := strings.TrimRight(grafanaURL, "/") + "/api/frontend/settings"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, settingsURL, nil)
 	if err != nil {
@@ -597,10 +607,6 @@ func fetchPublicURL(ctx context.Context, grafanaURL, apiKey string, auth *url.Us
 	if publicURL != "" {
 		slog.Info("Fetched public URL from Grafana frontend settings", "public_url", publicURL)
 	}
-
-	// Cache the result (even empty string to avoid repeated failed requests)
-	publicURLCache.Store(grafanaURL, publicURL)
-
 	return publicURL
 }
 

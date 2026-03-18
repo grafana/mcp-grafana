@@ -1057,6 +1057,24 @@ func TestFetchPublicURL(t *testing.T) {
 		assert.Equal(t, "https://grafana.example.com", publicURL)
 		assert.Equal(t, 1, callCount) // no additional HTTP call
 	})
+
+	t.Run("caches error results to avoid repeated failed requests", func(t *testing.T) {
+		callCount := 0
+		ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+			callCount++
+			w.WriteHeader(http.StatusInternalServerError)
+		})
+
+		// First call should hit the server and get an error
+		publicURL := fetchPublicURL(context.Background(), ts.URL, "test-key", nil, nil, nil)
+		assert.Equal(t, "", publicURL)
+		assert.Equal(t, 1, callCount)
+
+		// Second call should use cached empty result, not retry
+		publicURL = fetchPublicURL(context.Background(), ts.URL, "test-key", nil, nil, nil)
+		assert.Equal(t, "", publicURL)
+		assert.Equal(t, 1, callCount) // no additional HTTP call
+	})
 }
 
 func TestNewGrafanaClientFetchesPublicURL(t *testing.T) {
