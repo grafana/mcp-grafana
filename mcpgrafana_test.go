@@ -6,6 +6,7 @@ package mcpgrafana
 import (
 	"context"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/go-openapi/runtime/client"
@@ -796,13 +797,16 @@ func TestExtraHeadersRoundTripper(t *testing.T) {
 	})
 }
 
-type extraHeadersMockRT struct {
+type capturingMockRT struct {
 	fn func(*http.Request) (*http.Response, error)
 }
 
-func (m *extraHeadersMockRT) RoundTrip(req *http.Request) (*http.Response, error) {
+func (m *capturingMockRT) RoundTrip(req *http.Request) (*http.Response, error) {
 	return m.fn(req)
 }
+
+// Keep the old name as an alias for backwards compatibility in case anything references it.
+type extraHeadersMockRT = capturingMockRT
 
 func TestExtractGrafanaInfoWithExtraHeaders(t *testing.T) {
 	t.Run("extra headers from env in ExtractGrafanaInfoFromEnv", func(t *testing.T) {
@@ -819,4 +823,111 @@ func TestExtractGrafanaInfoWithExtraHeaders(t *testing.T) {
 		config := GrafanaConfigFromContext(ctx)
 		assert.Equal(t, map[string]string{"X-Tenant-ID": "tenant-456"}, config.ExtraHeaders)
 	})
+}
+
+func TestOrgIDRoundTripper(t *testing.T) {
+	t.Run("adds org ID header to request", func(t *testing.T) {
+		var capturedReq *http.Request
+		mockRT := &capturingMockRT{
+			fn: func(req *http.Request) (*http.Response, error) {
+				capturedReq = req
+				return &http.Response{StatusCode: 200}, nil
+			},
+		}
+
+		rt := NewOrgIDRoundTripper(mockRT, 123)
+
+		req, _ := http.NewRequest("GET", "http://example.com", nil)
+		_, err := rt.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Equal(t, "123", capturedReq.Header.Get(grafana_client.OrgIDHeader))
+	})
+
+	t.Run("does not add header when org ID is zero", func(t *testing.T) {
+		var capturedReq *http.Request
+		mockRT := &capturingMockRT{
+			fn: func(req *http.Request) (*http.Response, error) {
+				capturedReq = req
+				return &http.Response{StatusCode: 200}, nil
+			},
+		}
+
+		rt := NewOrgIDRoundTripper(mockRT, 0)
+
+		req, _ := http.NewRequest("GET", "http://example.com", nil)
+		_, err := rt.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Empty(t, capturedReq.Header.Get(grafana_client.OrgIDHeader))
+	})
+
+	t.Run("does not modify original request", func(t *testing.T) {
+		mockRT := &capturingMockRT{
+			fn: func(req *http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: 200}, nil
+			},
+		}
+
+		rt := NewOrgIDRoundTripper(mockRT, 42)
+
+		req, _ := http.NewRequest("GET", "http://example.com", nil)
+		_, err := rt.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Empty(t, req.Header.Get(grafana_client.OrgIDHeader))
+	})
+
+	t.Run("nil transport uses default", func(t *testing.T) {
+		rt := NewOrgIDRoundTripper(nil, 1)
+		assert.NotNil(t, rt.underlying)
+	})
+}
+
+func TestNewGrafanaClientOrgIDTransport(t *testing.T) {
+	t.Run("org ID header is sent on requests when configured", func(t *testing.T) {
+		var capturedHeaders http.Header
+		ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+			capturedHeaders = r.Header.Clone()
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`[]`))
+		})
+
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{
+			OrgID: 99,
+		})
+		c := NewGrafanaClient(ctx, ts.URL, "test-key", nil, 99)
+		require.NotNil(t, c)
+
+		// Make a real request through the client
+		_, _ = c.Search.Search(nil, nil)
+
+		assert.Equal(t, "99", capturedHeaders.Get(grafana_client.OrgIDHeader))
+	})
+
+	t.Run("org ID header is not sent when org ID is zero", func(t *testing.T) {
+		var capturedHeaders http.Header
+		ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+			capturedHeaders = r.Header.Clone()
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`[]`))
+		})
+
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{
+			OrgID: 0,
+		})
+		c := NewGrafanaClient(ctx, ts.URL, "test-key", nil, 0)
+		require.NotNil(t, c)
+
+		_, _ = c.Search.Search(nil, nil)
+
+		assert.Empty(t, capturedHeaders.Get(grafana_client.OrgIDHeader))
+	})
+}
+
+func newTestHTTPServer(t *testing.T, handler http.HandlerFunc) *httptest.Server {
+	t.Helper()
+	ts := httptest.NewServer(handler)
+	t.Cleanup(ts.Close)
+	return ts
 }

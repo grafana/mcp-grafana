@@ -1,6 +1,6 @@
 services:
   grafana:
-    image: grafana/grafana@sha256:ba93c9d192e58b23e064c7f501d453426ccf4a85065bf25b705ab1e98602bfb1
+    image: grafana/grafana:12.4.0@sha256:b0ae311af06228bcfd4a620504b653db80f5b91e94dc3dc2a5b7dab202bcde20
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "false"
       GF_INSTALL_PLUGINS: grafana-clickhouse-datasource
@@ -13,6 +13,8 @@ services:
     volumes:
       - ./testdata/provisioning:/etc/grafana/provisioning
       - ./testdata/dashboards:/var/lib/grafana/dashboards
+      - type: tmpfs
+        target: /var/lib/grafana/empty-alerts-folder
 
   renderer:
     image: grafana/grafana-image-renderer:latest@sha256:a3e58eb1fe07482c96d5a7e19eda1c1f272732f29b4d7d20c11a73c889efaed2
@@ -80,8 +82,47 @@ services:
       - "--config.file=/etc/alertmanager/alertmanager.yml"
       - "--storage.path=/alertmanager"
 
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.17.0
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health | grep -q '\"status\":\"green\"\\|\"status\":\"yellow\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  elasticsearch-seed:
+    image: curlimages/curl:8.12.1
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    volumes:
+      - ./testdata/elasticsearch-seed.sh:/seed.sh
+    entrypoint: ["sh", "/seed.sh"]
+
+  localstack:
+    image: localstack/localstack:4.13@sha256:46302bcb91a7e8008e6394be8afafdbfa40fb77a54d4046a38be35992042d5de
+    ports:
+      - "4566:4566"
+    environment:
+      SERVICES: cloudwatch,logs
+      AWS_DEFAULT_REGION: us-east-1
+      EAGER_SERVICE_LOADING: 1
+    volumes:
+      - ./testdata/localstack-init.sh:/etc/localstack/init/ready.d/init.sh
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   clickhouse:
-    image: clickhouse/clickhouse-server:24.8
+    image: clickhouse/clickhouse-server:25.10@sha256:8d1a479c36a4556eeb0556ad36141b194cf6a4a4020f9def391c1570fd1570b7
     ports:
       - "8123:8123"
       - "9000:9000"

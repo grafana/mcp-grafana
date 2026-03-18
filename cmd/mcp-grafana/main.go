@@ -51,10 +51,11 @@ type disabledTools struct {
 	enabledTools string
 
 	search, datasource, incident,
-	prometheus, loki, alerting,
+	prometheus, loki, elasticsearch, alerting,
 	dashboard, folder, oncall, asserts, sift, admin,
-	pyroscope, navigation, proxied, annotations, rendering, write,
-	examples, clickhouse, searchlogs bool
+	pyroscope, navigation, proxied, annotations, rendering, cloudwatch, write,
+	examples, clickhouse, searchlogs,
+	runpanelquery bool
 }
 
 // Configuration for the Grafana client.
@@ -67,6 +68,9 @@ type grafanaConfig struct {
 	tlsKeyFile    string
 	tlsCAFile     string
 	tlsSkipVerify bool
+
+	// Loki configuration
+	maxLokiLogLimit int
 }
 
 func (dt *disabledTools) addFlags() {
@@ -76,6 +80,7 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.incident, "disable-incident", false, "Disable incident tools")
 	flag.BoolVar(&dt.prometheus, "disable-prometheus", false, "Disable prometheus tools")
 	flag.BoolVar(&dt.loki, "disable-loki", false, "Disable loki tools")
+	flag.BoolVar(&dt.elasticsearch, "disable-elasticsearch", false, "Disable elasticsearch tools")
 	flag.BoolVar(&dt.alerting, "disable-alerting", false, "Disable alerting tools")
 	flag.BoolVar(&dt.dashboard, "disable-dashboard", false, "Disable dashboard tools")
 	flag.BoolVar(&dt.folder, "disable-folder", false, "Disable folder tools")
@@ -89,9 +94,11 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.write, "disable-write", false, "Disable write tools (create/update operations)")
 	flag.BoolVar(&dt.annotations, "disable-annotations", false, "Disable annotation tools")
 	flag.BoolVar(&dt.rendering, "disable-rendering", false, "Disable rendering tools (panel/dashboard image export)")
+	flag.BoolVar(&dt.cloudwatch, "disable-cloudwatch", false, "Disable CloudWatch tools")
 	flag.BoolVar(&dt.examples, "disable-examples", false, "Disable query examples tools")
 	flag.BoolVar(&dt.clickhouse, "disable-clickhouse", false, "Disable ClickHouse tools")
 	flag.BoolVar(&dt.searchlogs, "disable-searchlogs", false, "Disable search logs tools")
+	flag.BoolVar(&dt.runpanelquery, "disable-runpanelquery", false, "Disable run panel query tools")
 }
 
 func (gc *grafanaConfig) addFlags() {
@@ -102,6 +109,9 @@ func (gc *grafanaConfig) addFlags() {
 	flag.StringVar(&gc.tlsKeyFile, "tls-key-file", "", "Path to TLS private key file for client authentication")
 	flag.StringVar(&gc.tlsCAFile, "tls-ca-file", "", "Path to TLS CA certificate file for server verification")
 	flag.BoolVar(&gc.tlsSkipVerify, "tls-skip-verify", false, "Skip TLS certificate verification (insecure)")
+
+	// Loki configuration flags
+	flag.IntVar(&gc.maxLokiLogLimit, "max-loki-log-limit", tools.MaxLokiLogLimit, "Maximum number of log lines returned per query_loki_logs call")
 }
 
 // toolCategories returns the list of all tool categories with their registration
@@ -118,6 +128,7 @@ func (dt *disabledTools) toolCategories() []toolCategory {
 		{func(s *server.MCPServer) { tools.AddIncidentTools(s, enableWriteTools) }, dt.incident, "incident", "- Incidents: Search, create, update, and resolve incidents in Grafana Incident."},
 		{tools.AddPrometheusTools, dt.prometheus, "prometheus", ""},
 		{tools.AddLokiTools, dt.loki, "loki", ""},
+		{tools.AddElasticsearchTools, dt.elasticsearch, "elasticsearch", "- Elasticsearch: Query Elasticsearch datasources using Lucene syntax or Query DSL for logs and metrics."},
 		{func(s *server.MCPServer) { tools.AddAlertingTools(s, enableWriteTools) }, dt.alerting, "alerting", "- Alerting: List and fetch alert rules and notification contact points."},
 		{func(s *server.MCPServer) { tools.AddDashboardTools(s, enableWriteTools) }, dt.dashboard, "dashboard", "- Dashboards: Search, retrieve, update, and create dashboards. Extract panel queries and datasource information."},
 		{func(s *server.MCPServer) { tools.AddFolderTools(s, enableWriteTools) }, dt.folder, "folder", ""},
@@ -129,9 +140,11 @@ func (dt *disabledTools) toolCategories() []toolCategory {
 		{tools.AddNavigationTools, dt.navigation, "navigation", "- Navigation: Generate deeplink URLs for Grafana resources like dashboards, panels, and Explore queries."},
 		{func(s *server.MCPServer) { tools.AddAnnotationTools(s, enableWriteTools) }, dt.annotations, "annotations", ""},
 		{tools.AddRenderingTools, dt.rendering, "rendering", "- Rendering: Export dashboard panels or full dashboards as PNG images (requires Grafana Image Renderer plugin)."},
+		{tools.AddCloudWatchTools, dt.cloudwatch, "cloudwatch", ""},
 		{tools.AddExamplesTools, dt.examples, "examples", ""},
 		{tools.AddClickHouseTools, dt.clickhouse, "clickhouse", "- ClickHouse: Query ClickHouse datasources via Grafana with macro and variable substitution support."},
 		{tools.AddSearchLogsTools, dt.searchlogs, "searchlogs", ""},
+		{tools.AddRunPanelQueryTools, dt.runpanelquery, "runpanelquery", ""},
 	}
 }
 
@@ -460,7 +473,10 @@ func main() {
 	}
 
 	// Convert local grafanaConfig to mcpgrafana.GrafanaConfig
-	grafanaConfig := mcpgrafana.GrafanaConfig{Debug: gc.debug}
+	grafanaConfig := mcpgrafana.GrafanaConfig{
+		Debug:           gc.debug,
+		MaxLokiLogLimit: gc.maxLokiLogLimit,
+	}
 	if gc.tlsCertFile != "" || gc.tlsKeyFile != "" || gc.tlsCAFile != "" || gc.tlsSkipVerify {
 		grafanaConfig.TLSConfig = &mcpgrafana.TLSConfig{
 			CertFile:   gc.tlsCertFile,

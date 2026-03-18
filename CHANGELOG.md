@@ -5,6 +5,52 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.3] - 2026-03-12
+
+### Added
+
+- Support panel filtering and template variable substitution in `get_dashboard_panel_queries` for more targeted query extraction ([#539](https://github.com/grafana/mcp-grafana/pull/539))
+- New `alerting_manage_routing` tool for managing notification policies, contact points, and time intervals in a single unified tool ([#618](https://github.com/grafana/mcp-grafana/pull/618))
+- Add `accountId` parameter to CloudWatch tools for cross-account monitoring support ([#616](https://github.com/grafana/mcp-grafana/pull/616))
+
+### Fixed
+
+- Add `OrgIDRoundTripper` to the Grafana client transport chain so organization ID is correctly sent on all requests ([#649](https://github.com/grafana/mcp-grafana/pull/649))
+
+### Changed
+
+- Consolidate alerting rule tools into a single `alerting_manage_rules` tool for simpler discovery ([#619](https://github.com/grafana/mcp-grafana/pull/619))
+- Use typed struct for alert query parameters instead of untyped `models.AlertQuery` ([#630](https://github.com/grafana/mcp-grafana/pull/630))
+- Add server-side filtering support to alerting client for more efficient rule queries (Grafana 10.0+) ([#612](https://github.com/grafana/mcp-grafana/pull/612))
+
+## [0.11.2] - 2026-02-24
+
+### Changed
+
+- Optimize Docker builds with Go cross-compilation for faster multi-platform image builds ([#600](https://github.com/grafana/mcp-grafana/pull/600))
+- Fix Python wheel subpackage build to use correct `--package-path` flag ([#601](https://github.com/grafana/mcp-grafana/pull/601))
+
+## [0.11.1] - 2026-02-24
+
+### Added
+
+- New `run_panel_query` tool that executes dashboard panel queries directly, with support for Prometheus, Loki, ClickHouse, and CloudWatch datasources, template variable substitution, Grafana macro expansion, and batch multi-panel queries ([#542](https://github.com/grafana/mcp-grafana/pull/542))
+
+### Changed
+
+- Merge near-duplicate MCP tools to reduce overall tool count, making it easier for LLMs to select the right tool ([#596](https://github.com/grafana/mcp-grafana/pull/596))
+
+## [0.11.0] - 2026-02-19
+
+### Added
+
+- Elasticsearch datasource support with Lucene and Query DSL syntax, time range filtering, and configurable result limits ([#424](https://github.com/grafana/mcp-grafana/pull/424))
+- CloudWatch datasource support with namespace, metric, and dimension discovery tools plus a guided query workflow ([#536](https://github.com/grafana/mcp-grafana/pull/536))
+
+### Fixed
+
+- Support standard HTTP proxy environment variables (`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`) for connecting through corporate proxies ([#578](https://github.com/grafana/mcp-grafana/pull/578))
+
 ## [0.10.0] - 2026-02-12
 
 ### Added
@@ -28,4 +74,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Upgrade Docker base image packages to resolve critical OpenSSL CVE-2025-15467 (CVSS 9.8) ([#551](https://github.com/grafana/mcp-grafana/pull/551))
 
+[0.11.3]: https://github.com/grafana/mcp-grafana/compare/v0.11.2...v0.11.3
+[0.11.2]: https://github.com/grafana/mcp-grafana/compare/v0.11.1...v0.11.2
+[0.11.1]: https://github.com/grafana/mcp-grafana/compare/v0.11.0...v0.11.1
+[0.11.0]: https://github.com/grafana/mcp-grafana/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/grafana/mcp-grafana/compare/v0.9.0...v0.10.0

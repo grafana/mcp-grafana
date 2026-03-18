@@ -322,6 +322,12 @@ type lokiQueryResponse struct {
 	Data   struct {
 		ResultType string          `json:"resultType"` // "streams", "vector", or "matrix"
 		Result     json.RawMessage `json:"result"`     // Unmarshal based on resultType
+		// Stats is a pointer so we can distinguish "stats missing" (nil) from "stats present with zero values"
+		Stats *struct {
+			Summary struct {
+				TotalLinesProcessed int `json:"totalLinesProcessed"`
+			} `json:"summary"`
+		} `json:"stats,omitempty"`
 	} `json:"data"`
 }
 
@@ -453,16 +459,25 @@ type QueryLokiLogsParams struct {
 	LogQL         string `json:"logql" jsonschema:"required,description=The LogQL query to execute against Loki. This can be a simple label matcher or a complex query with filters\\, parsers\\, and expressions. Supports full LogQL syntax including label matchers\\, filter operators\\, pattern expressions\\, and pipeline operations."`
 	StartRFC3339  string `json:"startRfc3339,omitempty" jsonschema:"description=Optionally\\, the start time of the query in RFC3339 format"`
 	EndRFC3339    string `json:"endRfc3339,omitempty" jsonschema:"description=Optionally\\, the end time of the query in RFC3339 format"`
-	Limit         int    `json:"limit,omitempty" jsonschema:"default=10,description=Optionally\\, the maximum number of log lines to return (max: 100)"`
+	Limit         int    `json:"limit,omitempty" jsonschema:"default=10,description=Optionally\\, the maximum number of log lines to return (default max: 100\\, configurable by MCP server)."`
 	Direction     string `json:"direction,omitempty" jsonschema:"description=Optionally\\, the direction of the query: 'forward' (oldest first) or 'backward' (newest first\\, default)"`
 	QueryType     string `json:"queryType,omitempty" jsonschema:"description=Query type: 'range' (default) or 'instant'. Instant queries return a single value at one point in time. Range queries return values over a time window. Use 'instant' for metric queries when you want the current value."`
 	StepSeconds   int    `json:"stepSeconds,omitempty" jsonschema:"description=Resolution step in seconds for range metric queries. When running metric queries with queryType='range'\\, this controls the time resolution of the returned data points."`
 }
 
+// QueryMetadata provides context about the query results for AI agents
+type QueryMetadata struct {
+	LinesReturned     int  `json:"linesReturned"`
+	MaxLinesAllowed   int  `json:"maxLinesAllowed"`
+	ResultsTruncated  bool `json:"resultsTruncated"`
+	TotalLinesScanned *int `json:"totalLinesScanned"` // nil if stats unavailable, 0 if actually zero lines scanned
+}
+
 // QueryLokiLogsResult wraps the Loki query result with optional hints
 type QueryLokiLogsResult struct {
-	Data  []LogEntry        `json:"data"`
-	Hints *EmptyResultHints `json:"hints,omitempty"`
+	Data     []LogEntry        `json:"data"`
+	Hints    *EmptyResultHints `json:"hints,omitempty"`
+	Metadata *QueryMetadata    `json:"metadata,omitempty"`
 }
 
 // LogEntry represents a single log entry or metric sample with metadata
@@ -475,12 +490,22 @@ type LogEntry struct {
 }
 
 // enforceLogLimit ensures a log limit value is within acceptable bounds
-func enforceLogLimit(requestedLimit int) int {
+func enforceLogLimit(ctx context.Context, requestedLimit int) int {
+	config := mcpgrafana.GrafanaConfigFromContext(ctx)
+	maxLimit := config.MaxLokiLogLimit
+	if maxLimit <= 0 {
+		maxLimit = MaxLokiLogLimit // fallback for programmatic usage
+	}
+
 	if requestedLimit <= 0 {
+		// Cap default to maxLimit in case admin configured a lower max
+		if DefaultLokiLogLimit > maxLimit {
+			return maxLimit
+		}
 		return DefaultLokiLogLimit
 	}
-	if requestedLimit > MaxLokiLogLimit {
-		return MaxLokiLogLimit
+	if requestedLimit > maxLimit {
+		return maxLimit
 	}
 	return requestedLimit
 }
@@ -531,7 +556,10 @@ func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) (*QueryLokiLog
 	}
 
 	// Apply limit constraints (only relevant for log queries)
-	limit := enforceLogLimit(args.Limit)
+	limit := enforceLogLimit(ctx, args.Limit)
+
+	// Request one extra to detect truncation
+	queryLimit := limit + 1
 
 	// Set default direction if not provided
 	direction := args.Direction
@@ -545,7 +573,7 @@ func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) (*QueryLokiLog
 		QueryType:   args.QueryType,
 		Start:       startTime,
 		End:         endTime,
-		Limit:       limit,
+		Limit:       queryLimit,
 		Direction:   direction,
 		StepSeconds: args.StepSeconds,
 	})
@@ -654,9 +682,33 @@ func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) (*QueryLokiLog
 		entries = []LogEntry{}
 	}
 
+	// Detect truncation and trim to actual limit (only for log queries, not metrics).
+	// For metric queries (vector/matrix), Loki doesn't receive a limit parameter,
+	// so we preserve the old behavior of returning all results.
+	truncated := false
+	if response.Data.ResultType == "streams" { // streams = log queries
+		truncated = len(entries) > limit
+		if truncated {
+			entries = entries[:limit]
+		}
+	}
+
+	// Get lines scanned from stats (nil if stats unavailable, 0 if actually zero)
+	var linesScanned *int
+	if response.Data.Stats != nil {
+		val := response.Data.Stats.Summary.TotalLinesProcessed
+		linesScanned = &val
+	}
+
 	// Build the response
 	result := &QueryLokiLogsResult{
 		Data: entries,
+		Metadata: &QueryMetadata{
+			LinesReturned:     len(entries),
+			MaxLinesAllowed:   limit,
+			ResultsTruncated:  truncated,
+			TotalLinesScanned: linesScanned,
+		},
 	}
 
 	// Add hints if the result is empty

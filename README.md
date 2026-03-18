@@ -10,6 +10,27 @@ A [Model Context Protocol][mcp] (MCP) server for Grafana.
 
 This provides access to your Grafana instance and the surrounding ecosystem.
 
+## Quick Start
+
+Requires [uv](https://docs.astral.sh/uv/getting-started/installation/). Add the following to your MCP client configuration (e.g. Claude Desktop, Cursor):
+
+```json
+{
+  "mcpServers": {
+    "grafana": {
+      "command": "uvx",
+      "args": ["mcp-grafana"],
+      "env": {
+        "GRAFANA_URL": "http://localhost:3000",
+        "GRAFANA_SERVICE_ACCOUNT_TOKEN": "<your service account token>"
+      }
+    }
+  }
+}
+```
+
+For Grafana Cloud, replace `GRAFANA_URL` with your instance URL (e.g. `https://myinstance.grafana.net`). See [Usage](#usage) for more installation options including Docker, binary, and Helm.
+
 ## Requirements
 
 - **Grafana version 9.0 or later** is required for full functionality. Some features, particularly datasource-related operations, may not work correctly with earlier versions due to missing API endpoints.
@@ -28,6 +49,12 @@ _The following features are currently available in MCP server. This list is for 
 - **Patch dashboard:** Apply specific changes to a dashboard without requiring the full JSON, significantly reducing context window usage for targeted modifications
 - **Get panel queries and datasource info:** Get the title, query string, and datasource information (including UID and type, if available) from every panel in a dashboard
 
+### Run Panel Query
+
+> **Note:** Run panel query tools are **disabled by default**. To enable them, add `runpanelquery` to your `--enabled-tools` flag.
+
+- **Run panel query:** Execute a dashboard panel's query with custom time ranges and variable overrides.
+
 #### Context Window Management
 
 The dashboard tools now include several strategies to manage context window usage effectively ([issue #101](https://github.com/grafana/mcp-grafana/issues/101)):
@@ -39,7 +66,7 @@ The dashboard tools now include several strategies to manage context window usag
 ### Datasources
 
 - **List and fetch datasource information:** View all configured datasources and retrieve detailed information about each.
-  - _Supported datasource types: Prometheus, Loki, ClickHouse._
+  - _Supported datasource types: Prometheus, Loki, ClickHouse, CloudWatch, Elasticsearch._
 
 ### Query Examples
 
@@ -67,11 +94,26 @@ The dashboard tools now include several strategies to manage context window usag
 - **Describe table schema:** Get column names, types, and metadata for a ClickHouse table.
 - **Query ClickHouse:** Execute SQL queries with Grafana macro and variable substitution support.
 
+### CloudWatch Querying
+
+> **Note:** CloudWatch tools are **disabled by default**. To enable them, add `cloudwatch` to your `--enabled-tools` flag.
+
+- **List CloudWatch namespaces:** Discover available AWS CloudWatch namespaces.
+- **List CloudWatch metrics:** List metrics available in a specific namespace.
+- **List CloudWatch dimensions:** Get dimensions for filtering metric queries.
+- **Query CloudWatch:** Execute CloudWatch metric queries with time range support.
+
 ### Log Search
 
 > **Note:** Search logs tools are **disabled by default**. To enable them, add `searchlogs` to your `--enabled-tools` flag.
 
 - **Search logs:** High-level log search across ClickHouse (OTel format) and Loki datasources.
+
+### Elasticsearch Querying
+
+> **Note:** Elasticsearch tools are **disabled by default**. To enable them, add `elasticsearch` to your `--enabled-tools` flag.
+
+- **Query Elasticsearch:** Execute search queries against Elasticsearch datasources using either Lucene query syntax or Elasticsearch Query DSL. Supports filtering by time range and retrieving logs, metrics, or any indexed data. Returns documents with their index, ID, source fields, and optional relevance score.
 
 ### Incidents
 
@@ -90,7 +132,7 @@ The dashboard tools now include several strategies to manage context window usag
 - **List and fetch alert rule information:** View alert rules and their statuses (firing/normal/error/etc.) in Grafana. Supports both Grafana-managed rules and datasource-managed rules from Prometheus or Loki datasources.
 - **Create and update alert rules:** Create new alert rules or modify existing ones.
 - **Delete alert rules:** Remove alert rules by UID.
-- **List contact points:** View configured notification contact points in Grafana. Supports both Grafana-managed contact points and receivers from external Alertmanager datasources (Prometheus Alertmanager, Mimir, Cortex).
+- **Manage alerting routing:** View notification policies, contact points, and time intervals. Supports both Grafana-managed contact points and receivers from external Alertmanager datasources (Prometheus Alertmanager, Mimir, Cortex).
 
 ### Grafana OnCall
 
@@ -217,11 +259,11 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `get_dashboard_by_uid`            | Dashboard   | Get a dashboard by uid                                              | `dashboards:read`                       | `dashboards:uid:abc123`                             |
 | `update_dashboard`                | Dashboard   | Update or create a new dashboard                                    | `dashboards:create`, `dashboards:write` | `dashboards:*`, `folders:*` or `folders:uid:xyz789` |
 | `get_dashboard_panel_queries`     | Dashboard   | Get panel title, queries, datasource UID and type from a dashboard  | `dashboards:read`                       | `dashboards:uid:abc123`                             |
+| `run_panel_query`                 | RunPanelQuery* | Execute one or more dashboard panel queries                       | `dashboards:read`, `datasources:query`  | `dashboards:uid:*`, `datasources:uid:*`             |
 | `get_dashboard_property`          | Dashboard   | Extract specific parts of a dashboard using JSONPath expressions    | `dashboards:read`                       | `dashboards:uid:abc123`                             |
 | `get_dashboard_summary`           | Dashboard   | Get a compact summary of a dashboard without full JSON              | `dashboards:read`                       | `dashboards:uid:abc123`                             |
 | `list_datasources`                | Datasources | List datasources                                                    | `datasources:read`                      | `datasources:*`                                     |
-| `get_datasource_by_uid`           | Datasources | Get a datasource by uid                                             | `datasources:read`                      | `datasources:uid:prometheus-uid`                    |
-| `get_datasource_by_name`          | Datasources | Get a datasource by name                                            | `datasources:read`                      | `datasources:*` or `datasources:uid:loki-uid`       |
+| `get_datasource`                  | Datasources | Get a datasource by UID or name                                     | `datasources:read`                      | `datasources:uid:prometheus-uid`                    |
 | `get_query_examples`              | Examples*   | Get example queries for a datasource type                           | `datasources:read`                      | `datasources:*`                                     |
 | `query_prometheus`                | Prometheus  | Execute a query against a Prometheus datasource                     | `datasources:query`                     | `datasources:uid:prometheus-uid`                    |
 | `list_prometheus_metric_metadata` | Prometheus  | List metric metadata                                                | `datasources:query`                     | `datasources:uid:prometheus-uid`                    |
@@ -241,13 +283,14 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `list_clickhouse_tables`          | ClickHouse* | List tables in a ClickHouse database                                | `datasources:query`                     | `datasources:uid:*`                                 |
 | `describe_clickhouse_table`       | ClickHouse* | Get table schema with column types                                  | `datasources:query`                     | `datasources:uid:*`                                 |
 | `query_clickhouse`                | ClickHouse* | Execute SQL queries with macro substitution                         | `datasources:query`                     | `datasources:uid:*`                                 |
+| `list_cloudwatch_namespaces`      | CloudWatch* | List available AWS CloudWatch namespaces                            | `datasources:query`                     | `datasources:uid:*`                                 |
+| `list_cloudwatch_metrics`         | CloudWatch* | List metrics in a namespace                                         | `datasources:query`                     | `datasources:uid:*`                                 |
+| `list_cloudwatch_dimensions`      | CloudWatch* | List dimensions for a metric                                        | `datasources:query`                     | `datasources:uid:*`                                 |
+| `query_cloudwatch`                | CloudWatch* | Execute CloudWatch metric queries                                   | `datasources:query`                     | `datasources:uid:*`                                 |
 | `search_logs`                     | SearchLogs* | Search logs across ClickHouse and Loki                              | `datasources:query`                     | `datasources:uid:*`                                 |
-| `list_alert_rules`                | Alerting    | List alert rules                                                    | `alert.rules:read`                      | `folders:*` or `folders:uid:alerts-folder`          |
-| `get_alert_rule_by_uid`           | Alerting    | Get alert rule by UID                                               | `alert.rules:read`                      | `folders:uid:alerts-folder`                         |
-| `create_alert_rule`               | Alerting    | Create a new alert rule                                             | `alert.rules:write`                     | `folders:*` or `folders:uid:alerts-folder`          |
-| `update_alert_rule`               | Alerting    | Update an existing alert rule                                       | `alert.rules:write`                     | `folders:uid:alerts-folder`                         |
-| `delete_alert_rule`               | Alerting    | Delete an alert rule by UID                                         | `alert.rules:write`                     | `folders:uid:alerts-folder`                         |
-| `list_contact_points`             | Alerting    | List notification contact points (Grafana-managed and Alertmanager) | `alert.notifications:read`              | Global scope                                        |
+| `query_elasticsearch`             | Elasticsearch* | Query Elasticsearch using Lucene syntax or Query DSL              | `datasources:query`                     | `datasources:uid:elasticsearch-uid`                 |
+| `alerting_manage_rules`           | Alerting    | Manage alert rules (list, get, versions, create, update, delete)    | `alert.rules:read` + `alert.rules:write` for mutations | `folders:*` or `folders:uid:alerts-folder` |
+| `alerting_manage_routing`         | Alerting    | Manage notification policies, contact points, and time intervals    | `alert.notifications:read`              | Global scope                                        |
 | `list_oncall_schedules`           | OnCall      | List schedules from Grafana OnCall                                  | `grafana-oncall-app.schedules:read`     | Plugin-specific scopes                              |
 | `get_oncall_shift`                | OnCall      | Get details for a specific OnCall shift                             | `grafana-oncall-app.schedules:read`     | Plugin-specific scopes                              |
 | `get_current_oncall_users`        | OnCall      | Get users currently on-call for a specific schedule                 | `grafana-oncall-app.schedules:read`     | Plugin-specific scopes                              |
@@ -267,10 +310,8 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `get_assertions`                  | Asserts     | Get assertion summary for a given entity                            | Plugin-specific permissions             | Plugin-specific scopes                              |
 | `generate_deeplink`               | Navigation  | Generate accurate deeplink URLs for Grafana resources               | None (read-only URL generation)         | N/A                                                 |
 | `get_annotations`                 | Annotations | Fetch annotations with filters                                      | `annotations:read`                      | `annotations:*` or `annotations:id:123`             |
-| `create_annotation`               | Annotations | Create a new annotation on a dashboard or panel                     | `annotations:write`                     | `annotations:*`                                     |
-| `create_graphite_annotation`      | Annotations | Create an annotation using Graphite format                          | `annotations:write`                     | `annotations:*`                                     |
-| `update_annotation`               | Annotations | Replace all fields of an annotation (full update)                   | `annotations:write`                     | `annotations:*`                                     |
-| `patch_annotation`                | Annotations | Update only specific fields of an annotation (partial update)       | `annotations:write`                     | `annotations:*`                                     |
+| `create_annotation`               | Annotations | Create a new annotation (standard or Graphite format)               | `annotations:write`                     | `annotations:*`                                     |
+| `update_annotation`               | Annotations | Update specific fields of an annotation (partial update)            | `annotations:write`                     | `annotations:*`                                     |
 | `get_annotation_tags`             | Annotations | List annotation tags with optional filtering                        | `annotations:read`                      | `annotations:*`                                     |
 | `get_panel_image`                 | Rendering   | Render a dashboard panel or full dashboard as a PNG image           | `dashboards:read`                       | `dashboards:uid:abc123`                             |
 
@@ -296,12 +337,14 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 
 **Tool Configuration:**
 - `--enabled-tools`: Comma-separated list of enabled categories - default: all categories except `admin`, to enable admin tools, add `admin` to the list (e.g., `"search,datasource,...,admin"`)
+- `--max-loki-log-limit`: Maximum number of log lines returned per `query_loki_logs` call - default: `100`. Note: Set this at least 1 below Loki's server-side `max_entries_limit_per_query` to allow truncation detection (the tool requests `limit+1` internally to detect if more data exists).
 - `--disable-search`: Disable search tools
 - `--disable-datasource`: Disable datasource tools
 - `--disable-incident`: Disable incident tools
 - `--disable-prometheus`: Disable prometheus tools
 - `--disable-write`: Disable write tools (create/update operations)
 - `--disable-loki`: Disable loki tools
+- `--disable-elasticsearch`: Disable elasticsearch tools
 - `--disable-alerting`: Disable alerting tools
 - `--disable-dashboard`: Disable dashboard tools
 - `--disable-oncall`: Disable oncall tools
@@ -311,9 +354,11 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 - `--disable-pyroscope`: Disable pyroscope tools
 - `--disable-navigation`: Disable navigation tools
 - `--disable-rendering`: Disable rendering tools (panel/dashboard image export)
+- `--disable-cloudwatch`: Disable CloudWatch tools
 - `--disable-examples`: Disable query examples tools
 - `--disable-clickhouse`: Disable ClickHouse tools
 - `--disable-searchlogs`: Disable search_logs tool
+- `--disable-runpanelquery`: Disable run panel query tools
 
 ### Read-Only Mode
 
@@ -337,15 +382,11 @@ When `--disable-write` is enabled, the following write operations are disabled:
 - `add_activity_to_incident`
 
 **Alerting Tools:**
-- `create_alert_rule`
-- `update_alert_rule`
-- `delete_alert_rule`
+- `alerting_manage_rules` (create, update, delete operations)
 
 **Annotation Tools:**
 - `create_annotation`
-- `create_graphite_annotation`
 - `update_annotation`
-- `patch_annotation`
 
 **Sift Tools:**
 - `find_error_pattern_logs` (creates investigations)
@@ -426,6 +467,12 @@ You can add arbitrary HTTP headers to all Grafana API requests using the `GRAFAN
 
 2. You have several options to install `mcp-grafana`:
 
+   - **uvx (recommended)**: If you have [uv](https://docs.astral.sh/uv/getting-started/installation/) installed, no extra setup is needed — `uvx` will automatically download and run the server:
+
+     ```bash
+     uvx mcp-grafana
+     ```
+
    - **Docker image**: Use the pre-built Docker image from Docker Hub.
 
      **Important**: The Docker image's entrypoint is configured to run the MCP server in SSE mode by default, but most users will want to use STDIO mode for direct integration with AI assistants like Claude Desktop:
@@ -487,6 +534,23 @@ You can add arbitrary HTTP headers to all Grafana API requests using the `GRAFAN
 
 
 3. Add the server configuration to your client configuration file. For example, for Claude Desktop:
+
+   **If using uvx:**
+
+   ```json
+   {
+     "mcpServers": {
+       "grafana": {
+         "command": "uvx",
+         "args": ["mcp-grafana"],
+         "env": {
+           "GRAFANA_URL": "http://localhost:3000",
+           "GRAFANA_SERVICE_ACCOUNT_TOKEN": "<your service account token>"
+         }
+       }
+     }
+   }
+   ```
 
    **If using the binary:**
 

@@ -200,7 +200,7 @@ class TestTempoProxiedToolsWithLLM:
     """LLM integration tests for Tempo proxied tools."""
 
     @pytest.mark.parametrize("model", models)
-    @pytest.mark.flaky(max_runs=3)
+    @pytest.mark.flaky(reruns=2)
     async def test_llm_can_list_trace_attributes(
         self, model: str, mcp_client: ClientSession, mcp_transport: str
     ):
