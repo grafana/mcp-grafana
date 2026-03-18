@@ -1058,22 +1058,32 @@ func TestFetchPublicURL(t *testing.T) {
 		assert.Equal(t, 1, callCount) // no additional HTTP call
 	})
 
-	t.Run("caches error results to avoid repeated failed requests", func(t *testing.T) {
+	t.Run("retries on failure instead of caching errors permanently", func(t *testing.T) {
 		callCount := 0
 		ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
 			callCount++
-			w.WriteHeader(http.StatusInternalServerError)
+			if callCount == 1 {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"appUrl": "https://grafana.example.com"}`))
 		})
 
-		// First call should hit the server and get an error
+		// First call fails
 		publicURL := fetchPublicURL(context.Background(), ts.URL, "test-key", nil, nil, nil)
 		assert.Equal(t, "", publicURL)
 		assert.Equal(t, 1, callCount)
 
-		// Second call should use cached empty result, not retry
+		// Second call retries and succeeds (failures are not cached)
 		publicURL = fetchPublicURL(context.Background(), ts.URL, "test-key", nil, nil, nil)
-		assert.Equal(t, "", publicURL)
-		assert.Equal(t, 1, callCount) // no additional HTTP call
+		assert.Equal(t, "https://grafana.example.com", publicURL)
+		assert.Equal(t, 2, callCount)
+
+		// Third call uses cached success
+		publicURL = fetchPublicURL(context.Background(), ts.URL, "test-key", nil, nil, nil)
+		assert.Equal(t, "https://grafana.example.com", publicURL)
+		assert.Equal(t, 2, callCount) // no additional HTTP call
 	})
 }
 

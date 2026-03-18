@@ -24,6 +24,7 @@ import (
 	"github.com/grafana/incident-go"
 	"github.com/mark3labs/mcp-go/server"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"golang.org/x/sync/singleflight"
 )
 
 const (
@@ -522,26 +523,45 @@ func makeBasePath(path string) string {
 	return strings.Join([]string{strings.TrimRight(path, "/"), "api"}, "/")
 }
 
-// publicURLCache caches the fetched public URL per Grafana URL to avoid
-// making HTTP calls on every request in HTTP/SSE modes where NewGrafanaClient
-// is called per-request. The public URL (appUrl) is a static server setting.
+// publicURLCache caches successfully fetched public URLs per Grafana URL.
+// Only non-empty (successful) results are cached; failures are retried on
+// subsequent calls so that transient errors at startup don't permanently
+// disable the feature.
 var publicURLCache sync.Map // map[string]string (grafanaURL -> publicURL)
+
+// publicURLFlight deduplicates concurrent fetchPublicURL calls for the same
+// Grafana URL, preventing thundering-herd HTTP requests and race conditions
+// where a failing goroutine could overwrite a successful result.
+var publicURLFlight singleflight.Group
 
 // fetchPublicURL fetches the public URL (appUrl) from Grafana's frontend settings API.
 // It returns the appUrl if available, or an empty string if the request fails.
-// Results are cached per grafanaURL to avoid repeated HTTP calls.
+// Successful results are cached permanently; failures are retried on subsequent calls.
+// Concurrent calls for the same grafanaURL are coalesced via singleflight.
 func fetchPublicURL(ctx context.Context, grafanaURL, apiKey string, auth *url.Userinfo, tlsConfig *TLSConfig, extraHeaders map[string]string) string {
-	// Check cache first
+	// Check cache first (only successful results are cached)
 	if cached, ok := publicURLCache.Load(grafanaURL); ok {
 		return cached.(string)
 	}
 
-	publicURL := doFetchPublicURL(ctx, grafanaURL, apiKey, auth, tlsConfig, extraHeaders)
+	// Use singleflight to coalesce concurrent requests for the same URL
+	result, _, _ := publicURLFlight.Do(grafanaURL, func() (any, error) {
+		// Double-check cache inside singleflight (another goroutine may have populated it)
+		if cached, ok := publicURLCache.Load(grafanaURL); ok {
+			return cached.(string), nil
+		}
 
-	// Cache the result (even empty string to avoid repeated failed/timeout requests)
-	publicURLCache.Store(grafanaURL, publicURL)
+		publicURL := doFetchPublicURL(ctx, grafanaURL, apiKey, auth, tlsConfig, extraHeaders)
 
-	return publicURL
+		// Only cache successful (non-empty) results so transient failures are retried
+		if publicURL != "" {
+			publicURLCache.Store(grafanaURL, publicURL)
+		}
+
+		return publicURL, nil
+	})
+
+	return result.(string)
 }
 
 // doFetchPublicURL performs the actual HTTP request to fetch the public URL.
