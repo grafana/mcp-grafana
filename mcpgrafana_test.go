@@ -933,7 +933,17 @@ func newTestHTTPServer(t *testing.T, handler http.HandlerFunc) *httptest.Server 
 	return ts
 }
 
+// clearPublicURLCache removes all entries from the publicURLCache for test isolation.
+func clearPublicURLCache() {
+	publicURLCache.Range(func(key, _ any) bool {
+		publicURLCache.Delete(key)
+		return true
+	})
+}
+
 func TestFetchPublicURL(t *testing.T) {
+	t.Cleanup(clearPublicURLCache)
+
 	t.Run("fetches appUrl from frontend settings", func(t *testing.T) {
 		ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/api/frontend/settings" {
@@ -944,7 +954,7 @@ func TestFetchPublicURL(t *testing.T) {
 			w.WriteHeader(http.StatusNotFound)
 		})
 
-		publicURL := fetchPublicURL(context.Background(), ts.URL, "test-key", nil, nil)
+		publicURL := fetchPublicURL(context.Background(), ts.URL, "test-key", nil, nil, nil)
 		assert.Equal(t, "https://grafana.example.com", publicURL)
 	})
 
@@ -953,7 +963,7 @@ func TestFetchPublicURL(t *testing.T) {
 			w.WriteHeader(http.StatusInternalServerError)
 		})
 
-		publicURL := fetchPublicURL(context.Background(), ts.URL, "test-key", nil, nil)
+		publicURL := fetchPublicURL(context.Background(), ts.URL, "test-key", nil, nil, nil)
 		assert.Equal(t, "", publicURL)
 	})
 
@@ -963,7 +973,7 @@ func TestFetchPublicURL(t *testing.T) {
 			_, _ = w.Write([]byte(`{"appUrl": ""}`))
 		})
 
-		publicURL := fetchPublicURL(context.Background(), ts.URL, "test-key", nil, nil)
+		publicURL := fetchPublicURL(context.Background(), ts.URL, "test-key", nil, nil, nil)
 		assert.Equal(t, "", publicURL)
 	})
 
@@ -972,7 +982,7 @@ func TestFetchPublicURL(t *testing.T) {
 			_, _ = w.Write([]byte(`not json`))
 		})
 
-		publicURL := fetchPublicURL(context.Background(), ts.URL, "test-key", nil, nil)
+		publicURL := fetchPublicURL(context.Background(), ts.URL, "test-key", nil, nil, nil)
 		assert.Equal(t, "", publicURL)
 	})
 
@@ -984,7 +994,7 @@ func TestFetchPublicURL(t *testing.T) {
 			_, _ = w.Write([]byte(`{"appUrl": "https://grafana.example.com"}`))
 		})
 
-		fetchPublicURL(context.Background(), ts.URL, "my-token", nil, nil)
+		fetchPublicURL(context.Background(), ts.URL, "my-token", nil, nil, nil)
 		assert.Equal(t, "Bearer my-token", capturedAuth)
 	})
 
@@ -997,7 +1007,7 @@ func TestFetchPublicURL(t *testing.T) {
 		})
 
 		auth := url.UserPassword("admin", "secret")
-		fetchPublicURL(context.Background(), ts.URL, "", auth, nil)
+		fetchPublicURL(context.Background(), ts.URL, "", auth, nil, nil)
 		assert.Equal(t, "admin", capturedUser)
 		assert.Equal(t, "secret", capturedPass)
 	})
@@ -1008,12 +1018,50 @@ func TestFetchPublicURL(t *testing.T) {
 			_, _ = w.Write([]byte(`{"appUrl": "https://grafana.example.com/"}`))
 		})
 
-		publicURL := fetchPublicURL(context.Background(), ts.URL, "", nil, nil)
+		publicURL := fetchPublicURL(context.Background(), ts.URL, "", nil, nil, nil)
 		assert.Equal(t, "https://grafana.example.com", publicURL)
+	})
+
+	t.Run("forwards extra headers", func(t *testing.T) {
+		var capturedHeaders http.Header
+		ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+			capturedHeaders = r.Header.Clone()
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"appUrl": "https://grafana.example.com"}`))
+		})
+
+		extraHeaders := map[string]string{
+			"X-Custom-Auth": "proxy-token-123",
+			"X-Forwarded-For": "10.0.0.1",
+		}
+		fetchPublicURL(context.Background(), ts.URL, "", nil, nil, extraHeaders)
+		assert.Equal(t, "proxy-token-123", capturedHeaders.Get("X-Custom-Auth"))
+		assert.Equal(t, "10.0.0.1", capturedHeaders.Get("X-Forwarded-For"))
+	})
+
+	t.Run("caches results per grafana URL", func(t *testing.T) {
+		callCount := 0
+		ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+			callCount++
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"appUrl": "https://grafana.example.com"}`))
+		})
+
+		// First call should hit the server
+		publicURL := fetchPublicURL(context.Background(), ts.URL, "test-key", nil, nil, nil)
+		assert.Equal(t, "https://grafana.example.com", publicURL)
+		assert.Equal(t, 1, callCount)
+
+		// Second call should use cache
+		publicURL = fetchPublicURL(context.Background(), ts.URL, "test-key", nil, nil, nil)
+		assert.Equal(t, "https://grafana.example.com", publicURL)
+		assert.Equal(t, 1, callCount) // no additional HTTP call
 	})
 }
 
 func TestNewGrafanaClientFetchesPublicURL(t *testing.T) {
+	t.Cleanup(clearPublicURLCache)
+
 	t.Run("stores public URL from frontend settings", func(t *testing.T) {
 		ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/api/frontend/settings" {

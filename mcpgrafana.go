@@ -522,9 +522,20 @@ func makeBasePath(path string) string {
 	return strings.Join([]string{strings.TrimRight(path, "/"), "api"}, "/")
 }
 
+// publicURLCache caches the fetched public URL per Grafana URL to avoid
+// making HTTP calls on every request in HTTP/SSE modes where NewGrafanaClient
+// is called per-request. The public URL (appUrl) is a static server setting.
+var publicURLCache sync.Map // map[string]string (grafanaURL -> publicURL)
+
 // fetchPublicURL fetches the public URL (appUrl) from Grafana's frontend settings API.
 // It returns the appUrl if available, or an empty string if the request fails.
-func fetchPublicURL(ctx context.Context, grafanaURL, apiKey string, auth *url.Userinfo, tlsConfig *TLSConfig) string {
+// Results are cached per grafanaURL to avoid repeated HTTP calls.
+func fetchPublicURL(ctx context.Context, grafanaURL, apiKey string, auth *url.Userinfo, tlsConfig *TLSConfig, extraHeaders map[string]string) string {
+	// Check cache first
+	if cached, ok := publicURLCache.Load(grafanaURL); ok {
+		return cached.(string)
+	}
+
 	settingsURL := strings.TrimRight(grafanaURL, "/") + "/api/frontend/settings"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, settingsURL, nil)
 	if err != nil {
@@ -540,6 +551,11 @@ func fetchPublicURL(ctx context.Context, grafanaURL, apiKey string, auth *url.Us
 		req.SetBasicAuth(auth.Username(), password)
 	}
 	req.Header.Set("User-Agent", UserAgent())
+
+	// Apply extra headers (e.g., for proxies requiring custom headers)
+	for k, v := range extraHeaders {
+		req.Header.Set(k, v)
+	}
 
 	httpClient := &http.Client{Timeout: 5 * time.Second}
 	if tlsConfig != nil {
@@ -581,6 +597,10 @@ func fetchPublicURL(ctx context.Context, grafanaURL, apiKey string, auth *url.Us
 	if publicURL != "" {
 		slog.Info("Fetched public URL from Grafana frontend settings", "public_url", publicURL)
 	}
+
+	// Cache the result (even empty string to avoid repeated failed requests)
+	publicURLCache.Store(grafanaURL, publicURL)
+
 	return publicURL
 }
 
@@ -691,7 +711,7 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 	}
 
 	// Fetch the public URL from Grafana's frontend settings.
-	publicURL := fetchPublicURL(ctx, grafanaURL, apiKey, auth, config.TLSConfig)
+	publicURL := fetchPublicURL(ctx, grafanaURL, apiKey, auth, config.TLSConfig, config.ExtraHeaders)
 
 	return &GrafanaClient{
 		GrafanaHTTPAPI: grafanaClient,
