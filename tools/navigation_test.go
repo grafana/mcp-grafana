@@ -115,6 +115,71 @@ func TestGenerateDeeplink(t *testing.T) {
 		assert.Equal(t, "prom-uid", ds["uid"])
 	})
 
+	t.Run("Explore deeplink with Elasticsearch extraJSON", func(t *testing.T) {
+		params := GenerateDeeplinkParams{
+			ResourceType:  "explore",
+			DatasourceUID: stringPtr("coralogix-uid"),
+			Queries: []ExploreQuery{
+				{
+					RefID: "A",
+					ExtraJSON: map[string]interface{}{
+						"query":     `app_class:"scan_status_service" AND message:"to status\: FAILED"`,
+						"alias":     "",
+						"timeField": "coralogix.timestamp",
+						"metrics": []interface{}{
+							map[string]interface{}{"type": "count", "id": "1"},
+						},
+						"bucketAggs": []interface{}{
+							map[string]interface{}{
+								"id":       "3",
+								"type":     "terms",
+								"field":    "customer_name.keyword",
+								"settings": map[string]interface{}{"min_doc_count": "1", "size": "10", "order": "desc", "orderBy": "_term"},
+							},
+							map[string]interface{}{
+								"id":       "2",
+								"type":     "date_histogram",
+								"field":    "coralogix.timestamp",
+								"settings": map[string]interface{}{"interval": "1d"},
+							},
+						},
+					},
+				},
+			},
+			TimeRange: &TimeRange{
+				From: "now-7d",
+				To:   "now",
+			},
+		}
+
+		result, err := generateDeeplink(ctx, params)
+		require.NoError(t, err)
+
+		leftJSON := extractLeftParam(t, result)
+		var leftObj map[string]interface{}
+		require.NoError(t, json.Unmarshal([]byte(leftJSON), &leftObj))
+
+		assert.Equal(t, "coralogix-uid", leftObj["datasource"])
+		queries := leftObj["queries"].([]interface{})
+		require.Len(t, queries, 1)
+		q := queries[0].(map[string]interface{})
+
+		// Should have Elasticsearch-specific fields
+		assert.Equal(t, `app_class:"scan_status_service" AND message:"to status\: FAILED"`, q["query"])
+		assert.Equal(t, "coralogix.timestamp", q["timeField"])
+		assert.NotNil(t, q["metrics"])
+		assert.NotNil(t, q["bucketAggs"])
+
+		// Should NOT have PromQL-specific fields
+		assert.Nil(t, q["expr"])
+		assert.Nil(t, q["editorMode"])
+		assert.Nil(t, q["range"])
+
+		// Datasource should be set
+		ds := q["datasource"].(map[string]interface{})
+		assert.Equal(t, "coralogix-uid", ds["uid"])
+	})
+
 	t.Run("Explore deeplink with time range embedded in left param", func(t *testing.T) {
 		params := GenerateDeeplinkParams{
 			ResourceType:  "explore",

@@ -19,16 +19,17 @@ type GenerateDeeplinkParams struct {
 	DashboardUID  *string           `json:"dashboardUid,omitempty" jsonschema:"description=Dashboard UID (required for dashboard and panel types)"`
 	DatasourceUID *string           `json:"datasourceUid,omitempty" jsonschema:"description=Datasource UID. Required for explore type. Optional for dashboard/panel types: when provided\\, auto-resolves the datasource template variable so callers don't need to know the exact var-datasource value."`
 	PanelID       *int              `json:"panelId,omitempty" jsonschema:"description=Panel ID (required for panel type)"`
-	Queries       []ExploreQuery    `json:"queries,omitempty" jsonschema:"description=Queries for explore links. Each query should have expr (PromQL/LogQL expression) and refId."`
+	Queries       []ExploreQuery    `json:"queries,omitempty" jsonschema:"description=Queries for explore links. For PromQL/LogQL datasources use expr. For Elasticsearch/Coralogix datasources use extraJSON with query\\, metrics\\, bucketAggs\\, and timeField."`
 	QueryParams   map[string]string `json:"queryParams,omitempty" jsonschema:"description=Additional query parameters"`
 	TimeRange     *TimeRange        `json:"timeRange,omitempty" jsonschema:"description=Time range for the link"`
 }
 
 type ExploreQuery struct {
-	Expr     string `json:"expr" jsonschema:"required,description=Query expression (PromQL\\, LogQL\\, etc.)"`
-	RefID    string `json:"refId,omitempty" jsonschema:"description=Reference ID for the query (defaults to A)"`
-	Instant  *bool  `json:"instant,omitempty" jsonschema:"description=Whether to run as instant query"`
-	Range    *bool  `json:"range,omitempty" jsonschema:"description=Whether to run as range query"`
+	Expr     string                 `json:"expr,omitempty" jsonschema:"description=Query expression (PromQL\\, LogQL\\, etc.). Required for Prometheus/Loki datasources."`
+	RefID    string                 `json:"refId,omitempty" jsonschema:"description=Reference ID for the query (defaults to A)"`
+	Instant  *bool                  `json:"instant,omitempty" jsonschema:"description=Whether to run as instant query"`
+	Range    *bool                  `json:"range,omitempty" jsonschema:"description=Whether to run as range query"`
+	ExtraJSON map[string]interface{} `json:"extraJSON,omitempty" jsonschema:"description=Additional datasource-specific query properties (e.g. query\\, metrics\\, bucketAggs\\, timeField for Elasticsearch/Coralogix datasources). These are merged directly into the query object."`
 }
 
 type TimeRange struct {
@@ -47,15 +48,32 @@ func buildExploreLeftParam(datasourceUID string, queries []ExploreQuery, timeRan
 			qm := map[string]interface{}{
 				"refId":      q.RefID,
 				"datasource": map[string]string{"uid": datasourceUID},
-				"editorMode": "code",
-				"expr":       q.Expr,
 			}
 			if qm["refId"] == "" {
 				qm["refId"] = string(rune('A' + i))
 			}
+
+			// If ExtraJSON is provided, merge those properties directly into the
+			// query object. This supports datasources like Elasticsearch/Coralogix
+			// that use fields like "query", "metrics", "bucketAggs", "timeField"
+			// instead of "expr".
+			if len(q.ExtraJSON) > 0 {
+				for k, v := range q.ExtraJSON {
+					qm[k] = v
+				}
+			}
+
+			// Only set expr/editorMode for PromQL/LogQL-style datasources
+			// (i.e., when ExtraJSON is not used or expr is explicitly provided)
+			if q.Expr != "" {
+				qm["expr"] = q.Expr
+				qm["editorMode"] = "code"
+			}
+
 			if q.Range != nil {
 				qm["range"] = *q.Range
-			} else {
+			} else if q.Expr != "" {
+				// Default range=true only for PromQL/LogQL queries
 				qm["range"] = true
 			}
 			if q.Instant != nil {
