@@ -551,7 +551,12 @@ func fetchPublicURL(ctx context.Context, grafanaURL, apiKey string, auth *url.Us
 			return cached.(string), nil
 		}
 
-		publicURL := doFetchPublicURL(ctx, grafanaURL, apiKey, auth, tlsConfig, extraHeaders)
+		// Use a detached context with timeout so that a cancelled request
+		// context from the first caller doesn't fail the fetch for all waiters.
+		fetchCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		publicURL := doFetchPublicURL(fetchCtx, grafanaURL, apiKey, auth, tlsConfig, extraHeaders)
 
 		// Only cache successful (non-empty) results so transient failures are retried
 		if publicURL != "" {
@@ -594,7 +599,10 @@ func doFetchPublicURL(ctx context.Context, grafanaURL, apiKey string, auth *url.
 			slog.Warn("Failed to create TLS config for frontend settings request", "error", err)
 			return ""
 		}
-		httpClient.Transport = &http.Transport{TLSClientConfig: tlsCfg}
+		httpClient.Transport = &http.Transport{
+			TLSClientConfig: tlsCfg,
+			Proxy:           http.ProxyFromEnvironment,
+		}
 	}
 
 	resp, err := httpClient.Do(req)
