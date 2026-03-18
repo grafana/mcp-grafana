@@ -556,7 +556,7 @@ func fetchPublicURL(ctx context.Context, grafanaURL, apiKey string, auth *url.Us
 		slog.Warn("Failed to fetch frontend settings", "error", err)
 		return ""
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		slog.Warn("Frontend settings request returned non-OK status", "status", resp.StatusCode)
