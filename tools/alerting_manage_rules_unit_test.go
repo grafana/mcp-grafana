@@ -423,6 +423,38 @@ func TestBuiltInValidationCatchesInvalidData(t *testing.T) {
 	})
 }
 
+func TestManageRulesReadParams_ToGetRulesOptsReusesValidatedOpts(t *testing.T) {
+	params := ManageRulesReadParams{
+		listFilterParams: listFilterParams{
+			Matchers: []LabelMatcher{{Name: "severity", Type: "=~", Value: "critical|warning"}},
+		},
+		Operation: "list",
+	}
+
+	require.NoError(t, params.validate())
+	require.NotNil(t, params.getRulesOpts)
+
+	opts, err := params.toGetRulesOpts()
+	require.NoError(t, err)
+	require.Same(t, params.getRulesOpts, opts)
+}
+
+func TestManageRulesReadWriteParams_ToGetRulesOptsReusesValidatedOpts(t *testing.T) {
+	params := ManageRulesReadWriteParams{
+		listFilterParams: listFilterParams{
+			Matchers: []LabelMatcher{{Name: "severity", Type: "=~", Value: "critical|warning"}},
+		},
+		Operation: "list",
+	}
+
+	require.NoError(t, params.validate())
+	require.NotNil(t, params.getRulesOpts)
+
+	opts, err := params.toGetRulesOpts()
+	require.NoError(t, err)
+	require.Same(t, params.getRulesOpts, opts)
+}
+
 func setupManageRulesTestContext(t *testing.T, assertRequest func(t *testing.T, r *http.Request)) context.Context {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -456,7 +488,7 @@ func TestManageRules_ListRules(t *testing.T) {
 		params        ManageRulesReadParams
 		assertRequest func(t *testing.T, r *http.Request)
 		wantErr       string
-		expectedRules     []alertRuleSummary
+		expectedRules []alertRuleSummary
 	}{
 		// Validation errors (mock server is never hit)
 		{
@@ -585,13 +617,17 @@ func TestManageRulesReadWrite_ValidationErrors(t *testing.T) {
 		wantErr string
 	}{
 		{
-			name:    "negative rule_limit",
-			call:    func() (any, error) { return manageRulesReadWrite(ctx, ManageRulesReadWriteParams{listFilterParams: listFilterParams{RuleLimit: -1}, Operation: "list"}) },
+			name: "negative rule_limit",
+			call: func() (any, error) {
+				return manageRulesReadWrite(ctx, ManageRulesReadWriteParams{listFilterParams: listFilterParams{RuleLimit: -1}, Operation: "list"})
+			},
 			wantErr: "invalid rule_limit",
 		},
 		{
-			name:    "folder_uid and search_folder mutually exclusive",
-			call:    func() (any, error) { return manageRulesReadWrite(ctx, ManageRulesReadWriteParams{listFilterParams: listFilterParams{SearchFolder: "Production"}, Operation: "list", FolderUID: "folder-1"}) },
+			name: "folder_uid and search_folder mutually exclusive",
+			call: func() (any, error) {
+				return manageRulesReadWrite(ctx, ManageRulesReadWriteParams{listFilterParams: listFilterParams{SearchFolder: "Production"}, Operation: "list", FolderUID: "folder-1"})
+			},
 			wantErr: "mutually exclusive",
 		},
 		{
@@ -622,8 +658,10 @@ func TestManageRulesReadWrite_ValidationErrors(t *testing.T) {
 			wantErr: "rule_uid is required",
 		},
 		{
-			name:    "unknown operation",
-			call:    func() (any, error) { return manageRulesReadWrite(ctx, ManageRulesReadWriteParams{Operation: "invalid"}) },
+			name: "unknown operation",
+			call: func() (any, error) {
+				return manageRulesReadWrite(ctx, ManageRulesReadWriteParams{Operation: "invalid"})
+			},
 			wantErr: "unknown operation",
 		},
 	}

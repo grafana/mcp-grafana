@@ -297,6 +297,20 @@ func buildGetRulesOpts(f listFilterParams, folderUID, ruleGroup string) (*GetRul
 	}, nil
 }
 
+func getOrBuildGetRulesOpts(cache **GetRulesOpts, f listFilterParams, folderUID, ruleGroup string) (*GetRulesOpts, error) {
+	if *cache != nil {
+		return *cache, nil
+	}
+
+	opts, err := buildGetRulesOpts(f, folderUID, ruleGroup)
+	if err != nil {
+		return nil, err
+	}
+
+	*cache = opts
+	return opts, nil
+}
+
 // listFilterParams contains list operation filter fields shared between read and read-write param structs.
 type listFilterParams struct {
 	RuleLimit      int            `json:"rule_limit,omitempty" jsonschema:"default=200,description=Maximum number of rules to return (default 200\\, max 200). Requires Grafana 12.4+ (for 'list' operation)"`
@@ -318,12 +332,14 @@ type ManageRulesReadParams struct {
 	DatasourceUID *string `json:"datasource_uid,omitempty" jsonschema:"description=Optional: UID of a Prometheus or Loki datasource to query for datasource-managed alert rules. If omitted\\, returns Grafana-managed rules."`
 	FolderUID     string  `json:"folder_uid,omitempty" jsonschema:"description=Filter by exact folder UID (for 'list' operation). Mutually exclusive with search_folder."`
 	RuleGroup     string  `json:"rule_group,omitempty" jsonschema:"description=Filter by exact rule group name (for 'list' operation)"`
+
+	getRulesOpts *GetRulesOpts
 }
 
-func (p ManageRulesReadParams) validate() error {
+func (p *ManageRulesReadParams) validate() error {
 	switch p.Operation {
 	case "list":
-		_, err := buildGetRulesOpts(p.listFilterParams, p.FolderUID, p.RuleGroup)
+		_, err := getOrBuildGetRulesOpts(&p.getRulesOpts, p.listFilterParams, p.FolderUID, p.RuleGroup)
 		return err
 	case "get":
 		if p.RuleUID == "" {
@@ -340,8 +356,8 @@ func (p ManageRulesReadParams) validate() error {
 	}
 }
 
-func (p ManageRulesReadParams) toGetRulesOpts() (*GetRulesOpts, error) {
-	return buildGetRulesOpts(p.listFilterParams, p.FolderUID, p.RuleGroup)
+func (p *ManageRulesReadParams) toGetRulesOpts() (*GetRulesOpts, error) {
+	return getOrBuildGetRulesOpts(&p.getRulesOpts, p.listFilterParams, p.FolderUID, p.RuleGroup)
 }
 
 // ManageRulesReadWriteParams is the param struct for the read-write version of alerting_manage_rules.
@@ -363,12 +379,14 @@ type ManageRulesReadWriteParams struct {
 	Labels            map[string]string `json:"labels,omitempty" jsonschema:"description=Optional labels for the alert rule"`
 	OrgID             int64             `json:"org_id,omitempty" jsonschema:"description=The organization ID (required for 'create'\\, 'update')"`
 	DisableProvenance *bool             `json:"disable_provenance,omitempty" jsonschema:"description=If true\\, the alert remains editable in the Grafana UI (sets X-Disable-Provenance header). Defaults to true."`
+
+	getRulesOpts *GetRulesOpts
 }
 
-func (p ManageRulesReadWriteParams) validate() error {
+func (p *ManageRulesReadWriteParams) validate() error {
 	switch p.Operation {
 	case "list":
-		_, err := buildGetRulesOpts(p.listFilterParams, p.FolderUID, p.RuleGroup)
+		_, err := getOrBuildGetRulesOpts(&p.getRulesOpts, p.listFilterParams, p.FolderUID, p.RuleGroup)
 		return err
 	case "get":
 		if p.RuleUID == "" {
@@ -433,6 +451,6 @@ func (p ManageRulesReadWriteParams) toUpdateParams() UpdateAlertRuleParams {
 	}
 }
 
-func (p ManageRulesReadWriteParams) toGetRulesOpts() (*GetRulesOpts, error) {
-	return buildGetRulesOpts(p.listFilterParams, p.FolderUID, p.RuleGroup)
+func (p *ManageRulesReadWriteParams) toGetRulesOpts() (*GetRulesOpts, error) {
+	return getOrBuildGetRulesOpts(&p.getRulesOpts, p.listFilterParams, p.FolderUID, p.RuleGroup)
 }
