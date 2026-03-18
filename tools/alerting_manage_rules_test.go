@@ -552,60 +552,36 @@ func TestManageRules_Create(t *testing.T) {
 	t.Run("create alert rule with valid parameters", func(t *testing.T) {
 		ctx := newTestContext()
 
-		sampleData := []*models.AlertQuery{
+		sampleData := []*AlertQuery{
 			{
-				RefID:     "A",
-				QueryType: "",
-				RelativeTimeRange: &models.RelativeTimeRange{
+				RefID:         "A",
+				DatasourceUID: "prometheus-uid",
+				RelativeTimeRange: &RelativeTimeRange{
 					From: 600,
 					To:   0,
 				},
-				DatasourceUID: "prometheus-uid",
-				Model: map[string]any{
-					"expr":          "up",
-					"hide":          false,
-					"intervalMs":    1000,
-					"maxDataPoints": 43200,
-					"refId":         "A",
+				Model: AlertQueryModel{
+					Expr: "up",
 				},
 			},
 			{
-				RefID:     "B",
-				QueryType: "",
-				RelativeTimeRange: &models.RelativeTimeRange{
-					From: 0,
-					To:   0,
-				},
+				RefID:         "B",
 				DatasourceUID: "__expr__",
-				Model: map[string]any{
-					"conditions": []any{
-						map[string]any{
-							"evaluator": map[string]any{
-								"params": []any{1},
-								"type":   "gt",
-							},
-							"operator": map[string]any{
-								"type": "and",
-							},
-							"query": map[string]any{
-								"params": []any{"A"},
-							},
-							"reducer": map[string]any{
-								"params": []any{},
-								"type":   "last",
-							},
-							"type": "query",
-						},
+				Model: AlertQueryModel{
+					Type:       "reduce",
+					Expression: "A",
+					Reducer:    "last",
+				},
+			},
+			{
+				RefID:         "C",
+				DatasourceUID: "__expr__",
+				Model: AlertQueryModel{
+					Type:       "threshold",
+					Expression: "B",
+					Conditions: []AlertCondition{
+						{Evaluator: ConditionEvaluator{Type: "gt", Params: []float64{1}}},
 					},
-					"datasource": map[string]any{
-						"type": "__expr__",
-						"uid":  "__expr__",
-					},
-					"hide":          false,
-					"intervalMs":    1000,
-					"maxDataPoints": 43200,
-					"refId":         "B",
-					"type":          "classic_conditions",
 				},
 			},
 		}
@@ -621,7 +597,7 @@ func TestManageRules_Create(t *testing.T) {
 			Title:        "Test Created Alert Rule",
 			RuleGroup:    "test-group",
 			FolderUID:    "tests",
-			Condition:    "B",
+			Condition:    "C",
 			Data:         sampleData,
 			NoDataState:  "OK",
 			ExecErrState: "OK",
@@ -641,6 +617,197 @@ func TestManageRules_Create(t *testing.T) {
 		require.Equal(t, testUID, created.UID)
 		require.Equal(t, "Test Created Alert Rule", *created.Title)
 		require.Equal(t, "test-group", *created.RuleGroup)
+	})
+
+	t.Run("create alert rule with reduce and threshold expressions", func(t *testing.T) {
+		ctx := newTestContext()
+
+		data := []*AlertQuery{
+			{
+				RefID:         "A",
+				DatasourceUID: "prometheus",
+				RelativeTimeRange: &RelativeTimeRange{
+					From: 600,
+					To:   0,
+				},
+				Model: AlertQueryModel{
+					Expr: "vector(1)",
+				},
+			},
+			{
+				RefID:         "B",
+				DatasourceUID: "__expr__",
+				Model: AlertQueryModel{
+					Type:       "reduce",
+					Expression: "A",
+					Reducer:    "last",
+				},
+			},
+			{
+				RefID:         "C",
+				DatasourceUID: "__expr__",
+				Model: AlertQueryModel{
+					Type:       "threshold",
+					Expression: "B",
+					Conditions: []AlertCondition{
+						{Evaluator: ConditionEvaluator{Type: "gt", Params: []float64{0}}},
+					},
+				},
+			},
+		}
+
+		testUID := "test_create_reduce_threshold"
+		t.Cleanup(func() {
+			manageRulesReadWrite(ctx, ManageRulesReadWriteParams{Operation: "delete", RuleUID: testUID}) //nolint:errcheck
+		})
+
+		result, err := manageRulesReadWrite(ctx, ManageRulesReadWriteParams{
+			Operation:    "create",
+			RuleUID:      testUID,
+			Title:        "Test Reduce+Threshold Rule",
+			RuleGroup:    "test-group",
+			FolderUID:    "tests",
+			Condition:    "C",
+			Data:         data,
+			NoDataState:  "OK",
+			ExecErrState: "OK",
+			For:          "5m",
+			OrgID:        1,
+		})
+		require.NoError(t, err)
+
+		created, ok := result.(*models.ProvisionedAlertRule)
+		require.True(t, ok)
+		require.Equal(t, testUID, created.UID)
+		require.Equal(t, "Test Reduce+Threshold Rule", *created.Title)
+		require.Len(t, created.Data, 3)
+		require.Equal(t, "A", created.Data[0].RefID)
+		require.Equal(t, "B", created.Data[1].RefID)
+		require.Equal(t, "C", created.Data[2].RefID)
+	})
+
+	t.Run("create alert rule with math expression", func(t *testing.T) {
+		ctx := newTestContext()
+
+		data := []*AlertQuery{
+			{
+				RefID:         "A",
+				DatasourceUID: "prometheus",
+				RelativeTimeRange: &RelativeTimeRange{
+					From: 600,
+					To:   0,
+				},
+				Model: AlertQueryModel{
+					Expr: "vector(1)",
+				},
+			},
+			{
+				RefID:         "B",
+				DatasourceUID: "__expr__",
+				Model: AlertQueryModel{
+					Type:       "reduce",
+					Expression: "A",
+					Reducer:    "last",
+				},
+			},
+			{
+				RefID:         "C",
+				DatasourceUID: "__expr__",
+				Model: AlertQueryModel{
+					Type:       "math",
+					Expression: "$B > 0",
+				},
+			},
+		}
+
+		testUID := "test_create_math_expr"
+		t.Cleanup(func() {
+			manageRulesReadWrite(ctx, ManageRulesReadWriteParams{Operation: "delete", RuleUID: testUID}) //nolint:errcheck
+		})
+
+		result, err := manageRulesReadWrite(ctx, ManageRulesReadWriteParams{
+			Operation:    "create",
+			RuleUID:      testUID,
+			Title:        "Test Math Expression Rule",
+			RuleGroup:    "test-group",
+			FolderUID:    "tests",
+			Condition:    "C",
+			Data:         data,
+			NoDataState:  "OK",
+			ExecErrState: "OK",
+			For:          "5m",
+			OrgID:        1,
+		})
+		require.NoError(t, err)
+
+		created, ok := result.(*models.ProvisionedAlertRule)
+		require.True(t, ok)
+		require.Equal(t, testUID, created.UID)
+		require.Equal(t, "Test Math Expression Rule", *created.Title)
+		require.Len(t, created.Data, 3)
+	})
+
+	t.Run("create alert rule with auto-assigned RefIDs", func(t *testing.T) {
+		ctx := newTestContext()
+
+		data := []*AlertQuery{
+			{
+				DatasourceUID: "prometheus",
+				RelativeTimeRange: &RelativeTimeRange{
+					From: 600,
+					To:   0,
+				},
+				Model: AlertQueryModel{
+					Expr: "vector(1)",
+				},
+			},
+			{
+				DatasourceUID: "__expr__",
+				Model: AlertQueryModel{
+					Type:       "reduce",
+					Expression: "A",
+					Reducer:    "last",
+				},
+			},
+			{
+				DatasourceUID: "__expr__",
+				Model: AlertQueryModel{
+					Type:       "threshold",
+					Expression: "B",
+					Conditions: []AlertCondition{
+						{Evaluator: ConditionEvaluator{Type: "gt", Params: []float64{0}}},
+					},
+				},
+			},
+		}
+
+		testUID := "test_create_auto_refid"
+		t.Cleanup(func() {
+			manageRulesReadWrite(ctx, ManageRulesReadWriteParams{Operation: "delete", RuleUID: testUID}) //nolint:errcheck
+		})
+
+		result, err := manageRulesReadWrite(ctx, ManageRulesReadWriteParams{
+			Operation:    "create",
+			RuleUID:      testUID,
+			Title:        "Test Auto RefID Rule",
+			RuleGroup:    "test-group",
+			FolderUID:    "tests",
+			Condition:    "C",
+			Data:         data,
+			NoDataState:  "OK",
+			ExecErrState: "OK",
+			For:          "5m",
+			OrgID:        1,
+		})
+		require.NoError(t, err)
+
+		created, ok := result.(*models.ProvisionedAlertRule)
+		require.True(t, ok)
+		require.Equal(t, testUID, created.UID)
+		require.Len(t, created.Data, 3)
+		require.Equal(t, "A", created.Data[0].RefID)
+		require.Equal(t, "B", created.Data[1].RefID)
+		require.Equal(t, "C", created.Data[2].RefID)
 	})
 
 	t.Run("create alert rule with missing required fields", func(t *testing.T) {
@@ -672,21 +839,16 @@ func TestManageRules_Update(t *testing.T) {
 	t.Run("update existing alert rule", func(t *testing.T) {
 		ctx := newTestContext()
 
-		sampleData := []*models.AlertQuery{
+		sampleData := []*AlertQuery{
 			{
-				RefID:     "A",
-				QueryType: "",
-				RelativeTimeRange: &models.RelativeTimeRange{
+				RefID:         "A",
+				DatasourceUID: "prometheus-uid",
+				RelativeTimeRange: &RelativeTimeRange{
 					From: 600,
 					To:   0,
 				},
-				DatasourceUID: "prometheus-uid",
-				Model: map[string]any{
-					"expr":          "up",
-					"hide":          false,
-					"intervalMs":    1000,
-					"maxDataPoints": 43200,
-					"refId":         "A",
+				Model: AlertQueryModel{
+					Expr: "up",
 				},
 			},
 		}
@@ -751,7 +913,7 @@ func TestManageRules_Update(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "tests",
 			Condition:    "A",
-			Data:         []*models.AlertQuery{},
+			Data:         []*AlertQuery{},
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
@@ -777,21 +939,16 @@ func TestManageRules_Delete(t *testing.T) {
 	t.Run("delete existing alert rule", func(t *testing.T) {
 		ctx := newTestContext()
 
-		sampleData := []*models.AlertQuery{
+		sampleData := []*AlertQuery{
 			{
-				RefID:     "A",
-				QueryType: "",
-				RelativeTimeRange: &models.RelativeTimeRange{
+				RefID:         "A",
+				DatasourceUID: "prometheus-uid",
+				RelativeTimeRange: &RelativeTimeRange{
 					From: 600,
 					To:   0,
 				},
-				DatasourceUID: "prometheus-uid",
-				Model: map[string]any{
-					"expr":          "up",
-					"hide":          false,
-					"intervalMs":    1000,
-					"maxDataPoints": 43200,
-					"refId":         "A",
+				Model: AlertQueryModel{
+					Expr: "up",
 				},
 			},
 		}
@@ -865,61 +1022,37 @@ func TestManageRules_Delete(t *testing.T) {
 }
 
 // createTestAlertQueries creates sample alert query data for testing DisableProvenance
-func createTestAlertQueries() []*models.AlertQuery {
-	return []*models.AlertQuery{
+func createTestAlertQueries() []*AlertQuery {
+	return []*AlertQuery{
 		{
-			RefID:     "A",
-			QueryType: "",
-			RelativeTimeRange: &models.RelativeTimeRange{
+			RefID:         "A",
+			DatasourceUID: "prometheus",
+			RelativeTimeRange: &RelativeTimeRange{
 				From: 600,
 				To:   0,
 			},
-			DatasourceUID: "prometheus",
-			Model: map[string]any{
-				"expr":          "vector(1)",
-				"hide":          false,
-				"intervalMs":    1000,
-				"maxDataPoints": 43200,
-				"refId":         "A",
+			Model: AlertQueryModel{
+				Expr: "vector(1)",
 			},
 		},
 		{
-			RefID:     "B",
-			QueryType: "",
-			RelativeTimeRange: &models.RelativeTimeRange{
-				From: 0,
-				To:   0,
-			},
+			RefID:         "B",
 			DatasourceUID: "__expr__",
-			Model: map[string]any{
-				"conditions": []any{
-					map[string]any{
-						"evaluator": map[string]any{
-							"params": []any{0},
-							"type":   "gt",
-						},
-						"operator": map[string]any{
-							"type": "and",
-						},
-						"query": map[string]any{
-							"params": []any{"A"},
-						},
-						"reducer": map[string]any{
-							"params": []any{},
-							"type":   "last",
-						},
-						"type": "query",
-					},
+			Model: AlertQueryModel{
+				Type:       "reduce",
+				Expression: "A",
+				Reducer:    "last",
+			},
+		},
+		{
+			RefID:         "C",
+			DatasourceUID: "__expr__",
+			Model: AlertQueryModel{
+				Type:       "threshold",
+				Expression: "B",
+				Conditions: []AlertCondition{
+					{Evaluator: ConditionEvaluator{Type: "gt", Params: []float64{0}}},
 				},
-				"datasource": map[string]any{
-					"type": "__expr__",
-					"uid":  "__expr__",
-				},
-				"hide":          false,
-				"intervalMs":    1000,
-				"maxDataPoints": 43200,
-				"refId":         "B",
-				"type":          "classic_conditions",
 			},
 		},
 	}
@@ -942,7 +1075,7 @@ func TestManageRules_DisableProvenance(t *testing.T) {
 			Title:        "Test Provenance Default",
 			RuleGroup:    "test-group",
 			FolderUID:    "tests",
-			Condition:    "B",
+			Condition:    "C",
 			Data:         sampleData,
 			NoDataState:  "OK",
 			ExecErrState: "OK",
@@ -975,7 +1108,7 @@ func TestManageRules_DisableProvenance(t *testing.T) {
 			Title:             "Test Provenance True",
 			RuleGroup:         "test-group",
 			FolderUID:         "tests",
-			Condition:         "B",
+			Condition:         "C",
 			Data:              sampleData,
 			NoDataState:       "OK",
 			ExecErrState:      "OK",
@@ -1008,7 +1141,7 @@ func TestManageRules_DisableProvenance(t *testing.T) {
 			Title:             "Test Provenance False",
 			RuleGroup:         "test-group",
 			FolderUID:         "tests",
-			Condition:         "B",
+			Condition:         "C",
 			Data:              sampleData,
 			NoDataState:       "OK",
 			ExecErrState:      "OK",
@@ -1040,7 +1173,7 @@ func TestManageRules_DisableProvenance(t *testing.T) {
 			Title:        "Test Update Provenance Default",
 			RuleGroup:    "test-group",
 			FolderUID:    "tests",
-			Condition:    "B",
+			Condition:    "C",
 			Data:         sampleData,
 			NoDataState:  "OK",
 			ExecErrState: "OK",
@@ -1056,7 +1189,7 @@ func TestManageRules_DisableProvenance(t *testing.T) {
 			Title:        "Test Update Provenance Default - Updated",
 			RuleGroup:    "test-group",
 			FolderUID:    "tests",
-			Condition:    "B",
+			Condition:    "C",
 			Data:         sampleData,
 			NoDataState:  "OK",
 			ExecErrState: "OK",
@@ -1087,7 +1220,7 @@ func TestManageRules_DisableProvenance(t *testing.T) {
 			Title:        "Test Update Provenance",
 			RuleGroup:    "test-group",
 			FolderUID:    "tests",
-			Condition:    "B",
+			Condition:    "C",
 			Data:         sampleData,
 			NoDataState:  "OK",
 			ExecErrState: "OK",
@@ -1104,7 +1237,7 @@ func TestManageRules_DisableProvenance(t *testing.T) {
 			Title:             "Test Update Provenance - Updated",
 			RuleGroup:         "test-group",
 			FolderUID:         "tests",
-			Condition:         "B",
+			Condition:         "C",
 			Data:              sampleData,
 			NoDataState:       "OK",
 			ExecErrState:      "OK",
@@ -1136,7 +1269,7 @@ func TestManageRules_DisableProvenance(t *testing.T) {
 			Title:        "Test Update Provenance False",
 			RuleGroup:    "test-group",
 			FolderUID:    "tests",
-			Condition:    "B",
+			Condition:    "C",
 			Data:         sampleData,
 			NoDataState:  "OK",
 			ExecErrState: "OK",
@@ -1153,7 +1286,7 @@ func TestManageRules_DisableProvenance(t *testing.T) {
 			Title:             "Test Update Provenance False - Updated",
 			RuleGroup:         "test-group",
 			FolderUID:         "tests",
-			Condition:         "B",
+			Condition:         "C",
 			Data:              sampleData,
 			NoDataState:       "OK",
 			ExecErrState:      "OK",

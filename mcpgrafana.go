@@ -176,6 +176,10 @@ type GrafanaConfig struct {
 	// ExtraHeaders contains additional HTTP headers to send with all Grafana API requests.
 	// Parsed from GRAFANA_EXTRA_HEADERS environment variable as JSON object.
 	ExtraHeaders map[string]string
+
+	// MaxLokiLogLimit is the maximum number of log lines that can be returned
+	// from Loki queries.
+	MaxLokiLogLimit int
 }
 
 const (
@@ -595,6 +599,9 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 					var rt http.RoundTripper = timeoutTransport
 					if len(config.ExtraHeaders) > 0 {
 						rt = NewExtraHeadersRoundTripper(rt, config.ExtraHeaders)
+					}
+					if config.OrgID > 0 {
+						rt = NewOrgIDRoundTripper(rt, config.OrgID)
 					}
 					userAgentWrapped := wrapWithUserAgent(rt)
 					wrapped := otelhttp.NewTransport(userAgentWrapped)

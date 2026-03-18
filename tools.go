@@ -212,7 +212,10 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 			output[0].Kind() == reflect.Func
 
 		if isNilable && output[0].IsNil() {
-			return nil, nil
+			// Return an empty text result instead of nil to avoid a nil pointer
+			// dereference in mcp-go's request_handler.go when it dereferences
+			// the *CallToolResult. A nil slice/map is a valid "no results" response.
+			return mcp.NewToolResultText("null"), nil
 		}
 
 		returnVal := output[0].Interface()
@@ -231,15 +234,12 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 
 		// Case 3: String or *string
 		if str, ok := returnVal.(string); ok {
-			if str == "" {
-				return nil, nil
-			}
 			return mcp.NewToolResultText(str), nil
 		}
 
 		if strPtr, ok := returnVal.(*string); ok {
-			if strPtr == nil || *strPtr == "" {
-				return nil, nil
+			if strPtr == nil {
+				return mcp.NewToolResultText(""), nil
 			}
 			return mcp.NewToolResultText(*strPtr), nil
 		}
@@ -270,6 +270,14 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 	schemaBytes, err := json.Marshal(argumentsSchema)
 	if err != nil {
 		return zero, nil, fmt.Errorf("failed to marshal input schema: %w", err)
+	}
+
+	// Validate that no bare boolean schemas slipped through. The Mapper on the
+	// reflector handles interface{} types, but this check catches anything it
+	// misses and prevents future regressions. MustTool will panic at init time
+	// if this fails, making it impossible to register a tool with bare booleans.
+	if err := validateNoBooleanSchemas(name, schemaBytes); err != nil {
+		return zero, nil, err
 	}
 
 	t := mcp.Tool{
@@ -330,10 +338,126 @@ var (
 		FieldNameTag:               "",
 		IgnoredTypes:               nil,
 		Lookup:                     nil,
-		Mapper:                     nil,
-		Namer:                      nil,
-		KeyNamer:                   nil,
-		AdditionalFields:           nil,
-		CommentMap:                 nil,
+		// Mapper handles Go interface{}/any types which the jsonschema library
+		// would otherwise emit as bare boolean `true` schemas. Some LLM providers
+		// (e.g. Fireworks AI) reject bare boolean schemas. We map them to an empty
+		// object schema {} instead. The non-nil Extras field prevents the library's
+		// MarshalJSON from collapsing the empty schema back to `true`.
+		// See: https://github.com/grafana/mcp-grafana/issues/594
+		Mapper: func(t reflect.Type) *jsonschema.Schema {
+			if t.Kind() == reflect.Interface {
+				return &jsonschema.Schema{Extras: map[string]any{}}
+			}
+			return nil
+		},
+		Namer:            nil,
+		KeyNamer:         nil,
+		AdditionalFields: nil,
+		CommentMap:       nil,
 	}
 )
+
+// JSON Schema keywords whose values are single sub-schemas.
+var schemaValuedKeys = []string{
+	"items", "additionalProperties", "not",
+	"if", "then", "else",
+	"contains", "propertyNames",
+	"unevaluatedItems", "unevaluatedProperties",
+}
+
+// JSON Schema keywords whose values are maps of sub-schemas.
+var schemaMapKeys = []string{
+	"properties", "patternProperties",
+	"$defs", "definitions",
+}
+
+// JSON Schema keywords whose values are arrays of sub-schemas.
+var schemaArrayKeys = []string{
+	"allOf", "anyOf", "oneOf", "prefixItems",
+}
+
+// validateNoBooleanSchemas checks that a marshaled JSON Schema contains no bare
+// boolean values (true/false) in positions where sub-schemas are expected. Bare
+// booleans typically come from Go interface{} types and break some LLM providers.
+// This validation runs at tool creation time so that MustTool panics immediately
+// if a tool's schema contains bare booleans, preventing silent compatibility issues.
+func validateNoBooleanSchemas(toolName string, data []byte) error {
+	var raw any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	return checkSchemaNode(toolName, raw, "$")
+}
+
+// checkSchemaNode recursively walks a JSON value representing a JSON Schema and
+// returns an error if any bare boolean values appear in sub-schema positions.
+func checkSchemaNode(toolName string, v any, path string) error {
+	obj, ok := v.(map[string]any)
+	if !ok {
+		return nil
+	}
+
+	// Check single-schema-valued keys
+	for _, key := range schemaValuedKeys {
+		if val, exists := obj[key]; exists {
+			if b, ok := val.(bool); ok {
+				return fmt.Errorf(
+					"tool %q has bare boolean schema (%v) at %s.%s; "+
+						"this is likely caused by an interface{}/any field — "+
+						"add the type to the jsonschema reflector Mapper in tools.go",
+					toolName, b, path, key,
+				)
+			}
+		}
+	}
+
+	// Check schema-map-valued keys
+	for _, key := range schemaMapKeys {
+		if mapVal, ok := obj[key].(map[string]any); ok {
+			for k, v := range mapVal {
+				if b, ok := v.(bool); ok {
+					return fmt.Errorf(
+						"tool %q has bare boolean schema (%v) at %s.%s.%s; "+
+							"this is likely caused by an interface{}/any field — "+
+							"add the type to the jsonschema reflector Mapper in tools.go",
+						toolName, b, path, key, k,
+					)
+				}
+			}
+		}
+	}
+
+	// Check schema-array-valued keys
+	for _, key := range schemaArrayKeys {
+		if arrVal, ok := obj[key].([]any); ok {
+			for i, v := range arrVal {
+				if b, ok := v.(bool); ok {
+					return fmt.Errorf(
+						"tool %q has bare boolean schema (%v) at %s.%s[%d]; "+
+							"this is likely caused by an interface{}/any field — "+
+							"add the type to the jsonschema reflector Mapper in tools.go",
+						toolName, b, path, key, i,
+					)
+				}
+			}
+		}
+	}
+
+	// Recurse into all nested objects and arrays
+	for key, val := range obj {
+		switch v := val.(type) {
+		case map[string]any:
+			if err := checkSchemaNode(toolName, v, path+"."+key); err != nil {
+				return err
+			}
+		case []any:
+			for _, item := range v {
+				if err := checkSchemaNode(toolName, item, path+"."+key); err != nil {
+					return err
+				}
+			}
+		}
+	}
+
+	return nil
+}
