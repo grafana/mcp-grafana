@@ -580,8 +580,7 @@ func doFetchPublicURL(ctx context.Context, grafanaURL, apiKey string, auth *url.
 
 	if apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+apiKey)
-	}
-	if auth != nil {
+	} else if auth != nil {
 		password, _ := auth.Password()
 		req.SetBasicAuth(auth.Username(), password)
 	}
