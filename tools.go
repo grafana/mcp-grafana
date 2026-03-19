@@ -154,45 +154,6 @@ func isIntegerKind(kind reflect.Kind) bool {
 	return false
 }
 
-// isValidNumericString returns true if the byte slice represents a valid numeric string
-// that can be parsed as an integer. It rejects special JSON keywords like "null", "true", "false"
-// and other non-numeric strings.
-func isValidNumericString(data []byte) bool {
-	if len(data) == 0 {
-		return false
-	}
-
-	// Reject JSON keywords that would be valid JSON but aren't numeric
-	str := string(data)
-	if str == "null" || str == "true" || str == "false" {
-		return false
-	}
-
-	// Check if it looks like a number: optional minus, followed by digits
-	i := 0
-	if data[i] == '-' {
-		i++
-	}
-
-	if i >= len(data) {
-		return false // Just a sign with no digits
-	}
-
-	// Must have at least one digit
-	hasDigit := false
-	for i < len(data) {
-		if data[i] >= '0' && data[i] <= '9' {
-			hasDigit = true
-			i++
-		} else {
-			// Invalid character for an integer
-			return false
-		}
-	}
-
-	return hasDigit
-}
-
 // ConvertTool converts a toolHandler function to an MCP Tool and ToolHandlerFunc.
 // The toolHandler must accept a context.Context and a struct with jsonschema tags for parameter documentation.
 // The struct fields define the tool's input schema, while the return value can be a string, struct, or *mcp.CallToolResult.
