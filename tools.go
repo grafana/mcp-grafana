@@ -170,7 +170,7 @@ func isValidNumericString(data []byte) bool {
 
 	// Check if it looks like a number: optional minus, followed by digits
 	i := 0
-	if data[i] == '-' || data[i] == '+' {
+	if data[i] == '-' {
 		i++
 	}
 
