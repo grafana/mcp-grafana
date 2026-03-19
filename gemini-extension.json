@@ -5,5 +5,25 @@
     "grafana": {
       "command": "${extensionPath}${/}mcp-grafana"
     }
-  }
+  },
+  "settings": [
+    {
+      "name": "Grafana URL",
+      "description": "The base URL of your Grafana instance (e.g., https://grafana.example.com)",
+      "envVar": "GRAFANA_URL",
+      "required": true
+    },
+    {
+      "name": "Service Account Token",
+      "description": "Your Grafana Service Account Token (glsa_...)",
+      "envVar": "GRAFANA_SERVICE_ACCOUNT_TOKEN",
+      "required": true,
+      "sensitive": true
+    },
+    {
+      "name": "Organization ID",
+      "description": "The Grafana Organization ID to use",
+      "envVar": "GRAFANA_ORG_ID"
+    }
+  ]
 }
