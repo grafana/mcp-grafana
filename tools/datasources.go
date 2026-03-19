@@ -13,8 +13,8 @@ import (
 )
 
 const (
-	DefaultListDataSourceLimit = 50
-	MaxListDataSourceLimit     = 100
+	defaultListDataSourceLimit = 50
+	maxListDataSourceLimit     = 100
 )
 
 type ListDatasourcesParams struct {
