@@ -161,6 +161,36 @@ func TestUnmarshalWithIntConversion(t *testing.T) {
 		assert.Equal(t, 99, got.EmbeddedCount)
 	})
 
+	t.Run("converts string to int for fields with no json tag (uses Go field name)", func(t *testing.T) {
+		type params struct {
+			Count int // no json tag at all — encoding/json uses "Count"
+		}
+		var got params
+		require.NoError(t, unmarshalWithIntConversion([]byte(`{"Count":"42"}`), &got))
+		assert.Equal(t, 42, got.Count)
+	})
+
+	t.Run("converts string to int for fields with omitempty but no tag name", func(t *testing.T) {
+		type params struct {
+			Count int `json:",omitempty"` // name part is empty — encoding/json uses "Count"
+		}
+		var got params
+		require.NoError(t, unmarshalWithIntConversion([]byte(`{"Count":"42"}`), &got))
+		assert.Equal(t, 42, got.Count)
+	})
+
+	t.Run("skips fields with json:\"-\" tag", func(t *testing.T) {
+		type params struct {
+			Ignored int    `json:"-"`
+			Name    string `json:"name"`
+		}
+		var got params
+		// "-" fields are excluded by encoding/json; they cannot be set via JSON at all
+		require.NoError(t, unmarshalWithIntConversion([]byte(`{"name":"test","Ignored":"99"}`), &got))
+		assert.Equal(t, "test", got.Name)
+		assert.Equal(t, 0, got.Ignored)
+	})
+
 	t.Run(`accepts string "null" in embedded pointer-to-struct int fields (strips to JSON null, zeroes field)`, func(t *testing.T) {
 		var got testEmbeddedParams
 		require.NoError(t, unmarshalWithIntConversion([]byte(`{"name":"test","embeddedCount":"null"}`), &got))

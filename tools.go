@@ -136,8 +136,11 @@ func collectIntFieldNames(structType reflect.Type) map[string]bool {
 			continue
 		}
 		name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
-		if name == "" || name == "-" {
+		if name == "-" {
 			continue
+		}
+		if name == "" {
+			name = f.Name // encoding/json falls back to the Go field name when no tag name is given
 		}
 		fields[name] = true
 	}
