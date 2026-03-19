@@ -41,7 +41,7 @@ type disabledTools struct {
 	enabledTools string
 
 	search, datasource, incident,
-	prometheus, loki, elasticsearch, alerting,
+	prometheus, loki, elasticsearch, opensearch, alerting,
 	dashboard, folder, oncall, asserts, sift, admin,
 	pyroscope, navigation, proxied, annotations, rendering, cloudwatch, write,
 	examples, clickhouse, searchlogs,
@@ -71,6 +71,7 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.prometheus, "disable-prometheus", false, "Disable prometheus tools")
 	flag.BoolVar(&dt.loki, "disable-loki", false, "Disable loki tools")
 	flag.BoolVar(&dt.elasticsearch, "disable-elasticsearch", false, "Disable elasticsearch tools")
+	flag.BoolVar(&dt.opensearch, "disable-opensearch", false, "Disable opensearch tools")
 	flag.BoolVar(&dt.alerting, "disable-alerting", false, "Disable alerting tools")
 	flag.BoolVar(&dt.dashboard, "disable-dashboard", false, "Disable dashboard tools")
 	flag.BoolVar(&dt.folder, "disable-folder", false, "Disable folder tools")
@@ -113,6 +114,7 @@ func (dt *disabledTools) addTools(s *server.MCPServer) {
 	maybeAddTools(s, tools.AddPrometheusTools, enabledTools, dt.prometheus, "prometheus")
 	maybeAddTools(s, tools.AddLokiTools, enabledTools, dt.loki, "loki")
 	maybeAddTools(s, tools.AddElasticsearchTools, enabledTools, dt.elasticsearch, "elasticsearch")
+	maybeAddTools(s, tools.AddOpenSearchTools, enabledTools, dt.opensearch, "opensearch")
 	maybeAddTools(s, func(mcp *server.MCPServer) { tools.AddAlertingTools(mcp, enableWriteTools) }, enabledTools, dt.alerting, "alerting")
 	maybeAddTools(s, func(mcp *server.MCPServer) { tools.AddDashboardTools(mcp, enableWriteTools) }, enabledTools, dt.dashboard, "dashboard")
 	maybeAddTools(s, func(mcp *server.MCPServer) { tools.AddFolderTools(mcp, enableWriteTools) }, enabledTools, dt.folder, "folder")
@@ -183,6 +185,7 @@ Available Capabilities:
 - Prometheus & Loki: Run PromQL and LogQL queries, retrieve metric/log metadata, and explore label names/values.
 - ClickHouse: Query ClickHouse datasources via Grafana with macro and variable substitution support.
 - Elasticsearch: Query Elasticsearch datasources using Lucene syntax or Query DSL for logs and metrics.
+- OpenSearch: Query OpenSearch datasources using Lucene syntax or Query DSL for logs and metrics.
 - Incidents: Search, create, update, and resolve incidents in Grafana Incident.
 - Sift Investigations: Start and manage Sift investigations, analyze logs/traces, find error patterns, and detect slow requests.
 - Alerting: List and fetch alert rules and notification contact points.
