@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"regexp"
 	"slices"
 	"sort"
@@ -130,11 +131,11 @@ func getDashboardByUIDKubernetesWithVersion(ctx context.Context, instance *mcpgr
 // convertKubernetesDashboardToLegacy converts a kubernetes-style dashboard response
 // to the legacy DashboardFullWithMeta format for compatibility with existing code.
 func convertKubernetesDashboardToLegacy(k8sDashboard *mcpgrafana.KubernetesDashboard) (*models.DashboardFullWithMeta, error) {
-	// The spec contains the actual dashboard JSON
-	dashboardJSON := k8sDashboard.Spec
-
-	// Add UID to the dashboard spec if not present
-	if dashboardJSON != nil {
+	// Create a shallow copy of the spec to avoid mutating the input
+	var dashboardJSON map[string]interface{}
+	if k8sDashboard.Spec != nil {
+		dashboardJSON = maps.Clone(k8sDashboard.Spec)
+		// Add UID to the dashboard spec if not present
 		if _, hasUID := dashboardJSON["uid"]; !hasUID {
 			dashboardJSON["uid"] = k8sDashboard.Metadata.Name
 		}

@@ -273,25 +273,9 @@ func (c *CapabilityCache) Invalidate(grafanaURL string) {
 	delete(c.entries, grafanaURL)
 }
 
-// DiscoverAPIs fetches the /apis endpoint and parses the response.
-// Returns a cache entry with the discovered capabilities.
-// If /apis returns 404, it means kubernetes-style APIs aren't available.
-// Used in tests; production code uses GrafanaInstance.discoverAPIsAuthenticated.
-func DiscoverAPIs(ctx context.Context, httpClient *http.Client, baseURL string) (*capabilityCacheEntry, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/apis", nil)
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("fetch /apis: %w", err)
-	}
-	defer func() {
-		_ = resp.Body.Close()
-	}()
-
+// parseAPIsResponse parses an HTTP response from the /apis endpoint.
+// This is shared logic used by both DiscoverAPIs and GrafanaInstance.discoverAPIsAuthenticated.
+func parseAPIsResponse(resp *http.Response) (*capabilityCacheEntry, error) {
 	// 404 means no kubernetes-style APIs available
 	if resp.StatusCode == http.StatusNotFound {
 		return &capabilityCacheEntry{
@@ -331,6 +315,28 @@ func DiscoverAPIs(ctx context.Context, httpClient *http.Client, baseURL string) 
 	}
 
 	return entry, nil
+}
+
+// DiscoverAPIs fetches the /apis endpoint and parses the response.
+// Returns a cache entry with the discovered capabilities.
+// If /apis returns 404, it means kubernetes-style APIs aren't available.
+// Used in tests; production code uses GrafanaInstance.discoverAPIsAuthenticated.
+func DiscoverAPIs(ctx context.Context, httpClient *http.Client, baseURL string) (*capabilityCacheEntry, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/apis", nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetch /apis: %w", err)
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	return parseAPIsResponse(resp)
 }
 
 // k8sAPIPattern matches kubernetes-style API paths in error messages.

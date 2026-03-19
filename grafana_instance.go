@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/grafana/grafana-openapi-client-go/client"
 )
@@ -184,45 +183,7 @@ func (g *GrafanaInstance) discoverAPIsAuthenticated(ctx context.Context) (*capab
 		_ = resp.Body.Close()
 	}()
 
-	// 404 means no kubernetes-style APIs available
-	if resp.StatusCode == http.StatusNotFound {
-		return &capabilityCacheEntry{
-			hasKubernetesAPIs: false,
-			perAPICapability:  make(map[string]APICapability),
-			detectedAt:        time.Now(),
-		}, nil
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20)) // 1MB limit
-		return nil, fmt.Errorf("unexpected status from /apis: %d, body: %s", resp.StatusCode, string(body))
-	}
-
-	var apiGroupList APIGroupList
-	if err := json.NewDecoder(resp.Body).Decode(&apiGroupList); err != nil {
-		return nil, fmt.Errorf("decode /apis response: %w", err)
-	}
-
-	entry := &capabilityCacheEntry{
-		hasKubernetesAPIs: true,
-		apiGroups:         make(map[string]*APIGroupInfo),
-		perAPICapability:  make(map[string]APICapability),
-		detectedAt:        time.Now(),
-	}
-
-	for _, group := range apiGroupList.Groups {
-		versions := make([]string, len(group.Versions))
-		for i, v := range group.Versions {
-			versions[i] = v.Version
-		}
-		entry.apiGroups[group.Name] = &APIGroupInfo{
-			Available:        true,
-			PreferredVersion: group.PreferredVersion.Version,
-			AllVersions:      versions,
-		}
-	}
-
-	return entry, nil
+	return parseAPIsResponse(resp)
 }
 
 // doKubernetesRequest performs an HTTP request to a kubernetes-style API endpoint.
