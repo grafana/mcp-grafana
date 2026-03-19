@@ -91,6 +91,61 @@ func TestGenerateDeeplink(t *testing.T) {
 		assert.Contains(t, result, "refresh=30s")
 	})
 
+	t.Run("Uses public URL from GrafanaClient when available", func(t *testing.T) {
+		// Set up context with both config URL and a GrafanaClient with a public URL
+		cfg := mcpgrafana.GrafanaConfig{
+			URL: "http://internal-grafana:3000",
+		}
+		ctxWithPublicURL := mcpgrafana.WithGrafanaConfig(context.Background(), cfg)
+		ctxWithPublicURL = mcpgrafana.WithGrafanaClient(ctxWithPublicURL, &mcpgrafana.GrafanaClient{
+			PublicURL: "https://grafana.example.com",
+		})
+
+		params := GenerateDeeplinkParams{
+			ResourceType: "dashboard",
+			DashboardUID: stringPtr("abc123"),
+		}
+
+		result, err := generateDeeplink(ctxWithPublicURL, params)
+		require.NoError(t, err)
+		assert.Equal(t, "https://grafana.example.com/d/abc123", result)
+	})
+
+	t.Run("Falls back to config URL when public URL is empty", func(t *testing.T) {
+		cfg := mcpgrafana.GrafanaConfig{
+			URL: "http://localhost:3000",
+		}
+		ctxWithEmptyPublicURL := mcpgrafana.WithGrafanaConfig(context.Background(), cfg)
+		ctxWithEmptyPublicURL = mcpgrafana.WithGrafanaClient(ctxWithEmptyPublicURL, &mcpgrafana.GrafanaClient{
+			PublicURL: "",
+		})
+
+		params := GenerateDeeplinkParams{
+			ResourceType: "dashboard",
+			DashboardUID: stringPtr("abc123"),
+		}
+
+		result, err := generateDeeplink(ctxWithEmptyPublicURL, params)
+		require.NoError(t, err)
+		assert.Equal(t, "http://localhost:3000/d/abc123", result)
+	})
+
+	t.Run("Falls back to config URL when no GrafanaClient in context", func(t *testing.T) {
+		cfg := mcpgrafana.GrafanaConfig{
+			URL: "http://localhost:3000",
+		}
+		ctxNoClient := mcpgrafana.WithGrafanaConfig(context.Background(), cfg)
+
+		params := GenerateDeeplinkParams{
+			ResourceType: "dashboard",
+			DashboardUID: stringPtr("abc123"),
+		}
+
+		result, err := generateDeeplink(ctxNoClient, params)
+		require.NoError(t, err)
+		assert.Equal(t, "http://localhost:3000/d/abc123", result)
+	})
+
 	t.Run("Error cases", func(t *testing.T) {
 		emptyGrafanaCfg := mcpgrafana.GrafanaConfig{
 			URL: "",

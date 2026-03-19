@@ -53,5 +53,5 @@ func newTestContext() context.Context {
 	}
 
 	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), grafanaCfg)
-	return mcpgrafana.WithGrafanaClient(ctx, client)
+	return mcpgrafana.WithGrafanaClient(ctx, &mcpgrafana.GrafanaClient{GrafanaHTTPAPI: client})
 }

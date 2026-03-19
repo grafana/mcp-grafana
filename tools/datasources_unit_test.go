@@ -25,7 +25,7 @@ func mockDatasourcesCtx(server *httptest.Server) context.Context {
 	cfg.APIKey = "test"
 
 	c := client.NewHTTPClientWithConfig(nil, cfg)
-	return mcpgrafana.WithGrafanaClient(context.Background(), c)
+	return mcpgrafana.WithGrafanaClient(context.Background(), &mcpgrafana.GrafanaClient{GrafanaHTTPAPI: c})
 }
 
 func createMockDatasources(count int) []*models.DataSource {

@@ -60,7 +60,7 @@ func newProxiedToolsTestContext(t *testing.T) context.Context {
 	}
 
 	ctx := WithGrafanaConfig(context.Background(), grafanaCfg)
-	return WithGrafanaClient(ctx, grafanaClient)
+	return WithGrafanaClient(ctx, &GrafanaClient{GrafanaHTTPAPI: grafanaClient})
 }
 
 func TestDiscoverMCPDatasources(t *testing.T) {
@@ -111,7 +111,7 @@ func TestDiscoverMCPDatasources(t *testing.T) {
 			// No APIKey or BasicAuth set
 		}
 		ctx := WithGrafanaConfig(context.Background(), grafanaCfg)
-		ctx = WithGrafanaClient(ctx, grafanaClient)
+		ctx = WithGrafanaClient(ctx, &GrafanaClient{GrafanaHTTPAPI: grafanaClient})
 
 		discovered, err := discoverMCPDatasources(ctx)
 		assert.Error(t, err)

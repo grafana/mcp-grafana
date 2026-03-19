@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -23,6 +24,7 @@ import (
 	"github.com/grafana/incident-go"
 	"github.com/mark3labs/mcp-go/server"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"golang.org/x/sync/singleflight"
 )
 
 const (
@@ -503,13 +505,142 @@ func MustWithOnBehalfOfAuth(ctx context.Context, accessToken, userToken string) 
 
 type grafanaClientKey struct{}
 
+// GrafanaClient wraps the Grafana HTTP API client with additional metadata
+// fetched from the Grafana instance, such as the public URL.
+// This allows the MCP server to generate user-facing links using the public URL
+// even when it accesses Grafana via an internal URL.
+type GrafanaClient struct {
+	*client.GrafanaHTTPAPI
+
+	// PublicURL is the public-facing URL of the Grafana instance, fetched from
+	// /api/frontend/settings (the appUrl field). It may differ from the configured
+	// URL when the MCP server accesses Grafana via an internal URL behind a load
+	// balancer or reverse proxy.
+	PublicURL string
+}
+
 func makeBasePath(path string) string {
 	return strings.Join([]string{strings.TrimRight(path, "/"), "api"}, "/")
 }
 
+// publicURLCache caches successfully fetched public URLs per Grafana URL.
+// Only non-empty (successful) results are cached; failures are retried on
+// subsequent calls so that transient errors at startup don't permanently
+// disable the feature.
+var publicURLCache sync.Map // map[string]string (grafanaURL -> publicURL)
+
+// publicURLFlight deduplicates concurrent fetchPublicURL calls for the same
+// Grafana URL, preventing thundering-herd HTTP requests and race conditions
+// where a failing goroutine could overwrite a successful result.
+var publicURLFlight singleflight.Group
+
+// fetchPublicURL fetches the public URL (appUrl) from Grafana's frontend settings API.
+// It returns the appUrl if available, or an empty string if the request fails.
+// Successful results are cached permanently; failures are retried on subsequent calls.
+// Concurrent calls for the same grafanaURL are coalesced via singleflight.
+func fetchPublicURL(ctx context.Context, grafanaURL, apiKey string, auth *url.Userinfo, tlsConfig *TLSConfig, extraHeaders map[string]string) string {
+	// Check cache first (only successful results are cached)
+	if cached, ok := publicURLCache.Load(grafanaURL); ok {
+		return cached.(string)
+	}
+
+	// Use singleflight to coalesce concurrent requests for the same URL
+	result, _, _ := publicURLFlight.Do(grafanaURL, func() (any, error) {
+		// Double-check cache inside singleflight (another goroutine may have populated it)
+		if cached, ok := publicURLCache.Load(grafanaURL); ok {
+			return cached.(string), nil
+		}
+
+		// Use a detached context with timeout so that a cancelled request
+		// context from the first caller doesn't fail the fetch for all waiters.
+		fetchCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		publicURL := doFetchPublicURL(fetchCtx, grafanaURL, apiKey, auth, tlsConfig, extraHeaders)
+
+		// Only cache successful (non-empty) results so transient failures are retried
+		if publicURL != "" {
+			publicURLCache.Store(grafanaURL, publicURL)
+		}
+
+		return publicURL, nil
+	})
+
+	return result.(string)
+}
+
+// doFetchPublicURL performs the actual HTTP request to fetch the public URL.
+func doFetchPublicURL(ctx context.Context, grafanaURL, apiKey string, auth *url.Userinfo, tlsConfig *TLSConfig, extraHeaders map[string]string) string {
+	settingsURL := strings.TrimRight(grafanaURL, "/") + "/api/frontend/settings"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, settingsURL, nil)
+	if err != nil {
+		slog.Warn("Failed to create request for frontend settings", "error", err)
+		return ""
+	}
+
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	} else if auth != nil {
+		password, _ := auth.Password()
+		req.SetBasicAuth(auth.Username(), password)
+	}
+	req.Header.Set("User-Agent", UserAgent())
+
+	// Apply extra headers (e.g., for proxies requiring custom headers)
+	for k, v := range extraHeaders {
+		req.Header.Set(k, v)
+	}
+
+	httpClient := &http.Client{Timeout: 5 * time.Second}
+	if tlsConfig != nil {
+		tlsCfg, err := tlsConfig.CreateTLSConfig()
+		if err != nil {
+			slog.Warn("Failed to create TLS config for frontend settings request", "error", err)
+			return ""
+		}
+		httpClient.Transport = &http.Transport{
+			TLSClientConfig: tlsCfg,
+			Proxy:           http.ProxyFromEnvironment,
+		}
+	}
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		slog.Warn("Failed to fetch frontend settings", "error", err)
+		return ""
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		slog.Warn("Frontend settings request returned non-OK status", "status", resp.StatusCode)
+		return ""
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		slog.Warn("Failed to read frontend settings response", "error", err)
+		return ""
+	}
+
+	var settings struct {
+		AppURL string `json:"appUrl"`
+	}
+	if err := json.Unmarshal(body, &settings); err != nil {
+		slog.Warn("Failed to parse frontend settings response", "error", err)
+		return ""
+	}
+
+	publicURL := strings.TrimRight(settings.AppURL, "/")
+	if publicURL != "" {
+		slog.Info("Fetched public URL from Grafana frontend settings", "public_url", publicURL)
+	}
+	return publicURL
+}
+
 // NewGrafanaClient creates a Grafana client with the provided URL and API key.
 // The client is automatically configured with the correct HTTP scheme, debug settings from context, custom TLS configuration if present, and OpenTelemetry instrumentation for distributed tracing.
-func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.Userinfo, orgId int64) *client.GrafanaHTTPAPI {
+// It also fetches the Grafana instance's public URL from /api/frontend/settings for use in deep link generation.
+func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.Userinfo, orgId int64) *GrafanaClient {
 	cfg := client.DefaultTransportConfig()
 
 	var parsedURL *url.URL
@@ -612,7 +743,13 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 		}
 	}
 
-	return grafanaClient
+	// Fetch the public URL from Grafana's frontend settings.
+	publicURL := fetchPublicURL(ctx, grafanaURL, apiKey, auth, config.TLSConfig, config.ExtraHeaders)
+
+	return &GrafanaClient{
+		GrafanaHTTPAPI: grafanaClient,
+		PublicURL:      publicURL,
+	}
 }
 
 // ExtractGrafanaClientFromEnv is a StdioContextFunc that creates and injects a Grafana client into the context.
@@ -643,14 +780,14 @@ var ExtractGrafanaClientFromHeaders httpContextFunc = func(ctx context.Context, 
 
 // WithGrafanaClient sets the Grafana client in the context.
 // The client can be retrieved using GrafanaClientFromContext and will be used by all Grafana-related tools in the MCP server.
-func WithGrafanaClient(ctx context.Context, client *client.GrafanaHTTPAPI) context.Context {
-	return context.WithValue(ctx, grafanaClientKey{}, client)
+func WithGrafanaClient(ctx context.Context, c *GrafanaClient) context.Context {
+	return context.WithValue(ctx, grafanaClientKey{}, c)
 }
 
 // GrafanaClientFromContext retrieves the Grafana client from the context.
 // Returns nil if no client has been set, which tools should handle gracefully with appropriate error messages.
-func GrafanaClientFromContext(ctx context.Context) *client.GrafanaHTTPAPI {
-	c, ok := ctx.Value(grafanaClientKey{}).(*client.GrafanaHTTPAPI)
+func GrafanaClientFromContext(ctx context.Context) *GrafanaClient {
+	c, ok := ctx.Value(grafanaClientKey{}).(*GrafanaClient)
 	if !ok {
 		return nil
 	}
