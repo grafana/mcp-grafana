@@ -147,8 +147,11 @@ func collectIntFieldNamesRecursive(structType reflect.Type, intFields map[string
 	for i := 0; i < structType.NumField(); i++ {
 		field := structType.Field(i)
 
-		// Handle embedded (anonymous) structs recursively
-		if field.Anonymous {
+		// Handle embedded (anonymous) structs recursively.
+		// Only promote fields when the anonymous field has no JSON tag of its own;
+		// a JSON tag makes encoding/json treat the field as a named nested object,
+		// so its inner field names do NOT appear at the top level.
+		if field.Anonymous && field.Tag.Get("json") == "" {
 			embeddedType := field.Type
 			// If it's a pointer to struct, dereference it
 			if embeddedType.Kind() == reflect.Ptr {
