@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestunmarshalJSONWithLimitMsg(t *testing.T) {
+func TestUnmarshalJSONWithLimitMsg(t *testing.T) {
 	t.Run("should return response size exceeded error when data exceeds limit", func(t *testing.T) {
 		bytesLimit := 50
 		data := []byte(`{"key":"` + strings.Repeat("x", bytesLimit) + `"`)
