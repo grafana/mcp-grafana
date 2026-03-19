@@ -295,7 +295,7 @@ func createAlertRule(ctx context.Context, args CreateAlertRuleParams) (*models.P
 
 	duration, err := time.ParseDuration(args.For)
 	if err != nil {
-		return nil, fmt.Errorf("update alert rule: invalid duration format for parameter for: %q: %w", args.For, err)
+		return nil, fmt.Errorf("create alert rule: invalid duration format for parameter for: %q: %w", args.For, err)
 	}
 
 	convertedData, err := convertAlertQueries(args.Data)

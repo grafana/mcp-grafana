@@ -305,14 +305,14 @@ func (p UpdateAlertRuleParams) validate() error {
 	if p.Data == nil {
 		return fmt.Errorf("data is required")
 	}
-	if p.Record == nil {
-		if p.NoDataState == "" {
-			return fmt.Errorf("no_data_state is required")
-		}
-		if p.ExecErrState == "" {
-			return fmt.Errorf("exec_err_state is required")
-		}
-	} else {
+	if p.NoDataState == "" {
+		return fmt.Errorf("no_data_state is required")
+	}
+	if p.ExecErrState == "" {
+		return fmt.Errorf("exec_err_state is required")
+	}
+
+	if p.Record != nil {
 		if err := p.Record.validate(); err != nil {
 			return err
 		}
