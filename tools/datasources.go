@@ -51,11 +51,11 @@ func listDatasources(ctx context.Context, args ListDatasourcesParams) (*ListData
 	// Apply default limit if not specified
 	limit := args.Limit
 	if limit <= 0 {
-		limit = DefaultListDataSourceLimit
+		limit = defaultListDataSourceLimit
 	}
 	// Cap at maximum
-	if limit > MaxListDataSourceLimit {
-		limit = MaxListDataSourceLimit
+	if limit > maxListDataSourceLimit {
+		limit = maxListDataSourceLimit
 	}
 
 	offset := args.Offset
