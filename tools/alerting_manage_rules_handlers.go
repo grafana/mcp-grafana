@@ -124,9 +124,11 @@ func getAlertRuleVersions(ctx context.Context, uid string) (any, error) {
 // are left at their zero values.
 func mergeRuleDetail(provisioned *models.ProvisionedAlertRule, runtime *alertingRule) alertRuleDetail {
 	detail := alertRuleDetail{
-		UID:         provisioned.UID,
-		Labels:      provisioned.Labels,
-		Annotations: provisioned.Annotations,
+		UID:                         provisioned.UID,
+		Labels:                      provisioned.Labels,
+		Annotations:                 provisioned.Annotations,
+		KeepFiringFor:               provisioned.KeepFiringFor.String(),
+		MissingSeriesEvalsToResolve: provisioned.MissingSeriesEvalsToResolve,
 	}
 
 	if provisioned.Title != nil {
@@ -149,6 +151,9 @@ func mergeRuleDetail(provisioned *models.ProvisionedAlertRule, runtime *alerting
 	}
 	if provisioned.For != nil {
 		detail.For = provisioned.For.String()
+	}
+	if provisioned.Record != nil {
+		detail.Record = (*Record)(provisioned.Record)
 	}
 
 	detail.IsPaused = provisioned.IsPaused

@@ -45,6 +45,10 @@ type alertRuleDetail struct {
 	NotificationSettings *models.AlertRuleNotificationSettings `json:"notification_settings,omitempty"`
 	Queries              []querySummary                        `json:"queries,omitempty"`
 
+	KeepFiringFor               string  `json:"keepFiringFor,omitempty"`
+	Record                      *Record `json:"record,omitempty" `
+	MissingSeriesEvalsToResolve int64   `json:"missingSeriesEvalsToResolve,omitempty"`
+
 	State          string  `json:"state"`
 	Health         string  `json:"health"`
 	Type           string  `json:"type,omitempty"`
@@ -91,6 +95,7 @@ type ConditionEvaluator struct {
 	Params []float64 `json:"params" jsonschema:"required,description=Threshold value(s)"`
 }
 
+// NotificationSettings defines how notifications for an alert should be handled and grouped.
 type NotificationSettings struct {
 	ActiveTimeIntervals []string `json:"activeTimeIntervals,omitempty" jsonschema:"description=Override active (non-muted) time intervals by name."`
 	GroupBy             []string `json:"groupBy,omitempty" jsonschema:"description=Labels used to group alerts for notification batching."`
@@ -101,6 +106,7 @@ type NotificationSettings struct {
 	RepeatInterval      string   `json:"repeatInterval,omitempty" jsonschema:"description=Interval before resending a notification for an ongoing alert."`
 }
 
+// Record contains the configuration for a recording rule.
 type Record struct {
 	From                *string `json:"from" jsonschema:"required,description=Reference ID of the query or expression used as input. Ex: A"`
 	Metric              *string `json:"metric" jsonschema:"required,description=Name of the recorded metric to be created."`
@@ -305,12 +311,12 @@ func (p UpdateAlertRuleParams) validate() error {
 	if p.Data == nil {
 		return fmt.Errorf("data is required")
 	}
-	if p.NoDataState == "" {
-		return fmt.Errorf("no_data_state is required")
-	}
-	if p.ExecErrState == "" {
-		return fmt.Errorf("exec_err_state is required")
-	}
+		if p.NoDataState == "" {
+			return fmt.Errorf("no_data_state is required")
+		}
+		if p.ExecErrState == "" {
+			return fmt.Errorf("exec_err_state is required")
+		}
 
 	if p.Record != nil {
 		if err := p.Record.validate(); err != nil {
