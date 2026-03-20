@@ -465,6 +465,32 @@ You can add arbitrary HTTP headers to all Grafana API requests using the `GRAFAN
 }
 ```
 
+### Forwarding Headers from the Client (SSE/Streamable-HTTP Only)
+
+When the MCP server runs behind a gateway or reverse proxy that handles SSO (e.g. an AWS ALB with OIDC), each user's session cookie must reach Grafana so it can associate the request with the authenticated user. The `GRAFANA_FORWARD_HEADERS` environment variable enables this by specifying a comma-separated allowlist of header names to copy from the **incoming** HTTP request to every outbound Grafana API request.
+
+This only applies when using SSE (`-t sse`) or streamable-http (`-t streamable-http`) transports. It has no effect in stdio mode.
+
+**Example: forward the session cookie**
+
+```json
+{
+  "env": {
+    "GRAFANA_URL": "https://grafana.internal",
+    "GRAFANA_SERVICE_ACCOUNT_TOKEN": "<your token>",
+    "GRAFANA_FORWARD_HEADERS": "Cookie"
+  }
+}
+```
+
+You can forward multiple headers by separating them with commas:
+
+```
+GRAFANA_FORWARD_HEADERS=Cookie,X-Session-Id
+```
+
+Forwarded headers are merged with any headers defined in `GRAFANA_EXTRA_HEADERS`. If a header name appears in both, the value from the incoming request takes precedence for that request.
+
 2. You have several options to install `mcp-grafana`:
 
    - **uvx (recommended)**: If you have [uv](https://docs.astral.sh/uv/getting-started/installation/) installed, no extra setup is needed — `uvx` will automatically download and run the server:
