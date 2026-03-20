@@ -23,17 +23,27 @@ import (
 	"go.opentelemetry.io/otel/semconv/v1.39.0/mcpconv"
 )
 
-func maybeAddTools(s *server.MCPServer, tf func(*server.MCPServer), enabledTools []string, disable bool, category string) {
+func maybeAddTools(s *server.MCPServer, tf func(*server.MCPServer), enabledTools []string, disable bool, category string) bool {
 	if !slices.Contains(enabledTools, category) {
 		slog.Debug("Not enabling tools", "category", category)
-		return
+		return false
 	}
 	if disable {
 		slog.Info("Disabling tools", "category", category)
-		return
+		return false
 	}
 	slog.Debug("Enabling tools", "category", category)
 	tf(s)
+	return true
+}
+
+// toolCategory defines a tool category with its registration function,
+// disabled flag, category name, and instruction text for the client.
+type toolCategory struct {
+	addFunc     func(*server.MCPServer)
+	disabled    bool
+	category    string
+	instruction string
 }
 
 // disabledTools indicates whether each category of tools should be disabled.
@@ -104,31 +114,94 @@ func (gc *grafanaConfig) addFlags() {
 	flag.IntVar(&gc.maxLokiLogLimit, "max-loki-log-limit", tools.MaxLokiLogLimit, "Maximum number of log lines returned per query_loki_logs call")
 }
 
+// toolCategories returns the list of all tool categories with their registration
+// functions, disabled flags, category names, and instruction text. This is the
+// single source of truth for the mapping between disabled flags and categories.
+//
+// Prometheus and Loki have empty instructions here because their instruction
+// text is built dynamically based on which combination is enabled.
+func (dt *disabledTools) toolCategories() []toolCategory {
+	enableWriteTools := !dt.write
+	return []toolCategory{
+		{tools.AddSearchTools, dt.search, "search", ""},
+		{tools.AddDatasourceTools, dt.datasource, "datasource", "- Datasources: List and fetch details for datasources."},
+		{func(s *server.MCPServer) { tools.AddIncidentTools(s, enableWriteTools) }, dt.incident, "incident", "- Incidents: Search, create, update, and resolve incidents in Grafana Incident."},
+		{tools.AddPrometheusTools, dt.prometheus, "prometheus", ""},
+		{tools.AddLokiTools, dt.loki, "loki", ""},
+		{tools.AddElasticsearchTools, dt.elasticsearch, "elasticsearch", "- Elasticsearch: Query Elasticsearch datasources using Lucene syntax or Query DSL for logs and metrics."},
+		{func(s *server.MCPServer) { tools.AddAlertingTools(s, enableWriteTools) }, dt.alerting, "alerting", "- Alerting: List and fetch alert rules and notification contact points."},
+		{func(s *server.MCPServer) { tools.AddDashboardTools(s, enableWriteTools) }, dt.dashboard, "dashboard", "- Dashboards: Search, retrieve, update, and create dashboards. Extract panel queries and datasource information."},
+		{func(s *server.MCPServer) { tools.AddFolderTools(s, enableWriteTools) }, dt.folder, "folder", ""},
+		{tools.AddOnCallTools, dt.oncall, "oncall", "- OnCall: View and manage on-call schedules, shifts, teams, and users."},
+		{tools.AddAssertsTools, dt.asserts, "asserts", ""},
+		{func(s *server.MCPServer) { tools.AddSiftTools(s, enableWriteTools) }, dt.sift, "sift", "- Sift Investigations: Start and manage Sift investigations, analyze logs/traces, find error patterns, and detect slow requests."},
+		{tools.AddAdminTools, dt.admin, "admin", "- Admin: List teams and perform administrative tasks."},
+		{tools.AddPyroscopeTools, dt.pyroscope, "pyroscope", "- Pyroscope: Profile applications and fetch profiling data."},
+		{tools.AddNavigationTools, dt.navigation, "navigation", "- Navigation: Generate deeplink URLs for Grafana resources like dashboards, panels, and Explore queries."},
+		{func(s *server.MCPServer) { tools.AddAnnotationTools(s, enableWriteTools) }, dt.annotations, "annotations", ""},
+		{tools.AddRenderingTools, dt.rendering, "rendering", "- Rendering: Export dashboard panels or full dashboards as PNG images (requires Grafana Image Renderer plugin)."},
+		{tools.AddCloudWatchTools, dt.cloudwatch, "cloudwatch", ""},
+		{tools.AddExamplesTools, dt.examples, "examples", ""},
+		{tools.AddClickHouseTools, dt.clickhouse, "clickhouse", "- ClickHouse: Query ClickHouse datasources via Grafana with macro and variable substitution support."},
+		{tools.AddSearchLogsTools, dt.searchlogs, "searchlogs", ""},
+		{tools.AddRunPanelQueryTools, dt.runpanelquery, "runpanelquery", ""},
+		// Proxied tools are registered separately in newServer, so addFunc is nil.
+		{nil, dt.proxied, "proxied", "- Proxied Tools: Access tools from external MCP servers (like Tempo) through dynamic discovery."},
+	}
+}
+
+// isEnabled reports whether the given tool category is both in the enabled-tools
+// list and not explicitly disabled.
+func (dt *disabledTools) isEnabled(category string) bool {
+	enabledTools := strings.Split(dt.enabledTools, ",")
+	for _, cat := range dt.toolCategories() {
+		if cat.category == category {
+			return slices.Contains(enabledTools, category) && !cat.disabled
+		}
+	}
+	return false
+}
+
 func (dt *disabledTools) addTools(s *server.MCPServer) {
 	enabledTools := strings.Split(dt.enabledTools, ",")
-	enableWriteTools := !dt.write
-	maybeAddTools(s, tools.AddSearchTools, enabledTools, dt.search, "search")
-	maybeAddTools(s, tools.AddDatasourceTools, enabledTools, dt.datasource, "datasource")
-	maybeAddTools(s, func(mcp *server.MCPServer) { tools.AddIncidentTools(mcp, enableWriteTools) }, enabledTools, dt.incident, "incident")
-	maybeAddTools(s, tools.AddPrometheusTools, enabledTools, dt.prometheus, "prometheus")
-	maybeAddTools(s, tools.AddLokiTools, enabledTools, dt.loki, "loki")
-	maybeAddTools(s, tools.AddElasticsearchTools, enabledTools, dt.elasticsearch, "elasticsearch")
-	maybeAddTools(s, func(mcp *server.MCPServer) { tools.AddAlertingTools(mcp, enableWriteTools) }, enabledTools, dt.alerting, "alerting")
-	maybeAddTools(s, func(mcp *server.MCPServer) { tools.AddDashboardTools(mcp, enableWriteTools) }, enabledTools, dt.dashboard, "dashboard")
-	maybeAddTools(s, func(mcp *server.MCPServer) { tools.AddFolderTools(mcp, enableWriteTools) }, enabledTools, dt.folder, "folder")
-	maybeAddTools(s, tools.AddOnCallTools, enabledTools, dt.oncall, "oncall")
-	maybeAddTools(s, tools.AddAssertsTools, enabledTools, dt.asserts, "asserts")
-	maybeAddTools(s, func(mcp *server.MCPServer) { tools.AddSiftTools(mcp, enableWriteTools) }, enabledTools, dt.sift, "sift")
-	maybeAddTools(s, tools.AddAdminTools, enabledTools, dt.admin, "admin")
-	maybeAddTools(s, tools.AddPyroscopeTools, enabledTools, dt.pyroscope, "pyroscope")
-	maybeAddTools(s, tools.AddNavigationTools, enabledTools, dt.navigation, "navigation")
-	maybeAddTools(s, func(mcp *server.MCPServer) { tools.AddAnnotationTools(mcp, enableWriteTools) }, enabledTools, dt.annotations, "annotations")
-	maybeAddTools(s, tools.AddRenderingTools, enabledTools, dt.rendering, "rendering")
-	maybeAddTools(s, tools.AddCloudWatchTools, enabledTools, dt.cloudwatch, "cloudwatch")
-	maybeAddTools(s, tools.AddExamplesTools, enabledTools, dt.examples, "examples")
-	maybeAddTools(s, tools.AddClickHouseTools, enabledTools, dt.clickhouse, "clickhouse")
-	maybeAddTools(s, tools.AddSearchLogsTools, enabledTools, dt.searchlogs, "searchlogs")
-	maybeAddTools(s, tools.AddRunPanelQueryTools, enabledTools, dt.runpanelquery, "runpanelquery")
+	for _, cat := range dt.toolCategories() {
+		if cat.addFunc == nil {
+			continue
+		}
+		maybeAddTools(s, cat.addFunc, enabledTools, cat.disabled, cat.category)
+	}
+}
+
+func (dt *disabledTools) buildInstructions() string {
+	enabledTools := strings.Split(dt.enabledTools, ",")
+	var capabilities []string
+
+	for _, cat := range dt.toolCategories() {
+		if cat.instruction == "" {
+			continue
+		}
+		if slices.Contains(enabledTools, cat.category) && !cat.disabled {
+			capabilities = append(capabilities, cat.instruction)
+		}
+	}
+
+	// Prometheus and Loki have a combined instruction line that adapts
+	// based on which of the two are enabled.
+	promEnabled := dt.isEnabled("prometheus")
+	lokiEnabled := dt.isEnabled("loki")
+	switch {
+	case promEnabled && lokiEnabled:
+		capabilities = append(capabilities, "- Prometheus & Loki: Run PromQL and LogQL queries, retrieve metric/log metadata, and explore label names/values.")
+	case promEnabled:
+		capabilities = append(capabilities, "- Prometheus: Run PromQL queries, retrieve metric metadata, and explore label names/values.")
+	case lokiEnabled:
+		capabilities = append(capabilities, "- Loki: Run LogQL queries, retrieve log metadata, and explore label names/values.")
+	}
+
+	instructions := "This server provides access to your Grafana instance and the surrounding ecosystem.\n\nAvailable Capabilities:\n"
+	instructions += strings.Join(capabilities, "\n")
+
+	return instructions
 }
 
 func newServer(transport string, dt disabledTools, obs *observability.Observability) (*server.MCPServer, *mcpgrafana.ToolManager) {
@@ -174,27 +247,7 @@ func newServer(transport string, dt disabledTools, obs *observability.Observabil
 	hooks = observability.MergeHooks(hooks, obs.MCPHooks())
 
 	s := server.NewMCPServer("mcp-grafana", mcpgrafana.Version(),
-		server.WithInstructions(`
-This server provides access to your Grafana instance and the surrounding ecosystem.
-
-Available Capabilities:
-- Dashboards: Search, retrieve, update, and create dashboards. Extract panel queries and datasource information.
-- Datasources: List and fetch details for datasources.
-- Prometheus & Loki: Run PromQL and LogQL queries, retrieve metric/log metadata, and explore label names/values.
-- ClickHouse: Query ClickHouse datasources via Grafana with macro and variable substitution support.
-- Elasticsearch: Query Elasticsearch datasources using Lucene syntax or Query DSL for logs and metrics.
-- Incidents: Search, create, update, and resolve incidents in Grafana Incident.
-- Sift Investigations: Start and manage Sift investigations, analyze logs/traces, find error patterns, and detect slow requests.
-- Alerting: List and fetch alert rules and notification contact points.
-- OnCall: View and manage on-call schedules, shifts, teams, and users.
-- Admin: List teams and perform administrative tasks.
-- Pyroscope: Profile applications and fetch profiling data.
-- Navigation: Generate deeplink URLs for Grafana resources like dashboards, panels, and Explore queries.
-- Rendering: Export dashboard panels or full dashboards as PNG images (requires Grafana Image Renderer plugin).
-- Proxied Tools: Access tools from external MCP servers (like Tempo) through dynamic discovery.
-
-Note that some of these capabilities may be disabled. Do not try to use features that are not available via tools.
-`),
+		server.WithInstructions(dt.buildInstructions()),
 		server.WithHooks(hooks),
 	)
 
