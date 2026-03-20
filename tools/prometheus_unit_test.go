@@ -326,7 +326,7 @@ func TestPostToGetRoundTripper(t *testing.T) {
 
 		resp, err := rt.RoundTrip(req)
 		require.NoError(t, err)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		assert.Equal(t, http.MethodGet, receivedReq.Method)
 		assert.Equal(t, "up", receivedReq.URL.Query().Get("query"))
@@ -349,7 +349,7 @@ func TestPostToGetRoundTripper(t *testing.T) {
 
 		resp, err := rt.RoundTrip(req)
 		require.NoError(t, err)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		assert.Equal(t, http.MethodGet, receivedReq.Method)
 		assert.Equal(t, "up", receivedReq.URL.Query().Get("query"))
@@ -372,7 +372,7 @@ func TestPostToGetRoundTripper(t *testing.T) {
 
 		resp, err := rt.RoundTrip(req)
 		require.NoError(t, err)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		assert.Equal(t, http.MethodGet, receivedReq.Method)
 		assert.Equal(t, "param", receivedReq.URL.Query().Get("existing"))
@@ -394,7 +394,7 @@ func TestPostToGetRoundTripper(t *testing.T) {
 
 		resp, err := rt.RoundTrip(req)
 		require.NoError(t, err)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		// Original request should still be POST
 		assert.Equal(t, http.MethodPost, req.Method)
@@ -417,7 +417,7 @@ func TestPostToGetRoundTripper(t *testing.T) {
 
 		resp, err := rt.RoundTrip(req)
 		require.NoError(t, err)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		assert.Equal(t, http.MethodGet, receivedReq.Method)
 		assert.Equal(t, "up", receivedReq.URL.Query().Get("query"))
@@ -440,7 +440,7 @@ func TestPostToGetRoundTripper(t *testing.T) {
 
 		resp, err := rt.RoundTrip(req)
 		require.NoError(t, err)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		assert.Equal(t, http.MethodGet, receivedReq.Method)
 		receivedBody, _ := io.ReadAll(receivedReq.Body)
