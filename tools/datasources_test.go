@@ -18,8 +18,8 @@ func TestDatasourcesTools(t *testing.T) {
 		result, err := listDatasources(ctx, ListDatasourcesParams{})
 		require.NoError(t, err)
 
-		// Ten datasources are provisioned in the test environment (Prometheus, Prometheus Demo, Loki, Pyroscope, Tempo, Tempo Secondary, Alertmanager, ClickHouse and CloudWatch).
-		assert.Len(t, result.Datasources, 10)
+		// Eleven datasources are provisioned in the test environment (Prometheus, Prometheus Demo, Loki, Pyroscope, Tempo, Tempo Secondary, Alertmanager, ClickHouse, Elasticsearch, OpenSearch, and CloudWatch).
+		assert.Len(t, result.Datasources, 11)
 	})
 
 	t.Run("list datasources for type", func(t *testing.T) {
