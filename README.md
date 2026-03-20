@@ -66,7 +66,7 @@ The dashboard tools now include several strategies to manage context window usag
 ### Datasources
 
 - **List and fetch datasource information:** View all configured datasources and retrieve detailed information about each.
-  - _Supported datasource types: Prometheus, Loki, ClickHouse, CloudWatch, Elasticsearch._
+  - _Supported datasource types: Prometheus, Loki, ClickHouse, CloudWatch, Elasticsearch, VictoriaLogs._
 
 ### Query Examples
 
@@ -102,6 +102,13 @@ The dashboard tools now include several strategies to manage context window usag
 - **List CloudWatch metrics:** List metrics available in a specific namespace.
 - **List CloudWatch dimensions:** Get dimensions for filtering metric queries.
 - **Query CloudWatch:** Execute CloudWatch metric queries with time range support.
+
+### VictoriaLogs Querying
+
+- **Query VictoriaLogs:** Execute LogsQL queries against VictoriaLogs datasources to retrieve log entries.
+- **Query VictoriaLogs metadata:** List available field names and field values from VictoriaLogs datasources.
+- **Query VictoriaLogs hits:** Get log volume over time buckets for trend analysis.
+- **Query VictoriaLogs streams:** List matching log streams with hit counts.
 
 ### Log Search
 
@@ -280,6 +287,11 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `list_loki_label_values`          | Loki        | List values for a specific log label                                | `datasources:query`                     | `datasources:uid:loki-uid`                          |
 | `query_loki_stats`                | Loki        | Get statistics about log streams                                    | `datasources:query`                     | `datasources:uid:loki-uid`                          |
 | `query_loki_patterns`             | Loki        | Query detected log patterns to identify common structures           | `datasources:query`                     | `datasources:uid:loki-uid`                          |
+| `query_victorialogs`              | VictoriaLogs | Execute LogsQL queries against VictoriaLogs                        | `datasources:query`                     | `datasources:uid:victorialogs-uid`                  |
+| `list_victorialogs_field_names`   | VictoriaLogs | List available field names in VictoriaLogs                         | `datasources:query`                     | `datasources:uid:victorialogs-uid`                  |
+| `list_victorialogs_field_values`  | VictoriaLogs | List values for a specific field with hit counts                   | `datasources:query`                     | `datasources:uid:victorialogs-uid`                  |
+| `query_victorialogs_hits`         | VictoriaLogs | Query log volume over time buckets                                 | `datasources:query`                     | `datasources:uid:victorialogs-uid`                  |
+| `query_victorialogs_streams`      | VictoriaLogs | List matching log streams with hit counts                          | `datasources:query`                     | `datasources:uid:victorialogs-uid`                  |
 | `list_clickhouse_tables`          | ClickHouse* | List tables in a ClickHouse database                                | `datasources:query`                     | `datasources:uid:*`                                 |
 | `describe_clickhouse_table`       | ClickHouse* | Get table schema with column types                                  | `datasources:query`                     | `datasources:uid:*`                                 |
 | `query_clickhouse`                | ClickHouse* | Execute SQL queries with macro substitution                         | `datasources:query`                     | `datasources:uid:*`                                 |
@@ -359,6 +371,7 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 - `--disable-clickhouse`: Disable ClickHouse tools
 - `--disable-searchlogs`: Disable search_logs tool
 - `--disable-runpanelquery`: Disable run panel query tools
+- `--disable-victorialogs`: Disable VictoriaLogs tools
 
 ### Read-Only Mode
 
