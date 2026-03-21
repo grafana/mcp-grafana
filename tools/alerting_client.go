@@ -120,8 +120,8 @@ const (
 
 // GetRulesOpts contains optional server-side filtering parameters for the
 // Prometheus rules API endpoint.
-// FolderUID, RuleGroup, States, LimitAlerts, Matchers are available since Grafana 10.0.
-// SearchFolder, RuleName, RuleType, RuleLimit require Grafana 12.4+.
+// FolderUID, RuleGroup, States, LimitAlerts are available since Grafana 10.0.
+// SearchFolder, RuleName, RuleType, RuleLimit, Matchers require Grafana 12.4+.
 type GetRulesOpts struct {
 	FolderUID    string   // Filter by folder UID
 	SearchFolder string   // Search folders by full path using partial matching
@@ -250,11 +250,15 @@ type alert struct {
 }
 
 // GetDatasourceRules queries a datasource's Prometheus ruler API
-func (c *alertingClient) GetDatasourceRules(ctx context.Context, datasourceUID string) (*v1.RulesResult, error) {
+func (c *alertingClient) GetDatasourceRules(ctx context.Context, datasourceUID string, opts *GetRulesOpts) (*v1.RulesResult, error) {
 	// use the Grafana unified endpoint - maybe we need to use the datasource proxy endpoint in the future as this
 	// is an api for internal use
 	path := fmt.Sprintf("/api/prometheus/%s/api/v1/rules", datasourceUID)
-	resp, err := c.makeRequest(ctx, path, nil)
+	var params url.Values
+	if opts != nil {
+		params = opts.queryValues()
+	}
+	resp, err := c.makeRequest(ctx, path, params)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get datasource rules: %w", err)
 	}
