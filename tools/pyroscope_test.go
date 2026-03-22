@@ -3,8 +3,10 @@
 package tools
 
 import (
+	"encoding/json"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -84,5 +86,90 @@ func TestPyroscopeTools(t *testing.T) {
 			Matchers:      `{service_name="pyroscope", label_does_not_exit="missing"}`,
 		})
 		require.EqualError(t, err, "failed to call Pyroscope API: pyroscope API returned an empty response")
+	})
+
+	t.Run("fetch Pyroscope series", func(t *testing.T) {
+		ctx := newTestContext()
+		result, err := fetchPyroscopeSeries(ctx, FetchPyroscopeSeriesParams{
+			DataSourceUID: "pyroscope",
+			ProfileType:   "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
+			Matchers:      `{service_name="pyroscope"}`,
+		})
+		require.NoError(t, err)
+		require.NotEmpty(t, result)
+
+		var parsed struct {
+			Series     []seriesSummary   `json:"series"`
+			TimeRange  map[string]string `json:"time_range"`
+			StepSecs   float64           `json:"step_seconds"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(result), &parsed))
+		assert.NotEmpty(t, parsed.Series)
+		assert.NotEmpty(t, parsed.TimeRange["from"])
+		assert.NotEmpty(t, parsed.TimeRange["to"])
+		assert.Greater(t, parsed.StepSecs, 0.0)
+	})
+
+	t.Run("fetch Pyroscope series empty", func(t *testing.T) {
+		ctx := newTestContext()
+		result, err := fetchPyroscopeSeries(ctx, FetchPyroscopeSeriesParams{
+			DataSourceUID: "pyroscope",
+			ProfileType:   "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
+			Matchers:      `{service_name="pyroscope", label_does_not_exit="missing"}`,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, "No series data returned for the given query and time range.", result)
+	})
+
+	t.Run("fetch Pyroscope unified both", func(t *testing.T) {
+		ctx := newTestContext()
+		result, err := fetchPyroscopeUnified(ctx, FetchPyroscopeUnifiedParams{
+			DataSourceUID: "pyroscope",
+			ProfileType:   "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
+			Matchers:      `{service_name="pyroscope"}`,
+			QueryType:     "both",
+		})
+		require.NoError(t, err)
+		require.NotEmpty(t, result)
+
+		var parsed map[string]any
+		require.NoError(t, json.Unmarshal([]byte(result), &parsed))
+		assert.Equal(t, "both", parsed["query_type"])
+		assert.NotNil(t, parsed["profile"], "profile should be present")
+		assert.NotNil(t, parsed["metrics"], "metrics should be present")
+	})
+
+	t.Run("fetch Pyroscope unified profile only", func(t *testing.T) {
+		ctx := newTestContext()
+		result, err := fetchPyroscopeUnified(ctx, FetchPyroscopeUnifiedParams{
+			DataSourceUID: "pyroscope",
+			ProfileType:   "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
+			Matchers:      `{service_name="pyroscope"}`,
+			QueryType:     "profile",
+		})
+		require.NoError(t, err)
+
+		var parsed map[string]any
+		require.NoError(t, json.Unmarshal([]byte(result), &parsed))
+		assert.Equal(t, "profile", parsed["query_type"])
+		assert.NotNil(t, parsed["profile"])
+		assert.Nil(t, parsed["metrics"], "metrics should not be present for profile-only")
+	})
+
+	t.Run("fetch Pyroscope unified metrics only", func(t *testing.T) {
+		ctx := newTestContext()
+		result, err := fetchPyroscopeUnified(ctx, FetchPyroscopeUnifiedParams{
+			DataSourceUID: "pyroscope",
+			ProfileType:   "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
+			Matchers:      `{service_name="pyroscope"}`,
+			QueryType:     "metrics",
+		})
+		require.NoError(t, err)
+
+		var parsed map[string]any
+		require.NoError(t, json.Unmarshal([]byte(result), &parsed))
+		assert.Equal(t, "metrics", parsed["query_type"])
+		assert.Nil(t, parsed["profile"], "profile should not be present for metrics-only")
+		assert.NotNil(t, parsed["metrics"])
 	})
 }
