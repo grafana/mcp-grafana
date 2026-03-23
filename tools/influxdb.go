@@ -15,10 +15,12 @@ import (
 	"time"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
+	"github.com/grafana/mcp-grafana/pkg/grafana"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
 
+// InfluxDB constants define limits and data source types for the InfluxDB client.
 const (
 	InfluxDBDataSourceType = "influxdb"
 
@@ -26,13 +28,15 @@ const (
 	InfluxDBDefaultLimit uint = 100
 
 	InfluxDBMeasurementsDefaultLimit uint = 100
+	// InfluxDBMeasurementsMaxLimit is the maximum limit applied when listing measurements.
 	InfluxDBMeasurementsMaxLimit     uint = 1000
 
-	//limit applied to fields, tags
+	// InfluxDBTagsDefaultLimit is the default limit applied to fields and tags.
 	InfluxDBTagsDefaultLimit uint = 100
 	InfluxDBTagsMaxLimit     uint = 1000
 )
 
+// Supported query types for the InfluxDB client.
 const (
 	FluxQueryType     = "Flux"
 	SQLQueryType      = "SQL"
@@ -110,90 +114,73 @@ type InfluxQueryArgs struct {
 	Limit         uint   `json:"limit,omitempty" jsonschema:"description=Limit number of records per table (or group)"`
 }
 
-// influxQueryResponse represents the raw API response from Grafana's /api/ds/query
-type influxQueryResponse struct {
-	Results map[string]struct {
-		Status int `json:"status,omitempty"`
-		Frames []struct {
-			Schema struct {
-				Name   string `json:"name,omitempty"`
-				RefID  string `json:"refId,omitempty"`
-				Fields []struct {
-					Labels struct {
-						Field string `json:"_field,omitempty"`
-					} `json:"labels"`
-					Name     string `json:"name"`
-					Type     string `json:"type"`
-					TypeInfo struct {
-						Frame string `json:"frame,omitempty"`
-					} `json:"typeInfo,omitempty"`
-					Config map[string]interface{} `json:"config,omitempty"`
-				} `json:"fields"`
-			} `json:"schema,omitempty"`
-			Data struct {
-				Values [][]interface{} `json:"values"`
-			} `json:"data"`
-		} `json:"frames,omitempty"`
-		Error string `json:"error,omitempty"`
-	} `json:"results"`
-}
-
+// InfluxQueryResFrame represents a single frame of data in the query response.
 type InfluxQueryResFrame struct {
 	Name     string           `json:"name"`
 	Columns  []string         `json:"columns"`
 	Rows     []map[string]any `json:"rows"`
 	RowCount uint             `json:"rowCount"`
 }
+// InfluxQueryResult contains the parsed results of an InfluxDB query.
 type InfluxQueryResult struct {
 	Frames      []*InfluxQueryResFrame
 	FramesCount int
 	Hints       *EmptyResultHints `json:"hints,omitempty"`
 }
 
-func queryTypePayloadKey(queryType string) (string, error) {
-	if queryType == SQLQueryType {
-		return "rawSql", nil
-	}
-
-	if queryType == InfluxQLQueryType || queryType == FluxQueryType {
-		return "query", nil
-	}
-
-	return "", fmt.Errorf("unknown query type: %s", queryType)
+type InfluxQLQuery struct {
+	Datasource   DatasourceRef `json:"datasource"`
+	RefID        string        `json:"refId"`
+	Type         string        `json:"type"`
+	Format       string        `json:"format"`
+	IntervalMs   uint          `json:"intervalMs"`
+	Query        string        `json:"query"`
+	RawSQL       string        `json:"rawSql"`
+	RawQuery     bool          `json:"rawQuery"`
+	Limit        string        `json:"limit"`
+	ResultFormat string        `json:"resultFormat"`
 }
 
-func (ic *influxDBClient) Query(ctx context.Context, args InfluxQueryArgs, from, to time.Time) (*influxQueryResponse, error) {
-	queryPayloadKey, err := queryTypePayloadKey(args.QueryType)
+// DatasourceRef encapsulates the unique identifier and type of a Grafana data source.
+type DatasourceRef struct {
+	UID  string `json:"uid"`
+	Type string `json:"type"`
+}
 
-	if err != nil {
-		// Pass errors
-		return nil, err
-	}
+func (ic *influxDBClient) Query(ctx context.Context, args InfluxQueryArgs, from, to time.Time) (*grafana.DSQueryResponse, error) {
 	format := "time_series"
 
 	if args.QueryType == SQLQueryType {
 		format = "table"
 	}
 
-	payload := map[string]interface{}{
-		"queries": []map[string]interface{}{
-			{
-				"datasource": map[string]string{
-					"uid":  args.DatasourceUID,
-					"type": InfluxDBDataSourceType,
-				},
-				"refId":         "A",
-				"type":          "timeSeriesQuery",
-				"format":        format,
-				"intervalMs":    args.IntervalMs,
-				queryPayloadKey: args.Query,
-				"rawQuery":      true,
-				"limit":         "",
-				"resultFormat":  "time_series",
-			},
+	query := InfluxQLQuery{
+		Datasource: DatasourceRef{
+			UID:  args.DatasourceUID,
+			Type: InfluxDBDataSourceType,
 		},
-		"from": strconv.FormatInt(from.UnixMilli(), 10),
-		"to":   strconv.FormatInt(to.UnixMilli(), 10),
+		RefID:        "A",
+		Type:         "timeSeriesQuery",
+		Format:       format,
+		IntervalMs:   args.IntervalMs,
+		RawQuery:     true,
+		Limit:        "",
+		ResultFormat: "time_series",
+	}
+
+	// append query
+	if args.QueryType == SQLQueryType {
+		query.RawSQL = args.Query
+	} else {
+		query.Query = args.Query
+	}
+
+	payload := grafana.DSQueryPayload{
+		Queries: []any{
+			query,
+		},
+		From: strconv.FormatInt(from.UnixMilli(), 10),
+		To:   strconv.FormatInt(to.UnixMilli(), 10),
 	}
 
 	payloadBytes, err := json.Marshal(payload)
@@ -220,12 +207,12 @@ func (ic *influxDBClient) Query(ctx context.Context, args InfluxQueryArgs, from,
 	}
 
 	// Read and parse response
-	body := io.LimitReader(resp.Body, 1024*1024*48) // 48MB limit
+	body := io.LimitReader(resp.Body, 1024*1024*10) // 10MB limit
 	bodyBytes, err := io.ReadAll(body)
 	if err != nil {
 		return nil, fmt.Errorf("reading response body: %w", err)
 	}
-	var queryResp influxQueryResponse
+	var queryResp grafana.DSQueryResponse
 	if err := json.Unmarshal(bodyBytes, &queryResp); err != nil {
 		return nil, fmt.Errorf("unmarshaling response: %w", err)
 	}
@@ -313,38 +300,24 @@ func parseTimeRange(start string, end string) (*time.Time, *time.Time, error) {
 
 }
 
-func queryInflux(ctx context.Context, args InfluxQueryArgs) (*InfluxQueryResult, error) {
-	client, _, err := newInfluxDBClient(ctx, args.DatasourceUID, &args.QueryType)
+// parseQueryResponseFrames parses ds/query response in a json key-pair format
+// returns list of frames combined of query results
+// treats empty results as an error
 
-	if err != nil {
-		return nil, err
-	}
-
-	originalQuery := args.Query
-
-	enforceQueryLimit(&args)
-	from, to, err := parseTimeRange(args.Start, args.End)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := client.Query(ctx, args, *from, *to)
-	if err != nil {
-		return nil, err
-	}
-
-	result := InfluxQueryResult{}
-
+func parseQueryResponseFrames(resp *grafana.DSQueryResponse) ([]*InfluxQueryResFrame, error) {
+	frames := make([]*InfluxQueryResFrame, 0)
 	hasResults := false
 
+	// InfluxQL Query has a frame for each column selection, (different selection sets result in varying row count for each frame)
+	// SQL Query results in a single frame , selected columns are mapped in frame.columns
 	for refID, r := range resp.Results {
 		if r.Error != "" {
 			return nil, fmt.Errorf("query error (refId=%s): %s", refID, r.Error)
 		}
 
-		clonedFrames := make([]*InfluxQueryResFrame, 0, len(result.Frames)+len(r.Frames))
-		copy(clonedFrames, result.Frames)
-		result.Frames = clonedFrames
+		clonedFrames := make([]*InfluxQueryResFrame, 0, len(frames)+len(r.Frames))
+		copy(clonedFrames, frames)
+		frames = clonedFrames
 
 		for _, frame := range r.Frames {
 
@@ -393,22 +366,51 @@ func queryInflux(ctx context.Context, args InfluxQueryArgs) (*InfluxQueryResult,
 				}
 			}
 
-			result.Frames = append(result.Frames, &resFrame)
+			frames = append(frames, &resFrame)
 			if rowCount > 0 && !hasResults {
 				hasResults = true
 			}
 		}
 	}
-	result.Frames = slices.Clip(result.Frames)
 
-	result.FramesCount = len(result.Frames)
-
-	/*
-		InfluxQL Query has a frame for each column selection, (different selection sets result in varying row count for each frame)
-		SQL Query results in a single frame , selected columns are mapped in frame.columns
-	*/
-
+	var err error
 	if !hasResults {
+		err = grafana.ErrNoRows
+	}
+	frames = slices.Clip(frames)
+
+	return frames, err
+}
+func queryInflux(ctx context.Context, args InfluxQueryArgs) (*InfluxQueryResult, error) {
+	client, _, err := newInfluxDBClient(ctx, args.DatasourceUID, &args.QueryType)
+
+	if err != nil {
+		return nil, err
+	}
+
+	originalQuery := args.Query
+
+	enforceQueryLimit(&args)
+	from, to, err := parseTimeRange(args.Start, args.End)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := client.Query(ctx, args, *from, *to)
+	if err != nil {
+		return nil, err
+	}
+
+	result := InfluxQueryResult{}
+
+	frames, err := parseQueryResponseFrames(resp)
+
+	if err != nil {
+		if err != grafana.ErrNoRows {
+			return nil, err
+		}
+		// query response returned no rows
+		// respond sucess with hints
 		result.Hints = GenerateEmptyResultHints(HintContext{
 			DatasourceType: InfluxDBDataSourceType,
 			Query:          originalQuery,
@@ -418,12 +420,15 @@ func queryInflux(ctx context.Context, args InfluxQueryArgs) (*InfluxQueryResult,
 		})
 	}
 
+	result.Frames = frames
+	result.FramesCount = len(result.Frames)
+
 	return &result, nil
 }
 
 var QueryInflux = mcpgrafana.MustTool(
 	"query_influx",
-	"Queries InfluxDB datasource, supports one of Flux, SQL, or InfluxQL query languages configured with the datasource.",
+	"Queries InfluxDB datasource, supports one of Flux, SQL, or InfluxQL query languages. Use in order: list_datasources -> get_datasource to determine query language configured for datasource.Use both list_field_keys_influxdb , list_tag_keys_influxdb to determine the available columns",
 	queryInflux,
 	mcp.WithTitleAnnotation("Query InfluxDB"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -439,14 +444,8 @@ type ListBucketResult struct {
 	Hints       *EmptyResultHints `json:"hints,omitempty"`
 }
 
-/*
-*
-
-	Exctracts Values from response of string type columns
-
-*
-*/
-func extractColValues(resp *influxQueryResponse, colName string) (*[]string, error) {
+// extractColValues extracts Values from response of string type columns
+func extractColValues(resp *grafana.DSQueryResponse, colName string) (*[]string, error) {
 	fieldValues := make([]string, 0)
 
 	for _, result := range resp.Results {
@@ -585,7 +584,8 @@ func listMeasurements(ctx context.Context, args ListMeasurementsArgs) (*ListMeas
 		query = fmt.Sprintf("SELECT table_name FROM information_schema.tables WHERE table_schema = 'iox' ORDER BY table_name LIMIT %d", args.Limit)
 		colKey = "table_name"
 	case FluxQueryType:
-		query = fmt.Sprintf(`import "influxdata/influxdb/schema" schema.measurements(bucket: "%s")|> limit(n: %d)`, args.Bucket, args.Limit)
+		query = fmt.Sprintf(`import "influxdata/influxdb/schema" schema.measurements(bucket: %s)|> limit(n: %d)`,
+			quoteStringAsFluxLiteral(args.Bucket), args.Limit)
 		colKey = "_value"
 	case InfluxQLQueryType:
 		query = fmt.Sprintf("SHOW MEASUREMENTS LIMIT %d", args.Limit)
@@ -654,6 +654,25 @@ func enforceTagKeysLimit(args *ListTagKeysArgs) {
 	}
 }
 
+func quoteStringAsLiteral(s string) string {
+	// SQL style: single quotes, escape internal single quotes by doubling
+	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
+}
+
+func quoteStringAsFluxLiteral(s string) string {
+	// Flux style: double quotes, escape backslash then double quotes
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `"`, `\"`)
+	return `"` + s + `"`
+}
+
+func quoteStringAsInfluxQLLiteral(s string) string {
+	// InfluxQL style: double quotes, escape backslash then double quotes
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `"`, `\"`)
+	return `"` + s + `"`
+}
+
 func listTagKeys(ctx context.Context, args ListTagKeysArgs) (*ListTagKeysResult, error) {
 	enforceTagKeysLimit(&args)
 
@@ -672,14 +691,17 @@ func listTagKeys(ctx context.Context, args ListTagKeysArgs) (*ListTagKeysResult,
 
 	switch queryType {
 	case SQLQueryType:
-		//data_type 'Dictionary%%' distinguishes tags from fields for SQL QUERIES
-		query = fmt.Sprintf("SELECT column_name FROM information_schema.columns WHERE table_schema = 'iox' AND table_name = '%s' AND data_type LIKE 'Dictionary%%' ORDER BY column_name LIMIT %d", args.Measurement, args.Limit)
+		// data_type 'Dictionary%%' distinguishes tags from fields for SQL QUERIES
+		query = fmt.Sprintf("SELECT column_name FROM information_schema.columns WHERE table_schema = 'iox' AND table_name = %s AND data_type LIKE 'Dictionary%%' ORDER BY column_name LIMIT %d",
+			quoteStringAsLiteral(args.Measurement), args.Limit)
 		tagColumnKey = "column_name"
 	case FluxQueryType:
-		query = fmt.Sprintf(`import "influxdata/influxdb/schema" schema.measurementTagKeys(bucket: "%s", measurement: "%s")|> limit(n: %d)`, args.Bucket, args.Measurement, args.Limit)
+		query = fmt.Sprintf(`import "influxdata/influxdb/schema" schema.measurementTagKeys(bucket: %s, measurement: %s)|> limit(n: %d)`,
+			quoteStringAsFluxLiteral(args.Bucket), quoteStringAsFluxLiteral(args.Measurement), args.Limit)
 		tagColumnKey = "_value"
 	case InfluxQLQueryType:
-		query = fmt.Sprintf(`SHOW TAG KEYS FROM "%s" LIMIT %d`, args.Measurement, args.Limit)
+		query = fmt.Sprintf(`SHOW TAG KEYS FROM %s LIMIT %d`,
+			quoteStringAsInfluxQLLiteral(args.Measurement), args.Limit)
 		tagColumnKey = "Value"
 	}
 
@@ -737,7 +759,7 @@ type ListFieldKeysResult struct {
 	Hints          *EmptyResultHints `json:"hints,omitempty"`
 }
 
-// field keys, tag key use same variable for limits
+// enforceFieldKeysLimit applies the default or maximum limits to the provided field keys arguments.
 func enforceFieldKeysLimit(args *ListFieldKeysArgs) {
 	if args.Limit > InfluxDBTagsMaxLimit {
 		args.Limit = InfluxDBTagsMaxLimit
@@ -766,13 +788,16 @@ func listFieldKeys(ctx context.Context, args ListFieldKeysArgs) (*ListFieldKeysR
 	switch queryType {
 	case SQLQueryType:
 		//data_type 'Dictionary%%' distinguishes tags from fields for SQL QUERIES
-		query = fmt.Sprintf("SELECT column_name FROM information_schema.columns WHERE table_schema = 'iox' AND table_name = '%s' AND data_type NOT LIKE 'Dictionary%%' ORDER BY column_name LIMIT %d", args.Measurement, args.Limit)
+		query = fmt.Sprintf("SELECT column_name FROM information_schema.columns WHERE table_schema = 'iox' AND table_name = %s AND data_type NOT LIKE 'Dictionary%%' ORDER BY column_name LIMIT %d",
+			quoteStringAsLiteral(args.Measurement), args.Limit)
 		fieldColumnKey = "column_name"
 	case FluxQueryType:
-		query = fmt.Sprintf(`import "influxdata/influxdb/schema" schema.measurementFieldKeys(bucket: "%s", measurement: "%s")|> limit(n: %d)`, args.Bucket, args.Measurement, args.Limit)
+		query = fmt.Sprintf(`import "influxdata/influxdb/schema" schema.measurementFieldKeys(bucket: %s, measurement: %s)|> limit(n: %d)`,
+			quoteStringAsFluxLiteral(args.Bucket), quoteStringAsFluxLiteral(args.Measurement), args.Limit)
 		fieldColumnKey = "_value"
 	case InfluxQLQueryType:
-		query = fmt.Sprintf(`SHOW FIELD KEYS FROM "%s" LIMIT %d`, args.Measurement, args.Limit)
+		query = fmt.Sprintf(`SHOW FIELD KEYS FROM %s LIMIT %d`,
+			quoteStringAsInfluxQLLiteral(args.Measurement), args.Limit)
 		fieldColumnKey = "Value"
 	}
 

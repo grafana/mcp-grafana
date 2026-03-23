@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"testing"
 
+	"github.com/grafana/mcp-grafana/pkg/grafana"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -251,108 +252,34 @@ func TestParseCloudWatchMetricsResponse(t *testing.T) {
 func TestCloudWatchMultiFrameStatistics(t *testing.T) {
 	// Build a cloudWatchQueryResponse with 2 frames to verify statistics
 	// are accumulated across all frames, not just the last one.
-	resp := &cloudWatchQueryResponse{
-		Results: map[string]struct {
-			Status int `json:"status,omitempty"`
-			Frames []struct {
-				Schema struct {
-					Name   string `json:"name,omitempty"`
-					RefID  string `json:"refId,omitempty"`
-					Fields []struct {
-						Name     string                 `json:"name"`
-						Type     string                 `json:"type"`
-						Labels   map[string]string      `json:"labels,omitempty"`
-						Config   map[string]interface{} `json:"config,omitempty"`
-						TypeInfo struct {
-							Frame string `json:"frame,omitempty"`
-						} `json:"typeInfo,omitempty"`
-					} `json:"fields"`
-				} `json:"schema"`
-				Data struct {
-					Values [][]interface{} `json:"values"`
-				} `json:"data"`
-			} `json:"frames,omitempty"`
-			Error string `json:"error,omitempty"`
-		}{},
-	}
-
-	// Frame type for convenience
-	type frame = struct {
-		Schema struct {
-			Name   string `json:"name,omitempty"`
-			RefID  string `json:"refId,omitempty"`
-			Fields []struct {
-				Name     string                 `json:"name"`
-				Type     string                 `json:"type"`
-				Labels   map[string]string      `json:"labels,omitempty"`
-				Config   map[string]interface{} `json:"config,omitempty"`
-				TypeInfo struct {
-					Frame string `json:"frame,omitempty"`
-				} `json:"typeInfo,omitempty"`
-			} `json:"fields"`
-		} `json:"schema"`
-		Data struct {
-			Values [][]interface{} `json:"values"`
-		} `json:"data"`
-	}
-
-	type field = struct {
-		Name     string                 `json:"name"`
-		Type     string                 `json:"type"`
-		Labels   map[string]string      `json:"labels,omitempty"`
-		Config   map[string]interface{} `json:"config,omitempty"`
-		TypeInfo struct {
-			Frame string `json:"frame,omitempty"`
-		} `json:"typeInfo,omitempty"`
+	resp := &grafana.DSQueryResponse{
+		Results: map[string]grafana.DsQueryResult{},
 	}
 
 	// Frame 1: values 10, 20 (sum=30, min=10, max=20)
-	f1 := frame{}
-	f1.Schema.Fields = []field{
+	f1 := grafana.DsQueryFrame{}
+	f1.Schema.Fields = []grafana.DsQueryFrameField{
 		{Name: "Time", Type: "time"},
 		{Name: "Value", Type: "number"},
 	}
 	f1.Data.Values = [][]interface{}{
-		{float64(1000), float64(2000)},       // timestamps
-		{float64(10.0), float64(20.0)},       // values
+		{float64(1000), float64(2000)}, // timestamps
+		{float64(10.0), float64(20.0)}, // values
 	}
 
 	// Frame 2: values 5, 40 (sum=45, min=5, max=40)
-	f2 := frame{}
-	f2.Schema.Fields = []field{
+	f2 := grafana.DsQueryFrame{}
+	f2.Schema.Fields = []grafana.DsQueryFrameField{
 		{Name: "Time", Type: "time"},
 		{Name: "Value", Type: "number"},
 	}
 	f2.Data.Values = [][]interface{}{
-		{float64(3000), float64(4000)},       // timestamps
-		{float64(5.0), float64(40.0)},        // values
+		{float64(3000), float64(4000)}, // timestamps
+		{float64(5.0), float64(40.0)},  // values
 	}
 
-	type resultType = struct {
-		Status int `json:"status,omitempty"`
-		Frames []struct {
-			Schema struct {
-				Name   string `json:"name,omitempty"`
-				RefID  string `json:"refId,omitempty"`
-				Fields []struct {
-					Name     string                 `json:"name"`
-					Type     string                 `json:"type"`
-					Labels   map[string]string      `json:"labels,omitempty"`
-					Config   map[string]interface{} `json:"config,omitempty"`
-					TypeInfo struct {
-						Frame string `json:"frame,omitempty"`
-					} `json:"typeInfo,omitempty"`
-				} `json:"fields"`
-			} `json:"schema"`
-			Data struct {
-				Values [][]interface{} `json:"values"`
-			} `json:"data"`
-		} `json:"frames,omitempty"`
-		Error string `json:"error,omitempty"`
-	}
-
-	resp.Results["A"] = resultType{
-		Frames: []frame{f1, f2},
+	resp.Results["A"] = grafana.DsQueryResult{
+		Frames: []grafana.DsQueryFrame{f1, f2},
 	}
 
 	// Process the response the same way queryCloudWatch does

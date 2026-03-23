@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Test_ListBuckets verifies the listing of buckets for different InfluxDB datasource linked types.
 func Test_ListBuckets(t *testing.T) {
 	t.Run("list buckets for FluxQL linked DataSource", func(t *testing.T) {
 		ctx := newTestContext()
@@ -38,6 +39,7 @@ func Test_ListBuckets(t *testing.T) {
 		require.EqualError(t, err, "Datasource is not configured with FluxQL, bucket listing is explicit to FluxQL linked datasources")
 	})
 }
+// Test_Query verifies querying InfluxDB with Flux, SQL and InfluxQL query languages.
 func Test_Query(t *testing.T) {
 
 	t.Run("Flux Query", func(t *testing.T) {
@@ -122,6 +124,7 @@ func Test_Query(t *testing.T) {
 		require.True(t, ok, "should contain queried columns with expected type in a row")
 	})
 }
+// Test_ListMeasurements verifies the listing of measurements for different InfluxDB datasource linked types.
 func Test_ListMeasurements(t *testing.T) {
 	t.Run("require bucket for FluxQL Datasource", func(t *testing.T) {
 		ctx := newTestContext()
@@ -162,6 +165,7 @@ func Test_ListMeasurements(t *testing.T) {
 	})
 
 }
+// Test_ListTagKeys verifies the listing of tag keys for different InfluxDB datasource linked types.
 func Test_ListTagKeys(t *testing.T) {
 
 	t.Run("require bucket for FluxQL Datasource", func(t *testing.T) {
@@ -221,6 +225,7 @@ func Test_ListTagKeys(t *testing.T) {
 	})
 
 }
+// Test_ListFieldKeys verifies the listing of field keys for different InfluxDB datasource linked types.
 func Test_ListFieldKeys(t *testing.T) {
 
 	t.Run("require bucket for FluxQL Datasource", func(t *testing.T) {
@@ -280,6 +285,7 @@ func Test_ListFieldKeys(t *testing.T) {
 	})
 
 }
+// Test_Limit verifies the correct application of rate limits on queries across datasource linked types.
 func Test_Limit(t *testing.T) {
 	dataSourceUIDs := []string{"influxdb-flux", "influxdb-sql", "influxdb-influxql"}
 
