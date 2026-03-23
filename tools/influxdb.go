@@ -62,7 +62,7 @@ func newInfluxDBClient(ctx context.Context, uid string, queryType *string) (*inf
 		return nil, "", fmt.Errorf("datasource %s is of type %s, not %s", uid, ds.Type, InfluxDBDataSourceType)
 	}
 
-	//verify the query lang specified is the one configured with datasource
+	// Verify the query lang specified is the one configured with datasource
 	dsQueryType := InfluxQLQueryType
 
 	if jsonMap, ok := ds.JSONData.(map[string]interface{}); ok {
@@ -537,7 +537,7 @@ func listBuckets(ctx context.Context, args ListBucketArgs) (*ListBucketResult, e
 }
 
 var ListBucketsInflux = mcpgrafana.MustTool(
-	"list_buckets_influxdb",
+	"list_influxdb_buckets",
 	"Lists buckets of an InfluxDB datasource identified by its UID. Requires the datasource to be configured with FluxQL. Use in order: list_datasources -> get_datasource -> list_buckets_influxdb",
 	listBuckets,
 	mcp.WithTitleAnnotation("List Buckets InfluxDB"),
