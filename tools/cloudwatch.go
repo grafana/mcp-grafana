@@ -477,7 +477,7 @@ func listCloudWatchNamespaces(ctx context.Context, args ListCloudWatchNamespaces
 		return nil, fmt.Errorf("CloudWatch namespaces returned status %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
-	bytesLimit := 1024 * 1024 //1MB limit
+	bytesLimit := 1024 * 1024 // 1MB limit
 	body := io.LimitReader(resp.Body, int64(bytesLimit))
 	bodyBytes, err := io.ReadAll(body)
 	if err != nil {
@@ -539,7 +539,7 @@ func listCloudWatchMetrics(ctx context.Context, args ListCloudWatchMetricsParams
 		return nil, fmt.Errorf("CloudWatch metrics returned status %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
-	bytesLimit := 1024 * 1024 //1MB limit
+	bytesLimit := 1024 * 1024 // 1MB limit
 	body := io.LimitReader(resp.Body, int64(bytesLimit))
 	bodyBytes, err := io.ReadAll(body)
 	if err != nil {
