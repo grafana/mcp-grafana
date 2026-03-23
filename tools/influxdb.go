@@ -497,7 +497,7 @@ func listBuckets(ctx context.Context, args ListBucketArgs) (*ListBucketResult, e
 
 	if err != nil {
 		if sourceQueryType != "" && sourceQueryType != queryType {
-			return nil, fmt.Errorf("Datasource is not configured with FluxQL, bucket listing is explicit to FluxQL linked datasources")
+			return nil, fmt.Errorf("datasource is not configured with FluxQL, bucket listing is explicit to FluxQL linked datasources")
 		}
 		return nil, err
 	}
@@ -528,7 +528,7 @@ func listBuckets(ctx context.Context, args ListBucketArgs) (*ListBucketResult, e
 			ProcessedQuery: query,
 			StartTime:      refTime,
 			EndTime:        refTime,
-			Error:          fmt.Errorf("Empty results, check if buckets exist for connected datasources"),
+			Error:          fmt.Errorf("empty results, check if buckets exist for connected datasources"),
 		})
 	}
 
@@ -575,7 +575,7 @@ func listMeasurements(ctx context.Context, args ListMeasurementsArgs) (*ListMeas
 	enforceMeasurementsLimit(&args)
 
 	if queryType == FluxQueryType && args.Bucket == "" {
-		return nil, fmt.Errorf("Bucket is required for %s linked InfluxDB Datasources", FluxQueryType)
+		return nil, fmt.Errorf("bucket is required for %s linked InfluxDB Datasources", FluxQueryType)
 	}
 	var query string
 	//represents column key of measurement in response
@@ -638,7 +638,7 @@ var ListMeasurements = mcpgrafana.MustTool(
 
 type ListTagKeysArgs struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the InfluxDB datasource. Use list_datasources to find available UIDs."`
-	Bucket        string `json:"bucket,omitempty" jsonschema:"optional,description=Bucket Name of target bucket to fetch from,required only for FluxQL linked datasources."`
+	Bucket        string `json:"bucket,omitempty" jsonschema:"optional,description=Bucket Name of target bucket to fetch from\\,required only for FluxQL linked datasources."`
 	Measurement   string `json:"measurement" jsonschema:"required,description=Filter by measurement"`
 	Limit         uint   `json:"limit"`
 }
@@ -751,7 +751,7 @@ var ListTagKeys = mcpgrafana.MustTool(
 
 type ListFieldKeysArgs struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the InfluxDB datasource. Use list_datasources to find available UIDs."`
-	Bucket        string `json:"bucket,omitempty" jsonschema:"optional,description=Bucket Name of target bucket to fetch from,required only for FluxQL linked datasources."`
+	Bucket        string `json:"bucket,omitempty" jsonschema:"optional,description=Bucket Name of target bucket to fetch from\\,required only for FluxQL linked datasources."`
 	Measurement   string `json:"measurement" jsonschema:"required,description=Filter by measurement"`
 	Limit         uint   `json:"limit"`
 }
