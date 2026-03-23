@@ -538,7 +538,7 @@ func listBuckets(ctx context.Context, args ListBucketArgs) (*ListBucketResult, e
 }
 
 var ListBucketsInflux = mcpgrafana.MustTool(
-	"list_buckets_influxdb",
+	"list_influxdb_buckets",
 	"Lists buckets of an InfluxDB datasource identified by its UID. Requires the datasource to be configured with FluxQL. Use in order: list_datasources -> get_datasource -> list_buckets_influxdb",
 	listBuckets,
 	mcp.WithTitleAnnotation("List Buckets InfluxDB"),
