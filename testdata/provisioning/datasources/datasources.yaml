@@ -87,3 +87,40 @@ datasources:
       accessKey: test
       secretKey: test
     isDefault: false
+  - name: InfluxDB_v2_Flux
+    id: 9
+    uid: influxdb-flux
+    type: influxdb
+    access: proxy
+    url: http://influxdb2:8086
+    jsonData:
+      version: Flux
+      organization: system-logs
+      defaultBucket: b-system-logs
+      tlsSkipVerify: true
+    secureJsonData:
+      token: admintoken
+  - name: InfluxDB_v2_InfluxQL
+    id: 10
+    uid: influxdb-influxql
+    type: influxdb
+    access: proxy
+    url: http://influxdb2:8086
+    jsonData:
+      dbName: b-system-logs
+      httpHeaderName1: 'Authorization'
+    secureJsonData:
+      httpHeaderValue1: 'Token admintoken'
+  - name: InfluxDB_v3_SQL
+    id: 11
+    uid: influxdb-sql
+    type: influxdb
+    access: proxy
+    url: http://influxdb3:8181
+    jsonData:
+      version: SQL
+      dbName: system-logs
+      httpMode: POST
+      insecureGrpc: true
+    secureJsonData:
+      token: 'apiv3_OgXAgbMRgiGXcAQaFLJoaw=='

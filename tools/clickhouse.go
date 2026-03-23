@@ -13,6 +13,7 @@ import (
 	"time"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
+	"github.com/grafana/mcp-grafana/pkg/grafana"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
@@ -48,30 +49,6 @@ type ClickHouseQueryResult struct {
 	RowCount       int                      `json:"rowCount"`
 	ProcessedQuery string                   `json:"processedQuery,omitempty"`
 	Hints          *EmptyResultHints        `json:"hints,omitempty"`
-}
-
-// clickHouseQueryResponse represents the raw API response from Grafana's /api/ds/query
-type clickHouseQueryResponse struct {
-	Results map[string]struct {
-		Status int `json:"status,omitempty"`
-		Frames []struct {
-			Schema struct {
-				Name   string `json:"name,omitempty"`
-				RefID  string `json:"refId,omitempty"`
-				Fields []struct {
-					Name     string `json:"name"`
-					Type     string `json:"type"`
-					TypeInfo struct {
-						Frame string `json:"frame,omitempty"`
-					} `json:"typeInfo,omitempty"`
-				} `json:"fields"`
-			} `json:"schema"`
-			Data struct {
-				Values [][]interface{} `json:"values"`
-			} `json:"data"`
-		} `json:"frames,omitempty"`
-		Error string `json:"error,omitempty"`
-	} `json:"results"`
 }
 
 // clickHouseClient handles communication with Grafana's ClickHouse datasource
@@ -119,7 +96,7 @@ func newClickHouseClient(ctx context.Context, uid string) (*clickHouseClient, er
 }
 
 // query executes a ClickHouse query via Grafana's /api/ds/query endpoint
-func (c *clickHouseClient) query(ctx context.Context, datasourceUID, rawSQL string, from, to time.Time) (*clickHouseQueryResponse, error) {
+func (c *clickHouseClient) query(ctx context.Context, datasourceUID, rawSQL string, from, to time.Time) (*grafana.DSQueryResponse, error) {
 	// Build the query payload
 	payload := map[string]interface{}{
 		"queries": []map[string]interface{}{
@@ -167,7 +144,7 @@ func (c *clickHouseClient) query(ctx context.Context, datasourceUID, rawSQL stri
 		return nil, fmt.Errorf("reading response body: %w", err)
 	}
 
-	var queryResp clickHouseQueryResponse
+	var queryResp grafana.DSQueryResponse
 	if err := json.Unmarshal(bodyBytes, &queryResp); err != nil {
 		return nil, fmt.Errorf("unmarshaling response: %w", err)
 	}

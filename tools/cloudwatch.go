@@ -13,6 +13,7 @@ import (
 	"time"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
+	"github.com/grafana/mcp-grafana/pkg/grafana"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
@@ -46,32 +47,6 @@ type CloudWatchQueryResult struct {
 	Values     []float64          `json:"values"`
 	Statistics map[string]float64 `json:"statistics,omitempty"`
 	Hints      []string           `json:"hints,omitempty"`
-}
-
-// cloudWatchQueryResponse represents the raw API response from Grafana's /api/ds/query
-type cloudWatchQueryResponse struct {
-	Results map[string]struct {
-		Status int `json:"status,omitempty"`
-		Frames []struct {
-			Schema struct {
-				Name   string `json:"name,omitempty"`
-				RefID  string `json:"refId,omitempty"`
-				Fields []struct {
-					Name     string                 `json:"name"`
-					Type     string                 `json:"type"`
-					Labels   map[string]string      `json:"labels,omitempty"`
-					Config   map[string]interface{} `json:"config,omitempty"`
-					TypeInfo struct {
-						Frame string `json:"frame,omitempty"`
-					} `json:"typeInfo,omitempty"`
-				} `json:"fields"`
-			} `json:"schema"`
-			Data struct {
-				Values [][]interface{} `json:"values"`
-			} `json:"data"`
-		} `json:"frames,omitempty"`
-		Error string `json:"error,omitempty"`
-	} `json:"results"`
 }
 
 // cloudWatchClient handles communication with Grafana's CloudWatch datasource
@@ -119,7 +94,7 @@ func newCloudWatchClient(ctx context.Context, uid string) (*cloudWatchClient, er
 }
 
 // query executes a CloudWatch query via Grafana's /api/ds/query endpoint
-func (c *cloudWatchClient) query(ctx context.Context, args CloudWatchQueryParams, from, to time.Time) (*cloudWatchQueryResponse, error) {
+func (c *cloudWatchClient) query(ctx context.Context, args CloudWatchQueryParams, from, to time.Time) (*grafana.DSQueryResponse, error) {
 	// Format dimensions for CloudWatch query
 	// CloudWatch expects dimensions as map[string][]string
 	dimensions := make(map[string][]string)
@@ -200,7 +175,7 @@ func (c *cloudWatchClient) query(ctx context.Context, args CloudWatchQueryParams
 		return nil, fmt.Errorf("reading response body: %w", err)
 	}
 
-	var queryResp cloudWatchQueryResponse
+	var queryResp grafana.DSQueryResponse
 	if err := json.Unmarshal(bodyBytes, &queryResp); err != nil {
 		return nil, fmt.Errorf("unmarshaling response: %w", err)
 	}
