@@ -161,7 +161,7 @@ func (c *clickHouseClient) query(ctx context.Context, datasourceUID, rawSQL stri
 	}
 
 	// Limit size of response read
-	var bytesLimit int64 = 1024 * 1024 * 48
+	var bytesLimit int64 = 1024 * 1024 * 10 // 10MB
 	body := io.LimitReader(resp.Body, bytesLimit)
 	bodyBytes, err := io.ReadAll(body)
 	if err != nil {
