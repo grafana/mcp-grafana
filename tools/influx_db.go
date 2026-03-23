@@ -58,7 +58,7 @@ func newInfluxDBClient(ctx context.Context, uid string, queryType *string) (*inf
 		return nil, "", fmt.Errorf("datasource %s is of type %s, not %s", uid, ds.Type, InfluxDBDataSourceType)
 	}
 
-	//verify the query lang specified is the one configured with datasource
+	// Verify the query lang specified is the one configured with datasource
 	dsQueryType := InfluxQLQueryType
 
 	if jsonMap, ok := ds.JSONData.(map[string]interface{}); ok {
