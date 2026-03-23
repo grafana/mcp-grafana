@@ -29,7 +29,7 @@ const (
 
 	InfluxDBMeasurementsDefaultLimit uint = 100
 	// InfluxDBMeasurementsMaxLimit is the maximum limit applied when listing measurements.
-	InfluxDBMeasurementsMaxLimit     uint = 1000
+	InfluxDBMeasurementsMaxLimit uint = 1000
 
 	// InfluxDBTagsDefaultLimit is the default limit applied to fields and tags.
 	InfluxDBTagsDefaultLimit uint = 100
@@ -121,6 +121,7 @@ type InfluxQueryResFrame struct {
 	Rows     []map[string]any `json:"rows"`
 	RowCount uint             `json:"rowCount"`
 }
+
 // InfluxQueryResult contains the parsed results of an InfluxDB query.
 type InfluxQueryResult struct {
 	Frames      []*InfluxQueryResFrame
@@ -315,7 +316,7 @@ func parseQueryResponseFrames(resp *grafana.DSQueryResponse) ([]*InfluxQueryResF
 			return nil, fmt.Errorf("query error (refId=%s): %s", refID, r.Error)
 		}
 
-		clonedFrames := make([]*InfluxQueryResFrame, 0, len(frames)+len(r.Frames))
+		clonedFrames := make([]*InfluxQueryResFrame, len(frames), len(frames)+len(r.Frames))
 		copy(clonedFrames, frames)
 		frames = clonedFrames
 
@@ -584,7 +585,9 @@ func listMeasurements(ctx context.Context, args ListMeasurementsArgs) (*ListMeas
 		query = fmt.Sprintf("SELECT table_name FROM information_schema.tables WHERE table_schema = 'iox' ORDER BY table_name LIMIT %d", args.Limit)
 		colKey = "table_name"
 	case FluxQueryType:
-		query = fmt.Sprintf(`import "influxdata/influxdb/schema" schema.measurements(bucket: %s)|> limit(n: %d)`,
+		query = fmt.Sprintf(
+			`import "influxdata/influxdb/schema"
+		 	schema.measurements(bucket: %s)|> limit(n: %d)`,
 			quoteStringAsFluxLiteral(args.Bucket), args.Limit)
 		colKey = "_value"
 	case InfluxQLQueryType:
@@ -667,10 +670,8 @@ func quoteStringAsFluxLiteral(s string) string {
 }
 
 func quoteStringAsInfluxQLLiteral(s string) string {
-	// InfluxQL style: double quotes, escape backslash then double quotes
-	s = strings.ReplaceAll(s, `\`, `\\`)
-	s = strings.ReplaceAll(s, `"`, `\"`)
-	return `"` + s + `"`
+	// InfluxQL identical as Flux
+	return quoteStringAsFluxLiteral(s)
 }
 
 func listTagKeys(ctx context.Context, args ListTagKeysArgs) (*ListTagKeysResult, error) {
@@ -696,7 +697,9 @@ func listTagKeys(ctx context.Context, args ListTagKeysArgs) (*ListTagKeysResult,
 			quoteStringAsLiteral(args.Measurement), args.Limit)
 		tagColumnKey = "column_name"
 	case FluxQueryType:
-		query = fmt.Sprintf(`import "influxdata/influxdb/schema" schema.measurementTagKeys(bucket: %s, measurement: %s)|> limit(n: %d)`,
+		query = fmt.Sprintf(
+			`import "influxdata/influxdb/schema"
+		 	schema.measurementTagKeys(bucket: %s, measurement: %s)|> limit(n: %d)`,
 			quoteStringAsFluxLiteral(args.Bucket), quoteStringAsFluxLiteral(args.Measurement), args.Limit)
 		tagColumnKey = "_value"
 	case InfluxQLQueryType:
@@ -792,7 +795,9 @@ func listFieldKeys(ctx context.Context, args ListFieldKeysArgs) (*ListFieldKeysR
 			quoteStringAsLiteral(args.Measurement), args.Limit)
 		fieldColumnKey = "column_name"
 	case FluxQueryType:
-		query = fmt.Sprintf(`import "influxdata/influxdb/schema" schema.measurementFieldKeys(bucket: %s, measurement: %s)|> limit(n: %d)`,
+		query = fmt.Sprintf(
+			`import "influxdata/influxdb/schema"
+		     schema.measurementFieldKeys(bucket: %s, measurement: %s)|> limit(n: %d)`,
 			quoteStringAsFluxLiteral(args.Bucket), quoteStringAsFluxLiteral(args.Measurement), args.Limit)
 		fieldColumnKey = "_value"
 	case InfluxQLQueryType:
