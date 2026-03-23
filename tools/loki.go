@@ -134,7 +134,7 @@ func (c *Client) makeRequest(ctx context.Context, method, urlPath string, params
 	}
 
 	// Read the response body with a limit to prevent memory issues
-	body := io.LimitReader(resp.Body, 1024*1024*48)
+	body := io.LimitReader(resp.Body, 1024*1024*10) //10MB  limit
 	bodyBytes, err := io.ReadAll(body)
 	if err != nil {
 		return nil, fmt.Errorf("reading response body: %w", err)
