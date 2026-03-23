@@ -618,7 +618,7 @@ func listMeasurements(ctx context.Context, args ListMeasurementsArgs) (*ListMeas
 			ProcessedQuery: query,
 			StartTime:      refTime,
 			EndTime:        refTime,
-			Error:          fmt.Errorf("No measurements found, verify at datasource"),
+			Error:          fmt.Errorf("no measurements found, verify at datasource"),
 		})
 	}
 
@@ -684,7 +684,7 @@ func listTagKeys(ctx context.Context, args ListTagKeysArgs) (*ListTagKeysResult,
 	}
 
 	if queryType == FluxQueryType && args.Bucket == "" {
-		return nil, fmt.Errorf("Bucket is required for %s linked InfluxDB Datasources", FluxQueryType)
+		return nil, fmt.Errorf("bucket is required for %s linked InfluxDB datasources", FluxQueryType)
 	}
 
 	var tagColumnKey string
@@ -731,7 +731,7 @@ func listTagKeys(ctx context.Context, args ListTagKeysArgs) (*ListTagKeysResult,
 			ProcessedQuery: query,
 			StartTime:      refTime,
 			EndTime:        refTime,
-			Error:          fmt.Errorf("No tags found, verify at datasource"),
+			Error:          fmt.Errorf("no tags found, verify at datasource"),
 		})
 	}
 
@@ -782,7 +782,7 @@ func listFieldKeys(ctx context.Context, args ListFieldKeysArgs) (*ListFieldKeysR
 	}
 
 	if queryType == FluxQueryType && args.Bucket == "" {
-		return nil, fmt.Errorf("Bucket is required for %s linked InfluxDB Datasources", FluxQueryType)
+		return nil, fmt.Errorf("bucket is required for %s linked InfluxDB datasources", FluxQueryType)
 	}
 
 	var fieldColumnKey string
@@ -829,7 +829,7 @@ func listFieldKeys(ctx context.Context, args ListFieldKeysArgs) (*ListFieldKeysR
 			ProcessedQuery: query,
 			StartTime:      refTime,
 			EndTime:        refTime,
-			Error:          fmt.Errorf("No fields found, verify at datasource"),
+			Error:          fmt.Errorf("no fields found, verify at datasource"),
 		})
 	}
 
