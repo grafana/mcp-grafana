@@ -200,7 +200,7 @@ func convertNotificationSettings(settings *NotificationSettings) *models.AlertRu
 	}
 }
 
-// convertRecord converts input type Record to grafana http API compatable models.Record
+// convertRecord converts the input Record to the models.Record type compatible with the Grafana HTTP API.
 func convertRecord(record *Record) *models.Record {
 	if record == nil {
 		return nil
@@ -311,12 +311,12 @@ func (p UpdateAlertRuleParams) validate() error {
 	if p.Data == nil {
 		return fmt.Errorf("data is required")
 	}
-		if p.NoDataState == "" {
-			return fmt.Errorf("no_data_state is required")
-		}
-		if p.ExecErrState == "" {
-			return fmt.Errorf("exec_err_state is required")
-		}
+	if p.NoDataState == "" {
+		return fmt.Errorf("no_data_state is required")
+	}
+	if p.ExecErrState == "" {
+		return fmt.Errorf("exec_err_state is required")
+	}
 
 	if p.Record != nil {
 		if err := p.Record.validate(); err != nil {

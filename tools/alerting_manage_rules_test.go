@@ -1157,7 +1157,7 @@ func TestManageRules_Update(t *testing.T) {
 			manageRulesReadWrite(ctx, ManageRulesReadWriteParams{Operation: "delete", RuleUID: testUID}) //nolint:errcheck
 		})
 
-		//Create a recording rule
+		// Create a recording rule
 		_, err := manageRulesReadWrite(ctx, ManageRulesReadWriteParams{
 			Operation:    "create",
 			RuleUID:      testUID,
@@ -1178,7 +1178,7 @@ func TestManageRules_Update(t *testing.T) {
 		})
 		require.NoError(t, err, "create recording rule should not return error")
 
-		//Update with a new query expression and new record metric
+		// Update with a new query expression and new record metric
 		updatedQuery := []*AlertQuery{
 			{
 				RefID:         "A",

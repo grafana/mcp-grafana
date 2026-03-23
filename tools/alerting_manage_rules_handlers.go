@@ -143,8 +143,8 @@ func mergeRuleDetail(provisioned *models.ProvisionedAlertRule, runtime *alerting
 	if provisioned.Condition != nil {
 		detail.Condition = *provisioned.Condition
 	}
-	//NoDataState, ExecErrState are set empty by grafana HTTP API for a recording rule
-	//required checks are applied as api expects to have a defined value for these fields
+	// NoDataState, ExecErrState are set empty by grafana HTTP API for a recording rule
+	// non-nil checks are applied as api expects to have a defined value for these fields
 	if provisioned.NoDataState != nil {
 		detail.NoDataState = *provisioned.NoDataState
 	}
