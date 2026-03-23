@@ -58,6 +58,9 @@ type grafanaConfig struct {
 	tlsKeyFile    string
 	tlsCAFile     string
 	tlsSkipVerify bool
+
+	// Loki configuration
+	maxLokiLogLimit int
 }
 
 func (dt *disabledTools) addFlags() {
@@ -97,6 +100,9 @@ func (gc *grafanaConfig) addFlags() {
 	flag.StringVar(&gc.tlsKeyFile, "tls-key-file", "", "Path to TLS private key file for client authentication")
 	flag.StringVar(&gc.tlsCAFile, "tls-ca-file", "", "Path to TLS CA certificate file for server verification")
 	flag.BoolVar(&gc.tlsSkipVerify, "tls-skip-verify", false, "Skip TLS certificate verification (insecure)")
+
+	// Loki configuration flags
+	flag.IntVar(&gc.maxLokiLogLimit, "max-loki-log-limit", tools.MaxLokiLogLimit, "Maximum number of log lines returned per query_loki_logs call")
 }
 
 func (dt *disabledTools) addTools(s *server.MCPServer) {
@@ -422,7 +428,10 @@ func main() {
 	}
 
 	// Convert local grafanaConfig to mcpgrafana.GrafanaConfig
-	grafanaConfig := mcpgrafana.GrafanaConfig{Debug: gc.debug}
+	grafanaConfig := mcpgrafana.GrafanaConfig{
+		Debug:           gc.debug,
+		MaxLokiLogLimit: gc.maxLokiLogLimit,
+	}
 	if gc.tlsCertFile != "" || gc.tlsKeyFile != "" || gc.tlsCAFile != "" || gc.tlsSkipVerify {
 		grafanaConfig.TLSConfig = &mcpgrafana.TLSConfig{
 			CertFile:   gc.tlsCertFile,

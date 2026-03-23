@@ -9,7 +9,7 @@ pytestmark = pytest.mark.anyio
 
 
 @pytest.mark.parametrize("model", models)
-@pytest.mark.flaky(max_runs=3)
+@pytest.mark.flaky(reruns=2)
 async def test_loki_logs_tool(
     model: str,
     mcp_client: ClientSession,
@@ -37,7 +37,7 @@ async def test_loki_logs_tool(
 
 
 @pytest.mark.parametrize("model", models)
-@pytest.mark.flaky(max_runs=3)
+@pytest.mark.flaky(reruns=2)
 async def test_loki_container_labels(
     model: str,
     mcp_client: ClientSession,

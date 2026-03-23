@@ -61,7 +61,7 @@ async def _run_deeplink_test_with_expected_args(
 
 
 @pytest.mark.parametrize("model", models)
-@pytest.mark.flaky(max_runs=3)
+@pytest.mark.flaky(reruns=2)
 async def test_generate_dashboard_deeplink(
     model: str,
     mcp_client: ClientSession,
@@ -80,7 +80,7 @@ async def test_generate_dashboard_deeplink(
 
 
 @pytest.mark.parametrize("model", models)
-@pytest.mark.flaky(max_runs=3)
+@pytest.mark.flaky(reruns=2)
 async def test_generate_panel_deeplink(
     model: str,
     mcp_client: ClientSession,
@@ -103,7 +103,7 @@ async def test_generate_panel_deeplink(
 
 
 @pytest.mark.parametrize("model", models)
-@pytest.mark.flaky(max_runs=3)
+@pytest.mark.flaky(reruns=2)
 async def test_generate_explore_deeplink(
     model: str,
     mcp_client: ClientSession,
@@ -122,7 +122,7 @@ async def test_generate_explore_deeplink(
 
 
 @pytest.mark.parametrize("model", models)
-@pytest.mark.flaky(max_runs=3)
+@pytest.mark.flaky(reruns=2)
 async def test_generate_deeplink_with_time_range(
     model: str,
     mcp_client: ClientSession,
@@ -145,7 +145,7 @@ async def test_generate_deeplink_with_time_range(
 
 
 @pytest.mark.parametrize("model", models)
-@pytest.mark.flaky(max_runs=3)
+@pytest.mark.flaky(reruns=2)
 async def test_generate_deeplink_with_query_params(
     model: str,
     mcp_client: ClientSession,

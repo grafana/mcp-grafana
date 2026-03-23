@@ -3,6 +3,7 @@
 package tools
 
 import (
+	"encoding/json"
 	"net/url"
 	"testing"
 
@@ -25,6 +26,7 @@ func TestCloudWatchQueryParams_Validation(t *testing.T) {
 		Start:     "now-1h",
 		End:       "now",
 		Region:    "us-east-1",
+		AccountId: "123456789012",
 	}
 
 	assert.Equal(t, "test-uid", params.DatasourceUID)
@@ -37,6 +39,32 @@ func TestCloudWatchQueryParams_Validation(t *testing.T) {
 	assert.Equal(t, "now-1h", params.Start)
 	assert.Equal(t, "now", params.End)
 	assert.Equal(t, "us-east-1", params.Region)
+	assert.Equal(t, "123456789012", params.AccountId)
+}
+
+func TestCloudWatchQueryParams_AccountIdAll(t *testing.T) {
+	// Test that AccountId supports the "all" wildcard value
+	params := CloudWatchQueryParams{
+		DatasourceUID: "test-uid",
+		Namespace:     "AWS/EC2",
+		MetricName:    "CPUUtilization",
+		Region:        "us-east-1",
+		AccountId:     "all",
+	}
+
+	assert.Equal(t, "all", params.AccountId)
+}
+
+func TestCloudWatchQueryParams_AccountIdEmpty(t *testing.T) {
+	// Test that AccountId is optional and defaults to empty
+	params := CloudWatchQueryParams{
+		DatasourceUID: "test-uid",
+		Namespace:     "AWS/EC2",
+		MetricName:    "CPUUtilization",
+		Region:        "us-east-1",
+	}
+
+	assert.Empty(t, params.AccountId)
 }
 
 func TestCloudWatchQueryResult_Structure(t *testing.T) {
@@ -72,10 +100,12 @@ func TestListCloudWatchNamespacesParams_Structure(t *testing.T) {
 	params := ListCloudWatchNamespacesParams{
 		DatasourceUID: "test-uid",
 		Region:        "us-west-2",
+		AccountId:     "123456789012",
 	}
 
 	assert.Equal(t, "test-uid", params.DatasourceUID)
 	assert.Equal(t, "us-west-2", params.Region)
+	assert.Equal(t, "123456789012", params.AccountId)
 }
 
 func TestListCloudWatchMetricsParams_Structure(t *testing.T) {
@@ -83,11 +113,13 @@ func TestListCloudWatchMetricsParams_Structure(t *testing.T) {
 		DatasourceUID: "test-uid",
 		Namespace:     "AWS/EC2",
 		Region:        "eu-west-1",
+		AccountId:     "all",
 	}
 
 	assert.Equal(t, "test-uid", params.DatasourceUID)
 	assert.Equal(t, "AWS/EC2", params.Namespace)
 	assert.Equal(t, "eu-west-1", params.Region)
+	assert.Equal(t, "all", params.AccountId)
 }
 
 func TestListCloudWatchDimensionsParams_Structure(t *testing.T) {
@@ -96,12 +128,14 @@ func TestListCloudWatchDimensionsParams_Structure(t *testing.T) {
 		Namespace:     "AWS/RDS",
 		MetricName:    "DatabaseConnections",
 		Region:        "ap-southeast-1",
+		AccountId:     "987654321098",
 	}
 
 	assert.Equal(t, "test-uid", params.DatasourceUID)
 	assert.Equal(t, "AWS/RDS", params.Namespace)
 	assert.Equal(t, "DatabaseConnections", params.MetricName)
 	assert.Equal(t, "ap-southeast-1", params.Region)
+	assert.Equal(t, "987654321098", params.AccountId)
 }
 
 func TestCloudWatchQueryResult_Hints(t *testing.T) {
@@ -467,6 +501,80 @@ func TestCloudWatchURLEncoding(t *testing.T) {
 				assert.Contains(t, encoded, "Custom%23Namespace", "# should be percent-encoded")
 				assert.NotContains(t, encoded, "Custom#", "raw # should not appear in encoded query")
 			}
+		})
+	}
+}
+
+func TestCloudWatchQueryParams_JSONSerialization(t *testing.T) {
+	t.Run("accountId included when set", func(t *testing.T) {
+		params := CloudWatchQueryParams{
+			DatasourceUID: "test-uid",
+			Namespace:     "AWS/EC2",
+			MetricName:    "CPUUtilization",
+			Region:        "us-east-1",
+			AccountId:     "123456789012",
+		}
+
+		data, err := json.Marshal(params)
+		require.NoError(t, err)
+
+		var raw map[string]interface{}
+		err = json.Unmarshal(data, &raw)
+		require.NoError(t, err)
+
+		assert.Equal(t, "123456789012", raw["accountId"])
+	})
+
+	t.Run("accountId omitted when empty", func(t *testing.T) {
+		params := CloudWatchQueryParams{
+			DatasourceUID: "test-uid",
+			Namespace:     "AWS/EC2",
+			MetricName:    "CPUUtilization",
+			Region:        "us-east-1",
+		}
+
+		data, err := json.Marshal(params)
+		require.NoError(t, err)
+
+		var raw map[string]interface{}
+		err = json.Unmarshal(data, &raw)
+		require.NoError(t, err)
+
+		_, exists := raw["accountId"]
+		assert.False(t, exists, "accountId should be omitted from JSON when empty")
+	})
+}
+
+func TestCloudWatchAccountIdURLEncoding(t *testing.T) {
+	tests := []struct {
+		name      string
+		accountId string
+		wantParam string
+	}{
+		{
+			name:      "specific account ID",
+			accountId: "123456789012",
+			wantParam: "123456789012",
+		},
+		{
+			name:      "all accounts wildcard",
+			accountId: "all",
+			wantParam: "all",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			params := url.Values{}
+			params.Set("region", "us-east-1")
+			if tt.accountId != "" {
+				params.Set("accountId", tt.accountId)
+			}
+
+			encoded := params.Encode()
+			parsed, err := url.ParseQuery(encoded)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantParam, parsed.Get("accountId"))
 		})
 	}
 }

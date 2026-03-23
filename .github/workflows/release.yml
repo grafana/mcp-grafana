@@ -93,7 +93,8 @@ jobs:
             --version "$VERSION" \
             --description "Grafana MCP server - interact with Grafana via the Model Context Protocol" \
             --url "https://github.com/grafana/mcp-grafana" \
-            --license Apache-2.0
+            --license Apache-2.0 \
+            --readme README.md
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@ed0c53931b1dc9bd32cbe73a98c7f6766f8a527e # v1.13.0
