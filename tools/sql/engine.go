@@ -93,25 +93,21 @@ type DSQueryResponse struct {
 	} `json:"results"`
 }
 
-// JsonFrame converts tabular data in a key-value format when used with json.Marshal
+// QueryResFrame represents each row as a set of column-value pairs
 //
 // This format is more verbose than Grafana's native wide timeframe format but is
 // easier for LLMs to consume as input.
-type JsonFrame struct {
+type QueryResFrame struct {
 	Name     string           `json:"name"`
 	Columns  []string         `json:"columns"`
 	Rows     []map[string]any `json:"rows"`
 	RowCount uint             `json:"rowCount"`
 }
 
-type JsonObject struct {
-	Status int          `json:"status,omitempty"`
-	Error  string       `json:"error,omitempty"`
-	Frames []*JsonFrame `json:"frames"`
-}
-
 type SQLQueryResult struct {
-	*JsonObject
+	Status int              `json:"status,omitempty"`
+	Error  string           `json:"error,omitempty"`
+	Frames []*QueryResFrame `json:"frames"`
 }
 
 type SQLQueryBatchResult struct {
@@ -139,7 +135,7 @@ func (en *sqlEngine) QueryBatch(ctx context.Context, queries []SQLQuery, args Qu
 
 	for refID, r := range response.Results {
 
-		frames := make([]*JsonFrame, 0, len(r.Frames))
+		frames := make([]*QueryResFrame, 0, len(r.Frames))
 
 		for _, frame := range r.Frames {
 
@@ -158,7 +154,7 @@ func (en *sqlEngine) QueryBatch(ctx context.Context, queries []SQLQuery, args Qu
 			// Number of rows count derived from count of values of first column
 			noOfRows := (len(frame.Data.Values[0]))
 
-			resFrame := JsonFrame{}
+			resFrame := QueryResFrame{}
 			resFrame.Name = frame.Schema.Name
 			resFrame.Columns = make([]string, 0, noOfCol)
 			resFrame.Rows = make([]map[string]any, 0, noOfRows)
@@ -184,11 +180,9 @@ func (en *sqlEngine) QueryBatch(ctx context.Context, queries []SQLQuery, args Qu
 		frames = slices.Clip(frames)
 
 		result.Results[refID] = &SQLQueryResult{
-			&JsonObject{
-				Status: r.Status,
-				Error:  r.Error,
-				Frames: frames,
-			},
+			Status: r.Status,
+			Error:  r.Error,
+			Frames: frames,
 		}
 		if r.Error != "" {
 			result.ErrorCount++

@@ -9,7 +9,7 @@ import (
 )
 
 func TestJSONMarshaling(t *testing.T) {
-	frame := &JsonFrame{
+	frame := &QueryResFrame{
 		Name:    "test_frame",
 		Columns: []string{"id", "name"},
 		Rows: []map[string]any{
@@ -20,10 +20,8 @@ func TestJSONMarshaling(t *testing.T) {
 	}
 
 	result := &SQLQueryResult{
-		JsonObject: &JsonObject{
-			Status: 200,
-			Frames: []*JsonFrame{frame},
-		},
+		Status: 200,
+		Frames: []*QueryResFrame{frame},
 	}
 
 	data, err := json.Marshal(result)
@@ -45,7 +43,7 @@ func TestJSONMarshaling(t *testing.T) {
 	f, ok := frames[0].(map[string]any)
 	require.True(t, ok)
 
-	// Check JsonFrame keys (name, columns, rows, rowCount)
+	// Check QueryResFrame keys (name, columns, rows, rowCount)
 	assert.Contains(t, f, "name")
 	assert.Contains(t, f, "columns")
 	assert.Contains(t, f, "rows")

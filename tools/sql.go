@@ -291,9 +291,9 @@ type SQLQueryArgs struct {
 }
 
 type SQLQueryResponse struct {
-	Hints          *EmptyResultHints `json:"hints,omitempty"`
-	Result         *sql.SQLQueryResult
-	ProcessedQuery string `json:"processedQuery,omitempty"`
+	Hints          *EmptyResultHints   `json:"hints,omitempty"`
+	Result         *sql.SQLQueryResult `json:"result"`
+	ProcessedQuery string              `json:"processedQuery,omitempty"`
 }
 
 // sqlQuery handles the query_sql_datasource tool implementation.

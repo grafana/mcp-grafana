@@ -55,7 +55,7 @@ func (*MySQL) GetSchemaQuery(tableName string, dbName string) string {
 
 func (*MySQL) QueryWithLimit(query string, limit uint) (string, bool) {
 	query = strings.TrimSuffix(query, ";")
-	queryWithLimit := fmt.Sprintf(`( %s ) LIMIT %d`, query, limit)
+	queryWithLimit := fmt.Sprintf(`SELECT * FROM ( %s ) as sub_query LIMIT %d`, query, limit)
 	return queryWithLimit, true
 }
 

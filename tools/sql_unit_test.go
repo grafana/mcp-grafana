@@ -10,7 +10,7 @@ import (
 )
 
 func TestSQLQueryResponseMarshaling(t *testing.T) {
-	frame := &sql.JsonFrame{
+	frame := &sql.QueryResFrame{
 		Name:    "test_frame",
 		Columns: []string{"id", "val"},
 		Rows: []map[string]any{
@@ -20,10 +20,8 @@ func TestSQLQueryResponseMarshaling(t *testing.T) {
 	}
 
 	result := &sql.SQLQueryResult{
-		JsonObject: &sql.JsonObject{
-			Status: 200,
-			Frames: []*sql.JsonFrame{frame},
-		},
+		Status: 200,
+		Frames: []*sql.QueryResFrame{frame},
 	}
 
 	response := &SQLQueryResponse{
@@ -41,8 +39,8 @@ func TestSQLQueryResponseMarshaling(t *testing.T) {
 	err = json.Unmarshal(data, &m)
 	require.NoError(t, err)
 
-	// Verify SQLQueryResult fields (from embedded JsonObject)
-	resMap := m["Result"].(map[string]any)
+	// Verify SQLQueryResult fields
+	resMap := m["result"].(map[string]any)
 	assert.Equal(t, float64(200), resMap["status"])
 	assert.Contains(t, resMap, "frames")
 
@@ -103,4 +101,3 @@ func TestListSQLTableSchemaResultMarshaling(t *testing.T) {
 	id := fields["id"].(map[string]any)
 	assert.Equal(t, "int", id["type"])
 }
-
