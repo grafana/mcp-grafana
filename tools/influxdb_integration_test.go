@@ -28,7 +28,7 @@ func Test_ListBuckets(t *testing.T) {
 		_, err := listBuckets(ctx, ListBucketArgs{
 			DatasourceUID: "influxdb-sql",
 		})
-		require.EqualError(t, err, "Datasource is not configured with FluxQL, bucket listing is explicit to FluxQL linked datasources")
+		require.EqualError(t, err, "datasource is not configured with FluxQL, bucket listing is explicit to FluxQL linked datasources")
 	})
 
 	t.Run("error for InfluxQL linked Datasource", func(t *testing.T) {
@@ -36,7 +36,7 @@ func Test_ListBuckets(t *testing.T) {
 		_, err := listBuckets(ctx, ListBucketArgs{
 			DatasourceUID: "influxdb-influxql",
 		})
-		require.EqualError(t, err, "Datasource is not configured with FluxQL, bucket listing is explicit to FluxQL linked datasources")
+		require.EqualError(t, err, "datasource is not configured with FluxQL, bucket listing is explicit to FluxQL linked datasources")
 	})
 }
 // Test_Query verifies querying InfluxDB with Flux, SQL and InfluxQL query languages.
@@ -131,7 +131,7 @@ func Test_ListMeasurements(t *testing.T) {
 		_, err := listMeasurements(ctx, ListMeasurementsArgs{
 			DatasourceUID: "influxdb-flux",
 		})
-		require.EqualError(t, err, fmt.Sprintf("Bucket is required for %s linked InfluxDB Datasources", FluxQueryType))
+		require.EqualError(t, err, fmt.Sprintf("bucket is required for %s linked InfluxDB Datasources", FluxQueryType))
 	})
 
 	t.Run("bucket optional for SQL/InfluxQL Datasource", func(t *testing.T) {
@@ -174,7 +174,7 @@ func Test_ListTagKeys(t *testing.T) {
 			DatasourceUID: "influxdb-flux",
 			Measurement:   "auth_events",
 		})
-		require.EqualError(t, err, fmt.Sprintf("Bucket is required for %s linked InfluxDB Datasources", FluxQueryType))
+		require.EqualError(t, err, fmt.Sprintf("bucket is required for %s linked InfluxDB Datasources", FluxQueryType))
 	})
 
 	t.Run("list tags keys", func(t *testing.T) {
@@ -234,7 +234,7 @@ func Test_ListFieldKeys(t *testing.T) {
 			DatasourceUID: "influxdb-flux",
 			Measurement:   "auth_events",
 		})
-		require.EqualError(t, err, fmt.Sprintf("Bucket is required for %s linked InfluxDB Datasources", FluxQueryType))
+		require.EqualError(t, err, fmt.Sprintf("bucket is required for %s linked InfluxDB Datasources", FluxQueryType))
 	})
 
 	t.Run("list field keys", func(t *testing.T) {
@@ -386,7 +386,7 @@ func Test_Limit(t *testing.T) {
 							|> set(key: "tag", value: "bar")
 							|> group(columns: ["tag"])
 
-					union(tables: [t1, t2])//user comments should not bypass limits
+					union(tables: [t1, t2])// user comments should not bypass limits
 				`,
 				DatasourceUID: "influxdb-flux",
 				QueryType:     FluxQueryType,

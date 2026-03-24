@@ -43,6 +43,10 @@ const (
 	InfluxQLQueryType = "InfluxQL"
 )
 
+// InfluxQL query supports limits in the format
+// LIMIT %d | LIMIT %d OFFSET %d, Unsupported: LIMIT %d,%d
+var limitRegEx = regexp.MustCompile(`(?i)(limit\s+)\d+(\s+offset\s+\d+)?(\s*$)`)
+
 type influxDBClient struct {
 	httpClient *http.Client
 	baseURL    string
@@ -222,8 +226,8 @@ func (ic *influxDBClient) Query(ctx context.Context, args InfluxQueryArgs, from,
 }
 
 func enforceQueryLimit(args *InfluxQueryArgs) {
-	//flux, influxql limits per measurement(influxql), table(flux) level so number of measurements * limit is final records
-	//sql limit applies on final records level
+	// flux, influxql limits per measurement(influxql), table(flux) level so number of measurements * limit is final records
+	// sql limit applies on final records level
 
 	limit := InfluxDBDefaultLimit
 
@@ -235,26 +239,23 @@ func enforceQueryLimit(args *InfluxQueryArgs) {
 	switch args.QueryType {
 
 	case SQLQueryType:
-		//wrap query and apply limit
+		// wrap query and apply limit
 		query := strings.TrimSuffix(args.Query, ";")
 		args.Query = "(" + query + ")" + fmt.Sprintf(" LIMIT %d", limit)
 	case InfluxQLQueryType:
-		//InfluxQL query supports limits in the format
-		//LIMIT %d | LIMIT %d OFFSET %d, Unsupported: LIMIT %d,%d (from manually testing queries)
-		limitWithOffset := regexp.MustCompile(`(?i)(limit\s+)\d+(\s+offset\s+\d+)?(\s*$)`)
-
-		if limitWithOffset.Match([]byte(args.Query)) {
-
+		// override limits when query contains limit
+		if limitRegEx.Match([]byte(args.Query)) {
 			replacement := fmt.Sprintf("${1}%d${2}${3}", limit)
-			args.Query = limitWithOffset.ReplaceAllString(args.Query, replacement)
-
+			args.Query = limitRegEx.ReplaceAllString(args.Query, replacement)
 		} else {
-			args.Query = args.Query + fmt.Sprintf(" LIMIT %d", limit)
+			// append limit in other cases
+			query := strings.TrimSuffix(args.Query, ";")
+			args.Query = query + fmt.Sprintf(" LIMIT %d", limit)
 		}
 
 	case FluxQueryType:
-		//A query can execute selection of multiple tables
-		//flux |>limit() operator applies limit per table or group
+		// A query can execute selection of multiple tables
+		// flux |>limit() operator applies limit per table or group
 		args.Query = strings.TrimSpace(args.Query) + fmt.Sprintf("\n|>limit(n:%d)", limit)
 	}
 
@@ -277,7 +278,7 @@ func parseTimeRange(start string, end string) (*time.Time, *time.Time, error) {
 			fromTime = parsed
 		}
 
-		//set relative end time 1hour from start
+		// set relative end time 1hour from start
 		if end == "" {
 			toTime = fromTime.Add(defaultPeriod)
 		}
@@ -304,7 +305,6 @@ func parseTimeRange(start string, end string) (*time.Time, *time.Time, error) {
 // parseQueryResponseFrames parses ds/query response in a json key-pair format
 // returns list of frames combined of query results
 // treats empty results as an error
-
 func parseQueryResponseFrames(resp *grafana.DSQueryResponse) ([]*InfluxQueryResFrame, error) {
 	frames := make([]*InfluxQueryResFrame, 0)
 	hasResults := false
@@ -324,7 +324,7 @@ func parseQueryResponseFrames(resp *grafana.DSQueryResponse) ([]*InfluxQueryResF
 
 			noOfCol := len(frame.Schema.Fields)
 			if noOfCol == 0 {
-				//columns not found for frame, skip frame
+				// columns not found for frame, skip frame
 				continue
 			}
 
@@ -335,7 +335,7 @@ func parseQueryResponseFrames(resp *grafana.DSQueryResponse) ([]*InfluxQueryResF
 				continue
 			}
 
-			//Number of rows count derived from count of values of first column
+			// Number of rows count derived from count of values of first column
 			rowCount := (len(frame.Data.Values[0]))
 			resFrame.RowCount = uint(rowCount)
 			resFrame.Rows = make([]map[string]any, 0, rowCount)
@@ -345,11 +345,11 @@ func parseQueryResponseFrames(resp *grafana.DSQueryResponse) ([]*InfluxQueryResF
 
 				fieldName := field.Name
 
-				if field.Labels.Field != "" && field.Name == "_value" {
-					//use field name for column values of flux queries
-					fieldName = field.Labels.Field
+				if field.Labels["_field"] != "" && field.Name == "_value" {
+					// use field name for column values of flux queries
+					fieldName = field.Labels["_field"]
 				}
-				//influxql query with 'time_series' format query
+				// influxql query with 'time_series' format query
 				if field.Config != nil {
 					if displayName, ok := field.Config["displayNameFromDS"].(string); ok && displayName != "" {
 						fieldName = displayName
@@ -466,7 +466,7 @@ func extractColValues(resp *grafana.DSQueryResponse, colName string) (*[]string,
 			}
 
 			if fieldColIdx == -1 {
-				//no bucket name col found
+				// no bucket name col found
 				continue
 			}
 
@@ -521,7 +521,7 @@ func listBuckets(ctx context.Context, args ListBucketArgs) (*ListBucketResult, e
 	result := ListBucketResult{}
 
 	if len(*buckets) == 0 {
-		//return empty result hints
+		// return empty result hints
 		result.Hints = GenerateEmptyResultHints(HintContext{
 			DatasourceType: InfluxDBDataSourceType,
 			Query:          query,
@@ -578,7 +578,7 @@ func listMeasurements(ctx context.Context, args ListMeasurementsArgs) (*ListMeas
 		return nil, fmt.Errorf("bucket is required for %s linked InfluxDB Datasources", FluxQueryType)
 	}
 	var query string
-	//represents column key of measurement in response
+	// represents column key of measurement in response
 	var colKey string
 	switch queryType {
 	case SQLQueryType:
@@ -611,7 +611,7 @@ func listMeasurements(ctx context.Context, args ListMeasurementsArgs) (*ListMeas
 	result := ListMeasurementResult{}
 
 	if len(*measurements) == 0 {
-		//add empty results hints
+		// add empty results hints
 		result.Hints = GenerateEmptyResultHints(HintContext{
 			DatasourceType: InfluxDBDataSourceType,
 			Query:          query,
@@ -724,7 +724,7 @@ func listTagKeys(ctx context.Context, args ListTagKeysArgs) (*ListTagKeysResult,
 	result := ListTagKeysResult{}
 
 	if len(*tags) == 0 {
-		//add empty results hints
+		// add empty results hints
 		result.Hints = GenerateEmptyResultHints(HintContext{
 			DatasourceType: InfluxDBDataSourceType,
 			Query:          query,
@@ -790,7 +790,7 @@ func listFieldKeys(ctx context.Context, args ListFieldKeysArgs) (*ListFieldKeysR
 
 	switch queryType {
 	case SQLQueryType:
-		//data_type 'Dictionary%%' distinguishes tags from fields for SQL QUERIES
+		// data_type 'Dictionary%%' distinguishes tags from fields for SQL QUERIES
 		query = fmt.Sprintf("SELECT column_name FROM information_schema.columns WHERE table_schema = 'iox' AND table_name = %s AND data_type NOT LIKE 'Dictionary%%' ORDER BY column_name LIMIT %d",
 			quoteStringAsLiteral(args.Measurement), args.Limit)
 		fieldColumnKey = "column_name"
@@ -822,7 +822,7 @@ func listFieldKeys(ctx context.Context, args ListFieldKeysArgs) (*ListFieldKeysR
 	result := ListFieldKeysResult{}
 
 	if len(*fieldKeys) == 0 {
-		//add empty results hints
+		// add empty results hints
 		result.Hints = GenerateEmptyResultHints(HintContext{
 			DatasourceType: InfluxDBDataSourceType,
 			Query:          query,

@@ -11,8 +11,9 @@ import (
 	"strings"
 	"time"
 
-	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/grafana/grafana-openapi-client-go/models"
+	mcpgrafana "github.com/grafana/mcp-grafana"
+	"github.com/grafana/mcp-grafana/pkg/grafana"
 	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	"github.com/prometheus/common/model"
 )
@@ -273,7 +274,7 @@ func (b *cloudMonitoringBackend) labelValuesViaQuery(ctx context.Context, labelN
 }
 
 // doDSQuery executes a request against Grafana's /api/ds/query endpoint.
-func (b *cloudMonitoringBackend) doDSQuery(ctx context.Context, payload map[string]interface{}) (*dsQueryResponse, error) {
+func (b *cloudMonitoringBackend) doDSQuery(ctx context.Context, payload map[string]interface{}) (*grafana.DSQueryResponse, error) {
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("marshaling query payload: %w", err)
@@ -300,7 +301,7 @@ func (b *cloudMonitoringBackend) doDSQuery(ctx context.Context, payload map[stri
 		return nil, fmt.Errorf("query returned status %d: %s", resp.StatusCode, string(body[:min(len(body), 1024)]))
 	}
 
-	var queryResp dsQueryResponse
+	var queryResp grafana.DSQueryResponse
 	if err := json.Unmarshal(body, &queryResp); err != nil {
 		return nil, fmt.Errorf("unmarshaling response: %w", err)
 	}
@@ -359,43 +360,10 @@ type gcpMetricDescriptor struct {
 	ServiceShortName string `json:"serviceShortName,omitempty"`
 }
 
-// --- /api/ds/query response types ---
-
-type dsQueryResponse struct {
-	Results map[string]dsQueryResult `json:"results"`
-}
-
-type dsQueryResult struct {
-	Status int            `json:"status,omitempty"`
-	Frames []dsQueryFrame `json:"frames,omitempty"`
-	Error  string         `json:"error,omitempty"`
-}
-
-type dsQueryFrame struct {
-	Schema dsQueryFrameSchema `json:"schema"`
-	Data   dsQueryFrameData   `json:"data"`
-}
-
-type dsQueryFrameSchema struct {
-	Name   string              `json:"name,omitempty"`
-	RefID  string              `json:"refId,omitempty"`
-	Fields []dsQueryFrameField `json:"fields"`
-}
-
-type dsQueryFrameField struct {
-	Name   string            `json:"name"`
-	Type   string            `json:"type"`
-	Labels map[string]string `json:"labels,omitempty"`
-}
-
-type dsQueryFrameData struct {
-	Values [][]interface{} `json:"values"`
-}
-
 // --- Frame conversion ---
 
 // framesToPrometheusValue converts /api/ds/query response frames to Prometheus model values.
-func framesToPrometheusValue(resp *dsQueryResponse, queryType string) (model.Value, error) {
+func framesToPrometheusValue(resp *grafana.DSQueryResponse, queryType string) (model.Value, error) {
 	r, ok := resp.Results["A"]
 	if !ok {
 		if queryType == "instant" {
@@ -414,7 +382,7 @@ func framesToPrometheusValue(resp *dsQueryResponse, queryType string) (model.Val
 	return framesToMatrix(r.Frames)
 }
 
-func framesToMatrix(frames []dsQueryFrame) (model.Matrix, error) {
+func framesToMatrix(frames []grafana.DsQueryFrame) (model.Matrix, error) {
 	var matrix model.Matrix
 	for _, frame := range frames {
 		timeIdx, valueIdx := findTimeAndValueFields(frame.Schema.Fields)
@@ -457,7 +425,7 @@ func framesToMatrix(frames []dsQueryFrame) (model.Matrix, error) {
 	return matrix, nil
 }
 
-func framesToVector(frames []dsQueryFrame) (model.Vector, error) {
+func framesToVector(frames []grafana.DsQueryFrame) (model.Vector, error) {
 	var vector model.Vector
 	for _, frame := range frames {
 		timeIdx, valueIdx := findTimeAndValueFields(frame.Schema.Fields)
@@ -497,7 +465,7 @@ func framesToVector(frames []dsQueryFrame) (model.Vector, error) {
 	return vector, nil
 }
 
-func findTimeAndValueFields(fields []dsQueryFrameField) (timeIdx, valueIdx int) {
+func findTimeAndValueFields(fields []grafana.DsQueryFrameField) (timeIdx, valueIdx int) {
 	timeIdx = -1
 	valueIdx = -1
 	for i, f := range fields {
@@ -549,7 +517,7 @@ func toFloat(v interface{}) (float64, bool) {
 }
 
 // extractLabelNamesFromFrames extracts unique label keys from HEADERS query frames.
-func extractLabelNamesFromFrames(resp *dsQueryResponse) []string {
+func extractLabelNamesFromFrames(resp *grafana.DSQueryResponse) []string {
 	seen := make(map[string]bool)
 	r, ok := resp.Results["A"]
 	if !ok {
@@ -574,7 +542,7 @@ func extractLabelNamesFromFrames(resp *dsQueryResponse) []string {
 }
 
 // extractLabelValuesFromFrames extracts unique values for a label from HEADERS query frames.
-func extractLabelValuesFromFrames(resp *dsQueryResponse, labelName string) []string {
+func extractLabelValuesFromFrames(resp *grafana.DSQueryResponse, labelName string) []string {
 	seen := make(map[string]bool)
 	r, ok := resp.Results["A"]
 	if !ok {

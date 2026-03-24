@@ -207,8 +207,8 @@ func Test_parseQueryResponseFrames(t *testing.T) {
 	t.Run("test_response", func(t *testing.T) {
 		t.Run("should parse frames successfully", func(t *testing.T) {
 			field1 := grafana.DsQueryFrameField{Name: "time"}
-			field2 := grafana.DsQueryFrameField{Name: "_value"}
-			field2.Labels.Field = "temp"
+			field2 := grafana.DsQueryFrameField{Name: "_value", Labels: make(map[string]string)}
+			field2.Labels["_field"] = "temp"
 
 			resp := &grafana.DSQueryResponse{
 				Results: map[string]grafana.DsQueryResult{
