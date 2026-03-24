@@ -45,9 +45,9 @@ type alertRuleDetail struct {
 	NotificationSettings *models.AlertRuleNotificationSettings `json:"notification_settings,omitempty"`
 	Queries              []querySummary                        `json:"queries,omitempty"`
 
-	KeepFiringFor               string  `json:"keepFiringFor,omitempty"`
+	KeepFiringFor               string  `json:"keep_firing_for,omitempty"`
 	Record                      *Record `json:"record,omitempty" `
-	MissingSeriesEvalsToResolve int64   `json:"missingSeriesEvalsToResolve,omitempty"`
+	MissingSeriesEvalsToResolve int64   `json:"missing_series_evals_to_resolve,omitempty"`
 
 	State          string  `json:"state"`
 	Health         string  `json:"health"`
@@ -397,11 +397,11 @@ type ManageRulesReadWriteParams struct {
 	NoDataState                 string                `json:"no_data_state,omitempty" jsonschema:"description=State when no data: NoData\\, Alerting\\, OK (required for 'create'\\, 'update' exceptions: recording type alert rule) "`
 	ExecErrState                string                `json:"exec_err_state,omitempty" jsonschema:"description=State on execution error: NoData\\, Alerting\\, OK (required for 'create'\\, 'update' exceptions: recording type alert rule)"`
 	For                         string                `json:"for,omitempty" jsonschema:"description=Duration before alert fires\\, e.g. '5m' (required for 'create'\\, 'update')"`
-	KeepFiringFor               string                `json:"keepFiringFor,omitempty" jsonschema:"description=Enables continous firing of alert for specified time even when condition is no longer met. Default is 0 (resolves immediately)"`
-	IsPaused                    bool                  `json:"isPaused,omitempty" jsonschema:"description=If true\\, the alert rule remains inactive\\, Default is false"`
-	NotificationSettings        *NotificationSettings `json:"notificationSettings,omitempty" jsonschema:"description=Alert rule notification settings"`
+	KeepFiringFor               string                `json:"keep_firing_for,omitempty" jsonschema:"description=Enables continous firing of alert for specified time even when condition is no longer met. Default is 0 (resolves immediately)"`
+	IsPaused                    bool                  `json:"is_paused,omitempty" jsonschema:"description=If true\\, the alert rule remains inactive\\, Default is false"`
+	NotificationSettings        *NotificationSettings `json:"notification_settings,omitempty" jsonschema:"description=Alert rule notification settings"`
 	Record                      *Record               `json:"record,omitempty" jsonschema:"description=Config for Recording type alert rule\\, applicable to 'create'\\, 'update'"`
-	MissingSeriesEvalsToResolve int64                 `json:"missingSeriesEvalsToResolve,omitempty" jsonschema:"description=Consecutive evaluation intervals with no data required to mark the alert as resolved. Default is 2."`
+	MissingSeriesEvalsToResolve int64                 `json:"missing_series_evals_to_resolve,omitempty" jsonschema:"description=Consecutive evaluation intervals with no data required to mark the alert as resolved. Default is 2."`
 	Annotations                 map[string]string     `json:"annotations,omitempty" jsonschema:"description=Optional annotations for the alert rule"`
 	Labels                      map[string]string     `json:"labels,omitempty" jsonschema:"description=Optional labels for the alert rule"`
 	OrgID                       int64                 `json:"org_id,omitempty" jsonschema:"description=The organization ID (required for 'create'\\, 'update')"`
