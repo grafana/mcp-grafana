@@ -251,7 +251,7 @@ var GetDashboardByUID = mcpgrafana.MustTool(
 
 var UpdateDashboard = mcpgrafana.MustTool(
 	"update_dashboard",
-	"Create or update a dashboard. Two modes: (1) Full JSON — provide 'dashboard' for new dashboards or complete replacements. (2) Patch — provide 'uid' + 'operations' to make targeted changes to an existing dashboard. One of these two modes is required; 'folderUid'\\, 'message'\\, and 'overwrite' are supplementary and do nothing on their own. Patch operations support JSONPaths like '$.panels[0].targets[0].expr'\\, '$.panels[1].title'\\, '$.panels[2].targets[0].datasource'. Append to arrays with '/- ' syntax: '$.panels/- '. Remove by index: {\"op\": \"remove\"\\, \"path\": \"$.panels[2]\"}. Multiple removes on the same array are automatically reordered to avoid index-shifting issues.",
+	"Create or update a dashboard. Two modes: (1) Full JSON — provide 'dashboard' for new dashboards or complete replacements. (2) Patch — provide 'uid' + 'operations' to make targeted changes to an existing dashboard. One of these two modes is required; 'folderUid'\\, 'message'\\, and 'overwrite' are supplementary and do nothing on their own. Patch operations support JSONPaths like '$.panels[0].targets[0].expr'\\, '$.panels[1].title'\\, '$.panels[2].targets[0].datasource'. Append to arrays with '/- ' syntax: '$.panels/- '. Remove by index: {\"op\": \"remove\"\\, \"path\": \"$.panels[2]\"}. Multiple removes on the same array are automatically reordered to avoid index-shifting issues. Note: only numeric array indices are supported in patch paths; filter expressions like [?(@.id==2)] and wildcards like [*] are not supported.",
 	updateDashboard,
 	mcp.WithTitleAnnotation("Create or update dashboard"),
 	mcp.WithDestructiveHintAnnotation(true),
@@ -475,6 +475,14 @@ func applyJSONPath(data map[string]interface{}, path string, value interface{}, 
 	// Remove the leading "$." if present
 	if len(path) > 2 && path[:2] == "$." {
 		path = path[2:]
+	}
+
+	// Detect unsupported JSONPath syntax and return actionable errors
+	if strings.Contains(path, "?(@") || strings.Contains(path, "?(") {
+		return fmt.Errorf("JSONPath filter expressions (e.g., [?(@.id==2)]) are not supported in patch operations. Use numeric array indices instead (e.g., $.panels[1]). Use get_dashboard_summary to find panel array indices")
+	}
+	if strings.Contains(path, "[*]") {
+		return fmt.Errorf("JSONPath wildcard expressions (e.g., [*]) are not supported in patch operations. Use numeric array indices instead (e.g., $.panels[0])")
 	}
 
 	// Split the path into segments

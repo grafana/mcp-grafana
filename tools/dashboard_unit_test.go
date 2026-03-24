@@ -473,3 +473,34 @@ func TestUpdateDashboard_ValidationErrors(t *testing.T) {
 		assert.Contains(t, err.Error(), "Do NOT retry")
 	})
 }
+
+func TestApplyJSONPath_UnsupportedSyntax(t *testing.T) {
+	data := map[string]interface{}{
+		"panels": []interface{}{
+			map[string]interface{}{"id": float64(1), "title": "Panel 1"},
+			map[string]interface{}{"id": float64(2), "title": "Panel 2"},
+		},
+	}
+
+	t.Run("filter expression returns actionable error", func(t *testing.T) {
+		err := applyJSONPath(data, `$.panels[?(@.id==2)].title`, "New Title", false)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "filter expressions")
+		assert.Contains(t, err.Error(), "not supported")
+		assert.Contains(t, err.Error(), "numeric array indices")
+	})
+
+	t.Run("wildcard expression returns actionable error", func(t *testing.T) {
+		err := applyJSONPath(data, `$.panels[*].title`, "New Title", false)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "wildcard")
+		assert.Contains(t, err.Error(), "not supported")
+	})
+
+	t.Run("valid numeric index still works", func(t *testing.T) {
+		err := applyJSONPath(data, "$.panels[1].title", "New Title", false)
+		require.NoError(t, err)
+		panel := data["panels"].([]interface{})[1].(map[string]interface{})
+		assert.Equal(t, "New Title", panel["title"])
+	})
+}
