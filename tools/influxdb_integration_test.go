@@ -12,7 +12,7 @@ import (
 
 // Test_ListBuckets verifies the listing of buckets for different InfluxDB datasource linked types.
 func Test_ListBuckets(t *testing.T) {
-	t.Run("list buckets for FluxQL linked DataSource", func(t *testing.T) {
+	t.Run("list buckets for Flux linked DataSource", func(t *testing.T) {
 		ctx := newTestContext()
 
 		result, err := listBuckets(ctx, ListBucketArgs{
@@ -20,7 +20,7 @@ func Test_ListBuckets(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		assert.Contains(t, *result.Buckets, "b-system-logs", "should list buckets for FluxQL DataSource")
+		assert.Contains(t, *result.Buckets, "b-system-logs", "should list buckets for Flux DataSource")
 	})
 
 	t.Run("error for SQL linked Datasource", func(t *testing.T) {
@@ -28,7 +28,7 @@ func Test_ListBuckets(t *testing.T) {
 		_, err := listBuckets(ctx, ListBucketArgs{
 			DatasourceUID: "influxdb-sql",
 		})
-		require.EqualError(t, err, "datasource is not configured with FluxQL, bucket listing is explicit to FluxQL linked datasources")
+		require.EqualError(t, err, "datasource is not configured with Flux, bucket listing is explicit to Flux linked datasources")
 	})
 
 	t.Run("error for InfluxQL linked Datasource", func(t *testing.T) {
@@ -36,7 +36,7 @@ func Test_ListBuckets(t *testing.T) {
 		_, err := listBuckets(ctx, ListBucketArgs{
 			DatasourceUID: "influxdb-influxql",
 		})
-		require.EqualError(t, err, "datasource is not configured with FluxQL, bucket listing is explicit to FluxQL linked datasources")
+		require.EqualError(t, err, "datasource is not configured with Flux, bucket listing is explicit to Flux linked datasources")
 	})
 }
 // Test_Query verifies querying InfluxDB with Flux, SQL and InfluxQL query languages.
@@ -126,7 +126,7 @@ func Test_Query(t *testing.T) {
 }
 // Test_ListMeasurements verifies the listing of measurements for different InfluxDB datasource linked types.
 func Test_ListMeasurements(t *testing.T) {
-	t.Run("require bucket for FluxQL Datasource", func(t *testing.T) {
+	t.Run("require bucket for Flux Datasource", func(t *testing.T) {
 		ctx := newTestContext()
 		_, err := listMeasurements(ctx, ListMeasurementsArgs{
 			DatasourceUID: "influxdb-flux",
@@ -168,7 +168,7 @@ func Test_ListMeasurements(t *testing.T) {
 // Test_ListTagKeys verifies the listing of tag keys for different InfluxDB datasource linked types.
 func Test_ListTagKeys(t *testing.T) {
 
-	t.Run("require bucket for FluxQL Datasource", func(t *testing.T) {
+	t.Run("require bucket for Flux Datasource", func(t *testing.T) {
 		ctx := newTestContext()
 		_, err := listTagKeys(ctx, ListTagKeysArgs{
 			DatasourceUID: "influxdb-flux",
@@ -228,7 +228,7 @@ func Test_ListTagKeys(t *testing.T) {
 // Test_ListFieldKeys verifies the listing of field keys for different InfluxDB datasource linked types.
 func Test_ListFieldKeys(t *testing.T) {
 
-	t.Run("require bucket for FluxQL Datasource", func(t *testing.T) {
+	t.Run("require bucket for Flux Datasource", func(t *testing.T) {
 		ctx := newTestContext()
 		_, err := listFieldKeys(ctx, ListFieldKeysArgs{
 			DatasourceUID: "influxdb-flux",
