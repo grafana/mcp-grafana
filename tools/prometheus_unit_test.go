@@ -104,13 +104,13 @@ func TestParseRelativeTime(t *testing.T) {
 				diff := result.Sub(now)
 				assert.Less(t, diff.Abs(), 2*time.Second, "Time difference should be less than 2 seconds")
 			} else if tc.isMonthCase {
-				// For month calculations, use proper calendar arithmetic
-				expected := now.AddDate(0, -1, 0)
+				// The datemath library (used by parseTime) defaults to UTC for
+				// calendar arithmetic, so use UTC to avoid DST differences.
+				expected := now.UTC().AddDate(0, -1, 0)
 				diff := result.Sub(expected)
 				assert.Less(t, diff.Abs(), 2*time.Second, "Time difference should be less than 2 seconds")
 			} else if tc.isYearCase {
-				// For year calculations, use proper calendar arithmetic
-				expected := now.AddDate(-1, 0, 0)
+				expected := now.UTC().AddDate(-1, 0, 0)
 				diff := result.Sub(expected)
 				assert.Less(t, diff.Abs(), 2*time.Second, "Time difference should be less than 2 seconds")
 			} else {
