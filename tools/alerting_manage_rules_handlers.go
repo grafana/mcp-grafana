@@ -21,19 +21,14 @@ func manageRulesRead(ctx context.Context, args ManageRulesReadParams) (any, erro
 
 	switch args.Operation {
 	case "list":
-		if args.DatasourceUID != nil && *args.DatasourceUID != "" {
-			return listDatasourceAlertRules(ctx, ListAlertRulesParams{
-				Limit:          args.RuleLimit,
-				DatasourceUID:  args.DatasourceUID,
-				LabelSelectors: args.LabelSelectors,
-			})
+		opts, err := args.toGetRulesOpts()
+		if err != nil {
+			return nil, fmt.Errorf("alerting_manage_rules: %w", err)
 		}
-		return listGrafanaRules(ctx, &GetRulesOpts{
-			RuleLimit:    args.RuleLimit,
-			LimitAlerts:  args.LimitAlerts,
-			FolderUID:    args.FolderUID,
-			SearchFolder: args.SearchFolder,
-		}, args.LabelSelectors)
+		if args.DatasourceUID != nil && *args.DatasourceUID != "" {
+			return listDatasourceAlertRules(ctx, *args.DatasourceUID, opts, args.LabelSelectors)
+		}
+		return listGrafanaRules(ctx, opts, args.LabelSelectors)
 	case "get":
 		return getAlertRuleDetail(ctx, args.RuleUID, args.LimitAlerts)
 	case "versions":
@@ -50,19 +45,14 @@ func manageRulesReadWrite(ctx context.Context, args ManageRulesReadWriteParams) 
 
 	switch args.Operation {
 	case "list":
-		if args.DatasourceUID != nil && *args.DatasourceUID != "" {
-			return listDatasourceAlertRules(ctx, ListAlertRulesParams{
-				Limit:          args.RuleLimit,
-				DatasourceUID:  args.DatasourceUID,
-				LabelSelectors: args.LabelSelectors,
-			})
+		opts, err := args.toGetRulesOpts()
+		if err != nil {
+			return nil, fmt.Errorf("alerting_manage_rules: %w", err)
 		}
-		return listGrafanaRules(ctx, &GetRulesOpts{
-			RuleLimit:    args.RuleLimit,
-			LimitAlerts:  args.LimitAlerts,
-			FolderUID:    args.FolderUID,
-			SearchFolder: args.SearchFolder,
-		}, args.LabelSelectors)
+		if args.DatasourceUID != nil && *args.DatasourceUID != "" {
+			return listDatasourceAlertRules(ctx, *args.DatasourceUID, opts, args.LabelSelectors)
+		}
+		return listGrafanaRules(ctx, opts, args.LabelSelectors)
 	case "get":
 		return getAlertRuleDetail(ctx, args.RuleUID, args.LimitAlerts)
 	case "versions":
@@ -92,7 +82,15 @@ func getAlertRuleDetail(ctx context.Context, uid string, limitAlerts int) (*aler
 		return nil, fmt.Errorf("creating alerting client for rule %s: %w", uid, err)
 	}
 
-	rulesResp, err := ac.GetRules(ctx, &GetRulesOpts{LimitAlerts: limitAlerts})
+	opts := &GetRulesOpts{LimitAlerts: limitAlerts}
+	if alertRule.Payload.FolderUID != nil {
+		opts.FolderUID = *alertRule.Payload.FolderUID
+	}
+	if alertRule.Payload.RuleGroup != nil {
+		opts.RuleGroup = *alertRule.Payload.RuleGroup
+	}
+
+	rulesResp, err := ac.GetRules(ctx, opts)
 	if err != nil {
 		slog.WarnContext(ctx, "failed to fetch runtime state for alert rule",
 			"uid", uid, "error", err)
@@ -227,7 +225,27 @@ func listGrafanaRules(ctx context.Context, opts *GetRulesOpts, labelSelectors []
 		}
 	}
 
+	// Server-side rule_limit returns complete groups, so it may exceed the
+	// requested limit. Enforce the limit client-side as well.
+	if opts != nil {
+		summaries = applyRuleLimit(summaries, opts.RuleLimit)
+	}
+
 	return summaries, nil
+}
+
+func applyRuleLimit(summaries []alertRuleSummary, ruleLimit int) []alertRuleSummary {
+	limit := ruleLimit
+	if limit == 0 {
+		limit = DefaultListAlertRulesLimit
+	}
+	if limit > maxRulesLimit {
+		limit = maxRulesLimit
+	}
+	if len(summaries) > limit {
+		return summaries[:limit]
+	}
+	return summaries
 }
 
 func convertRulesResponseToSummary(resp *rulesResponse) []alertRuleSummary {

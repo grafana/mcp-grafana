@@ -9,9 +9,7 @@ import (
 	v1 "github.com/prometheus/client_golang/api/prometheus/v1"
 )
 
-func listDatasourceAlertRules(ctx context.Context, args ListAlertRulesParams) ([]alertRuleSummary, error) {
-	dsUID := *args.DatasourceUID
-
+func listDatasourceAlertRules(ctx context.Context, dsUID string, opts *GetRulesOpts, labelSelectors []Selector) ([]alertRuleSummary, error) {
 	ds, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: dsUID})
 	if err != nil {
 		return nil, fmt.Errorf("datasource %s: %w", dsUID, err)
@@ -26,26 +24,22 @@ func listDatasourceAlertRules(ctx context.Context, args ListAlertRulesParams) ([
 		return nil, fmt.Errorf("creating alerting client: %w", err)
 	}
 
-	rulesResp, err := client.GetDatasourceRules(ctx, dsUID)
+	rulesResp, err := client.GetDatasourceRules(ctx, dsUID, opts)
 	if err != nil {
 		return nil, fmt.Errorf("querying datasource %s rules: %w", dsUID, err)
 	}
 
 	summaries := convertPrometheusRulesToSummary(rulesResp)
 
-	if len(args.LabelSelectors) > 0 {
-		summaries, err = filterSummaryByLabels(summaries, args.LabelSelectors)
+	if len(labelSelectors) > 0 {
+		summaries, err = filterSummaryByLabels(summaries, labelSelectors)
 		if err != nil {
 			return nil, fmt.Errorf("filtering rules: %w", err)
 		}
 	}
 
-	limit := args.Limit
-	if limit == 0 {
-		limit = DefaultListAlertRulesLimit
-	}
-	if limit < len(summaries) {
-		summaries = summaries[:limit]
+	if opts != nil {
+		summaries = applyRuleLimit(summaries, opts.RuleLimit)
 	}
 
 	return summaries, nil
