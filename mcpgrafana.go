@@ -640,7 +640,8 @@ func doFetchPublicURL(ctx context.Context, grafanaURL, apiKey string, auth *url.
 // NewGrafanaClient creates a Grafana client with the provided URL and API key.
 // The client is automatically configured with the correct HTTP scheme, debug settings from context, custom TLS configuration if present, and OpenTelemetry instrumentation for distributed tracing.
 // It also fetches the Grafana instance's public URL from /api/frontend/settings for use in deep link generation.
-func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.Userinfo, orgId int64) *GrafanaClient {
+// The org ID is read from the GrafanaConfig in the context, which should be set by ExtractGrafanaInfoFromEnv or ExtractGrafanaInfoFromHeaders before calling this function.
+func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.Userinfo) *GrafanaClient {
 	cfg := client.DefaultTransportConfig()
 
 	var parsedURL *url.URL
@@ -762,19 +763,23 @@ var ExtractGrafanaClientFromEnv server.StdioContextFunc = func(ctx context.Conte
 		grafanaURL = defaultGrafanaURL
 	}
 	auth := userAndPassFromEnv()
-	orgId := orgIdFromEnv()
-	grafanaClient := NewGrafanaClient(ctx, grafanaURL, apiKey, auth, orgId)
+	grafanaClient := NewGrafanaClient(ctx, grafanaURL, apiKey, auth)
 	return WithGrafanaClient(ctx, grafanaClient)
 }
 
 // ExtractGrafanaClientFromHeaders is a HTTPContextFunc that creates and injects a Grafana client into the context.
 // It prioritizes configuration from HTTP headers (X-Grafana-URL, X-Grafana-API-Key) over environment variables for multi-tenant scenarios.
 var ExtractGrafanaClientFromHeaders httpContextFunc = func(ctx context.Context, req *http.Request) context.Context {
+	config := GrafanaConfigFromContext(ctx)
+	if config.OrgID == 0 {
+		slog.Warn("No org ID found in request headers or environment variables, using default org. Set GRAFANA_ORG_ID or pass X-Grafana-Org-Id header to target a specific org.")
+	}
+
 	// Extract transport config from request headers, and set it on the context.
-	u, apiKey, basicAuth, orgId := extractKeyGrafanaInfoFromReq(req)
+	u, apiKey, basicAuth, _ := extractKeyGrafanaInfoFromReq(req)
 	slog.Debug("Creating Grafana client", "url", u, "api_key_set", apiKey != "", "basic_auth_set", basicAuth != nil)
 
-	grafanaClient := NewGrafanaClient(ctx, u, apiKey, basicAuth, orgId)
+	grafanaClient := NewGrafanaClient(ctx, u, apiKey, basicAuth)
 	return WithGrafanaClient(ctx, grafanaClient)
 }
 
