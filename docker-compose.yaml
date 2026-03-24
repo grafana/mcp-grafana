@@ -1,6 +1,6 @@
 services:
   grafana:
-    image: grafana/grafana:12.4.0@sha256:b0ae311af06228bcfd4a620504b653db80f5b91e94dc3dc2a5b7dab202bcde20
+    image: grafana/grafana:12.4.1@sha256:e932bd6ed0e026595b08483cd0141e5103e1ab7ff8604839ff899b8dc54cabcb
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "false"
       GF_INSTALL_PLUGINS: grafana-clickhouse-datasource
@@ -32,7 +32,7 @@ services:
       - ./testdata/prometheus-entrypoint.sh:/etc/prometheus/entrypoint.sh
 
   loki:
-    image: grafana/loki:3.6.4@sha256:be31579ac047e9f78b81e48f3b69d3af709e7299b431d5aa78bcda43382f9511
+    image: grafana/loki:3.6.7@sha256:3c8fd3570dd9219951a60d3f919c7f31923d10baee578b77bc26c4a0b32d092d
     ports:
       - "3100:3100"
     command: -config.file=/etc/loki/loki-config.yml
@@ -41,7 +41,7 @@ services:
       - ./testdata/loki-rules.yml:/loki/rules/fake/loki-rules.yml
 
   promtail:
-    image: grafana/promtail:3.6.3@sha256:130b6dd63277d99ce87560c0266c0c30d07bc15ba0a8a590d42215465d4f5363
+    image: grafana/promtail:3.6.7@sha256:51346af8682f7a664affaca4f34a62f5a4f0f83ace9931df94590375a94ff8f1
     volumes:
       - ./testdata/promtail-config.yml:/etc/promtail/config.yml
       - /var/run/docker.sock:/var/run/docker.sock
@@ -50,7 +50,7 @@ services:
       - loki
 
   pyroscope:
-    image: grafana/pyroscope:1.18.0@sha256:e7edae4fd99dbb8695a1e03d7db96ab247630cf83842407908922b2f66aafc6a
+    image: grafana/pyroscope:1.18.1@sha256:0ad897bb457228c7d1133ce7004f83052e635be9daf4a7cc90364317637e9754
     ports:
       - 4040:4040
 
@@ -73,7 +73,7 @@ services:
       - "3201:3201" # tempo instance 2
 
   alertmanager:
-    image: prom/alertmanager:v0.30.1@sha256:286ad8838533a5a01d89bd09643f43d2b68b65203123b5700e54a8f80ff9c1f4
+    image: prom/alertmanager:v0.31.1@sha256:88b605de9aba0410775c1eb3438f951115054e0d307f23f274a4c705f51630c1
     ports:
       - "9093:9093"
     volumes:
@@ -97,7 +97,7 @@ services:
       retries: 10
 
   elasticsearch-seed:
-    image: curlimages/curl:8.12.1
+    image: curlimages/curl:8.18.0@sha256:d94d07ba9e7d6de898b6d96c1a072f6f8266c687af78a74f380087a0addf5d17
     depends_on:
       elasticsearch:
         condition: service_healthy
@@ -106,7 +106,7 @@ services:
     entrypoint: ["sh", "/seed.sh"]
 
   localstack:
-    image: localstack/localstack:4.13@sha256:46302bcb91a7e8008e6394be8afafdbfa40fb77a54d4046a38be35992042d5de
+    image: localstack/localstack:4.14@sha256:3ebc37595918b8accb852f8048fef2aff047d465167edd655528065b07bc364a
     ports:
       - "4566:4566"
     environment:
@@ -122,7 +122,7 @@ services:
       retries: 5
 
   clickhouse:
-    image: clickhouse/clickhouse-server:25.10@sha256:8d1a479c36a4556eeb0556ad36141b194cf6a4a4020f9def391c1570fd1570b7
+    image: clickhouse/clickhouse-server:25.12@sha256:5b1c0d22fe62a62b9192062fdb21b528ce29eed8ae75281642f0b5abd7eac8c8
     ports:
       - "8123:8123"
       - "9000:9000"
