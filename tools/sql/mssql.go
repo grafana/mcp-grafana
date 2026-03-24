@@ -34,7 +34,6 @@ func (*MSSQL) GetTablesQuery(dbName string) string {
 		database = fmt.Sprintf("%s.", quoteIdentifier(strings.Trim(dbName, " ")))
 	}
 
-	//TODO : apply quoting with quote identifier outside
 	return fmt.Sprintf(
 		`
 		SELECT TABLE_SCHEMA + '.' + TABLE_NAME as %s

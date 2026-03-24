@@ -42,7 +42,7 @@ type BuildQueryArgs struct {
 	DatasourceUId string
 	Query         string
 	DB            *SQLDatabase
-	IntervalMs    uint //optional : not applicable for meta queries
+	IntervalMs    uint // optional : not applicable for meta queries
 }
 
 // SQLQuery represents a formatted query object for the Grafana API.

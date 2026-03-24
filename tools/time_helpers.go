@@ -55,7 +55,7 @@ func parseTimeRange(start string, end string) (*time.Time, *time.Time, error) {
 			fromTime = parsed
 		}
 
-		//set relative end time 1hour from start
+		// set relative end time 1hour from start
 		if end == "" {
 			toTime = fromTime.Add(defaultPeriod)
 		}
