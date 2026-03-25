@@ -404,6 +404,10 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 				handleOAuthProtectedResource(serverURL, oauth2Config.ProviderURL))
 			mcpHandler = requireOAuth2Bearer(mcpHandler)
 			slog.Info("OAuth2 enforcement enabled", "provider", oauth2Config.ProviderURL)
+			if mcpgrafana.OAuth2TokenForwardToGrafanaEnabledFromEnv() {
+				slog.Info("OAuth2 token forwarding to Grafana enabled",
+					"use_cloud_headers", mcpgrafana.OAuth2TokenForwardToGrafanaUseCloudHeadersFromEnv())
+			}
 		}
 		mux.Handle(basePath, mcpHandler)
 		mux.HandleFunc("/healthz", handleHealthz)
@@ -438,6 +442,10 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 				handleOAuthProtectedResource(serverURL, oauth2Config.ProviderURL))
 			mcpHandler = requireOAuth2Bearer(mcpHandler)
 			slog.Info("OAuth2 enforcement enabled", "provider", oauth2Config.ProviderURL)
+			if mcpgrafana.OAuth2TokenForwardToGrafanaEnabledFromEnv() {
+				slog.Info("OAuth2 token forwarding to Grafana enabled",
+					"use_cloud_headers", mcpgrafana.OAuth2TokenForwardToGrafanaUseCloudHeadersFromEnv())
+			}
 		}
 		mux.Handle(endpointPath, mcpHandler)
 		mux.HandleFunc("/healthz", handleHealthz)

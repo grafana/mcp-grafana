@@ -408,6 +408,36 @@ func TestExtractGrafanaInfoFromHeadersOAuth2TokenForwarding(t *testing.T) {
 	})
 }
 
+func TestAuthProxyConfigFromEnv(t *testing.T) {
+	t.Run("auto enables auth proxy when oauth2 enabled and proxy auth unset", func(t *testing.T) {
+		t.Setenv(oauth2EnabledEnvVar, "true")
+		t.Setenv(oauth2ProviderURLEnvVar, "http://oauth.example")
+
+		enabled, _, _, _, _ := authProxyConfigFromEnv()
+		assert.True(t, enabled)
+	})
+
+	t.Run("respects explicit proxy auth disabled when oauth2 enabled", func(t *testing.T) {
+		t.Setenv(oauth2EnabledEnvVar, "true")
+		t.Setenv(oauth2ProviderURLEnvVar, "http://oauth.example")
+		t.Setenv(grafanaProxyAuthEnabledEnvVar, "false")
+
+		enabled, _, _, _, _ := authProxyConfigFromEnv()
+		assert.False(t, enabled)
+	})
+
+	t.Run("respects explicit proxy auth enabled", func(t *testing.T) {
+		t.Setenv(grafanaProxyAuthEnabledEnvVar, "true")
+
+		enabled, userHeader, emailHeader, nameHeader, roleHeader := authProxyConfigFromEnv()
+		assert.True(t, enabled)
+		assert.Equal(t, defaultProxyUserHeader, userHeader)
+		assert.Equal(t, defaultProxyEmailHeader, emailHeader)
+		assert.Equal(t, defaultProxyNameHeader, nameHeader)
+		assert.Equal(t, defaultProxyRoleHeader, roleHeader)
+	})
+}
+
 func TestExtractGrafanaClientPath(t *testing.T) {
 	t.Run("no custom path", func(t *testing.T) {
 		t.Setenv("GRAFANA_URL", "http://my-test-url.grafana.com/")
@@ -1126,7 +1156,7 @@ func TestFetchPublicURL(t *testing.T) {
 			w.WriteHeader(http.StatusNotFound)
 		})
 
-		publicURL := fetchPublicURL(context.Background(), ts.URL, "test-key", nil, nil, nil, nil)
+		publicURL := fetchPublicURL(context.Background(), ts.URL, "test-key", "", nil, nil, nil, nil)
 		assert.Equal(t, "https://grafana.example.com", publicURL)
 	})
 
@@ -1135,7 +1165,7 @@ func TestFetchPublicURL(t *testing.T) {
 			w.WriteHeader(http.StatusInternalServerError)
 		})
 
-		publicURL := fetchPublicURL(context.Background(), ts.URL, "test-key", nil, nil, nil, nil)
+		publicURL := fetchPublicURL(context.Background(), ts.URL, "test-key", "", nil, nil, nil, nil)
 		assert.Equal(t, "", publicURL)
 	})
 
@@ -1145,7 +1175,7 @@ func TestFetchPublicURL(t *testing.T) {
 			_, _ = w.Write([]byte(`{"appUrl": ""}`))
 		})
 
-		publicURL := fetchPublicURL(context.Background(), ts.URL, "test-key", nil, nil, nil, nil)
+		publicURL := fetchPublicURL(context.Background(), ts.URL, "test-key", "", nil, nil, nil, nil)
 		assert.Equal(t, "", publicURL)
 	})
 
@@ -1154,7 +1184,7 @@ func TestFetchPublicURL(t *testing.T) {
 			_, _ = w.Write([]byte(`not json`))
 		})
 
-		publicURL := fetchPublicURL(context.Background(), ts.URL, "test-key", nil, nil, nil, nil)
+		publicURL := fetchPublicURL(context.Background(), ts.URL, "test-key", "", nil, nil, nil, nil)
 		assert.Equal(t, "", publicURL)
 	})
 
@@ -1166,7 +1196,7 @@ func TestFetchPublicURL(t *testing.T) {
 			_, _ = w.Write([]byte(`{"appUrl": "https://grafana.example.com"}`))
 		})
 
-		fetchPublicURL(context.Background(), ts.URL, "my-token", nil, nil, nil, nil)
+		fetchPublicURL(context.Background(), ts.URL, "my-token", "", nil, nil, nil, nil)
 		assert.Equal(t, "Bearer my-token", capturedAuth)
 	})
 
@@ -1179,7 +1209,7 @@ func TestFetchPublicURL(t *testing.T) {
 		})
 
 		auth := url.UserPassword("admin", "secret")
-		fetchPublicURL(context.Background(), ts.URL, "", auth, nil, nil, nil)
+		fetchPublicURL(context.Background(), ts.URL, "", "", auth, nil, nil, nil)
 		assert.Equal(t, "admin", capturedUser)
 		assert.Equal(t, "secret", capturedPass)
 	})
@@ -1190,7 +1220,7 @@ func TestFetchPublicURL(t *testing.T) {
 			_, _ = w.Write([]byte(`{"appUrl": "https://grafana.example.com/"}`))
 		})
 
-		publicURL := fetchPublicURL(context.Background(), ts.URL, "", nil, nil, nil, nil)
+		publicURL := fetchPublicURL(context.Background(), ts.URL, "", "", nil, nil, nil, nil)
 		assert.Equal(t, "https://grafana.example.com", publicURL)
 	})
 
@@ -1206,7 +1236,7 @@ func TestFetchPublicURL(t *testing.T) {
 			"X-Custom-Auth":   "proxy-token-123",
 			"X-Forwarded-For": "10.0.0.1",
 		}
-		fetchPublicURL(context.Background(), ts.URL, "", nil, nil, extraHeaders, nil)
+		fetchPublicURL(context.Background(), ts.URL, "", "", nil, nil, extraHeaders, nil)
 		assert.Equal(t, "proxy-token-123", capturedHeaders.Get("X-Custom-Auth"))
 		assert.Equal(t, "10.0.0.1", capturedHeaders.Get("X-Forwarded-For"))
 	})
@@ -1220,12 +1250,12 @@ func TestFetchPublicURL(t *testing.T) {
 		})
 
 		// First call should hit the server
-		publicURL := fetchPublicURL(context.Background(), ts.URL, "test-key", nil, nil, nil, nil)
+		publicURL := fetchPublicURL(context.Background(), ts.URL, "test-key", "", nil, nil, nil, nil)
 		assert.Equal(t, "https://grafana.example.com", publicURL)
 		assert.Equal(t, 1, callCount)
 
 		// Second call should use cache
-		publicURL = fetchPublicURL(context.Background(), ts.URL, "test-key", nil, nil, nil, nil)
+		publicURL = fetchPublicURL(context.Background(), ts.URL, "test-key", "", nil, nil, nil, nil)
 		assert.Equal(t, "https://grafana.example.com", publicURL)
 		assert.Equal(t, 1, callCount) // no additional HTTP call
 	})
@@ -1243,17 +1273,17 @@ func TestFetchPublicURL(t *testing.T) {
 		})
 
 		// First call fails
-		publicURL := fetchPublicURL(context.Background(), ts.URL, "test-key", nil, nil, nil, nil)
+		publicURL := fetchPublicURL(context.Background(), ts.URL, "test-key", "", nil, nil, nil, nil)
 		assert.Equal(t, "", publicURL)
 		assert.Equal(t, 1, callCount)
 
 		// Second call retries and succeeds (failures are not cached)
-		publicURL = fetchPublicURL(context.Background(), ts.URL, "test-key", nil, nil, nil, nil)
+		publicURL = fetchPublicURL(context.Background(), ts.URL, "test-key", "", nil, nil, nil, nil)
 		assert.Equal(t, "https://grafana.example.com", publicURL)
 		assert.Equal(t, 2, callCount)
 
 		// Third call uses cached success
-		publicURL = fetchPublicURL(context.Background(), ts.URL, "test-key", nil, nil, nil, nil)
+		publicURL = fetchPublicURL(context.Background(), ts.URL, "test-key", "", nil, nil, nil, nil)
 		assert.Equal(t, "https://grafana.example.com", publicURL)
 		assert.Equal(t, 2, callCount) // no additional HTTP call
 	})
