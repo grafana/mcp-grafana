@@ -316,9 +316,8 @@ func parseQueryResponseFrames(resp *grafana.DSQueryResponse) ([]*InfluxQueryResF
 			return nil, fmt.Errorf("query error (refId=%s): %s", refID, r.Error)
 		}
 
-		clonedFrames := make([]*InfluxQueryResFrame, len(frames), len(frames)+len(r.Frames))
-		copy(clonedFrames, frames)
-		frames = clonedFrames
+		// grow slice to accomadte atleast len(r.Frames) elements
+		frames = slices.Grow(frames, len(r.Frames))
 
 		for _, frame := range r.Frames {
 
@@ -333,6 +332,11 @@ func parseQueryResponseFrames(resp *grafana.DSQueryResponse) ([]*InfluxQueryResF
 
 			if len(frame.Data.Values) == 0 {
 				continue
+			}
+
+			if len(frame.Data.Values) != noOfCol {
+				// return error when data values count mismatch schema fields
+				return nil, fmt.Errorf("frame data values count (%d) mismatch schema fields count (%d)", len(frame.Data.Values), noOfCol)
 			}
 
 			// Number of rows count derived from count of values of first column
@@ -474,15 +478,13 @@ func extractColValues(resp *grafana.DSQueryResponse, colName string) (*[]string,
 				continue
 			}
 
-			resizedFieldValues := make([]string, len(fieldValues), len(fieldValues)+len(frame.Data.Values[fieldColIdx]))
-			copy(resizedFieldValues, fieldValues)
-			fieldValues = resizedFieldValues
+			fieldValues = slices.Grow(fieldValues, len(frame.Data.Values[fieldColIdx]))
 
 			for _, name := range frame.Data.Values[fieldColIdx] {
 				if s, ok := name.(string); ok {
 					fieldValues = append(fieldValues, s)
 				} else {
-					return nil, errors.New("expected column to be string type")
+					return nil, fmt.Errorf("expected column %s to be string type, got %T", colName, name)
 				}
 			}
 		}
@@ -539,7 +541,7 @@ func listBuckets(ctx context.Context, args ListBucketArgs) (*ListBucketResult, e
 
 var ListBucketsInflux = mcpgrafana.MustTool(
 	"list_influxdb_buckets",
-	"Lists buckets of an InfluxDB datasource identified by its UID. Requires the datasource to be configured with Flux. Use in order: list_datasources -> get_datasource -> list_buckets_influxdb",
+	"Lists buckets of an InfluxDB datasource identified by its UID. Requires the datasource to be configured with Flux. Use in order: list_datasources -> get_datasource -> list_influxdb_buckets",
 	listBuckets,
 	mcp.WithTitleAnnotation("List Buckets InfluxDB"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -629,7 +631,7 @@ func listMeasurements(ctx context.Context, args ListMeasurementsArgs) (*ListMeas
 
 var ListMeasurements = mcpgrafana.MustTool(
 	"list_measurements_influxdb",
-	"Lists Measurements of an InfluxDB datasource identified by its UID. Use in order: list_datasources -> get_datasource -> list_buckets_influxdb (required only for Flux linked datasource) -> list_measurements_influxdb",
+	"Lists Measurements of an InfluxDB datasource identified by its UID. Use in order: list_datasources -> get_datasource -> list_influxdb_buckets (required only for Flux linked datasource) -> list_measurements_influxdb",
 	listMeasurements,
 	mcp.WithTitleAnnotation("List Measurements InfluxDB"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -742,7 +744,7 @@ func listTagKeys(ctx context.Context, args ListTagKeysArgs) (*ListTagKeysResult,
 
 var ListTagKeys = mcpgrafana.MustTool(
 	"list_tag_keys_influxdb",
-	"Lists Tag Keys of an InfluxDB datasource identified by its UID. Use in order: list_datasources -> get_datasource -> list_buckets_influxdb (required only for Flux linked datasource) -> list_measurements_influxdb -> list_tag_keys_influxdb",
+	"Lists Tag Keys of an InfluxDB datasource identified by its UID. Use in order: list_datasources -> get_datasource -> list_influxdb_buckets (required only for Flux linked datasource) -> list_measurements_influxdb -> list_tag_keys_influxdb",
 	listTagKeys,
 	mcp.WithTitleAnnotation("List Tag Keys InfluxDB"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -840,7 +842,7 @@ func listFieldKeys(ctx context.Context, args ListFieldKeysArgs) (*ListFieldKeysR
 
 var ListFieldKeys = mcpgrafana.MustTool(
 	"list_field_keys_influxdb",
-	"Lists Field Keys of an InfluxDB datasource identified by its UID. Use in order: list_datasources -> get_datasource -> list_buckets_influxdb (required only for Flux linked datasource) -> list_measurements_influxdb -> list_field_keys_influxdb",
+	"Lists Field Keys of an InfluxDB datasource identified by its UID. Use in order: list_datasources -> get_datasource -> list_influxdb_buckets (required only for Flux linked datasource) -> list_measurements_influxdb -> list_field_keys_influxdb",
 	listFieldKeys,
 	mcp.WithTitleAnnotation("List Field Keys InfluxDB"),
 	mcp.WithIdempotentHintAnnotation(true),

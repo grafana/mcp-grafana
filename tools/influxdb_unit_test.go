@@ -1,3 +1,5 @@
+//go:build unit
+
 package tools
 
 import (
@@ -158,18 +160,12 @@ func Test_extractColValues(t *testing.T) {
 					"A": {
 						Frames: []grafana.DsQueryFrame{
 							{
-								Schema: struct {
-									Name   string                      `json:"name,omitempty"`
-									RefID  string                      `json:"refId,omitempty"`
-									Fields []grafana.DsQueryFrameField `json:"fields"`
-								}{
+								Schema: grafana.DsQueryFrameSchema{
 									Fields: []grafana.DsQueryFrameField{
 										{Name: "my_col"},
 									},
 								},
-								Data: struct {
-									Values [][]interface{} `json:"values"`
-								}{
+								Data: grafana.DSQueryFrameData{
 									Values: [][]interface{}{
 										{"val1", "val2"},
 									},
@@ -215,20 +211,14 @@ func Test_parseQueryResponseFrames(t *testing.T) {
 					"A": {
 						Frames: []grafana.DsQueryFrame{
 							{
-								Schema: struct {
-									Name   string                      `json:"name,omitempty"`
-									RefID  string                      `json:"refId,omitempty"`
-									Fields []grafana.DsQueryFrameField `json:"fields"`
-								}{
+								Schema: grafana.DsQueryFrameSchema{
 									Name: "test_frame",
 									Fields: []grafana.DsQueryFrameField{
 										field1,
 										field2,
 									},
 								},
-								Data: struct {
-									Values [][]interface{} `json:"values"`
-								}{
+								Data: grafana.DSQueryFrameData{
 									Values: [][]interface{}{
 										{1000, 2000},
 										{22.5, 23.0},
@@ -268,19 +258,13 @@ func Test_parseQueryResponseFrames(t *testing.T) {
 					"A": {
 						Frames: []grafana.DsQueryFrame{
 							{
-								Schema: struct {
-									Name   string                      `json:"name,omitempty"`
-									RefID  string                      `json:"refId,omitempty"`
-									Fields []grafana.DsQueryFrameField `json:"fields"`
-								}{
+								Schema: grafana.DsQueryFrameSchema{
 									Name: "test_frame",
 									Fields: []grafana.DsQueryFrameField{
 										{Name: "time"},
 									},
 								},
-								Data: struct {
-									Values [][]interface{} `json:"values"`
-								}{
+								Data: grafana.DSQueryFrameData{
 									Values: [][]interface{}{},
 								},
 							},
