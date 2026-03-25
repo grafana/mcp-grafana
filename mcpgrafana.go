@@ -42,6 +42,33 @@ const (
 
 	grafanaExtraHeadersEnvVar = "GRAFANA_EXTRA_HEADERS"
 
+	grafanaURLHeader    = "X-Grafana-URL"
+	grafanaAPIKeyHeader = "X-Grafana-API-Key"
+
+	// OAuth2 environment variables
+	oauth2EnabledEnvVar            = "OAUTH2_ENABLED"
+	oauth2ProviderURLEnvVar        = "OAUTH2_PROVIDER_URL"
+	oauth2UserInfoEndpointEnvVar   = "OAUTH2_USERINFO_ENDPOINT"
+	oauth2TokenCacheTTLEnvVar      = "OAUTH2_TOKEN_CACHE_TTL"
+	oauth2TokenForwardToGrafanaEnabledEnvVar         = "OAUTH2_TOKEN_FORWARD_TO_GRAFANA_ENABLED"
+	oauth2TokenForwardToGrafanaUseCloudHeadersEnvVar = "OAUTH2_TOKEN_FORWARD_TO_GRAFANA_USE_CLOUD_HEADERS"
+
+	// Deprecated OAuth2 OBO env vars kept for backward compatibility.
+	oauth2OBOEnabledEnvVar            = "OAUTH2_OBO_ENABLED"
+	oauth2OBOUseGrafanaHeadersEnvVar  = "OAUTH2_OBO_USE_GRAFANA_HEADERS"
+
+	// Auth Proxy environment variables
+	grafanaProxyAuthEnabledEnvVar  = "GRAFANA_PROXY_AUTH_ENABLED"
+	grafanaProxyUserHeaderEnvVar   = "GRAFANA_PROXY_USER_HEADER"
+	grafanaProxyEmailHeaderEnvVar  = "GRAFANA_PROXY_EMAIL_HEADER"
+	grafanaProxyNameHeaderEnvVar   = "GRAFANA_PROXY_NAME_HEADER"
+	grafanaProxyRoleHeaderEnvVar   = "GRAFANA_PROXY_ROLE_HEADER"
+
+	// Default proxy header names
+	defaultProxyUserHeader  = "X-WEBAUTH-USER"
+	defaultProxyEmailHeader = "X-WEBAUTH-EMAIL"
+	defaultProxyNameHeader  = "X-WEBAUTH-NAME"
+	defaultProxyRoleHeader  = "X-WEBAUTH-ROLE"
 )
 
 func urlAndAPIKeyFromEnv() (string, string) {

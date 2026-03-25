@@ -50,7 +50,6 @@ GRAFANA_PROXY_ROLE_HEADER=X-WEBAUTH-ROLE
 
 Notes:
 
-- `OAUTH2_CLIENT_ID` and `OAUTH2_CLIENT_SECRET` are not required by current server-side token validation logic.
 - If `OAUTH2_ENABLED=true` and `OAUTH2_PROVIDER_URL` is empty, OAuth2 is disabled.
 - When `OAUTH2_TOKEN_FORWARD_TO_GRAFANA_ENABLED=true`, MCP forwards authenticated requests to Grafana using:
   - `Authorization: Bearer <validated incoming bearer token>` by default.
