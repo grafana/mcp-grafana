@@ -1,0 +1,206 @@
+#!/bin/bash
+
+# OAuth2 Testing Helper Script
+# Use this script to get tokens and test the OAuth2 + Auth Proxy flow
+
+set -e
+
+# Color codes
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+NC='\033[0m' # No Color
+
+# Load configuration from .env.oauth2-test
+if [ -f ".env.oauth2-test" ]; then
+  set -a
+  # shellcheck disable=SC1091
+  . ./.env.oauth2-test
+  set +a
+else
+  echo -e "${RED}Error: .env.oauth2-test not found${NC}"
+  exit 1
+fi
+
+function usage() {
+  cat << EOF
+Usage: $0 <command> [args]
+
+Commands:
+  token <user> [password]     Get OAuth2 token for a user
+  get-users                   List users in Grafana using admin credentials
+  test-flow <user> [password] Test complete OAuth2 flow
+  cleanup                     Stop and remove docker containers
+  help                        Show this help message
+
+Examples:
+  # Get token for john.doe
+  $0 token john.doe password123
+
+  # Test complete flow
+  $0 test-flow john.doe password123
+
+  # Get users in Grafana
+  $0 get-users
+EOF
+}
+
+function get_token() {
+  local user=$1
+  local password=$2
+  local keycloak_url="${OAUTH2_PROVIDER_URL%/realms*}"
+  local realm="mcp-grafana"
+  
+  if [ -z "$user" ] || [ -z "$password" ]; then
+    echo -e "${RED}Error: user and password required${NC}"
+    return 1
+  fi
+  
+  echo -e "${BLUE}Getting token for user: $user${NC}" >&2
+  
+  local response=$(curl -s -X POST "${keycloak_url}/realms/${realm}/protocol/openid-connect/token" \
+    -H "Content-Type: application/x-www-form-urlencoded" \
+    -d "client_id=grafana-ui" \
+    -d "grant_type=password" \
+    -d "username=$user" \
+    -d "password=$password")
+  
+  local token=$(echo "$response" | jq -r '.access_token' 2>/dev/null || echo "")
+  
+  if [ -z "$token" ] || [ "$token" = "null" ]; then
+    echo -e "${RED}✗ Failed to get token${NC}" >&2
+    echo "Response: $response" >&2
+    return 1
+  fi
+  
+  echo -e "${GREEN}✓ Token obtained${NC}" >&2
+  echo "$token"
+  return 0
+}
+
+function get_users() {
+  echo -e "${BLUE}Getting users from Grafana...${NC}"
+  
+  local response=$(curl -s -u admin:admin "http://localhost:3001/api/users" 2>/dev/null || echo "")
+  
+  if [ -z "$response" ]; then
+    echo -e "${RED}✗ Failed to get users (Grafana not responding)${NC}"
+    return 1
+  fi
+  
+  echo -e "${GREEN}Users in Grafana:${NC}"
+  echo "$response" | jq '.[] | "\(.id): \(.login) (\(.name))"' 2>/dev/null || echo "$response"
+  return 0
+}
+
+function test_flow() {
+  local user=$1
+  local password=$2
+  local payload
+  
+  echo -e "\n${BLUE}═══════════════════════════════════════${NC}"
+  echo -e "${BLUE}OAuth2 + Auth Proxy Complete Flow Test${NC}"
+  echo -e "${BLUE}═══════════════════════════════════════${NC}\n"
+  
+  # Step 1: Get token
+  echo -e "${YELLOW}Step 1: Get OAuth2 Token${NC}"
+  local token
+  if ! token=$(get_token "$user" "$password"); then
+    echo -e "${RED}✗ Test failed at token retrieval${NC}"
+    return 1
+  fi
+  echo -e "Token: ${GREEN}${token:0:20}...${NC}\n"
+  
+  # Step 2: Decode token to show claims
+  echo -e "${YELLOW}Step 2: Token Claims${NC}"
+  payload=$(echo "$token" | cut -d. -f2 | tr '_-' '/+' | awk '{ l=length($0)%4; if (l==2) printf "%s==", $0; else if (l==3) printf "%s=", $0; else printf "%s", $0 }')
+  local claims=$(printf '%s' "$payload" | base64 -d 2>/dev/null | jq . 2>/dev/null || echo "Could not decode")
+  echo "$claims"
+  echo ""
+  
+  # Step 3: Call MCP API with token
+  echo -e "${YELLOW}Step 3: Call MCP Health Check (with OAuth2 Token)${NC}"
+  if command -v go &> /dev/null; then
+    local health_response=$(curl -s "http://localhost:8080/healthz" 2>/dev/null || echo "")
+    
+    if [ -n "$health_response" ]; then
+      echo -e "${GREEN}✓ MCP API accessible${NC}"
+      echo "Response: $health_response"
+    else
+      echo -e "${YELLOW}⚠ MCP not running on localhost:8080${NC}"
+      echo "  Start with: source .env.oauth2-test && go run ./cmd/mcp-grafana/main.go"
+    fi
+  fi
+  echo ""
+  
+  # Step 4: Check if user created in Grafana
+  echo -e "${YELLOW}Step 4: Check Grafana User${NC}"
+  local auth_proxy_response=$(curl -s "http://localhost:3001/api/user" \
+    -H "${GRAFANA_PROXY_USER_HEADER}: $user" \
+    -H "${GRAFANA_PROXY_EMAIL_HEADER}: ${user}@example.com" \
+    -H "${GRAFANA_PROXY_NAME_HEADER}: ${user}" \
+    2>/dev/null || echo "")
+  if [ -n "$auth_proxy_response" ] && echo "$auth_proxy_response" | jq -e '.login' >/dev/null 2>&1; then
+    echo -e "${GREEN}✓ Auth Proxy accepted user headers${NC}"
+    echo "$auth_proxy_response" | jq '{id, login, email, name}'
+  else
+    echo -e "${YELLOW}⚠ Could not confirm Auth Proxy user via /api/user${NC}"
+    echo "Response: ${auth_proxy_response:-<empty>}"
+  fi
+  echo ""
+  
+  # Step 5: Test Auth Proxy header injection
+  echo -e "${YELLOW}Step 5: Test Auth Proxy Headers${NC}"
+  local response=$(curl -s -i "http://localhost:3001/api/user" \
+    -H "${GRAFANA_PROXY_USER_HEADER}: $user" \
+    -H "${GRAFANA_PROXY_EMAIL_HEADER}: ${user}@example.com" \
+    -H "${GRAFANA_PROXY_NAME_HEADER}: ${user}" \
+    2>/dev/null || echo "")
+
+  if echo "$response" | grep -q "HTTP/.* 200"; then
+    echo -e "${GREEN}✓ Auth Proxy headers accepted${NC}"
+  else
+    echo -e "${YELLOW}⚠ Auth Proxy header test response:${NC}"
+    echo "$response"
+  fi
+  echo ""
+  
+  echo -e "${BLUE}═══════════════════════════════════════${NC}"
+  echo -e "${GREEN}✓ Test flow completed${NC}"
+  echo -e "${BLUE}═══════════════════════════════════════${NC}\n"
+}
+
+function cleanup() {
+  echo -e "${BLUE}Stopping and removing containers...${NC}"
+  docker-compose down
+  echo -e "${GREEN}✓ Cleanup complete${NC}"
+}
+
+# Main command handler
+case "${1}" in
+  token)
+    get_token "$2" "$3"
+    ;;
+  get-users)
+    get_users
+    ;;
+  test-flow)
+    test_flow "$2" "$3"
+    ;;
+  cleanup)
+    cleanup
+    ;;
+  help|--help|-h)
+    usage
+    ;;
+  "")
+    echo "No command specified. Use 'help' for usage."
+    exit 1
+    ;;
+  *)
+    echo "Unknown command: $1"
+    usage
+    exit 1
+    ;;
+esac

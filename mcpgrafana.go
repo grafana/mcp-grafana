@@ -33,10 +33,9 @@ const (
 	defaultGrafanaHost = "localhost:3000"
 	defaultGrafanaURL  = "http://" + defaultGrafanaHost
 
-	grafanaURLEnvVar                 = "GRAFANA_URL"
-	grafanaServiceAccountTokenEnvVar = "GRAFANA_SERVICE_ACCOUNT_TOKEN"
-	grafanaAPIEnvVar                 = "GRAFANA_API_KEY" // Deprecated: use GRAFANA_SERVICE_ACCOUNT_TOKEN instead
-	grafanaOrgIDEnvVar               = "GRAFANA_ORG_ID"
+	grafanaURLEnvVar       = "GRAFANA_URL"
+	grafanaAPIKeyEnvVar    = "GRAFANA_API_KEY" // Optional: API key or service account token (for backward compatibility)
+	grafanaOrgIDEnvVar     = "GRAFANA_ORG_ID"
 
 	grafanaUsernameEnvVar = "GRAFANA_USERNAME"
 	grafanaPasswordEnvVar = "GRAFANA_PASSWORD"
@@ -51,17 +50,8 @@ const (
 func urlAndAPIKeyFromEnv() (string, string) {
 	u := strings.TrimRight(os.Getenv(grafanaURLEnvVar), "/")
 
-	// Check for the new service account token environment variable first
-	apiKey := os.Getenv(grafanaServiceAccountTokenEnvVar)
-	if apiKey != "" {
-		return u, apiKey
-	}
-
-	// Fall back to the deprecated API key environment variable
-	apiKey = os.Getenv(grafanaAPIEnvVar)
-	if apiKey != "" {
-		slog.Warn("GRAFANA_API_KEY is deprecated, please use GRAFANA_SERVICE_ACCOUNT_TOKEN instead. See https://grafana.com/docs/grafana/latest/administration/service-accounts/#add-a-token-to-a-service-account-in-grafana for details on creating service account tokens.")
-	}
+	// Optional: API key for direct API access (when not using OAuth2 + Auth Proxy)
+	apiKey := os.Getenv(grafanaAPIKeyEnvVar)
 
 	return u, apiKey
 }
@@ -193,6 +183,28 @@ type GrafanaConfig struct {
 	// MaxLokiLogLimit is the maximum number of log lines that can be returned
 	// from Loki queries.
 	MaxLokiLogLimit int
+
+	// OAuth2Config holds OAuth2 provider configuration for token validation.
+	OAuth2Config *OAuth2Config
+
+	// ProxyAuthEnabled enables Auth Proxy mode for relaying user identity to Grafana.
+	ProxyAuthEnabled bool
+
+	// ProxyUserHeader is the HTTP header name for user identity (default: X-WEBAUTH-USER).
+	ProxyUserHeader string
+
+	// ProxyEmailHeader is the HTTP header name for user email (default: X-WEBAUTH-EMAIL).
+	ProxyEmailHeader string
+
+	// ProxyNameHeader is the HTTP header name for user display name (default: X-WEBAUTH-NAME).
+	ProxyNameHeader string
+
+	// ProxyRoleHeader is the HTTP header name for user roles (default: X-WEBAUTH-ROLE).
+	ProxyRoleHeader string
+
+	// AuthenticatedUser contains the OAuth2 user info from the current request.
+	// Only populated when OAuth2 validation succeeds.
+	AuthenticatedUser *OAuth2UserInfo
 }
 
 const (
@@ -380,6 +392,61 @@ func NewExtraHeadersRoundTripper(rt http.RoundTripper, headers map[string]string
 	}
 }
 
+// AuthProxyRoundTripper adds Auth Proxy headers to relay user identity to Grafana
+type AuthProxyRoundTripper struct {
+	underlying http.RoundTripper
+	userHeader string
+	emailHeader string
+	nameHeader string
+	roleHeader string
+	userInfo   *OAuth2UserInfo
+}
+
+func (t *AuthProxyRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	if t.userInfo == nil {
+		// No user info, pass through unchanged
+		return t.underlying.RoundTrip(req)
+	}
+
+	clonedReq := req.Clone(req.Context())
+
+	// Add Auth Proxy headers for user identity
+	if t.userInfo.Username != "" && t.userHeader != "" {
+		clonedReq.Header.Set(t.userHeader, t.userInfo.Username)
+	}
+
+	if t.userInfo.Email != "" && t.emailHeader != "" {
+		clonedReq.Header.Set(t.emailHeader, t.userInfo.Email)
+	}
+
+	if t.userInfo.Name != "" && t.nameHeader != "" {
+		clonedReq.Header.Set(t.nameHeader, t.userInfo.Name)
+	}
+
+	// Add roles header if user has roles
+	if len(t.userInfo.Roles) > 0 && t.roleHeader != "" {
+		// Join roles with comma (Grafana convention)
+		rolesStr := strings.Join(t.userInfo.Roles, ",")
+		clonedReq.Header.Set(t.roleHeader, rolesStr)
+	}
+
+	return t.underlying.RoundTrip(clonedReq)
+}
+
+func NewAuthProxyRoundTripper(rt http.RoundTripper, userHeader, emailHeader, nameHeader, roleHeader string, userInfo *OAuth2UserInfo) *AuthProxyRoundTripper {
+	if rt == nil {
+		rt = http.DefaultTransport
+	}
+	return &AuthProxyRoundTripper{
+		underlying:  rt,
+		userHeader:  userHeader,
+		emailHeader: emailHeader,
+		nameHeader:  nameHeader,
+		roleHeader:  roleHeader,
+		userInfo:    userInfo,
+	}
+}
+
 func BuildTransport(cfg *GrafanaConfig, base http.RoundTripper) (http.RoundTripper, error) {
 	if base == nil {
 		base = http.DefaultTransport
@@ -458,7 +525,18 @@ var ExtractGrafanaInfoFromEnv server.StdioContextFunc = func(ctx context.Context
 	}
 
 	extraHeaders := extraHeadersFromEnv()
-	slog.Info("Using Grafana configuration", "url", parsedURL.Redacted(), "api_key_set", apiKey != "", "basic_auth_set", basicAuth != nil, "org_id", orgID, "extra_headers_count", len(extraHeaders))
+	oauth2Config := oauth2ConfigFromEnv()
+	proxyAuthEnabled, userHeader, emailHeader, nameHeader, roleHeader := authProxyConfigFromEnv()
+
+	slog.Info("Using Grafana configuration",
+		"url", parsedURL.Redacted(),
+		"api_key_set", apiKey != "",
+		"basic_auth_set", basicAuth != nil,
+		"org_id", orgID,
+		"extra_headers_count", len(extraHeaders),
+		"oauth2_enabled", oauth2Config != nil,
+		"proxy_auth_enabled", proxyAuthEnabled,
+	)
 
 	// Get existing config or create a new one.
 	// This will respect the existing debug flag, if set.
@@ -468,6 +546,19 @@ var ExtractGrafanaInfoFromEnv server.StdioContextFunc = func(ctx context.Context
 	config.BasicAuth = basicAuth
 	config.OrgID = orgID
 	config.ExtraHeaders = extraHeaders
+	config.OAuth2Config = oauth2Config
+	config.ProxyAuthEnabled = proxyAuthEnabled
+	config.ProxyUserHeader = userHeader
+	config.ProxyEmailHeader = emailHeader
+	config.ProxyNameHeader = nameHeader
+	config.ProxyRoleHeader = roleHeader
+
+	// Initialize OAuth2 client if enabled
+	if oauth2Config != nil {
+		oauth2Client := NewOAuth2Client(*oauth2Config, nil)
+		ctx = WithOAuth2Client(ctx, oauth2Client)
+	}
+
 	return WithGrafanaConfig(ctx, config)
 }
 
@@ -478,6 +569,7 @@ type httpContextFunc func(ctx context.Context, req *http.Request) context.Contex
 
 // ExtractGrafanaInfoFromHeaders is a HTTPContextFunc that extracts Grafana configuration from HTTP request headers.
 // It reads X-Grafana-URL and X-Grafana-API-Key headers, falling back to environment variables if headers are not present.
+// It also extracts and validates OAuth2 tokens if configured.
 var ExtractGrafanaInfoFromHeaders httpContextFunc = func(ctx context.Context, req *http.Request) context.Context {
 	u, apiKey, basicAuth, orgID := extractKeyGrafanaInfoFromReq(req)
 
@@ -489,6 +581,34 @@ var ExtractGrafanaInfoFromHeaders httpContextFunc = func(ctx context.Context, re
 	config.BasicAuth = basicAuth
 	config.OrgID = orgID
 	config.ExtraHeaders = extraHeadersFromEnv()
+	config.OAuth2Config = oauth2ConfigFromEnv()
+	proxyAuthEnabled, userHeader, emailHeader, nameHeader, roleHeader := authProxyConfigFromEnv()
+	config.ProxyAuthEnabled = proxyAuthEnabled
+	config.ProxyUserHeader = userHeader
+	config.ProxyEmailHeader = emailHeader
+	config.ProxyNameHeader = nameHeader
+	config.ProxyRoleHeader = roleHeader
+
+	// Initialize OAuth2 client if needed
+	var oauth2Client *OAuth2Client
+	if config.OAuth2Config != nil {
+		oauth2Client = NewOAuth2Client(*config.OAuth2Config, nil)
+		ctx = WithOAuth2Client(ctx, oauth2Client)
+
+		// Extract and validate OAuth2 token from Authorization header
+		if token := extractBearerToken(req.Header.Get("Authorization")); token != "" {
+			userInfo, err := oauth2Client.ValidateToken(ctx, token)
+			if err != nil {
+				slog.Warn("OAuth2 token validation failed", "error", err)
+				// Continue without user info - will fall back to service account
+			} else {
+				config.AuthenticatedUser = userInfo
+				ctx = WithOAuth2UserInfo(ctx, userInfo)
+				slog.Debug("OAuth2 token validated", "user", userInfo.Username)
+			}
+		}
+	}
+
 	return WithGrafanaConfig(ctx, config)
 }
 
@@ -545,11 +665,20 @@ var publicURLCache sync.Map // map[string]string (grafanaURL -> publicURL)
 // where a failing goroutine could overwrite a successful result.
 var publicURLFlight singleflight.Group
 
+// proxyAuthParams holds Auth Proxy configuration needed to authenticate the public URL fetch.
+type proxyAuthParams struct {
+	userHeader  string
+	emailHeader string
+	nameHeader  string
+	roleHeader  string
+	userInfo    *OAuth2UserInfo
+}
+
 // fetchPublicURL fetches the public URL (appUrl) from Grafana's frontend settings API.
 // It returns the appUrl if available, or an empty string if the request fails.
 // Successful results are cached permanently; failures are retried on subsequent calls.
 // Concurrent calls for the same grafanaURL are coalesced via singleflight.
-func fetchPublicURL(ctx context.Context, grafanaURL, apiKey string, auth *url.Userinfo, tlsConfig *TLSConfig, extraHeaders map[string]string) string {
+func fetchPublicURL(ctx context.Context, grafanaURL, apiKey string, auth *url.Userinfo, tlsConfig *TLSConfig, extraHeaders map[string]string, proxyAuth *proxyAuthParams) string {
 	// Check cache first (only successful results are cached)
 	if cached, ok := publicURLCache.Load(grafanaURL); ok {
 		return cached.(string)
@@ -567,7 +696,7 @@ func fetchPublicURL(ctx context.Context, grafanaURL, apiKey string, auth *url.Us
 		fetchCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
-		publicURL := doFetchPublicURL(fetchCtx, grafanaURL, apiKey, auth, tlsConfig, extraHeaders)
+		publicURL := doFetchPublicURL(fetchCtx, grafanaURL, apiKey, auth, tlsConfig, extraHeaders, proxyAuth)
 
 		// Only cache successful (non-empty) results so transient failures are retried
 		if publicURL != "" {
@@ -581,7 +710,7 @@ func fetchPublicURL(ctx context.Context, grafanaURL, apiKey string, auth *url.Us
 }
 
 // doFetchPublicURL performs the actual HTTP request to fetch the public URL.
-func doFetchPublicURL(ctx context.Context, grafanaURL, apiKey string, auth *url.Userinfo, tlsConfig *TLSConfig, extraHeaders map[string]string) string {
+func doFetchPublicURL(ctx context.Context, grafanaURL, apiKey string, auth *url.Userinfo, tlsConfig *TLSConfig, extraHeaders map[string]string, proxyAuth *proxyAuthParams) string {
 	settingsURL := strings.TrimRight(grafanaURL, "/") + "/api/frontend/settings"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, settingsURL, nil)
 	if err != nil {
@@ -594,6 +723,20 @@ func doFetchPublicURL(ctx context.Context, grafanaURL, apiKey string, auth *url.
 	} else if auth != nil {
 		password, _ := auth.Password()
 		req.SetBasicAuth(auth.Username(), password)
+	} else if proxyAuth != nil && proxyAuth.userInfo != nil {
+		// Auth Proxy mode: inject user identity headers so Grafana authenticates the request
+		if proxyAuth.userInfo.Username != "" && proxyAuth.userHeader != "" {
+			req.Header.Set(proxyAuth.userHeader, proxyAuth.userInfo.Username)
+		}
+		if proxyAuth.userInfo.Email != "" && proxyAuth.emailHeader != "" {
+			req.Header.Set(proxyAuth.emailHeader, proxyAuth.userInfo.Email)
+		}
+		if proxyAuth.userInfo.Name != "" && proxyAuth.nameHeader != "" {
+			req.Header.Set(proxyAuth.nameHeader, proxyAuth.userInfo.Name)
+		}
+		if len(proxyAuth.userInfo.Roles) > 0 && proxyAuth.roleHeader != "" {
+			req.Header.Set(proxyAuth.roleHeader, strings.Join(proxyAuth.userInfo.Roles, ","))
+		}
 	}
 	req.Header.Set("User-Agent", UserAgent())
 
@@ -757,6 +900,10 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 					if config.OrgID > 0 {
 						rt = NewOrgIDRoundTripper(rt, config.OrgID)
 					}
+					// Add Auth Proxy headers if configured and user info is available
+					if config.ProxyAuthEnabled {
+						rt = NewAuthProxyRoundTripper(rt, config.ProxyUserHeader, config.ProxyEmailHeader, config.ProxyNameHeader, config.ProxyRoleHeader, config.AuthenticatedUser)
+					}
 					userAgentWrapped := wrapWithUserAgent(rt)
 					wrapped := otelhttp.NewTransport(userAgentWrapped)
 					transportField.Set(reflect.ValueOf(wrapped))
@@ -767,7 +914,17 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 	}
 
 	// Fetch the public URL from Grafana's frontend settings.
-	publicURL := fetchPublicURL(ctx, grafanaURL, apiKey, auth, config.TLSConfig, config.ExtraHeaders)
+	var pa *proxyAuthParams
+	if config.ProxyAuthEnabled && config.AuthenticatedUser != nil {
+		pa = &proxyAuthParams{
+			userHeader:  config.ProxyUserHeader,
+			emailHeader: config.ProxyEmailHeader,
+			nameHeader:  config.ProxyNameHeader,
+			roleHeader:  config.ProxyRoleHeader,
+			userInfo:    config.AuthenticatedUser,
+		}
+	}
+	publicURL := fetchPublicURL(ctx, grafanaURL, apiKey, auth, config.TLSConfig, config.ExtraHeaders, pa)
 
 	return &GrafanaClient{
 		GrafanaHTTPAPI: grafanaClient,
@@ -799,7 +956,6 @@ var ExtractGrafanaClientFromHeaders httpContextFunc = func(ctx context.Context, 
 
 	// Extract transport config from request headers, and set it on the context.
 	u, apiKey, basicAuth, _ := extractKeyGrafanaInfoFromReq(req)
-	slog.Debug("Creating Grafana client", "url", u, "api_key_set", apiKey != "", "basic_auth_set", basicAuth != nil)
 
 	grafanaClient := NewGrafanaClient(ctx, u, apiKey, basicAuth)
 	return WithGrafanaClient(ctx, grafanaClient)

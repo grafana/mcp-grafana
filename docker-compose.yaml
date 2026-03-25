@@ -134,3 +134,58 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
+  # Keycloak with LDAP federation for OAuth2 testing
+  keycloak:
+    image: quay.io/keycloak/keycloak:25.0.0
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin123
+      KC_HTTP_PORT: 8080
+      KC_DB: dev-mem
+      KC_HEALTH_ENABLED: "true"
+      KC_METRICS_ENABLED: "true"
+    ports:
+      - "8082:8080"
+    command:
+      - "start-dev"
+      - "--import-realm"
+    volumes:
+      - ./testdata/keycloak-realm.json:/opt/keycloak/data/import/keycloak-realm.json
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/9000 && echo -e 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q '\"status\": \"UP\"' <&3"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - default
+
+  # Update Grafana with auth proxy configuration
+  grafana-oauth:
+    image: grafana/grafana:12.4.0@sha256:b0ae311af06228bcfd4a620504b653db80f5b91e94dc3dc2a5b7dab202bcde20
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_AUTH_PROXY_ENABLED: "true"
+      GF_AUTH_PROXY_HEADER_NAME: "X-WEBAUTH-USER"
+      GF_AUTH_PROXY_HEADER_PROPERTY: "username"
+      GF_AUTH_PROXY_AUTO_SIGN_UP: "true"
+      GF_AUTH_PROXY_ENABLE_EMAIL_TRACKING: "true"
+      GF_INSTALL_PLUGINS: grafana-clickhouse-datasource
+      GF_LOG_LEVEL: debug
+      GF_SERVER_ROUTER_LOGGING: "true"
+      GF_RENDERING_SERVER_URL: http://renderer:8081/render
+      GF_RENDERING_CALLBACK_URL: http://grafana-oauth:3000/
+    ports:
+      - "3001:3000/tcp"
+    volumes:
+      - ./testdata/provisioning:/etc/grafana/provisioning
+      - ./testdata/dashboards:/var/lib/grafana/dashboards
+      - type: tmpfs
+        target: /var/lib/grafana/empty-alerts-folder
+    depends_on:
+      - renderer
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10

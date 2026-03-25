@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -269,6 +270,41 @@ func handleHealthz(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte("ok"))
 }
 
+// handleOAuthProtectedResource serves the OAuth2 Protected Resource metadata
+// document (RFC 9728 / MCP Authorization spec) so MCP clients can discover
+// which authorization server issues tokens for this server.
+func handleOAuthProtectedResource(serverURL, providerURL string) http.HandlerFunc {
+	type metadata struct {
+		Resource             string   `json:"resource"`
+		AuthorizationServers []string `json:"authorization_servers"`
+	}
+	m := metadata{
+		Resource:             serverURL,
+		AuthorizationServers: []string{providerURL},
+	}
+	body, _ := json.Marshal(m)
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(body)
+	}
+}
+
+// requireOAuth2Bearer is middleware that enforces a Bearer token on MCP
+// endpoints when OAuth2 is enabled. On missing token it returns 401 with a
+// WWW-Authenticate header, which triggers the automatic OAuth2 flow in
+// compliant MCP clients (e.g. VS Code Copilot).
+func requireOAuth2Bearer(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth := r.Header.Get("Authorization")
+		if !strings.HasPrefix(strings.TrimSpace(auth), "Bearer ") {
+			w.Header().Set("WWW-Authenticate", `Bearer realm="mcp-grafana", error="invalid_token"`)
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // runMetricsServer starts a separate HTTP server for metrics.
 func runMetricsServer(addr string, o *observability.Observability) {
 	mux := http.NewServeMux()
@@ -361,7 +397,15 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		if basePath == "" {
 			basePath = "/"
 		}
-		mux.Handle(basePath, observability.WrapHandler(srv, basePath))
+		var mcpHandler http.Handler = observability.WrapHandler(srv, basePath)
+		if oauth2Config := mcpgrafana.OAuth2ConfigFromEnv(); oauth2Config != nil {
+			serverURL := "http://" + addr
+			mux.HandleFunc("/.well-known/oauth-protected-resource",
+				handleOAuthProtectedResource(serverURL, oauth2Config.ProviderURL))
+			mcpHandler = requireOAuth2Bearer(mcpHandler)
+			slog.Info("OAuth2 enforcement enabled", "provider", oauth2Config.ProviderURL)
+		}
+		mux.Handle(basePath, mcpHandler)
 		mux.HandleFunc("/healthz", handleHealthz)
 		if obs.MetricsEnabled {
 			if obs.MetricsAddress == "" {
@@ -387,7 +431,15 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		}
 		srv := server.NewStreamableHTTPServer(s, opts...)
 		mux := http.NewServeMux()
-		mux.Handle(endpointPath, observability.WrapHandler(srv, endpointPath))
+		var mcpHandler http.Handler = observability.WrapHandler(srv, endpointPath)
+		if oauth2Config := mcpgrafana.OAuth2ConfigFromEnv(); oauth2Config != nil {
+			serverURL := "http://" + addr
+			mux.HandleFunc("/.well-known/oauth-protected-resource",
+				handleOAuthProtectedResource(serverURL, oauth2Config.ProviderURL))
+			mcpHandler = requireOAuth2Bearer(mcpHandler)
+			slog.Info("OAuth2 enforcement enabled", "provider", oauth2Config.ProviderURL)
+		}
+		mux.Handle(endpointPath, mcpHandler)
 		mux.HandleFunc("/healthz", handleHealthz)
 		if obs.MetricsEnabled {
 			if obs.MetricsAddress == "" {
@@ -407,6 +459,22 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 
 func main() {
 	var transport string
+	wasSet := func(names ...string) bool {
+		seen := false
+		flag.Visit(func(f *flag.Flag) {
+			if seen {
+				return
+			}
+			for _, name := range names {
+				if f.Name == name {
+					seen = true
+					return
+				}
+			}
+		})
+		return seen
+	}
+
 	flag.StringVar(&transport, "t", "stdio", "Transport type (stdio, sse or streamable-http)")
 	flag.StringVar(
 		&transport,
@@ -430,6 +498,47 @@ func main() {
 	flag.BoolVar(&obs.MetricsEnabled, "metrics", false, "Enable Prometheus metrics endpoint")
 	flag.StringVar(&obs.MetricsAddress, "metrics-address", "", "Separate address for metrics server (e.g., :9090). If empty, metrics are served on the main server at /metrics")
 	flag.Parse()
+
+	if !wasSet("transport", "t") {
+		if value := strings.TrimSpace(os.Getenv("MCP_SERVER_MODE")); value != "" {
+			transport = value
+		}
+	}
+
+	if !wasSet("address") {
+		if value := strings.TrimSpace(os.Getenv("MCP_SERVER_ADDRESS")); value != "" {
+			*addr = value
+		} else if value := strings.TrimSpace(os.Getenv("MCP_SERVER_PORT")); value != "" {
+			*addr = "localhost:" + value
+		}
+	}
+
+	if !wasSet("base-path") {
+		if value := strings.TrimSpace(os.Getenv("MCP_SERVER_BASE_PATH")); value != "" {
+			*basePath = value
+		}
+	}
+
+	if !wasSet("endpoint-path") {
+		if value := strings.TrimSpace(os.Getenv("MCP_SERVER_ENDPOINT_PATH")); value != "" {
+			*endpointPath = value
+		}
+	}
+
+	if !wasSet("log-level") {
+		if value := strings.TrimSpace(os.Getenv("LOG_LEVEL")); value != "" {
+			*logLevel = value
+		}
+	}
+
+	// Support MCP_DISABLE_PROXIED_TOOLS environment variable for OAuth2 or multi-tenant scenarios
+	if !wasSet("disable-proxied") {
+		if value := strings.TrimSpace(os.Getenv("MCP_DISABLE_PROXIED_TOOLS")); value != "" {
+			if strings.ToLower(value) == "true" || value == "1" {
+				dt.proxied = true
+			}
+		}
+	}
 
 	if *showVersion {
 		fmt.Println(mcpgrafana.Version())

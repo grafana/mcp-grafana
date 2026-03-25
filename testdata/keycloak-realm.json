@@ -1,0 +1,280 @@
+{
+  "realm": "mcp-grafana",
+  "displayName": "MCP Grafana",
+  "enabled": true,
+  "accessTokenLifespan": 300,
+  "accessTokenLifespanForImplicitFlow": 900,
+  "actionTokenGeneratedByUserLifespan": 3600,
+  "actionTokenGeneratedByAdminLifespan": 43200,
+  "refreshTokenMaxReuse": 0,
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "registrationEmailAsUsername": false,
+  "rememberMe": false,
+  "verifyEmail": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "editUsernameAllowed": false,
+  "bruteForceProtected": true,
+  "permanentLockout": false,
+  "maxFailureWaitSeconds": 900,
+  "minimumQuickLoginWaitSeconds": 60,
+  "waitIncrementSeconds": 60,
+  "quickLoginCheckMilliSeconds": 0,
+  "maxDeltaTimeSeconds": 43200,
+  "failureFactor": 30,
+  "defaultRoles": [
+    "default-roles-mcp-grafana"
+  ],
+  "roles": {
+    "realm": [
+      {
+        "name": "admin",
+        "description": "Administrator role"
+      },
+      {
+        "name": "editor",
+        "description": "Editor role"
+      },
+      {
+        "name": "viewer",
+        "description": "Viewer role"
+      }
+    ],
+    "client": {
+      "mcp-server": [
+        {
+          "name": "admin",
+          "description": "Admin access to MCP server"
+        }
+      ]
+    }
+  },
+  "clients": [
+    {
+      "clientId": "mcp-server",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "redirectUris": [
+        "http://127.0.0.1:*",
+        "http://127.0.0.1:*/*",
+        "http://localhost:*",
+        "http://localhost:*/*"
+      ],
+      "webOrigins": [
+        "*"
+      ],
+      "notBefore": 0,
+      "bearerOnly": false,
+      "consentRequired": false,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "publicClient": true,
+      "frontchannelLogout": true,
+      "protocol": "openid-connect",
+      "attributes": {
+        "oidc.ciba.grant_enabled": "false",
+        "client.secret.creation.time": "1234567890",
+        "backchannel.logout.session.required": "true",
+        "oauth2.device.authorization.grant.enabled": "false",
+        "require.pushed.authorization.requests": "false",
+        "backchannel.logout.revoke.offline.tokens": "false"
+      },
+      "authenticationFlowBindingOverrides": {},
+      "fullScopeAllowed": true,
+      "nodeReRegistrationTimeout": -1,
+      "protocolMappers": [
+        {
+          "name": "preferred_username",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-property-mapper",
+          "consentRequired": false,
+          "config": {
+            "userinfo.token.claim": "true",
+            "user.attribute": "username",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "preferred_username",
+            "jsonType.label": "String"
+          }
+        },
+        {
+          "name": "email",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-property-mapper",
+          "consentRequired": false,
+          "config": {
+            "userinfo.token.claim": "true",
+            "user.attribute": "email",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "email",
+            "jsonType.label": "String"
+          }
+        },
+        {
+          "name": "name",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-property-mapper",
+          "consentRequired": false,
+          "config": {
+            "userinfo.token.claim": "true",
+            "user.attribute": "firstName",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "name",
+            "jsonType.label": "String"
+          }
+        },
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "multivalued": "true",
+            "userinfo.token.claim": "true",
+            "user.attribute": "groups",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "groups",
+            "jsonType.label": "String"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "grafana-ui",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "redirectUris": [
+        "http://localhost:3001/*"
+      ],
+      "webOrigins": [
+        "*"
+      ],
+      "notBefore": 0,
+      "bearerOnly": false,
+      "consentRequired": false,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "publicClient": true,
+      "frontchannelLogout": true,
+      "protocol": "openid-connect",
+      "fullScopeAllowed": true
+    }
+  ],
+  "users": [
+    {
+      "username": "admin",
+      "enabled": true,
+      "totp": false,
+      "emailVerified": true,
+      "firstName": "Admin",
+      "lastName": "User",
+      "email": "admin@example.com",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "admin123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "default-roles-mcp-grafana",
+        "admin"
+      ],
+      "groups": [
+        "ldap-admins"
+      ]
+    },
+    {
+      "username": "john.doe",
+      "enabled": true,
+      "totp": false,
+      "emailVerified": true,
+      "firstName": "John",
+      "lastName": "Doe",
+      "email": "john.doe@example.com",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "password123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "default-roles-mcp-grafana",
+        "editor"
+      ],
+      "groups": [
+        "ldap-editors"
+      ]
+    },
+    {
+      "username": "jane.smith",
+      "enabled": true,
+      "totp": false,
+      "emailVerified": true,
+      "firstName": "Jane",
+      "lastName": "Smith",
+      "email": "jane.smith@example.com",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "password123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "default-roles-mcp-grafana",
+        "viewer"
+      ],
+      "groups": [
+        "ldap-users"
+      ]
+    },
+    {
+      "username": "service-account-mcp-server",
+      "enabled": true,
+      "totp": false,
+      "emailVerified": true,
+      "firstName": "MCP",
+      "lastName": "Service Account",
+      "email": "mcp@example.com",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "service-account-secret",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "default-roles-mcp-grafana"
+      ],
+      "serviceAccountClientId": "mcp-server"
+    }
+  ],
+  "groups": [
+    {
+      "name": "ldap-admins",
+      "path": "/ldap-admins",
+      "realmRoles": ["admin"]
+    },
+    {
+      "name": "ldap-editors",
+      "path": "/ldap-editors",
+      "realmRoles": ["editor"]
+    },
+    {
+      "name": "ldap-users",
+      "path": "/ldap-users",
+      "realmRoles": ["viewer"]
+    }
+  ]
+}
