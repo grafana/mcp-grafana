@@ -131,7 +131,7 @@ func Test_ListMeasurements(t *testing.T) {
 		_, err := listMeasurements(ctx, ListMeasurementsArgs{
 			DatasourceUID: "influxdb-flux",
 		})
-		require.EqualError(t, err, fmt.Sprintf("bucket is required for %s linked InfluxDB Datasources", FluxQueryType))
+		require.EqualError(t, err, fmt.Sprintf("bucket is required for %s linked InfluxDB datasources", FluxQueryType))
 	})
 
 	t.Run("bucket optional for SQL/InfluxQL Datasource", func(t *testing.T) {
@@ -174,7 +174,7 @@ func Test_ListTagKeys(t *testing.T) {
 			DatasourceUID: "influxdb-flux",
 			Measurement:   "auth_events",
 		})
-		require.EqualError(t, err, fmt.Sprintf("bucket is required for %s linked InfluxDB Datasources", FluxQueryType))
+		require.EqualError(t, err, fmt.Sprintf("bucket is required for %s linked InfluxDB datasources", FluxQueryType))
 	})
 
 	t.Run("list tags keys", func(t *testing.T) {
@@ -234,7 +234,7 @@ func Test_ListFieldKeys(t *testing.T) {
 			DatasourceUID: "influxdb-flux",
 			Measurement:   "auth_events",
 		})
-		require.EqualError(t, err, fmt.Sprintf("bucket is required for %s linked InfluxDB Datasources", FluxQueryType))
+		require.EqualError(t, err, fmt.Sprintf("bucket is required for %s linked InfluxDB datasources", FluxQueryType))
 	})
 
 	t.Run("list field keys", func(t *testing.T) {

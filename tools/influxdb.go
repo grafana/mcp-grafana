@@ -577,7 +577,7 @@ func listMeasurements(ctx context.Context, args ListMeasurementsArgs) (*ListMeas
 	enforceMeasurementsLimit(&args)
 
 	if queryType == FluxQueryType && args.Bucket == "" {
-		return nil, fmt.Errorf("bucket is required for %s linked InfluxDB Datasources", FluxQueryType)
+		return nil, fmt.Errorf("bucket is required for %s linked InfluxDB datasources", FluxQueryType)
 	}
 	var query string
 	// represents column key of measurement in response
