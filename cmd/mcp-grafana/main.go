@@ -397,7 +397,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		if basePath == "" {
 			basePath = "/"
 		}
-		var mcpHandler http.Handler = observability.WrapHandler(srv, basePath)
+		mcpHandler := observability.WrapHandler(srv, basePath)
 		if oauth2Config := mcpgrafana.OAuth2ConfigFromEnv(); oauth2Config != nil {
 			serverURL := "http://" + addr
 			mux.HandleFunc("/.well-known/oauth-protected-resource",
@@ -435,7 +435,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		}
 		srv := server.NewStreamableHTTPServer(s, opts...)
 		mux := http.NewServeMux()
-		var mcpHandler http.Handler = observability.WrapHandler(srv, endpointPath)
+		mcpHandler := observability.WrapHandler(srv, endpointPath)
 		if oauth2Config := mcpgrafana.OAuth2ConfigFromEnv(); oauth2Config != nil {
 			serverURL := "http://" + addr
 			mux.HandleFunc("/.well-known/oauth-protected-resource",

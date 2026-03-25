@@ -20,7 +20,7 @@ func TestOAuth2ClientValidateToken(t *testing.T) {
 			}
 
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"sub":                  "user123",
 				"preferred_username":   "john.doe",
 				"email":                "john.doe@example.com",
@@ -81,7 +81,7 @@ func TestOAuth2ClientTokenCaching(t *testing.T) {
 		callCount++
 		if r.URL.Path == "/userinfo" {
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"sub":                "user123",
 				"preferred_username": "john.doe",
 			})
@@ -223,7 +223,7 @@ func TestOAuth2ClientExpiredCache(t *testing.T) {
 		callCount++
 		if r.URL.Path == "/userinfo" {
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"sub":                "user123",
 				"preferred_username": "john.doe",
 			})
