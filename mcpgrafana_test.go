@@ -641,7 +641,7 @@ func TestHTTPTracingConfiguration(t *testing.T) {
 		ctx := WithGrafanaConfig(context.Background(), config)
 
 		// Create Grafana client
-		client := NewGrafanaClient(ctx, "http://localhost:3000", "test-api-key", nil, 0)
+		client := NewGrafanaClient(ctx, "http://localhost:3000", "test-api-key", nil)
 		require.NotNil(t, client)
 
 		// Verify the client was created successfully (should not panic)
@@ -656,7 +656,7 @@ func TestHTTPTracingConfiguration(t *testing.T) {
 		ctx := WithGrafanaConfig(context.Background(), config)
 
 		// Create Grafana client (should not panic even without OTEL configured)
-		client := NewGrafanaClient(ctx, "http://localhost:3000", "test-api-key", nil, 0)
+		client := NewGrafanaClient(ctx, "http://localhost:3000", "test-api-key", nil)
 		require.NotNil(t, client)
 
 		// Verify the client was created successfully
@@ -897,7 +897,7 @@ func TestNewGrafanaClientOrgIDTransport(t *testing.T) {
 		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{
 			OrgID: 99,
 		})
-		c := NewGrafanaClient(ctx, ts.URL, "test-key", nil, 99)
+		c := NewGrafanaClient(ctx, ts.URL, "test-key", nil)
 		require.NotNil(t, c)
 
 		// Make a real request through the client
@@ -917,7 +917,7 @@ func TestNewGrafanaClientOrgIDTransport(t *testing.T) {
 		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{
 			OrgID: 0,
 		})
-		c := NewGrafanaClient(ctx, ts.URL, "test-key", nil, 0)
+		c := NewGrafanaClient(ctx, ts.URL, "test-key", nil)
 		require.NotNil(t, c)
 
 		_, _ = c.Search.Search(nil, nil)
@@ -1102,7 +1102,7 @@ func TestNewGrafanaClientFetchesPublicURL(t *testing.T) {
 		})
 
 		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{})
-		gc := NewGrafanaClient(ctx, ts.URL, "test-key", nil, 0)
+		gc := NewGrafanaClient(ctx, ts.URL, "test-key", nil)
 		assert.Equal(t, "https://public.grafana.example.com", gc.PublicURL)
 	})
 
@@ -1117,7 +1117,7 @@ func TestNewGrafanaClientFetchesPublicURL(t *testing.T) {
 		})
 
 		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{})
-		gc := NewGrafanaClient(ctx, ts.URL, "test-key", nil, 0)
+		gc := NewGrafanaClient(ctx, ts.URL, "test-key", nil)
 		assert.Equal(t, "", gc.PublicURL)
 	})
 }

@@ -5,6 +5,7 @@ package tools
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -17,6 +18,132 @@ import (
 
 func intPtr(i int) *int {
 	return &i
+}
+
+func TestStringOrSlice_UnmarshalJSON(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected StringOrSlice
+		wantErr  bool
+	}{
+		{
+			name:     "Single string value",
+			input:    `"prometheus"`,
+			expected: StringOrSlice{"prometheus"},
+		},
+		{
+			name:     "Array with single value",
+			input:    `["prometheus"]`,
+			expected: StringOrSlice{"prometheus"},
+		},
+		{
+			name:     "Array with multiple values",
+			input:    `["server1", "server2", "server3"]`,
+			expected: StringOrSlice{"server1", "server2", "server3"},
+		},
+		{
+			name:     "Empty array",
+			input:    `[]`,
+			expected: StringOrSlice{},
+		},
+		{
+			name:    "Invalid type (number)",
+			input:   `42`,
+			wantErr: true,
+		},
+		{
+			name:    "Invalid type (object)",
+			input:   `{"key": "value"}`,
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var result StringOrSlice
+			err := json.Unmarshal([]byte(tt.input), &result)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestStringOrSlice_MarshalJSON(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    StringOrSlice
+		expected string
+	}{
+		{
+			name:     "Single value marshals as string",
+			input:    StringOrSlice{"prometheus"},
+			expected: `"prometheus"`,
+		},
+		{
+			name:     "Multiple values marshal as array",
+			input:    StringOrSlice{"server1", "server2"},
+			expected: `["server1","server2"]`,
+		},
+		{
+			name:     "Empty slice marshals as empty array",
+			input:    StringOrSlice{},
+			expected: `[]`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := json.Marshal(tt.input)
+			require.NoError(t, err)
+			assert.JSONEq(t, tt.expected, string(result))
+		})
+	}
+}
+
+func TestGetPanelImageParams_UnmarshalVariables(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected map[string]StringOrSlice
+	}{
+		{
+			name:  "Single string values (backward compatible)",
+			input: `{"dashboardUid": "abc", "variables": {"var-datasource": "prometheus", "var-host": "server01"}}`,
+			expected: map[string]StringOrSlice{
+				"var-datasource": {"prometheus"},
+				"var-host":       {"server01"},
+			},
+		},
+		{
+			name:  "Multi-value array",
+			input: `{"dashboardUid": "abc", "variables": {"var-instance": ["172.16.31.129", "172.16.32.99"]}}`,
+			expected: map[string]StringOrSlice{
+				"var-instance": {"172.16.31.129", "172.16.32.99"},
+			},
+		},
+		{
+			name:  "Mixed single and multi-value",
+			input: `{"dashboardUid": "abc", "variables": {"var-datasource": "prometheus", "var-instance": ["server1", "server2"]}}`,
+			expected: map[string]StringOrSlice{
+				"var-datasource": {"prometheus"},
+				"var-instance":   {"server1", "server2"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var params GetPanelImageParams
+			err := json.Unmarshal([]byte(tt.input), &params)
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, params.Variables)
+		})
+	}
 }
 
 func TestBuildRenderURL(t *testing.T) {
@@ -83,18 +210,32 @@ func TestBuildRenderURL(t *testing.T) {
 			},
 		},
 		{
-			name:    "With variables",
+			name:    "With single-value variables",
 			baseURL: "http://localhost:3000",
 			args: GetPanelImageParams{
 				DashboardUID: "abc123",
-				Variables: map[string]string{
-					"var-datasource": "prometheus",
-					"var-host":       "server01",
+				Variables: map[string]StringOrSlice{
+					"var-datasource": {"prometheus"},
+					"var-host":       {"server01"},
 				},
 			},
 			contains: []string{
 				"var-datasource=prometheus",
 				"var-host=server01",
+			},
+		},
+		{
+			name:    "With multi-value variables",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				DashboardUID: "abc123",
+				Variables: map[string]StringOrSlice{
+					"var-instance": {"172.16.31.129", "172.16.32.99"},
+				},
+			},
+			contains: []string{
+				"var-instance=172.16.31.129",
+				"var-instance=172.16.32.99",
 			},
 		},
 		{
@@ -339,8 +480,36 @@ func TestGetPanelImage(t *testing.T) {
 
 		_, err := getPanelImage(ctx, GetPanelImageParams{
 			DashboardUID: "test-dash",
-			Variables: map[string]string{
-				"var-datasource": "prometheus",
+			Variables: map[string]StringOrSlice{
+				"var-datasource": {"prometheus"},
+			},
+		})
+
+		require.NoError(t, err)
+	})
+
+	t.Run("With multi-value dashboard variables", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Multi-value variables should appear as multiple query params
+			values := r.URL.Query()["var-instance"]
+			assert.ElementsMatch(t, []string{"172.16.31.129", "172.16.32.99"}, values)
+
+			w.Header().Set("Content-Type", "image/png")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(testPNGData)
+		}))
+		defer server.Close()
+
+		grafanaCfg := mcpgrafana.GrafanaConfig{
+			URL:    server.URL,
+			APIKey: "test-api-key",
+		}
+		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), grafanaCfg)
+
+		_, err := getPanelImage(ctx, GetPanelImageParams{
+			DashboardUID: "test-dash",
+			Variables: map[string]StringOrSlice{
+				"var-instance": {"172.16.31.129", "172.16.32.99"},
 			},
 		})
 

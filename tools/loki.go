@@ -119,6 +119,10 @@ func (c *Client) makeRequest(ctx context.Context, method, urlPath string, params
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
 
+	// Request categorized labels so Loki returns structured metadata and
+	// parsed labels separately from stream/index labels (Loki >= 3.0).
+	req.Header.Set("X-Loki-Response-Encoding-Flags", "categorize-labels")
+
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("executing request: %w", err)
@@ -134,7 +138,7 @@ func (c *Client) makeRequest(ctx context.Context, method, urlPath string, params
 	}
 
 	// Read the response body with a limit to prevent memory issues
-	body := io.LimitReader(resp.Body, 1024*1024*48)
+	body := io.LimitReader(resp.Body, 1024*1024*10) //10MB  limit
 	bodyBytes, err := io.ReadAll(body)
 	if err != nil {
 		return nil, fmt.Errorf("reading response body: %w", err)
@@ -320,8 +324,9 @@ type LokiMetricSample struct {
 type lokiQueryResponse struct {
 	Status string `json:"status"`
 	Data   struct {
-		ResultType string          `json:"resultType"` // "streams", "vector", or "matrix"
-		Result     json.RawMessage `json:"result"`     // Unmarshal based on resultType
+		ResultType    string          `json:"resultType"`              // "streams", "vector", or "matrix"
+		EncodingFlags []string        `json:"encodingFlags,omitempty"` // e.g. ["categorize-labels"]
+		Result        json.RawMessage `json:"result"`                  // Unmarshal based on resultType
 		// Stats is a pointer so we can distinguish "stats missing" (nil) from "stats present with zero values"
 		Stats *struct {
 			Summary struct {
@@ -329,6 +334,24 @@ type lokiQueryResponse struct {
 			} `json:"summary"`
 		} `json:"stats,omitempty"`
 	} `json:"data"`
+}
+
+// categorizedLabels is the third element of a log entry's values array when
+// Loki responds with the categorize-labels encoding flag.
+type categorizedLabels struct {
+	StructuredMetadata map[string]string `json:"structuredMetadata,omitempty"`
+	Parsed             map[string]string `json:"parsed,omitempty"`
+}
+
+// hasCategorizeLabelsFlag reports whether the response included the
+// "categorize-labels" encoding flag from Loki >= 3.0.
+func hasCategorizeLabelsFlag(flags []string) bool {
+	for _, f := range flags {
+		if f == "categorize-labels" {
+			return true
+		}
+	}
+	return false
 }
 
 // MetricValue represents a single metric data point with timestamp and value
@@ -480,13 +503,18 @@ type QueryLokiLogsResult struct {
 	Metadata *QueryMetadata    `json:"metadata,omitempty"`
 }
 
-// LogEntry represents a single log entry or metric sample with metadata
+// LogEntry represents a single log entry or metric sample with metadata.
+// When Loki returns categorized labels (via X-Loki-Response-Encoding-Flags),
+// Labels contains only stream/index labels, while StructuredMetadata and
+// Parsed carry the remaining label categories per entry.
 type LogEntry struct {
-	Timestamp string            `json:"timestamp,omitempty"`
-	Line      string            `json:"line,omitempty"`   // For log queries
-	Value     *float64          `json:"value,omitempty"`  // For instant metric queries
-	Values    []MetricValue     `json:"values,omitempty"` // For range metric queries
-	Labels    map[string]string `json:"labels"`
+	Timestamp          string            `json:"timestamp,omitempty"`
+	Line               string            `json:"line,omitempty"`              // For log queries
+	Value              *float64          `json:"value,omitempty"`             // For instant metric queries
+	Values             []MetricValue     `json:"values,omitempty"`            // For range metric queries
+	Labels             map[string]string `json:"labels"`                      // Stream / index labels
+	StructuredMetadata map[string]string `json:"structuredMetadata,omitempty"` // Structured metadata labels (Loki >= 3.0)
+	Parsed             map[string]string `json:"parsed,omitempty"`            // Parser-extracted labels (Loki >= 3.0)
 }
 
 // enforceLogLimit ensures a log limit value is within acceptable bounds
@@ -592,6 +620,11 @@ func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) (*QueryLokiLog
 			return nil, fmt.Errorf("parsing streams result: %w", err)
 		}
 
+		// Check if Loki returned categorized labels (Loki >= 3.0).
+		// When present, values[2] is a JSON object with "structuredMetadata"
+		// and "parsed" maps; stream.Stream contains only index labels.
+		categorized := hasCategorizeLabelsFlag(response.Data.EncodingFlags)
+
 		for _, stream := range streams {
 			for _, value := range stream.Values {
 				if len(value) >= 2 {
@@ -601,11 +634,22 @@ func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) (*QueryLokiLog
 						continue // Skip invalid log lines
 					}
 
-					entries = append(entries, LogEntry{
+					entry := LogEntry{
 						Timestamp: string(value[0]), // Nanoseconds as string
 						Line:      logLine,
 						Labels:    stream.Stream,
-					})
+					}
+
+					// Parse categorized labels from the optional third element.
+					if categorized && len(value) >= 3 {
+						var cats categorizedLabels
+						if err := json.Unmarshal(value[2], &cats); err == nil {
+							entry.StructuredMetadata = cats.StructuredMetadata
+							entry.Parsed = cats.Parsed
+						}
+					}
+
+					entries = append(entries, entry)
 				}
 			}
 		}
