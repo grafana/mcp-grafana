@@ -12,6 +12,11 @@ import (
 	mcpgrafana "github.com/grafana/mcp-grafana"
 )
 
+const (
+	defaultListDataSourceLimit = 50
+	maxListDataSourceLimit     = 100
+)
+
 type ListDatasourcesParams struct {
 	Type   string `json:"type,omitempty" jsonschema:"description=The type of datasources to search for. For example\\, 'prometheus'\\, 'loki'\\, 'tempo'\\, etc..."`
 	Limit  int    `json:"limit,omitempty" jsonschema:"default=50,description=Maximum number of datasources to return (max 100)"`
@@ -46,11 +51,11 @@ func listDatasources(ctx context.Context, args ListDatasourcesParams) (*ListData
 	// Apply default limit if not specified
 	limit := args.Limit
 	if limit <= 0 {
-		limit = 50
+		limit = defaultListDataSourceLimit
 	}
 	// Cap at maximum
-	if limit > 100 {
-		limit = 100
+	if limit > maxListDataSourceLimit {
+		limit = maxListDataSourceLimit
 	}
 
 	offset := args.Offset

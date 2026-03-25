@@ -160,16 +160,18 @@ func (c *clickHouseClient) query(ctx context.Context, datasourceUID, rawSQL stri
 		return nil, fmt.Errorf("ClickHouse query returned status %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
-	// Read and parse response
-	body := io.LimitReader(resp.Body, 1024*1024*48) // 48MB limit
+	// Limit size of response read
+	var bytesLimit int64 = 1024 * 1024 * 10 // 10MB
+	body := io.LimitReader(resp.Body, bytesLimit)
 	bodyBytes, err := io.ReadAll(body)
 	if err != nil {
 		return nil, fmt.Errorf("reading response body: %w", err)
 	}
 
 	var queryResp clickHouseQueryResponse
-	if err := json.Unmarshal(bodyBytes, &queryResp); err != nil {
-		return nil, fmt.Errorf("unmarshaling response: %w", err)
+
+	if err := unmarshalJSONWithLimitMsg(bodyBytes, &queryResp, int(bytesLimit)); err != nil {
+		return nil, err
 	}
 
 	return &queryResp, nil

@@ -195,7 +195,7 @@ func TestParseCloudWatchResourceResponse(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := parseCloudWatchResourceResponse([]byte(tt.input))
+			result, err := parseCloudWatchResourceResponse([]byte(tt.input), 1024*1024)
 			if tt.expectError {
 				require.Error(t, err)
 				return
@@ -237,7 +237,7 @@ func TestParseCloudWatchMetricsResponse(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := parseCloudWatchMetricsResponse([]byte(tt.input))
+			result, err := parseCloudWatchMetricsResponse([]byte(tt.input), 1024*1024)
 			if tt.expectError {
 				require.Error(t, err)
 				return
@@ -313,8 +313,8 @@ func TestCloudWatchMultiFrameStatistics(t *testing.T) {
 		{Name: "Value", Type: "number"},
 	}
 	f1.Data.Values = [][]interface{}{
-		{float64(1000), float64(2000)},       // timestamps
-		{float64(10.0), float64(20.0)},       // values
+		{float64(1000), float64(2000)}, // timestamps
+		{float64(10.0), float64(20.0)}, // values
 	}
 
 	// Frame 2: values 5, 40 (sum=45, min=5, max=40)
@@ -324,8 +324,8 @@ func TestCloudWatchMultiFrameStatistics(t *testing.T) {
 		{Name: "Value", Type: "number"},
 	}
 	f2.Data.Values = [][]interface{}{
-		{float64(3000), float64(4000)},       // timestamps
-		{float64(5.0), float64(40.0)},        // values
+		{float64(3000), float64(4000)}, // timestamps
+		{float64(5.0), float64(40.0)},  // values
 	}
 
 	type resultType = struct {
