@@ -150,8 +150,10 @@
       "clientId": "grafana-ui",
       "enabled": true,
       "clientAuthenticatorType": "client-secret",
+      "secret": "grafana-secret",
       "redirectUris": [
-        "http://localhost:3001/*"
+        "http://localhost:3000/login/generic_oauth",
+        "http://localhost:3000/*"
       ],
       "webOrigins": [
         "*"
@@ -163,7 +165,7 @@
       "implicitFlowEnabled": false,
       "directAccessGrantsEnabled": true,
       "serviceAccountsEnabled": false,
-      "publicClient": true,
+      "publicClient": false,
       "frontchannelLogout": true,
       "protocol": "openid-connect",
       "fullScopeAllowed": true

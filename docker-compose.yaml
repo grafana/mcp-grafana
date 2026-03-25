@@ -3,6 +3,23 @@ services:
     image: grafana/grafana:12.4.1@sha256:e932bd6ed0e026595b08483cd0141e5103e1ab7ff8604839ff899b8dc54cabcb
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_AUTH_PROXY_ENABLED: "true"
+      GF_AUTH_PROXY_HEADER_NAME: "X-WEBAUTH-USER"
+      GF_AUTH_PROXY_HEADER_PROPERTY: "username"
+      GF_AUTH_PROXY_AUTO_SIGN_UP: "true"
+      GF_AUTH_PROXY_ENABLE_EMAIL_TRACKING: "true"
+      GF_AUTH_GENERIC_OAUTH_ENABLED: "true"
+      GF_AUTH_GENERIC_OAUTH_NAME: "Keycloak"
+      GF_AUTH_GENERIC_OAUTH_ALLOW_SIGN_UP: "true"
+      GF_AUTH_GENERIC_OAUTH_CLIENT_ID: "grafana-ui"
+      GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET: "grafana-secret"
+      GF_AUTH_GENERIC_OAUTH_SCOPES: "openid profile email"
+      GF_AUTH_GENERIC_OAUTH_AUTH_URL: "http://localhost:8082/realms/mcp-grafana/protocol/openid-connect/auth"
+      GF_AUTH_GENERIC_OAUTH_TOKEN_URL: "http://keycloak:8080/realms/mcp-grafana/protocol/openid-connect/token"
+      GF_AUTH_GENERIC_OAUTH_API_URL: "http://keycloak:8080/realms/mcp-grafana/protocol/openid-connect/userinfo"
+      GF_AUTH_GENERIC_OAUTH_LOGIN_ATTRIBUTE_PATH: "preferred_username"
+      GF_AUTH_GENERIC_OAUTH_NAME_ATTRIBUTE_PATH: "name"
+      GF_AUTH_GENERIC_OAUTH_EMAIL_ATTRIBUTE_PATH: "email"
       GF_INSTALL_PLUGINS: grafana-clickhouse-datasource
       GF_LOG_LEVEL: debug
       GF_SERVER_ROUTER_LOGGING: "true"
@@ -10,11 +27,19 @@ services:
       GF_RENDERING_CALLBACK_URL: http://grafana:3000/
     ports:
       - 3000:3000/tcp
+      # - 3001:3000/tcp
     volumes:
       - ./testdata/provisioning:/etc/grafana/provisioning
       - ./testdata/dashboards:/var/lib/grafana/dashboards
       - type: tmpfs
         target: /var/lib/grafana/empty-alerts-folder
+    depends_on:
+      - renderer
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
   renderer:
     image: grafana/grafana-image-renderer:latest@sha256:92f3d0913464a20be2fbfaa91366520b0dd593493e0da9ae6c4c61b3bbbb90cb
@@ -142,7 +167,7 @@ services:
       KEYCLOAK_ADMIN: admin
       KEYCLOAK_ADMIN_PASSWORD: admin123
       KC_HTTP_PORT: 8080
-      KC_DB: dev-mem
+      KC_DB: dev-file
       KC_HEALTH_ENABLED: "true"
       KC_METRICS_ENABLED: "true"
     ports:
@@ -160,32 +185,3 @@ services:
     networks:
       - default
 
-  # Update Grafana with auth proxy configuration
-  grafana-oauth:
-    image: grafana/grafana:12.4.0@sha256:b0ae311af06228bcfd4a620504b653db80f5b91e94dc3dc2a5b7dab202bcde20
-    environment:
-      GF_AUTH_ANONYMOUS_ENABLED: "false"
-      GF_AUTH_PROXY_ENABLED: "true"
-      GF_AUTH_PROXY_HEADER_NAME: "X-WEBAUTH-USER"
-      GF_AUTH_PROXY_HEADER_PROPERTY: "username"
-      GF_AUTH_PROXY_AUTO_SIGN_UP: "true"
-      GF_AUTH_PROXY_ENABLE_EMAIL_TRACKING: "true"
-      GF_INSTALL_PLUGINS: grafana-clickhouse-datasource
-      GF_LOG_LEVEL: debug
-      GF_SERVER_ROUTER_LOGGING: "true"
-      GF_RENDERING_SERVER_URL: http://renderer:8081/render
-      GF_RENDERING_CALLBACK_URL: http://grafana-oauth:3000/
-    ports:
-      - "3001:3000/tcp"
-    volumes:
-      - ./testdata/provisioning:/etc/grafana/provisioning
-      - ./testdata/dashboards:/var/lib/grafana/dashboards
-      - type: tmpfs
-        target: /var/lib/grafana/empty-alerts-folder
-    depends_on:
-      - renderer
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 10

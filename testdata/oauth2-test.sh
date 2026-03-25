@@ -12,6 +12,8 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m' # No Color
 
+grafana_url="${GRAFANA_URL:-http://localhost:3000}"
+
 # Load configuration from .env.oauth2-test
 if [ -f ".env.oauth2-test" ]; then
   set -a
@@ -30,7 +32,7 @@ Usage: $0 <command> [args]
 Commands:
   token <user> [password]     Get OAuth2 token for a user
   get-users                   List users in Grafana using admin credentials
-  test-flow <user> [password] Test complete OAuth2 flow
+  test-flow <user> [password] Run end-to-end OAuth2/Auth Proxy check
   cleanup                     Stop and remove docker containers
   help                        Show this help message
 
@@ -57,7 +59,7 @@ function get_token() {
     return 1
   fi
   
-  echo -e "${BLUE}Getting token for user: $user${NC}" >&2
+  echo -e "${BLUE}Requesting token for: $user${NC}" >&2
   
   local response=$(curl -s -X POST "${keycloak_url}/realms/${realm}/protocol/openid-connect/token" \
     -H "Content-Type: application/x-www-form-urlencoded" \
@@ -69,23 +71,23 @@ function get_token() {
   local token=$(echo "$response" | jq -r '.access_token' 2>/dev/null || echo "")
   
   if [ -z "$token" ] || [ "$token" = "null" ]; then
-    echo -e "${RED}✗ Failed to get token${NC}" >&2
+    echo -e "${RED}Failed to get token${NC}" >&2
     echo "Response: $response" >&2
     return 1
   fi
   
-  echo -e "${GREEN}✓ Token obtained${NC}" >&2
+  echo -e "${GREEN}Token received${NC}" >&2
   echo "$token"
   return 0
 }
 
 function get_users() {
-  echo -e "${BLUE}Getting users from Grafana...${NC}"
+  echo -e "${BLUE}Fetching users from Grafana...${NC}"
   
-  local response=$(curl -s -u admin:admin "http://localhost:3001/api/users" 2>/dev/null || echo "")
+  local response=$(curl -s -u admin:admin "${grafana_url}/api/users" 2>/dev/null || echo "")
   
   if [ -z "$response" ]; then
-    echo -e "${RED}✗ Failed to get users (Grafana not responding)${NC}"
+    echo -e "${RED}Failed to get users (Grafana not responding)${NC}"
     return 1
   fi
   
@@ -99,82 +101,78 @@ function test_flow() {
   local password=$2
   local payload
   
-  echo -e "\n${BLUE}═══════════════════════════════════════${NC}"
-  echo -e "${BLUE}OAuth2 + Auth Proxy Complete Flow Test${NC}"
-  echo -e "${BLUE}═══════════════════════════════════════${NC}\n"
+  echo -e "\n${BLUE}OAuth2/Auth Proxy test flow${NC}\n"
   
   # Step 1: Get token
-  echo -e "${YELLOW}Step 1: Get OAuth2 Token${NC}"
+  echo -e "${YELLOW}1. Get OAuth2 token${NC}"
   local token
   if ! token=$(get_token "$user" "$password"); then
-    echo -e "${RED}✗ Test failed at token retrieval${NC}"
+    echo -e "${RED}Test failed at token retrieval${NC}"
     return 1
   fi
   echo -e "Token: ${GREEN}${token:0:20}...${NC}\n"
   
   # Step 2: Decode token to show claims
-  echo -e "${YELLOW}Step 2: Token Claims${NC}"
+  echo -e "${YELLOW}2. Token claims${NC}"
   payload=$(echo "$token" | cut -d. -f2 | tr '_-' '/+' | awk '{ l=length($0)%4; if (l==2) printf "%s==", $0; else if (l==3) printf "%s=", $0; else printf "%s", $0 }')
   local claims=$(printf '%s' "$payload" | base64 -d 2>/dev/null | jq . 2>/dev/null || echo "Could not decode")
   echo "$claims"
   echo ""
   
   # Step 3: Call MCP API with token
-  echo -e "${YELLOW}Step 3: Call MCP Health Check (with OAuth2 Token)${NC}"
+  echo -e "${YELLOW}3. MCP health check${NC}"
   if command -v go &> /dev/null; then
     local health_response=$(curl -s "http://localhost:8080/healthz" 2>/dev/null || echo "")
     
     if [ -n "$health_response" ]; then
-      echo -e "${GREEN}✓ MCP API accessible${NC}"
+      echo -e "${GREEN}MCP API reachable${NC}"
       echo "Response: $health_response"
     else
-      echo -e "${YELLOW}⚠ MCP not running on localhost:8080${NC}"
+      echo -e "${YELLOW}MCP not running on localhost:8080${NC}"
       echo "  Start with: source .env.oauth2-test && go run ./cmd/mcp-grafana/main.go"
     fi
   fi
   echo ""
   
   # Step 4: Check if user created in Grafana
-  echo -e "${YELLOW}Step 4: Check Grafana User${NC}"
-  local auth_proxy_response=$(curl -s "http://localhost:3001/api/user" \
+  echo -e "${YELLOW}4. Grafana auth proxy user check${NC}"
+  local auth_proxy_response=$(curl -s "${grafana_url}/api/user" \
     -H "${GRAFANA_PROXY_USER_HEADER}: $user" \
     -H "${GRAFANA_PROXY_EMAIL_HEADER}: ${user}@example.com" \
     -H "${GRAFANA_PROXY_NAME_HEADER}: ${user}" \
     2>/dev/null || echo "")
   if [ -n "$auth_proxy_response" ] && echo "$auth_proxy_response" | jq -e '.login' >/dev/null 2>&1; then
-    echo -e "${GREEN}✓ Auth Proxy accepted user headers${NC}"
+    echo -e "${GREEN}Auth proxy accepted user headers${NC}"
     echo "$auth_proxy_response" | jq '{id, login, email, name}'
   else
-    echo -e "${YELLOW}⚠ Could not confirm Auth Proxy user via /api/user${NC}"
+    echo -e "${YELLOW}Could not confirm auth proxy user via /api/user${NC}"
     echo "Response: ${auth_proxy_response:-<empty>}"
   fi
   echo ""
   
   # Step 5: Test Auth Proxy header injection
-  echo -e "${YELLOW}Step 5: Test Auth Proxy Headers${NC}"
-  local response=$(curl -s -i "http://localhost:3001/api/user" \
+  echo -e "${YELLOW}5. Auth proxy header response${NC}"
+  local response=$(curl -s -i "${grafana_url}/api/user" \
     -H "${GRAFANA_PROXY_USER_HEADER}: $user" \
     -H "${GRAFANA_PROXY_EMAIL_HEADER}: ${user}@example.com" \
     -H "${GRAFANA_PROXY_NAME_HEADER}: ${user}" \
     2>/dev/null || echo "")
 
   if echo "$response" | grep -q "HTTP/.* 200"; then
-    echo -e "${GREEN}✓ Auth Proxy headers accepted${NC}"
+    echo -e "${GREEN}Auth proxy headers accepted${NC}"
   else
-    echo -e "${YELLOW}⚠ Auth Proxy header test response:${NC}"
+    echo -e "${YELLOW}Auth proxy header test response:${NC}"
     echo "$response"
   fi
   echo ""
   
-  echo -e "${BLUE}═══════════════════════════════════════${NC}"
-  echo -e "${GREEN}✓ Test flow completed${NC}"
-  echo -e "${BLUE}═══════════════════════════════════════${NC}\n"
+  echo -e "${GREEN}Test flow completed${NC}\n"
 }
 
 function cleanup() {
   echo -e "${BLUE}Stopping and removing containers...${NC}"
   docker-compose down
-  echo -e "${GREEN}✓ Cleanup complete${NC}"
+  echo -e "${GREEN}Cleanup complete${NC}"
 }
 
 # Main command handler
