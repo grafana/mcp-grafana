@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 
 	mcp_client "github.com/mark3labs/mcp-go/client"
@@ -22,19 +23,46 @@ type ProxiedClient struct {
 	mutex          sync.RWMutex
 }
 
+func proxiedClientAuthHeaders(config GrafanaConfig) map[string]string {
+	headers := make(map[string]string)
+
+	if config.AccessToken != "" && config.IDToken != "" {
+		headers["X-Access-Token"] = config.AccessToken
+		headers["X-Grafana-Id"] = config.IDToken
+	} else if config.IDToken != "" {
+		headers["Authorization"] = "Bearer " + config.IDToken
+	} else if config.APIKey != "" {
+		headers["Authorization"] = "Bearer " + config.APIKey
+	} else if config.BasicAuth != nil {
+		auth := config.BasicAuth.String()
+		headers["Authorization"] = "Basic " + base64.StdEncoding.EncodeToString([]byte(auth))
+	}
+
+	if config.ProxyAuthEnabled && config.AuthenticatedUser != nil {
+		if config.AuthenticatedUser.Username != "" && config.ProxyUserHeader != "" {
+			headers[config.ProxyUserHeader] = config.AuthenticatedUser.Username
+		}
+		if config.AuthenticatedUser.Email != "" && config.ProxyEmailHeader != "" {
+			headers[config.ProxyEmailHeader] = config.AuthenticatedUser.Email
+		}
+		if config.AuthenticatedUser.Name != "" && config.ProxyNameHeader != "" {
+			headers[config.ProxyNameHeader] = config.AuthenticatedUser.Name
+		}
+		if len(config.AuthenticatedUser.Roles) > 0 && config.ProxyRoleHeader != "" {
+			headers[config.ProxyRoleHeader] = strings.Join(config.AuthenticatedUser.Roles, ",")
+		}
+	}
+
+	return headers
+}
+
 // NewProxiedClient creates a new connection to a remote MCP server
 func NewProxiedClient(ctx context.Context, datasourceUID, datasourceName, datasourceType, mcpEndpoint string) (*ProxiedClient, error) {
 	// Get Grafana config for authentication
 	config := GrafanaConfigFromContext(ctx)
 
 	// Build headers for authentication
-	headers := make(map[string]string)
-	if config.APIKey != "" {
-		headers["Authorization"] = "Bearer " + config.APIKey
-	} else if config.BasicAuth != nil {
-		auth := config.BasicAuth.String()
-		headers["Authorization"] = "Basic " + base64.StdEncoding.EncodeToString([]byte(auth))
-	}
+	headers := proxiedClientAuthHeaders(config)
 
 	// Add org ID header if configured
 	if config.OrgID != 0 {

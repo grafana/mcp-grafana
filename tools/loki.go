@@ -218,6 +218,8 @@ func (rt *authRoundTripper) RoundTrip(req *http.Request) (*http.Response, error)
 	if rt.accessToken != "" && rt.idToken != "" {
 		req.Header.Set("X-Access-Token", rt.accessToken)
 		req.Header.Set("X-Grafana-Id", rt.idToken)
+	} else if rt.idToken != "" {
+		req.Header.Set("Authorization", "Bearer "+rt.idToken)
 	} else if rt.apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+rt.apiKey)
 	} else if rt.basicAuth != nil {

@@ -47,6 +47,21 @@ for i in {1..30}; do
 done
 
 echo
+echo -e "${BLUE}Downloading Keycloak JWKS for Grafana JWT auth...${NC}"
+JWKS_FILE="$(dirname "$0")/keycloak-jwks.json"
+for i in {1..10}; do
+  if curl -sf http://localhost:8082/realms/mcp-grafana/protocol/openid-connect/certs -o "$JWKS_FILE" 2>/dev/null; then
+    KEYS=$(jq '.keys | length' "$JWKS_FILE" 2>/dev/null || echo 0)
+    echo -e "${GREEN}✓ JWKS saved ($KEYS keys)${NC}"
+    break
+  fi
+  if [ $i -eq 10 ]; then
+    echo -e "${YELLOW}⚠ Could not download JWKS — re-run setup after Keycloak is ready${NC}"
+  fi
+  sleep 2
+done
+
+echo
 echo -e "${GREEN}Environment ready.${NC}"
 echo
 echo "Services:"

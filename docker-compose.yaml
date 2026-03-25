@@ -3,7 +3,7 @@ services:
     image: grafana/grafana:12.4.1@sha256:e932bd6ed0e026595b08483cd0141e5103e1ab7ff8604839ff899b8dc54cabcb
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "false"
-      GF_AUTH_PROXY_ENABLED: "true"
+      GF_AUTH_PROXY_ENABLED: "false"
       GF_AUTH_PROXY_HEADER_NAME: "X-WEBAUTH-USER"
       GF_AUTH_PROXY_HEADER_PROPERTY: "username"
       GF_AUTH_PROXY_AUTO_SIGN_UP: "true"
@@ -25,12 +25,25 @@ services:
       GF_SERVER_ROUTER_LOGGING: "true"
       GF_RENDERING_SERVER_URL: http://renderer:8081/render
       GF_RENDERING_CALLBACK_URL: http://grafana:3000/
+      # JWT authentication: validates Keycloak-issued tokens forwarded by MCP clients
+      GF_AUTH_JWT_ENABLED: "true"
+      # Accept tokens from the standard Authorization: Bearer <token> header
+      GF_AUTH_JWT_HEADER_NAME: "Authorization"
+      # Keycloak public signing keys for token signature verification.
+      # File is downloaded by oauth2-setup.sh from Keycloak's JWKS endpoint.
+      # Re-run oauth2-setup.sh if Keycloak is restarted (keys may rotate).
+      GF_AUTH_JWT_JWK_SET_FILE: "/etc/grafana/jwks/keycloak-jwks.json"
+      GF_AUTH_JWT_USERNAME_CLAIM: "preferred_username"
+      GF_AUTH_JWT_EMAIL_CLAIM: "email"
+      GF_AUTH_JWT_AUTO_SIGN_UP: "true"
+      GF_AUTH_JWT_CACHE_TTL: "60m"
     ports:
       - 3000:3000/tcp
       # - 3001:3000/tcp
     volumes:
       - ./testdata/provisioning:/etc/grafana/provisioning
       - ./testdata/dashboards:/var/lib/grafana/dashboards
+      - ./testdata/keycloak-jwks.json:/etc/grafana/jwks/keycloak-jwks.json:ro
       - type: tmpfs
         target: /var/lib/grafana/empty-alerts-folder
     depends_on:

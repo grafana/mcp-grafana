@@ -140,6 +140,8 @@ func discoverMCPDatasources(ctx context.Context) ([]DiscoveredDatasource, error)
 			if config.AccessToken != "" && config.IDToken != "" {
 				req.Header.Set("X-Access-Token", config.AccessToken)
 				req.Header.Set("X-Grafana-Id", config.IDToken)
+			} else if config.IDToken != "" {
+				req.Header.Set("Authorization", "Bearer "+config.IDToken)
 			} else if config.APIKey != "" {
 				req.Header.Set("Authorization", "Bearer "+config.APIKey)
 			} else if config.BasicAuth != nil {

@@ -86,6 +86,8 @@ func (c *alertingClient) makeRequest(ctx context.Context, path string, params ur
 	if c.accessToken != "" && c.idToken != "" {
 		req.Header.Set("X-Access-Token", c.accessToken)
 		req.Header.Set("X-Grafana-Id", c.idToken)
+	} else if c.idToken != "" {
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.idToken))
 	} else if c.apiKey != "" {
 		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.apiKey))
 	} else if c.basicAuth != nil {

@@ -42,9 +42,6 @@ const (
 
 	grafanaExtraHeadersEnvVar = "GRAFANA_EXTRA_HEADERS"
 
-	grafanaURLHeader                 = "X-Grafana-URL"
-	grafanaServiceAccountTokenHeader = "X-Grafana-Service-Account-Token"
-	grafanaAPIKeyHeader              = "X-Grafana-API-Key" // Deprecated: use X-Grafana-Service-Account-Token instead
 )
 
 func urlAndAPIKeyFromEnv() (string, string) {
@@ -121,6 +118,109 @@ func urlAndAPIKeyFromHeaders(req *http.Request) (string, string) {
 	return u, apiKey
 }
 
+// oauth2ConfigFromEnv extracts OAuth2 configuration from environment variables
+func oauth2ConfigFromEnv() *OAuth2Config {
+	return OAuth2ConfigFromEnv()
+}
+
+// OAuth2ConfigFromEnv extracts OAuth2 configuration from environment variables.
+// Returns nil if OAuth2 is not enabled or OAUTH2_PROVIDER_URL is missing.
+func OAuth2ConfigFromEnv() *OAuth2Config {
+	enabled := strings.ToLower(os.Getenv(oauth2EnabledEnvVar)) == "true"
+	if !enabled {
+		return nil
+	}
+
+	providerURL := os.Getenv(oauth2ProviderURLEnvVar)
+	if providerURL == "" {
+		slog.Warn("OAUTH2_ENABLED is true but OAUTH2_PROVIDER_URL is empty, disabling OAuth2")
+		return nil
+	}
+
+	tokenCacheTTL := 300 // Default 5 minutes
+	if ttlStr := os.Getenv(oauth2TokenCacheTTLEnvVar); ttlStr != "" {
+		if ttl, err := strconv.Atoi(ttlStr); err == nil {
+			tokenCacheTTL = ttl
+		} else {
+			slog.Warn("Invalid OAUTH2_TOKEN_CACHE_TTL value, using default", "value", ttlStr, "error", err)
+		}
+	}
+
+	userInfoEndpoint := os.Getenv(oauth2UserInfoEndpointEnvVar)
+	if userInfoEndpoint == "" {
+		// Default OpenID Connect standard endpoint
+		userInfoEndpoint = "/protocol/openid-connect/userinfo"
+	}
+
+	return &OAuth2Config{
+		Enabled:          true,
+		ProviderURL:      providerURL,
+		UserInfoEndpoint: userInfoEndpoint,
+		TokenCacheTTL:    tokenCacheTTL,
+	}
+}
+
+func envBoolValueIsTrue(envVar string) bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv(envVar)), "true")
+}
+
+func oauth2TokenForwardToGrafanaEnabledFromEnv() bool {
+	// Prefer the new explicit env var name, fall back to legacy OBO name.
+	if _, exists := os.LookupEnv(oauth2TokenForwardToGrafanaEnabledEnvVar); exists {
+		return envBoolValueIsTrue(oauth2TokenForwardToGrafanaEnabledEnvVar)
+	}
+	return envBoolValueIsTrue(oauth2OBOEnabledEnvVar)
+}
+
+func oauth2TokenForwardToGrafanaUseCloudHeadersFromEnv() bool {
+	// Prefer the new explicit env var name, fall back to legacy OBO name.
+	if _, exists := os.LookupEnv(oauth2TokenForwardToGrafanaUseCloudHeadersEnvVar); exists {
+		return envBoolValueIsTrue(oauth2TokenForwardToGrafanaUseCloudHeadersEnvVar)
+	}
+	return envBoolValueIsTrue(oauth2OBOUseGrafanaHeadersEnvVar)
+}
+
+// authProxyConfigFromEnv extracts Auth Proxy configuration from environment variables
+func authProxyConfigFromEnv() (bool, string, string, string, string) {
+	enabled := strings.ToLower(os.Getenv(grafanaProxyAuthEnabledEnvVar)) == "true"
+
+	// If OAuth2 is enabled, automatically enable Auth Proxy
+	if !enabled && oauth2ConfigFromEnv() != nil {
+		enabled = true
+	}
+
+	userHeader := os.Getenv(grafanaProxyUserHeaderEnvVar)
+	if userHeader == "" {
+		userHeader = defaultProxyUserHeader
+	}
+
+	emailHeader := os.Getenv(grafanaProxyEmailHeaderEnvVar)
+	if emailHeader == "" {
+		emailHeader = defaultProxyEmailHeader
+	}
+
+	nameHeader := os.Getenv(grafanaProxyNameHeaderEnvVar)
+	if nameHeader == "" {
+		nameHeader = defaultProxyNameHeader
+	}
+
+	roleHeader := os.Getenv(grafanaProxyRoleHeaderEnvVar)
+	if roleHeader == "" {
+		roleHeader = defaultProxyRoleHeader
+	}
+
+	return enabled, userHeader, emailHeader, nameHeader, roleHeader
+}
+
+// extractBearerToken extracts the bearer token from Authorization header
+func extractBearerToken(authHeader string) string {
+	const bearerScheme = "Bearer "
+	if auth := strings.TrimSpace(authHeader); strings.HasPrefix(auth, bearerScheme) {
+		return auth[len(bearerScheme):]
+	}
+	return ""
+}
+
 // grafanaConfigKey is the context key for Grafana configuration.
 type grafanaConfigKey struct{}
 
@@ -186,6 +286,15 @@ type GrafanaConfig struct {
 
 	// OAuth2Config holds OAuth2 provider configuration for token validation.
 	OAuth2Config *OAuth2Config
+
+	// OAuth2TokenForwardToGrafanaEnabled enables forwarding validated incoming OAuth2
+	// bearer tokens to Grafana for downstream authentication/identification.
+	OAuth2TokenForwardToGrafanaEnabled bool
+
+	// OAuth2TokenForwardToGrafanaUseCloudHeaders enables Grafana Cloud style token-forwarding
+	// headers (X-Access-Token + X-Grafana-Id) when both service token and user token are available.
+	// When disabled, token forwarding uses Authorization: Bearer <validated user token>.
+	OAuth2TokenForwardToGrafanaUseCloudHeaders bool
 
 	// ProxyAuthEnabled enables Auth Proxy mode for relaying user identity to Grafana.
 	ProxyAuthEnabled bool
@@ -547,6 +656,8 @@ var ExtractGrafanaInfoFromEnv server.StdioContextFunc = func(ctx context.Context
 	config.OrgID = orgID
 	config.ExtraHeaders = extraHeaders
 	config.OAuth2Config = oauth2Config
+	config.OAuth2TokenForwardToGrafanaEnabled = oauth2TokenForwardToGrafanaEnabledFromEnv()
+	config.OAuth2TokenForwardToGrafanaUseCloudHeaders = oauth2TokenForwardToGrafanaUseCloudHeadersFromEnv()
 	config.ProxyAuthEnabled = proxyAuthEnabled
 	config.ProxyUserHeader = userHeader
 	config.ProxyEmailHeader = emailHeader
@@ -582,6 +693,8 @@ var ExtractGrafanaInfoFromHeaders httpContextFunc = func(ctx context.Context, re
 	config.OrgID = orgID
 	config.ExtraHeaders = extraHeadersFromEnv()
 	config.OAuth2Config = oauth2ConfigFromEnv()
+	config.OAuth2TokenForwardToGrafanaEnabled = oauth2TokenForwardToGrafanaEnabledFromEnv()
+	config.OAuth2TokenForwardToGrafanaUseCloudHeaders = oauth2TokenForwardToGrafanaUseCloudHeadersFromEnv()
 	proxyAuthEnabled, userHeader, emailHeader, nameHeader, roleHeader := authProxyConfigFromEnv()
 	config.ProxyAuthEnabled = proxyAuthEnabled
 	config.ProxyUserHeader = userHeader
@@ -603,6 +716,14 @@ var ExtractGrafanaInfoFromHeaders httpContextFunc = func(ctx context.Context, re
 				// Continue without user info - will fall back to service account
 			} else {
 				config.AuthenticatedUser = userInfo
+				if config.OAuth2TokenForwardToGrafanaEnabled {
+					// Always preserve validated user token for downstream forwarding.
+					config.IDToken = token
+					// If explicitly enabled and a service token is configured, use Grafana Cloud OBO headers.
+					if config.OAuth2TokenForwardToGrafanaUseCloudHeaders && config.APIKey != "" {
+						config.AccessToken = config.APIKey
+					}
+				}
 				ctx = WithOAuth2UserInfo(ctx, userInfo)
 				slog.Debug("OAuth2 token validated", "user", userInfo.Username)
 			}
@@ -678,7 +799,7 @@ type proxyAuthParams struct {
 // It returns the appUrl if available, or an empty string if the request fails.
 // Successful results are cached permanently; failures are retried on subsequent calls.
 // Concurrent calls for the same grafanaURL are coalesced via singleflight.
-func fetchPublicURL(ctx context.Context, grafanaURL, apiKey string, auth *url.Userinfo, tlsConfig *TLSConfig, extraHeaders map[string]string, proxyAuth *proxyAuthParams) string {
+func fetchPublicURL(ctx context.Context, grafanaURL, apiKey, idToken string, auth *url.Userinfo, tlsConfig *TLSConfig, extraHeaders map[string]string, proxyAuth *proxyAuthParams) string {
 	// Check cache first (only successful results are cached)
 	if cached, ok := publicURLCache.Load(grafanaURL); ok {
 		return cached.(string)
@@ -696,7 +817,7 @@ func fetchPublicURL(ctx context.Context, grafanaURL, apiKey string, auth *url.Us
 		fetchCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
-		publicURL := doFetchPublicURL(fetchCtx, grafanaURL, apiKey, auth, tlsConfig, extraHeaders, proxyAuth)
+		publicURL := doFetchPublicURL(fetchCtx, grafanaURL, apiKey, idToken, auth, tlsConfig, extraHeaders, proxyAuth)
 
 		// Only cache successful (non-empty) results so transient failures are retried
 		if publicURL != "" {
@@ -710,7 +831,7 @@ func fetchPublicURL(ctx context.Context, grafanaURL, apiKey string, auth *url.Us
 }
 
 // doFetchPublicURL performs the actual HTTP request to fetch the public URL.
-func doFetchPublicURL(ctx context.Context, grafanaURL, apiKey string, auth *url.Userinfo, tlsConfig *TLSConfig, extraHeaders map[string]string, proxyAuth *proxyAuthParams) string {
+func doFetchPublicURL(ctx context.Context, grafanaURL, apiKey, idToken string, auth *url.Userinfo, tlsConfig *TLSConfig, extraHeaders map[string]string, proxyAuth *proxyAuthParams) string {
 	settingsURL := strings.TrimRight(grafanaURL, "/") + "/api/frontend/settings"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, settingsURL, nil)
 	if err != nil {
@@ -720,6 +841,9 @@ func doFetchPublicURL(ctx context.Context, grafanaURL, apiKey string, auth *url.
 
 	if apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+apiKey)
+	} else if idToken != "" {
+		// Token-forwarding mode: use the validated incoming OAuth2 user token.
+		req.Header.Set("Authorization", "Bearer "+idToken)
 	} else if auth != nil {
 		password, _ := auth.Password()
 		req.SetBasicAuth(auth.Username(), password)
@@ -818,15 +942,19 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 		cfg.Schemes = []string{"http"}
 	}
 
+	config := GrafanaConfigFromContext(ctx)
+
 	if apiKey != "" {
 		cfg.APIKey = apiKey
+	} else if config.IDToken != "" {
+		// OBO fallback: forward the validated incoming bearer token.
+		cfg.APIKey = config.IDToken
 	}
 
 	if auth != nil {
 		cfg.BasicAuth = auth
 	}
 
-	config := GrafanaConfigFromContext(ctx)
 	cfg.Debug = config.Debug
 
 	if config.OrgID > 0 {
@@ -924,7 +1052,7 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 			userInfo:    config.AuthenticatedUser,
 		}
 	}
-	publicURL := fetchPublicURL(ctx, grafanaURL, apiKey, auth, config.TLSConfig, config.ExtraHeaders, pa)
+	publicURL := fetchPublicURL(ctx, grafanaURL, apiKey, config.IDToken, auth, config.TLSConfig, config.ExtraHeaders, pa)
 
 	return &GrafanaClient{
 		GrafanaHTTPAPI: grafanaClient,
@@ -1016,10 +1144,17 @@ var ExtractIncidentClientFromEnv server.StdioContextFunc = func(ctx context.Cont
 // It uses HTTP headers for configuration with environment variable fallbacks, enabling per-request incident management configuration.
 var ExtractIncidentClientFromHeaders httpContextFunc = func(ctx context.Context, req *http.Request) context.Context {
 	grafanaURL, apiKey, _, orgID := extractKeyGrafanaInfoFromReq(req)
+
+	config := GrafanaConfigFromContext(ctx)
+	// In token-forwarding mode no service account key is configured; use the
+	// validated incoming OAuth2 user token so incident API calls are authenticated.
+	if apiKey == "" && config.IDToken != "" {
+		apiKey = config.IDToken
+	}
+
 	incidentURL := fmt.Sprintf("%s/api/plugins/grafana-irm-app/resources/api/v1/", grafanaURL)
 	client := incident.NewClient(incidentURL, apiKey)
 
-	config := GrafanaConfigFromContext(ctx)
 	transport, err := BuildTransport(&config, nil)
 	if err != nil {
 		slog.Error("Failed to create custom transport for incident client, using default", "error", err)

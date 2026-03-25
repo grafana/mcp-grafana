@@ -273,6 +273,139 @@ func TestExtractGrafanaInfoFromHeaders(t *testing.T) {
 		config := GrafanaConfigFromContext(ctx)
 		assert.Equal(t, int64(0), config.OrgID)
 	})
+
+}
+
+func TestExtractGrafanaInfoFromHeadersOAuth2TokenForwarding(t *testing.T) {
+	t.Run("oauth2 token forwarding defaults to bearer token forwarding", func(t *testing.T) {
+		oauth2Srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			assert.Equal(t, "Bearer user-oauth-token", r.Header.Get("Authorization"))
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"sub":"u-1","preferred_username":"john.doe","email":"john@example.com"}`))
+		}))
+		t.Cleanup(oauth2Srv.Close)
+
+		t.Setenv(oauth2EnabledEnvVar, "true")
+		t.Setenv(oauth2ProviderURLEnvVar, oauth2Srv.URL)
+		t.Setenv(oauth2UserInfoEndpointEnvVar, "/userinfo")
+		t.Setenv(oauth2TokenForwardToGrafanaEnabledEnvVar, "true")
+		t.Setenv(oauth2TokenForwardToGrafanaUseCloudHeadersEnvVar, "false")
+		t.Setenv(grafanaAPIKeyEnvVar, "grafana-service-token")
+
+		req, err := http.NewRequest("GET", "http://example.com", nil)
+		require.NoError(t, err)
+		req.Header.Set("Authorization", "Bearer user-oauth-token")
+
+		ctx := ExtractGrafanaInfoFromHeaders(context.Background(), req)
+		config := GrafanaConfigFromContext(ctx)
+
+		require.NotNil(t, config.AuthenticatedUser)
+		assert.Equal(t, "john.doe", config.AuthenticatedUser.Username)
+		assert.Empty(t, config.AccessToken)
+		assert.Equal(t, "user-oauth-token", config.IDToken)
+	})
+
+	t.Run("oauth2 token forwarding can use grafana cloud headers when explicitly enabled", func(t *testing.T) {
+		oauth2Srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"sub":"u-1","preferred_username":"john.doe"}`))
+		}))
+		t.Cleanup(oauth2Srv.Close)
+
+		t.Setenv(oauth2EnabledEnvVar, "true")
+		t.Setenv(oauth2ProviderURLEnvVar, oauth2Srv.URL)
+		t.Setenv(oauth2UserInfoEndpointEnvVar, "/userinfo")
+		t.Setenv(oauth2TokenForwardToGrafanaEnabledEnvVar, "true")
+		t.Setenv(oauth2TokenForwardToGrafanaUseCloudHeadersEnvVar, "true")
+		t.Setenv(grafanaAPIKeyEnvVar, "grafana-service-token")
+
+		req, err := http.NewRequest("GET", "http://example.com", nil)
+		require.NoError(t, err)
+		req.Header.Set("Authorization", "Bearer user-oauth-token")
+
+		ctx := ExtractGrafanaInfoFromHeaders(context.Background(), req)
+		config := GrafanaConfigFromContext(ctx)
+
+		require.NotNil(t, config.AuthenticatedUser)
+		assert.Equal(t, "grafana-service-token", config.AccessToken)
+		assert.Equal(t, "user-oauth-token", config.IDToken)
+	})
+
+	t.Run("oauth2 token forwarding disabled does not populate access and id tokens", func(t *testing.T) {
+		oauth2Srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"sub":"u-1","preferred_username":"john.doe"}`))
+		}))
+		t.Cleanup(oauth2Srv.Close)
+
+		t.Setenv(oauth2EnabledEnvVar, "true")
+		t.Setenv(oauth2ProviderURLEnvVar, oauth2Srv.URL)
+		t.Setenv(oauth2UserInfoEndpointEnvVar, "/userinfo")
+		t.Setenv(oauth2TokenForwardToGrafanaEnabledEnvVar, "false")
+		t.Setenv(grafanaAPIKeyEnvVar, "grafana-service-token")
+
+		req, err := http.NewRequest("GET", "http://example.com", nil)
+		require.NoError(t, err)
+		req.Header.Set("Authorization", "Bearer user-oauth-token")
+
+		ctx := ExtractGrafanaInfoFromHeaders(context.Background(), req)
+		config := GrafanaConfigFromContext(ctx)
+
+		require.NotNil(t, config.AuthenticatedUser)
+		assert.Empty(t, config.AccessToken)
+		assert.Empty(t, config.IDToken)
+	})
+
+	t.Run("oauth2 token forwarding without service token still preserves id token", func(t *testing.T) {
+		oauth2Srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"sub":"u-1","preferred_username":"john.doe"}`))
+		}))
+		t.Cleanup(oauth2Srv.Close)
+
+		t.Setenv(oauth2EnabledEnvVar, "true")
+		t.Setenv(oauth2ProviderURLEnvVar, oauth2Srv.URL)
+		t.Setenv(oauth2UserInfoEndpointEnvVar, "/userinfo")
+		t.Setenv(oauth2TokenForwardToGrafanaEnabledEnvVar, "true")
+		t.Setenv(grafanaAPIKeyEnvVar, "")
+
+		req, err := http.NewRequest("GET", "http://example.com", nil)
+		require.NoError(t, err)
+		req.Header.Set("Authorization", "Bearer user-oauth-token")
+
+		ctx := ExtractGrafanaInfoFromHeaders(context.Background(), req)
+		config := GrafanaConfigFromContext(ctx)
+
+		require.NotNil(t, config.AuthenticatedUser)
+		assert.Empty(t, config.AccessToken)
+		assert.Equal(t, "user-oauth-token", config.IDToken)
+	})
+
+	t.Run("legacy oauth2 obo env vars are still supported", func(t *testing.T) {
+		oauth2Srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"sub":"u-1","preferred_username":"john.doe"}`))
+		}))
+		t.Cleanup(oauth2Srv.Close)
+
+		t.Setenv(oauth2EnabledEnvVar, "true")
+		t.Setenv(oauth2ProviderURLEnvVar, oauth2Srv.URL)
+		t.Setenv(oauth2UserInfoEndpointEnvVar, "/userinfo")
+		t.Setenv(oauth2OBOEnabledEnvVar, "true")
+		t.Setenv(oauth2OBOUseGrafanaHeadersEnvVar, "true")
+		t.Setenv(grafanaAPIKeyEnvVar, "grafana-service-token")
+
+		req, err := http.NewRequest("GET", "http://example.com", nil)
+		require.NoError(t, err)
+		req.Header.Set("Authorization", "Bearer user-oauth-token")
+
+		ctx := ExtractGrafanaInfoFromHeaders(context.Background(), req)
+		config := GrafanaConfigFromContext(ctx)
+
+		require.NotNil(t, config.AuthenticatedUser)
+		assert.Equal(t, "grafana-service-token", config.AccessToken)
+		assert.Equal(t, "user-oauth-token", config.IDToken)
+	})
 }
 
 func TestExtractGrafanaClientPath(t *testing.T) {

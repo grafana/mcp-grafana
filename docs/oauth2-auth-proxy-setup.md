@@ -18,6 +18,21 @@ OAUTH2_ENABLED=true
 OAUTH2_PROVIDER_URL=http://localhost:8082/auth/realms/mcp-grafana
 OAUTH2_USERINFO_ENDPOINT=/protocol/openid-connect/userinfo
 OAUTH2_TOKEN_CACHE_TTL=300
+
+# Optional: enable forwarding validated OAuth2 user tokens to Grafana
+OAUTH2_TOKEN_FORWARD_TO_GRAFANA_ENABLED=true
+
+# Optional: only for Grafana Cloud style token-forwarding headers
+# When false (default), MCP forwards Authorization: Bearer <user token>
+OAUTH2_TOKEN_FORWARD_TO_GRAFANA_USE_CLOUD_HEADERS=false
+
+# Inactive alternative (Grafana Cloud-style forwarding):
+# OAUTH2_TOKEN_FORWARD_TO_GRAFANA_USE_CLOUD_HEADERS=true
+# GRAFANA_API_KEY=<grafana-service-token>
+
+# Inactive legacy aliases:
+# OAUTH2_OBO_ENABLED=true
+# OAUTH2_OBO_USE_GRAFANA_HEADERS=false
 ```
 
 Grafana settings for MCP:
@@ -37,6 +52,10 @@ Notes:
 
 - `OAUTH2_CLIENT_ID` and `OAUTH2_CLIENT_SECRET` are not required by current server-side token validation logic.
 - If `OAUTH2_ENABLED=true` and `OAUTH2_PROVIDER_URL` is empty, OAuth2 is disabled.
+- When `OAUTH2_TOKEN_FORWARD_TO_GRAFANA_ENABLED=true`, MCP forwards authenticated requests to Grafana using:
+  - `Authorization: Bearer <validated incoming bearer token>` by default.
+  - `X-Access-Token: <GRAFANA_SERVICE_ACCOUNT_TOKEN|GRAFANA_API_KEY>` and `X-Grafana-Id: <validated incoming bearer token>` only when `OAUTH2_TOKEN_FORWARD_TO_GRAFANA_USE_CLOUD_HEADERS=true`.
+- Legacy env vars `OAUTH2_OBO_ENABLED` and `OAUTH2_OBO_USE_GRAFANA_HEADERS` are still supported.
 
 ## Local test setup (recommended)
 
