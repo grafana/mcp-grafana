@@ -418,6 +418,63 @@ This MCP server works with both local Grafana instances and Grafana Cloud. For G
 
    > **Note:** The environment variable `GRAFANA_API_KEY` is deprecated and will be removed in a future version. Please migrate to using `GRAFANA_SERVICE_ACCOUNT_TOKEN` instead. The old variable name will continue to work for backward compatibility but will show deprecation warnings.
 
+### OAuth2 Authentication
+
+In addition to direct service account tokens, the MCP server supports OAuth2 authentication, which enables:
+
+- **Token validation**: Validate user bearer tokens against an OAuth2 provider (e.g., Keycloak, Azure AD, Auth0)
+- **Token forwarding**: Automatically forward validated user tokens to Grafana for use in downstream API calls (enabled by default when OAuth2 is configured)
+- **Auth Proxy user impersonation** (optional): Forward user identity to Grafana via `X-WEBAUTH-*` headers for additional context, enabling per-user audit trails and audit logging
+
+**Quick Setup:**
+
+```json
+{
+  "mcpServers": {
+    "grafana": {
+      "command": "mcp-grafana",
+      "args": [],
+      "env": {
+        "GRAFANA_URL": "http://localhost:3000",
+        // OAuth2 configuration
+        "OAUTH2_ENABLED": "true",
+        "OAUTH2_PROVIDER_URL": "https://keycloak.example.com/realms/myrealm",
+        "OAUTH2_CLIENT_ID": "mcp-grafana",
+        "OAUTH2_CLIENT_SECRET": "<your client secret>",
+        "OAUTH2_TOKEN_CACHE_TTL": "3600",
+        // Token forwarding enabled by default
+        // (all user tokens are forwarded to Grafana)
+        // Optional: enable auth proxy for user impersonation
+        // "GRAFANA_PROXY_AUTH_ENABLED": "true"
+      }
+    }
+  }
+}
+```
+
+**How it works:**
+
+1. Client sends requests with `Authorization: Bearer <user-token>` header
+2. MCP validates the token against your OAuth2 provider's userinfo endpoint
+3. MCP forwards the validated token to Grafana for use in downstream API calls
+4. If `GRAFANA_PROXY_AUTH_ENABLED=true`, MCP additionally forwards user identity headers (username, email, groups) extracted from the userinfo response
+
+**For detailed information** about OAuth2 setup, token validation, auth proxy configuration, and troubleshooting, see [docs/oauth2-auth-proxy-setup.md](docs/oauth2-auth-proxy-setup.md).
+
+**Environment Variables:**
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `OAUTH2_ENABLED` | Enable OAuth2 token validation | `true` |
+| `OAUTH2_PROVIDER_URL` | OAuth2 provider's OIDC/OAuth2 endpoint URL | `https://keycloak.example.com/realms/myrealm` |
+| `OAUTH2_CLIENT_ID` | OAuth2 client ID | `mcp-grafana` |
+| `OAUTH2_CLIENT_SECRET` | OAuth2 client secret (for confidential clients) | `your-secret` |
+| `OAUTH2_SCOPES` | Comma-separated OAuth2 scopes to request | `openid,profile,email` |
+| `OAUTH2_TOKEN_CACHE_TTL` | Token validation cache TTL in seconds | `3600` |
+| `OAUTH2_TOKEN_FORWARD_TO_GRAFANA_ENABLED` | Forward validated tokens to Grafana (default: true) | `true` or `false` |
+| `OAUTH2_TOKEN_FORWARD_TO_GRAFANA_USE_CLOUD_HEADERS` | Use cloud-specific headers when forwarding tokens | `true` |
+| `GRAFANA_PROXY_AUTH_ENABLED` | Enable Auth Proxy headers for user impersonation (optional, default: false) | `false` |
+
 ### Multi-Organization Support
  
 You can specify which organization to interact with using either:

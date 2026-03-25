@@ -1,6 +1,8 @@
 #!/bin/bash
 
-# OAuth2 local setup for Keycloak + Grafana Auth Proxy test flow.
+# OAuth2 local setup for Keycloak + Grafana testing.
+# This script starts local services needed for testing OAuth2 token validation,
+# token forwarding, and optional Auth Proxy configuration.
 
 set -e
 
@@ -68,8 +70,12 @@ echo "Services:"
 echo "  Keycloak: http://localhost:8082 (admin/admin123)"
 echo "  Grafana:  http://localhost:3000 (admin/admin)"
 echo
-echo "Start MCP:"
-echo "  source .env.oauth2-test"
+echo "Start MCP with token forwarding (default):"
+echo "  source testdata/.env.oauth2-forward-test"
+echo "  go run ./cmd/mcp-grafana/main.go"
+echo
+echo "Start MCP with token forwarding + Auth Proxy:"
+echo "  source testdata/.env.oauth2-test"
 echo "  go run ./cmd/mcp-grafana/main.go"
 echo
 echo "Run test flow (new terminal):"

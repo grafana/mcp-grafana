@@ -14,14 +14,27 @@ NC='\033[0m' # No Color
 
 grafana_url="${GRAFANA_URL:-http://localhost:3000}"
 
-# Load configuration from .env.oauth2-test
-if [ -f ".env.oauth2-test" ]; then
+# Load configuration from testdata/.env.oauth2-test (or .env.oauth2-forward-test)
+# The env file path can be passed as an argument or will use default
+env_file="${2:-.env.oauth2-test}"
+
+if [ ! -f "$env_file" ]; then
+  # If not found at the given path, try in testdata/
+  if [ -f "testdata/$env_file" ]; then
+    env_file="testdata/$env_file"
+  fi
+fi
+
+if [ -f "$env_file" ]; then
   set -a
-  # shellcheck disable=SC1091
-  . ./.env.oauth2-test
+  # shellcheck disable=SC1090
+  . "$env_file"
   set +a
 else
-  echo -e "${RED}Error: .env.oauth2-test not found${NC}"
+  echo -e "${RED}Error: OAuth2 env file not found${NC}"
+  echo "Expected one of:"
+  echo "  testdata/.env.oauth2-test"
+  echo "  testdata/.env.oauth2-forward-test"
   exit 1
 fi
 
@@ -129,7 +142,7 @@ function test_flow() {
       echo "Response: $health_response"
     else
       echo -e "${YELLOW}MCP not running on localhost:8080${NC}"
-      echo "  Start with: source .env.oauth2-test && go run ./cmd/mcp-grafana/main.go"
+      echo "  Start with: source testdata/.env.oauth2-test && go run ./cmd/mcp-grafana/main.go"
     fi
   fi
   echo ""

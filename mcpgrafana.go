@@ -53,10 +53,6 @@ const (
 	oauth2TokenForwardToGrafanaEnabledEnvVar         = "OAUTH2_TOKEN_FORWARD_TO_GRAFANA_ENABLED"
 	oauth2TokenForwardToGrafanaUseCloudHeadersEnvVar = "OAUTH2_TOKEN_FORWARD_TO_GRAFANA_USE_CLOUD_HEADERS"
 
-	// Deprecated OAuth2 OBO env vars kept for backward compatibility.
-	oauth2OBOEnabledEnvVar            = "OAUTH2_OBO_ENABLED"
-	oauth2OBOUseGrafanaHeadersEnvVar  = "OAUTH2_OBO_USE_GRAFANA_HEADERS"
-
 	// Auth Proxy environment variables
 	grafanaProxyAuthEnabledEnvVar  = "GRAFANA_PROXY_AUTH_ENABLED"
 	grafanaProxyUserHeaderEnvVar   = "GRAFANA_PROXY_USER_HEADER"
@@ -196,12 +192,15 @@ func oauth2TokenForwardToGrafanaEnabledFromEnv() bool {
 }
 
 // OAuth2TokenForwardToGrafanaEnabledFromEnv returns true when OAuth2 token forwarding to Grafana is enabled.
+// Token forwarding is enabled by default when OAuth2 is configured.
+// Set OAUTH2_TOKEN_FORWARD_TO_GRAFANA_ENABLED=false to explicitly disable it.
 func OAuth2TokenForwardToGrafanaEnabledFromEnv() bool {
-	// Prefer the new explicit env var name, fall back to legacy OBO name.
-	if _, exists := os.LookupEnv(oauth2TokenForwardToGrafanaEnabledEnvVar); exists {
-		return envBoolValueIsTrue(oauth2TokenForwardToGrafanaEnabledEnvVar)
+	// Check if explicitly disabled
+	if val, exists := os.LookupEnv(oauth2TokenForwardToGrafanaEnabledEnvVar); exists {
+		return strings.ToLower(strings.TrimSpace(val)) != "false"
 	}
-	return envBoolValueIsTrue(oauth2OBOEnabledEnvVar)
+	// Default: enable token forwarding if OAuth2 is enabled
+	return oauth2ConfigFromEnv() != nil
 }
 
 func oauth2TokenForwardToGrafanaUseCloudHeadersFromEnv() bool {
@@ -210,23 +209,14 @@ func oauth2TokenForwardToGrafanaUseCloudHeadersFromEnv() bool {
 
 // OAuth2TokenForwardToGrafanaUseCloudHeadersFromEnv returns true when Grafana Cloud-style forwarding headers should be used.
 func OAuth2TokenForwardToGrafanaUseCloudHeadersFromEnv() bool {
-	// Prefer the new explicit env var name, fall back to legacy OBO name.
-	if _, exists := os.LookupEnv(oauth2TokenForwardToGrafanaUseCloudHeadersEnvVar); exists {
-		return envBoolValueIsTrue(oauth2TokenForwardToGrafanaUseCloudHeadersEnvVar)
-	}
-	return envBoolValueIsTrue(oauth2OBOUseGrafanaHeadersEnvVar)
+	return envBoolValueIsTrue(oauth2TokenForwardToGrafanaUseCloudHeadersEnvVar)
 }
 
 // authProxyConfigFromEnv extracts Auth Proxy configuration from environment variables
+// Auth Proxy is disabled by default and must be explicitly enabled.
 func authProxyConfigFromEnv() (bool, string, string, string, string) {
-	// If explicitly configured, respect the proxy auth setting as-is.
-	// Otherwise, for backward compatibility, auto-enable proxy auth when OAuth2 is enabled.
-	var enabled bool
-	if _, exists := os.LookupEnv(grafanaProxyAuthEnabledEnvVar); exists {
-		enabled = envBoolValueIsTrue(grafanaProxyAuthEnabledEnvVar)
-	} else if oauth2ConfigFromEnv() != nil {
-		enabled = true
-	}
+	// Auth Proxy only enables if explicitly configured
+	enabled := envBoolValueIsTrue(grafanaProxyAuthEnabledEnvVar)
 
 	userHeader := os.Getenv(grafanaProxyUserHeaderEnvVar)
 	if userHeader == "" {

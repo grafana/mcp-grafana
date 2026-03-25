@@ -277,6 +277,35 @@ func TestExtractGrafanaInfoFromHeaders(t *testing.T) {
 }
 
 func TestExtractGrafanaInfoFromHeadersOAuth2TokenForwarding(t *testing.T) {
+	t.Run("oauth2 token forwarding enabled by default when oauth2 is configured", func(t *testing.T) {
+		oauth2Srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			assert.Equal(t, "Bearer user-oauth-token", r.Header.Get("Authorization"))
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"sub":"u-1","preferred_username":"john.doe","email":"john@example.com"}`))
+		}))
+		t.Cleanup(oauth2Srv.Close)
+
+		// OAuth2 configured, token forwarding not explicitly set but should be enabled by default
+		t.Setenv(oauth2EnabledEnvVar, "true")
+		t.Setenv(oauth2ProviderURLEnvVar, oauth2Srv.URL)
+		t.Setenv(oauth2UserInfoEndpointEnvVar, "/userinfo")
+		// Note: NOT setting oauth2TokenForwardToGrafanaEnabledEnvVar - should default to enabled
+		t.Setenv(grafanaAPIKeyEnvVar, "grafana-service-token")
+
+		req, err := http.NewRequest("GET", "http://example.com", nil)
+		require.NoError(t, err)
+		req.Header.Set("Authorization", "Bearer user-oauth-token")
+
+		ctx := ExtractGrafanaInfoFromHeaders(context.Background(), req)
+		config := GrafanaConfigFromContext(ctx)
+
+		require.NotNil(t, config.AuthenticatedUser)
+		assert.Equal(t, "john.doe", config.AuthenticatedUser.Username)
+		assert.Empty(t, config.AccessToken)
+		// Token forwarding is enabled by default, so IDToken should be set
+		assert.Equal(t, "user-oauth-token", config.IDToken)
+	})
+
 	t.Run("oauth2 token forwarding defaults to bearer token forwarding", func(t *testing.T) {
 		oauth2Srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			assert.Equal(t, "Bearer user-oauth-token", r.Header.Get("Authorization"))
@@ -288,7 +317,6 @@ func TestExtractGrafanaInfoFromHeadersOAuth2TokenForwarding(t *testing.T) {
 		t.Setenv(oauth2EnabledEnvVar, "true")
 		t.Setenv(oauth2ProviderURLEnvVar, oauth2Srv.URL)
 		t.Setenv(oauth2UserInfoEndpointEnvVar, "/userinfo")
-		t.Setenv(oauth2TokenForwardToGrafanaEnabledEnvVar, "true")
 		t.Setenv(oauth2TokenForwardToGrafanaUseCloudHeadersEnvVar, "false")
 		t.Setenv(grafanaAPIKeyEnvVar, "grafana-service-token")
 
@@ -380,47 +408,12 @@ func TestExtractGrafanaInfoFromHeadersOAuth2TokenForwarding(t *testing.T) {
 		assert.Empty(t, config.AccessToken)
 		assert.Equal(t, "user-oauth-token", config.IDToken)
 	})
-
-	t.Run("legacy oauth2 obo env vars are still supported", func(t *testing.T) {
-		oauth2Srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"sub":"u-1","preferred_username":"john.doe"}`))
-		}))
-		t.Cleanup(oauth2Srv.Close)
-
-		t.Setenv(oauth2EnabledEnvVar, "true")
-		t.Setenv(oauth2ProviderURLEnvVar, oauth2Srv.URL)
-		t.Setenv(oauth2UserInfoEndpointEnvVar, "/userinfo")
-		t.Setenv(oauth2OBOEnabledEnvVar, "true")
-		t.Setenv(oauth2OBOUseGrafanaHeadersEnvVar, "true")
-		t.Setenv(grafanaAPIKeyEnvVar, "grafana-service-token")
-
-		req, err := http.NewRequest("GET", "http://example.com", nil)
-		require.NoError(t, err)
-		req.Header.Set("Authorization", "Bearer user-oauth-token")
-
-		ctx := ExtractGrafanaInfoFromHeaders(context.Background(), req)
-		config := GrafanaConfigFromContext(ctx)
-
-		require.NotNil(t, config.AuthenticatedUser)
-		assert.Equal(t, "grafana-service-token", config.AccessToken)
-		assert.Equal(t, "user-oauth-token", config.IDToken)
-	})
 }
 
 func TestAuthProxyConfigFromEnv(t *testing.T) {
-	t.Run("auto enables auth proxy when oauth2 enabled and proxy auth unset", func(t *testing.T) {
+	t.Run("auth proxy disabled by default even when oauth2 enabled", func(t *testing.T) {
 		t.Setenv(oauth2EnabledEnvVar, "true")
 		t.Setenv(oauth2ProviderURLEnvVar, "http://oauth.example")
-
-		enabled, _, _, _, _ := authProxyConfigFromEnv()
-		assert.True(t, enabled)
-	})
-
-	t.Run("respects explicit proxy auth disabled when oauth2 enabled", func(t *testing.T) {
-		t.Setenv(oauth2EnabledEnvVar, "true")
-		t.Setenv(oauth2ProviderURLEnvVar, "http://oauth.example")
-		t.Setenv(grafanaProxyAuthEnabledEnvVar, "false")
 
 		enabled, _, _, _, _ := authProxyConfigFromEnv()
 		assert.False(t, enabled)
