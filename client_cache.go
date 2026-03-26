@@ -13,6 +13,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
+	"golang.org/x/sync/singleflight"
 )
 
 const clientCacheMeterName = "mcp-grafana"
@@ -49,10 +50,10 @@ func (k clientCacheKey) String() string {
 
 // clientCacheMetrics holds OTel instruments for cache observability.
 type clientCacheMetrics struct {
-	lookups  metric.Int64Counter // Total lookups (hits + misses)
-	hits     metric.Int64Counter // Cache hits
-	misses   metric.Int64Counter // Cache misses (new client created)
-	size     metric.Int64Gauge   // Current number of cached clients
+	lookups metric.Int64Counter // Total lookups (hits + misses)
+	hits    metric.Int64Counter // Cache hits
+	misses  metric.Int64Counter // Cache misses (new client created)
+	size    metric.Int64Gauge   // Current number of cached clients
 }
 
 func newClientCacheMetrics() clientCacheMetrics {
@@ -96,6 +97,8 @@ type ClientCache struct {
 	grafanaClients  map[clientCacheKey]*GrafanaClient
 	incidentClients map[clientCacheKey]*incident.Client
 	metrics         clientCacheMetrics
+	sfGrafana       singleflight.Group
+	sfIncident      singleflight.Group
 }
 
 // NewClientCache creates a new client cache.
@@ -109,6 +112,8 @@ func NewClientCache() *ClientCache {
 
 // GetOrCreateGrafanaClient returns a cached Grafana client for the given key,
 // or creates one using createFn if no cached client exists.
+// The createFn is called outside the cache lock via singleflight to avoid
+// blocking concurrent cache reads during slow client creation (e.g. network I/O).
 func (c *ClientCache) GetOrCreateGrafanaClient(key clientCacheKey, createFn func() *GrafanaClient) *GrafanaClient {
 	ctx := context.Background()
 	typeAttr := metric.WithAttributes(attrClientTypeGrafana)
@@ -123,26 +128,39 @@ func (c *ClientCache) GetOrCreateGrafanaClient(key clientCacheKey, createFn func
 	}
 	c.mu.RUnlock()
 
-	// Slow path: create with write lock
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	// Slow path: use singleflight to create outside the lock,
+	// deduplicating concurrent requests for the same key.
+	sfKey := key.String()
+	val, _, _ := c.sfGrafana.Do(sfKey, func() (any, error) {
+		// Double-check after winning the singleflight race
+		c.mu.RLock()
+		if client, ok := c.grafanaClients[key]; ok {
+			c.mu.RUnlock()
+			return client, nil
+		}
+		c.mu.RUnlock()
 
-	// Double-check after acquiring write lock
-	if client, ok := c.grafanaClients[key]; ok {
-		c.metrics.hits.Add(ctx, 1, typeAttr)
-		return client
-	}
+		// Create the client without holding any lock
+		client := createFn()
 
-	client := createFn()
-	c.grafanaClients[key] = client
-	c.metrics.misses.Add(ctx, 1, typeAttr)
-	c.metrics.size.Record(ctx, int64(len(c.grafanaClients)), typeAttr)
-	slog.Debug("Cached new Grafana client", "key", key, "cache_size", len(c.grafanaClients))
-	return client
+		// Store the result
+		c.mu.Lock()
+		c.grafanaClients[key] = client
+		c.metrics.misses.Add(ctx, 1, typeAttr)
+		c.metrics.size.Record(ctx, int64(len(c.grafanaClients)), typeAttr)
+		c.mu.Unlock()
+
+		slog.Debug("Cached new Grafana client", "key", key, "cache_size", len(c.grafanaClients))
+		return client, nil
+	})
+
+	return val.(*GrafanaClient)
 }
 
 // GetOrCreateIncidentClient returns a cached incident client for the given key,
 // or creates one using createFn if no cached client exists.
+// The createFn is called outside the cache lock via singleflight to avoid
+// blocking concurrent cache reads during slow client creation.
 func (c *ClientCache) GetOrCreateIncidentClient(key clientCacheKey, createFn func() *incident.Client) *incident.Client {
 	ctx := context.Background()
 	typeAttr := metric.WithAttributes(attrClientTypeIncident)
@@ -157,22 +175,29 @@ func (c *ClientCache) GetOrCreateIncidentClient(key clientCacheKey, createFn fun
 	}
 	c.mu.RUnlock()
 
-	// Slow path: create with write lock
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	// Slow path: use singleflight to create outside the lock
+	sfKey := key.String()
+	val, _, _ := c.sfIncident.Do(sfKey, func() (any, error) {
+		c.mu.RLock()
+		if client, ok := c.incidentClients[key]; ok {
+			c.mu.RUnlock()
+			return client, nil
+		}
+		c.mu.RUnlock()
 
-	// Double-check after acquiring write lock
-	if client, ok := c.incidentClients[key]; ok {
-		c.metrics.hits.Add(ctx, 1, typeAttr)
-		return client
-	}
+		client := createFn()
 
-	client := createFn()
-	c.incidentClients[key] = client
-	c.metrics.misses.Add(ctx, 1, typeAttr)
-	c.metrics.size.Record(ctx, int64(len(c.incidentClients)), typeAttr)
-	slog.Debug("Cached new incident client", "key", key, "cache_size", len(c.incidentClients))
-	return client
+		c.mu.Lock()
+		c.incidentClients[key] = client
+		c.metrics.misses.Add(ctx, 1, typeAttr)
+		c.metrics.size.Record(ctx, int64(len(c.incidentClients)), typeAttr)
+		c.mu.Unlock()
+
+		slog.Debug("Cached new incident client", "key", key, "cache_size", len(c.incidentClients))
+		return client, nil
+	})
+
+	return val.(*incident.Client)
 }
 
 // Close cleans up cached clients. For incident clients, idle connections

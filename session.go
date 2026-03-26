@@ -87,6 +87,7 @@ type SessionManager struct {
 	sessionTTL time.Duration
 	stopReaper chan struct{}
 	reaperDone chan struct{}
+	closeOnce  sync.Once
 	metrics    sessionMetrics
 }
 
@@ -163,30 +164,27 @@ func cleanupSessionState(state *SessionState) {
 }
 
 // Close stops the reaper goroutine and cleans up all remaining sessions.
+// It is safe to call concurrently and multiple times.
 func (sm *SessionManager) Close() {
-	// Signal reaper to stop
-	select {
-	case <-sm.stopReaper:
-		// Already closed
-	default:
+	sm.closeOnce.Do(func() {
 		close(sm.stopReaper)
-	}
-	<-sm.reaperDone
+		<-sm.reaperDone
 
-	// Clean up all remaining sessions
-	sm.mutex.Lock()
-	sessions := make(map[string]*SessionState, len(sm.sessions))
-	for k, v := range sm.sessions {
-		sessions[k] = v
-	}
-	sm.sessions = make(map[string]*SessionState)
-	sm.recordActiveSessionCount()
-	sm.mutex.Unlock()
+		// Clean up all remaining sessions
+		sm.mutex.Lock()
+		sessions := make(map[string]*SessionState, len(sm.sessions))
+		for k, v := range sm.sessions {
+			sessions[k] = v
+		}
+		sm.sessions = make(map[string]*SessionState)
+		sm.recordActiveSessionCount()
+		sm.mutex.Unlock()
 
-	for _, state := range sessions {
-		cleanupSessionState(state)
-	}
-	slog.Debug("SessionManager closed", "cleaned_sessions", len(sessions))
+		for _, state := range sessions {
+			cleanupSessionState(state)
+		}
+		slog.Debug("SessionManager closed", "cleaned_sessions", len(sessions))
+	})
 }
 
 // runReaper periodically checks for and removes idle sessions.
