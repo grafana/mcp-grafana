@@ -61,6 +61,8 @@ func NewClientCache() *ClientCache {
 
 // GetOrCreateGrafanaClient returns a cached Grafana client for the given key,
 // or creates one using createFn if no cached client exists.
+// The creation is performed outside the lock to avoid blocking other cache
+// operations during potentially slow I/O (e.g., network requests).
 func (c *ClientCache) GetOrCreateGrafanaClient(key clientCacheKey, createFn func() *GrafanaClient) *GrafanaClient {
 	// Fast path: check with read lock
 	c.mu.RLock()
@@ -70,23 +72,28 @@ func (c *ClientCache) GetOrCreateGrafanaClient(key clientCacheKey, createFn func
 	}
 	c.mu.RUnlock()
 
-	// Slow path: create with write lock
+	// Create the client outside the lock to avoid blocking other operations
+	// during potentially slow I/O (e.g., network requests in NewGrafanaClient).
+	newClient := createFn()
+
+	// Insert under write lock with re-check
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// Double-check after acquiring write lock
+	// Another goroutine may have inserted a client while we were creating ours
 	if client, ok := c.grafanaClients[key]; ok {
 		return client
 	}
 
-	client := createFn()
-	c.grafanaClients[key] = client
+	c.grafanaClients[key] = newClient
 	slog.Debug("Cached new Grafana client", "key", key, "cache_size", len(c.grafanaClients))
-	return client
+	return newClient
 }
 
 // GetOrCreateIncidentClient returns a cached incident client for the given key,
 // or creates one using createFn if no cached client exists.
+// The creation is performed outside the lock to avoid blocking other cache
+// operations during potentially slow I/O.
 func (c *ClientCache) GetOrCreateIncidentClient(key clientCacheKey, createFn func() *incident.Client) *incident.Client {
 	// Fast path: check with read lock
 	c.mu.RLock()
@@ -96,19 +103,22 @@ func (c *ClientCache) GetOrCreateIncidentClient(key clientCacheKey, createFn fun
 	}
 	c.mu.RUnlock()
 
-	// Slow path: create with write lock
+	// Create the client outside the lock to avoid blocking other operations
+	// during potentially slow I/O.
+	newClient := createFn()
+
+	// Insert under write lock with re-check
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// Double-check after acquiring write lock
+	// Another goroutine may have inserted a client while we were creating ours
 	if client, ok := c.incidentClients[key]; ok {
 		return client
 	}
 
-	client := createFn()
-	c.incidentClients[key] = client
+	c.incidentClients[key] = newClient
 	slog.Debug("Cached new incident client", "key", key, "cache_size", len(c.incidentClients))
-	return client
+	return newClient
 }
 
 // Close cleans up cached clients. For incident clients, idle connections
