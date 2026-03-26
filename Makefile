@@ -35,6 +35,10 @@ test: test-unit
 test-integration: ## Run only the Docker-based integration tests (requires docker-compose services to be running, use `make run-test-services` to start them).
 	go test -v -tags integration ./...
 
+.PHONY: test-k8s-integration
+test-k8s-integration: ## Run integration tests against the k8s-enabled Grafana instance (requires grafana-k8s service on port 3001).
+	GRAFANA_URL=http://localhost:3001 GRAFANA_K8S_URL=http://localhost:3001 GRAFANA_USERNAME=admin GRAFANA_PASSWORD=admin go test -v -count=1 -tags integration ./tools -run TestK8s
+
 .PHONY: test-cloud
 test-cloud: ## Run only the cloud-based tests (requires cloud Grafana instance and credentials).
 ifeq ($(origin GRAFANA_SERVICE_ACCOUNT_TOKEN), undefined)
