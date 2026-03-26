@@ -263,7 +263,7 @@ func TestPrometheusQueries(t *testing.T) {
 		result, err := queryPrometheus(ctx, QueryPrometheusParams{
 			DatasourceUID: "prometheus",
 			Expr:          "up",
-			StartTime:     time.Now().Format(time.RFC3339),
+			EndTime:     time.Now().Format(time.RFC3339),
 			QueryType:     "instant",
 		})
 		afterQuery := model.TimeFromUnix(time.Now().Unix())
@@ -283,7 +283,7 @@ func TestPrometheusQueries(t *testing.T) {
 		result, err := queryPrometheus(ctx, QueryPrometheusParams{
 			DatasourceUID: "prometheus",
 			Expr:          "up",
-			StartTime:     "now",
+			EndTime:     "now",
 			QueryType:     "instant",
 		})
 		afterQuery := model.TimeFromUnix(time.Now().Unix())

@@ -64,8 +64,8 @@ var ListPrometheusMetricMetadata = mcpgrafana.MustTool(
 type QueryPrometheusParams struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the datasource to query"`
 	Expr          string `json:"expr" jsonschema:"required,description=The PromQL expression to query"`
-	StartTime     string `json:"startTime" jsonschema:"required,description=The start time. Supported formats are RFC3339 or relative to now (e.g. 'now'\\, 'now-1.5h'\\, 'now-2h45m'). Valid time units are 'ns'\\, 'us' (or 'µs')\\, 'ms'\\, 's'\\, 'm'\\, 'h'\\, 'd'."`
-	EndTime       string `json:"endTime,omitempty" jsonschema:"description=The end time. Required if queryType is 'range'\\, ignored if queryType is 'instant' Supported formats are RFC3339 or relative to now (e.g. 'now'\\, 'now-1.5h'\\, 'now-2h45m'). Valid time units are 'ns'\\, 'us' (or 'µs')\\, 'ms'\\, 's'\\, 'm'\\, 'h'\\, 'd'."`
+	StartTime     string `json:"startTime,omitempty" jsonschema:"description=The start time. Required if queryType is 'range'\\, ignored if queryType is 'instant' Supported formats are RFC3339 or relative to now (e.g. 'now'\\, 'now-1.5h'\\, 'now-2h45m'). Valid time units are 'ns'\\, 'us' (or 'µs')\\, 'ms'\\, 's'\\, 'm'\\, 'h'\\, 'd'."`
+	EndTime       string `json:"endTime" jsonschema:"required,description=The end time. Supported formats are RFC3339 or relative to now (e.g. 'now'\\, 'now-1.5h'\\, 'now-2h45m'). Valid time units are 'ns'\\, 'us' (or 'µs')\\, 'ms'\\, 's'\\, 'm'\\, 'h'\\, 'd'."`
 	StepSeconds   int    `json:"stepSeconds,omitempty" jsonschema:"description=The time series step size in seconds. Required if queryType is 'range'\\, ignored if queryType is 'instant'"`
 	QueryType     string `json:"queryType,omitempty" jsonschema:"description=The type of query to use. Either 'range' or 'instant'"`
 }
@@ -116,19 +116,21 @@ func queryPrometheus(ctx context.Context, args QueryPrometheusParams) (model.Val
 		queryType = "range"
 	}
 
-	startTime, err := parseTime(args.StartTime)
+	var endTime time.Time
+	endTime, err = parseTime(args.EndTime)
 	if err != nil {
-		return nil, fmt.Errorf("parsing start time: %w", err)
+		return nil, fmt.Errorf("parsing end time: %w", err)
 	}
 
-	var endTime time.Time
+	var startTime time.Time
+
 	if queryType == "range" {
 		if args.StepSeconds == 0 {
 			return nil, fmt.Errorf("stepSeconds must be provided when queryType is 'range'")
 		}
-		endTime, err = parseTime(args.EndTime)
+		startTime, err = parseTime(args.StartTime)
 		if err != nil {
-			return nil, fmt.Errorf("parsing end time: %w", err)
+			return nil, fmt.Errorf("parsing start time: %w", err)
 		}
 	}
 

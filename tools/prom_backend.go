@@ -103,7 +103,7 @@ func (b *prometheusBackend) Query(ctx context.Context, expr string, queryType st
 		}
 		return result, nil
 	case "instant":
-		result, _, err := b.api.Query(ctx, expr, start)
+		result, _, err := b.api.Query(ctx, expr, end)
 		if err != nil {
 			return nil, fmt.Errorf("querying Prometheus instant: %w", err)
 		}
