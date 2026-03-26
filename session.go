@@ -9,13 +9,41 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/metric"
 )
 
 const (
 	// DefaultSessionTTL is the default time-to-live for idle sessions.
 	// Sessions with no activity for this duration are reaped.
 	DefaultSessionTTL = 30 * time.Minute
+
+	sessionMeterName = "mcp-grafana"
 )
+
+// sessionMetrics holds OTel instruments for session observability.
+type sessionMetrics struct {
+	activeSessions metric.Int64Gauge   // Current active session count
+	sessionsReaped metric.Int64Counter // Total sessions removed by the reaper
+}
+
+func newSessionMetrics() sessionMetrics {
+	meter := otel.GetMeterProvider().Meter(sessionMeterName)
+
+	active, _ := meter.Int64Gauge("mcp.sessions.active",
+		metric.WithDescription("Current number of active MCP sessions"),
+		metric.WithUnit("{session}"),
+	)
+	reaped, _ := meter.Int64Counter("mcp.sessions.reaped",
+		metric.WithDescription("Total number of sessions removed by the idle reaper"),
+		metric.WithUnit("{session}"),
+	)
+
+	return sessionMetrics{
+		activeSessions: active,
+		sessionsReaped: reaped,
+	}
+}
 
 // SessionState holds the state for a single client session
 type SessionState struct {
@@ -59,6 +87,7 @@ type SessionManager struct {
 	sessionTTL time.Duration
 	stopReaper chan struct{}
 	reaperDone chan struct{}
+	metrics    sessionMetrics
 }
 
 func NewSessionManager(opts ...SessionManagerOption) *SessionManager {
@@ -67,6 +96,7 @@ func NewSessionManager(opts ...SessionManagerOption) *SessionManager {
 		sessionTTL: DefaultSessionTTL,
 		stopReaper: make(chan struct{}),
 		reaperDone: make(chan struct{}),
+		metrics:    newSessionMetrics(),
 	}
 	for _, opt := range opts {
 		opt(sm)
@@ -79,6 +109,10 @@ func NewSessionManager(opts ...SessionManagerOption) *SessionManager {
 	return sm
 }
 
+func (sm *SessionManager) recordActiveSessionCount() {
+	sm.metrics.activeSessions.Record(context.Background(), int64(len(sm.sessions)))
+}
+
 func (sm *SessionManager) CreateSession(ctx context.Context, session server.ClientSession) {
 	sm.mutex.Lock()
 	defer sm.mutex.Unlock()
@@ -86,6 +120,7 @@ func (sm *SessionManager) CreateSession(ctx context.Context, session server.Clie
 	sessionID := session.SessionID()
 	if _, exists := sm.sessions[sessionID]; !exists {
 		sm.sessions[sessionID] = newSessionState()
+		sm.recordActiveSessionCount()
 	}
 }
 
@@ -105,6 +140,7 @@ func (sm *SessionManager) RemoveSession(ctx context.Context, session server.Clie
 	sessionID := session.SessionID()
 	state, exists := sm.sessions[sessionID]
 	delete(sm.sessions, sessionID)
+	sm.recordActiveSessionCount()
 	sm.mutex.Unlock()
 
 	if !exists {
@@ -144,6 +180,7 @@ func (sm *SessionManager) Close() {
 		sessions[k] = v
 	}
 	sm.sessions = make(map[string]*SessionState)
+	sm.recordActiveSessionCount()
 	sm.mutex.Unlock()
 
 	for _, state := range sessions {
@@ -186,6 +223,10 @@ func (sm *SessionManager) reapStaleSessions() {
 			staleIDs = append(staleIDs, id)
 			delete(sm.sessions, id)
 		}
+	}
+	if len(stale) > 0 {
+		sm.recordActiveSessionCount()
+		sm.metrics.sessionsReaped.Add(context.Background(), int64(len(stale)))
 	}
 	sm.mutex.Unlock()
 

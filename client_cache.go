@@ -10,7 +10,12 @@ import (
 	"sync"
 
 	"github.com/grafana/incident-go"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 )
+
+const clientCacheMeterName = "mcp-grafana"
 
 // clientCacheKey uniquely identifies a client by its credentials and target.
 type clientCacheKey struct {
@@ -24,9 +29,9 @@ type clientCacheKey struct {
 // cacheKeyFromRequest builds a clientCacheKey from request-derived credentials.
 func cacheKeyFromRequest(grafanaURL, apiKey string, basicAuth *url.Userinfo, orgID int64) clientCacheKey {
 	key := clientCacheKey{
-		url:   grafanaURL,
+		url:    grafanaURL,
 		apiKey: apiKey,
-		orgID: orgID,
+		orgID:  orgID,
 	}
 	if basicAuth != nil {
 		key.username = basicAuth.Username()
@@ -42,6 +47,47 @@ func (k clientCacheKey) String() string {
 	return fmt.Sprintf("url=%s apiKey=%t basicAuth=%t orgID=%d", k.url, hasKey, hasBasic, k.orgID)
 }
 
+// clientCacheMetrics holds OTel instruments for cache observability.
+type clientCacheMetrics struct {
+	lookups  metric.Int64Counter // Total lookups (hits + misses)
+	hits     metric.Int64Counter // Cache hits
+	misses   metric.Int64Counter // Cache misses (new client created)
+	size     metric.Int64Gauge   // Current number of cached clients
+}
+
+func newClientCacheMetrics() clientCacheMetrics {
+	meter := otel.GetMeterProvider().Meter(clientCacheMeterName)
+
+	lookups, _ := meter.Int64Counter("mcp.client_cache.lookups",
+		metric.WithDescription("Total number of client cache lookups"),
+		metric.WithUnit("{lookup}"),
+	)
+	hits, _ := meter.Int64Counter("mcp.client_cache.hits",
+		metric.WithDescription("Number of client cache hits (existing client reused)"),
+		metric.WithUnit("{hit}"),
+	)
+	misses, _ := meter.Int64Counter("mcp.client_cache.misses",
+		metric.WithDescription("Number of client cache misses (new client created)"),
+		metric.WithUnit("{miss}"),
+	)
+	size, _ := meter.Int64Gauge("mcp.client_cache.size",
+		metric.WithDescription("Current number of cached clients"),
+		metric.WithUnit("{client}"),
+	)
+
+	return clientCacheMetrics{
+		lookups: lookups,
+		hits:    hits,
+		misses:  misses,
+		size:    size,
+	}
+}
+
+var (
+	attrClientTypeGrafana  = attribute.String("client.type", "grafana")
+	attrClientTypeIncident = attribute.String("client.type", "incident")
+)
+
 // ClientCache caches HTTP clients keyed by credentials to avoid creating
 // new transports per request. This prevents the memory leak described in
 // https://github.com/grafana/mcp-grafana/issues/682.
@@ -49,6 +95,7 @@ type ClientCache struct {
 	mu              sync.RWMutex
 	grafanaClients  map[clientCacheKey]*GrafanaClient
 	incidentClients map[clientCacheKey]*incident.Client
+	metrics         clientCacheMetrics
 }
 
 // NewClientCache creates a new client cache.
@@ -56,16 +103,22 @@ func NewClientCache() *ClientCache {
 	return &ClientCache{
 		grafanaClients:  make(map[clientCacheKey]*GrafanaClient),
 		incidentClients: make(map[clientCacheKey]*incident.Client),
+		metrics:         newClientCacheMetrics(),
 	}
 }
 
 // GetOrCreateGrafanaClient returns a cached Grafana client for the given key,
 // or creates one using createFn if no cached client exists.
 func (c *ClientCache) GetOrCreateGrafanaClient(key clientCacheKey, createFn func() *GrafanaClient) *GrafanaClient {
+	ctx := context.Background()
+	typeAttr := metric.WithAttributes(attrClientTypeGrafana)
+	c.metrics.lookups.Add(ctx, 1, typeAttr)
+
 	// Fast path: check with read lock
 	c.mu.RLock()
 	if client, ok := c.grafanaClients[key]; ok {
 		c.mu.RUnlock()
+		c.metrics.hits.Add(ctx, 1, typeAttr)
 		return client
 	}
 	c.mu.RUnlock()
@@ -76,11 +129,14 @@ func (c *ClientCache) GetOrCreateGrafanaClient(key clientCacheKey, createFn func
 
 	// Double-check after acquiring write lock
 	if client, ok := c.grafanaClients[key]; ok {
+		c.metrics.hits.Add(ctx, 1, typeAttr)
 		return client
 	}
 
 	client := createFn()
 	c.grafanaClients[key] = client
+	c.metrics.misses.Add(ctx, 1, typeAttr)
+	c.metrics.size.Record(ctx, int64(len(c.grafanaClients)), typeAttr)
 	slog.Debug("Cached new Grafana client", "key", key, "cache_size", len(c.grafanaClients))
 	return client
 }
@@ -88,10 +144,15 @@ func (c *ClientCache) GetOrCreateGrafanaClient(key clientCacheKey, createFn func
 // GetOrCreateIncidentClient returns a cached incident client for the given key,
 // or creates one using createFn if no cached client exists.
 func (c *ClientCache) GetOrCreateIncidentClient(key clientCacheKey, createFn func() *incident.Client) *incident.Client {
+	ctx := context.Background()
+	typeAttr := metric.WithAttributes(attrClientTypeIncident)
+	c.metrics.lookups.Add(ctx, 1, typeAttr)
+
 	// Fast path: check with read lock
 	c.mu.RLock()
 	if client, ok := c.incidentClients[key]; ok {
 		c.mu.RUnlock()
+		c.metrics.hits.Add(ctx, 1, typeAttr)
 		return client
 	}
 	c.mu.RUnlock()
@@ -102,11 +163,14 @@ func (c *ClientCache) GetOrCreateIncidentClient(key clientCacheKey, createFn fun
 
 	// Double-check after acquiring write lock
 	if client, ok := c.incidentClients[key]; ok {
+		c.metrics.hits.Add(ctx, 1, typeAttr)
 		return client
 	}
 
 	client := createFn()
 	c.incidentClients[key] = client
+	c.metrics.misses.Add(ctx, 1, typeAttr)
+	c.metrics.size.Record(ctx, int64(len(c.incidentClients)), typeAttr)
 	slog.Debug("Cached new incident client", "key", key, "cache_size", len(c.incidentClients))
 	return client
 }
@@ -128,6 +192,10 @@ func (c *ClientCache) Close() {
 	for key := range c.grafanaClients {
 		delete(c.grafanaClients, key)
 	}
+
+	ctx := context.Background()
+	c.metrics.size.Record(ctx, 0, metric.WithAttributes(attrClientTypeGrafana))
+	c.metrics.size.Record(ctx, 0, metric.WithAttributes(attrClientTypeIncident))
 	slog.Debug("Client cache closed")
 }
 
