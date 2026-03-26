@@ -39,7 +39,7 @@ func TestClientCache_GrafanaClient(t *testing.T) {
 	assert.NotSame(t, client1, client3)
 	assert.Equal(t, 2, createCount)
 
-	g, _ := cache.Size()
+	g, _, _ := cache.Size()
 	assert.Equal(t, 2, g)
 }
 
@@ -63,7 +63,7 @@ func TestClientCache_IncidentClient(t *testing.T) {
 	assert.Same(t, client1, client2)
 	assert.Equal(t, 1, createCount)
 
-	_, i := cache.Size()
+	_, i, _ := cache.Size()
 	assert.Equal(t, 1, i)
 }
 
@@ -131,7 +131,7 @@ func TestClientCache_DifferentCredentials(t *testing.T) {
 	assert.NotSame(t, clients[0], clients[2])
 	assert.NotSame(t, clients[0], clients[3])
 
-	g, _ := cache.Size()
+	g, _, _ := cache.Size()
 	assert.Equal(t, 4, g) // 4 unique keys
 }
 
@@ -158,13 +158,15 @@ func TestClientCache_Close(t *testing.T) {
 		return incident.NewClient("http://localhost:3000/incident", "key")
 	})
 
-	g, i := cache.Size()
+	g, i, k := cache.Size()
 	assert.Equal(t, 1, g)
 	assert.Equal(t, 1, i)
+	assert.Equal(t, 0, k)
 
 	cache.Close()
 
-	g, i = cache.Size()
+	g, i, k = cache.Size()
 	assert.Equal(t, 0, g)
 	assert.Equal(t, 0, i)
+	assert.Equal(t, 0, k)
 }

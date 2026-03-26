@@ -286,10 +286,10 @@ func (c *ClientCache) Close() {
 }
 
 // Size returns the number of cached clients (for testing/metrics).
-func (c *ClientCache) Size() (grafana, incident int) {
+func (c *ClientCache) Size() (grafana, incident, k8s int) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return len(c.grafanaClients), len(c.incidentClients)
+	return len(c.grafanaClients), len(c.incidentClients), len(c.k8sClients)
 }
 
 // hashAPIKey returns a short hash of the API key for use in logging.
