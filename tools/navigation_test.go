@@ -93,9 +93,11 @@ func TestGenerateDeeplink(t *testing.T) {
 	})
 
 	t.Run("Explore deeplink with time range inside left JSON", func(t *testing.T) {
+		useLegacy := true
 		params := GenerateDeeplinkParams{
-			ResourceType:  "explore",
-			DatasourceUID: stringPtr("prometheus-uid"),
+			ResourceType:        "explore",
+			DatasourceUID:       stringPtr("prometheus-uid"),
+			UseLegacyExploreURL: &useLegacy,
 			TimeRange: &TimeRange{
 				From: "now-1h",
 				To:   "now",
@@ -123,9 +125,11 @@ func TestGenerateDeeplink(t *testing.T) {
 	})
 
 	t.Run("Explore deeplink with queries", func(t *testing.T) {
+		useLegacy := true
 		params := GenerateDeeplinkParams{
-			ResourceType:  "explore",
-			DatasourceUID: stringPtr("prometheus-uid"),
+			ResourceType:        "explore",
+			DatasourceUID:       stringPtr("prometheus-uid"),
+			UseLegacyExploreURL: &useLegacy,
 			Queries: []map[string]interface{}{
 				{"refId": "A", "expr": "up"},
 			},

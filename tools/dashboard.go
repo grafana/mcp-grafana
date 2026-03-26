@@ -130,14 +130,15 @@ func getDashboardByUIDKubernetesWithVersion(ctx context.Context, instance *mcpgr
 // convertKubernetesDashboardToLegacy converts a kubernetes-style dashboard response
 // to the legacy DashboardFullWithMeta format for compatibility with existing code.
 func convertKubernetesDashboardToLegacy(k8sDashboard *mcpgrafana.KubernetesDashboard) (*models.DashboardFullWithMeta, error) {
-	// The spec contains the actual dashboard JSON
-	dashboardJSON := k8sDashboard.Spec
+	// Copy the spec to avoid mutating the caller's KubernetesDashboard.
+	dashboardJSON := make(map[string]interface{}, len(k8sDashboard.Spec))
+	for k, v := range k8sDashboard.Spec {
+		dashboardJSON[k] = v
+	}
 
 	// Add UID to the dashboard spec if not present
-	if dashboardJSON != nil {
-		if _, hasUID := dashboardJSON["uid"]; !hasUID {
-			dashboardJSON["uid"] = k8sDashboard.Metadata.Name
-		}
+	if _, hasUID := dashboardJSON["uid"]; !hasUID {
+		dashboardJSON["uid"] = k8sDashboard.Metadata.Name
 	}
 
 	// Extract folder UID from annotations

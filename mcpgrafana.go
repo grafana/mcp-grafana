@@ -863,7 +863,7 @@ var ExtractGrafanaInstanceFromEnv server.StdioContextFunc = func(ctx context.Con
 	config := GrafanaConfigFromContext(ctx)
 	legacyClient := GrafanaClientFromContext(ctx)
 	httpClient := NewHTTPClient(ctx, config)
-	instance := NewGrafanaInstance(config, legacyClient, httpClient)
+	instance := NewGrafanaInstance(config, legacyClient.GrafanaHTTPAPI, httpClient)
 	return WithGrafanaInstance(ctx, instance)
 }
 
@@ -873,7 +873,7 @@ var ExtractGrafanaInstanceFromHeaders httpContextFunc = func(ctx context.Context
 	config := GrafanaConfigFromContext(ctx)
 	legacyClient := GrafanaClientFromContext(ctx)
 	httpClient := NewHTTPClient(ctx, config)
-	instance := NewGrafanaInstance(config, legacyClient, httpClient)
+	instance := NewGrafanaInstance(config, legacyClient.GrafanaHTTPAPI, httpClient)
 	return WithGrafanaInstance(ctx, instance)
 }
 
