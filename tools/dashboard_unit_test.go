@@ -530,7 +530,7 @@ func createTestContext(server *httptest.Server) context.Context {
 	instance := mcpgrafana.NewGrafanaInstance(config, legacyClient, server.Client())
 
 	ctx := context.Background()
-	ctx = mcpgrafana.WithGrafanaClient(ctx, legacyClient)
+	ctx = mcpgrafana.WithGrafanaClient(ctx, &mcpgrafana.GrafanaClient{GrafanaHTTPAPI: legacyClient})
 	ctx = mcpgrafana.WithGrafanaInstance(ctx, instance)
 
 	return ctx
@@ -559,7 +559,7 @@ func createLegacyOnlyContext(server *httptest.Server) context.Context {
 	cfg.APIKey = "test-api-key"
 
 	legacyClient := client.NewHTTPClientWithConfig(nil, cfg)
-	return mcpgrafana.WithGrafanaClient(context.Background(), legacyClient)
+	return mcpgrafana.WithGrafanaClient(context.Background(), &mcpgrafana.GrafanaClient{GrafanaHTTPAPI: legacyClient})
 }
 
 func TestGetDashboardByUID_LegacyAPI(t *testing.T) {
