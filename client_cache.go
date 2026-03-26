@@ -130,7 +130,9 @@ func (c *ClientCache) GetOrCreateGrafanaClient(key clientCacheKey, createFn func
 
 	// Slow path: use singleflight to create outside the lock,
 	// deduplicating concurrent requests for the same key.
-	sfKey := key.String()
+	// Use fmt.Sprintf("%v", key) for the singleflight key to include actual
+	// credential values (the struct fields), not the redacted String() output.
+	sfKey := fmt.Sprintf("%v", key)
 	val, _, _ := c.sfGrafana.Do(sfKey, func() (any, error) {
 		// Double-check after winning the singleflight race
 		c.mu.RLock()
@@ -148,9 +150,9 @@ func (c *ClientCache) GetOrCreateGrafanaClient(key clientCacheKey, createFn func
 		c.grafanaClients[key] = client
 		c.metrics.misses.Add(ctx, 1, typeAttr)
 		c.metrics.size.Record(ctx, int64(len(c.grafanaClients)), typeAttr)
+		slog.Debug("Cached new Grafana client", "key", key, "cache_size", len(c.grafanaClients))
 		c.mu.Unlock()
 
-		slog.Debug("Cached new Grafana client", "key", key, "cache_size", len(c.grafanaClients))
 		return client, nil
 	})
 
@@ -176,7 +178,7 @@ func (c *ClientCache) GetOrCreateIncidentClient(key clientCacheKey, createFn fun
 	c.mu.RUnlock()
 
 	// Slow path: use singleflight to create outside the lock
-	sfKey := key.String()
+	sfKey := fmt.Sprintf("%v", key)
 	val, _, _ := c.sfIncident.Do(sfKey, func() (any, error) {
 		c.mu.RLock()
 		if client, ok := c.incidentClients[key]; ok {
@@ -191,9 +193,9 @@ func (c *ClientCache) GetOrCreateIncidentClient(key clientCacheKey, createFn fun
 		c.incidentClients[key] = client
 		c.metrics.misses.Add(ctx, 1, typeAttr)
 		c.metrics.size.Record(ctx, int64(len(c.incidentClients)), typeAttr)
+		slog.Debug("Cached new incident client", "key", key, "cache_size", len(c.incidentClients))
 		c.mu.Unlock()
 
-		slog.Debug("Cached new incident client", "key", key, "cache_size", len(c.incidentClients))
 		return client, nil
 	})
 
