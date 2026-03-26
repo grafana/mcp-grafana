@@ -1,6 +1,7 @@
 package mcpgrafana
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -176,6 +177,17 @@ type KubernetesAPIError struct {
 
 func (e *KubernetesAPIError) Error() string {
 	return fmt.Sprintf("kubernetes API error: %s (HTTP %d): %s", e.Status, e.StatusCode, e.Body)
+}
+
+// DoRawRequest executes an authenticated HTTP request with an arbitrary method and path.
+// It is intended for operations like PUT and DELETE that are not covered by
+// the higher-level Get/List methods. The body parameter may be nil.
+func (c *KubernetesClient) DoRawRequest(ctx context.Context, method, path string, body []byte) ([]byte, error) {
+	var reader io.Reader
+	if body != nil {
+		reader = bytes.NewReader(body)
+	}
+	return c.doRequest(ctx, method, path, reader)
 }
 
 // doRequest executes an authenticated HTTP request and returns the response body.
