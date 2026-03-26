@@ -81,8 +81,11 @@ func (b *cloudMonitoringBackend) Query(ctx context.Context, expr string, queryTy
 		step = "60s"
 	}
 
-	// For instant queries, end may be zero — set it to start so the plugin
+	// For instant queries, start or end may be zero — ensure the plugin
 	// receives a valid time range (start <= end).
+	if start.IsZero() {
+		start = end
+	}
 	if end.IsZero() || end.Before(start) {
 		end = start
 	}

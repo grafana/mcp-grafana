@@ -52,7 +52,7 @@ func TestCloudMonitoringQuery(t *testing.T) {
 		result, err := queryPrometheus(ctx, QueryPrometheusParams{
 			DatasourceUID: cloudMonitoringTestDatasourceUID,
 			Expr:          `compute_googleapis_com:instance:cpu:utilization`,
-			StartTime:     "now",
+			EndTime:     "now",
 			QueryType:     "instant",
 		})
 		require.NoError(t, err)
