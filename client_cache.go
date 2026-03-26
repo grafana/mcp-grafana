@@ -48,6 +48,13 @@ func (k clientCacheKey) String() string {
 	return fmt.Sprintf("url=%s apiKey=%t basicAuth=%t orgID=%d", k.url, hasKey, hasBasic, k.orgID)
 }
 
+// singleflightKey returns a unique key for singleflight deduplication.
+// Unlike String(), this includes actual credential values to ensure different
+// credentials produce different keys, preventing cross-tenant client sharing.
+func (k clientCacheKey) singleflightKey() string {
+	return fmt.Sprintf("%s\x00%s\x00%s\x00%s\x00%d", k.url, k.apiKey, k.username, k.password, k.orgID)
+}
+
 // clientCacheMetrics holds OTel instruments for cache observability.
 type clientCacheMetrics struct {
 	lookups metric.Int64Counter // Total lookups (hits + misses)
@@ -130,7 +137,7 @@ func (c *ClientCache) GetOrCreateGrafanaClient(key clientCacheKey, createFn func
 
 	// Slow path: use singleflight to create outside the lock,
 	// deduplicating concurrent requests for the same key.
-	sfKey := key.String()
+	sfKey := key.singleflightKey()
 	val, _, _ := c.sfGrafana.Do(sfKey, func() (any, error) {
 		// Double-check after winning the singleflight race
 		c.mu.RLock()
@@ -148,9 +155,10 @@ func (c *ClientCache) GetOrCreateGrafanaClient(key clientCacheKey, createFn func
 		c.grafanaClients[key] = client
 		c.metrics.misses.Add(ctx, 1, typeAttr)
 		c.metrics.size.Record(ctx, int64(len(c.grafanaClients)), typeAttr)
+		cacheSize := len(c.grafanaClients)
 		c.mu.Unlock()
 
-		slog.Debug("Cached new Grafana client", "key", key, "cache_size", len(c.grafanaClients))
+		slog.Debug("Cached new Grafana client", "key", key, "cache_size", cacheSize)
 		return client, nil
 	})
 
@@ -176,7 +184,7 @@ func (c *ClientCache) GetOrCreateIncidentClient(key clientCacheKey, createFn fun
 	c.mu.RUnlock()
 
 	// Slow path: use singleflight to create outside the lock
-	sfKey := key.String()
+	sfKey := key.singleflightKey()
 	val, _, _ := c.sfIncident.Do(sfKey, func() (any, error) {
 		c.mu.RLock()
 		if client, ok := c.incidentClients[key]; ok {
@@ -191,9 +199,10 @@ func (c *ClientCache) GetOrCreateIncidentClient(key clientCacheKey, createFn fun
 		c.incidentClients[key] = client
 		c.metrics.misses.Add(ctx, 1, typeAttr)
 		c.metrics.size.Record(ctx, int64(len(c.incidentClients)), typeAttr)
+		cacheSize := len(c.incidentClients)
 		c.mu.Unlock()
 
-		slog.Debug("Cached new incident client", "key", key, "cache_size", len(c.incidentClients))
+		slog.Debug("Cached new incident client", "key", key, "cache_size", cacheSize)
 		return client, nil
 	})
 
