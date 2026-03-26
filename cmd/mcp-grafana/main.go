@@ -132,11 +132,9 @@ func (dt *disabledTools) addTools(s *server.MCPServer) {
 }
 
 func newServer(transport string, dt disabledTools, obs *observability.Observability, sessionIdleTimeoutMinutes int) (*server.MCPServer, *mcpgrafana.ToolManager, *mcpgrafana.SessionManager) {
-	var smOpts []mcpgrafana.SessionManagerOption
-	if sessionIdleTimeoutMinutes > 0 {
-		smOpts = append(smOpts, mcpgrafana.WithSessionTTL(time.Duration(sessionIdleTimeoutMinutes)*time.Minute))
-	}
-	sm := mcpgrafana.NewSessionManager(smOpts...)
+	sm := mcpgrafana.NewSessionManager(
+		mcpgrafana.WithSessionTTL(time.Duration(sessionIdleTimeoutMinutes) * time.Minute),
+	)
 
 	// Declare variable for ToolManager that will be initialized after server creation
 	var stm *mcpgrafana.ToolManager
