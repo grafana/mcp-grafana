@@ -641,7 +641,7 @@ func TestHTTPTracingConfiguration(t *testing.T) {
 		ctx := WithGrafanaConfig(context.Background(), config)
 
 		// Create Grafana client
-		client := NewGrafanaClient(ctx, "http://localhost:3000", "test-api-key", nil)
+		client, _ := NewGrafanaClient(ctx, "http://localhost:3000", "test-api-key", nil)
 		require.NotNil(t, client)
 
 		// Verify the client was created successfully (should not panic)
@@ -656,7 +656,7 @@ func TestHTTPTracingConfiguration(t *testing.T) {
 		ctx := WithGrafanaConfig(context.Background(), config)
 
 		// Create Grafana client (should not panic even without OTEL configured)
-		client := NewGrafanaClient(ctx, "http://localhost:3000", "test-api-key", nil)
+		client, _ := NewGrafanaClient(ctx, "http://localhost:3000", "test-api-key", nil)
 		require.NotNil(t, client)
 
 		// Verify the client was created successfully
@@ -720,7 +720,6 @@ func assertHasAttribute(t *testing.T, attributes []attribute.KeyValue, key strin
 	}
 	t.Errorf("Expected attribute %s with value %s not found", key, expectedValue)
 }
-
 
 func TestExtraHeadersFromEnv(t *testing.T) {
 	t.Run("empty env returns nil", func(t *testing.T) {
@@ -897,7 +896,7 @@ func TestNewGrafanaClientOrgIDTransport(t *testing.T) {
 		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{
 			OrgID: 99,
 		})
-		c := NewGrafanaClient(ctx, ts.URL, "test-key", nil)
+		c, _ := NewGrafanaClient(ctx, ts.URL, "test-key", nil)
 		require.NotNil(t, c)
 
 		// Make a real request through the client
@@ -917,7 +916,7 @@ func TestNewGrafanaClientOrgIDTransport(t *testing.T) {
 		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{
 			OrgID: 0,
 		})
-		c := NewGrafanaClient(ctx, ts.URL, "test-key", nil)
+		c, _ := NewGrafanaClient(ctx, ts.URL, "test-key", nil)
 		require.NotNil(t, c)
 
 		_, _ = c.Search.Search(nil, nil)
@@ -1031,7 +1030,7 @@ func TestFetchPublicURL(t *testing.T) {
 		})
 
 		extraHeaders := map[string]string{
-			"X-Custom-Auth": "proxy-token-123",
+			"X-Custom-Auth":   "proxy-token-123",
 			"X-Forwarded-For": "10.0.0.1",
 		}
 		fetchPublicURL(context.Background(), ts.URL, "", nil, nil, extraHeaders)
@@ -1102,7 +1101,7 @@ func TestNewGrafanaClientFetchesPublicURL(t *testing.T) {
 		})
 
 		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{})
-		gc := NewGrafanaClient(ctx, ts.URL, "test-key", nil)
+		gc, _ := NewGrafanaClient(ctx, ts.URL, "test-key", nil)
 		assert.Equal(t, "https://public.grafana.example.com", gc.PublicURL)
 	})
 
@@ -1117,7 +1116,7 @@ func TestNewGrafanaClientFetchesPublicURL(t *testing.T) {
 		})
 
 		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{})
-		gc := NewGrafanaClient(ctx, ts.URL, "test-key", nil)
+		gc, _ := NewGrafanaClient(ctx, ts.URL, "test-key", nil)
 		assert.Equal(t, "", gc.PublicURL)
 	})
 }

@@ -1,6 +1,7 @@
 package mcpgrafana
 
 import (
+	"net/http"
 	"net/url"
 	"sync"
 	"testing"
@@ -17,9 +18,9 @@ func TestClientCache_GrafanaClient(t *testing.T) {
 	key := clientCacheKey{url: "http://localhost:3000", apiKey: "test-key", orgID: 1}
 	createCount := 0
 
-	createFn := func() *GrafanaClient {
+	createFn := func() (*GrafanaClient, *http.Transport) {
 		createCount++
-		return &GrafanaClient{}
+		return &GrafanaClient{}, &http.Transport{}
 	}
 
 	// First call should create
@@ -50,9 +51,9 @@ func TestClientCache_IncidentClient(t *testing.T) {
 	key := clientCacheKey{url: "http://localhost:3000", apiKey: "test-key", orgID: 1}
 	createCount := 0
 
-	createFn := func() *incident.Client {
+	createFn := func() (*incident.Client, *http.Transport) {
 		createCount++
-		return incident.NewClient("http://localhost:3000/api/plugins/grafana-irm-app/resources/api/v1/", "test-key")
+		return incident.NewClient("http://localhost:3000/api/plugins/grafana-irm-app/resources/api/v1/", "test-key"), &http.Transport{}
 	}
 
 	client1 := cache.GetOrCreateIncidentClient(key, createFn)
@@ -76,11 +77,11 @@ func TestClientCache_ConcurrentAccess(t *testing.T) {
 	var mu sync.Mutex
 	createCount := 0
 
-	createFn := func() *GrafanaClient {
+	createFn := func() (*GrafanaClient, *http.Transport) {
 		mu.Lock()
 		createCount++
 		mu.Unlock()
-		return &GrafanaClient{}
+		return &GrafanaClient{}, &http.Transport{}
 	}
 
 	const numGoroutines = 50
@@ -111,16 +112,16 @@ func TestClientCache_DifferentCredentials(t *testing.T) {
 
 	keys := []clientCacheKey{
 		{url: "http://host1:3000", apiKey: "key1", orgID: 1},
-		{url: "http://host1:3000", apiKey: "key2", orgID: 1},       // different key
-		{url: "http://host1:3000", apiKey: "key1", orgID: 2},       // different org
-		{url: "http://host2:3000", apiKey: "key1", orgID: 1},       // different url
-		{url: "http://host1:3000", apiKey: "key1", orgID: 1},       // same as first
+		{url: "http://host1:3000", apiKey: "key2", orgID: 1}, // different key
+		{url: "http://host1:3000", apiKey: "key1", orgID: 2}, // different org
+		{url: "http://host2:3000", apiKey: "key1", orgID: 1}, // different url
+		{url: "http://host1:3000", apiKey: "key1", orgID: 1}, // same as first
 	}
 
 	clients := make([]*GrafanaClient, len(keys))
 	for i, key := range keys {
-		clients[i] = cache.GetOrCreateGrafanaClient(key, func() *GrafanaClient {
-			return &GrafanaClient{}
+		clients[i] = cache.GetOrCreateGrafanaClient(key, func() (*GrafanaClient, *http.Transport) {
+			return &GrafanaClient{}, &http.Transport{}
 		})
 	}
 
@@ -151,11 +152,11 @@ func TestClientCache_Close(t *testing.T) {
 	cache := NewClientCache()
 
 	key := clientCacheKey{url: "http://localhost:3000", apiKey: "key", orgID: 1}
-	cache.GetOrCreateGrafanaClient(key, func() *GrafanaClient {
-		return &GrafanaClient{}
+	cache.GetOrCreateGrafanaClient(key, func() (*GrafanaClient, *http.Transport) {
+		return &GrafanaClient{}, &http.Transport{}
 	})
-	cache.GetOrCreateIncidentClient(key, func() *incident.Client {
-		return incident.NewClient("http://localhost:3000/incident", "key")
+	cache.GetOrCreateIncidentClient(key, func() (*incident.Client, *http.Transport) {
+		return incident.NewClient("http://localhost:3000/incident", "key"), &http.Transport{}
 	})
 
 	g, i := cache.Size()

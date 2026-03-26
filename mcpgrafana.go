@@ -641,7 +641,8 @@ func doFetchPublicURL(ctx context.Context, grafanaURL, apiKey string, auth *url.
 // The client is automatically configured with the correct HTTP scheme, debug settings from context, custom TLS configuration if present, and OpenTelemetry instrumentation for distributed tracing.
 // It also fetches the Grafana instance's public URL from /api/frontend/settings for use in deep link generation.
 // The org ID is read from the GrafanaConfig in the context, which should be set by ExtractGrafanaInfoFromEnv or ExtractGrafanaInfoFromHeaders before calling this function.
-func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.Userinfo) *GrafanaClient {
+// Returns both the client and the underlying transport for cleanup purposes.
+func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.Userinfo) (*GrafanaClient, *http.Transport) {
 	cfg := client.DefaultTransportConfig()
 
 	var parsedURL *url.URL
@@ -701,6 +702,9 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 	slog.Debug("Creating Grafana client", "url", parsedURL.Redacted(), "api_key_set", apiKey != "", "basic_auth_set", config.BasicAuth != nil, "org_id", cfg.OrgID, "timeout", timeout, "extra_headers_count", len(config.ExtraHeaders))
 	grafanaClient := client.NewHTTPClientWithConfig(strfmt.Default, cfg)
 
+	// Track the underlying transport for cleanup
+	var underlyingTransport *http.Transport
+
 	// Always enable HTTP tracing for context propagation (no-op when no exporter configured)
 	// Use reflection to wrap the transport without importing the runtime client package
 	v := reflect.ValueOf(grafanaClient.Transport)
@@ -728,6 +732,7 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 					if cfg.TLSConfig != nil {
 						timeoutTransport.TLSClientConfig = cfg.TLSConfig
 					}
+					underlyingTransport = timeoutTransport
 					var rt http.RoundTripper = timeoutTransport
 					if len(config.ExtraHeaders) > 0 {
 						rt = NewExtraHeadersRoundTripper(rt, config.ExtraHeaders)
@@ -750,7 +755,7 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 	return &GrafanaClient{
 		GrafanaHTTPAPI: grafanaClient,
 		PublicURL:      publicURL,
-	}
+	}, underlyingTransport
 }
 
 // ExtractGrafanaClientFromEnv is a StdioContextFunc that creates and injects a Grafana client into the context.
@@ -763,7 +768,7 @@ var ExtractGrafanaClientFromEnv server.StdioContextFunc = func(ctx context.Conte
 		grafanaURL = defaultGrafanaURL
 	}
 	auth := userAndPassFromEnv()
-	grafanaClient := NewGrafanaClient(ctx, grafanaURL, apiKey, auth)
+	grafanaClient, _ := NewGrafanaClient(ctx, grafanaURL, apiKey, auth)
 	return WithGrafanaClient(ctx, grafanaClient)
 }
 
@@ -779,7 +784,7 @@ var ExtractGrafanaClientFromHeaders httpContextFunc = func(ctx context.Context, 
 	u, apiKey, basicAuth, _ := extractKeyGrafanaInfoFromReq(req)
 	slog.Debug("Creating Grafana client", "url", u, "api_key_set", apiKey != "", "basic_auth_set", basicAuth != nil)
 
-	grafanaClient := NewGrafanaClient(ctx, u, apiKey, basicAuth)
+	grafanaClient, _ := NewGrafanaClient(ctx, u, apiKey, basicAuth)
 	return WithGrafanaClient(ctx, grafanaClient)
 }
 

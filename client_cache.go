@@ -24,9 +24,9 @@ type clientCacheKey struct {
 // cacheKeyFromRequest builds a clientCacheKey from request-derived credentials.
 func cacheKeyFromRequest(grafanaURL, apiKey string, basicAuth *url.Userinfo, orgID int64) clientCacheKey {
 	key := clientCacheKey{
-		url:   grafanaURL,
+		url:    grafanaURL,
 		apiKey: apiKey,
-		orgID: orgID,
+		orgID:  orgID,
 	}
 	if basicAuth != nil {
 		key.username = basicAuth.Username()
@@ -73,7 +73,8 @@ func NewClientCache() *ClientCache {
 
 // GetOrCreateGrafanaClient returns a cached Grafana client for the given key,
 // or creates one using createFn if no cached client exists.
-func (c *ClientCache) GetOrCreateGrafanaClient(key clientCacheKey, createFn func() *GrafanaClient) *GrafanaClient {
+// createFn must return both the client and the underlying transport for cleanup.
+func (c *ClientCache) GetOrCreateGrafanaClient(key clientCacheKey, createFn func() (*GrafanaClient, *http.Transport)) *GrafanaClient {
 	// Fast path: check with read lock
 	c.mu.RLock()
 	if entry, ok := c.grafanaClients[key]; ok {
@@ -91,15 +92,16 @@ func (c *ClientCache) GetOrCreateGrafanaClient(key clientCacheKey, createFn func
 		return entry.client
 	}
 
-	client := createFn()
-	c.grafanaClients[key] = &grafanaCacheEntry{client: client}
+	client, transport := createFn()
+	c.grafanaClients[key] = &grafanaCacheEntry{client: client, transport: transport}
 	slog.Debug("Cached new Grafana client", "key", key, "cache_size", len(c.grafanaClients))
 	return client
 }
 
 // GetOrCreateIncidentClient returns a cached incident client for the given key,
 // or creates one using createFn if no cached client exists.
-func (c *ClientCache) GetOrCreateIncidentClient(key clientCacheKey, createFn func() *incident.Client) *incident.Client {
+// createFn must return both the client and the underlying transport for cleanup.
+func (c *ClientCache) GetOrCreateIncidentClient(key clientCacheKey, createFn func() (*incident.Client, *http.Transport)) *incident.Client {
 	// Fast path: check with read lock
 	c.mu.RLock()
 	if entry, ok := c.incidentClients[key]; ok {
@@ -117,8 +119,8 @@ func (c *ClientCache) GetOrCreateIncidentClient(key clientCacheKey, createFn fun
 		return entry.client
 	}
 
-	client := createFn()
-	c.incidentClients[key] = &incidentCacheEntry{client: client}
+	client, transport := createFn()
+	c.incidentClients[key] = &incidentCacheEntry{client: client, transport: transport}
 	slog.Debug("Cached new incident client", "key", key, "cache_size", len(c.incidentClients))
 	return client
 }
@@ -171,7 +173,7 @@ func extractGrafanaClientCached(cache *ClientCache) httpContextFunc {
 		u, apiKey, basicAuth, _ := extractKeyGrafanaInfoFromReq(req)
 		key := cacheKeyFromRequest(u, apiKey, basicAuth, config.OrgID)
 
-		grafanaClient := cache.GetOrCreateGrafanaClient(key, func() *GrafanaClient {
+		grafanaClient := cache.GetOrCreateGrafanaClient(key, func() (*GrafanaClient, *http.Transport) {
 			slog.Debug("Creating new Grafana client (cache miss)", "url", u, "api_key_hash", hashAPIKey(apiKey))
 			return NewGrafanaClient(ctx, u, apiKey, basicAuth)
 		})
@@ -186,21 +188,22 @@ func extractIncidentClientCached(cache *ClientCache) httpContextFunc {
 		grafanaURL, apiKey, _, orgID := extractKeyGrafanaInfoFromReq(req)
 		key := cacheKeyFromRequest(grafanaURL, apiKey, nil, orgID)
 
-		incidentClient := cache.GetOrCreateIncidentClient(key, func() *incident.Client {
+		incidentClient := cache.GetOrCreateIncidentClient(key, func() (*incident.Client, *http.Transport) {
 			incidentURL := fmt.Sprintf("%s/api/plugins/grafana-irm-app/resources/api/v1/", grafanaURL)
 			slog.Debug("Creating new incident client (cache miss)", "url", incidentURL)
 			client := incident.NewClient(incidentURL, apiKey)
 
+			baseTransport := http.DefaultTransport.(*http.Transport).Clone()
 			config := GrafanaConfigFromContext(ctx)
-			transport, err := BuildTransport(&config, nil)
+			transport, err := BuildTransport(&config, baseTransport)
 			if err != nil {
 				slog.Error("Failed to create custom transport for incident client, using default", "error", err)
-			} else {
-				orgIDWrapped := NewOrgIDRoundTripper(transport, orgID)
-				client.HTTPClient.Transport = wrapWithUserAgent(orgIDWrapped)
+				return client, nil
 			}
+			orgIDWrapped := NewOrgIDRoundTripper(transport, orgID)
+			client.HTTPClient.Transport = wrapWithUserAgent(orgIDWrapped)
 
-			return client
+			return client, baseTransport
 		})
 
 		return WithIncidentClient(ctx, incidentClient)
