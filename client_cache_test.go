@@ -39,7 +39,7 @@ func TestClientCache_GrafanaClient(t *testing.T) {
 	assert.NotSame(t, client1, client3)
 	assert.Equal(t, 2, createCount)
 
-	g, _ := cache.Size()
+	g, _, _ := cache.Size()
 	assert.Equal(t, 2, g)
 }
 
@@ -63,8 +63,42 @@ func TestClientCache_IncidentClient(t *testing.T) {
 	assert.Same(t, client1, client2)
 	assert.Equal(t, 1, createCount)
 
-	_, i := cache.Size()
+	_, i, _ := cache.Size()
 	assert.Equal(t, 1, i)
+}
+
+func TestClientCache_KubernetesClient(t *testing.T) {
+	cache := NewClientCache()
+	defer cache.Close()
+
+	key := clientCacheKey{url: "http://localhost:3000", apiKey: "test-key", orgID: 1}
+	createCount := 0
+
+	createFn := func() (*KubernetesClient, error) {
+		createCount++
+		return &KubernetesClient{BaseURL: "http://localhost:3000"}, nil
+	}
+
+	client1, err := cache.GetOrCreateKubernetesClient(key, createFn)
+	require.NoError(t, err)
+	require.NotNil(t, client1)
+	assert.Equal(t, 1, createCount)
+
+	client2, err := cache.GetOrCreateKubernetesClient(key, createFn)
+	require.NoError(t, err)
+	assert.Same(t, client1, client2)
+	assert.Equal(t, 1, createCount, "createFn should not be called again for same key")
+
+	// Different key should create new client
+	key2 := clientCacheKey{url: "http://other:3000", apiKey: "other-key", orgID: 2}
+	client3, err := cache.GetOrCreateKubernetesClient(key2, createFn)
+	require.NoError(t, err)
+	require.NotNil(t, client3)
+	assert.NotSame(t, client1, client3)
+	assert.Equal(t, 2, createCount)
+
+	_, _, k := cache.Size()
+	assert.Equal(t, 2, k)
 }
 
 func TestClientCache_ConcurrentAccess(t *testing.T) {
@@ -131,7 +165,7 @@ func TestClientCache_DifferentCredentials(t *testing.T) {
 	assert.NotSame(t, clients[0], clients[2])
 	assert.NotSame(t, clients[0], clients[3])
 
-	g, _ := cache.Size()
+	g, _, _ := cache.Size()
 	assert.Equal(t, 4, g) // 4 unique keys
 }
 
@@ -157,14 +191,19 @@ func TestClientCache_Close(t *testing.T) {
 	cache.GetOrCreateIncidentClient(key, func() *incident.Client {
 		return incident.NewClient("http://localhost:3000/incident", "key")
 	})
+	_, _ = cache.GetOrCreateKubernetesClient(key, func() (*KubernetesClient, error) {
+		return &KubernetesClient{BaseURL: "http://localhost:3000"}, nil
+	})
 
-	g, i := cache.Size()
+	g, i, k := cache.Size()
 	assert.Equal(t, 1, g)
 	assert.Equal(t, 1, i)
+	assert.Equal(t, 1, k)
 
 	cache.Close()
 
-	g, i = cache.Size()
+	g, i, k = cache.Size()
 	assert.Equal(t, 0, g)
 	assert.Equal(t, 0, i)
+	assert.Equal(t, 0, k)
 }

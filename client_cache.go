@@ -85,28 +85,32 @@ func newClientCacheMetrics() clientCacheMetrics {
 }
 
 var (
-	attrClientTypeGrafana  = attribute.String("client.type", "grafana")
-	attrClientTypeIncident = attribute.String("client.type", "incident")
+	attrClientTypeGrafana    = attribute.String("client.type", "grafana")
+	attrClientTypeIncident   = attribute.String("client.type", "incident")
+	attrClientTypeKubernetes = attribute.String("client.type", "kubernetes")
 )
 
 // ClientCache caches HTTP clients keyed by credentials to avoid creating
 // new transports per request. This prevents the memory leak described in
 // https://github.com/grafana/mcp-grafana/issues/682.
 type ClientCache struct {
-	mu              sync.RWMutex
-	grafanaClients  map[clientCacheKey]*GrafanaClient
-	incidentClients map[clientCacheKey]*incident.Client
-	metrics         clientCacheMetrics
-	sfGrafana       singleflight.Group
-	sfIncident      singleflight.Group
+	mu                sync.RWMutex
+	grafanaClients    map[clientCacheKey]*GrafanaClient
+	incidentClients   map[clientCacheKey]*incident.Client
+	kubernetesClients map[clientCacheKey]*KubernetesClient
+	metrics           clientCacheMetrics
+	sfGrafana         singleflight.Group
+	sfIncident        singleflight.Group
+	sfKubernetes      singleflight.Group
 }
 
 // NewClientCache creates a new client cache.
 func NewClientCache() *ClientCache {
 	return &ClientCache{
-		grafanaClients:  make(map[clientCacheKey]*GrafanaClient),
-		incidentClients: make(map[clientCacheKey]*incident.Client),
-		metrics:         newClientCacheMetrics(),
+		grafanaClients:    make(map[clientCacheKey]*GrafanaClient),
+		incidentClients:   make(map[clientCacheKey]*incident.Client),
+		kubernetesClients: make(map[clientCacheKey]*KubernetesClient),
+		metrics:           newClientCacheMetrics(),
 	}
 }
 
@@ -202,9 +206,58 @@ func (c *ClientCache) GetOrCreateIncidentClient(key clientCacheKey, createFn fun
 	return val.(*incident.Client)
 }
 
-// Close cleans up cached clients. For incident clients, idle connections
-// are closed via the underlying HTTP transport. Grafana clients use a
-// go-openapi runtime whose transport is set via reflection, so we clear
+// GetOrCreateKubernetesClient returns a cached Kubernetes client for the given key,
+// or creates one using createFn if no cached client exists.
+// The createFn is called outside the cache lock via singleflight to avoid
+// blocking concurrent cache reads during slow client creation.
+func (c *ClientCache) GetOrCreateKubernetesClient(key clientCacheKey, createFn func() (*KubernetesClient, error)) (*KubernetesClient, error) {
+	ctx := context.Background()
+	typeAttr := metric.WithAttributes(attrClientTypeKubernetes)
+	c.metrics.lookups.Add(ctx, 1, typeAttr)
+
+	// Fast path: check with read lock
+	c.mu.RLock()
+	if client, ok := c.kubernetesClients[key]; ok {
+		c.mu.RUnlock()
+		c.metrics.hits.Add(ctx, 1, typeAttr)
+		return client, nil
+	}
+	c.mu.RUnlock()
+
+	// Slow path: use singleflight to create outside the lock
+	sfKey := fmt.Sprintf("%v", key)
+	val, err, _ := c.sfKubernetes.Do(sfKey, func() (any, error) {
+		c.mu.RLock()
+		if client, ok := c.kubernetesClients[key]; ok {
+			c.mu.RUnlock()
+			return client, nil
+		}
+		c.mu.RUnlock()
+
+		client, err := createFn()
+		if err != nil {
+			return nil, err
+		}
+
+		c.mu.Lock()
+		c.kubernetesClients[key] = client
+		c.metrics.misses.Add(ctx, 1, typeAttr)
+		c.metrics.size.Record(ctx, int64(len(c.kubernetesClients)), typeAttr)
+		slog.Debug("Cached new Kubernetes client", "key", key, "cache_size", len(c.kubernetesClients))
+		c.mu.Unlock()
+
+		return client, nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+	return val.(*KubernetesClient), nil
+}
+
+// Close cleans up cached clients. For incident and Kubernetes clients, idle
+// connections are closed via the underlying HTTP transport. Grafana clients
+// use a go-openapi runtime whose transport is set via reflection, so we clear
 // the map and let the GC reclaim resources.
 func (c *ClientCache) Close() {
 	c.mu.Lock()
@@ -216,6 +269,12 @@ func (c *ClientCache) Close() {
 		}
 		delete(c.incidentClients, key)
 	}
+	for key, client := range c.kubernetesClients {
+		if client.HTTPClient != nil {
+			client.HTTPClient.CloseIdleConnections()
+		}
+		delete(c.kubernetesClients, key)
+	}
 	for key := range c.grafanaClients {
 		delete(c.grafanaClients, key)
 	}
@@ -223,14 +282,15 @@ func (c *ClientCache) Close() {
 	ctx := context.Background()
 	c.metrics.size.Record(ctx, 0, metric.WithAttributes(attrClientTypeGrafana))
 	c.metrics.size.Record(ctx, 0, metric.WithAttributes(attrClientTypeIncident))
+	c.metrics.size.Record(ctx, 0, metric.WithAttributes(attrClientTypeKubernetes))
 	slog.Debug("Client cache closed")
 }
 
 // Size returns the number of cached clients (for testing/metrics).
-func (c *ClientCache) Size() (grafana, incident int) {
+func (c *ClientCache) Size() (grafana, incident, kubernetes int) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return len(c.grafanaClients), len(c.incidentClients)
+	return len(c.grafanaClients), len(c.incidentClients), len(c.kubernetesClients)
 }
 
 // hashAPIKey returns a short hash of the API key for use in logging.
@@ -287,5 +347,24 @@ func extractIncidentClientCached(cache *ClientCache) httpContextFunc {
 		})
 
 		return WithIncidentClient(ctx, incidentClient)
+	}
+}
+
+// extractKubernetesClientCached creates an httpContextFunc that uses the cache.
+func extractKubernetesClientCached(cache *ClientCache) httpContextFunc {
+	return func(ctx context.Context, req *http.Request) context.Context {
+		grafanaURL, apiKey, basicAuth, orgID := extractKeyGrafanaInfoFromReq(req)
+		key := cacheKeyFromRequest(grafanaURL, apiKey, basicAuth, orgID)
+
+		k8sClient, err := cache.GetOrCreateKubernetesClient(key, func() (*KubernetesClient, error) {
+			slog.Debug("Creating new Kubernetes client (cache miss)", "url", grafanaURL, "api_key_hash", hashAPIKey(apiKey))
+			return NewKubernetesClient(ctx)
+		})
+		if err != nil {
+			slog.Warn("Failed to create Kubernetes client from headers", "error", err)
+			return ctx
+		}
+
+		return WithKubernetesClient(ctx, k8sClient)
 	}
 }
