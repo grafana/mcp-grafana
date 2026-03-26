@@ -373,11 +373,7 @@ func TestToolTracingInstrumentation(t *testing.T) {
 
 		// Create a mock MCP request
 		request := mcp.CallToolRequest{
-			Params: struct {
-				Name      string    `json:"name"`
-				Arguments any       `json:"arguments,omitempty"`
-				Meta      *mcp.Meta `json:"_meta,omitempty"`
-			}{
+			Params: mcp.CallToolParams{
 				Name: "test_tool",
 				Arguments: map[string]interface{}{
 					"message": "world",
@@ -430,11 +426,7 @@ func TestToolTracingInstrumentation(t *testing.T) {
 
 		// Create a mock MCP request that will cause failure
 		request := mcp.CallToolRequest{
-			Params: struct {
-				Name      string    `json:"name"`
-				Arguments any       `json:"arguments,omitempty"`
-				Meta      *mcp.Meta `json:"_meta,omitempty"`
-			}{
+			Params: mcp.CallToolParams{
 				Name: "failing_tool",
 				Arguments: map[string]interface{}{
 					"shouldFail": true,
@@ -491,11 +483,7 @@ func TestToolTracingInstrumentation(t *testing.T) {
 
 		// Create a mock MCP request
 		request := mcp.CallToolRequest{
-			Params: struct {
-				Name      string    `json:"name"`
-				Arguments any       `json:"arguments,omitempty"`
-				Meta      *mcp.Meta `json:"_meta,omitempty"`
-			}{
+			Params: mcp.CallToolParams{
 				Name: "context_prop_tool",
 				Arguments: map[string]interface{}{
 					"message": "test",
@@ -541,11 +529,7 @@ func TestToolTracingInstrumentation(t *testing.T) {
 
 		// Create a mock MCP request with potentially sensitive data
 		request := mcp.CallToolRequest{
-			Params: struct {
-				Name      string    `json:"name"`
-				Arguments any       `json:"arguments,omitempty"`
-				Meta      *mcp.Meta `json:"_meta,omitempty"`
-			}{
+			Params: mcp.CallToolParams{
 				Name: "sensitive_tool",
 				Arguments: map[string]interface{}{
 					"sensitiveData": "user@example.com",
@@ -601,11 +585,7 @@ func TestToolTracingInstrumentation(t *testing.T) {
 
 		// Create a mock MCP request
 		request := mcp.CallToolRequest{
-			Params: struct {
-				Name      string    `json:"name"`
-				Arguments any       `json:"arguments,omitempty"`
-				Meta      *mcp.Meta `json:"_meta,omitempty"`
-			}{
+			Params: mcp.CallToolParams{
 				Name: "debug_tool",
 				Arguments: map[string]interface{}{
 					"safeData": "debug-value",
