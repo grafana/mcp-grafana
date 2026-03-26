@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
+	"time"
 )
 
 // KubernetesClient is a lightweight, generic HTTP client for Grafana's
@@ -28,7 +30,16 @@ type KubernetesClient struct {
 	// HTTPClient is the underlying HTTP client used for requests.
 	// If nil, http.DefaultClient is used.
 	HTTPClient *http.Client
+
+	// capsMu protects the cached capabilities fields below.
+	capsMu    sync.Mutex
+	cachedCaps *GrafanaCapabilities
+	capsExpiry time.Time
 }
+
+// capabilitiesTTL is the duration for which cached capabilities are considered
+// valid. After this period, DiscoverCapabilities will re-fetch from the server.
+const capabilitiesTTL = 1 * time.Minute
 
 // NewKubernetesClient creates a KubernetesClient from the GrafanaConfig in ctx.
 // It reuses BuildTransport so TLS, extra headers, OrgID, and user-agent are

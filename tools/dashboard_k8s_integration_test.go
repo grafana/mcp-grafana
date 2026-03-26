@@ -147,9 +147,11 @@ func TestK8sGetDashboardByUID_K8sAPI(t *testing.T) {
 	}
 }
 
-func TestK8sGetDashboardByUID_FallbackToLegacy(t *testing.T) {
-	// Use the regular Grafana (port 3000) which has no k8s APIs.
-	// This verifies the legacy fallback path works.
+func TestK8sGetDashboardByUID_LegacyPathWithoutK8sClient(t *testing.T) {
+	// This test verifies that getDashboardByUID falls back to the legacy API
+	// when no KubernetesClient is present in the context. It does NOT test
+	// the 406 → k8s retry path (that would require a mock server returning 406
+	// from the legacy endpoint).
 	ctx := newTestContext()
 
 	// Verify this is a non-k8s Grafana by checking that no k8s client is in context
