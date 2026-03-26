@@ -37,6 +37,12 @@ func (c *KubernetesClient) DiscoverCapabilities(ctx context.Context) (*GrafanaCa
 	// Slow path: use singleflight to deduplicate concurrent discovery calls.
 	// This prevents a thundering herd when the cache expires and multiple
 	// goroutines race to re-discover capabilities.
+	//
+	// Extract GrafanaConfig before entering singleflight so it can be injected
+	// into the detached context below. This is needed because doRequest reads
+	// auth credentials from the context.
+	cfg := GrafanaConfigFromContext(ctx)
+
 	val, err, _ := c.capsSF.Do("discover", func() (interface{}, error) {
 		// Double-check cache after winning the singleflight race.
 		c.capsMu.Lock()
@@ -47,7 +53,14 @@ func (c *KubernetesClient) DiscoverCapabilities(ctx context.Context) (*GrafanaCa
 		}
 		c.capsMu.Unlock()
 
-		caps, err := c.discoverCapabilitiesUncached(ctx)
+		// Use a detached context with timeout so that a cancelled request
+		// context from the first caller doesn't fail the fetch for all waiters.
+		// Re-inject GrafanaConfig since doRequest reads auth from the context.
+		discoverCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		discoverCtx = WithGrafanaConfig(discoverCtx, cfg)
+
+		caps, err := c.discoverCapabilitiesUncached(discoverCtx)
 		if err != nil {
 			return nil, err
 		}
