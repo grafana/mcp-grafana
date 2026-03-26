@@ -5,13 +5,24 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
 
+const (
+	// DefaultSessionTTL is the default time-to-live for idle sessions.
+	// Sessions with no activity for this duration are reaped.
+	DefaultSessionTTL = 30 * time.Minute
+)
+
 // SessionState holds the state for a single client session
 type SessionState struct {
+	// lastActivity is the last time this session was accessed.
+	// Updated on every GetSession call.
+	lastActivity time.Time
+
 	// Proxied tools state
 	initOnce                sync.Once
 	proxiedToolsInitialized bool
@@ -23,21 +34,49 @@ type SessionState struct {
 
 func newSessionState() *SessionState {
 	return &SessionState{
+		lastActivity:      time.Now(),
 		proxiedClients:    make(map[string]*ProxiedClient),
 		toolToDatasources: make(map[string][]string),
 	}
 }
 
-// SessionManager manages client sessions and their state
-type SessionManager struct {
-	sessions map[string]*SessionState
-	mutex    sync.RWMutex
+// SessionManagerOption configures a SessionManager.
+type SessionManagerOption func(*SessionManager)
+
+// WithSessionTTL sets the TTL for idle sessions. Sessions idle longer than
+// this duration are automatically reaped. A zero or negative value disables
+// the reaper.
+func WithSessionTTL(ttl time.Duration) SessionManagerOption {
+	return func(sm *SessionManager) {
+		sm.sessionTTL = ttl
+	}
 }
 
-func NewSessionManager() *SessionManager {
-	return &SessionManager{
-		sessions: make(map[string]*SessionState),
+// SessionManager manages client sessions and their state
+type SessionManager struct {
+	sessions   map[string]*SessionState
+	mutex      sync.RWMutex
+	sessionTTL time.Duration
+	stopReaper chan struct{}
+	reaperDone chan struct{}
+}
+
+func NewSessionManager(opts ...SessionManagerOption) *SessionManager {
+	sm := &SessionManager{
+		sessions:   make(map[string]*SessionState),
+		sessionTTL: DefaultSessionTTL,
+		stopReaper: make(chan struct{}),
+		reaperDone: make(chan struct{}),
 	}
+	for _, opt := range opts {
+		opt(sm)
+	}
+	if sm.sessionTTL > 0 {
+		go sm.runReaper()
+	} else {
+		close(sm.reaperDone)
+	}
+	return sm
 }
 
 func (sm *SessionManager) CreateSession(ctx context.Context, session server.ClientSession) {
@@ -51,10 +90,13 @@ func (sm *SessionManager) CreateSession(ctx context.Context, session server.Clie
 }
 
 func (sm *SessionManager) GetSession(sessionID string) (*SessionState, bool) {
-	sm.mutex.RLock()
-	defer sm.mutex.RUnlock()
+	sm.mutex.Lock()
+	defer sm.mutex.Unlock()
 
 	session, exists := sm.sessions[sessionID]
+	if exists {
+		session.lastActivity = time.Now()
+	}
 	return session, exists
 }
 
@@ -69,7 +111,11 @@ func (sm *SessionManager) RemoveSession(ctx context.Context, session server.Clie
 		return
 	}
 
-	// Clean up proxied clients outside of the main lock
+	cleanupSessionState(state)
+}
+
+// cleanupSessionState closes all proxied clients in a session state.
+func cleanupSessionState(state *SessionState) {
 	state.mutex.Lock()
 	defer state.mutex.Unlock()
 
@@ -77,6 +123,78 @@ func (sm *SessionManager) RemoveSession(ctx context.Context, session server.Clie
 		if err := client.Close(); err != nil {
 			slog.Error("failed to close proxied client", "key", key, "error", err)
 		}
+	}
+}
+
+// Close stops the reaper goroutine and cleans up all remaining sessions.
+func (sm *SessionManager) Close() {
+	// Signal reaper to stop
+	select {
+	case <-sm.stopReaper:
+		// Already closed
+	default:
+		close(sm.stopReaper)
+	}
+	<-sm.reaperDone
+
+	// Clean up all remaining sessions
+	sm.mutex.Lock()
+	sessions := make(map[string]*SessionState, len(sm.sessions))
+	for k, v := range sm.sessions {
+		sessions[k] = v
+	}
+	sm.sessions = make(map[string]*SessionState)
+	sm.mutex.Unlock()
+
+	for _, state := range sessions {
+		cleanupSessionState(state)
+	}
+	slog.Debug("SessionManager closed", "cleaned_sessions", len(sessions))
+}
+
+// runReaper periodically checks for and removes idle sessions.
+func (sm *SessionManager) runReaper() {
+	defer close(sm.reaperDone)
+
+	interval := sm.sessionTTL / 2
+	if interval < 100*time.Millisecond {
+		interval = 100 * time.Millisecond
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			sm.reapStaleSessions()
+		case <-sm.stopReaper:
+			return
+		}
+	}
+}
+
+// reapStaleSessions removes sessions that have been idle longer than the TTL.
+func (sm *SessionManager) reapStaleSessions() {
+	now := time.Now()
+
+	sm.mutex.Lock()
+	var stale []*SessionState
+	var staleIDs []string
+	for id, state := range sm.sessions {
+		if now.Sub(state.lastActivity) > sm.sessionTTL {
+			stale = append(stale, state)
+			staleIDs = append(staleIDs, id)
+			delete(sm.sessions, id)
+		}
+	}
+	sm.mutex.Unlock()
+
+	if len(stale) > 0 {
+		slog.Info("Reaping stale sessions", "count", len(stale), "session_ids", staleIDs)
+	}
+
+	for _, state := range stale {
+		cleanupSessionState(state)
 	}
 }
 
