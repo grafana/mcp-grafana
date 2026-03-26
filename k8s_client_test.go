@@ -385,9 +385,9 @@ func TestKubernetesClient_AuthAPIKey(t *testing.T) {
 }
 
 func TestKubernetesClient_AuthOnBehalfOf(t *testing.T) {
-	var capturedAuth, capturedIDToken string
+	var capturedAccessToken, capturedIDToken string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		capturedAuth = r.Header.Get("Authorization")
+		capturedAccessToken = r.Header.Get("X-Access-Token")
 		capturedIDToken = r.Header.Get("X-Grafana-Id")
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -415,8 +415,8 @@ func TestKubernetesClient_AuthOnBehalfOf(t *testing.T) {
 		t.Fatalf("Get() error: %v", err)
 	}
 
-	if capturedAuth != "Bearer access-token-123" {
-		t.Errorf("Authorization = %q, want %q", capturedAuth, "Bearer access-token-123")
+	if capturedAccessToken != "access-token-123" {
+		t.Errorf("X-Access-Token = %q, want %q", capturedAccessToken, "access-token-123")
 	}
 	if capturedIDToken != "id-token-456" {
 		t.Errorf("X-Grafana-Id = %q, want %q", capturedIDToken, "id-token-456")

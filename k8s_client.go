@@ -229,7 +229,7 @@ func (c *KubernetesClient) doRequest(ctx context.Context, method, path string, r
 func applyAuth(req *http.Request, cfg *GrafanaConfig) {
 	switch {
 	case cfg.AccessToken != "" && cfg.IDToken != "":
-		req.Header.Set("Authorization", "Bearer "+cfg.AccessToken)
+		req.Header.Set("X-Access-Token", cfg.AccessToken)
 		req.Header.Set("X-Grafana-Id", cfg.IDToken)
 	case cfg.APIKey != "":
 		req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
