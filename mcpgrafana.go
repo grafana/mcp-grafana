@@ -808,6 +808,45 @@ func GrafanaClientFromContext(ctx context.Context) *GrafanaClient {
 	return c
 }
 
+type kubernetesClientKey struct{}
+
+// ExtractKubernetesClientFromEnv is a StdioContextFunc that creates and injects a KubernetesClient into the context.
+// It uses the GrafanaConfig already present in the context (set by ExtractGrafanaInfoFromEnv).
+var ExtractKubernetesClientFromEnv server.StdioContextFunc = func(ctx context.Context) context.Context {
+	k8sClient, err := NewKubernetesClient(ctx)
+	if err != nil {
+		slog.Warn("Failed to create Kubernetes client", "error", err)
+		return ctx
+	}
+	return WithKubernetesClient(ctx, k8sClient)
+}
+
+// ExtractKubernetesClientFromHeaders is a HTTPContextFunc that creates and injects a KubernetesClient into the context.
+// It uses the GrafanaConfig already present in the context (set by ExtractGrafanaInfoFromHeaders).
+var ExtractKubernetesClientFromHeaders httpContextFunc = func(ctx context.Context, req *http.Request) context.Context {
+	k8sClient, err := NewKubernetesClient(ctx)
+	if err != nil {
+		slog.Warn("Failed to create Kubernetes client from headers", "error", err)
+		return ctx
+	}
+	return WithKubernetesClient(ctx, k8sClient)
+}
+
+// WithKubernetesClient sets the KubernetesClient in the context.
+func WithKubernetesClient(ctx context.Context, c *KubernetesClient) context.Context {
+	return context.WithValue(ctx, kubernetesClientKey{}, c)
+}
+
+// KubernetesClientFromContext retrieves the KubernetesClient from the context.
+// Returns nil if no client has been set.
+func KubernetesClientFromContext(ctx context.Context) *KubernetesClient {
+	c, ok := ctx.Value(kubernetesClientKey{}).(*KubernetesClient)
+	if !ok {
+		return nil
+	}
+	return c
+}
+
 type incidentClientKey struct{}
 
 // ExtractIncidentClientFromEnv is a StdioContextFunc that creates and injects a Grafana Incident client into the context.
@@ -926,6 +965,7 @@ func ComposedStdioContextFunc(config GrafanaConfig) server.StdioContextFunc {
 		},
 		ExtractGrafanaInfoFromEnv,
 		ExtractGrafanaClientFromEnv,
+		ExtractKubernetesClientFromEnv,
 		ExtractIncidentClientFromEnv,
 	)
 }
@@ -941,6 +981,7 @@ func ComposedSSEContextFunc(config GrafanaConfig, cache ...*ClientCache) server.
 		},
 		ExtractGrafanaInfoFromHeaders,
 		grafanaExtractor,
+		ExtractKubernetesClientFromHeaders,
 		incidentExtractor,
 	)
 }
@@ -956,6 +997,7 @@ func ComposedHTTPContextFunc(config GrafanaConfig, cache ...*ClientCache) server
 		},
 		ExtractGrafanaInfoFromHeaders,
 		grafanaExtractor,
+		ExtractKubernetesClientFromHeaders,
 		incidentExtractor,
 	)
 }
