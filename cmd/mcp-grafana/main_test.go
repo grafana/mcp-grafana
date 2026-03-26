@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -34,33 +35,37 @@ func newTestObservability(t *testing.T) *observability.Observability {
 
 func TestNewServer_SessionIdleTimeoutZeroDisablesReaping(t *testing.T) {
 	obs := newTestObservability(t)
-	_, _, sm := newServer("stdio", disabledTools{enabledTools: "search"}, obs, 0)
-	defer sm.Close()
+	synctest.Test(t, func(t *testing.T) {
+		_, _, sm := newServer("stdio", disabledTools{enabledTools: "search"}, obs, 0)
+		defer sm.Close()
 
-	session := &testClientSession{id: "should-persist"}
-	sm.CreateSession(context.Background(), session)
+		session := &testClientSession{id: "should-persist"}
+		sm.CreateSession(context.Background(), session)
 
-	// With reaper disabled, the session must survive well beyond any
-	// reasonable reaper interval.
-	time.Sleep(200 * time.Millisecond)
+		// Advance the fake clock well beyond any reasonable reaper interval.
+		// With reaper disabled (TTL=0), the session must survive.
+		time.Sleep(time.Hour)
 
-	_, exists := sm.GetSession("should-persist")
-	assert.True(t, exists, "Session should persist when idle timeout is 0 (reaper disabled)")
+		_, exists := sm.GetSession("should-persist")
+		assert.True(t, exists, "Session should persist when idle timeout is 0 (reaper disabled)")
+	})
 }
 
 func TestNewServer_SessionIdleTimeoutCustomValue(t *testing.T) {
 	obs := newTestObservability(t)
-	// Use 1 minute; we can't wait a full minute in a unit test, but we can
-	// verify the session is NOT reaped within a short window (proving the
-	// TTL is at least longer than the default 100ms test TTLs).
-	_, _, sm := newServer("stdio", disabledTools{enabledTools: "search"}, obs, 1)
-	defer sm.Close()
+	synctest.Test(t, func(t *testing.T) {
+		_, _, sm := newServer("stdio", disabledTools{enabledTools: "search"}, obs, 1)
+		defer sm.Close()
 
-	session := &testClientSession{id: "custom-ttl"}
-	sm.CreateSession(context.Background(), session)
+		session := &testClientSession{id: "custom-ttl"}
+		sm.CreateSession(context.Background(), session)
 
-	time.Sleep(200 * time.Millisecond)
+		// Advance the fake clock past the 1-minute TTL.
+		// The reaper runs every TTL/2 (30s), so by 2 minutes
+		// it will have fired and reaped the idle session.
+		time.Sleep(2 * time.Minute)
 
-	_, exists := sm.GetSession("custom-ttl")
-	assert.True(t, exists, "Session should still exist with a 1-minute idle timeout after only 200ms")
+		_, exists := sm.GetSession("custom-ttl")
+		assert.False(t, exists, "Session should be reaped after exceeding the 1-minute idle timeout")
+	})
 }
