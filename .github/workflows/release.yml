@@ -42,14 +42,14 @@ jobs:
           fi
 
       - name: Set up Go
-        uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
         with:
           go-version: stable
           # Do not use any caches when creating a release.
           cache: false
 
       - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@4247c53b304edb39a4e6a0808f415d3eebad450a
+        uses: goreleaser/goreleaser-action@fdcf0b9df926c8dd93d4e7f15c508dd346e09eb1
         with:
           distribution: goreleaser
           # 'latest', 'nightly', or a semver
@@ -71,13 +71,13 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Set up Go
-        uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
         with:
           go-version: stable
           cache: false
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@803947b9bd8e9f986429fa0c5a41c367cd732b41 # v7.2.1
+        uses: astral-sh/setup-uv@6ee6290f1cbc4156c0bdd66691b2c144ef8df19a # v7.4.0
         with:
           enable-cache: false
 

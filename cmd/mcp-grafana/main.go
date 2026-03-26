@@ -20,7 +20,7 @@ import (
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/grafana/mcp-grafana/observability"
 	"github.com/grafana/mcp-grafana/tools"
-	"go.opentelemetry.io/otel/semconv/v1.39.0/mcpconv"
+	"go.opentelemetry.io/otel/semconv/v1.40.0/mcpconv"
 )
 
 func maybeAddTools(s *server.MCPServer, tf func(*server.MCPServer), enabledTools []string, disable bool, category string) {
