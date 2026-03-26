@@ -58,7 +58,7 @@ func newK8sTestContext(t *testing.T) context.Context {
 	}
 
 	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), grafanaCfg)
-	ctx = mcpgrafana.WithGrafanaClient(ctx, legacyClient)
+	ctx = mcpgrafana.WithGrafanaClient(ctx, &mcpgrafana.GrafanaClient{GrafanaHTTPAPI: legacyClient})
 
 	httpClient := mcpgrafana.NewHTTPClient(ctx, grafanaCfg)
 	instance := mcpgrafana.NewGrafanaInstance(grafanaCfg, legacyClient, httpClient)
