@@ -206,11 +206,7 @@ func TestConvertToolWithStringToIntConversion(t *testing.T) {
 
 	makeRequest := func(args map[string]any) mcp.CallToolRequest {
 		return mcp.CallToolRequest{
-			Params: struct {
-				Name      string    `json:"name"`
-				Arguments any       `json:"arguments,omitempty"`
-				Meta      *mcp.Meta `json:"_meta,omitempty"`
-			}{
+			Params: mcp.CallToolParams{
 				Name:      "test_int_tool",
 				Arguments: args,
 			},
