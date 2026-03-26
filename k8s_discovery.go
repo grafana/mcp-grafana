@@ -23,9 +23,9 @@ type GrafanaCapabilities struct {
 //
 // Results are cached for capabilitiesTTL (1 minute) to avoid hitting
 // GET /apis on every tool invocation. The cache is invalidated after the TTL
-// expires.
+// expires. Concurrent calls during cache expiry are deduplicated via singleflight.
 func (c *KubernetesClient) DiscoverCapabilities(ctx context.Context) (*GrafanaCapabilities, error) {
-	// Check cache under lock.
+	// Fast path: check cache under lock.
 	c.capsMu.Lock()
 	if c.cachedCaps != nil && time.Now().Before(c.capsExpiry) {
 		caps := c.cachedCaps
@@ -34,19 +34,36 @@ func (c *KubernetesClient) DiscoverCapabilities(ctx context.Context) (*GrafanaCa
 	}
 	c.capsMu.Unlock()
 
-	// Cache miss or expired — perform discovery.
-	caps, err := c.discoverCapabilitiesUncached(ctx)
+	// Slow path: use singleflight to deduplicate concurrent discovery calls.
+	val, err, _ := c.capsSF.Do("discover", func() (any, error) {
+		// Double-check cache after winning the singleflight race.
+		c.capsMu.Lock()
+		if c.cachedCaps != nil && time.Now().Before(c.capsExpiry) {
+			caps := c.cachedCaps
+			c.capsMu.Unlock()
+			return caps, nil
+		}
+		c.capsMu.Unlock()
+
+		// Perform discovery without holding any lock.
+		caps, err := c.discoverCapabilitiesUncached(ctx)
+		if err != nil {
+			return nil, err
+		}
+
+		// Store in cache.
+		c.capsMu.Lock()
+		c.cachedCaps = caps
+		c.capsExpiry = time.Now().Add(capabilitiesTTL)
+		c.capsMu.Unlock()
+
+		return caps, nil
+	})
 	if err != nil {
 		return nil, err
 	}
 
-	// Store in cache.
-	c.capsMu.Lock()
-	c.cachedCaps = caps
-	c.capsExpiry = time.Now().Add(capabilitiesTTL)
-	c.capsMu.Unlock()
-
-	return caps, nil
+	return val.(*GrafanaCapabilities), nil
 }
 
 // discoverCapabilitiesUncached performs the actual /apis discovery without caching.

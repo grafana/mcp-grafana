@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/sync/singleflight"
 )
 
 // KubernetesClient is a lightweight, generic HTTP client for Grafana's
@@ -32,9 +34,12 @@ type KubernetesClient struct {
 	HTTPClient *http.Client
 
 	// capsMu protects the cached capabilities fields below.
-	capsMu    sync.Mutex
+	capsMu     sync.Mutex
 	cachedCaps *GrafanaCapabilities
 	capsExpiry time.Time
+
+	// capsSF deduplicates concurrent capability discovery calls when cache is expired.
+	capsSF singleflight.Group
 }
 
 // capabilitiesTTL is the duration for which cached capabilities are considered
