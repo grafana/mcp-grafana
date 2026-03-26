@@ -932,26 +932,39 @@ func ComposedStdioContextFunc(config GrafanaConfig) server.StdioContextFunc {
 
 // ComposedSSEContextFunc returns a SSEContextFunc that comprises all predefined SSEContextFuncs.
 // It sets up the complete context for SSE transport, extracting configuration from HTTP headers with environment variable fallbacks.
-func ComposedSSEContextFunc(config GrafanaConfig) server.SSEContextFunc {
+// If cache is non-nil, clients are cached by credentials to avoid per-request transport allocation.
+func ComposedSSEContextFunc(config GrafanaConfig, cache ...*ClientCache) server.SSEContextFunc {
+	grafanaExtractor, incidentExtractor := clientExtractors(cache)
 	return ComposeSSEContextFuncs(
 		func(ctx context.Context, req *http.Request) context.Context {
 			return WithGrafanaConfig(ctx, config)
 		},
 		ExtractGrafanaInfoFromHeaders,
-		ExtractGrafanaClientFromHeaders,
-		ExtractIncidentClientFromHeaders,
+		grafanaExtractor,
+		incidentExtractor,
 	)
 }
 
 // ComposedHTTPContextFunc returns a HTTPContextFunc that comprises all predefined HTTPContextFuncs.
 // It provides the complete context setup for HTTP transport, including header-based authentication and client configuration.
-func ComposedHTTPContextFunc(config GrafanaConfig) server.HTTPContextFunc {
+// If cache is non-nil, clients are cached by credentials to avoid per-request transport allocation.
+func ComposedHTTPContextFunc(config GrafanaConfig, cache ...*ClientCache) server.HTTPContextFunc {
+	grafanaExtractor, incidentExtractor := clientExtractors(cache)
 	return ComposeHTTPContextFuncs(
 		func(ctx context.Context, req *http.Request) context.Context {
 			return WithGrafanaConfig(ctx, config)
 		},
 		ExtractGrafanaInfoFromHeaders,
-		ExtractGrafanaClientFromHeaders,
-		ExtractIncidentClientFromHeaders,
+		grafanaExtractor,
+		incidentExtractor,
 	)
+}
+
+// clientExtractors returns the appropriate client extraction functions,
+// using cached versions if a cache is provided.
+func clientExtractors(cache []*ClientCache) (httpContextFunc, httpContextFunc) {
+	if len(cache) > 0 && cache[0] != nil {
+		return extractGrafanaClientCached(cache[0]), extractIncidentClientCached(cache[0])
+	}
+	return ExtractGrafanaClientFromHeaders, ExtractIncidentClientFromHeaders
 }

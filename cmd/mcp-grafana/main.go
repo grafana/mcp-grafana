@@ -131,7 +131,7 @@ func (dt *disabledTools) addTools(s *server.MCPServer) {
 	maybeAddTools(s, tools.AddRunPanelQueryTools, enabledTools, dt.runpanelquery, "runpanelquery")
 }
 
-func newServer(transport string, dt disabledTools, obs *observability.Observability) (*server.MCPServer, *mcpgrafana.ToolManager) {
+func newServer(transport string, dt disabledTools, obs *observability.Observability) (*server.MCPServer, *mcpgrafana.ToolManager, *mcpgrafana.SessionManager) {
 	sm := mcpgrafana.NewSessionManager()
 
 	// Declare variable for ToolManager that will be initialized after server creation
@@ -202,7 +202,7 @@ Note that some of these capabilities may be disabled. Do not try to use features
 	stm = mcpgrafana.NewToolManager(sm, s, mcpgrafana.WithProxiedTools(!dt.proxied))
 
 	dt.addTools(s)
-	return s, stm
+	return s, stm, sm
 }
 
 type tlsConfig struct {
@@ -293,7 +293,16 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		}
 	}()
 
-	s, tm := newServer(transport, dt, o)
+	// Create a client cache for HTTP-based transports to avoid per-request
+	// transport allocation (see https://github.com/grafana/mcp-grafana/issues/682).
+	var clientCache *mcpgrafana.ClientCache
+	if transport != "stdio" {
+		clientCache = mcpgrafana.NewClientCache()
+		defer clientCache.Close()
+	}
+
+	s, tm, sm := newServer(transport, dt, o)
+	defer sm.Close()
 
 	// Create a context that will be cancelled on shutdown
 	ctx, cancel := context.WithCancel(context.Background())
@@ -342,7 +351,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 	case "sse":
 		httpSrv := &http.Server{Addr: addr}
 		srv := server.NewSSEServer(s,
-			server.WithSSEContextFunc(mcpgrafana.ComposedSSEContextFunc(gc)),
+			server.WithSSEContextFunc(mcpgrafana.ComposedSSEContextFunc(gc, clientCache)),
 			server.WithStaticBasePath(basePath),
 			server.WithHTTPServer(httpSrv),
 		)
@@ -366,7 +375,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 	case "streamable-http":
 		httpSrv := &http.Server{Addr: addr}
 		opts := []server.StreamableHTTPOption{
-			server.WithHTTPContextFunc(mcpgrafana.ComposedHTTPContextFunc(gc)),
+			server.WithHTTPContextFunc(mcpgrafana.ComposedHTTPContextFunc(gc, clientCache)),
 			server.WithStateLess(dt.proxied), // Stateful when proxied tools enabled (requires sessions)
 			server.WithEndpointPath(endpointPath),
 			server.WithStreamableHTTPServer(httpSrv),
