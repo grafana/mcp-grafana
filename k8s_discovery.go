@@ -47,7 +47,11 @@ func (c *KubernetesClient) DiscoverCapabilities(ctx context.Context) (*GrafanaCa
 		}
 		c.capsMu.Unlock()
 
-		caps, err := c.discoverCapabilitiesUncached(ctx)
+		// Use a detached context so that if the first caller's context is
+		// cancelled, concurrent waiters don't all receive the same error.
+		// Re-inject GrafanaConfig since doRequest reads auth from context.
+		detachedCtx := WithGrafanaConfig(context.Background(), GrafanaConfigFromContext(ctx))
+		caps, err := c.discoverCapabilitiesUncached(detachedCtx)
 		if err != nil {
 			return nil, err
 		}
