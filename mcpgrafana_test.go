@@ -158,6 +158,37 @@ func TestExtractGrafanaInfoFromHeaders(t *testing.T) {
 		assert.Equal(t, "my-test-api-key", config.APIKey)
 	})
 
+	t.Run("with service account token header", func(t *testing.T) {
+		t.Setenv("GRAFANA_URL", "")
+		t.Setenv("GRAFANA_API_KEY", "")
+		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN", "")
+
+		req, err := http.NewRequest("GET", "http://example.com", nil)
+		require.NoError(t, err)
+		req.Header.Set(grafanaURLHeader, "http://my-test-url.grafana.com")
+		req.Header.Set(grafanaServiceAccountTokenHeader, "my-service-account-token")
+		ctx := ExtractGrafanaInfoFromHeaders(context.Background(), req)
+		config := GrafanaConfigFromContext(ctx)
+		assert.Equal(t, "http://my-test-url.grafana.com", config.URL)
+		assert.Equal(t, "my-service-account-token", config.APIKey)
+	})
+
+	t.Run("service account token header takes precedence over api key header", func(t *testing.T) {
+		t.Setenv("GRAFANA_URL", "")
+		t.Setenv("GRAFANA_API_KEY", "")
+		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN", "")
+
+		req, err := http.NewRequest("GET", "http://example.com", nil)
+		require.NoError(t, err)
+		req.Header.Set(grafanaURLHeader, "http://my-test-url.grafana.com")
+		req.Header.Set(grafanaServiceAccountTokenHeader, "my-service-account-token")
+		req.Header.Set(grafanaAPIKeyHeader, "my-deprecated-api-key")
+		ctx := ExtractGrafanaInfoFromHeaders(context.Background(), req)
+		config := GrafanaConfigFromContext(ctx)
+		assert.Equal(t, "http://my-test-url.grafana.com", config.URL)
+		assert.Equal(t, "my-service-account-token", config.APIKey)
+	})
+
 	t.Run("no headers, with env", func(t *testing.T) {
 		t.Setenv("GRAFANA_USERNAME", "foo")
 		t.Setenv("GRAFANA_PASSWORD", "bar")
