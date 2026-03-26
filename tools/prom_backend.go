@@ -57,7 +57,9 @@ type prometheusBackend struct {
 
 func newPrometheusBackend(ctx context.Context, uid string, ds *models.DataSource) (*prometheusBackend, error) {
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
-	url := fmt.Sprintf("%s/api/datasources/uid/%s/resources", trimTrailingSlash(cfg.URL), uid)
+	grafanaURL := trimTrailingSlash(cfg.URL)
+	resourcesBase, proxyBase := datasourceProxyPaths(uid)
+	url := grafanaURL + resourcesBase
 
 	rt, err := mcpgrafana.BuildTransport(&cfg, api.DefaultRoundTripper)
 	if err != nil {
@@ -77,6 +79,10 @@ func newPrometheusBackend(ctx context.Context, uid string, ds *models.DataSource
 			rt = &postToGetRoundTripper{underlying: rt}
 		}
 	}
+
+	// Wrap with fallback transport: try /resources first, fall back to /proxy
+	// on 403/500 for compatibility with different managed Grafana deployments.
+	rt = newDatasourceFallbackTransport(rt, resourcesBase, proxyBase)
 
 	c, err := api.NewClient(api.Config{
 		Address:      url,
