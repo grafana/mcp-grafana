@@ -29,12 +29,17 @@ type GetDashboardByUIDParams struct {
 const dashboardAPIGroup = "dashboard.grafana.app"
 
 func getDashboardByUID(ctx context.Context, args GetDashboardByUIDParams) (*models.DashboardFullWithMeta, error) {
+	// Track whether we already attempted the k8s path so we don't redundantly
+	// retry it in the 406 safety net below.
+	k8sAttempted := false
+
 	// Try Kubernetes API first if a k8s client is available.
 	if k8sClient := mcpgrafana.KubernetesClientFromContext(ctx); k8sClient != nil {
 		caps, err := k8sClient.DiscoverCapabilities(ctx)
 		if err != nil {
 			slog.WarnContext(ctx, "Failed to discover k8s capabilities, falling back to legacy API", "error", err)
 		} else if caps.ShouldUseKubernetesAPI(dashboardAPIGroup) {
+			k8sAttempted = true
 			result, err := getDashboardByUIDViaK8s(ctx, k8sClient, caps, args.UID)
 			if err != nil {
 				slog.WarnContext(ctx, "K8s API failed, falling back to legacy API", "error", err)
@@ -47,9 +52,10 @@ func getDashboardByUID(ctx context.Context, args GetDashboardByUIDParams) (*mode
 	// Legacy path.
 	result, err := getDashboardByUIDLegacy(ctx, args.UID)
 	if err != nil {
-		// Safety net: if legacy returns 406 Not Acceptable, try k8s API.
+		// Safety net: if legacy returns 406 Not Acceptable, try k8s API —
+		// but only if we haven't already attempted k8s above.
 		var notAcceptable *dashboards.GetDashboardByUIDNotAcceptable
-		if errors.As(err, &notAcceptable) {
+		if !k8sAttempted && errors.As(err, &notAcceptable) {
 			if k8sClient := mcpgrafana.KubernetesClientFromContext(ctx); k8sClient != nil {
 				caps, capErr := k8sClient.DiscoverCapabilities(ctx)
 				if capErr == nil && caps.ShouldUseKubernetesAPI(dashboardAPIGroup) {
@@ -83,6 +89,9 @@ func getDashboardByUIDViaK8s(ctx context.Context, k8sClient *mcpgrafana.Kubernet
 		Resource: "dashboards",
 	}
 
+	// "default" is the standard Grafana namespace. This may need to become
+	// configurable for multi-org setups where each org maps to a separate
+	// Kubernetes namespace.
 	obj, err := k8sClient.Get(ctx, desc, "default", uid)
 	if err != nil {
 		return nil, fmt.Errorf("get dashboard via k8s API: %w", err)
@@ -94,6 +103,10 @@ func getDashboardByUIDViaK8s(ctx context.Context, k8sClient *mcpgrafana.Kubernet
 // convertK8sDashboardToLegacy converts an unstructured Kubernetes dashboard
 // response into the legacy DashboardFullWithMeta format.
 func convertK8sDashboardToLegacy(obj map[string]interface{}) (*models.DashboardFullWithMeta, error) {
+	if obj == nil {
+		return nil, fmt.Errorf("k8s dashboard response is nil")
+	}
+
 	// Extract the spec (the actual dashboard JSON).
 	spec, ok := obj["spec"]
 	if !ok {
