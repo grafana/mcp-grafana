@@ -173,11 +173,17 @@ func TestK8sGetDashboardByUID_LegacyPathWithoutK8sClient(t *testing.T) {
 		t.Fatalf("search failed: %v", err)
 	}
 
-	if len(searchResult.Payload) == 0 {
+	// Find a dashboard (not a folder) in the search results.
+	var uid string
+	for _, hit := range searchResult.Payload {
+		if hit.Type == "dash-db" {
+			uid = hit.UID
+			break
+		}
+	}
+	if uid == "" {
 		t.Skip("no dashboards found in legacy Grafana, skipping")
 	}
-
-	uid := searchResult.Payload[0].UID
 	result, err := getDashboardByUID(ctx, GetDashboardByUIDParams{UID: uid})
 	if err != nil {
 		t.Fatalf("getDashboardByUID failed for legacy path: %v", err)
