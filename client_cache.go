@@ -42,32 +42,20 @@ func (k clientCacheKey) String() string {
 	return fmt.Sprintf("url=%s apiKey=%t basicAuth=%t orgID=%d", k.url, hasKey, hasBasic, k.orgID)
 }
 
-// grafanaCacheEntry holds a cached Grafana client.
-type grafanaCacheEntry struct {
-	client    *GrafanaClient
-	transport *http.Transport // held for cleanup
-}
-
-// incidentCacheEntry holds a cached incident client.
-type incidentCacheEntry struct {
-	client    *incident.Client
-	transport *http.Transport // held for cleanup
-}
-
 // ClientCache caches HTTP clients keyed by credentials to avoid creating
 // new transports per request. This prevents the memory leak described in
 // https://github.com/grafana/mcp-grafana/issues/682.
 type ClientCache struct {
 	mu              sync.RWMutex
-	grafanaClients  map[clientCacheKey]*grafanaCacheEntry
-	incidentClients map[clientCacheKey]*incidentCacheEntry
+	grafanaClients  map[clientCacheKey]*GrafanaClient
+	incidentClients map[clientCacheKey]*incident.Client
 }
 
 // NewClientCache creates a new client cache.
 func NewClientCache() *ClientCache {
 	return &ClientCache{
-		grafanaClients:  make(map[clientCacheKey]*grafanaCacheEntry),
-		incidentClients: make(map[clientCacheKey]*incidentCacheEntry),
+		grafanaClients:  make(map[clientCacheKey]*GrafanaClient),
+		incidentClients: make(map[clientCacheKey]*incident.Client),
 	}
 }
 
@@ -76,9 +64,9 @@ func NewClientCache() *ClientCache {
 func (c *ClientCache) GetOrCreateGrafanaClient(key clientCacheKey, createFn func() *GrafanaClient) *GrafanaClient {
 	// Fast path: check with read lock
 	c.mu.RLock()
-	if entry, ok := c.grafanaClients[key]; ok {
+	if client, ok := c.grafanaClients[key]; ok {
 		c.mu.RUnlock()
-		return entry.client
+		return client
 	}
 	c.mu.RUnlock()
 
@@ -87,12 +75,12 @@ func (c *ClientCache) GetOrCreateGrafanaClient(key clientCacheKey, createFn func
 	defer c.mu.Unlock()
 
 	// Double-check after acquiring write lock
-	if entry, ok := c.grafanaClients[key]; ok {
-		return entry.client
+	if client, ok := c.grafanaClients[key]; ok {
+		return client
 	}
 
 	client := createFn()
-	c.grafanaClients[key] = &grafanaCacheEntry{client: client}
+	c.grafanaClients[key] = client
 	slog.Debug("Cached new Grafana client", "key", key, "cache_size", len(c.grafanaClients))
 	return client
 }
@@ -102,9 +90,9 @@ func (c *ClientCache) GetOrCreateGrafanaClient(key clientCacheKey, createFn func
 func (c *ClientCache) GetOrCreateIncidentClient(key clientCacheKey, createFn func() *incident.Client) *incident.Client {
 	// Fast path: check with read lock
 	c.mu.RLock()
-	if entry, ok := c.incidentClients[key]; ok {
+	if client, ok := c.incidentClients[key]; ok {
 		c.mu.RUnlock()
-		return entry.client
+		return client
 	}
 	c.mu.RUnlock()
 
@@ -113,32 +101,32 @@ func (c *ClientCache) GetOrCreateIncidentClient(key clientCacheKey, createFn fun
 	defer c.mu.Unlock()
 
 	// Double-check after acquiring write lock
-	if entry, ok := c.incidentClients[key]; ok {
-		return entry.client
+	if client, ok := c.incidentClients[key]; ok {
+		return client
 	}
 
 	client := createFn()
-	c.incidentClients[key] = &incidentCacheEntry{client: client}
+	c.incidentClients[key] = client
 	slog.Debug("Cached new incident client", "key", key, "cache_size", len(c.incidentClients))
 	return client
 }
 
-// Close closes all idle connections on cached transports.
+// Close cleans up cached clients. For incident clients, idle connections
+// are closed via the underlying HTTP transport. Grafana clients use a
+// go-openapi runtime whose transport is set via reflection, so we clear
+// the map and let the GC reclaim resources.
 func (c *ClientCache) Close() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	for key, entry := range c.grafanaClients {
-		if entry.transport != nil {
-			entry.transport.CloseIdleConnections()
-		}
-		delete(c.grafanaClients, key)
-	}
-	for key, entry := range c.incidentClients {
-		if entry.transport != nil {
-			entry.transport.CloseIdleConnections()
+	for key, client := range c.incidentClients {
+		if client.HTTPClient != nil {
+			client.HTTPClient.CloseIdleConnections()
 		}
 		delete(c.incidentClients, key)
+	}
+	for key := range c.grafanaClients {
+		delete(c.grafanaClients, key)
 	}
 	slog.Debug("Client cache closed")
 }
