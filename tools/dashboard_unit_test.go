@@ -504,3 +504,88 @@ func TestApplyJSONPath_UnsupportedSyntax(t *testing.T) {
 		assert.Equal(t, "New Title", panel["title"])
 	})
 }
+
+func TestConvertK8sDashboardToLegacy(t *testing.T) {
+	t.Run("normal case with spec, metadata, and annotations", func(t *testing.T) {
+		obj := map[string]interface{}{
+			"kind":       "Dashboard",
+			"apiVersion": "dashboard.grafana.app/v2beta1",
+			"metadata": map[string]interface{}{
+				"name":      "my-dash",
+				"namespace": "default",
+				"annotations": map[string]interface{}{
+					"grafana.app/folder": "folder-uid-123",
+				},
+			},
+			"spec": map[string]interface{}{
+				"title":  "My Dashboard",
+				"panels": []interface{}{},
+			},
+		}
+
+		result, err := convertK8sDashboardToLegacy(obj)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		require.NotNil(t, result.Dashboard)
+		require.NotNil(t, result.Meta)
+
+		spec, ok := result.Dashboard.(map[string]interface{})
+		require.True(t, ok)
+		assert.Equal(t, "My Dashboard", spec["title"])
+		assert.Equal(t, "folder-uid-123", result.Meta.FolderUID)
+	})
+
+	t.Run("missing metadata", func(t *testing.T) {
+		obj := map[string]interface{}{
+			"spec": map[string]interface{}{
+				"title": "No Metadata Dashboard",
+			},
+		}
+
+		result, err := convertK8sDashboardToLegacy(obj)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		require.NotNil(t, result.Dashboard)
+		// Meta should be initialized but empty.
+		require.NotNil(t, result.Meta)
+		assert.Empty(t, result.Meta.FolderUID)
+	})
+
+	t.Run("missing annotations", func(t *testing.T) {
+		obj := map[string]interface{}{
+			"metadata": map[string]interface{}{
+				"name":      "my-dash",
+				"namespace": "default",
+				// No annotations key.
+			},
+			"spec": map[string]interface{}{
+				"title": "No Annotations",
+			},
+		}
+
+		result, err := convertK8sDashboardToLegacy(obj)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Empty(t, result.Meta.FolderUID)
+	})
+
+	t.Run("missing spec returns error", func(t *testing.T) {
+		obj := map[string]interface{}{
+			"metadata": map[string]interface{}{
+				"name": "my-dash",
+			},
+			// No spec field.
+		}
+
+		result, err := convertK8sDashboardToLegacy(obj)
+		require.Error(t, err)
+		assert.Nil(t, result)
+		assert.Contains(t, err.Error(), "spec")
+	})
+
+	t.Run("nil input", func(t *testing.T) {
+		result, err := convertK8sDashboardToLegacy(nil)
+		require.Error(t, err)
+		assert.Nil(t, result)
+	})
+}
