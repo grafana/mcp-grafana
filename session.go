@@ -87,6 +87,7 @@ type SessionManager struct {
 	sessionTTL time.Duration
 	stopReaper chan struct{}
 	reaperDone chan struct{}
+	closeOnce  sync.Once
 	metrics    sessionMetrics
 }
 
@@ -164,13 +165,10 @@ func cleanupSessionState(state *SessionState) {
 
 // Close stops the reaper goroutine and cleans up all remaining sessions.
 func (sm *SessionManager) Close() {
-	// Signal reaper to stop
-	select {
-	case <-sm.stopReaper:
-		// Already closed
-	default:
+	// Signal reaper to stop (sync.Once ensures this is safe for concurrent callers)
+	sm.closeOnce.Do(func() {
 		close(sm.stopReaper)
-	}
+	})
 	<-sm.reaperDone
 
 	// Clean up all remaining sessions

@@ -111,6 +111,20 @@ func TestSessionManager_CloseIsIdempotent(t *testing.T) {
 	sm.Close() // Should not panic
 }
 
+func TestSessionManager_ConcurrentClose(t *testing.T) {
+	sm := NewSessionManager(WithSessionTTL(100 * time.Millisecond))
+
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sm.Close() // Should not panic even with concurrent calls
+		}()
+	}
+	wg.Wait()
+}
+
 func TestSessionManager_DisabledReaper(t *testing.T) {
 	sm := NewSessionManager(WithSessionTTL(0))
 	defer sm.Close()
