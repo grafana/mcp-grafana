@@ -68,6 +68,14 @@ PHONY: run-streamable-http
 run-streamable-http: ## Run the MCP server in StreamableHTTP mode.
 	$(GRAFANA_ENV) $(OTEL_ENV) go run ./cmd/mcp-grafana --transport streamable-http --log-level debug --debug --metrics --enabled-tools $(ENABLED_TOOLS)
 
+.PHONY: token-baseline
+token-baseline: build ## Generate a token baseline for the MCP server.
+	mcp-tokens analyze --format json --all-providers --output baseline.json -- ./dist/mcp-grafana
+
+.PHONY: token-check
+token-check: build ## Compare token usage against the baseline.
+	mcp-tokens analyze --baseline baseline.json --threshold-percent 5 -- ./dist/mcp-grafana
+
 .PHONY: run-test-services
 run-test-services: ## Run the docker-compose services required for the unit and integration tests.
 	docker-compose up -d --build
