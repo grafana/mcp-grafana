@@ -85,8 +85,9 @@ func newClientCacheMetrics() clientCacheMetrics {
 }
 
 var (
-	attrClientTypeGrafana  = attribute.String("client.type", "grafana")
-	attrClientTypeIncident = attribute.String("client.type", "incident")
+	attrClientTypeGrafana    = attribute.String("client.type", "grafana")
+	attrClientTypeIncident   = attribute.String("client.type", "incident")
+	attrClientTypeKubernetes = attribute.String("client.type", "kubernetes")
 )
 
 // ClientCache caches HTTP clients keyed by credentials to avoid creating
@@ -96,9 +97,11 @@ type ClientCache struct {
 	mu              sync.RWMutex
 	grafanaClients  map[clientCacheKey]*GrafanaClient
 	incidentClients map[clientCacheKey]*incident.Client
+	k8sClients      map[clientCacheKey]*KubernetesClient
 	metrics         clientCacheMetrics
 	sfGrafana       singleflight.Group
 	sfIncident      singleflight.Group
+	sfK8s           singleflight.Group
 }
 
 // NewClientCache creates a new client cache.
@@ -106,6 +109,7 @@ func NewClientCache() *ClientCache {
 	return &ClientCache{
 		grafanaClients:  make(map[clientCacheKey]*GrafanaClient),
 		incidentClients: make(map[clientCacheKey]*incident.Client),
+		k8sClients:      make(map[clientCacheKey]*KubernetesClient),
 		metrics:         newClientCacheMetrics(),
 	}
 }
@@ -202,10 +206,58 @@ func (c *ClientCache) GetOrCreateIncidentClient(key clientCacheKey, createFn fun
 	return val.(*incident.Client)
 }
 
-// Close cleans up cached clients. For incident clients, idle connections
-// are closed via the underlying HTTP transport. Grafana clients use a
-// go-openapi runtime whose transport is set via reflection, so we clear
-// the map and let the GC reclaim resources.
+// GetOrCreateKubernetesClient returns a cached Kubernetes client for the given key,
+// or creates one using createFn if no cached client exists.
+func (c *ClientCache) GetOrCreateKubernetesClient(key clientCacheKey, createFn func() (*KubernetesClient, error)) *KubernetesClient {
+	ctx := context.Background()
+	typeAttr := metric.WithAttributes(attrClientTypeKubernetes)
+	c.metrics.lookups.Add(ctx, 1, typeAttr)
+
+	// Fast path: check with read lock
+	c.mu.RLock()
+	if client, ok := c.k8sClients[key]; ok {
+		c.mu.RUnlock()
+		c.metrics.hits.Add(ctx, 1, typeAttr)
+		return client
+	}
+	c.mu.RUnlock()
+
+	// Slow path: use singleflight to create outside the lock
+	sfKey := fmt.Sprintf("k8s:%v", key)
+	val, _, _ := c.sfK8s.Do(sfKey, func() (any, error) {
+		c.mu.RLock()
+		if client, ok := c.k8sClients[key]; ok {
+			c.mu.RUnlock()
+			return client, nil
+		}
+		c.mu.RUnlock()
+
+		client, err := createFn()
+		if err != nil {
+			slog.Warn("Failed to create Kubernetes client for cache", "error", err)
+			return nil, err
+		}
+
+		c.mu.Lock()
+		c.k8sClients[key] = client
+		c.metrics.misses.Add(ctx, 1, typeAttr)
+		c.metrics.size.Record(ctx, int64(len(c.k8sClients)), typeAttr)
+		slog.Debug("Cached new Kubernetes client", "key", key, "cache_size", len(c.k8sClients))
+		c.mu.Unlock()
+
+		return client, nil
+	})
+
+	if val == nil {
+		return nil
+	}
+	return val.(*KubernetesClient)
+}
+
+// Close cleans up cached clients. For incident and Kubernetes clients,
+// idle connections are closed via the underlying HTTP transport. Grafana
+// clients use a go-openapi runtime whose transport is set via reflection,
+// so we clear the map and let the GC reclaim resources.
 func (c *ClientCache) Close() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -216,6 +268,12 @@ func (c *ClientCache) Close() {
 		}
 		delete(c.incidentClients, key)
 	}
+	for key, client := range c.k8sClients {
+		if client.HTTPClient != nil {
+			client.HTTPClient.CloseIdleConnections()
+		}
+		delete(c.k8sClients, key)
+	}
 	for key := range c.grafanaClients {
 		delete(c.grafanaClients, key)
 	}
@@ -223,6 +281,7 @@ func (c *ClientCache) Close() {
 	ctx := context.Background()
 	c.metrics.size.Record(ctx, 0, metric.WithAttributes(attrClientTypeGrafana))
 	c.metrics.size.Record(ctx, 0, metric.WithAttributes(attrClientTypeIncident))
+	c.metrics.size.Record(ctx, 0, metric.WithAttributes(attrClientTypeKubernetes))
 	slog.Debug("Client cache closed")
 }
 
@@ -260,6 +319,24 @@ func extractGrafanaClientCached(cache *ClientCache) httpContextFunc {
 		})
 
 		return WithGrafanaClient(ctx, grafanaClient)
+	}
+}
+
+// extractKubernetesClientCached creates an httpContextFunc that uses the cache.
+func extractKubernetesClientCached(cache *ClientCache) httpContextFunc {
+	return func(ctx context.Context, req *http.Request) context.Context {
+		u, apiKey, basicAuth, orgID := extractKeyGrafanaInfoFromReq(req)
+		key := cacheKeyFromRequest(u, apiKey, basicAuth, orgID)
+
+		k8sClient := cache.GetOrCreateKubernetesClient(key, func() (*KubernetesClient, error) {
+			slog.Debug("Creating new Kubernetes client (cache miss)", "url", u, "api_key_hash", hashAPIKey(apiKey))
+			return NewKubernetesClient(ctx)
+		})
+
+		if k8sClient == nil {
+			return ctx
+		}
+		return WithKubernetesClient(ctx, k8sClient)
 	}
 }
 
