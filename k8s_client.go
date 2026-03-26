@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -95,9 +96,26 @@ func (c *KubernetesClient) Discover(ctx context.Context) (*ResourceRegistry, err
 	return NewResourceRegistry(&groupList), nil
 }
 
+// validatePathSegment checks that a user-supplied path segment (namespace or
+// resource name) does not contain path separators, which could lead to path
+// traversal.
+func validatePathSegment(kind, value string) error {
+	if strings.Contains(value, "/") || strings.Contains(value, "\\") {
+		return fmt.Errorf("%s %q must not contain path separators", kind, value)
+	}
+	return nil
+}
+
 // Get fetches a single resource by name.
 // Returns the full Kubernetes-style object as unstructured data.
 func (c *KubernetesClient) Get(ctx context.Context, desc ResourceDescriptor, namespace, name string) (map[string]interface{}, error) {
+	if err := validatePathSegment("namespace", namespace); err != nil {
+		return nil, err
+	}
+	if err := validatePathSegment("name", name); err != nil {
+		return nil, err
+	}
+
 	path := desc.BasePath(namespace) + "/" + name
 
 	body, err := c.doRequest(ctx, http.MethodGet, path, nil)
@@ -114,22 +132,26 @@ func (c *KubernetesClient) Get(ctx context.Context, desc ResourceDescriptor, nam
 
 // List fetches a collection of resources.
 func (c *KubernetesClient) List(ctx context.Context, desc ResourceDescriptor, namespace string, opts *ListOptions) (*ResourceList, error) {
+	if err := validatePathSegment("namespace", namespace); err != nil {
+		return nil, err
+	}
+
 	path := desc.BasePath(namespace)
 
-	// Build query string from options.
+	// Build query string from options using url.Values for proper encoding.
 	if opts != nil {
-		var params []string
+		params := url.Values{}
 		if opts.LabelSelector != "" {
-			params = append(params, "labelSelector="+opts.LabelSelector)
+			params.Set("labelSelector", opts.LabelSelector)
 		}
 		if opts.Limit > 0 {
-			params = append(params, fmt.Sprintf("limit=%d", opts.Limit))
+			params.Set("limit", fmt.Sprintf("%d", opts.Limit))
 		}
 		if opts.Continue != "" {
-			params = append(params, "continue="+opts.Continue)
+			params.Set("continue", opts.Continue)
 		}
-		if len(params) > 0 {
-			path += "?" + strings.Join(params, "&")
+		if encoded := params.Encode(); encoded != "" {
+			path += "?" + encoded
 		}
 	}
 

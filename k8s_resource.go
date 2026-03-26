@@ -37,6 +37,9 @@ func (d ResourceDescriptor) BasePath(namespace string) string {
 
 // ResourceRegistry maps API group names to their available resources and versions.
 // It is built from the /apis discovery response (APIGroupList).
+//
+// ResourceRegistry is immutable after construction via NewResourceRegistry and
+// is safe for concurrent reads from multiple goroutines without synchronization.
 type ResourceRegistry struct {
 	groups map[string]*ResourceGroup
 }

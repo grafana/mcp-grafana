@@ -187,6 +187,82 @@ func TestKubernetesClient_List(t *testing.T) {
 	}
 }
 
+func TestKubernetesClient_List_WithOptions(t *testing.T) {
+	listResp := map[string]interface{}{
+		"kind":       "DashboardList",
+		"apiVersion": "dashboard.grafana.app/v2beta1",
+		"items":      []interface{}{},
+	}
+
+	var capturedQuery url.Values
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedQuery = r.URL.Query()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(listResp)
+	}))
+	defer ts.Close()
+
+	client := &KubernetesClient{
+		BaseURL:    ts.URL,
+		HTTPClient: ts.Client(),
+	}
+
+	opts := &ListOptions{
+		LabelSelector: "app=foo,env=prod",
+		Limit:         50,
+		Continue:      "eyJjb250aW51ZSI6InRlc3QifQ==",
+	}
+	_, err := client.List(context.Background(), testDashboardDesc, "default", opts)
+	if err != nil {
+		t.Fatalf("List() error: %v", err)
+	}
+
+	if got := capturedQuery.Get("labelSelector"); got != "app=foo,env=prod" {
+		t.Errorf("labelSelector = %q, want %q", got, "app=foo,env=prod")
+	}
+	if got := capturedQuery.Get("limit"); got != "50" {
+		t.Errorf("limit = %q, want %q", got, "50")
+	}
+	if got := capturedQuery.Get("continue"); got != "eyJjb250aW51ZSI6InRlc3QifQ==" {
+		t.Errorf("continue = %q, want %q", got, "eyJjb250aW51ZSI6InRlc3QifQ==")
+	}
+}
+
+func TestKubernetesClient_List_WithSpecialCharacters(t *testing.T) {
+	listResp := map[string]interface{}{
+		"kind":       "DashboardList",
+		"apiVersion": "dashboard.grafana.app/v2beta1",
+		"items":      []interface{}{},
+	}
+
+	var capturedQuery url.Values
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedQuery = r.URL.Query()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(listResp)
+	}))
+	defer ts.Close()
+
+	client := &KubernetesClient{
+		BaseURL:    ts.URL,
+		HTTPClient: ts.Client(),
+	}
+
+	// Label selector with special characters that need URL encoding.
+	opts := &ListOptions{
+		LabelSelector: "app in (foo,bar),version!=v1&test",
+	}
+	_, err := client.List(context.Background(), testDashboardDesc, "default", opts)
+	if err != nil {
+		t.Fatalf("List() error: %v", err)
+	}
+
+	// The server should receive the properly decoded value.
+	if got := capturedQuery.Get("labelSelector"); got != "app in (foo,bar),version!=v1&test" {
+		t.Errorf("labelSelector = %q, want %q", got, "app in (foo,bar),version!=v1&test")
+	}
+}
+
 func TestKubernetesClient_List_WithNamespace(t *testing.T) {
 	listResp := map[string]interface{}{
 		"kind":       "DashboardList",
@@ -216,6 +292,62 @@ func TestKubernetesClient_List_WithNamespace(t *testing.T) {
 	if capturedPath != wantPath {
 		t.Errorf("request path = %q, want %q", capturedPath, wantPath)
 	}
+}
+
+func TestKubernetesClient_PathTraversal(t *testing.T) {
+	ts := newTestServer(t, map[string]interface{}{})
+	defer ts.Close()
+
+	client := &KubernetesClient{
+		BaseURL:    ts.URL,
+		HTTPClient: ts.Client(),
+	}
+
+	t.Run("Get rejects slash in namespace", func(t *testing.T) {
+		_, err := client.Get(context.Background(), testDashboardDesc, "default/../../etc", "my-dash")
+		if err == nil {
+			t.Fatal("expected error for path traversal in namespace")
+		}
+		if got := err.Error(); got == "" {
+			t.Fatal("expected non-empty error message")
+		}
+	})
+
+	t.Run("Get rejects slash in name", func(t *testing.T) {
+		_, err := client.Get(context.Background(), testDashboardDesc, "default", "../../etc/passwd")
+		if err == nil {
+			t.Fatal("expected error for path traversal in name")
+		}
+	})
+
+	t.Run("Get rejects backslash in namespace", func(t *testing.T) {
+		_, err := client.Get(context.Background(), testDashboardDesc, `default\..`, "my-dash")
+		if err == nil {
+			t.Fatal("expected error for backslash in namespace")
+		}
+	})
+
+	t.Run("List rejects slash in namespace", func(t *testing.T) {
+		_, err := client.List(context.Background(), testDashboardDesc, "default/../../etc", nil)
+		if err == nil {
+			t.Fatal("expected error for path traversal in namespace")
+		}
+	})
+
+	t.Run("Get allows valid names", func(t *testing.T) {
+		// This will 404 but should not return a validation error.
+		_, err := client.Get(context.Background(), testDashboardDesc, "default", "my-dashboard")
+		if err == nil {
+			t.Fatal("expected 404 error")
+		}
+		apiErr, ok := err.(*KubernetesAPIError)
+		if !ok {
+			t.Fatalf("expected *KubernetesAPIError, got %T: %v", err, err)
+		}
+		if apiErr.StatusCode != 404 {
+			t.Errorf("StatusCode = %d, want 404", apiErr.StatusCode)
+		}
+	})
 }
 
 func TestKubernetesClient_AuthAPIKey(t *testing.T) {
