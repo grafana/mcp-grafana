@@ -16,6 +16,13 @@ jobs:
           script: |
             const { state, sha } = context.payload;
 
+            // Only act on conclusive states (success or failure)
+            // Skip pending (check in progress) and error (infrastructure issue)
+            if (state === 'pending' || state === 'error') {
+              console.log(`Skipping labeling for state: ${state}`);
+              return;
+            }
+
             // Find PRs associated with this commit
             const { data: prs } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
               owner: context.repo.owner,
