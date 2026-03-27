@@ -354,7 +354,7 @@ func TestValidateClickHouseIdentifier(t *testing.T) {
 	for _, tt := range tests {
 		err := validateClickHouseIdentifier(tt.name, tt.field)
 		if (err != nil) != tt.wantErr {
-			t.Fatalf("validateClickHouseIdentifier(%q) error = %v, wantErr %v", tt.name, err, tt.wantErr)
+			t.Errorf("validateClickHouseIdentifier(%q) error = %v, wantErr %v", tt.name, err, tt.wantErr)
 		}
 	}
 }

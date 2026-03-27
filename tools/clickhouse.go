@@ -31,7 +31,6 @@ const (
 	ClickHouseFormatTable = 1
 )
 
-// Fix security
 var clickHouseIdentifierRe = regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
 
 func validateClickHouseIdentifier(name, field string) error {
@@ -411,7 +410,6 @@ type ClickHouseTableInfo struct {
 
 // listClickHouseTables lists tables from a ClickHouse datasource
 func listClickHouseTables(ctx context.Context, args ListClickHouseTablesParams) ([]ClickHouseTableInfo, error) {
-	// FIX: validate input
 	if err := validateClickHouseIdentifier(args.Database, "database"); err != nil {
 		return nil, err
 	}
@@ -493,7 +491,6 @@ func describeClickHouseTable(ctx context.Context, args DescribeClickHouseTablePa
 		database = "default"
 	}
 
-	//FIX: validate input
 	if err := validateClickHouseIdentifier(database, "database"); err != nil {
 		return nil, err
 	}
