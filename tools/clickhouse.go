@@ -494,6 +494,11 @@ func describeClickHouseTable(ctx context.Context, args DescribeClickHouseTablePa
 	if err := validateClickHouseIdentifier(database, "database"); err != nil {
 		return nil, err
 	}
+
+	if args.Table == "" {
+		return nil, fmt.Errorf("table is required")
+	}
+
 	if err := validateClickHouseIdentifier(args.Table, "table"); err != nil {
 		return nil, err
 	}

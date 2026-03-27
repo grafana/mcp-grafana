@@ -348,6 +348,7 @@ func TestValidateClickHouseIdentifier(t *testing.T) {
 		{name: "default' UNION SELECT name FROM system.databases --", field: "database", wantErr: true},
 		{name: "table-name", field: "table", wantErr: true},
 		{name: "table name", field: "table", wantErr: true},
+		{name: "", field: "table", wantErr: true},
 		{name: "system.tables", field: "table", wantErr: true},
 	}
 
