@@ -1,6 +1,3 @@
-//go:build unit
-// +build unit
-
 package mcpgrafana
 
 import (
@@ -8,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/go-openapi/runtime/client"
@@ -645,6 +643,37 @@ func TestToolTracingInstrumentation(t *testing.T) {
 	})
 }
 
+func TestTextMimeConsumerOverride(t *testing.T) {
+	// Verify that NewGrafanaClient overrides text/plain and text/html consumers
+	// with JSON consumers so that responses with incorrect content-type headers
+	// (e.g. from Grafana v12 or reverse proxies) are still parsed correctly.
+	// See: https://github.com/grafana/mcp-grafana/issues/635
+	ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{})
+	c := NewGrafanaClient(ctx, "http://localhost:3000", "test-api-key", nil)
+	require.NotNil(t, c)
+
+	rt, ok := c.Transport.(*client.Runtime)
+	require.True(t, ok, "expected Transport to be *client.Runtime")
+
+	// The text/plain and text/html consumers should no longer be the default
+	// TextConsumer. Verify by checking they can consume a JSON object into a
+	// map (TextConsumer would fail on this).
+	for _, mime := range []string{"text/plain", "text/html"} {
+		consumer, exists := rt.Consumers[mime]
+		require.True(t, exists, "consumer for %s should exist", mime)
+		require.NotNil(t, consumer, "consumer for %s should not be nil", mime)
+
+		// JSONConsumer can unmarshal into a map; TextConsumer cannot.
+		var result map[string]interface{}
+		err := consumer.Consume(
+			strings.NewReader(`{"status":"ok"}`),
+			&result,
+		)
+		assert.NoError(t, err, "consumer for %s should parse JSON", mime)
+		assert.Equal(t, "ok", result["status"], "consumer for %s should return parsed value", mime)
+	}
+}
+
 func TestHTTPTracingConfiguration(t *testing.T) {
 	t.Run("HTTP tracing always enabled for context propagation", func(t *testing.T) {
 		// Create context (HTTP tracing always enabled)
@@ -731,7 +760,6 @@ func assertHasAttribute(t *testing.T, attributes []attribute.KeyValue, key strin
 	}
 	t.Errorf("Expected attribute %s with value %s not found", key, expectedValue)
 }
-
 
 func TestExtraHeadersFromEnv(t *testing.T) {
 	t.Run("empty env returns nil", func(t *testing.T) {
@@ -1042,7 +1070,7 @@ func TestFetchPublicURL(t *testing.T) {
 		})
 
 		extraHeaders := map[string]string{
-			"X-Custom-Auth": "proxy-token-123",
+			"X-Custom-Auth":   "proxy-token-123",
 			"X-Forwarded-For": "10.0.0.1",
 		}
 		fetchPublicURL(context.Background(), ts.URL, "", nil, nil, extraHeaders)
