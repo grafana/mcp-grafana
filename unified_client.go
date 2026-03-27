@@ -26,7 +26,7 @@ type GrafanaAPIClient struct {
 	k8s    *KubernetesClient // generic k8s client (may be nil)
 
 	// Cached capability detection
-	capsMu     sync.Mutex
+	capsMu     sync.RWMutex
 	caps       *grafanaCapabilities
 	capsExpiry time.Time
 	capsSF     singleflight.Group
@@ -54,14 +54,14 @@ func NewGrafanaAPIClient(legacy *GrafanaClient, k8s *KubernetesClient) *GrafanaA
 // Uses singleflight + detached context so a cancelled caller context
 // doesn't fail the fetch for all waiters.
 func (c *GrafanaAPIClient) discoverCapabilities(ctx context.Context) *grafanaCapabilities {
-	// Fast path: check cache under lock.
-	c.capsMu.Lock()
+	// Fast path: check cache under read lock.
+	c.capsMu.RLock()
 	if c.caps != nil && time.Now().Before(c.capsExpiry) {
 		caps := c.caps
-		c.capsMu.Unlock()
+		c.capsMu.RUnlock()
 		return caps
 	}
-	c.capsMu.Unlock()
+	c.capsMu.RUnlock()
 
 	if c.k8s == nil {
 		caps := &grafanaCapabilities{hasK8sAPIs: false}
@@ -74,14 +74,14 @@ func (c *GrafanaAPIClient) discoverCapabilities(ctx context.Context) *grafanaCap
 
 	// Use singleflight to coalesce concurrent discovery requests.
 	result, _, _ := c.capsSF.Do("discover", func() (any, error) {
-		// Double-check cache inside singleflight.
-		c.capsMu.Lock()
+		// Double-check cache inside singleflight (read lock first).
+		c.capsMu.RLock()
 		if c.caps != nil && time.Now().Before(c.capsExpiry) {
 			caps := c.caps
-			c.capsMu.Unlock()
+			c.capsMu.RUnlock()
 			return caps, nil
 		}
-		c.capsMu.Unlock()
+		c.capsMu.RUnlock()
 
 		// Use a detached context with timeout so that a cancelled request
 		// context from the first caller doesn't fail the fetch for all waiters.
@@ -161,17 +161,22 @@ func (c *GrafanaAPIClient) getResource(ctx context.Context, opts getResourceOpts
 		return nil, fmt.Errorf("no legacy fetch function provided and k8s API group %q not available", opts.apiGroup)
 	}
 
-	result, err := opts.legacyFetch(ctx)
-	if err != nil && opts.check406 != nil && opts.check406(err) {
+	result, legacyErr := opts.legacyFetch(ctx)
+	if legacyErr != nil && opts.check406 != nil && opts.check406(legacyErr) {
 		slog.Debug("Legacy API returned 406, invalidating cache and retrying via k8s API", "group", opts.apiGroup)
 		// Invalidate cached capabilities: 406 means the server has switched
 		// to k8s APIs since our last discovery.
 		c.capsMu.Lock()
 		c.caps = nil
 		c.capsMu.Unlock()
-		return c.getResourceViaK8s(ctx, opts, ns)
+		result, k8sErr := c.getResourceViaK8s(ctx, opts, ns)
+		if k8sErr != nil {
+			// Wrap both errors so the original 406 context isn't lost.
+			return nil, fmt.Errorf("%w (original legacy error: %v)", k8sErr, legacyErr)
+		}
+		return result, nil
 	}
-	return result, err
+	return result, legacyErr
 }
 
 // getResourceViaK8s fetches a resource via the k8s API and converts it.
