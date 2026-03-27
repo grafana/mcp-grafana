@@ -192,7 +192,7 @@ func TestGetDashboardByUID_ViaK8s(t *testing.T) {
 
 	require.NotNil(t, dashboard.Meta)
 	assert.Equal(t, "folder-abc", dashboard.Meta.FolderUID)
-	assert.Equal(t, "test-uid-123", dashboard.Meta.Slug)
+	assert.Equal(t, "my-test-dashboard", dashboard.Meta.Slug)
 }
 
 func TestGetDashboardByUID_FallbackToLegacy(t *testing.T) {
@@ -369,7 +369,7 @@ func TestConvertK8sDashboard(t *testing.T) {
 
 	require.NotNil(t, dashboard.Meta)
 	assert.Equal(t, "my-folder", dashboard.Meta.FolderUID)
-	assert.Equal(t, "dash-uid-1", dashboard.Meta.Slug)
+	assert.Equal(t, "test-dash", dashboard.Meta.Slug)
 	assert.Equal(t, "db", dashboard.Meta.Type)
 }
 
@@ -401,7 +401,7 @@ func TestConvertK8sDashboard_NoAnnotations(t *testing.T) {
 	dashboard, ok := result.(*models.DashboardFullWithMeta)
 	require.True(t, ok)
 	assert.Equal(t, "", dashboard.Meta.FolderUID)
-	assert.Equal(t, "no-annotations", dashboard.Meta.Slug)
+	assert.Equal(t, "no-folder", dashboard.Meta.Slug)
 }
 
 func TestContextHelpers(t *testing.T) {

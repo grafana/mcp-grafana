@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -245,6 +247,19 @@ func (c *GrafanaAPIClient) GetDashboardByUID(ctx context.Context, uid string) (*
 	return dashboard, nil
 }
 
+// slugifyTitle converts a dashboard title to a URL-safe slug matching
+// Grafana's legacy API format: lowercase, spaces and special chars replaced
+// with hyphens, multiple hyphens collapsed, leading/trailing hyphens removed.
+func slugifyTitle(title string) string {
+	slug := strings.ToLower(title)
+	// Replace non-alphanumeric characters with hyphens
+	reg := regexp.MustCompile(`[^a-z0-9]+`)
+	slug = reg.ReplaceAllString(slug, "-")
+	// Remove leading/trailing hyphens
+	slug = strings.Trim(slug, "-")
+	return slug
+}
+
 // convertK8sDashboard converts a k8s dashboard response to the legacy
 // DashboardFullWithMeta format. It extracts `spec` as the dashboard JSON,
 // `metadata.name` as UID, and `metadata.annotations["grafana.app/folder"]`
@@ -278,17 +293,18 @@ func convertK8sDashboard(obj map[string]interface{}) (interface{}, error) {
 		}
 	}
 
-	// Extract title for metadata.
+	// Extract title for metadata and slugify for URL.
 	title, _ := spec["title"].(string)
+	slug := slugifyTitle(title)
 
 	result := &models.DashboardFullWithMeta{
 		Dashboard: spec,
 		Meta: &models.DashboardMeta{
-			Slug:      uid,
+			Slug:      slug,
 			FolderUID: folderUID,
 			Type:      "db",
 			IsFolder:  false,
-			URL:       fmt.Sprintf("/d/%s/%s", uid, title),
+			URL:       fmt.Sprintf("/d/%s/%s", uid, slug),
 		},
 	}
 
