@@ -690,7 +690,7 @@ func getAvailableDatasourceUIDs(ctx context.Context, dsType string) []string {
 func normalizeDatasourceType(dsType string) string {
 	lower := strings.ToLower(dsType)
 	switch {
-	case lower == "prometheus":
+	case lower == "prometheus" || lower == "stackdriver":
 		return "prometheus"
 	case lower == "loki":
 		return "loki"

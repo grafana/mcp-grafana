@@ -31,6 +31,18 @@ const (
 	ClickHouseFormatTable = 1
 )
 
+var clickHouseIdentifierRe = regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
+
+func validateClickHouseIdentifier(name, field string) error {
+	if name == "" {
+		return nil
+	}
+	if !clickHouseIdentifierRe.MatchString(name) {
+		return fmt.Errorf("invalid %s: must contain only letters, numbers, and underscores", field)
+	}
+	return nil
+}
+
 // ClickHouseQueryParams defines the parameters for querying ClickHouse
 type ClickHouseQueryParams struct {
 	DatasourceUID string            `json:"datasourceUid" jsonschema:"required,description=The UID of the ClickHouse datasource to query. Use list_datasources to find available UIDs."`
@@ -160,16 +172,18 @@ func (c *clickHouseClient) query(ctx context.Context, datasourceUID, rawSQL stri
 		return nil, fmt.Errorf("ClickHouse query returned status %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
-	// Read and parse response
-	body := io.LimitReader(resp.Body, 1024*1024*48) // 48MB limit
+	// Limit size of response read
+	var bytesLimit int64 = 1024 * 1024 * 10 // 10MB
+	body := io.LimitReader(resp.Body, bytesLimit)
 	bodyBytes, err := io.ReadAll(body)
 	if err != nil {
 		return nil, fmt.Errorf("reading response body: %w", err)
 	}
 
 	var queryResp clickHouseQueryResponse
-	if err := json.Unmarshal(bodyBytes, &queryResp); err != nil {
-		return nil, fmt.Errorf("unmarshaling response: %w", err)
+
+	if err := unmarshalJSONWithLimitMsg(bodyBytes, &queryResp, int(bytesLimit)); err != nil {
+		return nil, err
 	}
 
 	return &queryResp, nil
@@ -396,6 +410,10 @@ type ClickHouseTableInfo struct {
 
 // listClickHouseTables lists tables from a ClickHouse datasource
 func listClickHouseTables(ctx context.Context, args ListClickHouseTablesParams) ([]ClickHouseTableInfo, error) {
+	if err := validateClickHouseIdentifier(args.Database, "database"); err != nil {
+		return nil, err
+	}
+
 	// Build the query to list tables
 	query := `SELECT database, name, engine, total_rows, total_bytes
 FROM system.tables
@@ -471,6 +489,18 @@ func describeClickHouseTable(ctx context.Context, args DescribeClickHouseTablePa
 	database := args.Database
 	if database == "" {
 		database = "default"
+	}
+
+	if err := validateClickHouseIdentifier(database, "database"); err != nil {
+		return nil, err
+	}
+
+	if args.Table == "" {
+		return nil, fmt.Errorf("table is required")
+	}
+
+	if err := validateClickHouseIdentifier(args.Table, "table"); err != nil {
+		return nil, err
 	}
 
 	// Query system.columns instead of using DESCRIBE TABLE

@@ -26,6 +26,8 @@ const (
 	ElasticsearchDatasourceType = "elasticsearch"
 )
 
+const elasticSearchResponseLimitBytes = 1024 * 1024 * 10 //10MB
+
 // ElasticsearchClient handles queries to an Elasticsearch datasource via Grafana proxy
 type ElasticsearchClient struct {
 	httpClient *http.Client
@@ -167,7 +169,7 @@ func (c *ElasticsearchClient) search(ctx context.Context, index, query string, s
 	}
 
 	// Read the response body with a limit to prevent memory issues
-	body := io.LimitReader(resp.Body, 1024*1024*48)
+	body := io.LimitReader(resp.Body, elasticSearchResponseLimitBytes)
 	bodyBytes, err := io.ReadAll(body)
 	if err != nil {
 		return nil, fmt.Errorf("reading response body: %w", err)
@@ -175,8 +177,9 @@ func (c *ElasticsearchClient) search(ctx context.Context, index, query string, s
 
 	// Parse the _msearch response (contains array of responses)
 	var msearchResponse MsearchResponse
-	if err := json.Unmarshal(bodyBytes, &msearchResponse); err != nil {
-		return nil, fmt.Errorf("unmarshalling response: %w", err)
+
+	if err := unmarshalJSONWithLimitMsg(bodyBytes, &msearchResponse, elasticSearchResponseLimitBytes); err != nil {
+		return nil, err
 	}
 
 	// We only send one query, so we expect one response

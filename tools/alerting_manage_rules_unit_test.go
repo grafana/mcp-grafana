@@ -1,6 +1,10 @@
 package tools
 
 import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -8,6 +12,8 @@ import (
 	"github.com/grafana/grafana-openapi-client-go/models"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/stretchr/testify/require"
+
+	mcpgrafana "github.com/grafana/mcp-grafana"
 )
 
 // Unit tests for parameter validation (no integration tag needed)
@@ -455,44 +461,65 @@ func TestRecord_Validate(t *testing.T) {
 		require.Contains(t, err.Error(), "record.metric is required")
 	})
 }
-func TestManageRulesReadParams_Validate(t *testing.T) {
+
+func setupManageRulesTestContext(t *testing.T, assertRequest func(t *testing.T, r *http.Request)) context.Context {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if assertRequest != nil {
+			assertRequest(t, r)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		err := json.NewEncoder(w).Encode(mockrulesResponse())
+		require.NoError(t, err)
+	}))
+	t.Cleanup(server.Close)
+	return mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{
+		URL:    server.URL,
+		APIKey: "test-api-key",
+	})
+}
+
+var expectedMockRuleSummary = alertRuleSummary{
+	UID:       "test-rule-uid",
+	Title:     "Test Alert Rule",
+	State:     "firing",
+	Health:    "",
+	FolderUID: "test-folder",
+	RuleGroup: "TestGroup",
+	Labels:    map[string]string{"severity": "critical"},
+}
+
+func TestManageRules_ListRules(t *testing.T) {
 	tests := []struct {
-		name    string
-		params  ManageRulesReadParams
-		wantErr string
+		name          string
+		params        ManageRulesReadParams
+		assertRequest func(t *testing.T, r *http.Request)
+		wantErr       string
+		expectedRules []alertRuleSummary
 	}{
+		// Validation errors (mock server is never hit)
 		{
-			name:   "list operation with defaults",
-			params: ManageRulesReadParams{Operation: "list"},
-		},
-		{
-			name:   "list operation with rule_limit",
-			params: ManageRulesReadParams{Operation: "list", RuleLimit: 50},
-		},
-		{
-			name:    "list operation with negative rule_limit",
-			params:  ManageRulesReadParams{Operation: "list", RuleLimit: -1},
+			name:    "negative rule_limit",
+			params:  ManageRulesReadParams{listFilterParams: listFilterParams{RuleLimit: -1}, Operation: "list"},
 			wantErr: "invalid rule_limit",
 		},
 		{
-			name:   "list operation with folder_uid",
-			params: ManageRulesReadParams{Operation: "list", FolderUID: "folder-1"},
-		},
-		{
-			name:   "list operation with search_folder",
-			params: ManageRulesReadParams{Operation: "list", SearchFolder: "Production"},
-		},
-		{
-			name:    "list operation with folder_uid and search_folder",
-			params:  ManageRulesReadParams{Operation: "list", FolderUID: "folder-1", SearchFolder: "Production"},
+			name:    "folder_uid and search_folder mutually exclusive",
+			params:  ManageRulesReadParams{listFilterParams: listFilterParams{SearchFolder: "Production"}, Operation: "list", FolderUID: "folder-1"},
 			wantErr: "mutually exclusive",
 		},
 		{
-			name:   "get operation with rule_uid",
-			params: ManageRulesReadParams{Operation: "get", RuleUID: "test-uid"},
+			name:    "invalid matcher type",
+			params:  ManageRulesReadParams{listFilterParams: listFilterParams{Matchers: []LabelMatcher{{Name: "severity", Type: ">>", Value: "critical"}}}, Operation: "list"},
+			wantErr: "invalid matcher type",
 		},
 		{
-			name:    "get operation without rule_uid",
+			name:    "invalid regex matcher value",
+			params:  ManageRulesReadParams{listFilterParams: listFilterParams{Matchers: []LabelMatcher{{Name: "severity", Type: "=~", Value: "[invalid"}}}, Operation: "list"},
+			wantErr: "invalid matcher",
+		},
+		{
+			name:    "get without rule_uid",
 			params:  ManageRulesReadParams{Operation: "get"},
 			wantErr: "rule_uid is required",
 		},
@@ -501,197 +528,156 @@ func TestManageRulesReadParams_Validate(t *testing.T) {
 			params:  ManageRulesReadParams{Operation: "create"},
 			wantErr: "unknown operation",
 		},
+		// Successful list with query params forwarded
 		{
-			name:    "empty operation",
-			params:  ManageRulesReadParams{Operation: ""},
-			wantErr: "unknown operation",
+			name:   "list with defaults",
+			params: ManageRulesReadParams{Operation: "list"},
+			assertRequest: func(t *testing.T, r *http.Request) {
+				t.Helper()
+				require.Equal(t, "/api/prometheus/grafana/api/v1/rules", r.URL.Path)
+			},
+			expectedRules: []alertRuleSummary{expectedMockRuleSummary},
 		},
 		{
-			name:    "delete not allowed in read params",
-			params:  ManageRulesReadParams{Operation: "delete"},
-			wantErr: "unknown operation",
+			name: "list with folder_uid",
+			params: ManageRulesReadParams{
+				Operation: "list",
+				FolderUID: "test-folder",
+			},
+			assertRequest: func(t *testing.T, r *http.Request) {
+				t.Helper()
+				require.Equal(t, "test-folder", r.URL.Query().Get("folder_uid"))
+			},
+			expectedRules: []alertRuleSummary{expectedMockRuleSummary},
 		},
 		{
-			name:   "versions operation with rule_uid",
-			params: ManageRulesReadParams{Operation: "versions", RuleUID: "test-uid"},
+			name: "list with all filter params",
+			params: ManageRulesReadParams{
+				listFilterParams: listFilterParams{
+					RuleLimit:      10,
+					SearchRuleName: "cpu",
+					RuleType:       "alerting",
+					States:         []string{"firing"},
+					Matchers:       []LabelMatcher{{Name: "severity", Type: "=", Value: "critical"}},
+				},
+				Operation: "list",
+				FolderUID: "test-folder",
+				RuleGroup: "test-group",
+			},
+			assertRequest: func(t *testing.T, r *http.Request) {
+				t.Helper()
+				q := r.URL.Query()
+				require.Equal(t, "test-folder", q.Get("folder_uid"))
+				require.Equal(t, "test-group", q.Get("rule_group"))
+				require.Equal(t, "cpu", q.Get("search.rule_name"))
+				require.Equal(t, "alerting", q.Get("rule_type"))
+				require.Equal(t, []string{"firing"}, q["state"])
+				require.Equal(t, "10", q.Get("rule_limit"))
+				require.NotEmpty(t, q.Get("matcher"))
+			},
+			expectedRules: []alertRuleSummary{expectedMockRuleSummary},
 		},
 		{
-			name:    "versions operation without rule_uid",
-			params:  ManageRulesReadParams{Operation: "versions"},
-			wantErr: "rule_uid is required",
+			name: "list with label selector filters matching rule",
+			params: ManageRulesReadParams{
+				listFilterParams: listFilterParams{
+					LabelSelectors: []Selector{{Filters: []LabelMatcher{{Name: "severity", Type: "=", Value: "critical"}}}},
+				},
+				Operation: "list",
+			},
+			expectedRules: []alertRuleSummary{expectedMockRuleSummary},
+		},
+		{
+			name: "list with label selector filters not matching",
+			params: ManageRulesReadParams{
+				listFilterParams: listFilterParams{
+					LabelSelectors: []Selector{{Filters: []LabelMatcher{{Name: "severity", Type: "=", Value: "warning"}}}},
+				},
+				Operation: "list",
+			},
+			expectedRules: nil,
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			err := tc.params.validate()
+			ctx := setupManageRulesTestContext(t, tc.assertRequest)
+			result, err := manageRulesRead(ctx, tc.params)
 			if tc.wantErr != "" {
 				require.Error(t, err)
 				require.Contains(t, err.Error(), tc.wantErr)
-			} else {
-				require.NoError(t, err)
+				return
 			}
+			require.NoError(t, err)
+			rules, ok := result.([]alertRuleSummary)
+			require.True(t, ok)
+			require.Equal(t, tc.expectedRules, rules)
 		})
 	}
 }
 
-func TestManageRulesReadWriteParams_Validate(t *testing.T) {
-	validCreateParams := ManageRulesReadWriteParams{
-		Operation:    "create",
-		Title:        "Test Rule",
-		RuleGroup:    "test-group",
-		FolderUID:    "test-folder",
-		Condition:    "A",
-		Data:         []*AlertQuery{{RefID: "A"}},
-		NoDataState:  "OK",
-		ExecErrState: "OK",
-		For:          "5m",
-		OrgID:        1,
-	}
-
-	validUpdateParams := ManageRulesReadWriteParams{
-		Operation:    "update",
-		RuleUID:      "test-uid",
-		Title:        "Test Rule",
-		RuleGroup:    "test-group",
-		FolderUID:    "test-folder",
-		Condition:    "A",
-		Data:         []*AlertQuery{{RefID: "A"}},
-		NoDataState:  "OK",
-		ExecErrState: "OK",
-		For:          "5m",
-		OrgID:        1,
-	}
-
+func TestManageRulesReadWrite_ValidationErrors(t *testing.T) {
+	ctx := context.Background()
 	tests := []struct {
 		name    string
-		params  ManageRulesReadWriteParams
+		call    func() (any, error)
 		wantErr string
 	}{
 		{
-			name:   "list operation with defaults",
-			params: ManageRulesReadWriteParams{Operation: "list"},
-		},
-		{
-			name:   "list operation with rule_limit",
-			params: ManageRulesReadWriteParams{Operation: "list", RuleLimit: 50},
-		},
-		{
-			name:    "list operation with negative rule_limit",
-			params:  ManageRulesReadWriteParams{Operation: "list", RuleLimit: -1},
+			name: "negative rule_limit",
+			call: func() (any, error) {
+				return manageRulesReadWrite(ctx, ManageRulesReadWriteParams{listFilterParams: listFilterParams{RuleLimit: -1}, Operation: "list"})
+			},
 			wantErr: "invalid rule_limit",
 		},
 		{
-			name:   "list operation with search_folder",
-			params: ManageRulesReadWriteParams{Operation: "list", SearchFolder: "Production"},
-		},
-		{
-			name:    "list operation with folder_uid and search_folder",
-			params:  ManageRulesReadWriteParams{Operation: "list", FolderUID: "folder-1", SearchFolder: "Production"},
+			name: "folder_uid and search_folder mutually exclusive",
+			call: func() (any, error) {
+				return manageRulesReadWrite(ctx, ManageRulesReadWriteParams{listFilterParams: listFilterParams{SearchFolder: "Production"}, Operation: "list", FolderUID: "folder-1"})
+			},
 			wantErr: "mutually exclusive",
 		},
 		{
-			name:   "get operation with rule_uid",
-			params: ManageRulesReadWriteParams{Operation: "get", RuleUID: "test-uid"},
-		},
-		{
-			name:    "get operation without rule_uid",
-			params:  ManageRulesReadWriteParams{Operation: "get"},
-			wantErr: "rule_uid is required",
-		},
-		{
-			name:   "create operation with valid params",
-			params: validCreateParams,
-		},
-		{
-			name: "create operation missing title",
-			params: ManageRulesReadWriteParams{
-				Operation:    "create",
-				RuleGroup:    "test-group",
-				FolderUID:    "test-folder",
-				Condition:    "A",
-				Data:         []*AlertQuery{{RefID: "A"}},
-				NoDataState:  "OK",
-				ExecErrState: "OK",
-				For:          "5m",
-				OrgID:        1,
+			name: "create missing title",
+			call: func() (any, error) {
+				return manageRulesReadWrite(ctx, ManageRulesReadWriteParams{
+					Operation: "create", RuleGroup: "test-group", FolderUID: "test-folder",
+					Condition: "A", Data: []*AlertQuery{{RefID: "A"}},
+					NoDataState: "OK", ExecErrState: "OK", For: "5m", OrgID: 1,
+				})
 			},
 			wantErr: "title is required",
 		},
 		{
-			name: "create operation missing rule_group",
-			params: ManageRulesReadWriteParams{
-				Operation:    "create",
-				Title:        "Test Rule",
-				FolderUID:    "test-folder",
-				Condition:    "A",
-				Data:         []*AlertQuery{{RefID: "A"}},
-				NoDataState:  "OK",
-				ExecErrState: "OK",
-				For:          "5m",
-				OrgID:        1,
-			},
-			wantErr: "rule_group is required",
-		},
-		{
-			name:   "update operation with valid params",
-			params: validUpdateParams,
-		},
-		{
-			name: "update operation missing rule_uid",
-			params: ManageRulesReadWriteParams{
-				Operation:    "update",
-				Title:        "Test Rule",
-				RuleGroup:    "test-group",
-				FolderUID:    "test-folder",
-				Condition:    "A",
-				Data:         []*AlertQuery{{RefID: "A"}},
-				NoDataState:  "OK",
-				ExecErrState: "OK",
-				For:          "5m",
-				OrgID:        1,
+			name: "update missing rule_uid",
+			call: func() (any, error) {
+				return manageRulesReadWrite(ctx, ManageRulesReadWriteParams{
+					Operation: "update", Title: "Test Rule", RuleGroup: "test-group", FolderUID: "test-folder",
+					Condition: "A", Data: []*AlertQuery{{RefID: "A"}},
+					NoDataState: "OK", ExecErrState: "OK", For: "5m", OrgID: 1,
+				})
 			},
 			wantErr: "rule_uid is required",
 		},
 		{
-			name:   "delete operation with rule_uid",
-			params: ManageRulesReadWriteParams{Operation: "delete", RuleUID: "test-uid"},
-		},
-		{
-			name:    "delete operation without rule_uid",
-			params:  ManageRulesReadWriteParams{Operation: "delete"},
+			name:    "delete without rule_uid",
+			call:    func() (any, error) { return manageRulesReadWrite(ctx, ManageRulesReadWriteParams{Operation: "delete"}) },
 			wantErr: "rule_uid is required",
 		},
 		{
-			name:   "versions operation with rule_uid",
-			params: ManageRulesReadWriteParams{Operation: "versions", RuleUID: "test-uid"},
-		},
-		{
-			name:    "versions operation without rule_uid",
-			params:  ManageRulesReadWriteParams{Operation: "versions"},
-			wantErr: "rule_uid is required",
-		},
-		{
-			name:    "unknown operation",
-			params:  ManageRulesReadWriteParams{Operation: "invalid"},
-			wantErr: "unknown operation",
-		},
-		{
-			name:    "empty operation",
-			params:  ManageRulesReadWriteParams{Operation: ""},
+			name: "unknown operation",
+			call: func() (any, error) {
+				return manageRulesReadWrite(ctx, ManageRulesReadWriteParams{Operation: "invalid"})
+			},
 			wantErr: "unknown operation",
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			err := tc.params.validate()
-			if tc.wantErr != "" {
-				require.Error(t, err)
-				require.Contains(t, err.Error(), tc.wantErr)
-			} else {
-				require.NoError(t, err)
-			}
+			_, err := tc.call()
+			require.Error(t, err)
+			require.Contains(t, err.Error(), tc.wantErr)
 		})
 	}
 }
@@ -933,7 +919,6 @@ func TestMergeRuleDetail(t *testing.T) {
 		require.Equal(t, "recording", detail.Type, "the rule type should be 'recording'")
 		require.Equal(t, "2026-02-28T12:00:00Z", detail.LastEvaluation, "the last evaluation time should match formatted UTC time")
 	})
-
 
 	t.Run("nil runtime leaves state fields empty", func(t *testing.T) {
 		title := "Disk Alert"

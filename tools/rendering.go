@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,22 +12,68 @@ import (
 	"strings"
 	"time"
 
+	"github.com/invopop/jsonschema"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
 )
 
+// StringOrSlice is a type that can be unmarshaled from either a JSON string
+// or an array of strings. This allows dashboard variables to support both
+// single-value (e.g., "prometheus") and multi-value (e.g., ["server1", "server2"])
+// inputs.
+type StringOrSlice []string
+
+// UnmarshalJSON implements the json.Unmarshaler interface.
+// It accepts both a JSON string and a JSON array of strings.
+func (s *StringOrSlice) UnmarshalJSON(data []byte) error {
+	// Try to unmarshal as a single string first.
+	var single string
+	if err := json.Unmarshal(data, &single); err == nil {
+		*s = StringOrSlice{single}
+		return nil
+	}
+
+	// Try to unmarshal as an array of strings.
+	var arr []string
+	if err := json.Unmarshal(data, &arr); err != nil {
+		return fmt.Errorf("variables value must be a string or array of strings, got: %s", string(data))
+	}
+	*s = StringOrSlice(arr)
+	return nil
+}
+
+// MarshalJSON implements the json.Marshaler interface.
+// A single-element slice is marshaled as a plain string for backward compatibility.
+func (s StringOrSlice) MarshalJSON() ([]byte, error) {
+	if len(s) == 1 {
+		return json.Marshal(s[0])
+	}
+	return json.Marshal([]string(s))
+}
+
+// JSONSchema implements the jsonschema.customSchemaGetterType interface so that
+// the schema reflector emits a union type: either a string or an array of strings.
+func (StringOrSlice) JSONSchema() *jsonschema.Schema {
+	return &jsonschema.Schema{
+		OneOf: []*jsonschema.Schema{
+			{Type: "string"},
+			{Type: "array", Items: &jsonschema.Schema{Type: "string"}},
+		},
+	}
+}
+
 type GetPanelImageParams struct {
-	DashboardUID string            `json:"dashboardUid" jsonschema:"required,description=The UID of the dashboard containing the panel"`
-	PanelID      *int              `json:"panelId,omitempty" jsonschema:"description=The ID of the panel to render. If omitted\\, the entire dashboard is rendered"`
-	Width        *int              `json:"width,omitempty" jsonschema:"description=Width of the rendered image in pixels. Defaults to 1000"`
-	Height       *int              `json:"height,omitempty" jsonschema:"description=Height of the rendered image in pixels. Defaults to 500"`
-	TimeRange    *RenderTimeRange  `json:"timeRange,omitempty" jsonschema:"description=Time range for the rendered image"`
-	Variables    map[string]string `json:"variables,omitempty" jsonschema:"description=Dashboard variables to apply (e.g.\\, {\"var-datasource\": \"prometheus\"})"`
-	Theme        *string           `json:"theme,omitempty" jsonschema:"description=Theme for the rendered image: light or dark. Defaults to dark"`
-	Scale        *int              `json:"scale,omitempty" jsonschema:"description=Scale factor for the image (1-3). Defaults to 1"`
-	Timeout      *int              `json:"timeout,omitempty" jsonschema:"description=Rendering timeout in seconds. Defaults to 60"`
+	DashboardUID string                   `json:"dashboardUid" jsonschema:"required,description=The UID of the dashboard containing the panel"`
+	PanelID      *int                     `json:"panelId,omitempty" jsonschema:"description=The ID of the panel to render. If omitted\\, the entire dashboard is rendered"`
+	Width        *int                     `json:"width,omitempty" jsonschema:"description=Width of the rendered image in pixels. Defaults to 1000"`
+	Height       *int                     `json:"height,omitempty" jsonschema:"description=Height of the rendered image in pixels. Defaults to 500"`
+	TimeRange    *RenderTimeRange         `json:"timeRange,omitempty" jsonschema:"description=Time range for the rendered image"`
+	Variables    map[string]StringOrSlice `json:"variables,omitempty" jsonschema:"description=Dashboard variables to apply. Values can be a single string or an array of strings for multi-value variables (e.g.\\, {\"var-datasource\": \"prometheus\"\\, \"var-instance\": [\"server1\"\\, \"server2\"]})"`
+	Theme        *string                  `json:"theme,omitempty" jsonschema:"description=Theme for the rendered image: light or dark. Defaults to dark"`
+	Scale        *int                     `json:"scale,omitempty" jsonschema:"description=Scale factor for the image (1-3). Defaults to 1"`
+	Timeout      *int                     `json:"timeout,omitempty" jsonschema:"description=Rendering timeout in seconds. Defaults to 60"`
 }
 
 type RenderTimeRange struct {
@@ -168,9 +215,11 @@ func buildRenderURL(baseURL string, args GetPanelImageParams) (string, error) {
 		params.Set("theme", *args.Theme)
 	}
 
-	// Add dashboard variables
-	for key, value := range args.Variables {
-		params.Set(key, value)
+	// Add dashboard variables (supports multi-value via params.Add)
+	for key, values := range args.Variables {
+		for _, v := range values {
+			params.Add(key, v)
+		}
 	}
 
 	// Add kiosk mode options for cleaner rendering

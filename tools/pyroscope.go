@@ -2,8 +2,10 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -23,7 +25,7 @@ func AddPyroscopeTools(mcp *server.MCPServer) {
 	ListPyroscopeLabelNames.Register(mcp)
 	ListPyroscopeLabelValues.Register(mcp)
 	ListPyroscopeProfileTypes.Register(mcp)
-	FetchPyroscopeProfile.Register(mcp)
+	QueryPyroscope.Register(mcp)
 }
 
 const listPyroscopeLabelNamesToolPrompt = `
@@ -210,79 +212,6 @@ func listPyroscopeProfileTypes(ctx context.Context, args ListPyroscopeProfileTyp
 	return profileTypes, nil
 }
 
-const fetchPyroscopeProfileToolPrompt = `
-Fetches a profile from a Pyroscope data source for a given time range. By default, the time range is tha past 1 hour.
-The profile type is required, available profile types can be fetched via the list_pyroscope_profile_types tool. Not all
-profile types are available for every service. Expect some queries to return empty result sets, this indicates the
-profile type does not exist for that query. In such a case, consider trying a related profile type or giving up.
-Matchers are not required, but highly recommended, they are generally used to select an application by the service_name
-label (e.g. {service_name="foo"}). Use the list_pyroscope_label_names tool to fetch available label names, and the
-list_pyroscope_label_values tool to fetch available label values. The returned profile is in DOT format.
-`
-
-var FetchPyroscopeProfile = mcpgrafana.MustTool(
-	"fetch_pyroscope_profile",
-	fetchPyroscopeProfileToolPrompt,
-	fetchPyroscopeProfile,
-	mcp.WithTitleAnnotation("Fetch Pyroscope profile"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-)
-
-type FetchPyroscopeProfileParams struct {
-	DataSourceUID string `json:"data_source_uid" jsonschema:"required,description=The UID of the datasource to query"`
-	ProfileType   string `json:"profile_type" jsonschema:"required,description=Type profile type\\, use the list_pyroscope_profile_types tool to fetch available profile types"`
-	Matchers      string `json:"matchers,omitempty" jsonschema:"description=Optionally\\, Prometheus style matchers used to filter the result set (defaults to: {})"`
-	MaxNodeDepth  int    `json:"max_node_depth,omitempty" jsonschema:"description=Optionally\\, the maximum depth of nodes in the resulting profile. Less depth results in smaller profiles that execute faster\\, more depth result in larger profiles that have more detail. A value of -1 indicates to use an unbounded node depth (default: 100). Reducing max node depth from the default will negatively impact the accuracy of the profile"`
-	StartRFC3339  string `json:"start_rfc_3339,omitempty" jsonschema:"description=Optionally\\, the start time of the query in RFC3339 format (defaults to 1 hour ago)"`
-	EndRFC3339    string `json:"end_rfc_3339,omitempty" jsonschema:"description=Optionally\\, the end time of the query in RFC3339 format (defaults to now)"`
-}
-
-func fetchPyroscopeProfile(ctx context.Context, args FetchPyroscopeProfileParams) (string, error) {
-	args.Matchers = stringOrDefault(args.Matchers, "{}")
-	matchersRegex := regexp.MustCompile(`^\{.*\}$`)
-	if !matchersRegex.MatchString(args.Matchers) {
-		args.Matchers = fmt.Sprintf("{%s}", args.Matchers)
-	}
-
-	args.MaxNodeDepth = intOrDefault(args.MaxNodeDepth, 100)
-
-	start, err := rfc3339OrDefault(args.StartRFC3339, time.Time{})
-	if err != nil {
-		return "", fmt.Errorf("failed to parse start timestamp %q: %w", args.StartRFC3339, err)
-	}
-
-	end, err := rfc3339OrDefault(args.EndRFC3339, time.Time{})
-	if err != nil {
-		return "", fmt.Errorf("failed to parse end timestamp %q: %w", args.EndRFC3339, err)
-	}
-
-	start, end, err = validateTimeRange(start, end)
-	if err != nil {
-		return "", err
-	}
-
-	client, err := newPyroscopeClient(ctx, args.DataSourceUID)
-	if err != nil {
-		return "", fmt.Errorf("failed to create Pyroscope client: %w", err)
-	}
-
-	req := &renderRequest{
-		ProfileType: args.ProfileType,
-		Matcher:     args.Matchers,
-		Start:       start,
-		End:         end,
-		Format:      "dot",
-		MaxNodes:    args.MaxNodeDepth,
-	}
-	res, err := client.Render(ctx, req)
-	if err != nil {
-		return "", fmt.Errorf("failed to call Pyroscope API: %w", err)
-	}
-
-	res = cleanupDotProfile(res)
-	return res, nil
-}
 
 func newPyroscopeClient(ctx context.Context, uid string) (*pyroscopeClient, error) {
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
@@ -387,7 +316,7 @@ func (c *pyroscopeClient) get(ctx context.Context, path string, params url.Value
 		return nil, fmt.Errorf("pyroscope API failed with status code %d: %s", res.StatusCode, string(body))
 	}
 
-	const limit = 1 << 25 // 32 MiB
+	const limit = 1024 * 1024 * 10 // 10MB limit
 	body, err := io.ReadAll(io.LimitReader(res.Body, limit))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response body: %w", err)
@@ -457,4 +386,188 @@ func cleanupDotProfile(profile string) string {
 		}
 		return ""
 	})
+}
+
+
+var matchersRegex = regexp.MustCompile(`^\{.*\}$`)
+
+// rawSeries is the JSON structure returned for a single time-series.
+type rawSeries struct {
+	Labels map[string]string `json:"labels"`
+	Points [][2]float64      `json:"points"` // [[timestamp_ms, value], ...]
+}
+
+// seriesResponse is the structured metrics response embedded in the query_pyroscope result.
+type seriesResponse struct {
+	Series    []rawSeries       `json:"series"`
+	TimeRange map[string]string `json:"time_range"`
+	StepSecs  float64           `json:"step_seconds"`
+}
+
+func buildSeriesResponse(series []*typesv1.Series, start, end time.Time, step float64) *seriesResponse {
+	raw := make([]rawSeries, 0, len(series))
+	for _, s := range series {
+		labels := make(map[string]string, len(s.Labels))
+		for _, lp := range s.Labels {
+			labels[lp.Name] = lp.Value
+		}
+
+		points := make([][2]float64, 0, len(s.Points))
+		for _, p := range s.Points {
+			points = append(points, [2]float64{float64(p.Timestamp), p.Value})
+		}
+
+		if len(points) == 0 {
+			continue
+		}
+
+		raw = append(raw, rawSeries{
+			Labels: labels,
+			Points: points,
+		})
+	}
+
+	return &seriesResponse{
+		Series:    raw,
+		TimeRange: map[string]string{"from": start.Format(time.RFC3339), "to": end.Format(time.RFC3339)},
+		StepSecs:  step,
+	}
+}
+
+// ---------------------------------------------------------------------------
+// query_pyroscope — unified tool: profile + metrics + both
+// ---------------------------------------------------------------------------
+
+const queryPyroscopeToolPrompt = `
+Unified Pyroscope query tool for fetching profiles or metrics from Pyroscope. Profile data shows WHICH functions consume resources; metrics data
+shows WHEN consumption spiked. Use query_type="both" for complete analysis in one call.
+
+query_type options (extends Grafana's PyroscopeQueryType):
+- "profile": returns DOT-format call graph
+- "metrics": returns time-series data points
+- "both" (default): returns both profile and metrics in one response
+`
+
+var QueryPyroscope = mcpgrafana.MustTool(
+	"query_pyroscope",
+	queryPyroscopeToolPrompt,
+	queryPyroscope,
+	mcp.WithTitleAnnotation("Query Pyroscope"),
+	mcp.WithIdempotentHintAnnotation(true),
+	mcp.WithReadOnlyHintAnnotation(true),
+)
+
+type QueryPyroscopeParams struct {
+	DataSourceUID string   `json:"data_source_uid" jsonschema:"required,description=The UID of the datasource to query"`
+	ProfileType   string   `json:"profile_type" jsonschema:"required,description=The profile type\\, use list_pyroscope_profile_types to discover available types"`
+	QueryType     string   `json:"query_type,omitempty" jsonschema:"description=Query type: \"profile\" (flamegraph)\\, \"metrics\" (time-series)\\, or \"both\" (default). Use \"both\" for complete analysis"`
+	Matchers      string   `json:"matchers,omitempty" jsonschema:"description=Prometheus style matchers (defaults to: {})"`
+	GroupBy       []string `json:"group_by,omitempty" jsonschema:"description=Labels to group metrics series by"`
+	Step          float64  `json:"step,omitempty" jsonschema:"description=Seconds between metrics data points (default: auto)"`
+	MaxNodeDepth  int      `json:"max_node_depth,omitempty" jsonschema:"description=Max depth for profile call graph (default: 100)"`
+	StartRFC3339  string   `json:"start_rfc_3339,omitempty" jsonschema:"description=Start time in RFC3339 (defaults to 1 hour ago)"`
+	EndRFC3339    string   `json:"end_rfc_3339,omitempty" jsonschema:"description=End time in RFC3339 (defaults to now)"`
+}
+
+func queryPyroscope(ctx context.Context, args QueryPyroscopeParams) (string, error) {
+	queryType := strings.ToLower(strings.TrimSpace(args.QueryType))
+	if queryType == "" {
+		queryType = "both"
+	}
+	if queryType != "profile" && queryType != "metrics" && queryType != "both" {
+		return "", fmt.Errorf("invalid query_type %q: must be \"profile\", \"metrics\", or \"both\"", args.QueryType)
+	}
+
+	// Common setup
+	matchers := stringOrDefault(args.Matchers, "{}")
+	if !matchersRegex.MatchString(matchers) {
+		matchers = fmt.Sprintf("{%s}", matchers)
+	}
+
+	start, err := rfc3339OrDefault(args.StartRFC3339, time.Time{})
+	if err != nil {
+		return "", fmt.Errorf("failed to parse start timestamp %q: %w", args.StartRFC3339, err)
+	}
+
+	end, err := rfc3339OrDefault(args.EndRFC3339, time.Time{})
+	if err != nil {
+		return "", fmt.Errorf("failed to parse end timestamp %q: %w", args.EndRFC3339, err)
+	}
+
+	start, end, err = validateTimeRange(start, end)
+	if err != nil {
+		return "", err
+	}
+
+	client, err := newPyroscopeClient(ctx, args.DataSourceUID)
+	if err != nil {
+		return "", fmt.Errorf("failed to create Pyroscope client: %w", err)
+	}
+
+	wantProfile := queryType == "profile" || queryType == "both"
+	wantMetrics := queryType == "metrics" || queryType == "both"
+
+	result := make(map[string]any)
+	result["query_type"] = queryType
+
+	if wantProfile {
+		maxNodes := intOrDefault(args.MaxNodeDepth, 100)
+		res, profileErr := client.Render(ctx, &renderRequest{
+			ProfileType: args.ProfileType,
+			Matcher:     matchers,
+			Start:       start,
+			End:         end,
+			Format:      "dot",
+			MaxNodes:    maxNodes,
+		})
+		if profileErr != nil {
+			// Single-type query: propagate error so MCP framework sets IsError=true.
+			// "both" mode: embed error for partial results.
+			if queryType == "profile" {
+				return "", fmt.Errorf("failed to fetch profile: %w", profileErr)
+			}
+			result["profile"] = map[string]string{"error": profileErr.Error()}
+		} else {
+			result["profile"] = cleanupDotProfile(res)
+		}
+	}
+
+	if wantMetrics {
+		step := args.Step
+		if step <= 0 {
+			step = math.Max(end.Sub(start).Seconds()/50.0, 15.0)
+		}
+
+		seriesRes, metricsErr := client.SelectSeries(ctx, connect.NewRequest(&querierv1.SelectSeriesRequest{
+			ProfileTypeID: args.ProfileType,
+			LabelSelector: matchers,
+			Start:         start.UnixMilli(),
+			End:           end.UnixMilli(),
+			GroupBy:       args.GroupBy,
+			Step:          step,
+		}))
+		if metricsErr != nil {
+			if queryType == "metrics" {
+				return "", fmt.Errorf("failed to fetch metrics: %w", metricsErr)
+			}
+			result["metrics"] = map[string]string{"error": metricsErr.Error()}
+		} else {
+			result["metrics"] = buildSeriesResponse(seriesRes.Msg.Series, start, end, step)
+		}
+	}
+
+	// If both queries were attempted and both failed, propagate error.
+	_, profileFailed := result["profile"].(map[string]string)
+	_, metricsFailed := result["metrics"].(map[string]string)
+	if queryType == "both" && profileFailed && metricsFailed {
+		return "", fmt.Errorf("both queries failed — profile: %s; metrics: %s",
+			result["profile"].(map[string]string)["error"],
+			result["metrics"].(map[string]string)["error"])
+	}
+
+	out, err := json.Marshal(result)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal response: %w", err)
+	}
+	return string(out), nil
 }

@@ -5,13 +5,8 @@ import (
 	"fmt"
 
 	"github.com/grafana/grafana-openapi-client-go/models"
+	"github.com/prometheus/prometheus/model/labels"
 )
-
-type ListAlertRulesParams struct {
-	Limit          int        `json:"limit,omitempty" jsonschema:"default=200,description=The maximum number of results to return"`
-	DatasourceUID  *string    `json:"datasourceUid,omitempty" jsonschema:"description=Optional: UID of a Prometheus or Loki datasource to query for datasource-managed alert rules. If omitted\\, returns Grafana-managed rules."`
-	LabelSelectors []Selector `json:"label_selectors,omitempty" jsonschema:"description=Optionally\\, a list of matchers to filter alert rules by labels"`
-}
 
 type alertRuleSummary struct {
 	UID            string            `json:"uid"`
@@ -343,28 +338,76 @@ func (p DeleteAlertRuleParams) validate() error {
 	return nil
 }
 
+// convertMatchers validates and converts LabelMatcher values into Prometheus matchers.
+func convertMatchers(matchers []LabelMatcher) ([]*labels.Matcher, error) {
+	var result []*labels.Matcher
+	for _, m := range matchers {
+		matchType, ok := matchTypeMap[m.Type]
+		if !ok {
+			return nil, fmt.Errorf("invalid matcher type: %s", m.Type)
+		}
+		lm, err := labels.NewMatcher(matchType, m.Name, m.Value)
+		if err != nil {
+			return nil, fmt.Errorf("invalid matcher {%s %s %q}: %w", m.Name, m.Type, m.Value, err)
+		}
+		result = append(result, lm)
+	}
+	return result, nil
+}
+
+// buildGetRulesOpts validates shared list filter fields and constructs GetRulesOpts.
+func buildGetRulesOpts(f listFilterParams, folderUID, ruleGroup string) (*GetRulesOpts, error) {
+	if f.RuleLimit < 0 {
+		return nil, fmt.Errorf("invalid rule_limit: %d, must be >= 0", f.RuleLimit)
+	}
+	if folderUID != "" && f.SearchFolder != "" {
+		return nil, fmt.Errorf("folder_uid and search_folder are mutually exclusive")
+	}
+	matchers, err := convertMatchers(f.Matchers)
+	if err != nil {
+		return nil, err
+	}
+	return &GetRulesOpts{
+		FolderUID:    folderUID,
+		SearchFolder: f.SearchFolder,
+		RuleGroup:    ruleGroup,
+		RuleName:     f.SearchRuleName,
+		RuleType:     f.RuleType,
+		States:       f.States,
+		RuleLimit:    f.RuleLimit,
+		LimitAlerts:  f.LimitAlerts,
+		Matchers:     matchers,
+	}, nil
+}
+
+// listFilterParams contains list operation filter fields shared between read and read-write param structs.
+type listFilterParams struct {
+	RuleLimit      int            `json:"rule_limit,omitempty" jsonschema:"default=200,description=Maximum number of rules to return (default 200\\, max 200). Requires Grafana 12.4+ (for 'list' operation)"`
+	LabelSelectors []Selector     `json:"label_selectors,omitempty" jsonschema:"description=Label matchers to filter alert rules (for 'list' operation)"`
+	LimitAlerts    int            `json:"limit_alerts,omitempty" jsonschema:"description=Limit alert instances per rule. For list: 0 omits alerts. For get: <=0 defaults to 200. Max 200."`
+	SearchFolder   string         `json:"search_folder,omitempty" jsonschema:"description=Search folders by path using partial matching (for 'list' operation). Requires Grafana 12.4+. Mutually exclusive with folder_uid."`
+	SearchRuleName string         `json:"search_rule_name,omitempty" jsonschema:"description=Search alert rule names/titles using partial matching. Requires Grafana 12.4+ (for 'list' operation)"`
+	States         []string       `json:"states,omitempty" jsonschema:"description=Filter by alert state: firing\\, pending\\, normal\\, recovering\\, nodata\\, error (for 'list' operation)"`
+	RuleType       string         `json:"rule_type,omitempty" jsonschema:"description=Filter by rule type: alerting\\, recording (for 'list' operation)"`
+	Matchers       []LabelMatcher `json:"matchers,omitempty" jsonschema:"description=Label matchers to filter alert instances by labels. Requires Grafana 12.4+ (for 'list' operation)"`
+}
+
 // ManageRulesReadParams is the param struct for the read-only version of alerting_manage_rules.
 type ManageRulesReadParams struct {
-	Operation      string     `json:"operation" jsonschema:"required,enum=list,enum=get,enum=versions,description=The operation to perform: 'list' to search/filter rules\\, 'get' to retrieve full rule details (state + configuration) by UID\\, or 'versions' to get the version history of a rule"`
-	RuleUID        string     `json:"rule_uid,omitempty" jsonschema:"description=The UID of the alert rule (required for 'get' and 'versions' operations)"`
-	RuleLimit      int        `json:"rule_limit,omitempty" jsonschema:"default=200,description=Maximum number of rules to return (default 200\\, max 200). Requires Grafana 12.4+ (for 'list' operation)"`
-	DatasourceUID  *string    `json:"datasource_uid,omitempty" jsonschema:"description=Optional: UID of a Prometheus or Loki datasource to query for datasource-managed alert rules. If omitted\\, returns Grafana-managed rules."`
-	LabelSelectors []Selector `json:"label_selectors,omitempty" jsonschema:"description=Label matchers to filter alert rules (for 'list' operation)"`
-	LimitAlerts    int        `json:"limit_alerts,omitempty" jsonschema:"description=Limit alert instances per rule. For list: 0 omits alerts. For get: <=0 defaults to 200. Max 200."`
-	FolderUID      string     `json:"folder_uid,omitempty" jsonschema:"description=Filter by exact folder UID (for 'list' operation). Mutually exclusive with search_folder."`
-	SearchFolder   string     `json:"search_folder,omitempty" jsonschema:"description=Search folders by path using partial matching (for 'list' operation). Requires Grafana 12.4+. Mutually exclusive with folder_uid."`
+	listFilterParams
+
+	Operation     string  `json:"operation" jsonschema:"required,enum=list,enum=get,enum=versions,description=The operation to perform: 'list' to search/filter rules\\, 'get' to retrieve full rule details (state + configuration) by UID\\, or 'versions' to get the version history of a rule"`
+	RuleUID       string  `json:"rule_uid,omitempty" jsonschema:"description=The UID of the alert rule (required for 'get' and 'versions' operations)"`
+	DatasourceUID *string `json:"datasource_uid,omitempty" jsonschema:"description=Optional: UID of a Prometheus or Loki datasource to query for datasource-managed alert rules. If omitted\\, returns Grafana-managed rules."`
+	FolderUID     string  `json:"folder_uid,omitempty" jsonschema:"description=Filter by exact folder UID (for 'list' operation). Mutually exclusive with search_folder."`
+	RuleGroup     string  `json:"rule_group,omitempty" jsonschema:"description=Filter by exact rule group name (for 'list' operation)"`
 }
 
 func (p ManageRulesReadParams) validate() error {
 	switch p.Operation {
 	case "list":
-		if p.RuleLimit < 0 {
-			return fmt.Errorf("invalid rule_limit: %d, must be >= 0", p.RuleLimit)
-		}
-		if p.FolderUID != "" && p.SearchFolder != "" {
-			return fmt.Errorf("folder_uid and search_folder are mutually exclusive")
-		}
-		return nil
+		_, err := buildGetRulesOpts(p.listFilterParams, p.FolderUID, p.RuleGroup)
+		return err
 	case "get":
 		if p.RuleUID == "" {
 			return fmt.Errorf("rule_uid is required for 'get' operation")
@@ -380,22 +423,24 @@ func (p ManageRulesReadParams) validate() error {
 	}
 }
 
+func (p ManageRulesReadParams) toGetRulesOpts() (*GetRulesOpts, error) {
+	return buildGetRulesOpts(p.listFilterParams, p.FolderUID, p.RuleGroup)
+}
+
 // ManageRulesReadWriteParams is the param struct for the read-write version of alerting_manage_rules.
 type ManageRulesReadWriteParams struct {
+	listFilterParams
+
 	Operation                   string                `json:"operation" jsonschema:"required,enum=list,enum=get,enum=versions,enum=create,enum=update,enum=delete,description=The operation to perform: 'list'\\, 'get'\\, 'versions'\\, 'create'\\, 'update'\\, or 'delete'. To create a rule\\, use operation 'create' and provide all required fields in a single call. To update a rule\\, first use 'get' to retrieve its full configuration\\, then 'update' with all required fields plus your changes."`
 	RuleUID                     string                `json:"rule_uid,omitempty" jsonschema:"description=The UID of the alert rule (required for 'get'\\, 'versions'\\, 'update'\\, 'delete'; optional for 'create')"`
-	RuleLimit                   int                   `json:"rule_limit,omitempty" jsonschema:"default=200,description=Maximum number of rules to return (default 200\\, max 200). Requires Grafana 12.4+ (for 'list' operation)"`
 	DatasourceUID               *string               `json:"datasource_uid,omitempty" jsonschema:"description=Optional: UID of a Prometheus or Loki datasource to query for datasource-managed alert rules (for 'list' operation)"`
-	LabelSelectors              []Selector            `json:"label_selectors,omitempty" jsonschema:"description=Label matchers to filter alert rules (for 'list' operation)"`
-	LimitAlerts                 int                   `json:"limit_alerts,omitempty" jsonschema:"description=Limit alert instances per rule. For list: 0 omits alerts. For get: <=0 defaults to 200. Max 200."`
-	SearchFolder                string                `json:"search_folder,omitempty" jsonschema:"description=Search folders by path using partial matching (for 'list' operation). Requires Grafana 12.4+. Mutually exclusive with folder_uid when used for filtering."`
 	Title                       string                `json:"title,omitempty" jsonschema:"description=The title of the alert rule (required for 'create'\\, 'update')"`
 	RuleGroup                   string                `json:"rule_group,omitempty" jsonschema:"description=The rule group name (required for 'create'\\, 'update')"`
 	FolderUID                   string                `json:"folder_uid,omitempty" jsonschema:"description=The folder UID. For 'list': filter by exact folder UID (mutually exclusive with search_folder). For 'create'/'update': the folder to store the rule in (required)."`
 	Condition                   string                `json:"condition,omitempty" jsonschema:"description=The query condition identifier\\, e.g. 'A'\\, 'B' (required for 'create'\\, 'update')"`
 	Data                        []*AlertQuery         `json:"data,omitempty" jsonschema:"description=Array of alert query objects (required for 'create' and 'update'). Example: [{datasourceUid: 'prometheus'\\, model: {expr: 'vector(1)'}}\\, {datasourceUid: '__expr__'\\, model: {type: 'threshold'\\, expression: 'A'\\, conditions: [{evaluator: {type: 'gt'\\, params: [1]}}]}}]. RefID and relativeTimeRange are auto-assigned if omitted. Use datasourceUid '__expr__' for server-side expressions. The 'condition' field must reference one of the refIds."`
-	NoDataState                 string                `json:"no_data_state,omitempty" jsonschema:"description=State when no data: NoData\\, Alerting\\, OK (required for 'create'\\, 'update' exceptions: recording type alert rule) "`
-	ExecErrState                string                `json:"exec_err_state,omitempty" jsonschema:"description=State on execution error: NoData\\, Alerting\\, OK (required for 'create'\\, 'update' exceptions: recording type alert rule)"`
+	NoDataState                 string                `json:"no_data_state,omitempty" jsonschema:"description=State when no data: NoData\\, Alerting\\, OK (required for 'create'\\, 'update')"`
+	ExecErrState                string                `json:"exec_err_state,omitempty" jsonschema:"description=State on execution error: NoData\\, Alerting\\, OK (required for 'create'\\, 'update')"`
 	For                         string                `json:"for,omitempty" jsonschema:"description=Duration before alert fires\\, e.g. '5m' (required for 'create'\\, 'update')"`
 	KeepFiringFor               string                `json:"keep_firing_for,omitempty" jsonschema:"description=Enables continous firing of alert for specified time even when condition is no longer met. Default is 0 (resolves immediately)"`
 	IsPaused                    bool                  `json:"is_paused,omitempty" jsonschema:"description=If true\\, the alert rule remains inactive\\, Default is false"`
@@ -411,13 +456,8 @@ type ManageRulesReadWriteParams struct {
 func (p ManageRulesReadWriteParams) validate() error {
 	switch p.Operation {
 	case "list":
-		if p.RuleLimit < 0 {
-			return fmt.Errorf("invalid rule_limit: %d, must be >= 0", p.RuleLimit)
-		}
-		if p.FolderUID != "" && p.SearchFolder != "" {
-			return fmt.Errorf("folder_uid and search_folder are mutually exclusive")
-		}
-		return nil
+		_, err := buildGetRulesOpts(p.listFilterParams, p.FolderUID, p.RuleGroup)
+		return err
 	case "get":
 		if p.RuleUID == "" {
 			return fmt.Errorf("rule_uid is required for 'get' operation")
@@ -489,4 +529,8 @@ func (p ManageRulesReadWriteParams) toUpdateParams() UpdateAlertRuleParams {
 		Record:                      p.Record,
 		MissingSeriesEvalsToResolve: p.MissingSeriesEvalsToResolve,
 	}
+}
+
+func (p ManageRulesReadWriteParams) toGetRulesOpts() (*GetRulesOpts, error) {
+	return buildGetRulesOpts(p.listFilterParams, p.FolderUID, p.RuleGroup)
 }

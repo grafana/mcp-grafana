@@ -67,7 +67,9 @@ func newLokiClient(ctx context.Context, uid string) (*Client, error) {
 	}
 
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
-	url := fmt.Sprintf("%s/api/datasources/proxy/uid/%s", strings.TrimRight(cfg.URL, "/"), uid)
+	grafanaURL := strings.TrimRight(cfg.URL, "/")
+	resourcesBase, proxyBase := datasourceProxyPaths(uid)
+	url := grafanaURL + proxyBase
 
 	// Create custom transport with TLS configuration if available
 	transport, err := mcpgrafana.BuildTransport(&cfg, nil)
@@ -77,10 +79,13 @@ func newLokiClient(ctx context.Context, uid string) (*Client, error) {
 	transport = NewAuthRoundTripper(transport, cfg.AccessToken, cfg.IDToken, cfg.APIKey, cfg.BasicAuth)
 	transport = mcpgrafana.NewOrgIDRoundTripper(transport, cfg.OrgID)
 
+	// Wrap with fallback transport: try /proxy first, fall back to /resources
+	// on 403/500 for compatibility with different managed Grafana deployments.
+	var rt http.RoundTripper = mcpgrafana.NewUserAgentTransport(transport)
+	rt = newDatasourceFallbackTransport(rt, proxyBase, resourcesBase)
+
 	client := &http.Client{
-		Transport: mcpgrafana.NewUserAgentTransport(
-			transport,
-		),
+		Transport: rt,
 	}
 
 	return &Client{
@@ -119,6 +124,10 @@ func (c *Client) makeRequest(ctx context.Context, method, urlPath string, params
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
 
+	// Request categorized labels so Loki returns structured metadata and
+	// parsed labels separately from stream/index labels (Loki >= 3.0).
+	req.Header.Set("X-Loki-Response-Encoding-Flags", "categorize-labels")
+
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("executing request: %w", err)
@@ -134,7 +143,7 @@ func (c *Client) makeRequest(ctx context.Context, method, urlPath string, params
 	}
 
 	// Read the response body with a limit to prevent memory issues
-	body := io.LimitReader(resp.Body, 1024*1024*48)
+	body := io.LimitReader(resp.Body, 1024*1024*10) //10MB  limit
 	bodyBytes, err := io.ReadAll(body)
 	if err != nil {
 		return nil, fmt.Errorf("reading response body: %w", err)
@@ -320,9 +329,34 @@ type LokiMetricSample struct {
 type lokiQueryResponse struct {
 	Status string `json:"status"`
 	Data   struct {
-		ResultType string          `json:"resultType"` // "streams", "vector", or "matrix"
-		Result     json.RawMessage `json:"result"`     // Unmarshal based on resultType
+		ResultType    string          `json:"resultType"`              // "streams", "vector", or "matrix"
+		EncodingFlags []string        `json:"encodingFlags,omitempty"` // e.g. ["categorize-labels"]
+		Result        json.RawMessage `json:"result"`                  // Unmarshal based on resultType
+		// Stats is a pointer so we can distinguish "stats missing" (nil) from "stats present with zero values"
+		Stats *struct {
+			Summary struct {
+				TotalLinesProcessed int `json:"totalLinesProcessed"`
+			} `json:"summary"`
+		} `json:"stats,omitempty"`
 	} `json:"data"`
+}
+
+// categorizedLabels is the third element of a log entry's values array when
+// Loki responds with the categorize-labels encoding flag.
+type categorizedLabels struct {
+	StructuredMetadata map[string]string `json:"structuredMetadata,omitempty"`
+	Parsed             map[string]string `json:"parsed,omitempty"`
+}
+
+// hasCategorizeLabelsFlag reports whether the response included the
+// "categorize-labels" encoding flag from Loki >= 3.0.
+func hasCategorizeLabelsFlag(flags []string) bool {
+	for _, f := range flags {
+		if f == "categorize-labels" {
+			return true
+		}
+	}
+	return false
 }
 
 // MetricValue represents a single metric data point with timestamp and value
@@ -453,34 +487,58 @@ type QueryLokiLogsParams struct {
 	LogQL         string `json:"logql" jsonschema:"required,description=The LogQL query to execute against Loki. This can be a simple label matcher or a complex query with filters\\, parsers\\, and expressions. Supports full LogQL syntax including label matchers\\, filter operators\\, pattern expressions\\, and pipeline operations."`
 	StartRFC3339  string `json:"startRfc3339,omitempty" jsonschema:"description=Optionally\\, the start time of the query in RFC3339 format"`
 	EndRFC3339    string `json:"endRfc3339,omitempty" jsonschema:"description=Optionally\\, the end time of the query in RFC3339 format"`
-	Limit         int    `json:"limit,omitempty" jsonschema:"default=10,description=Optionally\\, the maximum number of log lines to return (max: 100)"`
+	Limit         int    `json:"limit,omitempty" jsonschema:"default=10,description=Optionally\\, the maximum number of log lines to return (default max: 100\\, configurable by MCP server)."`
 	Direction     string `json:"direction,omitempty" jsonschema:"description=Optionally\\, the direction of the query: 'forward' (oldest first) or 'backward' (newest first\\, default)"`
 	QueryType     string `json:"queryType,omitempty" jsonschema:"description=Query type: 'range' (default) or 'instant'. Instant queries return a single value at one point in time. Range queries return values over a time window. Use 'instant' for metric queries when you want the current value."`
 	StepSeconds   int    `json:"stepSeconds,omitempty" jsonschema:"description=Resolution step in seconds for range metric queries. When running metric queries with queryType='range'\\, this controls the time resolution of the returned data points."`
 }
 
-// QueryLokiLogsResult wraps the Loki query result with optional hints
-type QueryLokiLogsResult struct {
-	Data  []LogEntry        `json:"data"`
-	Hints *EmptyResultHints `json:"hints,omitempty"`
+// QueryMetadata provides context about the query results for AI agents
+type QueryMetadata struct {
+	LinesReturned     int  `json:"linesReturned"`
+	MaxLinesAllowed   int  `json:"maxLinesAllowed"`
+	ResultsTruncated  bool `json:"resultsTruncated"`
+	TotalLinesScanned *int `json:"totalLinesScanned"` // nil if stats unavailable, 0 if actually zero lines scanned
 }
 
-// LogEntry represents a single log entry or metric sample with metadata
+// QueryLokiLogsResult wraps the Loki query result with optional hints
+type QueryLokiLogsResult struct {
+	Data     []LogEntry        `json:"data"`
+	Hints    *EmptyResultHints `json:"hints,omitempty"`
+	Metadata *QueryMetadata    `json:"metadata,omitempty"`
+}
+
+// LogEntry represents a single log entry or metric sample with metadata.
+// When Loki returns categorized labels (via X-Loki-Response-Encoding-Flags),
+// Labels contains only stream/index labels, while StructuredMetadata and
+// Parsed carry the remaining label categories per entry.
 type LogEntry struct {
-	Timestamp string            `json:"timestamp,omitempty"`
-	Line      string            `json:"line,omitempty"`   // For log queries
-	Value     *float64          `json:"value,omitempty"`  // For instant metric queries
-	Values    []MetricValue     `json:"values,omitempty"` // For range metric queries
-	Labels    map[string]string `json:"labels"`
+	Timestamp          string            `json:"timestamp,omitempty"`
+	Line               string            `json:"line,omitempty"`              // For log queries
+	Value              *float64          `json:"value,omitempty"`             // For instant metric queries
+	Values             []MetricValue     `json:"values,omitempty"`            // For range metric queries
+	Labels             map[string]string `json:"labels"`                      // Stream / index labels
+	StructuredMetadata map[string]string `json:"structuredMetadata,omitempty"` // Structured metadata labels (Loki >= 3.0)
+	Parsed             map[string]string `json:"parsed,omitempty"`            // Parser-extracted labels (Loki >= 3.0)
 }
 
 // enforceLogLimit ensures a log limit value is within acceptable bounds
-func enforceLogLimit(requestedLimit int) int {
+func enforceLogLimit(ctx context.Context, requestedLimit int) int {
+	config := mcpgrafana.GrafanaConfigFromContext(ctx)
+	maxLimit := config.MaxLokiLogLimit
+	if maxLimit <= 0 {
+		maxLimit = MaxLokiLogLimit // fallback for programmatic usage
+	}
+
 	if requestedLimit <= 0 {
+		// Cap default to maxLimit in case admin configured a lower max
+		if DefaultLokiLogLimit > maxLimit {
+			return maxLimit
+		}
 		return DefaultLokiLogLimit
 	}
-	if requestedLimit > MaxLokiLogLimit {
-		return MaxLokiLogLimit
+	if requestedLimit > maxLimit {
+		return maxLimit
 	}
 	return requestedLimit
 }
@@ -531,7 +589,10 @@ func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) (*QueryLokiLog
 	}
 
 	// Apply limit constraints (only relevant for log queries)
-	limit := enforceLogLimit(args.Limit)
+	limit := enforceLogLimit(ctx, args.Limit)
+
+	// Request one extra to detect truncation
+	queryLimit := limit + 1
 
 	// Set default direction if not provided
 	direction := args.Direction
@@ -545,7 +606,7 @@ func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) (*QueryLokiLog
 		QueryType:   args.QueryType,
 		Start:       startTime,
 		End:         endTime,
-		Limit:       limit,
+		Limit:       queryLimit,
 		Direction:   direction,
 		StepSeconds: args.StepSeconds,
 	})
@@ -564,6 +625,11 @@ func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) (*QueryLokiLog
 			return nil, fmt.Errorf("parsing streams result: %w", err)
 		}
 
+		// Check if Loki returned categorized labels (Loki >= 3.0).
+		// When present, values[2] is a JSON object with "structuredMetadata"
+		// and "parsed" maps; stream.Stream contains only index labels.
+		categorized := hasCategorizeLabelsFlag(response.Data.EncodingFlags)
+
 		for _, stream := range streams {
 			for _, value := range stream.Values {
 				if len(value) >= 2 {
@@ -573,11 +639,22 @@ func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) (*QueryLokiLog
 						continue // Skip invalid log lines
 					}
 
-					entries = append(entries, LogEntry{
+					entry := LogEntry{
 						Timestamp: string(value[0]), // Nanoseconds as string
 						Line:      logLine,
 						Labels:    stream.Stream,
-					})
+					}
+
+					// Parse categorized labels from the optional third element.
+					if categorized && len(value) >= 3 {
+						var cats categorizedLabels
+						if err := json.Unmarshal(value[2], &cats); err == nil {
+							entry.StructuredMetadata = cats.StructuredMetadata
+							entry.Parsed = cats.Parsed
+						}
+					}
+
+					entries = append(entries, entry)
 				}
 			}
 		}
@@ -654,9 +731,33 @@ func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) (*QueryLokiLog
 		entries = []LogEntry{}
 	}
 
+	// Detect truncation and trim to actual limit (only for log queries, not metrics).
+	// For metric queries (vector/matrix), Loki doesn't receive a limit parameter,
+	// so we preserve the old behavior of returning all results.
+	truncated := false
+	if response.Data.ResultType == "streams" { // streams = log queries
+		truncated = len(entries) > limit
+		if truncated {
+			entries = entries[:limit]
+		}
+	}
+
+	// Get lines scanned from stats (nil if stats unavailable, 0 if actually zero)
+	var linesScanned *int
+	if response.Data.Stats != nil {
+		val := response.Data.Stats.Summary.TotalLinesProcessed
+		linesScanned = &val
+	}
+
 	// Build the response
 	result := &QueryLokiLogsResult{
 		Data: entries,
+		Metadata: &QueryMetadata{
+			LinesReturned:     len(entries),
+			MaxLinesAllowed:   limit,
+			ResultsTruncated:  truncated,
+			TotalLinesScanned: linesScanned,
+		},
 	}
 
 	// Add hints if the result is empty

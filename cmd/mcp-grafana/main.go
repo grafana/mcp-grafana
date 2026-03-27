@@ -20,7 +20,7 @@ import (
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/grafana/mcp-grafana/observability"
 	"github.com/grafana/mcp-grafana/tools"
-	"go.opentelemetry.io/otel/semconv/v1.39.0/mcpconv"
+	"go.opentelemetry.io/otel/semconv/v1.40.0/mcpconv"
 )
 
 func maybeAddTools(s *server.MCPServer, tf func(*server.MCPServer), enabledTools []string, disable bool, category string) {
@@ -58,6 +58,9 @@ type grafanaConfig struct {
 	tlsKeyFile    string
 	tlsCAFile     string
 	tlsSkipVerify bool
+
+	// Loki configuration
+	maxLokiLogLimit int
 }
 
 func (dt *disabledTools) addFlags() {
@@ -96,6 +99,9 @@ func (gc *grafanaConfig) addFlags() {
 	flag.StringVar(&gc.tlsKeyFile, "tls-key-file", "", "Path to TLS private key file for client authentication")
 	flag.StringVar(&gc.tlsCAFile, "tls-ca-file", "", "Path to TLS CA certificate file for server verification")
 	flag.BoolVar(&gc.tlsSkipVerify, "tls-skip-verify", false, "Skip TLS certificate verification (insecure)")
+
+	// Loki configuration flags
+	flag.IntVar(&gc.maxLokiLogLimit, "max-loki-log-limit", tools.MaxLokiLogLimit, "Maximum number of log lines returned per query_loki_logs call")
 }
 
 func (dt *disabledTools) addTools(s *server.MCPServer) {
@@ -125,8 +131,10 @@ func (dt *disabledTools) addTools(s *server.MCPServer) {
 	maybeAddTools(s, tools.AddRunPanelQueryTools, enabledTools, dt.runpanelquery, "runpanelquery")
 }
 
-func newServer(transport string, dt disabledTools, obs *observability.Observability) (*server.MCPServer, *mcpgrafana.ToolManager) {
-	sm := mcpgrafana.NewSessionManager()
+func newServer(transport string, dt disabledTools, obs *observability.Observability, sessionIdleTimeoutMinutes int) (*server.MCPServer, *mcpgrafana.ToolManager, *mcpgrafana.SessionManager) {
+	sm := mcpgrafana.NewSessionManager(
+		mcpgrafana.WithSessionTTL(time.Duration(sessionIdleTimeoutMinutes) * time.Minute),
+	)
 
 	// Declare variable for ToolManager that will be initialized after server creation
 	var stm *mcpgrafana.ToolManager
@@ -196,7 +204,7 @@ Note that some of these capabilities may be disabled. Do not try to use features
 	stm = mcpgrafana.NewToolManager(sm, s, mcpgrafana.WithProxiedTools(!dt.proxied))
 
 	dt.addTools(s)
-	return s, stm
+	return s, stm, sm
 }
 
 type tlsConfig struct {
@@ -271,7 +279,7 @@ func runMetricsServer(addr string, o *observability.Observability) {
 	}
 }
 
-func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt disabledTools, gc mcpgrafana.GrafanaConfig, tls tlsConfig, obs observability.Config) error {
+func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt disabledTools, gc mcpgrafana.GrafanaConfig, tls tlsConfig, obs observability.Config, sessionIdleTimeoutMinutes int) error {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})))
 
 	// Set up observability (metrics and tracing)
@@ -287,7 +295,16 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		}
 	}()
 
-	s, tm := newServer(transport, dt, o)
+	// Create a client cache for HTTP-based transports to avoid per-request
+	// transport allocation (see https://github.com/grafana/mcp-grafana/issues/682).
+	var clientCache *mcpgrafana.ClientCache
+	if transport != "stdio" {
+		clientCache = mcpgrafana.NewClientCache()
+		defer clientCache.Close()
+	}
+
+	s, tm, sm := newServer(transport, dt, o, sessionIdleTimeoutMinutes)
+	defer sm.Close()
 
 	// Create a context that will be cancelled on shutdown
 	ctx, cancel := context.WithCancel(context.Background())
@@ -336,7 +353,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 	case "sse":
 		httpSrv := &http.Server{Addr: addr}
 		srv := server.NewSSEServer(s,
-			server.WithSSEContextFunc(mcpgrafana.ComposedSSEContextFunc(gc)),
+			server.WithSSEContextFunc(mcpgrafana.ComposedSSEContextFunc(gc, clientCache)),
 			server.WithStaticBasePath(basePath),
 			server.WithHTTPServer(httpSrv),
 		)
@@ -360,7 +377,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 	case "streamable-http":
 		httpSrv := &http.Server{Addr: addr}
 		opts := []server.StreamableHTTPOption{
-			server.WithHTTPContextFunc(mcpgrafana.ComposedHTTPContextFunc(gc)),
+			server.WithHTTPContextFunc(mcpgrafana.ComposedHTTPContextFunc(gc, clientCache)),
 			server.WithStateLess(dt.proxied), // Stateful when proxied tools enabled (requires sessions)
 			server.WithEndpointPath(endpointPath),
 			server.WithStreamableHTTPServer(httpSrv),
@@ -401,6 +418,7 @@ func main() {
 	basePath := flag.String("base-path", "", "Base path for the sse server")
 	endpointPath := flag.String("endpoint-path", "/mcp", "Endpoint path for the streamable-http server")
 	logLevel := flag.String("log-level", "info", "Log level (debug, info, warn, error)")
+	sessionIdleTimeoutMinutes := flag.Int("session-idle-timeout-minutes", 30, "Session idle timeout in minutes. Sessions with no activity for this duration are automatically reaped. Set to 0 to disable session reaping")
 	showVersion := flag.Bool("version", false, "Print the version and exit")
 	var dt disabledTools
 	dt.addFlags()
@@ -419,7 +437,10 @@ func main() {
 	}
 
 	// Convert local grafanaConfig to mcpgrafana.GrafanaConfig
-	grafanaConfig := mcpgrafana.GrafanaConfig{Debug: gc.debug}
+	grafanaConfig := mcpgrafana.GrafanaConfig{
+		Debug:           gc.debug,
+		MaxLokiLogLimit: gc.maxLokiLogLimit,
+	}
 	if gc.tlsCertFile != "" || gc.tlsKeyFile != "" || gc.tlsCAFile != "" || gc.tlsSkipVerify {
 		grafanaConfig.TLSConfig = &mcpgrafana.TLSConfig{
 			CertFile:   gc.tlsCertFile,
@@ -441,7 +462,7 @@ func main() {
 		obs.NetworkTransport = mcpconv.NetworkTransportTCP
 	}
 
-	if err := run(transport, *addr, *basePath, *endpointPath, parseLevel(*logLevel), dt, grafanaConfig, tls, obs); err != nil {
+	if err := run(transport, *addr, *basePath, *endpointPath, parseLevel(*logLevel), dt, grafanaConfig, tls, obs, *sessionIdleTimeoutMinutes); err != nil {
 		panic(err)
 	}
 }
