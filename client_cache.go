@@ -96,9 +96,11 @@ type ClientCache struct {
 	mu              sync.RWMutex
 	grafanaClients  map[clientCacheKey]*GrafanaClient
 	incidentClients map[clientCacheKey]*incident.Client
+	apiClients      map[clientCacheKey]*GrafanaAPIClient
 	metrics         clientCacheMetrics
 	sfGrafana       singleflight.Group
 	sfIncident      singleflight.Group
+	sfAPI           singleflight.Group
 }
 
 // NewClientCache creates a new client cache.
@@ -106,6 +108,7 @@ func NewClientCache() *ClientCache {
 	return &ClientCache{
 		grafanaClients:  make(map[clientCacheKey]*GrafanaClient),
 		incidentClients: make(map[clientCacheKey]*incident.Client),
+		apiClients:      make(map[clientCacheKey]*GrafanaAPIClient),
 		metrics:         newClientCacheMetrics(),
 	}
 }
@@ -202,10 +205,43 @@ func (c *ClientCache) GetOrCreateIncidentClient(key clientCacheKey, createFn fun
 	return val.(*incident.Client)
 }
 
+// GetOrCreateAPIClient returns a cached unified API client for the given key,
+// or creates one using createFn if no cached client exists.
+func (c *ClientCache) GetOrCreateAPIClient(key clientCacheKey, createFn func() *GrafanaAPIClient) *GrafanaAPIClient {
+	// Fast path: check with read lock
+	c.mu.RLock()
+	if client, ok := c.apiClients[key]; ok {
+		c.mu.RUnlock()
+		return client
+	}
+	c.mu.RUnlock()
+
+	// Slow path: use singleflight
+	sfKey := fmt.Sprintf("api:%v", key)
+	val, _, _ := c.sfAPI.Do(sfKey, func() (any, error) {
+		c.mu.RLock()
+		if client, ok := c.apiClients[key]; ok {
+			c.mu.RUnlock()
+			return client, nil
+		}
+		c.mu.RUnlock()
+
+		client := createFn()
+
+		c.mu.Lock()
+		c.apiClients[key] = client
+		slog.Debug("Cached new unified API client", "key", key, "cache_size", len(c.apiClients))
+		c.mu.Unlock()
+
+		return client, nil
+	})
+
+	return val.(*GrafanaAPIClient)
+}
+
 // Close cleans up cached clients. For incident clients, idle connections
-// are closed via the underlying HTTP transport. Grafana clients use a
-// go-openapi runtime whose transport is set via reflection, so we clear
-// the map and let the GC reclaim resources.
+// are closed via the underlying HTTP transport. Grafana and unified API
+// clients are cleared and let the GC reclaim resources.
 func (c *ClientCache) Close() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -218,6 +254,9 @@ func (c *ClientCache) Close() {
 	}
 	for key := range c.grafanaClients {
 		delete(c.grafanaClients, key)
+	}
+	for key := range c.apiClients {
+		delete(c.apiClients, key)
 	}
 
 	ctx := context.Background()
@@ -287,5 +326,26 @@ func extractIncidentClientCached(cache *ClientCache) httpContextFunc {
 		})
 
 		return WithIncidentClient(ctx, incidentClient)
+	}
+}
+
+// extractAPIClientCached creates an httpContextFunc that uses the cache
+// for the unified GrafanaAPIClient.
+func extractAPIClientCached(cache *ClientCache) httpContextFunc {
+	return func(ctx context.Context, req *http.Request) context.Context {
+		u, apiKey, basicAuth, orgID := extractKeyGrafanaInfoFromReq(req)
+		key := cacheKeyFromRequest(u, apiKey, basicAuth, orgID)
+
+		apiClient := cache.GetOrCreateAPIClient(key, func() *GrafanaAPIClient {
+			slog.Debug("Creating new unified API client (cache miss)", "url", u)
+			legacy := GrafanaClientFromContext(ctx)
+			k8s, err := NewKubernetesClient(ctx)
+			if err != nil {
+				slog.Debug("Failed to create k8s client for unified API client", "error", err)
+			}
+			return NewGrafanaAPIClient(legacy, k8s)
+		})
+
+		return WithGrafanaAPIClient(ctx, apiClient)
 	}
 }

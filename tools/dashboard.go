@@ -24,6 +24,10 @@ type GetDashboardByUIDParams struct {
 }
 
 func getDashboardByUID(ctx context.Context, args GetDashboardByUIDParams) (*models.DashboardFullWithMeta, error) {
+	if apiClient := mcpgrafana.GrafanaAPIClientFromContext(ctx); apiClient != nil {
+		return apiClient.GetDashboardByUID(ctx, args.UID)
+	}
+	// Fallback: no unified client, use legacy directly
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
 	dashboard, err := c.Dashboards.GetDashboardByUID(args.UID)
 	if err != nil {
