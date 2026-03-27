@@ -87,6 +87,7 @@ func newClientCacheMetrics() clientCacheMetrics {
 var (
 	attrClientTypeGrafana  = attribute.String("client.type", "grafana")
 	attrClientTypeIncident = attribute.String("client.type", "incident")
+	attrClientTypeAPI      = attribute.String("client.type", "api")
 )
 
 // ClientCache caches HTTP clients keyed by credentials to avoid creating
@@ -208,10 +209,15 @@ func (c *ClientCache) GetOrCreateIncidentClient(key clientCacheKey, createFn fun
 // GetOrCreateAPIClient returns a cached unified API client for the given key,
 // or creates one using createFn if no cached client exists.
 func (c *ClientCache) GetOrCreateAPIClient(key clientCacheKey, createFn func() *GrafanaAPIClient) *GrafanaAPIClient {
+	ctx := context.Background()
+	typeAttr := metric.WithAttributes(attrClientTypeAPI)
+	c.metrics.lookups.Add(ctx, 1, typeAttr)
+
 	// Fast path: check with read lock
 	c.mu.RLock()
 	if client, ok := c.apiClients[key]; ok {
 		c.mu.RUnlock()
+		c.metrics.hits.Add(ctx, 1, typeAttr)
 		return client
 	}
 	c.mu.RUnlock()
@@ -230,6 +236,8 @@ func (c *ClientCache) GetOrCreateAPIClient(key clientCacheKey, createFn func() *
 
 		c.mu.Lock()
 		c.apiClients[key] = client
+		c.metrics.misses.Add(ctx, 1, typeAttr)
+		c.metrics.size.Record(ctx, int64(len(c.apiClients)), typeAttr)
 		slog.Debug("Cached new unified API client", "key", key, "cache_size", len(c.apiClients))
 		c.mu.Unlock()
 
@@ -262,6 +270,7 @@ func (c *ClientCache) Close() {
 	ctx := context.Background()
 	c.metrics.size.Record(ctx, 0, metric.WithAttributes(attrClientTypeGrafana))
 	c.metrics.size.Record(ctx, 0, metric.WithAttributes(attrClientTypeIncident))
+	c.metrics.size.Record(ctx, 0, metric.WithAttributes(attrClientTypeAPI))
 	slog.Debug("Client cache closed")
 }
 

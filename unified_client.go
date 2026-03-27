@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -278,21 +280,33 @@ func convertK8sDashboard(obj map[string]interface{}) (interface{}, error) {
 		}
 	}
 
-	// Extract title for metadata.
+	// Extract title and slugify for URL.
 	title, _ := spec["title"].(string)
+	slug := slugify(title)
 
 	result := &models.DashboardFullWithMeta{
 		Dashboard: spec,
 		Meta: &models.DashboardMeta{
-			Slug:      uid,
+			Slug:      slug,
 			FolderUID: folderUID,
 			Type:      "db",
 			IsFolder:  false,
-			URL:       fmt.Sprintf("/d/%s/%s", uid, title),
+			URL:       fmt.Sprintf("/d/%s/%s", uid, slug),
 		},
 	}
 
 	return result, nil
+}
+
+// slugifyPattern matches non-alphanumeric characters for URL slugification.
+var slugifyPattern = regexp.MustCompile(`[^a-z0-9]+`)
+
+// slugify converts a title to a URL-safe slug, matching Grafana's behavior.
+func slugify(s string) string {
+	s = strings.ToLower(s)
+	s = slugifyPattern.ReplaceAllString(s, "-")
+	s = strings.Trim(s, "-")
+	return s
 }
 
 // Context integration for GrafanaAPIClient.
