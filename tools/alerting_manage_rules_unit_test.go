@@ -422,6 +422,45 @@ func TestBuiltInValidationCatchesInvalidData(t *testing.T) {
 		require.NoError(t, err, "Simple validation doesn't check length constraints")
 	})
 }
+func TestRecord_Validate(t *testing.T) {
+	from := "A"
+	metric := "my_metric"
+
+	t.Run("valid record", func(t *testing.T) {
+		r := &Record{From: &from, Metric: &metric}
+		require.NoError(t, r.validate())
+	})
+
+	t.Run("nil From", func(t *testing.T) {
+		r := &Record{From: nil, Metric: &metric}
+		err := r.validate()
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "record.from is required")
+	})
+
+	t.Run("empty From", func(t *testing.T) {
+		empty := ""
+		r := &Record{From: &empty, Metric: &metric}
+		err := r.validate()
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "record.from is required")
+	})
+
+	t.Run("nil Metric", func(t *testing.T) {
+		r := &Record{From: &from, Metric: nil}
+		err := r.validate()
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "record.metric is required")
+	})
+
+	t.Run("empty Metric", func(t *testing.T) {
+		empty := ""
+		r := &Record{From: &from, Metric: &empty}
+		err := r.validate()
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "record.metric is required")
+	})
+}
 
 func setupManageRulesTestContext(t *testing.T, assertRequest func(t *testing.T, r *http.Request)) context.Context {
 	t.Helper()
@@ -456,7 +495,7 @@ func TestManageRules_ListRules(t *testing.T) {
 		params        ManageRulesReadParams
 		assertRequest func(t *testing.T, r *http.Request)
 		wantErr       string
-		expectedRules     []alertRuleSummary
+		expectedRules []alertRuleSummary
 	}{
 		// Validation errors (mock server is never hit)
 		{
@@ -585,13 +624,17 @@ func TestManageRulesReadWrite_ValidationErrors(t *testing.T) {
 		wantErr string
 	}{
 		{
-			name:    "negative rule_limit",
-			call:    func() (any, error) { return manageRulesReadWrite(ctx, ManageRulesReadWriteParams{listFilterParams: listFilterParams{RuleLimit: -1}, Operation: "list"}) },
+			name: "negative rule_limit",
+			call: func() (any, error) {
+				return manageRulesReadWrite(ctx, ManageRulesReadWriteParams{listFilterParams: listFilterParams{RuleLimit: -1}, Operation: "list"})
+			},
 			wantErr: "invalid rule_limit",
 		},
 		{
-			name:    "folder_uid and search_folder mutually exclusive",
-			call:    func() (any, error) { return manageRulesReadWrite(ctx, ManageRulesReadWriteParams{listFilterParams: listFilterParams{SearchFolder: "Production"}, Operation: "list", FolderUID: "folder-1"}) },
+			name: "folder_uid and search_folder mutually exclusive",
+			call: func() (any, error) {
+				return manageRulesReadWrite(ctx, ManageRulesReadWriteParams{listFilterParams: listFilterParams{SearchFolder: "Production"}, Operation: "list", FolderUID: "folder-1"})
+			},
 			wantErr: "mutually exclusive",
 		},
 		{
@@ -622,8 +665,10 @@ func TestManageRulesReadWrite_ValidationErrors(t *testing.T) {
 			wantErr: "rule_uid is required",
 		},
 		{
-			name:    "unknown operation",
-			call:    func() (any, error) { return manageRulesReadWrite(ctx, ManageRulesReadWriteParams{Operation: "invalid"}) },
+			name: "unknown operation",
+			call: func() (any, error) {
+				return manageRulesReadWrite(ctx, ManageRulesReadWriteParams{Operation: "invalid"})
+			},
 			wantErr: "unknown operation",
 		},
 	}
@@ -813,6 +858,66 @@ func TestMergeRuleDetail(t *testing.T) {
 		require.Equal(t, "some transient error", detail.LastError)
 		require.Len(t, detail.Alerts, 1)
 		require.Equal(t, "firing", detail.Alerts[0].State)
+	})
+
+	t.Run("merges provisioned recording rule config with runtime state", func(t *testing.T) {
+		title := "High CPU Recording"
+		folderUID := "folder-1"
+		ruleGroup := "infra"
+		condition := "A"
+
+		from := "A"
+		metric := "cpu_usage_avg"
+		record := &models.Record{
+			From:   &from,
+			Metric: &metric,
+		}
+
+		provisioned := &models.ProvisionedAlertRule{
+			UID:       "record-123",
+			Title:     &title,
+			FolderUID: &folderUID,
+			RuleGroup: &ruleGroup,
+			Condition: &condition,
+			Record:    record,
+			Data: []*models.AlertQuery{
+				{
+					RefID:         "A",
+					DatasourceUID: "prometheus-uid",
+					Model:         map[string]any{"expr": "avg(up{job=\"api\"})"},
+				},
+			},
+		}
+
+		evalTime := time.Date(2026, 2, 28, 12, 0, 0, 0, time.UTC)
+		runtime := &alertingRule{
+			State:          "inactive",
+			Health:         "ok",
+			Type:           "recording",
+			LastEvaluation: evalTime,
+		}
+
+		detail := mergeRuleDetail(provisioned, runtime)
+		t.Logf("detail: %+v", detail)
+
+		require.Equal(t, "record-123", detail.UID, "the rule UID should match")
+		require.Equal(t, "High CPU Recording", detail.Title, "the rule title should match")
+		require.Equal(t, "folder-1", detail.FolderUID, "the folder UID should match")
+		require.Equal(t, "infra", detail.RuleGroup, "the rule group name should match")
+		require.NotNil(t, detail.Record, "the recording configuration should not be nil")
+		require.Equal(t, "A", *detail.Record.From, "the from identifier in recording config should match")
+		require.Equal(t, "cpu_usage_avg", *detail.Record.Metric, "the target metric name in recording config should match")
+
+		require.Len(t, detail.Queries, 1, "the queries slice should have length 1")
+		require.Equal(t, "A", detail.Queries[0].RefID, "the query refID should match")
+		require.Equal(t, "prometheus-uid", detail.Queries[0].DatasourceUID, "the query datasource UID should match")
+		require.Equal(t, "avg(up{job=\"api\"})", detail.Queries[0].Expression, "the query expression should match")
+
+		// Runtime fields
+		require.Equal(t, "normal", detail.State, "the rule state should be normalized from inactive to normal")
+		require.Equal(t, "ok", detail.Health, "the health status should match")
+		require.Equal(t, "recording", detail.Type, "the rule type should be 'recording'")
+		require.Equal(t, "2026-02-28T12:00:00Z", detail.LastEvaluation, "the last evaluation time should match formatted UTC time")
 	})
 
 	t.Run("nil runtime leaves state fields empty", func(t *testing.T) {
