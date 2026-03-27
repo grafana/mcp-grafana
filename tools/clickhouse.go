@@ -31,6 +31,19 @@ const (
 	ClickHouseFormatTable = 1
 )
 
+// Fix security
+var clickHouseIdentifierRe = regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
+
+func validateClickHouseIdentifier(name, field string) error {
+	if name == "" {
+		return nil
+	}
+	if !clickHouseIdentifierRe.MatchString(name) {
+		return fmt.Errorf("invalid %s: must contain only letters, numbers, and underscores", field)
+	}
+	return nil
+}
+
 // ClickHouseQueryParams defines the parameters for querying ClickHouse
 type ClickHouseQueryParams struct {
 	DatasourceUID string            `json:"datasourceUid" jsonschema:"required,description=The UID of the ClickHouse datasource to query. Use list_datasources to find available UIDs."`
@@ -398,6 +411,11 @@ type ClickHouseTableInfo struct {
 
 // listClickHouseTables lists tables from a ClickHouse datasource
 func listClickHouseTables(ctx context.Context, args ListClickHouseTablesParams) ([]ClickHouseTableInfo, error) {
+	// FIX: validate input
+	if err := validateClickHouseIdentifier(args.Database, "database"); err != nil {
+		return nil, err
+	}
+
 	// Build the query to list tables
 	query := `SELECT database, name, engine, total_rows, total_bytes
 FROM system.tables
@@ -473,6 +491,14 @@ func describeClickHouseTable(ctx context.Context, args DescribeClickHouseTablePa
 	database := args.Database
 	if database == "" {
 		database = "default"
+	}
+
+	//FIX: validate input
+	if err := validateClickHouseIdentifier(database, "database"); err != nil {
+		return nil, err
+	}
+	if err := validateClickHouseIdentifier(args.Table, "table"); err != nil {
+		return nil, err
 	}
 
 	// Query system.columns instead of using DESCRIBE TABLE
