@@ -30,7 +30,7 @@ func newTestK8sServer(t *testing.T, groups []APIGroup, resources map[string]map[
 			Groups: groups,
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	})
 
 	// Serve individual resources.
@@ -38,7 +38,7 @@ func newTestK8sServer(t *testing.T, groups []APIGroup, resources map[string]map[
 		obj := obj // capture
 		mux.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(obj)
+			_ = json.NewEncoder(w).Encode(obj)
 		})
 	}
 
@@ -218,7 +218,7 @@ func TestGetDashboardByUID_406RetryLegacyCalledFirst(t *testing.T) {
 		if r.URL.Path == "/apis" {
 			resp := APIGroupList{Kind: "APIGroupList", Groups: nil}
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(resp)
+			_ = json.NewEncoder(w).Encode(resp)
 			return
 		}
 		http.NotFound(w, r)
@@ -291,15 +291,15 @@ func TestGetDashboardByUID_406RetrySuccess(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		if call == 1 {
 			// First discovery: no groups.
-			json.NewEncoder(w).Encode(APIGroupList{Kind: "APIGroupList"})
+			_ = json.NewEncoder(w).Encode(APIGroupList{Kind: "APIGroupList"})
 		} else {
 			// After cache invalidation: groups appear.
-			json.NewEncoder(w).Encode(APIGroupList{Kind: "APIGroupList", Groups: groups})
+			_ = json.NewEncoder(w).Encode(APIGroupList{Kind: "APIGroupList", Groups: groups})
 		}
 	})
 	mux.HandleFunc("/apis/dashboard.grafana.app/v0alpha1/namespaces/default/dashboards/retry-uid", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(dashObj)
+		_ = json.NewEncoder(w).Encode(dashObj)
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
