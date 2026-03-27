@@ -449,7 +449,7 @@ func TestManageRules_List(t *testing.T) {
 		require.Empty(t, rules)
 	})
 
-	t.Run("list with rule_type recording returns empty", func(t *testing.T) {
+	t.Run("list recording rules", func(t *testing.T) {
 		ctx := newTestContext()
 		result, err := manageRulesRead(ctx, ManageRulesReadParams{
 			listFilterParams: listFilterParams{RuleType: "recording"},
@@ -459,7 +459,7 @@ func TestManageRules_List(t *testing.T) {
 
 		rules, ok := result.([]alertRuleSummary)
 		require.True(t, ok)
-		require.Empty(t, rules)
+		require.NotEmpty(t, rules)
 	})
 
 	t.Run("list with rule_limit limits results", func(t *testing.T) {
