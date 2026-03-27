@@ -19,6 +19,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/go-openapi/runtime"
+	openapiclient "github.com/go-openapi/runtime/client"
 	"github.com/go-openapi/strfmt"
 	"github.com/grafana/grafana-openapi-client-go/client"
 	"github.com/grafana/incident-go"
@@ -709,6 +711,17 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 
 	slog.Debug("Creating Grafana client", "url", parsedURL.Redacted(), "api_key_set", apiKey != "", "basic_auth_set", config.BasicAuth != nil, "org_id", cfg.OrgID, "timeout", timeout, "extra_headers_count", len(config.ExtraHeaders))
 	grafanaClient := client.NewHTTPClientWithConfig(strfmt.Default, cfg)
+
+	// Some Grafana versions (v12+) and reverse proxies return JSON responses
+	// with text/plain or text/html content-type headers. The default
+	// TextConsumer cannot deserialize these into typed Go structs. Override
+	// with JSONConsumer so the client can parse the response body correctly.
+	// See: https://github.com/grafana/mcp-grafana/issues/635
+	if rt, ok := grafanaClient.Transport.(*openapiclient.Runtime); ok {
+		jsonConsumer := runtime.JSONConsumer()
+		rt.Consumers[runtime.TextMime] = jsonConsumer
+		rt.Consumers[runtime.HTMLMime] = jsonConsumer
+	}
 
 	// Always enable HTTP tracing for context propagation (no-op when no exporter configured)
 	// Use reflection to wrap the transport without importing the runtime client package
