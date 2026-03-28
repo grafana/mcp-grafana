@@ -1741,7 +1741,7 @@ dev = [
 dev = [
     { name = "anyio", specifier = ">=4.9.0" },
     { name = "deepeval", specifier = ">=1.0.0" },
-    { name = "litellm", specifier = ">=1.63.12" },
+    { name = "litellm", specifier = ">=1.68.1,<1.82.7" },
     { name = "mcp", specifier = ">=1.9.3" },
     { name = "pytest", specifier = ">=8.3.5" },
     { name = "pytest-rerunfailures", specifier = ">=15.0" },
