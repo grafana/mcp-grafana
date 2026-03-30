@@ -253,12 +253,12 @@ func TestCloudWatchMultiFrameStatistics(t *testing.T) {
 	// Build a cloudWatchQueryResponse with 2 frames to verify statistics
 	// are accumulated across all frames, not just the last one.
 	resp := &grafana.DSQueryResponse{
-		Results: map[string]grafana.DsQueryResult{},
+		Results: map[string]grafana.DSQueryResult{},
 	}
 
 	// Frame 1: values 10, 20 (sum=30, min=10, max=20)
-	f1 := grafana.DsQueryFrame{}
-	f1.Schema.Fields = []grafana.DsQueryFrameField{
+	f1 := grafana.DSQueryFrame{}
+	f1.Schema.Fields = []grafana.DSQueryFrameField{
 		{Name: "Time", Type: "time"},
 		{Name: "Value", Type: "number"},
 	}
@@ -268,8 +268,8 @@ func TestCloudWatchMultiFrameStatistics(t *testing.T) {
 	}
 
 	// Frame 2: values 5, 40 (sum=45, min=5, max=40)
-	f2 := grafana.DsQueryFrame{}
-	f2.Schema.Fields = []grafana.DsQueryFrameField{
+	f2 := grafana.DSQueryFrame{}
+	f2.Schema.Fields = []grafana.DSQueryFrameField{
 		{Name: "Time", Type: "time"},
 		{Name: "Value", Type: "number"},
 	}
@@ -278,8 +278,8 @@ func TestCloudWatchMultiFrameStatistics(t *testing.T) {
 		{float64(5.0), float64(40.0)},  // values
 	}
 
-	resp.Results["A"] = grafana.DsQueryResult{
-		Frames: []grafana.DsQueryFrame{f1, f2},
+	resp.Results["A"] = grafana.DSQueryResult{
+		Frames: []grafana.DSQueryFrame{f1, f2},
 	}
 
 	// Process the response the same way queryCloudWatch does

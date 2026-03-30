@@ -4,6 +4,7 @@ package tools
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -99,8 +100,29 @@ func Test_enforceQueryLimit(t *testing.T) {
 		t.Run("should apply flux limit", func(t *testing.T) {
 			args := InfluxQueryArgs{QueryType: FluxQueryType, Query: "from(bucket: \"my-bucket\")", Limit: 20}
 			enforceQueryLimit(&args)
-			assert.Equal(t, "from(bucket: \"my-bucket\")\n|>limit(n:20)", args.Query, "flux query should be limited")
+			assert.Equal(t, "from(bucket: \"my-bucket\")\n|> limit(n:20)", args.Query, "flux query should be limited")
 			t.Log("applied flux limit")
+		})
+
+		t.Run("should replace flux limit at absolute end", func(t *testing.T) {
+			args := InfluxQueryArgs{QueryType: FluxQueryType, Query: "from(bucket: \"my-bucket\") |> limit(n:10)", Limit: 20}
+			enforceQueryLimit(&args)
+			assert.Equal(t, "from(bucket: \"my-bucket\") |> limit(n:20)", args.Query, "flux query should have limit replaced")
+			t.Log("replaced absolute end flux limit")
+		})
+
+		t.Run("should append flux limit when existing limit is not at end", func(t *testing.T) {
+			args := InfluxQueryArgs{QueryType: FluxQueryType, Query: "from(bucket: \"my-bucket\") |> limit(n:10) |> count()", Limit: 20}
+			enforceQueryLimit(&args)
+			assert.Equal(t, "from(bucket: \"my-bucket\") |> limit(n:10) |> count()\n|> limit(n:20)", args.Query, "flux query should have another limit appended at end")
+			t.Log("appended flux limit after transformation")
+		})
+
+		t.Run("should handle whitespace and case-insensitivity in flux limit replacement", func(t *testing.T) {
+			args := InfluxQueryArgs{QueryType: FluxQueryType, Query: "from(bucket: \"my-bucket\") |>  LIMIT ( n : 5 ) ", Limit: 20}
+			enforceQueryLimit(&args)
+			assert.Equal(t, "from(bucket: \"my-bucket\") |> limit(n:20)", args.Query, "flux query should normalize and replace limit")
+			t.Log("normalized and replaced flux limit")
 		})
 
 		t.Run("should replace influxql limit if exists", func(t *testing.T) {
@@ -156,12 +178,12 @@ func Test_extractColValues(t *testing.T) {
 	t.Run("test_response", func(t *testing.T) {
 		t.Run("should extract values from valid response", func(t *testing.T) {
 			resp := &grafana.DSQueryResponse{
-				Results: map[string]grafana.DsQueryResult{
+				Results: map[string]grafana.DSQueryResult{
 					"A": {
-						Frames: []grafana.DsQueryFrame{
+						Frames: []grafana.DSQueryFrame{
 							{
-								Schema: grafana.DsQueryFrameSchema{
-									Fields: []grafana.DsQueryFrameField{
+								Schema: grafana.DSQueryFrameSchema{
+									Fields: []grafana.DSQueryFrameField{
 										{Name: "my_col"},
 									},
 								},
@@ -184,7 +206,7 @@ func Test_extractColValues(t *testing.T) {
 
 		t.Run("should propagate error from result", func(t *testing.T) {
 			resp := &grafana.DSQueryResponse{
-				Results: map[string]grafana.DsQueryResult{
+				Results: map[string]grafana.DSQueryResult{
 					"A": {
 						Error: "some target error",
 					},
@@ -202,18 +224,18 @@ func Test_extractColValues(t *testing.T) {
 func Test_parseQueryResponseFrames(t *testing.T) {
 	t.Run("test_response", func(t *testing.T) {
 		t.Run("should parse frames successfully", func(t *testing.T) {
-			field1 := grafana.DsQueryFrameField{Name: "time"}
-			field2 := grafana.DsQueryFrameField{Name: "_value", Labels: make(map[string]string)}
+			field1 := grafana.DSQueryFrameField{Name: "time"}
+			field2 := grafana.DSQueryFrameField{Name: "_value", Labels: make(map[string]string)}
 			field2.Labels["_field"] = "temp"
 
 			resp := &grafana.DSQueryResponse{
-				Results: map[string]grafana.DsQueryResult{
+				Results: map[string]grafana.DSQueryResult{
 					"A": {
-						Frames: []grafana.DsQueryFrame{
+						Frames: []grafana.DSQueryFrame{
 							{
-								Schema: grafana.DsQueryFrameSchema{
+								Schema: grafana.DSQueryFrameSchema{
 									Name: "test_frame",
-									Fields: []grafana.DsQueryFrameField{
+									Fields: []grafana.DSQueryFrameField{
 										field1,
 										field2,
 									},
@@ -240,7 +262,7 @@ func Test_parseQueryResponseFrames(t *testing.T) {
 
 		t.Run("should return error when results contain error", func(t *testing.T) {
 			resp := &grafana.DSQueryResponse{
-				Results: map[string]grafana.DsQueryResult{
+				Results: map[string]grafana.DSQueryResult{
 					"A": {
 						Error: "query failed",
 					},
@@ -254,13 +276,13 @@ func Test_parseQueryResponseFrames(t *testing.T) {
 
 		t.Run("should return error when no rows", func(t *testing.T) {
 			resp := &grafana.DSQueryResponse{
-				Results: map[string]grafana.DsQueryResult{
+				Results: map[string]grafana.DSQueryResult{
 					"A": {
-						Frames: []grafana.DsQueryFrame{
+						Frames: []grafana.DSQueryFrame{
 							{
-								Schema: grafana.DsQueryFrameSchema{
+								Schema: grafana.DSQueryFrameSchema{
 									Name: "test_frame",
-									Fields: []grafana.DsQueryFrameField{
+									Fields: []grafana.DSQueryFrameField{
 										{Name: "time"},
 									},
 								},
@@ -279,4 +301,138 @@ func Test_parseQueryResponseFrames(t *testing.T) {
 			t.Log("returned no rows error correctly")
 		})
 	})
+}
+
+func TestQuoting(t *testing.T) {
+	t.Run("quoteStringAsFluxLiteral", func(t *testing.T) {
+		assert.Equal(t, `"standard"`, quoteStringAsFluxLiteral("standard"))
+		assert.Equal(t, `"with \"quotes\""`, quoteStringAsFluxLiteral(`with "quotes"`))
+		assert.Equal(t, `"with \\backslashes\\"`, quoteStringAsFluxLiteral(`with \backslashes\`))
+	})
+
+	t.Run("quoteStringAsInfluxQLIdentifier", func(t *testing.T) {
+		assert.Equal(t, `"standard"`, quoteStringAsInfluxQLIdentifier("standard"))
+		assert.Equal(t, `"with \"quotes\""`, quoteStringAsInfluxQLIdentifier(`with "quotes"`))
+		assert.Equal(t, `"with \backslashes"`, quoteStringAsInfluxQLIdentifier(`with \backslashes`)) // backslash escaping
+	})
+
+	t.Run("quoteStringAsLiteral (SQL style)", func(t *testing.T) {
+		assert.Equal(t, "'standard'", quoteStringAsLiteral("standard"))
+		assert.Equal(t, "'it''s a test'", quoteStringAsLiteral("it's a test"))
+	})
+}
+
+func TestFindTopLevelSelectAfterCTE(t *testing.T) {
+	tests := []struct {
+		name    string
+		query   string
+		wantPos int    // -1 if not found, otherwise we just check query[pos:] starts with SELECT
+		wantSel string // expected string at pos (trimmed, lowercased prefix)
+	}{
+		{
+			name: "single CTE",
+			query: `WITH a AS (
+				SELECT * FROM orders
+			)
+			SELECT * FROM a`,
+			wantSel: "SELECT * FROM a",
+		},
+		{
+			name: "multiple CTEs",
+			query: `WITH a AS (
+				SELECT * FROM orders
+			),
+			b AS (
+				SELECT COUNT(*) AS cnt FROM a
+			)
+			SELECT * FROM a JOIN b ON true`,
+			wantSel: "SELECT * FROM a JOIN b ON true",
+		},
+		{
+			name: "CTE with nested subquery inside",
+			query: `WITH a AS (
+				SELECT * FROM (SELECT id FROM orders WHERE id IN (SELECT id FROM archive)) sub
+			)
+			SELECT * FROM a`,
+			wantSel: "SELECT * FROM a",
+		},
+		{
+			name: "CTE with window function in body",
+			query: `WITH ranked AS (
+				SELECT *, ROW_NUMBER() OVER (PARTITION BY id ORDER BY created_at DESC) AS rn FROM orders
+			)
+			SELECT * FROM ranked WHERE rn = 1`,
+			wantSel: "SELECT * FROM ranked WHERE rn = 1",
+		},
+		{
+			name:    "not a CTE query",
+			query:   `SELECT * FROM orders`,
+			wantPos: -1,
+		},
+		{
+			name:    "empty string",
+			query:   ``,
+			wantPos: -1,
+		},
+		{
+			name:    "CTE with no final select (malformed)",
+			query:   `WITH a AS (SELECT * FROM orders)`,
+			wantPos: -1,
+		},
+		{
+			name: "lowercase with",
+			query: `with a as (
+				select * from orders
+			)
+			select * from a`,
+			wantSel: "select * from a",
+		},
+		{
+			name: "three CTEs",
+			query: `WITH a AS (SELECT * FROM t1),
+			b AS (SELECT * FROM t2),
+			c AS (SELECT * FROM a JOIN b ON a.id = b.id)
+			SELECT * FROM c`,
+			wantSel: "SELECT * FROM c",
+		},
+		{
+			name: "CTE with deeply nested parens",
+			query: `WITH a AS (
+				SELECT * FROM (SELECT * FROM (SELECT * FROM orders) t1) t2
+			)
+			SELECT * FROM a`,
+			wantSel: "SELECT * FROM a",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pos := findTopLevelSelectAfterCTE(tt.query)
+
+			if tt.wantPos == -1 {
+				if pos != -1 {
+					t.Log(tt)
+					t.Errorf("expected -1, got %d", pos)
+				}
+				return
+			}
+
+			if pos == -1 {
+				t.Fatalf("expected a valid position, got -1")
+			}
+
+			got := strings.TrimSpace(tt.query[pos:])
+			if !strings.EqualFold(got[:6], "select") {
+				t.Errorf("expected SELECT at pos %d, got: %q", pos, got[:10])
+			}
+
+			if tt.wantSel != "" {
+				gotTrimmed := strings.TrimSpace(got)
+				wantTrimmed := strings.TrimSpace(tt.wantSel)
+				if !strings.EqualFold(gotTrimmed, wantTrimmed) {
+					t.Errorf("select part mismatch:\n  got:  %q\n  want: %q", gotTrimmed, wantTrimmed)
+				}
+			}
+		})
+	}
 }

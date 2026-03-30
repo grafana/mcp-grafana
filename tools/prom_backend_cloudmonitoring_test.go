@@ -15,11 +15,11 @@ import (
 
 func TestFramesToMatrix(t *testing.T) {
 	t.Run("single series", func(t *testing.T) {
-		frames := []grafana.DsQueryFrame{
+		frames := []grafana.DSQueryFrame{
 			{
-				Schema: grafana.DsQueryFrameSchema{
+				Schema: grafana.DSQueryFrameSchema{
 					Name: "cpu_usage",
-					Fields: []grafana.DsQueryFrameField{
+					Fields: []grafana.DSQueryFrameField{
 						{Name: "Time", Type: "time"},
 						{Name: "Value", Type: "number", Labels: map[string]string{"host": "a"}},
 					},
@@ -44,18 +44,18 @@ func TestFramesToMatrix(t *testing.T) {
 	})
 
 	t.Run("multiple series", func(t *testing.T) {
-		frames := []grafana.DsQueryFrame{
+		frames := []grafana.DSQueryFrame{
 			{
-				Schema: grafana.DsQueryFrameSchema{
+				Schema: grafana.DSQueryFrameSchema{
 					Name:   "cpu",
-					Fields: []grafana.DsQueryFrameField{{Name: "Time", Type: "time"}, {Name: "Value", Type: "number", Labels: map[string]string{"host": "a"}}},
+					Fields: []grafana.DSQueryFrameField{{Name: "Time", Type: "time"}, {Name: "Value", Type: "number", Labels: map[string]string{"host": "a"}}},
 				},
 				Data: grafana.DSQueryFrameData{Values: [][]interface{}{{float64(1000)}, {float64(0.5)}}},
 			},
 			{
-				Schema: grafana.DsQueryFrameSchema{
+				Schema: grafana.DSQueryFrameSchema{
 					Name:   "cpu",
-					Fields: []grafana.DsQueryFrameField{{Name: "Time", Type: "time"}, {Name: "Value", Type: "number", Labels: map[string]string{"host": "b"}}},
+					Fields: []grafana.DSQueryFrameField{{Name: "Time", Type: "time"}, {Name: "Value", Type: "number", Labels: map[string]string{"host": "b"}}},
 				},
 				Data: grafana.DSQueryFrameData{Values: [][]interface{}{{float64(1000)}, {float64(0.8)}}},
 			},
@@ -73,10 +73,10 @@ func TestFramesToMatrix(t *testing.T) {
 	})
 
 	t.Run("frame missing time field", func(t *testing.T) {
-		frames := []grafana.DsQueryFrame{
+		frames := []grafana.DSQueryFrame{
 			{
-				Schema: grafana.DsQueryFrameSchema{
-					Fields: []grafana.DsQueryFrameField{{Name: "Value", Type: "number"}},
+				Schema: grafana.DSQueryFrameSchema{
+					Fields: []grafana.DSQueryFrameField{{Name: "Value", Type: "number"}},
 				},
 				Data: grafana.DSQueryFrameData{Values: [][]interface{}{{float64(1.0)}}},
 			},
@@ -90,11 +90,11 @@ func TestFramesToMatrix(t *testing.T) {
 
 func TestFramesToVector(t *testing.T) {
 	t.Run("single sample", func(t *testing.T) {
-		frames := []grafana.DsQueryFrame{
+		frames := []grafana.DSQueryFrame{
 			{
-				Schema: grafana.DsQueryFrameSchema{
+				Schema: grafana.DSQueryFrameSchema{
 					Name: "up",
-					Fields: []grafana.DsQueryFrameField{
+					Fields: []grafana.DSQueryFrameField{
 						{Name: "Time", Type: "time"},
 						{Name: "Value", Type: "number", Labels: map[string]string{"job": "prometheus"}},
 					},
@@ -118,10 +118,10 @@ func TestFramesToVector(t *testing.T) {
 	})
 
 	t.Run("takes last value from multi-point frame", func(t *testing.T) {
-		frames := []grafana.DsQueryFrame{
+		frames := []grafana.DSQueryFrame{
 			{
-				Schema: grafana.DsQueryFrameSchema{
-					Fields: []grafana.DsQueryFrameField{
+				Schema: grafana.DSQueryFrameSchema{
+					Fields: []grafana.DSQueryFrameField{
 						{Name: "Time", Type: "time"},
 						{Name: "Value", Type: "number"},
 					},
@@ -151,7 +151,7 @@ func TestFramesToVector(t *testing.T) {
 
 func TestFramesToPrometheusValue(t *testing.T) {
 	t.Run("missing refId returns empty", func(t *testing.T) {
-		resp := &grafana.DSQueryResponse{Results: map[string]grafana.DsQueryResult{}}
+		resp := &grafana.DSQueryResponse{Results: map[string]grafana.DSQueryResult{}}
 		v, err := framesToPrometheusValue(resp, "range")
 		require.NoError(t, err)
 		assert.Equal(t, model.Matrix{}, v)
@@ -162,7 +162,7 @@ func TestFramesToPrometheusValue(t *testing.T) {
 	})
 
 	t.Run("error in result", func(t *testing.T) {
-		resp := &grafana.DSQueryResponse{Results: map[string]grafana.DsQueryResult{
+		resp := &grafana.DSQueryResponse{Results: map[string]grafana.DSQueryResult{
 			"A": {Error: "something went wrong"},
 		}}
 		_, err := framesToPrometheusValue(resp, "range")
@@ -236,28 +236,28 @@ func TestMapGCPMetricKind(t *testing.T) {
 
 func TestExtractLabelValuesFromFrames(t *testing.T) {
 	resp := &grafana.DSQueryResponse{
-		Results: map[string]grafana.DsQueryResult{
+		Results: map[string]grafana.DSQueryResult{
 			"A": {
-				Frames: []grafana.DsQueryFrame{
+				Frames: []grafana.DSQueryFrame{
 					{
-						Schema: grafana.DsQueryFrameSchema{
-							Fields: []grafana.DsQueryFrameField{
+						Schema: grafana.DSQueryFrameSchema{
+							Fields: []grafana.DSQueryFrameField{
 								{Name: "Time", Type: "time"},
 								{Name: "Value", Type: "number", Labels: map[string]string{"zone": "us-east1-b", "project_id": "my-project"}},
 							},
 						},
 					},
 					{
-						Schema: grafana.DsQueryFrameSchema{
-							Fields: []grafana.DsQueryFrameField{
+						Schema: grafana.DSQueryFrameSchema{
+							Fields: []grafana.DSQueryFrameField{
 								{Name: "Time", Type: "time"},
 								{Name: "Value", Type: "number", Labels: map[string]string{"zone": "us-west1-a", "project_id": "my-project"}},
 							},
 						},
 					},
 					{
-						Schema: grafana.DsQueryFrameSchema{
-							Fields: []grafana.DsQueryFrameField{
+						Schema: grafana.DSQueryFrameSchema{
+							Fields: []grafana.DSQueryFrameField{
 								{Name: "Time", Type: "time"},
 								{Name: "Value", Type: "number", Labels: map[string]string{"zone": "us-east1-b", "project_id": "other-project"}},
 							},

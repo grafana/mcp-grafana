@@ -382,7 +382,7 @@ func framesToPrometheusValue(resp *grafana.DSQueryResponse, queryType string) (m
 	return framesToMatrix(r.Frames)
 }
 
-func framesToMatrix(frames []grafana.DsQueryFrame) (model.Matrix, error) {
+func framesToMatrix(frames []grafana.DSQueryFrame) (model.Matrix, error) {
 	var matrix model.Matrix
 	for _, frame := range frames {
 		timeIdx, valueIdx := findTimeAndValueFields(frame.Schema.Fields)
@@ -425,7 +425,7 @@ func framesToMatrix(frames []grafana.DsQueryFrame) (model.Matrix, error) {
 	return matrix, nil
 }
 
-func framesToVector(frames []grafana.DsQueryFrame) (model.Vector, error) {
+func framesToVector(frames []grafana.DSQueryFrame) (model.Vector, error) {
 	var vector model.Vector
 	for _, frame := range frames {
 		timeIdx, valueIdx := findTimeAndValueFields(frame.Schema.Fields)
@@ -465,7 +465,7 @@ func framesToVector(frames []grafana.DsQueryFrame) (model.Vector, error) {
 	return vector, nil
 }
 
-func findTimeAndValueFields(fields []grafana.DsQueryFrameField) (timeIdx, valueIdx int) {
+func findTimeAndValueFields(fields []grafana.DSQueryFrameField) (timeIdx, valueIdx int) {
 	timeIdx = -1
 	valueIdx = -1
 	for i, f := range fields {

@@ -1,4 +1,3 @@
-// package grafana
 package grafana
 
 import "errors"
@@ -11,7 +10,7 @@ type DSQueryPayload struct {
 	To      string `json:"to"`
 }
 
-type DsQueryFrameField struct {
+type DSQueryFrameField struct {
 	Name     string `json:"name"`
 	Type     string `json:"type"`
 	TypeInfo struct {
@@ -21,28 +20,28 @@ type DsQueryFrameField struct {
 	Config map[string]interface{} `json:"config,omitempty"`
 }
 
-type DsQueryFrameSchema struct {
+type DSQueryFrameSchema struct {
 	Name   string              `json:"name,omitempty"`
 	RefID  string              `json:"refId,omitempty"`
-	Fields []DsQueryFrameField `json:"fields"`
+	Fields []DSQueryFrameField `json:"fields"`
 }
 
 type DSQueryFrameData struct {
 	Values [][]interface{} `json:"values"`
 }
 
-type DsQueryFrame struct {
-	Schema DsQueryFrameSchema `json:"schema,omitempty"`
+type DSQueryFrame struct {
+	Schema DSQueryFrameSchema `json:"schema,omitempty"`
 	Data   DSQueryFrameData   `json:"data"`
 }
 
-type DsQueryResult struct {
+type DSQueryResult struct {
 	Status int            `json:"status,omitempty"`
-	Frames []DsQueryFrame `json:"frames,omitempty"`
+	Frames []DSQueryFrame `json:"frames,omitempty"`
 	Error  string         `json:"error,omitempty"`
 }
 
 // DSQueryResponse represents the raw API response from Grafana's /api/ds/query
 type DSQueryResponse struct {
-	Results map[string]DsQueryResult `json:"results"`
+	Results map[string]DSQueryResult `json:"results"`
 }

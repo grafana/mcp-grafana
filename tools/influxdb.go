@@ -36,6 +36,13 @@ const (
 	InfluxDBTagsMaxLimit     uint = 1000
 )
 
+const (
+	// influxDBResponseLimitBytes is the max limit for successful query responses (10MB)
+	influxDBResponseLimitBytes = 1024 * 1024 * 10
+	// influxDBErrorResponseLimitBytes is the max limit for error responses (1MB)
+	influxDBErrorResponseLimitBytes = 1024 * 1024
+)
+
 // Supported query types for the InfluxDB client.
 const (
 	FluxQueryType     = "Flux"
@@ -43,9 +50,23 @@ const (
 	InfluxQLQueryType = "InfluxQL"
 )
 
-// InfluxQL query supports limits in the format
-// LIMIT %d | LIMIT %d OFFSET %d, Unsupported: LIMIT %d,%d
-var limitRegEx = regexp.MustCompile(`(?i)(limit\s+)\d+(\s+offset\s+\d+)?(\s*$)`)
+// Regex expressions used for query parsing and limit enforcement.
+var (
+	// influxQLLimitRegEx matches InfluxQL LIMIT and optional OFFSET clauses.
+	influxQLLimitRegEx = regexp.MustCompile(`(?i)(limit\s+)\d+(\s+offset\s+\d+)?(\s*$)`)
+
+	// sqlCTEStartRegEx matches the start of a CTE (WITH clause).
+	sqlCTEStartRegEx = regexp.MustCompile(`(?i)^\s*WITH\b`)
+
+	// sqlKeywordRegEx matches standard SQL keywords that follow a CTE.
+	sqlKeywordRegEx = regexp.MustCompile(`(?i)^(SELECT|INSERT|UPDATE|DELETE|MERGE|TRUNCATE)\b`)
+
+	// sqlLimitRegEx matches a SQL LIMIT clause.
+	sqlLimitRegEx = regexp.MustCompile(`(?i)\bLIMIT\s+\d+`)
+
+	// fluxLimitRegEx matches a Flux limit operator at the end of a query.
+	fluxLimitRegEx = regexp.MustCompile(`(?i)\|>\s*limit\s*\(\s*n\s*:\s*\d+\s*\)\s*$`)
+)
 
 type influxDBClient struct {
 	httpClient *http.Client
@@ -133,23 +154,20 @@ type InfluxQueryResult struct {
 	Hints       *EmptyResultHints `json:"hints,omitempty"`
 }
 
-type InfluxQLQuery struct {
-	Datasource   DatasourceRef `json:"datasource"`
-	RefID        string        `json:"refId"`
-	Type         string        `json:"type"`
-	Format       string        `json:"format"`
-	IntervalMs   uint          `json:"intervalMs"`
-	Query        string        `json:"query"`
-	RawSQL       string        `json:"rawSql"`
-	RawQuery     bool          `json:"rawQuery"`
-	Limit        string        `json:"limit"`
-	ResultFormat string        `json:"resultFormat"`
-}
-
-// DatasourceRef encapsulates the unique identifier and type of a Grafana data source.
-type DatasourceRef struct {
-	UID  string `json:"uid"`
-	Type string `json:"type"`
+type influxDBQueryPayload struct {
+	Datasource struct {
+		UID  string `json:"uid"`
+		Type string `json:"type"`
+	} `json:"datasource"`
+	RefID        string `json:"refId"`
+	Type         string `json:"type"`
+	Format       string `json:"format"`
+	IntervalMs   uint   `json:"intervalMs"`
+	Query        string `json:"query"`
+	RawSQL       string `json:"rawSql"`
+	RawQuery     bool   `json:"rawQuery"`
+	Limit        string `json:"limit"`
+	ResultFormat string `json:"resultFormat"`
 }
 
 func (ic *influxDBClient) Query(ctx context.Context, args InfluxQueryArgs, from, to time.Time) (*grafana.DSQueryResponse, error) {
@@ -159,8 +177,11 @@ func (ic *influxDBClient) Query(ctx context.Context, args InfluxQueryArgs, from,
 		format = "table"
 	}
 
-	query := InfluxQLQuery{
-		Datasource: DatasourceRef{
+	query := influxDBQueryPayload{
+		Datasource: struct {
+			UID  string `json:"uid"`
+			Type string `json:"type"`
+		}{
 			UID:  args.DatasourceUID,
 			Type: InfluxDBDataSourceType,
 		},
@@ -207,22 +228,72 @@ func (ic *influxDBClient) Query(ctx context.Context, args InfluxQueryArgs, from,
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
+		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, influxDBErrorResponseLimitBytes))
 		return nil, fmt.Errorf("InfluxDB query returned status %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
 	// Read and parse response
-	body := io.LimitReader(resp.Body, 1024*1024*10) // 10MB limit
-	bodyBytes, err := io.ReadAll(body)
+	var queryResp grafana.DSQueryResponse
+	bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, influxDBResponseLimitBytes))
 	if err != nil {
 		return nil, fmt.Errorf("reading response body: %w", err)
 	}
-	var queryResp grafana.DSQueryResponse
-	if err := json.Unmarshal(bodyBytes, &queryResp); err != nil {
-		return nil, fmt.Errorf("unmarshaling response: %w", err)
+
+	if err := unmarshalJSONWithLimitMsg(bodyBytes, &queryResp, influxDBResponseLimitBytes); err != nil {
+		return nil, err
 	}
 
 	return &queryResp, nil
+}
+
+func findTopLevelSelectAfterCTE(query string) int {
+	loc := sqlCTEStartRegEx.FindStringIndex(query)
+	if loc == nil {
+		return -1
+	}
+	i := loc[1]
+
+	for i < len(query) {
+		parenIdx := strings.Index(query[i:], "(")
+		if parenIdx == -1 {
+			break
+		}
+		i += parenIdx
+
+		depth := 0
+		for i < len(query) {
+			switch query[i] {
+			case '(':
+				depth++
+			case ')':
+				depth--
+			}
+			i++
+			if depth == 0 {
+				break
+			}
+		}
+
+		// Skip whitespace
+		for i < len(query) && (query[i] == ' ' || query[i] == '\n' || query[i] == '\t' || query[i] == '\r') {
+			i++
+		}
+
+		if i >= len(query) {
+			return -1 // nothing after closing paren — malformed
+		}
+
+		if query[i] == ',' {
+			i++ // another CTE follows
+		} else {
+			// Verify a valid SQL keyword exists here (SELECT, INSERT, UPDATE, DELETE, etc.)
+			if !sqlKeywordRegEx.MatchString(query[i:]) {
+				return -1
+			}
+			return i
+		}
+	}
+	return -1
 }
 
 func enforceQueryLimit(args *InfluxQueryArgs) {
@@ -239,24 +310,46 @@ func enforceQueryLimit(args *InfluxQueryArgs) {
 	switch args.QueryType {
 
 	case SQLQueryType:
-		// wrap query and apply limit
 		query := strings.TrimSuffix(args.Query, ";")
-		args.Query = "(" + query + ")" + fmt.Sprintf(" LIMIT %d", limit)
+
+		if sqlCTEStartRegEx.MatchString(query) {
+			// CTE query
+			pos := findTopLevelSelectAfterCTE(query)
+			if pos != -1 {
+				ctePrefix := query[:pos]  // WITH a AS (...), b AS (...)
+				selectPart := query[pos:] // SELECT * FROM a JOIN b ON true
+
+				if !sqlLimitRegEx.MatchString(selectPart) {
+					wrappedSelect := "(" + selectPart + ")" + fmt.Sprintf(" LIMIT %d", limit)
+					args.Query = ctePrefix + wrappedSelect
+				}
+			}
+		} else {
+			// window functions , generic queries
+			// wrap query and apply limit
+			args.Query = "(" + query + ")" + fmt.Sprintf(" LIMIT %d", limit)
+		}
 	case InfluxQLQueryType:
 		// override limits when query contains limit
-		if limitRegEx.Match([]byte(args.Query)) {
+		if influxQLLimitRegEx.Match([]byte(args.Query)) {
 			replacement := fmt.Sprintf("${1}%d${2}${3}", limit)
-			args.Query = limitRegEx.ReplaceAllString(args.Query, replacement)
+			args.Query = influxQLLimitRegEx.ReplaceAllString(args.Query, replacement)
 		} else {
 			// append limit in other cases
 			query := strings.TrimSuffix(args.Query, ";")
 			args.Query = query + fmt.Sprintf(" LIMIT %d", limit)
 		}
-
 	case FluxQueryType:
-		// A query can execute selection of multiple tables
-		// flux |>limit() operator applies limit per table or group
-		args.Query = strings.TrimSpace(args.Query) + fmt.Sprintf("\n|>limit(n:%d)", limit)
+		query := strings.TrimSpace(args.Query)
+
+		if fluxLimitRegEx.MatchString(query) {
+			// Replace existing limit at end
+			args.Query = fluxLimitRegEx.ReplaceAllString(query, fmt.Sprintf("|> limit(n:%d)", limit))
+		} else {
+			// Always append limit at end — goal is to always have limit as final operator
+			args.Query = query + fmt.Sprintf("\n|> limit(n:%d)", limit)
+		}
+
 	}
 
 }
@@ -671,9 +764,9 @@ func quoteStringAsFluxLiteral(s string) string {
 	return `"` + s + `"`
 }
 
-func quoteStringAsInfluxQLLiteral(s string) string {
-	// InfluxQL identical as Flux
-	return quoteStringAsFluxLiteral(s)
+// quoteStringAsInfluxQLIdentifier quotes a string as an InfluxQL identifier using double quotes.
+func quoteStringAsInfluxQLIdentifier(s string) string {
+	return `"` + strings.ReplaceAll(s, `"`, `\"`) + `"`
 }
 
 func listTagKeys(ctx context.Context, args ListTagKeysArgs) (*ListTagKeysResult, error) {
@@ -706,7 +799,7 @@ func listTagKeys(ctx context.Context, args ListTagKeysArgs) (*ListTagKeysResult,
 		tagColumnKey = "_value"
 	case InfluxQLQueryType:
 		query = fmt.Sprintf(`SHOW TAG KEYS FROM %s LIMIT %d`,
-			quoteStringAsInfluxQLLiteral(args.Measurement), args.Limit)
+			quoteStringAsInfluxQLIdentifier(args.Measurement), args.Limit)
 		tagColumnKey = "Value"
 	}
 
@@ -804,7 +897,7 @@ func listFieldKeys(ctx context.Context, args ListFieldKeysArgs) (*ListFieldKeysR
 		fieldColumnKey = "_value"
 	case InfluxQLQueryType:
 		query = fmt.Sprintf(`SHOW FIELD KEYS FROM %s LIMIT %d`,
-			quoteStringAsInfluxQLLiteral(args.Measurement), args.Limit)
+			quoteStringAsInfluxQLIdentifier(args.Measurement), args.Limit)
 		fieldColumnKey = "Value"
 	}
 
