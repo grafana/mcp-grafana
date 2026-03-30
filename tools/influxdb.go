@@ -526,7 +526,7 @@ func queryInflux(ctx context.Context, args InfluxQueryArgs) (*InfluxQueryResult,
 
 var QueryInflux = mcpgrafana.MustTool(
 	"query_influx",
-	"Queries InfluxDB datasource, supports one of Flux, SQL, or InfluxQL query languages. Use in order: list_datasources -> get_datasource to determine query language configured for datasource.Use both list_field_keys_influxdb , list_tag_keys_influxdb to determine the available columns",
+	"Queries InfluxDB datasource, supports one of Flux, SQL, or InfluxQL query languages. Use in order: list_datasources -> get_datasource to determine query language configured for datasource.Use both list_influxdb_field_keys , list_influxdb_tag_keys to determine the available columns",
 	queryInflux,
 	mcp.WithTitleAnnotation("Query InfluxDB"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -723,8 +723,8 @@ func listMeasurements(ctx context.Context, args ListMeasurementsArgs) (*ListMeas
 }
 
 var ListMeasurements = mcpgrafana.MustTool(
-	"list_measurements_influxdb",
-	"Lists Measurements of an InfluxDB datasource identified by its UID. Use in order: list_datasources -> get_datasource -> list_influxdb_buckets (required only for Flux linked datasource) -> list_measurements_influxdb",
+	"list_influxdb_measurements",
+	"Lists Measurements of an InfluxDB datasource identified by its UID. Use in order: list_datasources -> get_datasource -> list_influxdb_buckets (required only for Flux linked datasource) -> list_influxdb_measurements",
 	listMeasurements,
 	mcp.WithTitleAnnotation("List Measurements InfluxDB"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -836,8 +836,8 @@ func listTagKeys(ctx context.Context, args ListTagKeysArgs) (*ListTagKeysResult,
 }
 
 var ListTagKeys = mcpgrafana.MustTool(
-	"list_tag_keys_influxdb",
-	"Lists Tag Keys of an InfluxDB datasource identified by its UID. Use in order: list_datasources -> get_datasource -> list_influxdb_buckets (required only for Flux linked datasource) -> list_measurements_influxdb -> list_tag_keys_influxdb",
+	"list_influxdb_tag_keys",
+	"Lists Tag Keys of an InfluxDB datasource identified by its UID. Use in order: list_datasources -> get_datasource -> list_influxdb_buckets (required only for Flux linked datasource) -> list_influxdb_measurements -> list_influxdb_tag_keys",
 	listTagKeys,
 	mcp.WithTitleAnnotation("List Tag Keys InfluxDB"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -934,8 +934,8 @@ func listFieldKeys(ctx context.Context, args ListFieldKeysArgs) (*ListFieldKeysR
 }
 
 var ListFieldKeys = mcpgrafana.MustTool(
-	"list_field_keys_influxdb",
-	"Lists Field Keys of an InfluxDB datasource identified by its UID. Use in order: list_datasources -> get_datasource -> list_influxdb_buckets (required only for Flux linked datasource) -> list_measurements_influxdb -> list_field_keys_influxdb",
+	"list_influxdb_field_keys",
+	"Lists Field Keys of an InfluxDB datasource identified by its UID. Use in order: list_datasources -> get_datasource -> list_influxdb_buckets (required only for Flux linked datasource) -> list_influxdb_measurements -> list_influxdb_field_keys",
 	listFieldKeys,
 	mcp.WithTitleAnnotation("List Field Keys InfluxDB"),
 	mcp.WithIdempotentHintAnnotation(true),
