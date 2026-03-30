@@ -229,15 +229,17 @@ Note that some of these capabilities may be disabled. Do not try to use features
 	)
 
 	// Initialize ToolManager now that server is created
-	stm = mcpgrafana.NewToolManager(
-		sm, s,
+	tmOpts := []mcpgrafana.ToolManagerOption{
 		mcpgrafana.WithProxiedTools(!dt.proxied),
-		mcpgrafana.WithConnectedOnlyTools(tc.onlyConnected, func() map[string]bool {
-			return toolsState(&dt)
-		}, func() map[string]func() []*mcpgrafana.Tool {
-			return buildMappedTools(!dt.write)
-		}, registryPluginCategories),
-	)
+	}
+	if tc.onlyConnected {
+		tmOpts = append(tmOpts, mcpgrafana.WithConnectedOnlyTools(mcpgrafana.ConnectedToolsConfig{
+			EnabledTools:     toolsState(&dt),
+			CategoryTools:    buildMappedTools(!dt.write),
+			PluginCategories: registryPluginCategories(),
+		}))
+	}
+	stm = mcpgrafana.NewToolManager(sm, s, tmOpts...)
 
 	dt.addTools(s, tc)
 	return s, stm, sm

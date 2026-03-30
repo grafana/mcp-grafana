@@ -243,8 +243,11 @@ type ToolManager struct {
 	pluginCategories map[string][]string
 }
 
+// ToolManagerOption defines configuration functions for the ToolManager.
+type ToolManagerOption func(*ToolManager)
+
 // NewToolManager creates a new ToolManager
-func NewToolManager(sm *SessionManager, mcpServer *server.MCPServer, opts ...toolManagerOption) *ToolManager {
+func NewToolManager(sm *SessionManager, mcpServer *server.MCPServer, opts ...ToolManagerOption) *ToolManager {
 	tm := &ToolManager{
 		sm:            sm,
 		server:        mcpServer,
@@ -258,29 +261,27 @@ func NewToolManager(sm *SessionManager, mcpServer *server.MCPServer, opts ...too
 	return tm
 }
 
-type toolManagerOption func(*ToolManager)
-
 // WithProxiedTools sets whether proxied tools are enabled
-func WithProxiedTools(enabled bool) toolManagerOption {
+func WithProxiedTools(enabled bool) ToolManagerOption {
 	return func(tm *ToolManager) {
 		tm.enableProxiedTools = enabled
 	}
 }
 
+// ConnectedToolsConfig defines configuration for tools that require a connected Grafana instance.
+type ConnectedToolsConfig struct {
+	EnabledTools     map[string]bool
+	CategoryTools    map[string]func() []*Tool
+	PluginCategories map[string][]string
+}
+
 // WithConnectedOnlyTools initializes ToolManager internal state for enabled Tools when connectedOnly is true
-func WithConnectedOnlyTools(
-	connectedOnly bool,
-	toolsState func() map[string]bool,
-	categoryTools func() map[string]func() []*Tool,
-	pluginCategories func() map[string][]string,
-) toolManagerOption {
+func WithConnectedOnlyTools(config ConnectedToolsConfig) ToolManagerOption {
 	return func(tm *ToolManager) {
-		if connectedOnly {
-			tm.connectedOnly = true
-			tm.enabledTools = toolsState()
-			tm.categoryTools = categoryTools()
-			tm.pluginCategories = pluginCategories()
-		}
+		tm.connectedOnly = true
+		tm.enabledTools = config.EnabledTools
+		tm.categoryTools = config.CategoryTools
+		tm.pluginCategories = config.PluginCategories
 	}
 }
 

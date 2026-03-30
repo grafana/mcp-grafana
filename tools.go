@@ -51,6 +51,7 @@ func (e *HardError) Unwrap() error {
 // Register adds the Tool to the given MCPServer.
 // It is a convenience method that calls server.MCPServer.AddTool with the Tool's metadata and handler,
 // allowing fluent tool registration in a single statement:
+//
 // mcpgrafana.MustTool(name, description, toolHandler).Register(server)
 func (t *Tool) Register(mcp *server.MCPServer) {
 	mcp.AddTool(t.Tool, t.Handler)
