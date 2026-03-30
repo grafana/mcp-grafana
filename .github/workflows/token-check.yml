@@ -18,7 +18,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Go
-        uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
         with:
           go-version-file: go.mod
 
@@ -27,7 +27,7 @@ jobs:
 
       - name: Download baseline
         id: download-baseline
-        uses: dawidd6/action-download-artifact@9dde25e7413c6123b6062d4c9fc954d6ff005cfc
+        uses: dawidd6/action-download-artifact@cdf23fa8e0b0f74767dbcb6b05a2905955a47043
         with:
           branch: main
           name: token-baseline
@@ -38,7 +38,7 @@ jobs:
       - name: Get secrets
         id: get-secrets
         if: github.event.pull_request.head.repo.full_name == github.repository
-        uses: grafana/shared-workflows/actions/get-vault-secrets@a37de51f3d713a30a9e4b21bcdfbd38170020593 # get-vault-secrets/v1.3.0
+        uses: grafana/shared-workflows/actions/get-vault-secrets@f1614b210386ac420af6807a997ac7f6d96e477a # get-vault-secrets/v1.3.1
         with:
           # Secrets placed in the ci/repo/grafana/mcp-grafana/<path> path in Vault
           repo_secrets: |

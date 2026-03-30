@@ -1,11 +1,11 @@
-//go:build unit
-// +build unit
-
 package mcpgrafana
 
 import (
 	"context"
 	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/go-openapi/runtime/client"
@@ -156,6 +156,37 @@ func TestExtractGrafanaInfoFromHeaders(t *testing.T) {
 		assert.Equal(t, "my-test-api-key", config.APIKey)
 	})
 
+	t.Run("with service account token header", func(t *testing.T) {
+		t.Setenv("GRAFANA_URL", "")
+		t.Setenv("GRAFANA_API_KEY", "")
+		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN", "")
+
+		req, err := http.NewRequest("GET", "http://example.com", nil)
+		require.NoError(t, err)
+		req.Header.Set(grafanaURLHeader, "http://my-test-url.grafana.com")
+		req.Header.Set(grafanaServiceAccountTokenHeader, "my-service-account-token")
+		ctx := ExtractGrafanaInfoFromHeaders(context.Background(), req)
+		config := GrafanaConfigFromContext(ctx)
+		assert.Equal(t, "http://my-test-url.grafana.com", config.URL)
+		assert.Equal(t, "my-service-account-token", config.APIKey)
+	})
+
+	t.Run("service account token header takes precedence over api key header", func(t *testing.T) {
+		t.Setenv("GRAFANA_URL", "")
+		t.Setenv("GRAFANA_API_KEY", "")
+		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN", "")
+
+		req, err := http.NewRequest("GET", "http://example.com", nil)
+		require.NoError(t, err)
+		req.Header.Set(grafanaURLHeader, "http://my-test-url.grafana.com")
+		req.Header.Set(grafanaServiceAccountTokenHeader, "my-service-account-token")
+		req.Header.Set(grafanaAPIKeyHeader, "my-deprecated-api-key")
+		ctx := ExtractGrafanaInfoFromHeaders(context.Background(), req)
+		config := GrafanaConfigFromContext(ctx)
+		assert.Equal(t, "http://my-test-url.grafana.com", config.URL)
+		assert.Equal(t, "my-service-account-token", config.APIKey)
+	})
+
 	t.Run("no headers, with env", func(t *testing.T) {
 		t.Setenv("GRAFANA_USERNAME", "foo")
 		t.Setenv("GRAFANA_PASSWORD", "bar")
@@ -283,7 +314,7 @@ type minURL struct {
 }
 
 // minURLFromClient extracts some minimal amount of URL info from a Grafana client.
-func minURLFromClient(c *grafana_client.GrafanaHTTPAPI) minURL {
+func minURLFromClient(c *GrafanaClient) minURL {
 	rt := c.Transport.(*client.Runtime)
 	return minURL{rt.Host, rt.BasePath}
 }
@@ -371,11 +402,7 @@ func TestToolTracingInstrumentation(t *testing.T) {
 
 		// Create a mock MCP request
 		request := mcp.CallToolRequest{
-			Params: struct {
-				Name      string    `json:"name"`
-				Arguments any       `json:"arguments,omitempty"`
-				Meta      *mcp.Meta `json:"_meta,omitempty"`
-			}{
+			Params: mcp.CallToolParams{
 				Name: "test_tool",
 				Arguments: map[string]interface{}{
 					"message": "world",
@@ -428,11 +455,7 @@ func TestToolTracingInstrumentation(t *testing.T) {
 
 		// Create a mock MCP request that will cause failure
 		request := mcp.CallToolRequest{
-			Params: struct {
-				Name      string    `json:"name"`
-				Arguments any       `json:"arguments,omitempty"`
-				Meta      *mcp.Meta `json:"_meta,omitempty"`
-			}{
+			Params: mcp.CallToolParams{
 				Name: "failing_tool",
 				Arguments: map[string]interface{}{
 					"shouldFail": true,
@@ -489,11 +512,7 @@ func TestToolTracingInstrumentation(t *testing.T) {
 
 		// Create a mock MCP request
 		request := mcp.CallToolRequest{
-			Params: struct {
-				Name      string    `json:"name"`
-				Arguments any       `json:"arguments,omitempty"`
-				Meta      *mcp.Meta `json:"_meta,omitempty"`
-			}{
+			Params: mcp.CallToolParams{
 				Name: "context_prop_tool",
 				Arguments: map[string]interface{}{
 					"message": "test",
@@ -539,11 +558,7 @@ func TestToolTracingInstrumentation(t *testing.T) {
 
 		// Create a mock MCP request with potentially sensitive data
 		request := mcp.CallToolRequest{
-			Params: struct {
-				Name      string    `json:"name"`
-				Arguments any       `json:"arguments,omitempty"`
-				Meta      *mcp.Meta `json:"_meta,omitempty"`
-			}{
+			Params: mcp.CallToolParams{
 				Name: "sensitive_tool",
 				Arguments: map[string]interface{}{
 					"sensitiveData": "user@example.com",
@@ -599,11 +614,7 @@ func TestToolTracingInstrumentation(t *testing.T) {
 
 		// Create a mock MCP request
 		request := mcp.CallToolRequest{
-			Params: struct {
-				Name      string    `json:"name"`
-				Arguments any       `json:"arguments,omitempty"`
-				Meta      *mcp.Meta `json:"_meta,omitempty"`
-			}{
+			Params: mcp.CallToolParams{
 				Name: "debug_tool",
 				Arguments: map[string]interface{}{
 					"safeData": "debug-value",
@@ -632,6 +643,37 @@ func TestToolTracingInstrumentation(t *testing.T) {
 	})
 }
 
+func TestTextMimeConsumerOverride(t *testing.T) {
+	// Verify that NewGrafanaClient overrides text/plain and text/html consumers
+	// with JSON consumers so that responses with incorrect content-type headers
+	// (e.g. from Grafana v12 or reverse proxies) are still parsed correctly.
+	// See: https://github.com/grafana/mcp-grafana/issues/635
+	ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{})
+	c := NewGrafanaClient(ctx, "http://localhost:3000", "test-api-key", nil)
+	require.NotNil(t, c)
+
+	rt, ok := c.Transport.(*client.Runtime)
+	require.True(t, ok, "expected Transport to be *client.Runtime")
+
+	// The text/plain and text/html consumers should no longer be the default
+	// TextConsumer. Verify by checking they can consume a JSON object into a
+	// map (TextConsumer would fail on this).
+	for _, mime := range []string{"text/plain", "text/html"} {
+		consumer, exists := rt.Consumers[mime]
+		require.True(t, exists, "consumer for %s should exist", mime)
+		require.NotNil(t, consumer, "consumer for %s should not be nil", mime)
+
+		// JSONConsumer can unmarshal into a map; TextConsumer cannot.
+		var result map[string]interface{}
+		err := consumer.Consume(
+			strings.NewReader(`{"status":"ok"}`),
+			&result,
+		)
+		assert.NoError(t, err, "consumer for %s should parse JSON", mime)
+		assert.Equal(t, "ok", result["status"], "consumer for %s should return parsed value", mime)
+	}
+}
+
 func TestHTTPTracingConfiguration(t *testing.T) {
 	t.Run("HTTP tracing always enabled for context propagation", func(t *testing.T) {
 		// Create context (HTTP tracing always enabled)
@@ -639,7 +681,7 @@ func TestHTTPTracingConfiguration(t *testing.T) {
 		ctx := WithGrafanaConfig(context.Background(), config)
 
 		// Create Grafana client
-		client := NewGrafanaClient(ctx, "http://localhost:3000", "test-api-key", nil, 0)
+		client := NewGrafanaClient(ctx, "http://localhost:3000", "test-api-key", nil)
 		require.NotNil(t, client)
 
 		// Verify the client was created successfully (should not panic)
@@ -654,7 +696,7 @@ func TestHTTPTracingConfiguration(t *testing.T) {
 		ctx := WithGrafanaConfig(context.Background(), config)
 
 		// Create Grafana client (should not panic even without OTEL configured)
-		client := NewGrafanaClient(ctx, "http://localhost:3000", "test-api-key", nil, 0)
+		client := NewGrafanaClient(ctx, "http://localhost:3000", "test-api-key", nil)
 		require.NotNil(t, client)
 
 		// Verify the client was created successfully
@@ -718,7 +760,6 @@ func assertHasAttribute(t *testing.T, attributes []attribute.KeyValue, key strin
 	}
 	t.Errorf("Expected attribute %s with value %s not found", key, expectedValue)
 }
-
 
 func TestExtraHeadersFromEnv(t *testing.T) {
 	t.Run("empty env returns nil", func(t *testing.T) {
@@ -796,13 +837,16 @@ func TestExtraHeadersRoundTripper(t *testing.T) {
 	})
 }
 
-type extraHeadersMockRT struct {
+type capturingMockRT struct {
 	fn func(*http.Request) (*http.Response, error)
 }
 
-func (m *extraHeadersMockRT) RoundTrip(req *http.Request) (*http.Response, error) {
+func (m *capturingMockRT) RoundTrip(req *http.Request) (*http.Response, error) {
 	return m.fn(req)
 }
+
+// Keep the old name as an alias for backwards compatibility in case anything references it.
+type extraHeadersMockRT = capturingMockRT
 
 func TestExtractGrafanaInfoWithExtraHeaders(t *testing.T) {
 	t.Run("extra headers from env in ExtractGrafanaInfoFromEnv", func(t *testing.T) {
@@ -818,5 +862,301 @@ func TestExtractGrafanaInfoWithExtraHeaders(t *testing.T) {
 		ctx := ExtractGrafanaInfoFromHeaders(context.Background(), req)
 		config := GrafanaConfigFromContext(ctx)
 		assert.Equal(t, map[string]string{"X-Tenant-ID": "tenant-456"}, config.ExtraHeaders)
+	})
+}
+
+func TestOrgIDRoundTripper(t *testing.T) {
+	t.Run("adds org ID header to request", func(t *testing.T) {
+		var capturedReq *http.Request
+		mockRT := &capturingMockRT{
+			fn: func(req *http.Request) (*http.Response, error) {
+				capturedReq = req
+				return &http.Response{StatusCode: 200}, nil
+			},
+		}
+
+		rt := NewOrgIDRoundTripper(mockRT, 123)
+
+		req, _ := http.NewRequest("GET", "http://example.com", nil)
+		_, err := rt.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Equal(t, "123", capturedReq.Header.Get(grafana_client.OrgIDHeader))
+	})
+
+	t.Run("does not add header when org ID is zero", func(t *testing.T) {
+		var capturedReq *http.Request
+		mockRT := &capturingMockRT{
+			fn: func(req *http.Request) (*http.Response, error) {
+				capturedReq = req
+				return &http.Response{StatusCode: 200}, nil
+			},
+		}
+
+		rt := NewOrgIDRoundTripper(mockRT, 0)
+
+		req, _ := http.NewRequest("GET", "http://example.com", nil)
+		_, err := rt.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Empty(t, capturedReq.Header.Get(grafana_client.OrgIDHeader))
+	})
+
+	t.Run("does not modify original request", func(t *testing.T) {
+		mockRT := &capturingMockRT{
+			fn: func(req *http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: 200}, nil
+			},
+		}
+
+		rt := NewOrgIDRoundTripper(mockRT, 42)
+
+		req, _ := http.NewRequest("GET", "http://example.com", nil)
+		_, err := rt.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Empty(t, req.Header.Get(grafana_client.OrgIDHeader))
+	})
+
+	t.Run("nil transport uses default", func(t *testing.T) {
+		rt := NewOrgIDRoundTripper(nil, 1)
+		assert.NotNil(t, rt.underlying)
+	})
+}
+
+func TestNewGrafanaClientOrgIDTransport(t *testing.T) {
+	t.Run("org ID header is sent on requests when configured", func(t *testing.T) {
+		var capturedHeaders http.Header
+		ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+			capturedHeaders = r.Header.Clone()
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`[]`))
+		})
+
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{
+			OrgID: 99,
+		})
+		c := NewGrafanaClient(ctx, ts.URL, "test-key", nil)
+		require.NotNil(t, c)
+
+		// Make a real request through the client
+		_, _ = c.Search.Search(nil, nil)
+
+		assert.Equal(t, "99", capturedHeaders.Get(grafana_client.OrgIDHeader))
+	})
+
+	t.Run("org ID header is not sent when org ID is zero", func(t *testing.T) {
+		var capturedHeaders http.Header
+		ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+			capturedHeaders = r.Header.Clone()
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`[]`))
+		})
+
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{
+			OrgID: 0,
+		})
+		c := NewGrafanaClient(ctx, ts.URL, "test-key", nil)
+		require.NotNil(t, c)
+
+		_, _ = c.Search.Search(nil, nil)
+
+		assert.Empty(t, capturedHeaders.Get(grafana_client.OrgIDHeader))
+	})
+}
+
+func newTestHTTPServer(t *testing.T, handler http.HandlerFunc) *httptest.Server {
+	t.Helper()
+	ts := httptest.NewServer(handler)
+	t.Cleanup(ts.Close)
+	return ts
+}
+
+// clearPublicURLCache removes all entries from the publicURLCache for test isolation.
+func clearPublicURLCache() {
+	publicURLCache.Range(func(key, _ any) bool {
+		publicURLCache.Delete(key)
+		return true
+	})
+}
+
+func TestFetchPublicURL(t *testing.T) {
+	t.Cleanup(clearPublicURLCache)
+
+	t.Run("fetches appUrl from frontend settings", func(t *testing.T) {
+		ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/api/frontend/settings" {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"appUrl": "https://grafana.example.com/"}`))
+				return
+			}
+			w.WriteHeader(http.StatusNotFound)
+		})
+
+		publicURL := fetchPublicURL(context.Background(), ts.URL, "test-key", nil, nil, nil)
+		assert.Equal(t, "https://grafana.example.com", publicURL)
+	})
+
+	t.Run("returns empty string when endpoint returns error", func(t *testing.T) {
+		ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+		})
+
+		publicURL := fetchPublicURL(context.Background(), ts.URL, "test-key", nil, nil, nil)
+		assert.Equal(t, "", publicURL)
+	})
+
+	t.Run("returns empty string when appUrl is empty", func(t *testing.T) {
+		ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"appUrl": ""}`))
+		})
+
+		publicURL := fetchPublicURL(context.Background(), ts.URL, "test-key", nil, nil, nil)
+		assert.Equal(t, "", publicURL)
+	})
+
+	t.Run("returns empty string for invalid JSON", func(t *testing.T) {
+		ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`not json`))
+		})
+
+		publicURL := fetchPublicURL(context.Background(), ts.URL, "test-key", nil, nil, nil)
+		assert.Equal(t, "", publicURL)
+	})
+
+	t.Run("sends authorization header with API key", func(t *testing.T) {
+		var capturedAuth string
+		ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+			capturedAuth = r.Header.Get("Authorization")
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"appUrl": "https://grafana.example.com"}`))
+		})
+
+		fetchPublicURL(context.Background(), ts.URL, "my-token", nil, nil, nil)
+		assert.Equal(t, "Bearer my-token", capturedAuth)
+	})
+
+	t.Run("sends basic auth credentials", func(t *testing.T) {
+		var capturedUser, capturedPass string
+		ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+			capturedUser, capturedPass, _ = r.BasicAuth()
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"appUrl": "https://grafana.example.com"}`))
+		})
+
+		auth := url.UserPassword("admin", "secret")
+		fetchPublicURL(context.Background(), ts.URL, "", auth, nil, nil)
+		assert.Equal(t, "admin", capturedUser)
+		assert.Equal(t, "secret", capturedPass)
+	})
+
+	t.Run("trims trailing slash from appUrl", func(t *testing.T) {
+		ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"appUrl": "https://grafana.example.com/"}`))
+		})
+
+		publicURL := fetchPublicURL(context.Background(), ts.URL, "", nil, nil, nil)
+		assert.Equal(t, "https://grafana.example.com", publicURL)
+	})
+
+	t.Run("forwards extra headers", func(t *testing.T) {
+		var capturedHeaders http.Header
+		ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+			capturedHeaders = r.Header.Clone()
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"appUrl": "https://grafana.example.com"}`))
+		})
+
+		extraHeaders := map[string]string{
+			"X-Custom-Auth":   "proxy-token-123",
+			"X-Forwarded-For": "10.0.0.1",
+		}
+		fetchPublicURL(context.Background(), ts.URL, "", nil, nil, extraHeaders)
+		assert.Equal(t, "proxy-token-123", capturedHeaders.Get("X-Custom-Auth"))
+		assert.Equal(t, "10.0.0.1", capturedHeaders.Get("X-Forwarded-For"))
+	})
+
+	t.Run("caches results per grafana URL", func(t *testing.T) {
+		callCount := 0
+		ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+			callCount++
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"appUrl": "https://grafana.example.com"}`))
+		})
+
+		// First call should hit the server
+		publicURL := fetchPublicURL(context.Background(), ts.URL, "test-key", nil, nil, nil)
+		assert.Equal(t, "https://grafana.example.com", publicURL)
+		assert.Equal(t, 1, callCount)
+
+		// Second call should use cache
+		publicURL = fetchPublicURL(context.Background(), ts.URL, "test-key", nil, nil, nil)
+		assert.Equal(t, "https://grafana.example.com", publicURL)
+		assert.Equal(t, 1, callCount) // no additional HTTP call
+	})
+
+	t.Run("retries on failure instead of caching errors permanently", func(t *testing.T) {
+		callCount := 0
+		ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+			callCount++
+			if callCount == 1 {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"appUrl": "https://grafana.example.com"}`))
+		})
+
+		// First call fails
+		publicURL := fetchPublicURL(context.Background(), ts.URL, "test-key", nil, nil, nil)
+		assert.Equal(t, "", publicURL)
+		assert.Equal(t, 1, callCount)
+
+		// Second call retries and succeeds (failures are not cached)
+		publicURL = fetchPublicURL(context.Background(), ts.URL, "test-key", nil, nil, nil)
+		assert.Equal(t, "https://grafana.example.com", publicURL)
+		assert.Equal(t, 2, callCount)
+
+		// Third call uses cached success
+		publicURL = fetchPublicURL(context.Background(), ts.URL, "test-key", nil, nil, nil)
+		assert.Equal(t, "https://grafana.example.com", publicURL)
+		assert.Equal(t, 2, callCount) // no additional HTTP call
+	})
+}
+
+func TestNewGrafanaClientFetchesPublicURL(t *testing.T) {
+	t.Cleanup(clearPublicURLCache)
+
+	t.Run("stores public URL from frontend settings", func(t *testing.T) {
+		ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/api/frontend/settings" {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"appUrl": "https://public.grafana.example.com/"}`))
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`[]`))
+		})
+
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{})
+		gc := NewGrafanaClient(ctx, ts.URL, "test-key", nil)
+		assert.Equal(t, "https://public.grafana.example.com", gc.PublicURL)
+	})
+
+	t.Run("public URL is empty when fetch fails", func(t *testing.T) {
+		ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/api/frontend/settings" {
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`[]`))
+		})
+
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{})
+		gc := NewGrafanaClient(ctx, ts.URL, "test-key", nil)
+		assert.Equal(t, "", gc.PublicURL)
 	})
 }

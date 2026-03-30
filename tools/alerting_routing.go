@@ -22,7 +22,7 @@ When to use:
 - Checking grouping, timing, or mute interval settings
 
 When NOT to use:
-- Checking alert rule configuration or state (use list_alert_rules or get_alert_rule_by_uid)`
+- Checking alert rule configuration or state (use alerting_manage_rules)`
 
 // ManageRoutingParams is the param struct for the alerting_manage_routing tool.
 type ManageRoutingParams struct {

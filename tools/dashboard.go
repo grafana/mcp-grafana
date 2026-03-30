@@ -251,14 +251,16 @@ var GetDashboardByUID = mcpgrafana.MustTool(
 
 var UpdateDashboard = mcpgrafana.MustTool(
 	"update_dashboard",
-	"Create or update a dashboard. Two modes: (1) Full JSON — provide 'dashboard' for new dashboards or complete replacements. (2) Patch — provide 'uid' + 'operations' to make targeted changes to an existing dashboard. One of these two modes is required; 'folderUid'\\, 'message'\\, and 'overwrite' are supplementary and do nothing on their own. Patch operations support JSONPaths like '$.panels[0].targets[0].expr'\\, '$.panels[1].title'\\, '$.panels[2].targets[0].datasource'. Append to arrays with '/- ' syntax: '$.panels/- '. Remove by index: {\"op\": \"remove\"\\, \"path\": \"$.panels[2]\"}. Multiple removes on the same array are automatically reordered to avoid index-shifting issues.",
+	"Create or update a dashboard. Two modes: (1) Full JSON — provide 'dashboard' for new dashboards or complete replacements. (2) Patch — provide 'uid' + 'operations' to make targeted changes to an existing dashboard. One of these two modes is required; 'folderUid'\\, 'message'\\, and 'overwrite' are supplementary and do nothing on their own. Patch operations support JSONPaths like '$.panels[0].targets[0].expr'\\, '$.panels[1].title'\\, '$.panels[2].targets[0].datasource'. Append to arrays with '/- ' syntax: '$.panels/- '. Remove by index: {\"op\": \"remove\"\\, \"path\": \"$.panels[2]\"}. Multiple removes on the same array are automatically reordered to avoid index-shifting issues. Note: only numeric array indices are supported in patch paths; filter expressions like [?(@.id==2)] and wildcards like [*] are not supported.",
 	updateDashboard,
 	mcp.WithTitleAnnotation("Create or update dashboard"),
 	mcp.WithDestructiveHintAnnotation(true),
 )
 
 type DashboardPanelQueriesParams struct {
-	UID string `json:"uid" jsonschema:"required,description=The UID of the dashboard"`
+	UID       string            `json:"uid" jsonschema:"required,description=The UID of the dashboard"`
+	PanelID   *int              `json:"panelId,omitempty" jsonschema:"description=Optional panel ID to filter to a specific panel"`
+	Variables map[string]string `json:"variables,omitempty" jsonschema:"description=Optional variable substitutions (e.g.\\, {\"job\": \"api-server\"})"`
 }
 
 type datasourceInfo struct {
@@ -267,65 +269,47 @@ type datasourceInfo struct {
 }
 
 type panelQuery struct {
-	Title      string         `json:"title"`
-	Query      string         `json:"query"`
-	Datasource datasourceInfo `json:"datasource"`
+	Title             string         `json:"title"`
+	Query             string         `json:"query"`
+	ProcessedQuery    string         `json:"processedQuery,omitempty"`
+	Datasource        datasourceInfo `json:"datasource"`
+	RefID             string         `json:"refId,omitempty"`
+	RequiredVariables []VariableInfo `json:"requiredVariables,omitempty"`
 }
 
 func GetDashboardPanelQueriesTool(ctx context.Context, args DashboardPanelQueriesParams) ([]panelQuery, error) {
-	result := make([]panelQuery, 0)
-
-	dashboard, err := getDashboardByUID(ctx, GetDashboardByUIDParams(args))
+	dashboard, err := getDashboardByUID(ctx, GetDashboardByUIDParams{UID: args.UID})
 	if err != nil {
-		return result, fmt.Errorf("get dashboard by uid: %w", err)
+		return nil, fmt.Errorf("get dashboard by uid: %w", err)
 	}
 
 	db, ok := dashboard.Dashboard.(map[string]any)
 	if !ok {
-		return result, fmt.Errorf("dashboard is not a JSON object")
-	}
-	panels, ok := db["panels"].([]any)
-	if !ok {
-		return result, fmt.Errorf("panels is not a JSON array")
+		return nil, fmt.Errorf("dashboard is not a JSON object")
 	}
 
-	for _, p := range panels {
-		panel, ok := p.(map[string]any)
-		if !ok {
-			continue
-		}
-		title, _ := panel["title"].(string)
+	// Determine if variable processing is needed
+	var dashboardVars map[string]VariableInfo
+	if args.Variables != nil {
+		dashboardVars = extractDashboardVariables(db)
+	}
 
-		var datasourceInfo datasourceInfo
-		if dsField, dsExists := panel["datasource"]; dsExists && dsField != nil {
-			if dsMap, ok := dsField.(map[string]any); ok {
-				if uid, ok := dsMap["uid"].(string); ok {
-					datasourceInfo.UID = uid
-				}
-				if dsType, ok := dsMap["type"].(string); ok {
-					datasourceInfo.Type = dsType
-				}
-			}
+	// Determine which panels to process
+	var panels []map[string]interface{}
+	if args.PanelID != nil {
+		panel, err := findPanelByID(db, *args.PanelID)
+		if err != nil {
+			return nil, err
 		}
+		panels = []map[string]interface{}{panel}
+	} else {
+		panels = collectAllPanels(db)
+	}
 
-		targets, ok := panel["targets"].([]any)
-		if !ok {
-			continue
-		}
-		for _, t := range targets {
-			target, ok := t.(map[string]any)
-			if !ok {
-				continue
-			}
-			expr, _ := target["expr"].(string)
-			if expr != "" {
-				result = append(result, panelQuery{
-					Title:      title,
-					Query:      expr,
-					Datasource: datasourceInfo,
-				})
-			}
-		}
+	result := make([]panelQuery, 0)
+	for _, panel := range panels {
+		queries := extractPanelQueries(panel, dashboardVars, args.Variables)
+		result = append(result, queries...)
 	}
 
 	return result, nil
@@ -333,7 +317,7 @@ func GetDashboardPanelQueriesTool(ctx context.Context, args DashboardPanelQuerie
 
 var GetDashboardPanelQueries = mcpgrafana.MustTool(
 	"get_dashboard_panel_queries",
-	"Use this tool to retrieve panel queries and information from a Grafana dashboard. When asked about panel queries, queries in a dashboard, or what queries a dashboard contains, call this tool with the dashboard UID. The datasource is an object with fields `uid` (which may be a concrete UID or a template variable like \"$datasource\") and `type`. If the datasource UID is a template variable, it won't be usable directly for queries. Returns an array of objects, each representing a panel, with fields: title, query, and datasource (an object with uid and type).",
+	"Retrieve panel queries from a Grafana dashboard. Supports all datasource types (Prometheus, Loki, CloudWatch, SQL, etc.) and row-nested panels. Optionally filter to a specific panel by ID with `panelId`. Optionally provide `variables` for template variable substitution, which populates `processedQuery` and `requiredVariables` fields. Returns an array of objects with fields: title, query (raw expression), datasource (object with uid and type), and optionally processedQuery, refId, and requiredVariables.",
 	GetDashboardPanelQueriesTool,
 	mcp.WithTitleAnnotation("Get dashboard panel queries"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -491,6 +475,14 @@ func applyJSONPath(data map[string]interface{}, path string, value interface{}, 
 	// Remove the leading "$." if present
 	if len(path) > 2 && path[:2] == "$." {
 		path = path[2:]
+	}
+
+	// Detect unsupported JSONPath syntax and return actionable errors
+	if strings.Contains(path, "?(@") || strings.Contains(path, "?(") {
+		return fmt.Errorf("JSONPath filter expressions (e.g., [?(@.id==2)]) are not supported in patch operations. Use numeric array indices instead (e.g., $.panels[1]). Use get_dashboard_summary to find panel array indices")
+	}
+	if strings.Contains(path, "[*]") {
+		return fmt.Errorf("JSONPath wildcard expressions (e.g., [*]) are not supported in patch operations. Use numeric array indices instead (e.g., $.panels[0])")
 	}
 
 	// Split the path into segments

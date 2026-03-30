@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/grafana/grafana-openapi-client-go/client/annotations"
+	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -37,6 +38,11 @@ func TestAnnotationTools(t *testing.T) {
 
 	// new UID for the test dashboard.
 	newUID := result.UID
+
+	t.Cleanup(func() {
+		c := mcpgrafana.GrafanaClientFromContext(ctx)
+		_, _ = c.Dashboards.DeleteDashboardByUID(*newUID)
+	})
 
 	// create and update annotation.
 	t.Run("create and update annotation", func(t *testing.T) {

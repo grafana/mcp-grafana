@@ -12,9 +12,7 @@ import (
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
-	"github.com/prometheus/client_golang/api"
 	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
-	"github.com/prometheus/common/config"
 	"github.com/prometheus/common/model"
 	"github.com/prometheus/prometheus/model/labels"
 )
@@ -34,56 +32,6 @@ var (
 	}
 )
 
-func promClientFromContext(ctx context.Context, uid string) (promv1.API, error) {
-	// First check if the datasource exists
-	_, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: uid})
-	if err != nil {
-		return nil, err
-	}
-
-	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
-	url := fmt.Sprintf("%s/api/datasources/uid/%s/resources", strings.TrimRight(cfg.URL, "/"), uid)
-
-	// Create custom transport with TLS configuration if available
-	rt, err := mcpgrafana.BuildTransport(&cfg, api.DefaultRoundTripper)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create custom transport: %w", err)
-	}
-
-	if cfg.AccessToken != "" && cfg.IDToken != "" {
-		rt = config.NewHeadersRoundTripper(&config.Headers{
-			Headers: map[string]config.Header{
-				"X-Access-Token": {
-					Secrets: []config.Secret{config.Secret(cfg.AccessToken)},
-				},
-				"X-Grafana-Id": {
-					Secrets: []config.Secret{config.Secret(cfg.IDToken)},
-				},
-			},
-		}, rt)
-	} else if cfg.APIKey != "" {
-		rt = config.NewAuthorizationCredentialsRoundTripper(
-			"Bearer", config.NewInlineSecret(cfg.APIKey), rt,
-		)
-	} else if cfg.BasicAuth != nil {
-		password, _ := cfg.BasicAuth.Password()
-		rt = config.NewBasicAuthRoundTripper(config.NewInlineSecret(cfg.BasicAuth.Username()), config.NewInlineSecret(password), rt)
-	}
-
-	// Wrap with org ID support
-	rt = mcpgrafana.NewOrgIDRoundTripper(rt, cfg.OrgID)
-
-	c, err := api.NewClient(api.Config{
-		Address:      url,
-		RoundTripper: rt,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("creating Prometheus client: %w", err)
-	}
-
-	return promv1.NewAPI(c), nil
-}
-
 type ListPrometheusMetricMetadataParams struct {
 	DatasourceUID  string `json:"datasourceUid" jsonschema:"required,description=The UID of the datasource to query"`
 	Limit          int    `json:"limit" jsonschema:"default=10,description=The maximum number of metrics to return"`
@@ -92,9 +40,9 @@ type ListPrometheusMetricMetadataParams struct {
 }
 
 func listPrometheusMetricMetadata(ctx context.Context, args ListPrometheusMetricMetadataParams) (map[string][]promv1.Metadata, error) {
-	promClient, err := promClientFromContext(ctx, args.DatasourceUID)
+	backend, err := backendForDatasource(ctx, args.DatasourceUID)
 	if err != nil {
-		return nil, fmt.Errorf("getting Prometheus client: %w", err)
+		return nil, fmt.Errorf("getting backend: %w", err)
 	}
 
 	limit := args.Limit
@@ -102,7 +50,7 @@ func listPrometheusMetricMetadata(ctx context.Context, args ListPrometheusMetric
 		limit = 10
 	}
 
-	metadata, err := promClient.Metadata(ctx, args.Metric, fmt.Sprintf("%d", limit))
+	metadata, err := backend.MetricMetadata(ctx, args.Metric, limit)
 	if err != nil {
 		return nil, fmt.Errorf("listing Prometheus metric metadata: %w", err)
 	}
@@ -121,8 +69,8 @@ var ListPrometheusMetricMetadata = mcpgrafana.MustTool(
 type QueryPrometheusParams struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the datasource to query"`
 	Expr          string `json:"expr" jsonschema:"required,description=The PromQL expression to query"`
-	StartTime     string `json:"startTime" jsonschema:"required,description=The start time. Supported formats are RFC3339 or relative to now (e.g. 'now'\\, 'now-1.5h'\\, 'now-2h45m'). Valid time units are 'ns'\\, 'us' (or 'µs')\\, 'ms'\\, 's'\\, 'm'\\, 'h'\\, 'd'."`
-	EndTime       string `json:"endTime,omitempty" jsonschema:"description=The end time. Required if queryType is 'range'\\, ignored if queryType is 'instant' Supported formats are RFC3339 or relative to now (e.g. 'now'\\, 'now-1.5h'\\, 'now-2h45m'). Valid time units are 'ns'\\, 'us' (or 'µs')\\, 'ms'\\, 's'\\, 'm'\\, 'h'\\, 'd'."`
+	StartTime     string `json:"startTime,omitempty" jsonschema:"description=The start time. Required if queryType is 'range'\\, ignored if queryType is 'instant' Supported formats are RFC3339 or relative to now (e.g. 'now'\\, 'now-1.5h'\\, 'now-2h45m'). Valid time units are 'ns'\\, 'us' (or 'µs')\\, 'ms'\\, 's'\\, 'm'\\, 'h'\\, 'd'."`
+	EndTime       string `json:"endTime" jsonschema:"required,description=The end time. Supported formats are RFC3339 or relative to now (e.g. 'now'\\, 'now-1.5h'\\, 'now-2h45m'). Valid time units are 'ns'\\, 'us' (or 'µs')\\, 'ms'\\, 's'\\, 'm'\\, 'h'\\, 'd'."`
 	StepSeconds   int    `json:"stepSeconds,omitempty" jsonschema:"description=The time series step size in seconds. Required if queryType is 'range'\\, ignored if queryType is 'instant'"`
 	QueryType     string `json:"queryType,omitempty" jsonschema:"description=The type of query to use. Either 'range' or 'instant'"`
 }
@@ -163,9 +111,9 @@ func isPrometheusResultEmpty(result model.Value) bool {
 // queryPrometheus executes a PromQL query and returns raw results.
 // This is the internal function - use queryPrometheusWithHints for MCP tools.
 func queryPrometheus(ctx context.Context, args QueryPrometheusParams) (model.Value, error) {
-	promClient, err := promClientFromContext(ctx, args.DatasourceUID)
+	backend, err := backendForDatasource(ctx, args.DatasourceUID)
 	if err != nil {
-		return nil, fmt.Errorf("getting Prometheus client: %w", err)
+		return nil, fmt.Errorf("getting backend: %w", err)
 	}
 
 	queryType := args.QueryType
@@ -173,44 +121,25 @@ func queryPrometheus(ctx context.Context, args QueryPrometheusParams) (model.Val
 		queryType = "range"
 	}
 
-	var startTime time.Time
-	startTime, err = parseTime(args.StartTime)
+	var endTime time.Time
+	endTime, err = parseTime(args.EndTime)
 	if err != nil {
-		return nil, fmt.Errorf("parsing start time: %w", err)
+		return nil, fmt.Errorf("parsing end time: %w", err)
 	}
 
-	var result model.Value
+	var startTime time.Time
 
-	switch queryType {
-	case "range":
+	if queryType == "range" {
 		if args.StepSeconds == 0 {
 			return nil, fmt.Errorf("stepSeconds must be provided when queryType is 'range'")
 		}
-
-		endTime, err := parseTime(args.EndTime)
+		startTime, err = parseTime(args.StartTime)
 		if err != nil {
-			return nil, fmt.Errorf("parsing end time: %w", err)
+			return nil, fmt.Errorf("parsing start time: %w", err)
 		}
-
-		step := time.Duration(args.StepSeconds) * time.Second
-		result, _, err = promClient.QueryRange(ctx, args.Expr, promv1.Range{
-			Start: startTime,
-			End:   endTime,
-			Step:  step,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("querying Prometheus range: %w", err)
-		}
-	case "instant":
-		result, _, err = promClient.Query(ctx, args.Expr, startTime)
-		if err != nil {
-			return nil, fmt.Errorf("querying Prometheus instant: %w", err)
-		}
-	default:
-		return nil, fmt.Errorf("invalid query type: %s", queryType)
 	}
 
-	return result, nil
+	return backend.Query(ctx, args.Expr, queryType, startTime, endTime, args.StepSeconds)
 }
 
 // queryPrometheusWithHints wraps queryPrometheus and adds hints for empty results.
@@ -242,7 +171,7 @@ func queryPrometheusWithHints(ctx context.Context, args QueryPrometheusParams) (
 
 var QueryPrometheus = mcpgrafana.MustTool(
 	"query_prometheus",
-	"WORKFLOW: list_prometheus_metric_names -> list_prometheus_label_values -> query_prometheus. Query Prometheus using a PromQL expression. Supports instant queries (single point) and range queries (time range). Time: RFC3339 or relative expressions like 'now'\\, 'now-1h'.",
+	"WORKFLOW: list_prometheus_metric_names -> list_prometheus_label_values -> query_prometheus. Query a PromQL-compatible datasource (Prometheus, Thanos, Mimir, Cloud Monitoring, etc.) using a PromQL expression. Supports instant queries (single point) and range queries (time range). Time: RFC3339 or relative expressions like 'now'\\, 'now-1h'.",
 	queryPrometheusWithHints,
 	mcp.WithTitleAnnotation("Query Prometheus metrics"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -257,9 +186,9 @@ type ListPrometheusMetricNamesParams struct {
 }
 
 func listPrometheusMetricNames(ctx context.Context, args ListPrometheusMetricNamesParams) ([]string, error) {
-	promClient, err := promClientFromContext(ctx, args.DatasourceUID)
+	backend, err := backendForDatasource(ctx, args.DatasourceUID)
 	if err != nil {
-		return nil, fmt.Errorf("getting Prometheus client: %w", err)
+		return nil, fmt.Errorf("getting backend: %w", err)
 	}
 
 	limit := args.Limit
@@ -272,28 +201,26 @@ func listPrometheusMetricNames(ctx context.Context, args ListPrometheusMetricNam
 		page = 1
 	}
 
-	// Get all metric names by querying for __name__ label values
-	labelValues, _, err := promClient.LabelValues(ctx, "__name__", nil, time.Time{}, time.Time{})
+	// Get all metric names via the backend
+	allNames, err := backend.LabelValues(ctx, "__name__", nil, time.Time{}, time.Time{})
 	if err != nil {
 		return nil, fmt.Errorf("listing Prometheus metric names: %w", err)
 	}
 
 	// Filter by regex if provided
-	matches := []string{}
+	var matches []string
 	if args.Regex != "" {
 		re, err := regexp.Compile(args.Regex)
 		if err != nil {
 			return nil, fmt.Errorf("compiling regex: %w", err)
 		}
-		for _, val := range labelValues {
-			if re.MatchString(string(val)) {
-				matches = append(matches, string(val))
+		for _, val := range allNames {
+			if re.MatchString(val) {
+				matches = append(matches, val)
 			}
 		}
 	} else {
-		for _, val := range labelValues {
-			matches = append(matches, string(val))
-		}
+		matches = allNames
 	}
 
 	// Apply pagination
@@ -312,7 +239,7 @@ func listPrometheusMetricNames(ctx context.Context, args ListPrometheusMetricNam
 
 var ListPrometheusMetricNames = mcpgrafana.MustTool(
 	"list_prometheus_metric_names",
-	"DISCOVERY: Call this first to find available metrics before querying. Lists metric names in a Prometheus datasource. Retrieves all metric names and filters them using the provided regex. Supports pagination.",
+	"DISCOVERY: Call this first to find available metrics before querying. Lists metric names in a PromQL-compatible datasource (Prometheus, Thanos, Mimir, Cloud Monitoring, etc.). Retrieves all metric names and filters them using the provided regex. Supports pagination.",
 	listPrometheusMetricNames,
 	mcp.WithTitleAnnotation("List Prometheus metric names"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -336,7 +263,7 @@ func (s Selector) String() string {
 		if f.Type == "" {
 			f.Type = "="
 		}
-		b.WriteString(fmt.Sprintf(`%s%s'%s'`, f.Name, f.Type, f.Value))
+		fmt.Fprintf(&b, `%s%s'%s'`, f.Name, f.Type, f.Value)
 		if i < len(s.Filters)-1 {
 			b.WriteString(", ")
 		}
@@ -375,9 +302,9 @@ type ListPrometheusLabelNamesParams struct {
 }
 
 func listPrometheusLabelNames(ctx context.Context, args ListPrometheusLabelNamesParams) ([]string, error) {
-	promClient, err := promClientFromContext(ctx, args.DatasourceUID)
+	backend, err := backendForDatasource(ctx, args.DatasourceUID)
 	if err != nil {
-		return nil, fmt.Errorf("getting Prometheus client: %w", err)
+		return nil, fmt.Errorf("getting backend: %w", err)
 	}
 
 	limit := args.Limit
@@ -402,7 +329,7 @@ func listPrometheusLabelNames(ctx context.Context, args ListPrometheusLabelNames
 		matchers = append(matchers, m.String())
 	}
 
-	labelNames, _, err := promClient.LabelNames(ctx, matchers, startTime, endTime)
+	labelNames, err := backend.LabelNames(ctx, matchers, startTime, endTime)
 	if err != nil {
 		return nil, fmt.Errorf("listing Prometheus label names: %w", err)
 	}
@@ -417,7 +344,7 @@ func listPrometheusLabelNames(ctx context.Context, args ListPrometheusLabelNames
 
 var ListPrometheusLabelNames = mcpgrafana.MustTool(
 	"list_prometheus_label_names",
-	"List label names in a Prometheus datasource. Allows filtering by series selectors and time range.",
+	"List label names in a PromQL-compatible datasource (Prometheus, Thanos, Mimir, Cloud Monitoring, etc.). Allows filtering by series selectors and time range.",
 	listPrometheusLabelNames,
 	mcp.WithTitleAnnotation("List Prometheus label names"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -433,10 +360,10 @@ type ListPrometheusLabelValuesParams struct {
 	Limit         int        `json:"limit,omitempty" jsonschema:"default=100,description=Optionally\\, the maximum number of results to return"`
 }
 
-func listPrometheusLabelValues(ctx context.Context, args ListPrometheusLabelValuesParams) (model.LabelValues, error) {
-	promClient, err := promClientFromContext(ctx, args.DatasourceUID)
+func listPrometheusLabelValues(ctx context.Context, args ListPrometheusLabelValuesParams) ([]string, error) {
+	backend, err := backendForDatasource(ctx, args.DatasourceUID)
 	if err != nil {
-		return nil, fmt.Errorf("getting Prometheus client: %w", err)
+		return nil, fmt.Errorf("getting backend: %w", err)
 	}
 
 	limit := args.Limit
@@ -461,22 +388,22 @@ func listPrometheusLabelValues(ctx context.Context, args ListPrometheusLabelValu
 		matchers = append(matchers, m.String())
 	}
 
-	labelValues, _, err := promClient.LabelValues(ctx, args.LabelName, matchers, startTime, endTime)
+	values, err := backend.LabelValues(ctx, args.LabelName, matchers, startTime, endTime)
 	if err != nil {
 		return nil, fmt.Errorf("listing Prometheus label values: %w", err)
 	}
 
 	// Apply limit
-	if len(labelValues) > limit {
-		labelValues = labelValues[:limit]
+	if len(values) > limit {
+		values = values[:limit]
 	}
 
-	return labelValues, nil
+	return values, nil
 }
 
 var ListPrometheusLabelValues = mcpgrafana.MustTool(
 	"list_prometheus_label_values",
-	"Use after list_prometheus_metric_names to find label values for filtering queries. Gets the values for a specific label name in Prometheus. Allows filtering by series selectors and time range.",
+	"Use after list_prometheus_metric_names to find label values for filtering queries. Gets the values for a specific label name in a PromQL-compatible datasource (Prometheus, Thanos, Mimir, Cloud Monitoring, etc.). Allows filtering by series selectors and time range.",
 	listPrometheusLabelValues,
 	mcp.WithTitleAnnotation("List Prometheus label values"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -540,7 +467,6 @@ func queryPrometheusHistogram(ctx context.Context, args QueryPrometheusHistogram
 	}
 
 	// Build the PromQL expression for histogram_quantile
-	// histogram_quantile(0.95, sum(rate(metric_bucket{labels}[5m])) by (le))
 	var expr string
 	if labelSelector != "" {
 		expr = fmt.Sprintf(

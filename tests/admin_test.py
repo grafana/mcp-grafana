@@ -71,7 +71,7 @@ async def grafana_team():
 
 
 @pytest.mark.parametrize("model", models)
-@pytest.mark.flaky(max_runs=3)
+@pytest.mark.flaky(reruns=2)
 async def test_list_users_by_org(
     model: str,
     mcp_client: ClientSession,
@@ -97,7 +97,7 @@ async def test_list_users_by_org(
 
 
 @pytest.mark.parametrize("model", models)
-@pytest.mark.flaky(max_runs=3)
+@pytest.mark.flaky(reruns=2)
 async def test_list_teams(
     model: str,
     mcp_client: ClientSession,

@@ -99,109 +99,6 @@ func TestSubstituteClickHouseMacros(t *testing.T) {
 	})
 }
 
-func TestSubstituteVariables(t *testing.T) {
-	tests := []struct {
-		name      string
-		query     string
-		variables map[string]string
-		expected  string
-	}{
-		{
-			name:  "single ${var} substitution",
-			query: "SELECT * FROM logs WHERE service = '${service}'",
-			variables: map[string]string{
-				"service": "my-app",
-			},
-			expected: "SELECT * FROM logs WHERE service = 'my-app'",
-		},
-		{
-			name:  "single $var substitution",
-			query: "SELECT * FROM logs WHERE service = '$service'",
-			variables: map[string]string{
-				"service": "my-app",
-			},
-			expected: "SELECT * FROM logs WHERE service = 'my-app'",
-		},
-		{
-			name:  "multiple variables",
-			query: "SELECT * FROM logs WHERE service = '${service}' AND env = '${env}'",
-			variables: map[string]string{
-				"service": "my-app",
-				"env":     "prod",
-			},
-			expected: "SELECT * FROM logs WHERE service = 'my-app' AND env = 'prod'",
-		},
-		{
-			name:  "mixed formats",
-			query: "SELECT * FROM logs WHERE service = '${service}' AND account = '$account'",
-			variables: map[string]string{
-				"service": "my-app",
-				"account": "AC123",
-			},
-			expected: "SELECT * FROM logs WHERE service = 'my-app' AND account = 'AC123'",
-		},
-		{
-			name:  "variable used multiple times",
-			query: "SELECT * FROM logs WHERE service = '${service}' OR source = '${service}'",
-			variables: map[string]string{
-				"service": "my-app",
-			},
-			expected: "SELECT * FROM logs WHERE service = 'my-app' OR source = 'my-app'",
-		},
-		{
-			name:      "no variables - query unchanged",
-			query:     "SELECT * FROM logs WHERE 1=1",
-			variables: nil,
-			expected:  "SELECT * FROM logs WHERE 1=1",
-		},
-		{
-			name:      "empty variables map",
-			query:     "SELECT * FROM logs WHERE service = '${service}'",
-			variables: map[string]string{},
-			expected:  "SELECT * FROM logs WHERE service = '${service}'",
-		},
-		{
-			name:  "variable not in query - no change",
-			query: "SELECT * FROM logs WHERE service = 'fixed'",
-			variables: map[string]string{
-				"service": "my-app",
-			},
-			expected: "SELECT * FROM logs WHERE service = 'fixed'",
-		},
-		{
-			name:  "empty value substitution",
-			query: "SELECT * FROM logs WHERE request_id = '${request_id}'",
-			variables: map[string]string{
-				"request_id": "",
-			},
-			expected: "SELECT * FROM logs WHERE request_id = ''",
-		},
-		{
-			name:  "$var should not match partial names",
-			query: "SELECT * FROM logs WHERE servicename = 'test'",
-			variables: map[string]string{
-				"service": "my-app",
-			},
-			expected: "SELECT * FROM logs WHERE servicename = 'test'",
-		},
-		{
-			name:  "value containing dollar sign treated literally",
-			query: "SELECT * FROM logs WHERE tag = '$tag'",
-			variables: map[string]string{
-				"tag": "price$1",
-			},
-			expected: "SELECT * FROM logs WHERE tag = 'price$1'",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := substituteVariables(tt.query, tt.variables)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
 func TestEnforceClickHouseLimit(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -435,4 +332,29 @@ func TestGenerateClickHouseEmptyResultHints(t *testing.T) {
 		}
 	}
 	assert.True(t, found, "Hints should suggest using list_clickhouse_tables")
+}
+
+func TestValidateClickHouseIdentifier(t *testing.T) {
+	tests := []struct {
+		name    string
+		field   string
+		wantErr bool
+	}{
+		{name: "default", field: "database", wantErr: false},
+		{name: "table_1", field: "table", wantErr: false},
+
+		//attack payloads (must fail)
+		{name: "default' OR 1=1 --", field: "database", wantErr: true},
+		{name: "default' UNION SELECT name FROM system.databases --", field: "database", wantErr: true},
+		{name: "table-name", field: "table", wantErr: true},
+		{name: "table name", field: "table", wantErr: true},
+		{name: "system.tables", field: "table", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		err := validateClickHouseIdentifier(tt.name, tt.field)
+		if (err != nil) != tt.wantErr {
+			t.Errorf("validateClickHouseIdentifier(%q) error = %v, wantErr %v", tt.name, err, tt.wantErr)
+		}
+	}
 }
