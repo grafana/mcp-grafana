@@ -26,7 +26,7 @@ const (
 	ElasticsearchDatasourceType = "elasticsearch"
 )
 
-const elasticSearchResponseLimitBytes = 1024 * 1024 * 10 //10MB
+const elasticSearchResponseLimitBytes = 1024 * 1024 * 10 // 10MB
 
 // ElasticsearchClient handles queries to an Elasticsearch datasource via Grafana proxy
 type ElasticsearchClient struct {

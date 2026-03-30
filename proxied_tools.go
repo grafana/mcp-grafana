@@ -253,7 +253,7 @@ func NewToolManager(sm *SessionManager, mcpServer *server.MCPServer, opts ...Too
 		server:        mcpServer,
 		serverClients: make(map[string]*ProxiedClient),
 	}
-	//if enabled by manager, we maintain list
+	// if enabled by manager, we maintain list
 
 	for _, opt := range opts {
 		opt(tm)

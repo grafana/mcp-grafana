@@ -33,7 +33,7 @@ const (
 // errorPatternLogExampleLimit controls how many log examples are fetched per error pattern.
 const errorPatternLogExampleLimit = 3
 
-const siftResponseLimitBytes = 1024 * 1024 * 10 //10MB
+const siftResponseLimitBytes = 1024 * 1024 * 10 // 10MB
 
 type analysisStatus string
 

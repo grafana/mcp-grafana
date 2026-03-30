@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	//PrometheusDataSourceType is the type identifier for prometheus data sources
+	// PrometheusDataSourceType is the type identifier for prometheus data sources
 	PrometheusDataSourceType = "prometheus"
 )
 

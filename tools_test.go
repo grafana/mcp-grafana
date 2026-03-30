@@ -637,7 +637,7 @@ func TestEmptyStructJSONSchema(t *testing.T) {
 
 func TestDiscoverConcurrency(t *testing.T) {
 
-	//concurrency test for DiscoverAndRegisterToolsSession
+	// concurrency test for DiscoverAndRegisterToolsSession
 	t.Run("concurrent initialization with sync.Once is safe", func(t *testing.T) {
 		state := newSessionState()
 

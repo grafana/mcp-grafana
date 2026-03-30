@@ -172,7 +172,7 @@ func newServer(transport string, dt disabledTools, tc toolConfig, obs *observabi
 						if !dt.proxied {
 							stm.InitializeAndRegisterProxiedTools(ctx, session)
 						}
-						//discover enabled
+						// discover enabled
 						if tc.onlyConnected {
 							stm.DiscoverAndRegisterToolsSession(ctx, session)
 						}
@@ -190,7 +190,7 @@ func newServer(transport string, dt disabledTools, tc toolConfig, obs *observabi
 						if !dt.proxied {
 							stm.InitializeAndRegisterProxiedTools(ctx, session)
 						}
-						//discover enabled
+						// discover enabled
 						if tc.onlyConnected {
 							stm.DiscoverAndRegisterToolsSession(ctx, session)
 						}
