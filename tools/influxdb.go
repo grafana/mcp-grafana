@@ -524,8 +524,8 @@ func queryInflux(ctx context.Context, args InfluxQueryArgs) (*InfluxQueryResult,
 	return &result, nil
 }
 
-var QueryInflux = mcpgrafana.MustTool(
-	"query_influx",
+var QueryInfluxDB = mcpgrafana.MustTool(
+	"query_influxdb",
 	"Queries InfluxDB datasource, supports one of Flux, SQL, or InfluxQL query languages. Use in order: list_datasources -> get_datasource to determine query language configured for datasource.Use both list_influxdb_field_keys , list_influxdb_tag_keys to determine the available columns",
 	queryInflux,
 	mcp.WithTitleAnnotation("Query InfluxDB"),
@@ -766,7 +766,10 @@ func quoteStringAsFluxLiteral(s string) string {
 
 // quoteStringAsInfluxQLIdentifier quotes a string as an InfluxQL identifier using double quotes.
 func quoteStringAsInfluxQLIdentifier(s string) string {
-	return `"` + strings.ReplaceAll(s, `"`, `\"`) + `"`
+	// Must escape backslashes FIRST, then double quotes
+    s = strings.ReplaceAll(s, `\`, `\\`)   // \ → \\
+    s = strings.ReplaceAll(s, `"`, `\"`)   // " → \"
+    return `"` + s + `"`
 }
 
 func listTagKeys(ctx context.Context, args ListTagKeysArgs) (*ListTagKeysResult, error) {
@@ -943,7 +946,7 @@ var ListFieldKeys = mcpgrafana.MustTool(
 )
 
 func AddInfluxTools(server *server.MCPServer) {
-	QueryInflux.Register(server)
+	QueryInfluxDB.Register(server)
 	ListBucketsInflux.Register(server)
 	ListMeasurements.Register(server)
 	ListTagKeys.Register(server)

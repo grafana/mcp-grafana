@@ -311,9 +311,58 @@ func TestQuoting(t *testing.T) {
 	})
 
 	t.Run("quoteStringAsInfluxQLIdentifier", func(t *testing.T) {
-		assert.Equal(t, `"standard"`, quoteStringAsInfluxQLIdentifier("standard"))
-		assert.Equal(t, `"with \"quotes\""`, quoteStringAsInfluxQLIdentifier(`with "quotes"`))
-		assert.Equal(t, `"with \backslashes"`, quoteStringAsInfluxQLIdentifier(`with \backslashes`)) // backslash escaping
+		tests := []struct {
+			input    string
+			expected string
+			message  string
+		}{
+			{
+				input:    "standard",
+				expected: `"standard"`,
+				message:  "plain string with no special characters should just be wrapped in double quotes",
+			},
+			{
+				input:    `with "quotes"`,
+				expected: `"with \"quotes\""`,
+				message:  "double quotes inside string should be escaped as \"",
+			},
+			{
+				input:    `with \backslashes`,
+				expected: `"with \\backslashes"`,
+				message:  "backslashes should be escaped as \\\\ before quote escaping",
+			},
+			{
+				input:    `trailing\`,
+				expected: `"trailing\\"`,
+				message:  "trailing backslash must be escaped to prevent unterminated identifier bug",
+			},
+			{
+				input:    `slash\"quote`,
+				expected: `"slash\\\"quote"`,
+				message:  "backslash immediately before a double quote must both be escaped independently",
+			},
+			{
+				input:    "",
+				expected: `""`,
+				message:  "empty string should produce a valid empty identifier",
+			},
+			{
+				input:    `"`,
+				expected: `"\""`,
+				message:  "a lone double quote should be escaped as \"",
+			},
+			{
+				input:    `\`,
+				expected: `"\\"`,
+				message:  "a lone backslash must be escaped to prevent unterminated identifier",
+			},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.message, func(t *testing.T) {
+				assert.Equal(t, tt.expected, quoteStringAsInfluxQLIdentifier(tt.input), tt.message)
+			})
+		}
 	})
 
 	t.Run("quoteStringAsLiteral (SQL style)", func(t *testing.T) {
