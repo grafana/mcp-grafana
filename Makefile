@@ -85,3 +85,4 @@ token-check: build ## Compare token usage against the baseline.
 .PHONY: run-test-services
 run-test-services: ## Run the docker-compose services required for the unit and integration tests.
 	docker-compose up -d --build
+	./testdata/oauth2-setup.sh
