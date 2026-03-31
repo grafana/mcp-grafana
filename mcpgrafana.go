@@ -33,9 +33,10 @@ const (
 	defaultGrafanaHost = "localhost:3000"
 	defaultGrafanaURL  = "http://" + defaultGrafanaHost
 
-	grafanaURLEnvVar       = "GRAFANA_URL"
-	grafanaAPIKeyEnvVar    = "GRAFANA_API_KEY" // Optional: API key or service account token (for backward compatibility)
-	grafanaOrgIDEnvVar     = "GRAFANA_ORG_ID"
+	grafanaURLEnvVar                 = "GRAFANA_URL"
+	grafanaServiceAccountTokenEnvVar = "GRAFANA_SERVICE_ACCOUNT_TOKEN"
+	grafanaAPIKeyEnvVar              = "GRAFANA_API_KEY" // Deprecated fallback for backward compatibility
+	grafanaOrgIDEnvVar               = "GRAFANA_ORG_ID"
 
 	grafanaUsernameEnvVar = "GRAFANA_USERNAME"
 	grafanaPasswordEnvVar = "GRAFANA_PASSWORD"
@@ -71,8 +72,11 @@ const (
 func urlAndAPIKeyFromEnv() (string, string) {
 	u := strings.TrimRight(os.Getenv(grafanaURLEnvVar), "/")
 
-	// Optional: API key for direct API access (when not using OAuth2 + Auth Proxy)
-	apiKey := os.Getenv(grafanaAPIKeyEnvVar)
+	// Prefer the documented service account token env var and fall back to the deprecated API key.
+	apiKey := os.Getenv(grafanaServiceAccountTokenEnvVar)
+	if apiKey == "" {
+		apiKey = os.Getenv(grafanaAPIKeyEnvVar)
+	}
 
 	return u, apiKey
 }
