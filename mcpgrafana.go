@@ -42,8 +42,9 @@ const (
 
 	grafanaExtraHeadersEnvVar = "GRAFANA_EXTRA_HEADERS"
 
-	grafanaURLHeader    = "X-Grafana-URL"
-	grafanaAPIKeyHeader = "X-Grafana-API-Key"
+	grafanaURLHeader                 = "X-Grafana-URL"
+	grafanaServiceAccountTokenHeader = "X-Grafana-Service-Account-Token"
+	grafanaAPIKeyHeader              = "X-Grafana-API-Key"
 
 	// OAuth2 environment variables
 	oauth2EnabledEnvVar            = "OAUTH2_ENABLED"
