@@ -76,6 +76,9 @@ func urlAndAPIKeyFromEnv() (string, string) {
 	apiKey := os.Getenv(grafanaServiceAccountTokenEnvVar)
 	if apiKey == "" {
 		apiKey = os.Getenv(grafanaAPIKeyEnvVar)
+		if apiKey != "" {
+			slog.Warn("GRAFANA_API_KEY is deprecated, please use GRAFANA_SERVICE_ACCOUNT_TOKEN instead. See https://grafana.com/docs/grafana/latest/administration/service-accounts/#add-a-token-to-a-service-account-in-grafana for details on creating service account tokens.")
+		}
 	}
 
 	return u, apiKey
