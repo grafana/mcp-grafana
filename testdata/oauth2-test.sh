@@ -14,9 +14,24 @@ NC='\033[0m' # No Color
 
 grafana_url="${GRAFANA_URL:-http://localhost:3000}"
 
-# Load configuration from testdata/.env.oauth2-test (or .env.oauth2-forward-test)
-# The env file path can be passed as an argument or will use default
-env_file="${2:-.env.oauth2-test}"
+# Parse global options before loading configuration.
+env_file=".env.oauth2-test"
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -e|--env-file)
+      if [ -z "$2" ]; then
+        echo -e "${RED}Error: missing value for $1${NC}"
+        exit 1
+      fi
+      env_file="$2"
+      shift 2
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
 
 if [ ! -f "$env_file" ]; then
   # If not found at the given path, try in testdata/
@@ -40,7 +55,7 @@ fi
 
 function usage() {
   cat << EOF
-Usage: $0 <command> [args]
+Usage: $0 [--env-file <path>] <command> [args]
 
 Commands:
   token <user> [password]     Get OAuth2 token for a user
@@ -55,6 +70,9 @@ Examples:
 
   # Test complete flow
   $0 test-flow john.doe password123
+
+  # Use the forwarding env file
+  $0 --env-file testdata/.env.oauth2-forward-test test-flow john.doe password123
 
   # Get users in Grafana
   $0 get-users
@@ -189,7 +207,7 @@ function cleanup() {
 }
 
 # Main command handler
-case "${1}" in
+case "$1" in
   token)
     get_token "$2" "$3"
     ;;
