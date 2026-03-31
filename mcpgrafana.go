@@ -149,11 +149,6 @@ func urlAndAPIKeyFromHeaders(req *http.Request) (string, string) {
 	return u, apiKey
 }
 
-// oauth2ConfigFromEnv extracts OAuth2 configuration from environment variables
-func oauth2ConfigFromEnv() *OAuth2Config {
-	return OAuth2ConfigFromEnv()
-}
-
 // OAuth2ConfigFromEnv extracts OAuth2 configuration from environment variables.
 // Returns nil if OAuth2 is not enabled or OAUTH2_PROVIDER_URL is missing.
 func OAuth2ConfigFromEnv() *OAuth2Config {
@@ -195,10 +190,6 @@ func envBoolValueIsTrue(envVar string) bool {
 	return strings.EqualFold(strings.TrimSpace(os.Getenv(envVar)), "true")
 }
 
-func oauth2TokenForwardToGrafanaEnabledFromEnv() bool {
-	return OAuth2TokenForwardToGrafanaEnabledFromEnv()
-}
-
 // OAuth2TokenForwardToGrafanaEnabledFromEnv returns true when OAuth2 token forwarding to Grafana is enabled.
 // Token forwarding is enabled by default when OAuth2 is configured.
 // Set OAUTH2_TOKEN_FORWARD_TO_GRAFANA_ENABLED=false to explicitly disable it.
@@ -208,11 +199,7 @@ func OAuth2TokenForwardToGrafanaEnabledFromEnv() bool {
 		return strings.ToLower(strings.TrimSpace(val)) != "false"
 	}
 	// Default: enable token forwarding if OAuth2 is enabled
-	return oauth2ConfigFromEnv() != nil
-}
-
-func oauth2TokenForwardToGrafanaUseCloudHeadersFromEnv() bool {
-	return OAuth2TokenForwardToGrafanaUseCloudHeadersFromEnv()
+	return OAuth2ConfigFromEnv() != nil
 }
 
 // OAuth2TokenForwardToGrafanaUseCloudHeadersFromEnv returns true when Grafana Cloud-style forwarding headers should be used.
@@ -390,7 +377,7 @@ func ensureOAuth2Client(config *GrafanaConfig) *OAuth2Client {
 
 func prepareGrafanaConfig(config GrafanaConfig) GrafanaConfig {
 	if config.OAuth2Config == nil {
-		config.OAuth2Config = oauth2ConfigFromEnv()
+		config.OAuth2Config = OAuth2ConfigFromEnv()
 	}
 	ensureOAuth2Client(&config)
 	return config
@@ -694,10 +681,10 @@ var ExtractGrafanaInfoFromEnv server.StdioContextFunc = func(ctx context.Context
 	}
 
 	extraHeaders := extraHeadersFromEnv()
-	oauth2Config := oauth2ConfigFromEnv()
+	oauth2Config := OAuth2ConfigFromEnv()
 	proxyAuthEnabled, userHeader, emailHeader, nameHeader, roleHeader := authProxyConfigFromEnv()
-	tokenForwardEnabled := oauth2TokenForwardToGrafanaEnabledFromEnv()
-	tokenForwardUseCloudHeaders := oauth2TokenForwardToGrafanaUseCloudHeadersFromEnv()
+	tokenForwardEnabled := OAuth2TokenForwardToGrafanaEnabledFromEnv()
+	tokenForwardUseCloudHeaders := OAuth2TokenForwardToGrafanaUseCloudHeadersFromEnv()
 
 	slog.Info("Using Grafana configuration",
 		"url", parsedURL.Redacted(),
@@ -756,9 +743,9 @@ var ExtractGrafanaInfoFromHeaders httpContextFunc = func(ctx context.Context, re
 	config.BasicAuth = basicAuth
 	config.OrgID = orgID
 	config.ExtraHeaders = extraHeadersFromEnv()
-	config.OAuth2Config = oauth2ConfigFromEnv()
-	config.OAuth2TokenForwardToGrafanaEnabled = oauth2TokenForwardToGrafanaEnabledFromEnv()
-	config.OAuth2TokenForwardToGrafanaUseCloudHeaders = oauth2TokenForwardToGrafanaUseCloudHeadersFromEnv()
+	config.OAuth2Config = OAuth2ConfigFromEnv()
+	config.OAuth2TokenForwardToGrafanaEnabled = OAuth2TokenForwardToGrafanaEnabledFromEnv()
+	config.OAuth2TokenForwardToGrafanaUseCloudHeaders = OAuth2TokenForwardToGrafanaUseCloudHeadersFromEnv()
 	proxyAuthEnabled, userHeader, emailHeader, nameHeader, roleHeader := authProxyConfigFromEnv()
 	config.ProxyAuthEnabled = proxyAuthEnabled
 	config.ProxyUserHeader = userHeader
