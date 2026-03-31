@@ -321,6 +321,11 @@ type GrafanaConfig struct {
 	// OAuth2Config holds OAuth2 provider configuration for token validation.
 	OAuth2Config *OAuth2Config
 
+	// OAuth2Client is the shared OAuth2 validation client used to validate
+	// request bearer tokens. It is reused across requests so token cache entries
+	// survive beyond a single HTTP request lifecycle.
+	OAuth2Client *OAuth2Client
+
 	// OAuth2TokenForwardToGrafanaEnabled enables forwarding validated incoming OAuth2
 	// bearer tokens to Grafana for downstream authentication/identification.
 	OAuth2TokenForwardToGrafanaEnabled bool
@@ -368,6 +373,24 @@ func GrafanaConfigFromContext(ctx context.Context) GrafanaConfig {
 		return config
 	}
 	return GrafanaConfig{}
+}
+
+func ensureOAuth2Client(config *GrafanaConfig) *OAuth2Client {
+	if config == nil || config.OAuth2Config == nil {
+		return nil
+	}
+	if config.OAuth2Client == nil {
+		config.OAuth2Client = NewOAuth2Client(*config.OAuth2Config, nil)
+	}
+	return config.OAuth2Client
+}
+
+func prepareGrafanaConfig(config GrafanaConfig) GrafanaConfig {
+	if config.OAuth2Config == nil {
+		config.OAuth2Config = oauth2ConfigFromEnv()
+	}
+	ensureOAuth2Client(&config)
+	return config
 }
 
 // CreateTLSConfig creates a *tls.Config from TLSConfig.
@@ -704,7 +727,7 @@ var ExtractGrafanaInfoFromEnv server.StdioContextFunc = func(ctx context.Context
 
 	// Initialize OAuth2 client if enabled
 	if oauth2Config != nil {
-		oauth2Client := NewOAuth2Client(*oauth2Config, nil)
+		oauth2Client := ensureOAuth2Client(&config)
 		ctx = WithOAuth2Client(ctx, oauth2Client)
 	}
 
@@ -743,7 +766,7 @@ var ExtractGrafanaInfoFromHeaders httpContextFunc = func(ctx context.Context, re
 	// Initialize OAuth2 client if needed
 	var oauth2Client *OAuth2Client
 	if config.OAuth2Config != nil {
-		oauth2Client = NewOAuth2Client(*config.OAuth2Config, nil)
+		oauth2Client = ensureOAuth2Client(&config)
 		ctx = WithOAuth2Client(ctx, oauth2Client)
 
 		// Extract and validate OAuth2 token from Authorization header
@@ -1262,6 +1285,7 @@ func ComposeHTTPContextFuncs(funcs ...httpContextFunc) server.HTTPContextFunc {
 // ComposedStdioContextFunc returns a StdioContextFunc that comprises all predefined StdioContextFuncs.
 // It sets up the complete context for stdio transport including Grafana configuration, client initialization from environment variables, and incident management support.
 func ComposedStdioContextFunc(config GrafanaConfig) server.StdioContextFunc {
+	config = prepareGrafanaConfig(config)
 	return ComposeStdioContextFuncs(
 		func(ctx context.Context) context.Context {
 			return WithGrafanaConfig(ctx, config)
@@ -1276,6 +1300,7 @@ func ComposedStdioContextFunc(config GrafanaConfig) server.StdioContextFunc {
 // It sets up the complete context for SSE transport, extracting configuration from HTTP headers with environment variable fallbacks.
 // If cache is non-nil, clients are cached by credentials to avoid per-request transport allocation.
 func ComposedSSEContextFunc(config GrafanaConfig, cache ...*ClientCache) server.SSEContextFunc {
+	config = prepareGrafanaConfig(config)
 	grafanaExtractor, incidentExtractor := clientExtractors(cache)
 	return ComposeSSEContextFuncs(
 		func(ctx context.Context, req *http.Request) context.Context {
@@ -1291,6 +1316,7 @@ func ComposedSSEContextFunc(config GrafanaConfig, cache ...*ClientCache) server.
 // It provides the complete context setup for HTTP transport, including header-based authentication and client configuration.
 // If cache is non-nil, clients are cached by credentials to avoid per-request transport allocation.
 func ComposedHTTPContextFunc(config GrafanaConfig, cache ...*ClientCache) server.HTTPContextFunc {
+	config = prepareGrafanaConfig(config)
 	grafanaExtractor, incidentExtractor := clientExtractors(cache)
 	return ComposeHTTPContextFuncs(
 		func(ctx context.Context, req *http.Request) context.Context {

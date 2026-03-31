@@ -410,6 +410,37 @@ func TestExtractGrafanaInfoFromHeadersOAuth2TokenForwarding(t *testing.T) {
 	})
 }
 
+func TestComposedHTTPContextFuncReusesOAuth2TokenCache(t *testing.T) {
+	callCount := 0
+	oauth2Srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		assert.Equal(t, "Bearer user-oauth-token", r.Header.Get("Authorization"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"sub":"u-1","preferred_username":"john.doe","email":"john@example.com"}`))
+	}))
+	t.Cleanup(oauth2Srv.Close)
+
+	t.Setenv(oauth2EnabledEnvVar, "true")
+	t.Setenv(oauth2ProviderURLEnvVar, oauth2Srv.URL)
+	t.Setenv(oauth2UserInfoEndpointEnvVar, "/userinfo")
+	t.Setenv(oauth2TokenCacheTTLEnvVar, "60")
+
+	contextFunc := ComposedHTTPContextFunc(GrafanaConfig{})
+
+	for range 2 {
+		req, err := http.NewRequest("GET", "http://example.com", nil)
+		require.NoError(t, err)
+		req.Header.Set("Authorization", "Bearer user-oauth-token")
+
+		ctx := contextFunc(context.Background(), req)
+		config := GrafanaConfigFromContext(ctx)
+		require.NotNil(t, config.AuthenticatedUser)
+		assert.Equal(t, "john.doe", config.AuthenticatedUser.Username)
+	}
+
+	assert.Equal(t, 1, callCount)
+}
+
 func TestAuthProxyConfigFromEnv(t *testing.T) {
 	t.Run("auth proxy disabled by default even when oauth2 enabled", func(t *testing.T) {
 		t.Setenv(oauth2EnabledEnvVar, "true")
