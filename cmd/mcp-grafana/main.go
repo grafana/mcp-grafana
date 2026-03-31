@@ -289,6 +289,14 @@ func handleOAuthProtectedResource(serverURL, providerURL string) http.HandlerFun
 	}
 }
 
+func protectedResourceServerURL(addr string, useTLS bool) string {
+	scheme := "http"
+	if useTLS {
+		scheme = "https"
+	}
+	return scheme + "://" + addr
+}
+
 // requireOAuth2Bearer is middleware that enforces a Bearer token on MCP
 // endpoints when OAuth2 is enabled. On missing token it returns 401 with a
 // WWW-Authenticate header, which triggers the automatic OAuth2 flow in
@@ -399,7 +407,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		}
 		mcpHandler := observability.WrapHandler(srv, basePath)
 		if oauth2Config := mcpgrafana.OAuth2ConfigFromEnv(); oauth2Config != nil {
-			serverURL := "http://" + addr
+			serverURL := protectedResourceServerURL(addr, false)
 			mux.HandleFunc("/.well-known/oauth-protected-resource",
 				handleOAuthProtectedResource(serverURL, oauth2Config.ProviderURL))
 			mcpHandler = requireOAuth2Bearer(mcpHandler)
@@ -437,7 +445,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		mux := http.NewServeMux()
 		mcpHandler := observability.WrapHandler(srv, endpointPath)
 		if oauth2Config := mcpgrafana.OAuth2ConfigFromEnv(); oauth2Config != nil {
-			serverURL := "http://" + addr
+			serverURL := protectedResourceServerURL(addr, tls.certFile != "" && tls.keyFile != "")
 			mux.HandleFunc("/.well-known/oauth-protected-resource",
 				handleOAuthProtectedResource(serverURL, oauth2Config.ProviderURL))
 			mcpHandler = requireOAuth2Bearer(mcpHandler)
