@@ -48,14 +48,45 @@ type CloudWatchQueryResult struct {
 	Hints      []string           `json:"hints,omitempty"`
 }
 
+// cloudWatchFrameMeta represents metadata in a Grafana data frame schema,
+// such as query execution status (e.g. "Complete", "Running").
+// The Custom field can be either a JSON object (Logs Insights) or a string (Metrics),
+// so it uses a custom unmarshaler to handle both cases.
+type cloudWatchFrameMeta struct {
+	Custom cloudWatchCustomMeta `json:"custom,omitempty"`
+}
+
+// cloudWatchCustomMeta handles the polymorphic "custom" field in frame metadata.
+// For Logs Insights responses it's an object like {"Status":"Complete"}.
+// For Metrics responses it can be a plain string like "timeSeriesQuery".
+type cloudWatchCustomMeta struct {
+	Status string `json:"Status"`
+}
+
+func (m *cloudWatchCustomMeta) UnmarshalJSON(data []byte) error {
+	// Try object first: {"Status":"Complete"}
+	type plain cloudWatchCustomMeta
+	if err := json.Unmarshal(data, (*plain)(m)); err == nil {
+		return nil
+	}
+	// Fall back to string (metrics responses) — ignore it, no Status to extract
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		return nil
+	}
+	// Unknown format — silently ignore to avoid breaking existing functionality
+	return nil
+}
+
 // cloudWatchQueryResponse represents the raw API response from Grafana's /api/ds/query
 type cloudWatchQueryResponse struct {
 	Results map[string]struct {
 		Status int `json:"status,omitempty"`
 		Frames []struct {
 			Schema struct {
-				Name   string `json:"name,omitempty"`
-				RefID  string `json:"refId,omitempty"`
+				Name   string                `json:"name,omitempty"`
+				RefID  string                `json:"refId,omitempty"`
+				Meta   *cloudWatchFrameMeta  `json:"meta,omitempty"`
 				Fields []struct {
 					Name     string                 `json:"name"`
 					Type     string                 `json:"type"`
@@ -95,16 +126,12 @@ func newCloudWatchClient(ctx context.Context, uid string) (*cloudWatchClient, er
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
 	baseURL := strings.TrimRight(cfg.URL, "/")
 
-	// Create custom transport with TLS configuration if available
-	var transport = http.DefaultTransport
-	if tlsConfig := cfg.TLSConfig; tlsConfig != nil {
-		var err error
-		transport, err = tlsConfig.HTTPTransport(transport.(*http.Transport))
-		if err != nil {
-			return nil, fmt.Errorf("failed to create custom transport: %w", err)
-		}
+	// CloudWatch uses /api/ds/query and /api/datasources/uid/.../resources/
+	// (not proxy paths), so no fallback transport is needed.
+	transport, err := mcpgrafana.BuildTransport(&cfg, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create transport: %w", err)
 	}
-
 	transport = NewAuthRoundTripper(transport, cfg.AccessToken, cfg.IDToken, cfg.APIKey, cfg.BasicAuth)
 	transport = mcpgrafana.NewOrgIDRoundTripper(transport, cfg.OrgID)
 
@@ -118,7 +145,48 @@ func newCloudWatchClient(ctx context.Context, uid string) (*cloudWatchClient, er
 	}, nil
 }
 
-// query executes a CloudWatch query via Grafana's /api/ds/query endpoint
+// postDsQuery sends a POST request to /api/ds/query and returns the parsed response.
+// Shared by both metrics (query) and logs (startLogsQuery, getLogsQueryResults).
+func (c *cloudWatchClient) postDsQuery(ctx context.Context, payload map[string]interface{}) (*cloudWatchQueryResponse, error) {
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling query payload: %w", err)
+	}
+
+	reqURL := c.baseURL + "/api/ds/query"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, bytes.NewReader(payloadBytes))
+	if err != nil {
+		return nil, fmt.Errorf("creating request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("executing request: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("query returned status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var bytesLimit int64 = 1024 * 1024 * 10 // 10MB limit
+	body := io.LimitReader(resp.Body, bytesLimit)
+	bodyBytes, err := io.ReadAll(body)
+	if err != nil {
+		return nil, fmt.Errorf("reading response body: %w", err)
+	}
+
+	var queryResp cloudWatchQueryResponse
+	if err := unmarshalJSONWithLimitMsg(bodyBytes, &queryResp, int(bytesLimit)); err != nil {
+		return nil, err
+	}
+
+	return &queryResp, nil
+}
+
+// query executes a CloudWatch metrics query via Grafana's /api/ds/query endpoint
 func (c *cloudWatchClient) query(ctx context.Context, args CloudWatchQueryParams, from, to time.Time) (*cloudWatchQueryResponse, error) {
 	// Format dimensions for CloudWatch query
 	// CloudWatch expects dimensions as map[string][]string
@@ -170,17 +238,22 @@ func (c *cloudWatchClient) query(ctx context.Context, args CloudWatchQueryParams
 		"to":      strconv.FormatInt(to.UnixMilli(), 10),
 	}
 
-	payloadBytes, err := json.Marshal(payload)
-	if err != nil {
-		return nil, fmt.Errorf("marshaling query payload: %w", err)
+	return c.postDsQuery(ctx, payload)
+}
+
+// fetchCloudWatchResource performs a GET request against the datasource resource API
+// and returns the raw response body. The resourcePath is the suffix after
+// /api/datasources/uid/{uid}/resources/ (e.g. "namespaces", "log-groups").
+func (c *cloudWatchClient) fetchCloudWatchResource(ctx context.Context, dsUID, resourcePath string, params url.Values) ([]byte, error) {
+	resourceURL := c.baseURL + "/api/datasources/uid/" + dsUID + "/resources/" + resourcePath
+	if len(params) > 0 {
+		resourceURL += "?" + params.Encode()
 	}
 
-	url := c.baseURL + "/api/ds/query"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payloadBytes))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, resourceURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -190,23 +263,12 @@ func (c *cloudWatchClient) query(ctx context.Context, args CloudWatchQueryParams
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("CloudWatch query returned status %d: %s", resp.StatusCode, string(bodyBytes))
+		return nil, fmt.Errorf("CloudWatch %s returned status %d: %s", resourcePath, resp.StatusCode, string(bodyBytes))
 	}
 
-	// Limit size of response read
-	var bytesLimit int64 = 1024 * 1024 * 10 // 10MB limit
-	body := io.LimitReader(resp.Body, bytesLimit)
-	bodyBytes, err := io.ReadAll(body)
-	if err != nil {
-		return nil, fmt.Errorf("reading response body: %w", err)
-	}
-
-	var queryResp cloudWatchQueryResponse
-	if err := unmarshalJSONWithLimitMsg(bodyBytes, &queryResp, int(bytesLimit)); err != nil {
-		return nil, err
-	}
-
-	return &queryResp, nil
+	bytesLimit := 1024 * 1024 // 1MB limit
+	body := io.LimitReader(resp.Body, int64(bytesLimit))
+	return io.ReadAll(body)
 }
 
 // queryCloudWatch executes a CloudWatch query via Grafana
@@ -448,7 +510,6 @@ func listCloudWatchNamespaces(ctx context.Context, args ListCloudWatchNamespaces
 		return nil, fmt.Errorf("creating CloudWatch client: %w", err)
 	}
 
-	// Build query parameters
 	params := url.Values{}
 	if args.Region != "" {
 		params.Set("region", args.Region)
@@ -457,34 +518,11 @@ func listCloudWatchNamespaces(ctx context.Context, args ListCloudWatchNamespaces
 		params.Set("accountId", args.AccountId)
 	}
 
-	resourceURL := client.baseURL + "/api/datasources/uid/" + args.DatasourceUID + "/resources/namespaces"
-	if len(params) > 0 {
-		resourceURL += "?" + params.Encode()
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, resourceURL, nil)
+	body, err := client.fetchCloudWatchResource(ctx, args.DatasourceUID, "namespaces", params)
 	if err != nil {
-		return nil, fmt.Errorf("creating request: %w", err)
+		return nil, err
 	}
-
-	resp, err := client.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("executing request: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("CloudWatch namespaces returned status %d: %s", resp.StatusCode, string(bodyBytes))
-	}
-
-	bytesLimit := 1024 * 1024 // 1MB limit
-	body := io.LimitReader(resp.Body, int64(bytesLimit))
-	bodyBytes, err := io.ReadAll(body)
-	if err != nil {
-		return nil, fmt.Errorf("reading response body: %w", err)
-	}
-
-	return parseCloudWatchResourceResponse(bodyBytes, bytesLimit)
+	return parseCloudWatchResourceResponse(body, 1024*1024)
 }
 
 // ListCloudWatchNamespaces is a tool for listing CloudWatch namespaces
@@ -512,7 +550,6 @@ func listCloudWatchMetrics(ctx context.Context, args ListCloudWatchMetricsParams
 		return nil, fmt.Errorf("creating CloudWatch client: %w", err)
 	}
 
-	// Build query parameters
 	params := url.Values{}
 	params.Set("namespace", args.Namespace)
 	if args.Region != "" {
@@ -522,31 +559,11 @@ func listCloudWatchMetrics(ctx context.Context, args ListCloudWatchMetricsParams
 		params.Set("accountId", args.AccountId)
 	}
 
-	resourceURL := client.baseURL + "/api/datasources/uid/" + args.DatasourceUID + "/resources/metrics?" + params.Encode()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, resourceURL, nil)
+	body, err := client.fetchCloudWatchResource(ctx, args.DatasourceUID, "metrics", params)
 	if err != nil {
-		return nil, fmt.Errorf("creating request: %w", err)
+		return nil, err
 	}
-
-	resp, err := client.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("executing request: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("CloudWatch metrics returned status %d: %s", resp.StatusCode, string(bodyBytes))
-	}
-
-	bytesLimit := 1024 * 1024 // 1MB limit
-	body := io.LimitReader(resp.Body, int64(bytesLimit))
-	bodyBytes, err := io.ReadAll(body)
-	if err != nil {
-		return nil, fmt.Errorf("reading response body: %w", err)
-	}
-
-	return parseCloudWatchMetricsResponse(bodyBytes, bytesLimit)
+	return parseCloudWatchMetricsResponse(body, 1024*1024)
 }
 
 // ListCloudWatchMetrics is a tool for listing CloudWatch metrics
@@ -575,7 +592,6 @@ func listCloudWatchDimensions(ctx context.Context, args ListCloudWatchDimensions
 		return nil, fmt.Errorf("creating CloudWatch client: %w", err)
 	}
 
-	// Build query parameters
 	params := url.Values{}
 	params.Set("namespace", args.Namespace)
 	params.Set("metricName", args.MetricName)
@@ -586,31 +602,11 @@ func listCloudWatchDimensions(ctx context.Context, args ListCloudWatchDimensions
 		params.Set("accountId", args.AccountId)
 	}
 
-	resourceURL := client.baseURL + "/api/datasources/uid/" + args.DatasourceUID + "/resources/dimension-keys?" + params.Encode()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, resourceURL, nil)
+	body, err := client.fetchCloudWatchResource(ctx, args.DatasourceUID, "dimension-keys", params)
 	if err != nil {
-		return nil, fmt.Errorf("creating request: %w", err)
+		return nil, err
 	}
-
-	resp, err := client.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("executing request: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("CloudWatch dimensions returned status %d: %s", resp.StatusCode, string(bodyBytes))
-	}
-
-	bytesLimit := 1024 * 1024 // 1MB Limit
-	body := io.LimitReader(resp.Body, int64(bytesLimit))
-	bodyBytes, err := io.ReadAll(body)
-	if err != nil {
-		return nil, fmt.Errorf("reading response body: %w", err)
-	}
-
-	return parseCloudWatchResourceResponse(bodyBytes, bytesLimit)
+	return parseCloudWatchResourceResponse(body, 1024*1024)
 }
 
 // ListCloudWatchDimensions is a tool for listing CloudWatch dimension keys
@@ -625,8 +621,13 @@ var ListCloudWatchDimensions = mcpgrafana.MustTool(
 
 // AddCloudWatchTools registers all CloudWatch tools with the MCP server
 func AddCloudWatchTools(mcp *server.MCPServer) {
+	// Metrics tools
 	QueryCloudWatch.Register(mcp)
 	ListCloudWatchNamespaces.Register(mcp)
 	ListCloudWatchMetrics.Register(mcp)
 	ListCloudWatchDimensions.Register(mcp)
+	// Logs tools
+	QueryCloudWatchLogs.Register(mcp)
+	ListCloudWatchLogGroups.Register(mcp)
+	ListCloudWatchLogGroupFields.Register(mcp)
 }
