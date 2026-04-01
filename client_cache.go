@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"sort"
+	"strings"
 	"sync"
 
 	"github.com/grafana/incident-go"
@@ -25,14 +27,18 @@ type clientCacheKey struct {
 	username string
 	password string
 	orgID    int64
+	idToken  string
+	userKey  string
 }
 
 // cacheKeyFromRequest builds a clientCacheKey from request-derived credentials.
-func cacheKeyFromRequest(grafanaURL, apiKey string, basicAuth *url.Userinfo, orgID int64) clientCacheKey {
+func cacheKeyFromRequest(grafanaURL, apiKey string, basicAuth *url.Userinfo, config GrafanaConfig) clientCacheKey {
 	key := clientCacheKey{
-		url:    grafanaURL,
-		apiKey: apiKey,
-		orgID:  orgID,
+		url:     grafanaURL,
+		apiKey:  apiKey,
+		orgID:   config.OrgID,
+		idToken: config.IDToken,
+		userKey: authenticatedUserCacheKey(config.AuthenticatedUser),
 	}
 	if basicAuth != nil {
 		key.username = basicAuth.Username()
@@ -41,11 +47,33 @@ func cacheKeyFromRequest(grafanaURL, apiKey string, basicAuth *url.Userinfo, org
 	return key
 }
 
+func authenticatedUserCacheKey(user *OAuth2UserInfo) string {
+	if user == nil {
+		return ""
+	}
+
+	roles := append([]string(nil), user.Roles...)
+	sort.Strings(roles)
+	groups := append([]string(nil), user.Groups...)
+	sort.Strings(groups)
+
+	return strings.Join([]string{
+		user.ID,
+		user.Username,
+		user.Email,
+		user.Name,
+		strings.Join(roles, ","),
+		strings.Join(groups, ","),
+	}, "\x00")
+}
+
 // String returns a redacted string representation for logging.
 func (k clientCacheKey) String() string {
 	hasKey := k.apiKey != ""
 	hasBasic := k.username != ""
-	return fmt.Sprintf("url=%s apiKey=%t basicAuth=%t orgID=%d", k.url, hasKey, hasBasic, k.orgID)
+	hasIDToken := k.idToken != ""
+	hasUser := k.userKey != ""
+	return fmt.Sprintf("url=%s apiKey=%t basicAuth=%t orgID=%d idToken=%t user=%t", k.url, hasKey, hasBasic, k.orgID, hasIDToken, hasUser)
 }
 
 // clientCacheMetrics holds OTel instruments for cache observability.
@@ -252,7 +280,7 @@ func extractGrafanaClientCached(cache *ClientCache) httpContextFunc {
 		}
 
 		u, apiKey, basicAuth, _ := extractKeyGrafanaInfoFromReq(req)
-		key := cacheKeyFromRequest(u, apiKey, basicAuth, config.OrgID)
+		key := cacheKeyFromRequest(u, apiKey, basicAuth, config)
 
 		grafanaClient := cache.GetOrCreateGrafanaClient(key, func() *GrafanaClient {
 			slog.Debug("Creating new Grafana client (cache miss)", "url", u, "api_key_hash", hashAPIKey(apiKey))
@@ -266,20 +294,23 @@ func extractGrafanaClientCached(cache *ClientCache) httpContextFunc {
 // extractIncidentClientCached creates an httpContextFunc that uses the cache.
 func extractIncidentClientCached(cache *ClientCache) httpContextFunc {
 	return func(ctx context.Context, req *http.Request) context.Context {
-		grafanaURL, apiKey, _, orgID := extractKeyGrafanaInfoFromReq(req)
-		key := cacheKeyFromRequest(grafanaURL, apiKey, nil, orgID)
+		config := GrafanaConfigFromContext(ctx)
+		grafanaURL, apiKey, _, _ := extractKeyGrafanaInfoFromReq(req)
+		if apiKey == "" && config.IDToken != "" {
+			apiKey = config.IDToken
+		}
+		key := cacheKeyFromRequest(grafanaURL, apiKey, nil, config)
 
 		incidentClient := cache.GetOrCreateIncidentClient(key, func() *incident.Client {
 			incidentURL := fmt.Sprintf("%s/api/plugins/grafana-irm-app/resources/api/v1/", grafanaURL)
 			slog.Debug("Creating new incident client (cache miss)", "url", incidentURL)
 			client := incident.NewClient(incidentURL, apiKey)
 
-			config := GrafanaConfigFromContext(ctx)
 			transport, err := BuildTransport(&config, nil)
 			if err != nil {
 				slog.Error("Failed to create custom transport for incident client, using default", "error", err)
 			} else {
-				orgIDWrapped := NewOrgIDRoundTripper(transport, orgID)
+				orgIDWrapped := NewOrgIDRoundTripper(transport, config.OrgID)
 				client.HTTPClient.Transport = wrapWithUserAgent(orgIDWrapped)
 			}
 

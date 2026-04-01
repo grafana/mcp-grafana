@@ -1,6 +1,9 @@
 package mcpgrafana
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"sync"
 	"testing"
@@ -136,15 +139,153 @@ func TestClientCache_DifferentCredentials(t *testing.T) {
 }
 
 func TestCacheKeyFromRequest(t *testing.T) {
-	key1 := cacheKeyFromRequest("http://localhost:3000", "key1", nil, 1)
-	key2 := cacheKeyFromRequest("http://localhost:3000", "key1", nil, 1)
+	config := GrafanaConfig{OrgID: 1}
+	key1 := cacheKeyFromRequest("http://localhost:3000", "key1", nil, config)
+	key2 := cacheKeyFromRequest("http://localhost:3000", "key1", nil, config)
 	assert.Equal(t, key1, key2)
 
-	key3 := cacheKeyFromRequest("http://localhost:3000", "key1", url.UserPassword("admin", "pass"), 1)
+	key3 := cacheKeyFromRequest("http://localhost:3000", "key1", url.UserPassword("admin", "pass"), config)
 	assert.NotEqual(t, key1, key3)
 
 	assert.Equal(t, "admin", key3.username)
 	assert.Equal(t, "pass", key3.password)
+}
+
+func TestCacheKeyFromRequest_DistinguishesOAuth2Identity(t *testing.T) {
+	key1 := cacheKeyFromRequest("http://localhost:3000", "service-account", nil, GrafanaConfig{
+		OrgID:   1,
+		IDToken: "token-a",
+		AuthenticatedUser: &OAuth2UserInfo{
+			ID:       "user-a",
+			Username: "alice",
+			Email:    "alice@example.com",
+			Name:     "Alice",
+			Roles:    []string{"Editor", "Viewer"},
+			Groups:   []string{"ops", "grafana"},
+		},
+	})
+	key2 := cacheKeyFromRequest("http://localhost:3000", "service-account", nil, GrafanaConfig{
+		OrgID:   1,
+		IDToken: "token-b",
+		AuthenticatedUser: &OAuth2UserInfo{
+			ID:       "user-b",
+			Username: "bob",
+			Email:    "bob@example.com",
+			Name:     "Bob",
+			Roles:    []string{"Viewer"},
+			Groups:   []string{"grafana"},
+		},
+	})
+	key3 := cacheKeyFromRequest("http://localhost:3000", "service-account", nil, GrafanaConfig{
+		OrgID:   1,
+		IDToken: "token-a",
+		AuthenticatedUser: &OAuth2UserInfo{
+			ID:       "user-a",
+			Username: "alice",
+			Email:    "alice@example.com",
+			Name:     "Alice",
+			Roles:    []string{"Viewer", "Editor"},
+			Groups:   []string{"grafana", "ops"},
+		},
+	})
+
+	assert.NotEqual(t, key1, key2)
+	assert.Equal(t, key1, key3)
+}
+
+func TestExtractGrafanaClientCached_SegregatesOAuth2Users(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/frontend/settings" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"appUrl":"https://grafana.example.com/"}`))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	cache := NewClientCache()
+	defer cache.Close()
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("X-Grafana-URL", server.URL)
+	req.Header.Set("X-Grafana-API-Key", "service-account")
+
+	extractor := extractGrafanaClientCached(cache)
+	ctxAlice := WithGrafanaConfig(context.Background(), GrafanaConfig{
+		OrgID:   1,
+		IDToken: "token-alice",
+		AuthenticatedUser: &OAuth2UserInfo{
+			ID:       "user-alice",
+			Username: "alice",
+			Email:    "alice@example.com",
+		},
+		ProxyAuthEnabled: true,
+		ProxyUserHeader:  "X-WEBAUTH-USER",
+		ProxyEmailHeader: "X-WEBAUTH-EMAIL",
+	})
+	ctxBob := WithGrafanaConfig(context.Background(), GrafanaConfig{
+		OrgID:   1,
+		IDToken: "token-bob",
+		AuthenticatedUser: &OAuth2UserInfo{
+			ID:       "user-bob",
+			Username: "bob",
+			Email:    "bob@example.com",
+		},
+		ProxyAuthEnabled: true,
+		ProxyUserHeader:  "X-WEBAUTH-USER",
+		ProxyEmailHeader: "X-WEBAUTH-EMAIL",
+	})
+
+	ctxAlice = extractor(ctxAlice, req)
+	ctxBob = extractor(ctxBob, req)
+
+	clientAlice := GrafanaClientFromContext(ctxAlice)
+	clientBob := GrafanaClientFromContext(ctxBob)
+	assert.NotNil(t, clientAlice)
+	assert.NotNil(t, clientBob)
+	assert.NotSame(t, clientAlice, clientBob)
+
+	grafanaClients, _ := cache.Size()
+	assert.Equal(t, 2, grafanaClients)
+}
+
+func TestExtractIncidentClientCached_SegregatesOAuth2Users(t *testing.T) {
+	cache := NewClientCache()
+	defer cache.Close()
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("X-Grafana-URL", "http://localhost:3000")
+
+	extractor := extractIncidentClientCached(cache)
+	ctxAlice := WithGrafanaConfig(context.Background(), GrafanaConfig{
+		OrgID:   1,
+		IDToken: "token-alice",
+		AuthenticatedUser: &OAuth2UserInfo{
+			ID:       "user-alice",
+			Username: "alice",
+		},
+	})
+	ctxBob := WithGrafanaConfig(context.Background(), GrafanaConfig{
+		OrgID:   1,
+		IDToken: "token-bob",
+		AuthenticatedUser: &OAuth2UserInfo{
+			ID:       "user-bob",
+			Username: "bob",
+		},
+	})
+
+	ctxAlice = extractor(ctxAlice, req)
+	ctxBob = extractor(ctxBob, req)
+
+	clientAlice := IncidentClientFromContext(ctxAlice)
+	clientBob := IncidentClientFromContext(ctxBob)
+	assert.NotNil(t, clientAlice)
+	assert.NotNil(t, clientBob)
+	assert.NotSame(t, clientAlice, clientBob)
+
+	_, incidentClients := cache.Size()
+	assert.Equal(t, 2, incidentClients)
 }
 
 func TestClientCache_Close(t *testing.T) {
