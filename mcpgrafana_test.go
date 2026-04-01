@@ -1224,6 +1224,30 @@ func TestFetchPublicURL(t *testing.T) {
 		assert.Equal(t, "Bearer my-token", capturedAuth)
 	})
 
+	t.Run("sends authorization header with OAuth2 id token when apiKey is empty", func(t *testing.T) {
+		var capturedAuth string
+		ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+			capturedAuth = r.Header.Get("Authorization")
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"appUrl": "https://grafana.example.com"}`))
+		})
+
+		fetchPublicURL(context.Background(), ts.URL, "", "my-id-token", nil, nil, nil, nil)
+		assert.Equal(t, "Bearer my-id-token", capturedAuth)
+	})
+
+	t.Run("prefers apiKey over id token when both are provided", func(t *testing.T) {
+		var capturedAuth string
+		ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+			capturedAuth = r.Header.Get("Authorization")
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"appUrl": "https://grafana.example.com"}`))
+		})
+
+		fetchPublicURL(context.Background(), ts.URL, "api-key", "id-token", nil, nil, nil, nil)
+		assert.Equal(t, "Bearer api-key", capturedAuth)
+	})
+
 	t.Run("sends basic auth credentials", func(t *testing.T) {
 		var capturedUser, capturedPass string
 		ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
