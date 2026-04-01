@@ -261,3 +261,54 @@ func TestOAuth2ClientExpiredCache(t *testing.T) {
 		t.Error("Expected new request after cache expiry")
 	}
 }
+
+func TestOAuth2ClientEvictsExpiredEntries(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/userinfo" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"sub":                "user123",
+				"preferred_username": "john.doe",
+			})
+		}
+	}))
+	defer server.Close()
+
+	config := OAuth2Config{
+		Enabled:          true,
+		ProviderURL:      server.URL,
+		UserInfoEndpoint: "/userinfo",
+		TokenCacheTTL:    1,
+	}
+
+	client := NewOAuth2Client(config, server.Client())
+
+	if _, err := client.ValidateToken(context.Background(), "token1"); err != nil {
+		t.Fatalf("token1 validation failed: %v", err)
+	}
+	if _, err := client.ValidateToken(context.Background(), "token2"); err != nil {
+		t.Fatalf("token2 validation failed: %v", err)
+	}
+
+	client.cacheMutex.RLock()
+	if len(client.tokenCache) != 2 {
+		client.cacheMutex.RUnlock()
+		t.Fatalf("expected 2 cached entries before expiry, got %d", len(client.tokenCache))
+	}
+	client.cacheMutex.RUnlock()
+
+	time.Sleep(1100 * time.Millisecond)
+
+	if _, err := client.ValidateToken(context.Background(), "token3"); err != nil {
+		t.Fatalf("token3 validation failed: %v", err)
+	}
+
+	client.cacheMutex.RLock()
+	defer client.cacheMutex.RUnlock()
+	if len(client.tokenCache) != 1 {
+		t.Fatalf("expected expired cache entries to be evicted, got %d entries", len(client.tokenCache))
+	}
+	if _, ok := client.tokenCache["token3"]; !ok {
+		t.Fatalf("expected token3 to be present in cache")
+	}
+}

@@ -80,14 +80,16 @@ func (c *OAuth2Client) ValidateToken(ctx context.Context, token string) (*OAuth2
 		return nil, fmt.Errorf("empty token")
 	}
 
-	// Check cache first
+	// Purge expired entries first to prevent unbounded cache growth.
 	if c.config.TokenCacheTTL > 0 {
-		c.cacheMutex.RLock()
-		if cached, ok := c.tokenCache[token]; ok && time.Now().Before(cached.expiry) {
-			c.cacheMutex.RUnlock()
+		now := time.Now()
+		c.cacheMutex.Lock()
+		c.evictExpiredTokensLocked(now)
+		if cached, ok := c.tokenCache[token]; ok {
+			c.cacheMutex.Unlock()
 			return cached.userInfo, nil
 		}
-		c.cacheMutex.RUnlock()
+		c.cacheMutex.Unlock()
 	}
 
 	userInfo, err := c.fetchUserInfo(ctx, token)
@@ -106,6 +108,14 @@ func (c *OAuth2Client) ValidateToken(ctx context.Context, token string) (*OAuth2
 	}
 
 	return userInfo, nil
+}
+
+func (c *OAuth2Client) evictExpiredTokensLocked(now time.Time) {
+	for token, cached := range c.tokenCache {
+		if !now.Before(cached.expiry) {
+			delete(c.tokenCache, token)
+		}
+	}
 }
 
 // fetchUserInfo gets user information from userinfo endpoint
