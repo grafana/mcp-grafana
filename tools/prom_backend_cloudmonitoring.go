@@ -29,10 +29,10 @@ type cloudMonitoringBackend struct {
 	defaultProject string
 }
 
-func newCloudMonitoringBackend(ctx context.Context, ds *models.DataSource) (*cloudMonitoringBackend, error) {
-	defaultProject, err := extractCMDefaultProject(ds)
-	if err != nil {
-		return nil, err
+func newCloudMonitoringBackend(ctx context.Context, ds *models.DataSource, projectOverride string) (*cloudMonitoringBackend, error) {
+	defaultProject := extractCMDefaultProject(ds)
+	if projectOverride != "" {
+		defaultProject = projectOverride
 	}
 
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
@@ -59,23 +59,23 @@ func newCloudMonitoringBackend(ctx context.Context, ds *models.DataSource) (*clo
 	}, nil
 }
 
-func extractCMDefaultProject(ds *models.DataSource) (string, error) {
+func extractCMDefaultProject(ds *models.DataSource) string {
 	if ds.JSONData == nil {
-		return "", fmt.Errorf("cloud monitoring datasource %s has no jsonData configured", ds.UID)
+		return ""
 	}
 	jsonDataMap, ok := ds.JSONData.(map[string]interface{})
 	if !ok {
-		return "", fmt.Errorf("cloud monitoring datasource %s has unexpected jsonData format", ds.UID)
+		return ""
 	}
-	proj, ok := jsonDataMap["defaultProject"].(string)
-	if !ok || proj == "" {
-		return "", fmt.Errorf("cloud monitoring datasource %s has no defaultProject configured in jsonData", ds.UID)
-	}
-	return proj, nil
+	proj, _ := jsonDataMap["defaultProject"].(string)
+	return proj
 }
 
 // Query executes a PromQL query via Grafana's /api/ds/query endpoint.
 func (b *cloudMonitoringBackend) Query(ctx context.Context, expr string, queryType string, start, end time.Time, stepSeconds int) (model.Value, error) {
+	if b.defaultProject == "" {
+		return nil, fmt.Errorf("no GCP project configured: set defaultProject on the datasource or pass projectName in the tool call")
+	}
 	step := fmt.Sprintf("%ds", stepSeconds)
 	if stepSeconds == 0 {
 		step = "60s"
