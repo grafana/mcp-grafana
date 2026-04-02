@@ -17,7 +17,7 @@ services:
         target: /var/lib/grafana/empty-alerts-folder
 
   renderer:
-    image: grafana/grafana-image-renderer:latest@sha256:92f3d0913464a20be2fbfaa91366520b0dd593493e0da9ae6c4c61b3bbbb90cb
+    image: grafana/grafana-image-renderer:latest@sha256:bdd4b9d3d529710406aa00fc567a0f3d637c94bdbfff569081ef88e8f157bee3
     ports:
       - 8081
 
