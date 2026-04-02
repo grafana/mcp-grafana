@@ -427,6 +427,7 @@ type QueryPrometheusHistogramParams struct {
 	StartTime     string  `json:"startTime,omitempty" jsonschema:"description=Start time (default: now-1h). Supports RFC3339\\, relative (now-1h)\\, or Unix ms."`
 	EndTime       string  `json:"endTime,omitempty" jsonschema:"description=End time (default: now). Supports RFC3339\\, relative\\, or Unix ms."`
 	StepSeconds   int     `json:"stepSeconds,omitempty" jsonschema:"description=Step size in seconds for range query (default: 60)"`
+	ProjectName   string  `json:"projectName,omitempty" jsonschema:"description=GCP project name to query (Cloud Monitoring datasources only). Overrides or substitutes the defaultProject configured on the datasource."`
 }
 
 // queryPrometheusHistogram generates and executes a histogram percentile query
@@ -488,6 +489,7 @@ func queryPrometheusHistogram(ctx context.Context, args QueryPrometheusHistogram
 		EndTime:       endTime,
 		StepSeconds:   stepSeconds,
 		QueryType:     "range",
+		ProjectName:   args.ProjectName,
 	})
 	if err != nil {
 		return nil, err
