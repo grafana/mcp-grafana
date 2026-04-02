@@ -7,13 +7,13 @@ require (
 	github.com/PaesslerAG/gval v1.2.4
 	github.com/PaesslerAG/jsonpath v0.1.1
 	github.com/go-openapi/runtime v0.29.3
-	github.com/go-openapi/strfmt v0.26.0
+	github.com/go-openapi/strfmt v0.26.1
 	github.com/google/uuid v1.6.0
 	github.com/grafana/amixr-api-go-client v0.0.28
-	github.com/grafana/grafana-openapi-client-go v0.0.0-20251202103709-7ef691d4df1d
+	github.com/grafana/grafana-openapi-client-go v0.0.0-20260330113218-ee77c4f6f90e
 	github.com/grafana/grafana-plugin-sdk-go v0.290.1
 	github.com/grafana/incident-go v0.0.0-20251003115753-d71681611ddd
-	github.com/grafana/pyroscope/api v1.3.0
+	github.com/grafana/pyroscope/api v1.3.2
 	github.com/invopop/jsonschema v0.13.0
 	github.com/mark3labs/mcp-go v0.45.0
 	github.com/prometheus/alertmanager v0.31.1
