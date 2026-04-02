@@ -194,6 +194,8 @@ func extractQuerySummaries(data []*models.AlertQuery) []querySummary {
 				s.Expression = expr
 			} else if expr, ok := m["expression"].(string); ok && expr != "" {
 				s.Expression = expr
+			} else if query, ok := m["query"].(string); ok && query != "" {
+				s.Expression = query
 			}
 		}
 		summaries = append(summaries, s)
