@@ -93,6 +93,8 @@ github.com/go-openapi/spec v0.22.4 h1:4pxGjipMKu0FzFiu/DPwN3CTBRlVM2yLf/YTWorYfD
 github.com/go-openapi/spec v0.22.4/go.mod h1:WQ6Ai0VPWMZgMT4XySjlRIE6GP1bGQOtEThn3gcWLtQ=
 github.com/go-openapi/strfmt v0.26.0 h1:SDdQLyOEqu8W96rO1FRG1fuCtVyzmukky0zcD6gMGLU=
 github.com/go-openapi/strfmt v0.26.0/go.mod h1:Zslk5VZPOISLwmWTMBIS7oiVFem1o1EI6zULY8Uer7Y=
+github.com/go-openapi/strfmt v0.26.1 h1:7zGCHji7zSYDC2tCXIusoxYQz/48jAf2q+sF6wXTG+c=
+github.com/go-openapi/strfmt v0.26.1/go.mod h1:Zslk5VZPOISLwmWTMBIS7oiVFem1o1EI6zULY8Uer7Y=
 github.com/go-openapi/swag v0.25.4 h1:OyUPUFYDPDBMkqyxOTkqDYFnrhuhi9NR6QVUvIochMU=
 github.com/go-openapi/swag v0.25.4/go.mod h1:zNfJ9WZABGHCFg2RnY0S4IOkAcVTzJ6z2Bi+Q4i6qFQ=
 github.com/go-openapi/swag/cmdutils v0.25.4 h1:8rYhB5n6WawR192/BfUu2iVlxqVR9aRgGJP6WaBoW+4=
@@ -159,6 +161,8 @@ github.com/grafana/amixr-api-go-client v0.0.28 h1:wh4aeEFVVJPv68YpxJAoP03BTUkLk6
 github.com/grafana/amixr-api-go-client v0.0.28/go.mod h1:hU0Hq74HITX7RfcP0uZ7+F0/L+TL3N6JSzofBm2vzco=
 github.com/grafana/grafana-openapi-client-go v0.0.0-20251202103709-7ef691d4df1d h1:7md403wbIZGk39todORDDUF/NY2oveyKqcNpsa0snzs=
 github.com/grafana/grafana-openapi-client-go v0.0.0-20251202103709-7ef691d4df1d/go.mod h1:sMcpxegie6TcvI6eVm+MbNneNC249GGWRcEO1M+UfSE=
+github.com/grafana/grafana-openapi-client-go v0.0.0-20260330113218-ee77c4f6f90e h1:P/SerquhsX/4a3kreHR5mrJmohlWRqaxei/ZUSA6zkA=
+github.com/grafana/grafana-openapi-client-go v0.0.0-20260330113218-ee77c4f6f90e/go.mod h1:sMcpxegie6TcvI6eVm+MbNneNC249GGWRcEO1M+UfSE=
 github.com/grafana/grafana-plugin-sdk-go v0.290.1 h1:wNX4R8sHxEAmtmFhmV05IsLGznzdMKvN94v+2Pz8Wkw=
 github.com/grafana/grafana-plugin-sdk-go v0.290.1/go.mod h1:KDkcxp1XqbKz0WD/q9p98Cf5Wp50LG0NkoPlVlptSWs=
 github.com/grafana/incident-go v0.0.0-20251003115753-d71681611ddd h1:y8uJA/UmFHjwNWAvppxDRq+w9zIQmb0z79YVV2vS96g=
@@ -169,6 +173,8 @@ github.com/grafana/pyroscope-go/godeltaprof v0.1.9 h1:c1Us8i6eSmkW+Ez05d3co8kasn
 github.com/grafana/pyroscope-go/godeltaprof v0.1.9/go.mod h1:2+l7K7twW49Ct4wFluZD3tZ6e0SjanjcUUBPVD/UuGU=
 github.com/grafana/pyroscope/api v1.3.0 h1:wzOC+3k9Yn247E3rftOaHlO0MG7mQL48eab/EOFujsU=
 github.com/grafana/pyroscope/api v1.3.0/go.mod h1:K4BU7r29UGWJfAF29ySzQQ9wvVvWsEU7IaRXIa89ZwA=
+github.com/grafana/pyroscope/api v1.3.2 h1:+F5JNUlM4ifoweKmRXW9cA6JsCeHzDVFV2Om3smqCxI=
+github.com/grafana/pyroscope/api v1.3.2/go.mod h1:IQdc2koLAWVLlWcvBV4bm6uSFW2LiklKa8xyevsZ28I=
 github.com/grafana/regexp v0.0.0-20250905093917-f7b3be9d1853 h1:cLN4IBkmkYZNnk7EAJ0BHIethd+J6LqxFNw5mSiI2bM=
 github.com/grafana/regexp v0.0.0-20250905093917-f7b3be9d1853/go.mod h1:+JKpmjMGhpgPL+rXZ5nsZieVzvarn86asRlBg4uNGnk=
 github.com/grpc-ecosystem/go-grpc-middleware/providers/prometheus v1.1.0 h1:QGLs/O40yoNK9vmy4rhUGBVyMf1lISBGtXRpsu/Qu/o=
