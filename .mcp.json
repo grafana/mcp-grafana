@@ -4,7 +4,11 @@
       "command": "uvx",
       "args": [
         "mcp-grafana"
-      ]
+      ],
+      "env": {
+        "GRAFANA_URL": "https://your-grafana-instance.com",
+        "GRAFANA_SERVICE_ACCOUNT_TOKEN": "your-token-here"
+      }
     }
   }
 }
