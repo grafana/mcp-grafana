@@ -1368,13 +1368,13 @@ func TestExtractQuerySummaries(t *testing.T) {
 				RefID:         "A",
 				DatasourceUID: "elasticsearch-uid",
 				Model: map[string]any{
-					"query": "app:\"sms-service\" AND error",
+					"query": "app:\"random-service\" AND error",
 				},
 			},
 		}
 		summaries := extractQuerySummaries(data)
 		require.Len(t, summaries, 1)
-		require.Equal(t, "app:\"sms-service\" AND error", summaries[0].Expression)
+		require.Equal(t, "app:\"random-service\" AND error", summaries[0].Expression)
 	})
 
 	t.Run("returns nil for empty data", func(t *testing.T) {
