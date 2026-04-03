@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "mcp-grafana": {
+      "command": "uvx",
+      "args": [
+        "mcp-grafana"
+      ]
+    }
+  }
+}

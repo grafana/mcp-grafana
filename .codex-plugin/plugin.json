@@ -1,0 +1,24 @@
+{
+  "name": "mcp-grafana",
+  "version": "0.1.0",
+  "description": "Query and manage Grafana dashboards from Codex via MCP",
+  "author": {
+    "name": "grafana",
+    "url": "https://github.com/grafana/mcp-grafana"
+  },
+  "homepage": "https://github.com/grafana/mcp-grafana",
+  "repository": "https://github.com/grafana/mcp-grafana",
+  "keywords": [
+    "mcp",
+    "codex"
+  ],
+  "mcpServers": "./.mcp.json",
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Grafana MCP",
+    "shortDescription": "Query and manage Grafana dashboards from Codex via MCP",
+    "longDescription": "MCP server for Grafana. Query dashboards, manage alerts, and explore metrics.",
+    "category": "Monitoring",
+    "websiteURL": "https://github.com/grafana/mcp-grafana"
+  }
+}
