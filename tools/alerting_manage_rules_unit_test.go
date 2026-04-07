@@ -1330,3 +1330,86 @@ func TestConvertAlertQueries(t *testing.T) {
 		require.Equal(t, models.Duration(1800), result[0].RelativeTimeRange.To)
 	})
 }
+
+func TestExtractQuerySummaries(t *testing.T) {
+	t.Run("extracts expr field (Prometheus)", func(t *testing.T) {
+		data := []*models.AlertQuery{
+			{
+				RefID:         "A",
+				DatasourceUID: "prometheus-uid",
+				Model: map[string]any{
+					"expr": `up{job="grafana"}`,
+				},
+			},
+		}
+		summaries := extractQuerySummaries(data)
+		require.Len(t, summaries, 1)
+		require.Equal(t, `up{job="grafana"}`, summaries[0].Expression)
+	})
+
+	t.Run("extracts expression field (Grafana expression)", func(t *testing.T) {
+		data := []*models.AlertQuery{
+			{
+				RefID:         "B",
+				DatasourceUID: "__expr__",
+				Model: map[string]any{
+					"expression": "A",
+				},
+			},
+		}
+		summaries := extractQuerySummaries(data)
+		require.Len(t, summaries, 1)
+		require.Equal(t, "A", summaries[0].Expression)
+	})
+
+	t.Run("extracts query field (Elasticsearch)", func(t *testing.T) {
+		data := []*models.AlertQuery{
+			{
+				RefID:         "A",
+				DatasourceUID: "elasticsearch-uid",
+				Model: map[string]any{
+					"query": `app:"random-service" AND error`,
+				},
+			},
+		}
+		summaries := extractQuerySummaries(data)
+		require.Len(t, summaries, 1)
+		require.Equal(t, `app:"random-service" AND error`, summaries[0].Expression)
+	})
+
+	t.Run("returns nil for empty data", func(t *testing.T) {
+		summaries := extractQuerySummaries(nil)
+		require.Nil(t, summaries)
+	})
+
+	t.Run("handles mixed datasource types", func(t *testing.T) {
+		data := []*models.AlertQuery{
+			{
+				RefID:         "A",
+				DatasourceUID: "elasticsearch-uid",
+				Model: map[string]any{
+					"query": `app:"random-service" AND log.level:"ERROR"`,
+				},
+			},
+			{
+				RefID:         "B",
+				DatasourceUID: "__expr__",
+				Model: map[string]any{
+					"expression": "A",
+				},
+			},
+			{
+				RefID:         "C",
+				DatasourceUID: "__expr__",
+				Model: map[string]any{
+					"expression": "B",
+				},
+			},
+		}
+		summaries := extractQuerySummaries(data)
+		require.Len(t, summaries, 3)
+		require.Equal(t, `app:"random-service" AND log.level:"ERROR"`, summaries[0].Expression)
+		require.Equal(t, "A", summaries[1].Expression)
+		require.Equal(t, "B", summaries[2].Expression)
+	})
+}
