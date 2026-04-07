@@ -94,6 +94,10 @@ func updateDashboardWithPatches(ctx context.Context, args UpdateDashboardParams)
 		return nil, fmt.Errorf("dashboard is not a JSON object")
 	}
 
+	// Preserve the numeric ID before patching so it survives any
+	// accidental mutation by patch operations.
+	origID := dashboardMap["id"]
+
 	// Apply each patch operation
 	for i, op := range args.Operations {
 		switch op.Op {
@@ -108,6 +112,16 @@ func updateDashboardWithPatches(ctx context.Context, args UpdateDashboardParams)
 		default:
 			return nil, fmt.Errorf("operation %d: unsupported operation '%s'", i, op.Op)
 		}
+	}
+
+	// Restore identity fields so the Grafana API updates the existing
+	// dashboard in place instead of creating a clone with a new UID.
+	// The UID is always taken from the request args (the value used to
+	// fetch the dashboard) to guarantee consistency even when the
+	// dashboard body returned by the API did not include it.
+	dashboardMap["uid"] = args.UID
+	if origID != nil {
+		dashboardMap["id"] = origID
 	}
 
 	// Use the folder UID from the existing dashboard if not provided
