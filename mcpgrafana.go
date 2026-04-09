@@ -193,6 +193,15 @@ type GrafanaConfig struct {
 	// MaxLokiLogLimit is the maximum number of log lines that can be returned
 	// from Loki queries.
 	MaxLokiLogLimit int
+
+	// BaseTransport is an optional base HTTP transport used as the innermost
+	// layer of the middleware chain in NewGrafanaClient. When set, it replaces
+	// the default http.Transport that NewGrafanaClient would otherwise create.
+	// The caller can use this to provide a pre-configured transport with custom
+	// connection pooling, timeouts, or tracing instrumentation.
+	// Note: NewGrafanaClient still wraps this transport with ExtraHeaders,
+	// OrgID, UserAgent, and otelhttp layers.
+	BaseTransport http.RoundTripper
 }
 
 const (
@@ -732,25 +741,30 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 			transportField := v.FieldByName("Transport")
 			if transportField.IsValid() && transportField.CanSet() {
 				if _, ok := transportField.Interface().(http.RoundTripper); ok {
-					// Wrap with timeout transport, then user agent, then otel
-					timeoutTransport := &http.Transport{
-						Proxy: http.ProxyFromEnvironment,
-						DialContext: (&net.Dialer{
-							Timeout:   timeout,
-							KeepAlive: 30 * time.Second,
-						}).DialContext,
-						TLSHandshakeTimeout:   timeout,
-						ResponseHeaderTimeout: timeout,
-						ExpectContinueTimeout: 1 * time.Second,
-						ForceAttemptHTTP2:     true,
-						MaxIdleConns:          100,
-						IdleConnTimeout:       90 * time.Second,
+					// Use caller-provided base transport or create a default one.
+					var rt http.RoundTripper
+					if config.BaseTransport != nil {
+						rt = config.BaseTransport
+					} else {
+						timeoutTransport := &http.Transport{
+							Proxy: http.ProxyFromEnvironment,
+							DialContext: (&net.Dialer{
+								Timeout:   timeout,
+								KeepAlive: 30 * time.Second,
+							}).DialContext,
+							TLSHandshakeTimeout:   timeout,
+							ResponseHeaderTimeout: timeout,
+							ExpectContinueTimeout: 1 * time.Second,
+							ForceAttemptHTTP2:     true,
+							MaxIdleConns:          100,
+							IdleConnTimeout:       90 * time.Second,
+						}
+						// Copy TLS config if present
+						if cfg.TLSConfig != nil {
+							timeoutTransport.TLSClientConfig = cfg.TLSConfig
+						}
+						rt = timeoutTransport
 					}
-					// Copy TLS config if present
-					if cfg.TLSConfig != nil {
-						timeoutTransport.TLSClientConfig = cfg.TLSConfig
-					}
-					var rt http.RoundTripper = timeoutTransport
 					if len(config.ExtraHeaders) > 0 {
 						rt = NewExtraHeadersRoundTripper(rt, config.ExtraHeaders)
 					}
