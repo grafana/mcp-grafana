@@ -829,6 +829,15 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 						}
 						rt = timeoutTransport
 					}
+					// Apply on-behalf-of auth headers as the innermost header
+					// layer so they take precedence over ExtraHeaders (which
+					// may contain forwarded headers with the same keys).
+					if config.AccessToken != "" && config.IDToken != "" {
+						rt = NewExtraHeadersRoundTripper(rt, map[string]string{
+							"X-Access-Token": config.AccessToken,
+							"X-Grafana-Id":   config.IDToken,
+						})
+					}
 					if len(config.ExtraHeaders) > 0 {
 						rt = NewExtraHeadersRoundTripper(rt, config.ExtraHeaders)
 					}
