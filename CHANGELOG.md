@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.5] - 2026-04-09
+
+### Added
+
+- Forward selected request headers (e.g. `Cookie`, `Authorization`) to Grafana in SSE and streamable-http modes, enabling SSO and ALB session cookie authentication ([#659](https://github.com/grafana/mcp-grafana/pull/659))
+- Support optional `projectName` parameter for Cloud Monitoring datasources to query specific GCP projects ([#710](https://github.com/grafana/mcp-grafana/pull/710))
+- Add `BaseTransport` field to `GrafanaConfig` for custom HTTP transport composition ([#726](https://github.com/grafana/mcp-grafana/pull/726))
+
+### Fixed
+
+- Extract Elasticsearch query field in alert rule summaries for accurate rule descriptions ([#714](https://github.com/grafana/mcp-grafana/pull/714))
+- Clarify dashboard authoring guidance in tool descriptions to reduce LLM confusion ([#713](https://github.com/grafana/mcp-grafana/pull/713))
+
 ## [0.11.4] - 2026-04-02
 
 ### Added
@@ -112,6 +125,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Upgrade Docker base image packages to resolve critical OpenSSL CVE-2025-15467 (CVSS 9.8) ([#551](https://github.com/grafana/mcp-grafana/pull/551))
 
+[0.11.5]: https://github.com/grafana/mcp-grafana/compare/v0.11.4...v0.11.5
 [0.11.4]: https://github.com/grafana/mcp-grafana/compare/v0.11.3...v0.11.4
 [0.11.3]: https://github.com/grafana/mcp-grafana/compare/v0.11.2...v0.11.3
 [0.11.2]: https://github.com/grafana/mcp-grafana/compare/v0.11.1...v0.11.2
