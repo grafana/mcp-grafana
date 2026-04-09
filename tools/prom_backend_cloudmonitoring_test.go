@@ -285,15 +285,14 @@ func TestExtractCMDefaultProject(t *testing.T) {
 			UID:      "test",
 			JSONData: map[string]interface{}{"defaultProject": "my-project"},
 		}
-		proj, err := extractCMDefaultProject(ds)
-		require.NoError(t, err)
+		proj := extractCMDefaultProject(ds)
 		assert.Equal(t, "my-project", proj)
 	})
 
 	t.Run("nil jsonData", func(t *testing.T) {
 		ds := &models.DataSource{UID: "test"}
-		_, err := extractCMDefaultProject(ds)
-		require.Error(t, err)
+		proj := extractCMDefaultProject(ds)
+		assert.Equal(t, "", proj)
 	})
 
 	t.Run("missing project", func(t *testing.T) {
@@ -301,7 +300,7 @@ func TestExtractCMDefaultProject(t *testing.T) {
 			UID:      "test",
 			JSONData: map[string]interface{}{"somethingElse": "value"},
 		}
-		_, err := extractCMDefaultProject(ds)
-		require.Error(t, err)
+		proj := extractCMDefaultProject(ds)
+		assert.Equal(t, "", proj)
 	})
 }
