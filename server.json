@@ -57,6 +57,13 @@
           "format": "string",
           "isSecret": false,
           "name": "GRAFANA_EXTRA_HEADERS"
+        },
+        {
+          "description": "Comma-separated list of HTTP header names to forward from the incoming request to Grafana (SSE/streamable-http only). Example: Cookie,X-Session-Id",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": false,
+          "name": "GRAFANA_FORWARD_HEADERS"
         }
       ]
     }
