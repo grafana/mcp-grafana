@@ -49,7 +49,7 @@ jobs:
           cache: false
 
       - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@fdcf0b9df926c8dd93d4e7f15c508dd346e09eb1
+        uses: goreleaser/goreleaser-action@01cbe076be10ba0af7b0b9319ac490a93d3d2fcd
         with:
           distribution: goreleaser
           # 'latest', 'nightly', or a semver

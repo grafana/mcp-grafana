@@ -65,7 +65,7 @@ jobs:
       - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98
 
       - name: Build and Push to Docker Hub
-        uses: grafana/shared-workflows/actions/build-push-to-dockerhub@f2909d40e17c95ca36e7b643fa56ca53ca6571f9
+        uses: grafana/shared-workflows/actions/build-push-to-dockerhub@e7a3275d4c4978a3514801ec55708f1c599a6906
         with:
           context: .
           file: ./Dockerfile
@@ -85,7 +85,7 @@ jobs:
       - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98
 
       - name: Build and Push Alpine to Docker Hub
-        uses: grafana/shared-workflows/actions/build-push-to-dockerhub@f2909d40e17c95ca36e7b643fa56ca53ca6571f9
+        uses: grafana/shared-workflows/actions/build-push-to-dockerhub@e7a3275d4c4978a3514801ec55708f1c599a6906
         with:
           context: .
           file: ./Dockerfile.alpine
