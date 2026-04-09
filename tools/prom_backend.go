@@ -33,15 +33,22 @@ type promBackend interface {
 }
 
 // backendForDatasource looks up the datasource type and returns the appropriate backend.
-func backendForDatasource(ctx context.Context, uid string) (promBackend, error) {
+// An optional projectOverride can be passed for Cloud Monitoring datasources to override
+// (or substitute for) the defaultProject configured on the datasource.
+func backendForDatasource(ctx context.Context, uid string, projectOverride ...string) (promBackend, error) {
 	ds, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: uid})
 	if err != nil {
 		return nil, err
 	}
 
+	proj := ""
+	if len(projectOverride) > 0 {
+		proj = projectOverride[0]
+	}
+
 	switch ds.Type {
 	case "stackdriver":
-		return newCloudMonitoringBackend(ctx, ds)
+		return newCloudMonitoringBackend(ctx, ds, proj)
 	default:
 		// For prometheus, thanos, cortex, mimir, and any other Prometheus-compatible datasource,
 		// use the native Prometheus client via the datasource proxy.
