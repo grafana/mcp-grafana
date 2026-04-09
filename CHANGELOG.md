@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.6] - 2026-04-09
+
+### Added
+
+- Apply on-behalf-of authentication headers in the Grafana client transport chain, enabling delegated identity for API requests ([#728](https://github.com/grafana/mcp-grafana/pull/728))
+
+### Fixed
+
+- Preserve dashboard identity fields (`id`, `uid`, `version`) in patch mode to prevent accidental dashboard duplication ([#722](https://github.com/grafana/mcp-grafana/pull/722))
+
 ## [0.11.5] - 2026-04-09
 
 ### Added
@@ -125,6 +135,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Upgrade Docker base image packages to resolve critical OpenSSL CVE-2025-15467 (CVSS 9.8) ([#551](https://github.com/grafana/mcp-grafana/pull/551))
 
+[0.11.6]: https://github.com/grafana/mcp-grafana/compare/v0.11.5...v0.11.6
 [0.11.5]: https://github.com/grafana/mcp-grafana/compare/v0.11.4...v0.11.5
 [0.11.4]: https://github.com/grafana/mcp-grafana/compare/v0.11.3...v0.11.4
 [0.11.3]: https://github.com/grafana/mcp-grafana/compare/v0.11.2...v0.11.3
