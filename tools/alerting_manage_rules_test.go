@@ -6,6 +6,7 @@
 package tools
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -91,6 +92,22 @@ var (
 		},
 	}
 )
+
+// toDataMaps converts typed []*AlertQuery to []map[string]any for use in ManageRulesReadWriteParams.
+func toDataMaps(queries []*AlertQuery) []map[string]any {
+	b, _ := json.Marshal(queries)
+	var result []map[string]any
+	_ = json.Unmarshal(b, &result)
+	return result
+}
+
+// toMap converts a typed struct to map[string]any for use in ManageRulesReadWriteParams.
+func toMap(v any) map[string]any {
+	b, _ := json.Marshal(v)
+	var result map[string]any
+	_ = json.Unmarshal(b, &result)
+	return result
+}
 
 // Because the state depends on the evaluation of the alert rules,
 // clear it and other variable runtime fields before comparing the results
@@ -623,7 +640,7 @@ func TestManageRules_Create(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "tests",
 			Condition:    "C",
-			Data:         sampleData,
+			Data:         toDataMaps(sampleData),
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
@@ -693,7 +710,7 @@ func TestManageRules_Create(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "tests",
 			Condition:    "C",
-			Data:         data,
+			Data:         toDataMaps(data),
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
@@ -757,7 +774,7 @@ func TestManageRules_Create(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "tests",
 			Condition:    "C",
-			Data:         data,
+			Data:         toDataMaps(data),
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
@@ -818,7 +835,7 @@ func TestManageRules_Create(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "tests",
 			Condition:    "C",
-			Data:         data,
+			Data:         toDataMaps(data),
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
@@ -856,11 +873,11 @@ func TestManageRules_Create(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "tests",
 			Condition:    "A",
-			Data:         recordingRuleTypeQuery,
+			Data:         toDataMaps(recordingRuleTypeQuery),
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
-			Record:       recordParams,
+			Record:       toMap(recordParams),
 			Annotations: map[string]string{
 				"summary": "Recording rule for test",
 			},
@@ -950,7 +967,7 @@ func TestManageRules_Update(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "tests",
 			Condition:    "A",
-			Data:         sampleData,
+			Data:         toDataMaps(sampleData),
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
@@ -966,7 +983,7 @@ func TestManageRules_Update(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "tests",
 			Condition:    "A",
-			Data:         sampleData,
+			Data:         toDataMaps(sampleData),
 			NoDataState:  "Alerting",
 			ExecErrState: "Alerting",
 			For:          "10m",
@@ -1023,7 +1040,7 @@ func TestManageRules_Update(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "tests",
 			Condition:    "A",
-			Data:         sampleData,
+			Data:         toDataMaps(sampleData),
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
@@ -1039,7 +1056,7 @@ func TestManageRules_Update(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "tests",
 			Condition:    "A",
-			Data:         sampleData,
+			Data:         toDataMaps(sampleData),
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
@@ -1099,7 +1116,7 @@ func TestManageRules_Update(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "tests",
 			Condition:    "A",
-			Data:         sampleData,
+			Data:         toDataMaps(sampleData),
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
@@ -1117,7 +1134,7 @@ func TestManageRules_Update(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "tests",
 			Condition:    "A",
-			Data:         sampleData,
+			Data:         toDataMaps(sampleData),
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
@@ -1157,7 +1174,7 @@ func TestManageRules_Update(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "tests",
 			Condition:    "A",
-			Data:         recordingRuleTypeQuery,
+			Data:         toDataMaps(recordingRuleTypeQuery),
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
@@ -1285,7 +1302,7 @@ func TestManageRules_Update(t *testing.T) {
 			RuleGroup:                   "test-group",
 			FolderUID:                   "tests",
 			Condition:                   "A",
-			Data:                        sampleData,
+			Data:                        toDataMaps(sampleData),
 			NoDataState:                 "OK",
 			ExecErrState:                "OK",
 			For:                         "5m",
@@ -1356,7 +1373,7 @@ func TestManageRules_Update(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "tests",
 			Condition:    "A",
-			Data:         recordingRuleTypeQuery,
+			Data:         toDataMaps(recordingRuleTypeQuery),
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
@@ -1438,7 +1455,7 @@ func TestManageRules_Delete(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "tests",
 			Condition:    "A",
-			Data:         sampleData,
+			Data:         toDataMaps(sampleData),
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
@@ -1548,7 +1565,7 @@ func TestManageRules_DisableProvenance(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "tests",
 			Condition:    "C",
-			Data:         sampleData,
+			Data:         toDataMaps(sampleData),
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
@@ -1581,7 +1598,7 @@ func TestManageRules_DisableProvenance(t *testing.T) {
 			RuleGroup:         "test-group",
 			FolderUID:         "tests",
 			Condition:         "C",
-			Data:              sampleData,
+			Data:              toDataMaps(sampleData),
 			NoDataState:       "OK",
 			ExecErrState:      "OK",
 			For:               "5m",
@@ -1614,7 +1631,7 @@ func TestManageRules_DisableProvenance(t *testing.T) {
 			RuleGroup:         "test-group",
 			FolderUID:         "tests",
 			Condition:         "C",
-			Data:              sampleData,
+			Data:              toDataMaps(sampleData),
 			NoDataState:       "OK",
 			ExecErrState:      "OK",
 			For:               "5m",
@@ -1646,7 +1663,7 @@ func TestManageRules_DisableProvenance(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "tests",
 			Condition:    "C",
-			Data:         sampleData,
+			Data:         toDataMaps(sampleData),
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
@@ -1662,7 +1679,7 @@ func TestManageRules_DisableProvenance(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "tests",
 			Condition:    "C",
-			Data:         sampleData,
+			Data:         toDataMaps(sampleData),
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "10m",
@@ -1693,7 +1710,7 @@ func TestManageRules_DisableProvenance(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "tests",
 			Condition:    "C",
-			Data:         sampleData,
+			Data:         toDataMaps(sampleData),
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
@@ -1710,7 +1727,7 @@ func TestManageRules_DisableProvenance(t *testing.T) {
 			RuleGroup:         "test-group",
 			FolderUID:         "tests",
 			Condition:         "C",
-			Data:              sampleData,
+			Data:              toDataMaps(sampleData),
 			NoDataState:       "OK",
 			ExecErrState:      "OK",
 			For:               "10m",
@@ -1742,7 +1759,7 @@ func TestManageRules_DisableProvenance(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "tests",
 			Condition:    "C",
-			Data:         sampleData,
+			Data:         toDataMaps(sampleData),
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
@@ -1759,7 +1776,7 @@ func TestManageRules_DisableProvenance(t *testing.T) {
 			RuleGroup:         "test-group",
 			FolderUID:         "tests",
 			Condition:         "C",
-			Data:              sampleData,
+			Data:              toDataMaps(sampleData),
 			NoDataState:       "OK",
 			ExecErrState:      "OK",
 			For:               "10m",
