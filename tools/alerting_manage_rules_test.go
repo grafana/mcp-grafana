@@ -138,17 +138,7 @@ func TestManageRules_List(t *testing.T) {
 		ctx := newTestContext()
 		result, err := manageRulesRead(ctx, ManageRulesReadParams{
 			listFilterParams: listFilterParams{
-				LabelSelectors: []Selector{
-					{
-						Filters: []LabelMatcher{
-							{
-								Name:  "severity",
-								Value: "info",
-								Type:  "=",
-							},
-						},
-					},
-				},
+				LabelSelectors: []string{`{severity="info"}`},
 			},
 			Operation: "list",
 		})
@@ -165,17 +155,7 @@ func TestManageRules_List(t *testing.T) {
 		ctx := newTestContext()
 		result, err := manageRulesRead(ctx, ManageRulesReadParams{
 			listFilterParams: listFilterParams{
-				LabelSelectors: []Selector{
-					{
-						Filters: []LabelMatcher{
-							{
-								Name:  "severity",
-								Value: "critical",
-								Type:  "=",
-							},
-						},
-					},
-				},
+				LabelSelectors: []string{`{severity="critical"}`},
 			},
 			Operation: "list",
 		})
@@ -190,26 +170,7 @@ func TestManageRules_List(t *testing.T) {
 		ctx := newTestContext()
 		result, err := manageRulesRead(ctx, ManageRulesReadParams{
 			listFilterParams: listFilterParams{
-				LabelSelectors: []Selector{
-					{
-						Filters: []LabelMatcher{
-							{
-								Name:  "severity",
-								Value: "info",
-								Type:  "=",
-							},
-						},
-					},
-					{
-						Filters: []LabelMatcher{
-							{
-								Name:  "rule",
-								Value: "second",
-								Type:  "=",
-							},
-						},
-					},
-				},
+				LabelSelectors: []string{`{severity="info"}`, `{rule="second"}`},
 			},
 			Operation: "list",
 		})
@@ -224,17 +185,7 @@ func TestManageRules_List(t *testing.T) {
 		ctx := newTestContext()
 		result, err := manageRulesRead(ctx, ManageRulesReadParams{
 			listFilterParams: listFilterParams{
-				LabelSelectors: []Selector{
-					{
-						Filters: []LabelMatcher{
-							{
-								Name:  "rule",
-								Value: "fi.*",
-								Type:  "=~",
-							},
-						},
-					},
-				},
+				LabelSelectors: []string{`{rule=~"fi.*"}`},
 			},
 			Operation: "list",
 		})
@@ -249,17 +200,7 @@ func TestManageRules_List(t *testing.T) {
 		ctx := newTestContext()
 		result, err := manageRulesRead(ctx, ManageRulesReadParams{
 			listFilterParams: listFilterParams{
-				LabelSelectors: []Selector{
-					{
-						Filters: []LabelMatcher{
-							{
-								Name:  "severity",
-								Value: "critical",
-								Type:  "!=",
-							},
-						},
-					},
-				},
+				LabelSelectors: []string{`{severity!="critical"}`},
 			},
 			Operation: "list",
 		})
@@ -274,17 +215,7 @@ func TestManageRules_List(t *testing.T) {
 		ctx := newTestContext()
 		result, err := manageRulesRead(ctx, ManageRulesReadParams{
 			listFilterParams: listFilterParams{
-				LabelSelectors: []Selector{
-					{
-						Filters: []LabelMatcher{
-							{
-								Name:  "severity",
-								Value: "crit.*",
-								Type:  "!~",
-							},
-						},
-					},
-				},
+				LabelSelectors: []string{`{severity!~"crit.*"}`},
 			},
 			Operation: "list",
 		})
@@ -299,17 +230,7 @@ func TestManageRules_List(t *testing.T) {
 		ctx := newTestContext()
 		result, err := manageRulesRead(ctx, ManageRulesReadParams{
 			listFilterParams: listFilterParams{
-				LabelSelectors: []Selector{
-					{
-						Filters: []LabelMatcher{
-							{
-								Name:  "nonexistent",
-								Value: "value",
-								Type:  "=",
-							},
-						},
-					},
-				},
+				LabelSelectors: []string{`{nonexistent="value"}`},
 			},
 			Operation: "list",
 		})
@@ -324,17 +245,7 @@ func TestManageRules_List(t *testing.T) {
 		ctx := newTestContext()
 		result, err := manageRulesRead(ctx, ManageRulesReadParams{
 			listFilterParams: listFilterParams{
-				LabelSelectors: []Selector{
-					{
-						Filters: []LabelMatcher{
-							{
-								Name:  "nonexistent",
-								Value: "value",
-								Type:  "!=",
-							},
-						},
-					},
-				},
+				LabelSelectors: []string{`{nonexistent!="value"}`},
 			},
 			Operation: "list",
 		})
@@ -1897,13 +1808,7 @@ func TestManageRules_List_Datasource(t *testing.T) {
 
 		result, err := manageRulesRead(ctx, ManageRulesReadParams{
 			listFilterParams: listFilterParams{
-				LabelSelectors: []Selector{
-					{
-						Filters: []LabelMatcher{
-							{Name: "severity", Type: "=", Value: "warning"},
-						},
-					},
-				},
+				LabelSelectors: []string{`{severity="warning"}`},
 			},
 			Operation:     "list",
 			DatasourceUID: &dsUID,
