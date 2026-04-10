@@ -1060,14 +1060,14 @@ func TestManageRules_Update(t *testing.T) {
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
-			NotificationSettings: &NotificationSettings{
+			NotificationSettings: toMap(&NotificationSettings{
 				Receiver:          ptrString("Email1"),
 				GroupBy:           []string{"alertname", "grafana_folder"},
 				GroupWait:         "30s",
 				GroupInterval:     "5m",
 				RepeatInterval:    "4h",
 				MuteTimeIntervals: []string{"weekends"},
-			},
+			}),
 			OrgID: 1,
 		})
 		require.NoError(t, err)
@@ -1138,11 +1138,11 @@ func TestManageRules_Update(t *testing.T) {
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
-			Record: &Record{
+			Record: toMap(&Record{
 				From:                ptrString("A"),
 				Metric:              ptrString("test_metric_record"),
 				TargetDatasourceUID: "prometheus",
-			},
+			}),
 			OrgID: 1,
 		})
 		require.NoError(t, err)
@@ -1178,11 +1178,11 @@ func TestManageRules_Update(t *testing.T) {
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
-			Record: &Record{
+			Record: toMap(&Record{
 				From:                ptrString("A"),
 				Metric:              ptrString("original_recording_metric"),
 				TargetDatasourceUID: "prometheus",
-			},
+			}),
 			OrgID: 1,
 		})
 		require.NoError(t, err, "create recording rule should not return error")
@@ -1209,15 +1209,15 @@ func TestManageRules_Update(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "tests",
 			Condition:    "A",
-			Data:         updatedQuery,
+			Data:         toDataMaps(updatedQuery),
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "10m",
-			Record: &Record{
+			Record: toMap(&Record{
 				From:                ptrString("A"),
 				Metric:              ptrString("updated_recording_metric"),
 				TargetDatasourceUID: "prometheus",
-			},
+			}),
 			OrgID: 1,
 		})
 		require.NoError(t, err, "update recording rule should not return error")
@@ -1251,7 +1251,7 @@ func TestManageRules_Update(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "tests",
 			Condition:    "A",
-			Data:         []*AlertQuery{},
+			Data:         []map[string]any{},
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
@@ -1313,10 +1313,10 @@ func TestManageRules_Update(t *testing.T) {
 			MissingSeriesEvalsToResolve: 3,
 			OrgID:                       1,
 			DisableProvenance:           &disableProvenance,
-			NotificationSettings: &NotificationSettings{
+			NotificationSettings: toMap(&NotificationSettings{
 				Receiver: ptrString("Email1"),
 				GroupBy:  []string{"alertname"},
-			},
+			}),
 		}
 
 		_, err := manageRulesReadWrite(ctx, initialParams)
@@ -1377,11 +1377,11 @@ func TestManageRules_Update(t *testing.T) {
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
-			Record: &Record{
+			Record: toMap(&Record{
 				From:                ptrString("A"),
 				Metric:              ptrString("test_metric"),
 				TargetDatasourceUID: "prometheus",
-			},
+			}),
 			Annotations: map[string]string{
 				"summary": "recording test",
 			},
