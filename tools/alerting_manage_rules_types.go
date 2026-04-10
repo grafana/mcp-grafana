@@ -455,23 +455,6 @@ func (p DeleteAlertRuleParams) validate() error {
 	return nil
 }
 
-// convertMatchers validates and converts LabelMatcher values into Prometheus matchers.
-func convertMatchers(matchers []LabelMatcher) ([]*labels.Matcher, error) {
-	var result []*labels.Matcher
-	for _, m := range matchers {
-		matchType, ok := matchTypeMap[m.Type]
-		if !ok {
-			return nil, fmt.Errorf("invalid matcher type: %s", m.Type)
-		}
-		lm, err := labels.NewMatcher(matchType, m.Name, m.Value)
-		if err != nil {
-			return nil, fmt.Errorf("invalid matcher {%s %s %q}: %w", m.Name, m.Type, m.Value, err)
-		}
-		result = append(result, lm)
-	}
-	return result, nil
-}
-
 // parseMatcherStrings parses Prometheus-style matcher strings (e.g. "severity=critical")
 // into LabelMatcher structs. Each string should be a single matcher like "name=value",
 // "name!=value", "name=~regex", or "name!~regex".
