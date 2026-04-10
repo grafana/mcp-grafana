@@ -39,6 +39,7 @@ type alertRuleDetail struct {
 	IsPaused             bool                                  `json:"is_paused"`
 	NotificationSettings *models.AlertRuleNotificationSettings `json:"notification_settings,omitempty"`
 	Queries              []querySummary                        `json:"queries,omitempty"`
+	Data                 []*models.AlertQuery                  `json:"data,omitempty"`
 
 	KeepFiringFor               string  `json:"keep_firing_for,omitempty"`
 	Record                      *Record `json:"record,omitempty" `

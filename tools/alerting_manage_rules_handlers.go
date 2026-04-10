@@ -159,6 +159,7 @@ func mergeRuleDetail(provisioned *models.ProvisionedAlertRule, runtime *alerting
 	detail.IsPaused = provisioned.IsPaused
 	detail.NotificationSettings = provisioned.NotificationSettings
 	detail.Queries = extractQuerySummaries(provisioned.Data)
+	detail.Data = provisioned.Data
 
 	if runtime != nil {
 		detail.State = normalizeState(runtime.State)
