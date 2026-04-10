@@ -71,18 +71,134 @@ type AlertQuery struct {
 	Model             AlertQueryModel    `json:"model" jsonschema:"required,description=Query model. For data sources: set expr. For expressions: set type and expression."`
 }
 
+// AlertQueryModel represents the query model for an alert query.
+// It has typed fields for common PromQL/expression properties, plus an Extra
+// map that preserves all additional datasource-specific fields (e.g. Graphite
+// "target", "datasource", "textEditor") that would otherwise be silently
+// dropped during JSON round-tripping.
 type AlertQueryModel struct {
 	Expr string `json:"expr,omitempty" jsonschema:"description=Query expression (PromQL\\, LogQL\\, etc.)"`
 
 	// Server-side expressions only (when datasourceUid is __expr__).
-	Type       string           `json:"type,omitempty" jsonschema:"description=Expression type (only for __expr__ datasource): math\\, reduce\\, threshold"`
+	Type       string           `json:"type,omitempty" jsonschema:"description=Expression type (only for __expr__ datasource): math\\, reduce\\, threshold\\, classic_conditions"`
 	Expression string           `json:"expression,omitempty" jsonschema:"description=Expression ref or formula. For reduce/threshold: ref like 'A'. For math: '$A > 0'."`
 	Reducer    string           `json:"reducer,omitempty" jsonschema:"description=Reducer for reduce expressions: last\\, mean\\, min\\, max\\, sum\\, count"`
-	Conditions []AlertCondition `json:"conditions,omitempty" jsonschema:"description=Conditions for threshold expressions"`
+	Conditions []AlertCondition `json:"conditions,omitempty" jsonschema:"description=Conditions for threshold or classic_conditions expressions"`
+
+	// Extra captures all additional model fields not explicitly typed above
+	// (e.g. Graphite "target", "datasource", "textEditor", "intervalMs",
+	// "maxDataPoints", "refId", etc.). This ensures datasource-specific
+	// fields survive JSON round-tripping through convertAlertQueries.
+	Extra map[string]any `json:"-"`
 }
 
+// MarshalJSON implements custom JSON marshaling that merges typed fields with
+// Extra overflow fields, ensuring datasource-specific properties are preserved.
+func (m AlertQueryModel) MarshalJSON() ([]byte, error) {
+	result := make(map[string]any)
+
+	// Start with extra fields as the base
+	for k, v := range m.Extra {
+		result[k] = v
+	}
+
+	// Overlay typed fields (they take precedence over Extra)
+	if m.Expr != "" {
+		result["expr"] = m.Expr
+	}
+	if m.Type != "" {
+		result["type"] = m.Type
+	}
+	if m.Expression != "" {
+		result["expression"] = m.Expression
+	}
+	if m.Reducer != "" {
+		result["reducer"] = m.Reducer
+	}
+	if len(m.Conditions) > 0 {
+		result["conditions"] = m.Conditions
+	}
+
+	return json.Marshal(result)
+}
+
+// UnmarshalJSON implements custom JSON unmarshaling that populates typed fields
+// and stores all remaining fields in Extra.
+func (m *AlertQueryModel) UnmarshalJSON(data []byte) error {
+	// Unmarshal everything into a generic map first
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	// Extract known typed fields. If a known key exists but has an unexpected
+	// type (e.g. null, number, object instead of string), fall through to
+	// Extra so the value is preserved in the round-trip rather than silently
+	// dropped.
+	knownConsumed := make(map[string]bool)
+
+	if v, ok := raw["expr"].(string); ok {
+		m.Expr = v
+		knownConsumed["expr"] = true
+	}
+	if v, ok := raw["type"].(string); ok {
+		m.Type = v
+		knownConsumed["type"] = true
+	}
+	if v, ok := raw["expression"].(string); ok {
+		m.Expression = v
+		knownConsumed["expression"] = true
+	}
+	if v, ok := raw["reducer"].(string); ok {
+		m.Reducer = v
+		knownConsumed["reducer"] = true
+	}
+	if v, ok := raw["conditions"]; ok {
+		condBytes, err := json.Marshal(v)
+		if err != nil {
+			return fmt.Errorf("marshal conditions: %w", err)
+		}
+		if err := json.Unmarshal(condBytes, &m.Conditions); err != nil {
+			return fmt.Errorf("unmarshal conditions: %w", err)
+		}
+		knownConsumed["conditions"] = true
+	}
+
+	// Store all remaining fields in Extra — including known keys whose
+	// type assertion failed above, so no value is silently lost.
+	m.Extra = make(map[string]any)
+	for k, v := range raw {
+		if !knownConsumed[k] {
+			m.Extra[k] = v
+		}
+	}
+
+	return nil
+}
+
+// AlertCondition represents a condition within a classic_conditions or threshold expression.
+// It includes the full set of fields used by classic_conditions (evaluator, operator, query, reducer).
 type AlertCondition struct {
-	Evaluator ConditionEvaluator `json:"evaluator" jsonschema:"description=Threshold evaluator"`
+	Evaluator ConditionEvaluator  `json:"evaluator" jsonschema:"description=Threshold evaluator"`
+	Operator  *ConditionOperator  `json:"operator,omitempty" jsonschema:"description=Logical operator (and/or) for combining conditions"`
+	Query     *ConditionQuery     `json:"query,omitempty" jsonschema:"description=Query reference for classic_conditions (contains params with RefID)"`
+	Reducer   *ConditionReducer   `json:"reducer,omitempty" jsonschema:"description=Reducer for classic_conditions (avg\\, sum\\, min\\, max\\, count\\, last\\, median)"`
+}
+
+// ConditionOperator represents the logical operator in a classic_conditions condition.
+type ConditionOperator struct {
+	Type string `json:"type" jsonschema:"description=Logical operator type: and\\, or"`
+}
+
+// ConditionQuery represents the query reference in a classic_conditions condition.
+type ConditionQuery struct {
+	Params []string `json:"params" jsonschema:"description=Query parameters\\, typically contains the RefID of the referenced query (e.g. ['C'])"`
+}
+
+// ConditionReducer represents the reducer in a classic_conditions condition.
+type ConditionReducer struct {
+	Type   string   `json:"type" jsonschema:"description=Reducer type: avg\\, sum\\, min\\, max\\, count\\, last\\, median"`
+	Params []string `json:"params,omitempty" jsonschema:"description=Optional reducer parameters"`
 }
 
 type ConditionEvaluator struct {
