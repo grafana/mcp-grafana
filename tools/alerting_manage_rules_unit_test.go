@@ -850,6 +850,16 @@ func TestMergeRuleDetail(t *testing.T) {
 		require.Equal(t, "__expr__", detail.Queries[1].DatasourceUID)
 		require.Equal(t, "$A > 0", detail.Queries[1].Expression)
 
+		// Full query data should be preserved for round-tripping
+		require.Len(t, detail.Data, 2, "Data should contain full query models from provisioning API")
+		require.Equal(t, "A", detail.Data[0].RefID)
+		require.Equal(t, "prometheus-uid", detail.Data[0].DatasourceUID)
+		model0, ok := detail.Data[0].Model.(map[string]any)
+		require.True(t, ok, "Data[0].Model should be a map")
+		require.Equal(t, "up{job=\"api\"}", model0["expr"])
+		require.Equal(t, "B", detail.Data[1].RefID)
+		require.Equal(t, "__expr__", detail.Data[1].DatasourceUID)
+
 		// Runtime fields
 		require.Equal(t, "firing", detail.State)
 		require.Equal(t, "ok", detail.Health)
@@ -918,6 +928,55 @@ func TestMergeRuleDetail(t *testing.T) {
 		require.Equal(t, "ok", detail.Health, "the health status should match")
 		require.Equal(t, "recording", detail.Type, "the rule type should be 'recording'")
 		require.Equal(t, "2026-02-28T12:00:00Z", detail.LastEvaluation, "the last evaluation time should match formatted UTC time")
+	})
+
+	t.Run("Data preserves full Graphite query model for round-tripping", func(t *testing.T) {
+		title := "DLB Error Rate"
+		folderUID := "folder-1"
+		ruleGroup := "infra"
+		condition := "A"
+
+		graphiteModel := map[string]any{
+			"datasource": map[string]any{"type": "graphite", "uid": "000000004"},
+			"target":     "alias(asPercent(sumSeries(a), sumSeries(b)), 'error rate')",
+			"textEditor": true,
+			"intervalMs":  float64(1000),
+			"refId":      "C",
+		}
+
+		provisioned := &models.ProvisionedAlertRule{
+			UID:       "rule-graphite",
+			Title:     &title,
+			FolderUID: &folderUID,
+			RuleGroup: &ruleGroup,
+			Condition: &condition,
+			Data: []*models.AlertQuery{
+				{
+					RefID:         "C",
+					DatasourceUID: "000000004",
+					Model:         graphiteModel,
+				},
+			},
+		}
+
+		detail := mergeRuleDetail(provisioned, nil)
+
+		// Queries summary won't have the Graphite target (only expr/expression/query)
+		require.Len(t, detail.Queries, 1)
+		require.Equal(t, "C", detail.Queries[0].RefID)
+		require.Empty(t, detail.Queries[0].Expression, "querySummary does not capture Graphite target")
+
+		// But Data should have the full model for round-tripping
+		require.Len(t, detail.Data, 1, "Data must be populated with full query models")
+		require.Equal(t, "C", detail.Data[0].RefID)
+		require.Equal(t, "000000004", detail.Data[0].DatasourceUID)
+		model, ok := detail.Data[0].Model.(map[string]any)
+		require.True(t, ok)
+		require.Equal(t, "alias(asPercent(sumSeries(a), sumSeries(b)), 'error rate')", model["target"], "Graphite target must survive in Data")
+		require.Equal(t, true, model["textEditor"], "textEditor must survive in Data")
+		ds, ok := model["datasource"].(map[string]any)
+		require.True(t, ok)
+		require.Equal(t, "graphite", ds["type"])
 	})
 
 	t.Run("nil runtime leaves state fields empty", func(t *testing.T) {
