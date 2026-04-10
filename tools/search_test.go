@@ -30,7 +30,7 @@ func TestSearchTools(t *testing.T) {
 			Query: "Tests",
 		})
 		require.NoError(t, err)
-		assert.NotEmpty(t, result)
-		assert.Equal(t, models.HitType("dash-folder"), result[0].Type)
+		assert.NotEmpty(t, result.Dashboards)
+		assert.Equal(t, "dash-folder", result.Dashboards[0].Type)
 	})
 }

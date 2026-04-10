@@ -1327,7 +1327,7 @@ func TestManageRules_Update(t *testing.T) {
 		updateParams.Title = "Identical Test Alert - Updated"
 		updateParams.For = "15m"
 		updateParams.IsPaused = false
-		updateParams.NotificationSettings.Receiver = ptrString("Email2")
+		updateParams.NotificationSettings["receiver"] = "Email2"
 
 		_, err = manageRulesReadWrite(ctx, updateParams)
 		require.NoError(t, err, "should update the alert rule")
@@ -1398,7 +1398,7 @@ func TestManageRules_Update(t *testing.T) {
 		updateParams := initialParams
 		updateParams.Operation = "update"
 		updateParams.Title = "Identical Test Recording - Updated"
-		updateParams.Record.Metric = ptrString("test_metric_updated")
+		updateParams.Record["metric"] = "test_metric_updated"
 		updateParams.Labels["team"] = "recording-updated"
 
 		_, err = manageRulesReadWrite(ctx, updateParams)
