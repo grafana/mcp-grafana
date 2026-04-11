@@ -44,7 +44,7 @@ type disabledTools struct {
 	prometheus, loki, elasticsearch, alerting,
 	dashboard, folder, oncall, asserts, sift, admin,
 	pyroscope, navigation, proxied, annotations, rendering, cloudwatch, write,
-	examples, clickhouse, searchlogs,
+	examples, clickhouse, searchlogs, graphite,
 	runpanelquery bool
 }
 
@@ -64,7 +64,7 @@ type grafanaConfig struct {
 }
 
 func (dt *disabledTools) addFlags() {
-	flag.StringVar(&dt.enabledTools, "enabled-tools", "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering", "A comma separated list of tools enabled for this server. Can be overwritten entirely or by disabling specific components, e.g. --disable-search.")
+	flag.StringVar(&dt.enabledTools, "enabled-tools", "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering,graphite", "A comma separated list of tools enabled for this server. Can be overwritten entirely or by disabling specific components, e.g. --disable-search.")
 	flag.BoolVar(&dt.search, "disable-search", false, "Disable search tools")
 	flag.BoolVar(&dt.datasource, "disable-datasource", false, "Disable datasource tools")
 	flag.BoolVar(&dt.incident, "disable-incident", false, "Disable incident tools")
@@ -89,6 +89,7 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.clickhouse, "disable-clickhouse", false, "Disable ClickHouse tools")
 	flag.BoolVar(&dt.searchlogs, "disable-searchlogs", false, "Disable search logs tools")
 	flag.BoolVar(&dt.runpanelquery, "disable-runpanelquery", false, "Disable run panel query tools")
+	flag.BoolVar(&dt.graphite, "disable-graphite", false, "Disable Graphite tools")
 }
 
 func (gc *grafanaConfig) addFlags() {
@@ -129,6 +130,7 @@ func (dt *disabledTools) addTools(s *server.MCPServer) {
 	maybeAddTools(s, tools.AddClickHouseTools, enabledTools, dt.clickhouse, "clickhouse")
 	maybeAddTools(s, tools.AddSearchLogsTools, enabledTools, dt.searchlogs, "searchlogs")
 	maybeAddTools(s, tools.AddRunPanelQueryTools, enabledTools, dt.runpanelquery, "runpanelquery")
+	maybeAddTools(s, tools.AddGraphiteTools, enabledTools, dt.graphite, "graphite")
 }
 
 func newServer(transport string, dt disabledTools, obs *observability.Observability, sessionIdleTimeoutMinutes int) (*server.MCPServer, *mcpgrafana.ToolManager, *mcpgrafana.SessionManager) {
