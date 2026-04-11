@@ -3,6 +3,7 @@ package tools
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/grafana/grafana-openapi-client-go/models"
 	"github.com/prometheus/prometheus/model/labels"
@@ -455,16 +456,21 @@ func (p DeleteAlertRuleParams) validate() error {
 	return nil
 }
 
-// parseMatcherStrings parses Prometheus-style matcher strings (e.g. "severity=critical")
-// into LabelMatcher structs. Each string should be a single matcher like "name=value",
-// "name!=value", "name=~regex", or "name!~regex".
+// parseMatcherStrings parses Prometheus-style matcher strings (e.g. 'severity="critical"')
+// into label matchers. Each string should be a single matcher like 'name="value"',
+// 'name!="value"', 'name=~"regex"', or 'name!~"regex"'. Strings may optionally be
+// wrapped in braces (e.g. '{severity="critical"}') — braces are stripped if present.
 func parseMatcherStrings(strs []string) ([]*labels.Matcher, error) {
 	if len(strs) == 0 {
 		return nil, nil
 	}
 	var result []*labels.Matcher
 	for _, s := range strs {
-		parsed, err := parser.ParseMetricSelector("{" + s + "}")
+		s = strings.TrimSpace(s)
+		if !strings.HasPrefix(s, "{") {
+			s = "{" + s + "}"
+		}
+		parsed, err := parser.ParseMetricSelector(s)
 		if err != nil {
 			return nil, fmt.Errorf("invalid matcher %q: %w", s, err)
 		}
