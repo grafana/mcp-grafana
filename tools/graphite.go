@@ -354,9 +354,237 @@ var ListGraphiteTags = mcpgrafana.MustTool(
 	mcp.WithReadOnlyHintAnnotation(true),
 )
 
+// graphiteDensityBucketSize returns an appropriate summarize bucket size for
+// the given from value.  It targets roughly 12–48 buckets over the window;
+// if from cannot be parsed as a relative duration, "1h" is used.
+func graphiteDensityBucketSize(from string) string {
+	if !strings.HasPrefix(from, "-") {
+		return "1h"
+	}
+	s := from[1:]
+	var n int
+	var unit string
+	if _, err := fmt.Sscanf(s, "%d%s", &n, &unit); err != nil {
+		return "1h"
+	}
+	var d time.Duration
+	switch unit {
+	case "m", "min":
+		d = time.Duration(n) * time.Minute
+	case "h":
+		d = time.Duration(n) * time.Hour
+	case "d":
+		d = time.Duration(n) * 24 * time.Hour
+	case "w":
+		d = time.Duration(n) * 7 * 24 * time.Hour
+	default:
+		return "1h"
+	}
+	switch {
+	case d <= 3*time.Hour:
+		return "5m"
+	case d <= 24*time.Hour:
+		return "30m"
+	case d <= 72*time.Hour:
+		return "1h"
+	case d <= 14*24*time.Hour:
+		return "6h"
+	default:
+		return "1d"
+	}
+}
+
+// computeSeriesDensity derives data-density statistics from the parsed
+// datapoints of a single Graphite series.
+func computeSeriesDensity(target string, pts []GraphiteDatapoint) *GraphiteSeriesDensity {
+	total := len(pts)
+
+	var stepSec int64
+	if total >= 2 {
+		if d := pts[1].Timestamp - pts[0].Timestamp; d > 0 {
+			stepSec = d
+		}
+	}
+
+	var nonNull int
+	var lastSeenTS int64
+	var hasLastSeen bool
+	var currentGap, longestGap int
+
+	for _, dp := range pts {
+		if dp.Value != nil {
+			nonNull++
+			lastSeenTS = dp.Timestamp
+			hasLastSeen = true
+			currentGap = 0
+		} else {
+			currentGap++
+			if currentGap > longestGap {
+				longestGap = currentGap
+			}
+		}
+	}
+
+	var fillRatio float64
+	if total > 0 {
+		fillRatio = float64(nonNull) / float64(total)
+	}
+
+	var lastSeen *int64
+	if hasLastSeen {
+		cp := lastSeenTS
+		lastSeen = &cp
+	}
+
+	return &GraphiteSeriesDensity{
+		Target:            target,
+		FillRatio:         fillRatio,
+		TotalPoints:       total,
+		NonNullPoints:     nonNull,
+		LastSeen:          lastSeen,
+		LongestGapSec:     int64(longestGap) * stepSec,
+		EstimatedInterval: stepSec,
+	}
+}
+
+// QueryGraphiteDensityParams defines the inputs for the query_graphite_density tool.
+type QueryGraphiteDensityParams struct {
+	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the Graphite datasource to query"`
+	Target        string `json:"target" jsonschema:"required,description=Graphite target expression; supports wildcards (e.g. 'obox-cl*.sys.sessions')"`
+	From          string `json:"from,omitempty" jsonschema:"description=Start of the time range. Accepts RFC3339 or Graphite relative times (e.g. '-1h'). Defaults to '-1h'."`
+	Until         string `json:"until,omitempty" jsonschema:"description=End of the time range. Accepts RFC3339 or Graphite relative times (e.g. 'now'). Defaults to 'now'."`
+}
+
+// GraphiteSeriesDensity holds data-density statistics for a single Graphite series.
+type GraphiteSeriesDensity struct {
+	// Target is the resolved metric path.
+	Target string `json:"target"`
+	// FillRatio is the fraction of non-null datapoints (0.0–1.0).
+	FillRatio float64 `json:"fillRatio"`
+	// TotalPoints is the total datapoints returned in the window.
+	TotalPoints int `json:"totalPoints"`
+	// NonNullPoints is the count of datapoints that carry a value.
+	NonNullPoints int `json:"nonNullPoints"`
+	// LastSeen is the Unix timestamp of the most recent non-null datapoint,
+	// or null if no data was seen in the window.
+	LastSeen *int64 `json:"lastSeen"`
+	// LongestGapSec is the duration in seconds of the longest consecutive
+	// run of null datapoints.
+	LongestGapSec int64 `json:"longestGap"`
+	// EstimatedInterval is the inferred write interval in seconds derived
+	// from the spacing between consecutive datapoints.
+	EstimatedInterval int64 `json:"estimatedInterval"`
+}
+
+// QueryGraphiteDensityResult is returned by the query_graphite_density tool.
+type QueryGraphiteDensityResult struct {
+	Series []*GraphiteSeriesDensity `json:"series"`
+}
+
+func queryGraphiteDensity(ctx context.Context, args QueryGraphiteDensityParams) (*QueryGraphiteDensityResult, error) {
+	client, err := newGraphiteClient(ctx, args.DatasourceUID)
+	if err != nil {
+		return nil, fmt.Errorf("creating graphite client: %w", err)
+	}
+
+	from := parseGraphiteTime(args.From)
+	if from == "" {
+		from = "-1h"
+	}
+	until := parseGraphiteTime(args.Until)
+	if until == "" {
+		until = "now"
+	}
+
+	// Primary path: fetch summarize(isNonNull(<target>), <bucket>, "sum") to
+	// obtain a compact per-bucket count of non-null points for each series.
+	// This avoids downloading full-resolution data for long windows.
+	bucketSize := graphiteDensityBucketSize(args.From)
+	isNonNullTarget := fmt.Sprintf(`summarize(isNonNull(%s),"%s","sum")`, args.Target, bucketSize)
+
+	isNonNullParams := url.Values{}
+	isNonNullParams.Set("target", isNonNullTarget)
+	isNonNullParams.Set("from", from)
+	isNonNullParams.Set("until", until)
+	isNonNullParams.Set("format", "json")
+
+	var isNonNullCounts []int
+	if data, fetchErr := client.doGet(ctx, "/render", isNonNullParams); fetchErr == nil {
+		var raw []graphiteRawSeries
+		if json.Unmarshal(data, &raw) == nil && len(raw) > 0 {
+			isNonNullCounts = make([]int, len(raw))
+			for i, s := range raw {
+				for _, dp := range parseGraphiteDatapoints(s.Datapoints) {
+					if dp.Value != nil {
+						isNonNullCounts[i] += int(*dp.Value)
+					}
+				}
+			}
+		}
+	}
+	// isNonNullCounts is nil when isNonNull() is unsupported by this Graphite
+	// version or the target matched no series; in both cases nonNullPoints is
+	// computed from raw datapoints below.
+
+	// Always fetch the raw series: required for TotalPoints, LastSeen,
+	// LongestGapSec, and EstimatedInterval.
+	rawParams := url.Values{}
+	rawParams.Set("target", args.Target)
+	rawParams.Set("from", from)
+	rawParams.Set("until", until)
+	rawParams.Set("format", "json")
+
+	rawData, err := client.doGet(ctx, "/render", rawParams)
+	if err != nil {
+		return nil, fmt.Errorf("querying graphite render API: %w", err)
+	}
+
+	var rawSeries []graphiteRawSeries
+	if err := json.Unmarshal(rawData, &rawSeries); err != nil {
+		return nil, fmt.Errorf("parsing graphite render response: %w", err)
+	}
+
+	// Only use isNonNull counts when the series count matches exactly.
+	// A mismatch means summarize consolidated or skipped series differently,
+	// so fall back to counting non-null points from raw datapoints.
+	useIsNonNull := isNonNullCounts != nil && len(isNonNullCounts) == len(rawSeries)
+
+	result := &QueryGraphiteDensityResult{
+		Series: make([]*GraphiteSeriesDensity, 0, len(rawSeries)),
+	}
+	for i, rs := range rawSeries {
+		pts := parseGraphiteDatapoints(rs.Datapoints)
+		stats := computeSeriesDensity(rs.Target, pts)
+		if useIsNonNull {
+			stats.NonNullPoints = isNonNullCounts[i]
+			if stats.TotalPoints > 0 {
+				stats.FillRatio = float64(stats.NonNullPoints) / float64(stats.TotalPoints)
+			}
+		}
+		result.Series = append(result.Series, stats)
+	}
+	return result, nil
+}
+
+// QueryGraphiteDensity is the MCP tool for analysing metric data density.
+var QueryGraphiteDensity = mcpgrafana.MustTool(
+	"query_graphite_density",
+	"Analyses metric data density for one or more Graphite series over a time window. "+
+		"Returns per-series statistics: fillRatio (fraction of non-null datapoints, 0.0–1.0), "+
+		"totalPoints, nonNullPoints, lastSeen (Unix timestamp of most recent non-null value, or null if none), "+
+		"longestGap (longest consecutive null run in seconds), and estimatedInterval (inferred write interval in seconds). "+
+		"Supports wildcard targets (e.g. 'obox-cl*.sys.sessions') to diagnose stale, sparse, or dead metrics across a cluster. "+
+		"A fillRatio of 0 with lastSeen null means the series reported no data in the requested window.",
+	queryGraphiteDensity,
+	mcp.WithTitleAnnotation("Query Graphite metric density"),
+	mcp.WithIdempotentHintAnnotation(true),
+	mcp.WithReadOnlyHintAnnotation(true),
+)
+
 // AddGraphiteTools registers all Graphite tools with the MCP server.
 func AddGraphiteTools(mcp *server.MCPServer) {
 	QueryGraphite.Register(mcp)
 	ListGraphiteMetrics.Register(mcp)
 	ListGraphiteTags.Register(mcp)
+	QueryGraphiteDensity.Register(mcp)
 }
