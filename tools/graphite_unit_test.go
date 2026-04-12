@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -337,4 +338,417 @@ func TestGraphiteClient_DoGet_NonOKStatus(t *testing.T) {
 	_, err := client.doGet(context.Background(), "/render", nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "500")
+}
+
+// --- graphiteDensityBucketSize ---
+
+func TestGraphiteDensityBucketSize(t *testing.T) {
+	tests := []struct {
+		from string
+		want string
+	}{
+		{"-30m", "5m"},
+		{"-1h", "5m"},
+		{"-3h", "5m"},
+		{"-4h", "30m"},
+		{"-12h", "30m"},
+		{"-24h", "30m"},
+		{"-48h", "1h"},
+		{"-72h", "1h"},
+		{"-7d", "6h"},
+		{"-14d", "6h"},
+		{"-30d", "1d"},
+		{"-1w", "6h"},
+		{"", "1h"},
+		{"now", "1h"},
+		{"2024-01-01T00:00:00Z", "1h"},
+		{"-5x", "1h"}, // unknown unit
+	}
+	for _, tc := range tests {
+		t.Run(tc.from, func(t *testing.T) {
+			assert.Equal(t, tc.want, graphiteDensityBucketSize(tc.from))
+		})
+	}
+}
+
+// --- computeSeriesDensity ---
+
+func TestComputeSeriesDensity_AllNull(t *testing.T) {
+	pts := []GraphiteDatapoint{
+		{Value: nil, Timestamp: 1704067200},
+		{Value: nil, Timestamp: 1704067260},
+		{Value: nil, Timestamp: 1704067320},
+	}
+	s := computeSeriesDensity("my.metric", pts)
+	assert.Equal(t, "my.metric", s.Target)
+	assert.InDelta(t, 0.0, s.FillRatio, 1e-9)
+	assert.Equal(t, 3, s.TotalPoints)
+	assert.Equal(t, 0, s.NonNullPoints)
+	assert.Nil(t, s.LastSeen)
+	assert.Equal(t, int64(180), s.LongestGapSec) // 3 nulls × 60 s/step
+	assert.Equal(t, int64(60), s.EstimatedInterval)
+}
+
+func TestComputeSeriesDensity_AllNonNull(t *testing.T) {
+	v1, v2, v3 := 1.0, 2.0, 3.0
+	pts := []GraphiteDatapoint{
+		{Value: &v1, Timestamp: 1704067200},
+		{Value: &v2, Timestamp: 1704067260},
+		{Value: &v3, Timestamp: 1704067320},
+	}
+	s := computeSeriesDensity("my.metric", pts)
+	assert.InDelta(t, 1.0, s.FillRatio, 1e-9)
+	assert.Equal(t, 3, s.TotalPoints)
+	assert.Equal(t, 3, s.NonNullPoints)
+	require.NotNil(t, s.LastSeen)
+	assert.Equal(t, int64(1704067320), *s.LastSeen)
+	assert.Equal(t, int64(0), s.LongestGapSec)
+	assert.Equal(t, int64(60), s.EstimatedInterval)
+}
+
+func TestComputeSeriesDensity_Mixed(t *testing.T) {
+	v := 5.5
+	pts := []GraphiteDatapoint{
+		{Value: nil, Timestamp: 1704067200},
+		{Value: &v, Timestamp: 1704067260},
+		{Value: nil, Timestamp: 1704067320},
+		{Value: nil, Timestamp: 1704067380},
+	}
+	s := computeSeriesDensity("my.metric", pts)
+	assert.InDelta(t, 0.25, s.FillRatio, 1e-9)
+	assert.Equal(t, 4, s.TotalPoints)
+	assert.Equal(t, 1, s.NonNullPoints)
+	require.NotNil(t, s.LastSeen)
+	assert.Equal(t, int64(1704067260), *s.LastSeen)
+	assert.Equal(t, int64(120), s.LongestGapSec) // trailing 2-null run × 60 s
+	assert.Equal(t, int64(60), s.EstimatedInterval)
+}
+
+func TestComputeSeriesDensity_Empty(t *testing.T) {
+	s := computeSeriesDensity("my.metric", nil)
+	assert.Equal(t, "my.metric", s.Target)
+	assert.InDelta(t, 0.0, s.FillRatio, 1e-9)
+	assert.Equal(t, 0, s.TotalPoints)
+	assert.Equal(t, 0, s.NonNullPoints)
+	assert.Nil(t, s.LastSeen)
+	assert.Equal(t, int64(0), s.LongestGapSec)
+	assert.Equal(t, int64(0), s.EstimatedInterval)
+}
+
+func TestComputeSeriesDensity_SingleNonNull(t *testing.T) {
+	v := 1.0
+	pts := []GraphiteDatapoint{{Value: &v, Timestamp: 1704067200}}
+	s := computeSeriesDensity("my.metric", pts)
+	assert.InDelta(t, 1.0, s.FillRatio, 1e-9)
+	assert.Equal(t, 1, s.TotalPoints)
+	assert.Equal(t, 1, s.NonNullPoints)
+	require.NotNil(t, s.LastSeen)
+	assert.Equal(t, int64(1704067200), *s.LastSeen)
+	assert.Equal(t, int64(0), s.LongestGapSec)
+	assert.Equal(t, int64(0), s.EstimatedInterval) // can't infer from 1 point
+}
+
+func TestComputeSeriesDensity_LongestGapInMiddle(t *testing.T) {
+	v := 1.0
+	pts := []GraphiteDatapoint{
+		{Value: &v, Timestamp: 1704067200},
+		{Value: nil, Timestamp: 1704067260},
+		{Value: nil, Timestamp: 1704067320},
+		{Value: nil, Timestamp: 1704067380},
+		{Value: &v, Timestamp: 1704067440},
+		{Value: nil, Timestamp: 1704067500},
+	}
+	s := computeSeriesDensity("my.metric", pts)
+	// Middle gap: 3 nulls = 180 s; trailing gap: 1 null = 60 s
+	assert.Equal(t, int64(180), s.LongestGapSec)
+	assert.Equal(t, 2, s.NonNullPoints)
+	require.NotNil(t, s.LastSeen)
+	assert.Equal(t, int64(1704067440), *s.LastSeen)
+}
+
+// --- query_graphite_density full-flow via client ---
+
+func TestQueryGraphiteDensity_AllNullCluster(t *testing.T) {
+	// Primary use-case: wildcard target where every node is all-null.
+	// Verifies that the raw-series path returns fillRatio=0 and lastSeen=nil
+	// for every series.
+	rawResp := []graphiteRawSeries{
+		{
+			Target: "obox-cl1.sys.sessions",
+			Datapoints: [][]json.RawMessage{
+				{json.RawMessage("null"), json.RawMessage("1704067200")},
+				{json.RawMessage("null"), json.RawMessage("1704067260")},
+				{json.RawMessage("null"), json.RawMessage("1704067320")},
+			},
+		},
+		{
+			Target: "obox-cl2.sys.sessions",
+			Datapoints: [][]json.RawMessage{
+				{json.RawMessage("null"), json.RawMessage("1704067200")},
+				{json.RawMessage("null"), json.RawMessage("1704067260")},
+				{json.RawMessage("null"), json.RawMessage("1704067320")},
+			},
+		},
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(rawResp)
+	}))
+	t.Cleanup(ts.Close)
+
+	client := &GraphiteClient{httpClient: http.DefaultClient, baseURL: ts.URL}
+
+	params := url.Values{}
+	params.Set("target", "obox-cl*.sys.sessions")
+	params.Set("from", "-1h")
+	params.Set("until", "now")
+	params.Set("format", "json")
+
+	data, err := client.doGet(context.Background(), "/render", params)
+	require.NoError(t, err)
+
+	var raw []graphiteRawSeries
+	require.NoError(t, json.Unmarshal(data, &raw))
+	require.Len(t, raw, 2)
+
+	for _, rs := range raw {
+		pts := parseGraphiteDatapoints(rs.Datapoints)
+		s := computeSeriesDensity(rs.Target, pts)
+		assert.InDelta(t, 0.0, s.FillRatio, 1e-9, "series %s", rs.Target)
+		assert.Equal(t, 0, s.NonNullPoints, "series %s", rs.Target)
+		assert.Nil(t, s.LastSeen, "series %s", rs.Target)
+	}
+}
+
+func TestQueryGraphiteDensity_MixedCluster(t *testing.T) {
+	v5, v6 := 5.0, 6.0
+	rawResp := []graphiteRawSeries{
+		{
+			Target: "obox-cl1.sys.sessions",
+			Datapoints: [][]json.RawMessage{
+				{json.RawMessage("null"), json.RawMessage("1704067200")},
+				{json.RawMessage("null"), json.RawMessage("1704067260")},
+				{json.RawMessage("null"), json.RawMessage("1704067320")},
+			},
+		},
+		{
+			Target: "obox-cl2.sys.sessions",
+			Datapoints: [][]json.RawMessage{
+				{json.RawMessage("5.0"), json.RawMessage("1704067200")},
+				{json.RawMessage("null"), json.RawMessage("1704067260")},
+				{json.RawMessage("6.0"), json.RawMessage("1704067320")},
+			},
+		},
+	}
+	_ = v5
+	_ = v6
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(rawResp)
+	}))
+	t.Cleanup(ts.Close)
+
+	client := &GraphiteClient{httpClient: http.DefaultClient, baseURL: ts.URL}
+
+	params := url.Values{}
+	params.Set("target", "obox-cl*.sys.sessions")
+	params.Set("format", "json")
+
+	data, err := client.doGet(context.Background(), "/render", params)
+	require.NoError(t, err)
+
+	var raw []graphiteRawSeries
+	require.NoError(t, json.Unmarshal(data, &raw))
+	require.Len(t, raw, 2)
+
+	// cl1: all null
+	s1 := computeSeriesDensity(raw[0].Target, parseGraphiteDatapoints(raw[0].Datapoints))
+	assert.Equal(t, "obox-cl1.sys.sessions", s1.Target)
+	assert.InDelta(t, 0.0, s1.FillRatio, 1e-9)
+	assert.Equal(t, 3, s1.TotalPoints)
+	assert.Equal(t, 0, s1.NonNullPoints)
+	assert.Nil(t, s1.LastSeen)
+	assert.Equal(t, int64(180), s1.LongestGapSec)
+
+	// cl2: mixed
+	s2 := computeSeriesDensity(raw[1].Target, parseGraphiteDatapoints(raw[1].Datapoints))
+	assert.Equal(t, "obox-cl2.sys.sessions", s2.Target)
+	assert.InDelta(t, 2.0/3.0, s2.FillRatio, 1e-9)
+	assert.Equal(t, 3, s2.TotalPoints)
+	assert.Equal(t, 2, s2.NonNullPoints)
+	require.NotNil(t, s2.LastSeen)
+	assert.Equal(t, int64(1704067320), *s2.LastSeen)
+	assert.Equal(t, int64(60), s2.LongestGapSec)
+	assert.Equal(t, int64(60), s2.EstimatedInterval)
+}
+
+func TestQueryGraphiteDensity_IsNonNullUsedWhenCountMatches(t *testing.T) {
+	// The isNonNull+summarize call reports 3 non-null points; the raw series has
+	// 2 non-null points (could differ due to resolution).  When counts match,
+	// the isNonNull value is used for NonNullPoints / FillRatio.
+	isNonNullResp := []graphiteRawSeries{
+		{
+			Target: `summarize(isNonNull(a.b.c),"5m","sum")`,
+			Datapoints: [][]json.RawMessage{
+				{json.RawMessage("2"), json.RawMessage("1704067200")},
+				{json.RawMessage("1"), json.RawMessage("1704067500")},
+			},
+		},
+	}
+	rawResp := []graphiteRawSeries{
+		{
+			Target: "a.b.c",
+			Datapoints: [][]json.RawMessage{
+				{json.RawMessage("1.0"), json.RawMessage("1704067200")},
+				{json.RawMessage("null"), json.RawMessage("1704067260")},
+				{json.RawMessage("2.0"), json.RawMessage("1704067320")},
+				{json.RawMessage("null"), json.RawMessage("1704067380")},
+			},
+		},
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		target := r.URL.Query().Get("target")
+		if strings.HasPrefix(target, "summarize") {
+			_ = json.NewEncoder(w).Encode(isNonNullResp)
+		} else {
+			_ = json.NewEncoder(w).Encode(rawResp)
+		}
+	}))
+	t.Cleanup(ts.Close)
+
+	client := &GraphiteClient{httpClient: http.DefaultClient, baseURL: ts.URL}
+	ctx := context.Background()
+
+	// Fetch isNonNull
+	innParams := url.Values{}
+	innParams.Set("target", `summarize(isNonNull(a.b.c),"5m","sum")`)
+	innParams.Set("format", "json")
+	innData, err := client.doGet(ctx, "/render", innParams)
+	require.NoError(t, err)
+	var innSeries []graphiteRawSeries
+	require.NoError(t, json.Unmarshal(innData, &innSeries))
+
+	isNonNullCounts := make([]int, len(innSeries))
+	for i, s := range innSeries {
+		for _, dp := range parseGraphiteDatapoints(s.Datapoints) {
+			if dp.Value != nil {
+				isNonNullCounts[i] += int(*dp.Value)
+			}
+		}
+	}
+	assert.Equal(t, []int{3}, isNonNullCounts) // 2+1 buckets
+
+	// Fetch raw
+	rawParams := url.Values{}
+	rawParams.Set("target", "a.b.c")
+	rawParams.Set("format", "json")
+	rawData, err := client.doGet(ctx, "/render", rawParams)
+	require.NoError(t, err)
+	var raws []graphiteRawSeries
+	require.NoError(t, json.Unmarshal(rawData, &raws))
+
+	// Counts match (1 == 1) → use isNonNull count
+	useIsNonNull := len(isNonNullCounts) == len(raws)
+	assert.True(t, useIsNonNull)
+
+	stats := computeSeriesDensity(raws[0].Target, parseGraphiteDatapoints(raws[0].Datapoints))
+	if useIsNonNull {
+		stats.NonNullPoints = isNonNullCounts[0]
+		if stats.TotalPoints > 0 {
+			stats.FillRatio = float64(stats.NonNullPoints) / float64(stats.TotalPoints)
+		}
+	}
+	assert.Equal(t, 3, stats.NonNullPoints)        // from isNonNull, not raw count (2)
+	assert.InDelta(t, 0.75, stats.FillRatio, 1e-9) // 3/4
+}
+
+func TestQueryGraphiteDensity_IsNonNullCountMismatch_FallsBackToRaw(t *testing.T) {
+	// isNonNull returns 2 series; raw returns 3 → mismatch → use raw counts.
+	isNonNullResp := []graphiteRawSeries{
+		{Target: `summarize(isNonNull(a.b.1),"5m","sum")`,
+			Datapoints: [][]json.RawMessage{{json.RawMessage("3"), json.RawMessage("1704067200")}}},
+		{Target: `summarize(isNonNull(a.b.2),"5m","sum")`,
+			Datapoints: [][]json.RawMessage{{json.RawMessage("null"), json.RawMessage("1704067200")}}},
+	}
+	rawResp := []graphiteRawSeries{
+		{
+			Target: "a.b.1",
+			Datapoints: [][]json.RawMessage{
+				{json.RawMessage("1.0"), json.RawMessage("1704067200")},
+				{json.RawMessage("null"), json.RawMessage("1704067260")},
+			},
+		},
+		{
+			Target: "a.b.2",
+			Datapoints: [][]json.RawMessage{
+				{json.RawMessage("null"), json.RawMessage("1704067200")},
+				{json.RawMessage("null"), json.RawMessage("1704067260")},
+			},
+		},
+		{
+			Target: "a.b.3", // extra series absent from isNonNull result
+			Datapoints: [][]json.RawMessage{
+				{json.RawMessage("2.0"), json.RawMessage("1704067200")},
+				{json.RawMessage("3.0"), json.RawMessage("1704067260")},
+			},
+		},
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		target := r.URL.Query().Get("target")
+		if strings.HasPrefix(target, "summarize") {
+			_ = json.NewEncoder(w).Encode(isNonNullResp)
+		} else {
+			_ = json.NewEncoder(w).Encode(rawResp)
+		}
+	}))
+	t.Cleanup(ts.Close)
+
+	client := &GraphiteClient{httpClient: http.DefaultClient, baseURL: ts.URL}
+	ctx := context.Background()
+
+	// Fetch isNonNull
+	innParams := url.Values{}
+	innParams.Set("target", `summarize(isNonNull(a.b.*),"5m","sum")`)
+	innParams.Set("format", "json")
+	innData, err := client.doGet(ctx, "/render", innParams)
+	require.NoError(t, err)
+	var innSeries []graphiteRawSeries
+	require.NoError(t, json.Unmarshal(innData, &innSeries))
+
+	isNonNullCounts := make([]int, len(innSeries))
+	for i, s := range innSeries {
+		for _, dp := range parseGraphiteDatapoints(s.Datapoints) {
+			if dp.Value != nil {
+				isNonNullCounts[i] += int(*dp.Value)
+			}
+		}
+	}
+
+	// Fetch raw
+	rawParams := url.Values{}
+	rawParams.Set("target", "a.b.*")
+	rawParams.Set("format", "json")
+	rawData, err := client.doGet(ctx, "/render", rawParams)
+	require.NoError(t, err)
+	var raws []graphiteRawSeries
+	require.NoError(t, json.Unmarshal(rawData, &raws))
+
+	// 2 isNonNull vs 3 raw → mismatch → do NOT use isNonNull
+	useIsNonNull := len(isNonNullCounts) == len(raws)
+	assert.False(t, useIsNonNull)
+
+	// Compute stats from raw only
+	var results []*GraphiteSeriesDensity
+	for _, rs := range raws {
+		results = append(results, computeSeriesDensity(rs.Target, parseGraphiteDatapoints(rs.Datapoints)))
+	}
+	assert.Equal(t, 1, results[0].NonNullPoints) // a.b.1: from raw
+	assert.Equal(t, 0, results[1].NonNullPoints) // a.b.2: from raw
+	assert.Equal(t, 2, results[2].NonNullPoints) // a.b.3: from raw
 }
