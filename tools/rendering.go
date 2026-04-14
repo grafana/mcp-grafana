@@ -130,6 +130,10 @@ func getPanelImage(ctx context.Context, args GetPanelImageParams) (*mcp.CallTool
 	// Add user agent
 	req.Header.Set("User-Agent", mcpgrafana.UserAgent())
 
+	// Prefer raw image bytes so API gateways (e.g. Kong) that inspect
+	// Accept to decide response format return the PNG directly.
+	req.Header.Set("Accept", "image/*")
+
 	// Execute request
 	resp, err := httpClient.Do(req)
 	if err != nil {

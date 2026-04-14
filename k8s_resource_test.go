@@ -76,6 +76,7 @@ func TestNewResourceRegistry(t *testing.T) {
 		g := reg.GetGroup("dashboard.grafana.app")
 		if g == nil {
 			t.Fatal("expected non-nil group")
+			return
 		}
 		if g.Name != "dashboard.grafana.app" {
 			t.Errorf("Name = %q, want %q", g.Name, "dashboard.grafana.app")
