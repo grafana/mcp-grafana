@@ -499,7 +499,7 @@ func queryGraphiteDensity(ctx context.Context, args QueryGraphiteDensityParams) 
 	// Primary path: fetch summarize(isNonNull(<target>), <bucket>, "sum") to
 	// obtain a compact per-bucket count of non-null points for each series.
 	// This avoids downloading full-resolution data for long windows.
-	bucketSize := graphiteDensityBucketSize(args.From)
+	bucketSize := graphiteDensityBucketSize(from)
 	isNonNullTarget := fmt.Sprintf(`summarize(isNonNull(%s),"%s","sum")`, args.Target, bucketSize)
 
 	isNonNullParams := url.Values{}
