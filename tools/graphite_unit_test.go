@@ -254,12 +254,15 @@ func TestListGraphiteMetrics_ParsesNodes(t *testing.T) {
 // --- listGraphiteTags handler ---
 
 func TestListGraphiteTags_ReturnsTags(t *testing.T) {
-	tags := []string{"env", "name", "region", "server"}
-
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/tags", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(tags)
+		_ = json.NewEncoder(w).Encode([]map[string]any{
+			{"tag": "env", "count": 3},
+			{"tag": "name", "count": 5},
+			{"tag": "region", "count": 2},
+			{"tag": "server", "count": 1},
+		})
 	}))
 	t.Cleanup(ts.Close)
 
@@ -272,16 +275,24 @@ func TestListGraphiteTags_ReturnsTags(t *testing.T) {
 	data, err := client.doGet(ctx, "/tags", nil)
 	require.NoError(t, err)
 
-	var result []string
-	require.NoError(t, json.Unmarshal(data, &result))
-	assert.Equal(t, tags, result)
+	var raw []struct {
+		Tag string `json:"tag"`
+	}
+	require.NoError(t, json.Unmarshal(data, &raw))
+	result := make([]string, len(raw))
+	for i, t := range raw {
+		result[i] = t.Tag
+	}
+	assert.Equal(t, []string{"env", "name", "region", "server"}, result)
 }
 
 func TestListGraphiteTags_WithPrefix(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "env", r.URL.Query().Get("tagPrefix"))
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode([]string{"env"})
+		_ = json.NewEncoder(w).Encode([]map[string]any{
+			{"tag": "env", "count": 3},
+		})
 	}))
 	t.Cleanup(ts.Close)
 
@@ -297,8 +308,14 @@ func TestListGraphiteTags_WithPrefix(t *testing.T) {
 	data, err := client.doGet(ctx, "/tags", params)
 	require.NoError(t, err)
 
-	var result []string
-	require.NoError(t, json.Unmarshal(data, &result))
+	var raw []struct {
+		Tag string `json:"tag"`
+	}
+	require.NoError(t, json.Unmarshal(data, &raw))
+	result := make([]string, len(raw))
+	for i, t := range raw {
+		result[i] = t.Tag
+	}
 	assert.Equal(t, []string{"env"}, result)
 }
 
@@ -317,8 +334,14 @@ func TestListGraphiteTags_EmptyList(t *testing.T) {
 	data, err := client.doGet(context.Background(), "/tags", nil)
 	require.NoError(t, err)
 
-	var result []string
-	require.NoError(t, json.Unmarshal(data, &result))
+	var raw []struct {
+		Tag string `json:"tag"`
+	}
+	require.NoError(t, json.Unmarshal(data, &raw))
+	result := make([]string, len(raw))
+	for i, t := range raw {
+		result[i] = t.Tag
+	}
 	assert.Empty(t, result)
 }
 
