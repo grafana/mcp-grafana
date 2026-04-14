@@ -337,9 +337,15 @@ func listGraphiteTags(ctx context.Context, args ListGraphiteTagsParams) ([]strin
 		return nil, fmt.Errorf("listing graphite tags: %w", err)
 	}
 
-	var tags []string
-	if err := json.Unmarshal(data, &tags); err != nil {
+	var raw []struct {
+		Tag string `json:"tag"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("parsing graphite tags response: %w", err)
+	}
+	tags := make([]string, len(raw))
+	for i, t := range raw {
+		tags[i] = t.Tag
 	}
 	return tags, nil
 }
