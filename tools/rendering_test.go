@@ -273,6 +273,80 @@ func TestBuildRenderURL(t *testing.T) {
 	}
 }
 
+func TestBuildRenderURL_LegacyMode(t *testing.T) {
+	t.Setenv("GRAFANA_RENDER_MODE", "legacy")
+
+	tests := []struct {
+		name        string
+		baseURL     string
+		args        GetPanelImageParams
+		contains    []string
+		notContains []string
+	}{
+		{
+			name:    "Legacy mode uses d-solo for panel render",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				DashboardUID: "abc123",
+				PanelID:      intPtr(6),
+			},
+			contains: []string{
+				"http://localhost:3000/render/d-solo/abc123",
+				"panelId=6",
+				"width=1000",
+				"height=500",
+				"kiosk=true",
+			},
+			notContains: []string{
+				"viewPanel",
+				"/render/d/abc123",
+			},
+		},
+		{
+			name:    "Legacy mode full dashboard still uses /d/",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				DashboardUID: "abc123",
+			},
+			contains: []string{
+				"http://localhost:3000/render/d/abc123",
+			},
+			notContains: []string{
+				"d-solo",
+				"panelId",
+			},
+		},
+		{
+			name:    "Legacy mode with subpath base URL",
+			baseURL: "https://grafana.example.com/log_api/grafana/space",
+			args: GetPanelImageParams{
+				DashboardUID: "LmKXqOHIz",
+				PanelID:      intPtr(6),
+				Width:        intPtr(1000),
+				Height:       intPtr(500),
+			},
+			contains: []string{
+				"https://grafana.example.com/log_api/grafana/space/render/d-solo/LmKXqOHIz",
+				"panelId=6",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := buildRenderURL(tt.baseURL, tt.args)
+			require.NoError(t, err)
+
+			for _, expected := range tt.contains {
+				assert.Contains(t, result, expected)
+			}
+			for _, notExpected := range tt.notContains {
+				assert.NotContains(t, result, notExpected)
+			}
+		})
+	}
+}
+
 func TestGetPanelImage(t *testing.T) {
 	// Create a test PNG image (1x1 pixel)
 	testPNGData := []byte{
@@ -538,5 +612,108 @@ func TestGetPanelImage(t *testing.T) {
 		})
 
 		require.NoError(t, err)
+	})
+
+	t.Run("JSON envelope response from API proxy", func(t *testing.T) {
+		b64PNG := base64.StdEncoding.EncodeToString(testPNGData)
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"base64":"` + b64PNG + `"}`))
+		}))
+		defer server.Close()
+
+		grafanaCfg := mcpgrafana.GrafanaConfig{
+			URL:    server.URL,
+			APIKey: "test-api-key",
+		}
+		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), grafanaCfg)
+
+		result, err := getPanelImage(ctx, GetPanelImageParams{
+			DashboardUID: "test-dash",
+		})
+
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		require.Len(t, result.Content, 1)
+
+		imageContent, ok := result.Content[0].(interface {
+			GetData() string
+			GetMimeType() string
+		})
+		if ok {
+			assert.Equal(t, "image/png", imageContent.GetMimeType())
+			decoded, err := base64.StdEncoding.DecodeString(imageContent.GetData())
+			require.NoError(t, err)
+			assert.Equal(t, testPNGData, decoded)
+		}
+	})
+
+	t.Run("JSON response without base64 field returns error", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"error":"something went wrong"}`))
+		}))
+		defer server.Close()
+
+		grafanaCfg := mcpgrafana.GrafanaConfig{
+			URL:    server.URL,
+			APIKey: "test-api-key",
+		}
+		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), grafanaCfg)
+
+		_, err := getPanelImage(ctx, GetPanelImageParams{
+			DashboardUID: "test-dash",
+		})
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "base64")
+	})
+
+	t.Run("HTML response returns auth error", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("<html><body>Login</body></html>"))
+		}))
+		defer server.Close()
+
+		grafanaCfg := mcpgrafana.GrafanaConfig{
+			URL:    server.URL,
+			APIKey: "test-api-key",
+		}
+		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), grafanaCfg)
+
+		_, err := getPanelImage(ctx, GetPanelImageParams{
+			DashboardUID: "test-dash",
+		})
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "HTML")
+		assert.Contains(t, err.Error(), "authentication")
+	})
+
+	t.Run("Unexpected content type returns error", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/plain")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("unexpected"))
+		}))
+		defer server.Close()
+
+		grafanaCfg := mcpgrafana.GrafanaConfig{
+			URL:    server.URL,
+			APIKey: "test-api-key",
+		}
+		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), grafanaCfg)
+
+		_, err := getPanelImage(ctx, GetPanelImageParams{
+			DashboardUID: "test-dash",
+		})
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "unexpected Content-Type")
 	})
 }

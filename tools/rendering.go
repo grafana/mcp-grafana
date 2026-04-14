@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -83,6 +84,7 @@ type RenderTimeRange struct {
 
 func getPanelImage(ctx context.Context, args GetPanelImageParams) (*mcp.CallToolResult, error) {
 	config := mcpgrafana.GrafanaConfigFromContext(ctx)
+
 	baseURL := strings.TrimRight(config.URL, "/")
 
 	if baseURL == "" {
@@ -146,32 +148,75 @@ func getPanelImage(ctx context.Context, args GetPanelImageParams) (*mcp.CallTool
 		return nil, fmt.Errorf("failed to render image: HTTP %d - %s", resp.StatusCode, string(body))
 	}
 
-	// Read the image data
+	// Read the response body
 	imageData, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read image data: %w", err)
 	}
 
-	// Return the image as base64 encoded data using MCP's image content type
-	base64Data := base64.StdEncoding.EncodeToString(imageData)
+	contentType := resp.Header.Get("Content-Type")
+	var base64Data string
+	mimeType := "image/png"
+
+	switch {
+	case strings.HasPrefix(contentType, "image/"):
+		base64Data = base64.StdEncoding.EncodeToString(imageData)
+		mimeType = strings.SplitN(contentType, ";", 2)[0]
+
+	case strings.HasPrefix(contentType, "application/json"):
+		// Some API proxies wrap the rendered image in a JSON envelope
+		// like {"base64": "<png-data>"}.
+		var envelope struct {
+			Base64 string `json:"base64"`
+		}
+		if err := json.Unmarshal(imageData, &envelope); err != nil {
+			return nil, fmt.Errorf("failed to parse JSON render response: %w", err)
+		}
+		if envelope.Base64 == "" {
+			return nil, fmt.Errorf("render response JSON does not contain a 'base64' field")
+		}
+		base64Data = envelope.Base64
+
+	case strings.HasPrefix(contentType, "text/html"):
+		return nil, fmt.Errorf("render endpoint returned HTML instead of an image (likely an authentication or redirect issue). Verify that GRAFANA_URL is reachable with the configured credentials")
+
+	default:
+		return nil, fmt.Errorf("unexpected Content-Type from render endpoint: %s (expected image/png or application/json)", contentType)
+	}
 
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{
 			mcp.ImageContent{
 				Type:     "image",
 				Data:     base64Data,
-				MIMEType: "image/png",
+				MIMEType: mimeType,
 			},
 		},
 	}, nil
+}
+
+// useLegacyRender reports whether the legacy /render/d-solo/ endpoint should
+// be used instead of the newer /render/d/?viewPanel= path. Set the
+// GRAFANA_RENDER_MODE environment variable to "legacy" to enable this for
+// Grafana instances where /render/d/ is unavailable (e.g. subpath deployments
+// or older Grafana versions).
+func useLegacyRender() bool {
+	return strings.EqualFold(os.Getenv("GRAFANA_RENDER_MODE"), "legacy")
 }
 
 func buildRenderURL(baseURL string, args GetPanelImageParams) (string, error) {
 	// Strip trailing slashes from base URL for consistent URL construction
 	baseURL = strings.TrimRight(baseURL, "/")
 
-	// Build the render path
-	renderPath := fmt.Sprintf("/render/d/%s", args.DashboardUID)
+	legacy := useLegacyRender()
+
+	// Choose render path: d-solo (legacy, broader compatibility) vs d (modern).
+	var renderPath string
+	if args.PanelID != nil && legacy {
+		renderPath = fmt.Sprintf("/render/d-solo/%s", args.DashboardUID)
+	} else {
+		renderPath = fmt.Sprintf("/render/d/%s", args.DashboardUID)
+	}
 
 	// Build query parameters
 	params := url.Values{}
@@ -195,9 +240,13 @@ func buildRenderURL(baseURL string, args GetPanelImageParams) (string, error) {
 	}
 	params.Set("scale", strconv.Itoa(scale))
 
-	// Add panel ID if specified (for single panel rendering)
+	// d-solo uses "panelId", modern /d/ uses "viewPanel".
 	if args.PanelID != nil {
-		params.Set("viewPanel", strconv.Itoa(*args.PanelID))
+		if legacy {
+			params.Set("panelId", strconv.Itoa(*args.PanelID))
+		} else {
+			params.Set("viewPanel", strconv.Itoa(*args.PanelID))
+		}
 	}
 
 	// Add time range
