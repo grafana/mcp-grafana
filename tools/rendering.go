@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -18,11 +17,6 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
-)
-
-const (
-	grafanaRenderModeEnvVar = "GRAFANA_RENDER_MODE"
-	renderModeLegacy        = "legacy"
 )
 
 // StringOrSlice is a type that can be unmarshaled from either a JSON string
@@ -180,18 +174,17 @@ func buildRenderURL(baseURL string, args GetPanelImageParams) (string, error) {
 	// Strip trailing slashes from base URL for consistent URL construction
 	baseURL = strings.TrimRight(baseURL, "/")
 
-	// Build the render path
-	renderPath := fmt.Sprintf("/render/d/%s", args.DashboardUID)
-	panelParamKey := "viewPanel"
-
-	// Use solo path and panel ID parameter for single panel rendering in legacy mode
-	if args.PanelID != nil && strings.EqualFold(os.Getenv(grafanaRenderModeEnvVar), renderModeLegacy) {
-		renderPath = fmt.Sprintf("/render/d-solo/%s", args.DashboardUID)
-		panelParamKey = "panelId"
-	}
-
 	// Build query parameters
 	params := url.Values{}
+
+	// Single-panel renders use the purpose-built /d-solo route (lighter than loading
+	// the full dashboard with viewPanel). Full dashboard renders use /d as default.
+	renderPath := fmt.Sprintf("/render/d/%s", args.DashboardUID)
+
+	if args.PanelID != nil {
+		renderPath = fmt.Sprintf("/render/d-solo/%s", args.DashboardUID)
+		params.Set("panelId", strconv.Itoa(*args.PanelID))
+	}
 
 	// Set dimensions
 	width := 1000
@@ -211,11 +204,6 @@ func buildRenderURL(baseURL string, args GetPanelImageParams) (string, error) {
 		scale = *args.Scale
 	}
 	params.Set("scale", strconv.Itoa(scale))
-
-	// Add panel ID if specified (for single panel rendering)
-	if args.PanelID != nil {
-		params.Set(panelParamKey, strconv.Itoa(*args.PanelID))
-	}
 
 	// Add time range
 	if args.TimeRange != nil {
