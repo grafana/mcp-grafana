@@ -148,10 +148,11 @@ func TestGetPanelImageParams_UnmarshalVariables(t *testing.T) {
 
 func TestBuildRenderURL(t *testing.T) {
 	tests := []struct {
-		name     string
-		baseURL  string
-		args     GetPanelImageParams
-		contains []string
+		name        string
+		baseURL     string
+		args        GetPanelImageParams
+		contains    []string
+		notContains []string
 	}{
 		{
 			name:    "Basic dashboard render",
@@ -168,7 +169,7 @@ func TestBuildRenderURL(t *testing.T) {
 			},
 		},
 		{
-			name:    "Panel render with custom dimensions",
+			name:    "Panel render with custom dimensions uses d-solo path",
 			baseURL: "http://localhost:3000",
 			args: GetPanelImageParams{
 				DashboardUID: "abc123",
@@ -177,10 +178,14 @@ func TestBuildRenderURL(t *testing.T) {
 				Height:       intPtr(600),
 			},
 			contains: []string{
-				"http://localhost:3000/render/d/abc123",
-				"viewPanel=5",
+				"http://localhost:3000/render/d-solo/abc123",
+				"panelId=5",
 				"width=800",
 				"height=600",
+			},
+			notContains: []string{
+				"/render/d/abc123",
+				"viewPanel=",
 			},
 		},
 		{
@@ -269,6 +274,9 @@ func TestBuildRenderURL(t *testing.T) {
 			for _, expected := range tt.contains {
 				assert.Contains(t, result, expected)
 			}
+			for _, unexpected := range tt.notContains {
+				assert.NotContains(t, result, unexpected)
+			}
 		})
 	}
 }
@@ -328,9 +336,10 @@ func TestGetPanelImage(t *testing.T) {
 		}
 	})
 
-	t.Run("Panel image with specific panel ID", func(t *testing.T) {
+	t.Run("Panel image with specific panel ID uses d-solo path and panelId param", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			assert.Equal(t, "5", r.URL.Query().Get("viewPanel"))
+			assert.Contains(t, r.URL.Path, "/render/d-solo/test-dash")
+			assert.Equal(t, "5", r.URL.Query().Get("panelId"))
 
 			w.Header().Set("Content-Type", "image/png")
 			w.WriteHeader(http.StatusOK)
