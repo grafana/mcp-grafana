@@ -148,10 +148,12 @@ func TestGetPanelImageParams_UnmarshalVariables(t *testing.T) {
 
 func TestBuildRenderURL(t *testing.T) {
 	tests := []struct {
-		name     string
-		baseURL  string
-		args     GetPanelImageParams
-		contains []string
+		name        string
+		baseURL     string
+		args        GetPanelImageParams
+		renderMode  string
+		contains    []string
+		notContains []string
 	}{
 		{
 			name:    "Basic dashboard render",
@@ -168,7 +170,7 @@ func TestBuildRenderURL(t *testing.T) {
 			},
 		},
 		{
-			name:    "Panel render with custom dimensions",
+			name:    "Panel render with custom dimensions (default mode)",
 			baseURL: "http://localhost:3000",
 			args: GetPanelImageParams{
 				DashboardUID: "abc123",
@@ -181,6 +183,27 @@ func TestBuildRenderURL(t *testing.T) {
 				"viewPanel=5",
 				"width=800",
 				"height=600",
+			},
+			notContains: []string{
+				"/d-solo/",
+				"panelId=",
+			},
+		},
+		{
+			name:       "Panel render with legacy mode uses d-solo",
+			baseURL:    "http://localhost:3000",
+			renderMode: "legacy",
+			args: GetPanelImageParams{
+				DashboardUID: "abc123",
+				PanelID:      intPtr(5),
+			},
+			contains: []string{
+				"http://localhost:3000/render/d-solo/abc123",
+				"panelId=5",
+			},
+			notContains: []string{
+				"/render/d/abc123",
+				"viewPanel=",
 			},
 		},
 		{
@@ -263,11 +286,18 @@ func TestBuildRenderURL(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			if tt.renderMode != "" {
+				t.Setenv(grafanaRenderModeEnvVar, tt.renderMode)
+			}
+
 			result, err := buildRenderURL(tt.baseURL, tt.args)
 			require.NoError(t, err)
 
 			for _, expected := range tt.contains {
 				assert.Contains(t, result, expected)
+			}
+			for _, unexpected := range tt.notContains {
+				assert.NotContains(t, result, unexpected)
 			}
 		})
 	}
@@ -331,6 +361,35 @@ func TestGetPanelImage(t *testing.T) {
 	t.Run("Panel image with specific panel ID", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			assert.Equal(t, "5", r.URL.Query().Get("viewPanel"))
+
+			w.Header().Set("Content-Type", "image/png")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(testPNGData)
+		}))
+		defer server.Close()
+
+		grafanaCfg := mcpgrafana.GrafanaConfig{
+			URL:    server.URL,
+			APIKey: "test-api-key",
+		}
+		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), grafanaCfg)
+
+		panelID := 5
+		result, err := getPanelImage(ctx, GetPanelImageParams{
+			DashboardUID: "test-dash",
+			PanelID:      &panelID,
+		})
+
+		require.NoError(t, err)
+		require.NotNil(t, result)
+	})
+
+	t.Run("Panel image with legacy mode uses d-solo path and panelId param", func(t *testing.T) {
+		t.Setenv(grafanaRenderModeEnvVar, "legacy")
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			assert.Contains(t, r.URL.Path, "/render/d-solo/test-dash")
+			assert.Equal(t, "5", r.URL.Query().Get("panelId"))
 
 			w.Header().Set("Content-Type", "image/png")
 			w.WriteHeader(http.StatusOK)

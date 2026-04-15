@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -17,6 +18,11 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
+)
+
+const (
+	grafanaRenderModeEnvVar = "GRAFANA_RENDER_MODE"
+	renderModeLegacy        = "legacy"
 )
 
 // StringOrSlice is a type that can be unmarshaled from either a JSON string
@@ -176,6 +182,13 @@ func buildRenderURL(baseURL string, args GetPanelImageParams) (string, error) {
 
 	// Build the render path
 	renderPath := fmt.Sprintf("/render/d/%s", args.DashboardUID)
+	panelParamKey := "viewPanel"
+
+	// Use solo path and panel ID parameter for single panel rendering in legacy mode
+	if args.PanelID != nil && strings.EqualFold(os.Getenv(grafanaRenderModeEnvVar), renderModeLegacy) {
+		renderPath = fmt.Sprintf("/render/d-solo/%s", args.DashboardUID)
+		panelParamKey = "panelId"
+	}
 
 	// Build query parameters
 	params := url.Values{}
@@ -201,7 +214,7 @@ func buildRenderURL(baseURL string, args GetPanelImageParams) (string, error) {
 
 	// Add panel ID if specified (for single panel rendering)
 	if args.PanelID != nil {
-		params.Set("viewPanel", strconv.Itoa(*args.PanelID))
+		params.Set(panelParamKey, strconv.Itoa(*args.PanelID))
 	}
 
 	// Add time range
