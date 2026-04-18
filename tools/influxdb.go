@@ -506,7 +506,7 @@ func queryInflux(ctx context.Context, args InfluxQueryArgs) (*InfluxQueryResult,
 	frames, err := parseQueryResponseFrames(resp)
 
 	if err != nil {
-		if errors.Is(err, grafana.ErrNoRows) {
+		if !errors.Is(err, grafana.ErrNoRows) {
 			return nil, err
 		}
 		// query response returned no rows
