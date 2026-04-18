@@ -185,7 +185,7 @@ Available Capabilities:
 - Prometheus & Loki: Run PromQL and LogQL queries, retrieve metric/log metadata, and explore label names/values.
 - ClickHouse: Query ClickHouse datasources via Grafana with macro and variable substitution support.
 - Elasticsearch: Query Elasticsearch datasources using Lucene syntax or Query DSL for logs and metrics.
-- InfluxDB: Query InfluxDB datasources with SQL, InfluxQL, Flux languages 
+- InfluxDB: Query InfluxDB datasources with SQL, InfluxQL, Flux languages.
 - Incidents: Search, create, update, and resolve incidents in Grafana Incident.
 - Sift Investigations: Start and manage Sift investigations, analyze logs/traces, find error patterns, and detect slow requests.
 - Alerting: List and fetch alert rules and notification contact points.
