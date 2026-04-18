@@ -463,11 +463,25 @@ func main() {
 	var obs observability.Config
 	flag.BoolVar(&obs.MetricsEnabled, "metrics", false, "Enable Prometheus metrics endpoint")
 	flag.StringVar(&obs.MetricsAddress, "metrics-address", "", "Separate address for metrics server (e.g., :9090). If empty, metrics are served on the main server at /metrics")
+	flag.DurationVar(&obs.SlowRequestThreshold, "slow-request-threshold", 0, "Log an event when any MCP request (tool invocation, list, resource read, etc.) takes longer than this threshold. Accepts Go duration strings, e.g. 500ms, 5s. Default 0 disables slow-request logging.")
+	var slowRequestLogLevelStr string
+	flag.StringVar(&slowRequestLogLevelStr, "slow-request-log-level", "warn", "Log level for slow-request events. One of \"info\" or \"warn\". Default \"warn\".")
 	flag.Parse()
 
-	if *showVersion {
+	action, slowLevel, err := handleFlagsPostParse(*showVersion, slowRequestLogLevelStr)
+	switch action {
+	case flagActionVersion:
 		fmt.Println(mcpgrafana.Version())
 		os.Exit(0)
+	case flagActionInvalidSlowLevel:
+		fmt.Fprintf(os.Stderr, "invalid --slow-request-log-level: %v\n", err)
+		os.Exit(2)
+	case flagActionContinue:
+		obs.SlowRequestLogLevel = slowLevel
+	default:
+		// flagActionUnset or any unexpected value — refuse to proceed silently.
+		fmt.Fprintf(os.Stderr, "internal error: unexpected flag action %v\n", action)
+		os.Exit(2)
 	}
 
 	// Convert local grafanaConfig to mcpgrafana.GrafanaConfig
@@ -507,4 +521,56 @@ func parseLevel(level string) slog.Level {
 		return slog.LevelInfo
 	}
 	return l
+}
+
+// parseSlowRequestLogLevel parses the --slow-request-log-level flag value.
+// Only "info" and "warn" are accepted (case-insensitive). Any other value,
+// including the empty string or values with surrounding whitespace, returns
+// a non-nil error so main() can fail-fast on misconfiguration rather than
+// silently defaulting.
+//
+// On error the returned slog.Level is the zero value (slog.LevelInfo == 0).
+// Callers MUST check the error before using the level; using the zero level
+// on a rejected input would silently select INFO, which is not the CLI's
+// advertised default of WARN.
+func parseSlowRequestLogLevel(s string) (slog.Level, error) {
+	switch strings.ToLower(s) {
+	case "info":
+		return slog.LevelInfo, nil
+	case "warn":
+		return slog.LevelWarn, nil
+	default:
+		return 0, fmt.Errorf("must be \"info\" or \"warn\", got %q", s)
+	}
+}
+
+// flagAction encodes what main() should do after flag.Parse().
+// flagActionUnset is reserved as the zero value so an accidentally-zero-valued
+// return from a future code path trips the switch's default: case rather
+// than silently taking the Continue branch.
+type flagAction int
+
+const (
+	flagActionUnset flagAction = iota
+	flagActionContinue
+	flagActionVersion
+	flagActionInvalidSlowLevel
+)
+
+// handleFlagsPostParse decides what main() should do after flag.Parse().
+// It is pure (no os.Exit, no I/O) so it is unit-testable. --version
+// short-circuits before slow-request-log-level validation so it prints
+// regardless of other flags' values (matches pre-#756 behavior).
+//
+// The returned slog.Level is only meaningful when action == flagActionContinue;
+// the other branches return a zero level that the caller must not read.
+func handleFlagsPostParse(showVersion bool, slowLevelStr string) (flagAction, slog.Level, error) {
+	if showVersion {
+		return flagActionVersion, 0, nil
+	}
+	slowLevel, err := parseSlowRequestLogLevel(slowLevelStr)
+	if err != nil {
+		return flagActionInvalidSlowLevel, 0, err
+	}
+	return flagActionContinue, slowLevel, nil
 }
