@@ -712,7 +712,7 @@ func maybeAddPluginTools(
 func addCategoryTools(category string, categoryIncluded map[string]bool, tm *ToolManager, tools []server.ServerTool) []server.ServerTool {
 
 	if !tm.enabledTools[category] {
-		slog.Info("skipping tool broadcast for excluded category", "category", category)
+		slog.Debug("skipping tool broadcast for excluded category", "category", category)
 		return tools
 	}
 
@@ -725,7 +725,7 @@ func addCategoryTools(category string, categoryIncluded map[string]bool, tm *Too
 
 	toolsFc, found := tm.categoryTools[category]
 	if !found {
-		slog.Info("skipping tool broadcast for unidentified category", "category", category)
+		slog.Debug("skipping tool broadcast for unidentified category", "category", category)
 		return tools
 	}
 
