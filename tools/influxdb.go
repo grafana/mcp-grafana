@@ -132,10 +132,10 @@ func newInfluxDBClient(ctx context.Context, uid string, queryType *string) (*inf
 type InfluxQueryArgs struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the InfluxDB datasource to query. Use list_datasources to find available UIDs."`
 	Query         string `json:"query" jsonschema:"required,description=SQL/Flux/InfluxQL query. Supports SQL macros: $__timeFilter for time filtering\\, $__timeFrom/$__timeTo for millisecond timestamps\\, $__interval for calculated intervals\\, $__dateBin(<column>)/$__dateBinAlias(<column>) to apply date_bin for timestamp columns. Supports Flux macros : v.timeRangeStart\\, v.timeRangeStop\\, v.windowPeriod (Grafana-calculated interval)\\, v.defaultBucket (configured default bucket)\\, v.organization (configured organization)\\."`
-	QueryType     string `json:"query_type" jsonschema:"required,enum=SQL,enum=Flux,enum=InfluxQL,description=QueryType of Datasource. One of the specified options"`
+	QueryType     string `json:"queryType" jsonschema:"required,enum=SQL,enum=Flux,enum=InfluxQL,description=QueryType of Datasource. One of the specified options"`
 	Start         string `json:"start,omitempty" jsonschema:"description=Start time. Formats: 'now-1h'\\, '2026-02-02T19:00:00Z'\\, '1738519200000' (Unix ms). Default: now-1h"`
 	End           string `json:"end,omitempty" jsonschema:"description=End time. Formats: 'now'\\, '2026-02-02T20:00:00Z'\\, '1738522800000' (Unix ms). Default: now"`
-	IntervalMs    uint   `json:"interval_ms,omitempty" jsonschema:"description=Interval in milliseconds"`
+	IntervalMs    uint   `json:"intervalMs,omitempty" jsonschema:"description=Interval in milliseconds"`
 	Limit         uint   `json:"limit,omitempty" jsonschema:"description=Limit number of records per table (or group)"`
 }
 
@@ -149,9 +149,9 @@ type InfluxQueryResFrame struct {
 
 // InfluxQueryResult contains the parsed results of an InfluxDB query.
 type InfluxQueryResult struct {
-	Frames      []*InfluxQueryResFrame
-	FramesCount int
-	Hints       *EmptyResultHints `json:"hints,omitempty"`
+	Frames      []*InfluxQueryResFrame `json:"frames"`
+	FramesCount int                    `json:"framesCount"`
+	Hints       *EmptyResultHints      `json:"hints,omitempty"`
 }
 
 type influxDBQueryPayload struct {
@@ -319,7 +319,9 @@ func enforceQueryLimit(args *InfluxQueryArgs) {
 				ctePrefix := query[:pos]  // WITH a AS (...), b AS (...)
 				selectPart := query[pos:] // SELECT * FROM a JOIN b ON true
 
-				if !sqlLimitRegEx.MatchString(selectPart) {
+				if sqlLimitRegEx.MatchString(selectPart) {
+					args.Query = ctePrefix + sqlLimitRegEx.ReplaceAllString(selectPart, fmt.Sprintf("LIMIT %d", limit))
+				} else {
 					wrappedSelect := "(" + selectPart + ")" + fmt.Sprintf(" LIMIT %d", limit)
 					args.Query = ctePrefix + wrappedSelect
 				}
@@ -504,7 +506,7 @@ func queryInflux(ctx context.Context, args InfluxQueryArgs) (*InfluxQueryResult,
 	frames, err := parseQueryResponseFrames(resp)
 
 	if err != nil {
-		if err != grafana.ErrNoRows {
+		if errors.Is(err, grafana.ErrNoRows) {
 			return nil, err
 		}
 		// query response returned no rows
@@ -537,13 +539,13 @@ type ListBucketArgs struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the InfluxDB datasource. Use list_datasources to find available UIDs."`
 }
 type ListBucketResult struct {
-	Buckets     *[]string         `json:"buckets"`
+	Buckets     []string          `json:"buckets"`
 	BucketCount uint              `json:"bucketCount"`
 	Hints       *EmptyResultHints `json:"hints,omitempty"`
 }
 
 // extractColValues extracts Values from response of string type columns
-func extractColValues(resp *grafana.DSQueryResponse, colName string) (*[]string, error) {
+func extractColValues(resp *grafana.DSQueryResponse, colName string) ([]string, error) {
 	fieldValues := make([]string, 0)
 
 	for _, result := range resp.Results {
@@ -583,7 +585,7 @@ func extractColValues(resp *grafana.DSQueryResponse, colName string) (*[]string,
 		}
 	}
 
-	return &fieldValues, nil
+	return fieldValues, nil
 }
 
 func listBuckets(ctx context.Context, args ListBucketArgs) (*ListBucketResult, error) {
@@ -615,7 +617,7 @@ func listBuckets(ctx context.Context, args ListBucketArgs) (*ListBucketResult, e
 
 	result := ListBucketResult{}
 
-	if len(*buckets) == 0 {
+	if len(buckets) == 0 {
 		// return empty result hints
 		result.Hints = GenerateEmptyResultHints(HintContext{
 			DatasourceType: InfluxDBDataSourceType,
@@ -627,7 +629,7 @@ func listBuckets(ctx context.Context, args ListBucketArgs) (*ListBucketResult, e
 		})
 	}
 
-	result.BucketCount = uint(len(*buckets))
+	result.BucketCount = uint(len(buckets))
 	result.Buckets = buckets
 	return &result, nil
 }
@@ -644,11 +646,11 @@ var ListBucketsInflux = mcpgrafana.MustTool(
 type ListMeasurementsArgs struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the InfluxDB datasource. Use list_datasources to find available UIDs."`
 	Bucket        string `json:"bucket,omitempty" jsonschema:"optional,description=Bucket Name of target bucket to fetch from; required only for Flux linked datasources."`
-	Limit         uint   `json:"limit"`
+	Limit         uint   `json:"limit,omitempty"`
 }
 
 type ListMeasurementResult struct {
-	Measurements     *[]string         `json:"measurements"`
+	Measurements     []string          `json:"measurements"`
 	MeasurementCount uint              `json:"measurementCount"`
 	Hints            *EmptyResultHints `json:"hints,omitempty"`
 }
@@ -705,7 +707,7 @@ func listMeasurements(ctx context.Context, args ListMeasurementsArgs) (*ListMeas
 
 	result := ListMeasurementResult{}
 
-	if len(*measurements) == 0 {
+	if len(measurements) == 0 {
 		// add empty results hints
 		result.Hints = GenerateEmptyResultHints(HintContext{
 			DatasourceType: InfluxDBDataSourceType,
@@ -717,7 +719,7 @@ func listMeasurements(ctx context.Context, args ListMeasurementsArgs) (*ListMeas
 		})
 	}
 
-	result.MeasurementCount = uint(len(*measurements))
+	result.MeasurementCount = uint(len(measurements))
 	result.Measurements = measurements
 	return &result, nil
 }
@@ -735,10 +737,10 @@ type ListTagKeysArgs struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the InfluxDB datasource. Use list_datasources to find available UIDs."`
 	Bucket        string `json:"bucket,omitempty" jsonschema:"optional,description=Bucket Name of target bucket to fetch from\\,required only for Flux linked datasources."`
 	Measurement   string `json:"measurement" jsonschema:"required,description=Filter by measurement"`
-	Limit         uint   `json:"limit"`
+	Limit         uint   `json:"limit,omitempty"`
 }
 type ListTagKeysResult struct {
-	TagKeys      *[]string         `json:"tags"`
+	TagKeys      []string          `json:"tags"`
 	TagKeysCount uint              `json:"tagCount"`
 	Hints        *EmptyResultHints `json:"hints,omitempty"`
 }
@@ -767,9 +769,9 @@ func quoteStringAsFluxLiteral(s string) string {
 // quoteStringAsInfluxQLIdentifier quotes a string as an InfluxQL identifier using double quotes.
 func quoteStringAsInfluxQLIdentifier(s string) string {
 	// Must escape backslashes FIRST, then double quotes
-    s = strings.ReplaceAll(s, `\`, `\\`)   // \ → \\
-    s = strings.ReplaceAll(s, `"`, `\"`)   // " → \"
-    return `"` + s + `"`
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `"`, `\"`)
+	return `"` + s + `"`
 }
 
 func listTagKeys(ctx context.Context, args ListTagKeysArgs) (*ListTagKeysResult, error) {
@@ -821,7 +823,7 @@ func listTagKeys(ctx context.Context, args ListTagKeysArgs) (*ListTagKeysResult,
 
 	result := ListTagKeysResult{}
 
-	if len(*tags) == 0 {
+	if len(tags) == 0 {
 		// add empty results hints
 		result.Hints = GenerateEmptyResultHints(HintContext{
 			DatasourceType: InfluxDBDataSourceType,
@@ -833,7 +835,7 @@ func listTagKeys(ctx context.Context, args ListTagKeysArgs) (*ListTagKeysResult,
 		})
 	}
 
-	result.TagKeysCount = uint(len(*tags))
+	result.TagKeysCount = uint(len(tags))
 	result.TagKeys = tags
 	return &result, nil
 }
@@ -851,11 +853,11 @@ type ListFieldKeysArgs struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the InfluxDB datasource. Use list_datasources to find available UIDs."`
 	Bucket        string `json:"bucket,omitempty" jsonschema:"optional,description=Bucket Name of target bucket to fetch from\\,required only for Flux linked datasources."`
 	Measurement   string `json:"measurement" jsonschema:"required,description=Filter by measurement"`
-	Limit         uint   `json:"limit"`
+	Limit         uint   `json:"limit,omitempty"`
 }
 
 type ListFieldKeysResult struct {
-	FieldKeys      *[]string         `json:"fields"`
+	FieldKeys      []string          `json:"fields"`
 	FieldKeysCount uint              `json:"fieldCount"`
 	Hints          *EmptyResultHints `json:"hints,omitempty"`
 }
@@ -919,7 +921,7 @@ func listFieldKeys(ctx context.Context, args ListFieldKeysArgs) (*ListFieldKeysR
 
 	result := ListFieldKeysResult{}
 
-	if len(*fieldKeys) == 0 {
+	if len(fieldKeys) == 0 {
 		// add empty results hints
 		result.Hints = GenerateEmptyResultHints(HintContext{
 			DatasourceType: InfluxDBDataSourceType,
@@ -931,7 +933,7 @@ func listFieldKeys(ctx context.Context, args ListFieldKeysArgs) (*ListFieldKeysR
 		})
 	}
 
-	result.FieldKeysCount = uint(len(*fieldKeys))
+	result.FieldKeysCount = uint(len(fieldKeys))
 	result.FieldKeys = fieldKeys
 	return &result, nil
 }
