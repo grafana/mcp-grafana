@@ -244,11 +244,21 @@ func hashAPIKey(key string) string {
 }
 
 // extractGrafanaClientCached creates an httpContextFunc that uses the cache.
+// If X-Grafana-URL is present but malformed or uses a non-HTTP(S) scheme, a
+// sentinel client is attached to the context instead of invoking
+// NewGrafanaClient (which would panic on url.Parse failure). The sentinel is
+// not cached: caching it would let a single bad caller poison a cache slot
+// keyed by their malformed URL.
 func extractGrafanaClientCached(cache *ClientCache) httpContextFunc {
 	return func(ctx context.Context, req *http.Request) context.Context {
 		config := GrafanaConfigFromContext(ctx)
 		if config.OrgID == 0 {
 			slog.Warn("No org ID found in request headers or environment variables, using default org. Set GRAFANA_ORG_ID or pass X-Grafana-Org-Id header to target a specific org.")
+		}
+
+		if err := validateHeaderURL(req); err != nil {
+			slog.Warn("rejecting malformed X-Grafana-URL header, attaching sentinel Grafana client", "error", err)
+			return WithGrafanaClient(ctx, newSentinelGrafanaClient(err))
 		}
 
 		u, apiKey, basicAuth, _ := extractKeyGrafanaInfoFromReq(req)
@@ -264,8 +274,14 @@ func extractGrafanaClientCached(cache *ClientCache) httpContextFunc {
 }
 
 // extractIncidentClientCached creates an httpContextFunc that uses the cache.
+// Same sentinel-on-bad-URL behavior as extractGrafanaClientCached.
 func extractIncidentClientCached(cache *ClientCache) httpContextFunc {
 	return func(ctx context.Context, req *http.Request) context.Context {
+		if err := validateHeaderURL(req); err != nil {
+			slog.Warn("rejecting malformed X-Grafana-URL header, attaching sentinel incident client", "error", err)
+			return WithIncidentClient(ctx, newSentinelIncidentClient(err))
+		}
+
 		grafanaURL, apiKey, _, orgID := extractKeyGrafanaInfoFromReq(req)
 		key := cacheKeyFromRequest(grafanaURL, apiKey, nil, orgID)
 

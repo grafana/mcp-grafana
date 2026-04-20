@@ -725,6 +725,13 @@ func doFetchPublicURL(ctx context.Context, grafanaURL, apiKey string, auth *url.
 // The client is automatically configured with the correct HTTP scheme, debug settings from context, custom TLS configuration if present, and OpenTelemetry instrumentation for distributed tracing.
 // It also fetches the Grafana instance's public URL from /api/frontend/settings for use in deep link generation.
 // The org ID is read from the GrafanaConfig in the context, which should be set by ExtractGrafanaInfoFromEnv or ExtractGrafanaInfoFromHeaders before calling this function.
+//
+// NewGrafanaClient panics if grafanaURL is present but not parseable by
+// url.Parse. This is safe for operator-supplied configuration (env vars,
+// CLI flags) where loud startup failure is preferable to silently running
+// against the wrong host. Library consumers that pass untrusted input
+// (request headers, user input) must validate first via ValidateGrafanaURL
+// to avoid a reachable panic.
 func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.Userinfo) *GrafanaClient {
 	cfg := client.DefaultTransportConfig()
 
@@ -878,10 +885,18 @@ var ExtractGrafanaClientFromEnv server.StdioContextFunc = func(ctx context.Conte
 
 // ExtractGrafanaClientFromHeaders is a HTTPContextFunc that creates and injects a Grafana client into the context.
 // It prioritizes configuration from HTTP headers (X-Grafana-URL, X-Grafana-API-Key) over environment variables for multi-tenant scenarios.
+// If X-Grafana-URL is present but malformed or uses a non-HTTP(S) scheme, a sentinel client
+// is attached to the context instead; tool handlers receive ErrInvalidGrafanaURL from the
+// client's API methods rather than having NewGrafanaClient panic on url.Parse failure.
 var ExtractGrafanaClientFromHeaders httpContextFunc = func(ctx context.Context, req *http.Request) context.Context {
 	config := GrafanaConfigFromContext(ctx)
 	if config.OrgID == 0 {
 		slog.Warn("No org ID found in request headers or environment variables, using default org. Set GRAFANA_ORG_ID or pass X-Grafana-Org-Id header to target a specific org.")
+	}
+
+	if err := validateHeaderURL(req); err != nil {
+		slog.Warn("rejecting malformed X-Grafana-URL header, attaching sentinel Grafana client", "error", err)
+		return WithGrafanaClient(ctx, newSentinelGrafanaClient(err))
 	}
 
 	// Extract transport config from request headers, and set it on the context.
@@ -945,7 +960,15 @@ var ExtractIncidentClientFromEnv server.StdioContextFunc = func(ctx context.Cont
 
 // ExtractIncidentClientFromHeaders is a HTTPContextFunc that creates and injects a Grafana Incident client into the context.
 // It uses HTTP headers for configuration with environment variable fallbacks, enabling per-request incident management configuration.
+// If X-Grafana-URL is present but malformed or uses a non-HTTP(S) scheme, a sentinel
+// client is attached instead; incident-tool handlers surface ErrInvalidGrafanaURL from
+// HTTP calls rather than building an incident URL from garbage.
 var ExtractIncidentClientFromHeaders httpContextFunc = func(ctx context.Context, req *http.Request) context.Context {
+	if err := validateHeaderURL(req); err != nil {
+		slog.Warn("rejecting malformed X-Grafana-URL header, attaching sentinel incident client", "error", err)
+		return WithIncidentClient(ctx, newSentinelIncidentClient(err))
+	}
+
 	grafanaURL, apiKey, _, orgID := extractKeyGrafanaInfoFromReq(req)
 	incidentURL := fmt.Sprintf("%s/api/plugins/grafana-irm-app/resources/api/v1/", grafanaURL)
 	client := incident.NewClient(incidentURL, apiKey)
