@@ -109,6 +109,15 @@ The dashboard tools now include several strategies to manage context window usag
 
 - **Search logs:** High-level log search across ClickHouse (OTel format) and Loki datasources.
 
+### Graphite Querying
+
+> **Note:** Graphite tools are **disabled by default**. To enable them, add `graphite` to your `--enabled-tools` flag.
+
+- **Query Graphite:** Execute Graphite render API queries against a Graphite datasource.
+- **List Graphite metrics:** Browse and discover Graphite metric paths.
+- **List Graphite tags:** List available Graphite tags and tag values.
+- **Query Graphite density:** Query Graphite metric density for a given pattern.
+
 ### Elasticsearch Querying
 
 > **Note:** Elasticsearch tools are **disabled by default**. To enable them, add `elasticsearch` to your `--enabled-tools` flag.
@@ -339,7 +348,7 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 - `--session-idle-timeout-minutes`: Session idle timeout in minutes. Sessions with no activity for this duration are automatically reaped - default: `30`. Set to `0` to disable session reaping. Only relevant for SSE and streamable-http transports.
 
 **Tool Configuration:**
-- `--enabled-tools`: Comma-separated list of enabled categories - default: all categories except `admin`, to enable admin tools, add `admin` to the list (e.g., `"search,datasource,...,admin"`)
+- `--enabled-tools`: Comma-separated list of enabled categories - default: all categories except `admin`, `clickhouse`, `cloudwatch`, `elasticsearch`, `examples`, `graphite`, `runpanelquery`, and `searchlogs`. To enable disabled categories, add them to the list (e.g., `"search,datasource,...,graphite"`)
 - `--max-loki-log-limit`: Maximum number of log lines returned per `query_loki_logs` call - default: `100`. Note: Set this at least 1 below Loki's server-side `max_entries_limit_per_query` to allow truncation detection (the tool requests `limit+1` internally to detect if more data exists).
 - `--disable-search`: Disable search tools
 - `--disable-datasource`: Disable datasource tools
@@ -362,6 +371,7 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 - `--disable-clickhouse`: Disable ClickHouse tools
 - `--disable-searchlogs`: Disable search_logs tool
 - `--disable-runpanelquery`: Disable run panel query tools
+- `--disable-graphite`: Disable Graphite tools
 
 ### Read-Only Mode
 
