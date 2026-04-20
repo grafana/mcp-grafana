@@ -1,3 +1,16 @@
+---
+title: VS Code and GitHub Copilot
+menuTitle: VS Code Copilot
+description: Set up the Grafana MCP server for VS Code with GitHub Copilot agent mode.
+keywords:
+  - VS Code
+  - GitHub Copilot
+  - MCP
+  - client
+weight: 4
+aliases: []
+---
+
 # VS Code and GitHub Copilot
 
 This guide helps you set up the `mcp-grafana` server for VS Code with GitHub Copilot agent mode.
@@ -28,7 +41,7 @@ Or with Docker:
 docker run --rm -p 8000:8000 \
   -e GRAFANA_URL=http://host.docker.internal:3000 \
   -e GRAFANA_SERVICE_ACCOUNT_TOKEN=<your-token> \
-  mcp/grafana --transport sse --address :8000
+  grafana/mcp-grafana --transport sse --address :8000
 ```
 
 ### 2. Configure VS Code
@@ -107,3 +120,8 @@ systemctl --user enable --now mcp-grafana
 ```bash
 mcp-grafana --transport sse --address localhost:8000 --disable-write
 ```
+
+## Next steps
+
+- [Transports and addresses](../../configure/transports-and-addresses/) for SSE details.
+- [Configure authentication](../../configure/authentication/) for Grafana credentials.

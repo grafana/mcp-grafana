@@ -1,3 +1,15 @@
+---
+title: Cursor
+menuTitle: Cursor
+description: Set up the Grafana MCP server for Cursor.
+keywords:
+  - Cursor
+  - MCP
+  - client
+weight: 2
+aliases: []
+---
+
 # Cursor
 
 This guide helps you set up the `mcp-grafana` server for Cursor.
@@ -19,8 +31,8 @@ Two options for configuration location:
 
 ### Add using the UI
 
-1. Open Cursor Settings -> Tools & Integrations
-2. Click "New MCP Server"
+1. Open Cursor Settings -> **Tools & Integrations**
+2. Click **New MCP Server**
 3. This opens `~/.cursor/mcp.json` for editing
 
 ### Manual configuration
@@ -57,7 +69,9 @@ Create or edit `~/.cursor/mcp.json`:
         "GRAFANA_URL",
         "-e",
         "GRAFANA_SERVICE_ACCOUNT_TOKEN",
-        "mcp/grafana"
+        "grafana/mcp-grafana",
+        "-t",
+        "stdio"
       ],
       "env": {
         "GRAFANA_URL": "http://host.docker.internal:3000",
@@ -87,8 +101,8 @@ Create or edit `~/.cursor/mcp.json`:
 
 ## Verify configuration
 
-1. Go to Cursor Settings -> Tools & Integrations
-2. Find "grafana" in the MCP servers list
+1. Go to Cursor Settings -> **Tools & Integrations**
+2. Find **grafana** in the MCP servers list
 3. Click the refresh button if needed
 4. Green indicator = server running
 5. Open Composer and ask: "List my Grafana dashboards"
@@ -123,3 +137,8 @@ Create or edit `~/.cursor/mcp.json`:
   }
 }
 ```
+
+## Next steps
+
+- [Set up](../../set-up/) for other install options (uvx, Helm).
+- [Configure authentication](../../configure/authentication/) for Grafana credentials.
