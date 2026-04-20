@@ -151,8 +151,10 @@ func newServer(transport string, dt disabledTools, tc toolConfig, obs *observabi
 		mcpgrafana.WithSessionTTL(time.Duration(sessionIdleTimeoutMinutes) * time.Minute),
 	)
 
-	// Declare variable for ToolManager that will be initialized after server creation
+	// Declare variables that will be initialized after server creation.
+	// The hooks below capture these by pointer, so they must be declared first.
 	var stm *mcpgrafana.ToolManager
+	var s *server.MCPServer
 
 	// Create hooks
 	hooks := &server.Hooks{
@@ -162,11 +164,26 @@ func newServer(transport string, dt disabledTools, tc toolConfig, obs *observabi
 
 	// Add (proxy tool hooks, datasource tools) dynamically if enabled and we're not running in stdio mode.
 	// (Stdio mode is handled by InitializeAndRegisterServerTools, InitDiscoverAndRegister; per-session
-	// tools are not supported).
+	// are not supported).
 	if transport != "stdio" && (!dt.proxied || tc.onlyConnected) {
+		// ensureSessionRegistered registers an ephemeral session in MCPServer.sessions
+		// if it's not already there. This is needed for horizontal scaling: when a
+		// request lands on a pod that didn't handle the initialize call, the SDK
+		// creates an ephemeral session that isn't registered, causing AddSessionTools
+		// to fail with ErrSessionNotFound. RegisterSession uses LoadOrStore
+		// internally, so this is a no-op for already-registered sessions.
+		ensureSessionRegistered := func(ctx context.Context) {
+			if s != nil {
+				if session := server.ClientSessionFromContext(ctx); session != nil {
+					_ = s.RegisterSession(ctx, session)
+				}
+			}
+		}
+
 		// OnBeforeListTools: Discover, connect, and register tools
 		hooks.OnBeforeListTools = []server.OnBeforeListToolsFunc{
 			func(ctx context.Context, id any, request *mcp.ListToolsRequest) {
+				ensureSessionRegistered(ctx)
 				if stm != nil {
 					if session := server.ClientSessionFromContext(ctx); session != nil {
 						if !dt.proxied {
@@ -185,6 +202,7 @@ func newServer(transport string, dt disabledTools, tc toolConfig, obs *observabi
 		// OnBeforeCallTool: Fallback in case client calls tool without listing first
 		hooks.OnBeforeCallTool = []server.OnBeforeCallToolFunc{
 			func(ctx context.Context, id any, request *mcp.CallToolRequest) {
+				ensureSessionRegistered(ctx)
 				if stm != nil {
 					if session := server.ClientSessionFromContext(ctx); session != nil {
 						if !dt.proxied {
@@ -203,7 +221,7 @@ func newServer(transport string, dt disabledTools, tc toolConfig, obs *observabi
 	// Merge observability hooks with existing hooks
 	hooks = observability.MergeHooks(hooks, obs.MCPHooks())
 
-	s := server.NewMCPServer("mcp-grafana", mcpgrafana.Version(),
+	s = server.NewMCPServer("mcp-grafana", mcpgrafana.Version(),
 		server.WithInstructions(`
 This server provides access to your Grafana instance and the surrounding ecosystem.
 
@@ -241,7 +259,11 @@ Note that some of these capabilities may be disabled. Do not try to use features
 	}
 	stm = mcpgrafana.NewToolManager(sm, s, tmOpts...)
 
-	dt.addTools(s, tc)
+	// Give the SessionManager a reference to the MCPServer so the reaper can
+	// unregister sessions from the SDK's internal session map.
+	sm.SetMCPServer(s)
+
+	dt.addTools(s)
 	return s, stm, sm
 }
 

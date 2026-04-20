@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/textproto"
 	"net/url"
 	"os"
 	"reflect"
@@ -41,7 +42,8 @@ const (
 	grafanaUsernameEnvVar = "GRAFANA_USERNAME"
 	grafanaPasswordEnvVar = "GRAFANA_PASSWORD"
 
-	grafanaExtraHeadersEnvVar = "GRAFANA_EXTRA_HEADERS"
+	grafanaExtraHeadersEnvVar   = "GRAFANA_EXTRA_HEADERS"
+	grafanaForwardHeadersEnvVar = "GRAFANA_FORWARD_HEADERS"
 
 	grafanaURLHeader                 = "X-Grafana-URL"
 	grafanaServiceAccountTokenHeader = "X-Grafana-Service-Account-Token"
@@ -102,6 +104,67 @@ func extraHeadersFromEnv() map[string]string {
 		return nil
 	}
 	return headers
+}
+
+func forwardHeaderNamesFromEnv() []string {
+	raw := os.Getenv(grafanaForwardHeadersEnvVar)
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	names := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			names = append(names, p)
+		}
+	}
+	return names
+}
+
+// forwardedHeadersFromRequest reads GRAFANA_FORWARD_HEADERS and copies matching
+// headers from the incoming HTTP request. Returns nil when no headers match.
+func forwardedHeadersFromRequest(req *http.Request) map[string]string {
+	names := forwardHeaderNamesFromEnv()
+	if len(names) == 0 {
+		return nil
+	}
+	var forwarded map[string]string
+	for _, name := range names {
+		if v := req.Header.Get(name); v != "" {
+			if forwarded == nil {
+				forwarded = make(map[string]string, len(names))
+			}
+			forwarded[name] = v
+		}
+	}
+	return forwarded
+}
+
+// mergeHeaders returns a new map containing all entries from base, with entries
+// from override taking precedence. When both maps are non-empty, header names
+// are canonicalized (via textproto.CanonicalMIMEHeaderKey) so that
+// case-insensitive matches are merged correctly and the documented
+// guarantee—incoming request wins—is upheld. When only one side is present the
+// original key casing is preserved.
+func mergeHeaders(base, override map[string]string) map[string]string {
+	if len(base) == 0 && len(override) == 0 {
+		return nil
+	}
+	if len(override) == 0 {
+		return base
+	}
+	if len(base) == 0 {
+		return override
+	}
+	merged := make(map[string]string, len(base)+len(override))
+	for k, v := range base {
+		merged[textproto.CanonicalMIMEHeaderKey(k)] = v
+	}
+	for k, v := range override {
+		merged[textproto.CanonicalMIMEHeaderKey(k)] = v
+	}
+	return merged
 }
 
 func orgIdFromHeaders(req *http.Request) int64 {
@@ -193,6 +256,15 @@ type GrafanaConfig struct {
 	// MaxLokiLogLimit is the maximum number of log lines that can be returned
 	// from Loki queries.
 	MaxLokiLogLimit int
+
+	// BaseTransport is an optional base HTTP transport used as the innermost
+	// layer of the middleware chain in NewGrafanaClient. When set, it replaces
+	// the default http.Transport that NewGrafanaClient would otherwise create.
+	// The caller can use this to provide a pre-configured transport with custom
+	// connection pooling, timeouts, or tracing instrumentation.
+	// Note: NewGrafanaClient still wraps this transport with ExtraHeaders,
+	// OrgID, UserAgent, and otelhttp layers.
+	BaseTransport http.RoundTripper
 }
 
 const (
@@ -478,6 +550,7 @@ type httpContextFunc func(ctx context.Context, req *http.Request) context.Contex
 
 // ExtractGrafanaInfoFromHeaders is a HTTPContextFunc that extracts Grafana configuration from HTTP request headers.
 // It reads X-Grafana-URL and X-Grafana-API-Key headers, falling back to environment variables if headers are not present.
+// Headers listed in GRAFANA_FORWARD_HEADERS are copied from the incoming request and merged with GRAFANA_EXTRA_HEADERS.
 var ExtractGrafanaInfoFromHeaders httpContextFunc = func(ctx context.Context, req *http.Request) context.Context {
 	u, apiKey, basicAuth, orgID := extractKeyGrafanaInfoFromReq(req)
 
@@ -488,7 +561,7 @@ var ExtractGrafanaInfoFromHeaders httpContextFunc = func(ctx context.Context, re
 	config.APIKey = apiKey
 	config.BasicAuth = basicAuth
 	config.OrgID = orgID
-	config.ExtraHeaders = extraHeadersFromEnv()
+	config.ExtraHeaders = mergeHeaders(extraHeadersFromEnv(), forwardedHeadersFromRequest(req))
 	return WithGrafanaConfig(ctx, config)
 }
 
@@ -732,25 +805,39 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 			transportField := v.FieldByName("Transport")
 			if transportField.IsValid() && transportField.CanSet() {
 				if _, ok := transportField.Interface().(http.RoundTripper); ok {
-					// Wrap with timeout transport, then user agent, then otel
-					timeoutTransport := &http.Transport{
-						Proxy: http.ProxyFromEnvironment,
-						DialContext: (&net.Dialer{
-							Timeout:   timeout,
-							KeepAlive: 30 * time.Second,
-						}).DialContext,
-						TLSHandshakeTimeout:   timeout,
-						ResponseHeaderTimeout: timeout,
-						ExpectContinueTimeout: 1 * time.Second,
-						ForceAttemptHTTP2:     true,
-						MaxIdleConns:          100,
-						IdleConnTimeout:       90 * time.Second,
+					// Use caller-provided base transport or create a default one.
+					var rt http.RoundTripper
+					if config.BaseTransport != nil {
+						rt = config.BaseTransport
+					} else {
+						timeoutTransport := &http.Transport{
+							Proxy: http.ProxyFromEnvironment,
+							DialContext: (&net.Dialer{
+								Timeout:   timeout,
+								KeepAlive: 30 * time.Second,
+							}).DialContext,
+							TLSHandshakeTimeout:   timeout,
+							ResponseHeaderTimeout: timeout,
+							ExpectContinueTimeout: 1 * time.Second,
+							ForceAttemptHTTP2:     true,
+							MaxIdleConns:          100,
+							IdleConnTimeout:       90 * time.Second,
+						}
+						// Copy TLS config if present
+						if cfg.TLSConfig != nil {
+							timeoutTransport.TLSClientConfig = cfg.TLSConfig
+						}
+						rt = timeoutTransport
 					}
-					// Copy TLS config if present
-					if cfg.TLSConfig != nil {
-						timeoutTransport.TLSClientConfig = cfg.TLSConfig
+					// Apply on-behalf-of auth headers as the innermost header
+					// layer so they take precedence over ExtraHeaders (which
+					// may contain forwarded headers with the same keys).
+					if config.AccessToken != "" && config.IDToken != "" {
+						rt = NewExtraHeadersRoundTripper(rt, map[string]string{
+							"X-Access-Token": config.AccessToken,
+							"X-Grafana-Id":   config.IDToken,
+						})
 					}
-					var rt http.RoundTripper = timeoutTransport
 					if len(config.ExtraHeaders) > 0 {
 						rt = NewExtraHeadersRoundTripper(rt, config.ExtraHeaders)
 					}

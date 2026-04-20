@@ -134,6 +134,10 @@ func getPanelImage(ctx context.Context, args GetPanelImageParams) (*mcp.CallTool
 	// Add user agent
 	req.Header.Set("User-Agent", mcpgrafana.UserAgent())
 
+	// Prefer raw image bytes so API gateways (e.g. Kong) that inspect
+	// Accept to decide response format return the PNG directly.
+	req.Header.Set("Accept", "image/*")
+
 	// Execute request
 	resp, err := httpClient.Do(req)
 	if err != nil {
@@ -174,11 +178,17 @@ func buildRenderURL(baseURL string, args GetPanelImageParams) (string, error) {
 	// Strip trailing slashes from base URL for consistent URL construction
 	baseURL = strings.TrimRight(baseURL, "/")
 
-	// Build the render path
-	renderPath := fmt.Sprintf("/render/d/%s", args.DashboardUID)
-
 	// Build query parameters
 	params := url.Values{}
+
+	// Single-panel renders use the purpose-built /d-solo route (lighter than loading
+	// the full dashboard with viewPanel). Full dashboard renders use /d as default.
+	renderPath := fmt.Sprintf("/render/d/%s", args.DashboardUID)
+
+	if args.PanelID != nil {
+		renderPath = fmt.Sprintf("/render/d-solo/%s", args.DashboardUID)
+		params.Set("panelId", strconv.Itoa(*args.PanelID))
+	}
 
 	// Set dimensions
 	width := 1000
@@ -198,11 +208,6 @@ func buildRenderURL(baseURL string, args GetPanelImageParams) (string, error) {
 		scale = *args.Scale
 	}
 	params.Set("scale", strconv.Itoa(scale))
-
-	// Add panel ID if specified (for single panel rendering)
-	if args.PanelID != nil {
-		params.Set("viewPanel", strconv.Itoa(*args.PanelID))
-	}
 
 	// Add time range
 	if args.TimeRange != nil {

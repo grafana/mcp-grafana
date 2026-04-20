@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"sync"
 
 	mcp_client "github.com/mark3labs/mcp-go/client"
@@ -22,6 +23,17 @@ type ProxiedClient struct {
 	mutex          sync.RWMutex
 }
 
+// basicAuthHeader encodes credentials per RFC 7617:
+// base64(username ":" password) with raw bytes, matching
+// (*http.Request).SetBasicAuth in the standard library. url.Userinfo.String()
+// percent-escapes reserved characters per RFC 3986, which is wrong here —
+// passwords containing ':', '@', '/', '%', or space would be double-encoded
+// on the wire and rejected by spec-compliant Basic Auth parsers.
+func basicAuthHeader(u *url.Userinfo) string {
+	password, _ := u.Password()
+	return "Basic " + base64.StdEncoding.EncodeToString([]byte(u.Username()+":"+password))
+}
+
 // NewProxiedClient creates a new connection to a remote MCP server
 func NewProxiedClient(ctx context.Context, datasourceUID, datasourceName, datasourceType, mcpEndpoint string) (*ProxiedClient, error) {
 	// Get Grafana config for authentication
@@ -32,8 +44,7 @@ func NewProxiedClient(ctx context.Context, datasourceUID, datasourceName, dataso
 	if config.APIKey != "" {
 		headers["Authorization"] = "Bearer " + config.APIKey
 	} else if config.BasicAuth != nil {
-		auth := config.BasicAuth.String()
-		headers["Authorization"] = "Basic " + base64.StdEncoding.EncodeToString([]byte(auth))
+		headers["Authorization"] = basicAuthHeader(config.BasicAuth)
 	}
 
 	// Add org ID header if configured

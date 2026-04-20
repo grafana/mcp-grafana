@@ -1329,4 +1329,238 @@ func TestConvertAlertQueries(t *testing.T) {
 		require.Equal(t, models.Duration(3600), result[0].RelativeTimeRange.From)
 		require.Equal(t, models.Duration(1800), result[0].RelativeTimeRange.To)
 	})
+
+	t.Run("preserves extra model fields for Graphite queries", func(t *testing.T) {
+		queries := []*AlertQuery{
+			{
+				RefID:         "C",
+				DatasourceUID: "000000004",
+				RelativeTimeRange: &RelativeTimeRange{From: 300, To: 0},
+				Model: AlertQueryModel{
+					Extra: map[string]any{
+						"datasource": map[string]any{"type": "graphite", "uid": "000000004"},
+						"target":     "alias(asPercent(sumSeries(a), sumSeries(b)), 'error rate')",
+						"textEditor": true,
+						"refId":      "C",
+					},
+				},
+			},
+		}
+		result, err := convertAlertQueries(queries)
+		require.NoError(t, err)
+		require.Len(t, result, 1)
+		require.Equal(t, "C", result[0].RefID)
+
+		model := result[0].Model.(map[string]any)
+		require.Equal(t, "alias(asPercent(sumSeries(a), sumSeries(b)), 'error rate')", model["target"])
+		require.Equal(t, true, model["textEditor"])
+		ds, ok := model["datasource"].(map[string]any)
+		require.True(t, ok)
+		require.Equal(t, "graphite", ds["type"])
+	})
+
+	t.Run("preserves classic_conditions with operator, query, and reducer", func(t *testing.T) {
+		queries := []*AlertQuery{
+			{
+				RefID:         "A",
+				DatasourceUID: "__expr__",
+				Model: AlertQueryModel{
+					Type: "classic_conditions",
+					Conditions: []AlertCondition{
+						{
+							Evaluator: ConditionEvaluator{Type: "gt", Params: []float64{0.1}},
+							Operator:  &ConditionOperator{Type: "and"},
+							Query:     &ConditionQuery{Params: []string{"C"}},
+							Reducer:   &ConditionReducer{Type: "avg"},
+						},
+					},
+				},
+			},
+		}
+		result, err := convertAlertQueries(queries)
+		require.NoError(t, err)
+		require.Len(t, result, 1)
+
+		model := result[0].Model.(map[string]any)
+		conditions, ok := model["conditions"].([]any)
+		require.True(t, ok)
+		require.Len(t, conditions, 1)
+
+		cond := conditions[0].(map[string]any)
+		// Verify evaluator
+		evaluator := cond["evaluator"].(map[string]any)
+		require.Equal(t, "gt", evaluator["type"])
+		// Verify operator is preserved
+		operator := cond["operator"].(map[string]any)
+		require.Equal(t, "and", operator["type"])
+		// Verify query params (RefID reference) is preserved
+		query := cond["query"].(map[string]any)
+		params := query["params"].([]any)
+		require.Equal(t, "C", params[0])
+		// Verify reducer is preserved
+		reducer := cond["reducer"].(map[string]any)
+		require.Equal(t, "avg", reducer["type"])
+	})
+}
+
+func TestAlertQueryModel_JSONRoundTrip(t *testing.T) {
+	t.Run("round-trips Graphite model without data loss", func(t *testing.T) {
+		input := `{
+			"datasource": {"type": "graphite", "uid": "000000004"},
+			"target": "alias(asPercent(a, b), 'rate')",
+			"textEditor": true,
+			"intervalMs": 1000,
+			"maxDataPoints": 43200,
+			"refCount": 0,
+			"refId": "C"
+		}`
+
+		var model AlertQueryModel
+		err := json.Unmarshal([]byte(input), &model)
+		require.NoError(t, err)
+
+		// Typed fields should be empty (Graphite doesn't use them)
+		require.Empty(t, model.Expr)
+		require.Empty(t, model.Type)
+
+		// Extra should have all Graphite-specific fields
+		require.Equal(t, "alias(asPercent(a, b), 'rate')", model.Extra["target"])
+		require.Equal(t, true, model.Extra["textEditor"])
+		require.Equal(t, float64(1000), model.Extra["intervalMs"])
+
+		// Re-marshal and verify no data loss
+		output, err := json.Marshal(model)
+		require.NoError(t, err)
+
+		var roundTripped map[string]any
+		err = json.Unmarshal(output, &roundTripped)
+		require.NoError(t, err)
+
+		require.Equal(t, "alias(asPercent(a, b), 'rate')", roundTripped["target"])
+		require.Equal(t, true, roundTripped["textEditor"])
+		require.Equal(t, float64(1000), roundTripped["intervalMs"])
+	})
+
+	t.Run("round-trips classic_conditions with all fields", func(t *testing.T) {
+		input := `{
+			"type": "classic_conditions",
+			"conditions": [
+				{
+					"evaluator": {"type": "gt", "params": [0.1]},
+					"operator": {"type": "and"},
+					"query": {"params": ["C"]},
+					"reducer": {"type": "avg"}
+				}
+			]
+		}`
+
+		var model AlertQueryModel
+		err := json.Unmarshal([]byte(input), &model)
+		require.NoError(t, err)
+		require.Equal(t, "classic_conditions", model.Type)
+		require.Len(t, model.Conditions, 1)
+		require.NotNil(t, model.Conditions[0].Operator)
+		require.Equal(t, "and", model.Conditions[0].Operator.Type)
+		require.NotNil(t, model.Conditions[0].Query)
+		require.Equal(t, []string{"C"}, model.Conditions[0].Query.Params)
+		require.NotNil(t, model.Conditions[0].Reducer)
+		require.Equal(t, "avg", model.Conditions[0].Reducer.Type)
+
+		// Re-marshal
+		output, err := json.Marshal(model)
+		require.NoError(t, err)
+
+		var roundTripped map[string]any
+		err = json.Unmarshal(output, &roundTripped)
+		require.NoError(t, err)
+
+		conditions := roundTripped["conditions"].([]any)
+		cond := conditions[0].(map[string]any)
+		query := cond["query"].(map[string]any)
+		params := query["params"].([]any)
+		require.Equal(t, "C", params[0])
+	})
+}
+
+func TestExtractQuerySummaries(t *testing.T) {
+	t.Run("extracts expr field (Prometheus)", func(t *testing.T) {
+		data := []*models.AlertQuery{
+			{
+				RefID:         "A",
+				DatasourceUID: "prometheus-uid",
+				Model: map[string]any{
+					"expr": `up{job="grafana"}`,
+				},
+			},
+		}
+		summaries := extractQuerySummaries(data)
+		require.Len(t, summaries, 1)
+		require.Equal(t, `up{job="grafana"}`, summaries[0].Expression)
+	})
+
+	t.Run("extracts expression field (Grafana expression)", func(t *testing.T) {
+		data := []*models.AlertQuery{
+			{
+				RefID:         "B",
+				DatasourceUID: "__expr__",
+				Model: map[string]any{
+					"expression": "A",
+				},
+			},
+		}
+		summaries := extractQuerySummaries(data)
+		require.Len(t, summaries, 1)
+		require.Equal(t, "A", summaries[0].Expression)
+	})
+
+	t.Run("extracts query field (Elasticsearch)", func(t *testing.T) {
+		data := []*models.AlertQuery{
+			{
+				RefID:         "A",
+				DatasourceUID: "elasticsearch-uid",
+				Model: map[string]any{
+					"query": `app:"random-service" AND error`,
+				},
+			},
+		}
+		summaries := extractQuerySummaries(data)
+		require.Len(t, summaries, 1)
+		require.Equal(t, `app:"random-service" AND error`, summaries[0].Expression)
+	})
+
+	t.Run("returns nil for empty data", func(t *testing.T) {
+		summaries := extractQuerySummaries(nil)
+		require.Nil(t, summaries)
+	})
+
+	t.Run("handles mixed datasource types", func(t *testing.T) {
+		data := []*models.AlertQuery{
+			{
+				RefID:         "A",
+				DatasourceUID: "elasticsearch-uid",
+				Model: map[string]any{
+					"query": `app:"random-service" AND log.level:"ERROR"`,
+				},
+			},
+			{
+				RefID:         "B",
+				DatasourceUID: "__expr__",
+				Model: map[string]any{
+					"expression": "A",
+				},
+			},
+			{
+				RefID:         "C",
+				DatasourceUID: "__expr__",
+				Model: map[string]any{
+					"expression": "B",
+				},
+			},
+		}
+		summaries := extractQuerySummaries(data)
+		require.Len(t, summaries, 3)
+		require.Equal(t, `app:"random-service" AND log.level:"ERROR"`, summaries[0].Expression)
+		require.Equal(t, "A", summaries[1].Expression)
+		require.Equal(t, "B", summaries[2].Expression)
+	})
 }
