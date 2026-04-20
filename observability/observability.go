@@ -105,10 +105,22 @@ type Observability struct {
 	// Slow-request logging configuration. When slowRequestThreshold > 0,
 	// the hooks emit a slog event at slowRequestLogLevel whenever a request
 	// duration exceeds the threshold. logger is always non-nil after Setup
-	// (falls back to slog.Default() if Config.Logger was nil).
+	// (falls back to a dedicated handler at slowRequestLogLevel if
+	// Config.Logger was nil, so slow-request events are not filtered by the
+	// process-global handler's level).
 	slowRequestThreshold time.Duration
 	slowRequestLogLevel  slog.Level
 	logger               *slog.Logger
+}
+
+// newSlowRequestLogger returns a *slog.Logger whose handler emits to stderr
+// at exactly the given level. It is used by Setup when Config.Logger is nil
+// so slow-request events are not silently dropped by the process-global
+// handler's level filter (installed by main.go's slog.SetDefault).
+func newSlowRequestLogger(level slog.Level) *slog.Logger {
+	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+		Level: level,
+	}))
 }
 
 // Setup initializes the observability providers based on the configuration.
@@ -121,7 +133,7 @@ type Observability struct {
 func Setup(cfg Config) (*Observability, error) {
 	logger := cfg.Logger
 	if logger == nil {
-		logger = slog.Default()
+		logger = newSlowRequestLogger(cfg.SlowRequestLogLevel)
 	}
 	obs := &Observability{
 		networkTransport:     cfg.NetworkTransport,
