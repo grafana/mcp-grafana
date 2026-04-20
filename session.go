@@ -89,6 +89,22 @@ type SessionManager struct {
 	reaperDone chan struct{}
 	closeOnce  sync.Once
 	metrics    sessionMetrics
+
+	// mcpServer is an optional reference to the MCP server, used to unregister
+	// sessions from the SDK's internal session map when they are reaped. This
+	// prevents a memory leak when sessions are registered via RegisterSession
+	// in horizontal scaling scenarios (where ephemeral sessions are registered
+	// so that AddSessionTools can find them).
+	mcpServer *server.MCPServer
+}
+
+// SetMCPServer sets the MCP server reference for session cleanup. When set,
+// the reaper will call MCPServer.UnregisterSession for reaped sessions to
+// prevent a memory leak in the SDK's internal session map.
+func (sm *SessionManager) SetMCPServer(s *server.MCPServer) {
+	sm.mutex.Lock()
+	defer sm.mutex.Unlock()
+	sm.mcpServer = s
 }
 
 func NewSessionManager(opts ...SessionManagerOption) *SessionManager {
@@ -215,6 +231,7 @@ func (sm *SessionManager) reapStaleSessions() {
 	sm.mutex.Lock()
 	var stale []*SessionState
 	var staleIDs []string
+	mcpSrv := sm.mcpServer
 	for id, state := range sm.sessions {
 		if now.Sub(state.lastActivity) > sm.sessionTTL {
 			stale = append(stale, state)
@@ -232,8 +249,15 @@ func (sm *SessionManager) reapStaleSessions() {
 		slog.Info("Reaping stale sessions", "count", len(stale), "session_ids", staleIDs)
 	}
 
-	for _, state := range stale {
+	ctx := context.Background()
+	for i, state := range stale {
 		cleanupSessionState(state)
+		// Also unregister from MCPServer.sessions to prevent a memory leak.
+		// Sessions may have been registered there via RegisterSession in the
+		// OnBeforeListTools/OnBeforeCallTool hooks for horizontal scaling support.
+		if mcpSrv != nil {
+			mcpSrv.UnregisterSession(ctx, staleIDs[i])
+		}
 	}
 }
 
