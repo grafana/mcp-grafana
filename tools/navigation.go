@@ -43,6 +43,15 @@ func generateDeeplink(ctx context.Context, args GenerateDeeplinkParams) (string,
 		return "", fmt.Errorf("grafana url not configured. Please set GRAFANA_URL environment variable or X-Grafana-URL header")
 	}
 
+	// Guard against a malformed URL flowing through config.URL when
+	// X-Grafana-URL was rejected by the client extractor. The sentinel client
+	// has empty PublicURL so this path reads config.URL, which
+	// ExtractGrafanaInfoFromHeaders sets unconditionally from the raw header.
+	// Without this guard, generated deeplinks embed garbage (e.g. http://%gg/d/<uid>).
+	if err := mcpgrafana.ValidateGrafanaURL(baseURL); err != nil {
+		return "", fmt.Errorf("grafana url is invalid: %w. Please set GRAFANA_URL environment variable or X-Grafana-URL header", err)
+	}
+
 	var deeplink string
 
 	switch strings.ToLower(args.ResourceType) {

@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"net/url"
 	"testing"
 
@@ -250,4 +251,63 @@ func TestGenerateDeeplink(t *testing.T) {
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "datasourceUid is required")
 	})
+}
+
+// TestGenerateDeeplink_RejectsMalformedBaseURL_WithSentinelClient exercises
+// the exact runtime state produced by the IMP-2 fix
+// (sentinel_client.go:newSentinelGrafanaClient): a *GrafanaClient is attached
+// to the context with an empty PublicURL, and config.URL still holds the raw
+// malformed X-Grafana-URL header value because ExtractGrafanaInfoFromHeaders
+// sets config.URL unconditionally before the client extractor validates.
+// Pre-fix: generateDeeplink returns a garbage deeplink like
+// "http://%gg/d/abc123" to the LLM with no error signal. Post-fix:
+// ValidateGrafanaURL guard catches the malformed baseURL and returns a
+// structured error wrapping ErrInvalidGrafanaURL.
+func TestGenerateDeeplink_RejectsMalformedBaseURL_WithSentinelClient(t *testing.T) {
+	grafanaCfg := mcpgrafana.GrafanaConfig{
+		URL: "http://%gg",
+	}
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), grafanaCfg)
+
+	// Zero-value GrafanaClient stands in for the real sentinel from IMP-2.
+	// generateDeeplink only reads gc.PublicURL (empty string, matching the
+	// sentinel's empty PublicURL), which is the code path we want to
+	// exercise. newSentinelGrafanaClient is package-private to mcpgrafana;
+	// the zero-value is equivalent for this test because generateDeeplink
+	// never invokes a method on the client. If future changes to
+	// generateDeeplink add a method call, this test needs to switch to a
+	// real sentinel (and newSentinelGrafanaClient will need to be
+	// exported, or a test-only helper added).
+	ctx = mcpgrafana.WithGrafanaClient(ctx, &mcpgrafana.GrafanaClient{})
+
+	params := GenerateDeeplinkParams{
+		ResourceType: "dashboard",
+		DashboardUID: stringPtr("abc123"),
+	}
+
+	_, err := generateDeeplink(ctx, params)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, mcpgrafana.ErrInvalidGrafanaURL),
+		"expected error to wrap ErrInvalidGrafanaURL, got: %v", err)
+}
+
+// TestGenerateDeeplink_RejectsMalformedBaseURL_NoClient covers the same bug
+// class but without any GrafanaClient attached to the context. Proves the
+// ValidateGrafanaURL guard fires on config.URL alone, not only when the
+// sentinel-style zero client is present.
+func TestGenerateDeeplink_RejectsMalformedBaseURL_NoClient(t *testing.T) {
+	grafanaCfg := mcpgrafana.GrafanaConfig{
+		URL: "http://%gg",
+	}
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), grafanaCfg)
+
+	params := GenerateDeeplinkParams{
+		ResourceType: "dashboard",
+		DashboardUID: stringPtr("abc123"),
+	}
+
+	_, err := generateDeeplink(ctx, params)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, mcpgrafana.ErrInvalidGrafanaURL),
+		"expected error to wrap ErrInvalidGrafanaURL, got: %v", err)
 }
