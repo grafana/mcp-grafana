@@ -362,46 +362,6 @@ var ListGraphiteTags = mcpgrafana.MustTool(
 	mcp.WithReadOnlyHintAnnotation(true),
 )
 
-// graphiteDensityBucketSize returns an appropriate summarize bucket size for
-// the given from value.  It targets roughly 12–48 buckets over the window;
-// if from cannot be parsed as a relative duration, "1h" is used.
-func graphiteDensityBucketSize(from string) string {
-	if !strings.HasPrefix(from, "-") {
-		return "1h"
-	}
-	s := from[1:]
-	var n int
-	var unit string
-	if _, err := fmt.Sscanf(s, "%d%s", &n, &unit); err != nil {
-		return "1h"
-	}
-	var d time.Duration
-	switch unit {
-	case "m", "min":
-		d = time.Duration(n) * time.Minute
-	case "h":
-		d = time.Duration(n) * time.Hour
-	case "d":
-		d = time.Duration(n) * 24 * time.Hour
-	case "w":
-		d = time.Duration(n) * 7 * 24 * time.Hour
-	default:
-		return "1h"
-	}
-	switch {
-	case d <= 3*time.Hour:
-		return "5m"
-	case d <= 24*time.Hour:
-		return "30m"
-	case d <= 72*time.Hour:
-		return "1h"
-	case d <= 14*24*time.Hour:
-		return "6h"
-	default:
-		return "1d"
-	}
-}
-
 // computeSeriesDensity derives data-density statistics from the parsed
 // datapoints of a single Graphite series.
 func computeSeriesDensity(target string, pts []GraphiteDatapoint) *GraphiteSeriesDensity {
@@ -504,38 +464,6 @@ func queryGraphiteDensity(ctx context.Context, args QueryGraphiteDensityParams) 
 		until = "now"
 	}
 
-	// Primary path: fetch summarize(isNonNull(<target>), <bucket>, "sum") to
-	// obtain a compact per-bucket count of non-null points for each series.
-	// This avoids downloading full-resolution data for long windows.
-	bucketSize := graphiteDensityBucketSize(from)
-	isNonNullTarget := fmt.Sprintf(`summarize(isNonNull(%s),"%s","sum")`, args.Target, bucketSize)
-
-	isNonNullParams := url.Values{}
-	isNonNullParams.Set("target", isNonNullTarget)
-	isNonNullParams.Set("from", from)
-	isNonNullParams.Set("until", until)
-	isNonNullParams.Set("format", "json")
-
-	var isNonNullCounts []int
-	if data, fetchErr := client.doGet(ctx, "/render", isNonNullParams); fetchErr == nil {
-		var raw []graphiteRawSeries
-		if json.Unmarshal(data, &raw) == nil && len(raw) > 0 {
-			isNonNullCounts = make([]int, len(raw))
-			for i, s := range raw {
-				for _, dp := range parseGraphiteDatapoints(s.Datapoints) {
-					if dp.Value != nil {
-						isNonNullCounts[i] += int(*dp.Value)
-					}
-				}
-			}
-		}
-	}
-	// isNonNullCounts is nil when isNonNull() is unsupported by this Graphite
-	// version or the target matched no series; in both cases nonNullPoints is
-	// computed from raw datapoints below.
-
-	// Always fetch the raw series: required for TotalPoints, LastSeen,
-	// LongestGapSec, and EstimatedInterval.
 	rawParams := url.Values{}
 	rawParams.Set("target", args.Target)
 	rawParams.Set("from", from)
@@ -552,23 +480,12 @@ func queryGraphiteDensity(ctx context.Context, args QueryGraphiteDensityParams) 
 		return nil, fmt.Errorf("parsing graphite render response: %w", err)
 	}
 
-	// Only use isNonNull counts when the series count matches exactly.
-	// A mismatch means summarize consolidated or skipped series differently,
-	// so fall back to counting non-null points from raw datapoints.
-	useIsNonNull := isNonNullCounts != nil && len(isNonNullCounts) == len(rawSeries)
-
 	result := &QueryGraphiteDensityResult{
 		Series: make([]*GraphiteSeriesDensity, 0, len(rawSeries)),
 	}
-	for i, rs := range rawSeries {
+	for _, rs := range rawSeries {
 		pts := parseGraphiteDatapoints(rs.Datapoints)
 		stats := computeSeriesDensity(rs.Target, pts)
-		if useIsNonNull {
-			stats.NonNullPoints = isNonNullCounts[i]
-			if stats.TotalPoints > 0 {
-				stats.FillRatio = float64(stats.NonNullPoints) / float64(stats.TotalPoints)
-			}
-		}
 		result.Series = append(result.Series, stats)
 	}
 	return result, nil
