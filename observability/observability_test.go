@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -1005,4 +1006,62 @@ func TestMaybeLogSlowRequest_ErrorAttrs(t *testing.T) {
 			assert.Equal(t, "_OTHER", v.String(), "plain errors should yield error.type = _OTHER")
 		}
 	})
+}
+
+// TestNewSlowRequestLogger verifies the helper in isolation: a logger
+// constructed at a given slog.Level enables events at or above that level
+// and filters events below. Proves the helper itself works before the
+// end-to-end test asserts it is wired into Setup correctly.
+func TestNewSlowRequestLogger(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("WARN level enables WARN, filters INFO", func(t *testing.T) {
+		logger := newSlowRequestLogger(slog.LevelWarn)
+		assert.True(t, logger.Handler().Enabled(ctx, slog.LevelWarn))
+		assert.False(t, logger.Handler().Enabled(ctx, slog.LevelInfo))
+	})
+
+	t.Run("INFO level enables both INFO and WARN", func(t *testing.T) {
+		logger := newSlowRequestLogger(slog.LevelInfo)
+		assert.True(t, logger.Handler().Enabled(ctx, slog.LevelInfo))
+		assert.True(t, logger.Handler().Enabled(ctx, slog.LevelWarn))
+	})
+}
+
+// TestSetup_SlowLogSurvivesStrictGlobal proves the Bugbot regression is
+// fixed: even when the process-global slog handler is installed at ERROR
+// level (as main.go's --log-level=error would do), a Setup call with
+// Config.Logger == nil and SlowRequestLogLevel == WARN MUST produce a
+// dedicated logger whose handler admits WARN-level events. Pre-fix, Setup
+// assigned slog.Default() and this assertion fails. Post-fix, Setup calls
+// newSlowRequestLogger and this assertion passes.
+//
+// Race safety: this test mutates slog.Default() with t.Cleanup restore.
+// It does NOT call t.Parallel() and no other test in this file calls
+// t.Parallel() either (verified prior to implementation). Do not add
+// t.Parallel() to this test or its neighbors without reworking the
+// isolation strategy.
+func TestSetup_SlowLogSurvivesStrictGlobal(t *testing.T) {
+	prevDefault := slog.Default()
+	t.Cleanup(func() {
+		slog.SetDefault(prevDefault)
+	})
+	strictGlobal := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+		Level: slog.LevelError,
+	}))
+	slog.SetDefault(strictGlobal)
+
+	obs, err := Setup(Config{
+		SlowRequestThreshold: 1 * time.Millisecond,
+		SlowRequestLogLevel:  slog.LevelWarn,
+		Logger:               nil,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, obs)
+
+	ctx := context.Background()
+	assert.True(t, obs.logger.Handler().Enabled(ctx, slog.LevelWarn),
+		"obs.logger must admit WARN events even when slog.Default() is at ERROR")
+	assert.False(t, strictGlobal.Handler().Enabled(ctx, slog.LevelWarn),
+		"sanity check: the installed global handler must reject WARN")
 }
