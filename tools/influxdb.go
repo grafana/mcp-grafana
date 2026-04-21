@@ -187,8 +187,9 @@ func (ic *influxDBClient) Query(ctx context.Context, args InfluxQueryArgs, from,
 		Format:       format,
 		IntervalMs:   args.IntervalMs,
 		RawQuery:     true,
+		// limits are applied at query parsing stage
 		Limit:        "",
-		ResultFormat: "time_series",
+		ResultFormat: format,
 	}
 
 	// append query
@@ -327,7 +328,7 @@ func enforceQueryLimit(args *InfluxQueryArgs) {
 		}
 	case InfluxQLQueryType:
 		// override limits when query contains limit
-		if influxQLLimitRegEx.Match([]byte(args.Query)) {
+		if influxQLLimitRegEx.MatchString(args.Query) {
 			replacement := fmt.Sprintf("${1}%d${2}${3}", limit)
 			args.Query = influxQLLimitRegEx.ReplaceAllString(args.Query, replacement)
 		} else {

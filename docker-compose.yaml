@@ -145,6 +145,12 @@ services:
       /bin/bash -c "/init.sh & influxdb3 serve --node-id=node0 --object-store=file --data-dir=/var/lib/influxdb3 --admin-token-file=/run/secrets/admin-token"
     secrets:
       - admin-token
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8181/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
   influxdb2:
     build:
       dockerfile_inline: |
@@ -163,6 +169,12 @@ services:
       - influxdb2-admin-username
       - influxdb2-admin-password
       - influxdb2-admin-token
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8086/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
     
 secrets:
   influxdb2-admin-username:
