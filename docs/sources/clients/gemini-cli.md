@@ -1,3 +1,16 @@
+---
+title: Gemini CLI
+menuTitle: Gemini CLI
+description: Set up the Grafana MCP server for the Google Gemini CLI.
+keywords:
+  - Gemini
+  - Google
+  - MCP
+  - client
+weight: 6
+aliases: []
+---
+
 # Gemini CLI
 
 This guide helps you set up the `mcp-grafana` server for the Google Gemini CLI.
@@ -56,7 +69,9 @@ gemini mcp remove grafana
         "GRAFANA_URL",
         "-e",
         "GRAFANA_SERVICE_ACCOUNT_TOKEN",
-        "mcp/grafana"
+        "grafana/mcp-grafana",
+        "-t",
+        "stdio"
       ],
       "env": {
         "GRAFANA_URL": "http://host.docker.internal:3000",
@@ -145,3 +160,8 @@ For HTTP-based connection:
   }
 }
 ```
+
+## Next steps
+
+- [Set up](../../set-up/) for other install options.
+- [Configure authentication](../../configure/authentication/) for Grafana credentials.
