@@ -28,11 +28,11 @@ The server runs in your cluster and can be used by MCP clients that connect to i
 Add the Grafana Helm repo and install the chart. Set `grafana.url` and `grafana.apiKey` (or the equivalent for your chart version) to your Grafana instance and token.
 
 ```bash
-helm repo add grafana https://grafana.github.io/helm-charts
-helm install --set grafana.apiKey=<Grafana_ApiKey> --set grafana.url=<GrafanaUrl> my-release grafana/grafana-mcp
+helm repo add grafana-community https://grafana-community.github.io/helm-charts
+helm install --set grafana.apiKey=<Grafana_ApiKey> --set grafana.url=<GrafanaUrl> my-release grafana-community/grafana-mcp
 ```
 
-For full chart options and defaults, refer to the [grafana-mcp chart](https://github.com/grafana/helm-charts/tree/main/charts/grafana-mcp) in the helm-charts repository.
+For full chart options and defaults, refer to the [grafana-mcp chart](https://github.com/grafana-community/helm-charts/tree/main/charts/grafana-mcp) in the grafana-community helm-charts repository.
 
 ## Next steps
 

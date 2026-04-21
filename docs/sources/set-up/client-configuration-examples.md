@@ -149,11 +149,11 @@ You can install `mcp-grafana` in several ways:
      GOBIN="$HOME/go/bin" go install github.com/grafana/mcp-grafana/cmd/mcp-grafana@latest
      ```
 
-   - **Deploy to Kubernetes using Helm**: use the [Helm chart from the Grafana helm-charts repository](https://github.com/grafana/helm-charts/tree/main/charts/grafana-mcp)
+   - **Deploy to Kubernetes using Helm**: use the [Helm chart from the grafana-community helm-charts repository](https://github.com/grafana-community/helm-charts/tree/main/charts/grafana-mcp)
 
      ```bash
-     helm repo add grafana https://grafana.github.io/helm-charts
-     helm install --set grafana.apiKey=<Grafana_ApiKey> --set grafana.url=<GrafanaUrl> my-release grafana/grafana-mcp
+     helm repo add grafana-community https://grafana-community.github.io/helm-charts
+     helm install --set grafana.apiKey=<Grafana_ApiKey> --set grafana.url=<GrafanaUrl> my-release grafana-community/grafana-mcp
      ```
 
 
