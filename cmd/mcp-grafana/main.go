@@ -263,7 +263,7 @@ Note that some of these capabilities may be disabled. Do not try to use features
 	// unregister sessions from the SDK's internal session map.
 	sm.SetMCPServer(s)
 
-	dt.addTools(s)
+	dt.addTools(s,tc)
 	return s, stm, sm
 }
 
