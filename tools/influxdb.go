@@ -53,7 +53,7 @@ const (
 // Regex expressions used for query parsing and limit enforcement.
 var (
 	// influxQLLimitRegEx matches InfluxQL LIMIT and optional OFFSET clauses.
-	influxQLLimitRegEx = regexp.MustCompile(`(?i)(limit\s+)\d+(\s+offset\s+\d+)?(\s*$)`)
+	influxQLLimitRegEx = regexp.MustCompile(`(?i)(\blimit\s+)\d+(\s+offset\s+\d+)?(\s*$)`)
 
 	// sqlCTEStartRegEx matches the start of a CTE (WITH clause).
 	sqlCTEStartRegEx = regexp.MustCompile(`(?i)^\s*WITH\b`)
