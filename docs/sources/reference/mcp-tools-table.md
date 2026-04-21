@@ -34,22 +34,24 @@ The following table lists MCP tools, required RBAC permissions, and typical scop
 
 | Tool                              | Category    | Description                                                         | Required RBAC Permissions               | Required Scopes                                     |
 | --------------------------------- | ----------- | ------------------------------------------------------------------- | --------------------------------------- | --------------------------------------------------- |
-| `list_teams`                      | Admin       | List all teams                                                      | `teams:read`                            | `teams:*` or `teams:id:1`                           |
-| `list_users_by_org`               | Admin       | List all users in an organization                                   | `users:read`                            | `global.users:*` or `global.users:id:123`           |
-| `list_all_roles`          | Admin    | List all Grafana roles                              | `roles:read`              | `roles:*`                         |
-| `get_role_details`        | Admin    | Get details for a Grafana role                      | `roles:read`              | `roles:uid:editor`                |
-| `get_role_assignments`    | Admin    | List assignments for a role                         | `roles:read`              | `roles:uid:editor`                |
-| `list_user_roles`         | Admin    | List roles for users                                | `roles:read`              | `global.users:id:123`             |
-| `list_team_roles`         | Admin    | List roles for teams                                | `roles:read`              | `teams:id:7`                      |
-| `get_resource_permissions`| Admin    | List permissions for a resource                     | `permissions:read`        | `dashboards:uid:abcd1234`         |
-| `get_resource_description`| Admin    | Describe a Grafana resource type                    | `permissions:read`        | `dashboards:*`                    |
+| `list_teams`                      | Admin*      | List all teams                                                      | `teams:read`                            | `teams:*` or `teams:id:1`                           |
+| `list_users_by_org`               | Admin*      | List all users in an organization                                   | `users:read`                            | `global.users:*` or `global.users:id:123`           |
+| `list_all_roles`                  | Admin*      | List all Grafana roles                                              | `roles:read`                            | `roles:*`                                           |
+| `get_role_details`                | Admin*      | Get details for a Grafana role                                      | `roles:read`                            | `roles:uid:editor`                                  |
+| `get_role_assignments`            | Admin*      | List assignments for a role                                         | `roles:read`                            | `roles:uid:editor`                                  |
+| `list_user_roles`                 | Admin*      | List roles for users                                                | `roles:read`                            | `global.users:id:123`                               |
+| `list_team_roles`                 | Admin*      | List roles for teams                                                | `roles:read`                            | `teams:id:7`                                        |
+| `get_resource_permissions`        | Admin*      | List permissions for a resource                                     | `permissions:read`                      | `dashboards:uid:abcd1234`                           |
+| `get_resource_description`        | Admin*      | Describe a Grafana resource type                                    | `permissions:read`                      | `dashboards:*`                                      |
 | `search_dashboards`               | Search      | Search for dashboards                                               | `dashboards:read`                       | `dashboards:*` or `dashboards:uid:abc123`           |
+| `search_folders`                  | Search      | Search for folders by query string                                  | `folders:read`                          | `folders:*` or `folders:uid:xyz789`                 |
 | `get_dashboard_by_uid`            | Dashboard   | Get a dashboard by uid                                              | `dashboards:read`                       | `dashboards:uid:abc123`                             |
 | `update_dashboard`                | Dashboard   | Update or create a new dashboard                                    | `dashboards:create`, `dashboards:write` | `dashboards:*`, `folders:*` or `folders:uid:xyz789` |
 | `get_dashboard_panel_queries`     | Dashboard   | Get panel title, queries, datasource UID and type from a dashboard  | `dashboards:read`                       | `dashboards:uid:abc123`                             |
 | `run_panel_query`                 | RunPanelQuery* | Execute one or more dashboard panel queries                       | `dashboards:read`, `datasources:query`  | `dashboards:uid:*`, `datasources:uid:*`             |
 | `get_dashboard_property`          | Dashboard   | Extract specific parts of a dashboard using JSONPath expressions    | `dashboards:read`                       | `dashboards:uid:abc123`                             |
 | `get_dashboard_summary`           | Dashboard   | Get a compact summary of a dashboard without full JSON              | `dashboards:read`                       | `dashboards:uid:abc123`                             |
+| `create_folder`                   | Folder      | Create a Grafana folder with a title and optional UID               | `folders:create`                        | `folders:*`                                         |
 | `list_datasources`                | Datasources | List datasources                                                    | `datasources:read`                      | `datasources:*`                                     |
 | `get_datasource`                  | Datasources | Get a datasource by UID or name                                     | `datasources:read`                      | `datasources:uid:prometheus-uid`                    |
 | `get_query_examples`              | Examples*   | Get example queries for a datasource type                           | `datasources:read`                      | `datasources:*`                                     |

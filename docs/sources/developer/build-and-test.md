@@ -89,11 +89,11 @@ make test-cloud
 
 **Note**: Cloud tests are automatically configured in CI. For local development, you'll need to set up your own Grafana Cloud instance and credentials.
 
-For more comprehensive integration tests, run Grafana on port 3000 (for example with Docker Compose):
+For the full integration suite, start the supporting services first (Grafana and its dependencies on port 3000):
 
 ```bash
-docker-compose up -d
-make test-all
+make run-test-services
+make test-integration
 ```
 
 If you add tools, add integration tests; existing tests are a good template.

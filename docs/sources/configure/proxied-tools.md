@@ -29,7 +29,7 @@ Enable Tempo’s MCP server so the proxy path responds (for example `query_front
 
 Add a Tempo datasource in Grafana if you do not already have one.
 
-Tools appear as `tempo_<remote-tool-name>`. They are not listed in the static [MCP tools reference](../reference/mcp-tools-table/). Use your MCP client to list tools from the server.
+Tools appear as `tempo_<remote-tool-name>`. They are not listed in the static [MCP tools reference](../../reference/mcp-tools-table/). Use your MCP client to list tools from the server.
 
 ## Disable proxied tools
 

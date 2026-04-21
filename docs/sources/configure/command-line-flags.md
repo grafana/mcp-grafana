@@ -29,6 +29,7 @@ You can look up defaults, choose `--disable-*` flags, or configure TLS without r
 - `--address`: Host and port for the SSE or streamable-http server. Default: `localhost:8000`.
 - `--base-path`: Base path for the SSE or streamable-http server.
 - `--endpoint-path`: HTTP path for the streamable-http MCP endpoint. Default: `/mcp`.
+- `--session-idle-timeout-minutes`: Idle timeout for streamable-http sessions, in minutes. Sessions with no activity for this duration are automatically reaped. Set to `0` to disable. Default: `30`.
 
 ## Configure debug and logging
 
@@ -72,6 +73,10 @@ You can look up defaults, choose `--disable-*` flags, or configure TLS without r
 - `--disable-runpanelquery`: Disable run panel query tools.
 - `--disable-annotations`: Disable annotation tools.
 - `--disable-proxied`: Disable proxied tools (tools from external MCP servers).
+
+## Configure tool limits
+
+- `--max-loki-log-limit`: Maximum number of log lines returned per `query_loki_logs` call.
 
 ## Run in read-only mode
 

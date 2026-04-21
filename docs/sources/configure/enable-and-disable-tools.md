@@ -25,7 +25,7 @@ You enable only the tool categories you need, or disable write operations global
 
 ## Enable optional tool categories
 
-Some tool categories are disabled by default. Add them to `--enabled-tools` as a comma-separated list. For example:
+Some tool categories are disabled by default:
 
 - **runpanelquery** – Run dashboard panel queries.
 - **examples** – Query examples for datasource types.
@@ -35,17 +35,19 @@ Some tool categories are disabled by default. Add them to `--enabled-tools` as a
 - **elasticsearch** – Elasticsearch query tool.
 - **admin** – Admin tools (teams, users, roles, permissions).
 
-Example: enable panel queries and examples:
+`--enabled-tools` **replaces** the default list, so to add an optional category you must pass the full set. For example, to keep the defaults and also enable `runpanelquery` and `examples`:
 
 ```bash
-mcp-grafana --enabled-tools runpanelquery,examples
+mcp-grafana --enabled-tools search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering,runpanelquery,examples
 ```
+
+Refer to [Command-line flags](../command-line-flags/) for the default list.
 
 ## Disable tool categories
 
 Use `--disable-<category>` to turn off a whole category (for example, `--disable-oncall`, `--disable-alerting`, `--disable-dashboard`). For every flag, read-only behavior, and TLS-related flags, refer to [Command-line flags](../command-line-flags/).
 
-For tools that come from external MCP servers through Grafana (for example from Grafana Tempo), refer to [Proxied tools](proxied-tools/).
+For tools that come from external MCP servers through Grafana (for example from Grafana Tempo), refer to [Proxied tools](../proxied-tools/).
 
 ## Run in read-only mode
 
