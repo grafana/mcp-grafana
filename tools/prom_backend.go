@@ -49,6 +49,8 @@ func backendForDatasource(ctx context.Context, uid string, projectOverride ...st
 	switch ds.Type {
 	case "stackdriver":
 		return newCloudMonitoringBackend(ctx, ds, proj)
+	case victoriaMetricsDatasourceType:
+		return newVictoriaMetricsBackend(ctx, uid, ds)
 	default:
 		// For prometheus, thanos, cortex, mimir, and any other Prometheus-compatible datasource,
 		// use the native Prometheus client via the datasource proxy.
