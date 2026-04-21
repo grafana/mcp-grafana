@@ -1,3 +1,15 @@
+---
+title: Claude Desktop
+menuTitle: Claude Desktop
+description: Set up the Grafana MCP server for Claude Desktop.
+keywords:
+  - Claude Desktop
+  - MCP
+  - client
+weight: 1
+aliases: []
+---
+
 # Claude Desktop
 
 This guide helps you set up the `mcp-grafana` server for Claude Desktop.
@@ -22,7 +34,7 @@ Get the latest release from [GitHub Releases](https://github.com/grafana/mcp-gra
 
 ### Option 3: Docker
 
-No installation needed - use Docker in the configuration below.
+No installation needed – use Docker in the configuration below.
 
 ## Configuration
 
@@ -83,7 +95,9 @@ If you get `ENOENT`, use the full path:
         "GRAFANA_URL",
         "-e",
         "GRAFANA_SERVICE_ACCOUNT_TOKEN",
-        "mcp/grafana"
+        "grafana/mcp-grafana",
+        "-t",
+        "stdio"
       ],
       "env": {
         "GRAFANA_URL": "http://host.docker.internal:3000",
@@ -166,3 +180,8 @@ For Grafana instances requiring mTLS:
   }
 }
 ```
+
+## Next steps
+
+- [Set up](../../set-up/) for other install options (uvx, Helm).
+- [Configure authentication](../../configure/authentication/) for Grafana credentials.

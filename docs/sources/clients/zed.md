@@ -1,3 +1,15 @@
+---
+title: Zed
+menuTitle: Zed
+description: Set up the Grafana MCP server for the Zed editor.
+keywords:
+  - Zed
+  - MCP
+  - client
+weight: 8
+aliases: []
+---
+
 # Zed
 
 This guide helps you set up the `mcp-grafana` server for the Zed editor.
@@ -16,7 +28,7 @@ Zed uses `context_servers` in `settings.json`, not `mcpServers`.
 
 1. Open Agent Panel (Cmd+Shift+A)
 2. Click Settings (gear icon)
-3. Click "Add Custom Server"
+3. Click **Add Custom Server**
 4. Fill in command and args
 
 ### Manual configuration
@@ -55,7 +67,9 @@ Open Zed settings (Cmd+,) and add:
         "GRAFANA_URL",
         "-e",
         "GRAFANA_SERVICE_ACCOUNT_TOKEN",
-        "mcp/grafana"
+        "grafana/mcp-grafana",
+        "-t",
+        "stdio"
       ],
       "env": {
         "GRAFANA_URL": "http://host.docker.internal:3000",
@@ -86,7 +100,7 @@ Open Zed settings (Cmd+,) and add:
 ## Verify configuration
 
 1. Open Agent Panel settings
-2. Check indicator next to "grafana"
+2. Check indicator next to **grafana**
    - Green = server active
    - Other colors = check tooltip for status
 3. Open Agent Panel chat
@@ -106,13 +120,13 @@ By default, Zed asks permission for each tool call. To auto-allow:
 }
 ```
 
-Use with caution - this enables all MCP tools without confirmation.
+Use with caution – this enables all MCP tools without confirmation.
 
 ## Troubleshooting
 
 **Server not starting:**
 
-- Check Zed logs: Cmd+Shift+P -> "zed: open logs"
+- Check Zed logs: Cmd+Shift+P -> **zed: open logs**
 - Verify binary path: `which mcp-grafana`
 - Restart Zed after configuration changes
 
@@ -173,3 +187,8 @@ Alternative using `mcp-remote` shim:
   }
 }
 ```
+
+## Next steps
+
+- [Set up](../../set-up/) for other install options.
+- [Configure authentication](../../configure/authentication/) for Grafana credentials.

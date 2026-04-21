@@ -548,7 +548,7 @@ Forwarded headers are merged with any headers defined in `GRAFANA_EXTRA_HEADERS`
    - **Download binary**: Download the latest release of `mcp-grafana` from the [releases page](https://github.com/grafana/mcp-grafana/releases) and place it in your `$PATH`.
 
    - **Build from source**: If you have a Go toolchain installed you can also build and install it from source, using the `GOBIN` environment variable
-     to specify the directory where the binary should be installed. This should also be in your `PATH`.
+     to specify the directory where the binary should be installed. This should also be in your `$PATH`.
 
      ```bash
      GOBIN="$HOME/go/bin" go install github.com/grafana/mcp-grafana/cmd/mcp-grafana@latest

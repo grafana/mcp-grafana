@@ -1,3 +1,16 @@
+---
+title: Claude Code
+menuTitle: Claude Code
+description: Set up the Grafana MCP server for the Claude Code CLI.
+keywords:
+  - Claude Code
+  - Anthropic
+  - MCP
+  - client
+weight: 5
+aliases: []
+---
+
 # Claude Code
 
 This guide helps you set up the `mcp-grafana` server for the Claude Code CLI.
@@ -65,7 +78,7 @@ claude mcp add-json "grafana" '{
 ```bash
 claude mcp add-json "grafana" '{
   "command": "docker",
-  "args": ["run", "--rm", "-i", "-e", "GRAFANA_URL", "-e", "GRAFANA_SERVICE_ACCOUNT_TOKEN", "mcp/grafana"],
+  "args": ["run", "--rm", "-i", "-e", "GRAFANA_URL", "-e", "GRAFANA_SERVICE_ACCOUNT_TOKEN", "grafana/mcp-grafana", "-t", "stdio"],
   "env": {
     "GRAFANA_URL": "http://host.docker.internal:3000",
     "GRAFANA_SERVICE_ACCOUNT_TOKEN": "<your-token>"
@@ -94,14 +107,14 @@ claude --debug
 
 ## Verify configuration
 
-1.  Start a new Claude Code session:
+1. Start a new Claude Code session:
 
-    ```bash
-    claude
-    ```
+   ```bash
+   claude
+   ```
 
-2.  Ask: "List my Grafana dashboards"
-3.  Claude should use the Grafana MCP tools automatically
+2. Ask: "List my Grafana dashboards"
+3. Claude should use the Grafana MCP tools automatically
 
 ## View current configuration
 
@@ -133,3 +146,8 @@ claude mcp add-json "grafana" '{
   }
 }'
 ```
+
+## Next steps
+
+- [Set up](../../set-up/) for other install options.
+- [Configure authentication](../../configure/authentication/) for Grafana credentials.
