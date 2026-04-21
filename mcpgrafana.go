@@ -551,13 +551,41 @@ type httpContextFunc func(ctx context.Context, req *http.Request) context.Contex
 // ExtractGrafanaInfoFromHeaders is a HTTPContextFunc that extracts Grafana configuration from HTTP request headers.
 // It reads X-Grafana-URL and X-Grafana-API-Key headers, falling back to environment variables if headers are not present.
 // Headers listed in GRAFANA_FORWARD_HEADERS are copied from the incoming request and merged with GRAFANA_EXTRA_HEADERS.
+//
+// When X-Grafana-URL is present but fails ValidateGrafanaURL (malformed, non-http(s)
+// scheme, missing host, or trims to empty), the header is rejected and config.URL
+// is left empty. This is fail-closed: the function does NOT fall back to env on a
+// present-but-invalid header, because silently substituting env would mask the
+// caller's mistake. Absent header still falls back to env. A slog.Warn names the
+// rejection so operators can diagnose bad deployments from logs.
 var ExtractGrafanaInfoFromHeaders httpContextFunc = func(ctx context.Context, req *http.Request) context.Context {
+	// extractKeyGrafanaInfoFromReq is called unconditionally because we need
+	// apiKey, basicAuth, and orgID on every path (including the invalid-URL
+	// path). Its `u` return is used only on the valid or absent header paths.
 	u, apiKey, basicAuth, orgID := extractKeyGrafanaInfoFromReq(req)
 
 	// Get existing config or create a new one.
 	// This will respect the existing debug flag, if set.
 	config := GrafanaConfigFromContext(ctx)
-	config.URL = u
+
+	rawHeader := req.Header.Get(grafanaURLHeader)
+	if rawHeader != "" {
+		// Present header: validate the trimmed RAW header, not `u`. `u` can
+		// be env-sourced when the raw header trims to empty (e.g. "/"), so
+		// validating `u` would silently accept an env URL when the header
+		// itself was bad. Validating the raw-trimmed header keeps fail-closed.
+		if err := ValidateGrafanaURL(strings.TrimRight(rawHeader, "/")); err != nil {
+			slog.Warn("rejecting malformed X-Grafana-URL header, leaving config.URL empty", "error", err)
+			config.URL = ""
+		} else {
+			config.URL = u
+		}
+	} else {
+		// Absent header: u is already the env-fallback URL (or empty) as
+		// returned by extractKeyGrafanaInfoFromReq. Pass through unchanged.
+		config.URL = u
+	}
+
 	config.APIKey = apiKey
 	config.BasicAuth = basicAuth
 	config.OrgID = orgID

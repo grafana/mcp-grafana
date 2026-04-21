@@ -2,10 +2,12 @@ package mcpgrafana
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/go-openapi/runtime/client"
@@ -1307,4 +1309,99 @@ func TestNewGrafanaClientFetchesPublicURL(t *testing.T) {
 		gc := NewGrafanaClient(ctx, ts.URL, "test-key", nil)
 		assert.Equal(t, "", gc.PublicURL)
 	})
+}
+
+// capturingHandler is a test-local slog.Handler that records every slog.Record
+// passed through it. Used by TestExtractGrafanaInfoFromHeaders_URLValidation to
+// assert that the new warn-on-bad-header path emits the expected WARN record.
+type capturingHandler struct {
+	mu      sync.Mutex
+	records []slog.Record
+}
+
+func (h *capturingHandler) Enabled(context.Context, slog.Level) bool { return true }
+
+func (h *capturingHandler) Handle(_ context.Context, r slog.Record) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.records = append(h.records, r.Clone())
+	return nil
+}
+
+func (h *capturingHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h *capturingHandler) WithGroup(string) slog.Handler      { return h }
+
+func (h *capturingHandler) warnRejectionCount() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	var n int
+	for _, r := range h.records {
+		if r.Level == slog.LevelWarn && strings.Contains(r.Message, "rejecting malformed X-Grafana-URL header") {
+			n++
+		}
+	}
+	return n
+}
+
+// TestExtractGrafanaInfoFromHeaders_URLValidation covers the inline header
+// validation added to ExtractGrafanaInfoFromHeaders. The six cases cover the
+// full product of (valid | invalid | absent | trim-collapse) x (env present |
+// env absent), plus the critical regression case (e) where a literal "/"
+// header would, under the old trim-then-empty-check logic, silently fall back
+// to env. Each sub-test runs with t.Setenv-scoped env vars so it is hermetic
+// regardless of the developer's shell env.
+func TestExtractGrafanaInfoFromHeaders_URLValidation(t *testing.T) {
+	cases := []struct {
+		name            string
+		header          string // "" means no X-Grafana-URL header set at all
+		setHeader       bool
+		env             string // value for GRAFANA_URL env; "" means unset
+		wantURL         string
+		wantWarnCount   int
+	}{
+		{name: "valid header, env present", header: "http://grafana.example", setHeader: true, env: "http://env.example", wantURL: "http://grafana.example", wantWarnCount: 0},
+		{name: "invalid header, env present", header: "http://%gg", setHeader: true, env: "http://env.example", wantURL: "", wantWarnCount: 1},
+		{name: "absent header, env present", header: "", setHeader: false, env: "http://env.example", wantURL: "http://env.example", wantWarnCount: 0},
+		// Note: "absent header, absent env" resolves to defaultGrafanaURL
+		// (http://localhost:3000) via extractKeyGrafanaInfoFromEnv, not "".
+		// The only paths that produce an empty config.URL are the fail-closed
+		// branches (invalid + trim-collapse below).
+		{name: "absent header, env absent (default applies)", header: "", setHeader: false, env: "", wantURL: defaultGrafanaURL, wantWarnCount: 0},
+		{name: "slash header (trim-collapse), env present", header: "/", setHeader: true, env: "http://env.example", wantURL: "", wantWarnCount: 1},
+		{name: "valid header, env absent", header: "http://grafana.example", setHeader: true, env: "", wantURL: "http://grafana.example", wantWarnCount: 0},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Hermetic env setup: GRAFANA_URL is the only env var
+			// extractKeyGrafanaInfoFromReq consults for URL fallback, but
+			// clear the auth-token vars too so a developer-set env does not
+			// leak into assertions on other config fields via future tests.
+			t.Setenv("GRAFANA_URL", tc.env)
+			t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN", "")
+			t.Setenv("GRAFANA_API_KEY", "")
+
+			// Install capturing slog.Handler as the process default so
+			// the WARN emitted inside ExtractGrafanaInfoFromHeaders is
+			// captured. Restore after the subtest via t.Cleanup. No
+			// t.Parallel, matching the slog.SetDefault-mutation pattern
+			// established by observability_test.go:TestSetup_SlowLogSurvivesStrictGlobal.
+			prev := slog.Default()
+			t.Cleanup(func() { slog.SetDefault(prev) })
+			h := &capturingHandler{}
+			slog.SetDefault(slog.New(h))
+
+			req, err := http.NewRequest("GET", "http://example.com", nil)
+			require.NoError(t, err)
+			if tc.setHeader {
+				req.Header.Set(grafanaURLHeader, tc.header)
+			}
+
+			ctx := ExtractGrafanaInfoFromHeaders(context.Background(), req)
+			cfg := GrafanaConfigFromContext(ctx)
+
+			assert.Equal(t, tc.wantURL, cfg.URL, "config.URL")
+			assert.Equal(t, tc.wantWarnCount, h.warnRejectionCount(), "warn count")
+		})
+	}
 }
