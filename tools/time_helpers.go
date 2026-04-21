@@ -12,7 +12,7 @@ import (
 // interpreted as UTC by the server, and suggests including an explicit offset
 // like '-05:00' or using the relative 'now-Xh' syntax accepted by gtime.
 func timeParamHint() string {
-	return "Timestamps without a timezone offset are interpreted as UTC; include an offset like '-05:00'"
+	return "Timestamps without a timezone offset are interpreted as UTC; include an offset like '-05:00' or use relative syntax like 'now-1h'"
 }
 
 // parseStartTime parses start time strings in various formats.
