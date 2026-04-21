@@ -45,6 +45,8 @@ mcp-grafana --enabled-tools runpanelquery,examples
 
 Use `--disable-<category>` to turn off a whole category (for example, `--disable-oncall`, `--disable-alerting`, `--disable-dashboard`). For every flag, read-only behavior, and TLS-related flags, refer to [Command-line flags](../command-line-flags/).
 
+For tools that come from external MCP servers through Grafana (for example from Grafana Tempo), refer to [Proxied tools](proxied-tools/).
+
 ## Run in read-only mode
 
 Use `--disable-write` to disable all write operations. The server can still read dashboards, run queries, and list resources, but it cannot create or update dashboards, incidents, alert rules, annotations, or investigations.
