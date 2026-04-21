@@ -61,9 +61,6 @@ var (
 	// sqlKeywordRegEx matches standard SQL keywords that follow a CTE.
 	sqlKeywordRegEx = regexp.MustCompile(`(?i)^(SELECT|INSERT|UPDATE|DELETE|MERGE|TRUNCATE)\b`)
 
-	// sqlLimitRegEx matches a SQL LIMIT clause.
-	sqlLimitRegEx = regexp.MustCompile(`(?i)\bLIMIT\s+\d+`)
-
 	// fluxLimitRegEx matches a Flux limit operator at the end of a query.
 	fluxLimitRegEx = regexp.MustCompile(`(?i)\|>\s*limit\s*\(\s*n\s*:\s*\d+\s*\)\s*$`)
 )
