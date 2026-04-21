@@ -213,6 +213,8 @@ Available Capabilities:
 - Rendering: Export dashboard panels or full dashboards as PNG images (requires Grafana Image Renderer plugin).
 - Proxied Tools: Access tools from external MCP servers (like Tempo) through dynamic discovery.
 
+Timestamp parameters without a timezone offset are interpreted as UTC. Include an offset like '-05:00' or use relative syntax like 'now-1h' to query in a different timezone.
+
 Note that some of these capabilities may be disabled. Do not try to use features that are not available via tools.
 `),
 		server.WithHooks(hooks),
