@@ -10,4 +10,4 @@ include docs.mk
 
 .PHONY: test
 test:
-	docker run -v $(CURDIR)/sources:/hugo/content/docs/mcp-server/latest -e HUGO_REFLINKSERRORLEVEL=ERROR --rm grafana/docs-base:latest /bin/bash -c 'exec make hugo'
+	docker run -v $(CURDIR)/sources:/hugo/content/docs/mcp-grafana/latest -e HUGO_REFLINKSERRORLEVEL=ERROR --rm grafana/docs-base:latest /bin/bash -c 'exec make hugo'
