@@ -137,14 +137,14 @@ func Test_enforceQueryLimit(t *testing.T) {
 	t.Run("should replace excessive limit in CTE select part", func(t *testing.T) {
 		args := InfluxQueryArgs{QueryType: SQLQueryType, Query: "WITH a AS (SELECT * FROM orders) SELECT * FROM a LIMIT 999999", Limit: 0}
 		enforceQueryLimit(&args)
-		assert.Equal(t, "WITH a AS (SELECT * FROM orders) SELECT * FROM a LIMIT 100", args.Query, "CTE query should have excessive limit replaced with enforced limit")
+		assert.Equal(t, "WITH a AS (SELECT * FROM orders) (SELECT * FROM a LIMIT 999999) LIMIT 100", args.Query, "CTE query should have excessive limit replaced with enforced limit")
 		t.Log("replaced excessive CTE limit")
 	})
 
 	t.Run("should replace excessive limit in multi-CTE select part", func(t *testing.T) {
 		args := InfluxQueryArgs{QueryType: SQLQueryType, Query: "WITH a AS (SELECT * FROM orders), b AS (SELECT * FROM a) SELECT * FROM b LIMIT 5000", Limit: 0}
 		enforceQueryLimit(&args)
-		assert.Equal(t, "WITH a AS (SELECT * FROM orders), b AS (SELECT * FROM a) SELECT * FROM b LIMIT 100", args.Query, "multi-CTE query should have excessive limit replaced")
+		assert.Equal(t, "WITH a AS (SELECT * FROM orders), b AS (SELECT * FROM a) (SELECT * FROM b LIMIT 5000) LIMIT 100", args.Query, "multi-CTE query should have excessive limit replaced")
 		t.Log("replaced excessive multi-CTE limit")
 	})
 }
@@ -408,6 +408,13 @@ func TestFindTopLevelSelectAfterCTE(t *testing.T) {
 			)
 			SELECT * FROM a`,
 			wantSel: "SELECT * FROM a",
+		},
+		{
+			name: `CTE with limit`,
+			query: `
+				WITH a AS (SELECT * FROM orders) SELECT * FROM a LIMIT 999999
+			`,
+			wantSel: `SELECT * FROM a LIMIT 999999`,
 		},
 		{
 			name: "CTE with window function in body",

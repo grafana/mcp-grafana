@@ -20,7 +20,7 @@ func Test_ListBuckets(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		assert.Contains(t, *result.Buckets, "b-system-logs", "should list buckets for Flux DataSource")
+		assert.Contains(t, result.Buckets, "b-system-logs", "should list buckets for Flux DataSource")
 	})
 
 	t.Run("error for SQL linked Datasource", func(t *testing.T) {
@@ -39,6 +39,7 @@ func Test_ListBuckets(t *testing.T) {
 		require.EqualError(t, err, "datasource is not configured with Flux, bucket listing is explicit to Flux linked datasources")
 	})
 }
+
 // Test_Query verifies querying InfluxDB with Flux, SQL and InfluxQL query languages.
 func Test_Query(t *testing.T) {
 
@@ -124,6 +125,7 @@ func Test_Query(t *testing.T) {
 		require.True(t, ok, "should contain queried columns with expected type in a row")
 	})
 }
+
 // Test_ListMeasurements verifies the listing of measurements for different InfluxDB datasource linked types.
 func Test_ListMeasurements(t *testing.T) {
 	t.Run("require bucket for Flux Datasource", func(t *testing.T) {
@@ -158,13 +160,14 @@ func Test_ListMeasurements(t *testing.T) {
 			require.NoError(t, err)
 
 			t.Log(result.Measurements, result.Hints, result.MeasurementCount)
-			assert.Subset(t, *result.Measurements,
+			assert.Subset(t, result.Measurements,
 				[]string{"auth_events", "db_queries", "http_requests", "queue_stats", "resource_usage", "syslog"},
 				"should list measurements for %s linked Datasource", uid)
 		}
 	})
 
 }
+
 // Test_ListTagKeys verifies the listing of tag keys for different InfluxDB datasource linked types.
 func Test_ListTagKeys(t *testing.T) {
 
@@ -198,7 +201,7 @@ func Test_ListTagKeys(t *testing.T) {
 
 			t.Log(result.TagKeys, uid, result.Hints)
 
-			assert.Subset(t, *result.TagKeys,
+			assert.Subset(t, result.TagKeys,
 				[]string{"ip", "status", "service"},
 				"should list tag keys for %s linked Datasource", uid)
 		}
@@ -220,11 +223,12 @@ func Test_ListTagKeys(t *testing.T) {
 
 			assert.NotNil(t, result.Hints, "should return hints")
 
-			assert.Empty(t, *result.TagKeys, "should return empty list for non-existent measurement")
+			assert.Empty(t, result.TagKeys, "should return empty list for non-existent measurement")
 		}
 	})
 
 }
+
 // Test_ListFieldKeys verifies the listing of field keys for different InfluxDB datasource linked types.
 func Test_ListFieldKeys(t *testing.T) {
 
@@ -258,7 +262,7 @@ func Test_ListFieldKeys(t *testing.T) {
 
 			t.Log(result.FieldKeys, uid, result.Hints)
 
-			assert.Subset(t, *result.FieldKeys,
+			assert.Subset(t, result.FieldKeys,
 				[]string{"attempt_count", "severity"},
 				"should list field keys for %s linked Datasource", uid)
 		}
@@ -280,11 +284,12 @@ func Test_ListFieldKeys(t *testing.T) {
 
 			assert.NotNil(t, result.Hints, "should return hints")
 
-			assert.Empty(t, *result.FieldKeys, "should return empty list for non-existent measurement")
+			assert.Empty(t, result.FieldKeys, "should return empty list for non-existent measurement")
 		}
 	})
 
 }
+
 // Test_Limit verifies the correct application of rate limits on queries across datasource linked types.
 func Test_Limit(t *testing.T) {
 	dataSourceUIDs := []string{"influxdb-flux", "influxdb-sql", "influxdb-influxql"}
@@ -308,7 +313,7 @@ func Test_Limit(t *testing.T) {
 
 			t.Log(result.Measurements, uid, result.Hints)
 
-			assert.Len(t, *result.Measurements, 1)
+			assert.Len(t, result.Measurements, 1)
 		}
 	})
 
@@ -332,7 +337,7 @@ func Test_Limit(t *testing.T) {
 
 			t.Log(result.TagKeys, uid, result.Hints)
 
-			assert.Len(t, *result.TagKeys, 1)
+			assert.Len(t, result.TagKeys, 1)
 		}
 	})
 
@@ -356,7 +361,7 @@ func Test_Limit(t *testing.T) {
 
 			t.Log(result.FieldKeys, uid, result.Hints)
 
-			assert.Len(t, *result.FieldKeys, 1)
+			assert.Len(t, result.FieldKeys, 1)
 		}
 	})
 
@@ -393,6 +398,19 @@ func Test_Limit(t *testing.T) {
 			},
 			{
 				Query:         `SELECT "attempt_count" FROM "auth_events" LIMIT 3;`,
+				DatasourceUID: "influxdb-sql",
+				QueryType:     SQLQueryType,
+			},
+			{
+				// CTE with a limit far exceeding InfluxDBMaxLimit (1000); enforceQueryLimit should
+				// wrap the final SELECT and apply the enforced limit instead.
+				Query:         `WITH recent AS (SELECT * FROM "auth_events") SELECT "attempt_count" FROM recent LIMIT 999999`,
+				DatasourceUID: "influxdb-sql",
+				QueryType:     SQLQueryType,
+			},
+			{
+				// Multi-CTE with an excessive limit; enforceQueryLimit should wrap the final SELECT.
+				Query:         `WITH base AS (SELECT * FROM "auth_events"), filtered AS (SELECT "attempt_count" FROM base) SELECT * FROM filtered LIMIT 5000`,
 				DatasourceUID: "influxdb-sql",
 				QueryType:     SQLQueryType,
 			},

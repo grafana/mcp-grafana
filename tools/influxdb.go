@@ -319,12 +319,9 @@ func enforceQueryLimit(args *InfluxQueryArgs) {
 				ctePrefix := query[:pos]  // WITH a AS (...), b AS (...)
 				selectPart := query[pos:] // SELECT * FROM a JOIN b ON true
 
-				if sqlLimitRegEx.MatchString(selectPart) {
-					args.Query = ctePrefix + sqlLimitRegEx.ReplaceAllString(selectPart, fmt.Sprintf("LIMIT %d", limit))
-				} else {
-					wrappedSelect := "(" + selectPart + ")" + fmt.Sprintf(" LIMIT %d", limit)
-					args.Query = ctePrefix + wrappedSelect
-				}
+				// wrap select with limit
+				wrappedSelect := "(" + selectPart + ")" + fmt.Sprintf(" LIMIT %d", limit)
+				args.Query = ctePrefix + wrappedSelect
 			}
 		} else {
 			// window functions , generic queries
