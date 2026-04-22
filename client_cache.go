@@ -296,12 +296,12 @@ func extractIncidentClientCached(cache *ClientCache) httpContextFunc {
 			client := incident.NewClient(incidentURL, apiKey)
 
 			config := GrafanaConfigFromContext(ctx)
-			transport, err := BuildTransport(&config, nil, WithoutOrgID(), WithoutUserAgent())
+			config.OrgID = orgID
+			transport, err := BuildTransport(&config, nil, WithoutAuth())
 			if err != nil {
 				slog.Error("Failed to create custom transport for incident client, using default", "error", err)
 			} else {
-				orgIDWrapped := NewOrgIDRoundTripper(transport, orgID)
-				client.HTTPClient.Transport = wrapWithUserAgent(orgIDWrapped)
+				client.HTTPClient.Transport = transport
 			}
 
 			return client

@@ -15,7 +15,6 @@ import (
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
-	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 const (
@@ -108,25 +107,13 @@ func newClickHouseClient(ctx context.Context, uid string) (*clickHouseClient, er
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
 	baseURL := strings.TrimRight(cfg.URL, "/")
 
-	// Create custom transport with TLS configuration if available
-	transport := cfg.HTTPTransport()
-	if tlsConfig := cfg.TLSConfig; tlsConfig != nil {
-		base, ok := transport.(*http.Transport)
-		if !ok {
-			base = http.DefaultTransport.(*http.Transport).Clone()
-		}
-		var err error
-		transport, err = tlsConfig.HTTPTransport(base)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create custom transport: %w", err)
-		}
+	transport, err := mcpgrafana.BuildTransport(&cfg, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create transport: %w", err)
 	}
 
-	transport = mcpgrafana.NewAuthRoundTripper(transport, cfg.AccessToken, cfg.IDToken, cfg.APIKey, cfg.BasicAuth)
-	transport = mcpgrafana.NewOrgIDRoundTripper(transport, cfg.OrgID)
-
 	client := &http.Client{
-		Transport: otelhttp.NewTransport(mcpgrafana.NewUserAgentTransport(transport)),
+		Transport: transport,
 	}
 
 	return &clickHouseClient{
