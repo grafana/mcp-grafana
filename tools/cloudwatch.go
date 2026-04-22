@@ -15,6 +15,7 @@ import (
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 const (
@@ -96,10 +97,14 @@ func newCloudWatchClient(ctx context.Context, uid string) (*cloudWatchClient, er
 	baseURL := strings.TrimRight(cfg.URL, "/")
 
 	// Create custom transport with TLS configuration if available
-	var transport = http.DefaultTransport
+	transport := cfg.HTTPTransport()
 	if tlsConfig := cfg.TLSConfig; tlsConfig != nil {
+		base, ok := transport.(*http.Transport)
+		if !ok {
+			base = http.DefaultTransport.(*http.Transport).Clone()
+		}
 		var err error
-		transport, err = tlsConfig.HTTPTransport(transport.(*http.Transport))
+		transport, err = tlsConfig.HTTPTransport(base)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create custom transport: %w", err)
 		}
@@ -109,7 +114,7 @@ func newCloudWatchClient(ctx context.Context, uid string) (*cloudWatchClient, er
 	transport = mcpgrafana.NewOrgIDRoundTripper(transport, cfg.OrgID)
 
 	client := &http.Client{
-		Transport: mcpgrafana.NewUserAgentTransport(transport),
+		Transport: otelhttp.NewTransport(mcpgrafana.NewUserAgentTransport(transport)),
 	}
 
 	return &cloudWatchClient{
