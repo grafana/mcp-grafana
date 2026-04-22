@@ -125,6 +125,7 @@ func AddIncidentTools(mcp *server.MCPServer, enableWriteTools bool) {
 	if enableWriteTools {
 		CreateIncident.Register(mcp)
 		AddActivityToIncident.Register(mcp)
+		UpdateIncident.Register(mcp)
 	}
 	GetIncident.Register(mcp)
 }
@@ -154,4 +155,55 @@ var GetIncident = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("Get incident details"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+)
+
+type UpdateIncidentParams struct {
+	IncidentID string `json:"incidentId" jsonschema:"description=The ID of the incident to update"`
+	Status     string `json:"status,omitempty" jsonschema:"description=New status: 'active' or 'resolved'"`
+	Severity   string `json:"severity,omitempty" jsonschema:"description=New severity level"`
+	AssignedTo string `json:"assignedTo,omitempty" jsonschema:"description=User or team to assign the incident to"`
+	Title      string `json:"title,omitempty" jsonschema:"description=Updated incident title"`
+}
+
+func updateIncident(ctx context.Context, args UpdateIncidentParams) (*incident.Incident, error) {
+	c := mcpgrafana.IncidentClientFromContext(ctx)
+	is := incident.NewIncidentsService(c)
+
+	incidentResp, err := is.GetIncident(ctx, incident.GetIncidentRequest{
+		IncidentID: args.IncidentID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get incident by ID: %w", err)
+	}
+
+	updatedIncident := incidentResp.Incident
+	if args.Status != "" {
+		updatedIncident.Status = args.Status
+	}
+	if args.Severity != "" {
+		updatedIncident.Severity = args.Severity
+	}
+	if args.Title != "" {
+		updatedIncident.Title = args.Title
+	}
+	if args.AssignedTo != "" {
+		updatedIncident.ResponderTeams = &[]incident.IncidentResponder{
+			{DisplayName: args.AssignedTo},
+		}
+	}
+
+	result, err := is.UpdateIncident(ctx, incident.UpdateIncidentRequest{
+		Incident: updatedIncident,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update incident: %w", err)
+	}
+	return &result.Incident, nil
+}
+
+var UpdateIncident = mcpgrafana.MustTool(
+	"update_incident",
+	"Update an existing Grafana incident. Allows updating status ('active', 'resolved'), severity, assigned responder, and title. Use this to resolve or reassign incidents as part of an on-call workflow.",
+	updateIncident,
+	mcp.WithTitleAnnotation("Update incident"),
 )
