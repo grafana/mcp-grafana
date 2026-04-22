@@ -256,8 +256,9 @@ func TestCloudWatchMultiFrameStatistics(t *testing.T) {
 			Status int `json:"status,omitempty"`
 			Frames []struct {
 				Schema struct {
-					Name   string `json:"name,omitempty"`
-					RefID  string `json:"refId,omitempty"`
+					Name   string                `json:"name,omitempty"`
+					RefID  string                `json:"refId,omitempty"`
+					Meta   *cloudWatchFrameMeta  `json:"meta,omitempty"`
 					Fields []struct {
 						Name     string                 `json:"name"`
 						Type     string                 `json:"type"`
@@ -279,8 +280,9 @@ func TestCloudWatchMultiFrameStatistics(t *testing.T) {
 	// Frame type for convenience
 	type frame = struct {
 		Schema struct {
-			Name   string `json:"name,omitempty"`
-			RefID  string `json:"refId,omitempty"`
+			Name   string                `json:"name,omitempty"`
+			RefID  string                `json:"refId,omitempty"`
+			Meta   *cloudWatchFrameMeta  `json:"meta,omitempty"`
 			Fields []struct {
 				Name     string                 `json:"name"`
 				Type     string                 `json:"type"`
@@ -332,8 +334,9 @@ func TestCloudWatchMultiFrameStatistics(t *testing.T) {
 		Status int `json:"status,omitempty"`
 		Frames []struct {
 			Schema struct {
-				Name   string `json:"name,omitempty"`
-				RefID  string `json:"refId,omitempty"`
+				Name   string                `json:"name,omitempty"`
+				RefID  string                `json:"refId,omitempty"`
+				Meta   *cloudWatchFrameMeta  `json:"meta,omitempty"`
 				Fields []struct {
 					Name     string                 `json:"name"`
 					Type     string                 `json:"type"`
@@ -575,6 +578,46 @@ func TestCloudWatchAccountIdURLEncoding(t *testing.T) {
 			parsed, err := url.ParseQuery(encoded)
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantParam, parsed.Get("accountId"))
+		})
+	}
+}
+
+func TestCloudWatchCustomMetaUnmarshal(t *testing.T) {
+	tests := []struct {
+		name           string
+		json           string
+		expectedStatus string
+	}{
+		{
+			name:           "object with Status (Logs Insights response)",
+			json:           `{"results":{"A":{"frames":[{"schema":{"meta":{"custom":{"Status":"Complete"}},"fields":[]},"data":{"values":[]}}]}}}`,
+			expectedStatus: "Complete",
+		},
+		{
+			name:           "string value (Metrics response)",
+			json:           `{"results":{"A":{"frames":[{"schema":{"meta":{"custom":"timeSeriesQuery"},"fields":[]},"data":{"values":[]}}]}}}`,
+			expectedStatus: "",
+		},
+		{
+			name:           "no meta field",
+			json:           `{"results":{"A":{"frames":[{"schema":{"fields":[]},"data":{"values":[]}}]}}}`,
+			expectedStatus: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var resp cloudWatchQueryResponse
+			err := json.Unmarshal([]byte(tt.json), &resp)
+			require.NoError(t, err, "unmarshaling should not fail regardless of custom field type")
+
+			for _, r := range resp.Results {
+				for _, frame := range r.Frames {
+					if frame.Schema.Meta != nil {
+						assert.Equal(t, tt.expectedStatus, frame.Schema.Meta.Custom.Status)
+					}
+				}
+			}
 		})
 	}
 }
