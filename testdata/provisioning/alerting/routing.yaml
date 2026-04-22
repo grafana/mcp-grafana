@@ -1,0 +1,22 @@
+apiVersion: 1
+
+muteTimes:
+    - orgId: 1
+      name: weekends
+      time_intervals:
+        - weekdays: [saturday, sunday]
+
+policies:
+    - orgId: 1
+      receiver: empty
+      group_by:
+        - grafana_folder
+        - alertname
+      routes:
+        - receiver: Email1
+          object_matchers:
+            - - severity
+              - =
+              - info
+          mute_time_intervals:
+            - weekends

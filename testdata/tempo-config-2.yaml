@@ -1,0 +1,43 @@
+server:
+  http_listen_port: 3201
+  log_level: debug
+
+query_frontend:
+  mcp_server:
+    enabled: true
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        http:
+          endpoint: 0.0.0.0:4318
+        grpc:
+          endpoint: 0.0.0.0:4317
+
+metrics_generator:
+  storage:
+    path: /tmp/tempo2/generator/wal
+    remote_write:
+      - url: http://prometheus:9090/api/v1/write
+        send_exemplars: true
+
+ingester:
+  max_block_duration: 5m
+
+overrides:
+  defaults:
+    metrics_generator:
+      processors: [service-graphs, span-metrics, local-blocks]
+
+compactor:
+  compaction:
+    block_retention: 1h
+
+storage:
+  trace:
+    backend: local
+    local:
+      path: /tmp/tempo2/blocks
+    wal:
+      path: /tmp/tempo2/wal

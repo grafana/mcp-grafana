@@ -1,0 +1,26 @@
+[project]
+name = "tests"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Ben Sully", email = "ben.sully@grafana.com" },
+    { name = "Ioanna Armouti", email = "ioanna.armouti@grafana.com" },
+    { name = "Chris Marchbanks", email = "chris.marchbanks@grafana.com" },
+]
+requires-python = ">=3.13"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "anyio>=4.9.0",
+    "deepeval>=1.0.0",
+    "litellm>=1.83.0,<1.83.1",
+    "mcp>=1.9.3",
+    "pytest>=9.0.3",
+    "pytest-rerunfailures>=15.0",
+    "python-dotenv>=1.2.2",
+]
+
+[tool.pytest.ini_options]
+addopts = "-p no:flaky"

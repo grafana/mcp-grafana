@@ -1,0 +1,661 @@
+// Requires a Grafana instance running on localhost:3000,
+// with a dashboard provisioned.
+// Run with `go test -tags integration`.
+//go:build integration
+
+package tools
+
+import (
+	"context"
+	"fmt"
+	"testing"
+
+	"github.com/grafana/grafana-openapi-client-go/models"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+const (
+	newTestDashboardName = "Integration Test"
+)
+
+// getExistingDashboardUID will fetch an existing dashboard for test purposes
+// It will search for exisiting dashboards and return the first, otherwise
+// will trigger a test error
+func getExistingTestDashboard(t *testing.T, ctx context.Context, dashboardName string) *models.Hit {
+	// Make sure we query for the existing dashboard, not a folder
+	if dashboardName == "" {
+		dashboardName = "Demo"
+	}
+	searchResults, err := searchDashboards(ctx, SearchDashboardsParams{
+		Query: dashboardName,
+	})
+	require.NoError(t, err)
+	require.Greater(t, len(searchResults.Dashboards), 0, "No dashboards found")
+	return searchResults.Dashboards[0]
+}
+
+// getExistingTestDashboardJSON will fetch the JSON map for an existing
+// dashboard in the test environment
+func getTestDashboardJSON(t *testing.T, ctx context.Context, dashboard *models.Hit) map[string]interface{} {
+	result, err := getDashboardByUID(ctx, GetDashboardByUIDParams{
+		UID: dashboard.UID,
+	})
+	require.NoError(t, err)
+	dashboardMap, ok := result.Dashboard.(map[string]interface{})
+	require.True(t, ok, "Dashboard should be a map")
+	return dashboardMap
+}
+
+func TestDashboardTools(t *testing.T) {
+	t.Run("get dashboard by uid", func(t *testing.T) {
+		ctx := newTestContext()
+
+		// First, let's search for a dashboard to get its UID
+		dashboard := getExistingTestDashboard(t, ctx, "")
+
+		// Now test the get dashboard by uid functionality
+		result, err := getDashboardByUID(ctx, GetDashboardByUIDParams{
+			UID: dashboard.UID,
+		})
+		require.NoError(t, err)
+		dashboardMap, ok := result.Dashboard.(map[string]interface{})
+		require.True(t, ok, "Dashboard should be a map")
+		assert.Equal(t, dashboard.UID, dashboardMap["uid"])
+		assert.NotNil(t, result.Meta)
+	})
+
+	t.Run("get dashboard by uid - invalid uid", func(t *testing.T) {
+		ctx := newTestContext()
+
+		_, err := getDashboardByUID(ctx, GetDashboardByUIDParams{
+			UID: "non-existent-uid",
+		})
+		require.Error(t, err)
+	})
+
+	t.Run("update dashboard - create new", func(t *testing.T) {
+		ctx := newTestContext()
+
+		// Get the dashboard JSON
+		// In this case, we will create a new dashboard with the same
+		// content but different Title, and disable "overwrite"
+		dashboard := getExistingTestDashboard(t, ctx, "")
+		dashboardMap := getTestDashboardJSON(t, ctx, dashboard)
+
+		// Avoid a clash by unsetting the existing IDs
+		delete(dashboardMap, "uid")
+		delete(dashboardMap, "id")
+
+		// Set a new title and tag
+		dashboardMap["title"] = newTestDashboardName
+		dashboardMap["tags"] = []string{"integration-test"}
+
+		params := UpdateDashboardParams{
+			Dashboard: dashboardMap,
+			Message:   "creating a new dashboard",
+			Overwrite: false,
+			UserID:    1,
+		}
+
+		// Only pass in the Folder UID if it exists
+		if dashboard.FolderUID != "" {
+			params.FolderUID = dashboard.FolderUID
+		}
+
+		// create the dashboard
+		_, err := updateDashboard(ctx, params)
+		require.NoError(t, err)
+	})
+
+	t.Run("update dashboard - overwrite existing", func(t *testing.T) {
+		ctx := newTestContext()
+
+		// Get the dashboard JSON for the non-provisioned dashboard we've created
+		dashboard := getExistingTestDashboard(t, ctx, newTestDashboardName)
+		dashboardMap := getTestDashboardJSON(t, ctx, dashboard)
+
+		params := UpdateDashboardParams{
+			Dashboard: dashboardMap,
+			Message:   "updating existing dashboard",
+			Overwrite: true,
+			UserID:    1,
+		}
+
+		// Only pass in the Folder UID if it exists
+		if dashboard.FolderUID != "" {
+			params.FolderUID = dashboard.FolderUID
+		}
+
+		// update the dashboard
+		_, err := updateDashboard(ctx, params)
+		require.NoError(t, err)
+	})
+
+	t.Run("get dashboard panel queries", func(t *testing.T) {
+		ctx := newTestContext()
+
+		// Get the test dashboard
+		dashboard := getExistingTestDashboard(t, ctx, "")
+
+		result, err := GetDashboardPanelQueriesTool(ctx, DashboardPanelQueriesParams{
+			UID: dashboard.UID,
+		})
+		require.NoError(t, err)
+		assert.Greater(t, len(result), 0, "Should return at least one panel query")
+
+		// Verify each returned query has the expected structure
+		for _, pq := range result {
+			assert.NotEmpty(t, pq.Title)
+			assert.NotEmpty(t, pq.Query)
+			assert.NotEmpty(t, pq.Datasource.UID)
+		}
+	})
+
+	t.Run("get dashboard panel queries - with panelId", func(t *testing.T) {
+		ctx := newTestContext()
+
+		dashboard := getExistingTestDashboard(t, ctx, "")
+
+		// Get the summary to find a valid panel ID
+		summary, err := getDashboardSummary(ctx, GetDashboardSummaryParams{UID: dashboard.UID})
+		require.NoError(t, err)
+		require.Greater(t, len(summary.Panels), 0)
+
+		panelID := summary.Panels[0].ID
+		result, err := GetDashboardPanelQueriesTool(ctx, DashboardPanelQueriesParams{
+			UID:     dashboard.UID,
+			PanelID: &panelID,
+		})
+		require.NoError(t, err)
+		assert.Greater(t, len(result), 0, "Should return at least one query for the panel")
+	})
+
+	t.Run("get dashboard panel queries - invalid panelId", func(t *testing.T) {
+		ctx := newTestContext()
+
+		dashboard := getExistingTestDashboard(t, ctx, "")
+
+		invalidID := 99999
+		_, err := GetDashboardPanelQueriesTool(ctx, DashboardPanelQueriesParams{
+			UID:     dashboard.UID,
+			PanelID: &invalidID,
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
+
+	t.Run("get dashboard panel queries - with variables", func(t *testing.T) {
+		ctx := newTestContext()
+
+		dashboard := getExistingTestDashboard(t, ctx, "")
+
+		result, err := GetDashboardPanelQueriesTool(ctx, DashboardPanelQueriesParams{
+			UID: dashboard.UID,
+			Variables: map[string]string{
+				"job": "test-job",
+			},
+		})
+		require.NoError(t, err)
+		assert.Greater(t, len(result), 0, "Should return at least one panel query")
+
+		// When variables are provided, raw query should always be present
+		for _, pq := range result {
+			assert.NotEmpty(t, pq.Query, "Raw query should always be present")
+		}
+	})
+
+	t.Run("get dashboard panel queries - with panelId and variables", func(t *testing.T) {
+		ctx := newTestContext()
+
+		dashboard := getExistingTestDashboard(t, ctx, "")
+
+		summary, err := getDashboardSummary(ctx, GetDashboardSummaryParams{UID: dashboard.UID})
+		require.NoError(t, err)
+		require.Greater(t, len(summary.Panels), 0)
+
+		panelID := summary.Panels[0].ID
+		result, err := GetDashboardPanelQueriesTool(ctx, DashboardPanelQueriesParams{
+			UID:     dashboard.UID,
+			PanelID: &panelID,
+			Variables: map[string]string{
+				"job": "test-job",
+			},
+		})
+		require.NoError(t, err)
+		assert.Greater(t, len(result), 0, "Should return at least one query")
+	})
+
+	// Tests for new Issue #101 context window management tools
+	t.Run("get dashboard summary", func(t *testing.T) {
+		ctx := newTestContext()
+
+		// Get the test dashboard
+		dashboard := getExistingTestDashboard(t, ctx, "")
+
+		result, err := getDashboardSummary(ctx, GetDashboardSummaryParams{
+			UID: dashboard.UID,
+		})
+		require.NoError(t, err)
+
+		assert.Equal(t, dashboard.UID, result.UID)
+		assert.NotEmpty(t, result.Title)
+		assert.Greater(t, result.PanelCount, 0, "Should have at least one panel")
+		assert.Len(t, result.Panels, result.PanelCount, "Panel count should match panels array length")
+		assert.NotNil(t, result.Meta)
+
+		// Check that panels have expected structure
+		for _, panel := range result.Panels {
+			assert.NotEmpty(t, panel.Title)
+			assert.NotEmpty(t, panel.Type)
+			assert.GreaterOrEqual(t, panel.QueryCount, 0)
+		}
+	})
+
+	t.Run("get dashboard property - title", func(t *testing.T) {
+		ctx := newTestContext()
+
+		dashboard := getExistingTestDashboard(t, ctx, "")
+
+		result, err := getDashboardProperty(ctx, GetDashboardPropertyParams{
+			UID:      dashboard.UID,
+			JSONPath: "$.title",
+		})
+		require.NoError(t, err)
+
+		title, ok := result.(string)
+		require.True(t, ok, "Title should be a string")
+		assert.NotEmpty(t, title)
+	})
+
+	t.Run("get dashboard property - panel titles", func(t *testing.T) {
+		ctx := newTestContext()
+
+		dashboard := getExistingTestDashboard(t, ctx, "")
+
+		result, err := getDashboardProperty(ctx, GetDashboardPropertyParams{
+			UID:      dashboard.UID,
+			JSONPath: "$.panels[*].title",
+		})
+		require.NoError(t, err)
+
+		titles, ok := result.([]interface{})
+		require.True(t, ok, "Panel titles should be an array")
+		assert.Greater(t, len(titles), 0, "Should have at least one panel title")
+
+		for _, title := range titles {
+			titleStr, ok := title.(string)
+			require.True(t, ok, "Each title should be a string")
+			assert.NotEmpty(t, titleStr)
+		}
+	})
+
+	t.Run("get dashboard property - invalid path", func(t *testing.T) {
+		ctx := newTestContext()
+
+		dashboard := getExistingTestDashboard(t, ctx, "")
+
+		_, err := getDashboardProperty(ctx, GetDashboardPropertyParams{
+			UID:      dashboard.UID,
+			JSONPath: "$.nonexistent.path",
+		})
+		require.Error(t, err, "Should fail for non-existent path")
+	})
+
+	t.Run("update dashboard - patch title", func(t *testing.T) {
+		ctx := newTestContext()
+
+		// Get our test dashboard (not the provisioned one)
+		dashboard := getExistingTestDashboard(t, ctx, newTestDashboardName)
+
+		newTitle := "Updated Integration Test Dashboard"
+
+		result, err := updateDashboard(ctx, UpdateDashboardParams{
+			UID: dashboard.UID,
+			Operations: []PatchOperation{
+				{
+					Op:    "replace",
+					Path:  "$.title",
+					Value: newTitle,
+				},
+			},
+			Message: "Updated title via patch",
+		})
+		require.NoError(t, err)
+		assert.NotNil(t, result)
+
+		// Verify the change was applied
+		updatedDashboard, err := getDashboardByUID(ctx, GetDashboardByUIDParams{
+			UID: dashboard.UID,
+		})
+		require.NoError(t, err)
+
+		dashboardMap, ok := updatedDashboard.Dashboard.(map[string]interface{})
+		require.True(t, ok, "Dashboard should be a map")
+		assert.Equal(t, newTitle, dashboardMap["title"])
+	})
+
+	t.Run("update dashboard - patch preserves UID", func(t *testing.T) {
+		ctx := newTestContext()
+
+		// Get our test dashboard
+		dashboard := getExistingTestDashboard(t, ctx, newTestDashboardName)
+		originalUID := dashboard.UID
+
+		// Fetch the full dashboard to get the numeric ID
+		fullDashboard, err := getDashboardByUID(ctx, GetDashboardByUIDParams{UID: originalUID})
+		require.NoError(t, err)
+		origMap, ok := fullDashboard.Dashboard.(map[string]interface{})
+		require.True(t, ok)
+		originalID := origMap["id"]
+
+		// Patch via uid + operations
+		patchedTitle := "Patch UID Preservation Test"
+		result, err := updateDashboard(ctx, UpdateDashboardParams{
+			UID: originalUID,
+			Operations: []PatchOperation{
+				{
+					Op:    "replace",
+					Path:  "$.title",
+					Value: patchedTitle,
+				},
+			},
+			Message: "Testing UID preservation",
+		})
+		require.NoError(t, err)
+		require.NotNil(t, result)
+
+		// The response UID must match the original — not a newly generated UUID.
+		require.NotNil(t, result.UID, "response UID should not be nil")
+		assert.Equal(t, originalUID, *result.UID,
+			"patch response UID should match the original dashboard UID, not a new one")
+
+		// Fetch the dashboard by the original UID and verify:
+		// 1. The title was actually changed (patch applied to the right dashboard)
+		// 2. The numeric ID is unchanged (same dashboard, not a clone)
+		updatedDashboard, err := getDashboardByUID(ctx, GetDashboardByUIDParams{UID: originalUID})
+		require.NoError(t, err)
+
+		updatedMap, ok := updatedDashboard.Dashboard.(map[string]interface{})
+		require.True(t, ok)
+		assert.Equal(t, patchedTitle, updatedMap["title"],
+			"title should be updated on the original dashboard")
+		assert.Equal(t, originalID, updatedMap["id"],
+			"numeric ID should be unchanged — dashboard should be updated in place, not cloned")
+
+		// Restore the original title so subsequent tests can find the dashboard
+		_, err = updateDashboard(ctx, UpdateDashboardParams{
+			UID: originalUID,
+			Operations: []PatchOperation{
+				{Op: "replace", Path: "$.title", Value: newTestDashboardName},
+			},
+		})
+		require.NoError(t, err)
+	})
+
+	t.Run("update dashboard - patch add description", func(t *testing.T) {
+		ctx := newTestContext()
+
+		dashboard := getExistingTestDashboard(t, ctx, newTestDashboardName)
+
+		description := "This is a test description added via patch"
+
+		_, err := updateDashboard(ctx, UpdateDashboardParams{
+			UID: dashboard.UID,
+			Operations: []PatchOperation{
+				{
+					Op:    "add",
+					Path:  "$.description",
+					Value: description,
+				},
+			},
+			Message: "Added description via patch",
+		})
+		require.NoError(t, err)
+
+		// Verify the description was added
+		updatedDashboard, err := getDashboardByUID(ctx, GetDashboardByUIDParams{
+			UID: dashboard.UID,
+		})
+		require.NoError(t, err)
+
+		dashboardMap, ok := updatedDashboard.Dashboard.(map[string]interface{})
+		require.True(t, ok, "Dashboard should be a map")
+		assert.Equal(t, description, dashboardMap["description"])
+	})
+
+	t.Run("update dashboard - patch remove description", func(t *testing.T) {
+		ctx := newTestContext()
+
+		dashboard := getExistingTestDashboard(t, ctx, newTestDashboardName)
+
+		_, err := updateDashboard(ctx, UpdateDashboardParams{
+			UID: dashboard.UID,
+			Operations: []PatchOperation{
+				{
+					Op:   "remove",
+					Path: "$.description",
+				},
+			},
+			Message: "Removed description via patch",
+		})
+		require.NoError(t, err)
+
+		// Verify the description was removed
+		updatedDashboard, err := getDashboardByUID(ctx, GetDashboardByUIDParams{
+			UID: dashboard.UID,
+		})
+		require.NoError(t, err)
+
+		dashboardMap, ok := updatedDashboard.Dashboard.(map[string]interface{})
+		require.True(t, ok, "Dashboard should be a map")
+		_, hasDescription := dashboardMap["description"]
+		assert.False(t, hasDescription, "Description should be removed")
+	})
+
+	t.Run("update dashboard - unsupported operation", func(t *testing.T) {
+		ctx := newTestContext()
+
+		dashboard := getExistingTestDashboard(t, ctx, newTestDashboardName)
+
+		_, err := updateDashboard(ctx, UpdateDashboardParams{
+			UID: dashboard.UID,
+			Operations: []PatchOperation{
+				{
+					Op:    "copy", // Unsupported operation
+					Path:  "$.title",
+					Value: "New Title",
+				},
+			},
+		})
+		require.Error(t, err, "Should fail for unsupported operation")
+	})
+
+	t.Run("update dashboard - invalid parameters", func(t *testing.T) {
+		ctx := newTestContext()
+
+		_, err := updateDashboard(ctx, UpdateDashboardParams{
+			// Neither dashboard nor (uid + operations) provided
+		})
+		require.Error(t, err, "Should fail when no valid parameters provided")
+	})
+
+	t.Run("update dashboard - append to panels array", func(t *testing.T) {
+		ctx := newTestContext()
+
+		// Get our test dashboard
+		dashboard := getExistingTestDashboard(t, ctx, newTestDashboardName)
+
+		// Create a new panel to append
+		newPanel := map[string]interface{}{
+			"id":    999,
+			"title": "New Appended Panel",
+			"type":  "stat",
+			"targets": []interface{}{
+				map[string]interface{}{
+					"expr": "up",
+				},
+			},
+			"gridPos": map[string]interface{}{
+				"h": 8,
+				"w": 12,
+				"x": 0,
+				"y": 8,
+			},
+		}
+
+		_, err := updateDashboard(ctx, UpdateDashboardParams{
+			UID: dashboard.UID,
+			Operations: []PatchOperation{
+				{
+					Op:    "add",
+					Path:  "$.panels/-",
+					Value: newPanel,
+				},
+			},
+			Message: "Appended new panel via /- syntax",
+		})
+		require.NoError(t, err)
+
+		// Verify the panel was appended
+		updatedDashboard, err := getDashboardByUID(ctx, GetDashboardByUIDParams{
+			UID: dashboard.UID,
+		})
+		require.NoError(t, err)
+
+		dashboardMap, ok := updatedDashboard.Dashboard.(map[string]interface{})
+		require.True(t, ok, "Dashboard should be a map")
+
+		panels, ok := dashboardMap["panels"].([]interface{})
+		require.True(t, ok, "Panels should be an array")
+
+		// Check that the new panel was appended (should be the last panel)
+		lastPanel, ok := panels[len(panels)-1].(map[string]interface{})
+		require.True(t, ok, "Last panel should be an object")
+		assert.Equal(t, "New Appended Panel", lastPanel["title"])
+		assert.Equal(t, float64(999), lastPanel["id"]) // JSON unmarshaling converts to float64
+	})
+
+	t.Run("update dashboard - remove with append syntax should fail", func(t *testing.T) {
+		ctx := newTestContext()
+
+		dashboard := getExistingTestDashboard(t, ctx, newTestDashboardName)
+
+		_, err := updateDashboard(ctx, UpdateDashboardParams{
+			UID: dashboard.UID,
+			Operations: []PatchOperation{
+				{
+					Op:   "remove",
+					Path: "$.panels/-", // Invalid: remove with append syntax
+				},
+			},
+		})
+		require.Error(t, err, "Should fail when using remove operation with append syntax")
+	})
+
+	t.Run("update dashboard - append to non-array should fail", func(t *testing.T) {
+		ctx := newTestContext()
+
+		dashboard := getExistingTestDashboard(t, ctx, newTestDashboardName)
+
+		_, err := updateDashboard(ctx, UpdateDashboardParams{
+			UID: dashboard.UID,
+			Operations: []PatchOperation{
+				{
+					Op:    "add",
+					Path:  "$.title/-", // Invalid: title is not an array
+					Value: "Invalid",
+				},
+			},
+		})
+		require.Error(t, err, "Should fail when trying to append to non-array field")
+	})
+
+	t.Run("update dashboard - remove panel by index", func(t *testing.T) {
+		ctx := newTestContext()
+
+		// Get our test dashboard
+		dashboard := getExistingTestDashboard(t, ctx, newTestDashboardName)
+		dashboardMap := getTestDashboardJSON(t, ctx, dashboard)
+
+		// Get current panel count
+		panels, ok := dashboardMap["panels"].([]interface{})
+		require.True(t, ok, "Panels should be an array")
+		originalCount := len(panels)
+
+		// Append a panel first so we have something to remove
+		newPanel := map[string]interface{}{
+			"id":    998,
+			"title": "Panel To Remove",
+			"type":  "stat",
+			"targets": []interface{}{
+				map[string]interface{}{
+					"expr": "up",
+				},
+			},
+			"gridPos": map[string]interface{}{
+				"h": 8,
+				"w": 12,
+				"x": 0,
+				"y": 16,
+			},
+		}
+
+		_, err := updateDashboard(ctx, UpdateDashboardParams{
+			UID: dashboard.UID,
+			Operations: []PatchOperation{
+				{
+					Op:    "add",
+					Path:  "$.panels/-",
+					Value: newPanel,
+				},
+			},
+			Message: "Appended panel for removal test",
+		})
+		require.NoError(t, err)
+
+		// Verify the panel was appended
+		updatedDashboard, err := getDashboardByUID(ctx, GetDashboardByUIDParams{
+			UID: dashboard.UID,
+		})
+		require.NoError(t, err)
+		updatedMap, ok := updatedDashboard.Dashboard.(map[string]interface{})
+		require.True(t, ok)
+		updatedPanels, ok := updatedMap["panels"].([]interface{})
+		require.True(t, ok)
+		require.Equal(t, originalCount+1, len(updatedPanels))
+
+		// Now remove the last panel by index
+		removeIndex := len(updatedPanels) - 1
+		_, err = updateDashboard(ctx, UpdateDashboardParams{
+			UID: dashboard.UID,
+			Operations: []PatchOperation{
+				{
+					Op:   "remove",
+					Path: fmt.Sprintf("$.panels[%d]", removeIndex),
+				},
+			},
+			Message: "Removed panel by index",
+		})
+		require.NoError(t, err)
+
+		// Verify the panel was removed
+		finalDashboard, err := getDashboardByUID(ctx, GetDashboardByUIDParams{
+			UID: dashboard.UID,
+		})
+		require.NoError(t, err)
+		finalMap, ok := finalDashboard.Dashboard.(map[string]interface{})
+		require.True(t, ok)
+		finalPanels, ok := finalMap["panels"].([]interface{})
+		require.True(t, ok)
+		assert.Equal(t, originalCount, len(finalPanels))
+
+		// Verify the removed panel is not present
+		for _, p := range finalPanels {
+			panel, ok := p.(map[string]interface{})
+			if ok {
+				assert.NotEqual(t, "Panel To Remove", panel["title"])
+			}
+		}
+	})
+}
