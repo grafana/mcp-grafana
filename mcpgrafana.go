@@ -461,12 +461,99 @@ func NewExtraHeadersRoundTripper(rt http.RoundTripper, headers map[string]string
 	}
 }
 
-func BuildTransport(cfg *GrafanaConfig, base http.RoundTripper) (http.RoundTripper, error) {
+// AuthRoundTripper wraps an http.RoundTripper to add authentication headers.
+// It supports on-behalf-of (OBO) auth via access/ID tokens, API key bearer
+// auth, and HTTP basic auth, in that priority order.
+type AuthRoundTripper struct {
+	accessToken string
+	idToken     string
+	apiKey      string
+	basicAuth   *url.Userinfo
+	underlying  http.RoundTripper
+}
+
+func (rt *AuthRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	clonedReq := req.Clone(req.Context())
+
+	if rt.accessToken != "" && rt.idToken != "" {
+		clonedReq.Header.Set("X-Access-Token", rt.accessToken)
+		clonedReq.Header.Set("X-Grafana-Id", rt.idToken)
+	} else if rt.apiKey != "" {
+		clonedReq.Header.Set("Authorization", "Bearer "+rt.apiKey)
+	} else if rt.basicAuth != nil {
+		password, _ := rt.basicAuth.Password()
+		clonedReq.SetBasicAuth(rt.basicAuth.Username(), password)
+	}
+
+	return rt.underlying.RoundTrip(clonedReq)
+}
+
+func NewAuthRoundTripper(rt http.RoundTripper, accessToken, idToken, apiKey string, basicAuth *url.Userinfo) *AuthRoundTripper {
+	if rt == nil {
+		rt = http.DefaultTransport
+	}
+	return &AuthRoundTripper{
+		accessToken: accessToken,
+		idToken:     idToken,
+		apiKey:      apiKey,
+		basicAuth:   basicAuth,
+		underlying:  rt,
+	}
+}
+
+// transportOptions controls which middleware layers BuildTransport includes.
+type transportOptions struct {
+	withoutAuth      bool
+	withoutOrgID     bool
+	withoutOtel      bool
+	withoutUserAgent bool
+}
+
+// TransportOption configures optional behaviour of BuildTransport.
+type TransportOption func(*transportOptions)
+
+// WithoutAuth skips the authentication middleware layer.
+// Use this when the HTTP client library handles auth itself (e.g. OnCall, incident).
+func WithoutAuth() TransportOption {
+	return func(o *transportOptions) { o.withoutAuth = true }
+}
+
+// WithoutOrgID skips the X-Grafana-Org-Id header layer.
+func WithoutOrgID() TransportOption {
+	return func(o *transportOptions) { o.withoutOrgID = true }
+}
+
+// WithoutOtel skips the otelhttp tracing wrapper.
+func WithoutOtel() TransportOption {
+	return func(o *transportOptions) { o.withoutOtel = true }
+}
+
+// WithoutUserAgent skips the User-Agent header layer.
+func WithoutUserAgent() TransportOption {
+	return func(o *transportOptions) { o.withoutUserAgent = true }
+}
+
+// BuildTransport constructs an http.RoundTripper with the standard middleware
+// chain derived from cfg. The default chain (innermost to outermost) is:
+//
+//	base → TLS → Auth → ExtraHeaders → OrgID → UserAgent → otelhttp
+//
+// Auth is innermost among the header-setting layers so that credentials take
+// precedence over any forwarded/extra headers with the same keys.
+//
+// Individual layers can be disabled with WithoutAuth, WithoutOrgID, etc.
+func BuildTransport(cfg *GrafanaConfig, base http.RoundTripper, opts ...TransportOption) (http.RoundTripper, error) {
+	var options transportOptions
+	for _, o := range opts {
+		o(&options)
+	}
+
 	if base == nil {
 		base = http.DefaultTransport
 	}
 	transport := base
 
+	// TLS
 	if cfg.TLSConfig != nil {
 		t, ok := base.(*http.Transport)
 		if !ok {
@@ -479,8 +566,29 @@ func BuildTransport(cfg *GrafanaConfig, base http.RoundTripper) (http.RoundTripp
 		}
 	}
 
+	// Auth (innermost header layer — wins on conflicts with ExtraHeaders)
+	if !options.withoutAuth {
+		transport = NewAuthRoundTripper(transport, cfg.AccessToken, cfg.IDToken, cfg.APIKey, cfg.BasicAuth)
+	}
+
+	// Extra headers
 	if len(cfg.ExtraHeaders) > 0 {
 		transport = NewExtraHeadersRoundTripper(transport, cfg.ExtraHeaders)
+	}
+
+	// Org ID
+	if !options.withoutOrgID && cfg.OrgID > 0 {
+		transport = NewOrgIDRoundTripper(transport, cfg.OrgID)
+	}
+
+	// User-Agent
+	if !options.withoutUserAgent {
+		transport = NewUserAgentTransport(transport)
+	}
+
+	// OpenTelemetry HTTP tracing (outermost)
+	if !options.withoutOtel {
+		transport = otelhttp.NewTransport(transport)
 	}
 
 	return transport, nil
