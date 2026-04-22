@@ -21,13 +21,10 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 )
 
-func AddPyroscopeTools(mcp *server.MCPServer) {
-	ListPyroscopeLabelNames.Register(mcp)
-	ListPyroscopeLabelValues.Register(mcp)
-	ListPyroscopeProfileTypes.Register(mcp)
-	QueryPyroscope.Register(mcp)
-}
-
+const (
+	// PyroscopeDataSourceType is the type identifier for Pyroscope datasources
+	PyroscopeDataSourceType = "grafana-pyroscope-datasource"
+)
 const listPyroscopeLabelNamesToolPrompt = `
 Lists all available label names (keys) found in profiles within a specified Pyroscope datasource, time range, and
 optional label matchers. Label matchers are typically used to qualify a service name ({service_name="foo"}). Returns a
@@ -220,7 +217,7 @@ func newPyroscopeClient(ctx context.Context, uid string) (*pyroscopeClient, erro
 	if err != nil {
 		return nil, fmt.Errorf("failed to create custom transport: %w", err)
 	}
-	transport = NewAuthRoundTripper(transport, cfg.AccessToken, cfg.IDToken, cfg.APIKey, cfg.BasicAuth)
+	transport = mcpgrafana.NewAuthRoundTripper(transport, cfg.AccessToken, cfg.IDToken, cfg.APIKey, cfg.BasicAuth)
 	transport = mcpgrafana.NewOrgIDRoundTripper(transport, cfg.OrgID)
 
 	httpClient := &http.Client{
@@ -570,4 +567,22 @@ func queryPyroscope(ctx context.Context, args QueryPyroscopeParams) (string, err
 		return "", fmt.Errorf("failed to marshal response: %w", err)
 	}
 	return string(out), nil
+}
+
+var pyroscopeTools = []*mcpgrafana.Tool{
+	&ListPyroscopeLabelNames,
+	&ListPyroscopeLabelValues,
+	&ListPyroscopeProfileTypes,
+	&QueryPyroscope,
+}
+
+func GetPyroscopeTools() []*mcpgrafana.Tool {
+	return pyroscopeTools
+}
+
+func AddPyroscopeTools(mcp *server.MCPServer) {
+	ListPyroscopeLabelNames.Register(mcp)
+	ListPyroscopeLabelValues.Register(mcp)
+	ListPyroscopeProfileTypes.Register(mcp)
+	QueryPyroscope.Register(mcp)
 }

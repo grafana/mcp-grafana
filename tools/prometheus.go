@@ -17,6 +17,11 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 )
 
+const (
+	// PrometheusDataSourceType is the type identifier for prometheus data sources
+	PrometheusDataSourceType = "prometheus"
+)
+
 var (
 	matchTypeMap = map[string]labels.MatchType{
 		"":   labels.MatchEqual,
@@ -563,6 +568,19 @@ Time formats: 'now-1h', '2026-02-02T19:00:00Z', '1738519200000' (Unix ms)`,
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
 )
+
+var prometheusTools = []*mcpgrafana.Tool{
+	&ListPrometheusMetricMetadata,
+	&QueryPrometheus,
+	&QueryPrometheusHistogram,
+	&ListPrometheusMetricNames,
+	&ListPrometheusLabelNames,
+	&ListPrometheusLabelValues,
+}
+
+func GetPrometheusTools() []*mcpgrafana.Tool {
+	return prometheusTools
+}
 
 func AddPrometheusTools(mcp *server.MCPServer) {
 	ListPrometheusMetricMetadata.Register(mcp)

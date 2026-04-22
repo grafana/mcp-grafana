@@ -19,6 +19,10 @@ import (
 	mcpgrafana "github.com/grafana/mcp-grafana"
 )
 
+const (
+	// Category Identifier for the rendering category.
+	Rendering = "rendering"
+)
 // StringOrSlice is a type that can be unmarshaled from either a JSON string
 // or an array of strings. This allows dashboard variables to support both
 // single-value (e.g., "prometheus") and multi-value (e.g., ["server1", "server2"])
@@ -255,4 +259,12 @@ var GetPanelImage = mcpgrafana.MustTool(
 
 func AddRenderingTools(mcp *server.MCPServer) {
 	GetPanelImage.Register(mcp)
+}
+
+var renderingTools = []*mcpgrafana.Tool{
+	&GetPanelImage,
+}
+
+func GetRenderingTools() []*mcpgrafana.Tool {
+	return renderingTools
 }

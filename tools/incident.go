@@ -10,6 +10,11 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 )
 
+const (
+	// Incident is the identifier for the incident category.
+	Incident = "incident"
+)
+
 type ListIncidentsParams struct {
 	Limit  int    `json:"limit" jsonschema:"default=10,description=The maximum number of incidents to return"`
 	Drill  bool   `json:"drill" jsonschema:"description=Whether to include drill incidents"`
@@ -120,15 +125,6 @@ var AddActivityToIncident = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("Add activity to incident"),
 )
 
-func AddIncidentTools(mcp *server.MCPServer, enableWriteTools bool) {
-	ListIncidents.Register(mcp)
-	if enableWriteTools {
-		CreateIncident.Register(mcp)
-		AddActivityToIncident.Register(mcp)
-	}
-	GetIncident.Register(mcp)
-}
-
 type GetIncidentParams struct {
 	ID string `json:"id" jsonschema:"description=The ID of the incident to retrieve"`
 }
@@ -155,3 +151,30 @@ var GetIncident = mcpgrafana.MustTool(
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
 )
+
+func AddIncidentTools(mcp *server.MCPServer, enableWriteTools bool) {
+	ListIncidents.Register(mcp)
+	GetIncident.Register(mcp)
+	if enableWriteTools {
+		CreateIncident.Register(mcp)
+		AddActivityToIncident.Register(mcp)
+	}
+}
+
+var incidentReadTools = []*mcpgrafana.Tool{
+	&ListIncidents,
+	&GetIncident,
+}
+
+var incidentWriteTools = []*mcpgrafana.Tool{
+	&CreateIncident,
+	&AddActivityToIncident,
+}
+
+func GetIncidentTools(enableWriteTools bool) []*mcpgrafana.Tool {
+	tools := incidentReadTools
+	if enableWriteTools {
+		tools = append(tools, incidentWriteTools...)
+	}
+	return tools
+}

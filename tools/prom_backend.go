@@ -73,7 +73,7 @@ func newPrometheusBackend(ctx context.Context, uid string, ds *models.DataSource
 		return nil, fmt.Errorf("failed to create custom transport: %w", err)
 	}
 
-	rt = NewAuthRoundTripper(rt, cfg.AccessToken, cfg.IDToken, cfg.APIKey, cfg.BasicAuth)
+	rt = mcpgrafana.NewAuthRoundTripper(rt, cfg.AccessToken, cfg.IDToken, cfg.APIKey, cfg.BasicAuth)
 	rt = mcpgrafana.NewOrgIDRoundTripper(rt, cfg.OrgID)
 
 	// Only convert POST→GET if the datasource is configured to use GET.

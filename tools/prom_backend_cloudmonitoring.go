@@ -43,7 +43,7 @@ func newCloudMonitoringBackend(ctx context.Context, ds *models.DataSource, proje
 		return nil, fmt.Errorf("failed to create custom transport: %w", err)
 	}
 
-	transport = NewAuthRoundTripper(transport, cfg.AccessToken, cfg.IDToken, cfg.APIKey, cfg.BasicAuth)
+	transport = mcpgrafana.NewAuthRoundTripper(transport, cfg.AccessToken, cfg.IDToken, cfg.APIKey, cfg.BasicAuth)
 	transport = mcpgrafana.NewOrgIDRoundTripper(transport, cfg.OrgID)
 
 	client := &http.Client{

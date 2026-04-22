@@ -105,7 +105,7 @@ func newCloudWatchClient(ctx context.Context, uid string) (*cloudWatchClient, er
 		}
 	}
 
-	transport = NewAuthRoundTripper(transport, cfg.AccessToken, cfg.IDToken, cfg.APIKey, cfg.BasicAuth)
+	transport = mcpgrafana.NewAuthRoundTripper(transport, cfg.AccessToken, cfg.IDToken, cfg.APIKey, cfg.BasicAuth)
 	transport = mcpgrafana.NewOrgIDRoundTripper(transport, cfg.OrgID)
 
 	client := &http.Client{
@@ -622,6 +622,17 @@ var ListCloudWatchDimensions = mcpgrafana.MustTool(
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
 )
+
+var cloudWatchTools = []*mcpgrafana.Tool{
+	&QueryCloudWatch,
+	&ListCloudWatchNamespaces,
+	&ListCloudWatchMetrics,
+	&ListCloudWatchDimensions,
+}
+
+func GetCloudWatchTools() []*mcpgrafana.Tool {
+	return cloudWatchTools
+}
 
 // AddCloudWatchTools registers all CloudWatch tools with the MCP server
 func AddCloudWatchTools(mcp *server.MCPServer) {

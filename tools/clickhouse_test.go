@@ -343,7 +343,7 @@ func TestValidateClickHouseIdentifier(t *testing.T) {
 		{name: "default", field: "database", wantErr: false},
 		{name: "table_1", field: "table", wantErr: false},
 
-		//attack payloads (must fail)
+		// attack payloads (must fail)
 		{name: "default' OR 1=1 --", field: "database", wantErr: true},
 		{name: "default' UNION SELECT name FROM system.databases --", field: "database", wantErr: true},
 		{name: "table-name", field: "table", wantErr: true},
