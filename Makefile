@@ -54,7 +54,7 @@ test-python-e2e: ## Run Python E2E tests (requires docker-compose services and S
 # Common environment variables for run targets
 GRAFANA_ENV = GRAFANA_USERNAME=admin GRAFANA_PASSWORD=admin
 OTEL_ENV = OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317 OTEL_EXPORTER_OTLP_INSECURE=true
-ENABLED_TOOLS = search,datasource,incident,prometheus,loki,elasticsearch,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering,admin,clickhouse,cloudwatch
+ENABLED_TOOLS = search,datasource,incident,prometheus,loki,elasticsearch,influxdb,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering,admin,clickhouse,cloudwatch
 
 .PHONY: run
 run: ## Run the MCP server in stdio mode.

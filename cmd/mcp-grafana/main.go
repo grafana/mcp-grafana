@@ -41,7 +41,7 @@ type disabledTools struct {
 	enabledTools string
 
 	search, datasource, incident,
-	prometheus, loki, elasticsearch, alerting,
+	prometheus, loki, elasticsearch, influxdb, alerting,
 	dashboard, folder, oncall, asserts, sift, admin,
 	pyroscope, navigation, proxied, annotations, rendering, cloudwatch, write,
 	examples, clickhouse, searchlogs,
@@ -64,13 +64,14 @@ type grafanaConfig struct {
 }
 
 func (dt *disabledTools) addFlags() {
-	flag.StringVar(&dt.enabledTools, "enabled-tools", "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering", "A comma separated list of tools enabled for this server. Can be overwritten entirely or by disabling specific components, e.g. --disable-search.")
+	flag.StringVar(&dt.enabledTools, "enabled-tools", "search,datasource,incident,prometheus,loki,influxdb,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering", "A comma separated list of tools enabled for this server. Can be overwritten entirely or by disabling specific components, e.g. --disable-search.")
 	flag.BoolVar(&dt.search, "disable-search", false, "Disable search tools")
 	flag.BoolVar(&dt.datasource, "disable-datasource", false, "Disable datasource tools")
 	flag.BoolVar(&dt.incident, "disable-incident", false, "Disable incident tools")
 	flag.BoolVar(&dt.prometheus, "disable-prometheus", false, "Disable prometheus tools")
 	flag.BoolVar(&dt.loki, "disable-loki", false, "Disable loki tools")
 	flag.BoolVar(&dt.elasticsearch, "disable-elasticsearch", false, "Disable elasticsearch tools")
+	flag.BoolVar(&dt.influxdb, "disable-influxdb", false, "Disable InfluxDB tools")
 	flag.BoolVar(&dt.alerting, "disable-alerting", false, "Disable alerting tools")
 	flag.BoolVar(&dt.dashboard, "disable-dashboard", false, "Disable dashboard tools")
 	flag.BoolVar(&dt.folder, "disable-folder", false, "Disable folder tools")
@@ -113,6 +114,7 @@ func (dt *disabledTools) addTools(s *server.MCPServer) {
 	maybeAddTools(s, tools.AddPrometheusTools, enabledTools, dt.prometheus, "prometheus")
 	maybeAddTools(s, tools.AddLokiTools, enabledTools, dt.loki, "loki")
 	maybeAddTools(s, tools.AddElasticsearchTools, enabledTools, dt.elasticsearch, "elasticsearch")
+	maybeAddTools(s, tools.AddInfluxDBTools, enabledTools, dt.influxdb, "influxdb")
 	maybeAddTools(s, func(mcp *server.MCPServer) { tools.AddAlertingTools(mcp, enableWriteTools) }, enabledTools, dt.alerting, "alerting")
 	maybeAddTools(s, func(mcp *server.MCPServer) { tools.AddDashboardTools(mcp, enableWriteTools) }, enabledTools, dt.dashboard, "dashboard")
 	maybeAddTools(s, func(mcp *server.MCPServer) { tools.AddFolderTools(mcp, enableWriteTools) }, enabledTools, dt.folder, "folder")
