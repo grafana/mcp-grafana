@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/grafana/grafana-openapi-client-go/models"
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -86,14 +87,18 @@ type influxDBClient struct {
 	baseURL    string
 }
 
-func newInfluxDBClient(ctx context.Context, uid string) (*influxDBClient, error) {
+// newInfluxDBClient builds the HTTP client plumbing and returns it alongside
+// the resolved datasource. Callers that need datasource metadata (dialect
+// inference, jsonData) should reuse the returned *models.DataSource rather
+// than issuing a second getDatasourceByUID call.
+func newInfluxDBClient(ctx context.Context, uid string) (*influxDBClient, *models.DataSource, error) {
 	ds, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: uid})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	if ds.Type != InfluxDBDatasourceType {
-		return nil, fmt.Errorf("datasource %s is of type %s, not %s", uid, ds.Type, InfluxDBDatasourceType)
+		return nil, nil, fmt.Errorf("datasource %s is of type %s, not %s", uid, ds.Type, InfluxDBDatasourceType)
 	}
 
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
@@ -104,7 +109,7 @@ func newInfluxDBClient(ctx context.Context, uid string) (*influxDBClient, error)
 		var err error
 		transport, err = tlsConfig.HTTPTransport(transport.(*http.Transport))
 		if err != nil {
-			return nil, fmt.Errorf("failed to create custom transport: %w", err)
+			return nil, nil, fmt.Errorf("failed to create custom transport: %w", err)
 		}
 	}
 
@@ -116,7 +121,7 @@ func newInfluxDBClient(ctx context.Context, uid string) (*influxDBClient, error)
 			Transport: mcpgrafana.NewUserAgentTransport(transport),
 		},
 		baseURL: baseURL,
-	}, nil
+	}, ds, nil
 }
 
 // resolveInfluxDBDialect returns a canonical dialect string.
@@ -275,15 +280,11 @@ func queryInfluxDB(ctx context.Context, args InfluxDBQueryParams) (*InfluxDBQuer
 		return nil, fmt.Errorf("query is required")
 	}
 
-	client, err := newInfluxDBClient(ctx, args.DatasourceUID)
+	client, ds, err := newInfluxDBClient(ctx, args.DatasourceUID)
 	if err != nil {
 		return nil, fmt.Errorf("creating InfluxDB client: %w", err)
 	}
 
-	ds, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: args.DatasourceUID})
-	if err != nil {
-		return nil, err
-	}
 	dialect, err := resolveInfluxDBDialect(args.Dialect, extractJSONData(ds))
 	if err != nil {
 		return nil, err
