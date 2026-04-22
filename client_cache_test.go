@@ -110,12 +110,15 @@ func TestClientCache_DifferentCredentials(t *testing.T) {
 	defer cache.Close()
 
 	keys := []clientCacheKey{
-		{url: "http://host1:3000", apiKey: "key1", orgID: 1},
-		{url: "http://host1:3000", apiKey: "key2", orgID: 1},       // different key
-		{url: "http://host1:3000", apiKey: "key1", orgID: 2},       // different org
-		{url: "http://host2:3000", apiKey: "key1", orgID: 1},       // different url
-		{url: "http://host1:3000", apiKey: "key1", orgID: 1},       // same as first
+		{url: "http://host1:3000", apiKey: "key1", orgID: 1, forwardedHeaders: "X-WEBAUTH-USER=admin"}, // base key
+		{url: "http://host1:3000", apiKey: "key2", orgID: 1, forwardedHeaders: "X-WEBAUTH-USER=admin"},       // different key
+		{url: "http://host1:3000", apiKey: "key1", orgID: 2, forwardedHeaders: "X-WEBAUTH-USER=admin"},       // different org
+		{url: "http://host2:3000", apiKey: "key1", orgID: 1, forwardedHeaders: "X-WEBAUTH-USER=admin"},       // different url
+		{url: "http://host1:3000", apiKey: "key1", orgID: 1, forwardedHeaders: "X-WEBAUTH-USER=admin"},       // same as first
+		{url: "http://host1:3000", apiKey: "key1", orgID: 1, forwardedHeaders: "X-WEBAUTH-USER=john.doe"}, // different user
 	}
+
+	const numUniqueKeys = 5
 
 	clients := make([]*GrafanaClient, len(keys))
 	for i, key := range keys {
@@ -130,17 +133,18 @@ func TestClientCache_DifferentCredentials(t *testing.T) {
 	assert.NotSame(t, clients[0], clients[1])
 	assert.NotSame(t, clients[0], clients[2])
 	assert.NotSame(t, clients[0], clients[3])
+	assert.NotSame(t, clients[0], clients[5])
 
 	g, _ := cache.Size()
-	assert.Equal(t, 4, g) // 4 unique keys
+	assert.Equal(t, numUniqueKeys, g) // 5 unique keys
 }
 
 func TestCacheKeyFromRequest(t *testing.T) {
-	key1 := cacheKeyFromRequest("http://localhost:3000", "key1", nil, 1)
-	key2 := cacheKeyFromRequest("http://localhost:3000", "key1", nil, 1)
+	key1 := cacheKeyFromRequest("http://localhost:3000", "key1", nil, 1, nil)
+	key2 := cacheKeyFromRequest("http://localhost:3000", "key1", nil, 1, nil)
 	assert.Equal(t, key1, key2)
 
-	key3 := cacheKeyFromRequest("http://localhost:3000", "key1", url.UserPassword("admin", "pass"), 1)
+	key3 := cacheKeyFromRequest("http://localhost:3000", "key1", url.UserPassword("admin", "pass"), 1, nil)
 	assert.NotEqual(t, key1, key3)
 
 	assert.Equal(t, "admin", key3.username)
