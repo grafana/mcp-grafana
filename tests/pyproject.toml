@@ -19,7 +19,7 @@ dev = [
     "mcp>=1.9.3",
     "pytest>=9.0.3",
     "pytest-rerunfailures>=15.0",
-    "python-dotenv>=1.0.0",
+    "python-dotenv>=1.2.2",
 ]
 
 [tool.pytest.ini_options]
