@@ -267,6 +267,15 @@ type GrafanaConfig struct {
 	BaseTransport http.RoundTripper
 }
 
+// HTTPTransport returns the base HTTP transport for this config.
+// If BaseTransport is set it is returned; otherwise http.DefaultTransport.
+func (c GrafanaConfig) HTTPTransport() http.RoundTripper {
+	if c.BaseTransport != nil {
+		return c.BaseTransport
+	}
+	return http.DefaultTransport
+}
+
 const (
 	// DefaultGrafanaClientTimeout is the default timeout for Grafana HTTP client requests.
 	DefaultGrafanaClientTimeout = 10 * time.Second

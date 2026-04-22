@@ -14,6 +14,7 @@ import (
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 // getOnCallURLFromSettings retrieves the OnCall API URL from the Grafana settings endpoint.
@@ -43,7 +44,8 @@ func getOnCallURLFromSettings(ctx context.Context, cfg mcpgrafana.GrafanaConfig)
 	// Add user agent for tracking
 	req.Header.Set("User-Agent", mcpgrafana.UserAgent())
 
-	resp, err := http.DefaultClient.Do(req)
+	httpClient := &http.Client{Transport: otelhttp.NewTransport(cfg.HTTPTransport())}
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("fetching settings: %w", err)
 	}
@@ -106,15 +108,11 @@ func oncallClientFromContext(ctx context.Context) (*aapi.Client, error) {
 			}
 			if httpClientField.IsValid() && httpClientField.CanSet() {
 				if httpClient, ok := httpClientField.Interface().(*http.Client); ok {
-					// Wrap the transport with user agent
-					if httpClient.Transport == nil {
-						httpClient.Transport = http.DefaultTransport
-					}
-					transport := httpClient.Transport
+					transport := cfg.HTTPTransport()
 					if len(cfg.ExtraHeaders) > 0 {
 						transport = mcpgrafana.NewExtraHeadersRoundTripper(transport, cfg.ExtraHeaders)
 					}
-					httpClient.Transport = mcpgrafana.NewUserAgentTransport(transport)
+					httpClient.Transport = otelhttp.NewTransport(mcpgrafana.NewUserAgentTransport(transport))
 				}
 			}
 		}
