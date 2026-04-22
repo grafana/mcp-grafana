@@ -296,7 +296,7 @@ func extractIncidentClientCached(cache *ClientCache) httpContextFunc {
 			client := incident.NewClient(incidentURL, apiKey)
 
 			config := GrafanaConfigFromContext(ctx)
-			transport, err := BuildTransport(&config, nil)
+			transport, err := BuildTransport(&config, nil, WithoutOrgID(), WithoutUserAgent())
 			if err != nil {
 				slog.Error("Failed to create custom transport for incident client, using default", "error", err)
 			} else {
