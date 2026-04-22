@@ -17,12 +17,12 @@ services:
         target: /var/lib/grafana/empty-alerts-folder
 
   renderer:
-    image: grafana/grafana-image-renderer:latest@sha256:bdd4b9d3d529710406aa00fc567a0f3d637c94bdbfff569081ef88e8f157bee3
+    image: grafana/grafana-image-renderer:latest@sha256:6c432f1aed266ce56433becacd197cdab708f9089104d67664207b4fe0975055
     ports:
       - 8081
 
   prometheus:
-    image: prom/prometheus@sha256:4a61322ac1103a0e3aea2a61ef1718422a48fa046441f299d71e660a3bc71ae9
+    image: prom/prometheus@sha256:5550dc63da361dc30f6fe02ac0e4dfc736ededfef3c8d12a634db04a67824d78
     ports:
       - "9090:9090"
     entrypoint: /etc/prometheus/entrypoint.sh
