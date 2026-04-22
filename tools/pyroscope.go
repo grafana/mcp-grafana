@@ -14,6 +14,7 @@ import (
 
 	"connectrpc.com/connect"
 	mcpgrafana "github.com/grafana/mcp-grafana"
+	"github.com/grafana/mcp-grafana/pkg/auth"
 	querierv1 "github.com/grafana/pyroscope/api/gen/proto/go/querier/v1"
 	"github.com/grafana/pyroscope/api/gen/proto/go/querier/v1/querierv1connect"
 	typesv1 "github.com/grafana/pyroscope/api/gen/proto/go/types/v1"
@@ -220,7 +221,7 @@ func newPyroscopeClient(ctx context.Context, uid string) (*pyroscopeClient, erro
 	if err != nil {
 		return nil, fmt.Errorf("failed to create custom transport: %w", err)
 	}
-	transport = NewAuthRoundTripper(transport, cfg.AccessToken, cfg.IDToken, cfg.APIKey, cfg.BasicAuth)
+	transport = auth.NewAuthRoundTripper(transport, cfg.AccessToken, cfg.IDToken, cfg.APIKey, cfg.BasicAuth)
 	transport = mcpgrafana.NewOrgIDRoundTripper(transport, cfg.OrgID)
 
 	httpClient := &http.Client{
