@@ -162,23 +162,6 @@ func resolveInfluxDBDialect(requested string, jsonData map[string]interface{}) (
 	return InfluxDBDialectInfluxQL, nil
 }
 
-// extractJSONData pulls the datasource's jsonData into a plain map. The
-// grafana-openapi model types it as interface{} because its shape depends on
-// the datasource plugin.
-func extractJSONData(ds any) map[string]interface{} {
-	b, err := json.Marshal(ds)
-	if err != nil {
-		return nil
-	}
-	var wrapper struct {
-		JSONData map[string]interface{} `json:"jsonData"`
-	}
-	if err := json.Unmarshal(b, &wrapper); err != nil {
-		return nil
-	}
-	return wrapper.JSONData
-}
-
 // buildInfluxDBPayload constructs the /api/ds/query request body. Kept as a
 // separate function so unit tests can verify the exact JSON we send upstream.
 func buildInfluxDBPayload(datasourceUID, dialect, query string, from, to time.Time, maxDataPoints int) map[string]interface{} {
@@ -294,7 +277,11 @@ func queryInfluxDB(ctx context.Context, args InfluxDBQueryParams) (*InfluxDBQuer
 		return nil, fmt.Errorf("creating InfluxDB client: %w", err)
 	}
 
-	dialect, err := resolveInfluxDBDialect(args.Dialect, extractJSONData(ds))
+	// grafana-openapi types JSONData as interface{}; the InfluxDB plugin
+	// stores version/org/bucket there as a map. Same pattern as
+	// alerting_contact_points.go and prom_backend.go.
+	jsonData, _ := ds.JSONData.(map[string]interface{})
+	dialect, err := resolveInfluxDBDialect(args.Dialect, jsonData)
 	if err != nil {
 		return nil, err
 	}
