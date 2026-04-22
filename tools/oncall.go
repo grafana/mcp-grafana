@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"reflect"
 	"strings"
@@ -96,7 +97,9 @@ func oncallClientFromContext(ctx context.Context) (*aapi.Client, error) {
 			if httpClientField.IsValid() && httpClientField.CanSet() {
 				if httpClient, ok := httpClientField.Interface().(*http.Client); ok {
 					transport, err := mcpgrafana.BuildTransport(&cfg, nil, mcpgrafana.WithoutAuth())
-					if err == nil {
+					if err != nil {
+						slog.Error("Failed to build transport for OnCall client", "error", err)
+					} else {
 						httpClient.Transport = transport
 					}
 				}

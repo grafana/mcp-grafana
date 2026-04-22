@@ -949,6 +949,10 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 						TLSConfig:    config.TLSConfig,
 						ExtraHeaders: config.ExtraHeaders,
 					}
+					// Panic matches the existing TLS error handling above
+					// (line ~887). The only realistic failure is a TLS
+					// misconfiguration, which can't happen here since base
+					// is always an *http.Transport.
 					wrapped, err := BuildTransport(&oboConfig, base)
 					if err != nil {
 						panic(fmt.Errorf("failed to build transport: %w", err))
