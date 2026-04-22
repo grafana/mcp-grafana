@@ -33,12 +33,13 @@ Some tool categories are disabled by default:
 - **cloudwatch** – CloudWatch tools.
 - **searchlogs** – Search logs across ClickHouse and Loki.
 - **elasticsearch** – Elasticsearch query tool.
+- **influxdb** – InfluxDB query tool (Flux and InfluxQL).
 - **admin** – Admin tools (teams, users, roles, permissions).
 
 `--enabled-tools` **replaces** the default list, so to add an optional category you must pass the full set. For example, to keep the defaults and also enable `runpanelquery` and `examples`:
 
 ```bash
-mcp-grafana --enabled-tools search,datasource,incident,prometheus,loki,influxdb,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering,runpanelquery,examples
+mcp-grafana --enabled-tools search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering,runpanelquery,examples
 ```
 
 Refer to [Command-line flags](../command-line-flags/) for the default list.

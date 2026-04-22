@@ -24,6 +24,7 @@ You ask your assistant to query an InfluxDB-backed metric; the assistant uses th
 ## Before you begin
 
 - The server [set up](../../set-up/) and [configured](../../configure/authentication/) with access to Grafana.
+- The InfluxDB tool category must be enabled (it's disabled by default, like the other optional datasource tools). Add **influxdb** to [Enable and disable tools](../../configure/enable-and-disable-tools/).
 - An InfluxDB datasource configured in Grafana. The service account must have `datasources:query` and scope for that datasource (for example, `datasources:uid:<uid>`).
 
 ## Run a query

@@ -45,9 +45,9 @@ You can look up defaults, choose `--disable-*` flags, or configure TLS without r
 
 - `--enabled-tools`: Comma-separated list of enabled tool **categories**. The default is exactly:
 
-  `search,datasource,incident,prometheus,loki,influxdb,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering`
+  `search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering`
 
-  Categories **not** in that default string are off until you add them, including: `admin`, `elasticsearch`, `cloudwatch`, `examples`, `clickhouse`, `searchlogs`, and `runpanelquery`. Pass a full comma-separated list to replace the default entirely, or use `--disable-*` flags to turn off pieces of the default set.
+  Categories **not** in that default string are off until you add them, including: `admin`, `elasticsearch`, `cloudwatch`, `examples`, `clickhouse`, `influxdb`, `searchlogs`, and `runpanelquery`. Pass a full comma-separated list to replace the default entirely, or use `--disable-*` flags to turn off pieces of the default set.
 
 - `--disable-search`: Disable search tools.
 - `--disable-datasource`: Disable datasource tools.

@@ -88,6 +88,8 @@ The dashboard tools now include several strategies to manage context window usag
 
 ### InfluxDB Querying
 
+> **Note:** InfluxDB tools are **disabled by default**. To enable them, add `influxdb` to your `--enabled-tools` flag.
+
 - **Query InfluxDB:** Execute queries against InfluxDB datasources using either InfluxQL (v1.x) or Flux (v2.x). The dialect is inferred from the datasource configuration, or can be set explicitly via the `dialect` parameter.
 
 ### ClickHouse Querying
