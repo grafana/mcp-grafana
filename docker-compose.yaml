@@ -121,6 +121,11 @@ services:
       timeout: 5s
       retries: 5
 
+  victorialogs:
+    image: victoriametrics/victoria-logs:v1.16.0-victorialogs
+    ports:
+      - "9428:9428"
+
   clickhouse:
     image: clickhouse/clickhouse-server:25.12@sha256:f42e90f635bafddfd5c0c25781332ff1c46bbe1424e49e2ce0c571958d4439e9
     ports:
