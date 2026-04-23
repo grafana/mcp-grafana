@@ -32,7 +32,7 @@ services:
       - ./testdata/prometheus-entrypoint.sh:/etc/prometheus/entrypoint.sh
 
   loki:
-    image: grafana/loki:3.6.8@sha256:9db961170b729dc38277963cbb4a79941626388562cc455db61bf85564aa8945
+    image: grafana/loki:3.7.1@sha256:73e905b51a7f917f7a1075e4be68759df30226e03dcb3cd2213b989cc0dc8eb4
     ports:
       - "3100:3100"
     command: -config.file=/etc/loki/loki-config.yml
@@ -41,7 +41,7 @@ services:
       - ./testdata/loki-rules.yml:/loki/rules/fake/loki-rules.yml
 
   promtail:
-    image: grafana/promtail:3.6.8@sha256:6cfa64ec432b24a912d640e2edb940eeae2666f61861a66c121d763dd7241381
+    image: grafana/promtail:3.6.10@sha256:2a0f5e3e160ee5d549c585f6cc4f4e1c566ff783324a424bd75bc16503fc660e
     volumes:
       - ./testdata/promtail-config.yml:/etc/promtail/config.yml
       - /var/run/docker.sock:/var/run/docker.sock
@@ -50,7 +50,7 @@ services:
       - loki
 
   pyroscope:
-    image: grafana/pyroscope:1.19.1@sha256:d5d38187f7593fdf5643ba29e67099206e8d4dee6207f78d028ea3fe621cc04d
+    image: grafana/pyroscope:1.20.3@sha256:47fc578b2227e9c0c5c5efda34966c1566b0d0a0802cb2adc2e1e9f7ae16a7aa
     ports:
       - 4040:4040
 
@@ -73,7 +73,7 @@ services:
       - "3201:3201" # tempo instance 2
 
   alertmanager:
-    image: prom/alertmanager:v0.31.1@sha256:88b605de9aba0410775c1eb3438f951115054e0d307f23f274a4c705f51630c1
+    image: prom/alertmanager:v0.32.0@sha256:58e117eabccebbff04e6643a3432d6315a2cc3a8c24ab5849bc628886bf08857
     ports:
       - "9093:9093"
     volumes:
