@@ -500,13 +500,12 @@ func TestManageRules_Get(t *testing.T) {
 		require.False(t, detail.IsPaused)
 		require.Nil(t, detail.NotificationSettings)
 
-		// Queries extracted from provisioned data
-		require.Len(t, detail.Queries, 2)
-		require.Equal(t, "A", detail.Queries[0].RefID)
-		require.Equal(t, "prometheus", detail.Queries[0].DatasourceUID)
-		require.Equal(t, "vector(1)", detail.Queries[0].Expression)
-		require.Equal(t, "B", detail.Queries[1].RefID)
-		require.Equal(t, "__expr__", detail.Queries[1].DatasourceUID)
+		// Full query data preserved for round-tripping
+		require.Len(t, detail.Data, 2)
+		require.Equal(t, "A", detail.Data[0].RefID)
+		require.Equal(t, "prometheus", detail.Data[0].DatasourceUID)
+		require.Equal(t, "B", detail.Data[1].RefID)
+		require.Equal(t, "__expr__", detail.Data[1].DatasourceUID)
 
 		// Runtime state from Prometheus rules API
 		require.Equal(t, "alerting", detail.Type)
