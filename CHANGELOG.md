@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.0] - 2026-04-23
+
+### Added
+
+- InfluxDB datasource support with both Flux and InfluxQL query languages ([#775](https://github.com/grafana/mcp-grafana/pull/775))
+- Graphite datasource support with metric finding, query execution, and function discovery tools ([#741](https://github.com/grafana/mcp-grafana/pull/741))
+- Support legacy `d-solo` render mode for panel image rendering ([#751](https://github.com/grafana/mcp-grafana/pull/751))
+- Forward `Accept` header through API proxy for rendering requests ([#747](https://github.com/grafana/mcp-grafana/pull/747))
+
+### Fixed
+
+- Include full query data in alert rule get response, preserving datasource-specific fields ([#777](https://github.com/grafana/mcp-grafana/pull/777))
+- Propagate trace context through OnCall, ClickHouse, and CloudWatch tools for end-to-end distributed tracing ([#769](https://github.com/grafana/mcp-grafana/pull/769))
+- Register ephemeral sessions to fix horizontal scaling of proxied tools ([#754](https://github.com/grafana/mcp-grafana/pull/754))
+- Encode Basic Auth credentials per RFC 7617 in proxied client ([#758](https://github.com/grafana/mcp-grafana/pull/758))
+- Preserve datasource-specific model fields (e.g. Graphite `target`, classic conditions) during alert rule JSON round-tripping ([#730](https://github.com/grafana/mcp-grafana/pull/730))
+- Include forwarded headers in client cache key to prevent cross-user cache collisions ([#768](https://github.com/grafana/mcp-grafana/pull/768))
+
+### Changed
+
+- Reduce tool schema token cost and response payload sizes for lower LLM token usage ([#734](https://github.com/grafana/mcp-grafana/pull/734))
+- Standardize HTTP transport middleware via shared `BuildTransport()` constructor ([#771](https://github.com/grafana/mcp-grafana/pull/771))
+
+### Security
+
+- Reject embedded credentials in `X-Grafana-URL` header to prevent credential leakage ([#782](https://github.com/grafana/mcp-grafana/pull/782))
+- Reject malformed `X-Grafana-URL` header instead of panicking ([#762](https://github.com/grafana/mcp-grafana/pull/762))
+- Update Prometheus dependency to v0.311.2 to address security vulnerability ([#742](https://github.com/grafana/mcp-grafana/pull/742))
+
 ## [0.11.6] - 2026-04-09
 
 ### Added
@@ -135,6 +164,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Upgrade Docker base image packages to resolve critical OpenSSL CVE-2025-15467 (CVSS 9.8) ([#551](https://github.com/grafana/mcp-grafana/pull/551))
 
+[0.12.0]: https://github.com/grafana/mcp-grafana/compare/v0.11.6...v0.12.0
 [0.11.6]: https://github.com/grafana/mcp-grafana/compare/v0.11.5...v0.11.6
 [0.11.5]: https://github.com/grafana/mcp-grafana/compare/v0.11.4...v0.11.5
 [0.11.4]: https://github.com/grafana/mcp-grafana/compare/v0.11.3...v0.11.4
