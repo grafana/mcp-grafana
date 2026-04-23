@@ -75,9 +75,19 @@ jobs:
       - name: Wait for Graphite metrics to be queryable
         run: |
           set -euo pipefail
-          # Graphite port 80 is not exposed on the host; go through Grafana's datasource proxy.
+          # The graphite-seed container sends metrics and verifies they're
+          # queryable before exiting. Wait for it to finish, then do a short
+          # verification via Grafana's datasource proxy.
+          echo "Waiting for graphite-seed container to finish..."
+          exit_code=$(docker wait mcp-grafana-graphite-seed-1 2>/dev/null || echo "1")
+          if [ "$exit_code" != "0" ]; then
+            echo "graphite-seed failed (exit code $exit_code):"
+            docker logs mcp-grafana-graphite-seed-1 2>&1 || true
+            exit 1
+          fi
+          echo "graphite-seed completed successfully, verifying via Grafana proxy..."
           ready=false
-          for i in $(seq 1 60); do
+          for i in $(seq 1 10); do
             count="$(curl -fsS -u admin:admin \
               'http://localhost:3000/api/datasources/proxy/uid/graphite/metrics/find?query=test.*' \
               2>/dev/null | jq 'length' 2>/dev/null || echo 0)"
