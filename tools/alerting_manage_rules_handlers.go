@@ -158,7 +158,7 @@ func mergeRuleDetail(provisioned *models.ProvisionedAlertRule, runtime *alerting
 
 	detail.IsPaused = provisioned.IsPaused
 	detail.NotificationSettings = provisioned.NotificationSettings
-	detail.Queries = extractQuerySummaries(provisioned.Data)
+	detail.Data = provisioned.Data
 
 	if runtime != nil {
 		detail.State = normalizeState(runtime.State)
@@ -177,30 +177,6 @@ func normalizeState(state string) string {
 		return "normal"
 	}
 	return state
-}
-
-func extractQuerySummaries(data []*models.AlertQuery) []querySummary {
-	if len(data) == 0 {
-		return nil
-	}
-	summaries := make([]querySummary, 0, len(data))
-	for _, q := range data {
-		s := querySummary{
-			RefID:         q.RefID,
-			DatasourceUID: q.DatasourceUID,
-		}
-		if m, ok := q.Model.(map[string]any); ok {
-			if expr, ok := m["expr"].(string); ok && expr != "" {
-				s.Expression = expr
-			} else if expr, ok := m["expression"].(string); ok && expr != "" {
-				s.Expression = expr
-			} else if query, ok := m["query"].(string); ok && query != "" {
-				s.Expression = query
-			}
-		}
-		summaries = append(summaries, s)
-	}
-	return summaries
 }
 
 func findRuleInResponse(resp *rulesResponse, uid string) *alertingRule {
