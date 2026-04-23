@@ -487,6 +487,10 @@ func parseSelectorStrings(strs []string) ([]Selector, error) {
 	}
 	var result []Selector
 	for _, s := range strs {
+		s = strings.TrimSpace(s)
+		if !strings.HasPrefix(s, "{") {
+			s = "{" + s + "}"
+		}
 		parsed, err := parser.ParseMetricSelector(s)
 		if err != nil {
 			return nil, fmt.Errorf("invalid label selector %q: %w", s, err)
