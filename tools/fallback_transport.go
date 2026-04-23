@@ -75,8 +75,11 @@ func (t *datasourceFallbackTransport) RoundTrip(req *http.Request) (*http.Respon
 		return nil, retryErr
 	}
 
-	// If the fallback succeeded, remember it for future requests.
-	if retryResp.StatusCode != http.StatusForbidden && retryResp.StatusCode != http.StatusInternalServerError {
+	// Only cache the fallback path when the fallback actually returned a
+	// successful (2xx) response.  A 4xx from the fallback means neither path
+	// is working for this particular request; caching it would silently break
+	// all subsequent calls that would otherwise succeed via the primary path.
+	if retryResp.StatusCode >= 200 && retryResp.StatusCode < 300 {
 		fallbackEndpoints.Store(t.primaryBase, true)
 	}
 
