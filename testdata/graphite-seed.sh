@@ -20,7 +20,7 @@ create_metric() {
   file_path="${WHISPER_DIR}/$(echo "$metric_path" | sed 's/\./\//g').wsp"
   dir_path=$(dirname "$file_path")
   mkdir -p "$dir_path"
-  "$WHISPER_CREATE" "$file_path" "$RETENTION"
+  "$WHISPER_CREATE" --overwrite "$file_path" "$RETENTION"
   "$WHISPER_UPDATE" "$file_path" "${NOW}:${value}"
 }
 
