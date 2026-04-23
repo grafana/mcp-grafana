@@ -15,20 +15,17 @@ echo "Graphite Carbon is ready."
 
 NOW=$(date +%s)
 
-send_metric() {
-  printf "%s %s %s\n" "$1" "$2" "$3" | nc -w 3 "$GRAPHITE_HOST" "$GRAPHITE_CARBON_PORT"
-}
-
-# Hierarchical metrics for listGraphiteMetrics and queryGraphite tests.
-send_metric "test.servers.web01.cpu.load5"  "1.5" "$NOW"
-send_metric "test.servers.web01.cpu.load15" "1.2" "$NOW"
-send_metric "test.servers.web02.cpu.load5"  "2.3" "$NOW"
-send_metric "test.servers.web02.cpu.load15" "2.1" "$NOW"
-send_metric "test.servers.db01.cpu.load5"   "0.8" "$NOW"
-
-# Tagged metrics for listGraphiteTags tests.
-send_metric "test.tagged.cpu;server=web01;env=prod" "1.5" "$NOW"
-send_metric "test.tagged.cpu;server=web02;env=prod" "2.3" "$NOW"
+# Send all metrics in a single connection. Carbon processes batched writes
+# over one TCP connection much more reliably than many short-lived ones.
+printf "test.servers.web01.cpu.load5 1.5 %s\n\
+test.servers.web01.cpu.load15 1.2 %s\n\
+test.servers.web02.cpu.load5 2.3 %s\n\
+test.servers.web02.cpu.load15 2.1 %s\n\
+test.servers.db01.cpu.load5 0.8 %s\n\
+test.tagged.cpu;server=web01;env=prod 1.5 %s\n\
+test.tagged.cpu;server=web02;env=prod 2.3 %s\n" \
+  "$NOW" "$NOW" "$NOW" "$NOW" "$NOW" "$NOW" "$NOW" \
+  | nc -w 5 "$GRAPHITE_HOST" "$GRAPHITE_CARBON_PORT"
 
 echo "Graphite metrics sent to Carbon."
 
