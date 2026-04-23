@@ -364,16 +364,18 @@ func TestKubernetesClient_AuthAPIKey(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{
-		APIKey: "my-secret-token",
-	})
+	cfg := GrafanaConfig{APIKey: "my-secret-token"}
+	rt, err := BuildTransport(&cfg, nil)
+	if err != nil {
+		t.Fatalf("BuildTransport() error: %v", err)
+	}
 
 	client := &KubernetesClient{
 		BaseURL:    ts.URL,
-		HTTPClient: ts.Client(),
+		HTTPClient: &http.Client{Transport: rt},
 	}
 
-	_, err := client.Get(ctx, testDashboardDesc, "default", "test")
+	_, err = client.Get(context.Background(), testDashboardDesc, "default", "test")
 	if err != nil {
 		t.Fatalf("Get() error: %v", err)
 	}
@@ -399,18 +401,22 @@ func TestKubernetesClient_AuthOnBehalfOf(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{
+	cfg := GrafanaConfig{
 		AccessToken: "access-token-123",
 		IDToken:     "id-token-456",
 		APIKey:      "should-not-be-used",
-	})
+	}
+	rt, err := BuildTransport(&cfg, nil)
+	if err != nil {
+		t.Fatalf("BuildTransport() error: %v", err)
+	}
 
 	client := &KubernetesClient{
 		BaseURL:    ts.URL,
-		HTTPClient: ts.Client(),
+		HTTPClient: &http.Client{Transport: rt},
 	}
 
-	_, err := client.Get(ctx, testDashboardDesc, "default", "test")
+	_, err = client.Get(context.Background(), testDashboardDesc, "default", "test")
 	if err != nil {
 		t.Fatalf("Get() error: %v", err)
 	}
@@ -438,16 +444,18 @@ func TestKubernetesClient_AuthBasicAuth(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{
-		BasicAuth: url.UserPassword("admin", "secret"),
-	})
+	cfg := GrafanaConfig{BasicAuth: url.UserPassword("admin", "secret")}
+	rt, err := BuildTransport(&cfg, nil)
+	if err != nil {
+		t.Fatalf("BuildTransport() error: %v", err)
+	}
 
 	client := &KubernetesClient{
 		BaseURL:    ts.URL,
-		HTTPClient: ts.Client(),
+		HTTPClient: &http.Client{Transport: rt},
 	}
 
-	_, err := client.Get(ctx, testDashboardDesc, "default", "test")
+	_, err = client.Get(context.Background(), testDashboardDesc, "default", "test")
 	if err != nil {
 		t.Fatalf("Get() error: %v", err)
 	}

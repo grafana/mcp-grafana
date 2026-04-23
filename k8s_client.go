@@ -45,8 +45,6 @@ func NewKubernetesClient(ctx context.Context) (*KubernetesClient, error) {
 	if err != nil {
 		return nil, fmt.Errorf("build transport: %w", err)
 	}
-	transport = NewOrgIDRoundTripper(transport, cfg.OrgID)
-	transport = NewUserAgentTransport(transport)
 
 	timeout := cfg.Timeout
 	if timeout == 0 {
@@ -192,10 +190,6 @@ func (c *KubernetesClient) doRequest(ctx context.Context, method, path string, r
 		req.Header.Set("Content-Type", "application/json")
 	}
 
-	// Inject authentication from context.
-	cfg := GrafanaConfigFromContext(ctx)
-	applyAuth(req, &cfg)
-
 	httpClient := c.HTTPClient
 	if httpClient == nil {
 		httpClient = http.DefaultClient
@@ -224,17 +218,3 @@ func (c *KubernetesClient) doRequest(ctx context.Context, method, path string, r
 	return body, nil
 }
 
-// applyAuth sets authentication headers on the request based on GrafanaConfig.
-// Priority: on-behalf-of (AccessToken+IDToken) > APIKey > BasicAuth.
-func applyAuth(req *http.Request, cfg *GrafanaConfig) {
-	switch {
-	case cfg.AccessToken != "" && cfg.IDToken != "":
-		req.Header.Set("X-Access-Token", cfg.AccessToken)
-		req.Header.Set("X-Grafana-Id", cfg.IDToken)
-	case cfg.APIKey != "":
-		req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
-	case cfg.BasicAuth != nil:
-		password, _ := cfg.BasicAuth.Password()
-		req.SetBasicAuth(cfg.BasicAuth.Username(), password)
-	}
-}

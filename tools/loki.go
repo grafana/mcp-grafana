@@ -71,18 +71,14 @@ func newLokiClient(ctx context.Context, uid string) (*Client, error) {
 	resourcesBase, proxyBase := datasourceProxyPaths(uid)
 	url := grafanaURL + proxyBase
 
-	// Create custom transport with TLS configuration if available
 	transport, err := mcpgrafana.BuildTransport(&cfg, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create custom transport: %w", err)
 	}
-	transport = NewAuthRoundTripper(transport, cfg.AccessToken, cfg.IDToken, cfg.APIKey, cfg.BasicAuth)
-	transport = mcpgrafana.NewOrgIDRoundTripper(transport, cfg.OrgID)
 
 	// Wrap with fallback transport: try /proxy first, fall back to /resources
 	// on 403/500 for compatibility with different managed Grafana deployments.
-	var rt http.RoundTripper = mcpgrafana.NewUserAgentTransport(transport)
-	rt = newDatasourceFallbackTransport(rt, proxyBase, resourcesBase)
+	rt := newDatasourceFallbackTransport(transport, proxyBase, resourcesBase)
 
 	client := &http.Client{
 		Transport: rt,
@@ -196,42 +192,7 @@ func (c *Client) fetchData(ctx context.Context, urlPath string, startRFC3339, en
 	return labelResponse.Data, nil
 }
 
-func NewAuthRoundTripper(rt http.RoundTripper, accessToken, idToken, apiKey string, basicAuth *url.Userinfo) *authRoundTripper {
-	return &authRoundTripper{
-		accessToken: accessToken,
-		idToken:     idToken,
-		apiKey:      apiKey,
-		basicAuth:   basicAuth,
-		underlying:  rt,
-	}
-}
 
-type authRoundTripper struct {
-	accessToken string
-	idToken     string
-	apiKey      string
-	basicAuth   *url.Userinfo
-	underlying  http.RoundTripper
-}
-
-func (rt *authRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
-	if rt.accessToken != "" && rt.idToken != "" {
-		req.Header.Set("X-Access-Token", rt.accessToken)
-		req.Header.Set("X-Grafana-Id", rt.idToken)
-	} else if rt.apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+rt.apiKey)
-	} else if rt.basicAuth != nil {
-		password, _ := rt.basicAuth.Password()
-		req.SetBasicAuth(rt.basicAuth.Username(), password)
-	}
-
-	resp, err := rt.underlying.RoundTrip(req)
-	if err != nil {
-		return nil, err
-	}
-
-	return resp, nil
-}
 
 // ListLokiLabelNamesParams defines the parameters for listing Loki label names
 type ListLokiLabelNamesParams struct {

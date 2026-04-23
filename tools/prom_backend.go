@@ -73,9 +73,6 @@ func newPrometheusBackend(ctx context.Context, uid string, ds *models.DataSource
 		return nil, fmt.Errorf("failed to create custom transport: %w", err)
 	}
 
-	rt = NewAuthRoundTripper(rt, cfg.AccessToken, cfg.IDToken, cfg.APIKey, cfg.BasicAuth)
-	rt = mcpgrafana.NewOrgIDRoundTripper(rt, cfg.OrgID)
-
 	// Only convert POST→GET if the datasource is configured to use GET.
 	// The Prometheus client library sends POST first and only falls back to GET
 	// on 405/501 responses, but Grafana's datasource proxy returns 500 for POST
