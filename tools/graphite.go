@@ -47,13 +47,10 @@ func newGraphiteClient(ctx context.Context, uid string) (*GraphiteClient, error)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create custom transport: %w", err)
 	}
-	transport = NewAuthRoundTripper(transport, cfg.AccessToken, cfg.IDToken, cfg.APIKey, cfg.BasicAuth)
-	transport = mcpgrafana.NewOrgIDRoundTripper(transport, cfg.OrgID)
 
 	// Wrap with fallback transport: try /proxy first, fall back to /resources
 	// on 403/500 for compatibility with different managed Grafana deployments.
-	var rt http.RoundTripper = mcpgrafana.NewUserAgentTransport(transport)
-	rt = newDatasourceFallbackTransport(rt, proxyBase, resourcesBase)
+	rt := newDatasourceFallbackTransport(transport, proxyBase, resourcesBase)
 
 	client := &http.Client{Transport: rt}
 	return &GraphiteClient{httpClient: client, baseURL: baseURL}, nil
