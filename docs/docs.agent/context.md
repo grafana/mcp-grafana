@@ -151,6 +151,12 @@ Order articles from foundational to advanced use cases.
 - **Include:** LogQL log and metric queries, label names/values, patterns. Example use case.
 - **Exclude:** Search logs tool, ClickHouse.
 
+### Query metrics with InfluxDB
+
+- **Context:** README.md (InfluxDB Querying), MCP tool descriptions
+- **Include:** Running InfluxQL (v1) or Flux (v2) queries via `query_influxdb`; dialect inference from the datasource version; running an InfluxDB panel via `run_panel_query`; using `get_query_examples` to see starter queries for both dialects.
+- **Exclude:** Dedicated metadata tools (InfluxDB uses queries like `SHOW MEASUREMENTS` or Flux schema functions for discovery instead).
+
 ### Search and inspect dashboards
 
 - **Context:** README.md (Dashboards, Context Window Management)

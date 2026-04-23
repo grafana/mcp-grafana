@@ -86,6 +86,12 @@ The dashboard tools now include several strategies to manage context window usag
 - **Query Loki metadata:** Retrieve label names, label values, and stream statistics from Loki datasources.
 - **Query Loki patterns:** Retrieve log patterns detected by Loki to identify common log structures and anomalies.
 
+### InfluxDB Querying
+
+> **Note:** InfluxDB tools are **disabled by default**. To enable them, add `influxdb` to your `--enabled-tools` flag.
+
+- **Query InfluxDB:** Execute queries against InfluxDB datasources using either InfluxQL (v1.x) or Flux (v2.x). The dialect is inferred from the datasource configuration, or can be set explicitly via the `dialect` parameter.
+
 ### ClickHouse Querying
 
 > **Note:** ClickHouse tools are **disabled by default**. To enable them, add `clickhouse` to your `--enabled-tools` flag.
@@ -289,6 +295,7 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `list_loki_label_values`          | Loki        | List values for a specific log label                                | `datasources:query`                     | `datasources:uid:loki-uid`                          |
 | `query_loki_stats`                | Loki        | Get statistics about log streams                                    | `datasources:query`                     | `datasources:uid:loki-uid`                          |
 | `query_loki_patterns`             | Loki        | Query detected log patterns to identify common structures           | `datasources:query`                     | `datasources:uid:loki-uid`                          |
+| `query_influxdb`                  | InfluxDB    | Query InfluxDB using InfluxQL (v1) or Flux (v2)                     | `datasources:query`                     | `datasources:uid:influxdb-uid`                      |
 | `list_clickhouse_tables`          | ClickHouse* | List tables in a ClickHouse database                                | `datasources:query`                     | `datasources:uid:*`                                 |
 | `describe_clickhouse_table`       | ClickHouse* | Get table schema with column types                                  | `datasources:query`                     | `datasources:uid:*`                                 |
 | `query_clickhouse`                | ClickHouse* | Execute SQL queries with macro substitution                         | `datasources:query`                     | `datasources:uid:*`                                 |
@@ -357,6 +364,7 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 - `--disable-write`: Disable write tools (create/update operations)
 - `--disable-loki`: Disable loki tools
 - `--disable-elasticsearch`: Disable elasticsearch tools
+- `--disable-influxdb`: Disable InfluxDB tools
 - `--disable-alerting`: Disable alerting tools
 - `--disable-dashboard`: Disable dashboard tools
 - `--disable-oncall`: Disable oncall tools
