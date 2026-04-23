@@ -49,6 +49,11 @@ func TestValidateGrafanaURL(t *testing.T) {
 		{"http with triple-slash and no host", "http:///path", true},
 		{"https with empty host", "https://", true},
 		{"control byte in URL", "http://host\x01", true},
+
+		// Embedded credentials rejected (issue #776).
+		{"embedded user:pass", "http://user:pass@host.example", true},
+		{"embedded user only", "http://user@host.example", true},
+		{"embedded user with https", "https://user:pass@host.example/path", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

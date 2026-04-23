@@ -43,6 +43,12 @@ func ValidateGrafanaURL(u string) error {
 	if pu.Host == "" {
 		return fmt.Errorf("%w: URL has no host", ErrInvalidGrafanaURL)
 	}
+	// Reject embedded userinfo (http://user:pass@host). Those values get logged
+	// raw in the extractors' slog.Debug lines, which is a credential-in-log
+	// leak risk. Tracked in issue #776.
+	if pu.User != nil {
+		return fmt.Errorf("%w: embedded credentials not allowed", ErrInvalidGrafanaURL)
+	}
 	return nil
 }
 
