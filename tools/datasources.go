@@ -84,6 +84,68 @@ func listDatasources(ctx context.Context, args ListDatasourcesParams) (*ListData
 	}, nil
 }
 
+type CreateDatasourceParams struct {
+	Name            string                 `json:"name" jsonschema:"required,description=Datasource display name"`
+	Type            string                 `json:"type" jsonschema:"required,description=Grafana datasource plugin type\\, for example prometheus"`
+	URL             string                 `json:"url,omitempty" jsonschema:"description=Datasource base URL when required by the plugin"`
+	Access          string                 `json:"access,omitempty" jsonschema:"description=How Grafana should access the datasource (proxy or direct)"`
+	Database        string                 `json:"database,omitempty" jsonschema:"description=Optional database name"`
+	User            string                 `json:"user,omitempty" jsonschema:"description=Optional username"`
+	BasicAuth       bool                   `json:"basicAuth,omitempty" jsonschema:"description=Whether Grafana should use basic auth"`
+	BasicAuthUser   string                 `json:"basicAuthUser,omitempty" jsonschema:"description=Basic auth username when basic auth is enabled"`
+	WithCredentials bool                   `json:"withCredentials,omitempty" jsonschema:"description=Whether Grafana should forward credentials such as cookies"`
+	IsDefault       bool                   `json:"isDefault,omitempty" jsonschema:"description=Whether this should become the default datasource"`
+	JSONData        map[string]interface{} `json:"jsonData,omitempty" jsonschema:"description=Datasource-specific non-secret settings, eventually this will be dynamic"`
+	SecureJSONData  map[string]string      `json:"secureJsonData,omitempty" jsonschema:"description=Datasource-specific secret settings such as passwords or tokens"`
+}
+
+type CreateDatasourceResult struct {
+	Message    string       `json:"message"`
+	ID         int64        `json:"id"`
+	UID        string       `json:"uid"`
+	Name       string       `json:"name"`
+	Datasource *models.DataSource `json:"datasource,omitempty"`
+}
+
+func createDatasource(ctx context.Context, args CreateDatasourceParams) (*CreateDatasourceResult, error) {
+	c := mcpgrafana.GrafanaClientFromContext(ctx)
+	body := &models.AddDataSourceCommand{
+		Name:            args.Name,
+		Type:            args.Type,
+		URL:             args.URL,
+		Access:          models.DsAccess(args.Access),
+		Database:        args.Database,
+		User:            args.User,
+		BasicAuth:       args.BasicAuth,
+		BasicAuthUser:   args.BasicAuthUser,
+		WithCredentials: args.WithCredentials,
+		IsDefault:       args.IsDefault,
+		JSONData:        models.JSON(args.JSONData),
+		SecureJSONData:  args.SecureJSONData,
+	}
+	resp, err := c.Datasources.AddDataSource(body)
+	if err != nil {
+		return nil, fmt.Errorf("create datasource: %w", err)
+	}
+	p := resp.Payload
+	result := &CreateDatasourceResult{
+		Datasource: p.Datasource,
+	}
+	if p.Message != nil {
+		result.Message = *p.Message
+	}
+	if p.ID != nil {
+		result.ID = *p.ID
+	}
+	if p.Name != nil {
+		result.Name = *p.Name
+	}
+	if p.Datasource != nil {
+		result.UID = p.Datasource.UID
+	}
+	return result, nil
+}
+
 // filterDatasources returns only datasources of the specified type `t`. If `t`
 // is an empty string no filtering is done.
 func filterDatasources(datasources models.DataSourceList, t string) models.DataSourceList {
@@ -121,6 +183,15 @@ var ListDatasources = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("List datasources"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+)
+
+var CreateDatasource = mcpgrafana.MustTool(
+	"create_datasource",
+	"Create a new datasource in Grafana. Returns the created datasource details including its UID.",
+	createDatasource,
+	mcp.WithTitleAnnotation("Create datasource"),
+	mcp.WithIdempotentHintAnnotation(false),
+	mcp.WithReadOnlyHintAnnotation(false),
 )
 
 type GetDatasourceByUIDParams struct {
@@ -181,4 +252,5 @@ var GetDatasource = mcpgrafana.MustTool(
 func AddDatasourceTools(mcp *server.MCPServer) {
 	ListDatasources.Register(mcp)
 	GetDatasource.Register(mcp)
+	CreateDatasource.Register(mcp)
 }
