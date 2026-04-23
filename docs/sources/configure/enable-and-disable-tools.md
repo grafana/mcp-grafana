@@ -33,6 +33,7 @@ Some tool categories are disabled by default:
 - **cloudwatch** – CloudWatch tools.
 - **searchlogs** – Search logs across ClickHouse and Loki.
 - **elasticsearch** – Elasticsearch query tool.
+- **influxdb** – InfluxDB query tool (Flux and InfluxQL).
 - **admin** – Admin tools (teams, users, roles, permissions).
 
 `--enabled-tools` **replaces** the default list, so to add an optional category you must pass the full set. For example, to keep the defaults and also enable `runpanelquery` and `examples`:

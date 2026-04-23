@@ -12,7 +12,7 @@ import (
 
 // GetQueryExamplesParams defines the parameters for the get_query_examples tool.
 type GetQueryExamplesParams struct {
-	DatasourceType string `json:"datasourceType" jsonschema:"required,description=The datasource type to get examples for (e.g. 'prometheus'\\, 'loki'\\, 'clickhouse'\\, 'cloudwatch')"`
+	DatasourceType string `json:"datasourceType" jsonschema:"required,description=The datasource type to get examples for (e.g. 'prometheus'\\, 'loki'\\, 'clickhouse'\\, 'cloudwatch'\\, 'influxdb')"`
 }
 
 // QueryExample represents a single example query for a datasource.
@@ -193,8 +193,72 @@ var cloudwatchExamples = []QueryExample{
 	},
 }
 
+// influxDBExamples covers both Flux (v2) and InfluxQL (v1). The `dialect`
+// parameter of query_influxdb selects between them; inference from the
+// datasource's jsonData.version is the default.
+var influxDBExamples = []QueryExample{
+	// Flux examples (InfluxDB v2.x)
+	{
+		Name:        "Flux: recent points from a measurement",
+		Description: "List the most recent points from a measurement. Good starting query to inspect available fields and tags.",
+		Query: `from(bucket: "my-bucket")
+  |> range(start: -1h)
+  |> filter(fn: (r) => r._measurement == "cpu")
+  |> limit(n: 10)`,
+	},
+	{
+		Name:        "Flux: mean value over time windows",
+		Description: "Aggregate a numeric field into fixed time windows - the typical panel query for a line chart.",
+		Query: `from(bucket: "my-bucket")
+  |> range(start: -6h)
+  |> filter(fn: (r) => r._measurement == "cpu" and r._field == "usage_idle")
+  |> aggregateWindow(every: 1m, fn: mean, createEmpty: false)`,
+	},
+	{
+		Name:        "Flux: group by tag",
+		Description: "Compute per-host mean usage over the range. Replace 'host' with any tag present on the measurement.",
+		Query: `from(bucket: "my-bucket")
+  |> range(start: -1h)
+  |> filter(fn: (r) => r._measurement == "cpu" and r._field == "usage_user")
+  |> group(columns: ["host"])
+  |> mean()`,
+	},
+	{
+		Name:        "Flux: top-K by host",
+		Description: "Find the top 5 hosts by maximum value - useful for 'noisiest' dashboards.",
+		Query: `from(bucket: "my-bucket")
+  |> range(start: -1h)
+  |> filter(fn: (r) => r._measurement == "cpu" and r._field == "usage_user")
+  |> group(columns: ["host"])
+  |> max()
+  |> sort(columns: ["_value"], desc: true)
+  |> limit(n: 5)`,
+	},
+	// InfluxQL examples (InfluxDB v1.x, also works against v2 via the v1 compat API)
+	{
+		Name:        "InfluxQL: recent points",
+		Description: "List the most recent points from a measurement with an explicit time filter.",
+		Query:       `SELECT * FROM "cpu" WHERE time > now() - 1h LIMIT 10`,
+	},
+	{
+		Name:        "InfluxQL: mean aggregated in time buckets",
+		Description: "Compute the mean of a field bucketed by time - the equivalent of Flux's aggregateWindow for InfluxQL.",
+		Query:       `SELECT mean("usage_idle") FROM "cpu" WHERE time > now() - 6h GROUP BY time(1m) fill(none)`,
+	},
+	{
+		Name:        "InfluxQL: group by tag",
+		Description: "Aggregate per-host so a line chart shows one series per host.",
+		Query:       `SELECT mean("usage_user") FROM "cpu" WHERE time > now() - 1h GROUP BY time(1m), "host" fill(none)`,
+	},
+	{
+		Name:        "InfluxQL: show measurements (discovery)",
+		Description: "Discover what measurements exist in the database. For v2 datasources this requires a dbrp mapping; for v1 it works directly.",
+		Query:       `SHOW MEASUREMENTS`,
+	},
+}
+
 // supportedDatasourceTypes contains the list of supported datasource types for examples.
-var supportedDatasourceTypes = []string{"prometheus", "loki", "clickhouse", "cloudwatch"}
+var supportedDatasourceTypes = []string{"prometheus", "loki", "clickhouse", "cloudwatch", "influxdb"}
 
 func getQueryExamples(_ context.Context, args GetQueryExamplesParams) (*GetQueryExamplesResult, error) {
 	datasourceType := strings.ToLower(args.DatasourceType)
@@ -209,6 +273,8 @@ func getQueryExamples(_ context.Context, args GetQueryExamplesParams) (*GetQuery
 		examples = clickhouseExamples
 	case "cloudwatch":
 		examples = cloudwatchExamples
+	case "influxdb":
+		examples = influxDBExamples
 	default:
 		return nil, fmt.Errorf("unsupported datasource type: %s. Supported types are: %s",
 			args.DatasourceType, strings.Join(supportedDatasourceTypes, ", "))
@@ -223,7 +289,7 @@ func getQueryExamples(_ context.Context, args GetQueryExamplesParams) (*GetQuery
 // GetQueryExamples is the MCP tool that provides example queries for each datasource type.
 var GetQueryExamples = mcpgrafana.MustTool(
 	"get_query_examples",
-	"Get example queries for a specific datasource type. Provides sample queries with descriptions for Prometheus (PromQL), Loki (LogQL), ClickHouse (SQL with Grafana macros), and CloudWatch (metric configurations). Use this to understand query syntax and common patterns for each datasource. TIP: Use list_datasources to find datasource UIDs, or get_datasource if you know the exact name.",
+	"Get example queries for a specific datasource type. Provides sample queries with descriptions for Prometheus (PromQL), Loki (LogQL), ClickHouse (SQL with Grafana macros), CloudWatch (metric configurations), and InfluxDB (Flux and InfluxQL). Use this to understand query syntax and common patterns for each datasource. TIP: Use list_datasources to find datasource UIDs, or get_datasource if you know the exact name.",
 	getQueryExamples,
 	mcp.WithTitleAnnotation("Get query examples"),
 	mcp.WithIdempotentHintAnnotation(true),

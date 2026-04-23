@@ -73,6 +73,11 @@ func GenerateEmptyResultHints(ctx HintContext) *EmptyResultHints {
 		hints.PossibleCauses = getCloudWatchCauses(ctx)
 		hints.SuggestedActions = getCloudWatchActions(ctx)
 
+	case "influxdb":
+		hints.Summary = "The InfluxDB query returned no points for the specified time range."
+		hints.PossibleCauses = getInfluxDBCauses(ctx)
+		hints.SuggestedActions = getInfluxDBActions(ctx)
+
 	case "graphite":
 		hints.Summary = "The Graphite query returned no metric series for the specified target and time range."
 		hints.PossibleCauses = getGraphiteCauses(ctx)
@@ -202,6 +207,32 @@ func getCloudWatchActions(ctx HintContext) []string {
 		"Use list_cloudwatch_metrics to check metrics in the namespace",
 		"Use list_cloudwatch_dimensions to verify dimension values",
 		"Try expanding the time range - CloudWatch data may have ingestion delays",
+	}
+}
+
+// getInfluxDBCauses returns possible causes for empty InfluxDB results
+func getInfluxDBCauses(ctx HintContext) []string {
+	causes := []string{
+		"The bucket (Flux) or database (InfluxQL) named in the query may not exist or may be empty",
+		"The measurement or field names may not match what's actually in the bucket",
+		"Tag filters may be too restrictive",
+		"The bucket's retention policy may have dropped data older than the query's time range",
+	}
+
+	q := strings.ToLower(ctx.Query)
+	if strings.Contains(q, "aggregatewindow") || strings.Contains(q, "group by time") {
+		causes = append(causes, "The aggregation window may be larger than the query's time range, yielding no buckets")
+	}
+	return causes
+}
+
+// getInfluxDBActions returns suggested actions for empty InfluxDB results
+func getInfluxDBActions(ctx HintContext) []string {
+	return []string{
+		"Verify the bucket or database name is correct",
+		"Inspect available measurements and tags with a broader query first (Flux: `from(bucket: \"...\") |> range(start: -1h) |> limit(n: 5)`; InfluxQL: `SHOW MEASUREMENTS`)",
+		"Try expanding the time range to see if data exists earlier",
+		"Remove tag filters one at a time to find the restrictive one",
 	}
 }
 

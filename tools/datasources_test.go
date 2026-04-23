@@ -28,6 +28,8 @@ func TestDatasourcesTools(t *testing.T) {
 		assert.True(t, uids["graphite"], "graphite datasource should be provisioned")
 		assert.True(t, uids["tempo"], "tempo datasource should be provisioned")
 		assert.True(t, uids["elasticsearch"], "elasticsearch datasource should be provisioned")
+		assert.True(t, uids["influxdb-flux"], "influxdb-flux datasource should be provisioned")
+		assert.True(t, uids["influxdb-influxql"], "influxdb-influxql datasource should be provisioned")
 	})
 
 	t.Run("list datasources for type", func(t *testing.T) {

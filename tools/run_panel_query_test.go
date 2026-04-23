@@ -813,6 +813,23 @@ func TestIsEmptyPanelResult(t *testing.T) {
 			},
 			expected: false,
 		},
+		{
+			name:     "nil InfluxDBQueryResult",
+			results:  (*InfluxDBQueryResult)(nil),
+			expected: true,
+		},
+		{
+			name:     "empty InfluxDBQueryResult",
+			results:  &InfluxDBQueryResult{Rows: []map[string]interface{}{}},
+			expected: true,
+		},
+		{
+			name: "non-empty InfluxDBQueryResult",
+			results: &InfluxDBQueryResult{
+				Rows: []map[string]interface{}{{"_value": 1.5}},
+			},
+			expected: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -870,6 +887,16 @@ func TestGeneratePanelQueryHints(t *testing.T) {
 			containsHints: []string{
 				"Query executed:",
 				"up{job=\"api\"}",
+			},
+		},
+		{
+			name:           "influxdb hints",
+			datasourceType: "influxdb",
+			query:          `from(bucket: "metrics") |> range(start: -1h)`,
+			containsHints: []string{
+				"No data found",
+				"Bucket",
+				"Measurement",
 			},
 		},
 	}
@@ -944,6 +971,8 @@ func TestNormalizeDatasourceType(t *testing.T) {
 		{"grafana-clickhouse-datasource", "clickhouse"},
 		{"clickhouse", "clickhouse"},
 		{"ClickHouse", "clickhouse"},
+		{"influxdb", "influxdb"},
+		{"InfluxDB", "influxdb"},
 		{"some-other-type", "some-other-type"},
 		{"", ""},
 	}
