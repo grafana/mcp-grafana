@@ -10,6 +10,8 @@ import (
 	"github.com/prometheus/prometheus/promql/parser"
 )
 
+var promqlParser = parser.NewParser(parser.Options{})
+
 type alertRuleSummary struct {
 	UID            string            `json:"uid"`
 	Title          string            `json:"title"`
@@ -464,7 +466,7 @@ func parseMatcherStrings(strs []string) ([]*labels.Matcher, error) {
 		if !strings.HasPrefix(s, "{") {
 			s = "{" + s + "}"
 		}
-		parsed, err := parser.ParseMetricSelector(s)
+		parsed, err := promqlParser.ParseMetricSelector(s)
 		if err != nil {
 			return nil, fmt.Errorf("invalid matcher %q: %w", s, err)
 		}
@@ -485,7 +487,7 @@ func parseSelectorStrings(strs []string) ([]Selector, error) {
 		if !strings.HasPrefix(s, "{") {
 			s = "{" + s + "}"
 		}
-		parsed, err := parser.ParseMetricSelector(s)
+		parsed, err := promqlParser.ParseMetricSelector(s)
 		if err != nil {
 			return nil, fmt.Errorf("invalid label selector %q: %w", s, err)
 		}
