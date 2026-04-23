@@ -40,7 +40,7 @@ type alertRuleDetail struct {
 
 	IsPaused             bool                                  `json:"is_paused"`
 	NotificationSettings *models.AlertRuleNotificationSettings `json:"notification_settings,omitempty"`
-	Queries              []querySummary                        `json:"queries,omitempty"`
+	Data                 []*models.AlertQuery                  `json:"data,omitempty"`
 
 	KeepFiringFor               string  `json:"keep_firing_for,omitempty"`
 	Record                      *Record `json:"record,omitempty" `
@@ -52,12 +52,6 @@ type alertRuleDetail struct {
 	LastEvaluation string  `json:"last_evaluation,omitempty"`
 	LastError      string  `json:"last_error,omitempty"`
 	Alerts         []alert `json:"alerts,omitempty"`
-}
-
-type querySummary struct {
-	RefID         string `json:"ref_id"`
-	DatasourceUID string `json:"datasource_uid"`
-	Expression    string `json:"expression,omitempty"`
 }
 
 type RelativeTimeRange struct {

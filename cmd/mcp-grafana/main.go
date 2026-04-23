@@ -41,10 +41,10 @@ type disabledTools struct {
 	enabledTools string
 
 	search, datasource, incident,
-	prometheus, loki, elasticsearch, alerting,
+	prometheus, loki, elasticsearch, influxdb, alerting,
 	dashboard, folder, oncall, asserts, sift, admin,
 	pyroscope, navigation, proxied, annotations, rendering, cloudwatch, write,
-	examples, clickhouse, searchlogs,
+	examples, clickhouse, searchlogs, graphite,
 	runpanelquery bool
 }
 
@@ -71,6 +71,7 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.prometheus, "disable-prometheus", false, "Disable prometheus tools")
 	flag.BoolVar(&dt.loki, "disable-loki", false, "Disable loki tools")
 	flag.BoolVar(&dt.elasticsearch, "disable-elasticsearch", false, "Disable elasticsearch tools")
+	flag.BoolVar(&dt.influxdb, "disable-influxdb", false, "Disable InfluxDB tools")
 	flag.BoolVar(&dt.alerting, "disable-alerting", false, "Disable alerting tools")
 	flag.BoolVar(&dt.dashboard, "disable-dashboard", false, "Disable dashboard tools")
 	flag.BoolVar(&dt.folder, "disable-folder", false, "Disable folder tools")
@@ -89,6 +90,7 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.clickhouse, "disable-clickhouse", false, "Disable ClickHouse tools")
 	flag.BoolVar(&dt.searchlogs, "disable-searchlogs", false, "Disable search logs tools")
 	flag.BoolVar(&dt.runpanelquery, "disable-runpanelquery", false, "Disable run panel query tools")
+	flag.BoolVar(&dt.graphite, "disable-graphite", false, "Disable Graphite tools")
 }
 
 func (gc *grafanaConfig) addFlags() {
@@ -113,6 +115,7 @@ func (dt *disabledTools) addTools(s *server.MCPServer) {
 	maybeAddTools(s, tools.AddPrometheusTools, enabledTools, dt.prometheus, "prometheus")
 	maybeAddTools(s, tools.AddLokiTools, enabledTools, dt.loki, "loki")
 	maybeAddTools(s, tools.AddElasticsearchTools, enabledTools, dt.elasticsearch, "elasticsearch")
+	maybeAddTools(s, tools.AddInfluxDBTools, enabledTools, dt.influxdb, "influxdb")
 	maybeAddTools(s, func(mcp *server.MCPServer) { tools.AddAlertingTools(mcp, enableWriteTools) }, enabledTools, dt.alerting, "alerting")
 	maybeAddTools(s, func(mcp *server.MCPServer) { tools.AddDashboardTools(mcp, enableWriteTools) }, enabledTools, dt.dashboard, "dashboard")
 	maybeAddTools(s, func(mcp *server.MCPServer) { tools.AddFolderTools(mcp, enableWriteTools) }, enabledTools, dt.folder, "folder")
@@ -129,6 +132,7 @@ func (dt *disabledTools) addTools(s *server.MCPServer) {
 	maybeAddTools(s, tools.AddClickHouseTools, enabledTools, dt.clickhouse, "clickhouse")
 	maybeAddTools(s, tools.AddSearchLogsTools, enabledTools, dt.searchlogs, "searchlogs")
 	maybeAddTools(s, tools.AddRunPanelQueryTools, enabledTools, dt.runpanelquery, "runpanelquery")
+	maybeAddTools(s, tools.AddGraphiteTools, enabledTools, dt.graphite, "graphite")
 }
 
 func newServer(transport string, dt disabledTools, obs *observability.Observability, sessionIdleTimeoutMinutes int) (*server.MCPServer, *mcpgrafana.ToolManager, *mcpgrafana.SessionManager) {
@@ -136,8 +140,10 @@ func newServer(transport string, dt disabledTools, obs *observability.Observabil
 		mcpgrafana.WithSessionTTL(time.Duration(sessionIdleTimeoutMinutes) * time.Minute),
 	)
 
-	// Declare variable for ToolManager that will be initialized after server creation
+	// Declare variables that will be initialized after server creation.
+	// The hooks below capture these by pointer, so they must be declared first.
 	var stm *mcpgrafana.ToolManager
+	var s *server.MCPServer
 
 	// Create hooks
 	hooks := &server.Hooks{
@@ -149,9 +155,24 @@ func newServer(transport string, dt disabledTools, obs *observability.Observabil
 	// (stdio mode is handled by InitializeAndRegisterServerTools; per-session tools
 	// are not supported).
 	if transport != "stdio" && !dt.proxied {
+		// ensureSessionRegistered registers an ephemeral session in MCPServer.sessions
+		// if it's not already there. This is needed for horizontal scaling: when a
+		// request lands on a pod that didn't handle the initialize call, the SDK
+		// creates an ephemeral session that isn't registered, causing AddSessionTools
+		// to fail with ErrSessionNotFound. RegisterSession uses LoadOrStore
+		// internally, so this is a no-op for already-registered sessions.
+		ensureSessionRegistered := func(ctx context.Context) {
+			if s != nil {
+				if session := server.ClientSessionFromContext(ctx); session != nil {
+					_ = s.RegisterSession(ctx, session)
+				}
+			}
+		}
+
 		// OnBeforeListTools: Discover, connect, and register tools
 		hooks.OnBeforeListTools = []server.OnBeforeListToolsFunc{
 			func(ctx context.Context, id any, request *mcp.ListToolsRequest) {
+				ensureSessionRegistered(ctx)
 				if stm != nil {
 					if session := server.ClientSessionFromContext(ctx); session != nil {
 						stm.InitializeAndRegisterProxiedTools(ctx, session)
@@ -163,6 +184,7 @@ func newServer(transport string, dt disabledTools, obs *observability.Observabil
 		// OnBeforeCallTool: Fallback in case client calls tool without listing first
 		hooks.OnBeforeCallTool = []server.OnBeforeCallToolFunc{
 			func(ctx context.Context, id any, request *mcp.CallToolRequest) {
+				ensureSessionRegistered(ctx)
 				if stm != nil {
 					if session := server.ClientSessionFromContext(ctx); session != nil {
 						stm.InitializeAndRegisterProxiedTools(ctx, session)
@@ -175,7 +197,7 @@ func newServer(transport string, dt disabledTools, obs *observability.Observabil
 	// Merge observability hooks with existing hooks
 	hooks = observability.MergeHooks(hooks, obs.MCPHooks())
 
-	s := server.NewMCPServer("mcp-grafana", mcpgrafana.Version(),
+	s = server.NewMCPServer("mcp-grafana", mcpgrafana.Version(),
 		server.WithInstructions(`
 This server provides access to your Grafana instance and the surrounding ecosystem.
 
@@ -195,6 +217,8 @@ Available Capabilities:
 - Rendering: Export dashboard panels or full dashboards as PNG images (requires Grafana Image Renderer plugin).
 - Proxied Tools: Access tools from external MCP servers (like Tempo) through dynamic discovery.
 
+Timestamp parameters without a timezone offset are interpreted as UTC. Include an offset like '-05:00' or use relative syntax like 'now-1h' to query in a different timezone.
+
 Note that some of these capabilities may be disabled. Do not try to use features that are not available via tools.
 `),
 		server.WithHooks(hooks),
@@ -202,6 +226,10 @@ Note that some of these capabilities may be disabled. Do not try to use features
 
 	// Initialize ToolManager now that server is created
 	stm = mcpgrafana.NewToolManager(sm, s, mcpgrafana.WithProxiedTools(!dt.proxied))
+
+	// Give the SessionManager a reference to the MCPServer so the reaper can
+	// unregister sessions from the SDK's internal session map.
+	sm.SetMCPServer(s)
 
 	dt.addTools(s)
 	return s, stm, sm
@@ -361,7 +389,10 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		if basePath == "" {
 			basePath = "/"
 		}
-		mux.Handle(basePath, observability.WrapHandler(srv, basePath))
+		mux.Handle(basePath, observability.WrapHandler(
+			mcpgrafana.ValidateGrafanaURLMiddleware(srv),
+			basePath,
+		))
 		mux.HandleFunc("/healthz", handleHealthz)
 		if obs.MetricsEnabled {
 			if obs.MetricsAddress == "" {
@@ -387,7 +418,10 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		}
 		srv := server.NewStreamableHTTPServer(s, opts...)
 		mux := http.NewServeMux()
-		mux.Handle(endpointPath, observability.WrapHandler(srv, endpointPath))
+		mux.Handle(endpointPath, observability.WrapHandler(
+			mcpgrafana.ValidateGrafanaURLMiddleware(srv),
+			endpointPath,
+		))
 		mux.HandleFunc("/healthz", handleHealthz)
 		if obs.MetricsEnabled {
 			if obs.MetricsAddress == "" {

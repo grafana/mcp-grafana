@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"sort"
+	"strings"
 	"sync"
 
 	"github.com/grafana/incident-go"
@@ -18,17 +20,18 @@ import (
 
 const clientCacheMeterName = "mcp-grafana"
 
-// clientCacheKey uniquely identifies a client by its credentials and target.
+// clientCacheKey uniquely identifies a client by its credentials, target, and forwarded headers.
 type clientCacheKey struct {
-	url      string
-	apiKey   string
-	username string
-	password string
-	orgID    int64
+	url             string
+	apiKey          string
+	username        string
+	password        string
+	orgID           int64
+	forwardedHeaders string // sorted, serialized forwarded headers for cache differentiation
 }
 
-// cacheKeyFromRequest builds a clientCacheKey from request-derived credentials.
-func cacheKeyFromRequest(grafanaURL, apiKey string, basicAuth *url.Userinfo, orgID int64) clientCacheKey {
+// cacheKeyFromRequest builds a clientCacheKey from request-derived credentials and forwarded headers.
+func cacheKeyFromRequest(grafanaURL, apiKey string, basicAuth *url.Userinfo, orgID int64, req *http.Request) clientCacheKey {
 	key := clientCacheKey{
 		url:    grafanaURL,
 		apiKey: apiKey,
@@ -38,6 +41,24 @@ func cacheKeyFromRequest(grafanaURL, apiKey string, basicAuth *url.Userinfo, org
 		key.username = basicAuth.Username()
 		key.password, _ = basicAuth.Password()
 	}
+	if req != nil {
+		headers := forwardedHeadersFromRequest(req)
+		if len(headers) > 0 {
+			names := make([]string, 0, len(headers))
+			for k := range headers {
+				names = append(names, k)
+			}
+			sort.Strings(names)
+			var sb strings.Builder
+			for _, k := range names {
+				sb.WriteString(k)
+				sb.WriteByte('=')
+				sb.WriteString(headers[k])
+				sb.WriteByte(',')
+			}
+			key.forwardedHeaders = sb.String()
+		}
+	}
 	return key
 }
 
@@ -45,7 +66,7 @@ func cacheKeyFromRequest(grafanaURL, apiKey string, basicAuth *url.Userinfo, org
 func (k clientCacheKey) String() string {
 	hasKey := k.apiKey != ""
 	hasBasic := k.username != ""
-	return fmt.Sprintf("url=%s apiKey=%t basicAuth=%t orgID=%d", k.url, hasKey, hasBasic, k.orgID)
+	return fmt.Sprintf("url=%s apiKey=%t basicAuth=%t orgID=%d forwardedHeaders=%s", k.url, hasKey, hasBasic, k.orgID, k.forwardedHeaders)
 }
 
 // clientCacheMetrics holds OTel instruments for cache observability.
@@ -252,7 +273,7 @@ func extractGrafanaClientCached(cache *ClientCache) httpContextFunc {
 		}
 
 		u, apiKey, basicAuth, _ := extractKeyGrafanaInfoFromReq(req)
-		key := cacheKeyFromRequest(u, apiKey, basicAuth, config.OrgID)
+		key := cacheKeyFromRequest(u, apiKey, basicAuth, config.OrgID, req)
 
 		grafanaClient := cache.GetOrCreateGrafanaClient(key, func() *GrafanaClient {
 			slog.Debug("Creating new Grafana client (cache miss)", "url", u, "api_key_hash", hashAPIKey(apiKey))
@@ -267,7 +288,7 @@ func extractGrafanaClientCached(cache *ClientCache) httpContextFunc {
 func extractIncidentClientCached(cache *ClientCache) httpContextFunc {
 	return func(ctx context.Context, req *http.Request) context.Context {
 		grafanaURL, apiKey, _, orgID := extractKeyGrafanaInfoFromReq(req)
-		key := cacheKeyFromRequest(grafanaURL, apiKey, nil, orgID)
+		key := cacheKeyFromRequest(grafanaURL, apiKey, nil, orgID, req)
 
 		incidentClient := cache.GetOrCreateIncidentClient(key, func() *incident.Client {
 			incidentURL := fmt.Sprintf("%s/api/plugins/grafana-irm-app/resources/api/v1/", grafanaURL)
@@ -275,12 +296,12 @@ func extractIncidentClientCached(cache *ClientCache) httpContextFunc {
 			client := incident.NewClient(incidentURL, apiKey)
 
 			config := GrafanaConfigFromContext(ctx)
-			transport, err := BuildTransport(&config, nil)
+			config.OrgID = orgID
+			transport, err := BuildTransport(&config, nil, WithoutAuth())
 			if err != nil {
 				slog.Error("Failed to create custom transport for incident client, using default", "error", err)
 			} else {
-				orgIDWrapped := NewOrgIDRoundTripper(transport, orgID)
-				client.HTTPClient.Transport = wrapWithUserAgent(orgIDWrapped)
+				client.HTTPClient.Transport = transport
 			}
 
 			return client

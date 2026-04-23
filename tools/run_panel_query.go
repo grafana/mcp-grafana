@@ -28,7 +28,7 @@ type RunPanelQueryParams struct {
 	End            string            `json:"end" jsonschema:"description=Override end time (e.g. 'now'\\, RFC3339\\, Unix ms)"`
 	Variables      map[string]string `json:"variables" jsonschema:"description=Override dashboard variables (e.g. {\"job\": \"api-server\"})"`
 	DatasourceUID  string            `json:"datasourceUid,omitempty" jsonschema:"description=Override datasource UID"`
-	DatasourceType string            `json:"datasourceType,omitempty" jsonschema:"description=Override datasource type (prometheus\\, loki\\, grafana-clickhouse-datasource\\, cloudwatch)"`
+	DatasourceType string            `json:"datasourceType,omitempty" jsonschema:"description=Override datasource type (prometheus\\, loki\\, grafana-clickhouse-datasource\\, cloudwatch\\, influxdb)"`
 }
 
 // QueryTimeRange represents the actual time range used for a panel query
@@ -224,8 +224,10 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 		results, err = executeClickHouseQuery(ctx, datasourceUID, query, params.Start, params.End)
 	case "cloudwatch":
 		results, err = executeCloudWatchPanelQuery(ctx, datasourceUID, panelData, params.Start, params.End, vars)
+	case "influxdb":
+		results, err = executeInfluxDBQuery(ctx, datasourceUID, panelData, query, params.Start, params.End)
 	default:
-		return nil, fmt.Errorf("datasource type '%s' is not supported by run_panel_query; use the native query tool (e.g. query_prometheus\\, query_loki_logs\\, query_clickhouse\\, query_cloudwatch) directly", datasourceType)
+		return nil, fmt.Errorf("datasource type '%s' is not supported by run_panel_query; use the native query tool (e.g. query_prometheus\\, query_loki_logs\\, query_clickhouse\\, query_cloudwatch\\, query_influxdb) directly", datasourceType)
 	}
 
 	if err != nil {
@@ -524,21 +526,38 @@ func executeCloudWatchPanelQuery(ctx context.Context, datasourceUID string, pane
 	return executeGrafanaDSQuery(ctx, payload)
 }
 
+// executeInfluxDBQuery runs an InfluxDB panel query using queryInfluxDB. The
+// panel's queryType field tells us which dialect to use (influxql vs flux);
+// fall back to inference from the datasource if the panel doesn't carry one.
+func executeInfluxDBQuery(ctx context.Context, datasourceUID string, panelData *panelInfo, query, start, end string) (*InfluxDBQueryResult, error) {
+	dialect := ""
+	if panelData != nil && panelData.RawTarget != nil {
+		if qt := safeString(panelData.RawTarget, "queryType"); qt != "" {
+			dialect = qt
+		}
+	}
+
+	return queryInfluxDB(ctx, InfluxDBQueryParams{
+		DatasourceUID: datasourceUID,
+		Query:         query,
+		Dialect:       dialect,
+		Start:         start,
+		End:           end,
+	})
+}
+
 // executeGrafanaDSQuery executes a query through Grafana's /api/ds/query endpoint
 func executeGrafanaDSQuery(ctx context.Context, payload map[string]interface{}) (interface{}, error) {
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
 	baseURL := strings.TrimRight(cfg.URL, "/")
 
-	// Create custom transport with TLS and extra headers support
 	transport, err := mcpgrafana.BuildTransport(&cfg, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create transport: %w", err)
 	}
-	transport = NewAuthRoundTripper(transport, cfg.AccessToken, cfg.IDToken, cfg.APIKey, cfg.BasicAuth)
-	transport = mcpgrafana.NewOrgIDRoundTripper(transport, cfg.OrgID)
 
 	client := &http.Client{
-		Transport: mcpgrafana.NewUserAgentTransport(transport),
+		Transport: transport,
 		Timeout:   30 * time.Second,
 	}
 
@@ -696,6 +715,8 @@ func normalizeDatasourceType(dsType string) string {
 		return "loki"
 	case lower == "cloudwatch":
 		return "cloudwatch"
+	case lower == "influxdb":
+		return "influxdb"
 	case strings.Contains(lower, "clickhouse"):
 		return "clickhouse"
 	default:
@@ -714,6 +735,8 @@ func isEmptyPanelResult(results interface{}) bool {
 	case []LogEntry:
 		return len(v) == 0
 	case *ClickHouseQueryResult:
+		return v == nil || len(v.Rows) == 0
+	case *InfluxDBQueryResult:
 		return v == nil || len(v.Rows) == 0
 	case model.Value:
 		switch m := v.(type) {
@@ -758,6 +781,13 @@ func generatePanelQueryHints(datasourceType, query string) []string {
 			"- AWS region may be incorrect - verify the region setting in the datasource",
 			"- CloudWatch metrics may have longer retention periods than the selected time range",
 		)
+	case "influxdb":
+		hints = append(hints,
+			"- Bucket (v2/Flux) or database (v1/InfluxQL) name in the query may be wrong",
+			"- Measurement or field names may not exist - try a broader query like 'from(bucket: \"...\") |> range(start: -1h) |> limit(n: 5)' to inspect available data",
+			"- Tag filters may be too restrictive - remove them to see if the measurement has any points",
+			"- InfluxDB retention policy may have expired the data - check the bucket's retention settings",
+		)
 	}
 
 	if query != "" {
@@ -778,7 +808,7 @@ func truncateString(s string, maxLen int) string {
 // RunPanelQuery is the tool definition for running panel queries
 var RunPanelQuery = mcpgrafana.MustTool(
 	"run_panel_query",
-	"Executes one or more dashboard panel queries with optional time range and variable overrides. Accepts an array of panel IDs to query in a single call. Fetches the dashboard\\, extracts queries from the specified panels\\, substitutes template variables and Grafana macros ($__range\\, $__rate_interval\\, $__interval)\\, and routes to the appropriate datasource (Prometheus\\, Loki\\, ClickHouse\\, or CloudWatch). Returns results keyed by panel ID - partial failures are allowed (some panels can succeed while others fail). Use get_dashboard_summary first to find panel IDs. If a panel uses a template variable datasource you cannot access\\, provide datasourceUid and datasourceType to override.",
+	"Executes one or more dashboard panel queries with optional time range and variable overrides. Accepts an array of panel IDs to query in a single call. Fetches the dashboard\\, extracts queries from the specified panels\\, substitutes template variables and Grafana macros ($__range\\, $__rate_interval\\, $__interval)\\, and routes to the appropriate datasource (Prometheus\\, Loki\\, ClickHouse\\, CloudWatch\\, or InfluxDB). Returns results keyed by panel ID - partial failures are allowed (some panels can succeed while others fail). Use get_dashboard_summary first to find panel IDs. If a panel uses a template variable datasource you cannot access\\, provide datasourceUid and datasourceType to override.",
 	runPanelQuery,
 	mcp.WithTitleAnnotation("Run panel query"),
 	mcp.WithIdempotentHintAnnotation(true),

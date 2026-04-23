@@ -34,8 +34,75 @@ jobs:
           go-version: "1.26"
           cache: true
 
-      - name: Wait for Grafana server and Prometheus server to start and scrape
-        run: sleep 30
+      - name: Wait for Grafana API to be ready
+        run: |
+          set -euo pipefail
+          ready=false
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:3000/api/health >/dev/null 2>&1; then
+              echo "Grafana is up"
+              ready=true
+              break
+            fi
+            echo "Waiting for Grafana... attempt $i"
+            sleep 2
+          done
+          if [ "$ready" != "true" ]; then
+            echo "Timed out waiting for Grafana to become ready"
+            exit 1
+          fi
+
+      - name: Wait for datasources to be provisioned
+        run: |
+          set -euo pipefail
+          ready=false
+          for i in $(seq 1 60); do
+            count="$(curl -fsS -u admin:admin http://localhost:3000/api/datasources 2>/dev/null | jq 'length' 2>/dev/null || echo 0)"
+            echo "datasource count=$count"
+            if [ "${count}" -ge 10 ]; then
+              echo "Datasources provisioned"
+              ready=true
+              break
+            fi
+            sleep 2
+          done
+          if [ "$ready" != "true" ]; then
+            echo "Timed out waiting for datasources to be provisioned"
+            curl -fsS -u admin:admin http://localhost:3000/api/datasources || true
+            exit 1
+          fi
+
+      - name: Wait for Graphite metrics to be queryable
+        run: |
+          set -euo pipefail
+          # The graphite-seed container sends metrics and verifies they're
+          # queryable before exiting. Wait for it to finish, then do a short
+          # verification via Grafana's datasource proxy.
+          echo "Waiting for graphite-seed container to finish..."
+          exit_code=$(docker wait mcp-grafana-graphite-seed-1 2>/dev/null || echo "1")
+          if [ "$exit_code" != "0" ]; then
+            echo "graphite-seed failed (exit code $exit_code):"
+            docker logs mcp-grafana-graphite-seed-1 2>&1 || true
+            exit 1
+          fi
+          echo "graphite-seed completed successfully, verifying via Grafana proxy..."
+          ready=false
+          for i in $(seq 1 10); do
+            count="$(curl -fsS -u admin:admin \
+              'http://localhost:3000/api/datasources/proxy/uid/graphite/metrics/find?query=test.*' \
+              2>/dev/null | jq 'length' 2>/dev/null || echo 0)"
+            echo "Graphite test.* node count=$count"
+            if [ "${count}" -ge 1 ]; then
+              echo "Graphite metrics are seeded and queryable"
+              ready=true
+              break
+            fi
+            sleep 2
+          done
+          if [ "$ready" != "true" ]; then
+            echo "Timed out waiting for Graphite metrics to be queryable"
+            exit 1
+          fi
 
       - name: Run integration tests
         run: make test-integration

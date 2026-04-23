@@ -267,6 +267,15 @@ type GrafanaConfig struct {
 	BaseTransport http.RoundTripper
 }
 
+// HTTPTransport returns the base HTTP transport for this config.
+// If BaseTransport is set it is returned; otherwise http.DefaultTransport.
+func (c GrafanaConfig) HTTPTransport() http.RoundTripper {
+	if c.BaseTransport != nil {
+		return c.BaseTransport
+	}
+	return http.DefaultTransport
+}
+
 const (
 	// DefaultGrafanaClientTimeout is the default timeout for Grafana HTTP client requests.
 	DefaultGrafanaClientTimeout = 10 * time.Second
@@ -396,11 +405,6 @@ func NewUserAgentTransport(rt http.RoundTripper, userAgent ...string) *UserAgent
 	}
 }
 
-// wrapWithUserAgent wraps an http.RoundTripper with user agent tracking
-func wrapWithUserAgent(rt http.RoundTripper) http.RoundTripper {
-	return NewUserAgentTransport(rt)
-}
-
 // OrgIDRoundTripper wraps an http.RoundTripper to add the X-Grafana-Org-Id header.
 type OrgIDRoundTripper struct {
 	underlying http.RoundTripper
@@ -452,12 +456,99 @@ func NewExtraHeadersRoundTripper(rt http.RoundTripper, headers map[string]string
 	}
 }
 
-func BuildTransport(cfg *GrafanaConfig, base http.RoundTripper) (http.RoundTripper, error) {
+// AuthRoundTripper wraps an http.RoundTripper to add authentication headers.
+// It supports on-behalf-of (OBO) auth via access/ID tokens, API key bearer
+// auth, and HTTP basic auth, in that priority order.
+type AuthRoundTripper struct {
+	accessToken string
+	idToken     string
+	apiKey      string
+	basicAuth   *url.Userinfo
+	underlying  http.RoundTripper
+}
+
+func (rt *AuthRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	clonedReq := req.Clone(req.Context())
+
+	if rt.accessToken != "" && rt.idToken != "" {
+		clonedReq.Header.Set("X-Access-Token", rt.accessToken)
+		clonedReq.Header.Set("X-Grafana-Id", rt.idToken)
+	} else if rt.apiKey != "" {
+		clonedReq.Header.Set("Authorization", "Bearer "+rt.apiKey)
+	} else if rt.basicAuth != nil {
+		password, _ := rt.basicAuth.Password()
+		clonedReq.SetBasicAuth(rt.basicAuth.Username(), password)
+	}
+
+	return rt.underlying.RoundTrip(clonedReq)
+}
+
+func NewAuthRoundTripper(rt http.RoundTripper, accessToken, idToken, apiKey string, basicAuth *url.Userinfo) *AuthRoundTripper {
+	if rt == nil {
+		rt = http.DefaultTransport
+	}
+	return &AuthRoundTripper{
+		accessToken: accessToken,
+		idToken:     idToken,
+		apiKey:      apiKey,
+		basicAuth:   basicAuth,
+		underlying:  rt,
+	}
+}
+
+// transportOptions controls which middleware layers BuildTransport includes.
+type transportOptions struct {
+	withoutAuth      bool
+	withoutOrgID     bool
+	withoutOtel      bool
+	withoutUserAgent bool
+}
+
+// TransportOption configures optional behaviour of BuildTransport.
+type TransportOption func(*transportOptions)
+
+// WithoutAuth skips the authentication middleware layer.
+// Use this when the HTTP client library handles auth itself (e.g. OnCall, incident).
+func WithoutAuth() TransportOption {
+	return func(o *transportOptions) { o.withoutAuth = true }
+}
+
+// WithoutOrgID skips the X-Grafana-Org-Id header layer.
+func WithoutOrgID() TransportOption {
+	return func(o *transportOptions) { o.withoutOrgID = true }
+}
+
+// WithoutOtel skips the otelhttp tracing wrapper.
+func WithoutOtel() TransportOption {
+	return func(o *transportOptions) { o.withoutOtel = true }
+}
+
+// WithoutUserAgent skips the User-Agent header layer.
+func WithoutUserAgent() TransportOption {
+	return func(o *transportOptions) { o.withoutUserAgent = true }
+}
+
+// BuildTransport constructs an http.RoundTripper with the standard middleware
+// chain derived from cfg. The default chain (innermost to outermost) is:
+//
+//	base → TLS → Auth → ExtraHeaders → OrgID → UserAgent → otelhttp
+//
+// Auth is innermost among the header-setting layers so that credentials take
+// precedence over any forwarded/extra headers with the same keys.
+//
+// Individual layers can be disabled with WithoutAuth, WithoutOrgID, etc.
+func BuildTransport(cfg *GrafanaConfig, base http.RoundTripper, opts ...TransportOption) (http.RoundTripper, error) {
+	var options transportOptions
+	for _, o := range opts {
+		o(&options)
+	}
+
 	if base == nil {
 		base = http.DefaultTransport
 	}
 	transport := base
 
+	// TLS
 	if cfg.TLSConfig != nil {
 		t, ok := base.(*http.Transport)
 		if !ok {
@@ -470,8 +561,29 @@ func BuildTransport(cfg *GrafanaConfig, base http.RoundTripper) (http.RoundTripp
 		}
 	}
 
+	// Auth (innermost header layer — wins on conflicts with ExtraHeaders)
+	if !options.withoutAuth {
+		transport = NewAuthRoundTripper(transport, cfg.AccessToken, cfg.IDToken, cfg.APIKey, cfg.BasicAuth)
+	}
+
+	// Extra headers
 	if len(cfg.ExtraHeaders) > 0 {
 		transport = NewExtraHeadersRoundTripper(transport, cfg.ExtraHeaders)
+	}
+
+	// Org ID
+	if !options.withoutOrgID && cfg.OrgID > 0 {
+		transport = NewOrgIDRoundTripper(transport, cfg.OrgID)
+	}
+
+	// User-Agent
+	if !options.withoutUserAgent {
+		transport = NewUserAgentTransport(transport)
+	}
+
+	// OpenTelemetry HTTP tracing (outermost)
+	if !options.withoutOtel {
+		transport = otelhttp.NewTransport(transport)
 	}
 
 	return transport, nil
@@ -796,8 +908,11 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 		rt.Consumers[runtime.HTMLMime] = jsonConsumer
 	}
 
-	// Always enable HTTP tracing for context propagation (no-op when no exporter configured)
-	// Use reflection to wrap the transport without importing the runtime client package
+	// Replace the OpenAPI client's transport with one built by BuildTransport
+	// so we get OTel tracing, user-agent, org-ID, and extra headers for free.
+	// The OpenAPI client handles APIKey/BasicAuth itself, so we skip transport-
+	// level auth and only inject OBO tokens (which the OpenAPI client doesn't
+	// know about) via the AuthRoundTripper.
 	v := reflect.ValueOf(grafanaClient.Transport)
 	if v.Kind() == reflect.Ptr && !v.IsNil() {
 		v = v.Elem()
@@ -805,12 +920,11 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 			transportField := v.FieldByName("Transport")
 			if transportField.IsValid() && transportField.CanSet() {
 				if _, ok := transportField.Interface().(http.RoundTripper); ok {
-					// Use caller-provided base transport or create a default one.
-					var rt http.RoundTripper
+					var base http.RoundTripper
 					if config.BaseTransport != nil {
-						rt = config.BaseTransport
+						base = config.BaseTransport
 					} else {
-						timeoutTransport := &http.Transport{
+						base = &http.Transport{
 							Proxy: http.ProxyFromEnvironment,
 							DialContext: (&net.Dialer{
 								Timeout:   timeout,
@@ -823,29 +937,26 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 							MaxIdleConns:          100,
 							IdleConnTimeout:       90 * time.Second,
 						}
-						// Copy TLS config if present
-						if cfg.TLSConfig != nil {
-							timeoutTransport.TLSClientConfig = cfg.TLSConfig
-						}
-						rt = timeoutTransport
 					}
-					// Apply on-behalf-of auth headers as the innermost header
-					// layer so they take precedence over ExtraHeaders (which
-					// may contain forwarded headers with the same keys).
-					if config.AccessToken != "" && config.IDToken != "" {
-						rt = NewExtraHeadersRoundTripper(rt, map[string]string{
-							"X-Access-Token": config.AccessToken,
-							"X-Grafana-Id":   config.IDToken,
-						})
+					// Use BuildTransport but skip APIKey/BasicAuth auth
+					// (handled by the OpenAPI client). OBO tokens still need
+					// transport-level injection since the OpenAPI client
+					// doesn't support them natively.
+					oboConfig := GrafanaConfig{
+						AccessToken:  config.AccessToken,
+						IDToken:      config.IDToken,
+						OrgID:        config.OrgID,
+						TLSConfig:    config.TLSConfig,
+						ExtraHeaders: config.ExtraHeaders,
 					}
-					if len(config.ExtraHeaders) > 0 {
-						rt = NewExtraHeadersRoundTripper(rt, config.ExtraHeaders)
+					// Panic matches the existing TLS error handling above
+					// (line ~887). The only realistic failure is a TLS
+					// misconfiguration, which can't happen here since base
+					// is always an *http.Transport.
+					wrapped, err := BuildTransport(&oboConfig, base)
+					if err != nil {
+						panic(fmt.Errorf("failed to build transport: %w", err))
 					}
-					if config.OrgID > 0 {
-						rt = NewOrgIDRoundTripper(rt, config.OrgID)
-					}
-					userAgentWrapped := wrapWithUserAgent(rt)
-					wrapped := otelhttp.NewTransport(userAgentWrapped)
 					transportField.Set(reflect.ValueOf(wrapped))
 					slog.Debug("HTTP tracing, user agent tracking, and timeout enabled for Grafana client", "timeout", timeout)
 				}
@@ -926,18 +1037,11 @@ var ExtractIncidentClientFromEnv server.StdioContextFunc = func(ctx context.Cont
 	client := incident.NewClient(incidentURL, apiKey)
 
 	config := GrafanaConfigFromContext(ctx)
-	transport, err := BuildTransport(&config, nil)
+	transport, err := BuildTransport(&config, nil, WithoutAuth())
 	if err != nil {
 		slog.Error("Failed to create custom transport for incident client, using default", "error", err)
 	} else {
-		orgIDWrapped := NewOrgIDRoundTripper(transport, config.OrgID)
-		client.HTTPClient.Transport = wrapWithUserAgent(orgIDWrapped)
-		if config.TLSConfig != nil {
-			slog.Debug("Using custom TLS configuration, user agent, and org ID support for incident client",
-				"cert_file", config.TLSConfig.CertFile,
-				"ca_file", config.TLSConfig.CAFile,
-				"skip_verify", config.TLSConfig.SkipVerify)
-		}
+		client.HTTPClient.Transport = transport
 	}
 
 	return context.WithValue(ctx, incidentClientKey{}, client)
@@ -951,18 +1055,14 @@ var ExtractIncidentClientFromHeaders httpContextFunc = func(ctx context.Context,
 	client := incident.NewClient(incidentURL, apiKey)
 
 	config := GrafanaConfigFromContext(ctx)
-	transport, err := BuildTransport(&config, nil)
+	// Use orgID from the request headers rather than config, since
+	// the incident client may be created with a different org context.
+	config.OrgID = orgID
+	transport, err := BuildTransport(&config, nil, WithoutAuth())
 	if err != nil {
 		slog.Error("Failed to create custom transport for incident client, using default", "error", err)
 	} else {
-		orgIDWrapped := NewOrgIDRoundTripper(transport, orgID)
-		client.HTTPClient.Transport = wrapWithUserAgent(orgIDWrapped)
-		if config.TLSConfig != nil {
-			slog.Debug("Using custom TLS configuration, user agent, and org ID support for incident client",
-				"cert_file", config.TLSConfig.CertFile,
-				"ca_file", config.TLSConfig.CAFile,
-				"skip_verify", config.TLSConfig.SkipVerify)
-		}
+		client.HTTPClient.Transport = transport
 	}
 
 	return context.WithValue(ctx, incidentClientKey{}, client)

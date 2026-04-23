@@ -89,15 +89,10 @@ func discoverMCPDatasources(ctx context.Context) ([]DiscoveredDatasource, error)
 		return nil, nil
 	}
 
-	// Create custom transport with TLS configuration if available
 	transport, err := BuildTransport(&config, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create transport: %w", err)
 	}
-	if config.OrgID > 0 {
-		transport = NewOrgIDRoundTripper(transport, config.OrgID)
-	}
-	transport = NewUserAgentTransport(transport)
 
 	httpClient := &http.Client{
 		Transport: transport,
@@ -134,17 +129,6 @@ func discoverMCPDatasources(ctx context.Context) ([]DiscoveredDatasource, error)
 			if err != nil {
 				slog.DebugContext(ctx, "failed to create probe request", "datasource", c.uid, "error", err)
 				return
-			}
-
-			// Add authentication headers from the Grafana config
-			if config.AccessToken != "" && config.IDToken != "" {
-				req.Header.Set("X-Access-Token", config.AccessToken)
-				req.Header.Set("X-Grafana-Id", config.IDToken)
-			} else if config.APIKey != "" {
-				req.Header.Set("Authorization", "Bearer "+config.APIKey)
-			} else if config.BasicAuth != nil {
-				password, _ := config.BasicAuth.Password()
-				req.SetBasicAuth(config.BasicAuth.Username(), password)
 			}
 
 			resp, err := httpClient.Do(req)

@@ -86,6 +86,12 @@ The dashboard tools now include several strategies to manage context window usag
 - **Query Loki metadata:** Retrieve label names, label values, and stream statistics from Loki datasources.
 - **Query Loki patterns:** Retrieve log patterns detected by Loki to identify common log structures and anomalies.
 
+### InfluxDB Querying
+
+> **Note:** InfluxDB tools are **disabled by default**. To enable them, add `influxdb` to your `--enabled-tools` flag.
+
+- **Query InfluxDB:** Execute queries against InfluxDB datasources using either InfluxQL (v1.x) or Flux (v2.x). The dialect is inferred from the datasource configuration, or can be set explicitly via the `dialect` parameter.
+
 ### ClickHouse Querying
 
 > **Note:** ClickHouse tools are **disabled by default**. To enable them, add `clickhouse` to your `--enabled-tools` flag.
@@ -108,6 +114,15 @@ The dashboard tools now include several strategies to manage context window usag
 > **Note:** Search logs tools are **disabled by default**. To enable them, add `searchlogs` to your `--enabled-tools` flag.
 
 - **Search logs:** High-level log search across ClickHouse (OTel format) and Loki datasources.
+
+### Graphite Querying
+
+> **Note:** Graphite tools are **disabled by default**. To enable them, add `graphite` to your `--enabled-tools` flag.
+
+- **Query Graphite:** Execute Graphite render API queries against a Graphite datasource.
+- **List Graphite metrics:** Browse and discover Graphite metric paths.
+- **List Graphite tags:** List available Graphite tags and tag values.
+- **Query Graphite density:** Query Graphite metric density for a given pattern.
 
 ### Elasticsearch Querying
 
@@ -280,6 +295,7 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `list_loki_label_values`          | Loki        | List values for a specific log label                                | `datasources:query`                     | `datasources:uid:loki-uid`                          |
 | `query_loki_stats`                | Loki        | Get statistics about log streams                                    | `datasources:query`                     | `datasources:uid:loki-uid`                          |
 | `query_loki_patterns`             | Loki        | Query detected log patterns to identify common structures           | `datasources:query`                     | `datasources:uid:loki-uid`                          |
+| `query_influxdb`                  | InfluxDB    | Query InfluxDB using InfluxQL (v1) or Flux (v2)                     | `datasources:query`                     | `datasources:uid:influxdb-uid`                      |
 | `list_clickhouse_tables`          | ClickHouse* | List tables in a ClickHouse database                                | `datasources:query`                     | `datasources:uid:*`                                 |
 | `describe_clickhouse_table`       | ClickHouse* | Get table schema with column types                                  | `datasources:query`                     | `datasources:uid:*`                                 |
 | `query_clickhouse`                | ClickHouse* | Execute SQL queries with macro substitution                         | `datasources:query`                     | `datasources:uid:*`                                 |
@@ -339,7 +355,7 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 - `--session-idle-timeout-minutes`: Session idle timeout in minutes. Sessions with no activity for this duration are automatically reaped - default: `30`. Set to `0` to disable session reaping. Only relevant for SSE and streamable-http transports.
 
 **Tool Configuration:**
-- `--enabled-tools`: Comma-separated list of enabled categories - default: all categories except `admin`, to enable admin tools, add `admin` to the list (e.g., `"search,datasource,...,admin"`)
+- `--enabled-tools`: Comma-separated list of enabled categories - default: all categories except `admin`, `clickhouse`, `cloudwatch`, `elasticsearch`, `examples`, `graphite`, `runpanelquery`, and `searchlogs`. To enable disabled categories, add them to the list (e.g., `"search,datasource,...,graphite"`)
 - `--max-loki-log-limit`: Maximum number of log lines returned per `query_loki_logs` call - default: `100`. Note: Set this at least 1 below Loki's server-side `max_entries_limit_per_query` to allow truncation detection (the tool requests `limit+1` internally to detect if more data exists).
 - `--disable-search`: Disable search tools
 - `--disable-datasource`: Disable datasource tools
@@ -348,6 +364,7 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 - `--disable-write`: Disable write tools (create/update operations)
 - `--disable-loki`: Disable loki tools
 - `--disable-elasticsearch`: Disable elasticsearch tools
+- `--disable-influxdb`: Disable InfluxDB tools
 - `--disable-alerting`: Disable alerting tools
 - `--disable-dashboard`: Disable dashboard tools
 - `--disable-oncall`: Disable oncall tools
@@ -362,6 +379,7 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 - `--disable-clickhouse`: Disable ClickHouse tools
 - `--disable-searchlogs`: Disable search_logs tool
 - `--disable-runpanelquery`: Disable run panel query tools
+- `--disable-graphite`: Disable Graphite tools
 
 ### Read-Only Mode
 
@@ -548,7 +566,7 @@ Forwarded headers are merged with any headers defined in `GRAFANA_EXTRA_HEADERS`
    - **Download binary**: Download the latest release of `mcp-grafana` from the [releases page](https://github.com/grafana/mcp-grafana/releases) and place it in your `$PATH`.
 
    - **Build from source**: If you have a Go toolchain installed you can also build and install it from source, using the `GOBIN` environment variable
-     to specify the directory where the binary should be installed. This should also be in your `PATH`.
+     to specify the directory where the binary should be installed. This should also be in your `$PATH`.
 
      ```bash
      GOBIN="$HOME/go/bin" go install github.com/grafana/mcp-grafana/cmd/mcp-grafana@latest
@@ -853,6 +871,26 @@ grafanaConfig := mcpgrafana.GrafanaConfig{
 }
 contextFunc := mcpgrafana.ComposedStdioContextFunc(grafanaConfig)
 ```
+
+**URL validation when wiring your own HTTP server:**
+
+When library consumers wire mcp-grafana's context functions into their own `http.Server`, install `ValidateGrafanaURLMiddleware` to reject malformed `X-Grafana-URL` headers with 400 Bad Request (matching the binary's behavior):
+
+```go
+mux.Handle(path, mcpgrafana.ValidateGrafanaURLMiddleware(yourMCPHandler))
+```
+
+When calling `NewGrafanaClient` directly (stdio or programmatic construction), pre-validate untrusted URLs to avoid a reachable panic:
+
+```go
+if err := mcpgrafana.ValidateGrafanaURL(urlFromHeader); err != nil {
+    http.Error(w, err.Error(), http.StatusBadRequest)
+    return
+}
+client := mcpgrafana.NewGrafanaClient(ctx, urlFromHeader, apiKey, nil)
+```
+
+Both patterns share `ValidateGrafanaURL` as the single validator.
 
 ### Server TLS Configuration (Streamable HTTP Transport Only)
 

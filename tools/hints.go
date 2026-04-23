@@ -73,6 +73,16 @@ func GenerateEmptyResultHints(ctx HintContext) *EmptyResultHints {
 		hints.PossibleCauses = getCloudWatchCauses(ctx)
 		hints.SuggestedActions = getCloudWatchActions(ctx)
 
+	case "influxdb":
+		hints.Summary = "The InfluxDB query returned no points for the specified time range."
+		hints.PossibleCauses = getInfluxDBCauses(ctx)
+		hints.SuggestedActions = getInfluxDBActions(ctx)
+
+	case "graphite":
+		hints.Summary = "The Graphite query returned no metric series for the specified target and time range."
+		hints.PossibleCauses = getGraphiteCauses(ctx)
+		hints.SuggestedActions = getGraphiteActions(ctx)
+
 	default:
 		hints.Summary = "The query returned no data for the specified parameters."
 		hints.PossibleCauses = getGenericCauses()
@@ -198,6 +208,62 @@ func getCloudWatchActions(ctx HintContext) []string {
 		"Use list_cloudwatch_dimensions to verify dimension values",
 		"Try expanding the time range - CloudWatch data may have ingestion delays",
 	}
+}
+
+// getInfluxDBCauses returns possible causes for empty InfluxDB results
+func getInfluxDBCauses(ctx HintContext) []string {
+	causes := []string{
+		"The bucket (Flux) or database (InfluxQL) named in the query may not exist or may be empty",
+		"The measurement or field names may not match what's actually in the bucket",
+		"Tag filters may be too restrictive",
+		"The bucket's retention policy may have dropped data older than the query's time range",
+	}
+
+	q := strings.ToLower(ctx.Query)
+	if strings.Contains(q, "aggregatewindow") || strings.Contains(q, "group by time") {
+		causes = append(causes, "The aggregation window may be larger than the query's time range, yielding no buckets")
+	}
+	return causes
+}
+
+// getInfluxDBActions returns suggested actions for empty InfluxDB results
+func getInfluxDBActions(ctx HintContext) []string {
+	return []string{
+		"Verify the bucket or database name is correct",
+		"Inspect available measurements and tags with a broader query first (Flux: `from(bucket: \"...\") |> range(start: -1h) |> limit(n: 5)`; InfluxQL: `SHOW MEASUREMENTS`)",
+		"Try expanding the time range to see if data exists earlier",
+		"Remove tag filters one at a time to find the restrictive one",
+	}
+}
+
+// getGraphiteCauses returns possible causes for empty Graphite results
+func getGraphiteCauses(ctx HintContext) []string {
+	causes := []string{
+		"The target expression may not match any metric paths",
+		"No data was recorded for the specified time range",
+		"The time range may be outside the data retention period for this metric",
+		"Wildcard patterns may not expand to any existing metrics",
+	}
+	if strings.Contains(ctx.Query, "seriesByTag") {
+		causes = append(causes, "Tag values in seriesByTag() may not match any tagged series")
+	}
+	if strings.Contains(ctx.Query, "sumSeries") || strings.Contains(ctx.Query, "averageSeries") {
+		causes = append(causes, "Aggregation functions return no data when the inner target matches nothing")
+	}
+	return causes
+}
+
+// getGraphiteActions returns suggested actions for empty Graphite results
+func getGraphiteActions(ctx HintContext) []string {
+	actions := []string{
+		"Use list_graphite_metrics to browse and verify the metric path exists",
+		"Try a simpler wildcard pattern (e.g. '*') to confirm the top-level namespace",
+		"Expand the time range — the metric may have data in a different period",
+	}
+	if strings.Contains(ctx.Query, "seriesByTag") {
+		actions = append(actions, "Use list_graphite_tags to verify tag names and values")
+	}
+	return actions
 }
 
 // getGenericCauses returns generic causes for empty results

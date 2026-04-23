@@ -37,7 +37,7 @@ Ensure you have the necessary prerequisites to install, update, and use the agen
 
 ### Prerequisites
 
-- Python 3 `python3` in your shell `PATH`
+- Python 3 `python3` in your shell `$PATH`
 - A frontier AI model and agent, ideally with a GitHub MCP server
 
 I recommend [VS Code GitHub Copilot](https://code.visualstudio.com/) as it has the following benefits:

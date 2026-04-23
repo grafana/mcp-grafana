@@ -17,12 +17,12 @@ services:
         target: /var/lib/grafana/empty-alerts-folder
 
   renderer:
-    image: grafana/grafana-image-renderer:latest@sha256:bdd4b9d3d529710406aa00fc567a0f3d637c94bdbfff569081ef88e8f157bee3
+    image: grafana/grafana-image-renderer:latest@sha256:6c432f1aed266ce56433becacd197cdab708f9089104d67664207b4fe0975055
     ports:
       - 8081
 
   prometheus:
-    image: prom/prometheus@sha256:4a61322ac1103a0e3aea2a61ef1718422a48fa046441f299d71e660a3bc71ae9
+    image: prom/prometheus@sha256:5550dc63da361dc30f6fe02ac0e4dfc736ededfef3c8d12a634db04a67824d78
     ports:
       - "9090:9090"
     entrypoint: /etc/prometheus/entrypoint.sh
@@ -121,6 +121,32 @@ services:
       timeout: 5s
       retries: 5
 
+  influxdb:
+    image: influxdb:2.7
+    ports:
+      - "8086:8086"
+    environment:
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: admin
+      DOCKER_INFLUXDB_INIT_PASSWORD: adminadmin
+      DOCKER_INFLUXDB_INIT_ORG: mcptests
+      DOCKER_INFLUXDB_INIT_BUCKET: metrics
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: mcptests-admin-token
+    healthcheck:
+      test: ["CMD", "influx", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  influxdb-seed:
+    image: curlimages/curl:8.18.0@sha256:d94d07ba9e7d6de898b6d96c1a072f6f8266c687af78a74f380087a0addf5d17
+    depends_on:
+      influxdb:
+        condition: service_healthy
+    volumes:
+      - ./testdata/influxdb-seed.sh:/seed.sh
+    entrypoint: ["sh", "/seed.sh"]
+
   clickhouse:
     image: clickhouse/clickhouse-server:25.12@sha256:f42e90f635bafddfd5c0c25781332ff1c46bbe1424e49e2ce0c571958d4439e9
     ports:
@@ -134,3 +160,26 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
+  graphite:
+    image: graphiteapp/graphite-statsd:latest@sha256:2d61228771119ddaee2f62d65739d3b5e903de36666e899703e47be1def571fe
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null 'http://127.0.0.1/metrics/find?query=*'"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+    volumes:
+      - graphite-whisper:/opt/graphite/storage/whisper
+
+  graphite-seed:
+    image: graphiteapp/graphite-statsd:latest@sha256:2d61228771119ddaee2f62d65739d3b5e903de36666e899703e47be1def571fe
+    depends_on:
+      graphite:
+        condition: service_healthy
+    volumes:
+      - graphite-whisper:/opt/graphite/storage/whisper
+      - ./testdata/graphite-seed.sh:/seed.sh
+    entrypoint: ["sh", "/seed.sh"]
+
+volumes:
+  graphite-whisper:
