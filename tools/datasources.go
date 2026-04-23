@@ -249,8 +249,11 @@ var GetDatasource = mcpgrafana.MustTool(
 	mcp.WithReadOnlyHintAnnotation(true),
 )
 
-func AddDatasourceTools(mcp *server.MCPServer) {
+func AddDatasourceTools(mcp *server.MCPServer, enableWrite bool) {
 	ListDatasources.Register(mcp)
 	GetDatasource.Register(mcp)
-	CreateDatasource.Register(mcp)
+	// this is to make sure that we only register datasource write tools when scope grafana:write has been granted
+	if enableWrite {
+		CreateDatasource.Register(mcp)
+	}
 }
