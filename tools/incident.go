@@ -16,7 +16,40 @@ type ListIncidentsParams struct {
 	Status string `json:"status" jsonschema:"description=The status of the incidents to include. Valid values: 'active'\\, 'resolved'"`
 }
 
-func listIncidents(ctx context.Context, args ListIncidentsParams) (*incident.QueryIncidentPreviewsResponse, error) {
+type incidentPreviewSummary struct {
+	IncidentID    string `json:"incidentId"`
+	Title         string `json:"title"`
+	Status        string `json:"status"`
+	Severity      string `json:"severity"`
+	CreatedTime   string `json:"createdTime,omitempty"`
+	ModifiedTime  string `json:"modifiedTime,omitempty"`
+	IncidentStart string `json:"incidentStart,omitempty"`
+	IsDrill       bool   `json:"isDrill,omitempty"`
+}
+
+type ListIncidentsResult struct {
+	Incidents []incidentPreviewSummary `json:"incidents"`
+	HasMore   bool                     `json:"hasMore"`
+}
+
+func summarizeIncidentPreviews(previews []incident.IncidentPreview) []incidentPreviewSummary {
+	result := make([]incidentPreviewSummary, 0, len(previews))
+	for _, p := range previews {
+		result = append(result, incidentPreviewSummary{
+			IncidentID:    p.IncidentID,
+			Title:         p.Title,
+			Status:        p.Status,
+			Severity:      p.SeverityLabel,
+			CreatedTime:   p.CreatedTime,
+			ModifiedTime:  p.ModifiedTime,
+			IncidentStart: p.IncidentStart,
+			IsDrill:       p.IsDrill,
+		})
+	}
+	return result
+}
+
+func listIncidents(ctx context.Context, args ListIncidentsParams) (*ListIncidentsResult, error) {
 	c := mcpgrafana.IncidentClientFromContext(ctx)
 	is := incident.NewIncidentsService(c)
 
@@ -43,7 +76,10 @@ func listIncidents(ctx context.Context, args ListIncidentsParams) (*incident.Que
 	if err != nil {
 		return nil, fmt.Errorf("list incidents: %w", err)
 	}
-	return incidents, nil
+	return &ListIncidentsResult{
+		Incidents: summarizeIncidentPreviews(incidents.IncidentPreviews),
+		HasMore:   incidents.Cursor.HasMore,
+	}, nil
 }
 
 var ListIncidents = mcpgrafana.MustTool(
@@ -56,9 +92,9 @@ var ListIncidents = mcpgrafana.MustTool(
 )
 
 type CreateIncidentParams struct {
-	Title         string                   `json:"title" jsonschema:"description=The title of the incident"`
-	Severity      string                   `json:"severity" jsonschema:"description=The severity of the incident"`
-	RoomPrefix    string                   `json:"roomPrefix" jsonschema:"description=The prefix of the room to create the incident in"`
+	Title         string                   `json:"title" jsonschema:"required,description=The title of the incident"`
+	Severity      string                   `json:"severity" jsonschema:"required,description=The severity of the incident"`
+	RoomPrefix    string                   `json:"roomPrefix" jsonschema:"required,description=The prefix of the room to create the incident in"`
 	IsDrill       bool                     `json:"isDrill" jsonschema:"description=Whether the incident is a drill incident"`
 	Status        string                   `json:"status" jsonschema:"description=The status of the incident"`
 	AttachCaption string                   `json:"attachCaption" jsonschema:"description=The caption of the attachment"`
@@ -93,8 +129,8 @@ var CreateIncident = mcpgrafana.MustTool(
 )
 
 type AddActivityToIncidentParams struct {
-	IncidentID string `json:"incidentId" jsonschema:"description=The ID of the incident to add the activity to"`
-	Body       string `json:"body" jsonschema:"description=The body of the activity. URLs will be parsed and attached as context"`
+	IncidentID string `json:"incidentId" jsonschema:"required,description=The ID of the incident to add the activity to"`
+	Body       string `json:"body" jsonschema:"required,description=The body of the activity. URLs will be parsed and attached as context"`
 	EventTime  string `json:"eventTime" jsonschema:"description=The time that the activity occurred. If not provided\\, the current time will be used"`
 }
 
@@ -130,7 +166,7 @@ func AddIncidentTools(mcp *server.MCPServer, enableWriteTools bool) {
 }
 
 type GetIncidentParams struct {
-	ID string `json:"id" jsonschema:"description=The ID of the incident to retrieve"`
+	ID string `json:"id" jsonschema:"required,description=The ID of the incident to retrieve"`
 }
 
 func getIncident(ctx context.Context, args GetIncidentParams) (*incident.Incident, error) {

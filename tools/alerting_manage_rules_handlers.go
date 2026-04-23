@@ -25,10 +25,14 @@ func manageRulesRead(ctx context.Context, args ManageRulesReadParams) (any, erro
 		if err != nil {
 			return nil, fmt.Errorf("alerting_manage_rules: %w", err)
 		}
-		if args.DatasourceUID != nil && *args.DatasourceUID != "" {
-			return listDatasourceAlertRules(ctx, *args.DatasourceUID, opts, args.LabelSelectors)
+		selectors, err := args.parseLabelSelectors()
+		if err != nil {
+			return nil, fmt.Errorf("alerting_manage_rules: %w", err)
 		}
-		return listGrafanaRules(ctx, opts, args.LabelSelectors)
+		if args.DatasourceUID != nil && *args.DatasourceUID != "" {
+			return listDatasourceAlertRules(ctx, *args.DatasourceUID, opts, selectors)
+		}
+		return listGrafanaRules(ctx, opts, selectors)
 	case "get":
 		return getAlertRuleDetail(ctx, args.RuleUID, args.LimitAlerts)
 	case "versions":
@@ -49,18 +53,30 @@ func manageRulesReadWrite(ctx context.Context, args ManageRulesReadWriteParams) 
 		if err != nil {
 			return nil, fmt.Errorf("alerting_manage_rules: %w", err)
 		}
-		if args.DatasourceUID != nil && *args.DatasourceUID != "" {
-			return listDatasourceAlertRules(ctx, *args.DatasourceUID, opts, args.LabelSelectors)
+		selectors, err := args.parseLabelSelectors()
+		if err != nil {
+			return nil, fmt.Errorf("alerting_manage_rules: %w", err)
 		}
-		return listGrafanaRules(ctx, opts, args.LabelSelectors)
+		if args.DatasourceUID != nil && *args.DatasourceUID != "" {
+			return listDatasourceAlertRules(ctx, *args.DatasourceUID, opts, selectors)
+		}
+		return listGrafanaRules(ctx, opts, selectors)
 	case "get":
 		return getAlertRuleDetail(ctx, args.RuleUID, args.LimitAlerts)
 	case "versions":
 		return getAlertRuleVersions(ctx, args.RuleUID)
 	case "create":
-		return createAlertRule(ctx, args.toCreateParams())
+		cp, err := args.toCreateParams()
+		if err != nil {
+			return nil, fmt.Errorf("alerting_manage_rules: %w", err)
+		}
+		return createAlertRule(ctx, cp)
 	case "update":
-		return updateAlertRule(ctx, args.toUpdateParams())
+		up, err := args.toUpdateParams()
+		if err != nil {
+			return nil, fmt.Errorf("alerting_manage_rules: %w", err)
+		}
+		return updateAlertRule(ctx, up)
 	case "delete":
 		return deleteAlertRule(ctx, DeleteAlertRuleParams{
 			UID: args.RuleUID,

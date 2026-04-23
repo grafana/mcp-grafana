@@ -510,12 +510,12 @@ func TestManageRules_ListRules(t *testing.T) {
 		},
 		{
 			name:    "invalid matcher type",
-			params:  ManageRulesReadParams{listFilterParams: listFilterParams{Matchers: []LabelMatcher{{Name: "severity", Type: ">>", Value: "critical"}}}, Operation: "list"},
-			wantErr: "invalid matcher type",
+			params:  ManageRulesReadParams{listFilterParams: listFilterParams{Matchers: []string{"severity>>critical"}}, Operation: "list"},
+			wantErr: "invalid matcher",
 		},
 		{
 			name:    "invalid regex matcher value",
-			params:  ManageRulesReadParams{listFilterParams: listFilterParams{Matchers: []LabelMatcher{{Name: "severity", Type: "=~", Value: "[invalid"}}}, Operation: "list"},
+			params:  ManageRulesReadParams{listFilterParams: listFilterParams{Matchers: []string{`severity=~[invalid`}}, Operation: "list"},
 			wantErr: "invalid matcher",
 		},
 		{
@@ -558,7 +558,7 @@ func TestManageRules_ListRules(t *testing.T) {
 					SearchRuleName: "cpu",
 					RuleType:       "alerting",
 					States:         []string{"firing"},
-					Matchers:       []LabelMatcher{{Name: "severity", Type: "=", Value: "critical"}},
+					Matchers:       []string{`severity="critical"`},
 				},
 				Operation: "list",
 				FolderUID: "test-folder",
@@ -581,7 +581,7 @@ func TestManageRules_ListRules(t *testing.T) {
 			name: "list with label selector filters matching rule",
 			params: ManageRulesReadParams{
 				listFilterParams: listFilterParams{
-					LabelSelectors: []Selector{{Filters: []LabelMatcher{{Name: "severity", Type: "=", Value: "critical"}}}},
+					LabelSelectors: []string{`{severity="critical"}`},
 				},
 				Operation: "list",
 			},
@@ -591,7 +591,7 @@ func TestManageRules_ListRules(t *testing.T) {
 			name: "list with label selector filters not matching",
 			params: ManageRulesReadParams{
 				listFilterParams: listFilterParams{
-					LabelSelectors: []Selector{{Filters: []LabelMatcher{{Name: "severity", Type: "=", Value: "warning"}}}},
+					LabelSelectors: []string{`{severity="warning"}`},
 				},
 				Operation: "list",
 			},
@@ -642,7 +642,7 @@ func TestManageRulesReadWrite_ValidationErrors(t *testing.T) {
 			call: func() (any, error) {
 				return manageRulesReadWrite(ctx, ManageRulesReadWriteParams{
 					Operation: "create", RuleGroup: "test-group", FolderUID: "test-folder",
-					Condition: "A", Data: []*AlertQuery{{RefID: "A"}},
+					Condition: "A", Data: []map[string]any{{"refId": "A"}},
 					NoDataState: "OK", ExecErrState: "OK", For: "5m", OrgID: 1,
 				})
 			},
@@ -653,7 +653,7 @@ func TestManageRulesReadWrite_ValidationErrors(t *testing.T) {
 			call: func() (any, error) {
 				return manageRulesReadWrite(ctx, ManageRulesReadWriteParams{
 					Operation: "update", Title: "Test Rule", RuleGroup: "test-group", FolderUID: "test-folder",
-					Condition: "A", Data: []*AlertQuery{{RefID: "A"}},
+					Condition: "A", Data: []map[string]any{{"refId": "A"}},
 					NoDataState: "OK", ExecErrState: "OK", For: "5m", OrgID: 1,
 				})
 			},
@@ -692,7 +692,7 @@ func TestManageRulesReadWriteParams_ToCreateParams(t *testing.T) {
 			RuleGroup:         "test-group",
 			FolderUID:         "test-folder",
 			Condition:         "B",
-			Data:              []*AlertQuery{{RefID: "A"}, {RefID: "B"}},
+			Data:              []map[string]any{{"refId": "A", "datasourceUid": "prom"}, {"refId": "B", "datasourceUid": "__expr__"}},
 			NoDataState:       "Alerting",
 			ExecErrState:      "OK",
 			For:               "10m",
@@ -702,7 +702,8 @@ func TestManageRulesReadWriteParams_ToCreateParams(t *testing.T) {
 			DisableProvenance: &disableProvenance,
 		}
 
-		result := params.toCreateParams()
+		result, err := params.toCreateParams()
+		require.NoError(t, err)
 		require.Equal(t, "Test Rule", result.Title)
 		require.Equal(t, "test-group", result.RuleGroup)
 		require.Equal(t, "test-folder", result.FolderUID)
@@ -726,7 +727,8 @@ func TestManageRulesReadWriteParams_ToCreateParams(t *testing.T) {
 			Title:     "Test Rule",
 		}
 
-		result := params.toCreateParams()
+		result, err := params.toCreateParams()
+		require.NoError(t, err)
 		require.Nil(t, result.UID)
 	})
 }
@@ -741,7 +743,7 @@ func TestManageRulesReadWriteParams_ToUpdateParams(t *testing.T) {
 			RuleGroup:         "updated-group",
 			FolderUID:         "updated-folder",
 			Condition:         "A",
-			Data:              []*AlertQuery{{RefID: "A"}},
+			Data:              []map[string]any{{"refId": "A", "datasourceUid": "prom"}},
 			NoDataState:       "NoData",
 			ExecErrState:      "Alerting",
 			For:               "15m",
@@ -751,7 +753,8 @@ func TestManageRulesReadWriteParams_ToUpdateParams(t *testing.T) {
 			DisableProvenance: &disableProvenance,
 		}
 
-		result := params.toUpdateParams()
+		result, err := params.toUpdateParams()
+		require.NoError(t, err)
 		require.Equal(t, "rule-uid-123", result.UID)
 		require.Equal(t, "Updated Rule", result.Title)
 		require.Equal(t, "updated-group", result.RuleGroup)
