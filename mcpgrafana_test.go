@@ -848,6 +848,227 @@ func (m *capturingMockRT) RoundTrip(req *http.Request) (*http.Response, error) {
 // Keep the old name as an alias for backwards compatibility in case anything references it.
 type extraHeadersMockRT = capturingMockRT
 
+func TestAuthRoundTripper(t *testing.T) {
+	t.Run("sets OBO headers when access and ID tokens present", func(t *testing.T) {
+		var capturedReq *http.Request
+		mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+			capturedReq = req
+			return &http.Response{StatusCode: 200}, nil
+		}}
+
+		rt := NewAuthRoundTripper(mock, "access-tok", "id-tok", "api-key", nil)
+		req, _ := http.NewRequest("GET", "http://example.com", nil)
+		_, err := rt.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Equal(t, "access-tok", capturedReq.Header.Get("X-Access-Token"))
+		assert.Equal(t, "id-tok", capturedReq.Header.Get("X-Grafana-Id"))
+		assert.Empty(t, capturedReq.Header.Get("Authorization"))
+	})
+
+	t.Run("sets bearer token when only API key present", func(t *testing.T) {
+		var capturedReq *http.Request
+		mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+			capturedReq = req
+			return &http.Response{StatusCode: 200}, nil
+		}}
+
+		rt := NewAuthRoundTripper(mock, "", "", "my-api-key", nil)
+		req, _ := http.NewRequest("GET", "http://example.com", nil)
+		_, err := rt.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Equal(t, "Bearer my-api-key", capturedReq.Header.Get("Authorization"))
+		assert.Empty(t, capturedReq.Header.Get("X-Access-Token"))
+	})
+
+	t.Run("sets basic auth when only credentials present", func(t *testing.T) {
+		var capturedReq *http.Request
+		mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+			capturedReq = req
+			return &http.Response{StatusCode: 200}, nil
+		}}
+
+		rt := NewAuthRoundTripper(mock, "", "", "", url.UserPassword("user", "pass"))
+		req, _ := http.NewRequest("GET", "http://example.com", nil)
+		_, err := rt.RoundTrip(req)
+		require.NoError(t, err)
+
+		user, pass, ok := capturedReq.BasicAuth()
+		require.True(t, ok)
+		assert.Equal(t, "user", user)
+		assert.Equal(t, "pass", pass)
+	})
+
+	t.Run("does not modify original request", func(t *testing.T) {
+		mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+			return &http.Response{StatusCode: 200}, nil
+		}}
+
+		rt := NewAuthRoundTripper(mock, "", "", "my-key", nil)
+		req, _ := http.NewRequest("GET", "http://example.com", nil)
+		_, err := rt.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Empty(t, req.Header.Get("Authorization"))
+	})
+}
+
+func TestBuildTransport(t *testing.T) {
+	t.Run("default chain sets all headers", func(t *testing.T) {
+		var capturedReq *http.Request
+		mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+			capturedReq = req
+			return &http.Response{StatusCode: 200}, nil
+		}}
+
+		cfg := &GrafanaConfig{
+			APIKey:       "test-key",
+			OrgID:        42,
+			ExtraHeaders: map[string]string{"X-Custom": "val"},
+		}
+		transport, err := BuildTransport(cfg, mock)
+		require.NoError(t, err)
+
+		req, _ := http.NewRequest("GET", "http://example.com", nil)
+		_, err = transport.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Equal(t, "Bearer test-key", capturedReq.Header.Get("Authorization"))
+		assert.Equal(t, "42", capturedReq.Header.Get("X-Grafana-Org-Id"))
+		assert.Equal(t, "val", capturedReq.Header.Get("X-Custom"))
+		assert.Contains(t, capturedReq.Header.Get("User-Agent"), "mcp-grafana/")
+	})
+
+	t.Run("WithoutAuth skips auth headers", func(t *testing.T) {
+		var capturedReq *http.Request
+		mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+			capturedReq = req
+			return &http.Response{StatusCode: 200}, nil
+		}}
+
+		cfg := &GrafanaConfig{APIKey: "test-key", OrgID: 1}
+		transport, err := BuildTransport(cfg, mock, WithoutAuth(), WithoutOtel())
+		require.NoError(t, err)
+
+		req, _ := http.NewRequest("GET", "http://example.com", nil)
+		_, err = transport.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Empty(t, capturedReq.Header.Get("Authorization"))
+		assert.Equal(t, "1", capturedReq.Header.Get("X-Grafana-Org-Id"))
+	})
+
+	t.Run("WithoutOrgID skips org ID header", func(t *testing.T) {
+		var capturedReq *http.Request
+		mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+			capturedReq = req
+			return &http.Response{StatusCode: 200}, nil
+		}}
+
+		cfg := &GrafanaConfig{OrgID: 42}
+		transport, err := BuildTransport(cfg, mock, WithoutOrgID(), WithoutOtel())
+		require.NoError(t, err)
+
+		req, _ := http.NewRequest("GET", "http://example.com", nil)
+		_, err = transport.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Empty(t, capturedReq.Header.Get("X-Grafana-Org-Id"))
+	})
+
+	t.Run("WithoutUserAgent skips user agent header", func(t *testing.T) {
+		var capturedReq *http.Request
+		mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+			capturedReq = req
+			return &http.Response{StatusCode: 200}, nil
+		}}
+
+		cfg := &GrafanaConfig{}
+		transport, err := BuildTransport(cfg, mock, WithoutUserAgent(), WithoutOtel())
+		require.NoError(t, err)
+
+		req, _ := http.NewRequest("GET", "http://example.com", nil)
+		_, err = transport.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Empty(t, capturedReq.Header.Get("User-Agent"))
+	})
+
+	t.Run("auth takes precedence over extra headers for same key", func(t *testing.T) {
+		var capturedReq *http.Request
+		mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+			capturedReq = req
+			return &http.Response{StatusCode: 200}, nil
+		}}
+
+		cfg := &GrafanaConfig{
+			APIKey:       "real-key",
+			ExtraHeaders: map[string]string{"Authorization": "Bearer forwarded-key"},
+		}
+		transport, err := BuildTransport(cfg, mock, WithoutOtel())
+		require.NoError(t, err)
+
+		req, _ := http.NewRequest("GET", "http://example.com", nil)
+		_, err = transport.RoundTrip(req)
+		require.NoError(t, err)
+
+		// Auth is innermost, so it runs last and wins.
+		assert.Equal(t, "Bearer real-key", capturedReq.Header.Get("Authorization"))
+	})
+
+	t.Run("OBO auth takes precedence over extra headers", func(t *testing.T) {
+		var capturedReq *http.Request
+		mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+			capturedReq = req
+			return &http.Response{StatusCode: 200}, nil
+		}}
+
+		cfg := &GrafanaConfig{
+			AccessToken:  "real-access-tok",
+			IDToken:      "real-id-tok",
+			ExtraHeaders: map[string]string{"X-Access-Token": "forwarded-access-tok"},
+		}
+		transport, err := BuildTransport(cfg, mock, WithoutOtel())
+		require.NoError(t, err)
+
+		req, _ := http.NewRequest("GET", "http://example.com", nil)
+		_, err = transport.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Equal(t, "real-access-tok", capturedReq.Header.Get("X-Access-Token"))
+	})
+
+	t.Run("nil base uses default transport", func(t *testing.T) {
+		cfg := &GrafanaConfig{}
+		transport, err := BuildTransport(cfg, nil, WithoutOtel())
+		require.NoError(t, err)
+		require.NotNil(t, transport)
+	})
+
+	t.Run("zero-value config produces working transport", func(t *testing.T) {
+		var capturedReq *http.Request
+		mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+			capturedReq = req
+			return &http.Response{StatusCode: 200}, nil
+		}}
+
+		cfg := &GrafanaConfig{}
+		transport, err := BuildTransport(cfg, mock, WithoutOtel())
+		require.NoError(t, err)
+
+		req, _ := http.NewRequest("GET", "http://example.com", nil)
+		_, err = transport.RoundTrip(req)
+		require.NoError(t, err)
+
+		// Should still get user-agent even with zero config
+		assert.Contains(t, capturedReq.Header.Get("User-Agent"), "mcp-grafana/")
+		// No auth, no org-id, no extra headers
+		assert.Empty(t, capturedReq.Header.Get("Authorization"))
+		assert.Empty(t, capturedReq.Header.Get("X-Grafana-Org-Id"))
+	})
+}
+
 func TestExtractGrafanaInfoWithExtraHeaders(t *testing.T) {
 	t.Run("extra headers from env in ExtractGrafanaInfoFromEnv", func(t *testing.T) {
 		t.Setenv("GRAFANA_EXTRA_HEADERS", `{"X-Tenant-ID": "tenant-123"}`)

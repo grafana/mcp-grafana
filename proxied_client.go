@@ -2,10 +2,9 @@ package mcpgrafana
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
 	"log/slog"
-	"net/url"
+	"net/http"
 	"sync"
 
 	mcp_client "github.com/mark3labs/mcp-go/client"
@@ -23,40 +22,19 @@ type ProxiedClient struct {
 	mutex          sync.RWMutex
 }
 
-// basicAuthHeader encodes credentials per RFC 7617:
-// base64(username ":" password) with raw bytes, matching
-// (*http.Request).SetBasicAuth in the standard library. url.Userinfo.String()
-// percent-escapes reserved characters per RFC 3986, which is wrong here —
-// passwords containing ':', '@', '/', '%', or space would be double-encoded
-// on the wire and rejected by spec-compliant Basic Auth parsers.
-func basicAuthHeader(u *url.Userinfo) string {
-	password, _ := u.Password()
-	return "Basic " + base64.StdEncoding.EncodeToString([]byte(u.Username()+":"+password))
-}
-
 // NewProxiedClient creates a new connection to a remote MCP server
 func NewProxiedClient(ctx context.Context, datasourceUID, datasourceName, datasourceType, mcpEndpoint string) (*ProxiedClient, error) {
-	// Get Grafana config for authentication
 	config := GrafanaConfigFromContext(ctx)
 
-	// Build headers for authentication
-	headers := make(map[string]string)
-	if config.APIKey != "" {
-		headers["Authorization"] = "Bearer " + config.APIKey
-	} else if config.BasicAuth != nil {
-		headers["Authorization"] = basicAuthHeader(config.BasicAuth)
+	rt, err := BuildTransport(&config, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build transport: %w", err)
 	}
 
-	// Add org ID header if configured
-	if config.OrgID != 0 {
-		headers["X-Grafana-Org-Id"] = fmt.Sprintf("%d", config.OrgID)
-	}
-
-	// Create HTTP transport with authentication and org ID headers
 	slog.DebugContext(ctx, "connecting to MCP server", "datasource", datasourceUID, "url", mcpEndpoint)
 	httpTransport, err := transport.NewStreamableHTTP(
 		mcpEndpoint,
-		transport.WithHTTPHeaders(headers),
+		transport.WithHTTPBasicClient(&http.Client{Transport: rt}),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create HTTP transport: %w", err)
