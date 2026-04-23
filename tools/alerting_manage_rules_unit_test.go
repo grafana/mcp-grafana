@@ -842,13 +842,6 @@ func TestMergeRuleDetail(t *testing.T) {
 		require.True(t, detail.IsPaused)
 		require.NotNil(t, detail.NotificationSettings)
 		require.Equal(t, "slack-notifications", *detail.NotificationSettings.Receiver)
-		require.Len(t, detail.Queries, 2)
-		require.Equal(t, "A", detail.Queries[0].RefID)
-		require.Equal(t, "prometheus-uid", detail.Queries[0].DatasourceUID)
-		require.Equal(t, "up{job=\"api\"}", detail.Queries[0].Expression)
-		require.Equal(t, "B", detail.Queries[1].RefID)
-		require.Equal(t, "__expr__", detail.Queries[1].DatasourceUID)
-		require.Equal(t, "$A > 0", detail.Queries[1].Expression)
 
 		// Full query data should be preserved for round-tripping
 		require.Len(t, detail.Data, 2, "Data should contain full query models from provisioning API")
@@ -918,11 +911,6 @@ func TestMergeRuleDetail(t *testing.T) {
 		require.Equal(t, "A", *detail.Record.From, "the from identifier in recording config should match")
 		require.Equal(t, "cpu_usage_avg", *detail.Record.Metric, "the target metric name in recording config should match")
 
-		require.Len(t, detail.Queries, 1, "the queries slice should have length 1")
-		require.Equal(t, "A", detail.Queries[0].RefID, "the query refID should match")
-		require.Equal(t, "prometheus-uid", detail.Queries[0].DatasourceUID, "the query datasource UID should match")
-		require.Equal(t, "avg(up{job=\"api\"})", detail.Queries[0].Expression, "the query expression should match")
-
 		// Runtime fields
 		require.Equal(t, "normal", detail.State, "the rule state should be normalized from inactive to normal")
 		require.Equal(t, "ok", detail.Health, "the health status should match")
@@ -961,12 +949,7 @@ func TestMergeRuleDetail(t *testing.T) {
 
 		detail := mergeRuleDetail(provisioned, nil)
 
-		// Queries summary won't have the Graphite target (only expr/expression/query)
-		require.Len(t, detail.Queries, 1)
-		require.Equal(t, "C", detail.Queries[0].RefID)
-		require.Empty(t, detail.Queries[0].Expression, "querySummary does not capture Graphite target")
-
-		// But Data should have the full model for round-tripping
+		// Data should have the full model for round-tripping
 		require.Len(t, detail.Data, 1, "Data must be populated with full query models")
 		require.Equal(t, "C", detail.Data[0].RefID)
 		require.Equal(t, "000000004", detail.Data[0].DatasourceUID)
@@ -998,7 +981,6 @@ func TestMergeRuleDetail(t *testing.T) {
 		require.Nil(t, detail.Alerts)
 		require.False(t, detail.IsPaused)
 		require.Nil(t, detail.NotificationSettings)
-		require.Nil(t, detail.Queries)
 	})
 
 	t.Run("provisioned with nil pointer fields", func(t *testing.T) {
@@ -1541,85 +1523,3 @@ func TestAlertQueryModel_JSONRoundTrip(t *testing.T) {
 	})
 }
 
-func TestExtractQuerySummaries(t *testing.T) {
-	t.Run("extracts expr field (Prometheus)", func(t *testing.T) {
-		data := []*models.AlertQuery{
-			{
-				RefID:         "A",
-				DatasourceUID: "prometheus-uid",
-				Model: map[string]any{
-					"expr": `up{job="grafana"}`,
-				},
-			},
-		}
-		summaries := extractQuerySummaries(data)
-		require.Len(t, summaries, 1)
-		require.Equal(t, `up{job="grafana"}`, summaries[0].Expression)
-	})
-
-	t.Run("extracts expression field (Grafana expression)", func(t *testing.T) {
-		data := []*models.AlertQuery{
-			{
-				RefID:         "B",
-				DatasourceUID: "__expr__",
-				Model: map[string]any{
-					"expression": "A",
-				},
-			},
-		}
-		summaries := extractQuerySummaries(data)
-		require.Len(t, summaries, 1)
-		require.Equal(t, "A", summaries[0].Expression)
-	})
-
-	t.Run("extracts query field (Elasticsearch)", func(t *testing.T) {
-		data := []*models.AlertQuery{
-			{
-				RefID:         "A",
-				DatasourceUID: "elasticsearch-uid",
-				Model: map[string]any{
-					"query": `app:"random-service" AND error`,
-				},
-			},
-		}
-		summaries := extractQuerySummaries(data)
-		require.Len(t, summaries, 1)
-		require.Equal(t, `app:"random-service" AND error`, summaries[0].Expression)
-	})
-
-	t.Run("returns nil for empty data", func(t *testing.T) {
-		summaries := extractQuerySummaries(nil)
-		require.Nil(t, summaries)
-	})
-
-	t.Run("handles mixed datasource types", func(t *testing.T) {
-		data := []*models.AlertQuery{
-			{
-				RefID:         "A",
-				DatasourceUID: "elasticsearch-uid",
-				Model: map[string]any{
-					"query": `app:"random-service" AND log.level:"ERROR"`,
-				},
-			},
-			{
-				RefID:         "B",
-				DatasourceUID: "__expr__",
-				Model: map[string]any{
-					"expression": "A",
-				},
-			},
-			{
-				RefID:         "C",
-				DatasourceUID: "__expr__",
-				Model: map[string]any{
-					"expression": "B",
-				},
-			},
-		}
-		summaries := extractQuerySummaries(data)
-		require.Len(t, summaries, 3)
-		require.Equal(t, `app:"random-service" AND log.level:"ERROR"`, summaries[0].Expression)
-		require.Equal(t, "A", summaries[1].Expression)
-		require.Equal(t, "B", summaries[2].Expression)
-	})
-}
