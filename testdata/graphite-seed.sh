@@ -30,9 +30,20 @@ send_metric "test.servers.db01.cpu.load5"   "0.8" "$NOW"
 send_metric "test.tagged.cpu;server=web01;env=prod" "1.5" "$NOW"
 send_metric "test.tagged.cpu;server=web02;env=prod" "2.3" "$NOW"
 
-echo "Graphite metrics seeded successfully."
+echo "Graphite metrics sent to Carbon."
 
-# Give Carbon a moment to process the received metrics into its cache
-# so they are available via the render API before the tests run.
-sleep 5
-echo "Done."
+# Wait until metrics are actually queryable via the Graphite web API.
+# Carbon writes to Whisper files asynchronously, and /metrics/find requires
+# the files to exist on disk, so a fixed sleep is unreliable on slow CI runners.
+MAX_ATTEMPTS=60
+attempt=0
+echo "Waiting for metrics to be queryable via Graphite API..."
+until wget -q -O - "http://${GRAPHITE_HOST}/metrics/find?query=test.*" 2>/dev/null | grep -q "test"; do
+  attempt=$((attempt + 1))
+  if [ "$attempt" -ge "$MAX_ATTEMPTS" ]; then
+    echo "Timed out waiting for metrics to become queryable after ${MAX_ATTEMPTS} attempts."
+    exit 1
+  fi
+  sleep 2
+done
+echo "Metrics are queryable. Done."
