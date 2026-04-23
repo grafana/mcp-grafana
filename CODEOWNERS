@@ -1,3 +1,4 @@
 # Default owners is the Machine Learning team.
 * @grafana/machine-learning
 
+.github/workflows/publish-technical-documentation-next.yml @grafana/docs-tooling
