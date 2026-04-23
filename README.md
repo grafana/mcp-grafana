@@ -854,6 +854,26 @@ grafanaConfig := mcpgrafana.GrafanaConfig{
 contextFunc := mcpgrafana.ComposedStdioContextFunc(grafanaConfig)
 ```
 
+**URL validation when wiring your own HTTP server:**
+
+When library consumers wire mcp-grafana's context functions into their own `http.Server`, install `ValidateGrafanaURLMiddleware` to reject malformed `X-Grafana-URL` headers with 400 Bad Request (matching the binary's behavior):
+
+```go
+mux.Handle(path, mcpgrafana.ValidateGrafanaURLMiddleware(yourMCPHandler))
+```
+
+When calling `NewGrafanaClient` directly (stdio or programmatic construction), pre-validate untrusted URLs to avoid a reachable panic:
+
+```go
+if err := mcpgrafana.ValidateGrafanaURL(urlFromHeader); err != nil {
+    http.Error(w, err.Error(), http.StatusBadRequest)
+    return
+}
+client := mcpgrafana.NewGrafanaClient(ctx, urlFromHeader, apiKey, nil)
+```
+
+Both patterns share `ValidateGrafanaURL` as the single validator.
+
 ### Server TLS Configuration (Streamable HTTP Transport Only)
 
 When using the streamable HTTP transport (`-t streamable-http`), you can configure the MCP server to serve HTTPS instead of HTTP. This is useful when you need to secure the connection between your MCP client and the server itself.
