@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"net/url"
 	"testing"
 
@@ -250,4 +251,59 @@ func TestGenerateDeeplink(t *testing.T) {
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "datasourceUid is required")
 	})
+}
+
+// TestGenerateDeeplink_RejectsMalformedBaseURL_ClientWithEmptyPublicURL
+// exercises the fall-through path where a GrafanaClient is attached but its
+// PublicURL is empty (/api/frontend/settings returned an empty or malformed
+// appUrl). generateDeeplink then reads config.URL, which may itself be
+// malformed. Without this guard, the malformed URL flows into the returned
+// deeplink (e.g. "http://%gg/d/abc123") with no error signal. Post-fix:
+// ValidateGrafanaURL catches the malformed baseURL and returns a structured
+// error wrapping ErrInvalidGrafanaURL.
+func TestGenerateDeeplink_RejectsMalformedBaseURL_ClientWithEmptyPublicURL(t *testing.T) {
+	grafanaCfg := mcpgrafana.GrafanaConfig{
+		URL: "http://%gg",
+	}
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), grafanaCfg)
+
+	// Zero-value GrafanaClient: generateDeeplink only reads gc.PublicURL
+	// (empty), which is the code path we want to exercise. The test does
+	// not invoke any method on the client, so a zero value is equivalent to
+	// a real client whose fetchPublicURL call returned empty.
+	ctx = mcpgrafana.WithGrafanaClient(ctx, &mcpgrafana.GrafanaClient{})
+
+	params := GenerateDeeplinkParams{
+		ResourceType: "dashboard",
+		DashboardUID: stringPtr("abc123"),
+	}
+
+	_, err := generateDeeplink(ctx, params)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, mcpgrafana.ErrInvalidGrafanaURL),
+		"expected error to wrap ErrInvalidGrafanaURL, got: %v", err)
+	assert.Contains(t, err.Error(), "invalid",
+		"error message must include 'invalid' for operator/LLM readability; got %q", err.Error())
+}
+
+// TestGenerateDeeplink_RejectsMalformedBaseURL_NoClient covers the same bug
+// class but without any GrafanaClient attached to the context. Proves the
+// ValidateGrafanaURL guard fires on config.URL alone.
+func TestGenerateDeeplink_RejectsMalformedBaseURL_NoClient(t *testing.T) {
+	grafanaCfg := mcpgrafana.GrafanaConfig{
+		URL: "http://%gg",
+	}
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), grafanaCfg)
+
+	params := GenerateDeeplinkParams{
+		ResourceType: "dashboard",
+		DashboardUID: stringPtr("abc123"),
+	}
+
+	_, err := generateDeeplink(ctx, params)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, mcpgrafana.ErrInvalidGrafanaURL),
+		"expected error to wrap ErrInvalidGrafanaURL, got: %v", err)
+	assert.Contains(t, err.Error(), "invalid",
+		"error message must include 'invalid' for operator/LLM readability; got %q", err.Error())
 }

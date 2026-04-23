@@ -114,22 +114,6 @@ func getPanelImage(ctx context.Context, args GetPanelImageParams) (*mcp.CallTool
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	// Add authentication headers
-	if config.APIKey != "" {
-		req.Header.Set("Authorization", "Bearer "+config.APIKey)
-	} else if config.BasicAuth != nil {
-		password, _ := config.BasicAuth.Password()
-		req.SetBasicAuth(config.BasicAuth.Username(), password)
-	}
-
-	// Add org ID header if specified
-	if config.OrgID > 0 {
-		req.Header.Set("X-Grafana-Org-Id", strconv.FormatInt(config.OrgID, 10))
-	}
-
-	// Add user agent
-	req.Header.Set("User-Agent", mcpgrafana.UserAgent())
-
 	// Prefer raw image bytes so API gateways (e.g. Kong) that inspect
 	// Accept to decide response format return the PNG directly.
 	req.Header.Set("Accept", "image/*")
@@ -238,8 +222,6 @@ func createHTTPClient(config mcpgrafana.GrafanaConfig) (*http.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	transport = mcpgrafana.NewOrgIDRoundTripper(transport, config.OrgID)
-	transport = mcpgrafana.NewUserAgentTransport(transport)
 
 	return &http.Client{Transport: transport}, nil
 }

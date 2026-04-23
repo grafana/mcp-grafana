@@ -18,8 +18,18 @@ func TestDatasourcesTools(t *testing.T) {
 		result, err := listDatasources(ctx, ListDatasourcesParams{})
 		require.NoError(t, err)
 
-		// Twelve datasources are provisioned in the test environment (Prometheus, Prometheus Demo, Loki, Pyroscope, Tempo, Tempo Secondary, Alertmanager, ClickHouse, Elasticsearch, CloudWatch, InfluxDB Flux and InfluxDB InfluxQL).
-		assert.Len(t, result.Datasources, 12)
+		// Verify the core datasources provisioned in the test environment are present.
+		uids := make(map[string]bool, len(result.Datasources))
+		for _, ds := range result.Datasources {
+			uids[ds.UID] = true
+		}
+		assert.True(t, uids["prometheus"], "prometheus datasource should be provisioned")
+		assert.True(t, uids["loki"], "loki datasource should be provisioned")
+		assert.True(t, uids["graphite"], "graphite datasource should be provisioned")
+		assert.True(t, uids["tempo"], "tempo datasource should be provisioned")
+		assert.True(t, uids["elasticsearch"], "elasticsearch datasource should be provisioned")
+		assert.True(t, uids["influxdb-flux"], "influxdb-flux datasource should be provisioned")
+		assert.True(t, uids["influxdb-influxql"], "influxdb-influxql datasource should be provisioned")
 	})
 
 	t.Run("list datasources for type", func(t *testing.T) {

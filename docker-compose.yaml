@@ -160,3 +160,22 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
+  graphite:
+    image: graphiteapp/graphite-statsd:latest@sha256:2d61228771119ddaee2f62d65739d3b5e903de36666e899703e47be1def571fe
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null 'http://127.0.0.1/metrics/find?query=*'"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+
+  graphite-seed:
+    image: alpine:3.21@sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d65087abc07d
+    depends_on:
+      graphite:
+        condition: service_healthy
+    volumes:
+      - ./testdata/graphite-seed.sh:/seed.sh
+    entrypoint: ["sh", "/seed.sh"]
+    environment:
+      GRAPHITE_HOST: graphite

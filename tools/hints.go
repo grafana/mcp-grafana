@@ -78,6 +78,11 @@ func GenerateEmptyResultHints(ctx HintContext) *EmptyResultHints {
 		hints.PossibleCauses = getInfluxDBCauses(ctx)
 		hints.SuggestedActions = getInfluxDBActions(ctx)
 
+	case "graphite":
+		hints.Summary = "The Graphite query returned no metric series for the specified target and time range."
+		hints.PossibleCauses = getGraphiteCauses(ctx)
+		hints.SuggestedActions = getGraphiteActions(ctx)
+
 	default:
 		hints.Summary = "The query returned no data for the specified parameters."
 		hints.PossibleCauses = getGenericCauses()
@@ -229,6 +234,36 @@ func getInfluxDBActions(ctx HintContext) []string {
 		"Try expanding the time range to see if data exists earlier",
 		"Remove tag filters one at a time to find the restrictive one",
 	}
+}
+
+// getGraphiteCauses returns possible causes for empty Graphite results
+func getGraphiteCauses(ctx HintContext) []string {
+	causes := []string{
+		"The target expression may not match any metric paths",
+		"No data was recorded for the specified time range",
+		"The time range may be outside the data retention period for this metric",
+		"Wildcard patterns may not expand to any existing metrics",
+	}
+	if strings.Contains(ctx.Query, "seriesByTag") {
+		causes = append(causes, "Tag values in seriesByTag() may not match any tagged series")
+	}
+	if strings.Contains(ctx.Query, "sumSeries") || strings.Contains(ctx.Query, "averageSeries") {
+		causes = append(causes, "Aggregation functions return no data when the inner target matches nothing")
+	}
+	return causes
+}
+
+// getGraphiteActions returns suggested actions for empty Graphite results
+func getGraphiteActions(ctx HintContext) []string {
+	actions := []string{
+		"Use list_graphite_metrics to browse and verify the metric path exists",
+		"Try a simpler wildcard pattern (e.g. '*') to confirm the top-level namespace",
+		"Expand the time range — the metric may have data in a different period",
+	}
+	if strings.Contains(ctx.Query, "seriesByTag") {
+		actions = append(actions, "Use list_graphite_tags to verify tag names and values")
+	}
+	return actions
 }
 
 // getGenericCauses returns generic causes for empty results

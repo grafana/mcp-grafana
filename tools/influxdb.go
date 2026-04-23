@@ -15,7 +15,6 @@ import (
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
-	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 const (
@@ -105,31 +104,14 @@ func newInfluxDBClient(ctx context.Context, uid string) (*influxDBClient, *model
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
 	baseURL := strings.TrimRight(cfg.URL, "/")
 
-	// Create custom transport with TLS configuration if available.
-	// Follow the ClickHouse pattern: start from cfg.HTTPTransport() so any
-	// BaseTransport configured on GrafanaConfig is respected, and use a safe
-	// type assertion with a Clone() fallback.
-	transport := cfg.HTTPTransport()
-	if tlsConfig := cfg.TLSConfig; tlsConfig != nil {
-		base, ok := transport.(*http.Transport)
-		if !ok {
-			base = http.DefaultTransport.(*http.Transport).Clone()
-		}
-		var err error
-		transport, err = tlsConfig.HTTPTransport(base)
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to create custom transport: %w", err)
-		}
+	transport, err := mcpgrafana.BuildTransport(&cfg, nil)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create transport: %w", err)
 	}
 
-	transport = NewAuthRoundTripper(transport, cfg.AccessToken, cfg.IDToken, cfg.APIKey, cfg.BasicAuth)
-	transport = mcpgrafana.NewOrgIDRoundTripper(transport, cfg.OrgID)
-
 	return &influxDBClient{
-		httpClient: &http.Client{
-			Transport: otelhttp.NewTransport(mcpgrafana.NewUserAgentTransport(transport)),
-		},
-		baseURL: baseURL,
+		httpClient: &http.Client{Transport: transport},
+		baseURL:    baseURL,
 	}, ds, nil
 }
 
