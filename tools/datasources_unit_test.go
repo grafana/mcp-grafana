@@ -13,6 +13,7 @@ import (
 	"github.com/grafana/grafana-openapi-client-go/client"
 	"github.com/grafana/grafana-openapi-client-go/models"
 	mcpgrafana "github.com/grafana/mcp-grafana"
+	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -226,4 +227,278 @@ func TestGetDatasource_ErrorWhenNeitherProvided(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "either uid or name must be provided")
+}
+
+// ---- createDatasource ----
+
+func TestCreateDatasource_Success(t *testing.T) {
+	id := int64(42)
+	name := "My Prometheus"
+	msg := "Datasource added"
+	uid := "new-prom-uid"
+
+	mockResp := models.AddDataSourceOKBody{
+		ID:      &id,
+		Name:    &name,
+		Message: &msg,
+		Datasource: &models.DataSource{
+			ID:   id,
+			UID:  uid,
+			Name: name,
+			Type: "prometheus",
+		},
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodPost, r.Method)
+		assert.Equal(t, "/api/datasources", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(mockResp)
+	}))
+	defer srv.Close()
+
+	ctx := mockDatasourcesCtx(srv)
+
+	toolResult, err := createDatasource(ctx, CreateDatasourceParams{
+		Name: name,
+		Type: "prometheus",
+		URL:  "http://prometheus:9090",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, toolResult)
+	assert.False(t, toolResult.IsError)
+	require.Len(t, toolResult.Content, 1)
+
+	text, ok := toolResult.Content[0].(mcp.TextContent)
+	require.True(t, ok)
+
+	var got CreateDatasourceResult
+	require.NoError(t, json.Unmarshal([]byte(text.Text), &got))
+	assert.Equal(t, uid, got.UID)
+	assert.Equal(t, name, got.Name)
+	assert.Equal(t, msg, got.Message)
+	assert.Equal(t, id, got.ID)
+}
+
+func TestCreateDatasource_CredentialViolation(t *testing.T) {
+	tests := []struct {
+		name           string
+		params         CreateDatasourceParams
+		expectedReason string
+	}{
+		{
+			name:           "basicAuth enabled",
+			params:         CreateDatasourceParams{Name: "test", Type: "prometheus", BasicAuth: true},
+			expectedReason: "basic_auth_enabled_via_mcp_disallowed",
+		},
+		{
+			name:           "basicAuthUser set",
+			params:         CreateDatasourceParams{Name: "test", Type: "prometheus", BasicAuthUser: "admin"},
+			expectedReason: "basic_auth_user_via_mcp_disallowed",
+		},
+		{
+			name:           "secureJsonData present",
+			params:         CreateDatasourceParams{Name: "test", Type: "prometheus", SecureJSONData: map[string]string{"password": "s3cr3t"}},
+			expectedReason: "secure_json_data_found",
+		},
+		{
+			name:           "auth intent in URL field",
+			params:         CreateDatasourceParams{Name: "test", Type: "prometheus", URL: "add authentication to prometheus datasource"},
+			expectedReason: "auth_credential_instructions",
+		},
+		{
+			name:           "embedded AWS key in jsonData",
+			params:         CreateDatasourceParams{Name: "test", Type: "prometheus", JSONData: map[string]interface{}{"accessKey": "AKIAIOSFODNN7EXAMPLE"}},
+			expectedReason: "embedded_secret_or_token",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				t.Fatal("credential guard should prevent any HTTP request")
+			}))
+			defer srv.Close()
+
+			ctx := mockDatasourcesCtx(srv)
+
+			toolResult, err := createDatasource(ctx, tt.params)
+			require.NoError(t, err)
+			require.NotNil(t, toolResult)
+			assert.True(t, toolResult.IsError)
+
+			require.GreaterOrEqual(t, len(toolResult.Content), 1)
+			text, ok := toolResult.Content[0].(mcp.TextContent)
+			require.True(t, ok)
+
+			var payload map[string]any
+			require.NoError(t, json.Unmarshal([]byte(text.Text), &payload))
+			assert.Equal(t, "credential_policy_redirect", payload["outcome"])
+			assert.Equal(t, tt.expectedReason, payload["reason"])
+		})
+	}
+}
+
+// ---- checkDatasourceCredentials ----
+
+func TestCheckDatasourceCredentials(t *testing.T) {
+	tests := []struct {
+		name   string
+		args   CreateDatasourceParams
+		wantOK bool
+		reason string
+	}{
+		{
+			name:   "clean params allowed",
+			args:   CreateDatasourceParams{Name: "Prometheus", Type: "prometheus", URL: "http://prometheus:9090"},
+			wantOK: true,
+		},
+		{
+			name:   "basicAuth true blocked",
+			args:   CreateDatasourceParams{Name: "test", Type: "prometheus", BasicAuth: true},
+			reason: "basic_auth_enabled_via_mcp_disallowed",
+		},
+		{
+			name:   "basicAuthUser blocked",
+			args:   CreateDatasourceParams{Name: "test", Type: "prometheus", BasicAuthUser: "user"},
+			reason: "basic_auth_user_via_mcp_disallowed",
+		},
+		{
+			name:   "secureJsonData blocked",
+			args:   CreateDatasourceParams{Name: "test", Type: "prometheus", SecureJSONData: map[string]string{"token": "abc"}},
+			reason: "secure_json_data_found",
+		},
+		{
+			name:   "auth intent in name blocked",
+			args:   CreateDatasourceParams{Name: "add authentication to grafana datasource", Type: "prometheus"},
+			reason: "auth_credential_instructions",
+		},
+		{
+			name:   "auth intent in database field blocked",
+			args:   CreateDatasourceParams{Name: "test", Type: "postgres", Database: "configure credentials with username and password"},
+			reason: "auth_credential_instructions",
+		},
+		{
+			name:   "private key in jsonData blocked",
+			args:   CreateDatasourceParams{Name: "test", Type: "prometheus", JSONData: map[string]interface{}{"key": "-----BEGIN RSA PRIVATE KEY-----"}},
+			reason: "embedded_secret_or_token",
+		},
+		{
+			name:   "bearer token in URL blocked",
+			args:   CreateDatasourceParams{Name: "test", Type: "prometheus", URL: "Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.payload.signature123"},
+			reason: "embedded_secret_or_token",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := checkDatasourceCredentials(tt.args)
+			if tt.wantOK {
+				assert.Empty(t, got)
+			} else {
+				assert.Equal(t, tt.reason, got)
+			}
+		})
+	}
+}
+
+// ---- datasourceConfigPageURL ----
+
+func makeURLTestCtx(grafanaURL, publicURL string) context.Context {
+	cfg := mcpgrafana.GrafanaConfig{URL: grafanaURL}
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), cfg)
+	if publicURL != "" {
+		ctx = mcpgrafana.WithGrafanaClient(ctx, &mcpgrafana.GrafanaClient{PublicURL: publicURL})
+	}
+	return ctx
+}
+
+func TestDatasourceConfigPageURL(t *testing.T) {
+	tests := []struct {
+		name       string
+		grafanaURL string
+		publicURL  string
+		uid        string
+		want       string
+	}{
+		{
+			name:       "no uid → new page",
+			grafanaURL: "http://localhost:3000",
+			want:       "http://localhost:3000/connections/datasources/new",
+		},
+		{
+			name:       "uid → edit page",
+			grafanaURL: "http://localhost:3000",
+			uid:        "abc-123",
+			want:       "http://localhost:3000/connections/datasources/edit/abc-123",
+		},
+		{
+			name:       "uid with slashes is path-escaped",
+			grafanaURL: "http://localhost:3000",
+			uid:        "prom/uid",
+			want:       "http://localhost:3000/connections/datasources/edit/prom%2Fuid",
+		},
+		{
+			name:       "prefers public URL over config URL",
+			grafanaURL: "http://internal:3000",
+			publicURL:  "https://grafana.example.com",
+			want:       "https://grafana.example.com/connections/datasources/new",
+		},
+		{
+			name:       "https config URL supported",
+			grafanaURL: "https://grafana.example.com",
+			want:       "https://grafana.example.com/connections/datasources/new",
+		},
+		{
+			name: "empty URL returns empty string",
+			want: "",
+		},
+		{
+			name:       "invalid scheme returns empty string",
+			grafanaURL: "ftp://grafana.example.com",
+			want:       "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := makeURLTestCtx(tt.grafanaURL, tt.publicURL)
+			got := datasourceConfigPageURL(ctx, tt.uid)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+// ---- credentialViolationResult ----
+
+func TestCredentialViolationResult(t *testing.T) {
+	t.Run("with config URL has text and resource link", func(t *testing.T) {
+		configURL := "https://grafana.example.com/connections/datasources/new"
+		result := credentialViolationResult("some_reason", configURL)
+
+		assert.True(t, result.IsError)
+		require.Len(t, result.Content, 2)
+
+		text, ok := result.Content[0].(mcp.TextContent)
+		require.True(t, ok)
+		var payload map[string]any
+		require.NoError(t, json.Unmarshal([]byte(text.Text), &payload))
+		assert.Equal(t, "credential_policy_redirect", payload["outcome"])
+		assert.Equal(t, "some_reason", payload["reason"])
+		assert.Equal(t, configURL, payload["open_config_page_url"])
+
+		link, ok := result.Content[1].(mcp.ResourceLink)
+		require.True(t, ok)
+		assert.Equal(t, configURL, link.URI)
+	})
+
+	t.Run("without config URL has text only", func(t *testing.T) {
+		result := credentialViolationResult("some_reason", "")
+
+		assert.True(t, result.IsError)
+		require.Len(t, result.Content, 1)
+		_, ok := result.Content[0].(mcp.TextContent)
+		assert.True(t, ok)
+	})
 }
