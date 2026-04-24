@@ -22,11 +22,11 @@ const clientCacheMeterName = "mcp-grafana"
 
 // clientCacheKey uniquely identifies a client by its credentials, target, and forwarded headers.
 type clientCacheKey struct {
-	url             string
-	apiKey          string
-	username        string
-	password        string
-	orgID           int64
+	url              string
+	apiKey           string
+	username         string
+	password         string
+	orgID            int64
 	forwardedHeaders string // sorted, serialized forwarded headers for cache differentiation
 }
 
