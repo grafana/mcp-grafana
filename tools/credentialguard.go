@@ -181,7 +181,7 @@ func credentialViolationResult(reason, configURL string) *mcp.CallToolResult {
 
 	if configURL != "" {
 		payload["open_config_page_url"] = configURL
-		openBrowser(configURL) // best-effort: only works when server and client are on the same machine
+		_ = openBrowser(configURL) // best-effort: only works when server and client are on the same machine. If there is an error we simply continue with the rest of the operation here.
 	}
 
 	b, _ := json.MarshalIndent(payload, "", "  ")
