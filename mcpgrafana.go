@@ -774,7 +774,7 @@ func doFetchPublicURL(ctx context.Context, cfg *GrafanaConfig) string {
 		return ""
 	}
 
-	transport, err := BuildTransport(cfg, nil, WithoutOtel())
+	transport, err := BuildTransport(cfg, nil)
 	if err != nil {
 		slog.Warn("Failed to build transport for frontend settings request", "error", err)
 		return ""
