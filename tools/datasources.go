@@ -123,6 +123,15 @@ var ListDatasources = mcpgrafana.MustTool(
 	mcp.WithReadOnlyHintAnnotation(true),
 )
 
+var UpdateDatasource = mcpgrafana.MustTool(
+	"update_datasource",
+	"Update non-secret Grafana datasource fields by UID (name, url, jsonData without secrets, default flag, etc.). Fetches the current config and merges only the fields you pass, then saves. For authentication or secrets, use Grafana UI directly. If the datasource does not exist, ask for confirmation before creating a new one.",
+	updateDatasource,
+	mcp.WithTitleAnnotation("Update datasource"),
+	mcp.WithIdempotentHintAnnotation(true),
+	mcp.WithReadOnlyHintAnnotation(true),
+)
+
 type GetDatasourceByUIDParams struct {
 	UID string `json:"uid" jsonschema:"required,description=The uid of the datasource"`
 }
@@ -178,7 +187,101 @@ var GetDatasource = mcpgrafana.MustTool(
 	mcp.WithReadOnlyHintAnnotation(true),
 )
 
+type UpdateDatasourceParams struct {
+	UID             string                 `json:"uid" jsonschema:"required,description=The UID of the datasource to update"`
+	Name            *string                `json:"name,omitempty" jsonschema:"description=New display name"`
+	Type            *string                `json:"type,omitempty" jsonschema:"description=Datasource plugin type (usually leave unchanged after create)"`
+	URL             *string                `json:"url,omitempty" jsonschema:"description=Datasource base URL"`
+	Access          *string                `json:"access,omitempty" jsonschema:"description=How Grafana reaches the datasource (proxy or direct)"`
+	Database        *string                `json:"database,omitempty" jsonschema:"description=Database name when applicable"`
+	User            *string                `json:"user,omitempty" jsonschema:"description=Username when applicable"`
+	BasicAuth       *bool                  `json:"basicAuth,omitempty" jsonschema:"description=Whether Grafana uses basic auth to the datasource"`
+	BasicAuthUser   *string                `json:"basicAuthUser,omitempty" jsonschema:"description=Basic auth username when basic auth is enabled"`
+	WithCredentials *bool                  `json:"withCredentials,omitempty" jsonschema:"description=Whether Grafana forwards credentials such as cookies"`
+	IsDefault       *bool                  `json:"isDefault,omitempty" jsonschema:"description=Whether this datasource should be the default"`
+	JSONData        map[string]interface{} `json:"jsonData,omitempty" jsonschema:"description=Non-secret plugin settings; when set\\, replaces jsonData on the server for this datasource"`
+	SecureJSONData  map[string]string      `json:"secureJsonData,omitempty" jsonschema:"description=Secret fields to set or rotate (passwords\\, tokens); only include keys you intend to change"`
+}
+
+func updateDatasource(ctx context.Context, args UpdateDatasourceParams) (*models.UpdateDataSourceByUIDOKBody, error) {
+	// pending add credential violation check
+	c := mcpgrafana.GrafanaClientFromContext(ctx)
+
+	current, err := c.Datasources.GetDataSourceByUID(args.UID)
+	if err != nil {
+		if strings.Contains(err.Error(), "404") {
+			return nil, fmt.Errorf("datasource with UID '%s' not found", args.UID)
+		}
+		return nil, fmt.Errorf("get datasource by uid %s: %w", args.UID, err)
+	}
+
+	dsAccess := "proxy"
+	if args.Access != nil && *args.Access != "" {
+		// use grafana default
+		dsAccess = *args.Access
+	}
+	ds := current.Payload
+	cmd := &models.UpdateDataSourceCommand{
+		Name:            ds.Name,
+		Type:            ds.Type,
+		Access:          models.DsAccess(dsAccess),
+		URL:             ds.URL,
+		Database:        ds.Database,
+		User:            ds.User,
+		BasicAuth:       ds.BasicAuth,
+		BasicAuthUser:   ds.BasicAuthUser,
+		WithCredentials: ds.WithCredentials,
+		IsDefault:       ds.IsDefault,
+		JSONData:        models.JSON(ds.JSONData),
+		Version:         ds.Version,
+	}
+
+	if args.Name != nil {
+		cmd.Name = *args.Name
+	}
+	if args.Type != nil {
+		cmd.Type = *args.Type
+	}
+	if args.URL != nil {
+		cmd.URL = *args.URL
+	}
+	if args.Access != nil {
+		cmd.Access = models.DsAccess(*args.Access)
+	}
+	if args.Database != nil {
+		cmd.Database = *args.Database
+	}
+	if args.User != nil {
+		cmd.User = *args.User
+	}
+	if args.BasicAuth != nil {
+		cmd.BasicAuth = *args.BasicAuth
+	}
+	if args.BasicAuthUser != nil {
+		cmd.BasicAuthUser = *args.BasicAuthUser
+	}
+	if args.WithCredentials != nil {
+		cmd.WithCredentials = *args.WithCredentials
+	}
+	if args.IsDefault != nil {
+		cmd.IsDefault = *args.IsDefault
+	}
+	if args.JSONData != nil {
+		cmd.JSONData = models.JSON(args.JSONData)
+	}
+	if args.SecureJSONData != nil {
+		cmd.SecureJSONData = args.SecureJSONData
+	}
+
+	resp, err := c.Datasources.UpdateDataSourceByUID(args.UID, cmd)
+	if err != nil {
+		return nil, fmt.Errorf("update datasource %s: %w", args.UID, err)
+	}
+	return resp.Payload, nil
+}
+
 func AddDatasourceTools(mcp *server.MCPServer) {
 	ListDatasources.Register(mcp)
 	GetDatasource.Register(mcp)
+	UpdateDatasource.Register(mcp)
 }
