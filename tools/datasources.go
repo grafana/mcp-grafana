@@ -280,8 +280,42 @@ func updateDatasource(ctx context.Context, args UpdateDatasourceParams) (*models
 	return resp.Payload, nil
 }
 
+type CheckDatasourceHealthParams struct {
+	UID string `json:"uid" jsonschema:"required,description=The UID of the datasource to health-check"`
+}
+
+type DatasourceHealthResult struct {
+	UID     string `json:"uid"`
+	Message string `json:"message"`
+}
+
+func checkDatasourceHealth(ctx context.Context, args CheckDatasourceHealthParams) (*DatasourceHealthResult, error) {
+	c := mcpgrafana.GrafanaClientFromContext(ctx)
+	resp, err := c.Datasources.CheckDatasourceHealthWithUID(args.UID)
+	if err != nil {
+		if strings.Contains(err.Error(), "404") {
+			return nil, fmt.Errorf("datasource with UID '%s' not found", args.UID)
+		}
+		return nil, fmt.Errorf("check datasource health %s: %w", args.UID, err)
+	}
+	return &DatasourceHealthResult{
+		UID:     args.UID,
+		Message: resp.Payload.Message,
+	}, nil
+}
+
+var CheckDatasourceHealth = mcpgrafana.MustTool(
+	"check_datasource_health",
+	"Checks the health of a Grafana datasource by UID by calling the datasource plugin's health endpoint. Returns a message indicating whether the connection is working.",
+	checkDatasourceHealth,
+	mcp.WithTitleAnnotation("Check datasource health"),
+	mcp.WithIdempotentHintAnnotation(true),
+	mcp.WithReadOnlyHintAnnotation(true),
+)
+
 func AddDatasourceTools(mcp *server.MCPServer) {
 	ListDatasources.Register(mcp)
 	GetDatasource.Register(mcp)
 	UpdateDatasource.Register(mcp)
+	CheckDatasourceHealth.Register(mcp)
 }
