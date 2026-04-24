@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -107,7 +108,10 @@ type CreateDatasourceResult struct {
 	Datasource *models.DataSource `json:"datasource,omitempty"`
 }
 
-func createDatasource(ctx context.Context, args CreateDatasourceParams) (*CreateDatasourceResult, error) {
+func createDatasource(ctx context.Context, args CreateDatasourceParams) (*mcp.CallToolResult, error) {
+	if reason := checkDatasourceCredentials(args); reason != "" {
+		return credentialViolationResult(reason, datasourceConfigPageURL(ctx, "")), nil
+	}
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
 	body := &models.AddDataSourceCommand{
 		Name:            args.Name,
@@ -143,7 +147,11 @@ func createDatasource(ctx context.Context, args CreateDatasourceParams) (*Create
 	if p.Datasource != nil {
 		result.UID = p.Datasource.UID
 	}
-	return result, nil
+	b, err := json.Marshal(result)
+	if err != nil {
+		return nil, fmt.Errorf("marshal result: %w", err)
+	}
+	return mcp.NewToolResultText(string(b)), nil
 }
 
 // filterDatasources returns only datasources of the specified type `t`. If `t`
