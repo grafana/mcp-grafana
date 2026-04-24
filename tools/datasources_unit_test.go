@@ -451,6 +451,18 @@ func TestDatasourceConfigPageURL(t *testing.T) {
 			want:       "https://grafana.example.com/connections/datasources/new",
 		},
 		{
+			name:       "config URL sub-path is preserved",
+			grafanaURL: "https://grafana.example.com/grafana",
+			want:       "https://grafana.example.com/grafana/connections/datasources/new",
+		},
+		{
+			name:       "public URL sub-path is preserved",
+			grafanaURL: "http://internal:3000",
+			publicURL:  "https://grafana.example.com/grafana",
+			uid:        "prometheus",
+			want:       "https://grafana.example.com/grafana/connections/datasources/edit/prometheus",
+		},
+		{
 			name: "empty URL returns empty string",
 			want: "",
 		},

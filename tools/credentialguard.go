@@ -3,7 +3,6 @@ package tools
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/url"
 	"os/exec"
 	"regexp"
@@ -137,7 +136,12 @@ func datasourceConfigPageURL(ctx context.Context, uid string) string {
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
 		return ""
 	}
-	origin := fmt.Sprintf("%s://%s", u.Scheme, u.Host)
+	basePath := strings.Trim(u.Path, "/")
+	origin := (&url.URL{
+		Scheme: u.Scheme,
+		Host:   u.Host,
+		Path:   basePath,
+	}).String()
 	var page string
 	if uid != "" {
 		page = "connections/datasources/edit/" + url.PathEscape(uid)
