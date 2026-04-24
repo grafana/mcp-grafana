@@ -101,10 +101,10 @@ type CreateDatasourceParams struct {
 }
 
 type CreateDatasourceResult struct {
-	Message    string       `json:"message"`
-	ID         int64        `json:"id"`
-	UID        string       `json:"uid"`
-	Name       string       `json:"name"`
+	Message    string             `json:"message"`
+	ID         int64              `json:"id"`
+	UID        string             `json:"uid"`
+	Name       string             `json:"name"`
 	Datasource *models.DataSource `json:"datasource,omitempty"`
 }
 
@@ -271,7 +271,7 @@ func addAuthenticationToDatasource(ctx context.Context, args AddAuthenticationTo
 			return credentialViolationResult("auth_credential_instructions", datasourceConfigPageURL(ctx, "")), nil
 		}
 	}
-	return credentialViolationResult("auth_credential_instructions", datasourceConfigPageURL(ctx, "")), nil
+	return credentialViolationResult("auth_credential_instructions", datasourceConfigPageURL(ctx, uid)), nil
 }
 
 var AddAuthenticationToDatasource = mcpgrafana.MustTool(

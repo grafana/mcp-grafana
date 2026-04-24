@@ -105,7 +105,7 @@ func TestAddAuthenticationToDatasourceTools(t *testing.T) {
 		assert.Contains(t, link.URI, "connections/datasources/new")
 	})
 
-	t.Run("valid uid redirects to new datasource page", func(t *testing.T) {
+	t.Run("valid uid redirects to datasource edit page", func(t *testing.T) {
 		ctx := newTestContext()
 		toolResult, err := addAuthenticationToDatasource(ctx, AddAuthenticationToDatasourceParams{UID: "prometheus"})
 		require.NoError(t, err)
@@ -120,7 +120,7 @@ func TestAddAuthenticationToDatasourceTools(t *testing.T) {
 		assert.Equal(t, "credential_policy_redirect", payload["outcome"])
 		assert.Equal(t, "auth_credential_instructions", payload["reason"])
 		configURL, _ := payload["open_config_page_url"].(string)
-		assert.Contains(t, configURL, "connections/datasources/new")
+		assert.Contains(t, configURL, "connections/datasources/edit/prometheus")
 	})
 
 	t.Run("secret-like uid short-circuits with embedded_secret_or_token reason", func(t *testing.T) {

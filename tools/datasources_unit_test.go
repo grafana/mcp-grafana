@@ -451,6 +451,18 @@ func TestDatasourceConfigPageURL(t *testing.T) {
 			want:       "https://grafana.example.com/connections/datasources/new",
 		},
 		{
+			name:       "config URL sub-path is preserved",
+			grafanaURL: "https://grafana.example.com/grafana",
+			want:       "https://grafana.example.com/grafana/connections/datasources/new",
+		},
+		{
+			name:       "public URL sub-path is preserved",
+			grafanaURL: "http://internal:3000",
+			publicURL:  "https://grafana.example.com/grafana",
+			uid:        "prometheus",
+			want:       "https://grafana.example.com/grafana/connections/datasources/edit/prometheus",
+		},
+		{
 			name: "empty URL returns empty string",
 			want: "",
 		},
@@ -529,7 +541,7 @@ func TestAddAuthenticationToDatasource(t *testing.T) {
 		assert.Equal(t, "http://grafana:3000/connections/datasources/new", link.URI)
 	})
 
-	t.Run("valid uid redirects to new datasource page", func(t *testing.T) {
+	t.Run("valid uid redirects to datasource edit page", func(t *testing.T) {
 		ctx := makeURLTestCtx("http://grafana:3000", "")
 		result, err := addAuthenticationToDatasource(ctx, AddAuthenticationToDatasourceParams{UID: "prometheus"})
 		require.NoError(t, err)
@@ -543,7 +555,7 @@ func TestAddAuthenticationToDatasource(t *testing.T) {
 		require.NoError(t, json.Unmarshal([]byte(text.Text), &payload))
 		assert.Equal(t, "credential_policy_redirect", payload["outcome"])
 		assert.Equal(t, "auth_credential_instructions", payload["reason"])
-		assert.Equal(t, "http://grafana:3000/connections/datasources/new", payload["open_config_page_url"])
+		assert.Equal(t, "http://grafana:3000/connections/datasources/edit/prometheus", payload["open_config_page_url"])
 	})
 
 	t.Run("secret-like uid short-circuits with embedded_secret_or_token reason", func(t *testing.T) {
