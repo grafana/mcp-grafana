@@ -385,6 +385,33 @@ func TestCheckDatasourceCredentials(t *testing.T) {
 			reason: "embedded_secret_or_token",
 		},
 		{
+			name: "nested secret in jsonData blocked",
+			args: CreateDatasourceParams{
+				Name: "test",
+				Type: "prometheus",
+				JSONData: map[string]interface{}{
+					"auth": map[string]interface{}{
+						"token": "ghp_abcdefghijklmnopqrstuvwxyz1234567890",
+					},
+				},
+			},
+			reason: "embedded_secret_or_token",
+		},
+		{
+			name: "auth intent in nested jsonData array blocked",
+			args: CreateDatasourceParams{
+				Name: "test",
+				Type: "prometheus",
+				JSONData: map[string]interface{}{
+					"steps": []interface{}{
+						"noop",
+						map[string]interface{}{"instruction": "configure credentials with username and password"},
+					},
+				},
+			},
+			reason: "auth_credential_instructions",
+		},
+		{
 			name:   "bearer token in URL blocked",
 			args:   CreateDatasourceParams{Name: "test", Type: "prometheus", URL: "Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.payload.signature123"},
 			reason: "embedded_secret_or_token",
