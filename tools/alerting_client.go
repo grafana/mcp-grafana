@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -54,13 +55,26 @@ func newAlertingClientFromContext(ctx context.Context) (*alertingClient, error) 
 }
 
 func (c *alertingClient) makeRequest(ctx context.Context, path string, params url.Values) (*http.Response, error) {
+	return c.makeJSONRequest(ctx, http.MethodGet, path, params, nil, http.StatusOK)
+}
+
+func (c *alertingClient) makeJSONRequest(ctx context.Context, method, path string, params url.Values, body any, okStatuses ...int) (*http.Response, error) {
 	u := c.baseURL.JoinPath(path)
 	if len(params) > 0 {
 		u.RawQuery = params.Encode()
 	}
 	p := u.String()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p, nil)
+	var reqBody io.Reader
+	if body != nil {
+		b, err := json.Marshal(body)
+		if err != nil {
+			return nil, fmt.Errorf("failed to encode request body for %s: %w", p, err)
+		}
+		reqBody = bytes.NewReader(b)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, method, p, reqBody)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request to %s: %w", p, err)
 	}
@@ -72,13 +86,19 @@ func (c *alertingClient) makeRequest(ctx context.Context, path string, params ur
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute request to %s: %w", p, err)
 	}
-	if resp.StatusCode != http.StatusOK {
+	if len(okStatuses) == 0 {
+		okStatuses = []int{http.StatusOK}
+	}
+	for _, status := range okStatuses {
+		if resp.StatusCode == status {
+			return resp, nil
+		}
+	}
+	{
 		bodyBytes, _ := io.ReadAll(resp.Body)
 		_ = resp.Body.Close() //nolint:errcheck
 		return nil, fmt.Errorf("grafana API returned status code %d: %s", resp.StatusCode, string(bodyBytes))
 	}
-
-	return resp, nil
 }
 
 const (
@@ -100,7 +120,7 @@ type GetRulesOpts struct {
 	RuleType     string   // Filter by rule type (e.g. "alerting", "recording")
 	States       []string // Filter by rule state (e.g. "firing", "pending", "normal", "nodata", "error")
 	RuleLimit    int      // Maximum number of rules to return (max 200)
-	LimitAlerts int // Maximum number of alert instances per rule (max 200)
+	LimitAlerts  int      // Maximum number of alert instances per rule (max 200)
 	// Matchers filters alert instances by labels. Each matcher is JSON-encoded
 	// as a Prometheus matcher object (e.g. {"type":0,"name":"severity","value":"critical"}).
 	// Multiple matchers are AND-ed together.
@@ -319,6 +339,100 @@ func (c *alertingClient) GetAlertmanagerConfig(ctx context.Context, datasourceUI
 	}
 
 	return &cfg, nil
+}
+
+func alertmanagerProxyPath(datasourceUID, apiPath string) string {
+	return fmt.Sprintf("/api/datasources/proxy/uid/%s%s", datasourceUID, apiPath)
+}
+
+func (c *alertingClient) GetAlertmanagerAlerts(ctx context.Context, datasourceUID string, params url.Values) (models.GettableAlerts, error) {
+	resp, err := c.makeJSONRequest(ctx, http.MethodGet, alertmanagerProxyPath(datasourceUID, "/api/v2/alerts"), params, nil, http.StatusOK)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get Alertmanager alerts: %w", err)
+	}
+	defer func() {
+		_ = resp.Body.Close() //nolint:errcheck
+	}()
+
+	var alerts models.GettableAlerts
+	if err := json.NewDecoder(resp.Body).Decode(&alerts); err != nil {
+		return nil, fmt.Errorf("failed to decode Alertmanager alerts response: %w", err)
+	}
+	return alerts, nil
+}
+
+func (c *alertingClient) GetAlertmanagerSilences(ctx context.Context, datasourceUID string, params url.Values) (models.GettableSilences, error) {
+	resp, err := c.makeJSONRequest(ctx, http.MethodGet, alertmanagerProxyPath(datasourceUID, "/api/v2/silences"), params, nil, http.StatusOK)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get Alertmanager silences: %w", err)
+	}
+	defer func() {
+		_ = resp.Body.Close() //nolint:errcheck
+	}()
+
+	var silences models.GettableSilences
+	if err := json.NewDecoder(resp.Body).Decode(&silences); err != nil {
+		return nil, fmt.Errorf("failed to decode Alertmanager silences response: %w", err)
+	}
+	return silences, nil
+}
+
+func (c *alertingClient) GetAlertmanagerSilence(ctx context.Context, datasourceUID, silenceID string) (*models.GettableSilence, error) {
+	resp, err := c.makeJSONRequest(ctx, http.MethodGet, alertmanagerProxyPath(datasourceUID, "/api/v2/silence/"+url.PathEscape(silenceID)), nil, nil, http.StatusOK)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get Alertmanager silence: %w", err)
+	}
+	defer func() {
+		_ = resp.Body.Close() //nolint:errcheck
+	}()
+
+	var silence models.GettableSilence
+	if err := json.NewDecoder(resp.Body).Decode(&silence); err != nil {
+		return nil, fmt.Errorf("failed to decode Alertmanager silence response: %w", err)
+	}
+	return &silence, nil
+}
+
+func (c *alertingClient) CreateOrUpdateAlertmanagerSilence(ctx context.Context, datasourceUID string, silence *models.PostableSilence) (map[string]string, error) {
+	resp, err := c.makeJSONRequest(ctx, http.MethodPost, alertmanagerProxyPath(datasourceUID, "/api/v2/silences"), nil, silence, http.StatusOK, http.StatusCreated, http.StatusAccepted)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create or update Alertmanager silence: %w", err)
+	}
+	defer func() {
+		_ = resp.Body.Close() //nolint:errcheck
+	}()
+
+	var result map[string]string
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode Alertmanager silence response: %w", err)
+	}
+	return result, nil
+}
+
+func (c *alertingClient) DeleteAlertmanagerSilence(ctx context.Context, datasourceUID, silenceID string) (map[string]string, error) {
+	resp, err := c.makeJSONRequest(ctx, http.MethodDelete, alertmanagerProxyPath(datasourceUID, "/api/v2/silence/"+url.PathEscape(silenceID)), nil, nil, http.StatusOK, http.StatusAccepted)
+	if err != nil {
+		return nil, fmt.Errorf("failed to delete Alertmanager silence: %w", err)
+	}
+	defer func() {
+		_ = resp.Body.Close() //nolint:errcheck
+	}()
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read Alertmanager delete silence response: %w", err)
+	}
+	if len(strings.TrimSpace(string(bodyBytes))) == 0 {
+		return map[string]string{"status": "deleted", "silenceID": silenceID}, nil
+	}
+	var result map[string]string
+	if err := json.Unmarshal(bodyBytes, &result); err != nil {
+		return nil, fmt.Errorf("failed to decode Alertmanager delete silence response: %w", err)
+	}
+	if len(result) == 0 {
+		result = map[string]string{"status": "deleted", "silenceID": silenceID}
+	}
+	return result, nil
 }
 
 // GetRuleVersions fetches the version history for a Grafana-managed alert rule.
