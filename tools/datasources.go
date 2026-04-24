@@ -257,9 +257,57 @@ var GetDatasource = mcpgrafana.MustTool(
 	mcp.WithReadOnlyHintAnnotation(true),
 )
 
+type AddAuthenticationToDatasourceParams struct {
+	UID string `json:"uid,omitempty" jsonschema:"description=Datasource UID to open in Grafana (e.g. after finding the Prometheus datasource). Omit only when the user is adding a brand-new datasource in the UI."`
+}
+
+func addAuthenticationToDatasource(ctx context.Context, args AddAuthenticationToDatasourceParams) (*mcp.CallToolResult, error) {
+	uid := strings.TrimSpace(args.UID)
+	if uid != "" {
+		if matchesSecretLike(uid) {
+			return credentialViolationResult("embedded_secret_or_token", datasourceConfigPageURL(ctx, "")), nil
+		}
+		if matchesAuthIntent(uid) {
+			return credentialViolationResult("auth_credential_instructions", datasourceConfigPageURL(ctx, "")), nil
+		}
+	}
+	configURL := datasourceConfigPageURL(ctx, uid)
+	openBrowser(configURL) // best-effort: only works when server and client are on the same machine
+	payload := map[string]any{
+		"outcome": "opening_config_page",
+		"message": "Opening the Grafana datasource configuration page. Configure authentication and secrets there; this tool does not accept credential values.",
+	}
+	if configURL != "" {
+		payload["config_page_url"] = configURL
+	}
+	b, _ := json.MarshalIndent(payload, "", "  ")
+	content := []mcp.Content{
+		mcp.TextContent{Type: "text", Text: string(b)},
+	}
+	if configURL != "" {
+		content = append(content, mcp.NewResourceLink(
+			configURL,
+			"grafana-datasource-config",
+			"Configure authentication and secrets in the Grafana UI; this tool does not accept credentials.",
+			"",
+		))
+	}
+	return &mcp.CallToolResult{Content: content, IsError: false}, nil
+}
+
+var AddAuthenticationToDatasource = mcpgrafana.MustTool(
+	"add_authentication_to_datasource",
+	"Use this when the user asks to add, set, configure, or rotate authentication for a Grafana datasource—passwords, API tokens, secrets, basic auth, bearer tokens, or TLS secrets—including Prometheus, Loki, or any other plugin type. Opens the Grafana UI to the datasource settings page (pass uid from list_datasources or get_datasource for an existing datasource; omit uid to open the new datasource page). Does not accept credential values through MCP. Do not use create_datasource for authentication or secrets; this server blocks those fields on create and this tool is the supported path for that intent.",
+	addAuthenticationToDatasource,
+	mcp.WithTitleAnnotation("Add authentication to datasource"),
+	mcp.WithIdempotentHintAnnotation(false),
+	mcp.WithReadOnlyHintAnnotation(false),
+)
+
 func AddDatasourceTools(mcp *server.MCPServer, enableWrite bool) {
 	ListDatasources.Register(mcp)
 	GetDatasource.Register(mcp)
+	AddAuthenticationToDatasource.Register(mcp)
 	// this is to make sure that we only register datasource write tools when scope grafana:write has been granted
 	if enableWrite {
 		CreateDatasource.Register(mcp)
