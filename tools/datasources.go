@@ -295,7 +295,7 @@ func addAuthenticationToDatasource(ctx context.Context, args AddAuthenticationTo
 			return credentialViolationResult("auth_credential_instructions", datasourceConfigPageURL(ctx, "")), nil
 		}
 	}
-	return credentialViolationResult("auth_credential_instructions", datasourceConfigPageURL(ctx, "")), nil
+	return credentialViolationResult("auth_credential_instructions", datasourceConfigPageURL(ctx, uid)), nil
 }
 
 var AddAuthenticationToDatasource = mcpgrafana.MustTool(
