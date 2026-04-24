@@ -3,7 +3,6 @@ package mcpgrafana
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"sync"
 
@@ -25,13 +24,14 @@ type ProxiedClient struct {
 // NewProxiedClient creates a new connection to a remote MCP server
 func NewProxiedClient(ctx context.Context, datasourceUID, datasourceName, datasourceType, mcpEndpoint string) (*ProxiedClient, error) {
 	config := GrafanaConfigFromContext(ctx)
+	logger := config.LoggerOrDefault()
 
 	rt, err := BuildTransport(&config, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build transport: %w", err)
 	}
 
-	slog.DebugContext(ctx, "connecting to MCP server", "datasource", datasourceUID, "url", mcpEndpoint)
+	logger.DebugContext(ctx, "connecting to MCP server", "datasource", datasourceUID, "url", mcpEndpoint)
 	httpTransport, err := transport.NewStreamableHTTP(
 		mcpEndpoint,
 		transport.WithHTTPBasicClient(&http.Client{Transport: rt}),
@@ -65,7 +65,7 @@ func NewProxiedClient(ctx context.Context, datasourceUID, datasourceName, dataso
 		return nil, fmt.Errorf("failed to list tools from remote MCP server: %w", err)
 	}
 
-	slog.DebugContext(ctx, "connected to proxied MCP server",
+	logger.DebugContext(ctx, "connected to proxied MCP server",
 		"datasource", datasourceUID,
 		"type", datasourceType,
 		"tools", len(toolsResult.Tools))

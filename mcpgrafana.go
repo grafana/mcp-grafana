@@ -50,7 +50,7 @@ const (
 	grafanaAPIKeyHeader              = "X-Grafana-API-Key" // Deprecated: use X-Grafana-Service-Account-Token instead
 )
 
-func urlAndAPIKeyFromEnv() (string, string) {
+func urlAndAPIKeyFromEnv(logger *slog.Logger) (string, string) {
 	u := strings.TrimRight(os.Getenv(grafanaURLEnvVar), "/")
 
 	// Check for the new service account token environment variable first
@@ -62,7 +62,7 @@ func urlAndAPIKeyFromEnv() (string, string) {
 	// Fall back to the deprecated API key environment variable
 	apiKey = os.Getenv(grafanaAPIEnvVar)
 	if apiKey != "" {
-		slog.Warn("GRAFANA_API_KEY is deprecated, please use GRAFANA_SERVICE_ACCOUNT_TOKEN instead. See https://grafana.com/docs/grafana/latest/administration/service-accounts/#add-a-token-to-a-service-account-in-grafana for details on creating service account tokens.")
+		logger.Warn("GRAFANA_API_KEY is deprecated, please use GRAFANA_SERVICE_ACCOUNT_TOKEN instead. See https://grafana.com/docs/grafana/latest/administration/service-accounts/#add-a-token-to-a-service-account-in-grafana for details on creating service account tokens.")
 	}
 
 	return u, apiKey
@@ -80,27 +80,27 @@ func userAndPassFromEnv() *url.Userinfo {
 	return url.UserPassword(username, password)
 }
 
-func orgIdFromEnv() int64 {
+func orgIdFromEnv(logger *slog.Logger) int64 {
 	orgIDStr := os.Getenv(grafanaOrgIDEnvVar)
 	if orgIDStr == "" {
 		return 0
 	}
 	orgID, err := strconv.ParseInt(orgIDStr, 10, 64)
 	if err != nil {
-		slog.Warn("Invalid GRAFANA_ORG_ID value, ignoring", "value", orgIDStr, "error", err)
+		logger.Warn("Invalid GRAFANA_ORG_ID value, ignoring", "value", orgIDStr, "error", err)
 		return 0
 	}
 	return orgID
 }
 
-func extraHeadersFromEnv() map[string]string {
+func extraHeadersFromEnv(logger *slog.Logger) map[string]string {
 	headersJSON := os.Getenv(grafanaExtraHeadersEnvVar)
 	if headersJSON == "" {
 		return nil
 	}
 	var headers map[string]string
 	if err := json.Unmarshal([]byte(headersJSON), &headers); err != nil {
-		slog.Warn("invalid GRAFANA_EXTRA_HEADERS value, ignoring", "value", headersJSON, "error", err)
+		logger.Warn("invalid GRAFANA_EXTRA_HEADERS value, ignoring", "value", headersJSON, "error", err)
 		return nil
 	}
 	return headers
@@ -167,14 +167,14 @@ func mergeHeaders(base, override map[string]string) map[string]string {
 	return merged
 }
 
-func orgIdFromHeaders(req *http.Request) int64 {
+func orgIdFromHeaders(req *http.Request, logger *slog.Logger) int64 {
 	orgIDStr := req.Header.Get(client.OrgIDHeader)
 	if orgIDStr == "" {
 		return 0
 	}
 	orgID, err := strconv.ParseInt(orgIDStr, 10, 64)
 	if err != nil {
-		slog.Warn("Invalid X-Grafana-Org-Id header value, ignoring", "value", orgIDStr, "error", err)
+		logger.Warn("Invalid X-Grafana-Org-Id header value, ignoring", "value", orgIDStr, "error", err)
 		return 0
 	}
 	return orgID
@@ -605,20 +605,20 @@ func BuildTransport(cfg *GrafanaConfig, base http.RoundTripper, opts ...Transpor
 }
 
 // Gets info from environment
-func extractKeyGrafanaInfoFromEnv() (url, apiKey string, auth *url.Userinfo, orgId int64) {
-	url, apiKey = urlAndAPIKeyFromEnv()
+func extractKeyGrafanaInfoFromEnv(logger *slog.Logger) (url, apiKey string, auth *url.Userinfo, orgId int64) {
+	url, apiKey = urlAndAPIKeyFromEnv(logger)
 	if url == "" {
 		url = defaultGrafanaURL
 	}
 	auth = userAndPassFromEnv()
-	orgId = orgIdFromEnv()
+	orgId = orgIdFromEnv(logger)
 	return
 }
 
 // Tries to get grafana info from a request.
 // Gets info from environment if it can't get it from request
-func extractKeyGrafanaInfoFromReq(req *http.Request) (grafanaUrl, apiKey string, auth *url.Userinfo, orgId int64) {
-	eUrl, eApiKey, eAuth, eOrgId := extractKeyGrafanaInfoFromEnv()
+func extractKeyGrafanaInfoFromReq(req *http.Request, logger *slog.Logger) (grafanaUrl, apiKey string, auth *url.Userinfo, orgId int64) {
+	eUrl, eApiKey, eAuth, eOrgId := extractKeyGrafanaInfoFromEnv(logger)
 	username, password, _ := req.BasicAuth()
 
 	grafanaUrl, apiKey = urlAndAPIKeyFromHeaders(req)
@@ -639,7 +639,7 @@ func extractKeyGrafanaInfoFromReq(req *http.Request) (grafanaUrl, apiKey string,
 	}
 
 	// extract org ID from header, fall back to environment
-	orgId = orgIdFromHeaders(req)
+	orgId = orgIdFromHeaders(req, logger)
 	if orgId == 0 {
 		orgId = eOrgId
 	}
@@ -650,18 +650,20 @@ func extractKeyGrafanaInfoFromReq(req *http.Request) (grafanaUrl, apiKey string,
 // ExtractGrafanaInfoFromEnv is a StdioContextFunc that extracts Grafana configuration from environment variables.
 // It reads GRAFANA_URL and GRAFANA_SERVICE_ACCOUNT_TOKEN (or deprecated GRAFANA_API_KEY) environment variables and adds the configuration to the context for use by Grafana clients.
 var ExtractGrafanaInfoFromEnv server.StdioContextFunc = func(ctx context.Context) context.Context {
-	u, apiKey, basicAuth, orgID := extractKeyGrafanaInfoFromEnv()
+	// Get existing config or create a new one.
+	// This will respect the existing debug flag, if set.
+	config := GrafanaConfigFromContext(ctx)
+	logger := config.LoggerOrDefault()
+
+	u, apiKey, basicAuth, orgID := extractKeyGrafanaInfoFromEnv(logger)
 	parsedURL, err := url.Parse(u)
 	if err != nil {
 		panic(fmt.Errorf("invalid Grafana URL %s: %w", u, err))
 	}
 
-	extraHeaders := extraHeadersFromEnv()
+	extraHeaders := extraHeadersFromEnv(logger)
 
-	// Get existing config or create a new one.
-	// This will respect the existing debug flag, if set.
-	config := GrafanaConfigFromContext(ctx)
-	config.LoggerOrDefault().Info("Using Grafana configuration", "url", parsedURL.Redacted(), "api_key_set", apiKey != "", "basic_auth_set", basicAuth != nil, "org_id", orgID, "extra_headers_count", len(extraHeaders))
+	logger.Info("Using Grafana configuration", "url", parsedURL.Redacted(), "api_key_set", apiKey != "", "basic_auth_set", basicAuth != nil, "org_id", orgID, "extra_headers_count", len(extraHeaders))
 	config.URL = u
 	config.APIKey = apiKey
 	config.BasicAuth = basicAuth
@@ -679,16 +681,18 @@ type httpContextFunc func(ctx context.Context, req *http.Request) context.Contex
 // It reads X-Grafana-URL and X-Grafana-API-Key headers, falling back to environment variables if headers are not present.
 // Headers listed in GRAFANA_FORWARD_HEADERS are copied from the incoming request and merged with GRAFANA_EXTRA_HEADERS.
 var ExtractGrafanaInfoFromHeaders httpContextFunc = func(ctx context.Context, req *http.Request) context.Context {
-	u, apiKey, basicAuth, orgID := extractKeyGrafanaInfoFromReq(req)
-
 	// Get existing config or create a new one.
 	// This will respect the existing debug flag, if set.
 	config := GrafanaConfigFromContext(ctx)
+	logger := config.LoggerOrDefault()
+
+	u, apiKey, basicAuth, orgID := extractKeyGrafanaInfoFromReq(req, logger)
+
 	config.URL = u
 	config.APIKey = apiKey
 	config.BasicAuth = basicAuth
 	config.OrgID = orgID
-	config.ExtraHeaders = mergeHeaders(extraHeadersFromEnv(), forwardedHeadersFromRequest(req))
+	config.ExtraHeaders = mergeHeaders(extraHeadersFromEnv(logger), forwardedHeadersFromRequest(req))
 	return WithGrafanaConfig(ctx, config)
 }
 
@@ -988,7 +992,9 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 // the client with proper authentication.
 var ExtractGrafanaClientFromEnv server.StdioContextFunc = func(ctx context.Context) context.Context {
 	// Extract transport config from env vars
-	grafanaURL, apiKey := urlAndAPIKeyFromEnv()
+	config := GrafanaConfigFromContext(ctx)
+	logger := config.LoggerOrDefault()
+	grafanaURL, apiKey := urlAndAPIKeyFromEnv(logger)
 	if grafanaURL == "" {
 		grafanaURL = defaultGrafanaURL
 	}
@@ -1007,7 +1013,7 @@ var ExtractGrafanaClientFromHeaders httpContextFunc = func(ctx context.Context, 
 	}
 
 	// Extract transport config from request headers, and set it on the context.
-	u, apiKey, basicAuth, _ := extractKeyGrafanaInfoFromReq(req)
+	u, apiKey, basicAuth, _ := extractKeyGrafanaInfoFromReq(req, logger)
 	logger.Debug("Creating Grafana client", "url", u, "api_key_set", apiKey != "", "basic_auth_set", basicAuth != nil)
 
 	grafanaClient := NewGrafanaClient(ctx, u, apiKey, basicAuth)
@@ -1035,7 +1041,9 @@ type incidentClientKey struct{}
 // ExtractIncidentClientFromEnv is a StdioContextFunc that creates and injects a Grafana Incident client into the context.
 // It configures the client using environment variables and applies any custom TLS settings from the context.
 var ExtractIncidentClientFromEnv server.StdioContextFunc = func(ctx context.Context) context.Context {
-	grafanaURL, apiKey := urlAndAPIKeyFromEnv()
+	config := GrafanaConfigFromContext(ctx)
+	logger := config.LoggerOrDefault()
+	grafanaURL, apiKey := urlAndAPIKeyFromEnv(logger)
 	if grafanaURL == "" {
 		grafanaURL = defaultGrafanaURL
 	}
@@ -1044,8 +1052,6 @@ var ExtractIncidentClientFromEnv server.StdioContextFunc = func(ctx context.Cont
 	if err != nil {
 		panic(fmt.Errorf("invalid incident URL %s: %w", incidentURL, err))
 	}
-	config := GrafanaConfigFromContext(ctx)
-	logger := config.LoggerOrDefault()
 	logger.Debug("Creating Incident client", "url", parsedURL.Redacted(), "api_key_set", apiKey != "")
 	client := incident.NewClient(incidentURL, apiKey)
 
@@ -1062,12 +1068,12 @@ var ExtractIncidentClientFromEnv server.StdioContextFunc = func(ctx context.Cont
 // ExtractIncidentClientFromHeaders is a HTTPContextFunc that creates and injects a Grafana Incident client into the context.
 // It uses HTTP headers for configuration with environment variable fallbacks, enabling per-request incident management configuration.
 var ExtractIncidentClientFromHeaders httpContextFunc = func(ctx context.Context, req *http.Request) context.Context {
-	grafanaURL, apiKey, _, orgID := extractKeyGrafanaInfoFromReq(req)
+	config := GrafanaConfigFromContext(ctx)
+	logger := config.LoggerOrDefault()
+	grafanaURL, apiKey, _, orgID := extractKeyGrafanaInfoFromReq(req, logger)
 	incidentURL := fmt.Sprintf("%s/api/plugins/grafana-irm-app/resources/api/v1/", grafanaURL)
 	client := incident.NewClient(incidentURL, apiKey)
 
-	config := GrafanaConfigFromContext(ctx)
-	logger := config.LoggerOrDefault()
 	// Use orgID from the request headers rather than config, since
 	// the incident client may be created with a different org context.
 	config.OrgID = orgID
