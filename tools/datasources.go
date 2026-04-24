@@ -137,12 +137,17 @@ func createDatasource(ctx context.Context, args CreateDatasourceParams) (*mcp.Ca
 	if reason := checkDatasourceCredentials(args); reason != "" {
 		return credentialViolationResult(reason, datasourceConfigPageURL(ctx, "")), nil
 	}
+	dsAccess := args.Access
+	if dsAccess == "" {
+		// use grafana default
+		dsAccess = "proxy"
+	}
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
 	body := &models.AddDataSourceCommand{
 		Name:            args.Name,
 		Type:            args.Type,
 		URL:             args.URL,
-		Access:          models.DsAccess(args.Access),
+		Access:          models.DsAccess(dsAccess),
 		Database:        args.Database,
 		User:            args.User,
 		BasicAuth:       args.BasicAuth,
