@@ -506,43 +506,47 @@ func TestCredentialViolationResult(t *testing.T) {
 // ---- addAuthenticationToDatasource ----
 
 func TestAddAuthenticationToDatasource(t *testing.T) {
-	t.Run("no uid returns new datasource page", func(t *testing.T) {
+	// The tool always returns a credential_policy_redirect to steer users to the UI.
+
+	t.Run("no uid redirects to new datasource page", func(t *testing.T) {
 		ctx := makeURLTestCtx("http://grafana:3000", "")
 		result, err := addAuthenticationToDatasource(ctx, AddAuthenticationToDatasourceParams{})
 		require.NoError(t, err)
 		require.NotNil(t, result)
-		assert.False(t, result.IsError)
+		assert.True(t, result.IsError)
 		require.Len(t, result.Content, 2)
 
 		text, ok := result.Content[0].(mcp.TextContent)
 		require.True(t, ok)
 		var payload map[string]any
 		require.NoError(t, json.Unmarshal([]byte(text.Text), &payload))
-		assert.Equal(t, "opening_config_page", payload["outcome"])
-		assert.Equal(t, "http://grafana:3000/connections/datasources/new", payload["config_page_url"])
+		assert.Equal(t, "credential_policy_redirect", payload["outcome"])
+		assert.Equal(t, "auth_credential_instructions", payload["reason"])
+		assert.Equal(t, "http://grafana:3000/connections/datasources/new", payload["open_config_page_url"])
 
 		link, ok := result.Content[1].(mcp.ResourceLink)
 		require.True(t, ok)
 		assert.Equal(t, "http://grafana:3000/connections/datasources/new", link.URI)
 	})
 
-	t.Run("with uid returns edit page", func(t *testing.T) {
+	t.Run("valid uid redirects to new datasource page", func(t *testing.T) {
 		ctx := makeURLTestCtx("http://grafana:3000", "")
 		result, err := addAuthenticationToDatasource(ctx, AddAuthenticationToDatasourceParams{UID: "prometheus"})
 		require.NoError(t, err)
 		require.NotNil(t, result)
-		assert.False(t, result.IsError)
+		assert.True(t, result.IsError)
 		require.Len(t, result.Content, 2)
 
 		text, ok := result.Content[0].(mcp.TextContent)
 		require.True(t, ok)
 		var payload map[string]any
 		require.NoError(t, json.Unmarshal([]byte(text.Text), &payload))
-		assert.Equal(t, "opening_config_page", payload["outcome"])
-		assert.Equal(t, "http://grafana:3000/connections/datasources/edit/prometheus", payload["config_page_url"])
+		assert.Equal(t, "credential_policy_redirect", payload["outcome"])
+		assert.Equal(t, "auth_credential_instructions", payload["reason"])
+		assert.Equal(t, "http://grafana:3000/connections/datasources/new", payload["open_config_page_url"])
 	})
 
-	t.Run("uid with secret-like value returns credential violation", func(t *testing.T) {
+	t.Run("secret-like uid short-circuits with embedded_secret_or_token reason", func(t *testing.T) {
 		ctx := makeURLTestCtx("http://grafana:3000", "")
 		result, err := addAuthenticationToDatasource(ctx, AddAuthenticationToDatasourceParams{UID: "ghp_abcdefghijklmnopqrstuvwxyz1234567890"})
 		require.NoError(t, err)
@@ -557,7 +561,7 @@ func TestAddAuthenticationToDatasource(t *testing.T) {
 		assert.Equal(t, "embedded_secret_or_token", payload["reason"])
 	})
 
-	t.Run("uid with auth intent returns credential violation", func(t *testing.T) {
+	t.Run("auth-intent uid short-circuits with auth_credential_instructions reason", func(t *testing.T) {
 		ctx := makeURLTestCtx("http://grafana:3000", "")
 		result, err := addAuthenticationToDatasource(ctx, AddAuthenticationToDatasourceParams{UID: "add authentication"})
 		require.NoError(t, err)
@@ -572,19 +576,15 @@ func TestAddAuthenticationToDatasource(t *testing.T) {
 		assert.Equal(t, "auth_credential_instructions", payload["reason"])
 	})
 
-	t.Run("no grafana url returns text only without link", func(t *testing.T) {
+	t.Run("no grafana url returns text only without resource link", func(t *testing.T) {
 		ctx := makeURLTestCtx("", "")
 		result, err := addAuthenticationToDatasource(ctx, AddAuthenticationToDatasourceParams{UID: "prometheus"})
 		require.NoError(t, err)
 		require.NotNil(t, result)
-		assert.False(t, result.IsError)
+		assert.True(t, result.IsError)
 		require.Len(t, result.Content, 1)
 
-		text, ok := result.Content[0].(mcp.TextContent)
-		require.True(t, ok)
-		var payload map[string]any
-		require.NoError(t, json.Unmarshal([]byte(text.Text), &payload))
-		assert.Equal(t, "opening_config_page", payload["outcome"])
-		assert.Nil(t, payload["config_page_url"])
+		_, ok := result.Content[0].(mcp.TextContent)
+		assert.True(t, ok)
 	})
 }

@@ -271,28 +271,7 @@ func addAuthenticationToDatasource(ctx context.Context, args AddAuthenticationTo
 			return credentialViolationResult("auth_credential_instructions", datasourceConfigPageURL(ctx, "")), nil
 		}
 	}
-	configURL := datasourceConfigPageURL(ctx, uid)
-	openBrowser(configURL) // best-effort: only works when server and client are on the same machine
-	payload := map[string]any{
-		"outcome": "opening_config_page",
-		"message": "Opening the Grafana datasource configuration page. Configure authentication and secrets there; this tool does not accept credential values.",
-	}
-	if configURL != "" {
-		payload["config_page_url"] = configURL
-	}
-	b, _ := json.MarshalIndent(payload, "", "  ")
-	content := []mcp.Content{
-		mcp.TextContent{Type: "text", Text: string(b)},
-	}
-	if configURL != "" {
-		content = append(content, mcp.NewResourceLink(
-			configURL,
-			"grafana-datasource-config",
-			"Configure authentication and secrets in the Grafana UI; this tool does not accept credentials.",
-			"",
-		))
-	}
-	return &mcp.CallToolResult{Content: content, IsError: false}, nil
+	return credentialViolationResult("auth_credential_instructions", datasourceConfigPageURL(ctx, "")), nil
 }
 
 var AddAuthenticationToDatasource = mcpgrafana.MustTool(
@@ -307,9 +286,9 @@ var AddAuthenticationToDatasource = mcpgrafana.MustTool(
 func AddDatasourceTools(mcp *server.MCPServer, enableWrite bool) {
 	ListDatasources.Register(mcp)
 	GetDatasource.Register(mcp)
-	AddAuthenticationToDatasource.Register(mcp)
 	// this is to make sure that we only register datasource write tools when scope grafana:write has been granted
 	if enableWrite {
+		AddAuthenticationToDatasource.Register(mcp)
 		CreateDatasource.Register(mcp)
 	}
 }

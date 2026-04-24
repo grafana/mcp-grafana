@@ -81,20 +81,23 @@ func TestDatasourcesTools(t *testing.T) {
 }
 
 func TestAddAuthenticationToDatasourceTools(t *testing.T) {
-	t.Run("no uid returns new datasource page link", func(t *testing.T) {
+	// The tool always returns a credential_policy_redirect to steer users to the Grafana UI.
+
+	t.Run("no uid redirects to new datasource page", func(t *testing.T) {
 		ctx := newTestContext()
 		toolResult, err := addAuthenticationToDatasource(ctx, AddAuthenticationToDatasourceParams{})
 		require.NoError(t, err)
 		require.NotNil(t, toolResult)
-		assert.False(t, toolResult.IsError)
+		assert.True(t, toolResult.IsError)
 
 		require.Len(t, toolResult.Content, 2)
 		text, ok := toolResult.Content[0].(mcp.TextContent)
 		require.True(t, ok)
 		var payload map[string]any
 		require.NoError(t, json.Unmarshal([]byte(text.Text), &payload))
-		assert.Equal(t, "opening_config_page", payload["outcome"])
-		configURL, _ := payload["config_page_url"].(string)
+		assert.Equal(t, "credential_policy_redirect", payload["outcome"])
+		assert.Equal(t, "auth_credential_instructions", payload["reason"])
+		configURL, _ := payload["open_config_page_url"].(string)
 		assert.Contains(t, configURL, "connections/datasources/new")
 
 		link, ok := toolResult.Content[1].(mcp.ResourceLink)
@@ -102,24 +105,25 @@ func TestAddAuthenticationToDatasourceTools(t *testing.T) {
 		assert.Contains(t, link.URI, "connections/datasources/new")
 	})
 
-	t.Run("with uid returns edit page link", func(t *testing.T) {
+	t.Run("valid uid redirects to new datasource page", func(t *testing.T) {
 		ctx := newTestContext()
 		toolResult, err := addAuthenticationToDatasource(ctx, AddAuthenticationToDatasourceParams{UID: "prometheus"})
 		require.NoError(t, err)
 		require.NotNil(t, toolResult)
-		assert.False(t, toolResult.IsError)
+		assert.True(t, toolResult.IsError)
 
 		require.Len(t, toolResult.Content, 2)
 		text, ok := toolResult.Content[0].(mcp.TextContent)
 		require.True(t, ok)
 		var payload map[string]any
 		require.NoError(t, json.Unmarshal([]byte(text.Text), &payload))
-		assert.Equal(t, "opening_config_page", payload["outcome"])
-		configURL, _ := payload["config_page_url"].(string)
-		assert.Contains(t, configURL, "connections/datasources/edit/prometheus")
+		assert.Equal(t, "credential_policy_redirect", payload["outcome"])
+		assert.Equal(t, "auth_credential_instructions", payload["reason"])
+		configURL, _ := payload["open_config_page_url"].(string)
+		assert.Contains(t, configURL, "connections/datasources/new")
 	})
 
-	t.Run("secret-like uid returns credential violation", func(t *testing.T) {
+	t.Run("secret-like uid short-circuits with embedded_secret_or_token reason", func(t *testing.T) {
 		ctx := newTestContext()
 		toolResult, err := addAuthenticationToDatasource(ctx, AddAuthenticationToDatasourceParams{
 			UID: "ghp_abcdefghijklmnopqrstuvwxyz1234567890",
