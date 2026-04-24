@@ -83,6 +83,22 @@ func matchesSecretLike(text string) bool {
 	return false
 }
 
+func appendJSONDataStringCandidates(candidates []string, value any) []string {
+	switch v := value.(type) {
+	case string:
+		return append(candidates, v)
+	case []any:
+		for _, item := range v {
+			candidates = appendJSONDataStringCandidates(candidates, item)
+		}
+	case map[string]any:
+		for _, item := range v {
+			candidates = appendJSONDataStringCandidates(candidates, item)
+		}
+	}
+	return candidates
+}
+
 // checkDatasourceCredentials checks CreateDatasourceParams for credential policy violations.
 // It mirrors DatasourceInputCredentialViolation from mcp-manage-datasources.
 // Returns a reason code or "" if no violation.
@@ -100,9 +116,7 @@ func checkDatasourceCredentials(args CreateDatasourceParams) string {
 	// Collect all string field values and jsonData string values for scanning.
 	candidates := []string{args.Name, args.Type, args.URL, args.Access, args.Database, args.User}
 	for _, v := range args.JSONData {
-		if s, ok := v.(string); ok {
-			candidates = append(candidates, s)
-		}
+		candidates = appendJSONDataStringCandidates(candidates, v)
 	}
 	for _, s := range candidates {
 		if strings.TrimSpace(s) == "" {
@@ -165,7 +179,13 @@ func openBrowser(rawURL string) error {
 	default:
 		cmd = exec.Command("xdg-open", rawURL)
 	}
-	return cmd.Start()
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	go func() {
+		_ = cmd.Wait()
+	}()
+	return nil
 }
 
 // credentialViolationResult builds a *mcp.CallToolResult for a credential policy
