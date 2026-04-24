@@ -203,7 +203,12 @@ type UpdateDatasourceParams struct {
 	SecureJSONData  map[string]string      `json:"secureJsonData,omitempty" jsonschema:"description=Secret fields to set or rotate (passwords\\, tokens); only include keys you intend to change"`
 }
 
-func updateDatasource(ctx context.Context, args UpdateDatasourceParams) (*models.UpdateDataSourceByUIDOKBody, error) {
+type UpdateDatasourceResult struct {
+	*models.UpdateDataSourceByUIDOKBody
+	Health *DatasourceHealthResult `json:"health,omitempty"`
+}
+
+func updateDatasource(ctx context.Context, args UpdateDatasourceParams) (*UpdateDatasourceResult, error) {
 	// pending add credential violation check
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
 
@@ -277,7 +282,17 @@ func updateDatasource(ctx context.Context, args UpdateDatasourceParams) (*models
 	if err != nil {
 		return nil, fmt.Errorf("update datasource %s: %w", args.UID, err)
 	}
-	return resp.Payload, nil
+
+	result := &UpdateDatasourceResult{UpdateDataSourceByUIDOKBody: resp.Payload}
+
+	health, err := checkDatasourceHealth(ctx, CheckDatasourceHealthParams{UID: args.UID})
+	if err != nil {
+		result.Health = &DatasourceHealthResult{UID: args.UID, Message: fmt.Sprintf("health check failed: %s", err)}
+	} else {
+		result.Health = health
+	}
+
+	return result, nil
 }
 
 type CheckDatasourceHealthParams struct {
