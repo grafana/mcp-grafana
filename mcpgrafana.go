@@ -265,6 +265,13 @@ type GrafanaConfig struct {
 	// Note: NewGrafanaClient still wraps this transport with ExtraHeaders,
 	// OrgID, UserAgent, and otelhttp layers.
 	BaseTransport http.RoundTripper
+
+	// Logger is an optional structured logger. When set, functions that have
+	// access to the GrafanaConfig will use this logger instead of the global
+	// slog.Default(). This allows callers (e.g. the hosted Cloud MCP server)
+	// to inject their own slog.Logger for consistent structured logging with
+	// per-request context such as tenant_id.
+	Logger *slog.Logger
 }
 
 // HTTPTransport returns the base HTTP transport for this config.
@@ -274,6 +281,14 @@ func (c GrafanaConfig) HTTPTransport() http.RoundTripper {
 		return c.BaseTransport
 	}
 	return http.DefaultTransport
+}
+
+// LoggerOrDefault returns the configured logger, or slog.Default() if none is set.
+func (c GrafanaConfig) LoggerOrDefault() *slog.Logger {
+	if c.Logger != nil {
+		return c.Logger
+	}
+	return slog.Default()
 }
 
 const (
@@ -642,11 +657,11 @@ var ExtractGrafanaInfoFromEnv server.StdioContextFunc = func(ctx context.Context
 	}
 
 	extraHeaders := extraHeadersFromEnv()
-	slog.Info("Using Grafana configuration", "url", parsedURL.Redacted(), "api_key_set", apiKey != "", "basic_auth_set", basicAuth != nil, "org_id", orgID, "extra_headers_count", len(extraHeaders))
 
 	// Get existing config or create a new one.
 	// This will respect the existing debug flag, if set.
 	config := GrafanaConfigFromContext(ctx)
+	config.LoggerOrDefault().Info("Using Grafana configuration", "url", parsedURL.Redacted(), "api_key_set", apiKey != "", "basic_auth_set", basicAuth != nil, "org_id", orgID, "extra_headers_count", len(extraHeaders))
 	config.URL = u
 	config.APIKey = apiKey
 	config.BasicAuth = basicAuth
@@ -767,16 +782,17 @@ func fetchPublicURL(ctx context.Context, cfg *GrafanaConfig) string {
 
 // doFetchPublicURL performs the actual HTTP request to fetch the public URL.
 func doFetchPublicURL(ctx context.Context, cfg *GrafanaConfig) string {
+	logger := cfg.LoggerOrDefault()
 	settingsURL := strings.TrimRight(cfg.URL, "/") + "/api/frontend/settings"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, settingsURL, nil)
 	if err != nil {
-		slog.Warn("Failed to create request for frontend settings", "error", err)
+		logger.Warn("Failed to create request for frontend settings", "error", err)
 		return ""
 	}
 
 	transport, err := BuildTransport(cfg, nil)
 	if err != nil {
-		slog.Warn("Failed to build transport for frontend settings request", "error", err)
+		logger.Warn("Failed to build transport for frontend settings request", "error", err)
 		return ""
 	}
 
@@ -787,19 +803,19 @@ func doFetchPublicURL(ctx context.Context, cfg *GrafanaConfig) string {
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		slog.Warn("Failed to fetch frontend settings", "error", err)
+		logger.Warn("Failed to fetch frontend settings", "error", err)
 		return ""
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		slog.Warn("Frontend settings request returned non-OK status", "status", resp.StatusCode)
+		logger.Warn("Frontend settings request returned non-OK status", "status", resp.StatusCode)
 		return ""
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		slog.Warn("Failed to read frontend settings response", "error", err)
+		logger.Warn("Failed to read frontend settings response", "error", err)
 		return ""
 	}
 
@@ -807,13 +823,13 @@ func doFetchPublicURL(ctx context.Context, cfg *GrafanaConfig) string {
 		AppURL string `json:"appUrl"`
 	}
 	if err := json.Unmarshal(body, &settings); err != nil {
-		slog.Warn("Failed to parse frontend settings response", "error", err)
+		logger.Warn("Failed to parse frontend settings response", "error", err)
 		return ""
 	}
 
 	publicURL := strings.TrimRight(settings.AppURL, "/")
 	if publicURL != "" {
-		slog.Info("Fetched public URL from Grafana frontend settings", "public_url", publicURL)
+		logger.Info("Fetched public URL from Grafana frontend settings", "public_url", publicURL)
 	}
 	return publicURL
 }
@@ -854,6 +870,7 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 	}
 
 	config := GrafanaConfigFromContext(ctx)
+	logger := config.LoggerOrDefault()
 	cfg.Debug = config.Debug
 
 	if config.OrgID > 0 {
@@ -867,7 +884,7 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 			panic(fmt.Errorf("failed to create TLS config: %w", err))
 		}
 		cfg.TLSConfig = tlsCfg
-		slog.Debug("Using custom TLS configuration",
+		logger.Debug("Using custom TLS configuration",
 			"cert_file", tlsConfig.CertFile,
 			"ca_file", tlsConfig.CAFile,
 			"skip_verify", tlsConfig.SkipVerify)
@@ -879,7 +896,7 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 		timeout = DefaultGrafanaClientTimeout
 	}
 
-	slog.Debug("Creating Grafana client", "url", parsedURL.Redacted(), "api_key_set", apiKey != "", "basic_auth_set", config.BasicAuth != nil, "org_id", cfg.OrgID, "timeout", timeout, "extra_headers_count", len(config.ExtraHeaders))
+	logger.Debug("Creating Grafana client", "url", parsedURL.Redacted(), "api_key_set", apiKey != "", "basic_auth_set", config.BasicAuth != nil, "org_id", cfg.OrgID, "timeout", timeout, "extra_headers_count", len(config.ExtraHeaders))
 	grafanaClient := client.NewHTTPClientWithConfig(strfmt.Default, cfg)
 
 	// Some Grafana versions (v12+) and reverse proxies return JSON responses
@@ -943,7 +960,7 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 						panic(fmt.Errorf("failed to build transport: %w", err))
 					}
 					transportField.Set(reflect.ValueOf(wrapped))
-					slog.Debug("HTTP tracing, user agent tracking, and timeout enabled for Grafana client", "timeout", timeout)
+					logger.Debug("HTTP tracing, user agent tracking, and timeout enabled for Grafana client", "timeout", timeout)
 				}
 			}
 		}
@@ -956,6 +973,7 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 		BasicAuth:    auth,
 		TLSConfig:    config.TLSConfig,
 		ExtraHeaders: config.ExtraHeaders,
+		Logger:       config.Logger,
 	}
 	publicURL := fetchPublicURL(ctx, fetchCfg)
 
@@ -983,13 +1001,14 @@ var ExtractGrafanaClientFromEnv server.StdioContextFunc = func(ctx context.Conte
 // It prioritizes configuration from HTTP headers (X-Grafana-URL, X-Grafana-API-Key) over environment variables for multi-tenant scenarios.
 var ExtractGrafanaClientFromHeaders httpContextFunc = func(ctx context.Context, req *http.Request) context.Context {
 	config := GrafanaConfigFromContext(ctx)
+	logger := config.LoggerOrDefault()
 	if config.OrgID == 0 {
-		slog.Warn("No org ID found in request headers or environment variables, using default org. Set GRAFANA_ORG_ID or pass X-Grafana-Org-Id header to target a specific org.")
+		logger.Warn("No org ID found in request headers or environment variables, using default org. Set GRAFANA_ORG_ID or pass X-Grafana-Org-Id header to target a specific org.")
 	}
 
 	// Extract transport config from request headers, and set it on the context.
 	u, apiKey, basicAuth, _ := extractKeyGrafanaInfoFromReq(req)
-	slog.Debug("Creating Grafana client", "url", u, "api_key_set", apiKey != "", "basic_auth_set", basicAuth != nil)
+	logger.Debug("Creating Grafana client", "url", u, "api_key_set", apiKey != "", "basic_auth_set", basicAuth != nil)
 
 	grafanaClient := NewGrafanaClient(ctx, u, apiKey, basicAuth)
 	return WithGrafanaClient(ctx, grafanaClient)
@@ -1025,13 +1044,14 @@ var ExtractIncidentClientFromEnv server.StdioContextFunc = func(ctx context.Cont
 	if err != nil {
 		panic(fmt.Errorf("invalid incident URL %s: %w", incidentURL, err))
 	}
-	slog.Debug("Creating Incident client", "url", parsedURL.Redacted(), "api_key_set", apiKey != "")
+	config := GrafanaConfigFromContext(ctx)
+	logger := config.LoggerOrDefault()
+	logger.Debug("Creating Incident client", "url", parsedURL.Redacted(), "api_key_set", apiKey != "")
 	client := incident.NewClient(incidentURL, apiKey)
 
-	config := GrafanaConfigFromContext(ctx)
 	transport, err := BuildTransport(&config, nil, WithoutAuth())
 	if err != nil {
-		slog.Error("Failed to create custom transport for incident client, using default", "error", err)
+		logger.Error("Failed to create custom transport for incident client, using default", "error", err)
 	} else {
 		client.HTTPClient.Transport = transport
 	}
@@ -1047,12 +1067,13 @@ var ExtractIncidentClientFromHeaders httpContextFunc = func(ctx context.Context,
 	client := incident.NewClient(incidentURL, apiKey)
 
 	config := GrafanaConfigFromContext(ctx)
+	logger := config.LoggerOrDefault()
 	// Use orgID from the request headers rather than config, since
 	// the incident client may be created with a different org context.
 	config.OrgID = orgID
 	transport, err := BuildTransport(&config, nil, WithoutAuth())
 	if err != nil {
-		slog.Error("Failed to create custom transport for incident client, using default", "error", err)
+		logger.Error("Failed to create custom transport for incident client, using default", "error", err)
 	} else {
 		client.HTTPClient.Transport = transport
 	}
