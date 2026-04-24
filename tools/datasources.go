@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/invopop/jsonschema"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
@@ -85,19 +86,43 @@ func listDatasources(ctx context.Context, args ListDatasourcesParams) (*ListData
 	}, nil
 }
 
+// datasourceJSONData holds plugin-specific non-secret settings for a datasource.
+// Its schema description is sourced from datasourceJSONDataSchema — swap that
+// function body for an API fetch when the datasource settings API is available.
+type datasourceJSONData map[string]interface{}
+
+func (datasourceJSONData) JSONSchema() *jsonschema.Schema {
+	return datasourceJSONDataSchema()
+}
+
+// datasourceJSONDataSchema returns the JSON schema for the jsonData field.
+// TODO: Replace with a fetch from the Grafana datasource settings API when available.
+func datasourceJSONDataSchema() *jsonschema.Schema {
+	return &jsonschema.Schema{
+		Type: "object",
+		Description: "Datasource-specific non-secret settings. Keys and values vary by plugin type; " +
+			"ask the user what to set or consult the plugin documentation. " +
+			"Examples — prometheus: {\"httpMethod\":\"GET\",\"timeInterval\":\"15s\"}; " +
+			"loki: {\"maxLines\":1000}; elasticsearch: {\"index\":\"my-index\",\"timeField\":\"@timestamp\"}; " +
+			"cloudwatch: {\"defaultRegion\":\"us-east-1\",\"authType\":\"default\"}; " +
+			"influxdb: {\"version\":\"Flux\",\"product\":\"InfluxDB Enterprise 3.x\"}.",
+		Extras: map[string]any{},
+	}
+}
+
 type CreateDatasourceParams struct {
-	Name            string                 `json:"name" jsonschema:"required,description=Datasource display name"`
-	Type            string                 `json:"type" jsonschema:"required,description=Grafana datasource plugin type\\, for example prometheus"`
-	URL             string                 `json:"url,omitempty" jsonschema:"description=Datasource base URL when required by the plugin"`
-	Access          string                 `json:"access,omitempty" jsonschema:"description=How Grafana should access the datasource (proxy or direct)"`
-	Database        string                 `json:"database,omitempty" jsonschema:"description=Optional database name"`
-	User            string                 `json:"user,omitempty" jsonschema:"description=Optional username"`
-	BasicAuth       bool                   `json:"basicAuth,omitempty" jsonschema:"description=Whether Grafana should use basic auth"`
-	BasicAuthUser   string                 `json:"basicAuthUser,omitempty" jsonschema:"description=Basic auth username when basic auth is enabled"`
-	WithCredentials bool                   `json:"withCredentials,omitempty" jsonschema:"description=Whether Grafana should forward credentials such as cookies"`
-	IsDefault       bool                   `json:"isDefault,omitempty" jsonschema:"description=Whether this should become the default datasource"`
-	JSONData        map[string]interface{} `json:"jsonData,omitempty" jsonschema:"description=Datasource-specific non-secret settings, eventually this will be dynamic"`
-	SecureJSONData  map[string]string      `json:"secureJsonData,omitempty" jsonschema:"description=Datasource-specific secret settings such as passwords or tokens"`
+	Name            string              `json:"name" jsonschema:"required,description=Datasource display name"`
+	Type            string              `json:"type" jsonschema:"required,description=Grafana datasource plugin type\\, for example prometheus"`
+	URL             string              `json:"url,omitempty" jsonschema:"description=Datasource base URL when required by the plugin"`
+	Access          string              `json:"access,omitempty" jsonschema:"description=How Grafana should access the datasource (proxy or direct)"`
+	Database        string              `json:"database,omitempty" jsonschema:"description=Optional database name"`
+	User            string              `json:"user,omitempty" jsonschema:"description=Optional username"`
+	BasicAuth       bool                `json:"basicAuth,omitempty" jsonschema:"description=Whether Grafana should use basic auth"`
+	BasicAuthUser   string              `json:"basicAuthUser,omitempty" jsonschema:"description=Basic auth username when basic auth is enabled"`
+	WithCredentials bool                `json:"withCredentials,omitempty" jsonschema:"description=Whether Grafana should forward credentials such as cookies"`
+	IsDefault       bool                `json:"isDefault,omitempty" jsonschema:"description=Whether this should become the default datasource"`
+	JSONData        datasourceJSONData  `json:"jsonData,omitempty"`
+	SecureJSONData  map[string]string   `json:"secureJsonData,omitempty" jsonschema:"description=Datasource-specific secret settings such as passwords or tokens"`
 }
 
 type CreateDatasourceResult struct {
@@ -125,7 +150,6 @@ func createDatasource(ctx context.Context, args CreateDatasourceParams) (*mcp.Ca
 		WithCredentials: args.WithCredentials,
 		IsDefault:       args.IsDefault,
 		JSONData:        models.JSON(args.JSONData),
-		SecureJSONData:  args.SecureJSONData,
 	}
 	resp, err := c.Datasources.AddDataSource(body)
 	if err != nil {
@@ -195,7 +219,7 @@ var ListDatasources = mcpgrafana.MustTool(
 
 var CreateDatasource = mcpgrafana.MustTool(
 	"create_datasource",
-	"Create a new datasource in Grafana. Returns the created datasource details including its UID.",
+	"Create a new datasource in Grafana. Returns the created datasource details including its UID. Does not support adding credentials and should never ask for authentication options.",
 	createDatasource,
 	mcp.WithTitleAnnotation("Create datasource"),
 	mcp.WithIdempotentHintAnnotation(false),
