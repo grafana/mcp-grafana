@@ -151,7 +151,7 @@ func discoverMCPDatasources(ctx context.Context, logger *slog.Logger) ([]Discove
 					enabled: true,
 				}
 			} else {
-				slog.DebugContext(ctx, "MCP probe returned non-OK status", "datasource", c.uid, "status", resp.StatusCode, "url", probeURL)
+				logger.DebugContext(ctx, "MCP probe returned non-OK status", "datasource", c.uid, "status", resp.StatusCode, "url", probeURL)
 			}
 		}(c)
 	}

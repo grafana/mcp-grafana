@@ -2,6 +2,7 @@ package mcpgrafana
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
