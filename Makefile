@@ -54,7 +54,9 @@ test-python-e2e: ## Run Python E2E tests (requires docker-compose services and S
 # Common environment variables for run targets
 GRAFANA_ENV = GRAFANA_USERNAME=admin GRAFANA_PASSWORD=admin
 OTEL_ENV = OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317 OTEL_EXPORTER_OTLP_INSECURE=true
-ENABLED_TOOLS = search,datasource,incident,prometheus,loki,elasticsearch,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering,admin,clickhouse,cloudwatch
+ENABLED_TOOLS = search,datasource,incident,prometheus,loki,elasticsearch,influxdb,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering,admin,clickhouse,cloudwatch
+# Note: influxdb is opt-in for end users (like clickhouse/cloudwatch/elasticsearch)
+# but included in Makefile run targets so local development exercises the code.
 
 .PHONY: run
 run: ## Run the MCP server in stdio mode.
@@ -67,6 +69,20 @@ run-sse: ## Run the MCP server in SSE mode.
 PHONY: run-streamable-http
 run-streamable-http: ## Run the MCP server in StreamableHTTP mode.
 	$(GRAFANA_ENV) $(OTEL_ENV) go run ./cmd/mcp-grafana --transport streamable-http --log-level debug --debug --metrics --enabled-tools $(ENABLED_TOOLS)
+
+define check_mcp_tokens
+	@command -v mcp-tokens >/dev/null 2>&1 || { echo "Error: mcp-tokens is not installed. Install it from https://github.com/sd2k/mcp-tokens"; exit 1; }
+endef
+
+.PHONY: token-baseline
+token-baseline: build ## Generate a token baseline for the MCP server.
+	$(check_mcp_tokens)
+	mcp-tokens analyze --format json --all-providers --output baseline.json -- ./dist/mcp-grafana
+
+.PHONY: token-check
+token-check: build ## Compare token usage against the baseline.
+	$(check_mcp_tokens)
+	mcp-tokens analyze --baseline baseline.json --threshold-percent 5 -- ./dist/mcp-grafana
 
 .PHONY: run-test-services
 run-test-services: ## Run the docker-compose services required for the unit and integration tests.

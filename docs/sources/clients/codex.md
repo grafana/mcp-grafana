@@ -1,3 +1,16 @@
+---
+title: Codex CLI
+menuTitle: Codex CLI
+description: Set up the Grafana MCP server for the OpenAI Codex CLI.
+keywords:
+  - Codex
+  - OpenAI
+  - MCP
+  - client
+weight: 3
+aliases: []
+---
+
 # Codex CLI
 
 This guide helps you set up the `mcp-grafana` server for the OpenAI Codex CLI.
@@ -56,7 +69,7 @@ env = { GRAFANA_URL = "http://localhost:3000", GRAFANA_SERVICE_ACCOUNT_TOKEN = "
 ```toml
 [mcp_servers.grafana]
 command = "docker"
-args = ["run", "--rm", "-i", "-e", "GRAFANA_URL", "-e", "GRAFANA_SERVICE_ACCOUNT_TOKEN", "mcp/grafana"]
+args = ["run", "--rm", "-i", "-e", "GRAFANA_URL", "-e", "GRAFANA_SERVICE_ACCOUNT_TOKEN", "grafana/mcp-grafana", "-t", "stdio"]
 env = { GRAFANA_URL = "http://host.docker.internal:3000", GRAFANA_SERVICE_ACCOUNT_TOKEN = "<your-token>" }
 ```
 
@@ -96,8 +109,7 @@ tool_timeout_ms = 120000
 - Check key is `mcp_servers` not `mcp-servers`
 - Restart Codex after configuration changes
 
-**Config shared across CLI and IDE:**
-Codex CLI and VS Code extension share `~/.codex/config.toml`. A syntax error breaks both.
+**Config shared across CLI and IDE:** Codex CLI and VS Code extension share `~/.codex/config.toml`. A syntax error breaks both.
 
 **Common TOML mistakes:**
 
@@ -117,3 +129,8 @@ command = "mcp-grafana"
 args = ["--disable-write"]
 env = { GRAFANA_URL = "http://localhost:3000", GRAFANA_SERVICE_ACCOUNT_TOKEN = "<your-token>" }
 ```
+
+## Next steps
+
+- [Set up](../../set-up/) for other install options.
+- [Configure authentication](../../configure/authentication/) for Grafana credentials.

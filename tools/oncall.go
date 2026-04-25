@@ -4,13 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"reflect"
-	"strconv"
 	"strings"
 
 	aapi "github.com/grafana/amixr-api-go-client"
-	"github.com/grafana/grafana-openapi-client-go/client"
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -28,22 +27,13 @@ func getOnCallURLFromSettings(ctx context.Context, cfg mcpgrafana.GrafanaConfig)
 		return "", fmt.Errorf("creating settings request: %w", err)
 	}
 
-	if cfg.APIKey != "" {
-		req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
-	} else if cfg.BasicAuth != nil {
-		password, _ := cfg.BasicAuth.Password()
-		req.SetBasicAuth(cfg.BasicAuth.Username(), password)
+	transport, err := mcpgrafana.BuildTransport(&cfg, nil)
+	if err != nil {
+		return "", fmt.Errorf("building transport: %w", err)
 	}
 
-	// Add org ID header for multi-org support
-	if cfg.OrgID > 0 {
-		req.Header.Set(client.OrgIDHeader, strconv.FormatInt(cfg.OrgID, 10))
-	}
-
-	// Add user agent for tracking
-	req.Header.Set("User-Agent", mcpgrafana.UserAgent())
-
-	resp, err := http.DefaultClient.Do(req)
+	httpClient := &http.Client{Transport: transport}
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("fetching settings: %w", err)
 	}
@@ -90,15 +80,15 @@ func oncallClientFromContext(ctx context.Context) (*aapi.Client, error) {
 		return nil, fmt.Errorf("creating OnCall client: %w", err)
 	}
 
-	// Try to customize the HTTP client with user agent using reflection
-	// since the OnCall client doesn't expose its HTTP client directly
+	// Customize the HTTP client's transport using reflection since the
+	// OnCall client doesn't expose its HTTP client directly. Auth is
+	// handled by the OnCall library (API key passed above), so we skip it.
 	clientValue := reflect.ValueOf(client)
 	if clientValue.Kind() == reflect.Ptr && !clientValue.IsNil() {
 		clientValue = clientValue.Elem()
 		if clientValue.Kind() == reflect.Struct {
 			httpClientField := clientValue.FieldByName("HTTPClient")
 			if !httpClientField.IsValid() {
-				// Try alternative field names
 				httpClientField = clientValue.FieldByName("HttpClient")
 			}
 			if !httpClientField.IsValid() {
@@ -106,15 +96,12 @@ func oncallClientFromContext(ctx context.Context) (*aapi.Client, error) {
 			}
 			if httpClientField.IsValid() && httpClientField.CanSet() {
 				if httpClient, ok := httpClientField.Interface().(*http.Client); ok {
-					// Wrap the transport with user agent
-					if httpClient.Transport == nil {
-						httpClient.Transport = http.DefaultTransport
+					transport, err := mcpgrafana.BuildTransport(&cfg, nil, mcpgrafana.WithoutAuth())
+					if err != nil {
+						slog.Error("Failed to build transport for OnCall client", "error", err)
+					} else {
+						httpClient.Transport = transport
 					}
-					transport := httpClient.Transport
-					if len(cfg.ExtraHeaders) > 0 {
-						transport = mcpgrafana.NewExtraHeadersRoundTripper(transport, cfg.ExtraHeaders)
-					}
-					httpClient.Transport = mcpgrafana.NewUserAgentTransport(transport)
 				}
 			}
 		}

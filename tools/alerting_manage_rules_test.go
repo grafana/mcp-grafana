@@ -6,19 +6,24 @@
 package tools
 
 import (
+	"encoding/json"
 	"testing"
+	"time"
 
+	"github.com/go-openapi/strfmt"
 	"github.com/grafana/grafana-openapi-client-go/models"
 	"github.com/stretchr/testify/require"
 )
 
 const (
-	rule1UID        = "test_alert_rule_1"
-	rule1Title      = "Test Alert Rule 1"
-	rule2UID        = "test_alert_rule_2"
-	rule2Title      = "Test Alert Rule 2"
-	rulePausedUID   = "test_alert_rule_paused"
-	rulePausedTitle = "Test Alert Rule (Paused)"
+	rule1UID           = "test_alert_rule_1"
+	rule1Title         = "Test Alert Rule 1"
+	rule2UID           = "test_alert_rule_2"
+	rule2Title         = "Test Alert Rule 2"
+	rulePausedUID      = "test_alert_rule_paused"
+	rulePausedTitle    = "Test Alert Rule (Paused)"
+	ruleIDRecording    = "recording_rule_1"
+	ruleRecordingTitle = "test_recording_rule"
 
 	testRuleGroup = "Test Alert Rules"
 )
@@ -58,8 +63,55 @@ var (
 		Title:  rulePausedTitle,
 		Labels: rule3Labels,
 	}
-	allExpectedRules = []alertRuleSummary{rule1, rule2, rulePaused}
+
+	ruleRecordingLabels = map[string]string{
+		"team": "sre",
+		"type": "test",
+	}
+
+	ruleRecordingType = alertRuleSummary{
+		UID:    ruleIDRecording,
+		State:  "",
+		Title:  ruleRecordingTitle,
+		Labels: ruleRecordingLabels,
+	}
+
+	allExpectedRules = []alertRuleSummary{rule1, rule2, rulePaused, ruleRecordingType}
+
+	recordingRuleTypeQuery = []*AlertQuery{
+		{
+			RefID:         "A",
+			DatasourceUID: "prometheus",
+			RelativeTimeRange: &RelativeTimeRange{
+				From: 600,
+				To:   0,
+			},
+			Model: AlertQueryModel{
+				Expr: "up",
+			},
+		},
+	}
 )
+
+// toDataMaps converts typed []*AlertQuery to []map[string]any for use in ManageRulesReadWriteParams.
+func toDataMaps(t *testing.T, queries []*AlertQuery) []map[string]any {
+	t.Helper()
+	b, err := json.Marshal(queries)
+	require.NoError(t, err)
+	var result []map[string]any
+	require.NoError(t, json.Unmarshal(b, &result))
+	return result
+}
+
+// toMap converts a typed struct to map[string]any for use in ManageRulesReadWriteParams.
+func toMap(t *testing.T, v any) map[string]any {
+	t.Helper()
+	b, err := json.Marshal(v)
+	require.NoError(t, err)
+	var result map[string]any
+	require.NoError(t, json.Unmarshal(b, &result))
+	return result
+}
 
 // Because the state depends on the evaluation of the alert rules,
 // clear it and other variable runtime fields before comparing the results
@@ -106,41 +158,27 @@ func TestManageRules_List(t *testing.T) {
 	t.Run("list alert rules with selectors that match", func(t *testing.T) {
 		ctx := newTestContext()
 		result, err := manageRulesRead(ctx, ManageRulesReadParams{
-			Operation: "list",
-			LabelSelectors: []Selector{
-				{
-					Filters: []LabelMatcher{
-						{
-							Name:  "severity",
-							Value: "info",
-							Type:  "=",
-						},
-					},
-				},
+			listFilterParams: listFilterParams{
+				LabelSelectors: []string{`{severity="info"}`},
 			},
+			Operation: "list",
 		})
 		require.NoError(t, err)
 
 		rules, ok := result.([]alertRuleSummary)
 		require.True(t, ok)
-		require.ElementsMatch(t, allExpectedRules, clearState(rules))
+		// Only the three alerting rules carry severity=info; the recording rule does not.
+		alertingRules := []alertRuleSummary{rule1, rule2, rulePaused}
+		require.ElementsMatch(t, alertingRules, clearState(rules))
 	})
 
 	t.Run("list alert rules with selectors that don't match", func(t *testing.T) {
 		ctx := newTestContext()
 		result, err := manageRulesRead(ctx, ManageRulesReadParams{
-			Operation: "list",
-			LabelSelectors: []Selector{
-				{
-					Filters: []LabelMatcher{
-						{
-							Name:  "severity",
-							Value: "critical",
-							Type:  "=",
-						},
-					},
-				},
+			listFilterParams: listFilterParams{
+				LabelSelectors: []string{`{severity="critical"}`},
 			},
+			Operation: "list",
 		})
 		require.NoError(t, err)
 
@@ -152,27 +190,10 @@ func TestManageRules_List(t *testing.T) {
 	t.Run("list alert rules with multiple selectors", func(t *testing.T) {
 		ctx := newTestContext()
 		result, err := manageRulesRead(ctx, ManageRulesReadParams{
-			Operation: "list",
-			LabelSelectors: []Selector{
-				{
-					Filters: []LabelMatcher{
-						{
-							Name:  "severity",
-							Value: "info",
-							Type:  "=",
-						},
-					},
-				},
-				{
-					Filters: []LabelMatcher{
-						{
-							Name:  "rule",
-							Value: "second",
-							Type:  "=",
-						},
-					},
-				},
+			listFilterParams: listFilterParams{
+				LabelSelectors: []string{`{severity="info"}`, `{rule="second"}`},
 			},
+			Operation: "list",
 		})
 		require.NoError(t, err)
 
@@ -184,18 +205,10 @@ func TestManageRules_List(t *testing.T) {
 	t.Run("list alert rules with regex matcher", func(t *testing.T) {
 		ctx := newTestContext()
 		result, err := manageRulesRead(ctx, ManageRulesReadParams{
-			Operation: "list",
-			LabelSelectors: []Selector{
-				{
-					Filters: []LabelMatcher{
-						{
-							Name:  "rule",
-							Value: "fi.*",
-							Type:  "=~",
-						},
-					},
-				},
+			listFilterParams: listFilterParams{
+				LabelSelectors: []string{`{rule=~"fi.*"}`},
 			},
+			Operation: "list",
 		})
 		require.NoError(t, err)
 
@@ -207,18 +220,10 @@ func TestManageRules_List(t *testing.T) {
 	t.Run("list alert rules with not equals operator", func(t *testing.T) {
 		ctx := newTestContext()
 		result, err := manageRulesRead(ctx, ManageRulesReadParams{
-			Operation: "list",
-			LabelSelectors: []Selector{
-				{
-					Filters: []LabelMatcher{
-						{
-							Name:  "severity",
-							Value: "critical",
-							Type:  "!=",
-						},
-					},
-				},
+			listFilterParams: listFilterParams{
+				LabelSelectors: []string{`{severity!="critical"}`},
 			},
+			Operation: "list",
 		})
 		require.NoError(t, err)
 
@@ -230,18 +235,10 @@ func TestManageRules_List(t *testing.T) {
 	t.Run("list alert rules with not matches operator", func(t *testing.T) {
 		ctx := newTestContext()
 		result, err := manageRulesRead(ctx, ManageRulesReadParams{
-			Operation: "list",
-			LabelSelectors: []Selector{
-				{
-					Filters: []LabelMatcher{
-						{
-							Name:  "severity",
-							Value: "crit.*",
-							Type:  "!~",
-						},
-					},
-				},
+			listFilterParams: listFilterParams{
+				LabelSelectors: []string{`{severity!~"crit.*"}`},
 			},
+			Operation: "list",
 		})
 		require.NoError(t, err)
 
@@ -253,18 +250,10 @@ func TestManageRules_List(t *testing.T) {
 	t.Run("list alert rules with non-existent label", func(t *testing.T) {
 		ctx := newTestContext()
 		result, err := manageRulesRead(ctx, ManageRulesReadParams{
-			Operation: "list",
-			LabelSelectors: []Selector{
-				{
-					Filters: []LabelMatcher{
-						{
-							Name:  "nonexistent",
-							Value: "value",
-							Type:  "=",
-						},
-					},
-				},
+			listFilterParams: listFilterParams{
+				LabelSelectors: []string{`{nonexistent="value"}`},
 			},
+			Operation: "list",
 		})
 		require.NoError(t, err)
 
@@ -276,18 +265,10 @@ func TestManageRules_List(t *testing.T) {
 	t.Run("list alert rules with non-existent label and inequality", func(t *testing.T) {
 		ctx := newTestContext()
 		result, err := manageRulesRead(ctx, ManageRulesReadParams{
-			Operation: "list",
-			LabelSelectors: []Selector{
-				{
-					Filters: []LabelMatcher{
-						{
-							Name:  "nonexistent",
-							Value: "value",
-							Type:  "!=",
-						},
-					},
-				},
+			listFilterParams: listFilterParams{
+				LabelSelectors: []string{`{nonexistent!="value"}`},
 			},
+			Operation: "list",
 		})
 		require.NoError(t, err)
 
@@ -299,8 +280,8 @@ func TestManageRules_List(t *testing.T) {
 	t.Run("list alert rules with a large rule_limit", func(t *testing.T) {
 		ctx := newTestContext()
 		result, err := manageRulesRead(ctx, ManageRulesReadParams{
-			Operation: "list",
-			RuleLimit: 1000,
+			listFilterParams: listFilterParams{RuleLimit: 1000},
+			Operation:        "list",
 		})
 		require.NoError(t, err)
 
@@ -312,8 +293,8 @@ func TestManageRules_List(t *testing.T) {
 	t.Run("list alert rules with negative rule_limit", func(t *testing.T) {
 		ctx := newTestContext()
 		_, err := manageRulesRead(ctx, ManageRulesReadParams{
-			Operation: "list",
-			RuleLimit: -1,
+			listFilterParams: listFilterParams{RuleLimit: -1},
+			Operation:        "list",
 		})
 		require.Error(t, err)
 	})
@@ -360,6 +341,71 @@ func TestManageRules_List(t *testing.T) {
 		require.Empty(t, rules)
 	})
 
+	t.Run("list with non-matching rule_group", func(t *testing.T) {
+		ctx := newTestContext()
+		result, err := manageRulesRead(ctx, ManageRulesReadParams{
+			Operation: "list",
+			RuleGroup: "nonexistent-group",
+		})
+		require.NoError(t, err)
+
+		rules, ok := result.([]alertRuleSummary)
+		require.True(t, ok)
+		require.Empty(t, rules)
+	})
+
+	t.Run("list with search_rule_name partial match", func(t *testing.T) {
+		ctx := newTestContext()
+		result, err := manageRulesRead(ctx, ManageRulesReadParams{
+			listFilterParams: listFilterParams{SearchRuleName: "Paused"},
+			Operation:        "list",
+		})
+		require.NoError(t, err)
+
+		rules, ok := result.([]alertRuleSummary)
+		require.True(t, ok)
+		require.Len(t, rules, 1)
+		require.Equal(t, rulePausedUID, rules[0].UID)
+	})
+
+	t.Run("list with search_rule_name matching nothing", func(t *testing.T) {
+		ctx := newTestContext()
+		result, err := manageRulesRead(ctx, ManageRulesReadParams{
+			listFilterParams: listFilterParams{SearchRuleName: "zzz-no-match"},
+			Operation:        "list",
+		})
+		require.NoError(t, err)
+
+		rules, ok := result.([]alertRuleSummary)
+		require.True(t, ok)
+		require.Empty(t, rules)
+	})
+
+	t.Run("list recording rules", func(t *testing.T) {
+		ctx := newTestContext()
+		result, err := manageRulesRead(ctx, ManageRulesReadParams{
+			listFilterParams: listFilterParams{RuleType: "recording"},
+			Operation:        "list",
+		})
+		require.NoError(t, err)
+
+		rules, ok := result.([]alertRuleSummary)
+		require.True(t, ok)
+		require.NotEmpty(t, rules)
+	})
+
+	t.Run("list with rule_limit limits results", func(t *testing.T) {
+		ctx := newTestContext()
+		result, err := manageRulesRead(ctx, ManageRulesReadParams{
+			listFilterParams: listFilterParams{RuleLimit: 1},
+			Operation:        "list",
+		})
+		require.NoError(t, err)
+
+		rules, ok := result.([]alertRuleSummary)
+		require.True(t, ok)
+		require.Len(t, rules, 1)
+	})
 }
 
 func TestManageRules_Get(t *testing.T) {
@@ -386,13 +432,12 @@ func TestManageRules_Get(t *testing.T) {
 		require.False(t, detail.IsPaused)
 		require.Nil(t, detail.NotificationSettings)
 
-		// Queries extracted from provisioned data
-		require.Len(t, detail.Queries, 2)
-		require.Equal(t, "A", detail.Queries[0].RefID)
-		require.Equal(t, "prometheus", detail.Queries[0].DatasourceUID)
-		require.Equal(t, "vector(1)", detail.Queries[0].Expression)
-		require.Equal(t, "B", detail.Queries[1].RefID)
-		require.Equal(t, "__expr__", detail.Queries[1].DatasourceUID)
+		// Full query data preserved for round-tripping
+		require.Len(t, detail.Data, 2)
+		require.Equal(t, "A", detail.Data[0].RefID)
+		require.Equal(t, "prometheus", detail.Data[0].DatasourceUID)
+		require.Equal(t, "B", detail.Data[1].RefID)
+		require.Equal(t, "__expr__", detail.Data[1].DatasourceUID)
 
 		// Runtime state from Prometheus rules API
 		require.Equal(t, "alerting", detail.Type)
@@ -440,9 +485,9 @@ func TestManageRules_Get(t *testing.T) {
 	t.Run("get with limit_alerts caps alert instances", func(t *testing.T) {
 		ctx := newTestContext()
 		result, err := manageRulesRead(ctx, ManageRulesReadParams{
-			Operation:   "get",
-			RuleUID:     rule1UID,
-			LimitAlerts: 1,
+			listFilterParams: listFilterParams{LimitAlerts: 1},
+			Operation:        "get",
+			RuleUID:          rule1UID,
 		})
 		require.NoError(t, err)
 		detail, ok := result.(*alertRuleDetail)
@@ -598,7 +643,7 @@ func TestManageRules_Create(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "tests",
 			Condition:    "C",
-			Data:         sampleData,
+			Data:         toDataMaps(t,sampleData),
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
@@ -668,7 +713,7 @@ func TestManageRules_Create(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "tests",
 			Condition:    "C",
-			Data:         data,
+			Data:         toDataMaps(t,data),
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
@@ -732,7 +777,7 @@ func TestManageRules_Create(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "tests",
 			Condition:    "C",
-			Data:         data,
+			Data:         toDataMaps(t,data),
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
@@ -793,7 +838,7 @@ func TestManageRules_Create(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "tests",
 			Condition:    "C",
-			Data:         data,
+			Data:         toDataMaps(t,data),
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
@@ -808,6 +853,65 @@ func TestManageRules_Create(t *testing.T) {
 		require.Equal(t, "A", created.Data[0].RefID)
 		require.Equal(t, "B", created.Data[1].RefID)
 		require.Equal(t, "C", created.Data[2].RefID)
+	})
+
+	t.Run("create recording rule type", func(t *testing.T) {
+		ctx := newTestContext()
+
+		testUID := ruleIDRecording + "_create"
+		t.Cleanup(func() {
+			manageRulesReadWrite(ctx, ManageRulesReadWriteParams{Operation: "delete", RuleUID: testUID}) //nolint:errcheck
+		})
+
+		recordParams := &Record{
+			From:                ptrString("A"),
+			Metric:              ptrString("test_recording_metric"),
+			TargetDatasourceUID: "prometheus",
+		}
+
+		result, err := manageRulesReadWrite(ctx, ManageRulesReadWriteParams{
+			Operation:    "create",
+			RuleUID:      testUID,
+			Title:        "Test Recording Rule",
+			RuleGroup:    "test-group",
+			FolderUID:    "tests",
+			Condition:    "A",
+			Data:         toDataMaps(t,recordingRuleTypeQuery),
+			NoDataState:  "OK",
+			ExecErrState: "OK",
+			For:          "5m",
+			Record:       toMap(t, recordParams),
+			Annotations: map[string]string{
+				"summary": "Recording rule for test",
+			},
+			Labels: map[string]string{
+				"team": "recording-team",
+			},
+			OrgID: 1,
+		})
+		require.NoError(t, err, "create recording rule should not return error")
+
+		created, ok := result.(*models.ProvisionedAlertRule)
+		require.True(t, ok, "result should be a *models.ProvisionedAlertRule")
+
+		t.Run("test_response", func(t *testing.T) {
+			require.Equal(t, testUID, created.UID, "UID should match the requested value")
+			require.Equal(t, "Test Recording Rule", *created.Title, "title should match the requested value")
+			require.Equal(t, "test-group", *created.RuleGroup, "rule_group should match the requested value")
+			if created.Record == nil {
+				require.Equal(t, "A", *created.Condition, "condition should match for alerting rule")
+			}
+			require.Len(t, created.Data, 1, "data should contain exactly one query")
+			require.Equal(t, "A", created.Data[0].RefID, "data[0].refId should match")
+
+			// Record fields
+			require.NotNil(t, created.Record, "record should not be nil for recording rule")
+			require.Equal(t, "A", *created.Record.From, "record.from should match the requested value")
+			require.Equal(t, "test_recording_metric", *created.Record.Metric, "record.metric should match the requested value")
+			require.Equal(t, "prometheus", created.Record.TargetDatasourceUID, "record.targetDatasourceUid should match the requested value")
+		})
+
+		t.Log("Recording rule created successfully with UID:", created.UID)
 	})
 
 	t.Run("create alert rule with missing required fields", func(t *testing.T) {
@@ -866,7 +970,7 @@ func TestManageRules_Update(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "tests",
 			Condition:    "A",
-			Data:         sampleData,
+			Data:         toDataMaps(t,sampleData),
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
@@ -874,7 +978,7 @@ func TestManageRules_Update(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		// Now update it
+		// Update basic fields
 		result, err := manageRulesReadWrite(ctx, ManageRulesReadWriteParams{
 			Operation:    "update",
 			RuleUID:      testUID,
@@ -882,7 +986,7 @@ func TestManageRules_Update(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "tests",
 			Condition:    "A",
-			Data:         sampleData,
+			Data:         toDataMaps(t,sampleData),
 			NoDataState:  "Alerting",
 			ExecErrState: "Alerting",
 			For:          "10m",
@@ -892,7 +996,10 @@ func TestManageRules_Update(t *testing.T) {
 			Labels: map[string]string{
 				"team": "updated-team",
 			},
-			OrgID: 1,
+			KeepFiringFor:               "5m",
+			IsPaused:                    false,
+			MissingSeriesEvalsToResolve: 2,
+			OrgID:                       1,
 		})
 		require.NoError(t, err)
 
@@ -901,6 +1008,240 @@ func TestManageRules_Update(t *testing.T) {
 		require.Equal(t, testUID, updated.UID)
 		require.Equal(t, "Updated Title", *updated.Title)
 		require.Equal(t, "Alerting", *updated.NoDataState)
+		require.Equal(t, "Alerting", *updated.ExecErrState)
+		require.Equal(t, strfmt.Duration(5*time.Minute), updated.KeepFiringFor)
+		require.False(t, updated.IsPaused)
+		require.Equal(t, int64(2), updated.MissingSeriesEvalsToResolve)
+	})
+
+	t.Run("update notification settings of existing alert", func(t *testing.T) {
+		ctx := newTestContext()
+
+		sampleData := []*AlertQuery{
+			{
+				RefID:         "A",
+				DatasourceUID: "prometheus",
+				RelativeTimeRange: &RelativeTimeRange{
+					From: 600,
+					To:   0,
+				},
+				Model: AlertQueryModel{
+					Expr: "up",
+				},
+			},
+		}
+
+		testUID := "test_update_notification_settings"
+		t.Cleanup(func() {
+			manageRulesReadWrite(ctx, ManageRulesReadWriteParams{Operation: "delete", RuleUID: testUID}) //nolint:errcheck
+		})
+
+		_, err := manageRulesReadWrite(ctx, ManageRulesReadWriteParams{
+			Operation:    "create",
+			RuleUID:      testUID,
+			Title:        "Notification Settings Test Rule",
+			RuleGroup:    "test-group",
+			FolderUID:    "tests",
+			Condition:    "A",
+			Data:         toDataMaps(t,sampleData),
+			NoDataState:  "OK",
+			ExecErrState: "OK",
+			For:          "5m",
+			OrgID:        1,
+		})
+		require.NoError(t, err)
+
+		// Update rule with notification settings
+		result, err := manageRulesReadWrite(ctx, ManageRulesReadWriteParams{
+			Operation:    "update",
+			RuleUID:      testUID,
+			Title:        "Notification Settings Test Rule",
+			RuleGroup:    "test-group",
+			FolderUID:    "tests",
+			Condition:    "A",
+			Data:         toDataMaps(t,sampleData),
+			NoDataState:  "OK",
+			ExecErrState: "OK",
+			For:          "5m",
+			NotificationSettings: toMap(t, &NotificationSettings{
+				Receiver:          ptrString("Email1"),
+				GroupBy:           []string{"alertname", "grafana_folder"},
+				GroupWait:         "30s",
+				GroupInterval:     "5m",
+				RepeatInterval:    "4h",
+				MuteTimeIntervals: []string{"weekends"},
+			}),
+			OrgID: 1,
+		})
+		require.NoError(t, err)
+
+		updated, ok := result.(*models.ProvisionedAlertRule)
+		require.True(t, ok)
+		require.Equal(t, testUID, updated.UID)
+
+		// NotificationSettings
+		require.NotNil(t, updated.NotificationSettings)
+		require.Equal(t, "Email1", *updated.NotificationSettings.Receiver)
+		require.ElementsMatch(t, []string{"alertname", "grafana_folder"}, updated.NotificationSettings.GroupBy)
+		require.Equal(t, "30s", updated.NotificationSettings.GroupWait)
+		require.Equal(t, "5m", updated.NotificationSettings.GroupInterval)
+		require.Equal(t, "4h", updated.NotificationSettings.RepeatInterval)
+		require.ElementsMatch(t, []string{"weekends"}, updated.NotificationSettings.MuteTimeIntervals)
+	})
+
+	t.Run("update an alert rule to recording type", func(t *testing.T) {
+		ctx := newTestContext()
+
+		sampleData := []*AlertQuery{
+			{
+				RefID:         "A",
+				DatasourceUID: "prometheus",
+				RelativeTimeRange: &RelativeTimeRange{
+					From: 600,
+					To:   0,
+				},
+				Model: AlertQueryModel{
+					Expr: "up",
+				},
+			},
+		}
+
+		testUID := "test_update_record"
+		t.Cleanup(func() {
+			manageRulesReadWrite(ctx, ManageRulesReadWriteParams{Operation: "delete", RuleUID: testUID}) //nolint:errcheck
+		})
+
+		// Create initial rule (alerting rule)
+		_, err := manageRulesReadWrite(ctx, ManageRulesReadWriteParams{
+			Operation:    "create",
+			RuleUID:      testUID,
+			Title:        "Record Test Rule",
+			RuleGroup:    "test-group",
+			FolderUID:    "tests",
+			Condition:    "A",
+			Data:         toDataMaps(t,sampleData),
+			NoDataState:  "OK",
+			ExecErrState: "OK",
+			For:          "5m",
+			OrgID:        1,
+		})
+		require.NoError(t, err)
+
+		// Update rule with Record (converts to recording rule).
+		// Grafana ignores NoDataState/ExecErrState for recording rules, but our
+		// validator requires them, so we pass dummy values.
+		result, err := manageRulesReadWrite(ctx, ManageRulesReadWriteParams{
+			Operation:    "update",
+			RuleUID:      testUID,
+			Title:        "Record Test Rule",
+			RuleGroup:    "test-group",
+			FolderUID:    "tests",
+			Condition:    "A",
+			Data:         toDataMaps(t,sampleData),
+			NoDataState:  "OK",
+			ExecErrState: "OK",
+			For:          "5m",
+			Record: toMap(t, &Record{
+				From:                ptrString("A"),
+				Metric:              ptrString("test_metric_record"),
+				TargetDatasourceUID: "prometheus",
+			}),
+			OrgID: 1,
+		})
+		require.NoError(t, err)
+
+		updated, ok := result.(*models.ProvisionedAlertRule)
+		require.True(t, ok)
+		require.Equal(t, testUID, updated.UID)
+
+		// Record
+		require.NotNil(t, updated.Record)
+		require.Equal(t, "A", *updated.Record.From)
+		require.Equal(t, "test_metric_record", *updated.Record.Metric)
+		require.Equal(t, "prometheus", updated.Record.TargetDatasourceUID)
+	})
+
+	t.Run("update a recoding rule query", func(t *testing.T) {
+		ctx := newTestContext()
+
+		testUID := ruleIDRecording + "_update_query"
+		t.Cleanup(func() {
+			manageRulesReadWrite(ctx, ManageRulesReadWriteParams{Operation: "delete", RuleUID: testUID}) //nolint:errcheck
+		})
+
+		// Create a recording rule
+		_, err := manageRulesReadWrite(ctx, ManageRulesReadWriteParams{
+			Operation:    "create",
+			RuleUID:      testUID,
+			Title:        "Recording Rule Update Query Test",
+			RuleGroup:    "test-group",
+			FolderUID:    "tests",
+			Condition:    "A",
+			Data:         toDataMaps(t,recordingRuleTypeQuery),
+			NoDataState:  "OK",
+			ExecErrState: "OK",
+			For:          "5m",
+			Record: toMap(t, &Record{
+				From:                ptrString("A"),
+				Metric:              ptrString("original_recording_metric"),
+				TargetDatasourceUID: "prometheus",
+			}),
+			OrgID: 1,
+		})
+		require.NoError(t, err, "create recording rule should not return error")
+
+		// Update with a new query expression and new record metric
+		updatedQuery := []*AlertQuery{
+			{
+				RefID:         "A",
+				DatasourceUID: "prometheus",
+				RelativeTimeRange: &RelativeTimeRange{
+					From: 900,
+					To:   0,
+				},
+				Model: AlertQueryModel{
+					Expr: "sum(rate(http_requests_total[5m]))",
+				},
+			},
+		}
+
+		updateResult, err := manageRulesReadWrite(ctx, ManageRulesReadWriteParams{
+			Operation:    "update",
+			RuleUID:      testUID,
+			Title:        "Recording Rule Update Query Test - Updated",
+			RuleGroup:    "test-group",
+			FolderUID:    "tests",
+			Condition:    "A",
+			Data:         toDataMaps(t,updatedQuery),
+			NoDataState:  "OK",
+			ExecErrState: "OK",
+			For:          "10m",
+			Record: toMap(t, &Record{
+				From:                ptrString("A"),
+				Metric:              ptrString("updated_recording_metric"),
+				TargetDatasourceUID: "prometheus",
+			}),
+			OrgID: 1,
+		})
+		require.NoError(t, err, "update recording rule should not return error")
+
+		updated, ok := updateResult.(*models.ProvisionedAlertRule)
+		require.True(t, ok, "result should be a *models.ProvisionedAlertRule")
+
+		t.Run("test_response", func(t *testing.T) {
+			require.Equal(t, testUID, updated.UID, "updated UID should match")
+			require.Equal(t, "Recording Rule Update Query Test - Updated", *updated.Title, "updated title should match")
+			require.Len(t, updated.Data, 1, "updated data should contain exactly one query")
+			require.Equal(t, "A", updated.Data[0].RefID, "updated data[0].refId should match")
+
+			// Record fields
+			require.NotNil(t, updated.Record, "updated record should not be nil")
+			require.Equal(t, "A", *updated.Record.From, "updated record.from should match")
+			require.Equal(t, "updated_recording_metric", *updated.Record.Metric, "updated record.metric should match the new value")
+			require.Equal(t, "prometheus", updated.Record.TargetDatasourceUID, "updated record.targetDatasourceUid should match")
+		})
+
+		t.Log("Recording rule updated successfully with new query and metric")
 	})
 
 	t.Run("update non-existent alert rule", func(t *testing.T) {
@@ -913,7 +1254,7 @@ func TestManageRules_Update(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "tests",
 			Condition:    "A",
-			Data:         []*AlertQuery{},
+			Data:         []map[string]any{},
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
@@ -933,6 +1274,157 @@ func TestManageRules_Update(t *testing.T) {
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "rule_uid is required")
 	})
+
+	t.Run("alert rule should have identical configuration for same state after update", func(t *testing.T) {
+		ctx := newTestContext()
+
+		sampleData := []*AlertQuery{
+			{
+				RefID:         "A",
+				DatasourceUID: "prometheus",
+				RelativeTimeRange: &RelativeTimeRange{
+					From: 600,
+					To:   0,
+				},
+				Model: AlertQueryModel{
+					Expr: "up",
+				},
+			},
+		}
+
+		testUID := "test_identical_alert_rule"
+		t.Cleanup(func() {
+			manageRulesReadWrite(ctx, ManageRulesReadWriteParams{Operation: "delete", RuleUID: testUID}) //nolint:errcheck
+		})
+
+		disableProvenance := false
+		initialParams := ManageRulesReadWriteParams{
+			Operation:                   "create",
+			RuleUID:                     testUID,
+			Title:                       "Identical Test Alert",
+			RuleGroup:                   "test-group",
+			FolderUID:                   "tests",
+			Condition:                   "A",
+			Data:                        toDataMaps(t,sampleData),
+			NoDataState:                 "OK",
+			ExecErrState:                "OK",
+			For:                         "5m",
+			KeepFiringFor:               "10m",
+			IsPaused:                    true,
+			Annotations:                 map[string]string{"summary": "test"},
+			Labels:                      map[string]string{"team": "test"},
+			MissingSeriesEvalsToResolve: 3,
+			OrgID:                       1,
+			DisableProvenance:           &disableProvenance,
+			NotificationSettings: toMap(t, &NotificationSettings{
+				Receiver: ptrString("Email1"),
+				GroupBy:  []string{"alertname"},
+			}),
+		}
+
+		_, err := manageRulesReadWrite(ctx, initialParams)
+		require.NoError(t, err, "should create the alert rule")
+
+		updateParams := initialParams
+		updateParams.Operation = "update"
+		updateParams.Title = "Identical Test Alert - Updated"
+		updateParams.For = "15m"
+		updateParams.IsPaused = false
+		updateParams.NotificationSettings["receiver"] = "Email2"
+
+		_, err = manageRulesReadWrite(ctx, updateParams)
+		require.NoError(t, err, "should update the alert rule")
+
+		fetchResult, err := manageRulesRead(ctx, ManageRulesReadParams{
+			Operation: "get",
+			RuleUID:   testUID,
+		})
+		require.NoError(t, err, "should fetch the alert rule")
+
+		detail, ok := fetchResult.(*alertRuleDetail)
+		require.True(t, ok, "result should be an *alertRuleDetail")
+
+		require.Equal(t, updateParams.Title, detail.Title, "title should match")
+		require.Equal(t, updateParams.RuleGroup, detail.RuleGroup, "rule group should match")
+		require.Equal(t, updateParams.FolderUID, detail.FolderUID, "folder UID should match")
+		require.Equal(t, updateParams.Condition, detail.Condition, "condition should match")
+		require.Equal(t, updateParams.NoDataState, detail.NoDataState, "no data state should match")
+		require.Equal(t, updateParams.ExecErrState, detail.ExecErrState, "exec err state should match")
+		require.Equal(t, "15m0s", detail.For, "for duration should match")
+		require.Equal(t, "10m0s", detail.KeepFiringFor, "keep firing for should match")
+		require.False(t, detail.IsPaused, "is paused should match")
+		require.Equal(t, int64(3), detail.MissingSeriesEvalsToResolve, "missing series evals should match")
+		require.Equal(t, updateParams.Annotations, detail.Annotations, "annotations should match")
+		require.Equal(t, updateParams.Labels, detail.Labels, "labels should match")
+		require.NotNil(t, detail.NotificationSettings, "notification settings should not be nil")
+		require.Equal(t, "Email2", *detail.NotificationSettings.Receiver, "notification receiver should match")
+	})
+
+	t.Run("recording rule should have identical configuration for same state after update", func(t *testing.T) {
+		ctx := newTestContext()
+
+		testUID := "test_identical_recording_rule"
+		t.Cleanup(func() {
+			manageRulesReadWrite(ctx, ManageRulesReadWriteParams{Operation: "delete", RuleUID: testUID}) //nolint:errcheck
+		})
+
+		disableProvenance := true
+		initialParams := ManageRulesReadWriteParams{
+			Operation:    "create",
+			RuleUID:      testUID,
+			Title:        "Identical Test Recording",
+			RuleGroup:    "test-group",
+			FolderUID:    "tests",
+			Condition:    "A",
+			Data:         toDataMaps(t,recordingRuleTypeQuery),
+			NoDataState:  "OK",
+			ExecErrState: "OK",
+			For:          "5m",
+			Record: toMap(t, &Record{
+				From:                ptrString("A"),
+				Metric:              ptrString("test_metric"),
+				TargetDatasourceUID: "prometheus",
+			}),
+			Annotations: map[string]string{
+				"summary": "recording test",
+			},
+			Labels: map[string]string{
+				"team": "recording",
+			},
+			OrgID:             1,
+			DisableProvenance: &disableProvenance,
+		}
+
+		_, err := manageRulesReadWrite(ctx, initialParams)
+		require.NoError(t, err, "should create the recording rule")
+
+		updateParams := initialParams
+		updateParams.Operation = "update"
+		updateParams.Title = "Identical Test Recording - Updated"
+		updateParams.Record["metric"] = "test_metric_updated"
+		updateParams.Labels["team"] = "recording-updated"
+
+		_, err = manageRulesReadWrite(ctx, updateParams)
+		require.NoError(t, err, "should update the recording rule")
+
+		fetchResult, err := manageRulesRead(ctx, ManageRulesReadParams{
+			Operation: "get",
+			RuleUID:   testUID,
+		})
+		require.NoError(t, err, "should fetch the recording rule")
+
+		detail, ok := fetchResult.(*alertRuleDetail)
+		require.True(t, ok, "result should be an *alertRuleDetail")
+
+		require.Equal(t, updateParams.Title, detail.Title, "title should match")
+		require.NotNil(t, detail.Record, "record should not be nil")
+		require.Equal(t, "A", *detail.Record.From, "record.from should match")
+		require.Equal(t, "test_metric_updated", *detail.Record.Metric, "record.metric should match")
+		require.Equal(t, "prometheus", detail.Record.TargetDatasourceUID, "record.targetDatasourceUid should match")
+		require.Equal(t, updateParams.Annotations, detail.Annotations, "annotations should match")
+		require.Equal(t, updateParams.Labels, detail.Labels, "labels should match")
+	})
+
 }
 
 func TestManageRules_Delete(t *testing.T) {
@@ -966,7 +1458,7 @@ func TestManageRules_Delete(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "tests",
 			Condition:    "A",
-			Data:         sampleData,
+			Data:         toDataMaps(t,sampleData),
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
@@ -1076,7 +1568,7 @@ func TestManageRules_DisableProvenance(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "tests",
 			Condition:    "C",
-			Data:         sampleData,
+			Data:         toDataMaps(t,sampleData),
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
@@ -1109,7 +1601,7 @@ func TestManageRules_DisableProvenance(t *testing.T) {
 			RuleGroup:         "test-group",
 			FolderUID:         "tests",
 			Condition:         "C",
-			Data:              sampleData,
+			Data:              toDataMaps(t,sampleData),
 			NoDataState:       "OK",
 			ExecErrState:      "OK",
 			For:               "5m",
@@ -1142,7 +1634,7 @@ func TestManageRules_DisableProvenance(t *testing.T) {
 			RuleGroup:         "test-group",
 			FolderUID:         "tests",
 			Condition:         "C",
-			Data:              sampleData,
+			Data:              toDataMaps(t,sampleData),
 			NoDataState:       "OK",
 			ExecErrState:      "OK",
 			For:               "5m",
@@ -1174,7 +1666,7 @@ func TestManageRules_DisableProvenance(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "tests",
 			Condition:    "C",
-			Data:         sampleData,
+			Data:         toDataMaps(t,sampleData),
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
@@ -1190,7 +1682,7 @@ func TestManageRules_DisableProvenance(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "tests",
 			Condition:    "C",
-			Data:         sampleData,
+			Data:         toDataMaps(t,sampleData),
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "10m",
@@ -1221,7 +1713,7 @@ func TestManageRules_DisableProvenance(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "tests",
 			Condition:    "C",
-			Data:         sampleData,
+			Data:         toDataMaps(t,sampleData),
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
@@ -1238,7 +1730,7 @@ func TestManageRules_DisableProvenance(t *testing.T) {
 			RuleGroup:         "test-group",
 			FolderUID:         "tests",
 			Condition:         "C",
-			Data:              sampleData,
+			Data:              toDataMaps(t,sampleData),
 			NoDataState:       "OK",
 			ExecErrState:      "OK",
 			For:               "10m",
@@ -1270,7 +1762,7 @@ func TestManageRules_DisableProvenance(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "tests",
 			Condition:    "C",
-			Data:         sampleData,
+			Data:         toDataMaps(t,sampleData),
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
@@ -1287,7 +1779,7 @@ func TestManageRules_DisableProvenance(t *testing.T) {
 			RuleGroup:         "test-group",
 			FolderUID:         "tests",
 			Condition:         "C",
-			Data:              sampleData,
+			Data:              toDataMaps(t,sampleData),
 			NoDataState:       "OK",
 			ExecErrState:      "OK",
 			For:               "10m",
@@ -1335,15 +1827,11 @@ func TestManageRules_List_Datasource(t *testing.T) {
 		dsUID := "prometheus"
 
 		result, err := manageRulesRead(ctx, ManageRulesReadParams{
+			listFilterParams: listFilterParams{
+				LabelSelectors: []string{`{severity="warning"}`},
+			},
 			Operation:     "list",
 			DatasourceUID: &dsUID,
-			LabelSelectors: []Selector{
-				{
-					Filters: []LabelMatcher{
-						{Name: "severity", Type: "=", Value: "warning"},
-					},
-				},
-			},
 		})
 		require.NoError(t, err)
 
@@ -1563,8 +2051,8 @@ func TestManageRules_SearchFolder(t *testing.T) {
 	t.Run("list with search_folder", func(t *testing.T) {
 		ctx := newTestContext()
 		result, err := manageRulesRead(ctx, ManageRulesReadParams{
-			Operation:    "list",
-			SearchFolder: "Test",
+			listFilterParams: listFilterParams{SearchFolder: "Test"},
+			Operation:        "list",
 		})
 		require.NoError(t, err)
 		// Should not error regardless of whether the folder exists
@@ -1576,11 +2064,12 @@ func TestManageRules_SearchFolder(t *testing.T) {
 	t.Run("mutual exclusion validation", func(t *testing.T) {
 		ctx := newTestContext()
 		_, err := manageRulesRead(ctx, ManageRulesReadParams{
-			Operation:    "list",
-			FolderUID:    "folder-1",
-			SearchFolder: "Production",
+			listFilterParams: listFilterParams{SearchFolder: "Production"},
+			Operation:        "list",
+			FolderUID:        "folder-1",
 		})
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "mutually exclusive")
 	})
 }
+func ptrString(s string) *string { return &s }

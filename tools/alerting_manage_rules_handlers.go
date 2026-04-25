@@ -21,19 +21,18 @@ func manageRulesRead(ctx context.Context, args ManageRulesReadParams) (any, erro
 
 	switch args.Operation {
 	case "list":
-		if args.DatasourceUID != nil && *args.DatasourceUID != "" {
-			return listDatasourceAlertRules(ctx, ListAlertRulesParams{
-				Limit:          args.RuleLimit,
-				DatasourceUID:  args.DatasourceUID,
-				LabelSelectors: args.LabelSelectors,
-			})
+		opts, err := args.toGetRulesOpts()
+		if err != nil {
+			return nil, fmt.Errorf("alerting_manage_rules: %w", err)
 		}
-		return listGrafanaRules(ctx, &GetRulesOpts{
-			RuleLimit:    args.RuleLimit,
-			LimitAlerts:  args.LimitAlerts,
-			FolderUID:    args.FolderUID,
-			SearchFolder: args.SearchFolder,
-		}, args.LabelSelectors)
+		selectors, err := args.parseLabelSelectors()
+		if err != nil {
+			return nil, fmt.Errorf("alerting_manage_rules: %w", err)
+		}
+		if args.DatasourceUID != nil && *args.DatasourceUID != "" {
+			return listDatasourceAlertRules(ctx, *args.DatasourceUID, opts, selectors)
+		}
+		return listGrafanaRules(ctx, opts, selectors)
 	case "get":
 		return getAlertRuleDetail(ctx, args.RuleUID, args.LimitAlerts)
 	case "versions":
@@ -50,27 +49,34 @@ func manageRulesReadWrite(ctx context.Context, args ManageRulesReadWriteParams) 
 
 	switch args.Operation {
 	case "list":
-		if args.DatasourceUID != nil && *args.DatasourceUID != "" {
-			return listDatasourceAlertRules(ctx, ListAlertRulesParams{
-				Limit:          args.RuleLimit,
-				DatasourceUID:  args.DatasourceUID,
-				LabelSelectors: args.LabelSelectors,
-			})
+		opts, err := args.toGetRulesOpts()
+		if err != nil {
+			return nil, fmt.Errorf("alerting_manage_rules: %w", err)
 		}
-		return listGrafanaRules(ctx, &GetRulesOpts{
-			RuleLimit:    args.RuleLimit,
-			LimitAlerts:  args.LimitAlerts,
-			FolderUID:    args.FolderUID,
-			SearchFolder: args.SearchFolder,
-		}, args.LabelSelectors)
+		selectors, err := args.parseLabelSelectors()
+		if err != nil {
+			return nil, fmt.Errorf("alerting_manage_rules: %w", err)
+		}
+		if args.DatasourceUID != nil && *args.DatasourceUID != "" {
+			return listDatasourceAlertRules(ctx, *args.DatasourceUID, opts, selectors)
+		}
+		return listGrafanaRules(ctx, opts, selectors)
 	case "get":
 		return getAlertRuleDetail(ctx, args.RuleUID, args.LimitAlerts)
 	case "versions":
 		return getAlertRuleVersions(ctx, args.RuleUID)
 	case "create":
-		return createAlertRule(ctx, args.toCreateParams())
+		cp, err := args.toCreateParams()
+		if err != nil {
+			return nil, fmt.Errorf("alerting_manage_rules: %w", err)
+		}
+		return createAlertRule(ctx, cp)
 	case "update":
-		return updateAlertRule(ctx, args.toUpdateParams())
+		up, err := args.toUpdateParams()
+		if err != nil {
+			return nil, fmt.Errorf("alerting_manage_rules: %w", err)
+		}
+		return updateAlertRule(ctx, up)
 	case "delete":
 		return deleteAlertRule(ctx, DeleteAlertRuleParams{
 			UID: args.RuleUID,
@@ -92,7 +98,15 @@ func getAlertRuleDetail(ctx context.Context, uid string, limitAlerts int) (*aler
 		return nil, fmt.Errorf("creating alerting client for rule %s: %w", uid, err)
 	}
 
-	rulesResp, err := ac.GetRules(ctx, &GetRulesOpts{LimitAlerts: limitAlerts})
+	opts := &GetRulesOpts{LimitAlerts: limitAlerts}
+	if alertRule.Payload.FolderUID != nil {
+		opts.FolderUID = *alertRule.Payload.FolderUID
+	}
+	if alertRule.Payload.RuleGroup != nil {
+		opts.RuleGroup = *alertRule.Payload.RuleGroup
+	}
+
+	rulesResp, err := ac.GetRules(ctx, opts)
 	if err != nil {
 		slog.WarnContext(ctx, "failed to fetch runtime state for alert rule",
 			"uid", uid, "error", err)
@@ -124,9 +138,11 @@ func getAlertRuleVersions(ctx context.Context, uid string) (any, error) {
 // are left at their zero values.
 func mergeRuleDetail(provisioned *models.ProvisionedAlertRule, runtime *alertingRule) alertRuleDetail {
 	detail := alertRuleDetail{
-		UID:         provisioned.UID,
-		Labels:      provisioned.Labels,
-		Annotations: provisioned.Annotations,
+		UID:                         provisioned.UID,
+		Labels:                      provisioned.Labels,
+		Annotations:                 provisioned.Annotations,
+		KeepFiringFor:               provisioned.KeepFiringFor.String(),
+		MissingSeriesEvalsToResolve: provisioned.MissingSeriesEvalsToResolve,
 	}
 
 	if provisioned.Title != nil {
@@ -141,6 +157,8 @@ func mergeRuleDetail(provisioned *models.ProvisionedAlertRule, runtime *alerting
 	if provisioned.Condition != nil {
 		detail.Condition = *provisioned.Condition
 	}
+	// NoDataState, ExecErrState are set empty by grafana HTTP API for a recording rule
+	// non-nil checks are applied as api expects to have a defined value for these fields
 	if provisioned.NoDataState != nil {
 		detail.NoDataState = *provisioned.NoDataState
 	}
@@ -150,10 +168,13 @@ func mergeRuleDetail(provisioned *models.ProvisionedAlertRule, runtime *alerting
 	if provisioned.For != nil {
 		detail.For = provisioned.For.String()
 	}
+	if provisioned.Record != nil {
+		detail.Record = (*Record)(provisioned.Record)
+	}
 
 	detail.IsPaused = provisioned.IsPaused
 	detail.NotificationSettings = provisioned.NotificationSettings
-	detail.Queries = extractQuerySummaries(provisioned.Data)
+	detail.Data = provisioned.Data
 
 	if runtime != nil {
 		detail.State = normalizeState(runtime.State)
@@ -172,28 +193,6 @@ func normalizeState(state string) string {
 		return "normal"
 	}
 	return state
-}
-
-func extractQuerySummaries(data []*models.AlertQuery) []querySummary {
-	if len(data) == 0 {
-		return nil
-	}
-	summaries := make([]querySummary, 0, len(data))
-	for _, q := range data {
-		s := querySummary{
-			RefID:         q.RefID,
-			DatasourceUID: q.DatasourceUID,
-		}
-		if m, ok := q.Model.(map[string]any); ok {
-			if expr, ok := m["expr"].(string); ok && expr != "" {
-				s.Expression = expr
-			} else if expr, ok := m["expression"].(string); ok && expr != "" {
-				s.Expression = expr
-			}
-		}
-		summaries = append(summaries, s)
-	}
-	return summaries
 }
 
 func findRuleInResponse(resp *rulesResponse, uid string) *alertingRule {
@@ -227,7 +226,27 @@ func listGrafanaRules(ctx context.Context, opts *GetRulesOpts, labelSelectors []
 		}
 	}
 
+	// Server-side rule_limit returns complete groups, so it may exceed the
+	// requested limit. Enforce the limit client-side as well.
+	if opts != nil {
+		summaries = applyRuleLimit(summaries, opts.RuleLimit)
+	}
+
 	return summaries, nil
+}
+
+func applyRuleLimit(summaries []alertRuleSummary, ruleLimit int) []alertRuleSummary {
+	limit := ruleLimit
+	if limit == 0 {
+		limit = DefaultListAlertRulesLimit
+	}
+	if limit > maxRulesLimit {
+		limit = maxRulesLimit
+	}
+	if len(summaries) > limit {
+		return summaries[:limit]
+	}
+	return summaries
 }
 
 func convertRulesResponseToSummary(resp *rulesResponse) []alertRuleSummary {
@@ -295,26 +314,41 @@ func createAlertRule(ctx context.Context, args CreateAlertRuleParams) (*models.P
 
 	duration, err := time.ParseDuration(args.For)
 	if err != nil {
-		return nil, fmt.Errorf("create alert rule: invalid duration format %q: %w", args.For, err)
+		return nil, fmt.Errorf("create alert rule: invalid duration format for parameter for: %q: %w", args.For, err)
 	}
 
 	convertedData, err := convertAlertQueries(args.Data)
 	if err != nil {
 		return nil, fmt.Errorf("create alert rule: %w", err)
 	}
+	keepFiringFor := time.Duration(0)
+	if args.KeepFiringFor != "" {
+		keepFiringFor, err = time.ParseDuration(args.KeepFiringFor)
+		if err != nil {
+			return nil, fmt.Errorf("create alert rule: invalid duration format for parameter keepFiringFor: %q: %w", args.KeepFiringFor, err)
+		}
+	}
+
+	notificationSettings := convertNotificationSettings(args.NotificationSettings)
+	record := convertRecord(args.Record)
 
 	rule := &models.ProvisionedAlertRule{
-		Title:        &args.Title,
-		RuleGroup:    &args.RuleGroup,
-		FolderUID:    &args.FolderUID,
-		Condition:    &args.Condition,
-		Data:         convertedData,
-		NoDataState:  &args.NoDataState,
-		ExecErrState: &args.ExecErrState,
-		For:          func() *strfmt.Duration { d := strfmt.Duration(duration); return &d }(),
-		Annotations:  args.Annotations,
-		Labels:       args.Labels,
-		OrgID:        &args.OrgID,
+		Title:                       &args.Title,
+		RuleGroup:                   &args.RuleGroup,
+		FolderUID:                   &args.FolderUID,
+		Condition:                   &args.Condition,
+		Data:                        convertedData,
+		NoDataState:                 &args.NoDataState,
+		ExecErrState:                &args.ExecErrState,
+		For:                         func() *strfmt.Duration { d := strfmt.Duration(duration); return &d }(),
+		Annotations:                 args.Annotations,
+		Labels:                      args.Labels,
+		OrgID:                       &args.OrgID,
+		IsPaused:                    args.IsPaused,
+		KeepFiringFor:               func() strfmt.Duration { d := strfmt.Duration(keepFiringFor); return d }(),
+		MissingSeriesEvalsToResolve: args.MissingSeriesEvalsToResolve,
+		NotificationSettings:        notificationSettings,
+		Record:                      record,
 	}
 
 	if args.UID != nil {
@@ -335,7 +369,6 @@ func createAlertRule(ctx context.Context, args CreateAlertRuleParams) (*models.P
 		header := "true"
 		params = params.WithXDisableProvenance(&header)
 	}
-
 	response, err := c.Provisioning.PostAlertRule(params)
 	if err != nil {
 		return nil, fmt.Errorf("create alert rule: %w", err)
@@ -353,7 +386,7 @@ func updateAlertRule(ctx context.Context, args UpdateAlertRuleParams) (*models.P
 
 	duration, err := time.ParseDuration(args.For)
 	if err != nil {
-		return nil, fmt.Errorf("update alert rule: invalid duration format %q: %w", args.For, err)
+		return nil, fmt.Errorf("update alert rule: invalid duration format for parameter for: %q: %w", args.For, err)
 	}
 
 	convertedData, err := convertAlertQueries(args.Data)
@@ -361,19 +394,37 @@ func updateAlertRule(ctx context.Context, args UpdateAlertRuleParams) (*models.P
 		return nil, fmt.Errorf("update alert rule: %w", err)
 	}
 
+	keepFiringFor := time.Duration(0)
+	if args.KeepFiringFor != "" {
+		keepFiringFor, err = time.ParseDuration(args.KeepFiringFor)
+		if err != nil {
+			return nil, fmt.Errorf("update alert rule: invalid duration format for parameter keepFiringFor: %q: %w", args.KeepFiringFor, err)
+		}
+	}
+
+	notificationSettings := convertNotificationSettings(args.NotificationSettings)
+
+	record := convertRecord(args.Record)
+
+	// MissingSeriesEvalsToResolve, Provenance are set to defaults
 	rule := &models.ProvisionedAlertRule{
-		UID:          args.UID,
-		Title:        &args.Title,
-		RuleGroup:    &args.RuleGroup,
-		FolderUID:    &args.FolderUID,
-		Condition:    &args.Condition,
-		Data:         convertedData,
-		NoDataState:  &args.NoDataState,
-		ExecErrState: &args.ExecErrState,
-		For:          func() *strfmt.Duration { d := strfmt.Duration(duration); return &d }(),
-		Annotations:  args.Annotations,
-		Labels:       args.Labels,
-		OrgID:        &args.OrgID,
+		UID:                         args.UID,
+		Title:                       &args.Title,
+		RuleGroup:                   &args.RuleGroup,
+		FolderUID:                   &args.FolderUID,
+		Condition:                   &args.Condition,
+		Data:                        convertedData,
+		NoDataState:                 &args.NoDataState,
+		ExecErrState:                &args.ExecErrState,
+		For:                         func() *strfmt.Duration { d := strfmt.Duration(duration); return &d }(),
+		Annotations:                 args.Annotations,
+		Labels:                      args.Labels,
+		OrgID:                       &args.OrgID,
+		IsPaused:                    args.IsPaused,
+		MissingSeriesEvalsToResolve: args.MissingSeriesEvalsToResolve,
+		KeepFiringFor:               func() strfmt.Duration { d := strfmt.Duration(keepFiringFor); return d }(),
+		NotificationSettings:        notificationSettings,
+		Record:                      record,
 	}
 
 	if err := rule.Validate(strfmt.Default); err != nil {

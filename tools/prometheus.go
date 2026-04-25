@@ -32,10 +32,11 @@ type ListPrometheusMetricMetadataParams struct {
 	Limit          int    `json:"limit" jsonschema:"default=10,description=The maximum number of metrics to return"`
 	LimitPerMetric int    `json:"limitPerMetric" jsonschema:"description=The maximum number of metrics to return per metric"`
 	Metric         string `json:"metric" jsonschema:"description=The metric to query"`
+	ProjectName    string `json:"projectName,omitempty" jsonschema:"description=GCP project name to query (Cloud Monitoring datasources only). Overrides or substitutes the defaultProject configured on the datasource."`
 }
 
 func listPrometheusMetricMetadata(ctx context.Context, args ListPrometheusMetricMetadataParams) (map[string][]promv1.Metadata, error) {
-	backend, err := backendForDatasource(ctx, args.DatasourceUID)
+	backend, err := backendForDatasource(ctx, args.DatasourceUID, args.ProjectName)
 	if err != nil {
 		return nil, fmt.Errorf("getting backend: %w", err)
 	}
@@ -64,10 +65,11 @@ var ListPrometheusMetricMetadata = mcpgrafana.MustTool(
 type QueryPrometheusParams struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the datasource to query"`
 	Expr          string `json:"expr" jsonschema:"required,description=The PromQL expression to query"`
-	StartTime     string `json:"startTime" jsonschema:"required,description=The start time. Supported formats are RFC3339 or relative to now (e.g. 'now'\\, 'now-1.5h'\\, 'now-2h45m'). Valid time units are 'ns'\\, 'us' (or 'µs')\\, 'ms'\\, 's'\\, 'm'\\, 'h'\\, 'd'."`
-	EndTime       string `json:"endTime,omitempty" jsonschema:"description=The end time. Required if queryType is 'range'\\, ignored if queryType is 'instant' Supported formats are RFC3339 or relative to now (e.g. 'now'\\, 'now-1.5h'\\, 'now-2h45m'). Valid time units are 'ns'\\, 'us' (or 'µs')\\, 'ms'\\, 's'\\, 'm'\\, 'h'\\, 'd'."`
+	StartTime     string `json:"startTime,omitempty" jsonschema:"description=The start time. Required if queryType is 'range'\\, ignored if queryType is 'instant' Supported formats are RFC3339 or relative to now (e.g. 'now'\\, 'now-1.5h'\\, 'now-2h45m'). Valid time units are 'ns'\\, 'us' (or 'µs')\\, 'ms'\\, 's'\\, 'm'\\, 'h'\\, 'd'."`
+	EndTime       string `json:"endTime" jsonschema:"required,description=The end time. Supported formats are RFC3339 or relative to now (e.g. 'now'\\, 'now-1.5h'\\, 'now-2h45m'). Valid time units are 'ns'\\, 'us' (or 'µs')\\, 'ms'\\, 's'\\, 'm'\\, 'h'\\, 'd'."`
 	StepSeconds   int    `json:"stepSeconds,omitempty" jsonschema:"description=The time series step size in seconds. Required if queryType is 'range'\\, ignored if queryType is 'instant'"`
 	QueryType     string `json:"queryType,omitempty" jsonschema:"description=The type of query to use. Either 'range' or 'instant'"`
+	ProjectName   string `json:"projectName,omitempty" jsonschema:"description=GCP project name to query (Cloud Monitoring datasources only). Overrides or substitutes the defaultProject configured on the datasource."`
 }
 
 // QueryPrometheusResult wraps the Prometheus query result with optional hints
@@ -106,7 +108,7 @@ func isPrometheusResultEmpty(result model.Value) bool {
 // queryPrometheus executes a PromQL query and returns raw results.
 // This is the internal function - use queryPrometheusWithHints for MCP tools.
 func queryPrometheus(ctx context.Context, args QueryPrometheusParams) (model.Value, error) {
-	backend, err := backendForDatasource(ctx, args.DatasourceUID)
+	backend, err := backendForDatasource(ctx, args.DatasourceUID, args.ProjectName)
 	if err != nil {
 		return nil, fmt.Errorf("getting backend: %w", err)
 	}
@@ -116,19 +118,21 @@ func queryPrometheus(ctx context.Context, args QueryPrometheusParams) (model.Val
 		queryType = "range"
 	}
 
-	startTime, err := parseTime(args.StartTime)
+	var endTime time.Time
+	endTime, err = parseTime(args.EndTime)
 	if err != nil {
-		return nil, fmt.Errorf("parsing start time: %w", err)
+		return nil, fmt.Errorf("parsing end time: %w", err)
 	}
 
-	var endTime time.Time
+	var startTime time.Time
+
 	if queryType == "range" {
 		if args.StepSeconds == 0 {
 			return nil, fmt.Errorf("stepSeconds must be provided when queryType is 'range'")
 		}
-		endTime, err = parseTime(args.EndTime)
+		startTime, err = parseTime(args.StartTime)
 		if err != nil {
-			return nil, fmt.Errorf("parsing end time: %w", err)
+			return nil, fmt.Errorf("parsing start time: %w", err)
 		}
 	}
 
@@ -176,10 +180,11 @@ type ListPrometheusMetricNamesParams struct {
 	Regex         string `json:"regex" jsonschema:"description=The regex to match against the metric names"`
 	Limit         int    `json:"limit,omitempty" jsonschema:"default=10,description=The maximum number of results to return"`
 	Page          int    `json:"page,omitempty" jsonschema:"default=1,description=The page number to return"`
+	ProjectName   string `json:"projectName,omitempty" jsonschema:"description=GCP project name to query (Cloud Monitoring datasources only). Overrides or substitutes the defaultProject configured on the datasource."`
 }
 
 func listPrometheusMetricNames(ctx context.Context, args ListPrometheusMetricNamesParams) ([]string, error) {
-	backend, err := backendForDatasource(ctx, args.DatasourceUID)
+	backend, err := backendForDatasource(ctx, args.DatasourceUID, args.ProjectName)
 	if err != nil {
 		return nil, fmt.Errorf("getting backend: %w", err)
 	}
@@ -292,10 +297,11 @@ type ListPrometheusLabelNamesParams struct {
 	StartRFC3339  string     `json:"startRfc3339,omitempty" jsonschema:"description=Optionally\\, the start time of the time range to filter the results by"`
 	EndRFC3339    string     `json:"endRfc3339,omitempty" jsonschema:"description=Optionally\\, the end time of the time range to filter the results by"`
 	Limit         int        `json:"limit,omitempty" jsonschema:"default=100,description=Optionally\\, the maximum number of results to return"`
+	ProjectName   string     `json:"projectName,omitempty" jsonschema:"description=GCP project name to query (Cloud Monitoring datasources only). Overrides or substitutes the defaultProject configured on the datasource."`
 }
 
 func listPrometheusLabelNames(ctx context.Context, args ListPrometheusLabelNamesParams) ([]string, error) {
-	backend, err := backendForDatasource(ctx, args.DatasourceUID)
+	backend, err := backendForDatasource(ctx, args.DatasourceUID, args.ProjectName)
 	if err != nil {
 		return nil, fmt.Errorf("getting backend: %w", err)
 	}
@@ -351,10 +357,11 @@ type ListPrometheusLabelValuesParams struct {
 	StartRFC3339  string     `json:"startRfc3339,omitempty" jsonschema:"description=Optionally\\, the start time of the query"`
 	EndRFC3339    string     `json:"endRfc3339,omitempty" jsonschema:"description=Optionally\\, the end time of the query"`
 	Limit         int        `json:"limit,omitempty" jsonschema:"default=100,description=Optionally\\, the maximum number of results to return"`
+	ProjectName   string     `json:"projectName,omitempty" jsonschema:"description=GCP project name to query (Cloud Monitoring datasources only). Overrides or substitutes the defaultProject configured on the datasource."`
 }
 
 func listPrometheusLabelValues(ctx context.Context, args ListPrometheusLabelValuesParams) ([]string, error) {
-	backend, err := backendForDatasource(ctx, args.DatasourceUID)
+	backend, err := backendForDatasource(ctx, args.DatasourceUID, args.ProjectName)
 	if err != nil {
 		return nil, fmt.Errorf("getting backend: %w", err)
 	}
@@ -420,6 +427,7 @@ type QueryPrometheusHistogramParams struct {
 	StartTime     string  `json:"startTime,omitempty" jsonschema:"description=Start time (default: now-1h). Supports RFC3339\\, relative (now-1h)\\, or Unix ms."`
 	EndTime       string  `json:"endTime,omitempty" jsonschema:"description=End time (default: now). Supports RFC3339\\, relative\\, or Unix ms."`
 	StepSeconds   int     `json:"stepSeconds,omitempty" jsonschema:"description=Step size in seconds for range query (default: 60)"`
+	ProjectName   string  `json:"projectName,omitempty" jsonschema:"description=GCP project name to query (Cloud Monitoring datasources only). Overrides or substitutes the defaultProject configured on the datasource."`
 }
 
 // queryPrometheusHistogram generates and executes a histogram percentile query
@@ -481,6 +489,7 @@ func queryPrometheusHistogram(ctx context.Context, args QueryPrometheusHistogram
 		EndTime:       endTime,
 		StepSeconds:   stepSeconds,
 		QueryType:     "range",
+		ProjectName:   args.ProjectName,
 	})
 	if err != nil {
 		return nil, err

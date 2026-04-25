@@ -176,3 +176,31 @@ groups:
           type: test
           rule: third
         isPaused: true
+      - uid: recording_rule_1
+        title: test_recording_rule
+        condition: A
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: prometheus  
+            model:
+              datasource:
+                type: prometheus
+                uid: prometheus
+              editorMode: code
+              expr: avg(rate(http_requests_total[5m])) 
+              instant: true
+              range: false
+              refId: A
+        record:
+          from: A
+          metric: http_requests_avg
+          target_datasource_uid: prometheus
+
+        annotations:
+          description: "Recording avg HTTP request rate"
+        labels:
+          team: sre
+          type: test

@@ -65,11 +65,12 @@ jobs:
       - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98
 
       - name: Build and Push to Docker Hub
-        uses: grafana/shared-workflows/actions/build-push-to-dockerhub@7f983a8135eb58eaec83c96d8b842b2092e110e3
+        uses: grafana/shared-workflows/actions/docker-build-push-image@21ae57f82e5256e5a418406388926d4ba24bccf2 # docker-build-push-image/v0.3.2
         with:
           context: .
           file: ./Dockerfile
-          repository: grafana/mcp-grafana
+          dockerhub-repository: grafana/mcp-grafana
+          registries: dockerhub
           platforms: ${{ needs.prepare.outputs.platforms }}
           tags: |
             ${{ needs.prepare.outputs.is_tag == 'true' && needs.prepare.outputs.is_stable == 'true' && 'latest' || '' }}
@@ -85,11 +86,12 @@ jobs:
       - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98
 
       - name: Build and Push Alpine to Docker Hub
-        uses: grafana/shared-workflows/actions/build-push-to-dockerhub@7f983a8135eb58eaec83c96d8b842b2092e110e3
+        uses: grafana/shared-workflows/actions/docker-build-push-image@21ae57f82e5256e5a418406388926d4ba24bccf2 # docker-build-push-image/v0.3.2
         with:
           context: .
           file: ./Dockerfile.alpine
-          repository: grafana/mcp-grafana
+          dockerhub-repository: grafana/mcp-grafana
+          registries: dockerhub
           platforms: ${{ needs.prepare.outputs.platforms }}
           tags: |
             ${{ needs.prepare.outputs.is_tag == 'true' && needs.prepare.outputs.is_stable == 'true' && 'alpine' || '' }}

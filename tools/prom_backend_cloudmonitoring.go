@@ -29,10 +29,10 @@ type cloudMonitoringBackend struct {
 	defaultProject string
 }
 
-func newCloudMonitoringBackend(ctx context.Context, ds *models.DataSource) (*cloudMonitoringBackend, error) {
-	defaultProject, err := extractCMDefaultProject(ds)
-	if err != nil {
-		return nil, err
+func newCloudMonitoringBackend(ctx context.Context, ds *models.DataSource, projectOverride string) (*cloudMonitoringBackend, error) {
+	defaultProject := extractCMDefaultProject(ds)
+	if projectOverride != "" {
+		defaultProject = projectOverride
 	}
 
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
@@ -43,11 +43,8 @@ func newCloudMonitoringBackend(ctx context.Context, ds *models.DataSource) (*clo
 		return nil, fmt.Errorf("failed to create custom transport: %w", err)
 	}
 
-	transport = NewAuthRoundTripper(transport, cfg.AccessToken, cfg.IDToken, cfg.APIKey, cfg.BasicAuth)
-	transport = mcpgrafana.NewOrgIDRoundTripper(transport, cfg.OrgID)
-
 	client := &http.Client{
-		Transport: mcpgrafana.NewUserAgentTransport(transport),
+		Transport: transport,
 		Timeout:   30 * time.Second,
 	}
 
@@ -59,30 +56,43 @@ func newCloudMonitoringBackend(ctx context.Context, ds *models.DataSource) (*clo
 	}, nil
 }
 
-func extractCMDefaultProject(ds *models.DataSource) (string, error) {
+func extractCMDefaultProject(ds *models.DataSource) string {
 	if ds.JSONData == nil {
-		return "", fmt.Errorf("cloud monitoring datasource %s has no jsonData configured", ds.UID)
+		return ""
 	}
 	jsonDataMap, ok := ds.JSONData.(map[string]interface{})
 	if !ok {
-		return "", fmt.Errorf("cloud monitoring datasource %s has unexpected jsonData format", ds.UID)
+		return ""
 	}
-	proj, ok := jsonDataMap["defaultProject"].(string)
-	if !ok || proj == "" {
-		return "", fmt.Errorf("cloud monitoring datasource %s has no defaultProject configured in jsonData", ds.UID)
+	proj, _ := jsonDataMap["defaultProject"].(string)
+	return proj
+}
+
+// project returns the configured GCP project or an actionable error if neither
+// defaultProject nor a per-call projectName override was supplied.
+func (b *cloudMonitoringBackend) project() (string, error) {
+	if b.defaultProject == "" {
+		return "", fmt.Errorf("no GCP project configured: set defaultProject on the datasource or pass projectName in the tool call")
 	}
-	return proj, nil
+	return b.defaultProject, nil
 }
 
 // Query executes a PromQL query via Grafana's /api/ds/query endpoint.
 func (b *cloudMonitoringBackend) Query(ctx context.Context, expr string, queryType string, start, end time.Time, stepSeconds int) (model.Value, error) {
+	project, err := b.project()
+	if err != nil {
+		return nil, err
+	}
 	step := fmt.Sprintf("%ds", stepSeconds)
 	if stepSeconds == 0 {
 		step = "60s"
 	}
 
-	// For instant queries, end may be zero — set it to start so the plugin
+	// For instant queries, start or end may be zero — ensure the plugin
 	// receives a valid time range (start <= end).
+	if start.IsZero() {
+		start = end
+	}
 	if end.IsZero() || end.Before(start) {
 		end = start
 	}
@@ -96,14 +106,14 @@ func (b *cloudMonitoringBackend) Query(ctx context.Context, expr string, queryTy
 		"queryType": "promQL",
 		"promQLQuery": map[string]interface{}{
 			"expr":        expr,
-			"projectName": b.defaultProject,
+			"projectName": project,
 			"step":        step,
 		},
 		// timeSeriesList is required by the Cloud Monitoring plugin even for
 		// PromQL queries — without it the plugin returns a 500 error.
 		"timeSeriesList": map[string]interface{}{
 			"filters":     []interface{}{},
-			"projectName": b.defaultProject,
+			"projectName": project,
 			"view":        "FULL",
 		},
 	}
@@ -127,6 +137,10 @@ func (b *cloudMonitoringBackend) Query(ctx context.Context, expr string, queryTy
 // The Grafana Cloud Monitoring plugin strips label descriptors from metric
 // descriptors, so we must query actual time series to discover labels.
 func (b *cloudMonitoringBackend) LabelNames(ctx context.Context, matchers []string, start, end time.Time) ([]string, error) {
+	project, err := b.project()
+	if err != nil {
+		return nil, err
+	}
 	if start.IsZero() {
 		start = time.Now().Add(-1 * time.Hour)
 	}
@@ -150,7 +164,7 @@ func (b *cloudMonitoringBackend) LabelNames(ctx context.Context, matchers []stri
 		},
 		"queryType": "timeSeriesList",
 		"timeSeriesList": map[string]interface{}{
-			"projectName":        b.defaultProject,
+			"projectName":        project,
 			"filters":            filters,
 			"view":               "HEADERS",
 			"crossSeriesReducer": "REDUCE_NONE",
@@ -228,6 +242,10 @@ func (b *cloudMonitoringBackend) metricNames(ctx context.Context, matchers []str
 // labelValuesViaQuery uses a TIME_SERIES_LIST HEADERS query via /api/ds/query
 // to discover label values, matching how the Grafana frontend does it.
 func (b *cloudMonitoringBackend) labelValuesViaQuery(ctx context.Context, labelName string, matchers []string, start, end time.Time) ([]string, error) {
+	project, err := b.project()
+	if err != nil {
+		return nil, err
+	}
 	if start.IsZero() {
 		start = time.Now().Add(-1 * time.Hour)
 	}
@@ -251,7 +269,7 @@ func (b *cloudMonitoringBackend) labelValuesViaQuery(ctx context.Context, labelN
 		},
 		"queryType": "timeSeriesList",
 		"timeSeriesList": map[string]interface{}{
-			"projectName":        b.defaultProject,
+			"projectName":        project,
 			"filters":            filters,
 			"view":               "HEADERS",
 			"crossSeriesReducer": "REDUCE_NONE",
@@ -312,8 +330,12 @@ func (b *cloudMonitoringBackend) doDSQuery(ctx context.Context, payload map[stri
 // The Grafana plugin handles GCP API pagination internally and returns all descriptors
 // as a flat JSON array (not the raw GCP API wrapper).
 func (b *cloudMonitoringBackend) fetchMetricDescriptors(ctx context.Context) ([]gcpMetricDescriptor, error) {
+	project, err := b.project()
+	if err != nil {
+		return nil, err
+	}
 	url := fmt.Sprintf("%s/api/datasources/uid/%s/resources/metricDescriptors/v3/projects/%s/metricDescriptors",
-		b.baseURL, b.datasourceUID, b.defaultProject)
+		b.baseURL, b.datasourceUID, project)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {

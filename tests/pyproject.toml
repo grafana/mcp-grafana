@@ -15,11 +15,11 @@ dependencies = []
 dev = [
     "anyio>=4.9.0",
     "deepeval>=1.0.0",
-    "litellm>=1.63.12",
+    "litellm>=1.83.0,<1.83.1",
     "mcp>=1.9.3",
-    "pytest>=8.3.5",
+    "pytest>=9.0.3",
     "pytest-rerunfailures>=15.0",
-    "python-dotenv>=1.0.0",
+    "python-dotenv>=1.2.2",
 ]
 
 [tool.pytest.ini_options]

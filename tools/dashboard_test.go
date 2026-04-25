@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/grafana/grafana-openapi-client-go/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -22,7 +21,7 @@ const (
 // getExistingDashboardUID will fetch an existing dashboard for test purposes
 // It will search for exisiting dashboards and return the first, otherwise
 // will trigger a test error
-func getExistingTestDashboard(t *testing.T, ctx context.Context, dashboardName string) *models.Hit {
+func getExistingTestDashboard(t *testing.T, ctx context.Context, dashboardName string) dashboardSearchHit {
 	// Make sure we query for the existing dashboard, not a folder
 	if dashboardName == "" {
 		dashboardName = "Demo"
@@ -37,7 +36,7 @@ func getExistingTestDashboard(t *testing.T, ctx context.Context, dashboardName s
 
 // getExistingTestDashboardJSON will fetch the JSON map for an existing
 // dashboard in the test environment
-func getTestDashboardJSON(t *testing.T, ctx context.Context, dashboard *models.Hit) map[string]interface{} {
+func getTestDashboardJSON(t *testing.T, ctx context.Context, dashboard dashboardSearchHit) map[string]interface{} {
 	result, err := getDashboardByUID(ctx, GetDashboardByUIDParams{
 		UID: dashboard.UID,
 	})
@@ -333,6 +332,64 @@ func TestDashboardTools(t *testing.T) {
 		dashboardMap, ok := updatedDashboard.Dashboard.(map[string]interface{})
 		require.True(t, ok, "Dashboard should be a map")
 		assert.Equal(t, newTitle, dashboardMap["title"])
+	})
+
+	t.Run("update dashboard - patch preserves UID", func(t *testing.T) {
+		ctx := newTestContext()
+
+		// Get our test dashboard
+		dashboard := getExistingTestDashboard(t, ctx, newTestDashboardName)
+		originalUID := dashboard.UID
+
+		// Fetch the full dashboard to get the numeric ID
+		fullDashboard, err := getDashboardByUID(ctx, GetDashboardByUIDParams{UID: originalUID})
+		require.NoError(t, err)
+		origMap, ok := fullDashboard.Dashboard.(map[string]interface{})
+		require.True(t, ok)
+		originalID := origMap["id"]
+
+		// Patch via uid + operations
+		patchedTitle := "Patch UID Preservation Test"
+		result, err := updateDashboard(ctx, UpdateDashboardParams{
+			UID: originalUID,
+			Operations: []PatchOperation{
+				{
+					Op:    "replace",
+					Path:  "$.title",
+					Value: patchedTitle,
+				},
+			},
+			Message: "Testing UID preservation",
+		})
+		require.NoError(t, err)
+		require.NotNil(t, result)
+
+		// The response UID must match the original — not a newly generated UUID.
+		require.NotNil(t, result.UID, "response UID should not be nil")
+		assert.Equal(t, originalUID, *result.UID,
+			"patch response UID should match the original dashboard UID, not a new one")
+
+		// Fetch the dashboard by the original UID and verify:
+		// 1. The title was actually changed (patch applied to the right dashboard)
+		// 2. The numeric ID is unchanged (same dashboard, not a clone)
+		updatedDashboard, err := getDashboardByUID(ctx, GetDashboardByUIDParams{UID: originalUID})
+		require.NoError(t, err)
+
+		updatedMap, ok := updatedDashboard.Dashboard.(map[string]interface{})
+		require.True(t, ok)
+		assert.Equal(t, patchedTitle, updatedMap["title"],
+			"title should be updated on the original dashboard")
+		assert.Equal(t, originalID, updatedMap["id"],
+			"numeric ID should be unchanged — dashboard should be updated in place, not cloned")
+
+		// Restore the original title so subsequent tests can find the dashboard
+		_, err = updateDashboard(ctx, UpdateDashboardParams{
+			UID: originalUID,
+			Operations: []PatchOperation{
+				{Op: "replace", Path: "$.title", Value: newTestDashboardName},
+			},
+		})
+		require.NoError(t, err)
 	})
 
 	t.Run("update dashboard - patch add description", func(t *testing.T) {

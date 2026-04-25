@@ -1,0 +1,53 @@
+name: CLA Label
+
+on:
+  status: {}
+
+jobs:
+  label:
+    if: github.event.context == 'license/cla'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Label PRs based on CLA status
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        with:
+          script: |
+            const { state, sha } = context.payload;
+
+            // Find PRs associated with this commit
+            const { data: prs } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              commit_sha: sha,
+            });
+
+            for (const pr of prs) {
+              if (pr.state !== 'open') continue;
+
+              const addLabel = state === 'success' ? 'cla: yes' : 'cla: no';
+              const removeLabel = state === 'success' ? 'cla: no' : 'cla: yes';
+
+              // Add the appropriate label
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                labels: [addLabel],
+              });
+
+              // Remove the opposite label if present
+              try {
+                await github.rest.issues.removeLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: pr.number,
+                  name: removeLabel,
+                });
+              } catch (e) {
+                // Label wasn't present, that's fine
+              }
+
+              console.log(`PR #${pr.number}: set "${addLabel}", removed "${removeLabel}"`);
+            }

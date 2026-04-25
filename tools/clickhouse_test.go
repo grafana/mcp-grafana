@@ -333,3 +333,28 @@ func TestGenerateClickHouseEmptyResultHints(t *testing.T) {
 	}
 	assert.True(t, found, "Hints should suggest using list_clickhouse_tables")
 }
+
+func TestValidateClickHouseIdentifier(t *testing.T) {
+	tests := []struct {
+		name    string
+		field   string
+		wantErr bool
+	}{
+		{name: "default", field: "database", wantErr: false},
+		{name: "table_1", field: "table", wantErr: false},
+
+		//attack payloads (must fail)
+		{name: "default' OR 1=1 --", field: "database", wantErr: true},
+		{name: "default' UNION SELECT name FROM system.databases --", field: "database", wantErr: true},
+		{name: "table-name", field: "table", wantErr: true},
+		{name: "table name", field: "table", wantErr: true},
+		{name: "system.tables", field: "table", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		err := validateClickHouseIdentifier(tt.name, tt.field)
+		if (err != nil) != tt.wantErr {
+			t.Errorf("validateClickHouseIdentifier(%q) error = %v, wantErr %v", tt.name, err, tt.wantErr)
+		}
+	}
+}

@@ -95,21 +95,13 @@ func newCloudWatchClient(ctx context.Context, uid string) (*cloudWatchClient, er
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
 	baseURL := strings.TrimRight(cfg.URL, "/")
 
-	// Create custom transport with TLS configuration if available
-	var transport = http.DefaultTransport
-	if tlsConfig := cfg.TLSConfig; tlsConfig != nil {
-		var err error
-		transport, err = tlsConfig.HTTPTransport(transport.(*http.Transport))
-		if err != nil {
-			return nil, fmt.Errorf("failed to create custom transport: %w", err)
-		}
+	transport, err := mcpgrafana.BuildTransport(&cfg, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create transport: %w", err)
 	}
 
-	transport = NewAuthRoundTripper(transport, cfg.AccessToken, cfg.IDToken, cfg.APIKey, cfg.BasicAuth)
-	transport = mcpgrafana.NewOrgIDRoundTripper(transport, cfg.OrgID)
-
 	client := &http.Client{
-		Transport: mcpgrafana.NewUserAgentTransport(transport),
+		Transport: transport,
 	}
 
 	return &cloudWatchClient{
@@ -193,16 +185,17 @@ func (c *cloudWatchClient) query(ctx context.Context, args CloudWatchQueryParams
 		return nil, fmt.Errorf("CloudWatch query returned status %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
-	// Read and parse response
-	body := io.LimitReader(resp.Body, 1024*1024*10) // 10MB limit
+	// Limit size of response read
+	var bytesLimit int64 = 1024 * 1024 * 10 // 10MB limit
+	body := io.LimitReader(resp.Body, bytesLimit)
 	bodyBytes, err := io.ReadAll(body)
 	if err != nil {
 		return nil, fmt.Errorf("reading response body: %w", err)
 	}
 
 	var queryResp cloudWatchQueryResponse
-	if err := json.Unmarshal(bodyBytes, &queryResp); err != nil {
-		return nil, fmt.Errorf("unmarshaling response: %w", err)
+	if err := unmarshalJSONWithLimitMsg(bodyBytes, &queryResp, int(bytesLimit)); err != nil {
+		return nil, err
 	}
 
 	return &queryResp, nil
@@ -413,10 +406,10 @@ type cloudWatchMetricItem struct {
 }
 
 // parseCloudWatchResourceResponse extracts values from CloudWatch resource API response
-func parseCloudWatchResourceResponse(bodyBytes []byte) ([]string, error) {
+func parseCloudWatchResourceResponse(bodyBytes []byte, bytesLimit int) ([]string, error) {
 	var items []cloudWatchResourceItem
-	if err := json.Unmarshal(bodyBytes, &items); err != nil {
-		return nil, fmt.Errorf("unmarshaling response: %w", err)
+	if err := unmarshalJSONWithLimitMsg(bodyBytes, &items, bytesLimit); err != nil {
+		return nil, err
 	}
 
 	result := make([]string, len(items))
@@ -427,10 +420,10 @@ func parseCloudWatchResourceResponse(bodyBytes []byte) ([]string, error) {
 }
 
 // parseCloudWatchMetricsResponse extracts metric names from CloudWatch metrics API response
-func parseCloudWatchMetricsResponse(bodyBytes []byte) ([]string, error) {
+func parseCloudWatchMetricsResponse(bodyBytes []byte, bytesLimit int) ([]string, error) {
 	var items []cloudWatchMetricItem
-	if err := json.Unmarshal(bodyBytes, &items); err != nil {
-		return nil, fmt.Errorf("unmarshaling response: %w", err)
+	if err := unmarshalJSONWithLimitMsg(bodyBytes, &items, bytesLimit); err != nil {
+		return nil, err
 	}
 
 	result := make([]string, len(items))
@@ -476,13 +469,14 @@ func listCloudWatchNamespaces(ctx context.Context, args ListCloudWatchNamespaces
 		return nil, fmt.Errorf("CloudWatch namespaces returned status %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
-	body := io.LimitReader(resp.Body, 1024*1024) // 1MB limit
+	bytesLimit := 1024 * 1024 // 1MB limit
+	body := io.LimitReader(resp.Body, int64(bytesLimit))
 	bodyBytes, err := io.ReadAll(body)
 	if err != nil {
 		return nil, fmt.Errorf("reading response body: %w", err)
 	}
 
-	return parseCloudWatchResourceResponse(bodyBytes)
+	return parseCloudWatchResourceResponse(bodyBytes, bytesLimit)
 }
 
 // ListCloudWatchNamespaces is a tool for listing CloudWatch namespaces
@@ -537,13 +531,14 @@ func listCloudWatchMetrics(ctx context.Context, args ListCloudWatchMetricsParams
 		return nil, fmt.Errorf("CloudWatch metrics returned status %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
-	body := io.LimitReader(resp.Body, 1024*1024) // 1MB limit
+	bytesLimit := 1024 * 1024 // 1MB limit
+	body := io.LimitReader(resp.Body, int64(bytesLimit))
 	bodyBytes, err := io.ReadAll(body)
 	if err != nil {
 		return nil, fmt.Errorf("reading response body: %w", err)
 	}
 
-	return parseCloudWatchMetricsResponse(bodyBytes)
+	return parseCloudWatchMetricsResponse(bodyBytes, bytesLimit)
 }
 
 // ListCloudWatchMetrics is a tool for listing CloudWatch metrics
@@ -600,13 +595,14 @@ func listCloudWatchDimensions(ctx context.Context, args ListCloudWatchDimensions
 		return nil, fmt.Errorf("CloudWatch dimensions returned status %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
-	body := io.LimitReader(resp.Body, 1024*1024) // 1MB limit
+	bytesLimit := 1024 * 1024 // 1MB Limit
+	body := io.LimitReader(resp.Body, int64(bytesLimit))
 	bodyBytes, err := io.ReadAll(body)
 	if err != nil {
 		return nil, fmt.Errorf("reading response body: %w", err)
 	}
 
-	return parseCloudWatchResourceResponse(bodyBytes)
+	return parseCloudWatchResourceResponse(bodyBytes, bytesLimit)
 }
 
 // ListCloudWatchDimensions is a tool for listing CloudWatch dimension keys
