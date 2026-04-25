@@ -109,17 +109,11 @@ The dashboard tools now include several strategies to manage context window usag
 
 - **Search logs:** High-level log search across ClickHouse (OTel format) and Loki datasources.
 
-### Elasticsearch Querying
+### Elasticsearch/OpenSearch Querying
 
-> **Note:** Elasticsearch tools are **disabled by default**. To enable them, add `elasticsearch` to your `--enabled-tools` flag.
+> **Note:** Elasticsearch/OpenSearch tools are **disabled by default**. To enable them, add `elasticsearch` to your `--enabled-tools` flag.
 
-- **Query Elasticsearch:** Execute search queries against Elasticsearch datasources using either Lucene query syntax or Elasticsearch Query DSL. Supports filtering by time range and retrieving logs, metrics, or any indexed data. Returns documents with their index, ID, source fields, and optional relevance score.
-
-### OpenSearch Querying
-
-> **Note:** OpenSearch tools are **disabled by default**. To enable them, add `opensearch` to your `--enabled-tools` flag.
-
-- **Query OpenSearch:** Execute search queries against OpenSearch datasources using either Lucene query syntax or OpenSearch Query DSL. Supports filtering by time range and retrieving logs, metrics, or any indexed data. Returns documents with their index, ID, source fields, and optional relevance score.
+- **Query Elasticsearch/OpenSearch:** Execute search queries against Elasticsearch or OpenSearch datasources using either Lucene query syntax or Elasticsearch Query DSL. Supports filtering by time range and retrieving logs, metrics, or any indexed data. Returns documents with their index, ID, source fields, and optional relevance score.
 
 ### Incidents
 
@@ -294,8 +288,7 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `list_cloudwatch_dimensions`      | CloudWatch* | List dimensions for a metric                                        | `datasources:query`                     | `datasources:uid:*`                                 |
 | `query_cloudwatch`                | CloudWatch* | Execute CloudWatch metric queries                                   | `datasources:query`                     | `datasources:uid:*`                                 |
 | `search_logs`                     | SearchLogs* | Search logs across ClickHouse and Loki                              | `datasources:query`                     | `datasources:uid:*`                                 |
-| `query_elasticsearch`             | Elasticsearch* | Query Elasticsearch using Lucene syntax or Query DSL              | `datasources:query`                     | `datasources:uid:elasticsearch-uid`                 |
-| `query_opensearch`                | OpenSearch*  | Query OpenSearch using Lucene syntax or Query DSL                   | `datasources:query`                     | `datasources:uid:opensearch-uid`                    |
+| `query_elasticsearch`             | Elasticsearch/OpenSearch* | Query Elasticsearch or OpenSearch using Lucene syntax or Query DSL | `datasources:query`                     | `datasources:uid:datasource-uid`                    |
 | `alerting_manage_rules`           | Alerting    | Manage alert rules (list, get, versions, create, update, delete)    | `alert.rules:read` + `alert.rules:write` for mutations | `folders:*` or `folders:uid:alerts-folder` |
 | `alerting_manage_routing`         | Alerting    | Manage notification policies, contact points, and time intervals    | `alert.notifications:read`              | Global scope                                        |
 | `list_oncall_schedules`           | OnCall      | List schedules from Grafana OnCall                                  | `grafana-oncall-app.schedules:read`     | Plugin-specific scopes                              |
@@ -351,8 +344,7 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 - `--disable-prometheus`: Disable prometheus tools
 - `--disable-write`: Disable write tools (create/update operations)
 - `--disable-loki`: Disable loki tools
-- `--disable-elasticsearch`: Disable elasticsearch tools
-- `--disable-opensearch`: Disable opensearch tools
+- `--disable-elasticsearch`: Disable elasticsearch and opensearch tools
 - `--disable-alerting`: Disable alerting tools
 - `--disable-dashboard`: Disable dashboard tools
 - `--disable-oncall`: Disable oncall tools
