@@ -24,18 +24,85 @@ jobs:
       # Do this early so that it can start up in time for the tests to run.
       # We may need to add a wait here.
       - name: Start docker-compose services
-        uses: hoverkraft-tech/compose-action@b160464f2ea59d4c7be918e457514639ad7c7f9f
+        uses: hoverkraft-tech/compose-action@3c795f9eb1db588146398cd8e4ab0fe98e0f92db
         with:
           compose-file: "docker-compose.yaml"
 
       - name: Set up Go
-        uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
-          go-version: "1.24"
+          go-version: "1.26"
           cache: true
 
-      - name: Wait for Grafana server and Prometheus server to start and scrape
-        run: sleep 30
+      - name: Wait for Grafana API to be ready
+        run: |
+          set -euo pipefail
+          ready=false
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:3000/api/health >/dev/null 2>&1; then
+              echo "Grafana is up"
+              ready=true
+              break
+            fi
+            echo "Waiting for Grafana... attempt $i"
+            sleep 2
+          done
+          if [ "$ready" != "true" ]; then
+            echo "Timed out waiting for Grafana to become ready"
+            exit 1
+          fi
+
+      - name: Wait for datasources to be provisioned
+        run: |
+          set -euo pipefail
+          ready=false
+          for i in $(seq 1 60); do
+            count="$(curl -fsS -u admin:admin http://localhost:3000/api/datasources 2>/dev/null | jq 'length' 2>/dev/null || echo 0)"
+            echo "datasource count=$count"
+            if [ "${count}" -ge 10 ]; then
+              echo "Datasources provisioned"
+              ready=true
+              break
+            fi
+            sleep 2
+          done
+          if [ "$ready" != "true" ]; then
+            echo "Timed out waiting for datasources to be provisioned"
+            curl -fsS -u admin:admin http://localhost:3000/api/datasources || true
+            exit 1
+          fi
+
+      - name: Wait for Graphite metrics to be queryable
+        run: |
+          set -euo pipefail
+          # The graphite-seed container sends metrics and verifies they're
+          # queryable before exiting. Wait for it to finish, then do a short
+          # verification via Grafana's datasource proxy.
+          echo "Waiting for graphite-seed container to finish..."
+          exit_code=$(docker wait mcp-grafana-graphite-seed-1 2>/dev/null || echo "1")
+          if [ "$exit_code" != "0" ]; then
+            echo "graphite-seed failed (exit code $exit_code):"
+            docker logs mcp-grafana-graphite-seed-1 2>&1 || true
+            exit 1
+          fi
+          echo "graphite-seed completed successfully, verifying via Grafana proxy..."
+          ready=false
+          for i in $(seq 1 10); do
+            count="$(curl -fsS -u admin:admin \
+              'http://localhost:3000/api/datasources/proxy/uid/graphite/metrics/find?query=test.*' \
+              2>/dev/null | jq 'length' 2>/dev/null || echo 0)"
+            echo "Graphite test.* node count=$count"
+            if [ "${count}" -ge 1 ]; then
+              echo "Graphite metrics are seeded and queryable"
+              ready=true
+              break
+            fi
+            sleep 2
+          done
+          if [ "$ready" != "true" ]; then
+            echo "Timed out waiting for Graphite metrics to be queryable"
+            exit 1
+          fi
 
       - name: Run integration tests
         run: make test-integration
@@ -54,9 +121,9 @@ jobs:
           persist-credentials: false
 
       - name: Set up Go
-        uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
-          go-version: "1.24"
+          go-version: "1.26"
           cache: true
 
       - id: get-secrets

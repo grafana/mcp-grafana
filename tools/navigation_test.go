@@ -2,6 +2,8 @@ package tools
 
 import (
 	"context"
+	"errors"
+	"net/url"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -45,7 +47,7 @@ func TestGenerateDeeplink(t *testing.T) {
 		assert.Equal(t, "http://localhost:3000/d/dash-123?viewPanel=5", result)
 	})
 
-	t.Run("Explore deeplink", func(t *testing.T) {
+	t.Run("Explore deeplink basic", func(t *testing.T) {
 		params := GenerateDeeplinkParams{
 			ResourceType:  "explore",
 			DatasourceUID: stringPtr("prometheus-uid"),
@@ -57,7 +59,59 @@ func TestGenerateDeeplink(t *testing.T) {
 		assert.Contains(t, result, "prometheus-uid")
 	})
 
-	t.Run("With time range", func(t *testing.T) {
+	t.Run("Explore deeplink with time range inside left JSON", func(t *testing.T) {
+		params := GenerateDeeplinkParams{
+			ResourceType:  "explore",
+			DatasourceUID: stringPtr("prometheus-uid"),
+			TimeRange: &TimeRange{
+				From: "now-1h",
+				To:   "now",
+			},
+		}
+
+		result, err := generateDeeplink(ctx, params)
+		require.NoError(t, err)
+
+		u, err := url.Parse(result)
+		require.NoError(t, err)
+
+		leftRaw := u.Query().Get("left")
+		require.NotEmpty(t, leftRaw)
+
+		// Range must be inside `left`, not as top-level URL params.
+		assert.Contains(t, leftRaw, `"range"`)
+		assert.Contains(t, leftRaw, "now-1h")
+		assert.Contains(t, leftRaw, "now")
+		assert.Empty(t, u.Query().Get("from"), "from should not be a top-level URL param for explore")
+		assert.Empty(t, u.Query().Get("to"), "to should not be a top-level URL param for explore")
+
+		// There must be exactly one `left` param.
+		assert.Len(t, u.Query()["left"], 1)
+	})
+
+	t.Run("Explore deeplink with queries", func(t *testing.T) {
+		params := GenerateDeeplinkParams{
+			ResourceType:  "explore",
+			DatasourceUID: stringPtr("prometheus-uid"),
+			Queries: []map[string]interface{}{
+				{"refId": "A", "expr": "up"},
+			},
+			TimeRange: &TimeRange{From: "now-1h", To: "now"},
+		}
+
+		result, err := generateDeeplink(ctx, params)
+		require.NoError(t, err)
+
+		u, err := url.Parse(result)
+		require.NoError(t, err)
+
+		leftRaw := u.Query().Get("left")
+		assert.Contains(t, leftRaw, `"queries"`)
+		assert.Contains(t, leftRaw, `"expr"`)
+		assert.Contains(t, leftRaw, "up")
+	})
+
+	t.Run("With time range on dashboard", func(t *testing.T) {
 		params := GenerateDeeplinkParams{
 			ResourceType: "dashboard",
 			DashboardUID: stringPtr("abc123"),
@@ -197,4 +251,59 @@ func TestGenerateDeeplink(t *testing.T) {
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "datasourceUid is required")
 	})
+}
+
+// TestGenerateDeeplink_RejectsMalformedBaseURL_ClientWithEmptyPublicURL
+// exercises the fall-through path where a GrafanaClient is attached but its
+// PublicURL is empty (/api/frontend/settings returned an empty or malformed
+// appUrl). generateDeeplink then reads config.URL, which may itself be
+// malformed. Without this guard, the malformed URL flows into the returned
+// deeplink (e.g. "http://%gg/d/abc123") with no error signal. Post-fix:
+// ValidateGrafanaURL catches the malformed baseURL and returns a structured
+// error wrapping ErrInvalidGrafanaURL.
+func TestGenerateDeeplink_RejectsMalformedBaseURL_ClientWithEmptyPublicURL(t *testing.T) {
+	grafanaCfg := mcpgrafana.GrafanaConfig{
+		URL: "http://%gg",
+	}
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), grafanaCfg)
+
+	// Zero-value GrafanaClient: generateDeeplink only reads gc.PublicURL
+	// (empty), which is the code path we want to exercise. The test does
+	// not invoke any method on the client, so a zero value is equivalent to
+	// a real client whose fetchPublicURL call returned empty.
+	ctx = mcpgrafana.WithGrafanaClient(ctx, &mcpgrafana.GrafanaClient{})
+
+	params := GenerateDeeplinkParams{
+		ResourceType: "dashboard",
+		DashboardUID: stringPtr("abc123"),
+	}
+
+	_, err := generateDeeplink(ctx, params)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, mcpgrafana.ErrInvalidGrafanaURL),
+		"expected error to wrap ErrInvalidGrafanaURL, got: %v", err)
+	assert.Contains(t, err.Error(), "invalid",
+		"error message must include 'invalid' for operator/LLM readability; got %q", err.Error())
+}
+
+// TestGenerateDeeplink_RejectsMalformedBaseURL_NoClient covers the same bug
+// class but without any GrafanaClient attached to the context. Proves the
+// ValidateGrafanaURL guard fires on config.URL alone.
+func TestGenerateDeeplink_RejectsMalformedBaseURL_NoClient(t *testing.T) {
+	grafanaCfg := mcpgrafana.GrafanaConfig{
+		URL: "http://%gg",
+	}
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), grafanaCfg)
+
+	params := GenerateDeeplinkParams{
+		ResourceType: "dashboard",
+		DashboardUID: stringPtr("abc123"),
+	}
+
+	_, err := generateDeeplink(ctx, params)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, mcpgrafana.ErrInvalidGrafanaURL),
+		"expected error to wrap ErrInvalidGrafanaURL, got: %v", err)
+	assert.Contains(t, err.Error(), "invalid",
+		"error message must include 'invalid' for operator/LLM readability; got %q", err.Error())
 }

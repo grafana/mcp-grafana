@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
+	"strings"
 
 	"github.com/invopop/jsonschema"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -15,7 +16,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/propagation"
-	semconv "go.opentelemetry.io/otel/semconv/v1.39.0"
+	semconv "go.opentelemetry.io/otel/semconv/v1.40.0"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -69,6 +70,92 @@ func MustTool[T any, R any](
 // ToolHandlerFunc is the type of a handler function for a tool.
 // T is the request parameter type (must be a struct with jsonschema tags), and R is the response type which can be a string, struct, or *mcp.CallToolResult.
 type ToolHandlerFunc[T any, R any] = func(ctx context.Context, request T) (R, error)
+
+// unmarshalWithIntConversion unmarshals JSON data into a target struct,
+// automatically converting string values to integer types for integer-typed fields.
+// This allows MCP tool parameters to accept both string and integer values for integer fields.
+//
+// Fast path: tries standard json.Unmarshal first (the common case — types already match).
+// Only on failure does it strip quotes from string-wrapped integers (e.g., "42" → 42)
+// and retry, delegating all validation (overflow, non-numeric strings, etc.) to json.Unmarshal.
+func unmarshalWithIntConversion(data []byte, target any) error {
+	// Fast path: standard unmarshal covers the common case with no reflection overhead.
+	if err := json.Unmarshal(data, target); err == nil {
+		return nil
+	}
+
+	targetType := reflect.TypeOf(target)
+	if targetType.Kind() != reflect.Pointer || targetType.Elem().Kind() != reflect.Struct {
+		return json.Unmarshal(data, target)
+	}
+
+	intFields := collectIntFieldNames(targetType.Elem())
+	if len(intFields) == 0 {
+		return json.Unmarshal(data, target)
+	}
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	changed := false
+	for name := range intFields {
+		v, ok := raw[name]
+		if ok && len(v) >= 2 && v[0] == '"' && v[len(v)-1] == '"' {
+			raw[name] = v[1 : len(v)-1] // strip quotes: "42" → 42
+			changed = true
+		}
+	}
+	if !changed {
+		return json.Unmarshal(data, target)
+	}
+
+	fixed, err := json.Marshal(raw)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(fixed, target)
+}
+
+// collectIntFieldNames uses reflect.VisibleFields to walk a struct type and returns
+// the set of JSON field names that map to integer (or pointer-to-integer) types.
+// reflect.VisibleFields follows the same promotion rules as encoding/json, correctly
+// handling embedded structs, pointer embedding, and shadowed fields.
+func collectIntFieldNames(structType reflect.Type) map[string]bool {
+	fields := make(map[string]bool)
+	for _, f := range reflect.VisibleFields(structType) {
+		if !f.IsExported() {
+			continue
+		}
+		ft := f.Type
+		if ft.Kind() == reflect.Pointer {
+			ft = ft.Elem()
+		}
+		if !isIntegerKind(ft.Kind()) {
+			continue
+		}
+		name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
+		if name == "-" {
+			continue
+		}
+		if name == "" {
+			name = f.Name // encoding/json falls back to the Go field name when no tag name is given
+		}
+		fields[name] = true
+	}
+	return fields
+}
+
+// isIntegerKind returns true if the given Kind represents an integer type.
+func isIntegerKind(kind reflect.Kind) bool {
+	switch kind {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return true
+	}
+	return false
+}
 
 // ConvertTool converts a toolHandler function to an MCP Tool and ToolHandlerFunc.
 // The toolHandler must accept a context.Context and a struct with jsonschema tags for parameter documentation.
@@ -135,7 +222,7 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 		}
 
 		unmarshaledArgs := reflect.New(argType).Interface()
-		if err := json.Unmarshal(argBytes, unmarshaledArgs); err != nil {
+		if err := unmarshalWithIntConversion(argBytes, unmarshaledArgs); err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, "failed to unmarshal arguments")
 			return nil, fmt.Errorf("unmarshal args: %s", err)
@@ -326,36 +413,34 @@ func createJSONSchemaFromHandler(handler any) *jsonschema.Schema {
 	return inputSchema
 }
 
-var (
-	jsonSchemaReflector = jsonschema.Reflector{
-		BaseSchemaID:               "",
-		Anonymous:                  true,
-		AssignAnchor:               false,
-		AllowAdditionalProperties:  true,
-		RequiredFromJSONSchemaTags: true,
-		DoNotReference:             true,
-		ExpandedStruct:             true,
-		FieldNameTag:               "",
-		IgnoredTypes:               nil,
-		Lookup:                     nil,
-		// Mapper handles Go interface{}/any types which the jsonschema library
-		// would otherwise emit as bare boolean `true` schemas. Some LLM providers
-		// (e.g. Fireworks AI) reject bare boolean schemas. We map them to an empty
-		// object schema {} instead. The non-nil Extras field prevents the library's
-		// MarshalJSON from collapsing the empty schema back to `true`.
-		// See: https://github.com/grafana/mcp-grafana/issues/594
-		Mapper: func(t reflect.Type) *jsonschema.Schema {
-			if t.Kind() == reflect.Interface {
-				return &jsonschema.Schema{Extras: map[string]any{}}
-			}
-			return nil
-		},
-		Namer:            nil,
-		KeyNamer:         nil,
-		AdditionalFields: nil,
-		CommentMap:       nil,
-	}
-)
+var jsonSchemaReflector = jsonschema.Reflector{
+	BaseSchemaID:               "",
+	Anonymous:                  true,
+	AssignAnchor:               false,
+	AllowAdditionalProperties:  true,
+	RequiredFromJSONSchemaTags: true,
+	DoNotReference:             true,
+	ExpandedStruct:             true,
+	FieldNameTag:               "",
+	IgnoredTypes:               nil,
+	Lookup:                     nil,
+	// Mapper handles Go interface{}/any types which the jsonschema library
+	// would otherwise emit as bare boolean `true` schemas. Some LLM providers
+	// (e.g. Fireworks AI) reject bare boolean schemas. We map them to an empty
+	// object schema {} instead. The non-nil Extras field prevents the library's
+	// MarshalJSON from collapsing the empty schema back to `true`.
+	// See: https://github.com/grafana/mcp-grafana/issues/594
+	Mapper: func(t reflect.Type) *jsonschema.Schema {
+		if t.Kind() == reflect.Interface {
+			return &jsonschema.Schema{Extras: map[string]any{}}
+		}
+		return nil
+	},
+	Namer:            nil,
+	KeyNamer:         nil,
+	AdditionalFields: nil,
+	CommentMap:       nil,
+}
 
 // JSON Schema keywords whose values are single sub-schemas.
 var schemaValuedKeys = []string{

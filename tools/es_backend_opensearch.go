@@ -32,11 +32,9 @@ func newOpenSearchBackend(ctx context.Context, ds *models.DataSource) (*openSear
 	if err != nil {
 		return nil, fmt.Errorf("failed to create transport: %w", err)
 	}
-	transport = NewAuthRoundTripper(transport, cfg.AccessToken, cfg.IDToken, cfg.APIKey, cfg.BasicAuth)
-	transport = mcpgrafana.NewOrgIDRoundTripper(transport, cfg.OrgID)
 
 	client := &http.Client{
-		Transport: mcpgrafana.NewUserAgentTransport(transport),
+		Transport: transport,
 		Timeout:   30 * time.Second,
 	}
 
@@ -194,6 +192,10 @@ func framesToDocuments(frames []dsQueryFrame) ([]ElasticsearchDocument, error) {
 				}
 			case "_type":
 				// Skip metadata field
+			case "_score":
+				if f, ok := val.(float64); ok {
+					doc.Score = &f
+				}
 			case "@timestamp":
 				// The plugin returns @timestamp as an array like ["2024-01-01T00:00:00Z"]
 				if arr, ok := val.([]interface{}); ok && len(arr) > 0 {
@@ -206,6 +208,10 @@ func framesToDocuments(frames []dsQueryFrame) ([]ElasticsearchDocument, error) {
 					doc.Source[key] = ts
 				}
 			default:
+				// Skip unknown _-prefixed metadata fields
+				if strings.HasPrefix(key, "_") {
+					continue
+				}
 				doc.Source[key] = val
 			}
 		}

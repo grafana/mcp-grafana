@@ -1,3 +1,16 @@
+---
+title: Windsurf
+menuTitle: Windsurf
+description: Set up the Grafana MCP server for Windsurf.
+keywords:
+  - Windsurf
+  - Codeium
+  - MCP
+  - client
+weight: 7
+aliases: []
+---
+
 # Windsurf
 
 This guide helps you set up the `mcp-grafana` server for Windsurf.
@@ -19,9 +32,9 @@ Configuration file location:
 
 ### Add using the UI
 
-1. Open Windsurf Settings (Cmd+Shift+P -> "Open Windsurf Settings")
+1. Open Windsurf Settings (Cmd+Shift+P -> **Open Windsurf Settings**)
 2. Scroll to Cascade section
-3. Click "Add Server" or "View raw config"
+3. Click **Add Server** or **View raw config**
 
 ### Manual configuration
 
@@ -57,7 +70,9 @@ Create or edit `~/.codeium/windsurf/mcp_config.json`:
         "GRAFANA_URL",
         "-e",
         "GRAFANA_SERVICE_ACCOUNT_TOKEN",
-        "mcp/grafana"
+        "grafana/mcp-grafana",
+        "-t",
+        "stdio"
       ],
       "env": {
         "GRAFANA_URL": "http://host.docker.internal:3000",
@@ -145,3 +160,8 @@ Then configure with `serverUrl`:
   }
 }
 ```
+
+## Next steps
+
+- [Set up](../../set-up/) for other install options.
+- [Configure authentication](../../configure/authentication/) for Grafana credentials.

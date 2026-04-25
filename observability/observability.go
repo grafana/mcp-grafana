@@ -25,8 +25,8 @@ import (
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	sdkresource "go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	semconv "go.opentelemetry.io/otel/semconv/v1.39.0"
-	"go.opentelemetry.io/otel/semconv/v1.39.0/mcpconv"
+	semconv "go.opentelemetry.io/otel/semconv/v1.40.0"
+	"go.opentelemetry.io/otel/semconv/v1.40.0/mcpconv"
 )
 
 // Config holds configuration for observability features.

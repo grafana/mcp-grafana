@@ -18,7 +18,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Go
-        uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
           go-version-file: go.mod
 
@@ -27,7 +27,7 @@ jobs:
 
       - name: Download baseline
         id: download-baseline
-        uses: dawidd6/action-download-artifact@9dde25e7413c6123b6062d4c9fc954d6ff005cfc
+        uses: dawidd6/action-download-artifact@09d0677378d50fef230b7cd4c0dea6dfe8883938
         with:
           branch: main
           name: token-baseline

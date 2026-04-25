@@ -73,11 +73,9 @@ func newElasticsearchBackend(ctx context.Context, ds *models.DataSource) (*elast
 	if err != nil {
 		return nil, fmt.Errorf("failed to create custom transport: %w", err)
 	}
-	transport = NewAuthRoundTripper(transport, cfg.AccessToken, cfg.IDToken, cfg.APIKey, cfg.BasicAuth)
-	transport = mcpgrafana.NewOrgIDRoundTripper(transport, cfg.OrgID)
 
 	client := &http.Client{
-		Transport: mcpgrafana.NewUserAgentTransport(transport),
+		Transport: transport,
 	}
 
 	return &elasticsearchBackend{

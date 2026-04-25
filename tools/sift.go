@@ -28,6 +28,8 @@ const (
 // errorPatternLogExampleLimit controls how many log examples are fetched per error pattern.
 const errorPatternLogExampleLimit = 3
 
+const siftResponseLimitBytes = 1024 * 1024 * 10 //10MB
+
 type analysisStatus string
 
 type investigationRequest struct {
@@ -115,9 +117,6 @@ func newSiftClient(cfg mcpgrafana.GrafanaConfig) (*siftClient, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create custom transport: %w", err)
 	}
-	transport = NewAuthRoundTripper(transport, cfg.AccessToken, cfg.IDToken, cfg.APIKey, cfg.BasicAuth)
-	transport = mcpgrafana.NewOrgIDRoundTripper(transport, cfg.OrgID)
-	transport = mcpgrafana.NewUserAgentTransport(transport)
 
 	client := &http.Client{
 		Transport: transport,
@@ -455,7 +454,7 @@ func (c *siftClient) makeRequest(ctx context.Context, method, path string, body 
 	}
 
 	// Read the response body with a limit to prevent memory issues
-	reader := io.LimitReader(response.Body, 1024*1024*48) // 48MB limit
+	reader := io.LimitReader(response.Body, siftResponseLimitBytes)
 	buf, err := io.ReadAll(reader)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response body: %w", err)
@@ -482,8 +481,8 @@ func (c *siftClient) getSiftInvestigation(ctx context.Context, id uuid.UUID) (*I
 		Data   Investigation `json:"data"`
 	}{}
 
-	if err := json.Unmarshal(buf, &investigationResponse); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal response body: %w. body: %s", err, buf)
+	if err := unmarshalJSONWithLimitMsg(buf, &investigationResponse, siftResponseLimitBytes); err != nil {
+		return nil, err
 	}
 
 	return &investigationResponse.Data, nil
@@ -524,8 +523,8 @@ func (c *siftClient) createSiftInvestigation(ctx context.Context, investigation 
 		Data   Investigation `json:"data"`
 	}{}
 
-	if err := json.Unmarshal(buf, &investigationResponse); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal response body: %w. body: %s", err, buf)
+	if err := unmarshalJSONWithLimitMsg(buf, &investigationResponse, siftResponseLimitBytes); err != nil {
+		return nil, err
 	}
 
 	// Poll for investigation completion
@@ -571,8 +570,8 @@ func (c *siftClient) getSiftAnalyses(ctx context.Context, investigationID uuid.U
 		Data   []analysis `json:"data"`
 	}
 
-	if err := json.Unmarshal(buf, &response); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal response body: %w. body: %s", err, buf)
+	if err := unmarshalJSONWithLimitMsg(buf, &response, siftResponseLimitBytes); err != nil {
+		return nil, err
 	}
 
 	return response.Data, nil
@@ -615,8 +614,8 @@ func (c *siftClient) listSiftInvestigations(ctx context.Context, limit int) ([]I
 		Data   []Investigation `json:"data"`
 	}
 
-	if err := json.Unmarshal(buf, &response); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal response body: %w. body: %s", err, buf)
+	if err := unmarshalJSONWithLimitMsg(buf, &response, siftResponseLimitBytes); err != nil {
+		return nil, err
 	}
 
 	return response.Data, nil

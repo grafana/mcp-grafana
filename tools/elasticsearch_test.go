@@ -39,8 +39,8 @@ func TestElasticsearchTools(t *testing.T) {
 	t.Run("query elasticsearch with time range", func(t *testing.T) {
 		ctx := newTestContext()
 		now := time.Now().UTC()
-		startTime := now.Add(-1 * time.Hour).Format(time.RFC3339)
-		endTime := now.Add(1 * time.Hour).Format(time.RFC3339)
+		startTime := now.Add(-24 * time.Hour).Format(time.RFC3339)
+		endTime := now.Add(24 * time.Hour).Format(time.RFC3339)
 
 		result, err := queryElasticsearch(ctx, QueryElasticsearchParams{
 			DatasourceUID: "elasticsearch",

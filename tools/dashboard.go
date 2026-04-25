@@ -35,17 +35,17 @@ func getDashboardByUID(ctx context.Context, args GetDashboardByUIDParams) (*mode
 // PatchOperation represents a single patch operation
 type PatchOperation struct {
 	Op    string      `json:"op" jsonschema:"required,description=Operation type: 'replace'\\, 'add'\\, 'remove'"`
-	Path  string      `json:"path" jsonschema:"required,description=JSONPath to the property to modify. Supports: '$.title'\\, '$.panels[0].title'\\, '$.panels[0].targets[0].expr'\\, '$.panels[1].targets[0].datasource'\\, etc. For appending to arrays\\, use '/- ' syntax: '$.panels/- ' (append to panels array) or '$.panels[2]/- ' (append to nested array at index 2)."`
-	Value interface{} `json:"value,omitempty" jsonschema:"description=New value for replace/add operations"`
+	Path  string      `json:"path" jsonschema:"required,description=JSONPath to the property to modify. Supports: '$.title'\\, '$.panels[0].title'\\, '$.panels[0].targets[0].expr'\\, '$.panels[1].targets[0].datasource'\\, '$.templating.list/-' (append a variable)\\, '$.annotations.list/-' (append a saved dashboard annotation query/definition). For appending to arrays\\, use '/- ' syntax: '$.panels/- ' (append to panels array) or '$.panels[2]/- ' (append to nested array at index 2)."`
+	Value interface{} `json:"value,omitempty" jsonschema:"description=New value for replace/add operations. When adding a saved dashboard annotation query/definition\\, append an object to '$.annotations.list' rather than calling create_annotation."`
 }
 
 type UpdateDashboardParams struct {
 	// For full dashboard updates (creates new dashboards or complete rewrites)
-	Dashboard map[string]interface{} `json:"dashboard,omitempty" jsonschema:"description=The full dashboard JSON. Use for creating new dashboards or complete updates. Large dashboards consume significant context - consider using patches for small changes."`
+	Dashboard map[string]interface{} `json:"dashboard,omitempty" jsonschema:"description=The full dashboard JSON. Use for creating new dashboards or complete updates. Saved dashboard annotation queries/definitions live in 'annotations.list' inside this JSON; they are different from annotation events created with create_annotation. Large dashboards consume significant context - consider using patches for small changes."`
 
 	// For targeted updates using patch operations (preferred for existing dashboards)
 	UID        string           `json:"uid,omitempty" jsonschema:"description=UID of existing dashboard to update. Must be used together with 'operations'. Providing 'uid' without 'operations' will fail."`
-	Operations []PatchOperation `json:"operations,omitempty" jsonschema:"description=Array of patch operations for targeted updates. More efficient than full dashboard JSON for small changes."`
+	Operations []PatchOperation `json:"operations,omitempty" jsonschema:"description=Array of patch operations for targeted updates. More efficient than full dashboard JSON for small changes. Common paths: '$.templating.list/-' to add a variable\\, '$.annotations.list/-' to add a saved dashboard annotation query/definition\\, '$.panels[0].targets[0].expr' to replace a panel query."`
 
 	// Common parameters
 	FolderUID string `json:"folderUid,omitempty" jsonschema:"description=The UID of the dashboard's folder"`
@@ -94,6 +94,10 @@ func updateDashboardWithPatches(ctx context.Context, args UpdateDashboardParams)
 		return nil, fmt.Errorf("dashboard is not a JSON object")
 	}
 
+	// Preserve the numeric ID before patching so it survives any
+	// accidental mutation by patch operations.
+	origID := dashboardMap["id"]
+
 	// Apply each patch operation
 	for i, op := range args.Operations {
 		switch op.Op {
@@ -108,6 +112,16 @@ func updateDashboardWithPatches(ctx context.Context, args UpdateDashboardParams)
 		default:
 			return nil, fmt.Errorf("operation %d: unsupported operation '%s'", i, op.Op)
 		}
+	}
+
+	// Restore identity fields so the Grafana API updates the existing
+	// dashboard in place instead of creating a clone with a new UID.
+	// The UID is always taken from the request args (the value used to
+	// fetch the dashboard) to guarantee consistency even when the
+	// dashboard body returned by the API did not include it.
+	dashboardMap["uid"] = args.UID
+	if origID != nil {
+		dashboardMap["id"] = origID
 	}
 
 	// Use the folder UID from the existing dashboard if not provided
@@ -251,7 +265,7 @@ var GetDashboardByUID = mcpgrafana.MustTool(
 
 var UpdateDashboard = mcpgrafana.MustTool(
 	"update_dashboard",
-	"Create or update a dashboard. Two modes: (1) Full JSON — provide 'dashboard' for new dashboards or complete replacements. (2) Patch — provide 'uid' + 'operations' to make targeted changes to an existing dashboard. One of these two modes is required; 'folderUid'\\, 'message'\\, and 'overwrite' are supplementary and do nothing on their own. Patch operations support JSONPaths like '$.panels[0].targets[0].expr'\\, '$.panels[1].title'\\, '$.panels[2].targets[0].datasource'. Append to arrays with '/- ' syntax: '$.panels/- '. Remove by index: {\"op\": \"remove\"\\, \"path\": \"$.panels[2]\"}. Multiple removes on the same array are automatically reordered to avoid index-shifting issues.",
+	"Create or update a dashboard. Two modes: (1) Full JSON — provide 'dashboard' for new dashboards or complete replacements. (2) Patch — provide 'uid' + 'operations' to make targeted changes to an existing dashboard. One of these two modes is required; 'folderUid'\\, 'message'\\, and 'overwrite' are supplementary and do nothing on their own. Dashboard authoring guidance: if a saved query must support one\\, many\\, or All values from a multi-select variable inside a regex expression or matcher\\, save '${var:regex}' rather than plain '$var'. Saved dashboard annotation queries/definitions must be written into dashboard JSON under 'annotations.list'; the create_annotation tool creates annotation events and does not add a reusable dashboard annotation query/definition to the saved dashboard. For stat panels over the current dashboard range\\, make the query return the range-level result the stat should display; panel-side reduction only reduces returned series and does not compute peak-over-range or ratio-of-peaks semantics for you. Patch operations support JSONPaths like '$.panels[0].targets[0].expr'\\, '$.panels[1].title'\\, '$.panels[2].targets[0].datasource'\\, '$.templating.list/-'\\, and '$.annotations.list/-'. Append to arrays with '/- ' syntax: '$.panels/- '. Remove by index: {\"op\": \"remove\"\\, \"path\": \"$.panels[2]\"}. Multiple removes on the same array are automatically reordered to avoid index-shifting issues. Note: only numeric array indices are supported in patch paths; filter expressions like [?(@.id==2)] and wildcards like [*] are not supported.",
 	updateDashboard,
 	mcp.WithTitleAnnotation("Create or update dashboard"),
 	mcp.WithDestructiveHintAnnotation(true),
@@ -327,7 +341,7 @@ var GetDashboardPanelQueries = mcpgrafana.MustTool(
 // GetDashboardPropertyParams defines parameters for getting specific dashboard properties
 type GetDashboardPropertyParams struct {
 	UID      string `json:"uid" jsonschema:"required,description=The UID of the dashboard"`
-	JSONPath string `json:"jsonPath" jsonschema:"required,description=JSONPath expression to extract specific data (e.g.\\, '$.panels[0].title' for first panel title\\, '$.panels[*].title' for all panel titles\\, '$.templating.list' for variables)"`
+	JSONPath string `json:"jsonPath" jsonschema:"required,description=JSONPath expression to extract specific data (e.g.\\, '$.panels[0].title' for first panel title\\, '$.panels[*].title' for all panel titles\\, '$.templating.list' for variables\\, '$.annotations.list' for saved dashboard annotation queries/definitions)"`
 }
 
 // getDashboardProperty retrieves specific parts of a dashboard using JSONPath expressions.
@@ -366,7 +380,7 @@ func getDashboardProperty(ctx context.Context, args GetDashboardPropertyParams) 
 
 var GetDashboardProperty = mcpgrafana.MustTool(
 	"get_dashboard_property",
-	"Get specific parts of a dashboard using JSONPath expressions to minimize context window usage. Common paths: '$.title' (title)\\, '$.panels[*].title' (all panel titles)\\, '$.panels[0]' (first panel)\\, '$.templating.list' (variables)\\, '$.tags' (tags)\\, '$.panels[*].targets[*].expr' (all queries). Use this instead of get_dashboard_by_uid when you only need specific dashboard properties.",
+	"Get specific parts of a dashboard using JSONPath expressions to minimize context window usage. Common paths: '$.title' (title)\\, '$.panels[*].title' (all panel titles)\\, '$.panels[0]' (first panel)\\, '$.templating.list' (variables)\\, '$.annotations.list' (saved dashboard annotation queries/definitions)\\, '$.tags' (tags)\\, '$.panels[*].targets[*].expr' (all queries). Use this instead of get_dashboard_by_uid when you only need specific dashboard properties.",
 	getDashboardProperty,
 	mcp.WithTitleAnnotation("Get dashboard property"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -475,6 +489,14 @@ func applyJSONPath(data map[string]interface{}, path string, value interface{}, 
 	// Remove the leading "$." if present
 	if len(path) > 2 && path[:2] == "$." {
 		path = path[2:]
+	}
+
+	// Detect unsupported JSONPath syntax and return actionable errors
+	if strings.Contains(path, "?(@") || strings.Contains(path, "?(") {
+		return fmt.Errorf("JSONPath filter expressions (e.g., [?(@.id==2)]) are not supported in patch operations. Use numeric array indices instead (e.g., $.panels[1]). Use get_dashboard_summary to find panel array indices")
+	}
+	if strings.Contains(path, "[*]") {
+		return fmt.Errorf("JSONPath wildcard expressions (e.g., [*]) are not supported in patch operations. Use numeric array indices instead (e.g., $.panels[0])")
 	}
 
 	// Split the path into segments

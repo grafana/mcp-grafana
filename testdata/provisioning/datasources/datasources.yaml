@@ -85,6 +85,33 @@ datasources:
       flavor: opensearch
       version: 2.19.1
       pplEnabled: false
+  - name: InfluxDB Flux
+    uid: influxdb-flux
+    type: influxdb
+    access: proxy
+    url: http://influxdb:8086
+    jsonData:
+      version: Flux
+      organization: mcptests
+      defaultBucket: metrics
+      tlsSkipVerify: true
+    secureJsonData:
+      token: mcptests-admin-token
+    isDefault: false
+  - name: InfluxDB InfluxQL
+    uid: influxdb-influxql
+    type: influxdb
+    access: proxy
+    url: http://influxdb:8086
+    database: metrics
+    jsonData:
+      version: InfluxQL
+      httpMode: GET
+      dbName: metrics
+      httpHeaderName1: Authorization
+    secureJsonData:
+      httpHeaderValue1: Token mcptests-admin-token
+    isDefault: false
   - name: CloudWatch
     id: 8
     uid: cloudwatch
@@ -97,4 +124,11 @@ datasources:
     secureJsonData:
       accessKey: test
       secretKey: test
+    isDefault: false
+  - name: Graphite
+    id: 9
+    uid: graphite
+    type: graphite
+    access: proxy
+    url: http://graphite:80
     isDefault: false
