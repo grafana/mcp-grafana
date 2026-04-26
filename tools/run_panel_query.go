@@ -226,7 +226,7 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 	case "influxdb":
 		results, err = executeInfluxDBQuery(ctx, datasourceUID, panelData, query, params.Start, params.End)
 	default:
-		return nil, fmt.Errorf("datasource type '%s' is not supported by run_panel_query; use the native query tool (e.g. query_prometheus\\, query_loki_logs\\, query_clickhouse\\, query_cloudwatch\\, query_influxdb) directly", datasourceType)
+		results, err = executeGenericPanelQuery(ctx, datasourceType, datasourceUID, panelData, params.Start, params.End, vars)
 	}
 
 	if err != nil {
@@ -248,6 +248,42 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 		Results:        results,
 		Hints:          hints,
 	}, nil
+}
+
+func executeGenericPanelQuery(ctx context.Context, datasourceType, datasourceUID string, panelData *panelInfo, start, end string, variables map[string]string) (interface{}, error) {
+	if panelData.RawTarget == nil {
+		return nil, fmt.Errorf("panel target not available")
+	}
+
+	// Parse time range
+	startTime, err := parseTime(start)
+	if err != nil {
+		return nil, fmt.Errorf("parsing start time: %w", err)
+	}
+	endTime, err := parseTime(end)
+	if err != nil {
+		return nil, fmt.Errorf("parsing end time: %w", err)
+	}
+
+	// Deep copy and substitute variables in target fields
+	target := substituteTemplateVariablesInMap(panelData.RawTarget, variables)
+
+	// Ensure datasource is set correctly
+	target["datasource"] = map[string]interface{}{"uid": datasourceUID, "type": datasourceType}
+
+	// Ensure refId is set
+	if safeString(target, "refId") == "" {
+		target["refId"] = "A"
+	}
+
+	// Build /api/ds/query payload
+	payload := map[string]interface{}{
+		"queries": []map[string]interface{}{target},
+		"from":    fmt.Sprintf("%d", startTime.UnixMilli()),
+		"to":      fmt.Sprintf("%d", endTime.UnixMilli()),
+	}
+
+	return executeGrafanaDSQuery(ctx, payload)
 }
 
 // substituteTemplateVariables replaces template variables in a query string
@@ -807,7 +843,7 @@ func truncateString(s string, maxLen int) string {
 // RunPanelQuery is the tool definition for running panel queries
 var RunPanelQuery = mcpgrafana.MustTool(
 	"run_panel_query",
-	"Executes one or more dashboard panel queries with optional time range and variable overrides. Accepts an array of panel IDs to query in a single call. Fetches the dashboard\\, extracts queries from the specified panels\\, substitutes template variables and Grafana macros ($__range\\, $__rate_interval\\, $__interval)\\, and routes to the appropriate datasource (Prometheus\\, Loki\\, ClickHouse\\, CloudWatch\\, or InfluxDB). Returns results keyed by panel ID - partial failures are allowed (some panels can succeed while others fail). Use get_dashboard_summary first to find panel IDs. If a panel uses a template variable datasource you cannot access\\, provide datasourceUid and datasourceType to override.",
+	"Executes one or more dashboard panel queries with optional time range and variable overrides. Accepts an array of panel IDs to query in a single call. Fetches the dashboard\\, extracts queries from the specified panels\\, substitutes template variables and Grafana macros ($__range\\, $__rate_interval\\, $__interval)\\, and routes to the appropriate datasource (e.g. Prometheus\\, Loki\\, ClickHouse\\, CloudWatch\\, InfluxDB). Returns results keyed by panel ID - partial failures are allowed (some panels can succeed while others fail). Use get_dashboard_summary first to find panel IDs. If a panel uses a template variable datasource you cannot access\\, provide datasourceUid and datasourceType to override.",
 	runPanelQuery,
 	mcp.WithTitleAnnotation("Run panel query"),
 	mcp.WithIdempotentHintAnnotation(true),

@@ -9,6 +9,7 @@ wheels/
 .vscode/
 .env
 .cursor/
+.idea/
 
 # Virtual environments
 .venv
