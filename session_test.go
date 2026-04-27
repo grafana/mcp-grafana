@@ -94,7 +94,7 @@ func TestDiscoverMCPDatasources(t *testing.T) {
 
 	t.Run("returns error when grafana client not in context", func(t *testing.T) {
 		emptyCtx := context.Background()
-		discovered, err := discoverMCPDatasources(emptyCtx)
+		discovered, err := discoverMCPDatasources(emptyCtx, slog.Default())
 		assert.Error(t, err)
 		assert.Nil(t, discovered)
 		assert.Contains(t, err.Error(), "grafana client not found in context")
