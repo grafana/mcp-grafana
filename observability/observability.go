@@ -7,6 +7,7 @@ package observability
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"os"
 	"sync"
@@ -46,6 +47,32 @@ type Config struct {
 
 	// ServerVersion is the service version for OTel resource identification.
 	ServerVersion string
+
+	// SlowRequestThreshold, if positive, enables slow-request logging: any
+	// MCP request whose duration exceeds this threshold is emitted via slog
+	// at SlowRequestLogLevel. A zero or negative value disables slow-request
+	// logging.
+	SlowRequestThreshold time.Duration
+
+	// SlowRequestLogLevel is the slog.Level at which slow-request events
+	// are emitted. Accepts slog.LevelInfo or slog.LevelWarn.
+	//
+	// IMPORTANT: This field's zero value is slog.LevelInfo (not WARN),
+	// because slog.LevelInfo == 0. The "warn default" advertised on the
+	// CLI flag is applied by flag parsing in main.go — anyone constructing
+	// observability.Config{} programmatically without going through CLI
+	// parsing (tests, future library consumers) will get INFO unless they
+	// set this field explicitly. Setup() does NOT apply a WARN default,
+	// because doing so would prevent callers from ever selecting INFO
+	// (zero-value is the only way to say "INFO" for an int-backed level).
+	// Set this field explicitly in every non-CLI construction.
+	SlowRequestLogLevel slog.Level
+
+	// Logger is the *slog.Logger used for slow-request events. If nil,
+	// slog.Default() is used. Primarily exists to allow tests to inject
+	// a scoped, buffer-backed logger without mutating the process-global
+	// default (which is race-prone when hooks run from goroutines).
+	Logger *slog.Logger
 }
 
 // sessionMeta holds per-session metadata for enriching metrics.
@@ -74,6 +101,26 @@ type Observability struct {
 
 	// Per-session metadata (protocol version, start time)
 	sessions sync.Map // map[string]*sessionMeta keyed by session ID
+
+	// Slow-request logging configuration. When slowRequestThreshold > 0,
+	// the hooks emit a slog event at slowRequestLogLevel whenever a request
+	// duration exceeds the threshold. logger is always non-nil after Setup
+	// (falls back to a dedicated handler at slowRequestLogLevel if
+	// Config.Logger was nil, so slow-request events are not filtered by the
+	// process-global handler's level).
+	slowRequestThreshold time.Duration
+	slowRequestLogLevel  slog.Level
+	logger               *slog.Logger
+}
+
+// newSlowRequestLogger returns a *slog.Logger whose handler emits to stderr
+// at exactly the given level. It is used by Setup when Config.Logger is nil
+// so slow-request events are not silently dropped by the process-global
+// handler's level filter (installed by main.go's slog.SetDefault).
+func newSlowRequestLogger(level slog.Level) *slog.Logger {
+	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+		Level: level,
+	}))
 }
 
 // Setup initializes the observability providers based on the configuration.
@@ -84,8 +131,15 @@ type Observability struct {
 // Tracing configuration is handled via standard OTEL_* environment variables
 // (e.g., OTEL_EXPORTER_OTLP_ENDPOINT, OTEL_TRACES_SAMPLER).
 func Setup(cfg Config) (*Observability, error) {
+	logger := cfg.Logger
+	if logger == nil {
+		logger = newSlowRequestLogger(cfg.SlowRequestLogLevel)
+	}
 	obs := &Observability{
-		networkTransport: cfg.NetworkTransport,
+		networkTransport:     cfg.NetworkTransport,
+		slowRequestThreshold: cfg.SlowRequestThreshold,
+		slowRequestLogLevel:  cfg.SlowRequestLogLevel,
+		logger:               logger,
 	}
 
 	// Build OTel resource with service identity.
@@ -231,6 +285,60 @@ func (o *Observability) buildOperationAttrs(ctx context.Context, method mcp.MCPM
 	return attrs
 }
 
+// toolNameFromMessage extracts the tool name from an MCP hook's message
+// argument when the method is tools/call and the message is a non-nil
+// *mcp.CallToolRequest. Returns the empty string for any other method,
+// a nil message, or a wrong-type message. Centralises the type assertion
+// so the slow-log helper doesn't need to know about mcp-go request types.
+func toolNameFromMessage(method mcp.MCPMethod, message any) string {
+	if method != "tools/call" {
+		return ""
+	}
+	req, ok := message.(*mcp.CallToolRequest)
+	if !ok || req == nil {
+		return ""
+	}
+	return req.Params.Name
+}
+
+// maybeLogSlowRequest emits a slog event at o.slowRequestLogLevel when the
+// request duration exceeds o.slowRequestThreshold. It is a no-op when the
+// threshold is zero or negative, or when the duration is at or below the
+// threshold. The toolName argument should already be extracted via
+// toolNameFromMessage at the call site; pass "" when unknown or not
+// applicable.
+//
+// A nil ctx is defensively coerced to context.Background() because some MCP
+// transports (notably stdio) may invoke hooks without a request-scoped
+// context, and slog.LogAttrs on a nil ctx can panic.
+func (o *Observability) maybeLogSlowRequest(ctx context.Context, method mcp.MCPMethod, toolName string, duration time.Duration, err error) {
+	if o.slowRequestThreshold <= 0 || duration <= o.slowRequestThreshold {
+		return
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	attrs := []slog.Attr{
+		slog.String("mcp.method", string(method)),
+		slog.Duration("duration", duration),
+		slog.Duration("threshold", o.slowRequestThreshold),
+	}
+	if toolName != "" {
+		attrs = append(attrs, slog.String("tool", toolName))
+	}
+	if err != nil {
+		// error: best-effort human-readable context (content bound is
+		// controlled by upstream error-wrapping, not by slog).
+		// error.type: bounded cardinality via errorTypeName, same helper
+		// used by the metrics path in buildOperationAttrs.
+		attrs = append(attrs,
+			slog.Any("error", err),
+			slog.String("error.type", errorTypeName(err)),
+		)
+	}
+	o.logger.LogAttrs(ctx, o.slowRequestLogLevel, "Slow request", attrs...)
+}
+
 // errorTypeName returns a descriptive error type string from an error.
 func errorTypeName(err error) string {
 	type errorTyper interface {
@@ -242,23 +350,76 @@ func errorTypeName(err error) string {
 	return "_OTHER"
 }
 
-// MCPHooks returns server.Hooks that record MCP protocol metrics.
-// These hooks should be merged with any existing hooks using MergeHooks.
+// MCPHooks returns server.Hooks that record MCP protocol metrics and/or
+// emit slow-request logs, depending on configuration. These hooks should
+// be merged with any existing hooks using MergeHooks.
+//
+// The gate truth table (metrics × slow-log):
+//   - both disabled → empty hooks (zero-overhead path preserved)
+//   - metrics on, slow-log off → full hook set (session + request)
+//   - metrics off, slow-log on → request hooks only (no session hooks;
+//     operationDuration.Record is NOT called — it would nil-deref the
+//     uninitialised instrument)
+//   - both on → full hook set, both actions fire inside each hook body
+//
+// Every operationDuration.Record call is guarded by o.metricsEnabled()
+// inside the hook body so that enabling slow-log without metrics stays safe.
 func (o *Observability) MCPHooks() *server.Hooks {
-	if !o.metricsEnabled() {
-		// Metrics not enabled, return empty hooks
+	metricsOn := o.metricsEnabled()
+	slowLogOn := o.slowRequestThreshold > 0
+
+	if !metricsOn && !slowLogOn {
+		// Nothing to do, return empty hooks
 		return &server.Hooks{}
 	}
 
-	return &server.Hooks{
-		OnRegisterSession: []server.OnRegisterSessionHookFunc{
+	hooks := &server.Hooks{
+		OnBeforeAny: []server.BeforeAnyHookFunc{
+			func(ctx context.Context, id any, method mcp.MCPMethod, message any) {
+				o.requestStartTimes.Store(id, time.Now())
+			},
+		},
+		OnSuccess: []server.OnSuccessHookFunc{
+			func(ctx context.Context, id any, method mcp.MCPMethod, message any, result any) {
+				startTime, ok := o.requestStartTimes.LoadAndDelete(id)
+				if !ok {
+					return
+				}
+				duration := time.Since(startTime.(time.Time))
+				if o.metricsEnabled() {
+					attrs := o.buildOperationAttrs(ctx, method, message, nil)
+					o.operationDuration.Record(ctx, duration.Seconds(), mcpconv.MethodNameAttr(method), attrs...)
+				}
+				o.maybeLogSlowRequest(ctx, method, toolNameFromMessage(method, message), duration, nil)
+			},
+		},
+		OnError: []server.OnErrorHookFunc{
+			func(ctx context.Context, id any, method mcp.MCPMethod, message any, err error) {
+				startTime, ok := o.requestStartTimes.LoadAndDelete(id)
+				if !ok {
+					return
+				}
+				duration := time.Since(startTime.(time.Time))
+				if o.metricsEnabled() {
+					attrs := o.buildOperationAttrs(ctx, method, message, err)
+					o.operationDuration.Record(ctx, duration.Seconds(), mcpconv.MethodNameAttr(method), attrs...)
+				}
+				o.maybeLogSlowRequest(ctx, method, toolNameFromMessage(method, message), duration, err)
+			},
+		},
+	}
+
+	// Session-tracking hooks only populate when metrics are enabled —
+	// slow-log does not need session metadata.
+	if metricsOn {
+		hooks.OnRegisterSession = []server.OnRegisterSessionHookFunc{
 			func(ctx context.Context, session server.ClientSession) {
 				o.sessions.Store(session.SessionID(), &sessionMeta{
 					startTime: time.Now(),
 				})
 			},
-		},
-		OnUnregisterSession: []server.OnUnregisterSessionHookFunc{
+		}
+		hooks.OnUnregisterSession = []server.OnUnregisterSessionHookFunc{
 			func(ctx context.Context, session server.ClientSession) {
 				sid := session.SessionID()
 				if meta, ok := o.sessions.LoadAndDelete(sid); ok {
@@ -274,8 +435,8 @@ func (o *Observability) MCPHooks() *server.Hooks {
 					o.sessionDuration.Record(ctx, duration, attrs...)
 				}
 			},
-		},
-		OnAfterInitialize: []server.OnAfterInitializeFunc{
+		}
+		hooks.OnAfterInitialize = []server.OnAfterInitializeFunc{
 			func(ctx context.Context, id any, message *mcp.InitializeRequest, result *mcp.InitializeResult) {
 				if result == nil {
 					return
@@ -286,31 +447,10 @@ func (o *Observability) MCPHooks() *server.Hooks {
 					}
 				}
 			},
-		},
-		OnBeforeAny: []server.BeforeAnyHookFunc{
-			func(ctx context.Context, id any, method mcp.MCPMethod, message any) {
-				o.requestStartTimes.Store(id, time.Now())
-			},
-		},
-		OnSuccess: []server.OnSuccessHookFunc{
-			func(ctx context.Context, id any, method mcp.MCPMethod, message any, result any) {
-				if startTime, ok := o.requestStartTimes.LoadAndDelete(id); ok {
-					duration := time.Since(startTime.(time.Time)).Seconds()
-					attrs := o.buildOperationAttrs(ctx, method, message, nil)
-					o.operationDuration.Record(ctx, duration, mcpconv.MethodNameAttr(method), attrs...)
-				}
-			},
-		},
-		OnError: []server.OnErrorHookFunc{
-			func(ctx context.Context, id any, method mcp.MCPMethod, message any, err error) {
-				if startTime, ok := o.requestStartTimes.LoadAndDelete(id); ok {
-					duration := time.Since(startTime.(time.Time)).Seconds()
-					attrs := o.buildOperationAttrs(ctx, method, message, err)
-					o.operationDuration.Record(ctx, duration, mcpconv.MethodNameAttr(method), attrs...)
-				}
-			},
-		},
+		}
 	}
+
+	return hooks
 }
 
 // MergeHooks combines multiple Hooks into one, preserving all hook functions.

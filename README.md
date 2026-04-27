@@ -350,6 +350,8 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 **Observability:**
 - `--metrics`: Enable Prometheus metrics endpoint at `/metrics`
 - `--metrics-address`: Separate address for metrics server (e.g., `:9090`). If empty, metrics are served on the main server
+- `--slow-request-threshold`: Log an event when any MCP request (tool invocation, list, resource read, etc.) takes longer than this duration. Accepts Go duration strings (e.g., `500ms`, `5s`). Default `0` disables slow-request logging. See the [Slow-request logging](#slow-request-logging) section.
+- `--slow-request-log-level`: Log level for slow-request events (`info` or `warn`) - default: `warn`.
 
 **Session Management:**
 - `--session-idle-timeout-minutes`: Session idle timeout in minutes. Sessions with no activity for this duration are automatically reaped - default: `30`. Set to `0` to disable session reaping. Only relevant for SSE and streamable-http transports.
@@ -976,6 +978,34 @@ When using the SSE or streamable HTTP transports, enable Prometheus metrics with
 | `http_server_request_duration_seconds` | Histogram | Duration of HTTP server requests (from otelhttp) |
 
 **Note:** Metrics are only available when using SSE or streamable HTTP transports. They are not available with the stdio transport.
+
+#### Slow-request logging
+
+The `--slow-request-threshold` flag emits a structured log event whenever an MCP request (tool invocation, list, resource read, etc.) exceeds the given duration. It is useful for diagnosing slow queries and tool calls without drowning in the full debug log.
+
+```bash
+# Warn on any request slower than 500ms (works on all transports)
+./mcp-grafana -t streamable-http --slow-request-threshold 500ms
+
+# Same thing on stdio (the feature is transport-agnostic, unlike --metrics)
+./mcp-grafana -t stdio --slow-request-threshold 500ms
+
+# Log at INFO level instead of WARN (useful during investigation)
+./mcp-grafana -t streamable-http --slow-request-threshold 500ms --slow-request-log-level info
+```
+
+The log event carries these structured attributes:
+
+| Attribute | Description |
+|-----------|-------------|
+| `mcp.method` | The MCP method (e.g., `tools/call`, `tools/list`, `resources/read`) |
+| `duration` | Observed request duration |
+| `threshold` | Configured threshold |
+| `tool` | Tool name (only present for `tools/call` methods) |
+| `error` | Error value, when the request failed (best-effort context; content is controlled by upstream error wrapping) |
+| `error.type` | Bounded-cardinality error classification (`_OTHER` for untyped errors) |
+
+Slow-request logging works on all transports (including stdio) and does not require `--metrics`. The default threshold of `0` disables it entirely. Proxied tools flow through `tools/call` and are covered automatically.
 
 #### Tracing
 
