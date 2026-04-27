@@ -182,13 +182,13 @@ func orgIdFromHeaders(req *http.Request) int64 {
 
 func urlAndAPIKeyFromHeaders(req *http.Request) (string, string) {
 	u := strings.TrimRight(req.Header.Get(grafanaURLHeader), "/")
-	
+
 	// Check for the new service account token header first
 	apiKey := req.Header.Get(grafanaServiceAccountTokenHeader)
 	if apiKey != "" {
 		return u, apiKey
 	}
-	
+
 	// Fall back to the deprecated API key header
 	apiKey = req.Header.Get(grafanaAPIKeyHeader)
 	return u, apiKey

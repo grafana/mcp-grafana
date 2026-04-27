@@ -110,11 +110,11 @@ func TestClientCache_DifferentCredentials(t *testing.T) {
 	defer cache.Close()
 
 	keys := []clientCacheKey{
-		{url: "http://host1:3000", apiKey: "key1", orgID: 1, forwardedHeaders: "X-WEBAUTH-USER=admin"}, // base key
-		{url: "http://host1:3000", apiKey: "key2", orgID: 1, forwardedHeaders: "X-WEBAUTH-USER=admin"},       // different key
-		{url: "http://host1:3000", apiKey: "key1", orgID: 2, forwardedHeaders: "X-WEBAUTH-USER=admin"},       // different org
-		{url: "http://host2:3000", apiKey: "key1", orgID: 1, forwardedHeaders: "X-WEBAUTH-USER=admin"},       // different url
-		{url: "http://host1:3000", apiKey: "key1", orgID: 1, forwardedHeaders: "X-WEBAUTH-USER=admin"},       // same as first
+		{url: "http://host1:3000", apiKey: "key1", orgID: 1, forwardedHeaders: "X-WEBAUTH-USER=admin"},    // base key
+		{url: "http://host1:3000", apiKey: "key2", orgID: 1, forwardedHeaders: "X-WEBAUTH-USER=admin"},    // different key
+		{url: "http://host1:3000", apiKey: "key1", orgID: 2, forwardedHeaders: "X-WEBAUTH-USER=admin"},    // different org
+		{url: "http://host2:3000", apiKey: "key1", orgID: 1, forwardedHeaders: "X-WEBAUTH-USER=admin"},    // different url
+		{url: "http://host1:3000", apiKey: "key1", orgID: 1, forwardedHeaders: "X-WEBAUTH-USER=admin"},    // same as first
 		{url: "http://host1:3000", apiKey: "key1", orgID: 1, forwardedHeaders: "X-WEBAUTH-USER=john.doe"}, // different user
 	}
 

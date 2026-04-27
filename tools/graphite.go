@@ -96,8 +96,8 @@ type GraphiteDatapoint struct {
 
 // GraphiteSeries is a metric series as returned by the Graphite render API.
 type GraphiteSeries struct {
-	Target     string             `json:"target"`
-	Tags       map[string]string  `json:"tags,omitempty"`
+	Target     string              `json:"target"`
+	Tags       map[string]string   `json:"tags,omitempty"`
 	Datapoints []GraphiteDatapoint `json:"datapoints"`
 }
 
