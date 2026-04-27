@@ -148,7 +148,7 @@ services:
     entrypoint: ["sh", "/seed.sh"]
 
   clickhouse:
-    image: clickhouse/clickhouse-server:25.12@sha256:f42e90f635bafddfd5c0c25781332ff1c46bbe1424e49e2ce0c571958d4439e9
+    image: clickhouse/clickhouse-server:25.12@sha256:59efe7d83b1e13c2e439a80adcce1fad186489d69a55d4b763102280a359a4cc
     ports:
       - "8123:8123"
       - "9000:9000"
