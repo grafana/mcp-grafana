@@ -98,7 +98,7 @@ func (c *athenaClient) resource(ctx context.Context, path string, body map[strin
 
 	if resp.StatusCode != http.StatusOK {
 		errBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("Athena resource %s returned status %d: %s", path, resp.StatusCode, string(errBody))
+		return nil, fmt.Errorf("athena resource %s returned status %d: %s", path, resp.StatusCode, string(errBody))
 	}
 
 	limitedBody := io.LimitReader(resp.Body, int64(athenaResponseLimitBytes))
@@ -166,7 +166,7 @@ func (c *athenaClient) query(ctx context.Context, rawSQL string, from, to time.T
 
 	if resp.StatusCode != http.StatusOK {
 		errBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("Athena query returned status %d: %s", resp.StatusCode, string(errBody))
+		return nil, fmt.Errorf("athena query returned status %d: %s", resp.StatusCode, string(errBody))
 	}
 
 	limitedBody := io.LimitReader(resp.Body, int64(athenaResponseLimitBytes))
