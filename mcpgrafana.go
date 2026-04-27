@@ -1011,6 +1011,45 @@ func GrafanaClientFromContext(ctx context.Context) *GrafanaClient {
 	return c
 }
 
+type kubernetesClientKey struct{}
+
+// ExtractKubernetesClientFromEnv is a StdioContextFunc that creates and injects a KubernetesClient into the context.
+// It uses the GrafanaConfig already present in the context (set by ExtractGrafanaInfoFromEnv).
+var ExtractKubernetesClientFromEnv server.StdioContextFunc = func(ctx context.Context) context.Context {
+	k8sClient, err := NewKubernetesClient(ctx)
+	if err != nil {
+		slog.Warn("Failed to create Kubernetes client", "error", err)
+		return ctx
+	}
+	return WithKubernetesClient(ctx, k8sClient)
+}
+
+// ExtractKubernetesClientFromHeaders is a HTTPContextFunc that creates and injects a KubernetesClient into the context.
+// It uses the GrafanaConfig already present in the context (set by ExtractGrafanaInfoFromHeaders).
+var ExtractKubernetesClientFromHeaders httpContextFunc = func(ctx context.Context, req *http.Request) context.Context {
+	k8sClient, err := NewKubernetesClient(ctx)
+	if err != nil {
+		slog.Warn("Failed to create Kubernetes client from headers", "error", err)
+		return ctx
+	}
+	return WithKubernetesClient(ctx, k8sClient)
+}
+
+// WithKubernetesClient sets the KubernetesClient in the context.
+func WithKubernetesClient(ctx context.Context, c *KubernetesClient) context.Context {
+	return context.WithValue(ctx, kubernetesClientKey{}, c)
+}
+
+// KubernetesClientFromContext retrieves the KubernetesClient from the context.
+// Returns nil if no client has been set.
+func KubernetesClientFromContext(ctx context.Context) *KubernetesClient {
+	c, ok := ctx.Value(kubernetesClientKey{}).(*KubernetesClient)
+	if !ok {
+		return nil
+	}
+	return c
+}
+
 type incidentClientKey struct{}
 
 // ExtractIncidentClientFromEnv is a StdioContextFunc that creates and injects a Grafana Incident client into the context.
@@ -1118,6 +1157,7 @@ func ComposedStdioContextFunc(config GrafanaConfig) server.StdioContextFunc {
 		},
 		ExtractGrafanaInfoFromEnv,
 		ExtractGrafanaClientFromEnv,
+		ExtractKubernetesClientFromEnv,
 		ExtractIncidentClientFromEnv,
 	)
 }
@@ -1126,13 +1166,14 @@ func ComposedStdioContextFunc(config GrafanaConfig) server.StdioContextFunc {
 // It sets up the complete context for SSE transport, extracting configuration from HTTP headers with environment variable fallbacks.
 // If cache is non-nil, clients are cached by credentials to avoid per-request transport allocation.
 func ComposedSSEContextFunc(config GrafanaConfig, cache ...*ClientCache) server.SSEContextFunc {
-	grafanaExtractor, incidentExtractor := clientExtractors(cache)
+	grafanaExtractor, k8sExtractor, incidentExtractor := clientExtractors(cache)
 	return ComposeSSEContextFuncs(
 		func(ctx context.Context, req *http.Request) context.Context {
 			return WithGrafanaConfig(ctx, config)
 		},
 		ExtractGrafanaInfoFromHeaders,
 		grafanaExtractor,
+		k8sExtractor,
 		incidentExtractor,
 	)
 }
@@ -1141,22 +1182,23 @@ func ComposedSSEContextFunc(config GrafanaConfig, cache ...*ClientCache) server.
 // It provides the complete context setup for HTTP transport, including header-based authentication and client configuration.
 // If cache is non-nil, clients are cached by credentials to avoid per-request transport allocation.
 func ComposedHTTPContextFunc(config GrafanaConfig, cache ...*ClientCache) server.HTTPContextFunc {
-	grafanaExtractor, incidentExtractor := clientExtractors(cache)
+	grafanaExtractor, k8sExtractor, incidentExtractor := clientExtractors(cache)
 	return ComposeHTTPContextFuncs(
 		func(ctx context.Context, req *http.Request) context.Context {
 			return WithGrafanaConfig(ctx, config)
 		},
 		ExtractGrafanaInfoFromHeaders,
 		grafanaExtractor,
+		k8sExtractor,
 		incidentExtractor,
 	)
 }
 
 // clientExtractors returns the appropriate client extraction functions,
 // using cached versions if a cache is provided.
-func clientExtractors(cache []*ClientCache) (httpContextFunc, httpContextFunc) {
+func clientExtractors(cache []*ClientCache) (httpContextFunc, httpContextFunc, httpContextFunc) {
 	if len(cache) > 0 && cache[0] != nil {
-		return extractGrafanaClientCached(cache[0]), extractIncidentClientCached(cache[0])
+		return extractGrafanaClientCached(cache[0]), extractKubernetesClientCached(cache[0]), extractIncidentClientCached(cache[0])
 	}
-	return ExtractGrafanaClientFromHeaders, ExtractIncidentClientFromHeaders
+	return ExtractGrafanaClientFromHeaders, ExtractKubernetesClientFromHeaders, ExtractIncidentClientFromHeaders
 }

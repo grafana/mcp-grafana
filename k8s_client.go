@@ -1,6 +1,7 @@
 package mcpgrafana
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -8,6 +9,10 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
+	"time"
+
+	"golang.org/x/sync/singleflight"
 )
 
 // KubernetesClient is a lightweight, generic HTTP client for Grafana's
@@ -27,7 +32,17 @@ type KubernetesClient struct {
 	// HTTPClient is the underlying HTTP client used for requests.
 	// If nil, http.DefaultClient is used.
 	HTTPClient *http.Client
+
+	// capsMu protects the cached capabilities fields below.
+	capsMu     sync.Mutex
+	cachedCaps *GrafanaCapabilities
+	capsExpiry time.Time
+	capsSF     singleflight.Group
 }
+
+// capabilitiesTTL is the duration for which cached capabilities are considered
+// valid. After this period, DiscoverCapabilities will re-fetch from the server.
+const capabilitiesTTL = 1 * time.Minute
 
 // NewKubernetesClient creates a KubernetesClient from the GrafanaConfig in ctx.
 // It reuses BuildTransport so TLS, extra headers, OrgID, and user-agent are
@@ -174,6 +189,17 @@ type KubernetesAPIError struct {
 
 func (e *KubernetesAPIError) Error() string {
 	return fmt.Sprintf("kubernetes API error: %s (HTTP %d): %s", e.Status, e.StatusCode, e.Body)
+}
+
+// DoRawRequest executes an authenticated HTTP request with an arbitrary method and path.
+// It is intended for operations like PUT and DELETE that are not covered by
+// the higher-level Get/List methods. The body parameter may be nil.
+func (c *KubernetesClient) DoRawRequest(ctx context.Context, method, path string, body []byte) ([]byte, error) {
+	var reader io.Reader
+	if body != nil {
+		reader = bytes.NewReader(body)
+	}
+	return c.doRequest(ctx, method, path, reader)
 }
 
 // doRequest executes an authenticated HTTP request and returns the response body.

@@ -3,7 +3,9 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"slices"
 	"sort"
@@ -15,6 +17,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
+	"github.com/grafana/grafana-openapi-client-go/client/dashboards"
 	"github.com/grafana/grafana-openapi-client-go/models"
 	mcpgrafana "github.com/grafana/mcp-grafana"
 )
@@ -23,13 +26,107 @@ type GetDashboardByUIDParams struct {
 	UID string `json:"uid" jsonschema:"required,description=The UID of the dashboard"`
 }
 
+const dashboardAPIGroup = "dashboard.grafana.app"
+
 func getDashboardByUID(ctx context.Context, args GetDashboardByUIDParams) (*models.DashboardFullWithMeta, error) {
-	c := mcpgrafana.GrafanaClientFromContext(ctx)
-	dashboard, err := c.Dashboards.GetDashboardByUID(args.UID)
+	// Track whether we already attempted the k8s path so we don't redundantly
+	// retry it in the 406 safety net below.
+	k8sAttempted := false
+
+	// Try Kubernetes API first if a k8s client is available.
+	if k8sClient := mcpgrafana.KubernetesClientFromContext(ctx); k8sClient != nil {
+		caps, err := k8sClient.DiscoverCapabilities(ctx)
+		if err != nil {
+			slog.WarnContext(ctx, "Failed to discover k8s capabilities, falling back to legacy API", "error", err)
+		} else if caps.ShouldUseKubernetesAPI(dashboardAPIGroup) {
+			k8sAttempted = true
+			result, err := getDashboardByUIDViaK8s(ctx, k8sClient, caps, args.UID)
+			if err != nil {
+				slog.WarnContext(ctx, "K8s API failed, falling back to legacy API", "error", err)
+			} else {
+				return result, nil
+			}
+		}
+	}
+
+	// Legacy path.
+	result, err := getDashboardByUIDLegacy(ctx, args.UID)
 	if err != nil {
-		return nil, fmt.Errorf("get dashboard by uid %s: %w", args.UID, err)
+		// Safety net: if legacy returns 406 Not Acceptable, try k8s API —
+		// but only if we haven't already attempted k8s above.
+		var notAcceptable *dashboards.GetDashboardByUIDNotAcceptable
+		if !k8sAttempted && errors.As(err, &notAcceptable) {
+			if k8sClient := mcpgrafana.KubernetesClientFromContext(ctx); k8sClient != nil {
+				caps, capErr := k8sClient.DiscoverCapabilities(ctx)
+				if capErr == nil && caps.ShouldUseKubernetesAPI(dashboardAPIGroup) {
+					slog.InfoContext(ctx, "Legacy API returned 406, retrying via k8s API", "uid", args.UID)
+					return getDashboardByUIDViaK8s(ctx, k8sClient, caps, args.UID)
+				}
+			}
+		}
+		return nil, err
+	}
+	return result, nil
+}
+
+// getDashboardByUIDLegacy fetches a dashboard using the legacy OpenAPI client.
+func getDashboardByUIDLegacy(ctx context.Context, uid string) (*models.DashboardFullWithMeta, error) {
+	c := mcpgrafana.GrafanaClientFromContext(ctx)
+	dashboard, err := c.Dashboards.GetDashboardByUID(uid)
+	if err != nil {
+		return nil, fmt.Errorf("get dashboard by uid %s: %w", uid, err)
 	}
 	return dashboard.Payload, nil
+}
+
+// getDashboardByUIDViaK8s fetches a dashboard using the Kubernetes-style API
+// and converts the response to the legacy DashboardFullWithMeta format.
+func getDashboardByUIDViaK8s(ctx context.Context, k8sClient *mcpgrafana.KubernetesClient, caps *mcpgrafana.GrafanaCapabilities, uid string) (*models.DashboardFullWithMeta, error) {
+	version := caps.Registry.PreferredVersion(dashboardAPIGroup)
+	desc := mcpgrafana.ResourceDescriptor{
+		Group:    dashboardAPIGroup,
+		Version:  version,
+		Resource: "dashboards",
+	}
+
+	// "default" is the standard Grafana namespace. This may need to become
+	// configurable for multi-org setups where each org maps to a separate
+	// Kubernetes namespace.
+	obj, err := k8sClient.Get(ctx, desc, "default", uid)
+	if err != nil {
+		return nil, fmt.Errorf("get dashboard via k8s API: %w", err)
+	}
+
+	return convertK8sDashboardToLegacy(obj)
+}
+
+// convertK8sDashboardToLegacy converts an unstructured Kubernetes dashboard
+// response into the legacy DashboardFullWithMeta format.
+func convertK8sDashboardToLegacy(obj map[string]interface{}) (*models.DashboardFullWithMeta, error) {
+	if obj == nil {
+		return nil, fmt.Errorf("k8s dashboard response is nil")
+	}
+
+	// Extract the spec (the actual dashboard JSON).
+	spec, ok := obj["spec"]
+	if !ok {
+		return nil, fmt.Errorf("k8s dashboard response missing 'spec' field")
+	}
+
+	// Extract metadata for annotations.
+	meta := &models.DashboardMeta{}
+	if metadata, ok := obj["metadata"].(map[string]interface{}); ok {
+		if annotations, ok := metadata["annotations"].(map[string]interface{}); ok {
+			if folderUID, ok := annotations["grafana.app/folder"].(string); ok {
+				meta.FolderUID = folderUID
+			}
+		}
+	}
+
+	return &models.DashboardFullWithMeta{
+		Dashboard: spec,
+		Meta:      meta,
+	}, nil
 }
 
 // PatchOperation represents a single patch operation
