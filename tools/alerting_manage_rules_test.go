@@ -6,6 +6,7 @@
 package tools
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -92,6 +93,26 @@ var (
 	}
 )
 
+// toDataMaps converts typed []*AlertQuery to []map[string]any for use in ManageRulesReadWriteParams.
+func toDataMaps(t *testing.T, queries []*AlertQuery) []map[string]any {
+	t.Helper()
+	b, err := json.Marshal(queries)
+	require.NoError(t, err)
+	var result []map[string]any
+	require.NoError(t, json.Unmarshal(b, &result))
+	return result
+}
+
+// toMap converts a typed struct to map[string]any for use in ManageRulesReadWriteParams.
+func toMap(t *testing.T, v any) map[string]any {
+	t.Helper()
+	b, err := json.Marshal(v)
+	require.NoError(t, err)
+	var result map[string]any
+	require.NoError(t, json.Unmarshal(b, &result))
+	return result
+}
+
 // Because the state depends on the evaluation of the alert rules,
 // clear it and other variable runtime fields before comparing the results
 // to avoid waiting for the alerts to start firing or be in the pending state.
@@ -138,17 +159,7 @@ func TestManageRules_List(t *testing.T) {
 		ctx := newTestContext()
 		result, err := manageRulesRead(ctx, ManageRulesReadParams{
 			listFilterParams: listFilterParams{
-				LabelSelectors: []Selector{
-					{
-						Filters: []LabelMatcher{
-							{
-								Name:  "severity",
-								Value: "info",
-								Type:  "=",
-							},
-						},
-					},
-				},
+				LabelSelectors: []string{`{severity="info"}`},
 			},
 			Operation: "list",
 		})
@@ -165,17 +176,7 @@ func TestManageRules_List(t *testing.T) {
 		ctx := newTestContext()
 		result, err := manageRulesRead(ctx, ManageRulesReadParams{
 			listFilterParams: listFilterParams{
-				LabelSelectors: []Selector{
-					{
-						Filters: []LabelMatcher{
-							{
-								Name:  "severity",
-								Value: "critical",
-								Type:  "=",
-							},
-						},
-					},
-				},
+				LabelSelectors: []string{`{severity="critical"}`},
 			},
 			Operation: "list",
 		})
@@ -190,26 +191,7 @@ func TestManageRules_List(t *testing.T) {
 		ctx := newTestContext()
 		result, err := manageRulesRead(ctx, ManageRulesReadParams{
 			listFilterParams: listFilterParams{
-				LabelSelectors: []Selector{
-					{
-						Filters: []LabelMatcher{
-							{
-								Name:  "severity",
-								Value: "info",
-								Type:  "=",
-							},
-						},
-					},
-					{
-						Filters: []LabelMatcher{
-							{
-								Name:  "rule",
-								Value: "second",
-								Type:  "=",
-							},
-						},
-					},
-				},
+				LabelSelectors: []string{`{severity="info"}`, `{rule="second"}`},
 			},
 			Operation: "list",
 		})
@@ -224,17 +206,7 @@ func TestManageRules_List(t *testing.T) {
 		ctx := newTestContext()
 		result, err := manageRulesRead(ctx, ManageRulesReadParams{
 			listFilterParams: listFilterParams{
-				LabelSelectors: []Selector{
-					{
-						Filters: []LabelMatcher{
-							{
-								Name:  "rule",
-								Value: "fi.*",
-								Type:  "=~",
-							},
-						},
-					},
-				},
+				LabelSelectors: []string{`{rule=~"fi.*"}`},
 			},
 			Operation: "list",
 		})
@@ -249,17 +221,7 @@ func TestManageRules_List(t *testing.T) {
 		ctx := newTestContext()
 		result, err := manageRulesRead(ctx, ManageRulesReadParams{
 			listFilterParams: listFilterParams{
-				LabelSelectors: []Selector{
-					{
-						Filters: []LabelMatcher{
-							{
-								Name:  "severity",
-								Value: "critical",
-								Type:  "!=",
-							},
-						},
-					},
-				},
+				LabelSelectors: []string{`{severity!="critical"}`},
 			},
 			Operation: "list",
 		})
@@ -274,17 +236,7 @@ func TestManageRules_List(t *testing.T) {
 		ctx := newTestContext()
 		result, err := manageRulesRead(ctx, ManageRulesReadParams{
 			listFilterParams: listFilterParams{
-				LabelSelectors: []Selector{
-					{
-						Filters: []LabelMatcher{
-							{
-								Name:  "severity",
-								Value: "crit.*",
-								Type:  "!~",
-							},
-						},
-					},
-				},
+				LabelSelectors: []string{`{severity!~"crit.*"}`},
 			},
 			Operation: "list",
 		})
@@ -299,17 +251,7 @@ func TestManageRules_List(t *testing.T) {
 		ctx := newTestContext()
 		result, err := manageRulesRead(ctx, ManageRulesReadParams{
 			listFilterParams: listFilterParams{
-				LabelSelectors: []Selector{
-					{
-						Filters: []LabelMatcher{
-							{
-								Name:  "nonexistent",
-								Value: "value",
-								Type:  "=",
-							},
-						},
-					},
-				},
+				LabelSelectors: []string{`{nonexistent="value"}`},
 			},
 			Operation: "list",
 		})
@@ -324,17 +266,7 @@ func TestManageRules_List(t *testing.T) {
 		ctx := newTestContext()
 		result, err := manageRulesRead(ctx, ManageRulesReadParams{
 			listFilterParams: listFilterParams{
-				LabelSelectors: []Selector{
-					{
-						Filters: []LabelMatcher{
-							{
-								Name:  "nonexistent",
-								Value: "value",
-								Type:  "!=",
-							},
-						},
-					},
-				},
+				LabelSelectors: []string{`{nonexistent!="value"}`},
 			},
 			Operation: "list",
 		})
@@ -500,13 +432,12 @@ func TestManageRules_Get(t *testing.T) {
 		require.False(t, detail.IsPaused)
 		require.Nil(t, detail.NotificationSettings)
 
-		// Queries extracted from provisioned data
-		require.Len(t, detail.Queries, 2)
-		require.Equal(t, "A", detail.Queries[0].RefID)
-		require.Equal(t, "prometheus", detail.Queries[0].DatasourceUID)
-		require.Equal(t, "vector(1)", detail.Queries[0].Expression)
-		require.Equal(t, "B", detail.Queries[1].RefID)
-		require.Equal(t, "__expr__", detail.Queries[1].DatasourceUID)
+		// Full query data preserved for round-tripping
+		require.Len(t, detail.Data, 2)
+		require.Equal(t, "A", detail.Data[0].RefID)
+		require.Equal(t, "prometheus", detail.Data[0].DatasourceUID)
+		require.Equal(t, "B", detail.Data[1].RefID)
+		require.Equal(t, "__expr__", detail.Data[1].DatasourceUID)
 
 		// Runtime state from Prometheus rules API
 		require.Equal(t, "alerting", detail.Type)
@@ -712,7 +643,7 @@ func TestManageRules_Create(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "tests",
 			Condition:    "C",
-			Data:         sampleData,
+			Data:         toDataMaps(t, sampleData),
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
@@ -782,7 +713,7 @@ func TestManageRules_Create(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "tests",
 			Condition:    "C",
-			Data:         data,
+			Data:         toDataMaps(t, data),
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
@@ -846,7 +777,7 @@ func TestManageRules_Create(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "tests",
 			Condition:    "C",
-			Data:         data,
+			Data:         toDataMaps(t, data),
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
@@ -907,7 +838,7 @@ func TestManageRules_Create(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "tests",
 			Condition:    "C",
-			Data:         data,
+			Data:         toDataMaps(t, data),
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
@@ -945,11 +876,11 @@ func TestManageRules_Create(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "tests",
 			Condition:    "A",
-			Data:         recordingRuleTypeQuery,
+			Data:         toDataMaps(t, recordingRuleTypeQuery),
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
-			Record:       recordParams,
+			Record:       toMap(t, recordParams),
 			Annotations: map[string]string{
 				"summary": "Recording rule for test",
 			},
@@ -1039,7 +970,7 @@ func TestManageRules_Update(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "tests",
 			Condition:    "A",
-			Data:         sampleData,
+			Data:         toDataMaps(t, sampleData),
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
@@ -1055,7 +986,7 @@ func TestManageRules_Update(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "tests",
 			Condition:    "A",
-			Data:         sampleData,
+			Data:         toDataMaps(t, sampleData),
 			NoDataState:  "Alerting",
 			ExecErrState: "Alerting",
 			For:          "10m",
@@ -1112,7 +1043,7 @@ func TestManageRules_Update(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "tests",
 			Condition:    "A",
-			Data:         sampleData,
+			Data:         toDataMaps(t, sampleData),
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
@@ -1128,18 +1059,18 @@ func TestManageRules_Update(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "tests",
 			Condition:    "A",
-			Data:         sampleData,
+			Data:         toDataMaps(t, sampleData),
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
-			NotificationSettings: &NotificationSettings{
+			NotificationSettings: toMap(t, &NotificationSettings{
 				Receiver:          ptrString("Email1"),
 				GroupBy:           []string{"alertname", "grafana_folder"},
 				GroupWait:         "30s",
 				GroupInterval:     "5m",
 				RepeatInterval:    "4h",
 				MuteTimeIntervals: []string{"weekends"},
-			},
+			}),
 			OrgID: 1,
 		})
 		require.NoError(t, err)
@@ -1188,7 +1119,7 @@ func TestManageRules_Update(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "tests",
 			Condition:    "A",
-			Data:         sampleData,
+			Data:         toDataMaps(t, sampleData),
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
@@ -1206,15 +1137,15 @@ func TestManageRules_Update(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "tests",
 			Condition:    "A",
-			Data:         sampleData,
+			Data:         toDataMaps(t, sampleData),
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
-			Record: &Record{
+			Record: toMap(t, &Record{
 				From:                ptrString("A"),
 				Metric:              ptrString("test_metric_record"),
 				TargetDatasourceUID: "prometheus",
-			},
+			}),
 			OrgID: 1,
 		})
 		require.NoError(t, err)
@@ -1246,15 +1177,15 @@ func TestManageRules_Update(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "tests",
 			Condition:    "A",
-			Data:         recordingRuleTypeQuery,
+			Data:         toDataMaps(t, recordingRuleTypeQuery),
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
-			Record: &Record{
+			Record: toMap(t, &Record{
 				From:                ptrString("A"),
 				Metric:              ptrString("original_recording_metric"),
 				TargetDatasourceUID: "prometheus",
-			},
+			}),
 			OrgID: 1,
 		})
 		require.NoError(t, err, "create recording rule should not return error")
@@ -1281,15 +1212,15 @@ func TestManageRules_Update(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "tests",
 			Condition:    "A",
-			Data:         updatedQuery,
+			Data:         toDataMaps(t, updatedQuery),
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "10m",
-			Record: &Record{
+			Record: toMap(t, &Record{
 				From:                ptrString("A"),
 				Metric:              ptrString("updated_recording_metric"),
 				TargetDatasourceUID: "prometheus",
-			},
+			}),
 			OrgID: 1,
 		})
 		require.NoError(t, err, "update recording rule should not return error")
@@ -1323,7 +1254,7 @@ func TestManageRules_Update(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "tests",
 			Condition:    "A",
-			Data:         []*AlertQuery{},
+			Data:         []map[string]any{},
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
@@ -1374,7 +1305,7 @@ func TestManageRules_Update(t *testing.T) {
 			RuleGroup:                   "test-group",
 			FolderUID:                   "tests",
 			Condition:                   "A",
-			Data:                        sampleData,
+			Data:                        toDataMaps(t, sampleData),
 			NoDataState:                 "OK",
 			ExecErrState:                "OK",
 			For:                         "5m",
@@ -1385,10 +1316,10 @@ func TestManageRules_Update(t *testing.T) {
 			MissingSeriesEvalsToResolve: 3,
 			OrgID:                       1,
 			DisableProvenance:           &disableProvenance,
-			NotificationSettings: &NotificationSettings{
+			NotificationSettings: toMap(t, &NotificationSettings{
 				Receiver: ptrString("Email1"),
 				GroupBy:  []string{"alertname"},
-			},
+			}),
 		}
 
 		_, err := manageRulesReadWrite(ctx, initialParams)
@@ -1399,7 +1330,7 @@ func TestManageRules_Update(t *testing.T) {
 		updateParams.Title = "Identical Test Alert - Updated"
 		updateParams.For = "15m"
 		updateParams.IsPaused = false
-		updateParams.NotificationSettings.Receiver = ptrString("Email2")
+		updateParams.NotificationSettings["receiver"] = "Email2"
 
 		_, err = manageRulesReadWrite(ctx, updateParams)
 		require.NoError(t, err, "should update the alert rule")
@@ -1445,15 +1376,15 @@ func TestManageRules_Update(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "tests",
 			Condition:    "A",
-			Data:         recordingRuleTypeQuery,
+			Data:         toDataMaps(t, recordingRuleTypeQuery),
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
-			Record: &Record{
+			Record: toMap(t, &Record{
 				From:                ptrString("A"),
 				Metric:              ptrString("test_metric"),
 				TargetDatasourceUID: "prometheus",
-			},
+			}),
 			Annotations: map[string]string{
 				"summary": "recording test",
 			},
@@ -1470,7 +1401,7 @@ func TestManageRules_Update(t *testing.T) {
 		updateParams := initialParams
 		updateParams.Operation = "update"
 		updateParams.Title = "Identical Test Recording - Updated"
-		updateParams.Record.Metric = ptrString("test_metric_updated")
+		updateParams.Record["metric"] = "test_metric_updated"
 		updateParams.Labels["team"] = "recording-updated"
 
 		_, err = manageRulesReadWrite(ctx, updateParams)
@@ -1527,7 +1458,7 @@ func TestManageRules_Delete(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "tests",
 			Condition:    "A",
-			Data:         sampleData,
+			Data:         toDataMaps(t, sampleData),
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
@@ -1637,7 +1568,7 @@ func TestManageRules_DisableProvenance(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "tests",
 			Condition:    "C",
-			Data:         sampleData,
+			Data:         toDataMaps(t, sampleData),
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
@@ -1670,7 +1601,7 @@ func TestManageRules_DisableProvenance(t *testing.T) {
 			RuleGroup:         "test-group",
 			FolderUID:         "tests",
 			Condition:         "C",
-			Data:              sampleData,
+			Data:              toDataMaps(t, sampleData),
 			NoDataState:       "OK",
 			ExecErrState:      "OK",
 			For:               "5m",
@@ -1703,7 +1634,7 @@ func TestManageRules_DisableProvenance(t *testing.T) {
 			RuleGroup:         "test-group",
 			FolderUID:         "tests",
 			Condition:         "C",
-			Data:              sampleData,
+			Data:              toDataMaps(t, sampleData),
 			NoDataState:       "OK",
 			ExecErrState:      "OK",
 			For:               "5m",
@@ -1735,7 +1666,7 @@ func TestManageRules_DisableProvenance(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "tests",
 			Condition:    "C",
-			Data:         sampleData,
+			Data:         toDataMaps(t, sampleData),
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
@@ -1751,7 +1682,7 @@ func TestManageRules_DisableProvenance(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "tests",
 			Condition:    "C",
-			Data:         sampleData,
+			Data:         toDataMaps(t, sampleData),
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "10m",
@@ -1782,7 +1713,7 @@ func TestManageRules_DisableProvenance(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "tests",
 			Condition:    "C",
-			Data:         sampleData,
+			Data:         toDataMaps(t, sampleData),
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
@@ -1799,7 +1730,7 @@ func TestManageRules_DisableProvenance(t *testing.T) {
 			RuleGroup:         "test-group",
 			FolderUID:         "tests",
 			Condition:         "C",
-			Data:              sampleData,
+			Data:              toDataMaps(t, sampleData),
 			NoDataState:       "OK",
 			ExecErrState:      "OK",
 			For:               "10m",
@@ -1831,7 +1762,7 @@ func TestManageRules_DisableProvenance(t *testing.T) {
 			RuleGroup:    "test-group",
 			FolderUID:    "tests",
 			Condition:    "C",
-			Data:         sampleData,
+			Data:         toDataMaps(t, sampleData),
 			NoDataState:  "OK",
 			ExecErrState: "OK",
 			For:          "5m",
@@ -1848,7 +1779,7 @@ func TestManageRules_DisableProvenance(t *testing.T) {
 			RuleGroup:         "test-group",
 			FolderUID:         "tests",
 			Condition:         "C",
-			Data:              sampleData,
+			Data:              toDataMaps(t, sampleData),
 			NoDataState:       "OK",
 			ExecErrState:      "OK",
 			For:               "10m",
@@ -1897,13 +1828,7 @@ func TestManageRules_List_Datasource(t *testing.T) {
 
 		result, err := manageRulesRead(ctx, ManageRulesReadParams{
 			listFilterParams: listFilterParams{
-				LabelSelectors: []Selector{
-					{
-						Filters: []LabelMatcher{
-							{Name: "severity", Type: "=", Value: "warning"},
-						},
-					},
-				},
+				LabelSelectors: []string{`{severity="warning"}`},
 			},
 			Operation:     "list",
 			DatasourceUID: &dsUID,

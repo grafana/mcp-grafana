@@ -248,3 +248,131 @@ func TestRunPanelQuery_MacroSubstitution_E2E(t *testing.T) {
 		assert.Empty(t, result.Errors)
 	})
 }
+
+// createInfluxDBTestDashboard builds a dashboard with InfluxDB panels for both
+// Flux and InfluxQL, matching the seed data written by testdata/influxdb-seed.sh.
+func createInfluxDBTestDashboard(t *testing.T) string {
+	t.Helper()
+	ctx := newTestContext()
+
+	dashJSON := map[string]interface{}{
+		"uid":   "influxdb-panel-test",
+		"title": "InfluxDB Panel Query Integration Test",
+		"panels": []interface{}{
+			// Panel 1: Flux query against the seeded "metrics" bucket.
+			map[string]interface{}{
+				"id":    float64(1),
+				"title": "Flux cpu usage",
+				"type":  "timeseries",
+				"datasource": map[string]interface{}{
+					"type": "influxdb",
+					"uid":  "influxdb-flux",
+				},
+				"targets": []interface{}{
+					map[string]interface{}{
+						"refId":     "A",
+						"queryType": "flux",
+						"query": `from(bucket: "metrics")
+  |> range(start: -2h)
+  |> filter(fn: (r) => r._measurement == "cpu")
+  |> limit(n: 10)`,
+					},
+				},
+			},
+			// Panel 2: InfluxQL query against the same data via the v1 compat endpoint.
+			map[string]interface{}{
+				"id":    float64(2),
+				"title": "InfluxQL cpu usage",
+				"type":  "timeseries",
+				"datasource": map[string]interface{}{
+					"type": "influxdb",
+					"uid":  "influxdb-influxql",
+				},
+				"targets": []interface{}{
+					map[string]interface{}{
+						"refId":     "A",
+						"queryType": "influxql",
+						"query":     `SELECT "usage" FROM "cpu" WHERE time > now() - 2h LIMIT 5`,
+					},
+				},
+			},
+		},
+	}
+
+	raw, err := json.Marshal(dashJSON)
+	require.NoError(t, err)
+
+	var dashboard map[string]interface{}
+	require.NoError(t, json.Unmarshal(raw, &dashboard))
+
+	_, err = updateDashboard(ctx, UpdateDashboardParams{
+		Dashboard: dashboard,
+		Overwrite: true,
+	})
+	require.NoError(t, err)
+
+	return "influxdb-panel-test"
+}
+
+func deleteInfluxDBTestDashboard(t *testing.T, uid string) {
+	t.Helper()
+	ctx := newTestContext()
+	c := mcpgrafana.GrafanaClientFromContext(ctx)
+	_, _ = c.Dashboards.DeleteDashboardByUID(uid)
+}
+
+func TestRunPanelQuery_InfluxDB_E2E(t *testing.T) {
+	uid := createInfluxDBTestDashboard(t)
+	defer deleteInfluxDBTestDashboard(t, uid)
+
+	ctx := newTestContext()
+
+	t.Run("flux panel returns seeded data", func(t *testing.T) {
+		result, err := runPanelQuery(ctx, RunPanelQueryParams{
+			DashboardUID: uid,
+			PanelIDs:     []int{1},
+			Start:        "now-2h",
+			End:          "now",
+		})
+		require.NoError(t, err)
+		require.Contains(t, result.Results, 1)
+		assert.Empty(t, result.Errors)
+		assert.Equal(t, "influxdb", result.Results[1].DatasourceType)
+
+		influx, ok := result.Results[1].Results.(*InfluxDBQueryResult)
+		require.True(t, ok, "expected *InfluxDBQueryResult, got %T", result.Results[1].Results)
+		assert.Equal(t, InfluxDBDialectFlux, influx.Dialect)
+		assert.NotEmpty(t, influx.Rows, "expected seeded cpu points via flux panel")
+	})
+
+	t.Run("influxql panel returns seeded data", func(t *testing.T) {
+		result, err := runPanelQuery(ctx, RunPanelQueryParams{
+			DashboardUID: uid,
+			PanelIDs:     []int{2},
+			Start:        "now-2h",
+			End:          "now",
+		})
+		require.NoError(t, err)
+		require.Contains(t, result.Results, 2)
+		assert.Empty(t, result.Errors)
+		assert.Equal(t, "influxdb", result.Results[2].DatasourceType)
+
+		influx, ok := result.Results[2].Results.(*InfluxDBQueryResult)
+		require.True(t, ok, "expected *InfluxDBQueryResult, got %T", result.Results[2].Results)
+		assert.Equal(t, InfluxDBDialectInfluxQL, influx.Dialect)
+		assert.NotEmpty(t, influx.Rows, "expected seeded cpu points via influxql panel")
+	})
+
+	t.Run("flux and influxql panels in one call", func(t *testing.T) {
+		result, err := runPanelQuery(ctx, RunPanelQueryParams{
+			DashboardUID: uid,
+			PanelIDs:     []int{1, 2},
+			Start:        "now-2h",
+			End:          "now",
+		})
+		require.NoError(t, err)
+		assert.Contains(t, result.Results, 1)
+		assert.Contains(t, result.Results, 2)
+		assert.Empty(t, result.Errors)
+	})
+}

@@ -25,10 +25,14 @@ func manageRulesRead(ctx context.Context, args ManageRulesReadParams) (any, erro
 		if err != nil {
 			return nil, fmt.Errorf("alerting_manage_rules: %w", err)
 		}
-		if args.DatasourceUID != nil && *args.DatasourceUID != "" {
-			return listDatasourceAlertRules(ctx, *args.DatasourceUID, opts, args.LabelSelectors)
+		selectors, err := args.parseLabelSelectors()
+		if err != nil {
+			return nil, fmt.Errorf("alerting_manage_rules: %w", err)
 		}
-		return listGrafanaRules(ctx, opts, args.LabelSelectors)
+		if args.DatasourceUID != nil && *args.DatasourceUID != "" {
+			return listDatasourceAlertRules(ctx, *args.DatasourceUID, opts, selectors)
+		}
+		return listGrafanaRules(ctx, opts, selectors)
 	case "get":
 		return getAlertRuleDetail(ctx, args.RuleUID, args.LimitAlerts)
 	case "versions":
@@ -49,18 +53,30 @@ func manageRulesReadWrite(ctx context.Context, args ManageRulesReadWriteParams) 
 		if err != nil {
 			return nil, fmt.Errorf("alerting_manage_rules: %w", err)
 		}
-		if args.DatasourceUID != nil && *args.DatasourceUID != "" {
-			return listDatasourceAlertRules(ctx, *args.DatasourceUID, opts, args.LabelSelectors)
+		selectors, err := args.parseLabelSelectors()
+		if err != nil {
+			return nil, fmt.Errorf("alerting_manage_rules: %w", err)
 		}
-		return listGrafanaRules(ctx, opts, args.LabelSelectors)
+		if args.DatasourceUID != nil && *args.DatasourceUID != "" {
+			return listDatasourceAlertRules(ctx, *args.DatasourceUID, opts, selectors)
+		}
+		return listGrafanaRules(ctx, opts, selectors)
 	case "get":
 		return getAlertRuleDetail(ctx, args.RuleUID, args.LimitAlerts)
 	case "versions":
 		return getAlertRuleVersions(ctx, args.RuleUID)
 	case "create":
-		return createAlertRule(ctx, args.toCreateParams())
+		cp, err := args.toCreateParams()
+		if err != nil {
+			return nil, fmt.Errorf("alerting_manage_rules: %w", err)
+		}
+		return createAlertRule(ctx, cp)
 	case "update":
-		return updateAlertRule(ctx, args.toUpdateParams())
+		up, err := args.toUpdateParams()
+		if err != nil {
+			return nil, fmt.Errorf("alerting_manage_rules: %w", err)
+		}
+		return updateAlertRule(ctx, up)
 	case "delete":
 		return deleteAlertRule(ctx, DeleteAlertRuleParams{
 			UID: args.RuleUID,
@@ -158,7 +174,7 @@ func mergeRuleDetail(provisioned *models.ProvisionedAlertRule, runtime *alerting
 
 	detail.IsPaused = provisioned.IsPaused
 	detail.NotificationSettings = provisioned.NotificationSettings
-	detail.Queries = extractQuerySummaries(provisioned.Data)
+	detail.Data = provisioned.Data
 
 	if runtime != nil {
 		detail.State = normalizeState(runtime.State)
@@ -177,30 +193,6 @@ func normalizeState(state string) string {
 		return "normal"
 	}
 	return state
-}
-
-func extractQuerySummaries(data []*models.AlertQuery) []querySummary {
-	if len(data) == 0 {
-		return nil
-	}
-	summaries := make([]querySummary, 0, len(data))
-	for _, q := range data {
-		s := querySummary{
-			RefID:         q.RefID,
-			DatasourceUID: q.DatasourceUID,
-		}
-		if m, ok := q.Model.(map[string]any); ok {
-			if expr, ok := m["expr"].(string); ok && expr != "" {
-				s.Expression = expr
-			} else if expr, ok := m["expression"].(string); ok && expr != "" {
-				s.Expression = expr
-			} else if query, ok := m["query"].(string); ok && query != "" {
-				s.Expression = query
-			}
-		}
-		summaries = append(summaries, s)
-	}
-	return summaries
 }
 
 func findRuleInResponse(resp *rulesResponse, uid string) *alertingRule {

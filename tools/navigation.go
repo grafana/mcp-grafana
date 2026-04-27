@@ -43,6 +43,16 @@ func generateDeeplink(ctx context.Context, args GenerateDeeplinkParams) (string,
 		return "", fmt.Errorf("grafana url not configured. Please set GRAFANA_URL environment variable or X-Grafana-URL header")
 	}
 
+	// Validate baseURL separately from the inbound X-Grafana-URL middleware:
+	// gc.PublicURL is populated by fetchPublicURL from Grafana's
+	// /api/frontend/settings appUrl response, which is not covered by the
+	// middleware at the HTTP transport boundary. A misconfigured Grafana can
+	// therefore return a malformed appUrl that flows into deeplink construction
+	// (e.g. http://%gg/d/<uid>) unless checked here.
+	if err := mcpgrafana.ValidateGrafanaURL(baseURL); err != nil {
+		return "", fmt.Errorf("grafana url is invalid: %w. Please set GRAFANA_URL environment variable or X-Grafana-URL header", err)
+	}
+
 	var deeplink string
 
 	switch strings.ToLower(args.ResourceType) {

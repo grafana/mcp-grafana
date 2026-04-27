@@ -17,7 +17,6 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 	"gopkg.in/yaml.v3"
 
-	"github.com/grafana/grafana-openapi-client-go/client"
 	grafanaModels "github.com/grafana/grafana-openapi-client-go/models"
 	mcpgrafana "github.com/grafana/mcp-grafana"
 )
@@ -28,13 +27,8 @@ const (
 )
 
 type alertingClient struct {
-	baseURL     *url.URL
-	accessToken string
-	idToken     string
-	apiKey      string
-	basicAuth   *url.Userinfo
-	orgID       int64
-	httpClient  *http.Client
+	baseURL    *url.URL
+	httpClient *http.Client
 }
 
 func newAlertingClientFromContext(ctx context.Context) (*alertingClient, error) {
@@ -45,26 +39,18 @@ func newAlertingClientFromContext(ctx context.Context) (*alertingClient, error) 
 		return nil, fmt.Errorf("invalid Grafana base URL %q: %w", baseURL, err)
 	}
 
-	client := &alertingClient{
-		baseURL:     parsedBaseURL,
-		accessToken: cfg.AccessToken,
-		idToken:     cfg.IDToken,
-		apiKey:      cfg.APIKey,
-		basicAuth:   cfg.BasicAuth,
-		orgID:       cfg.OrgID,
-		httpClient: &http.Client{
-			Timeout: defaultTimeout,
-		},
-	}
-
-	// Create custom transport with TLS configuration if available
 	transport, err := mcpgrafana.BuildTransport(&cfg, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create custom transport: %w", err)
 	}
-	client.httpClient.Transport = mcpgrafana.NewUserAgentTransport(transport)
 
-	return client, nil
+	return &alertingClient{
+		baseURL: parsedBaseURL,
+		httpClient: &http.Client{
+			Transport: transport,
+			Timeout:   defaultTimeout,
+		},
+	}, nil
 }
 
 func (c *alertingClient) makeRequest(ctx context.Context, path string, params url.Values) (*http.Response, error) {
@@ -81,22 +67,6 @@ func (c *alertingClient) makeRequest(ctx context.Context, path string, params ur
 
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/json")
-
-	// If accessToken is set we use that first and fall back to normal Authorization.
-	if c.accessToken != "" && c.idToken != "" {
-		req.Header.Set("X-Access-Token", c.accessToken)
-		req.Header.Set("X-Grafana-Id", c.idToken)
-	} else if c.apiKey != "" {
-		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.apiKey))
-	} else if c.basicAuth != nil {
-		password, _ := c.basicAuth.Password()
-		req.SetBasicAuth(c.basicAuth.Username(), password)
-	}
-
-	// Add org ID header for multi-org support
-	if c.orgID > 0 {
-		req.Header.Set(client.OrgIDHeader, strconv.FormatInt(c.orgID, 10))
-	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -130,7 +100,7 @@ type GetRulesOpts struct {
 	RuleType     string   // Filter by rule type (e.g. "alerting", "recording")
 	States       []string // Filter by rule state (e.g. "firing", "pending", "normal", "nodata", "error")
 	RuleLimit    int      // Maximum number of rules to return (max 200)
-	LimitAlerts int // Maximum number of alert instances per rule (max 200)
+	LimitAlerts  int      // Maximum number of alert instances per rule (max 200)
 	// Matchers filters alert instances by labels. Each matcher is JSON-encoded
 	// as a Prometheus matcher object (e.g. {"type":0,"name":"severity","value":"critical"}).
 	// Multiple matchers are AND-ed together.

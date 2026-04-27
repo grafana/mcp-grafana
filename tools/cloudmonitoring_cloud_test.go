@@ -17,7 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const cloudMonitoringTestDatasourceUID = "dehw4r7w7o0lcd"
+const cloudMonitoringTestDatasourceUID = "gcmimpersonation-ds-m"
 
 func createCloudMonitoringTestContext(t *testing.T) context.Context {
 	t.Helper()
@@ -52,7 +52,7 @@ func TestCloudMonitoringQuery(t *testing.T) {
 		result, err := queryPrometheus(ctx, QueryPrometheusParams{
 			DatasourceUID: cloudMonitoringTestDatasourceUID,
 			Expr:          `compute_googleapis_com:instance:cpu:utilization`,
-			EndTime:     "now",
+			EndTime:       "now",
 			QueryType:     "instant",
 		})
 		require.NoError(t, err)

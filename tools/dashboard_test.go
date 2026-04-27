@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/grafana/grafana-openapi-client-go/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -22,7 +21,7 @@ const (
 // getExistingDashboardUID will fetch an existing dashboard for test purposes
 // It will search for exisiting dashboards and return the first, otherwise
 // will trigger a test error
-func getExistingTestDashboard(t *testing.T, ctx context.Context, dashboardName string) *models.Hit {
+func getExistingTestDashboard(t *testing.T, ctx context.Context, dashboardName string) dashboardSearchHit {
 	// Make sure we query for the existing dashboard, not a folder
 	if dashboardName == "" {
 		dashboardName = "Demo"
@@ -37,7 +36,7 @@ func getExistingTestDashboard(t *testing.T, ctx context.Context, dashboardName s
 
 // getExistingTestDashboardJSON will fetch the JSON map for an existing
 // dashboard in the test environment
-func getTestDashboardJSON(t *testing.T, ctx context.Context, dashboard *models.Hit) map[string]interface{} {
+func getTestDashboardJSON(t *testing.T, ctx context.Context, dashboard dashboardSearchHit) map[string]interface{} {
 	result, err := getDashboardByUID(ctx, GetDashboardByUIDParams{
 		UID: dashboard.UID,
 	})

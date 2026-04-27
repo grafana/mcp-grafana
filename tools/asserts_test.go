@@ -65,8 +65,8 @@ func TestAssertTools(t *testing.T) {
 		defer server.Close()
 
 		result, err := getAssertions(ctx, GetAssertionsParams{
-			StartTime:  startTime,
-			EndTime:    endTime,
+			StartTime:  startTime.Format(time.RFC3339),
+			EndTime:    endTime.Format(time.RFC3339),
 			EntityType: "Service",
 			EntityName: "mongodb",
 			Env:        "asserts-demo",
@@ -114,8 +114,8 @@ func TestAssertTools(t *testing.T) {
 		defer server.Close()
 
 		result, err := getAssertions(ctx, GetAssertionsParams{
-			StartTime:  startTime,
-			EndTime:    endTime,
+			StartTime:  startTime.Format(time.RFC3339),
+			EndTime:    endTime.Format(time.RFC3339),
 			EntityType: "Service",
 			EntityName: "mongodb",
 			Env:        "asserts-demo",
@@ -123,5 +123,35 @@ func TestAssertTools(t *testing.T) {
 		require.NoError(t, err)
 		assert.NotNil(t, result)
 		assert.Equal(t, `{"summary": "test summary"}`, result)
+	})
+
+	t.Run("get assertions with invalid start time", func(t *testing.T) {
+		_, ctx := setupMockAssertsServer(func(w http.ResponseWriter, r *http.Request) {
+			t.Fatal("server should not be called with invalid timestamps")
+		})
+
+		_, err := getAssertions(ctx, GetAssertionsParams{
+			StartTime:  "not-a-date",
+			EndTime:    "2025-04-23T11:00:00Z",
+			EntityType: "Service",
+			EntityName: "mongodb",
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "parsing start time")
+	})
+
+	t.Run("get assertions with invalid end time", func(t *testing.T) {
+		_, ctx := setupMockAssertsServer(func(w http.ResponseWriter, r *http.Request) {
+			t.Fatal("server should not be called with invalid timestamps")
+		})
+
+		_, err := getAssertions(ctx, GetAssertionsParams{
+			StartTime:  "2025-04-23T10:00:00Z",
+			EndTime:    "also-not-a-date",
+			EntityType: "Service",
+			EntityName: "mongodb",
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "parsing end time")
 	})
 }
