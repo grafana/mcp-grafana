@@ -44,8 +44,8 @@ type disabledTools struct {
 	prometheus, loki, elasticsearch, influxdb, alerting,
 	dashboard, folder, oncall, asserts, sift, admin,
 	pyroscope, navigation, proxied, annotations, rendering, cloudwatch, write,
-	examples, clickhouse, graphite,
-	runpanelquery bool
+	examples, clickhouse, searchlogs, graphite,
+	runpanelquery, athena bool
 }
 
 // Configuration for the Grafana client.
@@ -90,6 +90,7 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.clickhouse, "disable-clickhouse", false, "Disable ClickHouse tools")
 	flag.BoolVar(&dt.runpanelquery, "disable-runpanelquery", false, "Disable run panel query tools")
 	flag.BoolVar(&dt.graphite, "disable-graphite", false, "Disable Graphite tools")
+	flag.BoolVar(&dt.athena, "disable-athena", false, "Disable Athena tools")
 }
 
 func (gc *grafanaConfig) addFlags() {
@@ -131,6 +132,7 @@ func (dt *disabledTools) addTools(s *server.MCPServer) {
 	maybeAddTools(s, tools.AddClickHouseTools, enabledTools, dt.clickhouse, "clickhouse")
 	maybeAddTools(s, tools.AddRunPanelQueryTools, enabledTools, dt.runpanelquery, "runpanelquery")
 	maybeAddTools(s, tools.AddGraphiteTools, enabledTools, dt.graphite, "graphite")
+	maybeAddTools(s, tools.AddAthenaTools, enabledTools, dt.athena, "athena")
 }
 
 func newServer(transport string, dt disabledTools, obs *observability.Observability, sessionIdleTimeoutMinutes int) (*server.MCPServer, *mcpgrafana.ToolManager, *mcpgrafana.SessionManager) {
@@ -204,6 +206,7 @@ Available Capabilities:
 - Datasources: List and fetch details for datasources.
 - Prometheus & Loki: Run PromQL and LogQL queries, retrieve metric/log metadata, and explore label names/values.
 - ClickHouse: Query ClickHouse datasources via Grafana with macro and variable substitution support.
+- Athena: Query Amazon Athena datasources via Grafana with SQL, macro substitution, and schema discovery.
 - Elasticsearch: Query Elasticsearch datasources using Lucene syntax or Query DSL for logs and metrics.
 - Incidents: Search, create, update, and resolve incidents in Grafana Incident.
 - Sift Investigations: Start and manage Sift investigations, analyze logs/traces, find error patterns, and detect slow requests.

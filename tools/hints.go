@@ -73,6 +73,11 @@ func GenerateEmptyResultHints(ctx HintContext) *EmptyResultHints {
 		hints.PossibleCauses = getCloudWatchCauses(ctx)
 		hints.SuggestedActions = getCloudWatchActions(ctx)
 
+	case "athena":
+		hints.Summary = "The Athena query returned no rows for the specified parameters."
+		hints.PossibleCauses = getAthenaCauses(ctx)
+		hints.SuggestedActions = getAthenaActions(ctx)
+
 	case "influxdb":
 		hints.Summary = "The InfluxDB query returned no points for the specified time range."
 		hints.PossibleCauses = getInfluxDBCauses(ctx)
@@ -264,6 +269,26 @@ func getGraphiteActions(ctx HintContext) []string {
 		actions = append(actions, "Use list_graphite_tags to verify tag names and values")
 	}
 	return actions
+}
+
+// getAthenaCauses returns possible causes for empty Athena results
+func getAthenaCauses(ctx HintContext) []string {
+	return []string{
+		"Database or table does not exist in the specified catalog",
+		"Column names in query may not match actual table schema",
+		"Time range may not overlap with available data or partitions",
+		"Query may lack permissions to access the underlying S3 data",
+	}
+}
+
+// getAthenaActions returns suggested actions for empty Athena results
+func getAthenaActions(ctx HintContext) []string {
+	return []string{
+		"Use list_athena_tables to verify the table exists",
+		"Use describe_athena_table to check column names, or run DESCRIBE db.table via query_athena for column types and partition spec",
+		"Widen the time range or check partition column values (run DESCRIBE to see partition structure)",
+		"Try a simple SELECT * FROM table LIMIT 10 to verify access",
+	}
 }
 
 // getGenericCauses returns generic causes for empty results
