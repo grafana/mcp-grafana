@@ -931,7 +931,7 @@ func TestMergeRuleDetail(t *testing.T) {
 			"datasource": map[string]any{"type": "graphite", "uid": "000000004"},
 			"target":     "alias(asPercent(sumSeries(a), sumSeries(b)), 'error rate')",
 			"textEditor": true,
-			"intervalMs":  float64(1000),
+			"intervalMs": float64(1000),
 			"refId":      "C",
 		}
 
@@ -1377,8 +1377,8 @@ func TestConvertAlertQueries(t *testing.T) {
 	t.Run("preserves extra model fields for Graphite queries", func(t *testing.T) {
 		queries := []*AlertQuery{
 			{
-				RefID:         "C",
-				DatasourceUID: "000000004",
+				RefID:             "C",
+				DatasourceUID:     "000000004",
 				RelativeTimeRange: &RelativeTimeRange{From: 300, To: 0},
 				Model: AlertQueryModel{
 					Extra: map[string]any{
@@ -1525,4 +1525,3 @@ func TestAlertQueryModel_JSONRoundTrip(t *testing.T) {
 		require.Equal(t, "C", params[0])
 	})
 }
-

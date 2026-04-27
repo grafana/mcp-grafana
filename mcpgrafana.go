@@ -182,13 +182,13 @@ func orgIdFromHeaders(req *http.Request) int64 {
 
 func urlAndAPIKeyFromHeaders(req *http.Request) (string, string) {
 	u := strings.TrimRight(req.Header.Get(grafanaURLHeader), "/")
-	
+
 	// Check for the new service account token header first
 	apiKey := req.Header.Get(grafanaServiceAccountTokenHeader)
 	if apiKey != "" {
 		return u, apiKey
 	}
-	
+
 	// Fall back to the deprecated API key header
 	apiKey = req.Header.Get(grafanaAPIKeyHeader)
 	return u, apiKey
@@ -734,16 +734,16 @@ var publicURLFlight singleflight.Group
 // It returns the appUrl if available, or an empty string if the request fails.
 // Successful results are cached permanently; failures are retried on subsequent calls.
 // Concurrent calls for the same grafanaURL are coalesced via singleflight.
-func fetchPublicURL(ctx context.Context, grafanaURL, apiKey string, auth *url.Userinfo, tlsConfig *TLSConfig, extraHeaders map[string]string) string {
+func fetchPublicURL(ctx context.Context, cfg *GrafanaConfig) string {
 	// Check cache first (only successful results are cached)
-	if cached, ok := publicURLCache.Load(grafanaURL); ok {
+	if cached, ok := publicURLCache.Load(cfg.URL); ok {
 		return cached.(string)
 	}
 
 	// Use singleflight to coalesce concurrent requests for the same URL
-	result, _, _ := publicURLFlight.Do(grafanaURL, func() (any, error) {
+	result, _, _ := publicURLFlight.Do(cfg.URL, func() (any, error) {
 		// Double-check cache inside singleflight (another goroutine may have populated it)
-		if cached, ok := publicURLCache.Load(grafanaURL); ok {
+		if cached, ok := publicURLCache.Load(cfg.URL); ok {
 			return cached.(string), nil
 		}
 
@@ -752,11 +752,11 @@ func fetchPublicURL(ctx context.Context, grafanaURL, apiKey string, auth *url.Us
 		fetchCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
-		publicURL := doFetchPublicURL(fetchCtx, grafanaURL, apiKey, auth, tlsConfig, extraHeaders)
+		publicURL := doFetchPublicURL(fetchCtx, cfg)
 
 		// Only cache successful (non-empty) results so transient failures are retried
 		if publicURL != "" {
-			publicURLCache.Store(grafanaURL, publicURL)
+			publicURLCache.Store(cfg.URL, publicURL)
 		}
 
 		return publicURL, nil
@@ -766,38 +766,23 @@ func fetchPublicURL(ctx context.Context, grafanaURL, apiKey string, auth *url.Us
 }
 
 // doFetchPublicURL performs the actual HTTP request to fetch the public URL.
-func doFetchPublicURL(ctx context.Context, grafanaURL, apiKey string, auth *url.Userinfo, tlsConfig *TLSConfig, extraHeaders map[string]string) string {
-	settingsURL := strings.TrimRight(grafanaURL, "/") + "/api/frontend/settings"
+func doFetchPublicURL(ctx context.Context, cfg *GrafanaConfig) string {
+	settingsURL := strings.TrimRight(cfg.URL, "/") + "/api/frontend/settings"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, settingsURL, nil)
 	if err != nil {
 		slog.Warn("Failed to create request for frontend settings", "error", err)
 		return ""
 	}
 
-	if apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+apiKey)
-	} else if auth != nil {
-		password, _ := auth.Password()
-		req.SetBasicAuth(auth.Username(), password)
-	}
-	req.Header.Set("User-Agent", UserAgent())
-
-	// Apply extra headers (e.g., for proxies requiring custom headers)
-	for k, v := range extraHeaders {
-		req.Header.Set(k, v)
+	transport, err := BuildTransport(cfg, nil)
+	if err != nil {
+		slog.Warn("Failed to build transport for frontend settings request", "error", err)
+		return ""
 	}
 
-	httpClient := &http.Client{Timeout: 5 * time.Second}
-	if tlsConfig != nil {
-		tlsCfg, err := tlsConfig.CreateTLSConfig()
-		if err != nil {
-			slog.Warn("Failed to create TLS config for frontend settings request", "error", err)
-			return ""
-		}
-		httpClient.Transport = &http.Transport{
-			TLSClientConfig: tlsCfg,
-			Proxy:           http.ProxyFromEnvironment,
-		}
+	httpClient := &http.Client{
+		Timeout:   5 * time.Second,
+		Transport: transport,
 	}
 
 	resp, err := httpClient.Do(req)
@@ -965,7 +950,14 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 	}
 
 	// Fetch the public URL from Grafana's frontend settings.
-	publicURL := fetchPublicURL(ctx, grafanaURL, apiKey, auth, config.TLSConfig, config.ExtraHeaders)
+	fetchCfg := &GrafanaConfig{
+		URL:          grafanaURL,
+		APIKey:       apiKey,
+		BasicAuth:    auth,
+		TLSConfig:    config.TLSConfig,
+		ExtraHeaders: config.ExtraHeaders,
+	}
+	publicURL := fetchPublicURL(ctx, fetchCfg)
 
 	return &GrafanaClient{
 		GrafanaHTTPAPI: grafanaClient,
