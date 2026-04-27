@@ -154,6 +154,48 @@ func TestVictoriaMetricsBackendQuery_DecodesInstantResponse(t *testing.T) {
 	assert.Equal(t, model.LabelValue("prometheus"), vec[0].Metric["job"])
 }
 
+func TestVictoriaMetricsBackendQuery_DecodesRangeResponseAsMatrix(t *testing.T) {
+	fake := newFakeVMServer(t, dsQueryResponse{Results: map[string]dsQueryResult{
+		"A": {Frames: []dsQueryFrame{
+			{
+				Schema: dsQueryFrameSchema{
+					Name: "up",
+					Fields: []dsQueryFrameField{
+						{Name: "Time", Type: "time"},
+						{Name: "Value", Type: "number", Labels: map[string]string{"job": "prometheus"}},
+					},
+				},
+				Data: dsQueryFrameData{
+					Values: [][]interface{}{
+						{float64(1700000000000), float64(1700000060000)},
+						{float64(1), float64(0)},
+					},
+				},
+			},
+		}},
+	}})
+	b := newTestVMBackend(t, fake.server)
+
+	v, err := b.Query(
+		context.Background(),
+		"up",
+		"range",
+		time.Unix(1700000000, 0),
+		time.Unix(1700000060, 0),
+		60,
+	)
+	require.NoError(t, err)
+
+	want := model.Matrix{{
+		Metric: model.Metric{"__name__": "up", "job": "prometheus"},
+		Values: []model.SamplePair{
+			{Timestamp: model.Time(1700000000000), Value: 1},
+			{Timestamp: model.Time(1700000060000), Value: 0},
+		},
+	}}
+	assert.Equal(t, want, v)
+}
+
 func TestVictoriaMetricsBackendQuery_PropagatesUpstreamError(t *testing.T) {
 	fake := newFakeVMServer(t, dsQueryResponse{Results: map[string]dsQueryResult{
 		"A": {Error: "rate: bad expression"},
