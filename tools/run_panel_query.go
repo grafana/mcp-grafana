@@ -50,10 +50,10 @@ type PanelQueryResult struct {
 
 // RunPanelQueryResult contains the result of running panel queries
 type RunPanelQueryResult struct {
-	DashboardUID string                   `json:"dashboardUid"`
+	DashboardUID string                    `json:"dashboardUid"`
 	Results      map[int]*PanelQueryResult `json:"results"`
-	Errors       map[int]string           `json:"errors,omitempty"`
-	TimeRange    QueryTimeRange           `json:"timeRange"`
+	Errors       map[int]string            `json:"errors,omitempty"`
+	TimeRange    QueryTimeRange            `json:"timeRange"`
 }
 
 // singlePanelQueryParams holds the parameters for running a single panel query.

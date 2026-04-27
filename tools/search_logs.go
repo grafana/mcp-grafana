@@ -324,7 +324,7 @@ func searchLogs(ctx context.Context, args SearchLogsParams) (*SearchLogsResult, 
 	// Parse time range with defaults
 	now := time.Now()
 	startTime := now.Add(-1 * time.Hour) // Default: 1 hour ago
-	endTime := now                        // Default: now
+	endTime := now                       // Default: now
 
 	if args.Start != "" {
 		parsed, err := parseSearchLogsTime(args.Start, false)

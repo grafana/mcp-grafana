@@ -100,7 +100,7 @@ type GetRulesOpts struct {
 	RuleType     string   // Filter by rule type (e.g. "alerting", "recording")
 	States       []string // Filter by rule state (e.g. "firing", "pending", "normal", "nodata", "error")
 	RuleLimit    int      // Maximum number of rules to return (max 200)
-	LimitAlerts int // Maximum number of alert instances per rule (max 200)
+	LimitAlerts  int      // Maximum number of alert instances per rule (max 200)
 	// Matchers filters alert instances by labels. Each matcher is JSON-encoded
 	// as a Prometheus matcher object (e.g. {"type":0,"name":"severity","value":"critical"}).
 	// Multiple matchers are AND-ed together.

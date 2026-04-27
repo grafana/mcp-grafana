@@ -212,7 +212,6 @@ func listPyroscopeProfileTypes(ctx context.Context, args ListPyroscopeProfileTyp
 	return profileTypes, nil
 }
 
-
 func newPyroscopeClient(ctx context.Context, uid string) (*pyroscopeClient, error) {
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
 
@@ -383,7 +382,6 @@ func cleanupDotProfile(profile string) string {
 		return ""
 	})
 }
-
 
 var matchersRegex = regexp.MustCompile(`^\{.*\}$`)
 

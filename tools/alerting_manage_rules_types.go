@@ -177,10 +177,10 @@ func (m *AlertQueryModel) UnmarshalJSON(data []byte) error {
 // AlertCondition represents a condition within a classic_conditions or threshold expression.
 // It includes the full set of fields used by classic_conditions (evaluator, operator, query, reducer).
 type AlertCondition struct {
-	Evaluator ConditionEvaluator  `json:"evaluator" jsonschema:"description=Threshold evaluator"`
-	Operator  *ConditionOperator  `json:"operator,omitempty" jsonschema:"description=Logical operator (and/or) for combining conditions"`
-	Query     *ConditionQuery     `json:"query,omitempty" jsonschema:"description=Query reference for classic_conditions (contains params with RefID)"`
-	Reducer   *ConditionReducer   `json:"reducer,omitempty" jsonschema:"description=Reducer for classic_conditions (avg\\, sum\\, min\\, max\\, count\\, last\\, median)"`
+	Evaluator ConditionEvaluator `json:"evaluator" jsonschema:"description=Threshold evaluator"`
+	Operator  *ConditionOperator `json:"operator,omitempty" jsonschema:"description=Logical operator (and/or) for combining conditions"`
+	Query     *ConditionQuery    `json:"query,omitempty" jsonschema:"description=Query reference for classic_conditions (contains params with RefID)"`
+	Reducer   *ConditionReducer  `json:"reducer,omitempty" jsonschema:"description=Reducer for classic_conditions (avg\\, sum\\, min\\, max\\, count\\, last\\, median)"`
 }
 
 // ConditionOperator represents the logical operator in a classic_conditions condition.

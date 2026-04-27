@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/grafana/grafana-openapi-client-go/models"
+	mcpgrafana "github.com/grafana/mcp-grafana"
 	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	"github.com/prometheus/common/model"
 )
