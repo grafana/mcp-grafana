@@ -70,7 +70,7 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.incident, "disable-incident", false, "Disable incident tools")
 	flag.BoolVar(&dt.prometheus, "disable-prometheus", false, "Disable prometheus tools")
 	flag.BoolVar(&dt.loki, "disable-loki", false, "Disable loki tools")
-	flag.BoolVar(&dt.elasticsearch, "disable-elasticsearch", false, "Disable elasticsearch tools")
+	flag.BoolVar(&dt.elasticsearch, "disable-elasticsearch", false, "Disable elasticsearch and opensearch tools")
 	flag.BoolVar(&dt.influxdb, "disable-influxdb", false, "Disable InfluxDB tools")
 	flag.BoolVar(&dt.alerting, "disable-alerting", false, "Disable alerting tools")
 	flag.BoolVar(&dt.dashboard, "disable-dashboard", false, "Disable dashboard tools")
@@ -206,7 +206,7 @@ Available Capabilities:
 - Datasources: List and fetch details for datasources.
 - Prometheus & Loki: Run PromQL and LogQL queries, retrieve metric/log metadata, and explore label names/values.
 - ClickHouse: Query ClickHouse datasources via Grafana with macro and variable substitution support.
-- Elasticsearch: Query Elasticsearch datasources using Lucene syntax or Query DSL for logs and metrics.
+- Elasticsearch/OpenSearch: Query Elasticsearch or OpenSearch datasources using Lucene syntax or Query DSL for logs and metrics.
 - Incidents: Search, create, update, and resolve incidents in Grafana Incident.
 - Sift Investigations: Start and manage Sift investigations, analyze logs/traces, find error patterns, and detect slow requests.
 - Alerting: List and fetch alert rules and notification contact points.
