@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -319,11 +320,89 @@ func checkDatasourceHealth(ctx context.Context, args CheckDatasourceHealthParams
 	}, nil
 }
 
-var CheckDatasourceHealth = mcpgrafana.MustTool(
-	"check_datasource_health",
-	"Checks the health of a Grafana datasource by UID by calling the datasource plugin's health endpoint. Returns a message indicating whether the connection is working.",
-	checkDatasourceHealth,
-	mcp.WithTitleAnnotation("Check datasource health"),
+type BulkCheckDatasourceHealthParams struct {
+	Type string   `json:"type,omitempty" jsonschema:"description=Datasource plugin type to filter by (e.g. 'prometheus'\\, 'loki'). If omitted and uids is empty\\, all datasources are checked."`
+	UIDs []string `json:"uids,omitempty" jsonschema:"description=Explicit list of datasource UIDs to check. When provided\\, the type filter is ignored."`
+}
+
+type DatasourceHealthCheckResult struct {
+	UID     string `json:"uid"`
+	Name    string `json:"name"`
+	Type    string `json:"type"`
+	Message string `json:"message,omitempty"`
+	Error   string `json:"error,omitempty"`
+}
+
+type BulkDatasourceHealthResult struct {
+	Results   []DatasourceHealthCheckResult `json:"results"`
+	Total     int                           `json:"total"`
+	Healthy   int                           `json:"healthy"`
+	Unhealthy int                           `json:"unhealthy"`
+}
+
+func checkDatasourcesHealth(ctx context.Context, args BulkCheckDatasourceHealthParams) (*BulkDatasourceHealthResult, error) {
+	c := mcpgrafana.GrafanaClientFromContext(ctx)
+
+	resp, err := c.Datasources.GetDataSources()
+	if err != nil {
+		return nil, fmt.Errorf("list datasources: %w", err)
+	}
+
+	var targets models.DataSourceList
+	if len(args.UIDs) > 0 {
+		uidSet := make(map[string]bool, len(args.UIDs))
+		for _, u := range args.UIDs {
+			uidSet[u] = true
+		}
+		for _, ds := range resp.Payload {
+			if uidSet[ds.UID] {
+				targets = append(targets, ds)
+			}
+		}
+	} else {
+		targets = filterDatasources(resp.Payload, args.Type)
+	}
+
+	results := make([]DatasourceHealthCheckResult, len(targets))
+	var wg sync.WaitGroup
+	for i, ds := range targets {
+		wg.Add(1)
+		go func(i int, ds *models.DataSourceListItemDTO) {
+			defer wg.Done()
+			r := DatasourceHealthCheckResult{UID: ds.UID, Name: ds.Name, Type: ds.Type}
+			health, err := checkDatasourceHealth(ctx, CheckDatasourceHealthParams{UID: ds.UID})
+			if err != nil {
+				r.Error = err.Error()
+			} else {
+				r.Message = health.Message
+			}
+			results[i] = r
+		}(i, ds)
+	}
+	wg.Wait()
+
+	healthy, unhealthy := 0, 0
+	for _, r := range results {
+		if r.Error != "" {
+			unhealthy++
+		} else {
+			healthy++
+		}
+	}
+
+	return &BulkDatasourceHealthResult{
+		Results:   results,
+		Total:     len(results),
+		Healthy:   healthy,
+		Unhealthy: unhealthy,
+	}, nil
+}
+
+var CheckDatasourcesHealth = mcpgrafana.MustTool(
+	"check_datasources_health",
+	"Checks the health of one or multiple Grafana datasources in parallel. Filter by type (e.g. 'prometheus') to check all datasources of that type, supply a list of UIDs to check specific ones, or omit both to check every configured datasource. Returns per-datasource results and a healthy/unhealthy summary.",
+	checkDatasourcesHealth,
+	mcp.WithTitleAnnotation("Check datasources health"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
 )
@@ -332,5 +411,5 @@ func AddDatasourceTools(mcp *server.MCPServer) {
 	ListDatasources.Register(mcp)
 	GetDatasource.Register(mcp)
 	UpdateDatasource.Register(mcp)
-	CheckDatasourceHealth.Register(mcp)
+	CheckDatasourcesHealth.Register(mcp)
 }
