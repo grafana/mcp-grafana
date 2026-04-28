@@ -307,3 +307,70 @@ func TestGenerateDeeplink_RejectsMalformedBaseURL_NoClient(t *testing.T) {
 	assert.Contains(t, err.Error(), "invalid",
 		"error message must include 'invalid' for operator/LLM readability; got %q", err.Error())
 }
+
+func TestToGrafanaTimeParam(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{"relative now-1h", "now-1h", "now-1h"},
+		{"relative now", "now", "now"},
+		{"epoch milliseconds", "1777380300000", "1777380300000"},
+		{"ISO 8601 UTC", "2026-04-28T12:45:00Z", "1777380300000"},
+		{"ISO 8601 with offset", "2026-04-28T13:45:00+01:00", "1777380300000"},
+		{"ISO 8601 with ms", "2026-04-28T12:45:00.000Z", "1777380300000"},
+		{"unrecognized format passthrough", "yesterday", "yesterday"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, toGrafanaTimeParam(tt.input))
+		})
+	}
+}
+
+func TestGenerateDeeplink_ISO8601TimeRange(t *testing.T) {
+	grafanaCfg := mcpgrafana.GrafanaConfig{
+		URL: "http://localhost:3000",
+	}
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), grafanaCfg)
+
+	panelID := 8
+	params := GenerateDeeplinkParams{
+		ResourceType: "panel",
+		DashboardUID: stringPtr("dash-123"),
+		PanelID:      &panelID,
+		TimeRange: &TimeRange{
+			From: "2026-04-28T12:45:00Z",
+			To:   "2026-04-28T13:15:00Z",
+		},
+	}
+
+	result, err := generateDeeplink(ctx, params)
+	require.NoError(t, err)
+	assert.Contains(t, result, "from=1777380300000")
+	assert.Contains(t, result, "to=1777382100000")
+	assert.NotContains(t, result, "2026-04-28")
+}
+
+func TestGenerateDeeplink_ExploreISO8601TimeRange(t *testing.T) {
+	grafanaCfg := mcpgrafana.GrafanaConfig{
+		URL: "http://localhost:3000",
+	}
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), grafanaCfg)
+
+	params := GenerateDeeplinkParams{
+		ResourceType:  "explore",
+		DatasourceUID: stringPtr("prometheus-uid"),
+		TimeRange: &TimeRange{
+			From: "2026-04-28T12:45:00Z",
+			To:   "2026-04-28T13:15:00Z",
+		},
+	}
+
+	result, err := generateDeeplink(ctx, params)
+	require.NoError(t, err)
+	assert.Contains(t, result, "1777380300000")
+	assert.Contains(t, result, "1777382100000")
+	assert.NotContains(t, result, "2026-04-28")
+}
