@@ -433,11 +433,14 @@ type OrgIDRoundTripper struct {
 }
 
 func (t *OrgIDRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
-	// clone the request to avoid modifying the original
 	clonedReq := req.Clone(req.Context())
 
-	if t.orgID > 0 {
-		clonedReq.Header.Set(client.OrgIDHeader, strconv.FormatInt(t.orgID, 10))
+	orgID := t.orgID
+	if cfg := GrafanaConfigFromContext(req.Context()); cfg.OrgID > 0 {
+		orgID = cfg.OrgID
+	}
+	if orgID > 0 {
+		clonedReq.Header.Set(client.OrgIDHeader, strconv.FormatInt(orgID, 10))
 	}
 
 	return t.underlying.RoundTrip(clonedReq)
@@ -461,7 +464,11 @@ type ExtraHeadersRoundTripper struct {
 
 func (t *ExtraHeadersRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	clonedReq := req.Clone(req.Context())
-	for k, v := range t.headers {
+	headers := t.headers
+	if cfg := GrafanaConfigFromContext(req.Context()); len(cfg.ExtraHeaders) > 0 {
+		headers = mergeHeaders(t.headers, cfg.ExtraHeaders)
+	}
+	for k, v := range headers {
 		clonedReq.Header.Set(k, v)
 	}
 	return t.underlying.RoundTrip(clonedReq)
@@ -491,14 +498,29 @@ type AuthRoundTripper struct {
 func (rt *AuthRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	clonedReq := req.Clone(req.Context())
 
-	if rt.accessToken != "" && rt.idToken != "" {
-		clonedReq.Header.Set("X-Access-Token", rt.accessToken)
-		clonedReq.Header.Set("X-Grafana-Id", rt.idToken)
-	} else if rt.apiKey != "" {
-		clonedReq.Header.Set("Authorization", "Bearer "+rt.apiKey)
-	} else if rt.basicAuth != nil {
-		password, _ := rt.basicAuth.Password()
-		clonedReq.SetBasicAuth(rt.basicAuth.Username(), password)
+	accessToken, idToken, apiKey, basicAuth := rt.accessToken, rt.idToken, rt.apiKey, rt.basicAuth
+	cfg := GrafanaConfigFromContext(req.Context())
+	if cfg.AccessToken != "" {
+		accessToken = cfg.AccessToken
+	}
+	if cfg.IDToken != "" {
+		idToken = cfg.IDToken
+	}
+	if cfg.APIKey != "" {
+		apiKey = cfg.APIKey
+	}
+	if cfg.BasicAuth != nil {
+		basicAuth = cfg.BasicAuth
+	}
+
+	if accessToken != "" && idToken != "" {
+		clonedReq.Header.Set("X-Access-Token", accessToken)
+		clonedReq.Header.Set("X-Grafana-Id", idToken)
+	} else if apiKey != "" {
+		clonedReq.Header.Set("Authorization", "Bearer "+apiKey)
+	} else if basicAuth != nil {
+		password, _ := basicAuth.Password()
+		clonedReq.SetBasicAuth(basicAuth.Username(), password)
 	}
 
 	return rt.underlying.RoundTrip(clonedReq)
@@ -587,13 +609,11 @@ func BuildTransport(cfg *GrafanaConfig, base http.RoundTripper, opts ...Transpor
 		transport = NewAuthRoundTripper(transport, cfg.AccessToken, cfg.IDToken, cfg.APIKey, cfg.BasicAuth)
 	}
 
-	// Extra headers
-	if len(cfg.ExtraHeaders) > 0 {
-		transport = NewExtraHeadersRoundTripper(transport, cfg.ExtraHeaders)
-	}
+	// Extra headers (always included so per-request context overrides work)
+	transport = NewExtraHeadersRoundTripper(transport, cfg.ExtraHeaders)
 
-	// Org ID
-	if !options.withoutOrgID && cfg.OrgID > 0 {
+	// Org ID (always included so per-request context overrides work)
+	if !options.withoutOrgID {
 		transport = NewOrgIDRoundTripper(transport, cfg.OrgID)
 	}
 
