@@ -407,9 +407,11 @@ var CheckDatasourcesHealth = mcpgrafana.MustTool(
 	mcp.WithReadOnlyHintAnnotation(true),
 )
 
-func AddDatasourceTools(mcp *server.MCPServer) {
+func AddDatasourceTools(mcp *server.MCPServer, enableWriteTools bool) {
 	ListDatasources.Register(mcp)
 	GetDatasource.Register(mcp)
-	UpdateDatasource.Register(mcp)
 	CheckDatasourcesHealth.Register(mcp)
+	if enableWriteTools {
+		UpdateDatasource.Register(mcp)
+	}
 }
