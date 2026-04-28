@@ -105,7 +105,7 @@ func newClickHouseClient(ctx context.Context, uid string) (*clickHouseClient, er
 	}
 
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
-	baseURL := strings.TrimRight(cfg.URL, "/")
+	baseURL := cfg.URL
 
 	transport, err := mcpgrafana.BuildTransport(&cfg, nil)
 	if err != nil {

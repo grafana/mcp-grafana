@@ -675,6 +675,26 @@ func TestTextMimeConsumerOverride(t *testing.T) {
 	}
 }
 
+func TestWithGrafanaConfigNormalizesURL(t *testing.T) {
+	tests := []struct {
+		name     string
+		inputURL string
+		wantURL  string
+	}{
+		{"trailing slash stripped", "https://example.grafana.net/", "https://example.grafana.net"},
+		{"multiple trailing slashes stripped", "https://example.grafana.net///", "https://example.grafana.net"},
+		{"no trailing slash unchanged", "https://example.grafana.net", "https://example.grafana.net"},
+		{"empty string unchanged", "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{URL: tt.inputURL})
+			got := GrafanaConfigFromContext(ctx)
+			assert.Equal(t, tt.wantURL, got.URL)
+		})
+	}
+}
+
 func TestHTTPTracingConfiguration(t *testing.T) {
 	t.Run("HTTP tracing always enabled for context propagation", func(t *testing.T) {
 		// Create context (HTTP tracing always enabled)

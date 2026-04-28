@@ -36,7 +36,7 @@ func generateDeeplink(ctx context.Context, args GenerateDeeplinkParams) (string,
 		baseURL = gc.PublicURL
 	} else {
 		config := mcpgrafana.GrafanaConfigFromContext(ctx)
-		baseURL = strings.TrimRight(config.URL, "/")
+		baseURL = config.URL
 	}
 
 	if baseURL == "" {

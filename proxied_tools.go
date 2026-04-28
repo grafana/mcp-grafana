@@ -60,7 +60,7 @@ func discoverMCPDatasources(ctx context.Context, logger *slog.Logger) ([]Discove
 	if config.URL == "" {
 		return nil, fmt.Errorf("grafana url not found in context")
 	}
-	grafanaBaseURL := strings.TrimRight(config.URL, "/")
+	grafanaBaseURL := config.URL
 
 	// Filter for datasources that support MCP and collect candidates
 	type candidate struct {

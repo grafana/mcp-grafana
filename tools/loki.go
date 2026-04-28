@@ -67,7 +67,7 @@ func newLokiClient(ctx context.Context, uid string) (*Client, error) {
 	}
 
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
-	grafanaURL := strings.TrimRight(cfg.URL, "/")
+	grafanaURL := cfg.URL
 	resourcesBase, proxyBase := datasourceProxyPaths(uid)
 	url := grafanaURL + proxyBase
 
