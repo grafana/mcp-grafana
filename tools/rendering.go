@@ -83,7 +83,7 @@ type RenderTimeRange struct {
 
 func getPanelImage(ctx context.Context, args GetPanelImageParams) (*mcp.CallToolResult, error) {
 	config := mcpgrafana.GrafanaConfigFromContext(ctx)
-	baseURL := strings.TrimRight(config.URL, "/")
+	baseURL := config.URL
 
 	if baseURL == "" {
 		return nil, fmt.Errorf("grafana URL not configured. Please set GRAFANA_URL environment variable or X-Grafana-URL header")

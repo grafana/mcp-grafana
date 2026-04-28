@@ -51,7 +51,7 @@ const (
 )
 
 func urlAndAPIKeyFromEnv(logger *slog.Logger) (string, string) {
-	u := strings.TrimRight(os.Getenv(grafanaURLEnvVar), "/")
+	u := os.Getenv(grafanaURLEnvVar)
 
 	// Check for the new service account token environment variable first
 	apiKey := os.Getenv(grafanaServiceAccountTokenEnvVar)
@@ -181,7 +181,7 @@ func orgIdFromHeaders(req *http.Request, logger *slog.Logger) int64 {
 }
 
 func urlAndAPIKeyFromHeaders(req *http.Request) (string, string) {
-	u := strings.TrimRight(req.Header.Get(grafanaURLHeader), "/")
+	u := req.Header.Get(grafanaURLHeader)
 
 	// Check for the new service account token header first
 	apiKey := req.Header.Get(grafanaServiceAccountTokenHeader)
@@ -305,6 +305,7 @@ const (
 // WithGrafanaConfig adds Grafana configuration to the context.
 // This configuration includes API credentials, debug settings, and TLS options that will be used by all Grafana clients created from this context.
 func WithGrafanaConfig(ctx context.Context, config GrafanaConfig) context.Context {
+	config.URL = strings.TrimRight(config.URL, "/")
 	return context.WithValue(ctx, grafanaConfigKey{}, config)
 }
 
@@ -813,7 +814,7 @@ func fetchPublicURL(ctx context.Context, cfg *GrafanaConfig) string {
 // doFetchPublicURL performs the actual HTTP request to fetch the public URL.
 func doFetchPublicURL(ctx context.Context, cfg *GrafanaConfig) string {
 	logger := cfg.LoggerOrDefault()
-	settingsURL := strings.TrimRight(cfg.URL, "/") + "/api/frontend/settings"
+	settingsURL := cfg.URL + "/api/frontend/settings"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, settingsURL, nil)
 	if err != nil {
 		logger.Warn("Failed to create request for frontend settings", "error", err)
