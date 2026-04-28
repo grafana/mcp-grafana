@@ -309,9 +309,6 @@ func checkDatasourceHealth(ctx context.Context, args CheckDatasourceHealthParams
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
 	resp, err := c.Datasources.CheckDatasourceHealthWithUID(args.UID)
 	if err != nil {
-		if strings.Contains(err.Error(), "404") {
-			return nil, fmt.Errorf("datasource with UID '%s' not found", args.UID)
-		}
 		return nil, fmt.Errorf("check datasource health %s: %w", args.UID, err)
 	}
 	return &DatasourceHealthResult{
