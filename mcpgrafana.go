@@ -51,7 +51,7 @@ const (
 )
 
 func urlAndAPIKeyFromEnv(logger *slog.Logger) (string, string) {
-	u := os.Getenv(grafanaURLEnvVar)
+	u := strings.TrimRight(os.Getenv(grafanaURLEnvVar), "/")
 
 	// Check for the new service account token environment variable first
 	apiKey := os.Getenv(grafanaServiceAccountTokenEnvVar)
@@ -181,7 +181,7 @@ func orgIdFromHeaders(req *http.Request, logger *slog.Logger) int64 {
 }
 
 func urlAndAPIKeyFromHeaders(req *http.Request) (string, string) {
-	u := req.Header.Get(grafanaURLHeader)
+	u := strings.TrimRight(req.Header.Get(grafanaURLHeader), "/")
 
 	// Check for the new service account token header first
 	apiKey := req.Header.Get(grafanaServiceAccountTokenHeader)
