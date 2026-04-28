@@ -116,7 +116,7 @@ s := server.NewMCPServer("mcp-grafana", "1.0.0")
 
 // Add tools
 tools.AddSearchTools(s)
-tools.AddDatasourceTools(s)
+tools.AddDatasourceTools(s, false)
 // ... add other tools as needed
 
 // Create stdio server with TLS support
@@ -156,7 +156,7 @@ func runServerWithTLS() {
 
 	// Add some basic tools
 	tools.AddSearchTools(s)
-	tools.AddDatasourceTools(s)
+	tools.AddDatasourceTools(s, false) // Read-only mode (no write tools)
 	tools.AddDashboardTools(s, false) // Read-only mode (no write tools)
 
 	// Create stdio server with TLS-enabled context function

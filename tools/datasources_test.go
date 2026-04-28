@@ -6,8 +6,11 @@
 package tools
 
 import (
+	"encoding/json"
 	"testing"
 
+	mcpgrafana "github.com/grafana/mcp-grafana"
+	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -74,5 +77,139 @@ func TestDatasourcesTools(t *testing.T) {
 		require.Error(t, err)
 		require.Nil(t, result)
 		assert.Contains(t, err.Error(), "either uid or name must be provided")
+	})
+}
+
+func TestAddAuthenticationToDatasourceTools(t *testing.T) {
+	// The tool always returns a credential_policy_redirect to steer users to the Grafana UI.
+
+	t.Run("no uid redirects to new datasource page", func(t *testing.T) {
+		ctx := newTestContext()
+		toolResult, err := addAuthenticationToDatasource(ctx, AddAuthenticationToDatasourceParams{})
+		require.NoError(t, err)
+		require.NotNil(t, toolResult)
+		assert.True(t, toolResult.IsError)
+
+		require.Len(t, toolResult.Content, 2)
+		text, ok := toolResult.Content[0].(mcp.TextContent)
+		require.True(t, ok)
+		var payload map[string]any
+		require.NoError(t, json.Unmarshal([]byte(text.Text), &payload))
+		assert.Equal(t, "credential_policy_redirect", payload["outcome"])
+		assert.Equal(t, "auth_credential_instructions", payload["reason"])
+		configURL, _ := payload["open_config_page_url"].(string)
+		assert.Contains(t, configURL, "connections/datasources/new")
+
+		link, ok := toolResult.Content[1].(mcp.ResourceLink)
+		require.True(t, ok)
+		assert.Contains(t, link.URI, "connections/datasources/new")
+	})
+
+	t.Run("valid uid redirects to edit datasource page", func(t *testing.T) {
+		ctx := newTestContext()
+		toolResult, err := addAuthenticationToDatasource(ctx, AddAuthenticationToDatasourceParams{UID: "prometheus"})
+		require.NoError(t, err)
+		require.NotNil(t, toolResult)
+		assert.True(t, toolResult.IsError)
+
+		require.Len(t, toolResult.Content, 2)
+		text, ok := toolResult.Content[0].(mcp.TextContent)
+		require.True(t, ok)
+		var payload map[string]any
+		require.NoError(t, json.Unmarshal([]byte(text.Text), &payload))
+		assert.Equal(t, "credential_policy_redirect", payload["outcome"])
+		assert.Equal(t, "auth_credential_instructions", payload["reason"])
+		configURL, _ := payload["open_config_page_url"].(string)
+		assert.Contains(t, configURL, "connections/datasources/edit/prometheus")
+
+		link, ok := toolResult.Content[1].(mcp.ResourceLink)
+		require.True(t, ok)
+		assert.Contains(t, link.URI, "connections/datasources/edit/prometheus")
+	})
+
+	t.Run("secret-like uid short-circuits with embedded_secret_or_token reason", func(t *testing.T) {
+		ctx := newTestContext()
+		toolResult, err := addAuthenticationToDatasource(ctx, AddAuthenticationToDatasourceParams{
+			UID: "ghp_abcdefghijklmnopqrstuvwxyz1234567890",
+		})
+		require.NoError(t, err)
+		require.NotNil(t, toolResult)
+		assert.True(t, toolResult.IsError)
+
+		text, ok := toolResult.Content[0].(mcp.TextContent)
+		require.True(t, ok)
+		var payload map[string]any
+		require.NoError(t, json.Unmarshal([]byte(text.Text), &payload))
+		assert.Equal(t, "credential_policy_redirect", payload["outcome"])
+		assert.Equal(t, "embedded_secret_or_token", payload["reason"])
+	})
+}
+
+func TestCreateDatasourceTools(t *testing.T) {
+	t.Run("create datasource", func(t *testing.T) {
+		ctx := newTestContext()
+
+		toolResult, err := createDatasource(ctx, CreateDatasourceParams{
+			Name: "mcp-test-prometheus",
+			Type: "prometheus",
+			URL:  "http://prometheus:9090",
+		})
+		require.NoError(t, err)
+		require.NotNil(t, toolResult)
+		assert.False(t, toolResult.IsError)
+
+		require.Len(t, toolResult.Content, 1)
+		text, ok := toolResult.Content[0].(mcp.TextContent)
+		require.True(t, ok)
+
+		var result CreateDatasourceResult
+		require.NoError(t, json.Unmarshal([]byte(text.Text), &result))
+		assert.Equal(t, "mcp-test-prometheus", result.Name)
+		assert.NotEmpty(t, result.UID)
+
+		c := mcpgrafana.GrafanaClientFromContext(ctx)
+		t.Cleanup(func() {
+			_, _ = c.Datasources.DeleteDataSourceByUID(result.UID)
+		})
+	})
+
+	t.Run("create datasource - basicAuth blocked", func(t *testing.T) {
+		ctx := newTestContext()
+
+		toolResult, err := createDatasource(ctx, CreateDatasourceParams{
+			Name:      "should-not-be-created",
+			Type:      "prometheus",
+			BasicAuth: true,
+		})
+		require.NoError(t, err)
+		require.NotNil(t, toolResult)
+		assert.True(t, toolResult.IsError)
+
+		text, ok := toolResult.Content[0].(mcp.TextContent)
+		require.True(t, ok)
+		var payload map[string]any
+		require.NoError(t, json.Unmarshal([]byte(text.Text), &payload))
+		assert.Equal(t, "credential_policy_redirect", payload["outcome"])
+		assert.Equal(t, "basic_auth_enabled_via_mcp_disallowed", payload["reason"])
+	})
+
+	t.Run("create datasource - secureJsonData blocked", func(t *testing.T) {
+		ctx := newTestContext()
+
+		toolResult, err := createDatasource(ctx, CreateDatasourceParams{
+			Name:           "should-not-be-created",
+			Type:           "prometheus",
+			SecureJSONData: map[string]string{"password": "s3cr3t"},
+		})
+		require.NoError(t, err)
+		require.NotNil(t, toolResult)
+		assert.True(t, toolResult.IsError)
+
+		text, ok := toolResult.Content[0].(mcp.TextContent)
+		require.True(t, ok)
+		var payload map[string]any
+		require.NoError(t, json.Unmarshal([]byte(text.Text), &payload))
+		assert.Equal(t, "credential_policy_redirect", payload["outcome"])
+		assert.Equal(t, "secure_json_data_found", payload["reason"])
 	})
 }
