@@ -59,8 +59,10 @@ var ManageRulesReadWrite = mcpgrafana.MustTool(
 func AddAlertingTools(mcp *server.MCPServer, enableWriteTools bool) {
 	if enableWriteTools {
 		ManageRulesReadWrite.Register(mcp)
+		ManageAlertmanagerReadWrite.Register(mcp)
 	} else {
 		ManageRulesRead.Register(mcp)
+		ManageAlertmanagerRead.Register(mcp)
 	}
 	ManageRouting.Register(mcp)
 }
