@@ -1001,6 +1001,8 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 		URL:          grafanaURL,
 		APIKey:       apiKey,
 		BasicAuth:    auth,
+		AccessToken:  config.AccessToken,
+		IDToken:      config.IDToken,
 		TLSConfig:    config.TLSConfig,
 		ExtraHeaders: config.ExtraHeaders,
 		Logger:       config.Logger,
