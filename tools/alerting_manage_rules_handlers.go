@@ -3,7 +3,6 @@ package tools
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"time"
 
 	"github.com/go-openapi/strfmt"
@@ -108,7 +107,7 @@ func getAlertRuleDetail(ctx context.Context, uid string, limitAlerts int) (*aler
 
 	rulesResp, err := ac.GetRules(ctx, opts)
 	if err != nil {
-		slog.WarnContext(ctx, "failed to fetch runtime state for alert rule",
+		mcpgrafana.LoggerFromContext(ctx).WarnContext(ctx, "failed to fetch runtime state for alert rule",
 			"uid", uid, "error", err)
 		detail := mergeRuleDetail(alertRule.Payload, nil)
 		return &detail, nil

@@ -2,6 +2,7 @@ package mcpgrafana
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -764,13 +765,13 @@ func assertHasAttribute(t *testing.T, attributes []attribute.KeyValue, key strin
 func TestExtraHeadersFromEnv(t *testing.T) {
 	t.Run("empty env returns nil", func(t *testing.T) {
 		t.Setenv("GRAFANA_EXTRA_HEADERS", "")
-		headers := extraHeadersFromEnv()
+		headers := extraHeadersFromEnv(slog.Default())
 		assert.Nil(t, headers)
 	})
 
 	t.Run("valid JSON", func(t *testing.T) {
 		t.Setenv("GRAFANA_EXTRA_HEADERS", `{"X-Custom-Header": "custom-value", "X-Another": "another-value"}`)
-		headers := extraHeadersFromEnv()
+		headers := extraHeadersFromEnv(slog.Default())
 		assert.Equal(t, map[string]string{
 			"X-Custom-Header": "custom-value",
 			"X-Another":       "another-value",
@@ -779,13 +780,13 @@ func TestExtraHeadersFromEnv(t *testing.T) {
 
 	t.Run("invalid JSON returns nil", func(t *testing.T) {
 		t.Setenv("GRAFANA_EXTRA_HEADERS", "not-json")
-		headers := extraHeadersFromEnv()
+		headers := extraHeadersFromEnv(slog.Default())
 		assert.Nil(t, headers)
 	})
 
 	t.Run("empty object", func(t *testing.T) {
 		t.Setenv("GRAFANA_EXTRA_HEADERS", "{}")
-		headers := extraHeadersFromEnv()
+		headers := extraHeadersFromEnv(slog.Default())
 		assert.Equal(t, map[string]string{}, headers)
 	})
 }
@@ -1531,5 +1532,336 @@ func TestNewGrafanaClientFetchesPublicURL(t *testing.T) {
 		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{})
 		gc := NewGrafanaClient(ctx, ts.URL, "test-key", nil)
 		assert.Equal(t, "", gc.PublicURL)
+	})
+}
+
+func TestOrgIDRoundTripperContextOverride(t *testing.T) {
+	t.Run("context OrgID overrides captured value", func(t *testing.T) {
+		var capturedReq *http.Request
+		mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+			capturedReq = req
+			return &http.Response{StatusCode: 200}, nil
+		}}
+
+		rt := NewOrgIDRoundTripper(mock, 1)
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{OrgID: 99})
+		req, _ := http.NewRequestWithContext(ctx, "GET", "http://example.com", nil)
+		_, err := rt.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Equal(t, "99", capturedReq.Header.Get(grafana_client.OrgIDHeader))
+	})
+
+	t.Run("context OrgID used when captured value is zero", func(t *testing.T) {
+		var capturedReq *http.Request
+		mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+			capturedReq = req
+			return &http.Response{StatusCode: 200}, nil
+		}}
+
+		rt := NewOrgIDRoundTripper(mock, 0)
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{OrgID: 42})
+		req, _ := http.NewRequestWithContext(ctx, "GET", "http://example.com", nil)
+		_, err := rt.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Equal(t, "42", capturedReq.Header.Get(grafana_client.OrgIDHeader))
+	})
+
+	t.Run("falls back to captured value when context has no OrgID", func(t *testing.T) {
+		var capturedReq *http.Request
+		mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+			capturedReq = req
+			return &http.Response{StatusCode: 200}, nil
+		}}
+
+		rt := NewOrgIDRoundTripper(mock, 7)
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{})
+		req, _ := http.NewRequestWithContext(ctx, "GET", "http://example.com", nil)
+		_, err := rt.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Equal(t, "7", capturedReq.Header.Get(grafana_client.OrgIDHeader))
+	})
+
+	t.Run("no header when both captured and context are zero", func(t *testing.T) {
+		var capturedReq *http.Request
+		mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+			capturedReq = req
+			return &http.Response{StatusCode: 200}, nil
+		}}
+
+		rt := NewOrgIDRoundTripper(mock, 0)
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{})
+		req, _ := http.NewRequestWithContext(ctx, "GET", "http://example.com", nil)
+		_, err := rt.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Empty(t, capturedReq.Header.Get(grafana_client.OrgIDHeader))
+	})
+}
+
+func TestAuthRoundTripperContextOverride(t *testing.T) {
+	t.Run("context OBO tokens override captured API key", func(t *testing.T) {
+		var capturedReq *http.Request
+		mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+			capturedReq = req
+			return &http.Response{StatusCode: 200}, nil
+		}}
+
+		rt := NewAuthRoundTripper(mock, "", "", "captured-key", nil)
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{
+			AccessToken: "ctx-access",
+			IDToken:     "ctx-id",
+		})
+		req, _ := http.NewRequestWithContext(ctx, "GET", "http://example.com", nil)
+		_, err := rt.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Equal(t, "ctx-access", capturedReq.Header.Get("X-Access-Token"))
+		assert.Equal(t, "ctx-id", capturedReq.Header.Get("X-Grafana-Id"))
+		assert.Empty(t, capturedReq.Header.Get("Authorization"))
+	})
+
+	t.Run("context API key overrides captured API key", func(t *testing.T) {
+		var capturedReq *http.Request
+		mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+			capturedReq = req
+			return &http.Response{StatusCode: 200}, nil
+		}}
+
+		rt := NewAuthRoundTripper(mock, "", "", "captured-key", nil)
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{APIKey: "ctx-key"})
+		req, _ := http.NewRequestWithContext(ctx, "GET", "http://example.com", nil)
+		_, err := rt.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Equal(t, "Bearer ctx-key", capturedReq.Header.Get("Authorization"))
+	})
+
+	t.Run("context basic auth overrides captured basic auth", func(t *testing.T) {
+		var capturedReq *http.Request
+		mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+			capturedReq = req
+			return &http.Response{StatusCode: 200}, nil
+		}}
+
+		rt := NewAuthRoundTripper(mock, "", "", "", url.UserPassword("old-user", "old-pass"))
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{
+			BasicAuth: url.UserPassword("new-user", "new-pass"),
+		})
+		req, _ := http.NewRequestWithContext(ctx, "GET", "http://example.com", nil)
+		_, err := rt.RoundTrip(req)
+		require.NoError(t, err)
+
+		user, pass, ok := capturedReq.BasicAuth()
+		require.True(t, ok)
+		assert.Equal(t, "new-user", user)
+		assert.Equal(t, "new-pass", pass)
+	})
+
+	t.Run("falls back to captured values when context has no auth", func(t *testing.T) {
+		var capturedReq *http.Request
+		mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+			capturedReq = req
+			return &http.Response{StatusCode: 200}, nil
+		}}
+
+		rt := NewAuthRoundTripper(mock, "", "", "captured-key", nil)
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{})
+		req, _ := http.NewRequestWithContext(ctx, "GET", "http://example.com", nil)
+		_, err := rt.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Equal(t, "Bearer captured-key", capturedReq.Header.Get("Authorization"))
+	})
+
+	t.Run("context OBO tokens used when no captured auth exists", func(t *testing.T) {
+		var capturedReq *http.Request
+		mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+			capturedReq = req
+			return &http.Response{StatusCode: 200}, nil
+		}}
+
+		rt := NewAuthRoundTripper(mock, "", "", "", nil)
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{
+			AccessToken: "ctx-access",
+			IDToken:     "ctx-id",
+		})
+		req, _ := http.NewRequestWithContext(ctx, "GET", "http://example.com", nil)
+		_, err := rt.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Equal(t, "ctx-access", capturedReq.Header.Get("X-Access-Token"))
+		assert.Equal(t, "ctx-id", capturedReq.Header.Get("X-Grafana-Id"))
+	})
+}
+
+func TestExtraHeadersRoundTripperContextOverride(t *testing.T) {
+	t.Run("context headers override captured headers", func(t *testing.T) {
+		var capturedReq *http.Request
+		mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+			capturedReq = req
+			return &http.Response{StatusCode: 200}, nil
+		}}
+
+		rt := NewExtraHeadersRoundTripper(mock, map[string]string{
+			"X-Tenant": "captured-tenant",
+		})
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{
+			ExtraHeaders: map[string]string{"X-Tenant": "ctx-tenant"},
+		})
+		req, _ := http.NewRequestWithContext(ctx, "GET", "http://example.com", nil)
+		_, err := rt.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Equal(t, "ctx-tenant", capturedReq.Header.Get("X-Tenant"))
+	})
+
+	t.Run("context headers merged with captured headers", func(t *testing.T) {
+		var capturedReq *http.Request
+		mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+			capturedReq = req
+			return &http.Response{StatusCode: 200}, nil
+		}}
+
+		rt := NewExtraHeadersRoundTripper(mock, map[string]string{
+			"X-Static": "from-config",
+		})
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{
+			ExtraHeaders: map[string]string{"X-Dynamic": "from-context"},
+		})
+		req, _ := http.NewRequestWithContext(ctx, "GET", "http://example.com", nil)
+		_, err := rt.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Equal(t, "from-config", capturedReq.Header.Get("X-Static"))
+		assert.Equal(t, "from-context", capturedReq.Header.Get("X-Dynamic"))
+	})
+
+	t.Run("falls back to captured headers when context has none", func(t *testing.T) {
+		var capturedReq *http.Request
+		mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+			capturedReq = req
+			return &http.Response{StatusCode: 200}, nil
+		}}
+
+		rt := NewExtraHeadersRoundTripper(mock, map[string]string{
+			"X-Custom": "captured-value",
+		})
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{})
+		req, _ := http.NewRequestWithContext(ctx, "GET", "http://example.com", nil)
+		_, err := rt.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Equal(t, "captured-value", capturedReq.Header.Get("X-Custom"))
+	})
+
+	t.Run("context headers used when no captured headers exist", func(t *testing.T) {
+		var capturedReq *http.Request
+		mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+			capturedReq = req
+			return &http.Response{StatusCode: 200}, nil
+		}}
+
+		rt := NewExtraHeadersRoundTripper(mock, nil)
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{
+			ExtraHeaders: map[string]string{"X-From-Context": "value"},
+		})
+		req, _ := http.NewRequestWithContext(ctx, "GET", "http://example.com", nil)
+		_, err := rt.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Equal(t, "value", capturedReq.Header.Get("X-From-Context"))
+	})
+}
+
+func TestBuildTransportContextOverrides(t *testing.T) {
+	t.Run("context OrgID works even when construction-time OrgID is zero", func(t *testing.T) {
+		var capturedReq *http.Request
+		mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+			capturedReq = req
+			return &http.Response{StatusCode: 200}, nil
+		}}
+
+		cfg := &GrafanaConfig{OrgID: 0}
+		transport, err := BuildTransport(cfg, mock, WithoutOtel())
+		require.NoError(t, err)
+
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{OrgID: 55})
+		req, _ := http.NewRequestWithContext(ctx, "GET", "http://example.com", nil)
+		_, err = transport.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Equal(t, "55", capturedReq.Header.Get(grafana_client.OrgIDHeader))
+	})
+
+	t.Run("context ExtraHeaders work even when construction-time headers are empty", func(t *testing.T) {
+		var capturedReq *http.Request
+		mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+			capturedReq = req
+			return &http.Response{StatusCode: 200}, nil
+		}}
+
+		cfg := &GrafanaConfig{}
+		transport, err := BuildTransport(cfg, mock, WithoutOtel())
+		require.NoError(t, err)
+
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{
+			ExtraHeaders: map[string]string{"X-Request-Tenant": "tenant-42"},
+		})
+		req, _ := http.NewRequestWithContext(ctx, "GET", "http://example.com", nil)
+		_, err = transport.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Equal(t, "tenant-42", capturedReq.Header.Get("X-Request-Tenant"))
+	})
+
+	t.Run("context auth overrides work through BuildTransport", func(t *testing.T) {
+		var capturedReq *http.Request
+		mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+			capturedReq = req
+			return &http.Response{StatusCode: 200}, nil
+		}}
+
+		cfg := &GrafanaConfig{APIKey: "startup-key"}
+		transport, err := BuildTransport(cfg, mock, WithoutOtel())
+		require.NoError(t, err)
+
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{
+			AccessToken: "per-request-access",
+			IDToken:     "per-request-id",
+		})
+		req, _ := http.NewRequestWithContext(ctx, "GET", "http://example.com", nil)
+		_, err = transport.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Equal(t, "per-request-access", capturedReq.Header.Get("X-Access-Token"))
+		assert.Equal(t, "per-request-id", capturedReq.Header.Get("X-Grafana-Id"))
+		assert.Empty(t, capturedReq.Header.Get("Authorization"))
+	})
+
+	t.Run("no context overlay preserves existing behavior", func(t *testing.T) {
+		var capturedReq *http.Request
+		mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+			capturedReq = req
+			return &http.Response{StatusCode: 200}, nil
+		}}
+
+		cfg := &GrafanaConfig{
+			APIKey:       "my-key",
+			OrgID:        10,
+			ExtraHeaders: map[string]string{"X-Custom": "val"},
+		}
+		transport, err := BuildTransport(cfg, mock, WithoutOtel())
+		require.NoError(t, err)
+
+		req, _ := http.NewRequest("GET", "http://example.com", nil)
+		_, err = transport.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Equal(t, "Bearer my-key", capturedReq.Header.Get("Authorization"))
+		assert.Equal(t, "10", capturedReq.Header.Get(grafana_client.OrgIDHeader))
+		assert.Equal(t, "val", capturedReq.Header.Get("X-Custom"))
 	})
 }

@@ -22,11 +22,11 @@ const clientCacheMeterName = "mcp-grafana"
 
 // clientCacheKey uniquely identifies a client by its credentials, target, and forwarded headers.
 type clientCacheKey struct {
-	url             string
-	apiKey          string
-	username        string
-	password        string
-	orgID           int64
+	url              string
+	apiKey           string
+	username         string
+	password         string
+	orgID            int64
 	forwardedHeaders string // sorted, serialized forwarded headers for cache differentiation
 }
 
@@ -120,14 +120,19 @@ type ClientCache struct {
 	metrics         clientCacheMetrics
 	sfGrafana       singleflight.Group
 	sfIncident      singleflight.Group
+	logger          *slog.Logger
 }
 
 // NewClientCache creates a new client cache.
-func NewClientCache() *ClientCache {
+func NewClientCache(logger *slog.Logger) *ClientCache {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &ClientCache{
 		grafanaClients:  make(map[clientCacheKey]*GrafanaClient),
 		incidentClients: make(map[clientCacheKey]*incident.Client),
 		metrics:         newClientCacheMetrics(),
+		logger:          logger,
 	}
 }
 
@@ -171,7 +176,7 @@ func (c *ClientCache) GetOrCreateGrafanaClient(key clientCacheKey, createFn func
 		c.grafanaClients[key] = client
 		c.metrics.misses.Add(ctx, 1, typeAttr)
 		c.metrics.size.Record(ctx, int64(len(c.grafanaClients)), typeAttr)
-		slog.Debug("Cached new Grafana client", "key", key, "cache_size", len(c.grafanaClients))
+		c.logger.Debug("Cached new Grafana client", "key", key, "cache_size", len(c.grafanaClients))
 		c.mu.Unlock()
 
 		return client, nil
@@ -214,7 +219,7 @@ func (c *ClientCache) GetOrCreateIncidentClient(key clientCacheKey, createFn fun
 		c.incidentClients[key] = client
 		c.metrics.misses.Add(ctx, 1, typeAttr)
 		c.metrics.size.Record(ctx, int64(len(c.incidentClients)), typeAttr)
-		slog.Debug("Cached new incident client", "key", key, "cache_size", len(c.incidentClients))
+		c.logger.Debug("Cached new incident client", "key", key, "cache_size", len(c.incidentClients))
 		c.mu.Unlock()
 
 		return client, nil
@@ -244,7 +249,7 @@ func (c *ClientCache) Close() {
 	ctx := context.Background()
 	c.metrics.size.Record(ctx, 0, metric.WithAttributes(attrClientTypeGrafana))
 	c.metrics.size.Record(ctx, 0, metric.WithAttributes(attrClientTypeIncident))
-	slog.Debug("Client cache closed")
+	c.logger.Debug("Client cache closed")
 }
 
 // Size returns the number of cached clients (for testing/metrics).
@@ -268,15 +273,16 @@ func hashAPIKey(key string) string {
 func extractGrafanaClientCached(cache *ClientCache) httpContextFunc {
 	return func(ctx context.Context, req *http.Request) context.Context {
 		config := GrafanaConfigFromContext(ctx)
+		logger := config.LoggerOrDefault()
 		if config.OrgID == 0 {
-			slog.Warn("No org ID found in request headers or environment variables, using default org. Set GRAFANA_ORG_ID or pass X-Grafana-Org-Id header to target a specific org.")
+			logger.Warn("No org ID found in request headers or environment variables, using default org. Set GRAFANA_ORG_ID or pass X-Grafana-Org-Id header to target a specific org.")
 		}
 
-		u, apiKey, basicAuth, _ := extractKeyGrafanaInfoFromReq(req)
+		u, apiKey, basicAuth, _ := extractKeyGrafanaInfoFromReq(req, logger)
 		key := cacheKeyFromRequest(u, apiKey, basicAuth, config.OrgID, req)
 
 		grafanaClient := cache.GetOrCreateGrafanaClient(key, func() *GrafanaClient {
-			slog.Debug("Creating new Grafana client (cache miss)", "url", u, "api_key_hash", hashAPIKey(apiKey))
+			logger.Debug("Creating new Grafana client (cache miss)", "url", u, "api_key_hash", hashAPIKey(apiKey))
 			return NewGrafanaClient(ctx, u, apiKey, basicAuth)
 		})
 
@@ -287,19 +293,21 @@ func extractGrafanaClientCached(cache *ClientCache) httpContextFunc {
 // extractIncidentClientCached creates an httpContextFunc that uses the cache.
 func extractIncidentClientCached(cache *ClientCache) httpContextFunc {
 	return func(ctx context.Context, req *http.Request) context.Context {
-		grafanaURL, apiKey, _, orgID := extractKeyGrafanaInfoFromReq(req)
+		config := GrafanaConfigFromContext(ctx)
+		logger := config.LoggerOrDefault()
+
+		grafanaURL, apiKey, _, orgID := extractKeyGrafanaInfoFromReq(req, logger)
 		key := cacheKeyFromRequest(grafanaURL, apiKey, nil, orgID, req)
 
 		incidentClient := cache.GetOrCreateIncidentClient(key, func() *incident.Client {
 			incidentURL := fmt.Sprintf("%s/api/plugins/grafana-irm-app/resources/api/v1/", grafanaURL)
-			slog.Debug("Creating new incident client (cache miss)", "url", incidentURL)
+			logger.Debug("Creating new incident client (cache miss)", "url", incidentURL)
 			client := incident.NewClient(incidentURL, apiKey)
 
-			config := GrafanaConfigFromContext(ctx)
 			config.OrgID = orgID
 			transport, err := BuildTransport(&config, nil, WithoutAuth())
 			if err != nil {
-				slog.Error("Failed to create custom transport for incident client, using default", "error", err)
+				logger.Error("Failed to create custom transport for incident client, using default", "error", err)
 			} else {
 				client.HTTPClient.Transport = transport
 			}
