@@ -158,6 +158,69 @@ func TestCategorizedLabelsParsing(t *testing.T) {
 	assert.Equal(t, map[string]string{"level": "error"}, cats2.Parsed)
 }
 
+// Regression test for #803: timestamps in `value[0]` arrive as JSON-encoded
+// strings (e.g. `"1234567890"`) and must be unquoted before being placed in
+// LogEntry.Timestamp; otherwise the surrounding quotes are double-encoded
+// when the entry is marshalled, producing `"timestamp":"\"1234567890\""` and
+// breaking any downstream `json.Unmarshal` of the tool result.
+func TestLogEntryTimestampNotDoubleEncoded(t *testing.T) {
+	rawResponse := `{
+		"status": "success",
+		"data": {
+			"resultType": "streams",
+			"result": [
+				{
+					"stream": {"app": "frontend"},
+					"values": [
+						["1693996529000222496", "some log line"]
+					]
+				}
+			]
+		}
+	}`
+
+	var response lokiQueryResponse
+	require.NoError(t, json.Unmarshal([]byte(rawResponse), &response))
+
+	var streams []LokiLogStream
+	require.NoError(t, json.Unmarshal(response.Data.Result, &streams))
+	require.Len(t, streams, 1)
+	require.Len(t, streams[0].Values, 1)
+
+	// Mirror the parsing the production code does in queryLokiLogs.
+	var ts string
+	require.NoError(t, json.Unmarshal(streams[0].Values[0][0], &ts))
+
+	var line string
+	require.NoError(t, json.Unmarshal(streams[0].Values[0][1], &line))
+
+	entry := LogEntry{
+		Timestamp: ts,
+		Line:      line,
+		Labels:    streams[0].Stream,
+	}
+
+	// Timestamp must be the plain numeric string, with no surrounding quotes.
+	assert.Equal(t, "1693996529000222496", entry.Timestamp)
+	assert.NotContains(t, entry.Timestamp, `"`,
+		"timestamp must not contain literal quotes — see #803")
+
+	// Marshalling the entry must produce a JSON object that can be
+	// re-parsed with json.Unmarshal without further unescaping.
+	out, err := json.Marshal([]LogEntry{entry})
+	require.NoError(t, err)
+	assert.Contains(t, string(out), `"timestamp":"1693996529000222496"`,
+		"timestamp must serialise as a plain string, not as a JSON-encoded JSON string")
+	assert.NotContains(t, string(out), `"timestamp":"\"`,
+		"timestamp must not be double-encoded (#803)")
+
+	var roundtrip []LogEntry
+	require.NoError(t, json.Unmarshal(out, &roundtrip),
+		"the serialised tool output must round-trip through json.Unmarshal")
+	require.Len(t, roundtrip, 1)
+	assert.Equal(t, "1693996529000222496", roundtrip[0].Timestamp)
+}
+
 func TestCategorizedLabelsBackwardCompat(t *testing.T) {
 	// Without the encoding flag, values only have 2 elements (old Loki).
 	rawResponse := `{
