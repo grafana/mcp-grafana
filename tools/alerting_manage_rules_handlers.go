@@ -107,7 +107,7 @@ func getAlertRuleDetail(ctx context.Context, uid string, limitAlerts int) (*aler
 
 	rulesResp, err := ac.GetRules(ctx, opts)
 	if err != nil {
-		mcpgrafana.GrafanaConfigFromContext(ctx).LoggerOrDefault().WarnContext(ctx, "failed to fetch runtime state for alert rule",
+		mcpgrafana.LoggerFromContext(ctx).WarnContext(ctx, "failed to fetch runtime state for alert rule",
 			"uid", uid, "error", err)
 		detail := mergeRuleDetail(alertRule.Payload, nil)
 		return &detail, nil

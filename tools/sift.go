@@ -268,7 +268,7 @@ type FindErrorPatternLogsParams struct {
 
 // findErrorPatternLogs creates an investigation with ErrorPatternLogs check, waits for it to complete, and returns the analysis
 func findErrorPatternLogs(ctx context.Context, args FindErrorPatternLogsParams) (*analysis, error) {
-	logger := mcpgrafana.GrafanaConfigFromContext(ctx).LoggerOrDefault()
+	logger := mcpgrafana.LoggerFromContext(ctx)
 	client, err := siftClientFromContext(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("creating Sift client: %w", err)
@@ -355,7 +355,7 @@ type FindSlowRequestsParams struct {
 
 // findSlowRequests creates an investigation with SlowRequests check, waits for it to complete, and returns the analysis
 func findSlowRequests(ctx context.Context, args FindSlowRequestsParams) (*analysis, error) {
-	logger := mcpgrafana.GrafanaConfigFromContext(ctx).LoggerOrDefault()
+	logger := mcpgrafana.LoggerFromContext(ctx)
 	client, err := siftClientFromContext(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("creating Sift client: %w", err)

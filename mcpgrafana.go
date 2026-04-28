@@ -291,6 +291,12 @@ func (c GrafanaConfig) LoggerOrDefault() *slog.Logger {
 	return slog.Default()
 }
 
+// LoggerFromContext extracts the logger from the GrafanaConfig in the context.
+// Returns slog.Default() if no config or logger is set.
+func LoggerFromContext(ctx context.Context) *slog.Logger {
+	return GrafanaConfigFromContext(ctx).LoggerOrDefault()
+}
+
 const (
 	// DefaultGrafanaClientTimeout is the default timeout for Grafana HTTP client requests.
 	DefaultGrafanaClientTimeout = 10 * time.Second
@@ -992,8 +998,7 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 // the client with proper authentication.
 var ExtractGrafanaClientFromEnv server.StdioContextFunc = func(ctx context.Context) context.Context {
 	// Extract transport config from env vars
-	config := GrafanaConfigFromContext(ctx)
-	logger := config.LoggerOrDefault()
+	logger := LoggerFromContext(ctx)
 	grafanaURL, apiKey := urlAndAPIKeyFromEnv(logger)
 	if grafanaURL == "" {
 		grafanaURL = defaultGrafanaURL
