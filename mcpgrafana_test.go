@@ -1421,6 +1421,24 @@ func TestFetchPublicURL(t *testing.T) {
 		assert.Equal(t, "secret", capturedPass)
 	})
 
+	t.Run("sends OBO access and ID tokens", func(t *testing.T) {
+		var capturedAccessToken, capturedIDToken string
+		ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+			capturedAccessToken = r.Header.Get("X-Access-Token")
+			capturedIDToken = r.Header.Get("X-Grafana-Id")
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"appUrl": "https://grafana.example.com"}`))
+		})
+
+		fetchPublicURL(context.Background(), &GrafanaConfig{
+			URL:         ts.URL,
+			AccessToken: "obo-access-token",
+			IDToken:     "obo-id-token",
+		})
+		assert.Equal(t, "obo-access-token", capturedAccessToken)
+		assert.Equal(t, "obo-id-token", capturedIDToken)
+	})
+
 	t.Run("trims trailing slash from appUrl", func(t *testing.T) {
 		ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
