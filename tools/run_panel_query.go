@@ -549,7 +549,7 @@ func executeInfluxDBQuery(ctx context.Context, datasourceUID string, panelData *
 // executeGrafanaDSQuery executes a query through Grafana's /api/ds/query endpoint
 func executeGrafanaDSQuery(ctx context.Context, payload map[string]interface{}) (interface{}, error) {
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
-	baseURL := strings.TrimRight(cfg.URL, "/")
+	baseURL := cfg.URL
 
 	transport, err := mcpgrafana.BuildTransport(&cfg, nil)
 	if err != nil {

@@ -33,7 +33,7 @@ type alertingClient struct {
 
 func newAlertingClientFromContext(ctx context.Context) (*alertingClient, error) {
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
-	baseURL := strings.TrimRight(cfg.URL, "/")
+	baseURL := cfg.URL
 	parsedBaseURL, err := url.Parse(baseURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid Grafana base URL %q: %w", baseURL, err)

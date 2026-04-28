@@ -102,7 +102,7 @@ func newInfluxDBClient(ctx context.Context, uid string) (*influxDBClient, *model
 	}
 
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
-	baseURL := strings.TrimRight(cfg.URL, "/")
+	baseURL := cfg.URL
 
 	transport, err := mcpgrafana.BuildTransport(&cfg, nil)
 	if err != nil {
