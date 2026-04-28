@@ -66,7 +66,7 @@ The dashboard tools now include several strategies to manage context window usag
 ### Datasources
 
 - **List and fetch datasource information:** View all configured datasources and retrieve detailed information about each.
-  - _Supported datasource types: Prometheus, Loki, ClickHouse, CloudWatch, Elasticsearch._
+  - _Supported datasource types: Prometheus, Loki, ClickHouse, CloudWatch, Elasticsearch, Athena._
 
 ### Query Examples
 
@@ -123,6 +123,16 @@ The dashboard tools now include several strategies to manage context window usag
 - **List Graphite metrics:** Browse and discover Graphite metric paths.
 - **List Graphite tags:** List available Graphite tags and tag values.
 - **Query Graphite density:** Query Graphite metric density for a given pattern.
+
+### Athena Querying
+
+> **Note:** Athena tools are **disabled by default**. To enable them, add `athena` to your `--enabled-tools` flag.
+
+- **List Athena catalogs:** Discover available data catalogs (e.g. AwsDataCatalog, Iceberg connectors).
+- **List Athena databases:** List databases in an Athena catalog.
+- **List Athena tables:** List tables in an Athena database.
+- **Describe Athena table:** Get column names for an Athena table.
+- **Query Athena:** Execute SQL queries against Amazon Athena via Grafana with macro substitution, limit enforcement, and template variable support.
 
 ### Elasticsearch Querying
 
@@ -303,6 +313,11 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `list_cloudwatch_metrics`         | CloudWatch* | List metrics in a namespace                                         | `datasources:query`                     | `datasources:uid:*`                                 |
 | `list_cloudwatch_dimensions`      | CloudWatch* | List dimensions for a metric                                        | `datasources:query`                     | `datasources:uid:*`                                 |
 | `query_cloudwatch`                | CloudWatch* | Execute CloudWatch metric queries                                   | `datasources:query`                     | `datasources:uid:*`                                 |
+| `list_athena_catalogs`            | Athena*     | List available Athena data catalogs                                 | `datasources:query`                     | `datasources:uid:*`                                 |
+| `list_athena_databases`           | Athena*     | List databases in an Athena catalog                                 | `datasources:query`                     | `datasources:uid:*`                                 |
+| `list_athena_tables`              | Athena*     | List tables in an Athena database                                   | `datasources:query`                     | `datasources:uid:*`                                 |
+| `describe_athena_table`           | Athena*     | Get column names for an Athena table                                | `datasources:query`                     | `datasources:uid:*`                                 |
+| `query_athena`                    | Athena*     | Execute SQL queries with macro substitution                         | `datasources:query`                     | `datasources:uid:*`                                 |
 | `search_logs`                     | SearchLogs* | Search logs across ClickHouse and Loki                              | `datasources:query`                     | `datasources:uid:*`                                 |
 | `query_elasticsearch`             | Elasticsearch* | Query Elasticsearch using Lucene syntax or Query DSL              | `datasources:query`                     | `datasources:uid:elasticsearch-uid`                 |
 | `alerting_manage_rules`           | Alerting    | Manage alert rules (list, get, versions, create, update, delete)    | `alert.rules:read` + `alert.rules:write` for mutations | `folders:*` or `folders:uid:alerts-folder` |
@@ -355,7 +370,7 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 - `--session-idle-timeout-minutes`: Session idle timeout in minutes. Sessions with no activity for this duration are automatically reaped - default: `30`. Set to `0` to disable session reaping. Only relevant for SSE and streamable-http transports.
 
 **Tool Configuration:**
-- `--enabled-tools`: Comma-separated list of enabled categories - default: all categories except `admin`, `clickhouse`, `cloudwatch`, `elasticsearch`, `examples`, `graphite`, `runpanelquery`, and `searchlogs`. To enable disabled categories, add them to the list (e.g., `"search,datasource,...,graphite"`)
+- `--enabled-tools`: Comma-separated list of enabled categories - default: all categories except `admin`, `athena`, `clickhouse`, `cloudwatch`, `elasticsearch`, `examples`, `graphite`, `runpanelquery`, and `searchlogs`. To enable disabled categories, add them to the list (e.g., `"search,datasource,...,graphite"`)
 - `--max-loki-log-limit`: Maximum number of log lines returned per `query_loki_logs` call - default: `100`. Note: Set this at least 1 below Loki's server-side `max_entries_limit_per_query` to allow truncation detection (the tool requests `limit+1` internally to detect if more data exists).
 - `--disable-search`: Disable search tools
 - `--disable-datasource`: Disable datasource tools
@@ -380,6 +395,7 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 - `--disable-searchlogs`: Disable search_logs tool
 - `--disable-runpanelquery`: Disable run panel query tools
 - `--disable-graphite`: Disable Graphite tools
+- `--disable-athena`: Disable Athena tools
 
 ### Read-Only Mode
 
