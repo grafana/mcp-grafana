@@ -2,6 +2,7 @@ package mcpgrafana
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -764,13 +765,13 @@ func assertHasAttribute(t *testing.T, attributes []attribute.KeyValue, key strin
 func TestExtraHeadersFromEnv(t *testing.T) {
 	t.Run("empty env returns nil", func(t *testing.T) {
 		t.Setenv("GRAFANA_EXTRA_HEADERS", "")
-		headers := extraHeadersFromEnv()
+		headers := extraHeadersFromEnv(slog.Default())
 		assert.Nil(t, headers)
 	})
 
 	t.Run("valid JSON", func(t *testing.T) {
 		t.Setenv("GRAFANA_EXTRA_HEADERS", `{"X-Custom-Header": "custom-value", "X-Another": "another-value"}`)
-		headers := extraHeadersFromEnv()
+		headers := extraHeadersFromEnv(slog.Default())
 		assert.Equal(t, map[string]string{
 			"X-Custom-Header": "custom-value",
 			"X-Another":       "another-value",
@@ -779,13 +780,13 @@ func TestExtraHeadersFromEnv(t *testing.T) {
 
 	t.Run("invalid JSON returns nil", func(t *testing.T) {
 		t.Setenv("GRAFANA_EXTRA_HEADERS", "not-json")
-		headers := extraHeadersFromEnv()
+		headers := extraHeadersFromEnv(slog.Default())
 		assert.Nil(t, headers)
 	})
 
 	t.Run("empty object", func(t *testing.T) {
 		t.Setenv("GRAFANA_EXTRA_HEADERS", "{}")
-		headers := extraHeadersFromEnv()
+		headers := extraHeadersFromEnv(slog.Default())
 		assert.Equal(t, map[string]string{}, headers)
 	})
 }

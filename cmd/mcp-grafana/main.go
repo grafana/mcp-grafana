@@ -327,7 +327,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 	// transport allocation (see https://github.com/grafana/mcp-grafana/issues/682).
 	var clientCache *mcpgrafana.ClientCache
 	if transport != "stdio" {
-		clientCache = mcpgrafana.NewClientCache()
+		clientCache = mcpgrafana.NewClientCache(nil)
 		defer clientCache.Close()
 	}
 
