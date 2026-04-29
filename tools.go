@@ -71,13 +71,13 @@ func MustTool[T any, R any](
 // T is the request parameter type (must be a struct with jsonschema tags), and R is the response type which can be a string, struct, or *mcp.CallToolResult.
 type ToolHandlerFunc[T any, R any] = func(ctx context.Context, request T) (R, error)
 
-// unmarshalWithIntConversion unmarshals JSON data into a target struct,
-// automatically converting string values to integer types for integer-typed fields.
-// This allows MCP tool parameters to accept both string and integer values for integer fields.
+// unmarshalWithTypeCoercion unmarshals JSON data into a target struct,
+// automatically coercing common LLM type mismatches:
+//   - string → integer (e.g., "42" → 42)
+//   - string → []string (e.g., "value" → ["value"])
 //
 // Fast path: tries standard json.Unmarshal first (the common case — types already match).
-// Only on failure does it strip quotes from string-wrapped integers (e.g., "42" → 42)
-// and retry, delegating all validation (overflow, non-numeric strings, etc.) to json.Unmarshal.
+// Only on failure does it apply coercions and retry.
 func unmarshalWithIntConversion(data []byte, target any) error {
 	// Fast path: standard unmarshal covers the common case with no reflection overhead.
 	if err := json.Unmarshal(data, target); err == nil {
@@ -89,8 +89,10 @@ func unmarshalWithIntConversion(data []byte, target any) error {
 		return json.Unmarshal(data, target)
 	}
 
-	intFields := collectIntFieldNames(targetType.Elem())
-	if len(intFields) == 0 {
+	structType := targetType.Elem()
+	intFields := collectIntFieldNames(structType)
+	stringSliceFields := collectStringSliceFieldNames(structType)
+	if len(intFields) == 0 && len(stringSliceFields) == 0 {
 		return json.Unmarshal(data, target)
 	}
 
@@ -104,6 +106,13 @@ func unmarshalWithIntConversion(data []byte, target any) error {
 		v, ok := raw[name]
 		if ok && len(v) >= 2 && v[0] == '"' && v[len(v)-1] == '"' {
 			raw[name] = v[1 : len(v)-1] // strip quotes: "42" → 42
+			changed = true
+		}
+	}
+	for name := range stringSliceFields {
+		v, ok := raw[name]
+		if ok && len(v) >= 2 && v[0] == '"' {
+			raw[name] = json.RawMessage("[" + string(v) + "]")
 			changed = true
 		}
 	}
@@ -155,6 +164,30 @@ func isIntegerKind(kind reflect.Kind) bool {
 		return true
 	}
 	return false
+}
+
+// collectStringSliceFieldNames returns the set of JSON field names that map to
+// []string types. This enables coercing a bare string into a single-element
+// array, which LLMs frequently send for array-typed parameters.
+func collectStringSliceFieldNames(structType reflect.Type) map[string]bool {
+	fields := make(map[string]bool)
+	for _, f := range reflect.VisibleFields(structType) {
+		if !f.IsExported() {
+			continue
+		}
+		ft := f.Type
+		if ft.Kind() == reflect.Slice && ft.Elem().Kind() == reflect.String {
+			name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
+			if name == "-" {
+				continue
+			}
+			if name == "" {
+				name = f.Name
+			}
+			fields[name] = true
+		}
+	}
+	return fields
 }
 
 // ConvertTool converts a toolHandler function to an MCP Tool and ToolHandlerFunc.

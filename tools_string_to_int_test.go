@@ -463,3 +463,79 @@ func TestUnmarshalWithAllIntegerTypes(t *testing.T) {
 		}
 	})
 }
+
+func TestUnmarshalWithStringToSliceCoercion(t *testing.T) {
+	type params struct {
+		Tags   []string `json:"tags,omitempty"`
+		States []string `json:"states,omitempty"`
+		Name   string   `json:"name"`
+		Count  int      `json:"count"`
+	}
+
+	t.Run("accepts array as-is", func(t *testing.T) {
+		data := `{"tags":["a","b"],"name":"test","count":1}`
+		var got params
+		require.NoError(t, unmarshalWithIntConversion([]byte(data), &got))
+		assert.Equal(t, []string{"a", "b"}, got.Tags)
+		assert.Equal(t, "test", got.Name)
+	})
+
+	t.Run("coerces string to single-element array", func(t *testing.T) {
+		data := `{"tags":"{severity=\"critical\"}","name":"test","count":1}`
+		var got params
+		require.NoError(t, unmarshalWithIntConversion([]byte(data), &got))
+		assert.Equal(t, []string{`{severity="critical"}`}, got.Tags)
+	})
+
+	t.Run("coerces string and int simultaneously", func(t *testing.T) {
+		data := `{"tags":"single","name":"test","count":"42"}`
+		var got params
+		require.NoError(t, unmarshalWithIntConversion([]byte(data), &got))
+		assert.Equal(t, []string{"single"}, got.Tags)
+		assert.Equal(t, 42, got.Count)
+	})
+
+	t.Run("omitted array field stays nil", func(t *testing.T) {
+		data := `{"name":"test","count":1}`
+		var got params
+		require.NoError(t, unmarshalWithIntConversion([]byte(data), &got))
+		assert.Nil(t, got.Tags)
+	})
+
+	t.Run("handles embedded struct with string slice", func(t *testing.T) {
+		type inner struct {
+			Filters []string `json:"filters,omitempty"`
+		}
+		type outer struct {
+			inner
+			Name string `json:"name"`
+		}
+		data := `{"filters":"one-filter","name":"test"}`
+		var got outer
+		require.NoError(t, unmarshalWithIntConversion([]byte(data), &got))
+		assert.Equal(t, []string{"one-filter"}, got.Filters)
+	})
+
+	t.Run("end-to-end through ConvertTool", func(t *testing.T) {
+		type toolParams struct {
+			Labels []string `json:"labels,omitempty" jsonschema:"description=Label selectors"`
+		}
+		handler := func(ctx context.Context, p toolParams) (string, error) {
+			if len(p.Labels) == 1 && p.Labels[0] == "test" {
+				return "ok", nil
+			}
+			return "", nil
+		}
+		_, h, err := ConvertTool("test", "test", handler)
+		require.NoError(t, err)
+
+		result, err := h(context.Background(), mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Name:      "test",
+				Arguments: map[string]any{"labels": "test"},
+			},
+		})
+		require.NoError(t, err)
+		assert.Equal(t, "ok", result.Content[0].(mcp.TextContent).Text)
+	})
+}
