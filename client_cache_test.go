@@ -11,7 +11,7 @@ import (
 )
 
 func TestClientCache_GrafanaClient(t *testing.T) {
-	cache := NewClientCache()
+	cache := NewClientCache(nil)
 	defer cache.Close()
 
 	key := clientCacheKey{url: "http://localhost:3000", apiKey: "test-key", orgID: 1}
@@ -44,7 +44,7 @@ func TestClientCache_GrafanaClient(t *testing.T) {
 }
 
 func TestClientCache_IncidentClient(t *testing.T) {
-	cache := NewClientCache()
+	cache := NewClientCache(nil)
 	defer cache.Close()
 
 	key := clientCacheKey{url: "http://localhost:3000", apiKey: "test-key", orgID: 1}
@@ -68,7 +68,7 @@ func TestClientCache_IncidentClient(t *testing.T) {
 }
 
 func TestClientCache_ConcurrentAccess(t *testing.T) {
-	cache := NewClientCache()
+	cache := NewClientCache(nil)
 	defer cache.Close()
 
 	key := clientCacheKey{url: "http://localhost:3000", apiKey: "test-key", orgID: 1}
@@ -106,15 +106,15 @@ func TestClientCache_ConcurrentAccess(t *testing.T) {
 }
 
 func TestClientCache_DifferentCredentials(t *testing.T) {
-	cache := NewClientCache()
+	cache := NewClientCache(nil)
 	defer cache.Close()
 
 	keys := []clientCacheKey{
-		{url: "http://host1:3000", apiKey: "key1", orgID: 1, forwardedHeaders: "X-WEBAUTH-USER=admin"}, // base key
-		{url: "http://host1:3000", apiKey: "key2", orgID: 1, forwardedHeaders: "X-WEBAUTH-USER=admin"},       // different key
-		{url: "http://host1:3000", apiKey: "key1", orgID: 2, forwardedHeaders: "X-WEBAUTH-USER=admin"},       // different org
-		{url: "http://host2:3000", apiKey: "key1", orgID: 1, forwardedHeaders: "X-WEBAUTH-USER=admin"},       // different url
-		{url: "http://host1:3000", apiKey: "key1", orgID: 1, forwardedHeaders: "X-WEBAUTH-USER=admin"},       // same as first
+		{url: "http://host1:3000", apiKey: "key1", orgID: 1, forwardedHeaders: "X-WEBAUTH-USER=admin"},    // base key
+		{url: "http://host1:3000", apiKey: "key2", orgID: 1, forwardedHeaders: "X-WEBAUTH-USER=admin"},    // different key
+		{url: "http://host1:3000", apiKey: "key1", orgID: 2, forwardedHeaders: "X-WEBAUTH-USER=admin"},    // different org
+		{url: "http://host2:3000", apiKey: "key1", orgID: 1, forwardedHeaders: "X-WEBAUTH-USER=admin"},    // different url
+		{url: "http://host1:3000", apiKey: "key1", orgID: 1, forwardedHeaders: "X-WEBAUTH-USER=admin"},    // same as first
 		{url: "http://host1:3000", apiKey: "key1", orgID: 1, forwardedHeaders: "X-WEBAUTH-USER=john.doe"}, // different user
 	}
 
@@ -152,7 +152,7 @@ func TestCacheKeyFromRequest(t *testing.T) {
 }
 
 func TestClientCache_Close(t *testing.T) {
-	cache := NewClientCache()
+	cache := NewClientCache(nil)
 
 	key := clientCacheKey{url: "http://localhost:3000", apiKey: "key", orgID: 1}
 	cache.GetOrCreateGrafanaClient(key, func() *GrafanaClient {

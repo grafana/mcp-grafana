@@ -116,8 +116,8 @@ func getContactPointDetail(ctx context.Context, name string) ([]*models.Embedded
 
 // muteTimingSummary is a compact representation of a mute timing for list output.
 type muteTimingSummary struct {
-	Name          string                      `json:"name"`
-	TimeIntervals []*models.TimeIntervalItem  `json:"time_intervals,omitempty"`
+	Name          string                     `json:"name"`
+	TimeIntervals []*models.TimeIntervalItem `json:"time_intervals,omitempty"`
 }
 
 // getTimeIntervals retrieves all mute timings / time intervals.

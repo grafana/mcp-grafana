@@ -447,7 +447,6 @@ func TestMergeHooks(t *testing.T) {
 	})
 }
 
-
 func TestMetricsEndpointContent(t *testing.T) {
 	cfg := Config{
 		MetricsEnabled:   true,
@@ -561,8 +560,8 @@ type typedError struct {
 	errType string
 }
 
-func (e *typedError) Error() string      { return e.msg }
-func (e *typedError) ErrorType() string   { return e.errType }
+func (e *typedError) Error() string     { return e.msg }
+func (e *typedError) ErrorType() string { return e.errType }
 
 func TestShutdown(t *testing.T) {
 	t.Run("shutdown with metrics enabled", func(t *testing.T) {

@@ -67,7 +67,7 @@ func newLokiClient(ctx context.Context, uid string) (*Client, error) {
 	}
 
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
-	grafanaURL := strings.TrimRight(cfg.URL, "/")
+	grafanaURL := cfg.URL
 	resourcesBase, proxyBase := datasourceProxyPaths(uid)
 	url := grafanaURL + proxyBase
 
@@ -191,8 +191,6 @@ func (c *Client) fetchData(ctx context.Context, urlPath string, startRFC3339, en
 
 	return labelResponse.Data, nil
 }
-
-
 
 // ListLokiLabelNamesParams defines the parameters for listing Loki label names
 type ListLokiLabelNamesParams struct {
@@ -475,12 +473,12 @@ type QueryLokiLogsResult struct {
 // Parsed carry the remaining label categories per entry.
 type LogEntry struct {
 	Timestamp          string            `json:"timestamp,omitempty"`
-	Line               string            `json:"line,omitempty"`              // For log queries
-	Value              *float64          `json:"value,omitempty"`             // For instant metric queries
-	Values             []MetricValue     `json:"values,omitempty"`            // For range metric queries
-	Labels             map[string]string `json:"labels"`                      // Stream / index labels
+	Line               string            `json:"line,omitempty"`               // For log queries
+	Value              *float64          `json:"value,omitempty"`              // For instant metric queries
+	Values             []MetricValue     `json:"values,omitempty"`             // For range metric queries
+	Labels             map[string]string `json:"labels"`                       // Stream / index labels
 	StructuredMetadata map[string]string `json:"structuredMetadata,omitempty"` // Structured metadata labels (Loki >= 3.0)
-	Parsed             map[string]string `json:"parsed,omitempty"`            // Parser-extracted labels (Loki >= 3.0)
+	Parsed             map[string]string `json:"parsed,omitempty"`             // Parser-extracted labels (Loki >= 3.0)
 }
 
 // enforceLogLimit ensures a log limit value is within acceptable bounds

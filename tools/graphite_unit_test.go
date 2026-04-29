@@ -574,4 +574,3 @@ func TestQueryGraphiteDensity_MixedCluster(t *testing.T) {
 	assert.Equal(t, int64(60), s2.LongestGapSec)
 	assert.Equal(t, int64(60), s2.EstimatedInterval)
 }
-

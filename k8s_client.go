@@ -217,4 +217,3 @@ func (c *KubernetesClient) doRequest(ctx context.Context, method, path string, r
 
 	return body, nil
 }
-

@@ -39,7 +39,7 @@ func newGraphiteClient(ctx context.Context, uid string) (*GraphiteClient, error)
 	}
 
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
-	grafanaURL := strings.TrimRight(cfg.URL, "/")
+	grafanaURL := cfg.URL
 	resourcesBase, proxyBase := datasourceProxyPaths(uid)
 	baseURL := grafanaURL + proxyBase
 
@@ -58,7 +58,7 @@ func newGraphiteClient(ctx context.Context, uid string) (*GraphiteClient, error)
 
 // doGet performs a GET request to the Graphite API via the Grafana proxy
 func (c *GraphiteClient) doGet(ctx context.Context, path string, params url.Values) ([]byte, error) {
-	fullURL := strings.TrimRight(c.baseURL, "/") + path
+	fullURL := c.baseURL + path
 	if len(params) > 0 {
 		fullURL += "?" + params.Encode()
 	}
@@ -96,8 +96,8 @@ type GraphiteDatapoint struct {
 
 // GraphiteSeries is a metric series as returned by the Graphite render API.
 type GraphiteSeries struct {
-	Target     string             `json:"target"`
-	Tags       map[string]string  `json:"tags,omitempty"`
+	Target     string              `json:"target"`
+	Tags       map[string]string   `json:"tags,omitempty"`
 	Datapoints []GraphiteDatapoint `json:"datapoints"`
 }
 
