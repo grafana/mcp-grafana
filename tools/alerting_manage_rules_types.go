@@ -15,7 +15,8 @@ var promqlParser = parser.NewParser(parser.Options{})
 type alertRuleSummary struct {
 	UID            string            `json:"uid"`
 	Title          string            `json:"title"`
-	State          string            `json:"state"`
+	Type           string            `json:"type,omitempty"`
+	State          string            `json:"state,omitempty"`
 	Health         string            `json:"health,omitempty"`
 	FolderUID      string            `json:"folder_uid,omitempty"`
 	RuleGroup      string            `json:"rule_group,omitempty"`
@@ -23,6 +24,11 @@ type alertRuleSummary struct {
 	LastEvaluation string            `json:"last_evaluation,omitempty"`
 	Labels         map[string]string `json:"labels,omitempty"`
 	Annotations    map[string]string `json:"annotations,omitempty"`
+	// Query is the rule expression. Populated for datasource-managed rules
+	// (Prometheus / Mimir / Loki ruler responses); empty for Grafana-managed
+	// rules where the expression is split across multiple AlertQuery nodes
+	// and exposed via the 'get' operation instead.
+	Query string `json:"query,omitempty"`
 }
 
 // alertRuleDetail is the enriched response for a single rule, combining
