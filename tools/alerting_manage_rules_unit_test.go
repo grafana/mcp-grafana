@@ -1589,7 +1589,7 @@ func TestQuoteUnquotedLabelValues(t *testing.T) {
 
 func TestBuildGetRulesOpts_StateValidation(t *testing.T) {
 	t.Run("valid states accepted", func(t *testing.T) {
-		for _, state := range []string{"firing", "pending", "normal", "recovering", "nodata", "error"} {
+		for _, state := range []string{"firing", "pending", "normal", "inactive", "recovering", "nodata", "error"} {
 			_, err := buildGetRulesOpts(listFilterParams{States: []string{state}}, "", "")
 			require.NoError(t, err, "state %q should be valid", state)
 		}

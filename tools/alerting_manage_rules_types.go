@@ -16,6 +16,7 @@ var promqlParser = parser.NewParser(parser.Options{})
 var validAlertStates = map[string]bool{
 	"firing": true, "pending": true, "normal": true,
 	"recovering": true, "nodata": true, "error": true,
+	"inactive": true,
 }
 
 // unquotedLabelValueRe matches a label matcher operator followed by an unquoted
@@ -545,7 +546,7 @@ func buildGetRulesOpts(f listFilterParams, folderUID, ruleGroup string) (*GetRul
 	}
 	for _, s := range f.States {
 		if !validAlertStates[s] {
-			return nil, fmt.Errorf("invalid state %q, must be one of: firing, pending, normal, recovering, nodata, error", s)
+			return nil, fmt.Errorf("invalid state %q, must be one of: firing, pending, normal, inactive, recovering, nodata, error", s)
 		}
 	}
 	matchers, err := parseMatcherStrings(f.Matchers)
