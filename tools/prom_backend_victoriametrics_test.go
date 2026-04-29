@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
@@ -205,6 +206,38 @@ func TestVictoriaMetricsBackendQuery_PropagatesUpstreamError(t *testing.T) {
 	_, err := b.Query(context.Background(), "rate(", "instant", time.Time{}, time.Unix(1700000000, 0), 0)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "rate: bad expression")
+}
+
+func TestVictoriaMetricsBackendQuery_RejectsInvalidQueryType(t *testing.T) {
+	fake := newFakeVMServer(t, dsQueryResponse{})
+	b := newTestVMBackend(t, fake.server)
+
+	_, err := b.Query(context.Background(), "up", "bogus", time.Time{}, time.Unix(1700000000, 0), 0)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid query type")
+	assert.Nil(t, fake.lastPayload, "should not hit the server with an invalid query type")
+}
+
+func TestVictoriaMetricsBackendQuery_DefaultsToNowWhenBothTimesZero(t *testing.T) {
+	fake := newFakeVMServer(t, dsQueryResponse{Results: map[string]dsQueryResult{
+		"A": {Frames: []dsQueryFrame{}},
+	}})
+	b := newTestVMBackend(t, fake.server)
+
+	before := time.Now().UnixMilli()
+	_, err := b.Query(context.Background(), "up", "instant", time.Time{}, time.Time{}, 0)
+	require.NoError(t, err)
+	after := time.Now().UnixMilli()
+
+	require.NotNil(t, fake.lastPayload)
+	from, err := strconv.ParseInt(fake.lastPayload["from"].(string), 10, 64)
+	require.NoError(t, err)
+	to, err := strconv.ParseInt(fake.lastPayload["to"].(string), 10, 64)
+	require.NoError(t, err)
+
+	assert.GreaterOrEqual(t, from, before)
+	assert.LessOrEqual(t, to, after)
+	assert.Equal(t, from, to, "both times default to the same now() value")
 }
 
 func TestVictoriaMetricsBackendQuery_HTTPError(t *testing.T) {

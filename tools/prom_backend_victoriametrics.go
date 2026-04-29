@@ -55,10 +55,17 @@ func newVictoriaMetricsBackend(ctx context.Context, uid string, ds *models.DataS
 // Query executes a PromQL/MetricsQL query via Grafana's /api/ds/query endpoint.
 // The VM plugin signals instant vs range with two boolean fields on the payload.
 func (b *victoriaMetricsBackend) Query(ctx context.Context, expr string, queryType string, start, end time.Time, stepSeconds int) (model.Value, error) {
+	if queryType != "instant" && queryType != "range" {
+		return nil, fmt.Errorf("invalid query type: %s", queryType)
+	}
+
+	if start.IsZero() && end.IsZero() {
+		end = time.Now()
+	}
 	if start.IsZero() {
 		start = end
 	}
-	if end.IsZero() || end.Before(start) {
+	if end.Before(start) {
 		end = start
 	}
 
