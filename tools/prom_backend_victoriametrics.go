@@ -46,11 +46,9 @@ func newVictoriaMetricsBackend(ctx context.Context, uid string, ds *models.DataS
 	if err != nil {
 		return nil, fmt.Errorf("failed to create custom transport: %w", err)
 	}
-	transport = NewAuthRoundTripper(transport, cfg.AccessToken, cfg.IDToken, cfg.APIKey, cfg.BasicAuth)
-	transport = mcpgrafana.NewOrgIDRoundTripper(transport, cfg.OrgID)
 
 	client := &http.Client{
-		Transport: mcpgrafana.NewUserAgentTransport(transport),
+		Transport: transport,
 		Timeout:   30 * time.Second,
 	}
 
