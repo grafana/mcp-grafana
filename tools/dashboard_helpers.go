@@ -93,35 +93,35 @@ func extractDashboardVariables(db map[string]interface{}) map[string]VariableInf
 // Supports both modern dashboards (top-level "panels", with row-typed entries
 // holding nested panels) and legacy schemaVersion <= 14 dashboards
 // (top-level "rows":[{panels:[...]}], no top-level "panels" array).
+// The legacy fallback only triggers when "panels" is absent, mirroring
+// getDashboardSummary so dashboards carrying both keys aren't walked twice.
 func findPanelByID(db map[string]interface{}, panelID int) (map[string]interface{}, error) {
-	panels := safeArray(db, "panels")
-	rows := safeArray(db, "rows")
-	if panels == nil && rows == nil {
-		return nil, fmt.Errorf("dashboard has no panels")
-	}
+	if panels := safeArray(db, "panels"); panels != nil {
+		for _, p := range panels {
+			panel, ok := p.(map[string]interface{})
+			if !ok {
+				continue
+			}
 
-	// Search top-level panels (modern schema)
-	for _, p := range panels {
-		panel, ok := p.(map[string]interface{})
-		if !ok {
-			continue
-		}
+			if safeInt(panel, "id") == panelID {
+				return panel, nil
+			}
 
-		if safeInt(panel, "id") == panelID {
-			return panel, nil
-		}
-
-		// Check for nested panels in row-type entries
-		if safeString(panel, "type") == "row" {
-			for _, np := range safeArray(panel, "panels") {
-				if nested, ok := np.(map[string]interface{}); ok && safeInt(nested, "id") == panelID {
-					return nested, nil
+			if safeString(panel, "type") == "row" {
+				for _, np := range safeArray(panel, "panels") {
+					if nested, ok := np.(map[string]interface{}); ok && safeInt(nested, "id") == panelID {
+						return nested, nil
+					}
 				}
 			}
 		}
+		return nil, fmt.Errorf("panel with ID %d not found", panelID)
 	}
 
-	// Search legacy top-level rows (schemaVersion <= 14)
+	rows := safeArray(db, "rows")
+	if rows == nil {
+		return nil, fmt.Errorf("dashboard has no panels")
+	}
 	for _, r := range rows {
 		row, ok := r.(map[string]interface{})
 		if !ok {
@@ -141,28 +141,31 @@ func findPanelByID(db map[string]interface{}, panelID int) (map[string]interface
 // panels inside rows. Handles modern dashboards (top-level "panels", with
 // row-typed entries that hold nested panels) and legacy schemaVersion <= 14
 // dashboards (top-level "rows":[{panels:[...]}], no top-level "panels").
+// The legacy fallback only triggers when "panels" is absent, mirroring
+// getDashboardSummary so dashboards carrying both keys don't yield duplicates.
 func collectAllPanels(db map[string]interface{}) []map[string]interface{} {
 	var result []map[string]interface{}
 
-	for _, p := range safeArray(db, "panels") {
-		panel, ok := p.(map[string]interface{})
-		if !ok {
-			continue
-		}
+	if panels := safeArray(db, "panels"); panels != nil {
+		for _, p := range panels {
+			panel, ok := p.(map[string]interface{})
+			if !ok {
+				continue
+			}
 
-		result = append(result, panel)
+			result = append(result, panel)
 
-		// Include nested panels from row-type entries (modern schema)
-		if safeString(panel, "type") == "row" {
-			for _, np := range safeArray(panel, "panels") {
-				if nested, ok := np.(map[string]interface{}); ok {
-					result = append(result, nested)
+			if safeString(panel, "type") == "row" {
+				for _, np := range safeArray(panel, "panels") {
+					if nested, ok := np.(map[string]interface{}); ok {
+						result = append(result, nested)
+					}
 				}
 			}
 		}
+		return result
 	}
 
-	// Include panels from legacy top-level rows (schemaVersion <= 14)
 	for _, r := range safeArray(db, "rows") {
 		row, ok := r.(map[string]interface{})
 		if !ok {
