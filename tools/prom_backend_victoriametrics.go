@@ -18,14 +18,9 @@ import (
 const victoriaMetricsDatasourceType = "victoriametrics-metrics-datasource"
 
 // victoriaMetricsBackend implements promBackend for the VictoriaMetrics
-// Grafana plugin (type: victoriametrics-metrics-datasource).
-//
-// Discovery endpoints (label names, label values, metric metadata) are served
-// correctly by the plugin's resource proxy and reuse the native Prometheus
-// backend. Only Query is overridden to go through Grafana's /api/ds/query
-// endpoint, because the plugin's resource proxy does not expose
-// /api/v1/query — hitting it returns the plugin's "Hello from VM data source!"
-// landing response and trips the Prometheus client's JSON parser.
+// Grafana plugin. Discovery endpoints reuse the native Prometheus backend via
+// the resource proxy; Query is routed through /api/ds/query because the
+// plugin's resource proxy does not expose /api/v1/query.
 type victoriaMetricsBackend struct {
 	*prometheusBackend
 	httpClient    *http.Client
@@ -61,10 +56,7 @@ func newVictoriaMetricsBackend(ctx context.Context, uid string, ds *models.DataS
 }
 
 // Query executes a PromQL/MetricsQL query via Grafana's /api/ds/query endpoint.
-//
-// The VictoriaMetrics plugin distinguishes instant vs range via two boolean
-// fields on the query payload (instant/range), unlike Prometheus where the
-// distinction is the URL path.
+// The VM plugin signals instant vs range with two boolean fields on the payload.
 func (b *victoriaMetricsBackend) Query(ctx context.Context, expr string, queryType string, start, end time.Time, stepSeconds int) (model.Value, error) {
 	if start.IsZero() {
 		start = end
@@ -99,18 +91,12 @@ func (b *victoriaMetricsBackend) Query(ctx context.Context, expr string, queryTy
 
 	resp, err := b.doDSQuery(ctx, payload)
 	if err != nil {
-		if queryType == "range" {
-			return nil, fmt.Errorf("querying VictoriaMetrics range: %w", err)
-		}
-		return nil, fmt.Errorf("querying VictoriaMetrics instant: %w", err)
+		return nil, fmt.Errorf("querying VictoriaMetrics %s: %w", queryType, err)
 	}
 
 	return framesToPrometheusValue(resp, queryType)
 }
 
-// doDSQuery executes a request against Grafana's /api/ds/query endpoint.
-// Mirrors the Cloud Monitoring backend's helper of the same name; kept local
-// to avoid coupling the two backends.
 func (b *victoriaMetricsBackend) doDSQuery(ctx context.Context, payload map[string]interface{}) (*dsQueryResponse, error) {
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
