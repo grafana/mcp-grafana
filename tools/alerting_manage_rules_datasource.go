@@ -31,6 +31,13 @@ func listDatasourceAlertRules(ctx context.Context, dsUID string, opts *GetRulesO
 
 	summaries := convertPrometheusRulesToSummary(rulesResp)
 
+	// The Grafana datasource endpoint proxies to upstream Prometheus/Mimir, which
+	// uses a different rule_type parameter name and value set. Filter client-side
+	// so callers get consistent behavior regardless of whether the proxy honors it.
+	if opts != nil && opts.RuleType != "" {
+		summaries = filterSummaryByRuleType(summaries, opts.RuleType)
+	}
+
 	if len(labelSelectors) > 0 {
 		summaries, err = filterSummaryByLabels(summaries, labelSelectors)
 		if err != nil {

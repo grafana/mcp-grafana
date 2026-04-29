@@ -1178,6 +1178,32 @@ func TestFilterSummaryByLabels(t *testing.T) {
 	})
 }
 
+func TestFilterSummaryByRuleType(t *testing.T) {
+	summaries := []alertRuleSummary{
+		{UID: "r1", Title: "Alert 1", Type: "alerting"},
+		{UID: "r2", Title: "Recording 1", Type: "recording"},
+		{UID: "r3", Title: "Alert 2", Type: "alerting"},
+	}
+
+	t.Run("filter alerting", func(t *testing.T) {
+		filtered := filterSummaryByRuleType(summaries, "alerting")
+		require.Len(t, filtered, 2)
+		require.Equal(t, "r1", filtered[0].UID)
+		require.Equal(t, "r3", filtered[1].UID)
+	})
+
+	t.Run("filter recording", func(t *testing.T) {
+		filtered := filterSummaryByRuleType(summaries, "recording")
+		require.Len(t, filtered, 1)
+		require.Equal(t, "r2", filtered[0].UID)
+	})
+
+	t.Run("unknown type returns empty", func(t *testing.T) {
+		filtered := filterSummaryByRuleType(summaries, "unknown")
+		require.Empty(t, filtered)
+	})
+}
+
 func TestFindRuleInResponse(t *testing.T) {
 	evalTime := time.Date(2026, 2, 28, 12, 0, 0, 0, time.UTC)
 
