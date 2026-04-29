@@ -312,22 +312,36 @@ func TestAlertingClient_GetDatasourceRules(t *testing.T) {
 	tests := []struct {
 		name          string
 		dsUID         string
+		dsType        string
 		opts          *GetRulesOpts
 		assertRequest func(t *testing.T, r *http.Request)
 	}{
 		{
-			name:  "nil opts produces no query params",
-			dsUID: "my-datasource",
-			opts:  nil,
+			name:   "prometheus datasource hits /api/v1/rules via proxy",
+			dsUID:  "my-datasource",
+			dsType: "prometheus",
+			opts:   nil,
 			assertRequest: func(t *testing.T, r *http.Request) {
 				t.Helper()
-				require.Equal(t, "/api/prometheus/my-datasource/api/v1/rules", r.URL.Path)
+				require.Equal(t, "/api/datasources/proxy/uid/my-datasource/api/v1/rules", r.URL.Path)
 				require.Empty(t, r.URL.RawQuery)
 			},
 		},
 		{
-			name:  "opts are forwarded as query params",
-			dsUID: "prom-ds",
+			name:   "loki datasource hits /prometheus/api/v1/rules via proxy",
+			dsUID:  "loki-ds",
+			dsType: "loki",
+			opts:   nil,
+			assertRequest: func(t *testing.T, r *http.Request) {
+				t.Helper()
+				require.Equal(t, "/api/datasources/proxy/uid/loki-ds/prometheus/api/v1/rules", r.URL.Path)
+				require.Empty(t, r.URL.RawQuery)
+			},
+		},
+		{
+			name:   "opts are forwarded as query params",
+			dsUID:  "prom-ds",
+			dsType: "prometheus",
 			opts: &GetRulesOpts{
 				FolderUID: "test-folder",
 				RuleGroup: "test-group",
@@ -338,7 +352,7 @@ func TestAlertingClient_GetDatasourceRules(t *testing.T) {
 			},
 			assertRequest: func(t *testing.T, r *http.Request) {
 				t.Helper()
-				require.Equal(t, "/api/prometheus/prom-ds/api/v1/rules", r.URL.Path)
+				require.Equal(t, "/api/datasources/proxy/uid/prom-ds/api/v1/rules", r.URL.Path)
 				q := r.URL.Query()
 				require.Equal(t, "test-folder", q.Get("folder_uid"))
 				require.Equal(t, "test-group", q.Get("rule_group"))
@@ -360,7 +374,7 @@ func TestAlertingClient_GetDatasourceRules(t *testing.T) {
 			})
 			defer server.Close()
 
-			result, err := client.GetDatasourceRules(context.Background(), tc.dsUID, tc.opts)
+			result, err := client.GetDatasourceRules(context.Background(), tc.dsUID, tc.dsType, tc.opts)
 			require.NoError(t, err)
 			require.NotNil(t, result)
 		})

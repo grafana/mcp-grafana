@@ -24,7 +24,7 @@ func listDatasourceAlertRules(ctx context.Context, dsUID string, opts *GetRulesO
 		return nil, fmt.Errorf("creating alerting client: %w", err)
 	}
 
-	rulesResp, err := client.GetDatasourceRules(ctx, dsUID, opts)
+	rulesResp, err := client.GetDatasourceRules(ctx, dsUID, ds.Type, opts)
 	if err != nil {
 		return nil, fmt.Errorf("querying datasource %s rules: %w", dsUID, err)
 	}

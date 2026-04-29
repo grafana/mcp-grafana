@@ -219,11 +219,24 @@ type alert struct {
 	Value       string        `json:"value"`
 }
 
-// GetDatasourceRules queries a datasource's Prometheus ruler API
-func (c *alertingClient) GetDatasourceRules(ctx context.Context, datasourceUID string, opts *GetRulesOpts) (*v1.RulesResult, error) {
-	// use the Grafana unified endpoint - maybe we need to use the datasource proxy endpoint in the future as this
-	// is an api for internal use
-	path := fmt.Sprintf("/api/prometheus/%s/api/v1/rules", datasourceUID)
+// GetDatasourceRules queries a datasource's Prometheus ruler API via the
+// generic Grafana datasource proxy. The proxy appends the request path to
+// the configured datasource URL, which already carries any backend-specific
+// prefix (e.g. Mimir gateway URLs that end in /prometheus). The legacy
+// /api/prometheus/{uid}/api/v1/rules unified endpoint applies an internal
+// path template that does not compose correctly with such datasource URLs.
+//
+// dsType is the Grafana datasource type (e.g. "prometheus", "loki"). It
+// determines which ruler path is appended to the datasource URL: Loki
+// exposes the Prometheus-format ruler under /prometheus/api/v1/rules,
+// while Prometheus/Mimir/Cortex datasources expose it at /api/v1/rules
+// (with any /prometheus prefix already baked into the datasource URL).
+func (c *alertingClient) GetDatasourceRules(ctx context.Context, datasourceUID, dsType string, opts *GetRulesOpts) (*v1.RulesResult, error) {
+	apiPath := "/api/v1/rules"
+	if strings.Contains(strings.ToLower(dsType), "loki") {
+		apiPath = "/prometheus/api/v1/rules"
+	}
+	path := fmt.Sprintf("/api/datasources/proxy/uid/%s%s", datasourceUID, apiPath)
 	var params url.Values
 	if opts != nil {
 		params = opts.queryValues()
