@@ -1,0 +1,82 @@
+{
+  "dashboard": {
+    "uid": "legacy-rows-fixture",
+    "title": "Mimir / Compactor resources",
+    "schemaVersion": 14,
+    "tags": ["mimir", "compactor"],
+    "templating": {
+      "list": [
+        {
+          "name": "datasource",
+          "type": "datasource",
+          "current": {"value": "default"}
+        },
+        {
+          "name": "cluster",
+          "type": "query",
+          "current": {"value": "$__all"}
+        }
+      ]
+    },
+    "rows": [
+      {
+        "title": "CPU and memory",
+        "panels": [
+          {
+            "id": 1,
+            "title": "CPU",
+            "type": "timeseries",
+            "datasource": "$datasource",
+            "targets": [
+              {
+                "refId": "A",
+                "expr": "sum by(pod) (rate(container_cpu_usage_seconds_total{cluster_id=~\"$cluster\",container=~\"compactor\"}[$__rate_interval]))"
+              }
+            ]
+          },
+          {
+            "id": 2,
+            "title": "Memory (go heap inuse)",
+            "type": "timeseries",
+            "datasource": "$datasource",
+            "targets": [
+              {
+                "refId": "A",
+                "expr": "sum by(pod) (go_memstats_heap_inuse_bytes{cluster_id=~\"$cluster\",container=~\"compactor\"})"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "title": "Network",
+        "panels": [
+          {
+            "id": 5,
+            "title": "Receive bandwidth",
+            "type": "timeseries",
+            "datasource": "$datasource",
+            "targets": [
+              {
+                "refId": "A",
+                "expr": "sum by(pod) (rate(container_network_receive_bytes_total{cluster_id=~\"$cluster\"}[$__rate_interval]))"
+              }
+            ]
+          },
+          {
+            "id": 6,
+            "title": "Transmit bandwidth",
+            "type": "timeseries",
+            "datasource": "$datasource",
+            "targets": [
+              {
+                "refId": "A",
+                "expr": "sum by(pod) (rate(container_network_transmit_bytes_total{cluster_id=~\"$cluster\"}[$__rate_interval]))"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}
