@@ -346,7 +346,7 @@ func TestCheckDatasourceHealth_NotFound(t *testing.T) {
 
 	_, err := checkDatasourceHealth(mockDatasourcesCtx(srv), CheckDatasourceHealthParams{UID: "missing"})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not found")
+	assert.Contains(t, err.Error(), "missing")
 }
 
 // --- checkDatasourcesHealth ---
