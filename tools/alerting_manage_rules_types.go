@@ -3,6 +3,7 @@ package tools
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/grafana/grafana-openapi-client-go/models"
@@ -11,6 +12,34 @@ import (
 )
 
 var promqlParser = parser.NewParser(parser.Options{})
+
+var validAlertStates = map[string]bool{
+	"firing": true, "pending": true, "normal": true,
+	"recovering": true, "nodata": true, "error": true,
+}
+
+// unquotedLabelValueRe matches a label matcher operator followed by an unquoted
+// value. Values already starting with " are excluded by [^"}.
+var unquotedLabelValueRe = regexp.MustCompile(`(!=|!~|=~|=)\s*([^"}\s,][^},]*)`)
+
+// quoteUnquotedLabelValues adds double quotes around unquoted label values in
+// Prometheus-style selectors. LLMs frequently omit the required quotes, e.g.
+// {severity=critical} instead of {severity="critical"}.
+func quoteUnquotedLabelValues(s string) string {
+	return unquotedLabelValueRe.ReplaceAllStringFunc(s, func(match string) string {
+		groups := unquotedLabelValueRe.FindStringSubmatch(match)
+		if len(groups) < 3 {
+			return match
+		}
+		// When "=" matched but the value starts with "~", the actual operator
+		// is "=~" with an already-quoted value — the regex fell back from =~ to
+		// = because " didn't match the value-start character class.
+		if groups[1] == "=" && strings.HasPrefix(groups[2], "~") {
+			return match
+		}
+		return groups[1] + `"` + strings.TrimSpace(groups[2]) + `"`
+	})
+}
 
 type alertRuleSummary struct {
 	UID            string            `json:"uid"`
@@ -466,6 +495,7 @@ func parseMatcherStrings(strs []string) ([]*labels.Matcher, error) {
 		if !strings.HasPrefix(s, "{") {
 			s = "{" + s + "}"
 		}
+		s = quoteUnquotedLabelValues(s)
 		parsed, err := promqlParser.ParseMetricSelector(s)
 		if err != nil {
 			return nil, fmt.Errorf("invalid matcher %q: %w", s, err)
@@ -487,6 +517,7 @@ func parseSelectorStrings(strs []string) ([]Selector, error) {
 		if !strings.HasPrefix(s, "{") {
 			s = "{" + s + "}"
 		}
+		s = quoteUnquotedLabelValues(s)
 		parsed, err := promqlParser.ParseMetricSelector(s)
 		if err != nil {
 			return nil, fmt.Errorf("invalid label selector %q: %w", s, err)
@@ -511,6 +542,11 @@ func buildGetRulesOpts(f listFilterParams, folderUID, ruleGroup string) (*GetRul
 	}
 	if folderUID != "" && f.SearchFolder != "" {
 		return nil, fmt.Errorf("folder_uid and search_folder are mutually exclusive")
+	}
+	for _, s := range f.States {
+		if !validAlertStates[s] {
+			return nil, fmt.Errorf("invalid state %q, must be one of: firing, pending, normal, recovering, nodata, error", s)
+		}
 	}
 	matchers, err := parseMatcherStrings(f.Matchers)
 	if err != nil {
