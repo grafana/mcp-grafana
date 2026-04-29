@@ -31,7 +31,6 @@ Some tool categories are disabled by default:
 - **examples** – Query examples for datasource types.
 - **clickhouse** – ClickHouse datasource tools.
 - **cloudwatch** – CloudWatch tools.
-- **searchlogs** – Search logs across ClickHouse and Loki.
 - **elasticsearch** – Elasticsearch query tool.
 - **influxdb** – InfluxDB query tool (Flux and InfluxQL).
 - **admin** – Admin tools (teams, users, roles, permissions).
