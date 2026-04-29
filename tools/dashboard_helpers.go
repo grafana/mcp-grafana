@@ -89,36 +89,47 @@ func extractDashboardVariables(db map[string]interface{}) map[string]VariableInf
 	return variables
 }
 
-// findPanelByID searches for a panel by ID, including nested panels in rows
+// findPanelByID searches for a panel by ID, including nested panels in rows.
+// Supports both modern dashboards (top-level "panels", with row-typed entries
+// holding nested panels) and legacy schemaVersion <= 14 dashboards
+// (top-level "rows":[{panels:[...]}], no top-level "panels" array).
 func findPanelByID(db map[string]interface{}, panelID int) (map[string]interface{}, error) {
 	panels := safeArray(db, "panels")
-	if panels == nil {
+	rows := safeArray(db, "rows")
+	if panels == nil && rows == nil {
 		return nil, fmt.Errorf("dashboard has no panels")
 	}
 
-	// Search top-level panels
+	// Search top-level panels (modern schema)
 	for _, p := range panels {
 		panel, ok := p.(map[string]interface{})
 		if !ok {
 			continue
 		}
 
-		id := safeInt(panel, "id")
-		if id == panelID {
+		if safeInt(panel, "id") == panelID {
 			return panel, nil
 		}
 
-		// Check for nested panels in row type
+		// Check for nested panels in row-type entries
 		if safeString(panel, "type") == "row" {
-			nestedPanels := safeArray(panel, "panels")
-			for _, np := range nestedPanels {
-				nestedPanel, ok := np.(map[string]interface{})
-				if !ok {
-					continue
+			for _, np := range safeArray(panel, "panels") {
+				if nested, ok := np.(map[string]interface{}); ok && safeInt(nested, "id") == panelID {
+					return nested, nil
 				}
-				if safeInt(nestedPanel, "id") == panelID {
-					return nestedPanel, nil
-				}
+			}
+		}
+	}
+
+	// Search legacy top-level rows (schemaVersion <= 14)
+	for _, r := range rows {
+		row, ok := r.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		for _, np := range safeArray(row, "panels") {
+			if nested, ok := np.(map[string]interface{}); ok && safeInt(nested, "id") == panelID {
+				return nested, nil
 			}
 		}
 	}
@@ -126,16 +137,14 @@ func findPanelByID(db map[string]interface{}, panelID int) (map[string]interface
 	return nil, fmt.Errorf("panel with ID %d not found", panelID)
 }
 
-// collectAllPanels returns all panels from a dashboard, including nested panels inside rows
+// collectAllPanels returns all panels from a dashboard, including nested
+// panels inside rows. Handles modern dashboards (top-level "panels", with
+// row-typed entries that hold nested panels) and legacy schemaVersion <= 14
+// dashboards (top-level "rows":[{panels:[...]}], no top-level "panels").
 func collectAllPanels(db map[string]interface{}) []map[string]interface{} {
 	var result []map[string]interface{}
 
-	panels := safeArray(db, "panels")
-	if panels == nil {
-		return result
-	}
-
-	for _, p := range panels {
+	for _, p := range safeArray(db, "panels") {
 		panel, ok := p.(map[string]interface{})
 		if !ok {
 			continue
@@ -143,13 +152,25 @@ func collectAllPanels(db map[string]interface{}) []map[string]interface{} {
 
 		result = append(result, panel)
 
-		// Also include nested panels from row-type panels
+		// Include nested panels from row-type entries (modern schema)
 		if safeString(panel, "type") == "row" {
-			nestedPanels := safeArray(panel, "panels")
-			for _, np := range nestedPanels {
-				if nestedPanel, ok := np.(map[string]interface{}); ok {
-					result = append(result, nestedPanel)
+			for _, np := range safeArray(panel, "panels") {
+				if nested, ok := np.(map[string]interface{}); ok {
+					result = append(result, nested)
 				}
+			}
+		}
+	}
+
+	// Include panels from legacy top-level rows (schemaVersion <= 14)
+	for _, r := range safeArray(db, "rows") {
+		row, ok := r.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		for _, np := range safeArray(row, "panels") {
+			if nested, ok := np.(map[string]interface{}); ok {
+				result = append(result, nested)
 			}
 		}
 	}
