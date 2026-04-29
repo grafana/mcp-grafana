@@ -16,7 +16,6 @@ var promqlParser = parser.NewParser(parser.Options{})
 var validAlertStates = map[string]bool{
 	"firing": true, "pending": true, "normal": true,
 	"recovering": true, "nodata": true, "error": true,
-	"inactive": true,
 }
 
 // unquotedLabelValueRe matches a label matcher operator followed by an unquoted
