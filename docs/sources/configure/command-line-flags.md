@@ -47,7 +47,7 @@ You can look up defaults, choose `--disable-*` flags, or configure TLS without r
 
   `search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering`
 
-  Categories **not** in that default string are off until you add them, including: `admin`, `elasticsearch`, `cloudwatch`, `examples`, `clickhouse`, `influxdb`, `searchlogs`, and `runpanelquery`. Pass a full comma-separated list to replace the default entirely, or use `--disable-*` flags to turn off pieces of the default set.
+  Categories **not** in that default string are off until you add them, including: `admin`, `elasticsearch`, `cloudwatch`, `examples`, `clickhouse`, `influxdb`, and `runpanelquery`. Pass a full comma-separated list to replace the default entirely, or use `--disable-*` flags to turn off pieces of the default set.
 
 - `--disable-search`: Disable search tools.
 - `--disable-datasource`: Disable datasource tools.
@@ -70,7 +70,6 @@ You can look up defaults, choose `--disable-*` flags, or configure TLS without r
 - `--disable-cloudwatch`: Disable CloudWatch tools.
 - `--disable-examples`: Disable query examples tools.
 - `--disable-clickhouse`: Disable ClickHouse tools.
-- `--disable-searchlogs`: Disable search logs tools.
 - `--disable-runpanelquery`: Disable run panel query tools.
 - `--disable-annotations`: Disable annotation tools.
 - `--disable-proxied`: Disable proxied tools (tools from external MCP servers).
