@@ -44,7 +44,8 @@ func quoteUnquotedLabelValues(s string) string {
 type alertRuleSummary struct {
 	UID            string            `json:"uid"`
 	Title          string            `json:"title"`
-	State          string            `json:"state"`
+	Type           string            `json:"type,omitempty"`
+	State          string            `json:"state,omitempty"`
 	Health         string            `json:"health,omitempty"`
 	FolderUID      string            `json:"folder_uid,omitempty"`
 	RuleGroup      string            `json:"rule_group,omitempty"`
@@ -52,6 +53,11 @@ type alertRuleSummary struct {
 	LastEvaluation string            `json:"last_evaluation,omitempty"`
 	Labels         map[string]string `json:"labels,omitempty"`
 	Annotations    map[string]string `json:"annotations,omitempty"`
+	// Query is the rule expression. Populated for datasource-managed rules
+	// (Prometheus / Mimir / Loki ruler responses); empty for Grafana-managed
+	// rules where the expression is split across multiple AlertQuery nodes
+	// and exposed via the 'get' operation instead.
+	Query string `json:"query,omitempty"`
 }
 
 // alertRuleDetail is the enriched response for a single rule, combining
@@ -578,7 +584,7 @@ type listFilterParams struct {
 	SearchFolder   string   `json:"search_folder,omitempty" jsonschema:"description=Search folders by path using partial matching (for 'list' operation). Requires Grafana 12.4+. Mutually exclusive with folder_uid."`
 	SearchRuleName string   `json:"search_rule_name,omitempty" jsonschema:"description=Search alert rule names/titles using partial matching. Requires Grafana 12.4+ (for 'list' operation)"`
 	States         []string `json:"states,omitempty" jsonschema:"description=Filter by alert state: firing\\, pending\\, normal\\, recovering\\, nodata\\, error (for 'list' operation)"`
-	RuleType       string   `json:"rule_type,omitempty" jsonschema:"description=Filter by rule type: alerting\\, recording (for 'list' operation)"`
+	RuleType       string   `json:"rule_type,omitempty" jsonschema:"enum=alerting,enum=recording,description=Filter by rule type (for 'list' operation)"`
 	Matchers       []string `json:"matchers,omitempty" jsonschema:"description=Label matchers to filter alert instances. Each string is a Prometheus-style matcher e.g. 'severity=\"critical\"'\\, 'env!=\"dev\"'\\, 'team=~\"backend.*\"'. Requires Grafana 12.4+."`
 }
 

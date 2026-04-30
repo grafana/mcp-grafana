@@ -31,6 +31,13 @@ func listDatasourceAlertRules(ctx context.Context, dsUID string, opts *GetRulesO
 
 	summaries := convertPrometheusRulesToSummary(rulesResp)
 
+	// The Grafana datasource endpoint proxies to upstream Prometheus/Mimir, which
+	// uses a different rule_type parameter name and value set. Filter client-side
+	// so callers get consistent behavior regardless of whether the proxy honors it.
+	if opts != nil && opts.RuleType != "" {
+		summaries = filterSummaryByRuleType(summaries, opts.RuleType)
+	}
+
 	if len(labelSelectors) > 0 {
 		summaries, err = filterSummaryByLabels(summaries, labelSelectors)
 		if err != nil {
@@ -51,39 +58,67 @@ func isRulerDatasource(dsType string) bool {
 		strings.Contains(dsType, "loki")
 }
 
+// convertPrometheusRulesToSummary flattens a ruler rules response into
+// alertRuleSummary entries. Both alerting and recording rules are emitted —
+// recording rules populate Query/Labels/Health/LastEvaluation but leave the
+// alerting-only fields (state, for, annotations) empty.
 func convertPrometheusRulesToSummary(result *v1.RulesResult) []alertRuleSummary {
+	if result == nil {
+		return nil
+	}
 	var rules []alertRuleSummary
 
 	for _, group := range result.Groups {
 		for _, rule := range group.Rules {
 			switch r := rule.(type) {
 			case v1.AlertingRule:
-				lbls := make(map[string]string)
-				for k, v := range r.Labels {
-					lbls[string(k)] = string(v)
-				}
-				annots := make(map[string]string)
-				for k, v := range r.Annotations {
-					annots[string(k)] = string(v)
-				}
-
 				rules = append(rules, alertRuleSummary{
 					Title:          r.Name,
+					Type:           "alerting",
 					RuleGroup:      group.Name,
-					Labels:         lbls,
-					Annotations:    annots,
+					Query:          r.Query,
+					Labels:         labelMap(r.Labels),
+					Annotations:    labelMap(r.Annotations),
 					State:          normalizeState(string(r.State)),
 					Health:         string(r.Health),
-					LastEvaluation: r.LastEvaluation.Format(time.RFC3339),
+					LastEvaluation: formatRuleEvalTime(r.LastEvaluation),
 					For:            formatDuration(r.Duration),
 				})
 			case v1.RecordingRule:
-				continue
+				rules = append(rules, alertRuleSummary{
+					Title:          r.Name,
+					Type:           "recording",
+					RuleGroup:      group.Name,
+					Query:          r.Query,
+					Labels:         labelMap(r.Labels),
+					Health:         string(r.Health),
+					LastEvaluation: formatRuleEvalTime(r.LastEvaluation),
+				})
 			}
 		}
 	}
 
 	return rules
+}
+
+// labelMap copies a v1 label set (model.LabelSet) into a plain string map.
+// Returns nil for empty input so the JSON output omits the field.
+func labelMap[K ~string, V ~string](in map[K]V) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[string(k)] = string(v)
+	}
+	return out
+}
+
+func formatRuleEvalTime(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.Format(time.RFC3339)
 }
 
 func formatDuration(seconds float64) string {

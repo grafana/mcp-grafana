@@ -234,6 +234,16 @@ func listGrafanaRules(ctx context.Context, opts *GetRulesOpts, labelSelectors []
 	return summaries, nil
 }
 
+func filterSummaryByRuleType(summaries []alertRuleSummary, ruleType string) []alertRuleSummary {
+	filtered := make([]alertRuleSummary, 0, len(summaries))
+	for _, s := range summaries {
+		if s.Type == ruleType {
+			filtered = append(filtered, s)
+		}
+	}
+	return filtered
+}
+
 func applyRuleLimit(summaries []alertRuleSummary, ruleLimit int) []alertRuleSummary {
 	limit := ruleLimit
 	if limit == 0 {
