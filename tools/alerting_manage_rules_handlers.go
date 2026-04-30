@@ -87,7 +87,9 @@ func manageRulesReadWrite(ctx context.Context, args ManageRulesReadWriteParams) 
 
 func getAlertRuleDetail(ctx context.Context, uid string, limitAlerts int) (*alertRuleDetail, error) {
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
-	alertRule, err := c.Provisioning.GetAlertRule(uid)
+	alertRule, err := c.Provisioning.GetAlertRuleWithParams(
+		provisioning.NewGetAlertRuleParamsWithContext(ctx).WithUID(uid),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("get alert rule %s: %w", uid, err)
 	}
