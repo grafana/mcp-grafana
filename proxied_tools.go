@@ -11,6 +11,8 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+
+	"github.com/grafana/grafana-openapi-client-go/client/datasources"
 )
 
 const (
@@ -50,7 +52,9 @@ func discoverMCPDatasources(ctx context.Context, logger *slog.Logger) ([]Discove
 	var discovered []DiscoveredDatasource
 
 	// List all datasources
-	resp, err := gc.Datasources.GetDataSources()
+	resp, err := gc.Datasources.GetDataSourcesWithParams(
+		datasources.NewGetDataSourcesParamsWithContext(ctx),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list datasources: %w", err)
 	}

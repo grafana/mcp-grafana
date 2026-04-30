@@ -95,7 +95,9 @@ func createAnnotation(ctx context.Context, args CreateAnnotationInput) (any, err
 			Tags: args.Tags,
 			Data: args.GraphiteData,
 		}
-		resp, err := c.Annotations.PostGraphiteAnnotation(req)
+		resp, err := c.Annotations.PostGraphiteAnnotationWithParams(
+			annotations.NewPostGraphiteAnnotationParamsWithContext(ctx).WithBody(req),
+		)
 		if err != nil {
 			return nil, fmt.Errorf("create graphite annotation: %w", err)
 		}
@@ -116,7 +118,9 @@ func createAnnotation(ctx context.Context, args CreateAnnotationInput) (any, err
 		Data:         args.Data,
 	}
 
-	resp, err := c.Annotations.PostAnnotation(&req)
+	resp, err := c.Annotations.PostAnnotationWithParams(
+		annotations.NewPostAnnotationParamsWithContext(ctx).WithBody(&req),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("create annotation: %w", err)
 	}
@@ -165,7 +169,9 @@ func updateAnnotation(ctx context.Context, args UpdateAnnotationInput) (*annotat
 		body.Data = args.Data
 	}
 
-	resp, err := c.Annotations.PatchAnnotation(id, body)
+	resp, err := c.Annotations.PatchAnnotationWithParams(
+		annotations.NewPatchAnnotationParamsWithContext(ctx).WithAnnotationID(id).WithBody(body),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("update annotation: %w", err)
 	}
