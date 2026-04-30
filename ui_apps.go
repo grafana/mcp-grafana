@@ -8,9 +8,9 @@ import (
 )
 
 const (
-	appMIMEType              = "text/html;profile=mcp-app"
-	timeseriesResourceURI    = "ui://mcp-grafana/timeseries.html"
-	TimeseriesResourceURI    = timeseriesResourceURI
+	appMIMEType           = "text/html;profile=mcp-app"
+	timeseriesResourceURI = "ui://mcp-grafana/timeseries.html"
+	TimeseriesResourceURI = timeseriesResourceURI
 )
 
 // WithUIResource returns a ToolOption that associates a tool with an MCP App
