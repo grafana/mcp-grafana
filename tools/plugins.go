@@ -72,7 +72,7 @@ func grafanaPluginGet(ctx context.Context, cfg mcpgrafana.GrafanaConfig, apiPath
 func getPlugin(ctx context.Context, args GetPluginParams) (*GetPluginResult, error) {
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
 	if cfg.URL == "" {
-		return nil, fmt.Errorf("Grafana URL is not configured")
+		return nil, fmt.Errorf("grafana URL is not configured")
 	}
 
 	pluginID := strings.TrimSpace(args.PluginID)
