@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -36,7 +38,7 @@ func generateDeeplink(ctx context.Context, args GenerateDeeplinkParams) (string,
 		baseURL = gc.PublicURL
 	} else {
 		config := mcpgrafana.GrafanaConfigFromContext(ctx)
-		baseURL = strings.TrimRight(config.URL, "/")
+		baseURL = config.URL
 	}
 
 	if baseURL == "" {
@@ -87,10 +89,10 @@ func generateDeeplink(ctx context.Context, args GenerateDeeplinkParams) (string,
 		if args.TimeRange != nil {
 			rangeObj := map[string]string{}
 			if args.TimeRange.From != "" {
-				rangeObj["from"] = args.TimeRange.From
+				rangeObj["from"] = toGrafanaTimeParam(args.TimeRange.From)
 			}
 			if args.TimeRange.To != "" {
-				rangeObj["to"] = args.TimeRange.To
+				rangeObj["to"] = toGrafanaTimeParam(args.TimeRange.To)
 			}
 			if len(rangeObj) > 0 {
 				exploreState["range"] = rangeObj
@@ -121,10 +123,10 @@ func generateDeeplink(ctx context.Context, args GenerateDeeplinkParams) (string,
 		}
 		timeParams := url.Values{}
 		if args.TimeRange.From != "" {
-			timeParams.Set("from", args.TimeRange.From)
+			timeParams.Set("from", toGrafanaTimeParam(args.TimeRange.From))
 		}
 		if args.TimeRange.To != "" {
-			timeParams.Set("to", args.TimeRange.To)
+			timeParams.Set("to", toGrafanaTimeParam(args.TimeRange.To))
 		}
 		if len(timeParams) > 0 {
 			deeplink = fmt.Sprintf("%s%s%s", deeplink, separator, timeParams.Encode())
@@ -157,4 +159,27 @@ var GenerateDeeplink = mcpgrafana.MustTool(
 
 func AddNavigationTools(mcp *server.MCPServer) {
 	GenerateDeeplink.Register(mcp)
+}
+
+// toGrafanaTimeParam converts a time value to a format Grafana understands
+// in URL query parameters. Grafana's Scenes parseUrlParam uses hardcoded
+// string length checks and only recognizes ISO 8601 at exactly 24 chars
+// (with milliseconds, e.g. "2026-04-28T12:45:00.000Z"). Shorter ISO 8601
+// strings like "2026-04-28T12:45:00Z" (20 chars) are silently ignored.
+// This function converts RFC 3339 timestamps to epoch milliseconds, which
+// is universally supported. Relative strings and epoch values pass through.
+func toGrafanaTimeParam(value string) string {
+	if _, err := strconv.ParseInt(value, 10, 64); err == nil {
+		return value
+	}
+	if strings.HasPrefix(value, "now") {
+		return value
+	}
+	if t, err := time.Parse(time.RFC3339, value); err == nil {
+		return strconv.FormatInt(t.UnixMilli(), 10)
+	}
+	if t, err := time.Parse(time.RFC3339Nano, value); err == nil {
+		return strconv.FormatInt(t.UnixMilli(), 10)
+	}
+	return value
 }

@@ -73,7 +73,7 @@ func newElasticsearchClient(ctx context.Context, uid string) (*ElasticsearchClie
 	}
 
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
-	url := fmt.Sprintf("%s/api/datasources/proxy/uid/%s", strings.TrimRight(cfg.URL, "/"), uid)
+	url := fmt.Sprintf("%s/api/datasources/proxy/uid/%s", cfg.URL, uid)
 
 	transport, err := mcpgrafana.BuildTransport(&cfg, nil)
 	if err != nil {

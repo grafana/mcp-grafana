@@ -19,7 +19,7 @@ import (
 // the OnCall URL from the jsonData.onCallApiUrl field in the response.
 // Returns the OnCall URL if found, or an error if the URL cannot be retrieved.
 func getOnCallURLFromSettings(ctx context.Context, cfg mcpgrafana.GrafanaConfig) (string, error) {
-	settingsURL := fmt.Sprintf("%s/api/plugins/grafana-irm-app/settings", strings.TrimRight(cfg.URL, "/"))
+	settingsURL := fmt.Sprintf("%s/api/plugins/grafana-irm-app/settings", cfg.URL)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", settingsURL, nil)
 	if err != nil {

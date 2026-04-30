@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -16,7 +15,7 @@ import (
 
 func newAssertsClient(ctx context.Context) (*Client, error) {
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
-	url := fmt.Sprintf("%s/api/plugins/grafana-asserts-app/resources/asserts/api-server", strings.TrimRight(cfg.URL, "/"))
+	url := fmt.Sprintf("%s/api/plugins/grafana-asserts-app/resources/asserts/api-server", cfg.URL)
 
 	transport, err := mcpgrafana.BuildTransport(&cfg, nil)
 	if err != nil {

@@ -1178,6 +1178,32 @@ func TestFilterSummaryByLabels(t *testing.T) {
 	})
 }
 
+func TestFilterSummaryByRuleType(t *testing.T) {
+	summaries := []alertRuleSummary{
+		{UID: "r1", Title: "Alert 1", Type: "alerting"},
+		{UID: "r2", Title: "Recording 1", Type: "recording"},
+		{UID: "r3", Title: "Alert 2", Type: "alerting"},
+	}
+
+	t.Run("filter alerting", func(t *testing.T) {
+		filtered := filterSummaryByRuleType(summaries, "alerting")
+		require.Len(t, filtered, 2)
+		require.Equal(t, "r1", filtered[0].UID)
+		require.Equal(t, "r3", filtered[1].UID)
+	})
+
+	t.Run("filter recording", func(t *testing.T) {
+		filtered := filterSummaryByRuleType(summaries, "recording")
+		require.Len(t, filtered, 1)
+		require.Equal(t, "r2", filtered[0].UID)
+	})
+
+	t.Run("unknown type returns empty", func(t *testing.T) {
+		filtered := filterSummaryByRuleType(summaries, "unknown")
+		require.Empty(t, filtered)
+	})
+}
+
 func TestFindRuleInResponse(t *testing.T) {
 	evalTime := time.Date(2026, 2, 28, 12, 0, 0, 0, time.UTC)
 
@@ -1523,5 +1549,122 @@ func TestAlertQueryModel_JSONRoundTrip(t *testing.T) {
 		query := cond["query"].(map[string]any)
 		params := query["params"].([]any)
 		require.Equal(t, "C", params[0])
+	})
+}
+
+func TestQuoteUnquotedLabelValues(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "already quoted",
+			input:    `{severity="critical"}`,
+			expected: `{severity="critical"}`,
+		},
+		{
+			name:     "unquoted value",
+			input:    `{severity=critical}`,
+			expected: `{severity="critical"}`,
+		},
+		{
+			name:     "unquoted regex",
+			input:    `{team=~backend.*}`,
+			expected: `{team=~"backend.*"}`,
+		},
+		{
+			name:     "quoted regex unchanged",
+			input:    `{team=~"backend.*"}`,
+			expected: `{team=~"backend.*"}`,
+		},
+		{
+			name:     "multiple unquoted",
+			input:    `{severity=critical, team=backend}`,
+			expected: `{severity="critical", team="backend"}`,
+		},
+		{
+			name:     "mixed quoted and unquoted",
+			input:    `{severity="critical", team=backend}`,
+			expected: `{severity="critical", team="backend"}`,
+		},
+		{
+			name:     "negation unquoted",
+			input:    `{env!=dev}`,
+			expected: `{env!="dev"}`,
+		},
+		{
+			name:     "negative regex unquoted",
+			input:    `{env!~staging.*}`,
+			expected: `{env!~"staging.*"}`,
+		},
+		{
+			name:     "empty selector",
+			input:    `{}`,
+			expected: `{}`,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result := quoteUnquotedLabelValues(tc.input)
+			require.Equal(t, tc.expected, result)
+		})
+	}
+}
+
+func TestBuildGetRulesOpts_StateValidation(t *testing.T) {
+	t.Run("valid states accepted", func(t *testing.T) {
+		for _, state := range []string{"firing", "pending", "normal", "recovering", "nodata", "error"} {
+			_, err := buildGetRulesOpts(listFilterParams{States: []string{state}}, "", "")
+			require.NoError(t, err, "state %q should be valid", state)
+		}
+	})
+
+	t.Run("invalid state rejected", func(t *testing.T) {
+		_, err := buildGetRulesOpts(listFilterParams{States: []string{"unknown"}}, "", "")
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "invalid state")
+	})
+
+	t.Run("mixed valid and invalid states rejected", func(t *testing.T) {
+		_, err := buildGetRulesOpts(listFilterParams{States: []string{"firing", "bogus"}}, "", "")
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "invalid state")
+	})
+}
+
+func TestParseSelectorStrings_UnquotedValues(t *testing.T) {
+	t.Run("accepts unquoted values", func(t *testing.T) {
+		selectors, err := parseSelectorStrings([]string{`{severity=critical}`})
+		require.NoError(t, err)
+		require.Len(t, selectors, 1)
+		require.Len(t, selectors[0].Filters, 1)
+		require.Equal(t, "severity", selectors[0].Filters[0].Name)
+		require.Equal(t, "critical", selectors[0].Filters[0].Value)
+	})
+
+	t.Run("accepts already-quoted values", func(t *testing.T) {
+		selectors, err := parseSelectorStrings([]string{`{severity="critical"}`})
+		require.NoError(t, err)
+		require.Len(t, selectors, 1)
+		require.Equal(t, "critical", selectors[0].Filters[0].Value)
+	})
+}
+
+func TestParseMatcherStrings_UnquotedValues(t *testing.T) {
+	t.Run("accepts unquoted values", func(t *testing.T) {
+		matchers, err := parseMatcherStrings([]string{`severity=critical`})
+		require.NoError(t, err)
+		require.Len(t, matchers, 1)
+		require.Equal(t, "severity", matchers[0].Name)
+		require.Equal(t, "critical", matchers[0].Value)
+	})
+
+	t.Run("accepts already-quoted values", func(t *testing.T) {
+		matchers, err := parseMatcherStrings([]string{`severity="critical"`})
+		require.NoError(t, err)
+		require.Len(t, matchers, 1)
+		require.Equal(t, "critical", matchers[0].Value)
 	})
 }
