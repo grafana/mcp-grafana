@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Prometheus Time Series</title>
+  <style>
+    :root {
+      --bg: #ffffff;
+      --bg-secondary: #f4f5f5;
+      --text: #1d1f22;
+      --text-secondary: #585959;
+      --border: #e4e7e7;
+      --accent: #3871dc;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #111217;
+        --bg-secondary: #1a1c24;
+        --text: #d5d6db;
+        --text-secondary: #8e8fa1;
+        --border: #2c2f3e;
+        --accent: #6c9eff;
+      }
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 13px;
+      background: var(--bg);
+      color: var(--text);
+      padding: 12px;
+    }
+
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+    }
+
+    .header h2 {
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    .header .meta {
+      color: var(--text-secondary);
+      font-size: 12px;
+    }
+
+    .toolbar {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+
+    button {
+      background: var(--bg-secondary);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 4px 10px;
+      font-size: 12px;
+      cursor: pointer;
+      font-family: inherit;
+    }
+
+    button:hover { background: var(--border); }
+    button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+    #chart-container {
+      width: 100%;
+      min-height: 250px;
+    }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 6px;
+      font-size: 12px;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      color: var(--text-secondary);
+      cursor: pointer;
+    }
+
+    .legend-item:hover { color: var(--text); }
+
+    .legend-swatch {
+      width: 10px;
+      height: 3px;
+      border-radius: 1px;
+    }
+
+    .status {
+      color: var(--text-secondary);
+      font-size: 12px;
+      text-align: center;
+      padding: 40px 0;
+    }
+
+    .error {
+      color: #e24d42;
+      font-size: 12px;
+      padding: 8px;
+      background: #e24d4215;
+      border-radius: 4px;
+      margin-bottom: 8px;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h2 id="title">Time Series</h2>
+    <span class="meta" id="meta"></span>
+  </div>
+  <div class="toolbar">
+    <button id="btn-refresh">Refresh</button>
+    <button id="btn-reset-zoom">Reset zoom</button>
+  </div>
+  <div id="error" class="error" style="display:none"></div>
+  <div id="chart-container">
+    <div class="status" id="status">Waiting for data…</div>
+  </div>
+  <div class="legend" id="legend"></div>
+  <script type="module" src="./src/mcp-app.ts"></script>
+</body>
+</html>
