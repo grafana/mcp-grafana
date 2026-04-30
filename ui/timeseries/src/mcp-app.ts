@@ -154,6 +154,7 @@ function buildOpts(labels: string[], width: number): uPlot.Options {
   return {
     width,
     height: 250,
+    legend: { show: false },
     cursor: {
       drag: { x: true, y: false, setScale: true },
     },
