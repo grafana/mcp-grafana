@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.1] - 2026-04-30
+
+### Added
+
+- Support PromQL queries against VictoriaMetrics datasources ([#767](https://github.com/grafana/mcp-grafana/pull/767))
+
+### Fixed
+
+- Include recording rules in datasource ruler listings for complete alerting rule visibility ([#819](https://github.com/grafana/mcp-grafana/pull/819))
+- Propagate request context through OpenAPI convenience calls to ensure proper tracing and cancellation ([#822](https://github.com/grafana/mcp-grafana/pull/822))
+
 ## [0.13.0] - 2026-04-29
 
 ### Fixed
@@ -191,6 +202,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Upgrade Docker base image packages to resolve critical OpenSSL CVE-2025-15467 (CVSS 9.8) ([#551](https://github.com/grafana/mcp-grafana/pull/551))
 
+[0.13.1]: https://github.com/grafana/mcp-grafana/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/grafana/mcp-grafana/compare/v0.12.1...v0.13.0
 [0.12.1]: https://github.com/grafana/mcp-grafana/compare/v0.12.0...v0.12.1
 [0.12.0]: https://github.com/grafana/mcp-grafana/compare/v0.11.6...v0.12.0
