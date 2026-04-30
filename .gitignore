@@ -13,3 +13,6 @@ wheels/
 # Virtual environments
 .venv
 .envrc
+
+# Git worktrees
+.worktrees/
