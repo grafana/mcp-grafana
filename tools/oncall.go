@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"reflect"
 	"strings"
 
@@ -526,41 +527,53 @@ type GetAlertGroupParams struct {
 	AlertGroupID string `json:"alertGroupId" jsonschema:"required,description=The ID of the alert group to retrieve"`
 }
 
-func getAlertGroup(ctx context.Context, args GetAlertGroupParams) (*OnCallAlertGroup, error) {
-	if useOncallProxy(ctx) {
-		return proxyGetAlertGroup(ctx, args.AlertGroupID)
-	}
-	return amixrGetAlertGroup(ctx, args.AlertGroupID)
+type GetAlertGroupLastAlert struct {
+	ID           string         `json:"id"`
+	AlertGroupID string         `json:"alert_group_id"`
+	CreatedAt    string         `json:"created_at"`
+	Payload      map[string]any `json:"payload,omitempty"`
 }
 
-func amixrGetAlertGroup(ctx context.Context, alertGroupID string) (*OnCallAlertGroup, error) {
+type GetAlertGroupResult struct {
+	OnCallAlertGroup
+	LastAlert *GetAlertGroupLastAlert `json:"last_alert,omitempty"`
+}
+
+func getAlertGroup(ctx context.Context, args GetAlertGroupParams) (*GetAlertGroupResult, error) {
+	if useOncallProxy(ctx) {
+		alertGroup, err := proxyGetAlertGroup(ctx, args.AlertGroupID)
+		if err != nil {
+			return nil, err
+		}
+		return &GetAlertGroupResult{OnCallAlertGroup: *alertGroup}, nil
+	}
+
+	return getAlertGroupWithLastAlertPayload(ctx, args.AlertGroupID)
+}
+
+func getAlertGroupWithLastAlertPayload(ctx context.Context, alertGroupID string) (*GetAlertGroupResult, error) {
 	client, err := oncallClientFromContext(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("getting OnCall client: %w", err)
 	}
 
-	alertGroupService := aapi.NewAlertGroupService(client)
-	ag, _, err := alertGroupService.GetAlertGroup(alertGroupID)
+	u := fmt.Sprintf("alert_groups/%s/", url.PathEscape(alertGroupID))
+	req, err := client.NewRequest(http.MethodGet, u, nil)
 	if err != nil {
+		return nil, fmt.Errorf("creating OnCall alert group request %s: %w", alertGroupID, err)
+	}
+
+	var alertGroup GetAlertGroupResult
+	if _, err := client.Do(req, &alertGroup); err != nil {
 		return nil, fmt.Errorf("getting OnCall alert group %s: %w", alertGroupID, err)
 	}
 
-	return &OnCallAlertGroup{
-		ID:             ag.ID,
-		IntegrationID:  ag.IntegrationID,
-		AlertsCount:    ag.AlertsCount,
-		State:          ag.State,
-		CreatedAt:      ag.CreatedAt,
-		ResolvedAt:     ag.ResolvedAt,
-		AcknowledgedAt: ag.AcknowledgedAt,
-		Title:          ag.Title,
-		Permalinks:     ag.Permalinks,
-	}, nil
+	return &alertGroup, nil
 }
 
 var GetAlertGroup = mcpgrafana.MustTool(
 	"get_alert_group",
-	"Get a specific alert group from Grafana OnCall by its ID. Returns the full alert group details.",
+	"Get a specific alert group from Grafana OnCall by its ID. Returns the alert group details, including the last alert payload when the public OnCall API provides it.",
 	getAlertGroup,
 	mcp.WithTitleAnnotation("Get IRM alert group"),
 	mcp.WithIdempotentHintAnnotation(true),
