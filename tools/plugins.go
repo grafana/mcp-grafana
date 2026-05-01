@@ -24,7 +24,7 @@ type GetPluginResult struct {
 	Name      string `json:"name,omitempty"`
 	Version   string `json:"version,omitempty"`
 	Type      string `json:"type,omitempty"`
-	Enabled   bool   `json:"enabled,omitempty"`
+	Enabled   bool   `json:"enabled"`
 }
 
 // pluginSettingsResponse mirrors the relevant fields from GET /api/plugins/{id}/settings.
@@ -51,9 +51,6 @@ func grafanaPluginGet(ctx context.Context, cfg mcpgrafana.GrafanaConfig, apiPath
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, 0, fmt.Errorf("create request: %w", err)
-	}
-	if cfg.APIKey != "" {
-		req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
 	}
 
 	resp, err := (&http.Client{Transport: transport}).Do(req)
