@@ -1,0 +1,78 @@
+//go:build unit
+// +build unit
+
+package observability
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"log/slog"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+var errBoom = errors.New("boom")
+
+type failingHandler struct{}
+
+func (failingHandler) Enabled(context.Context, slog.Level) bool  { return true }
+func (failingHandler) Handle(context.Context, slog.Record) error { return errBoom }
+func (f failingHandler) WithAttrs([]slog.Attr) slog.Handler       { return f }
+func (f failingHandler) WithGroup(string) slog.Handler            { return f }
+
+func TestFanoutHandler_DispatchesToAllChildren(t *testing.T) {
+	var bufA, bufB bytes.Buffer
+	h := newFanoutHandler(
+		slog.NewTextHandler(&bufA, &slog.HandlerOptions{Level: slog.LevelInfo}),
+		slog.NewTextHandler(&bufB, &slog.HandlerOptions{Level: slog.LevelInfo}),
+	)
+
+	logger := slog.New(h)
+	logger.Info("hello world", "k", "v")
+
+	assert.Contains(t, bufA.String(), "hello world")
+	assert.Contains(t, bufA.String(), "k=v")
+	assert.Contains(t, bufB.String(), "hello world")
+	assert.Contains(t, bufB.String(), "k=v")
+}
+
+func TestFanoutHandler_EnabledIfAnyChildEnabled(t *testing.T) {
+	var bufDebug, bufError bytes.Buffer
+	h := newFanoutHandler(
+		slog.NewTextHandler(&bufDebug, &slog.HandlerOptions{Level: slog.LevelDebug}),
+		slog.NewTextHandler(&bufError, &slog.HandlerOptions{Level: slog.LevelError}),
+	)
+
+	assert.True(t, h.Enabled(context.Background(), slog.LevelInfo))
+}
+
+func TestFanoutHandler_WithAttrsPropagatesToChildren(t *testing.T) {
+	var buf bytes.Buffer
+	h := newFanoutHandler(
+		slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}),
+	).WithAttrs([]slog.Attr{slog.String("service", "mcp-grafana")})
+
+	slog.New(h).Info("msg")
+	assert.Contains(t, buf.String(), "service=mcp-grafana")
+}
+
+func TestFanoutHandler_WithGroupPropagatesToChildren(t *testing.T) {
+	var buf bytes.Buffer
+	h := newFanoutHandler(
+		slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}),
+	).WithGroup("grp")
+
+	slog.New(h).Info("msg", "k", "v")
+	assert.Contains(t, buf.String(), "grp.k=v")
+}
+
+func TestFanoutHandler_AggregatesErrors(t *testing.T) {
+	h := newFanoutHandler(failingHandler{}, failingHandler{})
+	err := h.Handle(context.Background(), slog.Record{})
+	require.Error(t, err)
+	assert.Equal(t, 2, strings.Count(err.Error(), "boom"))
+}
