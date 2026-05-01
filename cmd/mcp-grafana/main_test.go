@@ -100,6 +100,7 @@ func TestBuildInstructions_ReflectsEnabledCategories(t *testing.T) {
 		{
 			name:         "empty enabled list shows no capabilities",
 			enabledTools: "",
+			disableFlags: map[string]bool{"proxied": true},
 			wantContains: []string{
 				"No tool categories are currently enabled.",
 			},
@@ -118,6 +119,9 @@ func TestBuildInstructions_ReflectsEnabledCategories(t *testing.T) {
 				}
 				if tc.disableFlags["prometheus"] {
 					dt.prometheus = true
+				}
+				if tc.disableFlags["proxied"] {
+					dt.proxied = true
 				}
 			}
 

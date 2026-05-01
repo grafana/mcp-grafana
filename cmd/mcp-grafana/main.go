@@ -23,19 +23,23 @@ import (
 	"go.opentelemetry.io/otel/semconv/v1.40.0/mcpconv"
 )
 
-// maybeAddTools registers a tool category and returns true if the category was enabled.
-func maybeAddTools(s *server.MCPServer, tf func(*server.MCPServer), enabledTools []string, disable bool, category string) bool {
+func maybeAddTools(s *server.MCPServer, tf func(*server.MCPServer), enabledTools []string, disable bool, category string) {
 	if !slices.Contains(enabledTools, category) {
 		slog.Debug("Not enabling tools", "category", category)
-		return false
+		return
 	}
 	if disable {
 		slog.Info("Disabling tools", "category", category)
-		return false
+		return
 	}
 	slog.Debug("Enabling tools", "category", category)
 	tf(s)
-	return true
+}
+
+// isCategoryEnabled reports whether a tool category is active given the
+// enabled-tools list and the per-category disable flag.
+func isCategoryEnabled(enabledTools []string, disabled bool, category string) bool {
+	return slices.Contains(enabledTools, category) && !disabled
 }
 
 // categoryDescription maps a tool category to the description shown in server instructions.
@@ -58,7 +62,6 @@ var categoryDescription = map[string]string{
 	"navigation":    "Navigation: Generate deeplink URLs for Grafana resources like dashboards, panels, and Explore queries.",
 	"annotations":   "Annotations: Create and manage dashboard annotations.",
 	"rendering":     "Rendering: Export dashboard panels or full dashboards as PNG images (requires Grafana Image Renderer plugin).",
-	"proxied":       "Proxied Tools: Access tools from external MCP servers (like Tempo) through dynamic discovery.",
 	"cloudwatch":    "CloudWatch: Query AWS CloudWatch datasources for metrics and logs.",
 	"examples":      "Examples: Query example tools.",
 	"clickhouse":    "ClickHouse: Query ClickHouse datasources via Grafana with macro and variable substitution support.",
@@ -189,13 +192,18 @@ func (dt *disabledTools) buildInstructions() string {
 
 	var capabilities []string
 	for _, e := range dt.toolEntries() {
-		// Mirror the same logic as maybeAddTools: enabled in the list and not disabled.
-		if !slices.Contains(enabledTools, e.category) || e.disabled {
+		if !isCategoryEnabled(enabledTools, e.disabled, e.category) {
 			continue
 		}
 		if desc, ok := categoryDescription[e.category]; ok {
 			capabilities = append(capabilities, desc)
 		}
+	}
+
+	// Proxied tools are registered via hooks (not maybeAddTools), so they
+	// are not in toolEntries. Include their description when enabled.
+	if !dt.proxied {
+		capabilities = append(capabilities, "Proxied Tools: Access tools from external MCP servers (like Tempo) through dynamic discovery.")
 	}
 
 	var b strings.Builder
