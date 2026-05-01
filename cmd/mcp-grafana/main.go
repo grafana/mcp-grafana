@@ -170,7 +170,7 @@ func (dt *disabledTools) toolEntries() []toolEntry {
 		{func(mcp *server.MCPServer) { tools.AddAlertingTools(mcp, enableWriteTools) }, dt.alerting, "alerting"},
 		{func(mcp *server.MCPServer) { tools.AddDashboardTools(mcp, enableWriteTools) }, dt.dashboard, "dashboard"},
 		{func(mcp *server.MCPServer) { tools.AddFolderTools(mcp, enableWriteTools) }, dt.folder, "folder"},
-		{tools.AddOnCallTools, dt.oncall, "oncall"},
+		{func(mcp *server.MCPServer) { tools.AddOnCallTools(mcp, enableWriteTools) }, dt.oncall, "oncall"},
 		{tools.AddAssertsTools, dt.asserts, "asserts"},
 		{func(mcp *server.MCPServer) { tools.AddSiftTools(mcp, enableWriteTools) }, dt.sift, "sift"},
 		{tools.AddAdminTools, dt.admin, "admin"},

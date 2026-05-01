@@ -52,7 +52,7 @@ For tools that come from external MCP servers through Grafana (for example from 
 
 ## Run in read-only mode
 
-Use `--disable-write` to disable all write operations. The server can still read dashboards, run queries, and list resources, but it cannot create or update dashboards, incidents, alert rules, annotations, or investigations.
+Use `--disable-write` to disable all write operations. The server can still read dashboards, run queries, and list resources, but it cannot create or update dashboards, incidents, alert groups, alert rules, annotations, or investigations.
 
 ## Next steps
 

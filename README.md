@@ -336,6 +336,7 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `list_oncall_users`               | OnCall      | List users from Grafana OnCall                                      | `grafana-oncall-app.user-settings:read` | Plugin-specific scopes                              |
 | `list_alert_groups`               | OnCall      | List alert groups from Grafana OnCall with filtering options        | `grafana-oncall-app.alert-groups:read`  | Plugin-specific scopes                              |
 | `get_alert_group`                 | OnCall      | Get a specific alert group from Grafana OnCall by its ID            | `grafana-oncall-app.alert-groups:read`  | Plugin-specific scopes                              |
+| `update_alert_group`              | OnCall      | Acknowledge, unacknowledge, resolve, or unresolve an alert group    | `grafana-oncall-app.alert-groups:write` | Plugin-specific scopes                              |
 | `get_sift_investigation`          | Sift        | Retrieve an existing Sift investigation by its UUID                 | Viewer role                             | N/A                                                 |
 | `get_sift_analysis`               | Sift        | Retrieve a specific analysis from a Sift investigation              | Viewer role                             | N/A                                                 |
 | `list_sift_investigations`        | Sift        | Retrieve a list of Sift investigations with an optional limit       | Viewer role                             | N/A                                                 |
@@ -429,6 +430,9 @@ When `--disable-write` is enabled, the following write operations are disabled:
 
 **Alerting Tools:**
 - `alerting_manage_rules` (create, update, delete operations)
+
+**OnCall Tools:**
+- `update_alert_group`
 
 **Annotation Tools:**
 - `create_annotation`

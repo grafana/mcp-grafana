@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"reflect"
 	"strings"
 
@@ -567,7 +568,65 @@ var GetAlertGroup = mcpgrafana.MustTool(
 	mcp.WithReadOnlyHintAnnotation(true),
 )
 
-func AddOnCallTools(mcp *server.MCPServer) {
+type UpdateAlertGroupParams struct {
+	AlertGroupID string `json:"alertGroupId" jsonschema:"required,description=The ID of the alert group to update"`
+	State        string `json:"state" jsonschema:"required,description=New state for the alert group. One of: acknowledged\\, unacknowledged\\, resolved\\, unresolved"`
+}
+
+func alertGroupActionForState(state string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(state)) {
+	case "acknowledged":
+		return "acknowledge", nil
+	case "unacknowledged":
+		return "unacknowledge", nil
+	case "resolved":
+		return "resolve", nil
+	case "unresolved":
+		return "unresolve", nil
+	default:
+		return "", fmt.Errorf("unsupported alert group state %q: expected acknowledged, unacknowledged, resolved, or unresolved", state)
+	}
+}
+
+func updateAlertGroup(ctx context.Context, args UpdateAlertGroupParams) (*aapi.AlertGroup, error) {
+	action, err := alertGroupActionForState(args.State)
+	if err != nil {
+		return nil, err
+	}
+
+	client, err := oncallClientFromContext(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("getting OnCall client: %w", err)
+	}
+
+	u := fmt.Sprintf("alert_groups/%s/%s", url.PathEscape(args.AlertGroupID), action)
+	req, err := client.NewRequest("POST", u, nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating OnCall alert group update request: %w", err)
+	}
+
+	if _, err := client.Do(req, nil); err != nil {
+		return nil, fmt.Errorf("updating OnCall alert group %s to %s: %w", args.AlertGroupID, args.State, err)
+	}
+
+	alertGroupService := aapi.NewAlertGroupService(client)
+	alertGroup, _, err := alertGroupService.GetAlertGroup(args.AlertGroupID)
+	if err != nil {
+		return nil, fmt.Errorf("getting updated OnCall alert group %s: %w", args.AlertGroupID, err)
+	}
+
+	return alertGroup, nil
+}
+
+var UpdateAlertGroup = mcpgrafana.MustTool(
+	"update_alert_group",
+	"Update a Grafana OnCall alert group state. Supports acknowledging, unacknowledging, resolving, and unresolving an alert group by ID. Returns the updated alert group details.",
+	updateAlertGroup,
+	mcp.WithTitleAnnotation("Update IRM alert group"),
+	mcp.WithDestructiveHintAnnotation(true),
+)
+
+func AddOnCallTools(mcp *server.MCPServer, enableWriteTools bool) {
 	ListOnCallSchedules.Register(mcp)
 	GetOnCallShift.Register(mcp)
 	GetCurrentOnCallUsers.Register(mcp)
@@ -575,6 +634,9 @@ func AddOnCallTools(mcp *server.MCPServer) {
 	ListOnCallUsers.Register(mcp)
 	ListAlertGroups.Register(mcp)
 	GetAlertGroup.Register(mcp)
+	if enableWriteTools {
+		UpdateAlertGroup.Register(mcp)
+	}
 }
 
 // helpers for converting amixr pointer types
