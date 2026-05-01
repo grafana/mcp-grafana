@@ -7,6 +7,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
+	"github.com/grafana/grafana-openapi-client-go/client/folders"
 	"github.com/grafana/grafana-openapi-client-go/models"
 	mcpgrafana "github.com/grafana/mcp-grafana"
 )
@@ -31,7 +32,9 @@ func createFolder(ctx context.Context, args CreateFolderParams) (*models.Folder,
 		cmd.ParentUID = args.ParentUID
 	}
 
-	resp, err := c.Folders.CreateFolder(cmd)
+	resp, err := c.Folders.CreateFolderWithParams(
+		folders.NewCreateFolderParamsWithContext(ctx).WithBody(cmd),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("create folder '%s': %w", args.Title, err)
 	}
