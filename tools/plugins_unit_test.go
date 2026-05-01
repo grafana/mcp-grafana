@@ -101,7 +101,7 @@ func TestGetPlugin_NoURLConfigured(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "Grafana URL is not configured")
+	assert.Contains(t, err.Error(), "grafana URL is not configured")
 }
 
 func TestGetPlugin_TrimsWhitespaceFromPluginID(t *testing.T) {
