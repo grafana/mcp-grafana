@@ -573,6 +573,13 @@ type UpdateAlertGroupParams struct {
 	State        string `json:"state" jsonschema:"required,description=New state for the alert group. One of: acknowledged\\, unacknowledged\\, resolved\\, unresolved"`
 }
 
+type UpdateAlertGroupResult struct {
+	AlertGroupID string `json:"alertGroupId"`
+	State        string `json:"state"`
+	Action       string `json:"action"`
+	Updated      bool   `json:"updated"`
+}
+
 func alertGroupActionForState(state string) (string, error) {
 	switch strings.ToLower(strings.TrimSpace(state)) {
 	case "acknowledged":
@@ -588,7 +595,7 @@ func alertGroupActionForState(state string) (string, error) {
 	}
 }
 
-func updateAlertGroup(ctx context.Context, args UpdateAlertGroupParams) (*aapi.AlertGroup, error) {
+func updateAlertGroup(ctx context.Context, args UpdateAlertGroupParams) (*UpdateAlertGroupResult, error) {
 	action, err := alertGroupActionForState(args.State)
 	if err != nil {
 		return nil, err
@@ -609,18 +616,17 @@ func updateAlertGroup(ctx context.Context, args UpdateAlertGroupParams) (*aapi.A
 		return nil, fmt.Errorf("updating OnCall alert group %s to %s: %w", args.AlertGroupID, args.State, err)
 	}
 
-	alertGroupService := aapi.NewAlertGroupService(client)
-	alertGroup, _, err := alertGroupService.GetAlertGroup(args.AlertGroupID)
-	if err != nil {
-		return nil, fmt.Errorf("getting updated OnCall alert group %s: %w", args.AlertGroupID, err)
-	}
-
-	return alertGroup, nil
+	return &UpdateAlertGroupResult{
+		AlertGroupID: args.AlertGroupID,
+		State:        strings.ToLower(strings.TrimSpace(args.State)),
+		Action:       action,
+		Updated:      true,
+	}, nil
 }
 
 var UpdateAlertGroup = mcpgrafana.MustTool(
 	"update_alert_group",
-	"Update a Grafana OnCall alert group state. Supports acknowledging, unacknowledging, resolving, and unresolving an alert group by ID. Returns the updated alert group details.",
+	"Update a Grafana OnCall alert group state. Supports acknowledging, unacknowledging, resolving, and unresolving an alert group by ID. Returns write confirmation without requiring alert group read permissions.",
 	updateAlertGroup,
 	mcp.WithTitleAnnotation("Update IRM alert group"),
 	mcp.WithDestructiveHintAnnotation(true),
