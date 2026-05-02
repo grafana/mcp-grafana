@@ -44,7 +44,7 @@ type disabledTools struct {
 	prometheus, loki, elasticsearch, influxdb, alerting,
 	dashboard, folder, oncall, asserts, sift, admin,
 	pyroscope, navigation, proxied, annotations, rendering, cloudwatch, write,
-	examples, clickhouse, searchlogs, graphite,
+	examples, clickhouse, graphite,
 	runpanelquery, athena bool
 }
 
