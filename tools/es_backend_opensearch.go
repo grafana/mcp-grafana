@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -19,9 +20,10 @@ import (
 // Grafana /api/ds/query endpoint, which routes through the OpenSearch
 // plugin backend. This ensures proper authentication (including AWS SigV4).
 type openSearchBackend struct {
-	httpClient    *http.Client
-	baseURL       string
-	datasourceUID string
+	httpClient     *http.Client
+	baseURL        string
+	datasourceUID  string
+	configuredIndex string
 }
 
 func newOpenSearchBackend(ctx context.Context, ds *models.DataSource) (*openSearchBackend, error) {
@@ -38,16 +40,52 @@ func newOpenSearchBackend(ctx context.Context, ds *models.DataSource) (*openSear
 		Timeout:   30 * time.Second,
 	}
 
+	// The OpenSearch plugin stores the index pattern in jsonData.database,
+	// not in the top-level database field.
+	configuredIndex := ""
+	if jsonData, ok := ds.JSONData.(map[string]interface{}); ok {
+		if db, ok := jsonData["database"].(string); ok {
+			configuredIndex = db
+		}
+	}
+
 	return &openSearchBackend{
-		httpClient:    client,
-		baseURL:       baseURL,
-		datasourceUID: ds.UID,
+		httpClient:      client,
+		baseURL:         baseURL,
+		datasourceUID:   ds.UID,
+		configuredIndex: configuredIndex,
 	}, nil
+}
+
+// indexMatchesPattern reports whether the given index is compatible with the
+// datasource's configured index pattern. It handles simple wildcard patterns
+// (e.g., "logs-*") using filepath.Match semantics.
+func indexMatchesPattern(pattern, index string) bool {
+	if pattern == "" || pattern == index {
+		return true
+	}
+	matched, err := filepath.Match(pattern, index)
+	if err == nil && matched {
+		return true
+	}
+	// If the user's index is itself a pattern (contains wildcards), check
+	// whether the non-wildcard prefix matches the configured pattern's prefix.
+	// e.g., configured="logs-*", user="logs-2024*" → compatible.
+	patternPrefix := strings.TrimRight(pattern, "*?")
+	indexPrefix := strings.TrimRight(index, "*?")
+	return strings.HasPrefix(indexPrefix, patternPrefix)
 }
 
 // Search executes a search query against an OpenSearch datasource using
 // the Grafana /api/ds/query endpoint with the OpenSearch plugin's query model.
 func (b *openSearchBackend) Search(ctx context.Context, index, query string, startTime, endTime *time.Time, limit int) ([]ElasticsearchDocument, error) {
+	// Validate the requested index against the datasource's configured index pattern.
+	// The OpenSearch plugin always searches within the configured index, so requests
+	// for incompatible indices would silently return no results.
+	if b.configuredIndex != "" && !indexMatchesPattern(b.configuredIndex, index) {
+		return nil, fmt.Errorf("the requested index %q is not compatible with this datasource's configured index pattern %q; use an index that matches the pattern or choose a different datasource", index, b.configuredIndex)
+	}
+
 	// Determine time range in milliseconds
 	var fromMs, toMs string
 	if startTime != nil {
@@ -62,14 +100,11 @@ func (b *openSearchBackend) Search(ctx context.Context, index, query string, sta
 		toMs = strconv.FormatInt(time.Now().UnixMilli(), 10)
 	}
 
-	// Build the Lucene query with index filter.
-	// The OpenSearch plugin uses the datasource's configured index pattern by default,
-	// so we prepend _index:<pattern> to filter by the user-specified index.
+	// Use the user's query as-is. The OpenSearch plugin searches within the
+	// datasource's configured index pattern, which we've already validated above.
 	luceneQuery := query
-	if luceneQuery == "*" || luceneQuery == "" {
-		luceneQuery = "_index:" + index
-	} else {
-		luceneQuery = "_index:" + index + " AND (" + luceneQuery + ")"
+	if luceneQuery == "" {
+		luceneQuery = "*"
 	}
 
 	// Build the /api/ds/query payload using the OpenSearch plugin's query model
