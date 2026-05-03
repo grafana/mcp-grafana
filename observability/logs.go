@@ -50,6 +50,10 @@ func (f *fanoutHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 }
 
 func (f *fanoutHandler) WithGroup(name string) slog.Handler {
+	// Per the slog.Handler contract, WithGroup("") must return the receiver.
+	if name == "" {
+		return f
+	}
 	next := make([]slog.Handler, len(f.children))
 	for i, c := range f.children {
 		next[i] = c.WithGroup(name)

@@ -76,3 +76,26 @@ func TestFanoutHandler_AggregatesErrors(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, 2, strings.Count(err.Error(), "boom"))
 }
+
+func TestFanoutHandler_ZeroChildren(t *testing.T) {
+	h := newFanoutHandler()
+	assert.False(t, h.Enabled(context.Background(), slog.LevelInfo))
+	assert.NoError(t, h.Handle(context.Background(), slog.Record{}))
+	require.NotNil(t, h.WithAttrs(nil))
+	require.NotNil(t, h.WithGroup("grp"))
+}
+
+func TestFanoutHandler_WithGroupEmptyNameReturnsReceiver(t *testing.T) {
+	var buf bytes.Buffer
+	h := newFanoutHandler(slog.NewTextHandler(&buf, nil))
+	assert.Same(t, h, h.WithGroup(""))
+}
+
+func TestFanoutHandler_EnabledFalseWhenAllChildrenDisabled(t *testing.T) {
+	var bufA, bufB bytes.Buffer
+	h := newFanoutHandler(
+		slog.NewTextHandler(&bufA, &slog.HandlerOptions{Level: slog.LevelError}),
+		slog.NewTextHandler(&bufB, &slog.HandlerOptions{Level: slog.LevelError}),
+	)
+	assert.False(t, h.Enabled(context.Background(), slog.LevelDebug))
+}
