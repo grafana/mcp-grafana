@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -98,4 +99,24 @@ func TestFanoutHandler_EnabledFalseWhenAllChildrenDisabled(t *testing.T) {
 		slog.NewTextHandler(&bufB, &slog.HandlerOptions{Level: slog.LevelError}),
 	)
 	assert.False(t, h.Enabled(context.Background(), slog.LevelDebug))
+}
+
+func TestSetupLogging_DisabledWhenEnvUnset(t *testing.T) {
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")
+	lp, err := setupLogging(context.Background(), nil)
+	require.NoError(t, err)
+	assert.Nil(t, lp)
+}
+
+func TestSetupLogging_EnabledWhenEnvSet(t *testing.T) {
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317")
+	t.Setenv("OTEL_EXPORTER_OTLP_INSECURE", "true")
+	lp, err := setupLogging(context.Background(), nil)
+	require.NoError(t, err)
+	require.NotNil(t, lp)
+
+	// Shutdown should succeed even if no collector is actually running.
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	assert.NoError(t, lp.Shutdown(shutdownCtx))
 }

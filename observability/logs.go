@@ -9,6 +9,11 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"os"
+
+	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
+	sdklog "go.opentelemetry.io/otel/sdk/log"
+	sdkresource "go.opentelemetry.io/otel/sdk/resource"
 )
 
 type fanoutHandler struct {
@@ -59,4 +64,24 @@ func (f *fanoutHandler) WithGroup(name string) slog.Handler {
 		next[i] = c.WithGroup(name)
 	}
 	return &fanoutHandler{children: next}
+}
+
+// setupLogging returns an OTLP LoggerProvider when OTEL_EXPORTER_OTLP_ENDPOINT
+// is set, otherwise (nil, nil). The gRPC exporter respects the standard
+// OTEL_EXPORTER_OTLP_* env vars for endpoint, headers, TLS, etc.
+func setupLogging(ctx context.Context, res *sdkresource.Resource) (*sdklog.LoggerProvider, error) {
+	if os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") == "" {
+		return nil, nil
+	}
+	exporter, err := otlploggrpc.New(ctx)
+	if err != nil {
+		return nil, err
+	}
+	opts := []sdklog.LoggerProviderOption{
+		sdklog.WithProcessor(sdklog.NewBatchProcessor(exporter)),
+	}
+	if res != nil {
+		opts = append(opts, sdklog.WithResource(res))
+	}
+	return sdklog.NewLoggerProvider(opts...), nil
 }
