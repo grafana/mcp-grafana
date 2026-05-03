@@ -3,6 +3,7 @@ package tools
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/grafana/grafana-openapi-client-go/models"
@@ -12,10 +13,39 @@ import (
 
 var promqlParser = parser.NewParser(parser.Options{})
 
+var validAlertStates = map[string]bool{
+	"firing": true, "pending": true, "normal": true,
+	"recovering": true, "nodata": true, "error": true,
+}
+
+// unquotedLabelValueRe matches a label matcher operator followed by an unquoted
+// value. Values already starting with " are excluded by [^"}.
+var unquotedLabelValueRe = regexp.MustCompile(`(!=|!~|=~|=)\s*([^"}\s,][^},]*)`)
+
+// quoteUnquotedLabelValues adds double quotes around unquoted label values in
+// Prometheus-style selectors. LLMs frequently omit the required quotes, e.g.
+// {severity=critical} instead of {severity="critical"}.
+func quoteUnquotedLabelValues(s string) string {
+	return unquotedLabelValueRe.ReplaceAllStringFunc(s, func(match string) string {
+		groups := unquotedLabelValueRe.FindStringSubmatch(match)
+		if len(groups) < 3 {
+			return match
+		}
+		// When "=" matched but the value starts with "~", the actual operator
+		// is "=~" with an already-quoted value — the regex fell back from =~ to
+		// = because " didn't match the value-start character class.
+		if groups[1] == "=" && strings.HasPrefix(groups[2], "~") {
+			return match
+		}
+		return groups[1] + `"` + strings.TrimSpace(groups[2]) + `"`
+	})
+}
+
 type alertRuleSummary struct {
 	UID            string            `json:"uid"`
 	Title          string            `json:"title"`
-	State          string            `json:"state"`
+	Type           string            `json:"type,omitempty"`
+	State          string            `json:"state,omitempty"`
 	Health         string            `json:"health,omitempty"`
 	FolderUID      string            `json:"folder_uid,omitempty"`
 	RuleGroup      string            `json:"rule_group,omitempty"`
@@ -23,6 +53,11 @@ type alertRuleSummary struct {
 	LastEvaluation string            `json:"last_evaluation,omitempty"`
 	Labels         map[string]string `json:"labels,omitempty"`
 	Annotations    map[string]string `json:"annotations,omitempty"`
+	// Query is the rule expression. Populated for datasource-managed rules
+	// (Prometheus / Mimir / Loki ruler responses); empty for Grafana-managed
+	// rules where the expression is split across multiple AlertQuery nodes
+	// and exposed via the 'get' operation instead.
+	Query string `json:"query,omitempty"`
 }
 
 // alertRuleDetail is the enriched response for a single rule, combining
@@ -177,10 +212,10 @@ func (m *AlertQueryModel) UnmarshalJSON(data []byte) error {
 // AlertCondition represents a condition within a classic_conditions or threshold expression.
 // It includes the full set of fields used by classic_conditions (evaluator, operator, query, reducer).
 type AlertCondition struct {
-	Evaluator ConditionEvaluator  `json:"evaluator" jsonschema:"description=Threshold evaluator"`
-	Operator  *ConditionOperator  `json:"operator,omitempty" jsonschema:"description=Logical operator (and/or) for combining conditions"`
-	Query     *ConditionQuery     `json:"query,omitempty" jsonschema:"description=Query reference for classic_conditions (contains params with RefID)"`
-	Reducer   *ConditionReducer   `json:"reducer,omitempty" jsonschema:"description=Reducer for classic_conditions (avg\\, sum\\, min\\, max\\, count\\, last\\, median)"`
+	Evaluator ConditionEvaluator `json:"evaluator" jsonschema:"description=Threshold evaluator"`
+	Operator  *ConditionOperator `json:"operator,omitempty" jsonschema:"description=Logical operator (and/or) for combining conditions"`
+	Query     *ConditionQuery    `json:"query,omitempty" jsonschema:"description=Query reference for classic_conditions (contains params with RefID)"`
+	Reducer   *ConditionReducer  `json:"reducer,omitempty" jsonschema:"description=Reducer for classic_conditions (avg\\, sum\\, min\\, max\\, count\\, last\\, median)"`
 }
 
 // ConditionOperator represents the logical operator in a classic_conditions condition.
@@ -466,6 +501,7 @@ func parseMatcherStrings(strs []string) ([]*labels.Matcher, error) {
 		if !strings.HasPrefix(s, "{") {
 			s = "{" + s + "}"
 		}
+		s = quoteUnquotedLabelValues(s)
 		parsed, err := promqlParser.ParseMetricSelector(s)
 		if err != nil {
 			return nil, fmt.Errorf("invalid matcher %q: %w", s, err)
@@ -487,6 +523,7 @@ func parseSelectorStrings(strs []string) ([]Selector, error) {
 		if !strings.HasPrefix(s, "{") {
 			s = "{" + s + "}"
 		}
+		s = quoteUnquotedLabelValues(s)
 		parsed, err := promqlParser.ParseMetricSelector(s)
 		if err != nil {
 			return nil, fmt.Errorf("invalid label selector %q: %w", s, err)
@@ -511,6 +548,11 @@ func buildGetRulesOpts(f listFilterParams, folderUID, ruleGroup string) (*GetRul
 	}
 	if folderUID != "" && f.SearchFolder != "" {
 		return nil, fmt.Errorf("folder_uid and search_folder are mutually exclusive")
+	}
+	for _, s := range f.States {
+		if !validAlertStates[s] {
+			return nil, fmt.Errorf("invalid state %q, must be one of: firing, pending, normal, recovering, nodata, error", s)
+		}
 	}
 	matchers, err := parseMatcherStrings(f.Matchers)
 	if err != nil {
@@ -542,7 +584,7 @@ type listFilterParams struct {
 	SearchFolder   string   `json:"search_folder,omitempty" jsonschema:"description=Search folders by path using partial matching (for 'list' operation). Requires Grafana 12.4+. Mutually exclusive with folder_uid."`
 	SearchRuleName string   `json:"search_rule_name,omitempty" jsonschema:"description=Search alert rule names/titles using partial matching. Requires Grafana 12.4+ (for 'list' operation)"`
 	States         []string `json:"states,omitempty" jsonschema:"description=Filter by alert state: firing\\, pending\\, normal\\, recovering\\, nodata\\, error (for 'list' operation)"`
-	RuleType       string   `json:"rule_type,omitempty" jsonschema:"description=Filter by rule type: alerting\\, recording (for 'list' operation)"`
+	RuleType       string   `json:"rule_type,omitempty" jsonschema:"enum=alerting,enum=recording,description=Filter by rule type (for 'list' operation)"`
 	Matchers       []string `json:"matchers,omitempty" jsonschema:"description=Label matchers to filter alert instances. Each string is a Prometheus-style matcher e.g. 'severity=\"critical\"'\\, 'env!=\"dev\"'\\, 'team=~\"backend.*\"'. Requires Grafana 12.4+."`
 }
 

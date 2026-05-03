@@ -50,10 +50,10 @@ type PanelQueryResult struct {
 
 // RunPanelQueryResult contains the result of running panel queries
 type RunPanelQueryResult struct {
-	DashboardUID string                   `json:"dashboardUid"`
+	DashboardUID string                    `json:"dashboardUid"`
 	Results      map[int]*PanelQueryResult `json:"results"`
-	Errors       map[int]string           `json:"errors,omitempty"`
-	TimeRange    QueryTimeRange           `json:"timeRange"`
+	Errors       map[int]string            `json:"errors,omitempty"`
+	TimeRange    QueryTimeRange            `json:"timeRange"`
 }
 
 // singlePanelQueryParams holds the parameters for running a single panel query.
@@ -549,7 +549,7 @@ func executeInfluxDBQuery(ctx context.Context, datasourceUID string, panelData *
 // executeGrafanaDSQuery executes a query through Grafana's /api/ds/query endpoint
 func executeGrafanaDSQuery(ctx context.Context, payload map[string]interface{}) (interface{}, error) {
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
-	baseURL := strings.TrimRight(cfg.URL, "/")
+	baseURL := cfg.URL
 
 	transport, err := mcpgrafana.BuildTransport(&cfg, nil)
 	if err != nil {

@@ -3,7 +3,6 @@ package tools
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"time"
 
 	"github.com/go-openapi/strfmt"
@@ -88,7 +87,9 @@ func manageRulesReadWrite(ctx context.Context, args ManageRulesReadWriteParams) 
 
 func getAlertRuleDetail(ctx context.Context, uid string, limitAlerts int) (*alertRuleDetail, error) {
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
-	alertRule, err := c.Provisioning.GetAlertRule(uid)
+	alertRule, err := c.Provisioning.GetAlertRuleWithParams(
+		provisioning.NewGetAlertRuleParamsWithContext(ctx).WithUID(uid),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("get alert rule %s: %w", uid, err)
 	}
@@ -108,7 +109,7 @@ func getAlertRuleDetail(ctx context.Context, uid string, limitAlerts int) (*aler
 
 	rulesResp, err := ac.GetRules(ctx, opts)
 	if err != nil {
-		slog.WarnContext(ctx, "failed to fetch runtime state for alert rule",
+		mcpgrafana.LoggerFromContext(ctx).WarnContext(ctx, "failed to fetch runtime state for alert rule",
 			"uid", uid, "error", err)
 		detail := mergeRuleDetail(alertRule.Payload, nil)
 		return &detail, nil
@@ -233,6 +234,16 @@ func listGrafanaRules(ctx context.Context, opts *GetRulesOpts, labelSelectors []
 	}
 
 	return summaries, nil
+}
+
+func filterSummaryByRuleType(summaries []alertRuleSummary, ruleType string) []alertRuleSummary {
+	filtered := make([]alertRuleSummary, 0, len(summaries))
+	for _, s := range summaries {
+		if s.Type == ruleType {
+			filtered = append(filtered, s)
+		}
+	}
+	return filtered
 }
 
 func applyRuleLimit(summaries []alertRuleSummary, ruleLimit int) []alertRuleSummary {

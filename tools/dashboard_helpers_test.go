@@ -3,11 +3,62 @@
 package tools
 
 import (
+	"encoding/json"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// loadLegacyRowsDashboard returns the dashboard map from the
+// schemaVersion-14 fixture (top-level "rows":[{panels:[...]}], no
+// top-level "panels" array).
+func loadLegacyRowsDashboard(t *testing.T) map[string]interface{} {
+	t.Helper()
+	raw, err := os.ReadFile("testdata/legacy_rows_dashboard.json")
+	require.NoError(t, err)
+	var doc struct {
+		Dashboard map[string]interface{} `json:"dashboard"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &doc))
+	return doc.Dashboard
+}
+
+// TestLegacyRowsSchemaWalker pins the bug fix: legacy Grafana dashboards
+// (schemaVersion <= 14) keep panels under "rows":[{panels:[...]}], with no
+// top-level "panels" array. The walker must not return zero panels.
+func TestLegacyRowsSchemaWalker(t *testing.T) {
+	db := loadLegacyRowsDashboard(t)
+
+	// Sanity: this fixture has no top-level "panels" — only "rows".
+	require.Nil(t, safeArray(db, "panels"), "fixture must have no top-level panels")
+	require.NotNil(t, safeArray(db, "rows"), "fixture must have top-level rows")
+
+	t.Run("collectAllPanels walks legacy rows", func(t *testing.T) {
+		panels := collectAllPanels(db)
+		require.Len(t, panels, 4, "expected all four legacy-row panels")
+
+		titles := make([]string, 0, len(panels))
+		for _, p := range panels {
+			titles = append(titles, safeString(p, "title"))
+		}
+		assert.ElementsMatch(t,
+			[]string{"CPU", "Memory (go heap inuse)", "Receive bandwidth", "Transmit bandwidth"},
+			titles,
+		)
+	})
+
+	t.Run("findPanelByID resolves legacy-row panels", func(t *testing.T) {
+		panel, err := findPanelByID(db, 5)
+		require.NoError(t, err)
+		assert.Equal(t, "Receive bandwidth", safeString(panel, "title"))
+
+		_, err = findPanelByID(db, 999)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
+}
 
 func TestExtractDashboardVariables(t *testing.T) {
 	t.Run("extracts variables from templating", func(t *testing.T) {
@@ -636,6 +687,36 @@ func TestCollectAllPanels(t *testing.T) {
 		panels := collectAllPanels(db)
 
 		assert.Empty(t, panels)
+	})
+
+	t.Run("does not duplicate when both panels and rows are present", func(t *testing.T) {
+		// A dashboard carrying both top-level "panels" and legacy "rows"
+		// (e.g. mid-migration) must not yield duplicates: prefer the
+		// modern walk and skip the legacy rows fallback, mirroring
+		// getDashboardSummary.
+		db := map[string]interface{}{
+			"panels": []interface{}{
+				map[string]interface{}{
+					"id":    float64(1),
+					"title": "Modern Panel",
+				},
+			},
+			"rows": []interface{}{
+				map[string]interface{}{
+					"panels": []interface{}{
+						map[string]interface{}{
+							"id":    float64(2),
+							"title": "Legacy Panel",
+						},
+					},
+				},
+			},
+		}
+
+		panels := collectAllPanels(db)
+
+		require.Len(t, panels, 1)
+		assert.Equal(t, "Modern Panel", panels[0]["title"])
 	})
 }
 

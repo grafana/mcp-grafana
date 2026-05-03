@@ -1,7 +1,6 @@
 package tools
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -11,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/grafana/grafana-openapi-client-go/models"
+	mcpgrafana "github.com/grafana/mcp-grafana"
 	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	"github.com/prometheus/common/model"
 )
@@ -124,7 +123,7 @@ func (b *cloudMonitoringBackend) Query(ctx context.Context, expr string, queryTy
 		"to":      strconv.FormatInt(end.UnixMilli(), 10),
 	}
 
-	resp, err := b.doDSQuery(ctx, payload)
+	resp, err := doDSQuery(ctx, b.httpClient, b.baseURL, payload)
 	if err != nil {
 		return nil, err
 	}
@@ -177,7 +176,7 @@ func (b *cloudMonitoringBackend) LabelNames(ctx context.Context, matchers []stri
 		"to":      strconv.FormatInt(end.UnixMilli(), 10),
 	}
 
-	resp, err := b.doDSQuery(ctx, payload)
+	resp, err := doDSQuery(ctx, b.httpClient, b.baseURL, payload)
 	if err != nil {
 		return nil, fmt.Errorf("querying label names: %w", err)
 	}
@@ -282,48 +281,12 @@ func (b *cloudMonitoringBackend) labelValuesViaQuery(ctx context.Context, labelN
 		"to":      strconv.FormatInt(end.UnixMilli(), 10),
 	}
 
-	resp, err := b.doDSQuery(ctx, payload)
+	resp, err := doDSQuery(ctx, b.httpClient, b.baseURL, payload)
 	if err != nil {
 		return nil, fmt.Errorf("querying label values: %w", err)
 	}
 
 	return extractLabelValuesFromFrames(resp, labelName), nil
-}
-
-// doDSQuery executes a request against Grafana's /api/ds/query endpoint.
-func (b *cloudMonitoringBackend) doDSQuery(ctx context.Context, payload map[string]interface{}) (*dsQueryResponse, error) {
-	payloadBytes, err := json.Marshal(payload)
-	if err != nil {
-		return nil, fmt.Errorf("marshaling query payload: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, b.baseURL+"/api/ds/query", bytes.NewReader(payloadBytes))
-	if err != nil {
-		return nil, fmt.Errorf("creating request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := b.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("executing request: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
-	if err != nil {
-		return nil, fmt.Errorf("reading response body: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("query returned status %d: %s", resp.StatusCode, string(body[:min(len(body), 1024)]))
-	}
-
-	var queryResp dsQueryResponse
-	if err := json.Unmarshal(body, &queryResp); err != nil {
-		return nil, fmt.Errorf("unmarshaling response: %w", err)
-	}
-
-	return &queryResp, nil
 }
 
 // fetchMetricDescriptors calls the Cloud Monitoring plugin's /metricDescriptors/ resource endpoint.

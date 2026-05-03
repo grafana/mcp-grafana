@@ -5,6 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.1] - 2026-04-30
+
+### Added
+
+- Support PromQL queries against VictoriaMetrics datasources ([#767](https://github.com/grafana/mcp-grafana/pull/767))
+
+### Fixed
+
+- Include recording rules in datasource ruler listings for complete alerting rule visibility ([#819](https://github.com/grafana/mcp-grafana/pull/819))
+- Propagate request context through OpenAPI convenience calls to ensure proper tracing and cancellation ([#822](https://github.com/grafana/mcp-grafana/pull/822))
+
+## [0.13.0] - 2026-04-29
+
+### Fixed
+
+- Handle common LLM type mismatches (e.g. string vs number) in `alerting_manage_rules` to prevent tool call failures ([#816](https://github.com/grafana/mcp-grafana/pull/816))
+- Convert ISO 8601 timestamps to epoch milliseconds in deeplink time ranges for correct Grafana URL generation ([#808](https://github.com/grafana/mcp-grafana/pull/808))
+- Remove broken `search_logs` tool that was returning errors ([#815](https://github.com/grafana/mcp-grafana/pull/815))
+- Normalize trailing slash in Grafana URL within `WithGrafanaConfig` to prevent malformed API requests ([#809](https://github.com/grafana/mcp-grafana/pull/809))
+- Include on-behalf-of tokens in `fetchPublicURL` config so delegated identity works for public URL resolution ([#810](https://github.com/grafana/mcp-grafana/pull/810))
+- Walk legacy dashboard rows (schemaVersion <= 14) in panel walkers so older dashboards are fully traversed ([#817](https://github.com/grafana/mcp-grafana/pull/817))
+
+## [0.12.1] - 2026-04-28
+
+### Added
+
+- Support per-request Grafana configuration via context in HTTP RoundTrippers ([#805](https://github.com/grafana/mcp-grafana/pull/805))
+- Optional `Logger` field on `GrafanaConfig` for structured logging ([#787](https://github.com/grafana/mcp-grafana/pull/787))
+
+### Fixed
+
+- Validate assertion timestamps as strings instead of `time.Time` to prevent type errors ([#793](https://github.com/grafana/mcp-grafana/pull/793))
+- Trim trailing slash from Grafana URL during proxied tool discovery to avoid malformed requests ([#788](https://github.com/grafana/mcp-grafana/pull/788))
+
+### Changed
+
+- Use shared `BuildTransport` constructor in `fetchPublicURL` for consistent HTTP middleware ([#789](https://github.com/grafana/mcp-grafana/pull/789))
+
 ## [0.12.0] - 2026-04-23
 
 ### Added
@@ -164,6 +202,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Upgrade Docker base image packages to resolve critical OpenSSL CVE-2025-15467 (CVSS 9.8) ([#551](https://github.com/grafana/mcp-grafana/pull/551))
 
+[0.13.1]: https://github.com/grafana/mcp-grafana/compare/v0.13.0...v0.13.1
+[0.13.0]: https://github.com/grafana/mcp-grafana/compare/v0.12.1...v0.13.0
+[0.12.1]: https://github.com/grafana/mcp-grafana/compare/v0.12.0...v0.12.1
 [0.12.0]: https://github.com/grafana/mcp-grafana/compare/v0.11.6...v0.12.0
 [0.11.6]: https://github.com/grafana/mcp-grafana/compare/v0.11.5...v0.11.6
 [0.11.5]: https://github.com/grafana/mcp-grafana/compare/v0.11.4...v0.11.5

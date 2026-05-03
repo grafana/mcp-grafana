@@ -16,12 +16,15 @@ build-image: ## Build the Docker image.
 build: ## Build the binary.
 	go build -o dist/mcp-grafana ./cmd/mcp-grafana
 
-.PHONY: lint lint-jsonschema lint-jsonschema-fix
-lint: lint-jsonschema ## Lint the Go code.
+.PHONY: lint lint-jsonschema lint-jsonschema-fix lint-openapi
+lint: lint-jsonschema lint-openapi ## Lint the Go code.
 	golangci-lint run
 
 lint-jsonschema: ## Lint for unescaped commas in jsonschema tags.
 	go run ./cmd/linters/jsonschema --path .
+
+lint-openapi: ## Lint for openapi client calls missing context propagation.
+	go run ./cmd/linters/openapi ./tools/... ./
 
 lint-jsonschema-fix: ## Automatically fix unescaped commas in jsonschema tags.
 	go run ./cmd/linters/jsonschema --path . --fix

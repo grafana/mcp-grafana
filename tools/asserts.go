@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
-	"time"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -17,7 +15,7 @@ import (
 
 func newAssertsClient(ctx context.Context) (*Client, error) {
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
-	url := fmt.Sprintf("%s/api/plugins/grafana-asserts-app/resources/asserts/api-server", strings.TrimRight(cfg.URL, "/"))
+	url := fmt.Sprintf("%s/api/plugins/grafana-asserts-app/resources/asserts/api-server", cfg.URL)
 
 	transport, err := mcpgrafana.BuildTransport(&cfg, nil)
 	if err != nil {
@@ -35,13 +33,13 @@ func newAssertsClient(ctx context.Context) (*Client, error) {
 }
 
 type GetAssertionsParams struct {
-	StartTime  time.Time `json:"startTime" jsonschema:"required,description=The start time in RFC3339 format"`
-	EndTime    time.Time `json:"endTime" jsonschema:"required,description=The end time in RFC3339 format"`
-	EntityType string    `json:"entityType" jsonschema:"description=The type of the entity to list (e.g. Service\\, Node\\, Pod\\, etc.)"`
-	EntityName string    `json:"entityName" jsonschema:"description=The name of the entity to list"`
-	Env        string    `json:"env,omitempty" jsonschema:"description=The env of the entity to list"`
-	Site       string    `json:"site,omitempty" jsonschema:"description=The site of the entity to list"`
-	Namespace  string    `json:"namespace,omitempty" jsonschema:"description=The namespace of the entity to list"`
+	StartTime  string `json:"startTime" jsonschema:"required,description=The start time in RFC3339 format (e.g. 2024-01-01T00:00:00Z) or relative format (e.g. now-1h)"`
+	EndTime    string `json:"endTime" jsonschema:"required,description=The end time in RFC3339 format (e.g. 2024-01-01T00:00:00Z) or relative format (e.g. now)"`
+	EntityType string `json:"entityType" jsonschema:"description=The type of the entity to list (e.g. Service\\, Node\\, Pod\\, etc.)"`
+	EntityName string `json:"entityName" jsonschema:"description=The name of the entity to list"`
+	Env        string `json:"env,omitempty" jsonschema:"description=The env of the entity to list"`
+	Site       string `json:"site,omitempty" jsonschema:"description=The site of the entity to list"`
+	Namespace  string `json:"namespace,omitempty" jsonschema:"description=The namespace of the entity to list"`
 }
 
 type scope struct {
@@ -97,6 +95,15 @@ func (c *Client) fetchAssertsData(ctx context.Context, urlPath string, method st
 }
 
 func getAssertions(ctx context.Context, args GetAssertionsParams) (string, error) {
+	startTime, err := parseStartTime(args.StartTime)
+	if err != nil {
+		return "", fmt.Errorf("parsing start time: %w", err)
+	}
+	endTime, err := parseEndTime(args.EndTime)
+	if err != nil {
+		return "", fmt.Errorf("parsing end time: %w", err)
+	}
+
 	client, err := newAssertsClient(ctx)
 	if err != nil {
 		return "", fmt.Errorf("failed to create Asserts client: %w", err)
@@ -104,8 +111,8 @@ func getAssertions(ctx context.Context, args GetAssertionsParams) (string, error
 
 	// Create request body
 	reqBody := requestBody{
-		StartTime: args.StartTime.UnixMilli(),
-		EndTime:   args.EndTime.UnixMilli(),
+		StartTime: startTime.UnixMilli(),
+		EndTime:   endTime.UnixMilli(),
 		EntityKeys: []entity{
 			{
 				Name:  args.EntityName,

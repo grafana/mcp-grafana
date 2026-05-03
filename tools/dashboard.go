@@ -15,6 +15,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
+	"github.com/grafana/grafana-openapi-client-go/client/dashboards"
 	"github.com/grafana/grafana-openapi-client-go/models"
 	mcpgrafana "github.com/grafana/mcp-grafana"
 )
@@ -25,7 +26,9 @@ type GetDashboardByUIDParams struct {
 
 func getDashboardByUID(ctx context.Context, args GetDashboardByUIDParams) (*models.DashboardFullWithMeta, error) {
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
-	dashboard, err := c.Dashboards.GetDashboardByUID(args.UID)
+	dashboard, err := c.Dashboards.GetDashboardByUIDWithParams(
+		dashboards.NewGetDashboardByUIDParamsWithContext(ctx).WithUID(args.UID),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("get dashboard by uid %s: %w", args.UID, err)
 	}
@@ -150,7 +153,9 @@ func updateDashboardWithFullJSON(ctx context.Context, args UpdateDashboardParams
 		Overwrite: args.Overwrite,
 		UserID:    args.UserID,
 	}
-	dashboard, err := c.Dashboards.PostDashboard(cmd)
+	dashboard, err := c.Dashboards.PostDashboardWithParams(
+		dashboards.NewPostDashboardParamsWithContext(ctx).WithBody(cmd),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("unable to save dashboard: %w", err)
 	}
@@ -448,7 +453,9 @@ func getDashboardSummary(ctx context.Context, args GetDashboardSummaryParams) (*
 	// Extract time range
 	summary.TimeRange = extractTimeRange(db)
 
-	// Extract panel summaries
+	// Extract panel summaries. Modern dashboards put panels at the top
+	// level; legacy schemaVersion <= 14 dashboards put them under
+	// "rows":[{panels:[...]}] with no top-level "panels".
 	if panels := safeArray(db, "panels"); panels != nil {
 		summary.PanelCount = len(panels)
 		for _, p := range panels {
@@ -456,6 +463,19 @@ func getDashboardSummary(ctx context.Context, args GetDashboardSummaryParams) (*
 				summary.Panels = append(summary.Panels, extractPanelSummary(panelObj))
 			}
 		}
+	} else if rows := safeArray(db, "rows"); rows != nil {
+		for _, r := range rows {
+			row, ok := r.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			for _, p := range safeArray(row, "panels") {
+				if panelObj, ok := p.(map[string]interface{}); ok {
+					summary.Panels = append(summary.Panels, extractPanelSummary(panelObj))
+				}
+			}
+		}
+		summary.PanelCount = len(summary.Panels)
 	}
 
 	// Extract variable summaries

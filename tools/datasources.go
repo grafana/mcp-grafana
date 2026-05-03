@@ -8,6 +8,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
+	"github.com/grafana/grafana-openapi-client-go/client/datasources"
 	"github.com/grafana/grafana-openapi-client-go/models"
 	mcpgrafana "github.com/grafana/mcp-grafana"
 )
@@ -39,7 +40,9 @@ type ListDatasourcesResult struct {
 
 func listDatasources(ctx context.Context, args ListDatasourcesParams) (*ListDatasourcesResult, error) {
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
-	resp, err := c.Datasources.GetDataSources()
+	resp, err := c.Datasources.GetDataSourcesWithParams(
+		datasources.NewGetDataSourcesParamsWithContext(ctx),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("list datasources: %w", err)
 	}
@@ -129,7 +132,9 @@ type GetDatasourceByUIDParams struct {
 
 func getDatasourceByUID(ctx context.Context, args GetDatasourceByUIDParams) (*models.DataSource, error) {
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
-	datasource, err := c.Datasources.GetDataSourceByUID(args.UID)
+	datasource, err := c.Datasources.GetDataSourceByUIDWithParams(
+		datasources.NewGetDataSourceByUIDParamsWithContext(ctx).WithUID(args.UID),
+	)
 	if err != nil {
 		// Check if it's a 404 Not Found Error
 		if strings.Contains(err.Error(), "404") {
@@ -146,7 +151,9 @@ type GetDatasourceByNameParams struct {
 
 func getDatasourceByName(ctx context.Context, args GetDatasourceByNameParams) (*models.DataSource, error) {
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
-	datasource, err := c.Datasources.GetDataSourceByName(args.Name)
+	datasource, err := c.Datasources.GetDataSourceByNameWithParams(
+		datasources.NewGetDataSourceByNameParamsWithContext(ctx).WithName(args.Name),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("get datasource by name %s: %w", args.Name, err)
 	}

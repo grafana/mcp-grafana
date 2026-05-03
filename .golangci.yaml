@@ -9,6 +9,7 @@ run:
 linters:
   enable:
     - depguard
+    - sloglint
   settings:
     depguard:
       rules:
@@ -23,3 +24,10 @@ linters:
           deny:
             - pkg: "go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
               desc: "Use mcpgrafana.BuildTransport() instead of wrapping with otelhttp directly."
+    sloglint:
+      no-global: "all"
+  exclusions:
+    rules:
+      - linters:
+          - sloglint
+        path: "cmd/"
