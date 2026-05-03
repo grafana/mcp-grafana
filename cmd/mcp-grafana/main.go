@@ -206,7 +206,8 @@ Available Capabilities:
 - Datasources: List and fetch details for datasources.
 - Prometheus & Loki: Run PromQL and LogQL queries, retrieve metric/log metadata, and explore label names/values.
 - ClickHouse: Query ClickHouse datasources via Grafana with macro and variable substitution support.
-- Elasticsearch/OpenSearch: Query Elasticsearch or OpenSearch datasources using Lucene syntax or Query DSL for logs and metrics.
+- Elasticsearch: Query Elasticsearch datasources using Lucene syntax or Query DSL for logs and metrics.
+- OpenSearch: Query OpenSearch datasources using Lucene syntax for logs and metrics.
 - Incidents: Search, create, update, and resolve incidents in Grafana Incident.
 - Sift Investigations: Start and manage Sift investigations, analyze logs/traces, find error patterns, and detect slow requests.
 - Alerting: List and fetch alert rules and notification contact points.
