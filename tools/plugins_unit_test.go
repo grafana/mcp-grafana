@@ -129,6 +129,27 @@ func TestGetPlugin_TrimsWhitespaceFromPluginID(t *testing.T) {
 	assert.Equal(t, "my-plugin", result.PluginID)
 }
 
+func TestGetPlugin_EscapesPluginIDPathSegment(t *testing.T) {
+	var capturedEscapedPath string
+	var capturedRawQuery string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedEscapedPath = r.URL.EscapedPath()
+		capturedRawQuery = r.URL.RawQuery
+		payload := pluginSettingsResponse{ID: "test?x=1/../../admin", Name: "Test Plugin", Type: "panel", Enabled: true}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(payload)
+	}))
+	t.Cleanup(ts.Close)
+
+	ctx := pluginTestContext(t, ts.URL)
+	result, err := getPlugin(ctx, GetPluginParams{PluginID: "test?x=1/../../admin"})
+
+	require.NoError(t, err)
+	assert.Equal(t, "/api/plugins/test%3Fx=1%2F..%2F..%2Fadmin/settings", capturedEscapedPath)
+	assert.Empty(t, capturedRawQuery)
+	assert.True(t, result.Installed)
+}
+
 func TestGetPlugin_SendsAPIKeyHeader(t *testing.T) {
 	var capturedAuth string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

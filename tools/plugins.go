@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -73,7 +74,7 @@ func getPlugin(ctx context.Context, args GetPluginParams) (*GetPluginResult, err
 	}
 
 	pluginID := strings.TrimSpace(args.PluginID)
-	body, status, err := grafanaPluginGet(ctx, cfg, "/api/plugins/"+pluginID+"/settings")
+	body, status, err := grafanaPluginGet(ctx, cfg, "/api/plugins/"+url.PathEscape(pluginID)+"/settings")
 	if err != nil {
 		return nil, fmt.Errorf("get plugin settings: %w", err)
 	}
