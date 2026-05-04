@@ -24,7 +24,7 @@ type GetPluginResult struct {
 	Name      string `json:"name,omitempty"`
 	Version   string `json:"version,omitempty"`
 	Type      string `json:"type,omitempty"`
-	Enabled   bool   `json:"enabled"`
+	Enabled   *bool  `json:"enabled,omitempty"`
 }
 
 // pluginSettingsResponse mirrors the relevant fields from GET /api/plugins/{id}/settings.
@@ -90,13 +90,14 @@ func getPlugin(ctx context.Context, args GetPluginParams) (*GetPluginResult, err
 		return nil, fmt.Errorf("parse response: %w", err)
 	}
 
+	enabled := settings.Enabled
 	return &GetPluginResult{
 		Installed: true,
 		PluginID:  settings.ID,
 		Name:      settings.Name,
 		Version:   settings.Info.Version,
 		Type:      settings.Type,
-		Enabled:   settings.Enabled,
+		Enabled:   &enabled,
 	}, nil
 }
 

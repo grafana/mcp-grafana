@@ -45,7 +45,8 @@ func TestGetPlugin_Found(t *testing.T) {
 	assert.Equal(t, "Pie Chart", result.Name)
 	assert.Equal(t, "2.0.1", result.Version)
 	assert.Equal(t, "panel", result.Type)
-	assert.True(t, result.Enabled)
+	require.NotNil(t, result.Enabled)
+	assert.True(t, *result.Enabled)
 }
 
 func TestGetPlugin_NotFound(t *testing.T) {
@@ -63,6 +64,11 @@ func TestGetPlugin_NotFound(t *testing.T) {
 	assert.Equal(t, "grafana-nonexistent-panel", result.PluginID)
 	assert.Empty(t, result.Name)
 	assert.Empty(t, result.Version)
+	assert.Nil(t, result.Enabled)
+
+	serialized, err := json.Marshal(result)
+	require.NoError(t, err)
+	assert.NotContains(t, string(serialized), "enabled")
 }
 
 func TestGetPlugin_UnexpectedStatus(t *testing.T) {
@@ -162,7 +168,8 @@ func TestGetPlugin_DisabledPlugin(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.True(t, result.Installed)
-	assert.False(t, result.Enabled)
+	require.NotNil(t, result.Enabled)
+	assert.False(t, *result.Enabled)
 	assert.Equal(t, "2.1.3", result.Version)
 }
 
