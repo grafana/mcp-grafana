@@ -103,6 +103,7 @@ func TestFanoutHandler_EnabledFalseWhenAllChildrenDisabled(t *testing.T) {
 
 func TestSetupLogging_DisabledWhenEnvUnset(t *testing.T) {
 	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")
+	t.Setenv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", "")
 	lp, err := setupLogging(context.Background(), nil)
 	require.NoError(t, err)
 	assert.Nil(t, lp)
@@ -116,6 +117,21 @@ func TestSetupLogging_EnabledWhenEnvSet(t *testing.T) {
 	require.NotNil(t, lp)
 
 	// Shutdown should succeed even if no collector is actually running.
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	assert.NoError(t, lp.Shutdown(shutdownCtx))
+}
+
+func TestSetupLogging_EnabledWhenLogsEndpointSet(t *testing.T) {
+	// Clear the generic endpoint so only the signal-specific variable is active;
+	// verifies gating honors OTEL_EXPORTER_OTLP_LOGS_ENDPOINT as a standalone trigger.
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")
+	t.Setenv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", "http://localhost:4317")
+	t.Setenv("OTEL_EXPORTER_OTLP_LOGS_INSECURE", "true")
+	lp, err := setupLogging(context.Background(), nil)
+	require.NoError(t, err)
+	require.NotNil(t, lp)
+
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	assert.NoError(t, lp.Shutdown(shutdownCtx))

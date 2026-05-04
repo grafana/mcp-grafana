@@ -66,11 +66,14 @@ func (f *fanoutHandler) WithGroup(name string) slog.Handler {
 	return &fanoutHandler{children: next}
 }
 
-// setupLogging returns an OTLP LoggerProvider when OTEL_EXPORTER_OTLP_ENDPOINT
-// is set, otherwise (nil, nil). The gRPC exporter respects the standard
-// OTEL_EXPORTER_OTLP_* env vars for endpoint, headers, TLS, etc.
+// setupLogging returns an OTLP LoggerProvider when either
+// OTEL_EXPORTER_OTLP_ENDPOINT or OTEL_EXPORTER_OTLP_LOGS_ENDPOINT is set,
+// otherwise (nil, nil). The gRPC exporter itself respects the standard
+// OTEL_EXPORTER_OTLP_* env vars (including the signal-specific
+// OTEL_EXPORTER_OTLP_LOGS_* variants) for endpoint, headers, TLS, etc.
 func setupLogging(ctx context.Context, res *sdkresource.Resource) (*sdklog.LoggerProvider, error) {
-	if os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") == "" {
+	if os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") == "" &&
+		os.Getenv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT") == "" {
 		return nil, nil
 	}
 	exporter, err := otlploggrpc.New(ctx)
