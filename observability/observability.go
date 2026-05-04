@@ -7,6 +7,7 @@ package observability
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"os"
 	"sync"
@@ -22,6 +23,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/exporters/prometheus"
+	sdklog "go.opentelemetry.io/otel/sdk/log"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	sdkresource "go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -60,6 +62,7 @@ type sessionMeta struct {
 type Observability struct {
 	meterProvider  *sdkmetric.MeterProvider
 	tracerProvider *sdktrace.TracerProvider
+	loggerProvider *sdklog.LoggerProvider
 	promHandler    http.Handler
 
 	// Semconv MCP metrics
@@ -118,6 +121,17 @@ func Setup(cfg Config) (*Observability, error) {
 		obs.tracerProvider = tp
 	}
 
+	// Set up OTLP log exporter when OTEL_EXPORTER_OTLP_ENDPOINT or
+	// OTEL_EXPORTER_OTLP_LOGS_ENDPOINT is set. See observability/logs.go for
+	// the gating logic. The binary (cmd/mcp-grafana/main.go) fans out slog
+	// records to both stderr and this provider so logs flow to the OTel
+	// collector alongside the traces this package already exports.
+	lp, logErr := setupLogging(context.Background(), res)
+	if logErr != nil {
+		return nil, logErr
+	}
+	obs.loggerProvider = lp
+
 	if !cfg.MetricsEnabled {
 		return obs, nil
 	}
@@ -163,15 +177,23 @@ func Setup(cfg Config) (*Observability, error) {
 
 // Shutdown gracefully shuts down the observability providers.
 func (o *Observability) Shutdown(ctx context.Context) error {
+	var errs []error
 	if o.tracerProvider != nil {
 		if err := o.tracerProvider.Shutdown(ctx); err != nil {
-			return err
+			errs = append(errs, err)
+		}
+	}
+	if o.loggerProvider != nil {
+		if err := o.loggerProvider.Shutdown(ctx); err != nil {
+			errs = append(errs, err)
 		}
 	}
 	if o.meterProvider != nil {
-		return o.meterProvider.Shutdown(ctx)
+		if err := o.meterProvider.Shutdown(ctx); err != nil {
+			errs = append(errs, err)
+		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // MetricsHandler returns the Prometheus HTTP handler for serving metrics.
@@ -348,4 +370,11 @@ func MergeHooks(hooks ...*server.Hooks) *server.Hooks {
 		merged.OnAfterCallTool = append(merged.OnAfterCallTool, h.OnAfterCallTool...)
 	}
 	return merged
+}
+
+// LoggerProvider returns the OTLP log provider, or nil if OTLP logging is
+// not configured (OTEL_EXPORTER_OTLP_ENDPOINT / OTEL_EXPORTER_OTLP_LOGS_ENDPOINT
+// not set).
+func (o *Observability) LoggerProvider() *sdklog.LoggerProvider {
+	return o.loggerProvider
 }
