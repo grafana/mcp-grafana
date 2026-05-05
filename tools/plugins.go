@@ -17,7 +17,7 @@ import (
 )
 
 type GetPluginParams struct {
-	PluginID string `json:"pluginId" jsonschema:"required,description=The plugin ID to check (e.g. 'grafana-image-renderer'\\, 'grafana-piechart-panel'\\, 'grafana-oncall-app')"`
+	PluginID string `json:"pluginId" jsonschema:"required,description=The plugin ID to check (e.g. 'prometheus'\\, 'grafana-piechart-panel'\\, 'grafana-oncall-app')"`
 }
 
 type GetPluginResult struct {
