@@ -23,8 +23,8 @@ type failingHandler struct{}
 
 func (failingHandler) Enabled(context.Context, slog.Level) bool  { return true }
 func (failingHandler) Handle(context.Context, slog.Record) error { return errBoom }
-func (f failingHandler) WithAttrs([]slog.Attr) slog.Handler       { return f }
-func (f failingHandler) WithGroup(string) slog.Handler            { return f }
+func (f failingHandler) WithAttrs([]slog.Attr) slog.Handler      { return f }
+func (f failingHandler) WithGroup(string) slog.Handler           { return f }
 
 func TestFanoutHandler_DispatchesToAllChildren(t *testing.T) {
 	var bufA, bufB bytes.Buffer
