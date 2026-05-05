@@ -23,6 +23,8 @@ import (
 
 func TestSetup(t *testing.T) {
 	t.Run("metrics disabled", func(t *testing.T) {
+		t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")
+		t.Setenv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", "")
 		cfg := Config{
 			MetricsEnabled: false,
 		}
@@ -34,9 +36,28 @@ func TestSetup(t *testing.T) {
 		// Should return nil handler when metrics disabled
 		assert.Nil(t, obs.MetricsHandler())
 
+		// LoggerProvider should be nil when OTLP log export is not configured.
+		assert.Nil(t, obs.LoggerProvider())
+
 		// Shutdown should work without error
 		err = obs.Shutdown(context.Background())
 		assert.NoError(t, err)
+	})
+
+	t.Run("logger provider populated when OTLP logs endpoint set", func(t *testing.T) {
+		t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")
+		t.Setenv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", "http://localhost:4317")
+		t.Setenv("OTEL_EXPORTER_OTLP_LOGS_INSECURE", "true")
+		cfg := Config{MetricsEnabled: false}
+
+		obs, err := Setup(cfg)
+		require.NoError(t, err)
+		require.NotNil(t, obs)
+		require.NotNil(t, obs.LoggerProvider())
+
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		assert.NoError(t, obs.Shutdown(shutdownCtx))
 	})
 
 	t.Run("metrics enabled", func(t *testing.T) {

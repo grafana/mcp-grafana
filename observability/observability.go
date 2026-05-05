@@ -123,9 +123,12 @@ func Setup(cfg Config) (*Observability, error) {
 
 	// Set up OTLP log exporter when OTEL_EXPORTER_OTLP_ENDPOINT or
 	// OTEL_EXPORTER_OTLP_LOGS_ENDPOINT is set. See observability/logs.go for
-	// the gating logic. The binary (cmd/mcp-grafana/main.go) fans out slog
-	// records to both stderr and this provider so logs flow to the OTel
-	// collector alongside the traces this package already exports.
+	// the gating logic. Note the signal-specific OTEL_EXPORTER_OTLP_LOGS_ENDPOINT
+	// is honored as a standalone trigger even when the generic var is unset;
+	// the trace block above only gates on the generic var today.
+	// The binary (cmd/mcp-grafana/main.go) fans out slog records to both stderr
+	// and this provider so logs flow to the OTel collector alongside the traces
+	// this package already exports.
 	lp, logErr := setupLogging(context.Background(), res)
 	if logErr != nil {
 		return nil, logErr
