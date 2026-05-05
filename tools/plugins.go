@@ -23,12 +23,12 @@ type GetPluginParams struct {
 }
 
 type GetPluginResult struct {
-	Installed bool   `json:"installed"`
-	PluginID  string `json:"pluginId"`
-	Name      string `json:"name,omitempty"`
-	Version   string `json:"version,omitempty"`
-	Type      string `json:"type,omitempty"`
-	Enabled   *bool  `json:"enabled,omitempty"`
+	Installed  bool   `json:"installed"`
+	PluginID   string `json:"pluginId"`
+	Name       string `json:"name,omitempty"`
+	Version    string `json:"version,omitempty"`
+	Type       string `json:"type,omitempty"`
+	Enabled    *bool  `json:"enabled,omitempty"`
 	Suggestion string `json:"suggestion,omitempty"` // Optional suggestion for next steps, e.g. installing the plugin if not found
 }
 
@@ -212,9 +212,9 @@ func installPlugin(ctx context.Context, args InstallPluginParams) (*InstallPlugi
 	}
 
 	return &InstallPluginResult{
-		PluginID: pluginID,
-		Message:  "Plugin installed successfully. Grafana may need to be restarted for the plugin to become active.",
-		Suggestion: "Configure a new data source for the plugin.", // For now keeping this static to a single suggestion, down the line we may end up with a list 
+		PluginID:   pluginID,
+		Message:    "Plugin installed successfully. Grafana may need to be restarted for the plugin to become active.",
+		Suggestion: "Configure a new data source for the plugin.", // For now keeping this static to a single suggestion, down the line we may end up with a list
 	}, nil
 }
 
