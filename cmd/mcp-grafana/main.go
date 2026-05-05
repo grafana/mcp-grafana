@@ -411,7 +411,12 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 	if lp := o.LoggerProvider(); lp != nil {
 		otlpHandler := otelslog.NewHandler("mcp-grafana", otelslog.WithLoggerProvider(lp))
 		slog.SetDefault(slog.New(observability.NewFanoutHandler(stderrHandler, otlpHandler)))
-		slog.Info("OTLP log export enabled", "endpoint", os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"))
+		// Prefer the signal-specific override, falling back to the generic var.
+		endpoint := os.Getenv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT")
+		if endpoint == "" {
+			endpoint = os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+		}
+		slog.Info("OTLP log export enabled", "endpoint", endpoint)
 	}
 
 	// Create a client cache for HTTP-based transports to avoid per-request

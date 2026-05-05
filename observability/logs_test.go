@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -89,7 +90,10 @@ func TestFanoutHandler_ZeroChildren(t *testing.T) {
 func TestFanoutHandler_WithGroupEmptyNameReturnsReceiver(t *testing.T) {
 	var buf bytes.Buffer
 	h := NewFanoutHandler(slog.NewTextHandler(&buf, nil))
-	assert.Same(t, h, h.WithGroup(""))
+	// WithGroup("") must return the receiver unchanged (contract of slog.Handler).
+	// Compare the underlying pointer identity.
+	same := h.WithGroup("")
+	assert.Equal(t, reflect.ValueOf(h).Pointer(), reflect.ValueOf(same).Pointer())
 }
 
 func TestFanoutHandler_EnabledFalseWhenAllChildrenDisabled(t *testing.T) {
@@ -135,4 +139,17 @@ func TestSetupLogging_EnabledWhenLogsEndpointSet(t *testing.T) {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	assert.NoError(t, lp.Shutdown(shutdownCtx))
+}
+
+func TestFanoutHandler_HandleSkipsDisabledChildren(t *testing.T) {
+	var bufDebug, bufError bytes.Buffer
+	h := NewFanoutHandler(
+		slog.NewTextHandler(&bufDebug, &slog.HandlerOptions{Level: slog.LevelDebug}),
+		slog.NewTextHandler(&bufError, &slog.HandlerOptions{Level: slog.LevelError}),
+	)
+
+	// Info is below Error threshold — only the debug child should receive.
+	slog.New(h).Info("hello", "k", "v")
+	assert.Contains(t, bufDebug.String(), "hello")
+	assert.Empty(t, bufError.String())
 }

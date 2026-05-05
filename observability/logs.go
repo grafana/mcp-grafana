@@ -20,10 +20,11 @@ type fanoutHandler struct {
 	children []slog.Handler
 }
 
-// NewFanoutHandler returns a slog.Handler that dispatches each record to all
-// provided child handlers. Enabled returns true if any child is enabled for the
-// given level. Handle errors are aggregated via errors.Join.
-func NewFanoutHandler(children ...slog.Handler) *fanoutHandler {
+// NewFanoutHandler returns a slog.Handler that dispatches each record to every
+// provided child handler. Enabled returns true if any child is enabled for the
+// given level. Handle errors are aggregated via errors.Join. Safe for concurrent
+// use once constructed.
+func NewFanoutHandler(children ...slog.Handler) slog.Handler {
 	return &fanoutHandler{children: children}
 }
 
