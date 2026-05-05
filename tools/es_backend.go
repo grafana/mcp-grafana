@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/grafana/grafana-openapi-client-go/models"
+	mcpgrafana "github.com/grafana/mcp-grafana"
 )
 
 const (
@@ -117,8 +117,8 @@ type elasticsearchResponse struct {
 
 // msearchResponse represents the response from Elasticsearch _msearch API
 type msearchResponse struct {
-	Took      int                      `json:"took"`
-	Responses []elasticsearchResponse  `json:"responses"`
+	Took      int                     `json:"took"`
+	Responses []elasticsearchResponse `json:"responses"`
 }
 
 // Search performs a search query against Elasticsearch using the _msearch API.

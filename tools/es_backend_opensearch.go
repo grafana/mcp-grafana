@@ -12,17 +12,17 @@ import (
 	"strings"
 	"time"
 
-	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/grafana/grafana-openapi-client-go/models"
+	mcpgrafana "github.com/grafana/mcp-grafana"
 )
 
 // openSearchBackend handles queries to an OpenSearch datasource via the
 // Grafana /api/ds/query endpoint, which routes through the OpenSearch
 // plugin backend. This ensures proper authentication (including AWS SigV4).
 type openSearchBackend struct {
-	httpClient     *http.Client
-	baseURL        string
-	datasourceUID  string
+	httpClient      *http.Client
+	baseURL         string
+	datasourceUID   string
 	configuredIndex string
 }
 
