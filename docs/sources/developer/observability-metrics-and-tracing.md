@@ -86,7 +86,7 @@ OTEL_EXPORTER_OTLP_INSECURE=true \
 
 Stderr logging continues unchanged; operators can pipe stderr to `/dev/null` if they only want logs going to the OTel collector.
 
-## Run with Docker (metrics and tracing)
+## Run with Docker (metrics, tracing, and logs)
 
 ```bash
 docker run --rm -p 8000:8000 \

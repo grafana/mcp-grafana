@@ -1007,7 +1007,7 @@ OTEL_EXPORTER_OTLP_HEADERS="Authorization=Basic ..." \
 
 Logs are also exported under the stdio transport, which makes it easy to centralize logs from local `mcp-grafana` instances invoked by IDE clients.
 
-**Docker example with metrics and tracing:**
+**Docker example with metrics, tracing, and logs:**
 
 ```bash
 docker run --rm -p 8000:8000 \
