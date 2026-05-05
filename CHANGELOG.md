@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Export logs via OTLP when `OTEL_EXPORTER_OTLP_ENDPOINT` or `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` is set, consistent with existing OTLP trace export. Stderr logging is preserved. ([#811](https://github.com/grafana/mcp-grafana/issues/811))
+
 ## [0.13.1] - 2026-04-30
 
 ### Added

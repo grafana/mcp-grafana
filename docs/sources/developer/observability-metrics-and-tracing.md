@@ -1,22 +1,23 @@
 ---
-title: Observability (metrics and tracing)
+title: Observability (metrics, tracing, and logs)
 menuTitle: Observability
-description: Expose Prometheus metrics and OpenTelemetry tracing from the Grafana MCP server.
+description: Expose Prometheus metrics and OpenTelemetry tracing and logs from the Grafana MCP server.
 keywords:
   - Prometheus
   - metrics
   - OpenTelemetry
   - tracing
+  - logs
   - MCP
 weight: 2
 aliases: []
 ---
 
-# Observability (metrics and tracing)
+# Observability (metrics, tracing, and logs)
 
-The MCP server can expose **Prometheus metrics** and supports **[OpenTelemetry](https://opentelemetry.io/)** distributed tracing, following the [OTel MCP semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/mcp/).
+The MCP server can expose **Prometheus metrics** and supports **[OpenTelemetry](https://opentelemetry.io/)** distributed tracing and log export, following the [OTel MCP semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/mcp/).
 
-Metrics require the **SSE** or **streamable-http** transport. Tracing uses standard `OTEL_*` environment variables and works independently of `--metrics`.
+Metrics require the **SSE** or **streamable-http** transport. Tracing and log export use standard `OTEL_*` environment variables and work with any transport, independently of `--metrics`.
 
 ## What you'll achieve
 
@@ -71,6 +72,19 @@ OTEL_EXPORTER_OTLP_HEADERS="Authorization=Basic ..." \
 ```
 
 Tool call spans follow naming like `tools/call <tool_name>` and include attributes such as `gen_ai.tool.name`, `mcp.method.name`, and `mcp.session.id`. The server supports W3C trace context propagation from the `_meta` field of tool call requests.
+
+## Enable OpenTelemetry logs
+
+When `OTEL_EXPORTER_OTLP_ENDPOINT` (or the signal-specific `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`) is set — the same trigger as tracing — the server also exports structured logs via OTLP/gRPC in addition to the existing plain-text stderr output. Logs carry `trace_id` and `span_id` from the active span so they correlate with exported traces.
+
+```bash
+# Send logs and traces to a local OTel collector
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317 \
+OTEL_EXPORTER_OTLP_INSECURE=true \
+./mcp-grafana -t streamable-http
+```
+
+Stderr logging continues unchanged; operators can pipe stderr to `/dev/null` if they only want logs going to the OTel collector.
 
 ## Run with Docker (metrics and tracing)
 
