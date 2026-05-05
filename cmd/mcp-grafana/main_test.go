@@ -51,6 +51,99 @@ func TestNewServer_SessionIdleTimeoutZeroDisablesReaping(t *testing.T) {
 	})
 }
 
+func TestBuildInstructions_ReflectsEnabledCategories(t *testing.T) {
+	tests := []struct {
+		name            string
+		enabledTools    string
+		disableFlags    map[string]bool
+		wantContains    []string
+		wantNotContains []string
+	}{
+		{
+			name:         "all defaults include Loki and Prometheus",
+			enabledTools: "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,annotations,rendering",
+			wantContains: []string{
+				"Prometheus:",
+				"Loki:",
+				"Alerting:",
+				"Available Capabilities:",
+			},
+			wantNotContains: []string{
+				"ClickHouse:",
+				"No tool categories are currently enabled.",
+			},
+		},
+		{
+			name:         "disabled category excluded from instructions",
+			enabledTools: "search,datasource,prometheus,loki",
+			disableFlags: map[string]bool{"loki": true},
+			wantContains: []string{
+				"Prometheus:",
+			},
+			wantNotContains: []string{
+				"Loki:",
+			},
+		},
+		{
+			name:         "category not in enabled list excluded",
+			enabledTools: "search,datasource",
+			wantContains: []string{
+				"Search:",
+				"Datasources:",
+			},
+			wantNotContains: []string{
+				"Prometheus:",
+				"Loki:",
+				"Alerting:",
+			},
+		},
+		{
+			name:         "empty enabled list shows no capabilities",
+			enabledTools: "",
+			disableFlags: map[string]bool{"proxied": true},
+			wantContains: []string{
+				"No tool categories are currently enabled.",
+			},
+			wantNotContains: []string{
+				"Available Capabilities:",
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			dt := disabledTools{enabledTools: tc.enabledTools}
+			if tc.disableFlags != nil {
+				if tc.disableFlags["loki"] {
+					dt.loki = true
+				}
+				if tc.disableFlags["prometheus"] {
+					dt.prometheus = true
+				}
+				if tc.disableFlags["proxied"] {
+					dt.proxied = true
+				}
+			}
+
+			instructions := dt.buildInstructions()
+
+			for _, want := range tc.wantContains {
+				assert.Contains(t, instructions, want, "instructions should contain %q", want)
+			}
+			for _, notWant := range tc.wantNotContains {
+				assert.NotContains(t, instructions, notWant, "instructions should not contain %q", notWant)
+			}
+		})
+	}
+}
+
+func TestBuildInstructions_TimestampNote(t *testing.T) {
+	// The timestamp note should always be present regardless of enabled categories.
+	dt := disabledTools{enabledTools: "search"}
+	instructions := dt.buildInstructions()
+	assert.Contains(t, instructions, "Timestamp parameters without a timezone offset are interpreted as UTC")
+}
+
 func TestNewServer_SessionIdleTimeoutCustomValue(t *testing.T) {
 	obs := newTestObservability(t)
 	synctest.Test(t, func(t *testing.T) {
