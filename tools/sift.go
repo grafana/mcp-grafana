@@ -321,7 +321,12 @@ func findErrorPatternLogs(ctx context.Context, args FindErrorPatternLogsParams) 
 		// No patterns found, return the analysis without examples
 		return errorPatternLogsAnalysis, nil
 	}
-	for _, pattern := range errorPatternLogsAnalysis.Result.Details["patterns"].([]any) {
+	patterns, ok := errorPatternLogsAnalysis.Result.Details["patterns"].([]any)
+	if !ok {
+		// Patterns key missing or unexpected type; return analysis without examples
+		return errorPatternLogsAnalysis, nil
+	}
+	for _, pattern := range patterns {
 		patternMap, ok := pattern.(map[string]any)
 		if !ok {
 			continue
