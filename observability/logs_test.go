@@ -27,7 +27,7 @@ func (f failingHandler) WithGroup(string) slog.Handler            { return f }
 
 func TestFanoutHandler_DispatchesToAllChildren(t *testing.T) {
 	var bufA, bufB bytes.Buffer
-	h := newFanoutHandler(
+	h := NewFanoutHandler(
 		slog.NewTextHandler(&bufA, &slog.HandlerOptions{Level: slog.LevelInfo}),
 		slog.NewTextHandler(&bufB, &slog.HandlerOptions{Level: slog.LevelInfo}),
 	)
@@ -43,7 +43,7 @@ func TestFanoutHandler_DispatchesToAllChildren(t *testing.T) {
 
 func TestFanoutHandler_EnabledIfAnyChildEnabled(t *testing.T) {
 	var bufDebug, bufError bytes.Buffer
-	h := newFanoutHandler(
+	h := NewFanoutHandler(
 		slog.NewTextHandler(&bufDebug, &slog.HandlerOptions{Level: slog.LevelDebug}),
 		slog.NewTextHandler(&bufError, &slog.HandlerOptions{Level: slog.LevelError}),
 	)
@@ -53,7 +53,7 @@ func TestFanoutHandler_EnabledIfAnyChildEnabled(t *testing.T) {
 
 func TestFanoutHandler_WithAttrsPropagatesToChildren(t *testing.T) {
 	var buf bytes.Buffer
-	h := newFanoutHandler(
+	h := NewFanoutHandler(
 		slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}),
 	).WithAttrs([]slog.Attr{slog.String("service", "mcp-grafana")})
 
@@ -63,7 +63,7 @@ func TestFanoutHandler_WithAttrsPropagatesToChildren(t *testing.T) {
 
 func TestFanoutHandler_WithGroupPropagatesToChildren(t *testing.T) {
 	var buf bytes.Buffer
-	h := newFanoutHandler(
+	h := NewFanoutHandler(
 		slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}),
 	).WithGroup("grp")
 
@@ -72,14 +72,14 @@ func TestFanoutHandler_WithGroupPropagatesToChildren(t *testing.T) {
 }
 
 func TestFanoutHandler_AggregatesErrors(t *testing.T) {
-	h := newFanoutHandler(failingHandler{}, failingHandler{})
+	h := NewFanoutHandler(failingHandler{}, failingHandler{})
 	err := h.Handle(context.Background(), slog.Record{})
 	require.Error(t, err)
 	assert.Equal(t, 2, strings.Count(err.Error(), "boom"))
 }
 
 func TestFanoutHandler_ZeroChildren(t *testing.T) {
-	h := newFanoutHandler()
+	h := NewFanoutHandler()
 	assert.False(t, h.Enabled(context.Background(), slog.LevelInfo))
 	assert.NoError(t, h.Handle(context.Background(), slog.Record{}))
 	require.NotNil(t, h.WithAttrs(nil))
@@ -88,13 +88,13 @@ func TestFanoutHandler_ZeroChildren(t *testing.T) {
 
 func TestFanoutHandler_WithGroupEmptyNameReturnsReceiver(t *testing.T) {
 	var buf bytes.Buffer
-	h := newFanoutHandler(slog.NewTextHandler(&buf, nil))
+	h := NewFanoutHandler(slog.NewTextHandler(&buf, nil))
 	assert.Same(t, h, h.WithGroup(""))
 }
 
 func TestFanoutHandler_EnabledFalseWhenAllChildrenDisabled(t *testing.T) {
 	var bufA, bufB bytes.Buffer
-	h := newFanoutHandler(
+	h := NewFanoutHandler(
 		slog.NewTextHandler(&bufA, &slog.HandlerOptions{Level: slog.LevelError}),
 		slog.NewTextHandler(&bufB, &slog.HandlerOptions{Level: slog.LevelError}),
 	)

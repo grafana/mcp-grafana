@@ -20,6 +20,7 @@ import (
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/grafana/mcp-grafana/observability"
 	"github.com/grafana/mcp-grafana/tools"
+	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"go.opentelemetry.io/otel/semconv/v1.40.0/mcpconv"
 )
 
@@ -385,9 +386,12 @@ func runMetricsServer(addr string, o *observability.Observability) {
 }
 
 func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt disabledTools, gc mcpgrafana.GrafanaConfig, tls tlsConfig, obs observability.Config, sessionIdleTimeoutMinutes int) error {
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})))
+	// Install stderr logging first so any errors from observability.Setup
+	// are captured even if OTLP logging can't be initialized.
+	stderrHandler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})
+	slog.SetDefault(slog.New(stderrHandler))
 
-	// Set up observability (metrics and tracing)
+	// Set up observability (metrics, tracing, and logs)
 	o, err := observability.Setup(obs)
 	if err != nil {
 		return fmt.Errorf("failed to setup observability: %w", err)
@@ -399,6 +403,16 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 			slog.Error("failed to shutdown observability", "error", err)
 		}
 	}()
+
+	// If the OTLP log exporter is configured, fan-out slog records to both
+	// stderr (unchanged behavior) AND OTLP via the otelslog bridge. The bridge
+	// attaches trace_id / span_id from context automatically, so log records
+	// correlate with the spans that mcp-grafana already emits.
+	if lp := o.LoggerProvider(); lp != nil {
+		otlpHandler := otelslog.NewHandler("mcp-grafana", otelslog.WithLoggerProvider(lp))
+		slog.SetDefault(slog.New(observability.NewFanoutHandler(stderrHandler, otlpHandler)))
+		slog.Info("OTLP log export enabled", "endpoint", os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"))
+	}
 
 	// Create a client cache for HTTP-based transports to avoid per-request
 	// transport allocation (see https://github.com/grafana/mcp-grafana/issues/682).
