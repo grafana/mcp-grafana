@@ -27,6 +27,7 @@ type GetPluginResult struct {
 	Version   string `json:"version,omitempty"`
 	Type      string `json:"type,omitempty"`
 	Enabled   *bool  `json:"enabled,omitempty"`
+	Suggestion string `json:"suggestion,omitempty"` // Optional suggestion for next steps, e.g. installing the plugin if not found
 }
 
 // pluginSettingsResponse mirrors the relevant fields from GET /api/plugins/{id}/settings.
@@ -94,7 +95,7 @@ func getPlugin(ctx context.Context, args GetPluginParams) (*GetPluginResult, err
 	}
 
 	if status == http.StatusNotFound {
-		return &GetPluginResult{Installed: false, PluginID: pluginID}, nil
+		return &GetPluginResult{Installed: false, PluginID: pluginID, Suggestion: "Install the plugin using install_plugin."}, nil
 	}
 	if status != http.StatusOK {
 		return nil, fmt.Errorf("get plugin settings: unexpected status %d", status)
@@ -118,7 +119,7 @@ func getPlugin(ctx context.Context, args GetPluginParams) (*GetPluginResult, err
 
 var GetPlugin = mcpgrafana.MustTool(
 	"get_plugin",
-	"Check whether a Grafana plugin is installed and retrieve its details (name, version, type, enabled status). Returns installed=false when the plugin is not found.",
+	"Check whether a Grafana plugin is installed and retrieve its details (name, version, type, enabled status). Returns installed=false when the plugin is not found. Use install_plugin when a plugin is not installed to install plugin after confirming this action with the user.",
 	getPlugin,
 	mcp.WithTitleAnnotation("Get plugin"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -127,12 +128,40 @@ var GetPlugin = mcpgrafana.MustTool(
 
 type InstallPluginParams struct {
 	PluginID string `json:"pluginId" jsonschema:"required,description=The plugin ID to install (e.g. 'grafana-image-renderer'\\, 'grafana-piechart-panel')"`
-	Version  string `json:"version,omitempty" jsonschema:"description=The version to install. Omit to install the latest version."`
+	Version  string `json:"version,omitempty" jsonschema:"description=The exact version to install. Must be confirmed with the user before calling — if unknown\\, omit this field to look up the latest version first."`
 }
 
 type InstallPluginResult struct {
-	PluginID string `json:"pluginId"`
-	Message  string `json:"message"`
+	PluginID             string `json:"pluginId"`
+	Message              string `json:"message"`
+	ConfirmationRequired bool   `json:"confirmationRequired,omitempty"`
+	LatestVersion        string `json:"latestVersion,omitempty"`
+}
+
+// grafanaComPluginResponse mirrors the relevant fields from the Grafana plugin catalog API.
+type grafanaComPluginResponse struct {
+	Version string `json:"version"`
+}
+
+// fetchLatestPluginVersion queries the Grafana plugin catalog for the latest published version of a plugin.
+func fetchLatestPluginVersion(ctx context.Context, pluginID string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://grafana.com/api/plugins/"+url.PathEscape(pluginID), nil)
+	if err != nil {
+		return "", fmt.Errorf("create request: %w", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("do request: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("unexpected status %d", resp.StatusCode)
+	}
+	var result grafanaComPluginResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("decode response: %w", err)
+	}
+	return result.Version, nil
 }
 
 func installPlugin(ctx context.Context, args InstallPluginParams) (*InstallPluginResult, error) {
@@ -143,16 +172,25 @@ func installPlugin(ctx context.Context, args InstallPluginParams) (*InstallPlugi
 
 	pluginID := strings.TrimSpace(args.PluginID)
 
-	var body any
-	if args.Version != "" {
-		body = map[string]string{"version": args.Version}
+	if args.Version == "" {
+		latestVersion, err := fetchLatestPluginVersion(ctx, pluginID)
+		result := &InstallPluginResult{
+			PluginID:             pluginID,
+			ConfirmationRequired: true,
+		}
+		if err == nil && latestVersion != "" {
+			result.LatestVersion = latestVersion
+			result.Message = fmt.Sprintf("The latest available version of %s is %s. Ask the user whether to install this version or a specific one, then call install_plugin again with the chosen version.", pluginID, latestVersion)
+		} else {
+			result.Message = fmt.Sprintf("No version was specified for %s. Ask the user whether to install the latest version or a specific one, then call install_plugin again with the chosen version.", pluginID)
+		}
+		return result, nil
 	}
 
-	_, status, err := grafanaPluginRequest(ctx, cfg, http.MethodPost, "/api/plugins/"+url.PathEscape(pluginID)+"/install", body)
+	_, status, err := grafanaPluginRequest(ctx, cfg, http.MethodPost, "/api/plugins/"+url.PathEscape(pluginID)+"/install", map[string]string{"version": args.Version})
 	if err != nil {
 		return nil, fmt.Errorf("install plugin: %w", err)
 	}
-
 	if status != http.StatusOK {
 		return nil, fmt.Errorf("install plugin: unexpected status %d", status)
 	}
@@ -165,12 +203,14 @@ func installPlugin(ctx context.Context, args InstallPluginParams) (*InstallPlugi
 
 var InstallPlugin = mcpgrafana.MustTool(
 	"install_plugin",
-	"Install a Grafana plugin by its plugin ID. Optionally specify a version; omit to install the latest. Grafana may need to be restarted after installation for the plugin to become active.",
+	"Install a Grafana plugin by its plugin ID. If the version is not already confirmed with the user, omit it — the tool will look up the latest version and return it for confirmation before installing.",
 	installPlugin,
 	mcp.WithTitleAnnotation("Install plugin"),
 )
 
-func AddPluginTools(s *server.MCPServer) {
+func AddPluginTools(s *server.MCPServer, enableWrite bool) {
 	GetPlugin.Register(s)
-	InstallPlugin.Register(s)
+	if (enableWrite) {
+		InstallPlugin.Register(s)
+	}
 }

@@ -132,7 +132,7 @@ func (dt *disabledTools) addTools(s *server.MCPServer) {
 	maybeAddTools(s, tools.AddClickHouseTools, enabledTools, dt.clickhouse, "clickhouse")
 	maybeAddTools(s, tools.AddRunPanelQueryTools, enabledTools, dt.runpanelquery, "runpanelquery")
 	maybeAddTools(s, tools.AddGraphiteTools, enabledTools, dt.graphite, "graphite")
-	maybeAddTools(s, tools.AddPluginTools, enabledTools, dt.plugin, "plugin")
+	maybeAddTools(s, func(mcp *server.MCPServer) { tools.AddPluginTools(mcp, enableWriteTools) }, enabledTools, dt.plugin, "plugin")
 }
 
 func newServer(transport string, dt disabledTools, obs *observability.Observability, sessionIdleTimeoutMinutes int) (*server.MCPServer, *mcpgrafana.ToolManager, *mcpgrafana.SessionManager) {
