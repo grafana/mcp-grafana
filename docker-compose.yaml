@@ -17,12 +17,12 @@ services:
         target: /var/lib/grafana/empty-alerts-folder
 
   renderer:
-    image: grafana/grafana-image-renderer:latest@sha256:6c432f1aed266ce56433becacd197cdab708f9089104d67664207b4fe0975055
+    image: grafana/grafana-image-renderer:latest@sha256:340c91e98ccd65001a3da4d0192fcf0ed13e95609a51a0d62c35a61b6ff28dff
     ports:
       - 8081
 
   prometheus:
-    image: prom/prometheus@sha256:5550dc63da361dc30f6fe02ac0e4dfc736ededfef3c8d12a634db04a67824d78
+    image: prom/prometheus@sha256:e4254400b85610324913f0dc4acf92603d9984e7519414c5a12811aa6146acc3
     ports:
       - "9090:9090"
     entrypoint: /etc/prometheus/entrypoint.sh
@@ -171,7 +171,7 @@ services:
     entrypoint: ["sh", "/seed.sh"]
 
   clickhouse:
-    image: clickhouse/clickhouse-server:25.12@sha256:59efe7d83b1e13c2e439a80adcce1fad186489d69a55d4b763102280a359a4cc
+    image: clickhouse/clickhouse-server:25.12@sha256:8a790dd3468db22b1d4e7b18a176f378ff5ff6053b9c48dd4ea1fa71a24c5ba6
     ports:
       - "8123:8123"
       - "9000:9000"
