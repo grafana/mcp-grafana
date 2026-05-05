@@ -467,7 +467,7 @@ func TestInstallPlugin_NoVersion_ReturnsLatestVersionForConfirmation(t *testing.
 	assert.Contains(t, result.Message, "grafana-test-plugin")
 }
 
-func TestInstallPlugin_NoVersion_LookupFails_StillPromptsForConfirmation(t *testing.T) {
+func TestInstallPlugin_NoVersion_CatalogLookupFails_StillPromptsForVersion(t *testing.T) {
 	versionCatalogTestServer(t, "grafana-test-plugin", "", http.StatusInternalServerError)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Error("unexpected call to Grafana instance")
@@ -482,6 +482,25 @@ func TestInstallPlugin_NoVersion_LookupFails_StillPromptsForConfirmation(t *test
 	assert.True(t, result.ConfirmationRequired)
 	assert.Empty(t, result.LatestVersion)
 	assert.Contains(t, result.Message, "grafana-test-plugin")
+	assert.Contains(t, result.Message, "Could not fetch")
+}
+
+func TestInstallPlugin_NoVersion_PluginNotInCatalog_PromptsToVerifyID(t *testing.T) {
+	versionCatalogTestServer(t, "grafana-test-plugin", "", http.StatusNotFound)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("unexpected call to Grafana instance")
+	}))
+	t.Cleanup(ts.Close)
+
+	ctx := pluginTestContext(t, ts.URL)
+	result, err := installPlugin(ctx, InstallPluginParams{PluginID: "grafana-test-plugin"})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.True(t, result.ConfirmationRequired)
+	assert.Empty(t, result.LatestVersion)
+	assert.Contains(t, result.Message, "not found in the Grafana plugin catalog")
+	assert.Contains(t, result.Message, "Verify the plugin ID")
 }
 
 func TestInstallPlugin_WithVersion_Success(t *testing.T) {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -144,6 +145,10 @@ type InstallPluginResult struct {
 // It is a variable to allow overriding in tests.
 var grafanaComCatalogURL = "https://grafana.com/api/plugins"
 
+// errPluginNotInCatalog is returned by fetchLatestPluginVersion when the plugin
+// does not exist in the public Grafana catalog (HTTP 404).
+var errPluginNotInCatalog = errors.New("plugin not found in catalog")
+
 // grafanaComPluginResponse mirrors the relevant fields from the Grafana plugin catalog API.
 type grafanaComPluginResponse struct {
 	Version string `json:"version"`
@@ -160,6 +165,9 @@ func fetchLatestPluginVersion(ctx context.Context, pluginID string) (string, err
 		return "", fmt.Errorf("do request: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode == http.StatusNotFound {
+		return "", errPluginNotInCatalog
+	}
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("unexpected status %d", resp.StatusCode)
 	}
@@ -187,8 +195,10 @@ func installPlugin(ctx context.Context, args InstallPluginParams) (*InstallPlugi
 		if err == nil && latestVersion != "" {
 			result.LatestVersion = latestVersion
 			result.Message = fmt.Sprintf("The latest available version of %s is %s. Ask the user whether to install this version or a specific one, then call install_plugin again with the chosen version.", pluginID, latestVersion)
+		} else if errors.Is(err, errPluginNotInCatalog) {
+			result.Message = fmt.Sprintf("%s was not found in the Grafana plugin catalog. Verify the plugin ID is correct with the user. If this is a private or custom plugin not listed in the catalog, ask the user to provide a specific version, then call install_plugin again with the chosen version.", pluginID)
 		} else {
-			result.Message = fmt.Sprintf("No version was specified for %s. Ask the user whether to install the latest version or a specific one, then call install_plugin again with the chosen version.", pluginID)
+			result.Message = fmt.Sprintf("Could not fetch the latest version for %s from the Grafana plugin catalog. Ask the user to provide a specific version, then call install_plugin again with the chosen version.", pluginID)
 		}
 		return result, nil
 	}
