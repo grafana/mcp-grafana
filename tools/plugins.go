@@ -151,7 +151,7 @@ type grafanaComPluginResponse struct {
 
 // fetchLatestPluginVersion queries the Grafana plugin catalog for the latest published version of a plugin.
 func fetchLatestPluginVersion(ctx context.Context, pluginID string) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://grafana.com/api/plugins/"+url.PathEscape(pluginID), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, grafanaComCatalogURL+"/"+url.PathEscape(pluginID), nil)
 	if err != nil {
 		return "", fmt.Errorf("create request: %w", err)
 	}
