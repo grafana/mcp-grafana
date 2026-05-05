@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"path/filepath"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -59,12 +59,12 @@ func newOpenSearchBackend(ctx context.Context, ds *models.DataSource) (*openSear
 
 // indexMatchesPattern reports whether the given index is compatible with the
 // datasource's configured index pattern. It handles simple wildcard patterns
-// (e.g., "logs-*") using filepath.Match semantics.
+// (e.g., "logs-*") using path.Match semantics.
 func indexMatchesPattern(pattern, index string) bool {
 	if pattern == "" || pattern == index {
 		return true
 	}
-	matched, err := filepath.Match(pattern, index)
+	matched, err := path.Match(pattern, index)
 	if err == nil && matched {
 		return true
 	}
