@@ -74,6 +74,17 @@ datasources:
       index: test-logs-*
       timeField: "@timestamp"
       esVersion: 8.17.0
+  - name: OpenSearch
+    uid: opensearch
+    type: grafana-opensearch-datasource
+    access: proxy
+    url: http://opensearch:9200
+    jsonData:
+      database: test-logs-*
+      timeField: "@timestamp"
+      flavor: opensearch
+      version: 2.19.1
+      pplEnabled: false
   - name: InfluxDB Flux
     uid: influxdb-flux
     type: influxdb
