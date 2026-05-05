@@ -388,3 +388,146 @@ func TestSearchPlugins_CatalogError(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "fetch plugin catalog")
 }
+
+func TestSearchPlugins_MalformedCatalogJSON(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{not valid json`))
+	}))
+	t.Cleanup(func() {
+		grafanaComCatalogURL = "https://grafana.com/api/plugins"
+		ts.Close()
+	})
+	grafanaComCatalogURL = ts.URL
+
+	_, err := searchPlugins(context.Background(), SearchPluginsParams{Query: "azure"})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "decode catalog")
+}
+
+func TestSearchPlugins_NoteEmptyWhenResultsNotTruncated(t *testing.T) {
+	catalogTestServer(t, []catalogPlugin{
+		{Slug: "grafana-loki", Name: "Loki", SignatureType: "grafana", Status: "active"},
+		{Slug: "grafana-loki-2", Name: "Loki 2", SignatureType: "grafana", Status: "active"},
+	})
+
+	result, err := searchPlugins(context.Background(), SearchPluginsParams{Query: "loki"})
+
+	require.NoError(t, err)
+	assert.Len(t, result.Results, 2)
+	assert.Equal(t, 2, result.Total)
+	assert.Empty(t, result.Note)
+}
+
+// installPlugin unit tests
+
+func versionCatalogTestServer(t *testing.T, pluginID, version string, statusCode int) {
+	t.Helper()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if statusCode != http.StatusOK {
+			http.Error(w, "error", statusCode)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(grafanaComPluginResponse{Version: version})
+	}))
+	t.Cleanup(func() {
+		grafanaComCatalogURL = "https://grafana.com/api/plugins"
+		ts.Close()
+	})
+	grafanaComCatalogURL = ts.URL
+}
+
+func TestInstallPlugin_NoURLConfigured(t *testing.T) {
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{})
+	result, err := installPlugin(ctx, InstallPluginParams{PluginID: "some-plugin", Version: "1.0.0"})
+
+	require.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "grafana URL is not configured")
+}
+
+func TestInstallPlugin_NoVersion_ReturnsLatestVersionForConfirmation(t *testing.T) {
+	versionCatalogTestServer(t, "grafana-test-plugin", "3.1.4", http.StatusOK)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// install should not be called in this path
+		t.Error("unexpected call to Grafana instance")
+	}))
+	t.Cleanup(ts.Close)
+
+	ctx := pluginTestContext(t, ts.URL)
+	result, err := installPlugin(ctx, InstallPluginParams{PluginID: "grafana-test-plugin"})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.True(t, result.ConfirmationRequired)
+	assert.Equal(t, "3.1.4", result.LatestVersion)
+	assert.Contains(t, result.Message, "3.1.4")
+	assert.Contains(t, result.Message, "grafana-test-plugin")
+}
+
+func TestInstallPlugin_NoVersion_LookupFails_StillPromptsForConfirmation(t *testing.T) {
+	versionCatalogTestServer(t, "grafana-test-plugin", "", http.StatusInternalServerError)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("unexpected call to Grafana instance")
+	}))
+	t.Cleanup(ts.Close)
+
+	ctx := pluginTestContext(t, ts.URL)
+	result, err := installPlugin(ctx, InstallPluginParams{PluginID: "grafana-test-plugin"})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.True(t, result.ConfirmationRequired)
+	assert.Empty(t, result.LatestVersion)
+	assert.Contains(t, result.Message, "grafana-test-plugin")
+}
+
+func TestInstallPlugin_WithVersion_Success(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodPost, r.Method)
+		assert.Equal(t, "/api/plugins/grafana-test-plugin/install", r.URL.Path)
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(ts.Close)
+
+	ctx := pluginTestContext(t, ts.URL)
+	result, err := installPlugin(ctx, InstallPluginParams{PluginID: "grafana-test-plugin", Version: "2.0.0"})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "grafana-test-plugin", result.PluginID)
+	assert.False(t, result.ConfirmationRequired)
+	assert.Contains(t, result.Message, "installed successfully")
+}
+
+func TestInstallPlugin_WithVersion_UnexpectedStatus(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	}))
+	t.Cleanup(ts.Close)
+
+	ctx := pluginTestContext(t, ts.URL)
+	result, err := installPlugin(ctx, InstallPluginParams{PluginID: "grafana-test-plugin", Version: "2.0.0"})
+
+	require.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "install plugin")
+	assert.Contains(t, err.Error(), "500")
+}
+
+func TestInstallPlugin_WithVersion_TrimsWhitespaceFromPluginID(t *testing.T) {
+	var capturedPath string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedPath = r.URL.Path
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(ts.Close)
+
+	ctx := pluginTestContext(t, ts.URL)
+	_, err := installPlugin(ctx, InstallPluginParams{PluginID: "  grafana-test-plugin  ", Version: "1.0.0"})
+
+	require.NoError(t, err)
+	assert.Equal(t, "/api/plugins/grafana-test-plugin/install", capturedPath)
+}
