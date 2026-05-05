@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -138,6 +139,10 @@ type InstallPluginResult struct {
 	LatestVersion        string `json:"latestVersion,omitempty"`
 }
 
+// grafanaComCatalogURL is the base URL for the Grafana plugin catalog API.
+// It is a variable to allow overriding in tests.
+var grafanaComCatalogURL = "https://grafana.com/api/plugins"
+
 // grafanaComPluginResponse mirrors the relevant fields from the Grafana plugin catalog API.
 type grafanaComPluginResponse struct {
 	Version string `json:"version"`
@@ -208,9 +213,172 @@ var InstallPlugin = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("Install plugin"),
 )
 
+// catalogPlugin mirrors the relevant fields from the Grafana plugin catalog list API.
+type catalogPlugin struct {
+	Slug            string   `json:"slug"`
+	Name            string   `json:"name"`
+	Description     string   `json:"description"`
+	Keywords        []string `json:"keywords"`
+	TypeCode        string   `json:"typeCode"`
+	Version         string   `json:"version"`
+	OrgName         string   `json:"orgName"`
+	OrgSlug         string   `json:"orgSlug"`
+	SignatureType   string   `json:"signatureType"`
+	Status          string   `json:"status"`
+	Popularity      float64  `json:"popularity"`
+	AngularDetected bool     `json:"angularDetected"`
+}
+
+type catalogListResponse struct {
+	Items []catalogPlugin `json:"items"`
+}
+
+type SearchPluginsParams struct {
+	Query string `json:"query" jsonschema:"required,description=Keyword to search for plugins (e.g. 'azure'\\, 'prometheus'\\, 'loki'\\, 'database'). Matches against plugin name\\, slug\\, description\\, and keywords."`
+}
+
+type SearchPluginResult struct {
+	PluginID      string   `json:"pluginId"`
+	Name          string   `json:"name"`
+	Description   string   `json:"description,omitempty"`
+	OrgName       string   `json:"orgName"`
+	Type          string   `json:"type"`
+	Version       string   `json:"version"`
+	SignatureType string   `json:"signatureType"`
+	Priority      string   `json:"priority"`
+	Warnings      []string `json:"warnings,omitempty"`
+}
+
+type SearchPluginsResult struct {
+	Results []SearchPluginResult `json:"results"`
+	Total   int                  `json:"total"`
+	Note    string               `json:"note,omitempty"`
+}
+
+func signaturePriority(sig string) int {
+	switch sig {
+	case "grafana":
+		return 0
+	case "commercial":
+		return 1
+	case "community":
+		return 2
+	default:
+		return 3
+	}
+}
+
+func pluginMatchesQuery(p catalogPlugin, query string) bool {
+	if strings.Contains(strings.ToLower(p.Name), query) {
+		return true
+	}
+	if strings.Contains(strings.ToLower(p.Slug), query) {
+		return true
+	}
+	if strings.Contains(strings.ToLower(p.Description), query) {
+		return true
+	}
+	for _, kw := range p.Keywords {
+		if strings.Contains(strings.ToLower(kw), query) {
+			return true
+		}
+	}
+	return false
+}
+
+func searchPlugins(ctx context.Context, args SearchPluginsParams) (*SearchPluginsResult, error) {
+	limit := 10
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, grafanaComCatalogURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetch plugin catalog: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("fetch plugin catalog: unexpected status %d", resp.StatusCode)
+	}
+
+	var catalog catalogListResponse
+	if err := json.NewDecoder(resp.Body).Decode(&catalog); err != nil {
+		return nil, fmt.Errorf("decode catalog: %w", err)
+	}
+
+	query := strings.ToLower(strings.TrimSpace(args.Query))
+	var matched []catalogPlugin
+	for _, p := range catalog.Items {
+		if pluginMatchesQuery(p, query) {
+			matched = append(matched, p)
+		}
+	}
+
+	sort.Slice(matched, func(i, j int) bool {
+		// order results by signature type (1. grafana, 2. commercial, 3. community) otherwise by popularity
+		pi, pj := signaturePriority(matched[i].SignatureType), signaturePriority(matched[j].SignatureType)
+		if pi != pj {
+			return pi < pj
+		}
+		return matched[i].Popularity > matched[j].Popularity
+	})
+
+	total := len(matched)
+	if len(matched) > limit {
+		matched = matched[:limit]
+	}
+
+	results := make([]SearchPluginResult, 0, len(matched))
+	for _, p := range matched {
+		var warnings []string
+		if p.Status == "enterprise" {
+			warnings = append(warnings, "Requires a Grafana Enterprise license")
+		}
+		if p.SignatureType == "private" {
+			warnings = append(warnings, "Private plugin: may not be publicly available for installation")
+		}
+		if p.AngularDetected {
+			warnings = append(warnings, "Uses Angular (being phased out in Grafana; prefer alternatives)")
+		}
+
+		results = append(results, SearchPluginResult{
+			PluginID:      p.Slug,
+			Name:          p.Name,
+			Description:   p.Description,
+			OrgName:       p.OrgName,
+			Type:          p.TypeCode,
+			Version:       p.Version,
+			SignatureType: p.SignatureType,
+			Warnings:      warnings,
+		})
+	}
+
+	note := ""
+	if total > limit {
+		note = fmt.Sprintf("Showing top %d of %d matching plugins. Use a more specific query to narrow results.", limit, total)
+	}
+
+	return &SearchPluginsResult{Results: results, Total: total, Note: note}, nil
+}
+
+var SearchPlugins = mcpgrafana.MustTool(
+	"search_plugin_information",
+	"Search the Grafana plugin catalog by keyword to discover available plugins before installing or getting plugin details on a specific instance. "+
+		"Returns results sorted by trust: official Grafana Labs plugins first, then commercial partner plugins, then community plugins. "+
+		"Use this tool when a user describes a plugin by purpose or partial name (e.g. 'azure monitoring', 'loki', 'database') — "+
+		"it returns the exact pluginId to pass to get_plugin or install_plugin. "+
+		"Results include warnings for enterprise-only or Angular-based plugins.",
+	searchPlugins,
+	mcp.WithTitleAnnotation("Search plugins"),
+	mcp.WithIdempotentHintAnnotation(true),
+	mcp.WithReadOnlyHintAnnotation(true),
+)
+
 func AddPluginTools(s *server.MCPServer, enableWrite bool) {
+	SearchPlugins.Register(s)
 	GetPlugin.Register(s)
-	if (enableWrite) {
+	if enableWrite {
 		InstallPlugin.Register(s)
 	}
 }

@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -11,6 +12,20 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func catalogTestServer(t *testing.T, items []catalogPlugin) *httptest.Server {
+	t.Helper()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(catalogListResponse{Items: items})
+	}))
+	t.Cleanup(func() {
+		grafanaComCatalogURL = "https://grafana.com/api/plugins"
+		ts.Close()
+	})
+	grafanaComCatalogURL = ts.URL
+	return ts
+}
 
 func pluginTestContext(t *testing.T, serverURL string) context.Context {
 	t.Helper()
@@ -216,4 +231,134 @@ func TestGetPlugin_AppType(t *testing.T) {
 	assert.True(t, result.Installed)
 	assert.Equal(t, "app", result.Type)
 	assert.Equal(t, "grafana-oncall-app", result.PluginID)
+}
+
+func TestSearchPlugins_PrioritizesGrafanaOwned(t *testing.T) {
+	catalogTestServer(t, []catalogPlugin{
+		{Slug: "azure-monitor-app", Name: "Azure Cloud Native Monitoring", SignatureType: "commercial", OrgSlug: "azure", OrgName: "Azure", TypeCode: "app", Status: "active", Popularity: 0.9},
+		{Slug: "grafana-azure-monitor-datasource", Name: "Azure Monitor", SignatureType: "grafana", OrgSlug: "grafana", OrgName: "Grafana Labs", TypeCode: "datasource", Status: "active", Popularity: 0.5},
+		{Slug: "community-azure-thing", Name: "Azure Community", SignatureType: "community", OrgSlug: "somecorp", OrgName: "Some Corp", TypeCode: "datasource", Status: "active", Popularity: 0.8},
+	})
+
+	result, err := searchPlugins(context.Background(), SearchPluginsParams{Query: "azure"})
+
+	require.NoError(t, err)
+	require.Len(t, result.Results, 3)
+	assert.Equal(t, "grafana-azure-monitor-datasource", result.Results[0].PluginID)
+	assert.Equal(t, "official", result.Results[0].Priority)
+	assert.Equal(t, "azure-monitor-app", result.Results[1].PluginID)
+	assert.Equal(t, "commercial", result.Results[1].Priority)
+	assert.Equal(t, "community-azure-thing", result.Results[2].PluginID)
+	assert.Equal(t, "community", result.Results[2].Priority)
+}
+
+func TestSearchPlugins_SortsByPopularityWithinTier(t *testing.T) {
+	catalogTestServer(t, []catalogPlugin{
+		{Slug: "grafana-loki-1", Name: "Loki A", SignatureType: "grafana", OrgSlug: "grafana", Status: "active", Popularity: 0.3},
+		{Slug: "grafana-loki-2", Name: "Loki B", SignatureType: "grafana", OrgSlug: "grafana", Status: "active", Popularity: 0.9},
+		{Slug: "grafana-loki-3", Name: "Loki C", SignatureType: "grafana", OrgSlug: "grafana", Status: "active", Popularity: 0.6},
+	})
+
+	result, err := searchPlugins(context.Background(), SearchPluginsParams{Query: "loki"})
+
+	require.NoError(t, err)
+	require.Len(t, result.Results, 3)
+	assert.Equal(t, "grafana-loki-2", result.Results[0].PluginID)
+	assert.Equal(t, "grafana-loki-3", result.Results[1].PluginID)
+	assert.Equal(t, "grafana-loki-1", result.Results[2].PluginID)
+}
+
+func TestSearchPlugins_WarnsEnterprisePlugins(t *testing.T) {
+	catalogTestServer(t, []catalogPlugin{
+		{Slug: "grafana-enterprise-traces", Name: "Grafana Enterprise Traces", SignatureType: "grafana", OrgSlug: "grafana", Status: "enterprise", Popularity: 0.5},
+	})
+
+	result, err := searchPlugins(context.Background(), SearchPluginsParams{Query: "enterprise traces"})
+
+	require.NoError(t, err)
+	require.Len(t, result.Results, 1)
+	assert.Contains(t, result.Results[0].Warnings, "Requires a Grafana Enterprise license")
+}
+
+func TestSearchPlugins_WarnsAngularPlugins(t *testing.T) {
+	catalogTestServer(t, []catalogPlugin{
+		{Slug: "old-panel", Name: "Old Angular Panel", SignatureType: "community", OrgSlug: "someone", Status: "active", Popularity: 0.1, AngularDetected: true},
+	})
+
+	result, err := searchPlugins(context.Background(), SearchPluginsParams{Query: "angular"})
+
+	require.NoError(t, err)
+	require.Len(t, result.Results, 1)
+	assert.Contains(t, result.Results[0].Warnings, "Uses Angular (being phased out in Grafana; prefer alternatives)")
+}
+
+func TestSearchPlugins_WarnsPrivatePlugins(t *testing.T) {
+	catalogTestServer(t, []catalogPlugin{
+		{Slug: "private-plugin", Name: "Private Datasource", SignatureType: "private", OrgSlug: "internalco", Status: "active", Popularity: 0.05},
+	})
+
+	result, err := searchPlugins(context.Background(), SearchPluginsParams{Query: "private datasource"})
+
+	require.NoError(t, err)
+	require.Len(t, result.Results, 1)
+	assert.Equal(t, "private", result.Results[0].Priority)
+	assert.Contains(t, result.Results[0].Warnings, "Private plugin: may not be publicly available for installation")
+}
+
+func TestSearchPlugins_DefaultLimit(t *testing.T) {
+	items := make([]catalogPlugin, 12)
+	for i := range items {
+		items[i] = catalogPlugin{
+			Slug:          fmt.Sprintf("db-plugin-%d", i),
+			Name:          fmt.Sprintf("DB Plugin %d", i),
+			SignatureType: "community",
+			Status:        "active",
+		}
+	}
+	catalogTestServer(t, items)
+
+	result, err := searchPlugins(context.Background(), SearchPluginsParams{Query: "db plugin"})
+
+	require.NoError(t, err)
+	assert.Len(t, result.Results, 10)
+}
+
+func TestSearchPlugins_MatchesKeywords(t *testing.T) {
+	catalogTestServer(t, []catalogPlugin{
+		{Slug: "grafana-prometheus", Name: "Prometheus", Keywords: []string{"metrics", "tsdb"}, SignatureType: "grafana", Status: "active"},
+	})
+
+	result, err := searchPlugins(context.Background(), SearchPluginsParams{Query: "tsdb"})
+
+	require.NoError(t, err)
+	require.Len(t, result.Results, 1)
+	assert.Equal(t, "grafana-prometheus", result.Results[0].PluginID)
+}
+
+func TestSearchPlugins_EmptyResults(t *testing.T) {
+	catalogTestServer(t, []catalogPlugin{
+		{Slug: "grafana-loki", Name: "Loki", SignatureType: "grafana", Status: "active"},
+	})
+
+	result, err := searchPlugins(context.Background(), SearchPluginsParams{Query: "nonexistentxyz"})
+
+	require.NoError(t, err)
+	assert.Empty(t, result.Results)
+	assert.Equal(t, 0, result.Total)
+}
+
+func TestSearchPlugins_CatalogError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	}))
+	t.Cleanup(func() {
+		grafanaComCatalogURL = "https://grafana.com/api/plugins"
+		ts.Close()
+	})
+	grafanaComCatalogURL = ts.URL
+
+	_, err := searchPlugins(context.Background(), SearchPluginsParams{Query: "azure"})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "fetch plugin catalog")
 }
