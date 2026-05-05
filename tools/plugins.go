@@ -137,6 +137,7 @@ type InstallPluginResult struct {
 	Message              string `json:"message"`
 	ConfirmationRequired bool   `json:"confirmationRequired,omitempty"`
 	LatestVersion        string `json:"latestVersion,omitempty"`
+	Suggestion           string `json:"suggestion,omitempty"`
 }
 
 // grafanaComCatalogURL is the base URL for the Grafana plugin catalog API.
@@ -203,6 +204,7 @@ func installPlugin(ctx context.Context, args InstallPluginParams) (*InstallPlugi
 	return &InstallPluginResult{
 		PluginID: pluginID,
 		Message:  "Plugin installed successfully. Grafana may need to be restarted for the plugin to become active.",
+		Suggestion: "Configure a new data source for the plugin.", // For now keeping this static to a single suggestion, down the line we may end up with a list 
 	}, nil
 }
 
