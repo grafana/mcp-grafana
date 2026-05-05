@@ -53,11 +53,11 @@ func TestNewServer_SessionIdleTimeoutZeroDisablesReaping(t *testing.T) {
 
 func TestBuildInstructions_ReflectsEnabledCategories(t *testing.T) {
 	tests := []struct {
-		name             string
-		enabledTools     string
-		disableFlags     map[string]bool
-		wantContains     []string
-		wantNotContains  []string
+		name            string
+		enabledTools    string
+		disableFlags    map[string]bool
+		wantContains    []string
+		wantNotContains []string
 	}{
 		{
 			name:         "all defaults include Loki and Prometheus",
