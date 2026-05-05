@@ -245,11 +245,11 @@ func TestSearchPlugins_PrioritizesGrafanaOwned(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, result.Results, 3)
 	assert.Equal(t, "grafana-azure-monitor-datasource", result.Results[0].PluginID)
-	assert.Equal(t, "official", result.Results[0].Priority)
+	assert.Equal(t, "grafana", result.Results[0].SignatureType)
 	assert.Equal(t, "azure-monitor-app", result.Results[1].PluginID)
-	assert.Equal(t, "commercial", result.Results[1].Priority)
+	assert.Equal(t, "commercial", result.Results[1].SignatureType)
 	assert.Equal(t, "community-azure-thing", result.Results[2].PluginID)
-	assert.Equal(t, "community", result.Results[2].Priority)
+	assert.Equal(t, "community", result.Results[2].SignatureType)
 }
 
 func TestSearchPlugins_SortsByPopularityWithinTier(t *testing.T) {
@@ -301,11 +301,11 @@ func TestSearchPlugins_WarnsPrivatePlugins(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Len(t, result.Results, 1)
-	assert.Equal(t, "private", result.Results[0].Priority)
+	assert.Equal(t, "private", result.Results[0].SignatureType)
 	assert.Contains(t, result.Results[0].Warnings, "Private plugin: may not be publicly available for installation")
 }
 
-func TestSearchPlugins_DefaultLimit(t *testing.T) {
+func TestSearchPlugins_TruncatesToTenAndReportsTotal(t *testing.T) {
 	items := make([]catalogPlugin, 12)
 	for i := range items {
 		items[i] = catalogPlugin{
@@ -321,6 +321,32 @@ func TestSearchPlugins_DefaultLimit(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Len(t, result.Results, 10)
+	assert.Equal(t, 12, result.Total)
+	assert.NotEmpty(t, result.Note)
+}
+
+func TestSearchPlugins_MatchesSlug(t *testing.T) {
+	catalogTestServer(t, []catalogPlugin{
+		{Slug: "grafana-piechart-panel", Name: "Some Panel", SignatureType: "grafana", Status: "active"},
+	})
+
+	result, err := searchPlugins(context.Background(), SearchPluginsParams{Query: "piechart"})
+
+	require.NoError(t, err)
+	require.Len(t, result.Results, 1)
+	assert.Equal(t, "grafana-piechart-panel", result.Results[0].PluginID)
+}
+
+func TestSearchPlugins_MatchesDescription(t *testing.T) {
+	catalogTestServer(t, []catalogPlugin{
+		{Slug: "some-datasource", Name: "Some Datasource", Description: "connects to InfluxDB time series", SignatureType: "community", Status: "active"},
+	})
+
+	result, err := searchPlugins(context.Background(), SearchPluginsParams{Query: "influxdb"})
+
+	require.NoError(t, err)
+	require.Len(t, result.Results, 1)
+	assert.Equal(t, "some-datasource", result.Results[0].PluginID)
 }
 
 func TestSearchPlugins_MatchesKeywords(t *testing.T) {

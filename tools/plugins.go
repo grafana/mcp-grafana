@@ -245,7 +245,6 @@ type SearchPluginResult struct {
 	Type          string   `json:"type"`
 	Version       string   `json:"version"`
 	SignatureType string   `json:"signatureType"`
-	Priority      string   `json:"priority"`
 	Warnings      []string `json:"warnings,omitempty"`
 }
 
