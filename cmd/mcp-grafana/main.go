@@ -230,6 +230,7 @@ Note that some of these capabilities may be disabled. Do not try to use features
 	sm.SetMCPServer(s)
 
 	dt.addTools(s)
+	mcpgrafana.RegisterAppResources(s)
 	return s, stm, sm
 }
 
@@ -305,7 +306,25 @@ func runMetricsServer(addr string, o *observability.Observability) {
 	}
 }
 
-func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt disabledTools, gc mcpgrafana.GrafanaConfig, tls tlsConfig, obs observability.Config, sessionIdleTimeoutMinutes int) error {
+func applyCORS(h http.Handler, enabled bool) http.Handler {
+	if !enabled {
+		return h
+	}
+	slog.Warn("CORS headers enabled for all origins (dev mode)")
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "*")
+		w.Header().Set("Access-Control-Expose-Headers", "*")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		h.ServeHTTP(w, r)
+	})
+}
+
+func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt disabledTools, gc mcpgrafana.GrafanaConfig, tls tlsConfig, obs observability.Config, sessionIdleTimeoutMinutes int, devCORS bool) error {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})))
 
 	// Set up observability (metrics and tracing)
@@ -399,7 +418,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 				go runMetricsServer(obs.MetricsAddress, o)
 			}
 		}
-		httpSrv.Handler = mux
+		httpSrv.Handler = applyCORS(mux, devCORS)
 		slog.Info("Starting Grafana MCP server using SSE transport",
 			"version", mcpgrafana.Version(), "address", addr, "basePath", basePath, "metrics", obs.MetricsEnabled)
 		return runHTTPServer(ctx, srv, addr, "SSE")
@@ -428,7 +447,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 				go runMetricsServer(obs.MetricsAddress, o)
 			}
 		}
-		httpSrv.Handler = mux
+		httpSrv.Handler = applyCORS(mux, devCORS)
 		slog.Info("Starting Grafana MCP server using StreamableHTTP transport",
 			"version", mcpgrafana.Version(), "address", addr, "endpointPath", endpointPath, "metrics", obs.MetricsEnabled)
 		return runHTTPServer(ctx, srv, addr, "StreamableHTTP")
@@ -461,6 +480,7 @@ func main() {
 	var obs observability.Config
 	flag.BoolVar(&obs.MetricsEnabled, "metrics", false, "Enable Prometheus metrics endpoint")
 	flag.StringVar(&obs.MetricsAddress, "metrics-address", "", "Separate address for metrics server (e.g., :9090). If empty, metrics are served on the main server at /metrics")
+	devCORS := flag.Bool("dev-cors", false, "Enable permissive CORS headers for local development (do not use in production)")
 	flag.Parse()
 
 	if *showVersion {
@@ -494,7 +514,7 @@ func main() {
 		obs.NetworkTransport = mcpconv.NetworkTransportTCP
 	}
 
-	if err := run(transport, *addr, *basePath, *endpointPath, parseLevel(*logLevel), dt, grafanaConfig, tls, obs, *sessionIdleTimeoutMinutes); err != nil {
+	if err := run(transport, *addr, *basePath, *endpointPath, parseLevel(*logLevel), dt, grafanaConfig, tls, obs, *sessionIdleTimeoutMinutes, *devCORS); err != nil {
 		panic(err)
 	}
 }

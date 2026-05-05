@@ -12,8 +12,17 @@ help: ## Print this help message.
 build-image: ## Build the Docker image.
 	docker build -t mcp-grafana:latest .
 
+.PHONY: build-ui
+build-ui: ## Build the MCP App UI bundles (requires Node.js 18+).
+	@for dir in ui/*/; do \
+		if [ -f "$$dir/package.json" ]; then \
+			echo "Building UI app in $$dir..."; \
+			(cd "$$dir" && npm install --silent && npm run build) || exit 1; \
+		fi; \
+	done
+
 .PHONY: build
-build: ## Build the binary.
+build: build-ui ## Build the binary.
 	go build -o dist/mcp-grafana ./cmd/mcp-grafana
 
 .PHONY: lint lint-jsonschema lint-jsonschema-fix lint-openapi
@@ -67,11 +76,11 @@ run: ## Run the MCP server in stdio mode.
 
 .PHONY: run-sse
 run-sse: ## Run the MCP server in SSE mode.
-	$(GRAFANA_ENV) $(OTEL_ENV) go run ./cmd/mcp-grafana --transport sse --log-level debug --debug --metrics --enabled-tools $(ENABLED_TOOLS)
+	$(GRAFANA_ENV) $(OTEL_ENV) go run ./cmd/mcp-grafana --transport sse --log-level debug --debug --metrics --dev-cors --enabled-tools $(ENABLED_TOOLS)
 
 PHONY: run-streamable-http
 run-streamable-http: ## Run the MCP server in StreamableHTTP mode.
-	$(GRAFANA_ENV) $(OTEL_ENV) go run ./cmd/mcp-grafana --transport streamable-http --log-level debug --debug --metrics --enabled-tools $(ENABLED_TOOLS)
+	$(GRAFANA_ENV) $(OTEL_ENV) go run ./cmd/mcp-grafana --transport streamable-http --log-level debug --address 0.0.0.0:8082 --debug --metrics --dev-cors --enabled-tools $(ENABLED_TOOLS)
 
 define check_mcp_tokens
 	@command -v mcp-tokens >/dev/null 2>&1 || { echo "Error: mcp-tokens is not installed. Install it from https://github.com/sd2k/mcp-tokens"; exit 1; }

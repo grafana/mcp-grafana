@@ -2,7 +2,7 @@
 __pycache__/
 *.py[oc]
 build/
-dist/
+/dist/
 wheels/
 *.egg-info
 .DS_Store
@@ -13,3 +13,6 @@ wheels/
 # Virtual environments
 .venv
 .envrc
+
+# UI apps
+node_modules/
