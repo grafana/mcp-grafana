@@ -1,9 +1,8 @@
-// Package observability — log fan-out handler.
-//
-// fanoutHandler dispatches each slog record to every child handler so that
-// the cmd/mcp-grafana binary can log to stderr AND export via OTLP at the
-// same time, without either output losing fidelity.
 package observability
+
+// This file implements the log fan-out slog.Handler and the OTLP LoggerProvider
+// setup used by cmd/mcp-grafana to log to stderr and the OTel collector
+// simultaneously. The package doc lives in observability.go.
 
 import (
 	"context"
@@ -51,6 +50,10 @@ func (f *fanoutHandler) Handle(ctx context.Context, r slog.Record) error {
 }
 
 func (f *fanoutHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	// Per the slog.Handler contract, WithAttrs with an empty slice returns the receiver.
+	if len(attrs) == 0 {
+		return f
+	}
 	next := make([]slog.Handler, len(f.children))
 	for i, c := range f.children {
 		next[i] = c.WithAttrs(attrs)

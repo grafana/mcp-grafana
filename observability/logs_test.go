@@ -10,11 +10,14 @@ import (
 	"log/slog"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/contrib/bridges/otelslog"
+	sdklog "go.opentelemetry.io/otel/sdk/log"
 )
 
 var errBoom = errors.New("boom")
@@ -96,6 +99,16 @@ func TestFanoutHandler_WithGroupEmptyNameReturnsReceiver(t *testing.T) {
 	assert.Equal(t, reflect.ValueOf(h).Pointer(), reflect.ValueOf(same).Pointer())
 }
 
+func TestFanoutHandler_WithAttrsEmptyReturnsReceiver(t *testing.T) {
+	var buf bytes.Buffer
+	h := NewFanoutHandler(slog.NewTextHandler(&buf, nil))
+	// WithAttrs on an empty slice must return the receiver (contract of slog.Handler).
+	sameNil := h.WithAttrs(nil)
+	sameEmpty := h.WithAttrs([]slog.Attr{})
+	assert.Equal(t, reflect.ValueOf(h).Pointer(), reflect.ValueOf(sameNil).Pointer())
+	assert.Equal(t, reflect.ValueOf(h).Pointer(), reflect.ValueOf(sameEmpty).Pointer())
+}
+
 func TestFanoutHandler_EnabledFalseWhenAllChildrenDisabled(t *testing.T) {
 	var bufA, bufB bytes.Buffer
 	h := NewFanoutHandler(
@@ -139,6 +152,60 @@ func TestSetupLogging_EnabledWhenLogsEndpointSet(t *testing.T) {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	assert.NoError(t, lp.Shutdown(shutdownCtx))
+}
+
+// memExporter is an in-process sdklog.Exporter that captures records so tests
+// can assert end-to-end that slog output actually reaches the OTLP bridge.
+type memExporter struct {
+	mu      sync.Mutex
+	records []sdklog.Record
+}
+
+func (e *memExporter) Export(_ context.Context, records []sdklog.Record) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for _, r := range records {
+		e.records = append(e.records, r.Clone())
+	}
+	return nil
+}
+
+func (e *memExporter) ForceFlush(context.Context) error { return nil }
+func (e *memExporter) Shutdown(context.Context) error   { return nil }
+
+func (e *memExporter) bodies() []string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	out := make([]string, len(e.records))
+	for i, r := range e.records {
+		out[i] = r.Body().AsString()
+	}
+	return out
+}
+
+// TestFanoutHandler_RoundTripToOTLPExporter verifies the full path main.go uses:
+// slog → NewFanoutHandler(stderr, otelslog.NewHandler(lp)) → LoggerProvider →
+// exporter. This is the regression guard the PR review asked for: if any wiring
+// step is removed, slog.Info stops producing OTel log records and this fails.
+func TestFanoutHandler_RoundTripToOTLPExporter(t *testing.T) {
+	exp := &memExporter{}
+	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(exp)))
+	t.Cleanup(func() { _ = lp.Shutdown(context.Background()) })
+
+	var stderr bytes.Buffer
+	stderrHandler := slog.NewTextHandler(&stderr, &slog.HandlerOptions{Level: slog.LevelInfo})
+	otlpHandler := otelslog.NewHandler("mcp-grafana", otelslog.WithLoggerProvider(lp))
+
+	logger := slog.New(NewFanoutHandler(stderrHandler, otlpHandler))
+	logger.Info("round-trip", "k", "v")
+
+	require.NoError(t, lp.ForceFlush(context.Background()))
+
+	bodies := exp.bodies()
+	require.Len(t, bodies, 1, "OTLP exporter did not receive the record")
+	assert.Equal(t, "round-trip", bodies[0])
+	assert.Contains(t, stderr.String(), "round-trip")
+	assert.Contains(t, stderr.String(), "k=v")
 }
 
 func TestFanoutHandler_HandleSkipsDisabledChildren(t *testing.T) {

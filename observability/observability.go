@@ -1,13 +1,14 @@
-// Package observability provides OpenTelemetry-based metrics and tracing
-// for the MCP Grafana server.
+// Package observability provides OpenTelemetry-based metrics, tracing, and
+// log export for the MCP Grafana server.
 //
 // Metrics follow the OTel MCP semantic conventions using the mcpconv package.
-// Tracing is configured via standard OTEL_* environment variables.
+// Tracing and log export are configured via standard OTEL_* environment variables.
 package observability
 
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"sync"
@@ -122,13 +123,8 @@ func Setup(cfg Config) (*Observability, error) {
 	}
 
 	// Set up OTLP log exporter when OTEL_EXPORTER_OTLP_ENDPOINT or
-	// OTEL_EXPORTER_OTLP_LOGS_ENDPOINT is set. See observability/logs.go for
-	// the gating logic. Note the signal-specific OTEL_EXPORTER_OTLP_LOGS_ENDPOINT
-	// is honored as a standalone trigger even when the generic var is unset;
-	// the trace block above only gates on the generic var today.
-	// The binary (cmd/mcp-grafana/main.go) fans out slog records to both stderr
-	// and this provider so logs flow to the OTel collector alongside the traces
-	// this package already exports.
+	// OTEL_EXPORTER_OTLP_LOGS_ENDPOINT is set; see setupLogging for the gating
+	// logic.
 	lp, logErr := setupLogging(context.Background(), res)
 	if logErr != nil {
 		return nil, logErr
@@ -178,22 +174,23 @@ func Setup(cfg Config) (*Observability, error) {
 	return obs, nil
 }
 
-// Shutdown gracefully shuts down the observability providers.
+// Shutdown gracefully shuts down the observability providers. Errors from all
+// providers are collected so one provider's failure doesn't mask another's.
 func (o *Observability) Shutdown(ctx context.Context) error {
 	var errs []error
 	if o.tracerProvider != nil {
 		if err := o.tracerProvider.Shutdown(ctx); err != nil {
-			errs = append(errs, err)
+			errs = append(errs, fmt.Errorf("tracer provider shutdown: %w", err))
 		}
 	}
 	if o.loggerProvider != nil {
 		if err := o.loggerProvider.Shutdown(ctx); err != nil {
-			errs = append(errs, err)
+			errs = append(errs, fmt.Errorf("logger provider shutdown: %w", err))
 		}
 	}
 	if o.meterProvider != nil {
 		if err := o.meterProvider.Shutdown(ctx); err != nil {
-			errs = append(errs, err)
+			errs = append(errs, fmt.Errorf("meter provider shutdown: %w", err))
 		}
 	}
 	return errors.Join(errs...)

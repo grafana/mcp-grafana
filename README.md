@@ -998,12 +998,9 @@ Stderr logging is unchanged when OTLP logging is enabled; you can continue to re
 OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317 \
 OTEL_EXPORTER_OTLP_INSECURE=true \
 ./mcp-grafana -t streamable-http
-
-# Send logs and traces to Grafana Cloud with authentication
-OTEL_EXPORTER_OTLP_ENDPOINT=https://otlp-gateway-prod-us-central-0.grafana.net/otlp \
-OTEL_EXPORTER_OTLP_HEADERS="Authorization=Basic ..." \
-./mcp-grafana -t streamable-http
 ```
+
+The server uses the OTLP/gRPC exporter, so `OTEL_EXPORTER_OTLP_ENDPOINT` must point at a gRPC-compatible endpoint (usually port `4317`). To export to a managed backend like Grafana Cloud, point `OTEL_EXPORTER_OTLP_ENDPOINT` at a local OTel collector configured to forward OTLP traffic upstream.
 
 Logs are also exported under the stdio transport, which makes it easy to centralize logs from local `mcp-grafana` instances invoked by IDE clients.
 

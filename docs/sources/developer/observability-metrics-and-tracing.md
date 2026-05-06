@@ -21,7 +21,7 @@ Metrics require the **SSE** or **streamable-http** transport. Tracing and log ex
 
 ## What you'll achieve
 
-You can scrape MCP operation metrics or export traces to Tempo or Grafana Cloud while the server runs over HTTP transports.
+You can scrape MCP operation metrics (HTTP transports only) and export traces and logs to Tempo, Loki, or Grafana Cloud under any transport, including stdio.
 
 ## Before you begin
 
@@ -85,6 +85,8 @@ OTEL_EXPORTER_OTLP_INSECURE=true \
 ```
 
 Stderr logging continues unchanged; operators can pipe stderr to `/dev/null` if they only want logs going to the OTel collector.
+
+Logs are also exported under the stdio transport, which makes it easy to centralize logs from local `mcp-grafana` instances invoked by IDE clients.
 
 ## Run with Docker (metrics, tracing, and logs)
 

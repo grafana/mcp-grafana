@@ -386,8 +386,10 @@ func runMetricsServer(addr string, o *observability.Observability) {
 }
 
 func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt disabledTools, gc mcpgrafana.GrafanaConfig, tls tlsConfig, obs observability.Config, sessionIdleTimeoutMinutes int) error {
-	// Install stderr logging first so any errors from observability.Setup
-	// are captured even if OTLP logging can't be initialized.
+	// Install the stderr handler as the default logger before Setup so any
+	// slog call during bring-up goes somewhere sensible. If OTLP logging is
+	// enabled below, we swap the default to a fan-out that keeps stderr in
+	// the mix.
 	stderrHandler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})
 	slog.SetDefault(slog.New(stderrHandler))
 
@@ -409,14 +411,15 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 	// attaches trace_id / span_id from context automatically, so log records
 	// correlate with the spans that mcp-grafana already emits.
 	if lp := o.LoggerProvider(); lp != nil {
-		otlpHandler := otelslog.NewHandler("mcp-grafana", otelslog.WithLoggerProvider(lp))
-		slog.SetDefault(slog.New(observability.NewFanoutHandler(stderrHandler, otlpHandler)))
-		// Prefer the signal-specific override, falling back to the generic var.
+		// Log the announcement through the pre-swap (stderr-only) handler so
+		// an operator sees "enabled" even if the very first OTLP batch fails.
 		endpoint := os.Getenv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT")
 		if endpoint == "" {
 			endpoint = os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
 		}
 		slog.Info("OTLP log export enabled", "endpoint", endpoint)
+		otlpHandler := otelslog.NewHandler("mcp-grafana", otelslog.WithLoggerProvider(lp))
+		slog.SetDefault(slog.New(observability.NewFanoutHandler(stderrHandler, otlpHandler)))
 	}
 
 	// Create a client cache for HTTP-based transports to avoid per-request
