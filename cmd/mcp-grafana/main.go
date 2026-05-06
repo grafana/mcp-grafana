@@ -386,14 +386,9 @@ func runMetricsServer(addr string, o *observability.Observability) {
 }
 
 func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt disabledTools, gc mcpgrafana.GrafanaConfig, tls tlsConfig, obs observability.Config, sessionIdleTimeoutMinutes int) error {
-	// Install the stderr handler as the default logger before Setup so any
-	// slog call during bring-up goes somewhere sensible. If OTLP logging is
-	// enabled below, we swap the default to a fan-out that keeps stderr in
-	// the mix.
 	stderrHandler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})
 	slog.SetDefault(slog.New(stderrHandler))
 
-	// Set up observability (metrics, tracing, and logs)
 	o, err := observability.Setup(obs)
 	if err != nil {
 		return fmt.Errorf("failed to setup observability: %w", err)
@@ -406,18 +401,12 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		}
 	}()
 
-	// If the OTLP log exporter is configured, fan-out slog records to both
-	// stderr (unchanged behavior) AND OTLP via the otelslog bridge. The bridge
-	// attaches trace_id / span_id from context automatically, so log records
-	// correlate with the spans that mcp-grafana already emits.
+	// The otelslog bridge attaches trace_id / span_id from context, so log
+	// records correlate with the spans mcp-grafana already emits.
 	if lp := o.LoggerProvider(); lp != nil {
-		// Log the announcement through the pre-swap (stderr-only) handler so
-		// an operator sees "enabled" even if the very first OTLP batch fails.
-		endpoint := os.Getenv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT")
-		if endpoint == "" {
-			endpoint = os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
-		}
-		slog.Info("OTLP log export enabled", "endpoint", endpoint)
+		// Announce through the pre-swap (stderr-only) handler so an operator
+		// sees "enabled" even if the first OTLP batch fails.
+		slog.Info("OTLP log export configured", "endpoint", observability.OTLPLogsEndpoint())
 		otlpHandler := otelslog.NewHandler("mcp-grafana", otelslog.WithLoggerProvider(lp))
 		slog.SetDefault(slog.New(observability.NewFanoutHandler(stderrHandler, otlpHandler)))
 	}

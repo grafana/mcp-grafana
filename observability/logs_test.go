@@ -183,10 +183,9 @@ func (e *memExporter) bodies() []string {
 	return out
 }
 
-// TestFanoutHandler_RoundTripToOTLPExporter verifies the full path main.go uses:
+// TestFanoutHandler_RoundTripToOTLPExporter guards the end-to-end invariant:
 // slog → NewFanoutHandler(stderr, otelslog.NewHandler(lp)) → LoggerProvider →
-// exporter. This is the regression guard the PR review asked for: if any wiring
-// step is removed, slog.Info stops producing OTel log records and this fails.
+// exporter. If any wiring step breaks, slog records stop reaching OTel.
 func TestFanoutHandler_RoundTripToOTLPExporter(t *testing.T) {
 	exp := &memExporter{}
 	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(exp)))
@@ -219,4 +218,51 @@ func TestFanoutHandler_HandleSkipsDisabledChildren(t *testing.T) {
 	slog.New(h).Info("hello", "k", "v")
 	assert.Contains(t, bufDebug.String(), "hello")
 	assert.Empty(t, bufError.String())
+}
+
+// panickingHandler always panics from Handle. Used to verify that
+// fanoutHandler.Handle recovers per-child panics, converts them to errors,
+// and still delivers the record to healthy siblings.
+type panickingHandler struct{}
+
+func (panickingHandler) Enabled(context.Context, slog.Level) bool  { return true }
+func (panickingHandler) Handle(context.Context, slog.Record) error { panic("boom from child") }
+func (h panickingHandler) WithAttrs([]slog.Attr) slog.Handler      { return h }
+func (h panickingHandler) WithGroup(string) slog.Handler           { return h }
+
+// TestFanoutHandler_RecoversChildPanic verifies two invariants of the
+// panic-isolation contract in fanoutHandler.Handle:
+//  1. a panic in one child is converted to an error (never re-raised), and
+//  2. other children still receive the record.
+//
+// A regression that removed the defer-recover would crash this test with a
+// panic instead of a clean Error.
+func TestFanoutHandler_RecoversChildPanic(t *testing.T) {
+	var buf bytes.Buffer
+	healthy := slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})
+	h := NewFanoutHandler(panickingHandler{}, healthy)
+
+	// Call Handle directly so we can observe the returned error (slog.Logger
+	// discards it).
+	err := h.Handle(context.Background(), slog.NewRecord(time.Now(), slog.LevelInfo, "msg", 0))
+	require.Error(t, err, "panic should be converted to an error")
+	assert.Contains(t, err.Error(), "panicked")
+	assert.Contains(t, buf.String(), "msg", "healthy child must still receive record despite sibling panic")
+}
+
+// TestFanoutHandler_SlogInfoSurvivesChildPanic is the user-facing guarantee:
+// application code calling slog.Info must never panic because of a buggy
+// handler. slog discards the handler's returned error, so this test also
+// verifies that the healthy child still writes the record.
+func TestFanoutHandler_SlogInfoSurvivesChildPanic(t *testing.T) {
+	var buf bytes.Buffer
+	healthy := slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})
+	h := NewFanoutHandler(panickingHandler{}, healthy)
+	logger := slog.New(h)
+
+	assert.NotPanics(t, func() {
+		logger.Info("critical business event", "key", "value")
+	})
+	assert.Contains(t, buf.String(), "critical business event")
+	assert.Contains(t, buf.String(), "key=value")
 }

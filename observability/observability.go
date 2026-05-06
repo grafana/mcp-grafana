@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"sync"
@@ -31,6 +32,8 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.40.0"
 	"go.opentelemetry.io/otel/semconv/v1.40.0/mcpconv"
 )
+
+var otelErrHandlerOnce sync.Once
 
 // Config holds configuration for observability features.
 type Config struct {
@@ -88,6 +91,17 @@ type Observability struct {
 // Tracing configuration is handled via standard OTEL_* environment variables
 // (e.g., OTEL_EXPORTER_OTLP_ENDPOINT, OTEL_TRACES_SAMPLER).
 func Setup(cfg Config) (*Observability, error) {
+	// Ensure OTel SDK internal errors (async export failures, queue drops, etc.)
+	// surface through slog instead of the stdlib log package where operators
+	// would never see them. Done once per process — sync.Once guards against
+	// tests that construct multiple Observability instances clobbering each
+	// other's expected handlers, and against replacing a user-installed handler.
+	otelErrHandlerOnce.Do(func() {
+		otel.SetErrorHandler(otel.ErrorHandlerFunc(func(err error) {
+			slog.Error("otel sdk error", "error", err)
+		}))
+	})
+
 	obs := &Observability{
 		networkTransport: cfg.NetworkTransport,
 	}
@@ -127,6 +141,13 @@ func Setup(cfg Config) (*Observability, error) {
 	// logic.
 	lp, logErr := setupLogging(context.Background(), res)
 	if logErr != nil {
+		// Clean up the tracer provider created above so its background batcher
+		// goroutine and gRPC connection don't leak for the process lifetime.
+		if obs.tracerProvider != nil {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			_ = obs.tracerProvider.Shutdown(shutdownCtx)
+			cancel()
+		}
 		return nil, logErr
 	}
 	obs.loggerProvider = lp

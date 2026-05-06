@@ -947,6 +947,8 @@ curl http://localhost:9090/healthz
 
 The MCP server supports Prometheus metrics, OpenTelemetry distributed tracing, and OpenTelemetry log export, following the [OTel MCP semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/mcp/). Tracing and log export are configured via standard `OTEL_*` environment variables and work with any transport.
 
+**Note:** mcp-grafana currently only supports the OTLP/gRPC transport for both traces and logs. `OTEL_EXPORTER_OTLP_PROTOCOL` (and its `_TRACES_PROTOCOL` / `_LOGS_PROTOCOL` variants) are not honored — gRPC is used regardless.
+
 #### Metrics
 
 When using the SSE or streamable HTTP transports, enable Prometheus metrics with the `--metrics` flag:
@@ -1000,7 +1002,11 @@ OTEL_EXPORTER_OTLP_INSECURE=true \
 ./mcp-grafana -t streamable-http
 ```
 
-The server uses the OTLP/gRPC exporter, so `OTEL_EXPORTER_OTLP_ENDPOINT` must point at a gRPC-compatible endpoint (usually port `4317`). To export to a managed backend like Grafana Cloud, point `OTEL_EXPORTER_OTLP_ENDPOINT` at a local OTel collector configured to forward OTLP traffic upstream.
+The transport is OTLP/gRPC (default port `4317`). Logs can be sent directly to any managed backend that accepts OTLP/gRPC — for example, Grafana Cloud — by pointing `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` (or the generic `OTEL_EXPORTER_OTLP_ENDPOINT`) at the remote gRPC endpoint and supplying auth via `OTEL_EXPORTER_OTLP_LOGS_HEADERS` (or `OTEL_EXPORTER_OTLP_HEADERS`), mirroring the tracing example above. A local OTel collector is **optional** — useful for fan-out, batching, or multi-backend routing, but not required.
+
+The signal-specific variants `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`, `OTEL_EXPORTER_OTLP_LOGS_HEADERS`, `OTEL_EXPORTER_OTLP_LOGS_INSECURE`, `OTEL_EXPORTER_OTLP_LOGS_CERTIFICATE`, `OTEL_EXPORTER_OTLP_LOGS_TIMEOUT`, and `OTEL_EXPORTER_OTLP_LOGS_COMPRESSION` are honored and override their generic `OTEL_EXPORTER_OTLP_*` counterparts — see the [OTel exporter spec](https://opentelemetry.io/docs/specs/otel/protocol/exporter/) for the full list and precedence rules.
+
+If the configured collector is unreachable, log records are buffered in memory (default queue: 2048) and the oldest records are dropped once the queue fills. The process continues without blocking the service. Configure a local OTel collector if you need lossless buffering during outages.
 
 Logs are also exported under the stdio transport, which makes it easy to centralize logs from local `mcp-grafana` instances invoked by IDE clients.
 

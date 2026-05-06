@@ -16,3 +16,6 @@ wheels/
 
 # Git worktrees
 .worktrees/
+
+# Superpowers agent artifacts (implementation plans, etc.)
+docs/superpowers/
