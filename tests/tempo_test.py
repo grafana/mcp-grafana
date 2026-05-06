@@ -129,15 +129,17 @@ class TestTempoProxiedToolsBasic:
     async def test_tempo_tool_call_missing_datasourceUid(self, mcp_client):
         """Test that calling a tempo tool without datasourceUid fails appropriately."""
 
-        with pytest.raises(Exception) as exc_info:
-            await mcp_client.call_tool(
-                "tempo_docs-traceql",
-                arguments={"name": "basic"},  # Missing datasourceUid
-            )
+        result = await mcp_client.call_tool(
+            "tempo_docs-traceql",
+            arguments={"name": "basic"},  # Missing datasourceUid
+        )
 
-        error_msg = str(exc_info.value).lower()
+        assert result.isError, "Should return an error for missing datasourceUid"
+        error_msg = "".join(
+            c.text for c in result.content if hasattr(c, "text")
+        ).lower()
         assert "datasourceuid" in error_msg and "required" in error_msg, (
-            f"Should require datasourceUid parameter: {exc_info.value}"
+            f"Should require datasourceUid parameter: {error_msg}"
         )
 
     @pytest.mark.anyio
