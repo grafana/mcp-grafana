@@ -138,7 +138,7 @@ class TestTempoProxiedToolsBasic:
         error_msg = "".join(
             c.text for c in result.content if hasattr(c, "text")
         ).lower()
-        assert "datasourceuid" in error_msg and "required" in error_msg, (
+        assert "datasourceuid" in error_msg and "validation failed" in error_msg, (
             f"Should require datasourceUid parameter: {error_msg}"
         )
 
