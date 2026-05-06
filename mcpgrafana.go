@@ -44,6 +44,7 @@ const (
 
 	grafanaExtraHeadersEnvVar   = "GRAFANA_EXTRA_HEADERS"
 	grafanaForwardHeadersEnvVar = "GRAFANA_FORWARD_HEADERS"
+	grafanaNamespaceEnvVar      = "GRAFANA_NAMESPACE"
 
 	grafanaURLHeader                 = "X-Grafana-URL"
 	grafanaServiceAccountTokenHeader = "X-Grafana-Service-Account-Token"
@@ -91,6 +92,10 @@ func orgIdFromEnv(logger *slog.Logger) int64 {
 		return 0
 	}
 	return orgID
+}
+
+func namespaceFromEnv() string {
+	return os.Getenv(grafanaNamespaceEnvVar)
 }
 
 func extraHeadersFromEnv(logger *slog.Logger) map[string]string {
@@ -234,6 +239,16 @@ type GrafanaConfig struct {
 	// Works with service account tokens, API keys, and basic authentication.
 	OrgID int64
 
+	// Namespace overrides the Kubernetes-style API namespace used when making
+	// requests to Grafana's /apis/... endpoints via KubernetesClient.
+	//
+	// In on-prem Grafana, the namespace is derived from OrgID: org 1 maps to
+	// "default", org N maps to "org-N". In Grafana Cloud, each stack has its
+	// own namespace of the form "stacks-{stackId}" (e.g. "stacks-5"), which
+	// does NOT match the OrgID. Set this field (or GRAFANA_NAMESPACE) to the
+	// correct value for your Cloud stack to avoid 404s from the k8s-style API.
+	Namespace string
+
 	// AccessToken is the Grafana Cloud access policy token used for on-behalf-of auth in Grafana Cloud.
 	AccessToken string
 	// IDToken is an ID token identifying the user for the current request.
@@ -295,6 +310,33 @@ func (c GrafanaConfig) LoggerOrDefault() *slog.Logger {
 // Returns slog.Default() if no config or logger is set.
 func LoggerFromContext(ctx context.Context) *slog.Logger {
 	return GrafanaConfigFromContext(ctx).LoggerOrDefault()
+}
+
+// KubernetesNamespace returns the Kubernetes-style API namespace to use when
+// making requests to Grafana's /apis/... endpoints.
+//
+// Resolution order:
+//  1. Explicit Namespace field (e.g. set from GRAFANA_NAMESPACE env var)
+//  2. Derived from OrgID: org 1 (or unset) → "default", org N → "org-N"
+//
+// Grafana Cloud stacks use a "stacks-{stackId}" namespace that is unrelated to
+// OrgID. Cloud users must set the Namespace field (or GRAFANA_NAMESPACE env
+// var) explicitly to avoid routing k8s API calls to the wrong namespace.
+func (c GrafanaConfig) KubernetesNamespace() string {
+	if c.Namespace != "" {
+		return c.Namespace
+	}
+	if c.OrgID <= 1 {
+		return "default"
+	}
+	return fmt.Sprintf("org-%d", c.OrgID)
+}
+
+// KubernetesNamespaceFromContext returns the Kubernetes namespace for the
+// GrafanaConfig stored in ctx. It is a convenience wrapper around
+// GrafanaConfigFromContext and KubernetesNamespace.
+func KubernetesNamespaceFromContext(ctx context.Context) string {
+	return GrafanaConfigFromContext(ctx).KubernetesNamespace()
 }
 
 const (
@@ -689,13 +731,15 @@ var ExtractGrafanaInfoFromEnv server.StdioContextFunc = func(ctx context.Context
 	}
 
 	extraHeaders := extraHeadersFromEnv(logger)
+	namespace := namespaceFromEnv()
 
-	logger.Info("Using Grafana configuration", "url", parsedURL.Redacted(), "api_key_set", apiKey != "", "basic_auth_set", basicAuth != nil, "org_id", orgID, "extra_headers_count", len(extraHeaders))
+	logger.Info("Using Grafana configuration", "url", parsedURL.Redacted(), "api_key_set", apiKey != "", "basic_auth_set", basicAuth != nil, "org_id", orgID, "extra_headers_count", len(extraHeaders), "namespace", namespace)
 	config.URL = u
 	config.APIKey = apiKey
 	config.BasicAuth = basicAuth
 	config.OrgID = orgID
 	config.ExtraHeaders = extraHeaders
+	config.Namespace = namespace
 	return WithGrafanaConfig(ctx, config)
 }
 

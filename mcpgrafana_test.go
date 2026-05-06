@@ -1903,3 +1903,127 @@ func TestBuildTransportContextOverrides(t *testing.T) {
 		assert.Equal(t, "val", capturedReq.Header.Get("X-Custom"))
 	})
 }
+
+// TestKubernetesNamespace verifies that KubernetesNamespace() returns the
+// correct namespace for different GrafanaConfig states.
+//
+// The bug: Grafana Cloud stacks use "stacks-{stackId}" as their k8s namespace
+// (e.g. "stacks-5" for stack ID 5). The OrgID inside such a stack is typically
+// 1, which maps to "default" via the on-prem derivation rule. Making k8s API
+// calls with namespace "default" against a Cloud stack therefore hits the wrong
+// namespace, causing 404s or empty results.
+func TestKubernetesNamespace(t *testing.T) {
+	t.Run("no OrgID, no explicit Namespace → default", func(t *testing.T) {
+		cfg := GrafanaConfig{}
+		assert.Equal(t, "default", cfg.KubernetesNamespace())
+	})
+
+	t.Run("OrgID=1, no explicit Namespace → default", func(t *testing.T) {
+		cfg := GrafanaConfig{OrgID: 1}
+		assert.Equal(t, "default", cfg.KubernetesNamespace())
+	})
+
+	t.Run("OrgID=5, no explicit Namespace → org-5 (on-prem multi-org)", func(t *testing.T) {
+		cfg := GrafanaConfig{OrgID: 5}
+		assert.Equal(t, "org-5", cfg.KubernetesNamespace())
+	})
+
+	// Reproduces the bug: stack ID 5 requires namespace "stacks-5" but
+	// OrgID=1 (the typical value inside a Cloud stack) would resolve to
+	// "default", causing k8s API calls to hit the wrong namespace.
+	t.Run("Cloud stack with ID 5: explicit Namespace overrides OrgID derivation", func(t *testing.T) {
+		// Without explicit Namespace, OrgID=1 returns "default" — WRONG for Cloud.
+		buggy := GrafanaConfig{OrgID: 1}
+		assert.Equal(t, "default", buggy.KubernetesNamespace(),
+			"without GRAFANA_NAMESPACE, Cloud stack with OrgID=1 incorrectly resolves to 'default'")
+
+		// With explicit Namespace set (via GRAFANA_NAMESPACE=stacks-5), it's correct.
+		fixed := GrafanaConfig{OrgID: 1, Namespace: "stacks-5"}
+		assert.Equal(t, "stacks-5", fixed.KubernetesNamespace())
+	})
+
+	t.Run("explicit Namespace always wins regardless of OrgID", func(t *testing.T) {
+		cfg := GrafanaConfig{OrgID: 99, Namespace: "stacks-5"}
+		assert.Equal(t, "stacks-5", cfg.KubernetesNamespace())
+	})
+}
+
+// TestKubernetesNamespaceFromContext verifies the context-level helper.
+func TestKubernetesNamespaceFromContext(t *testing.T) {
+	t.Run("no config in context → default", func(t *testing.T) {
+		assert.Equal(t, "default", KubernetesNamespaceFromContext(context.Background()))
+	})
+
+	t.Run("explicit Namespace in context config", func(t *testing.T) {
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{Namespace: "stacks-5"})
+		assert.Equal(t, "stacks-5", KubernetesNamespaceFromContext(ctx))
+	})
+}
+
+// TestKubernetesNamespaceFromEnv verifies that GRAFANA_NAMESPACE is read by
+// ExtractGrafanaInfoFromEnv and propagated into the config.
+func TestKubernetesNamespaceFromEnv(t *testing.T) {
+	t.Run("GRAFANA_NAMESPACE env var is picked up", func(t *testing.T) {
+		t.Setenv("GRAFANA_NAMESPACE", "stacks-5")
+		ctx := ExtractGrafanaInfoFromEnv(context.Background())
+		cfg := GrafanaConfigFromContext(ctx)
+		assert.Equal(t, "stacks-5", cfg.Namespace)
+		assert.Equal(t, "stacks-5", cfg.KubernetesNamespace())
+	})
+
+	t.Run("unset GRAFANA_NAMESPACE falls back to OrgID derivation", func(t *testing.T) {
+		// Ensure env var is absent.
+		t.Setenv("GRAFANA_NAMESPACE", "")
+		ctx := ExtractGrafanaInfoFromEnv(context.Background())
+		cfg := GrafanaConfigFromContext(ctx)
+		assert.Equal(t, "", cfg.Namespace)
+		assert.Equal(t, "default", cfg.KubernetesNamespace())
+	})
+}
+
+// TestKubernetesClientWrongNamespaceBug demonstrates the failure mode:
+// a KubernetesClient using namespace "default" returns 404 when the Grafana
+// instance (e.g. a Cloud stack with ID 5) serves resources under "stacks-5".
+func TestKubernetesClientWrongNamespaceBug(t *testing.T) {
+	dashObj := map[string]interface{}{
+		"kind":       "Dashboard",
+		"apiVersion": "dashboard.grafana.app/v2beta1",
+		"metadata": map[string]interface{}{
+			"name":      "my-dashboard",
+			"namespace": "stacks-5",
+		},
+	}
+
+	// Server simulates a Grafana Cloud stack: resources live under stacks-5.
+	ts := newTestServer(t, map[string]interface{}{
+		"/apis/dashboard.grafana.app/v2beta1/namespaces/stacks-5/dashboards/my-dashboard": dashObj,
+	})
+	defer ts.Close()
+
+	kc := &KubernetesClient{
+		BaseURL:    ts.URL,
+		HTTPClient: ts.Client(),
+	}
+
+	desc := ResourceDescriptor{
+		Group:    "dashboard.grafana.app",
+		Version:  "v2beta1",
+		Resource: "dashboards",
+	}
+
+	// BUG: GrafanaConfig with OrgID=1 (typical in Cloud) resolves namespace to
+	// "default", but the resource is in "stacks-5".
+	buggyNs := GrafanaConfig{OrgID: 1}.KubernetesNamespace() // "default"
+	_, err := kc.Get(context.Background(), desc, buggyNs, "my-dashboard")
+	require.Error(t, err, "using 'default' namespace should fail for a Cloud stack-5 instance")
+	apiErr, ok := err.(*KubernetesAPIError)
+	require.True(t, ok)
+	assert.Equal(t, 404, apiErr.StatusCode, "wrong namespace → 404")
+
+	// FIX: set Namespace explicitly to "stacks-5".
+	fixedNs := GrafanaConfig{OrgID: 1, Namespace: "stacks-5"}.KubernetesNamespace()
+	result, err := kc.Get(context.Background(), desc, fixedNs, "my-dashboard")
+	require.NoError(t, err, "using correct namespace should succeed")
+	meta, _ := result["metadata"].(map[string]interface{})
+	assert.Equal(t, "stacks-5", meta["namespace"])
+}
