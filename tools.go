@@ -392,6 +392,15 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 		return zero, nil, fmt.Errorf("failed to marshal input schema: %w", err)
 	}
 
+	// Relax strict type constraints so that the JSON schema validator (used by
+	// WithInputSchemaValidation) accepts the same inputs that
+	// unmarshalWithIntConversion can coerce: strings for integer fields and
+	// bare strings for []string fields.
+	schemaBytes, err = relaxSchemaTypes(schemaBytes)
+	if err != nil {
+		return zero, nil, fmt.Errorf("failed to relax schema types: %w", err)
+	}
+
 	// Validate that no bare boolean schemas slipped through. The Mapper on the
 	// reflector handles interface{} types, but this check catches anything it
 	// misses and prevents future regressions. MustTool will panic at init time
@@ -578,4 +587,65 @@ func checkSchemaNode(toolName string, v any, path string) error {
 	}
 
 	return nil
+}
+
+// relaxSchemaTypes post-processes a marshaled JSON Schema so that
+// the schema validator (WithInputSchemaValidation) accepts the same
+// type-mismatched inputs that unmarshalWithIntConversion can coerce:
+//   - integer fields also accept strings  (e.g. "42" for an int param)
+//   - []string fields also accept a bare string  (e.g. "v" for []string)
+//
+// The modification is applied at tool-creation time and is therefore
+// free at request time.
+func relaxSchemaTypes(data []byte) ([]byte, error) {
+	var schema map[string]any
+	if err := json.Unmarshal(data, &schema); err != nil {
+		return data, err
+	}
+	if relaxProperties(schema) {
+		return json.Marshal(schema)
+	}
+	return data, nil
+}
+
+// relaxProperties walks the "properties" map of a JSON Schema object and
+// widens type constraints for integer and string-array fields. It recurses
+// into nested object schemas. Returns true if any modification was made.
+func relaxProperties(schema map[string]any) bool {
+	props, ok := schema["properties"].(map[string]any)
+	if !ok {
+		return false
+	}
+	changed := false
+	for _, propVal := range props {
+		prop, ok := propVal.(map[string]any)
+		if !ok {
+			continue
+		}
+		typ, _ := prop["type"].(string)
+		switch typ {
+		case "integer":
+			prop["type"] = []any{"integer", "string"}
+			changed = true
+		case "array":
+			if isStringItemsArray(prop) {
+				prop["type"] = []any{"array", "string"}
+				changed = true
+			}
+		case "object":
+			if relaxProperties(prop) {
+				changed = true
+			}
+		}
+	}
+	return changed
+}
+
+func isStringItemsArray(prop map[string]any) bool {
+	items, ok := prop["items"].(map[string]any)
+	if !ok {
+		return false
+	}
+	itemType, _ := items["type"].(string)
+	return itemType == "string"
 }
