@@ -125,6 +125,20 @@ func TestGetPlugin_NoURLConfigured(t *testing.T) {
 	assert.Contains(t, err.Error(), "grafana URL is not configured")
 }
 
+func TestGetPlugin_EmptyPluginID(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("unexpected request with empty plugin ID")
+	}))
+	t.Cleanup(ts.Close)
+
+	ctx := pluginTestContext(t, ts.URL)
+	result, err := getPlugin(ctx, GetPluginParams{PluginID: "   "})
+
+	require.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "plugin ID must not be empty")
+}
+
 func TestGetPlugin_TrimsWhitespaceFromPluginID(t *testing.T) {
 	var capturedPath string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

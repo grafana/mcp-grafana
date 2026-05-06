@@ -91,6 +91,10 @@ func getPlugin(ctx context.Context, args GetPluginParams) (*GetPluginResult, err
 	}
 
 	pluginID := strings.TrimSpace(args.PluginID)
+	if pluginID == "" {
+		return nil, fmt.Errorf("plugin ID is required")
+	}
+
 	body, status, err := grafanaPluginRequest(ctx, cfg, http.MethodGet, "/api/plugins/"+url.PathEscape(pluginID)+"/settings", nil)
 	if err != nil {
 		return nil, fmt.Errorf("get plugin settings: %w", err)
@@ -185,6 +189,9 @@ func installPlugin(ctx context.Context, args InstallPluginParams) (*InstallPlugi
 	}
 
 	pluginID := strings.TrimSpace(args.PluginID)
+	if pluginID == "" {
+		return nil, fmt.Errorf("plugin ID is required")
+	}
 
 	if args.Version == "" {
 		latestVersion, err := fetchLatestPluginVersion(ctx, pluginID)
