@@ -230,6 +230,9 @@ var InstallPlugin = mcpgrafana.MustTool(
 	"Install a Grafana plugin by its plugin ID. If the version is not already confirmed with the user, omit it — the tool will look up the latest version and return it for confirmation before installing.",
 	installPlugin,
 	mcp.WithTitleAnnotation("Install plugin"),
+	mcp.WithReadOnlyHintAnnotation(false),
+	mcp.WithDestructiveHintAnnotation(true),
+	mcp.WithIdempotentHintAnnotation(false),
 )
 
 // catalogPlugin mirrors the relevant fields from the Grafana plugin catalog list API.
