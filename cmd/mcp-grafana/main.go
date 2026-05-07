@@ -20,6 +20,7 @@ import (
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/grafana/mcp-grafana/observability"
 	"github.com/grafana/mcp-grafana/tools"
+	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"go.opentelemetry.io/otel/semconv/v1.40.0/mcpconv"
 )
 
@@ -385,9 +386,9 @@ func runMetricsServer(addr string, o *observability.Observability) {
 }
 
 func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt disabledTools, gc mcpgrafana.GrafanaConfig, tls tlsConfig, obs observability.Config, sessionIdleTimeoutMinutes int) error {
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})))
+	stderrHandler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})
+	slog.SetDefault(slog.New(stderrHandler))
 
-	// Set up observability (metrics and tracing)
 	o, err := observability.Setup(obs)
 	if err != nil {
 		return fmt.Errorf("failed to setup observability: %w", err)
@@ -399,6 +400,17 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 			slog.Error("failed to shutdown observability", "error", err)
 		}
 	}()
+
+	// The otelslog bridge attaches trace_id / span_id from context, so log
+	// records correlate with the spans mcp-grafana already emits.
+	if lp := o.LoggerProvider(); lp != nil {
+		otlpHandler := otelslog.NewHandler("mcp-grafana", otelslog.WithLoggerProvider(lp))
+		slog.SetDefault(slog.New(observability.NewFanoutHandler(stderrHandler, otlpHandler)))
+		// Announce through the fanout so both stderr and OTLP subscribers see
+		// the startup signal. If the first OTLP batch fails, the stderr branch
+		// of the fanout still lands the record.
+		slog.Info("OTLP log export configured", "endpoint", observability.OTLPLogsEndpoint())
+	}
 
 	// Create a client cache for HTTP-based transports to avoid per-request
 	// transport allocation (see https://github.com/grafana/mcp-grafana/issues/682).
