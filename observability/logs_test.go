@@ -7,7 +7,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"log/slog"
+	"os"
 	"reflect"
 	"strings"
 	"sync"
@@ -266,3 +268,71 @@ func TestFanoutHandler_SlogInfoSurvivesChildPanic(t *testing.T) {
 	assert.Contains(t, buf.String(), "critical business event")
 	assert.Contains(t, buf.String(), "key=value")
 }
+
+// TestOTLPLogsEndpoint_LogsEndpointTakesPrecedence verifies that when both the
+// signal-specific and generic OTEL endpoint env vars are set, OTLPLogsEndpoint
+// returns the signal-specific value. A branch-swap regression would pass every
+// other test in this suite, so this precedence case is covered directly.
+func TestOTLPLogsEndpoint_LogsEndpointTakesPrecedence(t *testing.T) {
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://generic:4317")
+	t.Setenv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", "http://logs-specific:4317")
+	assert.Equal(t, "http://logs-specific:4317", OTLPLogsEndpoint())
+}
+
+// TestOTLPLogsEndpoint_FallsBackToGeneric verifies the fallback path: when the
+// signal-specific env var is empty, the generic endpoint is used.
+func TestOTLPLogsEndpoint_FallsBackToGeneric(t *testing.T) {
+	t.Setenv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", "")
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://generic:4317")
+	assert.Equal(t, "http://generic:4317", OTLPLogsEndpoint())
+}
+
+// TestOTLPLogsEndpoint_EmptyWhenNeitherSet verifies the "disabled" signal: when
+// neither env var is set, OTLPLogsEndpoint returns "" so setupLogging can
+// short-circuit without creating an exporter.
+func TestOTLPLogsEndpoint_EmptyWhenNeitherSet(t *testing.T) {
+	t.Setenv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", "")
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")
+	assert.Empty(t, OTLPLogsEndpoint())
+}
+
+// TestFanoutHandler_PanicWritesStackToStderr verifies that handleChild writes
+// the panic message AND a stack trace directly to os.Stderr before returning
+// the error. slog.Logger discards errors returned from Handle, so without this
+// stderr write panic evidence would be lost entirely in production.
+//
+// We capture os.Stderr by redirecting it through a pipe for the duration of
+// the test — the production code writes to os.Stderr directly (not an injected
+// writer), so swapping the package-level var is the cleanest way to observe it.
+func TestFanoutHandler_PanicWritesStackToStderr(t *testing.T) {
+	// Capture os.Stderr by redirecting to a pipe.
+	origStderr := os.Stderr
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	os.Stderr = w
+	t.Cleanup(func() { os.Stderr = origStderr })
+
+	h := NewFanoutHandler(panickingHandler{})
+	// Drive a log through — slog will discard the returned error but handleChild
+	// must still have written the panic+stack to stderr before returning.
+	slog.New(h).Info("trigger")
+
+	// Close the writer so the read completes, then read everything captured.
+	require.NoError(t, w.Close())
+	var captured bytes.Buffer
+	_, _ = io.Copy(&captured, r)
+
+	got := captured.String()
+	assert.Contains(t, got, "fanout child panicked")
+	// Stack trace should include a function name; we just assert it's non-trivial
+	// (a bare "panicked: X" line is ~30 chars; a stack is hundreds).
+	assert.Greater(t, len(got), 100, "expected stack trace, got: %q", got)
+}
+
+// NOTE: Coverage gap — observability.go's otel.SetErrorHandler callback is not
+// directly unit-tested. otel.SetErrorHandler is a process-global side effect
+// guarded by sync.Once, so once any test (or production bootstrap) sets it, it
+// cannot be reliably reset for another test. The production behavior (write
+// directly to os.Stderr rather than via slog.Default()) is defensive against a
+// feedback loop and is simple enough that the failure mode — recursion — would
+// surface as a stack blow-up in manual / integration testing.

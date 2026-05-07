@@ -9,7 +9,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"os"
 	"sync"
@@ -90,6 +89,10 @@ type Observability struct {
 //
 // Tracing configuration is handled via standard OTEL_* environment variables
 // (e.g., OTEL_EXPORTER_OTLP_ENDPOINT, OTEL_TRACES_SAMPLER).
+//
+// Log export is enabled when OTEL_EXPORTER_OTLP_ENDPOINT or
+// OTEL_EXPORTER_OTLP_LOGS_ENDPOINT is set; use LoggerProvider() to retrieve
+// the provider for wiring into an slog.Handler (e.g., via the otelslog bridge).
 func Setup(cfg Config) (*Observability, error) {
 	// Ensure OTel SDK internal errors (async export failures, queue drops, etc.)
 	// surface through slog instead of the stdlib log package where operators
@@ -98,7 +101,12 @@ func Setup(cfg Config) (*Observability, error) {
 	// other's expected handlers, and against replacing a user-installed handler.
 	otelErrHandlerOnce.Do(func() {
 		otel.SetErrorHandler(otel.ErrorHandlerFunc(func(err error) {
-			slog.Error("otel sdk error", "error", err)
+			// Write directly to stderr rather than slog.Default(). If the
+			// default handler routes to OTLP (via the fanout), emitting an
+			// SDK error through slog would re-enter the SDK (otelslog bridge
+			// → processor → otel.Handle) and either churn on every failed
+			// batch or, with a synchronous processor, recurse unbounded.
+			fmt.Fprintf(os.Stderr, "otel sdk error: %v\n", err)
 		}))
 	})
 

@@ -404,11 +404,12 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 	// The otelslog bridge attaches trace_id / span_id from context, so log
 	// records correlate with the spans mcp-grafana already emits.
 	if lp := o.LoggerProvider(); lp != nil {
-		// Announce through the pre-swap (stderr-only) handler so an operator
-		// sees "enabled" even if the first OTLP batch fails.
-		slog.Info("OTLP log export configured", "endpoint", observability.OTLPLogsEndpoint())
 		otlpHandler := otelslog.NewHandler("mcp-grafana", otelslog.WithLoggerProvider(lp))
 		slog.SetDefault(slog.New(observability.NewFanoutHandler(stderrHandler, otlpHandler)))
+		// Announce through the fanout so both stderr and OTLP subscribers see
+		// the startup signal. If the first OTLP batch fails, the stderr branch
+		// of the fanout still lands the record.
+		slog.Info("OTLP log export configured", "endpoint", observability.OTLPLogsEndpoint())
 	}
 
 	// Create a client cache for HTTP-based transports to avoid per-request

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"runtime/debug"
 
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
@@ -64,6 +65,10 @@ func (f *fanoutHandler) Handle(ctx context.Context, r slog.Record) error {
 func (f *fanoutHandler) handleChild(ctx context.Context, c slog.Handler, r slog.Record) (err error) {
 	defer func() {
 		if p := recover(); p != nil {
+			// Write to stderr directly (not slog) so a panicking child cannot
+			// re-enter itself via slog.Default(), and so the trace survives
+			// slog discarding the returned error.
+			fmt.Fprintf(os.Stderr, "fanout child panicked: %v\n%s", p, debug.Stack())
 			err = fmt.Errorf("fanout child panicked: %v", p)
 		}
 	}()
