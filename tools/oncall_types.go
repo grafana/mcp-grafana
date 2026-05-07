@@ -58,13 +58,13 @@ type OnCallShift struct {
 // onCallScheduleInternal is the internal API response for a schedule.
 // Used to parse the IRM proxy response before mapping to ScheduleSummary.
 type onCallScheduleInternal struct {
-	ID         string   `json:"id"`
-	Name       string   `json:"name"`
-	Type       any      `json:"type"`
-	Team       any      `json:"team"`
-	TimeZone   string   `json:"time_zone"`
-	OnCallNow  any      `json:"on_call_now"`
-	Shifts     []string `json:"shifts"`
+	ID        string   `json:"id"`
+	Name      string   `json:"name"`
+	Type      any      `json:"type"`
+	Team      any      `json:"team"`
+	TimeZone  string   `json:"time_zone"`
+	OnCallNow any      `json:"on_call_now"`
+	Shifts    []string `json:"shifts"`
 }
 
 // onCallAlertGroupInternal is the internal API response for an alert group.
