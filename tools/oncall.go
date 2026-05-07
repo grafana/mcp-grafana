@@ -225,7 +225,7 @@ func amixrGetShift(ctx context.Context, shiftID string) (*OnCallShift, error) {
 		Type:          shift.Type,
 		PriorityLevel: shift.Level,
 		ShiftStart:    shift.Start,
-		RotationStart: shift.Start,
+		RotationStart: shift.Start, // amixr only has one "start" field
 		Frequency:     shift.Frequency,
 		Interval:      derefIntOr(shift.Interval, 0),
 		ByDay:         derefStrSlice(shift.ByDay),
