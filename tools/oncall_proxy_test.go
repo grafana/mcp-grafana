@@ -197,7 +197,7 @@ func TestProxyListAlertGroups(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Contains(t, r.URL.Path, "/api/plugins/grafana-irm-app/resources/alertgroups/")
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(paginatedResult[onCallAlertGroupInternal]{
+		_ = json.NewEncoder(w).Encode(paginatedResult[onCallAlertGroupInternal]{
 			Results: []onCallAlertGroupInternal{
 				{
 					PK:          "AG1",
@@ -233,7 +233,7 @@ func TestProxyGetAlertGroup(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Contains(t, r.URL.Path, "/api/plugins/grafana-irm-app/resources/alertgroups/AG123/")
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(onCallAlertGroupInternal{
+		_ = json.NewEncoder(w).Encode(onCallAlertGroupInternal{
 			PK:          "AG123",
 			AlertsCount: 1,
 			Status:      float64(1),
@@ -261,7 +261,7 @@ func TestProxyGetAlertGroup(t *testing.T) {
 func TestProxyListSchedules(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(paginatedResult[onCallScheduleInternal]{
+		_ = json.NewEncoder(w).Encode(paginatedResult[onCallScheduleInternal]{
 			Results: []onCallScheduleInternal{
 				{
 					ID:       "SCHED1",
@@ -297,13 +297,13 @@ func TestProxyPagination(t *testing.T) {
 		page++
 		w.Header().Set("Content-Type", "application/json")
 		if page == 1 {
-			nextURL := fmt.Sprintf("https://oncall-prod.grafana.net/oncall/api/internal/v1/users/?page=2")
-			json.NewEncoder(w).Encode(paginatedResult[onCallUserInternal]{
+			nextURL := "https://oncall-prod.grafana.net/oncall/api/internal/v1/users/?page=2"
+			_ = json.NewEncoder(w).Encode(paginatedResult[onCallUserInternal]{
 				Results: []onCallUserInternal{{PK: "U1", Username: "user1"}},
 				Next:    &nextURL,
 			})
 		} else {
-			json.NewEncoder(w).Encode(paginatedResult[onCallUserInternal]{
+			_ = json.NewEncoder(w).Encode(paginatedResult[onCallUserInternal]{
 				Results: []onCallUserInternal{{PK: "U2", Username: "user2"}},
 			})
 		}

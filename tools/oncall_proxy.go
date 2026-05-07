@@ -33,7 +33,7 @@ type oncallProxyClient struct {
 func newOncallProxyClient(ctx context.Context) (*oncallProxyClient, error) {
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
 	if cfg.URL == "" {
-		return nil, fmt.Errorf("Grafana URL is not configured")
+		return nil, fmt.Errorf("grafana URL is not configured")
 	}
 
 	transport, err := mcpgrafana.BuildTransport(&cfg, nil)
@@ -107,7 +107,7 @@ func fetchPaginated[T any](ctx context.Context, c *oncallProxyClient, path strin
 			return nil, err
 		}
 		body, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			if len(body) > 0 {
 				return nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(body))
@@ -153,7 +153,7 @@ func fetchOne[T any](ctx context.Context, c *oncallProxyClient, basePath, id str
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, handleProxyErrorResponse(resp)
