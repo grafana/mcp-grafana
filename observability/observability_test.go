@@ -1009,18 +1009,20 @@ type logValuerError struct {
 	logValue string
 }
 
-func (e *logValuerError) Error() string          { return e.errText }
-func (e *logValuerError) LogValue() slog.Value   { return slog.StringValue(e.logValue) }
-func (e *logValuerError) ErrorType() string      { return "LogValuerError" }
+func (e *logValuerError) Error() string        { return e.errText }
+func (e *logValuerError) LogValue() slog.Value { return slog.StringValue(e.logValue) }
+func (e *logValuerError) ErrorType() string    { return "LogValuerError" }
 
 // Test 15. Two orthogonal assertions, each as its own subtest:
 //
 // (a) API surface: uses slog.Any("error", err), not slog.String("error", err.Error()).
-//     Verified via a LogValuer sentinel — slog.Any triggers LogValue() resolution.
+//
+//	Verified via a LogValuer sentinel — slog.Any triggers LogValue() resolution.
 //
 // (b) Bounded attribute presence: error.type is emitted with errorTypeName(err),
-//     using both a typed error and a plain error to cover both the typed path
-//     and the "_OTHER" fallback.
+//
+//	using both a typed error and a plain error to cover both the typed path
+//	and the "_OTHER" fallback.
 func TestMaybeLogSlowRequest_ErrorAttrs(t *testing.T) {
 	t.Run("API surface: slog.Any resolves LogValuer", func(t *testing.T) {
 		obs, h := newSlowLogObs(t, Config{
