@@ -15,9 +15,7 @@ import (
 )
 
 // getOnCallURLFromSettings retrieves the OnCall API URL from the Grafana settings endpoint.
-// It makes a GET request to <grafana-url>/api/plugins/grafana-irm-app/settings and extracts
-// the OnCall URL from the jsonData.onCallApiUrl field in the response.
-// Returns the OnCall URL if found, or an error if the URL cannot be retrieved.
+// Only used for the public API fallback path (when no OBO tokens are available).
 func getOnCallURLFromSettings(ctx context.Context, cfg mcpgrafana.GrafanaConfig) (string, error) {
 	settingsURL := fmt.Sprintf("%s/api/plugins/grafana-irm-app/settings", cfg.URL)
 
@@ -37,7 +35,7 @@ func getOnCallURLFromSettings(ctx context.Context, cfg mcpgrafana.GrafanaConfig)
 		return "", fmt.Errorf("fetching settings: %w", err)
 	}
 	defer func() {
-		_ = resp.Body.Close() //nolint:errcheck
+		_ = resp.Body.Close()
 	}()
 
 	if resp.StatusCode != http.StatusOK {
@@ -61,11 +59,11 @@ func getOnCallURLFromSettings(ctx context.Context, cfg mcpgrafana.GrafanaConfig)
 	return settings.JSONData.OnCallAPIURL, nil
 }
 
+// oncallClientFromContext creates an amixr client for the public OnCall API.
+// Used as fallback when OBO auth is not available (OSS / self-hosted with API key).
 func oncallClientFromContext(ctx context.Context) (*aapi.Client, error) {
-	// Get the standard Grafana URL and API key
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
 
-	// Try to get OnCall URL from settings endpoint
 	grafanaOnCallURL, err := getOnCallURLFromSettings(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("getting OnCall URL from settings: %w", err)
@@ -73,7 +71,6 @@ func oncallClientFromContext(ctx context.Context) (*aapi.Client, error) {
 
 	grafanaOnCallURL = strings.TrimRight(grafanaOnCallURL, "/")
 
-	// TODO: Allow access to OnCall using an access token instead of an API key.
 	client, err := aapi.NewWithGrafanaURL(grafanaOnCallURL, cfg.APIKey, cfg.URL)
 	if err != nil {
 		return nil, fmt.Errorf("creating OnCall client: %w", err)
@@ -109,45 +106,7 @@ func oncallClientFromContext(ctx context.Context) (*aapi.Client, error) {
 	return client, nil
 }
 
-// getUserServiceFromContext creates a new UserService using the OnCall client from the context
-func getUserServiceFromContext(ctx context.Context) (*aapi.UserService, error) {
-	client, err := oncallClientFromContext(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("getting OnCall client: %w", err)
-	}
-
-	return aapi.NewUserService(client), nil
-}
-
-// getScheduleServiceFromContext creates a new ScheduleService using the OnCall client from the context
-func getScheduleServiceFromContext(ctx context.Context) (*aapi.ScheduleService, error) {
-	client, err := oncallClientFromContext(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("getting OnCall client: %w", err)
-	}
-
-	return aapi.NewScheduleService(client), nil
-}
-
-// getTeamServiceFromContext creates a new TeamService using the OnCall client from the context
-func getTeamServiceFromContext(ctx context.Context) (*aapi.TeamService, error) {
-	client, err := oncallClientFromContext(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("getting OnCall client: %w", err)
-	}
-
-	return aapi.NewTeamService(client), nil
-}
-
-// getOnCallShiftServiceFromContext creates a new OnCallShiftService using the OnCall client from the context
-func getOnCallShiftServiceFromContext(ctx context.Context) (*aapi.OnCallShiftService, error) {
-	client, err := oncallClientFromContext(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("getting OnCall client: %w", err)
-	}
-
-	return aapi.NewOnCallShiftService(client), nil
-}
+// --- Schedules ---
 
 type ListOnCallSchedulesParams struct {
 	TeamID     string `json:"teamId,omitempty" jsonschema:"description=The ID of the team to list schedules for"`
@@ -155,7 +114,7 @@ type ListOnCallSchedulesParams struct {
 	Page       int    `json:"page,omitempty" jsonschema:"description=The page number to return (1-based)"`
 }
 
-// ScheduleSummary represents a simplified view of an OnCall schedule
+// ScheduleSummary represents a simplified view of an OnCall schedule.
 type ScheduleSummary struct {
 	ID       string   `json:"id" jsonschema:"description=The unique identifier of the schedule"`
 	Name     string   `json:"name" jsonschema:"description=The name of the schedule"`
@@ -165,10 +124,19 @@ type ScheduleSummary struct {
 }
 
 func listOnCallSchedules(ctx context.Context, args ListOnCallSchedulesParams) ([]*ScheduleSummary, error) {
-	scheduleService, err := getScheduleServiceFromContext(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("getting OnCall schedule service: %w", err)
+	if useOncallProxy(ctx) {
+		return proxyListSchedules(ctx, args)
 	}
+	return amixrListSchedules(ctx, args)
+}
+
+func amixrListSchedules(ctx context.Context, args ListOnCallSchedulesParams) ([]*ScheduleSummary, error) {
+	client, err := oncallClientFromContext(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("getting OnCall client: %w", err)
+	}
+
+	scheduleService := aapi.NewScheduleService(client)
 
 	if args.ScheduleID != "" {
 		schedule, _, err := scheduleService.GetSchedule(args.ScheduleID, &aapi.GetScheduleOptions{})
@@ -200,7 +168,6 @@ func listOnCallSchedules(ctx context.Context, args ListOnCallSchedulesParams) ([
 		return nil, fmt.Errorf("listing OnCall schedules: %w", err)
 	}
 
-	// Convert schedules to summaries
 	summaries := make([]*ScheduleSummary, 0, len(response.Schedules))
 	for _, schedule := range response.Schedules {
 		summary := &ScheduleSummary{
@@ -227,22 +194,45 @@ var ListOnCallSchedules = mcpgrafana.MustTool(
 	mcp.WithReadOnlyHintAnnotation(true),
 )
 
+// --- Shifts ---
+
 type GetOnCallShiftParams struct {
 	ShiftID string `json:"shiftId" jsonschema:"required,description=The ID of the shift to get details for"`
 }
 
-func getOnCallShift(ctx context.Context, args GetOnCallShiftParams) (*aapi.OnCallShift, error) {
-	shiftService, err := getOnCallShiftServiceFromContext(ctx)
+func getOnCallShift(ctx context.Context, args GetOnCallShiftParams) (*OnCallShift, error) {
+	if useOncallProxy(ctx) {
+		return proxyGetShift(ctx, args.ShiftID)
+	}
+	return amixrGetShift(ctx, args.ShiftID)
+}
+
+func amixrGetShift(ctx context.Context, shiftID string) (*OnCallShift, error) {
+	client, err := oncallClientFromContext(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("getting OnCall shift service: %w", err)
+		return nil, fmt.Errorf("getting OnCall client: %w", err)
 	}
 
-	shift, _, err := shiftService.GetOnCallShift(args.ShiftID, &aapi.GetOnCallShiftOptions{})
+	shiftService := aapi.NewOnCallShiftService(client)
+	shift, _, err := shiftService.GetOnCallShift(shiftID, &aapi.GetOnCallShiftOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("getting OnCall shift %s: %w", args.ShiftID, err)
+		return nil, fmt.Errorf("getting OnCall shift %s: %w", shiftID, err)
 	}
 
-	return shift, nil
+	return &OnCallShift{
+		ID:            shift.ID,
+		Name:          shift.Name,
+		Type:          shift.Type,
+		PriorityLevel: shift.Level,
+		ShiftStart:    shift.Start,
+		RotationStart: shift.Start,
+		Frequency:     shift.Frequency,
+		Interval:      derefIntOr(shift.Interval, 0),
+		ByDay:         derefStrSlice(shift.ByDay),
+		WeekStart:     derefStrOr(shift.WeekStart, ""),
+		RollingUsers:  shift.RollingUsers,
+		Until:         derefStrOr(shift.Until, ""),
+	}, nil
 }
 
 var GetOnCallShift = mcpgrafana.MustTool(
@@ -254,11 +244,13 @@ var GetOnCallShift = mcpgrafana.MustTool(
 	mcp.WithReadOnlyHintAnnotation(true),
 )
 
-// CurrentOnCallUsers represents the currently on-call users for a schedule
+// --- Current On-Call Users ---
+
+// CurrentOnCallUsers represents the currently on-call users for a schedule.
 type CurrentOnCallUsers struct {
-	ScheduleID   string       `json:"scheduleId" jsonschema:"description=The ID of the schedule"`
-	ScheduleName string       `json:"scheduleName" jsonschema:"description=The name of the schedule"`
-	Users        []*aapi.User `json:"users" jsonschema:"description=List of users currently on call"`
+	ScheduleID   string        `json:"scheduleId" jsonschema:"description=The ID of the schedule"`
+	ScheduleName string        `json:"scheduleName" jsonschema:"description=The name of the schedule"`
+	Users        []*OnCallUser `json:"users" jsonschema:"description=List of users currently on call"`
 }
 
 type GetCurrentOnCallUsersParams struct {
@@ -266,43 +258,46 @@ type GetCurrentOnCallUsersParams struct {
 }
 
 func getCurrentOnCallUsers(ctx context.Context, args GetCurrentOnCallUsersParams) (*CurrentOnCallUsers, error) {
-	scheduleService, err := getScheduleServiceFromContext(ctx)
+	if useOncallProxy(ctx) {
+		return proxyGetCurrentOnCallUsers(ctx, args.ScheduleID)
+	}
+	return amixrGetCurrentOnCallUsers(ctx, args.ScheduleID)
+}
+
+func amixrGetCurrentOnCallUsers(ctx context.Context, scheduleID string) (*CurrentOnCallUsers, error) {
+	client, err := oncallClientFromContext(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("getting OnCall schedule service: %w", err)
+		return nil, fmt.Errorf("getting OnCall client: %w", err)
 	}
 
-	schedule, _, err := scheduleService.GetSchedule(args.ScheduleID, &aapi.GetScheduleOptions{})
+	scheduleService := aapi.NewScheduleService(client)
+	schedule, _, err := scheduleService.GetSchedule(scheduleID, &aapi.GetScheduleOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("getting schedule %s: %w", args.ScheduleID, err)
+		return nil, fmt.Errorf("getting schedule %s: %w", scheduleID, err)
 	}
 
-	// Create the result with the schedule info
 	result := &CurrentOnCallUsers{
 		ScheduleID:   schedule.ID,
 		ScheduleName: schedule.Name,
-		Users:        make([]*aapi.User, 0, len(schedule.OnCallNow)),
+		Users:        make([]*OnCallUser, 0, len(schedule.OnCallNow)),
 	}
 
-	// If there are no users on call, return early
 	if len(schedule.OnCallNow) == 0 {
 		return result, nil
 	}
 
-	// Get the user service to fetch user details
-	userService, err := getUserServiceFromContext(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("getting OnCall user service: %w", err)
-	}
-
-	// Fetch details for each user currently on call
+	userService := aapi.NewUserService(client)
 	for _, userID := range schedule.OnCallNow {
 		user, _, err := userService.GetUser(userID, &aapi.GetUserOptions{})
 		if err != nil {
-			// Log the error but continue with other users
-			fmt.Printf("Error fetching user %s: %v\n", userID, err)
 			continue
 		}
-		result.Users = append(result.Users, user)
+		result.Users = append(result.Users, &OnCallUser{
+			ID:       user.ID,
+			Username: user.Username,
+			Email:    user.Email,
+			Role:     user.Role,
+		})
 	}
 
 	return result, nil
@@ -317,16 +312,26 @@ var GetCurrentOnCallUsers = mcpgrafana.MustTool(
 	mcp.WithReadOnlyHintAnnotation(true),
 )
 
+// --- Teams ---
+
 type ListOnCallTeamsParams struct {
 	Page int `json:"page,omitempty" jsonschema:"description=The page number to return"`
 }
 
-func listOnCallTeams(ctx context.Context, args ListOnCallTeamsParams) ([]*aapi.Team, error) {
-	teamService, err := getTeamServiceFromContext(ctx)
+func listOnCallTeams(ctx context.Context, args ListOnCallTeamsParams) ([]*OnCallTeam, error) {
+	if useOncallProxy(ctx) {
+		return proxyListTeams(ctx, args)
+	}
+	return amixrListTeams(ctx, args)
+}
+
+func amixrListTeams(ctx context.Context, args ListOnCallTeamsParams) ([]*OnCallTeam, error) {
+	client, err := oncallClientFromContext(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("getting OnCall team service: %w", err)
+		return nil, fmt.Errorf("getting OnCall client: %w", err)
 	}
 
+	teamService := aapi.NewTeamService(client)
 	listOptions := &aapi.ListTeamOptions{}
 	if args.Page > 0 {
 		listOptions.Page = args.Page
@@ -337,7 +342,16 @@ func listOnCallTeams(ctx context.Context, args ListOnCallTeamsParams) ([]*aapi.T
 		return nil, fmt.Errorf("listing OnCall teams: %w", err)
 	}
 
-	return response.Teams, nil
+	result := make([]*OnCallTeam, 0, len(response.Teams))
+	for _, team := range response.Teams {
+		result = append(result, &OnCallTeam{
+			ID:        team.ID,
+			Name:      team.Name,
+			Email:     team.Email,
+			AvatarURL: team.AvatarUrl,
+		})
+	}
+	return result, nil
 }
 
 var ListOnCallTeams = mcpgrafana.MustTool(
@@ -349,27 +363,42 @@ var ListOnCallTeams = mcpgrafana.MustTool(
 	mcp.WithReadOnlyHintAnnotation(true),
 )
 
+// --- Users ---
+
 type ListOnCallUsersParams struct {
 	UserID   string `json:"userId,omitempty" jsonschema:"description=The ID of the user to get details for. If provided\\, returns only that user's details"`
 	Username string `json:"username,omitempty" jsonschema:"description=The username to filter users by. If provided\\, returns only the user matching this username"`
 	Page     int    `json:"page,omitempty" jsonschema:"description=The page number to return"`
 }
 
-func listOnCallUsers(ctx context.Context, args ListOnCallUsersParams) ([]*aapi.User, error) {
-	userService, err := getUserServiceFromContext(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("getting OnCall user service: %w", err)
+func listOnCallUsers(ctx context.Context, args ListOnCallUsersParams) ([]*OnCallUser, error) {
+	if useOncallProxy(ctx) {
+		return proxyListUsers(ctx, args)
 	}
+	return amixrListUsers(ctx, args)
+}
+
+func amixrListUsers(ctx context.Context, args ListOnCallUsersParams) ([]*OnCallUser, error) {
+	client, err := oncallClientFromContext(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("getting OnCall client: %w", err)
+	}
+
+	userService := aapi.NewUserService(client)
 
 	if args.UserID != "" {
 		user, _, err := userService.GetUser(args.UserID, &aapi.GetUserOptions{})
 		if err != nil {
 			return nil, fmt.Errorf("getting OnCall user %s: %w", args.UserID, err)
 		}
-		return []*aapi.User{user}, nil
+		return []*OnCallUser{{
+			ID:       user.ID,
+			Username: user.Username,
+			Email:    user.Email,
+			Role:     user.Role,
+		}}, nil
 	}
 
-	// Otherwise, list all users
 	listOptions := &aapi.ListUserOptions{}
 	if args.Page > 0 {
 		listOptions.Page = args.Page
@@ -383,7 +412,16 @@ func listOnCallUsers(ctx context.Context, args ListOnCallUsersParams) ([]*aapi.U
 		return nil, fmt.Errorf("listing OnCall users: %w", err)
 	}
 
-	return response.Users, nil
+	result := make([]*OnCallUser, 0, len(response.Users))
+	for _, user := range response.Users {
+		result = append(result, &OnCallUser{
+			ID:       user.ID,
+			Username: user.Username,
+			Email:    user.Email,
+			Role:     user.Role,
+		})
+	}
+	return result, nil
 }
 
 var ListOnCallUsers = mcpgrafana.MustTool(
@@ -395,14 +433,7 @@ var ListOnCallUsers = mcpgrafana.MustTool(
 	mcp.WithReadOnlyHintAnnotation(true),
 )
 
-func getAlertGroupServiceFromContext(ctx context.Context) (*aapi.AlertGroupService, error) {
-	client, err := oncallClientFromContext(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("getting OnCall client: %w", err)
-	}
-
-	return aapi.NewAlertGroupService(client), nil
-}
+// --- Alert Groups ---
 
 type ListAlertGroupsParams struct {
 	Page          int      `json:"page,omitempty" jsonschema:"description=The page number to return"`
@@ -416,11 +447,20 @@ type ListAlertGroupsParams struct {
 	Name          string   `json:"name,omitempty" jsonschema:"description=Filter by alert group name"`
 }
 
-func listAlertGroups(ctx context.Context, args ListAlertGroupsParams) ([]*aapi.AlertGroup, error) {
-	alertGroupService, err := getAlertGroupServiceFromContext(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("getting OnCall alert group service: %w", err)
+func listAlertGroups(ctx context.Context, args ListAlertGroupsParams) ([]*OnCallAlertGroup, error) {
+	if useOncallProxy(ctx) {
+		return proxyListAlertGroups(ctx, args)
 	}
+	return amixrListAlertGroups(ctx, args)
+}
+
+func amixrListAlertGroups(ctx context.Context, args ListAlertGroupsParams) ([]*OnCallAlertGroup, error) {
+	client, err := oncallClientFromContext(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("getting OnCall client: %w", err)
+	}
+
+	alertGroupService := aapi.NewAlertGroupService(client)
 
 	listOptions := &aapi.ListAlertGroupOptions{}
 	if args.Page > 0 {
@@ -456,7 +496,21 @@ func listAlertGroups(ctx context.Context, args ListAlertGroupsParams) ([]*aapi.A
 		return nil, fmt.Errorf("listing OnCall alert groups: %w", err)
 	}
 
-	return response.AlertGroups, nil
+	result := make([]*OnCallAlertGroup, 0, len(response.AlertGroups))
+	for _, ag := range response.AlertGroups {
+		result = append(result, &OnCallAlertGroup{
+			ID:             ag.ID,
+			IntegrationID:  ag.IntegrationID,
+			AlertsCount:    ag.AlertsCount,
+			State:          ag.State,
+			CreatedAt:      ag.CreatedAt,
+			ResolvedAt:     ag.ResolvedAt,
+			AcknowledgedAt: ag.AcknowledgedAt,
+			Title:          ag.Title,
+			Permalinks:     ag.Permalinks,
+		})
+	}
+	return result, nil
 }
 
 var ListAlertGroups = mcpgrafana.MustTool(
@@ -472,18 +526,36 @@ type GetAlertGroupParams struct {
 	AlertGroupID string `json:"alertGroupId" jsonschema:"required,description=The ID of the alert group to retrieve"`
 }
 
-func getAlertGroup(ctx context.Context, args GetAlertGroupParams) (*aapi.AlertGroup, error) {
-	alertGroupService, err := getAlertGroupServiceFromContext(ctx)
+func getAlertGroup(ctx context.Context, args GetAlertGroupParams) (*OnCallAlertGroup, error) {
+	if useOncallProxy(ctx) {
+		return proxyGetAlertGroup(ctx, args.AlertGroupID)
+	}
+	return amixrGetAlertGroup(ctx, args.AlertGroupID)
+}
+
+func amixrGetAlertGroup(ctx context.Context, alertGroupID string) (*OnCallAlertGroup, error) {
+	client, err := oncallClientFromContext(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("getting OnCall alert group service: %w", err)
+		return nil, fmt.Errorf("getting OnCall client: %w", err)
 	}
 
-	alertGroup, _, err := alertGroupService.GetAlertGroup(args.AlertGroupID)
+	alertGroupService := aapi.NewAlertGroupService(client)
+	ag, _, err := alertGroupService.GetAlertGroup(alertGroupID)
 	if err != nil {
-		return nil, fmt.Errorf("getting OnCall alert group %s: %w", args.AlertGroupID, err)
+		return nil, fmt.Errorf("getting OnCall alert group %s: %w", alertGroupID, err)
 	}
 
-	return alertGroup, nil
+	return &OnCallAlertGroup{
+		ID:             ag.ID,
+		IntegrationID:  ag.IntegrationID,
+		AlertsCount:    ag.AlertsCount,
+		State:          ag.State,
+		CreatedAt:      ag.CreatedAt,
+		ResolvedAt:     ag.ResolvedAt,
+		AcknowledgedAt: ag.AcknowledgedAt,
+		Title:          ag.Title,
+		Permalinks:     ag.Permalinks,
+	}, nil
 }
 
 var GetAlertGroup = mcpgrafana.MustTool(
@@ -503,4 +575,27 @@ func AddOnCallTools(mcp *server.MCPServer) {
 	ListOnCallUsers.Register(mcp)
 	ListAlertGroups.Register(mcp)
 	GetAlertGroup.Register(mcp)
+}
+
+// helpers for converting amixr pointer types
+
+func derefStrOr(p *string, fallback string) string {
+	if p != nil {
+		return *p
+	}
+	return fallback
+}
+
+func derefIntOr(p *int, fallback int) int {
+	if p != nil {
+		return *p
+	}
+	return fallback
+}
+
+func derefStrSlice(p *[]string) []string {
+	if p != nil {
+		return *p
+	}
+	return nil
 }
