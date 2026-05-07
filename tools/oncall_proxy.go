@@ -181,6 +181,9 @@ func proxyListAlertGroups(ctx context.Context, args ListAlertGroupsParams) ([]*O
 	if args.AlertGroupID != "" {
 		params.Set("id", args.AlertGroupID)
 	}
+	if args.RouteID != "" {
+		params.Set("route_id", args.RouteID)
+	}
 	if args.IntegrationID != "" {
 		params.Set("integration_id", args.IntegrationID)
 	}
