@@ -93,7 +93,7 @@ type Observability struct {
 // Log export is enabled when OTEL_EXPORTER_OTLP_ENDPOINT or
 // OTEL_EXPORTER_OTLP_LOGS_ENDPOINT is set; use LoggerProvider() to retrieve
 // the provider for wiring into an slog.Handler (e.g., via the otelslog bridge).
-func Setup(cfg Config) (*Observability, error) {
+func Setup(cfg Config) (_ *Observability, err error) {
 	// Ensure OTel SDK internal errors (async export failures, queue drops, etc.)
 	// surface through slog instead of the stdlib log package where operators
 	// would never see them. Done once per process — sync.Once guards against
@@ -113,6 +113,20 @@ func Setup(cfg Config) (*Observability, error) {
 	obs := &Observability{
 		networkTransport: cfg.NetworkTransport,
 	}
+
+	// Shut down any providers already populated if Setup fails mid-way. This
+	// is the symmetric counterpart to Shutdown() on the success path: callers
+	// who never receive a non-nil Observability can't call Shutdown themselves,
+	// so their background goroutines and gRPC connections would otherwise leak
+	// for the process lifetime.
+	defer func() {
+		if err == nil {
+			return
+		}
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = obs.Shutdown(shutdownCtx)
+	}()
 
 	// Build OTel resource with service identity.
 	// This is shared by both tracing and metrics providers.
@@ -146,17 +160,11 @@ func Setup(cfg Config) (*Observability, error) {
 
 	// Set up OTLP log exporter when OTEL_EXPORTER_OTLP_ENDPOINT or
 	// OTEL_EXPORTER_OTLP_LOGS_ENDPOINT is set; see setupLogging for the gating
-	// logic.
-	lp, logErr := setupLogging(context.Background(), res)
-	if logErr != nil {
-		// Clean up the tracer provider created above so its background batcher
-		// goroutine and gRPC connection don't leak for the process lifetime.
-		if obs.tracerProvider != nil {
-			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			_ = obs.tracerProvider.Shutdown(shutdownCtx)
-			cancel()
-		}
-		return nil, logErr
+	// logic. On error, the deferred rollback above shuts down any tracer
+	// provider already populated.
+	lp, err := setupLogging(context.Background(), res)
+	if err != nil {
+		return nil, err
 	}
 	obs.loggerProvider = lp
 

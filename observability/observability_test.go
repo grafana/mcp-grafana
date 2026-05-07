@@ -200,12 +200,13 @@ func TestObservability_ShutdownAggregatesErrors(t *testing.T) {
 	assert.Contains(t, msg, "meter boom", "meter provider error should be aggregated")
 }
 
-// Note: we do not directly cover the "Setup shuts down the tracer provider
-// when setupLogging fails" branch. setupLogging is a package-level function
-// with no injection seam; swapping it out would require either a package
-// variable or a test-only build tag. Given the small blast radius, that
-// branch is left uncovered; the guardrail is the code review of
-// observability.go.
+// Note: we do not directly cover Setup's deferred rollback path (Setup fails
+// mid-way → already-populated providers get shut down). The failure points
+// (setupLogging, prometheus.New, mcpconv.New*) are package-level functions
+// with no injection seam; exercising them would require a test-only build
+// tag or a package variable. Given the small blast radius and that Shutdown
+// itself is well-tested above, the rollback is left uncovered and the
+// guardrail is code review.
 
 func TestMetricsHandler(t *testing.T) {
 	cfg := Config{
