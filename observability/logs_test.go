@@ -304,6 +304,9 @@ func TestOTLPLogsEndpoint_EmptyWhenNeitherSet(t *testing.T) {
 // We capture os.Stderr by redirecting it through a pipe for the duration of
 // the test — the production code writes to os.Stderr directly (not an injected
 // writer), so swapping the package-level var is the cleanest way to observe it.
+//
+// Do not t.Parallel() this test or any sibling that writes to stderr: the
+// os.Stderr swap is process-global and would interleave with concurrent writers.
 func TestFanoutHandler_PanicWritesStackToStderr(t *testing.T) {
 	// Capture os.Stderr by redirecting to a pipe.
 	origStderr := os.Stderr
