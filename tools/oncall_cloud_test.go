@@ -134,7 +134,6 @@ func TestCloudGetCurrentOnCallUsers(t *testing.T) {
 		assert.NotEmpty(t, result.ScheduleName, "Schedule should have a name")
 		assert.NotNil(t, result.Users, "Users field should be present")
 
-		// Assert that Users is of type []*aapi.User
 		if len(result.Users) > 0 {
 			user := result.Users[0]
 			assert.NotEmpty(t, user.ID, "User should have an ID")
