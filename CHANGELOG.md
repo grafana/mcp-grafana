@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.0] - 2026-05-08
+
+### Added
+
+- Generic API request tool for making arbitrary HTTP requests to the Grafana API ([#841](https://github.com/grafana/mcp-grafana/pull/841))
+- OpenSearch datasource support ([#669](https://github.com/grafana/mcp-grafana/pull/669))
+- Tool to retrieve Grafana plugin information ([#826](https://github.com/grafana/mcp-grafana/pull/826))
+- Export logs via OTLP when `OTEL_EXPORTER_OTLP_ENDPOINT` or `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` is set, consistent with existing OTLP trace export ([#839](https://github.com/grafana/mcp-grafana/pull/839))
+- Configurable slow-request-threshold logging for identifying long-running tool calls ([#756](https://github.com/grafana/mcp-grafana/pull/756))
+- Server instructions now dynamically reflect only the enabled tool categories, preventing agents from attempting to use disabled tools ([#829](https://github.com/grafana/mcp-grafana/pull/829))
+
+### Fixed
+
+- Route OnCall tools through IRM plugin proxy for correct on-behalf-of authentication ([#842](https://github.com/grafana/mcp-grafana/pull/842))
+- Propagate context to jq operations and return clear errors on non-JSON input ([#847](https://github.com/grafana/mcp-grafana/pull/847))
+- Prevent panic in Sift tool when pattern type assertion fails ([#834](https://github.com/grafana/mcp-grafana/pull/834))
+
 ## [0.13.1] - 2026-04-30
 
 ### Added
@@ -202,6 +219,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Upgrade Docker base image packages to resolve critical OpenSSL CVE-2025-15467 (CVSS 9.8) ([#551](https://github.com/grafana/mcp-grafana/pull/551))
 
+[0.14.0]: https://github.com/grafana/mcp-grafana/compare/v0.13.1...v0.14.0
 [0.13.1]: https://github.com/grafana/mcp-grafana/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/grafana/mcp-grafana/compare/v0.12.1...v0.13.0
 [0.12.1]: https://github.com/grafana/mcp-grafana/compare/v0.12.0...v0.12.1
