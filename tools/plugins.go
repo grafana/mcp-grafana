@@ -193,7 +193,8 @@ func installPlugin(ctx context.Context, args InstallPluginParams) (*InstallPlugi
 		return nil, fmt.Errorf("plugin ID is required")
 	}
 
-	if args.Version == "" {
+	version := strings.TrimSpace(args.Version)
+	if version == "" {
 		latestVersion, err := fetchLatestPluginVersion(ctx, pluginID)
 		result := &InstallPluginResult{
 			PluginID:             pluginID,
@@ -210,7 +211,7 @@ func installPlugin(ctx context.Context, args InstallPluginParams) (*InstallPlugi
 		return result, nil
 	}
 
-	body, status, err := grafanaPluginRequest(ctx, cfg, http.MethodPost, "/api/plugins/"+url.PathEscape(pluginID)+"/install", map[string]string{"version": args.Version})
+	body, status, err := grafanaPluginRequest(ctx, cfg, http.MethodPost, "/api/plugins/"+url.PathEscape(pluginID)+"/install", map[string]string{"version": version})
 	if err != nil {
 		return nil, fmt.Errorf("install plugin: %w", err)
 	}
@@ -310,6 +311,11 @@ func pluginMatchesQuery(p catalogPlugin, query string) bool {
 func searchPlugins(ctx context.Context, args SearchPluginsParams) (*SearchPluginsResult, error) {
 	limit := 10
 
+	query := strings.ToLower(strings.TrimSpace(args.Query))
+	if query == "" {
+		return nil, fmt.Errorf("query is required")
+	}
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, grafanaComCatalogURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
@@ -328,7 +334,6 @@ func searchPlugins(ctx context.Context, args SearchPluginsParams) (*SearchPlugin
 		return nil, fmt.Errorf("decode catalog: %w", err)
 	}
 
-	query := strings.ToLower(strings.TrimSpace(args.Query))
 	var matched []catalogPlugin
 	for _, p := range catalog.Items {
 		if pluginMatchesQuery(p, query) {

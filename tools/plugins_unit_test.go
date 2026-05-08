@@ -387,6 +387,14 @@ func TestSearchPlugins_EmptyResults(t *testing.T) {
 	assert.Equal(t, 0, result.Total)
 }
 
+func TestSearchPlugins_EmptyQuery(t *testing.T) {
+	result, err := searchPlugins(context.Background(), SearchPluginsParams{Query: "   "})
+
+	require.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "query is required")
+}
+
 func TestSearchPlugins_CatalogError(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -479,6 +487,22 @@ func TestInstallPlugin_NoVersion_ReturnsLatestVersionForConfirmation(t *testing.
 	assert.Equal(t, "3.1.4", result.LatestVersion)
 	assert.Contains(t, result.Message, "3.1.4")
 	assert.Contains(t, result.Message, "grafana-test-plugin")
+}
+
+func TestInstallPlugin_WhitespaceVersion_ReturnsLatestVersionForConfirmation(t *testing.T) {
+	versionCatalogTestServer(t, "grafana-test-plugin", "3.1.4", http.StatusOK)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("unexpected call to Grafana instance")
+	}))
+	t.Cleanup(ts.Close)
+
+	ctx := pluginTestContext(t, ts.URL)
+	result, err := installPlugin(ctx, InstallPluginParams{PluginID: "grafana-test-plugin", Version: "   "})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.True(t, result.ConfirmationRequired)
+	assert.Equal(t, "3.1.4", result.LatestVersion)
 }
 
 func TestInstallPlugin_NoVersion_CatalogLookupFails_StillPromptsForVersion(t *testing.T) {
