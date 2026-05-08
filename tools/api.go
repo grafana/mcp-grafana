@@ -139,9 +139,6 @@ func doAPIRequest(ctx context.Context, endpoint, method, body string, headers ma
 
 	var parsed any
 	if err := json.Unmarshal(respBody, &parsed); err != nil {
-		if jqCode != nil {
-			return nil, fmt.Errorf("cannot apply jq expression: response is not valid JSON")
-		}
 		result.Data = string(respBody)
 		return result, nil
 	}

@@ -305,7 +305,7 @@ func TestAPIRequest_ResponseTooLarge(t *testing.T) {
 	assert.Contains(t, err.Error(), "exceeds maximum size")
 }
 
-func TestAPIRequest_JQWithNonJSONResponseReturnsError(t *testing.T) {
+func TestAPIRequest_JQWithNonJSONResponseReturnsText(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		_, _ = w.Write([]byte("plain text response"))
@@ -313,13 +313,13 @@ func TestAPIRequest_JQWithNonJSONResponseReturnsError(t *testing.T) {
 	t.Cleanup(ts.Close)
 
 	ctx := apiTestContext(t, ts.URL)
-	_, err := apiRequest(ctx, APIRequestParams{
+	result, err := apiRequest(ctx, APIRequestParams{
 		Endpoint: "/api/health",
 		JQ:       ".status",
 	})
 
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "response is not valid JSON")
+	require.NoError(t, err)
+	assert.Equal(t, "plain text response", result.Data)
 }
 
 func TestAPIRequest_JQRespectsContextCancellation(t *testing.T) {
