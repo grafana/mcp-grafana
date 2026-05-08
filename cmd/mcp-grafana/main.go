@@ -67,6 +67,7 @@ var categoryDescription = map[string]string{
 	"cloudwatch":    "CloudWatch: Query AWS CloudWatch datasources for metrics and logs.",
 	"examples":      "Examples: Query example tools.",
 	"clickhouse":    "ClickHouse: Query ClickHouse datasources via Grafana with macro and variable substitution support.",
+	"snowflake":     "Snowflake: Query Snowflake datasources via Grafana (including the SNOWFLAKE.TELEMETRY.EVENTS event table) with macro and variable substitution support.",
 	"runpanelquery": "Run Panel Query: Execute panel queries directly.",
 	"graphite":      "Graphite: Query Graphite datasources for metrics.",
 	"api":           "API: Make authenticated HTTP requests to any Grafana API endpoint with optional jq-style response filtering.",
@@ -80,7 +81,7 @@ type disabledTools struct {
 	prometheus, loki, elasticsearch, influxdb, alerting,
 	dashboard, folder, oncall, asserts, sift, admin,
 	pyroscope, navigation, proxied, annotations, rendering, cloudwatch, write,
-	examples, clickhouse, graphite,
+	examples, clickhouse, snowflake, graphite,
 	runpanelquery, plugin, api bool
 }
 
@@ -124,6 +125,7 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.cloudwatch, "disable-cloudwatch", false, "Disable CloudWatch tools")
 	flag.BoolVar(&dt.examples, "disable-examples", false, "Disable query examples tools")
 	flag.BoolVar(&dt.clickhouse, "disable-clickhouse", false, "Disable ClickHouse tools")
+	flag.BoolVar(&dt.snowflake, "disable-snowflake", false, "Disable Snowflake tools")
 	flag.BoolVar(&dt.runpanelquery, "disable-runpanelquery", false, "Disable run panel query tools")
 	flag.BoolVar(&dt.graphite, "disable-graphite", false, "Disable Graphite tools")
 	flag.BoolVar(&dt.plugin, "disable-plugin", false, "Disable plugin tools")
@@ -177,6 +179,7 @@ func (dt *disabledTools) toolEntries() []toolEntry {
 		{tools.AddCloudWatchTools, dt.cloudwatch, "cloudwatch"},
 		{tools.AddExamplesTools, dt.examples, "examples"},
 		{tools.AddClickHouseTools, dt.clickhouse, "clickhouse"},
+		{tools.AddSnowflakeTools, dt.snowflake, "snowflake"},
 		{tools.AddRunPanelQueryTools, dt.runpanelquery, "runpanelquery"},
 		{tools.AddGraphiteTools, dt.graphite, "graphite"},
 		{tools.AddPluginTools, dt.plugin, "plugin"},

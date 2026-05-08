@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Snowflake tools (`query_snowflake`, `list_snowflake_tables`, `describe_snowflake_table`) for querying Snowflake datasources (Grafana Enterprise plugin `grafana-snowflake-datasource`) through Grafana's `/api/ds/query` endpoint. Supports `$__timeFilter`, `$__timeFrom`/`$__timeTo`, `$__from`/`$__to`, `$__interval`/`$__interval_ms`, and `${varname}` substitution. Disabled by default — opt in with `--enabled-tools=...,snowflake`.
+
 ## [0.14.0] - 2026-05-08
 
 ### Added
