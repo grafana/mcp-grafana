@@ -305,6 +305,44 @@ func TestAPIRequest_ResponseTooLarge(t *testing.T) {
 	assert.Contains(t, err.Error(), "exceeds maximum size")
 }
 
+func TestAPIRequest_JQWithNonJSONResponseReturnsError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		_, _ = w.Write([]byte("plain text response"))
+	}))
+	t.Cleanup(ts.Close)
+
+	ctx := apiTestContext(t, ts.URL)
+	_, err := apiRequest(ctx, APIRequestParams{
+		Endpoint: "/api/health",
+		JQ:       ".status",
+	})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "response is not valid JSON")
+}
+
+func TestAPIRequest_JQRespectsContextCancellation(t *testing.T) {
+	payload := map[string]any{"value": float64(1)}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(payload)
+	}))
+	t.Cleanup(ts.Close)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cfg := mcpgrafana.GrafanaConfig{URL: ts.URL}
+	ctx = mcpgrafana.WithGrafanaConfig(ctx, cfg)
+	cancel() // cancel immediately
+
+	_, err := apiRequest(ctx, APIRequestParams{
+		Endpoint: "/api/test",
+		JQ:       "while(true; . + 1)",
+	})
+
+	require.Error(t, err)
+}
+
 func TestAPIRequest_HTTPErrorStatus(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
