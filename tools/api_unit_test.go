@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
+	"github.com/itchyny/gojq"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -323,23 +324,17 @@ func TestAPIRequest_JQWithNonJSONResponseReturnsText(t *testing.T) {
 }
 
 func TestAPIRequest_JQRespectsContextCancellation(t *testing.T) {
-	payload := map[string]any{"value": float64(1)}
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(payload)
-	}))
-	t.Cleanup(ts.Close)
+	// Test applyJQ directly to verify RunWithContext propagates cancellation,
+	// avoiding the HTTP layer which would fail on a cancelled context first.
+	query, err := gojq.Parse("while(true; . + 1)")
+	require.NoError(t, err)
+	code, err := gojq.Compile(query)
+	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	cfg := mcpgrafana.GrafanaConfig{URL: ts.URL}
-	ctx = mcpgrafana.WithGrafanaConfig(ctx, cfg)
-	cancel() // cancel immediately
+	cancel()
 
-	_, err := apiRequest(ctx, APIRequestParams{
-		Endpoint: "/api/test",
-		JQ:       "while(true; . + 1)",
-	})
-
+	_, err = applyJQ(ctx, code, float64(1))
 	require.Error(t, err)
 }
 
