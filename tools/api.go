@@ -144,7 +144,7 @@ func doAPIRequest(ctx context.Context, endpoint, method, body string, headers ma
 	}
 
 	if jqCode != nil {
-		filtered, err := applyJQ(jqCode, parsed)
+		filtered, err := applyJQ(ctx, jqCode, parsed)
 		if err != nil {
 			return nil, fmt.Errorf("apply jq expression: %w", err)
 		}
@@ -156,8 +156,8 @@ func doAPIRequest(ctx context.Context, endpoint, method, body string, headers ma
 	return result, nil
 }
 
-func applyJQ(code *gojq.Code, input any) (any, error) {
-	iter := code.Run(input)
+func applyJQ(ctx context.Context, code *gojq.Code, input any) (any, error) {
+	iter := code.RunWithContext(ctx, input)
 	var results []any
 	for {
 		v, ok := iter.Next()
