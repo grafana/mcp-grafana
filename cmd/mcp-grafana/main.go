@@ -182,7 +182,7 @@ func (dt *disabledTools) toolEntries() []toolEntry {
 		{tools.AddSnowflakeTools, dt.snowflake, "snowflake"},
 		{tools.AddRunPanelQueryTools, dt.runpanelquery, "runpanelquery"},
 		{tools.AddGraphiteTools, dt.graphite, "graphite"},
-		{tools.AddPluginTools, dt.plugin, "plugin"},
+		{func(mcp *server.MCPServer) { tools.AddPluginTools(mcp, enableWriteTools) }, dt.plugin, "plugin"},
 		{func(mcp *server.MCPServer) { tools.AddAPITools(mcp, enableWriteTools) }, dt.api, "api"},
 	}
 }
