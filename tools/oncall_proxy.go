@@ -24,6 +24,15 @@ const (
 	proxyTeamsPath       = "teams/"
 )
 
+// stateToStatus maps public API state strings to internal API numeric status values.
+// The internal API's status filter expects integers: 0=new, 1=acknowledged, 2=resolved, 3=silenced.
+var stateToStatus = map[string]string{
+	"new":          "0",
+	"acknowledged": "1",
+	"resolved":     "2",
+	"silenced":     "3",
+}
+
 // oncallProxyClient makes requests to the OnCall internal API via the IRM plugin proxy.
 type oncallProxyClient struct {
 	httpClient *http.Client
@@ -222,7 +231,9 @@ func proxyListAlertGroups(ctx context.Context, args ListAlertGroupsParams) ([]*O
 		params.Set("integration_id", args.IntegrationID)
 	}
 	if args.State != "" {
-		params.Set("state", args.State)
+		if v, ok := stateToStatus[args.State]; ok {
+			params.Set("status", v)
+		}
 	}
 	if args.TeamID != "" {
 		params.Set("team", args.TeamID)
