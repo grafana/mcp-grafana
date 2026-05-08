@@ -548,6 +548,7 @@ func TestInstallPlugin_WithVersion_UnexpectedStatus(t *testing.T) {
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "install plugin")
 	assert.Contains(t, err.Error(), "500")
+	assert.Contains(t, err.Error(), "internal error")
 }
 
 func TestInstallPlugin_WithVersion_TrimsWhitespaceFromPluginID(t *testing.T) {

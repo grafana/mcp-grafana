@@ -210,12 +210,12 @@ func installPlugin(ctx context.Context, args InstallPluginParams) (*InstallPlugi
 		return result, nil
 	}
 
-	_, status, err := grafanaPluginRequest(ctx, cfg, http.MethodPost, "/api/plugins/"+url.PathEscape(pluginID)+"/install", map[string]string{"version": args.Version})
+	body, status, err := grafanaPluginRequest(ctx, cfg, http.MethodPost, "/api/plugins/"+url.PathEscape(pluginID)+"/install", map[string]string{"version": args.Version})
 	if err != nil {
 		return nil, fmt.Errorf("install plugin: %w", err)
 	}
 	if status != http.StatusOK {
-		return nil, fmt.Errorf("install plugin: unexpected status %d", status)
+		return nil, fmt.Errorf("install plugin: unexpected status %d: %s", status, body)
 	}
 
 	return &InstallPluginResult{
