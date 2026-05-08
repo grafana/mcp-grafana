@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/stretchr/testify/assert"
@@ -323,24 +324,33 @@ func TestAPIRequest_JQWithNonJSONResponseReturnsText(t *testing.T) {
 }
 
 func TestAPIRequest_JQRespectsContextCancellation(t *testing.T) {
-	payload := map[string]any{"value": float64(1)}
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(payload)
+		_, _ = w.Write([]byte(`1`))
 	}))
 	t.Cleanup(ts.Close)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
 	cfg := mcpgrafana.GrafanaConfig{URL: ts.URL}
 	ctx = mcpgrafana.WithGrafanaConfig(ctx, cfg)
-	cancel() // cancel immediately
 
-	_, err := apiRequest(ctx, APIRequestParams{
-		Endpoint: "/api/test",
-		JQ:       "while(true; . + 1)",
-	})
+	done := make(chan error, 1)
+	go func() {
+		_, err := apiRequest(ctx, APIRequestParams{
+			Endpoint: "/api/test",
+			JQ:       "while(true; . + 1)",
+		})
+		done <- err
+	}()
 
-	require.Error(t, err)
+	select {
+	case err := <-done:
+		require.Error(t, err)
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for apiRequest to return after context cancellation")
+	}
 }
 
 func TestAPIRequest_HTTPErrorStatus(t *testing.T) {
