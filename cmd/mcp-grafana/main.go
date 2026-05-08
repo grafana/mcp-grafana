@@ -69,6 +69,7 @@ var categoryDescription = map[string]string{
 	"clickhouse":    "ClickHouse: Query ClickHouse datasources via Grafana with macro and variable substitution support.",
 	"runpanelquery": "Run Panel Query: Execute panel queries directly.",
 	"graphite":      "Graphite: Query Graphite datasources for metrics.",
+	"api":           "API: Make authenticated HTTP requests to any Grafana API endpoint with optional jq-style response filtering.",
 }
 
 // disabledTools indicates whether each category of tools should be disabled.
@@ -80,7 +81,7 @@ type disabledTools struct {
 	dashboard, folder, oncall, asserts, sift, admin,
 	pyroscope, navigation, proxied, annotations, rendering, cloudwatch, write,
 	examples, clickhouse, graphite,
-	runpanelquery, plugin bool
+	runpanelquery, plugin, api bool
 }
 
 // Configuration for the Grafana client.
@@ -99,7 +100,7 @@ type grafanaConfig struct {
 }
 
 func (dt *disabledTools) addFlags() {
-	flag.StringVar(&dt.enabledTools, "enabled-tools", "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering,plugin", "A comma separated list of tools enabled for this server. Can be overwritten entirely or by disabling specific components, e.g. --disable-search.")
+	flag.StringVar(&dt.enabledTools, "enabled-tools", "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering,plugin,api", "A comma separated list of tools enabled for this server. Can be overwritten entirely or by disabling specific components, e.g. --disable-search.")
 	flag.BoolVar(&dt.search, "disable-search", false, "Disable search tools")
 	flag.BoolVar(&dt.datasource, "disable-datasource", false, "Disable datasource tools")
 	flag.BoolVar(&dt.incident, "disable-incident", false, "Disable incident tools")
@@ -126,6 +127,7 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.runpanelquery, "disable-runpanelquery", false, "Disable run panel query tools")
 	flag.BoolVar(&dt.graphite, "disable-graphite", false, "Disable Graphite tools")
 	flag.BoolVar(&dt.plugin, "disable-plugin", false, "Disable plugin tools")
+	flag.BoolVar(&dt.api, "disable-api", false, "Disable API tools")
 }
 
 func (gc *grafanaConfig) addFlags() {
@@ -178,6 +180,7 @@ func (dt *disabledTools) toolEntries() []toolEntry {
 		{tools.AddRunPanelQueryTools, dt.runpanelquery, "runpanelquery"},
 		{tools.AddGraphiteTools, dt.graphite, "graphite"},
 		{tools.AddPluginTools, dt.plugin, "plugin"},
+		{func(mcp *server.MCPServer) { tools.AddAPITools(mcp, enableWriteTools) }, dt.api, "api"},
 	}
 }
 
