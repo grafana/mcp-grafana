@@ -6,10 +6,14 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"maps"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -17,6 +21,91 @@ import (
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
 )
+
+const grafanaSampleDatasourcesURL = "https://raw.githubusercontent.com/grafana/grafana/refs/heads/main/conf/provisioning/datasources/sample.yaml"
+
+type parsedSample struct {
+	apiVersion   int
+	baseTemplate map[string]any
+}
+
+var (
+	sampleOnce sync.Once
+	sampleCache parsedSample
+)
+
+// uncommentYAML strips the leading "# " from commented-out lines in Grafana's
+// sample YAML files, making them parseable as regular YAML.
+func uncommentYAML(s string) string {
+	lines := strings.Split(s, "\n")
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		switch {
+		case strings.HasPrefix(line, "# "):
+			out = append(out, line[2:])
+		case line == "#":
+			out = append(out, "")
+		default:
+			out = append(out, line)
+		}
+	}
+	return strings.Join(out, "\n")
+}
+
+// loadSample fetches the Grafana sample datasource YAML once per process and
+// returns the parsed apiVersion and a base field template for new entries.
+// Falls back to safe defaults if the fetch fails.
+func loadSample() parsedSample {
+	sampleOnce.Do(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, grafanaSampleDatasourcesURL, nil)
+		if err != nil {
+			return
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return
+		}
+		defer resp.Body.Close()
+
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return
+		}
+
+		var pf datasourceProvisioningFile
+		if err := yaml.Unmarshal([]byte(uncommentYAML(string(body))), &pf); err != nil {
+			return
+		}
+
+		// always honor the API version that comes from the sample RAW github file.
+		sampleCache.apiVersion = pf.APIVersion
+
+		// Build a base template from the first datasource entry, keeping only the
+		// non-null fields that are common to all types. Skip name, type, uid, and
+		// url since those are always provided by the caller or left out intentionally.
+		// Clear jsonData/secureJsonData since their contents are type-specific.
+		if len(pf.Datasources) > 0 {
+			skip := map[string]bool{"name": true, "type": true, "uid": true, "url": true}
+			tmpl := make(map[string]any)
+			for k, v := range pf.Datasources[0] {
+				if v == nil || skip[k] {
+					continue
+				}
+				if k == "jsonData" || k == "secureJsonData" {
+					tmpl[k] = map[string]any{}
+					continue
+				}
+				tmpl[k] = v
+			}
+			sampleCache.baseTemplate = tmpl
+		}
+	})
+	
+	return sampleCache
+}
 
 type datasourceProvisioningFile struct {
 	APIVersion  int              `yaml:"apiVersion"`
@@ -76,6 +165,8 @@ func stemToDisplayName(stem string) string {
 }
 
 func provisionDatasource(_ context.Context, args ProvisionDatasourceParams) (*ProvisionDatasourceResult, error) {
+	s := loadSample()
+
 	fileName := args.FileName
 	if fileName == "" {
 		fileName = "prov-{type}"
@@ -88,7 +179,7 @@ func provisionDatasource(_ context.Context, args ProvisionDatasourceParams) (*Pr
 	}
 
 	// Load existing file if a directory was given, otherwise start fresh.
-	pf := &datasourceProvisioningFile{APIVersion: 1}
+	pf := &datasourceProvisioningFile{APIVersion: s.apiVersion}
 	isNew := true
 	var filePath string
 
@@ -98,9 +189,6 @@ func provisionDatasource(_ context.Context, args ProvisionDatasourceParams) (*Pr
 			isNew = false
 			if err := yaml.Unmarshal(data, pf); err != nil {
 				return nil, fmt.Errorf("parse %s: %w", filePath, err)
-			}
-			if pf.APIVersion != 1 {
-				pf.APIVersion = 1
 			}
 		} else if !os.IsNotExist(err) {
 			return nil, fmt.Errorf("read %s: %w", filePath, err)
@@ -142,7 +230,12 @@ func provisionDatasource(_ context.Context, args ProvisionDatasourceParams) (*Pr
 		}
 	}
 	if !upserted {
-		pf.Datasources = append(pf.Datasources, updates)
+		// For new entries, start from the sample base template so the output
+		// reflects the current Grafana provisioning schema, then overlay user values.
+		base := make(map[string]any, len(s.baseTemplate))
+		maps.Copy(base, s.baseTemplate)
+		maps.Copy(base, updates)
+		pf.Datasources = append(pf.Datasources, base)
 	}
 
 	out, err := yaml.Marshal(pf)
@@ -188,7 +281,7 @@ func provisionDatasource(_ context.Context, args ProvisionDatasourceParams) (*Pr
 
 var ProvisionDatasource = mcpgrafana.MustTool(
 	"provision_datasource",
-	"Generate a Grafana datasource provisioning YAML file. Always returns the YAML content and a base64-encoded zip archive in the response. Optionally attempts to write to disk when a directory is provided — this is only reliable when the server is running via stdio (local mode). In remote deployments the server cannot write to the client's filesystem, so callers should use the returned content or zip_content to save the file locally.",
+	"Generate a Grafana datasource provisioning YAML file. The schema is fetched from Grafana's official sample at startup so the output always reflects the current provisioning format. Always returns the YAML content and a base64-encoded zip archive. Optionally attempts to write to disk when a directory is provided — only reliable when running via stdio (local mode). In remote deployments use the returned content or zip_content to save the file locally.",
 	provisionDatasource,
 	mcp.WithTitleAnnotation("Provision datasource"),
 )
