@@ -64,10 +64,11 @@ var categoryDescription = map[string]string{
 	"rendering":     "Rendering: Export dashboard panels or full dashboards as PNG images (requires Grafana Image Renderer plugin).",
 	"plugin":        "Plugins: Check whether Grafana plugins are installed and fetch plugin details.",
 	"cloudwatch":    "CloudWatch: Query AWS CloudWatch datasources for metrics and logs.",
-	"examples":      "Examples: Query example tools.",
-	"clickhouse":    "ClickHouse: Query ClickHouse datasources via Grafana with macro and variable substitution support.",
-	"runpanelquery": "Run Panel Query: Execute panel queries directly.",
-	"graphite":      "Graphite: Query Graphite datasources for metrics.",
+	"examples":               "Examples: Query example tools.",
+	"clickhouse":             "ClickHouse: Query ClickHouse datasources via Grafana with macro and variable substitution support.",
+	"runpanelquery":          "Run Panel Query: Execute panel queries directly.",
+	"graphite":               "Graphite: Query Graphite datasources for metrics.",
+	"datasource-provisioning": "Datasource Provisioning: Create and update Grafana datasource provisioning YAML files on the local filesystem.",
 }
 
 // disabledTools indicates whether each category of tools should be disabled.
@@ -79,7 +80,7 @@ type disabledTools struct {
 	dashboard, folder, oncall, asserts, sift, admin,
 	pyroscope, navigation, proxied, annotations, rendering, cloudwatch, write,
 	examples, clickhouse, graphite,
-	runpanelquery, plugin bool
+	runpanelquery, plugin, dsprovisioning bool
 }
 
 // Configuration for the Grafana client.
@@ -125,6 +126,7 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.runpanelquery, "disable-runpanelquery", false, "Disable run panel query tools")
 	flag.BoolVar(&dt.graphite, "disable-graphite", false, "Disable Graphite tools")
 	flag.BoolVar(&dt.plugin, "disable-plugin", false, "Disable plugin tools")
+	flag.BoolVar(&dt.dsprovisioning, "disable-datasource-provisioning", false, "Disable datasource provisioning tools")
 }
 
 func (gc *grafanaConfig) addFlags() {
@@ -177,6 +179,7 @@ func (dt *disabledTools) toolEntries() []toolEntry {
 		{tools.AddRunPanelQueryTools, dt.runpanelquery, "runpanelquery"},
 		{tools.AddGraphiteTools, dt.graphite, "graphite"},
 		{tools.AddPluginTools, dt.plugin, "plugin"},
+		{tools.AddDatasourceProvisioningTools, dt.dsprovisioning, "datasource-provisioning"},
 	}
 }
 
