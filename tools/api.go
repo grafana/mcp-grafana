@@ -122,9 +122,12 @@ func doAPIRequest(ctx context.Context, endpoint, method, body string, headers ma
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxAPIResponseBytes))
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxAPIResponseBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("read response: %w", err)
+	}
+	if len(respBody) > maxAPIResponseBytes {
+		return nil, fmt.Errorf("response body exceeds maximum size of %d bytes", maxAPIResponseBytes)
 	}
 
 	result := &APIRequestResult{

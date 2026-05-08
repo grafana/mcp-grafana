@@ -290,6 +290,21 @@ func TestAPIRequest_MethodCaseInsensitive(t *testing.T) {
 	assert.Equal(t, http.MethodPost, capturedMethod)
 }
 
+func TestAPIRequest_ResponseTooLarge(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// Write more than maxAPIResponseBytes
+		_, _ = w.Write(make([]byte, maxAPIResponseBytes+1))
+	}))
+	t.Cleanup(ts.Close)
+
+	ctx := apiTestContext(t, ts.URL)
+	_, err := apiRequest(ctx, APIRequestParams{Endpoint: "/api/large"})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exceeds maximum size")
+}
+
 func TestAPIRequest_HTTPErrorStatus(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
