@@ -350,7 +350,11 @@ func proxyGetShift(ctx context.Context, id string) (*OnCallShift, error) {
 	if err != nil {
 		return nil, fmt.Errorf("creating proxy client: %w", err)
 	}
-	return fetchOne[OnCallShift](ctx, client, proxyShiftsPath, id)
+	internal, err := fetchOne[onCallShiftInternal](ctx, client, proxyShiftsPath, id)
+	if err != nil {
+		return nil, fmt.Errorf("getting shift %s: %w", id, err)
+	}
+	return internal.toOnCallShift(), nil
 }
 
 func proxyListUsers(ctx context.Context, args ListOnCallUsersParams) ([]*OnCallUser, error) {
@@ -391,7 +395,11 @@ func proxyListUsers(ctx context.Context, args ListOnCallUsersParams) ([]*OnCallU
 
 	result := make([]*OnCallUser, 0, len(internal))
 	for i := range internal {
-		result = append(result, internal[i].toOnCallUser())
+		u := internal[i].toOnCallUser()
+		if args.Username != "" && u.Username != args.Username {
+			continue
+		}
+		result = append(result, u)
 	}
 	return result, nil
 }

@@ -88,6 +88,43 @@ type renderForWeb struct {
 	Message string `json:"message"`
 }
 
+// onCallShiftInternal is the internal API response for a shift.
+type onCallShiftInternal struct {
+	ID            string   `json:"id"`
+	Name          string   `json:"name"`
+	Type          any      `json:"type"`
+	Schedule      string   `json:"schedule"`
+	PriorityLevel int      `json:"priority_level"`
+	ShiftStart    string   `json:"shift_start"`
+	ShiftEnd      any      `json:"shift_end"`
+	RotationStart string   `json:"rotation_start"`
+	Until         string   `json:"until"`
+	Frequency     any      `json:"frequency"`
+	Interval      int      `json:"interval"`
+	ByDay         []string `json:"by_day"`
+	WeekStart     string   `json:"week_start"`
+	RollingUsers  any      `json:"rolling_users"`
+}
+
+func (s *onCallShiftInternal) toOnCallShift() *OnCallShift {
+	return &OnCallShift{
+		ID:            s.ID,
+		Name:          s.Name,
+		Type:          s.Type,
+		Schedule:      s.Schedule,
+		PriorityLevel: s.PriorityLevel,
+		ShiftStart:    s.ShiftStart,
+		ShiftEnd:      s.ShiftEnd,
+		RotationStart: s.RotationStart,
+		Until:         s.Until,
+		Frequency:     s.Frequency,
+		Interval:      s.Interval,
+		ByDay:         s.ByDay,
+		WeekStart:     s.WeekStart,
+		RollingUsers:  s.RollingUsers,
+	}
+}
+
 // onCallUserInternal is the internal API response for a user.
 type onCallUserInternal struct {
 	PK       string `json:"pk"`

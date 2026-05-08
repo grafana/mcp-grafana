@@ -131,6 +131,67 @@ func TestInternalUserConversion(t *testing.T) {
 	assert.Equal(t, "admin", result.Role)
 }
 
+func TestInternalShiftConversion(t *testing.T) {
+	s := &onCallShiftInternal{
+		ID:            "SHIFT1",
+		Name:          "Morning Shift",
+		Type:          float64(2),
+		Schedule:      "SCHED1",
+		PriorityLevel: 1,
+		ShiftStart:    "2025-01-15T08:00:00Z",
+		ShiftEnd:      "2025-01-15T16:00:00Z",
+		RotationStart: "2025-01-01T08:00:00Z",
+		Until:         "2025-06-01T00:00:00Z",
+		Frequency:     "weekly",
+		Interval:      1,
+		ByDay:         []string{"MO", "TU", "WE", "TH", "FR"},
+		WeekStart:     "MO",
+		RollingUsers:  []any{[]any{"USER1", "USER2"}},
+	}
+
+	result := s.toOnCallShift()
+
+	assert.Equal(t, "SHIFT1", result.ID)
+	assert.Equal(t, "Morning Shift", result.Name)
+	assert.Equal(t, float64(2), result.Type)
+	assert.Equal(t, "SCHED1", result.Schedule)
+	assert.Equal(t, 1, result.PriorityLevel)
+	assert.Equal(t, "2025-01-15T08:00:00Z", result.ShiftStart)
+	assert.Equal(t, "2025-01-15T16:00:00Z", result.ShiftEnd)
+	assert.Equal(t, "2025-01-01T08:00:00Z", result.RotationStart)
+	assert.Equal(t, "2025-06-01T00:00:00Z", result.Until)
+	assert.Equal(t, "weekly", result.Frequency)
+	assert.Equal(t, 1, result.Interval)
+	assert.Equal(t, []string{"MO", "TU", "WE", "TH", "FR"}, result.ByDay)
+	assert.Equal(t, "MO", result.WeekStart)
+}
+
+func TestProxyUsernameExactMatch(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(paginatedResult[onCallUserInternal]{
+			Results: []onCallUserInternal{
+				{PK: "U1", Username: "ben"},
+				{PK: "U2", Username: "benjamin"},
+				{PK: "U3", Username: "benny"},
+			},
+		})
+	}))
+	defer server.Close()
+
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{
+		URL:         server.URL,
+		AccessToken: "test-access",
+		IDToken:     "test-id",
+	})
+
+	result, err := proxyListUsers(ctx, ListOnCallUsersParams{Username: "ben"})
+	require.NoError(t, err)
+	require.Len(t, result, 1)
+	assert.Equal(t, "U1", result[0].ID)
+	assert.Equal(t, "ben", result[0].Username)
+}
+
 func TestExtractUserIDs(t *testing.T) {
 	tests := []struct {
 		name  string
