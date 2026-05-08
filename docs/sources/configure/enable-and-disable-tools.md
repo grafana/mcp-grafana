@@ -30,6 +30,7 @@ Some tool categories are disabled by default:
 - **runpanelquery** – Run dashboard panel queries.
 - **examples** – Query examples for datasource types.
 - **clickhouse** – ClickHouse datasource tools.
+- **snowflake** – Snowflake datasource tools (including queries against `SNOWFLAKE.TELEMETRY.EVENTS` event tables).
 - **cloudwatch** – CloudWatch tools.
 - **elasticsearch** – Elasticsearch query tool.
 - **influxdb** – InfluxDB query tool (Flux and InfluxQL).
