@@ -419,19 +419,19 @@ func proxyListTeams(ctx context.Context, args ListOnCallTeamsParams) ([]*OnCallT
 		path += "?" + params.Encode()
 	}
 
-	var teams []OnCallTeam
+	var internal []onCallTeamInternal
 	if args.Page > 0 {
-		teams, err = fetchSinglePage[OnCallTeam](ctx, client, path)
+		internal, err = fetchSinglePage[onCallTeamInternal](ctx, client, path)
 	} else {
-		teams, err = fetchPaginated[OnCallTeam](ctx, client, path)
+		internal, err = fetchPaginated[onCallTeamInternal](ctx, client, path)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("listing teams: %w", err)
 	}
 
-	result := make([]*OnCallTeam, 0, len(teams))
-	for i := range teams {
-		result = append(result, &teams[i])
+	result := make([]*OnCallTeam, 0, len(internal))
+	for i := range internal {
+		result = append(result, internal[i].toOnCallTeam())
 	}
 	return result, nil
 }

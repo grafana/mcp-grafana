@@ -88,6 +88,23 @@ type renderForWeb struct {
 	Message string `json:"message"`
 }
 
+// onCallTeamInternal is the internal API response for a team.
+type onCallTeamInternal struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Email     string `json:"email"`
+	AvatarURL string `json:"avatar_url"`
+}
+
+func (t *onCallTeamInternal) toOnCallTeam() *OnCallTeam {
+	return &OnCallTeam{
+		ID:        t.ID,
+		Name:      t.Name,
+		Email:     t.Email,
+		AvatarURL: t.AvatarURL,
+	}
+}
+
 // onCallShiftInternal is the internal API response for a shift.
 type onCallShiftInternal struct {
 	ID            string   `json:"id"`
