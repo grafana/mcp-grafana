@@ -240,8 +240,8 @@ func substituteAthenaMacros(query string, from, to time.Time) string {
 	// $__interval_ms -> interval in milliseconds (must be before $__interval to avoid partial replacement)
 	query = strings.ReplaceAll(query, "$__interval_ms", strconv.FormatInt(intervalSeconds*1000, 10))
 
-	// $__interval -> interval string
-	query = strings.ReplaceAll(query, "$__interval", fmt.Sprintf("%ds", intervalSeconds))
+	// $__interval -> interval in seconds (plain integer, valid in Athena SQL expressions)
+	query = strings.ReplaceAll(query, "$__interval", strconv.FormatInt(intervalSeconds, 10))
 
 	return query
 }

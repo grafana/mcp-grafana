@@ -56,7 +56,7 @@ func TestSubstituteAthenaMacros(t *testing.T) {
 		{
 			name:     "$__interval macro",
 			query:    "SELECT date_trunc('second', ts / $__interval) AS bucket",
-			expected: "SELECT date_trunc('second', ts / 3s) AS bucket",
+			expected: "SELECT date_trunc('second', ts / 3) AS bucket",
 		},
 		{
 			name:     "$__interval_ms macro",
@@ -66,7 +66,7 @@ func TestSubstituteAthenaMacros(t *testing.T) {
 		{
 			name:     "$__interval_ms not corrupted by $__interval",
 			query:    "SELECT $__interval_ms, $__interval",
-			expected: "SELECT 3000, 3s",
+			expected: "SELECT 3000, 3",
 		},
 		{
 			name:     "multiple macros",
@@ -262,9 +262,9 @@ func TestSubstituteAthenaMacros_IntervalCalculation(t *testing.T) {
 		rangeHours       int
 		expectedInterval string
 	}{
-		{name: "1 hour range", rangeHours: 1, expectedInterval: "3s"},
-		{name: "6 hour range", rangeHours: 6, expectedInterval: "21s"},
-		{name: "24 hour range", rangeHours: 24, expectedInterval: "86s"},
+		{name: "1 hour range", rangeHours: 1, expectedInterval: "3"},
+		{name: "6 hour range", rangeHours: 6, expectedInterval: "21"},
+		{name: "24 hour range", rangeHours: 24, expectedInterval: "86"},
 	}
 
 	for _, tt := range tests {
