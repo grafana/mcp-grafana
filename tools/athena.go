@@ -102,7 +102,11 @@ func (c *athenaClient) resource(ctx context.Context, path string, body map[strin
 		return nil, fmt.Errorf("athena resource %s returned status %d: %s", path, resp.StatusCode, string(errBody))
 	}
 
-	return io.ReadAll(limitedBody)
+	respBytes, err := io.ReadAll(limitedBody)
+	if err != nil {
+		return nil, fmt.Errorf("reading athena resource %s response: %w", path, err)
+	}
+	return respBytes, nil
 }
 
 type athenaQueryResponse struct {
