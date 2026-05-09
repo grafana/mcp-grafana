@@ -88,6 +88,11 @@ func GenerateEmptyResultHints(ctx HintContext) *EmptyResultHints {
 		hints.PossibleCauses = getGraphiteCauses(ctx)
 		hints.SuggestedActions = getGraphiteActions(ctx)
 
+	case "snowflake":
+		hints.Summary = "The Snowflake query returned no rows for the specified parameters."
+		hints.PossibleCauses = getSnowflakeCauses(ctx)
+		hints.SuggestedActions = getSnowflakeActions(ctx)
+
 	default:
 		hints.Summary = "The query returned no data for the specified parameters."
 		hints.PossibleCauses = getGenericCauses()
@@ -288,6 +293,26 @@ func getAthenaActions(ctx HintContext) []string {
 		"Use describe_athena_table to check column names, or run DESCRIBE db.table via query_athena for column types and partition spec",
 		"Widen the time range or check partition column values (run DESCRIBE to see partition structure)",
 		"Try a simple SELECT * FROM table LIMIT 10 to verify access",
+	}
+}
+
+// getSnowflakeCauses returns possible causes for empty Snowflake results
+func getSnowflakeCauses(ctx HintContext) []string {
+	return []string{
+		"The table may not contain data for the specified time range",
+		"The WHERE clause filters may not match any rows",
+		"The database/schema/table names may be incorrect (Snowflake identifiers are typically uppercase)",
+		"The time column filter may use an incorrect format (use TIMESTAMP_NTZ casts or $__timeFilter)",
+	}
+}
+
+// getSnowflakeActions returns suggested actions for empty Snowflake results
+func getSnowflakeActions(ctx HintContext) []string {
+	return []string{
+		"Use list_snowflake_tables to verify the table exists",
+		"Use describe_snowflake_table to check column names and types",
+		"Try removing WHERE clause filters to see if the table contains data",
+		"Verify the datasource's default database/role has access to the table",
 	}
 }
 

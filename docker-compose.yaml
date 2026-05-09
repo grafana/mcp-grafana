@@ -3,7 +3,7 @@ services:
     image: grafana/grafana:12.4.2@sha256:83749231c3835e390a3144e5e940203e42b9589761f20ef3169c716e734ad505
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "false"
-      GF_INSTALL_PLUGINS: grafana-clickhouse-datasource
+      GF_INSTALL_PLUGINS: grafana-clickhouse-datasource,grafana-opensearch-datasource
       GF_LOG_LEVEL: debug
       GF_SERVER_ROUTER_LOGGING: "true"
       GF_RENDERING_SERVER_URL: http://renderer:8081/render
@@ -17,12 +17,12 @@ services:
         target: /var/lib/grafana/empty-alerts-folder
 
   renderer:
-    image: grafana/grafana-image-renderer:latest@sha256:6c432f1aed266ce56433becacd197cdab708f9089104d67664207b4fe0975055
+    image: grafana/grafana-image-renderer:latest@sha256:340c91e98ccd65001a3da4d0192fcf0ed13e95609a51a0d62c35a61b6ff28dff
     ports:
       - 8081
 
   prometheus:
-    image: prom/prometheus@sha256:5550dc63da361dc30f6fe02ac0e4dfc736ededfef3c8d12a634db04a67824d78
+    image: prom/prometheus@sha256:e4254400b85610324913f0dc4acf92603d9984e7519414c5a12811aa6146acc3
     ports:
       - "9090:9090"
     entrypoint: /etc/prometheus/entrypoint.sh
@@ -105,6 +105,29 @@ services:
       - ./testdata/elasticsearch-seed.sh:/seed.sh
     entrypoint: ["sh", "/seed.sh"]
 
+  opensearch:
+    image: opensearchproject/opensearch:2.19.1
+    environment:
+      - discovery.type=single-node
+      - DISABLE_SECURITY_PLUGIN=true
+      - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"
+    ports:
+      - "9201:9200"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health | grep -q '\"status\":\"green\"\\|\"status\":\"yellow\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  opensearch-seed:
+    image: curlimages/curl:8.12.1
+    depends_on:
+      opensearch:
+        condition: service_healthy
+    volumes:
+      - ./testdata/opensearch-seed.sh:/seed.sh
+    entrypoint: ["sh", "/seed.sh"]
+
   localstack:
     image: localstack/localstack:4.14@sha256:3ebc37595918b8accb852f8048fef2aff047d465167edd655528065b07bc364a
     ports:
@@ -148,7 +171,7 @@ services:
     entrypoint: ["sh", "/seed.sh"]
 
   clickhouse:
-    image: clickhouse/clickhouse-server:25.12@sha256:59efe7d83b1e13c2e439a80adcce1fad186489d69a55d4b763102280a359a4cc
+    image: clickhouse/clickhouse-server:25.12@sha256:8a790dd3468db22b1d4e7b18a176f378ff5ff6053b9c48dd4ea1fa71a24c5ba6
     ports:
       - "8123:8123"
       - "9000:9000"
