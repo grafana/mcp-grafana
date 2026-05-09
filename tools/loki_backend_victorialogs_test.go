@@ -48,7 +48,7 @@ func newFakeVLServer(t *testing.T, handler http.HandlerFunc) *fakeVLServer {
 func newTestVLBackend(t *testing.T, server *httptest.Server) *victoriaLogsBackend {
 	t.Helper()
 	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: server.URL})
-	b, err := newVictoriaLogsBackend(ctx, "vl-uid")
+	b, err := newVictoriaLogsBackend(ctx, "vl-uid", nil)
 	require.NoError(t, err)
 	// The backend's baseURL targets /api/datasources/proxy/uid/{uid} on the
 	// real Grafana; for tests we point it at the fake server root.

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/grafana/grafana-openapi-client-go/models"
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -59,13 +60,13 @@ type Pattern struct {
 	TotalCount int64  `json:"totalCount"`
 }
 
-func newLokiClient(ctx context.Context, uid string) (*Client, error) {
-	// First check if the datasource exists
-	_, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: uid})
-	if err != nil {
-		return nil, err
-	}
-
+// newLokiClient builds the HTTP client used by the native Loki backend.
+// Callers are expected to have already resolved the datasource (so the
+// existence check happens in lokiBackendForDatasource and isn't repeated
+// here); the ds argument is currently unused but kept to mirror the
+// prom_backend constructor signature and to leave room for per-datasource
+// configuration (e.g. JSONData) without churning the call sites again.
+func newLokiClient(ctx context.Context, uid string, _ *models.DataSource) (*Client, error) {
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
 	grafanaURL := cfg.URL
 	resourcesBase, proxyBase := datasourceProxyPaths(uid)

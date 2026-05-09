@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/grafana/grafana-openapi-client-go/models"
 )
 
 // lokiBackend abstracts the differences between datasource types that serve
@@ -59,7 +61,9 @@ type lokiQueryResult struct {
 // lokiBackendForDatasource resolves a UID to the appropriate backend by
 // inspecting the datasource type. Native Loki is the default; VictoriaLogs
 // is selected when the type matches the victoriametrics-logs-datasource
-// plugin.
+// plugin. The looked-up DataSource is forwarded to the constructors so
+// they don't have to re-fetch it (mirroring backendForDatasource in
+// prom_backend.go).
 func lokiBackendForDatasource(ctx context.Context, uid string) (lokiBackend, error) {
 	ds, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: uid})
 	if err != nil {
@@ -68,9 +72,9 @@ func lokiBackendForDatasource(ctx context.Context, uid string) (lokiBackend, err
 
 	switch ds.Type {
 	case victoriaLogsDatasourceType:
-		return newVictoriaLogsBackend(ctx, uid)
+		return newVictoriaLogsBackend(ctx, uid, ds)
 	default:
-		return newLokiNativeBackend(ctx, uid)
+		return newLokiNativeBackend(ctx, uid, ds)
 	}
 }
 
@@ -79,8 +83,8 @@ type lokiNativeBackend struct {
 	client *Client
 }
 
-func  newLokiNativeBackend(ctx context.Context, uid string) (*lokiNativeBackend, error) {
-	c, err := newLokiClient(ctx, uid)
+func newLokiNativeBackend(ctx context.Context, uid string, ds *models.DataSource) (*lokiNativeBackend, error) {
+	c, err := newLokiClient(ctx, uid, ds)
 	if err != nil {
 		return nil, err
 	}

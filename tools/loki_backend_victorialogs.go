@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/grafana/grafana-openapi-client-go/models"
 	mcpgrafana "github.com/grafana/mcp-grafana"
 )
 
@@ -32,7 +33,11 @@ type victoriaLogsBackend struct {
 	baseURL    string
 }
 
-func newVictoriaLogsBackend(ctx context.Context, uid string) (*victoriaLogsBackend, error) {
+// newVictoriaLogsBackend constructs the backend. The ds argument is
+// currently unused but accepted to mirror the prom_backend constructor
+// signature and to leave room for per-datasource configuration without
+// churning callers later.
+func newVictoriaLogsBackend(ctx context.Context, uid string, _ *models.DataSource) (*victoriaLogsBackend, error) {
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
 	resourcesBase, proxyBase := datasourceProxyPaths(uid)
 	baseURL := trimTrailingSlash(cfg.URL) + proxyBase
