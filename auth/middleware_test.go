@@ -2,8 +2,10 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -179,4 +181,138 @@ func TestMiddleware_ExpiredBearer_PreservesRefresh(t *testing.T) {
 	if _, err := store.GetSessionByRefreshHash(context.Background(), HashToken(plainRT)); err != nil {
 		t.Errorf("session was deleted on access-token expiry — refresh path is broken: %v", err)
 	}
+}
+
+func TestMiddleware_RefreshesNearExpiry(t *testing.T) {
+	enc := mustEnc(t, mustKey(t), nil)
+	store := NewMemoryStore()
+
+	// Pre-existing session with creds expiring in 30 seconds (< 60s window).
+	plainAT, hashAT := NewToken()
+	credCT, _ := enc.Seal([]byte("expiring-bearer"))
+	refreshCT, _ := enc.Seal([]byte("refresh-1"))
+	_, _ = store.PutSession(context.Background(), Session{
+		TokenHash:         hashAT,
+		ExpiresAt:         time.Now().Add(time.Hour),
+		Identity:          Identity{Mode: ModeOAuthGrafana, ID: "alice"},
+		UpstreamCredsCT:   credCT,
+		UpstreamRefreshCT: refreshCT,
+		UpstreamExpiresAt: time.Now().Add(30 * time.Second),
+	})
+
+	srv := &Server{
+		PublicURL: "https://mcp.example.com",
+		Store:     store,
+		Encryptor: enc,
+		Upstream: &refreshableStub{
+			newCreds:   []byte("refreshed-bearer"),
+			newRefresh: []byte("refresh-2"),
+			newExpiry:  time.Now().Add(10 * time.Minute),
+		},
+	}
+
+	var observedKey string
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cfg := mcpgrafana.GrafanaConfigFromContext(r.Context())
+		observedKey = cfg.APIKey
+	})
+	r := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	r.Header.Set("Authorization", "Bearer "+plainAT)
+	w := httptest.NewRecorder()
+	srv.Middleware()(next).ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d", w.Code)
+	}
+	if observedKey != "refreshed-bearer" {
+		t.Errorf("APIKey on context = %q, want refreshed-bearer", observedKey)
+	}
+
+	// Persisted session must reflect the new credentials.
+	got, err := store.GetSessionByTokenHash(context.Background(), hashAT)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pt, _ := enc.Open(got.UpstreamCredsCT)
+	if string(pt) != "refreshed-bearer" {
+		t.Errorf("session creds not persisted: got %q", pt)
+	}
+	pt, _ = enc.Open(got.UpstreamRefreshCT)
+	if string(pt) != "refresh-2" {
+		t.Errorf("session refresh not persisted: got %q", pt)
+	}
+	if got.UpstreamExpiresAt.Before(time.Now().Add(time.Minute)) {
+		t.Errorf("session expiry not advanced: %v", got.UpstreamExpiresAt)
+	}
+}
+
+func TestMiddleware_RefreshFailureReturns401(t *testing.T) {
+	enc := mustEnc(t, mustKey(t), nil)
+	store := NewMemoryStore()
+
+	plainAT, hashAT := NewToken()
+	credCT, _ := enc.Seal([]byte("expiring-bearer"))
+	refreshCT, _ := enc.Seal([]byte("refresh-1"))
+	_, _ = store.PutSession(context.Background(), Session{
+		TokenHash:         hashAT,
+		ExpiresAt:         time.Now().Add(time.Hour),
+		Identity:          Identity{Mode: ModeOAuthGrafana, ID: "alice"},
+		UpstreamCredsCT:   credCT,
+		UpstreamRefreshCT: refreshCT,
+		UpstreamExpiresAt: time.Now().Add(10 * time.Second),
+	})
+
+	srv := &Server{
+		PublicURL: "https://mcp.example.com",
+		Store:     store,
+		Encryptor: enc,
+		Upstream:  &refreshableStub{refreshErr: errors.New("upstream rejected refresh token")},
+	}
+
+	called := false
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { called = true })
+	r := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	r.Header.Set("Authorization", "Bearer "+plainAT)
+	w := httptest.NewRecorder()
+	srv.Middleware()(next).ServeHTTP(w, r)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("status=%d, want 401", w.Code)
+	}
+	if !strings.Contains(w.Header().Get("WWW-Authenticate"), "invalid_token") {
+		t.Errorf("WWW-Authenticate=%q", w.Header().Get("WWW-Authenticate"))
+	}
+	if called {
+		t.Errorf("next handler should not run on refresh failure")
+	}
+
+	// Session should be deleted on failed refresh — client must re-auth.
+	if _, err := store.GetSessionByTokenHash(context.Background(), hashAT); !errors.Is(err, ErrNotFound) {
+		t.Errorf("expected session deleted after failed refresh, got err=%v", err)
+	}
+}
+
+// refreshableStub is a test Upstream that returns canned refresh results.
+type refreshableStub struct {
+	newCreds   []byte
+	newRefresh []byte
+	newExpiry  time.Time
+	refreshErr error
+}
+
+func (r *refreshableStub) Mode() Mode                      { return ModeOAuthGrafana }
+func (r *refreshableStub) AuthorizeURL(_, _ string) string { return "" }
+func (r *refreshableStub) HandleCallback(_ context.Context, _ url.Values) (CallbackResult, error) {
+	return CallbackResult{}, nil
+}
+func (r *refreshableStub) Refresh(_ context.Context, _ []byte) (CallbackResult, error) {
+	if r.refreshErr != nil {
+		return CallbackResult{}, r.refreshErr
+	}
+	return CallbackResult{
+		HasCred:           true,
+		UpstreamCreds:     r.newCreds,
+		UpstreamRefresh:   r.newRefresh,
+		UpstreamExpiresAt: r.newExpiry,
+	}, nil
 }
