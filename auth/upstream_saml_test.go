@@ -1,0 +1,173 @@
+package auth
+
+import (
+	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"math/big"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/crewjam/saml"
+)
+
+func TestNewSAMLUpstream_ConstructsServiceProvider(t *testing.T) {
+	dir := t.TempDir()
+	certPath, keyPath := generateSPKeyPair(t, dir)
+	metadataPath := writeMockIdPMetadata(t, dir)
+
+	cfg := Config{
+		Mode:                ModeSAML,
+		PublicURL:           "https://mcp.example.com",
+		SAMLIdPMetadataFile: metadataPath,
+		SAMLSPCertFile:      certPath,
+		SAMLSPKeyFile:       keyPath,
+		SAMLNameIDFormat:    "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
+		SAMLAttributeEmail:  "email",
+		SAMLAttributeGroups: "groups",
+		SAMLClockSkew:       60 * time.Second,
+	}
+	up, err := NewSAMLUpstream(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if up.Mode() != ModeSAML {
+		t.Errorf("Mode() = %q", up.Mode())
+	}
+	if up.cfg.AcsURL != "https://mcp.example.com/saml/acs" {
+		t.Errorf("AcsURL = %q", up.cfg.AcsURL)
+	}
+	if up.cfg.EntityID != "https://mcp.example.com/saml/metadata" {
+		t.Errorf("default EntityID = %q", up.cfg.EntityID)
+	}
+}
+
+func TestSAMLUpstream_AuthorizeURL_ContainsSAMLRequest(t *testing.T) {
+	up := mustNewSAMLUpstream(t)
+
+	rawURL := up.AuthorizeURL("https://mcp.example.com/callback", "state-1")
+	if rawURL == "" {
+		t.Fatalf("AuthorizeURL returned empty string")
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := u.Query()
+	if q.Get("SAMLRequest") == "" {
+		t.Errorf("SAMLRequest query parameter missing: %s", rawURL)
+	}
+	if q.Get("RelayState") != "state-1" {
+		t.Errorf("RelayState = %q", q.Get("RelayState"))
+	}
+
+	// The pending registry should now have an entry for state-1 with a
+	// SAML RequestID.
+	up.mu.Lock()
+	p, ok := up.pendings["state-1"]
+	up.mu.Unlock()
+	if !ok || p.requestID == "" {
+		t.Errorf("expected pending RequestID stored for state-1: ok=%v p=%v", ok, p)
+	}
+}
+
+func TestSAMLUpstream_HandleCallbackReturnsError(t *testing.T) {
+	up := mustNewSAMLUpstream(t)
+	if _, err := up.HandleCallback(context.Background(), nil); err == nil {
+		t.Errorf("HandleCallback should return an error in SAML mode")
+	}
+}
+
+func TestSAMLUpstream_RefreshNotSupported(t *testing.T) {
+	up := mustNewSAMLUpstream(t)
+	if _, err := up.Refresh(context.Background(), nil); err == nil {
+		t.Errorf("Refresh should return ErrRefreshNotSupported in SAML mode")
+	} else if !strings.Contains(err.Error(), "does not support") {
+		t.Errorf("error doesn't mention refresh support: %v", err)
+	}
+}
+
+// --- Helpers ---
+
+func mustNewSAMLUpstream(t *testing.T) *SAMLUpstream {
+	t.Helper()
+	dir := t.TempDir()
+	certPath, keyPath := generateSPKeyPair(t, dir)
+	metadataPath := writeMockIdPMetadata(t, dir)
+
+	up, err := NewSAMLUpstream(context.Background(), Config{
+		Mode:                ModeSAML,
+		PublicURL:           "https://mcp.example.com",
+		SAMLIdPMetadataFile: metadataPath,
+		SAMLSPCertFile:      certPath,
+		SAMLSPKeyFile:       keyPath,
+		SAMLNameIDFormat:    "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return up
+}
+
+// generateSPKeyPair creates a 2048-bit RSA key + self-signed X.509 cert
+// for the SP, written as PEM files. Returns the cert path and key path.
+func generateSPKeyPair(t *testing.T, dir string) (certPath, keyPath string) {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	template := x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "mcp-grafana-sp"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, &template, &template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	certPath = filepath.Join(dir, "sp.crt")
+	keyPath = filepath.Join(dir, "sp.key")
+	os.WriteFile(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0600)
+	os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}), 0600)
+	return
+}
+
+// writeMockIdPMetadata creates a minimal SAML IdP metadata XML on disk.
+// The IdP signing key here is the same as the SP's for simplicity — in
+// tests that exercise actual assertions, real IdP keys come from the
+// crewjam/saml test helpers.
+func writeMockIdPMetadata(t *testing.T, dir string) string {
+	t.Helper()
+	// Produce a minimal EntityDescriptor with one SSO endpoint. crewjam's
+	// ParseMetadata needs valid XML and a SingleSignOnService for redirect
+	// binding.
+	xmlData := `<?xml version="1.0" encoding="UTF-8"?>
+<EntityDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata"
+                  entityID="https://idp.example.com">
+  <IDPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
+    <SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect"
+                         Location="https://idp.example.com/sso"/>
+    <SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"
+                         Location="https://idp.example.com/sso"/>
+  </IDPSSODescriptor>
+</EntityDescriptor>`
+	path := filepath.Join(dir, "idp-metadata.xml")
+	if err := os.WriteFile(path, []byte(xmlData), 0600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// _ keeps saml import live in case other tests in this package don't
+// reference it directly.
+var _ = saml.HTTPRedirectBinding
