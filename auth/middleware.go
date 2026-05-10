@@ -69,17 +69,31 @@ func (s *Server) Middleware() func(http.Handler) http.Handler {
 			if !sess.UpstreamExpiresAt.IsZero() && time.Until(sess.UpstreamExpiresAt) < refreshWindow {
 				updated, err := s.refreshUpstream(r.Context(), sess)
 				if err != nil {
-					// Same race as the expired-token branch above: gate
-					// the SessionRevoked decrement on whether THIS request
-					// actually deleted the row.
-					deleted, _ := s.Store.DeleteSession(r.Context(), sess.TokenHash)
-					if deleted {
-						s.Metrics.SessionRevoked(r.Context(), sess.Identity.Mode)
+					// Proactive refresh: a transient upstream blip while the
+					// existing creds are still valid (within window but not
+					// yet expired) shouldn't permanently destroy the session.
+					// Log and serve with the existing credential; the next
+					// request will retry the refresh. Only delete + 401 when
+					// the credential has actually expired and we have no
+					// usable token to fall back on.
+					if !time.Now().After(sess.UpstreamExpiresAt) {
+						s.logger().Warn("auth.upstream_refresh_failed_but_creds_still_valid",
+							"user_id", sess.Identity.String(), "error", err.Error(),
+							"expires_in", time.Until(sess.UpstreamExpiresAt).String())
+					} else {
+						// Same race as the expired-token branch above: gate
+						// the SessionRevoked decrement on whether THIS request
+						// actually deleted the row.
+						deleted, _ := s.Store.DeleteSession(r.Context(), sess.TokenHash)
+						if deleted {
+							s.Metrics.SessionRevoked(r.Context(), sess.Identity.Mode)
+						}
+						s.unauthorized(w, "invalid_token", "upstream refresh failed")
+						return
 					}
-					s.unauthorized(w, "invalid_token", "upstream refresh failed")
-					return
+				} else {
+					sess = updated
 				}
-				sess = updated
 			}
 
 			pt, err := s.Encryptor.Open(sess.UpstreamCredsCT)

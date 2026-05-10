@@ -302,7 +302,10 @@ func TestMiddleware_Refresh_PreservesOldRefreshTokenWhenUpstreamOmitsIt(t *testi
 	}
 }
 
-func TestMiddleware_RefreshFailureReturns401(t *testing.T) {
+// TestMiddleware_RefreshFailure_ExpiredCreds_Returns401 covers the case where
+// the upstream credential has already expired and refresh fails: there is no
+// usable token left, so the middleware deletes the session and returns 401.
+func TestMiddleware_RefreshFailure_ExpiredCreds_Returns401(t *testing.T) {
 	enc := mustEnc(t, mustKey(t), nil)
 	store := NewMemoryStore()
 
@@ -315,7 +318,8 @@ func TestMiddleware_RefreshFailureReturns401(t *testing.T) {
 		Identity:          Identity{Mode: ModeOAuthGrafana, ID: "alice"},
 		UpstreamCredsCT:   credCT,
 		UpstreamRefreshCT: refreshCT,
-		UpstreamExpiresAt: time.Now().Add(10 * time.Second),
+		// Already expired — refresh is the only path forward.
+		UpstreamExpiresAt: time.Now().Add(-5 * time.Second),
 	})
 
 	srv := &Server{
@@ -346,6 +350,58 @@ func TestMiddleware_RefreshFailureReturns401(t *testing.T) {
 	// Session should be deleted on failed refresh — client must re-auth.
 	if _, err := store.GetSessionByTokenHash(context.Background(), hashAT); !errors.Is(err, ErrNotFound) {
 		t.Errorf("expected session deleted after failed refresh, got err=%v", err)
+	}
+}
+
+// TestMiddleware_RefreshFailure_ValidCreds_ServesRequest covers the more
+// common case: a transient upstream blip during proactive refresh while the
+// credential is still valid. The session must not be destroyed; the request
+// is served with the existing token and the next request retries refresh.
+func TestMiddleware_RefreshFailure_ValidCreds_ServesRequest(t *testing.T) {
+	enc := mustEnc(t, mustKey(t), nil)
+	store := NewMemoryStore()
+
+	plainAT, hashAT := NewToken()
+	credCT, _ := enc.Seal([]byte("still-valid-bearer"))
+	refreshCT, _ := enc.Seal([]byte("refresh-1"))
+	_, _ = store.PutSession(context.Background(), Session{
+		TokenHash:         hashAT,
+		ExpiresAt:         time.Now().Add(time.Hour),
+		Identity:          Identity{Mode: ModeOAuthGrafana, ID: "alice"},
+		UpstreamCredsCT:   credCT,
+		UpstreamRefreshCT: refreshCT,
+		// Within the 60s refresh window but not yet expired.
+		UpstreamExpiresAt: time.Now().Add(20 * time.Second),
+	})
+
+	srv := &Server{
+		Metrics:   NewMetrics(),
+		PublicURL: "https://mcp.example.com",
+		Store:     store,
+		Encryptor: enc,
+		Upstream:  &refreshableStub{refreshErr: errors.New("transient upstream blip")},
+	}
+
+	var observedKey string
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cfg := mcpgrafana.GrafanaConfigFromContext(r.Context())
+		observedKey = cfg.APIKey
+	})
+	r := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	r.Header.Set("Authorization", "Bearer "+plainAT)
+	w := httptest.NewRecorder()
+	srv.Middleware()(next).ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d, want 200 (refresh failure on still-valid creds shouldn't 401)", w.Code)
+	}
+	if observedKey != "still-valid-bearer" {
+		t.Errorf("served bearer = %q, want existing creds", observedKey)
+	}
+
+	// Session must still exist for the next request to retry refresh.
+	if _, err := store.GetSessionByTokenHash(context.Background(), hashAT); err != nil {
+		t.Errorf("session must not be destroyed by transient refresh failure: %v", err)
 	}
 }
 
