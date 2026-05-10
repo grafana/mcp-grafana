@@ -49,8 +49,17 @@ type Config struct {
 
 	// RBACGating selects the RBAC tool gating mode.
 	// "auto" (default), "enterprise", "basic", or "off".
-	// "auto" probes /api/access-control/user/permissions on first use and
-	// picks "enterprise" if the response is non-empty, else "basic".
+	//
+	// "auto" probes /api/access-control/user/permissions on first use.
+	// When the response is non-empty the engine resolves to "enterprise"
+	// for the rest of the process lifetime. An empty response is
+	// ambiguous (real OSS-Basic install vs. Enterprise where the first
+	// observed user happens to have no granted permissions), so "auto"
+	// stays unresolved and the tools/list hook fails open — every tool
+	// is visible until either some user yields non-empty perms or the
+	// operator explicitly sets --rbac-gating=basic. Pure-OSS deployments
+	// that want basic-role-only gating should set "basic" explicitly
+	// rather than rely on auto-detection.
 	RBACGating string
 
 	// RBACCacheTTL is how long a per-session permission snapshot is reused
