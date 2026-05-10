@@ -144,6 +144,17 @@ func NewSAMLUpstream(ctx context.Context, cfg Config) (*SAMLUpstream, error) {
 	if cfg.SAMLNameIDFormat != "" {
 		sp.AuthnNameIDFormat = saml.NameIDFormat(cfg.SAMLNameIDFormat)
 	}
+	// Honour the operator-configured clock skew. crewjam/saml exposes
+	// the tolerance as a package-level var (saml.MaxClockSkew, default
+	// 180s), not a ServiceProvider field — ParseResponse reads it
+	// directly when validating NotBefore/NotOnOrAfter on the inbound
+	// assertion. Without this assignment the cfg value flowed into
+	// samlConfig but the library never saw it, so --saml-clock-skew
+	// silently had no effect. Setting a package global is acceptable
+	// because mcp-grafana runs one upstream config per process.
+	if cfg.SAMLClockSkew > 0 {
+		saml.MaxClockSkew = cfg.SAMLClockSkew
+	}
 
 	upstream := &SAMLUpstream{
 		rawSP: sp,
