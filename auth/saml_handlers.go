@@ -1,11 +1,8 @@
 package auth
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"html"
 	"net/http"
-	"time"
 )
 
 // samlValidator returns the upstream as a SAMLValidator if it implements
@@ -80,37 +77,12 @@ func (s *Server) SAMLACSHandler() http.Handler {
 			return
 		}
 
-		// Run the Mode-C-equivalent flow: existing session shortcut, else
-		// redirect to /bootstrap.
-		existing, err := s.Store.GetSessionByIdentity(r.Context(), result.Identity)
-		if err == nil && len(existing.UpstreamCredsCT) > 0 {
-			s.completeAuthCode(w, r, pf, result.Identity, existing.UpstreamCredsCT, existing.UpstreamRefreshCT, existing.UpstreamExpiresAt)
-			return
-		}
-
-		// First login — redirect to /bootstrap.
-		var fb [16]byte
-		if _, err := rand.Read(fb[:]); err != nil {
-			panic("rng: " + err.Error())
-		}
-		flowToken := hex.EncodeToString(fb[:])
-		storeBootstrap(flowToken, &pendingBootstrap{
-			identity:            result.Identity,
-			clientID:            pf.clientID,
-			redirectURI:         pf.redirectURI,
-			clientState:         pf.clientState,
-			codeChallenge:       pf.codeChallenge,
-			codeChallengeMethod: pf.codeChallengeMethod,
-			createdAt:           time.Now(),
-		})
-
-		http.Redirect(w, r, samlBootstrapURL(flowToken), http.StatusFound)
+		// Same Mode-C-equivalent flow as /callback: existing session
+		// shortcut, else redirect to /bootstrap. The shared helper keeps
+		// audit logging / future identity post-processing in lockstep
+		// across the two entry points.
+		s.resolveIdentityOrBootstrap(w, r, pf, result.Identity)
 	})
-}
-
-// samlBootstrapURL returns the /bootstrap?flow=... URL.
-func samlBootstrapURL(flow string) string {
-	return "/bootstrap?flow=" + flow
 }
 
 // renderSAMLIdPInitLanding tells the user that an IdP-initiated assertion
