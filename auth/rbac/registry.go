@@ -285,13 +285,19 @@ var ToolGates = map[string]ToolGate{
 	"find_slow_requests":       {MinBasicRole: "Editor"},
 
 	// --- OnCall (uses plugin-specific actions; treat them as their own namespace) ---
-	"list_oncall_schedules":    {Permissions: []Permission{{Action: "grafana-oncall-app.schedules:read"}}},
-	"get_oncall_shift":         {Permissions: []Permission{{Action: "grafana-oncall-app.schedules:read"}}},
-	"get_current_oncall_users": {Permissions: []Permission{{Action: "grafana-oncall-app.schedules:read"}}},
-	"list_oncall_teams":        {Permissions: []Permission{{Action: "grafana-oncall-app.user-settings:read"}}},
-	"list_oncall_users":        {Permissions: []Permission{{Action: "grafana-oncall-app.user-settings:read"}}},
-	"list_alert_groups":        {Permissions: []Permission{{Action: "grafana-oncall-app.alert-groups:read"}}},
-	"get_alert_group":          {Permissions: []Permission{{Action: "grafana-oncall-app.alert-groups:read"}}},
+	// Each entry sets both Permissions (for ModeEnterprise) and MinBasicRole
+	// (for ModeBasic). All OnCall tools here are read-side, so Viewer is the
+	// correct minimum — matches Incident/Sift's pattern. Without
+	// MinBasicRole, ModeBasic would fall through to basicRoleSatisfies("")
+	// and admit every authenticated user including those with no
+	// recognized role at all.
+	"list_oncall_schedules":    {Permissions: []Permission{{Action: "grafana-oncall-app.schedules:read"}}, MinBasicRole: "Viewer"},
+	"get_oncall_shift":         {Permissions: []Permission{{Action: "grafana-oncall-app.schedules:read"}}, MinBasicRole: "Viewer"},
+	"get_current_oncall_users": {Permissions: []Permission{{Action: "grafana-oncall-app.schedules:read"}}, MinBasicRole: "Viewer"},
+	"list_oncall_teams":        {Permissions: []Permission{{Action: "grafana-oncall-app.user-settings:read"}}, MinBasicRole: "Viewer"},
+	"list_oncall_users":        {Permissions: []Permission{{Action: "grafana-oncall-app.user-settings:read"}}, MinBasicRole: "Viewer"},
+	"list_alert_groups":        {Permissions: []Permission{{Action: "grafana-oncall-app.alert-groups:read"}}, MinBasicRole: "Viewer"},
+	"get_alert_group":          {Permissions: []Permission{{Action: "grafana-oncall-app.alert-groups:read"}}, MinBasicRole: "Viewer"},
 
 	// --- Asserts (plugin; permissions are plugin-specific; gate behind plugin existence) ---
 	"get_assertions": {}, // public — Grafana enforces plugin permissions
