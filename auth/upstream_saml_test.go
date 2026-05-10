@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/crewjam/saml"
+	dsig "github.com/russellhaering/goxmldsig"
 )
 
 func TestNewSAMLUpstream_ConstructsServiceProvider(t *testing.T) {
@@ -144,6 +145,17 @@ func TestSAMLUpstream_AuthorizeURL_ContainsSAMLRequest(t *testing.T) {
 	p, ok := up.pendings.Peek("state-1")
 	if !ok || p.requestID == "" {
 		t.Errorf("expected pending RequestID stored for state-1: ok=%v p=%v", ok, p)
+	}
+}
+
+// TestNewSAMLUpstream_SignsAuthnRequestsWithSHA256 asserts the SP signs
+// outbound AuthnRequests with RSA-SHA256 rather than the crewjam/saml
+// RSA-SHA1 default. SHA-1 is rejected by many modern IdPs and is below
+// many enterprise crypto baselines.
+func TestNewSAMLUpstream_SignsAuthnRequestsWithSHA256(t *testing.T) {
+	up := mustNewSAMLUpstream(t)
+	if got := up.rawSP.SignatureMethod; got != dsig.RSASHA256SignatureMethod {
+		t.Errorf("SignatureMethod = %q, want RSA-SHA256 (%q)", got, dsig.RSASHA256SignatureMethod)
 	}
 }
 

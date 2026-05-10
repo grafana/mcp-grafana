@@ -22,6 +22,7 @@ import (
 
 	"github.com/crewjam/saml"
 	"github.com/crewjam/saml/samlsp"
+	dsig "github.com/russellhaering/goxmldsig"
 )
 
 // samlPendingTTL bounds how long a pending SAML AuthnRequest waits for its
@@ -122,6 +123,12 @@ func NewSAMLUpstream(ctx context.Context, cfg Config) (*SAMLUpstream, error) {
 	if cfg.SAMLNameIDFormat != "" {
 		sp.AuthnNameIDFormat = saml.NameIDFormat(cfg.SAMLNameIDFormat)
 	}
+	// crewjam/saml's samlsp.New defaults SignatureMethod to RSA-SHA1 for
+	// RSA keys. SHA-1 has been considered weak for digital signatures
+	// for over a decade and many modern IdPs (and several enterprise
+	// security baselines) reject SHA-1 AuthnRequest signatures outright.
+	// Override to RSA-SHA256.
+	sp.SignatureMethod = dsig.RSASHA256SignatureMethod
 	// Honour the operator-configured clock skew. crewjam/saml exposes
 	// the tolerance as a package-level var (saml.MaxClockSkew, default
 	// 180s), not a ServiceProvider field — ParseResponse reads it
