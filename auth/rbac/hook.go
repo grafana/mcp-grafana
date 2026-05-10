@@ -42,12 +42,8 @@ func NewEngine(cfg EngineConfig) *Engine {
 
 func (e *Engine) effectiveMode() Mode {
 	e.mu.RLock()
-	m := e.resolved
-	e.mu.RUnlock()
-	if m == ModeAuto {
-		return ModeAuto
-	}
-	return m
+	defer e.mu.RUnlock()
+	return e.resolved
 }
 
 func (e *Engine) recordEdition(perms PermissionSet) {
