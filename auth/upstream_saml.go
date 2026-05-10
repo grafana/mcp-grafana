@@ -231,9 +231,64 @@ func (u *SAMLUpstream) MetadataXML() ([]byte, error) {
 	return xml.MarshalIndent(md, "", "  ")
 }
 
-// ValidateAssertion is implemented in Task 6.
+// ValidateAssertion validates a POSTed SAMLResponse, extracting identity
+// and attributes. It pins the assertion to a pending request by RelayState.
 func (u *SAMLUpstream) ValidateAssertion(r *http.Request) (samlAssertion, error) {
-	return samlAssertion{}, fmt.Errorf("not yet implemented")
+	if err := r.ParseForm(); err != nil {
+		return samlAssertion{}, fmt.Errorf("parse acs form: %w", err)
+	}
+
+	// Pin to expected RequestID(s). We accept all currently-pending requests.
+	u.mu.Lock()
+	expectedIDs := make([]string, 0, len(u.pendings))
+	for _, p := range u.pendings {
+		expectedIDs = append(expectedIDs, p.requestID)
+	}
+	u.mu.Unlock()
+
+	// ParseResponse reads the request form, validates signatures, audience,
+	// conditions, and replay. Returns a *saml.Assertion.
+	assertion, err := u.rawSP.ParseResponse(r, expectedIDs)
+	if err != nil {
+		return samlAssertion{}, fmt.Errorf("%w: %v", ErrSAMLInvalidAssertion, err)
+	}
+
+	relayState := r.PostFormValue("RelayState")
+
+	// Consume the matched pending — if RelayState mapped to one.
+	// IdP-initiated flows have no RelayState; allow them iff configured.
+	if relayState != "" {
+		u.mu.Lock()
+		delete(u.pendings, relayState)
+		u.mu.Unlock()
+	} else if !u.cfg.AllowIdPInit {
+		return samlAssertion{}, fmt.Errorf("%w: missing RelayState (IdP-initiated SSO disabled)", ErrSAMLInvalidAssertion)
+	}
+
+	nameID := ""
+	if assertion.Subject != nil && assertion.Subject.NameID != nil {
+		nameID = assertion.Subject.NameID.Value
+	}
+	if nameID == "" {
+		return samlAssertion{}, fmt.Errorf("%w: assertion has no NameID", ErrSAMLInvalidAssertion)
+	}
+
+	attrs := map[string][]string{}
+	for _, st := range assertion.AttributeStatements {
+		for _, a := range st.Attributes {
+			vs := make([]string, 0, len(a.Values))
+			for _, v := range a.Values {
+				vs = append(vs, v.Value)
+			}
+			attrs[a.Name] = vs
+		}
+	}
+
+	return samlAssertion{
+		Identity:   Identity{Mode: ModeSAML, ID: nameID},
+		Attributes: attrs,
+		RelayState: relayState,
+	}, nil
 }
 
 // BuildLogoutResponseURL is implemented in Task 7.
