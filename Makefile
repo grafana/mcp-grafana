@@ -16,6 +16,10 @@ build-image: ## Build the Docker image.
 build: ## Build the binary.
 	go build -o dist/mcp-grafana ./cmd/mcp-grafana
 
+.PHONY: build-mock-oidc
+build-mock-oidc: ## Build the mock OIDC IdP binary used by integration tests.
+	go build -o ./bin/mock-oidc ./tests/mock_oidc
+
 .PHONY: lint lint-jsonschema lint-jsonschema-fix lint-openapi
 lint: lint-jsonschema lint-openapi ## Lint the Go code.
 	golangci-lint run

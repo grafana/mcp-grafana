@@ -20,6 +20,7 @@ dev = [
     "pytest>=9.0.3",
     "pytest-rerunfailures>=15.0",
     "python-dotenv>=1.2.2",
+    "requests>=2.32.0",
 ]
 
 [tool.pytest.ini_options]

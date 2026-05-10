@@ -3,6 +3,10 @@ import os
 import asyncio
 import gc
 import base64
+import secrets
+import socket
+import subprocess
+import time
 from dotenv import load_dotenv
 from mcp.client.sse import sse_client
 from mcp.client.stdio import stdio_client
@@ -127,3 +131,57 @@ async def mcp_client(mcp_transport, mcp_url, grafana_env, grafana_headers):
                 yield session
     else:
         raise ValueError(f"Unsupported transport: {mcp_transport}")
+
+
+def _free_port():
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+@pytest.fixture(scope="session")
+def mock_oidc():
+    port = _free_port()
+    proc = subprocess.Popen(
+        ["./bin/mock-oidc", "-addr", f":{port}"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    # Wait for ready.
+    for _ in range(50):
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.1):
+                break
+        except OSError:
+            time.sleep(0.1)
+    yield {"issuer": f"http://localhost:{port}", "client_id": "mcp"}
+    proc.terminate()
+    proc.wait(timeout=5)
+
+
+@pytest.fixture(scope="session")
+def auth_mcp(mock_oidc):
+    """Run mcp-grafana with --auth-mode=oauth-oidc."""
+    port = _free_port()
+    enc_key = secrets.token_bytes(32).hex()
+    env = os.environ.copy()
+    env["GRAFANA_URL"] = "http://localhost:3000"
+    proc = subprocess.Popen([
+        "./mcp-grafana",
+        "-t", "streamable-http",
+        "-address", f":{port}",
+        "--auth-mode", "oauth-oidc",
+        "--public-url", f"http://localhost:{port}",
+        "--allow-insecure-auth",
+        "--token-encryption-key", enc_key,
+        "--oidc-issuer-url", mock_oidc["issuer"],
+        "--oidc-client-id", mock_oidc["client_id"],
+    ], env=env)
+    for _ in range(50):
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.1):
+                break
+        except OSError:
+            time.sleep(0.1)
+    yield {"base": f"http://localhost:{port}"}
+    proc.terminate()
+    proc.wait(timeout=5)

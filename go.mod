@@ -7,6 +7,7 @@ require (
 	github.com/PaesslerAG/gval v1.2.4
 	github.com/PaesslerAG/jsonpath v0.1.1
 	github.com/coreos/go-oidc/v3 v3.18.0
+	github.com/go-jose/go-jose/v4 v4.1.4
 	github.com/go-openapi/runtime v0.29.3
 	github.com/go-openapi/strfmt v0.26.1
 	github.com/google/uuid v1.6.0
@@ -69,7 +70,6 @@ require (
 	github.com/dennwc/varint v1.0.0 // indirect
 	github.com/fatih/color v1.18.0 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
-	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-openapi/analysis v0.24.3 // indirect
