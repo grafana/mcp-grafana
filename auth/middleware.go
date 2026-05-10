@@ -10,10 +10,13 @@ import (
 	mcpgrafana "github.com/grafana/mcp-grafana"
 )
 
+<<<<<<< HEAD
 // refreshWindow is the duration before upstream credential expiry at which the
 // middleware proactively refreshes the token.
 const refreshWindow = 60 * time.Second
 
+=======
+>>>>>>> 7a8d08b (rbac: wire engine into auth.Server and main.go)
 type sessionKeyCtx struct{}
 
 // WithSessionKey stores an opaque session-cache key on the context.
