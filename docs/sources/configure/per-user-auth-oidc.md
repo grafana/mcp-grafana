@@ -60,11 +60,27 @@ Restarting `mcp-grafana` with `--token-encryption-key=NEW
 while encrypting new data with the new key. Drain the old key over time and
 remove `--token-encryption-key-previous` once all sessions have rotated.
 
-## Limitations in Phase 1
+## RBAC tool gating
 
-- RBAC tool gating is not yet implemented; every authenticated user sees the
-  full tool list. Grafana still enforces RBAC on each tool call.
+When per-user auth is enabled, `mcp-grafana` can filter the list of tools
+each user sees based on their Grafana RBAC permissions.
+
+`--rbac-gating` controls the mode (default `auto`):
+
+| Value        | Behavior                                                                 |
+| ------------ | ------------------------------------------------------------------------ |
+| `auto`       | Detect edition at runtime. Non-empty permission sets → enterprise mode; empty → basic-role mode. |
+| `enterprise` | Filter by fine-grained RBAC permissions from `/api/access-control/user/permissions`. |
+| `basic`      | Filter by built-in role only (Viewer / Editor / Admin).                  |
+| `off`        | No filtering — every authenticated user sees the full tool list.         |
+
+`--rbac-cache-ttl` sets how long a user's permission snapshot is cached before
+re-fetching from Grafana (default `5m`).
+
+Grafana always enforces RBAC on the underlying API call; tool-list gating is
+an additional UX layer that hides tools the user cannot use.
+
+## Known limitations
+
 - Single-replica only when using the file store. Multi-replica deployments
   require all replicas to share the state directory on a network filesystem.
-- See the design spec for upcoming phases (Mode A: Grafana OAuth2 server;
-  Mode S: SAML).
