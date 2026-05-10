@@ -103,20 +103,28 @@ func (s *Server) CallbackHandler() http.Handler {
 			}
 			credCT, err := s.Encryptor.Seal(result.UpstreamCreds)
 			if err != nil {
+<<<<<<< HEAD
 				// Log the cipher-level detail locally; redirect the
 				// user-agent back to the MCP client with a generic
 				// error_description so internal crypto state doesn't
 				// reach external clients (matches the pattern above).
 				s.logger().Error("auth.callback_encrypt_failed", "error", err.Error())
 				httpRedirectError(w, r, pf.redirectURI, "server_error", "credential encryption failed", pf.clientState)
+=======
+				httpRedirectError(w, r, pf.redirectURI, "server_error", err.Error(), pf.clientState)
+>>>>>>> db593b2 (auth: refactor HandleCallback to return CallbackResult struct)
 				return
 			}
 			var refreshCT []byte
 			if len(result.UpstreamRefresh) > 0 {
 				refreshCT, err = s.Encryptor.Seal(result.UpstreamRefresh)
 				if err != nil {
+<<<<<<< HEAD
 					s.logger().Error("auth.callback_encrypt_failed", "error", err.Error())
 					httpRedirectError(w, r, pf.redirectURI, "server_error", "credential encryption failed", pf.clientState)
+=======
+					httpRedirectError(w, r, pf.redirectURI, "server_error", err.Error(), pf.clientState)
+>>>>>>> db593b2 (auth: refactor HandleCallback to return CallbackResult struct)
 					return
 				}
 			}
