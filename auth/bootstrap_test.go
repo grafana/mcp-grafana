@@ -1,0 +1,143 @@
+package auth
+
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"testing"
+	"time"
+)
+
+// fakeGrafana stands in for the real Grafana /api/user endpoint.
+func fakeGrafana(t *testing.T, expectedToken string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/user" {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		if r.Header.Get("Authorization") != "Bearer "+expectedToken {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		_, _ = w.Write([]byte(`{"id":1,"login":"alice"}`))
+	}))
+}
+
+func TestBootstrap_GET_RendersForm(t *testing.T) {
+	srv := &Server{
+		PublicURL: "https://mcp.example.com",
+		Store:     NewMemoryStore(),
+		Encryptor: mustEnc(t, mustKey(t), nil),
+	}
+	storeBootstrap("flow-1", &pendingBootstrap{
+		identity:    Identity{Mode: ModeOAuthOIDC, ID: "alice"},
+		clientID:    "cid",
+		redirectURI: "http://localhost:1/cb",
+		createdAt:   time.Now(),
+	})
+
+	r := httptest.NewRequest(http.MethodGet, "/bootstrap?flow=flow-1", nil)
+	w := httptest.NewRecorder()
+	srv.BootstrapHandler("https://grafana.example.com").ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, `name="grafana_token"`) {
+		t.Errorf("missing token field in form: %s", body)
+	}
+	if !strings.Contains(body, "flow-1") {
+		t.Errorf("flow token must round-trip in the form")
+	}
+}
+
+func TestBootstrap_POST_ValidatesAndStoresToken(t *testing.T) {
+	gf := fakeGrafana(t, "good-token")
+	defer gf.Close()
+	srv := &Server{
+		PublicURL:   "https://mcp.example.com",
+		Store:       NewMemoryStore(),
+		Encryptor:   mustEnc(t, mustKey(t), nil),
+		AuthCodeTTL: 5 * time.Minute,
+	}
+	storeBootstrap("flow-2", &pendingBootstrap{
+		identity:            Identity{Mode: ModeOAuthOIDC, ID: "alice"},
+		clientID:            "cid",
+		redirectURI:         "http://localhost:1/cb",
+		clientState:         "client-state",
+		codeChallenge:       "x",
+		codeChallengeMethod: "S256",
+		createdAt:           time.Now(),
+	})
+
+	form := url.Values{}
+	form.Set("flow", "flow-2")
+	form.Set("grafana_token", "good-token")
+	r := httptest.NewRequest(http.MethodPost, "/bootstrap", strings.NewReader(form.Encode()))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+
+	srv.BootstrapHandler(gf.URL).ServeHTTP(w, r)
+
+	if w.Code != http.StatusFound {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body)
+	}
+	loc, _ := url.Parse(w.Header().Get("Location"))
+	if loc.Host != "localhost:1" || loc.Query().Get("code") == "" {
+		t.Errorf("loc=%v", loc)
+	}
+
+	// Session was stored with encrypted SA token.
+	sess, err := srv.Store.GetSessionByIdentity(context.Background(), Identity{Mode: ModeOAuthOIDC, ID: "alice"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pt, err := srv.Encryptor.Open(sess.UpstreamCredsCT)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(pt) != "good-token" {
+		t.Errorf("decrypted creds=%q", pt)
+	}
+}
+
+func TestBootstrap_POST_BadToken(t *testing.T) {
+	gf := fakeGrafana(t, "good-token")
+	defer gf.Close()
+	srv := &Server{
+		PublicURL: "https://mcp.example.com",
+		Store:     NewMemoryStore(),
+		Encryptor: mustEnc(t, mustKey(t), nil),
+	}
+	storeBootstrap("flow-3", &pendingBootstrap{
+		identity:    Identity{Mode: ModeOAuthOIDC, ID: "alice"},
+		clientID:    "cid",
+		redirectURI: "http://localhost:1/cb",
+		createdAt:   time.Now(),
+	})
+
+	form := url.Values{}
+	form.Set("flow", "flow-3")
+	form.Set("grafana_token", "wrong-token")
+	r := httptest.NewRequest(http.MethodPost, "/bootstrap", strings.NewReader(form.Encode()))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+
+	srv.BootstrapHandler(gf.URL).ServeHTTP(w, r)
+
+	// Expect re-render of the form with an error message; flow token must
+	// remain valid for retry, so the same flow should still work afterwards.
+	if w.Code != http.StatusUnauthorized && w.Code != http.StatusOK {
+		t.Errorf("status=%d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "token") {
+		t.Errorf("body should mention token rejection: %s", w.Body)
+	}
+	if _, ok := consumeBootstrap("flow-3"); !ok {
+		t.Errorf("flow token should remain valid after a failed paste")
+	}
+}
