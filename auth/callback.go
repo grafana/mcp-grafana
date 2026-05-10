@@ -70,7 +70,7 @@ func (s *Server) CallbackHandler() http.Handler {
 			return
 		}
 
-		identity, cred, hasCred, err := s.Upstream.HandleCallback(r.Context(), r.URL.Query())
+		result, err := s.Upstream.HandleCallback(r.Context(), r.URL.Query())
 		if err != nil {
 			// Log the underlying upstream error for operators; redirect the
 			// user-agent back to the MCP client with a generic
@@ -81,15 +81,29 @@ func (s *Server) CallbackHandler() http.Handler {
 			return
 		}
 
-		// Mode A would land here with hasCred=true. Mode C never does.
-		if hasCred {
-			s.completeAuthCode(w, r, pf, identity, cred)
+		// Mode A lands here with HasCred=true. Encrypt the credential pair before
+		// passing it through to the auth-code shortcut.
+		if result.HasCred {
+			credCT, err := s.Encryptor.Seal(result.UpstreamCreds)
+			if err != nil {
+				httpRedirectError(w, r, pf.redirectURI, "server_error", err.Error(), pf.clientState)
+				return
+			}
+			var refreshCT []byte
+			if len(result.UpstreamRefresh) > 0 {
+				refreshCT, err = s.Encryptor.Seal(result.UpstreamRefresh)
+				if err != nil {
+					httpRedirectError(w, r, pf.redirectURI, "server_error", err.Error(), pf.clientState)
+					return
+				}
+			}
+			s.completeAuthCode(w, r, pf, result.Identity, credCT, refreshCT, result.UpstreamExpiresAt)
 			return
 		}
 
 		// Mode C (and SAML, in phase 4): existing SA token shortcut, else
 		// redirect to /bootstrap.
-		s.resolveIdentityOrBootstrap(w, r, pf, identity)
+		s.resolveIdentityOrBootstrap(w, r, pf, result.Identity)
 	})
 }
 
@@ -101,7 +115,7 @@ func (s *Server) CallbackHandler() http.Handler {
 func (s *Server) resolveIdentityOrBootstrap(w http.ResponseWriter, r *http.Request, pf *pendingFlow, identity Identity) {
 	existing, err := s.Store.GetSessionByIdentity(r.Context(), identity)
 	if err == nil && len(existing.UpstreamCredsCT) > 0 {
-		s.completeAuthCode(w, r, pf, identity, existing.UpstreamCredsCT)
+		s.completeAuthCode(w, r, pf, identity, existing.UpstreamCredsCT, existing.UpstreamRefreshCT, existing.UpstreamExpiresAt)
 		return
 	}
 
@@ -128,7 +142,7 @@ func (s *Server) resolveIdentityOrBootstrap(w http.ResponseWriter, r *http.Reque
 
 // completeAuthCode mints a one-shot auth code, persists it, and 302s the
 // user-agent back to the MCP client's redirect_uri with code+state.
-func (s *Server) completeAuthCode(w http.ResponseWriter, r *http.Request, pf *pendingFlow, identity Identity, credCT []byte) {
+func (s *Server) completeAuthCode(w http.ResponseWriter, r *http.Request, pf *pendingFlow, identity Identity, credCT, refreshCT []byte, upstreamExpiresAt time.Time) {
 	plain, hashed := NewAuthCode()
 	ttl := s.AuthCodeTTL
 	if ttl == 0 {
@@ -142,6 +156,8 @@ func (s *Server) completeAuthCode(w http.ResponseWriter, r *http.Request, pf *pe
 		CodeChallengeMethod: pf.codeChallengeMethod,
 		Identity:            identity,
 		UpstreamCredsCT:     credCT,
+		UpstreamRefreshCT:   refreshCT,
+		UpstreamExpiresAt:   upstreamExpiresAt,
 		ExpiresAt:           time.Now().Add(ttl),
 	}); err != nil {
 		// Log the storage detail locally; redirect with a generic

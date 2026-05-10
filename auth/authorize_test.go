@@ -23,8 +23,14 @@ func (s *stubUpstream) AuthorizeURL(redirectURI, state string) string {
 	s.lastRedirectURI = redirectURI
 	return s.authURL + "?state=" + state
 }
-func (s *stubUpstream) HandleCallback(_ context.Context, _ url.Values) (Identity, []byte, bool, error) {
-	return Identity{Mode: s.mode, ID: "u1"}, nil, false, nil
+func (s *stubUpstream) HandleCallback(_ context.Context, _ url.Values) (CallbackResult, error) {
+	return CallbackResult{
+		Identity: Identity{Mode: s.mode, ID: "u1"},
+	}, nil
+}
+
+func (s *stubUpstream) Refresh(_ context.Context, _ []byte) (CallbackResult, error) {
+	return CallbackResult{}, ErrRefreshNotSupported
 }
 
 func newAuthorizeServer(t *testing.T) (*Server, *MemoryStore, *stubUpstream) {

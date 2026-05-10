@@ -89,22 +89,23 @@ func (s *Server) handleAuthCodeGrant(w http.ResponseWriter, r *http.Request) {
 		rtTTL = 30 * 24 * time.Hour
 	}
 
-	// Re-authentication for the same identity replaces the previous session
 	// inside PutSession (one-session-per-identity invariant). PutSession
 	// reports the replaced TokenHash atomically so we emit a paired
 	// SessionRevoked here — using a pre-PutSession GetSessionByIdentity
 	// check would race with the middleware's expired-token DeleteSession
 	// path and could double-decrement the active-sessions gauge.
 	replacedTokenHash, err := s.Store.PutSession(r.Context(), Session{
-		TokenHash:        atHash,
-		RefreshHash:      rtHash,
-		ClientID:         clientID,
-		ExpiresAt:        now.Add(atTTL),
-		RefreshExpiresAt: now.Add(rtTTL),
-		Identity:         c.Identity,
-		UpstreamCredsCT:  c.UpstreamCredsCT,
-		CreatedAt:        now,
-		UpdatedAt:        now,
+		TokenHash:         atHash,
+		RefreshHash:       rtHash,
+		ClientID:          clientID,
+		ExpiresAt:         now.Add(atTTL),
+		RefreshExpiresAt:  now.Add(rtTTL),
+		Identity:          c.Identity,
+		UpstreamCredsCT:   c.UpstreamCredsCT,
+		UpstreamRefreshCT: c.UpstreamRefreshCT,
+		UpstreamExpiresAt: c.UpstreamExpiresAt,
+		CreatedAt:         now,
+		UpdatedAt:         now,
 	})
 	if err != nil {
 		s.logger().Error("auth.session_persist_failed", "user_id", c.Identity.String(), "error", err.Error())

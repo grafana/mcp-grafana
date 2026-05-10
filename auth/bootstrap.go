@@ -147,7 +147,7 @@ func (s *Server) processBootstrap(w http.ResponseWriter, r *http.Request, grafan
 		codeChallengeMethod: pb.codeChallengeMethod,
 		clientState:         pb.clientState,
 	}
-	s.completeAuthCode(w, r, pf, pb.identity, ct)
+	s.completeAuthCode(w, r, pf, pb.identity, ct, nil, time.Time{})
 }
 
 // validateGrafanaToken pings Grafana's /api/user with the bearer.

@@ -38,7 +38,18 @@ type Session struct {
 	Identity Identity
 
 	// AES-GCM(SA token) for Mode oauth-oidc.
+	// AES-GCM(Grafana access token) for Mode oauth-grafana.
 	UpstreamCredsCT []byte
+
+	// AES-GCM(refresh token) for Mode oauth-grafana. nil for Mode oauth-oidc
+	// (SA tokens don't rotate).
+	UpstreamRefreshCT []byte
+
+	// When the upstream credential expires. Zero for Mode oauth-oidc
+	// (SA-token expiry is set by the user in Grafana and not communicated
+	// to mcp-grafana). The auth middleware refreshes the credential when
+	// non-zero and within 60s of expiry.
+	UpstreamExpiresAt time.Time
 
 	// Auditing.
 	CreatedAt time.Time
@@ -62,6 +73,8 @@ type AuthCode struct {
 	CodeChallenge       string // PKCE S256 challenge from /authorize
 	CodeChallengeMethod string // always "S256"
 	Identity            Identity
-	UpstreamCredsCT     []byte // already-encrypted SA token captured at /callback or /bootstrap
+	UpstreamCredsCT     []byte    // already-encrypted SA token captured at /callback or /bootstrap
+	UpstreamRefreshCT   []byte    // Mode A only
+	UpstreamExpiresAt   time.Time // Mode A only; zero for Mode C
 	ExpiresAt           time.Time
 }

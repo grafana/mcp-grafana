@@ -19,8 +19,12 @@ type stubUpstreamWithIdentity struct {
 	has  bool
 }
 
-func (s *stubUpstreamWithIdentity) HandleCallback(_ context.Context, _ url.Values) (Identity, []byte, bool, error) {
-	return s.id, s.cred, s.has, nil
+func (s *stubUpstreamWithIdentity) HandleCallback(_ context.Context, _ url.Values) (CallbackResult, error) {
+	return CallbackResult{
+		Identity:      s.id,
+		HasCred:       s.has,
+		UpstreamCreds: s.cred,
+	}, nil
 }
 
 func newCallbackServer(t *testing.T, upHas bool) (*Server, *MemoryStore) {
@@ -126,8 +130,8 @@ func TestCallback_UnknownState(t *testing.T) {
 // user-agent redirect.
 type failingUpstream struct{ stubUpstream }
 
-func (f *failingUpstream) HandleCallback(_ context.Context, _ url.Values) (Identity, []byte, bool, error) {
-	return Identity{}, nil, false, fmt.Errorf("token exchange against https://internal-idp.corp.example/oauth/token: invalid_grant - corrupted refresh slot 0xdeadbeef")
+func (f *failingUpstream) HandleCallback(_ context.Context, _ url.Values) (CallbackResult, error) {
+	return CallbackResult{}, fmt.Errorf("token exchange against https://internal-idp.corp.example/oauth/token: invalid_grant - corrupted refresh slot 0xdeadbeef")
 }
 
 func TestCallback_UpstreamError_RedirectsWithGenericDescription(t *testing.T) {
@@ -186,7 +190,7 @@ func TestCompleteAuthCode_PutFails_RedirectsWithGenericDescription(t *testing.T)
 	}
 	r := httptest.NewRequest(http.MethodGet, "/callback", nil)
 	w := httptest.NewRecorder()
-	srv.completeAuthCode(w, r, pf, Identity{Mode: ModeOAuthOIDC, ID: "alice"}, []byte("ct"))
+	srv.completeAuthCode(w, r, pf, Identity{Mode: ModeOAuthOIDC, ID: "alice"}, []byte("ct"), nil, time.Time{})
 
 	if w.Code != http.StatusFound {
 		t.Fatalf("status=%d body=%s", w.Code, w.Body)

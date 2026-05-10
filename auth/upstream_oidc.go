@@ -97,15 +97,15 @@ func (u *OIDCUpstream) AuthorizeURL(redirectURI, state string) string {
 
 // HandleCallback exchanges the upstream code, validates the ID token, and
 // returns the user's canonical identity.
-func (u *OIDCUpstream) HandleCallback(ctx context.Context, params url.Values) (Identity, []byte, bool, error) {
+func (u *OIDCUpstream) HandleCallback(ctx context.Context, params url.Values) (CallbackResult, error) {
 	state := params.Get("state")
 	code := params.Get("code")
 	if state == "" || code == "" {
-		return Identity{}, nil, false, fmt.Errorf("missing state or code")
+		return CallbackResult{}, fmt.Errorf("missing state or code")
 	}
 	p, ok := u.pendings.Consume(state)
 	if !ok {
-		return Identity{}, nil, false, fmt.Errorf("unknown or expired state")
+		return CallbackResult{}, fmt.Errorf("unknown or expired state")
 	}
 
 	exchangeCtx, span := otel.Tracer("mcp-grafana-auth").Start(ctx, "auth.upstream_token_exchange")
@@ -122,23 +122,32 @@ func (u *OIDCUpstream) HandleCallback(ctx context.Context, params url.Values) (I
 	}
 	span.End()
 	if err != nil {
-		return Identity{}, nil, false, fmt.Errorf("token exchange: %w", err)
+		return CallbackResult{}, fmt.Errorf("token exchange: %w", err)
 	}
 	rawID, ok := tok.Extra("id_token").(string)
 	if !ok || rawID == "" {
-		return Identity{}, nil, false, fmt.Errorf("upstream returned no id_token")
+		return CallbackResult{}, fmt.Errorf("upstream returned no id_token")
 	}
 	idTok, err := u.verifier.Verify(ctx, rawID)
 	if err != nil {
-		return Identity{}, nil, false, fmt.Errorf("verify id_token: %w", err)
+		return CallbackResult{}, fmt.Errorf("verify id_token: %w", err)
 	}
 	if idTok.Nonce != p.nonce {
-		return Identity{}, nil, false, fmt.Errorf("nonce mismatch")
+		return CallbackResult{}, fmt.Errorf("nonce mismatch")
 	}
 	if idTok.Subject == "" {
-		return Identity{}, nil, false, fmt.Errorf("id_token has no sub")
+		return CallbackResult{}, fmt.Errorf("id_token has no sub")
 	}
-	return Identity{Mode: ModeOAuthOIDC, ID: idTok.Subject}, nil, false, nil
+	return CallbackResult{
+		Identity: Identity{Mode: ModeOAuthOIDC, ID: idTok.Subject},
+		HasCred:  false,
+	}, nil
+}
+
+// Refresh is not supported in Mode C: SA tokens have user-controlled expiry
+// and don't rotate on a known schedule. Returns ErrRefreshNotSupported.
+func (u *OIDCUpstream) Refresh(_ context.Context, _ []byte) (CallbackResult, error) {
+	return CallbackResult{}, ErrRefreshNotSupported
 }
 
 // randURL returns a base64url-no-pad random string of length n bytes.
