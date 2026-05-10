@@ -93,7 +93,7 @@ func (s *Server) processBootstrap(w http.ResponseWriter, r *http.Request, grafan
 		httpError(w, http.StatusBadRequest, "invalid_request", "unknown or expired flow token")
 		return
 	}
-	if time.Since(pb.createdAt) > 15*time.Minute {
+	if time.Since(pb.createdAt) > bootstrapTTL {
 		_, _ = consumeBootstrap(flow)
 		httpError(w, http.StatusBadRequest, "invalid_request", "flow expired; please log in again")
 		return
