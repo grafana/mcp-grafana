@@ -93,6 +93,26 @@ func (r *pendingRegistry[T]) Delete(key string) bool {
 	return true
 }
 
+// Modify invokes fn on the entry's value under the registry mutex when an
+// unexpired entry exists at key. Returns true when fn ran. Used by the
+// /bootstrap retry-attempt counter so a per-flow brute-force can't sit on
+// the rate-limiter's amortised allowance across IPs.
+func (r *pendingRegistry[T]) Modify(key string, fn func(T)) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.sweepLocked(time.Now())
+	e, ok := r.entries[key]
+	if !ok {
+		return false
+	}
+	if time.Since(e.createdAt) > r.ttl {
+		delete(r.entries, key)
+		return false
+	}
+	fn(e.value)
+	return true
+}
+
 // sweepLocked drops entries older than ttl. The caller must hold r.mu.
 // Runs at most once per ttl window so the amortised cost stays O(1).
 func (r *pendingRegistry[T]) sweepLocked(now time.Time) {

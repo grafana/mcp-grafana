@@ -190,3 +190,56 @@ func TestBootstrap_POST_BadToken(t *testing.T) {
 		t.Errorf("flow token should remain valid after a failed paste")
 	}
 }
+
+// TestBootstrap_POST_BadToken_ExhaustsAttempts verifies the per-flow
+// brute-force guard: after maxBootstrapAttempts rejected pastes the flow
+// is consumed and a subsequent paste — even with the correct token —
+// fails with an unknown-flow error. Without this bound, a flow-token
+// holder could brute-force Grafana SA tokens across the full bootstrapTTL
+// window, with per-IP rate limits as the only constraint.
+func TestBootstrap_POST_BadToken_ExhaustsAttempts(t *testing.T) {
+	gf := fakeGrafana(t, "good-token")
+	defer gf.Close()
+	srv := &Server{
+		Metrics:   NewMetrics(),
+		PublicURL: "https://mcp.example.com",
+		Store:     NewMemoryStore(),
+		Encryptor: mustEnc(t, mustKey(t), nil),
+	}
+	srv.bootstrapPendings().Store("flow-bf", &pendingBootstrap{
+		identity:    Identity{Mode: ModeOAuthOIDC, ID: "alice"},
+		clientID:    "cid",
+		redirectURI: "http://localhost:1/cb",
+	})
+
+	post := func(token string) *httptest.ResponseRecorder {
+		form := url.Values{}
+		form.Set("flow", "flow-bf")
+		form.Set("grafana_token", token)
+		r := httptest.NewRequest(http.MethodPost, "/bootstrap", strings.NewReader(form.Encode()))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		w := httptest.NewRecorder()
+		srv.BootstrapHandler(gf.URL).ServeHTTP(w, r)
+		return w
+	}
+
+	// First (maxBootstrapAttempts - 1) bad pastes should re-render the form
+	// without consuming the flow.
+	for i := 0; i < maxBootstrapAttempts-1; i++ {
+		w := post("wrong-token")
+		if w.Code == http.StatusBadRequest {
+			t.Fatalf("attempt %d consumed flow prematurely: body=%s", i+1, w.Body)
+		}
+	}
+	// The maxBootstrapAttempts-th bad paste consumes the flow.
+	w := post("wrong-token")
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("cap-hit status=%d (want 400) body=%s", w.Code, w.Body)
+	}
+	// A subsequent paste — even with the correct token — must fail because
+	// the flow is gone.
+	w = post("good-token")
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("post-consume status=%d (want 400) body=%s", w.Code, w.Body)
+	}
+}

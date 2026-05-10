@@ -19,6 +19,10 @@ type pendingBootstrap struct {
 	clientState         string
 	codeChallenge       string
 	codeChallengeMethod string
+	// attempts counts rejected token pastes against this flow. Bumped under
+	// the registry mutex via pendingRegistry.Modify so concurrent POSTs
+	// can't race past the cap. See maxBootstrapAttempts in bootstrap.go.
+	attempts int
 }
 
 // bootstrapTTL bounds how long a /bootstrap-side pending entry stays in

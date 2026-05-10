@@ -13,6 +13,13 @@ import (
 	"go.opentelemetry.io/otel"
 )
 
+// maxBootstrapAttempts caps how many rejected token pastes a single
+// /bootstrap flow accepts before the flow token is consumed. Three covers
+// honest fat-finger retries; past that an attacker holding a flow token
+// would otherwise have the full bootstrapTTL (15m) to brute-force
+// Grafana SA tokens, with per-IP rate limits as the only constraint.
+const maxBootstrapAttempts = 3
+
 const bootstrapPageHTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -113,6 +120,27 @@ func (s *Server) processBootstrap(w http.ResponseWriter, r *http.Request, grafan
 	// flight — is handled by consumeBootstrap returning ok=false.
 
 	if err := validateGrafanaToken(r.Context(), grafanaURL, token); err != nil {
+		// Bump the per-flow attempt counter under the registry mutex. When
+		// the cap is hit, consume the flow so a flow-token holder can't
+		// brute-force Grafana SA tokens across the bootstrapTTL window —
+		// the /bootstrap IP rate limit alone (3/min) still lets ~45
+		// attempts per IP over 15 minutes, and an attacker rotating IPs
+		// would otherwise sit on the full TTL.
+		var consumed bool
+		s.bootstrapPendings().Modify(flow, func(p *pendingBootstrap) {
+			p.attempts++
+			if p.attempts >= maxBootstrapAttempts {
+				consumed = true
+			}
+		})
+		if consumed {
+			s.bootstrapPendings().Consume(flow)
+			s.logger().Warn("bootstrap_token_rejected_flow_consumed",
+				"user_id", pb.identity.String(), "error", err.Error(),
+				"attempts", maxBootstrapAttempts)
+			httpError(w, http.StatusBadRequest, "invalid_request", "too many bad tokens; please log in again")
+			return
+		}
 		s.logger().Warn("bootstrap_token_rejected", "user_id", pb.identity.String(), "error", err.Error())
 		s.renderBootstrap(w, r, "Grafana rejected that token. Double-check and try again.")
 		return

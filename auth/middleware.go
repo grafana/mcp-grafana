@@ -89,9 +89,21 @@ func (s *Server) Middleware() func(http.Handler) http.Handler {
 						sess = latest
 					}
 					if !time.Now().After(sess.UpstreamExpiresAt) {
-						s.logger().Warn("auth.upstream_refresh_failed_but_creds_still_valid",
-							"user_id", sess.Identity.String(), "error", err.Error(),
-							"expires_in", time.Until(sess.UpstreamExpiresAt).String())
+						// When the store re-read failed (lerr != nil) the
+						// expires_in below reflects the pre-refresh snapshot,
+						// not necessarily the live store state. Surface lerr
+						// so an operator triaging this log can tell which.
+						attrs := []any{
+							"user_id", sess.Identity.String(),
+							"error", err.Error(),
+							"expires_in", time.Until(sess.UpstreamExpiresAt).String(),
+							"snapshot", "fresh",
+						}
+						if lerr != nil {
+							attrs[len(attrs)-1] = "pre_refresh"
+							attrs = append(attrs, "store_reread_error", lerr.Error())
+						}
+						s.logger().Warn("auth.upstream_refresh_failed_but_creds_still_valid", attrs...)
 					} else {
 						// Same race as the expired-token branch above: gate
 						// the SessionRevoked decrement on whether THIS request
