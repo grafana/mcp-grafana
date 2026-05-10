@@ -223,3 +223,18 @@ func TestSAMLSLSHandler_DeletesSession(t *testing.T) {
 		t.Errorf("session should be deleted, got err=%v", err)
 	}
 }
+
+func TestSAMLSLSHandler_RejectsNonGetPost(t *testing.T) {
+	srv := &Server{Upstream: &stubSAMLValidator{}}
+	for _, m := range []string{http.MethodPut, http.MethodDelete, http.MethodPatch} {
+		r := httptest.NewRequest(m, "/saml/sls", nil)
+		w := httptest.NewRecorder()
+		srv.SAMLSLSHandler().ServeHTTP(w, r)
+		if w.Code != http.StatusMethodNotAllowed {
+			t.Errorf("method %s: status=%d, want 405", m, w.Code)
+		}
+		if !strings.Contains(w.Header().Get("Allow"), "GET") || !strings.Contains(w.Header().Get("Allow"), "POST") {
+			t.Errorf("method %s: Allow=%q", m, w.Header().Get("Allow"))
+		}
+	}
+}

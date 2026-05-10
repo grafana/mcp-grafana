@@ -152,6 +152,14 @@ func (s *Server) SAMLSLSHandler() http.Handler {
 			http.NotFound(w, r)
 			return
 		}
+		// SAML SLO supports the HTTP-Redirect (GET) and HTTP-POST (POST)
+		// bindings only; reject anything else so /saml/sls matches the
+		// strict method guards used by /saml/acs and the OAuth handlers.
+		if r.Method != http.MethodGet && r.Method != http.MethodPost {
+			w.Header().Set("Allow", "GET, POST")
+			httpError(w, http.StatusMethodNotAllowed, "invalid_request", "GET or POST")
+			return
+		}
 
 		identity, redirectURL, err := v.BuildLogoutResponseURL(r)
 		if err != nil {

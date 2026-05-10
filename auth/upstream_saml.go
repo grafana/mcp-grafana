@@ -34,8 +34,12 @@ const samlPendingTTL = 15 * time.Minute
 // to /saml/acs); credentials are then bootstrapped by the user pasting an
 // SA token at /bootstrap (same flow as Mode C).
 type SAMLUpstream struct {
-	sp    samlsp.Middleware     // wraps a saml.ServiceProvider with cookie/session helpers
-	rawSP *saml.ServiceProvider // direct access to AuthnRequest/Response APIs
+	// rawSP is the configured saml.ServiceProvider (ACS URL, SP entity,
+	// signing key, IdP metadata, etc.). The samlsp.Middleware wrapper that
+	// constructs it isn't kept around — we drive AuthnRequest/Response/
+	// LogoutRequest flows through rawSP directly and don't use the
+	// middleware's cookie/session helpers.
+	rawSP *saml.ServiceProvider
 
 	cfg samlConfig
 
@@ -142,7 +146,6 @@ func NewSAMLUpstream(ctx context.Context, cfg Config) (*SAMLUpstream, error) {
 	}
 
 	upstream := &SAMLUpstream{
-		sp:    *mw,
 		rawSP: sp,
 		cfg: samlConfig{
 			EntityID:     sp.EntityID,
