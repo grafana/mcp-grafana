@@ -24,6 +24,11 @@ import (
 	"github.com/crewjam/saml/samlsp"
 )
 
+// samlPendingTTL bounds how long a pending SAML AuthnRequest waits for its
+// matching ACS response. Aligned with the OAuth-side pending-flow TTL so
+// abandoned flows are reaped on the same cadence.
+const samlPendingTTL = 15 * time.Minute
+
 // SAMLUpstream implements the Upstream + SAMLValidator interfaces for
 // Mode saml. Identity flows through the IdP-issued SAML assertion (POSTed
 // to /saml/acs); credentials are then bootstrapped by the user pasting an
@@ -36,8 +41,25 @@ type SAMLUpstream struct {
 
 	// Per-RelayState pendings tracking the SAML RequestID we issued, so the
 	// ACS handler can pin the inbound assertion to the request we sent out.
-	mu       sync.Mutex
-	pendings map[string]*samlPending
+	mu        sync.Mutex
+	pendings  map[string]*samlPending
+	lastSwept time.Time
+}
+
+// sweepPendingsLocked drops pending entries older than samlPendingTTL. The
+// caller must hold u.mu. Runs at most once per TTL window so the amortised
+// per-call cost stays O(1) under sustained traffic.
+func (u *SAMLUpstream) sweepPendingsLocked(now time.Time) {
+	if now.Sub(u.lastSwept) < samlPendingTTL {
+		return
+	}
+	cutoff := now.Add(-samlPendingTTL)
+	for k, p := range u.pendings {
+		if p.createdAt.Before(cutoff) {
+			delete(u.pendings, k)
+		}
+	}
+	u.lastSwept = now
 }
 
 type samlConfig struct {
@@ -213,6 +235,7 @@ func (u *SAMLUpstream) AuthorizeURL(_redirectURI, state string) string {
 	}
 
 	u.mu.Lock()
+	u.sweepPendingsLocked(time.Now())
 	u.pendings[state] = &samlPending{requestID: req.ID, createdAt: time.Now()}
 	u.mu.Unlock()
 
@@ -246,43 +269,47 @@ func (u *SAMLUpstream) MetadataXML() ([]byte, error) {
 }
 
 // ValidateAssertion validates a POSTed SAMLResponse, extracting identity
-// and attributes. It pins the assertion to a pending request by RelayState.
+// and attributes. It pins the assertion to the specific pending AuthnRequest
+// addressed by the inbound RelayState — one assertion can satisfy exactly
+// one pending flow, never an arbitrary in-flight neighbour's.
 func (u *SAMLUpstream) ValidateAssertion(r *http.Request) (samlAssertion, error) {
 	if err := r.ParseForm(); err != nil {
 		return samlAssertion{}, fmt.Errorf("parse acs form: %w", err)
 	}
 
-	// Pin to expected RequestID(s). We accept any currently-pending request
-	// because crewjam's ParseResponse takes a slice; it returns the matched ID.
-	// Each successful response consumes its pending entry (RelayState delete
-	// below), so the replay surface is at most one assertion per pending entry.
-	// Concurrent /authorize calls broaden this window briefly; entries are
-	// dropped on either successful ACS or pending-cleanup (currently TTL-only;
-	// see follow-up).
+	relayState := r.PostFormValue("RelayState")
+
+	// Resolve the expected RequestID for THIS RelayState (and consume the
+	// pending entry while we hold the lock so a replay can't reuse it).
+	// IdP-initiated flows have no RelayState; permit those only when
+	// explicitly enabled, and pass an empty expected-ID list so
+	// ParseResponse uses the unsolicited-response path.
+	var expectedIDs []string
 	u.mu.Lock()
-	expectedIDs := make([]string, 0, len(u.pendings))
-	for _, p := range u.pendings {
-		expectedIDs = append(expectedIDs, p.requestID)
+	u.sweepPendingsLocked(time.Now())
+	if relayState != "" {
+		p, ok := u.pendings[relayState]
+		if ok {
+			expectedIDs = []string{p.requestID}
+			delete(u.pendings, relayState)
+		}
+		u.mu.Unlock()
+		if !ok {
+			return samlAssertion{}, fmt.Errorf("%w: unknown or expired RelayState", ErrSAMLInvalidAssertion)
+		}
+	} else {
+		u.mu.Unlock()
+		if !u.cfg.AllowIdPInit {
+			return samlAssertion{}, fmt.Errorf("%w: missing RelayState (IdP-initiated SSO disabled)", ErrSAMLInvalidAssertion)
+		}
+		// expectedIDs stays nil → unsolicited-response acceptance.
 	}
-	u.mu.Unlock()
 
 	// ParseResponse reads the request form, validates signatures, audience,
 	// conditions, and replay. Returns a *saml.Assertion.
 	assertion, err := u.rawSP.ParseResponse(r, expectedIDs)
 	if err != nil {
 		return samlAssertion{}, fmt.Errorf("%w: %v", ErrSAMLInvalidAssertion, err)
-	}
-
-	relayState := r.PostFormValue("RelayState")
-
-	// Consume the matched pending — if RelayState mapped to one.
-	// IdP-initiated flows have no RelayState; allow them iff configured.
-	if relayState != "" {
-		u.mu.Lock()
-		delete(u.pendings, relayState)
-		u.mu.Unlock()
-	} else if !u.cfg.AllowIdPInit {
-		return samlAssertion{}, fmt.Errorf("%w: missing RelayState (IdP-initiated SSO disabled)", ErrSAMLInvalidAssertion)
 	}
 
 	nameID := ""

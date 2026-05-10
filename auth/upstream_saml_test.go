@@ -211,3 +211,22 @@ func TestDecodeSAMLRequest_BadInput(t *testing.T) {
 		t.Errorf("expected error on invalid base64")
 	}
 }
+
+func TestSAMLUpstream_SweepDropsExpiredPendings(t *testing.T) {
+	up := &SAMLUpstream{pendings: map[string]*samlPending{}}
+
+	now := time.Now()
+	up.pendings["stale"] = &samlPending{requestID: "id-old", createdAt: now.Add(-2 * samlPendingTTL)}
+	up.pendings["fresh"] = &samlPending{requestID: "id-new", createdAt: now}
+
+	up.mu.Lock()
+	up.sweepPendingsLocked(now)
+	up.mu.Unlock()
+
+	if _, ok := up.pendings["stale"]; ok {
+		t.Errorf("expired SAML pending was not swept")
+	}
+	if _, ok := up.pendings["fresh"]; !ok {
+		t.Errorf("fresh SAML pending was incorrectly swept")
+	}
+}

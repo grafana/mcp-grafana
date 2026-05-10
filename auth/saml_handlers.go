@@ -3,6 +3,7 @@ package auth
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"html"
 	"net/http"
 	"time"
 )
@@ -61,6 +62,17 @@ func (s *Server) SAMLACSHandler() http.Handler {
 			return
 		}
 
+		// IdP-initiated SSO has no RelayState and therefore no client OAuth
+		// flow to redirect to — there's no client_id/redirect_uri/PKCE
+		// challenge to honour. Render an instructional landing page so
+		// the --saml-allow-idp-initiated flag isn't a silent dead-end;
+		// the user must restart from their MCP client to complete an
+		// OAuth handshake. ValidateAssertion already enforces that this
+		// branch is only reached when the operator opted in.
+		if result.RelayState == "" {
+			s.renderSAMLIdPInitLanding(w, result.Identity)
+			return
+		}
 		// Look up the pendingFlow by RelayState (acts like OAuth state).
 		pf, ok := consumePending(result.RelayState)
 		if !ok {
@@ -97,6 +109,35 @@ func (s *Server) SAMLACSHandler() http.Handler {
 // samlBootstrapURL returns the /bootstrap?flow=... URL.
 func samlBootstrapURL(flow string) string {
 	return "/bootstrap?flow=" + flow
+}
+
+// renderSAMLIdPInitLanding tells the user that an IdP-initiated assertion
+// was accepted but cannot be completed without an MCP-client OAuth flow.
+// Rendered when --saml-allow-idp-initiated is true and the IdP POSTed an
+// assertion with no RelayState. The page is intentionally informational
+// and persists no state: there is no client_id/redirect_uri to redirect
+// to, so we tell the user to start from their MCP client.
+func (s *Server) renderSAMLIdPInitLanding(w http.ResponseWriter, identity Identity) {
+	s.logger().Info("auth.saml_idp_initiated_landing", "user_id", identity.String())
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	body := `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>mcp-grafana: SAML authentication accepted</title>
+<style>body{font-family:system-ui,sans-serif;max-width:600px;margin:4em auto;padding:0 1em;color:#222}</style>
+</head>
+<body>
+<h1>SAML authentication accepted</h1>
+<p>Your IdP authenticated you as <strong>` + html.EscapeString(identity.ID) + `</strong>.</p>
+<p>To finish connecting, start the login from your MCP client. The MCP server
+needs the OAuth handshake (client ID, redirect URI, PKCE challenge) that
+only the client can supply, so an IdP-initiated assertion alone cannot
+complete the connection.</p>
+</body>
+</html>`
+	_, _ = w.Write([]byte(body))
 }
 
 // SAMLSLSHandler handles SAML Single Logout requests from the IdP.
