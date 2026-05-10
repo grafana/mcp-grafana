@@ -88,10 +88,10 @@ type samlAssertion struct {
 
 	// Email is the value of the configured SAMLAttributeEmail attribute,
 	// if present in the assertion. Empty when the attribute name was not
-	// configured or the IdP didn't include it. Identity.ID prefers this
-	// over NameID when available, since IdP NameIDs are sometimes opaque
-	// per-tenant identifiers and the configured email is the operator's
-	// canonical key.
+	// configured or the IdP didn't include it. Informational only —
+	// Identity.ID stays bound to NameID so sessions remain looked up
+	// consistently between login (which sees attributes) and SLO (which
+	// only sees NameID in the IdP's LogoutRequest).
 	Email string
 	// Groups is the value list of the configured SAMLAttributeGroups
 	// attribute. Empty if not configured or absent from the assertion.

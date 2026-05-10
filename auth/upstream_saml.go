@@ -366,9 +366,16 @@ func (u *SAMLUpstream) ValidateAssertion(r *http.Request) (samlAssertion, error)
 		}
 	}
 
-	// Look up the configured email/groups attributes by name. attrEmail
-	// is empty when the operator didn't set --saml-attribute-email; in
-	// that case Identity.ID falls back to NameID below.
+	if nameID == "" {
+		return samlAssertion{}, fmt.Errorf("%w: assertion has no NameID", ErrSAMLInvalidAssertion)
+	}
+
+	// Look up the configured email/groups attributes by name. These are
+	// informational and do NOT override Identity.ID — the SLO LogoutRequest
+	// from the IdP carries only a NameID (no AttributeStatements), so the
+	// identity used to key sessions must be the NameID for login and
+	// logout to agree. An earlier version of this code preferred email
+	// over NameID and broke /saml/sls session lookup as a result.
 	var email string
 	if u.attrEmail != "" {
 		if vs := attrs[u.attrEmail]; len(vs) > 0 {
@@ -380,21 +387,8 @@ func (u *SAMLUpstream) ValidateAssertion(r *http.Request) (samlAssertion, error)
 		groups = attrs[u.attrGroups]
 	}
 
-	// Identity prefers the configured email attribute when present.
-	// Some IdPs put an opaque per-tenant identifier in NameID and the
-	// canonical user key (an email or username) in an attribute; fall
-	// back to NameID when no email attribute was configured or when the
-	// IdP omitted it. Reject only when both sources are empty.
-	identityID := email
-	if identityID == "" {
-		identityID = nameID
-	}
-	if identityID == "" {
-		return samlAssertion{}, fmt.Errorf("%w: assertion has no NameID and no configured email attribute", ErrSAMLInvalidAssertion)
-	}
-
 	return samlAssertion{
-		Identity:   Identity{Mode: ModeSAML, ID: identityID},
+		Identity:   Identity{Mode: ModeSAML, ID: nameID},
 		Email:      email,
 		Groups:     groups,
 		Attributes: attrs,
