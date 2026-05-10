@@ -304,6 +304,48 @@ func (s *Server) doRefreshUpstream(ctx context.Context, sess Session) (Session, 
 	return sess, nil
 }
 
+// refreshUpstream calls the configured Upstream.Refresh, encrypts the new
+// credentials, and persists the updated session. Returns the updated session
+// or an error.
+func (s *Server) refreshUpstream(ctx context.Context, sess Session) (Session, error) {
+	if s.Upstream == nil {
+		return sess, fmt.Errorf("no upstream configured")
+	}
+	rt, err := s.Encryptor.Open(sess.UpstreamRefreshCT)
+	if err != nil {
+		return sess, fmt.Errorf("decrypt refresh token: %w", err)
+	}
+	result, err := s.Upstream.Refresh(ctx, rt)
+	if err != nil {
+		return sess, err
+	}
+	credCT, err := s.Encryptor.Seal(result.UpstreamCreds)
+	if err != nil {
+		return sess, fmt.Errorf("encrypt new creds: %w", err)
+	}
+	refreshCT, err := s.Encryptor.Seal(result.UpstreamRefresh)
+	if err != nil {
+		return sess, fmt.Errorf("encrypt new refresh: %w", err)
+	}
+
+	sess.UpstreamCredsCT = credCT
+	sess.UpstreamRefreshCT = refreshCT
+	sess.UpstreamExpiresAt = result.UpstreamExpiresAt
+	sess.UpdatedAt = time.Now()
+
+	if _, err := s.Store.PutSession(ctx, sess); err != nil {
+		return sess, fmt.Errorf("persist refreshed session: %w", err)
+	}
+
+	if s.RBAC != nil {
+		// The MCP session key didn't change, but the underlying credential
+		// did. Drop the cached permission snapshot so the next tools/list
+		// re-fetches with the new bearer.
+		s.RBAC.InvalidateSessionCache(sess.TokenHash)
+	}
+	return sess, nil
+}
+
 func (s *Server) unauthorized(w http.ResponseWriter, errCode, desc string) {
 	parts := []string{`Bearer realm="mcp-grafana"`, fmt.Sprintf(`resource_metadata="%s/.well-known/oauth-protected-resource"`, s.PublicURL)}
 	if errCode != "" {
