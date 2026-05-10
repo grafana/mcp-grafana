@@ -8,7 +8,7 @@ import (
 )
 
 func TestRateLimit_BucketRefills(t *testing.T) {
-	limiter := NewIPLimiter(2, 100*time.Millisecond)
+	limiter := NewIPLimiter(2, 100*time.Millisecond, true)
 	handler := limiter.Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -42,7 +42,7 @@ func TestRateLimit_BucketRefills(t *testing.T) {
 // preventing the 2×max burst that a fixed-window limiter would allow.
 func TestRateLimit_ContinuousRefill_NoBoundaryBurst(t *testing.T) {
 	// max=4, refill=200ms → one token regenerates every 50ms.
-	limiter := NewIPLimiter(4, 200*time.Millisecond)
+	limiter := NewIPLimiter(4, 200*time.Millisecond, true)
 	allow := func() bool { return limiter.allow("10.0.0.1") }
 
 	// Drain the bucket.
@@ -67,7 +67,7 @@ func TestRateLimit_ContinuousRefill_NoBoundaryBurst(t *testing.T) {
 }
 
 func TestRateLimit_PerIPIsolation(t *testing.T) {
-	limiter := NewIPLimiter(1, time.Second)
+	limiter := NewIPLimiter(1, time.Second, true)
 	handler := limiter.Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -86,7 +86,7 @@ func TestRateLimit_PerIPIsolation(t *testing.T) {
 func TestRateLimit_PrefersForwardedHeaders(t *testing.T) {
 	// Two requests arrive from the same proxy IP but with different
 	// X-Forwarded-For — they must occupy independent buckets.
-	limiter := NewIPLimiter(1, time.Second)
+	limiter := NewIPLimiter(1, time.Second, true)
 	handler := limiter.Wrap(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -112,7 +112,7 @@ func TestRateLimit_PrefersForwardedHeaders(t *testing.T) {
 }
 
 func TestRateLimit_SweepDropsIdleBuckets(t *testing.T) {
-	l := NewIPLimiter(1, 10*time.Millisecond)
+	l := NewIPLimiter(1, 10*time.Millisecond, true)
 	// Plant an old bucket directly so we do not have to wait real time.
 	now := time.Now()
 	l.buckets["stale"] = &bucket{tokens: 1, updatedAt: now.Add(-5 * l.refill)}

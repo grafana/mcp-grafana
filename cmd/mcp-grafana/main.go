@@ -458,7 +458,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 			if err != nil {
 				return fmt.Errorf("auth setup: %w", err)
 			}
-			slog.Info("Per-user auth enabled", "mode", string(authCfg.Mode), "public_url", authCfg.PublicURL)
+			slog.Info("Per-user auth enabled", "mode", string(authCfg.Mode), "public_url", authCfg.PublicURL, "trust_forwarded_headers", authCfg.TrustForwardedHeaders)
 		}
 	}
 
@@ -567,20 +567,21 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 	}
 }
 
-func buildAuthConfig(modeStr, publicURL, encKey, encKeyPrev, stateDir string, allowInsecure bool, oidcIssuer, oidcClientID, oidcClientSecret, oidcScopes string) (auth.Config, error) {
+func buildAuthConfig(modeStr, publicURL, encKey, encKeyPrev, stateDir string, allowInsecure, trustForwarded bool, oidcIssuer, oidcClientID, oidcClientSecret, oidcScopes string) (auth.Config, error) {
 	mode, err := auth.ParseMode(modeStr)
 	if err != nil {
 		return auth.Config{}, err
 	}
 	cfg := auth.Config{
-		Mode:             mode,
-		PublicURL:        strings.TrimRight(publicURL, "/"),
-		StateDir:         stateDir,
-		AllowInsecure:    allowInsecure,
-		OIDCIssuerURL:    strings.TrimRight(oidcIssuer, "/"),
-		OIDCClientID:     oidcClientID,
-		OIDCClientSecret: oidcClientSecret,
-		OIDCScopes:       strings.Fields(oidcScopes),
+		Mode:                  mode,
+		PublicURL:             strings.TrimRight(publicURL, "/"),
+		StateDir:              stateDir,
+		AllowInsecure:         allowInsecure,
+		TrustForwardedHeaders: trustForwarded,
+		OIDCIssuerURL:         strings.TrimRight(oidcIssuer, "/"),
+		OIDCClientID:          oidcClientID,
+		OIDCClientSecret:      oidcClientSecret,
+		OIDCScopes:            strings.Fields(oidcScopes),
 	}
 	if encKey != "" {
 		k, err := auth.DecodeKey(encKey)
@@ -667,7 +668,7 @@ func main() {
 	var slowRequestLogLevelStr string
 	flag.StringVar(&slowRequestLogLevelStr, "slow-request-log-level", "warn", "Log level for slow-request events. One of \"info\" or \"warn\". Default \"warn\".")
 	var authModeStr, authPublicURL, authStateDir, authEncKey, authEncKeyPrev string
-	var authAllowInsecure bool
+	var authAllowInsecure, authTrustForwarded bool
 	var oidcIssuer, oidcClientID, oidcClientSecret, oidcScopes string
 	flag.StringVar(&authModeStr, "auth-mode", "none", "Per-user auth mode: 'none' (default), 'oauth-oidc'")
 	flag.StringVar(&authPublicURL, "public-url", "", "Public URL of this MCP server (required when --auth-mode != none)")
@@ -675,6 +676,7 @@ func main() {
 	flag.StringVar(&authEncKeyPrev, "token-encryption-key-previous", "", "Previous AES-GCM key, accepted for decryption during rotation")
 	flag.StringVar(&authStateDir, "auth-state-dir", "", "Directory for persistent auth state. Empty = in-memory store.")
 	flag.BoolVar(&authAllowInsecure, "allow-insecure-auth", false, "Permit auth endpoints over plain HTTP (dev only).")
+	flag.BoolVar(&authTrustForwarded, "trust-forwarded-headers", false, "Honour X-Forwarded-For / X-Real-IP / X-Forwarded-Proto from inbound requests. Set ONLY when a header-stripping reverse proxy fronts mcp-grafana — without one, attackers can spoof these per request to bypass per-IP rate limits and the auth-endpoint HTTPS guard.")
 	flag.StringVar(&oidcIssuer, "oidc-issuer-url", "", "OIDC issuer URL (oauth-oidc mode)")
 	flag.StringVar(&oidcClientID, "oidc-client-id", "", "OIDC client_id (oauth-oidc mode)")
 	flag.StringVar(&oidcClientSecret, "oidc-client-secret", "", "OIDC client_secret (oauth-oidc mode)")
@@ -697,7 +699,7 @@ func main() {
 		os.Exit(2)
 	}
 
-	authCfg, err := buildAuthConfig(authModeStr, authPublicURL, authEncKey, authEncKeyPrev, authStateDir, authAllowInsecure, oidcIssuer, oidcClientID, oidcClientSecret, oidcScopes)
+	authCfg, err := buildAuthConfig(authModeStr, authPublicURL, authEncKey, authEncKeyPrev, authStateDir, authAllowInsecure, authTrustForwarded, oidcIssuer, oidcClientID, oidcClientSecret, oidcScopes)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "invalid auth config: %v\n", err)
 		os.Exit(2)

@@ -15,11 +15,19 @@ type Server struct {
 	// the decrypted per-session API key at an attacker-controlled host via
 	// the X-Grafana-URL header.
 	GrafanaURL string
-	Store      Store
-	Upstream   Upstream
-	Encryptor  *Encryptor
-	Logger     *slog.Logger
-	Metrics    *Metrics
+	// TrustForwardedHeaders gates whether X-Forwarded-For / X-Real-IP /
+	// X-Forwarded-Proto from inbound requests are honoured for rate-limit
+	// bucketing and HTTPS detection respectively. Default false: only
+	// r.RemoteAddr and the actual TLS state are used. Set to true ONLY
+	// when a header-stripping reverse proxy fronts mcp-grafana — without
+	// that, attackers can spoof these headers per request to bypass per-IP
+	// limits and the auth-endpoint HTTPS guard.
+	TrustForwardedHeaders bool
+	Store                 Store
+	Upstream              Upstream
+	Encryptor             *Encryptor
+	Logger                *slog.Logger
+	Metrics               *Metrics
 
 	AccessTokenTTL  time.Duration
 	RefreshTokenTTL time.Duration
@@ -49,10 +57,10 @@ func (s *Server) logger() *slog.Logger {
 // guard; use only for dev.
 func (s *Server) RegisterRoutes(mux *http.ServeMux, grafanaURL string, allowInsecure bool) {
 	s.GrafanaURL = grafanaURL
-	authLim := NewIPLimiter(10, time.Minute)
-	bootLim := NewIPLimiter(3, time.Minute)
-	dcrLim := NewIPLimiter(5, time.Minute)
-	guard := RequireHTTPS(allowInsecure)
+	authLim := NewIPLimiter(10, time.Minute, s.TrustForwardedHeaders)
+	bootLim := NewIPLimiter(3, time.Minute, s.TrustForwardedHeaders)
+	dcrLim := NewIPLimiter(5, time.Minute, s.TrustForwardedHeaders)
+	guard := RequireHTTPS(allowInsecure, s.TrustForwardedHeaders)
 
 	wrap := func(h http.Handler) http.Handler { return guard(h) }
 
@@ -69,14 +77,15 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux, grafanaURL string, allowInse
 // upstream. Sets sensible defaults for TTLs.
 func New(cfg Config, store Store, enc *Encryptor, upstream Upstream, logger *slog.Logger) *Server {
 	return &Server{
-		PublicURL:       cfg.PublicURL,
-		Store:           store,
-		Upstream:        upstream,
-		Encryptor:       enc,
-		Logger:          logger,
-		Metrics:         NewMetrics(),
-		AccessTokenTTL:  time.Hour,
-		RefreshTokenTTL: 30 * 24 * time.Hour,
-		AuthCodeTTL:     5 * time.Minute,
+		PublicURL:             cfg.PublicURL,
+		TrustForwardedHeaders: cfg.TrustForwardedHeaders,
+		Store:                 store,
+		Upstream:              upstream,
+		Encryptor:             enc,
+		Logger:                logger,
+		Metrics:               NewMetrics(),
+		AccessTokenTTL:        time.Hour,
+		RefreshTokenTTL:       30 * 24 * time.Hour,
+		AuthCodeTTL:           5 * time.Minute,
 	}
 }

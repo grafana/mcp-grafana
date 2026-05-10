@@ -64,13 +64,17 @@ func (s *Server) Middleware() func(http.Handler) http.Handler {
 // RequireHTTPS rejects auth-endpoint requests that arrived over plain HTTP.
 // A request is considered HTTPS if any of the following is true:
 //   - The TLS field on the *http.Request is non-nil (direct TLS termination).
-//   - The X-Forwarded-Proto header is "https" (terminating proxy in front).
+//   - trustForwarded is true AND the X-Forwarded-Proto header is "https".
 //
-// When allowInsecure is true the guard is a no-op; intended for dev only.
-func RequireHTTPS(allowInsecure bool) func(http.Handler) http.Handler {
+// trustForwarded gates the X-Forwarded-Proto trust under the same opt-in
+// as XFF/X-Real-IP rate-limit bucketing — without a proxy that strips
+// inbound X-Forwarded-Proto, an attacker can spoof "https" over a plain
+// HTTP socket and bypass this guard. When allowInsecure is true the
+// guard is a no-op; intended for dev only.
+func RequireHTTPS(allowInsecure, trustForwarded bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if allowInsecure || isSecure(r) {
+			if allowInsecure || isSecure(r, trustForwarded) {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -79,11 +83,11 @@ func RequireHTTPS(allowInsecure bool) func(http.Handler) http.Handler {
 	}
 }
 
-func isSecure(r *http.Request) bool {
+func isSecure(r *http.Request, trustForwarded bool) bool {
 	if r.TLS != nil {
 		return true
 	}
-	if r.Header.Get("X-Forwarded-Proto") == "https" {
+	if trustForwarded && r.Header.Get("X-Forwarded-Proto") == "https" {
 		return true
 	}
 	return false

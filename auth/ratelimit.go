@@ -15,6 +15,14 @@ type IPLimiter struct {
 	max    int
 	refill time.Duration
 
+	// trustForwarded controls whether X-Forwarded-For / X-Real-IP
+	// headers are honoured when bucketing. Default false: only
+	// r.RemoteAddr is used, which is correct when mcp-grafana is the
+	// edge listener. Set to true ONLY when the operator runs a header-
+	// stripping proxy in front; otherwise an attacker can rotate XFF
+	// per request and bypass per-IP limits entirely.
+	trustForwarded bool
+
 	mu        sync.Mutex
 	buckets   map[string]*bucket
 	lastSwept time.Time
@@ -26,19 +34,22 @@ type bucket struct {
 }
 
 // NewIPLimiter creates a limiter that allows up to max requests per refill
-// window per IP.
-func NewIPLimiter(max int, refill time.Duration) *IPLimiter {
+// window per IP. trustForwarded honours X-Forwarded-For / X-Real-IP — only
+// pass true when a header-stripping reverse proxy is in front; otherwise
+// an attacker can spoof XFF and bypass the limit.
+func NewIPLimiter(max int, refill time.Duration, trustForwarded bool) *IPLimiter {
 	return &IPLimiter{
-		max:     max,
-		refill:  refill,
-		buckets: make(map[string]*bucket),
+		max:            max,
+		refill:         refill,
+		trustForwarded: trustForwarded,
+		buckets:        make(map[string]*bucket),
 	}
 }
 
 // Wrap returns an http.Handler that rate-limits by source IP.
 func (l *IPLimiter) Wrap(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !l.allow(clientIP(r)) {
+		if !l.allow(clientIP(r, l.trustForwarded)) {
 			w.Header().Set("Retry-After", "1")
 			httpError(w, http.StatusTooManyRequests, "too_many_requests", "rate limited")
 			return
@@ -102,26 +113,31 @@ func (l *IPLimiter) sweepBucketsLocked(now time.Time) {
 }
 
 // clientIP returns the source IP for rate-limiting. When mcp-grafana sits
-// behind a reverse proxy (the typical production deployment, since the
-// /authorize and /token endpoints require HTTPS), r.RemoteAddr is the
-// proxy's address — every request looks identical and the limiter
-// degenerates to a single global bucket. We honour X-Forwarded-For (first
-// hop) and X-Real-IP when present so the limiter scopes to the original
-// client. Operators MUST run a proxy that strips inbound XFF/XRI headers
-// from untrusted clients, otherwise these headers are spoofable.
-func clientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		// XFF is "client, proxy1, proxy2, ..." — the first non-empty entry
-		// is the original client.
-		for _, raw := range strings.Split(xff, ",") {
-			candidate := strings.TrimSpace(raw)
-			if candidate != "" {
-				return candidate
+// behind a reverse proxy and the operator has confirmed the proxy strips
+// inbound X-Forwarded-For / X-Real-IP from untrusted clients (via
+// trustForwarded=true, plumbed from --trust-forwarded-headers), we honour
+// XFF (first hop) and XRI so the limiter scopes to the original client.
+//
+// Without that opt-in we fall back to r.RemoteAddr unconditionally —
+// blindly trusting XFF would let any attacker rotate the header per
+// request and bypass per-IP limits entirely, which is worse than the
+// "every request looks like the proxy" failure mode of always using
+// RemoteAddr.
+func clientIP(r *http.Request, trustForwarded bool) string {
+	if trustForwarded {
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			// XFF is "client, proxy1, proxy2, ..." — the first non-empty
+			// entry is the original client.
+			for _, raw := range strings.Split(xff, ",") {
+				candidate := strings.TrimSpace(raw)
+				if candidate != "" {
+					return candidate
+				}
 			}
 		}
-	}
-	if xri := strings.TrimSpace(r.Header.Get("X-Real-IP")); xri != "" {
-		return xri
+		if xri := strings.TrimSpace(r.Header.Get("X-Real-IP")); xri != "" {
+			return xri
+		}
 	}
 	if ip, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
 		return ip

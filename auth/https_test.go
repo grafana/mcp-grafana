@@ -7,7 +7,7 @@ import (
 )
 
 func TestRequireHTTPS_AcceptsForwardedProto(t *testing.T) {
-	guard := RequireHTTPS(false)
+	guard := RequireHTTPS(false, true)
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
@@ -21,7 +21,7 @@ func TestRequireHTTPS_AcceptsForwardedProto(t *testing.T) {
 }
 
 func TestRequireHTTPS_RejectsPlain(t *testing.T) {
-	guard := RequireHTTPS(false)
+	guard := RequireHTTPS(false, true)
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
 	r := httptest.NewRequest(http.MethodGet, "/authorize", nil)
 	w := httptest.NewRecorder()
@@ -32,7 +32,7 @@ func TestRequireHTTPS_RejectsPlain(t *testing.T) {
 }
 
 func TestRequireHTTPS_AllowInsecureFlag(t *testing.T) {
-	guard := RequireHTTPS(true)
+	guard := RequireHTTPS(true, true)
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
 	r := httptest.NewRequest(http.MethodGet, "/authorize", nil)
 	w := httptest.NewRecorder()

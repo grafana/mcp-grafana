@@ -33,6 +33,13 @@ type Config struct {
 	// Allow auth endpoints over plain HTTP. Dev-only.
 	AllowInsecure bool
 
+	// TrustForwardedHeaders enables honouring X-Forwarded-For / X-Real-IP /
+	// X-Forwarded-Proto from inbound requests. Set ONLY when a header-
+	// stripping reverse proxy fronts mcp-grafana — without one, attackers
+	// can spoof these per request to bypass per-IP rate limits and the
+	// auth-endpoint HTTPS guard.
+	TrustForwardedHeaders bool
+
 	// OIDC config (Mode oauth-oidc).
 	OIDCIssuerURL    string
 	OIDCClientID     string

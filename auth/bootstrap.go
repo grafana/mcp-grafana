@@ -66,10 +66,21 @@ func (s *Server) renderBootstrap(w http.ResponseWriter, r *http.Request, errMsg 
 		httpError(w, http.StatusBadRequest, "invalid_request", "unknown or expired flow token")
 		return
 	}
+	// The form embeds a flow-bound token and accepts a Grafana SA token
+	// on POST. No-store keeps it out of shared caches, CSP locks form
+	// submission to this origin, and no-referrer prevents the flow
+	// token from leaking to whatever the SA-token doc link in the body
+	// points at.
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if errMsg != "" {
-		w.WriteHeader(http.StatusUnauthorized)
-	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Content-Security-Policy", "default-src 'self'; form-action 'self'; img-src 'none'; style-src 'unsafe-inline'")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	// errMsg means "we previously rejected the user's POSTed token";
+	// re-render the form. This is application-level, not HTTP-auth, so
+	// 200 is the right status — 401 would imply Authorization header
+	// rejection and triggers browser/cache behaviour we don't want.
 	_ = bootstrapTmpl.Execute(w, map[string]string{
 		"Flow":  flow,
 		"Error": errMsg,
