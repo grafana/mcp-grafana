@@ -18,6 +18,7 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
+	"github.com/grafana/mcp-grafana/auth"
 	"github.com/grafana/mcp-grafana/observability"
 	"github.com/grafana/mcp-grafana/tools"
 	"go.opentelemetry.io/contrib/bridges/otelslog"
@@ -534,6 +535,41 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 	}
 }
 
+func buildAuthConfig(modeStr, publicURL, encKey, encKeyPrev, stateDir string, allowInsecure bool, oidcIssuer, oidcClientID, oidcClientSecret, oidcScopes string) (auth.Config, error) {
+	mode, err := auth.ParseMode(modeStr)
+	if err != nil {
+		return auth.Config{}, err
+	}
+	cfg := auth.Config{
+		Mode:             mode,
+		PublicURL:        strings.TrimRight(publicURL, "/"),
+		StateDir:         stateDir,
+		AllowInsecure:    allowInsecure,
+		OIDCIssuerURL:    strings.TrimRight(oidcIssuer, "/"),
+		OIDCClientID:     oidcClientID,
+		OIDCClientSecret: oidcClientSecret,
+		OIDCScopes:       strings.Fields(oidcScopes),
+	}
+	if encKey != "" {
+		k, err := auth.DecodeKey(encKey)
+		if err != nil {
+			return cfg, fmt.Errorf("--token-encryption-key: %w", err)
+		}
+		cfg.EncryptionKey = k
+	}
+	if encKeyPrev != "" {
+		k, err := auth.DecodeKey(encKeyPrev)
+		if err != nil {
+			return cfg, fmt.Errorf("--token-encryption-key-previous: %w", err)
+		}
+		cfg.EncryptionKeyPrevious = k
+	}
+	if err := cfg.Validate(); err != nil {
+		return cfg, err
+	}
+	return cfg, nil
+}
+
 func main() {
 	var transport string
 	flag.StringVar(&transport, "t", "stdio", "Transport type (stdio, sse or streamable-http)")
@@ -561,6 +597,19 @@ func main() {
 	flag.DurationVar(&obs.SlowRequestThreshold, "slow-request-threshold", 0, "Log an event when any MCP request (tool invocation, list, resource read, etc.) takes longer than this threshold. Accepts Go duration strings, e.g. 500ms, 5s. Default 0 disables slow-request logging.")
 	var slowRequestLogLevelStr string
 	flag.StringVar(&slowRequestLogLevelStr, "slow-request-log-level", "warn", "Log level for slow-request events. One of \"info\" or \"warn\". Default \"warn\".")
+	var authModeStr, authPublicURL, authStateDir, authEncKey, authEncKeyPrev string
+	var authAllowInsecure bool
+	var oidcIssuer, oidcClientID, oidcClientSecret, oidcScopes string
+	flag.StringVar(&authModeStr, "auth-mode", "none", "Per-user auth mode: 'none' (default), 'oauth-oidc'")
+	flag.StringVar(&authPublicURL, "public-url", "", "Public URL of this MCP server (required when --auth-mode != none)")
+	flag.StringVar(&authEncKey, "token-encryption-key", "", "AES-GCM key for encrypting stored credentials (32 bytes, base64 or hex). Required when --auth-mode != none.")
+	flag.StringVar(&authEncKeyPrev, "token-encryption-key-previous", "", "Previous AES-GCM key, accepted for decryption during rotation")
+	flag.StringVar(&authStateDir, "auth-state-dir", "", "Directory for persistent auth state. Empty = in-memory store.")
+	flag.BoolVar(&authAllowInsecure, "allow-insecure-auth", false, "Permit auth endpoints over plain HTTP (dev only).")
+	flag.StringVar(&oidcIssuer, "oidc-issuer-url", "", "OIDC issuer URL (oauth-oidc mode)")
+	flag.StringVar(&oidcClientID, "oidc-client-id", "", "OIDC client_id (oauth-oidc mode)")
+	flag.StringVar(&oidcClientSecret, "oidc-client-secret", "", "OIDC client_secret (oauth-oidc mode)")
+	flag.StringVar(&oidcScopes, "oidc-scopes", "openid profile email", "Space-separated OIDC scopes")
 	flag.Parse()
 
 	action, slowLevel, err := handleFlagsPostParse(*showVersion, slowRequestLogLevelStr)
@@ -578,6 +627,16 @@ func main() {
 		fmt.Fprintf(os.Stderr, "internal error: unexpected flag action %v\n", action)
 		os.Exit(2)
 	}
+
+	authCfg, err := buildAuthConfig(authModeStr, authPublicURL, authEncKey, authEncKeyPrev, authStateDir, authAllowInsecure, oidcIssuer, oidcClientID, oidcClientSecret, oidcScopes)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "invalid auth config: %v\n", err)
+		os.Exit(2)
+	}
+	if authCfg.Mode != auth.ModeNone {
+		fmt.Fprintln(os.Stderr, "--auth-mode is parsed but not yet wired (Phase 1 in progress); ignoring")
+	}
+	_ = authCfg // silence "declared and not used" until Task 18 wires it
 
 	// Convert local grafanaConfig to mcpgrafana.GrafanaConfig
 	grafanaConfig := mcpgrafana.GrafanaConfig{
