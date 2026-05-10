@@ -744,6 +744,12 @@ func buildAuthServer(ctx context.Context, cfg auth.Config, grafanaURL string, lo
 			return nil, fmt.Errorf("grafana upstream: %w", err)
 		}
 		up = g
+	case auth.ModeSAML:
+		s, err := auth.NewSAMLUpstream(ctx, cfg)
+		if err != nil {
+			return nil, fmt.Errorf("saml upstream: %w", err)
+		}
+		up = s
 	default:
 		return nil, fmt.Errorf("auth mode %q is not implemented yet", cfg.Mode)
 	}
