@@ -13,7 +13,6 @@ const meterName = "mcp-grafana-auth"
 // Metrics owns the OTel instruments used by the auth package.
 type Metrics struct {
 	active metric.Int64UpDownCounter
-	login  metric.Float64Histogram
 }
 
 // NewMetrics constructs the instruments, swallowing errors (per OTel conventions
@@ -25,11 +24,7 @@ func NewMetrics() *Metrics {
 		metric.WithDescription("Active per-user auth sessions"),
 		metric.WithUnit("{session}"),
 	)
-	login, _ := m.Float64Histogram("mcp_auth_login_duration_seconds",
-		metric.WithDescription("End-to-end auth login flow duration"),
-		metric.WithUnit("s"),
-	)
-	return &Metrics{active: active, login: login}
+	return &Metrics{active: active}
 }
 
 func (m *Metrics) SessionCreated(ctx context.Context, mode Mode) {
@@ -44,14 +39,4 @@ func (m *Metrics) SessionRevoked(ctx context.Context, mode Mode) {
 		return
 	}
 	m.active.Add(ctx, -1, metric.WithAttributes(attribute.String("mode", string(mode))))
-}
-
-func (m *Metrics) LoginObserved(ctx context.Context, mode Mode, result string, durationSec float64) {
-	if m == nil {
-		return
-	}
-	m.login.Record(ctx, durationSec, metric.WithAttributes(
-		attribute.String("mode", string(mode)),
-		attribute.String("result", result),
-	))
 }
