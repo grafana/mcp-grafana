@@ -137,10 +137,15 @@ func chooseEntityID(cfg Config, publicURL *url.URL) string {
 	return publicURL.String() + "/saml/metadata"
 }
 
+// mustJoin joins a path segment onto base, preserving any path prefix on
+// base. Panics on a parse error since ref is always a hardcoded literal.
 func mustJoin(base *url.URL, ref string) *url.URL {
-	u, err := base.Parse(strings.TrimLeft(ref, "/"))
+	joined, err := url.JoinPath(base.String(), ref)
 	if err != nil {
-		// base is a parsed URL; ref is a hardcoded path — this can't fail.
+		panic(err)
+	}
+	u, err := url.Parse(joined)
+	if err != nil {
 		panic(err)
 	}
 	return u
@@ -173,7 +178,8 @@ func loadIdPMetadata(ctx context.Context, cfg Config) (*saml.EntityDescriptor, e
 	if err != nil {
 		return nil, err
 	}
-	return samlsp.FetchMetadata(ctx, http.DefaultClient, *u)
+	client := &http.Client{Timeout: 30 * time.Second}
+	return samlsp.FetchMetadata(ctx, client, *u)
 }
 
 // --- Upstream interface ---

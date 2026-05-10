@@ -72,6 +72,14 @@ func (s *Server) AuthorizeHandler() http.Handler {
 		})
 
 		dest := s.Upstream.AuthorizeURL(s.PublicURL+"/callback", state)
+		if dest == "" {
+			// Upstream returned an empty URL (internal misconfiguration).
+			// Drop the pending entry so it doesn't accumulate, then redirect-error
+			// the user-agent back to the client with a generic OAuth error.
+			consumePending(state)
+			httpRedirectError(w, r, redirectURI, "server_error", "upstream returned no authorize URL", clientState)
+			return
+		}
 		http.Redirect(w, r, dest, http.StatusFound)
 	})
 }
