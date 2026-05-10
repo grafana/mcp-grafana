@@ -1,7 +1,6 @@
 package rbac
 
 import (
-	"context"
 	"testing"
 )
 
@@ -9,8 +8,7 @@ func TestMetrics_NilSafe(t *testing.T) {
 	var m *Metrics
 	m.CacheHit(nil)
 	m.CacheMiss(nil)
-	m.FilterObserved(nil, ModeAuto, 0.1)
-	defer m.Stopwatch(context.Background(), ModeAuto)() // must not panic
+	m.FilterObserved(nil, ModeAuto, 0.1) // must not panic
 }
 
 func TestNewMetrics_DoesNotPanic(t *testing.T) {

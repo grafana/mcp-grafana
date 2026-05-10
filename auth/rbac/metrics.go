@@ -2,7 +2,6 @@ package rbac
 
 import (
 	"context"
-	"time"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -56,14 +55,4 @@ func (m *Metrics) CacheMiss(ctx context.Context) {
 	if m != nil {
 		m.cacheMisses.Add(ctx, 1)
 	}
-}
-
-// Stopwatch returns a closure that records duration when called.
-// The context is captured for trace/exemplar correlation.
-func (m *Metrics) Stopwatch(ctx context.Context, mode Mode) func() {
-	if m == nil {
-		return func() {}
-	}
-	start := time.Now()
-	return func() { m.FilterObserved(ctx, mode, time.Since(start).Seconds()) }
 }
