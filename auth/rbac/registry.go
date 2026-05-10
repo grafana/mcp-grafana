@@ -50,154 +50,162 @@ var ToolGates = map[string]ToolGate{
 	},
 
 	// --- Datasources ---
+	// Scope is intentionally empty here for the same reason as the Search
+	// section above: we gate on "has the action on any resource", not a
+	// specific wildcard scope. A user with a per-datasource grant like
+	// datasources:uid:prom does NOT satisfy a datasources:* requirement
+	// under scopeMatch, so requiring "datasources:*" would hide
+	// per-datasource users' tools entirely. Per-tool target enforcement
+	// (e.g. "this user can query prom but not loki") is the datasource's
+	// job, not the MCP gate's.
 	"list_datasources": {
-		Permissions:  []Permission{{Action: "datasources:read", Scope: "datasources:*"}},
+		Permissions:  []Permission{{Action: "datasources:read"}},
 		MinBasicRole: "Viewer",
 	},
 	"get_datasource": {
-		Permissions:  []Permission{{Action: "datasources:read", Scope: "datasources:*"}},
+		Permissions:  []Permission{{Action: "datasources:read"}},
 		MinBasicRole: "Viewer",
 	},
 
 	// --- Prometheus ---
 	"query_prometheus": {
-		Permissions:  []Permission{{Action: "datasources:query", Scope: "datasources:*"}},
+		Permissions:  []Permission{{Action: "datasources:query"}},
 		MinBasicRole: "Viewer",
 	},
 	"list_prometheus_metric_metadata": {
-		Permissions:  []Permission{{Action: "datasources:query", Scope: "datasources:*"}},
+		Permissions:  []Permission{{Action: "datasources:query"}},
 		MinBasicRole: "Viewer",
 	},
 	"list_prometheus_metric_names": {
-		Permissions:  []Permission{{Action: "datasources:query", Scope: "datasources:*"}},
+		Permissions:  []Permission{{Action: "datasources:query"}},
 		MinBasicRole: "Viewer",
 	},
 	"list_prometheus_label_names": {
-		Permissions:  []Permission{{Action: "datasources:query", Scope: "datasources:*"}},
+		Permissions:  []Permission{{Action: "datasources:query"}},
 		MinBasicRole: "Viewer",
 	},
 	"list_prometheus_label_values": {
-		Permissions:  []Permission{{Action: "datasources:query", Scope: "datasources:*"}},
+		Permissions:  []Permission{{Action: "datasources:query"}},
 		MinBasicRole: "Viewer",
 	},
 	"query_prometheus_histogram": {
-		Permissions:  []Permission{{Action: "datasources:query", Scope: "datasources:*"}},
+		Permissions:  []Permission{{Action: "datasources:query"}},
 		MinBasicRole: "Viewer",
 	},
 
 	// --- Loki ---
 	"query_loki_logs": {
-		Permissions:  []Permission{{Action: "datasources:query", Scope: "datasources:*"}},
+		Permissions:  []Permission{{Action: "datasources:query"}},
 		MinBasicRole: "Viewer",
 	},
 	"list_loki_label_names": {
-		Permissions:  []Permission{{Action: "datasources:query", Scope: "datasources:*"}},
+		Permissions:  []Permission{{Action: "datasources:query"}},
 		MinBasicRole: "Viewer",
 	},
 	"list_loki_label_values": {
-		Permissions:  []Permission{{Action: "datasources:query", Scope: "datasources:*"}},
+		Permissions:  []Permission{{Action: "datasources:query"}},
 		MinBasicRole: "Viewer",
 	},
 	"query_loki_stats": {
-		Permissions:  []Permission{{Action: "datasources:query", Scope: "datasources:*"}},
+		Permissions:  []Permission{{Action: "datasources:query"}},
 		MinBasicRole: "Viewer",
 	},
 	"query_loki_patterns": {
-		Permissions:  []Permission{{Action: "datasources:query", Scope: "datasources:*"}},
+		Permissions:  []Permission{{Action: "datasources:query"}},
 		MinBasicRole: "Viewer",
 	},
 
 	// --- InfluxDB ---
 	"query_influxdb": {
-		Permissions:  []Permission{{Action: "datasources:query", Scope: "datasources:*"}},
+		Permissions:  []Permission{{Action: "datasources:query"}},
 		MinBasicRole: "Viewer",
 	},
 
 	// --- ClickHouse ---
 	"list_clickhouse_tables": {
-		Permissions:  []Permission{{Action: "datasources:query", Scope: "datasources:*"}},
+		Permissions:  []Permission{{Action: "datasources:query"}},
 		MinBasicRole: "Viewer",
 	},
 	"describe_clickhouse_table": {
-		Permissions:  []Permission{{Action: "datasources:query", Scope: "datasources:*"}},
+		Permissions:  []Permission{{Action: "datasources:query"}},
 		MinBasicRole: "Viewer",
 	},
 	"query_clickhouse": {
-		Permissions:  []Permission{{Action: "datasources:query", Scope: "datasources:*"}},
+		Permissions:  []Permission{{Action: "datasources:query"}},
 		MinBasicRole: "Viewer",
 	},
 
 	// --- CloudWatch ---
 	"list_cloudwatch_namespaces": {
-		Permissions:  []Permission{{Action: "datasources:query", Scope: "datasources:*"}},
+		Permissions:  []Permission{{Action: "datasources:query"}},
 		MinBasicRole: "Viewer",
 	},
 	"list_cloudwatch_metrics": {
-		Permissions:  []Permission{{Action: "datasources:query", Scope: "datasources:*"}},
+		Permissions:  []Permission{{Action: "datasources:query"}},
 		MinBasicRole: "Viewer",
 	},
 	"list_cloudwatch_dimensions": {
-		Permissions:  []Permission{{Action: "datasources:query", Scope: "datasources:*"}},
+		Permissions:  []Permission{{Action: "datasources:query"}},
 		MinBasicRole: "Viewer",
 	},
 	"query_cloudwatch": {
-		Permissions:  []Permission{{Action: "datasources:query", Scope: "datasources:*"}},
+		Permissions:  []Permission{{Action: "datasources:query"}},
 		MinBasicRole: "Viewer",
 	},
 
 	// --- Elasticsearch / OpenSearch ---
 	"query_elasticsearch": {
-		Permissions:  []Permission{{Action: "datasources:query", Scope: "datasources:*"}},
+		Permissions:  []Permission{{Action: "datasources:query"}},
 		MinBasicRole: "Viewer",
 	},
 
 	// --- Snowflake ---
 	"list_snowflake_tables": {
-		Permissions:  []Permission{{Action: "datasources:query", Scope: "datasources:*"}},
+		Permissions:  []Permission{{Action: "datasources:query"}},
 		MinBasicRole: "Viewer",
 	},
 	"describe_snowflake_table": {
-		Permissions:  []Permission{{Action: "datasources:query", Scope: "datasources:*"}},
+		Permissions:  []Permission{{Action: "datasources:query"}},
 		MinBasicRole: "Viewer",
 	},
 	"query_snowflake": {
-		Permissions:  []Permission{{Action: "datasources:query", Scope: "datasources:*"}},
+		Permissions:  []Permission{{Action: "datasources:query"}},
 		MinBasicRole: "Viewer",
 	},
 
 	// --- Graphite ---
 	"query_graphite": {
-		Permissions:  []Permission{{Action: "datasources:query", Scope: "datasources:*"}},
+		Permissions:  []Permission{{Action: "datasources:query"}},
 		MinBasicRole: "Viewer",
 	},
 	"list_graphite_metrics": {
-		Permissions:  []Permission{{Action: "datasources:query", Scope: "datasources:*"}},
+		Permissions:  []Permission{{Action: "datasources:query"}},
 		MinBasicRole: "Viewer",
 	},
 	"list_graphite_tags": {
-		Permissions:  []Permission{{Action: "datasources:query", Scope: "datasources:*"}},
+		Permissions:  []Permission{{Action: "datasources:query"}},
 		MinBasicRole: "Viewer",
 	},
 	"query_graphite_density": {
-		Permissions:  []Permission{{Action: "datasources:query", Scope: "datasources:*"}},
+		Permissions:  []Permission{{Action: "datasources:query"}},
 		MinBasicRole: "Viewer",
 	},
 
 	// --- Pyroscope ---
 	"list_pyroscope_label_names": {
-		Permissions:  []Permission{{Action: "datasources:query", Scope: "datasources:*"}},
+		Permissions:  []Permission{{Action: "datasources:query"}},
 		MinBasicRole: "Viewer",
 	},
 	"list_pyroscope_label_values": {
-		Permissions:  []Permission{{Action: "datasources:query", Scope: "datasources:*"}},
+		Permissions:  []Permission{{Action: "datasources:query"}},
 		MinBasicRole: "Viewer",
 	},
 	"list_pyroscope_profile_types": {
-		Permissions:  []Permission{{Action: "datasources:query", Scope: "datasources:*"}},
+		Permissions:  []Permission{{Action: "datasources:query"}},
 		MinBasicRole: "Viewer",
 	},
 	"query_pyroscope": {
-		Permissions:  []Permission{{Action: "datasources:query", Scope: "datasources:*"}},
+		Permissions:  []Permission{{Action: "datasources:query"}},
 		MinBasicRole: "Viewer",
 	},
 
@@ -205,14 +213,14 @@ var ToolGates = map[string]ToolGate{
 	"run_panel_query": {
 		Permissions: []Permission{
 			{Action: "dashboards:read"},
-			{Action: "datasources:query", Scope: "datasources:*"},
+			{Action: "datasources:query"},
 		},
 		MinBasicRole: "Viewer",
 	},
 
 	// --- Examples ---
 	"get_query_examples": {
-		Permissions:  []Permission{{Action: "datasources:read", Scope: "datasources:*"}},
+		Permissions:  []Permission{{Action: "datasources:read"}},
 		MinBasicRole: "Viewer",
 	},
 

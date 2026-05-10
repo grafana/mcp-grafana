@@ -77,6 +77,27 @@ func TestRegistry_AllRegisteredToolsCovered(t *testing.T) {
 	}
 }
 
+// TestRegistry_DatasourceToolsAcceptUIDScopedGrants is the regression guard
+// for the bugbot finding: a user whose RBAC grant is per-datasource (e.g.
+// datasources:uid:prom) must satisfy the gate for datasource tools.
+// Requiring "datasources:*" on the registry side would force the user to
+// have a wildcard grant, locking out users whose Grafana admin gave them
+// targeted access — the same UX cliff the dashboard tools intentionally
+// avoid via empty scopes.
+func TestRegistry_DatasourceToolsAcceptUIDScopedGrants(t *testing.T) {
+	uidGrant := rbac.PermissionSet{
+		"datasources:read":  []string{"datasources:uid:prom"},
+		"datasources:query": []string{"datasources:uid:prom"},
+	}
+	gate := rbac.NewGate(rbac.ToolGates)
+	snap := rbac.Snapshot{Permissions: uidGrant, BasicRole: "Viewer"}
+	for _, name := range []string{"list_datasources", "get_datasource", "query_prometheus"} {
+		if !gate.Allow(rbac.ModeEnterprise, snap, name) {
+			t.Errorf("user with datasources:uid:prom grant denied %q — registry scope is too narrow", name)
+		}
+	}
+}
+
 // extractToolNames pulls the tool names out of an MCP tools/list response.
 // HandleMessage may return a typed response struct or raw JSON bytes;
 // round-trip through encoding/json so we don't depend on mcp-go internals.
