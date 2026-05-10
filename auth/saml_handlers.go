@@ -90,7 +90,9 @@ func (s *Server) SAMLACSHandler() http.Handler {
 
 		// First login — redirect to /bootstrap.
 		var fb [16]byte
-		_, _ = rand.Read(fb[:])
+		if _, err := rand.Read(fb[:]); err != nil {
+			panic("rng: " + err.Error())
+		}
 		flowToken := hex.EncodeToString(fb[:])
 		storeBootstrap(flowToken, &pendingBootstrap{
 			identity:            result.Identity,
@@ -158,15 +160,19 @@ func (s *Server) SAMLSLSHandler() http.Handler {
 			return
 		}
 
-		// Drop all sessions matching this identity.
+		// Drop the session matching this identity, if any. The audit log
+		// only fires when a session was actually deleted — otherwise an
+		// already-logged-out (or never-bootstrapped) identity would leave
+		// a misleading "session_revoked" entry.
 		if existing, err := s.Store.GetSessionByIdentity(r.Context(), identity); err == nil {
 			_ = s.Store.DeleteSession(r.Context(), existing.TokenHash)
 			if s.RBAC != nil {
 				s.RBAC.InvalidateSessionCache(existing.TokenHash)
 			}
+			s.logger().Info("auth.session_revoked", "user_id", identity.String(), "reason", "saml_slo")
+		} else {
+			s.logger().Info("auth.saml_slo_no_session", "user_id", identity.String())
 		}
-
-		s.logger().Info("auth.session_revoked", "user_id", identity.String(), "reason", "saml_slo")
 		http.Redirect(w, r, redirectURL, http.StatusFound)
 	})
 }
