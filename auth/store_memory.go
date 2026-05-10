@@ -142,15 +142,22 @@ func (m *MemoryStore) GetClient(_ context.Context, id string) (DCRClient, error)
 // Snapshot returns deep copies of every session, client, and auth code held
 // in memory. FileStore.flush uses it to capture a coherent serialization
 // snapshot under the memory store's own lock, keeping FileStore from
-// reaching into MemoryStore's internal fields. Sessions are dereferenced
-// (the in-memory store holds pointers); clients and auth codes are
-// already value types.
+// reaching into MemoryStore's internal fields.
+//
+// Session and AuthCode carry []byte ciphertext fields whose backing arrays
+// must NOT be shared with the live store — a future mutation that
+// reassigns the slice header is safe, but in-place mutation (or a future
+// optimization that overwrites the backing array) would corrupt an
+// in-flight flush. cloneBytes copies the underlying bytes so the caller
+// owns its own copy of every ciphertext.
 func (m *MemoryStore) Snapshot() (sessions []Session, clients []DCRClient, codes []AuthCode) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	sessions = make([]Session, 0, len(m.sessByToken))
 	for _, s := range m.sessByToken {
-		sessions = append(sessions, *s)
+		sc := *s
+		sc.UpstreamCredsCT = cloneBytes(sc.UpstreamCredsCT)
+		sessions = append(sessions, sc)
 	}
 	clients = make([]DCRClient, 0, len(m.clients))
 	for _, c := range m.clients {
@@ -158,9 +165,19 @@ func (m *MemoryStore) Snapshot() (sessions []Session, clients []DCRClient, codes
 	}
 	codes = make([]AuthCode, 0, len(m.codes))
 	for _, ac := range m.codes {
+		ac.UpstreamCredsCT = cloneBytes(ac.UpstreamCredsCT)
 		codes = append(codes, ac)
 	}
 	return sessions, clients, codes
+}
+
+func cloneBytes(b []byte) []byte {
+	if b == nil {
+		return nil
+	}
+	out := make([]byte, len(b))
+	copy(out, b)
+	return out
 }
 
 func (m *MemoryStore) PutAuthCode(_ context.Context, c AuthCode) error {
