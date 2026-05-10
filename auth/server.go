@@ -2,6 +2,7 @@ package auth
 
 import (
 	"log/slog"
+	"net/http"
 	"time"
 )
 
@@ -24,4 +25,33 @@ func (s *Server) logger() *slog.Logger {
 		return s.Logger
 	}
 	return slog.Default()
+}
+
+// RegisterRoutes mounts the auth endpoints on mux. grafanaURL is forwarded to
+// the bootstrap handler so it can validate pasted tokens against the right
+// Grafana instance.
+func (s *Server) RegisterRoutes(mux *http.ServeMux, grafanaURL string) {
+	mux.Handle("/.well-known/oauth-authorization-server", ASMetadataHandler(s.PublicURL))
+	mux.Handle("/.well-known/oauth-protected-resource", ProtectedResourceMetadataHandler(s.PublicURL))
+	mux.Handle("/register", DCRHandler(s.Store))
+	mux.Handle("/authorize", s.AuthorizeHandler())
+	mux.Handle("/callback", s.CallbackHandler())
+	mux.Handle("/token", s.TokenHandler())
+	mux.Handle("/bootstrap", s.BootstrapHandler(grafanaURL))
+}
+
+// New constructs a Server from a validated Config plus an Encryptor and
+// upstream. Sets sensible defaults for TTLs.
+func New(cfg Config, store Store, enc *Encryptor, upstream Upstream, logger *slog.Logger) *Server {
+	return &Server{
+		PublicURL:       cfg.PublicURL,
+		Store:           store,
+		Upstream:        upstream,
+		Encryptor:       enc,
+		Logger:          logger,
+		AccessTokenTTL:  time.Hour,
+		RefreshTokenTTL: 30 * 24 * time.Hour,
+		AuthCodeTTL:     5 * time.Minute,
+		PendingFlowTTL:  15 * time.Minute,
+	}
 }
