@@ -30,6 +30,7 @@ type dcrResponse struct {
 func DCRHandler(store Store) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
+			w.Header().Set("Allow", "POST")
 			httpError(w, http.StatusMethodNotAllowed, "invalid_request", "POST required")
 			return
 		}
@@ -61,7 +62,7 @@ func DCRHandler(store Store) http.Handler {
 			CreatedAt:    time.Now(),
 		}
 		if err := store.PutClient(r.Context(), client); err != nil {
-			httpError(w, http.StatusInternalServerError, "server_error", err.Error())
+			httpError(w, http.StatusInternalServerError, "server_error", "registration failed")
 			return
 		}
 
@@ -85,6 +86,9 @@ func validateRedirectURI(s string) error {
 	if err != nil {
 		return err
 	}
+	if u.Fragment != "" || strings.Contains(s, "#") {
+		return errFragment
+	}
 	if u.Scheme == "https" {
 		return nil
 	}
@@ -102,6 +106,7 @@ func validateRedirectURI(s string) error {
 var (
 	errPlainHTTP = stringError("redirect_uri must use https or http loopback")
 	errBadScheme = stringError("redirect_uri must use https or http loopback")
+	errFragment  = stringError("redirect_uri must not contain a fragment")
 )
 
 type stringError string
@@ -138,6 +143,3 @@ func httpRedirectError(w http.ResponseWriter, r *http.Request, redirectURI, errC
 	u.RawQuery = q.Encode()
 	http.Redirect(w, r, u.String(), http.StatusFound)
 }
-
-// strJoin is used in error helpers; standalone to keep imports tidy.
-func strJoin(items []string, sep string) string { return strings.Join(items, sep) }

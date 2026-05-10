@@ -91,3 +91,31 @@ func TestDCR_RequiresAtLeastOneRedirect(t *testing.T) {
 		t.Errorf("status=%d", w.Code)
 	}
 }
+
+func TestDCR_RejectsRedirectWithFragment(t *testing.T) {
+	store := NewMemoryStore()
+	h := DCRHandler(store)
+	body := bytes.NewBufferString(`{
+		"redirect_uris": ["http://localhost:1234/cb#frag"]
+	}`)
+	r := httptest.NewRequest(http.MethodPost, "/register", body)
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestDCR_RejectsNonPost(t *testing.T) {
+	h := DCRHandler(NewMemoryStore())
+	r := httptest.NewRequest(http.MethodGet, "/register", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("status=%d", w.Code)
+	}
+	if got := w.Header().Get("Allow"); got != "POST" {
+		t.Errorf("Allow=%q want POST", got)
+	}
+}
