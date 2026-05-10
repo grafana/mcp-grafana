@@ -1,11 +1,14 @@
 package auth
 
 import (
+	"bytes"
+	"compress/flate"
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/base64"
 	"encoding/pem"
 	"math/big"
 	"net/url"
@@ -166,6 +169,45 @@ func writeMockIdPMetadata(t *testing.T, dir string) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+func TestDecodeSAMLRequest_RedirectBinding(t *testing.T) {
+	// Construct a minimal LogoutRequest XML.
+	rawXML := []byte(`<samlp:LogoutRequest xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" ID="abc"/>`)
+
+	// Apply the HTTP-Redirect binding encoding: deflate then base64.
+	var buf bytes.Buffer
+	fw, _ := flate.NewWriter(&buf, flate.DefaultCompression)
+	_, _ = fw.Write(rawXML)
+	_ = fw.Close()
+	encoded := base64.StdEncoding.EncodeToString(buf.Bytes())
+
+	decoded, err := decodeSAMLRequest(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(decoded, rawXML) {
+		t.Errorf("decoded=%q want=%q", decoded, rawXML)
+	}
+}
+
+func TestDecodeSAMLRequest_PostBinding(t *testing.T) {
+	rawXML := []byte(`<samlp:LogoutRequest xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" ID="def"/>`)
+	encoded := base64.StdEncoding.EncodeToString(rawXML)
+
+	decoded, err := decodeSAMLRequest(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(decoded, rawXML) {
+		t.Errorf("decoded=%q want=%q", decoded, rawXML)
+	}
+}
+
+func TestDecodeSAMLRequest_BadInput(t *testing.T) {
+	if _, err := decodeSAMLRequest("not-valid-base64!@#"); err == nil {
+		t.Errorf("expected error on invalid base64")
+	}
 }
 
 // _ keeps saml import live in case other tests in this package don't

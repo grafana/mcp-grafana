@@ -18,6 +18,8 @@ import (
 	"sync"
 	"time"
 
+	"log/slog"
+
 	"github.com/crewjam/saml"
 	"github.com/crewjam/saml/samlsp"
 )
@@ -117,7 +119,7 @@ func NewSAMLUpstream(ctx context.Context, cfg Config) (*SAMLUpstream, error) {
 		sp.AuthnNameIDFormat = saml.NameIDFormat(cfg.SAMLNameIDFormat)
 	}
 
-	return &SAMLUpstream{
+	upstream := &SAMLUpstream{
 		sp:    *mw,
 		rawSP: sp,
 		cfg: samlConfig{
@@ -131,7 +133,13 @@ func NewSAMLUpstream(ctx context.Context, cfg Config) (*SAMLUpstream, error) {
 			ClockSkew:    cfg.SAMLClockSkew,
 		},
 		pendings: make(map[string]*samlPending),
-	}, nil
+	}
+
+	if cfg.SAMLEnableSLO {
+		slog.Warn("SAML Single Logout enabled but inbound LogoutRequest signature validation is not implemented. Restrict /saml/sls via mTLS or IP allowlist as defense-in-depth.")
+	}
+
+	return upstream, nil
 }
 
 func chooseEntityID(cfg Config, publicURL *url.URL) string {
@@ -295,11 +303,23 @@ func (u *SAMLUpstream) ValidateAssertion(r *http.Request) (samlAssertion, error)
 	}, nil
 }
 
-// BuildLogoutResponseURL parses an inbound SLO LogoutRequest (HTTP-Redirect
-// binding), extracts the NameID, and returns the LogoutResponse redirect URL.
-// The crewjam/saml v0.5.1 library does not expose ValidateLogoutRequestForm;
-// we decode the SAMLRequest ourselves and use MakeRedirectLogoutResponse to
-// build the reply.
+// BuildLogoutResponseURL parses an inbound IdP LogoutRequest and returns
+// the URL the user-agent should be redirected to (the IdP's SLO endpoint
+// with our LogoutResponse).
+//
+// SECURITY: This implementation does NOT verify the IdP's XML digital
+// signature on the inbound LogoutRequest. crewjam/saml v0.5.1 does not
+// expose a public API for inbound LogoutRequest validation, and
+// implementing signature verification correctly requires careful XML
+// canonicalization. As a result, when --saml-enable-slo is set, an
+// attacker who knows a user's NameID can forge a LogoutRequest to
+// destroy that user's session. Mitigations:
+//  1. SLO is opt-in via --saml-enable-slo (default false).
+//  2. Operators enabling SLO should put /saml/sls behind defense-in-depth
+//     (mTLS, IP allowlist, or similar) until proper signature validation
+//     lands as a follow-up.
+//
+// See: https://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf §3.7.3
 func (u *SAMLUpstream) BuildLogoutResponseURL(r *http.Request) (Identity, string, error) {
 	if err := r.ParseForm(); err != nil {
 		return Identity{}, "", fmt.Errorf("parse slo form: %w", err)
