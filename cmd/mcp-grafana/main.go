@@ -681,6 +681,17 @@ func buildAuthConfig(modeStr, publicURL, encKey, encKeyPrev, stateDir string, al
 		// Default to GRAFANA_URL when not explicitly set.
 		cfg.GrafanaOAuth2IssuerURL = strings.TrimRight(os.Getenv("GRAFANA_URL"), "/")
 	}
+	cfg.SAMLIdPMetadataURL = samlIdPMetadataURL
+	cfg.SAMLIdPMetadataFile = samlIdPMetadataFile
+	cfg.SAMLSPCertFile = samlSPCertFile
+	cfg.SAMLSPKeyFile = samlSPKeyFile
+	cfg.SAMLEntityID = samlEntityID
+	cfg.SAMLNameIDFormat = samlNameIDFormat
+	cfg.SAMLAttributeEmail = samlAttrEmail
+	cfg.SAMLAttributeGroups = samlAttrGroups
+	cfg.SAMLAllowIdPInitiated = samlAllowIdPInitiated
+	cfg.SAMLEnableSLO = samlEnableSLO
+	cfg.SAMLClockSkew = samlClockSkew
 	if encKey != "" {
 		k, err := auth.DecodeKey(encKey)
 		if err != nil {
@@ -774,7 +785,7 @@ func main() {
 	var authModeStr, authPublicURL, authStateDir, authEncKey, authEncKeyPrev string
 	var authAllowInsecure, authTrustForwarded bool
 	var oidcIssuer, oidcClientID, oidcClientSecret, oidcScopes string
-	flag.StringVar(&authModeStr, "auth-mode", "none", "Per-user auth mode: 'none' (default), 'oauth-oidc', 'oauth-grafana'")
+	flag.StringVar(&authModeStr, "auth-mode", "none", "Per-user auth mode: 'none' (default), 'oauth-oidc', 'oauth-grafana', 'saml'")
 	flag.StringVar(&authPublicURL, "public-url", "", "Public URL of this MCP server (required when --auth-mode != none)")
 	flag.StringVar(&authEncKey, "token-encryption-key", "", "AES-GCM key for encrypting stored credentials (32 bytes, base64 or hex). Required when --auth-mode != none.")
 	flag.StringVar(&authEncKeyPrev, "token-encryption-key-previous", "", "Previous AES-GCM key, accepted for decryption during rotation")
@@ -793,6 +804,23 @@ func main() {
 	flag.StringVar(&grafanaOAuth2ClientID, "grafana-oauth2-client-id", "", "Grafana oauth2_server client_id (oauth-grafana mode)")
 	flag.StringVar(&grafanaOAuth2ClientSecret, "grafana-oauth2-client-secret", "", "Grafana oauth2_server client_secret (oauth-grafana mode)")
 	flag.StringVar(&grafanaOAuth2IssuerURL, "grafana-oauth2-issuer-url", "", "Grafana oauth2_server issuer URL (oauth-grafana mode); defaults to GRAFANA_URL")
+	var samlIdPMetadataURL, samlIdPMetadataFile string
+	var samlSPCertFile, samlSPKeyFile string
+	var samlEntityID, samlNameIDFormat string
+	var samlAttrEmail, samlAttrGroups string
+	var samlAllowIdPInitiated, samlEnableSLO bool
+	var samlClockSkew time.Duration
+	flag.StringVar(&samlIdPMetadataURL, "saml-idp-metadata-url", "", "URL of the SAML IdP metadata XML (saml mode)")
+	flag.StringVar(&samlIdPMetadataFile, "saml-idp-metadata-file", "", "Path to the SAML IdP metadata XML file (saml mode)")
+	flag.StringVar(&samlSPCertFile, "saml-sp-cert-file", "", "Path to SP X.509 cert in PEM (saml mode)")
+	flag.StringVar(&samlSPKeyFile, "saml-sp-key-file", "", "Path to SP private key in PEM (saml mode)")
+	flag.StringVar(&samlEntityID, "saml-entity-id", "", "SP entity ID; defaults to ${public-url}/saml/metadata")
+	flag.StringVar(&samlNameIDFormat, "saml-name-id-format", "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress", "NameID format requested in AuthnRequest")
+	flag.StringVar(&samlAttrEmail, "saml-attribute-email", "email", "Attribute name carrying the user's email")
+	flag.StringVar(&samlAttrGroups, "saml-attribute-groups", "groups", "Attribute name carrying the user's groups")
+	flag.BoolVar(&samlAllowIdPInitiated, "saml-allow-idp-initiated", false, "Permit IdP-initiated SSO (less safe)")
+	flag.BoolVar(&samlEnableSLO, "saml-enable-slo", false, "Mount /saml/sls for SAML Single Logout")
+	flag.DurationVar(&samlClockSkew, "saml-clock-skew", 60*time.Second, "Clock-skew tolerance for assertion validation")
 	flag.Parse()
 
 	action, slowLevel, err := handleFlagsPostParse(*showVersion, slowRequestLogLevelStr)

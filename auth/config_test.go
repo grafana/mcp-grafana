@@ -16,7 +16,7 @@ func TestParseMode(t *testing.T) {
 		{"NONE", ModeNone, false},
 		{"oauth-oidc", ModeOAuthOIDC, false},
 		{"oauth-grafana", ModeOAuthGrafana, false},
-		{"saml", "", true},
+		{"saml", ModeSAML, false},
 		{"bogus", "", true},
 	} {
 		got, err := ParseMode(tc.in)
@@ -62,6 +62,40 @@ func TestConfigValidate(t *testing.T) {
 	none := Config{Mode: ModeNone}
 	if err := none.Validate(); err != nil {
 		t.Errorf("ModeNone should validate without other fields: %v", err)
+	}
+}
+
+func TestConfigValidate_ModeSAML(t *testing.T) {
+	good := func() Config {
+		return Config{
+			Mode:               ModeSAML,
+			PublicURL:          "https://mcp.example.com",
+			EncryptionKey:      make([]byte, 32),
+			SAMLIdPMetadataURL: "https://idp.example.com/metadata",
+			SAMLSPCertFile:     "/etc/mcp/sp.crt",
+			SAMLSPKeyFile:      "/etc/mcp/sp.key",
+		}
+	}
+	if err := good().Validate(); err != nil {
+		t.Fatalf("good Mode S config failed: %v", err)
+	}
+
+	c := good()
+	c.SAMLIdPMetadataURL = ""
+	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "saml-idp-metadata") {
+		t.Errorf("expected idp-metadata error, got %v", err)
+	}
+
+	c = good()
+	c.SAMLIdPMetadataFile = "/etc/mcp/idp.xml" // both set
+	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Errorf("expected mutual-exclusion error, got %v", err)
+	}
+
+	c = good()
+	c.SAMLSPCertFile = ""
+	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "saml-sp") {
+		t.Errorf("expected SP cert error, got %v", err)
 	}
 }
 

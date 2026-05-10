@@ -52,6 +52,19 @@ type Config struct {
 	GrafanaOAuth2ClientSecret string
 	GrafanaOAuth2IssuerURL    string // typically equal to GRAFANA_URL
 
+	// SAML (Mode S) — when Mode == ModeSAML.
+	SAMLIdPMetadataURL    string        // remote IdP metadata; mutually exclusive with file
+	SAMLIdPMetadataFile   string        // local IdP metadata XML file
+	SAMLSPCertFile        string        // path to SP X.509 cert (PEM)
+	SAMLSPKeyFile         string        // path to SP private key (PEM)
+	SAMLEntityID          string        // SP entity ID; defaults to ${PublicURL}/saml/metadata
+	SAMLNameIDFormat      string        // default urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress
+	SAMLAttributeEmail    string        // attribute name to extract user email; default "email"
+	SAMLAttributeGroups   string        // attribute name to extract groups; default "groups"
+	SAMLAllowIdPInitiated bool          // default false
+	SAMLClockSkew         time.Duration // default 60 seconds
+	SAMLEnableSLO         bool          // default false; mounts /saml/sls when true
+
 	// RBACGating selects the RBAC tool gating mode.
 	// "auto" (default), "enterprise", "basic", or "off".
 	//
@@ -82,9 +95,9 @@ func ParseMode(s string) (Mode, error) {
 	case ModeOAuthGrafana:
 		return ModeOAuthGrafana, nil
 	case ModeSAML:
-		return "", fmt.Errorf("auth mode %q is reserved for a later release; Phase 3 supports only %q, %q, and %q", s, ModeNone, ModeOAuthOIDC, ModeOAuthGrafana)
+		return ModeSAML, nil
 	default:
-		return "", fmt.Errorf("unknown auth mode %q (valid: %q, %q, %q)", s, ModeNone, ModeOAuthOIDC, ModeOAuthGrafana)
+		return "", fmt.Errorf("unknown auth mode %q (valid: %q, %q, %q, %q)", s, ModeNone, ModeOAuthOIDC, ModeOAuthGrafana, ModeSAML)
 	}
 }
 
@@ -127,6 +140,17 @@ func (c Config) Validate() error {
 		// failure on the first authorization-code redemption.
 		if c.GrafanaOAuth2ClientSecret == "" {
 			return errors.New("--grafana-oauth2-client-secret is required for --auth-mode=oauth-grafana")
+		}
+	}
+	if c.Mode == ModeSAML {
+		if c.SAMLIdPMetadataURL == "" && c.SAMLIdPMetadataFile == "" {
+			return errors.New("--saml-idp-metadata-url or --saml-idp-metadata-file is required for --auth-mode=saml")
+		}
+		if c.SAMLIdPMetadataURL != "" && c.SAMLIdPMetadataFile != "" {
+			return errors.New("--saml-idp-metadata-url and --saml-idp-metadata-file are mutually exclusive")
+		}
+		if c.SAMLSPCertFile == "" || c.SAMLSPKeyFile == "" {
+			return errors.New("--saml-sp-cert-file and --saml-sp-key-file are required for --auth-mode=saml")
 		}
 	}
 	// Normalize the same way rbac.ParseMode does (lower + trim) so a
