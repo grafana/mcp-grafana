@@ -207,3 +207,40 @@ func TestToken_RefreshRotates(t *testing.T) {
 		t.Errorf("expected old refresh to be rejected, got %d", w2.Code)
 	}
 }
+
+// TestToken_RefreshRejectsCrossClient confirms that a refresh token issued
+// to client A cannot be exchanged by client B (RFC 6749 §10.4). A
+// malicious sibling client that obtains the refresh token must not be
+// able to mint fresh access tokens against it.
+func TestToken_RefreshRejectsCrossClient(t *testing.T) {
+	srv := newTokenServer(t)
+	ctx := context.Background()
+
+	plainRT, hashRT := NewAuthCode()
+	credCT, _ := srv.Encryptor.Seal([]byte("sa-token"))
+	_ = srv.Store.PutSession(ctx, Session{
+		TokenHash:        HashToken("at"),
+		RefreshHash:      hashRT,
+		ClientID:         "client-a",
+		Identity:         Identity{Mode: ModeOAuthOIDC, ID: "alice"},
+		UpstreamCredsCT:  credCT,
+		ExpiresAt:        time.Now().Add(5 * time.Minute),
+		RefreshExpiresAt: time.Now().Add(time.Hour),
+	})
+
+	form := url.Values{}
+	form.Set("grant_type", "refresh_token")
+	form.Set("refresh_token", plainRT)
+	form.Set("client_id", "client-b") // wrong client
+	r := httptest.NewRequest(http.MethodPost, "/token", strings.NewReader(form.Encode()))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	srv.TokenHandler().ServeHTTP(w, r)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected cross-client refresh to be rejected, got %d body=%s", w.Code, w.Body)
+	}
+	if !strings.Contains(w.Body.String(), "invalid_grant") {
+		t.Errorf("expected invalid_grant in body, got %s", w.Body)
+	}
+}

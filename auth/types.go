@@ -21,6 +21,13 @@ type Session struct {
 	// Hashed refresh token. May be empty for initial-issuance fixtures.
 	RefreshHash string
 
+	// ClientID of the DCR client this session was issued to. Used by
+	// /token's refresh-token grant to enforce that a refresh token can
+	// only be exchanged by the same client that received it (RFC 6749
+	// §10.4): a malicious sibling client that captures the refresh token
+	// must not be able to mint new access tokens against it.
+	ClientID string
+
 	// When the access token expires.
 	ExpiresAt time.Time
 

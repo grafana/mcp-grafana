@@ -75,6 +75,7 @@ func (s *Server) handleAuthCodeGrant(w http.ResponseWriter, r *http.Request) {
 	if err := s.Store.PutSession(r.Context(), Session{
 		TokenHash:        atHash,
 		RefreshHash:      rtHash,
+		ClientID:         clientID,
 		ExpiresAt:        now.Add(atTTL),
 		RefreshExpiresAt: now.Add(rtTTL),
 		Identity:         c.Identity,
@@ -94,13 +95,27 @@ func (s *Server) handleAuthCodeGrant(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleRefreshGrant(w http.ResponseWriter, r *http.Request) {
 	plain := r.FormValue("refresh_token")
-	if plain == "" {
-		httpError(w, http.StatusBadRequest, "invalid_request", "refresh_token required")
+	clientID := r.FormValue("client_id")
+	if plain == "" || clientID == "" {
+		httpError(w, http.StatusBadRequest, "invalid_request", "refresh_token and client_id required")
 		return
 	}
 	sess, err := s.Store.GetSessionByRefreshHash(r.Context(), HashToken(plain))
 	if err != nil {
 		httpError(w, http.StatusBadRequest, "invalid_grant", "refresh_token unknown")
+		return
+	}
+	// RFC 6749 §10.4: a refresh token must be bound to the client it was
+	// issued to. Rejecting a mismatch defends against a malicious DCR
+	// client that obtained another client's refresh token (e.g. via a
+	// log capture or compromised client storage) attempting to mint
+	// fresh access tokens against it.
+	if sess.ClientID != "" && sess.ClientID != clientID {
+		s.logger().Warn("auth.refresh_client_mismatch",
+			"user_id", sess.Identity.String(),
+			"session_client_id", sess.ClientID,
+			"request_client_id", clientID)
+		httpError(w, http.StatusBadRequest, "invalid_grant", "refresh_token issued to a different client")
 		return
 	}
 	if !sess.RefreshExpiresAt.IsZero() && time.Now().After(sess.RefreshExpiresAt) {
@@ -129,6 +144,7 @@ func (s *Server) handleRefreshGrant(w http.ResponseWriter, r *http.Request) {
 	if err := s.Store.PutSession(r.Context(), Session{
 		TokenHash:        atHash,
 		RefreshHash:      rtHash,
+		ClientID:         sess.ClientID,
 		ExpiresAt:        now.Add(atTTL),
 		RefreshExpiresAt: now.Add(rtTTL),
 		Identity:         sess.Identity,
