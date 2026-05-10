@@ -93,11 +93,11 @@ func (s *Server) processBootstrap(w http.ResponseWriter, r *http.Request, grafan
 		httpError(w, http.StatusBadRequest, "invalid_request", "unknown or expired flow token")
 		return
 	}
-	if time.Since(pb.createdAt) > bootstrapTTL {
-		_, _ = consumeBootstrap(flow)
-		httpError(w, http.StatusBadRequest, "invalid_request", "flow expired; please log in again")
-		return
-	}
+	// peekBootstrap already enforces bootstrapTTL under the mutex (returns
+	// ok=false for expired entries), so a duplicate freshness check here
+	// would be unreachable. The race window the consume below covers — the
+	// entry expiring while validateGrafanaToken's network call is in
+	// flight — is handled by consumeBootstrap returning ok=false.
 
 	if err := validateGrafanaToken(r.Context(), grafanaURL, token); err != nil {
 		s.logger().Warn("bootstrap_token_rejected", "user_id", pb.identity.String(), "error", err.Error())
