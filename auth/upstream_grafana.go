@@ -30,6 +30,13 @@ type GrafanaUpstream struct {
 
 type grafanaPending struct {
 	verifier string
+	// redirectURI is the per-flow redirect_uri override that AuthorizeURL
+	// sent to the upstream, if any. Per RFC 6749 §4.1.3, when redirect_uri
+	// was included in the authorization request it MUST be repeated
+	// verbatim in the token-exchange call; a mismatch triggers
+	// invalid_grant. Empty means the caller didn't override and the
+	// configured RedirectURL applies.
+	redirectURI string
 }
 
 // NewGrafanaUpstream builds a GrafanaUpstream. The issuer URL and client
@@ -73,7 +80,7 @@ func (u *GrafanaUpstream) AuthorizeURL(redirectURI, state string) string {
 	sum := sha256.Sum256([]byte(verifier))
 	challenge := base64.RawURLEncoding.EncodeToString(sum[:])
 
-	u.pendings.Store(state, &grafanaPending{verifier: verifier})
+	u.pendings.Store(state, &grafanaPending{verifier: verifier, redirectURI: redirectURI})
 
 	opts := []oauth2.AuthCodeOption{
 		oauth2.SetAuthURLParam("code_challenge", challenge),
@@ -97,7 +104,14 @@ func (u *GrafanaUpstream) HandleCallback(ctx context.Context, params url.Values)
 		return CallbackResult{}, fmt.Errorf("unknown or expired state")
 	}
 
-	tok, err := u.oauth.Exchange(ctx, code, oauth2.SetAuthURLParam("code_verifier", p.verifier))
+	exchangeOpts := []oauth2.AuthCodeOption{oauth2.SetAuthURLParam("code_verifier", p.verifier)}
+	if p.redirectURI != "" {
+		// Echo the same redirect_uri the upstream saw on /authorize.
+		// RFC 6749 §4.1.3 says the token-exchange call must repeat it;
+		// otherwise Grafana's oauth2_server returns invalid_grant.
+		exchangeOpts = append(exchangeOpts, oauth2.SetAuthURLParam("redirect_uri", p.redirectURI))
+	}
+	tok, err := u.oauth.Exchange(ctx, code, exchangeOpts...)
 	if err != nil {
 		return CallbackResult{}, fmt.Errorf("token exchange: %w", err)
 	}
