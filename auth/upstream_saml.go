@@ -208,6 +208,7 @@ func (u *SAMLUpstream) AuthorizeURL(_redirectURI, state string) string {
 		// which we'd have caught at NewSAMLUpstream. Surface as a /authorize
 		// 500 by returning an empty URL — the caller handles empty-string
 		// as a build error.
+		slog.Error("saml: MakeAuthenticationRequest failed", "error", err)
 		return ""
 	}
 
@@ -217,6 +218,7 @@ func (u *SAMLUpstream) AuthorizeURL(_redirectURI, state string) string {
 
 	redirectURL, err := req.Redirect(state, u.rawSP)
 	if err != nil {
+		slog.Error("saml: AuthnRequest Redirect failed", "error", err)
 		return ""
 	}
 	return redirectURL.String()
@@ -250,7 +252,13 @@ func (u *SAMLUpstream) ValidateAssertion(r *http.Request) (samlAssertion, error)
 		return samlAssertion{}, fmt.Errorf("parse acs form: %w", err)
 	}
 
-	// Pin to expected RequestID(s). We accept all currently-pending requests.
+	// Pin to expected RequestID(s). We accept any currently-pending request
+	// because crewjam's ParseResponse takes a slice; it returns the matched ID.
+	// Each successful response consumes its pending entry (RelayState delete
+	// below), so the replay surface is at most one assertion per pending entry.
+	// Concurrent /authorize calls broaden this window briefly; entries are
+	// dropped on either successful ACS or pending-cleanup (currently TTL-only;
+	// see follow-up).
 	u.mu.Lock()
 	expectedIDs := make([]string, 0, len(u.pendings))
 	for _, p := range u.pendings {

@@ -17,8 +17,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/crewjam/saml"
 )
 
 func TestNewSAMLUpstream_ConstructsServiceProvider(t *testing.T) {
@@ -140,8 +138,12 @@ func generateSPKeyPair(t *testing.T, dir string) (certPath, keyPath string) {
 	}
 	certPath = filepath.Join(dir, "sp.crt")
 	keyPath = filepath.Join(dir, "sp.key")
-	os.WriteFile(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0600)
-	os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}), 0600)
+	if err := os.WriteFile(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}), 0600); err != nil {
+		t.Fatal(err)
+	}
 	return
 }
 
@@ -209,7 +211,3 @@ func TestDecodeSAMLRequest_BadInput(t *testing.T) {
 		t.Errorf("expected error on invalid base64")
 	}
 }
-
-// _ keeps saml import live in case other tests in this package don't
-// reference it directly.
-var _ = saml.HTTPRedirectBinding
