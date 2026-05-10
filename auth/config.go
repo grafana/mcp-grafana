@@ -107,7 +107,12 @@ func (c Config) Validate() error {
 			return errors.New("--oidc-client-id is required for --auth-mode=oauth-oidc")
 		}
 	}
-	switch c.RBACGating {
+	// Normalize the same way rbac.ParseMode does (lower + trim) so a
+	// programmatic caller that supplies "Auto" or " auto " isn't
+	// rejected at validation while the downstream parser would accept
+	// it. The CLI path normalizes at the flag boundary; this guards
+	// programmatic callers.
+	switch strings.ToLower(strings.TrimSpace(c.RBACGating)) {
 	case "", "auto", "enterprise", "basic", "off":
 		// ok
 	default:
