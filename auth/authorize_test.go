@@ -10,14 +10,18 @@ import (
 	"time"
 )
 
-// stubUpstream is a deterministic Upstream for handler tests.
+// stubUpstream is a deterministic Upstream for handler tests. It captures
+// the redirectURI argument passed to AuthorizeURL so tests can assert that
+// AuthorizeHandler forwards the configured callback URL to the upstream.
 type stubUpstream struct {
-	mode    Mode
-	authURL string
+	mode            Mode
+	authURL         string
+	lastRedirectURI string
 }
 
 func (s *stubUpstream) Mode() Mode { return s.mode }
-func (s *stubUpstream) AuthorizeURL(_, state string) string {
+func (s *stubUpstream) AuthorizeURL(redirectURI, state string) string {
+	s.lastRedirectURI = redirectURI
 	return s.authURL + "?state=" + state
 }
 func (s *stubUpstream) HandleCallback(_ context.Context, _ url.Values) (Identity, []byte, bool, error) {
@@ -61,6 +65,12 @@ func TestAuthorize_RedirectsToUpstream(t *testing.T) {
 	loc := w.Header().Get("Location")
 	if !strings.HasPrefix(loc, up.authURL) {
 		t.Errorf("location=%s", loc)
+	}
+	// AuthorizeHandler must forward the configured callback URL
+	// (PublicURL + "/callback") to the upstream so OIDCUpstream can override
+	// the oauth2.Config.RedirectURL for this specific flow.
+	if up.lastRedirectURI != srv.PublicURL+"/callback" {
+		t.Errorf("upstream.AuthorizeURL got redirectURI=%q, want %q", up.lastRedirectURI, srv.PublicURL+"/callback")
 	}
 }
 
