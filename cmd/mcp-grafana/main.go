@@ -672,6 +672,8 @@ func buildAuthConfig(modeStr, publicURL, encKey, encKeyPrev, stateDir string, al
 		// Default to GRAFANA_URL when not explicitly set.
 		cfg.GrafanaOAuth2IssuerURL = strings.TrimRight(os.Getenv("GRAFANA_URL"), "/")
 	}
+	cfg.RBACGating = strings.ToLower(strings.TrimSpace(rbacGating))
+	cfg.RBACCacheTTL = rbacCacheTTL
 	if encKey != "" {
 		k, err := auth.DecodeKey(encKey)
 		if err != nil {
