@@ -3,7 +3,6 @@ package auth
 import (
 	"net/url"
 	"testing"
-	"time"
 
 	"golang.org/x/oauth2"
 )
@@ -22,7 +21,7 @@ func TestOIDCUpstream_AuthorizeURL_HonorsRedirectURIParam(t *testing.T) {
 			RedirectURL: "https://configured.example.com/callback",
 			Endpoint:    oauth2.Endpoint{AuthURL: "https://idp.example.com/authorize"},
 		},
-		pendings: make(map[string]*oidcPending),
+		pendings: newPendingRegistry[*oidcPending](oidcPendingTTL),
 	}
 
 	got := up.AuthorizeURL("https://override.example.com/callback", "state-1")
@@ -41,18 +40,5 @@ func TestOIDCUpstream_AuthorizeURL_HonorsRedirectURIParam(t *testing.T) {
 	}
 }
 
-func TestOIDCUpstream_SweepDropsExpiredPendings(t *testing.T) {
-	up := &OIDCUpstream{pendings: map[string]*oidcPending{}}
-	now := time.Now()
-	up.pendings["stale"] = &oidcPending{verifier: "v1", nonce: "n1", createdAt: now.Add(-2 * oidcPendingTTL)}
-	up.pendings["fresh"] = &oidcPending{verifier: "v2", nonce: "n2", createdAt: now}
-	up.mu.Lock()
-	up.sweepPendingsLocked(now)
-	up.mu.Unlock()
-	if _, ok := up.pendings["stale"]; ok {
-		t.Errorf("expired OIDC pending was not swept")
-	}
-	if _, ok := up.pendings["fresh"]; !ok {
-		t.Errorf("fresh OIDC pending was incorrectly swept")
-	}
-}
+// Sweep / TTL behaviour is exercised at the registry level in
+// pending_registry_test.go; OIDCUpstream just composes pendingRegistry.

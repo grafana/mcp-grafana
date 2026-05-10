@@ -33,7 +33,7 @@ func TestBootstrap_GET_RendersForm(t *testing.T) {
 		Store:     NewMemoryStore(),
 		Encryptor: mustEnc(t, mustKey(t), nil),
 	}
-	storeBootstrap("flow-1", &pendingBootstrap{
+	srv.bootstrapPendings().Store("flow-1", &pendingBootstrap{
 		identity:    Identity{Mode: ModeOAuthOIDC, ID: "alice"},
 		clientID:    "cid",
 		redirectURI: "http://localhost:1/cb",
@@ -66,7 +66,7 @@ func TestBootstrap_POST_ValidatesAndStoresToken(t *testing.T) {
 		Encryptor:   mustEnc(t, mustKey(t), nil),
 		AuthCodeTTL: 5 * time.Minute,
 	}
-	storeBootstrap("flow-2", &pendingBootstrap{
+	srv.bootstrapPendings().Store("flow-2", &pendingBootstrap{
 		identity:            Identity{Mode: ModeOAuthOIDC, ID: "alice"},
 		clientID:            "cid",
 		redirectURI:         "http://localhost:1/cb",
@@ -126,7 +126,7 @@ func TestBootstrap_POST_RejectsDoubleConsume(t *testing.T) {
 		Encryptor:   mustEnc(t, mustKey(t), nil),
 		AuthCodeTTL: 5 * time.Minute,
 	}
-	storeBootstrap("flow-double", &pendingBootstrap{
+	srv.bootstrapPendings().Store("flow-double", &pendingBootstrap{
 		identity:            Identity{Mode: ModeOAuthOIDC, ID: "alice"},
 		clientID:            "cid",
 		redirectURI:         "http://localhost:1/cb",
@@ -166,7 +166,7 @@ func TestBootstrap_POST_BadToken(t *testing.T) {
 		Store:     NewMemoryStore(),
 		Encryptor: mustEnc(t, mustKey(t), nil),
 	}
-	storeBootstrap("flow-3", &pendingBootstrap{
+	srv.bootstrapPendings().Store("flow-3", &pendingBootstrap{
 		identity:    Identity{Mode: ModeOAuthOIDC, ID: "alice"},
 		clientID:    "cid",
 		redirectURI: "http://localhost:1/cb",
@@ -190,7 +190,7 @@ func TestBootstrap_POST_BadToken(t *testing.T) {
 	if !strings.Contains(w.Body.String(), "token") {
 		t.Errorf("body should mention token rejection: %s", w.Body)
 	}
-	if _, ok := consumeBootstrap("flow-3"); !ok {
+	if _, ok := srv.bootstrapPendings().Consume("flow-3"); !ok {
 		t.Errorf("flow token should remain valid after a failed paste")
 	}
 }

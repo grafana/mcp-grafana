@@ -45,7 +45,7 @@ func newCallbackServer(t *testing.T, upHas bool) (*Server, *MemoryStore) {
 func TestCallback_FirstLogin_RedirectsToBootstrap(t *testing.T) {
 	srv, _ := newCallbackServer(t, false)
 	state := stateToken()
-	storePending(state, &pendingFlow{
+	srv.authzPendings().Store(state, &pendingFlow{
 		clientID:            "cid",
 		redirectURI:         "http://localhost:1/cb",
 		codeChallenge:       "x",
@@ -85,7 +85,7 @@ func TestCallback_RepeatLogin_ShortcutsToClient(t *testing.T) {
 	})
 
 	state := stateToken()
-	storePending(state, &pendingFlow{
+	srv.authzPendings().Store(state, &pendingFlow{
 		clientID:            "cid",
 		redirectURI:         "http://localhost:1/cb",
 		codeChallenge:       "x",
@@ -137,7 +137,7 @@ func TestCallback_UpstreamError_RedirectsWithGenericDescription(t *testing.T) {
 	srv.Upstream = &failingUpstream{stubUpstream: stubUpstream{mode: ModeOAuthOIDC}}
 
 	state := stateToken()
-	storePending(state, &pendingFlow{
+	srv.authzPendings().Store(state, &pendingFlow{
 		clientID:            "cid",
 		redirectURI:         "http://localhost:1/cb",
 		codeChallenge:       "x",

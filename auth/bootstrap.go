@@ -62,7 +62,7 @@ func (s *Server) renderBootstrap(w http.ResponseWriter, r *http.Request, errMsg 
 	if flow == "" {
 		flow = r.FormValue("flow")
 	}
-	if _, ok := peekBootstrap(flow); !ok {
+	if _, ok := s.peekBootstrap(flow); !ok {
 		httpError(w, http.StatusBadRequest, "invalid_request", "unknown or expired flow token")
 		return
 	}
@@ -88,7 +88,7 @@ func (s *Server) processBootstrap(w http.ResponseWriter, r *http.Request, grafan
 		return
 	}
 
-	pb, ok := peekBootstrap(flow)
+	pb, ok := s.peekBootstrap(flow)
 	if !ok {
 		httpError(w, http.StatusBadRequest, "invalid_request", "unknown or expired flow token")
 		return
@@ -112,7 +112,7 @@ func (s *Server) processBootstrap(w http.ResponseWriter, r *http.Request, grafan
 	// that can take seconds). consumeBootstrap returns ok=false in both
 	// cases and we can't tell them apart at this layer, so the message
 	// covers both — the user is told to log in again either way.
-	claimed, ok := consumeBootstrap(flow)
+	claimed, ok := s.bootstrapPendings().Consume(flow)
 	if !ok {
 		httpError(w, http.StatusBadRequest, "invalid_request", "flow expired or already consumed; please log in again")
 		return

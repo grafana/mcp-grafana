@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"net/http"
 	"net/url"
-	"sync"
 	"time"
 )
 
@@ -26,63 +25,35 @@ type pendingBootstrap struct {
 // freshness check in processBootstrap.
 const bootstrapTTL = 15 * time.Minute
 
-var (
-	bootstrapMu        sync.Mutex
-	bootstrapPendings  = map[string]*pendingBootstrap{}
-	bootstrapLastSwept time.Time
-)
-
-// sweepBootstrapLocked drops entries older than bootstrapTTL. The caller
-// must hold bootstrapMu. Runs at most once per bootstrapTTL window for
-// amortised O(1) cost under sustained traffic.
-func sweepBootstrapLocked(now time.Time) {
-	if now.Sub(bootstrapLastSwept) < bootstrapTTL {
-		return
-	}
-	cutoff := now.Add(-bootstrapTTL)
-	for k, p := range bootstrapPendings {
-		if p.createdAt.Before(cutoff) {
-			delete(bootstrapPendings, k)
-		}
-	}
-	bootstrapLastSwept = now
+// authzPendings returns the per-Server /authorize → /callback registry,
+// initializing it on first use. Lazy init keeps &Server{...} struct
+// literals (used widely in tests) working without an explicit constructor
+// step while still giving each Server its own state — eliminates the
+// cross-Server / cross-test pollution the package-level globals used to
+// have.
+func (s *Server) authzPendings() *pendingRegistry[*pendingFlow] {
+	s.pendingsOnce.Do(s.initPendings)
+	return s.authzReg
 }
 
-func storeBootstrap(token string, p *pendingBootstrap) {
-	bootstrapMu.Lock()
-	defer bootstrapMu.Unlock()
-	sweepBootstrapLocked(time.Now())
-	bootstrapPendings[token] = p
+// bootstrapPendings returns the per-Server /bootstrap registry, lazy
+// initialized on first use. Same rationale as authzPendings.
+func (s *Server) bootstrapPendings() *pendingRegistry[*pendingBootstrap] {
+	s.pendingsOnce.Do(s.initPendings)
+	return s.bootstrapReg
 }
 
-func consumeBootstrap(token string) (*pendingBootstrap, bool) {
-	bootstrapMu.Lock()
-	defer bootstrapMu.Unlock()
-	sweepBootstrapLocked(time.Now())
-	p, ok := bootstrapPendings[token]
-	if !ok {
-		return nil, false
-	}
-	delete(bootstrapPendings, token)
-	if time.Since(p.createdAt) > bootstrapTTL {
-		return nil, false
-	}
-	return p, true
+func (s *Server) initPendings() {
+	s.authzReg = newPendingRegistry[*pendingFlow](pendingFlowTTL)
+	s.bootstrapReg = newPendingRegistry[*pendingBootstrap](bootstrapTTL)
 }
 
 // peekBootstrap returns a snapshot of the pending entry without removing it.
 // Used by /bootstrap GET and POST to read the entry under the mutex without
 // consuming it (consumption happens after token validation).
-func peekBootstrap(token string) (pendingBootstrap, bool) {
-	bootstrapMu.Lock()
-	defer bootstrapMu.Unlock()
-	sweepBootstrapLocked(time.Now())
-	p, ok := bootstrapPendings[token]
+func (s *Server) peekBootstrap(token string) (pendingBootstrap, bool) {
+	p, ok := s.bootstrapPendings().Peek(token)
 	if !ok {
-		return pendingBootstrap{}, false
-	}
-	if time.Since(p.createdAt) > bootstrapTTL {
-		delete(bootstrapPendings, token)
 		return pendingBootstrap{}, false
 	}
 	return *p, true
@@ -92,7 +63,7 @@ func peekBootstrap(token string) (pendingBootstrap, bool) {
 func (s *Server) CallbackHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		state := r.URL.Query().Get("state")
-		pf, ok := consumePending(state)
+		pf, ok := s.authzPendings().Consume(state)
 		if !ok {
 			httpError(w, http.StatusBadRequest, "invalid_request", "unknown or expired state")
 			return
@@ -138,7 +109,7 @@ func (s *Server) resolveIdentityOrBootstrap(w http.ResponseWriter, r *http.Reque
 		panic("rng: " + err.Error())
 	}
 	flowToken := hex.EncodeToString(fb[:])
-	storeBootstrap(flowToken, &pendingBootstrap{
+	s.bootstrapPendings().Store(flowToken, &pendingBootstrap{
 		identity:            identity,
 		clientID:            pf.clientID,
 		redirectURI:         pf.redirectURI,

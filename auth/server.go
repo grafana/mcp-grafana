@@ -3,6 +3,7 @@ package auth
 import (
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 )
 
@@ -23,6 +24,15 @@ type Server struct {
 	AccessTokenTTL  time.Duration
 	RefreshTokenTTL time.Duration
 	AuthCodeTTL     time.Duration
+
+	// pendingsOnce lazy-initializes the per-Server pending-flow registries
+	// (authzReg, bootstrapReg) on first use. Lazy init keeps &Server{...}
+	// struct literals working in tests while still giving each Server its
+	// own state — the previous package-level globals leaked state across
+	// Server instances and across tests in the same binary.
+	pendingsOnce sync.Once
+	authzReg     *pendingRegistry[*pendingFlow]
+	bootstrapReg *pendingRegistry[*pendingBootstrap]
 }
 
 func (s *Server) logger() *slog.Logger {

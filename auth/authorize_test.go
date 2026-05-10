@@ -7,7 +7,6 @@ import (
 	"net/url"
 	"strings"
 	"testing"
-	"time"
 )
 
 // stubUpstream is a deterministic Upstream for handler tests. It captures
@@ -142,48 +141,6 @@ func TestAuthorize_RequiresS256(t *testing.T) {
 	}
 }
 
-// TestSweepPendings_DropsExpiredEntries verifies that pending /authorize
-// entries that exceed pendingFlowTTL are evicted by the opportunistic
-// sweep, so a flood of unfinished /authorize calls can't grow the map
-// without bound.
-func TestSweepPendings_DropsExpiredEntries(t *testing.T) {
-	now := time.Now()
-
-	pendingMu.Lock()
-	for k := range pendings {
-		delete(pendings, k)
-	}
-	pendings["fresh"] = &pendingFlow{createdAt: now}
-	pendings["expired"] = &pendingFlow{createdAt: now.Add(-2 * pendingFlowTTL)}
-	// Force the sweep gate to fire on the next call.
-	pendingLastSwept = now.Add(-2 * pendingFlowTTL)
-	sweepPendingsLocked(now)
-	_, hasFresh := pendings["fresh"]
-	_, hasExpired := pendings["expired"]
-	pendingMu.Unlock()
-
-	if hasExpired {
-		t.Errorf("expected expired entry to be swept")
-	}
-	if !hasFresh {
-		t.Errorf("fresh entry should survive the sweep")
-	}
-}
-
-// TestConsumePending_TreatsExpiredAsMissing verifies that an entry which
-// has somehow lingered past pendingFlowTTL is rejected by consumePending,
-// forcing the user to restart the flow rather than completing with stale
-// state.
-func TestConsumePending_TreatsExpiredAsMissing(t *testing.T) {
-	pendingMu.Lock()
-	for k := range pendings {
-		delete(pendings, k)
-	}
-	pendingLastSwept = time.Now()
-	pendings["stale"] = &pendingFlow{createdAt: time.Now().Add(-(pendingFlowTTL + time.Second))}
-	pendingMu.Unlock()
-
-	if _, ok := consumePending("stale"); ok {
-		t.Errorf("expected expired pending to be treated as missing")
-	}
-}
+// Sweep- and TTL-handling behaviour of the pending-flow registry is
+// covered by pending_registry_test.go, which exercises it directly
+// rather than through the /authorize handler glue.

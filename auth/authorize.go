@@ -3,7 +3,6 @@ package auth
 import (
 	"net/http"
 	"slices"
-	"sync"
 	"time"
 )
 
@@ -22,54 +21,6 @@ type pendingFlow struct {
 // never completed it has its slot reclaimed once the TTL elapses. The
 // value matches the bootstrap-side TTL in callback.go for consistency.
 const pendingFlowTTL = 15 * time.Minute
-
-// In-memory pending-flow registry. Keyed by upstream state value.
-// State values are large random tokens; collisions are infeasible.
-var (
-	pendingMu        sync.Mutex
-	pendings         = map[string]*pendingFlow{}
-	pendingLastSwept time.Time
-)
-
-// sweepPendingsLocked drops entries older than pendingFlowTTL. The caller
-// must hold pendingMu. Runs at most once per pendingFlowTTL window so the
-// amortised per-call cost stays O(1) under sustained traffic.
-func sweepPendingsLocked(now time.Time) {
-	if now.Sub(pendingLastSwept) < pendingFlowTTL {
-		return
-	}
-	cutoff := now.Add(-pendingFlowTTL)
-	for k, p := range pendings {
-		if p.createdAt.Before(cutoff) {
-			delete(pendings, k)
-		}
-	}
-	pendingLastSwept = now
-}
-
-func storePending(state string, p *pendingFlow) {
-	pendingMu.Lock()
-	defer pendingMu.Unlock()
-	sweepPendingsLocked(time.Now())
-	pendings[state] = p
-}
-
-func consumePending(state string) (*pendingFlow, bool) {
-	pendingMu.Lock()
-	defer pendingMu.Unlock()
-	sweepPendingsLocked(time.Now())
-	p, ok := pendings[state]
-	if !ok {
-		return nil, false
-	}
-	delete(pendings, state)
-	// A pending that's already past TTL is treated as missing — the
-	// caller must restart the flow.
-	if time.Since(p.createdAt) > pendingFlowTTL {
-		return nil, false
-	}
-	return p, true
-}
 
 // AuthorizeHandler validates the inbound /authorize request and redirects
 // the user-agent to the upstream IdP.
@@ -111,7 +62,7 @@ func (s *Server) AuthorizeHandler() http.Handler {
 		}
 
 		state := stateToken()
-		storePending(state, &pendingFlow{
+		s.authzPendings().Store(state, &pendingFlow{
 			clientID:            clientID,
 			redirectURI:         redirectURI,
 			codeChallenge:       challenge,
