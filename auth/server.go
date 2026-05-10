@@ -114,6 +114,7 @@ func New(cfg Config, store Store, enc *Encryptor, upstream Upstream, logger *slo
 		Encryptor:             enc,
 		Logger:                logger,
 		Metrics:               NewMetrics(),
+		SAMLEnableSLO:         cfg.SAMLEnableSLO,
 		AccessTokenTTL:        time.Hour,
 		RefreshTokenTTL:       30 * 24 * time.Hour,
 		AuthCodeTTL:           5 * time.Minute,

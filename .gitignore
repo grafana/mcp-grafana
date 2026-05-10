@@ -10,6 +10,11 @@ wheels/
 .env
 .cursor/
 
+# Local Claude Code session artifacts. Shared skills (.claude/skills/)
+# stay tracked; the lockfile and any other transient session state
+# do not.
+.claude/scheduled_tasks.lock
+
 # Virtual environments
 .venv
 .envrc
