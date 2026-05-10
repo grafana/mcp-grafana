@@ -765,7 +765,7 @@ func main() {
 	var authModeStr, authPublicURL, authStateDir, authEncKey, authEncKeyPrev string
 	var authAllowInsecure, authTrustForwarded bool
 	var oidcIssuer, oidcClientID, oidcClientSecret, oidcScopes string
-	flag.StringVar(&authModeStr, "auth-mode", "none", "Per-user auth mode: 'none' (default), 'oauth-oidc'")
+	flag.StringVar(&authModeStr, "auth-mode", "none", "Per-user auth mode: 'none' (default), 'oauth-oidc', 'oauth-grafana'")
 	flag.StringVar(&authPublicURL, "public-url", "", "Public URL of this MCP server (required when --auth-mode != none)")
 	flag.StringVar(&authEncKey, "token-encryption-key", "", "AES-GCM key for encrypting stored credentials (32 bytes, base64 or hex). Required when --auth-mode != none.")
 	flag.StringVar(&authEncKeyPrev, "token-encryption-key-previous", "", "Previous AES-GCM key, accepted for decryption during rotation")

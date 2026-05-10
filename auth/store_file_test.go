@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // sealedTestSession returns a test session whose UpstreamCredsCT is properly
@@ -143,6 +144,62 @@ func TestFileStore_NoLingeringTempFiles(t *testing.T) {
 			continue
 		}
 		t.Errorf("unexpected leftover file in state dir: %s", e.Name())
+	}
+}
+
+func TestFileStore_KeyRotationMigratesRefreshCiphertexts(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "auth.state")
+
+	keyA := mustKey(t)
+	keyB := mustKey(t)
+
+	// Step 1: write a session with an encrypted refresh token under keyA.
+	encA := mustEnc(t, keyA, nil)
+	s1, err := NewFileStore(path, encA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := newTestSession(t, "alice")
+	sess.UpstreamCredsCT, err = encA.Seal([]byte("access-token"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess.UpstreamRefreshCT, err = encA.Seal([]byte("refresh-token"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess.UpstreamExpiresAt = time.Now().Add(time.Hour)
+	if err := s1.PutSession(context.Background(), sess); err != nil {
+		t.Fatal(err)
+	}
+	_ = s1.Close()
+
+	// Step 2: open with keyB primary, keyA as previous → migrates ciphertexts.
+	encAB := mustEnc(t, keyB, keyA)
+	s2, err := NewFileStore(path, encAB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = s2.Close()
+
+	// Step 3: open with keyB only — refresh token must still resolve.
+	encB := mustEnc(t, keyB, nil)
+	s3, err := NewFileStore(path, encB)
+	if err != nil {
+		t.Fatalf("after rotation drain, file should still open: %v", err)
+	}
+	defer s3.Close()
+	got, err := s3.GetSessionByTokenHash(context.Background(), sess.TokenHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pt, err := encB.Open(got.UpstreamRefreshCT)
+	if err != nil {
+		t.Fatalf("inner refresh ciphertext should decrypt with keyB only after migration: %v", err)
+	}
+	if string(pt) != "refresh-token" {
+		t.Errorf("decrypted refresh=%q", pt)
 	}
 }
 

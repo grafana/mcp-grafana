@@ -85,6 +85,18 @@ func (f *FileStore) load() error {
 			return fmt.Errorf("reseal session %s: %w", p.Sessions[i].Identity.String(), err)
 		}
 		p.Sessions[i].UpstreamCredsCT = innerCt
+
+		if len(p.Sessions[i].UpstreamRefreshCT) > 0 {
+			innerPt, err := f.enc.Open(p.Sessions[i].UpstreamRefreshCT)
+			if err != nil {
+				return fmt.Errorf("rewrap session %s refresh: %w", p.Sessions[i].Identity.String(), err)
+			}
+			innerCt, err := f.enc.Seal(innerPt)
+			if err != nil {
+				return fmt.Errorf("reseal session %s refresh: %w", p.Sessions[i].Identity.String(), err)
+			}
+			p.Sessions[i].UpstreamRefreshCT = innerCt
+		}
 	}
 	for i := range p.AuthCodes {
 		if len(p.AuthCodes[i].UpstreamCredsCT) == 0 {
@@ -99,6 +111,18 @@ func (f *FileStore) load() error {
 			return fmt.Errorf("reseal auth code: %w", err)
 		}
 		p.AuthCodes[i].UpstreamCredsCT = innerCt
+
+		if len(p.AuthCodes[i].UpstreamRefreshCT) > 0 {
+			innerPt, err := f.enc.Open(p.AuthCodes[i].UpstreamRefreshCT)
+			if err != nil {
+				return fmt.Errorf("rewrap auth code %s refresh: %w", p.AuthCodes[i].Code, err)
+			}
+			innerCt, err := f.enc.Seal(innerPt)
+			if err != nil {
+				return fmt.Errorf("reseal auth code %s refresh: %w", p.AuthCodes[i].Code, err)
+			}
+			p.AuthCodes[i].UpstreamRefreshCT = innerCt
+		}
 	}
 
 	ctx := context.Background()

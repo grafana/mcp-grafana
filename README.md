@@ -391,7 +391,7 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 - `--disable-graphite`: Disable Graphite tools
 
 **Per-User Authentication:**
-- `--auth-mode`: Per-user auth mode. `none` (default) or `oauth-oidc`. See [Per-user auth (OIDC)](docs/sources/configure/per-user-auth-oidc.md).
+- `--auth-mode`: Per-user auth mode. `none` (default), `oauth-oidc`, or `oauth-grafana`. See [Per-user auth (OIDC)](docs/sources/configure/per-user-auth-oidc.md).
 - `--rbac-gating`: Tool-list filtering mode when per-user auth is active. `auto` (default), `enterprise`, `basic`, or `off`.
 - `--rbac-cache-ttl`: How long to cache each user's Grafana permission set before re-fetching (default `5m`).
 - `--grafana-oauth2-client-id`: Grafana oauth2_server client_id (oauth-grafana mode).

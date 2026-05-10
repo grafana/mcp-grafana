@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/grafana/mcp-grafana/auth/rbac"
+	"golang.org/x/sync/singleflight"
 )
 
 // Server bundles everything the auth HTTP handlers need.
@@ -44,6 +45,10 @@ type Server struct {
 	pendingsOnce sync.Once
 	authzReg     *pendingRegistry[*pendingFlow]
 	bootstrapReg *pendingRegistry[*pendingBootstrap]
+
+	// refreshGroup coalesces concurrent upstream refresh calls for the same
+	// session so that at most one call reaches the upstream at a time.
+	refreshGroup singleflight.Group
 }
 
 func (s *Server) logger() *slog.Logger {

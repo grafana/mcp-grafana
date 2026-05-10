@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -314,5 +316,83 @@ func (r *refreshableStub) Refresh(_ context.Context, _ []byte) (CallbackResult, 
 		UpstreamCreds:     r.newCreds,
 		UpstreamRefresh:   r.newRefresh,
 		UpstreamExpiresAt: r.newExpiry,
+	}, nil
+}
+
+func TestMiddleware_ConcurrentRefreshes_CoalesceToOneUpstreamCall(t *testing.T) {
+	enc := mustEnc(t, mustKey(t), nil)
+	store := NewMemoryStore()
+
+	plainAT, hashAT := NewToken()
+	credCT, _ := enc.Seal([]byte("expiring-bearer"))
+	refreshCT, _ := enc.Seal([]byte("refresh-1"))
+	_ = store.PutSession(context.Background(), Session{
+		TokenHash:         hashAT,
+		ExpiresAt:         time.Now().Add(time.Hour),
+		Identity:          Identity{Mode: ModeOAuthGrafana, ID: "alice"},
+		UpstreamCredsCT:   credCT,
+		UpstreamRefreshCT: refreshCT,
+		UpstreamExpiresAt: time.Now().Add(20 * time.Second),
+	})
+
+	var calls int32
+	stub := &countingRefreshableStub{
+		newCreds:   []byte("refreshed-bearer"),
+		newRefresh: []byte("refresh-2"),
+		newExpiry:  time.Now().Add(10 * time.Minute),
+		delay:      50 * time.Millisecond, // gives concurrent callers time to coalesce
+		calls:      &calls,
+	}
+
+	srv := &Server{
+		PublicURL: "https://mcp.example.com",
+		Store:     store,
+		Encryptor: enc,
+		Upstream:  stub,
+	}
+
+	var wg sync.WaitGroup
+	handler := srv.Middleware()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	for i := 0; i < 25; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			r := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+			r.Header.Set("Authorization", "Bearer "+plainAT)
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, r)
+		}()
+	}
+	wg.Wait()
+
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Errorf("expected exactly 1 upstream refresh, got %d", got)
+	}
+}
+
+// countingRefreshableStub is a refreshable Upstream that counts Refresh calls
+// and optionally sleeps before responding.
+type countingRefreshableStub struct {
+	newCreds, newRefresh []byte
+	newExpiry            time.Time
+	delay                time.Duration
+	calls                *int32
+}
+
+func (c *countingRefreshableStub) Mode() Mode                      { return ModeOAuthGrafana }
+func (c *countingRefreshableStub) AuthorizeURL(_, _ string) string { return "" }
+func (c *countingRefreshableStub) HandleCallback(_ context.Context, _ url.Values) (CallbackResult, error) {
+	return CallbackResult{}, nil
+}
+func (c *countingRefreshableStub) Refresh(_ context.Context, _ []byte) (CallbackResult, error) {
+	atomic.AddInt32(c.calls, 1)
+	if c.delay > 0 {
+		time.Sleep(c.delay)
+	}
+	return CallbackResult{
+		HasCred:           true,
+		UpstreamCreds:     c.newCreds,
+		UpstreamRefresh:   c.newRefresh,
+		UpstreamExpiresAt: c.newExpiry,
 	}, nil
 }
