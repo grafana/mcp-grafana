@@ -81,20 +81,42 @@ func (c *Cache) SetMetrics(m *Metrics) {
 	c.metrics = m
 }
 
+// recordHit / recordMiss wrap the optional Metrics receiver so the
+// Cache itself stays safe even if a future Metrics method forgets its
+// nil-receiver guard. SetMetrics is optional for callers, so c.metrics
+// may be nil.
+func (c *Cache) recordHit(ctx context.Context) {
+	if c.metrics != nil {
+		c.metrics.CacheHit(ctx)
+	}
+}
+
+func (c *Cache) recordMiss(ctx context.Context) {
+	if c.metrics != nil {
+		c.metrics.CacheMiss(ctx)
+	}
+}
+
 // Get returns the cached snapshot if fresh, otherwise fetches.
 func (c *Cache) Get(ctx context.Context, key string) (Snapshot, error) {
 	if c.ttl > 0 {
 		c.mu.RLock()
 		if e, ok := c.entries[key]; ok && time.Now().Before(e.expiresAt) {
 			c.mu.RUnlock()
-			c.metrics.CacheHit(ctx)
+			c.recordHit(ctx)
 			return e.snap, nil
 		}
 		c.mu.RUnlock()
 	}
-	c.metrics.CacheMiss(ctx)
 
 	v, err, _ := c.flight.Do(key, func() (any, error) {
+		// Record CacheMiss inside the singleflight closure so it counts
+		// once per actual upstream fetch rather than once per coalesced
+		// waiter. Concurrent callers for the same key that the
+		// singleflight collapses share this miss; the hit/miss ratio on
+		// dashboards now reflects fetch frequency, not request frequency.
+		c.recordMiss(ctx)
+
 		// Detach from the caller's context. Singleflight coalesces
 		// concurrent waiters onto the goroutine that won the race; if we
 		// forwarded that goroutine's request ctx and it cancelled (e.g.
