@@ -66,6 +66,37 @@ func TestRateLimit_ContinuousRefill_NoBoundaryBurst(t *testing.T) {
 	}
 }
 
+func TestRateLimit_IdleBucketsAreEvicted(t *testing.T) {
+	// Use a short refill so a single sleep covers the 4× idle threshold.
+	limiter := NewIPLimiter(2, 50*time.Millisecond)
+
+	// Hit the limiter from many distinct IPs.
+	for i := 0; i < 50; i++ {
+		ip := "10.0.0." + string(rune('a'+i)) + ":1234" // 50 distinct strings
+		_ = limiter.allow(ip)
+	}
+	limiter.mu.Lock()
+	before := len(limiter.buckets)
+	limiter.mu.Unlock()
+	if before < 50 {
+		t.Fatalf("expected ≥50 buckets after 50 unique IPs, got %d", before)
+	}
+
+	// Wait long enough that all buckets are idle past the 4× cutoff,
+	// then trigger a sweep by hitting one fresh IP.
+	time.Sleep(250 * time.Millisecond)
+	_ = limiter.allow("99.99.99.99:1")
+
+	limiter.mu.Lock()
+	after := len(limiter.buckets)
+	limiter.mu.Unlock()
+
+	// Only the freshly-touched IP should remain.
+	if after != 1 {
+		t.Errorf("after sweep: %d buckets, want 1", after)
+	}
+}
+
 func TestRateLimit_PerIPIsolation(t *testing.T) {
 	limiter := NewIPLimiter(1, time.Second, true)
 	handler := limiter.Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

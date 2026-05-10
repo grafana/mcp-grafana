@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -76,8 +77,17 @@ func (e *Engine) HookOnAfterListTools() server.OnAfterListToolsFunc {
 			return // no session: leave the tool list alone (legacy path)
 		}
 
-		stop := e.cfg.Metrics.Stopwatch(ctx, mode)
-		defer stop()
+		// Time the filter and record under the FINAL resolved mode. We can't
+		// use Metrics.Stopwatch here because it captures `mode` by value at
+		// call time — for the first request after startup, that's ModeAuto,
+		// and the metric would be recorded under "auto" instead of the
+		// post-recordEdition value. The closure below captures `mode` by
+		// reference, so it sees whatever it's been reassigned to by the
+		// time the deferred call runs.
+		start := time.Now()
+		defer func() {
+			e.cfg.Metrics.FilterObserved(ctx, mode, time.Since(start).Seconds())
+		}()
 
 		snap, err := e.cfg.Cache.Get(ctx, key)
 		if err != nil {
