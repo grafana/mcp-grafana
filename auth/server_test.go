@@ -11,10 +11,10 @@ import (
 
 func TestRegisterRoutes_AllPathsRespond(t *testing.T) {
 	srv := &Server{
-		PublicURL: "https://mcp.example.com",
-		Store:     NewMemoryStore(),
-		Encryptor: mustEnc(t, mustKey(t), nil),
-		Upstream:  &stubUpstream{mode: ModeOAuthOIDC, authURL: "https://idp.example/auth"},
+		PublicURL:      "https://mcp.example.com",
+		Store:          NewMemoryStore(),
+		Encryptor:      mustEnc(t, mustKey(t), nil),
+		Upstream:       &stubUpstream{mode: ModeOAuthOIDC, authURL: "https://idp.example/auth"},
 		AccessTokenTTL: time.Hour, RefreshTokenTTL: 24 * time.Hour, AuthCodeTTL: 5 * time.Minute,
 	}
 	mux := http.NewServeMux()
