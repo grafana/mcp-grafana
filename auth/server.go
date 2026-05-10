@@ -37,6 +37,11 @@ type Server struct {
 	RefreshTokenTTL time.Duration
 	AuthCodeTTL     time.Duration
 
+	// SAMLEnableSLO controls whether /saml/sls is mounted. Populated from
+	// cfg.SAMLEnableSLO in New(...). Meaningful only when the upstream
+	// implements SAMLValidator.
+	SAMLEnableSLO bool
+
 	// pendingsOnce lazy-initializes the per-Server pending-flow registries
 	// (authzReg, bootstrapReg) on first use. Lazy init keeps &Server{...}
 	// struct literals working in tests while still giving each Server its
@@ -85,6 +90,17 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux, grafanaURL string, allowInse
 	mux.Handle("/callback", wrap(authLim.Wrap(s.CallbackHandler())))
 	mux.Handle("/token", wrap(authLim.Wrap(s.TokenHandler())))
 	mux.Handle("/bootstrap", wrap(bootLim.Wrap(s.BootstrapHandler(grafanaURL))))
+
+	// SAML routes are only mounted when the upstream implements SAMLValidator.
+	// With non-SAML upstreams the type assertion fails and these paths remain
+	// unregistered (404).
+	if _, ok := s.Upstream.(SAMLValidator); ok {
+		mux.Handle("/saml/metadata", wrap(authLim.Wrap(s.SAMLMetadataHandler())))
+		mux.Handle("/saml/acs", wrap(authLim.Wrap(s.SAMLACSHandler())))
+		if s.SAMLEnableSLO {
+			mux.Handle("/saml/sls", wrap(authLim.Wrap(s.SAMLSLSHandler())))
+		}
+	}
 }
 
 // New constructs a Server from a validated Config plus an Encryptor and

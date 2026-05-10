@@ -38,3 +38,27 @@ func TestRegisterRoutes_AllPathsRespond(t *testing.T) {
 		t.Errorf("/authorize not registered")
 	}
 }
+
+func TestRegisterRoutes_SAMLRoutesMountedWhenSAMLValidator(t *testing.T) {
+	srv := &Server{
+		PublicURL:       "https://mcp.example.com",
+		Store:           NewMemoryStore(),
+		Encryptor:       mustEnc(t, mustKey(t), nil),
+		Upstream:        &stubSAMLValidator{metadata: []byte(`<EntityDescriptor></EntityDescriptor>`)},
+		AuthCodeTTL:     5 * time.Minute,
+		RefreshTokenTTL: 24 * time.Hour,
+		AccessTokenTTL:  time.Hour,
+		SAMLEnableSLO:   true,
+	}
+	mux := http.NewServeMux()
+	srv.RegisterRoutes(mux, "https://grafana.example.com", true)
+
+	for _, path := range []string{"/saml/metadata", "/saml/acs", "/saml/sls"} {
+		r := httptest.NewRequest(http.MethodGet, path, nil)
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, r)
+		if w.Code == http.StatusNotFound {
+			t.Errorf("%s not registered (404)", path)
+		}
+	}
+}
