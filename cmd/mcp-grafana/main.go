@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"slices"
 	"strings"
 	"syscall"
@@ -392,7 +393,7 @@ func runMetricsServer(addr string, o *observability.Observability) {
 	}
 }
 
-func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt disabledTools, gc mcpgrafana.GrafanaConfig, tls tlsConfig, obs observability.Config, sessionIdleTimeoutMinutes int) error {
+func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt disabledTools, gc mcpgrafana.GrafanaConfig, tls tlsConfig, obs observability.Config, sessionIdleTimeoutMinutes int, authCfg auth.Config) error {
 	stderrHandler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})
 	slog.SetDefault(slog.New(stderrHandler))
 
@@ -433,6 +434,24 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 	// Create a context that will be cancelled on shutdown
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	var authSrv *auth.Server
+	if authCfg.Mode != auth.ModeNone {
+		grafanaURL := os.Getenv("GRAFANA_URL")
+		if grafanaURL == "" {
+			grafanaURL = "http://localhost:3000"
+		}
+		var err error
+		authSrv, err = buildAuthServer(ctx, authCfg, grafanaURL, slog.Default())
+		if err != nil {
+			return fmt.Errorf("auth setup: %w", err)
+		}
+		if transport == "stdio" {
+			slog.Warn("--auth-mode is ignored on stdio transport")
+		} else {
+			slog.Info("Per-user auth enabled", "mode", string(authCfg.Mode), "public_url", authCfg.PublicURL)
+		}
+	}
 
 	// Set up signal handling for graceful shutdown
 	sigChan := make(chan os.Signal, 1)
@@ -485,10 +504,12 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		if basePath == "" {
 			basePath = "/"
 		}
-		mux.Handle(basePath, observability.WrapHandler(
-			mcpgrafana.ValidateGrafanaURLMiddleware(srv),
-			basePath,
-		))
+		mcpHandler := http.Handler(mcpgrafana.ValidateGrafanaURLMiddleware(srv))
+		if authSrv != nil {
+			mcpHandler = authSrv.Middleware()(mcpHandler)
+			authSrv.RegisterRoutes(mux, os.Getenv("GRAFANA_URL"), authCfg.AllowInsecure)
+		}
+		mux.Handle(basePath, observability.WrapHandler(mcpHandler, basePath))
 		mux.HandleFunc("/healthz", handleHealthz)
 		if obs.MetricsEnabled {
 			if obs.MetricsAddress == "" {
@@ -514,10 +535,12 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		}
 		srv := server.NewStreamableHTTPServer(s, opts...)
 		mux := http.NewServeMux()
-		mux.Handle(endpointPath, observability.WrapHandler(
-			mcpgrafana.ValidateGrafanaURLMiddleware(srv),
-			endpointPath,
-		))
+		mcpHandler := http.Handler(mcpgrafana.ValidateGrafanaURLMiddleware(srv))
+		if authSrv != nil {
+			mcpHandler = authSrv.Middleware()(mcpHandler)
+			authSrv.RegisterRoutes(mux, os.Getenv("GRAFANA_URL"), authCfg.AllowInsecure)
+		}
+		mux.Handle(endpointPath, observability.WrapHandler(mcpHandler, endpointPath))
 		mux.HandleFunc("/healthz", handleHealthz)
 		if obs.MetricsEnabled {
 			if obs.MetricsAddress == "" {
@@ -568,6 +591,43 @@ func buildAuthConfig(modeStr, publicURL, encKey, encKeyPrev, stateDir string, al
 		return cfg, err
 	}
 	return cfg, nil
+}
+
+func buildAuthServer(ctx context.Context, cfg auth.Config, grafanaURL string, logger *slog.Logger) (*auth.Server, error) {
+	enc, err := auth.NewEncryptor(cfg.EncryptionKey, cfg.EncryptionKeyPrevious)
+	if err != nil {
+		return nil, fmt.Errorf("encryptor: %w", err)
+	}
+
+	var store auth.Store
+	if cfg.StateDir != "" {
+		path := filepath.Join(cfg.StateDir, "auth.state")
+		fs, err := auth.NewFileStore(path, enc)
+		if err != nil {
+			return nil, fmt.Errorf("file store at %s: %w", path, err)
+		}
+		store = fs
+	} else {
+		store = auth.NewMemoryStore()
+	}
+
+	var up auth.Upstream
+	switch cfg.Mode {
+	case auth.ModeOAuthOIDC:
+		oidc, err := auth.NewOIDCUpstream(ctx, cfg)
+		if err != nil {
+			return nil, fmt.Errorf("oidc upstream: %w", err)
+		}
+		up = oidc
+	default:
+		return nil, fmt.Errorf("auth mode %q is not implemented in Phase 1", cfg.Mode)
+	}
+
+	if !strings.HasPrefix(grafanaURL, "http://") && !strings.HasPrefix(grafanaURL, "https://") {
+		return nil, fmt.Errorf("GRAFANA_URL must be set when --auth-mode != none")
+	}
+
+	return auth.New(cfg, store, enc, up, logger), nil
 }
 
 func main() {
@@ -633,10 +693,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "invalid auth config: %v\n", err)
 		os.Exit(2)
 	}
-	if authCfg.Mode != auth.ModeNone {
-		fmt.Fprintln(os.Stderr, "--auth-mode is parsed but not yet wired (Phase 1 in progress); ignoring")
-	}
-	_ = authCfg // silence "declared and not used" until Task 18 wires it
+	// authCfg is consumed inside run()
 
 	// Convert local grafanaConfig to mcpgrafana.GrafanaConfig
 	grafanaConfig := mcpgrafana.GrafanaConfig{
@@ -664,7 +721,7 @@ func main() {
 		obs.NetworkTransport = mcpconv.NetworkTransportTCP
 	}
 
-	if err := run(transport, *addr, *basePath, *endpointPath, parseLevel(*logLevel), dt, grafanaConfig, tls, obs, *sessionIdleTimeoutMinutes); err != nil {
+	if err := run(transport, *addr, *basePath, *endpointPath, parseLevel(*logLevel), dt, grafanaConfig, tls, obs, *sessionIdleTimeoutMinutes, authCfg); err != nil {
 		panic(err)
 	}
 }
