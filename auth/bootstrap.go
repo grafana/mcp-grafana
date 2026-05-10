@@ -105,25 +105,14 @@ func (s *Server) processBootstrap(w http.ResponseWriter, r *http.Request, grafan
 		return
 	}
 
-	// Token good — consume the flow, persist session, redirect to the AS auth-code path.
+	// Token good — consume the flow, redirect to the AS auth-code path.
+	// The encrypted SA token is carried on the auth code (UpstreamCredsCT);
+	// the real Session is written later by /token's handleAuthCodeGrant.
 	_, _ = consumeBootstrap(flow)
 
 	ct, err := s.Encryptor.Seal([]byte(token))
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "server_error", "encrypt: "+err.Error())
-		return
-	}
-	now := time.Now()
-	if err := s.Store.PutSession(r.Context(), Session{
-		TokenHash:        HashToken("placeholder-replaced-at-token-endpoint"),
-		Identity:         pb.identity,
-		UpstreamCredsCT:  ct,
-		ExpiresAt:        now.Add(time.Hour),
-		RefreshExpiresAt: now.Add(30 * 24 * time.Hour),
-		CreatedAt:        now,
-		UpdatedAt:        now,
-	}); err != nil {
-		httpError(w, http.StatusInternalServerError, "server_error", err.Error())
 		return
 	}
 	s.logger().Info("auth.bootstrap_token_validated", "user_id", pb.identity.String())

@@ -91,12 +91,17 @@ func TestBootstrap_POST_ValidatesAndStoresToken(t *testing.T) {
 		t.Errorf("loc=%v", loc)
 	}
 
-	// Session was stored with encrypted SA token.
-	sess, err := srv.Store.GetSessionByIdentity(context.Background(), Identity{Mode: ModeOAuthOIDC, ID: "alice"})
+	// Bootstrap writes the encrypted SA token onto the auth code (not a session).
+	// Find the auth code via the redirect's `code` query param, then consume + verify.
+	code := loc.Query().Get("code")
+	if code == "" {
+		t.Fatal("expected code in redirect URL")
+	}
+	ac, err := srv.Store.ConsumeAuthCode(context.Background(), HashToken(code))
 	if err != nil {
 		t.Fatal(err)
 	}
-	pt, err := srv.Encryptor.Open(sess.UpstreamCredsCT)
+	pt, err := srv.Encryptor.Open(ac.UpstreamCredsCT)
 	if err != nil {
 		t.Fatal(err)
 	}
