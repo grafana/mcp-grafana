@@ -317,8 +317,17 @@ func (u *SAMLUpstream) ValidateAssertion(r *http.Request) (samlAssertion, error)
 	if relayState != "" {
 		p, ok := u.pendings[relayState]
 		if ok {
-			expectedIDs = []string{p.requestID}
+			// Defense-in-depth: an entry can age past samlPendingTTL between
+			// sweep cycles. Treat post-TTL entries as missing rather than
+			// running an expensive ParseResponse crypto check on a flow
+			// the OAuth-side consumePending will reject anyway. Mirrors
+			// the per-entry guards in consumePending / consumeBootstrap.
 			delete(u.pendings, relayState)
+			if time.Since(p.createdAt) > samlPendingTTL {
+				ok = false
+			} else {
+				expectedIDs = []string{p.requestID}
+			}
 		}
 		u.mu.Unlock()
 		if !ok {
