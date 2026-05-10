@@ -105,19 +105,19 @@ func (m *MemoryStore) GetSessionByIdentity(_ context.Context, id Identity) (Sess
 	return *s, nil
 }
 
-func (m *MemoryStore) DeleteSession(_ context.Context, tokenHash string) error {
+func (m *MemoryStore) DeleteSession(_ context.Context, tokenHash string) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	s, ok := m.sessByToken[tokenHash]
 	if !ok {
-		return nil
+		return false, nil
 	}
 	delete(m.sessByToken, tokenHash)
 	if s.RefreshHash != "" {
 		delete(m.sessByRefresh, s.RefreshHash)
 	}
 	delete(m.sessByIdentity, s.Identity.String())
-	return nil
+	return true, nil
 }
 
 func (m *MemoryStore) PutClient(_ context.Context, c DCRClient) error {

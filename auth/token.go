@@ -119,7 +119,7 @@ func (s *Server) handleRefreshGrant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !sess.RefreshExpiresAt.IsZero() && time.Now().After(sess.RefreshExpiresAt) {
-		_ = s.Store.DeleteSession(r.Context(), sess.TokenHash)
+		_, _ = s.Store.DeleteSession(r.Context(), sess.TokenHash)
 		httpError(w, http.StatusBadRequest, "invalid_grant", "refresh_token expired")
 		return
 	}

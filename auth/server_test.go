@@ -1,10 +1,8 @@
 package auth
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 )
@@ -38,6 +36,4 @@ func TestRegisterRoutes_AllPathsRespond(t *testing.T) {
 	if w.Code == http.StatusNotFound {
 		t.Errorf("/authorize not registered")
 	}
-	_ = context.Background()
-	_ = strings.HasPrefix
 }

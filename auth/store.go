@@ -26,7 +26,12 @@ type Store interface {
 	// Per the Store-level invariant, this is unambiguous: identities map 1-to-1
 	// to sessions.
 	GetSessionByIdentity(ctx context.Context, id Identity) (Session, error)
-	DeleteSession(ctx context.Context, tokenHash string) error
+	// DeleteSession removes the session keyed by tokenHash. The bool return
+	// reports whether a session was actually deleted; callers that maintain
+	// per-session counters (e.g. the SessionRevoked metric) gate their
+	// decrement on it so concurrent requests against the same expired
+	// session don't double-count.
+	DeleteSession(ctx context.Context, tokenHash string) (bool, error)
 
 	PutClient(ctx context.Context, c DCRClient) error
 	GetClient(ctx context.Context, clientID string) (DCRClient, error)

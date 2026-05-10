@@ -26,8 +26,15 @@ func (s *Server) Middleware() func(http.Handler) http.Handler {
 				return
 			}
 			if !sess.ExpiresAt.IsZero() && time.Now().After(sess.ExpiresAt) {
-				s.Metrics.SessionRevoked(r.Context(), sess.Identity.Mode)
-				_ = s.Store.DeleteSession(r.Context(), sess.TokenHash)
+				// Gate the SessionRevoked decrement on whether THIS request
+				// actually deleted the row. Concurrent requests against the
+				// same expired session would otherwise each decrement the
+				// active-sessions gauge despite only one having been
+				// SessionCreated, driving the gauge negative.
+				deleted, _ := s.Store.DeleteSession(r.Context(), sess.TokenHash)
+				if deleted {
+					s.Metrics.SessionRevoked(r.Context(), sess.Identity.Mode)
+				}
 				s.unauthorized(w, "invalid_token", "access token expired")
 				return
 			}

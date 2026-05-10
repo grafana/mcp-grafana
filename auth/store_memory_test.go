@@ -94,8 +94,20 @@ func TestMemoryStore_DeleteSession(t *testing.T) {
 	ctx := context.Background()
 	sess := newTestSession(t, "alice")
 	_ = s.PutSession(ctx, sess)
-	if err := s.DeleteSession(ctx, sess.TokenHash); err != nil {
+	deleted, err := s.DeleteSession(ctx, sess.TokenHash)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if !deleted {
+		t.Errorf("DeleteSession should report deleted=true for an existing session")
+	}
+	// Calling again should report deleted=false (no row to remove).
+	deleted, err = s.DeleteSession(ctx, sess.TokenHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleted {
+		t.Errorf("DeleteSession should report deleted=false on repeat call")
 	}
 	if _, err := s.GetSessionByTokenHash(ctx, sess.TokenHash); !errors.Is(err, ErrNotFound) {
 		t.Errorf("expected ErrNotFound, got %v", err)

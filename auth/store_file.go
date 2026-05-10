@@ -202,13 +202,21 @@ func (f *FileStore) GetSessionByIdentity(ctx context.Context, id Identity) (Sess
 	return f.mem.GetSessionByIdentity(ctx, id)
 }
 
-func (f *FileStore) DeleteSession(ctx context.Context, h string) error {
+func (f *FileStore) DeleteSession(ctx context.Context, h string) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if err := f.mem.DeleteSession(ctx, h); err != nil {
-		return err
+	deleted, err := f.mem.DeleteSession(ctx, h)
+	if err != nil {
+		return false, err
 	}
-	return f.flush()
+	if !deleted {
+		// Nothing changed in-memory, no need to rewrite the file.
+		return false, nil
+	}
+	if err := f.flush(); err != nil {
+		return true, err
+	}
+	return true, nil
 }
 
 func (f *FileStore) PutClient(ctx context.Context, c DCRClient) error {
