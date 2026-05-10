@@ -157,6 +157,7 @@ func (m *MemoryStore) Snapshot() (sessions []Session, clients []DCRClient, codes
 	for _, s := range m.sessByToken {
 		sc := *s
 		sc.UpstreamCredsCT = cloneBytes(sc.UpstreamCredsCT)
+		sc.UpstreamRefreshCT = cloneBytes(sc.UpstreamRefreshCT)
 		sessions = append(sessions, sc)
 	}
 	clients = make([]DCRClient, 0, len(m.clients))
@@ -166,6 +167,7 @@ func (m *MemoryStore) Snapshot() (sessions []Session, clients []DCRClient, codes
 	codes = make([]AuthCode, 0, len(m.codes))
 	for _, ac := range m.codes {
 		ac.UpstreamCredsCT = cloneBytes(ac.UpstreamCredsCT)
+		ac.UpstreamRefreshCT = cloneBytes(ac.UpstreamRefreshCT)
 		codes = append(codes, ac)
 	}
 	return sessions, clients, codes
