@@ -58,7 +58,13 @@ func (s *Server) logger() *slog.Logger {
 func (s *Server) RegisterRoutes(mux *http.ServeMux, grafanaURL string, allowInsecure bool) {
 	s.GrafanaURL = grafanaURL
 	authLim := NewIPLimiter(10, time.Minute, s.TrustForwardedHeaders)
-	bootLim := NewIPLimiter(3, time.Minute, s.TrustForwardedHeaders)
+	// A normal /bootstrap flow is GET (form render) + POST (submit). A
+	// fat-finger paste turns into GET + POST(fail) + POST(retry) = 3 hits
+	// in quick succession, so 3/min was a cliff that legitimate users hit
+	// on their first mis-paste. 12/min covers a few honest retries; the
+	// per-IP limit is the wide guard and the flow-token check is the
+	// real one (a flow token is required on every POST).
+	bootLim := NewIPLimiter(12, time.Minute, s.TrustForwardedHeaders)
 	dcrLim := NewIPLimiter(5, time.Minute, s.TrustForwardedHeaders)
 	guard := RequireHTTPS(allowInsecure, s.TrustForwardedHeaders)
 

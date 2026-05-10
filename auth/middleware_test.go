@@ -141,3 +141,42 @@ func TestMiddleware_ExpiredBearer_401(t *testing.T) {
 		t.Errorf("WWW-Authenticate=%q", w.Header().Get("WWW-Authenticate"))
 	}
 }
+
+// TestMiddleware_ExpiredBearer_PreservesRefresh covers the standard
+// OAuth "access expired → use refresh token" flow: when middleware sees
+// an expired access token it must NOT delete the session, otherwise the
+// sessByRefresh mapping would also drop and handleRefreshGrant would
+// return invalid_grant for a refresh token that's still well within its
+// 30-day TTL.
+func TestMiddleware_ExpiredBearer_PreservesRefresh(t *testing.T) {
+	enc := mustEnc(t, mustKey(t), nil)
+	store := NewMemoryStore()
+	srv := &Server{
+		Metrics:   NewMetrics(),
+		PublicURL: "https://mcp.example.com",
+		Store:     store,
+		Encryptor: enc,
+	}
+	plainAT, hashAT := NewToken()
+	plainRT, hashRT := NewToken()
+	credCT, _ := enc.Seal([]byte("x"))
+	_, _ = store.PutSession(context.Background(), Session{
+		TokenHash:        hashAT,
+		RefreshHash:      hashRT,
+		ExpiresAt:        time.Now().Add(-time.Second),
+		RefreshExpiresAt: time.Now().Add(30 * 24 * time.Hour),
+		UpstreamCredsCT:  credCT,
+		Identity:         Identity{Mode: ModeOAuthOIDC, ID: "alice"},
+	})
+
+	r := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	r.Header.Set("Authorization", "Bearer "+plainAT)
+	srv.Middleware()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})).ServeHTTP(httptest.NewRecorder(), r)
+
+	// Session must still be resolvable by refresh hash; if Middleware had
+	// called DeleteSession we'd get ErrNotFound here and the client could
+	// never refresh.
+	if _, err := store.GetSessionByRefreshHash(context.Background(), HashToken(plainRT)); err != nil {
+		t.Errorf("session was deleted on access-token expiry — refresh path is broken: %v", err)
+	}
+}

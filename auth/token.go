@@ -46,7 +46,8 @@ func (s *Server) handleAuthCodeGrant(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, "invalid_request", "code, code_verifier, client_id required")
 		return
 	}
-	c, err := s.Store.ConsumeAuthCode(r.Context(), HashToken(plain))
+	codeHash := HashToken(plain)
+	c, err := s.Store.PeekAuthCode(r.Context(), codeHash)
 	if err != nil {
 		httpError(w, http.StatusBadRequest, "invalid_grant", "code unknown or expired")
 		return
@@ -57,6 +58,14 @@ func (s *Server) handleAuthCodeGrant(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := VerifyPKCE(c.CodeChallengeMethod, c.CodeChallenge, verifier); err != nil {
 		httpError(w, http.StatusBadRequest, "invalid_grant", err.Error())
+		return
+	}
+	// All checks passed; now consume one-shot. If a concurrent request
+	// already burned the code (legitimate-retry race), ConsumeAuthCode
+	// returns ErrNotFound and we surface the same "unknown or expired"
+	// error — the second caller can't double-mint a session.
+	if _, err := s.Store.ConsumeAuthCode(r.Context(), codeHash); err != nil {
+		httpError(w, http.StatusBadRequest, "invalid_grant", "code unknown or expired")
 		return
 	}
 

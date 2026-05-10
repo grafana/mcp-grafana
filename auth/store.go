@@ -44,6 +44,12 @@ type Store interface {
 	GetClient(ctx context.Context, clientID string) (DCRClient, error)
 
 	PutAuthCode(ctx context.Context, c AuthCode) error
+	// PeekAuthCode returns the code's stored payload without removing it.
+	// Used by handleAuthCodeGrant to validate PKCE / client / redirect_uri
+	// BEFORE the single-use consume — otherwise a malformed redemption
+	// burns the code and a legitimate retry from the same client can
+	// never succeed (RFC 6749 §4.1.2 only forbids reuse AFTER success).
+	PeekAuthCode(ctx context.Context, codeHash string) (AuthCode, error)
 	ConsumeAuthCode(ctx context.Context, codeHash string) (AuthCode, error)
 }
 

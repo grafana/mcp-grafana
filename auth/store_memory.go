@@ -146,6 +146,19 @@ func (m *MemoryStore) PutAuthCode(_ context.Context, c AuthCode) error {
 	return nil
 }
 
+func (m *MemoryStore) PeekAuthCode(_ context.Context, codeHash string) (AuthCode, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	c, ok := m.codes[codeHash]
+	if !ok {
+		return AuthCode{}, ErrNotFound
+	}
+	if !c.ExpiresAt.IsZero() && time.Now().After(c.ExpiresAt) {
+		return AuthCode{}, ErrNotFound
+	}
+	return c, nil
+}
+
 func (m *MemoryStore) ConsumeAuthCode(_ context.Context, codeHash string) (AuthCode, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

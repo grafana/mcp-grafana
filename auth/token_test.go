@@ -158,6 +158,17 @@ func TestToken_PKCEMismatch(t *testing.T) {
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("status=%d", w.Code)
 	}
+
+	// The auth code must survive a PKCE failure so a legitimate client
+	// holding the correct verifier can still redeem it. PeekAuthCode
+	// before ConsumeAuthCode is the guard — without it, a malformed
+	// first redemption (or a client that retried with the wrong
+	// verifier) would burn the code and prevent the real owner from
+	// completing the flow. RFC 6749 §4.1.2 forbids reuse AFTER success,
+	// not retry AFTER failure.
+	if _, err := srv.Store.PeekAuthCode(ctx, hashedCode); err != nil {
+		t.Errorf("auth code was consumed despite PKCE failure: %v", err)
+	}
 }
 
 func TestToken_RefreshRotates(t *testing.T) {

@@ -244,6 +244,12 @@ func (f *FileStore) PutAuthCode(ctx context.Context, c AuthCode) error {
 	return f.flush()
 }
 
+func (f *FileStore) PeekAuthCode(ctx context.Context, h string) (AuthCode, error) {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	return f.mem.PeekAuthCode(ctx, h)
+}
+
 func (f *FileStore) ConsumeAuthCode(ctx context.Context, h string) (AuthCode, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

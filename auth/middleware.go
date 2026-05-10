@@ -26,15 +26,14 @@ func (s *Server) Middleware() func(http.Handler) http.Handler {
 				return
 			}
 			if !sess.ExpiresAt.IsZero() && time.Now().After(sess.ExpiresAt) {
-				// Gate the SessionRevoked decrement on whether THIS request
-				// actually deleted the row. Concurrent requests against the
-				// same expired session would otherwise each decrement the
-				// active-sessions gauge despite only one having been
-				// SessionCreated, driving the gauge negative.
-				deleted, _ := s.Store.DeleteSession(r.Context(), sess.TokenHash)
-				if deleted {
-					s.Metrics.SessionRevoked(r.Context(), sess.Identity.Mode)
-				}
+				// Don't delete the session on access-token expiry. The
+				// refresh token is still valid (access TTL is 1h vs refresh
+				// TTL 30d by default), and DeleteSession would also drop
+				// the sessByRefresh mapping, breaking the standard
+				// "401 → use refresh_token → get a new access token" flow.
+				// Replacement of the stale access-token-hash index entry
+				// happens atomically inside PutSession when refresh runs;
+				// SessionRevoked fires there for the replaced hash.
 				s.unauthorized(w, "invalid_token", "access token expired")
 				return
 			}
