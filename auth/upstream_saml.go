@@ -152,7 +152,13 @@ func NewSAMLUpstream(ctx context.Context, cfg Config) (*SAMLUpstream, error) {
 	// samlConfig but the library never saw it, so --saml-clock-skew
 	// silently had no effect. Setting a package global is acceptable
 	// because mcp-grafana runs one upstream config per process.
-	if cfg.SAMLClockSkew > 0 {
+	//
+	// Apply on >= 0, not > 0: an operator who explicitly passes
+	// --saml-clock-skew=0s wants strict zero tolerance, not the library
+	// default. Negative values are treated as "leave the library default
+	// in place" — used by tests that don't want to perturb the package
+	// global.
+	if cfg.SAMLClockSkew >= 0 {
 		saml.MaxClockSkew = cfg.SAMLClockSkew
 	}
 
@@ -255,6 +261,13 @@ func (u *SAMLUpstream) AuthorizeURL(_redirectURI, state string) string {
 
 	redirectURL, err := req.Redirect(state, u.rawSP)
 	if err != nil {
+		// Clean up the pending we just stored so a Redirect failure
+		// doesn't leak entries until the next TTL sweep — the caller's
+		// /authorize handler unwinds its own state on empty-URL but has
+		// no access to u.pendings.
+		u.mu.Lock()
+		delete(u.pendings, state)
+		u.mu.Unlock()
 		slog.Error("saml: AuthnRequest Redirect failed", "error", err)
 		return ""
 	}

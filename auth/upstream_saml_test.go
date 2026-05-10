@@ -17,6 +17,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/crewjam/saml"
 )
 
 func TestNewSAMLUpstream_ConstructsServiceProvider(t *testing.T) {
@@ -47,6 +49,64 @@ func TestNewSAMLUpstream_ConstructsServiceProvider(t *testing.T) {
 	}
 	if up.cfg.EntityID != "https://mcp.example.com/saml/metadata" {
 		t.Errorf("default EntityID = %q", up.cfg.EntityID)
+	}
+}
+
+// TestNewSAMLUpstream_AppliesExplicitZeroClockSkew confirms that an
+// operator who explicitly passes --saml-clock-skew=0s gets strict zero
+// tolerance, not the crewjam/saml library default of 180s.
+func TestNewSAMLUpstream_AppliesExplicitZeroClockSkew(t *testing.T) {
+	prev := saml.MaxClockSkew
+	t.Cleanup(func() { saml.MaxClockSkew = prev })
+
+	saml.MaxClockSkew = 999 * time.Second // sentinel different from 0 and lib default
+
+	dir := t.TempDir()
+	certPath, keyPath := generateSPKeyPair(t, dir)
+	metadataPath := writeMockIdPMetadata(t, dir)
+
+	if _, err := NewSAMLUpstream(context.Background(), Config{
+		Mode:                ModeSAML,
+		PublicURL:           "https://mcp.example.com",
+		SAMLIdPMetadataFile: metadataPath,
+		SAMLSPCertFile:      certPath,
+		SAMLSPKeyFile:       keyPath,
+		SAMLNameIDFormat:    "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
+		SAMLClockSkew:       0,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if saml.MaxClockSkew != 0 {
+		t.Errorf("explicit 0s not applied: saml.MaxClockSkew = %v", saml.MaxClockSkew)
+	}
+}
+
+// TestNewSAMLUpstream_NegativeClockSkewLeavesGlobalAlone verifies the
+// negative-sentinel opt-out used by the test helper to keep saml.MaxClockSkew
+// at whatever the library default is.
+func TestNewSAMLUpstream_NegativeClockSkewLeavesGlobalAlone(t *testing.T) {
+	prev := saml.MaxClockSkew
+	t.Cleanup(func() { saml.MaxClockSkew = prev })
+
+	saml.MaxClockSkew = 42 * time.Second
+
+	dir := t.TempDir()
+	certPath, keyPath := generateSPKeyPair(t, dir)
+	metadataPath := writeMockIdPMetadata(t, dir)
+
+	if _, err := NewSAMLUpstream(context.Background(), Config{
+		Mode:                ModeSAML,
+		PublicURL:           "https://mcp.example.com",
+		SAMLIdPMetadataFile: metadataPath,
+		SAMLSPCertFile:      certPath,
+		SAMLSPKeyFile:       keyPath,
+		SAMLNameIDFormat:    "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
+		SAMLClockSkew:       -1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if saml.MaxClockSkew != 42*time.Second {
+		t.Errorf("negative skew should not perturb global: saml.MaxClockSkew = %v", saml.MaxClockSkew)
 	}
 }
 
@@ -110,6 +170,10 @@ func mustNewSAMLUpstream(t *testing.T) *SAMLUpstream {
 		SAMLSPCertFile:      certPath,
 		SAMLSPKeyFile:       keyPath,
 		SAMLNameIDFormat:    "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
+		// -1 sentinel: leave saml.MaxClockSkew at the library default so
+		// helper-built upstreams don't perturb the package global for
+		// other tests in the same process.
+		SAMLClockSkew: -1,
 	})
 	if err != nil {
 		t.Fatal(err)
