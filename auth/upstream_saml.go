@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"log/slog"
@@ -130,16 +131,25 @@ func NewSAMLUpstream(ctx context.Context, cfg Config) (*SAMLUpstream, error) {
 	// directly when validating NotBefore/NotOnOrAfter on the inbound
 	// assertion. Without this assignment the cfg value flowed into
 	// samlConfig but the library never saw it, so --saml-clock-skew
-	// silently had no effect. Setting a package global is acceptable
-	// because mcp-grafana runs one upstream config per process.
+	// silently had no effect.
 	//
 	// Gate on SAMLClockSkewSet rather than on the value itself. A bare
 	// Config{} (programmatic, no CLI) leaves SAMLClockSkewSet=false and
 	// the library default (180s) stays in place — so a missing field
 	// never silently imposes zero tolerance. main.go always sets the
 	// flag so an operator's explicit `--saml-clock-skew=0s` is honoured.
+	//
+	// Mutating a process-global is acceptable because mcp-grafana runs
+	// one upstream config per process; a sync.Once gate ensures the
+	// value is written exactly once even if multiple SAMLUpstreams are
+	// constructed (e.g. in tests), so concurrent ParseResponse readers
+	// can't observe a value flapping between configurations. Subsequent
+	// constructors with a different SAMLClockSkew log a warning rather
+	// than silently overwrite. The clock-skew-specific tests in
+	// upstream_saml_test.go save/restore saml.MaxClockSkew directly to
+	// reset this state between cases.
 	if cfg.SAMLClockSkewSet {
-		saml.MaxClockSkew = cfg.SAMLClockSkew
+		applyClockSkew(cfg.SAMLClockSkew)
 	}
 
 	upstream := &SAMLUpstream{
@@ -162,6 +172,44 @@ func NewSAMLUpstream(ctx context.Context, cfg Config) (*SAMLUpstream, error) {
 	}
 
 	return upstream, nil
+}
+
+// clockSkewMu guards the saml.MaxClockSkew package-global write so a
+// second NewSAMLUpstream call (in tests, typically) doesn't race the
+// first against a concurrent ParseResponse reader. Writes after the
+// first emit a warning if the value differs rather than silently
+// overwriting — production runs one upstream per process, so a
+// disagreement here is almost always a configuration mistake worth
+// surfacing to operators.
+var (
+	clockSkewMu      sync.Mutex
+	clockSkewApplied bool
+	clockSkewValue   time.Duration
+)
+
+func applyClockSkew(d time.Duration) {
+	clockSkewMu.Lock()
+	defer clockSkewMu.Unlock()
+	if clockSkewApplied {
+		if clockSkewValue != d {
+			slog.Warn("saml: NewSAMLUpstream called with a different clock-skew than previously applied; keeping the first value to avoid races with in-flight ParseResponse",
+				"applied", clockSkewValue, "requested", d)
+		}
+		return
+	}
+	saml.MaxClockSkew = d
+	clockSkewValue = d
+	clockSkewApplied = true
+}
+
+// resetClockSkewForTest is a test-only escape hatch. The two
+// clock-skew-specific tests need to exercise applyClockSkew across
+// multiple cases in the same process; production never calls this.
+func resetClockSkewForTest() {
+	clockSkewMu.Lock()
+	defer clockSkewMu.Unlock()
+	clockSkewApplied = false
+	clockSkewValue = 0
 }
 
 func chooseEntityID(cfg Config, publicURL *url.URL) string {

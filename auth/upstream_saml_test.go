@@ -59,9 +59,10 @@ func TestNewSAMLUpstream_ConstructsServiceProvider(t *testing.T) {
 // tolerance, not the crewjam/saml library default of 180s.
 func TestNewSAMLUpstream_AppliesExplicitZeroClockSkew(t *testing.T) {
 	prev := saml.MaxClockSkew
-	t.Cleanup(func() { saml.MaxClockSkew = prev })
+	t.Cleanup(func() { saml.MaxClockSkew = prev; resetClockSkewForTest() })
 
 	saml.MaxClockSkew = 999 * time.Second // sentinel different from 0 and lib default
+	resetClockSkewForTest()
 
 	dir := t.TempDir()
 	certPath, keyPath := generateSPKeyPair(t, dir)
@@ -91,9 +92,10 @@ func TestNewSAMLUpstream_AppliesExplicitZeroClockSkew(t *testing.T) {
 // zero tolerance on every assertion.
 func TestNewSAMLUpstream_UnsetClockSkewLeavesGlobalAlone(t *testing.T) {
 	prev := saml.MaxClockSkew
-	t.Cleanup(func() { saml.MaxClockSkew = prev })
+	t.Cleanup(func() { saml.MaxClockSkew = prev; resetClockSkewForTest() })
 
 	saml.MaxClockSkew = 42 * time.Second
+	resetClockSkewForTest()
 
 	dir := t.TempDir()
 	certPath, keyPath := generateSPKeyPair(t, dir)
