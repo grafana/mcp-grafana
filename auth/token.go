@@ -114,6 +114,13 @@ func (s *Server) handleAuthCodeGrant(w http.ResponseWriter, r *http.Request) {
 
 	if replacedTokenHash != "" {
 		s.Metrics.SessionRevoked(r.Context(), c.Identity.Mode)
+		// Invalidate the previous session's RBAC permission-cache entry,
+		// mirroring handleRefreshGrant. Without this, the old hash's
+		// snapshot lingers until TTL — unreachable but wasting memory and
+		// inconsistent with the refresh path.
+		if s.RBAC != nil {
+			s.RBAC.InvalidateSessionCache(replacedTokenHash)
+		}
 	}
 	s.Metrics.SessionCreated(r.Context(), c.Identity.Mode)
 	s.logger().Info("auth.session_created", "user_id", c.Identity.String(), "mode", string(c.Identity.Mode), "client_id", clientID)
