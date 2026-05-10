@@ -115,35 +115,44 @@ func (s *Server) CallbackHandler() http.Handler {
 			return
 		}
 
-		// Mode C: do we already have an SA token for this identity?
-		existing, err := s.Store.GetSessionByIdentity(r.Context(), identity)
-		if err == nil && len(existing.UpstreamCredsCT) > 0 {
-			s.completeAuthCode(w, r, pf, identity, existing.UpstreamCredsCT)
-			return
-		}
-
-		// First login (or token previously cleared): redirect to /bootstrap.
-		var fb [16]byte
-		if _, err := rand.Read(fb[:]); err != nil {
-			panic("rng: " + err.Error())
-		}
-		flowToken := hex.EncodeToString(fb[:])
-		storeBootstrap(flowToken, &pendingBootstrap{
-			identity:            identity,
-			clientID:            pf.clientID,
-			redirectURI:         pf.redirectURI,
-			clientState:         pf.clientState,
-			codeChallenge:       pf.codeChallenge,
-			codeChallengeMethod: pf.codeChallengeMethod,
-			createdAt:           time.Now(),
-		})
-
-		bs := url.URL{Path: "/bootstrap"}
-		q := bs.Query()
-		q.Set("flow", flowToken)
-		bs.RawQuery = q.Encode()
-		http.Redirect(w, r, bs.String(), http.StatusFound)
+		// Mode C (and SAML, in phase 4): existing SA token shortcut, else
+		// redirect to /bootstrap.
+		s.resolveIdentityOrBootstrap(w, r, pf, identity)
 	})
+}
+
+// resolveIdentityOrBootstrap completes the auth code if a session already
+// exists for this identity (Mode C / SAML existing-user shortcut), or
+// stores a pendingBootstrap and 302s to /bootstrap if not. Shared between
+// the OAuth /callback handler and the SAML /saml/acs handler so future
+// changes (audit logging, identity post-processing) stay consistent.
+func (s *Server) resolveIdentityOrBootstrap(w http.ResponseWriter, r *http.Request, pf *pendingFlow, identity Identity) {
+	existing, err := s.Store.GetSessionByIdentity(r.Context(), identity)
+	if err == nil && len(existing.UpstreamCredsCT) > 0 {
+		s.completeAuthCode(w, r, pf, identity, existing.UpstreamCredsCT)
+		return
+	}
+
+	var fb [16]byte
+	if _, err := rand.Read(fb[:]); err != nil {
+		panic("rng: " + err.Error())
+	}
+	flowToken := hex.EncodeToString(fb[:])
+	storeBootstrap(flowToken, &pendingBootstrap{
+		identity:            identity,
+		clientID:            pf.clientID,
+		redirectURI:         pf.redirectURI,
+		clientState:         pf.clientState,
+		codeChallenge:       pf.codeChallenge,
+		codeChallengeMethod: pf.codeChallengeMethod,
+		createdAt:           time.Now(),
+	})
+
+	bs := url.URL{Path: "/bootstrap"}
+	q := bs.Query()
+	q.Set("flow", flowToken)
+	bs.RawQuery = q.Encode()
+	http.Redirect(w, r, bs.String(), http.StatusFound)
 }
 
 // completeAuthCode mints a one-shot auth code, persists it, and 302s the
