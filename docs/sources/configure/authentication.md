@@ -41,3 +41,8 @@ You can use basic auth by setting `GRAFANA_USERNAME` and `GRAFANA_PASSWORD` inst
 
 - [Enable and disable tools](../enable-and-disable-tools/) to control which MCP tools are available.
 - [Transports and addresses](../transports-and-addresses/) for stdio, SSE, and streamable-http.
+
+## Per-user authentication
+
+For shared HTTP/SSE deployments where each user should authenticate as
+themselves, see [Per-user auth (OIDC)](../per-user-auth-oidc/).

@@ -390,6 +390,9 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 - `--disable-runpanelquery`: Disable run panel query tools
 - `--disable-graphite`: Disable Graphite tools
 
+**Per-User Authentication:**
+- `--auth-mode`: Per-user auth mode. `none` (default) or `oauth-oidc`. See [Per-user auth (OIDC)](docs/sources/configure/per-user-auth-oidc.md).
+
 ### Read-Only Mode
 
 The `--disable-write` flag provides a way to run the MCP server in read-only mode, preventing any write operations to your Grafana instance. This is useful for scenarios where you want to provide safe, read-only access such as:
