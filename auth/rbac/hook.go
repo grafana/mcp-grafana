@@ -102,7 +102,7 @@ func (e *Engine) HookOnAfterListTools() server.OnAfterListToolsFunc {
 		// past every early-return path; no `recorded` flag needed.
 		start := time.Now()
 		filtered := e.cfg.Gate.Filter(mode, snap, result.Tools)
-		e.cfg.Metrics.FilterObserved(ctx, mode, time.Since(start).Seconds())
+		e.recordFilterDuration(ctx, mode, time.Since(start).Seconds())
 		if e.cfg.Logger != nil {
 			removed := len(result.Tools) - len(filtered)
 			if removed > 0 {
@@ -114,6 +114,17 @@ func (e *Engine) HookOnAfterListTools() server.OnAfterListToolsFunc {
 			}
 		}
 		result.Tools = filtered
+	}
+}
+
+// recordFilterDuration wraps the optional Metrics receiver so the hook
+// stays safe even if a future Metrics method forgets its nil-receiver
+// guard. Engine.cfg.Metrics is documented as optional, so an Engine
+// constructed without one (e.g. TestEngine_Hook_Filters) goes through
+// here as a no-op.
+func (e *Engine) recordFilterDuration(ctx context.Context, mode Mode, durationSec float64) {
+	if e.cfg.Metrics != nil {
+		e.cfg.Metrics.FilterObserved(ctx, mode, durationSec)
 	}
 }
 
