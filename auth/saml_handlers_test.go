@@ -80,7 +80,7 @@ func TestSAMLACSHandler_FirstLogin_RedirectsToBootstrap(t *testing.T) {
 		},
 		AuthCodeTTL: 5 * time.Minute,
 	}
-	storePending("rs-1", &pendingFlow{
+	srv.authzPendings().Store("rs-1", &pendingFlow{
 		clientID:            "cid",
 		redirectURI:         "http://localhost:1/cb",
 		clientState:         "client-state",
@@ -133,7 +133,7 @@ func TestSAMLACSHandler_RepeatLogin_ShortcutsToClient(t *testing.T) {
 		},
 		AuthCodeTTL: 5 * time.Minute,
 	}
-	storePending("rs-2", &pendingFlow{
+	srv.authzPendings().Store("rs-2", &pendingFlow{
 		clientID:            "cid",
 		redirectURI:         "http://localhost:1/cb",
 		clientState:         "client-state",

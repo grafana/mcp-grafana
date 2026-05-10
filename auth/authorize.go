@@ -76,7 +76,7 @@ func (s *Server) AuthorizeHandler() http.Handler {
 			// Upstream returned an empty URL (internal misconfiguration).
 			// Drop the pending entry so it doesn't accumulate, then redirect-error
 			// the user-agent back to the client with a generic OAuth error.
-			consumePending(state)
+			s.authzPendings().Delete(state)
 			httpRedirectError(w, r, redirectURI, "server_error", "upstream returned no authorize URL", clientState)
 			return
 		}

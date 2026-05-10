@@ -15,7 +15,6 @@ import (
 	"net/url"
 	"os"
 	"strings"
-	"sync"
 	"time"
 
 	"log/slog"
@@ -45,25 +44,7 @@ type SAMLUpstream struct {
 
 	// Per-RelayState pendings tracking the SAML RequestID we issued, so the
 	// ACS handler can pin the inbound assertion to the request we sent out.
-	mu        sync.Mutex
-	pendings  map[string]*samlPending
-	lastSwept time.Time
-}
-
-// sweepPendingsLocked drops pending entries older than samlPendingTTL. The
-// caller must hold u.mu. Runs at most once per TTL window so the amortised
-// per-call cost stays O(1) under sustained traffic.
-func (u *SAMLUpstream) sweepPendingsLocked(now time.Time) {
-	if now.Sub(u.lastSwept) < samlPendingTTL {
-		return
-	}
-	cutoff := now.Add(-samlPendingTTL)
-	for k, p := range u.pendings {
-		if p.createdAt.Before(cutoff) {
-			delete(u.pendings, k)
-		}
-	}
-	u.lastSwept = now
+	pendings *pendingRegistry[*samlPending]
 }
 
 type samlConfig struct {
@@ -79,7 +60,6 @@ type samlConfig struct {
 
 type samlPending struct {
 	requestID string
-	createdAt time.Time
 }
 
 // NewSAMLUpstream loads the IdP metadata, parses the SP cert/key, and
@@ -174,7 +154,7 @@ func NewSAMLUpstream(ctx context.Context, cfg Config) (*SAMLUpstream, error) {
 			AllowIdPInit: cfg.SAMLAllowIdPInitiated,
 			ClockSkew:    cfg.SAMLClockSkew,
 		},
-		pendings: make(map[string]*samlPending),
+		pendings: newPendingRegistry[*samlPending](samlPendingTTL),
 	}
 
 	if cfg.SAMLEnableSLO {
@@ -254,10 +234,7 @@ func (u *SAMLUpstream) AuthorizeURL(_redirectURI, state string) string {
 		return ""
 	}
 
-	u.mu.Lock()
-	u.sweepPendingsLocked(time.Now())
-	u.pendings[state] = &samlPending{requestID: req.ID, createdAt: time.Now()}
-	u.mu.Unlock()
+	u.pendings.Store(state, &samlPending{requestID: req.ID})
 
 	redirectURL, err := req.Redirect(state, u.rawSP)
 	if err != nil {
@@ -265,9 +242,7 @@ func (u *SAMLUpstream) AuthorizeURL(_redirectURI, state string) string {
 		// doesn't leak entries until the next TTL sweep — the caller's
 		// /authorize handler unwinds its own state on empty-URL but has
 		// no access to u.pendings.
-		u.mu.Lock()
-		delete(u.pendings, state)
-		u.mu.Unlock()
+		u.pendings.Delete(state)
 		slog.Error("saml: AuthnRequest Redirect failed", "error", err)
 		return ""
 	}
@@ -312,29 +287,18 @@ func (u *SAMLUpstream) ValidateAssertion(r *http.Request) (samlAssertion, error)
 	// explicitly enabled, and pass an empty expected-ID list so
 	// ParseResponse uses the unsolicited-response path.
 	var expectedIDs []string
-	u.mu.Lock()
-	u.sweepPendingsLocked(time.Now())
 	if relayState != "" {
-		p, ok := u.pendings[relayState]
-		if ok {
-			// Defense-in-depth: an entry can age past samlPendingTTL between
-			// sweep cycles. Treat post-TTL entries as missing rather than
-			// running an expensive ParseResponse crypto check on a flow
-			// the OAuth-side consumePending will reject anyway. Mirrors
-			// the per-entry guards in consumePending / consumeBootstrap.
-			delete(u.pendings, relayState)
-			if time.Since(p.createdAt) > samlPendingTTL {
-				ok = false
-			} else {
-				expectedIDs = []string{p.requestID}
-			}
-		}
-		u.mu.Unlock()
+		// Consume drops the entry under the registry's lock and applies
+		// the per-entry TTL guard, so a replay can't reuse it and an
+		// entry that aged past samlPendingTTL between sweeps is treated
+		// as missing — short-circuits before ParseResponse runs the
+		// crypto validation.
+		p, ok := u.pendings.Consume(relayState)
 		if !ok {
 			return samlAssertion{}, fmt.Errorf("%w: unknown or expired RelayState", ErrSAMLInvalidAssertion)
 		}
+		expectedIDs = []string{p.requestID}
 	} else {
-		u.mu.Unlock()
 		if !u.cfg.AllowIdPInit {
 			return samlAssertion{}, fmt.Errorf("%w: missing RelayState (IdP-initiated SSO disabled)", ErrSAMLInvalidAssertion)
 		}

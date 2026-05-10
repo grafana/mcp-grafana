@@ -135,10 +135,9 @@ func TestSAMLUpstream_AuthorizeURL_ContainsSAMLRequest(t *testing.T) {
 	}
 
 	// The pending registry should now have an entry for state-1 with a
-	// SAML RequestID.
-	up.mu.Lock()
-	p, ok := up.pendings["state-1"]
-	up.mu.Unlock()
+	// SAML RequestID. Peek (non-consuming) so the entry is still around if
+	// later assertions in this test reach for it.
+	p, ok := up.pendings.Peek("state-1")
 	if !ok || p.requestID == "" {
 		t.Errorf("expected pending RequestID stored for state-1: ok=%v p=%v", ok, p)
 	}
@@ -279,21 +278,5 @@ func TestDecodeSAMLRequest_BadInput(t *testing.T) {
 	}
 }
 
-func TestSAMLUpstream_SweepDropsExpiredPendings(t *testing.T) {
-	up := &SAMLUpstream{pendings: map[string]*samlPending{}}
-
-	now := time.Now()
-	up.pendings["stale"] = &samlPending{requestID: "id-old", createdAt: now.Add(-2 * samlPendingTTL)}
-	up.pendings["fresh"] = &samlPending{requestID: "id-new", createdAt: now}
-
-	up.mu.Lock()
-	up.sweepPendingsLocked(now)
-	up.mu.Unlock()
-
-	if _, ok := up.pendings["stale"]; ok {
-		t.Errorf("expired SAML pending was not swept")
-	}
-	if _, ok := up.pendings["fresh"]; !ok {
-		t.Errorf("fresh SAML pending was incorrectly swept")
-	}
-}
+// Sweep / TTL behaviour is exercised at the registry level in
+// pending_registry_test.go; SAMLUpstream just composes pendingRegistry.

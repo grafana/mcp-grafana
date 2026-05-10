@@ -71,7 +71,7 @@ func (s *Server) SAMLACSHandler() http.Handler {
 			return
 		}
 		// Look up the pendingFlow by RelayState (acts like OAuth state).
-		pf, ok := consumePending(result.RelayState)
+		pf, ok := s.authzPendings().Consume(result.RelayState)
 		if !ok {
 			httpError(w, http.StatusBadRequest, "invalid_request", "unknown or expired RelayState")
 			return
