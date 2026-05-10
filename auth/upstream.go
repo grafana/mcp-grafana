@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"net/http"
 	"net/url"
 	"time"
 )
@@ -58,3 +59,36 @@ type Upstream interface {
 // ErrRefreshNotSupported indicates that the active upstream doesn't perform
 // upstream-credential refresh. Returned by Mode C's OIDC upstream.
 var ErrRefreshNotSupported = stringError("upstream does not support refresh")
+
+// SAMLValidator is an optional extension implemented by SAML upstreams.
+// Server.RegisterRoutes type-asserts the active Upstream to SAMLValidator
+// and mounts the /saml/* endpoints when the assertion succeeds.
+type SAMLValidator interface {
+	// MetadataXML returns the SP entity metadata as XML. Served verbatim
+	// at /saml/metadata.
+	MetadataXML() ([]byte, error)
+
+	// ValidateAssertion validates a POSTed SAMLResponse on the ACS request,
+	// returning identity, attributes, and the original RelayState. The
+	// attributes map keys follow the configured attribute names (email,
+	// groups). Returns ErrSAMLInvalidAssertion (or wrapped) on any
+	// signature, audience, conditions, or replay failure.
+	ValidateAssertion(r *http.Request) (samlAssertion, error)
+
+	// BuildLogoutResponseURL parses an inbound LogoutRequest, validates it
+	// against the IdP's signing key, and returns the URL the user-agent
+	// should be redirected to (the IdP's SLO endpoint with the LogoutResponse).
+	// Returns the user identity that should have its session removed.
+	BuildLogoutResponseURL(r *http.Request) (Identity, string, error)
+}
+
+// samlAssertion is the validated payload returned by SAMLValidator.
+type samlAssertion struct {
+	Identity   Identity
+	Attributes map[string][]string
+	RelayState string
+}
+
+// ErrSAMLInvalidAssertion indicates a SAMLResponse was rejected during
+// signature, audience, conditions, or replay validation.
+var ErrSAMLInvalidAssertion = stringError("saml: invalid assertion")
