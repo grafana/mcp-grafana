@@ -391,12 +391,22 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 - `--disable-graphite`: Disable Graphite tools
 
 **Per-User Authentication:**
-- `--auth-mode`: Per-user auth mode. `none` (default), `oauth-oidc`, or `oauth-grafana`. See [Per-user auth (OIDC)](docs/sources/configure/per-user-auth-oidc.md).
+- `--auth-mode`: Per-user auth mode. `none` (default), `oauth-oidc`, `oauth-grafana`, or `saml`. See [Per-user auth (OIDC)](docs/sources/configure/per-user-auth-oidc.md).
 - `--rbac-gating`: Tool-list filtering mode when per-user auth is active. `auto` (default), `enterprise`, `basic`, or `off`.
 - `--rbac-cache-ttl`: How long to cache each user's Grafana permission set before re-fetching (default `5m`).
 - `--grafana-oauth2-client-id`: Grafana oauth2_server client_id (oauth-grafana mode).
 - `--grafana-oauth2-client-secret`: Grafana oauth2_server client_secret (oauth-grafana mode).
 - `--grafana-oauth2-issuer-url`: Grafana oauth2_server issuer URL; defaults to GRAFANA_URL.
+- `--saml-idp-metadata-url`: URL of the SAML IdP metadata XML (saml mode).
+- `--saml-idp-metadata-file`: Path to the SAML IdP metadata XML file (saml mode).
+- `--saml-sp-cert-file`: SP X.509 cert PEM (saml mode).
+- `--saml-sp-key-file`: SP RSA private key PEM (saml mode).
+- `--saml-entity-id`: SP entity ID; defaults to `${public-url}/saml/metadata`.
+- `--saml-name-id-format`: NameID format requested in AuthnRequest. Default `urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress`.
+- `--saml-attribute-email` / `--saml-attribute-groups`: Attribute names for email/groups.
+- `--saml-allow-idp-initiated`: Permit IdP-initiated SSO. Default `false`.
+- `--saml-enable-slo`: Mount `/saml/sls` for SAML Single Logout. Default `false`.
+- `--saml-clock-skew`: Clock-skew tolerance for assertion validation. Default `60s`.
 
 ### Read-Only Mode
 

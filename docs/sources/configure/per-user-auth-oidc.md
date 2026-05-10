@@ -18,6 +18,8 @@ user to authenticate as themselves before tool calls reach Grafana.
 This page covers **Mode C** (`--auth-mode=oauth-oidc`). For **Mode A** —
 users sign in via Grafana itself using Grafana's experimental OAuth2 server,
 no SA-token paste needed — see [Per-user auth (Grafana)](../per-user-auth-grafana/).
+For **Mode S** — users sign in via a SAML 2.0 IdP — see
+[Per-user auth (SAML)](../per-user-auth-saml/).
 
 In Mode C, users sign in through a generic OIDC IdP (Auth0, Keycloak, Okta,
 etc.), then on first login paste a personal Grafana service-account token.

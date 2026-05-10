@@ -22,6 +22,11 @@ and the Grafana-issued bearer token becomes the per-user credential
 `mcp-grafana` uses on every API call. There's no service-account-token paste
 step — credentials come from Grafana directly.
 
+For **Mode C** (generic OIDC IdP with SA-token bootstrap), see
+[Per-user auth (OIDC)](../per-user-auth-oidc/).
+For **Mode S** (SAML 2.0 IdP), see
+[Per-user auth (SAML)](../per-user-auth-saml/).
+
 ## What you need
 
 - Grafana 11+ with `oauth2_server` enabled in `grafana.ini` and an external

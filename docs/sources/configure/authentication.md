@@ -48,3 +48,5 @@ For shared HTTP/SSE deployments where each user should authenticate as
 themselves, see [Per-user auth (OIDC)](../per-user-auth-oidc/).
 
 For Mode A (Grafana's own OAuth2 server), see [Per-user auth (Grafana)](../per-user-auth-grafana/).
+
+For Mode S (SAML 2.0), see [Per-user auth (SAML)](../per-user-auth-saml/).
