@@ -173,3 +173,31 @@ func TestGate_FilterFailsOpenForUnknownMode(t *testing.T) {
 		t.Errorf("unknown mode must fail open: got %d tools, want 2 (%v)", len(got), got)
 	}
 }
+
+func TestGate_FilterEnterpriseFallsBackToBasicRoleWhenNoPermissions(t *testing.T) {
+	// A gate with MinBasicRole only (e.g. Incident/Sift entries) must
+	// honour the role check even in ModeEnterprise — without the
+	// fallback, allPermissionsGranted(_, nil)==true would expose these
+	// tools to every authenticated user regardless of role.
+	registry := map[string]ToolGate{
+		"editor_only": {MinBasicRole: "Editor"},
+	}
+	g := NewGate(registry)
+	tools := []mcp.Tool{{Name: "editor_only"}}
+
+	// Viewer in ModeEnterprise: must NOT see the tool.
+	got := g.Filter(ModeEnterprise, Snapshot{BasicRole: "Viewer"}, tools)
+	if len(got) != 0 {
+		t.Errorf("Viewer should not see Editor-gated tool in ModeEnterprise, got %d tools", len(got))
+	}
+	// Editor in ModeEnterprise: should see the tool.
+	got = g.Filter(ModeEnterprise, Snapshot{BasicRole: "Editor"}, tools)
+	if len(got) != 1 {
+		t.Errorf("Editor should see Editor-gated tool in ModeEnterprise, got %d tools", len(got))
+	}
+	// Empty role in ModeEnterprise: must NOT see the tool.
+	got = g.Filter(ModeEnterprise, Snapshot{BasicRole: ""}, tools)
+	if len(got) != 0 {
+		t.Errorf("user with no role should not see Editor-gated tool in ModeEnterprise, got %d tools", len(got))
+	}
+}

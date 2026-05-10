@@ -77,22 +77,6 @@ func (e *Engine) HookOnAfterListTools() server.OnAfterListToolsFunc {
 			return // no session: leave the tool list alone (legacy path)
 		}
 
-		// Time the filter and record under the FINAL resolved mode. The
-		// closure captures `mode` and `recorded` by reference, so the
-		// deferred call sees whatever value `mode` was reassigned to
-		// (post-recordEdition for ModeAuto) by the time the hook returns.
-		// `recorded` gates emission so we don't pollute the histogram with
-		// failure-path durations (cache fetch failed → no filter happened →
-		// the duration is a network-call timing, not a filter timing, and
-		// would land under mode="auto" if recordEdition didn't run).
-		start := time.Now()
-		recorded := false
-		defer func() {
-			if recorded {
-				e.cfg.Metrics.FilterObserved(ctx, mode, time.Since(start).Seconds())
-			}
-		}()
-
 		snap, err := e.cfg.Cache.Get(ctx, key)
 		if err != nil {
 			if e.cfg.Logger != nil {
@@ -100,7 +84,7 @@ func (e *Engine) HookOnAfterListTools() server.OnAfterListToolsFunc {
 					"session_key", redactKey(key),
 					"error", err.Error())
 			}
-			return // fail open — no metric recorded since no filter ran
+			return // fail open
 		}
 
 		if mode == ModeAuto {
@@ -111,8 +95,14 @@ func (e *Engine) HookOnAfterListTools() server.OnAfterListToolsFunc {
 			}
 		}
 
+		// Time only the filter call — Cache.Get can include a network
+		// fetch on miss (up to fetchTimeout=10s) which would dominate the
+		// histogram and make it useless for tracking actual filter
+		// performance. Recording happens unconditionally now that we're
+		// past every early-return path; no `recorded` flag needed.
+		start := time.Now()
 		filtered := e.cfg.Gate.Filter(mode, snap, result.Tools)
-		recorded = true
+		e.cfg.Metrics.FilterObserved(ctx, mode, time.Since(start).Seconds())
 		if e.cfg.Logger != nil {
 			removed := len(result.Tools) - len(filtered)
 			if removed > 0 {

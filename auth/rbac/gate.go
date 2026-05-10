@@ -39,7 +39,18 @@ func (g *Gate) Filter(mode Mode, snap Snapshot, tools []mcp.Tool) []mcp.Tool {
 		}
 		switch mode {
 		case ModeEnterprise:
-			if allPermissionsGranted(snap.Permissions, gate.Permissions) {
+			// If the gate has Permissions, ModeEnterprise checks them.
+			// If the gate has ONLY MinBasicRole (e.g. Incident, Sift —
+			// plugins without fine-grained RBAC actions), fall back to
+			// the basic-role check; otherwise tools that have no
+			// Permissions but DO have a MinBasicRole would be visible
+			// to every authenticated user via
+			// allPermissionsGranted(_, nil) == true.
+			if len(gate.Permissions) > 0 {
+				if allPermissionsGranted(snap.Permissions, gate.Permissions) {
+					out = append(out, t)
+				}
+			} else if basicRoleSatisfies(snap.BasicRole, gate.MinBasicRole) {
 				out = append(out, t)
 			}
 		case ModeBasic:
