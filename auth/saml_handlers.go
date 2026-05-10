@@ -168,12 +168,14 @@ func (s *Server) SAMLSLSHandler() http.Handler {
 			return
 		}
 
-		// Drop the session matching this identity, if any. The audit log
-		// only fires when a session was actually deleted — otherwise an
-		// already-logged-out (or never-bootstrapped) identity would leave
-		// a misleading "session_revoked" entry.
+		// Drop the session matching this identity, if any. The audit log,
+		// SessionRevoked metric decrement, and RBAC cache invalidate all
+		// fire only when a session was actually deleted — otherwise an
+		// already-logged-out (or never-bootstrapped) identity would
+		// double-count revocations and leave a misleading log entry.
 		if existing, err := s.Store.GetSessionByIdentity(r.Context(), identity); err == nil {
 			_ = s.Store.DeleteSession(r.Context(), existing.TokenHash)
+			s.Metrics.SessionRevoked(r.Context(), existing.Identity.Mode)
 			if s.RBAC != nil {
 				s.RBAC.InvalidateSessionCache(existing.TokenHash)
 			}
