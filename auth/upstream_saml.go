@@ -41,15 +41,15 @@ type SAMLUpstream struct {
 	// middleware's cookie/session helpers.
 	rawSP *saml.ServiceProvider
 
-	// allowIdPInit mirrors cfg.SAMLAllowIdPInitiated. The other SAML
-	// configuration values (entity ID, ACS URL, SLO URL, NameIDFormat,
-	// attribute names, clock skew) are baked into rawSP at construction
-	// time or — for clock skew — into the package-level saml.MaxClockSkew
-	// global via applyClockSkew. Don't re-store them on the struct: the
-	// rawSP / library is the source of truth, and a dead copy here would
-	// invite the same field-vs-global confusion the previous samlConfig
-	// had with ClockSkew.
+	// allowIdPInit mirrors cfg.SAMLAllowIdPInitiated. Entity ID, ACS URL,
+	// SLO URL, NameIDFormat, and clock skew are baked into rawSP / the
+	// package-level saml.MaxClockSkew global respectively, so they aren't
+	// re-stored here. attrEmail and attrGroups stay on the struct because
+	// ValidateAssertion needs to look up specific keys in the assertion's
+	// AttributeStatements.
 	allowIdPInit bool
+	attrEmail    string
+	attrGroups   string
 
 	// Per-RelayState pendings tracking the SAML RequestID we issued, so the
 	// ACS handler can pin the inbound assertion to the request we sent out.
@@ -152,6 +152,8 @@ func NewSAMLUpstream(ctx context.Context, cfg Config) (*SAMLUpstream, error) {
 	upstream := &SAMLUpstream{
 		rawSP:        sp,
 		allowIdPInit: cfg.SAMLAllowIdPInitiated,
+		attrEmail:    cfg.SAMLAttributeEmail,
+		attrGroups:   cfg.SAMLAttributeGroups,
 		pendings:     newPendingRegistry[*samlPending](samlPendingTTL),
 	}
 
@@ -352,9 +354,6 @@ func (u *SAMLUpstream) ValidateAssertion(r *http.Request) (samlAssertion, error)
 	if assertion.Subject != nil && assertion.Subject.NameID != nil {
 		nameID = assertion.Subject.NameID.Value
 	}
-	if nameID == "" {
-		return samlAssertion{}, fmt.Errorf("%w: assertion has no NameID", ErrSAMLInvalidAssertion)
-	}
 
 	attrs := map[string][]string{}
 	for _, st := range assertion.AttributeStatements {
@@ -367,8 +366,37 @@ func (u *SAMLUpstream) ValidateAssertion(r *http.Request) (samlAssertion, error)
 		}
 	}
 
+	// Look up the configured email/groups attributes by name. attrEmail
+	// is empty when the operator didn't set --saml-attribute-email; in
+	// that case Identity.ID falls back to NameID below.
+	var email string
+	if u.attrEmail != "" {
+		if vs := attrs[u.attrEmail]; len(vs) > 0 {
+			email = vs[0]
+		}
+	}
+	var groups []string
+	if u.attrGroups != "" {
+		groups = attrs[u.attrGroups]
+	}
+
+	// Identity prefers the configured email attribute when present.
+	// Some IdPs put an opaque per-tenant identifier in NameID and the
+	// canonical user key (an email or username) in an attribute; fall
+	// back to NameID when no email attribute was configured or when the
+	// IdP omitted it. Reject only when both sources are empty.
+	identityID := email
+	if identityID == "" {
+		identityID = nameID
+	}
+	if identityID == "" {
+		return samlAssertion{}, fmt.Errorf("%w: assertion has no NameID and no configured email attribute", ErrSAMLInvalidAssertion)
+	}
+
 	return samlAssertion{
-		Identity:   Identity{Mode: ModeSAML, ID: nameID},
+		Identity:   Identity{Mode: ModeSAML, ID: identityID},
+		Email:      email,
+		Groups:     groups,
 		Attributes: attrs,
 		RelayState: relayState,
 	}, nil

@@ -84,8 +84,25 @@ type SAMLValidator interface {
 
 // samlAssertion is the validated payload returned by SAMLValidator.
 type samlAssertion struct {
-	Identity   Identity
+	Identity Identity
+
+	// Email is the value of the configured SAMLAttributeEmail attribute,
+	// if present in the assertion. Empty when the attribute name was not
+	// configured or the IdP didn't include it. Identity.ID prefers this
+	// over NameID when available, since IdP NameIDs are sometimes opaque
+	// per-tenant identifiers and the configured email is the operator's
+	// canonical key.
+	Email string
+	// Groups is the value list of the configured SAMLAttributeGroups
+	// attribute. Empty if not configured or absent from the assertion.
+	// Reserved for future authorization use; currently informational.
+	Groups []string
+
+	// Attributes is the raw attribute map from the assertion's
+	// AttributeStatements, keyed by SAML attribute name. Email and Groups
+	// above are extracted from this for convenience.
 	Attributes map[string][]string
+
 	RelayState string
 }
 
