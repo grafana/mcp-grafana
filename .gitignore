@@ -19,3 +19,10 @@ wheels/
 
 # Superpowers agent artifacts (implementation plans, etc.)
 docs/superpowers/
+
+# Local Go build artifacts
+/bin/
+/mcp-grafana
+/mcp-grafana.exe
+/mock_oidc
+/mock_oidc.exe
