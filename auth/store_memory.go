@@ -187,27 +187,37 @@ func (m *MemoryStore) PutAuthCode(_ context.Context, c AuthCode) error {
 	return nil
 }
 
-func (m *MemoryStore) PeekAuthCode(_ context.Context, codeHash string) (AuthCode, error) {
-	// Take the write lock so we can prune expired-but-unconsumed codes
-	// in place. Without this, handleAuthCodeGrant's peek-then-consume
-	// flow leaves every expired code in the map forever — the early
-	// return on Peek means ConsumeAuthCode (which also deletes) is
-	// never reached for expired entries, so the codes map (and any
-	// FileStore-persisted version) accumulates entries from abandoned
-	// auth flows. Each one carries an encrypted UpstreamCredsCT byte
-	// slice. Peek is already on the cold path (one call per token
-	// exchange); the extra lock cost is negligible.
+func (m *MemoryStore) PeekAuthCode(ctx context.Context, codeHash string) (AuthCode, error) {
+	c, err, _ := m.peekAuthCodePruning(ctx, codeHash)
+	return c, err
+}
+
+// peekAuthCodePruning is the FileStore-friendly variant of PeekAuthCode:
+// it returns (code, err, pruned) where pruned reports whether an expired
+// entry was deleted under the lock. FileStore consumes the pruned flag
+// to decide whether to flush — a never-existed code returns ErrNotFound
+// with pruned=false, so the disk hot path on the /token endpoint isn't
+// burdened by a full rewrite for unknown or replayed codes.
+//
+// The write lock is unconditional here: pruning is the whole point.
+// Without this method (or the equivalent), handleAuthCodeGrant's
+// peek-then-consume flow leaves every expired code in the map forever —
+// the early return on Peek means ConsumeAuthCode (which also deletes)
+// is never reached for expired entries, so the codes map (and any
+// FileStore-persisted version) accumulates entries from abandoned auth
+// flows.
+func (m *MemoryStore) peekAuthCodePruning(_ context.Context, codeHash string) (AuthCode, error, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	c, ok := m.codes[codeHash]
 	if !ok {
-		return AuthCode{}, ErrNotFound
+		return AuthCode{}, ErrNotFound, false
 	}
 	if !c.ExpiresAt.IsZero() && time.Now().After(c.ExpiresAt) {
 		delete(m.codes, codeHash)
-		return AuthCode{}, ErrNotFound
+		return AuthCode{}, ErrNotFound, true
 	}
-	return c, nil
+	return c, nil, false
 }
 
 func (m *MemoryStore) ConsumeAuthCode(_ context.Context, codeHash string) (AuthCode, error) {

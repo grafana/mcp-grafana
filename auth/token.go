@@ -193,7 +193,13 @@ func (s *Server) handleRefreshGrant(w http.ResponseWriter, r *http.Request) {
 
 func writeTokenResponse(w http.ResponseWriter, accessToken, refreshToken string, atTTL time.Duration) {
 	w.Header().Set("Content-Type", "application/json")
+	// RFC 6749 §5.1 requires BOTH Cache-Control: no-store AND
+	// Pragma: no-cache on any response containing tokens. HTTP/1.0
+	// intermediaries only understand Pragma; without it a legacy
+	// proxy could cache the access + refresh token and serve them
+	// to a different client.
 	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Pragma", "no-cache")
 	_ = json.NewEncoder(w).Encode(tokenResponse{
 		AccessToken:  accessToken,
 		TokenType:    "Bearer",
