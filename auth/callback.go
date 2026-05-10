@@ -88,6 +88,19 @@ func (s *Server) CallbackHandler() http.Handler {
 		// Mode A lands here with HasCred=true. Encrypt the credential pair before
 		// passing it through to the auth-code shortcut.
 		if result.HasCred {
+			// Reject an empty access token at the boundary, mirroring
+			// doRefreshUpstream's guard. Sealing "" would create a
+			// session whose decrypted bearer is the empty string —
+			// every subsequent Grafana API call would 401 with no
+			// recovery path until the session naturally expires.
+			// Treat a missing access token as an upstream error and
+			// redirect with a generic description.
+			if len(result.UpstreamCreds) == 0 {
+				s.logger().Warn("auth.callback_empty_access_token",
+					"user_id", result.Identity.String())
+				httpRedirectError(w, r, pf.redirectURI, "server_error", "upstream returned empty access token", pf.clientState)
+				return
+			}
 			credCT, err := s.Encryptor.Seal(result.UpstreamCreds)
 			if err != nil {
 				// Log the cipher-level detail locally; redirect the
