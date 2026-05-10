@@ -37,7 +37,6 @@ func TestBootstrap_GET_RendersForm(t *testing.T) {
 		identity:    Identity{Mode: ModeOAuthOIDC, ID: "alice"},
 		clientID:    "cid",
 		redirectURI: "http://localhost:1/cb",
-		createdAt:   time.Now(),
 	})
 
 	r := httptest.NewRequest(http.MethodGet, "/bootstrap?flow=flow-1", nil)
@@ -73,7 +72,6 @@ func TestBootstrap_POST_ValidatesAndStoresToken(t *testing.T) {
 		clientState:         "client-state",
 		codeChallenge:       "x",
 		codeChallengeMethod: "S256",
-		createdAt:           time.Now(),
 	})
 
 	form := url.Values{}
@@ -133,7 +131,6 @@ func TestBootstrap_POST_RejectsDoubleConsume(t *testing.T) {
 		clientState:         "client-state",
 		codeChallenge:       "x",
 		codeChallengeMethod: "S256",
-		createdAt:           time.Now(),
 	})
 
 	doPost := func() *httptest.ResponseRecorder {
@@ -170,7 +167,6 @@ func TestBootstrap_POST_BadToken(t *testing.T) {
 		identity:    Identity{Mode: ModeOAuthOIDC, ID: "alice"},
 		clientID:    "cid",
 		redirectURI: "http://localhost:1/cb",
-		createdAt:   time.Now(),
 	})
 
 	form := url.Values{}

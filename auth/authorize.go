@@ -7,13 +7,14 @@ import (
 )
 
 // pendingFlow records what we expect to come back from /callback.
+// TTL enforcement happens in pendingRegistry via pendingEntry.createdAt;
+// no per-value timestamp is needed here.
 type pendingFlow struct {
 	clientID            string
 	redirectURI         string
 	codeChallenge       string
 	codeChallengeMethod string
 	clientState         string
-	createdAt           time.Time
 }
 
 // pendingFlowTTL bounds how long an /authorize-side pending entry is kept
@@ -68,7 +69,6 @@ func (s *Server) AuthorizeHandler() http.Handler {
 			codeChallenge:       challenge,
 			codeChallengeMethod: challengeMethod,
 			clientState:         clientState,
-			createdAt:           time.Now(),
 		})
 
 		dest := s.Upstream.AuthorizeURL(s.PublicURL+"/callback", state)

@@ -10,6 +10,8 @@ import (
 
 // pendingBootstrap holds the data we'll need after the user submits their
 // SA token at /bootstrap. Keyed by an opaque "flow" token in the URL.
+// TTL enforcement happens in pendingRegistry via pendingEntry.createdAt;
+// no per-value timestamp is needed here.
 type pendingBootstrap struct {
 	identity            Identity
 	clientID            string
@@ -17,7 +19,6 @@ type pendingBootstrap struct {
 	clientState         string
 	codeChallenge       string
 	codeChallengeMethod string
-	createdAt           time.Time
 }
 
 // bootstrapTTL bounds how long a /bootstrap-side pending entry stays in
@@ -116,7 +117,6 @@ func (s *Server) resolveIdentityOrBootstrap(w http.ResponseWriter, r *http.Reque
 		clientState:         pf.clientState,
 		codeChallenge:       pf.codeChallenge,
 		codeChallengeMethod: pf.codeChallengeMethod,
-		createdAt:           time.Now(),
 	})
 
 	bs := url.URL{Path: "/bootstrap"}

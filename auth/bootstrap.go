@@ -144,7 +144,6 @@ func (s *Server) processBootstrap(w http.ResponseWriter, r *http.Request, grafan
 		codeChallenge:       pb.codeChallenge,
 		codeChallengeMethod: pb.codeChallengeMethod,
 		clientState:         pb.clientState,
-		createdAt:           pb.createdAt,
 	}
 	s.completeAuthCode(w, r, pf, pb.identity, ct)
 }

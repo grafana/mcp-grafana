@@ -51,7 +51,6 @@ func TestCallback_FirstLogin_RedirectsToBootstrap(t *testing.T) {
 		codeChallenge:       "x",
 		codeChallengeMethod: "S256",
 		clientState:         "client-state",
-		createdAt:           time.Now(),
 	})
 
 	r := httptest.NewRequest(http.MethodGet, "/callback?code=abc&state="+state, nil)
@@ -91,7 +90,6 @@ func TestCallback_RepeatLogin_ShortcutsToClient(t *testing.T) {
 		codeChallenge:       "x",
 		codeChallengeMethod: "S256",
 		clientState:         "client-state",
-		createdAt:           time.Now(),
 	})
 
 	r := httptest.NewRequest(http.MethodGet, "/callback?code=abc&state="+state, nil)
@@ -143,7 +141,6 @@ func TestCallback_UpstreamError_RedirectsWithGenericDescription(t *testing.T) {
 		codeChallenge:       "x",
 		codeChallengeMethod: "S256",
 		clientState:         "client-state",
-		createdAt:           time.Now(),
 	})
 
 	r := httptest.NewRequest(http.MethodGet, "/callback?code=abc&state="+state, nil)
@@ -186,7 +183,6 @@ func TestCompleteAuthCode_PutFails_RedirectsWithGenericDescription(t *testing.T)
 		codeChallenge:       "x",
 		codeChallengeMethod: "S256",
 		clientState:         "client-state",
-		createdAt:           time.Now(),
 	}
 	r := httptest.NewRequest(http.MethodGet, "/callback", nil)
 	w := httptest.NewRecorder()
