@@ -715,10 +715,18 @@ var ExtractGrafanaInfoFromHeaders httpContextFunc = func(ctx context.Context, re
 
 	u, apiKey, basicAuth, orgID := extractKeyGrafanaInfoFromReq(req, logger)
 
-	config.URL = u
-	config.APIKey = apiKey
-	config.BasicAuth = basicAuth
-	config.OrgID = orgID
+	if config.URL == "" {
+		config.URL = u
+	}
+	// A session-derived APIKey (set by the auth middleware) wins over
+	// header/env values. This is the per-user auth precedence rule.
+	if config.APIKey == "" {
+		config.APIKey = apiKey
+		config.BasicAuth = basicAuth
+	}
+	if config.OrgID == 0 {
+		config.OrgID = orgID
+	}
 	config.ExtraHeaders = mergeHeaders(extraHeadersFromEnv(logger), forwardedHeadersFromRequest(req))
 	return WithGrafanaConfig(ctx, config)
 }
