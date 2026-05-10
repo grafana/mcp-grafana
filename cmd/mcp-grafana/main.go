@@ -440,18 +440,24 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		authGrafanaURL string
 	)
 	if authCfg.Mode != auth.ModeNone {
-		authGrafanaURL = os.Getenv("GRAFANA_URL")
-		if authGrafanaURL == "" {
-			authGrafanaURL = "http://localhost:3000"
-		}
-		var err error
-		authSrv, err = buildAuthServer(ctx, authCfg, authGrafanaURL, slog.Default())
-		if err != nil {
-			return fmt.Errorf("auth setup: %w", err)
-		}
+		// stdio transport doesn't expose HTTP endpoints, so /authorize,
+		// /callback, /token, etc. would never be reached. Skip
+		// buildAuthServer entirely on stdio — calling it would do
+		// network-bound work (e.g. OIDC discovery) only to throw the
+		// result away, and would block startup if the issuer is
+		// unreachable even though the resulting Server can't be used.
 		if transport == "stdio" {
 			slog.Warn("--auth-mode is ignored on stdio transport")
 		} else {
+			authGrafanaURL = os.Getenv("GRAFANA_URL")
+			if authGrafanaURL == "" {
+				authGrafanaURL = "http://localhost:3000"
+			}
+			var err error
+			authSrv, err = buildAuthServer(ctx, authCfg, authGrafanaURL, slog.Default())
+			if err != nil {
+				return fmt.Errorf("auth setup: %w", err)
+			}
 			slog.Info("Per-user auth enabled", "mode", string(authCfg.Mode), "public_url", authCfg.PublicURL)
 		}
 	}

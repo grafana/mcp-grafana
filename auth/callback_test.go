@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -118,5 +119,44 @@ func TestCallback_UnknownState(t *testing.T) {
 	srv.CallbackHandler().ServeHTTP(w, r)
 	if w.Code == http.StatusFound {
 		t.Errorf("expected error, got redirect")
+	}
+}
+
+// failingUpstream returns a chatty error from HandleCallback so we can
+// confirm the callback handler does NOT propagate err.Error() to the
+// user-agent redirect.
+type failingUpstream struct{ stubUpstream }
+
+func (f *failingUpstream) HandleCallback(_ context.Context, _ url.Values) (Identity, []byte, bool, error) {
+	return Identity{}, nil, false, fmt.Errorf("token exchange against https://internal-idp.corp.example/oauth/token: invalid_grant - corrupted refresh slot 0xdeadbeef")
+}
+
+func TestCallback_UpstreamError_RedirectsWithGenericDescription(t *testing.T) {
+	srv, _ := newCallbackServer(t, false)
+	srv.Upstream = &failingUpstream{stubUpstream: stubUpstream{mode: ModeOAuthOIDC}}
+
+	state := stateToken()
+	storePending(state, &pendingFlow{
+		clientID:            "cid",
+		redirectURI:         "http://localhost:1/cb",
+		codeChallenge:       "x",
+		codeChallengeMethod: "S256",
+		clientState:         "client-state",
+		createdAt:           time.Now(),
+	})
+
+	r := httptest.NewRequest(http.MethodGet, "/callback?code=abc&state="+state, nil)
+	w := httptest.NewRecorder()
+	srv.CallbackHandler().ServeHTTP(w, r)
+
+	if w.Code != http.StatusFound {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body)
+	}
+	loc := w.Header().Get("Location")
+	if strings.Contains(loc, "internal-idp.corp.example") || strings.Contains(loc, "deadbeef") {
+		t.Errorf("redirect leaked upstream error details: %s", loc)
+	}
+	if !strings.Contains(loc, "error=access_denied") {
+		t.Errorf("redirect missing error=access_denied: %s", loc)
 	}
 }

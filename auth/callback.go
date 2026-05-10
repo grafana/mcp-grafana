@@ -100,7 +100,12 @@ func (s *Server) CallbackHandler() http.Handler {
 
 		identity, cred, hasCred, err := s.Upstream.HandleCallback(r.Context(), r.URL.Query())
 		if err != nil {
-			httpRedirectError(w, r, pf.redirectURI, "access_denied", err.Error(), pf.clientState)
+			// Log the underlying upstream error for operators; redirect the
+			// user-agent back to the MCP client with a generic
+			// error_description to avoid leaking internal hostnames or
+			// upstream token-exchange details to external clients.
+			s.logger().Warn("auth.upstream_callback_failed", "error", err.Error())
+			httpRedirectError(w, r, pf.redirectURI, "access_denied", "upstream authentication failed", pf.clientState)
 			return
 		}
 
@@ -119,7 +124,9 @@ func (s *Server) CallbackHandler() http.Handler {
 
 		// First login (or token previously cleared): redirect to /bootstrap.
 		var fb [16]byte
-		_, _ = rand.Read(fb[:])
+		if _, err := rand.Read(fb[:]); err != nil {
+			panic("rng: " + err.Error())
+		}
 		flowToken := hex.EncodeToString(fb[:])
 		storeBootstrap(flowToken, &pendingBootstrap{
 			identity:            identity,

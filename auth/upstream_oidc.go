@@ -9,11 +9,17 @@ import (
 	"fmt"
 	"net/url"
 	"sync"
+	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"go.opentelemetry.io/otel"
 	"golang.org/x/oauth2"
 )
+
+// oidcPendingTTL bounds how long an upstream OIDC pending entry waits for
+// its matching /callback. Aligned with pendingFlowTTL/bootstrapTTL so all
+// pending maps reap on the same cadence.
+const oidcPendingTTL = 15 * time.Minute
 
 // OIDCUpstream is Mode oauth-oidc: a generic OIDC-compliant IdP authenticates
 // the user; the resulting identity is bound to a session that will be
@@ -23,13 +29,31 @@ type OIDCUpstream struct {
 	verifier *oidc.IDTokenVerifier
 	oauth    *oauth2.Config
 
-	mu       sync.Mutex
-	pendings map[string]*oidcPending // state -> pending PKCE verifier
+	mu        sync.Mutex
+	pendings  map[string]*oidcPending // state -> pending PKCE verifier
+	lastSwept time.Time
 }
 
 type oidcPending struct {
-	verifier string
-	nonce    string
+	verifier  string
+	nonce     string
+	createdAt time.Time
+}
+
+// sweepPendingsLocked drops entries older than oidcPendingTTL. The caller
+// must hold u.mu. Runs at most once per TTL window so the amortised
+// per-call cost stays O(1) under sustained traffic.
+func (u *OIDCUpstream) sweepPendingsLocked(now time.Time) {
+	if now.Sub(u.lastSwept) < oidcPendingTTL {
+		return
+	}
+	cutoff := now.Add(-oidcPendingTTL)
+	for k, p := range u.pendings {
+		if p.createdAt.Before(cutoff) {
+			delete(u.pendings, k)
+		}
+	}
+	u.lastSwept = now
 }
 
 // NewOIDCUpstream performs OIDC discovery and returns a usable upstream.
@@ -70,7 +94,8 @@ func (u *OIDCUpstream) AuthorizeURL(redirectURI, state string) string {
 	nonce := randURL(16)
 
 	u.mu.Lock()
-	u.pendings[state] = &oidcPending{verifier: verifier, nonce: nonce}
+	u.sweepPendingsLocked(time.Now())
+	u.pendings[state] = &oidcPending{verifier: verifier, nonce: nonce, createdAt: time.Now()}
 	u.mu.Unlock()
 
 	opts := []oauth2.AuthCodeOption{
@@ -93,6 +118,7 @@ func (u *OIDCUpstream) HandleCallback(ctx context.Context, params url.Values) (I
 		return Identity{}, nil, false, fmt.Errorf("missing state or code")
 	}
 	u.mu.Lock()
+	u.sweepPendingsLocked(time.Now())
 	p, ok := u.pendings[state]
 	if ok {
 		delete(u.pendings, state)
@@ -100,6 +126,9 @@ func (u *OIDCUpstream) HandleCallback(ctx context.Context, params url.Values) (I
 	u.mu.Unlock()
 	if !ok {
 		return Identity{}, nil, false, fmt.Errorf("unknown or replayed state")
+	}
+	if time.Since(p.createdAt) > oidcPendingTTL {
+		return Identity{}, nil, false, fmt.Errorf("pending flow expired")
 	}
 
 	exchangeCtx, span := otel.Tracer("mcp-grafana-auth").Start(ctx, "auth.upstream_token_exchange")
@@ -140,6 +169,8 @@ func randURL(n int) string {
 // stateToken returns a hex random state value.
 func stateToken() string {
 	var b [16]byte
-	_, _ = rand.Read(b[:])
+	if _, err := rand.Read(b[:]); err != nil {
+		panic("rng: " + err.Error())
+	}
 	return hex.EncodeToString(b[:])
 }

@@ -82,3 +82,48 @@ func TestRateLimit_PerIPIsolation(t *testing.T) {
 		}
 	}
 }
+
+func TestRateLimit_PrefersForwardedHeaders(t *testing.T) {
+	// Two requests arrive from the same proxy IP but with different
+	// X-Forwarded-For — they must occupy independent buckets.
+	limiter := NewIPLimiter(1, time.Second)
+	handler := limiter.Wrap(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	doReq := func(xff string) int {
+		r := httptest.NewRequest(http.MethodPost, "/x", nil)
+		r.RemoteAddr = "10.0.0.1:1234" // same proxy
+		if xff != "" {
+			r.Header.Set("X-Forwarded-For", xff)
+		}
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		return w.Code
+	}
+	if doReq("1.1.1.1") != http.StatusOK {
+		t.Errorf("first client should get its own bucket")
+	}
+	if doReq("2.2.2.2") != http.StatusOK {
+		t.Errorf("second client should get its own bucket")
+	}
+	if doReq("1.1.1.1") != http.StatusTooManyRequests {
+		t.Errorf("first client must hit its own per-bucket cap, not share a global one")
+	}
+}
+
+func TestRateLimit_SweepDropsIdleBuckets(t *testing.T) {
+	l := NewIPLimiter(1, 10*time.Millisecond)
+	// Plant an old bucket directly so we do not have to wait real time.
+	now := time.Now()
+	l.buckets["stale"] = &bucket{tokens: 1, updatedAt: now.Add(-5 * l.refill)}
+	l.buckets["fresh"] = &bucket{tokens: 1, updatedAt: now}
+	l.mu.Lock()
+	l.sweepBucketsLocked(now)
+	l.mu.Unlock()
+	if _, ok := l.buckets["stale"]; ok {
+		t.Errorf("idle bucket was not swept")
+	}
+	if _, ok := l.buckets["fresh"]; !ok {
+		t.Errorf("fresh bucket was incorrectly swept")
+	}
+}

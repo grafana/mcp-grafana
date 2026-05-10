@@ -214,3 +214,19 @@ func TestOIDCUpstream_HandleCallback_Success(t *testing.T) {
 		t.Errorf("identity = %+v", id)
 	}
 }
+
+func TestOIDCUpstream_SweepDropsExpiredPendings(t *testing.T) {
+	up := &OIDCUpstream{pendings: map[string]*oidcPending{}}
+	now := time.Now()
+	up.pendings["stale"] = &oidcPending{verifier: "v1", nonce: "n1", createdAt: now.Add(-2 * oidcPendingTTL)}
+	up.pendings["fresh"] = &oidcPending{verifier: "v2", nonce: "n2", createdAt: now}
+	up.mu.Lock()
+	up.sweepPendingsLocked(now)
+	up.mu.Unlock()
+	if _, ok := up.pendings["stale"]; ok {
+		t.Errorf("expired OIDC pending was not swept")
+	}
+	if _, ok := up.pendings["fresh"]; !ok {
+		t.Errorf("fresh OIDC pending was incorrectly swept")
+	}
+}
