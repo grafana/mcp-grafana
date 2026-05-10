@@ -248,6 +248,58 @@ func TestMiddleware_RefreshesNearExpiry(t *testing.T) {
 	}
 }
 
+// Per OAuth 2 §6, an upstream may omit refresh_token from a refresh response;
+// the previous refresh token then remains valid. doRefreshUpstream must
+// preserve the existing UpstreamRefreshCT in that case rather than overwrite
+// it with an encrypted empty value (which would break the next refresh).
+func TestMiddleware_Refresh_PreservesOldRefreshTokenWhenUpstreamOmitsIt(t *testing.T) {
+	enc := mustEnc(t, mustKey(t), nil)
+	store := NewMemoryStore()
+
+	plainAT, hashAT := NewToken()
+	credCT, _ := enc.Seal([]byte("expiring-bearer"))
+	originalRefreshCT, _ := enc.Seal([]byte("original-refresh"))
+	_ = store.PutSession(context.Background(), Session{
+		TokenHash:         hashAT,
+		ExpiresAt:         time.Now().Add(time.Hour),
+		Identity:          Identity{Mode: ModeOAuthGrafana, ID: "alice"},
+		UpstreamCredsCT:   credCT,
+		UpstreamRefreshCT: originalRefreshCT,
+		UpstreamExpiresAt: time.Now().Add(20 * time.Second),
+	})
+
+	srv := &Server{
+		PublicURL: "https://mcp.example.com",
+		Store:     store,
+		Encryptor: enc,
+		Upstream: &refreshableStub{
+			newCreds:   []byte("refreshed-bearer"),
+			newRefresh: nil, // upstream omitted refresh_token
+			newExpiry:  time.Now().Add(10 * time.Minute),
+		},
+	}
+
+	r := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	r.Header.Set("Authorization", "Bearer "+plainAT)
+	w := httptest.NewRecorder()
+	srv.Middleware()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})).ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d", w.Code)
+	}
+	got, err := store.GetSessionByTokenHash(context.Background(), hashAT)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pt, err := enc.Open(got.UpstreamRefreshCT)
+	if err != nil {
+		t.Fatalf("decrypt persisted refresh: %v", err)
+	}
+	if string(pt) != "original-refresh" {
+		t.Errorf("refresh token clobbered: got %q want original-refresh", pt)
+	}
+}
+
 func TestMiddleware_RefreshFailureReturns401(t *testing.T) {
 	enc := mustEnc(t, mustKey(t), nil)
 	store := NewMemoryStore()

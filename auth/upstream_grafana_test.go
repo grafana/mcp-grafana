@@ -234,3 +234,44 @@ func TestGrafanaUpstream_Refresh(t *testing.T) {
 		t.Errorf("old refresh token should be invalidated")
 	}
 }
+
+func TestGrafanaUpstream_OAuthScopesIncludeOpenID(t *testing.T) {
+	cfg := Config{
+		Mode:                      ModeOAuthGrafana,
+		PublicURL:                 "https://mcp.example.com",
+		GrafanaOAuth2IssuerURL:    "https://grafana.example.com",
+		GrafanaOAuth2ClientID:     "mcp",
+		GrafanaOAuth2ClientSecret: "shh",
+	}
+	up, err := NewGrafanaUpstream(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authURL := up.AuthorizeURL("https://mcp.example.com/callback", "state-x")
+	u, _ := url.Parse(authURL)
+	scope := u.Query().Get("scope")
+	if !strings.Contains(scope, "openid") {
+		t.Errorf("authorize URL must request openid scope (got %q)", scope)
+	}
+}
+
+func TestGrafanaUpstream_SweepDropsExpiredPendings(t *testing.T) {
+	up := &GrafanaUpstream{pendings: map[string]*grafanaPending{}}
+
+	now := time.Now()
+	// Old entry: created two TTLs ago — should be reaped.
+	up.pendings["old"] = &grafanaPending{verifier: "v1", createdAt: now.Add(-2 * grafanaPendingTTL)}
+	// Fresh entry: created "now" — should survive a sweep that runs "now".
+	up.pendings["fresh"] = &grafanaPending{verifier: "v2", createdAt: now}
+
+	up.mu.Lock()
+	up.sweepPendingsLocked(now)
+	up.mu.Unlock()
+
+	if _, ok := up.pendings["old"]; ok {
+		t.Errorf("expired pending was not swept")
+	}
+	if _, ok := up.pendings["fresh"]; !ok {
+		t.Errorf("fresh pending was incorrectly swept")
+	}
+}

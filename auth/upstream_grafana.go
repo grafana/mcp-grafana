@@ -9,9 +9,15 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"time"
 
 	"golang.org/x/oauth2"
 )
+
+// grafanaPendingTTL bounds how long a stored PKCE verifier waits for its
+// matching /callback. Aligned with the global pending-flow TTL in
+// authorize.go so abandoned flows are reaped on the same cadence.
+const grafanaPendingTTL = 15 * time.Minute
 
 // GrafanaUpstream implements the Upstream interface for Mode A
 // (oauth-grafana). It treats Grafana's experimental oauth2_server as a
@@ -20,12 +26,14 @@ import (
 type GrafanaUpstream struct {
 	oauth *oauth2.Config
 
-	mu       sync.Mutex
-	pendings map[string]*grafanaPending // state -> PKCE verifier
+	mu        sync.Mutex
+	pendings  map[string]*grafanaPending // state -> PKCE verifier
+	lastSwept time.Time
 }
 
 type grafanaPending struct {
-	verifier string
+	verifier  string
+	createdAt time.Time
 }
 
 // NewGrafanaUpstream builds a GrafanaUpstream. The issuer URL and client
@@ -46,9 +54,30 @@ func NewGrafanaUpstream(_ctx context.Context, cfg Config) (*GrafanaUpstream, err
 			ClientSecret: cfg.GrafanaOAuth2ClientSecret,
 			Endpoint:     endpoint,
 			RedirectURL:  strings.TrimRight(cfg.PublicURL, "/") + "/callback",
+			// "openid" makes Grafana's oauth2_server return an id_token whose
+			// "sub" we use as the stable identity. Without it identity falls
+			// back to a hash of the access token, which rotates on refresh
+			// and breaks one-session-per-identity dedup.
+			Scopes: []string{"openid", "email", "profile"},
 		},
 		pendings: make(map[string]*grafanaPending),
 	}, nil
+}
+
+// sweepPendingsLocked drops verifiers older than grafanaPendingTTL. The
+// caller must hold u.mu. Runs at most once per TTL window so the amortised
+// per-call cost stays O(1) under sustained traffic.
+func (u *GrafanaUpstream) sweepPendingsLocked(now time.Time) {
+	if now.Sub(u.lastSwept) < grafanaPendingTTL {
+		return
+	}
+	cutoff := now.Add(-grafanaPendingTTL)
+	for k, p := range u.pendings {
+		if p.createdAt.Before(cutoff) {
+			delete(u.pendings, k)
+		}
+	}
+	u.lastSwept = now
 }
 
 func (u *GrafanaUpstream) Mode() Mode { return ModeOAuthGrafana }
@@ -61,7 +90,8 @@ func (u *GrafanaUpstream) AuthorizeURL(_redirectURI, state string) string {
 	challenge := base64.RawURLEncoding.EncodeToString(sum[:])
 
 	u.mu.Lock()
-	u.pendings[state] = &grafanaPending{verifier: verifier}
+	u.sweepPendingsLocked(time.Now())
+	u.pendings[state] = &grafanaPending{verifier: verifier, createdAt: time.Now()}
 	u.mu.Unlock()
 
 	return u.oauth.AuthCodeURL(state,
@@ -78,6 +108,7 @@ func (u *GrafanaUpstream) HandleCallback(ctx context.Context, params url.Values)
 		return CallbackResult{}, fmt.Errorf("missing state or code")
 	}
 	u.mu.Lock()
+	u.sweepPendingsLocked(time.Now())
 	p, ok := u.pendings[state]
 	if ok {
 		delete(u.pendings, state)
@@ -85,6 +116,10 @@ func (u *GrafanaUpstream) HandleCallback(ctx context.Context, params url.Values)
 	u.mu.Unlock()
 	if !ok {
 		return CallbackResult{}, fmt.Errorf("unknown or replayed state")
+	}
+	// Treat past-TTL entries as missing — caller restarts the flow.
+	if time.Since(p.createdAt) > grafanaPendingTTL {
+		return CallbackResult{}, fmt.Errorf("pending flow expired")
 	}
 
 	tok, err := u.oauth.Exchange(ctx, code, oauth2.SetAuthURLParam("code_verifier", p.verifier))
@@ -135,9 +170,10 @@ func (u *GrafanaUpstream) Refresh(ctx context.Context, refreshToken []byte) (Cal
 
 // identityFromGrafanaToken extracts a stable user identifier from a Grafana
 // oauth2 token. Grafana's oauth2_server returns access tokens that are
-// opaque to the client; the optional id_token (when scopes include "openid")
-// carries the subject. We check for id_token first and fall back to a stable
-// hash of the access token.
+// opaque to the client; the id_token (returned because we request the
+// "openid" scope in NewGrafanaUpstream) carries the subject. We check for
+// id_token first and fall back to a stable hash of the access token if the
+// upstream omits the id_token.
 func identityFromGrafanaToken(tok *oauth2.Token) string {
 	if raw, ok := tok.Extra("id_token").(string); ok && raw != "" {
 		// id_token is a JWT; second segment is the base64url payload.

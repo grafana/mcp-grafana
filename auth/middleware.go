@@ -150,12 +150,23 @@ func bearerFrom(r *http.Request) string {
 	return strings.TrimSpace(h[len(prefix):])
 }
 
+// refreshUpstreamTimeout bounds how long the upstream refresh call (run
+// inside singleflight) is allowed to take. The work executes on a context
+// detached from the winning request so a client disconnect doesn't cancel
+// the in-flight refresh and cascade into spurious session deletion for
+// every coalesced caller.
+const refreshUpstreamTimeout = 30 * time.Second
+
 // refreshUpstream coalesces concurrent upstream refresh calls for the same
 // session via singleflight, then delegates to doRefreshUpstream. At most one
 // call per session token reaches the upstream at a time; concurrent callers
-// share the result.
-func (s *Server) refreshUpstream(ctx context.Context, sess Session) (Session, error) {
+// share the result. The work runs on a fresh context derived from
+// context.Background so a single client disconnect cannot cancel the
+// upstream call and revoke the session for all coalesced callers.
+func (s *Server) refreshUpstream(_ context.Context, sess Session) (Session, error) {
 	v, err, _ := s.refreshGroup.Do(sess.TokenHash, func() (any, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), refreshUpstreamTimeout)
+		defer cancel()
 		// After winning the flight, re-read the session from the store —
 		// a concurrent refresh may have already updated it.
 		fresh, err := s.Store.GetSessionByTokenHash(ctx, sess.TokenHash)
@@ -193,13 +204,20 @@ func (s *Server) doRefreshUpstream(ctx context.Context, sess Session) (Session, 
 	if err != nil {
 		return sess, fmt.Errorf("encrypt new creds: %w", err)
 	}
-	refreshCT, err := s.Encryptor.Seal(result.UpstreamRefresh)
-	if err != nil {
-		return sess, fmt.Errorf("encrypt new refresh: %w", err)
-	}
 
 	sess.UpstreamCredsCT = credCT
-	sess.UpstreamRefreshCT = refreshCT
+	// Per OAuth 2 §6, upstreams MAY return a new refresh token or omit it
+	// (the existing one stays valid). Only re-seal and overwrite the stored
+	// ciphertext when the upstream actually returned one — otherwise we'd
+	// replace a working refresh token with an encrypted empty value and
+	// break the next refresh.
+	if len(result.UpstreamRefresh) > 0 {
+		refreshCT, err := s.Encryptor.Seal(result.UpstreamRefresh)
+		if err != nil {
+			return sess, fmt.Errorf("encrypt new refresh: %w", err)
+		}
+		sess.UpstreamRefreshCT = refreshCT
+	}
 	sess.UpstreamExpiresAt = result.UpstreamExpiresAt
 	sess.UpdatedAt = time.Now()
 
