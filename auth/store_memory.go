@@ -171,13 +171,23 @@ func (m *MemoryStore) PutAuthCode(_ context.Context, c AuthCode) error {
 }
 
 func (m *MemoryStore) PeekAuthCode(_ context.Context, codeHash string) (AuthCode, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	// Take the write lock so we can prune expired-but-unconsumed codes
+	// in place. Without this, handleAuthCodeGrant's peek-then-consume
+	// flow leaves every expired code in the map forever — the early
+	// return on Peek means ConsumeAuthCode (which also deletes) is
+	// never reached for expired entries, so the codes map (and any
+	// FileStore-persisted version) accumulates entries from abandoned
+	// auth flows. Each one carries an encrypted UpstreamCredsCT byte
+	// slice. Peek is already on the cold path (one call per token
+	// exchange); the extra lock cost is negligible.
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	c, ok := m.codes[codeHash]
 	if !ok {
 		return AuthCode{}, ErrNotFound
 	}
 	if !c.ExpiresAt.IsZero() && time.Now().After(c.ExpiresAt) {
+		delete(m.codes, codeHash)
 		return AuthCode{}, ErrNotFound
 	}
 	return c, nil

@@ -18,6 +18,10 @@ type tokenResponse struct {
 func (s *Server) TokenHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
+			// RFC 7231 §6.5.5 requires Allow on every 405 response so
+			// clients can discover which methods are supported without
+			// guessing.
+			w.Header().Set("Allow", "POST")
 			httpError(w, http.StatusMethodNotAllowed, "invalid_request", "POST required")
 			return
 		}

@@ -52,6 +52,8 @@ func (s *Server) BootstrapHandler(grafanaURL string) http.Handler {
 		case http.MethodPost:
 			s.processBootstrap(w, r, grafanaURL)
 		default:
+			// RFC 7231 §6.5.5 requires Allow on every 405 response.
+			w.Header().Set("Allow", "GET, POST")
 			httpError(w, http.StatusMethodNotAllowed, "invalid_request", "GET or POST")
 		}
 	})
