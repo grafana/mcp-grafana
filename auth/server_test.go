@@ -18,7 +18,7 @@ func TestRegisterRoutes_AllPathsRespond(t *testing.T) {
 		AccessTokenTTL: time.Hour, RefreshTokenTTL: 24 * time.Hour, AuthCodeTTL: 5 * time.Minute,
 	}
 	mux := http.NewServeMux()
-	srv.RegisterRoutes(mux, "https://grafana.example.com")
+	srv.RegisterRoutes(mux, "https://grafana.example.com", true)
 
 	for _, path := range []string{
 		"/.well-known/oauth-authorization-server",

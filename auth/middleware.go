@@ -44,6 +44,34 @@ func (s *Server) Middleware() func(http.Handler) http.Handler {
 	}
 }
 
+// RequireHTTPS rejects auth-endpoint requests that arrived over plain HTTP.
+// A request is considered HTTPS if any of the following is true:
+//   - The TLS field on the *http.Request is non-nil (direct TLS termination).
+//   - The X-Forwarded-Proto header is "https" (terminating proxy in front).
+//
+// When allowInsecure is true the guard is a no-op; intended for dev only.
+func RequireHTTPS(allowInsecure bool) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if allowInsecure || isSecure(r) {
+				next.ServeHTTP(w, r)
+				return
+			}
+			httpError(w, http.StatusForbidden, "insecure_transport", "auth endpoints require https; set --allow-insecure-auth for dev only")
+		})
+	}
+}
+
+func isSecure(r *http.Request) bool {
+	if r.TLS != nil {
+		return true
+	}
+	if r.Header.Get("X-Forwarded-Proto") == "https" {
+		return true
+	}
+	return false
+}
+
 func bearerFrom(r *http.Request) string {
 	h := r.Header.Get("Authorization")
 	if h == "" {

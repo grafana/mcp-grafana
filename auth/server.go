@@ -29,19 +29,22 @@ func (s *Server) logger() *slog.Logger {
 
 // RegisterRoutes mounts the auth endpoints on mux. grafanaURL is forwarded to
 // the bootstrap handler so it can validate pasted tokens against the right
-// Grafana instance.
-func (s *Server) RegisterRoutes(mux *http.ServeMux, grafanaURL string) {
+// Grafana instance. allowInsecure disables the HTTPS guard; use only for dev.
+func (s *Server) RegisterRoutes(mux *http.ServeMux, grafanaURL string, allowInsecure bool) {
 	authLim := NewIPLimiter(10, time.Minute)
 	bootLim := NewIPLimiter(3, time.Minute)
 	dcrLim := NewIPLimiter(5, time.Minute)
+	guard := RequireHTTPS(allowInsecure)
 
-	mux.Handle("/.well-known/oauth-authorization-server", ASMetadataHandler(s.PublicURL))
-	mux.Handle("/.well-known/oauth-protected-resource", ProtectedResourceMetadataHandler(s.PublicURL))
-	mux.Handle("/register", dcrLim.Wrap(DCRHandler(s.Store)))
-	mux.Handle("/authorize", authLim.Wrap(s.AuthorizeHandler()))
-	mux.Handle("/callback", authLim.Wrap(s.CallbackHandler()))
-	mux.Handle("/token", authLim.Wrap(s.TokenHandler()))
-	mux.Handle("/bootstrap", bootLim.Wrap(s.BootstrapHandler(grafanaURL)))
+	wrap := func(h http.Handler) http.Handler { return guard(h) }
+
+	mux.Handle("/.well-known/oauth-authorization-server", wrap(ASMetadataHandler(s.PublicURL)))
+	mux.Handle("/.well-known/oauth-protected-resource", wrap(ProtectedResourceMetadataHandler(s.PublicURL)))
+	mux.Handle("/register", wrap(dcrLim.Wrap(DCRHandler(s.Store))))
+	mux.Handle("/authorize", wrap(authLim.Wrap(s.AuthorizeHandler())))
+	mux.Handle("/callback", wrap(authLim.Wrap(s.CallbackHandler())))
+	mux.Handle("/token", wrap(authLim.Wrap(s.TokenHandler())))
+	mux.Handle("/bootstrap", wrap(bootLim.Wrap(s.BootstrapHandler(grafanaURL))))
 }
 
 // New constructs a Server from a validated Config plus an Encryptor and
