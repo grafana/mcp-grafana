@@ -59,21 +59,62 @@ func (f *FileStore) load() error {
 	if err := json.Unmarshal(pt, &p); err != nil {
 		return fmt.Errorf("parse state file: %w", err)
 	}
+
+	// Re-seal inner ciphertexts under the current primary key. This makes
+	// key rotation work end-to-end: when an admin runs once with
+	// --token-encryption-key-previous=OLD --token-encryption-key=NEW, this
+	// loop migrates every stored ciphertext from OLD to NEW. After the next
+	// flush, OLD can be removed without losing any sessions.
+	for i := range p.Sessions {
+		if len(p.Sessions[i].UpstreamCredsCT) == 0 {
+			continue
+		}
+		innerPt, err := f.enc.Open(p.Sessions[i].UpstreamCredsCT)
+		if err != nil {
+			return fmt.Errorf("rewrap session %s: %w", p.Sessions[i].Identity.String(), err)
+		}
+		innerCt, err := f.enc.Seal(innerPt)
+		if err != nil {
+			return fmt.Errorf("reseal session %s: %w", p.Sessions[i].Identity.String(), err)
+		}
+		p.Sessions[i].UpstreamCredsCT = innerCt
+	}
+	for i := range p.AuthCodes {
+		if len(p.AuthCodes[i].UpstreamCredsCT) == 0 {
+			continue
+		}
+		innerPt, err := f.enc.Open(p.AuthCodes[i].UpstreamCredsCT)
+		if err != nil {
+			return fmt.Errorf("rewrap auth code: %w", err)
+		}
+		innerCt, err := f.enc.Seal(innerPt)
+		if err != nil {
+			return fmt.Errorf("reseal auth code: %w", err)
+		}
+		p.AuthCodes[i].UpstreamCredsCT = innerCt
+	}
+
 	ctx := context.Background()
 	for _, s := range p.Sessions {
 		if err := f.mem.PutSession(ctx, s); err != nil {
-			return fmt.Errorf("load %T: %w", s, err)
+			return fmt.Errorf("load session: %w", err)
 		}
 	}
 	for _, c := range p.Clients {
 		if err := f.mem.PutClient(ctx, c); err != nil {
-			return fmt.Errorf("load %T: %w", c, err)
+			return fmt.Errorf("load client: %w", err)
 		}
 	}
 	for _, ac := range p.AuthCodes {
 		if err := f.mem.PutAuthCode(ctx, ac); err != nil {
-			return fmt.Errorf("load %T: %w", ac, err)
+			return fmt.Errorf("load auth code: %w", err)
 		}
+	}
+
+	// Persist rewrapped ciphertexts immediately so the previous key can be
+	// safely removed after a rotation cycle completes.
+	if err := f.flush(); err != nil {
+		return fmt.Errorf("post-rewrap flush: %w", err)
 	}
 	return nil
 }
