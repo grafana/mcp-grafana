@@ -37,7 +37,7 @@ func newTestObservability(t *testing.T) *observability.Observability {
 func TestNewServer_SessionIdleTimeoutZeroDisablesReaping(t *testing.T) {
 	obs := newTestObservability(t)
 	synctest.Test(t, func(t *testing.T) {
-		_, _, sm := newServer("stdio", disabledTools{enabledTools: "search"}, obs, 0)
+		_, _, sm := newServer("stdio", disabledTools{enabledTools: "search"}, obs, 0, nil)
 		defer sm.Close()
 
 		session := &testClientSession{id: "should-persist"}
@@ -148,7 +148,7 @@ func TestBuildInstructions_TimestampNote(t *testing.T) {
 func TestNewServer_SessionIdleTimeoutCustomValue(t *testing.T) {
 	obs := newTestObservability(t)
 	synctest.Test(t, func(t *testing.T) {
-		_, _, sm := newServer("stdio", disabledTools{enabledTools: "search"}, obs, 1)
+		_, _, sm := newServer("stdio", disabledTools{enabledTools: "search"}, obs, 1, nil)
 		defer sm.Close()
 
 		session := &testClientSession{id: "custom-ttl"}

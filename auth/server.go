@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/grafana/mcp-grafana/auth/rbac"
 )
 
 // Server bundles everything the auth HTTP handlers need.
@@ -28,6 +30,7 @@ type Server struct {
 	Encryptor             *Encryptor
 	Logger                *slog.Logger
 	Metrics               *Metrics
+	RBAC                  *rbac.Engine
 
 	AccessTokenTTL  time.Duration
 	RefreshTokenTTL time.Duration

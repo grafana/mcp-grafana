@@ -20,6 +20,7 @@ import (
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/grafana/mcp-grafana/auth"
+	"github.com/grafana/mcp-grafana/auth/rbac"
 	"github.com/grafana/mcp-grafana/observability"
 	"github.com/grafana/mcp-grafana/tools"
 	"go.opentelemetry.io/contrib/bridges/otelslog"
@@ -236,7 +237,7 @@ func (dt *disabledTools) buildInstructions() string {
 	return b.String()
 }
 
-func newServer(transport string, dt disabledTools, obs *observability.Observability, sessionIdleTimeoutMinutes int) (*server.MCPServer, *mcpgrafana.ToolManager, *mcpgrafana.SessionManager) {
+func newServer(transport string, dt disabledTools, obs *observability.Observability, sessionIdleTimeoutMinutes int, rbacEngine *rbac.Engine) (*server.MCPServer, *mcpgrafana.ToolManager, *mcpgrafana.SessionManager) {
 	sm := mcpgrafana.NewSessionManager(
 		mcpgrafana.WithSessionTTL(time.Duration(sessionIdleTimeoutMinutes) * time.Minute),
 	)
@@ -297,6 +298,10 @@ func newServer(transport string, dt disabledTools, obs *observability.Observabil
 
 	// Merge observability hooks with existing hooks
 	hooks = observability.MergeHooks(hooks, obs.MCPHooks())
+
+	if rbacEngine != nil {
+		hooks.OnAfterListTools = append(hooks.OnAfterListTools, rbacEngine.HookOnAfterListTools())
+	}
 
 	// Register tools and build the instruction string from enabled categories.
 	// processTools both registers tools on the server and collects descriptions
@@ -428,9 +433,6 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		defer clientCache.Close()
 	}
 
-	s, tm, sm := newServer(transport, dt, o, sessionIdleTimeoutMinutes)
-	defer sm.Close()
-
 	// Create a context that will be cancelled on shutdown
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -460,7 +462,55 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 			}
 			slog.Info("Per-user auth enabled", "mode", string(authCfg.Mode), "public_url", authCfg.PublicURL, "trust_forwarded_headers", authCfg.TrustForwardedHeaders)
 		}
+		rbacMode, err := rbac.ParseMode(authCfg.RBACGating)
+		if err != nil {
+			return fmt.Errorf("rbac: %w", err)
+		}
+		permsClient := rbac.NewPermsClient(authGrafanaURL, nil)
+		rbacFetcher := func(ctx context.Context, sessionKey string) (rbac.Snapshot, error) {
+			// Recover the per-user upstream credential from the request context. The
+			// fetcher is invoked from the OnAfterListTools hook, where the auth
+			// middleware has already populated GrafanaConfig.APIKey.
+			cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
+			if cfg.APIKey == "" {
+				return rbac.Snapshot{}, rbac.ErrFetchFailed
+			}
+			perms, err := permsClient.Fetch(ctx, cfg.APIKey)
+			if err != nil {
+				return rbac.Snapshot{}, err
+			}
+			// Derive basic role from the user's permissions, if present. Grafana
+			// returns the basic role as a separate header on /api/user; for now we
+			// approximate from the "fixed:..." role permissions if present, else
+			// leave empty (basic-mode tools without a basic role won't be visible).
+			role := basicRoleFromPerms(perms)
+			return rbac.Snapshot{
+				Permissions: perms,
+				BasicRole:   role,
+				FetchedAt:   time.Now(),
+			}, nil
+		}
+		ttl := authCfg.RBACCacheTTL
+		if ttl == 0 {
+			ttl = 5 * time.Minute
+		}
+		rbacCache := rbac.NewCache(ttl, rbacFetcher)
+		authSrv.RBAC = rbac.NewEngine(rbac.EngineConfig{
+			Mode:           rbacMode,
+			Cache:          rbacCache,
+			Gate:           rbac.NewGate(rbac.ToolGates),
+			KeyFromContext: auth.SessionKeyFromContext,
+			Metrics:        rbac.NewMetrics(),
+			Logger:         slog.Default(),
+		})
 	}
+
+	var rbacEngine *rbac.Engine
+	if authSrv != nil {
+		rbacEngine = authSrv.RBAC
+	}
+	s, tm, sm := newServer(transport, dt, o, sessionIdleTimeoutMinutes, rbacEngine)
+	defer sm.Close()
 
 	// Set up signal handling for graceful shutdown
 	sigChan := make(chan os.Signal, 1)
@@ -801,4 +851,30 @@ func handleFlagsPostParse(showVersion bool, slowLevelStr string) (flagAction, sl
 		return flagActionInvalidSlowLevel, 0, err
 	}
 	return flagActionContinue, slowLevel, nil
+}
+
+// basicRoleFromPerms approximates the user's BasicRole from their permission
+// set. Grafana's RBAC engine includes role-membership permissions on the
+// /user/permissions response; we look for the "fixed:" role names. This is
+// best-effort; if no signal, returns empty (caller treats as no role).
+func basicRoleFromPerms(perms rbac.PermissionSet) string {
+	// Heuristic: if the user can manage roles, they're at least Admin.
+	// If they can write to dashboards/datasources, they're at least Editor.
+	// If they can read, they're at least Viewer.
+	if _, ok := perms["roles:write"]; ok {
+		return "Admin"
+	}
+	if _, ok := perms["users:write"]; ok {
+		return "Admin"
+	}
+	if _, ok := perms["dashboards:write"]; ok {
+		return "Editor"
+	}
+	if _, ok := perms["datasources:write"]; ok {
+		return "Editor"
+	}
+	if _, ok := perms["dashboards:read"]; ok {
+		return "Viewer"
+	}
+	return ""
 }

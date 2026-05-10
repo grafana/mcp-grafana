@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strings"
@@ -8,6 +9,20 @@ import (
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
 )
+
+type sessionKeyCtx struct{}
+
+// WithSessionKey stores an opaque session-cache key on the context.
+// Used by the RBAC engine to look up the user's permission snapshot.
+func WithSessionKey(ctx context.Context, key string) context.Context {
+	return context.WithValue(ctx, sessionKeyCtx{}, key)
+}
+
+// SessionKeyFromContext returns the session-cache key set by Middleware.
+func SessionKeyFromContext(ctx context.Context) (string, bool) {
+	v, ok := ctx.Value(sessionKeyCtx{}).(string)
+	return v, ok && v != ""
+}
 
 // Middleware returns an HTTP middleware that resolves the Bearer token to a
 // session, decrypts the upstream creds, and stores them in the context as
@@ -61,6 +76,7 @@ func (s *Server) Middleware() func(http.Handler) http.Handler {
 				cfg.URL = s.GrafanaURL
 			}
 			ctx := mcpgrafana.WithGrafanaConfig(r.Context(), cfg)
+			ctx = WithSessionKey(ctx, sess.TokenHash)
 
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
