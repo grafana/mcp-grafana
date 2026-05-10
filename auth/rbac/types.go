@@ -47,7 +47,6 @@ func (g ToolGate) IsPublic() bool {
 
 // Errors used by the package.
 var (
-	ErrUnknownTool = fmt.Errorf("rbac: tool has no registered gate")
 	ErrFetchFailed = fmt.Errorf("rbac: permission fetch failed")
 	ErrModeUnknown = fmt.Errorf("rbac: unknown gating mode")
 )
