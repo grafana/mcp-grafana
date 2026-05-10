@@ -159,3 +159,29 @@ func TestMemoryStore_ClientCRUD(t *testing.T) {
 		t.Errorf("expected ErrNotFound, got %v", err)
 	}
 }
+
+func TestMemoryStore_PutSession_DropsStaleRefreshOnSameTokenOverwrite(t *testing.T) {
+	s := NewMemoryStore()
+	ctx := context.Background()
+	sess := newTestSession(t, "alice")
+	if err := s.PutSession(ctx, sess); err != nil {
+		t.Fatal(err)
+	}
+
+	// Overwrite with same TokenHash + Identity but a rotated RefreshHash.
+	rotated := sess
+	rotated.RefreshHash = HashToken("ref-alice-rotated")
+	if err := s.PutSession(ctx, rotated); err != nil {
+		t.Fatal(err)
+	}
+
+	// The new RefreshHash must resolve.
+	if _, err := s.GetSessionByRefreshHash(ctx, rotated.RefreshHash); err != nil {
+		t.Errorf("rotated RefreshHash should resolve, got %v", err)
+	}
+	// The old RefreshHash must NOT resolve — otherwise an attacker with
+	// the previous refresh token could keep minting new access tokens.
+	if _, err := s.GetSessionByRefreshHash(ctx, sess.RefreshHash); !errors.Is(err, ErrNotFound) {
+		t.Errorf("stale RefreshHash still resolves; got err=%v", err)
+	}
+}

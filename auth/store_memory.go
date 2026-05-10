@@ -49,6 +49,14 @@ func (m *MemoryStore) PutSession(_ context.Context, s Session) error {
 			}
 		}
 	}
+	// Same-token overwrite (e.g. doRefreshUpstream rotating the upstream
+	// credential under the same MCP TokenHash): if the prior session under
+	// this TokenHash had a different RefreshHash, drop the stale
+	// refresh-hash → token-hash mapping so the old refresh token can no
+	// longer resolve via GetSessionByRefreshHash.
+	if prev, ok := m.sessByToken[s.TokenHash]; ok && prev.RefreshHash != "" && prev.RefreshHash != s.RefreshHash {
+		delete(m.sessByRefresh, prev.RefreshHash)
+	}
 
 	cp := s
 	m.sessByToken[s.TokenHash] = &cp
