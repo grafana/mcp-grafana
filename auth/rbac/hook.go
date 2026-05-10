@@ -76,7 +76,7 @@ func (e *Engine) HookOnAfterListTools() server.OnAfterListToolsFunc {
 			return // no session: leave the tool list alone (legacy path)
 		}
 
-		stop := e.cfg.Metrics.Stopwatch(mode)
+		stop := e.cfg.Metrics.Stopwatch(ctx, mode)
 		defer stop()
 
 		snap, err := e.cfg.Cache.Get(ctx, key)
@@ -110,6 +110,18 @@ func (e *Engine) HookOnAfterListTools() server.OnAfterListToolsFunc {
 		}
 		result.Tools = filtered
 	}
+}
+
+// InvalidateSessionCache drops the cached snapshot for the given session
+// key. Safe to call when no entry exists. Intended for use by the auth
+// package's token-rotation path so a refreshed access-token's new session
+// doesn't share permissions with the previous one (and so the previous
+// entry doesn't linger until TTL).
+func (e *Engine) InvalidateSessionCache(key string) {
+	if e == nil || e.cfg.Cache == nil {
+		return
+	}
+	e.cfg.Cache.Invalidate(key)
 }
 
 // redactKey shortens an opaque session key for logs.

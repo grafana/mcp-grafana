@@ -501,13 +501,15 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		if ttl == 0 {
 			ttl = 5 * time.Minute
 		}
+		rbacMetrics := rbac.NewMetrics()
 		rbacCache := rbac.NewCache(ttl, rbacFetcher)
+		rbacCache.SetMetrics(rbacMetrics)
 		authSrv.RBAC = rbac.NewEngine(rbac.EngineConfig{
 			Mode:           rbacMode,
 			Cache:          rbacCache,
 			Gate:           rbac.NewGate(rbac.ToolGates),
 			KeyFromContext: auth.SessionKeyFromContext,
-			Metrics:        rbac.NewMetrics(),
+			Metrics:        rbacMetrics,
 			Logger:         slog.Default(),
 		})
 	}

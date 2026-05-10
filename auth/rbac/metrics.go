@@ -58,12 +58,12 @@ func (m *Metrics) CacheMiss(ctx context.Context) {
 	}
 }
 
-// Stopwatch returns a closure that records the filter duration when called.
-// Used via defer stop() in the hook.
-func (m *Metrics) Stopwatch(mode Mode) func() {
+// Stopwatch returns a closure that records duration when called.
+// The context is captured for trace/exemplar correlation.
+func (m *Metrics) Stopwatch(ctx context.Context, mode Mode) func() {
 	if m == nil {
 		return func() {}
 	}
 	start := time.Now()
-	return func() { m.FilterObserved(context.Background(), mode, time.Since(start).Seconds()) }
+	return func() { m.FilterObserved(ctx, mode, time.Since(start).Seconds()) }
 }

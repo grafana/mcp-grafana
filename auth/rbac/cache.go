@@ -28,7 +28,8 @@ type Cache struct {
 	mu      sync.RWMutex
 	entries map[string]*entry
 
-	flight singleflight.Group
+	flight  singleflight.Group
+	metrics *Metrics
 }
 
 type entry struct {
@@ -46,16 +47,26 @@ func NewCache(ttl time.Duration, fetcher Fetcher) *Cache {
 	}
 }
 
+// SetMetrics attaches an optional Metrics instance for cache hit/miss
+// reporting. Safe to call concurrently with Get only if the caller can
+// guarantee no Get is in-flight; in practice this should be called once
+// at construction time.
+func (c *Cache) SetMetrics(m *Metrics) {
+	c.metrics = m
+}
+
 // Get returns the cached snapshot if fresh, otherwise fetches.
 func (c *Cache) Get(ctx context.Context, key string) (Snapshot, error) {
 	if c.ttl > 0 {
 		c.mu.RLock()
 		if e, ok := c.entries[key]; ok && time.Now().Before(e.expiresAt) {
 			c.mu.RUnlock()
+			c.metrics.CacheHit(ctx)
 			return e.snap, nil
 		}
 		c.mu.RUnlock()
 	}
+	c.metrics.CacheMiss(ctx)
 
 	v, err, _ := c.flight.Do(key, func() (any, error) {
 		snap, err := c.fetcher(ctx, key)
