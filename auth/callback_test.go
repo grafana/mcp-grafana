@@ -75,7 +75,7 @@ func TestCallback_RepeatLogin_ShortcutsToClient(t *testing.T) {
 	// Pre-existing session with an SA token on file.
 	enc := srv.Encryptor
 	ct, _ := enc.Seal([]byte("sa-token"))
-	_ = store.PutSession(context.Background(), Session{
+	_, _ = store.PutSession(context.Background(), Session{
 		TokenHash:       HashToken("old-tok"),
 		Identity:        id,
 		UpstreamCredsCT: ct,

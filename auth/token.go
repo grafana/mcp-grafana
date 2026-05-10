@@ -73,18 +73,12 @@ func (s *Server) handleAuthCodeGrant(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Re-authentication for the same identity replaces the previous session
-	// inside PutSession (one-session-per-identity invariant). Without this
-	// pre-check the active-sessions gauge would only ever increment on
-	// re-login: PutSession atomically removes the old row, but no
-	// SessionRevoked is emitted, so the counter drifts upward. Look up
-	// any existing session under the same identity and emit a paired
-	// Revoked so the gauge nets to +1 across a full login (not +1 per).
-	hadPrev := false
-	if _, err := s.Store.GetSessionByIdentity(r.Context(), c.Identity); err == nil {
-		hadPrev = true
-	}
-
-	if err := s.Store.PutSession(r.Context(), Session{
+	// inside PutSession (one-session-per-identity invariant). PutSession
+	// reports the replaced TokenHash atomically so we emit a paired
+	// SessionRevoked here — using a pre-PutSession GetSessionByIdentity
+	// check would race with the middleware's expired-token DeleteSession
+	// path and could double-decrement the active-sessions gauge.
+	replacedTokenHash, err := s.Store.PutSession(r.Context(), Session{
 		TokenHash:        atHash,
 		RefreshHash:      rtHash,
 		ClientID:         clientID,
@@ -94,13 +88,14 @@ func (s *Server) handleAuthCodeGrant(w http.ResponseWriter, r *http.Request) {
 		UpstreamCredsCT:  c.UpstreamCredsCT,
 		CreatedAt:        now,
 		UpdatedAt:        now,
-	}); err != nil {
+	})
+	if err != nil {
 		s.logger().Error("auth.session_persist_failed", "user_id", c.Identity.String(), "error", err.Error())
 		httpError(w, http.StatusInternalServerError, "server_error", "session persist failed")
 		return
 	}
 
-	if hadPrev {
+	if replacedTokenHash != "" {
 		s.Metrics.SessionRevoked(r.Context(), c.Identity.Mode)
 	}
 	s.Metrics.SessionCreated(r.Context(), c.Identity.Mode)
@@ -163,7 +158,7 @@ func (s *Server) handleRefreshGrant(w http.ResponseWriter, r *http.Request) {
 	if rtTTL == 0 {
 		rtTTL = 30 * 24 * time.Hour
 	}
-	if err := s.Store.PutSession(r.Context(), Session{
+	if _, err := s.Store.PutSession(r.Context(), Session{
 		TokenHash:        atHash,
 		RefreshHash:      rtHash,
 		ClientID:         sess.ClientID,

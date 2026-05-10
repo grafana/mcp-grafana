@@ -31,7 +31,7 @@ func NewMemoryStore() *MemoryStore {
 	}
 }
 
-func (m *MemoryStore) PutSession(_ context.Context, s Session) error {
+func (m *MemoryStore) PutSession(_ context.Context, s Session) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -41,7 +41,9 @@ func (m *MemoryStore) PutSession(_ context.Context, s Session) error {
 	// session's access and refresh tokens would still resolve via
 	// GetSessionByTokenHash / GetSessionByRefreshHash, while
 	// GetSessionByIdentity points at the new session.
+	var replacedTokenHash string
 	if oldHash, ok := m.sessByIdentity[s.Identity.String()]; ok && oldHash != s.TokenHash {
+		replacedTokenHash = oldHash
 		if old, ok := m.sessByToken[oldHash]; ok {
 			delete(m.sessByToken, oldHash)
 			if old.RefreshHash != "" {
@@ -64,7 +66,7 @@ func (m *MemoryStore) PutSession(_ context.Context, s Session) error {
 		m.sessByRefresh[s.RefreshHash] = s.TokenHash
 	}
 	m.sessByIdentity[s.Identity.String()] = s.TokenHash
-	return nil
+	return replacedTokenHash, nil
 }
 
 func (m *MemoryStore) GetSessionByTokenHash(_ context.Context, h string) (Session, error) {

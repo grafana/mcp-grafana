@@ -31,7 +31,7 @@ func TestFileStore_PersistsAcrossInstances(t *testing.T) {
 		t.Fatal(err)
 	}
 	sess := sealedTestSession(t, "alice", enc)
-	if err := s1.PutSession(context.Background(), sess); err != nil {
+	if _, err := s1.PutSession(context.Background(), sess); err != nil {
 		t.Fatal(err)
 	}
 	if err := s1.Close(); err != nil {
@@ -58,7 +58,7 @@ func TestFileStore_WrongKeyFails(t *testing.T) {
 	bad := mustEnc(t, mustKey(t), nil)
 
 	s1, _ := NewFileStore(filepath.Join(dir, "auth.state"), good)
-	_ = s1.PutSession(context.Background(), sealedTestSession(t, "x", good))
+	_, _ = s1.PutSession(context.Background(), sealedTestSession(t, "x", good))
 	_ = s1.Close()
 
 	if _, err := NewFileStore(filepath.Join(dir, "auth.state"), bad); err == nil {
@@ -100,7 +100,7 @@ func TestFileStore_RenameFailureCleansTempFile(t *testing.T) {
 	}
 
 	// Trigger a flush — should fail at os.Rename.
-	err = s.PutSession(context.Background(), sealedTestSession(t, "x", enc))
+	_, err = s.PutSession(context.Background(), sealedTestSession(t, "x", enc))
 	if err == nil {
 		t.Skip("os.Rename succeeded against a directory target — platform-specific; cleanup test not applicable here")
 	}
@@ -129,7 +129,7 @@ func TestFileStore_NoLingeringTempFiles(t *testing.T) {
 	defer s.Close()
 
 	for i := 0; i < 5; i++ {
-		if err := s.PutSession(context.Background(), sealedTestSession(t, fmt.Sprintf("v%d", i), enc)); err != nil {
+		if _, err := s.PutSession(context.Background(), sealedTestSession(t, fmt.Sprintf("v%d", i), enc)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -167,7 +167,7 @@ func TestFileStore_KeyRotationMigratesInnerCiphertexts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s1.PutSession(context.Background(), sess); err != nil {
+	if _, err := s1.PutSession(context.Background(), sess); err != nil {
 		t.Fatal(err)
 	}
 	_ = s1.Close()

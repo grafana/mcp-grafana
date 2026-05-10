@@ -9,11 +9,16 @@ import (
 // Server bundles everything the auth HTTP handlers need.
 type Server struct {
 	PublicURL string
-	Store     Store
-	Upstream  Upstream
-	Encryptor *Encryptor
-	Logger    *slog.Logger
-	Metrics   *Metrics
+	// GrafanaURL is the operator-configured Grafana base URL. Middleware
+	// pins it onto the request's GrafanaConfig so a client cannot redirect
+	// the decrypted per-session API key at an attacker-controlled host via
+	// the X-Grafana-URL header.
+	GrafanaURL string
+	Store      Store
+	Upstream   Upstream
+	Encryptor  *Encryptor
+	Logger     *slog.Logger
+	Metrics    *Metrics
 
 	AccessTokenTTL  time.Duration
 	RefreshTokenTTL time.Duration
@@ -29,8 +34,11 @@ func (s *Server) logger() *slog.Logger {
 
 // RegisterRoutes mounts the auth endpoints on mux. grafanaURL is forwarded to
 // the bootstrap handler so it can validate pasted tokens against the right
-// Grafana instance. allowInsecure disables the HTTPS guard; use only for dev.
+// Grafana instance, and stamped onto s.GrafanaURL so Middleware can pin it
+// against X-Grafana-URL header overrides. allowInsecure disables the HTTPS
+// guard; use only for dev.
 func (s *Server) RegisterRoutes(mux *http.ServeMux, grafanaURL string, allowInsecure bool) {
+	s.GrafanaURL = grafanaURL
 	authLim := NewIPLimiter(10, time.Minute)
 	bootLim := NewIPLimiter(3, time.Minute)
 	dcrLim := NewIPLimiter(5, time.Minute)

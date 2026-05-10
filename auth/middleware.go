@@ -46,6 +46,14 @@ func (s *Server) Middleware() func(http.Handler) http.Handler {
 
 			cfg := mcpgrafana.GrafanaConfigFromContext(r.Context())
 			cfg.APIKey = string(pt)
+			// Pin the Grafana URL to the operator-configured value before any
+			// downstream context func (ExtractGrafanaInfoFromHeaders, etc.)
+			// has a chance to read X-Grafana-URL. Otherwise a client holding
+			// a valid bearer token could redirect the just-decrypted session
+			// API key to an attacker-controlled host.
+			if s.GrafanaURL != "" {
+				cfg.URL = s.GrafanaURL
+			}
 			ctx := mcpgrafana.WithGrafanaConfig(r.Context(), cfg)
 
 			next.ServeHTTP(w, r.WithContext(ctx))

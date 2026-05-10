@@ -167,7 +167,7 @@ func TestToken_RefreshRotates(t *testing.T) {
 	plainAT, hashAT := NewAuthCode()
 	plainRT, hashRT := NewAuthCode()
 	credCT, _ := srv.Encryptor.Seal([]byte("sa-token"))
-	_ = srv.Store.PutSession(ctx, Session{
+	_, _ = srv.Store.PutSession(ctx, Session{
 		TokenHash:        hashAT,
 		RefreshHash:      hashRT,
 		Identity:         Identity{Mode: ModeOAuthOIDC, ID: "alice"},
@@ -218,7 +218,7 @@ func TestToken_RefreshRejectsCrossClient(t *testing.T) {
 
 	plainRT, hashRT := NewAuthCode()
 	credCT, _ := srv.Encryptor.Seal([]byte("sa-token"))
-	_ = srv.Store.PutSession(ctx, Session{
+	_, _ = srv.Store.PutSession(ctx, Session{
 		TokenHash:        HashToken("at"),
 		RefreshHash:      hashRT,
 		ClientID:         "client-a",

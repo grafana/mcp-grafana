@@ -96,7 +96,7 @@ func (f *FileStore) load() error {
 
 	ctx := context.Background()
 	for _, s := range p.Sessions {
-		if err := f.mem.PutSession(ctx, s); err != nil {
+		if _, err := f.mem.PutSession(ctx, s); err != nil {
 			return fmt.Errorf("load session: %w", err)
 		}
 	}
@@ -177,13 +177,14 @@ func (f *FileStore) Close() error { return nil }
 
 // All mutating methods delegate to the memory store and then flush.
 
-func (f *FileStore) PutSession(ctx context.Context, s Session) error {
+func (f *FileStore) PutSession(ctx context.Context, s Session) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if err := f.mem.PutSession(ctx, s); err != nil {
-		return err
+	replaced, err := f.mem.PutSession(ctx, s)
+	if err != nil {
+		return "", err
 	}
-	return f.flush()
+	return replaced, f.flush()
 }
 
 func (f *FileStore) GetSessionByTokenHash(ctx context.Context, h string) (Session, error) {

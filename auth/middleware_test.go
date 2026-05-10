@@ -45,7 +45,7 @@ func TestMiddleware_GoodBearer_PopulatesContext(t *testing.T) {
 
 	plainAT, hashAT := NewToken()
 	credCT, _ := enc.Seal([]byte("sa-token"))
-	_ = store.PutSession(context.Background(), Session{
+	_, _ = store.PutSession(context.Background(), Session{
 		TokenHash:       hashAT,
 		ExpiresAt:       time.Now().Add(time.Hour),
 		Identity:        Identity{Mode: ModeOAuthOIDC, ID: "alice"},
@@ -69,6 +69,45 @@ func TestMiddleware_GoodBearer_PopulatesContext(t *testing.T) {
 	}
 }
 
+// TestMiddleware_PinsGrafanaURL verifies the middleware overrides any
+// pre-set context URL with the operator-configured Server.GrafanaURL so a
+// downstream X-Grafana-URL handler cannot redirect the decrypted session
+// API key at an attacker-controlled host.
+func TestMiddleware_PinsGrafanaURL(t *testing.T) {
+	enc := mustEnc(t, mustKey(t), nil)
+	store := NewMemoryStore()
+	srv := &Server{
+		PublicURL:  "https://mcp.example.com",
+		GrafanaURL: "https://grafana.internal:3000",
+		Store:      store,
+		Encryptor:  enc,
+	}
+	plainAT, hashAT := NewToken()
+	credCT, _ := enc.Seal([]byte("sa-token"))
+	_, _ = store.PutSession(context.Background(), Session{
+		TokenHash:       hashAT,
+		ExpiresAt:       time.Now().Add(time.Hour),
+		Identity:        Identity{Mode: ModeOAuthOIDC, ID: "alice"},
+		UpstreamCredsCT: credCT,
+	})
+
+	var observed mcpgrafana.GrafanaConfig
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		observed = mcpgrafana.GrafanaConfigFromContext(r.Context())
+	})
+	r := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	r.Header.Set("Authorization", "Bearer "+plainAT)
+	w := httptest.NewRecorder()
+	srv.Middleware()(next).ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d", w.Code)
+	}
+	if observed.URL != "https://grafana.internal:3000" {
+		t.Errorf("URL=%q want %q (Server.GrafanaURL must pin)", observed.URL, "https://grafana.internal:3000")
+	}
+}
+
 func TestMiddleware_ExpiredBearer_401(t *testing.T) {
 	enc := mustEnc(t, mustKey(t), nil)
 	store := NewMemoryStore()
@@ -79,7 +118,7 @@ func TestMiddleware_ExpiredBearer_401(t *testing.T) {
 	}
 	plainAT, hashAT := NewToken()
 	credCT, _ := enc.Seal([]byte("x"))
-	_ = store.PutSession(context.Background(), Session{
+	_, _ = store.PutSession(context.Background(), Session{
 		TokenHash:       hashAT,
 		ExpiresAt:       time.Now().Add(-time.Second),
 		UpstreamCredsCT: credCT,

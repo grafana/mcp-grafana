@@ -19,7 +19,14 @@ var ErrNotFound = errors.New("auth: record not found")
 // replaces the previous one; GetSessionByIdentity returns the single current
 // session. Implementations must enforce this invariant.
 type Store interface {
-	PutSession(ctx context.Context, s Session) error
+	// PutSession upserts s. If an existing session for s.Identity is replaced,
+	// the old session's TokenHash is returned so the caller can atomically
+	// emit a paired SessionRevoked metric / invalidate caches keyed by it.
+	// Returns "" when this is a fresh install or a same-token rotation under
+	// the same TokenHash. Callers must use this signal rather than a
+	// pre-PutSession GetSessionByIdentity check, which is racy with the
+	// middleware's expired-token DeleteSession path.
+	PutSession(ctx context.Context, s Session) (replacedTokenHash string, err error)
 	GetSessionByTokenHash(ctx context.Context, tokenHash string) (Session, error)
 	GetSessionByRefreshHash(ctx context.Context, refreshHash string) (Session, error)
 	// GetSessionByIdentity returns the single live session for id, if any.

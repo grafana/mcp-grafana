@@ -26,7 +26,7 @@ func TestMemoryStore_SessionRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	sess := newTestSession(t, "alice")
 
-	if err := s.PutSession(ctx, sess); err != nil {
+	if _, err := s.PutSession(ctx, sess); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.GetSessionByTokenHash(ctx, sess.TokenHash)
@@ -57,16 +57,20 @@ func TestMemoryStore_PutSession_ReplacesPreviousForSameIdentity(t *testing.T) {
 	ctx := context.Background()
 
 	first := newTestSession(t, "alice")
-	if err := s.PutSession(ctx, first); err != nil {
+	if replaced, err := s.PutSession(ctx, first); err != nil {
 		t.Fatal(err)
+	} else if replaced != "" {
+		t.Errorf("first PutSession reported replaced=%q want empty", replaced)
 	}
 
 	// Replace with a new session for the same identity but distinct hashes.
 	second := first
 	second.TokenHash = HashToken("tok-alice-2")
 	second.RefreshHash = HashToken("ref-alice-2")
-	if err := s.PutSession(ctx, second); err != nil {
+	if replaced, err := s.PutSession(ctx, second); err != nil {
 		t.Fatal(err)
+	} else if replaced != first.TokenHash {
+		t.Errorf("second PutSession reported replaced=%q want %q", replaced, first.TokenHash)
 	}
 
 	// New session resolves via every index.
@@ -93,7 +97,7 @@ func TestMemoryStore_DeleteSession(t *testing.T) {
 	s := NewMemoryStore()
 	ctx := context.Background()
 	sess := newTestSession(t, "alice")
-	_ = s.PutSession(ctx, sess)
+	_, _ = s.PutSession(ctx, sess)
 	deleted, err := s.DeleteSession(ctx, sess.TokenHash)
 	if err != nil {
 		t.Fatal(err)
@@ -176,15 +180,17 @@ func TestMemoryStore_PutSession_DropsStaleRefreshOnSameTokenOverwrite(t *testing
 	s := NewMemoryStore()
 	ctx := context.Background()
 	sess := newTestSession(t, "alice")
-	if err := s.PutSession(ctx, sess); err != nil {
+	if _, err := s.PutSession(ctx, sess); err != nil {
 		t.Fatal(err)
 	}
 
 	// Overwrite with same TokenHash + Identity but a rotated RefreshHash.
 	rotated := sess
 	rotated.RefreshHash = HashToken("ref-alice-rotated")
-	if err := s.PutSession(ctx, rotated); err != nil {
+	if replaced, err := s.PutSession(ctx, rotated); err != nil {
 		t.Fatal(err)
+	} else if replaced != "" {
+		t.Errorf("same-token overwrite reported replaced=%q want empty", replaced)
 	}
 
 	// The new RefreshHash must resolve.
