@@ -218,6 +218,14 @@ func (s *Server) handleRefreshGrant(w http.ResponseWriter, r *http.Request) {
 		s.RBAC.InvalidateSessionCache(sess.TokenHash)
 	}
 
+	// Invalidate any RBAC permission-cache entry keyed by the old access
+	// token. The new token has a new hash, so the old entry would otherwise
+	// linger until TTL — and could leak a stale snapshot if the new session's
+	// underlying credential ever differed.
+	if s.RBAC != nil {
+		s.RBAC.InvalidateSessionCache(sess.TokenHash)
+	}
+
 	s.logger().Info("auth.session_refreshed", "user_id", sess.Identity.String(), "reason", "mcp_token")
 	writeTokenResponse(w, at, rt, atTTL)
 }
