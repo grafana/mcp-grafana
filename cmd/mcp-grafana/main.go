@@ -718,8 +718,14 @@ func buildAuthServer(ctx context.Context, cfg auth.Config, grafanaURL string, lo
 			return nil, fmt.Errorf("oidc upstream: %w", err)
 		}
 		up = oidc
+	case auth.ModeOAuthGrafana:
+		g, err := auth.NewGrafanaUpstream(ctx, cfg)
+		if err != nil {
+			return nil, fmt.Errorf("grafana upstream: %w", err)
+		}
+		up = g
 	default:
-		return nil, fmt.Errorf("auth mode %q is not implemented in Phase 1", cfg.Mode)
+		return nil, fmt.Errorf("auth mode %q is not implemented yet", cfg.Mode)
 	}
 
 	if !strings.HasPrefix(grafanaURL, "http://") && !strings.HasPrefix(grafanaURL, "https://") {
