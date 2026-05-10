@@ -76,6 +76,18 @@ func (s *Server) Middleware() func(http.Handler) http.Handler {
 					// request will retry the refresh. Only delete + 401 when
 					// the credential has actually expired and we have no
 					// usable token to fall back on.
+					//
+					// Re-read the session from the store before deciding —
+					// the refresh call is bounded by refreshUpstreamTimeout
+					// (30s), and a singleflight winner whose call took close
+					// to that bound could find sess.UpstreamExpiresAt is now
+					// in the past even though it was inside the refreshWindow
+					// at flight entry. The store also reflects any concurrent
+					// successful refresh by a sibling goroutine.
+					latest, lerr := s.Store.GetSessionByTokenHash(r.Context(), sess.TokenHash)
+					if lerr == nil {
+						sess = latest
+					}
 					if !time.Now().After(sess.UpstreamExpiresAt) {
 						s.logger().Warn("auth.upstream_refresh_failed_but_creds_still_valid",
 							"user_id", sess.Identity.String(), "error", err.Error(),
