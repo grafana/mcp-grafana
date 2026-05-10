@@ -267,7 +267,16 @@ func (s *Server) doRefreshUpstream(ctx context.Context, sess Session) (Session, 
 		}
 		sess.UpstreamRefreshCT = refreshCT
 	}
-	sess.UpstreamExpiresAt = result.UpstreamExpiresAt
+	// Same defensive pattern for expiry. OAuth 2 §5.1 makes expires_in
+	// optional; an upstream that omits it surfaces here as
+	// result.UpstreamExpiresAt.IsZero(). Persisting that would clobber
+	// the original expiry and the middleware's
+	// '!sess.UpstreamExpiresAt.IsZero()' guard would then permanently
+	// skip future refreshes — the credential would silently stop
+	// rotating until the access token expired hard.
+	if !result.UpstreamExpiresAt.IsZero() {
+		sess.UpstreamExpiresAt = result.UpstreamExpiresAt
+	}
 	sess.UpdatedAt = time.Now()
 
 	if _, err := s.Store.PutSession(ctx, sess); err != nil {
