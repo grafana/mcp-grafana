@@ -262,23 +262,5 @@ func TestGrafanaUpstream_OAuthScopesIncludeOpenID(t *testing.T) {
 	}
 }
 
-func TestGrafanaUpstream_SweepDropsExpiredPendings(t *testing.T) {
-	up := &GrafanaUpstream{pendings: map[string]*grafanaPending{}}
-
-	now := time.Now()
-	// Old entry: created two TTLs ago — should be reaped.
-	up.pendings["old"] = &grafanaPending{verifier: "v1", createdAt: now.Add(-2 * grafanaPendingTTL)}
-	// Fresh entry: created "now" — should survive a sweep that runs "now".
-	up.pendings["fresh"] = &grafanaPending{verifier: "v2", createdAt: now}
-
-	up.mu.Lock()
-	up.sweepPendingsLocked(now)
-	up.mu.Unlock()
-
-	if _, ok := up.pendings["old"]; ok {
-		t.Errorf("expired pending was not swept")
-	}
-	if _, ok := up.pendings["fresh"]; !ok {
-		t.Errorf("fresh pending was incorrectly swept")
-	}
-}
+// Sweep / TTL behaviour is exercised at the registry level in
+// pending_registry_test.go; GrafanaUpstream just composes pendingRegistry.

@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
-	"sync"
 	"time"
 
 	"golang.org/x/oauth2"
@@ -24,16 +23,12 @@ const grafanaPendingTTL = 15 * time.Minute
 // standard OAuth2 authorization server. The access token returned by the
 // upstream IS the credential we use to call Grafana on the user's behalf.
 type GrafanaUpstream struct {
-	oauth *oauth2.Config
-
-	mu        sync.Mutex
-	pendings  map[string]*grafanaPending // state -> PKCE verifier
-	lastSwept time.Time
+	oauth    *oauth2.Config
+	pendings *pendingRegistry[*grafanaPending]
 }
 
 type grafanaPending struct {
-	verifier  string
-	createdAt time.Time
+	verifier string
 }
 
 // NewGrafanaUpstream builds a GrafanaUpstream. The issuer URL and client
@@ -60,24 +55,8 @@ func NewGrafanaUpstream(_ctx context.Context, cfg Config) (*GrafanaUpstream, err
 			// and breaks one-session-per-identity dedup.
 			Scopes: []string{"openid", "email", "profile"},
 		},
-		pendings: make(map[string]*grafanaPending),
+		pendings: newPendingRegistry[*grafanaPending](grafanaPendingTTL),
 	}, nil
-}
-
-// sweepPendingsLocked drops verifiers older than grafanaPendingTTL. The
-// caller must hold u.mu. Runs at most once per TTL window so the amortised
-// per-call cost stays O(1) under sustained traffic.
-func (u *GrafanaUpstream) sweepPendingsLocked(now time.Time) {
-	if now.Sub(u.lastSwept) < grafanaPendingTTL {
-		return
-	}
-	cutoff := now.Add(-grafanaPendingTTL)
-	for k, p := range u.pendings {
-		if p.createdAt.Before(cutoff) {
-			delete(u.pendings, k)
-		}
-	}
-	u.lastSwept = now
 }
 
 func (u *GrafanaUpstream) Mode() Mode { return ModeOAuthGrafana }
@@ -93,10 +72,7 @@ func (u *GrafanaUpstream) AuthorizeURL(redirectURI, state string) string {
 	sum := sha256.Sum256([]byte(verifier))
 	challenge := base64.RawURLEncoding.EncodeToString(sum[:])
 
-	u.mu.Lock()
-	u.sweepPendingsLocked(time.Now())
-	u.pendings[state] = &grafanaPending{verifier: verifier, createdAt: time.Now()}
-	u.mu.Unlock()
+	u.pendings.Store(state, &grafanaPending{verifier: verifier})
 
 	opts := []oauth2.AuthCodeOption{
 		oauth2.SetAuthURLParam("code_challenge", challenge),
@@ -115,19 +91,9 @@ func (u *GrafanaUpstream) HandleCallback(ctx context.Context, params url.Values)
 	if state == "" || code == "" {
 		return CallbackResult{}, fmt.Errorf("missing state or code")
 	}
-	u.mu.Lock()
-	u.sweepPendingsLocked(time.Now())
-	p, ok := u.pendings[state]
-	if ok {
-		delete(u.pendings, state)
-	}
-	u.mu.Unlock()
+	p, ok := u.pendings.Consume(state)
 	if !ok {
-		return CallbackResult{}, fmt.Errorf("unknown or replayed state")
-	}
-	// Treat past-TTL entries as missing — caller restarts the flow.
-	if time.Since(p.createdAt) > grafanaPendingTTL {
-		return CallbackResult{}, fmt.Errorf("pending flow expired")
+		return CallbackResult{}, fmt.Errorf("unknown or expired state")
 	}
 
 	tok, err := u.oauth.Exchange(ctx, code, oauth2.SetAuthURLParam("code_verifier", p.verifier))
