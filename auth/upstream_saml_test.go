@@ -147,6 +147,61 @@ func TestSAMLUpstream_AuthorizeURL_ContainsSAMLRequest(t *testing.T) {
 	}
 }
 
+// TestSAMLUpstream_ValidateRequestID_EnforcesInResponseToWhenIDPInitAllowed
+// guards against a regression where AllowIDPInitiated=true silently
+// disabled InResponseTo enforcement on SP-initiated flows. crewjam/saml's
+// default ValidateRequestID returns nil unconditionally when
+// AllowIDPInitiated is set; we override it so SP-initiated assertions
+// (possibleRequestIDs non-empty) must still match.
+func TestSAMLUpstream_ValidateRequestID_EnforcesInResponseToWhenIDPInitAllowed(t *testing.T) {
+	dir := t.TempDir()
+	certPath, keyPath := generateSPKeyPair(t, dir)
+	metadataPath := writeMockIdPMetadata(t, dir)
+
+	up, err := NewSAMLUpstream(context.Background(), Config{
+		Mode:                  ModeSAML,
+		PublicURL:             "https://mcp.example.com",
+		SAMLIdPMetadataFile:   metadataPath,
+		SAMLSPCertFile:        certPath,
+		SAMLSPKeyFile:         keyPath,
+		SAMLNameIDFormat:      "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
+		SAMLAllowIdPInitiated: true, // the dangerous case
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// SP-initiated: possibleRequestIDs non-empty, but the response's
+	// InResponseTo doesn't match. Default crewjam behaviour with
+	// AllowIDPInitiated=true would accept this; our override must reject.
+	resp := saml.Response{InResponseTo: "different-id"}
+	if err := up.rawSP.ValidateRequestID(resp, []string{"expected-id"}); err == nil {
+		t.Errorf("ValidateRequestID accepted a mismatched InResponseTo on the SP-initiated path")
+	}
+
+	// SP-initiated with a matching InResponseTo: must pass.
+	resp.InResponseTo = "expected-id"
+	if err := up.rawSP.ValidateRequestID(resp, []string{"expected-id"}); err != nil {
+		t.Errorf("ValidateRequestID rejected a matching InResponseTo: %v", err)
+	}
+
+	// True IdP-initiated (possibleRequestIDs empty) WITH the flag enabled
+	// is allowed.
+	if err := up.rawSP.ValidateRequestID(saml.Response{}, nil); err != nil {
+		t.Errorf("ValidateRequestID rejected an allowed IdP-initiated response: %v", err)
+	}
+}
+
+// TestSAMLUpstream_ValidateRequestID_RejectsIDPInitWhenDisabled — the
+// IdP-init path is blocked when the operator hasn't opted in, even at
+// the SP layer (defense in depth alongside ValidateAssertion).
+func TestSAMLUpstream_ValidateRequestID_RejectsIDPInitWhenDisabled(t *testing.T) {
+	up := mustNewSAMLUpstream(t) // SAMLAllowIdPInitiated defaults to false
+	if err := up.rawSP.ValidateRequestID(saml.Response{}, nil); err == nil {
+		t.Errorf("ValidateRequestID accepted IdP-initiated response despite the flag being off")
+	}
+}
+
 func TestSAMLUpstream_HandleCallbackReturnsError(t *testing.T) {
 	up := mustNewSAMLUpstream(t)
 	if _, err := up.HandleCallback(context.Background(), nil); err == nil {

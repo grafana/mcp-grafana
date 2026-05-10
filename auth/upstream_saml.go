@@ -149,6 +149,35 @@ func NewSAMLUpstream(ctx context.Context, cfg Config) (*SAMLUpstream, error) {
 		applyClockSkew(cfg.SAMLClockSkew)
 	}
 
+	// Install a custom ValidateRequestID. crewjam/saml's default short-
+	// circuits InResponseTo enforcement entirely when sp.AllowIDPInitiated
+	// is true — even on SP-initiated flows where ValidateAssertion passes
+	// expectedIDs=[p.requestID]. That would let an attacker who captured
+	// any valid signed assertion replay it against any current pending
+	// RelayState and complete a victim's OAuth flow under their own
+	// identity. Override the callback so the IdP-initiated escape only
+	// applies when the caller actually omitted expected IDs (the true
+	// IdP-initiated path); SP-initiated requests must still match
+	// InResponseTo.
+	sp.ValidateRequestID = func(response saml.Response, possibleRequestIDs []string) error {
+		if len(possibleRequestIDs) == 0 {
+			// True IdP-initiated path. Allow only when explicitly enabled;
+			// otherwise reject. ValidateAssertion already enforces this
+			// at the handler layer, but defending here too keeps the SP
+			// safe against any future caller that forgets the check.
+			if !cfg.SAMLAllowIdPInitiated {
+				return fmt.Errorf("saml: response missing InResponseTo and IdP-initiated SSO not allowed")
+			}
+			return nil
+		}
+		for _, id := range possibleRequestIDs {
+			if response.InResponseTo == id {
+				return nil
+			}
+		}
+		return fmt.Errorf("saml: response InResponseTo=%q does not match any expected request ID", response.InResponseTo)
+	}
+
 	upstream := &SAMLUpstream{
 		rawSP:        sp,
 		allowIdPInit: cfg.SAMLAllowIdPInitiated,
