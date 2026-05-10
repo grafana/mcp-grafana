@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"strings"
 	"time"
@@ -157,13 +158,16 @@ func identityFromGrafanaToken(tok *oauth2.Token) string {
 		parts := strings.Split(raw, ".")
 		if len(parts) == 3 {
 			payload, err := base64.RawURLEncoding.DecodeString(parts[1])
-			if err == nil {
+			if err != nil {
+				slog.Warn("grafana oauth: id_token base64 payload decode failed; falling back to access-token-hash identity", "error", err.Error())
+			} else {
 				type claims struct {
 					Sub string `json:"sub"`
 				}
 				var c claims
-				_ = json.Unmarshal(payload, &c)
-				if c.Sub != "" {
+				if err := json.Unmarshal(payload, &c); err != nil {
+					slog.Warn("grafana oauth: id_token JSON payload parse failed; falling back to access-token-hash identity", "error", err.Error())
+				} else if c.Sub != "" {
 					return c.Sub
 				}
 			}

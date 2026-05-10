@@ -240,6 +240,15 @@ func (s *Server) doRefreshUpstream(ctx context.Context, sess Session) (Session, 
 		return sess, fmt.Errorf("upstream refresh returned different identity %q (session bound to %q)",
 			result.Identity.String(), sess.Identity.String())
 	}
+	// A refresh response that surfaces an empty access token would seal
+	// "" into UpstreamCredsCT, leaving every subsequent request to 401
+	// against Grafana with no recovery path until the refresh token also
+	// expires. Treat it as an upstream error so the middleware's
+	// transient-blip path serves with the existing creds (if still valid)
+	// instead of silently breaking the session.
+	if len(result.UpstreamCreds) == 0 {
+		return sess, fmt.Errorf("upstream refresh returned empty access token")
+	}
 	credCT, err := s.Encryptor.Seal(result.UpstreamCreds)
 	if err != nil {
 		return sess, fmt.Errorf("encrypt new creds: %w", err)
