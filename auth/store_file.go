@@ -235,9 +235,20 @@ func (f *FileStore) PutAuthCode(ctx context.Context, c AuthCode) error {
 }
 
 func (f *FileStore) PeekAuthCode(ctx context.Context, h string) (AuthCode, error) {
-	f.mu.RLock()
-	defer f.mu.RUnlock()
-	return f.mem.PeekAuthCode(ctx, h)
+	// MemoryStore.PeekAuthCode prunes expired entries in place, so this
+	// is potentially a mutating call — take the write lock and flush on
+	// the not-found path (the only path where the inner method may have
+	// deleted). Without the flush, an expired code pruned in memory
+	// would reappear after restart from the disk snapshot.
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	c, err := f.mem.PeekAuthCode(ctx, h)
+	if err != nil {
+		if ferr := f.flush(); ferr != nil {
+			return c, ferr
+		}
+	}
+	return c, err
 }
 
 func (f *FileStore) ConsumeAuthCode(ctx context.Context, h string) (AuthCode, error) {

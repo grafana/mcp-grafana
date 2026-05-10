@@ -120,6 +120,11 @@ func (s *Server) unauthorized(w http.ResponseWriter, errCode, desc string) {
 		}
 	}
 	w.Header().Set("WWW-Authenticate", strings.Join(parts, ", "))
+	// Set Content-Type explicitly so clients don't fall back to Go's
+	// http.DetectContentType, which returns text/plain for short bodies
+	// starting with `{`. httpError sets this elsewhere in the package;
+	// the 401 path was the only one missing it.
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusUnauthorized)
 	_, _ = w.Write([]byte(`{"error":"unauthorized"}`))
 }
