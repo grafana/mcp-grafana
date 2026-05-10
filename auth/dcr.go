@@ -104,8 +104,8 @@ func validateRedirectURI(s string) error {
 }
 
 var (
-	errPlainHTTP = stringError("redirect_uri must use https or http loopback")
-	errBadScheme = stringError("redirect_uri must use https or http loopback")
+	errPlainHTTP = stringError("redirect_uri must use https; plain http is only allowed for loopback hosts")
+	errBadScheme = stringError("redirect_uri scheme must be https or http (got something else)")
 	errFragment  = stringError("redirect_uri must not contain a fragment")
 )
 
