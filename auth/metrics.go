@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"sync"
 
 	"go.opentelemetry.io/otel"
@@ -35,25 +36,25 @@ func NewMetrics() *Metrics {
 	return &Metrics{active: active, login: login, counts: make(map[Mode]int64)}
 }
 
-func (m *Metrics) SessionCreated(mode Mode) {
+func (m *Metrics) SessionCreated(ctx context.Context, mode Mode) {
 	if m == nil {
 		return
 	}
-	m.active.Add(nil, 1, metric.WithAttributes(attribute.String("mode", string(mode))))
+	m.active.Add(ctx, 1, metric.WithAttributes(attribute.String("mode", string(mode))))
 }
 
-func (m *Metrics) SessionRevoked(mode Mode) {
+func (m *Metrics) SessionRevoked(ctx context.Context, mode Mode) {
 	if m == nil {
 		return
 	}
-	m.active.Add(nil, -1, metric.WithAttributes(attribute.String("mode", string(mode))))
+	m.active.Add(ctx, -1, metric.WithAttributes(attribute.String("mode", string(mode))))
 }
 
-func (m *Metrics) LoginObserved(mode Mode, result string, durationSec float64) {
+func (m *Metrics) LoginObserved(ctx context.Context, mode Mode, result string, durationSec float64) {
 	if m == nil {
 		return
 	}
-	m.login.Record(nil, durationSec, metric.WithAttributes(
+	m.login.Record(ctx, durationSec, metric.WithAttributes(
 		attribute.String("mode", string(mode)),
 		attribute.String("result", result),
 	))

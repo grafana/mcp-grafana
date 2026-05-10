@@ -12,12 +12,15 @@ import (
 func TestMetrics_SessionActiveIncrementsAndDecrements(t *testing.T) {
 	reader := sdkmetric.NewManualReader()
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	original := otel.GetMeterProvider()
 	otel.SetMeterProvider(mp)
+	t.Cleanup(func() { otel.SetMeterProvider(original) })
 
+	ctx := context.Background()
 	m := NewMetrics()
-	m.SessionCreated(ModeOAuthOIDC)
-	m.SessionCreated(ModeOAuthOIDC)
-	m.SessionRevoked(ModeOAuthOIDC)
+	m.SessionCreated(ctx, ModeOAuthOIDC)
+	m.SessionCreated(ctx, ModeOAuthOIDC)
+	m.SessionRevoked(ctx, ModeOAuthOIDC)
 
 	var rm metricdata.ResourceMetrics
 	if err := reader.Collect(context.Background(), &rm); err != nil {

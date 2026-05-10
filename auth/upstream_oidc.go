@@ -96,8 +96,11 @@ func (u *OIDCUpstream) HandleCallback(ctx context.Context, params url.Values) (I
 		return Identity{}, nil, false, fmt.Errorf("unknown or replayed state")
 	}
 
-	ctx, span := otel.Tracer("mcp-grafana-auth").Start(ctx, "auth.upstream_token_exchange")
-	tok, err := u.oauth.Exchange(ctx, code, oauth2.SetAuthURLParam("code_verifier", p.verifier))
+	exchangeCtx, span := otel.Tracer("mcp-grafana-auth").Start(ctx, "auth.upstream_token_exchange")
+	tok, err := u.oauth.Exchange(exchangeCtx, code, oauth2.SetAuthURLParam("code_verifier", p.verifier))
+	if err != nil {
+		span.RecordError(err)
+	}
 	span.End()
 	if err != nil {
 		return Identity{}, nil, false, fmt.Errorf("token exchange: %w", err)
