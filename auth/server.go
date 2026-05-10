@@ -31,13 +31,17 @@ func (s *Server) logger() *slog.Logger {
 // the bootstrap handler so it can validate pasted tokens against the right
 // Grafana instance.
 func (s *Server) RegisterRoutes(mux *http.ServeMux, grafanaURL string) {
+	authLim := NewIPLimiter(10, time.Minute)
+	bootLim := NewIPLimiter(3, time.Minute)
+	dcrLim := NewIPLimiter(5, time.Minute)
+
 	mux.Handle("/.well-known/oauth-authorization-server", ASMetadataHandler(s.PublicURL))
 	mux.Handle("/.well-known/oauth-protected-resource", ProtectedResourceMetadataHandler(s.PublicURL))
-	mux.Handle("/register", DCRHandler(s.Store))
-	mux.Handle("/authorize", s.AuthorizeHandler())
-	mux.Handle("/callback", s.CallbackHandler())
-	mux.Handle("/token", s.TokenHandler())
-	mux.Handle("/bootstrap", s.BootstrapHandler(grafanaURL))
+	mux.Handle("/register", dcrLim.Wrap(DCRHandler(s.Store)))
+	mux.Handle("/authorize", authLim.Wrap(s.AuthorizeHandler()))
+	mux.Handle("/callback", authLim.Wrap(s.CallbackHandler()))
+	mux.Handle("/token", authLim.Wrap(s.TokenHandler()))
+	mux.Handle("/bootstrap", bootLim.Wrap(s.BootstrapHandler(grafanaURL)))
 }
 
 // New constructs a Server from a validated Config plus an Encryptor and
