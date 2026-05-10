@@ -177,8 +177,16 @@ def auth_mcp(mock_oidc):
     enc_key = secrets.token_bytes(32).hex()
     env = os.environ.copy()
     env["GRAFANA_URL"] = "http://localhost:3000"
+    # The Makefile's `build` target outputs to dist/mcp-grafana; respect
+    # the same MCP_GRAFANA_PATH env override the rest of the suite uses
+    # (see line 108) so `make build && pytest tests/` works without
+    # extra steps.
+    binary = os.environ.get(
+        "MCP_GRAFANA_PATH",
+        os.path.join(_REPO_ROOT, "dist", "mcp-grafana"),
+    )
     proc = subprocess.Popen([
-        _exe(os.path.join(_REPO_ROOT, "mcp-grafana")),
+        _exe(binary),
         "-t", "streamable-http",
         "-address", f":{port}",
         "--auth-mode", "oauth-oidc",

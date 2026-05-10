@@ -9,14 +9,19 @@ import (
 // document. publicURL is the base URL (no trailing slash).
 func ASMetadataHandler(publicURL string) http.Handler {
 	doc := map[string]any{
-		"issuer":                                publicURL,
-		"authorization_endpoint":                publicURL + "/authorize",
-		"token_endpoint":                        publicURL + "/token",
-		"registration_endpoint":                 publicURL + "/register",
-		"response_types_supported":              []string{"code"},
-		"grant_types_supported":                 []string{"authorization_code", "refresh_token"},
-		"code_challenge_methods_supported":      []string{"S256"},
-		"token_endpoint_auth_methods_supported": []string{"none", "client_secret_basic"},
+		"issuer":                           publicURL,
+		"authorization_endpoint":           publicURL + "/authorize",
+		"token_endpoint":                   publicURL + "/token",
+		"registration_endpoint":            publicURL + "/register",
+		"response_types_supported":         []string{"code"},
+		"grant_types_supported":            []string{"authorization_code", "refresh_token"},
+		"code_challenge_methods_supported": []string{"S256"},
+		// PKCE-only: DCR never issues a client_secret and the token
+		// endpoint accepts only public clients (method "none"). Don't
+		// advertise client_secret_basic — a spec-compliant MCP client
+		// would otherwise try to negotiate it and get confusing
+		// failures on the token-exchange.
+		"token_endpoint_auth_methods_supported": []string{"none"},
 	}
 	return jsonHandler(doc)
 }
