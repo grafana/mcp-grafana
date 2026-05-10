@@ -6,6 +6,7 @@ import base64
 import secrets
 import socket
 import subprocess
+import sys
 import time
 from dotenv import load_dotenv
 from mcp.client.sse import sse_client
@@ -139,11 +140,22 @@ def _free_port():
         return s.getsockname()[1]
 
 
+def _exe(name: str) -> str:
+    """Append .exe on Windows so Python's subprocess can find Go binaries."""
+    if sys.platform == "win32" and not name.endswith(".exe"):
+        return name + ".exe"
+    return name
+
+
+# Repo root (parent of tests/) so binary paths resolve regardless of pytest cwd.
+_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
+
+
 @pytest.fixture(scope="session")
 def mock_oidc():
     port = _free_port()
     proc = subprocess.Popen(
-        ["./bin/mock-oidc", "-addr", f":{port}"],
+        [_exe(os.path.join(_REPO_ROOT, "bin", "mock-oidc")), "-addr", f":{port}"],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
     # Wait for ready.
@@ -166,7 +178,7 @@ def auth_mcp(mock_oidc):
     env = os.environ.copy()
     env["GRAFANA_URL"] = "http://localhost:3000"
     proc = subprocess.Popen([
-        "./mcp-grafana",
+        _exe(os.path.join(_REPO_ROOT, "mcp-grafana")),
         "-t", "streamable-http",
         "-address", f":{port}",
         "--auth-mode", "oauth-oidc",
@@ -175,6 +187,9 @@ def auth_mcp(mock_oidc):
         "--token-encryption-key", enc_key,
         "--oidc-issuer-url", mock_oidc["issuer"],
         "--oidc-client-id", mock_oidc["client_id"],
+        # Stateless mode: skips MCP session-id handshake, so the test can
+        # POST tools/list directly with just the OAuth Bearer.
+        "--disable-proxied",
     ], env=env)
     for _ in range(50):
         try:

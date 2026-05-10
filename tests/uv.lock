@@ -1733,6 +1733,7 @@ dev = [
     { name = "pytest" },
     { name = "pytest-rerunfailures" },
     { name = "python-dotenv" },
+    { name = "requests" },
 ]
 
 [package.metadata]
@@ -1746,6 +1747,7 @@ dev = [
     { name = "pytest", specifier = ">=9.0.3" },
     { name = "pytest-rerunfailures", specifier = ">=15.0" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
+    { name = "requests", specifier = ">=2.32.0" },
 ]
 
 [[package]]

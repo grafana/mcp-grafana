@@ -13,7 +13,17 @@ import hashlib
 import os
 import secrets
 import urllib.parse
+
+import pytest
 import requests
+
+
+# Override the async autouse cleanup_sessions fixture from conftest with a
+# sync no-op. This file's tests are sync (driving HTTP via requests), and the
+# conftest fixture is intended for async MCP-client tests.
+@pytest.fixture(autouse=True)
+def cleanup_sessions():
+    yield
 
 
 def _pkce_pair():
@@ -63,9 +73,11 @@ def test_full_oauth_flow(auth_mcp):
 
     # 4. Hit /callback -> 302 to /bootstrap?flow=...
     cb = requests.get(callback_url, allow_redirects=False)
-    assert cb.status_code == 302
+    assert cb.status_code == 302, f"callback status={cb.status_code} body={cb.text}"
     boot = urllib.parse.urlparse(cb.headers["Location"])
-    flow = urllib.parse.parse_qs(boot.query)["flow"][0]
+    boot_query = urllib.parse.parse_qs(boot.query)
+    assert "flow" in boot_query, f"callback redirected to {cb.headers['Location']!r}"
+    flow = boot_query["flow"][0]
 
     # 5. Provision a Grafana SA token, paste into /bootstrap.
     sa_token = _provision_grafana_sa_token()
