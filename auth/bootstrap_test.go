@@ -110,6 +110,50 @@ func TestBootstrap_POST_ValidatesAndStoresToken(t *testing.T) {
 	}
 }
 
+// A flow token must be consumed exactly once: a second concurrent POST
+// against the same token must be rejected, otherwise both requests would
+// mint auth codes for the same identity, and the second-to-finish would
+// silently invalidate the first (one-session-per-identity invariant).
+func TestBootstrap_POST_RejectsDoubleConsume(t *testing.T) {
+	gf := fakeGrafana(t, "good-token")
+	defer gf.Close()
+	srv := &Server{
+		PublicURL:   "https://mcp.example.com",
+		Store:       NewMemoryStore(),
+		Encryptor:   mustEnc(t, mustKey(t), nil),
+		AuthCodeTTL: 5 * time.Minute,
+	}
+	storeBootstrap("flow-double", &pendingBootstrap{
+		identity:            Identity{Mode: ModeOAuthOIDC, ID: "alice"},
+		clientID:            "cid",
+		redirectURI:         "http://localhost:1/cb",
+		clientState:         "client-state",
+		codeChallenge:       "x",
+		codeChallengeMethod: "S256",
+		createdAt:           time.Now(),
+	})
+
+	doPost := func() *httptest.ResponseRecorder {
+		form := url.Values{}
+		form.Set("flow", "flow-double")
+		form.Set("grafana_token", "good-token")
+		r := httptest.NewRequest(http.MethodPost, "/bootstrap", strings.NewReader(form.Encode()))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		w := httptest.NewRecorder()
+		srv.BootstrapHandler(gf.URL).ServeHTTP(w, r)
+		return w
+	}
+
+	first := doPost()
+	if first.Code != http.StatusFound {
+		t.Fatalf("first POST status=%d body=%s", first.Code, first.Body)
+	}
+	second := doPost()
+	if second.Code != http.StatusBadRequest {
+		t.Errorf("second POST status=%d (want 400 already consumed) body=%s", second.Code, second.Body)
+	}
+}
+
 func TestBootstrap_POST_BadToken(t *testing.T) {
 	gf := fakeGrafana(t, "good-token")
 	defer gf.Close()

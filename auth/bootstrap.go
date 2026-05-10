@@ -105,10 +105,19 @@ func (s *Server) processBootstrap(w http.ResponseWriter, r *http.Request, grafan
 		return
 	}
 
-	// Token good — consume the flow, redirect to the AS auth-code path.
-	// The encrypted SA token is carried on the auth code (UpstreamCredsCT);
-	// the real Session is written later by /token's handleAuthCodeGrant.
-	_, _ = consumeBootstrap(flow)
+	// Token good — atomically claim the flow before issuing an auth code.
+	// peekBootstrap above is a non-consuming read; a concurrent POST for the
+	// same flow token could race in between. consumeBootstrap returns
+	// ok=false if a sibling already claimed it, in which case we reject
+	// this request rather than mint a duplicate auth code that would
+	// silently invalidate the first client's session via the
+	// one-session-per-identity invariant.
+	claimed, ok := consumeBootstrap(flow)
+	if !ok {
+		httpError(w, http.StatusBadRequest, "invalid_request", "flow already consumed")
+		return
+	}
+	pb = *claimed
 
 	ct, err := s.Encryptor.Seal([]byte(token))
 	if err != nil {
