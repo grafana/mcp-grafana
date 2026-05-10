@@ -110,13 +110,6 @@ func (c *Cache) Get(ctx context.Context, key string) (Snapshot, error) {
 	}
 
 	v, err, _ := c.flight.Do(key, func() (any, error) {
-		// Record CacheMiss inside the singleflight closure so it counts
-		// once per actual upstream fetch rather than once per coalesced
-		// waiter. Concurrent callers for the same key that the
-		// singleflight collapses share this miss; the hit/miss ratio on
-		// dashboards now reflects fetch frequency, not request frequency.
-		c.recordMiss(ctx)
-
 		// Detach from the caller's context. Singleflight coalesces
 		// concurrent waiters onto the goroutine that won the race; if we
 		// forwarded that goroutine's request ctx and it cancelled (e.g.
@@ -126,6 +119,17 @@ func (c *Cache) Get(ctx context.Context, key string) (Snapshot, error) {
 		// can't keep the flight open indefinitely.
 		fetchCtx, cancel := context.WithTimeout(context.Background(), fetchTimeout)
 		defer cancel()
+
+		// Record CacheMiss inside the singleflight closure so it counts
+		// once per actual upstream fetch rather than once per coalesced
+		// waiter. Concurrent callers for the same key that the
+		// singleflight collapses share this miss; the hit/miss ratio on
+		// dashboards now reflects fetch frequency, not request frequency.
+		// Use the detached fetchCtx (not the outer ctx) so the metric
+		// emission doesn't get a cancelled context if the winning
+		// goroutine's caller already disconnected.
+		c.recordMiss(fetchCtx)
+
 		snap, err := c.fetcher(fetchCtx, key)
 		if err != nil {
 			return Snapshot{}, err

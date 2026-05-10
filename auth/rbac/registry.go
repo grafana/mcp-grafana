@@ -21,7 +21,7 @@ var ToolGates = map[string]ToolGate{
 		MinBasicRole: "Viewer",
 	},
 	"search_folders": {
-		Permissions:  []Permission{{Action: "dashboards:read"}},
+		Permissions:  []Permission{{Action: "folders:read"}},
 		MinBasicRole: "Viewer",
 	},
 
