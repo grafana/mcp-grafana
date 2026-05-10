@@ -45,6 +45,7 @@ func (s *stubSAMLValidator) Refresh(_ context.Context, _ []byte) (CallbackResult
 
 func TestSAMLMetadataHandler_ServesXML(t *testing.T) {
 	srv := &Server{
+		Metrics:   NewMetrics(),
 		PublicURL: "https://mcp.example.com",
 		Upstream: &stubSAMLValidator{
 			metadata: []byte(`<EntityDescriptor></EntityDescriptor>`),
@@ -69,6 +70,7 @@ func TestSAMLACSHandler_FirstLogin_RedirectsToBootstrap(t *testing.T) {
 	enc := mustEnc(t, mustKey(t), nil)
 	store := NewMemoryStore()
 	srv := &Server{
+		Metrics:   NewMetrics(),
 		PublicURL: "https://mcp.example.com",
 		Store:     store,
 		Encryptor: enc,
@@ -122,6 +124,7 @@ func TestSAMLACSHandler_RepeatLogin_ShortcutsToClient(t *testing.T) {
 	})
 
 	srv := &Server{
+		Metrics:   NewMetrics(),
 		PublicURL: "https://mcp.example.com",
 		Store:     store,
 		Encryptor: enc,
@@ -159,6 +162,7 @@ func TestSAMLACSHandler_RepeatLogin_ShortcutsToClient(t *testing.T) {
 
 func TestSAMLACSHandler_InvalidAssertion_400(t *testing.T) {
 	srv := &Server{
+		Metrics:   NewMetrics(),
 		PublicURL: "https://mcp.example.com",
 		Upstream: &stubSAMLValidator{
 			assertErr: ErrSAMLInvalidAssertion,
@@ -199,6 +203,7 @@ func TestSAMLSLSHandler_DeletesSession(t *testing.T) {
 	})
 
 	srv := &Server{
+		Metrics:   NewMetrics(),
 		PublicURL: "https://mcp.example.com",
 		Store:     store,
 		Encryptor: enc,
