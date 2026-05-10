@@ -41,22 +41,19 @@ type SAMLUpstream struct {
 	// middleware's cookie/session helpers.
 	rawSP *saml.ServiceProvider
 
-	cfg samlConfig
+	// allowIdPInit mirrors cfg.SAMLAllowIdPInitiated. The other SAML
+	// configuration values (entity ID, ACS URL, SLO URL, NameIDFormat,
+	// attribute names, clock skew) are baked into rawSP at construction
+	// time or — for clock skew — into the package-level saml.MaxClockSkew
+	// global via applyClockSkew. Don't re-store them on the struct: the
+	// rawSP / library is the source of truth, and a dead copy here would
+	// invite the same field-vs-global confusion the previous samlConfig
+	// had with ClockSkew.
+	allowIdPInit bool
 
 	// Per-RelayState pendings tracking the SAML RequestID we issued, so the
 	// ACS handler can pin the inbound assertion to the request we sent out.
 	pendings *pendingRegistry[*samlPending]
-}
-
-type samlConfig struct {
-	EntityID     string
-	AcsURL       string
-	SloURL       string
-	NameIDFormat string
-	AttrEmail    string
-	AttrGroups   string
-	AllowIdPInit bool
-	ClockSkew    time.Duration
 }
 
 type samlPending struct {
@@ -153,18 +150,9 @@ func NewSAMLUpstream(ctx context.Context, cfg Config) (*SAMLUpstream, error) {
 	}
 
 	upstream := &SAMLUpstream{
-		rawSP: sp,
-		cfg: samlConfig{
-			EntityID:     sp.EntityID,
-			AcsURL:       sp.AcsURL.String(),
-			SloURL:       sp.SloURL.String(),
-			NameIDFormat: cfg.SAMLNameIDFormat,
-			AttrEmail:    cfg.SAMLAttributeEmail,
-			AttrGroups:   cfg.SAMLAttributeGroups,
-			AllowIdPInit: cfg.SAMLAllowIdPInitiated,
-			ClockSkew:    cfg.SAMLClockSkew,
-		},
-		pendings: newPendingRegistry[*samlPending](samlPendingTTL),
+		rawSP:        sp,
+		allowIdPInit: cfg.SAMLAllowIdPInitiated,
+		pendings:     newPendingRegistry[*samlPending](samlPendingTTL),
 	}
 
 	if cfg.SAMLEnableSLO {
@@ -347,7 +335,7 @@ func (u *SAMLUpstream) ValidateAssertion(r *http.Request) (samlAssertion, error)
 		}
 		expectedIDs = []string{p.requestID}
 	} else {
-		if !u.cfg.AllowIdPInit {
+		if !u.allowIdPInit {
 			return samlAssertion{}, fmt.Errorf("%w: missing RelayState (IdP-initiated SSO disabled)", ErrSAMLInvalidAssertion)
 		}
 		// expectedIDs stays nil → unsolicited-response acceptance.

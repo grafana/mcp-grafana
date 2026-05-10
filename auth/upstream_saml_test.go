@@ -45,11 +45,13 @@ func TestNewSAMLUpstream_ConstructsServiceProvider(t *testing.T) {
 	if up.Mode() != ModeSAML {
 		t.Errorf("Mode() = %q", up.Mode())
 	}
-	if up.cfg.AcsURL != "https://mcp.example.com/saml/acs" {
-		t.Errorf("AcsURL = %q", up.cfg.AcsURL)
+	// rawSP is the configured ServiceProvider; assert against it directly,
+	// not a parallel cfg copy that would silently drift from rawSP.
+	if got := up.rawSP.AcsURL.String(); got != "https://mcp.example.com/saml/acs" {
+		t.Errorf("AcsURL = %q", got)
 	}
-	if up.cfg.EntityID != "https://mcp.example.com/saml/metadata" {
-		t.Errorf("default EntityID = %q", up.cfg.EntityID)
+	if got := up.rawSP.EntityID; got != "https://mcp.example.com/saml/metadata" {
+		t.Errorf("default EntityID = %q", got)
 	}
 }
 
