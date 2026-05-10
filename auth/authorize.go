@@ -26,8 +26,8 @@ const pendingFlowTTL = 15 * time.Minute
 // In-memory pending-flow registry. Keyed by upstream state value.
 // State values are large random tokens; collisions are infeasible.
 var (
-	pendingMu       sync.Mutex
-	pendings        = map[string]*pendingFlow{}
+	pendingMu        sync.Mutex
+	pendings         = map[string]*pendingFlow{}
 	pendingLastSwept time.Time
 )
 

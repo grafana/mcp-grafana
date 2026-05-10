@@ -28,6 +28,7 @@ func newCallbackServer(t *testing.T, upHas bool) (*Server, *MemoryStore) {
 	store := NewMemoryStore()
 	enc := mustEnc(t, mustKey(t), nil)
 	srv := &Server{
+		Metrics:   NewMetrics(),
 		PublicURL: "https://mcp.example.com",
 		Store:     store,
 		Encryptor: enc,
@@ -173,6 +174,7 @@ func (f *failingAuthCodeStore) PutAuthCode(_ context.Context, _ AuthCode) error 
 func TestCompleteAuthCode_PutFails_RedirectsWithGenericDescription(t *testing.T) {
 	enc := mustEnc(t, mustKey(t), nil)
 	srv := &Server{
+		Metrics:     NewMetrics(),
 		PublicURL:   "https://mcp.example.com",
 		Store:       &failingAuthCodeStore{MemoryStore: NewMemoryStore()},
 		Encryptor:   enc,

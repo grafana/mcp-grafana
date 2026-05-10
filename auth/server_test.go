@@ -9,6 +9,7 @@ import (
 
 func TestRegisterRoutes_AllPathsRespond(t *testing.T) {
 	srv := &Server{
+		Metrics:        NewMetrics(),
 		PublicURL:      "https://mcp.example.com",
 		Store:          NewMemoryStore(),
 		Encryptor:      mustEnc(t, mustKey(t), nil),

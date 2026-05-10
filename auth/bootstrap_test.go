@@ -28,6 +28,7 @@ func fakeGrafana(t *testing.T, expectedToken string) *httptest.Server {
 
 func TestBootstrap_GET_RendersForm(t *testing.T) {
 	srv := &Server{
+		Metrics:   NewMetrics(),
 		PublicURL: "https://mcp.example.com",
 		Store:     NewMemoryStore(),
 		Encryptor: mustEnc(t, mustKey(t), nil),
@@ -59,6 +60,7 @@ func TestBootstrap_POST_ValidatesAndStoresToken(t *testing.T) {
 	gf := fakeGrafana(t, "good-token")
 	defer gf.Close()
 	srv := &Server{
+		Metrics:     NewMetrics(),
 		PublicURL:   "https://mcp.example.com",
 		Store:       NewMemoryStore(),
 		Encryptor:   mustEnc(t, mustKey(t), nil),
@@ -118,6 +120,7 @@ func TestBootstrap_POST_RejectsDoubleConsume(t *testing.T) {
 	gf := fakeGrafana(t, "good-token")
 	defer gf.Close()
 	srv := &Server{
+		Metrics:     NewMetrics(),
 		PublicURL:   "https://mcp.example.com",
 		Store:       NewMemoryStore(),
 		Encryptor:   mustEnc(t, mustKey(t), nil),
@@ -158,6 +161,7 @@ func TestBootstrap_POST_BadToken(t *testing.T) {
 	gf := fakeGrafana(t, "good-token")
 	defer gf.Close()
 	srv := &Server{
+		Metrics:   NewMetrics(),
 		PublicURL: "https://mcp.example.com",
 		Store:     NewMemoryStore(),
 		Encryptor: mustEnc(t, mustKey(t), nil),

@@ -13,6 +13,7 @@ import (
 
 func TestMiddleware_NoBearer_401(t *testing.T) {
 	srv := &Server{
+		Metrics:   NewMetrics(),
 		PublicURL: "https://mcp.example.com",
 		Store:     NewMemoryStore(),
 		Encryptor: mustEnc(t, mustKey(t), nil),
@@ -38,6 +39,7 @@ func TestMiddleware_GoodBearer_PopulatesContext(t *testing.T) {
 	enc := mustEnc(t, mustKey(t), nil)
 	store := NewMemoryStore()
 	srv := &Server{
+		Metrics:   NewMetrics(),
 		PublicURL: "https://mcp.example.com",
 		Store:     store,
 		Encryptor: enc,
@@ -77,6 +79,7 @@ func TestMiddleware_PinsGrafanaURL(t *testing.T) {
 	enc := mustEnc(t, mustKey(t), nil)
 	store := NewMemoryStore()
 	srv := &Server{
+		Metrics:    NewMetrics(),
 		PublicURL:  "https://mcp.example.com",
 		GrafanaURL: "https://grafana.internal:3000",
 		Store:      store,
@@ -112,6 +115,7 @@ func TestMiddleware_ExpiredBearer_401(t *testing.T) {
 	enc := mustEnc(t, mustKey(t), nil)
 	store := NewMemoryStore()
 	srv := &Server{
+		Metrics:   NewMetrics(),
 		PublicURL: "https://mcp.example.com",
 		Store:     store,
 		Encryptor: enc,

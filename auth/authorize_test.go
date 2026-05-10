@@ -33,6 +33,7 @@ func newAuthorizeServer(t *testing.T) (*Server, *MemoryStore, *stubUpstream) {
 	store := NewMemoryStore()
 	up := &stubUpstream{mode: ModeOAuthOIDC, authURL: "https://idp.example.com/auth"}
 	srv := &Server{
+		Metrics:   NewMetrics(),
 		PublicURL: "https://mcp.example.com",
 		Store:     store,
 		Upstream:  up,

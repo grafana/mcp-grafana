@@ -16,6 +16,7 @@ import (
 func newTokenServer(t *testing.T) *Server {
 	t.Helper()
 	return &Server{
+		Metrics:         NewMetrics(),
 		PublicURL:       "https://mcp.example.com",
 		Store:           NewMemoryStore(),
 		Encryptor:       mustEnc(t, mustKey(t), nil),
