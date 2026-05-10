@@ -18,7 +18,6 @@ type Server struct {
 	AccessTokenTTL  time.Duration
 	RefreshTokenTTL time.Duration
 	AuthCodeTTL     time.Duration
-	PendingFlowTTL  time.Duration
 }
 
 func (s *Server) logger() *slog.Logger {
@@ -61,6 +60,5 @@ func New(cfg Config, store Store, enc *Encryptor, upstream Upstream, logger *slo
 		AccessTokenTTL:  time.Hour,
 		RefreshTokenTTL: 30 * 24 * time.Hour,
 		AuthCodeTTL:     5 * time.Minute,
-		PendingFlowTTL:  15 * time.Minute,
 	}
 }

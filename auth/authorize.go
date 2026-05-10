@@ -18,9 +18,9 @@ type pendingFlow struct {
 }
 
 // pendingFlowTTL bounds how long an /authorize-side pending entry is kept
-// before it's swept away. It matches the default Server.PendingFlowTTL
-// (15 minutes); a user-agent that began the OAuth dance and never
-// completed it has its slot reclaimed once the TTL elapses.
+// before it's swept away. A user-agent that began the OAuth dance and
+// never completed it has its slot reclaimed once the TTL elapses. The
+// value matches the bootstrap-side TTL in callback.go for consistency.
 const pendingFlowTTL = 15 * time.Minute
 
 // In-memory pending-flow registry. Keyed by upstream state value.
