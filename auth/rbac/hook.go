@@ -77,13 +77,14 @@ func (e *Engine) HookOnAfterListTools() server.OnAfterListToolsFunc {
 			return // no session: leave the tool list alone (legacy path)
 		}
 
-		// Time the filter and record under the FINAL resolved mode. We can't
-		// use Metrics.Stopwatch here because it captures `mode` by value at
-		// call time — for the first request after startup, that's ModeAuto,
-		// and the metric would be recorded under "auto" instead of the
-		// post-recordEdition value. The closure below captures `mode` by
-		// reference, so it sees whatever it's been reassigned to by the
-		// time the deferred call runs.
+		// Time the filter and record under the FINAL resolved mode. The
+		// closure captures `mode` by reference, so the deferred call sees
+		// whatever value `mode` was reassigned to (post-recordEdition for
+		// ModeAuto, post-early-return otherwise) by the time the hook
+		// returns. This matters on the first request after startup: at the
+		// top of the hook `mode == ModeAuto`, but recordEdition flips it
+		// below to the resolved mode, and the metric must be recorded
+		// under that resolved value rather than under "auto".
 		start := time.Now()
 		defer func() {
 			e.cfg.Metrics.FilterObserved(ctx, mode, time.Since(start).Seconds())
