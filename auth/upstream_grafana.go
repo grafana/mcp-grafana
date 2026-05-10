@@ -83,8 +83,12 @@ func (u *GrafanaUpstream) sweepPendingsLocked(now time.Time) {
 func (u *GrafanaUpstream) Mode() Mode { return ModeOAuthGrafana }
 
 // AuthorizeURL stores a per-state PKCE verifier and returns the upstream
-// authorize URL.
-func (u *GrafanaUpstream) AuthorizeURL(_redirectURI, state string) string {
+// authorize URL. If redirectURI is non-empty it overrides the configured
+// RedirectURL for this flow; otherwise the configured value (set during
+// NewGrafanaUpstream) is used. Mirrors OIDCUpstream's AuthorizeURL so
+// callers that vary the redirect per flow (e.g. multi-tenant deployments)
+// get consistent behaviour across upstreams.
+func (u *GrafanaUpstream) AuthorizeURL(redirectURI, state string) string {
 	verifier := randURL(32)
 	sum := sha256.Sum256([]byte(verifier))
 	challenge := base64.RawURLEncoding.EncodeToString(sum[:])
@@ -94,10 +98,14 @@ func (u *GrafanaUpstream) AuthorizeURL(_redirectURI, state string) string {
 	u.pendings[state] = &grafanaPending{verifier: verifier, createdAt: time.Now()}
 	u.mu.Unlock()
 
-	return u.oauth.AuthCodeURL(state,
+	opts := []oauth2.AuthCodeOption{
 		oauth2.SetAuthURLParam("code_challenge", challenge),
 		oauth2.SetAuthURLParam("code_challenge_method", "S256"),
-	)
+	}
+	if redirectURI != "" {
+		opts = append(opts, oauth2.SetAuthURLParam("redirect_uri", redirectURI))
+	}
+	return u.oauth.AuthCodeURL(state, opts...)
 }
 
 // HandleCallback exchanges the upstream code and packages the result.
