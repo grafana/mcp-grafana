@@ -154,7 +154,13 @@ func (f *FileStore) flush() error {
 		_ = os.Remove(tmp.Name())
 		return err
 	}
-	return os.Rename(tmp.Name(), f.path)
+	if err := os.Rename(tmp.Name(), f.path); err != nil {
+		// Cross-device or permission errors leave the temp file behind.
+		// Drop it so successive failures don't accumulate orphans.
+		_ = os.Remove(tmp.Name())
+		return err
+	}
+	return nil
 }
 
 func (f *FileStore) Close() error { return nil }

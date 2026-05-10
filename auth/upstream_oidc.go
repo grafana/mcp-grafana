@@ -60,8 +60,10 @@ func NewOIDCUpstream(ctx context.Context, cfg Config) (*OIDCUpstream, error) {
 func (u *OIDCUpstream) Mode() Mode { return ModeOAuthOIDC }
 
 // AuthorizeURL stores a per-state PKCE verifier and returns the upstream
-// authorize URL with PKCE + nonce parameters.
-func (u *OIDCUpstream) AuthorizeURL(_redirectURI, state string) string {
+// authorize URL with PKCE + nonce parameters. If redirectURI is non-empty
+// it overrides the configured RedirectURL for this flow; otherwise the
+// configured value (set during NewOIDCUpstream) is used.
+func (u *OIDCUpstream) AuthorizeURL(redirectURI, state string) string {
 	verifier := randURL(32)
 	sum := sha256.Sum256([]byte(verifier))
 	challenge := base64.RawURLEncoding.EncodeToString(sum[:])
@@ -71,11 +73,15 @@ func (u *OIDCUpstream) AuthorizeURL(_redirectURI, state string) string {
 	u.pendings[state] = &oidcPending{verifier: verifier, nonce: nonce}
 	u.mu.Unlock()
 
-	return u.oauth.AuthCodeURL(state,
+	opts := []oauth2.AuthCodeOption{
 		oauth2.SetAuthURLParam("code_challenge", challenge),
 		oauth2.SetAuthURLParam("code_challenge_method", "S256"),
 		oidc.Nonce(nonce),
-	)
+	}
+	if redirectURI != "" {
+		opts = append(opts, oauth2.SetAuthURLParam("redirect_uri", redirectURI))
+	}
+	return u.oauth.AuthCodeURL(state, opts...)
 }
 
 // HandleCallback exchanges the upstream code, validates the ID token, and

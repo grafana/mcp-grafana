@@ -36,6 +36,36 @@ func TestRateLimit_BucketRefills(t *testing.T) {
 	}
 }
 
+// TestRateLimit_ContinuousRefill_NoBoundaryBurst confirms that after
+// exhausting tokens, the bucket regenerates one token per (refill/max)
+// duration rather than refilling all-at-once at the window boundary —
+// preventing the 2×max burst that a fixed-window limiter would allow.
+func TestRateLimit_ContinuousRefill_NoBoundaryBurst(t *testing.T) {
+	// max=4, refill=200ms → one token regenerates every 50ms.
+	limiter := NewIPLimiter(4, 200*time.Millisecond)
+	allow := func() bool { return limiter.allow("10.0.0.1") }
+
+	// Drain the bucket.
+	for i := 0; i < 4; i++ {
+		if !allow() {
+			t.Fatalf("initial drain: request %d unexpectedly limited", i+1)
+		}
+	}
+	if allow() {
+		t.Fatalf("expected limit after drain")
+	}
+
+	// Sleep just over one perToken interval (50ms). One token should be
+	// available, not all 4.
+	time.Sleep(60 * time.Millisecond)
+	if !allow() {
+		t.Errorf("expected one regenerated token after 60ms")
+	}
+	if allow() {
+		t.Errorf("expected only one regenerated token, second request should be limited")
+	}
+}
+
 func TestRateLimit_PerIPIsolation(t *testing.T) {
 	limiter := NewIPLimiter(1, time.Second)
 	handler := limiter.Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

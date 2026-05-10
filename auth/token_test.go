@@ -24,6 +24,56 @@ func newTokenServer(t *testing.T) *Server {
 	}
 }
 
+// TestToken_NilMetricsDoesNotPanic confirms that constructing a Server
+// without a Metrics instance (e.g., in tests or library usage that doesn't
+// call auth.New) doesn't panic when the token-grant path emits its
+// SessionCreated call. The Metrics methods have nil-receiver guards; this
+// test locks that invariant in.
+func TestToken_NilMetricsDoesNotPanic(t *testing.T) {
+	srv := &Server{
+		PublicURL:       "https://mcp.example.com",
+		Store:           NewMemoryStore(),
+		Encryptor:       mustEnc(t, mustKey(t), nil),
+		AccessTokenTTL:  time.Hour,
+		RefreshTokenTTL: 24 * time.Hour,
+		// Metrics intentionally nil.
+	}
+	ctx := context.Background()
+
+	verifier := "the-code-verifier"
+	sum := sha256.Sum256([]byte(verifier))
+	challenge := base64.RawURLEncoding.EncodeToString(sum[:])
+	plainCode, hashedCode := NewAuthCode()
+	credCT, _ := srv.Encryptor.Seal([]byte("sa-token"))
+	_ = srv.Store.PutAuthCode(ctx, AuthCode{
+		Code:                hashedCode,
+		ClientID:            "cid",
+		RedirectURI:         "http://localhost:1/cb",
+		CodeChallenge:       challenge,
+		CodeChallengeMethod: "S256",
+		Identity:            Identity{Mode: ModeOAuthOIDC, ID: "alice"},
+		UpstreamCredsCT:     credCT,
+		ExpiresAt:           time.Now().Add(5 * time.Minute),
+	})
+
+	form := url.Values{}
+	form.Set("grant_type", "authorization_code")
+	form.Set("code", plainCode)
+	form.Set("redirect_uri", "http://localhost:1/cb")
+	form.Set("client_id", "cid")
+	form.Set("code_verifier", verifier)
+	r := httptest.NewRequest(http.MethodPost, "/token", strings.NewReader(form.Encode()))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+
+	// Must not panic.
+	srv.TokenHandler().ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status=%d, expected 200 even with nil Metrics", w.Code)
+	}
+}
+
 func TestToken_RedeemAuthCode(t *testing.T) {
 	srv := newTokenServer(t)
 	ctx := context.Background()

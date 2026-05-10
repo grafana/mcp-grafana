@@ -79,6 +79,45 @@ func TestFileStore_MissingFileIsEmpty(t *testing.T) {
 	}
 }
 
+// TestFileStore_RenameFailureCleansTempFile verifies that when os.Rename
+// fails inside flush() the temp file is removed so failed flushes don't
+// leave orphans accumulating in the state directory.
+func TestFileStore_RenameFailureCleansTempFile(t *testing.T) {
+	dir := t.TempDir()
+	enc := mustEnc(t, mustKey(t), nil)
+	path := filepath.Join(dir, "auth.state")
+
+	s, err := NewFileStore(path, enc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	// Replace the target path with a directory of the same name. On most
+	// platforms os.Rename from a regular file to an existing directory fails.
+	if err := os.Mkdir(path, 0700); err != nil {
+		t.Fatal(err)
+	}
+
+	// Trigger a flush — should fail at os.Rename.
+	err = s.PutSession(context.Background(), sealedTestSession(t, "x", enc))
+	if err == nil {
+		t.Skip("os.Rename succeeded against a directory target — platform-specific; cleanup test not applicable here")
+	}
+
+	// Anything other than the directory means the temp file leaked.
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.Name() == "auth.state" {
+			continue
+		}
+		t.Errorf("temp file leaked after rename failure: %s", e.Name())
+	}
+}
+
 func TestFileStore_NoLingeringTempFiles(t *testing.T) {
 	dir := t.TempDir()
 	enc := mustEnc(t, mustKey(t), nil)

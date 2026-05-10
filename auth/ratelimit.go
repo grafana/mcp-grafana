@@ -53,11 +53,25 @@ func (l *IPLimiter) allow(ip string) bool {
 		l.buckets[ip] = &bucket{tokens: l.max - 1, updatedAt: now}
 		return true
 	}
-	elapsed := now.Sub(b.updatedAt)
-	if elapsed >= l.refill {
-		b.tokens = l.max
-		b.updatedAt = now
+
+	// Continuous refill: regenerate one token every refill/max nanoseconds,
+	// capped at max. Advancing updatedAt by exactly the time consumed for
+	// the tokens we added preserves fractional refill across calls and
+	// prevents the 2×max boundary burst a fixed-window limiter allows.
+	if l.refill > 0 && l.max > 0 {
+		perToken := time.Duration(int64(l.refill) / int64(l.max))
+		if perToken > 0 {
+			elapsed := now.Sub(b.updatedAt)
+			if earned := int(elapsed / perToken); earned > 0 {
+				b.tokens += earned
+				if b.tokens > l.max {
+					b.tokens = l.max
+				}
+				b.updatedAt = b.updatedAt.Add(time.Duration(earned) * perToken)
+			}
+		}
 	}
+
 	if b.tokens <= 0 {
 		return false
 	}
