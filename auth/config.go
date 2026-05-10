@@ -121,6 +121,13 @@ func (c Config) Validate() error {
 		if c.GrafanaOAuth2ClientID == "" {
 			return errors.New("--grafana-oauth2-client-id is required for --auth-mode=oauth-grafana")
 		}
+		// Mode A treats Grafana's oauth2_server as a confidential client and
+		// sends credentials with oauth2.AuthStyleInParams; missing the secret
+		// at startup would otherwise surface as a confusing token-exchange
+		// failure on the first authorization-code redemption.
+		if c.GrafanaOAuth2ClientSecret == "" {
+			return errors.New("--grafana-oauth2-client-secret is required for --auth-mode=oauth-grafana")
+		}
 	}
 	// Normalize the same way rbac.ParseMode does (lower + trim) so a
 	// programmatic caller that supplies "Auto" or " auto " isn't

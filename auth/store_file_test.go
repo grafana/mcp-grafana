@@ -170,7 +170,7 @@ func TestFileStore_KeyRotationMigratesRefreshCiphertexts(t *testing.T) {
 		t.Fatal(err)
 	}
 	sess.UpstreamExpiresAt = time.Now().Add(time.Hour)
-	if err := s1.PutSession(context.Background(), sess); err != nil {
+	if _, err := s1.PutSession(context.Background(), sess); err != nil {
 		t.Fatal(err)
 	}
 	_ = s1.Close()

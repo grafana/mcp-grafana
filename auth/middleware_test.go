@@ -259,7 +259,7 @@ func TestMiddleware_Refresh_PreservesOldRefreshTokenWhenUpstreamOmitsIt(t *testi
 	plainAT, hashAT := NewToken()
 	credCT, _ := enc.Seal([]byte("expiring-bearer"))
 	originalRefreshCT, _ := enc.Seal([]byte("original-refresh"))
-	_ = store.PutSession(context.Background(), Session{
+	_, _ = store.PutSession(context.Background(), Session{
 		TokenHash:         hashAT,
 		ExpiresAt:         time.Now().Add(time.Hour),
 		Identity:          Identity{Mode: ModeOAuthGrafana, ID: "alice"},
@@ -378,7 +378,7 @@ func TestMiddleware_ConcurrentRefreshes_CoalesceToOneUpstreamCall(t *testing.T) 
 	plainAT, hashAT := NewToken()
 	credCT, _ := enc.Seal([]byte("expiring-bearer"))
 	refreshCT, _ := enc.Seal([]byte("refresh-1"))
-	_ = store.PutSession(context.Background(), Session{
+	_, _ = store.PutSession(context.Background(), Session{
 		TokenHash:         hashAT,
 		ExpiresAt:         time.Now().Add(time.Hour),
 		Identity:          Identity{Mode: ModeOAuthGrafana, ID: "alice"},

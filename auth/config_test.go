@@ -68,11 +68,12 @@ func TestConfigValidate(t *testing.T) {
 func TestConfigValidate_ModeOAuthGrafana(t *testing.T) {
 	good := func() Config {
 		return Config{
-			Mode:                   ModeOAuthGrafana,
-			PublicURL:              "https://mcp.example.com",
-			EncryptionKey:          make([]byte, 32),
-			GrafanaOAuth2IssuerURL: "https://grafana.example.com",
-			GrafanaOAuth2ClientID:  "mcp",
+			Mode:                      ModeOAuthGrafana,
+			PublicURL:                 "https://mcp.example.com",
+			EncryptionKey:             make([]byte, 32),
+			GrafanaOAuth2IssuerURL:    "https://grafana.example.com",
+			GrafanaOAuth2ClientID:     "mcp",
+			GrafanaOAuth2ClientSecret: "shh",
 		}
 	}
 	if err := good().Validate(); err != nil {
@@ -89,5 +90,11 @@ func TestConfigValidate_ModeOAuthGrafana(t *testing.T) {
 	c.GrafanaOAuth2ClientID = ""
 	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "grafana-oauth2-client-id") {
 		t.Errorf("expected client-id error, got %v", err)
+	}
+
+	c = good()
+	c.GrafanaOAuth2ClientSecret = ""
+	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "grafana-oauth2-client-secret") {
+		t.Errorf("expected client-secret error, got %v", err)
 	}
 }
