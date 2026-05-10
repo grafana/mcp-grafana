@@ -253,10 +253,6 @@ func (f *FileStore) PeekAuthCode(ctx context.Context, h string) (AuthCode, error
 	if !pruned {
 		return c, err
 	}
-	// Best-effort flush: callers differentiate ErrNotFound from I/O
-	// failures, so don't mask the semantic error with the flush error.
-	// The disk eviction is opportunistic — the next mutation flush
-	// will capture the in-memory deletion regardless.
 	f.flushMu.Lock()
 	_ = f.flush()
 	f.flushMu.Unlock()
