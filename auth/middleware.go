@@ -69,6 +69,9 @@ func (s *Server) Middleware() func(http.Handler) http.Handler {
 			if !sess.UpstreamExpiresAt.IsZero() && time.Until(sess.UpstreamExpiresAt) < refreshWindow {
 				updated, err := s.refreshUpstream(r.Context(), sess)
 				if err != nil {
+					// Same race as the expired-token branch above: gate
+					// the SessionRevoked decrement on whether THIS request
+					// actually deleted the row.
 					deleted, _ := s.Store.DeleteSession(r.Context(), sess.TokenHash)
 					if deleted {
 						s.Metrics.SessionRevoked(r.Context(), sess.Identity.Mode)
