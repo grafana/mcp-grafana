@@ -21,25 +21,53 @@ type pendingBootstrap struct {
 	createdAt           time.Time
 }
 
+// bootstrapTTL bounds how long a /bootstrap-side pending entry stays in
+// memory before it's swept away. Matches the existing 15-minute
+// freshness check in processBootstrap.
+const bootstrapTTL = 15 * time.Minute
+
 var (
-	bootstrapMu       sync.Mutex
-	bootstrapPendings = map[string]*pendingBootstrap{}
+	bootstrapMu        sync.Mutex
+	bootstrapPendings  = map[string]*pendingBootstrap{}
+	bootstrapLastSwept time.Time
 )
+
+// sweepBootstrapLocked drops entries older than bootstrapTTL. The caller
+// must hold bootstrapMu. Runs at most once per bootstrapTTL window for
+// amortised O(1) cost under sustained traffic.
+func sweepBootstrapLocked(now time.Time) {
+	if now.Sub(bootstrapLastSwept) < bootstrapTTL {
+		return
+	}
+	cutoff := now.Add(-bootstrapTTL)
+	for k, p := range bootstrapPendings {
+		if p.createdAt.Before(cutoff) {
+			delete(bootstrapPendings, k)
+		}
+	}
+	bootstrapLastSwept = now
+}
 
 func storeBootstrap(token string, p *pendingBootstrap) {
 	bootstrapMu.Lock()
 	defer bootstrapMu.Unlock()
+	sweepBootstrapLocked(time.Now())
 	bootstrapPendings[token] = p
 }
 
 func consumeBootstrap(token string) (*pendingBootstrap, bool) {
 	bootstrapMu.Lock()
 	defer bootstrapMu.Unlock()
+	sweepBootstrapLocked(time.Now())
 	p, ok := bootstrapPendings[token]
-	if ok {
-		delete(bootstrapPendings, token)
+	if !ok {
+		return nil, false
 	}
-	return p, ok
+	delete(bootstrapPendings, token)
+	if time.Since(p.createdAt) > bootstrapTTL {
+		return nil, false
+	}
+	return p, true
 }
 
 // peekBootstrap returns a snapshot of the pending entry without removing it.
@@ -48,8 +76,13 @@ func consumeBootstrap(token string) (*pendingBootstrap, bool) {
 func peekBootstrap(token string) (pendingBootstrap, bool) {
 	bootstrapMu.Lock()
 	defer bootstrapMu.Unlock()
+	sweepBootstrapLocked(time.Now())
 	p, ok := bootstrapPendings[token]
 	if !ok {
+		return pendingBootstrap{}, false
+	}
+	if time.Since(p.createdAt) > bootstrapTTL {
+		delete(bootstrapPendings, token)
 		return pendingBootstrap{}, false
 	}
 	return *p, true

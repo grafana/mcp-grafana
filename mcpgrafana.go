@@ -318,6 +318,37 @@ func GrafanaConfigFromContext(ctx context.Context) GrafanaConfig {
 	return GrafanaConfig{}
 }
 
+// PreservingPerRequestFields returns a copy of c with the per-request
+// credential fields (APIKey, BasicAuth, AccessToken, IDToken, OrgID)
+// taken from other when they are non-zero. Used by the composed context
+// functions so a static CLI baseline can be installed on each request
+// without overwriting per-user credentials that an HTTP middleware
+// (notably the per-user auth middleware) has already placed on the
+// context.
+//
+// All non-credential fields (Debug, TLSConfig, Timeout, ExtraHeaders,
+// MaxLokiLogLimit, BaseTransport, Logger, IncludeArgumentsInSpans) come
+// from c — they are deployment-level concerns, not per-request.
+func (c GrafanaConfig) PreservingPerRequestFields(other GrafanaConfig) GrafanaConfig {
+	out := c
+	if other.APIKey != "" {
+		out.APIKey = other.APIKey
+	}
+	if other.BasicAuth != nil {
+		out.BasicAuth = other.BasicAuth
+	}
+	if other.AccessToken != "" {
+		out.AccessToken = other.AccessToken
+	}
+	if other.IDToken != "" {
+		out.IDToken = other.IDToken
+	}
+	if other.OrgID != 0 {
+		out.OrgID = other.OrgID
+	}
+	return out
+}
+
 // CreateTLSConfig creates a *tls.Config from TLSConfig.
 // It supports client certificates, custom CA certificates, and the option to skip TLS verification for development environments.
 func (tc *TLSConfig) CreateTLSConfig() (*tls.Config, error) {
@@ -1191,8 +1222,12 @@ func ComposedStdioContextFunc(config GrafanaConfig) server.StdioContextFunc {
 func ComposedSSEContextFunc(config GrafanaConfig, cache ...*ClientCache) server.SSEContextFunc {
 	grafanaExtractor, incidentExtractor := clientExtractors(cache)
 	return ComposeSSEContextFuncs(
-		func(ctx context.Context, req *http.Request) context.Context {
-			return WithGrafanaConfig(ctx, config)
+		func(ctx context.Context, _ *http.Request) context.Context {
+			// Preserve per-user credentials placed on the context by
+			// upstream HTTP middleware (e.g. auth.Middleware) — overwriting
+			// the whole config here would silently drop the session-derived
+			// APIKey before any handler sees it.
+			return WithGrafanaConfig(ctx, config.PreservingPerRequestFields(GrafanaConfigFromContext(ctx)))
 		},
 		ExtractGrafanaInfoFromHeaders,
 		grafanaExtractor,
@@ -1206,8 +1241,12 @@ func ComposedSSEContextFunc(config GrafanaConfig, cache ...*ClientCache) server.
 func ComposedHTTPContextFunc(config GrafanaConfig, cache ...*ClientCache) server.HTTPContextFunc {
 	grafanaExtractor, incidentExtractor := clientExtractors(cache)
 	return ComposeHTTPContextFuncs(
-		func(ctx context.Context, req *http.Request) context.Context {
-			return WithGrafanaConfig(ctx, config)
+		func(ctx context.Context, _ *http.Request) context.Context {
+			// Preserve per-user credentials placed on the context by
+			// upstream HTTP middleware (e.g. auth.Middleware) — overwriting
+			// the whole config here would silently drop the session-derived
+			// APIKey before any handler sees it.
+			return WithGrafanaConfig(ctx, config.PreservingPerRequestFields(GrafanaConfigFromContext(ctx)))
 		},
 		ExtractGrafanaInfoFromHeaders,
 		grafanaExtractor,

@@ -36,3 +36,71 @@ func TestExtractGrafanaInfoFromHeaders_HeadersWinWhenNoSession(t *testing.T) {
 		t.Errorf("APIKey=%q want header-token", cfg.APIKey)
 	}
 }
+
+// TestComposedHTTPContextFunc_PreservesSessionAPIKey verifies the per-user
+// APIKey placed on the context by upstream HTTP middleware (e.g. the auth
+// middleware) survives the composed-context-func chain. Previously the
+// chain's first step did `WithGrafanaConfig(ctx, config)` unconditionally,
+// silently dropping the session-derived APIKey.
+func TestComposedHTTPContextFunc_PreservesSessionAPIKey(t *testing.T) {
+	staticCfg := GrafanaConfig{
+		URL:   "http://localhost:3000",
+		Debug: true,
+	}
+	ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{
+		APIKey: "session-token-from-middleware",
+	})
+
+	r := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	out := ComposedHTTPContextFunc(staticCfg)(ctx, r)
+	cfg := GrafanaConfigFromContext(out)
+
+	if cfg.APIKey != "session-token-from-middleware" {
+		t.Errorf("APIKey=%q, expected session-token-from-middleware", cfg.APIKey)
+	}
+	if !cfg.Debug {
+		t.Errorf("Debug should be carried over from static config")
+	}
+	if cfg.URL == "" {
+		t.Errorf("URL should be carried over from static config, got empty")
+	}
+}
+
+// TestPreservingPerRequestFields covers the credential-merging contract:
+// per-request fields override the receiver, deployment-level fields stay.
+func TestPreservingPerRequestFields(t *testing.T) {
+	base := GrafanaConfig{
+		URL:   "http://localhost:3000",
+		Debug: true,
+	}
+
+	// Empty other → no per-request overrides.
+	got := base.PreservingPerRequestFields(GrafanaConfig{})
+	if got.APIKey != "" || got.AccessToken != "" || got.OrgID != 0 {
+		t.Errorf("empty other should not populate per-request fields: %+v", got)
+	}
+	if !got.Debug {
+		t.Errorf("baseline Debug should survive: %+v", got)
+	}
+
+	// Per-request fields overlay.
+	got = base.PreservingPerRequestFields(GrafanaConfig{
+		APIKey:      "session-key",
+		AccessToken: "obo-access",
+		IDToken:     "obo-id",
+		OrgID:       42,
+	})
+	if got.APIKey != "session-key" {
+		t.Errorf("APIKey=%q", got.APIKey)
+	}
+	if got.AccessToken != "obo-access" || got.IDToken != "obo-id" {
+		t.Errorf("OBO fields not preserved: %+v", got)
+	}
+	if got.OrgID != 42 {
+		t.Errorf("OrgID=%d", got.OrgID)
+	}
+	// Baseline fields still set.
+	if got.URL == "" || !got.Debug {
+		t.Errorf("baseline fields lost: %+v", got)
+	}
+}
