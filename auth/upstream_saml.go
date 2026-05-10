@@ -389,8 +389,12 @@ func (u *SAMLUpstream) BuildLogoutResponseURL(r *http.Request) (Identity, string
 		return Identity{}, "", fmt.Errorf("saml: logout request has no NameID")
 	}
 
-	// Build a LogoutResponse URL directing the user-agent back to the IdP.
-	sloURL, err := u.rawSP.MakeRedirectLogoutResponse(req.ID, "")
+	// Per SAML 2.0 Core §3.5.3, if the LogoutRequest carried a RelayState
+	// the LogoutResponse MUST echo it back. IdPs (e.g. Azure AD, Keycloak)
+	// rely on this for SLO session coordination — dropping it silently
+	// breaks the round-trip for those providers.
+	relayState := r.Form.Get("RelayState")
+	sloURL, err := u.rawSP.MakeRedirectLogoutResponse(req.ID, relayState)
 	if err != nil {
 		return Identity{}, "", fmt.Errorf("saml: build logout response: %w", err)
 	}
