@@ -164,12 +164,23 @@ func (s *Server) completeAuthCode(w http.ResponseWriter, r *http.Request, pf *pe
 		UpstreamCredsCT:     credCT,
 		ExpiresAt:           time.Now().Add(ttl),
 	}); err != nil {
-		httpRedirectError(w, r, pf.redirectURI, "server_error", err.Error(), pf.clientState)
+		// Log the storage detail locally; redirect with a generic
+		// description so internal storage state (file paths, DB
+		// internals) doesn't reach the client's URL — and from there
+		// browser history, proxy logs, and the redirect target's
+		// access logs. Matches the upstream-error sanitization above.
+		s.logger().Error("auth.authcode_persist_failed", "user_id", identity.String(), "error", err.Error())
+		httpRedirectError(w, r, pf.redirectURI, "server_error", "auth code persist failed", pf.clientState)
 		return
 	}
 	u, err := url.Parse(pf.redirectURI)
 	if err != nil {
-		httpError(w, http.StatusBadRequest, "invalid_redirect_uri", err.Error())
+		// pf.redirectURI was validated against the client's registered
+		// URIs at /authorize time, so this branch shouldn't fire — but
+		// if a parser change ever does trip it, log internally rather
+		// than echo the err string back to the user.
+		s.logger().Error("auth.redirect_uri_parse_failed", "redirect_uri", pf.redirectURI, "error", err.Error())
+		httpError(w, http.StatusBadRequest, "invalid_redirect_uri", "registered redirect_uri did not parse")
 		return
 	}
 	q := u.Query()

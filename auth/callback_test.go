@@ -160,3 +160,46 @@ func TestCallback_UpstreamError_RedirectsWithGenericDescription(t *testing.T) {
 		t.Errorf("redirect missing error=access_denied: %s", loc)
 	}
 }
+
+// failingAuthCodeStore wraps MemoryStore and forces PutAuthCode to fail
+// with a chatty error so the test can confirm completeAuthCode does NOT
+// echo that error string back to the client redirect.
+type failingAuthCodeStore struct{ *MemoryStore }
+
+func (f *failingAuthCodeStore) PutAuthCode(_ context.Context, _ AuthCode) error {
+	return fmt.Errorf("file:///var/lib/mcp/state.json: write failed: disk quota exceeded for tenant t-0xdeadbeef")
+}
+
+func TestCompleteAuthCode_PutFails_RedirectsWithGenericDescription(t *testing.T) {
+	enc := mustEnc(t, mustKey(t), nil)
+	srv := &Server{
+		PublicURL:   "https://mcp.example.com",
+		Store:       &failingAuthCodeStore{MemoryStore: NewMemoryStore()},
+		Encryptor:   enc,
+		AuthCodeTTL: 5 * time.Minute,
+	}
+	pf := &pendingFlow{
+		clientID:            "cid",
+		redirectURI:         "http://localhost:1/cb",
+		codeChallenge:       "x",
+		codeChallengeMethod: "S256",
+		clientState:         "client-state",
+		createdAt:           time.Now(),
+	}
+	r := httptest.NewRequest(http.MethodGet, "/callback", nil)
+	w := httptest.NewRecorder()
+	srv.completeAuthCode(w, r, pf, Identity{Mode: ModeOAuthOIDC, ID: "alice"}, []byte("ct"))
+
+	if w.Code != http.StatusFound {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body)
+	}
+	loc := w.Header().Get("Location")
+	for _, leak := range []string{"file:///var/lib", "disk quota", "deadbeef", "tenant t-"} {
+		if strings.Contains(loc, leak) {
+			t.Errorf("redirect leaked store error fragment %q: %s", leak, loc)
+		}
+	}
+	if !strings.Contains(loc, "error=server_error") {
+		t.Errorf("redirect missing error=server_error: %s", loc)
+	}
+}

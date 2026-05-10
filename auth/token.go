@@ -82,7 +82,8 @@ func (s *Server) handleAuthCodeGrant(w http.ResponseWriter, r *http.Request) {
 		CreatedAt:        now,
 		UpdatedAt:        now,
 	}); err != nil {
-		httpError(w, http.StatusInternalServerError, "server_error", err.Error())
+		s.logger().Error("auth.session_persist_failed", "user_id", c.Identity.String(), "error", err.Error())
+		httpError(w, http.StatusInternalServerError, "server_error", "session persist failed")
 		return
 	}
 
@@ -110,7 +111,8 @@ func (s *Server) handleRefreshGrant(w http.ResponseWriter, r *http.Request) {
 
 	// Rotate both tokens. Delete the old session and write a new one.
 	if err := s.Store.DeleteSession(r.Context(), sess.TokenHash); err != nil {
-		httpError(w, http.StatusInternalServerError, "server_error", err.Error())
+		s.logger().Error("auth.session_delete_failed", "user_id", sess.Identity.String(), "error", err.Error())
+		httpError(w, http.StatusInternalServerError, "server_error", "session rotation failed")
 		return
 	}
 	at, atHash := NewToken()
@@ -134,7 +136,8 @@ func (s *Server) handleRefreshGrant(w http.ResponseWriter, r *http.Request) {
 		CreatedAt:        sess.CreatedAt,
 		UpdatedAt:        now,
 	}); err != nil {
-		httpError(w, http.StatusInternalServerError, "server_error", err.Error())
+		s.logger().Error("auth.session_persist_failed", "user_id", sess.Identity.String(), "error", err.Error())
+		httpError(w, http.StatusInternalServerError, "server_error", "session persist failed")
 		return
 	}
 
