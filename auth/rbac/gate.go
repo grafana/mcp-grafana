@@ -84,12 +84,19 @@ func permissionGranted(perms PermissionSet, req Permission) bool {
 // Grafana's scope-tree semantics. Empty grant doesn't match anything;
 // "*" matches everything; "<prefix>:*" matches any string starting with
 // "<prefix>:". Otherwise exact match.
+//
+// An empty requirement means "the action at any scope" — any non-empty
+// grant satisfies it (the user has the action on at least one resource).
 func scopeMatch(grant, requirement string) bool {
 	if grant == "" {
 		// Empty grant means "no scope filter at all" only when the action
 		// is global. permissionGranted is the only caller; require an
 		// empty requirement too (action is global on both sides).
 		return requirement == ""
+	}
+	if requirement == "" {
+		// Any non-empty grant satisfies an action-only (no scope) requirement.
+		return true
 	}
 	if grant == "*" {
 		return true

@@ -13,36 +13,38 @@ package rbac
 // README table and this file disagree, this file wins (it's executable).
 var ToolGates = map[string]ToolGate{
 	// --- Search ---
+	// Scope is intentionally empty: we gate on "has the action on any resource",
+	// not a specific wildcard scope. Grafana OSS issues folder-scoped grants
+	// (folders:uid:*) rather than dashboards:* for Viewer SAs.
 	"search_dashboards": {
-		Permissions:  []Permission{{Action: "dashboards:read", Scope: "dashboards:*"}},
+		Permissions:  []Permission{{Action: "dashboards:read"}},
 		MinBasicRole: "Viewer",
 	},
 	"search_folders": {
-		Permissions:  []Permission{{Action: "dashboards:read", Scope: "dashboards:*"}},
+		Permissions:  []Permission{{Action: "dashboards:read"}},
 		MinBasicRole: "Viewer",
 	},
 
 	// --- Dashboard ---
 	"get_dashboard_by_uid": {
-		Permissions:  []Permission{{Action: "dashboards:read", Scope: "dashboards:*"}},
+		Permissions:  []Permission{{Action: "dashboards:read"}},
 		MinBasicRole: "Viewer",
 	},
 	"get_dashboard_summary": {
-		Permissions:  []Permission{{Action: "dashboards:read", Scope: "dashboards:*"}},
+		Permissions:  []Permission{{Action: "dashboards:read"}},
 		MinBasicRole: "Viewer",
 	},
 	"get_dashboard_property": {
-		Permissions:  []Permission{{Action: "dashboards:read", Scope: "dashboards:*"}},
+		Permissions:  []Permission{{Action: "dashboards:read"}},
 		MinBasicRole: "Viewer",
 	},
 	"get_dashboard_panel_queries": {
-		Permissions:  []Permission{{Action: "dashboards:read", Scope: "dashboards:*"}},
+		Permissions:  []Permission{{Action: "dashboards:read"}},
 		MinBasicRole: "Viewer",
 	},
 	"update_dashboard": {
 		Permissions: []Permission{
-			{Action: "dashboards:create", Scope: "dashboards:*"},
-			{Action: "dashboards:write", Scope: "dashboards:*"},
+			{Action: "dashboards:write"},
 		},
 		MinBasicRole: "Editor",
 	},
@@ -202,7 +204,7 @@ var ToolGates = map[string]ToolGate{
 	// --- RunPanelQuery ---
 	"run_panel_query": {
 		Permissions: []Permission{
-			{Action: "dashboards:read", Scope: "dashboards:*"},
+			{Action: "dashboards:read"},
 			{Action: "datasources:query", Scope: "datasources:*"},
 		},
 		MinBasicRole: "Viewer",
@@ -246,13 +248,13 @@ var ToolGates = map[string]ToolGate{
 
 	// --- Rendering ---
 	"get_panel_image": {
-		Permissions:  []Permission{{Action: "dashboards:read", Scope: "dashboards:*"}},
+		Permissions:  []Permission{{Action: "dashboards:read"}},
 		MinBasicRole: "Viewer",
 	},
 
 	// --- Admin ---
 	"list_teams":               {Permissions: []Permission{{Action: "teams:read"}}, MinBasicRole: "Admin"},
-	"list_users_by_org":        {Permissions: []Permission{{Action: "users:read"}}, MinBasicRole: "Admin"},
+	"list_users_by_org":        {Permissions: []Permission{{Action: "org.users:read"}}, MinBasicRole: "Admin"},
 	"list_all_roles":           {Permissions: []Permission{{Action: "roles:read"}}, MinBasicRole: "Admin"},
 	"get_role_details":         {Permissions: []Permission{{Action: "roles:read"}}, MinBasicRole: "Admin"},
 	"get_role_assignments":     {Permissions: []Permission{{Action: "roles:read"}}, MinBasicRole: "Admin"},

@@ -152,59 +152,82 @@ _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
 
 
 @pytest.fixture(scope="session")
-def mock_oidc():
-    port = _free_port()
-    proc = subprocess.Popen(
-        [_exe(os.path.join(_REPO_ROOT, "bin", "mock-oidc")), "-addr", f":{port}"],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-    )
-    # Wait for ready.
-    for _ in range(50):
-        try:
-            with socket.create_connection(("127.0.0.1", port), timeout=0.1):
-                break
-        except OSError:
-            time.sleep(0.1)
-    yield {"issuer": f"http://localhost:{port}", "client_id": "mcp"}
-    proc.terminate()
-    proc.wait(timeout=5)
+def mock_oidc_factory():
+    procs = []
+    def _factory(subject: str = "alice"):
+        port = _free_port()
+        proc = subprocess.Popen(
+            [_exe(os.path.join(_REPO_ROOT, "bin", "mock-oidc")), "-addr", f":{port}", "-sub", subject],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        procs.append(proc)
+        for _ in range(50):
+            try:
+                with socket.create_connection(("127.0.0.1", port), timeout=0.1):
+                    break
+            except OSError:
+                time.sleep(0.1)
+        return {"issuer": f"http://localhost:{port}", "client_id": "mcp", "subject": subject}
+    yield _factory
+    for p in procs:
+        p.terminate()
+        p.wait(timeout=5)
 
 
 @pytest.fixture(scope="session")
-def auth_mcp(mock_oidc):
-    """Run mcp-grafana with --auth-mode=oauth-oidc."""
-    port = _free_port()
-    enc_key = secrets.token_bytes(32).hex()
-    env = os.environ.copy()
-    env["GRAFANA_URL"] = "http://localhost:3000"
-    # The Makefile's `build` target outputs to dist/mcp-grafana; respect
-    # the same MCP_GRAFANA_PATH env override the rest of the suite uses
-    # (see line 108) so `make build && pytest tests/` works without
-    # extra steps.
-    binary = os.environ.get(
-        "MCP_GRAFANA_PATH",
-        os.path.join(_REPO_ROOT, "dist", "mcp-grafana"),
-    )
-    proc = subprocess.Popen([
-        _exe(binary),
-        "-t", "streamable-http",
-        "-address", f":{port}",
-        "--auth-mode", "oauth-oidc",
-        "--public-url", f"http://localhost:{port}",
-        "--allow-insecure-auth",
-        "--token-encryption-key", enc_key,
-        "--oidc-issuer-url", mock_oidc["issuer"],
-        "--oidc-client-id", mock_oidc["client_id"],
-        # Stateless mode: skips MCP session-id handshake, so the test can
-        # POST tools/list directly with just the OAuth Bearer.
-        "--disable-proxied",
-    ], env=env)
-    for _ in range(50):
-        try:
-            with socket.create_connection(("127.0.0.1", port), timeout=0.1):
-                break
-        except OSError:
-            time.sleep(0.1)
-    yield {"base": f"http://localhost:{port}"}
-    proc.terminate()
-    proc.wait(timeout=5)
+def auth_mcp_factory(mock_oidc_factory):
+    procs = []
+    def _factory(subject: str = "alice"):
+        idp = mock_oidc_factory(subject)
+        port = _free_port()
+        enc_key = secrets.token_bytes(32).hex()
+        env = os.environ.copy()
+        env["GRAFANA_URL"] = "http://localhost:3000"
+        # The Makefile's `build` target outputs to dist/mcp-grafana; respect
+        # the same MCP_GRAFANA_PATH env override the rest of the suite uses
+        # (see line 108) so `make build && pytest tests/` works without
+        # extra steps.
+        binary = os.environ.get(
+            "MCP_GRAFANA_PATH",
+            os.path.join(_REPO_ROOT, "dist", "mcp-grafana"),
+        )
+        proc = subprocess.Popen([
+            _exe(binary),
+            "-t", "streamable-http",
+            "-address", f":{port}",
+            "--auth-mode", "oauth-oidc",
+            "--public-url", f"http://localhost:{port}",
+            "--allow-insecure-auth",
+            "--token-encryption-key", enc_key,
+            "--oidc-issuer-url", idp["issuer"],
+            "--oidc-client-id", idp["client_id"],
+            # Stateless mode: skips MCP session-id handshake, so the test can
+            # POST tools/list directly with just the OAuth Bearer.
+            "--disable-proxied",
+            # Include admin tools so RBAC spot-checks (list_teams, list_users_by_org)
+            # are actually registered and can be filtered by role.
+            "--enabled-tools", "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,admin,pyroscope,navigation,annotations,rendering,plugin,api",
+        ], env=env)
+        procs.append(proc)
+        for _ in range(50):
+            try:
+                with socket.create_connection(("127.0.0.1", port), timeout=0.1):
+                    break
+            except OSError:
+                time.sleep(0.1)
+        return {"base": f"http://localhost:{port}"}
+    yield _factory
+    for p in procs:
+        p.terminate()
+        p.wait(timeout=5)
+
+
+# Backwards-compatible single-instance fixtures used by the existing test.
+@pytest.fixture(scope="session")
+def mock_oidc(mock_oidc_factory):
+    return mock_oidc_factory()
+
+
+@pytest.fixture(scope="session")
+def auth_mcp(auth_mcp_factory):
+    return auth_mcp_factory()

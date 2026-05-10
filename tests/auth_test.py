@@ -18,6 +18,54 @@ import pytest
 import requests
 
 
+def _drive_oauth(base, sa_token):
+    """Drive the full OAuth flow against the given mcp-grafana base URL,
+    pasting sa_token at /bootstrap. Returns the issued MCP access token."""
+    verifier, challenge = _pkce_pair()
+    dcr = requests.post(f"{base}/register", json={
+        "client_name": "test",
+        "redirect_uris": ["http://localhost:55555/cb"],
+    }, allow_redirects=False)
+    assert dcr.status_code == 201, dcr.text
+    client_id = dcr.json()["client_id"]
+
+    auth_resp = requests.get(f"{base}/authorize", params={
+        "response_type": "code", "client_id": client_id,
+        "redirect_uri": "http://localhost:55555/cb",
+        "code_challenge": challenge, "code_challenge_method": "S256",
+        "state": "s",
+    }, allow_redirects=False)
+    upstream_url = auth_resp.headers["Location"]
+
+    upstream_resp = requests.get(upstream_url, allow_redirects=False)
+    callback_url = upstream_resp.headers["Location"]
+    cb = requests.get(callback_url, allow_redirects=False)
+    flow = urllib.parse.parse_qs(urllib.parse.urlparse(cb.headers["Location"]).query)["flow"][0]
+
+    boot_resp = requests.post(f"{base}/bootstrap",
+                              data={"flow": flow, "grafana_token": sa_token},
+                              allow_redirects=False)
+    final = urllib.parse.urlparse(boot_resp.headers["Location"])
+    code = urllib.parse.parse_qs(final.query)["code"][0]
+
+    tok = requests.post(f"{base}/token", data={
+        "grant_type": "authorization_code",
+        "code": code,
+        "redirect_uri": "http://localhost:55555/cb",
+        "client_id": client_id,
+        "code_verifier": verifier,
+    })
+    return tok.json()["access_token"]
+
+
+def _list_tools(base, mcp_token):
+    r = requests.post(f"{base}/mcp", json={
+        "jsonrpc": "2.0", "id": 1, "method": "tools/list",
+    }, headers={"Authorization": f"Bearer {mcp_token}", "Content-Type": "application/json"})
+    assert r.status_code == 200, r.text
+    return [t["name"] for t in r.json()["result"]["tools"]]
+
+
 # Override the async autouse cleanup_sessions fixture from conftest with a
 # sync no-op. This file's tests are sync (driving HTTP via requests), and the
 # conftest fixture is intended for async MCP-client tests.
@@ -32,13 +80,21 @@ def _pkce_pair():
     return verifier, challenge
 
 
-def _provision_grafana_sa_token():
+def _provision_grafana_sa_token(role: str = "Admin"):
     """Create a Grafana service account + token using admin/admin and return the token."""
     base = os.environ.get("GRAFANA_URL", "http://localhost:3000")
     auth = ("admin", "admin")
-    sa = requests.post(f"{base}/api/serviceaccounts", auth=auth, json={"name": f"mcp-test-{secrets.token_hex(4)}", "role": "Admin"}).json()
+    sa = requests.post(
+        f"{base}/api/serviceaccounts",
+        auth=auth,
+        json={"name": f"mcp-test-{secrets.token_hex(4)}", "role": role},
+    ).json()
     sa_id = sa["id"]
-    tok = requests.post(f"{base}/api/serviceaccounts/{sa_id}/tokens", auth=auth, json={"name": f"tok-{secrets.token_hex(4)}"}).json()
+    tok = requests.post(
+        f"{base}/api/serviceaccounts/{sa_id}/tokens",
+        auth=auth,
+        json={"name": f"tok-{secrets.token_hex(4)}"},
+    ).json()
     return tok["key"]
 
 
@@ -80,7 +136,7 @@ def test_full_oauth_flow(auth_mcp):
     flow = boot_query["flow"][0]
 
     # 5. Provision a Grafana SA token, paste into /bootstrap.
-    sa_token = _provision_grafana_sa_token()
+    sa_token = _provision_grafana_sa_token("Admin")
     boot_resp = requests.post(f"{base}/bootstrap", data={"flow": flow, "grafana_token": sa_token}, allow_redirects=False)
     assert boot_resp.status_code == 302, boot_resp.text
     final = urllib.parse.urlparse(boot_resp.headers["Location"])
@@ -125,3 +181,32 @@ def test_full_oauth_flow(auth_mcp):
         "grant_type": "refresh_token", "refresh_token": refresh, "client_id": client_id,
     })
     assert again.status_code == 400
+
+
+def test_rbac_admin_vs_viewer_tool_sets(auth_mcp_factory):
+    # Two distinct mcp-grafana instances, each bound to a distinct OIDC subject,
+    # so they don't share session/identity state.
+    admin_inst = auth_mcp_factory("alice-admin")
+    viewer_inst = auth_mcp_factory("alice-viewer")
+
+    admin_token = _drive_oauth(admin_inst["base"], _provision_grafana_sa_token("Admin"))
+    viewer_token = _drive_oauth(viewer_inst["base"], _provision_grafana_sa_token("Viewer"))
+
+    admin_tools = set(_list_tools(admin_inst["base"], admin_token))
+    viewer_tools = set(_list_tools(viewer_inst["base"], viewer_token))
+
+    # Viewer should be a strict subset of admin (admin can do everything).
+    assert viewer_tools < admin_tools, (
+        f"viewer tools should be strict subset of admin tools.\n"
+        f"viewer extra: {viewer_tools - admin_tools}\n"
+        f"admin extra: {admin_tools - viewer_tools}"
+    )
+
+    # Spot-check: admin tools should be visible to admin but not viewer.
+    for adm_tool in ("list_teams", "list_users_by_org"):
+        assert adm_tool in admin_tools, f"admin missing {adm_tool}"
+        assert adm_tool not in viewer_tools, f"viewer should not see {adm_tool}"
+
+    # Spot-check: read-only tools should be visible to viewer.
+    for ro_tool in ("search_dashboards", "list_datasources"):
+        assert ro_tool in viewer_tools, f"viewer missing read-only tool {ro_tool}"

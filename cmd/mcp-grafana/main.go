@@ -468,14 +468,21 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		}
 		permsClient := rbac.NewPermsClient(authGrafanaURL, nil)
 		rbacFetcher := func(ctx context.Context, sessionKey string) (rbac.Snapshot, error) {
-			// Recover the per-user upstream credential from the request context. The
-			// fetcher is invoked from the OnAfterListTools hook, where the auth
-			// middleware has already populated GrafanaConfig.APIKey.
-			cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
-			if cfg.APIKey == "" {
+			// Recover the per-user upstream credential by looking up the session in
+			// the store and decrypting the stored ciphertext. We cannot read it from
+			// GrafanaConfig because ComposedHTTPContextFunc resets the config from
+			// environment/headers before the hook runs, discarding the value the auth
+			// middleware placed there.
+			sess, err := authSrv.Store.GetSessionByTokenHash(ctx, sessionKey)
+			if err != nil {
 				return rbac.Snapshot{}, rbac.ErrFetchFailed
 			}
-			perms, err := permsClient.Fetch(ctx, cfg.APIKey)
+			pt, err := authSrv.Encryptor.Open(sess.UpstreamCredsCT)
+			if err != nil {
+				return rbac.Snapshot{}, rbac.ErrFetchFailed
+			}
+			saToken := string(pt)
+			perms, err := permsClient.Fetch(ctx, saToken)
 			if err != nil {
 				return rbac.Snapshot{}, err
 			}

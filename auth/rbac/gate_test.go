@@ -20,6 +20,12 @@ func TestScopeMatch(t *testing.T) {
 		{"*", "anything", true},
 		{"", "datasources:uid:prom", false},
 		{"folders:*", "dashboards:uid:x", false},
+		// Empty requirement means "action on any resource": any non-empty grant satisfies it.
+		// This is the common OSS case where Grafana returns folder-scoped dashboard grants.
+		{"folders:uid:abc", "", true},
+		{"dashboards:*", "", true},
+		{"", "", true}, // empty grant, empty req: global action (both sides)
+
 	}
 	for _, tc := range cases {
 		if got := scopeMatch(tc.grant, tc.req); got != tc.want {
@@ -43,6 +49,10 @@ func TestPermissionGranted(t *testing.T) {
 		{Permission{"datasources:query", "datasources:uid:foo"}, false},
 		{Permission{"datasources:write", "datasources:uid:prom"}, false},
 		{Permission{"alert.rules:read", ""}, true},
+		// Empty scope requirement: "has the action on any resource". The user has
+		// dashboards:read only on folder-scoped grants (OSS Viewer pattern) — still satisfies.
+		{Permission{"datasources:read", ""}, true},  // non-empty grant covers empty req
+		{Permission{"datasources:query", ""}, true}, // action present, scope doesn't matter
 	}
 	for _, tc := range cases {
 		if got := permissionGranted(perms, tc.req); got != tc.want {

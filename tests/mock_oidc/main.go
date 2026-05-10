@@ -64,12 +64,16 @@ func main() {
 			}},
 		})
 	})
-	// Track per-code nonce so /token can echo the same nonce that was sent
-	// to /authorize. The OIDC spec requires the IdP to bind nonce to the auth
-	// code; clients (including go-oidc) verify the returned nonce.
+	// Track per-code nonce and subject so /token can echo the same nonce that
+	// was sent to /authorize. The OIDC spec requires the IdP to bind nonce to
+	// the auth code; clients (including go-oidc) verify the returned nonce.
+	type pending struct {
+		nonce   string
+		subject string
+	}
 	var (
-		nonceMu sync.Mutex
-		nonces  = map[string]string{}
+		nonceMu  sync.Mutex
+		pendings = map[string]pending{}
 	)
 
 	mux.HandleFunc("/authorize", func(w http.ResponseWriter, r *http.Request) {
@@ -77,6 +81,10 @@ func main() {
 		redirect := q.Get("redirect_uri")
 		state := q.Get("state")
 		nonce := q.Get("nonce")
+		sub := q.Get("sub")
+		if sub == "" {
+			sub = *subject
+		}
 		u, err := url.Parse(redirect)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -88,9 +96,9 @@ func main() {
 		_, _ = rand.Read(codeBytes[:])
 		code := base64.RawURLEncoding.EncodeToString(codeBytes[:])
 		nonceMu.Lock()
-		nonces[code] = nonce
+		pendings[code] = pending{nonce: nonce, subject: sub}
 		nonceMu.Unlock()
-		log.Printf("/authorize state=%q nonce=%q -> issued code=%q", state, nonce, code)
+		log.Printf("/authorize state=%q nonce=%q sub=%q -> issued code=%q", state, nonce, sub, code)
 
 		qq := u.Query()
 		qq.Set("code", code)
@@ -106,7 +114,7 @@ func main() {
 		// Lookup is idempotent: tests may invoke /token multiple times via
 		// oauth2's auth-style autodetect probe. Don't delete on lookup.
 		nonceMu.Lock()
-		nonce, ok := nonces[code]
+		p, ok := pendings[code]
 		nonceMu.Unlock()
 		log.Printf("/token code=%q ok=%v form=%v", code, ok, r.Form)
 		if !ok {
@@ -122,12 +130,12 @@ func main() {
 		now := time.Now()
 		claims := map[string]any{
 			"iss":   issuer,
-			"sub":   *subject,
+			"sub":   p.subject,
 			"aud":   *clientID,
 			"iat":   now.Unix(),
 			"exp":   now.Add(10 * time.Minute).Unix(),
 			"email": *email,
-			"nonce": nonce,
+			"nonce": p.nonce,
 		}
 		idToken, err := jwt.Signed(signer).Claims(claims).Serialize()
 		if err != nil {
