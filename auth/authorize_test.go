@@ -10,7 +10,10 @@ import (
 )
 
 // stubUpstream is a deterministic Upstream for handler tests.
-type stubUpstream struct{ mode Mode; authURL string }
+type stubUpstream struct {
+	mode    Mode
+	authURL string
+}
 
 func (s *stubUpstream) Mode() Mode { return s.mode }
 func (s *stubUpstream) AuthorizeURL(_, state string) string {

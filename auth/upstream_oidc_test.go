@@ -54,13 +54,13 @@ func newMockOIDCServer(t *testing.T) *mockOIDCServer {
 	srv.Server = httptest.NewServer(mux)
 	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"issuer":                 srv.URL,
-			"authorization_endpoint": srv.URL + "/authorize",
-			"token_endpoint":         srv.URL + "/token",
-			"jwks_uri":               srv.URL + "/jwks",
+			"issuer":                                srv.URL,
+			"authorization_endpoint":                srv.URL + "/authorize",
+			"token_endpoint":                        srv.URL + "/token",
+			"jwks_uri":                              srv.URL + "/jwks",
 			"id_token_signing_alg_values_supported": []string{"RS256"},
-			"response_types_supported":               []string{"code"},
-			"subject_types_supported":                []string{"public"},
+			"response_types_supported":              []string{"code"},
+			"subject_types_supported":               []string{"public"},
 		})
 	})
 	mux.HandleFunc("/jwks", func(w http.ResponseWriter, r *http.Request) {
