@@ -304,10 +304,34 @@ func (s *Server) doRefreshUpstream(ctx context.Context, sess Session) (Session, 
 	return sess, nil
 }
 
-// refreshUpstream calls the configured Upstream.Refresh, encrypts the new
+// refreshUpstream coalesces concurrent upstream refresh calls for the same
+// session via singleflight, then delegates to doRefreshUpstream. At most one
+// call per session token reaches the upstream at a time; concurrent callers
+// share the result.
+func (s *Server) refreshUpstream(ctx context.Context, sess Session) (Session, error) {
+	v, err, _ := s.refreshGroup.Do(sess.TokenHash, func() (any, error) {
+		// After winning the flight, re-read the session from the store —
+		// a concurrent refresh may have already updated it.
+		fresh, err := s.Store.GetSessionByTokenHash(ctx, sess.TokenHash)
+		if err != nil {
+			return nil, err
+		}
+		if !fresh.UpstreamExpiresAt.IsZero() && time.Until(fresh.UpstreamExpiresAt) >= refreshWindow {
+			// Another goroutine refreshed while we were waiting.
+			return fresh, nil
+		}
+		return s.doRefreshUpstream(ctx, fresh)
+	})
+	if err != nil {
+		return Session{}, err
+	}
+	return v.(Session), nil
+}
+
+// doRefreshUpstream calls the configured Upstream.Refresh, encrypts the new
 // credentials, and persists the updated session. Returns the updated session
 // or an error.
-func (s *Server) refreshUpstream(ctx context.Context, sess Session) (Session, error) {
+func (s *Server) doRefreshUpstream(ctx context.Context, sess Session) (Session, error) {
 	if s.Upstream == nil {
 		return sess, fmt.Errorf("no upstream configured")
 	}
