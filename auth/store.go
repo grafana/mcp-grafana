@@ -13,10 +13,18 @@ var ErrNotFound = errors.New("auth: record not found")
 
 // Store persists sessions, dynamic clients, and auth codes. Implementations
 // must be safe for concurrent use.
+//
+// Sessions are unique per Identity: at any moment a given Identity has at most
+// one live session. PutSession with an Identity that already has a session
+// replaces the previous one; GetSessionByIdentity returns the single current
+// session. Implementations must enforce this invariant.
 type Store interface {
 	PutSession(ctx context.Context, s Session) error
 	GetSessionByTokenHash(ctx context.Context, tokenHash string) (Session, error)
 	GetSessionByRefreshHash(ctx context.Context, refreshHash string) (Session, error)
+	// GetSessionByIdentity returns the single live session for id, if any.
+	// Per the Store-level invariant, this is unambiguous: identities map 1-to-1
+	// to sessions.
 	GetSessionByIdentity(ctx context.Context, id Identity) (Session, error)
 	DeleteSession(ctx context.Context, tokenHash string) error
 

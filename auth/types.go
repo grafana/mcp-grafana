@@ -55,6 +55,6 @@ type AuthCode struct {
 	CodeChallenge       string // PKCE S256 challenge from /authorize
 	CodeChallengeMethod string // always "S256"
 	Identity            Identity
-	UpstreamCredsCT     []byte    // already-encrypted SA token captured at /callback or /bootstrap
+	UpstreamCredsCT     []byte // already-encrypted SA token captured at /callback or /bootstrap
 	ExpiresAt           time.Time
 }

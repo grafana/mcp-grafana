@@ -16,7 +16,7 @@ type FileStore struct {
 	mem *MemoryStore
 	enc *Encryptor
 
-	mu   sync.Mutex
+	mu   sync.RWMutex
 	path string
 }
 
@@ -61,13 +61,19 @@ func (f *FileStore) load() error {
 	}
 	ctx := context.Background()
 	for _, s := range p.Sessions {
-		_ = f.mem.PutSession(ctx, s)
+		if err := f.mem.PutSession(ctx, s); err != nil {
+			return fmt.Errorf("load %T: %w", s, err)
+		}
 	}
 	for _, c := range p.Clients {
-		_ = f.mem.PutClient(ctx, c)
+		if err := f.mem.PutClient(ctx, c); err != nil {
+			return fmt.Errorf("load %T: %w", c, err)
+		}
 	}
 	for _, ac := range p.AuthCodes {
-		_ = f.mem.PutAuthCode(ctx, ac)
+		if err := f.mem.PutAuthCode(ctx, ac); err != nil {
+			return fmt.Errorf("load %T: %w", ac, err)
+		}
 	}
 	return nil
 }
@@ -104,6 +110,7 @@ func (f *FileStore) flush() error {
 		return err
 	}
 	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmp.Name())
 		return err
 	}
 	return os.Rename(tmp.Name(), f.path)
@@ -123,12 +130,18 @@ func (f *FileStore) PutSession(ctx context.Context, s Session) error {
 }
 
 func (f *FileStore) GetSessionByTokenHash(ctx context.Context, h string) (Session, error) {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
 	return f.mem.GetSessionByTokenHash(ctx, h)
 }
 func (f *FileStore) GetSessionByRefreshHash(ctx context.Context, h string) (Session, error) {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
 	return f.mem.GetSessionByRefreshHash(ctx, h)
 }
 func (f *FileStore) GetSessionByIdentity(ctx context.Context, id Identity) (Session, error) {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
 	return f.mem.GetSessionByIdentity(ctx, id)
 }
 
@@ -151,6 +164,8 @@ func (f *FileStore) PutClient(ctx context.Context, c DCRClient) error {
 }
 
 func (f *FileStore) GetClient(ctx context.Context, id string) (DCRClient, error) {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
 	return f.mem.GetClient(ctx, id)
 }
 

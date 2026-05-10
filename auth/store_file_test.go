@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -65,23 +66,30 @@ func TestFileStore_MissingFileIsEmpty(t *testing.T) {
 	}
 }
 
-func TestFileStore_WriteAtomic(t *testing.T) {
-	// Verifies that a partial write doesn't corrupt the existing file.
+func TestFileStore_NoLingeringTempFiles(t *testing.T) {
 	dir := t.TempDir()
 	enc := mustEnc(t, mustKey(t), nil)
 	path := filepath.Join(dir, "auth.state")
-	s, _ := NewFileStore(path, enc)
+	s, err := NewFileStore(path, enc)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer s.Close()
 
-	_ = s.PutSession(context.Background(), newTestSession(t, "v1"))
-	infoBefore, _ := os.Stat(path)
+	for i := 0; i < 5; i++ {
+		if err := s.PutSession(context.Background(), newTestSession(t, fmt.Sprintf("v%d", i))); err != nil {
+			t.Fatal(err)
+		}
+	}
 
-	// Make the file's parent read-only briefly to force a write error -- platform-specific.
-	// Instead, just assert that two sequential writes both succeed and produce consistent reads.
-	_ = s.PutSession(context.Background(), newTestSession(t, "v2"))
-
-	infoAfter, _ := os.Stat(path)
-	if infoAfter.Size() == 0 {
-		t.Errorf("after-write file is empty: before=%d after=%d", infoBefore.Size(), infoAfter.Size())
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.Name() == "auth.state" {
+			continue
+		}
+		t.Errorf("unexpected leftover file in state dir: %s", e.Name())
 	}
 }
