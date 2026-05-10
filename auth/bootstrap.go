@@ -9,6 +9,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"go.opentelemetry.io/otel"
 )
 
 const bootstrapPageHTML = `<!DOCTYPE html>
@@ -139,6 +141,9 @@ func (s *Server) processBootstrap(w http.ResponseWriter, r *http.Request, grafan
 
 // validateGrafanaToken pings Grafana's /api/user with the bearer.
 func validateGrafanaToken(ctx context.Context, grafanaURL, token string) error {
+	ctx, span := otel.Tracer("mcp-grafana-auth").Start(ctx, "auth.bootstrap_validate")
+	defer span.End()
+
 	target, err := url.JoinPath(grafanaURL, "/api/user")
 	if err != nil {
 		return err

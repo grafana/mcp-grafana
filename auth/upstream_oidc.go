@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/coreos/go-oidc/v3/oidc"
+	"go.opentelemetry.io/otel"
 	"golang.org/x/oauth2"
 )
 
@@ -95,7 +96,9 @@ func (u *OIDCUpstream) HandleCallback(ctx context.Context, params url.Values) (I
 		return Identity{}, nil, false, fmt.Errorf("unknown or replayed state")
 	}
 
+	ctx, span := otel.Tracer("mcp-grafana-auth").Start(ctx, "auth.upstream_token_exchange")
 	tok, err := u.oauth.Exchange(ctx, code, oauth2.SetAuthURLParam("code_verifier", p.verifier))
+	span.End()
 	if err != nil {
 		return Identity{}, nil, false, fmt.Errorf("token exchange: %w", err)
 	}

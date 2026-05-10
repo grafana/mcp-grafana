@@ -86,6 +86,7 @@ func (s *Server) handleAuthCodeGrant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.Metrics.SessionCreated(c.Identity.Mode)
 	s.logger().Info("auth.session_created", "user_id", c.Identity.String(), "mode", string(c.Identity.Mode), "client_id", clientID)
 	writeTokenResponse(w, at, rt, atTTL)
 }

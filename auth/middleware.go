@@ -26,6 +26,8 @@ func (s *Server) Middleware() func(http.Handler) http.Handler {
 				return
 			}
 			if !sess.ExpiresAt.IsZero() && time.Now().After(sess.ExpiresAt) {
+				s.Metrics.SessionRevoked(sess.Identity.Mode)
+				_ = s.Store.DeleteSession(r.Context(), sess.TokenHash)
 				s.unauthorized(w, "invalid_token", "access token expired")
 				return
 			}

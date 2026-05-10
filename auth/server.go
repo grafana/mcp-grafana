@@ -13,6 +13,7 @@ type Server struct {
 	Upstream  Upstream
 	Encryptor *Encryptor
 	Logger    *slog.Logger
+	Metrics   *Metrics
 
 	AccessTokenTTL  time.Duration
 	RefreshTokenTTL time.Duration
@@ -56,6 +57,7 @@ func New(cfg Config, store Store, enc *Encryptor, upstream Upstream, logger *slo
 		Upstream:        upstream,
 		Encryptor:       enc,
 		Logger:          logger,
+		Metrics:         NewMetrics(),
 		AccessTokenTTL:  time.Hour,
 		RefreshTokenTTL: 30 * 24 * time.Hour,
 		AuthCodeTTL:     5 * time.Minute,
