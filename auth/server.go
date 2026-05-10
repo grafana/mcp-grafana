@@ -7,10 +7,7 @@ import (
 	"time"
 
 	"github.com/grafana/mcp-grafana/auth/rbac"
-<<<<<<< HEAD
 	"golang.org/x/sync/singleflight"
-=======
->>>>>>> 7a8d08b (rbac: wire engine into auth.Server and main.go)
 )
 
 // Server bundles everything the auth HTTP handlers need.
