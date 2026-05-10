@@ -869,21 +869,37 @@ func handleFlagsPostParse(showVersion bool, slowLevelStr string) (flagAction, sl
 func basicRoleFromPerms(perms rbac.PermissionSet) string {
 	// Heuristic: if the user can manage roles, they're at least Admin.
 	// If they can write to dashboards/datasources, they're at least Editor.
-	// If they can read, they're at least Viewer.
-	if _, ok := perms["roles:write"]; ok {
-		return "Admin"
+	// Any read permission promotes to Viewer.
+	for _, action := range []string{"roles:write", "users:write", "org.users:write"} {
+		if _, ok := perms[action]; ok {
+			return "Admin"
+		}
 	}
-	if _, ok := perms["users:write"]; ok {
-		return "Admin"
+	for _, action := range []string{
+		"dashboards:write", "dashboards:create",
+		"datasources:write", "datasources:create",
+		"folders:write", "folders:create",
+		"alert.rules:write", "annotations:write",
+	} {
+		if _, ok := perms[action]; ok {
+			return "Editor"
+		}
 	}
-	if _, ok := perms["dashboards:write"]; ok {
-		return "Editor"
-	}
-	if _, ok := perms["datasources:write"]; ok {
-		return "Editor"
-	}
-	if _, ok := perms["dashboards:read"]; ok {
-		return "Viewer"
+	// Any read-only signal promotes to Viewer. SAs scoped to query-only
+	// datasources commonly have datasources:query/datasources:read but not
+	// dashboards:read; missing those would silently hide every Viewer-level
+	// tool in ModeBasic.
+	for _, action := range []string{
+		"dashboards:read",
+		"datasources:read", "datasources:query",
+		"folders:read",
+		"annotations:read",
+		"alert.rules:read", "alert.notifications:read",
+		"teams:read", "users:read",
+	} {
+		if _, ok := perms[action]; ok {
+			return "Viewer"
+		}
 	}
 	return ""
 }
