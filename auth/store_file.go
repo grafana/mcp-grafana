@@ -150,6 +150,16 @@ func (f *FileStore) flush() error {
 		_ = os.Remove(tmp.Name())
 		return err
 	}
+	// Sync to stable storage before the rename so a crash between Close
+	// and Rename can't leave the renamed file with zero-length / partial
+	// contents. Without this the OS may have buffered the write and the
+	// rename atomically swaps in a corrupt blob — every user has to
+	// re-authenticate and re-bootstrap.
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmp.Name())
+		return err
+	}
 	if err := tmp.Close(); err != nil {
 		_ = os.Remove(tmp.Name())
 		return err

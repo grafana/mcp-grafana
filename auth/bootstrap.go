@@ -106,15 +106,15 @@ func (s *Server) processBootstrap(w http.ResponseWriter, r *http.Request, grafan
 	}
 
 	// Token good — atomically claim the flow before issuing an auth code.
-	// peekBootstrap above is a non-consuming read; a concurrent POST for the
-	// same flow token could race in between. consumeBootstrap returns
-	// ok=false if a sibling already claimed it, in which case we reject
-	// this request rather than mint a duplicate auth code that would
-	// silently invalidate the first client's session via the
-	// one-session-per-identity invariant.
+	// peekBootstrap above is a non-consuming read; a concurrent POST for
+	// the same flow token could race in between, OR the entry could
+	// expire while validateGrafanaToken was running (it's a network call
+	// that can take seconds). consumeBootstrap returns ok=false in both
+	// cases and we can't tell them apart at this layer, so the message
+	// covers both — the user is told to log in again either way.
 	claimed, ok := consumeBootstrap(flow)
 	if !ok {
-		httpError(w, http.StatusBadRequest, "invalid_request", "flow already consumed")
+		httpError(w, http.StatusBadRequest, "invalid_request", "flow expired or already consumed; please log in again")
 		return
 	}
 	pb = *claimed
