@@ -647,7 +647,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 	}
 }
 
-func buildAuthConfig(modeStr, publicURL, encKey, encKeyPrev, stateDir string, allowInsecure, trustForwarded bool, oidcIssuer, oidcClientID, oidcClientSecret, oidcScopes string, rbacGating string, rbacCacheTTL time.Duration) (auth.Config, error) {
+func buildAuthConfig(modeStr, publicURL, encKey, encKeyPrev, stateDir string, allowInsecure, trustForwarded bool, oidcIssuer, oidcClientID, oidcClientSecret, oidcScopes, grafanaOAuth2ClientID, grafanaOAuth2ClientSecret, grafanaOAuth2IssuerURL string, rbacGating string, rbacCacheTTL time.Duration) (auth.Config, error) {
 	mode, err := auth.ParseMode(modeStr)
 	if err != nil {
 		return auth.Config{}, err
@@ -802,7 +802,7 @@ func main() {
 		os.Exit(2)
 	}
 
-	authCfg, err := buildAuthConfig(authModeStr, authPublicURL, authEncKey, authEncKeyPrev, authStateDir, authAllowInsecure, authTrustForwarded, oidcIssuer, oidcClientID, oidcClientSecret, oidcScopes, rbacGating, rbacCacheTTL)
+	authCfg, err := buildAuthConfig(authModeStr, authPublicURL, authEncKey, authEncKeyPrev, authStateDir, authAllowInsecure, authTrustForwarded, oidcIssuer, oidcClientID, oidcClientSecret, oidcScopes, grafanaOAuth2ClientID, grafanaOAuth2ClientSecret, grafanaOAuth2IssuerURL, rbacGating, rbacCacheTTL)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "invalid auth config: %v\n", err)
 		os.Exit(2)
