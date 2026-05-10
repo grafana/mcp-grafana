@@ -52,6 +52,43 @@ func TestMemoryStore_SessionRoundTrip(t *testing.T) {
 	}
 }
 
+func TestMemoryStore_PutSession_ReplacesPreviousForSameIdentity(t *testing.T) {
+	s := NewMemoryStore()
+	ctx := context.Background()
+
+	first := newTestSession(t, "alice")
+	if err := s.PutSession(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+
+	// Replace with a new session for the same identity but distinct hashes.
+	second := first
+	second.TokenHash = HashToken("tok-alice-2")
+	second.RefreshHash = HashToken("ref-alice-2")
+	if err := s.PutSession(ctx, second); err != nil {
+		t.Fatal(err)
+	}
+
+	// New session resolves via every index.
+	if got, err := s.GetSessionByTokenHash(ctx, second.TokenHash); err != nil || got.TokenHash != second.TokenHash {
+		t.Errorf("new session not reachable: got=%+v err=%v", got, err)
+	}
+	if got, err := s.GetSessionByRefreshHash(ctx, second.RefreshHash); err != nil || got.TokenHash != second.TokenHash {
+		t.Errorf("new refresh hash should resolve to new session: got=%+v err=%v", got, err)
+	}
+	if got, err := s.GetSessionByIdentity(ctx, second.Identity); err != nil || got.TokenHash != second.TokenHash {
+		t.Errorf("identity should resolve to new session: got=%+v err=%v", got, err)
+	}
+
+	// Old session must NOT be reachable via its own access or refresh hash.
+	if _, err := s.GetSessionByTokenHash(ctx, first.TokenHash); !errors.Is(err, ErrNotFound) {
+		t.Errorf("previous session should be unreachable by old token hash, got err=%v", err)
+	}
+	if _, err := s.GetSessionByRefreshHash(ctx, first.RefreshHash); !errors.Is(err, ErrNotFound) {
+		t.Errorf("previous session should be unreachable by old refresh hash, got err=%v", err)
+	}
+}
+
 func TestMemoryStore_DeleteSession(t *testing.T) {
 	s := NewMemoryStore()
 	ctx := context.Background()

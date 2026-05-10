@@ -112,7 +112,8 @@ func (s *Server) processBootstrap(w http.ResponseWriter, r *http.Request, grafan
 
 	ct, err := s.Encryptor.Seal([]byte(token))
 	if err != nil {
-		httpError(w, http.StatusInternalServerError, "server_error", "encrypt: "+err.Error())
+		s.logger().Error("auth.bootstrap_encrypt_failed", "user_id", pb.identity.String(), "error", err.Error())
+		httpError(w, http.StatusInternalServerError, "server_error", "encryption failed")
 		return
 	}
 	s.logger().Info("auth.bootstrap_token_validated", "user_id", pb.identity.String())

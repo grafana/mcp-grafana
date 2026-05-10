@@ -34,6 +34,22 @@ func NewMemoryStore() *MemoryStore {
 func (m *MemoryStore) PutSession(_ context.Context, s Session) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	// Enforce the documented "one session per identity" invariant: if a
+	// session already exists for this identity, drop its secondary-index
+	// entries before installing the replacement. Otherwise the previous
+	// session's access and refresh tokens would still resolve via
+	// GetSessionByTokenHash / GetSessionByRefreshHash, while
+	// GetSessionByIdentity points at the new session.
+	if oldHash, ok := m.sessByIdentity[s.Identity.String()]; ok && oldHash != s.TokenHash {
+		if old, ok := m.sessByToken[oldHash]; ok {
+			delete(m.sessByToken, oldHash)
+			if old.RefreshHash != "" {
+				delete(m.sessByRefresh, old.RefreshHash)
+			}
+		}
+	}
+
 	cp := s
 	m.sessByToken[s.TokenHash] = &cp
 	if s.RefreshHash != "" {
