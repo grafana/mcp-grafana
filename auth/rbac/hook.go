@@ -51,31 +51,34 @@ func (e *Engine) effectiveMode() Mode {
 }
 
 func (e *Engine) recordEdition(perms PermissionSet) {
-	if e.resolved != ModeAuto {
-		return
-	}
 	// Only resolve on a non-empty permission set. An empty response is
 	// ambiguous: it could be a real OSS-Basic install OR an Enterprise
 	// install where the FIRST observed user happens to be a service
-	// account with no granted permissions. Resolving to ModeBasic on
-	// that empty signal would permanently misclassify the cluster — every
+	// account with no granted permissions. Resolving to ModeBasic on that
+	// empty signal would permanently misclassify the cluster — every
 	// subsequent Admin user would also be filtered as Basic until restart.
-	// Stay in ModeAuto until SOME user yields non-empty perms (→ Enterprise),
-	// or the operator explicitly sets --rbac-gating=basic. The Filter
-	// fail-open path keeps tools visible during the unresolved window.
+	// Stay in ModeAuto until SOME user yields non-empty perms (→
+	// ModeEnterprise), or the operator explicitly sets --rbac-gating=basic.
+	// The hot path's fail-open behaviour keeps tools visible until then.
 	//
-	// Capture the slog call's argument before releasing the lock so the
-	// emission itself doesn't run while holding a write lock (slog
-	// handlers may queue/block — keep them off the hot path).
+	// Don't pre-check e.resolved before taking the lock — that's a data
+	// race (the field is written under e.mu, and Mode/string is multi-word
+	// in Go). Take the write lock unconditionally; the early-out cost is
+	// one mutex/unmutex per post-resolution call and is dominated by the
+	// Cache.Get work that precedes it on the hot path.
 	if len(perms) == 0 {
 		return
 	}
 	e.mu.Lock()
-	if e.resolved == ModeAuto {
-		e.resolved = ResolveAuto(perms)
+	if e.resolved != ModeAuto {
+		e.mu.Unlock()
+		return
 	}
+	e.resolved = ResolveAuto(perms)
 	resolved := e.resolved
 	e.mu.Unlock()
+	// Emit outside the lock so a slog handler that queues/blocks doesn't
+	// pin recordEdition behind it.
 	if e.cfg.Logger != nil {
 		e.cfg.Logger.Info("rbac.edition_detected", "mode", string(resolved))
 	}

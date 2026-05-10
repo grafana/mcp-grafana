@@ -470,6 +470,12 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 			}
 			slog.Info("Per-user auth enabled", "mode", string(authCfg.Mode), "public_url", authCfg.PublicURL, "trust_forwarded_headers", authCfg.TrustForwardedHeaders)
 		}
+	}
+	// RBAC wiring is gated on the auth Server actually existing. On stdio
+	// (or any future transport that skips buildAuthServer) authSrv is nil
+	// and the fetcher closure below would panic on authSrv.Store. RBAC
+	// gating is also pointless without HTTP-side per-user auth.
+	if authSrv != nil {
 		rbacMode, err := rbac.ParseMode(authCfg.RBACGating)
 		if err != nil {
 			return fmt.Errorf("rbac: %w", err)

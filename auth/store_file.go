@@ -16,8 +16,15 @@ type FileStore struct {
 	mem *MemoryStore
 	enc *Encryptor
 
-	mu   sync.RWMutex
-	path string
+	// flushMu serializes file I/O (snapshot + encrypt + write + fsync +
+	// rename) across concurrent mutating methods. It does NOT guard
+	// reads or in-memory mutation — the underlying MemoryStore has its
+	// own RWMutex for those, so a slow flush doesn't block session
+	// lookups on the auth middleware's hot path. flush() snapshots the
+	// memory state under f.mem.mu.RLock briefly, then releases that
+	// lock before doing the disk I/O.
+	flushMu sync.Mutex
+	path    string
 }
 
 type filePayload struct {
@@ -165,37 +172,37 @@ func (f *FileStore) flush() error {
 
 func (f *FileStore) Close() error { return nil }
 
-// All mutating methods delegate to the memory store and then flush.
+// All mutating methods delegate to the memory store, then take flushMu
+// to serialize the file write. Reads delegate directly to MemoryStore
+// (which has its own RWMutex) so a slow flush doesn't block session
+// lookups on the auth middleware's hot path.
+//
+// Concurrency note: a mutation is "committed" (visible to readers) the
+// moment MemoryStore's write returns. The on-disk file always reflects
+// some past valid state — when two flushes race, the second-to-finish
+// captures both mutations, so eventual on-disk consistency is preserved.
 
 func (f *FileStore) PutSession(ctx context.Context, s Session) (string, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	replaced, err := f.mem.PutSession(ctx, s)
 	if err != nil {
 		return "", err
 	}
+	f.flushMu.Lock()
+	defer f.flushMu.Unlock()
 	return replaced, f.flush()
 }
 
 func (f *FileStore) GetSessionByTokenHash(ctx context.Context, h string) (Session, error) {
-	f.mu.RLock()
-	defer f.mu.RUnlock()
 	return f.mem.GetSessionByTokenHash(ctx, h)
 }
 func (f *FileStore) GetSessionByRefreshHash(ctx context.Context, h string) (Session, error) {
-	f.mu.RLock()
-	defer f.mu.RUnlock()
 	return f.mem.GetSessionByRefreshHash(ctx, h)
 }
 func (f *FileStore) GetSessionByIdentity(ctx context.Context, id Identity) (Session, error) {
-	f.mu.RLock()
-	defer f.mu.RUnlock()
 	return f.mem.GetSessionByIdentity(ctx, id)
 }
 
 func (f *FileStore) DeleteSession(ctx context.Context, h string) (bool, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	deleted, err := f.mem.DeleteSession(ctx, h)
 	if err != nil {
 		return false, err
@@ -204,6 +211,8 @@ func (f *FileStore) DeleteSession(ctx context.Context, h string) (bool, error) {
 		// Nothing changed in-memory, no need to rewrite the file.
 		return false, nil
 	}
+	f.flushMu.Lock()
+	defer f.flushMu.Unlock()
 	if err := f.flush(); err != nil {
 		return true, err
 	}
@@ -211,56 +220,51 @@ func (f *FileStore) DeleteSession(ctx context.Context, h string) (bool, error) {
 }
 
 func (f *FileStore) PutClient(ctx context.Context, c DCRClient) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	if err := f.mem.PutClient(ctx, c); err != nil {
 		return err
 	}
+	f.flushMu.Lock()
+	defer f.flushMu.Unlock()
 	return f.flush()
 }
 
 func (f *FileStore) GetClient(ctx context.Context, id string) (DCRClient, error) {
-	f.mu.RLock()
-	defer f.mu.RUnlock()
 	return f.mem.GetClient(ctx, id)
 }
 
 func (f *FileStore) PutAuthCode(ctx context.Context, c AuthCode) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	if err := f.mem.PutAuthCode(ctx, c); err != nil {
 		return err
 	}
+	f.flushMu.Lock()
+	defer f.flushMu.Unlock()
 	return f.flush()
 }
 
 func (f *FileStore) PeekAuthCode(ctx context.Context, h string) (AuthCode, error) {
 	// peekAuthCodePruning signals whether MemoryStore actually deleted
-	// an expired entry. Take f.mu for the full call to keep the
-	// read-mutate-flush sequence under the same lock as every other
-	// FileStore method (PutSession, ConsumeAuthCode, etc.) — the inner
-	// MemoryStore mu prevents data corruption either way, but holding
-	// f.mu honours the documented locking contract. Flush only on a
-	// real prune; a never-existed or non-expired code skips the disk
-	// rewrite. The flush is best-effort: callers may differentiate
-	// ErrNotFound from I/O failure via errors.Is, so we don't mask
-	// the inner error with a flush error.
-	f.mu.Lock()
-	defer f.mu.Unlock()
+	// an expired entry. Flush only on a real prune under flushMu —
+	// a never-existed or non-expired code shouldn't burden the /token
+	// hot path with a full file rewrite, and a concurrent flush must
+	// see the deletion. The flush is best-effort: errors.Is(err,
+	// ErrNotFound) downstream must keep working, so we don't mask the
+	// inner error with a disk error.
 	c, err, pruned := f.mem.peekAuthCodePruning(ctx, h)
 	if !pruned {
 		return c, err
 	}
+	f.flushMu.Lock()
 	_ = f.flush()
+	f.flushMu.Unlock()
 	return c, err
 }
 
 func (f *FileStore) ConsumeAuthCode(ctx context.Context, h string) (AuthCode, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	c, err := f.mem.ConsumeAuthCode(ctx, h)
 	if err != nil {
 		return c, err
 	}
+	f.flushMu.Lock()
+	defer f.flushMu.Unlock()
 	return c, f.flush()
 }
