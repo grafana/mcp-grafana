@@ -405,8 +405,11 @@ func decodeSAMLRequest(encoded string) ([]byte, error) {
 	// Try deflate decompress (redirect binding).
 	r := flate.NewReader(bytes.NewReader(b))
 	deflated, deflateErr := io.ReadAll(r)
+	// Close on both paths. The flate reader's Close can surface
+	// trailing-byte errors that ReadAll missed; we ignore the error
+	// either way since the fallback already covers the failure mode.
+	_ = r.Close()
 	if deflateErr == nil {
-		_ = r.Close()
 		return deflated, nil
 	}
 	// Fall back to treating as raw XML (POST binding).
