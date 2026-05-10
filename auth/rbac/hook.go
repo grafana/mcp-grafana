@@ -84,6 +84,54 @@ func (e *Engine) recordEdition(perms PermissionSet) {
 	}
 }
 
+// resolveContext is the shared "should we gate?" probe used by both the
+// list-tools hook and the call-time middleware. It returns:
+//
+//   - mode: the effective Mode for THIS request (ModeAuto promoted to
+//     ModeEnterprise/ModeBasic via recordEdition when possible).
+//   - snap: the per-session Snapshot.
+//   - sessionKey: the cache key used (for logging only).
+//   - gate: true when the caller should consult e.cfg.Gate; false when
+//     the caller should pass-through unchanged (ModeOff, no session,
+//     fetch failure, unresolved ModeAuto).
+//
+// fetchLogKey lets the two call sites distinguish their log events
+// without duplicating the fetch/fail-open block.
+func (e *Engine) resolveContext(ctx context.Context, fetchLogKey string) (mode Mode, snap Snapshot, sessionKey string, gate bool) {
+	mode = e.effectiveMode()
+	if mode == ModeOff {
+		return mode, Snapshot{}, "", false
+	}
+	key, ok := e.cfg.KeyFromContext(ctx)
+	if !ok {
+		// No session on the context: legacy / no-auth path. Caller passes
+		// through unchanged.
+		return mode, Snapshot{}, "", false
+	}
+	snap, err := e.cfg.Cache.Get(ctx, key)
+	if err != nil {
+		if e.cfg.Logger != nil {
+			e.cfg.Logger.Warn(fetchLogKey,
+				"session_key", redactKey(key),
+				"error", err.Error())
+		}
+		// Fail open: an RBAC outage shouldn't lock everyone out.
+		return mode, Snapshot{}, key, false
+	}
+	if mode == ModeAuto {
+		e.recordEdition(snap.Permissions)
+		mode = e.effectiveMode()
+		if mode == ModeOff || mode == ModeAuto {
+			// recordEdition refuses to resolve on empty perms, so a
+			// real OSS-Basic install (where /api/access-control/user/
+			// permissions always returns {}) stays in ModeAuto until
+			// the operator switches to --rbac-gating=basic. Fail open.
+			return mode, snap, key, false
+		}
+	}
+	return mode, snap, key, true
+}
+
 // HookOnAfterListTools returns the mark3labs/mcp-go hook that filters the
 // result in place.
 func (e *Engine) HookOnAfterListTools() server.OnAfterListToolsFunc {
@@ -91,37 +139,9 @@ func (e *Engine) HookOnAfterListTools() server.OnAfterListToolsFunc {
 		if result == nil || len(result.Tools) == 0 {
 			return
 		}
-		mode := e.effectiveMode()
-		if mode == ModeOff {
+		mode, snap, key, gate := e.resolveContext(ctx, "auth.permission_fetch_failed")
+		if !gate {
 			return
-		}
-		key, ok := e.cfg.KeyFromContext(ctx)
-		if !ok {
-			return // no session: leave the tool list alone (legacy path)
-		}
-
-		snap, err := e.cfg.Cache.Get(ctx, key)
-		if err != nil {
-			if e.cfg.Logger != nil {
-				e.cfg.Logger.Warn("auth.permission_fetch_failed",
-					"session_key", redactKey(key),
-					"error", err.Error())
-			}
-			return // fail open
-		}
-
-		if mode == ModeAuto {
-			e.recordEdition(snap.Permissions)
-			mode = e.effectiveMode()
-			if mode == ModeOff || mode == ModeAuto {
-				// recordEdition refuses to resolve on empty perms, so a
-				// real OSS-Basic install (where /api/access-control/user/
-				// permissions always returns {}) stays in ModeAuto until
-				// the operator switches to --rbac-gating=basic. Fail open
-				// here — better than misclassifying an Enterprise cluster
-				// off the first restricted-SA observation.
-				return
-			}
 		}
 
 		// Time only the filter call — Cache.Get can include a network
@@ -154,7 +174,7 @@ func (e *Engine) HookOnAfterListTools() server.OnAfterListToolsFunc {
 // defense in depth — the on-list filter is for UX, this middleware is
 // for correctness.
 //
-// Behaviour mirrors the list-tools hook:
+// Behaviour mirrors the list-tools hook (shared via resolveContext):
 //   - ModeOff or no-session-on-context → pass-through.
 //   - Cache fetch error → pass-through (fail open). Same rationale: an
 //     RBAC outage shouldn't lock everyone out of every tool.
@@ -165,30 +185,9 @@ func (e *Engine) HookOnAfterListTools() server.OnAfterListToolsFunc {
 func (e *Engine) ToolMiddleware() server.ToolHandlerMiddleware {
 	return func(next server.ToolHandlerFunc) server.ToolHandlerFunc {
 		return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			mode := e.effectiveMode()
-			if mode == ModeOff {
+			mode, snap, key, gate := e.resolveContext(ctx, "auth.permission_fetch_failed_call_time")
+			if !gate {
 				return next(ctx, request)
-			}
-			key, ok := e.cfg.KeyFromContext(ctx)
-			if !ok {
-				return next(ctx, request) // no session: legacy / no-auth path
-			}
-			snap, err := e.cfg.Cache.Get(ctx, key)
-			if err != nil {
-				if e.cfg.Logger != nil {
-					e.cfg.Logger.Warn("auth.permission_fetch_failed_call_time",
-						"session_key", redactKey(key),
-						"tool", request.Params.Name,
-						"error", err.Error())
-				}
-				return next(ctx, request) // fail open
-			}
-			if mode == ModeAuto {
-				e.recordEdition(snap.Permissions)
-				mode = e.effectiveMode()
-				if mode == ModeOff || mode == ModeAuto {
-					return next(ctx, request)
-				}
 			}
 			if !e.cfg.Gate.Allow(mode, snap, request.Params.Name) {
 				if e.cfg.Logger != nil {
