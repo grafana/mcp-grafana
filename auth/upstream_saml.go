@@ -1,12 +1,16 @@
 package auth
 
 import (
+	"bytes"
+	"compress/flate"
 	"context"
 	"crypto/rsa"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/pem"
 	"encoding/xml"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -291,7 +295,65 @@ func (u *SAMLUpstream) ValidateAssertion(r *http.Request) (samlAssertion, error)
 	}, nil
 }
 
-// BuildLogoutResponseURL is implemented in Task 7.
+// BuildLogoutResponseURL parses an inbound SLO LogoutRequest (HTTP-Redirect
+// binding), extracts the NameID, and returns the LogoutResponse redirect URL.
+// The crewjam/saml v0.5.1 library does not expose ValidateLogoutRequestForm;
+// we decode the SAMLRequest ourselves and use MakeRedirectLogoutResponse to
+// build the reply.
 func (u *SAMLUpstream) BuildLogoutResponseURL(r *http.Request) (Identity, string, error) {
-	return Identity{}, "", fmt.Errorf("not yet implemented")
+	if err := r.ParseForm(); err != nil {
+		return Identity{}, "", fmt.Errorf("parse slo form: %w", err)
+	}
+
+	// Support both GET (redirect binding) and POST (post binding) logout requests.
+	raw := r.Form.Get("SAMLRequest")
+	if raw == "" {
+		return Identity{}, "", fmt.Errorf("saml: SLO request missing SAMLRequest")
+	}
+
+	// Decode: base64 → deflate → XML (redirect binding).
+	// POST binding is plain base64 without deflate; try redirect first.
+	decoded, err := decodeSAMLRequest(raw)
+	if err != nil {
+		return Identity{}, "", fmt.Errorf("saml: decode SLO SAMLRequest: %w", err)
+	}
+
+	var req saml.LogoutRequest
+	if err := xml.Unmarshal(decoded, &req); err != nil {
+		return Identity{}, "", fmt.Errorf("saml: parse LogoutRequest XML: %w", err)
+	}
+
+	nameID := ""
+	if req.NameID != nil {
+		nameID = req.NameID.Value
+	}
+	if nameID == "" {
+		return Identity{}, "", fmt.Errorf("saml: logout request has no NameID")
+	}
+
+	// Build a LogoutResponse URL directing the user-agent back to the IdP.
+	sloURL, err := u.rawSP.MakeRedirectLogoutResponse(req.ID, "")
+	if err != nil {
+		return Identity{}, "", fmt.Errorf("saml: build logout response: %w", err)
+	}
+
+	return Identity{Mode: ModeSAML, ID: nameID}, sloURL.String(), nil
+}
+
+// decodeSAMLRequest decodes a SAMLRequest parameter from either HTTP-Redirect
+// binding (base64 + deflate) or HTTP-POST binding (plain base64).
+func decodeSAMLRequest(encoded string) ([]byte, error) {
+	b, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return nil, fmt.Errorf("base64 decode: %w", err)
+	}
+	// Try deflate decompress (redirect binding).
+	r := flate.NewReader(bytes.NewReader(b))
+	deflated, deflateErr := io.ReadAll(r)
+	if deflateErr == nil {
+		_ = r.Close()
+		return deflated, nil
+	}
+	// Fall back to treating as raw XML (POST binding).
+	return b, nil
 }
