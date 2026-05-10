@@ -78,16 +78,19 @@ func (e *Engine) HookOnAfterListTools() server.OnAfterListToolsFunc {
 		}
 
 		// Time the filter and record under the FINAL resolved mode. The
-		// closure captures `mode` by reference, so the deferred call sees
-		// whatever value `mode` was reassigned to (post-recordEdition for
-		// ModeAuto, post-early-return otherwise) by the time the hook
-		// returns. This matters on the first request after startup: at the
-		// top of the hook `mode == ModeAuto`, but recordEdition flips it
-		// below to the resolved mode, and the metric must be recorded
-		// under that resolved value rather than under "auto".
+		// closure captures `mode` and `recorded` by reference, so the
+		// deferred call sees whatever value `mode` was reassigned to
+		// (post-recordEdition for ModeAuto) by the time the hook returns.
+		// `recorded` gates emission so we don't pollute the histogram with
+		// failure-path durations (cache fetch failed → no filter happened →
+		// the duration is a network-call timing, not a filter timing, and
+		// would land under mode="auto" if recordEdition didn't run).
 		start := time.Now()
+		recorded := false
 		defer func() {
-			e.cfg.Metrics.FilterObserved(ctx, mode, time.Since(start).Seconds())
+			if recorded {
+				e.cfg.Metrics.FilterObserved(ctx, mode, time.Since(start).Seconds())
+			}
 		}()
 
 		snap, err := e.cfg.Cache.Get(ctx, key)
@@ -97,7 +100,7 @@ func (e *Engine) HookOnAfterListTools() server.OnAfterListToolsFunc {
 					"session_key", redactKey(key),
 					"error", err.Error())
 			}
-			return // fail open
+			return // fail open — no metric recorded since no filter ran
 		}
 
 		if mode == ModeAuto {
@@ -109,6 +112,7 @@ func (e *Engine) HookOnAfterListTools() server.OnAfterListToolsFunc {
 		}
 
 		filtered := e.cfg.Gate.Filter(mode, snap, result.Tools)
+		recorded = true
 		if e.cfg.Logger != nil {
 			removed := len(result.Tools) - len(filtered)
 			if removed > 0 {

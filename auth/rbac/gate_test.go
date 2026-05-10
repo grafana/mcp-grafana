@@ -151,3 +151,25 @@ func sameNames(ts []mcp.Tool, want []string) bool {
 	}
 	return true
 }
+
+func TestGate_FilterFailsOpenForUnknownMode(t *testing.T) {
+	// A gated tool that nominally requires Enterprise permissions.
+	registry := map[string]ToolGate{
+		"gated": {Permissions: []Permission{{Action: "x:read"}}},
+	}
+	g := NewGate(registry)
+	tools := []mcp.Tool{{Name: "gated"}, {Name: "other"}}
+
+	// ModeAuto must NOT silently drop the gated tool — without a default
+	// case the switch would skip the append and remove it.
+	got := g.Filter(ModeAuto, Snapshot{}, tools)
+	if len(got) != 2 {
+		t.Errorf("ModeAuto must fail open: got %d tools, want 2 (%v)", len(got), got)
+	}
+
+	// And same for any other unrecognised value.
+	got = g.Filter(Mode("not-a-real-mode"), Snapshot{}, tools)
+	if len(got) != 2 {
+		t.Errorf("unknown mode must fail open: got %d tools, want 2 (%v)", len(got), got)
+	}
+}

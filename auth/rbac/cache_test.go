@@ -168,3 +168,50 @@ func readCounter(t *testing.T, rm *metricdata.ResourceMetrics, name string) int6
 	}
 	return 0
 }
+
+func TestCache_DetachedFetchSurvivesCallerCancel(t *testing.T) {
+	// First Get cancels its context immediately. The fetch must NOT see
+	// that cancellation — it runs on a detached context so concurrent
+	// waiters arent failed by one client's disconnect.
+	fetchSawCancel := atomic.Bool{}
+	fetcher := func(ctx context.Context, _ string) (Snapshot, error) {
+		select {
+		case <-ctx.Done():
+			fetchSawCancel.Store(true)
+			return Snapshot{}, ctx.Err()
+		case <-time.After(50 * time.Millisecond):
+			return Snapshot{Permissions: PermissionSet{"a:read": []string{"*"}}}, nil
+		}
+	}
+	c := NewCache(time.Second, fetcher)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	snap, err := c.Get(ctx, "k")
+	if err != nil {
+		t.Fatalf("Get returned error %v from detached fetch", err)
+	}
+	if fetchSawCancel.Load() {
+		t.Errorf("fetcher saw cancellation from caller ctx; expected detached ctx")
+	}
+	if _, ok := snap.Permissions["a:read"]; !ok {
+		t.Errorf("missing expected snapshot data: %+v", snap)
+	}
+}
+
+func TestCache_SweepDropsExpiredEntries(t *testing.T) {
+	c := NewCache(10*time.Millisecond, func(_ context.Context, _ string) (Snapshot, error) {
+		return Snapshot{}, nil
+	})
+	now := time.Now()
+	c.entries["stale"] = &entry{expiresAt: now.Add(-time.Hour)}
+	c.entries["fresh"] = &entry{expiresAt: now.Add(time.Hour)}
+	c.mu.Lock()
+	c.sweepEntriesLocked(now)
+	c.mu.Unlock()
+	if _, ok := c.entries["stale"]; ok {
+		t.Errorf("expired cache entry was not swept")
+	}
+	if _, ok := c.entries["fresh"]; !ok {
+		t.Errorf("fresh cache entry was incorrectly swept")
+	}
+}

@@ -20,13 +20,21 @@ type Snapshot struct {
 // Grafana with the per-user token bound to that session.
 type Fetcher func(ctx context.Context, sessionKey string) (Snapshot, error)
 
+// fetchTimeout bounds how long a single coalesced cache fetch may run on
+// its detached context. The fetch is started by whichever Get() wins the
+// singleflight race; subsequent waiters share the result. We can't use the
+// caller's request context because cancelling that one would fail the fetch
+// for every coalesced waiter — see TestCache_GetCoalescesConcurrentFetches.
+const fetchTimeout = 10 * time.Second
+
 // Cache is a per-session, TTL'd, singleflight-deduplicated cache of Snapshots.
 type Cache struct {
 	ttl     time.Duration
 	fetcher Fetcher
 
-	mu      sync.RWMutex
-	entries map[string]*entry
+	mu        sync.RWMutex
+	entries   map[string]*entry
+	lastSwept time.Time
 
 	flight  singleflight.Group
 	metrics *Metrics
@@ -35,6 +43,24 @@ type Cache struct {
 type entry struct {
 	snap      Snapshot
 	expiresAt time.Time
+}
+
+// sweepEntriesLocked drops entries whose TTL has elapsed. The caller must
+// hold c.mu. Runs at most once per TTL window so the amortised per-call
+// cost stays O(1) under sustained traffic.
+func (c *Cache) sweepEntriesLocked(now time.Time) {
+	if c.ttl <= 0 {
+		return
+	}
+	if now.Sub(c.lastSwept) < c.ttl {
+		return
+	}
+	for k, e := range c.entries {
+		if !now.Before(e.expiresAt) {
+			delete(c.entries, k)
+		}
+	}
+	c.lastSwept = now
 }
 
 // NewCache builds a cache with the given TTL. A zero ttl disables caching
@@ -69,13 +95,24 @@ func (c *Cache) Get(ctx context.Context, key string) (Snapshot, error) {
 	c.metrics.CacheMiss(ctx)
 
 	v, err, _ := c.flight.Do(key, func() (any, error) {
-		snap, err := c.fetcher(ctx, key)
+		// Detach from the caller's context. Singleflight coalesces
+		// concurrent waiters onto the goroutine that won the race; if we
+		// forwarded that goroutine's request ctx and it cancelled (e.g.
+		// client disconnect), every waiter would receive the cancellation
+		// error and the hook would fail-open with unfiltered tool lists.
+		// Bound the detached call with fetchTimeout so a hung upstream
+		// can't keep the flight open indefinitely.
+		fetchCtx, cancel := context.WithTimeout(context.Background(), fetchTimeout)
+		defer cancel()
+		snap, err := c.fetcher(fetchCtx, key)
 		if err != nil {
 			return Snapshot{}, err
 		}
 		if c.ttl > 0 {
+			now := time.Now()
 			c.mu.Lock()
-			c.entries[key] = &entry{snap: snap, expiresAt: time.Now().Add(c.ttl)}
+			c.sweepEntriesLocked(now)
+			c.entries[key] = &entry{snap: snap, expiresAt: now.Add(c.ttl)}
 			c.mu.Unlock()
 		}
 		return snap, nil

@@ -46,6 +46,13 @@ func (g *Gate) Filter(mode Mode, snap Snapshot, tools []mcp.Tool) []mcp.Tool {
 			if basicRoleSatisfies(snap.BasicRole, gate.MinBasicRole) {
 				out = append(out, t)
 			}
+		default:
+			// Fail open for unrecognised modes (incl. ModeAuto reaching
+			// Filter directly). The hook never lets ModeAuto through, but
+			// this default keeps Filter safe for direct callers — better
+			// to over-expose tools than to silently drop the entire
+			// non-public catalog.
+			out = append(out, t)
 		}
 	}
 	return out

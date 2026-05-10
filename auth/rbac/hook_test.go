@@ -147,3 +147,42 @@ func readHistogramMode(t *testing.T, rm *metricdata.ResourceMetrics, name string
 	t.Fatalf("metric %s not found", name)
 	return ""
 }
+
+// TestEngine_Hook_FetchError_DoesNotRecordFilterDuration confirms that the
+// filter-duration metric is NOT recorded on the fail-open path. The fetch
+// failed, no filter ran — recording a duration would conflate failed
+// network call timings with actual filter timings on dashboards.
+func TestEngine_Hook_FetchError_DoesNotRecordFilterDuration(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	original := otel.GetMeterProvider()
+	otel.SetMeterProvider(mp)
+	t.Cleanup(func() { otel.SetMeterProvider(original) })
+
+	e := NewEngine(EngineConfig{
+		Mode: ModeEnterprise,
+		Cache: NewCache(0, func(_ context.Context, _ string) (Snapshot, error) {
+			return Snapshot{}, ErrFetchFailed
+		}),
+		Gate:           NewGate(map[string]ToolGate{"x": {Permissions: []Permission{{"a", ""}}}}),
+		KeyFromContext: func(_ context.Context) (string, bool) { return "session", true },
+		Metrics:        NewMetrics(),
+	})
+	r := &mcp.ListToolsResult{Tools: []mcp.Tool{{Name: "x"}}}
+	e.HookOnAfterListTools()(context.Background(), "id", &mcp.ListToolsRequest{}, r)
+
+	var rm metricdata.ResourceMetrics
+	if err := reader.Collect(context.Background(), &rm); err != nil {
+		t.Fatal(err)
+	}
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if m.Name == "mcp_auth_rbac_filter_duration_seconds" {
+				h := m.Data.(metricdata.Histogram[float64])
+				if len(h.DataPoints) > 0 {
+					t.Errorf("filter-duration metric was recorded on fail-open path: %d data points", len(h.DataPoints))
+				}
+			}
+		}
+	}
+}
