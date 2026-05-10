@@ -674,6 +674,13 @@ func buildAuthConfig(modeStr, publicURL, encKey, encKeyPrev, stateDir string, al
 	}
 	cfg.RBACGating = strings.ToLower(strings.TrimSpace(rbacGating))
 	cfg.RBACCacheTTL = rbacCacheTTL
+	cfg.GrafanaOAuth2ClientID = grafanaOAuth2ClientID
+	cfg.GrafanaOAuth2ClientSecret = grafanaOAuth2ClientSecret
+	cfg.GrafanaOAuth2IssuerURL = strings.TrimRight(grafanaOAuth2IssuerURL, "/")
+	if cfg.GrafanaOAuth2IssuerURL == "" {
+		// Default to GRAFANA_URL when not explicitly set.
+		cfg.GrafanaOAuth2IssuerURL = strings.TrimRight(os.Getenv("GRAFANA_URL"), "/")
+	}
 	if encKey != "" {
 		k, err := auth.DecodeKey(encKey)
 		if err != nil {
