@@ -170,16 +170,21 @@ func (s *Server) SAMLSLSHandler() http.Handler {
 
 		// Drop the session matching this identity, if any. The audit log,
 		// SessionRevoked metric decrement, and RBAC cache invalidate all
-		// fire only when a session was actually deleted — otherwise an
-		// already-logged-out (or never-bootstrapped) identity would
-		// double-count revocations and leave a misleading log entry.
+		// fire only when DeleteSession actually deleted the row — so two
+		// concurrent SLO requests for the same identity don't double-
+		// count, and an already-logged-out / never-bootstrapped identity
+		// emits the no_session event instead.
 		if existing, err := s.Store.GetSessionByIdentity(r.Context(), identity); err == nil {
-			_ = s.Store.DeleteSession(r.Context(), existing.TokenHash)
-			s.Metrics.SessionRevoked(r.Context(), existing.Identity.Mode)
-			if s.RBAC != nil {
-				s.RBAC.InvalidateSessionCache(existing.TokenHash)
+			deleted, _ := s.Store.DeleteSession(r.Context(), existing.TokenHash)
+			if deleted {
+				s.Metrics.SessionRevoked(r.Context(), existing.Identity.Mode)
+				if s.RBAC != nil {
+					s.RBAC.InvalidateSessionCache(existing.TokenHash)
+				}
+				s.logger().Info("auth.session_revoked", "user_id", identity.String(), "reason", "saml_slo")
+			} else {
+				s.logger().Info("auth.saml_slo_no_session", "user_id", identity.String())
 			}
-			s.logger().Info("auth.session_revoked", "user_id", identity.String(), "reason", "saml_slo")
 		} else {
 			s.logger().Info("auth.saml_slo_no_session", "user_id", identity.String())
 		}
