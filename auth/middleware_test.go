@@ -203,6 +203,7 @@ func TestMiddleware_RefreshesNearExpiry(t *testing.T) {
 	})
 
 	srv := &Server{
+		Metrics:   NewMetrics(),
 		PublicURL: "https://mcp.example.com",
 		Store:     store,
 		Encryptor: enc,
@@ -269,6 +270,7 @@ func TestMiddleware_Refresh_PreservesOldRefreshTokenWhenUpstreamOmitsIt(t *testi
 	})
 
 	srv := &Server{
+		Metrics:   NewMetrics(),
 		PublicURL: "https://mcp.example.com",
 		Store:     store,
 		Encryptor: enc,
@@ -317,6 +319,7 @@ func TestMiddleware_RefreshFailureReturns401(t *testing.T) {
 	})
 
 	srv := &Server{
+		Metrics:   NewMetrics(),
 		PublicURL: "https://mcp.example.com",
 		Store:     store,
 		Encryptor: enc,
@@ -397,6 +400,7 @@ func TestMiddleware_ConcurrentRefreshes_CoalesceToOneUpstreamCall(t *testing.T) 
 	}
 
 	srv := &Server{
+		Metrics:   NewMetrics(),
 		PublicURL: "https://mcp.example.com",
 		Store:     store,
 		Encryptor: enc,
