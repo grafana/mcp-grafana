@@ -66,3 +66,46 @@ func (p *PermsClient) Fetch(ctx context.Context, token string) (PermissionSet, e
 	}
 	return out, nil
 }
+
+// FetchOrgRole returns the user's BasicRole ("Viewer", "Editor", "Admin",
+// or "" if absent / unparseable) from Grafana's /api/user endpoint.
+//
+// The /api/access-control/user/permissions endpoint doesn't include the
+// basic role; deriving it from action names (e.g. roles:write → Admin)
+// fails on real Grafana RBAC because the action constants those
+// heuristics tested for are not the names Grafana emits. /api/user is the
+// authoritative source.
+//
+// Empty role on transport-level error or non-200 status is treated as
+// missing, not as a hard failure: a Grafana that doesn't expose the
+// endpoint to the SA token shouldn't block tool gating entirely. Callers
+// that need the role for Basic-mode gating will skip Basic-mode-only
+// tools, which is the safe default.
+func (p *PermsClient) FetchOrgRole(ctx context.Context, token string) (string, error) {
+	url := p.grafanaURL + "/api/user"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return "", fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := p.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("fetch user: %w", err)
+	}
+	defer func() { _, _ = io.Copy(io.Discard, resp.Body); _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("user endpoint returned %d", resp.StatusCode)
+	}
+	// /api/user returns the org-scoped role under "orgRole". The Viewer/
+	// Editor/Admin values match what the gate expects without translation.
+	var out struct {
+		OrgRole string `json:"orgRole"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return "", fmt.Errorf("decode user: %w", err)
+	}
+	return out.OrgRole, nil
+}

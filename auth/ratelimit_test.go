@@ -68,7 +68,7 @@ func TestRateLimit_ContinuousRefill_NoBoundaryBurst(t *testing.T) {
 
 func TestRateLimit_IdleBucketsAreEvicted(t *testing.T) {
 	// Use a short refill so a single sleep covers the 4× idle threshold.
-	limiter := NewIPLimiter(2, 50*time.Millisecond)
+	limiter := NewIPLimiter(2, 50*time.Millisecond, true)
 
 	// Hit the limiter from many distinct IPs.
 	for i := 0; i < 50; i++ {

@@ -11,38 +11,16 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/grafana/mcp-grafana/auth/rbac"
 	"github.com/grafana/mcp-grafana/observability"
 )
 
-func TestBasicRoleFromPerms(t *testing.T) {
-	cases := []struct {
-		name  string
-		perms rbac.PermissionSet
-		want  string
-	}{
-		{"empty perms", rbac.PermissionSet{}, ""},
-		{"datasources:query only (regression)", rbac.PermissionSet{"datasources:query": {"datasources:*"}}, "Viewer"},
-		{"datasources:read only", rbac.PermissionSet{"datasources:read": {"datasources:*"}}, "Viewer"},
-		{"dashboards:read", rbac.PermissionSet{"dashboards:read": {"dashboards:*"}}, "Viewer"},
-		{"alert.rules:read", rbac.PermissionSet{"alert.rules:read": {""}}, "Viewer"},
-		{"dashboards:write", rbac.PermissionSet{"dashboards:write": {"dashboards:*"}}, "Editor"},
-		{"alert.rules:write", rbac.PermissionSet{"alert.rules:write": {""}}, "Editor"},
-		{"folders:create", rbac.PermissionSet{"folders:create": {""}}, "Editor"},
-		{"editor wins over reader signal", rbac.PermissionSet{"datasources:read": {"datasources:*"}, "dashboards:write": {"dashboards:*"}}, "Editor"},
-		{"roles:write", rbac.PermissionSet{"roles:write": {""}}, "Admin"},
-		{"users:write", rbac.PermissionSet{"users:write": {""}}, "Admin"},
-		{"org.users:write", rbac.PermissionSet{"org.users:write": {""}}, "Admin"},
-		{"admin wins over editor signal", rbac.PermissionSet{"roles:write": {""}, "dashboards:write": {""}}, "Admin"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := basicRoleFromPerms(tc.perms); got != tc.want {
-				t.Errorf("got %q want %q (perms=%v)", got, tc.want, tc.perms)
-			}
-		})
-	}
-}
+// basicRoleFromPerms used to live here, deriving the user's BasicRole
+// from action names. The heuristic was wrong (the action names tested
+// for weren't the ones Grafana actually emits) and silently misclassified
+// real Admins as Editor in ModeBasic. Replaced with a direct
+// PermsClient.FetchOrgRole call against /api/user — the authoritative
+// source. Tests for the role-detection path now live in
+// auth/rbac/perms_client_test.go.
 
 // testClientSession implements server.ClientSession for unit tests.
 type testClientSession struct {

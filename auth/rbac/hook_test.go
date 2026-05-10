@@ -86,6 +86,51 @@ func TestEngine_Hook_FetchError_FailsOpen(t *testing.T) {
 
 type testKey struct{}
 
+// TestEngine_RecordEdition_EmptyPermsStaysInAuto guards against the
+// sticky-Basic edge case: in an Enterprise cluster, the FIRST observed
+// user might be a service account with no granted permissions. If
+// recordEdition resolved on that empty signal it would pin the cluster
+// to ModeBasic until restart, misclassifying every subsequent Admin
+// user. Empty perms must keep the engine in ModeAuto so the next user
+// with non-empty perms can promote it to ModeEnterprise.
+func TestEngine_RecordEdition_EmptyPermsStaysInAuto(t *testing.T) {
+	e := NewEngine(EngineConfig{Mode: ModeAuto})
+	e.recordEdition(PermissionSet{})
+	if got := e.effectiveMode(); got != ModeAuto {
+		t.Errorf("recordEdition with empty perms set mode=%q, want %q (stay in auto)", got, ModeAuto)
+	}
+	// A subsequent non-empty observation should still promote.
+	e.recordEdition(PermissionSet{"datasources:read": {"datasources:*"}})
+	if got := e.effectiveMode(); got != ModeEnterprise {
+		t.Errorf("recordEdition with non-empty perms after empty set mode=%q, want %q", got, ModeEnterprise)
+	}
+}
+
+// TestEngine_Hook_AutoMode_EmptyPerms_FailsOpen confirms the user-facing
+// consequence of the fix: in ModeAuto, a fetch that returns empty perms
+// passes the tools list through unfiltered (rather than misclassifying
+// the cluster as Basic and applying basic-role filtering immediately).
+func TestEngine_Hook_AutoMode_EmptyPerms_FailsOpen(t *testing.T) {
+	e := NewEngine(EngineConfig{
+		Mode: ModeAuto,
+		Cache: NewCache(0, func(ctx context.Context, key string) (Snapshot, error) {
+			return Snapshot{Permissions: PermissionSet{}}, nil // restricted SA
+		}),
+		Gate: NewGate(map[string]ToolGate{
+			"editor_only": {MinBasicRole: "Editor"},
+		}),
+		KeyFromContext: func(ctx context.Context) (string, bool) { return "session", true },
+	})
+	r := &mcp.ListToolsResult{Tools: []mcp.Tool{{Name: "editor_only"}, {Name: "passthrough"}}}
+	e.HookOnAfterListTools()(context.Background(), "id", &mcp.ListToolsRequest{}, r)
+	if len(r.Tools) != 2 {
+		t.Errorf("auto+empty-perms must pass tools through; got %v", r.Tools)
+	}
+	if e.effectiveMode() != ModeAuto {
+		t.Errorf("engine should still be in ModeAuto after empty observation, got %q", e.effectiveMode())
+	}
+}
+
 // TestEngine_Hook_AutoModeMetricUsesResolvedMode confirms that when the
 // engine starts in ModeAuto and resolves to ModeEnterprise on first
 // permission fetch, the filter-duration histogram is recorded with

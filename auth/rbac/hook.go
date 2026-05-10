@@ -51,13 +51,33 @@ func (e *Engine) effectiveMode() Mode {
 }
 
 func (e *Engine) recordEdition(perms PermissionSet) {
+	if e.resolved != ModeAuto {
+		return
+	}
+	// Only resolve on a non-empty permission set. An empty response is
+	// ambiguous: it could be a real OSS-Basic install OR an Enterprise
+	// install where the FIRST observed user happens to be a service
+	// account with no granted permissions. Resolving to ModeBasic on
+	// that empty signal would permanently misclassify the cluster — every
+	// subsequent Admin user would also be filtered as Basic until restart.
+	// Stay in ModeAuto until SOME user yields non-empty perms (→ Enterprise),
+	// or the operator explicitly sets --rbac-gating=basic. The Filter
+	// fail-open path keeps tools visible during the unresolved window.
+	//
+	// Capture the slog call's argument before releasing the lock so the
+	// emission itself doesn't run while holding a write lock (slog
+	// handlers may queue/block — keep them off the hot path).
+	if len(perms) == 0 {
+		return
+	}
 	e.mu.Lock()
-	defer e.mu.Unlock()
 	if e.resolved == ModeAuto {
 		e.resolved = ResolveAuto(perms)
-		if e.cfg.Logger != nil {
-			e.cfg.Logger.Info("rbac.edition_detected", "mode", string(e.resolved))
-		}
+	}
+	resolved := e.resolved
+	e.mu.Unlock()
+	if e.cfg.Logger != nil {
+		e.cfg.Logger.Info("rbac.edition_detected", "mode", string(resolved))
 	}
 }
 
@@ -91,7 +111,13 @@ func (e *Engine) HookOnAfterListTools() server.OnAfterListToolsFunc {
 			e.recordEdition(snap.Permissions)
 			mode = e.effectiveMode()
 			if mode == ModeOff || mode == ModeAuto {
-				return // shouldn't happen, but be defensive
+				// recordEdition refuses to resolve on empty perms, so a
+				// real OSS-Basic install (where /api/access-control/user/
+				// permissions always returns {}) stays in ModeAuto until
+				// the operator switches to --rbac-gating=basic. Fail open
+				// here — better than misclassifying an Enterprise cluster
+				// off the first restricted-SA observation.
+				return
 			}
 		}
 

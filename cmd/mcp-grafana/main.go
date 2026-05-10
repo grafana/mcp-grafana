@@ -494,11 +494,18 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 			if err != nil {
 				return rbac.Snapshot{}, err
 			}
-			// Derive basic role from the user's permissions, if present. Grafana
-			// returns the basic role as a separate header on /api/user; for now we
-			// approximate from the "fixed:..." role permissions if present, else
-			// leave empty (basic-mode tools without a basic role won't be visible).
-			role := basicRoleFromPerms(perms)
+			// /api/user is the authoritative source for the org-scoped role.
+			// A failure here is non-fatal: gate the BasicRole-only tools off
+			// rather than fail open the whole snapshot. The previous heuristic
+			// derived role from action names but those weren't real Grafana
+			// RBAC actions, so real Admins were silently misclassified as
+			// Editor in ModeBasic / fallback.
+			role, err := permsClient.FetchOrgRole(ctx, saToken)
+			if err != nil {
+				slog.Warn("rbac: org-role fetch failed; basic-mode tools requiring Admin/Editor/Viewer will be hidden",
+					"error", err.Error())
+				role = ""
+			}
 			return rbac.Snapshot{
 				Permissions: perms,
 				BasicRole:   role,
@@ -870,44 +877,3 @@ func handleFlagsPostParse(showVersion bool, slowLevelStr string) (flagAction, sl
 	return flagActionContinue, slowLevel, nil
 }
 
-// basicRoleFromPerms approximates the user's BasicRole from their permission
-// set. Grafana's RBAC engine includes role-membership permissions on the
-// /user/permissions response; we look for the "fixed:" role names. This is
-// best-effort; if no signal, returns empty (caller treats as no role).
-func basicRoleFromPerms(perms rbac.PermissionSet) string {
-	// Heuristic: if the user can manage roles, they're at least Admin.
-	// If they can write to dashboards/datasources, they're at least Editor.
-	// Any read permission promotes to Viewer.
-	for _, action := range []string{"roles:write", "users:write", "org.users:write"} {
-		if _, ok := perms[action]; ok {
-			return "Admin"
-		}
-	}
-	for _, action := range []string{
-		"dashboards:write", "dashboards:create",
-		"datasources:write", "datasources:create",
-		"folders:write", "folders:create",
-		"alert.rules:write", "annotations:write",
-	} {
-		if _, ok := perms[action]; ok {
-			return "Editor"
-		}
-	}
-	// Any read-only signal promotes to Viewer. SAs scoped to query-only
-	// datasources commonly have datasources:query/datasources:read but not
-	// dashboards:read; missing those would silently hide every Viewer-level
-	// tool in ModeBasic.
-	for _, action := range []string{
-		"dashboards:read",
-		"datasources:read", "datasources:query",
-		"folders:read",
-		"annotations:read",
-		"alert.rules:read", "alert.notifications:read",
-		"teams:read", "users:read",
-	} {
-		if _, ok := perms[action]; ok {
-			return "Viewer"
-		}
-	}
-	return ""
-}
