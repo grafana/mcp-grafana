@@ -47,6 +47,11 @@ type Config struct {
 	OIDCClientSecret string
 	OIDCScopes       []string
 
+	// Grafana oauth2_server (Mode A) — when Mode == ModeOAuthGrafana.
+	GrafanaOAuth2ClientID     string
+	GrafanaOAuth2ClientSecret string
+	GrafanaOAuth2IssuerURL    string // typically equal to GRAFANA_URL
+
 	// RBACGating selects the RBAC tool gating mode.
 	// "auto" (default), "enterprise", "basic", or "off".
 	//
@@ -74,10 +79,12 @@ func ParseMode(s string) (Mode, error) {
 		return ModeNone, nil
 	case ModeOAuthOIDC:
 		return ModeOAuthOIDC, nil
-	case ModeOAuthGrafana, ModeSAML:
-		return "", fmt.Errorf("auth mode %q is reserved for a later release; Phase 1 supports only %q and %q", s, ModeNone, ModeOAuthOIDC)
+	case ModeOAuthGrafana:
+		return ModeOAuthGrafana, nil
+	case ModeSAML:
+		return "", fmt.Errorf("auth mode %q is reserved for a later release; Phase 3 supports only %q, %q, and %q", s, ModeNone, ModeOAuthOIDC, ModeOAuthGrafana)
 	default:
-		return "", fmt.Errorf("unknown auth mode %q (valid: %q, %q)", s, ModeNone, ModeOAuthOIDC)
+		return "", fmt.Errorf("unknown auth mode %q (valid: %q, %q, %q)", s, ModeNone, ModeOAuthOIDC, ModeOAuthGrafana)
 	}
 }
 
@@ -105,6 +112,14 @@ func (c Config) Validate() error {
 		}
 		if c.OIDCClientID == "" {
 			return errors.New("--oidc-client-id is required for --auth-mode=oauth-oidc")
+		}
+	}
+	if c.Mode == ModeOAuthGrafana {
+		if c.GrafanaOAuth2IssuerURL == "" {
+			return errors.New("--grafana-oauth2-issuer-url is required for --auth-mode=oauth-grafana")
+		}
+		if c.GrafanaOAuth2ClientID == "" {
+			return errors.New("--grafana-oauth2-client-id is required for --auth-mode=oauth-grafana")
 		}
 	}
 	// Normalize the same way rbac.ParseMode does (lower + trim) so a

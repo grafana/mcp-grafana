@@ -665,6 +665,13 @@ func buildAuthConfig(modeStr, publicURL, encKey, encKeyPrev, stateDir string, al
 	}
 	cfg.RBACGating = strings.ToLower(strings.TrimSpace(rbacGating))
 	cfg.RBACCacheTTL = rbacCacheTTL
+	cfg.GrafanaOAuth2ClientID = grafanaOAuth2ClientID
+	cfg.GrafanaOAuth2ClientSecret = grafanaOAuth2ClientSecret
+	cfg.GrafanaOAuth2IssuerURL = strings.TrimRight(grafanaOAuth2IssuerURL, "/")
+	if cfg.GrafanaOAuth2IssuerURL == "" {
+		// Default to GRAFANA_URL when not explicitly set.
+		cfg.GrafanaOAuth2IssuerURL = strings.TrimRight(os.Getenv("GRAFANA_URL"), "/")
+	}
 	if encKey != "" {
 		k, err := auth.DecodeKey(encKey)
 		if err != nil {
@@ -767,6 +774,10 @@ func main() {
 	var rbacCacheTTL time.Duration
 	flag.StringVar(&rbacGating, "rbac-gating", "auto", "RBAC tool gating mode: 'auto' (default), 'enterprise', 'basic', 'off'.")
 	flag.DurationVar(&rbacCacheTTL, "rbac-cache-ttl", 5*time.Minute, "How long to cache a user's permission set before refetching from Grafana.")
+	var grafanaOAuth2ClientID, grafanaOAuth2ClientSecret, grafanaOAuth2IssuerURL string
+	flag.StringVar(&grafanaOAuth2ClientID, "grafana-oauth2-client-id", "", "Grafana oauth2_server client_id (oauth-grafana mode)")
+	flag.StringVar(&grafanaOAuth2ClientSecret, "grafana-oauth2-client-secret", "", "Grafana oauth2_server client_secret (oauth-grafana mode)")
+	flag.StringVar(&grafanaOAuth2IssuerURL, "grafana-oauth2-issuer-url", "", "Grafana oauth2_server issuer URL (oauth-grafana mode); defaults to GRAFANA_URL")
 	flag.Parse()
 
 	action, slowLevel, err := handleFlagsPostParse(*showVersion, slowRequestLogLevelStr)

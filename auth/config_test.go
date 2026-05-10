@@ -15,7 +15,7 @@ func TestParseMode(t *testing.T) {
 		{"none", ModeNone, false},
 		{"NONE", ModeNone, false},
 		{"oauth-oidc", ModeOAuthOIDC, false},
-		{"oauth-grafana", "", true},
+		{"oauth-grafana", ModeOAuthGrafana, false},
 		{"saml", "", true},
 		{"bogus", "", true},
 	} {
@@ -62,5 +62,32 @@ func TestConfigValidate(t *testing.T) {
 	none := Config{Mode: ModeNone}
 	if err := none.Validate(); err != nil {
 		t.Errorf("ModeNone should validate without other fields: %v", err)
+	}
+}
+
+func TestConfigValidate_ModeOAuthGrafana(t *testing.T) {
+	good := func() Config {
+		return Config{
+			Mode:                   ModeOAuthGrafana,
+			PublicURL:              "https://mcp.example.com",
+			EncryptionKey:          make([]byte, 32),
+			GrafanaOAuth2IssuerURL: "https://grafana.example.com",
+			GrafanaOAuth2ClientID:  "mcp",
+		}
+	}
+	if err := good().Validate(); err != nil {
+		t.Fatalf("good Mode A config failed: %v", err)
+	}
+
+	c := good()
+	c.GrafanaOAuth2IssuerURL = ""
+	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "grafana-oauth2-issuer-url") {
+		t.Errorf("expected issuer-url error, got %v", err)
+	}
+
+	c = good()
+	c.GrafanaOAuth2ClientID = ""
+	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "grafana-oauth2-client-id") {
+		t.Errorf("expected client-id error, got %v", err)
 	}
 }
