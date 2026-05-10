@@ -120,18 +120,8 @@ func (f *FileStore) load() error {
 }
 
 func (f *FileStore) flush() error {
-	f.mem.mu.RLock()
-	p := filePayload{}
-	for _, s := range f.mem.sessByToken {
-		p.Sessions = append(p.Sessions, *s)
-	}
-	for _, c := range f.mem.clients {
-		p.Clients = append(p.Clients, c)
-	}
-	for _, ac := range f.mem.codes {
-		p.AuthCodes = append(p.AuthCodes, ac)
-	}
-	f.mem.mu.RUnlock()
+	sessions, clients, codes := f.mem.Snapshot()
+	p := filePayload{Sessions: sessions, Clients: clients, AuthCodes: codes}
 
 	pt, err := json.Marshal(p)
 	if err != nil {

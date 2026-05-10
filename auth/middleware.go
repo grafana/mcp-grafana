@@ -34,6 +34,13 @@ func (s *Server) Middleware() func(http.Handler) http.Handler {
 				// Replacement of the stale access-token-hash index entry
 				// happens atomically inside PutSession when refresh runs;
 				// SessionRevoked fires there for the replaced hash.
+				//
+				// Trade-off: a client that gets a 401 and never returns
+				// (crashed, lost the refresh token) leaves a session row
+				// in memory until — well, today nothing prunes it.
+				// A periodic reaper that drops rows past RefreshExpiresAt
+				// is the right long-term fix; tracked separately so this
+				// refresh-flow correctness fix can ship on its own.
 				s.unauthorized(w, "invalid_token", "access token expired")
 				return
 			}

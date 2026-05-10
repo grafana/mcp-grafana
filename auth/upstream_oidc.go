@@ -49,16 +49,18 @@ func NewOIDCUpstream(ctx context.Context, cfg Config) (*OIDCUpstream, error) {
 	if err != nil {
 		return nil, fmt.Errorf("oidc discovery: %w", err)
 	}
-	scopes := cfg.OIDCScopes
-	if len(scopes) == 0 {
-		scopes = []string{oidc.ScopeOpenID, "email", "profile"}
-	}
+	// OIDCScopes is set by the CLI default (--oidc-scopes defaults to
+	// "openid profile email"). A programmatic caller that supplies an
+	// empty slice gets it through unchanged; the upstream will fail at
+	// the OAuth call site with a clear error rather than us papering
+	// over a misconfiguration with a hidden second default that could
+	// silently diverge from the CLI's.
 	oauth := &oauth2.Config{
 		ClientID:     cfg.OIDCClientID,
 		ClientSecret: cfg.OIDCClientSecret,
 		Endpoint:     provider.Endpoint(),
 		RedirectURL:  cfg.PublicURL + "/callback",
-		Scopes:       scopes,
+		Scopes:       cfg.OIDCScopes,
 	}
 	return &OIDCUpstream{
 		provider: provider,

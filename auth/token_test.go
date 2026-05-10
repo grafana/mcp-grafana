@@ -171,6 +171,57 @@ func TestToken_PKCEMismatch(t *testing.T) {
 	}
 }
 
+// TestToken_PreservesCodeOnValidationFailure asserts every pre-consume
+// validation failure leaves the auth code redeemable, not just PKCE.
+// The peek-then-consume ordering is the guard; a future refactor that
+// reordered the checks could regress one branch without breaking the
+// PKCE-only test above. Three branches share the same control-flow
+// shape (Peek → check → return on failure → Consume), so a table-driven
+// check here pins them all.
+func TestToken_PreservesCodeOnValidationFailure(t *testing.T) {
+	tests := []struct {
+		name        string
+		clientID    string
+		redirectURI string
+		verifier    string
+	}{
+		{"client_id mismatch", "wrong-cid", "http://localhost:1/cb", "good-verifier"},
+		{"redirect_uri mismatch", "cid", "http://wrong/cb", "good-verifier"},
+		{"PKCE mismatch", "cid", "http://localhost:1/cb", "wrong-verifier"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := newTokenServer(t)
+			ctx := context.Background()
+			plainCode, hashedCode := NewAuthCode()
+			_ = srv.Store.PutAuthCode(ctx, AuthCode{
+				Code:                hashedCode,
+				ClientID:            "cid",
+				RedirectURI:         "http://localhost:1/cb",
+				CodeChallenge:       "actual-challenge",
+				CodeChallengeMethod: "S256",
+				ExpiresAt:           time.Now().Add(5 * time.Minute),
+			})
+			form := url.Values{}
+			form.Set("grant_type", "authorization_code")
+			form.Set("code", plainCode)
+			form.Set("redirect_uri", tc.redirectURI)
+			form.Set("client_id", tc.clientID)
+			form.Set("code_verifier", tc.verifier)
+			r := httptest.NewRequest(http.MethodPost, "/token", strings.NewReader(form.Encode()))
+			r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			w := httptest.NewRecorder()
+			srv.TokenHandler().ServeHTTP(w, r)
+			if w.Code != http.StatusBadRequest {
+				t.Errorf("status=%d (want 400)", w.Code)
+			}
+			if _, err := srv.Store.PeekAuthCode(ctx, hashedCode); err != nil {
+				t.Errorf("code consumed despite validation failure: %v", err)
+			}
+		})
+	}
+}
+
 func TestToken_RefreshRotates(t *testing.T) {
 	srv := newTokenServer(t)
 	ctx := context.Background()

@@ -139,6 +139,30 @@ func (m *MemoryStore) GetClient(_ context.Context, id string) (DCRClient, error)
 	return c, nil
 }
 
+// Snapshot returns deep copies of every session, client, and auth code held
+// in memory. FileStore.flush uses it to capture a coherent serialization
+// snapshot under the memory store's own lock, keeping FileStore from
+// reaching into MemoryStore's internal fields. Sessions are dereferenced
+// (the in-memory store holds pointers); clients and auth codes are
+// already value types.
+func (m *MemoryStore) Snapshot() (sessions []Session, clients []DCRClient, codes []AuthCode) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	sessions = make([]Session, 0, len(m.sessByToken))
+	for _, s := range m.sessByToken {
+		sessions = append(sessions, *s)
+	}
+	clients = make([]DCRClient, 0, len(m.clients))
+	for _, c := range m.clients {
+		clients = append(clients, c)
+	}
+	codes = make([]AuthCode, 0, len(m.codes))
+	for _, ac := range m.codes {
+		codes = append(codes, ac)
+	}
+	return sessions, clients, codes
+}
+
 func (m *MemoryStore) PutAuthCode(_ context.Context, c AuthCode) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
