@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // Mode selects which upstream identity provider authenticates users.
@@ -45,6 +46,16 @@ type Config struct {
 	OIDCClientID     string
 	OIDCClientSecret string
 	OIDCScopes       []string
+
+	// RBACGating selects the RBAC tool gating mode.
+	// "auto" (default), "enterprise", "basic", or "off".
+	// "auto" probes /api/access-control/user/permissions on first use and
+	// picks "enterprise" if the response is non-empty, else "basic".
+	RBACGating string
+
+	// RBACCacheTTL is how long a per-session permission snapshot is reused
+	// before refetching from Grafana. Default 5 minutes.
+	RBACCacheTTL time.Duration
 }
 
 // ParseMode maps a CLI string to a Mode value.
@@ -86,6 +97,15 @@ func (c Config) Validate() error {
 		if c.OIDCClientID == "" {
 			return errors.New("--oidc-client-id is required for --auth-mode=oauth-oidc")
 		}
+	}
+	switch c.RBACGating {
+	case "", "auto", "enterprise", "basic", "off":
+		// ok
+	default:
+		return fmt.Errorf("--rbac-gating must be one of auto|enterprise|basic|off (got %q)", c.RBACGating)
+	}
+	if c.RBACCacheTTL < 0 {
+		return errors.New("--rbac-cache-ttl must be >= 0")
 	}
 	return nil
 }

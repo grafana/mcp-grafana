@@ -567,7 +567,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 	}
 }
 
-func buildAuthConfig(modeStr, publicURL, encKey, encKeyPrev, stateDir string, allowInsecure, trustForwarded bool, oidcIssuer, oidcClientID, oidcClientSecret, oidcScopes string) (auth.Config, error) {
+func buildAuthConfig(modeStr, publicURL, encKey, encKeyPrev, stateDir string, allowInsecure, trustForwarded bool, oidcIssuer, oidcClientID, oidcClientSecret, oidcScopes string, rbacGating string, rbacCacheTTL time.Duration) (auth.Config, error) {
 	mode, err := auth.ParseMode(modeStr)
 	if err != nil {
 		return auth.Config{}, err
@@ -583,6 +583,8 @@ func buildAuthConfig(modeStr, publicURL, encKey, encKeyPrev, stateDir string, al
 		OIDCClientSecret:      oidcClientSecret,
 		OIDCScopes:            strings.Fields(oidcScopes),
 	}
+	cfg.RBACGating = strings.ToLower(strings.TrimSpace(rbacGating))
+	cfg.RBACCacheTTL = rbacCacheTTL
 	if encKey != "" {
 		k, err := auth.DecodeKey(encKey)
 		if err != nil {
@@ -681,6 +683,10 @@ func main() {
 	flag.StringVar(&oidcClientID, "oidc-client-id", "", "OIDC client_id (oauth-oidc mode)")
 	flag.StringVar(&oidcClientSecret, "oidc-client-secret", "", "OIDC client_secret (oauth-oidc mode)")
 	flag.StringVar(&oidcScopes, "oidc-scopes", "openid profile email", "Space-separated OIDC scopes")
+	var rbacGating string
+	var rbacCacheTTL time.Duration
+	flag.StringVar(&rbacGating, "rbac-gating", "auto", "RBAC tool gating mode: 'auto' (default), 'enterprise', 'basic', 'off'.")
+	flag.DurationVar(&rbacCacheTTL, "rbac-cache-ttl", 5*time.Minute, "How long to cache a user's permission set before refetching from Grafana.")
 	flag.Parse()
 
 	action, slowLevel, err := handleFlagsPostParse(*showVersion, slowRequestLogLevelStr)
@@ -699,7 +705,7 @@ func main() {
 		os.Exit(2)
 	}
 
-	authCfg, err := buildAuthConfig(authModeStr, authPublicURL, authEncKey, authEncKeyPrev, authStateDir, authAllowInsecure, authTrustForwarded, oidcIssuer, oidcClientID, oidcClientSecret, oidcScopes)
+	authCfg, err := buildAuthConfig(authModeStr, authPublicURL, authEncKey, authEncKeyPrev, authStateDir, authAllowInsecure, authTrustForwarded, oidcIssuer, oidcClientID, oidcClientSecret, oidcScopes, rbacGating, rbacCacheTTL)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "invalid auth config: %v\n", err)
 		os.Exit(2)
