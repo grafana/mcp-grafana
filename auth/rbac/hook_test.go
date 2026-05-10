@@ -186,3 +186,135 @@ func TestEngine_Hook_FetchError_DoesNotRecordFilterDuration(t *testing.T) {
 		}
 	}
 }
+
+// TestEngine_ToolMiddleware_DeniesUngrantedTool exercises the call-time
+// gate: a session that lacks the required permission gets a permission-
+// denied result instead of the underlying handler being invoked.
+func TestEngine_ToolMiddleware_DeniesUngrantedTool(t *testing.T) {
+	e := NewEngine(EngineConfig{
+		Mode: ModeEnterprise,
+		Cache: NewCache(0, func(ctx context.Context, key string) (Snapshot, error) {
+			return Snapshot{Permissions: PermissionSet{"datasources:read": {"datasources:*"}}}, nil
+		}),
+		Gate: NewGate(map[string]ToolGate{
+			"datasources_write": {Permissions: []Permission{{"datasources:write", "datasources:*"}}},
+		}),
+		KeyFromContext: func(ctx context.Context) (string, bool) {
+			if v, ok := ctx.Value(testKey{}).(string); ok {
+				return v, true
+			}
+			return "", false
+		},
+	})
+
+	called := false
+	next := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		called = true
+		return &mcp.CallToolResult{}, nil
+	}
+	wrapped := e.ToolMiddleware()(next)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Name = "datasources_write"
+	ctx := context.WithValue(context.Background(), testKey{}, "session-1")
+
+	res, err := wrapped(ctx, req)
+	if err != nil {
+		t.Fatalf("middleware should not return a transport error on deny: %v", err)
+	}
+	if called {
+		t.Errorf("downstream handler must not run when permission is denied")
+	}
+	if res == nil || !res.IsError {
+		t.Errorf("expected permission-denied tool result, got %+v", res)
+	}
+}
+
+// TestEngine_ToolMiddleware_AllowsGrantedTool — the inverse: a session
+// that has the required permission flows through to the handler.
+func TestEngine_ToolMiddleware_AllowsGrantedTool(t *testing.T) {
+	e := NewEngine(EngineConfig{
+		Mode: ModeEnterprise,
+		Cache: NewCache(0, func(ctx context.Context, key string) (Snapshot, error) {
+			return Snapshot{Permissions: PermissionSet{"datasources:read": {"datasources:*"}}}, nil
+		}),
+		Gate: NewGate(map[string]ToolGate{
+			"datasources_read": {Permissions: []Permission{{"datasources:read", "datasources:*"}}},
+		}),
+		KeyFromContext: func(ctx context.Context) (string, bool) {
+			if v, ok := ctx.Value(testKey{}).(string); ok {
+				return v, true
+			}
+			return "", false
+		},
+	})
+
+	called := false
+	next := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		called = true
+		return &mcp.CallToolResult{}, nil
+	}
+	wrapped := e.ToolMiddleware()(next)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Name = "datasources_read"
+	ctx := context.WithValue(context.Background(), testKey{}, "session-1")
+
+	if _, err := wrapped(ctx, req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !called {
+		t.Errorf("handler should run when permission is granted")
+	}
+}
+
+// TestEngine_ToolMiddleware_NoSessionPassThrough — legacy / no-auth callers
+// (no session key on context) flow through without a permission check.
+func TestEngine_ToolMiddleware_NoSessionPassThrough(t *testing.T) {
+	e := NewEngine(EngineConfig{
+		Mode:           ModeEnterprise,
+		Cache:          NewCache(0, func(ctx context.Context, key string) (Snapshot, error) { return Snapshot{}, nil }),
+		Gate:           NewGate(map[string]ToolGate{"x": {Permissions: []Permission{{"a", ""}}}}),
+		KeyFromContext: func(ctx context.Context) (string, bool) { return "", false },
+	})
+
+	called := false
+	wrapped := e.ToolMiddleware()(func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		called = true
+		return &mcp.CallToolResult{}, nil
+	})
+	req := mcp.CallToolRequest{}
+	req.Params.Name = "x"
+	if _, err := wrapped(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	if !called {
+		t.Errorf("no-session call should pass through to handler")
+	}
+}
+
+// TestEngine_ToolMiddleware_FetchError_FailsOpen — an RBAC fetch failure
+// shouldn't lock everyone out of every tool.
+func TestEngine_ToolMiddleware_FetchError_FailsOpen(t *testing.T) {
+	e := NewEngine(EngineConfig{
+		Mode: ModeEnterprise,
+		Cache: NewCache(0, func(ctx context.Context, key string) (Snapshot, error) {
+			return Snapshot{}, ErrFetchFailed
+		}),
+		Gate:           NewGate(map[string]ToolGate{"x": {Permissions: []Permission{{"a", ""}}}}),
+		KeyFromContext: func(ctx context.Context) (string, bool) { return "s", true },
+	})
+	called := false
+	wrapped := e.ToolMiddleware()(func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		called = true
+		return &mcp.CallToolResult{}, nil
+	})
+	req := mcp.CallToolRequest{}
+	req.Params.Name = "x"
+	if _, err := wrapped(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	if !called {
+		t.Errorf("fetch error should fail open at call time")
+	}
+}

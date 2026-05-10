@@ -28,45 +28,55 @@ func (g *Gate) Filter(mode Mode, snap Snapshot, tools []mcp.Tool) []mcp.Tool {
 	}
 	out := make([]mcp.Tool, 0, len(tools))
 	for _, t := range tools {
-		gate, ok := g.registry[t.Name]
-		if !ok {
-			out = append(out, t) // unknown — let it through
-			continue
-		}
-		if gate.IsPublic() {
-			out = append(out, t)
-			continue
-		}
-		switch mode {
-		case ModeEnterprise:
-			// If the gate has Permissions, ModeEnterprise checks them.
-			// If the gate has ONLY MinBasicRole (e.g. Incident, Sift —
-			// plugins without fine-grained RBAC actions), fall back to
-			// the basic-role check; otherwise tools that have no
-			// Permissions but DO have a MinBasicRole would be visible
-			// to every authenticated user via
-			// allPermissionsGranted(_, nil) == true.
-			if len(gate.Permissions) > 0 {
-				if allPermissionsGranted(snap.Permissions, gate.Permissions) {
-					out = append(out, t)
-				}
-			} else if basicRoleSatisfies(snap.BasicRole, gate.MinBasicRole) {
-				out = append(out, t)
-			}
-		case ModeBasic:
-			if basicRoleSatisfies(snap.BasicRole, gate.MinBasicRole) {
-				out = append(out, t)
-			}
-		default:
-			// Fail open for unrecognised modes (incl. ModeAuto reaching
-			// Filter directly). The hook never lets ModeAuto through, but
-			// this default keeps Filter safe for direct callers — better
-			// to over-expose tools than to silently drop the entire
-			// non-public catalog.
+		if g.Allow(mode, snap, t.Name) {
 			out = append(out, t)
 		}
 	}
 	return out
+}
+
+// Allow reports whether a single tool is permitted under mode for the
+// given snapshot. Same gate semantics as Filter; extracted so the
+// call-time middleware can reuse it without rebuilding a tools slice.
+//
+// Tools not in the registry pass through (consistent with Filter's
+// "unknown — let it through" branch). Public tools always pass. ModeOff
+// returns true unconditionally — the caller (Filter / middleware) is
+// responsible for short-circuiting before this is reached on the hot
+// path, but this stays safe for direct callers.
+func (g *Gate) Allow(mode Mode, snap Snapshot, toolName string) bool {
+	if mode == ModeOff {
+		return true
+	}
+	gate, ok := g.registry[toolName]
+	if !ok {
+		return true
+	}
+	if gate.IsPublic() {
+		return true
+	}
+	switch mode {
+	case ModeEnterprise:
+		// If the gate has Permissions, ModeEnterprise checks them.
+		// If the gate has ONLY MinBasicRole (e.g. Incident, Sift —
+		// plugins without fine-grained RBAC actions), fall back to
+		// the basic-role check; otherwise tools that have no
+		// Permissions but DO have a MinBasicRole would be visible
+		// to every authenticated user via
+		// allPermissionsGranted(_, nil) == true.
+		if len(gate.Permissions) > 0 {
+			return allPermissionsGranted(snap.Permissions, gate.Permissions)
+		}
+		return basicRoleSatisfies(snap.BasicRole, gate.MinBasicRole)
+	case ModeBasic:
+		return basicRoleSatisfies(snap.BasicRole, gate.MinBasicRole)
+	default:
+		// Fail open for unrecognised modes (incl. ModeAuto). Filter / the
+		// middleware never let ModeAuto through, but this keeps Allow safe
+		// for direct callers — better to over-expose than to silently
+		// drop the entire non-public catalog.
+		return true
+	}
 }
 
 // allPermissionsGranted reports whether every required permission has at

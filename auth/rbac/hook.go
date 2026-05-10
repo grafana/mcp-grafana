@@ -117,6 +117,64 @@ func (e *Engine) HookOnAfterListTools() server.OnAfterListToolsFunc {
 	}
 }
 
+// ToolMiddleware returns a server.ToolHandlerMiddleware that enforces the
+// same registry gates at tool-call time. Filtering tools/list keeps tool
+// surfaces user-friendly, but a client that already knows tool names
+// (cached, hardcoded, leaked from another session) could still call
+// gated tools without this. Together with HookOnAfterListTools it gives
+// defense in depth — the on-list filter is for UX, this middleware is
+// for correctness.
+//
+// Behaviour mirrors the list-tools hook:
+//   - ModeOff or no-session-on-context → pass-through.
+//   - Cache fetch error → pass-through (fail open). Same rationale: an
+//     RBAC outage shouldn't lock everyone out of every tool.
+//   - ModeAuto resolves on first observation, same as the list path.
+//
+// On a deny, returns an mcp.NewToolResultError with a stable, generic
+// message; the underlying tool handler is never invoked.
+func (e *Engine) ToolMiddleware() server.ToolHandlerMiddleware {
+	return func(next server.ToolHandlerFunc) server.ToolHandlerFunc {
+		return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			mode := e.effectiveMode()
+			if mode == ModeOff {
+				return next(ctx, request)
+			}
+			key, ok := e.cfg.KeyFromContext(ctx)
+			if !ok {
+				return next(ctx, request) // no session: legacy / no-auth path
+			}
+			snap, err := e.cfg.Cache.Get(ctx, key)
+			if err != nil {
+				if e.cfg.Logger != nil {
+					e.cfg.Logger.Warn("auth.permission_fetch_failed_call_time",
+						"session_key", redactKey(key),
+						"tool", request.Params.Name,
+						"error", err.Error())
+				}
+				return next(ctx, request) // fail open
+			}
+			if mode == ModeAuto {
+				e.recordEdition(snap.Permissions)
+				mode = e.effectiveMode()
+				if mode == ModeOff || mode == ModeAuto {
+					return next(ctx, request)
+				}
+			}
+			if !e.cfg.Gate.Allow(mode, snap, request.Params.Name) {
+				if e.cfg.Logger != nil {
+					e.cfg.Logger.Info("auth.tool_call_denied",
+						"session_key", redactKey(key),
+						"mode", string(mode),
+						"tool", request.Params.Name)
+				}
+				return mcp.NewToolResultError("permission denied: tool '" + request.Params.Name + "' is not available for this session"), nil
+			}
+			return next(ctx, request)
+		}
+	}
+}
+
 // recordFilterDuration wraps the optional Metrics receiver so the hook
 // stays safe even if a future Metrics method forgets its nil-receiver
 // guard. Engine.cfg.Metrics is documented as optional, so an Engine

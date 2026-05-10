@@ -310,10 +310,18 @@ func newServer(transport string, dt disabledTools, obs *observability.Observabil
 	// then register tools.
 	instructions := dt.buildInstructions()
 
-	s = server.NewMCPServer("mcp-grafana", mcpgrafana.Version(),
+	mcpOpts := []server.ServerOption{
 		server.WithInstructions(instructions),
 		server.WithHooks(hooks),
-	)
+	}
+	if rbacEngine != nil {
+		// Defense in depth: filter tools/list (UX) AND gate tool calls
+		// (correctness — clients with cached/known names can call tools
+		// without listing first). The middleware uses the same Engine /
+		// Cache / Gate as the list-tools hook.
+		mcpOpts = append(mcpOpts, server.WithToolHandlerMiddleware(rbacEngine.ToolMiddleware()))
+	}
+	s = server.NewMCPServer("mcp-grafana", mcpgrafana.Version(), mcpOpts...)
 
 	// Initialize ToolManager now that server is created
 	stm = mcpgrafana.NewToolManager(sm, s, mcpgrafana.WithProxiedTools(!dt.proxied))
