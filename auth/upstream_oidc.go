@@ -35,9 +35,16 @@ type OIDCUpstream struct {
 }
 
 type oidcPending struct {
-	verifier  string
-	nonce     string
-	createdAt time.Time
+	verifier string
+	nonce    string
+	// redirectURI is the per-flow redirect_uri override that
+	// AuthorizeURL sent to the IdP, if any. The token-exchange call in
+	// HandleCallback must echo the same value back; otherwise the IdP
+	// rejects with redirect_uri_mismatch (RFC 6749 §4.1.3). Empty
+	// means the caller didn't override and the configured RedirectURL
+	// applies.
+	redirectURI string
+	createdAt   time.Time
 }
 
 // sweepPendingsLocked drops entries older than oidcPendingTTL. The caller
@@ -95,7 +102,7 @@ func (u *OIDCUpstream) AuthorizeURL(redirectURI, state string) string {
 
 	u.mu.Lock()
 	u.sweepPendingsLocked(time.Now())
-	u.pendings[state] = &oidcPending{verifier: verifier, nonce: nonce, createdAt: time.Now()}
+	u.pendings[state] = &oidcPending{verifier: verifier, nonce: nonce, redirectURI: redirectURI, createdAt: time.Now()}
 	u.mu.Unlock()
 
 	opts := []oauth2.AuthCodeOption{
@@ -132,7 +139,14 @@ func (u *OIDCUpstream) HandleCallback(ctx context.Context, params url.Values) (I
 	}
 
 	exchangeCtx, span := otel.Tracer("mcp-grafana-auth").Start(ctx, "auth.upstream_token_exchange")
-	tok, err := u.oauth.Exchange(exchangeCtx, code, oauth2.SetAuthURLParam("code_verifier", p.verifier))
+	exchangeOpts := []oauth2.AuthCodeOption{oauth2.SetAuthURLParam("code_verifier", p.verifier)}
+	if p.redirectURI != "" {
+		// Echo the same redirect_uri the IdP saw on /authorize. RFC 6749
+		// §4.1.3 says the token-exchange call must repeat it; otherwise
+		// the IdP rejects with redirect_uri_mismatch.
+		exchangeOpts = append(exchangeOpts, oauth2.SetAuthURLParam("redirect_uri", p.redirectURI))
+	}
+	tok, err := u.oauth.Exchange(exchangeCtx, code, exchangeOpts...)
 	if err != nil {
 		span.RecordError(err)
 	}

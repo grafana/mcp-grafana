@@ -124,12 +124,12 @@ func (s *Server) handleRefreshGrant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Rotate both tokens. Delete the old session and write a new one.
-	if err := s.Store.DeleteSession(r.Context(), sess.TokenHash); err != nil {
-		s.logger().Error("auth.session_delete_failed", "user_id", sess.Identity.String(), "error", err.Error())
-		httpError(w, http.StatusInternalServerError, "server_error", "session rotation failed")
-		return
-	}
+	// Rotate both tokens. PutSession with the new TokenHash creates a new
+	// session row; the MemoryStore's identity-keyed cleanup atomically
+	// drops the previous session's secondary-index entries (sessByToken
+	// and sessByRefresh under the old hashes) under the same lock. Don't
+	// DeleteSession first — if PutSession then fails the old session is
+	// already gone and the client can never recover.
 	at, atHash := NewToken()
 	rt, rtHash := NewToken()
 	now := time.Now()
