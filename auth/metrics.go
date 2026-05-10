@@ -2,7 +2,6 @@ package auth
 
 import (
 	"context"
-	"sync"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -15,9 +14,6 @@ const meterName = "mcp-grafana-auth"
 type Metrics struct {
 	active metric.Int64UpDownCounter
 	login  metric.Float64Histogram
-
-	mu     sync.Mutex
-	counts map[Mode]int64
 }
 
 // NewMetrics constructs the instruments, swallowing errors (per OTel conventions
@@ -33,7 +29,7 @@ func NewMetrics() *Metrics {
 		metric.WithDescription("End-to-end auth login flow duration"),
 		metric.WithUnit("s"),
 	)
-	return &Metrics{active: active, login: login, counts: make(map[Mode]int64)}
+	return &Metrics{active: active, login: login}
 }
 
 func (m *Metrics) SessionCreated(ctx context.Context, mode Mode) {
