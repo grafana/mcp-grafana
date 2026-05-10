@@ -435,14 +435,17 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	var authSrv *auth.Server
+	var (
+		authSrv        *auth.Server
+		authGrafanaURL string
+	)
 	if authCfg.Mode != auth.ModeNone {
-		grafanaURL := os.Getenv("GRAFANA_URL")
-		if grafanaURL == "" {
-			grafanaURL = "http://localhost:3000"
+		authGrafanaURL = os.Getenv("GRAFANA_URL")
+		if authGrafanaURL == "" {
+			authGrafanaURL = "http://localhost:3000"
 		}
 		var err error
-		authSrv, err = buildAuthServer(ctx, authCfg, grafanaURL, slog.Default())
+		authSrv, err = buildAuthServer(ctx, authCfg, authGrafanaURL, slog.Default())
 		if err != nil {
 			return fmt.Errorf("auth setup: %w", err)
 		}
@@ -507,7 +510,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		mcpHandler := http.Handler(mcpgrafana.ValidateGrafanaURLMiddleware(srv))
 		if authSrv != nil {
 			mcpHandler = authSrv.Middleware()(mcpHandler)
-			authSrv.RegisterRoutes(mux, os.Getenv("GRAFANA_URL"), authCfg.AllowInsecure)
+			authSrv.RegisterRoutes(mux, authGrafanaURL, authCfg.AllowInsecure)
 		}
 		mux.Handle(basePath, observability.WrapHandler(mcpHandler, basePath))
 		mux.HandleFunc("/healthz", handleHealthz)
@@ -538,7 +541,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		mcpHandler := http.Handler(mcpgrafana.ValidateGrafanaURLMiddleware(srv))
 		if authSrv != nil {
 			mcpHandler = authSrv.Middleware()(mcpHandler)
-			authSrv.RegisterRoutes(mux, os.Getenv("GRAFANA_URL"), authCfg.AllowInsecure)
+			authSrv.RegisterRoutes(mux, authGrafanaURL, authCfg.AllowInsecure)
 		}
 		mux.Handle(endpointPath, observability.WrapHandler(mcpHandler, endpointPath))
 		mux.HandleFunc("/healthz", handleHealthz)
