@@ -153,12 +153,12 @@ func NewSAMLUpstream(ctx context.Context, cfg Config) (*SAMLUpstream, error) {
 	// silently had no effect. Setting a package global is acceptable
 	// because mcp-grafana runs one upstream config per process.
 	//
-	// Apply on >= 0, not > 0: an operator who explicitly passes
-	// --saml-clock-skew=0s wants strict zero tolerance, not the library
-	// default. Negative values are treated as "leave the library default
-	// in place" — used by tests that don't want to perturb the package
-	// global.
-	if cfg.SAMLClockSkew >= 0 {
+	// Gate on SAMLClockSkewSet rather than on the value itself. A bare
+	// Config{} (programmatic, no CLI) leaves SAMLClockSkewSet=false and
+	// the library default (180s) stays in place — so a missing field
+	// never silently imposes zero tolerance. main.go always sets the
+	// flag so an operator's explicit `--saml-clock-skew=0s` is honoured.
+	if cfg.SAMLClockSkewSet {
 		saml.MaxClockSkew = cfg.SAMLClockSkew
 	}
 

@@ -36,6 +36,7 @@ func TestNewSAMLUpstream_ConstructsServiceProvider(t *testing.T) {
 		SAMLAttributeEmail:  "email",
 		SAMLAttributeGroups: "groups",
 		SAMLClockSkew:       60 * time.Second,
+		SAMLClockSkewSet:    true,
 	}
 	up, err := NewSAMLUpstream(context.Background(), cfg)
 	if err != nil {
@@ -53,7 +54,8 @@ func TestNewSAMLUpstream_ConstructsServiceProvider(t *testing.T) {
 }
 
 // TestNewSAMLUpstream_AppliesExplicitZeroClockSkew confirms that an
-// operator who explicitly passes --saml-clock-skew=0s gets strict zero
+// operator who explicitly passes --saml-clock-skew=0s (which sets
+// SAMLClockSkewSet=true and SAMLClockSkew=0 in main.go) gets strict zero
 // tolerance, not the crewjam/saml library default of 180s.
 func TestNewSAMLUpstream_AppliesExplicitZeroClockSkew(t *testing.T) {
 	prev := saml.MaxClockSkew
@@ -73,6 +75,7 @@ func TestNewSAMLUpstream_AppliesExplicitZeroClockSkew(t *testing.T) {
 		SAMLSPKeyFile:       keyPath,
 		SAMLNameIDFormat:    "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
 		SAMLClockSkew:       0,
+		SAMLClockSkewSet:    true,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -81,10 +84,12 @@ func TestNewSAMLUpstream_AppliesExplicitZeroClockSkew(t *testing.T) {
 	}
 }
 
-// TestNewSAMLUpstream_NegativeClockSkewLeavesGlobalAlone verifies the
-// negative-sentinel opt-out used by the test helper to keep saml.MaxClockSkew
-// at whatever the library default is.
-func TestNewSAMLUpstream_NegativeClockSkewLeavesGlobalAlone(t *testing.T) {
+// TestNewSAMLUpstream_UnsetClockSkewLeavesGlobalAlone verifies that a
+// programmatic Config{} that doesn't touch SAMLClockSkew*  fields keeps
+// saml.MaxClockSkew at whatever the library default is — protects against
+// the previous footgun where a zero SAMLClockSkew silently imposed strict
+// zero tolerance on every assertion.
+func TestNewSAMLUpstream_UnsetClockSkewLeavesGlobalAlone(t *testing.T) {
 	prev := saml.MaxClockSkew
 	t.Cleanup(func() { saml.MaxClockSkew = prev })
 
@@ -101,12 +106,12 @@ func TestNewSAMLUpstream_NegativeClockSkewLeavesGlobalAlone(t *testing.T) {
 		SAMLSPCertFile:      certPath,
 		SAMLSPKeyFile:       keyPath,
 		SAMLNameIDFormat:    "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
-		SAMLClockSkew:       -1,
+		// SAMLClockSkewSet intentionally false.
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if saml.MaxClockSkew != 42*time.Second {
-		t.Errorf("negative skew should not perturb global: saml.MaxClockSkew = %v", saml.MaxClockSkew)
+		t.Errorf("unset skew should not perturb global: saml.MaxClockSkew = %v", saml.MaxClockSkew)
 	}
 }
 
@@ -170,10 +175,8 @@ func mustNewSAMLUpstream(t *testing.T) *SAMLUpstream {
 		SAMLSPCertFile:      certPath,
 		SAMLSPKeyFile:       keyPath,
 		SAMLNameIDFormat:    "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
-		// -1 sentinel: leave saml.MaxClockSkew at the library default so
-		// helper-built upstreams don't perturb the package global for
-		// other tests in the same process.
-		SAMLClockSkew: -1,
+		// SAMLClockSkewSet left false: helper-built upstreams shouldn't
+		// perturb saml.MaxClockSkew for other tests in the same process.
 	})
 	if err != nil {
 		t.Fatal(err)

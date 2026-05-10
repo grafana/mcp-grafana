@@ -692,6 +692,11 @@ func buildAuthConfig(modeStr, publicURL, encKey, encKeyPrev, stateDir string, al
 	cfg.SAMLAllowIdPInitiated = samlAllowIdPInitiated
 	cfg.SAMLEnableSLO = samlEnableSLO
 	cfg.SAMLClockSkew = samlClockSkew
+	// Always mark the value as deliberately set when wiring from CLI flags.
+	// The flag default of 60s flows through, and an explicit 0s is honoured.
+	// Programmatic Config{} callers that skip this assignment fall back to
+	// crewjam/saml's library default — see Config.SAMLClockSkew docs.
+	cfg.SAMLClockSkewSet = true
 	if encKey != "" {
 		k, err := auth.DecodeKey(encKey)
 		if err != nil {

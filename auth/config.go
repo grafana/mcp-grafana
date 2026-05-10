@@ -61,9 +61,18 @@ type Config struct {
 	SAMLNameIDFormat      string        // default urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress
 	SAMLAttributeEmail    string        // attribute name to extract user email; default "email"
 	SAMLAttributeGroups   string        // attribute name to extract groups; default "groups"
-	SAMLAllowIdPInitiated bool          // default false
-	SAMLClockSkew         time.Duration // default 60 seconds
-	SAMLEnableSLO         bool          // default false; mounts /saml/sls when true
+	SAMLAllowIdPInitiated bool // default false
+	// SAMLClockSkew is the assertion-validation clock-skew tolerance applied
+	// to crewjam/saml's package-level saml.MaxClockSkew. The CLI flag default
+	// is 60 seconds; main.go also sets SAMLClockSkewSet=true so the value
+	// (including an explicit 0) flows through. For programmatic Config{}
+	// callers, leaving SAMLClockSkewSet=false keeps the library default
+	// (180s) — the zero value of SAMLClockSkew is NOT treated as an
+	// implicit zero-tolerance request, since that would silently fail any
+	// SAML validation with even trivial clock drift.
+	SAMLClockSkew    time.Duration
+	SAMLClockSkewSet bool
+	SAMLEnableSLO    bool // default false; mounts /saml/sls when true
 
 	// RBACGating selects the RBAC tool gating mode.
 	// "auto" (default), "enterprise", "basic", or "off".
