@@ -72,6 +72,18 @@ func (s *Server) handleAuthCodeGrant(w http.ResponseWriter, r *http.Request) {
 		rtTTL = 30 * 24 * time.Hour
 	}
 
+	// Re-authentication for the same identity replaces the previous session
+	// inside PutSession (one-session-per-identity invariant). Without this
+	// pre-check the active-sessions gauge would only ever increment on
+	// re-login: PutSession atomically removes the old row, but no
+	// SessionRevoked is emitted, so the counter drifts upward. Look up
+	// any existing session under the same identity and emit a paired
+	// Revoked so the gauge nets to +1 across a full login (not +1 per).
+	hadPrev := false
+	if _, err := s.Store.GetSessionByIdentity(r.Context(), c.Identity); err == nil {
+		hadPrev = true
+	}
+
 	if err := s.Store.PutSession(r.Context(), Session{
 		TokenHash:        atHash,
 		RefreshHash:      rtHash,
@@ -88,6 +100,9 @@ func (s *Server) handleAuthCodeGrant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if hadPrev {
+		s.Metrics.SessionRevoked(r.Context(), c.Identity.Mode)
+	}
 	s.Metrics.SessionCreated(r.Context(), c.Identity.Mode)
 	s.logger().Info("auth.session_created", "user_id", c.Identity.String(), "mode", string(c.Identity.Mode), "client_id", clientID)
 	writeTokenResponse(w, at, rt, atTTL)
@@ -119,7 +134,14 @@ func (s *Server) handleRefreshGrant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !sess.RefreshExpiresAt.IsZero() && time.Now().After(sess.RefreshExpiresAt) {
-		_, _ = s.Store.DeleteSession(r.Context(), sess.TokenHash)
+		// Same race-gating pattern as the middleware's expired-token branch:
+		// emit SessionRevoked only if THIS request actually deleted the row
+		// so concurrent refresh attempts against the same expired session
+		// can't drive the gauge negative.
+		deleted, _ := s.Store.DeleteSession(r.Context(), sess.TokenHash)
+		if deleted {
+			s.Metrics.SessionRevoked(r.Context(), sess.Identity.Mode)
+		}
 		httpError(w, http.StatusBadRequest, "invalid_grant", "refresh_token expired")
 		return
 	}
