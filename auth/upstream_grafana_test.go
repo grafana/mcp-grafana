@@ -228,6 +228,13 @@ func TestGrafanaUpstream_Refresh(t *testing.T) {
 	if string(refreshed.UpstreamRefresh) == string(first.UpstreamRefresh) {
 		t.Errorf("refresh should rotate the refresh token")
 	}
+	// Identity must be left zero on Refresh's result so doRefreshUpstream
+	// keeps the original session's identity. identityFromGrafanaToken's
+	// access-token-hash fallback would otherwise produce a different
+	// identity each refresh and break the one-session-per-identity invariant.
+	if refreshed.Identity != (Identity{}) {
+		t.Errorf("refresh must leave Identity unset, got %+v", refreshed.Identity)
+	}
 
 	// Old refresh token must now be rejected.
 	if _, err := up.Refresh(context.Background(), first.UpstreamRefresh); err == nil {

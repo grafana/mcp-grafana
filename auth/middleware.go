@@ -203,6 +203,17 @@ func (s *Server) doRefreshUpstream(ctx context.Context, sess Session) (Session, 
 	if err != nil {
 		return sess, err
 	}
+	// A refresh that surfaces a different Identity than the original session's
+	// would break the one-session-per-identity invariant if persisted, and
+	// almost certainly indicates a misbehaving upstream (or an unstable
+	// identity derivation, e.g. an access-token-hash fallback). Reject
+	// rather than silently rewrite — doRefreshUpstream keeps the existing
+	// sess.Identity below, but this guards future regressions and makes
+	// the contract explicit.
+	if result.Identity != (Identity{}) && result.Identity != sess.Identity {
+		return sess, fmt.Errorf("upstream refresh returned different identity %q (session bound to %q)",
+			result.Identity.String(), sess.Identity.String())
+	}
 	credCT, err := s.Encryptor.Seal(result.UpstreamCreds)
 	if err != nil {
 		return sess, fmt.Errorf("encrypt new creds: %w", err)

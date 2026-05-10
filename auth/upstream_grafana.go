@@ -153,6 +153,12 @@ func (u *GrafanaUpstream) HandleCallback(ctx context.Context, params url.Values)
 }
 
 // Refresh exchanges a stored refresh token for a fresh credential pair.
+// Identity is intentionally left zero on the result: doRefreshUpstream
+// reuses the original session's Identity, and identityFromGrafanaToken's
+// access-token-hash fallback would otherwise produce a different value
+// every refresh (the access token rotates), which would silently break
+// the one-session-per-identity invariant if a future caller started
+// trusting result.Identity here.
 func (u *GrafanaUpstream) Refresh(ctx context.Context, refreshToken []byte) (CallbackResult, error) {
 	if len(refreshToken) == 0 {
 		return CallbackResult{}, fmt.Errorf("empty refresh token")
@@ -165,10 +171,7 @@ func (u *GrafanaUpstream) Refresh(ctx context.Context, refreshToken []byte) (Cal
 		return CallbackResult{}, fmt.Errorf("upstream refresh: %w", err)
 	}
 
-	id := identityFromGrafanaToken(tok)
-
 	return CallbackResult{
-		Identity:          Identity{Mode: ModeOAuthGrafana, ID: id},
 		HasCred:           true,
 		UpstreamCreds:     []byte(tok.AccessToken),
 		UpstreamRefresh:   []byte(tok.RefreshToken),
