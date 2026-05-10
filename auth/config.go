@@ -82,9 +82,3 @@ func (c Config) Validate() error {
 	}
 	return nil
 }
-
-// DecodeKey is implemented in crypto.go (Task 2). Placeholder so the binary
-// compiles between tasks.
-func DecodeKey(s string) ([]byte, error) {
-	return nil, errors.New("crypto not implemented yet (Task 2)")
-}
