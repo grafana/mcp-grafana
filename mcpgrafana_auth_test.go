@@ -104,3 +104,35 @@ func TestPreservingPerRequestFields(t *testing.T) {
 		t.Errorf("baseline fields lost: %+v", got)
 	}
 }
+
+// TestPreservingPerRequestFields_PreservesURL is the regression guard for
+// the per-user auth flow: auth.Middleware pins cfg.URL to the operator-
+// configured Grafana base URL, and the composed SSE/HTTP context func
+// must NOT drop that value back to the baseline (which is typically
+// empty — GRAFANA_URL is read at request time via
+// ExtractGrafanaInfoFromHeaders). Dropping URL on composition reopens
+// the X-Grafana-URL exfil path the auth middleware closes.
+func TestPreservingPerRequestFields_PreservesURL(t *testing.T) {
+	// Baseline with empty URL (typical CLI shape).
+	base := GrafanaConfig{}
+
+	// Per-request URL pinned by the auth middleware.
+	got := base.PreservingPerRequestFields(GrafanaConfig{
+		URL:    "https://grafana.internal:3000",
+		APIKey: "session-key",
+	})
+	if got.URL != "https://grafana.internal:3000" {
+		t.Errorf("URL pinned by per-request context was dropped: got %q, want %q", got.URL, "https://grafana.internal:3000")
+	}
+	if got.APIKey != "session-key" {
+		t.Errorf("APIKey not preserved alongside URL: %+v", got)
+	}
+
+	// Baseline with a URL set, no per-request URL → baseline wins (the
+	// existing no-auth deployment path keeps working).
+	base = GrafanaConfig{URL: "http://baseline.example/"}
+	got = base.PreservingPerRequestFields(GrafanaConfig{})
+	if got.URL != "http://baseline.example/" {
+		t.Errorf("empty per-request URL should not clobber baseline: got %q", got.URL)
+	}
+}

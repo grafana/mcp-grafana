@@ -319,12 +319,21 @@ func GrafanaConfigFromContext(ctx context.Context) GrafanaConfig {
 }
 
 // PreservingPerRequestFields returns a copy of c with the per-request
-// credential fields (APIKey, BasicAuth, AccessToken, IDToken, OrgID)
+// credential fields (APIKey, BasicAuth, AccessToken, IDToken, OrgID, URL)
 // taken from other when they are non-zero. Used by the composed context
 // functions so a static CLI baseline can be installed on each request
 // without overwriting per-user credentials that an HTTP middleware
 // (notably the per-user auth middleware) has already placed on the
 // context.
+//
+// URL is preserved here because auth.Middleware pins it to the operator-
+// configured Grafana base URL alongside the decrypted session API key.
+// Dropping URL on this composition reopened the X-Grafana-URL exfil
+// path: with baseline.URL empty (the typical CLI shape, where GRAFANA_URL
+// is read at request time via ExtractGrafanaInfoFromHeaders), the
+// post-composition config had URL="" and the header override fired —
+// letting a client with a valid bearer redirect the session token to an
+// attacker-controlled host.
 //
 // All non-credential fields (Debug, TLSConfig, Timeout, ExtraHeaders,
 // MaxLokiLogLimit, BaseTransport, Logger, IncludeArgumentsInSpans) come
@@ -345,6 +354,9 @@ func (c GrafanaConfig) PreservingPerRequestFields(other GrafanaConfig) GrafanaCo
 	}
 	if other.OrgID != 0 {
 		out.OrgID = other.OrgID
+	}
+	if other.URL != "" {
+		out.URL = other.URL
 	}
 	return out
 }
