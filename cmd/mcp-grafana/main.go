@@ -674,29 +674,6 @@ func buildAuthConfig(modeStr, publicURL, encKey, encKeyPrev, stateDir string, al
 	}
 	cfg.RBACGating = strings.ToLower(strings.TrimSpace(rbacGating))
 	cfg.RBACCacheTTL = rbacCacheTTL
-	cfg.GrafanaOAuth2ClientID = grafanaOAuth2ClientID
-	cfg.GrafanaOAuth2ClientSecret = grafanaOAuth2ClientSecret
-	cfg.GrafanaOAuth2IssuerURL = strings.TrimRight(grafanaOAuth2IssuerURL, "/")
-	if cfg.GrafanaOAuth2IssuerURL == "" {
-		// Default to GRAFANA_URL when not explicitly set.
-		cfg.GrafanaOAuth2IssuerURL = strings.TrimRight(os.Getenv("GRAFANA_URL"), "/")
-	}
-	cfg.SAMLIdPMetadataURL = samlIdPMetadataURL
-	cfg.SAMLIdPMetadataFile = samlIdPMetadataFile
-	cfg.SAMLSPCertFile = samlSPCertFile
-	cfg.SAMLSPKeyFile = samlSPKeyFile
-	cfg.SAMLEntityID = samlEntityID
-	cfg.SAMLNameIDFormat = samlNameIDFormat
-	cfg.SAMLAttributeEmail = samlAttrEmail
-	cfg.SAMLAttributeGroups = samlAttrGroups
-	cfg.SAMLAllowIdPInitiated = samlAllowIdPInitiated
-	cfg.SAMLEnableSLO = samlEnableSLO
-	cfg.SAMLClockSkew = samlClockSkew
-	// Always mark the value as deliberately set when wiring from CLI flags.
-	// The flag default of 60s flows through, and an explicit 0s is honoured.
-	// Programmatic Config{} callers that skip this assignment fall back to
-	// crewjam/saml's library default — see Config.SAMLClockSkew docs.
-	cfg.SAMLClockSkewSet = true
 	if encKey != "" {
 		k, err := auth.DecodeKey(encKey)
 		if err != nil {
@@ -855,6 +832,24 @@ func main() {
 		fmt.Fprintf(os.Stderr, "invalid auth config: %v\n", err)
 		os.Exit(2)
 	}
+	// SAML wiring lives outside buildAuthConfig to keep that function's
+	// signature manageable.
+	authCfg.SAMLIdPMetadataURL = samlIdPMetadataURL
+	authCfg.SAMLIdPMetadataFile = samlIdPMetadataFile
+	authCfg.SAMLSPCertFile = samlSPCertFile
+	authCfg.SAMLSPKeyFile = samlSPKeyFile
+	authCfg.SAMLEntityID = samlEntityID
+	authCfg.SAMLNameIDFormat = samlNameIDFormat
+	authCfg.SAMLAttributeEmail = samlAttrEmail
+	authCfg.SAMLAttributeGroups = samlAttrGroups
+	authCfg.SAMLAllowIdPInitiated = samlAllowIdPInitiated
+	authCfg.SAMLEnableSLO = samlEnableSLO
+	authCfg.SAMLClockSkew = samlClockSkew
+	// Always mark the value as deliberately set when wiring from CLI flags.
+	// The flag default of 60s flows through, and an explicit 0s is honoured.
+	// Programmatic Config{} callers that skip this assignment fall back to
+	// crewjam/saml's library default — see Config.SAMLClockSkew docs.
+	authCfg.SAMLClockSkewSet = true
 	// authCfg is consumed inside run()
 
 	// Convert local grafanaConfig to mcpgrafana.GrafanaConfig
