@@ -113,7 +113,7 @@ func TestSAMLACSHandler_RepeatLogin_ShortcutsToClient(t *testing.T) {
 
 	id := Identity{Mode: ModeSAML, ID: "alice@example.com"}
 	ct, _ := enc.Seal([]byte("sa-token"))
-	_ = store.PutSession(context.Background(), Session{
+	_, _ = store.PutSession(context.Background(), Session{
 		TokenHash:       HashToken("old-tok"),
 		Identity:        id,
 		UpstreamCredsCT: ct,
@@ -191,7 +191,7 @@ func TestSAMLSLSHandler_DeletesSession(t *testing.T) {
 
 	id := Identity{Mode: ModeSAML, ID: "alice@example.com"}
 	ct, _ := enc.Seal([]byte("sa-token"))
-	_ = store.PutSession(context.Background(), Session{
+	_, _ = store.PutSession(context.Background(), Session{
 		TokenHash:       HashToken("tok-1"),
 		Identity:        id,
 		UpstreamCredsCT: ct,
