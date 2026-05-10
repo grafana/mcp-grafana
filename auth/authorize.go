@@ -52,19 +52,12 @@ func (s *Server) AuthorizeHandler() http.Handler {
 		challengeMethod := q.Get("code_challenge_method")
 		clientState := q.Get("state")
 
-		if responseType != "code" {
-			httpError(w, http.StatusBadRequest, "unsupported_response_type", "response_type must be 'code'")
-			return
-		}
-		if challenge == "" || challengeMethod != "S256" {
-			httpError(w, http.StatusBadRequest, "invalid_request", "PKCE code_challenge with method=S256 is required")
-			return
-		}
+		// First: validate client_id and redirect_uri. Errors here are JSON
+		// (we don't have a verified redirect to safely send the user back to).
 		if clientID == "" || redirectURI == "" {
 			httpError(w, http.StatusBadRequest, "invalid_request", "client_id and redirect_uri are required")
 			return
 		}
-
 		client, err := s.Store.GetClient(r.Context(), clientID)
 		if err != nil {
 			httpError(w, http.StatusBadRequest, "invalid_client", "unknown client_id")
@@ -72,6 +65,17 @@ func (s *Server) AuthorizeHandler() http.Handler {
 		}
 		if !slices.Contains(client.RedirectURIs, redirectURI) {
 			httpError(w, http.StatusBadRequest, "invalid_request", "redirect_uri does not match registered URIs")
+			return
+		}
+
+		// From here on, redirect_uri is verified. OAuth errors go back to the client
+		// via redirect with error= and state= (RFC 6749 §4.1.2.1).
+		if responseType != "code" {
+			httpRedirectError(w, r, redirectURI, "unsupported_response_type", "response_type must be 'code'", clientState)
+			return
+		}
+		if challenge == "" || challengeMethod != "S256" {
+			httpRedirectError(w, r, redirectURI, "invalid_request", "PKCE code_challenge with method=S256 is required", clientState)
 			return
 		}
 

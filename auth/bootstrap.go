@@ -60,7 +60,7 @@ func (s *Server) renderBootstrap(w http.ResponseWriter, r *http.Request, errMsg 
 	if flow == "" {
 		flow = r.FormValue("flow")
 	}
-	if _, ok := bootstrapPendings[flow]; !ok {
+	if _, ok := peekBootstrap(flow); !ok {
 		httpError(w, http.StatusBadRequest, "invalid_request", "unknown or expired flow token")
 		return
 	}
@@ -86,7 +86,7 @@ func (s *Server) processBootstrap(w http.ResponseWriter, r *http.Request, grafan
 		return
 	}
 
-	pb, ok := bootstrapPendings[flow]
+	pb, ok := peekBootstrap(flow)
 	if !ok {
 		httpError(w, http.StatusBadRequest, "invalid_request", "unknown or expired flow token")
 		return
@@ -148,7 +148,12 @@ func validateGrafanaToken(ctx context.Context, grafanaURL, token string) error {
 		return err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
-	c := &http.Client{Timeout: 10 * time.Second}
+	c := &http.Client{
+		Timeout: 10 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 	resp, err := c.Do(req)
 	if err != nil {
 		return fmt.Errorf("call grafana: %w", err)

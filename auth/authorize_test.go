@@ -109,10 +109,23 @@ func TestAuthorize_RequiresS256(t *testing.T) {
 	q.Set("response_type", "code")
 	q.Set("code_challenge", "x")
 	q.Set("code_challenge_method", "plain")
+	q.Set("state", "client-state")
 	r := httptest.NewRequest(http.MethodGet, "/authorize?"+q.Encode(), nil)
 	w := httptest.NewRecorder()
 	srv.AuthorizeHandler().ServeHTTP(w, r)
-	if w.Code == http.StatusFound {
-		t.Errorf("must reject plain PKCE")
+
+	// PKCE failure with a verified redirect_uri must redirect with error=
+	if w.Code != http.StatusFound {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body)
+	}
+	loc, _ := url.Parse(w.Header().Get("Location"))
+	if loc.Host != "localhost:1" || loc.Path != "/cb" {
+		t.Errorf("loc=%v", loc)
+	}
+	if loc.Query().Get("error") != "invalid_request" {
+		t.Errorf("error=%q", loc.Query().Get("error"))
+	}
+	if loc.Query().Get("state") != "client-state" {
+		t.Errorf("state=%q", loc.Query().Get("state"))
 	}
 }

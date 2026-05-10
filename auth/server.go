@@ -13,7 +13,6 @@ type Server struct {
 	Encryptor *Encryptor
 	Logger    *slog.Logger
 
-	// Tunables, defaulted by RegisterRoutes.
 	AccessTokenTTL  time.Duration
 	RefreshTokenTTL time.Duration
 	AuthCodeTTL     time.Duration

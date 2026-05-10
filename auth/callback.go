@@ -42,6 +42,19 @@ func consumeBootstrap(token string) (*pendingBootstrap, bool) {
 	return p, ok
 }
 
+// peekBootstrap returns a snapshot of the pending entry without removing it.
+// Used by /bootstrap GET and POST to read the entry under the mutex without
+// consuming it (consumption happens after token validation).
+func peekBootstrap(token string) (pendingBootstrap, bool) {
+	bootstrapMu.Lock()
+	defer bootstrapMu.Unlock()
+	p, ok := bootstrapPendings[token]
+	if !ok {
+		return pendingBootstrap{}, false
+	}
+	return *p, true
+}
+
 // CallbackHandler handles the upstream IdP callback (Mode C: OIDC code).
 func (s *Server) CallbackHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
