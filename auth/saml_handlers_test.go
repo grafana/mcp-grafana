@@ -88,7 +88,6 @@ func TestSAMLACSHandler_FirstLogin_RedirectsToBootstrap(t *testing.T) {
 		clientState:         "client-state",
 		codeChallenge:       "x",
 		codeChallengeMethod: "S256",
-		createdAt:           time.Now(),
 	})
 
 	body := strings.NewReader("RelayState=rs-1&SAMLResponse=ignored-by-stub")
@@ -142,7 +141,6 @@ func TestSAMLACSHandler_RepeatLogin_ShortcutsToClient(t *testing.T) {
 		clientState:         "client-state",
 		codeChallenge:       "x",
 		codeChallengeMethod: "S256",
-		createdAt:           time.Now(),
 	})
 
 	body := strings.NewReader("RelayState=rs-2&SAMLResponse=ignored-by-stub")

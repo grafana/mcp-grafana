@@ -25,9 +25,17 @@ wheels/
 # Superpowers agent artifacts (implementation plans, etc.)
 docs/superpowers/
 
-# Local Go build artifacts
+# Local Go build artifacts. The tilde-suffixed variants are emitted by
+# `go build -o <name>~` and by editors that write to <name>~ before
+# atomic rename — both of which can leave a tracked binary behind on
+# Windows if the build was interrupted.
 /bin/
 /mcp-grafana
 /mcp-grafana.exe
+/mcp-grafana.exe~
+/mcp-grafana~
 /mock_oidc
 /mock_oidc.exe
+/mock_oidc.exe~
+/mock_oidc~
+*.exe~
