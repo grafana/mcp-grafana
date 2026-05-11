@@ -7,14 +7,10 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
 	"maps"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
-	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -23,115 +19,67 @@ import (
 	mcpgrafana "github.com/grafana/mcp-grafana"
 )
 
-const grafanaSampleDatasourcesURL = "https://raw.githubusercontent.com/grafana/grafana/refs/heads/main/conf/provisioning/datasources/sample.yaml"
-
-type parsedSample struct {
-	apiVersion   int
-	baseTemplate map[string]any
-}
-
-var (
-	sampleOnce sync.Once
-	sampleCache parsedSample
-)
-
-// uncommentYAML strips the leading "# " from commented-out lines in Grafana's
-// sample YAML files, making them parseable as regular YAML.
-func uncommentYAML(s string) string {
-	lines := strings.Split(s, "\n")
-	out := make([]string, 0, len(lines))
-	for _, line := range lines {
-		switch {
-		case strings.HasPrefix(line, "# "):
-			out = append(out, line[2:])
-		case line == "#":
-			out = append(out, "")
-		default:
-			out = append(out, line)
-		}
-	}
-	return strings.Join(out, "\n")
-}
-
-// loadSample fetches the Grafana sample datasource YAML once per process and
-// returns the parsed apiVersion and a base field template for new entries.
-// Falls back to safe defaults if the fetch fails.
-func loadSample() parsedSample {
-	sampleOnce.Do(func() {
-		sampleCache.apiVersion = 1 // known stable fallback if fetch fails
-
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, grafanaSampleDatasourcesURL, nil)
-		if err != nil {
-			return
-		}
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			return
-		}
-		defer resp.Body.Close()
-
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return
-		}
-
-		var pf datasourceProvisioningFile
-		if err := yaml.Unmarshal([]byte(uncommentYAML(string(body))), &pf); err != nil {
-			return
-		}
-
-		// always honor the API version that comes from the sample RAW github file.
-		sampleCache.apiVersion = pf.APIVersion
-
-		// Build a base template from the first datasource entry, keeping only the
-		// non-null fields that are common to all types. Skip name, type, uid, and
-		// url since those are always provided by the caller or left out intentionally.
-		// Clear jsonData/secureJsonData since their contents are type-specific.
-		if len(pf.Datasources) > 0 {
-			skip := map[string]bool{"name": true, "type": true, "uid": true, "url": true}
-			tmpl := make(map[string]any)
-			for k, v := range pf.Datasources[0] {
-				if v == nil || skip[k] {
-					continue
-				}
-				if k == "jsonData" || k == "secureJsonData" {
-					tmpl[k] = map[string]any{}
-					continue
-				}
-				tmpl[k] = v
-			}
-			sampleCache.baseTemplate = tmpl
-		}
-	})
-	
-	return sampleCache
-}
-
 type datasourceProvisioningFile struct {
-	APIVersion  int              `yaml:"apiVersion"`
-	Datasources []map[string]any `yaml:"datasources"`
+	APIVersion  int               `yaml:"apiVersion"`
+	Datasources []datasourceEntry `yaml:"datasources"`
+}
+
+// datasourceEntry represents a single datasource in the provisioning file.
+// Field declaration order determines the YAML key order on output.
+type datasourceEntry struct {
+	Name            string         `yaml:"name"`
+	Type            string         `yaml:"type"`
+	UID             string         `yaml:"uid,omitempty"`
+	OrgID           int            `yaml:"orgId,omitempty"`
+	Access          string         `yaml:"access,omitempty"`
+	URL             string         `yaml:"url,omitempty"`
+	User            string         `yaml:"user,omitempty"`
+	Database        string         `yaml:"database,omitempty"`
+	BasicAuth       *bool          `yaml:"basicAuth,omitempty"`
+	BasicAuthUser   string         `yaml:"basicAuthUser,omitempty"`
+	WithCredentials *bool          `yaml:"withCredentials,omitempty"`
+	IsDefault       *bool          `yaml:"isDefault,omitempty"`
+	Editable        *bool          `yaml:"editable,omitempty"`
+	Version         int            `yaml:"version,omitempty"`
+	JSONData        map[string]any `yaml:"jsonData,omitempty"`
+	SecureJSONData  map[string]any `yaml:"secureJsonData,omitempty"`
+	Extra           map[string]any `yaml:",inline"`
+}
+
+// applyUpdates merges root-level and jsonData updates into an existing entry.
+// It uses a yaml round-trip so that type coercion (e.g. float64 → int for orgId)
+// is handled by the yaml package rather than hand-written switch cases.
+func applyUpdates(entry *datasourceEntry, updates map[string]any, jsonDataUpdates map[string]any) error {
+	data, err := yaml.Marshal(updates)
+	if err != nil {
+		return err
+	}
+	if err := yaml.Unmarshal(data, entry); err != nil {
+		return err
+	}
+	if len(jsonDataUpdates) > 0 {
+		if entry.JSONData == nil {
+			entry.JSONData = make(map[string]any)
+		}
+		maps.Copy(entry.JSONData, jsonDataUpdates)
+	}
+	return nil
 }
 
 type ProvisionDatasourceParams struct {
-	Directory   string `json:"directory,omitempty" jsonschema:"description=Directory where the tool will attempt to write the YAML provisioning file. Optional. Writing to disk is only reliable when the server is running via stdio (local mode). In remote deployments the write targets the server's filesystem\\, not the client's — omit this and use the returned content or zip attachment instead."`
-	FileName    string `json:"file_name,omitempty" jsonschema:"description=Template for the file name. Supports {type} placeholder. Defaults to 'prov-{type}'."`
-	Type        string `json:"type" jsonschema:"required,description=Datasource type (e.g. prometheus\\, loki\\, influxdb)"`
-	Name        string `json:"name,omitempty" jsonschema:"description=Datasource display name. Derived from file name template if omitted."`
-	URL         string `json:"url,omitempty" jsonschema:"description=Datasource connection URL (e.g. http://prometheus:9090)"`
-	IsDefault   bool   `json:"isDefault,omitempty" jsonschema:"description=Set as the default datasource for the Grafana instance"`
-	UID         string `json:"uid,omitempty" jsonschema:"description=Unique identifier for the datasource. Auto-generated by Grafana if omitted."`
-	ForceUpdate bool   `json:"force_update,omitempty" jsonschema:"description=If true\\, overwrite an existing datasource entry with the same name. Defaults to false\\, which returns a conflict error instead."`
+	Directory   string         `json:"directory,omitempty" jsonschema:"description=Directory where the tool will attempt to write the YAML provisioning file. Optional. Writing to disk is only reliable when the server is running via stdio (local mode). In remote deployments the write targets the server's filesystem\\, not the client's — omit this and use the returned content or zip attachment instead."`
+	FileName    string         `json:"file_name,omitempty" jsonschema:"description=Template for the file name. Supports {type} placeholder. Defaults to 'prov-{type}'."`
+	Type        string         `json:"type" jsonschema:"required,description=Datasource type (e.g. prometheus\\, loki\\, influxdb)"`
+	ForceUpdate bool           `json:"force_update,omitempty" jsonschema:"description=If true\\, overwrite an existing datasource entry with the same name. Defaults to false\\, which returns a conflict error instead."`
+	Fields      map[string]any `json:"fields,omitempty" jsonschema:"description=Datasource field values to provision\\, keyed by field key from the schema returned on the first call. The server uses each field's target (root or jsonData) to place values correctly in the YAML. Example: {\"url\": \"http://prometheus:9090\"\\, \"httpMethod\": \"POST\"}."`
 }
 
 type ProvisionDatasourceResult struct {
 	FilePath    string `json:"file_path,omitempty"`
 	FileCreated bool   `json:"file_created,omitempty"`
 	Conflict    bool   `json:"conflict,omitempty"`
-	Content string `json:"content"`
-	Summary string `json:"summary"`
+	Content     string `json:"content"`
+	Summary     string `json:"summary"`
 }
 
 // buildZip produces a base64-encoded zip archive from a map of filename -> content.
@@ -167,7 +115,20 @@ func stemToDisplayName(stem string) string {
 }
 
 func provisionDatasource(_ context.Context, args ProvisionDatasourceParams) (*mcp.CallToolResult, error) {
-	s := loadSample()
+	schema, err := loadDatasourceSchema(args.Type)
+	if err != nil {
+		return nil, err
+	}
+	if schema == nil {
+		return nil, fmt.Errorf("no schema available for datasource type %q", args.Type)
+	}
+
+	// Phase 1: if no fields have been provided yet, return field guidance so the
+	// client can collect the right values from the user before calling again.
+	if len(args.Fields) == 0 {
+		text, _ := json.Marshal(buildSchemaGuidance(schema))
+		return mcp.NewToolResultText(string(text)), nil
+	}
 
 	fileName := args.FileName
 	if fileName == "" {
@@ -175,13 +136,13 @@ func provisionDatasource(_ context.Context, args ProvisionDatasourceParams) (*mc
 	}
 	stem := strings.ReplaceAll(fileName, "{type}", args.Type)
 
-	dsName := args.Name
+	dsName, _ := args.Fields["name"].(string)
 	if dsName == "" {
 		dsName = stemToDisplayName(stem)
 	}
 
 	// Load existing file if a directory was given, otherwise start fresh.
-	pf := &datasourceProvisioningFile{APIVersion: s.apiVersion}
+	pf := &datasourceProvisioningFile{APIVersion: 1}
 	isNew := true
 	var filePath string
 
@@ -197,27 +158,38 @@ func provisionDatasource(_ context.Context, args ProvisionDatasourceParams) (*mc
 		}
 	}
 
-	// Only set fields the user explicitly provided so that unrecognised
-	// fields in an existing entry (e.g. basicAuth, jsonData) are preserved.
+	// Build a field-target lookup from the schema so we can route each field
+	// to the correct place in the YAML (root vs jsonData).
+	fieldTarget := map[string]string{}
+	for _, f := range schema.Fields {
+		fieldTarget[f.Key] = f.Target
+	}
+
+	// Split caller-provided fields into root-level updates and jsonData updates.
+	// access is always proxy — direct/browser mode is deprecated in Grafana.
 	updates := map[string]any{
-		"name": dsName,
-		"type": args.Type,
+		"name":   dsName,
+		"type":   args.Type,
+		"access": "proxy",
 	}
-	if args.URL != "" {
-		updates["url"] = args.URL
-		updates["access"] = "proxy"
-	}
-	if args.UID != "" {
-		updates["uid"] = args.UID
-	}
-	if args.IsDefault {
-		updates["isDefault"] = true
+	jsonDataUpdates := map[string]any{}
+	for k, v := range args.Fields {
+		if k == "name" {
+			continue // already set above
+		}
+		if fieldTarget[k] == "jsonData" {
+			jsonDataUpdates[k] = v
+		} else {
+			updates[k] = v
+		}
 	}
 
 	// Upsert: merge into existing entry by name, or append.
+	// this will only be work when running the server locally
+	// when running remote we won't have access to read local user files
 	upserted := false
 	for i, existing := range pf.Datasources {
-		if existing["name"] == dsName {
+		if existing.Name == dsName {
 			if !args.ForceUpdate {
 				text, _ := json.Marshal(&ProvisionDatasourceResult{
 					FilePath: filePath,
@@ -226,19 +198,19 @@ func provisionDatasource(_ context.Context, args ProvisionDatasourceParams) (*mc
 				})
 				return mcp.NewToolResultText(string(text)), nil
 			}
-			maps.Copy(existing, updates)
-			pf.Datasources[i] = existing
+			if err := applyUpdates(&pf.Datasources[i], updates, jsonDataUpdates); err != nil {
+				return nil, fmt.Errorf("merge datasource: %w", err)
+			}
 			upserted = true
 			break
 		}
 	}
 	if !upserted {
-		// For new entries, start from the sample base template so the output
-		// reflects the current Grafana provisioning schema, then overlay user values.
-		base := make(map[string]any, len(s.baseTemplate))
-		maps.Copy(base, s.baseTemplate)
-		maps.Copy(base, updates)
-		pf.Datasources = append(pf.Datasources, base)
+		var entry datasourceEntry
+		if err := applyUpdates(&entry, updates, jsonDataUpdates); err != nil {
+			return nil, fmt.Errorf("build datasource entry: %w", err)
+		}
+		pf.Datasources = append(pf.Datasources, entry)
 	}
 
 	out, err := yaml.Marshal(pf)
@@ -293,7 +265,7 @@ func provisionDatasource(_ context.Context, args ProvisionDatasourceParams) (*mc
 
 var ProvisionDatasource = mcpgrafana.MustTool(
 	"provision_datasource",
-	"Generate a Grafana datasource provisioning YAML file. The schema is fetched from Grafana's official sample at startup so the output always reflects the current provisioning format. Always returns the YAML content as text and a zip file attachment. Optionally attempts to write to disk when a directory is provided — only reliable when running via stdio (local mode). In remote deployments use the returned content or zip attachment to save the file locally.",
+	"Generate a Grafana datasource provisioning YAML file. IMPORTANT: always call this tool twice. First call: provide only the type — the tool returns a field schema. After receiving the schema, you MUST ask the user for every required field value explicitly; do not infer or use defaults without user confirmation. Second call: provide the type plus the fields map populated with values confirmed by the user. Always returns the YAML content as text and a zip file attachment. Optionally attempts to write to disk when a directory is provided — only reliable when running via stdio (local mode). In remote deployments use the returned content or zip attachment to save the file locally.",
 	provisionDatasource,
 	mcp.WithTitleAnnotation("Provision datasource"),
 )
