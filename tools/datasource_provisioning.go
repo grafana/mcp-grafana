@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"maps"
@@ -57,6 +58,8 @@ func uncommentYAML(s string) string {
 // Falls back to safe defaults if the fetch fails.
 func loadSample() parsedSample {
 	sampleOnce.Do(func() {
+		sampleCache.apiVersion = 1 // known stable fallback if fetch fails
+
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
@@ -113,7 +116,7 @@ type datasourceProvisioningFile struct {
 }
 
 type ProvisionDatasourceParams struct {
-	Directory   string `json:"directory,omitempty" jsonschema:"description=Directory where the tool will attempt to write the YAML provisioning file. Optional. Writing to disk is only reliable when the server is running via stdio (local mode). In remote deployments the write targets the server's filesystem\\, not the client's — omit this and use the returned content and zip_content instead."`
+	Directory   string `json:"directory,omitempty" jsonschema:"description=Directory where the tool will attempt to write the YAML provisioning file. Optional. Writing to disk is only reliable when the server is running via stdio (local mode). In remote deployments the write targets the server's filesystem\\, not the client's — omit this and use the returned content or zip attachment instead."`
 	FileName    string `json:"file_name,omitempty" jsonschema:"description=Template for the file name. Supports {type} placeholder. Defaults to 'prov-{type}'."`
 	Type        string `json:"type" jsonschema:"required,description=Datasource type (e.g. prometheus\\, loki\\, influxdb)"`
 	Name        string `json:"name,omitempty" jsonschema:"description=Datasource display name. Derived from file name template if omitted."`
@@ -127,9 +130,8 @@ type ProvisionDatasourceResult struct {
 	FilePath    string `json:"file_path,omitempty"`
 	FileCreated bool   `json:"file_created,omitempty"`
 	Conflict    bool   `json:"conflict,omitempty"`
-	Content     string `json:"content"`
-	ZipContent  string `json:"zip_content"`
-	Summary     string `json:"summary"`
+	Content string `json:"content"`
+	Summary string `json:"summary"`
 }
 
 // buildZip produces a base64-encoded zip archive from a map of filename -> content.
@@ -164,7 +166,7 @@ func stemToDisplayName(stem string) string {
 	return strings.Join(parts, " ")
 }
 
-func provisionDatasource(_ context.Context, args ProvisionDatasourceParams) (*ProvisionDatasourceResult, error) {
+func provisionDatasource(_ context.Context, args ProvisionDatasourceParams) (*mcp.CallToolResult, error) {
 	s := loadSample()
 
 	fileName := args.FileName
@@ -217,11 +219,12 @@ func provisionDatasource(_ context.Context, args ProvisionDatasourceParams) (*Pr
 	for i, existing := range pf.Datasources {
 		if existing["name"] == dsName {
 			if !args.ForceUpdate {
-				return &ProvisionDatasourceResult{
+				text, _ := json.Marshal(&ProvisionDatasourceResult{
 					FilePath: filePath,
 					Conflict: true,
 					Summary:  fmt.Sprintf("Datasource '%s' already exists in %s. Set force_update to true to overwrite it, or provide a different name.", dsName, filePath),
-				}, nil
+				})
+				return mcp.NewToolResultText(string(text)), nil
 			}
 			maps.Copy(existing, updates)
 			pf.Datasources[i] = existing
@@ -261,7 +264,7 @@ func provisionDatasource(_ context.Context, args ProvisionDatasourceParams) (*Pr
 
 	var summary string
 	if args.Directory == "" {
-		summary = fmt.Sprintf("Generated provisioning YAML for datasource '%s'. The content and zip_content fields contain the result — extract zip_content into your local provisioning/datasources directory.", dsName)
+		summary = fmt.Sprintf("Generated provisioning YAML for datasource '%s'. The content field contains the YAML — the attached zip file can be extracted directly into your local provisioning/datasources directory.", dsName)
 	} else {
 		action := "update"
 		if isNew {
@@ -270,18 +273,27 @@ func provisionDatasource(_ context.Context, args ProvisionDatasourceParams) (*Pr
 		summary = fmt.Sprintf("Attempted to %s provisioning file %s with datasource '%s'. Write to disk is only guaranteed when running via stdio — in remote mode this targeted the server's filesystem.", action, filePath, dsName)
 	}
 
-	return &ProvisionDatasourceResult{
+	text, _ := json.Marshal(&ProvisionDatasourceResult{
 		FilePath:    filePath,
 		FileCreated: isNew && args.Directory != "",
 		Content:     content,
-		ZipContent:  zipContent,
 		Summary:     summary,
+	})
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			mcp.TextContent{Type: "text", Text: string(text)},
+			mcp.NewEmbeddedResource(mcp.BlobResourceContents{
+				URI:      stem + ".zip",
+				MIMEType: "application/zip",
+				Blob:     zipContent,
+			}),
+		},
 	}, nil
 }
 
 var ProvisionDatasource = mcpgrafana.MustTool(
 	"provision_datasource",
-	"Generate a Grafana datasource provisioning YAML file. The schema is fetched from Grafana's official sample at startup so the output always reflects the current provisioning format. Always returns the YAML content and a base64-encoded zip archive. Optionally attempts to write to disk when a directory is provided — only reliable when running via stdio (local mode). In remote deployments use the returned content or zip_content to save the file locally.",
+	"Generate a Grafana datasource provisioning YAML file. The schema is fetched from Grafana's official sample at startup so the output always reflects the current provisioning format. Always returns the YAML content as text and a zip file attachment. Optionally attempts to write to disk when a directory is provided — only reliable when running via stdio (local mode). In remote deployments use the returned content or zip attachment to save the file locally.",
 	provisionDatasource,
 	mcp.WithTitleAnnotation("Provision datasource"),
 )
