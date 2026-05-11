@@ -310,6 +310,16 @@ func extractIncidentClientCached(cache *ClientCache) httpContextFunc {
 		logger := config.LoggerOrDefault()
 
 		grafanaURL, apiKey, _, orgID := extractKeyGrafanaInfoFromReq(req, logger)
+		// Per-user auth (auth.Middleware) pre-sets config.URL and
+		// config.APIKey on the context. Those win over header/env so
+		// the cached incident client is keyed by — and created with —
+		// the session-derived bearer rather than the shared env token.
+		if config.URL != "" {
+			grafanaURL = config.URL
+		}
+		if config.APIKey != "" {
+			apiKey = config.APIKey
+		}
 		key := cacheKeyFromRequest(grafanaURL, apiKey, nil, orgID, req)
 
 		incidentClient := cache.GetOrCreateIncidentClient(key, func() *incident.Client {

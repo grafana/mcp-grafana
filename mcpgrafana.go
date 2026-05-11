@@ -1170,6 +1170,16 @@ var ExtractIncidentClientFromHeaders httpContextFunc = func(ctx context.Context,
 	config := GrafanaConfigFromContext(ctx)
 	logger := config.LoggerOrDefault()
 	grafanaURL, apiKey, _, orgID := extractKeyGrafanaInfoFromReq(req, logger)
+	// Per-user auth (auth.Middleware) pre-sets config.URL and
+	// config.APIKey on the context. Those win over header/env so
+	// the incident client talks to Grafana with the session bearer
+	// rather than the shared env token.
+	if config.URL != "" {
+		grafanaURL = config.URL
+	}
+	if config.APIKey != "" {
+		apiKey = config.APIKey
+	}
 	incidentURL := fmt.Sprintf("%s/api/plugins/grafana-irm-app/resources/api/v1/", grafanaURL)
 	client := incident.NewClient(incidentURL, apiKey)
 
