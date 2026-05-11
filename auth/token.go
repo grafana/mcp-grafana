@@ -194,15 +194,17 @@ func (s *Server) handleRefreshGrant(w http.ResponseWriter, r *http.Request) {
 	// intentional; named explicitly so a future contributor doesn't
 	// silently flip the contract.
 	replacedTokenHash, err := s.Store.PutSession(r.Context(), Session{
-		TokenHash:        atHash,
-		RefreshHash:      rtHash,
-		ClientID:         sess.ClientID,
-		ExpiresAt:        now.Add(atTTL),
-		RefreshExpiresAt: now.Add(rtTTL),
-		Identity:         sess.Identity,
-		UpstreamCredsCT:  sess.UpstreamCredsCT,
-		CreatedAt:        sess.CreatedAt,
-		UpdatedAt:        now,
+		TokenHash:         atHash,
+		RefreshHash:       rtHash,
+		ClientID:          sess.ClientID,
+		ExpiresAt:         now.Add(atTTL),
+		RefreshExpiresAt:  now.Add(rtTTL),
+		Identity:          sess.Identity,
+		UpstreamCredsCT:   sess.UpstreamCredsCT,
+		UpstreamRefreshCT: sess.UpstreamRefreshCT,
+		UpstreamExpiresAt: sess.UpstreamExpiresAt,
+		CreatedAt:         sess.CreatedAt,
+		UpdatedAt:         now,
 	})
 	if err != nil {
 		s.logger().Error("auth.session_persist_failed", "user_id", sess.Identity.String(), "error", err.Error())
@@ -210,14 +212,6 @@ func (s *Server) handleRefreshGrant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = replacedTokenHash // refresh is rotation, not revocation; see comment above
-
-	// Invalidate any RBAC permission-cache entry keyed by the old access
-	// token. The new token has a new hash, so the old entry would otherwise
-	// linger until TTL — and could leak a stale snapshot if the new session's
-	// underlying credential ever differed.
-	if s.RBAC != nil {
-		s.RBAC.InvalidateSessionCache(sess.TokenHash)
-	}
 
 	// Invalidate any RBAC permission-cache entry keyed by the old access
 	// token. The new token has a new hash, so the old entry would otherwise
