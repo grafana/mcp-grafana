@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/grafana/incident-go"
 	"go.opentelemetry.io/otel"
@@ -17,6 +18,14 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	"golang.org/x/sync/singleflight"
 )
+
+// defaultClientCacheMaxEntries caps the per-type (grafana / incident)
+// map size. Without a cap, per-user auth (one APIKey per user) lets
+// the cache grow without bound over the process lifetime — a soft
+// memory leak in long-running deployments. 1000 fits typical
+// deployments comfortably; operators with much larger user
+// populations can build their own ClientCache via NewClientCacheSized.
+const defaultClientCacheMaxEntries = 1000
 
 const clientCacheMeterName = "mcp-grafana"
 
@@ -113,24 +122,49 @@ var (
 // ClientCache caches HTTP clients keyed by credentials to avoid creating
 // new transports per request. This prevents the memory leak described in
 // https://github.com/grafana/mcp-grafana/issues/682.
+//
+// Eviction: each per-type map is capped at maxEntries. When a new entry
+// would push past the cap, the least-recently-used entry (the one whose
+// lastUsed timestamp is oldest) is dropped. Without this cap, per-user
+// auth (one distinct APIKey per user) would grow the cache linearly
+// with the unique-user count over the process lifetime — a soft leak.
 type ClientCache struct {
 	mu              sync.RWMutex
-	grafanaClients  map[clientCacheKey]*GrafanaClient
-	incidentClients map[clientCacheKey]*incident.Client
+	grafanaClients  map[clientCacheKey]*grafanaCacheEntry
+	incidentClients map[clientCacheKey]*incidentCacheEntry
+	maxEntries      int
 	metrics         clientCacheMetrics
 	sfGrafana       singleflight.Group
 	sfIncident      singleflight.Group
 	logger          *slog.Logger
 }
 
-// NewClientCache creates a new client cache.
+type grafanaCacheEntry struct {
+	client   *GrafanaClient
+	lastUsed time.Time
+}
+
+type incidentCacheEntry struct {
+	client   *incident.Client
+	lastUsed time.Time
+}
+
+// NewClientCache creates a new client cache with the default per-type
+// max-entries cap.
 func NewClientCache(logger *slog.Logger) *ClientCache {
+	return NewClientCacheSized(logger, defaultClientCacheMaxEntries)
+}
+
+// NewClientCacheSized creates a new client cache with a custom per-type
+// max-entries cap. <=0 means unbounded (legacy behaviour).
+func NewClientCacheSized(logger *slog.Logger, maxEntries int) *ClientCache {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return &ClientCache{
-		grafanaClients:  make(map[clientCacheKey]*GrafanaClient),
-		incidentClients: make(map[clientCacheKey]*incident.Client),
+		grafanaClients:  make(map[clientCacheKey]*grafanaCacheEntry),
+		incidentClients: make(map[clientCacheKey]*incidentCacheEntry),
+		maxEntries:      maxEntries,
 		metrics:         newClientCacheMetrics(),
 		logger:          logger,
 	}
@@ -145,11 +179,14 @@ func (c *ClientCache) GetOrCreateGrafanaClient(key clientCacheKey, createFn func
 	typeAttr := metric.WithAttributes(attrClientTypeGrafana)
 	c.metrics.lookups.Add(ctx, 1, typeAttr)
 
-	// Fast path: check with read lock
+	// Fast path: check with read lock. Promote lastUsed under the
+	// write lock if found, so eviction reflects actual usage.
 	c.mu.RLock()
-	if client, ok := c.grafanaClients[key]; ok {
+	if entry, ok := c.grafanaClients[key]; ok {
+		client := entry.client
 		c.mu.RUnlock()
 		c.metrics.hits.Add(ctx, 1, typeAttr)
+		c.touchGrafana(key)
 		return client
 	}
 	c.mu.RUnlock()
@@ -162,9 +199,9 @@ func (c *ClientCache) GetOrCreateGrafanaClient(key clientCacheKey, createFn func
 	val, _, _ := c.sfGrafana.Do(sfKey, func() (any, error) {
 		// Double-check after winning the singleflight race
 		c.mu.RLock()
-		if client, ok := c.grafanaClients[key]; ok {
+		if entry, ok := c.grafanaClients[key]; ok {
 			c.mu.RUnlock()
-			return client, nil
+			return entry.client, nil
 		}
 		c.mu.RUnlock()
 
@@ -173,7 +210,8 @@ func (c *ClientCache) GetOrCreateGrafanaClient(key clientCacheKey, createFn func
 
 		// Store the result
 		c.mu.Lock()
-		c.grafanaClients[key] = client
+		c.evictGrafanaIfFullLocked()
+		c.grafanaClients[key] = &grafanaCacheEntry{client: client, lastUsed: time.Now()}
 		c.metrics.misses.Add(ctx, 1, typeAttr)
 		c.metrics.size.Record(ctx, int64(len(c.grafanaClients)), typeAttr)
 		c.logger.Debug("Cached new Grafana client", "key", key, "cache_size", len(c.grafanaClients))
@@ -185,6 +223,34 @@ func (c *ClientCache) GetOrCreateGrafanaClient(key clientCacheKey, createFn func
 	return val.(*GrafanaClient)
 }
 
+func (c *ClientCache) touchGrafana(key clientCacheKey) {
+	c.mu.Lock()
+	if entry, ok := c.grafanaClients[key]; ok {
+		entry.lastUsed = time.Now()
+	}
+	c.mu.Unlock()
+}
+
+// evictGrafanaIfFullLocked drops the LRU entry from grafanaClients when
+// the cap would be exceeded. Caller must hold c.mu write-locked.
+func (c *ClientCache) evictGrafanaIfFullLocked() {
+	if c.maxEntries <= 0 || len(c.grafanaClients) < c.maxEntries {
+		return
+	}
+	var oldestKey clientCacheKey
+	var oldestTime time.Time
+	first := true
+	for k, e := range c.grafanaClients {
+		if first || e.lastUsed.Before(oldestTime) {
+			oldestKey = k
+			oldestTime = e.lastUsed
+			first = false
+		}
+	}
+	delete(c.grafanaClients, oldestKey)
+	c.logger.Debug("Evicted LRU Grafana client", "key", oldestKey, "last_used", oldestTime)
+}
+
 // GetOrCreateIncidentClient returns a cached incident client for the given key,
 // or creates one using createFn if no cached client exists.
 // The createFn is called outside the cache lock via singleflight to avoid
@@ -194,11 +260,14 @@ func (c *ClientCache) GetOrCreateIncidentClient(key clientCacheKey, createFn fun
 	typeAttr := metric.WithAttributes(attrClientTypeIncident)
 	c.metrics.lookups.Add(ctx, 1, typeAttr)
 
-	// Fast path: check with read lock
+	// Fast path: check with read lock. Promote lastUsed under the
+	// write lock if found.
 	c.mu.RLock()
-	if client, ok := c.incidentClients[key]; ok {
+	if entry, ok := c.incidentClients[key]; ok {
+		client := entry.client
 		c.mu.RUnlock()
 		c.metrics.hits.Add(ctx, 1, typeAttr)
+		c.touchIncident(key)
 		return client
 	}
 	c.mu.RUnlock()
@@ -207,16 +276,17 @@ func (c *ClientCache) GetOrCreateIncidentClient(key clientCacheKey, createFn fun
 	sfKey := fmt.Sprintf("%v", key)
 	val, _, _ := c.sfIncident.Do(sfKey, func() (any, error) {
 		c.mu.RLock()
-		if client, ok := c.incidentClients[key]; ok {
+		if entry, ok := c.incidentClients[key]; ok {
 			c.mu.RUnlock()
-			return client, nil
+			return entry.client, nil
 		}
 		c.mu.RUnlock()
 
 		client := createFn()
 
 		c.mu.Lock()
-		c.incidentClients[key] = client
+		c.evictIncidentIfFullLocked()
+		c.incidentClients[key] = &incidentCacheEntry{client: client, lastUsed: time.Now()}
 		c.metrics.misses.Add(ctx, 1, typeAttr)
 		c.metrics.size.Record(ctx, int64(len(c.incidentClients)), typeAttr)
 		c.logger.Debug("Cached new incident client", "key", key, "cache_size", len(c.incidentClients))
@@ -228,6 +298,38 @@ func (c *ClientCache) GetOrCreateIncidentClient(key clientCacheKey, createFn fun
 	return val.(*incident.Client)
 }
 
+func (c *ClientCache) touchIncident(key clientCacheKey) {
+	c.mu.Lock()
+	if entry, ok := c.incidentClients[key]; ok {
+		entry.lastUsed = time.Now()
+	}
+	c.mu.Unlock()
+}
+
+// evictIncidentIfFullLocked drops the LRU entry from incidentClients
+// when the cap would be exceeded. Closes the evicted client's idle
+// connections before dropping. Caller must hold c.mu write-locked.
+func (c *ClientCache) evictIncidentIfFullLocked() {
+	if c.maxEntries <= 0 || len(c.incidentClients) < c.maxEntries {
+		return
+	}
+	var oldestKey clientCacheKey
+	var oldestTime time.Time
+	first := true
+	for k, e := range c.incidentClients {
+		if first || e.lastUsed.Before(oldestTime) {
+			oldestKey = k
+			oldestTime = e.lastUsed
+			first = false
+		}
+	}
+	if entry, ok := c.incidentClients[oldestKey]; ok && entry.client != nil && entry.client.HTTPClient != nil {
+		entry.client.HTTPClient.CloseIdleConnections()
+	}
+	delete(c.incidentClients, oldestKey)
+	c.logger.Debug("Evicted LRU incident client", "key", oldestKey, "last_used", oldestTime)
+}
+
 // Close cleans up cached clients. For incident clients, idle connections
 // are closed via the underlying HTTP transport. Grafana clients use a
 // go-openapi runtime whose transport is set via reflection, so we clear
@@ -236,9 +338,9 @@ func (c *ClientCache) Close() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	for key, client := range c.incidentClients {
-		if client.HTTPClient != nil {
-			client.HTTPClient.CloseIdleConnections()
+	for key, entry := range c.incidentClients {
+		if entry.client != nil && entry.client.HTTPClient != nil {
+			entry.client.HTTPClient.CloseIdleConnections()
 		}
 		delete(c.incidentClients, key)
 	}
