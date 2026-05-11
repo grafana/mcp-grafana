@@ -67,22 +67,6 @@ func NewGrafanaUpstream(_ctx context.Context, cfg Config) (*GrafanaUpstream, err
 	}, nil
 }
 
-// sweepPendingsLocked drops verifiers older than grafanaPendingTTL. The
-// caller must hold u.mu. Runs at most once per TTL window so the amortised
-// per-call cost stays O(1) under sustained traffic.
-func (u *GrafanaUpstream) sweepPendingsLocked(now time.Time) {
-	if now.Sub(u.lastSwept) < grafanaPendingTTL {
-		return
-	}
-	cutoff := now.Add(-grafanaPendingTTL)
-	for k, p := range u.pendings {
-		if p.createdAt.Before(cutoff) {
-			delete(u.pendings, k)
-		}
-	}
-	u.lastSwept = now
-}
-
 func (u *GrafanaUpstream) Mode() Mode { return ModeOAuthGrafana }
 
 // AuthorizeURL stores a per-state PKCE verifier and returns the upstream
@@ -118,10 +102,6 @@ func (u *GrafanaUpstream) HandleCallback(ctx context.Context, params url.Values)
 	p, ok := u.pendings.Consume(state)
 	if !ok {
 		return CallbackResult{}, fmt.Errorf("unknown or expired state")
-	}
-	// Treat past-TTL entries as missing — caller restarts the flow.
-	if time.Since(p.createdAt) > grafanaPendingTTL {
-		return CallbackResult{}, fmt.Errorf("pending flow expired")
 	}
 
 	exchangeOpts := []oauth2.AuthCodeOption{oauth2.SetAuthURLParam("code_verifier", p.verifier)}
