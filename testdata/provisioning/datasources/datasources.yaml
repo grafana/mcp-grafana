@@ -83,7 +83,7 @@ datasources:
       database: test-logs-*
       timeField: "@timestamp"
       flavor: opensearch
-      version: 2.19.1
+      version: 3.6.0
       pplEnabled: false
   - name: InfluxDB Flux
     uid: influxdb-flux
