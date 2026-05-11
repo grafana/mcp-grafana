@@ -245,7 +245,7 @@ func listLokiLabelNames(ctx context.Context, args ListLokiLabelNamesParams) ([]s
 // ListLokiLabelNames is a tool for listing Loki label names
 var ListLokiLabelNames = mcpgrafana.MustTool(
 	"list_loki_label_names",
-	"Lists all available label names (keys) found in logs within a specified Loki or VictoriaLogs datasource and time range. Returns a list of unique label strings (e.g., `[\"app\", \"env\", \"pod\"]`). On VictoriaLogs (`victoriametrics-logs-datasource`) this maps to the LogsQL field-names endpoint. If the time range is not provided, it defaults to the last hour.",
+	"Lists all available label/field names (keys) found in logs within a specified Loki or VictoriaLogs datasource and time range. Returns a list of unique label strings (e.g., `[\"app\", \"env\", \"pod\"]`). If the time range is not provided, it defaults to the last hour.",
 	listLokiLabelNames,
 	mcp.WithTitleAnnotation("List Loki label names"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -292,7 +292,7 @@ func listLokiLabelValues(ctx context.Context, args ListLokiLabelValuesParams) ([
 // ListLokiLabelValues is a tool for listing Loki label values
 var ListLokiLabelValues = mcpgrafana.MustTool(
 	"list_loki_label_values",
-	"Retrieves all unique values associated with a specific `labelName` within a Loki or VictoriaLogs datasource and time range. Returns a list of string values (e.g., for `labelName=\"env\"`, might return `[\"prod\", \"staging\", \"dev\"]`). Useful for discovering filter options. On VictoriaLogs (`victoriametrics-logs-datasource`) this maps to the LogsQL field-values endpoint. Defaults to the last hour if the time range is omitted.",
+	"Retrieves all unique values associated with a specific `labelName` within a Loki or VictoriaLogs datasource and time range. Returns a list of string values (e.g., for `labelName=\"env\"`, might return `[\"prod\", \"staging\", \"dev\"]`). Useful for discovering filter options. Defaults to the last hour if the time range is omitted.",
 	listLokiLabelValues,
 	mcp.WithTitleAnnotation("List Loki label values"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -756,7 +756,7 @@ func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) (*QueryLokiLog
 // QueryLokiLogs is a tool for querying logs from Loki
 var QueryLokiLogs = mcpgrafana.MustTool(
 	"query_loki_logs",
-	"Executes a log query against a Loki or VictoriaLogs datasource and returns matching log entries (or metric samples on Loki). Defaults to the last hour, a limit of 10 entries, and 'backward' direction (newest first). The `logql` parameter takes LogQL on Loki datasources (e.g., `{app=\"foo\"} |= \"error\"`, `rate({app=\"bar\"}[1m])`) and LogsQL on VictoriaLogs (`victoriametrics-logs-datasource`) datasources (e.g., `{app=\"foo\"} \"error\"`). Metric / aggregation result types (`vector`, `matrix`) are only produced by Loki; on VictoriaLogs the response always contains log records. Prefer using `query_loki_stats` first to check stream size and `list_loki_label_names` / `list_loki_label_values` to verify labels exist.",
+	"Executes a log query against a Loki or VictoriaLogs datasource and returns matching log entries (or metric samples on Loki). Defaults to the last hour, a limit of 10 entries, and 'backward' direction (newest first). The `logql` parameter takes LogQL on Loki and LogsQL on VictoriaLogs (e.g., Loki: `{app=\"foo\"} |= \"error\"`; VictoriaLogs: `{app=\"foo\"} \"error\"`). Prefer using `query_loki_stats` first to check stream size and `list_loki_label_names` / `list_loki_label_values` to verify labels exist.",
 	queryLokiLogs,
 	mcp.WithTitleAnnotation("Query Loki logs"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -868,7 +868,7 @@ func queryLokiStats(ctx context.Context, args QueryLokiStatsParams) (*Stats, err
 // QueryLokiStats is a tool for querying stats from Loki
 var QueryLokiStats = mcpgrafana.MustTool(
 	"query_loki_stats",
-	"Retrieves statistics about log streams matching a given selector within a Loki or VictoriaLogs datasource and time range. Returns an object containing the count of streams, chunks, entries, and total bytes (e.g., `{\"streams\": 5, \"chunks\": 50, \"entries\": 10000, \"bytes\": 512000}`). On VictoriaLogs (`victoriametrics-logs-datasource`) only `entries` is populated — chunks/streams/bytes are not exposed by the LogsQL stats_query endpoint and remain zero. The `logql` parameter **must** be a simple label selector (e.g., `{app=\"nginx\", env=\"prod\"}`) and does not support line filters, parsers, or aggregations. Defaults to the last hour if the time range is omitted.",
+	"Retrieves statistics about log streams matching a given selector within a Loki or VictoriaLogs datasource and time range. Returns an object containing the count of streams, chunks, entries, and total bytes (e.g., `{\"streams\": 5, \"chunks\": 50, \"entries\": 10000, \"bytes\": 512000}`). On VictoriaLogs only `entries` is populated; the other fields remain zero. The `logql` parameter **must** be a simple label selector (e.g., `{app=\"nginx\", env=\"prod\"}`) and does not support line filters, parsers, or aggregations. Defaults to the last hour if the time range is omitted.",
 	queryLokiStats,
 	mcp.WithTitleAnnotation("Get Loki log statistics"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -909,7 +909,7 @@ func queryLokiPatterns(ctx context.Context, args QueryLokiPatternsParams) ([]Pat
 // QueryLokiPatterns is a tool for querying detected log patterns from Loki
 var QueryLokiPatterns = mcpgrafana.MustTool(
 	"query_loki_patterns",
-	"Retrieves detected log patterns from a Loki datasource for a given stream selector and time range. Returns a list of patterns, each containing a pattern string and a total count of occurrences. Patterns help identify common log structures and anomalies. The `logql` parameter must be a stream selector (e.g., `{job=\"nginx\"}`) and does not support line filters or aggregations. Defaults to the last hour if the time range is omitted. **Not supported on VictoriaLogs** datasources — the LogsQL HTTP API has no equivalent of `/loki/api/v1/patterns`; the call returns an error explaining how to approximate it via `list_loki_label_values` or a `| stats` pipeline.",
+	"Retrieves detected log patterns from a Loki datasource for a given stream selector and time range. Returns a list of patterns, each containing a pattern string and a total count of occurrences. Patterns help identify common log structures and anomalies. The `logql` parameter must be a stream selector (e.g., `{job=\"nginx\"}`) and does not support line filters or aggregations. Defaults to the last hour if the time range is omitted. **Not supported on VictoriaLogs** datasources - use a `| stats` pipeline instead.",
 	queryLokiPatterns,
 	mcp.WithTitleAnnotation("Query Loki patterns"),
 	mcp.WithIdempotentHintAnnotation(true),
