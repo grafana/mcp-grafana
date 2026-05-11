@@ -3,12 +3,16 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"testing"
+	"time"
 
+	"github.com/go-openapi/strfmt"
 	grafanaModels "github.com/grafana/grafana-openapi-client-go/models"
+	ammodels "github.com/prometheus/alertmanager/api/v2/models"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/stretchr/testify/require"
 
@@ -49,6 +53,104 @@ func setupMockServer(handler http.HandlerFunc) (*httptest.Server, *alertingClien
 		httpClient: &http.Client{Transport: transport},
 	}
 	return server, client
+}
+
+func TestAlertingClient_GetAlertmanagerAlerts(t *testing.T) {
+	server, client := setupMockServer(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, http.MethodGet, r.Method)
+		require.Equal(t, "/api/datasources/proxy/uid/alertmanager/api/v2/alerts", r.URL.Path)
+		require.Equal(t, "alertname=HighCPU", r.URL.Query().Get("filter"))
+		w.Header().Set("Content-Type", "application/json")
+		_, err := w.Write([]byte(`[]`))
+		require.NoError(t, err)
+	})
+	defer server.Close()
+
+	alerts, err := client.GetAlertmanagerAlerts(context.Background(), "alertmanager", url.Values{"filter": {"alertname=HighCPU"}})
+	require.NoError(t, err)
+	require.Empty(t, alerts)
+}
+
+func TestAlertingClient_Silences(t *testing.T) {
+	now := strfmt.DateTime(time.Date(2026, 4, 24, 0, 0, 0, 0, time.UTC))
+	comment := "maintenance"
+	createdBy := "mcp-grafana"
+	name := "alertname"
+	value := "HighCPU"
+	isRegex := false
+	isEqual := true
+
+	tests := []struct {
+		name   string
+		call   func(*alertingClient) (any, error)
+		assert func(*testing.T, *http.Request, []byte)
+		body   string
+	}{
+		{
+			name: "list silences",
+			call: func(c *alertingClient) (any, error) {
+				return c.GetAlertmanagerSilences(context.Background(), "alertmanager", url.Values{"filter": {"alertname=HighCPU"}})
+			},
+			assert: func(t *testing.T, r *http.Request, body []byte) {
+				require.Equal(t, http.MethodGet, r.Method)
+				require.Equal(t, "/api/datasources/proxy/uid/alertmanager/api/v2/silences", r.URL.Path)
+				require.Equal(t, "alertname=HighCPU", r.URL.Query().Get("filter"))
+			},
+			body: `[]`,
+		},
+		{
+			name: "get silence",
+			call: func(c *alertingClient) (any, error) {
+				return c.GetAlertmanagerSilence(context.Background(), "alertmanager", "abc/123")
+			},
+			assert: func(t *testing.T, r *http.Request, body []byte) {
+				require.Equal(t, http.MethodGet, r.Method)
+				require.Equal(t, "/api/datasources/proxy/uid/alertmanager/api/v2/silence/abc%2F123", r.URL.EscapedPath())
+			},
+			body: `{"id":"abc/123","status":{"state":"active"},"comment":"maintenance","createdBy":"mcp-grafana","startsAt":"2026-04-24T00:00:00Z","endsAt":"2026-04-24T01:00:00Z","updatedAt":"2026-04-24T00:00:00Z","matchers":[{"name":"alertname","value":"HighCPU","isRegex":false,"isEqual":true}]}`,
+		},
+		{
+			name: "create silence",
+			call: func(c *alertingClient) (any, error) {
+				return c.CreateOrUpdateAlertmanagerSilence(context.Background(), "alertmanager", &ammodels.PostableSilence{Silence: ammodels.Silence{Comment: &comment, CreatedBy: &createdBy, StartsAt: &now, EndsAt: &now, Matchers: ammodels.Matchers{&ammodels.Matcher{Name: &name, Value: &value, IsRegex: &isRegex, IsEqual: &isEqual}}}})
+			},
+			assert: func(t *testing.T, r *http.Request, body []byte) {
+				require.Equal(t, http.MethodPost, r.Method)
+				require.Equal(t, "/api/datasources/proxy/uid/alertmanager/api/v2/silences", r.URL.Path)
+				require.Contains(t, string(body), `"createdBy":"mcp-grafana"`)
+			},
+			body: `{"silenceID":"abc123"}`,
+		},
+		{
+			name: "delete silence",
+			call: func(c *alertingClient) (any, error) {
+				return c.DeleteAlertmanagerSilence(context.Background(), "alertmanager", "abc123")
+			},
+			assert: func(t *testing.T, r *http.Request, body []byte) {
+				require.Equal(t, http.MethodDelete, r.Method)
+				require.Equal(t, "/api/datasources/proxy/uid/alertmanager/api/v2/silence/abc123", r.URL.Path)
+			},
+			body: ``,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			server, client := setupMockServer(func(w http.ResponseWriter, r *http.Request) {
+				body, err := io.ReadAll(r.Body)
+				require.NoError(t, err)
+				tc.assert(t, r, body)
+				w.Header().Set("Content-Type", "application/json")
+				_, err = w.Write([]byte(tc.body))
+				require.NoError(t, err)
+			})
+			defer server.Close()
+
+			result, err := tc.call(client)
+			require.NoError(t, err)
+			require.NotNil(t, result)
+		})
+	}
 }
 
 func mockrulesResponse() rulesResponse {
