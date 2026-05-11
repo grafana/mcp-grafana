@@ -1097,6 +1097,22 @@ var ExtractGrafanaClientFromHeaders httpContextFunc = func(ctx context.Context, 
 
 	// Extract transport config from request headers, and set it on the context.
 	u, apiKey, basicAuth, _ := extractKeyGrafanaInfoFromReq(req, logger)
+	// Per-user auth (auth.Middleware) pre-sets config.URL and
+	// config.APIKey on the request context. Those win over the
+	// header/env values so the Grafana client is created with the
+	// session-derived bearer rather than the shared env token.
+	// Otherwise every tool call from an authenticated MCP session
+	// would talk to Grafana with the operator's GRAFANA_API_KEY
+	// (or empty, which 401s).
+	if config.URL != "" {
+		u = config.URL
+	}
+	if config.APIKey != "" {
+		apiKey = config.APIKey
+	}
+	if config.BasicAuth != nil {
+		basicAuth = config.BasicAuth
+	}
 	logger.Debug("Creating Grafana client", "url", u, "api_key_set", apiKey != "", "basic_auth_set", basicAuth != nil)
 
 	grafanaClient := NewGrafanaClient(ctx, u, apiKey, basicAuth)

@@ -279,6 +279,19 @@ func extractGrafanaClientCached(cache *ClientCache) httpContextFunc {
 		}
 
 		u, apiKey, basicAuth, _ := extractKeyGrafanaInfoFromReq(req, logger)
+		// Per-user auth (auth.Middleware) pre-sets config.URL and
+		// config.APIKey on the context. Those win over header/env so
+		// the cached client is keyed by — and created with — the
+		// session-derived bearer rather than the shared env token.
+		if config.URL != "" {
+			u = config.URL
+		}
+		if config.APIKey != "" {
+			apiKey = config.APIKey
+		}
+		if config.BasicAuth != nil {
+			basicAuth = config.BasicAuth
+		}
 		key := cacheKeyFromRequest(u, apiKey, basicAuth, config.OrgID, req)
 
 		grafanaClient := cache.GetOrCreateGrafanaClient(key, func() *GrafanaClient {
