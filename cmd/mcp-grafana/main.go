@@ -70,6 +70,7 @@ var categoryDescription = map[string]string{
 	"snowflake":     "Snowflake: Query Snowflake datasources via Grafana (including the SNOWFLAKE.TELEMETRY.EVENTS event table) with macro and variable substitution support.",
 	"runpanelquery": "Run Panel Query: Execute panel queries directly.",
 	"graphite":      "Graphite: Query Graphite datasources for metrics.",
+	"athena":        "Athena: Query Amazon Athena datasources via Grafana with SQL, macro substitution, and schema discovery.",
 	"api":           "API: Make authenticated HTTP requests to any Grafana API endpoint with optional jq-style response filtering.",
 }
 
@@ -82,7 +83,7 @@ type disabledTools struct {
 	dashboard, folder, oncall, asserts, sift, admin,
 	pyroscope, navigation, proxied, annotations, rendering, cloudwatch, write,
 	examples, clickhouse, snowflake, graphite,
-	runpanelquery, plugin, api bool
+	runpanelquery, athena, plugin, api bool
 }
 
 // Configuration for the Grafana client.
@@ -128,6 +129,7 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.snowflake, "disable-snowflake", false, "Disable Snowflake tools")
 	flag.BoolVar(&dt.runpanelquery, "disable-runpanelquery", false, "Disable run panel query tools")
 	flag.BoolVar(&dt.graphite, "disable-graphite", false, "Disable Graphite tools")
+	flag.BoolVar(&dt.athena, "disable-athena", false, "Disable Athena tools")
 	flag.BoolVar(&dt.plugin, "disable-plugin", false, "Disable plugin tools")
 	flag.BoolVar(&dt.api, "disable-api", false, "Disable API tools")
 }
@@ -182,6 +184,7 @@ func (dt *disabledTools) toolEntries() []toolEntry {
 		{tools.AddSnowflakeTools, dt.snowflake, "snowflake"},
 		{tools.AddRunPanelQueryTools, dt.runpanelquery, "runpanelquery"},
 		{tools.AddGraphiteTools, dt.graphite, "graphite"},
+		{tools.AddAthenaTools, dt.athena, "athena"},
 		{func(mcp *server.MCPServer) { tools.AddPluginTools(mcp, enableWriteTools) }, dt.plugin, "plugin"},
 		{func(mcp *server.MCPServer) { tools.AddAPITools(mcp, enableWriteTools) }, dt.api, "api"},
 	}
