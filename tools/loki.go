@@ -592,6 +592,15 @@ func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) (*QueryLokiLog
 		for _, stream := range streams {
 			for _, value := range stream.Values {
 				if len(value) >= 2 {
+					// Parse timestamp. value[0] is a json.RawMessage containing
+					// a JSON-encoded string like `"1234567890"`; using string()
+					// directly would keep the surrounding quotes and double-encode
+					// when the LogEntry is marshalled (see issue #803).
+					var ts string
+					if err := json.Unmarshal(value[0], &ts); err != nil {
+						continue // Skip invalid timestamps
+					}
+
 					// Parse log line
 					var logLine string
 					if err := json.Unmarshal(value[1], &logLine); err != nil {
@@ -599,7 +608,7 @@ func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) (*QueryLokiLog
 					}
 
 					entry := LogEntry{
-						Timestamp: string(value[0]), // Nanoseconds as string
+						Timestamp: ts, // Nanoseconds as string (unquoted)
 						Line:      logLine,
 						Labels:    stream.Stream,
 					}
