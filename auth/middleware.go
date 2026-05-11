@@ -104,11 +104,14 @@ func bearerFrom(r *http.Request) string {
 	if h == "" {
 		return ""
 	}
+	// RFC 7235 §2.1: authentication scheme matching is case-insensitive.
+	// A client sending "bearer foo" or "BEARER foo" is spec-compliant
+	// and should be accepted.
 	const prefix = "Bearer "
-	if !strings.HasPrefix(h, prefix) {
+	if len(h) < len(prefix) || !strings.EqualFold(h[:len(prefix)], prefix) {
 		return ""
 	}
-	return strings.TrimSpace(strings.TrimPrefix(h, prefix))
+	return strings.TrimSpace(h[len(prefix):])
 }
 
 func (s *Server) unauthorized(w http.ResponseWriter, errCode, desc string) {

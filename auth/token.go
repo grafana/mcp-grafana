@@ -67,8 +67,12 @@ func (s *Server) handleAuthCodeGrant(w http.ResponseWriter, r *http.Request) {
 	// All checks passed; now consume one-shot. If a concurrent request
 	// already burned the code (legitimate-retry race), ConsumeAuthCode
 	// returns ErrNotFound and we surface the same "unknown or expired"
-	// error — the second caller can't double-mint a session.
-	if _, err := s.Store.ConsumeAuthCode(r.Context(), codeHash); err != nil {
+	// error — the second caller can't double-mint a session. Use the
+	// returned AuthCode (the canonical consumed copy) rather than the
+	// earlier Peek so the session is built from the value that was
+	// actually atomically removed from the store.
+	c, err = s.Store.ConsumeAuthCode(r.Context(), codeHash)
+	if err != nil {
 		httpError(w, http.StatusBadRequest, "invalid_grant", "code unknown or expired")
 		return
 	}
@@ -171,7 +175,17 @@ func (s *Server) handleRefreshGrant(w http.ResponseWriter, r *http.Request) {
 	if rtTTL == 0 {
 		rtTTL = 30 * 24 * time.Hour
 	}
-	if _, err := s.Store.PutSession(r.Context(), Session{
+	// PutSession returns the prior session's TokenHash on replacement.
+	// Refresh always replaces (one-session-per-identity), but we don't
+	// emit SessionRevoked here because the active-session GAUGE is
+	// unchanged across a refresh — the user still has exactly one
+	// session, just under a different access-token hash. The
+	// auth-code grant emits the metric because it can replace a
+	// session belonging to the same identity from a different
+	// browser/client, which IS a revocation event. The discard is
+	// intentional; named explicitly so a future contributor doesn't
+	// silently flip the contract.
+	replacedTokenHash, err := s.Store.PutSession(r.Context(), Session{
 		TokenHash:        atHash,
 		RefreshHash:      rtHash,
 		ClientID:         sess.ClientID,
@@ -181,11 +195,13 @@ func (s *Server) handleRefreshGrant(w http.ResponseWriter, r *http.Request) {
 		UpstreamCredsCT:  sess.UpstreamCredsCT,
 		CreatedAt:        sess.CreatedAt,
 		UpdatedAt:        now,
-	}); err != nil {
+	})
+	if err != nil {
 		s.logger().Error("auth.session_persist_failed", "user_id", sess.Identity.String(), "error", err.Error())
 		httpError(w, http.StatusInternalServerError, "server_error", "session persist failed")
 		return
 	}
+	_ = replacedTokenHash // refresh is rotation, not revocation; see comment above
 
 	s.logger().Info("auth.session_refreshed", "user_id", sess.Identity.String(), "reason", "mcp_token")
 	writeTokenResponse(w, at, rt, atTTL)
