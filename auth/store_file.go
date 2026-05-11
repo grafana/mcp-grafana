@@ -236,18 +236,22 @@ func (f *FileStore) PutAuthCode(ctx context.Context, c AuthCode) error {
 
 func (f *FileStore) PeekAuthCode(ctx context.Context, h string) (AuthCode, error) {
 	// peekAuthCodePruning signals whether MemoryStore actually deleted
-	// an expired entry. Flush only on a real prune — a never-existed
-	// or non-expired code shouldn't burden the /token hot path with a
-	// full file rewrite. And don't mask the inner ErrNotFound with a
-	// flush error: callers may differentiate "not found" from "I/O
-	// failure" via errors.Is, so the flush is best-effort.
+	// an expired entry. Take f.mu for the full call to keep the
+	// read-mutate-flush sequence under the same lock as every other
+	// FileStore method (PutSession, ConsumeAuthCode, etc.) — the inner
+	// MemoryStore mu prevents data corruption either way, but holding
+	// f.mu honours the documented locking contract. Flush only on a
+	// real prune; a never-existed or non-expired code skips the disk
+	// rewrite. The flush is best-effort: callers may differentiate
+	// ErrNotFound from I/O failure via errors.Is, so we don't mask
+	// the inner error with a flush error.
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	c, err, pruned := f.mem.peekAuthCodePruning(ctx, h)
 	if !pruned {
 		return c, err
 	}
-	f.mu.Lock()
 	_ = f.flush()
-	f.mu.Unlock()
 	return c, err
 }
 

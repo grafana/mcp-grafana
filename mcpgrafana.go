@@ -762,9 +762,13 @@ var ExtractGrafanaInfoFromHeaders httpContextFunc = func(ctx context.Context, re
 		config.URL = u
 	}
 	// A session-derived APIKey (set by the auth middleware) wins over
-	// header/env values. This is the per-user auth precedence rule.
+	// header/env values. BasicAuth has its own precedence — it's a
+	// separate credential type and the auth middleware never sets it,
+	// so a pre-set APIKey shouldn't shadow header/env BasicAuth.
 	if config.APIKey == "" {
 		config.APIKey = apiKey
+	}
+	if config.BasicAuth == nil {
 		config.BasicAuth = basicAuth
 	}
 	if config.OrgID == 0 {
