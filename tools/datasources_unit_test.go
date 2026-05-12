@@ -260,6 +260,7 @@ func TestCreateDatasource_Success(t *testing.T) {
 	defer srv.Close()
 
 	ctx := mockDatasourcesCtx(srv)
+	mcpgrafana.GrafanaClientFromContext(ctx).PublicURL = "https://grafana.example.com"
 
 	toolResult, err := createDatasource(ctx, CreateDatasourceParams{
 		Name: name,
@@ -281,7 +282,7 @@ func TestCreateDatasource_Success(t *testing.T) {
 	assert.Equal(t, msg+". Please remember to never enter sensitive data via this chat.", got.Message)
 	assert.Equal(t, id, got.ID)
 
-	configPageURL := srv.URL + "/connections/datasources/edit/" + uid
+	configPageURL := "https://grafana.example.com/connections/datasources/edit/" + uid
 	assert.Contains(t, got.NextSteps, configPageURL)
 
 	link, ok := toolResult.Content[1].(mcp.ResourceLink)
@@ -290,4 +291,3 @@ func TestCreateDatasource_Success(t *testing.T) {
 	assert.Equal(t, configPageURL, link.URI)
 	assert.Equal(t, name, link.Name)
 }
-
