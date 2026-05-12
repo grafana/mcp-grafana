@@ -290,4 +290,3 @@ func TestCreateDatasource_Success(t *testing.T) {
 	assert.Equal(t, configPageURL, link.URI)
 	assert.Equal(t, name, link.Name)
 }
-
