@@ -601,6 +601,18 @@ func updateAlertGroup(ctx context.Context, args UpdateAlertGroupParams) (*Update
 		return nil, err
 	}
 
+	if useOncallProxy(ctx) {
+		if err := proxyUpdateAlertGroup(ctx, args.AlertGroupID, action); err != nil {
+			return nil, err
+		}
+		return &UpdateAlertGroupResult{
+			AlertGroupID: args.AlertGroupID,
+			State:        strings.ToLower(strings.TrimSpace(args.State)),
+			Action:       action,
+			Updated:      true,
+		}, nil
+	}
+
 	client, err := oncallClientFromContext(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("getting OnCall client: %w", err)

@@ -110,3 +110,42 @@ func TestUpdateAlertGroupDoesNotFetchAfterWrite(t *testing.T) {
 		"POST /api/v1/alert_groups/AG123/acknowledge",
 	}, requests)
 }
+
+func TestUpdateAlertGroupUsesProxyWhenOboTokensAvailable(t *testing.T) {
+	var requests []string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.Method+" "+r.URL.Path)
+
+		if r.Method == http.MethodPost &&
+			r.URL.Path == "/api/plugins/grafana-irm-app/resources/alertgroups/AG123/resolve/" {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		http.Error(w, "unexpected request", http.StatusTeapot)
+	}))
+	defer srv.Close()
+
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{
+		URL:         srv.URL,
+		AccessToken: "test-access",
+		IDToken:     "test-id",
+	})
+
+	result, err := updateAlertGroup(ctx, UpdateAlertGroupParams{
+		AlertGroupID: "AG123",
+		State:        "resolved",
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, &UpdateAlertGroupResult{
+		AlertGroupID: "AG123",
+		State:        "resolved",
+		Action:       "resolve",
+		Updated:      true,
+	}, result)
+	assert.Equal(t, []string{
+		"POST /api/plugins/grafana-irm-app/resources/alertgroups/AG123/resolve/",
+	}, requests)
+}
