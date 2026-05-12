@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -188,6 +189,106 @@ func TestBuildSchemaGuidance_MessageContainsPluginNameAndInstruction(t *testing.
 	guidance := buildSchemaGuidance(minimalSchema())
 	assert.Contains(t, guidance.Message, "Test Plugin")
 	assert.Contains(t, guidance.Message, "MUST")
+}
+
+func TestBuildSchemaGuidance_AnnotatesDefaultOption(t *testing.T) {
+	schema := minimalSchema()
+	schema.Fields = append(schema.Fields, dsSchemaField{
+		ID:        "jsonData.method",
+		Key:       "method",
+		ValueType: "string",
+		Target:    "jsonData",
+		DefaultVal: "POST",
+		UI: &dsFieldUI{
+			Options: []dsSchemaFieldOption{
+				{Label: "GET", Value: "GET"},
+				{Label: "POST", Value: "POST"},
+			},
+		},
+	})
+
+	guidance := buildSchemaGuidance(schema)
+
+	var field *dsSchemaField
+	for i := range guidance.Fields {
+		if guidance.Fields[i].Key == "method" {
+			field = &guidance.Fields[i]
+			break
+		}
+	}
+	require.NotNil(t, field, "method field must be present")
+	require.NotNil(t, field.UI)
+	require.Len(t, field.UI.Options, 2)
+
+	for _, opt := range field.UI.Options {
+		if fmt.Sprint(opt.Value) == "POST" {
+			assert.True(t, opt.IsDefault, "POST should be marked as default")
+		} else {
+			assert.False(t, opt.IsDefault, "GET should not be marked as default")
+		}
+	}
+}
+
+func TestBuildSchemaGuidance_OptionsWithNoDefaultLeaveIsDefaultUnset(t *testing.T) {
+	schema := minimalSchema()
+	schema.Fields = append(schema.Fields, dsSchemaField{
+		ID:        "jsonData.method",
+		Key:       "method",
+		ValueType: "string",
+		Target:    "jsonData",
+		// no DefaultVal
+		UI: &dsFieldUI{
+			Options: []dsSchemaFieldOption{
+				{Label: "GET", Value: "GET"},
+				{Label: "POST", Value: "POST"},
+			},
+		},
+	})
+
+	guidance := buildSchemaGuidance(schema)
+
+	var field *dsSchemaField
+	for i := range guidance.Fields {
+		if guidance.Fields[i].Key == "method" {
+			field = &guidance.Fields[i]
+			break
+		}
+	}
+	require.NotNil(t, field)
+	for _, opt := range field.UI.Options {
+		assert.False(t, opt.IsDefault, "no option should be marked default when DefaultVal is nil")
+	}
+}
+
+func TestBuildSchemaGuidance_UnmatchedDefaultLeavesIsDefaultUnset(t *testing.T) {
+	schema := minimalSchema()
+	schema.Fields = append(schema.Fields, dsSchemaField{
+		ID:         "jsonData.method",
+		Key:        "method",
+		ValueType:  "string",
+		Target:     "jsonData",
+		DefaultVal: "PATCH", // not present in options
+		UI: &dsFieldUI{
+			Options: []dsSchemaFieldOption{
+				{Label: "GET", Value: "GET"},
+				{Label: "POST", Value: "POST"},
+			},
+		},
+	})
+
+	guidance := buildSchemaGuidance(schema)
+
+	var field *dsSchemaField
+	for i := range guidance.Fields {
+		if guidance.Fields[i].Key == "method" {
+			field = &guidance.Fields[i]
+			break
+		}
+	}
+	require.NotNil(t, field)
+	for _, opt := range field.UI.Options {
+		assert.False(t, opt.IsDefault, "no option should be marked default when default value is not in the options list")
+	}
 }
 
 // ── applyUpdates ─────────────────────────────────────────────────────────────

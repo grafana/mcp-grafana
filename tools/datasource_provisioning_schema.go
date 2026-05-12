@@ -28,6 +28,20 @@ type dsFieldValidation struct {
 	Expression string `json:"expression,omitempty"`
 }
 
+// dsSchemaFieldOption is a single choice for a select-type field.
+// IsDefault is set by buildSchemaGuidance, not stored in the JSON files.
+type dsSchemaFieldOption struct {
+	Label     string `json:"label"`
+	Value     any    `json:"value"`
+	IsDefault bool   `json:"isDefault,omitempty"`
+}
+
+// dsFieldUI captures the UI hints for a field. Only Options is kept in the
+// guidance output; component/placeholder/rows are rendering-only and ignored.
+type dsFieldUI struct {
+	Options []dsSchemaFieldOption `json:"options,omitempty"`
+}
+
 // dsSchemaField mirrors the relevant fields of each entry in a datasource schema JSON.
 type dsSchemaField struct {
 	ID           string              `json:"id"`
@@ -44,6 +58,7 @@ type dsSchemaField struct {
 	Tags         []string            `json:"tags,omitempty"`
 	DependsOn    string              `json:"dependsOn,omitempty"`
 	Validations  []dsFieldValidation `json:"validations,omitempty"`
+	UI           *dsFieldUI          `json:"ui,omitempty"`
 }
 
 type datasourceSchema struct {
@@ -117,6 +132,25 @@ func loadDatasourceSchema(pluginType string) (*datasourceSchema, error) {
 	return &s, nil
 }
 
+// annotateDefaultOption returns a copy of f with IsDefault set on the option
+// whose value matches f.DefaultVal, mirroring the generateLLMHint behaviour.
+func annotateDefaultOption(f dsSchemaField) dsSchemaField {
+	if f.UI == nil || len(f.UI.Options) == 0 || f.DefaultVal == nil {
+		// it is non select UI field, return as is.
+		return f
+	}
+	opts := make([]dsSchemaFieldOption, len(f.UI.Options))
+	copy(opts, f.UI.Options)
+	for i, opt := range opts {
+		if fmt.Sprint(opt.Value) == fmt.Sprint(f.DefaultVal) {
+			opts[i].IsDefault = true
+		}
+	}
+	uiCopy := &dsFieldUI{Options: opts}
+	f.UI = uiCopy
+	return f
+}
+
 func buildSchemaGuidance(schema *datasourceSchema) *datasourceSchemaGuidance {
 	fields := make([]dsSchemaField, 0, len(commonDatasourceFields)+len(schema.Fields))
 	fields = append(fields, commonDatasourceFields...)
@@ -148,7 +182,7 @@ func buildSchemaGuidance(schema *datasourceSchema) *datasourceSchemaGuidance {
 			continue
 		}
 
-		fields = append(fields, f)
+		fields = append(fields, annotateDefaultOption(f))
 	}
 
 	return &datasourceSchemaGuidance{
