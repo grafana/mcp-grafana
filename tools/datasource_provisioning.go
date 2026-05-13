@@ -44,6 +44,39 @@ type datasourceEntry struct {
 	Extra           map[string]any `yaml:",inline"`
 }
 
+type fieldRoute struct {
+	Target  string
+	Section string
+	Key     string
+}
+
+func buildFieldRoutes(schema *datasourceSchema) map[string]fieldRoute {
+	routes := map[string]fieldRoute{}
+	for _, f := range schema.Fields {
+		routes[schemaFieldInputKey(f)] = fieldRoute{
+			Target:  f.Target,
+			Section: f.Section,
+			Key:     f.Key,
+		}
+	}
+	for _, f := range commonDatasourceFields {
+		routes[f.Key] = fieldRoute{
+			Target: f.Target,
+			Key:    f.Key,
+		}
+	}
+	return routes
+}
+
+func setSectionJSONDataUpdate(updates map[string]any, section string, key string, value any) {
+	sectionUpdates, ok := updates[section].(map[string]any)
+	if !ok {
+		sectionUpdates = map[string]any{}
+		updates[section] = sectionUpdates
+	}
+	sectionUpdates[key] = value
+}
+
 // applyUpdates merges root-level and jsonData updates into an existing entry.
 // It uses a yaml round-trip so that type coercion (e.g. float64 → int for orgId)
 // is handled by the yaml package rather than hand-written switch cases.
@@ -130,15 +163,9 @@ func provisionDatasource(_ context.Context, args ProvisionDatasourceParams) (*mc
 
 	pf := &datasourceProvisioningFile{APIVersion: 1}
 
-	// Build a field-target lookup from the common fields and schema so we can
-	// route each field to the correct place in the YAML (root vs jsonData).
-	fieldTarget := map[string]string{}
-	for _, f := range commonDatasourceFields {
-		fieldTarget[f.Key] = f.Target
-	}
-	for _, f := range schema.Fields {
-		fieldTarget[f.Key] = f.Target
-	}
+	// Build a field route lookup so we can route each field to the correct place
+	// in the YAML (root vs jsonData, including section-scoped jsonData fields).
+	fieldRoutes := buildFieldRoutes(schema)
 
 	// Split caller-provided fields into root-level updates and jsonData updates.
 	// access is always proxy — direct/browser mode is deprecated in Grafana.
@@ -152,10 +179,15 @@ func provisionDatasource(_ context.Context, args ProvisionDatasourceParams) (*mc
 		if k == "name" || k == "type" || k == "access" {
 			continue // already set above
 		}
+		route := fieldRoutes[k]
 		// only update jsonData and root, ignore secureJsonData
-		switch fieldTarget[k] {
+		switch route.Target {
 		case "jsonData":
-			jsonDataUpdates[k] = v
+			if route.Section != "" {
+				setSectionJSONDataUpdate(jsonDataUpdates, route.Section, route.Key, v)
+			} else {
+				jsonDataUpdates[k] = v
+			}
 		case "root":
 			updates[k] = v
 		}

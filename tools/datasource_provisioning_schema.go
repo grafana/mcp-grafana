@@ -51,6 +51,7 @@ type dsSchemaField struct {
 	ValueType    string              `json:"valueType"`
 	SemanticType string              `json:"semanticType,omitempty"`
 	Target       string              `json:"target"`
+	Section      string              `json:"section,omitempty"`
 	Required     bool                `json:"required,omitempty"`
 	DefaultVal   any                 `json:"defaultValue,omitempty"`
 	Lifecycle    string              `json:"lifecycle,omitempty"`
@@ -151,6 +152,13 @@ func annotateDefaultOption(f dsSchemaField) dsSchemaField {
 	return f
 }
 
+func schemaFieldInputKey(f dsSchemaField) string {
+	if f.Section == "" {
+		return f.Key
+	}
+	return f.Section + "." + f.Key
+}
+
 func buildSchemaGuidance(schema *datasourceSchema) *datasourceSchemaGuidance {
 	fields := make([]dsSchemaField, 0, len(commonDatasourceFields)+len(schema.Fields))
 	fields = append(fields, commonDatasourceFields...)
@@ -182,6 +190,7 @@ func buildSchemaGuidance(schema *datasourceSchema) *datasourceSchemaGuidance {
 			continue
 		}
 
+		f.Key = schemaFieldInputKey(f)
 		fields = append(fields, annotateDefaultOption(f))
 	}
 
