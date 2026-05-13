@@ -8,8 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
-	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -67,19 +65,12 @@ func applyUpdates(entry *datasourceEntry, updates map[string]any, jsonDataUpdate
 }
 
 type ProvisionDatasourceParams struct {
-	Directory   string         `json:"directory,omitempty" jsonschema:"description=Directory where the tool will attempt to write the YAML provisioning file. Optional. Writing to disk is only reliable when the server is running via stdio (local mode). In remote deployments the write targets the server's filesystem\\, not the client's — omit this and use the returned content or zip attachment instead."`
-	FileName    string         `json:"file_name,omitempty" jsonschema:"description=Template for the file name. Supports {type} placeholder. Defaults to 'prov-{type}'."`
-	Type        string         `json:"type" jsonschema:"required,description=Datasource type (e.g. prometheus\\, loki\\, influxdb)"`
-	ForceUpdate bool           `json:"force_update,omitempty" jsonschema:"description=If true\\, overwrite an existing datasource entry with the same name. Defaults to false\\, which returns a conflict error instead."`
-	Fields      map[string]any `json:"fields,omitempty" jsonschema:"description=Datasource field values to provision\\, keyed by field key from the schema returned on the first call. The server uses each field's target (root or jsonData) to place values correctly in the YAML. Example: {\"url\": \"http://prometheus:9090\"\\, \"httpMethod\": \"POST\"}."`
+	Type   string         `json:"type" jsonschema:"required,description=Datasource type (e.g. prometheus\\, loki\\, influxdb)"`
+	Fields map[string]any `json:"fields,omitempty" jsonschema:"description=Datasource field values to provision, keyed by field key from the schema returned on the first call. The server uses each field's target (root or jsonData) to place values correctly in the YAML. Example: {\"url\": \"http://prometheus:9090\", \"httpMethod\": \"POST\"}."`
 }
 
 type ProvisionDatasourceResult struct {
-	FilePath    string `json:"file_path,omitempty"`
-	FileCreated bool   `json:"file_created,omitempty"`
-	Conflict    bool   `json:"conflict,omitempty"`
-	Content     string `json:"content"`
-	Summary     string `json:"summary"`
+	Content string `json:"content"`
 }
 
 // buildZip produces a base64-encoded zip archive from a map of filename -> content.
@@ -130,33 +121,15 @@ func provisionDatasource(_ context.Context, args ProvisionDatasourceParams) (*mc
 		return mcp.NewToolResultText(string(text)), nil
 	}
 
-	fileName := args.FileName
-	if fileName == "" {
-		fileName = "prov-{type}"
-	}
-	stem := strings.ReplaceAll(fileName, "{type}", args.Type)
+	
+	stem := "prov-" + args.Type
 
 	dsName, _ := args.Fields["name"].(string)
 	if dsName == "" {
 		dsName = stemToDisplayName(stem)
 	}
 
-	// Load existing file if a directory was given, otherwise start fresh.
 	pf := &datasourceProvisioningFile{APIVersion: 1}
-	isNew := true
-	var filePath string
-
-	if args.Directory != "" {
-		filePath = filepath.Join(args.Directory, stem+".yaml")
-		if data, err := os.ReadFile(filePath); err == nil {
-			isNew = false
-			if err := yaml.Unmarshal(data, pf); err != nil {
-				return nil, fmt.Errorf("parse %s: %w", filePath, err)
-			}
-		} else if !os.IsNotExist(err) {
-			return nil, fmt.Errorf("read %s: %w", filePath, err)
-		}
-	}
 
 	// Build a field-target lookup from the schema so we can route each field
 	// to the correct place in the YAML (root vs jsonData).
@@ -184,34 +157,11 @@ func provisionDatasource(_ context.Context, args ProvisionDatasourceParams) (*mc
 		}
 	}
 
-	// Upsert: merge into existing entry by name, or append.
-	// this will only be work when running the server locally
-	// when running remote we won't have access to read local user files
-	upserted := false
-	for i, existing := range pf.Datasources {
-		if existing.Name == dsName {
-			if !args.ForceUpdate {
-				text, _ := json.Marshal(&ProvisionDatasourceResult{
-					FilePath: filePath,
-					Conflict: true,
-					Summary:  fmt.Sprintf("Datasource '%s' already exists in %s. Set force_update to true to overwrite it, or provide a different name.", dsName, filePath),
-				})
-				return mcp.NewToolResultText(string(text)), nil
-			}
-			if err := applyUpdates(&pf.Datasources[i], updates, jsonDataUpdates); err != nil {
-				return nil, fmt.Errorf("merge datasource: %w", err)
-			}
-			upserted = true
-			break
-		}
+	var entry datasourceEntry
+	if err := applyUpdates(&entry, updates, jsonDataUpdates); err != nil {
+		return nil, fmt.Errorf("build datasource entry: %w", err)
 	}
-	if !upserted {
-		var entry datasourceEntry
-		if err := applyUpdates(&entry, updates, jsonDataUpdates); err != nil {
-			return nil, fmt.Errorf("build datasource entry: %w", err)
-		}
-		pf.Datasources = append(pf.Datasources, entry)
-	}
+	pf.Datasources = append(pf.Datasources, entry)
 
 	out, err := yaml.Marshal(pf)
 	if err != nil {
@@ -224,33 +174,11 @@ func provisionDatasource(_ context.Context, args ProvisionDatasourceParams) (*mc
 		return nil, fmt.Errorf("build zip: %w", err)
 	}
 
-	// Write to disk only when a directory was provided.
-	if args.Directory != "" {
-		if err := os.MkdirAll(args.Directory, 0755); err != nil {
-			return nil, fmt.Errorf("create directory %s: %w", args.Directory, err)
-		}
-		if err := os.WriteFile(filePath, out, 0644); err != nil {
-			return nil, fmt.Errorf("write %s: %w", filePath, err)
-		}
-	}
-
-	var summary string
-	if args.Directory == "" {
-		summary = fmt.Sprintf("Generated provisioning YAML for datasource '%s'. The content field contains the YAML — the attached zip file can be extracted directly into your local provisioning/datasources directory.", dsName)
-	} else {
-		action := "update"
-		if isNew {
-			action = "create"
-		}
-		summary = fmt.Sprintf("Attempted to %s provisioning file %s with datasource '%s'. Write to disk is only guaranteed when running via stdio — in remote mode this targeted the server's filesystem.", action, filePath, dsName)
-	}
 
 	text, _ := json.Marshal(&ProvisionDatasourceResult{
-		FilePath:    filePath,
-		FileCreated: isNew && args.Directory != "",
 		Content:     content,
-		Summary:     summary,
 	})
+
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{
 			mcp.TextContent{Type: "text", Text: string(text)},
@@ -265,7 +193,7 @@ func provisionDatasource(_ context.Context, args ProvisionDatasourceParams) (*mc
 
 var ProvisionDatasource = mcpgrafana.MustTool(
 	"provision_datasource",
-	"Generate a Grafana datasource provisioning YAML file. IMPORTANT: always call this tool twice. First call: provide only the type — the tool returns a field schema. After receiving the schema, you MUST ask the user for every required field value explicitly; do not infer or use defaults without user confirmation. Second call: provide the type plus the fields map populated with values confirmed by the user. Always returns the YAML content as text and a zip file attachment. Optionally attempts to write to disk when a directory is provided — only reliable when running via stdio (local mode). In remote deployments use the returned content or zip attachment to save the file locally.",
+	"Generate a Grafana datasource provisioning YAML file. IMPORTANT: always call this tool twice. First call: provide only the type — the tool returns a field schema. After receiving the schema, you MUST ask the user for every required field value explicitly; do not infer or use defaults without user confirmation. Second call: provide the type plus the fields map populated with values confirmed by the user. Returns the YAML content as text and a zip file attachment that can be extracted into your local provisioning/datasources directory.",
 	provisionDatasource,
 	mcp.WithTitleAnnotation("Provision datasource"),
 )

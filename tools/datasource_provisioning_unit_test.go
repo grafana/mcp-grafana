@@ -7,7 +7,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 	"testing"
 
@@ -401,7 +400,7 @@ func TestProvisionDatasource_Phase2_DefaultNameDerivedFromStem(t *testing.T) {
 	}))
 	require.NoError(t, err)
 
-	// Default FileName is "prov-{type}" → stem "prov-prometheus" → "Prov Prometheus"
+	// Default stem is "prov-{type}" → "Prov Prometheus"
 	pr := mustExtractProvisionResult(t, result)
 	assert.Contains(t, pr.Content, "name: Prov Prometheus")
 }
@@ -464,62 +463,6 @@ func TestProvisionDatasource_Phase2_NameIsFirstKey(t *testing.T) {
 	assert.Less(t, nameIdx, accessIdx, "name must appear before access")
 }
 
-func TestProvisionDatasource_Phase2_WritesFileToDisk(t *testing.T) {
-	dir := t.TempDir()
-	result, err := provisionDatasource(context.Background(), ProvisionDatasourceParams{
-		Type:      "prometheus",
-		Directory: dir,
-		Fields:    map[string]any{"name": "Written DS", "url": "http://prometheus:9090"},
-	})
-	require.NoError(t, err)
-
-	pr := mustExtractProvisionResult(t, result)
-	assert.True(t, pr.FileCreated)
-	require.NotEmpty(t, pr.FilePath)
-	require.FileExists(t, pr.FilePath)
-	data, err := os.ReadFile(pr.FilePath)
-	require.NoError(t, err)
-	assert.Contains(t, string(data), "name: Written DS")
-}
-
-func TestProvisionDatasource_Phase2_Conflict_NoForceUpdate(t *testing.T) {
-	dir := t.TempDir()
-	args := ProvisionDatasourceParams{
-		Type:      "prometheus",
-		Directory: dir,
-		Fields:    map[string]any{"name": "Existing DS", "url": "http://prometheus:9090"},
-	}
-	_, err := provisionDatasource(context.Background(), args)
-	require.NoError(t, err)
-
-	result, err := provisionDatasource(context.Background(), args)
-	require.NoError(t, err)
-	pr := mustExtractProvisionResult(t, result)
-	assert.True(t, pr.Conflict)
-	assert.Contains(t, pr.Summary, "Existing DS")
-}
-
-func TestProvisionDatasource_Phase2_ForceUpdate_OverwritesEntry(t *testing.T) {
-	dir := t.TempDir()
-	_, err := provisionDatasource(context.Background(), ProvisionDatasourceParams{
-		Type:      "prometheus",
-		Directory: dir,
-		Fields:    map[string]any{"name": "My DS", "url": "http://old:9090"},
-	})
-	require.NoError(t, err)
-
-	result, err := provisionDatasource(context.Background(), ProvisionDatasourceParams{
-		Type:        "prometheus",
-		Directory:   dir,
-		ForceUpdate: true,
-		Fields:      map[string]any{"name": "My DS", "url": "http://new:9090"},
-	})
-	require.NoError(t, err)
-	pr := mustExtractProvisionResult(t, result)
-	assert.False(t, pr.Conflict)
-	assert.Contains(t, pr.Content, "http://new:9090")
-	assert.NotContains(t, pr.Content, "http://old:9090")
-}
 
 func TestProvisionDatasource_Phase2_ZipAttachmentIsValidArchive(t *testing.T) {
 	result, err := provisionDatasource(context.Background(), promArgs(map[string]any{
@@ -561,14 +504,3 @@ func TestProvisionDatasource_Phase2_ZipContainsYAMLContent(t *testing.T) {
 	assert.Contains(t, buf.String(), "name: Zip DS")
 }
 
-func TestProvisionDatasource_Phase2_CustomFileName(t *testing.T) {
-	result, err := provisionDatasource(context.Background(), ProvisionDatasourceParams{
-		Type:     "prometheus",
-		FileName: "custom-{type}",
-		Fields:   map[string]any{"url": "http://prometheus:9090"},
-	})
-	require.NoError(t, err)
-
-	blob := mustExtractZipBlob(t, result)
-	assert.Equal(t, "custom-prometheus.zip", blob.URI)
-}
