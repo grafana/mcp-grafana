@@ -66,7 +66,7 @@ func applyUpdates(entry *datasourceEntry, updates map[string]any, jsonDataUpdate
 
 type ProvisionDatasourceParams struct {
 	Type   string         `json:"type" jsonschema:"required,description=Datasource type (e.g. prometheus\\, loki\\, influxdb)"`
-	Fields map[string]any `json:"fields,omitempty" jsonschema:"description=Datasource field values to provision, keyed by field key from the schema returned on the first call. The server uses each field's target (root or jsonData) to place values correctly in the YAML. Example: {\"url\": \"http://prometheus:9090\", \"httpMethod\": \"POST\"}."`
+	Fields map[string]any `json:"fields,omitempty" jsonschema:"description=Datasource field values to provision\\, keyed by field key from the schema returned on the first call. The server uses each field's target (root or jsonData) to place values correctly in the YAML. Example: {\"url\": \"http://prometheus:9090\"\\, \"httpMethod\": \"POST\"}."`
 }
 
 type ProvisionDatasourceResult struct {
