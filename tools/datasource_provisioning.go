@@ -146,7 +146,7 @@ func provisionDatasource(_ context.Context, args ProvisionDatasourceParams) (*mc
 	}
 	jsonDataUpdates := map[string]any{}
 	for k, v := range args.Fields {
-		if k == "name" {
+		if k == "name" || k == "type" || k == "access" {
 			continue // already set above
 		}
 		if fieldTarget[k] == "jsonData" {
