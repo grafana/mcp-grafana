@@ -86,7 +86,6 @@ func listDatasources(ctx context.Context, args ListDatasourcesParams) (*ListData
 		Datasources: summarizeDatasources(paginated),
 		Total:       total,
 		HasMore:     hasMore,
-		Message:     "Data sources retrieved successfully. Please remember to never enter sensitive data via this chat.",
 	}, nil
 }
 
