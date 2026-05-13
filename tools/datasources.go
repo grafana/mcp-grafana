@@ -2,9 +2,11 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
+	"github.com/invopop/jsonschema"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
@@ -87,6 +89,120 @@ func listDatasources(ctx context.Context, args ListDatasourcesParams) (*ListData
 	}, nil
 }
 
+// datasourceJSONData holds plugin-specific non-secret settings for a datasource.
+// Its schema description is sourced from datasourceJSONDataSchema — swap that
+// function body for an API fetch when the datasource settings API is available.
+type datasourceJSONData map[string]interface{}
+
+func (datasourceJSONData) JSONSchema() *jsonschema.Schema {
+	return datasourceJSONDataSchema()
+}
+
+// datasourceJSONDataSchema returns the JSON schema for the jsonData field.
+// TODO: Replace with a fetch from the Grafana datasource settings API when available.
+func datasourceJSONDataSchema() *jsonschema.Schema {
+	return &jsonschema.Schema{
+		Type: "object",
+		Description: "Datasource-specific non-secret settings. Keys and values vary by plugin type; " +
+			"ask the user what to set or consult the plugin documentation. " +
+			"Examples — prometheus: {\"httpMethod\":\"GET\",\"timeInterval\":\"15s\"}; " +
+			"loki: {\"maxLines\":1000}; elasticsearch: {\"index\":\"my-index\",\"timeField\":\"@timestamp\"}; " +
+			"cloudwatch: {\"defaultRegion\":\"us-east-1\",\"authType\":\"default\"}; " +
+			"influxdb: {\"version\":\"Flux\",\"product\":\"InfluxDB Enterprise 3.x\"}.",
+		Extras: map[string]any{},
+	}
+}
+
+type CreateDatasourceParams struct {
+	Name            string             `json:"name" jsonschema:"required,description=Datasource display name"`
+	Type            string             `json:"type" jsonschema:"required,description=Grafana datasource plugin type\\, for example prometheus"`
+	URL             string             `json:"url,omitempty" jsonschema:"description=Datasource base URL when required by the plugin"`
+	Access          string             `json:"access,omitempty" jsonschema:"description=How Grafana should access the datasource (proxy or direct)"`
+	Database        string             `json:"database,omitempty" jsonschema:"description=Optional database name"`
+	User            string             `json:"user,omitempty" jsonschema:"description=Optional username"`
+	BasicAuth       bool               `json:"basicAuth,omitempty" jsonschema:"description=Whether Grafana should use basic auth"`
+	WithCredentials bool               `json:"withCredentials,omitempty" jsonschema:"description=Whether Grafana should forward credentials such as cookies"`
+	IsDefault       bool               `json:"isDefault,omitempty" jsonschema:"description=Whether this should become the default datasource"`
+	JSONData        datasourceJSONData `json:"jsonData,omitempty"`
+}
+
+type CreateDatasourceResult struct {
+	Message    string             `json:"message"`
+	ID         int64              `json:"id"`
+	UID        string             `json:"uid"`
+	Name       string             `json:"name"`
+	Datasource *models.DataSource `json:"datasource,omitempty"`
+	NextSteps  string             `json:"nextSteps,omitempty"`
+}
+
+func createDatasource(ctx context.Context, args CreateDatasourceParams) (*mcp.CallToolResult, error) {
+	dsAccess := args.Access
+	if dsAccess == "" {
+		// use grafana default
+		dsAccess = "proxy"
+	}
+	c := mcpgrafana.GrafanaClientFromContext(ctx)
+	body := &models.AddDataSourceCommand{
+		Name:            args.Name,
+		Type:            args.Type,
+		URL:             args.URL,
+		Access:          models.DsAccess(dsAccess),
+		Database:        args.Database,
+		BasicAuth:       args.BasicAuth,
+		IsDefault:       args.IsDefault,
+		JSONData:        models.JSON(args.JSONData),
+		WithCredentials: args.WithCredentials,
+	}
+	resp, err := c.Datasources.AddDataSourceWithParams(
+		datasources.NewAddDataSourceParamsWithContext(ctx).WithBody(body),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create datasource: %w", err)
+	}
+	p := resp.Payload
+	result := &CreateDatasourceResult{
+		Datasource: p.Datasource,
+	}
+
+	if p.Message != nil {
+		result.Message = *p.Message
+	}
+	if p.ID != nil {
+		result.ID = *p.ID
+	}
+	if p.Name != nil {
+		result.Name = *p.Name
+	}
+	if p.Datasource != nil {
+		result.UID = p.Datasource.UID
+	}
+	if result.UID != "" {
+		grafanaURL := c.PublicURL
+		if grafanaURL == "" {
+			grafanaURL = mcpgrafana.GrafanaConfigFromContext(ctx).URL
+		}
+		configPageURL := fmt.Sprintf("%s/connections/datasources/edit/%s", grafanaURL, result.UID)
+		result.NextSteps = fmt.Sprintf("Visit the datasource configuration page to finish setting it up: %s", configPageURL)
+		b, err := json.Marshal(result)
+		if err != nil {
+			return nil, fmt.Errorf("marshal result: %w", err)
+		}
+		toolResult := mcp.NewToolResultText(string(b))
+		toolResult.Content = append(toolResult.Content, mcp.ResourceLink{
+			Type:        "resource_link",
+			URI:         configPageURL,
+			Name:        result.Name,
+			Description: "Datasource configuration page",
+		})
+		return toolResult, nil
+	}
+	b, err := json.Marshal(result)
+	if err != nil {
+		return nil, fmt.Errorf("marshal result: %w", err)
+	}
+	return mcp.NewToolResultText(string(b)), nil
+}
+
 // filterDatasources returns only datasources of the specified type `t`. If `t`
 // is an empty string no filtering is done.
 func filterDatasources(datasources models.DataSourceList, t string) models.DataSourceList {
@@ -124,6 +240,15 @@ var ListDatasources = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("List datasources"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+)
+
+var CreateDatasource = mcpgrafana.MustTool(
+	"create_datasource",
+	"Create a new datasource in Grafana. Returns the created datasource details including its UID. The result includes a nextSteps field and a resource link pointing to the datasource configuration page — always surface both to the user so they can complete setup (e.g. add credentials) in the Grafana UI. Does not support adding credentials or PII and should never ask for authentication options. If credentials are detected, remind the user to rotate and revoke them to keep them safe.",
+	createDatasource,
+	mcp.WithTitleAnnotation("Create datasource"),
+	mcp.WithIdempotentHintAnnotation(false),
+	mcp.WithReadOnlyHintAnnotation(false),
 )
 
 type GetDatasourceByUIDParams struct {
@@ -185,7 +310,11 @@ var GetDatasource = mcpgrafana.MustTool(
 	mcp.WithReadOnlyHintAnnotation(true),
 )
 
-func AddDatasourceTools(mcp *server.MCPServer) {
+func AddDatasourceTools(mcp *server.MCPServer, enableWrite bool) {
 	ListDatasources.Register(mcp)
 	GetDatasource.Register(mcp)
+	// this is to make sure that we only register datasource write tools when scope grafana:write has been granted
+	if enableWrite {
+		CreateDatasource.Register(mcp)
+	}
 }

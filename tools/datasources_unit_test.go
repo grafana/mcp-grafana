@@ -13,6 +13,7 @@ import (
 	"github.com/grafana/grafana-openapi-client-go/client"
 	"github.com/grafana/grafana-openapi-client-go/models"
 	mcpgrafana "github.com/grafana/mcp-grafana"
+	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -25,7 +26,8 @@ func mockDatasourcesCtx(server *httptest.Server) context.Context {
 	cfg.APIKey = "test"
 
 	c := client.NewHTTPClientWithConfig(nil, cfg)
-	return mcpgrafana.WithGrafanaClient(context.Background(), &mcpgrafana.GrafanaClient{GrafanaHTTPAPI: c})
+	ctx := mcpgrafana.WithGrafanaClient(context.Background(), &mcpgrafana.GrafanaClient{GrafanaHTTPAPI: c})
+	return mcpgrafana.WithGrafanaConfig(ctx, mcpgrafana.GrafanaConfig{URL: server.URL})
 }
 
 func createMockDatasources(count int) []*models.DataSource {
@@ -226,4 +228,66 @@ func TestGetDatasource_ErrorWhenNeitherProvided(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "either uid or name must be provided")
+}
+
+// ---- createDatasource ----
+
+func TestCreateDatasource_Success(t *testing.T) {
+	id := int64(42)
+	name := "My Prometheus"
+	msg := "Datasource added"
+	uid := "new-prom-uid"
+
+	mockResp := models.AddDataSourceOKBody{
+		ID:      &id,
+		Name:    &name,
+		Message: &msg,
+		Datasource: &models.DataSource{
+			ID:   id,
+			UID:  uid,
+			Name: name,
+			Type: "prometheus",
+		},
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodPost, r.Method)
+		assert.Equal(t, "/api/datasources", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(mockResp)
+	}))
+	defer srv.Close()
+
+	ctx := mockDatasourcesCtx(srv)
+	mcpgrafana.GrafanaClientFromContext(ctx).PublicURL = "https://grafana.example.com"
+
+	toolResult, err := createDatasource(ctx, CreateDatasourceParams{
+		Name: name,
+		Type: "prometheus",
+		URL:  "http://prometheus:9090",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, toolResult)
+	assert.False(t, toolResult.IsError)
+	require.Len(t, toolResult.Content, 2)
+
+	text, ok := toolResult.Content[0].(mcp.TextContent)
+	require.True(t, ok)
+
+	var got CreateDatasourceResult
+	require.NoError(t, json.Unmarshal([]byte(text.Text), &got))
+	assert.Equal(t, uid, got.UID)
+	assert.Equal(t, name, got.Name)
+	assert.Equal(t, msg, got.Message)
+	assert.Equal(t, id, got.ID)
+
+	configPageURL := "https://grafana.example.com/connections/datasources/edit/" + uid
+	assert.Contains(t, got.NextSteps, configPageURL)
+
+	link, ok := toolResult.Content[1].(mcp.ResourceLink)
+	require.True(t, ok)
+	assert.Equal(t, "resource_link", link.Type)
+	assert.Equal(t, configPageURL, link.URI)
+	assert.Equal(t, name, link.Name)
 }
