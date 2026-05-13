@@ -137,7 +137,8 @@ func provisionDatasource(_ context.Context, args ProvisionDatasourceParams) (*mc
 		fieldTarget[f.Key] = f.Target
 	}
 
-	// Split caller-provided fields into root-level updates and jsonData updates.
+	// Split caller-provided fields into root-level updates, jsonData updates,
+	// and secureJsonData updates.
 	// access is always proxy — direct/browser mode is deprecated in Grafana.
 	updates := map[string]any{
 		"name":   dsName,
@@ -145,13 +146,17 @@ func provisionDatasource(_ context.Context, args ProvisionDatasourceParams) (*mc
 		"access": "proxy",
 	}
 	jsonDataUpdates := map[string]any{}
+	secureJSONDataUpdates := map[string]any{}
 	for k, v := range args.Fields {
 		if k == "name" || k == "type" || k == "access" {
 			continue // already set above
 		}
-		if fieldTarget[k] == "jsonData" {
+		switch fieldTarget[k] {
+		case "jsonData":
 			jsonDataUpdates[k] = v
-		} else {
+		case "secureJsonData":
+			secureJSONDataUpdates[k] = v
+		default:
 			updates[k] = v
 		}
 	}
@@ -159,6 +164,9 @@ func provisionDatasource(_ context.Context, args ProvisionDatasourceParams) (*mc
 	var entry datasourceEntry
 	if err := applyUpdates(&entry, updates, jsonDataUpdates); err != nil {
 		return nil, fmt.Errorf("build datasource entry: %w", err)
+	}
+	if len(secureJSONDataUpdates) > 0 {
+		entry.SecureJSONData = secureJSONDataUpdates
 	}
 	pf.Datasources = append(pf.Datasources, entry)
 

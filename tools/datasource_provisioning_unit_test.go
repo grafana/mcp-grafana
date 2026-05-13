@@ -444,6 +444,21 @@ func TestProvisionDatasource_Phase2_JsonDataFieldRoutedToJsonData(t *testing.T) 
 	assert.Equal(t, "POST", pf.Datasources[0].JSONData["httpMethod"])
 }
 
+func TestProvisionDatasource_Phase2_SecureJsonDataFieldRoutedToSecureJsonData(t *testing.T) {
+	result, err := provisionDatasource(context.Background(), promArgs(map[string]any{
+		"url":               "http://prometheus:9090",
+		"basicAuthPassword": "secret",
+	}))
+	require.NoError(t, err)
+
+	pr := mustExtractProvisionResult(t, result)
+	var pf datasourceProvisioningFile
+	require.NoError(t, yaml.Unmarshal([]byte(pr.Content), &pf))
+	require.NotNil(t, pf.Datasources[0].SecureJSONData)
+	assert.Equal(t, "secret", pf.Datasources[0].SecureJSONData["basicAuthPassword"])
+	assert.NotContains(t, pf.Datasources[0].Extra, "basicAuthPassword")
+}
+
 func TestProvisionDatasource_Phase2_NameIsFirstKey(t *testing.T) {
 	result, err := provisionDatasource(context.Background(), promArgs(map[string]any{
 		"url": "http://prometheus:9090",
