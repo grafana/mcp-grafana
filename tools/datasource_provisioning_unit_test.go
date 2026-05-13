@@ -383,6 +383,29 @@ func TestProvisionDatasource_Phase2_GeneratesValidYAML(t *testing.T) {
 	require.Len(t, pf.Datasources, 1)
 }
 
+func TestProvisionDatasource_Phase2_CommonFieldsRoutedToRoot(t *testing.T) {
+	result, err := provisionDatasource(context.Background(), promArgs(map[string]any{
+		"url":       "http://prometheus:9090",
+		"uid":       "prom-main",
+		"orgId":     42,
+		"isDefault": true,
+		"editable":  false,
+	}))
+	require.NoError(t, err)
+
+	pr := mustExtractProvisionResult(t, result)
+	var pf datasourceProvisioningFile
+	require.NoError(t, yaml.Unmarshal([]byte(pr.Content), &pf))
+	require.Len(t, pf.Datasources, 1)
+	entry := pf.Datasources[0]
+	assert.Equal(t, "prom-main", entry.UID)
+	assert.Equal(t, 42, entry.OrgID)
+	require.NotNil(t, entry.IsDefault)
+	assert.True(t, *entry.IsDefault)
+	require.NotNil(t, entry.Editable)
+	assert.False(t, *entry.Editable)
+}
+
 func TestProvisionDatasource_Phase2_NameFromFields(t *testing.T) {
 	result, err := provisionDatasource(context.Background(), promArgs(map[string]any{
 		"name": "My Prometheus",
