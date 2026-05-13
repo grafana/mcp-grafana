@@ -121,7 +121,6 @@ func provisionDatasource(_ context.Context, args ProvisionDatasourceParams) (*mc
 		return mcp.NewToolResultText(string(text)), nil
 	}
 
-	
 	stem := "prov-" + args.Type
 
 	dsName, _ := args.Fields["name"].(string)
@@ -147,7 +146,7 @@ func provisionDatasource(_ context.Context, args ProvisionDatasourceParams) (*mc
 	}
 	jsonDataUpdates := map[string]any{}
 	for k, v := range args.Fields {
-		if k == "name" {
+		if k == "name" || k == "type" || k == "access" {
 			continue // already set above
 		}
 		if fieldTarget[k] == "jsonData" {
@@ -174,9 +173,8 @@ func provisionDatasource(_ context.Context, args ProvisionDatasourceParams) (*mc
 		return nil, fmt.Errorf("build zip: %w", err)
 	}
 
-
 	text, _ := json.Marshal(&ProvisionDatasourceResult{
-		Content:     content,
+		Content: content,
 	})
 
 	return &mcp.CallToolResult{
