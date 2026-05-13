@@ -135,7 +135,7 @@ func (c *Client) makeRequest(ctx context.Context, method, urlPath string, params
 
 	// Check for non-200 status code
 	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
+		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 		return nil, fmt.Errorf("loki API returned status code %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 

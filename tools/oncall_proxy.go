@@ -96,7 +96,7 @@ func extractNextPath(rawURL string) (string, error) {
 }
 
 func handleProxyErrorResponse(resp *http.Response) error {
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1024))
 	if err != nil {
 		return fmt.Errorf("request failed with status %d (could not read body: %w)", resp.StatusCode, err)
 	}
