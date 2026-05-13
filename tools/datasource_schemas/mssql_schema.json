@@ -1,0 +1,281 @@
+{
+    "schemaVersion": "v1",
+    "pluginType": "mssql",
+    "pluginName": "Microsoft SQL Server",
+    "docURL": "https://grafana.com/docs/grafana/latest/datasources/mssql/",
+    "fields": [
+        {
+            "id": "jsonData.authenticationType",
+            "key": "authenticationType",
+            "label": "Authentication",
+            "description": "SQL Server authentication type.",
+            "valueType": "string",
+            "target": "jsonData",
+            "defaultValue": "SQL Server Authentication",
+            "validations": [
+                {
+                    "type": "allowedValues",
+                    "values": [
+                        "SQL Server Authentication",
+                        "Windows Authentication",
+                        "Azure AD Authentication",
+                        "Windows AD: Username + password",
+                        "Windows AD: Keytab",
+                        "Windows AD: Credential cache",
+                        "Windows AD: Credential cache file"
+                    ]
+                }
+            ],
+            "ui": {
+                "component": "select"
+            }
+        },
+        {
+            "id": "jsonData.encrypt",
+            "key": "encrypt",
+            "label": "Encrypt",
+            "description": "TLS/SSL encryption mode for the connection.",
+            "valueType": "string",
+            "target": "jsonData",
+            "defaultValue": "false",
+            "validations": [
+                {
+                    "type": "allowedValues",
+                    "values": [
+                        "disable",
+                        "false",
+                        "true"
+                    ]
+                }
+            ],
+            "ui": {
+                "component": "select",
+                "options": [
+                    {
+                        "label": "disable",
+                        "value": "disable"
+                    },
+                    {
+                        "label": "false",
+                        "value": "false"
+                    },
+                    {
+                        "label": "true",
+                        "value": "true"
+                    }
+                ]
+            }
+        },
+        {
+            "id": "jsonData.sslRootCertFile",
+            "key": "sslRootCertFile",
+            "label": "SSL Root Cert File",
+            "description": "Path to the SSL root certificate file.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.serverName",
+            "key": "serverName",
+            "label": "Server Name",
+            "description": "TLS server name for certificate verification.",
+            "valueType": "string",
+            "semanticType": "hostname",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.connectionTimeout",
+            "key": "connectionTimeout",
+            "label": "Connection timeout",
+            "description": "Connection timeout in seconds.",
+            "valueType": "number",
+            "target": "jsonData",
+            "validations": [
+                {
+                    "type": "range",
+                    "min": 0
+                }
+            ]
+        },
+        {
+            "id": "jsonData.database",
+            "key": "database",
+            "label": "Database",
+            "description": "SQL Server database name.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.maxOpenConns",
+            "key": "maxOpenConns",
+            "label": "Max open connections",
+            "description": "Maximum number of open connections to the database.",
+            "valueType": "number",
+            "target": "jsonData",
+            "validations": [
+                {
+                    "type": "range",
+                    "min": 0
+                }
+            ]
+        },
+        {
+            "id": "jsonData.maxIdleConns",
+            "key": "maxIdleConns",
+            "label": "Max idle connections",
+            "description": "Maximum number of idle connections in the pool.",
+            "valueType": "number",
+            "target": "jsonData",
+            "defaultValue": 2,
+            "validations": [
+                {
+                    "type": "range",
+                    "min": 0
+                }
+            ]
+        },
+        {
+            "id": "jsonData.connMaxLifetime",
+            "key": "connMaxLifetime",
+            "label": "Max connection lifetime",
+            "description": "Maximum lifetime of a connection in seconds.",
+            "valueType": "number",
+            "target": "jsonData",
+            "defaultValue": 14400,
+            "validations": [
+                {
+                    "type": "range",
+                    "min": 0
+                }
+            ]
+        },
+        {
+            "id": "jsonData.keytabFilePath",
+            "key": "keytabFilePath",
+            "label": "Keytab file path",
+            "description": "Path to the Kerberos keytab file.",
+            "valueType": "string",
+            "target": "jsonData",
+            "dependsOn": "jsonData.authenticationType == 'Windows AD: Keytab'"
+        },
+        {
+            "id": "jsonData.credentialCache",
+            "key": "credentialCache",
+            "label": "Credential cache",
+            "description": "Kerberos credential cache name.",
+            "valueType": "string",
+            "target": "jsonData",
+            "dependsOn": "jsonData.authenticationType == 'Windows AD: Credential cache'"
+        },
+        {
+            "id": "jsonData.credentialCacheLookupFile",
+            "key": "credentialCacheLookupFile",
+            "label": "Credential cache lookup file",
+            "description": "Path to the credential cache lookup file.",
+            "valueType": "string",
+            "target": "jsonData",
+            "dependsOn": "jsonData.authenticationType == 'Windows AD: Credential cache file'"
+        },
+        {
+            "id": "jsonData.configFilePath",
+            "key": "configFilePath",
+            "label": "Kerberos config file path",
+            "description": "Path to the Kerberos configuration file.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.UDPConnectionLimit",
+            "key": "UDPConnectionLimit",
+            "label": "UDP connection limit",
+            "description": "Maximum number of UDP connections for Kerberos.",
+            "valueType": "number",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.enableDNSLookupKDC",
+            "key": "enableDNSLookupKDC",
+            "label": "Enable DNS lookup for KDC",
+            "description": "Enable DNS SRV lookup for Kerberos KDC.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.timeInterval",
+            "key": "timeInterval",
+            "label": "Min time interval",
+            "description": "A lower limit for the auto group-by time interval.",
+            "valueType": "string",
+            "semanticType": "duration",
+            "target": "jsonData",
+            "ui": {
+                "component": "input",
+                "placeholder": "1m"
+            }
+        },
+        {
+            "id": "secureJsonData.password",
+            "key": "password",
+            "label": "Password",
+            "description": "Database password.",
+            "valueType": "string",
+            "semanticType": "password",
+            "target": "secureJsonData"
+        }
+    ],
+    "groups": [
+        {
+            "id": "connection",
+            "title": "Connection",
+            "fieldRefs": [
+                "jsonData.database",
+                "jsonData.authenticationType",
+                "jsonData.encrypt",
+                "jsonData.serverName",
+                "jsonData.connectionTimeout"
+            ]
+        },
+        {
+            "id": "connection-limits",
+            "title": "Connection Limits",
+            "fieldRefs": [
+                "jsonData.maxOpenConns",
+                "jsonData.maxIdleConns",
+                "jsonData.connMaxLifetime"
+            ]
+        },
+        {
+            "id": "tls",
+            "title": "TLS / SSL",
+            "fieldRefs": [
+                "jsonData.sslRootCertFile"
+            ]
+        },
+        {
+            "id": "kerberos",
+            "title": "Kerberos",
+            "fieldRefs": [
+                "jsonData.keytabFilePath",
+                "jsonData.credentialCache",
+                "jsonData.credentialCacheLookupFile",
+                "jsonData.configFilePath",
+                "jsonData.UDPConnectionLimit",
+                "jsonData.enableDNSLookupKDC"
+            ]
+        },
+        {
+            "id": "settings",
+            "title": "Settings",
+            "fieldRefs": [
+                "jsonData.timeInterval"
+            ]
+        },
+        {
+            "id": "auth",
+            "title": "Authentication",
+            "fieldRefs": [
+                "secureJsonData.password"
+            ]
+        }
+    ]
+}

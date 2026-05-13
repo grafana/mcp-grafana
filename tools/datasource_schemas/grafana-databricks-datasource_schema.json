@@ -1,0 +1,281 @@
+{
+    "schemaVersion": "v1",
+    "pluginType": "grafana-databricks-datasource",
+    "pluginName": "Databricks",
+    "fields": [
+        {
+            "id": "jsonData.host",
+            "key": "host",
+            "label": "Server Hostname",
+            "description": "Databricks workspace server hostname.",
+            "valueType": "string",
+            "target": "jsonData",
+            "required": true
+        },
+        {
+            "id": "jsonData.port",
+            "key": "port",
+            "label": "Port",
+            "description": "Connection port.",
+            "valueType": "number",
+            "target": "jsonData",
+            "defaultValue": 443
+        },
+        {
+            "id": "jsonData.httpPath",
+            "key": "httpPath",
+            "label": "HTTP Path",
+            "description": "HTTP path for the Databricks SQL warehouse or cluster.",
+            "valueType": "string",
+            "target": "jsonData",
+            "required": true
+        },
+        {
+            "id": "jsonData.authType",
+            "key": "authType",
+            "label": "Authentication Type",
+            "description": "Databricks authentication method.",
+            "valueType": "string",
+            "target": "jsonData",
+            "required": true,
+            "defaultValue": "Pat",
+            "validations": [
+                {
+                    "type": "allowedValues",
+                    "values": [
+                        "Pat",
+                        "OauthM2M",
+                        "OauthPT",
+                        "OauthOBO",
+                        "AzureM2M"
+                    ]
+                }
+            ],
+            "ui": {
+                "component": "select",
+                "options": [
+                    {
+                        "label": "Personal Access Token",
+                        "value": "Pat"
+                    },
+                    {
+                        "label": "OAuth M2M (Service Principal)",
+                        "value": "OauthM2M"
+                    },
+                    {
+                        "label": "OAuth Passthrough",
+                        "value": "OauthPT"
+                    },
+                    {
+                        "label": "OAuth On-Behalf-Of",
+                        "value": "OauthOBO"
+                    },
+                    {
+                        "label": "Azure Managed Identity",
+                        "value": "AzureM2M"
+                    }
+                ]
+            }
+        },
+        {
+            "id": "jsonData.catalog",
+            "key": "catalog",
+            "label": "Default catalog",
+            "description": "Default Unity Catalog name.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.schema",
+            "key": "schema",
+            "label": "Default schema",
+            "description": "Default database schema.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.maxOpenConns",
+            "key": "maxOpenConns",
+            "label": "Max open connections",
+            "description": "Maximum number of open connections.",
+            "valueType": "number",
+            "target": "jsonData",
+            "defaultValue": 10
+        },
+        {
+            "id": "jsonData.maxIdleConns",
+            "key": "maxIdleConns",
+            "label": "Max idle connections",
+            "description": "Maximum number of idle connections.",
+            "valueType": "number",
+            "target": "jsonData",
+            "defaultValue": 10
+        },
+        {
+            "id": "jsonData.connMaxLifetime",
+            "key": "connMaxLifetime",
+            "label": "Max connection lifetime",
+            "description": "Maximum lifetime of a connection in seconds.",
+            "valueType": "number",
+            "target": "jsonData",
+            "defaultValue": 14400
+        },
+        {
+            "id": "jsonData.connectionTimeout",
+            "key": "connectionTimeout",
+            "label": "Connection timeout",
+            "description": "Connection timeout in seconds.",
+            "valueType": "number",
+            "target": "jsonData",
+            "defaultValue": 60
+        },
+        {
+            "id": "jsonData.clientId",
+            "key": "clientId",
+            "label": "Client ID",
+            "description": "OAuth client ID or Azure App Registration client ID.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.workspaceId",
+            "key": "workspaceId",
+            "label": "Workspace ID",
+            "description": "Databricks workspace ID for OAuth.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.azureTenantId",
+            "key": "azureTenantId",
+            "label": "Azure Tenant ID",
+            "description": "Azure AD tenant ID.",
+            "valueType": "string",
+            "target": "jsonData",
+            "dependsOn": "jsonData.authType == 'AzureM2M'"
+        },
+        {
+            "id": "jsonData.azureClientId",
+            "key": "azureClientId",
+            "label": "Azure Client ID",
+            "description": "Azure AD application client ID.",
+            "valueType": "string",
+            "target": "jsonData",
+            "dependsOn": "jsonData.authType == 'AzureM2M'"
+        },
+        {
+            "id": "jsonData.retryCount",
+            "key": "retryCount",
+            "label": "Retry count",
+            "description": "Number of retries for failed requests.",
+            "valueType": "number",
+            "target": "jsonData",
+            "defaultValue": 4
+        },
+        {
+            "id": "jsonData.retryWaitMin",
+            "key": "retryWaitMin",
+            "label": "Retry wait min (s)",
+            "description": "Minimum wait between retries in seconds.",
+            "valueType": "number",
+            "target": "jsonData",
+            "defaultValue": 1
+        },
+        {
+            "id": "jsonData.retryWaitMax",
+            "key": "retryWaitMax",
+            "label": "Retry wait max (s)",
+            "description": "Maximum wait between retries in seconds.",
+            "valueType": "number",
+            "target": "jsonData",
+            "defaultValue": 30
+        },
+        {
+            "id": "secureJsonData.token",
+            "key": "token",
+            "label": "Access Token",
+            "description": "Databricks personal access token.",
+            "valueType": "string",
+            "semanticType": "token",
+            "target": "secureJsonData",
+            "dependsOn": "jsonData.authType == 'Pat'"
+        },
+        {
+            "id": "secureJsonData.clientSecret",
+            "key": "clientSecret",
+            "label": "Client Secret",
+            "description": "OAuth client secret.",
+            "valueType": "string",
+            "semanticType": "token",
+            "target": "secureJsonData"
+        },
+        {
+            "id": "secureJsonData.azureClientSecret",
+            "key": "azureClientSecret",
+            "label": "Azure Client Secret",
+            "description": "Azure AD application secret.",
+            "valueType": "string",
+            "semanticType": "token",
+            "target": "secureJsonData",
+            "dependsOn": "jsonData.authType == 'AzureM2M'"
+        }
+    ],
+    "groups": [
+        {
+            "id": "connection",
+            "title": "Connection",
+            "fieldRefs": [
+                "jsonData.host",
+                "jsonData.port",
+                "jsonData.httpPath"
+            ]
+        },
+        {
+            "id": "auth",
+            "title": "Authentication",
+            "fieldRefs": [
+                "jsonData.authType",
+                "secureJsonData.token",
+                "jsonData.clientId",
+                "jsonData.workspaceId",
+                "secureJsonData.clientSecret"
+            ]
+        },
+        {
+            "id": "azure",
+            "title": "Azure Authentication",
+            "fieldRefs": [
+                "jsonData.azureTenantId",
+                "jsonData.azureClientId",
+                "secureJsonData.azureClientSecret"
+            ]
+        },
+        {
+            "id": "database",
+            "title": "Database",
+            "fieldRefs": [
+                "jsonData.catalog",
+                "jsonData.schema"
+            ]
+        },
+        {
+            "id": "pool",
+            "title": "Connection Pool",
+            "fieldRefs": [
+                "jsonData.maxOpenConns",
+                "jsonData.maxIdleConns",
+                "jsonData.connMaxLifetime",
+                "jsonData.connectionTimeout"
+            ]
+        },
+        {
+            "id": "retry",
+            "title": "Retry Settings",
+            "fieldRefs": [
+                "jsonData.retryCount",
+                "jsonData.retryWaitMin",
+                "jsonData.retryWaitMax"
+            ]
+        }
+    ]
+}

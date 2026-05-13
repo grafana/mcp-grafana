@@ -1,0 +1,294 @@
+{
+    "schemaVersion": "v1",
+    "pluginType": "grafana-snowflake-datasource",
+    "pluginName": "Snowflake",
+    "fields": [
+        {
+            "id": "jsonData.account",
+            "key": "account",
+            "label": "Account Name",
+            "description": "Snowflake account identifier (e.g. xy12345.us-east-1).",
+            "valueType": "string",
+            "target": "jsonData",
+            "required": true
+        },
+        {
+            "id": "jsonData.username",
+            "key": "username",
+            "label": "Username",
+            "description": "Snowflake user login name.",
+            "valueType": "string",
+            "target": "jsonData",
+            "required": true
+        },
+        {
+            "id": "jsonData.authType",
+            "key": "authType",
+            "label": "Authentication Type",
+            "description": "Snowflake authentication method.",
+            "valueType": "string",
+            "target": "jsonData",
+            "defaultValue": "password",
+            "validations": [
+                {
+                    "type": "allowedValues",
+                    "values": [
+                        "password",
+                        "keypair",
+                        "oauth",
+                        "pat"
+                    ]
+                }
+            ],
+            "ui": {
+                "component": "select",
+                "options": [
+                    {
+                        "label": "Password",
+                        "value": "password"
+                    },
+                    {
+                        "label": "Key Pair",
+                        "value": "keypair"
+                    },
+                    {
+                        "label": "OAuth",
+                        "value": "oauth"
+                    },
+                    {
+                        "label": "Programmatic Access Token",
+                        "value": "pat"
+                    }
+                ]
+            }
+        },
+        {
+            "id": "jsonData.region",
+            "key": "region",
+            "label": "Region",
+            "description": "Snowflake region (if not included in account name).",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.role",
+            "key": "role",
+            "label": "Role",
+            "description": "Snowflake role to use for queries.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.warehouse",
+            "key": "warehouse",
+            "label": "Warehouse",
+            "description": "Snowflake virtual warehouse.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.database",
+            "key": "database",
+            "label": "Database",
+            "description": "Default database.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.schema",
+            "key": "schema",
+            "label": "Schema",
+            "description": "Default schema.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.defaultQuery",
+            "key": "defaultQuery",
+            "label": "Default Query",
+            "description": "Default SQL query template.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.defaultVariableQuery",
+            "key": "defaultVariableQuery",
+            "label": "Default Variable Query",
+            "description": "Default SQL for template variable queries.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.defaultInterpolation",
+            "key": "defaultInterpolation",
+            "label": "Default Interpolation",
+            "description": "Default interpolation format for multi-value variables.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.timeInterval",
+            "key": "timeInterval",
+            "label": "Min Time Interval",
+            "description": "Minimum time interval between data points.",
+            "valueType": "string",
+            "semanticType": "duration",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.loginTimeout",
+            "key": "loginTimeout",
+            "label": "Login Timeout (s)",
+            "description": "Login timeout in seconds.",
+            "valueType": "number",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.requestTimeout",
+            "key": "requestTimeout",
+            "label": "Request Timeout (s)",
+            "description": "Query request timeout in seconds.",
+            "valueType": "number",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.oauthPassThru",
+            "key": "oauthPassThru",
+            "label": "OAuth Pass-thru",
+            "description": "Forward the user's OAuth token to Snowflake.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.rowLimit",
+            "key": "rowLimit",
+            "label": "Row Limit",
+            "description": "Maximum number of rows returned per query.",
+            "valueType": "number",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.enableSecureSocksProxy",
+            "key": "enableSecureSocksProxy",
+            "label": "Secure Socks Proxy",
+            "description": "Enable secure SOCKS proxy.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.settings",
+            "key": "settings",
+            "label": "Session Parameters",
+            "description": "Additional Snowflake session parameters as key-value pairs.",
+            "valueType": "array",
+            "target": "jsonData",
+            "item": {
+                "valueType": "object"
+            }
+        },
+        {
+            "id": "secureJsonData.password",
+            "key": "password",
+            "label": "Password",
+            "description": "Snowflake password.",
+            "valueType": "string",
+            "target": "secureJsonData",
+            "semanticType": "password",
+            "dependsOn": "jsonData.authType == 'password'"
+        },
+        {
+            "id": "secureJsonData.privateKey",
+            "key": "privateKey",
+            "label": "Private Key",
+            "description": "RSA private key for key pair authentication (PEM format).",
+            "valueType": "string",
+            "target": "secureJsonData",
+            "semanticType": "token",
+            "dependsOn": "jsonData.authType == 'keypair'",
+            "ui": {
+                "component": "textarea",
+                "rows": 7
+            }
+        },
+        {
+            "id": "secureJsonData.privateKeyPassphrase",
+            "key": "privateKeyPassphrase",
+            "label": "Private Key Passphrase",
+            "description": "Passphrase for the encrypted private key.",
+            "valueType": "string",
+            "target": "secureJsonData",
+            "semanticType": "token",
+            "dependsOn": "jsonData.authType == 'keypair'"
+        },
+        {
+            "id": "secureJsonData.patToken",
+            "key": "patToken",
+            "label": "Programmatic Access Token",
+            "description": "Snowflake programmatic access token.",
+            "valueType": "string",
+            "target": "secureJsonData",
+            "semanticType": "token",
+            "dependsOn": "jsonData.authType == 'pat'"
+        }
+    ],
+    "groups": [
+        {
+            "id": "connection",
+            "title": "Connection",
+            "fieldRefs": [
+                "jsonData.account",
+                "jsonData.region"
+            ]
+        },
+        {
+            "id": "auth",
+            "title": "Authentication",
+            "fieldRefs": [
+                "jsonData.username",
+                "jsonData.authType",
+                "secureJsonData.password",
+                "secureJsonData.privateKey",
+                "secureJsonData.privateKeyPassphrase",
+                "secureJsonData.patToken",
+                "jsonData.oauthPassThru"
+            ]
+        },
+        {
+            "id": "database",
+            "title": "Database",
+            "fieldRefs": [
+                "jsonData.role",
+                "jsonData.warehouse",
+                "jsonData.database",
+                "jsonData.schema"
+            ]
+        },
+        {
+            "id": "query",
+            "title": "Query Defaults",
+            "fieldRefs": [
+                "jsonData.defaultQuery",
+                "jsonData.defaultVariableQuery",
+                "jsonData.defaultInterpolation",
+                "jsonData.timeInterval"
+            ]
+        },
+        {
+            "id": "advanced",
+            "title": "Advanced",
+            "fieldRefs": [
+                "jsonData.loginTimeout",
+                "jsonData.requestTimeout",
+                "jsonData.rowLimit",
+                "jsonData.enableSecureSocksProxy",
+                "jsonData.settings"
+            ]
+        }
+    ]
+}

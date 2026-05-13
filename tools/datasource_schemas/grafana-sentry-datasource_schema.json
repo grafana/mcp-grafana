@@ -1,0 +1,84 @@
+{
+    "schemaVersion": "v1",
+    "pluginType": "grafana-sentry-datasource",
+    "pluginName": "Sentry",
+    "fields": [
+        {
+            "id": "jsonData.url",
+            "key": "url",
+            "label": "URL",
+            "description": "Sentry instance URL.",
+            "valueType": "string",
+            "semanticType": "url",
+            "target": "jsonData",
+            "required": true,
+            "defaultValue": "https://sentry.io"
+        },
+        {
+            "id": "jsonData.orgSlug",
+            "key": "orgSlug",
+            "label": "Organization Slug",
+            "description": "Sentry organization slug.",
+            "valueType": "string",
+            "target": "jsonData",
+            "required": true
+        },
+        {
+            "id": "jsonData.tlsSkipVerify",
+            "key": "tlsSkipVerify",
+            "label": "Skip TLS Verify",
+            "description": "Skip TLS certificate verification.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.enableSecureSocksProxy",
+            "key": "enableSecureSocksProxy",
+            "label": "Secure Socks Proxy",
+            "description": "Enable secure SOCKS proxy.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "secureJsonData.authToken",
+            "key": "authToken",
+            "label": "Auth Token",
+            "description": "Sentry authentication token.",
+            "valueType": "string",
+            "target": "secureJsonData",
+            "required": true,
+            "semanticType": "token"
+        }
+    ],
+    "groups": [
+        {
+            "id": "connection",
+            "title": "Connection",
+            "fieldRefs": [
+                "jsonData.url",
+                "jsonData.orgSlug"
+            ]
+        },
+        {
+            "id": "auth",
+            "title": "Authentication",
+            "fieldRefs": [
+                "secureJsonData.authToken"
+            ]
+        },
+        {
+            "id": "advanced",
+            "title": "Advanced",
+            "fieldRefs": [
+                "jsonData.tlsSkipVerify",
+                "jsonData.enableSecureSocksProxy"
+            ]
+        }
+    ]
+}

@@ -1,0 +1,608 @@
+{
+    "schemaVersion": "v1",
+    "pluginType": "tempo",
+    "pluginName": "Tempo",
+    "docURL": "https://grafana.com/docs/grafana/latest/datasources/tempo/configure-tempo-data-source/",
+    "fields": [
+        {
+            "id": "root.url",
+            "key": "url",
+            "label": "URL",
+            "description": "URL of your Tempo instance. If running locally, use http://localhost:3200.",
+            "valueType": "string",
+            "semanticType": "url",
+            "target": "root",
+            "required": true,
+            "ui": {
+                "component": "input",
+                "placeholder": "http://localhost:3200"
+            }
+        },
+        {
+            "id": "root.basicAuth",
+            "key": "basicAuth",
+            "label": "Basic Auth",
+            "description": "Enable basic authentication.",
+            "valueType": "boolean",
+            "target": "root",
+            "defaultValue": false,
+            "tags": [
+                "managed-by:auth.method"
+            ]
+        },
+        {
+            "id": "auth.method",
+            "key": "authMethod",
+            "label": "Authentication method",
+            "description": "Choose an authentication method to access the data source.",
+            "valueType": "string",
+            "kind": "virtual",
+            "defaultValue": "no-auth",
+            "validations": [
+                {
+                    "type": "allowedValues",
+                    "values": [
+                        "no-auth",
+                        "basic-auth",
+                        "forward-oauth"
+                    ]
+                }
+            ],
+            "ui": {
+                "component": "select",
+                "options": [
+                    {
+                        "label": "No Authentication",
+                        "value": "no-auth",
+                        "description": "Data source is available without authentication"
+                    },
+                    {
+                        "label": "Basic authentication",
+                        "value": "basic-auth",
+                        "description": "Authenticate with your data source username and password"
+                    },
+                    {
+                        "label": "Forward OAuth Identity",
+                        "value": "forward-oauth",
+                        "description": "Forward the OAuth access token (and if available: the OIDC ID token) of the user querying the data source"
+                    }
+                ]
+            },
+            "storage": {
+                "type": "computed",
+                "read": "root.basicAuth == true ? 'basic-auth' : (jsonData.oauthPassThru == true ? 'forward-oauth' : 'no-auth')"
+            },
+            "effects": [
+                {
+                    "when": "value == 'no-auth'",
+                    "set": {
+                        "root.basicAuth": false,
+                        "jsonData.oauthPassThru": false
+                    }
+                },
+                {
+                    "when": "value == 'basic-auth'",
+                    "set": {
+                        "root.basicAuth": true,
+                        "jsonData.oauthPassThru": false
+                    }
+                },
+                {
+                    "when": "value == 'forward-oauth'",
+                    "set": {
+                        "root.basicAuth": false,
+                        "jsonData.oauthPassThru": true
+                    }
+                }
+            ]
+        },
+        {
+            "id": "root.basicAuthUser",
+            "key": "basicAuthUser",
+            "label": "User",
+            "description": "Username for basic authentication.",
+            "valueType": "string",
+            "target": "root",
+            "dependsOn": "auth.method == 'basic-auth'"
+        },
+        {
+            "id": "jsonData.oauthPassThru",
+            "key": "oauthPassThru",
+            "label": "Forward OAuth Identity",
+            "description": "Forward the OAuth access token (and if available: the OIDC ID token) of the user querying the data source.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "defaultValue": false,
+            "tags": [
+                "managed-by:auth.method"
+            ]
+        },
+        {
+            "id": "jsonData.serviceMap.datasourceUid",
+            "key": "datasourceUid",
+            "label": "Data source",
+            "description": "The Prometheus data source with the service graph data.",
+            "valueType": "string",
+            "semanticType": "datasourceUid",
+            "target": "jsonData",
+            "section": "serviceMap"
+        },
+        {
+            "id": "jsonData.search.hide",
+            "key": "hide",
+            "label": "Hide search",
+            "description": "Hide the search option in Explore.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "section": "search",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.search.filters",
+            "key": "filters",
+            "label": "Search filters",
+            "description": "Default TraceQL search filters shown in the Explore search tab.",
+            "valueType": "array",
+            "target": "jsonData",
+            "section": "search",
+            "item": {
+                "valueType": "object"
+            }
+        },
+        {
+            "id": "jsonData.nodeGraph.enabled",
+            "key": "enabled",
+            "label": "Enable node graph",
+            "description": "Shows the node graph visualization above the trace view.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "section": "nodeGraph",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.spanBar.tag",
+            "key": "tag",
+            "label": "Tag",
+            "description": "Tag key to display on the span bar. Only applicable when span bar label is set to 'Tag'.",
+            "valueType": "string",
+            "target": "jsonData",
+            "section": "spanBar"
+        },
+        {
+            "id": "jsonData.tagLimit",
+            "key": "tagLimit",
+            "label": "Tag limit",
+            "description": "Maximum number of tags retrieved from Tempo. Default is 100.",
+            "valueType": "number",
+            "target": "jsonData",
+            "defaultValue": 100
+        },
+        {
+            "id": "jsonData.traceQuery.timeShiftEnabled",
+            "key": "timeShiftEnabled",
+            "label": "Use time range in query",
+            "description": "Narrow down TraceID lookups to a time range for performance. Default: disabled.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "section": "traceQuery",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.traceQuery.spanStartTimeShift",
+            "key": "spanStartTimeShift",
+            "label": "Time shift for start of search",
+            "description": "Shifts the start of the time range when searching by TraceID. Use higher time shifts for longer traces. Default: 30m.",
+            "valueType": "string",
+            "semanticType": "duration",
+            "target": "jsonData",
+            "section": "traceQuery",
+            "defaultValue": "30m",
+            "dependsOn": "jsonData.traceQuery.timeShiftEnabled == true"
+        },
+        {
+            "id": "jsonData.traceQuery.spanEndTimeShift",
+            "key": "spanEndTimeShift",
+            "label": "Time shift for end of search",
+            "description": "Shifts the end of the time range when searching by TraceID. Use higher time shifts for longer traces. Default: 30m.",
+            "valueType": "string",
+            "semanticType": "duration",
+            "target": "jsonData",
+            "section": "traceQuery",
+            "defaultValue": "30m",
+            "dependsOn": "jsonData.traceQuery.timeShiftEnabled == true"
+        },
+        {
+            "id": "jsonData.streamingEnabled.search",
+            "key": "search",
+            "label": "Search streaming",
+            "description": "Enable streaming for search queries, allowing partial results before the query completes.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "section": "streamingEnabled",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.streamingEnabled.metrics",
+            "key": "metrics",
+            "label": "Metrics streaming",
+            "description": "Enable streaming for metrics queries.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "section": "streamingEnabled",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.timeRangeForTags",
+            "key": "timeRangeForTags",
+            "label": "Tags time range",
+            "description": "Time window in seconds for tag and tag-value queries. Controls how far back Tempo looks when fetching tags.",
+            "valueType": "number",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.tracesToMetrics",
+            "key": "tracesToMetrics",
+            "label": "Trace to metrics",
+            "description": "Navigate from a trace span to the selected data source's metrics.",
+            "valueType": "object",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.tracesToLogs",
+            "key": "tracesToLogs",
+            "label": "Trace to logs (legacy)",
+            "description": "Legacy trace-to-logs configuration. Use tracesToLogsV2 instead.",
+            "valueType": "object",
+            "target": "jsonData",
+            "lifecycle": "deprecated"
+        },
+        {
+            "id": "jsonData.tracesToLogsV2",
+            "key": "tracesToLogsV2",
+            "label": "Trace to logs",
+            "description": "Navigate from a trace span to the selected data source's logs.",
+            "valueType": "object",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.tracesToProfiles",
+            "key": "tracesToProfiles",
+            "label": "Trace to profiles",
+            "description": "Navigate from a trace span to the selected data source's profiles.",
+            "valueType": "object",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.timeout",
+            "key": "timeout",
+            "label": "HTTP request timeout",
+            "description": "HTTP request timeout in seconds. Overrides the global dataproxy.timeout setting.",
+            "valueType": "number",
+            "target": "jsonData",
+            "ui": {
+                "component": "input",
+                "placeholder": "Timeout in seconds"
+            }
+        },
+        {
+            "id": "jsonData.serverName",
+            "key": "serverName",
+            "label": "TLS server name",
+            "description": "Controls the server name used for certificate verification. Defaults to the data source URL.",
+            "valueType": "string",
+            "semanticType": "hostname",
+            "target": "jsonData",
+            "dependsOn": "jsonData.tlsAuth == true"
+        },
+        {
+            "id": "jsonData.tlsAuth",
+            "key": "tlsAuth",
+            "label": "TLS Client Auth",
+            "description": "Enable TLS client certificate authentication.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.tlsAuthWithCACert",
+            "key": "tlsAuthWithCACert",
+            "label": "With CA Cert",
+            "description": "Verify self-signed TLS certificates using a CA certificate.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.tlsSkipVerify",
+            "key": "tlsSkipVerify",
+            "label": "Skip TLS Verify",
+            "description": "Skip TLS certificate verification. Use only for testing.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.keepCookies",
+            "key": "keepCookies",
+            "label": "Allowed cookies",
+            "description": "Grafana proxy deletes forwarded cookies by default. Specify cookies by name that should be forwarded.",
+            "valueType": "array",
+            "target": "jsonData",
+            "item": {
+                "valueType": "string"
+            },
+            "ui": {
+                "component": "list",
+                "placeholder": "New cookie (hit enter to add)"
+            }
+        },
+        {
+            "id": "jsonData.pdcInjected",
+            "key": "pdcInjected",
+            "label": "Private data source connect",
+            "description": "When enabled, connection is made via Grafana's Private Data Source Connect (PDC).",
+            "valueType": "boolean",
+            "target": "jsonData"
+        },
+        {
+            "id": "httpHeaders",
+            "key": "httpHeaders",
+            "label": "Custom HTTP Headers",
+            "description": "Additional headers sent with every request to the data source.",
+            "valueType": "array",
+            "target": "jsonData",
+            "item": {
+                "valueType": "object",
+                "fields": [
+                    {
+                        "id": "httpHeaders.item.name",
+                        "key": "name",
+                        "label": "Header Name",
+                        "valueType": "string",
+                        "isItemField": true,
+                        "validations": [
+                            {
+                                "type": "pattern",
+                                "pattern": "^[A-Za-z][A-Za-z0-9-]*$",
+                                "message": "Must be a valid HTTP header name"
+                            }
+                        ],
+                        "description": "HTTP header name."
+                    },
+                    {
+                        "id": "httpHeaders.item.value",
+                        "key": "value",
+                        "label": "Header Value",
+                        "valueType": "string",
+                        "isItemField": true,
+                        "description": "HTTP header value."
+                    }
+                ]
+            },
+            "storage": {
+                "type": "indexedPair",
+                "key": {
+                    "target": "jsonData",
+                    "pattern": "httpHeaderName{index}"
+                },
+                "value": {
+                    "target": "secureJsonData",
+                    "pattern": "httpHeaderValue{index}"
+                },
+                "startIndex": 1
+            },
+            "validations": [
+                {
+                    "type": "itemCount",
+                    "max": 10,
+                    "message": "Maximum 10 custom headers"
+                }
+            ]
+        },
+        {
+            "id": "secureJsonData.basicAuthPassword",
+            "key": "basicAuthPassword",
+            "label": "Password",
+            "description": "Password for basic authentication.",
+            "valueType": "string",
+            "semanticType": "password",
+            "target": "secureJsonData",
+            "dependsOn": "auth.method == 'basic-auth'"
+        },
+        {
+            "id": "secureJsonData.tlsCACert",
+            "key": "tlsCACert",
+            "label": "CA Cert",
+            "description": "PEM-encoded CA certificate to verify the Tempo server's TLS certificate.",
+            "valueType": "string",
+            "target": "secureJsonData",
+            "dependsOn": "jsonData.tlsAuthWithCACert == true",
+            "ui": {
+                "component": "textarea",
+                "rows": 7,
+                "placeholder": "Begins with -----BEGIN CERTIFICATE-----"
+            }
+        },
+        {
+            "id": "secureJsonData.tlsClientCert",
+            "key": "tlsClientCert",
+            "label": "Client Cert",
+            "description": "PEM-encoded client certificate for TLS client authentication.",
+            "valueType": "string",
+            "target": "secureJsonData",
+            "dependsOn": "jsonData.tlsAuth == true",
+            "ui": {
+                "component": "textarea",
+                "rows": 7,
+                "placeholder": "Begins with -----BEGIN CERTIFICATE-----"
+            }
+        },
+        {
+            "id": "secureJsonData.tlsClientKey",
+            "key": "tlsClientKey",
+            "label": "Client Key",
+            "description": "PEM-encoded client private key for TLS client authentication.",
+            "valueType": "string",
+            "semanticType": "token",
+            "target": "secureJsonData",
+            "dependsOn": "jsonData.tlsAuth == true",
+            "ui": {
+                "component": "textarea",
+                "rows": 7,
+                "placeholder": "Begins with -----BEGIN RSA PRIVATE KEY-----"
+            }
+        }
+    ],
+    "groups": [
+        {
+            "id": "connection",
+            "title": "Connection",
+            "fieldRefs": [
+                "root.url"
+            ]
+        },
+        {
+            "id": "auth",
+            "title": "Authentication",
+            "fieldRefs": [
+                "auth.method",
+                "root.basicAuthUser",
+                "secureJsonData.basicAuthPassword"
+            ]
+        },
+        {
+            "id": "http-network",
+            "title": "HTTP / Network Settings",
+            "fieldRefs": [
+                "jsonData.tlsAuthWithCACert",
+                "secureJsonData.tlsCACert",
+                "jsonData.tlsAuth",
+                "jsonData.serverName",
+                "secureJsonData.tlsClientCert",
+                "secureJsonData.tlsClientKey",
+                "jsonData.tlsSkipVerify",
+                "httpHeaders",
+                "jsonData.keepCookies",
+                "jsonData.timeout",
+                "jsonData.pdcInjected"
+            ]
+        },
+        {
+            "id": "streaming",
+            "title": "Streaming",
+            "fieldRefs": [
+                "jsonData.streamingEnabled.search",
+                "jsonData.streamingEnabled.metrics"
+            ]
+        },
+        {
+            "id": "trace-to-logs",
+            "title": "Trace to logs",
+            "fieldRefs": [
+                "jsonData.tracesToLogsV2"
+            ]
+        },
+        {
+            "id": "trace-to-metrics",
+            "title": "Trace to metrics",
+            "fieldRefs": [
+                "jsonData.tracesToMetrics"
+            ]
+        },
+        {
+            "id": "trace-to-profiles",
+            "title": "Trace to profiles",
+            "fieldRefs": [
+                "jsonData.tracesToProfiles"
+            ]
+        },
+        {
+            "id": "service-graph",
+            "title": "Service graph",
+            "fieldRefs": [
+                "jsonData.serviceMap.datasourceUid"
+            ]
+        },
+        {
+            "id": "node-graph",
+            "title": "Node graph",
+            "fieldRefs": [
+                "jsonData.nodeGraph.enabled"
+            ]
+        },
+        {
+            "id": "search",
+            "title": "Tempo search",
+            "fieldRefs": [
+                "jsonData.search.hide",
+                "jsonData.search.filters"
+            ]
+        },
+        {
+            "id": "traceid-query",
+            "title": "TraceID query",
+            "fieldRefs": [
+                "jsonData.traceQuery.timeShiftEnabled",
+                "jsonData.traceQuery.spanStartTimeShift",
+                "jsonData.traceQuery.spanEndTimeShift"
+            ]
+        },
+        {
+            "id": "tags",
+            "title": "Tags",
+            "fieldRefs": [
+                "jsonData.timeRangeForTags",
+                "jsonData.tagLimit"
+            ]
+        },
+        {
+            "id": "span-bar",
+            "title": "Span bar",
+            "fieldRefs": [
+                "jsonData.spanBar.tag"
+            ]
+        }
+    ],
+    "relationships": [
+        {
+            "type": "pair",
+            "fields": [
+                "root.basicAuthUser",
+                "secureJsonData.basicAuthPassword"
+            ],
+            "description": "Basic auth credentials"
+        },
+        {
+            "type": "pair",
+            "fields": [
+                "secureJsonData.tlsClientCert",
+                "secureJsonData.tlsClientKey"
+            ],
+            "description": "TLS client certificate and key"
+        },
+        {
+            "type": "datasourceReference",
+            "fields": [
+                "jsonData.serviceMap.datasourceUid"
+            ],
+            "description": "Prometheus data source for service graph metrics",
+            "targetPluginType": "prometheus"
+        }
+    ]
+}
