@@ -149,9 +149,11 @@ func provisionDatasource(_ context.Context, args ProvisionDatasourceParams) (*mc
 		if k == "name" || k == "type" || k == "access" {
 			continue // already set above
 		}
-		if fieldTarget[k] == "jsonData" {
+		// only update jsonData and root, ignore secureJsonData
+		switch fieldTarget[k] {
+		case "jsonData":
 			jsonDataUpdates[k] = v
-		} else {
+		case "root":
 			updates[k] = v
 		}
 	}
