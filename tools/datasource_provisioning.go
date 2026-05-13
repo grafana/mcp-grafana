@@ -130,9 +130,12 @@ func provisionDatasource(_ context.Context, args ProvisionDatasourceParams) (*mc
 
 	pf := &datasourceProvisioningFile{APIVersion: 1}
 
-	// Build a field-target lookup from the schema so we can route each field
-	// to the correct place in the YAML (root vs jsonData).
+	// Build a field-target lookup from the common fields and schema so we can
+	// route each field to the correct place in the YAML (root vs jsonData).
 	fieldTarget := map[string]string{}
+	for _, f := range commonDatasourceFields {
+		fieldTarget[f.Key] = f.Target
+	}
 	for _, f := range schema.Fields {
 		fieldTarget[f.Key] = f.Target
 	}
