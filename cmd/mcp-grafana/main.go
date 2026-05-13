@@ -20,6 +20,7 @@ import (
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/grafana/mcp-grafana/observability"
 	"github.com/grafana/mcp-grafana/tools"
+	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"go.opentelemetry.io/otel/semconv/v1.40.0/mcpconv"
 )
 
@@ -66,8 +67,11 @@ var categoryDescription = map[string]string{
 	"cloudwatch":    "CloudWatch: Query AWS CloudWatch datasources for metrics and logs.",
 	"examples":      "Examples: Query example tools.",
 	"clickhouse":    "ClickHouse: Query ClickHouse datasources via Grafana with macro and variable substitution support.",
+	"snowflake":     "Snowflake: Query Snowflake datasources via Grafana (including the SNOWFLAKE.TELEMETRY.EVENTS event table) with macro and variable substitution support.",
 	"runpanelquery": "Run Panel Query: Execute panel queries directly.",
 	"graphite":      "Graphite: Query Graphite datasources for metrics.",
+	"athena":        "Athena: Query Amazon Athena datasources via Grafana with SQL, macro substitution, and schema discovery.",
+	"api":           "API: Make authenticated HTTP requests to any Grafana API endpoint with optional jq-style response filtering.",
 }
 
 // disabledTools indicates whether each category of tools should be disabled.
@@ -78,8 +82,8 @@ type disabledTools struct {
 	prometheus, loki, elasticsearch, influxdb, alerting,
 	dashboard, folder, oncall, asserts, sift, admin,
 	pyroscope, navigation, proxied, annotations, rendering, cloudwatch, write,
-	examples, clickhouse, graphite,
-	runpanelquery, plugin bool
+	examples, clickhouse, snowflake, graphite,
+	runpanelquery, athena, plugin, api bool
 }
 
 // Configuration for the Grafana client.
@@ -98,7 +102,7 @@ type grafanaConfig struct {
 }
 
 func (dt *disabledTools) addFlags() {
-	flag.StringVar(&dt.enabledTools, "enabled-tools", "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering,plugin", "A comma separated list of tools enabled for this server. Can be overwritten entirely or by disabling specific components, e.g. --disable-search.")
+	flag.StringVar(&dt.enabledTools, "enabled-tools", "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering,plugin,api", "A comma separated list of tools enabled for this server. Can be overwritten entirely or by disabling specific components, e.g. --disable-search.")
 	flag.BoolVar(&dt.search, "disable-search", false, "Disable search tools")
 	flag.BoolVar(&dt.datasource, "disable-datasource", false, "Disable datasource tools")
 	flag.BoolVar(&dt.incident, "disable-incident", false, "Disable incident tools")
@@ -122,9 +126,12 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.cloudwatch, "disable-cloudwatch", false, "Disable CloudWatch tools")
 	flag.BoolVar(&dt.examples, "disable-examples", false, "Disable query examples tools")
 	flag.BoolVar(&dt.clickhouse, "disable-clickhouse", false, "Disable ClickHouse tools")
+	flag.BoolVar(&dt.snowflake, "disable-snowflake", false, "Disable Snowflake tools")
 	flag.BoolVar(&dt.runpanelquery, "disable-runpanelquery", false, "Disable run panel query tools")
 	flag.BoolVar(&dt.graphite, "disable-graphite", false, "Disable Graphite tools")
+	flag.BoolVar(&dt.athena, "disable-athena", false, "Disable Athena tools")
 	flag.BoolVar(&dt.plugin, "disable-plugin", false, "Disable plugin tools")
+	flag.BoolVar(&dt.api, "disable-api", false, "Disable API tools")
 }
 
 func (gc *grafanaConfig) addFlags() {
@@ -174,9 +181,12 @@ func (dt *disabledTools) toolEntries() []toolEntry {
 		{tools.AddCloudWatchTools, dt.cloudwatch, "cloudwatch"},
 		{tools.AddExamplesTools, dt.examples, "examples"},
 		{tools.AddClickHouseTools, dt.clickhouse, "clickhouse"},
+		{tools.AddSnowflakeTools, dt.snowflake, "snowflake"},
 		{tools.AddRunPanelQueryTools, dt.runpanelquery, "runpanelquery"},
 		{tools.AddGraphiteTools, dt.graphite, "graphite"},
-		{tools.AddPluginTools, dt.plugin, "plugin"},
+		{tools.AddAthenaTools, dt.athena, "athena"},
+		{func(mcp *server.MCPServer) { tools.AddPluginTools(mcp, enableWriteTools) }, dt.plugin, "plugin"},
+		{func(mcp *server.MCPServer) { tools.AddAPITools(mcp, enableWriteTools) }, dt.api, "api"},
 	}
 }
 
@@ -385,9 +395,9 @@ func runMetricsServer(addr string, o *observability.Observability) {
 }
 
 func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt disabledTools, gc mcpgrafana.GrafanaConfig, tls tlsConfig, obs observability.Config, sessionIdleTimeoutMinutes int) error {
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})))
+	stderrHandler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})
+	slog.SetDefault(slog.New(stderrHandler))
 
-	// Set up observability (metrics and tracing)
 	o, err := observability.Setup(obs)
 	if err != nil {
 		return fmt.Errorf("failed to setup observability: %w", err)
@@ -399,6 +409,17 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 			slog.Error("failed to shutdown observability", "error", err)
 		}
 	}()
+
+	// The otelslog bridge attaches trace_id / span_id from context, so log
+	// records correlate with the spans mcp-grafana already emits.
+	if lp := o.LoggerProvider(); lp != nil {
+		otlpHandler := otelslog.NewHandler("mcp-grafana", otelslog.WithLoggerProvider(lp))
+		slog.SetDefault(slog.New(observability.NewFanoutHandler(stderrHandler, otlpHandler)))
+		// Announce through the fanout so both stderr and OTLP subscribers see
+		// the startup signal. If the first OTLP batch fails, the stderr branch
+		// of the fanout still lands the record.
+		slog.Info("OTLP log export configured", "endpoint", observability.OTLPLogsEndpoint())
+	}
 
 	// Create a client cache for HTTP-based transports to avoid per-request
 	// transport allocation (see https://github.com/grafana/mcp-grafana/issues/682).
@@ -540,11 +561,25 @@ func main() {
 	var obs observability.Config
 	flag.BoolVar(&obs.MetricsEnabled, "metrics", false, "Enable Prometheus metrics endpoint")
 	flag.StringVar(&obs.MetricsAddress, "metrics-address", "", "Separate address for metrics server (e.g., :9090). If empty, metrics are served on the main server at /metrics")
+	flag.DurationVar(&obs.SlowRequestThreshold, "slow-request-threshold", 0, "Log an event when any MCP request (tool invocation, list, resource read, etc.) takes longer than this threshold. Accepts Go duration strings, e.g. 500ms, 5s. Default 0 disables slow-request logging.")
+	var slowRequestLogLevelStr string
+	flag.StringVar(&slowRequestLogLevelStr, "slow-request-log-level", "warn", "Log level for slow-request events. One of \"info\" or \"warn\". Default \"warn\".")
 	flag.Parse()
 
-	if *showVersion {
+	action, slowLevel, err := handleFlagsPostParse(*showVersion, slowRequestLogLevelStr)
+	switch action {
+	case flagActionVersion:
 		fmt.Println(mcpgrafana.Version())
 		os.Exit(0)
+	case flagActionInvalidSlowLevel:
+		fmt.Fprintf(os.Stderr, "invalid --slow-request-log-level: %v\n", err)
+		os.Exit(2)
+	case flagActionContinue:
+		obs.SlowRequestLogLevel = slowLevel
+	default:
+		// flagActionUnset or any unexpected value — refuse to proceed silently.
+		fmt.Fprintf(os.Stderr, "internal error: unexpected flag action %v\n", action)
+		os.Exit(2)
 	}
 
 	// Convert local grafanaConfig to mcpgrafana.GrafanaConfig
@@ -584,4 +619,56 @@ func parseLevel(level string) slog.Level {
 		return slog.LevelInfo
 	}
 	return l
+}
+
+// parseSlowRequestLogLevel parses the --slow-request-log-level flag value.
+// Only "info" and "warn" are accepted (case-insensitive). Any other value,
+// including the empty string or values with surrounding whitespace, returns
+// a non-nil error so main() can fail-fast on misconfiguration rather than
+// silently defaulting.
+//
+// On error the returned slog.Level is the zero value (slog.LevelInfo == 0).
+// Callers MUST check the error before using the level; using the zero level
+// on a rejected input would silently select INFO, which is not the CLI's
+// advertised default of WARN.
+func parseSlowRequestLogLevel(s string) (slog.Level, error) {
+	switch strings.ToLower(s) {
+	case "info":
+		return slog.LevelInfo, nil
+	case "warn":
+		return slog.LevelWarn, nil
+	default:
+		return 0, fmt.Errorf("must be \"info\" or \"warn\", got %q", s)
+	}
+}
+
+// flagAction encodes what main() should do after flag.Parse().
+// flagActionUnset is reserved as the zero value so an accidentally-zero-valued
+// return from a future code path trips the switch's default: case rather
+// than silently taking the Continue branch.
+type flagAction int
+
+const (
+	flagActionUnset flagAction = iota
+	flagActionContinue
+	flagActionVersion
+	flagActionInvalidSlowLevel
+)
+
+// handleFlagsPostParse decides what main() should do after flag.Parse().
+// It is pure (no os.Exit, no I/O) so it is unit-testable. --version
+// short-circuits before slow-request-log-level validation so it prints
+// regardless of other flags' values (matches pre-#756 behavior).
+//
+// The returned slog.Level is only meaningful when action == flagActionContinue;
+// the other branches return a zero level that the caller must not read.
+func handleFlagsPostParse(showVersion bool, slowLevelStr string) (flagAction, slog.Level, error) {
+	if showVersion {
+		return flagActionVersion, 0, nil
+	}
+	slowLevel, err := parseSlowRequestLogLevel(slowLevelStr)
+	if err != nil {
+		return flagActionInvalidSlowLevel, 0, err
+	}
+	return flagActionContinue, slowLevel, nil
 }

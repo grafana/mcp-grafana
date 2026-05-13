@@ -13,3 +13,9 @@ wheels/
 # Virtual environments
 .venv
 .envrc
+
+# Git worktrees
+.worktrees/
+
+# Superpowers agent artifacts (implementation plans, etc.)
+docs/superpowers/
