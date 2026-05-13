@@ -163,9 +163,6 @@ func createDatasource(ctx context.Context, args CreateDatasourceParams) (*mcp.Ca
 	result := &CreateDatasourceResult{
 		Datasource: p.Datasource,
 	}
-	if p.Message != nil {
-		result.Message = fmt.Sprintf("%s. Please remember to never enter sensitive data via this chat.", *p.Message)
-	}
 	if p.ID != nil {
 		result.ID = *p.ID
 	}
