@@ -136,7 +136,7 @@ func loadDatasourceSchema(pluginType string) (*datasourceSchema, error) {
 // whose value matches f.DefaultVal, mirroring the generateLLMHint behaviour.
 func annotateDefaultOption(f dsSchemaField) dsSchemaField {
 	if f.UI == nil || len(f.UI.Options) == 0 || f.DefaultVal == nil {
-		// it is non select UI field, return as is.
+		// it is non-select UI field, return as is.
 		return f
 	}
 	opts := make([]dsSchemaFieldOption, len(f.UI.Options))
@@ -159,7 +159,7 @@ func buildSchemaGuidance(schema *datasourceSchema) *datasourceSchemaGuidance {
 		if f.Kind == "virtual" {
 			continue
 		}
-		
+
 		// Never surface sensitive fields.
 		if f.Target == "secureJsonData" || f.ID == "root.basicAuthUser" {
 			continue
@@ -186,9 +186,9 @@ func buildSchemaGuidance(schema *datasourceSchema) *datasourceSchemaGuidance {
 	}
 
 	return &datasourceSchemaGuidance{
-		Type:             schema.PluginType,
-		PluginName:       schema.PluginName,
-		DocURL:           schema.DocURL,
+		Type:       schema.PluginType,
+		PluginName: schema.PluginName,
+		DocURL:     schema.DocURL,
 		Message: fmt.Sprintf(
 			"Schema for %s datasource. "+
 				"You MUST ask the user for the value of every required field (required=true) before calling provision_datasource again. "+

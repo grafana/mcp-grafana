@@ -193,10 +193,10 @@ func TestBuildSchemaGuidance_MessageContainsPluginNameAndInstruction(t *testing.
 func TestBuildSchemaGuidance_AnnotatesDefaultOption(t *testing.T) {
 	schema := minimalSchema()
 	schema.Fields = append(schema.Fields, dsSchemaField{
-		ID:        "jsonData.method",
-		Key:       "method",
-		ValueType: "string",
-		Target:    "jsonData",
+		ID:         "jsonData.method",
+		Key:        "method",
+		ValueType:  "string",
+		Target:     "jsonData",
 		DefaultVal: "POST",
 		UI: &dsFieldUI{
 			Options: []dsSchemaFieldOption{
@@ -463,7 +463,6 @@ func TestProvisionDatasource_Phase2_NameIsFirstKey(t *testing.T) {
 	assert.Less(t, nameIdx, accessIdx, "name must appear before access")
 }
 
-
 func TestProvisionDatasource_Phase2_ZipAttachmentIsValidArchive(t *testing.T) {
 	result, err := provisionDatasource(context.Background(), promArgs(map[string]any{
 		"url": "http://prometheus:9090",
@@ -503,4 +502,3 @@ func TestProvisionDatasource_Phase2_ZipContainsYAMLContent(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, buf.String(), "name: Zip DS")
 }
-

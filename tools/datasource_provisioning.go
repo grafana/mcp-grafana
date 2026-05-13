@@ -121,7 +121,6 @@ func provisionDatasource(_ context.Context, args ProvisionDatasourceParams) (*mc
 		return mcp.NewToolResultText(string(text)), nil
 	}
 
-	
 	stem := "prov-" + args.Type
 
 	dsName, _ := args.Fields["name"].(string)
@@ -174,9 +173,8 @@ func provisionDatasource(_ context.Context, args ProvisionDatasourceParams) (*mc
 		return nil, fmt.Errorf("build zip: %w", err)
 	}
 
-
 	text, _ := json.Marshal(&ProvisionDatasourceResult{
-		Content:     content,
+		Content: content,
 	})
 
 	return &mcp.CallToolResult{
