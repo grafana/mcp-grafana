@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -480,6 +481,23 @@ func TestProvisionDatasource_Phase2_WritesFileToDisk(t *testing.T) {
 	data, err := os.ReadFile(pr.FilePath)
 	require.NoError(t, err)
 	assert.Contains(t, string(data), "name: Written DS")
+}
+
+func TestProvisionDatasource_Phase2_FileNameCannotTraverseDirectory(t *testing.T) {
+	baseDir := t.TempDir()
+	dir := filepath.Join(baseDir, "provisioning")
+	result, err := provisionDatasource(context.Background(), ProvisionDatasourceParams{
+		Type:      "prometheus",
+		Directory: dir,
+		FileName:  "../evil",
+		Fields:    map[string]any{"name": "Safe DS", "url": "http://prometheus:9090"},
+	})
+	require.NoError(t, err)
+
+	pr := mustExtractProvisionResult(t, result)
+	assert.Equal(t, filepath.Join(dir, "evil.yaml"), pr.FilePath)
+	require.NoFileExists(t, filepath.Join(baseDir, "evil.yaml"))
+	require.FileExists(t, pr.FilePath)
 }
 
 func TestProvisionDatasource_Phase2_Conflict_NoForceUpdate(t *testing.T) {

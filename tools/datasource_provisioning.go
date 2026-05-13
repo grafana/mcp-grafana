@@ -134,7 +134,7 @@ func provisionDatasource(_ context.Context, args ProvisionDatasourceParams) (*mc
 	if fileName == "" {
 		fileName = "prov-{type}"
 	}
-	stem := strings.ReplaceAll(fileName, "{type}", args.Type)
+	stem := filepath.Base(strings.ReplaceAll(fileName, "{type}", args.Type))
 
 	dsName, _ := args.Fields["name"].(string)
 	if dsName == "" {
