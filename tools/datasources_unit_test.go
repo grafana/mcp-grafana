@@ -320,6 +320,30 @@ func TestUpdateDatasource_NotFound(t *testing.T) {
 	assert.Contains(t, err.Error(), "not found")
 }
 
+func TestUpdateDatasource_SensitiveFieldsStrippedFromCommand(t *testing.T) {
+	// Even when the current datasource has User and BasicAuthUser set,
+	// the update command must not forward them.
+	current := &models.DataSource{
+		ID:            1,
+		UID:           "prom-1",
+		Name:          "Prometheus",
+		Type:          "prometheus",
+		User:          "db-user",
+		BasicAuthUser: "ba-user",
+	}
+	var captured models.UpdateDataSourceCommand
+	srv := newUpdateDatasourceServer(t, current, &captured, "OK", http.StatusOK)
+	defer srv.Close()
+
+	newURL := "http://prometheus:9090"
+	_, err := updateDatasource(mockDatasourcesCtx(srv), UpdateDatasourceParams{UID: "prom-1", URL: &newURL})
+	require.NoError(t, err)
+
+	assert.Empty(t, captured.User, "User must not be forwarded in update command")
+	assert.Empty(t, captured.BasicAuthUser, "BasicAuthUser must not be forwarded in update command")
+	assert.Nil(t, captured.SecureJSONData, "SecureJSONData must not be forwarded in update command")
+}
+
 // --- checkDatasourceHealth ---
 
 func TestCheckDatasourceHealth_ReturnsMessage(t *testing.T) {

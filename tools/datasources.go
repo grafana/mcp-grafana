@@ -202,13 +202,10 @@ type UpdateDatasourceParams struct {
 	URL             *string                `json:"url,omitempty" jsonschema:"description=Datasource base URL"`
 	Access          *string                `json:"access,omitempty" jsonschema:"description=How Grafana reaches the datasource (proxy or direct)"`
 	Database        *string                `json:"database,omitempty" jsonschema:"description=Database name when applicable"`
-	User            *string                `json:"user,omitempty" jsonschema:"description=Username when applicable"`
 	BasicAuth       *bool                  `json:"basicAuth,omitempty" jsonschema:"description=Whether Grafana uses basic auth to the datasource"`
-	BasicAuthUser   *string                `json:"basicAuthUser,omitempty" jsonschema:"description=Basic auth username when basic auth is enabled"`
 	WithCredentials *bool                  `json:"withCredentials,omitempty" jsonschema:"description=Whether Grafana forwards credentials such as cookies"`
 	IsDefault       *bool                  `json:"isDefault,omitempty" jsonschema:"description=Whether this datasource should be the default"`
 	JSONData        map[string]interface{} `json:"jsonData,omitempty" jsonschema:"description=Non-secret plugin settings; when set\\, replaces jsonData on the server for this datasource"`
-	SecureJSONData  map[string]string      `json:"secureJsonData,omitempty" jsonschema:"description=Secret fields to set or rotate (passwords\\, tokens); only include keys you intend to change"`
 }
 
 type UpdateDatasourceResult struct {
@@ -240,9 +237,7 @@ func updateDatasource(ctx context.Context, args UpdateDatasourceParams) (*Update
 		Access:          models.DsAccess(dsAccess),
 		URL:             ds.URL,
 		Database:        ds.Database,
-		User:            ds.User,
 		BasicAuth:       ds.BasicAuth,
-		BasicAuthUser:   ds.BasicAuthUser,
 		WithCredentials: ds.WithCredentials,
 		IsDefault:       ds.IsDefault,
 		JSONData:        models.JSON(ds.JSONData),
@@ -264,14 +259,8 @@ func updateDatasource(ctx context.Context, args UpdateDatasourceParams) (*Update
 	if args.Database != nil {
 		cmd.Database = *args.Database
 	}
-	if args.User != nil {
-		cmd.User = *args.User
-	}
 	if args.BasicAuth != nil {
 		cmd.BasicAuth = *args.BasicAuth
-	}
-	if args.BasicAuthUser != nil {
-		cmd.BasicAuthUser = *args.BasicAuthUser
 	}
 	if args.WithCredentials != nil {
 		cmd.WithCredentials = *args.WithCredentials
@@ -281,9 +270,6 @@ func updateDatasource(ctx context.Context, args UpdateDatasourceParams) (*Update
 	}
 	if args.JSONData != nil {
 		cmd.JSONData = models.JSON(args.JSONData)
-	}
-	if args.SecureJSONData != nil {
-		cmd.SecureJSONData = args.SecureJSONData
 	}
 
 	resp, err := c.Datasources.UpdateDataSourceByUID(args.UID, cmd)
