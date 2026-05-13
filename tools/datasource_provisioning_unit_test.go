@@ -342,6 +342,10 @@ func promArgs(fields map[string]any) ProvisionDatasourceParams {
 	return ProvisionDatasourceParams{Type: "prometheus", Fields: fields}
 }
 
+func promTFArgs(fields map[string]any) ProvisionDatasourceParams {
+	return ProvisionDatasourceParams{Type: "prometheus", Format: "terraform", Fields: fields}
+}
+
 func TestProvisionDatasource_UnknownType_ReturnsError(t *testing.T) {
 	_, err := provisionDatasource(context.Background(), ProvisionDatasourceParams{Type: "no-such-type-xyz"})
 	require.Error(t, err)
@@ -542,4 +546,163 @@ func TestProvisionDatasource_Phase2_ZipContainsYAMLContent(t *testing.T) {
 	_, err = buf.ReadFrom(rc)
 	require.NoError(t, err)
 	assert.Contains(t, buf.String(), "name: Zip DS")
+}
+
+// ── toTerraformLabel ──────────────────────────────────────────────────────────
+
+func TestToTerraformLabel(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"prometheus", "prometheus"},
+		{"My Prometheus", "my_prometheus"},
+		{"prov-prometheus", "prov_prometheus"},
+		{"My  DS", "my_ds"},
+		{"123bad", "ds_123bad"},
+		{"", "datasource"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.in, func(t *testing.T) {
+			assert.Equal(t, tc.want, toTerraformLabel(tc.in))
+		})
+	}
+}
+
+// ── buildTerraformHCL ─────────────────────────────────────────────────────────
+
+func TestBuildTerraformHCL_ResourceBlock(t *testing.T) {
+	hcl := buildTerraformHCL("prov_prometheus", map[string]any{
+		"type": "prometheus",
+		"name": "Prov Prometheus",
+		"url":  "http://prometheus:9090",
+	}, nil)
+
+	assert.Contains(t, hcl, `resource "grafana_data_source" "prov_prometheus"`)
+	assert.Contains(t, hcl, `type = "prometheus"`)
+	assert.Contains(t, hcl, `name = "Prov Prometheus"`)
+	assert.Contains(t, hcl, `url = "http://prometheus:9090"`)
+}
+
+func TestBuildTerraformHCL_JsonDataEncoded(t *testing.T) {
+	hcl := buildTerraformHCL("prov_prometheus", map[string]any{
+		"type": "prometheus",
+		"name": "Prov Prometheus",
+	}, map[string]any{
+		"httpMethod":   "POST",
+		"tlsSkipVerify": true,
+	})
+
+	assert.Contains(t, hcl, "json_data_encoded = jsonencode({")
+	assert.Contains(t, hcl, `httpMethod = "POST"`)
+	assert.Contains(t, hcl, "tlsSkipVerify = true")
+}
+
+func TestBuildTerraformHCL_OmitsAccessMode(t *testing.T) {
+	hcl := buildTerraformHCL("prov_prometheus", map[string]any{
+		"type":   "prometheus",
+		"name":   "Prov Prometheus",
+		"access": "proxy",
+	}, nil)
+
+	assert.NotContains(t, hcl, "access")
+	assert.NotContains(t, hcl, "access_mode")
+}
+
+func TestBuildTerraformHCL_RootFieldMapping(t *testing.T) {
+	hcl := buildTerraformHCL("prov_prometheus", map[string]any{
+		"type":      "prometheus",
+		"name":      "Prov Prometheus",
+		"orgId":     float64(2),
+		"isDefault": true,
+		"editable":  false,
+	}, nil)
+
+	assert.Contains(t, hcl, "org_id = 2")
+	assert.Contains(t, hcl, "is_default = true")
+	assert.Contains(t, hcl, "editable = false")
+}
+
+func TestBuildTerraformHCL_JsonDataKeysSorted(t *testing.T) {
+	hcl := buildTerraformHCL("prov_prometheus", map[string]any{
+		"type": "prometheus",
+		"name": "Prov Prometheus",
+	}, map[string]any{
+		"zoo":   "z",
+		"alpha": "a",
+		"mango": "m",
+	})
+
+	alphaIdx := strings.Index(hcl, "alpha")
+	mangoIdx := strings.Index(hcl, "mango")
+	zooIdx := strings.Index(hcl, "zoo")
+	assert.Less(t, alphaIdx, mangoIdx)
+	assert.Less(t, mangoIdx, zooIdx)
+}
+
+// ── provisionDatasource (Terraform format) ────────────────────────────────────
+
+func TestProvisionDatasource_TerraformFormat_GeneratesHCL(t *testing.T) {
+	result, err := provisionDatasource(context.Background(), promTFArgs(map[string]any{
+		"url": "http://prometheus:9090",
+	}))
+	require.NoError(t, err)
+
+	pr := mustExtractProvisionResult(t, result)
+	assert.Contains(t, pr.Content, `resource "grafana_data_source"`)
+	assert.Contains(t, pr.Content, `type = "prometheus"`)
+	assert.Contains(t, pr.Content, `url = "http://prometheus:9090"`)
+}
+
+func TestProvisionDatasource_TerraformFormat_ZipContainsTfFile(t *testing.T) {
+	result, err := provisionDatasource(context.Background(), promTFArgs(map[string]any{
+		"url": "http://prometheus:9090",
+	}))
+	require.NoError(t, err)
+
+	blob := mustExtractZipBlob(t, result)
+	assert.Equal(t, "application/zip", blob.MIMEType)
+
+	zipBytes, err := base64.StdEncoding.DecodeString(blob.Blob)
+	require.NoError(t, err)
+	zr, err := zip.NewReader(bytes.NewReader(zipBytes), int64(len(zipBytes)))
+	require.NoError(t, err)
+	require.Len(t, zr.File, 1)
+	assert.True(t, strings.HasSuffix(zr.File[0].Name, ".tf"))
+}
+
+func TestProvisionDatasource_TerraformFormat_JsonDataFieldRoutedToJsonEncode(t *testing.T) {
+	result, err := provisionDatasource(context.Background(), promTFArgs(map[string]any{
+		"url":        "http://prometheus:9090",
+		"httpMethod": "POST",
+	}))
+	require.NoError(t, err)
+
+	pr := mustExtractProvisionResult(t, result)
+	assert.Contains(t, pr.Content, "json_data_encoded = jsonencode({")
+	assert.Contains(t, pr.Content, `httpMethod = "POST"`)
+	// url is a root-level attribute, not inside jsonencode
+	jsonEncodeIdx := strings.Index(pr.Content, "json_data_encoded")
+	require.Greater(t, jsonEncodeIdx, -1)
+	assert.NotContains(t, pr.Content[jsonEncodeIdx:], `url = `)
+}
+
+func TestProvisionDatasource_TerraformFormat_SecureJsonDataDropped(t *testing.T) {
+	result, err := provisionDatasource(context.Background(), promTFArgs(map[string]any{
+		"url":               "http://prometheus:9090",
+		"basicAuthPassword": "secret",
+	}))
+	require.NoError(t, err)
+
+	pr := mustExtractProvisionResult(t, result)
+	assert.NotContains(t, pr.Content, "basicAuthPassword")
+	assert.NotContains(t, pr.Content, "secret")
+}
+
+func TestProvisionDatasource_TerraformFormat_Phase1StillReturnsGuidance(t *testing.T) {
+	result, err := provisionDatasource(context.Background(), ProvisionDatasourceParams{
+		Type:   "prometheus",
+		Format: "terraform",
+	})
+	require.NoError(t, err)
+
+	guidance := mustExtractGuidance(t, result)
+	assert.Equal(t, "prometheus", guidance.Type)
 }

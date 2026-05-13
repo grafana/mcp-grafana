@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"sort"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -66,7 +67,110 @@ func applyUpdates(entry *datasourceEntry, updates map[string]any, jsonDataUpdate
 
 type ProvisionDatasourceParams struct {
 	Type   string         `json:"type" jsonschema:"required,description=Datasource type (e.g. prometheus\\, loki\\, influxdb)"`
-	Fields map[string]any `json:"fields,omitempty" jsonschema:"description=Datasource field values to provision\\, keyed by field key from the schema returned on the first call. The server uses each field's target (root or jsonData) to place values correctly in the YAML. Example: {\"url\": \"http://prometheus:9090\"\\, \"httpMethod\": \"POST\"}."`
+	Fields map[string]any `json:"fields,omitempty" jsonschema:"description=Datasource field values to provision\\, keyed by field key from the schema returned on the first call. The server uses each field's target (root or jsonData) to place values correctly in the output. Example: {\"url\": \"http://prometheus:9090\"\\, \"httpMethod\": \"POST\"}."`
+	Format string         `json:"format,omitempty" jsonschema:"description=Output format: yaml (default\\, for on-premises Grafana) or terraform (for Grafana Cloud customers using Terraform).,enum=yaml,enum=terraform"`
+}
+
+// tfAttrName maps YAML/JSON field names to Terraform HCL attribute names for
+// the grafana_data_source resource. Fields absent from this map are not emitted.
+var tfAttrName = map[string]string{
+	"name":            "name",
+	"type":            "type",
+	"uid":             "uid",
+	"url":             "url",
+	"orgId":           "org_id",
+	"isDefault":       "is_default",
+	"editable":        "editable",
+	"basicAuth":       "basic_auth_enabled",
+	"basicAuthUser":   "basic_auth_username",
+	"withCredentials": "with_credentials",
+	"database":        "database_name",
+	"user":            "username",
+	// "access" is intentionally absent: "proxy" is the default in the TF provider
+}
+
+// tfAttrOrder controls the output order of Terraform root-level attributes.
+var tfAttrOrder = []string{
+	"type", "name", "uid", "url", "orgId",
+	"isDefault", "editable", "basicAuth", "basicAuthUser",
+	"withCredentials", "database", "user",
+}
+
+// toTerraformLabel converts a datasource name to a valid Terraform resource label.
+func toTerraformLabel(name string) string {
+	var sb strings.Builder
+	prevUnderscore := false
+	for _, r := range strings.ToLower(name) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			sb.WriteRune(r)
+			prevUnderscore = false
+		} else if !prevUnderscore && sb.Len() > 0 {
+			sb.WriteRune('_')
+			prevUnderscore = true
+		}
+	}
+	label := strings.TrimRight(sb.String(), "_")
+	if label == "" {
+		label = "datasource"
+	}
+	if label[0] >= '0' && label[0] <= '9' {
+		label = "ds_" + label
+	}
+	return label
+}
+
+// hclLiteral renders a Go value as an HCL literal (string, bool, or number).
+func hclLiteral(v any) string {
+	switch t := v.(type) {
+	case string:
+		return fmt.Sprintf("%q", t)
+	case bool:
+		if t {
+			return "true"
+		}
+		return "false"
+	case int:
+		return fmt.Sprintf("%d", t)
+	case float64:
+		if t == float64(int64(t)) {
+			return fmt.Sprintf("%d", int64(t))
+		}
+		return fmt.Sprintf("%g", t)
+	default:
+		b, _ := json.Marshal(v)
+		return string(b)
+	}
+}
+
+// buildTerraformHCL generates a grafana_data_source Terraform resource block.
+func buildTerraformHCL(label string, rootFields map[string]any, jsonData map[string]any) string {
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("resource \"grafana_data_source\" %q {\n", label))
+
+	for _, key := range tfAttrOrder {
+		val, ok := rootFields[key]
+		if !ok {
+			continue
+		}
+		attr := tfAttrName[key]
+		sb.WriteString(fmt.Sprintf("  %s = %s\n", attr, hclLiteral(val)))
+	}
+
+	if len(jsonData) > 0 {
+		sb.WriteString("\n  json_data_encoded = jsonencode({\n")
+		keys := make([]string, 0, len(jsonData))
+		for k := range jsonData {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			sb.WriteString(fmt.Sprintf("    %s = %s\n", k, hclLiteral(jsonData[k])))
+		}
+		sb.WriteString("  })\n")
+	}
+
+	sb.WriteString("}\n")
+	return sb.String()
 }
 
 type ProvisionDatasourceResult struct {
@@ -161,19 +265,29 @@ func provisionDatasource(_ context.Context, args ProvisionDatasourceParams) (*mc
 		}
 	}
 
-	var entry datasourceEntry
-	if err := applyUpdates(&entry, updates, jsonDataUpdates); err != nil {
-		return nil, fmt.Errorf("build datasource entry: %w", err)
-	}
-	pf.Datasources = append(pf.Datasources, entry)
+	var content string
+	var zipFiles map[string][]byte
 
-	out, err := yaml.Marshal(pf)
-	if err != nil {
-		return nil, fmt.Errorf("marshal YAML: %w", err)
-	}
-	content := string(out)
+	if args.Format == "terraform" {
+		label := toTerraformLabel(dsName)
+		content = buildTerraformHCL(label, updates, jsonDataUpdates)
+		zipFiles = map[string][]byte{stem + ".tf": []byte(content)}
+	} else {
+		var entry datasourceEntry
+		if err := applyUpdates(&entry, updates, jsonDataUpdates); err != nil {
+			return nil, fmt.Errorf("build datasource entry: %w", err)
+		}
+		pf.Datasources = append(pf.Datasources, entry)
 
-	zipContent, err := buildZip(map[string][]byte{stem + ".yaml": out})
+		out, err := yaml.Marshal(pf)
+		if err != nil {
+			return nil, fmt.Errorf("marshal YAML: %w", err)
+		}
+		content = string(out)
+		zipFiles = map[string][]byte{stem + ".yaml": out}
+	}
+
+	zipContent, err := buildZip(zipFiles)
 	if err != nil {
 		return nil, fmt.Errorf("build zip: %w", err)
 	}
@@ -196,7 +310,7 @@ func provisionDatasource(_ context.Context, args ProvisionDatasourceParams) (*mc
 
 var ProvisionDatasource = mcpgrafana.MustTool(
 	"provision_datasource",
-	"Generate a Grafana datasource provisioning YAML file. IMPORTANT: always call this tool twice. First call: provide only the type — the tool returns a field schema. After receiving the schema, you MUST ask the user for every required field value explicitly; do not infer or use defaults without user confirmation. Second call: provide the type plus the fields map populated with values confirmed by the user. Returns the YAML content as text and a zip file attachment that can be extracted into your local provisioning/datasources directory.",
+	"Generate a Grafana datasource provisioning file. Supports YAML format (for on-premises Grafana) and Terraform HCL format (for Grafana Cloud customers using Terraform). IMPORTANT: always call this tool twice. First call: provide only the type — the tool returns a field schema. After receiving the schema, you MUST ask the user for every required field value explicitly; do not infer or use defaults without user confirmation. Second call: provide the type, the fields map populated with values confirmed by the user, and optionally format (\"yaml\" for on-prem, \"terraform\" for Grafana Cloud). Returns the file content as text and a zip file attachment.",
 	provisionDatasource,
 	mcp.WithTitleAnnotation("Provision datasource"),
 )
