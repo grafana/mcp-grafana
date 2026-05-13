@@ -38,7 +38,6 @@ type ListDatasourcesResult struct {
 	Datasources []dataSourceSummary `json:"datasources"`
 	Total       int                 `json:"total"`   // Total count before pagination
 	HasMore     bool                `json:"hasMore"` // Whether more results exist
-	Message     string              `json:"message,omitempty"`
 }
 
 func listDatasources(ctx context.Context, args ListDatasourcesParams) (*ListDatasourcesResult, error) {
