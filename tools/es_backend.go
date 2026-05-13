@@ -163,7 +163,7 @@ func (b *elasticsearchBackend) Search(ctx context.Context, index, query string, 
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
+		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 		return nil, fmt.Errorf("elasticsearch API returned status code %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 

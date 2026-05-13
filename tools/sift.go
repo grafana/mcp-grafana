@@ -456,7 +456,7 @@ func (c *siftClient) makeRequest(ctx context.Context, method, path string, body 
 
 	// Check for non-200 status code (matching Loki client's logic)
 	if response.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(response.Body) // Read full body on error
+		bodyBytes, _ := io.ReadAll(io.LimitReader(response.Body, 1024))
 		return nil, fmt.Errorf("API request returned status code %d: %s", response.StatusCode, string(bodyBytes))
 	}
 
