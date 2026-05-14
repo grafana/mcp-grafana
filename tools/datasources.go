@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 
@@ -19,6 +21,9 @@ import (
 const (
 	defaultListDataSourceLimit = 50
 	maxListDataSourceLimit     = 100
+
+	datasourceHealthStatusOK            = "OK"
+	maxConcurrentDatasourceHealthChecks = 10
 )
 
 type ListDatasourcesParams struct {
@@ -401,18 +406,61 @@ type CheckDatasourceHealthParams struct {
 
 type DatasourceHealthResult struct {
 	UID     string `json:"uid"`
+	Status  string `json:"status,omitempty"`
 	Message string `json:"message"`
 }
 
 func checkDatasourceHealth(ctx context.Context, args CheckDatasourceHealthParams) (*DatasourceHealthResult, error) {
-	c := mcpgrafana.GrafanaClientFromContext(ctx)
-	resp, err := c.Datasources.CheckDatasourceHealthWithUID(args.UID)
+	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
+	if cfg.URL == "" {
+		return nil, fmt.Errorf("grafana URL is not configured")
+	}
+
+	healthURL, err := url.Parse(cfg.URL)
+	if err != nil {
+		return nil, fmt.Errorf("parse grafana URL: %w", err)
+	}
+	healthURL = healthURL.JoinPath("api", "datasources", "uid", args.UID, "health")
+
+	transport, err := mcpgrafana.BuildTransport(&cfg, cfg.HTTPTransport())
+	if err != nil {
+		return nil, fmt.Errorf("build transport: %w", err)
+	}
+	httpClient := &http.Client{
+		Timeout:   mcpgrafana.DefaultGrafanaClientTimeout,
+		Transport: transport,
+	}
+	if cfg.Timeout != 0 {
+		httpClient.Timeout = cfg.Timeout
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, healthURL.String(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("create datasource health request %s: %w", args.UID, err)
+	}
+
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("check datasource health %s: %w", args.UID, err)
 	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("check datasource health %s: unexpected status %d", args.UID, resp.StatusCode)
+	}
+
+	var health struct {
+		Status  string `json:"status"`
+		Message string `json:"message"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&health); err != nil {
+		return nil, fmt.Errorf("parse datasource health %s: %w", args.UID, err)
+	}
+
 	return &DatasourceHealthResult{
 		UID:     args.UID,
-		Message: resp.Payload.Message,
+		Status:  health.Status,
+		Message: health.Message,
 	}, nil
 }
 
@@ -425,6 +473,7 @@ type DatasourceHealthCheckResult struct {
 	UID     string `json:"uid"`
 	Name    string `json:"name"`
 	Type    string `json:"type"`
+	Status  string `json:"status,omitempty"`
 	Message string `json:"message,omitempty"`
 	Error   string `json:"error,omitempty"`
 }
@@ -461,15 +510,19 @@ func checkDatasourcesHealth(ctx context.Context, args BulkCheckDatasourceHealthP
 
 	results := make([]DatasourceHealthCheckResult, len(targets))
 	var wg sync.WaitGroup
+	sem := make(chan struct{}, maxConcurrentDatasourceHealthChecks)
 	for i, ds := range targets {
+		sem <- struct{}{}
 		wg.Add(1)
 		go func(i int, ds *models.DataSourceListItemDTO) {
 			defer wg.Done()
+			defer func() { <-sem }()
 			r := DatasourceHealthCheckResult{UID: ds.UID, Name: ds.Name, Type: ds.Type}
 			health, err := checkDatasourceHealth(ctx, CheckDatasourceHealthParams{UID: ds.UID})
 			if err != nil {
 				r.Error = err.Error()
 			} else {
+				r.Status = health.Status
 				r.Message = health.Message
 			}
 			results[i] = r
@@ -479,7 +532,7 @@ func checkDatasourcesHealth(ctx context.Context, args BulkCheckDatasourceHealthP
 
 	healthy, unhealthy := 0, 0
 	for _, r := range results {
-		if r.Error != "" {
+		if r.Error != "" || (r.Status != "" && !strings.EqualFold(r.Status, datasourceHealthStatusOK)) {
 			unhealthy++
 		} else {
 			healthy++

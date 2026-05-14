@@ -9,7 +9,9 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/grafana/grafana-openapi-client-go/client"
 	"github.com/grafana/grafana-openapi-client-go/models"
@@ -387,13 +389,14 @@ func TestCheckDatasourceHealth_ReturnsMessage(t *testing.T) {
 		assert.Equal(t, "/api/datasources/uid/prom-1/health", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(map[string]any{"message": "Data source connected"})
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "OK", "message": "Data source connected"})
 	}))
 	defer srv.Close()
 
 	result, err := checkDatasourceHealth(mockDatasourcesCtx(srv), CheckDatasourceHealthParams{UID: "prom-1"})
 	require.NoError(t, err)
 	assert.Equal(t, "prom-1", result.UID)
+	assert.Equal(t, "OK", result.Status)
 	assert.Equal(t, "Data source connected", result.Message)
 }
 
@@ -431,12 +434,11 @@ func newBulkHealthServer(t *testing.T, list []*models.DataSourceListItemDTO, hea
 		// /api/datasources/uid/{uid}/health
 		parts := strings.Split(r.URL.Path, "/")
 		uid := parts[len(parts)-2] // path: .../uid/{uid}/health
+		w.WriteHeader(http.StatusOK)
 		if healthyUIDs[uid] {
-			w.WriteHeader(http.StatusOK)
-			_ = json.NewEncoder(w).Encode(map[string]any{"message": "OK"})
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "OK", "message": "OK"})
 		} else {
-			w.WriteHeader(http.StatusInternalServerError)
-			_ = json.NewEncoder(w).Encode(map[string]any{"message": "connection error"})
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ERROR", "message": "connection error"})
 		}
 	}))
 }
@@ -498,13 +500,67 @@ func TestCheckDatasourcesHealth_HealthyCounts(t *testing.T) {
 	assert.Equal(t, 2, result.Healthy)
 	assert.Equal(t, 2, result.Unhealthy)
 
-	errCount := 0
+	unhealthyStatusCount := 0
 	for _, r := range result.Results {
-		if r.Error != "" {
-			errCount++
+		if r.Status == "ERROR" {
+			unhealthyStatusCount++
 		}
 	}
-	assert.Equal(t, 2, errCount)
+	assert.Equal(t, 2, unhealthyStatusCount)
+}
+
+func TestCheckDatasourcesHealth_LimitsConcurrentChecks(t *testing.T) {
+	list := mockDatasourceList([]string{
+		"ds-1", "ds-2", "ds-3", "ds-4", "ds-5", "ds-6", "ds-7", "ds-8",
+		"ds-9", "ds-10", "ds-11", "ds-12", "ds-13", "ds-14", "ds-15",
+	}, "prometheus")
+
+	var inFlight int32
+	started := make(chan struct{}, len(list))
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/api/datasources" {
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(list)
+			return
+		}
+
+		current := atomic.AddInt32(&inFlight, 1)
+		defer atomic.AddInt32(&inFlight, -1)
+		started <- struct{}{}
+		assert.LessOrEqual(t, int(current), maxConcurrentDatasourceHealthChecks)
+		<-release
+
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "OK", "message": "OK"})
+	}))
+	defer srv.Close()
+	defer func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	}()
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := checkDatasourcesHealth(mockDatasourcesCtx(srv), BulkCheckDatasourceHealthParams{})
+		done <- err
+	}()
+
+	for range maxConcurrentDatasourceHealthChecks {
+		<-started
+	}
+	select {
+	case <-started:
+		t.Fatalf("started more than %d concurrent health checks", maxConcurrentDatasourceHealthChecks)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(release)
+	require.NoError(t, <-done)
 }
 
 func TestCheckDatasourcesHealth_UnknownUIDsProduceEmptyResult(t *testing.T) {
