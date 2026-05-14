@@ -252,11 +252,15 @@ func TestCreateDatasource_Success(t *testing.T) {
 	}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, http.MethodPost, r.Method)
-		assert.Equal(t, "/api/datasources", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(mockResp)
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/datasources":
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(mockResp)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/datasources/uid/"+uid+"/health":
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(map[string]any{"message": "Data source connected"})
+		}
 	}))
 	defer srv.Close()
 
@@ -282,6 +286,9 @@ func TestCreateDatasource_Success(t *testing.T) {
 	assert.Equal(t, name, got.Name)
 	assert.Equal(t, msg, got.Message)
 	assert.Equal(t, id, got.ID)
+	require.NotNil(t, got.Health)
+	assert.Equal(t, uid, got.Health.UID)
+	assert.Equal(t, "Data source connected", got.Health.Message)
 
 	configPageURL := "https://grafana.example.com/connections/datasources/edit/" + uid
 	assert.Contains(t, got.NextSteps, configPageURL)
@@ -295,7 +302,7 @@ func TestCreateDatasource_Success(t *testing.T) {
 
 // --- updateDatasource ---
 
-func newUpdateDatasourceServer(t *testing.T, current *models.DataSource, captureBody *models.UpdateDataSourceCommand) *httptest.Server {
+func newUpdateDatasourceServer(t *testing.T, current *models.DataSource, captureBody *models.UpdateDataSourceCommand, healthMsg string, healthStatus int) *httptest.Server {
 	t.Helper()
 	id := current.ID
 	msg := "Datasource updated"
@@ -318,6 +325,9 @@ func newUpdateDatasourceServer(t *testing.T, current *models.DataSource, capture
 			}
 			w.WriteHeader(http.StatusOK)
 			_ = json.NewEncoder(w).Encode(updateResp)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/datasources/uid/"+current.UID+"/health":
+			w.WriteHeader(healthStatus)
+			_ = json.NewEncoder(w).Encode(map[string]any{"message": healthMsg})
 		}
 	}))
 }
@@ -331,7 +341,7 @@ func TestUpdateDatasource_MergesProvidedFields(t *testing.T) {
 		URL:  "http://old:9090",
 	}
 	var captured models.UpdateDataSourceCommand
-	srv := newUpdateDatasourceServer(t, current, &captured)
+	srv := newUpdateDatasourceServer(t, current, &captured, "Health check passed", http.StatusOK)
 	defer srv.Close()
 
 	newName := "New Name"
@@ -341,6 +351,31 @@ func TestUpdateDatasource_MergesProvidedFields(t *testing.T) {
 	assert.Equal(t, "New Name", captured.Name)
 	assert.Equal(t, "http://old:9090", captured.URL) // unprovided field preserved from current
 	assert.Equal(t, "prometheus", captured.Type)
+}
+
+func TestUpdateDatasource_HealthCheckIncludedInResult(t *testing.T) {
+	current := &models.DataSource{ID: 1, UID: "prom-1", Name: "Prometheus", Type: "prometheus"}
+	srv := newUpdateDatasourceServer(t, current, nil, "Data source is working", http.StatusOK)
+	defer srv.Close()
+
+	newURL := "http://new:9090"
+	result, err := updateDatasource(mockDatasourcesCtx(srv), UpdateDatasourceParams{UID: "prom-1", URL: &newURL})
+	require.NoError(t, err)
+	require.NotNil(t, result.Health)
+	assert.Equal(t, "prom-1", result.Health.UID)
+	assert.Equal(t, "Data source is working", result.Health.Message)
+}
+
+func TestUpdateDatasource_HealthCheckFailureIsNonFatal(t *testing.T) {
+	current := &models.DataSource{ID: 1, UID: "prom-1", Name: "Prometheus", Type: "prometheus"}
+	srv := newUpdateDatasourceServer(t, current, nil, "connection refused", http.StatusInternalServerError)
+	defer srv.Close()
+
+	newURL := "http://bad-host:9090"
+	result, err := updateDatasource(mockDatasourcesCtx(srv), UpdateDatasourceParams{UID: "prom-1", URL: &newURL})
+	require.NoError(t, err)
+	require.NotNil(t, result.Health)
+	assert.Contains(t, result.Health.Message, "health check failed")
 }
 
 func TestUpdateDatasource_NotFound(t *testing.T) {
@@ -368,7 +403,7 @@ func TestUpdateDatasource_SensitiveFieldsStrippedFromCommand(t *testing.T) {
 		BasicAuthUser: "ba-user",
 	}
 	var captured models.UpdateDataSourceCommand
-	srv := newUpdateDatasourceServer(t, current, &captured)
+	srv := newUpdateDatasourceServer(t, current, &captured, "OK", http.StatusOK)
 	defer srv.Close()
 
 	newURL := "http://prometheus:9090"
