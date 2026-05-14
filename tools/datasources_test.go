@@ -245,15 +245,6 @@ func TestUpdateDatasourceTool(t *testing.T) {
 		assert.Equal(t, newURL, result.Datasource.URL)
 	})
 
-	t.Run("health check included in result", func(t *testing.T) {
-		newName := "Integration Test DS Health"
-		result, err := updateDatasource(ctx, UpdateDatasourceParams{UID: testUID, Name: &newName})
-		require.NoError(t, err)
-		require.NotNil(t, result.Health)
-		assert.Equal(t, testUID, result.Health.UID)
-		assert.NotEmpty(t, result.Health.Message)
-	})
-
 	t.Run("update non-existent datasource returns error", func(t *testing.T) {
 		newName := "Should Fail"
 		_, err := updateDatasource(ctx, UpdateDatasourceParams{UID: "non-existent-uid", Name: &newName})

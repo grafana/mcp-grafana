@@ -245,7 +245,7 @@ var ListDatasources = mcpgrafana.MustTool(
 
 var CreateDatasource = mcpgrafana.MustTool(
 	"create_datasource",
-	"Create a new datasource in Grafana. Returns the created datasource details including its UID. The result includes a nextSteps field and a resource link pointing to the datasource configuration page — always surface both to the user so they can complete setup (e.g. add credentials) in the Grafana UI. Does not support adding credentials or PII and should never ask for authentication options. If credentials are detected, remind the user to rotate and revoke them to keep them safe.",
+	"Create a new datasource in Grafana. Returns the created datasource details including its UID. The result includes a nextSteps field and a resource link pointing to the datasource configuration page — always surface both to the user so they can complete setup (e.g. add credentials) in the Grafana UI. After creating, call check_datasources_health to verify the datasource is reachable. Does not support adding credentials or PII and should never ask for authentication options. If credentials are detected, remind the user to rotate and revoke them to keep them safe.",
 	createDatasource,
 	mcp.WithTitleAnnotation("Create datasource"),
 	mcp.WithIdempotentHintAnnotation(false),
@@ -254,7 +254,7 @@ var CreateDatasource = mcpgrafana.MustTool(
 
 var UpdateDatasource = mcpgrafana.MustTool(
 	"update_datasource",
-	"Update non-secret Grafana datasource fields by UID (name, url, jsonData without secrets, default flag, etc.). Fetches the current config and merges only the fields you pass, then saves. For authentication or secrets, use Grafana UI directly. If the datasource does not exist, ask for confirmation before creating a new one.",
+	"Update non-secret Grafana datasource fields by UID (name, url, jsonData without secrets, default flag, etc.). Fetches the current config and merges only the fields you pass, then saves. After updating, call check_datasources_health to verify the datasource is reachable. For authentication or secrets, use Grafana UI directly. If the datasource does not exist, ask for confirmation before creating a new one.",
 	updateDatasource,
 	mcp.WithTitleAnnotation("Update datasource"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -333,12 +333,7 @@ type UpdateDatasourceParams struct {
 	JSONData        map[string]interface{} `json:"jsonData,omitempty" jsonschema:"description=Non-secret plugin settings; when set\\, replaces jsonData on the server for this datasource"`
 }
 
-type UpdateDatasourceResult struct {
-	*models.UpdateDataSourceByUIDOKBody
-	Health *DatasourceHealthResult `json:"health,omitempty"`
-}
-
-func updateDatasource(ctx context.Context, args UpdateDatasourceParams) (*UpdateDatasourceResult, error) {
+func updateDatasource(ctx context.Context, args UpdateDatasourceParams) (*models.UpdateDataSourceByUIDOKBody, error) {
 	// pending add credential violation check
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
 
@@ -402,16 +397,7 @@ func updateDatasource(ctx context.Context, args UpdateDatasourceParams) (*Update
 		return nil, fmt.Errorf("update datasource %s: %w", args.UID, err)
 	}
 
-	result := &UpdateDatasourceResult{UpdateDataSourceByUIDOKBody: resp.Payload}
-
-	health, err := checkDatasourceHealth(ctx, CheckDatasourceHealthParams{UID: args.UID})
-	if err != nil {
-		result.Health = &DatasourceHealthResult{UID: args.UID, Message: fmt.Sprintf("health check failed: %s", err)}
-	} else {
-		result.Health = health
-	}
-
-	return result, nil
+	return resp.Payload, nil
 }
 
 type CheckDatasourceHealthParams struct {
