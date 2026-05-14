@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -319,21 +320,20 @@ func TestGetPanelImage(t *testing.T) {
 
 		require.NoError(t, err)
 		require.NotNil(t, result)
-		require.Len(t, result.Content, 1)
+		require.Len(t, result.Content, 2)
 
-		// Check that the content is image content with base64 data
-		content := result.Content[0]
-		imageContent, ok := content.(interface {
-			GetData() string
-			GetMimeType() string
-		})
-		if ok {
-			assert.Equal(t, "image/png", imageContent.GetMimeType())
-			// Verify base64 decoding works
-			decoded, err := base64.StdEncoding.DecodeString(imageContent.GetData())
-			require.NoError(t, err)
-			assert.Equal(t, testPNGData, decoded)
-		}
+		// Check image content
+		imageContent, ok := result.Content[0].(mcp.ImageContent)
+		require.True(t, ok, "first content item should be ImageContent")
+		assert.Equal(t, "image/png", imageContent.MIMEType)
+		decoded, err := base64.StdEncoding.DecodeString(imageContent.Data)
+		require.NoError(t, err)
+		assert.Equal(t, testPNGData, decoded)
+
+		// Check deeplink content
+		textContent, ok := result.Content[1].(mcp.TextContent)
+		require.True(t, ok, "second content item should be TextContent")
+		assert.Equal(t, server.URL+"/d/test-dash", textContent.Text)
 	})
 
 	t.Run("Panel image with specific panel ID uses d-solo path and panelId param", func(t *testing.T) {
@@ -361,6 +361,11 @@ func TestGetPanelImage(t *testing.T) {
 
 		require.NoError(t, err)
 		require.NotNil(t, result)
+		require.Len(t, result.Content, 2)
+
+		textContent, ok := result.Content[1].(mcp.TextContent)
+		require.True(t, ok)
+		assert.Equal(t, server.URL+"/d/test-dash?viewPanel=5", textContent.Text)
 	})
 
 	t.Run("Authentication header with API key", func(t *testing.T) {
