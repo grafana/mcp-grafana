@@ -83,6 +83,8 @@ func minimalSchema() *datasourceSchema {
 			{ID: "root.arr", Key: "arr", ValueType: "array", Target: "jsonData"},
 			// ✗ excluded: object valueType
 			{ID: "root.obj", Key: "obj", ValueType: "object", Target: "jsonData"},
+			// ✗ excluded: map valueType
+			{ID: "root.map", Key: "map", ValueType: "map", Target: "jsonData"},
 			// ✗ excluded: optional + dependsOn
 			{ID: "root.cond", Key: "cond", ValueType: "string", Target: "jsonData", DependsOn: "url", Required: false},
 		},
@@ -157,10 +159,11 @@ func TestBuildSchemaGuidance_ExcludesExperimentalFields(t *testing.T) {
 	assert.NotContains(t, fieldKeys(guidance.Fields), "exp")
 }
 
-func TestBuildSchemaGuidance_ExcludesArrayAndObjectValueTypes(t *testing.T) {
+func TestBuildSchemaGuidance_ExcludesComplexValueTypes(t *testing.T) {
 	guidance := buildSchemaGuidance(minimalSchema())
 	keys := fieldKeys(guidance.Fields)
 	assert.NotContains(t, keys, "arr")
+	assert.NotContains(t, keys, "map")
 	assert.NotContains(t, keys, "obj")
 }
 
