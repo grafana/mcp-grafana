@@ -391,9 +391,9 @@ func TestUpdateDatasource_NotFound(t *testing.T) {
 	assert.Contains(t, err.Error(), "not found")
 }
 
-func TestUpdateDatasource_SensitiveFieldsStrippedFromCommand(t *testing.T) {
-	// Even when the current datasource has User and BasicAuthUser set,
-	// the update command must not forward them.
+func TestUpdateDatasource_PreservesPlainTextAuthFields(t *testing.T) {
+	// User and BasicAuthUser are plain-text fields returned by Grafana and
+	// must be preserved in the full update command.
 	current := &models.DataSource{
 		ID:            1,
 		UID:           "prom-1",
@@ -410,8 +410,8 @@ func TestUpdateDatasource_SensitiveFieldsStrippedFromCommand(t *testing.T) {
 	_, err := updateDatasource(mockDatasourcesCtx(srv), UpdateDatasourceParams{UID: "prom-1", URL: &newURL})
 	require.NoError(t, err)
 
-	assert.Empty(t, captured.User, "User must not be forwarded in update command")
-	assert.Empty(t, captured.BasicAuthUser, "BasicAuthUser must not be forwarded in update command")
+	assert.Equal(t, "db-user", captured.User)
+	assert.Equal(t, "ba-user", captured.BasicAuthUser)
 	assert.Nil(t, captured.SecureJSONData, "SecureJSONData must not be forwarded in update command")
 }
 
