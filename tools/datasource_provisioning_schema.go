@@ -176,8 +176,8 @@ func buildSchemaGuidance(schema *datasourceSchema) *datasourceSchemaGuidance {
 		if f.Lifecycle == "experimental" {
 			continue
 		}
-		// Skip complex types (arrays / nested objects) for now.
-		if f.ValueType == "array" || f.ValueType == "object" {
+		// Skip complex types (arrays / maps / nested objects) for now.
+		if f.ValueType == "array" || f.ValueType == "map" || f.ValueType == "object" {
 			continue
 		}
 		// Optional fields with a conditional dependency are advanced; skip them
