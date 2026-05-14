@@ -258,7 +258,7 @@ var UpdateDatasource = mcpgrafana.MustTool(
 	updateDatasource,
 	mcp.WithTitleAnnotation("Update datasource"),
 	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithReadOnlyHintAnnotation(false),
 )
 
 type GetDatasourceByUIDParams struct {
@@ -345,16 +345,11 @@ func updateDatasource(ctx context.Context, args UpdateDatasourceParams) (*models
 		return nil, fmt.Errorf("get datasource by uid %s: %w", args.UID, err)
 	}
 
-	dsAccess := "proxy"
-	if args.Access != nil && *args.Access != "" {
-		// use grafana default
-		dsAccess = *args.Access
-	}
 	ds := current.Payload
 	cmd := &models.UpdateDataSourceCommand{
 		Name:            ds.Name,
 		Type:            ds.Type,
-		Access:          models.DsAccess(dsAccess),
+		Access:          ds.Access,
 		URL:             ds.URL,
 		Database:        ds.Database,
 		BasicAuth:       ds.BasicAuth,
