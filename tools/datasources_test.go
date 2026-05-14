@@ -6,10 +6,12 @@
 package tools
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/grafana/grafana-openapi-client-go/models"
 	mcpgrafana "github.com/grafana/mcp-grafana"
+	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -77,6 +79,78 @@ func TestDatasourcesTools(t *testing.T) {
 		require.Error(t, err)
 		require.Nil(t, result)
 		assert.Contains(t, err.Error(), "either uid or name must be provided")
+	})
+}
+
+func TestCreateDatasourceTools(t *testing.T) {
+	t.Run("create datasource", func(t *testing.T) {
+		ctx := newTestContext()
+
+		toolResult, err := createDatasource(ctx, CreateDatasourceParams{
+			Name: "mcp-test-prometheus",
+			Type: "prometheus",
+			URL:  "http://prometheus:9090",
+		})
+		require.NoError(t, err)
+		require.NotNil(t, toolResult)
+		assert.False(t, toolResult.IsError)
+
+		require.Len(t, toolResult.Content, 2)
+		text, ok := toolResult.Content[0].(mcp.TextContent)
+		require.True(t, ok)
+
+		var result CreateDatasourceResult
+		require.NoError(t, json.Unmarshal([]byte(text.Text), &result))
+		assert.Equal(t, "mcp-test-prometheus", result.Name)
+		assert.NotEmpty(t, result.UID)
+
+		configPageURL := "http://localhost:3000/connections/datasources/edit/" + result.UID
+		assert.Contains(t, result.NextSteps, configPageURL)
+
+		link, ok := toolResult.Content[1].(mcp.ResourceLink)
+		require.True(t, ok)
+		assert.Equal(t, configPageURL, link.URI)
+		assert.Equal(t, result.Name, link.Name)
+
+		c := mcpgrafana.GrafanaClientFromContext(ctx)
+		t.Cleanup(func() {
+			_, _ = c.Datasources.DeleteDataSourceByUID(result.UID)
+		})
+	})
+
+	t.Run("create datasource - basicAuth flag", func(t *testing.T) {
+		ctx := newTestContext()
+
+		toolResult, err := createDatasource(ctx, CreateDatasourceParams{
+			Name:      "mcp-test-prometheus-basicauth",
+			Type:      "prometheus",
+			BasicAuth: true,
+		})
+		require.NoError(t, err)
+		require.NotNil(t, toolResult)
+		assert.False(t, toolResult.IsError)
+
+		require.Len(t, toolResult.Content, 2)
+		text, ok := toolResult.Content[0].(mcp.TextContent)
+		require.True(t, ok)
+
+		var result CreateDatasourceResult
+		require.NoError(t, json.Unmarshal([]byte(text.Text), &result))
+		assert.Equal(t, "mcp-test-prometheus-basicauth", result.Name)
+		assert.NotEmpty(t, result.UID)
+
+		configPageURL := "http://localhost:3000/connections/datasources/edit/" + result.UID
+		assert.Contains(t, result.NextSteps, configPageURL)
+
+		link, ok := toolResult.Content[1].(mcp.ResourceLink)
+		require.True(t, ok)
+		assert.Equal(t, configPageURL, link.URI)
+		assert.Equal(t, result.Name, link.Name)
+
+		c := mcpgrafana.GrafanaClientFromContext(ctx)
+		t.Cleanup(func() {
+			_, _ = c.Datasources.DeleteDataSourceByUID(result.UID)
+		})
 	})
 }
 
