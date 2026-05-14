@@ -245,7 +245,7 @@ var ListDatasources = mcpgrafana.MustTool(
 
 var CreateDatasource = mcpgrafana.MustTool(
 	"create_datasource",
-	"Create a new datasource in Grafana. Returns the created datasource details including its UID. The result includes a nextSteps field and a resource link pointing to the datasource configuration page — always surface both to the user so they can complete setup (e.g. add credentials) in the Grafana UI. After creating, call check_datasources_health to verify the datasource is reachable. Does not support adding credentials or PII and should never ask for authentication options. If credentials are detected, remind the user to rotate and revoke them to keep them safe.",
+	"Create a new datasource in Grafana. Before calling this tool: (1) if the datasource type is ambiguous or described generically (e.g. 'azure', 'cloud watch', 'postgres database'), call search_plugin_information to discover the correct plugin ID; (2) call get_plugin to check whether that plugin is installed — if it is not, ask the user whether they want to install it and call install_plugin before proceeding. Returns the created datasource details including its UID. The result includes a nextSteps field and a resource link pointing to the datasource configuration page — always surface both to the user so they can complete setup (e.g. add credentials) in the Grafana UI. After creating, call check_datasources_health to verify the datasource is reachable. Does not support adding credentials or PII and should never ask for authentication options. If credentials are detected, remind the user to rotate and revoke them to keep them safe.",
 	createDatasource,
 	mcp.WithTitleAnnotation("Create datasource"),
 	mcp.WithIdempotentHintAnnotation(false),
