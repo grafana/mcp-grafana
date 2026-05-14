@@ -758,7 +758,7 @@ func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) (*QueryLokiLog
 
 	if usedDefaultTimeRange && out.Hints == nil {
 		out.Hints = &EmptyResultHints{
-			Summary:        "This query used the default 1-hour lookback window because startRfc3339 or endRfc3339 was not provided.",
+			Summary:          "This query used the default 1-hour lookback window because startRfc3339 or endRfc3339 was not provided.",
 			SuggestedActions: []string{"If results seem incomplete or you need data from a wider time range, provide explicit startRfc3339 and endRfc3339 parameters."},
 		}
 	}
