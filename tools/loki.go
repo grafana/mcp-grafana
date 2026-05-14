@@ -685,7 +685,7 @@ func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) (*QueryLokiLog
 		startTimeStr = args.StartRFC3339
 		endTimeStr = args.EndRFC3339
 	} else {
-		usedDefaultTimeRange = args.StartRFC3339 == "" || args.EndRFC3339 == ""
+		usedDefaultTimeRange = args.StartRFC3339 == "" && args.EndRFC3339 == ""
 		startTimeStr, endTimeStr = getDefaultTimeRange(args.StartRFC3339, args.EndRFC3339)
 	}
 
@@ -758,7 +758,8 @@ func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) (*QueryLokiLog
 
 	if usedDefaultTimeRange && out.Hints == nil {
 		out.Hints = &EmptyResultHints{
-			Summary:          "This query used the default 1-hour lookback window because startRfc3339 or endRfc3339 was not provided.",
+			Summary:          "This query used the default 1-hour lookback window because neither startRfc3339 nor endRfc3339 was provided.",
+			PossibleCauses:   []string{},
 			SuggestedActions: []string{"If results seem incomplete or you need data from a wider time range, provide explicit startRfc3339 and endRfc3339 parameters."},
 		}
 	}
