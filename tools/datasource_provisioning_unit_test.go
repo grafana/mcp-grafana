@@ -228,6 +228,27 @@ func TestBuildSchemaGuidance_AnnotatesDefaultOption(t *testing.T) {
 	}
 }
 
+func TestBuildSchemaGuidance_QualifiesSectionScopedFieldKeys(t *testing.T) {
+	schema := minimalSchema()
+	schema.Fields = append(schema.Fields,
+		dsSchemaField{ID: "jsonData.defaultDatabase", Key: "defaultDatabase", ValueType: "string", Target: "jsonData"},
+		dsSchemaField{ID: "jsonData.logs.defaultDatabase", Key: "defaultDatabase", ValueType: "string", Target: "jsonData", Section: "logs"},
+		dsSchemaField{ID: "jsonData.traces.defaultDatabase", Key: "defaultDatabase", ValueType: "string", Target: "jsonData", Section: "traces"},
+	)
+
+	guidance := buildSchemaGuidance(schema)
+	keys := fieldKeys(guidance.Fields)
+
+	assert.Contains(t, keys, "defaultDatabase")
+	assert.Contains(t, keys, "logs.defaultDatabase")
+	assert.Contains(t, keys, "traces.defaultDatabase")
+	for _, f := range guidance.Fields {
+		if f.Key == "logs.defaultDatabase" {
+			assert.Equal(t, "logs", f.Section)
+		}
+	}
+}
+
 func TestBuildSchemaGuidance_OptionsWithNoDefaultLeaveIsDefaultUnset(t *testing.T) {
 	schema := minimalSchema()
 	schema.Fields = append(schema.Fields, dsSchemaField{
@@ -334,6 +355,20 @@ func TestApplyUpdates_SetsBooleanPointerFields(t *testing.T) {
 	assert.True(t, *entry.IsDefault)
 	require.NotNil(t, entry.Editable)
 	assert.False(t, *entry.Editable)
+}
+
+func TestBuildFieldRoutes_CommonFieldsOverrideSchemaRoutes(t *testing.T) {
+	schema := minimalSchema()
+	schema.Fields = append(schema.Fields, dsSchemaField{
+		ID:        "jsonData.uid",
+		Key:       "uid",
+		ValueType: "string",
+		Target:    "jsonData",
+	})
+
+	routes := buildFieldRoutes(schema)
+
+	assert.Equal(t, "root", routes["uid"].Target)
 }
 
 // ── provisionDatasource ──────────────────────────────────────────────────────
@@ -465,6 +500,33 @@ func TestProvisionDatasource_Phase2_JsonDataFieldRoutedToJsonData(t *testing.T) 
 	require.NoError(t, yaml.Unmarshal([]byte(pr.Content), &pf))
 	require.NotNil(t, pf.Datasources[0].JSONData)
 	assert.Equal(t, "POST", pf.Datasources[0].JSONData["httpMethod"])
+}
+
+func TestProvisionDatasource_Phase2_SectionJsonDataFieldsRoutedToNestedJsonData(t *testing.T) {
+	result, err := provisionDatasource(context.Background(), ProvisionDatasourceParams{
+		Type: "grafana-clickhouse-datasource",
+		Fields: map[string]any{
+			"defaultDatabase":        "global_db",
+			"logs.defaultDatabase":   "logs_db",
+			"traces.defaultDatabase": "traces_db",
+		},
+	})
+	require.NoError(t, err)
+
+	pr := mustExtractProvisionResult(t, result)
+	var pf datasourceProvisioningFile
+	require.NoError(t, yaml.Unmarshal([]byte(pr.Content), &pf))
+	jsonData := pf.Datasources[0].JSONData
+	require.NotNil(t, jsonData)
+	assert.Equal(t, "global_db", jsonData["defaultDatabase"])
+
+	logs, ok := jsonData["logs"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "logs_db", logs["defaultDatabase"])
+
+	traces, ok := jsonData["traces"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "traces_db", traces["defaultDatabase"])
 }
 
 func TestProvisionDatasource_Phase2_SecureJsonDataFieldsDropped(t *testing.T) {
