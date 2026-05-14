@@ -2,6 +2,7 @@ import { App } from "@modelcontextprotocol/ext-apps";
 
 const statusEl = document.getElementById("status")!;
 const containerEl = document.getElementById("image-container")!;
+const deeplinkEl = document.getElementById("deeplink")!;
 
 const app = new App(
   { name: "Grafana Panel Viewer", version: "1.0.0" },
@@ -22,6 +23,19 @@ app.ontoolresult = (result: any) => {
       img.src = `data:${item.mimeType || "image/png"};base64,${item.data}`;
       img.alt = "Grafana panel";
       containerEl.appendChild(img);
+    }
+    if (item.type === "text" && item.text?.startsWith("http")) {
+      const url = item.text;
+      const a = document.createElement("a");
+      a.href = url;
+      a.textContent = "Open in Grafana";
+      a.addEventListener("click", (e) => {
+        e.preventDefault();
+        app.openLink({ url });
+      });
+      deeplinkEl.innerHTML = "";
+      deeplinkEl.appendChild(a);
+      deeplinkEl.style.display = "block";
     }
   }
 };

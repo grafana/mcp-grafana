@@ -8,6 +8,7 @@
     :root {
       --bg: #ffffff;
       --text-secondary: #585959;
+      --link: #6e9fff;
     }
     @media (prefers-color-scheme: dark) {
       :root {
@@ -19,10 +20,14 @@
     body { background: var(--bg); }
     img { max-width: 100%; height: auto; display: block; }
     .status { color: var(--text-secondary); font-style: italic; font-size: 13px; padding: 12px; }
+    .deeplink { padding: 8px 0 4px; font-size: 13px; }
+    .deeplink a { color: var(--link); text-decoration: none; }
+    .deeplink a:hover { text-decoration: underline; }
   </style>
 </head>
 <body>
   <div id="image-container"></div>
+  <div id="deeplink" class="deeplink" style="display:none;"></div>
   <p id="status" class="status">Waiting for panel data...</p>
   <script type="module" src="./src/mcp-app.ts"></script>
 </body>

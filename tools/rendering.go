@@ -140,8 +140,8 @@ func getPanelImage(ctx context.Context, args GetPanelImageParams) (*mcp.CallTool
 		return nil, fmt.Errorf("failed to read image data: %w", err)
 	}
 
-	// Return the image as base64 encoded data using MCP's image content type
 	base64Data := base64.StdEncoding.EncodeToString(imageData)
+	deeplink := buildDashboardDeeplink(baseURL, args)
 
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{
@@ -149,6 +149,10 @@ func getPanelImage(ctx context.Context, args GetPanelImageParams) (*mcp.CallTool
 				Type:     "image",
 				Data:     base64Data,
 				MIMEType: "image/png",
+			},
+			mcp.TextContent{
+				Type: "text",
+				Text: deeplink,
 			},
 		},
 	}, nil
@@ -215,6 +219,14 @@ func buildRenderURL(baseURL string, args GetPanelImageParams) (string, error) {
 	params.Set("kiosk", "true")
 
 	return fmt.Sprintf("%s%s?%s", baseURL, renderPath, params.Encode()), nil
+}
+
+func buildDashboardDeeplink(baseURL string, args GetPanelImageParams) string {
+	baseURL = strings.TrimRight(baseURL, "/")
+	if args.PanelID != nil {
+		return fmt.Sprintf("%s/d/%s?viewPanel=%d", baseURL, args.DashboardUID, *args.PanelID)
+	}
+	return fmt.Sprintf("%s/d/%s", baseURL, args.DashboardUID)
 }
 
 func createHTTPClient(config mcpgrafana.GrafanaConfig) (*http.Client, error) {
