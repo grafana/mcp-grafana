@@ -17,7 +17,7 @@ build-ui: ## Build all MCP App UI bundles under ui/.
 	@for dir in ui/*/; do \
 		if [ -f "$$dir/package.json" ]; then \
 			echo "Building $$dir..."; \
-			(cd "$$dir" && npm install && npm run build); \
+			(cd "$$dir" && npm ci && npm run build); \
 		fi; \
 	done
 
