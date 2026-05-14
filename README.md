@@ -378,6 +378,10 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 **Session Management:**
 - `--session-idle-timeout-minutes`: Session idle timeout in minutes. Sessions with no activity for this duration are automatically reaped - default: `30`. Set to `0` to disable session reaping. Only relevant for SSE and streamable-http transports.
 
+**Server Instructions:**
+- `--server-instructions-file`: Path to a text or Markdown file containing custom MCP server instructions
+- `--server-instructions-mode`: Controls how `--server-instructions-file` is applied (`append` or `replace`) - default: `append`
+
 **Tool Configuration:**
 - `--enabled-tools`: Comma-separated list of enabled categories - default: all categories except `admin`, `athena`, `clickhouse`, `cloudwatch`, `elasticsearch`, `examples`, `graphite`, `runpanelquery`, and `snowflake`. To enable disabled categories, add them to the list (e.g., `"search,datasource,...,snowflake"`)
 - `--max-loki-log-limit`: Maximum number of log lines returned per `query_loki_logs` call - default: `100`. Note: Set this at least 1 below Loki's server-side `max_entries_limit_per_query` to allow truncation detection (the tool requests `limit+1` internally to detect if more data exists).
@@ -439,6 +443,24 @@ When `--disable-write` is enabled, the following write operations are disabled:
 - `find_slow_requests` (creates investigations)
 
 All read operations remain available, allowing you to query dashboards, run PromQL/LogQL queries, list resources, and retrieve data.
+
+### Server Instructions
+
+The server provides generated instructions that describe the enabled Grafana tool categories and timestamp handling. You can add custom instructions from a file for organization-specific guidance or deployment-specific usage notes:
+
+```bash
+mcp-grafana \
+  --transport=streamable-http \
+  --server-instructions-file=/etc/mcp-grafana/instructions.md \
+  --server-instructions-mode=append
+```
+
+The `--server-instructions-mode` flag controls how the file is applied:
+
+- `append` keeps the generated Grafana capability and timestamp guidance, then appends the file contents.
+- `replace` uses only the file contents as the MCP server instructions.
+
+If `--server-instructions-file` is omitted, the generated instructions are unchanged. If the file is configured but cannot be read, startup fails.
 
 **Client TLS Configuration (for Grafana connections):**
 - `--tls-cert-file`: Path to TLS certificate file for client authentication
