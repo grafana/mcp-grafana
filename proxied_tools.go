@@ -116,8 +116,10 @@ func discoverMCPDatasources(ctx context.Context, logger *slog.Logger) ([]Discove
 		go func(c candidate) {
 			defer wg.Done()
 
-			// Create a context with timeout for this probe
-			probeCtx, cancel := context.WithTimeout(ctx, mcpProbeTimeout)
+			probeURL := fmt.Sprintf("%s/api/datasources/proxy/uid/%s%s", grafanaBaseURL, c.uid, c.dsConfig.EndpointPath)
+
+			probeCtx, cancel := context.WithTimeoutCause(ctx, mcpProbeTimeout,
+				fmt.Errorf("timed out after %s probing MCP endpoint for datasource %s (%s) at %s", mcpProbeTimeout, c.name, c.uid, probeURL))
 			defer cancel()
 
 			// Check if the datasource instance has MCP enabled
@@ -125,10 +127,6 @@ func discoverMCPDatasources(ctx context.Context, logger *slog.Logger) ([]Discove
 			// - GET would start an event stream and hang
 			// - POST doesn't work with the Grafana OpenAPI client
 			// - DELETE returns 200 if MCP is enabled, 404 if not
-			//
-			// Note: We create a new client with the probe context to respect the timeout.
-			// The existing client doesn't pass context to HTTP requests properly.
-			probeURL := fmt.Sprintf("%s/api/datasources/proxy/uid/%s%s", grafanaBaseURL, c.uid, c.dsConfig.EndpointPath)
 			req, err := http.NewRequestWithContext(probeCtx, http.MethodDelete, probeURL, nil)
 			if err != nil {
 				logger.DebugContext(ctx, "failed to create probe request", "datasource", c.uid, "error", err)
@@ -137,7 +135,7 @@ func discoverMCPDatasources(ctx context.Context, logger *slog.Logger) ([]Discove
 
 			resp, err := httpClient.Do(req)
 			if err != nil {
-				logger.DebugContext(ctx, "MCP probe failed", "datasource", c.uid, "error", err)
+				logger.DebugContext(ctx, "MCP probe failed", "datasource", c.uid, "error", contextCauseOrErr(probeCtx, err))
 				return
 			}
 			defer func() { _ = resp.Body.Close() }()
@@ -258,6 +256,16 @@ func WithToolManagerLogger(logger *slog.Logger) toolManagerOption {
 	}
 }
 
+// loggerFromCtx returns the logger from the context's GrafanaConfig if available,
+// otherwise falls back to the ToolManager's logger.
+func (tm *ToolManager) loggerFromCtx(ctx context.Context) *slog.Logger {
+	config := GrafanaConfigFromContext(ctx)
+	if config.Logger != nil {
+		return config.Logger
+	}
+	return tm.logger
+}
+
 // InitializeAndRegisterServerTools discovers datasources and registers tools on the server (for stdio transport)
 // This should be called once at server startup for single-tenant stdio servers
 func (tm *ToolManager) InitializeAndRegisterServerTools(ctx context.Context) error {
@@ -268,14 +276,16 @@ func (tm *ToolManager) InitializeAndRegisterServerTools(ctx context.Context) err
 	// Mark as server mode (stdio transport)
 	tm.serverMode = true
 
+	logger := tm.loggerFromCtx(ctx)
+
 	// Discover datasources with MCP support
-	discovered, err := discoverMCPDatasources(ctx, tm.logger)
+	discovered, err := discoverMCPDatasources(ctx, logger)
 	if err != nil {
 		return fmt.Errorf("failed to discover MCP datasources: %w", err)
 	}
 
 	if len(discovered) == 0 {
-		tm.logger.Info("no MCP datasources discovered")
+		logger.InfoContext(ctx, "no MCP datasources discovered")
 		return nil
 	}
 
@@ -284,7 +294,7 @@ func (tm *ToolManager) InitializeAndRegisterServerTools(ctx context.Context) err
 	for _, ds := range discovered {
 		client, err := NewProxiedClient(ctx, ds.UID, ds.Name, ds.Type, ds.MCPURL)
 		if err != nil {
-			tm.logger.Error("failed to create proxied client", "datasource", ds.UID, "error", err)
+			logger.ErrorContext(ctx, "failed to create proxied client", "datasource", ds.UID, "error", err)
 			continue
 		}
 		key := ds.Type + "_" + ds.UID
@@ -294,11 +304,11 @@ func (tm *ToolManager) InitializeAndRegisterServerTools(ctx context.Context) err
 	tm.clientsMutex.Unlock()
 
 	if clientCount == 0 {
-		tm.logger.Warn("no proxied clients created")
+		logger.WarnContext(ctx, "no proxied clients created")
 		return nil
 	}
 
-	tm.logger.Info("connected to proxied MCP servers", "datasources", clientCount)
+	logger.InfoContext(ctx, "connected to proxied MCP servers", "datasources", clientCount)
 
 	// Collect and register all unique tools
 	tm.clientsMutex.RLock()
@@ -320,7 +330,7 @@ func (tm *ToolManager) InitializeAndRegisterServerTools(ctx context.Context) err
 		tm.server.AddTool(tool, handler.Handle)
 	}
 
-	tm.logger.Info("registered proxied tools on server", "tools", len(toolMap))
+	logger.InfoContext(ctx, "registered proxied tools on server", "tools", len(toolMap))
 	return nil
 }
 
@@ -331,6 +341,8 @@ func (tm *ToolManager) InitializeAndRegisterProxiedTools(ctx context.Context, se
 		return
 	}
 
+	logger := tm.loggerFromCtx(ctx)
+
 	sessionID := session.SessionID()
 	state, exists := tm.sm.GetSession(sessionID)
 	if !exists {
@@ -338,7 +350,7 @@ func (tm *ToolManager) InitializeAndRegisterProxiedTools(ctx context.Context, se
 		tm.sm.CreateSession(ctx, session)
 		state, exists = tm.sm.GetSession(sessionID)
 		if !exists {
-			tm.logger.Error("failed to create session in SessionManager", "sessionID", sessionID)
+			logger.ErrorContext(ctx, "failed to create session in SessionManager", "sessionID", sessionID)
 			return
 		}
 	}
@@ -346,9 +358,9 @@ func (tm *ToolManager) InitializeAndRegisterProxiedTools(ctx context.Context, se
 	// Step 1: Discover and connect (guaranteed to run exactly once per session)
 	state.initOnce.Do(func() {
 		// Discover datasources with MCP support
-		discovered, err := discoverMCPDatasources(ctx, tm.logger)
+		discovered, err := discoverMCPDatasources(ctx, logger)
 		if err != nil {
-			tm.logger.Error("failed to discover MCP datasources", "error", err)
+			logger.ErrorContext(ctx, "failed to discover MCP datasources", "error", err)
 			state.mutex.Lock()
 			state.proxiedToolsInitialized = true
 			state.mutex.Unlock()
@@ -360,7 +372,7 @@ func (tm *ToolManager) InitializeAndRegisterProxiedTools(ctx context.Context, se
 		for _, ds := range discovered {
 			client, err := NewProxiedClient(ctx, ds.UID, ds.Name, ds.Type, ds.MCPURL)
 			if err != nil {
-				tm.logger.Error("failed to create proxied client", "datasource", ds.UID, "error", err)
+				logger.ErrorContext(ctx, "failed to create proxied client", "datasource", ds.UID, "error", err)
 				continue
 			}
 
@@ -371,7 +383,7 @@ func (tm *ToolManager) InitializeAndRegisterProxiedTools(ctx context.Context, se
 		state.proxiedToolsInitialized = true
 		state.mutex.Unlock()
 
-		tm.logger.Info("connected to proxied MCP servers", "session", sessionID, "datasources", len(state.proxiedClients))
+		logger.InfoContext(ctx, "connected to proxied MCP servers", "session", sessionID, "datasources", len(state.proxiedClients))
 	})
 
 	// Step 2: Register tools with the MCP server
@@ -422,9 +434,9 @@ func (tm *ToolManager) InitializeAndRegisterProxiedTools(ctx context.Context, se
 	}
 
 	if err := tm.server.AddSessionTools(sessionID, serverTools...); err != nil {
-		tm.logger.Warn("failed to add session tools", "session", sessionID, "error", err)
+		logger.WarnContext(ctx, "failed to add session tools", "session", sessionID, "error", err)
 	} else {
-		tm.logger.Info("registered proxied tools", "session", sessionID, "tools", len(state.proxiedTools))
+		logger.InfoContext(ctx, "registered proxied tools", "session", sessionID, "tools", len(state.proxiedTools))
 	}
 }
 

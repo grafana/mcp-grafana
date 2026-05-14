@@ -5,10 +5,18 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
+	"time"
 
 	mcp_client "github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/client/transport"
 	"github.com/mark3labs/mcp-go/mcp"
+)
+
+const (
+	// mcpClientInitTimeout is the timeout for initializing a proxied MCP client
+	// (connecting, handshaking, and listing tools). Kept short to avoid blocking
+	// server startup when a datasource's MCP endpoint is slow or unreachable.
+	mcpClientInitTimeout = 30 * time.Second
 )
 
 // ProxiedClient represents a connection to a remote MCP server (e.g., Tempo datasource)
@@ -21,17 +29,32 @@ type ProxiedClient struct {
 	mutex          sync.RWMutex
 }
 
+// contextCauseOrErr returns the context cause if the error is due to context
+// cancellation, otherwise returns the original error.
+func contextCauseOrErr(ctx context.Context, err error) error {
+	if ctx.Err() != nil {
+		if cause := context.Cause(ctx); cause != nil {
+			return cause
+		}
+	}
+	return err
+}
+
 // NewProxiedClient creates a new connection to a remote MCP server
 func NewProxiedClient(ctx context.Context, datasourceUID, datasourceName, datasourceType, mcpEndpoint string) (*ProxiedClient, error) {
 	config := GrafanaConfigFromContext(ctx)
 	logger := config.LoggerOrDefault()
+
+	initCtx, cancel := context.WithTimeoutCause(ctx, mcpClientInitTimeout,
+		fmt.Errorf("timed out after %s connecting to MCP server for datasource %s (%s) at %s", mcpClientInitTimeout, datasourceName, datasourceUID, mcpEndpoint))
+	defer cancel()
 
 	rt, err := BuildTransport(&config, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build transport: %w", err)
 	}
 
-	logger.DebugContext(ctx, "connecting to MCP server", "datasource", datasourceUID, "url", mcpEndpoint)
+	logger.DebugContext(initCtx, "connecting to MCP server", "datasource", datasourceUID, "url", mcpEndpoint)
 	httpTransport, err := transport.NewStreamableHTTP(
 		mcpEndpoint,
 		transport.WithHTTPBasicClient(&http.Client{Transport: rt}),
@@ -51,21 +74,21 @@ func NewProxiedClient(ctx context.Context, datasourceUID, datasourceName, dataso
 		Version: Version(),
 	}
 
-	_, err = mcpClient.Initialize(ctx, initReq)
+	_, err = mcpClient.Initialize(initCtx, initReq)
 	if err != nil {
 		_ = mcpClient.Close()
-		return nil, fmt.Errorf("failed to initialize MCP client: %w", err)
+		return nil, fmt.Errorf("failed to initialize MCP client: %w", contextCauseOrErr(initCtx, err))
 	}
 
 	// List available tools from the remote server
 	listReq := mcp.ListToolsRequest{}
-	toolsResult, err := mcpClient.ListTools(ctx, listReq)
+	toolsResult, err := mcpClient.ListTools(initCtx, listReq)
 	if err != nil {
 		_ = mcpClient.Close()
-		return nil, fmt.Errorf("failed to list tools from remote MCP server: %w", err)
+		return nil, fmt.Errorf("failed to list tools from remote MCP server: %w", contextCauseOrErr(initCtx, err))
 	}
 
-	logger.DebugContext(ctx, "connected to proxied MCP server",
+	logger.DebugContext(initCtx, "connected to proxied MCP server",
 		"datasource", datasourceUID,
 		"type", datasourceType,
 		"tools", len(toolsResult.Tools))
