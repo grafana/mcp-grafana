@@ -12,8 +12,17 @@ help: ## Print this help message.
 build-image: ## Build the Docker image.
 	docker build -t mcp-grafana:latest .
 
+.PHONY: build-ui
+build-ui: ## Build all MCP App UI bundles under ui/.
+	@for dir in ui/*/; do \
+		if [ -f "$$dir/package.json" ]; then \
+			echo "Building $$dir..."; \
+			(cd "$$dir" && npm ci --ignore-scripts && npm run build); \
+		fi; \
+	done
+
 .PHONY: build
-build: ## Build the binary.
+build: build-ui ## Build the binary.
 	go build -o dist/mcp-grafana ./cmd/mcp-grafana
 
 .PHONY: lint lint-jsonschema lint-jsonschema-fix lint-openapi

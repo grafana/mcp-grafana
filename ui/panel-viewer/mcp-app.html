@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Grafana Panel Viewer</title>
+  <style>
+    :root {
+      --bg: #ffffff;
+      --text-secondary: #585959;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #111217;
+        --text-secondary: #8e8fa1;
+      }
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: var(--bg); }
+    img { max-width: 100%; height: auto; display: block; }
+    .status { color: var(--text-secondary); font-style: italic; font-size: 13px; padding: 12px; }
+  </style>
+</head>
+<body>
+  <div id="image-container"></div>
+  <p id="status" class="status">Waiting for panel data...</p>
+  <script type="module" src="./src/mcp-app.ts"></script>
+</body>
+</html>

@@ -549,3 +549,13 @@ func TestGetPanelImage(t *testing.T) {
 		require.NoError(t, err)
 	})
 }
+
+func TestGetPanelImageToolMeta(t *testing.T) {
+	tool := GetPanelImage.Tool
+	require.NotNil(t, tool.Meta, "get_panel_image should have _meta for MCP Apps")
+	require.NotNil(t, tool.Meta.AdditionalFields)
+
+	ui, ok := tool.Meta.AdditionalFields["ui"].(map[string]any)
+	require.True(t, ok, "expected _meta.ui to be a map")
+	assert.Equal(t, mcpgrafana.PanelViewerResourceURI, ui["resourceUri"])
+}
