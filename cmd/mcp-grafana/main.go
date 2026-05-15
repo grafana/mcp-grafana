@@ -255,6 +255,27 @@ func parseServerInstructionsMode(s string) (serverInstructionsMode, error) {
 	}
 }
 
+// withInstructionsReminder returns a tool handler middleware that appends the
+// server instructions to every tool result. This ensures the LLM sees the
+// instructions on every tool call regardless of whether the MCP client injects
+// the instructions field from the initialize response into the system prompt.
+func withInstructionsReminder(instructions string) server.ServerOption {
+	if instructions == "" {
+		return func(_ *server.MCPServer) {}
+	}
+	reminder := "\n\n---\n**Server instructions (follow at all times):**\n" + instructions
+	return server.WithToolHandlerMiddleware(func(next server.ToolHandlerFunc) server.ToolHandlerFunc {
+		return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			result, err := next(ctx, req)
+			if err != nil || result == nil {
+				return result, err
+			}
+			result.Content = append(result.Content, mcp.NewTextContent(reminder))
+			return result, nil
+		}
+	})
+}
+
 func applyServerInstructions(generated string, filePath string, mode serverInstructionsMode) (string, error) {
 	if filePath == "" {
 		return generated, nil
@@ -349,6 +370,7 @@ func newServer(transport string, dt disabledTools, obs *observability.Observabil
 	s = server.NewMCPServer("mcp-grafana", mcpgrafana.Version(),
 		server.WithInstructions(instructions),
 		server.WithHooks(hooks),
+		withInstructionsReminder(instructions),
 	)
 
 	// Initialize ToolManager now that server is created
@@ -434,9 +456,15 @@ func runMetricsServer(addr string, o *observability.Observability) {
 	}
 }
 
-func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt disabledTools, gc mcpgrafana.GrafanaConfig, tls tlsConfig, obs observability.Config, sessionIdleTimeoutMinutes int, instructions string) error {
+func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt disabledTools, gc mcpgrafana.GrafanaConfig, tls tlsConfig, obs observability.Config, sessionIdleTimeoutMinutes int, instructions string, serverInstructionsFile string, serverInstructionsMode serverInstructionsMode) error {
 	stderrHandler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})
 	slog.SetDefault(slog.New(stderrHandler))
+
+	slog.Debug("MCP server instructions resolved",
+		"file", serverInstructionsFile,
+		"mode", serverInstructionsMode,
+		"instructions", instructions,
+	)
 
 	o, err := observability.Setup(obs)
 	if err != nil {
@@ -658,13 +686,8 @@ func main() {
 		fmt.Fprintf(os.Stderr, "failed to apply server instructions: %v\n", err)
 		os.Exit(2)
 	}
-	slog.Debug("MCP server instructions resolved",
-		"file", *serverInstructionsFile,
-		"mode", serverInstructionsMode,
-		"instructions", instructions,
-	)
 
-	if err := run(transport, *addr, *basePath, *endpointPath, parseLevel(*logLevel), dt, grafanaConfig, tls, obs, *sessionIdleTimeoutMinutes, instructions); err != nil {
+	if err := run(transport, *addr, *basePath, *endpointPath, parseLevel(*logLevel), dt, grafanaConfig, tls, obs, *sessionIdleTimeoutMinutes, instructions, *serverInstructionsFile, serverInstructionsMode); err != nil {
 		panic(err)
 	}
 }
