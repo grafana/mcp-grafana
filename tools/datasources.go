@@ -104,12 +104,7 @@ func (datasourceJSONData) JSONSchema() *jsonschema.Schema {
 func datasourceJSONDataSchema() *jsonschema.Schema {
 	return &jsonschema.Schema{
 		Type: "object",
-		Description: "Datasource-specific non-secret settings. Keys and values vary by plugin type; " +
-			"ask the user what to set or consult the plugin documentation. " +
-			"Examples — prometheus: {\"httpMethod\":\"GET\",\"timeInterval\":\"15s\"}; " +
-			"loki: {\"maxLines\":1000}; elasticsearch: {\"index\":\"my-index\",\"timeField\":\"@timestamp\"}; " +
-			"cloudwatch: {\"defaultRegion\":\"us-east-1\",\"authType\":\"default\"}; " +
-			"influxdb: {\"version\":\"Flux\",\"product\":\"InfluxDB Enterprise 3.x\"}.",
+		Description: "Plugin-specific non-secret settings. Keys vary by datasource type; ask the user or consult the plugin docs.",
 		Extras: map[string]any{},
 	}
 }
@@ -253,7 +248,7 @@ var ListDatasources = mcpgrafana.MustTool(
 
 var CreateDatasource = mcpgrafana.MustTool(
 	"create_datasource",
-	"Create a new datasource in Grafana. Before calling this tool: (1) if the datasource type is ambiguous or described generically (e.g. 'azure', 'cloud watch', 'postgres database'), call search_plugin_information to discover the correct plugin ID; (2) call get_plugin to check whether that plugin is installed — if it is not, ask the user whether they want to install it and call install_plugin before proceeding. Returns the created datasource details including its UID, a health check result, a nextSteps field, and a resource link pointing to the datasource configuration page — always surface the nextSteps and resource link to the user so they can complete setup (e.g. add credentials) in the Grafana UI. Does not support adding credentials or PII and should never ask for authentication options. If credentials are detected, remind the user to rotate and revoke them to keep them safe.",
+	"Create a new datasource in Grafana. If the type is ambiguous, call search_plugin_information first; if the plugin is not installed, call get_plugin and install_plugin if needed. Returns the UID, a health check, and a resource link to the config page — always surface these to the user. Never handle credentials; if detected, remind the user to rotate and revoke them.",
 	createDatasource,
 	mcp.WithTitleAnnotation("Create datasource"),
 	mcp.WithIdempotentHintAnnotation(false),
@@ -262,7 +257,7 @@ var CreateDatasource = mcpgrafana.MustTool(
 
 var UpdateDatasource = mcpgrafana.MustTool(
 	"update_datasource",
-	"Update non-secret Grafana datasource fields by UID (name, url, jsonData without secrets, default flag, etc.). Fetches the current config and merges only the fields you pass, then saves. Returns the updated datasource and a health check result. For authentication or secrets, use Grafana UI directly. If the datasource does not exist, ask for confirmation before creating a new one.",
+	"Update non-secret Grafana datasource fields by UID. Merges only the provided fields into the current config. Returns the updated datasource and a health check. For secrets, use Grafana UI directly. If the datasource does not exist, confirm before creating.",
 	updateDatasource,
 	mcp.WithTitleAnnotation("Update datasource"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -447,9 +442,9 @@ func checkDatasourceHealth(ctx context.Context, args CheckDatasourceHealthParams
 }
 
 type BulkCheckDatasourceHealthParams struct {
-	Type   string   `json:"type,omitempty" jsonschema:"description=Datasource plugin type to filter by (e.g. 'prometheus'\\, 'loki'). If omitted and uids is empty\\, all datasources are checked."`
-	UIDs   []string `json:"uids,omitempty" jsonschema:"description=Explicit list of datasource UIDs to check. When provided\\, the type filter is ignored."`
-	Offset int      `json:"offset,omitempty" jsonschema:"default=0,description=Number of datasources to skip before health-checking. Use with limit to page through results."`
+	Type   string   `json:"type,omitempty" jsonschema:"description=Plugin type to filter (e.g. prometheus). Omit to check all."`
+	UIDs   []string `json:"uids,omitempty" jsonschema:"description=UIDs to check. Takes priority over type when set."`
+	Offset int      `json:"offset,omitempty" jsonschema:"default=0,description=Number to skip for pagination."`
 }
 
 type DatasourceHealthCheckResult struct {
@@ -552,7 +547,7 @@ func checkDatasourcesHealth(ctx context.Context, args BulkCheckDatasourceHealthP
 
 var CheckDatasourcesHealth = mcpgrafana.MustTool(
 	"check_datasources_health",
-	"Checks the health of one or multiple Grafana datasources in parallel. Filter by type (e.g. 'prometheus') to check all datasources of that type, supply a list of UIDs to check specific ones, or omit both to check every configured datasource. Returns per-datasource results and a healthy/unhealthy summary.",
+	"Check the health of Grafana datasources in parallel. Filter by type to check all of that type, provide UIDs to check specific ones, or omit both to check all. Returns per-datasource results and a summary.",
 	checkDatasourcesHealth,
 	mcp.WithTitleAnnotation("Check datasources health"),
 	mcp.WithIdempotentHintAnnotation(true),
