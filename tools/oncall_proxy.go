@@ -112,7 +112,7 @@ func fetchSinglePage[T any](ctx context.Context, c *oncallProxyClient, path stri
 	if err != nil {
 		return nil, err
 	}
-	body, err := io.ReadAll(resp.Body)
+	body, err := readResponseBody(resp.Body, defaultResponseLimitBytes)
 	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		if len(body) > 0 {
@@ -149,7 +149,7 @@ func fetchPaginated[T any](ctx context.Context, c *oncallProxyClient, path strin
 		if err != nil {
 			return nil, err
 		}
-		body, err := io.ReadAll(resp.Body)
+		body, err := readResponseBody(resp.Body, defaultResponseLimitBytes)
 		_ = resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			if len(body) > 0 {
