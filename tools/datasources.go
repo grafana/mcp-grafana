@@ -441,8 +441,9 @@ func checkDatasourceHealth(ctx context.Context, args CheckDatasourceHealthParams
 }
 
 type BulkCheckDatasourceHealthParams struct {
-	Type string   `json:"type,omitempty" jsonschema:"description=Datasource plugin type to filter by (e.g. 'prometheus'\\, 'loki'). If omitted and uids is empty\\, all datasources are checked."`
-	UIDs []string `json:"uids,omitempty" jsonschema:"description=Explicit list of datasource UIDs to check. When provided\\, the type filter is ignored."`
+	Type   string   `json:"type,omitempty" jsonschema:"description=Datasource plugin type to filter by (e.g. 'prometheus'\\, 'loki'). If omitted and uids is empty\\, all datasources are checked."`
+	UIDs   []string `json:"uids,omitempty" jsonschema:"description=Explicit list of datasource UIDs to check. When provided\\, the type filter is ignored."`
+	Offset int      `json:"offset,omitempty" jsonschema:"default=0,description=Number of datasources to skip before health-checking. Use with limit to page through results."`
 }
 
 type DatasourceHealthCheckResult struct {
@@ -455,9 +456,11 @@ type DatasourceHealthCheckResult struct {
 
 type BulkDatasourceHealthResult struct {
 	Results   []DatasourceHealthCheckResult `json:"results"`
-	Total     int                           `json:"total"`
+	Total     int                           `json:"total"`   // Total matching datasources before pagination
+	Checked   int                           `json:"checked"` // Number of datasources health-checked in this page
 	Healthy   int                           `json:"healthy"`
 	Unhealthy int                           `json:"unhealthy"`
+	HasMore   bool                          `json:"hasMore"` // Whether more datasources exist beyond this page
 }
 
 func checkDatasourcesHealth(ctx context.Context, args BulkCheckDatasourceHealthParams) (*BulkDatasourceHealthResult, error) {
@@ -468,7 +471,7 @@ func checkDatasourcesHealth(ctx context.Context, args BulkCheckDatasourceHealthP
 		return nil, fmt.Errorf("list datasources: %w", err)
 	}
 
-	var targets models.DataSourceList
+	var all models.DataSourceList
 	if len(args.UIDs) > 0 {
 		uidSet := make(map[string]bool, len(args.UIDs))
 		for _, u := range args.UIDs {
@@ -476,19 +479,38 @@ func checkDatasourcesHealth(ctx context.Context, args BulkCheckDatasourceHealthP
 		}
 		for _, ds := range resp.Payload {
 			if uidSet[ds.UID] {
-				targets = append(targets, ds)
+				all = append(all, ds)
 			}
 		}
 	} else {
-		targets = filterDatasources(resp.Payload, args.Type)
+		all = filterDatasources(resp.Payload, args.Type)
+	}
+
+	limit := 10
+
+	offset := args.Offset
+	if offset < 0 {
+		offset = 0
+	}
+
+	var targets models.DataSourceList
+	if offset < len(all) {
+		end := offset + limit
+		if end > len(all) {
+			end = len(all)
+		}
+		targets = all[offset:end]
 	}
 
 	results := make([]DatasourceHealthCheckResult, len(targets))
+	sem := make(chan struct{}, 10)
 	var wg sync.WaitGroup
 	for i, ds := range targets {
 		wg.Add(1)
 		go func(i int, ds *models.DataSourceListItemDTO) {
 			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
 			r := DatasourceHealthCheckResult{UID: ds.UID, Name: ds.Name, Type: ds.Type}
 			health, err := checkDatasourceHealth(ctx, CheckDatasourceHealthParams{UID: ds.UID})
 			if err != nil {
@@ -512,9 +534,11 @@ func checkDatasourcesHealth(ctx context.Context, args BulkCheckDatasourceHealthP
 
 	return &BulkDatasourceHealthResult{
 		Results:   results,
-		Total:     len(results),
+		Total:     len(all),
+		Checked:   len(results),
 		Healthy:   healthy,
 		Unhealthy: unhealthy,
+		HasMore:   offset+len(results) < len(all),
 	}, nil
 }
 

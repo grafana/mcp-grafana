@@ -5,6 +5,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -454,6 +455,22 @@ func mockDatasourceList(uids []string, dsType string) []*models.DataSourceListIt
 	return list
 }
 
+func makeUIDList(n int) []string {
+	uids := make([]string, n)
+	for i := range uids {
+		uids[i] = fmt.Sprintf("ds-%02d", i+1)
+	}
+	return uids
+}
+
+func allHealthy(uids []string) map[string]bool {
+	m := make(map[string]bool, len(uids))
+	for _, uid := range uids {
+		m[uid] = true
+	}
+	return m
+}
+
 func newBulkHealthServer(t *testing.T, list []*models.DataSourceListItemDTO, healthyUIDs map[string]bool) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -484,8 +501,10 @@ func TestCheckDatasourcesHealth_NoFilter_ChecksAll(t *testing.T) {
 	result, err := checkDatasourcesHealth(mockDatasourcesCtx(srv), BulkCheckDatasourceHealthParams{})
 	require.NoError(t, err)
 	assert.Equal(t, 3, result.Total)
+	assert.Equal(t, 3, result.Checked)
 	assert.Equal(t, 3, result.Healthy)
 	assert.Equal(t, 0, result.Unhealthy)
+	assert.False(t, result.HasMore)
 }
 
 func TestCheckDatasourcesHealth_TypeFilter(t *testing.T) {
@@ -500,7 +519,9 @@ func TestCheckDatasourcesHealth_TypeFilter(t *testing.T) {
 	result, err := checkDatasourcesHealth(mockDatasourcesCtx(srv), BulkCheckDatasourceHealthParams{Type: "prometheus"})
 	require.NoError(t, err)
 	assert.Equal(t, 2, result.Total)
+	assert.Equal(t, 2, result.Checked)
 	assert.Equal(t, 2, result.Healthy)
+	assert.False(t, result.HasMore)
 	for _, r := range result.Results {
 		assert.Equal(t, "prometheus", r.Type)
 	}
@@ -514,6 +535,8 @@ func TestCheckDatasourcesHealth_ExplicitUIDs(t *testing.T) {
 	result, err := checkDatasourcesHealth(mockDatasourcesCtx(srv), BulkCheckDatasourceHealthParams{UIDs: []string{"ds-1", "ds-3"}})
 	require.NoError(t, err)
 	assert.Equal(t, 2, result.Total)
+	assert.Equal(t, 2, result.Checked)
+	assert.False(t, result.HasMore)
 
 	uids := make([]string, len(result.Results))
 	for i, r := range result.Results {
@@ -530,8 +553,10 @@ func TestCheckDatasourcesHealth_HealthyCounts(t *testing.T) {
 	result, err := checkDatasourcesHealth(mockDatasourcesCtx(srv), BulkCheckDatasourceHealthParams{})
 	require.NoError(t, err)
 	assert.Equal(t, 4, result.Total)
+	assert.Equal(t, 4, result.Checked)
 	assert.Equal(t, 2, result.Healthy)
 	assert.Equal(t, 2, result.Unhealthy)
+	assert.False(t, result.HasMore)
 
 	errCount := 0
 	for _, r := range result.Results {
@@ -550,6 +575,55 @@ func TestCheckDatasourcesHealth_UnknownUIDsProduceEmptyResult(t *testing.T) {
 	result, err := checkDatasourcesHealth(mockDatasourcesCtx(srv), BulkCheckDatasourceHealthParams{UIDs: []string{"does-not-exist"}})
 	require.NoError(t, err)
 	assert.Equal(t, 0, result.Total)
+	assert.Equal(t, 0, result.Checked)
 	assert.Equal(t, 0, result.Healthy)
 	assert.Equal(t, 0, result.Unhealthy)
+	assert.False(t, result.HasMore)
+}
+
+func TestCheckDatasourcesHealth_Pagination_FirstPage(t *testing.T) {
+	uids := makeUIDList(15)
+	list := mockDatasourceList(uids, "prometheus")
+	srv := newBulkHealthServer(t, list, allHealthy(uids))
+	defer srv.Close()
+
+	result, err := checkDatasourcesHealth(mockDatasourcesCtx(srv), BulkCheckDatasourceHealthParams{})
+	require.NoError(t, err)
+	assert.Equal(t, 15, result.Total)
+	assert.Equal(t, 10, result.Checked)
+	assert.Equal(t, 10, result.Healthy)
+	assert.Equal(t, 0, result.Unhealthy)
+	assert.True(t, result.HasMore)
+	assert.Len(t, result.Results, 10)
+}
+
+func TestCheckDatasourcesHealth_Pagination_SecondPage(t *testing.T) {
+	uids := makeUIDList(15)
+	list := mockDatasourceList(uids, "prometheus")
+	srv := newBulkHealthServer(t, list, allHealthy(uids))
+	defer srv.Close()
+
+	result, err := checkDatasourcesHealth(mockDatasourcesCtx(srv), BulkCheckDatasourceHealthParams{Offset: 10})
+	require.NoError(t, err)
+	assert.Equal(t, 15, result.Total)
+	assert.Equal(t, 5, result.Checked)
+	assert.Equal(t, 5, result.Healthy)
+	assert.Equal(t, 0, result.Unhealthy)
+	assert.False(t, result.HasMore)
+	assert.Len(t, result.Results, 5)
+}
+
+func TestCheckDatasourcesHealth_Pagination_OffsetBeyondTotal(t *testing.T) {
+	list := mockDatasourceList([]string{"ds-1", "ds-2"}, "prometheus")
+	srv := newBulkHealthServer(t, list, map[string]bool{"ds-1": true, "ds-2": true})
+	defer srv.Close()
+
+	result, err := checkDatasourcesHealth(mockDatasourcesCtx(srv), BulkCheckDatasourceHealthParams{Offset: 20})
+	require.NoError(t, err)
+	assert.Equal(t, 2, result.Total)
+	assert.Equal(t, 0, result.Checked)
+	assert.Equal(t, 0, result.Healthy)
+	assert.Equal(t, 0, result.Unhealthy)
+	assert.False(t, result.HasMore)
+	assert.Empty(t, result.Results)
 }
