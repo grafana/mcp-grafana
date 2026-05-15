@@ -923,4 +923,5 @@ func AddLokiTools(mcp *server.MCPServer) {
 	QueryLokiStats.Register(mcp)
 	QueryLokiLogs.Register(mcp)
 	QueryLokiPatterns.Register(mcp)
+	AddLokiLabelAnalyzerTools(mcp)
 }
