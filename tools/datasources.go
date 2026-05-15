@@ -350,7 +350,9 @@ func updateDatasource(ctx context.Context, args UpdateDatasourceParams) (*Update
 	// pending add credential violation check
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
 
-	current, err := c.Datasources.GetDataSourceByUID(args.UID)
+	current, err := c.Datasources.GetDataSourceByUIDWithParams(
+		datasources.NewGetDataSourceByUIDParamsWithContext(ctx).WithUID(args.UID),
+	)
 	if err != nil {
 		if strings.Contains(err.Error(), "404") {
 			return nil, fmt.Errorf("datasource with UID '%s' not found", args.UID)
@@ -402,7 +404,9 @@ func updateDatasource(ctx context.Context, args UpdateDatasourceParams) (*Update
 		cmd.JSONData = models.JSON(args.JSONData)
 	}
 
-	resp, err := c.Datasources.UpdateDataSourceByUID(args.UID, cmd)
+	resp, err := c.Datasources.UpdateDataSourceByUIDWithParams(
+		datasources.NewUpdateDataSourceByUIDParamsWithContext(ctx).WithUID(args.UID).WithBody(cmd),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("update datasource %s: %w", args.UID, err)
 	}
@@ -430,7 +434,9 @@ type DatasourceHealthResult struct {
 
 func checkDatasourceHealth(ctx context.Context, args CheckDatasourceHealthParams) (*DatasourceHealthResult, error) {
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
-	resp, err := c.Datasources.CheckDatasourceHealthWithUID(args.UID)
+	resp, err := c.Datasources.CheckDatasourceHealthWithUIDWithParams(
+		datasources.NewCheckDatasourceHealthWithUIDParamsWithContext(ctx).WithUID(args.UID),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("check datasource health %s: %w", args.UID, err)
 	}
@@ -466,7 +472,9 @@ type BulkDatasourceHealthResult struct {
 func checkDatasourcesHealth(ctx context.Context, args BulkCheckDatasourceHealthParams) (*BulkDatasourceHealthResult, error) {
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
 
-	resp, err := c.Datasources.GetDataSources()
+	resp, err := c.Datasources.GetDataSourcesWithParams(
+		datasources.NewGetDataSourcesParamsWithContext(ctx),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("list datasources: %w", err)
 	}
