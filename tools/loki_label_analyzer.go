@@ -28,13 +28,13 @@ import (
 // ---------------------------------------------------------------------------
 
 const (
-	bandLow       = "low"        // < 10 unique values
-	bandMedium    = "medium"     // 10 .. 99
-	bandHigh      = "high"       // 100 .. 999
-	bandVeryHigh  = "very_high"  // 1000 .. 9999
-	bandExtreme   = "extreme"    // >= 10000
-	bandUnknown   = "unknown"    // caller didn't supply a count
-	bandUnbounded = "unbounded"  // caller asserted the label is unbounded
+	bandLow       = "low"       // < 10 unique values
+	bandMedium    = "medium"    // 10 .. 99
+	bandHigh      = "high"      // 100 .. 999
+	bandVeryHigh  = "very_high" // 1000 .. 9999
+	bandExtreme   = "extreme"   // >= 10000
+	bandUnknown   = "unknown"   // caller didn't supply a count
+	bandUnbounded = "unbounded" // caller asserted the label is unbounded
 )
 
 // classifyCardinality maps a unique-value count to a band string. Counts
@@ -135,12 +135,12 @@ type LokiLabelCardinality struct {
 
 // GetLokiLabelCardinalityParams is the request shape for the tool.
 type GetLokiLabelCardinalityParams struct {
-	DatasourceUID   string   `json:"datasourceUid" jsonschema:"required,description=The UID of the Loki (or VictoriaLogs) datasource to query"`
-	LabelNames      []string `json:"labelNames,omitempty" jsonschema:"description=Optional list of label names to measure. When omitted\\, every label name in the datasource is measured (subject to a safety cap)."`
-	MaxLabels       int      `json:"maxLabels,omitempty" jsonschema:"description=Optional safety cap on how many labels to inspect when labelNames is omitted (default 50)."`
-	MaxSampleValues int      `json:"maxSampleValues,omitempty" jsonschema:"description=Optional number of sample values to return per label (default 10\\, max 50)."`
-	StartRFC3339    string   `json:"startRfc3339,omitempty" jsonschema:"description=Optionally\\, the start time of the query in RFC3339 format (defaults to 1 hour ago)."`
-	EndRFC3339      string   `json:"endRfc3339,omitempty" jsonschema:"description=Optionally\\, the end time of the query in RFC3339 format (defaults to now)."`
+	DatasourceUID   string   `json:"datasourceUid" jsonschema:"required,description=Loki/VictoriaLogs datasource UID."`
+	LabelNames      []string `json:"labelNames,omitempty" jsonschema:"description=Labels to measure. Omit to auto-discover."`
+	MaxLabels       int      `json:"maxLabels,omitempty" jsonschema:"description=Cap on auto-discovered labels (default 50)."`
+	MaxSampleValues int      `json:"maxSampleValues,omitempty" jsonschema:"description=Sample values per label (default 10\\, max 50)."`
+	StartRFC3339    string   `json:"startRfc3339,omitempty" jsonschema:"description=RFC3339 start (default: 1h ago)."`
+	EndRFC3339      string   `json:"endRfc3339,omitempty" jsonschema:"description=RFC3339 end (default: now)."`
 }
 
 func getLokiLabelCardinality(ctx context.Context, args GetLokiLabelCardinalityParams) ([]LokiLabelCardinality, error) {
@@ -217,7 +217,7 @@ func getLokiLabelCardinality(ctx context.Context, args GetLokiLabelCardinalityPa
 // GetLokiLabelCardinality is the registered tool wrapper.
 var GetLokiLabelCardinality = mcpgrafana.MustTool(
 	"get_loki_label_cardinality",
-	"Measures the unique-value count of each Loki label and classifies it into a cardinality band (low/medium/high/very_high/extreme). When `labelNames` is omitted, samples up to 50 labels from the datasource. Returns a list sorted by cardinality descending so the worst offenders surface first. Use this as the first step in a label-strategy audit; pair with `audit_loki_label_strategy` for verdicts and recommendations.",
+	"Counts unique values per Loki label and classifies each into a band (low/medium/high/very_high/extreme). Sorted by cardinality descending. Pair with audit_loki_label_strategy.",
 	getLokiLabelCardinality,
 	mcp.WithTitleAnnotation("Measure Loki label cardinality"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -232,12 +232,12 @@ var GetLokiLabelCardinality = mcpgrafana.MustTool(
 // optional so users can supply only what they know; the scorer degrades
 // gracefully (lower-confidence verdicts) when data is missing.
 type LabelDescriptor struct {
-	Name           string   `json:"name" jsonschema:"required,description=The label name as it appears on log streams (e.g. 'app'\\, 'pod')."`
-	UniqueValues   int      `json:"uniqueValues,omitempty" jsonschema:"description=Optional measured unique-value count for the label. Leave 0/unset if unknown."`
-	SampleValues   []string `json:"sampleValues,omitempty" jsonschema:"description=Optional sample values for the label\\, used for normalisation checks."`
-	Unbounded      bool     `json:"unbounded,omitempty" jsonschema:"description=Set to true to assert the label is unbounded (e.g. user IDs)\\, overriding the cardinality band."`
-	UsedInQueries  string   `json:"usedInQueries,omitempty" jsonschema:"description=How often this label appears in selectors: 'always'\\, 'often'\\, 'sometimes'\\, 'rarely'\\, 'never'\\, or empty if unknown."`
-	ValueKind      string   `json:"valueKind,omitempty" jsonschema:"description=Whether label values are 'static' (don't change per line) or 'dynamic' (extracted per line)."`
+	Name          string   `json:"name" jsonschema:"required,description=Label name."`
+	UniqueValues  int      `json:"uniqueValues,omitempty" jsonschema:"description=Measured cardinality (0 = unknown)."`
+	SampleValues  []string `json:"sampleValues,omitempty" jsonschema:"description=Sample values for normalisation checks."`
+	Unbounded     bool     `json:"unbounded,omitempty" jsonschema:"description=Mark label as unbounded (forces move-to-metadata)."`
+	UsedInQueries string   `json:"usedInQueries,omitempty" jsonschema:"description=One of: always/often/sometimes/rarely/never."`
+	ValueKind     string   `json:"valueKind,omitempty" jsonschema:"description=static or dynamic (per-line extracted)."`
 }
 
 // LabelVerdict is one row of the audit table.
@@ -256,31 +256,26 @@ type LabelVerdict struct {
 // populated; if both are supplied, live data is gathered and merged with
 // any static hints (e.g. UsedInQueries) the caller provided.
 type AuditLokiLabelStrategyParams struct {
-	// Live mode
-	DatasourceUID string `json:"datasourceUid,omitempty" jsonschema:"description=Live mode: UID of the Loki (or VictoriaLogs) datasource to audit. Either this OR 'labels' must be supplied."`
-	Selector      string `json:"selector,omitempty" jsonschema:"description=Live mode: optional LogQL selector (e.g. {app=\"foo\"}) to scope the audit. Used only for the stats sample\\, not for label discovery."`
-	MaxLabels     int    `json:"maxLabels,omitempty" jsonschema:"description=Live mode: cap on labels inspected (default 50)."`
-	StartRFC3339  string `json:"startRfc3339,omitempty" jsonschema:"description=Live mode: query start time in RFC3339 (defaults to 1h ago)."`
-	EndRFC3339    string `json:"endRfc3339,omitempty" jsonschema:"description=Live mode: query end time in RFC3339 (defaults to now)."`
-
-	// Static mode
-	Labels []LabelDescriptor `json:"labels,omitempty" jsonschema:"description=Static mode: caller-supplied label set to audit. Either this OR 'datasourceUid' must be supplied."`
-
-	// Shared
-	ExpectedBaseLabels []string `json:"expectedBaseLabels,omitempty" jsonschema:"description=Optional override of the recommended base label set. Empty uses the built-in defaults (app/service/env/cluster/region/level/job/team/source/classification)."`
+	DatasourceUID      string            `json:"datasourceUid,omitempty" jsonschema:"description=Live mode: Loki/VictoriaLogs datasource UID. Either this or 'labels' is required."`
+	Selector           string            `json:"selector,omitempty" jsonschema:"description=Optional LogQL selector for live stats sample."`
+	MaxLabels          int               `json:"maxLabels,omitempty" jsonschema:"description=Live-mode label cap (default 50)."`
+	StartRFC3339       string            `json:"startRfc3339,omitempty" jsonschema:"description=RFC3339 start (default: 1h ago)."`
+	EndRFC3339         string            `json:"endRfc3339,omitempty" jsonschema:"description=RFC3339 end (default: now)."`
+	Labels             []LabelDescriptor `json:"labels,omitempty" jsonschema:"description=Static mode: caller-supplied label set."`
+	ExpectedBaseLabels []string          `json:"expectedBaseLabels,omitempty" jsonschema:"description=Override the default recommended base labels."`
 }
 
 // LabelStrategyAudit is the structured response.
 type LabelStrategyAudit struct {
-	Mode                 string         `json:"mode"` // "live" | "static" | "hybrid"
-	Summary              string         `json:"summary"`
-	Verdicts             []LabelVerdict `json:"verdicts"`
-	MissingBaseLabels    []string       `json:"missingBaseLabels,omitempty"`
-	NormalizationIssues  []string       `json:"normalizationIssues,omitempty"`
-	NamingIssues         []string       `json:"namingIssues,omitempty"`
-	RecommendedLabelSet  []string       `json:"recommendedLabelSet"`
-	EstimatedStreamGain  string         `json:"estimatedStreamGain,omitempty"`
-	StatsObserved        *Stats         `json:"statsObserved,omitempty"`
+	Mode                string         `json:"mode"` // "live" | "static" | "hybrid"
+	Summary             string         `json:"summary"`
+	Verdicts            []LabelVerdict `json:"verdicts"`
+	MissingBaseLabels   []string       `json:"missingBaseLabels,omitempty"`
+	NormalizationIssues []string       `json:"normalizationIssues,omitempty"`
+	NamingIssues        []string       `json:"namingIssues,omitempty"`
+	RecommendedLabelSet []string       `json:"recommendedLabelSet"`
+	EstimatedStreamGain string         `json:"estimatedStreamGain,omitempty"`
+	StatsObserved       *Stats         `json:"statsObserved,omitempty"`
 }
 
 func auditLokiLabelStrategy(ctx context.Context, args AuditLokiLabelStrategyParams) (*LabelStrategyAudit, error) {
@@ -348,7 +343,7 @@ func auditLokiLabelStrategy(ctx context.Context, args AuditLokiLabelStrategyPara
 // AuditLokiLabelStrategy is the registered tool wrapper.
 var AuditLokiLabelStrategy = mcpgrafana.MustTool(
 	"audit_loki_label_strategy",
-	"Evaluates a Loki label strategy against Grafana Professional Services best practices and returns a structured audit: per-label verdicts (keep/review/move_to_metadata/remove/normalize), missing base labels, naming and normalisation issues, a recommended label set, and (in live mode) the observed stream/chunk stats. Supports two modes: live (pass `datasourceUid` to pull labels and cardinality directly) or static (pass `labels` with your own measurements). Pass both to refine a live audit with hints like `usedInQueries`.",
+	"Audits a Loki label strategy. Returns per-label verdicts (keep/review/move_to_metadata/remove/normalize), missing base labels, naming/normalisation issues, and a recommended set. Live mode (datasourceUid) pulls cardinality directly; static mode (labels) scores caller-supplied measurements; both can be combined.",
 	auditLokiLabelStrategy,
 	mcp.WithTitleAnnotation("Audit Loki label strategy"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -742,14 +737,14 @@ func buildSummary(mode string, verdicts []LabelVerdict, missing, normalization, 
 // querier metrics.go log line. All fields are optional — the diagnoser
 // produces best-effort findings from whatever subset is supplied.
 type QueryPerfMetrics struct {
-	QueueTimeSec                 float64 `json:"queueTimeSec,omitempty" jsonschema:"description=metrics.go queue_time in seconds. High = not enough queriers."`
-	ChunkRefsFetchTimeSec        float64 `json:"chunkRefsFetchTimeSec,omitempty" jsonschema:"description=metrics.go chunk_refs_fetch_time in seconds. High = index gateway bottleneck."`
-	StoreChunksDownloadTimeSec   float64 `json:"storeChunksDownloadTimeSec,omitempty" jsonschema:"description=metrics.go store_chunks_download_time in seconds. High with small chunks indicates label over-splitting."`
-	ExecutionTimeSec             float64 `json:"executionTimeSec,omitempty" jsonschema:"description=metrics.go exec_time in seconds. High = CPU work in regex or many tiny log lines."`
-	TotalBytes                   int64   `json:"totalBytes,omitempty" jsonschema:"description=Bytes downloaded by the query (used to compute average chunk size when paired with cacheChunkReqs)."`
-	CacheChunkReqs               int64   `json:"cacheChunkReqs,omitempty" jsonschema:"description=Number of chunk requests served (total_bytes / cache_chunk_req = avg chunk size)."`
-	TotalLines                   int64   `json:"totalLines,omitempty" jsonschema:"description=Total lines scanned by the query."`
-	PostFilterLines              int64   `json:"postFilterLines,omitempty" jsonschema:"description=Lines remaining after line filters (high discard ratio = poor label selectivity)."`
+	QueueTimeSec               float64 `json:"queueTimeSec,omitempty" jsonschema:"description=metrics.go queue_time (s)."`
+	ChunkRefsFetchTimeSec      float64 `json:"chunkRefsFetchTimeSec,omitempty" jsonschema:"description=metrics.go chunk_refs_fetch_time (s)."`
+	StoreChunksDownloadTimeSec float64 `json:"storeChunksDownloadTimeSec,omitempty" jsonschema:"description=metrics.go store_chunks_download_time (s)."`
+	ExecutionTimeSec           float64 `json:"executionTimeSec,omitempty" jsonschema:"description=metrics.go exec_time (s)."`
+	TotalBytes                 int64   `json:"totalBytes,omitempty" jsonschema:"description=Bytes downloaded; with cacheChunkReqs gives avg chunk size."`
+	CacheChunkReqs             int64   `json:"cacheChunkReqs,omitempty" jsonschema:"description=Chunk requests served."`
+	TotalLines                 int64   `json:"totalLines,omitempty" jsonschema:"description=Total lines scanned."`
+	PostFilterLines            int64   `json:"postFilterLines,omitempty" jsonschema:"description=Lines remaining after line filters."`
 }
 
 // QueryPerfFinding is one entry in the diagnosis output.
@@ -764,11 +759,11 @@ type QueryPerfFinding struct {
 // datasource UID (optional, enables live stats lookup), and the metrics
 // the operator pulled from logs.
 type DiagnoseLokiQueryPerformanceParams struct {
-	DatasourceUID string           `json:"datasourceUid,omitempty" jsonschema:"description=Optional Loki/VictoriaLogs datasource UID. When supplied with 'logql'\\, the tool fetches index stats live."`
-	LogQL         string           `json:"logql,omitempty" jsonschema:"description=Optional LogQL selector used for live stats. Must be a label-only matcher (no line filters)."`
-	Metrics       QueryPerfMetrics `json:"metrics,omitempty" jsonschema:"description=Optional runtime metrics from the querier metrics.go log line."`
-	StartRFC3339  string           `json:"startRfc3339,omitempty" jsonschema:"description=Optional start time for live stats lookup (RFC3339)."`
-	EndRFC3339    string           `json:"endRfc3339,omitempty" jsonschema:"description=Optional end time for live stats lookup (RFC3339)."`
+	DatasourceUID string           `json:"datasourceUid,omitempty" jsonschema:"description=Datasource UID for live stats."`
+	LogQL         string           `json:"logql,omitempty" jsonschema:"description=Label-only selector for live stats."`
+	Metrics       QueryPerfMetrics `json:"metrics,omitempty" jsonschema:"description=Runtime metrics from metrics.go."`
+	StartRFC3339  string           `json:"startRfc3339,omitempty" jsonschema:"description=RFC3339 start."`
+	EndRFC3339    string           `json:"endRfc3339,omitempty" jsonschema:"description=RFC3339 end."`
 }
 
 // QueryPerfDiagnosis is the structured output.
@@ -812,7 +807,7 @@ func diagnoseLokiQueryPerformance(ctx context.Context, args DiagnoseLokiQueryPer
 // DiagnoseLokiQueryPerformance is the registered tool wrapper.
 var DiagnoseLokiQueryPerformance = mcpgrafana.MustTool(
 	"diagnose_loki_query_performance",
-	"Diagnoses slow LogQL queries against the Grafana Professional Services bottleneck checklist. Accepts optional runtime metrics from the querier `metrics.go` log line (queue_time, chunk_refs_fetch_time, store_chunks_download_time, exec_time, total_bytes/cache_chunk_req, total_lines/post_filter_lines). When `datasourceUid` + `logql` are supplied the tool also pulls live index stats. Returns ranked findings with concrete fixes (more queriers, more index gateways, smaller stream count, better label selectivity, etc.).",
+	"Diagnoses slow LogQL queries against the bottleneck checklist. Accepts runtime metrics from the querier metrics.go log and/or live stats via datasourceUid+logql. Returns ranked findings with fixes.",
 	diagnoseLokiQueryPerformance,
 	mcp.WithTitleAnnotation("Diagnose Loki query performance"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -943,11 +938,11 @@ func buildPerfSummary(findings []QueryPerfFinding, stats *Stats) string {
 
 // SuggestLokiAlloyLabelConfigParams describes the desired Alloy pipeline.
 type SuggestLokiAlloyLabelConfigParams struct {
-	ApprovedLabels    []string `json:"approvedLabels" jsonschema:"required,description=Labels to keep on the index after the pipeline runs."`
-	RequiredLabels    []string `json:"requiredLabels,omitempty" jsonschema:"description=Labels that must be present; the snippet will inject \"unknown\" placeholders for missing values (soft enforcement)."`
-	NormalizeLogLevel bool     `json:"normalizeLogLevel,omitempty" jsonschema:"description=When true\\, include stage.replace blocks that fold info/warn/error/debug casing variants into lower-case."`
-	ComponentName     string   `json:"componentName,omitempty" jsonschema:"description=Optional Alloy component name. Defaults to \"enforce_labels\"."`
-	ForwardTo         string   `json:"forwardTo,omitempty" jsonschema:"description=Optional forward_to target. Defaults to loki.write.default.receiver."`
+	ApprovedLabels    []string `json:"approvedLabels" jsonschema:"required,description=Labels to keep on the index."`
+	RequiredLabels    []string `json:"requiredLabels,omitempty" jsonschema:"description=Labels that get an 'unknown' placeholder when missing."`
+	NormalizeLogLevel bool     `json:"normalizeLogLevel,omitempty" jsonschema:"description=Fold info/warn/error/debug casing to lower-case."`
+	ComponentName     string   `json:"componentName,omitempty" jsonschema:"description=Alloy component name (default enforce_labels)."`
+	ForwardTo         string   `json:"forwardTo,omitempty" jsonschema:"description=forward_to target (default loki.write.default.receiver)."`
 }
 
 // SuggestLokiAlloyLabelConfigResult is the rendered snippet plus notes.
@@ -1023,7 +1018,7 @@ func suggestLokiAlloyLabelConfig(_ context.Context, args SuggestLokiAlloyLabelCo
 // SuggestLokiAlloyLabelConfig is the registered tool wrapper.
 var SuggestLokiAlloyLabelConfig = mcpgrafana.MustTool(
 	"suggest_loki_alloy_label_config",
-	"Generates an Alloy `loki.process` snippet that enforces an approved Loki label set. Always emits a final `stage.label_keep` for hard enforcement; optionally folds log-level casing (`I`/`Info`/`INFO` -> `info`) and injects `unknown` placeholders for required labels so violations are queryable before flipping to hard rejection. Inputs are static — no Loki connection required.",
+	"Generates an Alloy loki.process snippet that enforces an approved label set via stage.label_keep, with optional log-level normalisation and soft-enforcement placeholders.",
 	suggestLokiAlloyLabelConfig,
 	mcp.WithTitleAnnotation("Suggest Alloy label enforcement config"),
 	mcp.WithIdempotentHintAnnotation(true),
