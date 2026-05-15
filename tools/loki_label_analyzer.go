@@ -214,18 +214,8 @@ func getLokiLabelCardinality(ctx context.Context, args GetLokiLabelCardinalityPa
 	return out, nil
 }
 
-// GetLokiLabelCardinality is the registered tool wrapper.
-var GetLokiLabelCardinality = mcpgrafana.MustTool(
-	"get_loki_label_cardinality",
-	"Counts unique values per Loki label and classifies each into a band (low/medium/high/very_high/extreme). Sorted by cardinality descending. Pair with audit_loki_label_strategy.",
-	getLokiLabelCardinality,
-	mcp.WithTitleAnnotation("Measure Loki label cardinality"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-)
-
 // ---------------------------------------------------------------------------
-// audit_loki_label_strategy
+// Label-strategy audit (internal — exposed via analyze_loki_labels)
 // ---------------------------------------------------------------------------
 
 // LabelDescriptor is the static-mode input for one label. Fields are
@@ -339,16 +329,6 @@ func auditLokiLabelStrategy(ctx context.Context, args AuditLokiLabelStrategyPara
 
 	return audit, nil
 }
-
-// AuditLokiLabelStrategy is the registered tool wrapper.
-var AuditLokiLabelStrategy = mcpgrafana.MustTool(
-	"audit_loki_label_strategy",
-	"Audits a Loki label strategy. Returns per-label verdicts (keep/review/move_to_metadata/remove/normalize), missing base labels, naming/normalisation issues, and a recommended set. Live mode (datasourceUid) pulls cardinality directly; static mode (labels) scores caller-supplied measurements; both can be combined.",
-	auditLokiLabelStrategy,
-	mcp.WithTitleAnnotation("Audit Loki label strategy"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-)
 
 // gatherLiveDescriptors pulls label names + values from a datasource and
 // optionally a stats sample for the provided selector. Cardinality of each
@@ -804,16 +784,6 @@ func diagnoseLokiQueryPerformance(ctx context.Context, args DiagnoseLokiQueryPer
 	}, nil
 }
 
-// DiagnoseLokiQueryPerformance is the registered tool wrapper.
-var DiagnoseLokiQueryPerformance = mcpgrafana.MustTool(
-	"diagnose_loki_query_performance",
-	"Diagnoses slow LogQL queries against the bottleneck checklist. Accepts runtime metrics from the querier metrics.go log and/or live stats via datasourceUid+logql. Returns ranked findings with fixes.",
-	diagnoseLokiQueryPerformance,
-	mcp.WithTitleAnnotation("Diagnose Loki query performance"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-)
-
 // scoreQueryPerf applies the bottleneck checklist from the skill.
 func scoreQueryPerf(m QueryPerfMetrics, stats *Stats) []QueryPerfFinding {
 	var findings []QueryPerfFinding
@@ -1032,8 +1002,89 @@ var SuggestLokiAlloyLabelConfig = mcpgrafana.MustTool(
 // AddLokiLabelAnalyzerTools registers the label-analyzer tool set.
 // AddLokiTools calls this so the standard Loki bundle includes them.
 func AddLokiLabelAnalyzerTools(s *server.MCPServer) {
-	GetLokiLabelCardinality.Register(s)
-	AuditLokiLabelStrategy.Register(s)
-	DiagnoseLokiQueryPerformance.Register(s)
+	AnalyzeLokiLabels.Register(s)
 	SuggestLokiAlloyLabelConfig.Register(s)
 }
+
+// ---------------------------------------------------------------------------
+// analyze_loki_labels — unified entry point
+// ---------------------------------------------------------------------------
+
+// AnalyzeLokiLabelsParams composes the inputs that used to belong to three
+// separate tools: live cardinality measurement, label-strategy audit, and
+// query-performance diagnosis. Either DatasourceUID (live) or Labels
+// (static) must be set; perf diagnosis runs when PerfMetrics is supplied
+// or when DatasourceUID + Selector together enable live stats lookup.
+type AnalyzeLokiLabelsParams struct {
+	DatasourceUID      string            `json:"datasourceUid,omitempty" jsonschema:"description=Loki/VictoriaLogs datasource UID (live mode)."`
+	Labels             []LabelDescriptor `json:"labels,omitempty" jsonschema:"description=Caller-supplied label set (static mode)."`
+	Selector           string            `json:"selector,omitempty" jsonschema:"description=LogQL selector for live stats / perf diagnosis."`
+	MaxLabels          int               `json:"maxLabels,omitempty" jsonschema:"description=Live-mode label cap (default 50)."`
+	StartRFC3339       string            `json:"startRfc3339,omitempty" jsonschema:"description=RFC3339 start (default: 1h ago)."`
+	EndRFC3339         string            `json:"endRfc3339,omitempty" jsonschema:"description=RFC3339 end (default: now)."`
+	ExpectedBaseLabels []string          `json:"expectedBaseLabels,omitempty" jsonschema:"description=Override the default recommended base labels."`
+	PerfMetrics        *QueryPerfMetrics `json:"perfMetrics,omitempty" jsonschema:"description=Runtime metrics from metrics.go; presence triggers perf diagnosis."`
+}
+
+// AnalyzeLokiLabelsResult is a composite: audit is always present, the
+// query-performance diagnosis is included only when there's enough signal
+// to produce it.
+type AnalyzeLokiLabelsResult struct {
+	Audit            *LabelStrategyAudit `json:"audit"`
+	QueryPerformance *QueryPerfDiagnosis `json:"queryPerformance,omitempty"`
+}
+
+func analyzeLokiLabels(ctx context.Context, args AnalyzeLokiLabelsParams) (*AnalyzeLokiLabelsResult, error) {
+	if args.DatasourceUID == "" && len(args.Labels) == 0 {
+		return nil, fmt.Errorf("either datasourceUid or labels must be supplied")
+	}
+
+	audit, err := auditLokiLabelStrategy(ctx, AuditLokiLabelStrategyParams{
+		DatasourceUID:      args.DatasourceUID,
+		Selector:           args.Selector,
+		MaxLabels:          args.MaxLabels,
+		StartRFC3339:       args.StartRFC3339,
+		EndRFC3339:         args.EndRFC3339,
+		Labels:             args.Labels,
+		ExpectedBaseLabels: args.ExpectedBaseLabels,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	out := &AnalyzeLokiLabelsResult{Audit: audit}
+
+	// Perf diagnosis runs if the caller provided runtime metrics, OR if
+	// they gave us enough to do a live stats lookup (datasource + selector).
+	hasMetrics := args.PerfMetrics != nil
+	canLive := args.DatasourceUID != "" && args.Selector != ""
+	if hasMetrics || canLive {
+		var metrics QueryPerfMetrics
+		if hasMetrics {
+			metrics = *args.PerfMetrics
+		}
+		diag, err := diagnoseLokiQueryPerformance(ctx, DiagnoseLokiQueryPerformanceParams{
+			DatasourceUID: args.DatasourceUID,
+			LogQL:         args.Selector,
+			Metrics:       metrics,
+			StartRFC3339:  args.StartRFC3339,
+			EndRFC3339:    args.EndRFC3339,
+		})
+		if err == nil {
+			out.QueryPerformance = diag
+		}
+		// Perf diagnosis is best-effort; the audit is the primary result.
+	}
+
+	return out, nil
+}
+
+// AnalyzeLokiLabels is the unified tool wrapper.
+var AnalyzeLokiLabels = mcpgrafana.MustTool(
+	"analyze_loki_labels",
+	"Analyses a Loki label strategy. Returns per-label verdicts (keep/review/move_to_metadata/remove/normalize), missing base labels, naming/normalisation issues, and a recommended set. Pass datasourceUid for live cardinality, labels for static scoring, or both. Adds query-performance diagnosis when perfMetrics is set or when datasourceUid+selector enable live stats.",
+	analyzeLokiLabels,
+	mcp.WithTitleAnnotation("Analyze Loki label strategy"),
+	mcp.WithIdempotentHintAnnotation(true),
+	mcp.WithReadOnlyHintAnnotation(true),
+)

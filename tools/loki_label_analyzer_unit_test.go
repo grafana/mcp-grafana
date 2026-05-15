@@ -254,6 +254,39 @@ func TestSuggestLokiAlloyLabelConfig_RejectsEmpty(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestAnalyzeLokiLabels_StaticAuditOnly(t *testing.T) {
+	res, err := analyzeLokiLabels(context.Background(), AnalyzeLokiLabelsParams{
+		Labels: []LabelDescriptor{
+			{Name: "app", UniqueValues: 5},
+			{Name: "pod", UniqueValues: 2000},
+		},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.NotNil(t, res.Audit)
+	assert.Equal(t, "static", res.Audit.Mode)
+	assert.Nil(t, res.QueryPerformance, "perf diagnosis should be absent without metrics or live stats")
+}
+
+func TestAnalyzeLokiLabels_StaticAuditWithPerfMetrics(t *testing.T) {
+	res, err := analyzeLokiLabels(context.Background(), AnalyzeLokiLabelsParams{
+		Labels: []LabelDescriptor{{Name: "app", UniqueValues: 5}},
+		PerfMetrics: &QueryPerfMetrics{
+			QueueTimeSec: 3.0,
+		},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, res.Audit)
+	require.NotNil(t, res.QueryPerformance, "perf diagnosis should run when perfMetrics is supplied")
+	require.NotEmpty(t, res.QueryPerformance.Findings)
+	assert.Equal(t, "queue_time", res.QueryPerformance.Findings[0].Bottleneck)
+}
+
+func TestAnalyzeLokiLabels_RejectsEmpty(t *testing.T) {
+	_, err := analyzeLokiLabels(context.Background(), AnalyzeLokiLabelsParams{})
+	require.Error(t, err)
+}
+
 func TestSuggestLokiAlloyLabelConfig_CustomComponentAndForward(t *testing.T) {
 	res, err := suggestLokiAlloyLabelConfig(context.Background(), SuggestLokiAlloyLabelConfigParams{
 		ApprovedLabels: []string{"app"},
