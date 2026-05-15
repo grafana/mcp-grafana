@@ -68,7 +68,7 @@ func applyUpdates(entry *datasourceEntry, updates map[string]any, jsonDataUpdate
 type ProvisionDatasourceParams struct {
 	Type   string         `json:"type" jsonschema:"required,description=Datasource type (e.g. prometheus\\, loki\\, influxdb)"`
 	Fields map[string]any `json:"fields,omitempty" jsonschema:"description=Datasource field values to provision\\, keyed by field key from the schema returned on the first call. The server uses each field's target (root or jsonData) to place values correctly in the output. Example: {\"url\": \"http://prometheus:9090\"\\, \"httpMethod\": \"POST\"}."`
-	Format string         `json:"format,omitempty" jsonschema:"description=Output format: yaml (default\\, for on-premises Grafana) or terraform (for Grafana Cloud customers using Terraform).,enum=yaml,enum=terraform"`
+	Format string         `json:"format,omitempty" jsonschema:"required,description=Output format: yaml (default\\, for on-premises Grafana) or terraform (for Grafana Cloud customers using Terraform).,enum=yaml,enum=terraform"`
 }
 
 // tfAttrName maps YAML/JSON field names to Terraform HCL attribute names for
@@ -82,18 +82,16 @@ var tfAttrName = map[string]string{
 	"isDefault":       "is_default",
 	"editable":        "editable",
 	"basicAuth":       "basic_auth_enabled",
-	"basicAuthUser":   "basic_auth_username",
 	"withCredentials": "with_credentials",
 	"database":        "database_name",
-	"user":            "username",
 	// "access" is intentionally absent: "proxy" is the default in the TF provider
 }
 
 // tfAttrOrder controls the output order of Terraform root-level attributes.
 var tfAttrOrder = []string{
 	"type", "name", "uid", "url", "orgId",
-	"isDefault", "editable", "basicAuth", "basicAuthUser",
-	"withCredentials", "database", "user",
+	"isDefault", "editable", "basicAuth",
+	"withCredentials", "database",
 }
 
 // toTerraformLabel converts a datasource name to a valid Terraform resource label.

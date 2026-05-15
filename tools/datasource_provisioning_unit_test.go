@@ -706,3 +706,163 @@ func TestProvisionDatasource_TerraformFormat_Phase1StillReturnsGuidance(t *testi
 	guidance := mustExtractGuidance(t, result)
 	assert.Equal(t, "prometheus", guidance.Type)
 }
+
+func TestProvisionDatasource_TerraformFormat_DefaultNameDerivedFromStem(t *testing.T) {
+	result, err := provisionDatasource(context.Background(), promTFArgs(map[string]any{
+		"url": "http://prometheus:9090",
+	}))
+	require.NoError(t, err)
+
+	pr := mustExtractProvisionResult(t, result)
+	assert.Contains(t, pr.Content, `name = "Prov Prometheus"`)
+	assert.Contains(t, pr.Content, `"grafana_data_source" "prov_prometheus"`)
+}
+
+func TestProvisionDatasource_TerraformFormat_NameFromFields(t *testing.T) {
+	result, err := provisionDatasource(context.Background(), promTFArgs(map[string]any{
+		"name": "My Prometheus",
+		"url":  "http://prometheus:9090",
+	}))
+	require.NoError(t, err)
+
+	pr := mustExtractProvisionResult(t, result)
+	assert.Contains(t, pr.Content, `name = "My Prometheus"`)
+	assert.Contains(t, pr.Content, `"grafana_data_source" "my_prometheus"`)
+}
+
+func TestProvisionDatasource_TerraformFormat_AccessNotEmitted(t *testing.T) {
+	result, err := provisionDatasource(context.Background(), promTFArgs(map[string]any{
+		"url": "http://prometheus:9090",
+	}))
+	require.NoError(t, err)
+
+	pr := mustExtractProvisionResult(t, result)
+	assert.NotContains(t, pr.Content, "access")
+}
+
+func TestProvisionDatasource_TerraformFormat_UIDMappedEndToEnd(t *testing.T) {
+	result, err := provisionDatasource(context.Background(), promTFArgs(map[string]any{
+		"url": "http://prometheus:9090",
+		"uid": "prom-main",
+	}))
+	require.NoError(t, err)
+
+	pr := mustExtractProvisionResult(t, result)
+	assert.Contains(t, pr.Content, `uid = "prom-main"`)
+}
+
+func TestProvisionDatasource_TerraformFormat_ZipContentMatchesText(t *testing.T) {
+	result, err := provisionDatasource(context.Background(), promTFArgs(map[string]any{
+		"name": "Zip TF DS",
+		"url":  "http://prometheus:9090",
+	}))
+	require.NoError(t, err)
+
+	pr := mustExtractProvisionResult(t, result)
+
+	blob := mustExtractZipBlob(t, result)
+	zipBytes, err := base64.StdEncoding.DecodeString(blob.Blob)
+	require.NoError(t, err)
+	zr, err := zip.NewReader(bytes.NewReader(zipBytes), int64(len(zipBytes)))
+	require.NoError(t, err)
+	require.Len(t, zr.File, 1)
+
+	rc, err := zr.File[0].Open()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = rc.Close() })
+	var buf bytes.Buffer
+	_, err = buf.ReadFrom(rc)
+	require.NoError(t, err)
+	assert.Equal(t, pr.Content, buf.String())
+}
+
+// ── hclLiteral ────────────────────────────────────────────────────────────────
+
+func TestHclLiteral_String(t *testing.T) {
+	assert.Equal(t, `"hello world"`, hclLiteral("hello world"))
+}
+
+func TestHclLiteral_BoolTrue(t *testing.T) {
+	assert.Equal(t, "true", hclLiteral(true))
+}
+
+func TestHclLiteral_BoolFalse(t *testing.T) {
+	assert.Equal(t, "false", hclLiteral(false))
+}
+
+func TestHclLiteral_Int(t *testing.T) {
+	assert.Equal(t, "42", hclLiteral(42))
+}
+
+func TestHclLiteral_Float64WholeNumber(t *testing.T) {
+	assert.Equal(t, "7", hclLiteral(float64(7)))
+}
+
+func TestHclLiteral_Float64NonInteger(t *testing.T) {
+	assert.Equal(t, "3.14", hclLiteral(3.14))
+}
+
+func TestHclLiteral_DefaultFallbackToJSON(t *testing.T) {
+	assert.Equal(t, `["a","b"]`, hclLiteral([]string{"a", "b"}))
+}
+
+// ── buildTerraformHCL (field mapping completeness) ────────────────────────────
+
+func TestBuildTerraformHCL_UIDMapped(t *testing.T) {
+	hcl := buildTerraformHCL("prov_prometheus", map[string]any{
+		"type": "prometheus",
+		"name": "Prov Prometheus",
+		"uid":  "prom-uid",
+	}, nil)
+	assert.Contains(t, hcl, `uid = "prom-uid"`)
+}
+
+func TestBuildTerraformHCL_BasicAuthMapped(t *testing.T) {
+	hcl := buildTerraformHCL("prov_prometheus", map[string]any{
+		"type":      "prometheus",
+		"name":      "Prov Prometheus",
+		"basicAuth": true,
+	}, nil)
+	assert.Contains(t, hcl, "basic_auth_enabled = true")
+	assert.NotContains(t, hcl, "basicAuth")
+}
+
+func TestBuildTerraformHCL_WithCredentialsMapped(t *testing.T) {
+	hcl := buildTerraformHCL("prov_prometheus", map[string]any{
+		"type":            "prometheus",
+		"name":            "Prov Prometheus",
+		"withCredentials": false,
+	}, nil)
+	assert.Contains(t, hcl, "with_credentials = false")
+	assert.NotContains(t, hcl, "withCredentials")
+}
+
+func TestBuildTerraformHCL_DatabaseMapped(t *testing.T) {
+	hcl := buildTerraformHCL("prov_influxdb", map[string]any{
+		"type":     "influxdb",
+		"name":     "Prov InfluxDB",
+		"database": "metrics",
+	}, nil)
+	assert.Contains(t, hcl, `database_name = "metrics"`)
+	assert.NotContains(t, hcl, "\"database\"")
+}
+
+func TestBuildTerraformHCL_NoJsonDataOmitsJsonEncode(t *testing.T) {
+	hcl := buildTerraformHCL("prov_prometheus", map[string]any{
+		"type": "prometheus",
+		"name": "Prov Prometheus",
+		"url":  "http://prometheus:9090",
+	}, nil)
+	assert.NotContains(t, hcl, "json_data_encoded")
+}
+
+func TestBuildTerraformHCL_UnknownFieldsNotEmitted(t *testing.T) {
+	// "user" is in the common datasource fields but absent from tfAttrName,
+	// so it must not appear in the HCL output.
+	hcl := buildTerraformHCL("prov_prometheus", map[string]any{
+		"type": "prometheus",
+		"name": "Prov Prometheus",
+		"user": "admin",
+	}, nil)
+	assert.NotContains(t, hcl, "user")
+}
