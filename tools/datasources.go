@@ -103,9 +103,9 @@ func (datasourceJSONData) JSONSchema() *jsonschema.Schema {
 // TODO: Replace with a fetch from the Grafana datasource settings API when available.
 func datasourceJSONDataSchema() *jsonschema.Schema {
 	return &jsonschema.Schema{
-		Type: "object",
+		Type:        "object",
 		Description: "Plugin-specific non-secret settings. Keys vary by datasource type; ask the user or consult the plugin docs.",
-		Extras: map[string]any{},
+		Extras:      map[string]any{},
 	}
 }
 
