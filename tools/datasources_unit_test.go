@@ -13,6 +13,7 @@ import (
 	"github.com/grafana/grafana-openapi-client-go/client"
 	"github.com/grafana/grafana-openapi-client-go/models"
 	mcpgrafana "github.com/grafana/mcp-grafana"
+	datasourceschemas "github.com/grafana/mcp-grafana/tools/datasource_schemas"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -231,6 +232,46 @@ func TestGetDatasource_ErrorWhenNeitherProvided(t *testing.T) {
 }
 
 // ---- createDatasource ----
+func TestCreateDatasource_SchemaGuidancePhase(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("Grafana API must not be called during schema guidance phase")
+	}))
+	defer srv.Close()
+
+	ctx := mockDatasourcesCtx(srv)
+
+	result, err := createDatasource(ctx, CreateDatasourceParams{
+		Name: "My Prometheus",
+		Type: "prometheus",
+		// no Fields → Phase 1: return schema guidance
+	})
+	require.NoError(t, err)
+	require.Len(t, result.Content, 1)
+
+	text, ok := result.Content[0].(mcp.TextContent)
+	require.True(t, ok)
+
+	var guidance map[string]any
+	require.NoError(t, json.Unmarshal([]byte(text.Text), &guidance))
+	assert.Equal(t, "prometheus", guidance["type"])
+	assert.NotEmpty(t, guidance["fields"])
+	assert.NotEmpty(t, guidance["message"])
+}
+
+func TestCreateDatasource_UnknownType(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("Grafana API must not be called for unknown type")
+	}))
+	defer srv.Close()
+
+	_, err := createDatasource(mockDatasourcesCtx(srv), CreateDatasourceParams{
+		Name:   "My DS",
+		Type:   "nonexistent-plugin",
+		Fields: map[string]any{"foo": "bar"},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no schema available")
+}
 
 func TestCreateDatasource_Success(t *testing.T) {
 	id := int64(42)
@@ -263,9 +304,10 @@ func TestCreateDatasource_Success(t *testing.T) {
 	mcpgrafana.GrafanaClientFromContext(ctx).PublicURL = "https://grafana.example.com"
 
 	toolResult, err := createDatasource(ctx, CreateDatasourceParams{
-		Name: name,
-		Type: "prometheus",
-		URL:  "http://prometheus:9090",
+		Name:   name,
+		Type:   "prometheus",
+		URL:    "http://prometheus:9090",
+		Fields: map[string]any{"httpMethod": "POST", "timeInterval": "15s"},
 	})
 	require.NoError(t, err)
 	require.NotNil(t, toolResult)
@@ -290,4 +332,102 @@ func TestCreateDatasource_Success(t *testing.T) {
 	assert.Equal(t, "resource_link", link.Type)
 	assert.Equal(t, configPageURL, link.URI)
 	assert.Equal(t, name, link.Name)
+}
+
+func TestCreateDatasource_SecureFieldsNotLeakedToJSONData(t *testing.T) {
+	var capturedJSONData map[string]any
+
+	id := int64(1)
+	name := "My Prometheus"
+	uid := "prom-uid"
+	msg := "ok"
+	mockResp := models.AddDataSourceOKBody{
+		ID:      &id,
+		Name:    &name,
+		Message: &msg,
+		Datasource: &models.DataSource{ID: id, UID: uid, Name: name, Type: "prometheus"},
+	}
+
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			JSONData map[string]any `json:"jsonData"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		capturedJSONData = body.JSONData
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(mockResp)
+	}))
+	defer srv.Close()
+
+	_, err := createDatasource(mockDatasourcesCtx(srv), CreateDatasourceParams{
+		Name: name,
+		Type: "prometheus",
+		Fields: map[string]any{
+			"httpMethod":        "GET",
+			"basicAuthPassword": "s3cr3t", // secureJsonData field — must be dropped
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "GET", capturedJSONData["httpMethod"])
+	assert.NotContains(t, capturedJSONData, "basicAuthPassword")
+}
+
+// ---- transformFields ----
+
+func TestTransformFields(t *testing.T) {
+	schema := &datasourceschemas.DatasourceSchema{
+		Fields: []datasourceschemas.DsSchemaField{
+			{Key: "httpMethod", Target: "jsonData", ValueType: "string"},
+			{Key: "timeInterval", Target: "jsonData", ValueType: "string"},
+			{Key: "basicAuthPassword", Target: "secureJsonData", ValueType: "string"},
+			{Key: "someRootField", Target: "root", ValueType: "string"},
+		},
+	}
+
+	t.Run("jsonData fields are included with base key", func(t *testing.T) {
+		result := transformFields(schema, map[string]any{"httpMethod": "POST"})
+		assert.Equal(t, "POST", result["httpMethod"])
+	})
+
+	t.Run("secureJsonData fields are excluded", func(t *testing.T) {
+		result := transformFields(schema, map[string]any{"basicAuthPassword": "s3cr3t"})
+		assert.NotContains(t, result, "basicAuthPassword")
+	})
+
+	t.Run("root fields are excluded", func(t *testing.T) {
+		result := transformFields(schema, map[string]any{"someRootField": "value"})
+		assert.NotContains(t, result, "someRootField")
+	})
+
+	t.Run("unknown fields are excluded", func(t *testing.T) {
+		result := transformFields(schema, map[string]any{"unknownField": "value"})
+		assert.NotContains(t, result, "unknownField")
+	})
+
+	t.Run("section-prefixed input key is stored under base key", func(t *testing.T) {
+		s := &datasourceschemas.DatasourceSchema{
+			Fields: []datasourceschemas.DsSchemaField{
+				{Key: "region", Section: "aws", Target: "jsonData", ValueType: "string"},
+			},
+		}
+		result := transformFields(s, map[string]any{"aws.region": "us-east-1"})
+		assert.Equal(t, "us-east-1", result["region"])
+		assert.NotContains(t, result, "aws.region")
+	})
+
+	t.Run("mixed targets: only schema jsonData fields make it through", func(t *testing.T) {
+		result := transformFields(schema, map[string]any{
+			"httpMethod":        "GET",
+			"timeInterval":      "30s",
+			"basicAuthPassword": "s3cr3t",
+			"someRootField":     "rootval",
+			"extra":             "fallback",
+		})
+		assert.Equal(t, "GET", result["httpMethod"])
+		assert.Equal(t, "30s", result["timeInterval"])
+		assert.NotContains(t, result, "basicAuthPassword")
+		assert.NotContains(t, result, "someRootField")
+		assert.NotContains(t, result, "extra")
+	})
 }

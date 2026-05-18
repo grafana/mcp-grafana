@@ -111,10 +111,9 @@ type CreateDatasourceResult struct {
 	NextSteps  string             `json:"nextSteps,omitempty"`
 }
 
-// TransformFields extracts the jsonData fields from inputFields (keyed by the
-// schema input key returned in guidance). Root-targeted fields are skipped since
-// they are already captured as explicit params on the caller side. Unknown keys
-// fall back to jsonData as a safe default.
+// transformFields extracts jsonData fields from inputFields (keyed by the schema
+// input key returned in guidance). Root and secureJsonData fields are skipped,
+// as are any keys not present in the schema.
 func transformFields(schema *datasourceschemas.DatasourceSchema, inputFields map[string]any) map[string]any {
 	lookup := make(map[string]datasourceschemas.DsSchemaField, len(schema.Fields))
 	for _, f := range schema.Fields {
@@ -125,7 +124,6 @@ func transformFields(schema *datasourceschemas.DatasourceSchema, inputFields map
 	for inputKey, v := range inputFields {
 		f, ok := lookup[inputKey]
 		if !ok {
-			result[inputKey] = v
 			continue
 		}
 		// skip root, these are coming directly from params

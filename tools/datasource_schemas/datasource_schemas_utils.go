@@ -121,7 +121,7 @@ type datasourceSchemaGuidance struct {
 }
 
 func LoadDatasourceSchema(pluginType string) (*DatasourceSchema, error) {
-	data, err := datasourceSchemaFiles.ReadFile(fmt.Sprintf("./%s_schema.json", pluginType))
+	data, err := datasourceSchemaFiles.ReadFile(fmt.Sprintf("%s_schema.json", pluginType))
 	if err != nil {
 		return nil, nil // no schema for this type
 	}
