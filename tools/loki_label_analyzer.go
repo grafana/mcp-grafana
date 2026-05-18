@@ -545,15 +545,25 @@ func detectMissingBaseLabels(descriptors []LabelDescriptor, base []string) []str
 	for _, d := range descriptors {
 		present[strings.ToLower(d.Name)] = true
 	}
-	// Treat env/environment, app/service as alternatives.
-	aliases := map[string]string{
-		"environment": "env",
-		"service":     "app",
-		"squad":       "team",
+	// Treat env/environment, app/service, team/squad as interchangeable: any
+	// member of a group satisfies the rest. Order within a group doesn't matter.
+	aliasGroups := [][]string{
+		{"env", "environment"},
+		{"app", "service"},
+		{"team", "squad"},
 	}
-	for canonical, alias := range aliases {
-		if present[canonical] {
-			present[alias] = true
+	for _, group := range aliasGroups {
+		anyPresent := false
+		for _, name := range group {
+			if present[name] {
+				anyPresent = true
+				break
+			}
+		}
+		if anyPresent {
+			for _, name := range group {
+				present[name] = true
+			}
 		}
 	}
 
@@ -851,7 +861,10 @@ func scoreQueryPerf(m QueryPerfMetrics, stats *Stats) []QueryPerfFinding {
 	}
 
 	// Post-filter ratio: how many scanned lines actually mattered.
-	if m.TotalLines > 0 {
+	// Require both fields > 0 — PostFilterLines defaults to 0 when omitted, so guarding
+	// on TotalLines alone would fire a false low_selectivity warning whenever a caller
+	// supplies TotalLines without PostFilterLines.
+	if m.TotalLines > 0 && m.PostFilterLines > 0 {
 		ratio := float64(m.PostFilterLines) / float64(m.TotalLines)
 		if ratio < 0.05 {
 			findings = append(findings, QueryPerfFinding{
@@ -950,11 +963,12 @@ func suggestLokiAlloyLabelConfig(_ context.Context, args SuggestLokiAlloyLabelCo
 	fmt.Fprintf(&b, "  forward_to = [%s]\n\n", forwardTo)
 
 	if args.NormalizeLogLevel {
-		b.WriteString("  // Normalize log level: I/Info/INFO -> info, etc.\n")
-		b.WriteString("  stage.replace {\n    source = \"level\"\n    expression = \"(?i)I(nfo)?\"\n    replace = \"info\"\n  }\n")
-		b.WriteString("  stage.replace {\n    source = \"level\"\n    expression = \"(?i)W(arn(ing)?)?\"\n    replace = \"warn\"\n  }\n")
-		b.WriteString("  stage.replace {\n    source = \"level\"\n    expression = \"(?i)E(rr(or)?)?\"\n    replace = \"error\"\n  }\n")
-		b.WriteString("  stage.replace {\n    source = \"level\"\n    expression = \"(?i)D(ebug)?\"\n    replace = \"debug\"\n  }\n")
+		b.WriteString("  // Normalize log level: I/Info/INFO -> info, etc. Patterns are anchored so partial matches\n")
+		b.WriteString("  // inside other level values (e.g. \"CRITICAL\", \"trace\") aren't mangled.\n")
+		b.WriteString("  stage.replace {\n    source = \"level\"\n    expression = \"^(?i)I(nfo)?$\"\n    replace = \"info\"\n  }\n")
+		b.WriteString("  stage.replace {\n    source = \"level\"\n    expression = \"^(?i)W(arn(ing)?)?$\"\n    replace = \"warn\"\n  }\n")
+		b.WriteString("  stage.replace {\n    source = \"level\"\n    expression = \"^(?i)E(rr(or)?)?$\"\n    replace = \"error\"\n  }\n")
+		b.WriteString("  stage.replace {\n    source = \"level\"\n    expression = \"^(?i)D(ebug)?$\"\n    replace = \"debug\"\n  }\n")
 		b.WriteString("  stage.labels {\n    values = { level = \"\" }\n  }\n\n")
 	}
 

@@ -110,6 +110,22 @@ func TestDetectMissingBaseLabels_TreatsServiceAsApp(t *testing.T) {
 	assert.Empty(t, missing, "service should satisfy the 'app' requirement")
 }
 
+func TestDetectMissingBaseLabels_AliasIsBidirectional(t *testing.T) {
+	// app should satisfy service, env should satisfy environment, team should satisfy squad.
+	descriptors := []LabelDescriptor{{Name: "app"}, {Name: "env"}, {Name: "team"}}
+	missing := detectMissingBaseLabels(descriptors, []string{"service", "environment", "squad"})
+	assert.Empty(t, missing, "alias groups should satisfy in both directions")
+}
+
+func TestDetectMissingBaseLabels_AppDoesNotFlagServiceAsMissing(t *testing.T) {
+	// Both "app" and "service" are in recommendedBaseLabels; supplying one
+	// must not cause the other to be reported missing.
+	descriptors := []LabelDescriptor{{Name: "app"}, {Name: "env"}, {Name: "cluster"}, {Name: "region"}, {Name: "level"}, {Name: "job"}, {Name: "team"}, {Name: "source"}, {Name: "classification"}}
+	missing := detectMissingBaseLabels(descriptors, recommendedBaseLabels)
+	assert.NotContains(t, missing, "service")
+	assert.NotContains(t, missing, "app")
+}
+
 func TestDetectNamingIssues_CaseDuplicates(t *testing.T) {
 	issues := detectNamingIssues([]LabelDescriptor{{Name: "Level"}, {Name: "level"}})
 	require.Len(t, issues, 1)
@@ -223,6 +239,16 @@ func TestScoreQueryPerf_NoSignals(t *testing.T) {
 	assert.Empty(t, findings)
 }
 
+func TestScoreQueryPerf_TotalLinesWithoutPostFilterLinesNoFalseLowSelectivity(t *testing.T) {
+	// PostFilterLines defaults to 0; supplying only TotalLines should not trip the
+	// low_selectivity finding (the ratio would otherwise be a spurious 0%).
+	findings := scoreQueryPerf(QueryPerfMetrics{TotalLines: 10000}, nil)
+	for _, f := range findings {
+		assert.NotEqual(t, "low_selectivity", f.Bottleneck,
+			"low_selectivity must not fire when PostFilterLines is omitted")
+	}
+}
+
 func TestScoreQueryPerf_BroadSelector(t *testing.T) {
 	findings := scoreQueryPerf(QueryPerfMetrics{}, &Stats{Streams: 12000})
 	require.Len(t, findings, 1)
@@ -243,8 +269,12 @@ func TestSuggestLokiAlloyLabelConfig_HappyPath(t *testing.T) {
 	assert.Contains(t, res.Alloy, "stage.label_keep")
 	// Approved labels are sorted alphabetically inside label_keep.
 	assert.Contains(t, res.Alloy, `["app", "cluster", "env", "level"]`)
-	// Level normalization stages present.
-	assert.Contains(t, res.Alloy, `(?i)I(nfo)?`)
+	// Level normalization stages present and anchored so substrings like "CRITICAL"
+	// or "trace" aren't mangled by partial matches.
+	assert.Contains(t, res.Alloy, `^(?i)I(nfo)?$`)
+	assert.Contains(t, res.Alloy, `^(?i)W(arn(ing)?)?$`)
+	assert.Contains(t, res.Alloy, `^(?i)E(rr(or)?)?$`)
+	assert.Contains(t, res.Alloy, `^(?i)D(ebug)?$`)
 	// Soft-enforcement template for required label.
 	assert.Contains(t, res.Alloy, `source = "team"`)
 }
