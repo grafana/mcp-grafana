@@ -258,19 +258,37 @@ func TestCreateDatasource_SchemaGuidancePhase(t *testing.T) {
 	assert.NotEmpty(t, guidance["message"])
 }
 
-func TestCreateDatasource_UnknownType(t *testing.T) {
+func TestCreateDatasource_NoSchemaCreatesDirectly(t *testing.T) {
+	id := int64(7)
+	name := "My Custom DS"
+	uid := "custom-uid"
+	msg := "Datasource added"
+	mockResp := models.AddDataSourceOKBody{
+		ID:      &id,
+		Name:    &name,
+		Message: &msg,
+		Datasource: &models.DataSource{ID: id, UID: uid, Name: name, Type: "nonexistent-plugin"},
+	}
+
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Fatal("Grafana API must not be called for unknown type")
+		assert.Equal(t, http.MethodPost, r.Method)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(mockResp)
 	}))
 	defer srv.Close()
 
-	_, err := createDatasource(mockDatasourcesCtx(srv), CreateDatasourceParams{
-		Name:   "My DS",
-		Type:   "nonexistent-plugin",
-		Fields: map[string]any{"foo": "bar"},
+	ctx := mockDatasourcesCtx(srv)
+	mcpgrafana.GrafanaClientFromContext(ctx).PublicURL = "https://grafana.example.com"
+
+	// No schema for this type — should create immediately without a fields step.
+	result, err := createDatasource(ctx, CreateDatasourceParams{
+		Name: name,
+		Type: "nonexistent-plugin",
+		URL:  "http://custom:9090",
 	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "no schema available")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.False(t, result.IsError)
 }
 
 func TestCreateDatasource_Success(t *testing.T) {

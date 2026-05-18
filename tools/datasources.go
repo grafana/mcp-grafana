@@ -141,13 +141,11 @@ func createDatasource(ctx context.Context, args CreateDatasourceParams) (*mcp.Ca
 	if err != nil {
 		return nil, err
 	}
-	if schema == nil {
-		return nil, fmt.Errorf("no schema available for datasource type %q", args.Type)
-	}
-
-	// Phase 1: if no fields have been provided yet, return field guidance so the
-	// client can collect the right values from the user before calling again.
-	if len(args.Fields) == 0 {
+	// Phase 1: schema available and no fields yet — return guidance so the client
+	// can collect values from the user before calling again.
+	// If no schema exists for this type, skip straight to creation using only
+	// the explicit outer params (Name, URL, etc.).
+	if schema != nil && len(args.Fields) == 0 {
 		text, _ := json.Marshal(datasourceschemas.BuildSchemaGuidance(schema))
 		return mcp.NewToolResultText(string(text)), nil
 	}
@@ -158,7 +156,10 @@ func createDatasource(ctx context.Context, args CreateDatasourceParams) (*mcp.Ca
 		dsAccess = "proxy"
 	}
 
-	jsonData := transformFields(schema, args.Fields)
+	var jsonData map[string]any
+	if schema != nil {
+		jsonData = transformFields(schema, args.Fields)
+	}
 
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
 	body := &models.AddDataSourceCommand{
@@ -263,7 +264,7 @@ var ListDatasources = mcpgrafana.MustTool(
 
 var CreateDatasource = mcpgrafana.MustTool(
 	"create_datasource",
-	"Create a new datasource in Grafana. Returns the created datasource details including its UID. First call: provide only the type — the tool returns a field schema. After receiving the schema, you MUST ask the user for every required field value explicitly; do not infer or use defaults without user confirmation. Second call: provide the type plus the fields map populated with values confirmed by the user The result includes a nextSteps field and a resource link pointing to the datasource configuration page — always surface both to the user so they can complete setup (e.g. add credentials) in the Grafana UI. Does not support adding credentials or PII and should never ask for authentication options. If credentials are detected, remind the user to rotate and revoke them to keep them safe.",
+	"Create a new datasource in Grafana. Returns the created datasource details including its UID. If the datasource type has a known schema: first call with only the type returns field guidance — you MUST then ask the user for every required field value explicitly before calling again with the fields map. If no schema is available for the type, the datasource is created immediately from the explicit params (name, url, etc.) with no fields step. The result includes a nextSteps field and a resource link pointing to the datasource configuration page — always surface both to the user so they can complete setup (e.g. add credentials) in the Grafana UI. Does not support adding credentials or PII and should never ask for authentication options. If credentials are detected, remind the user to rotate and revoke them to keep them safe.",
 	createDatasource,
 	mcp.WithTitleAnnotation("Create datasource"),
 	mcp.WithIdempotentHintAnnotation(false),
