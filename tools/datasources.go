@@ -304,14 +304,49 @@ type GetDatasourceParams struct {
 	Name string `json:"name,omitempty" jsonschema:"description=The name of the datasource. Used if UID is not provided."`
 }
 
-func getDatasource(ctx context.Context, args GetDatasourceParams) (*models.DataSource, error) {
+func getDatasource(ctx context.Context, args GetDatasourceParams) (*getDatasourceResult, error) {
+	var ds *models.DataSource
+	var err error
 	if args.UID != "" {
-		return getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: args.UID})
+		ds, err = getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: args.UID})
+	} else if args.Name != "" {
+		ds, err = getDatasourceByName(ctx, GetDatasourceByNameParams{Name: args.Name})
+	} else {
+		return nil, fmt.Errorf("either uid or name must be provided")
 	}
-	if args.Name != "" {
-		return getDatasourceByName(ctx, GetDatasourceByNameParams{Name: args.Name})
+	if err != nil {
+		return nil, err
 	}
-	return nil, fmt.Errorf("either uid or name must be provided")
+	jsonData, _ := ds.JSONData.(map[string]any)
+	return &getDatasourceResult{
+		ID:               ds.ID,
+		UID:              ds.UID,
+		Name:             ds.Name,
+		Type:             ds.Type,
+		URL:              ds.URL,
+		Access:           string(ds.Access),
+		Database:         ds.Database,
+		BasicAuth:        ds.BasicAuth,
+		WithCredentials:  ds.WithCredentials,
+		IsDefault:        ds.IsDefault,
+		ReadOnly:         ds.ReadOnly,
+		JSONData:         jsonData,
+	}, nil
+}
+
+type getDatasourceResult struct {
+	ID               int64           `json:"id"`
+	UID              string          `json:"uid"`
+	Name             string          `json:"name"`
+	Type             string          `json:"type"`
+	URL              string          `json:"url,omitempty"`
+	Access           string          `json:"access,omitempty"`
+	Database         string          `json:"database,omitempty"`
+	BasicAuth        bool            `json:"basicAuth,omitempty"`
+	WithCredentials  bool            `json:"withCredentials,omitempty"`
+	IsDefault        bool            `json:"isDefault,omitempty"`
+	ReadOnly         bool            `json:"readOnly,omitempty"`
+	JSONData         map[string]any  `json:"jsonData,omitempty"`
 }
 
 var GetDatasource = mcpgrafana.MustTool(
