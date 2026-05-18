@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -94,22 +95,17 @@ var tfAttrOrder = []string{
 	"withCredentials", "database",
 }
 
+var nonAlnum = regexp.MustCompile(`[^a-z0-9]+`)
+
 // toTerraformLabel converts a datasource name to a valid Terraform resource label.
+// Non-alphanumeric runs become single underscores; leading digits get a "ds_" prefix.
+//   "My Prometheus"  → "my_prometheus"
+//   "1st Loki"       → "ds_1st_loki"
+//   "  !!  "         → "datasource"
 func toTerraformLabel(name string) string {
-	var sb strings.Builder
-	prevUnderscore := false
-	for _, r := range strings.ToLower(name) {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
-			sb.WriteRune(r)
-			prevUnderscore = false
-		} else if !prevUnderscore && sb.Len() > 0 {
-			sb.WriteRune('_')
-			prevUnderscore = true
-		}
-	}
-	label := strings.TrimRight(sb.String(), "_")
+	label := strings.Trim(nonAlnum.ReplaceAllString(strings.ToLower(name), "_"), "_")
 	if label == "" {
-		label = "datasource"
+		return "datasource"
 	}
 	if label[0] >= '0' && label[0] <= '9' {
 		label = "ds_" + label
@@ -196,13 +192,9 @@ func buildZip(files map[string][]byte) (string, error) {
 
 // stemToDisplayName converts a stem like "my-prometheus" to "My Prometheus".
 func stemToDisplayName(stem string) string {
-	parts := strings.FieldsFunc(stem, func(r rune) bool {
-		return r == '-' || r == '_'
-	})
+	parts := strings.FieldsFunc(stem, func(r rune) bool { return r == '-' || r == '_' })
 	for i, p := range parts {
-		if len(p) > 0 {
-			parts[i] = strings.ToUpper(p[:1]) + p[1:]
-		}
+		parts[i] = strings.ToUpper(p[:1]) + p[1:]
 	}
 	return strings.Join(parts, " ")
 }
