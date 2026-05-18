@@ -95,7 +95,6 @@ type CreateDatasourceParams struct {
 	URL             string             `json:"url,omitempty" jsonschema:"description=Datasource base URL when required by the plugin"`
 	Access          string             `json:"access,omitempty" jsonschema:"description=How Grafana should access the datasource (proxy or direct)"`
 	Database        string             `json:"database,omitempty" jsonschema:"description=Optional database name"`
-	User            string             `json:"user,omitempty" jsonschema:"description=Optional username"`
 	BasicAuth       bool               `json:"basicAuth,omitempty" jsonschema:"description=Whether Grafana should use basic auth"`
 	WithCredentials bool               `json:"withCredentials,omitempty" jsonschema:"description=Whether Grafana should forward credentials such as cookies"`
 	IsDefault       bool               `json:"isDefault,omitempty" jsonschema:"description=Whether this should become the default datasource"`
@@ -111,29 +110,82 @@ type CreateDatasourceResult struct {
 	NextSteps  string             `json:"nextSteps,omitempty"`
 }
 
-// transformFields extracts jsonData fields from inputFields (keyed by the schema
-// input key returned in guidance). Root and secureJsonData fields are skipped,
-// as are any keys not present in the schema.
-func transformFields(schema *datasourceschemas.DatasourceSchema, inputFields map[string]any) map[string]any {
+
+type noSchemaField struct {
+	Key         string `json:"key"`
+	Description string `json:"description"`
+	Required    bool   `json:"required,omitempty"`
+}
+
+type noSchemaGuidanceResult struct {
+	Type    string           `json:"type"`
+	Message string           `json:"message"`
+	Fields  []noSchemaField  `json:"fields"`
+}
+
+func noSchemaGuidance(pluginType string) *noSchemaGuidanceResult {
+	return &noSchemaGuidanceResult{
+		Type: pluginType,
+		Message: "No schema is available for this datasource type. " +
+			"You MUST ask the user for the value of every required field before calling create_datasource again. " +
+			"For optional fields, ask only if relevant to the user's setup.",
+		Fields: []noSchemaField{
+			{Key: "name", Description: "Display name for the datasource.", Required: true},
+			{Key: "url", Description: "Base URL of the datasource (e.g. http://localhost:8086)."},
+			{Key: "database", Description: "Database name, if applicable."},
+			{Key: "basicAuth", Description: "Set to true to enable basic authentication."},
+			{Key: "isDefault", Description: "Set to true to make this the default datasource."},
+			{Key: "withCredentials", Description: "Set to true to forward browser cookies/credentials."},
+		},
+	}
+}
+
+// applyFields routes Fields values to the body (root-target keys) or into the
+// returned jsonData map. secureJsonData keys are never written.
+func applyFields(body *models.AddDataSourceCommand, schema *datasourceschemas.DatasourceSchema, inputFields map[string]any) map[string]any {
 	lookup := make(map[string]datasourceschemas.DsSchemaField, len(schema.Fields))
 	for _, f := range schema.Fields {
 		lookup[datasourceschemas.SchemaFieldInputKey(f)] = f
 	}
 
-	result := make(map[string]any)
+	jsonData := make(map[string]any)
 	for inputKey, v := range inputFields {
 		f, ok := lookup[inputKey]
-		if !ok {
+		if !ok || f.Target == "secureJsonData" {
 			continue
 		}
-		// skip root, these are coming directly from params
-		// skip secureJsonData, we must never include sensitive data.
-		if f.Target == "root" || f.Target == "secureJsonData" {
-			continue
+		if f.Target == "root" {
+			switch f.Key {
+			case "url":
+				if s, ok := v.(string); ok {
+					body.URL = s
+				}
+			case "basicAuth":
+				if b, ok := v.(bool); ok {
+					body.BasicAuth = b
+				}
+			case "isDefault":
+				if b, ok := v.(bool); ok {
+					body.IsDefault = b
+				}
+			case "uid":
+				if s, ok := v.(string); ok {
+					body.UID = s
+				}
+			case "access":
+				if s, ok := v.(string); ok {
+					body.Access = models.DsAccess(s)
+				}
+			case "withCredentials":
+				if b, ok := v.(bool); ok {
+					body.WithCredentials = b
+				}
+			}
+		} else {
+			jsonData[f.Key] = v
 		}
-		result[f.Key] = v
 	}
-	return result
+	return jsonData
 }
 
 func createDatasource(ctx context.Context, args CreateDatasourceParams) (*mcp.CallToolResult, error) {
@@ -141,12 +193,16 @@ func createDatasource(ctx context.Context, args CreateDatasourceParams) (*mcp.Ca
 	if err != nil {
 		return nil, err
 	}
-	// Phase 1: schema available and no fields yet — return guidance so the client
-	// can collect values from the user before calling again.
-	// If no schema exists for this type, skip straight to creation using only
-	// the explicit outer params (Name, URL, etc.).
+	// Phase 1: return field guidance before creation.
+	// With a schema: list schema fields and ask the user to fill them in.
+	// Without a schema: list the explicit params and ask for name + any others
+	// the user wants to set, then call again with those values.
 	if schema != nil && len(args.Fields) == 0 {
 		text, _ := json.Marshal(datasourceschemas.BuildSchemaGuidance(schema, "create_datasource"))
+		return mcp.NewToolResultText(string(text)), nil
+	}
+	if schema == nil && args.Name == "" {
+		text, _ := json.Marshal(noSchemaGuidance(args.Type))
 		return mcp.NewToolResultText(string(text)), nil
 	}
 
@@ -156,12 +212,8 @@ func createDatasource(ctx context.Context, args CreateDatasourceParams) (*mcp.Ca
 		dsAccess = "proxy"
 	}
 
-	var jsonData map[string]any
-	if schema != nil {
-		jsonData = transformFields(schema, args.Fields)
-	}
-
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
+	// these are used as fallback in case the schema fails to load, that way we can still create a datasource with common, shared fields
 	body := &models.AddDataSourceCommand{
 		Name:            args.Name,
 		Type:            args.Type,
@@ -170,8 +222,10 @@ func createDatasource(ctx context.Context, args CreateDatasourceParams) (*mcp.Ca
 		Database:        args.Database,
 		BasicAuth:       args.BasicAuth,
 		IsDefault:       args.IsDefault,
-		JSONData:        models.JSON(jsonData),
 		WithCredentials: args.WithCredentials,
+	}
+	if schema != nil {
+		body.JSONData = models.JSON(applyFields(body, schema, args.Fields))
 	}
 	resp, err := c.Datasources.AddDataSourceWithParams(
 		datasources.NewAddDataSourceParamsWithContext(ctx).WithBody(body),

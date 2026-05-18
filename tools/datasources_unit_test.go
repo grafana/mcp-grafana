@@ -232,6 +232,39 @@ func TestGetDatasource_ErrorWhenNeitherProvided(t *testing.T) {
 }
 
 // ---- createDatasource ----
+func TestCreateDatasource_NoSchemaGuidancePhase(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("Grafana API must not be called during no-schema guidance phase")
+	}))
+	defer srv.Close()
+
+	ctx := mockDatasourcesCtx(srv)
+
+	// No schema for this type and no name yet — should return field guidance, not create.
+	result, err := createDatasource(ctx, CreateDatasourceParams{
+		Type: "nonexistent-plugin",
+	})
+	require.NoError(t, err)
+	require.Len(t, result.Content, 1)
+
+	text, ok := result.Content[0].(mcp.TextContent)
+	require.True(t, ok)
+
+	var guidance map[string]any
+	require.NoError(t, json.Unmarshal([]byte(text.Text), &guidance))
+	assert.Equal(t, "nonexistent-plugin", guidance["type"])
+	assert.NotEmpty(t, guidance["message"])
+
+	fields, ok := guidance["fields"].([]any)
+	require.True(t, ok)
+	keys := make([]string, 0, len(fields))
+	for _, f := range fields {
+		fm := f.(map[string]any)
+		keys = append(keys, fm["key"].(string))
+	}
+	assert.Contains(t, keys, "name")
+}
+
 func TestCreateDatasource_SchemaGuidancePhase(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("Grafana API must not be called during schema guidance phase")
@@ -391,35 +424,54 @@ func TestCreateDatasource_SecureFieldsNotLeakedToJSONData(t *testing.T) {
 	assert.NotContains(t, capturedJSONData, "basicAuthPassword")
 }
 
-// ---- transformFields ----
+// ---- applyFields ----
 
-func TestTransformFields(t *testing.T) {
+func TestApplyFields(t *testing.T) {
 	schema := &datasourceschemas.DatasourceSchema{
 		Fields: []datasourceschemas.DsSchemaField{
 			{Key: "httpMethod", Target: "jsonData", ValueType: "string"},
 			{Key: "timeInterval", Target: "jsonData", ValueType: "string"},
 			{Key: "basicAuthPassword", Target: "secureJsonData", ValueType: "string"},
-			{Key: "someRootField", Target: "root", ValueType: "string"},
+			{Key: "url", Target: "root", ValueType: "string"},
+			{Key: "basicAuth", Target: "root", ValueType: "boolean"},
+			{Key: "isDefault", Target: "root", ValueType: "boolean"},
 		},
 	}
 
-	t.Run("jsonData fields are included with base key", func(t *testing.T) {
-		result := transformFields(schema, map[string]any{"httpMethod": "POST"})
+	t.Run("jsonData fields are returned in jsonData map", func(t *testing.T) {
+		body := &models.AddDataSourceCommand{}
+		result := applyFields(body, schema, map[string]any{"httpMethod": "POST"})
 		assert.Equal(t, "POST", result["httpMethod"])
 	})
 
 	t.Run("secureJsonData fields are excluded", func(t *testing.T) {
-		result := transformFields(schema, map[string]any{"basicAuthPassword": "s3cr3t"})
+		body := &models.AddDataSourceCommand{}
+		result := applyFields(body, schema, map[string]any{"basicAuthPassword": "s3cr3t"})
 		assert.NotContains(t, result, "basicAuthPassword")
 	})
 
-	t.Run("root fields are excluded", func(t *testing.T) {
-		result := transformFields(schema, map[string]any{"someRootField": "value"})
-		assert.NotContains(t, result, "someRootField")
+	t.Run("root url is applied to body and not in jsonData", func(t *testing.T) {
+		body := &models.AddDataSourceCommand{}
+		result := applyFields(body, schema, map[string]any{"url": "http://prometheus:9090"})
+		assert.Equal(t, "http://prometheus:9090", body.URL)
+		assert.NotContains(t, result, "url")
+	})
+
+	t.Run("root basicAuth is applied to body", func(t *testing.T) {
+		body := &models.AddDataSourceCommand{}
+		applyFields(body, schema, map[string]any{"basicAuth": true})
+		assert.True(t, body.BasicAuth)
+	})
+
+	t.Run("root isDefault is applied to body", func(t *testing.T) {
+		body := &models.AddDataSourceCommand{}
+		applyFields(body, schema, map[string]any{"isDefault": true})
+		assert.True(t, body.IsDefault)
 	})
 
 	t.Run("unknown fields are excluded", func(t *testing.T) {
-		result := transformFields(schema, map[string]any{"unknownField": "value"})
+		body := &models.AddDataSourceCommand{}
+		result := applyFields(body, schema, map[string]any{"unknownField": "value"})
 		assert.NotContains(t, result, "unknownField")
 	})
 
@@ -429,23 +481,26 @@ func TestTransformFields(t *testing.T) {
 				{Key: "region", Section: "aws", Target: "jsonData", ValueType: "string"},
 			},
 		}
-		result := transformFields(s, map[string]any{"aws.region": "us-east-1"})
+		body := &models.AddDataSourceCommand{}
+		result := applyFields(body, s, map[string]any{"aws.region": "us-east-1"})
 		assert.Equal(t, "us-east-1", result["region"])
 		assert.NotContains(t, result, "aws.region")
 	})
 
-	t.Run("mixed targets: only schema jsonData fields make it through", func(t *testing.T) {
-		result := transformFields(schema, map[string]any{
+	t.Run("mixed targets: root to body, jsonData to map, secrets excluded", func(t *testing.T) {
+		body := &models.AddDataSourceCommand{}
+		result := applyFields(body, schema, map[string]any{
+			"url":               "http://prometheus:9090",
 			"httpMethod":        "GET",
 			"timeInterval":      "30s",
 			"basicAuthPassword": "s3cr3t",
-			"someRootField":     "rootval",
 			"extra":             "fallback",
 		})
+		assert.Equal(t, "http://prometheus:9090", body.URL)
 		assert.Equal(t, "GET", result["httpMethod"])
 		assert.Equal(t, "30s", result["timeInterval"])
+		assert.NotContains(t, result, "url")
 		assert.NotContains(t, result, "basicAuthPassword")
-		assert.NotContains(t, result, "someRootField")
 		assert.NotContains(t, result, "extra")
 	})
 }
