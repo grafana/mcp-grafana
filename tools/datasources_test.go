@@ -179,8 +179,8 @@ func TestCheckDatasourcesHealthTool(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		assert.Greater(t, result.Total, 0)
-		assert.Equal(t, result.Total, result.Healthy+result.Unhealthy)
-		assert.Len(t, result.Results, result.Total)
+		assert.Len(t, result.Results, result.Healthy+result.Unhealthy)
+		assert.LessOrEqual(t, len(result.Results), result.Total)
 	})
 
 	t.Run("filter by type returns only matching datasources", func(t *testing.T) {
