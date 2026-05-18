@@ -158,7 +158,7 @@ func annotateDefaultOption(f DsSchemaField) DsSchemaField {
 	return f
 }
 
-func BuildSchemaGuidance(schema *DatasourceSchema) *datasourceSchemaGuidance {
+func BuildSchemaGuidance(schema *DatasourceSchema, toolName string) *datasourceSchemaGuidance {
 	fields := make([]DsSchemaField, 0, len(commonDatasourceFields)+len(schema.Fields))
 	fields = append(fields, commonDatasourceFields...)
 
@@ -202,9 +202,10 @@ func BuildSchemaGuidance(schema *DatasourceSchema) *datasourceSchemaGuidance {
 				"You MUST ask the user for the value of every required field (required=true) before calling provision_datasource again. "+
 				"Do NOT infer, guess, or use default values for required fields without explicit confirmation from the user. "+
 				"For optional fields, ask only if they are relevant to the user's setup. "+
-				"Once you have collected all required values from the user, call provision_datasource again with those values in the fields param. "+
+				"Once you have collected all required values from the user, call %s again with those values in the fields param. "+
 				"The server uses each field's target to route values to the correct place in the YAML.",
 			schema.PluginName,
+			toolName,
 		),
 		Fields: fields,
 	}

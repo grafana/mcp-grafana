@@ -146,7 +146,7 @@ func createDatasource(ctx context.Context, args CreateDatasourceParams) (*mcp.Ca
 	// If no schema exists for this type, skip straight to creation using only
 	// the explicit outer params (Name, URL, etc.).
 	if schema != nil && len(args.Fields) == 0 {
-		text, _ := json.Marshal(datasourceschemas.BuildSchemaGuidance(schema))
+		text, _ := json.Marshal(datasourceschemas.BuildSchemaGuidance(schema, "create_datasource"))
 		return mcp.NewToolResultText(string(text)), nil
 	}
 
