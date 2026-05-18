@@ -6,13 +6,13 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/invopop/jsonschema"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
 	"github.com/grafana/grafana-openapi-client-go/client/datasources"
 	"github.com/grafana/grafana-openapi-client-go/models"
 	mcpgrafana "github.com/grafana/mcp-grafana"
+	datasourceschemas "github.com/grafana/mcp-grafana/tools/datasource_schemas"
 )
 
 const (
@@ -89,30 +89,6 @@ func listDatasources(ctx context.Context, args ListDatasourcesParams) (*ListData
 	}, nil
 }
 
-// datasourceJSONData holds plugin-specific non-secret settings for a datasource.
-// Its schema description is sourced from datasourceJSONDataSchema — swap that
-// function body for an API fetch when the datasource settings API is available.
-type datasourceJSONData map[string]interface{}
-
-func (datasourceJSONData) JSONSchema() *jsonschema.Schema {
-	return datasourceJSONDataSchema()
-}
-
-// datasourceJSONDataSchema returns the JSON schema for the jsonData field.
-// TODO: Replace with a fetch from the Grafana datasource settings API when available.
-func datasourceJSONDataSchema() *jsonschema.Schema {
-	return &jsonschema.Schema{
-		Type: "object",
-		Description: "Datasource-specific non-secret settings. Keys and values vary by plugin type; " +
-			"ask the user what to set or consult the plugin documentation. " +
-			"Examples — prometheus: {\"httpMethod\":\"GET\",\"timeInterval\":\"15s\"}; " +
-			"loki: {\"maxLines\":1000}; elasticsearch: {\"index\":\"my-index\",\"timeField\":\"@timestamp\"}; " +
-			"cloudwatch: {\"defaultRegion\":\"us-east-1\",\"authType\":\"default\"}; " +
-			"influxdb: {\"version\":\"Flux\",\"product\":\"InfluxDB Enterprise 3.x\"}.",
-		Extras: map[string]any{},
-	}
-}
-
 type CreateDatasourceParams struct {
 	Name            string             `json:"name" jsonschema:"required,description=Datasource display name"`
 	Type            string             `json:"type" jsonschema:"required,description=Grafana datasource plugin type\\, for example prometheus"`
@@ -123,7 +99,7 @@ type CreateDatasourceParams struct {
 	BasicAuth       bool               `json:"basicAuth,omitempty" jsonschema:"description=Whether Grafana should use basic auth"`
 	WithCredentials bool               `json:"withCredentials,omitempty" jsonschema:"description=Whether Grafana should forward credentials such as cookies"`
 	IsDefault       bool               `json:"isDefault,omitempty" jsonschema:"description=Whether this should become the default datasource"`
-	JSONData        datasourceJSONData `json:"jsonData,omitempty"`
+	Fields        map[string]any 	   `json:"fields,omitempty" jsonschema:"description=Datasource field values to provision\\, keyed by field key from the schema returned on the first call. The server uses each field's target (root or jsonData) to place values correctly in the YAML. Example: {\"url\": \"http://prometheus:9090\"\\, \"httpMethod\": \"POST\"}."`
 }
 
 type CreateDatasourceResult struct {
@@ -135,12 +111,57 @@ type CreateDatasourceResult struct {
 	NextSteps  string             `json:"nextSteps,omitempty"`
 }
 
+// TransformFields extracts the jsonData fields from inputFields (keyed by the
+// schema input key returned in guidance). Root-targeted fields are skipped since
+// they are already captured as explicit params on the caller side. Unknown keys
+// fall back to jsonData as a safe default.
+func transformFields(schema *datasourceschemas.DatasourceSchema, inputFields map[string]any) map[string]any {
+	lookup := make(map[string]datasourceschemas.DsSchemaField, len(schema.Fields))
+	for _, f := range schema.Fields {
+		lookup[datasourceschemas.SchemaFieldInputKey(f)] = f
+	}
+
+	result := make(map[string]any)
+	for inputKey, v := range inputFields {
+		f, ok := lookup[inputKey]
+		if !ok {
+			result[inputKey] = v
+			continue
+		}
+		// skip root, these are coming directly from params
+		// skip secureJsonData, we must never include sensitive data.
+		if f.Target == "root" || f.Target == "secureJsonData" {
+			continue
+		}
+		result[f.Key] = v
+	}
+	return result
+}
+
 func createDatasource(ctx context.Context, args CreateDatasourceParams) (*mcp.CallToolResult, error) {
+	schema, err := datasourceschemas.LoadDatasourceSchema(args.Type)
+	if err != nil {
+		return nil, err
+	}
+	if schema == nil {
+		return nil, fmt.Errorf("no schema available for datasource type %q", args.Type)
+	}
+
+	// Phase 1: if no fields have been provided yet, return field guidance so the
+	// client can collect the right values from the user before calling again.
+	if len(args.Fields) == 0 {
+		text, _ := json.Marshal(datasourceschemas.BuildSchemaGuidance(schema))
+		return mcp.NewToolResultText(string(text)), nil
+	}
+
 	dsAccess := args.Access
 	if dsAccess == "" {
 		// use grafana default
 		dsAccess = "proxy"
 	}
+
+	jsonData := transformFields(schema, args.Fields)
+
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
 	body := &models.AddDataSourceCommand{
 		Name:            args.Name,
@@ -150,7 +171,7 @@ func createDatasource(ctx context.Context, args CreateDatasourceParams) (*mcp.Ca
 		Database:        args.Database,
 		BasicAuth:       args.BasicAuth,
 		IsDefault:       args.IsDefault,
-		JSONData:        models.JSON(args.JSONData),
+		JSONData:        models.JSON(jsonData),
 		WithCredentials: args.WithCredentials,
 	}
 	resp, err := c.Datasources.AddDataSourceWithParams(
@@ -244,7 +265,7 @@ var ListDatasources = mcpgrafana.MustTool(
 
 var CreateDatasource = mcpgrafana.MustTool(
 	"create_datasource",
-	"Create a new datasource in Grafana. Returns the created datasource details including its UID. The result includes a nextSteps field and a resource link pointing to the datasource configuration page — always surface both to the user so they can complete setup (e.g. add credentials) in the Grafana UI. Does not support adding credentials or PII and should never ask for authentication options. If credentials are detected, remind the user to rotate and revoke them to keep them safe.",
+	"Create a new datasource in Grafana. Returns the created datasource details including its UID. First call: provide only the type — the tool returns a field schema. After receiving the schema, you MUST ask the user for every required field value explicitly; do not infer or use defaults without user confirmation. Second call: provide the type plus the fields map populated with values confirmed by the user The result includes a nextSteps field and a resource link pointing to the datasource configuration page — always surface both to the user so they can complete setup (e.g. add credentials) in the Grafana UI. Does not support adding credentials or PII and should never ask for authentication options. If credentials are detected, remind the user to rotate and revoke them to keep them safe.",
 	createDatasource,
 	mcp.WithTitleAnnotation("Create datasource"),
 	mcp.WithIdempotentHintAnnotation(false),
