@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"regexp"
 	"strings"
@@ -578,7 +577,7 @@ func executeGrafanaDSQuery(ctx context.Context, payload map[string]interface{}) 
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	bodyBytes, err := io.ReadAll(resp.Body)
+	bodyBytes, err := readResponseBody(resp.Body, defaultResponseLimitBytes)
 	if err != nil {
 		return nil, fmt.Errorf("reading response: %w", err)
 	}

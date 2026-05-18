@@ -29,9 +29,6 @@ const (
 
 	// AthenaFormatTable requests table-formatted results from the Athena plugin.
 	AthenaFormatTable = 1
-
-	// athenaResponseLimitBytes is the maximum response size (10MB) before truncation.
-	athenaResponseLimitBytes = 1024 * 1024 * 10
 )
 
 var (
@@ -96,13 +93,12 @@ func (c *athenaClient) resource(ctx context.Context, path string, body map[strin
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	limitedBody := io.LimitReader(resp.Body, int64(athenaResponseLimitBytes))
 	if resp.StatusCode != http.StatusOK {
-		errBody, _ := io.ReadAll(limitedBody)
+		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 		return nil, fmt.Errorf("athena resource %s returned status %d: %s", path, resp.StatusCode, string(errBody))
 	}
 
-	respBytes, err := io.ReadAll(limitedBody)
+	respBytes, err := readResponseBody(resp.Body, defaultResponseLimitBytes)
 	if err != nil {
 		return nil, fmt.Errorf("reading athena resource %s response: %w", path, err)
 	}
@@ -168,20 +164,19 @@ func (c *athenaClient) query(ctx context.Context, rawSQL string, from, to time.T
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	limitedBody := io.LimitReader(resp.Body, int64(athenaResponseLimitBytes))
 	if resp.StatusCode != http.StatusOK {
-		errBody, _ := io.ReadAll(limitedBody)
+		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 		return nil, fmt.Errorf("athena query returned status %d: %s", resp.StatusCode, string(errBody))
 	}
 
-	respBytes, err := io.ReadAll(limitedBody)
+	respBytes, err := readResponseBody(resp.Body, defaultResponseLimitBytes)
 	if err != nil {
 		return nil, fmt.Errorf("reading response body: %w", err)
 	}
 
 	var queryResp athenaQueryResponse
-	if err := unmarshalJSONWithLimitMsg(respBytes, &queryResp, athenaResponseLimitBytes); err != nil {
-		return nil, err
+	if err := json.Unmarshal(respBytes, &queryResp); err != nil {
+		return nil, fmt.Errorf("unmarshaling response: %w", err)
 	}
 
 	return &queryResp, nil
@@ -305,8 +300,8 @@ func listAthenaCatalogs(ctx context.Context, args ListAthenaCatalogsParams) ([]s
 	}
 
 	var catalogs []string
-	if err := unmarshalJSONWithLimitMsg(respBytes, &catalogs, athenaResponseLimitBytes); err != nil {
-		return nil, err
+	if err := json.Unmarshal(respBytes, &catalogs); err != nil {
+		return nil, fmt.Errorf("unmarshaling response: %w", err)
 	}
 	return catalogs, nil
 }
@@ -346,8 +341,8 @@ func listAthenaDatabases(ctx context.Context, args ListAthenaDatabasesParams) ([
 	}
 
 	var databases []string
-	if err := unmarshalJSONWithLimitMsg(respBytes, &databases, athenaResponseLimitBytes); err != nil {
-		return nil, err
+	if err := json.Unmarshal(respBytes, &databases); err != nil {
+		return nil, fmt.Errorf("unmarshaling response: %w", err)
 	}
 	return databases, nil
 }
@@ -391,8 +386,8 @@ func listAthenaTables(ctx context.Context, args ListAthenaTablesParams) ([]strin
 	}
 
 	var tables []string
-	if err := unmarshalJSONWithLimitMsg(respBytes, &tables, athenaResponseLimitBytes); err != nil {
-		return nil, err
+	if err := json.Unmarshal(respBytes, &tables); err != nil {
+		return nil, fmt.Errorf("unmarshaling response: %w", err)
 	}
 	return tables, nil
 }
@@ -443,8 +438,8 @@ func describeAthenaTable(ctx context.Context, args DescribeAthenaTableParams) ([
 	}
 
 	var columns []string
-	if err := unmarshalJSONWithLimitMsg(respBytes, &columns, athenaResponseLimitBytes); err != nil {
-		return nil, err
+	if err := json.Unmarshal(respBytes, &columns); err != nil {
+		return nil, fmt.Errorf("unmarshaling response: %w", err)
 	}
 	return columns, nil
 }

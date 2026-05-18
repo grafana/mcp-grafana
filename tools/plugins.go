@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"sort"
@@ -77,7 +76,7 @@ func grafanaPluginRequest(ctx context.Context, cfg mcpgrafana.GrafanaConfig, met
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := readResponseBody(resp.Body, defaultResponseLimitBytes)
 	if err != nil {
 		return nil, resp.StatusCode, fmt.Errorf("read response: %w", err)
 	}

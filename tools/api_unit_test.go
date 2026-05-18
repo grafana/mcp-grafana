@@ -294,8 +294,8 @@ func TestAPIRequest_MethodCaseInsensitive(t *testing.T) {
 func TestAPIRequest_ResponseTooLarge(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		// Write more than maxAPIResponseBytes
-		_, _ = w.Write(make([]byte, maxAPIResponseBytes+1))
+		// Write more than defaultResponseLimitBytes
+		_, _ = w.Write(make([]byte, defaultResponseLimitBytes+1))
 	}))
 	t.Cleanup(ts.Close)
 

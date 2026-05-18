@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -311,7 +310,7 @@ func (b *cloudMonitoringBackend) fetchMetricDescriptors(ctx context.Context) ([]
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
+	body, err := readResponseBody(resp.Body, defaultResponseLimitBytes)
 	if err != nil {
 		return nil, fmt.Errorf("reading response: %w", err)
 	}

@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"path"
 	"strconv"
@@ -154,7 +153,7 @@ func (b *openSearchBackend) Search(ctx context.Context, index, query string, sta
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, 48*1024*1024))
+	bodyBytes, err := readResponseBody(resp.Body, 48*1024*1024)
 	if err != nil {
 		return nil, fmt.Errorf("reading response body: %w", err)
 	}

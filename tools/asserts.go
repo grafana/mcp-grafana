@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
@@ -82,7 +81,7 @@ func (c *Client) fetchAssertsData(ctx context.Context, urlPath string, method st
 		_ = resp.Body.Close() //nolint:errcheck
 	}()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := readResponseBody(resp.Body, defaultResponseLimitBytes)
 	if err != nil {
 		return "", fmt.Errorf("failed to read response body: %w", err)
 	}

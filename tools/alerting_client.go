@@ -299,7 +299,7 @@ func (c *alertingClient) GetAlertmanagerConfig(ctx context.Context, datasourceUI
 	}
 
 	// Mimir/Cortex /api/v1/alerts returns YAML with alertmanager_config field
-	bodyBytes, err := io.ReadAll(resp.Body)
+	bodyBytes, err := readResponseBody(resp.Body, defaultResponseLimitBytes)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read Alertmanager config response: %w", err)
 	}

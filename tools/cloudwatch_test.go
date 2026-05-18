@@ -195,7 +195,7 @@ func TestParseCloudWatchResourceResponse(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := parseCloudWatchResourceResponse([]byte(tt.input), 1024*1024)
+			result, err := parseCloudWatchResourceResponse([]byte(tt.input))
 			if tt.expectError {
 				require.Error(t, err)
 				return
@@ -237,7 +237,7 @@ func TestParseCloudWatchMetricsResponse(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := parseCloudWatchMetricsResponse([]byte(tt.input), 1024*1024)
+			result, err := parseCloudWatchMetricsResponse([]byte(tt.input))
 			if tt.expectError {
 				require.Error(t, err)
 				return
