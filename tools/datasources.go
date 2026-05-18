@@ -123,13 +123,12 @@ type CreateDatasourceParams struct {
 }
 
 type CreateDatasourceResult struct {
-	Message    string                  `json:"message"`
-	ID         int64                   `json:"id"`
-	UID        string                  `json:"uid"`
-	Name       string                  `json:"name"`
-	Datasource *models.DataSource      `json:"datasource,omitempty"`
-	NextSteps  string                  `json:"nextSteps,omitempty"`
-	Health     *DatasourceHealthResult `json:"health,omitempty"`
+	Message   string                  `json:"message"`
+	ID        int64                   `json:"id"`
+	UID       string                  `json:"uid"`
+	Name      string                  `json:"name"`
+	NextSteps string                  `json:"nextSteps,omitempty"`
+	Health    *DatasourceHealthResult `json:"health,omitempty"`
 }
 
 func createDatasource(ctx context.Context, args CreateDatasourceParams) (*mcp.CallToolResult, error) {
@@ -157,9 +156,7 @@ func createDatasource(ctx context.Context, args CreateDatasourceParams) (*mcp.Ca
 		return nil, fmt.Errorf("create datasource: %w", err)
 	}
 	p := resp.Payload
-	result := &CreateDatasourceResult{
-		Datasource: p.Datasource,
-	}
+	result := &CreateDatasourceResult{}
 
 	if p.Message != nil {
 		result.Message = *p.Message
@@ -248,7 +245,7 @@ var ListDatasources = mcpgrafana.MustTool(
 
 var CreateDatasource = mcpgrafana.MustTool(
 	"create_datasource",
-	"Create a new datasource in Grafana. If the type is ambiguous, call search_plugin_information first; if the plugin is not installed, call get_plugin and install_plugin if needed. Returns the UID, a health check, and a resource link to the config page — always surface these to the user. Never handle credentials; if detected, remind the user to rotate and revoke them.",
+	"Create a datasource. If type is ambiguous, call search_plugin_information first; install the plugin if needed. Returns UID, health check, and a config page link. Never handle credentials — remind the user to rotate any detected.",
 	createDatasource,
 	mcp.WithTitleAnnotation("Create datasource"),
 	mcp.WithIdempotentHintAnnotation(false),
@@ -257,7 +254,7 @@ var CreateDatasource = mcpgrafana.MustTool(
 
 var UpdateDatasource = mcpgrafana.MustTool(
 	"update_datasource",
-	"Update non-secret Grafana datasource fields by UID. Merges only the provided fields into the current config. Returns the updated datasource and a health check. For secrets, use Grafana UI directly. If the datasource does not exist, confirm before creating.",
+	"Update non-secret datasource fields by UID. Omitted fields are preserved. Returns a health check. For secrets, use Grafana UI. Confirm before creating if the datasource doesn't exist.",
 	updateDatasource,
 	mcp.WithTitleAnnotation("Update datasource"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -337,8 +334,8 @@ type UpdateDatasourceParams struct {
 }
 
 type UpdateDatasourceResult struct {
-	*models.UpdateDataSourceByUIDOKBody
-	Health *DatasourceHealthResult `json:"health,omitempty"`
+	Message string                  `json:"message,omitempty"`
+	Health  *DatasourceHealthResult `json:"health,omitempty"`
 }
 
 func updateDatasource(ctx context.Context, args UpdateDatasourceParams) (*UpdateDatasourceResult, error) {
@@ -406,7 +403,10 @@ func updateDatasource(ctx context.Context, args UpdateDatasourceParams) (*Update
 		return nil, fmt.Errorf("update datasource %s: %w", args.UID, err)
 	}
 
-	result := &UpdateDatasourceResult{UpdateDataSourceByUIDOKBody: resp.Payload}
+	result := &UpdateDatasourceResult{}
+	if resp.Payload.Message != nil {
+		result.Message = *resp.Payload.Message
+	}
 
 	health, err := checkDatasourceHealth(ctx, CheckDatasourceHealthParams{UID: args.UID})
 	if err != nil {
@@ -547,7 +547,7 @@ func checkDatasourcesHealth(ctx context.Context, args BulkCheckDatasourceHealthP
 
 var CheckDatasourcesHealth = mcpgrafana.MustTool(
 	"check_datasources_health",
-	"Check the health of Grafana datasources in parallel. Filter by type to check all of that type, provide UIDs to check specific ones, or omit both to check all. Returns per-datasource results and a summary.",
+	"Check datasource health in parallel. Filter by type or provide UIDs; omit both to check all. Returns per-datasource status and a summary.",
 	checkDatasourcesHealth,
 	mcp.WithTitleAnnotation("Check datasources health"),
 	mcp.WithIdempotentHintAnnotation(true),
