@@ -304,15 +304,14 @@ func (c *pyroscopeClient) get(ctx context.Context, path string, params url.Value
 	}()
 
 	if res.StatusCode < 200 || res.StatusCode > 299 {
-		body, err := io.ReadAll(res.Body)
+		body, err := io.ReadAll(io.LimitReader(res.Body, 1024))
 		if err != nil {
 			return nil, fmt.Errorf("pyroscope API failed with status code %d", res.StatusCode)
 		}
 		return nil, fmt.Errorf("pyroscope API failed with status code %d: %s", res.StatusCode, string(body))
 	}
 
-	const limit = 1024 * 1024 * 10 // 10MB limit
-	body, err := io.ReadAll(io.LimitReader(res.Body, limit))
+	body, err := readResponseBody(res.Body, defaultResponseLimitBytes)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}

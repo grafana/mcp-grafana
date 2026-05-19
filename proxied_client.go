@@ -7,10 +7,18 @@ import (
 	"log/slog"
 	"net/http"
 	"sync"
+	"time"
 
 	mcp_client "github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/client/transport"
 	"github.com/mark3labs/mcp-go/mcp"
+)
+
+const (
+	// mcpClientInitTimeout is the timeout for initializing a proxied MCP client
+	// (connecting, handshaking, and listing tools). Kept short to avoid blocking
+	// server startup when a datasource's MCP endpoint is slow or unreachable.
+	mcpClientInitTimeout = 30 * time.Second
 )
 
 // ProxiedClient represents a connection to a remote MCP server (e.g., Tempo datasource).
@@ -28,17 +36,32 @@ type ProxiedClient struct {
 	mutex             sync.RWMutex
 }
 
+// contextCauseOrErr returns the context cause if the error is due to context
+// cancellation, otherwise returns the original error.
+func contextCauseOrErr(ctx context.Context, err error) error {
+	if ctx.Err() != nil {
+		if cause := context.Cause(ctx); cause != nil {
+			return cause
+		}
+	}
+	return err
+}
+
 // NewProxiedClient creates a new connection to a remote MCP server
 func NewProxiedClient(ctx context.Context, datasourceUID, datasourceName, datasourceType, mcpEndpoint string) (*ProxiedClient, error) {
 	config := GrafanaConfigFromContext(ctx)
 	logger := config.LoggerOrDefault()
+
+	initCtx, cancel := context.WithTimeoutCause(ctx, mcpClientInitTimeout,
+		fmt.Errorf("timed out after %s connecting to MCP server for datasource %s (%s) at %s", mcpClientInitTimeout, datasourceName, datasourceUID, mcpEndpoint))
+	defer cancel()
 
 	rt, err := BuildTransport(&config, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build transport: %w", err)
 	}
 
-	logger.DebugContext(ctx, "connecting to MCP server", "datasource", datasourceUID, "url", mcpEndpoint)
+	logger.DebugContext(initCtx, "connecting to MCP server", "datasource", datasourceUID, "url", mcpEndpoint)
 	httpTransport, err := transport.NewStreamableHTTP(
 		mcpEndpoint,
 		transport.WithHTTPBasicClient(&http.Client{Transport: rt}),
@@ -58,26 +81,26 @@ func NewProxiedClient(ctx context.Context, datasourceUID, datasourceName, dataso
 		Version: Version(),
 	}
 
-	_, err = mcpClient.Initialize(ctx, initReq)
+	_, err = mcpClient.Initialize(initCtx, initReq)
 	if err != nil {
 		_ = mcpClient.Close()
-		return nil, fmt.Errorf("failed to initialize MCP client: %w", err)
+		return nil, fmt.Errorf("failed to initialize MCP client: %w", contextCauseOrErr(initCtx, err))
 	}
 
 	// List available tools from the remote server. Tools are mandatory: if the
 	// upstream advertises no tool capability we still try (some servers do not
 	// declare capabilities precisely) and tolerate METHOD_NOT_FOUND gracefully.
 	var tools []mcp.Tool
-	toolsResult, err := mcpClient.ListTools(ctx, mcp.ListToolsRequest{})
+	toolsResult, err := mcpClient.ListTools(initCtx, mcp.ListToolsRequest{})
 	switch {
 	case err == nil:
 		tools = toolsResult.Tools
 	case errors.Is(err, mcp.ErrMethodNotFound):
-		logger.DebugContext(ctx, "remote MCP server does not support tools/list",
+		logger.DebugContext(initCtx, "remote MCP server does not support tools/list",
 			"datasource", datasourceUID)
 	default:
 		_ = mcpClient.Close()
-		return nil, fmt.Errorf("failed to list tools from remote MCP server: %w", err)
+		return nil, fmt.Errorf("failed to list tools from remote MCP server: %w", contextCauseOrErr(initCtx, err))
 	}
 
 	caps := mcpClient.GetServerCapabilities()
@@ -85,27 +108,27 @@ func NewProxiedClient(ctx context.Context, datasourceUID, datasourceName, dataso
 	// Fetch resources and resource templates if advertised. Many servers (Tempo
 	// included) register resources without explicitly declaring the capability,
 	// so we also probe when caps.Resources is nil and ignore METHOD_NOT_FOUND.
-	resources, resourceTemplates := listRemoteResources(ctx, mcpClient, caps, logger, datasourceUID)
+	resources, resourceTemplates := listRemoteResources(initCtx, mcpClient, caps, logger, datasourceUID)
 
 	// Fetch prompts only if advertised. We don't probe blindly here because
 	// stricter upstreams may treat unknown methods as errors and we have no
 	// reason to expect a prompt-less server to suddenly grow prompts.
 	var prompts []mcp.Prompt
 	if caps.Prompts != nil {
-		promptsResult, err := mcpClient.ListPrompts(ctx, mcp.ListPromptsRequest{})
+		promptsResult, err := mcpClient.ListPrompts(initCtx, mcp.ListPromptsRequest{})
 		switch {
 		case err == nil:
 			prompts = promptsResult.Prompts
 		case errors.Is(err, mcp.ErrMethodNotFound):
-			logger.DebugContext(ctx, "remote MCP server advertised prompts but returned method not found",
+			logger.DebugContext(initCtx, "remote MCP server advertised prompts but returned method not found",
 				"datasource", datasourceUID)
 		default:
-			logger.WarnContext(ctx, "failed to list prompts from remote MCP server",
+			logger.WarnContext(initCtx, "failed to list prompts from remote MCP server",
 				"datasource", datasourceUID, "error", err)
 		}
 	}
 
-	logger.DebugContext(ctx, "connected to proxied MCP server",
+	logger.DebugContext(initCtx, "connected to proxied MCP server",
 		"datasource", datasourceUID,
 		"type", datasourceType,
 		"tools", len(tools),

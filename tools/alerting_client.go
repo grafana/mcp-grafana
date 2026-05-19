@@ -73,7 +73,7 @@ func (c *alertingClient) makeRequest(ctx context.Context, path string, params ur
 		return nil, fmt.Errorf("failed to execute request to %s: %w", p, err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
+		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 		_ = resp.Body.Close() //nolint:errcheck
 		return nil, fmt.Errorf("grafana API returned status code %d: %s", resp.StatusCode, string(bodyBytes))
 	}
@@ -299,7 +299,7 @@ func (c *alertingClient) GetAlertmanagerConfig(ctx context.Context, datasourceUI
 	}
 
 	// Mimir/Cortex /api/v1/alerts returns YAML with alertmanager_config field
-	bodyBytes, err := io.ReadAll(resp.Body)
+	bodyBytes, err := readResponseBody(resp.Body, defaultResponseLimitBytes)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read Alertmanager config response: %w", err)
 	}

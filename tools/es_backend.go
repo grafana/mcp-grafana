@@ -23,8 +23,6 @@ const (
 
 	elasticsearchDatasourceType = "elasticsearch"
 	openSearchDatasourceType    = "grafana-opensearch-datasource"
-
-	elasticSearchResponseLimitBytes = 1024 * 1024 * 10 // 10MB
 )
 
 // ElasticsearchDocument represents a single document from search results
@@ -163,19 +161,18 @@ func (b *elasticsearchBackend) Search(ctx context.Context, index, query string, 
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
+		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 		return nil, fmt.Errorf("elasticsearch API returned status code %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
-	body := io.LimitReader(resp.Body, elasticSearchResponseLimitBytes)
-	bodyBytes, err := io.ReadAll(body)
+	bodyBytes, err := readResponseBody(resp.Body, defaultResponseLimitBytes)
 	if err != nil {
 		return nil, fmt.Errorf("reading response body: %w", err)
 	}
 
 	var msearchResp msearchResponse
-	if err := unmarshalJSONWithLimitMsg(bodyBytes, &msearchResp, elasticSearchResponseLimitBytes); err != nil {
-		return nil, err
+	if err := json.Unmarshal(bodyBytes, &msearchResp); err != nil {
+		return nil, fmt.Errorf("unmarshaling response: %w", err)
 	}
 
 	if len(msearchResp.Responses) == 0 {
