@@ -112,16 +112,19 @@ func fetchSinglePage[T any](ctx context.Context, c *oncallProxyClient, path stri
 	if err != nil {
 		return nil, err
 	}
-	body, err := io.ReadAll(resp.Body)
+	body, readErr := readResponseBody(resp.Body, defaultResponseLimitBytes)
 	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		if len(body) > 0 {
 			return nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(body))
 		}
+		if readErr != nil {
+			return nil, fmt.Errorf("request failed with status %d (%w)", resp.StatusCode, readErr)
+		}
 		return nil, fmt.Errorf("request failed with status %d", resp.StatusCode)
 	}
-	if err != nil {
-		return nil, fmt.Errorf("reading response: %w", err)
+	if readErr != nil {
+		return nil, fmt.Errorf("reading response: %w", readErr)
 	}
 
 	trimmed := bytes.TrimSpace(body)
@@ -149,16 +152,19 @@ func fetchPaginated[T any](ctx context.Context, c *oncallProxyClient, path strin
 		if err != nil {
 			return nil, err
 		}
-		body, err := io.ReadAll(resp.Body)
+		body, readErr := readResponseBody(resp.Body, defaultResponseLimitBytes)
 		_ = resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			if len(body) > 0 {
 				return nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(body))
 			}
+			if readErr != nil {
+				return nil, fmt.Errorf("request failed with status %d (%w)", resp.StatusCode, readErr)
+			}
 			return nil, fmt.Errorf("request failed with status %d", resp.StatusCode)
 		}
-		if err != nil {
-			return nil, fmt.Errorf("reading response: %w", err)
+		if readErr != nil {
+			return nil, fmt.Errorf("reading response: %w", readErr)
 		}
 
 		// The internal API returns either paginated {"results": [...], "next": "..."} or a raw array.

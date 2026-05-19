@@ -19,8 +19,6 @@ import (
 const (
 	// GraphiteDatasourceType is the type identifier for Graphite datasources
 	GraphiteDatasourceType = "graphite"
-
-	graphiteResponseLimitBytes = 1024 * 1024 * 10 // 10MB
 )
 
 // GraphiteClient handles queries to a Graphite datasource via Grafana proxy
@@ -80,7 +78,7 @@ func (c *GraphiteClient) doGet(ctx context.Context, path string, params url.Valu
 		return nil, fmt.Errorf("graphite API returned status %d: %s", resp.StatusCode, string(body))
 	}
 
-	data, err := io.ReadAll(io.LimitReader(resp.Body, graphiteResponseLimitBytes))
+	data, err := readResponseBody(resp.Body, defaultResponseLimitBytes)
 	if err != nil {
 		return nil, fmt.Errorf("reading response body: %w", err)
 	}
