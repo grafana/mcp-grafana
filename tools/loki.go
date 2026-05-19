@@ -483,10 +483,12 @@ type QueryLokiLogsParams struct {
 
 // QueryMetadata provides context about the query results for AI agents
 type QueryMetadata struct {
-	LinesReturned     int  `json:"linesReturned"`
-	MaxLinesAllowed   int  `json:"maxLinesAllowed"`
-	ResultsTruncated  bool `json:"resultsTruncated"`
-	TotalLinesScanned *int `json:"totalLinesScanned"` // nil if stats unavailable, 0 if actually zero lines scanned
+	LinesReturned     int    `json:"linesReturned"`
+	MaxLinesAllowed   int    `json:"maxLinesAllowed"`
+	ResultsTruncated  bool   `json:"resultsTruncated"`
+	TotalLinesScanned *int   `json:"totalLinesScanned"` // nil if stats unavailable, 0 if actually zero lines scanned
+	StartTime         string `json:"startTime,omitempty"`
+	EndTime           string `json:"endTime,omitempty"`
 }
 
 // QueryLokiLogsResult wraps the Loki query result with optional hints
@@ -677,10 +679,12 @@ func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) (*QueryLokiLog
 	// Time defaults: range queries default to "last hour"; instant queries
 	// pass through verbatim because the backend chooses the anchor itself.
 	var startTimeStr, endTimeStr string
+	usedDefaultTimeRange := false
 	if args.QueryType == "instant" {
 		startTimeStr = args.StartRFC3339
 		endTimeStr = args.EndRFC3339
 	} else {
+		usedDefaultTimeRange = args.StartRFC3339 == "" && args.EndRFC3339 == ""
 		startTimeStr, endTimeStr = getDefaultTimeRange(args.StartRFC3339, args.EndRFC3339)
 	}
 
@@ -737,6 +741,8 @@ func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) (*QueryLokiLog
 			MaxLinesAllowed:   limit,
 			ResultsTruncated:  truncated,
 			TotalLinesScanned: result.TotalLinesScanned,
+			StartTime:         startTimeStr,
+			EndTime:           endTimeStr,
 		},
 	}
 
@@ -749,13 +755,21 @@ func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) (*QueryLokiLog
 		})
 	}
 
+	if usedDefaultTimeRange && out.Hints == nil {
+		out.Hints = &EmptyResultHints{
+			Summary:          "This query used the default 1-hour lookback window because startRfc3339 and endRfc3339 were not provided.",
+			PossibleCauses:   []string{},
+			SuggestedActions: []string{"If results seem incomplete or you need data from a wider time range, provide explicit startRfc3339 and endRfc3339 parameters."},
+		}
+	}
+
 	return out, nil
 }
 
 // QueryLokiLogs is a tool for querying logs from Loki
 var QueryLokiLogs = mcpgrafana.MustTool(
 	"query_loki_logs",
-	"Executes a log query against a Loki or VictoriaLogs datasource and returns matching log entries (or metric samples on Loki). Defaults to the last hour, a limit of 10 entries, and 'backward' direction (newest first). The `logql` parameter takes LogQL on Loki and LogsQL on VictoriaLogs (e.g., Loki: `{app=\"foo\"} |= \"error\"`; VictoriaLogs: `{app=\"foo\"} \"error\"`). Prefer using `query_loki_stats` first to check stream size and `list_loki_label_names` / `list_loki_label_values` to verify labels exist.",
+	"Executes a log query against a Loki or VictoriaLogs datasource and returns matching log entries (or metric samples on Loki). Defaults to the last hour, a limit of 10 entries, and 'backward' direction (newest first). The `logql` parameter takes LogQL on Loki and LogsQL on VictoriaLogs (e.g., Loki: `{app=\"foo\"} |= \"error\"`; VictoriaLogs: `{app=\"foo\"} \"error\"`). To count matching log lines precisely, use a `count_over_time()` metric query with queryType='instant'. Prefer using `query_loki_stats` first to cheaply check whether a stream contains data (avoiding expensive queries against empty streams) and `list_loki_label_names` / `list_loki_label_values` to verify labels exist before querying. Note: `query_loki_stats` returns approximate storage-level counts, not exact log line counts.",
 	queryLokiLogs,
 	mcp.WithTitleAnnotation("Query Loki logs"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -867,7 +881,7 @@ func queryLokiStats(ctx context.Context, args QueryLokiStatsParams) (*Stats, err
 // QueryLokiStats is a tool for querying stats from Loki
 var QueryLokiStats = mcpgrafana.MustTool(
 	"query_loki_stats",
-	"Retrieves statistics about log streams matching a given selector within a Loki or VictoriaLogs datasource and time range. Returns an object containing the count of streams, chunks, entries, and total bytes (e.g., `{\"streams\": 5, \"chunks\": 50, \"entries\": 10000, \"bytes\": 512000}`). On VictoriaLogs only `entries` is populated; the other fields remain zero. The `logql` parameter **must** be a simple label selector (e.g., `{app=\"nginx\", env=\"prod\"}`) and does not support line filters, parsers, or aggregations. Defaults to the last hour if the time range is omitted.",
+	"Retrieves index-level statistics about log streams matching a given selector within a Loki or VictoriaLogs datasource and time range. Returns an object containing the count of streams, chunks, entries, and total bytes (e.g., `{\"streams\": 5, \"chunks\": 50, \"entries\": 10000, \"bytes\": 512000}`). **Important**: the `entries` count reflects storage-level index entries (chunk metadata), NOT the number of individual log lines matching the selector. To count actual matching log lines, use `query_loki_logs` with a `count_over_time()` metric query instead. On VictoriaLogs only `entries` is populated; the other fields remain zero. The `logql` parameter **must** be a simple label selector (e.g., `{app=\"nginx\", env=\"prod\"}`) and does not support line filters, parsers, or aggregations. Defaults to the last hour if the time range is omitted.",
 	queryLokiStats,
 	mcp.WithTitleAnnotation("Get Loki log statistics"),
 	mcp.WithIdempotentHintAnnotation(true),
