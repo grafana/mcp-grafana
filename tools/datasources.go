@@ -426,7 +426,7 @@ type CheckDatasourceHealthParams struct {
 
 type DatasourceHealthResult struct {
 	UID     string `json:"uid"`
-	Status  string `json:"status,omitempty"`  // "OK", "ERROR", or "UNKNOWN"
+	Status  string `json:"status,omitempty"` // "OK", "ERROR", or "UNKNOWN"
 	Message string `json:"message"`
 }
 
@@ -434,6 +434,7 @@ type datasourcesClient struct {
 	httpClient *http.Client
 	baseURL    string
 }
+
 func newDatasourcesClient(ctx context.Context) (*datasourcesClient, error) {
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
 	baseURL := strings.TrimRight(cfg.URL, "/") + "/api/datasources"
@@ -489,7 +490,7 @@ type DatasourceHealthCheckResult struct {
 	UID     string `json:"uid"`
 	Name    string `json:"name"`
 	Type    string `json:"type"`
-	Status  string `json:"status,omitempty"`  // "OK", "ERROR", or "UNKNOWN"
+	Status  string `json:"status,omitempty"` // "OK", "ERROR", or "UNKNOWN"
 	Message string `json:"message,omitempty"`
 	Error   string `json:"error,omitempty"`
 }
