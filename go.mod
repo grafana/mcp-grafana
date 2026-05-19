@@ -15,12 +15,14 @@ require (
 	github.com/grafana/incident-go v0.0.0-20251003115753-d71681611ddd
 	github.com/grafana/pyroscope/api v1.3.2
 	github.com/invopop/jsonschema v0.13.0
+	github.com/itchyny/gojq v0.12.19
 	github.com/mark3labs/mcp-go v0.46.0
 	github.com/prometheus/alertmanager v0.31.1
 	github.com/prometheus/client_golang v1.23.2
 	github.com/prometheus/common v0.67.5
 	github.com/prometheus/prometheus v0.311.3
 	github.com/stretchr/testify v1.11.1
+	github.com/yosida95/uritemplate/v3 v3.0.2
 	go.opentelemetry.io/contrib/bridges/otelslog v0.18.0
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.67.0
 	go.opentelemetry.io/otel v1.43.0
@@ -111,7 +113,6 @@ require (
 	github.com/hashicorp/go-plugin v1.7.0 // indirect
 	github.com/hashicorp/go-retryablehttp v0.7.8 // indirect
 	github.com/hashicorp/yamux v0.1.2 // indirect
-	github.com/itchyny/gojq v0.12.19 // indirect
 	github.com/itchyny/timefmt-go v0.1.8 // indirect
 	github.com/jaegertracing/jaeger-idl v0.6.0 // indirect
 	github.com/jpillora/backoff v1.0.0 // indirect
@@ -144,7 +145,6 @@ require (
 	github.com/shopspring/decimal v1.4.0 // indirect
 	github.com/spf13/cast v1.10.0 // indirect
 	github.com/wk8/go-ordered-map/v2 v2.1.8 // indirect
-	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	github.com/zeebo/xxh3 v1.0.2 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.65.0 // indirect

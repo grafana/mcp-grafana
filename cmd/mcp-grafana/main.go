@@ -216,7 +216,7 @@ func (dt *disabledTools) buildInstructions() string {
 	// Proxied tools are registered via hooks (not maybeAddTools), so they
 	// are not in toolEntries. Include their description when enabled.
 	if !dt.proxied {
-		capabilities = append(capabilities, "Proxied Tools: Access tools from external MCP servers (like Tempo) through dynamic discovery.")
+		capabilities = append(capabilities, "Proxied MCP Servers: Full proxy (tools, resources, and prompts) for external MCP servers (like Tempo) discovered via Grafana datasources.")
 	}
 
 	var b strings.Builder
@@ -306,10 +306,23 @@ func newServer(transport string, dt disabledTools, obs *observability.Observabil
 	// then register tools.
 	instructions := dt.buildInstructions()
 
-	s = server.NewMCPServer("mcp-grafana", mcpgrafana.Version(),
+	serverOpts := []server.ServerOption{
 		server.WithInstructions(instructions),
 		server.WithHooks(hooks),
-	)
+	}
+	// When proxied tools are enabled, declare resource and prompt capabilities
+	// upfront so clients see them during the initial `initialize` exchange.
+	// Resources/prompts from upstream MCP servers (e.g. Tempo) are registered
+	// lazily per session, but mcp-go advertises capabilities only at initialize
+	// time, so they would otherwise be invisible to clients.
+	if !dt.proxied {
+		serverOpts = append(serverOpts,
+			server.WithResourceCapabilities(false, true),
+			server.WithPromptCapabilities(true),
+		)
+	}
+
+	s = server.NewMCPServer("mcp-grafana", mcpgrafana.Version(), serverOpts...)
 
 	// Initialize ToolManager now that server is created
 	stm = mcpgrafana.NewToolManager(sm, s, mcpgrafana.WithProxiedTools(!dt.proxied))
