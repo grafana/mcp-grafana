@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
 	"sync"
 
@@ -424,21 +426,57 @@ type CheckDatasourceHealthParams struct {
 
 type DatasourceHealthResult struct {
 	UID     string `json:"uid"`
+	Status  string `json:"status,omitempty"`  // "OK", "ERROR", or "UNKNOWN"
 	Message string `json:"message"`
 }
 
+type datasourcesClient struct {
+	httpClient *http.Client
+	baseURL    string
+}
+func newDatasourcesClient(ctx context.Context) (*datasourcesClient, error) {
+	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
+	baseURL := strings.TrimRight(cfg.URL, "/") + "/api/datasources"
+
+	transport, err := mcpgrafana.BuildTransport(&cfg, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create transport: %w", err)
+	}
+	httpClient := &http.Client{Transport: transport}
+
+	return &datasourcesClient{
+		httpClient: httpClient,
+		baseURL:    baseURL,
+	}, nil
+}
+
 func checkDatasourceHealth(ctx context.Context, args CheckDatasourceHealthParams) (*DatasourceHealthResult, error) {
-	c := mcpgrafana.GrafanaClientFromContext(ctx)
-	resp, err := c.Datasources.CheckDatasourceHealthWithUIDWithParams(
-		datasources.NewCheckDatasourceHealthWithUIDParamsWithContext(ctx).WithUID(args.UID),
-	)
+	client, err := newDatasourcesClient(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("check datasource health %s: %w", args.UID, err)
 	}
-	return &DatasourceHealthResult{
-		UID:     args.UID,
-		Message: resp.Payload.Message,
-	}, nil
+	endpoint := client.baseURL + "/uid/" + args.UID + "/health"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request %s: %w", args.UID, err)
+	}
+
+	resp, err := client.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("check datasource health %s: %w", args.UID, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("check datasource health %s: HTTP %d: %s", args.UID, resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	result := &DatasourceHealthResult{UID: args.UID}
+	if err := json.NewDecoder(resp.Body).Decode(result); err != nil {
+		return nil, fmt.Errorf("check datasource health %s: %w", args.UID, err)
+	}
+	return result, nil
 }
 
 type BulkCheckDatasourceHealthParams struct {
@@ -451,6 +489,7 @@ type DatasourceHealthCheckResult struct {
 	UID     string `json:"uid"`
 	Name    string `json:"name"`
 	Type    string `json:"type"`
+	Status  string `json:"status,omitempty"`  // "OK", "ERROR", or "UNKNOWN"
 	Message string `json:"message,omitempty"`
 	Error   string `json:"error,omitempty"`
 }
@@ -519,6 +558,7 @@ func checkDatasourcesHealth(ctx context.Context, args BulkCheckDatasourceHealthP
 			if err != nil {
 				r.Error = err.Error()
 			} else {
+				r.Status = health.Status
 				r.Message = health.Message
 			}
 			results[i] = r
@@ -528,7 +568,7 @@ func checkDatasourcesHealth(ctx context.Context, args BulkCheckDatasourceHealthP
 
 	healthy, unhealthy := 0, 0
 	for _, r := range results {
-		if r.Error != "" {
+		if r.Error != "" || r.Status != "OK" {
 			unhealthy++
 		} else {
 			healthy++

@@ -303,7 +303,7 @@ func TestCreateDatasource_Success(t *testing.T) {
 
 // --- updateDatasource ---
 
-func newUpdateDatasourceServer(t *testing.T, current *models.DataSource, captureBody *models.UpdateDataSourceCommand, healthMsg string, healthStatus int) *httptest.Server {
+func newUpdateDatasourceServer(t *testing.T, current *models.DataSource, captureBody *models.UpdateDataSourceCommand, healthMsg string, healthGrafanaStatus string) *httptest.Server {
 	t.Helper()
 	id := current.ID
 	msg := "Datasource updated"
@@ -327,8 +327,8 @@ func newUpdateDatasourceServer(t *testing.T, current *models.DataSource, capture
 			w.WriteHeader(http.StatusOK)
 			_ = json.NewEncoder(w).Encode(updateResp)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/datasources/uid/"+current.UID+"/health":
-			w.WriteHeader(healthStatus)
-			_ = json.NewEncoder(w).Encode(map[string]any{"message": healthMsg})
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": healthGrafanaStatus, "message": healthMsg})
 		}
 	}))
 }
@@ -342,7 +342,7 @@ func TestUpdateDatasource_MergesProvidedFields(t *testing.T) {
 		URL:  "http://old:9090",
 	}
 	var captured models.UpdateDataSourceCommand
-	srv := newUpdateDatasourceServer(t, current, &captured, "Health check passed", http.StatusOK)
+	srv := newUpdateDatasourceServer(t, current, &captured, "Health check passed", "OK")
 	defer srv.Close()
 
 	newName := "New Name"
@@ -356,7 +356,7 @@ func TestUpdateDatasource_MergesProvidedFields(t *testing.T) {
 
 func TestUpdateDatasource_HealthCheckIncludedInResult(t *testing.T) {
 	current := &models.DataSource{ID: 1, UID: "prom-1", Name: "Prometheus", Type: "prometheus"}
-	srv := newUpdateDatasourceServer(t, current, nil, "Data source is working", http.StatusOK)
+	srv := newUpdateDatasourceServer(t, current, nil, "Data source is working", "OK")
 	defer srv.Close()
 
 	newURL := "http://new:9090"
@@ -369,14 +369,15 @@ func TestUpdateDatasource_HealthCheckIncludedInResult(t *testing.T) {
 
 func TestUpdateDatasource_HealthCheckFailureIsNonFatal(t *testing.T) {
 	current := &models.DataSource{ID: 1, UID: "prom-1", Name: "Prometheus", Type: "prometheus"}
-	srv := newUpdateDatasourceServer(t, current, nil, "connection refused", http.StatusInternalServerError)
+	srv := newUpdateDatasourceServer(t, current, nil, "connection refused", "ERROR")
 	defer srv.Close()
 
 	newURL := "http://bad-host:9090"
 	result, err := updateDatasource(mockDatasourcesCtx(srv), UpdateDatasourceParams{UID: "prom-1", URL: &newURL})
 	require.NoError(t, err)
 	require.NotNil(t, result.Health)
-	assert.Contains(t, result.Health.Message, "health check failed")
+	assert.Equal(t, "ERROR", result.Health.Status)
+	assert.Equal(t, "connection refused", result.Health.Message)
 }
 
 func TestUpdateDatasource_NotFound(t *testing.T) {
@@ -404,7 +405,7 @@ func TestUpdateDatasource_PreservesPlainTextAuthFields(t *testing.T) {
 		BasicAuthUser: "ba-user",
 	}
 	var captured models.UpdateDataSourceCommand
-	srv := newUpdateDatasourceServer(t, current, &captured, "OK", http.StatusOK)
+	srv := newUpdateDatasourceServer(t, current, &captured, "OK", "OK")
 	defer srv.Close()
 
 	newURL := "http://prometheus:9090"
@@ -423,14 +424,31 @@ func TestCheckDatasourceHealth_ReturnsMessage(t *testing.T) {
 		assert.Equal(t, "/api/datasources/uid/prom-1/health", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(map[string]any{"message": "Data source connected"})
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "OK", "message": "Data source connected"})
 	}))
 	defer srv.Close()
 
 	result, err := checkDatasourceHealth(mockDatasourcesCtx(srv), CheckDatasourceHealthParams{UID: "prom-1"})
 	require.NoError(t, err)
 	assert.Equal(t, "prom-1", result.UID)
+	assert.Equal(t, "OK", result.Status)
 	assert.Equal(t, "Data source connected", result.Message)
+}
+
+func TestCheckDatasourceHealth_HTTP200WithErrorStatus(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/datasources/uid/prom-1/health", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "ERROR", "message": "connection refused"})
+	}))
+	defer srv.Close()
+
+	result, err := checkDatasourceHealth(mockDatasourcesCtx(srv), CheckDatasourceHealthParams{UID: "prom-1"})
+	require.NoError(t, err)
+	assert.Equal(t, "prom-1", result.UID)
+	assert.Equal(t, "ERROR", result.Status)
+	assert.Equal(t, "connection refused", result.Message)
 }
 
 func TestCheckDatasourceHealth_NotFound(t *testing.T) {
@@ -485,10 +503,10 @@ func newBulkHealthServer(t *testing.T, list []*models.DataSourceListItemDTO, hea
 		uid := parts[len(parts)-2] // path: .../uid/{uid}/health
 		if healthyUIDs[uid] {
 			w.WriteHeader(http.StatusOK)
-			_ = json.NewEncoder(w).Encode(map[string]any{"message": "OK"})
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "OK", "message": "Data source is working"})
 		} else {
-			w.WriteHeader(http.StatusInternalServerError)
-			_ = json.NewEncoder(w).Encode(map[string]any{"message": "connection error"})
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ERROR", "message": "connection refused"})
 		}
 	}))
 }
@@ -558,13 +576,13 @@ func TestCheckDatasourcesHealth_HealthyCounts(t *testing.T) {
 	assert.Equal(t, 2, result.Unhealthy)
 	assert.False(t, result.HasMore)
 
-	errCount := 0
+	unhealthyCount := 0
 	for _, r := range result.Results {
-		if r.Error != "" {
-			errCount++
+		if r.Status != "OK" {
+			unhealthyCount++
 		}
 	}
-	assert.Equal(t, 2, errCount)
+	assert.Equal(t, 2, unhealthyCount)
 }
 
 func TestCheckDatasourcesHealth_UnknownUIDsProduceEmptyResult(t *testing.T) {
