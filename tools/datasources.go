@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/invopop/jsonschema"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -102,14 +105,9 @@ func (datasourceJSONData) JSONSchema() *jsonschema.Schema {
 // TODO: Replace with a fetch from the Grafana datasource settings API when available.
 func datasourceJSONDataSchema() *jsonschema.Schema {
 	return &jsonschema.Schema{
-		Type: "object",
-		Description: "Datasource-specific non-secret settings. Keys and values vary by plugin type; " +
-			"ask the user what to set or consult the plugin documentation. " +
-			"Examples — prometheus: {\"httpMethod\":\"GET\",\"timeInterval\":\"15s\"}; " +
-			"loki: {\"maxLines\":1000}; elasticsearch: {\"index\":\"my-index\",\"timeField\":\"@timestamp\"}; " +
-			"cloudwatch: {\"defaultRegion\":\"us-east-1\",\"authType\":\"default\"}; " +
-			"influxdb: {\"version\":\"Flux\",\"product\":\"InfluxDB Enterprise 3.x\"}.",
-		Extras: map[string]any{},
+		Type:        "object",
+		Description: "Plugin-specific non-secret settings. Keys vary by datasource type; ask the user or consult the plugin docs.",
+		Extras:      map[string]any{},
 	}
 }
 
@@ -127,12 +125,12 @@ type CreateDatasourceParams struct {
 }
 
 type CreateDatasourceResult struct {
-	Message    string             `json:"message"`
-	ID         int64              `json:"id"`
-	UID        string             `json:"uid"`
-	Name       string             `json:"name"`
-	Datasource *models.DataSource `json:"datasource,omitempty"`
-	NextSteps  string             `json:"nextSteps,omitempty"`
+	Message   string                  `json:"message"`
+	ID        int64                   `json:"id"`
+	UID       string                  `json:"uid"`
+	Name      string                  `json:"name"`
+	NextSteps string                  `json:"nextSteps,omitempty"`
+	Health    *DatasourceHealthResult `json:"health,omitempty"`
 }
 
 func createDatasource(ctx context.Context, args CreateDatasourceParams) (*mcp.CallToolResult, error) {
@@ -160,9 +158,7 @@ func createDatasource(ctx context.Context, args CreateDatasourceParams) (*mcp.Ca
 		return nil, fmt.Errorf("create datasource: %w", err)
 	}
 	p := resp.Payload
-	result := &CreateDatasourceResult{
-		Datasource: p.Datasource,
-	}
+	result := &CreateDatasourceResult{}
 
 	if p.Message != nil {
 		result.Message = *p.Message
@@ -177,6 +173,13 @@ func createDatasource(ctx context.Context, args CreateDatasourceParams) (*mcp.Ca
 		result.UID = p.Datasource.UID
 	}
 	if result.UID != "" {
+		health, err := checkDatasourceHealth(ctx, CheckDatasourceHealthParams{UID: result.UID})
+		if err != nil {
+			result.Health = &DatasourceHealthResult{UID: result.UID, Message: fmt.Sprintf("health check failed: %s", err)}
+		} else {
+			result.Health = health
+		}
+
 		grafanaURL := c.PublicURL
 		if grafanaURL == "" {
 			grafanaURL = mcpgrafana.GrafanaConfigFromContext(ctx).URL
@@ -244,10 +247,19 @@ var ListDatasources = mcpgrafana.MustTool(
 
 var CreateDatasource = mcpgrafana.MustTool(
 	"create_datasource",
-	"Create a new datasource in Grafana. Returns the created datasource details including its UID. The result includes a nextSteps field and a resource link pointing to the datasource configuration page — always surface both to the user so they can complete setup (e.g. add credentials) in the Grafana UI. Does not support adding credentials or PII and should never ask for authentication options. If credentials are detected, remind the user to rotate and revoke them to keep them safe.",
+	"Create a datasource. If type is ambiguous, call search_plugin_information first; install the plugin if needed. Returns UID, health check, and a config page link. Never handle credentials — remind the user to rotate any detected.",
 	createDatasource,
 	mcp.WithTitleAnnotation("Create datasource"),
 	mcp.WithIdempotentHintAnnotation(false),
+	mcp.WithReadOnlyHintAnnotation(false),
+)
+
+var UpdateDatasource = mcpgrafana.MustTool(
+	"update_datasource",
+	"Update non-secret datasource fields by UID. Omitted fields are preserved. Returns a health check. For secrets, instruct the user to use the Grafana UI. Confirm before creating if the datasource doesn't exist.",
+	updateDatasource,
+	mcp.WithTitleAnnotation("Update datasource"),
+	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(false),
 )
 
@@ -310,11 +322,286 @@ var GetDatasource = mcpgrafana.MustTool(
 	mcp.WithReadOnlyHintAnnotation(true),
 )
 
-func AddDatasourceTools(mcp *server.MCPServer, enableWrite bool) {
+type UpdateDatasourceParams struct {
+	UID             string                 `json:"uid" jsonschema:"required,description=The UID of the datasource to update"`
+	Name            *string                `json:"name,omitempty" jsonschema:"description=New display name"`
+	Type            *string                `json:"type,omitempty" jsonschema:"description=Datasource plugin type (usually leave unchanged after create)"`
+	URL             *string                `json:"url,omitempty" jsonschema:"description=Datasource base URL"`
+	Access          *string                `json:"access,omitempty" jsonschema:"description=How Grafana reaches the datasource (proxy or direct)"`
+	Database        *string                `json:"database,omitempty" jsonschema:"description=Database name when applicable"`
+	BasicAuth       *bool                  `json:"basicAuth,omitempty" jsonschema:"description=Whether Grafana uses basic auth to the datasource"`
+	WithCredentials *bool                  `json:"withCredentials,omitempty" jsonschema:"description=Whether Grafana forwards credentials such as cookies"`
+	IsDefault       *bool                  `json:"isDefault,omitempty" jsonschema:"description=Whether this datasource should be the default"`
+	JSONData        map[string]interface{} `json:"jsonData,omitempty" jsonschema:"description=Non-secret plugin settings; when set\\, replaces jsonData on the server for this datasource"`
+}
+
+type UpdateDatasourceResult struct {
+	Message string                  `json:"message,omitempty"`
+	Health  *DatasourceHealthResult `json:"health,omitempty"`
+}
+
+func updateDatasource(ctx context.Context, args UpdateDatasourceParams) (*UpdateDatasourceResult, error) {
+	// pending add credential violation check
+	c := mcpgrafana.GrafanaClientFromContext(ctx)
+
+	current, err := c.Datasources.GetDataSourceByUIDWithParams(
+		datasources.NewGetDataSourceByUIDParamsWithContext(ctx).WithUID(args.UID),
+	)
+	if err != nil {
+		if strings.Contains(err.Error(), "404") {
+			return nil, fmt.Errorf("datasource with UID '%s' not found", args.UID)
+		}
+		return nil, fmt.Errorf("get datasource by uid %s: %w", args.UID, err)
+	}
+
+	ds := current.Payload
+	cmd := &models.UpdateDataSourceCommand{
+		Name:            ds.Name,
+		Type:            ds.Type,
+		Access:          ds.Access,
+		URL:             ds.URL,
+		User:            ds.User,
+		Database:        ds.Database,
+		BasicAuth:       ds.BasicAuth,
+		BasicAuthUser:   ds.BasicAuthUser,
+		WithCredentials: ds.WithCredentials,
+		IsDefault:       ds.IsDefault,
+		JSONData:        models.JSON(ds.JSONData),
+		Version:         ds.Version,
+	}
+
+	if args.Name != nil {
+		cmd.Name = *args.Name
+	}
+	if args.Type != nil {
+		cmd.Type = *args.Type
+	}
+	if args.URL != nil {
+		cmd.URL = *args.URL
+	}
+	if args.Access != nil {
+		cmd.Access = models.DsAccess(*args.Access)
+	}
+	if args.Database != nil {
+		cmd.Database = *args.Database
+	}
+	if args.BasicAuth != nil {
+		cmd.BasicAuth = *args.BasicAuth
+	}
+	if args.WithCredentials != nil {
+		cmd.WithCredentials = *args.WithCredentials
+	}
+	if args.IsDefault != nil {
+		cmd.IsDefault = *args.IsDefault
+	}
+	if args.JSONData != nil {
+		cmd.JSONData = models.JSON(args.JSONData)
+	}
+
+	resp, err := c.Datasources.UpdateDataSourceByUIDWithParams(
+		datasources.NewUpdateDataSourceByUIDParamsWithContext(ctx).WithUID(args.UID).WithBody(cmd),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("update datasource %s: %w", args.UID, err)
+	}
+
+	result := &UpdateDatasourceResult{}
+	if resp.Payload.Message != nil {
+		result.Message = *resp.Payload.Message
+	}
+
+	health, err := checkDatasourceHealth(ctx, CheckDatasourceHealthParams{UID: args.UID})
+	if err != nil {
+		result.Health = &DatasourceHealthResult{UID: args.UID, Message: fmt.Sprintf("health check failed: %s", err)}
+	} else {
+		result.Health = health
+	}
+
+	return result, nil
+}
+
+type CheckDatasourceHealthParams struct {
+	UID string `json:"uid" jsonschema:"required,description=The UID of the datasource to health-check"`
+}
+
+type DatasourceHealthResult struct {
+	UID     string `json:"uid"`
+	Status  string `json:"status,omitempty"` // "OK", "ERROR", or "UNKNOWN"
+	Message string `json:"message"`
+}
+
+type datasourcesClient struct {
+	httpClient *http.Client
+	baseURL    string
+}
+
+func newDatasourcesClient(ctx context.Context) (*datasourcesClient, error) {
+	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
+	baseURL := strings.TrimRight(cfg.URL, "/") + "/api/datasources"
+
+	transport, err := mcpgrafana.BuildTransport(&cfg, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create transport: %w", err)
+	}
+	httpClient := &http.Client{Transport: transport}
+
+	return &datasourcesClient{
+		httpClient: httpClient,
+		baseURL:    baseURL,
+	}, nil
+}
+
+func checkDatasourceHealth(ctx context.Context, args CheckDatasourceHealthParams) (*DatasourceHealthResult, error) {
+	client, err := newDatasourcesClient(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("check datasource health %s: %w", args.UID, err)
+	}
+	endpoint := client.baseURL + "/uid/" + args.UID + "/health"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request %s: %w", args.UID, err)
+	}
+
+	resp, err := client.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("check datasource health %s: %w", args.UID, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("check datasource health %s: HTTP %d: %s", args.UID, resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	result := &DatasourceHealthResult{UID: args.UID}
+	if err := json.NewDecoder(resp.Body).Decode(result); err != nil {
+		return nil, fmt.Errorf("check datasource health %s: %w", args.UID, err)
+	}
+	return result, nil
+}
+
+type BulkCheckDatasourceHealthParams struct {
+	Type   string   `json:"type,omitempty" jsonschema:"description=Plugin type to filter (e.g. prometheus). Omit to check all."`
+	UIDs   []string `json:"uids,omitempty" jsonschema:"description=UIDs to check. Takes priority over type when set."`
+	Offset int      `json:"offset,omitempty" jsonschema:"default=0,description=Number to skip for pagination."`
+}
+
+type DatasourceHealthCheckResult struct {
+	UID     string `json:"uid"`
+	Name    string `json:"name"`
+	Type    string `json:"type"`
+	Status  string `json:"status,omitempty"` // "OK", "ERROR", or "UNKNOWN"
+	Message string `json:"message,omitempty"`
+	Error   string `json:"error,omitempty"`
+}
+
+type BulkDatasourceHealthResult struct {
+	Results   []DatasourceHealthCheckResult `json:"results"`
+	Total     int                           `json:"total"`   // Total matching datasources before pagination
+	Checked   int                           `json:"checked"` // Number of datasources health-checked in this page
+	Healthy   int                           `json:"healthy"`
+	Unhealthy int                           `json:"unhealthy"`
+	HasMore   bool                          `json:"hasMore"` // Whether more datasources exist beyond this page
+}
+
+func checkDatasourcesHealth(ctx context.Context, args BulkCheckDatasourceHealthParams) (*BulkDatasourceHealthResult, error) {
+	c := mcpgrafana.GrafanaClientFromContext(ctx)
+
+	resp, err := c.Datasources.GetDataSourcesWithParams(
+		datasources.NewGetDataSourcesParamsWithContext(ctx),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list datasources: %w", err)
+	}
+
+	var all models.DataSourceList
+	if len(args.UIDs) > 0 {
+		uidSet := make(map[string]bool, len(args.UIDs))
+		for _, u := range args.UIDs {
+			uidSet[u] = true
+		}
+		for _, ds := range resp.Payload {
+			if uidSet[ds.UID] {
+				all = append(all, ds)
+			}
+		}
+	} else {
+		all = filterDatasources(resp.Payload, args.Type)
+	}
+
+	limit := 10
+
+	offset := args.Offset
+	if offset < 0 {
+		offset = 0
+	}
+
+	var targets models.DataSourceList
+	if offset < len(all) {
+		end := offset + limit
+		if end > len(all) {
+			end = len(all)
+		}
+		targets = all[offset:end]
+	}
+
+	results := make([]DatasourceHealthCheckResult, len(targets))
+	sem := make(chan struct{}, 10)
+	var wg sync.WaitGroup
+	for i, ds := range targets {
+		wg.Add(1)
+		go func(i int, ds *models.DataSourceListItemDTO) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			r := DatasourceHealthCheckResult{UID: ds.UID, Name: ds.Name, Type: ds.Type}
+			health, err := checkDatasourceHealth(ctx, CheckDatasourceHealthParams{UID: ds.UID})
+			if err != nil {
+				r.Error = err.Error()
+			} else {
+				r.Status = health.Status
+				r.Message = health.Message
+			}
+			results[i] = r
+		}(i, ds)
+	}
+	wg.Wait()
+
+	healthy, unhealthy := 0, 0
+	for _, r := range results {
+		if r.Error != "" || r.Status != "OK" {
+			unhealthy++
+		} else {
+			healthy++
+		}
+	}
+
+	return &BulkDatasourceHealthResult{
+		Results:   results,
+		Total:     len(all),
+		Checked:   len(results),
+		Healthy:   healthy,
+		Unhealthy: unhealthy,
+		HasMore:   offset+len(results) < len(all),
+	}, nil
+}
+
+var CheckDatasourcesHealth = mcpgrafana.MustTool(
+	"check_datasources_health",
+	"Check datasource health in parallel. Filter by type or provide UIDs; omit both to check all. Returns per-datasource status and a summary.",
+	checkDatasourcesHealth,
+	mcp.WithTitleAnnotation("Check datasources health"),
+	mcp.WithIdempotentHintAnnotation(true),
+	mcp.WithReadOnlyHintAnnotation(true),
+)
+
+func AddDatasourceTools(mcp *server.MCPServer, enableWriteTools bool) {
 	ListDatasources.Register(mcp)
 	GetDatasource.Register(mcp)
-	// this is to make sure that we only register datasource write tools when scope grafana:write has been granted
-	if enableWrite {
+	CheckDatasourcesHealth.Register(mcp)
+	if enableWriteTools {
+		// TODO: since these tools are more for set up / admin, when merging to main, we should move them to the admin toolset
 		CreateDatasource.Register(mcp)
+		UpdateDatasource.Register(mcp)
 	}
 }
