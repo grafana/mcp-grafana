@@ -153,9 +153,9 @@ func TestBuildSchemaGuidance(t *testing.T) {
 	t.Run("annotates default option for select fields", func(t *testing.T) {
 		schema := &DatasourceSchema{Fields: []DsSchemaField{
 			{
-				Key:       "method",
-				Target:    "jsonData",
-				ValueType: "string",
+				Key:        "method",
+				Target:     "jsonData",
+				ValueType:  "string",
 				DefaultVal: "POST",
 				UI: &dsFieldUI{Options: []dsSchemaFieldOption{
 					{Label: "GET", Value: "GET"},

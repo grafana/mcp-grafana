@@ -90,15 +90,15 @@ func listDatasources(ctx context.Context, args ListDatasourcesParams) (*ListData
 }
 
 type CreateDatasourceParams struct {
-	Name            string             `json:"name" jsonschema:"required,description=Datasource display name"`
-	Type            string             `json:"type" jsonschema:"required,description=Grafana datasource plugin type\\, for example prometheus"`
-	URL             string             `json:"url,omitempty" jsonschema:"description=Datasource base URL when required by the plugin"`
-	Access          string             `json:"access,omitempty" jsonschema:"description=How Grafana should access the datasource (proxy or direct)"`
-	Database        string             `json:"database,omitempty" jsonschema:"description=Optional database name"`
-	BasicAuth       bool               `json:"basicAuth,omitempty" jsonschema:"description=Whether Grafana should use basic auth"`
-	WithCredentials bool               `json:"withCredentials,omitempty" jsonschema:"description=Whether Grafana should forward credentials such as cookies"`
-	IsDefault       bool               `json:"isDefault,omitempty" jsonschema:"description=Whether this should become the default datasource"`
-	Fields        map[string]any 	   `json:"fields,omitempty" jsonschema:"description=Datasource field values to provision\\, keyed by field key from the schema returned on the first call. The server uses each field's target (root or jsonData) to place values correctly in the YAML. Example: {\"url\": \"http://prometheus:9090\"\\, \"httpMethod\": \"POST\"}."`
+	Name            string         `json:"name" jsonschema:"required,description=Datasource display name"`
+	Type            string         `json:"type" jsonschema:"required,description=Grafana datasource plugin type\\, for example prometheus"`
+	URL             string         `json:"url,omitempty" jsonschema:"description=Datasource base URL when required by the plugin"`
+	Access          string         `json:"access,omitempty" jsonschema:"description=How Grafana should access the datasource (proxy or direct)"`
+	Database        string         `json:"database,omitempty" jsonschema:"description=Optional database name"`
+	BasicAuth       bool           `json:"basicAuth,omitempty" jsonschema:"description=Whether Grafana should use basic auth"`
+	WithCredentials bool           `json:"withCredentials,omitempty" jsonschema:"description=Whether Grafana should forward credentials such as cookies"`
+	IsDefault       bool           `json:"isDefault,omitempty" jsonschema:"description=Whether this should become the default datasource"`
+	Fields          map[string]any `json:"fields,omitempty" jsonschema:"description=Datasource field values to provision\\, keyed by field key from the schema returned on the first call. The server uses each field's target (root or jsonData) to place values correctly in the YAML. Example: {\"url\": \"http://prometheus:9090\"\\, \"httpMethod\": \"POST\"}."`
 }
 
 type CreateDatasourceResult struct {
@@ -110,7 +110,6 @@ type CreateDatasourceResult struct {
 	NextSteps  string             `json:"nextSteps,omitempty"`
 }
 
-
 type noSchemaField struct {
 	Key         string `json:"key"`
 	Description string `json:"description"`
@@ -118,9 +117,9 @@ type noSchemaField struct {
 }
 
 type noSchemaGuidanceResult struct {
-	Type    string           `json:"type"`
-	Message string           `json:"message"`
-	Fields  []noSchemaField  `json:"fields"`
+	Type    string          `json:"type"`
+	Message string          `json:"message"`
+	Fields  []noSchemaField `json:"fields"`
 }
 
 func noSchemaGuidance(pluginType string) *noSchemaGuidanceResult {

@@ -77,13 +77,11 @@ type dsSchemaFieldOption struct {
 	IsDefault bool   `json:"isDefault,omitempty"`
 }
 
-
 // dsFieldUI captures the UI hints for a field. Only Options is kept in the
 // guidance output; component/placeholder/rows are rendering-only and ignored.
 type dsFieldUI struct {
 	Options []dsSchemaFieldOption `json:"options,omitempty"`
 }
-
 
 // dsSchemaField mirrors the relevant fields of each entry in a datasource schema JSON.
 type DsSchemaField struct {

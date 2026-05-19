@@ -297,9 +297,9 @@ func TestCreateDatasource_NoSchemaCreatesDirectly(t *testing.T) {
 	uid := "custom-uid"
 	msg := "Datasource added"
 	mockResp := models.AddDataSourceOKBody{
-		ID:      &id,
-		Name:    &name,
-		Message: &msg,
+		ID:         &id,
+		Name:       &name,
+		Message:    &msg,
 		Datasource: &models.DataSource{ID: id, UID: uid, Name: name, Type: "nonexistent-plugin"},
 	}
 
@@ -393,12 +393,11 @@ func TestCreateDatasource_SecureFieldsNotLeakedToJSONData(t *testing.T) {
 	uid := "prom-uid"
 	msg := "ok"
 	mockResp := models.AddDataSourceOKBody{
-		ID:      &id,
-		Name:    &name,
-		Message: &msg,
+		ID:         &id,
+		Name:       &name,
+		Message:    &msg,
 		Datasource: &models.DataSource{ID: id, UID: uid, Name: name, Type: "prometheus"},
 	}
-
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
