@@ -45,33 +45,34 @@ func isCategoryEnabled(enabledTools []string, disabled bool, category string) bo
 
 // categoryDescription maps a tool category to the description shown in server instructions.
 var categoryDescription = map[string]string{
-	"search":        "Search: Find dashboards, folders, and other Grafana resources.",
-	"datasource":    "Datasources: List and fetch details for datasources.",
-	"incident":      "Incidents: Search, create, update, and resolve incidents in Grafana Incident.",
-	"prometheus":    "Prometheus: Run PromQL queries, retrieve metric metadata, and explore label names/values.",
-	"loki":          "Loki: Run LogQL queries, retrieve log metadata, and explore label names/values.",
-	"elasticsearch": "Elasticsearch and OpenSearch: Query Elasticsearch and OpenSearch datasources using Lucene syntax or Query DSL for logs and metrics.",
-	"influxdb":      "InfluxDB: Query InfluxDB datasources.",
-	"alerting":      "Alerting: List and fetch alert rules and notification contact points.",
-	"dashboard":     "Dashboards: Search, retrieve, update, and create dashboards. Extract panel queries and datasource information.",
-	"folder":        "Folders: Manage dashboard folders.",
-	"oncall":        "OnCall: View and manage on-call schedules, shifts, teams, and users.",
-	"asserts":       "Asserts: Query and analyze assertion data.",
-	"sift":          "Sift Investigations: Start and manage Sift investigations, analyze logs/traces, find error patterns, and detect slow requests.",
-	"admin":         "Admin: List teams and perform administrative tasks.",
-	"pyroscope":     "Pyroscope: Profile applications and fetch profiling data.",
-	"navigation":    "Navigation: Generate deeplink URLs for Grafana resources like dashboards, panels, and Explore queries.",
-	"annotations":   "Annotations: Create and manage dashboard annotations.",
-	"rendering":     "Rendering: Export dashboard panels or full dashboards as PNG images (requires Grafana Image Renderer plugin).",
-	"plugin":        "Plugins: Check whether Grafana plugins are installed and fetch plugin details.",
-	"cloudwatch":    "CloudWatch: Query AWS CloudWatch datasources for metrics and logs.",
-	"examples":      "Examples: Query example tools.",
-	"clickhouse":    "ClickHouse: Query ClickHouse datasources via Grafana with macro and variable substitution support.",
-	"snowflake":     "Snowflake: Query Snowflake datasources via Grafana (including the SNOWFLAKE.TELEMETRY.EVENTS event table) with macro and variable substitution support.",
-	"runpanelquery": "Run Panel Query: Execute panel queries directly.",
-	"graphite":      "Graphite: Query Graphite datasources for metrics.",
-	"athena":        "Athena: Query Amazon Athena datasources via Grafana with SQL, macro substitution, and schema discovery.",
-	"api":           "API: Make authenticated HTTP requests to any Grafana API endpoint with optional jq-style response filtering.",
+	"search":                  "Search: Find dashboards, folders, and other Grafana resources.",
+	"datasource":              "Datasources: List and fetch details for datasources.",
+	"incident":                "Incidents: Search, create, update, and resolve incidents in Grafana Incident.",
+	"prometheus":              "Prometheus: Run PromQL queries, retrieve metric metadata, and explore label names/values.",
+	"loki":                    "Loki: Run LogQL queries, retrieve log metadata, and explore label names/values.",
+	"elasticsearch":           "Elasticsearch and OpenSearch: Query Elasticsearch and OpenSearch datasources using Lucene syntax or Query DSL for logs and metrics.",
+	"influxdb":                "InfluxDB: Query InfluxDB datasources.",
+	"alerting":                "Alerting: List and fetch alert rules and notification contact points.",
+	"dashboard":               "Dashboards: Search, retrieve, update, and create dashboards. Extract panel queries and datasource information.",
+	"folder":                  "Folders: Manage dashboard folders.",
+	"oncall":                  "OnCall: View and manage on-call schedules, shifts, teams, and users.",
+	"asserts":                 "Asserts: Query and analyze assertion data.",
+	"sift":                    "Sift Investigations: Start and manage Sift investigations, analyze logs/traces, find error patterns, and detect slow requests.",
+	"admin":                   "Admin: List teams and perform administrative tasks.",
+	"pyroscope":               "Pyroscope: Profile applications and fetch profiling data.",
+	"navigation":              "Navigation: Generate deeplink URLs for Grafana resources like dashboards, panels, and Explore queries.",
+	"annotations":             "Annotations: Create and manage dashboard annotations.",
+	"rendering":               "Rendering: Export dashboard panels or full dashboards as PNG images (requires Grafana Image Renderer plugin).",
+	"plugin":                  "Plugins: Check whether Grafana plugins are installed and fetch plugin details.",
+	"cloudwatch":              "CloudWatch: Query AWS CloudWatch datasources for metrics and logs.",
+	"examples":                "Examples: Query example tools.",
+	"clickhouse":              "ClickHouse: Query ClickHouse datasources via Grafana with macro and variable substitution support.",
+	"snowflake":               "Snowflake: Query Snowflake datasources via Grafana (including the SNOWFLAKE.TELEMETRY.EVENTS event table) with macro and variable substitution support.",
+	"runpanelquery":           "Run Panel Query: Execute panel queries directly.",
+	"graphite":                "Graphite: Query Graphite datasources for metrics.",
+	"athena":                  "Athena: Query Amazon Athena datasources via Grafana with SQL, macro substitution, and schema discovery.",
+	"api":                     "API: Make authenticated HTTP requests to any Grafana API endpoint with optional jq-style response filtering.",
+	"datasource-provisioning": "Datasource Provisioning: Create and update Grafana datasource provisioning YAML files on the local filesystem.",
 }
 
 // disabledTools indicates whether each category of tools should be disabled.
@@ -83,7 +84,7 @@ type disabledTools struct {
 	dashboard, folder, oncall, asserts, sift, admin,
 	pyroscope, navigation, proxied, annotations, rendering, cloudwatch, write,
 	examples, clickhouse, snowflake, graphite,
-	runpanelquery, athena, plugin, api bool
+	runpanelquery, athena, plugin, api, dsprovisioning bool
 }
 
 // Configuration for the Grafana client.
@@ -102,7 +103,7 @@ type grafanaConfig struct {
 }
 
 func (dt *disabledTools) addFlags() {
-	flag.StringVar(&dt.enabledTools, "enabled-tools", "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering,plugin,api", "A comma separated list of tools enabled for this server. Can be overwritten entirely or by disabling specific components, e.g. --disable-search.")
+	flag.StringVar(&dt.enabledTools, "enabled-tools", "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering,plugin,api,datasource-provisioning", "A comma separated list of tools enabled for this server. Can be overwritten entirely or by disabling specific components, e.g. --disable-search.")
 	flag.BoolVar(&dt.search, "disable-search", false, "Disable search tools")
 	flag.BoolVar(&dt.datasource, "disable-datasource", false, "Disable datasource tools")
 	flag.BoolVar(&dt.incident, "disable-incident", false, "Disable incident tools")
@@ -132,6 +133,7 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.athena, "disable-athena", false, "Disable Athena tools")
 	flag.BoolVar(&dt.plugin, "disable-plugin", false, "Disable plugin tools")
 	flag.BoolVar(&dt.api, "disable-api", false, "Disable API tools")
+	flag.BoolVar(&dt.dsprovisioning, "disable-datasource-provisioning", false, "Disable datasource provisioning tools")
 }
 
 func (gc *grafanaConfig) addFlags() {
@@ -187,6 +189,7 @@ func (dt *disabledTools) toolEntries() []toolEntry {
 		{tools.AddAthenaTools, dt.athena, "athena"},
 		{func(mcp *server.MCPServer) { tools.AddPluginTools(mcp, enableWriteTools) }, dt.plugin, "plugin"},
 		{func(mcp *server.MCPServer) { tools.AddAPITools(mcp, enableWriteTools) }, dt.api, "api"},
+		{tools.AddDatasourceProvisioningTools, dt.dsprovisioning, "datasource-provisioning"},
 	}
 }
 

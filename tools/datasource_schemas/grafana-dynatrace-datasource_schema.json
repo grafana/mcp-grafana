@@ -1,0 +1,169 @@
+{
+    "schemaVersion": "v1",
+    "pluginType": "grafana-dynatrace-datasource",
+    "pluginName": "Dynatrace",
+    "fields": [
+        {
+            "id": "jsonData.apiType",
+            "key": "apiType",
+            "label": "API Type",
+            "description": "Dynatrace deployment type.",
+            "valueType": "string",
+            "target": "jsonData",
+            "required": true,
+            "validations": [
+                {
+                    "type": "allowedValues",
+                    "values": [
+                        "saas",
+                        "managed",
+                        "url"
+                    ]
+                }
+            ],
+            "ui": {
+                "component": "select",
+                "options": [
+                    {
+                        "label": "SaaS",
+                        "value": "saas"
+                    },
+                    {
+                        "label": "Managed",
+                        "value": "managed"
+                    },
+                    {
+                        "label": "Custom URL",
+                        "value": "url"
+                    }
+                ]
+            }
+        },
+        {
+            "id": "jsonData.environmentId",
+            "key": "environmentId",
+            "label": "Environment ID",
+            "description": "Dynatrace environment identifier.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.domain",
+            "key": "domain",
+            "label": "Domain",
+            "description": "Dynatrace Managed domain.",
+            "valueType": "string",
+            "target": "jsonData",
+            "dependsOn": "jsonData.apiType == 'managed'"
+        },
+        {
+            "id": "jsonData.tlsSkipVerify",
+            "key": "tlsSkipVerify",
+            "label": "Skip TLS Verify",
+            "description": "Skip TLS certificate verification.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.tlsAuthWithCACert",
+            "key": "tlsAuthWithCACert",
+            "label": "With CA Cert",
+            "description": "Provide CA certificate for TLS.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.enableSecureSocksProxy",
+            "key": "enableSecureSocksProxy",
+            "label": "Secure Socks Proxy",
+            "description": "Enable secure SOCKS proxy.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.httpClientTimeout",
+            "key": "httpClientTimeout",
+            "label": "HTTP Client Timeout",
+            "description": "HTTP client timeout in seconds.",
+            "valueType": "number",
+            "target": "jsonData"
+        },
+        {
+            "id": "secureJsonData.apiToken",
+            "key": "apiToken",
+            "label": "API Token",
+            "description": "Dynatrace API token.",
+            "valueType": "string",
+            "semanticType": "token",
+            "target": "secureJsonData",
+            "required": true
+        },
+        {
+            "id": "secureJsonData.platformToken",
+            "key": "platformToken",
+            "label": "Platform Token",
+            "description": "Dynatrace platform token for Grail queries.",
+            "valueType": "string",
+            "semanticType": "token",
+            "target": "secureJsonData"
+        },
+        {
+            "id": "secureJsonData.tlsCACert",
+            "key": "tlsCACert",
+            "label": "CA Cert",
+            "description": "PEM-encoded CA certificate.",
+            "valueType": "string",
+            "target": "secureJsonData",
+            "dependsOn": "jsonData.tlsAuthWithCACert == true",
+            "ui": {
+                "component": "textarea",
+                "rows": 7
+            }
+        }
+    ],
+    "groups": [
+        {
+            "id": "connection",
+            "title": "Connection",
+            "fieldRefs": [
+                "jsonData.apiType",
+                "jsonData.environmentId",
+                "jsonData.domain"
+            ]
+        },
+        {
+            "id": "auth",
+            "title": "Authentication",
+            "fieldRefs": [
+                "secureJsonData.apiToken",
+                "secureJsonData.platformToken"
+            ]
+        },
+        {
+            "id": "tls",
+            "title": "TLS / SSL",
+            "fieldRefs": [
+                "jsonData.tlsSkipVerify",
+                "jsonData.tlsAuthWithCACert",
+                "secureJsonData.tlsCACert"
+            ]
+        },
+        {
+            "id": "advanced",
+            "title": "Advanced",
+            "fieldRefs": [
+                "jsonData.httpClientTimeout",
+                "jsonData.enableSecureSocksProxy"
+            ]
+        }
+    ]
+}
