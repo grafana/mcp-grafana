@@ -254,7 +254,7 @@ var CreateDatasource = mcpgrafana.MustTool(
 
 var UpdateDatasource = mcpgrafana.MustTool(
 	"update_datasource",
-	"Update non-secret datasource fields by UID. Omitted fields are preserved. Returns a health check. For secrets, use Grafana UI. Confirm before creating if the datasource doesn't exist.",
+	"Update non-secret datasource fields by UID. Omitted fields are preserved. Returns a health check. For secrets, instruct the user to use the Grafana UI. Confirm before creating if the datasource doesn't exist.",
 	updateDatasource,
 	mcp.WithTitleAnnotation("Update datasource"),
 	mcp.WithIdempotentHintAnnotation(true),
