@@ -145,7 +145,11 @@ func noSchemaGuidance(pluginType string) *noSchemaGuidanceResult {
 // applyFields routes Fields values to the body (root-target keys) or into the
 // returned jsonData map. secureJsonData keys are never written.
 func applyFields(body *models.AddDataSourceCommand, schema *datasourceschemas.DatasourceSchema, inputFields map[string]any) map[string]any {
-	lookup := make(map[string]datasourceschemas.DsSchemaField, len(schema.Fields))
+	commonFields := datasourceschemas.CommonDatasourceFields()
+	lookup := make(map[string]datasourceschemas.DsSchemaField, len(commonFields)+len(schema.Fields))
+	for _, f := range commonFields {
+		lookup[datasourceschemas.SchemaFieldInputKey(f)] = f
+	}
 	for _, f := range schema.Fields {
 		lookup[datasourceschemas.SchemaFieldInputKey(f)] = f
 	}
@@ -183,6 +187,13 @@ func applyFields(body *models.AddDataSourceCommand, schema *datasourceschemas.Da
 					body.WithCredentials = b
 				}
 			}
+		} else if f.Section != "" {
+			section, ok := jsonData[f.Section].(map[string]any)
+			if !ok {
+				section = make(map[string]any)
+				jsonData[f.Section] = section
+			}
+			section[f.Key] = v
 		} else {
 			jsonData[f.Key] = v
 		}
