@@ -56,11 +56,11 @@ type SessionState struct {
 	proxiedToolsInitialized       bool
 	proxiedCapabilitiesRegistered bool
 	proxiedTools                  []mcp.Tool
-	proxiedResources         []mcp.Resource
-	proxiedResourceTemplates []mcp.ResourceTemplate
-	proxiedClients           map[string]*ProxiedClient // key: datasourceType_datasourceUID
-	toolToDatasources        map[string][]string       // key: toolName, value: list of datasource keys that support it
-	mutex                    sync.RWMutex
+	proxiedResources              []mcp.Resource
+	proxiedResourceTemplates      []mcp.ResourceTemplate
+	proxiedClients                map[string]*ProxiedClient // key: datasourceType_datasourceUID
+	toolToDatasources             map[string][]string       // key: toolName, value: list of datasource keys that support it
+	mutex                         sync.RWMutex
 }
 
 func newSessionState() *SessionState {
