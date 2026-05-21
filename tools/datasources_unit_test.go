@@ -13,7 +13,7 @@ import (
 	"testing"
 
 	"github.com/grafana/grafana-openapi-client-go/client"
-	"github.com/grafana/gsrafana-openapi-client-go/models"
+	"github.com/grafana/grafana-openapi-client-go/models"
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	datasourceschemas "github.com/grafana/mcp-grafana/tools/datasource_schemas"
 	"github.com/mark3labs/mcp-go/mcp"
