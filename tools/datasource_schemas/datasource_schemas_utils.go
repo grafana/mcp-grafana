@@ -110,12 +110,24 @@ type DatasourceSchema struct {
 	Fields     []DsSchemaField `json:"fields"`
 }
 
+// GuidanceField is the slim per-field representation sent to the LLM.
+// It contains only what is needed to prompt the user and populate the fields map.
+type GuidanceField struct {
+	Key           string `json:"key"`
+	Label         string `json:"label"`
+	Description   string `json:"description,omitempty"`
+	Required      bool   `json:"required,omitempty"`
+	Type          string `json:"type"`
+	Default       any    `json:"default,omitempty"`
+	AllowedValues []any  `json:"allowedValues,omitempty"`
+}
+
 type datasourceSchemaGuidance struct {
 	Type       string          `json:"type"`
 	PluginName string          `json:"plugin_name"`
 	DocURL     string          `json:"doc_url,omitempty"`
 	Message    string          `json:"message"`
-	Fields     []DsSchemaField `json:"fields"`
+	Fields     []GuidanceField `json:"fields"`
 }
 
 func LoadDatasourceSchema(pluginType string) (*DatasourceSchema, error) {
@@ -137,28 +149,37 @@ func SchemaFieldInputKey(f DsSchemaField) string {
 	return f.Section + "." + f.Key
 }
 
-// annotateDefaultOption returns a copy of f with IsDefault set on the option
-// whose value matches f.DefaultVal, mirroring the generateLLMHint behaviour.
-func annotateDefaultOption(f DsSchemaField) DsSchemaField {
-	if f.UI == nil || len(f.UI.Options) == 0 || f.DefaultVal == nil {
-		// it is non-select UI field, return as is.
-		return f
+// toGuidanceField converts a DsSchemaField to the slim GuidanceField the LLM receives.
+// Allowed values are extracted from UI options (preferred) or allowedValues validations.
+func toGuidanceField(f DsSchemaField) GuidanceField {
+	gf := GuidanceField{
+		Key:         f.Key,
+		Label:       f.Label,
+		Description: f.Description,
+		Required:    f.Required,
+		Type:        f.ValueType,
+		Default:     f.DefaultVal,
 	}
-	opts := make([]dsSchemaFieldOption, len(f.UI.Options))
-	copy(opts, f.UI.Options)
-	for i, opt := range opts {
-		if fmt.Sprint(opt.Value) == fmt.Sprint(f.DefaultVal) {
-			opts[i].IsDefault = true
+	if f.UI != nil && len(f.UI.Options) > 0 {
+		for _, opt := range f.UI.Options {
+			gf.AllowedValues = append(gf.AllowedValues, opt.Value)
+		}
+	} else {
+		for _, v := range f.Validations {
+			if v.Type == "allowedValues" {
+				gf.AllowedValues = v.Values
+				break
+			}
 		}
 	}
-	uiCopy := &dsFieldUI{Options: opts}
-	f.UI = uiCopy
-	return f
+	return gf
 }
 
 func BuildSchemaGuidance(schema *DatasourceSchema, toolName string) *datasourceSchemaGuidance {
-	fields := make([]DsSchemaField, 0, len(commonDatasourceFields)+len(schema.Fields))
-	fields = append(fields, commonDatasourceFields...)
+	fields := make([]GuidanceField, 0, len(commonDatasourceFields)+len(schema.Fields))
+	for _, f := range commonDatasourceFields {
+		fields = append(fields, toGuidanceField(f))
+	}
 
 	for _, f := range schema.Fields {
 		if f.Kind == "virtual" {
@@ -188,7 +209,7 @@ func BuildSchemaGuidance(schema *DatasourceSchema, toolName string) *datasourceS
 		}
 
 		f.Key = SchemaFieldInputKey(f)
-		fields = append(fields, annotateDefaultOption(f))
+		fields = append(fields, toGuidanceField(f))
 	}
 
 	return &datasourceSchemaGuidance{
@@ -197,12 +218,12 @@ func BuildSchemaGuidance(schema *DatasourceSchema, toolName string) *datasourceS
 		DocURL:     schema.DocURL,
 		Message: fmt.Sprintf(
 			"Schema for %s datasource. "+
-				"You MUST ask the user for the value of every required field (required=true) before calling provision_datasource again. "+
+				"You MUST ask the user for the value of every required field (required=true) before calling %s again. "+
 				"Do NOT infer, guess, or use default values for required fields without explicit confirmation from the user. "+
 				"For optional fields, ask only if they are relevant to the user's setup. "+
-				"Once you have collected all required values from the user, call %s again with those values in the fields param. "+
-				"The server uses each field's target to route values to the correct place in the YAML.",
+				"Once you have collected all required values from the user, call %s again with those values in the fields param.",
 			schema.PluginName,
+			toolName,
 			toolName,
 		),
 		Fields: fields,

@@ -11,7 +11,7 @@ import (
 )
 
 // fieldKeys extracts the Key values from a field slice for easy assertion.
-func fieldKeys(fields []DsSchemaField) []string {
+func fieldKeys(fields []GuidanceField) []string {
 	keys := make([]string, len(fields))
 	for i, f := range fields {
 		keys[i] = f.Key
@@ -69,7 +69,7 @@ func TestLoadDatasourceSchema(t *testing.T) {
 func TestBuildSchemaGuidance(t *testing.T) {
 	t.Run("includes common root fields", func(t *testing.T) {
 		schema := &DatasourceSchema{PluginType: "test-plugin", PluginName: "Test"}
-		guidance := BuildSchemaGuidance(schema)
+		guidance := BuildSchemaGuidance(schema, "create_datasource")
 		keys := fieldKeys(guidance.Fields)
 		assert.Contains(t, keys, "uid")
 		assert.Contains(t, keys, "isDefault")
@@ -81,7 +81,7 @@ func TestBuildSchemaGuidance(t *testing.T) {
 			PluginName: "Test Plugin",
 			DocURL:     "https://example.com/docs",
 		}
-		guidance := BuildSchemaGuidance(schema)
+		guidance := BuildSchemaGuidance(schema, "create_datasource")
 		assert.Equal(t, "test-plugin", guidance.Type)
 		assert.Equal(t, "Test Plugin", guidance.PluginName)
 		assert.Equal(t, "https://example.com/docs", guidance.DocURL)
@@ -93,7 +93,7 @@ func TestBuildSchemaGuidance(t *testing.T) {
 			{Key: "visible", Target: "jsonData", ValueType: "string"},
 			{Key: "hidden", Target: "jsonData", ValueType: "string", Kind: "virtual"},
 		}}
-		keys := fieldKeys(BuildSchemaGuidance(schema).Fields)
+		keys := fieldKeys(BuildSchemaGuidance(schema, "create_datasource").Fields)
 		assert.Contains(t, keys, "visible")
 		assert.NotContains(t, keys, "hidden")
 	})
@@ -102,7 +102,7 @@ func TestBuildSchemaGuidance(t *testing.T) {
 		schema := &DatasourceSchema{Fields: []DsSchemaField{
 			{Key: "apiKey", Target: "secureJsonData", ValueType: "string"},
 		}}
-		assert.NotContains(t, fieldKeys(BuildSchemaGuidance(schema).Fields), "apiKey")
+		assert.NotContains(t, fieldKeys(BuildSchemaGuidance(schema, "create_datasource").Fields), "apiKey")
 	})
 
 	t.Run("skips experimental lifecycle fields", func(t *testing.T) {
@@ -110,7 +110,7 @@ func TestBuildSchemaGuidance(t *testing.T) {
 			{Key: "beta", Target: "jsonData", ValueType: "string", Lifecycle: "experimental"},
 			{Key: "stable", Target: "jsonData", ValueType: "string"},
 		}}
-		keys := fieldKeys(BuildSchemaGuidance(schema).Fields)
+		keys := fieldKeys(BuildSchemaGuidance(schema, "create_datasource").Fields)
 		assert.NotContains(t, keys, "beta")
 		assert.Contains(t, keys, "stable")
 	})
@@ -122,7 +122,7 @@ func TestBuildSchemaGuidance(t *testing.T) {
 			{Key: "nested", Target: "jsonData", ValueType: "object"},
 			{Key: "simple", Target: "jsonData", ValueType: "string"},
 		}}
-		keys := fieldKeys(BuildSchemaGuidance(schema).Fields)
+		keys := fieldKeys(BuildSchemaGuidance(schema, "create_datasource").Fields)
 		assert.NotContains(t, keys, "tags")
 		assert.NotContains(t, keys, "meta")
 		assert.NotContains(t, keys, "nested")
@@ -135,7 +135,7 @@ func TestBuildSchemaGuidance(t *testing.T) {
 			{Key: "reqDep", Target: "jsonData", ValueType: "string", DependsOn: "other", Required: true},
 			{Key: "free", Target: "jsonData", ValueType: "string"},
 		}}
-		keys := fieldKeys(BuildSchemaGuidance(schema).Fields)
+		keys := fieldKeys(BuildSchemaGuidance(schema, "create_datasource").Fields)
 		assert.NotContains(t, keys, "optDep")
 		assert.Contains(t, keys, "reqDep")
 		assert.Contains(t, keys, "free")
@@ -145,12 +145,12 @@ func TestBuildSchemaGuidance(t *testing.T) {
 		schema := &DatasourceSchema{Fields: []DsSchemaField{
 			{Key: "region", Section: "aws", Target: "jsonData", ValueType: "string"},
 		}}
-		keys := fieldKeys(BuildSchemaGuidance(schema).Fields)
+		keys := fieldKeys(BuildSchemaGuidance(schema, "create_datasource").Fields)
 		assert.Contains(t, keys, "aws.region")
 		assert.NotContains(t, keys, "region")
 	})
 
-	t.Run("annotates default option for select fields", func(t *testing.T) {
+	t.Run("extracts allowed values and default for select fields", func(t *testing.T) {
 		schema := &DatasourceSchema{Fields: []DsSchemaField{
 			{
 				Key:        "method",
@@ -163,8 +163,8 @@ func TestBuildSchemaGuidance(t *testing.T) {
 				}},
 			},
 		}}
-		guidance := BuildSchemaGuidance(schema)
-		var methodField *DsSchemaField
+		guidance := BuildSchemaGuidance(schema, "create_datasource")
+		var methodField *GuidanceField
 		for i := range guidance.Fields {
 			if guidance.Fields[i].Key == "method" {
 				methodField = &guidance.Fields[i]
@@ -172,8 +172,7 @@ func TestBuildSchemaGuidance(t *testing.T) {
 			}
 		}
 		require.NotNil(t, methodField)
-		require.Len(t, methodField.UI.Options, 2)
-		assert.False(t, methodField.UI.Options[0].IsDefault) // GET
-		assert.True(t, methodField.UI.Options[1].IsDefault)  // POST
+		assert.Equal(t, "POST", methodField.Default)
+		assert.ElementsMatch(t, []any{"GET", "POST"}, methodField.AllowedValues)
 	})
 }

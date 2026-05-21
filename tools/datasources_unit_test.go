@@ -5,9 +5,11 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/grafana/grafana-openapi-client-go/client"
@@ -304,9 +306,15 @@ func TestCreateDatasource_NoSchemaCreatesDirectly(t *testing.T) {
 	}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, http.MethodPost, r.Method)
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(mockResp)
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/datasources":
+			_ = json.NewEncoder(w).Encode(mockResp)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/datasources/uid/"+uid+"/health":
+			_ = json.NewEncoder(w).Encode(map[string]any{"message": "Data source connected"})
+		default:
+			assert.Failf(t, "unexpected request", "%s %s", r.Method, r.URL.Path)
+		}
 	}))
 	defer srv.Close()
 
@@ -343,11 +351,15 @@ func TestCreateDatasource_Success(t *testing.T) {
 	}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, http.MethodPost, r.Method)
-		assert.Equal(t, "/api/datasources", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(mockResp)
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/datasources":
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(mockResp)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/datasources/uid/"+uid+"/health":
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(map[string]any{"message": "Data source connected"})
+		}
 	}))
 	defer srv.Close()
 
@@ -374,6 +386,9 @@ func TestCreateDatasource_Success(t *testing.T) {
 	assert.Equal(t, name, got.Name)
 	assert.Equal(t, msg, got.Message)
 	assert.Equal(t, id, got.ID)
+	require.NotNil(t, got.Health)
+	assert.Equal(t, uid, got.Health.UID)
+	assert.Equal(t, "Data source connected", got.Health.Message)
 
 	configPageURL := "https://grafana.example.com/connections/datasources/edit/" + uid
 	assert.Contains(t, got.NextSteps, configPageURL)
@@ -383,6 +398,351 @@ func TestCreateDatasource_Success(t *testing.T) {
 	assert.Equal(t, "resource_link", link.Type)
 	assert.Equal(t, configPageURL, link.URI)
 	assert.Equal(t, name, link.Name)
+}
+
+// --- updateDatasource ---
+
+func newUpdateDatasourceServer(t *testing.T, current *models.DataSource, captureBody *models.UpdateDataSourceCommand, healthMsg string, healthGrafanaStatus string) *httptest.Server {
+	t.Helper()
+	id := current.ID
+	msg := "Datasource updated"
+	name := current.Name
+	updateResp := &models.UpdateDataSourceByUIDOKBody{
+		Datasource: current,
+		ID:         &id,
+		Message:    &msg,
+		Name:       &name,
+	}
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/datasources/uid/"+current.UID:
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(current)
+		case r.Method == http.MethodPut && r.URL.Path == "/api/datasources/uid/"+current.UID:
+			if captureBody != nil {
+				_ = json.NewDecoder(r.Body).Decode(captureBody)
+			}
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(updateResp)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/datasources/uid/"+current.UID+"/health":
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": healthGrafanaStatus, "message": healthMsg})
+		}
+	}))
+}
+
+func TestUpdateDatasource_MergesProvidedFields(t *testing.T) {
+	current := &models.DataSource{
+		ID:   1,
+		UID:  "prom-1",
+		Name: "Old Name",
+		Type: "prometheus",
+		URL:  "http://old:9090",
+	}
+	var captured models.UpdateDataSourceCommand
+	srv := newUpdateDatasourceServer(t, current, &captured, "Health check passed", "OK")
+	defer srv.Close()
+
+	newName := "New Name"
+	_, err := updateDatasource(mockDatasourcesCtx(srv), UpdateDatasourceParams{UID: "prom-1", Name: &newName})
+	require.NoError(t, err)
+
+	assert.Equal(t, "New Name", captured.Name)
+	assert.Equal(t, "http://old:9090", captured.URL) // unprovided field preserved from current
+	assert.Equal(t, "prometheus", captured.Type)
+}
+
+func TestUpdateDatasource_HealthCheckIncludedInResult(t *testing.T) {
+	current := &models.DataSource{ID: 1, UID: "prom-1", Name: "Prometheus", Type: "prometheus"}
+	srv := newUpdateDatasourceServer(t, current, nil, "Data source is working", "OK")
+	defer srv.Close()
+
+	newURL := "http://new:9090"
+	result, err := updateDatasource(mockDatasourcesCtx(srv), UpdateDatasourceParams{UID: "prom-1", URL: &newURL})
+	require.NoError(t, err)
+	require.NotNil(t, result.Health)
+	assert.Equal(t, "prom-1", result.Health.UID)
+	assert.Equal(t, "Data source is working", result.Health.Message)
+}
+
+func TestUpdateDatasource_HealthCheckFailureIsNonFatal(t *testing.T) {
+	current := &models.DataSource{ID: 1, UID: "prom-1", Name: "Prometheus", Type: "prometheus"}
+	srv := newUpdateDatasourceServer(t, current, nil, "connection refused", "ERROR")
+	defer srv.Close()
+
+	newURL := "http://bad-host:9090"
+	result, err := updateDatasource(mockDatasourcesCtx(srv), UpdateDatasourceParams{UID: "prom-1", URL: &newURL})
+	require.NoError(t, err)
+	require.NotNil(t, result.Health)
+	assert.Equal(t, "ERROR", result.Health.Status)
+	assert.Equal(t, "connection refused", result.Health.Message)
+}
+
+func TestUpdateDatasource_NotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"message":"not found"}`))
+	}))
+	defer srv.Close()
+
+	_, err := updateDatasource(mockDatasourcesCtx(srv), UpdateDatasourceParams{UID: "missing"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+}
+
+func TestUpdateDatasource_PreservesPlainTextAuthFields(t *testing.T) {
+	// User and BasicAuthUser are plain-text fields returned by Grafana and
+	// must be preserved in the full update command.
+	current := &models.DataSource{
+		ID:            1,
+		UID:           "prom-1",
+		Name:          "Prometheus",
+		Type:          "prometheus",
+		User:          "db-user",
+		BasicAuthUser: "ba-user",
+	}
+	var captured models.UpdateDataSourceCommand
+	srv := newUpdateDatasourceServer(t, current, &captured, "OK", "OK")
+	defer srv.Close()
+
+	newURL := "http://prometheus:9090"
+	_, err := updateDatasource(mockDatasourcesCtx(srv), UpdateDatasourceParams{UID: "prom-1", URL: &newURL})
+	require.NoError(t, err)
+
+	assert.Equal(t, "db-user", captured.User)
+	assert.Equal(t, "ba-user", captured.BasicAuthUser)
+	assert.Nil(t, captured.SecureJSONData, "SecureJSONData must not be forwarded in update command")
+}
+
+// --- checkDatasourceHealth ---
+
+func TestCheckDatasourceHealth_ReturnsMessage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/datasources/uid/prom-1/health", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "OK", "message": "Data source connected"})
+	}))
+	defer srv.Close()
+
+	result, err := checkDatasourceHealth(mockDatasourcesCtx(srv), CheckDatasourceHealthParams{UID: "prom-1"})
+	require.NoError(t, err)
+	assert.Equal(t, "prom-1", result.UID)
+	assert.Equal(t, "OK", result.Status)
+	assert.Equal(t, "Data source connected", result.Message)
+}
+
+func TestCheckDatasourceHealth_HTTP200WithErrorStatus(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/datasources/uid/prom-1/health", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "ERROR", "message": "connection refused"})
+	}))
+	defer srv.Close()
+
+	result, err := checkDatasourceHealth(mockDatasourcesCtx(srv), CheckDatasourceHealthParams{UID: "prom-1"})
+	require.NoError(t, err)
+	assert.Equal(t, "prom-1", result.UID)
+	assert.Equal(t, "ERROR", result.Status)
+	assert.Equal(t, "connection refused", result.Message)
+}
+
+func TestCheckDatasourceHealth_NotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"message":"data source not found"}`))
+	}))
+	defer srv.Close()
+
+	_, err := checkDatasourceHealth(mockDatasourcesCtx(srv), CheckDatasourceHealthParams{UID: "missing"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "missing")
+}
+
+// --- checkDatasourcesHealth ---
+
+func mockDatasourceList(uids []string, dsType string) []*models.DataSourceListItemDTO {
+	list := make([]*models.DataSourceListItemDTO, len(uids))
+	for i, uid := range uids {
+		list[i] = &models.DataSourceListItemDTO{UID: uid, Name: "DS " + uid, Type: dsType}
+	}
+	return list
+}
+
+func makeUIDList(n int) []string {
+	uids := make([]string, n)
+	for i := range uids {
+		uids[i] = fmt.Sprintf("ds-%02d", i+1)
+	}
+	return uids
+}
+
+func allHealthy(uids []string) map[string]bool {
+	m := make(map[string]bool, len(uids))
+	for _, uid := range uids {
+		m[uid] = true
+	}
+	return m
+}
+
+func newBulkHealthServer(t *testing.T, list []*models.DataSourceListItemDTO, healthyUIDs map[string]bool) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/api/datasources" {
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(list)
+			return
+		}
+		// /api/datasources/uid/{uid}/health
+		parts := strings.Split(r.URL.Path, "/")
+		uid := parts[len(parts)-2] // path: .../uid/{uid}/health
+		if healthyUIDs[uid] {
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "OK", "message": "Data source is working"})
+		} else {
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ERROR", "message": "connection refused"})
+		}
+	}))
+}
+
+func TestCheckDatasourcesHealth_NoFilter_ChecksAll(t *testing.T) {
+	list := mockDatasourceList([]string{"ds-1", "ds-2", "ds-3"}, "prometheus")
+	srv := newBulkHealthServer(t, list, map[string]bool{"ds-1": true, "ds-2": true, "ds-3": true})
+	defer srv.Close()
+
+	result, err := checkDatasourcesHealth(mockDatasourcesCtx(srv), BulkCheckDatasourceHealthParams{})
+	require.NoError(t, err)
+	assert.Equal(t, 3, result.Total)
+	assert.Equal(t, 3, result.Checked)
+	assert.Equal(t, 3, result.Healthy)
+	assert.Equal(t, 0, result.Unhealthy)
+	assert.False(t, result.HasMore)
+}
+
+func TestCheckDatasourcesHealth_TypeFilter(t *testing.T) {
+	list := []*models.DataSourceListItemDTO{
+		{UID: "prom-1", Name: "Prometheus 1", Type: "prometheus"},
+		{UID: "loki-1", Name: "Loki 1", Type: "loki"},
+		{UID: "prom-2", Name: "Prometheus 2", Type: "prometheus"},
+	}
+	srv := newBulkHealthServer(t, list, map[string]bool{"prom-1": true, "prom-2": true})
+	defer srv.Close()
+
+	result, err := checkDatasourcesHealth(mockDatasourcesCtx(srv), BulkCheckDatasourceHealthParams{Type: "prometheus"})
+	require.NoError(t, err)
+	assert.Equal(t, 2, result.Total)
+	assert.Equal(t, 2, result.Checked)
+	assert.Equal(t, 2, result.Healthy)
+	assert.False(t, result.HasMore)
+	for _, r := range result.Results {
+		assert.Equal(t, "prometheus", r.Type)
+	}
+}
+
+func TestCheckDatasourcesHealth_ExplicitUIDs(t *testing.T) {
+	list := mockDatasourceList([]string{"ds-1", "ds-2", "ds-3"}, "prometheus")
+	srv := newBulkHealthServer(t, list, map[string]bool{"ds-1": true, "ds-2": true})
+	defer srv.Close()
+
+	result, err := checkDatasourcesHealth(mockDatasourcesCtx(srv), BulkCheckDatasourceHealthParams{UIDs: []string{"ds-1", "ds-3"}})
+	require.NoError(t, err)
+	assert.Equal(t, 2, result.Total)
+	assert.Equal(t, 2, result.Checked)
+	assert.False(t, result.HasMore)
+
+	uids := make([]string, len(result.Results))
+	for i, r := range result.Results {
+		uids[i] = r.UID
+	}
+	assert.ElementsMatch(t, []string{"ds-1", "ds-3"}, uids)
+}
+
+func TestCheckDatasourcesHealth_HealthyCounts(t *testing.T) {
+	list := mockDatasourceList([]string{"ds-1", "ds-2", "ds-3", "ds-4"}, "prometheus")
+	srv := newBulkHealthServer(t, list, map[string]bool{"ds-1": true, "ds-3": true})
+	defer srv.Close()
+
+	result, err := checkDatasourcesHealth(mockDatasourcesCtx(srv), BulkCheckDatasourceHealthParams{})
+	require.NoError(t, err)
+	assert.Equal(t, 4, result.Total)
+	assert.Equal(t, 4, result.Checked)
+	assert.Equal(t, 2, result.Healthy)
+	assert.Equal(t, 2, result.Unhealthy)
+	assert.False(t, result.HasMore)
+
+	unhealthyCount := 0
+	for _, r := range result.Results {
+		if r.Status != "OK" {
+			unhealthyCount++
+		}
+	}
+	assert.Equal(t, 2, unhealthyCount)
+}
+
+func TestCheckDatasourcesHealth_UnknownUIDsProduceEmptyResult(t *testing.T) {
+	list := mockDatasourceList([]string{"ds-1"}, "prometheus")
+	srv := newBulkHealthServer(t, list, map[string]bool{"ds-1": true})
+	defer srv.Close()
+
+	result, err := checkDatasourcesHealth(mockDatasourcesCtx(srv), BulkCheckDatasourceHealthParams{UIDs: []string{"does-not-exist"}})
+	require.NoError(t, err)
+	assert.Equal(t, 0, result.Total)
+	assert.Equal(t, 0, result.Checked)
+	assert.Equal(t, 0, result.Healthy)
+	assert.Equal(t, 0, result.Unhealthy)
+	assert.False(t, result.HasMore)
+}
+
+func TestCheckDatasourcesHealth_Pagination_FirstPage(t *testing.T) {
+	uids := makeUIDList(15)
+	list := mockDatasourceList(uids, "prometheus")
+	srv := newBulkHealthServer(t, list, allHealthy(uids))
+	defer srv.Close()
+
+	result, err := checkDatasourcesHealth(mockDatasourcesCtx(srv), BulkCheckDatasourceHealthParams{})
+	require.NoError(t, err)
+	assert.Equal(t, 15, result.Total)
+	assert.Equal(t, 10, result.Checked)
+	assert.Equal(t, 10, result.Healthy)
+	assert.Equal(t, 0, result.Unhealthy)
+	assert.True(t, result.HasMore)
+	assert.Len(t, result.Results, 10)
+}
+
+func TestCheckDatasourcesHealth_Pagination_SecondPage(t *testing.T) {
+	uids := makeUIDList(15)
+	list := mockDatasourceList(uids, "prometheus")
+	srv := newBulkHealthServer(t, list, allHealthy(uids))
+	defer srv.Close()
+
+	result, err := checkDatasourcesHealth(mockDatasourcesCtx(srv), BulkCheckDatasourceHealthParams{Offset: 10})
+	require.NoError(t, err)
+	assert.Equal(t, 15, result.Total)
+	assert.Equal(t, 5, result.Checked)
+	assert.Equal(t, 5, result.Healthy)
+	assert.Equal(t, 0, result.Unhealthy)
+	assert.False(t, result.HasMore)
+	assert.Len(t, result.Results, 5)
+}
+
+func TestCheckDatasourcesHealth_Pagination_OffsetBeyondTotal(t *testing.T) {
+	list := mockDatasourceList([]string{"ds-1", "ds-2"}, "prometheus")
+	srv := newBulkHealthServer(t, list, map[string]bool{"ds-1": true, "ds-2": true})
+	defer srv.Close()
+
+	result, err := checkDatasourcesHealth(mockDatasourcesCtx(srv), BulkCheckDatasourceHealthParams{Offset: 20})
+	require.NoError(t, err)
+	assert.Equal(t, 2, result.Total)
+	assert.Equal(t, 0, result.Checked)
+	assert.Equal(t, 0, result.Healthy)
+	assert.Equal(t, 0, result.Unhealthy)
+	assert.False(t, result.HasMore)
+	assert.Empty(t, result.Results)
 }
 
 func TestCreateDatasource_SecureFieldsNotLeakedToJSONData(t *testing.T) {
@@ -400,13 +760,18 @@ func TestCreateDatasource_SecureFieldsNotLeakedToJSONData(t *testing.T) {
 	}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body struct {
-			JSONData map[string]any `json:"jsonData"`
-		}
-		_ = json.NewDecoder(r.Body).Decode(&body)
-		capturedJSONData = body.JSONData
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(mockResp)
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/datasources":
+			var body struct {
+				JSONData map[string]any `json:"jsonData"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			capturedJSONData = body.JSONData
+			_ = json.NewEncoder(w).Encode(mockResp)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/datasources/uid/"+uid+"/health":
+			_ = json.NewEncoder(w).Encode(map[string]any{"message": "Data source connected"})
+		}
 	}))
 	defer srv.Close()
 

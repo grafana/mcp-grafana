@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/grafana/grafana-openapi-client-go/models"
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/stretchr/testify/assert"
@@ -150,5 +151,110 @@ func TestCreateDatasourceTools(t *testing.T) {
 		t.Cleanup(func() {
 			_, _ = c.Datasources.DeleteDataSourceByUID(result.UID)
 		})
+	})
+}
+
+func TestCheckDatasourceHealthTool(t *testing.T) {
+	t.Run("check health of provisioned prometheus datasource", func(t *testing.T) {
+		ctx := newTestContext()
+		result, err := checkDatasourceHealth(ctx, CheckDatasourceHealthParams{UID: "prometheus"})
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Equal(t, "prometheus", result.UID)
+		assert.NotEmpty(t, result.Message)
+	})
+
+	t.Run("check health of non-existent datasource returns error", func(t *testing.T) {
+		ctx := newTestContext()
+		_, err := checkDatasourceHealth(ctx, CheckDatasourceHealthParams{UID: "non-existent-uid"})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "non-existent-uid")
+	})
+}
+
+func TestCheckDatasourcesHealthTool(t *testing.T) {
+	t.Run("check all datasources returns summary", func(t *testing.T) {
+		ctx := newTestContext()
+		result, err := checkDatasourcesHealth(ctx, BulkCheckDatasourceHealthParams{})
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Greater(t, result.Total, 0)
+		assert.Len(t, result.Results, result.Healthy+result.Unhealthy)
+		assert.LessOrEqual(t, len(result.Results), result.Total)
+	})
+
+	t.Run("filter by type returns only matching datasources", func(t *testing.T) {
+		ctx := newTestContext()
+		result, err := checkDatasourcesHealth(ctx, BulkCheckDatasourceHealthParams{Type: "prometheus"})
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Greater(t, result.Total, 0)
+		for _, r := range result.Results {
+			assert.Equal(t, "prometheus", r.Type)
+		}
+	})
+
+	t.Run("explicit uids checks only those datasources", func(t *testing.T) {
+		ctx := newTestContext()
+		result, err := checkDatasourcesHealth(ctx, BulkCheckDatasourceHealthParams{UIDs: []string{"prometheus", "loki"}})
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Equal(t, 2, result.Total)
+		uids := make([]string, len(result.Results))
+		for i, r := range result.Results {
+			uids[i] = r.UID
+		}
+		assert.ElementsMatch(t, []string{"prometheus", "loki"}, uids)
+	})
+}
+
+func TestUpdateDatasourceTool(t *testing.T) {
+	ctx := newTestContext()
+	c := mcpgrafana.GrafanaClientFromContext(ctx)
+
+	// Create a temporary datasource to test against so we don't modify provisioned ones.
+	dsAccess := models.DsAccess("proxy")
+	addResp, err := c.Datasources.AddDataSource(&models.AddDataSourceCommand{
+		Name:   "Integration Test DS",
+		Type:   "prometheus",
+		Access: dsAccess,
+		URL:    "http://prometheus:9090",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, addResp.Payload)
+	testUID := addResp.Payload.Datasource.UID
+
+	t.Cleanup(func() {
+		_, _ = c.Datasources.DeleteDataSourceByUID(testUID)
+	})
+
+	t.Run("update name", func(t *testing.T) {
+		newName := "Integration Test DS Updated"
+		result, err := updateDatasource(ctx, UpdateDatasourceParams{UID: testUID, Name: &newName})
+		require.NoError(t, err)
+		require.NotNil(t, result)
+	})
+
+	t.Run("update url", func(t *testing.T) {
+		newURL := "http://prometheus:9090"
+		result, err := updateDatasource(ctx, UpdateDatasourceParams{UID: testUID, URL: &newURL})
+		require.NoError(t, err)
+		require.NotNil(t, result)
+	})
+
+	t.Run("health check included in result", func(t *testing.T) {
+		newName := "Integration Test DS Health"
+		result, err := updateDatasource(ctx, UpdateDatasourceParams{UID: testUID, Name: &newName})
+		require.NoError(t, err)
+		require.NotNil(t, result.Health)
+		assert.Equal(t, testUID, result.Health.UID)
+		assert.NotEmpty(t, result.Health.Message)
+	})
+
+	t.Run("update non-existent datasource returns error", func(t *testing.T) {
+		newName := "Should Fail"
+		_, err := updateDatasource(ctx, UpdateDatasourceParams{UID: "non-existent-uid", Name: &newName})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
 	})
 }
