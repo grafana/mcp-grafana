@@ -267,8 +267,9 @@ func TestSuggestLokiAlloyLabelConfig_HappyPath(t *testing.T) {
 	assert.Contains(t, res.Alloy, `loki.process "enforce_labels"`)
 	assert.Contains(t, res.Alloy, `forward_to = [loki.write.default.receiver]`)
 	assert.Contains(t, res.Alloy, "stage.label_keep")
-	// Approved labels are sorted alphabetically inside label_keep.
-	assert.Contains(t, res.Alloy, `["app", "cluster", "env", "level"]`)
+	// Required labels are unioned into the kept set so soft-enforcement
+	// placeholders aren't immediately dropped. Labels are sorted alphabetically.
+	assert.Contains(t, res.Alloy, `["app", "cluster", "env", "level", "team"]`)
 	// Level normalization stages present and anchored so substrings like "CRITICAL"
 	// or "trace" aren't mangled by partial matches.
 	assert.Contains(t, res.Alloy, `^(?i)I(nfo)?$`)
@@ -282,6 +283,33 @@ func TestSuggestLokiAlloyLabelConfig_HappyPath(t *testing.T) {
 func TestSuggestLokiAlloyLabelConfig_RejectsEmpty(t *testing.T) {
 	_, err := suggestLokiAlloyLabelConfig(context.Background(), SuggestLokiAlloyLabelConfigParams{})
 	require.Error(t, err)
+}
+
+// Regression test: a required label that isn't also in ApprovedLabels must
+// still appear in stage.label_keep, otherwise the "unknown" placeholder
+// injected by stage.template is immediately dropped on the next stage.
+func TestSuggestLokiAlloyLabelConfig_RequiredLabelUnionedIntoKeep(t *testing.T) {
+	res, err := suggestLokiAlloyLabelConfig(context.Background(), SuggestLokiAlloyLabelConfigParams{
+		ApprovedLabels: []string{"app", "env"},
+		RequiredLabels: []string{"team"},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, res)
+
+	assert.Contains(t, res.Alloy, `["app", "env", "team"]`)
+	// Sanity: soft-enforcement template should still fire for `team`.
+	assert.Contains(t, res.Alloy, `source = "team"`)
+}
+
+// Duplicates between ApprovedLabels and RequiredLabels must not double-emit
+// inside stage.label_keep.
+func TestSuggestLokiAlloyLabelConfig_DuplicateRequiredApprovedNotDoubled(t *testing.T) {
+	res, err := suggestLokiAlloyLabelConfig(context.Background(), SuggestLokiAlloyLabelConfigParams{
+		ApprovedLabels: []string{"app", "team"},
+		RequiredLabels: []string{"team"},
+	})
+	require.NoError(t, err)
+	assert.Contains(t, res.Alloy, `["app", "team"]`)
 }
 
 func TestAnalyzeLokiLabels_StaticAuditOnly(t *testing.T) {
