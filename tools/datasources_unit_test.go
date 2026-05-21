@@ -839,7 +839,7 @@ func TestApplyFields(t *testing.T) {
 		assert.NotContains(t, result, "unknownField")
 	})
 
-	t.Run("section-prefixed input key is stored under base key", func(t *testing.T) {
+	t.Run("section-prefixed input key is stored under nested section", func(t *testing.T) {
 		s := &datasourceschemas.DatasourceSchema{
 			Fields: []datasourceschemas.DsSchemaField{
 				{Key: "region", Section: "aws", Target: "jsonData", ValueType: "string"},
@@ -847,8 +847,38 @@ func TestApplyFields(t *testing.T) {
 		}
 		body := &models.AddDataSourceCommand{}
 		result := applyFields(body, s, map[string]any{"aws.region": "us-east-1"})
-		assert.Equal(t, "us-east-1", result["region"])
+		assert.Equal(t, map[string]any{"region": "us-east-1"}, result["aws"])
+		assert.NotContains(t, result, "region")
 		assert.NotContains(t, result, "aws.region")
+	})
+
+	t.Run("section-prefixed input keys do not collide", func(t *testing.T) {
+		s := &datasourceschemas.DatasourceSchema{
+			Fields: []datasourceschemas.DsSchemaField{
+				{Key: "defaultDatabase", Target: "jsonData", ValueType: "string"},
+				{Key: "defaultDatabase", Section: "logs", Target: "jsonData", ValueType: "string"},
+				{Key: "defaultDatabase", Section: "traces", Target: "jsonData", ValueType: "string"},
+			},
+		}
+		body := &models.AddDataSourceCommand{}
+		result := applyFields(body, s, map[string]any{
+			"defaultDatabase":        "queries",
+			"logs.defaultDatabase":   "logs",
+			"traces.defaultDatabase": "traces",
+		})
+		assert.Equal(t, "queries", result["defaultDatabase"])
+		assert.Equal(t, map[string]any{"defaultDatabase": "logs"}, result["logs"])
+		assert.Equal(t, map[string]any{"defaultDatabase": "traces"}, result["traces"])
+	})
+
+	t.Run("common root fields are applied to body", func(t *testing.T) {
+		body := &models.AddDataSourceCommand{}
+		applyFields(body, &datasourceschemas.DatasourceSchema{}, map[string]any{
+			"uid":       "custom-uid",
+			"isDefault": true,
+		})
+		assert.Equal(t, "custom-uid", body.UID)
+		assert.True(t, body.IsDefault)
 	})
 
 	t.Run("mixed targets: root to body, jsonData to map, secrets excluded", func(t *testing.T) {

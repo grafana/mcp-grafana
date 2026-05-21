@@ -22,15 +22,6 @@ var commonDatasourceFields = []DsSchemaField{
 		Target:      "root",
 	},
 	{
-		ID:          "root.orgId",
-		Key:         "orgId",
-		Label:       "Organization ID",
-		Description: "Organization this datasource belongs to. Defaults to 1.",
-		ValueType:   "number",
-		Target:      "root",
-		DefaultVal:  1,
-	},
-	{
 		ID:          "root.isDefault",
 		Key:         "isDefault",
 		Label:       "Default datasource",
@@ -39,15 +30,13 @@ var commonDatasourceFields = []DsSchemaField{
 		Target:      "root",
 		DefaultVal:  false,
 	},
-	{
-		ID:          "root.editable",
-		Key:         "editable",
-		Label:       "Editable",
-		Description: "When true, users can edit this datasource from the Grafana UI. When false, it is read-only.",
-		ValueType:   "boolean",
-		Target:      "root",
-		DefaultVal:  false,
-	},
+}
+
+// CommonDatasourceFields returns a copy of the shared root fields advertised in guidance.
+func CommonDatasourceFields() []DsSchemaField {
+	fields := make([]DsSchemaField, len(commonDatasourceFields))
+	copy(fields, commonDatasourceFields)
+	return fields
 }
 
 // dsFieldValidation covers all FieldValidationRule shapes from the dsconfig schema.
