@@ -200,11 +200,18 @@ func buildRenderURL(baseURL string, args GetPanelImageParams) (string, error) {
 	// via the standard kiosk/viewPanel mechanism.
 	var renderPath string
 	if hasPreview {
-		renderPath = fmt.Sprintf(
-			"/render/dashboard/provisioning/%s/preview/%s",
-			args.ProvisioningPreview.Repo,
-			args.ProvisioningPreview.Path,
-		)
+		// Use url.URL.EscapedPath() so characters like ?, #, or spaces in the
+		// repo slug or dashboard file path don't produce a malformed render
+		// URL. EscapedPath preserves the structural / between segments while
+		// percent-encoding everything else that isn't valid in a URL path.
+		previewURL := url.URL{
+			Path: fmt.Sprintf(
+				"/render/dashboard/provisioning/%s/preview/%s",
+				args.ProvisioningPreview.Repo,
+				args.ProvisioningPreview.Path,
+			),
+		}
+		renderPath = previewURL.EscapedPath()
 		if args.ProvisioningPreview.Ref != "" {
 			params.Set("ref", args.ProvisioningPreview.Ref)
 		}
