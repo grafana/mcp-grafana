@@ -102,6 +102,13 @@ type grafanaConfig struct {
 	maxLokiLogLimit int
 }
 
+type serverInstructionsMode string
+
+const (
+	serverInstructionsModeAppend  serverInstructionsMode = "append"
+	serverInstructionsModeReplace serverInstructionsMode = "replace"
+)
+
 func (dt *disabledTools) addFlags() {
 	flag.StringVar(&dt.enabledTools, "enabled-tools", "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering,plugin,api,config", "A comma separated list of tools enabled for this server. Can be overwritten entirely or by disabling specific components, e.g. --disable-search.")
 	flag.BoolVar(&dt.search, "disable-search", false, "Disable search tools")
@@ -240,7 +247,63 @@ func (dt *disabledTools) buildInstructions() string {
 	return b.String()
 }
 
-func newServer(transport string, dt disabledTools, obs *observability.Observability, sessionIdleTimeoutMinutes int) (*server.MCPServer, *mcpgrafana.ToolManager, *mcpgrafana.SessionManager) {
+func parseServerInstructionsMode(s string) (serverInstructionsMode, error) {
+	switch serverInstructionsMode(s) {
+	case "", serverInstructionsModeAppend:
+		return serverInstructionsModeAppend, nil
+	case serverInstructionsModeReplace:
+		return serverInstructionsModeReplace, nil
+	default:
+		return "", fmt.Errorf("must be \"append\" or \"replace\", got %q", s)
+	}
+}
+
+// withInstructionsReminder returns a tool handler middleware that appends the
+// server instructions to every tool result. This ensures the LLM sees the
+// instructions on every tool call regardless of whether the MCP client injects
+// the instructions field from the initialize response into the system prompt.
+func withInstructionsReminder(instructions string) server.ServerOption {
+	if instructions == "" {
+		return func(_ *server.MCPServer) {}
+	}
+	reminder := "\n\n---\n**Server instructions (follow at all times):**\n" + instructions
+	return server.WithToolHandlerMiddleware(func(next server.ToolHandlerFunc) server.ToolHandlerFunc {
+		return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			result, err := next(ctx, req)
+			if err != nil || result == nil {
+				return result, err
+			}
+			result.Content = append(result.Content, mcp.NewTextContent(reminder))
+			return result, nil
+		}
+	})
+}
+
+func applyServerInstructions(generated string, filePath string, mode serverInstructionsMode) (string, error) {
+	if filePath == "" {
+		return generated, nil
+	}
+
+	customBytes, err := os.ReadFile(filePath)
+	if err != nil {
+		return "", fmt.Errorf("read server instructions file: %w", err)
+	}
+	custom := string(customBytes)
+
+	switch mode {
+	case "", serverInstructionsModeAppend:
+		if custom == "" {
+			return generated, nil
+		}
+		return generated + "\n\n" + custom, nil
+	case serverInstructionsModeReplace:
+		return custom, nil
+	default:
+		return "", fmt.Errorf("invalid server instructions mode %q: must be append or replace", mode)
+	}
+}
+
+func newServer(transport string, dt disabledTools, obs *observability.Observability, sessionIdleTimeoutMinutes int, instructions string) (*server.MCPServer, *mcpgrafana.ToolManager, *mcpgrafana.SessionManager) {
 	sm := mcpgrafana.NewSessionManager(
 		mcpgrafana.WithSessionTTL(time.Duration(sessionIdleTimeoutMinutes) * time.Minute),
 	)
@@ -302,16 +365,15 @@ func newServer(transport string, dt disabledTools, obs *observability.Observabil
 	// Merge observability hooks with existing hooks
 	hooks = observability.MergeHooks(hooks, obs.MCPHooks())
 
-	// Register tools and build the instruction string from enabled categories.
+	// Register tools and use the instruction string from enabled categories.
 	// processTools both registers tools on the server and collects descriptions
 	// of enabled categories, so we need a temporary nil server reference first.
-	// Instead, we split: compute instructions from flags, then create server,
+	// Instead, we split: compute instructions before creating the server,
 	// then register tools.
-	instructions := dt.buildInstructions()
-
 	s = server.NewMCPServer("mcp-grafana", mcpgrafana.Version(),
 		server.WithInstructions(instructions),
 		server.WithHooks(hooks),
+		withInstructionsReminder(instructions),
 	)
 
 	// Initialize ToolManager now that server is created
@@ -397,9 +459,15 @@ func runMetricsServer(addr string, o *observability.Observability) {
 	}
 }
 
-func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt disabledTools, gc mcpgrafana.GrafanaConfig, tls tlsConfig, obs observability.Config, sessionIdleTimeoutMinutes int) error {
+func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt disabledTools, gc mcpgrafana.GrafanaConfig, tls tlsConfig, obs observability.Config, sessionIdleTimeoutMinutes int, instructions string, serverInstructionsFile string, serverInstructionsMode serverInstructionsMode) error {
 	stderrHandler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})
 	slog.SetDefault(slog.New(stderrHandler))
+
+	slog.Debug("MCP server instructions resolved",
+		"file", serverInstructionsFile,
+		"mode", serverInstructionsMode,
+		"instructions", instructions,
+	)
 
 	o, err := observability.Setup(obs)
 	if err != nil {
@@ -432,7 +500,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		defer clientCache.Close()
 	}
 
-	s, tm, sm := newServer(transport, dt, o, sessionIdleTimeoutMinutes)
+	s, tm, sm := newServer(transport, dt, o, sessionIdleTimeoutMinutes, instructions)
 	defer sm.Close()
 
 	// Create a context that will be cancelled on shutdown
@@ -567,15 +635,20 @@ func main() {
 	flag.DurationVar(&obs.SlowRequestThreshold, "slow-request-threshold", 0, "Log an event when any MCP request (tool invocation, list, resource read, etc.) takes longer than this threshold. Accepts Go duration strings, e.g. 500ms, 5s. Default 0 disables slow-request logging.")
 	var slowRequestLogLevelStr string
 	flag.StringVar(&slowRequestLogLevelStr, "slow-request-log-level", "warn", "Log level for slow-request events. One of \"info\" or \"warn\". Default \"warn\".")
+	serverInstructionsFile := flag.String("server-instructions-file", "", "Path to a file containing custom MCP server instructions")
+	serverInstructionsModeStr := flag.String("server-instructions-mode", "append", "How to apply custom MCP server instructions. One of \"append\" or \"replace\". Default \"append\".")
 	flag.Parse()
 
-	action, slowLevel, err := handleFlagsPostParse(*showVersion, slowRequestLogLevelStr)
+	action, slowLevel, serverInstructionsMode, err := handleFlagsPostParse(*showVersion, slowRequestLogLevelStr, *serverInstructionsModeStr)
 	switch action {
 	case flagActionVersion:
 		fmt.Println(mcpgrafana.Version())
 		os.Exit(0)
 	case flagActionInvalidSlowLevel:
 		fmt.Fprintf(os.Stderr, "invalid --slow-request-log-level: %v\n", err)
+		os.Exit(2)
+	case flagActionInvalidServerInstructionsMode:
+		fmt.Fprintf(os.Stderr, "invalid --server-instructions-mode: %v\n", err)
 		os.Exit(2)
 	case flagActionContinue:
 		obs.SlowRequestLogLevel = slowLevel
@@ -611,7 +684,13 @@ func main() {
 		obs.NetworkTransport = mcpconv.NetworkTransportTCP
 	}
 
-	if err := run(transport, *addr, *basePath, *endpointPath, parseLevel(*logLevel), dt, grafanaConfig, tls, obs, *sessionIdleTimeoutMinutes); err != nil {
+	instructions, err := applyServerInstructions(dt.buildInstructions(), *serverInstructionsFile, serverInstructionsMode)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to apply server instructions: %v\n", err)
+		os.Exit(2)
+	}
+
+	if err := run(transport, *addr, *basePath, *endpointPath, parseLevel(*logLevel), dt, grafanaConfig, tls, obs, *sessionIdleTimeoutMinutes, instructions, *serverInstructionsFile, serverInstructionsMode); err != nil {
 		panic(err)
 	}
 }
@@ -656,6 +735,7 @@ const (
 	flagActionContinue
 	flagActionVersion
 	flagActionInvalidSlowLevel
+	flagActionInvalidServerInstructionsMode
 )
 
 // handleFlagsPostParse decides what main() should do after flag.Parse().
@@ -663,15 +743,20 @@ const (
 // short-circuits before slow-request-log-level validation so it prints
 // regardless of other flags' values (matches pre-#756 behavior).
 //
-// The returned slog.Level is only meaningful when action == flagActionContinue;
-// the other branches return a zero level that the caller must not read.
-func handleFlagsPostParse(showVersion bool, slowLevelStr string) (flagAction, slog.Level, error) {
+// The returned slog.Level and serverInstructionsMode are only meaningful when
+// action == flagActionContinue; the other branches return zero values that the
+// caller must not read.
+func handleFlagsPostParse(showVersion bool, slowLevelStr string, serverInstructionsModeStr string) (flagAction, slog.Level, serverInstructionsMode, error) {
 	if showVersion {
-		return flagActionVersion, 0, nil
+		return flagActionVersion, 0, "", nil
 	}
 	slowLevel, err := parseSlowRequestLogLevel(slowLevelStr)
 	if err != nil {
-		return flagActionInvalidSlowLevel, 0, err
+		return flagActionInvalidSlowLevel, 0, "", err
 	}
-	return flagActionContinue, slowLevel, nil
+	serverInstructionsMode, err := parseServerInstructionsMode(serverInstructionsModeStr)
+	if err != nil {
+		return flagActionInvalidServerInstructionsMode, 0, "", err
+	}
+	return flagActionContinue, slowLevel, serverInstructionsMode, nil
 }
