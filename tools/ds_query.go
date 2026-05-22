@@ -120,13 +120,19 @@ func framesToTabularRows(resp *backend.QueryDataResponse) ([]string, []map[strin
 	return columns, rows, nil
 }
 
-// toInt64FromRow extracts an int64 from a row value that may be float64, int64,
-// or their pointer variants depending on the SDK field type.
+// toInt64FromRow extracts an int64 from a row value that may be any of the
+// numeric types (or their pointer variants) the SDK's data.Field can hold.
 func toInt64FromRow(v interface{}) int64 {
 	switch n := v.(type) {
 	case float64:
 		return int64(n)
 	case *float64:
+		if n != nil {
+			return int64(*n)
+		}
+	case float32:
+		return int64(n)
+	case *float32:
 		if n != nil {
 			return int64(*n)
 		}
@@ -136,9 +142,45 @@ func toInt64FromRow(v interface{}) int64 {
 		if n != nil {
 			return *n
 		}
+	case int32:
+		return int64(n)
+	case *int32:
+		if n != nil {
+			return int64(*n)
+		}
+	case int16:
+		return int64(n)
+	case *int16:
+		if n != nil {
+			return int64(*n)
+		}
+	case int8:
+		return int64(n)
+	case *int8:
+		if n != nil {
+			return int64(*n)
+		}
 	case uint64:
 		return int64(n)
 	case *uint64:
+		if n != nil {
+			return int64(*n)
+		}
+	case uint32:
+		return int64(n)
+	case *uint32:
+		if n != nil {
+			return int64(*n)
+		}
+	case uint16:
+		return int64(n)
+	case *uint16:
+		if n != nil {
+			return int64(*n)
+		}
+	case uint8:
+		return int64(n)
+	case *uint8:
 		if n != nil {
 			return int64(*n)
 		}
