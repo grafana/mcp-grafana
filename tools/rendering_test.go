@@ -377,6 +377,61 @@ func TestBuildRenderURL(t *testing.T) {
 			},
 			expectError: true,
 		},
+		{
+			name:    "Error: provisioningPreview repo with slash",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				ProvisioningPreview: &ProvisioningPreview{
+					Repo: "evil/../../d",
+					Path: "dashboard.json",
+				},
+			},
+			expectError: true,
+		},
+		{
+			name:    "Error: provisioningPreview repo with backslash",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				ProvisioningPreview: &ProvisioningPreview{
+					Repo: `evil\..\d`,
+					Path: "dashboard.json",
+				},
+			},
+			expectError: true,
+		},
+		{
+			name:    "Error: provisioningPreview repo equals ..",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				ProvisioningPreview: &ProvisioningPreview{
+					Repo: "..",
+					Path: "dashboard.json",
+				},
+			},
+			expectError: true,
+		},
+		{
+			name:    "Error: provisioningPreview path with .. segment",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				ProvisioningPreview: &ProvisioningPreview{
+					Repo: "my-repo",
+					Path: "folder/../../etc/passwd",
+				},
+			},
+			expectError: true,
+		},
+		{
+			name:    "Error: provisioningPreview path is exactly ..",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				ProvisioningPreview: &ProvisioningPreview{
+					Repo: "my-repo",
+					Path: "..",
+				},
+			},
+			expectError: true,
+		},
 	}
 
 	for _, tt := range tests {
