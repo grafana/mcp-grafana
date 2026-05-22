@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -37,7 +39,8 @@ func newTestObservability(t *testing.T) *observability.Observability {
 func TestNewServer_SessionIdleTimeoutZeroDisablesReaping(t *testing.T) {
 	obs := newTestObservability(t)
 	synctest.Test(t, func(t *testing.T) {
-		_, _, sm := newServer("stdio", disabledTools{enabledTools: "search"}, obs, 0)
+		dt := disabledTools{enabledTools: "search"}
+		_, _, sm := newServer("stdio", dt, obs, 0, dt.buildInstructions())
 		defer sm.Close()
 
 		session := &testClientSession{id: "should-persist"}
@@ -145,10 +148,88 @@ func TestBuildInstructions_TimestampNote(t *testing.T) {
 	assert.Contains(t, instructions, "Timestamp parameters without a timezone offset are interpreted as UTC")
 }
 
+func TestApplyServerInstructions(t *testing.T) {
+	generated := "generated instructions"
+	custom := "custom instructions\nwith multiple lines"
+	customFile := filepath.Join(t.TempDir(), "instructions.md")
+	require.NoError(t, os.WriteFile(customFile, []byte(custom), 0o600))
+	emptyFile := filepath.Join(t.TempDir(), "empty.md")
+	require.NoError(t, os.WriteFile(emptyFile, nil, 0o600))
+	missingFile := filepath.Join(t.TempDir(), "missing.md")
+
+	tests := []struct {
+		name          string
+		filePath      string
+		mode          serverInstructionsMode
+		want          string
+		wantErrSubstr string
+	}{
+		{
+			name: "no file returns generated instructions unchanged",
+			want: generated,
+		},
+		{
+			name:     "empty mode defaults to append",
+			filePath: customFile,
+			want:     generated + "\n\n" + custom,
+		},
+		{
+			name:     "append mode appends custom instructions",
+			filePath: customFile,
+			mode:     serverInstructionsModeAppend,
+			want:     generated + "\n\n" + custom,
+		},
+		{
+			name:     "replace mode returns custom instructions only",
+			filePath: customFile,
+			mode:     serverInstructionsModeReplace,
+			want:     custom,
+		},
+		{
+			name:     "empty file is valid in append mode",
+			filePath: emptyFile,
+			mode:     serverInstructionsModeAppend,
+			want:     generated,
+		},
+		{
+			name:     "empty file is valid in replace mode",
+			filePath: emptyFile,
+			mode:     serverInstructionsModeReplace,
+			want:     "",
+		},
+		{
+			name:          "missing file returns error",
+			filePath:      missingFile,
+			mode:          serverInstructionsModeAppend,
+			wantErrSubstr: "read server instructions file",
+		},
+		{
+			name:          "invalid mode returns error",
+			filePath:      customFile,
+			mode:          serverInstructionsMode("overwrite"),
+			wantErrSubstr: "invalid server instructions mode",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := applyServerInstructions(generated, tc.filePath, tc.mode)
+			if tc.wantErrSubstr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tc.wantErrSubstr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
 func TestNewServer_SessionIdleTimeoutCustomValue(t *testing.T) {
 	obs := newTestObservability(t)
 	synctest.Test(t, func(t *testing.T) {
-		_, _, sm := newServer("stdio", disabledTools{enabledTools: "search"}, obs, 1)
+		dt := disabledTools{enabledTools: "search"}
+		_, _, sm := newServer("stdio", dt, obs, 1, dt.buildInstructions())
 		defer sm.Close()
 
 		session := &testClientSession{id: "custom-ttl"}
@@ -212,6 +293,7 @@ func TestHandleFlagsPostParse(t *testing.T) {
 		slowLevelStr  string
 		wantAction    flagAction
 		wantLevel     slog.Level
+		wantMode      serverInstructionsMode
 		wantErr       bool
 		wantErrSubstr []string
 	}{
@@ -231,11 +313,18 @@ func TestHandleFlagsPostParse(t *testing.T) {
 			wantAction:   flagActionVersion,
 		},
 		{
+			name:         "--version wins over bad instructions mode",
+			showVersion:  true,
+			slowLevelStr: "warn",
+			wantAction:   flagActionVersion,
+		},
+		{
 			name:         "no --version, warn slow-level",
 			showVersion:  false,
 			slowLevelStr: "warn",
 			wantAction:   flagActionContinue,
 			wantLevel:    slog.LevelWarn,
+			wantMode:     serverInstructionsModeAppend,
 		},
 		{
 			name:         "no --version, info slow-level",
@@ -243,6 +332,15 @@ func TestHandleFlagsPostParse(t *testing.T) {
 			slowLevelStr: "info",
 			wantAction:   flagActionContinue,
 			wantLevel:    slog.LevelInfo,
+			wantMode:     serverInstructionsModeAppend,
+		},
+		{
+			name:         "replace server instructions mode",
+			showVersion:  false,
+			slowLevelStr: "warn",
+			wantAction:   flagActionContinue,
+			wantLevel:    slog.LevelWarn,
+			wantMode:     serverInstructionsModeReplace,
 		},
 		{
 			name:          "no --version, bogus slow-level",
@@ -260,14 +358,31 @@ func TestHandleFlagsPostParse(t *testing.T) {
 			wantErr:       true,
 			wantErrSubstr: []string{"must be"},
 		},
+		{
+			name:          "no --version, bogus server instructions mode",
+			showVersion:   false,
+			slowLevelStr:  "warn",
+			wantAction:    flagActionInvalidServerInstructionsMode,
+			wantErr:       true,
+			wantErrSubstr: []string{"append", "replace", "bogus"},
+		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			action, level, err := handleFlagsPostParse(tc.showVersion, tc.slowLevelStr)
+			instructionsModeStr := ""
+			if tc.name == "replace server instructions mode" {
+				instructionsModeStr = "replace"
+			}
+			if tc.name == "no --version, bogus server instructions mode" || tc.name == "--version wins over bad instructions mode" {
+				instructionsModeStr = "bogus"
+			}
+
+			action, level, mode, err := handleFlagsPostParse(tc.showVersion, tc.slowLevelStr, instructionsModeStr)
 			assert.Equal(t, tc.wantAction, action, "unexpected action")
 			if tc.wantAction == flagActionContinue {
 				assert.Equal(t, tc.wantLevel, level, "unexpected level")
+				assert.Equal(t, tc.wantMode, mode, "unexpected server instructions mode")
 			}
 			if tc.wantErr {
 				require.Error(t, err, "expected an error")
