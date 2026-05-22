@@ -19,11 +19,21 @@ Install the Grafana MCP server by downloading a release binary or building from 
 
 You have the `mcp-grafana` binary available so your MCP client can run it directly (typically in stdio mode).
 
-## Before you begin
+## Install with Homebrew
 
-- For source build: a Go toolchain (see [Go install](https://go.dev/doc/install)).
+If you have [Homebrew](https://brew.sh/) installed, install `mcp-grafana` with:
 
-## Download a release
+```bash
+brew install mcp-grafana
+```
+
+Verify that the binary is available:
+
+```bash
+  mcp-grafana --help
+```
+
+## Download a release from GitHub
 
 1. Open the [releases page](https://github.com/grafana/mcp-grafana/releases) on GitHub.
 2. Download the archive for your platform.
@@ -31,7 +41,7 @@ You have the `mcp-grafana` binary available so your MCP client can run it direct
 
 ## Build from source
 
-If you have a Go toolchain installed you can also build and install it from source. Use `go install` and set `GOBIN` so the binary is installed where you want it (for example, a directory in your `$PATH`).
+If you have a [Go toolchain](https://go.dev/doc/install) installed, you can also build and install it from source. Use `go install` and set `GOBIN` so the binary is installed where you want it (for example, a directory in your `$PATH`).
 
 ```bash
 GOBIN="$HOME/go/bin" go install github.com/grafana/mcp-grafana/cmd/mcp-grafana@latest

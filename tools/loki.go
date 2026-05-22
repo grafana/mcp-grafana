@@ -929,11 +929,14 @@ var QueryLokiPatterns = mcpgrafana.MustTool(
 	mcp.WithReadOnlyHintAnnotation(true),
 )
 
-// AddLokiTools registers all Loki tools with the MCP server
+// AddLokiTools registers all Loki tools with the MCP server.
+// Config-generation tools (e.g. suggest_loki_alloy_label_config) live in
+// the separate "config" category — see tools.AddConfigTools.
 func AddLokiTools(mcp *server.MCPServer) {
 	ListLokiLabelNames.Register(mcp)
 	ListLokiLabelValues.Register(mcp)
 	QueryLokiStats.Register(mcp)
 	QueryLokiLogs.Register(mcp)
 	QueryLokiPatterns.Register(mcp)
+	AddLokiLabelAnalyzerTools(mcp)
 }
