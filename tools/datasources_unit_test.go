@@ -15,6 +15,7 @@ import (
 	"github.com/grafana/grafana-openapi-client-go/client"
 	"github.com/grafana/grafana-openapi-client-go/models"
 	mcpgrafana "github.com/grafana/mcp-grafana"
+	datasourceschemas "github.com/grafana/mcp-grafana/tools/datasource_schemas"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -233,6 +234,103 @@ func TestGetDatasource_ErrorWhenNeitherProvided(t *testing.T) {
 }
 
 // ---- createDatasource ----
+func TestCreateDatasource_NoSchemaGuidancePhase(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("Grafana API must not be called during no-schema guidance phase")
+	}))
+	defer srv.Close()
+
+	ctx := mockDatasourcesCtx(srv)
+
+	// No schema for this type and no name yet — should return field guidance, not create.
+	result, err := createDatasource(ctx, CreateDatasourceParams{
+		Type: "nonexistent-plugin",
+	})
+	require.NoError(t, err)
+	require.Len(t, result.Content, 1)
+
+	text, ok := result.Content[0].(mcp.TextContent)
+	require.True(t, ok)
+
+	var guidance map[string]any
+	require.NoError(t, json.Unmarshal([]byte(text.Text), &guidance))
+	assert.Equal(t, "nonexistent-plugin", guidance["type"])
+	assert.NotEmpty(t, guidance["message"])
+
+	fields, ok := guidance["fields"].([]any)
+	require.True(t, ok)
+	keys := make([]string, 0, len(fields))
+	for _, f := range fields {
+		fm := f.(map[string]any)
+		keys = append(keys, fm["key"].(string))
+	}
+	assert.Contains(t, keys, "name")
+}
+
+func TestCreateDatasource_SchemaGuidancePhase(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("Grafana API must not be called during schema guidance phase")
+	}))
+	defer srv.Close()
+
+	ctx := mockDatasourcesCtx(srv)
+
+	result, err := createDatasource(ctx, CreateDatasourceParams{
+		Name: "My Prometheus",
+		Type: "prometheus",
+		// no Fields → Phase 1: return schema guidance
+	})
+	require.NoError(t, err)
+	require.Len(t, result.Content, 1)
+
+	text, ok := result.Content[0].(mcp.TextContent)
+	require.True(t, ok)
+
+	var guidance map[string]any
+	require.NoError(t, json.Unmarshal([]byte(text.Text), &guidance))
+	assert.Equal(t, "prometheus", guidance["type"])
+	assert.NotEmpty(t, guidance["fields"])
+	assert.NotEmpty(t, guidance["message"])
+}
+
+func TestCreateDatasource_NoSchemaCreatesDirectly(t *testing.T) {
+	id := int64(7)
+	name := "My Custom DS"
+	uid := "custom-uid"
+	msg := "Datasource added"
+	mockResp := models.AddDataSourceOKBody{
+		ID:         &id,
+		Name:       &name,
+		Message:    &msg,
+		Datasource: &models.DataSource{ID: id, UID: uid, Name: name, Type: "nonexistent-plugin"},
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/datasources":
+			_ = json.NewEncoder(w).Encode(mockResp)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/datasources/uid/"+uid+"/health":
+			_ = json.NewEncoder(w).Encode(map[string]any{"message": "Data source connected"})
+		default:
+			assert.Failf(t, "unexpected request", "%s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	ctx := mockDatasourcesCtx(srv)
+	mcpgrafana.GrafanaClientFromContext(ctx).PublicURL = "https://grafana.example.com"
+
+	// No schema for this type — should create immediately without a fields step.
+	result, err := createDatasource(ctx, CreateDatasourceParams{
+		Name: name,
+		Type: "nonexistent-plugin",
+		URL:  "http://custom:9090",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.False(t, result.IsError)
+}
 
 func TestCreateDatasource_Success(t *testing.T) {
 	id := int64(42)
@@ -269,9 +367,10 @@ func TestCreateDatasource_Success(t *testing.T) {
 	mcpgrafana.GrafanaClientFromContext(ctx).PublicURL = "https://grafana.example.com"
 
 	toolResult, err := createDatasource(ctx, CreateDatasourceParams{
-		Name: name,
-		Type: "prometheus",
-		URL:  "http://prometheus:9090",
+		Name:   name,
+		Type:   "prometheus",
+		URL:    "http://prometheus:9090",
+		Fields: map[string]any{"httpMethod": "POST", "timeInterval": "15s"},
 	})
 	require.NoError(t, err)
 	require.NotNil(t, toolResult)
@@ -644,4 +743,158 @@ func TestCheckDatasourcesHealth_Pagination_OffsetBeyondTotal(t *testing.T) {
 	assert.Equal(t, 0, result.Unhealthy)
 	assert.False(t, result.HasMore)
 	assert.Empty(t, result.Results)
+}
+
+func TestCreateDatasource_SecureFieldsNotLeakedToJSONData(t *testing.T) {
+	var capturedJSONData map[string]any
+
+	id := int64(1)
+	name := "My Prometheus"
+	uid := "prom-uid"
+	msg := "ok"
+	mockResp := models.AddDataSourceOKBody{
+		ID:         &id,
+		Name:       &name,
+		Message:    &msg,
+		Datasource: &models.DataSource{ID: id, UID: uid, Name: name, Type: "prometheus"},
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/datasources":
+			var body struct {
+				JSONData map[string]any `json:"jsonData"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			capturedJSONData = body.JSONData
+			_ = json.NewEncoder(w).Encode(mockResp)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/datasources/uid/"+uid+"/health":
+			_ = json.NewEncoder(w).Encode(map[string]any{"message": "Data source connected"})
+		}
+	}))
+	defer srv.Close()
+
+	_, err := createDatasource(mockDatasourcesCtx(srv), CreateDatasourceParams{
+		Name: name,
+		Type: "prometheus",
+		Fields: map[string]any{
+			"httpMethod":        "GET",
+			"basicAuthPassword": "s3cr3t", // secureJsonData field — must be dropped
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "GET", capturedJSONData["httpMethod"])
+	assert.NotContains(t, capturedJSONData, "basicAuthPassword")
+}
+
+// ---- applyFields ----
+
+func TestApplyFields(t *testing.T) {
+	schema := &datasourceschemas.DatasourceSchema{
+		Fields: []datasourceschemas.DsSchemaField{
+			{Key: "httpMethod", Target: "jsonData", ValueType: "string"},
+			{Key: "timeInterval", Target: "jsonData", ValueType: "string"},
+			{Key: "basicAuthPassword", Target: "secureJsonData", ValueType: "string"},
+			{Key: "url", Target: "root", ValueType: "string"},
+			{Key: "basicAuth", Target: "root", ValueType: "boolean"},
+			{Key: "isDefault", Target: "root", ValueType: "boolean"},
+		},
+	}
+
+	t.Run("jsonData fields are returned in jsonData map", func(t *testing.T) {
+		body := &models.AddDataSourceCommand{}
+		result := applyFields(body, schema, map[string]any{"httpMethod": "POST"})
+		assert.Equal(t, "POST", result["httpMethod"])
+	})
+
+	t.Run("secureJsonData fields are excluded", func(t *testing.T) {
+		body := &models.AddDataSourceCommand{}
+		result := applyFields(body, schema, map[string]any{"basicAuthPassword": "s3cr3t"})
+		assert.NotContains(t, result, "basicAuthPassword")
+	})
+
+	t.Run("root url is applied to body and not in jsonData", func(t *testing.T) {
+		body := &models.AddDataSourceCommand{}
+		result := applyFields(body, schema, map[string]any{"url": "http://prometheus:9090"})
+		assert.Equal(t, "http://prometheus:9090", body.URL)
+		assert.NotContains(t, result, "url")
+	})
+
+	t.Run("root basicAuth is applied to body", func(t *testing.T) {
+		body := &models.AddDataSourceCommand{}
+		applyFields(body, schema, map[string]any{"basicAuth": true})
+		assert.True(t, body.BasicAuth)
+	})
+
+	t.Run("root isDefault is applied to body", func(t *testing.T) {
+		body := &models.AddDataSourceCommand{}
+		applyFields(body, schema, map[string]any{"isDefault": true})
+		assert.True(t, body.IsDefault)
+	})
+
+	t.Run("unknown fields are excluded", func(t *testing.T) {
+		body := &models.AddDataSourceCommand{}
+		result := applyFields(body, schema, map[string]any{"unknownField": "value"})
+		assert.NotContains(t, result, "unknownField")
+	})
+
+	t.Run("section-prefixed input key is stored under nested section", func(t *testing.T) {
+		s := &datasourceschemas.DatasourceSchema{
+			Fields: []datasourceschemas.DsSchemaField{
+				{Key: "region", Section: "aws", Target: "jsonData", ValueType: "string"},
+			},
+		}
+		body := &models.AddDataSourceCommand{}
+		result := applyFields(body, s, map[string]any{"aws.region": "us-east-1"})
+		assert.Equal(t, map[string]any{"region": "us-east-1"}, result["aws"])
+		assert.NotContains(t, result, "region")
+		assert.NotContains(t, result, "aws.region")
+	})
+
+	t.Run("section-prefixed input keys do not collide", func(t *testing.T) {
+		s := &datasourceschemas.DatasourceSchema{
+			Fields: []datasourceschemas.DsSchemaField{
+				{Key: "defaultDatabase", Target: "jsonData", ValueType: "string"},
+				{Key: "defaultDatabase", Section: "logs", Target: "jsonData", ValueType: "string"},
+				{Key: "defaultDatabase", Section: "traces", Target: "jsonData", ValueType: "string"},
+			},
+		}
+		body := &models.AddDataSourceCommand{}
+		result := applyFields(body, s, map[string]any{
+			"defaultDatabase":        "queries",
+			"logs.defaultDatabase":   "logs",
+			"traces.defaultDatabase": "traces",
+		})
+		assert.Equal(t, "queries", result["defaultDatabase"])
+		assert.Equal(t, map[string]any{"defaultDatabase": "logs"}, result["logs"])
+		assert.Equal(t, map[string]any{"defaultDatabase": "traces"}, result["traces"])
+	})
+
+	t.Run("common root fields are applied to body", func(t *testing.T) {
+		body := &models.AddDataSourceCommand{}
+		applyFields(body, &datasourceschemas.DatasourceSchema{}, map[string]any{
+			"uid":       "custom-uid",
+			"isDefault": true,
+		})
+		assert.Equal(t, "custom-uid", body.UID)
+		assert.True(t, body.IsDefault)
+	})
+
+	t.Run("mixed targets: root to body, jsonData to map, secrets excluded", func(t *testing.T) {
+		body := &models.AddDataSourceCommand{}
+		result := applyFields(body, schema, map[string]any{
+			"url":               "http://prometheus:9090",
+			"httpMethod":        "GET",
+			"timeInterval":      "30s",
+			"basicAuthPassword": "s3cr3t",
+			"extra":             "fallback",
+		})
+		assert.Equal(t, "http://prometheus:9090", body.URL)
+		assert.Equal(t, "GET", result["httpMethod"])
+		assert.Equal(t, "30s", result["timeInterval"])
+		assert.NotContains(t, result, "url")
+		assert.NotContains(t, result, "basicAuthPassword")
+		assert.NotContains(t, result, "extra")
+	})
 }

@@ -1,0 +1,113 @@
+{
+    "schemaVersion": "v1",
+    "pluginType": "grafana-astradb-datasource",
+    "pluginName": "DataStax Astra DB",
+    "fields": [
+        {
+            "id": "jsonData.uri",
+            "key": "uri",
+            "label": "URI",
+            "description": "Astra DB connection URI.",
+            "valueType": "string",
+            "target": "jsonData",
+            "required": true
+        },
+        {
+            "id": "jsonData.authKind",
+            "key": "authKind",
+            "label": "Auth Kind",
+            "description": "Authentication type identifier.",
+            "valueType": "number",
+            "target": "jsonData",
+            "required": true
+        },
+        {
+            "id": "jsonData.user",
+            "key": "user",
+            "label": "Username",
+            "description": "Astra DB username.",
+            "valueType": "string",
+            "target": "jsonData",
+            "required": true
+        },
+        {
+            "id": "jsonData.grpcEndpoint",
+            "key": "grpcEndpoint",
+            "label": "gRPC Endpoint",
+            "description": "Astra DB gRPC endpoint.",
+            "valueType": "string",
+            "target": "jsonData",
+            "required": true
+        },
+        {
+            "id": "jsonData.authEndpoint",
+            "key": "authEndpoint",
+            "label": "Auth Endpoint",
+            "description": "Authentication endpoint URL.",
+            "valueType": "string",
+            "semanticType": "url",
+            "target": "jsonData",
+            "required": true
+        },
+        {
+            "id": "jsonData.secure",
+            "key": "secure",
+            "label": "Secure",
+            "description": "Use secure connection.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.database",
+            "key": "database",
+            "label": "Database",
+            "description": "Astra DB database name.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "secureJsonData.token",
+            "key": "token",
+            "label": "Token",
+            "description": "Astra DB application token.",
+            "valueType": "string",
+            "semanticType": "token",
+            "target": "secureJsonData"
+        },
+        {
+            "id": "secureJsonData.password",
+            "key": "password",
+            "label": "Password",
+            "description": "Astra DB password.",
+            "valueType": "string",
+            "semanticType": "password",
+            "target": "secureJsonData"
+        }
+    ],
+    "groups": [
+        {
+            "id": "connection",
+            "title": "Connection",
+            "fieldRefs": [
+                "jsonData.uri",
+                "jsonData.grpcEndpoint",
+                "jsonData.database",
+                "jsonData.secure"
+            ]
+        },
+        {
+            "id": "auth",
+            "title": "Authentication",
+            "fieldRefs": [
+                "jsonData.authKind",
+                "jsonData.user",
+                "jsonData.authEndpoint",
+                "secureJsonData.token",
+                "secureJsonData.password"
+            ]
+        }
+    ]
+}
