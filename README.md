@@ -353,7 +353,7 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `create_annotation`               | Annotations | Create a new annotation (standard or Graphite format)               | `annotations:write`                     | `annotations:*`                                     |
 | `update_annotation`               | Annotations | Update specific fields of an annotation (partial update)            | `annotations:write`                     | `annotations:*`                                     |
 | `get_annotation_tags`             | Annotations | List annotation tags with optional filtering                        | `annotations:read`                      | `annotations:*`                                     |
-| `get_panel_image`                 | Rendering   | Render a dashboard panel or full dashboard as a PNG image           | `dashboards:read`                       | `dashboards:uid:abc123`                             |
+| `get_panel_image`                 | Rendering   | Render a stored dashboard or panel — or a provisioning preview from a repository branch — as a PNG image | `dashboards:read`                       | `dashboards:uid:abc123`                             |
 
 _* Disabled by default. Add category to `--enabled-tools` to enable._
 

@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Snowflake tools (`query_snowflake`, `list_snowflake_tables`, `describe_snowflake_table`) for querying Snowflake datasources (Grafana Enterprise plugin `grafana-snowflake-datasource`) through Grafana's `/api/ds/query` endpoint. Supports `$__timeFilter`, `$__timeFrom`/`$__timeTo`, `$__from`/`$__to`, `$__interval`/`$__interval_ms`, and `${varname}` substitution. Disabled by default — opt in with `--enabled-tools=...,snowflake`.
+- `get_panel_image` now accepts an optional `provisioningPreview` parameter (`repo`, `path`, `ref`) for rendering dashboards staged on a provisioning repository branch (e.g. a git-sync PR preview) before they're merged or applied. Mutually exclusive with `dashboardUid`.
 
 ## [0.14.0] - 2026-05-08
 
