@@ -206,7 +206,7 @@ Queries go through Grafana's Snowflake datasource (Grafana Enterprise plugin `gr
 
 ### Rendering
 
-- **Get panel or dashboard image:** Render a Grafana dashboard panel or full dashboard as a PNG image. Returns the image as base64 encoded data for use in reports, alerts, or presentations. Supports customizing dimensions, time range, theme, scale, and dashboard variables.
+- **Get panel or dashboard image:** Render a Grafana dashboard panel or full dashboard as a PNG image. Returns the image as base64 encoded data for use in reports, alerts, or presentations. Supports customizing dimensions, time range, theme, scale, and dashboard variables. Also supports rendering not-yet-applied dashboards from a provisioning repository branch (e.g. a git-sync PR preview) via the optional `provisioningPreview` parameter.
   - _Note: Requires the [Grafana Image Renderer](https://grafana.com/docs/grafana/latest/setup-grafana/image-rendering/) service to be installed and configured._
 
 The list of tools is configurable, so you can choose which tools you want to make available to the MCP client.
