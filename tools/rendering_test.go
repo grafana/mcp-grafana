@@ -302,6 +302,24 @@ func TestBuildRenderURL(t *testing.T) {
 			},
 		},
 		{
+			name:    "Provisioning preview escapes special characters in repo and path",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				ProvisioningPreview: &ProvisioningPreview{
+					Repo: "repo with space",
+					Path: "folder/dash?name#frag.json",
+				},
+			},
+			contains: []string{
+				"/render/dashboard/provisioning/repo%20with%20space/preview/folder/dash%3Fname%23frag.json",
+			},
+			notContains: []string{
+				"repo with space",
+				"dash?name",
+				"#frag",
+			},
+		},
+		{
 			name:    "Provisioning preview with panel ID uses viewPanel (not d-solo)",
 			baseURL: "http://localhost:3000",
 			args: GetPanelImageParams{
