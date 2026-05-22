@@ -90,7 +90,8 @@ const (
 
 // GetRulesOpts contains optional server-side filtering parameters for the
 // Prometheus rules API endpoint.
-// FolderUID, RuleGroup, States, LimitAlerts are available since Grafana 10.0.
+// RuleGroup, States, LimitAlerts are available since Grafana 10.0.
+// FolderUID requires Grafana 11.4+.
 // SearchFolder, RuleName, RuleType, RuleLimit, Matchers require Grafana 12.4+.
 type GetRulesOpts struct {
 	FolderUID    string   // Filter by folder UID
