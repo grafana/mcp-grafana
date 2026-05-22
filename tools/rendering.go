@@ -192,11 +192,11 @@ func buildRenderURL(baseURL string, args GetPanelImageParams) (string, error) {
 			return "", fmt.Errorf("provisioningPreview.repo must not contain path separators")
 		}
 		if args.ProvisioningPreview.Repo == ".." {
-			return "", fmt.Errorf("provisioningPreview.repo must not be ..")
+			return "", fmt.Errorf("provisioningPreview.repo must not be the parent-directory reference")
 		}
 		for _, seg := range strings.Split(args.ProvisioningPreview.Path, "/") {
 			if seg == ".." {
-				return "", fmt.Errorf("provisioningPreview.path must not contain .. segments")
+				return "", fmt.Errorf("provisioningPreview.path must not contain parent-directory segments")
 			}
 		}
 	}
