@@ -256,9 +256,17 @@ func newServer(transport string, dt disabledTools, obs *observability.Observabil
 		OnUnregisterSession: []server.OnUnregisterSessionHookFunc{sm.RemoveSession},
 	}
 
-	// Add proxied tools hooks if enabled and we're not running in stdio mode.
-	// (stdio mode is handled by InitializeAndRegisterServerTools; per-session tools
-	// are not supported).
+	// Add proxied capabilities hooks if enabled and we're not running in stdio mode.
+	// (stdio mode is handled by InitializeAndRegisterServerTools; per-session
+	// registration is not supported.)
+	//
+	// We wire every list/call entry point for tools, resources, resource
+	// templates, and prompts. The server advertises resource/prompt capabilities
+	// at initialize time, so any of these requests may arrive before tools/list.
+	// Without a hook on the resource/prompt entry points, the lazy per-session
+	// registration would never run for clients that enumerate resources or
+	// prompts first, and they would see an empty list despite the advertised
+	// capability. InitializeAndRegisterProxiedCapabilities is idempotent.
 	if transport != "stdio" && !dt.proxied {
 		// ensureSessionRegistered registers an ephemeral session in MCPServer.sessions
 		// if it's not already there. This is needed for horizontal scaling: when a
@@ -274,28 +282,35 @@ func newServer(transport string, dt disabledTools, obs *observability.Observabil
 			}
 		}
 
-		// OnBeforeListTools: Discover, connect, and register tools
-		hooks.OnBeforeListTools = []server.OnBeforeListToolsFunc{
-			func(ctx context.Context, id any, request *mcp.ListToolsRequest) {
-				ensureSessionRegistered(ctx)
-				if stm != nil {
-					if session := server.ClientSessionFromContext(ctx); session != nil {
-						stm.InitializeAndRegisterProxiedTools(ctx, session)
-					}
+		registerProxied := func(ctx context.Context) {
+			ensureSessionRegistered(ctx)
+			if stm != nil {
+				if session := server.ClientSessionFromContext(ctx); session != nil {
+					stm.InitializeAndRegisterProxiedCapabilities(ctx, session)
 				}
-			},
+			}
 		}
 
-		// OnBeforeCallTool: Fallback in case client calls tool without listing first
+		hooks.OnBeforeListTools = []server.OnBeforeListToolsFunc{
+			func(ctx context.Context, _ any, _ *mcp.ListToolsRequest) { registerProxied(ctx) },
+		}
 		hooks.OnBeforeCallTool = []server.OnBeforeCallToolFunc{
-			func(ctx context.Context, id any, request *mcp.CallToolRequest) {
-				ensureSessionRegistered(ctx)
-				if stm != nil {
-					if session := server.ClientSessionFromContext(ctx); session != nil {
-						stm.InitializeAndRegisterProxiedTools(ctx, session)
-					}
-				}
-			},
+			func(ctx context.Context, _ any, _ *mcp.CallToolRequest) { registerProxied(ctx) },
+		}
+		hooks.OnBeforeListResources = []server.OnBeforeListResourcesFunc{
+			func(ctx context.Context, _ any, _ *mcp.ListResourcesRequest) { registerProxied(ctx) },
+		}
+		hooks.OnBeforeListResourceTemplates = []server.OnBeforeListResourceTemplatesFunc{
+			func(ctx context.Context, _ any, _ *mcp.ListResourceTemplatesRequest) { registerProxied(ctx) },
+		}
+		hooks.OnBeforeReadResource = []server.OnBeforeReadResourceFunc{
+			func(ctx context.Context, _ any, _ *mcp.ReadResourceRequest) { registerProxied(ctx) },
+		}
+		hooks.OnBeforeListPrompts = []server.OnBeforeListPromptsFunc{
+			func(ctx context.Context, _ any, _ *mcp.ListPromptsRequest) { registerProxied(ctx) },
+		}
+		hooks.OnBeforeGetPrompt = []server.OnBeforeGetPromptFunc{
+			func(ctx context.Context, _ any, _ *mcp.GetPromptRequest) { registerProxied(ctx) },
 		}
 	}
 

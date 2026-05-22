@@ -21,6 +21,8 @@ func TestNamespaceResourceURI_Roundtrip(t *testing.T) {
 		{"with-colons", "tempo", "abc-123", "urn:something:with:colons"},
 		{"uid-with-dashes-underscores", "tempo", "ds_abc-123", "docs://x"},
 		{"empty-original", "tempo", "abc", ""},
+		{"with-plus", "tempo", "abc-123", "docs://a+b/foo"},
+		{"with-space", "tempo", "abc-123", "docs://a b/foo"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -121,6 +123,21 @@ func TestNamespaceResource_RewritesURIAndName(t *testing.T) {
 	assert.Equal(t, in.MIMEType, out.MIMEType)
 }
 
+// TestParseNamespacedResourceURI_TemplateExpansionPreservesPlus verifies that
+// a URI produced by expanding a verbatim-embedded resource template (which
+// bypasses PathEscape) round-trips correctly through parseNamespacedResourceURI
+// when the upstream URI contains a literal '+'.
+func TestParseNamespacedResourceURI_TemplateExpansionPreservesPlus(t *testing.T) {
+	// Simulate what a client sends back after expanding a template like
+	// urn:mcp-grafana:tempo:abc-123:docs://a+b/{section} with section=foo.
+	expanded := "urn:mcp-grafana:tempo:abc-123:docs://a+b/foo"
+	gotType, gotUID, gotURI, err := parseNamespacedResourceURI(expanded)
+	require.NoError(t, err)
+	assert.Equal(t, "tempo", gotType)
+	assert.Equal(t, "abc-123", gotUID)
+	assert.Equal(t, "docs://a+b/foo", gotURI)
+}
+
 func TestNamespaceResourceTemplate_RewritesURIAndName(t *testing.T) {
 	client := &ProxiedClient{
 		DatasourceUID:  "abc-123",
@@ -135,11 +152,26 @@ func TestNamespaceResourceTemplate_RewritesURIAndName(t *testing.T) {
 		Name:        "TraceQL Section",
 		MIMEType:    "text/markdown",
 	}
-	out := namespaceResourceTemplate(in, client)
+	out, ok := namespaceResourceTemplate(in, client)
+	require.True(t, ok)
 	require.NotNil(t, out.URITemplate)
 	rawOut := out.URITemplate.Raw()
 	assert.Contains(t, rawOut, "urn:mcp-grafana:tempo:abc-123:")
 	assert.Contains(t, rawOut, "{section}")
 	assert.Contains(t, out.Name, "TraceQL Section")
 	assert.Contains(t, out.Name, "Prod Tempo")
+}
+
+func TestNamespaceResourceTemplate_NilURITemplateSkipped(t *testing.T) {
+	client := &ProxiedClient{
+		DatasourceUID:  "abc-123",
+		DatasourceName: "Prod Tempo",
+		DatasourceType: "tempo",
+	}
+	in := mcp.ResourceTemplate{
+		URITemplate: nil,
+		Name:        "Broken",
+	}
+	_, ok := namespaceResourceTemplate(in, client)
+	assert.False(t, ok)
 }

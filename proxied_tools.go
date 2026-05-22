@@ -223,18 +223,27 @@ const proxiedResourceURIScheme = "urn:mcp-grafana"
 // namespaceResourceURI rewrites an upstream resource URI to a namespaced URN that
 // embeds the datasource type and UID, allowing multiple datasources of the same
 // type to expose colliding URIs without conflict.
+//
+// PathEscape is used (not QueryEscape) because resource templates embed the
+// upstream URI verbatim and rely on PathUnescape to leave '+' as literal '+'
+// on the read path. QueryUnescape would decode '+' to ' ', corrupting any
+// upstream URI containing a literal '+' (e.g. a template like
+// docs://a+b/{section}).
 func namespaceResourceURI(datasourceType, datasourceUID, originalURI string) string {
 	return fmt.Sprintf("%s:%s:%s:%s",
 		proxiedResourceURIScheme,
 		datasourceType,
 		datasourceUID,
-		url.QueryEscape(originalURI),
+		url.PathEscape(originalURI),
 	)
 }
 
 // parseNamespacedResourceURI is the inverse of namespaceResourceURI. It returns
 // (datasourceType, datasourceUID, originalURI, error). If the URI does not match
 // the proxied URN form, an error is returned.
+//
+// Uses PathUnescape so that literal '+' characters in the original URI (which
+// resource templates embed verbatim, not via PathEscape) survive the round trip.
 func parseNamespacedResourceURI(uri string) (string, string, string, error) {
 	if !strings.HasPrefix(uri, proxiedResourceURIScheme+":") {
 		return "", "", "", fmt.Errorf("not a proxied resource URI: %s", uri)
@@ -245,7 +254,7 @@ func parseNamespacedResourceURI(uri string) (string, string, string, error) {
 	if len(parts) != 3 {
 		return "", "", "", fmt.Errorf("invalid proxied resource URI format: %s", uri)
 	}
-	original, err := url.QueryUnescape(parts[2])
+	original, err := url.PathUnescape(parts[2])
 	if err != nil {
 		return "", "", "", fmt.Errorf("failed to decode original URI in %s: %w", uri, err)
 	}
@@ -297,25 +306,30 @@ func namespaceResource(r mcp.Resource, client *ProxiedClient) mcp.Resource {
 // namespaceResourceTemplate is the resource-template counterpart of
 // namespaceResource. The upstream URI template is wrapped in the proxied URN
 // form so client substitutions still produce a valid namespaced URI.
-func namespaceResourceTemplate(t mcp.ResourceTemplate, client *ProxiedClient) mcp.ResourceTemplate {
+//
+// Returns ok=false when the template cannot be safely namespaced (nil
+// URITemplate). Callers must skip the entry; downstream mcp-go registration
+// dereferences URITemplate without a nil check and would panic.
+func namespaceResourceTemplate(t mcp.ResourceTemplate, client *ProxiedClient) (mcp.ResourceTemplate, bool) {
+	if t.URITemplate == nil {
+		return mcp.ResourceTemplate{}, false
+	}
+	// We cannot percent-encode a URI template body without breaking its
+	// variable expressions, so we embed it verbatim. This is acceptable
+	// because URI templates produce URIs that the client passes back to us
+	// in resources/read; we re-parse the namespaced URI there.
+	raw := fmt.Sprintf("%s:%s:%s:%s",
+		proxiedResourceURIScheme,
+		client.DatasourceType,
+		client.DatasourceUID,
+		t.URITemplate.Raw(),
+	)
 	out := t
-	if t.URITemplate != nil {
-		// We cannot percent-encode a URI template body without breaking its
-		// variable expressions, so we embed it verbatim. This is acceptable
-		// because URI templates produce URIs that the client passes back to us
-		// in resources/read; we re-parse the namespaced URI there.
-		raw := fmt.Sprintf("%s:%s:%s:%s",
-			proxiedResourceURIScheme,
-			client.DatasourceType,
-			client.DatasourceUID,
-			t.URITemplate.Raw(),
-		)
-		if parsed, err := uritemplate.New(raw); err == nil {
-			out.URITemplate = &mcp.URITemplate{Template: parsed}
-		}
+	if parsed, err := uritemplate.New(raw); err == nil {
+		out.URITemplate = &mcp.URITemplate{Template: parsed}
 	}
 	out.Name = fmt.Sprintf("%s (%s)", t.Name, client.DatasourceName)
-	return out
+	return out, true
 }
 
 // namespacePrompt rewrites the prompt name to embed datasource type and adds
@@ -456,8 +470,14 @@ func (tm *ToolManager) InitializeAndRegisterServerTools(ctx context.Context) err
 			})
 		}
 		for _, tmpl := range client.ListResourceTemplates() {
+			ns, ok := namespaceResourceTemplate(tmpl, client)
+			if !ok {
+				logger.WarnContext(ctx, "skipping resource template with nil URITemplate",
+					"datasource", client.DatasourceUID, "name", tmpl.Name)
+				continue
+			}
 			resourceTemplates = append(resourceTemplates, server.ServerResourceTemplate{
-				Template: namespaceResourceTemplate(tmpl, client),
+				Template: ns,
 				Handler:  resourceHandler.Handle,
 			})
 		}
@@ -492,9 +512,15 @@ func (tm *ToolManager) InitializeAndRegisterServerTools(ctx context.Context) err
 	return nil
 }
 
-// InitializeAndRegisterProxiedTools discovers datasources, creates clients, and registers tools per-session
-// This should be called in OnBeforeListTools and OnBeforeCallTool hooks for HTTP/SSE transports
-func (tm *ToolManager) InitializeAndRegisterProxiedTools(ctx context.Context, session server.ClientSession) {
+// InitializeAndRegisterProxiedCapabilities discovers datasources, creates
+// clients, and registers tools, resources, resource templates, and prompts
+// per-session. It should be called from the OnBefore* hooks of every entry
+// point that could observe these capabilities (list/call tools, list/read
+// resources, list resource templates, list/get prompts) for HTTP/SSE
+// transports. The function is idempotent: discovery runs once per session via
+// initOnce, and registration is gated by proxiedCapabilitiesRegistered, so
+// repeated calls on the warm path are cheap.
+func (tm *ToolManager) InitializeAndRegisterProxiedCapabilities(ctx context.Context, session server.ClientSession) {
 	if !tm.enableProxiedTools {
 		return
 	}
@@ -586,7 +612,12 @@ func (tm *ToolManager) InitializeAndRegisterProxiedTools(ctx context.Context, se
 			state.proxiedResources = append(state.proxiedResources, ns)
 		}
 		for _, tmpl := range client.ListResourceTemplates() {
-			ns := namespaceResourceTemplate(tmpl, client)
+			ns, ok := namespaceResourceTemplate(tmpl, client)
+			if !ok {
+				logger.WarnContext(ctx, "skipping resource template with nil URITemplate",
+					"datasource", client.DatasourceUID, "name", tmpl.Name)
+				continue
+			}
 			serverResourceTemplates = append(serverResourceTemplates, server.ServerResourceTemplate{
 				Template: ns,
 				Handler:  resourceHandler.Handle,

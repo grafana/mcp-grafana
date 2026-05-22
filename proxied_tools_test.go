@@ -191,7 +191,7 @@ func TestInitOncePattern(t *testing.T) {
 		var counter int32
 		var wg sync.WaitGroup
 
-		// Simulate what happens in InitializeAndRegisterProxiedTools
+		// Simulate what happens in InitializeAndRegisterProxiedCapabilities
 		initFunc := func() {
 			atomic.AddInt32(&counter, 1)
 			// Simulate expensive initialization

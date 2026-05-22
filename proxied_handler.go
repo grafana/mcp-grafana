@@ -8,25 +8,20 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 )
 
-// resolveProxiedClient locates a cached ProxiedClient for the given datasource,
-// preferring per-session storage (HTTP/SSE) and falling back to manager-level
-// storage (stdio). It returns a user-facing error suitable for surfacing back
-// to the MCP caller.
+// resolveProxiedClient locates a cached ProxiedClient for the given datasource.
+// In stdio (serverMode) it uses manager-level storage; in HTTP/SSE it uses
+// per-session storage. It returns a user-facing error suitable for surfacing
+// back to the MCP caller.
 func resolveProxiedClient(ctx context.Context, sm *SessionManager, tm *ToolManager, datasourceType, datasourceUID string) (*ProxiedClient, error) {
+	var (
+		client *ProxiedClient
+		err    error
+	)
 	if tm.serverMode {
-		client, err := tm.GetServerClient(datasourceType, datasourceUID)
-		if err != nil {
-			return nil, fmt.Errorf("datasource '%s' not found or not accessible. Ensure the datasource exists and you have permission to access it", datasourceUID)
-		}
-		return client, nil
+		client, err = tm.GetServerClient(datasourceType, datasourceUID)
+	} else {
+		client, err = sm.GetProxiedClient(ctx, datasourceType, datasourceUID)
 	}
-
-	if client, err := sm.GetProxiedClient(ctx, datasourceType, datasourceUID); err == nil {
-		return client, nil
-	}
-	// Mixed-mode fallback: try server-level storage in case stdio-style
-	// registration was used while an HTTP session is active.
-	client, err := tm.GetServerClient(datasourceType, datasourceUID)
 	if err != nil {
 		return nil, fmt.Errorf("datasource '%s' not found or not accessible. Ensure the datasource exists and you have permission to access it", datasourceUID)
 	}
@@ -137,6 +132,9 @@ func (h *ProxiedResourceHandler) Handle(ctx context.Context, request mcp.ReadRes
 	result, err := client.ReadResource(ctx, originalURI)
 	if err != nil {
 		return nil, err
+	}
+	if result == nil {
+		return nil, fmt.Errorf("remote MCP server returned nil read-resource result")
 	}
 	return result.Contents, nil
 }

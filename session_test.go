@@ -271,7 +271,7 @@ func TestConcurrentInitializationRaceCondition(t *testing.T) {
 		for i := 0; i < numGoroutines; i++ {
 			go func() {
 				defer wg.Done()
-				// This should be the pattern used in InitializeAndRegisterProxiedTools
+				// This should be the pattern used in InitializeAndRegisterProxiedCapabilities
 				state.initOnce.Do(initWork)
 			}()
 		}
