@@ -91,7 +91,7 @@ type RenderTimeRange struct {
 // instead of looking it up by UID.
 type ProvisioningPreview struct {
 	Repo string `json:"repo" jsonschema:"required,description=Provisioning repository slug. List repositories via /apis/provisioning.grafana.app/v0alpha1/namespaces/default/repositories if unknown."`
-	Path string `json:"path" jsonschema:"required,description=Path to the dashboard file within the repository, relative to its root."`
+	Path string `json:"path" jsonschema:"required,description=Path to the dashboard file within the repository\\, relative to its root."`
 	Ref  string `json:"ref,omitempty" jsonschema:"description=Branch or commit SHA to render from. Defaults to the repository's main branch when omitted."`
 }
 
