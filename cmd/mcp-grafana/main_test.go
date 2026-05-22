@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"log/slog"
+	"os/exec"
+	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -198,6 +200,30 @@ func TestParseSlowRequestLogLevel(t *testing.T) {
 			assert.Equal(t, tc.wantLevel, got, "unexpected level for input %q", tc.input)
 		})
 	}
+}
+
+func TestVersionOutput(t *testing.T) {
+	t.Run("without ldflags returns non-empty version", func(t *testing.T) {
+		bin := t.TempDir() + "/mcp-grafana"
+		build := exec.Command("go", "build", "-o", bin, ".")
+		out, err := build.CombinedOutput()
+		require.NoError(t, err, "go build failed: %s", out)
+
+		got, err := exec.Command(bin, "--version").Output()
+		require.NoError(t, err)
+		assert.NotEmpty(t, strings.TrimSpace(string(got)))
+	})
+
+	t.Run("ldflags version takes precedence", func(t *testing.T) {
+		bin := t.TempDir() + "/mcp-grafana"
+		build := exec.Command("go", "build", "-ldflags", "-X github.com/grafana/mcp-grafana.version=v1.2.3", "-o", bin, ".")
+		out, err := build.CombinedOutput()
+		require.NoError(t, err, "go build failed: %s", out)
+
+		got, err := exec.Command(bin, "--version").Output()
+		require.NoError(t, err)
+		assert.Equal(t, "v1.2.3", strings.TrimSpace(string(got)))
+	})
 }
 
 // TestHandleFlagsPostParse locks in the precedence invariant that --version
