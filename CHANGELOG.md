@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `get_panel_image` now accepts an optional `provisioningPreview` parameter (`repo`, `path`, `ref`) for rendering dashboards staged on a provisioning repository branch (e.g. a git-sync PR preview) before they're merged or applied. Mutually exclusive with `dashboardUid`.
+
 ## [0.15.0] - 2026-06-01
 
 ### Added
