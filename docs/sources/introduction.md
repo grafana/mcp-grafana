@@ -14,7 +14,7 @@ aliases: []
 
 # Introduction to the Grafana MCP server
 
-This article outlines what the Grafana MCP server is, what it can do, and how authentication and permissions work.
+This article outlines what the [Grafana MCP serve](https://github.com/grafana/mcp-grafana) is, what it can do, and how authentication and permissions work.
 
 ## What you'll achieve
 
