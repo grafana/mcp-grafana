@@ -18,7 +18,7 @@ builds:
       - linux
       - windows
       - darwin
-    ldflags: "-s -w -X main.commit={{.Commit}} -X main.date={{.Date}} -X main.builtBy=goreleaser"
+    ldflags: "-s -w -X github.com/grafana/mcp-grafana.version={{.Version}}"
   - id: gemini-cli-extension
     env:
       - CGO_ENABLED=0
@@ -30,7 +30,7 @@ builds:
     goarch:
       - amd64
       - arm64
-    ldflags: "-s -w -X main.commit={{.Commit}} -X main.date={{.Date}} -X main.builtBy=goreleaser"
+    ldflags: "-s -w -X github.com/grafana/mcp-grafana.version={{.Version}}"
 
 archives:
   - id: default
