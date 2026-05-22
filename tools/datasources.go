@@ -9,13 +9,13 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/invopop/jsonschema"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
 	"github.com/grafana/grafana-openapi-client-go/client/datasources"
 	"github.com/grafana/grafana-openapi-client-go/models"
 	mcpgrafana "github.com/grafana/mcp-grafana"
+	datasourceschemas "github.com/grafana/mcp-grafana/tools/datasource_schemas"
 )
 
 const (
@@ -92,36 +92,16 @@ func listDatasources(ctx context.Context, args ListDatasourcesParams) (*ListData
 	}, nil
 }
 
-// datasourceJSONData holds plugin-specific non-secret settings for a datasource.
-// Its schema description is sourced from datasourceJSONDataSchema — swap that
-// function body for an API fetch when the datasource settings API is available.
-type datasourceJSONData map[string]interface{}
-
-func (datasourceJSONData) JSONSchema() *jsonschema.Schema {
-	return datasourceJSONDataSchema()
-}
-
-// datasourceJSONDataSchema returns the JSON schema for the jsonData field.
-// TODO: Replace with a fetch from the Grafana datasource settings API when available.
-func datasourceJSONDataSchema() *jsonschema.Schema {
-	return &jsonschema.Schema{
-		Type:        "object",
-		Description: "Plugin-specific non-secret settings. Keys vary by datasource type; ask the user or consult the plugin docs.",
-		Extras:      map[string]any{},
-	}
-}
-
 type CreateDatasourceParams struct {
-	Name            string             `json:"name" jsonschema:"required,description=Datasource display name"`
-	Type            string             `json:"type" jsonschema:"required,description=Grafana datasource plugin type\\, for example prometheus"`
-	URL             string             `json:"url,omitempty" jsonschema:"description=Datasource base URL when required by the plugin"`
-	Access          string             `json:"access,omitempty" jsonschema:"description=How Grafana should access the datasource (proxy or direct)"`
-	Database        string             `json:"database,omitempty" jsonschema:"description=Optional database name"`
-	User            string             `json:"user,omitempty" jsonschema:"description=Optional username"`
-	BasicAuth       bool               `json:"basicAuth,omitempty" jsonschema:"description=Whether Grafana should use basic auth"`
-	WithCredentials bool               `json:"withCredentials,omitempty" jsonschema:"description=Whether Grafana should forward credentials such as cookies"`
-	IsDefault       bool               `json:"isDefault,omitempty" jsonschema:"description=Whether this should become the default datasource"`
-	JSONData        datasourceJSONData `json:"jsonData,omitempty"`
+	Name            string         `json:"name" jsonschema:"required,description=Datasource display name"`
+	Type            string         `json:"type" jsonschema:"required,description=Grafana datasource plugin type\\, for example prometheus"`
+	URL             string         `json:"url,omitempty" jsonschema:"description=Datasource base URL when required by the plugin"`
+	Access          string         `json:"access,omitempty" jsonschema:"description=How Grafana should access the datasource (proxy or direct)"`
+	Database        string         `json:"database,omitempty" jsonschema:"description=Optional database name"`
+	BasicAuth       bool           `json:"basicAuth,omitempty" jsonschema:"description=Whether Grafana should use basic auth"`
+	WithCredentials bool           `json:"withCredentials,omitempty" jsonschema:"description=Whether Grafana should forward credentials such as cookies"`
+	IsDefault       bool           `json:"isDefault,omitempty" jsonschema:"description=Whether this should become the default datasource"`
+	Fields          map[string]any `json:"fields,omitempty" jsonschema:"description=Datasource field values to provision\\, keyed by field key from the schema returned on the first call. The server uses each field's target (root or jsonData) to place values correctly in the YAML. Example: {\"url\": \"http://prometheus:9090\"\\, \"httpMethod\": \"POST\"}."`
 }
 
 type CreateDatasourceResult struct {
@@ -133,13 +113,120 @@ type CreateDatasourceResult struct {
 	Health    *DatasourceHealthResult `json:"health,omitempty"`
 }
 
+type noSchemaField struct {
+	Key         string `json:"key"`
+	Description string `json:"description"`
+	Required    bool   `json:"required,omitempty"`
+}
+
+type noSchemaGuidanceResult struct {
+	Type    string          `json:"type"`
+	Message string          `json:"message"`
+	Fields  []noSchemaField `json:"fields"`
+}
+
+func noSchemaGuidance(pluginType string) *noSchemaGuidanceResult {
+	return &noSchemaGuidanceResult{
+		Type: pluginType,
+		Message: "No schema is available for this datasource type. " +
+			"You MUST ask the user for the value of every required field before calling create_datasource again. " +
+			"For optional fields, ask only if relevant to the user's setup.",
+		Fields: []noSchemaField{
+			{Key: "name", Description: "Display name for the datasource.", Required: true},
+			{Key: "url", Description: "Base URL of the datasource (e.g. http://localhost:8086)."},
+			{Key: "database", Description: "Database name, if applicable."},
+			{Key: "basicAuth", Description: "Set to true to enable basic authentication."},
+			{Key: "isDefault", Description: "Set to true to make this the default datasource."},
+			{Key: "withCredentials", Description: "Set to true to forward browser cookies/credentials."},
+		},
+	}
+}
+
+// applyFields routes Fields values to the body (root-target keys) or into the
+// returned jsonData map. secureJsonData keys are never written.
+func applyFields(body *models.AddDataSourceCommand, schema *datasourceschemas.DatasourceSchema, inputFields map[string]any) map[string]any {
+	commonFields := datasourceschemas.CommonDatasourceFields()
+	lookup := make(map[string]datasourceschemas.DsSchemaField, len(commonFields)+len(schema.Fields))
+	for _, f := range commonFields {
+		lookup[datasourceschemas.SchemaFieldInputKey(f)] = f
+	}
+	for _, f := range schema.Fields {
+		lookup[datasourceschemas.SchemaFieldInputKey(f)] = f
+	}
+
+	jsonData := make(map[string]any)
+	for inputKey, v := range inputFields {
+		f, ok := lookup[inputKey]
+		if !ok || f.Target == "secureJsonData" {
+			continue
+		}
+		if f.Target == "root" {
+			switch f.Key {
+			case "url":
+				if s, ok := v.(string); ok {
+					body.URL = s
+				}
+			case "basicAuth":
+				if b, ok := v.(bool); ok {
+					body.BasicAuth = b
+				}
+			case "isDefault":
+				if b, ok := v.(bool); ok {
+					body.IsDefault = b
+				}
+			case "uid":
+				if s, ok := v.(string); ok {
+					body.UID = s
+				}
+			case "access":
+				if s, ok := v.(string); ok {
+					body.Access = models.DsAccess(s)
+				}
+			case "withCredentials":
+				if b, ok := v.(bool); ok {
+					body.WithCredentials = b
+				}
+			}
+		} else if f.Section != "" {
+			section, ok := jsonData[f.Section].(map[string]any)
+			if !ok {
+				section = make(map[string]any)
+				jsonData[f.Section] = section
+			}
+			section[f.Key] = v
+		} else {
+			jsonData[f.Key] = v
+		}
+	}
+	return jsonData
+}
+
 func createDatasource(ctx context.Context, args CreateDatasourceParams) (*mcp.CallToolResult, error) {
+	schema, err := datasourceschemas.LoadDatasourceSchema(args.Type)
+	if err != nil {
+		return nil, err
+	}
+	// Phase 1: return field guidance before creation.
+	// With a schema: list schema fields and ask the user to fill them in.
+	// Without a schema: list the explicit params and ask for name + any others
+	// the user wants to set, then call again with those values.
+	if schema != nil && args.Fields == nil {
+		text, _ := json.Marshal(datasourceschemas.BuildSchemaGuidance(schema, "create_datasource"))
+		return mcp.NewToolResultText(string(text)), nil
+	}
+	if schema == nil && args.Name == "" {
+		text, _ := json.Marshal(noSchemaGuidance(args.Type))
+		return mcp.NewToolResultText(string(text)), nil
+	}
+
 	dsAccess := args.Access
 	if dsAccess == "" {
 		// use grafana default
 		dsAccess = "proxy"
 	}
+
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
+	// these are used as fallback in case the schema fails to load, that way we can still create a datasource with common, shared fields
 	body := &models.AddDataSourceCommand{
 		Name:            args.Name,
 		Type:            args.Type,
@@ -148,8 +235,10 @@ func createDatasource(ctx context.Context, args CreateDatasourceParams) (*mcp.Ca
 		Database:        args.Database,
 		BasicAuth:       args.BasicAuth,
 		IsDefault:       args.IsDefault,
-		JSONData:        models.JSON(args.JSONData),
 		WithCredentials: args.WithCredentials,
+	}
+	if schema != nil {
+		body.JSONData = models.JSON(applyFields(body, schema, args.Fields))
 	}
 	resp, err := c.Datasources.AddDataSourceWithParams(
 		datasources.NewAddDataSourceParamsWithContext(ctx).WithBody(body),
@@ -247,7 +336,7 @@ var ListDatasources = mcpgrafana.MustTool(
 
 var CreateDatasource = mcpgrafana.MustTool(
 	"create_datasource",
-	"Create a datasource. If type is ambiguous, call search_plugin_information first; install the plugin if needed. Returns UID, health check, and a config page link. Never handle credentials — remind the user to rotate any detected.",
+	"Create a datasource. If type is ambiguous, call search_plugin_information first; install the plugin if needed. IMPORTANT: always call this tool twice. First call: provide only the type — the tool returns a field schema. After receiving the schema, you MUST ask the user for every required field value explicitly; do not infer or use defaults without user confirmation. Second call: provide the type plus the fields map populated with values confirmed by the user Never handle credentials — remind the user to rotate any detected. Returns UID, health check, and a config page link. ",
 	createDatasource,
 	mcp.WithTitleAnnotation("Create datasource"),
 	mcp.WithIdempotentHintAnnotation(false),
@@ -256,7 +345,7 @@ var CreateDatasource = mcpgrafana.MustTool(
 
 var UpdateDatasource = mcpgrafana.MustTool(
 	"update_datasource",
-	"Update non-secret datasource fields by UID. Omitted fields are preserved. Returns a health check. For secrets, instruct the user to use the Grafana UI. Confirm before creating if the datasource doesn't exist.",
+	"Update non-secret datasource fields by UID. Omitted fields are preserved. For secrets, direct the user to the Grafana UI.",
 	updateDatasource,
 	mcp.WithTitleAnnotation("Update datasource"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -323,16 +412,14 @@ var GetDatasource = mcpgrafana.MustTool(
 )
 
 type UpdateDatasourceParams struct {
-	UID             string                 `json:"uid" jsonschema:"required,description=The UID of the datasource to update"`
-	Name            *string                `json:"name,omitempty" jsonschema:"description=New display name"`
-	Type            *string                `json:"type,omitempty" jsonschema:"description=Datasource plugin type (usually leave unchanged after create)"`
-	URL             *string                `json:"url,omitempty" jsonschema:"description=Datasource base URL"`
-	Access          *string                `json:"access,omitempty" jsonschema:"description=How Grafana reaches the datasource (proxy or direct)"`
-	Database        *string                `json:"database,omitempty" jsonschema:"description=Database name when applicable"`
-	BasicAuth       *bool                  `json:"basicAuth,omitempty" jsonschema:"description=Whether Grafana uses basic auth to the datasource"`
-	WithCredentials *bool                  `json:"withCredentials,omitempty" jsonschema:"description=Whether Grafana forwards credentials such as cookies"`
-	IsDefault       *bool                  `json:"isDefault,omitempty" jsonschema:"description=Whether this datasource should be the default"`
-	JSONData        map[string]interface{} `json:"jsonData,omitempty" jsonschema:"description=Non-secret plugin settings; when set\\, replaces jsonData on the server for this datasource"`
+	UID       string                 `json:"uid" jsonschema:"required,description=UID of the datasource to update"`
+	Name      *string                `json:"name,omitempty" jsonschema:"description=Display name"`
+	URL       *string                `json:"url,omitempty" jsonschema:"description=Base URL"`
+	Access    *string                `json:"access,omitempty" jsonschema:"description=proxy or direct"`
+	Database  *string                `json:"database,omitempty" jsonschema:"description=Database name"`
+	BasicAuth *bool                  `json:"basicAuth,omitempty" jsonschema:"description=Enable basic auth"`
+	IsDefault *bool                  `json:"isDefault,omitempty" jsonschema:"description=Make this the default datasource"`
+	JSONData  map[string]interface{} `json:"jsonData,omitempty" jsonschema:"description=Non-secret plugin settings; replaces existing jsonData when set"`
 }
 
 type UpdateDatasourceResult struct {
@@ -373,9 +460,6 @@ func updateDatasource(ctx context.Context, args UpdateDatasourceParams) (*Update
 	if args.Name != nil {
 		cmd.Name = *args.Name
 	}
-	if args.Type != nil {
-		cmd.Type = *args.Type
-	}
 	if args.URL != nil {
 		cmd.URL = *args.URL
 	}
@@ -387,9 +471,6 @@ func updateDatasource(ctx context.Context, args UpdateDatasourceParams) (*Update
 	}
 	if args.BasicAuth != nil {
 		cmd.BasicAuth = *args.BasicAuth
-	}
-	if args.WithCredentials != nil {
-		cmd.WithCredentials = *args.WithCredentials
 	}
 	if args.IsDefault != nil {
 		cmd.IsDefault = *args.IsDefault
@@ -481,9 +562,9 @@ func checkDatasourceHealth(ctx context.Context, args CheckDatasourceHealthParams
 }
 
 type BulkCheckDatasourceHealthParams struct {
-	Type   string   `json:"type,omitempty" jsonschema:"description=Plugin type to filter (e.g. prometheus). Omit to check all."`
-	UIDs   []string `json:"uids,omitempty" jsonschema:"description=UIDs to check. Takes priority over type when set."`
-	Offset int      `json:"offset,omitempty" jsonschema:"default=0,description=Number to skip for pagination."`
+	Type   string   `json:"type,omitempty" jsonschema:"description=Plugin type filter; omit to check all"`
+	UIDs   []string `json:"uids,omitempty" jsonschema:"description=UIDs to check"`
+	Offset int      `json:"offset,omitempty" jsonschema:"default=0,description=Number to skip for pagination"`
 }
 
 type DatasourceHealthCheckResult struct {
@@ -588,7 +669,7 @@ func checkDatasourcesHealth(ctx context.Context, args BulkCheckDatasourceHealthP
 
 var CheckDatasourcesHealth = mcpgrafana.MustTool(
 	"check_datasources_health",
-	"Check datasource health in parallel. Filter by type or provide UIDs; omit both to check all. Returns per-datasource status and a summary.",
+	"Check datasource health. Filter by type or UIDs; omit both to check all.",
 	checkDatasourcesHealth,
 	mcp.WithTitleAnnotation("Check datasources health"),
 	mcp.WithIdempotentHintAnnotation(true),
