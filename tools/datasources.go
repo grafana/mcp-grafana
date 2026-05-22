@@ -210,7 +210,7 @@ func createDatasource(ctx context.Context, args CreateDatasourceParams) (*mcp.Ca
 	// With a schema: list schema fields and ask the user to fill them in.
 	// Without a schema: list the explicit params and ask for name + any others
 	// the user wants to set, then call again with those values.
-	if schema != nil && len(args.Fields) == 0 {
+	if schema != nil && args.Fields == nil {
 		text, _ := json.Marshal(datasourceschemas.BuildSchemaGuidance(schema, "create_datasource"))
 		return mcp.NewToolResultText(string(text)), nil
 	}

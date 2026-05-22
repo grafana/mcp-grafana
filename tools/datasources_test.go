@@ -87,9 +87,10 @@ func TestCreateDatasourceTools(t *testing.T) {
 		ctx := newTestContext()
 
 		toolResult, err := createDatasource(ctx, CreateDatasourceParams{
-			Name: "mcp-test-prometheus",
-			Type: "prometheus",
-			URL:  "http://prometheus:9090",
+			Name:   "mcp-test-prometheus",
+			Type:   "prometheus",
+			URL:    "http://prometheus:9090",
+			Fields: map[string]any{},
 		})
 		require.NoError(t, err)
 		require.NotNil(t, toolResult)
@@ -125,6 +126,7 @@ func TestCreateDatasourceTools(t *testing.T) {
 			Name:      "mcp-test-prometheus-basicauth",
 			Type:      "prometheus",
 			BasicAuth: true,
+			Fields:    map[string]any{},
 		})
 		require.NoError(t, err)
 		require.NotNil(t, toolResult)
