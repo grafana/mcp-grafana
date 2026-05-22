@@ -153,6 +153,7 @@ func TestBuildRenderURL(t *testing.T) {
 		args        GetPanelImageParams
 		contains    []string
 		notContains []string
+		expectError bool
 	}{
 		{
 			name:    "Basic dashboard render",
@@ -264,11 +265,109 @@ func TestBuildRenderURL(t *testing.T) {
 				"http://localhost:3000/render/d/abc123",
 			},
 		},
+		{
+			name:    "Provisioning preview renders the preview path with ref",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				ProvisioningPreview: &ProvisioningPreview{
+					Repo: "my-repo",
+					Path: "folder/dashboard.json",
+					Ref:  "feature-branch",
+				},
+			},
+			contains: []string{
+				"http://localhost:3000/render/dashboard/provisioning/my-repo/preview/folder/dashboard.json",
+				"ref=feature-branch",
+				"kiosk=true",
+			},
+			notContains: []string{
+				"/render/d/",
+				"/render/d-solo/",
+			},
+		},
+		{
+			name:    "Provisioning preview without ref omits the ref query param",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				ProvisioningPreview: &ProvisioningPreview{
+					Repo: "my-repo",
+					Path: "dashboard.json",
+				},
+			},
+			contains: []string{
+				"http://localhost:3000/render/dashboard/provisioning/my-repo/preview/dashboard.json",
+			},
+			notContains: []string{
+				"ref=",
+			},
+		},
+		{
+			name:    "Provisioning preview with panel ID uses viewPanel (not d-solo)",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				ProvisioningPreview: &ProvisioningPreview{
+					Repo: "my-repo",
+					Path: "dashboard.json",
+					Ref:  "feature-branch",
+				},
+				PanelID: intPtr(7),
+			},
+			contains: []string{
+				"http://localhost:3000/render/dashboard/provisioning/my-repo/preview/dashboard.json",
+				"viewPanel=7",
+			},
+			notContains: []string{
+				"panelId=",
+				"/render/d-solo/",
+			},
+		},
+		{
+			name:        "Error: neither dashboardUid nor provisioningPreview",
+			baseURL:     "http://localhost:3000",
+			args:        GetPanelImageParams{},
+			expectError: true,
+		},
+		{
+			name:    "Error: both dashboardUid and provisioningPreview",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				DashboardUID: "abc123",
+				ProvisioningPreview: &ProvisioningPreview{
+					Repo: "my-repo",
+					Path: "dashboard.json",
+				},
+			},
+			expectError: true,
+		},
+		{
+			name:    "Error: provisioningPreview missing repo",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				ProvisioningPreview: &ProvisioningPreview{
+					Path: "dashboard.json",
+				},
+			},
+			expectError: true,
+		},
+		{
+			name:    "Error: provisioningPreview missing path",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				ProvisioningPreview: &ProvisioningPreview{
+					Repo: "my-repo",
+				},
+			},
+			expectError: true,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result, err := buildRenderURL(tt.baseURL, tt.args)
+			if tt.expectError {
+				require.Error(t, err)
+				return
+			}
 			require.NoError(t, err)
 
 			for _, expected := range tt.contains {
