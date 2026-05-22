@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"github.com/yosida95/uritemplate/v3"
 
 	"github.com/grafana/grafana-openapi-client-go/client/datasources"
 )
@@ -208,6 +210,136 @@ func parseProxiedToolName(toolName string) (string, string, error) {
 	return parts[0], parts[1], nil
 }
 
+// proxiedResourceURIScheme is the URN namespace identifier for resources proxied
+// from upstream MCP servers. The full URI form is:
+//
+//	urn:mcp-grafana:<datasourceType>:<datasourceUID>:<percent-encoded-original-uri>
+//
+// A URN was chosen over a custom scheme because it is a valid RFC3986 URI and
+// passes mcp-go's url.ParseRequestURI validation, while keeping the original
+// upstream URI recoverable for forwarding.
+const proxiedResourceURIScheme = "urn:mcp-grafana"
+
+// namespaceResourceURI rewrites an upstream resource URI to a namespaced URN that
+// embeds the datasource type and UID, allowing multiple datasources of the same
+// type to expose colliding URIs without conflict.
+//
+// PathEscape is used (not QueryEscape) because resource templates embed the
+// upstream URI verbatim and rely on PathUnescape to leave '+' as literal '+'
+// on the read path. QueryUnescape would decode '+' to ' ', corrupting any
+// upstream URI containing a literal '+' (e.g. a template like
+// docs://a+b/{section}).
+func namespaceResourceURI(datasourceType, datasourceUID, originalURI string) string {
+	return fmt.Sprintf("%s:%s:%s:%s",
+		proxiedResourceURIScheme,
+		datasourceType,
+		datasourceUID,
+		url.PathEscape(originalURI),
+	)
+}
+
+// parseNamespacedResourceURI is the inverse of namespaceResourceURI. It returns
+// (datasourceType, datasourceUID, originalURI, error). If the URI does not match
+// the proxied URN form, an error is returned.
+//
+// Uses PathUnescape so that literal '+' characters in the original URI (which
+// resource templates embed verbatim, not via PathEscape) survive the round trip.
+func parseNamespacedResourceURI(uri string) (string, string, string, error) {
+	if !strings.HasPrefix(uri, proxiedResourceURIScheme+":") {
+		return "", "", "", fmt.Errorf("not a proxied resource URI: %s", uri)
+	}
+	rest := strings.TrimPrefix(uri, proxiedResourceURIScheme+":")
+	// rest = <datasourceType>:<datasourceUID>:<encoded-original-uri>
+	parts := strings.SplitN(rest, ":", 3)
+	if len(parts) != 3 {
+		return "", "", "", fmt.Errorf("invalid proxied resource URI format: %s", uri)
+	}
+	original, err := url.PathUnescape(parts[2])
+	if err != nil {
+		return "", "", "", fmt.Errorf("failed to decode original URI in %s: %w", uri, err)
+	}
+	return parts[0], parts[1], original, nil
+}
+
+// namespacePromptName rewrites an upstream prompt name to be prefixed with the
+// datasource type. Format: <datasourceType>_<originalName>. The datasource UID
+// is supplied at call time via an injected argument (mirroring the tool pattern)
+// rather than encoded in the name, because UIDs may contain underscores which
+// would make a positional encoding ambiguous to parse.
+func namespacePromptName(datasourceType, originalName string) string {
+	return fmt.Sprintf("%s_%s", datasourceType, originalName)
+}
+
+// parseProxiedPromptName is the inverse of namespacePromptName.
+// Returns (datasourceType, originalName, error).
+func parseProxiedPromptName(name string) (string, string, error) {
+	parts := strings.SplitN(name, "_", 2)
+	if len(parts) != 2 {
+		return "", "", fmt.Errorf("invalid proxied prompt name format: %s", name)
+	}
+	return parts[0], parts[1], nil
+}
+
+// addDatasourceUidPromptArgument returns a copy of the prompt with a required
+// datasourceUid argument prepended.
+func addDatasourceUidPromptArgument(p mcp.Prompt, datasourceType string) mcp.Prompt {
+	out := p
+	out.Arguments = append([]mcp.PromptArgument{{
+		Name:        "datasourceUid",
+		Description: "UID of the " + datasourceType + " datasource to query",
+		Required:    true,
+	}}, p.Arguments...)
+	return out
+}
+
+// namespaceResource returns a copy of the upstream resource with the URI
+// rewritten to the proxied URN form and the human-readable name suffixed with
+// the datasource name to disambiguate identical resources from multiple
+// datasources of the same type.
+func namespaceResource(r mcp.Resource, client *ProxiedClient) mcp.Resource {
+	out := r
+	out.URI = namespaceResourceURI(client.DatasourceType, client.DatasourceUID, r.URI)
+	out.Name = fmt.Sprintf("%s (%s)", r.Name, client.DatasourceName)
+	return out
+}
+
+// namespaceResourceTemplate is the resource-template counterpart of
+// namespaceResource. The upstream URI template is wrapped in the proxied URN
+// form so client substitutions still produce a valid namespaced URI.
+//
+// Returns ok=false when the template cannot be safely namespaced (nil
+// URITemplate). Callers must skip the entry; downstream mcp-go registration
+// dereferences URITemplate without a nil check and would panic.
+func namespaceResourceTemplate(t mcp.ResourceTemplate, client *ProxiedClient) (mcp.ResourceTemplate, bool) {
+	if t.URITemplate == nil {
+		return mcp.ResourceTemplate{}, false
+	}
+	// We cannot percent-encode a URI template body without breaking its
+	// variable expressions, so we embed it verbatim. This is acceptable
+	// because URI templates produce URIs that the client passes back to us
+	// in resources/read; we re-parse the namespaced URI there.
+	raw := fmt.Sprintf("%s:%s:%s:%s",
+		proxiedResourceURIScheme,
+		client.DatasourceType,
+		client.DatasourceUID,
+		t.URITemplate.Raw(),
+	)
+	out := t
+	if parsed, err := uritemplate.New(raw); err == nil {
+		out.URITemplate = &mcp.URITemplate{Template: parsed}
+	}
+	out.Name = fmt.Sprintf("%s (%s)", t.Name, client.DatasourceName)
+	return out, true
+}
+
+// namespacePrompt rewrites the prompt name to embed datasource type and adds
+// a required datasourceUid argument that callers must supply at invocation.
+func namespacePrompt(p mcp.Prompt, client *ProxiedClient) mcp.Prompt {
+	out := addDatasourceUidPromptArgument(p, client.DatasourceType)
+	out.Name = namespacePromptName(client.DatasourceType, p.Name)
+	return out
+}
+
 // ToolManager manages proxied tools (either per-session or server-wide)
 type ToolManager struct {
 	sm     *SessionManager
@@ -310,9 +442,19 @@ func (tm *ToolManager) InitializeAndRegisterServerTools(ctx context.Context) err
 
 	logger.InfoContext(ctx, "connected to proxied MCP servers", "datasources", clientCount)
 
-	// Collect and register all unique tools
+	// Collect and register all unique tools, namespaced resources, namespaced
+	// resource templates, and namespaced prompts. Namespacing keys (tool/prompt
+	// name, resource URI) embed the datasource type and UID so multiple
+	// datasources of the same type can coexist without collisions.
 	tm.clientsMutex.RLock()
 	toolMap := make(map[string]mcp.Tool)
+	var resources []server.ServerResource
+	var resourceTemplates []server.ServerResourceTemplate
+	var prompts []server.ServerPrompt
+
+	resourceHandler := NewProxiedResourceHandler(tm.sm, tm)
+	promptHandler := NewProxiedPromptHandler(tm.sm, tm)
+
 	for _, client := range tm.serverClients {
 		for _, tool := range client.ListTools() {
 			toolName := client.DatasourceType + "_" + tool.Name
@@ -321,22 +463,64 @@ func (tm *ToolManager) InitializeAndRegisterServerTools(ctx context.Context) err
 				toolMap[toolName] = modifiedTool
 			}
 		}
+		for _, res := range client.ListResources() {
+			resources = append(resources, server.ServerResource{
+				Resource: namespaceResource(res, client),
+				Handler:  resourceHandler.Handle,
+			})
+		}
+		for _, tmpl := range client.ListResourceTemplates() {
+			ns, ok := namespaceResourceTemplate(tmpl, client)
+			if !ok {
+				logger.WarnContext(ctx, "skipping resource template with nil URITemplate",
+					"datasource", client.DatasourceUID, "name", tmpl.Name)
+				continue
+			}
+			resourceTemplates = append(resourceTemplates, server.ServerResourceTemplate{
+				Template: ns,
+				Handler:  resourceHandler.Handle,
+			})
+		}
+		for _, prompt := range client.ListPrompts() {
+			prompts = append(prompts, server.ServerPrompt{
+				Prompt:  namespacePrompt(prompt, client),
+				Handler: promptHandler.Handle,
+			})
+		}
 	}
 	tm.clientsMutex.RUnlock()
 
-	// Register tools on the server (not per-session)
 	for toolName, tool := range toolMap {
 		handler := NewProxiedToolHandler(tm.sm, tm, toolName)
 		tm.server.AddTool(tool, handler.Handle)
 	}
+	if len(resources) > 0 {
+		tm.server.AddResources(resources...)
+	}
+	if len(resourceTemplates) > 0 {
+		tm.server.AddResourceTemplates(resourceTemplates...)
+	}
+	if len(prompts) > 0 {
+		tm.server.AddPrompts(prompts...)
+	}
 
-	logger.InfoContext(ctx, "registered proxied tools on server", "tools", len(toolMap))
+	logger.InfoContext(ctx, "registered proxied capabilities on server",
+		"tools", len(toolMap),
+		"resources", len(resources),
+		"resource_templates", len(resourceTemplates),
+		"prompts", len(prompts))
 	return nil
 }
 
-// InitializeAndRegisterProxiedTools discovers datasources, creates clients, and registers tools per-session
-// This should be called in OnBeforeListTools and OnBeforeCallTool hooks for HTTP/SSE transports
-func (tm *ToolManager) InitializeAndRegisterProxiedTools(ctx context.Context, session server.ClientSession) {
+// InitializeAndRegisterProxiedCapabilities discovers datasources, creates
+// clients, and registers tools, resources, resource templates, and prompts
+// per-session. It should be called from the OnBefore* hooks of every entry
+// point that could observe these capabilities (list/call tools, list/read
+// resources, list resource templates, list/get prompts) for HTTP/SSE
+// transports. The function is idempotent: discovery runs once per session via
+// initOnce, and registration is gated by proxiedCapabilitiesRegistered, so
+// repeated calls on the warm path are cheap.
+func (tm *ToolManager) InitializeAndRegisterProxiedCapabilities(ctx context.Context, session server.ClientSession) {
 	if !tm.enableProxiedTools {
 		return
 	}
@@ -390,36 +574,61 @@ func (tm *ToolManager) InitializeAndRegisterProxiedTools(ctx context.Context, se
 	state.mutex.Lock()
 	defer state.mutex.Unlock()
 
-	// Check if tools already registered
-	if len(state.proxiedTools) > 0 {
+	if state.proxiedCapabilitiesRegistered {
 		return
 	}
 
-	// Check if we have any clients (discovery should have happened above)
 	if len(state.proxiedClients) == 0 {
+		state.proxiedCapabilitiesRegistered = true
 		return
 	}
 
-	// First pass: collect all unique tools and track which datasources support them
+	// First pass: collect all unique tools, namespaced resources, and templates
+	// across the session's clients. Track which datasources support each tool.
 	toolMap := make(map[string]mcp.Tool) // unique tools by name
+	var serverResources []server.ServerResource
+	var serverResourceTemplates []server.ServerResourceTemplate
+	var promptCount int
+
+	resourceHandler := NewProxiedResourceHandler(tm.sm, tm)
 
 	for key, client := range state.proxiedClients {
-		remoteTools := client.ListTools()
-
-		for _, tool := range remoteTools {
+		for _, tool := range client.ListTools() {
 			// Tool name format: datasourceType_originalToolName (e.g., "tempo_traceql-search")
 			toolName := client.DatasourceType + "_" + tool.Name
-
-			// Store the tool if we haven't seen it yet
 			if _, exists := toolMap[toolName]; !exists {
-				// Add datasourceUid parameter to the tool
 				modifiedTool := addDatasourceUidParameter(tool, client.DatasourceType)
 				toolMap[toolName] = modifiedTool
 			}
-
-			// Track which datasources support this tool
 			state.toolToDatasources[toolName] = append(state.toolToDatasources[toolName], key)
 		}
+
+		for _, res := range client.ListResources() {
+			ns := namespaceResource(res, client)
+			serverResources = append(serverResources, server.ServerResource{
+				Resource: ns,
+				Handler:  resourceHandler.Handle,
+			})
+			state.proxiedResources = append(state.proxiedResources, ns)
+		}
+		for _, tmpl := range client.ListResourceTemplates() {
+			ns, ok := namespaceResourceTemplate(tmpl, client)
+			if !ok {
+				logger.WarnContext(ctx, "skipping resource template with nil URITemplate",
+					"datasource", client.DatasourceUID, "name", tmpl.Name)
+				continue
+			}
+			serverResourceTemplates = append(serverResourceTemplates, server.ServerResourceTemplate{
+				Template: ns,
+				Handler:  resourceHandler.Handle,
+			})
+			state.proxiedResourceTemplates = append(state.proxiedResourceTemplates, ns)
+		}
+		// Prompts are intentionally skipped on per-session transports.
+		// mcp-go v0.46 has no AddSessionPrompts; registering server-wide would
+		// leak prompts across tenants. Tempo today exposes no prompts so this
+		// is purely defensive.
+		promptCount += len(client.ListPrompts())
 	}
 
 	// Second pass: register all unique tools at once (reduces listChanged notifications)
@@ -433,11 +642,36 @@ func (tm *ToolManager) InitializeAndRegisterProxiedTools(ctx context.Context, se
 		state.proxiedTools = append(state.proxiedTools, tool)
 	}
 
-	if err := tm.server.AddSessionTools(sessionID, serverTools...); err != nil {
-		logger.WarnContext(ctx, "failed to add session tools", "session", sessionID, "error", err)
-	} else {
-		logger.InfoContext(ctx, "registered proxied tools", "session", sessionID, "tools", len(state.proxiedTools))
+	if len(serverTools) > 0 {
+		if err := tm.server.AddSessionTools(sessionID, serverTools...); err != nil {
+			logger.WarnContext(ctx, "failed to add session tools", "session", sessionID, "error", err)
+		} else {
+			logger.InfoContext(ctx, "registered proxied tools", "session", sessionID, "tools", len(state.proxiedTools))
+		}
 	}
+	if len(serverResources) > 0 {
+		if err := tm.server.AddSessionResources(sessionID, serverResources...); err != nil {
+			tm.logger.Warn("failed to add session resources", "session", sessionID, "error", err)
+		}
+	}
+	if len(serverResourceTemplates) > 0 {
+		if err := tm.server.AddSessionResourceTemplates(sessionID, serverResourceTemplates...); err != nil {
+			tm.logger.Warn("failed to add session resource templates", "session", sessionID, "error", err)
+		}
+	}
+	if promptCount > 0 {
+		tm.logger.Warn("upstream MCP servers exposed prompts but per-session prompt registration is not supported in this transport; prompts will be ignored",
+			"session", sessionID, "prompt_count", promptCount)
+	}
+
+	state.proxiedCapabilitiesRegistered = true
+
+	tm.logger.Info("registered proxied capabilities",
+		"session", sessionID,
+		"tools", len(state.proxiedTools),
+		"resources", len(state.proxiedResources),
+		"resource_templates", len(state.proxiedResourceTemplates),
+		"prompts_skipped", promptCount)
 }
 
 // GetServerClient retrieves a proxied client from server-level storage (for stdio transport)

@@ -209,6 +209,21 @@ Queries go through Grafana's Snowflake datasource (Grafana Enterprise plugin `gr
 - **Get panel or dashboard image:** Render a Grafana dashboard panel or full dashboard as a PNG image. Returns the image as base64 encoded data for use in reports, alerts, or presentations. Supports customizing dimensions, time range, theme, scale, and dashboard variables.
   - _Note: Requires the [Grafana Image Renderer](https://grafana.com/docs/grafana/latest/setup-grafana/image-rendering/) service to be installed and configured._
 
+### Proxied MCP Servers
+
+Some Grafana datasources embed their own MCP server (today: **Tempo**, via the `query_frontend.mcp_server.enabled` setting). When `--disable-proxied` is not set, mcp-grafana discovers these datasources at startup (stdio transport) or per-session (HTTP/SSE transports) and re-exposes the upstream server's full set of capabilities through the same Grafana process:
+
+- **Tools** are renamed `<datasourceType>_<originalName>` and gain a required `datasourceUid` argument that selects which datasource instance to call.
+- **Resources** and **resource templates** are exposed under namespaced URNs of the form `urn:mcp-grafana:<datasourceType>:<datasourceUid>:<percent-encoded-original-uri>`. The original URI is recovered server-side before forwarding, so clients never need to know it.
+- **Prompts** are exposed as `<datasourceType>_<originalName>` with an injected required `datasourceUid` argument.
+  - _Note:_ on HTTP/SSE transports, prompts from upstream servers are currently skipped because mcp-go does not yet support per-session prompt registration. Tempo exposes no prompts today, so this only matters for future upstream servers.
+
+**Permissions.** Every proxied call is forwarded through Grafana's datasource proxy at `/api/datasources/proxy/uid/<uid>/api/mcp` using the caller's existing credentials. As a result:
+
+- The Grafana service account (or on-behalf-of user identified by `X-Access-Token` + `X-Grafana-Id`) needs `datasources:query` on each datasource UID it intends to use, exactly the same as for normal datasource queries.
+- Grafana itself attaches the datasource's saved authentication (basic, bearer, custom headers, `X-Scope-OrgID`, etc.) when forwarding to the upstream MCP endpoint, so the caller never needs direct Tempo credentials.
+- Multi-tenant isolation is preserved: each MCP session opens its own upstream connection using the session's credentials, and per-session resource/tool registration scopes the namespaced URIs to the session that discovered them.
+
 The list of tools is configurable, so you can choose which tools you want to make available to the MCP client.
 This is useful if you don't use certain functionality or if you don't want to take up too much of the context window.
 To disable a category of tools, use the `--disable-<category>` flag when starting the server. For example, to disable
