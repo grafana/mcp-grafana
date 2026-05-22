@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"log/slog"
+	"os/exec"
+	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -196,6 +198,43 @@ func TestParseSlowRequestLogLevel(t *testing.T) {
 			}
 			require.NoError(t, err, "unexpected error for input %q", tc.input)
 			assert.Equal(t, tc.wantLevel, got, "unexpected level for input %q", tc.input)
+		})
+	}
+}
+
+func TestVersionOutput(t *testing.T) {
+	tests := []struct {
+		name    string
+		ldflags string
+		want    string
+	}{
+		{
+			name: "without ldflags returns devel",
+			want: "(devel)",
+		},
+		{
+			name:    "with ldflags returns injected version",
+			ldflags: "-X github.com/grafana/mcp-grafana.version=v1.2.3",
+			want:    "v1.2.3",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			args := []string{"build", "-o", t.TempDir() + "/mcp-grafana"}
+			if tc.ldflags != "" {
+				args = append(args, "-ldflags", tc.ldflags)
+			}
+			args = append(args, ".")
+
+			build := exec.Command("go", args...)
+			out, err := build.CombinedOutput()
+			require.NoError(t, err, "go build failed: %s", out)
+
+			bin := args[2] // the -o path
+			got, err := exec.Command(bin, "--version").Output()
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, strings.TrimSpace(string(got)))
 		})
 	}
 }
