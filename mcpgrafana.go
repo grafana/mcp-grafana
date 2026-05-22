@@ -389,17 +389,22 @@ func (t *UserAgentTransport) RoundTrip(req *http.Request) (*http.Response, error
 	return t.rt.RoundTrip(clonedReq)
 }
 
+// version is set at build time via ldflags:
+//
+//	-X github.com/grafana/mcp-grafana.version=v1.2.3
+var version string
+
 // Version returns the version of the mcp-grafana binary.
-// It uses runtime/debug to fetch version information from the build, returning "(devel)" for local development builds.
-// The version is computed once and cached for performance.
+// It prefers an ldflags-injected value, then falls back to runtime/debug build info,
+// and finally returns "(devel)" for local development builds.
 var Version = sync.OnceValue(func() string {
-	// Default version string returned by `runtime/debug` if built
-	// from the source repository rather than with `go install`.
-	v := "(devel)"
-	if bi, ok := debug.ReadBuildInfo(); ok && bi.Main.Version != "" {
-		v = bi.Main.Version
+	if version != "" {
+		return version
 	}
-	return v
+	if bi, ok := debug.ReadBuildInfo(); ok && bi.Main.Version != "" {
+		return bi.Main.Version
+	}
+	return "(devel)"
 })
 
 // UserAgent returns the user agent string for HTTP requests.
