@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"reflect"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -399,6 +400,9 @@ var version string
 var Version = sync.OnceValue(func() string {
 	if version != "" {
 		return version
+	}
+	if bi, ok := debug.ReadBuildInfo(); ok && bi.Main.Version != "" {
+		return bi.Main.Version
 	}
 	return "(devel)"
 })

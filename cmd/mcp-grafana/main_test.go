@@ -203,40 +203,27 @@ func TestParseSlowRequestLogLevel(t *testing.T) {
 }
 
 func TestVersionOutput(t *testing.T) {
-	tests := []struct {
-		name    string
-		ldflags string
-		want    string
-	}{
-		{
-			name: "without ldflags returns devel",
-			want: "(devel)",
-		},
-		{
-			name:    "with ldflags returns injected version",
-			ldflags: "-X github.com/grafana/mcp-grafana.version=v1.2.3",
-			want:    "v1.2.3",
-		},
-	}
+	t.Run("without ldflags returns non-empty version", func(t *testing.T) {
+		bin := t.TempDir() + "/mcp-grafana"
+		build := exec.Command("go", "build", "-o", bin, ".")
+		out, err := build.CombinedOutput()
+		require.NoError(t, err, "go build failed: %s", out)
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			args := []string{"build", "-o", t.TempDir() + "/mcp-grafana"}
-			if tc.ldflags != "" {
-				args = append(args, "-ldflags", tc.ldflags)
-			}
-			args = append(args, ".")
+		got, err := exec.Command(bin, "--version").Output()
+		require.NoError(t, err)
+		assert.NotEmpty(t, strings.TrimSpace(string(got)))
+	})
 
-			build := exec.Command("go", args...)
-			out, err := build.CombinedOutput()
-			require.NoError(t, err, "go build failed: %s", out)
+	t.Run("ldflags version takes precedence", func(t *testing.T) {
+		bin := t.TempDir() + "/mcp-grafana"
+		build := exec.Command("go", "build", "-ldflags", "-X github.com/grafana/mcp-grafana.version=v1.2.3", "-o", bin, ".")
+		out, err := build.CombinedOutput()
+		require.NoError(t, err, "go build failed: %s", out)
 
-			bin := args[2] // the -o path
-			got, err := exec.Command(bin, "--version").Output()
-			require.NoError(t, err)
-			assert.Equal(t, tc.want, strings.TrimSpace(string(got)))
-		})
-	}
+		got, err := exec.Command(bin, "--version").Output()
+		require.NoError(t, err)
+		assert.Equal(t, "v1.2.3", strings.TrimSpace(string(got)))
+	})
 }
 
 // TestHandleFlagsPostParse locks in the precedence invariant that --version
