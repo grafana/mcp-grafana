@@ -41,6 +41,7 @@ type ListDatasourcesResult struct {
 	Datasources []dataSourceSummary `json:"datasources"`
 	Total       int                 `json:"total"`   // Total count before pagination
 	HasMore     bool                `json:"hasMore"` // Whether more results exist
+	NextSteps   []string            `json:"nextSteps,omitempty"`
 }
 
 func listDatasources(ctx context.Context, args ListDatasourcesParams) (*ListDatasourcesResult, error) {
@@ -89,6 +90,11 @@ func listDatasources(ctx context.Context, args ListDatasourcesParams) (*ListData
 		Datasources: summarizeDatasources(paginated),
 		Total:       total,
 		HasMore:     hasMore,
+		NextSteps: []string{
+			"Run a health check on datasources using the `check_datasources_health` tool.",
+			"Edit a datasource's configuration using the `update_datasource` tool with its UID.",
+			"Query datasource (loki or prom) data using type-specific tools (e.g. `query_prometheus`, `query_loki_logs`) or `run_panel_query` for panel-based queries.",
+		},
 	}, nil
 }
 
@@ -279,7 +285,7 @@ func createDatasource(ctx context.Context, args CreateDatasourceParams) (*mcp.Ca
 		if err != nil {
 			return nil, fmt.Errorf("marshal result: %w", err)
 		}
-		toolResult := mcp.NewToolResultText(string(b))
+	toolResult := mcp.NewToolResultText(string(b))
 		toolResult.Content = append(toolResult.Content, mcp.ResourceLink{
 			Type:        "resource_link",
 			URI:         configPageURL,
