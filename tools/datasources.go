@@ -276,7 +276,7 @@ func executeDatasourceCreate(ctx context.Context, c *mcpgrafana.GrafanaClient, d
 
 		if grafanaURL != "" {
 			result.ConfigURL = fmt.Sprintf("%s/connections/datasources/edit/%s", grafanaURL, result.UID)
-			result.NextSteps = fmt.Sprintf("Visit the datasource configuration page to finish setting it up: %s", result.ConfigURL)
+			result.NextSteps = fmt.Sprintf("Visit the datasource configuration page to finish setting it up: %s, then come back for health checks and troubleshooting.", result.ConfigURL)
 		}
 	}
 
