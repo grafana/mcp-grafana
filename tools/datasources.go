@@ -589,6 +589,7 @@ type BulkDatasourceHealthResult struct {
 	Healthy   int                           `json:"healthy"`
 	Unhealthy int                           `json:"unhealthy"`
 	HasMore   bool                          `json:"hasMore"` // Whether more datasources exist beyond this page
+	NextSteps []string                      `json:"nextSteps,omitempty"`
 }
 
 func checkDatasourcesHealth(ctx context.Context, args BulkCheckDatasourceHealthParams) (*BulkDatasourceHealthResult, error) {
@@ -670,6 +671,11 @@ func checkDatasourcesHealth(ctx context.Context, args BulkCheckDatasourceHealthP
 		Healthy:   healthy,
 		Unhealthy: unhealthy,
 		HasMore:   offset+len(results) < len(all),
+		NextSteps: []string{
+			"Troubleshoot unhealthy datasources by editing their configuration using the `update_datasource` tool with the datasource UID.",
+			"Edit a datasource's configuration using the `update_datasource` tool with its UID.",
+			"Query datasource data using type-specific (prom or loki) tools (e.g. `query_prometheus`, `query_loki_logs`) or `run_panel_query` for panel-based queries.",
+		},
 	}, nil
 }
 
