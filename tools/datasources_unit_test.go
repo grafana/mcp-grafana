@@ -242,10 +242,8 @@ func TestCreateDatasource_NoSchemaGuidancePhase(t *testing.T) {
 
 	ctx := mockDatasourcesCtx(srv)
 
-	// No schema for this type and no name yet — should return field guidance, not create.
-	result, err := createDatasource(ctx, CreateDatasourceParams{
-		Type: "nonexistent-plugin",
-	})
+	// No schema for this type and no datasources — should return field guidance, not create.
+	result, err := createDatasource(ctx, CreateDatasourceParams{Type: "nonexistent-plugin"})
 	require.NoError(t, err)
 	require.Len(t, result.Content, 1)
 
@@ -275,11 +273,8 @@ func TestCreateDatasource_SchemaGuidancePhase(t *testing.T) {
 
 	ctx := mockDatasourcesCtx(srv)
 
-	result, err := createDatasource(ctx, CreateDatasourceParams{
-		Name: "My Prometheus",
-		Type: "prometheus",
-		// no Fields → Phase 1: return schema guidance
-	})
+	// Type only, no datasources → Phase 1: return schema guidance.
+	result, err := createDatasource(ctx, CreateDatasourceParams{Type: "prometheus"})
 	require.NoError(t, err)
 	require.Len(t, result.Content, 1)
 
@@ -323,9 +318,10 @@ func TestCreateDatasource_NoSchemaCreatesDirectly(t *testing.T) {
 
 	// No schema for this type — should create immediately without a fields step.
 	result, err := createDatasource(ctx, CreateDatasourceParams{
-		Name: name,
 		Type: "nonexistent-plugin",
-		URL:  "http://custom:9090",
+		Datasources: []CreateDatasourceSpec{
+			{Name: name, URL: "http://custom:9090"},
+		},
 	})
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -367,21 +363,27 @@ func TestCreateDatasource_Success(t *testing.T) {
 	mcpgrafana.GrafanaClientFromContext(ctx).PublicURL = "https://grafana.example.com"
 
 	toolResult, err := createDatasource(ctx, CreateDatasourceParams{
-		Name:   name,
-		Type:   "prometheus",
-		URL:    "http://prometheus:9090",
-		Fields: map[string]any{"httpMethod": "POST", "timeInterval": "15s"},
+		Type: "prometheus",
+		Datasources: []CreateDatasourceSpec{
+			{
+				Name:   name,
+				URL:    "http://prometheus:9090",
+				Fields: map[string]any{"httpMethod": "POST", "timeInterval": "15s"},
+			},
+		},
 	})
 	require.NoError(t, err)
 	require.NotNil(t, toolResult)
 	assert.False(t, toolResult.IsError)
-	require.Len(t, toolResult.Content, 2)
+	require.Len(t, toolResult.Content, 1)
 
 	text, ok := toolResult.Content[0].(mcp.TextContent)
 	require.True(t, ok)
 
-	var got CreateDatasourceResult
-	require.NoError(t, json.Unmarshal([]byte(text.Text), &got))
+	var bulk BulkCreateDatasourceResult
+	require.NoError(t, json.Unmarshal([]byte(text.Text), &bulk))
+	require.Len(t, bulk.Results, 1)
+	got := bulk.Results[0]
 	assert.Equal(t, uid, got.UID)
 	assert.Equal(t, name, got.Name)
 	assert.Equal(t, msg, got.Message)
@@ -392,12 +394,6 @@ func TestCreateDatasource_Success(t *testing.T) {
 
 	configPageURL := "https://grafana.example.com/connections/datasources/edit/" + uid
 	assert.Contains(t, got.NextSteps, configPageURL)
-
-	link, ok := toolResult.Content[1].(mcp.ResourceLink)
-	require.True(t, ok)
-	assert.Equal(t, "resource_link", link.Type)
-	assert.Equal(t, configPageURL, link.URI)
-	assert.Equal(t, name, link.Name)
 }
 
 // --- updateDatasource ---
@@ -776,16 +772,222 @@ func TestCreateDatasource_SecureFieldsNotLeakedToJSONData(t *testing.T) {
 	defer srv.Close()
 
 	_, err := createDatasource(mockDatasourcesCtx(srv), CreateDatasourceParams{
-		Name: name,
 		Type: "prometheus",
-		Fields: map[string]any{
-			"httpMethod":        "GET",
-			"basicAuthPassword": "s3cr3t", // secureJsonData field — must be dropped
+		Datasources: []CreateDatasourceSpec{
+			{
+				Name: name,
+				Fields: map[string]any{
+					"httpMethod":        "GET",
+					"basicAuthPassword": "s3cr3t", // secureJsonData field — must be dropped
+				},
+			},
 		},
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "GET", capturedJSONData["httpMethod"])
 	assert.NotContains(t, capturedJSONData, "basicAuthPassword")
+}
+
+// ---- createDatasourcesInBulk ----
+
+func makeBulkServer(t *testing.T, responses map[string]models.AddDataSourceOKBody, healthStatuses map[string]string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/datasources":
+			var body struct {
+				Name string `json:"name"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			resp, ok := responses[body.Name]
+			if !ok {
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = w.Write([]byte(`{"message":"unexpected datasource name"}`))
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(resp)
+		default:
+			// health check: /api/datasources/uid/{uid}/health
+			parts := strings.Split(r.URL.Path, "/")
+			uid := parts[len(parts)-2]
+			status, ok := healthStatuses[uid]
+			if !ok {
+				status = "OK"
+			}
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": status, "message": "Data source connected"})
+		}
+	}))
+}
+
+func TestCreateDatasourcesInBulk_AllSucceed(t *testing.T) {
+	names := []string{"prom-1", "prom-2", "prom-3"}
+	responses := map[string]models.AddDataSourceOKBody{}
+	healthStatuses := map[string]string{}
+	for i, name := range names {
+		id := int64(i + 1)
+		uid := fmt.Sprintf("uid-%d", i+1)
+		n := name
+		msg := "Datasource added"
+		responses[name] = models.AddDataSourceOKBody{
+			ID:         &id,
+			Name:       &n,
+			Message:    &msg,
+			Datasource: &models.DataSource{ID: id, UID: uid, Name: n, Type: "prometheus"},
+		}
+		healthStatuses[uid] = "OK"
+	}
+
+	srv := makeBulkServer(t, responses, healthStatuses)
+	defer srv.Close()
+
+	ctx := mockDatasourcesCtx(srv)
+	mcpgrafana.GrafanaClientFromContext(ctx).PublicURL = "https://grafana.example.com"
+
+	specs := make([]CreateDatasourceSpec, len(names))
+	for i, name := range names {
+		specs[i] = CreateDatasourceSpec{
+			Name:   name,
+			Fields: map[string]any{"httpMethod": "GET"},
+		}
+	}
+
+	toolResult, err := createDatasource(ctx, CreateDatasourceParams{Type: "prometheus", Datasources: specs})
+	require.NoError(t, err)
+	require.NotNil(t, toolResult)
+	assert.False(t, toolResult.IsError)
+
+	text, ok := toolResult.Content[0].(mcp.TextContent)
+	require.True(t, ok)
+
+	var got BulkCreateDatasourceResult
+	require.NoError(t, json.Unmarshal([]byte(text.Text), &got))
+	assert.Equal(t, 3, got.Total)
+	assert.Equal(t, 3, got.Succeeded)
+	assert.Equal(t, 0, got.Failed)
+	assert.Len(t, got.Results, 3)
+	for _, r := range got.Results {
+		assert.Empty(t, r.Error)
+		require.NotNil(t, r.Health)
+		assert.Equal(t, "OK", r.Health.Status)
+	}
+}
+
+func TestCreateDatasourcesInBulk_PartialFailure(t *testing.T) {
+	id := int64(1)
+	uid := "uid-1"
+	name := "prom-ok"
+	msg := "Datasource added"
+	responses := map[string]models.AddDataSourceOKBody{
+		"prom-ok": {
+			ID:         &id,
+			Name:       &name,
+			Message:    &msg,
+			Datasource: &models.DataSource{ID: id, UID: uid, Name: name, Type: "nonexistent-plugin"},
+		},
+		// "prom-fail" deliberately absent — server returns 500
+	}
+
+	srv := makeBulkServer(t, responses, map[string]string{uid: "OK"})
+	defer srv.Close()
+
+	ctx := mockDatasourcesCtx(srv)
+
+	specs := []CreateDatasourceSpec{
+		{Name: "prom-ok"},
+		{Name: "prom-fail"},
+	}
+
+	toolResult, err := createDatasource(ctx, CreateDatasourceParams{Type: "nonexistent-plugin", Datasources: specs})
+	require.NoError(t, err)
+	require.NotNil(t, toolResult)
+
+	text, ok := toolResult.Content[0].(mcp.TextContent)
+	require.True(t, ok)
+
+	var got BulkCreateDatasourceResult
+	require.NoError(t, json.Unmarshal([]byte(text.Text), &got))
+	assert.Equal(t, 2, got.Total)
+	assert.Equal(t, 1, got.Succeeded)
+	assert.Equal(t, 1, got.Failed)
+
+	failedCount := 0
+	for _, r := range got.Results {
+		if r.Error != "" {
+			failedCount++
+		}
+	}
+	assert.Equal(t, 1, failedCount)
+}
+
+func TestCreateDatasourcesInBulk_BlockedWhenSpecMissingFields(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("Grafana API must not be called when fields are missing")
+	}))
+	defer srv.Close()
+
+	ctx := mockDatasourcesCtx(srv)
+
+	// Prometheus has a schema; providing a spec with no fields must return schema
+	// guidance rather than attempting creation.
+	specs := []CreateDatasourceSpec{
+		{Name: "prom-1"},
+	}
+	toolResult, err := createDatasource(ctx, CreateDatasourceParams{Type: "prometheus", Datasources: specs})
+	require.NoError(t, err)
+
+	text, ok := toolResult.Content[0].(mcp.TextContent)
+	require.True(t, ok)
+
+	var guidance map[string]any
+	require.NoError(t, json.Unmarshal([]byte(text.Text), &guidance))
+	assert.Equal(t, "prometheus", guidance["type"])
+	assert.NotEmpty(t, guidance["fields"])
+}
+
+func TestCreateDatasourcesInBulk_NoSchemaTypeCreatesWithoutFields(t *testing.T) {
+	id := int64(1)
+	uid := "custom-uid"
+	name := "custom-1"
+	msg := "ok"
+	mockResp := models.AddDataSourceOKBody{
+		ID:         &id,
+		Name:       &name,
+		Message:    &msg,
+		Datasource: &models.DataSource{ID: id, UID: uid, Name: name, Type: "nonexistent-plugin"},
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/datasources":
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(mockResp)
+		default:
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "OK", "message": "ok"})
+		}
+	}))
+	defer srv.Close()
+
+	ctx := mockDatasourcesCtx(srv)
+
+	// Types with no schema can be created directly without fields — no schema to enforce.
+	specs := []CreateDatasourceSpec{
+		{Name: "custom-1"},
+	}
+	toolResult, err := createDatasource(ctx, CreateDatasourceParams{Type: "nonexistent-plugin", Datasources: specs})
+	require.NoError(t, err)
+
+	text, ok := toolResult.Content[0].(mcp.TextContent)
+	require.True(t, ok)
+
+	var got BulkCreateDatasourceResult
+	require.NoError(t, json.Unmarshal([]byte(text.Text), &got), "expected bulk result, not schema guidance")
+	assert.Equal(t, 1, got.Total)
+	assert.Equal(t, 1, got.Succeeded)
 }
 
 // ---- applyFields ----

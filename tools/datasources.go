@@ -92,25 +92,44 @@ func listDatasources(ctx context.Context, args ListDatasourcesParams) (*ListData
 	}, nil
 }
 
-type CreateDatasourceParams struct {
+// CreateDatasourceSpec defines one datasource within a creation request.
+// All specs in a single call share the same plugin type (set on CreateDatasourceParams).
+type CreateDatasourceSpec struct {
 	Name            string         `json:"name" jsonschema:"required,description=Datasource display name"`
-	Type            string         `json:"type" jsonschema:"required,description=Grafana datasource plugin type\\, for example prometheus"`
 	URL             string         `json:"url,omitempty" jsonschema:"description=Datasource base URL when required by the plugin"`
 	Access          string         `json:"access,omitempty" jsonschema:"description=How Grafana should access the datasource (proxy or direct)"`
 	Database        string         `json:"database,omitempty" jsonschema:"description=Optional database name"`
 	BasicAuth       bool           `json:"basicAuth,omitempty" jsonschema:"description=Whether Grafana should use basic auth"`
 	WithCredentials bool           `json:"withCredentials,omitempty" jsonschema:"description=Whether Grafana should forward credentials such as cookies"`
 	IsDefault       bool           `json:"isDefault,omitempty" jsonschema:"description=Whether this should become the default datasource"`
-	Fields          map[string]any `json:"fields,omitempty" jsonschema:"description=Datasource field values to provision\\, keyed by field key from the schema returned on the first call. The server uses each field's target (root or jsonData) to place values correctly in the YAML. Example: {\"url\": \"http://prometheus:9090\"\\, \"httpMethod\": \"POST\"}."`
+	Fields          map[string]any `json:"fields,omitempty" jsonschema:"description=Datasource field values keyed by field key from the schema"`
+}
+
+type CreateDatasourceParams struct {
+	// Type is required on both calls: it identifies the plugin for schema guidance
+	// and is applied to every spec in Datasources during creation.
+	Type string `json:"type" jsonschema:"required,description=Datasource plugin type (e.g. prometheus). Required on every call."`
+
+	// Datasources is omitted on the first (schema-guidance) call and populated on the second.
+	// One entry creates a single datasource; multiple entries of the same type are created concurrently.
+	Datasources []CreateDatasourceSpec `json:"datasources,omitempty" jsonschema:"description=One or more datasource configs to create. Omit on the first call to get the field schema. All entries are created concurrently and must share the type set above."`
 }
 
 type CreateDatasourceResult struct {
-	Message   string                  `json:"message"`
-	ID        int64                   `json:"id"`
-	UID       string                  `json:"uid"`
-	Name      string                  `json:"name"`
+	Message   string                  `json:"message,omitempty"`
+	ID        int64                   `json:"id,omitempty"`
+	UID       string                  `json:"uid,omitempty"`
+	Name      string                  `json:"name,omitempty"`
 	NextSteps string                  `json:"nextSteps,omitempty"`
 	Health    *DatasourceHealthResult `json:"health,omitempty"`
+	Error     string                  `json:"error,omitempty"`
+}
+
+type BulkCreateDatasourceResult struct {
+	Results   []CreateDatasourceResult `json:"results"`
+	Total     int                      `json:"total"`
+	Succeeded int                      `json:"succeeded"`
+	Failed    int                      `json:"failed"`
 }
 
 type noSchemaField struct {
@@ -201,54 +220,45 @@ func applyFields(body *models.AddDataSourceCommand, schema *datasourceschemas.Da
 	return jsonData
 }
 
-func createDatasource(ctx context.Context, args CreateDatasourceParams) (*mcp.CallToolResult, error) {
-	schema, err := datasourceschemas.LoadDatasourceSchema(args.Type)
+// executeDatasourceCreate performs the actual API call for one datasource spec and
+// returns a populated CreateDatasourceResult. It is shared by the single and bulk paths.
+func executeDatasourceCreate(ctx context.Context, c *mcpgrafana.GrafanaClient, dsType string, spec CreateDatasourceSpec, grafanaURL string) *CreateDatasourceResult {
+	result := &CreateDatasourceResult{Name: spec.Name}
+
+	schema, err := datasourceschemas.LoadDatasourceSchema(dsType)
 	if err != nil {
-		return nil, err
-	}
-	// Phase 1: return field guidance before creation.
-	// With a schema: list schema fields and ask the user to fill them in.
-	// Without a schema: list the explicit params and ask for name + any others
-	// the user wants to set, then call again with those values.
-	if schema != nil && args.Fields == nil {
-		text, _ := json.Marshal(datasourceschemas.BuildSchemaGuidance(schema, "create_datasource"))
-		return mcp.NewToolResultText(string(text)), nil
-	}
-	if schema == nil && args.Name == "" {
-		text, _ := json.Marshal(noSchemaGuidance(args.Type))
-		return mcp.NewToolResultText(string(text)), nil
+		result.Error = fmt.Sprintf("load schema: %s", err)
+		return result
 	}
 
-	dsAccess := args.Access
+	dsAccess := spec.Access
 	if dsAccess == "" {
-		// use grafana default
 		dsAccess = "proxy"
 	}
 
-	c := mcpgrafana.GrafanaClientFromContext(ctx)
-	// these are used as fallback in case the schema fails to load, that way we can still create a datasource with common, shared fields
 	body := &models.AddDataSourceCommand{
-		Name:            args.Name,
-		Type:            args.Type,
-		URL:             args.URL,
+		Name:            spec.Name,
+		Type:            dsType,
+		URL:             spec.URL,
 		Access:          models.DsAccess(dsAccess),
-		Database:        args.Database,
-		BasicAuth:       args.BasicAuth,
-		IsDefault:       args.IsDefault,
-		WithCredentials: args.WithCredentials,
+		Database:        spec.Database,
+		BasicAuth:       spec.BasicAuth,
+		IsDefault:       spec.IsDefault,
+		WithCredentials: spec.WithCredentials,
 	}
 	if schema != nil {
-		body.JSONData = models.JSON(applyFields(body, schema, args.Fields))
+		body.JSONData = models.JSON(applyFields(body, schema, spec.Fields))
 	}
+
 	resp, err := c.Datasources.AddDataSourceWithParams(
 		datasources.NewAddDataSourceParamsWithContext(ctx).WithBody(body),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("create datasource: %w", err)
+		result.Error = fmt.Sprintf("create datasource: %s", err)
+		return result
 	}
-	p := resp.Payload
-	result := &CreateDatasourceResult{}
 
+	p := resp.Payload
 	if p.Message != nil {
 		result.Message = *p.Message
 	}
@@ -261,6 +271,7 @@ func createDatasource(ctx context.Context, args CreateDatasourceParams) (*mcp.Ca
 	if p.Datasource != nil {
 		result.UID = p.Datasource.UID
 	}
+
 	if result.UID != "" {
 		health, err := checkDatasourceHealth(ctx, CheckDatasourceHealthParams{UID: result.UID})
 		if err != nil {
@@ -269,28 +280,97 @@ func createDatasource(ctx context.Context, args CreateDatasourceParams) (*mcp.Ca
 			result.Health = health
 		}
 
-		grafanaURL := c.PublicURL
-		if grafanaURL == "" {
-			grafanaURL = mcpgrafana.GrafanaConfigFromContext(ctx).URL
+		if grafanaURL != "" {
+			configPageURL := fmt.Sprintf("%s/connections/datasources/edit/%s", grafanaURL, result.UID)
+			result.NextSteps = fmt.Sprintf("Visit the datasource configuration page to finish setting it up: %s", configPageURL)
 		}
-		configPageURL := fmt.Sprintf("%s/connections/datasources/edit/%s", grafanaURL, result.UID)
-		result.NextSteps = fmt.Sprintf("Visit the datasource configuration page to finish setting it up: %s", configPageURL)
-		b, err := json.Marshal(result)
-		if err != nil {
-			return nil, fmt.Errorf("marshal result: %w", err)
-		}
-		toolResult := mcp.NewToolResultText(string(b))
-		toolResult.Content = append(toolResult.Content, mcp.ResourceLink{
-			Type:        "resource_link",
-			URI:         configPageURL,
-			Name:        result.Name,
-			Description: "Datasource configuration page",
-		})
-		return toolResult, nil
 	}
-	b, err := json.Marshal(result)
+
+	return result
+}
+
+func createDatasource(ctx context.Context, args CreateDatasourceParams) (*mcp.CallToolResult, error) {
+	// Phase 1: no datasources yet — return field guidance for the given type so the
+	// caller knows exactly which fields to populate before the creation call.
+	if len(args.Datasources) == 0 {
+		schema, err := datasourceschemas.LoadDatasourceSchema(args.Type)
+		if err != nil {
+			return nil, err
+		}
+		if schema != nil {
+			text, _ := json.Marshal(datasourceschemas.BuildSchemaGuidance(schema, "create_datasource"))
+			return mcp.NewToolResultText(string(text)), nil
+		}
+		text, _ := json.Marshal(noSchemaGuidance(args.Type))
+		return mcp.NewToolResultText(string(text)), nil
+	}
+
+	// Phase 2: datasources provided. Since all specs share args.Type, one schema
+	// check is enough — if any spec is missing fields for a type that has a schema,
+	// return guidance before creating anything.
+	schema, err := datasourceschemas.LoadDatasourceSchema(args.Type)
 	if err != nil {
-		return nil, fmt.Errorf("marshal result: %w", err)
+		return nil, err
+	}
+	if schema != nil {
+		needsGuidance := false
+		for _, spec := range args.Datasources {
+			if spec.Fields == nil {
+				needsGuidance = true
+				break
+			}
+		}
+		if needsGuidance {
+			text, _ := json.Marshal(datasourceschemas.BuildSchemaGuidance(schema, "create_datasource"))
+			return mcp.NewToolResultText(string(text)), nil
+		}
+	}
+
+	// All specs are ready — create concurrently.
+	return createDatasourcesInBulk(ctx, args.Type, args.Datasources)
+}
+
+func createDatasourcesInBulk(ctx context.Context, dsType string, specs []CreateDatasourceSpec) (*mcp.CallToolResult, error) {
+	c := mcpgrafana.GrafanaClientFromContext(ctx)
+	grafanaURL := c.PublicURL
+	if grafanaURL == "" {
+		grafanaURL = mcpgrafana.GrafanaConfigFromContext(ctx).URL
+	}
+
+	results := make([]CreateDatasourceResult, len(specs))
+	sem := make(chan struct{}, 5)
+	var wg sync.WaitGroup
+
+	for i, spec := range specs {
+		wg.Add(1)
+		go func(i int, spec CreateDatasourceSpec) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			results[i] = *executeDatasourceCreate(ctx, c, dsType, spec, grafanaURL)
+		}(i, spec)
+	}
+	wg.Wait()
+
+	succeeded, failed := 0, 0
+	for _, r := range results {
+		if r.Error != "" {
+			failed++
+		} else {
+			succeeded++
+		}
+	}
+
+	bulkResult := BulkCreateDatasourceResult{
+		Results:   results,
+		Total:     len(specs),
+		Succeeded: succeeded,
+		Failed:    failed,
+	}
+
+	b, err := json.Marshal(bulkResult)
+	if err != nil {
+		return nil, fmt.Errorf("marshal bulk result: %w", err)
 	}
 	return mcp.NewToolResultText(string(b)), nil
 }
@@ -336,7 +416,13 @@ var ListDatasources = mcpgrafana.MustTool(
 
 var CreateDatasource = mcpgrafana.MustTool(
 	"create_datasource",
-	"Create a datasource. If type is ambiguous, call search_plugin_information first; install the plugin if needed. IMPORTANT: always call this tool twice. First call: provide only the type — the tool returns a field schema. After receiving the schema, you MUST ask the user for every required field value explicitly; do not infer or use defaults without user confirmation. Second call: provide the type plus the fields map populated with values confirmed by the user Never handle credentials — remind the user to rotate any detected. Returns UID, health check, and a config page link. ",
+	"Create one or more datasources. If type is ambiguous, call search_plugin_information first; install the plugin if needed. "+
+		"IMPORTANT: always call this tool twice for single-datasource creation. "+
+		"First call: provide only the type — the tool returns a field schema. "+
+		"After receiving the schema, you MUST ask the user for every required non-sensitive field value explicitly; do not infer or use defaults without user confirmation. Never ask for sensitive or secure fields (e.g. passwords, tokens, secret keys) — direct the user to enter those in the Grafana UI instead. "+
+		"Second call (single): provide type plus the fields map populated with values confirmed by the user. "+
+		"Second call (multiple, e.g. one datasource per region): provide the 'datasources' array where each entry has name, type, and fields — all entries are created concurrently in a single call. "+
+		"Never handle credentials — remind the user to rotate any detected. Returns UID, health check, and config page links.",
 	createDatasource,
 	mcp.WithTitleAnnotation("Create datasource"),
 	mcp.WithIdempotentHintAnnotation(false),
