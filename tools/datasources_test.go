@@ -108,6 +108,7 @@ func TestCreateDatasourceTools(t *testing.T) {
 		assert.NotEmpty(t, result.UID)
 
 		configPageURL := "http://localhost:3000/connections/datasources/edit/" + result.UID
+		assert.Equal(t, configPageURL, result.ConfigURL)
 		assert.Contains(t, result.NextSteps, configPageURL)
 
 		c := mcpgrafana.GrafanaClientFromContext(ctx)
@@ -141,6 +142,7 @@ func TestCreateDatasourceTools(t *testing.T) {
 		assert.NotEmpty(t, result.UID)
 
 		configPageURL := "http://localhost:3000/connections/datasources/edit/" + result.UID
+		assert.Equal(t, configPageURL, result.ConfigURL)
 		assert.Contains(t, result.NextSteps, configPageURL)
 
 		c := mcpgrafana.GrafanaClientFromContext(ctx)

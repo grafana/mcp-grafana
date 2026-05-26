@@ -393,6 +393,7 @@ func TestCreateDatasource_Success(t *testing.T) {
 	assert.Equal(t, "Data source connected", got.Health.Message)
 
 	configPageURL := "https://grafana.example.com/connections/datasources/edit/" + uid
+	assert.Equal(t, configPageURL, got.ConfigURL)
 	assert.Contains(t, got.NextSteps, configPageURL)
 }
 
