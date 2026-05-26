@@ -113,7 +113,7 @@ type CreateDatasourceResult struct {
 	ID        int64                   `json:"id,omitempty"`
 	UID       string                  `json:"uid,omitempty"`
 	Name      string                  `json:"name,omitempty"`
-	ConfigURL string                  `json:"configURL,omitempty"`
+	ConfigURL string                  `json:"datasourceConfigPage,omitempty"`
 	NextSteps string                  `json:"nextSteps,omitempty"`
 	Health    *DatasourceHealthResult `json:"health,omitempty"`
 	Error     string                  `json:"error,omitempty"`
