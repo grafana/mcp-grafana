@@ -324,6 +324,13 @@ func createDatasource(ctx context.Context, args CreateDatasourceParams) (*mcp.Ca
 			text, _ := json.Marshal(datasourceschemas.BuildSchemaGuidance(schema, "create_datasource"))
 			return mcp.NewToolResultText(string(text)), nil
 		}
+	} else {
+		for _, spec := range args.Datasources {
+			if spec.Name == "" {
+				text, _ := json.Marshal(noSchemaGuidance(args.Type))
+				return mcp.NewToolResultText(string(text)), nil
+			}
+		}
 	}
 
 	// All specs are ready — create concurrently.
@@ -372,7 +379,9 @@ func createDatasourcesInBulk(ctx context.Context, dsType string, specs []CreateD
 	if err != nil {
 		return nil, fmt.Errorf("marshal bulk result: %w", err)
 	}
-	return mcp.NewToolResultText(string(b)), nil
+	toolResult := mcp.NewToolResultText(string(b))
+	toolResult.IsError = failed > 0
+	return toolResult, nil
 }
 
 // filterDatasources returns only datasources of the specified type `t`. If `t`

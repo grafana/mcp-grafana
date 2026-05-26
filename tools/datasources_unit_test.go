@@ -265,6 +265,30 @@ func TestCreateDatasource_NoSchemaGuidancePhase(t *testing.T) {
 	assert.Contains(t, keys, "name")
 }
 
+func TestCreateDatasource_NoSchemaMissingNameReturnsGuidance(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("Grafana API must not be called when no-schema datasource name is missing")
+	}))
+	defer srv.Close()
+
+	result, err := createDatasource(mockDatasourcesCtx(srv), CreateDatasourceParams{
+		Type: "nonexistent-plugin",
+		Datasources: []CreateDatasourceSpec{
+			{URL: "http://custom:9090"},
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, result.Content, 1)
+
+	text, ok := result.Content[0].(mcp.TextContent)
+	require.True(t, ok)
+
+	var guidance map[string]any
+	require.NoError(t, json.Unmarshal([]byte(text.Text), &guidance))
+	assert.Equal(t, "nonexistent-plugin", guidance["type"])
+	assert.NotEmpty(t, guidance["fields"])
+}
+
 func TestCreateDatasource_SchemaGuidancePhase(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("Grafana API must not be called during schema guidance phase")
@@ -920,6 +944,31 @@ func TestCreateDatasourcesInBulk_PartialFailure(t *testing.T) {
 		}
 	}
 	assert.Equal(t, 1, failedCount)
+}
+
+func TestCreateDatasourcesInBulk_FailureSetsToolError(t *testing.T) {
+	srv := makeBulkServer(t, map[string]models.AddDataSourceOKBody{}, nil)
+	defer srv.Close()
+
+	specs := []CreateDatasourceSpec{
+		{Name: "prom-fail"},
+	}
+
+	toolResult, err := createDatasource(mockDatasourcesCtx(srv), CreateDatasourceParams{Type: "nonexistent-plugin", Datasources: specs})
+	require.NoError(t, err)
+	require.NotNil(t, toolResult)
+	assert.True(t, toolResult.IsError)
+
+	text, ok := toolResult.Content[0].(mcp.TextContent)
+	require.True(t, ok)
+
+	var got BulkCreateDatasourceResult
+	require.NoError(t, json.Unmarshal([]byte(text.Text), &got))
+	assert.Equal(t, 1, got.Total)
+	assert.Equal(t, 0, got.Succeeded)
+	assert.Equal(t, 1, got.Failed)
+	require.Len(t, got.Results, 1)
+	assert.NotEmpty(t, got.Results[0].Error)
 }
 
 func TestCreateDatasourcesInBulk_BlockedWhenSpecMissingFields(t *testing.T) {
