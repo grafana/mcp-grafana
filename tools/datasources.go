@@ -279,6 +279,7 @@ func executeDatasourceCreate(ctx context.Context, c *mcpgrafana.GrafanaClient, d
 			result.NextSteps = []string{
 				"Make any of the newly created datasources the default?",
 				fmt.Sprintf("Open the config page to finish setup or enter credentials: %s", result.ConfigURL),
+				"Create a dashboard?",
 				"Adjust or further customize the datasource through additional settings?",
 			}
 		}
