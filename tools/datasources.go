@@ -412,7 +412,7 @@ var CreateDatasource = mcpgrafana.MustTool(
 	"create_datasource",
 	"Create one or more datasources of the same type. If type is ambiguous, call search_plugin_information first. "+
 		"Call 1: provide type only — returns field schema. "+
-		"Call 2: provide type + datasources array (one entry per datasource). Ask the user for every required non-sensitive field; never ask for passwords/tokens/keys — direct those to the Grafana UI. "+
+		"Call 2: provide type + datasources array (one entry per datasource). Ask the user for every required non-sensitive field; never ask for passwords/tokens/keys — direct those to the Grafana UI config page, then invite the user to return here to run health checks and continue troubleshooting. "+
 		"Never handle credentials — remind the user to rotate any detected.",
 	createDatasource,
 	mcp.WithTitleAnnotation("Create datasource"),
