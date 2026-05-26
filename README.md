@@ -31,6 +31,22 @@ Requires [uv](https://docs.astral.sh/uv/getting-started/installation/). Add the 
 
 For Grafana Cloud, replace `GRAFANA_URL` with your instance URL (e.g. `https://myinstance.grafana.net`). See [Usage](#usage) for more installation options including Docker, binary, and Helm.
 
+### Claude Code
+
+Claude Code has native plugin support and can install this server with no binary download. Add the marketplace and install the `grafana` plugin:
+
+```bash
+/plugin marketplace add grafana/mcp-grafana
+/plugin install grafana@mcp-grafana
+```
+
+Claude Code will prompt you at enable time for:
+
+- **Grafana instance URL** — Grafana Cloud (`https://<stack>.grafana.net`) or a publicly reachable self-hosted URL
+- **Service account token** — stored in your system keychain
+
+The plugin uses the hosted streamable-http MCP server at `https://mcp.grafana.com/mcp` and passes your URL and token as headers. For private or firewalled Grafana instances that the hosted server cannot reach, install the local binary instead (see [Usage](#usage)).
+
 ## Requirements
 
 - **Grafana version 9.0 or later** is required for full functionality. Some features, particularly datasource-related operations, may not work correctly with earlier versions due to missing API endpoints.

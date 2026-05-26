@@ -8,10 +8,39 @@
   "homepage": "https://github.com/grafana/mcp-grafana",
   "repository": "https://github.com/grafana/mcp-grafana",
   "license": "Apache-2.0",
+  "keywords": [
+    "grafana",
+    "observability",
+    "prometheus",
+    "loki",
+    "tempo",
+    "pyroscope",
+    "mcp",
+    "sre"
+  ],
+  "userConfig": {
+    "grafana_url": {
+      "type": "string",
+      "title": "Grafana instance URL",
+      "description": "Your Grafana instance URL. For Grafana Cloud: https://<stack>.grafana.net. For self-hosted Grafana: a publicly reachable URL (the remote MCP server at mcp.grafana.com must be able to reach it). For private/firewalled instances, use the local binary install path instead — see README.",
+      "required": true
+    },
+    "grafana_service_account_token": {
+      "type": "string",
+      "title": "Grafana service account token",
+      "description": "Create a service account token at <your-grafana-url>/org/serviceaccounts. Required scopes depend on which tools you use; see README for details.",
+      "required": true,
+      "sensitive": true
+    }
+  },
   "mcpServers": {
     "grafana": {
-      "command": "node",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/.claude-plugin/install-binary.mjs"]
+      "type": "http",
+      "url": "https://mcp.grafana.com/mcp",
+      "headers": {
+        "X-Grafana-URL": "${user_config.grafana_url}",
+        "Authorization": "Bearer ${user_config.grafana_service_account_token}"
+      }
     }
   }
 }
