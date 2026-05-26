@@ -92,27 +92,20 @@ func listDatasources(ctx context.Context, args ListDatasourcesParams) (*ListData
 	}, nil
 }
 
-// CreateDatasourceSpec defines one datasource within a creation request.
-// All specs in a single call share the same plugin type (set on CreateDatasourceParams).
 type CreateDatasourceSpec struct {
-	Name            string         `json:"name" jsonschema:"required,description=Datasource display name"`
-	URL             string         `json:"url,omitempty" jsonschema:"description=Datasource base URL when required by the plugin"`
-	Access          string         `json:"access,omitempty" jsonschema:"description=How Grafana should access the datasource (proxy or direct)"`
-	Database        string         `json:"database,omitempty" jsonschema:"description=Optional database name"`
-	BasicAuth       bool           `json:"basicAuth,omitempty" jsonschema:"description=Whether Grafana should use basic auth"`
-	WithCredentials bool           `json:"withCredentials,omitempty" jsonschema:"description=Whether Grafana should forward credentials such as cookies"`
-	IsDefault       bool           `json:"isDefault,omitempty" jsonschema:"description=Whether this should become the default datasource"`
-	Fields          map[string]any `json:"fields,omitempty" jsonschema:"description=Datasource field values keyed by field key from the schema"`
+	Name            string         `json:"name" jsonschema:"required,description=Display name"`
+	URL             string         `json:"url,omitempty" jsonschema:"description=Base URL"`
+	Access          string         `json:"access,omitempty" jsonschema:"description=proxy or direct"`
+	Database        string         `json:"database,omitempty" jsonschema:"description=Database name"`
+	BasicAuth       bool           `json:"basicAuth,omitempty" jsonschema:"description=Enable basic auth"`
+	WithCredentials bool           `json:"withCredentials,omitempty" jsonschema:"description=Forward cookies/credentials"`
+	IsDefault       bool           `json:"isDefault,omitempty" jsonschema:"description=Set as default"`
+	Fields          map[string]any `json:"fields,omitempty" jsonschema:"description=Field values from schema"`
 }
 
 type CreateDatasourceParams struct {
-	// Type is required on both calls: it identifies the plugin for schema guidance
-	// and is applied to every spec in Datasources during creation.
-	Type string `json:"type" jsonschema:"required,description=Datasource plugin type (e.g. prometheus). Required on every call."`
-
-	// Datasources is omitted on the first (schema-guidance) call and populated on the second.
-	// One entry creates a single datasource; multiple entries of the same type are created concurrently.
-	Datasources []CreateDatasourceSpec `json:"datasources,omitempty" jsonschema:"description=One or more datasource configs to create. Omit on the first call to get the field schema. All entries are created concurrently and must share the type set above."`
+	Type        string                 `json:"type" jsonschema:"required,description=Plugin type (e.g. prometheus). Required on every call."`
+	Datasources []CreateDatasourceSpec `json:"datasources,omitempty" jsonschema:"description=Omit on first call to get schema. On second call\\, provide one or more specs — all created concurrently."`
 }
 
 type CreateDatasourceResult struct {
@@ -417,13 +410,10 @@ var ListDatasources = mcpgrafana.MustTool(
 
 var CreateDatasource = mcpgrafana.MustTool(
 	"create_datasource",
-	"Create one or more datasources. If type is ambiguous, call search_plugin_information first; install the plugin if needed. "+
-		"IMPORTANT: always call this tool twice for single-datasource creation. "+
-		"First call: provide only the type — the tool returns a field schema. "+
-		"After receiving the schema, you MUST ask the user for every required non-sensitive field value explicitly; do not infer or use defaults without user confirmation. Never ask for sensitive or secure fields (e.g. passwords, tokens, secret keys) — direct the user to enter those in the Grafana UI instead. "+
-		"Second call (single): provide type plus the fields map populated with values confirmed by the user. "+
-		"Second call (multiple, e.g. one datasource per region): provide the 'datasources' array where each entry has name, type, and fields — all entries are created concurrently in a single call. "+
-		"Never handle credentials — remind the user to rotate any detected. Returns UID, health check, and config page links.",
+	"Create one or more datasources of the same type. If type is ambiguous, call search_plugin_information first. "+
+		"Call 1: provide type only — returns field schema. "+
+		"Call 2: provide type + datasources array (one entry per datasource). Ask the user for every required non-sensitive field; never ask for passwords/tokens/keys — direct those to the Grafana UI. "+
+		"Never handle credentials — remind the user to rotate any detected.",
 	createDatasource,
 	mcp.WithTitleAnnotation("Create datasource"),
 	mcp.WithIdempotentHintAnnotation(false),
