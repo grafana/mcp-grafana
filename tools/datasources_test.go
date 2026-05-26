@@ -7,6 +7,8 @@ package tools
 
 import (
 	"encoding/json"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/grafana/grafana-openapi-client-go/models"
@@ -109,7 +111,9 @@ func TestCreateDatasourceTools(t *testing.T) {
 
 		configPageURL := "http://localhost:3000/connections/datasources/edit/" + result.UID
 		assert.Equal(t, configPageURL, result.ConfigURL)
-		assert.Contains(t, result.NextSteps, configPageURL)
+		assert.True(t, slices.ContainsFunc(result.NextSteps, func(s string) bool {
+			return strings.Contains(s, configPageURL)
+		}), "expected NextSteps to contain an entry referencing the config page URL")
 
 		c := mcpgrafana.GrafanaClientFromContext(ctx)
 		t.Cleanup(func() {
@@ -143,7 +147,9 @@ func TestCreateDatasourceTools(t *testing.T) {
 
 		configPageURL := "http://localhost:3000/connections/datasources/edit/" + result.UID
 		assert.Equal(t, configPageURL, result.ConfigURL)
-		assert.Contains(t, result.NextSteps, configPageURL)
+		assert.True(t, slices.ContainsFunc(result.NextSteps, func(s string) bool {
+			return strings.Contains(s, configPageURL)
+		}), "expected NextSteps to contain an entry referencing the config page URL")
 
 		c := mcpgrafana.GrafanaClientFromContext(ctx)
 		t.Cleanup(func() {

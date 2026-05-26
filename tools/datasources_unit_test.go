@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 
@@ -394,7 +395,9 @@ func TestCreateDatasource_Success(t *testing.T) {
 
 	configPageURL := "https://grafana.example.com/connections/datasources/edit/" + uid
 	assert.Equal(t, configPageURL, got.ConfigURL)
-	assert.Contains(t, got.NextSteps, configPageURL)
+	assert.True(t, slices.ContainsFunc(got.NextSteps, func(s string) bool {
+		return strings.Contains(s, configPageURL)
+	}), "expected NextSteps to contain an entry referencing the config page URL")
 }
 
 // --- updateDatasource ---

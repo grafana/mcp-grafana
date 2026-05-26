@@ -114,7 +114,7 @@ type CreateDatasourceResult struct {
 	UID       string                  `json:"uid,omitempty"`
 	Name      string                  `json:"name,omitempty"`
 	ConfigURL string                  `json:"datasourceConfigPage,omitempty"`
-	NextSteps string                  `json:"nextSteps,omitempty"`
+	NextSteps []string                `json:"nextSteps,omitempty"`
 	Health    *DatasourceHealthResult `json:"health,omitempty"`
 	Error     string                  `json:"error,omitempty"`
 }
@@ -276,7 +276,11 @@ func executeDatasourceCreate(ctx context.Context, c *mcpgrafana.GrafanaClient, d
 
 		if grafanaURL != "" {
 			result.ConfigURL = fmt.Sprintf("%s/connections/datasources/edit/%s", grafanaURL, result.UID)
-			result.NextSteps = fmt.Sprintf("Visit the datasource configuration page to finish setting it up: %s, then come back for health checks and troubleshooting.", result.ConfigURL)
+			result.NextSteps = []string{
+				"Make any of the newly created datasources the default?",
+				fmt.Sprintf("Open the config page to finish setup or enter credentials: %s", result.ConfigURL),
+				"Adjust or further customize the datasource through additional settings?",
+			}
 		}
 	}
 
