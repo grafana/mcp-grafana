@@ -344,25 +344,15 @@ func buildDashboardTargetURL(baseURL string, dashboardUID *string, preview *Deep
 		return fmt.Sprintf("%s/d/%s", baseURL, *dashboardUID), nil
 	}
 
-	if preview.Repo == "" {
-		return "", fmt.Errorf("provisioningPreview.repo is required")
-	}
-	if preview.Path == "" {
-		return "", fmt.Errorf("provisioningPreview.path is required")
-	}
 	// url.PathEscape doesn't touch `..` (dots are valid path chars), so the
 	// generated link could point at an unintended Grafana page without these
-	// explicit checks. Mirrors the validation in tools/rendering.go.
-	if strings.ContainsAny(preview.Repo, `/\`) {
-		return "", fmt.Errorf("provisioningPreview.repo must not contain path separators")
+	// explicit checks. Shared helpers also used by rendering and the
+	// provisioning file tool.
+	if err := validateRepoSlug("provisioningPreview.repo", preview.Repo); err != nil {
+		return "", err
 	}
-	if preview.Repo == ".." {
-		return "", fmt.Errorf("provisioningPreview.repo must not be the parent-directory reference")
-	}
-	for _, seg := range strings.Split(preview.Path, "/") {
-		if seg == ".." {
-			return "", fmt.Errorf("provisioningPreview.path must not contain parent-directory segments")
-		}
+	if err := validateRepoPath("provisioningPreview.path", preview.Path); err != nil {
+		return "", err
 	}
 
 	escapedPath := (&url.URL{Path: strings.TrimLeft(preview.Path, "/")}).EscapedPath()

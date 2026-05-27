@@ -186,28 +186,31 @@ type ProvisioningFileValidation struct {
 }
 
 // validateRepoSlug rejects repo values that would change the URL structure.
-func validateRepoSlug(repo string) error {
+// fieldName is the user-facing parameter name to embed in error messages so
+// the caller knows which argument was rejected (e.g. "repo" vs
+// "provisioningPreview.repo").
+func validateRepoSlug(fieldName, repo string) error {
 	if repo == "" {
-		return fmt.Errorf("repo is required")
+		return fmt.Errorf("%s is required", fieldName)
 	}
 	if strings.ContainsAny(repo, `/\`) {
-		return fmt.Errorf("repo must not contain path separators")
+		return fmt.Errorf("%s must not contain path separators", fieldName)
 	}
 	if repo == ".." {
-		return fmt.Errorf("repo must not be the parent-directory reference")
+		return fmt.Errorf("%s must not be the parent-directory reference", fieldName)
 	}
 	return nil
 }
 
 // validateRepoPath rejects path values with parent-directory segments to
 // keep HTTP intermediaries that normalize ../ from redirecting the request.
-func validateRepoPath(path string) error {
+func validateRepoPath(fieldName, path string) error {
 	if path == "" {
-		return fmt.Errorf("path is required")
+		return fmt.Errorf("%s is required", fieldName)
 	}
 	for _, seg := range strings.Split(path, "/") {
 		if seg == ".." {
-			return fmt.Errorf("path must not contain parent-directory segments")
+			return fmt.Errorf("%s must not contain parent-directory segments", fieldName)
 		}
 	}
 	return nil
@@ -251,10 +254,10 @@ func validateProvisioningFile(ctx context.Context, args ValidateProvisioningFile
 	if cfg.URL == "" {
 		return nil, fmt.Errorf("grafana URL is not configured")
 	}
-	if err := validateRepoSlug(args.Repo); err != nil {
+	if err := validateRepoSlug("repo", args.Repo); err != nil {
 		return nil, err
 	}
-	if err := validateRepoPath(args.Path); err != nil {
+	if err := validateRepoPath("path", args.Path); err != nil {
 		return nil, err
 	}
 

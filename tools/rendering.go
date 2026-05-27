@@ -179,25 +179,11 @@ func buildRenderURL(baseURL string, args GetPanelImageParams) (string, error) {
 		return "", fmt.Errorf("either dashboardUid or provisioningPreview must be set")
 	}
 	if hasPreview {
-		if args.ProvisioningPreview.Repo == "" {
-			return "", fmt.Errorf("provisioningPreview.repo is required")
+		if err := validateRepoSlug("provisioningPreview.repo", args.ProvisioningPreview.Repo); err != nil {
+			return "", err
 		}
-		if args.ProvisioningPreview.Path == "" {
-			return "", fmt.Errorf("provisioningPreview.path is required")
-		}
-		// Reject path-traversal vectors. Even with proper percent-encoding,
-		// HTTP intermediaries can collapse .. segments before the request
-		// reaches Grafana, redirecting the render to a different route.
-		if strings.ContainsAny(args.ProvisioningPreview.Repo, `/\`) {
-			return "", fmt.Errorf("provisioningPreview.repo must not contain path separators")
-		}
-		if args.ProvisioningPreview.Repo == ".." {
-			return "", fmt.Errorf("provisioningPreview.repo must not be the parent-directory reference")
-		}
-		for _, seg := range strings.Split(args.ProvisioningPreview.Path, "/") {
-			if seg == ".." {
-				return "", fmt.Errorf("provisioningPreview.path must not contain parent-directory segments")
-			}
+		if err := validateRepoPath("provisioningPreview.path", args.ProvisioningPreview.Path); err != nil {
+			return "", err
 		}
 	}
 
