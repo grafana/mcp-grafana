@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `get_panel_image` now accepts an optional `provisioningPreview` parameter (`repo`, `path`, `ref`) for rendering dashboards staged on a provisioning repository branch (e.g. a git-sync PR preview) before they're merged or applied. Mutually exclusive with `dashboardUid`.
+- New `provisioning` tool category with `list_provisioning_repositories` — returns each repository's slug, source URL/branch/path, sync state, and health, so agents can discover the `repo` value to pass to `get_panel_image`'s `provisioningPreview`.
 
 ## [0.15.0] - 2026-06-01
 

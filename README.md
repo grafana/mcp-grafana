@@ -209,6 +209,10 @@ Queries go through Grafana's Snowflake datasource (Grafana Enterprise plugin `gr
 - **Get panel or dashboard image:** Render a Grafana dashboard panel or full dashboard as a PNG image. Returns the image as base64 encoded data for use in reports, alerts, or presentations. Supports customizing dimensions, time range, theme, scale, and dashboard variables. Also supports rendering not-yet-applied dashboards from a provisioning repository branch (e.g. a git-sync PR preview) via the optional `provisioningPreview` parameter.
   - _Note: Requires the [Grafana Image Renderer](https://grafana.com/docs/grafana/latest/setup-grafana/image-rendering/) service to be installed and configured._
 
+### Provisioning
+
+- **List provisioning repositories:** List provisioning repositories configured for this Grafana instance (e.g. git-sync sources), returning each repository's slug along with its source URL, branch, path, sync state, and health.
+
 The list of tools is configurable, so you can choose which tools you want to make available to the MCP client.
 This is useful if you don't use certain functionality or if you don't want to take up too much of the context window.
 To disable a category of tools, use the `--disable-<category>` flag when starting the server. For example, to disable
@@ -354,6 +358,7 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `update_annotation`               | Annotations | Update specific fields of an annotation (partial update)            | `annotations:write`                     | `annotations:*`                                     |
 | `get_annotation_tags`             | Annotations | List annotation tags with optional filtering                        | `annotations:read`                      | `annotations:*`                                     |
 | `get_panel_image`                 | Rendering   | Render a stored dashboard or panel — or a provisioning preview from a repository branch — as a PNG image | `dashboards:read`                       | `dashboards:uid:abc123`                             |
+| `list_provisioning_repositories`  | Provisioning | List provisioning repositories (e.g. git-sync sources) with their source URL, branch, sync state, and health | `provisioning.repositories:read`        | N/A                                                 |
 
 _* Disabled by default. Add category to `--enabled-tools` to enable._
 
@@ -407,6 +412,7 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 - `--disable-runpanelquery`: Disable run panel query tools
 - `--disable-graphite`: Disable Graphite tools
 - `--disable-athena`: Disable Athena tools
+- `--disable-provisioning`: Disable provisioning tools
 
 ### Read-Only Mode
 
