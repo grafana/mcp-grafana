@@ -200,18 +200,21 @@ func buildRenderURL(baseURL string, args GetPanelImageParams) (string, error) {
 	// via the standard kiosk/viewPanel mechanism.
 	var renderPath string
 	if hasPreview {
-		// Use url.URL.EscapedPath() so characters like ?, #, or spaces in the
-		// repo slug or dashboard file path don't produce a malformed render
-		// URL. EscapedPath preserves the structural / between segments while
-		// percent-encoding everything else that isn't valid in a URL path.
-		previewURL := url.URL{
-			Path: fmt.Sprintf(
-				"/render/dashboard/provisioning/%s/preview/%s",
-				args.ProvisioningPreview.Repo,
-				strings.TrimLeft(args.ProvisioningPreview.Path, "/"),
-			),
-		}
-		renderPath = previewURL.EscapedPath()
+		// Repo is a single segment and gets the stricter url.PathEscape (which
+		// also encodes sub-delim characters like @, $, &, ;, =, :). For the
+		// multi-segment file path we use url.URL.EscapedPath() so structural /
+		// separators between segments are preserved while everything else that
+		// isn't valid in a URL path is percent-encoded. This matches the
+		// encoding done by tools/navigation.go and tools/provisioning.go.
+		// Note: we build the path by string-concatenation rather than via
+		// `url.URL{Path: ...}` because url.URL would re-escape our PathEscape
+		// output (turning %40 into %2540).
+		escapedFile := (&url.URL{Path: strings.TrimLeft(args.ProvisioningPreview.Path, "/")}).EscapedPath()
+		renderPath = fmt.Sprintf(
+			"/render/dashboard/provisioning/%s/preview/%s",
+			url.PathEscape(args.ProvisioningPreview.Repo),
+			escapedFile,
+		)
 		if args.ProvisioningPreview.Ref != "" {
 			params.Set("ref", args.ProvisioningPreview.Ref)
 		}

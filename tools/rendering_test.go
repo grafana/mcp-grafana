@@ -320,6 +320,27 @@ func TestBuildRenderURL(t *testing.T) {
 			},
 		},
 		{
+			// url.URL{}.EscapedPath() and url.PathEscape diverge on a few
+			// characters that are legal in a path but not in a single segment
+			// — notably `;` and `,`. The render URL should encode them the
+			// same way navigation/provisioning do (PathEscape semantics) for
+			// the single-segment repo slug.
+			name:    "Provisioning preview encodes segment-only-reserved chars in repo slug",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				ProvisioningPreview: &ProvisioningPreview{
+					Repo: "a;b,c",
+					Path: "dash.json",
+				},
+			},
+			contains: []string{
+				"/render/dashboard/provisioning/a%3Bb%2Cc/preview/dash.json",
+			},
+			notContains: []string{
+				"/provisioning/a;b,c/",
+			},
+		},
+		{
 			name:    "Provisioning preview with panel ID uses viewPanel (not d-solo)",
 			baseURL: "http://localhost:3000",
 			args: GetPanelImageParams{
