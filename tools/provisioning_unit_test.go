@@ -257,8 +257,10 @@ func TestValidateProvisioningFile_RejectsTraversal(t *testing.T) {
 		{"missing repo", ValidateProvisioningFileParams{Path: "dash.json"}, "repo is required"},
 		{"missing path", ValidateProvisioningFileParams{Repo: "ok"}, "path is required"},
 		{"repo with slash", ValidateProvisioningFileParams{Repo: "a/b", Path: "x.json"}, "must not contain path separators"},
-		{"repo is ..", ValidateProvisioningFileParams{Repo: "..", Path: "x.json"}, "must not be the parent-directory reference"},
-		{"path with ..", ValidateProvisioningFileParams{Repo: "ok", Path: "a/../b.json"}, "must not contain parent-directory segments"},
+		{"repo is ..", ValidateProvisioningFileParams{Repo: "..", Path: "x.json"}, "must not be a relative-directory reference"},
+		{"repo is .", ValidateProvisioningFileParams{Repo: ".", Path: "x.json"}, "must not be a relative-directory reference"},
+		{"path with ..", ValidateProvisioningFileParams{Repo: "ok", Path: "a/../b.json"}, "must not contain relative-directory segments"},
+		{"path with .", ValidateProvisioningFileParams{Repo: "ok", Path: "a/./b.json"}, "must not contain relative-directory segments"},
 	}
 	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: "http://example.invalid"})
 	for _, tc := range cases {

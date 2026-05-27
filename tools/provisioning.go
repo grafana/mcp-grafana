@@ -196,21 +196,24 @@ func validateRepoSlug(fieldName, repo string) error {
 	if strings.ContainsAny(repo, `/\`) {
 		return fmt.Errorf("%s must not contain path separators", fieldName)
 	}
-	if repo == ".." {
-		return fmt.Errorf("%s must not be the parent-directory reference", fieldName)
+	// Reject both ".." and "." since HTTP intermediaries that normalize
+	// these segments could collapse them out and redirect the request.
+	if repo == "." || repo == ".." {
+		return fmt.Errorf("%s must not be a relative-directory reference", fieldName)
 	}
 	return nil
 }
 
-// validateRepoPath rejects path values with parent-directory segments to
-// keep HTTP intermediaries that normalize ../ from redirecting the request.
+// validateRepoPath rejects path values with parent-directory or
+// current-directory segments to keep HTTP intermediaries that normalize
+// `..` or `.` from collapsing the path and redirecting the request.
 func validateRepoPath(fieldName, path string) error {
 	if path == "" {
 		return fmt.Errorf("%s is required", fieldName)
 	}
 	for _, seg := range strings.Split(path, "/") {
-		if seg == ".." {
-			return fmt.Errorf("%s must not contain parent-directory segments", fieldName)
+		if seg == "." || seg == ".." {
+			return fmt.Errorf("%s must not contain relative-directory segments", fieldName)
 		}
 	}
 	return nil

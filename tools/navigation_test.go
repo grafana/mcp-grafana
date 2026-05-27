@@ -368,8 +368,8 @@ func TestGenerateDeeplink(t *testing.T) {
 			want string
 		}{
 			{"repo with slash", "a/b", "x.json", "must not contain path separators"},
-			{"repo is ..", "..", "x.json", "must not be the parent-directory reference"},
-			{"path with ..", "ok", "a/../b.json", "must not contain parent-directory segments"},
+			{"repo is ..", "..", "x.json", "must not be a relative-directory reference"},
+			{"path with ..", "ok", "a/../b.json", "must not contain relative-directory segments"},
 		}
 		for _, tc := range cases {
 			t.Run(tc.name, func(t *testing.T) {
