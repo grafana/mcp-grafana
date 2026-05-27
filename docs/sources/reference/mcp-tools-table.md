@@ -108,6 +108,7 @@ The following table lists MCP tools, required RBAC permissions, and typical scop
 | `get_annotation_tags`             | Annotations | List annotation tags with optional filtering                        | `annotations:read`                      | `annotations:*`                                     |
 | `get_panel_image`                 | Rendering   | Render a stored dashboard or panel — or a provisioning preview from a repository branch — as a PNG image | `dashboards:read`                       | `dashboards:uid:abc123`                             |
 | `list_provisioning_repositories`  | Provisioning | List provisioning repositories (e.g. git-sync sources) with their source URL, branch, sync state, and health | `provisioning.repositories:read`        | N/A                                                 |
+| `validate_provisioning_file`      | Provisioning | Dry-run-apply a file from a provisioning repository and report admission validation errors | `provisioning.repositories:read`        | N/A                                                 |
 
 _* Categories marked with `*` are off until you add them to `--enabled-tools`._
 

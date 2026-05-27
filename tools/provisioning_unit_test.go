@@ -134,3 +134,152 @@ func TestListProvisioningRepositories_HTTPError(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "HTTP 403")
 }
+
+// -----------------------------------------------------------------------------
+// validate_provisioning_file
+// -----------------------------------------------------------------------------
+
+func TestValidateProvisioningFile_Valid(t *testing.T) {
+	var capturedURI string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedURI = r.RequestURI
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"path": "folder/dash.json",
+			"resource": map[string]any{
+				"action": "create",
+				"type": map[string]any{
+					"group":    "dashboard.grafana.app",
+					"kind":     "Dashboard",
+					"resource": "dashboards",
+					"version":  "v2",
+				},
+			},
+		})
+	}))
+	defer ts.Close()
+
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: ts.URL})
+	out, err := validateProvisioningFile(ctx, ValidateProvisioningFileParams{
+		Repo: "git-global",
+		Path: "folder/dash.json",
+		Ref:  "feature/branch",
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, "/apis/provisioning.grafana.app/v0alpha1/namespaces/default/repositories/git-global/files/folder/dash.json?ref=feature%2Fbranch", capturedURI)
+	assert.True(t, out.Valid)
+	assert.Equal(t, "create", out.Action)
+	require.NotNil(t, out.Type)
+	assert.Equal(t, "Dashboard", out.Type.Kind)
+	assert.Empty(t, out.Errors)
+}
+
+func TestValidateProvisioningFile_AdmissionInvalid(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"kind":       "Status",
+			"apiVersion": "v1",
+			"status":     "Failure",
+			"message":    `Dashboard.dashboard.grafana.app "x" is invalid: ...`,
+			"reason":     "Invalid",
+			"code":       422,
+			"details": map[string]any{
+				"group": "dashboard.grafana.app",
+				"kind":  "Dashboard",
+				"name":  "x",
+				"causes": []any{
+					map[string]any{
+						"reason":  "FieldValueInvalid",
+						"message": "incompatible list lengths",
+						"field":   "DashboardSpec.variables",
+					},
+					map[string]any{
+						"reason":  "FieldValueInvalid",
+						"message": `conflicting values "AdhocVariable" and "QueryVariable"`,
+						"field":   "DashboardSpec.variables.0.kind",
+					},
+				},
+			},
+		})
+	}))
+	defer ts.Close()
+
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: ts.URL})
+	out, err := validateProvisioningFile(ctx, ValidateProvisioningFileParams{
+		Repo: "git-global",
+		Path: "broken.json",
+	})
+
+	require.NoError(t, err)
+	assert.False(t, out.Valid)
+	require.Len(t, out.Errors, 2)
+	assert.Equal(t, "DashboardSpec.variables", out.Errors[0].Field)
+	assert.Equal(t, "FieldValueInvalid", out.Errors[0].Reason)
+	assert.Contains(t, out.Errors[0].Message, "incompatible list lengths")
+	assert.Equal(t, "DashboardSpec.variables.0.kind", out.Errors[1].Field)
+}
+
+func TestValidateProvisioningFile_StatusWithoutCauses(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"kind":    "Status",
+			"status":  "Failure",
+			"message": "could not parse: unexpected end of JSON input",
+			"reason":  "BadRequest",
+		})
+	}))
+	defer ts.Close()
+
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: ts.URL})
+	out, err := validateProvisioningFile(ctx, ValidateProvisioningFileParams{
+		Repo: "git-global",
+		Path: "bad.json",
+	})
+
+	require.NoError(t, err)
+	assert.False(t, out.Valid)
+	require.Len(t, out.Errors, 1)
+	assert.Equal(t, "could not parse: unexpected end of JSON input", out.Errors[0].Message)
+	assert.Equal(t, "BadRequest", out.Errors[0].Reason)
+}
+
+func TestValidateProvisioningFile_RejectsTraversal(t *testing.T) {
+	cases := []struct {
+		name string
+		args ValidateProvisioningFileParams
+		want string
+	}{
+		{"missing repo", ValidateProvisioningFileParams{Path: "dash.json"}, "repo is required"},
+		{"missing path", ValidateProvisioningFileParams{Repo: "ok"}, "path is required"},
+		{"repo with slash", ValidateProvisioningFileParams{Repo: "a/b", Path: "x.json"}, "must not contain path separators"},
+		{"repo is ..", ValidateProvisioningFileParams{Repo: "..", Path: "x.json"}, "must not be the parent-directory reference"},
+		{"path with ..", ValidateProvisioningFileParams{Repo: "ok", Path: "a/../b.json"}, "must not contain parent-directory segments"},
+	}
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: "http://example.invalid"})
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := validateProvisioningFile(ctx, tc.args)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.want)
+		})
+	}
+}
+
+func TestValidateProvisioningFile_NonStatusError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`<html>oops</html>`))
+	}))
+	defer ts.Close()
+
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: ts.URL})
+	_, err := validateProvisioningFile(ctx, ValidateProvisioningFileParams{Repo: "ok", Path: "x.json"})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "HTTP 500")
+}
