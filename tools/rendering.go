@@ -222,7 +222,7 @@ func buildRenderURL(baseURL string, args GetPanelImageParams) (string, error) {
 			Path: fmt.Sprintf(
 				"/render/dashboard/provisioning/%s/preview/%s",
 				args.ProvisioningPreview.Repo,
-				args.ProvisioningPreview.Path,
+				strings.TrimLeft(args.ProvisioningPreview.Path, "/"),
 			),
 		}
 		renderPath = previewURL.EscapedPath()

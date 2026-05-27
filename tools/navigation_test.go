@@ -360,6 +360,29 @@ func TestGenerateDeeplink(t *testing.T) {
 		assert.Contains(t, err.Error(), "mutually exclusive")
 	})
 
+	t.Run("Provisioning preview rejects traversal segments", func(t *testing.T) {
+		cases := []struct {
+			name string
+			repo string
+			path string
+			want string
+		}{
+			{"repo with slash", "a/b", "x.json", "must not contain path separators"},
+			{"repo is ..", "..", "x.json", "must not be the parent-directory reference"},
+			{"path with ..", "ok", "a/../b.json", "must not contain parent-directory segments"},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				_, err := generateDeeplink(ctx, GenerateDeeplinkParams{
+					ResourceType:        "dashboard",
+					ProvisioningPreview: &DeeplinkProvisioningPreview{Repo: tc.repo, Path: tc.path},
+				})
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tc.want)
+			})
+		}
+	})
+
 	t.Run("Provisioning preview requires repo and path", func(t *testing.T) {
 		params := GenerateDeeplinkParams{
 			ResourceType:        "dashboard",

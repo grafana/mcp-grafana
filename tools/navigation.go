@@ -350,6 +350,20 @@ func buildDashboardTargetURL(baseURL string, dashboardUID *string, preview *Deep
 	if preview.Path == "" {
 		return "", fmt.Errorf("provisioningPreview.path is required")
 	}
+	// url.PathEscape doesn't touch `..` (dots are valid path chars), so the
+	// generated link could point at an unintended Grafana page without these
+	// explicit checks. Mirrors the validation in tools/rendering.go.
+	if strings.ContainsAny(preview.Repo, `/\`) {
+		return "", fmt.Errorf("provisioningPreview.repo must not contain path separators")
+	}
+	if preview.Repo == ".." {
+		return "", fmt.Errorf("provisioningPreview.repo must not be the parent-directory reference")
+	}
+	for _, seg := range strings.Split(preview.Path, "/") {
+		if seg == ".." {
+			return "", fmt.Errorf("provisioningPreview.path must not contain parent-directory segments")
+		}
+	}
 
 	escapedPath := (&url.URL{Path: strings.TrimLeft(preview.Path, "/")}).EscapedPath()
 	target := fmt.Sprintf("%s/dashboard/provisioning/%s/preview/%s",

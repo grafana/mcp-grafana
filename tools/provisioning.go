@@ -88,7 +88,7 @@ func listProvisioningRepositories(ctx context.Context, args ListProvisioningRepo
 	}
 
 	endpoint := strings.TrimRight(cfg.URL, "/") +
-		fmt.Sprintf("/apis/provisioning.grafana.app/v0alpha1/namespaces/%s/repositories", ns)
+		fmt.Sprintf("/apis/provisioning.grafana.app/v0alpha1/namespaces/%s/repositories", url.PathEscape(ns))
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
