@@ -207,11 +207,14 @@ func validateRepoSlug(fieldName, repo string) error {
 // validateRepoPath rejects path values with parent-directory or
 // current-directory segments to keep HTTP intermediaries that normalize
 // `..` or `.` from collapsing the path and redirecting the request.
+// Backslash is normalized to a forward slash before the segment scan so
+// a value like `a\..\b` is rejected the same way `a/../b` is.
 func validateRepoPath(fieldName, path string) error {
 	if path == "" {
 		return fmt.Errorf("%s is required", fieldName)
 	}
-	for _, seg := range strings.Split(path, "/") {
+	normalized := strings.ReplaceAll(path, `\`, "/")
+	for _, seg := range strings.Split(normalized, "/") {
 		if seg == "." || seg == ".." {
 			return fmt.Errorf("%s must not contain relative-directory segments", fieldName)
 		}

@@ -261,6 +261,7 @@ func TestValidateProvisioningFile_RejectsTraversal(t *testing.T) {
 		{"repo is .", ValidateProvisioningFileParams{Repo: ".", Path: "x.json"}, "must not be a relative-directory reference"},
 		{"path with ..", ValidateProvisioningFileParams{Repo: "ok", Path: "a/../b.json"}, "must not contain relative-directory segments"},
 		{"path with .", ValidateProvisioningFileParams{Repo: "ok", Path: "a/./b.json"}, "must not contain relative-directory segments"},
+		{"path with backslash ..", ValidateProvisioningFileParams{Repo: "ok", Path: `a\..\b.json`}, "must not contain relative-directory segments"},
 	}
 	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: "http://example.invalid"})
 	for _, tc := range cases {
