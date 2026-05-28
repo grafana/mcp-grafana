@@ -121,6 +121,14 @@ func TestListProvisioningRepositories_NoURLConfigured(t *testing.T) {
 	assert.Contains(t, err.Error(), "grafana URL is not configured")
 }
 
+func TestListProvisioningRepositories_RejectsTraversalNamespace(t *testing.T) {
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: "http://example.invalid"})
+	_, err := listProvisioningRepositories(ctx, ListProvisioningRepositoriesParams{Namespace: ".."})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "namespace must not be a relative-directory reference")
+}
+
 func TestListProvisioningRepositories_HTTPError(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
@@ -262,6 +270,8 @@ func TestValidateProvisioningFile_RejectsTraversal(t *testing.T) {
 		{"path with ..", ValidateProvisioningFileParams{Repo: "ok", Path: "a/../b.json"}, "must not contain relative-directory segments"},
 		{"path with .", ValidateProvisioningFileParams{Repo: "ok", Path: "a/./b.json"}, "must not contain relative-directory segments"},
 		{"path with backslash ..", ValidateProvisioningFileParams{Repo: "ok", Path: `a\..\b.json`}, "must not contain relative-directory segments"},
+		{"namespace is ..", ValidateProvisioningFileParams{Namespace: "..", Repo: "ok", Path: "x.json"}, "namespace must not be a relative-directory reference"},
+		{"namespace with slash", ValidateProvisioningFileParams{Namespace: "a/b", Repo: "ok", Path: "x.json"}, "namespace must not contain path separators"},
 	}
 	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: "http://example.invalid"})
 	for _, tc := range cases {

@@ -81,6 +81,9 @@ func listProvisioningRepositories(ctx context.Context, args ListProvisioningRepo
 	if ns == "" {
 		ns = "default"
 	}
+	if err := validateRepoSlug("namespace", ns); err != nil {
+		return nil, err
+	}
 
 	transport, err := mcpgrafana.BuildTransport(&cfg, nil)
 	if err != nil {
@@ -275,6 +278,9 @@ func validateProvisioningFile(ctx context.Context, args ValidateProvisioningFile
 	ns := args.Namespace
 	if ns == "" {
 		ns = "default"
+	}
+	if err := validateRepoSlug("namespace", ns); err != nil {
+		return nil, err
 	}
 	escapedPath := (&url.URL{Path: strings.TrimLeft(args.Path, "/")}).EscapedPath()
 	endpoint := strings.TrimRight(cfg.URL, "/") + fmt.Sprintf(
