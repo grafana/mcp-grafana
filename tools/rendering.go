@@ -67,6 +67,7 @@ func (StringOrSlice) JSONSchema() *jsonschema.Schema {
 type GetPanelImageParams struct {
 	DashboardUID string                   `json:"dashboardUid" jsonschema:"required,description=The UID of the dashboard containing the panel"`
 	PanelID      *int                     `json:"panelId,omitempty" jsonschema:"description=The ID of the panel to render. If omitted\\, the entire dashboard is rendered"`
+	OrgID        *int                     `json:"orgId,omitempty" jsonschema:"description=The Grafana organization ID to render the panel in. Defaults to the default org (usually 1)"`
 	Width        *int                     `json:"width,omitempty" jsonschema:"description=Width of the rendered image in pixels. Defaults to 1000"`
 	Height       *int                     `json:"height,omitempty" jsonschema:"description=Height of the rendered image in pixels. Defaults to 500"`
 	TimeRange    *RenderTimeRange         `json:"timeRange,omitempty" jsonschema:"description=Time range for the rendered image"`
@@ -89,6 +90,16 @@ func getPanelImage(ctx context.Context, args GetPanelImageParams) (*mcp.CallTool
 		return nil, fmt.Errorf("grafana URL not configured. Please set GRAFANA_URL environment variable or X-Grafana-URL header")
 	}
 
+	// When a per-call orgId is provided, override the org for this request so the
+	// X-Grafana-Org-Id header added by the transport matches the render URL's
+	// orgId. Without this, a multi-org deployment would render the configured
+	// default org instead of the requested one.
+	reqCtx := ctx
+	if args.OrgID != nil {
+		config.OrgID = int64(*args.OrgID)
+		reqCtx = mcpgrafana.WithGrafanaConfig(ctx, config)
+	}
+
 	// Build the render URL
 	renderURL, err := buildRenderURL(baseURL, args)
 	if err != nil {
@@ -109,7 +120,7 @@ func getPanelImage(ctx context.Context, args GetPanelImageParams) (*mcp.CallTool
 	httpClient.Timeout = timeout
 
 	// Create request
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, renderURL, nil)
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, renderURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -168,6 +179,9 @@ func buildRenderURL(baseURL string, args GetPanelImageParams) (string, error) {
 	if args.PanelID != nil {
 		renderPath = fmt.Sprintf("/render/d-solo/%s", args.DashboardUID)
 		params.Set("panelId", strconv.Itoa(*args.PanelID))
+	}
+	if args.OrgID != nil {
+		params.Set("orgId", strconv.Itoa(*args.OrgID))
 	}
 
 	// Set dimensions
