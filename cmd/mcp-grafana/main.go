@@ -312,6 +312,7 @@ func newServer(transport string, dt disabledTools, obs *observability.Observabil
 	s = server.NewMCPServer("mcp-grafana", mcpgrafana.Version(),
 		server.WithInstructions(instructions),
 		server.WithHooks(hooks),
+		server.WithInputSchemaValidation(),
 	)
 
 	// Initialize ToolManager now that server is created
