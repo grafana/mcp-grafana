@@ -104,17 +104,6 @@ func newElasticsearchBackend(ctx context.Context, ds *models.DataSource) (*elast
 	}, nil
 }
 
-// buildURL constructs a full URL for an Elasticsearch API endpoint
-func (b *elasticsearchBackend) buildURL(urlPath string) string {
-	fullURL := b.baseURL
-	if !strings.HasSuffix(fullURL, "/") && !strings.HasPrefix(urlPath, "/") {
-		fullURL += "/"
-	} else if strings.HasSuffix(fullURL, "/") && strings.HasPrefix(urlPath, "/") {
-		urlPath = strings.TrimPrefix(urlPath, "/")
-	}
-	return fullURL + urlPath
-}
-
 // elasticsearchResponse represents a generic Elasticsearch search response
 type elasticsearchResponse struct {
 	Took     int                    `json:"took"`
@@ -166,7 +155,7 @@ func (b *elasticsearchBackend) Search(ctx context.Context, index, query string, 
 	payload.Write(queryBytes)
 	payload.WriteByte('\n')
 
-	fullURL := b.buildURL("/_msearch")
+	fullURL := buildURL(b.baseURL, "/_msearch")
 
 	req, err := http.NewRequestWithContext(ctx, "POST", fullURL, &payload)
 	if err != nil {
