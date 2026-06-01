@@ -226,6 +226,11 @@ func validateRepoPath(fieldName, path string) error {
 		return fmt.Errorf("%s is required", fieldName)
 	}
 	normalized := strings.ReplaceAll(path, `\`, "/")
+	// A path of only separators (e.g. "/" or "///") has no real segment and
+	// would build a file URL with an empty trailing segment.
+	if strings.Trim(normalized, "/") == "" {
+		return fmt.Errorf("%s must reference a file", fieldName)
+	}
 	for _, seg := range strings.Split(normalized, "/") {
 		if seg == "." || seg == ".." {
 			return fmt.Errorf("%s must not contain relative-directory segments", fieldName)

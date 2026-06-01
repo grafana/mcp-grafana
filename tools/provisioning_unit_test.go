@@ -297,6 +297,8 @@ func TestValidateProvisioningFile_RejectsTraversal(t *testing.T) {
 		{"path with ..", ValidateProvisioningFileParams{Repo: "ok", Path: "a/../b.json"}, "must not contain relative-directory segments"},
 		{"path with .", ValidateProvisioningFileParams{Repo: "ok", Path: "a/./b.json"}, "must not contain relative-directory segments"},
 		{"path with backslash ..", ValidateProvisioningFileParams{Repo: "ok", Path: `a\..\b.json`}, "must not contain relative-directory segments"},
+		{"path is a single slash", ValidateProvisioningFileParams{Repo: "ok", Path: "/"}, "must reference a file"},
+		{"path is only slashes", ValidateProvisioningFileParams{Repo: "ok", Path: "///"}, "must reference a file"},
 		{"namespace is ..", ValidateProvisioningFileParams{Namespace: "..", Repo: "ok", Path: "x.json"}, "namespace must not be a relative-directory reference"},
 		{"namespace with slash", ValidateProvisioningFileParams{Namespace: "a/b", Repo: "ok", Path: "x.json"}, "namespace must not contain path separators"},
 	}
