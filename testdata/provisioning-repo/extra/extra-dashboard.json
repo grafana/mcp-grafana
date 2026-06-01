@@ -1,0 +1,35 @@
+{
+  "apiVersion": "dashboard.grafana.app/v2",
+  "kind": "Dashboard",
+  "metadata": {
+    "name": "integration-test-extra"
+  },
+  "spec": {
+    "title": "Integration test extra dashboard",
+    "description": "Only present on the feature/extra-dashboard branch; tests that the ref parameter resolves branch-specific files.",
+    "annotations": [],
+    "cursorSync": "Off",
+    "editable": true,
+    "elements": {},
+    "layout": {
+      "kind": "GridLayout",
+      "spec": {
+        "items": []
+      }
+    },
+    "links": [],
+    "liveNow": false,
+    "preload": false,
+    "tags": ["integration-test"],
+    "timeSettings": {
+      "from": "now-6h",
+      "to": "now",
+      "autoRefresh": "",
+      "autoRefreshIntervals": [],
+      "fiscalYearStartMonth": 0,
+      "hideTimepicker": false,
+      "timezone": "browser"
+    },
+    "variables": []
+  }
+}
