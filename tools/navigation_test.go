@@ -242,7 +242,7 @@ func TestGenerateDeeplink(t *testing.T) {
 		}
 		_, err = generateDeeplink(ctx, params)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "dashboardUid is required")
+		assert.Contains(t, err.Error(), "either dashboardUid or provisioningPreview must be set")
 
 		// Test missing dashboardUid for panel
 		params = GenerateDeeplinkParams{
@@ -250,7 +250,7 @@ func TestGenerateDeeplink(t *testing.T) {
 		}
 		_, err = generateDeeplink(ctx, params)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "dashboardUid is required")
+		assert.Contains(t, err.Error(), "either dashboardUid or provisioningPreview must be set")
 
 		// Test missing panelId for panel
 		params = GenerateDeeplinkParams{
@@ -268,6 +268,136 @@ func TestGenerateDeeplink(t *testing.T) {
 		_, err = generateDeeplink(ctx, params)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "datasourceUid is required")
+	})
+
+	t.Run("Provisioning preview dashboard deeplink", func(t *testing.T) {
+		params := GenerateDeeplinkParams{
+			ResourceType: "dashboard",
+			ProvisioningPreview: &DeeplinkProvisioningPreview{
+				Repo: "git-global",
+				Path: "otel-migration/compare.json",
+				Ref:  "madaraszg/otel-migration-dashboard",
+			},
+		}
+
+		deeplink, err := generateDeeplink(ctx, params)
+		require.NoError(t, err)
+		assert.Equal(t, "http://localhost:3000/dashboard/provisioning/git-global/preview/otel-migration/compare.json?ref=madaraszg%2Fotel-migration-dashboard", deeplink)
+	})
+
+	t.Run("Provisioning preview panel deeplink", func(t *testing.T) {
+		panelID := 5
+		params := GenerateDeeplinkParams{
+			ResourceType: "panel",
+			ProvisioningPreview: &DeeplinkProvisioningPreview{
+				Repo: "git-global",
+				Path: "otel-migration/compare.json",
+				Ref:  "feature-branch",
+			},
+			PanelID: &panelID,
+		}
+
+		deeplink, err := generateDeeplink(ctx, params)
+		require.NoError(t, err)
+		assert.Contains(t, deeplink, "/dashboard/provisioning/git-global/preview/otel-migration/compare.json")
+		assert.Contains(t, deeplink, "ref=feature-branch")
+		assert.Contains(t, deeplink, "viewPanel=5")
+	})
+
+	t.Run("Provisioning preview with pull request URL", func(t *testing.T) {
+		params := GenerateDeeplinkParams{
+			ResourceType: "dashboard",
+			ProvisioningPreview: &DeeplinkProvisioningPreview{
+				Repo:           "git-global",
+				Path:           "folder/dash.json",
+				Ref:            "pr-branch",
+				PullRequestURL: "https://github.com/example/repo/pull/42",
+			},
+		}
+
+		deeplink, err := generateDeeplink(ctx, params)
+		require.NoError(t, err)
+		u, err := url.Parse(deeplink)
+		require.NoError(t, err)
+		assert.Equal(t, "/dashboard/provisioning/git-global/preview/folder/dash.json", u.Path)
+		assert.Equal(t, "pr-branch", u.Query().Get("ref"))
+		assert.Equal(t, "https://github.com/example/repo/pull/42", u.Query().Get("pull_request_url"))
+	})
+
+	t.Run("Provisioning preview escapes spaces in path", func(t *testing.T) {
+		params := GenerateDeeplinkParams{
+			ResourceType: "dashboard",
+			ProvisioningPreview: &DeeplinkProvisioningPreview{
+				Repo: "git-global",
+				Path: "folder name/dash file.json",
+			},
+		}
+
+		deeplink, err := generateDeeplink(ctx, params)
+		require.NoError(t, err)
+		// Spaces are percent-encoded but the structural / separators are preserved.
+		assert.Contains(t, deeplink, "/dashboard/provisioning/git-global/preview/folder%20name/dash%20file.json")
+	})
+
+	t.Run("Dashboard requires uid or provisioning preview", func(t *testing.T) {
+		params := GenerateDeeplinkParams{ResourceType: "dashboard"}
+		_, err := generateDeeplink(ctx, params)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "either dashboardUid or provisioningPreview must be set")
+	})
+
+	t.Run("Dashboard rejects empty dashboardUid", func(t *testing.T) {
+		params := GenerateDeeplinkParams{ResourceType: "dashboard", DashboardUID: stringPtr("")}
+		_, err := generateDeeplink(ctx, params)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "either dashboardUid or provisioningPreview must be set")
+	})
+
+	t.Run("Dashboard rejects both uid and provisioning preview", func(t *testing.T) {
+		params := GenerateDeeplinkParams{
+			ResourceType: "dashboard",
+			DashboardUID: stringPtr("abc123"),
+			ProvisioningPreview: &DeeplinkProvisioningPreview{
+				Repo: "git-global",
+				Path: "x.json",
+			},
+		}
+		_, err := generateDeeplink(ctx, params)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "mutually exclusive")
+	})
+
+	t.Run("Provisioning preview rejects traversal segments", func(t *testing.T) {
+		cases := []struct {
+			name string
+			repo string
+			path string
+			want string
+		}{
+			{"repo with slash", "a/b", "x.json", "must not contain path separators"},
+			{"repo is ..", "..", "x.json", "must not be a relative-directory reference"},
+			{"path with ..", "ok", "a/../b.json", "must not contain relative-directory segments"},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				_, err := generateDeeplink(ctx, GenerateDeeplinkParams{
+					ResourceType:        "dashboard",
+					ProvisioningPreview: &DeeplinkProvisioningPreview{Repo: tc.repo, Path: tc.path},
+				})
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tc.want)
+			})
+		}
+	})
+
+	t.Run("Provisioning preview requires repo and path", func(t *testing.T) {
+		params := GenerateDeeplinkParams{
+			ResourceType:        "dashboard",
+			ProvisioningPreview: &DeeplinkProvisioningPreview{Repo: "git-global"},
+		}
+		_, err := generateDeeplink(ctx, params)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "path is required")
 	})
 }
 

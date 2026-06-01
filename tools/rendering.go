@@ -65,7 +65,7 @@ func (StringOrSlice) JSONSchema() *jsonschema.Schema {
 }
 
 type GetPanelImageParams struct {
-	DashboardUID string                   `json:"dashboardUid" jsonschema:"required,description=The UID of the dashboard containing the panel"`
+	DashboardUID string                   `json:"dashboardUid,omitempty" jsonschema:"description=The UID of a stored dashboard containing the panel. Required unless provisioningPreview is provided."`
 	PanelID      *int                     `json:"panelId,omitempty" jsonschema:"description=The ID of the panel to render. If omitted\\, the entire dashboard is rendered"`
 	Width        *int                     `json:"width,omitempty" jsonschema:"description=Width of the rendered image in pixels. Defaults to 1000"`
 	Height       *int                     `json:"height,omitempty" jsonschema:"description=Height of the rendered image in pixels. Defaults to 500"`
@@ -74,11 +74,25 @@ type GetPanelImageParams struct {
 	Theme        *string                  `json:"theme,omitempty" jsonschema:"description=Theme for the rendered image: light or dark. Defaults to dark"`
 	Scale        *int                     `json:"scale,omitempty" jsonschema:"description=Scale factor for the image (1-3). Defaults to 1"`
 	Timeout      *int                     `json:"timeout,omitempty" jsonschema:"description=Rendering timeout in seconds. Defaults to 60"`
+	// ProvisioningPreview renders a dashboard from a provisioning repository
+	// branch that has not yet been merged or applied. Mutually exclusive with
+	// dashboardUid.
+	ProvisioningPreview *ProvisioningPreview `json:"provisioningPreview,omitempty" jsonschema:"description=Render a dashboard from a provisioning repository branch (e.g. a git-sync PR preview). Mutually exclusive with dashboardUid."`
 }
 
 type RenderTimeRange struct {
 	From string `json:"from" jsonschema:"description=Start time (e.g.\\, 'now-1h'\\, '2024-01-01T00:00:00Z')"`
 	To   string `json:"to" jsonschema:"description=End time (e.g.\\, 'now'\\, '2024-01-01T12:00:00Z')"`
+}
+
+// ProvisioningPreview identifies a not-yet-applied dashboard inside a
+// provisioning repository, e.g. one staged on a feature branch via git-sync.
+// The renderer loads the dashboard at /dashboard/provisioning/<repo>/preview/<path>
+// instead of looking it up by UID.
+type ProvisioningPreview struct {
+	Repo string `json:"repo" jsonschema:"required,description=Provisioning repository slug. List repositories via /apis/provisioning.grafana.app/v0alpha1/namespaces/default/repositories if unknown."`
+	Path string `json:"path" jsonschema:"required,description=Path to the dashboard file within the repository\\, relative to its root."`
+	Ref  string `json:"ref,omitempty" jsonschema:"description=Branch or commit SHA to render from. Defaults to the repository's main branch when omitted."`
 }
 
 func getPanelImage(ctx context.Context, args GetPanelImageParams) (*mcp.CallToolResult, error) {
@@ -155,19 +169,64 @@ func getPanelImage(ctx context.Context, args GetPanelImageParams) (*mcp.CallTool
 }
 
 func buildRenderURL(baseURL string, args GetPanelImageParams) (string, error) {
+	// Validate that exactly one source is set.
+	hasUID := args.DashboardUID != ""
+	hasPreview := args.ProvisioningPreview != nil
+	if hasUID == hasPreview {
+		if hasUID {
+			return "", fmt.Errorf("dashboardUid and provisioningPreview are mutually exclusive; pass exactly one")
+		}
+		return "", fmt.Errorf("either dashboardUid or provisioningPreview must be set")
+	}
+	if hasPreview {
+		if err := validateRepoSlug("provisioningPreview.repo", args.ProvisioningPreview.Repo); err != nil {
+			return "", err
+		}
+		if err := validateRepoPath("provisioningPreview.path", args.ProvisioningPreview.Path); err != nil {
+			return "", err
+		}
+	}
+
 	// Strip trailing slashes from base URL for consistent URL construction
 	baseURL = strings.TrimRight(baseURL, "/")
 
 	// Build query parameters
 	params := url.Values{}
 
-	// Single-panel renders use the purpose-built /d-solo route (lighter than loading
-	// the full dashboard with viewPanel). Full dashboard renders use /d as default.
-	renderPath := fmt.Sprintf("/render/d/%s", args.DashboardUID)
-
-	if args.PanelID != nil {
-		renderPath = fmt.Sprintf("/render/d-solo/%s", args.DashboardUID)
-		params.Set("panelId", strconv.Itoa(*args.PanelID))
+	// Choose render path. For stored dashboards we use the purpose-built /d-solo
+	// route for single-panel renders (lighter than loading the full dashboard
+	// with viewPanel); full dashboard renders use /d. For provisioning previews
+	// the same route is used for both since the preview UI handles ?panelId
+	// via the standard kiosk/viewPanel mechanism.
+	var renderPath string
+	if hasPreview {
+		// Repo is a single segment and gets the stricter url.PathEscape (which
+		// also encodes sub-delim characters like @, $, &, ;, =, :). For the
+		// multi-segment file path we use url.URL.EscapedPath() so structural /
+		// separators between segments are preserved while everything else that
+		// isn't valid in a URL path is percent-encoded. This matches the
+		// encoding done by tools/navigation.go and tools/provisioning.go.
+		// Note: we build the path by string-concatenation rather than via
+		// `url.URL{Path: ...}` because url.URL would re-escape our PathEscape
+		// output (turning %40 into %2540).
+		escapedFile := (&url.URL{Path: strings.TrimLeft(args.ProvisioningPreview.Path, "/")}).EscapedPath()
+		renderPath = fmt.Sprintf(
+			"/render/dashboard/provisioning/%s/preview/%s",
+			url.PathEscape(args.ProvisioningPreview.Repo),
+			escapedFile,
+		)
+		if args.ProvisioningPreview.Ref != "" {
+			params.Set("ref", args.ProvisioningPreview.Ref)
+		}
+		if args.PanelID != nil {
+			params.Set("viewPanel", strconv.Itoa(*args.PanelID))
+		}
+	} else {
+		renderPath = fmt.Sprintf("/render/d/%s", args.DashboardUID)
+		if args.PanelID != nil {
+			renderPath = fmt.Sprintf("/render/d-solo/%s", args.DashboardUID)
+			params.Set("panelId", strconv.Itoa(*args.PanelID))
+		}
 	}
 
 	// Set dimensions
@@ -228,7 +287,9 @@ func createHTTPClient(config mcpgrafana.GrafanaConfig) (*http.Client, error) {
 
 var GetPanelImage = mcpgrafana.MustTool(
 	"get_panel_image",
-	"Render a Grafana dashboard panel or full dashboard as a PNG image. Returns the image as base64 encoded data. Requires the Grafana Image Renderer service to be installed. Use this for generating visual snapshots of dashboards for reports\\, alerts\\, or presentations.",
+	"Render a Grafana dashboard panel or full dashboard as a PNG image. Returns the image as base64 encoded data. Requires the Grafana Image Renderer service to be installed. "+
+		"Either dashboardUid (for stored dashboards) or provisioningPreview (for dashboards staged on a provisioning repository branch, e.g. a git-sync PR) must be supplied. "+
+		"Use this for generating visual snapshots of dashboards for reports, alerts, or presentations.",
 	getPanelImage,
 	mcp.WithTitleAnnotation("Get panel or dashboard image"),
 	mcp.WithIdempotentHintAnnotation(true),
