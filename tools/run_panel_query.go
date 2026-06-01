@@ -1,12 +1,9 @@
 package tools
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"regexp"
 	"strings"
 	"time"
@@ -515,14 +512,7 @@ func executeCloudWatchPanelQuery(ctx context.Context, datasourceUID string, pane
 		target["refId"] = "A"
 	}
 
-	// Build /api/ds/query payload
-	payload := map[string]interface{}{
-		"queries": []map[string]interface{}{target},
-		"from":    fmt.Sprintf("%d", startTime.UnixMilli()),
-		"to":      fmt.Sprintf("%d", endTime.UnixMilli()),
-	}
-
-	return executeGrafanaDSQuery(ctx, payload)
+	return executeGrafanaDSQuery(ctx, dsQueryPayload(startTime, endTime, target))
 }
 
 // executeInfluxDBQuery runs an InfluxDB panel query using queryInfluxDB. The
@@ -545,65 +535,19 @@ func executeInfluxDBQuery(ctx context.Context, datasourceUID string, panelData *
 	})
 }
 
-// executeGrafanaDSQuery executes a query through Grafana's /api/ds/query endpoint
+// executeGrafanaDSQuery executes a query through Grafana's /api/ds/query endpoint.
 func executeGrafanaDSQuery(ctx context.Context, payload map[string]interface{}) (interface{}, error) {
-	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
-	baseURL := cfg.URL
-
-	transport, err := mcpgrafana.BuildTransport(&cfg, nil)
+	client, baseURL, err := newDSQueryHTTPClient(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create transport: %w", err)
+		return nil, err
 	}
 
-	client := &http.Client{
-		Transport: transport,
-		Timeout:   30 * time.Second,
-	}
-
-	payloadBytes, err := json.Marshal(payload)
+	resp, err := doDSQuery(ctx, client, baseURL, payload)
 	if err != nil {
-		return nil, fmt.Errorf("marshaling query payload: %w", err)
+		return nil, err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", baseURL+"/api/ds/query", bytes.NewReader(payloadBytes))
-	if err != nil {
-		return nil, fmt.Errorf("creating request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("executing query: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	bodyBytes, err := readResponseBody(resp.Body, defaultResponseLimitBytes)
-	if err != nil {
-		return nil, fmt.Errorf("reading response: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		// Try to extract error message from JSON response
-		var errResult map[string]interface{}
-		if json.Unmarshal(bodyBytes, &errResult) == nil {
-			if errMsg, ok := errResult["message"].(string); ok {
-				return nil, fmt.Errorf("query failed: %s", errMsg)
-			}
-		}
-		return nil, fmt.Errorf("query failed with status %d: %s", resp.StatusCode, string(bodyBytes))
-	}
-
-	var result map[string]interface{}
-	if err := json.Unmarshal(bodyBytes, &result); err != nil {
-		return nil, fmt.Errorf("decoding response: %w", err)
-	}
-
-	// Return the results from the response
-	if results, ok := result["results"].(map[string]interface{}); ok {
-		return results, nil
-	}
-
-	return result, nil
+	return resp.Responses, nil
 }
 
 // substituteGrafanaMacros substitutes Grafana temporal macros ($__range, $__rate_interval, $__interval)
