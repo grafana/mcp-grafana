@@ -20,6 +20,21 @@ func stringPtr(s string) *string {
 	return &s
 }
 
+func newShortenTestServer(t *testing.T, handler http.HandlerFunc) *httptest.Server {
+	ts := httptest.NewServer(handler)
+	t.Cleanup(ts.Close)
+	return ts
+}
+
+func newShortenTestContext(apiURL, publicURL, apiKey string) context.Context {
+	cfg := mcpgrafana.GrafanaConfig{URL: apiURL, APIKey: apiKey}
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), cfg)
+	if publicURL == "" {
+		return ctx
+	}
+	return mcpgrafana.WithGrafanaClient(ctx, &mcpgrafana.GrafanaClient{PublicURL: publicURL})
+}
+
 func TestGenerateDeeplink(t *testing.T) {
 	grafanaCfg := mcpgrafana.GrafanaConfig{
 		URL: "http://localhost:3000",
@@ -257,9 +272,11 @@ func TestGenerateDeeplink(t *testing.T) {
 }
 
 func TestShortenURL(t *testing.T) {
+	const longDashboardURL = "https://grafana.example.com/d/test"
+
 	t.Run("Success", func(t *testing.T) {
 		var capturedPath string
-		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ts := newShortenTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			require.Equal(t, http.MethodPost, r.Method)
 			require.Equal(t, "/api/short-urls", r.URL.Path)
 			require.Equal(t, "application/json", r.Header.Get("Content-Type"))
@@ -271,13 +288,8 @@ func TestShortenURL(t *testing.T) {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"uid":"abc123","url":"https://grafana.example.com/goto/abc123"}`))
 		}))
-		t.Cleanup(ts.Close)
 
-		cfg := mcpgrafana.GrafanaConfig{URL: ts.URL}
-		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), cfg)
-		ctx = mcpgrafana.WithGrafanaClient(ctx, &mcpgrafana.GrafanaClient{
-			PublicURL: "https://grafana.example.com",
-		})
+		ctx := newShortenTestContext(ts.URL, "https://grafana.example.com", "")
 
 		result, err := shortenURL(ctx, "https://grafana.example.com/explore?left=%7B%22datasource%22%3A%22abc%22%7D")
 		require.NoError(t, err)
@@ -287,65 +299,55 @@ func TestShortenURL(t *testing.T) {
 
 	t.Run("Includes auth headers", func(t *testing.T) {
 		var capturedAuth string
-		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ts := newShortenTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			capturedAuth = r.Header.Get("Authorization")
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"uid":"abc123","url":"https://grafana.example.com/goto/abc123"}`))
 		}))
-		t.Cleanup(ts.Close)
 
-		cfg := mcpgrafana.GrafanaConfig{URL: ts.URL, APIKey: "glsa_test_token"}
-		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), cfg)
+		ctx := newShortenTestContext(ts.URL, "", "glsa_test_token")
 
-		_, err := shortenURL(ctx, "https://grafana.example.com/d/test")
+		_, err := shortenURL(ctx, longDashboardURL)
 		require.NoError(t, err)
 		assert.Equal(t, "Bearer glsa_test_token", capturedAuth)
 	})
 
 	t.Run("Rejects invalid URL", func(t *testing.T) {
-		cfg := mcpgrafana.GrafanaConfig{URL: "http://localhost:3000"}
-		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), cfg)
+		ctx := newShortenTestContext("http://localhost:3000", "", "")
 		_, err := shortenURL(ctx, "http://%zz")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid url")
 	})
 
 	t.Run("No grafana URL configured", func(t *testing.T) {
-		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{})
-		_, err := shortenURL(ctx, "https://grafana.example.com/d/test")
+		ctx := newShortenTestContext("", "", "")
+		_, err := shortenURL(ctx, longDashboardURL)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "grafana url not configured")
 	})
 
 	t.Run("Relative short URL response", func(t *testing.T) {
-		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ts := newShortenTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"uid":"abc123","url":"/goto/abc123"}`))
 		}))
-		t.Cleanup(ts.Close)
 
-		cfg := mcpgrafana.GrafanaConfig{URL: ts.URL}
-		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), cfg)
+		ctx := newShortenTestContext(ts.URL, "", "")
 
-		result, err := shortenURL(ctx, "https://grafana.example.com/d/test")
+		result, err := shortenURL(ctx, longDashboardURL)
 		require.NoError(t, err)
 		assert.Equal(t, ts.URL+"/goto/abc123", result)
 	})
 
 	t.Run("Uses API URL for shorten request and Public URL for relative return", func(t *testing.T) {
 		var requestHost string
-		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ts := newShortenTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			requestHost = r.Host
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"uid":"abc123","url":"/goto/abc123"}`))
 		}))
-		t.Cleanup(ts.Close)
 
-		cfg := mcpgrafana.GrafanaConfig{URL: ts.URL}
-		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), cfg)
-		ctx = mcpgrafana.WithGrafanaClient(ctx, &mcpgrafana.GrafanaClient{
-			PublicURL: "https://grafana.public.example.com",
-		})
+		ctx := newShortenTestContext(ts.URL, "https://grafana.public.example.com", "")
 
 		result, err := shortenURL(ctx, "https://grafana.public.example.com/d/test")
 		require.NoError(t, err)
@@ -354,17 +356,12 @@ func TestShortenURL(t *testing.T) {
 	})
 
 	t.Run("Rebases absolute short URL response to Public URL host", func(t *testing.T) {
-		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ts := newShortenTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"uid":"abc123","url":"http://internal-grafana:3000/goto/abc123"}`))
 		}))
-		t.Cleanup(ts.Close)
 
-		cfg := mcpgrafana.GrafanaConfig{URL: ts.URL}
-		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), cfg)
-		ctx = mcpgrafana.WithGrafanaClient(ctx, &mcpgrafana.GrafanaClient{
-			PublicURL: "https://grafana.public.example.com",
-		})
+		ctx := newShortenTestContext(ts.URL, "https://grafana.public.example.com", "")
 
 		result, err := shortenURL(ctx, "https://grafana.public.example.com/d/test")
 		require.NoError(t, err)
@@ -372,32 +369,28 @@ func TestShortenURL(t *testing.T) {
 	})
 
 	t.Run("Non-2xx response returns error", func(t *testing.T) {
-		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ts := newShortenTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusInternalServerError)
 			_, _ = w.Write([]byte(`{"message":"boom"}`))
 		}))
-		t.Cleanup(ts.Close)
 
-		cfg := mcpgrafana.GrafanaConfig{URL: ts.URL}
-		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), cfg)
+		ctx := newShortenTestContext(ts.URL, "", "")
 
-		_, err := shortenURL(ctx, "https://grafana.example.com/d/test")
+		_, err := shortenURL(ctx, longDashboardURL)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "create short url failed with status 500")
 	})
 
 	t.Run("Missing url field in response returns error", func(t *testing.T) {
-		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ts := newShortenTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"uid":"abc123"}`))
 		}))
-		t.Cleanup(ts.Close)
 
-		cfg := mcpgrafana.GrafanaConfig{URL: ts.URL}
-		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), cfg)
+		ctx := newShortenTestContext(ts.URL, "", "")
 
-		_, err := shortenURL(ctx, "https://grafana.example.com/d/test")
+		_, err := shortenURL(ctx, longDashboardURL)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "missing url field")
 	})
@@ -405,17 +398,14 @@ func TestShortenURL(t *testing.T) {
 
 func TestGenerateDeeplink_ShortenCompatibilityFallback(t *testing.T) {
 	t.Run("Returns shortened URL when shortening succeeds", func(t *testing.T) {
-		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ts := newShortenTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			require.Equal(t, http.MethodPost, r.Method)
 			require.Equal(t, "/api/short-urls", r.URL.Path)
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"uid":"abc123","url":"https://grafana.example.com/goto/abc123"}`))
 		}))
-		t.Cleanup(ts.Close)
 
-		cfg := mcpgrafana.GrafanaConfig{URL: ts.URL}
-		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), cfg)
-		ctx = mcpgrafana.WithGrafanaClient(ctx, &mcpgrafana.GrafanaClient{PublicURL: "https://grafana.example.com"})
+		ctx := newShortenTestContext(ts.URL, "https://grafana.example.com", "")
 
 		result, err := generateDeeplink(ctx, GenerateDeeplinkParams{
 			ResourceType: "dashboard",
@@ -427,16 +417,13 @@ func TestGenerateDeeplink_ShortenCompatibilityFallback(t *testing.T) {
 	})
 
 	t.Run("Falls back to long URL when shortening fails", func(t *testing.T) {
-		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ts := newShortenTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusForbidden)
 			_, _ = w.Write([]byte(`{"message":"forbidden"}`))
 		}))
-		t.Cleanup(ts.Close)
 
-		cfg := mcpgrafana.GrafanaConfig{URL: ts.URL}
-		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), cfg)
-		ctx = mcpgrafana.WithGrafanaClient(ctx, &mcpgrafana.GrafanaClient{PublicURL: "https://grafana.example.com"})
+		ctx := newShortenTestContext(ts.URL, "https://grafana.example.com", "")
 
 		result, err := generateDeeplink(ctx, GenerateDeeplinkParams{
 			ResourceType: "dashboard",
@@ -448,8 +435,7 @@ func TestGenerateDeeplink_ShortenCompatibilityFallback(t *testing.T) {
 	})
 
 	t.Run("Read-only mode ignores shorten and returns long URL", func(t *testing.T) {
-		cfg := mcpgrafana.GrafanaConfig{URL: "http://localhost:3000"}
-		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), cfg)
+		ctx := newShortenTestContext("http://localhost:3000", "", "")
 
 		result, err := generateDeeplinkReadOnly(ctx, GenerateDeeplinkParams{
 			ResourceType: "dashboard",
