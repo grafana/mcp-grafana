@@ -1,9 +1,11 @@
 package tools
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
@@ -23,6 +25,7 @@ type GenerateDeeplinkParams struct {
 	Queries       []map[string]interface{} `json:"queries,omitempty" jsonschema:"description=List of query objects for explore links (e.g. [{\"refId\":\"A\"\\,\"expr\":\"up\"}])"`
 	QueryParams   map[string]string        `json:"queryParams,omitempty" jsonschema:"description=Additional URL query parameters (for dashboard/panel types)"`
 	TimeRange     *TimeRange               `json:"timeRange,omitempty" jsonschema:"description=Time range for the link"`
+	Shorten       bool                     `json:"shorten,omitempty" jsonschema:"description=If true\\, try to shorten the generated URL to /goto/<uid>. If shortening fails\\, return the original deeplink."`
 }
 
 type TimeRange struct {
@@ -30,7 +33,7 @@ type TimeRange struct {
 	To   string `json:"to" jsonschema:"description=End time (e.g.\\, 'now')"`
 }
 
-func generateDeeplink(ctx context.Context, args GenerateDeeplinkParams) (string, error) {
+func grafanaBaseURLFromContext(ctx context.Context) (string, error) {
 	// Prefer the public URL from the Grafana client (fetched from /api/frontend/settings),
 	// falling back to the configured URL if the client is not available or has no public URL.
 	var baseURL string
@@ -53,6 +56,14 @@ func generateDeeplink(ctx context.Context, args GenerateDeeplinkParams) (string,
 	// (e.g. http://%gg/d/<uid>) unless checked here.
 	if err := mcpgrafana.ValidateGrafanaURL(baseURL); err != nil {
 		return "", fmt.Errorf("grafana url is invalid: %w. Please set GRAFANA_URL environment variable or X-Grafana-URL header", err)
+	}
+	return baseURL, nil
+}
+
+func generateDeeplinkWithMode(ctx context.Context, args GenerateDeeplinkParams, allowShorten bool) (string, error) {
+	baseURL, err := grafanaBaseURLFromContext(ctx)
+	if err != nil {
+		return "", err
 	}
 
 	var deeplink string
@@ -145,20 +156,161 @@ func generateDeeplink(ctx context.Context, args GenerateDeeplinkParams) (string,
 		deeplink = fmt.Sprintf("%s%s%s", deeplink, separator, additionalParams.Encode())
 	}
 
-	return deeplink, nil
+	if !args.Shorten {
+		return deeplink, nil
+	}
+
+	if !allowShorten {
+		mcpgrafana.LoggerFromContext(ctx).DebugContext(ctx,
+			"generate_deeplink shorten requested while write tools are disabled; returning full URL")
+		return deeplink, nil
+	}
+
+	shortURL, err := shortenURL(ctx, deeplink)
+	if err != nil {
+		// Compatibility-first behavior: never fail deeplink generation when
+		// short-url creation is unavailable; return the long URL instead.
+		mcpgrafana.LoggerFromContext(ctx).WarnContext(ctx,
+			"failed to shorten generated deeplink; returning full URL",
+			"error", err)
+		return deeplink, nil
+	}
+
+	return shortURL, nil
+}
+
+func generateDeeplink(ctx context.Context, args GenerateDeeplinkParams) (string, error) {
+	return generateDeeplinkWithMode(ctx, args, true)
+}
+
+func generateDeeplinkReadOnly(ctx context.Context, args GenerateDeeplinkParams) (string, error) {
+	return generateDeeplinkWithMode(ctx, args, false)
+}
+
+func shortenURL(ctx context.Context, longURL string) (string, error) {
+	publicBaseURL, err := grafanaBaseURLFromContext(ctx)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(longURL) == "" {
+		return "", fmt.Errorf("url is required")
+	}
+
+	parsedURL, err := url.Parse(longURL)
+	if err != nil {
+		return "", fmt.Errorf("invalid url: %w", err)
+	}
+	path := parsedURL.RequestURI()
+	if !strings.HasPrefix(path, "/") {
+		return "", fmt.Errorf("url must include an absolute path")
+	}
+
+	payload, err := json.Marshal(map[string]string{"path": path})
+	if err != nil {
+		return "", fmt.Errorf("marshal short-url payload: %w", err)
+	}
+
+	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
+	apiBaseURL := strings.TrimRight(cfg.URL, "/")
+	if apiBaseURL == "" {
+		apiBaseURL = publicBaseURL
+	}
+	if err := mcpgrafana.ValidateGrafanaURL(apiBaseURL); err != nil {
+		return "", fmt.Errorf("grafana api url is invalid: %w", err)
+	}
+
+	transport, err := mcpgrafana.BuildTransport(&cfg, nil)
+	if err != nil {
+		return "", fmt.Errorf("build transport: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiBaseURL+"/api/short-urls", bytes.NewReader(payload))
+	if err != nil {
+		return "", fmt.Errorf("create short-url request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := (&http.Client{Transport: transport}).Do(req)
+	if err != nil {
+		return "", fmt.Errorf("create short url: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := readResponseBody(resp.Body, defaultResponseLimitBytes)
+	if err != nil {
+		return "", fmt.Errorf("read short-url response: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("create short url failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var shortResp struct {
+		URL string `json:"url"`
+		UID string `json:"uid"`
+	}
+	if err := json.Unmarshal(body, &shortResp); err != nil {
+		return "", fmt.Errorf("decode short-url response: %w", err)
+	}
+	if shortResp.URL == "" {
+		return "", fmt.Errorf("short-url response missing url field")
+	}
+
+	normalizedURL, err := normalizeShortURLWithPublicBase(shortResp.URL, publicBaseURL)
+	if err != nil {
+		return "", err
+	}
+	return normalizedURL, nil
+}
+
+func normalizeShortURLWithPublicBase(rawShortURL, publicBaseURL string) (string, error) {
+	publicBase, err := url.Parse(publicBaseURL)
+	if err != nil {
+		return "", fmt.Errorf("invalid public base url: %w", err)
+	}
+
+	shortURL, err := url.Parse(rawShortURL)
+	if err != nil {
+		return "", fmt.Errorf("short-url response contains invalid url: %w", err)
+	}
+
+	// Keep path/query/fragment from Grafana response but always use public
+	// scheme/host so shortened links match deeplink host behavior.
+	if shortURL.IsAbs() {
+		shortURL.Scheme = publicBase.Scheme
+		shortURL.Host = publicBase.Host
+		return shortURL.String(), nil
+	}
+
+	if strings.HasPrefix(rawShortURL, "/") {
+		return strings.TrimRight(publicBaseURL, "/") + rawShortURL, nil
+	}
+
+	return publicBase.ResolveReference(shortURL).String(), nil
 }
 
 var GenerateDeeplink = mcpgrafana.MustTool(
 	"generate_deeplink",
-	"Generate deeplink URLs for Grafana resources. Supports dashboards (requires dashboardUid), panels (requires dashboardUid and panelId), and Explore queries (requires datasourceUid and optionally queries). For explore links, the time range and queries are embedded inside the Grafana explore state.",
+	"Generate deeplink URLs for Grafana resources. Supports dashboards (requires dashboardUid), panels (requires dashboardUid and panelId), and Explore queries (requires datasourceUid and optionally queries). For explore links, the time range and queries are embedded inside the Grafana explore state. Set shorten=true to also attempt a /goto/<uid> short URL; if shortening fails, the full deeplink is returned.",
 	generateDeeplink,
+	mcp.WithTitleAnnotation("Generate navigation deeplink"),
+	mcp.WithIdempotentHintAnnotation(false),
+)
+
+var GenerateDeeplinkReadOnly = mcpgrafana.MustTool(
+	"generate_deeplink",
+	"Generate deeplink URLs for Grafana resources. Supports dashboards (requires dashboardUid), panels (requires dashboardUid and panelId), and Explore queries (requires datasourceUid and optionally queries). In read-only mode, shorten=true is accepted but ignored and the full deeplink is returned.",
+	generateDeeplinkReadOnly,
 	mcp.WithTitleAnnotation("Generate navigation deeplink"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
 )
 
-func AddNavigationTools(mcp *server.MCPServer) {
-	GenerateDeeplink.Register(mcp)
+func AddNavigationTools(mcp *server.MCPServer, enableWriteTools bool) {
+	if enableWriteTools {
+		GenerateDeeplink.Register(mcp)
+		return
+	}
+	GenerateDeeplinkReadOnly.Register(mcp)
 }
 
 // toGrafanaTimeParam converts a time value to a format Grafana understands

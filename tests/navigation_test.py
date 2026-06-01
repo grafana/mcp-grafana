@@ -176,3 +176,43 @@ async def test_generate_deeplink_with_query_params(
         mcp_server,
         expected_tools="generate_deeplink",
     )
+
+
+@pytest.mark.parametrize("model", models)
+@pytest.mark.flaky(reruns=2)
+async def test_generate_and_shorten_explore_deeplink(
+    model: str,
+    mcp_client: ClientSession,
+    mcp_transport: str,
+):
+    prompt = (
+        "Generate an Explore deeplink for datasource 'test-uid', then shorten it "
+        "using generate_deeplink with shorten=true and return only the short URL."
+    )
+    final_content, tools_called, mcp_server = await run_llm_tool_loop(
+        model, mcp_client, mcp_transport, prompt
+    )
+
+    deeplink_calls = [tc for tc in tools_called if tc.name == "generate_deeplink"]
+    assert deeplink_calls, "Expected LLM to call generate_deeplink"
+    deeplink_args = deeplink_calls[0].args
+    assert deeplink_args.get("resourceType") == "explore", (
+        f"Expected resourceType explore, got {deeplink_args.get('resourceType')}"
+    )
+    assert deeplink_args.get("datasourceUid") == "test-uid", (
+        f"Expected datasourceUid test-uid, got {deeplink_args.get('datasourceUid')}"
+    )
+    assert deeplink_args.get("shorten") is True, (
+        f"Expected shorten=true, got {deeplink_args.get('shorten')}"
+    )
+
+    assert "/goto/" in final_content, f"Expected short /goto/ URL in response, got: {final_content}"
+
+    assert_mcp_eval(
+        prompt,
+        final_content,
+        tools_called,
+        mcp_server,
+        "Does the response contain a shortened /goto/ URL using generate_deeplink?",
+        expected_tools="generate_deeplink",
+    )
