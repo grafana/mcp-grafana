@@ -1,12 +1,8 @@
 package tools
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
@@ -60,121 +56,6 @@ type ClickHouseQueryResult struct {
 	RowCount       int                      `json:"rowCount"`
 	ProcessedQuery string                   `json:"processedQuery,omitempty"`
 	Hints          *EmptyResultHints        `json:"hints,omitempty"`
-}
-
-// clickHouseQueryResponse represents the raw API response from Grafana's /api/ds/query
-type clickHouseQueryResponse struct {
-	Results map[string]struct {
-		Status int `json:"status,omitempty"`
-		Frames []struct {
-			Schema struct {
-				Name   string `json:"name,omitempty"`
-				RefID  string `json:"refId,omitempty"`
-				Fields []struct {
-					Name     string `json:"name"`
-					Type     string `json:"type"`
-					TypeInfo struct {
-						Frame string `json:"frame,omitempty"`
-					} `json:"typeInfo,omitempty"`
-				} `json:"fields"`
-			} `json:"schema"`
-			Data struct {
-				Values [][]interface{} `json:"values"`
-			} `json:"data"`
-		} `json:"frames,omitempty"`
-		Error string `json:"error,omitempty"`
-	} `json:"results"`
-}
-
-// clickHouseClient handles communication with Grafana's ClickHouse datasource
-type clickHouseClient struct {
-	httpClient *http.Client
-	baseURL    string
-}
-
-// newClickHouseClient creates a new ClickHouse client for the given datasource
-func newClickHouseClient(ctx context.Context, uid string) (*clickHouseClient, error) {
-	// Verify the datasource exists and is a ClickHouse datasource
-	ds, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: uid})
-	if err != nil {
-		return nil, err
-	}
-
-	if ds.Type != ClickHouseDatasourceType {
-		return nil, fmt.Errorf("datasource %s is of type %s, not %s", uid, ds.Type, ClickHouseDatasourceType)
-	}
-
-	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
-	baseURL := cfg.URL
-
-	transport, err := mcpgrafana.BuildTransport(&cfg, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create transport: %w", err)
-	}
-
-	client := &http.Client{
-		Transport: transport,
-	}
-
-	return &clickHouseClient{
-		httpClient: client,
-		baseURL:    baseURL,
-	}, nil
-}
-
-// query executes a ClickHouse query via Grafana's /api/ds/query endpoint
-func (c *clickHouseClient) query(ctx context.Context, datasourceUID, rawSQL string, from, to time.Time) (*clickHouseQueryResponse, error) {
-	// Build the query payload
-	payload := map[string]interface{}{
-		"queries": []map[string]interface{}{
-			{
-				"datasource": map[string]string{
-					"uid":  datasourceUID,
-					"type": ClickHouseDatasourceType,
-				},
-				"rawSql": rawSQL,
-				"refId":  "A",
-				"format": ClickHouseFormatTable,
-			},
-		},
-		"from": strconv.FormatInt(from.UnixMilli(), 10),
-		"to":   strconv.FormatInt(to.UnixMilli(), 10),
-	}
-
-	payloadBytes, err := json.Marshal(payload)
-	if err != nil {
-		return nil, fmt.Errorf("marshaling query payload: %w", err)
-	}
-
-	url := c.baseURL + "/api/ds/query"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payloadBytes))
-	if err != nil {
-		return nil, fmt.Errorf("creating request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("executing request: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return nil, fmt.Errorf("ClickHouse query returned status %d: %s", resp.StatusCode, string(bodyBytes))
-	}
-
-	bodyBytes, err := readResponseBody(resp.Body, defaultResponseLimitBytes)
-	if err != nil {
-		return nil, fmt.Errorf("reading response body: %w", err)
-	}
-
-	var queryResp clickHouseQueryResponse
-	if err := json.Unmarshal(bodyBytes, &queryResp); err != nil {
-		return nil, fmt.Errorf("unmarshaling response: %w", err)
-	}
-
-	return &queryResp, nil
 }
 
 // substituteClickHouseMacros replaces ClickHouse-specific macros in the query
@@ -261,9 +142,17 @@ func enforceClickHouseLimit(query string, requestedLimit int) string {
 
 // queryClickHouse executes a ClickHouse query via Grafana
 func queryClickHouse(ctx context.Context, args ClickHouseQueryParams) (*ClickHouseQueryResult, error) {
-	client, err := newClickHouseClient(ctx, args.DatasourceUID)
+	ds, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: args.DatasourceUID})
 	if err != nil {
 		return nil, fmt.Errorf("creating ClickHouse client: %w", err)
+	}
+	if ds.Type != ClickHouseDatasourceType {
+		return nil, fmt.Errorf("datasource %s is of type %s, not %s", args.DatasourceUID, ds.Type, ClickHouseDatasourceType)
+	}
+
+	client, baseURL, err := newDSQueryHTTPClient(ctx)
+	if err != nil {
+		return nil, err
 	}
 
 	// Parse time range
@@ -293,65 +182,37 @@ func queryClickHouse(ctx context.Context, args ClickHouseQueryParams) (*ClickHou
 
 	// Process the query
 	processedQuery := args.Query
-
-	// Substitute ClickHouse macros
 	processedQuery = substituteClickHouseMacros(processedQuery, fromTime, toTime)
-
-	// Substitute user variables
 	processedQuery = substituteVariables(processedQuery, args.Variables)
-
-	// Enforce limit
 	processedQuery = enforceClickHouseLimit(processedQuery, args.Limit)
 
-	// Execute query
-	resp, err := client.query(ctx, args.DatasourceUID, processedQuery, fromTime, toTime)
+	payload := dsQueryPayload(fromTime, toTime, map[string]interface{}{
+		"datasource": map[string]string{
+			"uid":  args.DatasourceUID,
+			"type": ClickHouseDatasourceType,
+		},
+		"rawSql": processedQuery,
+		"refId":  "A",
+		"format": ClickHouseFormatTable,
+	})
+
+	resp, err := doDSQuery(ctx, client, baseURL, payload)
 	if err != nil {
 		return nil, err
 	}
 
-	// Process response
+	columns, rows, err := framesToTabularRows(resp)
+	if err != nil {
+		return nil, err
+	}
+
 	result := &ClickHouseQueryResult{
-		Columns:        []string{},
-		Rows:           []map[string]interface{}{},
+		Columns:        columns,
+		Rows:           rows,
+		RowCount:       len(rows),
 		ProcessedQuery: processedQuery,
 	}
 
-	// Check for errors in the response
-	for refID, r := range resp.Results {
-		if r.Error != "" {
-			return nil, fmt.Errorf("query error (refId=%s): %s", refID, r.Error)
-		}
-
-		// Process frames
-		for _, frame := range r.Frames {
-			// Extract column names
-			columns := make([]string, len(frame.Schema.Fields))
-			for i, field := range frame.Schema.Fields {
-				columns[i] = field.Name
-			}
-			result.Columns = columns
-
-			// Convert columnar data to rows
-			if len(frame.Data.Values) == 0 {
-				continue
-			}
-
-			rowCount := len(frame.Data.Values[0])
-			for i := 0; i < rowCount; i++ {
-				row := make(map[string]interface{})
-				for colIdx, colName := range columns {
-					if colIdx < len(frame.Data.Values) && i < len(frame.Data.Values[colIdx]) {
-						row[colName] = frame.Data.Values[colIdx][i]
-					}
-				}
-				result.Rows = append(result.Rows, row)
-			}
-		}
-	}
-
-	result.RowCount = len(result.Rows)
-
-	// Add hints if no data was found
 	if result.RowCount == 0 {
 		result.Hints = GenerateEmptyResultHints(HintContext{
 			DatasourceType: "clickhouse",
@@ -424,21 +285,12 @@ WHERE database NOT IN ('system', 'INFORMATION_SCHEMA', 'information_schema')`
 	// Convert rows to table info
 	tables := make([]ClickHouseTableInfo, 0, len(result.Rows))
 	for _, row := range result.Rows {
-		table := ClickHouseTableInfo{}
-		if v, ok := row["database"].(string); ok {
-			table.Database = v
-		}
-		if v, ok := row["name"].(string); ok {
-			table.Name = v
-		}
-		if v, ok := row["engine"].(string); ok {
-			table.Engine = v
-		}
-		if v, ok := row["total_rows"].(float64); ok {
-			table.TotalRows = int64(v)
-		}
-		if v, ok := row["total_bytes"].(float64); ok {
-			table.TotalBytes = int64(v)
+		table := ClickHouseTableInfo{
+			Database:   toStringFromRow(row["database"]),
+			Name:       toStringFromRow(row["name"]),
+			Engine:     toStringFromRow(row["engine"]),
+			TotalRows:  toInt64FromRow(row["total_rows"]),
+			TotalBytes: toInt64FromRow(row["total_bytes"]),
 		}
 		tables = append(tables, table)
 	}
@@ -511,23 +363,13 @@ ORDER BY position`, database, args.Table)
 	// Convert rows to column info
 	columns := make([]ClickHouseColumnInfo, 0, len(result.Rows))
 	for _, row := range result.Rows {
-		col := ClickHouseColumnInfo{}
-		if v, ok := row["name"].(string); ok {
-			col.Name = v
-		}
-		if v, ok := row["type"].(string); ok {
-			col.Type = v
-		}
-		if v, ok := row["default_type"].(string); ok {
-			col.DefaultType = v
-		}
-		if v, ok := row["default_expression"].(string); ok {
-			col.DefaultExpression = v
-		}
-		if v, ok := row["comment"].(string); ok {
-			col.Comment = v
-		}
-		columns = append(columns, col)
+		columns = append(columns, ClickHouseColumnInfo{
+			Name:              toStringFromRow(row["name"]),
+			Type:              toStringFromRow(row["type"]),
+			DefaultType:       toStringFromRow(row["default_type"]),
+			DefaultExpression: toStringFromRow(row["default_expression"]),
+			Comment:           toStringFromRow(row["comment"]),
+		})
 	}
 
 	return columns, nil

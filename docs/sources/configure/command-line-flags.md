@@ -74,6 +74,7 @@ You can look up defaults, choose `--disable-*` flags, or configure TLS without r
 - `--disable-runpanelquery`: Disable run panel query tools.
 - `--disable-annotations`: Disable annotation tools.
 - `--disable-proxied`: Disable proxied tools (tools from external MCP servers).
+- `--disable-provisioning`: Disable provisioning tools.
 
 ## Configure tool limits
 
