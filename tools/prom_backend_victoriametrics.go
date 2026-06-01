@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/grafana/grafana-openapi-client-go/models"
@@ -87,13 +86,7 @@ func (b *victoriaMetricsBackend) Query(ctx context.Context, expr string, queryTy
 		"intervalMs": int64(step) * 1000,
 	}
 
-	payload := map[string]interface{}{
-		"queries": []interface{}{query},
-		"from":    strconv.FormatInt(start.UnixMilli(), 10),
-		"to":      strconv.FormatInt(end.UnixMilli(), 10),
-	}
-
-	resp, err := doDSQuery(ctx, b.httpClient, b.baseURL, payload)
+	resp, err := doDSQuery(ctx, b.httpClient, b.baseURL, dsQueryPayload(start, end, query))
 	if err != nil {
 		return nil, fmt.Errorf("querying VictoriaMetrics %s: %w", queryType, err)
 	}

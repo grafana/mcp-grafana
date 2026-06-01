@@ -3,9 +3,13 @@
 package tools
 
 import (
+	"fmt"
 	"testing"
+	"time"
 
 	"github.com/grafana/grafana-openapi-client-go/models"
+	"github.com/grafana/grafana-plugin-sdk-go/backend"
+	"github.com/grafana/grafana-plugin-sdk-go/data"
 	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	"github.com/prometheus/common/model"
 	"github.com/stretchr/testify/assert"
@@ -14,22 +18,13 @@ import (
 
 func TestFramesToMatrix(t *testing.T) {
 	t.Run("single series", func(t *testing.T) {
-		frames := []dsQueryFrame{
-			{
-				Schema: dsQueryFrameSchema{
-					Name: "cpu_usage",
-					Fields: []dsQueryFrameField{
-						{Name: "Time", Type: "time"},
-						{Name: "Value", Type: "number", Labels: map[string]string{"host": "a"}},
-					},
-				},
-				Data: dsQueryFrameData{
-					Values: [][]interface{}{
-						{float64(1000), float64(2000), float64(3000)},
-						{float64(0.5), float64(0.7), float64(0.9)},
-					},
-				},
-			},
+		frames := data.Frames{
+			data.NewFrame("cpu_usage",
+				data.NewField("Time", nil, []time.Time{
+					time.UnixMilli(1000), time.UnixMilli(2000), time.UnixMilli(3000),
+				}),
+				data.NewField("Value", data.Labels{"host": "a"}, []float64{0.5, 0.7, 0.9}),
+			),
 		}
 
 		result, err := framesToMatrix(frames)
@@ -43,21 +38,15 @@ func TestFramesToMatrix(t *testing.T) {
 	})
 
 	t.Run("multiple series", func(t *testing.T) {
-		frames := []dsQueryFrame{
-			{
-				Schema: dsQueryFrameSchema{
-					Name:   "cpu",
-					Fields: []dsQueryFrameField{{Name: "Time", Type: "time"}, {Name: "Value", Type: "number", Labels: map[string]string{"host": "a"}}},
-				},
-				Data: dsQueryFrameData{Values: [][]interface{}{{float64(1000)}, {float64(0.5)}}},
-			},
-			{
-				Schema: dsQueryFrameSchema{
-					Name:   "cpu",
-					Fields: []dsQueryFrameField{{Name: "Time", Type: "time"}, {Name: "Value", Type: "number", Labels: map[string]string{"host": "b"}}},
-				},
-				Data: dsQueryFrameData{Values: [][]interface{}{{float64(1000)}, {float64(0.8)}}},
-			},
+		frames := data.Frames{
+			data.NewFrame("cpu",
+				data.NewField("Time", nil, []time.Time{time.UnixMilli(1000)}),
+				data.NewField("Value", data.Labels{"host": "a"}, []float64{0.5}),
+			),
+			data.NewFrame("cpu",
+				data.NewField("Time", nil, []time.Time{time.UnixMilli(1000)}),
+				data.NewField("Value", data.Labels{"host": "b"}, []float64{0.8}),
+			),
 		}
 
 		result, err := framesToMatrix(frames)
@@ -72,13 +61,10 @@ func TestFramesToMatrix(t *testing.T) {
 	})
 
 	t.Run("frame missing time field", func(t *testing.T) {
-		frames := []dsQueryFrame{
-			{
-				Schema: dsQueryFrameSchema{
-					Fields: []dsQueryFrameField{{Name: "Value", Type: "number"}},
-				},
-				Data: dsQueryFrameData{Values: [][]interface{}{{float64(1.0)}}},
-			},
+		frames := data.Frames{
+			data.NewFrame("",
+				data.NewField("Value", nil, []float64{1.0}),
+			),
 		}
 
 		result, err := framesToMatrix(frames)
@@ -89,22 +75,11 @@ func TestFramesToMatrix(t *testing.T) {
 
 func TestFramesToVector(t *testing.T) {
 	t.Run("single sample", func(t *testing.T) {
-		frames := []dsQueryFrame{
-			{
-				Schema: dsQueryFrameSchema{
-					Name: "up",
-					Fields: []dsQueryFrameField{
-						{Name: "Time", Type: "time"},
-						{Name: "Value", Type: "number", Labels: map[string]string{"job": "prometheus"}},
-					},
-				},
-				Data: dsQueryFrameData{
-					Values: [][]interface{}{
-						{float64(5000)},
-						{float64(1.0)},
-					},
-				},
-			},
+		frames := data.Frames{
+			data.NewFrame("up",
+				data.NewField("Time", nil, []time.Time{time.UnixMilli(5000)}),
+				data.NewField("Value", data.Labels{"job": "prometheus"}, []float64{1.0}),
+			),
 		}
 
 		result, err := framesToVector(frames)
@@ -117,21 +92,13 @@ func TestFramesToVector(t *testing.T) {
 	})
 
 	t.Run("takes last value from multi-point frame", func(t *testing.T) {
-		frames := []dsQueryFrame{
-			{
-				Schema: dsQueryFrameSchema{
-					Fields: []dsQueryFrameField{
-						{Name: "Time", Type: "time"},
-						{Name: "Value", Type: "number"},
-					},
-				},
-				Data: dsQueryFrameData{
-					Values: [][]interface{}{
-						{float64(1000), float64(2000), float64(3000)},
-						{float64(1.0), float64(2.0), float64(3.0)},
-					},
-				},
-			},
+		frames := data.Frames{
+			data.NewFrame("",
+				data.NewField("Time", nil, []time.Time{
+					time.UnixMilli(1000), time.UnixMilli(2000), time.UnixMilli(3000),
+				}),
+				data.NewField("Value", nil, []float64{1.0, 2.0, 3.0}),
+			),
 		}
 
 		result, err := framesToVector(frames)
@@ -150,7 +117,7 @@ func TestFramesToVector(t *testing.T) {
 
 func TestFramesToPrometheusValue(t *testing.T) {
 	t.Run("missing refId returns empty", func(t *testing.T) {
-		resp := &dsQueryResponse{Results: map[string]dsQueryResult{}}
+		resp := &backend.QueryDataResponse{Responses: backend.Responses{}}
 		v, err := framesToPrometheusValue(resp, "range")
 		require.NoError(t, err)
 		assert.Equal(t, model.Matrix{}, v)
@@ -161,8 +128,8 @@ func TestFramesToPrometheusValue(t *testing.T) {
 	})
 
 	t.Run("error in result", func(t *testing.T) {
-		resp := &dsQueryResponse{Results: map[string]dsQueryResult{
-			"A": {Error: "something went wrong"},
+		resp := &backend.QueryDataResponse{Responses: backend.Responses{
+			"A": {Error: fmt.Errorf("something went wrong")},
 		}}
 		_, err := framesToPrometheusValue(resp, "range")
 		require.Error(t, err)
@@ -234,34 +201,22 @@ func TestMapGCPMetricKind(t *testing.T) {
 }
 
 func TestExtractLabelValuesFromFrames(t *testing.T) {
-	resp := &dsQueryResponse{
-		Results: map[string]dsQueryResult{
-			"A": {
-				Frames: []dsQueryFrame{
-					{
-						Schema: dsQueryFrameSchema{
-							Fields: []dsQueryFrameField{
-								{Name: "Time", Type: "time"},
-								{Name: "Value", Type: "number", Labels: map[string]string{"zone": "us-east1-b", "project_id": "my-project"}},
-							},
-						},
-					},
-					{
-						Schema: dsQueryFrameSchema{
-							Fields: []dsQueryFrameField{
-								{Name: "Time", Type: "time"},
-								{Name: "Value", Type: "number", Labels: map[string]string{"zone": "us-west1-a", "project_id": "my-project"}},
-							},
-						},
-					},
-					{
-						Schema: dsQueryFrameSchema{
-							Fields: []dsQueryFrameField{
-								{Name: "Time", Type: "time"},
-								{Name: "Value", Type: "number", Labels: map[string]string{"zone": "us-east1-b", "project_id": "other-project"}},
-							},
-						},
-					},
+	resp := &backend.QueryDataResponse{
+		Responses: backend.Responses{
+			"A": backend.DataResponse{
+				Frames: data.Frames{
+					data.NewFrame("",
+						data.NewField("Time", nil, []time.Time{}),
+						data.NewField("Value", data.Labels{"zone": "us-east1-b", "project_id": "my-project"}, []float64{}),
+					),
+					data.NewFrame("",
+						data.NewField("Time", nil, []time.Time{}),
+						data.NewField("Value", data.Labels{"zone": "us-west1-a", "project_id": "my-project"}, []float64{}),
+					),
+					data.NewFrame("",
+						data.NewField("Time", nil, []time.Time{}),
+						data.NewField("Value", data.Labels{"zone": "us-east1-b", "project_id": "other-project"}, []float64{}),
+					),
 				},
 			},
 		},

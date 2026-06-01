@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/grafana/grafana-plugin-sdk-go/backend"
+	"github.com/grafana/grafana-plugin-sdk-go/data"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -127,43 +129,50 @@ func TestBuildInfluxDBPayload_SerializesToValidJSON(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestFramesToRows(t *testing.T) {
-	frame := `{
-		"schema": {
-			"name": "A",
-			"refId": "A",
-			"fields": [
-				{"name": "Time", "type": "time"},
-				{"name": "value", "type": "number"}
-			]
-		},
-		"data": {
-			"values": [
-				[1705312800000, 1705312860000, 1705312920000],
-				[1.0, 2.5, 3.7]
-			]
-		}
-	}`
+func TestFramesToTabularRows_InfluxDB(t *testing.T) {
+	t1 := time.UnixMilli(1705312800000)
+	t2 := time.UnixMilli(1705312860000)
+	t3 := time.UnixMilli(1705312920000)
 
-	cols, rows, err := framesToRows([]json.RawMessage{json.RawMessage(frame)})
+	frame := data.NewFrame("A",
+		data.NewField("Time", nil, []time.Time{t1, t2, t3}),
+		data.NewField("value", nil, []float64{1.0, 2.5, 3.7}),
+	)
+	frame.RefID = "A"
+
+	resp := &backend.QueryDataResponse{
+		Responses: backend.Responses{
+			"A": backend.DataResponse{
+				Frames: data.Frames{frame},
+			},
+		},
+	}
+
+	cols, rows, err := framesToTabularRows(resp)
 	require.NoError(t, err)
 
 	assert.Equal(t, []string{"Time", "value"}, cols)
 	require.Len(t, rows, 3)
-	assert.Equal(t, float64(1705312800000), rows[0]["Time"])
+	assert.Equal(t, t1, rows[0]["Time"])
 	assert.Equal(t, 1.0, rows[0]["value"])
 	assert.Equal(t, 3.7, rows[2]["value"])
 }
 
-func TestFramesToRows_EmptyFrame(t *testing.T) {
-	frame := `{"schema": {"fields": [{"name": "Time"}]}, "data": {"values": []}}`
-	cols, rows, err := framesToRows([]json.RawMessage{json.RawMessage(frame)})
+func TestFramesToTabularRows_EmptyFrame(t *testing.T) {
+	frame := data.NewFrame("",
+		data.NewField("Time", nil, []time.Time{}),
+	)
+
+	resp := &backend.QueryDataResponse{
+		Responses: backend.Responses{
+			"A": backend.DataResponse{
+				Frames: data.Frames{frame},
+			},
+		},
+	}
+
+	cols, rows, err := framesToTabularRows(resp)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"Time"}, cols)
 	assert.Empty(t, rows)
-}
-
-func TestFramesToRows_InvalidJSON(t *testing.T) {
-	_, _, err := framesToRows([]json.RawMessage{json.RawMessage(`{not json`)})
-	require.Error(t, err)
 }
