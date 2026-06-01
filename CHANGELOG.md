@@ -5,11 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.15.0] - 2026-06-01
 
 ### Added
 
-- Snowflake tools (`query_snowflake`, `list_snowflake_tables`, `describe_snowflake_table`) for querying Snowflake datasources (Grafana Enterprise plugin `grafana-snowflake-datasource`) through Grafana's `/api/ds/query` endpoint. Supports `$__timeFilter`, `$__timeFrom`/`$__timeTo`, `$__from`/`$__to`, `$__interval`/`$__interval_ms`, and `${varname}` substitution. Disabled by default — opt in with `--enabled-tools=...,snowflake`.
+- Snowflake datasource tools for querying Snowflake through Grafana's `/api/ds/query` endpoint with macro substitution and template variables ([#845](https://github.com/grafana/mcp-grafana/pull/845))
+- Amazon Athena datasource support with schema discovery tools and SQL query execution, including macro substitution and result reuse ([#799](https://github.com/grafana/mcp-grafana/pull/799))
+- VictoriaLogs support through existing Loki tools, routing LogsQL queries via the VictoriaLogs HTTP API without adding new tools ([#850](https://github.com/grafana/mcp-grafana/pull/850))
+- Loki label-strategy analyzer tools for evaluating label cardinality and optimization opportunities ([#885](https://github.com/grafana/mcp-grafana/pull/885))
+- Plugin install and search tools for discovering, inspecting, and installing Grafana plugins ([#835](https://github.com/grafana/mcp-grafana/pull/835))
+
+### Fixed
+
+- Scope datasource fallback cache by request path to prevent incorrect cache hits across different API endpoints ([#897](https://github.com/grafana/mcp-grafana/pull/897))
+- Release builds now report the correct version via ldflags injection ([#895](https://github.com/grafana/mcp-grafana/pull/895))
+- Improved Loki and dashboard tool descriptions for better agent accuracy ([#880](https://github.com/grafana/mcp-grafana/pull/880))
+- Add readResponseBody helper to limit and detect oversized responses, preventing excessive memory use ([#884](https://github.com/grafana/mcp-grafana/pull/884))
+- Improved timeout error messages for proxied tools with context-aware logging ([#881](https://github.com/grafana/mcp-grafana/pull/881))
+- Cap error response body reads to 1KB across all HTTP clients to prevent excessive memory allocation from misbehaving servers ([#876](https://github.com/grafana/mcp-grafana/pull/876))
+
+### Changed
+
+- Consolidated duplicated `/api/ds/query` implementations into a shared helper ([#877](https://github.com/grafana/mcp-grafana/pull/877))
+
+### Security
+
+- Update `golang.org/x/net` to v0.55.0 to address security vulnerability ([#901](https://github.com/grafana/mcp-grafana/pull/901))
 
 ## [0.14.0] - 2026-05-08
 
@@ -225,6 +246,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Upgrade Docker base image packages to resolve critical OpenSSL CVE-2025-15467 (CVSS 9.8) ([#551](https://github.com/grafana/mcp-grafana/pull/551))
 
+[0.15.0]: https://github.com/grafana/mcp-grafana/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/grafana/mcp-grafana/compare/v0.13.1...v0.14.0
 [0.13.1]: https://github.com/grafana/mcp-grafana/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/grafana/mcp-grafana/compare/v0.12.1...v0.13.0
