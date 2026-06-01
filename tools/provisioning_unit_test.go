@@ -53,6 +53,23 @@ func repositoryListFixture() map[string]any {
 					"sync":   map[string]any{"state": "pending"},
 				},
 			},
+			map[string]any{
+				"metadata": map[string]any{"name": "git-plain"},
+				"spec": map[string]any{
+					"title": "Plain Git",
+					"type":  "git",
+					"git": map[string]any{
+						"url":    "https://git.example.com/dashboards.git",
+						"branch": "develop",
+						"path":   "grafana",
+					},
+					"sync": map[string]any{"enabled": true},
+				},
+				"status": map[string]any{
+					"health": map[string]any{"healthy": true},
+					"sync":   map[string]any{"state": "success"},
+				},
+			},
 		},
 	}
 }
@@ -71,7 +88,7 @@ func TestListProvisioningRepositories_DefaultNamespace(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, "/apis/provisioning.grafana.app/v0alpha1/namespaces/default/repositories", capturedPath)
-	require.Len(t, out, 2)
+	require.Len(t, out, 3)
 
 	gh := out[0]
 	assert.Equal(t, "git-global", gh.Name)
@@ -94,6 +111,16 @@ func TestListProvisioningRepositories_DefaultNamespace(t *testing.T) {
 	assert.False(t, local.SyncEnabled)
 	assert.False(t, local.Healthy)
 	assert.Equal(t, "pending", local.SyncState)
+
+	git := out[2]
+	assert.Equal(t, "git-plain", git.Name)
+	assert.Equal(t, "git", git.Type)
+	assert.Equal(t, "https://git.example.com/dashboards.git", git.URL)
+	assert.Equal(t, "develop", git.Branch)
+	assert.Equal(t, "grafana", git.Path)
+	assert.True(t, git.SyncEnabled)
+	assert.True(t, git.Healthy)
+	assert.Equal(t, "success", git.SyncState)
 }
 
 func TestListProvisioningRepositories_CustomNamespace(t *testing.T) {

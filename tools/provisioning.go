@@ -53,6 +53,11 @@ type repositoryItem struct {
 			Branch string `json:"branch"`
 			Path   string `json:"path"`
 		} `json:"github"`
+		Git struct {
+			URL    string `json:"url"`
+			Branch string `json:"branch"`
+			Path   string `json:"path"`
+		} `json:"git"`
 		Local struct {
 			Path string `json:"path"`
 		} `json:"local"`
@@ -135,6 +140,10 @@ func listProvisioningRepositories(ctx context.Context, args ListProvisioningRepo
 			r.URL = item.Spec.GitHub.URL
 			r.Branch = item.Spec.GitHub.Branch
 			r.Path = item.Spec.GitHub.Path
+		case "git":
+			r.URL = item.Spec.Git.URL
+			r.Branch = item.Spec.Git.Branch
+			r.Path = item.Spec.Git.Path
 		case "local":
 			r.Path = item.Spec.Local.Path
 		}
