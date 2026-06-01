@@ -153,6 +153,7 @@ func TestBuildRenderURL(t *testing.T) {
 		args        GetPanelImageParams
 		contains    []string
 		notContains []string
+		expectError bool
 	}{
 		{
 			name:    "Basic dashboard render",
@@ -264,11 +265,203 @@ func TestBuildRenderURL(t *testing.T) {
 				"http://localhost:3000/render/d/abc123",
 			},
 		},
+		{
+			name:    "Provisioning preview renders the preview path with ref",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				ProvisioningPreview: &ProvisioningPreview{
+					Repo: "my-repo",
+					Path: "folder/dashboard.json",
+					Ref:  "feature-branch",
+				},
+			},
+			contains: []string{
+				"http://localhost:3000/render/dashboard/provisioning/my-repo/preview/folder/dashboard.json",
+				"ref=feature-branch",
+				"kiosk=true",
+			},
+			notContains: []string{
+				"/render/d/",
+				"/render/d-solo/",
+			},
+		},
+		{
+			name:    "Provisioning preview without ref omits the ref query param",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				ProvisioningPreview: &ProvisioningPreview{
+					Repo: "my-repo",
+					Path: "dashboard.json",
+				},
+			},
+			contains: []string{
+				"http://localhost:3000/render/dashboard/provisioning/my-repo/preview/dashboard.json",
+			},
+			notContains: []string{
+				"ref=",
+			},
+		},
+		{
+			name:    "Provisioning preview escapes special characters in repo and path",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				ProvisioningPreview: &ProvisioningPreview{
+					Repo: "repo with space",
+					Path: "folder/dash?name#frag.json",
+				},
+			},
+			contains: []string{
+				"/render/dashboard/provisioning/repo%20with%20space/preview/folder/dash%3Fname%23frag.json",
+			},
+			notContains: []string{
+				"repo with space",
+				"dash?name",
+				"#frag",
+			},
+		},
+		{
+			// url.URL{}.EscapedPath() and url.PathEscape diverge on a few
+			// characters that are legal in a path but not in a single segment
+			// — notably `;` and `,`. The render URL should encode them the
+			// same way navigation/provisioning do (PathEscape semantics) for
+			// the single-segment repo slug.
+			name:    "Provisioning preview encodes segment-only-reserved chars in repo slug",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				ProvisioningPreview: &ProvisioningPreview{
+					Repo: "a;b,c",
+					Path: "dash.json",
+				},
+			},
+			contains: []string{
+				"/render/dashboard/provisioning/a%3Bb%2Cc/preview/dash.json",
+			},
+			notContains: []string{
+				"/provisioning/a;b,c/",
+			},
+		},
+		{
+			name:    "Provisioning preview with panel ID uses viewPanel (not d-solo)",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				ProvisioningPreview: &ProvisioningPreview{
+					Repo: "my-repo",
+					Path: "dashboard.json",
+					Ref:  "feature-branch",
+				},
+				PanelID: intPtr(7),
+			},
+			contains: []string{
+				"http://localhost:3000/render/dashboard/provisioning/my-repo/preview/dashboard.json",
+				"viewPanel=7",
+			},
+			notContains: []string{
+				"panelId=",
+				"/render/d-solo/",
+			},
+		},
+		{
+			name:        "Error: neither dashboardUid nor provisioningPreview",
+			baseURL:     "http://localhost:3000",
+			args:        GetPanelImageParams{},
+			expectError: true,
+		},
+		{
+			name:    "Error: both dashboardUid and provisioningPreview",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				DashboardUID: "abc123",
+				ProvisioningPreview: &ProvisioningPreview{
+					Repo: "my-repo",
+					Path: "dashboard.json",
+				},
+			},
+			expectError: true,
+		},
+		{
+			name:    "Error: provisioningPreview missing repo",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				ProvisioningPreview: &ProvisioningPreview{
+					Path: "dashboard.json",
+				},
+			},
+			expectError: true,
+		},
+		{
+			name:    "Error: provisioningPreview missing path",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				ProvisioningPreview: &ProvisioningPreview{
+					Repo: "my-repo",
+				},
+			},
+			expectError: true,
+		},
+		{
+			name:    "Error: provisioningPreview repo with slash",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				ProvisioningPreview: &ProvisioningPreview{
+					Repo: "evil/../../d",
+					Path: "dashboard.json",
+				},
+			},
+			expectError: true,
+		},
+		{
+			name:    "Error: provisioningPreview repo with backslash",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				ProvisioningPreview: &ProvisioningPreview{
+					Repo: `evil\..\d`,
+					Path: "dashboard.json",
+				},
+			},
+			expectError: true,
+		},
+		{
+			name:    "Error: provisioningPreview repo equals ..",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				ProvisioningPreview: &ProvisioningPreview{
+					Repo: "..",
+					Path: "dashboard.json",
+				},
+			},
+			expectError: true,
+		},
+		{
+			name:    "Error: provisioningPreview path with .. segment",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				ProvisioningPreview: &ProvisioningPreview{
+					Repo: "my-repo",
+					Path: "folder/../../etc/passwd",
+				},
+			},
+			expectError: true,
+		},
+		{
+			name:    "Error: provisioningPreview path is exactly ..",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				ProvisioningPreview: &ProvisioningPreview{
+					Repo: "my-repo",
+					Path: "..",
+				},
+			},
+			expectError: true,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result, err := buildRenderURL(tt.baseURL, tt.args)
+			if tt.expectError {
+				require.Error(t, err)
+				return
+			}
 			require.NoError(t, err)
 
 			for _, expected := range tt.contains {

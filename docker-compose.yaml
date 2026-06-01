@@ -1,13 +1,15 @@
 services:
   grafana:
-    image: grafana/grafana:12.4.2@sha256:83749231c3835e390a3144e5e940203e42b9589761f20ef3169c716e734ad505
+    image: grafana/grafana:13.0.1@sha256:0f86bada30d65ef9d0183b90c1e2682ac92d53d95da8bed322b984ea78a4a73a
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "false"
-      GF_INSTALL_PLUGINS: grafana-clickhouse-datasource,grafana-opensearch-datasource
+      GF_INSTALL_PLUGINS: grafana-clickhouse-datasource,grafana-opensearch-datasource,elasticsearch 12.5.4
       GF_LOG_LEVEL: debug
       GF_SERVER_ROUTER_LOGGING: "true"
       GF_RENDERING_SERVER_URL: http://renderer:8081/render
       GF_RENDERING_CALLBACK_URL: http://grafana:3000/
+      GF_RENDERING_RENDERER_TOKEN: integration-test-renderer-token
+      GF_FEATURE_TOGGLES_ENABLE: provisioning,kubernetesDashboards
     ports:
       - 3000:3000/tcp
     volumes:
@@ -15,9 +17,42 @@ services:
       - ./testdata/dashboards:/var/lib/grafana/dashboards
       - type: tmpfs
         target: /var/lib/grafana/empty-alerts-folder
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:3000/api/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  gitserver:
+    build: ./testdata/gitserver
+    ports:
+      - "8888:80"
+    volumes:
+      - ./testdata/provisioning-repo:/srv/seed:ro
+    # The entrypoint seeds the repo before exec'ing httpd, so a live server
+    # implies the repo is ready — a static GET / is enough, no need to spawn
+    # the upload-pack CGI.
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost/"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  provisioning-repo-seed:
+    image: curlimages/curl:8.18.0@sha256:d94d07ba9e7d6de898b6d96c1a072f6f8266c687af78a74f380087a0addf5d17
+    depends_on:
+      grafana:
+        condition: service_healthy
+      gitserver:
+        condition: service_healthy
+    volumes:
+      - ./testdata/provisioning-repo-seed.sh:/seed.sh
+    entrypoint: ["sh", "/seed.sh"]
 
   renderer:
     image: grafana/grafana-image-renderer:latest@sha256:340c91e98ccd65001a3da4d0192fcf0ed13e95609a51a0d62c35a61b6ff28dff
+    environment:
+      AUTH_TOKEN: integration-test-renderer-token
     ports:
       - 8081
 

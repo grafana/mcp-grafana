@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `get_panel_image` now accepts an optional `provisioningPreview` parameter (`repo`, `path`, `ref`) for rendering dashboards staged on a provisioning repository branch (e.g. a git-sync PR preview) before they're merged or applied. Mutually exclusive with `dashboardUid`.
+- New `provisioning` tool category with `list_provisioning_repositories` — returns each repository's slug, source URL/branch/path, sync state, and health, so agents can discover the `repo` value to pass to `get_panel_image`'s `provisioningPreview`.
+- `validate_provisioning_file` dry-run-applies a file from a provisioning repository at a given branch/commit and returns whether it would be accepted, the resource action (create/update), the target resource type, and any structured validation errors — the same admission surface Grafana's PR commenter reports.
+- `generate_deeplink` now accepts a `provisioningPreview` parameter (`repo`, `path`, optional `ref` and `pullRequestUrl`) for the `dashboard` and `panel` resource types, returning a link to a dashboard staged on a provisioning repository branch (e.g. a git-sync PR preview). Mutually exclusive with `dashboardUid`.
+
 ## [0.15.0] - 2026-06-01
 
 ### Added
