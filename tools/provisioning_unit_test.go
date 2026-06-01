@@ -323,3 +323,26 @@ func TestValidateProvisioningFile_NonStatusError(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "HTTP 500")
 }
+
+// A 5xx that carries a k8s Status body is a transient server failure, not a
+// verdict on the file: it must surface as a tool error, not valid:false.
+func TestValidateProvisioningFile_ServerErrorStatusIsError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"kind":    "Status",
+			"status":  "Failure",
+			"message": "internal server error",
+			"reason":  "InternalError",
+			"code":    500,
+		})
+	}))
+	defer ts.Close()
+
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: ts.URL})
+	_, err := validateProvisioningFile(ctx, ValidateProvisioningFileParams{Repo: "ok", Path: "x.json"})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "HTTP 500")
+}

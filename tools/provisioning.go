@@ -336,11 +336,14 @@ func validateProvisioningFile(ctx context.Context, args ValidateProvisioningFile
 		return out, nil
 	}
 
-	// Non-2xx: typically 422 with a k8s Status object carrying the admission
-	// validation errors. Surface structured causes when present; otherwise
-	// fall back to the flat Status.message.
+	// A 4xx admission rejection comes back as a k8s Status object carrying the
+	// validation errors (typically 422). Surface those as valid:false. Other
+	// statuses — notably 5xx server errors — are transient failures, not a
+	// verdict on the file, so they bubble up as a tool error even when the
+	// body happens to be a Status object.
 	var status k8sStatus
-	if json.Unmarshal(body, &status) == nil && status.Kind == "Status" {
+	if resp.StatusCode >= 400 && resp.StatusCode < 500 &&
+		json.Unmarshal(body, &status) == nil && status.Kind == "Status" {
 		out := &ProvisioningFileValidation{Valid: false}
 		if len(status.Details.Causes) > 0 {
 			for _, c := range status.Details.Causes {
