@@ -346,6 +346,13 @@ func TestGenerateDeeplink(t *testing.T) {
 		assert.Contains(t, err.Error(), "either dashboardUid or provisioningPreview must be set")
 	})
 
+	t.Run("Dashboard rejects empty dashboardUid", func(t *testing.T) {
+		params := GenerateDeeplinkParams{ResourceType: "dashboard", DashboardUID: stringPtr("")}
+		_, err := generateDeeplink(ctx, params)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "either dashboardUid or provisioningPreview must be set")
+	})
+
 	t.Run("Dashboard rejects both uid and provisioning preview", func(t *testing.T) {
 		params := GenerateDeeplinkParams{
 			ResourceType: "dashboard",

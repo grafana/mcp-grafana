@@ -335,12 +335,15 @@ func AddNavigationTools(mcp *server.MCPServer, enableWriteTools bool) {
 // (without time range or extra query params) for the dashboard and panel
 // resource types. Exactly one of dashboardUid or preview must be supplied.
 func buildDashboardTargetURL(baseURL string, dashboardUID *string, preview *DeeplinkProvisioningPreview) (string, error) {
+	// Treat an empty dashboardUid the same as unset, so a non-nil but blank
+	// value doesn't produce a "/d/" URL with no UID.
+	hasUID := dashboardUID != nil && *dashboardUID != ""
 	switch {
-	case dashboardUID != nil && preview != nil:
+	case hasUID && preview != nil:
 		return "", fmt.Errorf("dashboardUid and provisioningPreview are mutually exclusive; pass exactly one")
-	case dashboardUID == nil && preview == nil:
+	case !hasUID && preview == nil:
 		return "", fmt.Errorf("either dashboardUid or provisioningPreview must be set")
-	case dashboardUID != nil:
+	case hasUID:
 		return fmt.Sprintf("%s/d/%s", baseURL, *dashboardUID), nil
 	}
 
