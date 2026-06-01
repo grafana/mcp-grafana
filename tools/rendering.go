@@ -81,6 +81,53 @@ type RenderTimeRange struct {
 	To   string `json:"to" jsonschema:"description=End time (e.g.\\, 'now'\\, '2024-01-01T12:00:00Z')"`
 }
 
+type RenderLinkInMCPAppParams struct {
+	URL string `json:"url" jsonschema:"required,description=HTTP(S) URL to render inside the MCP App iframe"`
+}
+
+func normalizeEmbeddableURL(raw string) (string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", fmt.Errorf("url is required")
+	}
+
+	parsed, err := url.ParseRequestURI(trimmed)
+	if err != nil {
+		return "", fmt.Errorf("invalid url %q: %w", raw, err)
+	}
+
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return "", fmt.Errorf("unsupported url scheme %q (must be http or https)", parsed.Scheme)
+	}
+	if parsed.Host == "" {
+		return "", fmt.Errorf("url must include a host")
+	}
+	if parsed.User != nil {
+		return "", fmt.Errorf("embedded credentials are not allowed in urls")
+	}
+
+	return parsed.String(), nil
+}
+
+func renderLinkInMCPApp(_ context.Context, args RenderLinkInMCPAppParams) (*mcp.CallToolResult, error) {
+	safeURL, err := normalizeEmbeddableURL(args.URL)
+	if err != nil {
+		return nil, err
+	}
+
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			mcp.TextContent{
+				Type: "text",
+				Text: fmt.Sprintf("Rendering URL in MCP app iframe: %s", safeURL),
+			},
+		},
+		StructuredContent: map[string]any{
+			"url": safeURL,
+		},
+	}, nil
+}
+
 func getPanelImage(ctx context.Context, args GetPanelImageParams) (*mcp.CallToolResult, error) {
 	config := mcpgrafana.GrafanaConfigFromContext(ctx)
 	baseURL := config.URL
@@ -235,6 +282,17 @@ var GetPanelImage = mcpgrafana.MustTool(
 	mcp.WithReadOnlyHintAnnotation(true),
 )
 
+var RenderLinkInMCPApp = mcpgrafana.MustTool(
+	"render_link_in_mcp_app",
+	"Render an arbitrary HTTP(S) URL inside an MCP App iframe. The URL is validated and returned as structured content for the app to display.",
+	renderLinkInMCPApp,
+	mcp.WithTitleAnnotation("Render link in MCP App iframe"),
+	mcp.WithIdempotentHintAnnotation(true),
+	mcp.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithUIResource(mcpgrafana.LinkIframeResourceURI),
+)
+
 func AddRenderingTools(mcp *server.MCPServer) {
 	GetPanelImage.Register(mcp)
+	RenderLinkInMCPApp.Register(mcp)
 }

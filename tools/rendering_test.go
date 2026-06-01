@@ -8,8 +8,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -548,4 +550,60 @@ func TestGetPanelImage(t *testing.T) {
 
 		require.NoError(t, err)
 	})
+}
+
+func TestNormalizeEmbeddableURL(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantErr bool
+	}{
+		{name: "https valid", input: "https://example.com/a?b=c", wantErr: false},
+		{name: "http valid", input: "http://example.com", wantErr: false},
+		{name: "trim whitespace", input: "  https://example.com  ", wantErr: false},
+		{name: "empty", input: "", wantErr: true},
+		{name: "javascript scheme", input: "javascript:alert(1)", wantErr: true},
+		{name: "data scheme", input: "data:text/html,hello", wantErr: true},
+		{name: "missing host", input: "https://", wantErr: true},
+		{name: "with credentials", input: "https://user:pass@example.com", wantErr: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := normalizeEmbeddableURL(tc.input)
+			if tc.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.NotEmpty(t, got)
+			assert.True(t, strings.HasPrefix(got, "https://") || strings.HasPrefix(got, "http://"))
+		})
+	}
+}
+
+func TestRenderLinkInMCPApp(t *testing.T) {
+	result, err := renderLinkInMCPApp(context.Background(), RenderLinkInMCPAppParams{
+		URL: "https://example.com/path?q=1",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	require.Len(t, result.Content, 1)
+	textContent, ok := result.Content[0].(mcp.TextContent)
+	require.True(t, ok, "expected text content")
+	assert.Contains(t, textContent.Text, "https://example.com/path?q=1")
+
+	structured, ok := result.StructuredContent.(map[string]any)
+	require.True(t, ok, "expected structured content map")
+	assert.Equal(t, "https://example.com/path?q=1", structured["url"])
+}
+
+func TestRenderLinkInMCPApp_ToolDefinition(t *testing.T) {
+	assert.Equal(t, "render_link_in_mcp_app", RenderLinkInMCPApp.Tool.Name)
+	require.NotNil(t, RenderLinkInMCPApp.Tool.Meta)
+
+	uiMeta, ok := RenderLinkInMCPApp.Tool.Meta.AdditionalFields["ui"].(map[string]any)
+	require.True(t, ok, "expected ui metadata")
+	assert.Equal(t, mcpgrafana.LinkIframeResourceURI, uiMeta["resourceUri"])
 }

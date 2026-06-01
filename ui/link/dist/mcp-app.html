@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Link Iframe Viewer</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    }
+    body {
+      margin: 0;
+      padding: 10px;
+      background: canvas;
+      color: canvastext;
+    }
+    .header {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      margin-bottom: 10px;
+    }
+    .title {
+      font-size: 14px;
+      font-weight: 600;
+    }
+    .subtle {
+      font-size: 12px;
+      opacity: 0.75;
+      word-break: break-all;
+    }
+    .error {
+      display: none;
+      margin-bottom: 10px;
+      padding: 8px;
+      border-radius: 6px;
+      border: 1px solid #c77;
+      background: rgba(220, 50, 47, 0.12);
+      font-size: 12px;
+    }
+    iframe {
+      width: 100%;
+      min-height: 500px;
+      border: 1px solid rgba(127, 127, 127, 0.35);
+      border-radius: 8px;
+      background: white;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="title">Embedded Link</div>
+    <div class="subtle" id="status">Initializing MCP app…</div>
+    <div class="subtle" id="current-url"></div>
+  </div>
+  <div id="error" class="error"></div>
+  <iframe
+    id="link-frame"
+    title="Embedded link content"
+    sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox"
+    referrerpolicy="no-referrer"
+  ></iframe>
+
+  <script>
+    (function () {
+      const PROTOCOL_VERSION = "2026-01-26";
+      const statusEl = document.getElementById("status");
+      const currentUrlEl = document.getElementById("current-url");
+      const errorEl = document.getElementById("error");
+      const frameEl = document.getElementById("link-frame");
+
+      let nextId = 1;
+      const pending = new Map();
+
+      function setStatus(text) {
+        statusEl.textContent = text;
+      }
+
+      function showError(text) {
+        errorEl.textContent = text;
+        errorEl.style.display = "block";
+      }
+
+      function clearError() {
+        errorEl.textContent = "";
+        errorEl.style.display = "none";
+      }
+
+      function postMessageToHost(message) {
+        window.parent.postMessage(message, "*");
+      }
+
+      function sendRequest(method, params) {
+        const id = nextId++;
+        postMessageToHost({
+          jsonrpc: "2.0",
+          id: id,
+          method: method,
+          params: params
+        });
+        return new Promise((resolve, reject) => {
+          pending.set(id, { resolve: resolve, reject: reject });
+        });
+      }
+
+      function sendNotification(method, params) {
+        postMessageToHost({
+          jsonrpc: "2.0",
+          method: method,
+          params: params || {}
+        });
+      }
+
+      function sanitizeURL(raw) {
+        if (typeof raw !== "string" || raw.trim() === "") {
+          return null;
+        }
+        try {
+          const parsed = new URL(raw.trim());
+          if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+            return null;
+          }
+          return parsed.toString();
+        } catch (_error) {
+          return null;
+        }
+      }
+
+      function parseURLFromToolResult(result) {
+        if (!result || typeof result !== "object") {
+          return null;
+        }
+
+        let candidate = null;
+
+        if (result.structuredContent && typeof result.structuredContent === "object") {
+          candidate = result.structuredContent.url;
+        }
+
+        if (typeof candidate !== "string" && Array.isArray(result.content)) {
+          const textContent = result.content.find((item) => item && item.type === "text" && typeof item.text === "string");
+          if (textContent && textContent.text) {
+            try {
+              const parsed = JSON.parse(textContent.text);
+              if (parsed && typeof parsed === "object") {
+                candidate = parsed.url;
+              }
+            } catch (_error) {
+              candidate = null;
+            }
+          }
+        }
+
+        return sanitizeURL(candidate);
+      }
+
+      function renderURL(url) {
+        clearError();
+        frameEl.src = url;
+        currentUrlEl.textContent = url;
+        setStatus("Rendering URL in iframe");
+      }
+
+      function handleMessage(event) {
+        const message = event.data;
+        if (!message || typeof message !== "object") {
+          return;
+        }
+
+        if (Object.prototype.hasOwnProperty.call(message, "id") && pending.has(message.id)) {
+          const pendingRequest = pending.get(message.id);
+          pending.delete(message.id);
+          if (Object.prototype.hasOwnProperty.call(message, "error")) {
+            pendingRequest.reject(new Error(message.error && message.error.message ? message.error.message : "request failed"));
+          } else {
+            pendingRequest.resolve(message.result);
+          }
+          return;
+        }
+
+        if (message.method === "ui/notifications/tool-result") {
+          const url = parseURLFromToolResult(message.params);
+          if (!url) {
+            showError("Tool result did not include a valid HTTP(S) URL.");
+            setStatus("Waiting for a valid tool result");
+            return;
+          }
+          renderURL(url);
+        }
+      }
+
+      async function initialize() {
+        window.addEventListener("message", handleMessage);
+
+        if (window.parent === window) {
+          const standaloneURL = sanitizeURL(new URLSearchParams(window.location.search).get("url"));
+          if (standaloneURL) {
+            renderURL(standaloneURL);
+            return;
+          }
+          setStatus("Standalone mode");
+          showError("Open this page with ?url=https://example.com to preview the iframe app.");
+          return;
+        }
+
+        try {
+          await sendRequest("ui/initialize", {
+            appInfo: { name: "Link Iframe Viewer", version: "1.0.0" },
+            appCapabilities: {},
+            protocolVersion: PROTOCOL_VERSION
+          });
+          sendNotification("ui/notifications/initialized", {});
+          setStatus("Waiting for tool result");
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "unknown error";
+          showError("Failed to initialize app: " + message);
+        }
+      }
+
+      initialize();
+    })();
+  </script>
+</body>
+</html>
