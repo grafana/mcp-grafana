@@ -46,6 +46,9 @@ jobs:
       - id: get-secrets
         uses: grafana/shared-workflows/actions/get-vault-secrets@a53fc80bc30b0a16a262520465db899fa3af08b7 # get-vault-secrets/v1.3.2
         with:
+          # Don't export secrets to $GITHUB_ENV for the whole job; consume them
+          # from this step's `secrets` output only where needed (see below).
+          export_env: false
           # Secrets placed in the ci/repo/grafana/mcp-grafana/<path> path in Vault
           repo_secrets: |
             ANTHROPIC_API_KEY=anthropic:api-key
@@ -75,6 +78,8 @@ jobs:
         env:
           MCP_GRAFANA_PATH: ../dist/mcp-grafana
           MCP_TRANSPORT: ${{ matrix.transport }}
+          ANTHROPIC_API_KEY: ${{ fromJSON(steps.get-secrets.outputs.secrets).ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ fromJSON(steps.get-secrets.outputs.secrets).OPENAI_API_KEY }}
         run: |
           cd tests
           uv run pytest
