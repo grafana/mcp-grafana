@@ -2,11 +2,11 @@
   "apiVersion": "dashboard.grafana.app/v2",
   "kind": "Dashboard",
   "metadata": {
-    "name": "integration-test-dashboard"
+    "name": "git-sync-sample"
   },
   "spec": {
-    "title": "Integration test dashboard",
-    "description": "Seed dashboard for the mcp-grafana provisioning integration tests. Contains a timeseries panel querying the test Prometheus datasource so the renderer produces a non-empty image.",
+    "title": "Git sync sample",
+    "description": "Seed dashboard for the mcp-grafana provisioning integration tests. Contains a timeseries panel querying the test Prometheus datasource so the renderer produces a non-empty image. Title is deliberately distinct from the other test dashboards (Demo, Integration Test) so it doesn't collide with their searches.",
     "annotations": [],
     "cursorSync": "Off",
     "editable": true,

@@ -2,10 +2,10 @@
   "apiVersion": "dashboard.grafana.app/v2",
   "kind": "Dashboard",
   "metadata": {
-    "name": "integration-test-extra"
+    "name": "git-sync-extra"
   },
   "spec": {
-    "title": "Integration test extra dashboard",
+    "title": "Git sync extra",
     "description": "Only present on the feature/extra-dashboard branch; tests that the ref parameter resolves branch-specific files. Carries the same up query panel as the sample dashboard so it renders a non-empty image.",
     "annotations": [],
     "cursorSync": "Off",
