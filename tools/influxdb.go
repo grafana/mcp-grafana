@@ -1,13 +1,9 @@
 package tools
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -55,64 +51,19 @@ type InfluxDBQueryResult struct {
 	Hints     *EmptyResultHints        `json:"hints,omitempty"`
 }
 
-// influxDBQueryResponse mirrors the ClickHouse response shape — Grafana's
-// /api/ds/query returns the same envelope for any datasource.
-type influxDBQueryResponse struct {
-	Results map[string]struct {
-		Status int               `json:"status,omitempty"`
-		Frames []json.RawMessage `json:"frames,omitempty"`
-		Error  string            `json:"error,omitempty"`
-	} `json:"results"`
-}
-
-// influxDBFrame is a structural view of a single data frame, used to flatten
-// columnar frame data into row-oriented results.
-type influxDBFrame struct {
-	Schema struct {
-		Name   string `json:"name,omitempty"`
-		RefID  string `json:"refId,omitempty"`
-		Fields []struct {
-			Name   string            `json:"name"`
-			Type   string            `json:"type,omitempty"`
-			Labels map[string]string `json:"labels,omitempty"`
-		} `json:"fields"`
-	} `json:"schema"`
-	Data struct {
-		Values [][]interface{} `json:"values"`
-	} `json:"data"`
-}
-
-type influxDBClient struct {
-	httpClient *http.Client
-	baseURL    string
-}
-
-// newInfluxDBClient builds the HTTP client plumbing and returns it alongside
-// the resolved datasource. Callers that need datasource metadata (dialect
-// inference, jsonData) should reuse the returned *models.DataSource rather
-// than issuing a second getDatasourceByUID call.
-func newInfluxDBClient(ctx context.Context, uid string) (*influxDBClient, *models.DataSource, error) {
+// newInfluxDBDatasource verifies the datasource exists and is an InfluxDB
+// datasource, returning the datasource metadata for dialect inference.
+func newInfluxDBDatasource(ctx context.Context, uid string) (*models.DataSource, error) {
 	ds, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: uid})
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	if ds.Type != InfluxDBDatasourceType {
-		return nil, nil, fmt.Errorf("datasource %s is of type %s, not %s", uid, ds.Type, InfluxDBDatasourceType)
+		return nil, fmt.Errorf("datasource %s is of type %s, not %s", uid, ds.Type, InfluxDBDatasourceType)
 	}
 
-	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
-	baseURL := cfg.URL
-
-	transport, err := mcpgrafana.BuildTransport(&cfg, nil)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create transport: %w", err)
-	}
-
-	return &influxDBClient{
-		httpClient: &http.Client{Transport: transport},
-		baseURL:    baseURL,
-	}, ds, nil
+	return ds, nil
 }
 
 // resolveInfluxDBDialect returns a canonical dialect string.
@@ -163,88 +114,7 @@ func buildInfluxDBPayload(datasourceUID, dialect, query string, from, to time.Ti
 		"maxDataPoints": maxDataPoints,
 	}
 
-	return map[string]interface{}{
-		"queries": []map[string]interface{}{q},
-		"from":    strconv.FormatInt(from.UnixMilli(), 10),
-		"to":      strconv.FormatInt(to.UnixMilli(), 10),
-	}
-}
-
-func (c *influxDBClient) query(ctx context.Context, payload map[string]interface{}) (*influxDBQueryResponse, error) {
-	payloadBytes, err := json.Marshal(payload)
-	if err != nil {
-		return nil, fmt.Errorf("marshaling query payload: %w", err)
-	}
-
-	url := c.baseURL + "/api/ds/query"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payloadBytes))
-	if err != nil {
-		return nil, fmt.Errorf("creating request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("executing request: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return nil, fmt.Errorf("InfluxDB query returned status %d: %s", resp.StatusCode, string(bodyBytes))
-	}
-
-	bodyBytes, err := readResponseBody(resp.Body, defaultResponseLimitBytes)
-	if err != nil {
-		return nil, fmt.Errorf("reading response body: %w", err)
-	}
-
-	var queryResp influxDBQueryResponse
-	if err := json.Unmarshal(bodyBytes, &queryResp); err != nil {
-		return nil, fmt.Errorf("unmarshaling response: %w", err)
-	}
-	return &queryResp, nil
-}
-
-// framesToRows flattens Grafana's columnar frame data into row-oriented maps,
-// matching the ClickHouse tool's output shape.
-func framesToRows(rawFrames []json.RawMessage) ([]string, []map[string]interface{}, error) {
-	var columns []string
-	var rows []map[string]interface{}
-
-	for _, raw := range rawFrames {
-		var frame influxDBFrame
-		if err := json.Unmarshal(raw, &frame); err != nil {
-			return nil, nil, fmt.Errorf("parsing frame: %w", err)
-		}
-
-		fieldNames := make([]string, len(frame.Schema.Fields))
-		for i, f := range frame.Schema.Fields {
-			fieldNames[i] = f.Name
-		}
-		// Columns from the last non-empty frame win. InfluxQL range queries
-		// usually return a single frame; Flux queries may return several, one
-		// per table, but they share the same field schema.
-		if len(fieldNames) > 0 {
-			columns = fieldNames
-		}
-
-		if len(frame.Data.Values) == 0 {
-			continue
-		}
-
-		rowCount := len(frame.Data.Values[0])
-		for i := 0; i < rowCount; i++ {
-			row := make(map[string]interface{}, len(fieldNames))
-			for colIdx, colName := range fieldNames {
-				if colIdx < len(frame.Data.Values) && i < len(frame.Data.Values[colIdx]) {
-					row[colName] = frame.Data.Values[colIdx][i]
-				}
-			}
-			rows = append(rows, row)
-		}
-	}
-	return columns, rows, nil
+	return dsQueryPayload(from, to, q)
 }
 
 func queryInfluxDB(ctx context.Context, args InfluxDBQueryParams) (*InfluxDBQueryResult, error) {
@@ -252,7 +122,7 @@ func queryInfluxDB(ctx context.Context, args InfluxDBQueryParams) (*InfluxDBQuer
 		return nil, fmt.Errorf("query is required")
 	}
 
-	client, ds, err := newInfluxDBClient(ctx, args.DatasourceUID)
+	ds, err := newInfluxDBDatasource(ctx, args.DatasourceUID)
 	if err != nil {
 		return nil, fmt.Errorf("creating InfluxDB client: %w", err)
 	}
@@ -290,43 +160,41 @@ func queryInfluxDB(ctx context.Context, args InfluxDBQueryParams) (*InfluxDBQuer
 	}
 
 	payload := buildInfluxDBPayload(args.DatasourceUID, dialect, args.Query, fromTime, toTime, args.MaxDataPoints)
-	resp, err := client.query(ctx, payload)
+
+	client, baseURL, err := newDSQueryHTTPClient(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := doDSQuery(ctx, client, baseURL, payload)
+	if err != nil {
+		return nil, err
+	}
+
+	columns, rows, err := framesToTabularRows(resp)
 	if err != nil {
 		return nil, err
 	}
 
 	result := &InfluxDBQueryResult{
-		Columns: []string{},
-		Rows:    []map[string]interface{}{},
-		Dialect: dialect,
+		Columns:  columns,
+		Rows:     rows,
+		RowCount: len(rows),
+		Dialect:  dialect,
 	}
 
-	for refID, r := range resp.Results {
-		if r.Error != "" {
-			return nil, fmt.Errorf("query error (refId=%s): %s", refID, r.Error)
+	// Preserve the raw frames so callers that want the native
+	// Grafana shape (timestamps + labels per field) can still get it.
+	for _, r := range resp.Responses {
+		if len(r.Frames) > 0 {
+			rawFramesJSON, err := json.Marshal(r.Frames)
+			if err == nil {
+				result.RawFrames = rawFramesJSON
+			}
+			break
 		}
-		if len(r.Frames) == 0 {
-			continue
-		}
-
-		// Preserve the raw frames so callers that want the native
-		// Grafana shape (timestamps + labels per field) can still get it.
-		rawFramesJSON, err := json.Marshal(r.Frames)
-		if err == nil {
-			result.RawFrames = rawFramesJSON
-		}
-
-		cols, rows, err := framesToRows(r.Frames)
-		if err != nil {
-			return nil, err
-		}
-		if len(cols) > 0 {
-			result.Columns = cols
-		}
-		result.Rows = append(result.Rows, rows...)
 	}
 
-	result.RowCount = len(result.Rows)
 	if result.RowCount == 0 {
 		result.Hints = GenerateEmptyResultHints(HintContext{
 			DatasourceType: "influxdb",
