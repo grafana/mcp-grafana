@@ -33,6 +33,12 @@ func (m *mockTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	return &http.Response{StatusCode: http.StatusNotFound, Body: io.NopCloser(strings.NewReader("not found"))}, nil
 }
 
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
 func newMockResponse(status int) *http.Response {
 	return &http.Response{
 		StatusCode: status,
@@ -109,7 +115,7 @@ func TestDatasourceFallbackTransport_FallbackOn500(t *testing.T) {
 	assert.Len(t, mock.requests, 2, "should retry with fallback on 500")
 }
 
-func TestDatasourceFallbackTransport_CachesFallback(t *testing.T) {
+func TestDatasourceFallbackTransport_CachesFallbackPerRequestPath(t *testing.T) {
 	resetFallbackCache()
 
 	mock := &mockTransport{
@@ -130,13 +136,67 @@ func TestDatasourceFallbackTransport_CachesFallback(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, mock.requests, 2)
 
-	// Second request: uses cached fallback directly (1 round trip).
-	req2, _ := http.NewRequest("GET", "http://grafana.example.com/api/datasources/uid/test-uid/resources/api/v1/query", nil)
+	// Same request path: uses cached fallback directly (1 round trip).
+	req2, _ := http.NewRequest("GET", "http://grafana.example.com/api/datasources/uid/test-uid/resources/api/v1/labels", nil)
 	resp, err := rt.RoundTrip(req2)
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Len(t, mock.requests, 3, "cached fallback should skip the primary attempt")
-	assert.Contains(t, mock.requests[2].URL.Path, "/api/datasources/proxy/uid/test-uid/api/v1/query")
+	assert.Len(t, mock.requests, 3, "same path should use cached fallback")
+	assert.Contains(t, mock.requests[2].URL.Path, "/api/datasources/proxy/uid/test-uid/api/v1/labels")
+
+	// Different request path: tries primary first because /resources and /proxy
+	// compatibility can differ between datasource API endpoints.
+	req3, _ := http.NewRequest("GET", "http://grafana.example.com/api/datasources/uid/test-uid/resources/api/v1/query", nil)
+	resp, err = rt.RoundTrip(req3)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Len(t, mock.requests, 5, "different path should not inherit fallback cache")
+	assert.Contains(t, mock.requests[3].URL.Path, "/api/datasources/uid/test-uid/resources/api/v1/query")
+	assert.Contains(t, mock.requests[4].URL.Path, "/api/datasources/proxy/uid/test-uid/api/v1/query")
+}
+
+func TestDatasourceFallbackTransport_LokiPatternsDoesNotInheritFallback(t *testing.T) {
+	resetFallbackCache()
+
+	var requests []*http.Request
+	mock := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requests = append(requests, req)
+
+		switch {
+		case strings.Contains(req.URL.Path, "/api/datasources/proxy/uid/test-uid/api/v1/labels"):
+			return newMockResponse(http.StatusForbidden), nil
+		case strings.Contains(req.URL.Path, "/api/datasources/uid/test-uid/resources/api/v1/labels"):
+			return newMockResponse(http.StatusOK), nil
+		case strings.Contains(req.URL.Path, "/api/datasources/proxy/uid/test-uid/loki/api/v1/patterns"):
+			return newMockResponse(http.StatusOK), nil
+		case strings.Contains(req.URL.Path, "/api/datasources/uid/test-uid/resources/loki/api/v1/patterns"):
+			return newMockResponse(http.StatusNotFound), nil
+		default:
+			return newMockResponse(http.StatusNotFound), nil
+		}
+	})
+
+	rt := newDatasourceFallbackTransport(mock,
+		"/api/datasources/proxy/uid/test-uid",
+		"/api/datasources/uid/test-uid/resources",
+	)
+
+	// First request: discovers fallback is needed for labels.
+	req1, _ := http.NewRequest("GET", "http://grafana.example.com/api/datasources/proxy/uid/test-uid/api/v1/labels", nil)
+	resp, err := rt.RoundTrip(req1)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Len(t, requests, 2)
+
+	// A different Loki path must still try the primary path. Caching the
+	// fallback only by datasource base would incorrectly route this directly to
+	// /resources, which is not equivalent for the patterns endpoint.
+	req2, _ := http.NewRequest("GET", "http://grafana.example.com/api/datasources/proxy/uid/test-uid/loki/api/v1/patterns", nil)
+	resp, err = rt.RoundTrip(req2)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Len(t, requests, 3)
+	assert.Contains(t, requests[2].URL.Path, "/api/datasources/proxy/uid/test-uid/loki/api/v1/patterns")
 }
 
 func TestDatasourceFallbackTransport_BothFail(t *testing.T) {

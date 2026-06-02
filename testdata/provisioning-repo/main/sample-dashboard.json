@@ -1,0 +1,110 @@
+{
+  "apiVersion": "dashboard.grafana.app/v2",
+  "kind": "Dashboard",
+  "metadata": {
+    "name": "git-sync-sample"
+  },
+  "spec": {
+    "title": "Git sync sample",
+    "description": "Seed dashboard for the mcp-grafana provisioning integration tests. Contains a timeseries panel querying the test Prometheus datasource so the renderer produces a non-empty image. Title is deliberately distinct from the other test dashboards (Demo, Integration Test) so it doesn't collide with their searches.",
+    "annotations": [],
+    "cursorSync": "Off",
+    "editable": true,
+    "elements": {
+      "panel-up": {
+        "kind": "Panel",
+        "spec": {
+          "id": 1,
+          "links": [],
+          "title": "Up",
+          "description": "Scrape target up state from the test Prometheus.",
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "transformations": [],
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "hidden": false,
+                    "refId": "A",
+                    "query": {
+                      "kind": "DataQuery",
+                      "version": "v0",
+                      "group": "prometheus",
+                      "datasource": { "name": "prometheus" },
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "up",
+                        "instant": false,
+                        "legendFormat": "{{instance}}",
+                        "range": true
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "spec": {
+              "fieldConfig": {
+                "defaults": {
+                  "color": { "mode": "palette-classic" },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineInterpolation": "linear",
+                    "lineWidth": 1,
+                    "scaleDistribution": { "type": "linear" },
+                    "showPoints": "auto"
+                  },
+                  "min": 0
+                },
+                "overrides": []
+              },
+              "options": {
+                "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
+                "tooltip": { "mode": "multi", "sort": "desc" }
+              },
+              "pluginVersion": "13.0.1"
+            }
+          }
+        }
+      }
+    },
+    "layout": {
+      "kind": "GridLayout",
+      "spec": {
+        "items": [
+          {
+            "kind": "GridLayoutItem",
+            "spec": {
+              "x": 0,
+              "y": 0,
+              "width": 24,
+              "height": 9,
+              "element": { "kind": "ElementReference", "name": "panel-up" }
+            }
+          }
+        ]
+      }
+    },
+    "links": [],
+    "liveNow": false,
+    "preload": false,
+    "tags": ["integration-test"],
+    "timeSettings": {
+      "from": "now-30m",
+      "to": "now",
+      "autoRefresh": "",
+      "autoRefreshIntervals": [],
+      "fiscalYearStartMonth": 0,
+      "hideTimepicker": false,
+      "timezone": "browser"
+    },
+    "variables": []
+  }
+}
