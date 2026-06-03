@@ -792,4 +792,3 @@ func TestGetPanelImage(t *testing.T) {
 		require.NoError(t, err)
 	})
 }
-
