@@ -614,7 +614,12 @@ func main() {
 		obs.NetworkTransport = mcpconv.NetworkTransportTCP
 	}
 
-	if err := run(transport, *addr, *basePath, *endpointPath, parseLevel(*logLevel), dt, grafanaConfig, tls, obs, *sessionIdleTimeoutMinutes); err != nil {
+	level := parseLevel(*logLevel)
+	if grafanaConfig.Debug && level > slog.LevelDebug {
+		level = slog.LevelDebug
+	}
+
+	if err := run(transport, *addr, *basePath, *endpointPath, level, dt, grafanaConfig, tls, obs, *sessionIdleTimeoutMinutes); err != nil {
 		panic(err)
 	}
 }

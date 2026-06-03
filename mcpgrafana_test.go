@@ -1,6 +1,7 @@
 package mcpgrafana
 
 import (
+	"bytes"
 	"context"
 	"log/slog"
 	"net/http"
@@ -1088,6 +1089,110 @@ func TestBuildTransport(t *testing.T) {
 		assert.Empty(t, capturedReq.Header.Get("Authorization"))
 		assert.Empty(t, capturedReq.Header.Get("X-Grafana-Org-Id"))
 	})
+}
+
+func TestRedactHeaderValue(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"short", "[REDACTED]"},
+		{"exactly11ch", "[REDACTED]"},
+		{"exactly12char", "exac***char"},
+		{"glsa_1234567890abcdef", "glsa***cdef"},
+		{"Bearer glsa_abcdefghij", "Bear***ghij"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			assert.Equal(t, tt.want, redactHeaderValue(tt.input))
+		})
+	}
+}
+
+func TestDebugLoggingRedactsSensitiveHeaders(t *testing.T) {
+	var capturedReq *http.Request
+	mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+		capturedReq = req
+		return &http.Response{StatusCode: 200, Header: http.Header{}}, nil
+	}}
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	cfg := &GrafanaConfig{
+		APIKey: "glsa_supersecrettoken1234",
+		Debug:  true,
+		Logger: logger,
+	}
+	transport, err := BuildTransport(cfg, mock, WithoutOtel())
+	require.NoError(t, err)
+
+	req, _ := http.NewRequest("GET", "http://example.com/api/search", nil)
+	_, err = transport.RoundTrip(req)
+	require.NoError(t, err)
+
+	// The actual request to the server must still carry the real token.
+	assert.Equal(t, "Bearer glsa_supersecrettoken1234", capturedReq.Header.Get("Authorization"))
+
+	// The debug log output must NOT contain the full token.
+	logOutput := buf.String()
+	assert.NotContains(t, logOutput, "glsa_supersecrettoken1234")
+	// But it should contain the redacted version.
+	assert.Contains(t, logOutput, "Bear***1234")
+}
+
+func TestDebugLoggingRedactsOBOTokens(t *testing.T) {
+	var capturedReq *http.Request
+	mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+		capturedReq = req
+		return &http.Response{StatusCode: 200, Header: http.Header{}}, nil
+	}}
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	cfg := &GrafanaConfig{
+		AccessToken: "access_secret_token_val",
+		IDToken:     "id_secret_token_value",
+		Debug:       true,
+		Logger:      logger,
+	}
+	transport, err := BuildTransport(cfg, mock, WithoutOtel())
+	require.NoError(t, err)
+
+	req, _ := http.NewRequest("GET", "http://example.com/api/search", nil)
+	_, err = transport.RoundTrip(req)
+	require.NoError(t, err)
+
+	// Real tokens must reach the server.
+	assert.Equal(t, "access_secret_token_val", capturedReq.Header.Get("X-Access-Token"))
+	assert.Equal(t, "id_secret_token_value", capturedReq.Header.Get("X-Grafana-Id"))
+
+	logOutput := buf.String()
+	assert.NotContains(t, logOutput, "access_secret_token_val")
+	assert.NotContains(t, logOutput, "id_secret_token_value")
+}
+
+func TestDebugLoggingDisabledByDefault(t *testing.T) {
+	mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 200, Header: http.Header{}}, nil
+	}}
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	cfg := &GrafanaConfig{
+		APIKey: "glsa_supersecrettoken1234",
+		Logger: logger,
+	}
+	transport, err := BuildTransport(cfg, mock, WithoutOtel())
+	require.NoError(t, err)
+
+	req, _ := http.NewRequest("GET", "http://example.com/api/search", nil)
+	_, err = transport.RoundTrip(req)
+	require.NoError(t, err)
+
+	assert.Empty(t, buf.String())
 }
 
 func TestExtractGrafanaInfoWithExtraHeaders(t *testing.T) {
