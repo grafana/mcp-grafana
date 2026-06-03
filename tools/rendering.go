@@ -109,18 +109,24 @@ func getPanelImage(ctx context.Context, args GetPanelImageParams) (*mcp.CallTool
 		return nil, fmt.Errorf("failed to build render URL: %w", err)
 	}
 
-	// Create HTTP client with TLS configuration if available
-	httpClient, err := createHTTPClient(config)
+	// Build the HTTP transport using the shared middleware chain (TLS, auth,
+	// extra headers, org ID, user-agent, otel). Using config.HTTPTransport()
+	// as the base ensures we respect BaseTransport when set (e.g. the hosted
+	// Cloud MCP server injects a pre-configured transport with custom
+	// instrumentation).
+	transport, err := mcpgrafana.BuildTransport(&config, config.HTTPTransport())
 	if err != nil {
-		return nil, fmt.Errorf("failed to create HTTP client: %w", err)
+		return nil, fmt.Errorf("failed to build HTTP transport: %w", err)
 	}
 
-	// Set timeout for rendering
 	timeout := 60 * time.Second
 	if args.Timeout != nil && *args.Timeout > 0 {
 		timeout = time.Duration(*args.Timeout) * time.Second
 	}
-	httpClient.Timeout = timeout
+	httpClient := &http.Client{
+		Transport: transport,
+		Timeout:   timeout,
+	}
 
 	// Create request
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, renderURL, nil)
@@ -274,15 +280,6 @@ func buildRenderURL(baseURL string, args GetPanelImageParams) (string, error) {
 	params.Set("kiosk", "true")
 
 	return fmt.Sprintf("%s%s?%s", baseURL, renderPath, params.Encode()), nil
-}
-
-func createHTTPClient(config mcpgrafana.GrafanaConfig) (*http.Client, error) {
-	transport, err := mcpgrafana.BuildTransport(&config, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return &http.Client{Transport: transport}, nil
 }
 
 var GetPanelImage = mcpgrafana.MustTool(
