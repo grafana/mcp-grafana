@@ -37,6 +37,19 @@ func TestPrometheusTools(t *testing.T) {
 		assert.Len(t, result, 10)
 	})
 
+	t.Run("list prometheus metric names with time range", func(t *testing.T) {
+		ctx := newTestContext()
+		result, err := listPrometheusMetricNames(ctx, ListPrometheusMetricNamesParams{
+			DatasourceUID: "prometheus",
+			Regex:         ".*",
+			Limit:         10,
+			StartRFC3339:  time.Now().Add(-time.Hour).Format(time.RFC3339),
+			EndRFC3339:    time.Now().Format(time.RFC3339),
+		})
+		require.NoError(t, err)
+		assert.Len(t, result, 10)
+	})
+
 	t.Run("list prometheus label names", func(t *testing.T) {
 		ctx := newTestContext()
 		result, err := listPrometheusLabelNames(ctx, ListPrometheusLabelNamesParams{
