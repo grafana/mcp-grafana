@@ -180,6 +180,8 @@ type ListPrometheusMetricNamesParams struct {
 	Regex         string `json:"regex" jsonschema:"description=The regex to match against the metric names"`
 	Limit         int    `json:"limit,omitempty" jsonschema:"default=10,description=The maximum number of results to return"`
 	Page          int    `json:"page,omitempty" jsonschema:"default=1,description=The page number to return"`
+	StartRFC3339  string `json:"startRfc3339,omitempty" jsonschema:"description=Optionally\\, the start time of the time range to filter the results by"`
+	EndRFC3339    string `json:"endRfc3339,omitempty" jsonschema:"description=Optionally\\, the end time of the time range to filter the results by"`
 	ProjectName   string `json:"projectName,omitempty" jsonschema:"description=GCP project name to query (Cloud Monitoring datasources only). Overrides or substitutes the defaultProject configured on the datasource."`
 }
 
@@ -199,8 +201,20 @@ func listPrometheusMetricNames(ctx context.Context, args ListPrometheusMetricNam
 		page = 1
 	}
 
+	var startTime, endTime time.Time
+	if args.StartRFC3339 != "" {
+		if startTime, err = time.Parse(time.RFC3339, args.StartRFC3339); err != nil {
+			return nil, fmt.Errorf("parsing start time: %w", err)
+		}
+	}
+	if args.EndRFC3339 != "" {
+		if endTime, err = time.Parse(time.RFC3339, args.EndRFC3339); err != nil {
+			return nil, fmt.Errorf("parsing end time: %w", err)
+		}
+	}
+
 	// Get all metric names via the backend
-	allNames, err := backend.LabelValues(ctx, "__name__", nil, time.Time{}, time.Time{})
+	allNames, err := backend.LabelValues(ctx, "__name__", nil, startTime, endTime)
 	if err != nil {
 		return nil, fmt.Errorf("listing Prometheus metric names: %w", err)
 	}
@@ -237,7 +251,7 @@ func listPrometheusMetricNames(ctx context.Context, args ListPrometheusMetricNam
 
 var ListPrometheusMetricNames = mcpgrafana.MustTool(
 	"list_prometheus_metric_names",
-	"DISCOVERY: Call this first to find available metrics before querying. Lists metric names in a PromQL-compatible datasource (Prometheus, Thanos, Mimir, Cloud Monitoring, etc.). Retrieves all metric names and filters them using the provided regex. Supports pagination.",
+	"DISCOVERY: Call this first to find available metrics before querying. Lists metric names in a PromQL-compatible datasource (Prometheus, Thanos, Mimir, Cloud Monitoring, etc.). Retrieves all metric names and filters them using the provided regex. Supports pagination and an optional time range to restrict results to metrics active within that window.",
 	listPrometheusMetricNames,
 	mcp.WithTitleAnnotation("List Prometheus metric names"),
 	mcp.WithIdempotentHintAnnotation(true),
