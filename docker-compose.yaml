@@ -90,7 +90,7 @@ services:
       - 4040:4040
 
   tempo:
-    image: grafana/tempo:2.10.0-rc.0@sha256:ab73a4fa3586e866be3322507491b66d49c9607592128b72b3aad80e3b355a12
+    image: grafana/tempo:3.0.0-rc.0@sha256:0897d37b38f6882be92de5ce4721eb13ce1d0fd2fbb683d7e67f5fe9d5be4062
     command: ["-config.file=/etc/tempo/tempo-config.yaml"]
     volumes:
       - ./testdata/tempo-config.yaml:/etc/tempo/tempo-config.yaml
@@ -100,7 +100,7 @@ services:
       - "4318:4318"   # OTLP HTTP receiver
 
   tempo2:
-    image: grafana/tempo:2.10.0-rc.0@sha256:ab73a4fa3586e866be3322507491b66d49c9607592128b72b3aad80e3b355a12
+    image: grafana/tempo:3.0.0-rc.0@sha256:0897d37b38f6882be92de5ce4721eb13ce1d0fd2fbb683d7e67f5fe9d5be4062
     command: ["-config.file=/etc/tempo/tempo-config.yaml"]
     volumes:
       - ./testdata/tempo-config-2.yaml:/etc/tempo/tempo-config.yaml
