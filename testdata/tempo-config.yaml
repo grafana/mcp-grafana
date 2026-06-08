@@ -22,17 +22,20 @@ metrics_generator:
       - url: http://prometheus:9090/api/v1/write
         send_exemplars: true
 
-ingester:
-  max_block_duration: 5m
+backend_scheduler:
+  provider:
+    compaction:
+      compaction:
+        block_retention: 1h
+
+backend_worker:
+  compaction:
+    block_retention: 1h
 
 overrides:
   defaults:
     metrics_generator:
-      processors: [service-graphs, span-metrics, local-blocks]
-
-compactor:
-  compaction:
-    block_retention: 1h
+      processors: [service-graphs, span-metrics]
 
 storage:
   trace:
