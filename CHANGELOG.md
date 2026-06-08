@@ -9,10 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `get_panel_image` now accepts an optional `provisioningPreview` parameter (`repo`, `path`, `ref`) for rendering dashboards staged on a provisioning repository branch (e.g. a git-sync PR preview) before they're merged or applied. Mutually exclusive with `dashboardUid`.
-- New `provisioning` tool category with `list_provisioning_repositories` — returns each repository's slug, source URL/branch/path, sync state, and health, so agents can discover the `repo` value to pass to `get_panel_image`'s `provisioningPreview`.
-- `validate_provisioning_file` dry-run-applies a file from a provisioning repository at a given branch/commit and returns whether it would be accepted, the resource action (create/update), the target resource type, and any structured validation errors — the same admission surface Grafana's PR commenter reports.
-- `generate_deeplink` now accepts a `provisioningPreview` parameter (`repo`, `path`, optional `ref` and `pullRequestUrl`) for the `dashboard` and `panel` resource types, returning a link to a dashboard staged on a provisioning repository branch (e.g. a git-sync PR preview). Mutually exclusive with `dashboardUid`.
+- Optional `startRfc3339`/`endRfc3339` time range parameters for `list_prometheus_metric_names` to restrict results to metrics active within a window
+
+## [0.15.2] - 2026-06-04
+
+### Fixed
+
+- Docker images are again published to `docker.io/grafana/mcp-grafana`. v0.15.0 and v0.15.1 Docker images were never published because the shared Docker Hub credential was restricted to read-only. The release workflow now publishes via Grafana's GAR-based Docker Hub mirror pipeline ([#925](https://github.com/grafana/mcp-grafana/pull/925))
+
+## [0.15.1] - 2026-06-03
+
+### Added
+
+- `shorten_url` tool for creating Grafana short links from long dashboard or explore URLs ([#899](https://github.com/grafana/mcp-grafana/pull/899))
+- Provisioning workflow tools: `list_provisioning_repositories` for discovering connected repositories, `validate_provisioning_file` for dry-run validation of provisioning files, and provisioning preview support in `get_panel_image` and `generate_deeplink` for rendering dashboards from PR branches before merge ([#900](https://github.com/grafana/mcp-grafana/pull/900))
+
+### Changed
+
+- Rendering tools now use a shared transport chain with `BaseTransport` support for consistent HTTP middleware ([#918](https://github.com/grafana/mcp-grafana/pull/918))
+
+### Security
+
+- Redact credentials from debug transport logs to prevent accidental exposure ([#920](https://github.com/grafana/mcp-grafana/pull/920))
+- Update Go to 1.26.3 to fix CVE-2026-33810 and bump litellm dependency ([#916](https://github.com/grafana/mcp-grafana/pull/916))
 
 ## [0.15.0] - 2026-06-01
 
@@ -255,6 +274,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Upgrade Docker base image packages to resolve critical OpenSSL CVE-2025-15467 (CVSS 9.8) ([#551](https://github.com/grafana/mcp-grafana/pull/551))
 
+[0.15.2]: https://github.com/grafana/mcp-grafana/compare/v0.15.1...v0.15.2
+[0.15.1]: https://github.com/grafana/mcp-grafana/compare/v0.15.0...v0.15.1
 [0.15.0]: https://github.com/grafana/mcp-grafana/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/grafana/mcp-grafana/compare/v0.13.1...v0.14.0
 [0.13.1]: https://github.com/grafana/mcp-grafana/compare/v0.13.0...v0.13.1
