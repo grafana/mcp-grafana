@@ -33,6 +33,28 @@ Set `GRAFANA_URL` and `GRAFANA_SERVICE_ACCOUNT_TOKEN` in the environment passed 
 
 The deprecated `GRAFANA_API_KEY` is still supported but will be removed in a future version; use `GRAFANA_SERVICE_ACCOUNT_TOKEN` instead.
 
+### Read the token from a file
+
+Set `GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE` to a file path that contains the token instead of passing the value inline. The file is read fresh on every request, so a rotated token is picked up automatically without restarting the server.
+
+This is useful in Kubernetes, where a Secret mounted as a volume is updated in place when the underlying Secret changes. Because the server's client cache is keyed on the token value, a rotated token transparently produces a new client with no pod restart:
+
+```yaml
+env:
+  - name: GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE
+    value: /var/run/secrets/grafana/token
+volumeMounts:
+  - name: grafana-token
+    mountPath: /var/run/secrets/grafana
+    readOnly: true
+volumes:
+  - name: grafana-token
+    secret:
+      secretName: grafana-mcp-token
+```
+
+Surrounding whitespace (including a trailing newline) is trimmed from the file contents. If both `GRAFANA_SERVICE_ACCOUNT_TOKEN` and `GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE` are set, the inline token takes precedence.
+
 ## Use username and password
 
 You can use basic auth by setting `GRAFANA_USERNAME` and `GRAFANA_PASSWORD` instead of a token. This is less suitable for automation; prefer a service account token when possible.
