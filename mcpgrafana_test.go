@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -1209,6 +1211,85 @@ func TestExtractGrafanaInfoWithExtraHeaders(t *testing.T) {
 		ctx := ExtractGrafanaInfoFromHeaders(context.Background(), req)
 		config := GrafanaConfigFromContext(ctx)
 		assert.Equal(t, map[string]string{"X-Tenant-ID": "tenant-456"}, config.ExtraHeaders)
+	})
+}
+
+func TestServiceAccountTokenFromFile(t *testing.T) {
+	logger := slog.New(slog.DiscardHandler)
+
+	writeToken := func(t *testing.T, contents string) string {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "token")
+		require.NoError(t, os.WriteFile(path, []byte(contents), 0o600))
+		return path
+	}
+
+	t.Run("reads token from file", func(t *testing.T) {
+		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN", "")
+		t.Setenv("GRAFANA_API_KEY", "")
+		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE", writeToken(t, "file-token"))
+
+		_, apiKey := urlAndAPIKeyFromEnv(logger)
+		assert.Equal(t, "file-token", apiKey)
+	})
+
+	t.Run("trims surrounding whitespace and newlines", func(t *testing.T) {
+		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN", "")
+		t.Setenv("GRAFANA_API_KEY", "")
+		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE", writeToken(t, "  file-token\n"))
+
+		_, apiKey := urlAndAPIKeyFromEnv(logger)
+		assert.Equal(t, "file-token", apiKey)
+	})
+
+	t.Run("direct token takes precedence over file", func(t *testing.T) {
+		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN", "direct-token")
+		t.Setenv("GRAFANA_API_KEY", "")
+		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE", writeToken(t, "file-token"))
+
+		_, apiKey := urlAndAPIKeyFromEnv(logger)
+		assert.Equal(t, "direct-token", apiKey)
+	})
+
+	t.Run("file takes precedence over deprecated api key", func(t *testing.T) {
+		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN", "")
+		t.Setenv("GRAFANA_API_KEY", "deprecated-key")
+		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE", writeToken(t, "file-token"))
+
+		_, apiKey := urlAndAPIKeyFromEnv(logger)
+		assert.Equal(t, "file-token", apiKey)
+	})
+
+	t.Run("falls back to deprecated api key when file is missing", func(t *testing.T) {
+		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN", "")
+		t.Setenv("GRAFANA_API_KEY", "deprecated-key")
+		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE", filepath.Join(t.TempDir(), "does-not-exist"))
+
+		_, apiKey := urlAndAPIKeyFromEnv(logger)
+		assert.Equal(t, "deprecated-key", apiKey)
+	})
+
+	t.Run("empty file falls back to deprecated api key", func(t *testing.T) {
+		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN", "")
+		t.Setenv("GRAFANA_API_KEY", "deprecated-key")
+		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE", writeToken(t, "\n  \n"))
+
+		_, apiKey := urlAndAPIKeyFromEnv(logger)
+		assert.Equal(t, "deprecated-key", apiKey)
+	})
+
+	t.Run("rotated file is picked up on subsequent reads", func(t *testing.T) {
+		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN", "")
+		t.Setenv("GRAFANA_API_KEY", "")
+		path := writeToken(t, "old-token")
+		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE", path)
+
+		_, apiKey := urlAndAPIKeyFromEnv(logger)
+		require.Equal(t, "old-token", apiKey)
+
+		require.NoError(t, os.WriteFile(path, []byte("new-token"), 0o600))
+		_, apiKey = urlAndAPIKeyFromEnv(logger)
+		assert.Equal(t, "new-token", apiKey)
 	})
 }
 
