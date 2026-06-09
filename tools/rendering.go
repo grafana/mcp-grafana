@@ -82,7 +82,42 @@ type RenderTimeRange struct {
 }
 
 type RenderLinkInMCPAppParams struct {
-	URL string `json:"url" jsonschema:"required,description=HTTP(S) URL to render inside the MCP App iframe"`
+	URL   string  `json:"url" jsonschema:"required,description=HTTP(S) URL to render inside the MCP App iframe"`
+	Kiosk *string `json:"kiosk,omitempty" jsonschema:"description=Grafana kiosk mode: 'true' (default for Grafana URLs)\\, 'tv'\\, or 'false' to disable"`
+}
+
+// addGrafanaKioskParam sets the Grafana kiosk query parameter on URLs that
+// point at the configured Grafana host. Other URLs are returned unchanged.
+func addGrafanaKioskParam(rawURL, grafanaBaseURL, override string) string {
+	if grafanaBaseURL == "" {
+		return rawURL
+	}
+	target, err := url.Parse(rawURL)
+	if err != nil {
+		return rawURL
+	}
+	base, err := url.Parse(grafanaBaseURL)
+	if err != nil {
+		return rawURL
+	}
+	if !strings.EqualFold(target.Host, base.Host) {
+		return rawURL
+	}
+
+	q := target.Query()
+	switch strings.ToLower(strings.TrimSpace(override)) {
+	case "false":
+		q.Del("kiosk")
+	case "":
+		if !q.Has("kiosk") {
+			q.Set("kiosk", "true")
+		}
+	default:
+		q.Set("kiosk", override)
+	}
+
+	target.RawQuery = q.Encode()
+	return target.String()
 }
 
 func normalizeEmbeddableURL(raw string) (string, error) {
@@ -109,11 +144,19 @@ func normalizeEmbeddableURL(raw string) (string, error) {
 	return parsed.String(), nil
 }
 
-func renderLinkInMCPApp(_ context.Context, args RenderLinkInMCPAppParams) (*mcp.CallToolResult, error) {
+func renderLinkInMCPApp(ctx context.Context, args RenderLinkInMCPAppParams) (*mcp.CallToolResult, error) {
 	safeURL, err := normalizeEmbeddableURL(args.URL)
 	if err != nil {
 		return nil, err
 	}
+
+	// Kiosk only affects the URL the iframe loads. Text content keeps the
+	// caller's original URL so it stays canonical when copied or shared.
+	override := ""
+	if args.Kiosk != nil {
+		override = *args.Kiosk
+	}
+	iframeURL := addGrafanaKioskParam(safeURL, mcpgrafana.GrafanaConfigFromContext(ctx).URL, override)
 
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{
@@ -123,7 +166,7 @@ func renderLinkInMCPApp(_ context.Context, args RenderLinkInMCPAppParams) (*mcp.
 			},
 		},
 		StructuredContent: map[string]any{
-			"url": safeURL,
+			"url": iframeURL,
 		},
 	}, nil
 }
@@ -284,7 +327,7 @@ var GetPanelImage = mcpgrafana.MustTool(
 
 var RenderLinkInMCPApp = mcpgrafana.MustTool(
 	"render_link_in_mcp_app",
-	"Render an arbitrary HTTP(S) URL inside an MCP App iframe. The URL is validated and returned as structured content for the app to display.",
+	"Render an HTTP(S) URL inside an MCP App iframe. Grafana URLs get kiosk=true by default; override with the kiosk parameter ('tv' to force TV mode\\, 'false' to disable). Non-Grafana URLs are unchanged.",
 	renderLinkInMCPApp,
 	mcp.WithTitleAnnotation("Render link in MCP App iframe"),
 	mcp.WithIdempotentHintAnnotation(true),

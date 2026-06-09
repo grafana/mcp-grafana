@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -597,6 +598,175 @@ func TestRenderLinkInMCPApp(t *testing.T) {
 	structured, ok := result.StructuredContent.(map[string]any)
 	require.True(t, ok, "expected structured content map")
 	assert.Equal(t, "https://example.com/path?q=1", structured["url"])
+}
+
+func TestRenderLinkInMCPApp_AppliesKioskForGrafanaURLs(t *testing.T) {
+	grafanaCfg := mcpgrafana.GrafanaConfig{URL: "https://grafana.example.com"}
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), grafanaCfg)
+
+	t.Run("Grafana host gets kiosk=true by default", func(t *testing.T) {
+		result, err := renderLinkInMCPApp(ctx, RenderLinkInMCPAppParams{
+			URL: "https://grafana.example.com/d/abc?from=now-1h&to=now",
+		})
+		require.NoError(t, err)
+
+		structured := result.StructuredContent.(map[string]any)
+		assert.Contains(t, structured["url"].(string), "kiosk=true")
+		assert.Contains(t, structured["url"].(string), "from=now-1h")
+
+		// Text content surfaces the caller's URL unchanged so kiosk=true
+		// doesn't leak when the URL is copied or shared.
+		text := result.Content[0].(mcp.TextContent).Text
+		assert.NotContains(t, text, "kiosk=true")
+		assert.Contains(t, text, "https://grafana.example.com/d/abc?from=now-1h&to=now")
+	})
+
+	t.Run("Non-Grafana host is not modified", func(t *testing.T) {
+		result, err := renderLinkInMCPApp(ctx, RenderLinkInMCPAppParams{
+			URL: "https://example.com/path?q=1",
+		})
+		require.NoError(t, err)
+
+		structured := result.StructuredContent.(map[string]any)
+		assert.Equal(t, "https://example.com/path?q=1", structured["url"])
+	})
+
+	t.Run("Explicit kiosk=tv is preserved", func(t *testing.T) {
+		result, err := renderLinkInMCPApp(ctx, RenderLinkInMCPAppParams{
+			URL: "https://grafana.example.com/d/abc?kiosk=tv",
+		})
+		require.NoError(t, err)
+
+		structured := result.StructuredContent.(map[string]any)
+		assert.Contains(t, structured["url"].(string), "kiosk=tv")
+		assert.NotContains(t, structured["url"].(string), "kiosk=true")
+	})
+
+	t.Run("Override kiosk=tv forces TV mode", func(t *testing.T) {
+		tv := "tv"
+		result, err := renderLinkInMCPApp(ctx, RenderLinkInMCPAppParams{
+			URL:   "https://grafana.example.com/d/abc",
+			Kiosk: &tv,
+		})
+		require.NoError(t, err)
+
+		structured := result.StructuredContent.(map[string]any)
+		assert.Contains(t, structured["url"].(string), "kiosk=tv")
+
+		text := result.Content[0].(mcp.TextContent).Text
+		assert.NotContains(t, text, "kiosk")
+	})
+
+	t.Run("Override kiosk=false strips kiosk", func(t *testing.T) {
+		off := "false"
+		result, err := renderLinkInMCPApp(ctx, RenderLinkInMCPAppParams{
+			URL:   "https://grafana.example.com/d/abc?kiosk=tv",
+			Kiosk: &off,
+		})
+		require.NoError(t, err)
+
+		structured := result.StructuredContent.(map[string]any)
+		assert.NotContains(t, structured["url"].(string), "kiosk")
+	})
+
+	t.Run("No Grafana URL configured leaves URL untouched", func(t *testing.T) {
+		emptyCtx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{})
+		result, err := renderLinkInMCPApp(emptyCtx, RenderLinkInMCPAppParams{
+			URL: "https://grafana.example.com/d/abc",
+		})
+		require.NoError(t, err)
+
+		structured := result.StructuredContent.(map[string]any)
+		assert.Equal(t, "https://grafana.example.com/d/abc", structured["url"])
+	})
+}
+
+func TestAddGrafanaKioskParam(t *testing.T) {
+	tests := []struct {
+		name      string
+		rawURL    string
+		baseURL   string
+		override  string
+		expectKey string
+		mustEqual string
+	}{
+		{
+			name:      "auto adds kiosk=true on matching host",
+			rawURL:    "https://grafana.example.com/d/abc?from=now-1h",
+			baseURL:   "https://grafana.example.com",
+			expectKey: "true",
+		},
+		{
+			name:      "host mismatch returns URL unchanged",
+			rawURL:    "https://other.example.com/d/abc",
+			baseURL:   "https://grafana.example.com",
+			mustEqual: "https://other.example.com/d/abc",
+		},
+		{
+			name:      "empty base URL returns URL unchanged",
+			rawURL:    "https://grafana.example.com/d/abc",
+			baseURL:   "",
+			mustEqual: "https://grafana.example.com/d/abc",
+		},
+		{
+			name:      "existing kiosk=tv is preserved in auto mode",
+			rawURL:    "https://grafana.example.com/d/abc?kiosk=tv",
+			baseURL:   "https://grafana.example.com",
+			expectKey: "tv",
+		},
+		{
+			name:      "host comparison is case-insensitive",
+			rawURL:    "https://GRAFANA.example.com/d/abc",
+			baseURL:   "https://grafana.example.com",
+			expectKey: "true",
+		},
+		{
+			name:      "host with subpath base URL still matches",
+			rawURL:    "https://grafana.example.com/grafana/d/abc",
+			baseURL:   "https://grafana.example.com/grafana",
+			expectKey: "true",
+		},
+		{
+			name:      "override tv forces tv even without existing param",
+			rawURL:    "https://grafana.example.com/d/abc",
+			baseURL:   "https://grafana.example.com",
+			override:  "tv",
+			expectKey: "tv",
+		},
+		{
+			name:     "override false strips existing kiosk",
+			rawURL:   "https://grafana.example.com/d/abc?kiosk=true&from=now",
+			baseURL:  "https://grafana.example.com",
+			override: "false",
+		},
+		{
+			name:      "override true overrides existing kiosk=tv",
+			rawURL:    "https://grafana.example.com/d/abc?kiosk=tv",
+			baseURL:   "https://grafana.example.com",
+			override:  "true",
+			expectKey: "true",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := addGrafanaKioskParam(tt.rawURL, tt.baseURL, tt.override)
+			if tt.mustEqual != "" {
+				assert.Equal(t, tt.mustEqual, got)
+				return
+			}
+
+			parsed, err := url.Parse(got)
+			require.NoError(t, err)
+
+			if tt.override == "false" {
+				assert.False(t, parsed.Query().Has("kiosk"), "kiosk should be removed, got %q", got)
+				return
+			}
+
+			assert.Equal(t, tt.expectKey, parsed.Query().Get("kiosk"))
+		})
+	}
 }
 
 func TestRenderLinkInMCPApp_ToolDefinition(t *testing.T) {
