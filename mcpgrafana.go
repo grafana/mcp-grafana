@@ -35,10 +35,11 @@ const (
 	defaultGrafanaHost = "localhost:3000"
 	defaultGrafanaURL  = "http://" + defaultGrafanaHost
 
-	grafanaURLEnvVar                 = "GRAFANA_URL"
-	grafanaServiceAccountTokenEnvVar = "GRAFANA_SERVICE_ACCOUNT_TOKEN"
-	grafanaAPIEnvVar                 = "GRAFANA_API_KEY" // Deprecated: use GRAFANA_SERVICE_ACCOUNT_TOKEN instead
-	grafanaOrgIDEnvVar               = "GRAFANA_ORG_ID"
+	grafanaURLEnvVar                     = "GRAFANA_URL"
+	grafanaServiceAccountTokenEnvVar     = "GRAFANA_SERVICE_ACCOUNT_TOKEN"
+	grafanaServiceAccountTokenFileEnvVar = "GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE"
+	grafanaAPIEnvVar                     = "GRAFANA_API_KEY" // Deprecated: use GRAFANA_SERVICE_ACCOUNT_TOKEN instead
+	grafanaOrgIDEnvVar                   = "GRAFANA_ORG_ID"
 
 	grafanaUsernameEnvVar = "GRAFANA_USERNAME"
 	grafanaPasswordEnvVar = "GRAFANA_PASSWORD"
@@ -54,10 +55,22 @@ const (
 func urlAndAPIKeyFromEnv(logger *slog.Logger) (string, string) {
 	u := strings.TrimRight(os.Getenv(grafanaURLEnvVar), "/")
 
-	// Check for the new service account token environment variable first
+	// Check for the new service account token environment variable first.
 	apiKey := os.Getenv(grafanaServiceAccountTokenEnvVar)
 	if apiKey != "" {
 		return u, apiKey
+	}
+
+	// Next, check for a file-based service account token. This is read fresh on
+	// every call so that rotated tokens (e.g. a Kubernetes Secret mounted as a
+	// volume) are picked up without restarting the server. See issue #800.
+	if tokenFile := os.Getenv(grafanaServiceAccountTokenFileEnvVar); tokenFile != "" {
+		token, err := os.ReadFile(tokenFile)
+		if err != nil {
+			logger.Warn("Failed to read GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE, ignoring", "path", tokenFile, "error", err)
+		} else if apiKey = strings.TrimSpace(string(token)); apiKey != "" {
+			return u, apiKey
+		}
 	}
 
 	// Fall back to the deprecated API key environment variable
