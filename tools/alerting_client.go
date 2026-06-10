@@ -90,7 +90,8 @@ const (
 
 // GetRulesOpts contains optional server-side filtering parameters for the
 // Prometheus rules API endpoint.
-// FolderUID, RuleGroup, States, LimitAlerts are available since Grafana 10.0.
+// RuleGroup, States, LimitAlerts are available since Grafana 10.0.
+// FolderUID requires Grafana 11.4+.
 // SearchFolder, RuleName, RuleType, RuleLimit, Matchers require Grafana 12.4+.
 type GetRulesOpts struct {
 	FolderUID    string   // Filter by folder UID
@@ -299,7 +300,7 @@ func (c *alertingClient) GetAlertmanagerConfig(ctx context.Context, datasourceUI
 	}
 
 	// Mimir/Cortex /api/v1/alerts returns YAML with alertmanager_config field
-	bodyBytes, err := io.ReadAll(resp.Body)
+	bodyBytes, err := readResponseBody(resp.Body, defaultResponseLimitBytes)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read Alertmanager config response: %w", err)
 	}

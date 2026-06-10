@@ -1,11 +1,14 @@
 package mcpgrafana
 
 import (
+	"bytes"
 	"context"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -1090,6 +1093,110 @@ func TestBuildTransport(t *testing.T) {
 	})
 }
 
+func TestRedactHeaderValue(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"short", "[REDACTED]"},
+		{"exactly11ch", "[REDACTED]"},
+		{"exactly12char", "exac***char"},
+		{"glsa_1234567890abcdef", "glsa***cdef"},
+		{"Bearer glsa_abcdefghij", "Bear***ghij"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			assert.Equal(t, tt.want, redactHeaderValue(tt.input))
+		})
+	}
+}
+
+func TestDebugLoggingRedactsSensitiveHeaders(t *testing.T) {
+	var capturedReq *http.Request
+	mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+		capturedReq = req
+		return &http.Response{StatusCode: 200, Header: http.Header{}}, nil
+	}}
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	cfg := &GrafanaConfig{
+		APIKey: "glsa_supersecrettoken1234",
+		Debug:  true,
+		Logger: logger,
+	}
+	transport, err := BuildTransport(cfg, mock, WithoutOtel())
+	require.NoError(t, err)
+
+	req, _ := http.NewRequest("GET", "http://example.com/api/search", nil)
+	_, err = transport.RoundTrip(req)
+	require.NoError(t, err)
+
+	// The actual request to the server must still carry the real token.
+	assert.Equal(t, "Bearer glsa_supersecrettoken1234", capturedReq.Header.Get("Authorization"))
+
+	// The debug log output must NOT contain the full token.
+	logOutput := buf.String()
+	assert.NotContains(t, logOutput, "glsa_supersecrettoken1234")
+	// But it should contain the redacted version.
+	assert.Contains(t, logOutput, "Bear***1234")
+}
+
+func TestDebugLoggingRedactsOBOTokens(t *testing.T) {
+	var capturedReq *http.Request
+	mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+		capturedReq = req
+		return &http.Response{StatusCode: 200, Header: http.Header{}}, nil
+	}}
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	cfg := &GrafanaConfig{
+		AccessToken: "access_secret_token_val",
+		IDToken:     "id_secret_token_value",
+		Debug:       true,
+		Logger:      logger,
+	}
+	transport, err := BuildTransport(cfg, mock, WithoutOtel())
+	require.NoError(t, err)
+
+	req, _ := http.NewRequest("GET", "http://example.com/api/search", nil)
+	_, err = transport.RoundTrip(req)
+	require.NoError(t, err)
+
+	// Real tokens must reach the server.
+	assert.Equal(t, "access_secret_token_val", capturedReq.Header.Get("X-Access-Token"))
+	assert.Equal(t, "id_secret_token_value", capturedReq.Header.Get("X-Grafana-Id"))
+
+	logOutput := buf.String()
+	assert.NotContains(t, logOutput, "access_secret_token_val")
+	assert.NotContains(t, logOutput, "id_secret_token_value")
+}
+
+func TestDebugLoggingDisabledByDefault(t *testing.T) {
+	mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 200, Header: http.Header{}}, nil
+	}}
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	cfg := &GrafanaConfig{
+		APIKey: "glsa_supersecrettoken1234",
+		Logger: logger,
+	}
+	transport, err := BuildTransport(cfg, mock, WithoutOtel())
+	require.NoError(t, err)
+
+	req, _ := http.NewRequest("GET", "http://example.com/api/search", nil)
+	_, err = transport.RoundTrip(req)
+	require.NoError(t, err)
+
+	assert.Empty(t, buf.String())
+}
+
 func TestExtractGrafanaInfoWithExtraHeaders(t *testing.T) {
 	t.Run("extra headers from env in ExtractGrafanaInfoFromEnv", func(t *testing.T) {
 		t.Setenv("GRAFANA_EXTRA_HEADERS", `{"X-Tenant-ID": "tenant-123"}`)
@@ -1104,6 +1211,85 @@ func TestExtractGrafanaInfoWithExtraHeaders(t *testing.T) {
 		ctx := ExtractGrafanaInfoFromHeaders(context.Background(), req)
 		config := GrafanaConfigFromContext(ctx)
 		assert.Equal(t, map[string]string{"X-Tenant-ID": "tenant-456"}, config.ExtraHeaders)
+	})
+}
+
+func TestServiceAccountTokenFromFile(t *testing.T) {
+	logger := slog.New(slog.DiscardHandler)
+
+	writeToken := func(t *testing.T, contents string) string {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "token")
+		require.NoError(t, os.WriteFile(path, []byte(contents), 0o600))
+		return path
+	}
+
+	t.Run("reads token from file", func(t *testing.T) {
+		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN", "")
+		t.Setenv("GRAFANA_API_KEY", "")
+		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE", writeToken(t, "file-token"))
+
+		_, apiKey := urlAndAPIKeyFromEnv(logger)
+		assert.Equal(t, "file-token", apiKey)
+	})
+
+	t.Run("trims surrounding whitespace and newlines", func(t *testing.T) {
+		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN", "")
+		t.Setenv("GRAFANA_API_KEY", "")
+		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE", writeToken(t, "  file-token\n"))
+
+		_, apiKey := urlAndAPIKeyFromEnv(logger)
+		assert.Equal(t, "file-token", apiKey)
+	})
+
+	t.Run("direct token takes precedence over file", func(t *testing.T) {
+		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN", "direct-token")
+		t.Setenv("GRAFANA_API_KEY", "")
+		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE", writeToken(t, "file-token"))
+
+		_, apiKey := urlAndAPIKeyFromEnv(logger)
+		assert.Equal(t, "direct-token", apiKey)
+	})
+
+	t.Run("file takes precedence over deprecated api key", func(t *testing.T) {
+		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN", "")
+		t.Setenv("GRAFANA_API_KEY", "deprecated-key")
+		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE", writeToken(t, "file-token"))
+
+		_, apiKey := urlAndAPIKeyFromEnv(logger)
+		assert.Equal(t, "file-token", apiKey)
+	})
+
+	t.Run("falls back to deprecated api key when file is missing", func(t *testing.T) {
+		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN", "")
+		t.Setenv("GRAFANA_API_KEY", "deprecated-key")
+		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE", filepath.Join(t.TempDir(), "does-not-exist"))
+
+		_, apiKey := urlAndAPIKeyFromEnv(logger)
+		assert.Equal(t, "deprecated-key", apiKey)
+	})
+
+	t.Run("empty file falls back to deprecated api key", func(t *testing.T) {
+		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN", "")
+		t.Setenv("GRAFANA_API_KEY", "deprecated-key")
+		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE", writeToken(t, "\n  \n"))
+
+		_, apiKey := urlAndAPIKeyFromEnv(logger)
+		assert.Equal(t, "deprecated-key", apiKey)
+	})
+
+	t.Run("rotated file is picked up on subsequent reads", func(t *testing.T) {
+		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN", "")
+		t.Setenv("GRAFANA_API_KEY", "")
+		path := writeToken(t, "old-token")
+		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE", path)
+
+		_, apiKey := urlAndAPIKeyFromEnv(logger)
+		require.Equal(t, "old-token", apiKey)
+
+		require.NoError(t, os.WriteFile(path, []byte("new-token"), 0o600))
+		_, apiKey = urlAndAPIKeyFromEnv(logger)
+		assert.Equal(t, "new-token", apiKey)
 	})
 }
 

@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/httputil"
 	"net/textproto"
 	"net/url"
 	"os"
@@ -34,10 +35,11 @@ const (
 	defaultGrafanaHost = "localhost:3000"
 	defaultGrafanaURL  = "http://" + defaultGrafanaHost
 
-	grafanaURLEnvVar                 = "GRAFANA_URL"
-	grafanaServiceAccountTokenEnvVar = "GRAFANA_SERVICE_ACCOUNT_TOKEN"
-	grafanaAPIEnvVar                 = "GRAFANA_API_KEY" // Deprecated: use GRAFANA_SERVICE_ACCOUNT_TOKEN instead
-	grafanaOrgIDEnvVar               = "GRAFANA_ORG_ID"
+	grafanaURLEnvVar                     = "GRAFANA_URL"
+	grafanaServiceAccountTokenEnvVar     = "GRAFANA_SERVICE_ACCOUNT_TOKEN"
+	grafanaServiceAccountTokenFileEnvVar = "GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE"
+	grafanaAPIEnvVar                     = "GRAFANA_API_KEY" // Deprecated: use GRAFANA_SERVICE_ACCOUNT_TOKEN instead
+	grafanaOrgIDEnvVar                   = "GRAFANA_ORG_ID"
 
 	grafanaUsernameEnvVar = "GRAFANA_USERNAME"
 	grafanaPasswordEnvVar = "GRAFANA_PASSWORD"
@@ -53,10 +55,22 @@ const (
 func urlAndAPIKeyFromEnv(logger *slog.Logger) (string, string) {
 	u := strings.TrimRight(os.Getenv(grafanaURLEnvVar), "/")
 
-	// Check for the new service account token environment variable first
+	// Check for the new service account token environment variable first.
 	apiKey := os.Getenv(grafanaServiceAccountTokenEnvVar)
 	if apiKey != "" {
 		return u, apiKey
+	}
+
+	// Next, check for a file-based service account token. This is read fresh on
+	// every call so that rotated tokens (e.g. a Kubernetes Secret mounted as a
+	// volume) are picked up without restarting the server. See issue #800.
+	if tokenFile := os.Getenv(grafanaServiceAccountTokenFileEnvVar); tokenFile != "" {
+		token, err := os.ReadFile(tokenFile)
+		if err != nil {
+			logger.Warn("Failed to read GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE, ignoring", "path", tokenFile, "error", err)
+		} else if apiKey = strings.TrimSpace(string(token)); apiKey != "" {
+			return u, apiKey
+		}
 	}
 
 	// Fall back to the deprecated API key environment variable
@@ -389,17 +403,22 @@ func (t *UserAgentTransport) RoundTrip(req *http.Request) (*http.Response, error
 	return t.rt.RoundTrip(clonedReq)
 }
 
+// version is set at build time via ldflags:
+//
+//	-X github.com/grafana/mcp-grafana.version=v1.2.3
+var version string
+
 // Version returns the version of the mcp-grafana binary.
-// It uses runtime/debug to fetch version information from the build, returning "(devel)" for local development builds.
-// The version is computed once and cached for performance.
+// It prefers an ldflags-injected value, then falls back to runtime/debug build info,
+// and finally returns "(devel)" for local development builds.
 var Version = sync.OnceValue(func() string {
-	// Default version string returned by `runtime/debug` if built
-	// from the source repository rather than with `go install`.
-	v := "(devel)"
-	if bi, ok := debug.ReadBuildInfo(); ok && bi.Main.Version != "" {
-		v = bi.Main.Version
+	if version != "" {
+		return version
 	}
-	return v
+	if bi, ok := debug.ReadBuildInfo(); ok && bi.Main.Version != "" {
+		return bi.Main.Version
+	}
+	return "(devel)"
 })
 
 // UserAgent returns the user agent string for HTTP requests.
@@ -540,6 +559,56 @@ func NewAuthRoundTripper(rt http.RoundTripper, accessToken, idToken, apiKey stri
 	}
 }
 
+// sensitiveHeaders lists HTTP header names whose values must be redacted in
+// debug logs to prevent credential leakage (see #919).
+var sensitiveHeaders = map[string]bool{
+	"Authorization":  true,
+	"X-Access-Token": true,
+	"X-Grafana-Id":   true,
+	"Cookie":         true,
+}
+
+// redactHeaderValue masks the middle portion of a credential value,
+// preserving the first 4 and last 4 characters for identification.
+// Values shorter than 12 characters are fully replaced.
+func redactHeaderValue(v string) string {
+	if len(v) < 12 {
+		return "[REDACTED]"
+	}
+	return v[:4] + "***" + v[len(v)-4:]
+}
+
+// debugLoggingRoundTripper logs HTTP requests and responses with sensitive
+// headers redacted. It replaces the go-openapi Debug flag, which uses
+// httputil.DumpRequestOut and exposes credentials in plaintext.
+type debugLoggingRoundTripper struct {
+	underlying http.RoundTripper
+	logger     *slog.Logger
+}
+
+func (rt *debugLoggingRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	redacted := req.Clone(req.Context())
+	redacted.Body = nil
+	for name := range sensitiveHeaders {
+		if v := redacted.Header.Get(name); v != "" {
+			redacted.Header.Set(name, redactHeaderValue(v))
+		}
+	}
+	if dump, err := httputil.DumpRequestOut(redacted, false); err == nil {
+		rt.logger.Debug(string(dump))
+	}
+
+	resp, err := rt.underlying.RoundTrip(req)
+	if err != nil {
+		return resp, err
+	}
+
+	if dump, dumpErr := httputil.DumpResponse(resp, false); dumpErr == nil {
+		rt.logger.Debug(string(dump))
+	}
+	return resp, nil
+}
+
 // transportOptions controls which middleware layers BuildTransport includes.
 type transportOptions struct {
 	withoutAuth      bool
@@ -575,10 +644,15 @@ func WithoutUserAgent() TransportOption {
 // BuildTransport constructs an http.RoundTripper with the standard middleware
 // chain derived from cfg. The default chain (innermost to outermost) is:
 //
-//	base → TLS → Auth → ExtraHeaders → OrgID → UserAgent → otelhttp
+//	base → TLS → debugLogging → Auth → ExtraHeaders → OrgID → UserAgent → otelhttp
 //
 // Auth is innermost among the header-setting layers so that credentials take
 // precedence over any forwarded/extra headers with the same keys.
+//
+// When cfg.Debug is true a debug-logging layer is added just above the base
+// transport. It sees the fully-decorated request (all headers set by outer
+// layers) and redacts sensitive values (Authorization, X-Access-Token, etc.)
+// before writing request/response details to the logger.
 //
 // Individual layers can be disabled with WithoutAuth, WithoutOrgID, etc.
 func BuildTransport(cfg *GrafanaConfig, base http.RoundTripper, opts ...TransportOption) (http.RoundTripper, error) {
@@ -602,6 +676,15 @@ func BuildTransport(cfg *GrafanaConfig, base http.RoundTripper, opts ...Transpor
 		transport, err = cfg.TLSConfig.HTTPTransport(t)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create TLS transport: %w", err)
+		}
+	}
+
+	// Debug logging with redacted credentials (innermost among the
+	// non-TLS layers so it sees the final request with all headers).
+	if cfg.Debug {
+		transport = &debugLoggingRoundTripper{
+			underlying: transport,
+			logger:     cfg.LoggerOrDefault(),
 		}
 	}
 
@@ -902,7 +985,10 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 
 	config := GrafanaConfigFromContext(ctx)
 	logger := config.LoggerOrDefault()
-	cfg.Debug = config.Debug
+	// NOTE: we intentionally do NOT set cfg.Debug here. The go-openapi
+	// runtime's Debug mode uses httputil.DumpRequestOut which prints
+	// credentials in plaintext. Instead, BuildTransport adds a redacting
+	// debug-logging layer when config.Debug is true (see #919).
 
 	if config.OrgID > 0 {
 		cfg.OrgID = config.OrgID
@@ -981,6 +1067,8 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 						OrgID:        config.OrgID,
 						TLSConfig:    config.TLSConfig,
 						ExtraHeaders: config.ExtraHeaders,
+						Debug:        config.Debug,
+						Logger:       config.Logger,
 					}
 					// Panic matches the existing TLS error handling above
 					// (line ~887). The only realistic failure is a TLS

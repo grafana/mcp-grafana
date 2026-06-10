@@ -1,12 +1,8 @@
 package tools
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
@@ -68,117 +64,6 @@ type SnowflakeQueryResult struct {
 	Hints          *EmptyResultHints        `json:"hints,omitempty"`
 }
 
-// snowflakeQueryResponse represents the raw API response from Grafana's /api/ds/query
-type snowflakeQueryResponse struct {
-	Results map[string]struct {
-		Status int `json:"status,omitempty"`
-		Frames []struct {
-			Schema struct {
-				Name   string `json:"name,omitempty"`
-				RefID  string `json:"refId,omitempty"`
-				Fields []struct {
-					Name     string `json:"name"`
-					Type     string `json:"type"`
-					TypeInfo struct {
-						Frame string `json:"frame,omitempty"`
-					} `json:"typeInfo,omitempty"`
-				} `json:"fields"`
-			} `json:"schema"`
-			Data struct {
-				Values [][]interface{} `json:"values"`
-			} `json:"data"`
-		} `json:"frames,omitempty"`
-		Error string `json:"error,omitempty"`
-	} `json:"results"`
-}
-
-// snowflakeClient handles communication with Grafana's Snowflake datasource
-type snowflakeClient struct {
-	httpClient *http.Client
-	baseURL    string
-}
-
-// newSnowflakeClient creates a new Snowflake client for the given datasource
-func newSnowflakeClient(ctx context.Context, uid string) (*snowflakeClient, error) {
-	ds, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: uid})
-	if err != nil {
-		return nil, err
-	}
-
-	if ds.Type != SnowflakeDatasourceType {
-		return nil, fmt.Errorf("datasource %s is of type %s, not %s", uid, ds.Type, SnowflakeDatasourceType)
-	}
-
-	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
-	baseURL := cfg.URL
-
-	transport, err := mcpgrafana.BuildTransport(&cfg, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create transport: %w", err)
-	}
-
-	return &snowflakeClient{
-		httpClient: &http.Client{Transport: transport},
-		baseURL:    baseURL,
-	}, nil
-}
-
-// query executes a Snowflake query via Grafana's /api/ds/query endpoint
-func (c *snowflakeClient) query(ctx context.Context, datasourceUID, rawSQL string, from, to time.Time) (*snowflakeQueryResponse, error) {
-	payload := map[string]interface{}{
-		"queries": []map[string]interface{}{
-			{
-				"datasource": map[string]string{
-					"uid":  datasourceUID,
-					"type": SnowflakeDatasourceType,
-				},
-				"rawSql": rawSQL,
-				"refId":  "A",
-				"format": SnowflakeFormatTable,
-			},
-		},
-		"from": strconv.FormatInt(from.UnixMilli(), 10),
-		"to":   strconv.FormatInt(to.UnixMilli(), 10),
-	}
-
-	payloadBytes, err := json.Marshal(payload)
-	if err != nil {
-		return nil, fmt.Errorf("marshaling query payload: %w", err)
-	}
-
-	url := c.baseURL + "/api/ds/query"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payloadBytes))
-	if err != nil {
-		return nil, fmt.Errorf("creating request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("executing request: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return nil, fmt.Errorf("snowflake query returned status %d: %s", resp.StatusCode, string(bodyBytes))
-	}
-
-	var bytesLimit int64 = 1024 * 1024 * 10 // 10MB
-	body := io.LimitReader(resp.Body, bytesLimit)
-	bodyBytes, err := io.ReadAll(body)
-	if err != nil {
-		return nil, fmt.Errorf("reading response body: %w", err)
-	}
-
-	var queryResp snowflakeQueryResponse
-	if err := unmarshalJSONWithLimitMsg(bodyBytes, &queryResp, int(bytesLimit)); err != nil {
-		return nil, err
-	}
-
-	return &queryResp, nil
-}
-
 // substituteSnowflakeMacros replaces Snowflake-specific macros in the query.
 // Supported macros:
 //   - $__timeFilter(column) -> column >= TO_TIMESTAMP_NTZ('YYYY-MM-DD HH:MI:SS') AND column <= ...
@@ -213,7 +98,6 @@ func substituteSnowflakeMacros(query string, from, to time.Time) string {
 	})
 
 	// $__timeFrom and $__timeTo - emit TIMESTAMP_NTZ literals.
-	// Replace these before $__from/$__to since "$__timeFrom" contains "$__from" as a prefix substring? No — actually $__from is a different token. Order is fine, but we keep $__timeFrom/$__timeTo first to be explicit.
 	query = strings.ReplaceAll(query, "$__timeFrom", fmt.Sprintf("TO_TIMESTAMP_NTZ('%s')", fromStr))
 	query = strings.ReplaceAll(query, "$__timeTo", fmt.Sprintf("TO_TIMESTAMP_NTZ('%s')", toStr))
 
@@ -259,9 +143,17 @@ func enforceSnowflakeLimit(query string, requestedLimit int) string {
 
 // querySnowflake executes a Snowflake query via Grafana
 func querySnowflake(ctx context.Context, args SnowflakeQueryParams) (*SnowflakeQueryResult, error) {
-	client, err := newSnowflakeClient(ctx, args.DatasourceUID)
+	ds, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: args.DatasourceUID})
 	if err != nil {
 		return nil, fmt.Errorf("creating Snowflake client: %w", err)
+	}
+	if ds.Type != SnowflakeDatasourceType {
+		return nil, fmt.Errorf("datasource %s is of type %s, not %s", args.DatasourceUID, ds.Type, SnowflakeDatasourceType)
+	}
+
+	client, baseURL, err := newDSQueryHTTPClient(ctx)
+	if err != nil {
+		return nil, err
 	}
 
 	now := time.Now()
@@ -293,47 +185,32 @@ func querySnowflake(ctx context.Context, args SnowflakeQueryParams) (*SnowflakeQ
 	processedQuery = substituteVariables(processedQuery, args.Variables)
 	processedQuery = enforceSnowflakeLimit(processedQuery, args.Limit)
 
-	resp, err := client.query(ctx, args.DatasourceUID, processedQuery, fromTime, toTime)
+	payload := dsQueryPayload(fromTime, toTime, map[string]interface{}{
+		"datasource": map[string]string{
+			"uid":  args.DatasourceUID,
+			"type": SnowflakeDatasourceType,
+		},
+		"rawSql": processedQuery,
+		"refId":  "A",
+		"format": SnowflakeFormatTable,
+	})
+
+	resp, err := doDSQuery(ctx, client, baseURL, payload)
+	if err != nil {
+		return nil, err
+	}
+
+	columns, rows, err := framesToTabularRows(resp)
 	if err != nil {
 		return nil, err
 	}
 
 	result := &SnowflakeQueryResult{
-		Columns:        []string{},
-		Rows:           []map[string]interface{}{},
+		Columns:        columns,
+		Rows:           rows,
+		RowCount:       len(rows),
 		ProcessedQuery: processedQuery,
 	}
-
-	for refID, r := range resp.Results {
-		if r.Error != "" {
-			return nil, fmt.Errorf("query error (refId=%s): %s", refID, r.Error)
-		}
-
-		for _, frame := range r.Frames {
-			columns := make([]string, len(frame.Schema.Fields))
-			for i, field := range frame.Schema.Fields {
-				columns[i] = field.Name
-			}
-			result.Columns = columns
-
-			if len(frame.Data.Values) == 0 {
-				continue
-			}
-
-			rowCount := len(frame.Data.Values[0])
-			for i := 0; i < rowCount; i++ {
-				row := make(map[string]interface{})
-				for colIdx, colName := range columns {
-					if colIdx < len(frame.Data.Values) && i < len(frame.Data.Values[colIdx]) {
-						row[colName] = frame.Data.Values[colIdx][i]
-					}
-				}
-				result.Rows = append(result.Rows, row)
-			}
-		}
-	}
-
-	result.RowCount = len(result.Rows)
 
 	if result.RowCount == 0 {
 		result.Hints = GenerateEmptyResultHints(HintContext{
@@ -420,24 +297,13 @@ WHERE TABLE_SCHEMA NOT IN ('INFORMATION_SCHEMA')`, from)
 
 	tables := make([]SnowflakeTableInfo, 0, len(result.Rows))
 	for _, row := range result.Rows {
-		t := SnowflakeTableInfo{}
-		if v, ok := row["TABLE_CATALOG"].(string); ok {
-			t.Database = v
-		}
-		if v, ok := row["TABLE_SCHEMA"].(string); ok {
-			t.Schema = v
-		}
-		if v, ok := row["TABLE_NAME"].(string); ok {
-			t.Name = v
-		}
-		if v, ok := row["TABLE_TYPE"].(string); ok {
-			t.Kind = v
-		}
-		if v, ok := row["ROW_COUNT"].(float64); ok {
-			t.RowCount = int64(v)
-		}
-		if v, ok := row["BYTES"].(float64); ok {
-			t.Bytes = int64(v)
+		t := SnowflakeTableInfo{
+			Database: toStringFromRow(row["TABLE_CATALOG"]),
+			Schema:   toStringFromRow(row["TABLE_SCHEMA"]),
+			Name:     toStringFromRow(row["TABLE_NAME"]),
+			Kind:     toStringFromRow(row["TABLE_TYPE"]),
+			RowCount: toInt64FromRow(row["ROW_COUNT"]),
+			Bytes:    toInt64FromRow(row["BYTES"]),
 		}
 		tables = append(tables, t)
 	}
@@ -514,21 +380,12 @@ ORDER BY ORDINAL_POSITION`, from, schema, args.Table)
 
 	columns := make([]SnowflakeColumnInfo, 0, len(result.Rows))
 	for _, row := range result.Rows {
-		col := SnowflakeColumnInfo{}
-		if v, ok := row["COLUMN_NAME"].(string); ok {
-			col.Name = v
-		}
-		if v, ok := row["DATA_TYPE"].(string); ok {
-			col.Type = v
-		}
-		if v, ok := row["IS_NULLABLE"].(string); ok {
-			col.Nullable = v
-		}
-		if v, ok := row["COLUMN_DEFAULT"].(string); ok {
-			col.Default = v
-		}
-		if v, ok := row["COMMENT"].(string); ok {
-			col.Comment = v
+		col := SnowflakeColumnInfo{
+			Name:     toStringFromRow(row["COLUMN_NAME"]),
+			Type:     toStringFromRow(row["DATA_TYPE"]),
+			Nullable: toStringFromRow(row["IS_NULLABLE"]),
+			Default:  toStringFromRow(row["COLUMN_DEFAULT"]),
+			Comment:  toStringFromRow(row["COMMENT"]),
 		}
 		columns = append(columns, col)
 	}

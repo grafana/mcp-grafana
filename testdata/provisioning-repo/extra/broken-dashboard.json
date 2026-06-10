@@ -1,0 +1,55 @@
+{
+  "apiVersion": "dashboard.grafana.app/v2",
+  "kind": "Dashboard",
+  "metadata": {
+    "name": "git-sync-broken"
+  },
+  "spec": {
+    "title": "Git sync broken",
+    "description": "Intentionally invalid: the variable declares kind AdhocVariable but carries a QueryVariable-shaped spec, so admission validation reports discriminated-union conflicts. Used to exercise validate_provisioning_file's error path.",
+    "annotations": [],
+    "cursorSync": "Off",
+    "editable": true,
+    "elements": {},
+    "layout": {
+      "kind": "GridLayout",
+      "spec": {
+        "items": []
+      }
+    },
+    "links": [],
+    "liveNow": false,
+    "preload": false,
+    "tags": ["integration-test"],
+    "timeSettings": {
+      "from": "now-30m",
+      "to": "now",
+      "autoRefresh": "",
+      "autoRefreshIntervals": [],
+      "fiscalYearStartMonth": 0,
+      "hideTimepicker": false,
+      "timezone": "browser"
+    },
+    "variables": [
+      {
+        "kind": "AdhocVariable",
+        "spec": {
+          "name": "broken",
+          "datasource": { "name": "prometheus" },
+          "query": {
+            "group": "prometheus",
+            "kind": "DataQuery",
+            "spec": { "query": "label_values(up, job)" },
+            "version": "v0"
+          },
+          "refresh": "onDashboardLoad",
+          "includeAll": false,
+          "multi": false,
+          "current": { "text": "", "value": "" },
+          "options": [],
+          "sort": "alphabeticalAsc"
+        }
+      }
+    ]
+  }
+}

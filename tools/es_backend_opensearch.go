@@ -1,11 +1,9 @@
 package tools
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"path"
 	"strconv"
@@ -13,6 +11,7 @@ import (
 	"time"
 
 	"github.com/grafana/grafana-openapi-client-go/models"
+	"github.com/grafana/grafana-plugin-sdk-go/data"
 	mcpgrafana "github.com/grafana/mcp-grafana"
 )
 
@@ -70,7 +69,7 @@ func indexMatchesPattern(pattern, index string) bool {
 	}
 	// If the user's index is itself a pattern (contains wildcards), check
 	// whether the non-wildcard prefix matches the configured pattern's prefix.
-	// e.g., configured="logs-*", user="logs-2024*" → compatible.
+	// e.g., configured="logs-*", user="logs-2024*" -> compatible.
 	patternPrefix := strings.TrimRight(pattern, "*?")
 	indexPrefix := strings.TrimRight(index, "*?")
 	return strings.HasPrefix(indexPrefix, patternPrefix)
@@ -86,18 +85,14 @@ func (b *openSearchBackend) Search(ctx context.Context, index, query string, sta
 		return nil, fmt.Errorf("the requested index %q is not compatible with this datasource's configured index pattern %q; use an index that matches the pattern or choose a different datasource", index, b.configuredIndex)
 	}
 
-	// Determine time range in milliseconds
-	var fromMs, toMs string
+	// Determine time range
+	from := time.Now().Add(-10 * 365 * 24 * time.Hour) // Default: 10 years ago
 	if startTime != nil {
-		fromMs = strconv.FormatInt(startTime.UnixMilli(), 10)
-	} else {
-		// Default to 10 years ago
-		fromMs = strconv.FormatInt(time.Now().Add(-10*365*24*time.Hour).UnixMilli(), 10)
+		from = *startTime
 	}
+	to := time.Now()
 	if endTime != nil {
-		toMs = strconv.FormatInt(endTime.UnixMilli(), 10)
-	} else {
-		toMs = strconv.FormatInt(time.Now().UnixMilli(), 10)
+		to = *endTime
 	}
 
 	// Use the user's query as-is. The OpenSearch plugin searches within the
@@ -108,79 +103,40 @@ func (b *openSearchBackend) Search(ctx context.Context, index, query string, sta
 	}
 
 	// Build the /api/ds/query payload using the OpenSearch plugin's query model
-	payload := map[string]interface{}{
-		"queries": []map[string]interface{}{
+	payload := dsQueryPayload(from, to, map[string]interface{}{
+		"refId": "A",
+		"datasource": map[string]interface{}{
+			"uid":  b.datasourceUID,
+			"type": openSearchDatasourceType,
+		},
+		"query":           luceneQuery,
+		"queryType":       "lucene",
+		"luceneQueryType": "RawDocument",
+		"timeField":       "@timestamp",
+		"metrics": []map[string]interface{}{
 			{
-				"refId": "A",
-				"datasource": map[string]interface{}{
-					"uid":  b.datasourceUID,
-					"type": openSearchDatasourceType,
+				"id":   "1",
+				"type": "raw_document",
+				"settings": map[string]interface{}{
+					"size": strconv.Itoa(limit),
 				},
-				"query":           luceneQuery,
-				"queryType":       "lucene",
-				"luceneQueryType": "RawDocument",
-				"timeField":       "@timestamp",
-				"metrics": []map[string]interface{}{
-					{
-						"id":   "1",
-						"type": "raw_document",
-						"settings": map[string]interface{}{
-							"size": strconv.Itoa(limit),
-						},
-					},
-				},
-				"bucketAggs": []interface{}{},
-				"format":     "table",
 			},
 		},
-		"from": fromMs,
-		"to":   toMs,
-	}
+		"bucketAggs": []interface{}{},
+		"format":     "table",
+	})
 
-	payloadBytes, err := json.Marshal(payload)
+	result, err := doDSQueryWithLimit(ctx, b.httpClient, b.baseURL, payload, 48*1024*1024)
 	if err != nil {
-		return nil, fmt.Errorf("marshaling query payload: %w", err)
+		return nil, err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", b.baseURL+"/api/ds/query", bytes.NewReader(payloadBytes))
-	if err != nil {
-		return nil, fmt.Errorf("creating request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := b.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("executing request: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, 48*1024*1024))
-	if err != nil {
-		return nil, fmt.Errorf("reading response body: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		var errResult map[string]interface{}
-		if json.Unmarshal(bodyBytes, &errResult) == nil {
-			if errMsg, ok := errResult["message"].(string); ok {
-				return nil, fmt.Errorf("opensearch query failed: %s", errMsg)
-			}
-		}
-		return nil, fmt.Errorf("opensearch query failed with status %d: %s", resp.StatusCode, string(bodyBytes))
-	}
-
-	// Parse the /api/ds/query response
-	var result dsQueryResponse
-	if err := json.Unmarshal(bodyBytes, &result); err != nil {
-		return nil, fmt.Errorf("unmarshalling response: %w", err)
-	}
-
-	queryResult, ok := result.Results["A"]
+	queryResult, ok := result.Responses["A"]
 	if !ok {
 		return nil, fmt.Errorf("no result found for refId A")
 	}
-	if queryResult.Error != "" {
-		return nil, fmt.Errorf("opensearch query error: %s", queryResult.Error)
+	if queryResult.Error != nil {
+		return nil, fmt.Errorf("opensearch query error: %s", queryResult.Error.Error())
 	}
 
 	return framesToDocuments(queryResult.Frames)
@@ -192,22 +148,38 @@ func (b *openSearchBackend) Search(ctx context.Context, index, query string, sta
 // The OpenSearch plugin returns a single frame with one column (named after the refId)
 // of type json.RawMessage. Each value in that column is a complete document object
 // containing _id, _index, _type, @timestamp (as array), and all source fields.
-func framesToDocuments(frames []dsQueryFrame) ([]ElasticsearchDocument, error) {
+func framesToDocuments(frames data.Frames) ([]ElasticsearchDocument, error) {
 	if len(frames) == 0 {
 		return []ElasticsearchDocument{}, nil
 	}
 
 	frame := frames[0]
-	if len(frame.Data.Values) == 0 || len(frame.Data.Values[0]) == 0 {
+	if len(frame.Fields) == 0 || frame.Rows() == 0 {
 		return []ElasticsearchDocument{}, nil
 	}
 
-	rawDocs := frame.Data.Values[0]
-	documents := make([]ElasticsearchDocument, 0, len(rawDocs))
+	rowCount := frame.Rows()
+	documents := make([]ElasticsearchDocument, 0, rowCount)
 
-	for _, rawDoc := range rawDocs {
-		docMap, ok := rawDoc.(map[string]interface{})
-		if !ok {
+	for i := 0; i < rowCount; i++ {
+		rawDoc := frame.At(0, i)
+
+		var docMap map[string]interface{}
+		switch v := rawDoc.(type) {
+		case json.RawMessage:
+			if err := json.Unmarshal(v, &docMap); err != nil {
+				continue
+			}
+		case *json.RawMessage:
+			if v == nil {
+				continue
+			}
+			if err := json.Unmarshal(*v, &docMap); err != nil {
+				continue
+			}
+		case map[string]interface{}:
+			docMap = v
+		default:
 			continue
 		}
 

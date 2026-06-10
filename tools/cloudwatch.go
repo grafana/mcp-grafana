@@ -1,7 +1,6 @@
 package tools
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -11,6 +10,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/grafana/grafana-plugin-sdk-go/backend"
+	"github.com/grafana/grafana-plugin-sdk-go/data"
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -45,32 +46,6 @@ type CloudWatchQueryResult struct {
 	Values     []float64          `json:"values"`
 	Statistics map[string]float64 `json:"statistics,omitempty"`
 	Hints      []string           `json:"hints,omitempty"`
-}
-
-// cloudWatchQueryResponse represents the raw API response from Grafana's /api/ds/query
-type cloudWatchQueryResponse struct {
-	Results map[string]struct {
-		Status int `json:"status,omitempty"`
-		Frames []struct {
-			Schema struct {
-				Name   string `json:"name,omitempty"`
-				RefID  string `json:"refId,omitempty"`
-				Fields []struct {
-					Name     string                 `json:"name"`
-					Type     string                 `json:"type"`
-					Labels   map[string]string      `json:"labels,omitempty"`
-					Config   map[string]interface{} `json:"config,omitempty"`
-					TypeInfo struct {
-						Frame string `json:"frame,omitempty"`
-					} `json:"typeInfo,omitempty"`
-				} `json:"fields"`
-			} `json:"schema"`
-			Data struct {
-				Values [][]interface{} `json:"values"`
-			} `json:"data"`
-		} `json:"frames,omitempty"`
-		Error string `json:"error,omitempty"`
-	} `json:"results"`
 }
 
 // cloudWatchClient handles communication with Grafana's CloudWatch datasource
@@ -110,7 +85,7 @@ func newCloudWatchClient(ctx context.Context, uid string) (*cloudWatchClient, er
 }
 
 // query executes a CloudWatch query via Grafana's /api/ds/query endpoint
-func (c *cloudWatchClient) query(ctx context.Context, args CloudWatchQueryParams, from, to time.Time) (*cloudWatchQueryResponse, error) {
+func (c *cloudWatchClient) query(ctx context.Context, args CloudWatchQueryParams, from, to time.Time) (*backend.QueryDataResponse, error) {
 	// Format dimensions for CloudWatch query
 	// CloudWatch expects dimensions as map[string][]string
 	dimensions := make(map[string][]string)
@@ -155,49 +130,7 @@ func (c *cloudWatchClient) query(ctx context.Context, args CloudWatchQueryParams
 		query["accountId"] = args.AccountId
 	}
 
-	payload := map[string]interface{}{
-		"queries": []map[string]interface{}{query},
-		"from":    strconv.FormatInt(from.UnixMilli(), 10),
-		"to":      strconv.FormatInt(to.UnixMilli(), 10),
-	}
-
-	payloadBytes, err := json.Marshal(payload)
-	if err != nil {
-		return nil, fmt.Errorf("marshaling query payload: %w", err)
-	}
-
-	url := c.baseURL + "/api/ds/query"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payloadBytes))
-	if err != nil {
-		return nil, fmt.Errorf("creating request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("executing request: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return nil, fmt.Errorf("CloudWatch query returned status %d: %s", resp.StatusCode, string(bodyBytes))
-	}
-
-	// Limit size of response read
-	var bytesLimit int64 = 1024 * 1024 * 10 // 10MB limit
-	body := io.LimitReader(resp.Body, bytesLimit)
-	bodyBytes, err := io.ReadAll(body)
-	if err != nil {
-		return nil, fmt.Errorf("reading response body: %w", err)
-	}
-
-	var queryResp cloudWatchQueryResponse
-	if err := unmarshalJSONWithLimitMsg(bodyBytes, &queryResp, int(bytesLimit)); err != nil {
-		return nil, err
-	}
-
-	return &queryResp, nil
+	return doDSQuery(ctx, c.httpClient, c.baseURL, dsQueryPayload(from, to, query))
 }
 
 // queryCloudWatch executes a CloudWatch query via Grafana
@@ -247,9 +180,9 @@ func queryCloudWatch(ctx context.Context, args CloudWatchQueryParams) (*CloudWat
 	}
 
 	// Check for errors in the response
-	for refID, r := range resp.Results {
-		if r.Error != "" {
-			return nil, fmt.Errorf("query error (refId=%s): %s", refID, r.Error)
+	for refID, r := range resp.Responses {
+		if r.Error != nil {
+			return nil, fmt.Errorf("query error (refId=%s): %s", refID, r.Error.Error())
 		}
 
 		// Process frames - accumulate statistics across all frames
@@ -260,17 +193,15 @@ func queryCloudWatch(ctx context.Context, args CloudWatchQueryParams) (*CloudWat
 		for _, frame := range r.Frames {
 			// Find time and value columns
 			var timeColIdx, valueColIdx = -1, -1
-			for i, field := range frame.Schema.Fields {
-				switch field.Type {
-				case "time":
+			for i, field := range frame.Fields {
+				switch {
+				case field.Type() == data.FieldTypeTime || field.Type() == data.FieldTypeNullableTime:
 					timeColIdx = i
-				case "number":
+				case field.Type().Numeric():
 					valueColIdx = i
 					// Update label if available from field config
-					if field.Config != nil {
-						if displayName, ok := field.Config["displayNameFromDS"].(string); ok && displayName != "" {
-							result.Label = displayName
-						}
+					if field.Config != nil && field.Config.DisplayNameFromDS != "" {
+						result.Label = field.Config.DisplayNameFromDS
 					}
 				}
 			}
@@ -280,52 +211,60 @@ func queryCloudWatch(ctx context.Context, args CloudWatchQueryParams) (*CloudWat
 			}
 
 			// Extract data
-			if len(frame.Data.Values) > timeColIdx && len(frame.Data.Values) > valueColIdx {
-				timeValues := frame.Data.Values[timeColIdx]
-				metricValues := frame.Data.Values[valueColIdx]
-
-				for i := 0; i < len(timeValues) && i < len(metricValues); i++ {
-					// Parse timestamp (can be float64 or int64 from JSON)
-					var ts int64
-					switch v := timeValues[i].(type) {
-					case float64:
-						ts = int64(v)
-					case int64:
-						ts = v
-					default:
+			rowCount := frame.Rows()
+			for i := 0; i < rowCount; i++ {
+				// Parse timestamp (can be float64 or int64 from JSON)
+				var ts int64
+				switch v := frame.At(timeColIdx, i).(type) {
+				case float64:
+					ts = int64(v)
+				case int64:
+					ts = v
+				case time.Time:
+					ts = v.UnixMilli()
+				case *time.Time:
+					if v == nil {
 						continue
 					}
+					ts = v.UnixMilli()
+				default:
+					continue
+				}
 
-					// Parse value
-					var val float64
-					switch v := metricValues[i].(type) {
-					case float64:
-						val = v
-					case int64:
-						val = float64(v)
-					case nil:
-						continue
-					default:
+				// Parse value
+				var val float64
+				switch v := frame.At(valueColIdx, i).(type) {
+				case float64:
+					val = v
+				case int64:
+					val = float64(v)
+				case *float64:
+					if v == nil {
 						continue
 					}
+					val = *v
+				case nil:
+					continue
+				default:
+					continue
+				}
 
-					result.Timestamps = append(result.Timestamps, ts)
-					result.Values = append(result.Values, val)
+				result.Timestamps = append(result.Timestamps, ts)
+				result.Values = append(result.Values, val)
 
-					// Calculate statistics
-					sum += val
-					count++
-					if first {
+				// Calculate statistics
+				sum += val
+				count++
+				if first {
+					min = val
+					max = val
+					first = false
+				} else {
+					if val < min {
 						min = val
+					}
+					if val > max {
 						max = val
-						first = false
-					} else {
-						if val < min {
-							min = val
-						}
-						if val > max {
-							max = val
-						}
 					}
 				}
 			}
@@ -405,9 +344,9 @@ type cloudWatchMetricItem struct {
 }
 
 // parseCloudWatchResourceResponse extracts values from CloudWatch resource API response
-func parseCloudWatchResourceResponse(bodyBytes []byte, bytesLimit int) ([]string, error) {
+func parseCloudWatchResourceResponse(bodyBytes []byte) ([]string, error) {
 	var items []cloudWatchResourceItem
-	if err := unmarshalJSONWithLimitMsg(bodyBytes, &items, bytesLimit); err != nil {
+	if err := json.Unmarshal(bodyBytes, &items); err != nil {
 		return nil, err
 	}
 
@@ -419,9 +358,9 @@ func parseCloudWatchResourceResponse(bodyBytes []byte, bytesLimit int) ([]string
 }
 
 // parseCloudWatchMetricsResponse extracts metric names from CloudWatch metrics API response
-func parseCloudWatchMetricsResponse(bodyBytes []byte, bytesLimit int) ([]string, error) {
+func parseCloudWatchMetricsResponse(bodyBytes []byte) ([]string, error) {
 	var items []cloudWatchMetricItem
-	if err := unmarshalJSONWithLimitMsg(bodyBytes, &items, bytesLimit); err != nil {
+	if err := json.Unmarshal(bodyBytes, &items); err != nil {
 		return nil, err
 	}
 
@@ -468,14 +407,12 @@ func listCloudWatchNamespaces(ctx context.Context, args ListCloudWatchNamespaces
 		return nil, fmt.Errorf("CloudWatch namespaces returned status %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
-	bytesLimit := 1024 * 1024 // 1MB limit
-	body := io.LimitReader(resp.Body, int64(bytesLimit))
-	bodyBytes, err := io.ReadAll(body)
+	bodyBytes, err := readResponseBody(resp.Body, defaultResponseLimitBytes)
 	if err != nil {
 		return nil, fmt.Errorf("reading response body: %w", err)
 	}
 
-	return parseCloudWatchResourceResponse(bodyBytes, bytesLimit)
+	return parseCloudWatchResourceResponse(bodyBytes)
 }
 
 // ListCloudWatchNamespaces is a tool for listing CloudWatch namespaces
@@ -530,14 +467,12 @@ func listCloudWatchMetrics(ctx context.Context, args ListCloudWatchMetricsParams
 		return nil, fmt.Errorf("CloudWatch metrics returned status %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
-	bytesLimit := 1024 * 1024 // 1MB limit
-	body := io.LimitReader(resp.Body, int64(bytesLimit))
-	bodyBytes, err := io.ReadAll(body)
+	bodyBytes, err := readResponseBody(resp.Body, defaultResponseLimitBytes)
 	if err != nil {
 		return nil, fmt.Errorf("reading response body: %w", err)
 	}
 
-	return parseCloudWatchMetricsResponse(bodyBytes, bytesLimit)
+	return parseCloudWatchMetricsResponse(bodyBytes)
 }
 
 // ListCloudWatchMetrics is a tool for listing CloudWatch metrics
@@ -594,14 +529,12 @@ func listCloudWatchDimensions(ctx context.Context, args ListCloudWatchDimensions
 		return nil, fmt.Errorf("CloudWatch dimensions returned status %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
-	bytesLimit := 1024 * 1024 // 1MB Limit
-	body := io.LimitReader(resp.Body, int64(bytesLimit))
-	bodyBytes, err := io.ReadAll(body)
+	bodyBytes, err := readResponseBody(resp.Body, defaultResponseLimitBytes)
 	if err != nil {
 		return nil, fmt.Errorf("reading response body: %w", err)
 	}
 
-	return parseCloudWatchResourceResponse(bodyBytes, bytesLimit)
+	return parseCloudWatchResourceResponse(bodyBytes)
 }
 
 // ListCloudWatchDimensions is a tool for listing CloudWatch dimension keys

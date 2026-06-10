@@ -6,7 +6,10 @@ import (
 	"encoding/json"
 	"net/url"
 	"testing"
+	"time"
 
+	"github.com/grafana/grafana-plugin-sdk-go/backend"
+	"github.com/grafana/grafana-plugin-sdk-go/data"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -195,7 +198,7 @@ func TestParseCloudWatchResourceResponse(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := parseCloudWatchResourceResponse([]byte(tt.input), 1024*1024)
+			result, err := parseCloudWatchResourceResponse([]byte(tt.input))
 			if tt.expectError {
 				require.Error(t, err)
 				return
@@ -237,7 +240,7 @@ func TestParseCloudWatchMetricsResponse(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := parseCloudWatchMetricsResponse([]byte(tt.input), 1024*1024)
+			result, err := parseCloudWatchMetricsResponse([]byte(tt.input))
 			if tt.expectError {
 				require.Error(t, err)
 				return
@@ -249,110 +252,27 @@ func TestParseCloudWatchMetricsResponse(t *testing.T) {
 }
 
 func TestCloudWatchMultiFrameStatistics(t *testing.T) {
-	// Build a cloudWatchQueryResponse with 2 frames to verify statistics
+	// Build a backend.QueryDataResponse with 2 frames to verify statistics
 	// are accumulated across all frames, not just the last one.
-	resp := &cloudWatchQueryResponse{
-		Results: map[string]struct {
-			Status int `json:"status,omitempty"`
-			Frames []struct {
-				Schema struct {
-					Name   string `json:"name,omitempty"`
-					RefID  string `json:"refId,omitempty"`
-					Fields []struct {
-						Name     string                 `json:"name"`
-						Type     string                 `json:"type"`
-						Labels   map[string]string      `json:"labels,omitempty"`
-						Config   map[string]interface{} `json:"config,omitempty"`
-						TypeInfo struct {
-							Frame string `json:"frame,omitempty"`
-						} `json:"typeInfo,omitempty"`
-					} `json:"fields"`
-				} `json:"schema"`
-				Data struct {
-					Values [][]interface{} `json:"values"`
-				} `json:"data"`
-			} `json:"frames,omitempty"`
-			Error string `json:"error,omitempty"`
-		}{},
-	}
+	t1 := time.UnixMilli(1000)
+	t2 := time.UnixMilli(2000)
+	t3 := time.UnixMilli(3000)
+	t4 := time.UnixMilli(4000)
 
-	// Frame type for convenience
-	type frame = struct {
-		Schema struct {
-			Name   string `json:"name,omitempty"`
-			RefID  string `json:"refId,omitempty"`
-			Fields []struct {
-				Name     string                 `json:"name"`
-				Type     string                 `json:"type"`
-				Labels   map[string]string      `json:"labels,omitempty"`
-				Config   map[string]interface{} `json:"config,omitempty"`
-				TypeInfo struct {
-					Frame string `json:"frame,omitempty"`
-				} `json:"typeInfo,omitempty"`
-			} `json:"fields"`
-		} `json:"schema"`
-		Data struct {
-			Values [][]interface{} `json:"values"`
-		} `json:"data"`
-	}
+	f1 := data.NewFrame("",
+		data.NewField("Time", nil, []time.Time{t1, t2}),
+		data.NewField("Value", nil, []float64{10.0, 20.0}),
+	)
 
-	type field = struct {
-		Name     string                 `json:"name"`
-		Type     string                 `json:"type"`
-		Labels   map[string]string      `json:"labels,omitempty"`
-		Config   map[string]interface{} `json:"config,omitempty"`
-		TypeInfo struct {
-			Frame string `json:"frame,omitempty"`
-		} `json:"typeInfo,omitempty"`
-	}
+	f2 := data.NewFrame("",
+		data.NewField("Time", nil, []time.Time{t3, t4}),
+		data.NewField("Value", nil, []float64{5.0, 40.0}),
+	)
 
-	// Frame 1: values 10, 20 (sum=30, min=10, max=20)
-	f1 := frame{}
-	f1.Schema.Fields = []field{
-		{Name: "Time", Type: "time"},
-		{Name: "Value", Type: "number"},
-	}
-	f1.Data.Values = [][]interface{}{
-		{float64(1000), float64(2000)}, // timestamps
-		{float64(10.0), float64(20.0)}, // values
-	}
-
-	// Frame 2: values 5, 40 (sum=45, min=5, max=40)
-	f2 := frame{}
-	f2.Schema.Fields = []field{
-		{Name: "Time", Type: "time"},
-		{Name: "Value", Type: "number"},
-	}
-	f2.Data.Values = [][]interface{}{
-		{float64(3000), float64(4000)}, // timestamps
-		{float64(5.0), float64(40.0)},  // values
-	}
-
-	type resultType = struct {
-		Status int `json:"status,omitempty"`
-		Frames []struct {
-			Schema struct {
-				Name   string `json:"name,omitempty"`
-				RefID  string `json:"refId,omitempty"`
-				Fields []struct {
-					Name     string                 `json:"name"`
-					Type     string                 `json:"type"`
-					Labels   map[string]string      `json:"labels,omitempty"`
-					Config   map[string]interface{} `json:"config,omitempty"`
-					TypeInfo struct {
-						Frame string `json:"frame,omitempty"`
-					} `json:"typeInfo,omitempty"`
-				} `json:"fields"`
-			} `json:"schema"`
-			Data struct {
-				Values [][]interface{} `json:"values"`
-			} `json:"data"`
-		} `json:"frames,omitempty"`
-		Error string `json:"error,omitempty"`
-	}
-
-	resp.Results["A"] = resultType{
-		Frames: []frame{f1, f2},
+	resp := &backend.QueryDataResponse{
+		Responses: backend.Responses{
+			"A": backend.DataResponse{Frames: data.Frames{f1, f2}},
+		},
 	}
 
 	// Process the response the same way queryCloudWatch does
@@ -363,51 +283,55 @@ func TestCloudWatchMultiFrameStatistics(t *testing.T) {
 		Statistics: make(map[string]float64),
 	}
 
-	for _, r := range resp.Results {
+	for _, r := range resp.Responses {
 		var sum, min, max float64
 		var count int64
 		first := true
 
 		for _, frm := range r.Frames {
 			var timeColIdx, valueColIdx = -1, -1
-			for i, fld := range frm.Schema.Fields {
-				switch fld.Type {
-				case "time":
+			for i, fld := range frm.Fields {
+				switch {
+				case fld.Type() == data.FieldTypeTime || fld.Type() == data.FieldTypeNullableTime:
 					timeColIdx = i
-				case "number":
+				case fld.Type().Numeric():
 					valueColIdx = i
 				}
 			}
 			if timeColIdx == -1 || valueColIdx == -1 {
 				continue
 			}
-			if len(frm.Data.Values) > timeColIdx && len(frm.Data.Values) > valueColIdx {
-				timeValues := frm.Data.Values[timeColIdx]
-				metricValues := frm.Data.Values[valueColIdx]
-				for i := 0; i < len(timeValues) && i < len(metricValues); i++ {
-					ts, ok := timeValues[i].(float64)
-					if !ok {
-						continue
-					}
-					val, ok := metricValues[i].(float64)
-					if !ok {
-						continue
-					}
-					result.Timestamps = append(result.Timestamps, int64(ts))
-					result.Values = append(result.Values, val)
-					sum += val
-					count++
-					if first {
+			rowCount := frm.Rows()
+			for i := 0; i < rowCount; i++ {
+				tsRaw := frm.At(timeColIdx, i)
+				var ts int64
+				switch v := tsRaw.(type) {
+				case time.Time:
+					ts = v.UnixMilli()
+				case float64:
+					ts = int64(v)
+				default:
+					continue
+				}
+
+				val, ok := frm.At(valueColIdx, i).(float64)
+				if !ok {
+					continue
+				}
+				result.Timestamps = append(result.Timestamps, ts)
+				result.Values = append(result.Values, val)
+				sum += val
+				count++
+				if first {
+					min = val
+					max = val
+					first = false
+				} else {
+					if val < min {
 						min = val
+					}
+					if val > max {
 						max = val
-						first = false
-					} else {
-						if val < min {
-							min = val
-						}
-						if val > max {
-							max = val
-						}
 					}
 				}
 			}
