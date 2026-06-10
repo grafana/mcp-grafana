@@ -46,7 +46,7 @@
     iframe {
       display: block;
       width: 100%;
-      min-height: 500px;
+      min-height: 700px;
       border: 1px solid rgba(127, 127, 127, 0.35);
       border-radius: 8px 8px 0 0;
       background: white;
@@ -240,9 +240,9 @@
 
         function clampHeight(px) {
           if (!Number.isFinite(px)) {
-            return 100;
+            return 300;
           }
-          return Math.max(100, Math.min(4000, Math.round(px)));
+          return Math.max(300, Math.min(4000, Math.round(px)));
         }
 
         function endDrag() {
