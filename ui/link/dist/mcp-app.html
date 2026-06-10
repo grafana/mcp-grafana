@@ -39,12 +39,56 @@
       background: rgba(220, 50, 47, 0.12);
       font-size: 12px;
     }
-    iframe {
+    .frame-wrapper {
+      position: relative;
       width: 100%;
-      min-height: 500px;
+    }
+    iframe {
+      display: block;
+      width: 100%;
+      min-height: 700px;
       border: 1px solid rgba(127, 127, 127, 0.35);
-      border-radius: 8px;
+      border-radius: 8px 8px 0 0;
       background: white;
+      box-sizing: border-box;
+    }
+    .resize-handle {
+      height: 12px;
+      width: 100%;
+      border: 1px solid rgba(127, 127, 127, 0.35);
+      border-top: none;
+      border-radius: 0 0 8px 8px;
+      background: rgba(127, 127, 127, 0.08);
+      cursor: ns-resize;
+      touch-action: none;
+      user-select: none;
+      box-sizing: border-box;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 120ms ease;
+    }
+    .resize-handle::before {
+      content: "";
+      display: block;
+      width: 32px;
+      height: 4px;
+      background-image:
+        linear-gradient(currentColor, currentColor),
+        linear-gradient(currentColor, currentColor);
+      background-size: 100% 1px;
+      background-position: 0 0, 0 100%;
+      background-repeat: no-repeat;
+      color: rgba(127, 127, 127, 0.6);
+      transition: color 120ms ease;
+    }
+    .resize-handle:hover,
+    .resize-handle.dragging {
+      background: rgba(127, 127, 127, 0.16);
+    }
+    .resize-handle:hover::before,
+    .resize-handle.dragging::before {
+      color: rgba(127, 127, 127, 0.9);
     }
   </style>
 </head>
@@ -55,12 +99,22 @@
     <div class="subtle" id="current-url"></div>
   </div>
   <div id="error" class="error"></div>
-  <iframe
-    id="link-frame"
-    title="Embedded link content"
-    sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox"
-    referrerpolicy="no-referrer"
-  ></iframe>
+  <div class="frame-wrapper">
+    <iframe
+      id="link-frame"
+      title="Embedded link content"
+      sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox"
+      referrerpolicy="no-referrer"
+    ></iframe>
+    <div
+      id="resize-handle"
+      class="resize-handle"
+      role="separator"
+      aria-orientation="horizontal"
+      aria-label="Drag to resize embedded content"
+      title="Drag to resize"
+    ></div>
+  </div>
 
   <script>
     (function () {
@@ -69,6 +123,7 @@
       const currentUrlEl = document.getElementById("current-url");
       const errorEl = document.getElementById("error");
       const frameEl = document.getElementById("link-frame");
+      const resizeHandleEl = document.getElementById("resize-handle");
 
       let nextId = 1;
       const pending = new Map();
@@ -161,6 +216,76 @@
         currentUrlEl.textContent = url;
         setStatus("Rendering URL in iframe");
       }
+
+      // Set both so drag can shrink below the CSS min-height.
+      function setFrameHeight(px) {
+        if (typeof px === "number") {
+          frameEl.style.height = px + "px";
+          frameEl.style.minHeight = px + "px";
+        } else {
+          frameEl.style.height = "";
+          frameEl.style.minHeight = "";
+        }
+      }
+
+      // Cross-origin iframes capture pointer events, so we disable them on
+      // the iframe during a drag to keep the gesture alive.
+      function attachResizeHandle() {
+        if (!resizeHandleEl) {
+          return;
+        }
+        let pointerId = null;
+        let startY = 0;
+        let startHeight = 0;
+
+        function clampHeight(px) {
+          if (!Number.isFinite(px)) {
+            return 300;
+          }
+          return Math.max(300, Math.min(4000, Math.round(px)));
+        }
+
+        function endDrag() {
+          if (pointerId === null) {
+            return;
+          }
+          try {
+            resizeHandleEl.releasePointerCapture(pointerId);
+          } catch (_error) { /* already released */ }
+          pointerId = null;
+          frameEl.style.pointerEvents = "";
+          resizeHandleEl.classList.remove("dragging");
+          document.body.style.cursor = "";
+        }
+
+        resizeHandleEl.addEventListener("pointerdown", (event) => {
+          if (event.button !== 0 && event.pointerType === "mouse") {
+            return;
+          }
+          pointerId = event.pointerId;
+          startY = event.clientY;
+          startHeight = frameEl.getBoundingClientRect().height;
+          try {
+            resizeHandleEl.setPointerCapture(pointerId);
+          } catch (_error) { /* synthetic events can throw */ }
+          frameEl.style.pointerEvents = "none";
+          resizeHandleEl.classList.add("dragging");
+          document.body.style.cursor = "ns-resize";
+          event.preventDefault();
+        });
+
+        resizeHandleEl.addEventListener("pointermove", (event) => {
+          if (pointerId === null || event.pointerId !== pointerId) {
+            return;
+          }
+          setFrameHeight(clampHeight(startHeight + (event.clientY - startY)));
+        });
+
+        resizeHandleEl.addEventListener("pointerup", endDrag);
+        resizeHandleEl.addEventListener("pointercancel", endDrag);
+      }
+
+      attachResizeHandle();
 
       function handleMessage(event) {
         const message = event.data;

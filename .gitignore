@@ -7,8 +7,15 @@ wheels/
 *.egg-info
 .DS_Store
 .vscode/
+.idea/
 .env
 .cursor/
+
+# Local Go binary build output
+/mcp-grafana
+
+# Frontend dependencies
+node_modules/
 
 # Virtual environments
 .venv
