@@ -471,6 +471,28 @@ This MCP server works with both local Grafana instances and Grafana Cloud. For G
 
    > **Note:** The environment variable `GRAFANA_API_KEY` is deprecated and will be removed in a future version. Please migrate to using `GRAFANA_SERVICE_ACCOUNT_TOKEN` instead. The old variable name will continue to work for backward compatibility but will show deprecation warnings.
 
+#### Reading the service account token from a file
+
+Instead of passing the token inline via `GRAFANA_SERVICE_ACCOUNT_TOKEN`, you can point `GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE` at a file path that contains the token. The file is read fresh on every request, so rotated tokens are picked up automatically without restarting the server.
+
+This is particularly useful in Kubernetes, where a Secret mounted as a volume is updated in place when the underlying Secret changes (typically within ~1 minute). Combined with the per-request client cache — which is keyed on the token value — a rotated token transparently produces a new client with no pod restart and no downtime:
+
+```yaml
+env:
+  - name: GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE
+    value: /var/run/secrets/grafana/token
+volumeMounts:
+  - name: grafana-token
+    mountPath: /var/run/secrets/grafana
+    readOnly: true
+volumes:
+  - name: grafana-token
+    secret:
+      secretName: grafana-mcp-token
+```
+
+Surrounding whitespace (including a trailing newline) is trimmed from the file contents. If both `GRAFANA_SERVICE_ACCOUNT_TOKEN` and `GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE` are set, the inline token takes precedence.
+
 ### Multi-Organization Support
  
 You can specify which organization to interact with using either:
