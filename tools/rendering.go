@@ -86,8 +86,8 @@ type RenderLinkInMCPAppParams struct {
 	Kiosk *string `json:"kiosk,omitempty" jsonschema:"description=Grafana kiosk mode: 'true' (default for Grafana URLs)\\, 'tv'\\, or 'false' to disable"`
 }
 
-// addGrafanaKioskParam sets the Grafana kiosk query parameter on URLs that
-// point at the configured Grafana host. Other URLs are returned unchanged.
+// addGrafanaKioskParam sets the Grafana kiosk query parameter on URLs whose
+// host matches grafanaBaseURL. Other URLs are returned unchanged.
 func addGrafanaKioskParam(rawURL, grafanaBaseURL, override string) string {
 	if grafanaBaseURL == "" {
 		return rawURL
@@ -150,8 +150,7 @@ func renderLinkInMCPApp(ctx context.Context, args RenderLinkInMCPAppParams) (*mc
 		return nil, err
 	}
 
-	// Kiosk only affects the URL the iframe loads. Text content keeps the
-	// caller's original URL so it stays canonical when copied or shared.
+	// Apply kiosk only to the iframe URL; text content keeps the caller's original.
 	override := ""
 	if args.Kiosk != nil {
 		override = *args.Kiosk
