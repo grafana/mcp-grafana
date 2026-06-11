@@ -197,3 +197,66 @@ func TestUpdateDashboardV2_SetsFolderAnnotation(t *testing.T) {
 	require.True(t, ok, "folder annotation should be written")
 	assert.Equal(t, "folder-xyz", ann["grafana.app/folder"])
 }
+
+// TestCreateOrUpdateDashboardV2_RespectsOverwriteFalse verifies a full-JSON v2
+// save refuses to replace an existing dashboard when overwrite is false, matching
+// the legacy save path.
+func TestCreateOrUpdateDashboardV2_RespectsOverwriteFalse(t *testing.T) {
+	var wrote bool
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/dashboards/u1"):
+			// The dashboard already exists.
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"apiVersion": "dashboard.grafana.app/v2beta1",
+				"kind":       "Dashboard",
+				"metadata":   map[string]interface{}{"name": "u1", "resourceVersion": "3"},
+				"spec":       map[string]interface{}{"title": "old"},
+			})
+		case r.Method == http.MethodPut || r.Method == http.MethodPost:
+			wrote = true
+			w.WriteHeader(http.StatusInternalServerError)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer ts.Close()
+
+	k8s := &mcpgrafana.KubernetesClient{BaseURL: ts.URL, HTTPClient: ts.Client()}
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: ts.URL})
+	ctx = mcpgrafana.WithKubernetesClient(ctx, k8s)
+
+	_, err := createOrUpdateDashboardV2(ctx, UpdateDashboardParams{
+		Dashboard: map[string]interface{}{"uid": "u1", "title": "new", "elements": map[string]interface{}{}},
+		Overwrite: false,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "already exists")
+	assert.False(t, wrote, "must not write when overwrite is false and the dashboard exists")
+}
+
+// TestCreateOrUpdateDashboardV2_DoesNotMutateInput verifies the caller's dashboard
+// map is not mutated (its uid survives) when saving a v2 dashboard.
+func TestCreateOrUpdateDashboardV2_DoesNotMutateInput(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"metadata": map[string]interface{}{"name": "newdash", "generation": 1},
+			})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound) // GET existing -> not found -> create
+	}))
+	defer ts.Close()
+
+	k8s := &mcpgrafana.KubernetesClient{BaseURL: ts.URL, HTTPClient: ts.Client()}
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: ts.URL})
+	ctx = mcpgrafana.WithKubernetesClient(ctx, k8s)
+
+	input := map[string]interface{}{"uid": "newdash", "title": "t", "elements": map[string]interface{}{}}
+	_, err := createOrUpdateDashboardV2(ctx, UpdateDashboardParams{Dashboard: input, Overwrite: true})
+	require.NoError(t, err)
+	assert.Equal(t, "newdash", input["uid"], "caller's dashboard map must not be mutated")
+}

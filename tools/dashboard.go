@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"regexp"
 	"slices"
 	"sort"
@@ -464,9 +465,10 @@ func createOrUpdateDashboardV2(ctx context.Context, args UpdateDashboardParams) 
 		return nil, fmt.Errorf("a Kubernetes-capable Grafana is required to save a v2 dashboard, but no k8s client is available")
 	}
 
-	spec := args.Dashboard
 	// The v2 spec carries identity in metadata, not the body; lift and strip a
-	// uid if one was provided in the JSON.
+	// uid if one was provided in the JSON. Copy the map first so we don't mutate
+	// the caller's input (which it may reuse for retries/follow-ups).
+	spec := maps.Clone(args.Dashboard)
 	uid := args.UID
 	if uid == "" {
 		if u, ok := spec["uid"].(string); ok {
@@ -487,6 +489,11 @@ func createOrUpdateDashboardV2(ctx context.Context, args UpdateDashboardParams) 
 		existing, err := fetchDashboardViaK8s(ctx, k8s, uid)
 		switch {
 		case err == nil && existing.Object != nil:
+			// Mirror the legacy save: refuse to replace an existing dashboard
+			// unless overwrite was requested.
+			if !args.Overwrite {
+				return nil, fmt.Errorf("dashboard %q already exists; set overwrite=true to replace it", uid)
+			}
 			obj := existing.Object
 			obj["spec"] = spec
 			if existing.APIVersion != "" {
