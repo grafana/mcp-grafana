@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -559,6 +560,61 @@ func TestGetPanelImage(t *testing.T) {
 		textContent, ok := result.Content[1].(mcp.TextContent)
 		require.True(t, ok)
 		assert.Equal(t, server.URL+"/d/test-dash?viewPanel=5", textContent.Text)
+	})
+
+	t.Run("Provisioning preview deeplink uses /dashboard/provisioning route", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "image/png")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(testPNGData)
+		}))
+		defer server.Close()
+
+		grafanaCfg := mcpgrafana.GrafanaConfig{URL: server.URL, APIKey: "test-api-key"}
+		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), grafanaCfg)
+
+		t.Run("full dashboard, no ref", func(t *testing.T) {
+			result, err := getPanelImage(ctx, GetPanelImageParams{
+				ProvisioningPreview: &ProvisioningPreview{
+					Repo: "my-repo",
+					Path: "folder/dashboard.json",
+				},
+			})
+			require.NoError(t, err)
+			require.Len(t, result.Content, 2)
+
+			text, ok := result.Content[1].(mcp.TextContent)
+			require.True(t, ok)
+			assert.Equal(t,
+				server.URL+"/dashboard/provisioning/my-repo/preview/folder/dashboard.json",
+				text.Text,
+			)
+		})
+
+		t.Run("specific panel with ref", func(t *testing.T) {
+			panelID := 7
+			result, err := getPanelImage(ctx, GetPanelImageParams{
+				ProvisioningPreview: &ProvisioningPreview{
+					Repo: "my-repo",
+					Path: "dashboard.json",
+					Ref:  "feature/branch",
+				},
+				PanelID: &panelID,
+			})
+			require.NoError(t, err)
+			require.Len(t, result.Content, 2)
+
+			text, ok := result.Content[1].(mcp.TextContent)
+			require.True(t, ok)
+			parsed, err := url.Parse(text.Text)
+			require.NoError(t, err)
+			assert.Equal(t,
+				"/dashboard/provisioning/my-repo/preview/dashboard.json",
+				parsed.Path,
+			)
+			assert.Equal(t, "feature/branch", parsed.Query().Get("ref"))
+			assert.Equal(t, "7", parsed.Query().Get("viewPanel"))
+		})
 	})
 
 	t.Run("Authentication header with API key", func(t *testing.T) {

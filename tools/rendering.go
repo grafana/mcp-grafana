@@ -162,7 +162,10 @@ func getPanelImage(ctx context.Context, args GetPanelImageParams) (*mcp.CallTool
 
 	// Return the image as base64 encoded data using MCP's image content type
 	base64Data := base64.StdEncoding.EncodeToString(imageData)
-	deeplink := buildDashboardDeeplink(baseURL, args)
+	deeplink, err := buildDashboardDeeplink(baseURL, args)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build dashboard deeplink: %w", err)
+	}
 
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{
@@ -287,12 +290,37 @@ func buildRenderURL(baseURL string, args GetPanelImageParams) (string, error) {
 	return fmt.Sprintf("%s%s?%s", baseURL, renderPath, params.Encode()), nil
 }
 
-func buildDashboardDeeplink(baseURL string, args GetPanelImageParams) string {
+// buildDashboardDeeplink returns the Grafana UI URL for the rendered
+// dashboard or provisioning-preview file, with viewPanel=<id> appended when
+// a specific panel was rendered.
+func buildDashboardDeeplink(baseURL string, args GetPanelImageParams) (string, error) {
 	baseURL = strings.TrimRight(baseURL, "/")
-	if args.PanelID != nil {
-		return fmt.Sprintf("%s/d/%s?viewPanel=%d", baseURL, args.DashboardUID, *args.PanelID)
+
+	var uid *string
+	if args.DashboardUID != "" {
+		uid = &args.DashboardUID
 	}
-	return fmt.Sprintf("%s/d/%s", baseURL, args.DashboardUID)
+	var preview *DeeplinkProvisioningPreview
+	if args.ProvisioningPreview != nil {
+		preview = &DeeplinkProvisioningPreview{
+			Repo: args.ProvisioningPreview.Repo,
+			Path: args.ProvisioningPreview.Path,
+			Ref:  args.ProvisioningPreview.Ref,
+		}
+	}
+
+	target, err := buildDashboardTargetURL(baseURL, uid, preview)
+	if err != nil {
+		return "", err
+	}
+	if args.PanelID == nil {
+		return target, nil
+	}
+	separator := "?"
+	if strings.Contains(target, "?") {
+		separator = "&"
+	}
+	return fmt.Sprintf("%s%sviewPanel=%d", target, separator, *args.PanelID), nil
 }
 
 var GetPanelImage = mcpgrafana.MustTool(

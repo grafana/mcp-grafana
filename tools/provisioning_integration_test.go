@@ -7,6 +7,7 @@ package tools
 
 import (
 	"encoding/base64"
+	"net/url"
 	"testing"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -114,10 +115,10 @@ func TestRenderProvisioningPreview_Integration(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, result)
 			require.False(t, result.IsError, "render returned an error result: %+v", result.Content)
-			require.Len(t, result.Content, 1)
+			require.Len(t, result.Content, 2)
 
 			img, ok := result.Content[0].(mcp.ImageContent)
-			require.True(t, ok, "expected ImageContent, got %T", result.Content[0])
+			require.True(t, ok, "expected ImageContent at index 0, got %T", result.Content[0])
 			assert.Equal(t, "image/png", img.MIMEType)
 
 			data, err := base64.StdEncoding.DecodeString(img.Data)
@@ -125,6 +126,22 @@ func TestRenderProvisioningPreview_Integration(t *testing.T) {
 			require.NotEmpty(t, data, "rendered PNG should not be empty")
 			// PNG magic number.
 			assert.Equal(t, []byte{0x89, 'P', 'N', 'G'}, data[:4], "rendered image should be a PNG")
+
+			// Provisioning previews must use the /dashboard/provisioning
+			// route, not the stored-dashboard /d/<uid> route.
+			deeplink, ok := result.Content[1].(mcp.TextContent)
+			require.True(t, ok, "expected TextContent at index 1, got %T", result.Content[1])
+			require.NotEmpty(t, deeplink.Text, "deeplink text should not be empty")
+
+			parsed, err := url.Parse(deeplink.Text)
+			require.NoError(t, err, "deeplink should be a valid URL")
+			assert.Equal(t,
+				"/dashboard/provisioning/"+testProvisioningRepo+"/preview/"+tc.path,
+				parsed.Path,
+				"deeplink should reference the provisioning preview route",
+			)
+			assert.Equal(t, tc.ref, parsed.Query().Get("ref"),
+				"deeplink ref query should match the requested branch")
 		})
 	}
 }
