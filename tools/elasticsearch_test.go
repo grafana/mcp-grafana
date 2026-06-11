@@ -212,6 +212,29 @@ func TestElasticsearchTools(t *testing.T) {
 			assert.NotEmpty(t, doc.Timestamp, "Documents with @timestamp should have Timestamp set")
 		}
 	})
+
+	t.Run("query elasticsearch with custom timeField", func(t *testing.T) {
+		ctx := newTestContext()
+		now := time.Now().UTC()
+		startTime := now.Add(-24 * time.Hour).Format(time.RFC3339)
+		endTime := now.Add(24 * time.Hour).Format(time.RFC3339)
+
+		result, err := queryElasticsearch(ctx, QueryElasticsearchParams{
+			DatasourceUID: "elasticsearch-custom-time",
+			Index:         "custom-time-logs-*",
+			Query:         "*",
+			StartTime:     startTime,
+			EndTime:       endTime,
+			Limit:         10,
+		})
+		require.NoError(t, err)
+		assert.NotEmpty(t, result, "Should return documents filtered by custom timestamp field")
+
+		for _, doc := range result {
+			assert.NotEmpty(t, doc.Timestamp, "Documents with timestamp field should have Timestamp set")
+			assert.Contains(t, doc.Source, "message")
+		}
+	})
 }
 
 func TestOpenSearchViaElasticsearchTools(t *testing.T) {
@@ -361,6 +384,29 @@ func TestOpenSearchViaElasticsearchTools(t *testing.T) {
 
 		for _, doc := range result {
 			assert.NotEmpty(t, doc.Timestamp, "Documents with @timestamp should have Timestamp set")
+		}
+	})
+
+	t.Run("query opensearch with custom timeField", func(t *testing.T) {
+		ctx := newTestContext()
+		now := time.Now().UTC()
+		startTime := now.Add(-24 * time.Hour).Format(time.RFC3339)
+		endTime := now.Add(24 * time.Hour).Format(time.RFC3339)
+
+		result, err := queryElasticsearch(ctx, QueryElasticsearchParams{
+			DatasourceUID: "opensearch-custom-time",
+			Index:         "custom-time-logs-*",
+			Query:         "*",
+			StartTime:     startTime,
+			EndTime:       endTime,
+			Limit:         10,
+		})
+		require.NoError(t, err)
+		assert.NotEmpty(t, result, "Should return documents filtered by custom timestamp field")
+
+		for _, doc := range result {
+			assert.NotEmpty(t, doc.Timestamp, "Documents with timestamp field should have Timestamp set")
+			assert.Contains(t, doc.Source, "message")
 		}
 	})
 }
