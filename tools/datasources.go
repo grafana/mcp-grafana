@@ -130,7 +130,8 @@ func noSchemaGuidance(pluginType string) *noSchemaGuidanceResult {
 		Type: pluginType,
 		Message: "No schema is available for this datasource type. " +
 			"You MUST ask the user for the value of every required field before calling create_datasource again. " +
-			"For optional fields, ask only if relevant to the user's setup.",
+			"For optional fields, ask only if relevant to the user's setup. " +
+			"Once collected, call create_datasource again with those values in the fields param.",
 		Fields: []noSchemaField{
 			{Key: "name", Description: "Display name for the datasource.", Required: true},
 			{Key: "url", Description: "Base URL of the datasource (e.g. http://localhost:8086)."},
@@ -162,9 +163,17 @@ func applyFields(body *models.AddDataSourceCommand, schema *datasourceschemas.Da
 		}
 		if f.Target == "root" {
 			switch f.Key {
+			case "name":
+				if s, ok := v.(string); ok {
+					body.Name = s
+				}
 			case "url":
 				if s, ok := v.(string); ok {
 					body.URL = s
+				}
+			case "database":
+				if s, ok := v.(string); ok {
+					body.Database = s
 				}
 			case "basicAuth":
 				if b, ok := v.(bool); ok {
@@ -201,6 +210,37 @@ func applyFields(body *models.AddDataSourceCommand, schema *datasourceschemas.Da
 	return jsonData
 }
 
+func applyNoSchemaFields(body *models.AddDataSourceCommand, inputFields map[string]any) {
+	for inputKey, v := range inputFields {
+		switch inputKey {
+		case "name":
+			if s, ok := v.(string); ok {
+				body.Name = s
+			}
+		case "url":
+			if s, ok := v.(string); ok {
+				body.URL = s
+			}
+		case "database":
+			if s, ok := v.(string); ok {
+				body.Database = s
+			}
+		case "basicAuth":
+			if b, ok := v.(bool); ok {
+				body.BasicAuth = b
+			}
+		case "isDefault":
+			if b, ok := v.(bool); ok {
+				body.IsDefault = b
+			}
+		case "withCredentials":
+			if b, ok := v.(bool); ok {
+				body.WithCredentials = b
+			}
+		}
+	}
+}
+
 func createDatasource(ctx context.Context, args CreateDatasourceParams) (*mcp.CallToolResult, error) {
 	schema, err := datasourceschemas.LoadDatasourceSchema(args.Type)
 	if err != nil {
@@ -210,13 +250,15 @@ func createDatasource(ctx context.Context, args CreateDatasourceParams) (*mcp.Ca
 	// With a schema: list schema fields and ask the user to fill them in.
 	// Without a schema: list the explicit params and ask for name + any others
 	// the user wants to set, then call again with those values.
-	if schema != nil && args.Fields == nil {
+	if schema != nil && len(args.Fields) == 0 {
 		text, _ := json.Marshal(datasourceschemas.BuildSchemaGuidance(schema, "create_datasource"))
 		return mcp.NewToolResultText(string(text)), nil
 	}
 	if schema == nil && args.Name == "" {
-		text, _ := json.Marshal(noSchemaGuidance(args.Type))
-		return mcp.NewToolResultText(string(text)), nil
+		if name, ok := args.Fields["name"].(string); !ok || name == "" {
+			text, _ := json.Marshal(noSchemaGuidance(args.Type))
+			return mcp.NewToolResultText(string(text)), nil
+		}
 	}
 
 	dsAccess := args.Access
@@ -239,6 +281,8 @@ func createDatasource(ctx context.Context, args CreateDatasourceParams) (*mcp.Ca
 	}
 	if schema != nil {
 		body.JSONData = models.JSON(applyFields(body, schema, args.Fields))
+	} else {
+		applyNoSchemaFields(body, args.Fields)
 	}
 	resp, err := c.Datasources.AddDataSourceWithParams(
 		datasources.NewAddDataSourceParamsWithContext(ctx).WithBody(body),

@@ -14,6 +14,15 @@ var datasourceSchemaFiles embed.FS
 // guidance so the user is always prompted for them.
 var commonDatasourceFields = []DsSchemaField{
 	{
+		ID:          "root.name",
+		Key:         "name",
+		Label:       "Name",
+		Description: "Display name for the datasource.",
+		ValueType:   "string",
+		Target:      "root",
+		Required:    true,
+	},
+	{
 		ID:          "root.uid",
 		Key:         "uid",
 		Label:       "UID",

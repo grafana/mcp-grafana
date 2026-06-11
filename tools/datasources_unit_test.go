@@ -276,9 +276,10 @@ func TestCreateDatasource_SchemaGuidancePhase(t *testing.T) {
 	ctx := mockDatasourcesCtx(srv)
 
 	result, err := createDatasource(ctx, CreateDatasourceParams{
-		Name: "My Prometheus",
-		Type: "prometheus",
-		// no Fields → Phase 1: return schema guidance
+		Name:   "My Prometheus",
+		Type:   "prometheus",
+		Fields: map[string]any{},
+		// Empty Fields means Phase 1: return schema guidance.
 	})
 	require.NoError(t, err)
 	require.Len(t, result.Content, 1)
@@ -291,6 +292,14 @@ func TestCreateDatasource_SchemaGuidancePhase(t *testing.T) {
 	assert.Equal(t, "prometheus", guidance["type"])
 	assert.NotEmpty(t, guidance["fields"])
 	assert.NotEmpty(t, guidance["message"])
+
+	fields := guidance["fields"].([]any)
+	keys := make([]string, 0, len(fields))
+	for _, f := range fields {
+		fm := f.(map[string]any)
+		keys = append(keys, fm["key"].(string))
+	}
+	assert.Contains(t, keys, "name")
 }
 
 func TestCreateDatasource_NoSchemaCreatesDirectly(t *testing.T) {
@@ -305,10 +314,12 @@ func TestCreateDatasource_NoSchemaCreatesDirectly(t *testing.T) {
 		Datasource: &models.DataSource{ID: id, UID: uid, Name: name, Type: "nonexistent-plugin"},
 	}
 
+	var captured models.AddDataSourceCommand
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/api/datasources":
+			_ = json.NewDecoder(r.Body).Decode(&captured)
 			_ = json.NewEncoder(w).Encode(mockResp)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/datasources/uid/"+uid+"/health":
 			_ = json.NewEncoder(w).Encode(map[string]any{"message": "Data source connected"})
@@ -321,15 +332,27 @@ func TestCreateDatasource_NoSchemaCreatesDirectly(t *testing.T) {
 	ctx := mockDatasourcesCtx(srv)
 	mcpgrafana.GrafanaClientFromContext(ctx).PublicURL = "https://grafana.example.com"
 
-	// No schema for this type — should create immediately without a fields step.
+	// No schema for this type should create immediately and apply guided fields.
 	result, err := createDatasource(ctx, CreateDatasourceParams{
-		Name: name,
 		Type: "nonexistent-plugin",
-		URL:  "http://custom:9090",
+		Fields: map[string]any{
+			"name":            name,
+			"url":             "http://custom:9090",
+			"database":        "metrics",
+			"basicAuth":       true,
+			"isDefault":       true,
+			"withCredentials": true,
+		},
 	})
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.False(t, result.IsError)
+	assert.Equal(t, name, captured.Name)
+	assert.Equal(t, "http://custom:9090", captured.URL)
+	assert.Equal(t, "metrics", captured.Database)
+	assert.True(t, captured.BasicAuth)
+	assert.True(t, captured.IsDefault)
+	assert.True(t, captured.WithCredentials)
 }
 
 func TestCreateDatasource_Success(t *testing.T) {
@@ -350,10 +373,12 @@ func TestCreateDatasource_Success(t *testing.T) {
 		},
 	}
 
+	var captured models.AddDataSourceCommand
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/api/datasources":
+			_ = json.NewDecoder(r.Body).Decode(&captured)
 			w.WriteHeader(http.StatusOK)
 			_ = json.NewEncoder(w).Encode(mockResp)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/datasources/uid/"+uid+"/health":
@@ -367,10 +392,13 @@ func TestCreateDatasource_Success(t *testing.T) {
 	mcpgrafana.GrafanaClientFromContext(ctx).PublicURL = "https://grafana.example.com"
 
 	toolResult, err := createDatasource(ctx, CreateDatasourceParams{
-		Name:   name,
-		Type:   "prometheus",
-		URL:    "http://prometheus:9090",
-		Fields: map[string]any{"httpMethod": "POST", "timeInterval": "15s"},
+		Type: "prometheus",
+		Fields: map[string]any{
+			"name":         name,
+			"url":          "http://prometheus:9090",
+			"httpMethod":   "POST",
+			"timeInterval": "15s",
+		},
 	})
 	require.NoError(t, err)
 	require.NotNil(t, toolResult)
@@ -386,6 +414,11 @@ func TestCreateDatasource_Success(t *testing.T) {
 	assert.Equal(t, name, got.Name)
 	assert.Equal(t, msg, got.Message)
 	assert.Equal(t, id, got.ID)
+	assert.Equal(t, name, captured.Name)
+	assert.Equal(t, "http://prometheus:9090", captured.URL)
+	jsonData, ok := captured.JSONData.(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "POST", jsonData["httpMethod"])
 	require.NotNil(t, got.Health)
 	assert.Equal(t, uid, got.Health.UID)
 	assert.Equal(t, "Data source connected", got.Health.Message)
@@ -796,7 +829,9 @@ func TestApplyFields(t *testing.T) {
 			{Key: "httpMethod", Target: "jsonData", ValueType: "string"},
 			{Key: "timeInterval", Target: "jsonData", ValueType: "string"},
 			{Key: "basicAuthPassword", Target: "secureJsonData", ValueType: "string"},
+			{Key: "name", Target: "root", ValueType: "string"},
 			{Key: "url", Target: "root", ValueType: "string"},
+			{Key: "database", Target: "root", ValueType: "string"},
 			{Key: "basicAuth", Target: "root", ValueType: "boolean"},
 			{Key: "isDefault", Target: "root", ValueType: "boolean"},
 		},
@@ -819,6 +854,15 @@ func TestApplyFields(t *testing.T) {
 		result := applyFields(body, schema, map[string]any{"url": "http://prometheus:9090"})
 		assert.Equal(t, "http://prometheus:9090", body.URL)
 		assert.NotContains(t, result, "url")
+	})
+
+	t.Run("root name and database are applied to body", func(t *testing.T) {
+		body := &models.AddDataSourceCommand{}
+		result := applyFields(body, schema, map[string]any{"name": "Prometheus", "database": "metrics"})
+		assert.Equal(t, "Prometheus", body.Name)
+		assert.Equal(t, "metrics", body.Database)
+		assert.NotContains(t, result, "name")
+		assert.NotContains(t, result, "database")
 	})
 
 	t.Run("root basicAuth is applied to body", func(t *testing.T) {

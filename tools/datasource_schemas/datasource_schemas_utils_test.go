@@ -71,6 +71,7 @@ func TestBuildSchemaGuidance(t *testing.T) {
 		schema := &DatasourceSchema{PluginType: "test-plugin", PluginName: "Test"}
 		guidance := BuildSchemaGuidance(schema, "create_datasource")
 		keys := fieldKeys(guidance.Fields)
+		assert.Contains(t, keys, "name")
 		assert.Contains(t, keys, "uid")
 		assert.Contains(t, keys, "isDefault")
 	})
