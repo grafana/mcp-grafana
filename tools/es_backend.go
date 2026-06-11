@@ -131,9 +131,14 @@ type msearchResponse struct {
 // Search performs a search query against Elasticsearch using the _msearch API.
 // Grafana's datasource proxy only allows POST requests to /_msearch for Elasticsearch.
 func (b *elasticsearchBackend) Search(ctx context.Context, index, query string, startTime, endTime *time.Time, limit int) ([]ElasticsearchDocument, error) {
+	url := buildURL(b.baseURL, "/_msearch")
 	searchQuery := buildElasticsearchQuery(query, startTime, endTime, limit, b.timeField)
+	return executeMSearch(ctx, b.httpClient, url, index, searchQuery, b.timeField)
+}
 
-	// Build NDJSON payload for _msearch API
+// executeMSearch runs an Elasticsearch-compatible _msearch request and converts hits to documents.
+func executeMSearch(ctx context.Context, client *http.Client, url string, index string,
+  searchQuery map[string]interface{}, timeField string) ([]ElasticsearchDocument, error) {
 	header := map[string]interface{}{
 		"index":              index,
 		"ignore_unavailable": true,
@@ -155,15 +160,13 @@ func (b *elasticsearchBackend) Search(ctx context.Context, index, query string, 
 	payload.Write(queryBytes)
 	payload.WriteByte('\n')
 
-	fullURL := buildURL(b.baseURL, "/_msearch")
-
-	req, err := http.NewRequestWithContext(ctx, "POST", fullURL, &payload)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, &payload)
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-ndjson")
 
-	resp, err := b.httpClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("executing request: %w", err)
 	}
@@ -211,7 +214,7 @@ func (b *elasticsearchBackend) Search(ctx context.Context, index, query string, 
 		}
 		if source, ok := hit["_source"].(map[string]interface{}); ok {
 			doc.Source = source
-			switch ts := source[b.timeField].(type) {
+			switch ts := source[timeField].(type) {
 			case string:
 				doc.Timestamp = ts
 			case float64:
@@ -231,14 +234,19 @@ func (b *elasticsearchBackend) Search(ctx context.Context, index, query string, 
 }
 
 // buildElasticsearchQuery constructs an Elasticsearch query DSL JSON object
-func buildElasticsearchQuery(query string, startTime, endTime *time.Time, size int, timeField string) map[string]interface{} {
+func buildElasticsearchQuery(query string, startTime, endTime *time.Time, size int, timeField string, sortFormat ...string) map[string]interface{} {
+	sortField := map[string]string{
+		"order": "desc",
+	}
+	if len(sortFormat) > 0 && sortFormat[0] != "" {
+		sortField["format"] = sortFormat[0]
+	}
+
 	esQuery := map[string]interface{}{
 		"size": size,
 		"sort": []map[string]interface{}{
 			{
-				timeField: map[string]string{
-					"order": "desc",
-				},
+				timeField: sortField,
 			},
 		},
 	}
@@ -266,20 +274,32 @@ func buildElasticsearchQuery(query string, startTime, endTime *time.Time, size i
 		if query != "" {
 			var parsedQuery map[string]interface{}
 			if err := json.Unmarshal([]byte(query), &parsedQuery); err == nil {
-				mustClauses = append(mustClauses, parsedQuery)
-			} else {
+				if len(mustClauses) > 0 {
+					mustClauses = append(mustClauses, parsedQuery)
+				} else {
+					queryClause = parsedQuery
+				}
+			} else if len(mustClauses) > 0 {
 				mustClauses = append(mustClauses, map[string]interface{}{
 					"query_string": map[string]interface{}{
 						"query": query,
 					},
 				})
+			} else {
+				queryClause = map[string]interface{}{
+					"query_string": map[string]interface{}{
+						"query": query,
+					},
+				}
 			}
 		}
 
-		queryClause = map[string]interface{}{
-			"bool": map[string]interface{}{
-				"must": mustClauses,
-			},
+		if queryClause == nil {
+			queryClause = map[string]interface{}{
+				"bool": map[string]interface{}{
+					"must": mustClauses,
+				},
+			}
 		}
 	} else {
 		queryClause = map[string]interface{}{
