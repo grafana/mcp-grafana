@@ -22,7 +22,7 @@ build-ui: ## Build all MCP App UI bundles under ui/.
 	done
 
 .PHONY: build
-build: build-ui ## Build the binary.
+build: ## Build the binary.
 	go build -o dist/mcp-grafana ./cmd/mcp-grafana
 
 .PHONY: lint lint-jsonschema lint-jsonschema-fix lint-openapi
