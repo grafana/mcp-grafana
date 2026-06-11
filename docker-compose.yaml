@@ -1,15 +1,17 @@
 services:
   grafana:
-    image: grafana/grafana:13.0.1@sha256:0f86bada30d65ef9d0183b90c1e2682ac92d53d95da8bed322b984ea78a4a73a
+    image: grafana/grafana:13.0.2@sha256:5dad0df181cb644a14e13617b913b261a54f7d4fd4510721dba420929f35bea2
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "false"
-      GF_INSTALL_PLUGINS: grafana-clickhouse-datasource,grafana-opensearch-datasource,elasticsearch 12.5.4
+      GF_INSTALL_PLUGINS: grafana-clickhouse-datasource,grafana-opensearch-datasource,elasticsearch 12.6.2
       GF_LOG_LEVEL: debug
       GF_SERVER_ROUTER_LOGGING: "true"
       GF_RENDERING_SERVER_URL: http://renderer:8081/render
       GF_RENDERING_CALLBACK_URL: http://grafana:3000/
       GF_RENDERING_RENDERER_TOKEN: integration-test-renderer-token
-      GF_FEATURE_TOGGLES_ENABLE: provisioning,kubernetesDashboards
+      # dashboardNewLayouts enables dashboard schema v2 (dashboard.grafana.app
+      # v2beta1) so this instance can store and serve native v2 dashboards.
+      GF_FEATURE_TOGGLES_ENABLE: provisioning,kubernetesDashboards,dashboardNewLayouts
     ports:
       - 3000:3000/tcp
     volumes:
@@ -17,6 +19,25 @@ services:
       - ./testdata/dashboards:/var/lib/grafana/dashboards
       - type: tmpfs
         target: /var/lib/grafana/empty-alerts-folder
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:3000/api/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # grafana-legacy runs Grafana 11, which predates the v1beta1 dashboard API
+  # (it serves only dashboard.grafana.app v0alpha1/v1alpha1/v2alpha1, never
+  # v1beta1, and cannot store schema v2). The dashboard tools' capability check
+  # therefore falls back to the legacy REST API against this instance, letting
+  # integration tests exercise that path.
+  grafana-legacy:
+    image: grafana/grafana:11.6.14-security-01@sha256:b3545ba7fa9aad785202461740f96d51c457a72b418d71f8a01d0f82fcb67232
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_LOG_LEVEL: debug
+      GF_SERVER_ROUTER_LOGGING: "true"
+    ports:
+      - 3002:3000/tcp
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:3000/api/health"]
       interval: 5s
