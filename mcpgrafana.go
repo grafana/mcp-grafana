@@ -986,27 +986,37 @@ func orgNamespace(orgID int64) string {
 	return fmt.Sprintf("org-%d", orgID)
 }
 
+// nsResult is the resolved namespace plus whether it came from frontend
+// settings (true) or the OrgID-derived fallback (false).
+type nsResult struct {
+	namespace    string
+	fromSettings bool
+}
+
 // DashboardNamespace returns the Kubernetes-style namespace to use for
-// dashboard.grafana.app API calls, given the Grafana config in ctx.
+// dashboard.grafana.app API calls, given the Grafana config in ctx, and whether
+// it was resolved from Grafana's /api/frontend/settings (fromSettings=true) or
+// fell back to the OrgID-derived value (fromSettings=false).
 //
-// It prefers the namespace reported by Grafana's /api/frontend/settings, which
-// is correct for both single-tenant ("default" / "org-N") and Grafana Cloud
-// ("stacks-{id}"), caching successful results per (URL, OrgID). If the settings
-// endpoint is unavailable or omits the namespace, it falls back to deriving the
-// namespace from the OrgID.
-func DashboardNamespace(ctx context.Context) string {
+// It prefers the namespace reported by /api/frontend/settings, which is correct
+// for both single-tenant ("default" / "org-N") and Grafana Cloud ("stacks-{id}"),
+// caching successful results per (URL, OrgID). If the settings endpoint is
+// unavailable or omits the namespace, it falls back to deriving the namespace
+// from the OrgID — which is correct on-prem but may be wrong on Grafana Cloud,
+// so callers can use fromSettings to qualify a subsequent not-found.
+func DashboardNamespace(ctx context.Context) (namespace string, fromSettings bool) {
 	cfg := GrafanaConfigFromContext(ctx)
 	fallback := orgNamespace(cfg.OrgID)
 
 	key := fmt.Sprintf("%s|%d", cfg.URL, cfg.OrgID)
 	if cached, ok := namespaceCache.Load(key); ok {
-		return cached.(string)
+		return cached.(string), true
 	}
 
 	result, _, _ := namespaceFlight.Do(key, func() (any, error) {
 		// Double-check cache inside singleflight.
 		if cached, ok := namespaceCache.Load(key); ok {
-			return cached.(string), nil
+			return nsResult{cached.(string), true}, nil
 		}
 
 		// Detached context with timeout so a cancelled caller doesn't fail the
@@ -1019,13 +1029,14 @@ func DashboardNamespace(ctx context.Context) string {
 		ns := doFetchFrontendSettings(fetchCtx, &cfg).Namespace
 		if ns != "" {
 			namespaceCache.Store(key, ns)
-			return ns, nil
+			return nsResult{ns, true}, nil
 		}
 		// Don't cache the fallback, so a transient settings failure is retried.
-		return fallback, nil
+		return nsResult{fallback, false}, nil
 	})
 
-	return result.(string)
+	r := result.(nsResult)
+	return r.namespace, r.fromSettings
 }
 
 // NewGrafanaClient creates a Grafana client with the provided URL and API key.

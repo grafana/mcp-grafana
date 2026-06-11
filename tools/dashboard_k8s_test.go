@@ -134,3 +134,66 @@ func TestFetchDashboardCapabilityGate(t *testing.T) {
 		assert.False(t, k8s.SupportsGroupVersion(context.Background(), dashboardAPIGroup, dashboardReadVersion))
 	})
 }
+
+// TestFetchDashboard_FailsClosedOnTransientDiscoveryError verifies that an
+// inconclusive capability check (discovery errors with a non-404) does NOT fall
+// back to the legacy API — which on a v2-capable Grafana would be lossy and, for
+// writes, corrupting. It must surface the error instead.
+func TestFetchDashboard_FailsClosedOnTransientDiscoveryError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Transient failure on the discovery endpoint (not a definitive 404).
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer ts.Close()
+
+	k8s := &mcpgrafana.KubernetesClient{BaseURL: ts.URL, HTTPClient: ts.Client()}
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: ts.URL})
+	ctx = mcpgrafana.WithKubernetesClient(ctx, k8s)
+
+	_, err := fetchDashboard(ctx, "some-uid")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "capability", "should fail closed on inconclusive discovery, not use lossy legacy")
+}
+
+// TestUpdateDashboardV2_SetsFolderAnnotation verifies a v2 update honors folderUid
+// by writing the grafana.app/folder metadata annotation.
+func TestUpdateDashboardV2_SetsFolderAnnotation(t *testing.T) {
+	var putBody map[string]interface{}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut {
+			_ = json.NewDecoder(r.Body).Decode(&putBody)
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"metadata": map[string]interface{}{"name": "u1", "generation": 2},
+			})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer ts.Close()
+
+	k8s := &mcpgrafana.KubernetesClient{BaseURL: ts.URL, HTTPClient: ts.Client()}
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: ts.URL})
+	ctx = mcpgrafana.WithKubernetesClient(ctx, k8s)
+
+	res := &dashboardResult{
+		Spec:       map[string]interface{}{"title": "t"},
+		APIVersion: "v2beta1",
+		IsV2:       true,
+		Object: map[string]interface{}{
+			"apiVersion": "dashboard.grafana.app/v2beta1",
+			"kind":       "Dashboard",
+			"metadata":   map[string]interface{}{"name": "u1", "resourceVersion": "5"},
+			"spec":       map[string]interface{}{"title": "t"},
+		},
+	}
+
+	_, err := updateDashboardV2(ctx, "u1", res, "folder-xyz")
+	require.NoError(t, err)
+
+	md, ok := putBody["metadata"].(map[string]interface{})
+	require.True(t, ok)
+	ann, ok := md["annotations"].(map[string]interface{})
+	require.True(t, ok, "folder annotation should be written")
+	assert.Equal(t, "folder-xyz", ann["grafana.app/folder"])
+}

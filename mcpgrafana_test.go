@@ -1580,7 +1580,9 @@ func TestDashboardNamespace(t *testing.T) {
 		})
 
 		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{URL: ts.URL, APIKey: "test-key", OrgID: 1})
-		assert.Equal(t, "stacks-123", DashboardNamespace(ctx))
+		ns, fromSettings := DashboardNamespace(ctx)
+		assert.Equal(t, "stacks-123", ns)
+		assert.True(t, fromSettings, "namespace came from frontend settings")
 	})
 
 	t.Run("falls back to default when settings omit namespace and org is 1", func(t *testing.T) {
@@ -1591,7 +1593,9 @@ func TestDashboardNamespace(t *testing.T) {
 		})
 
 		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{URL: ts.URL, OrgID: 1})
-		assert.Equal(t, "default", DashboardNamespace(ctx))
+		ns, fromSettings := DashboardNamespace(ctx)
+		assert.Equal(t, "default", ns)
+		assert.False(t, fromSettings, "namespace fell back to the org-derived value")
 	})
 
 	t.Run("falls back to org-N when settings unavailable", func(t *testing.T) {
@@ -1601,7 +1605,9 @@ func TestDashboardNamespace(t *testing.T) {
 		})
 
 		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{URL: ts.URL, OrgID: 5})
-		assert.Equal(t, "org-5", DashboardNamespace(ctx))
+		ns, fromSettings := DashboardNamespace(ctx)
+		assert.Equal(t, "org-5", ns)
+		assert.False(t, fromSettings, "namespace fell back to the org-derived value")
 	})
 
 	t.Run("caches successful namespace lookups", func(t *testing.T) {
@@ -1614,8 +1620,12 @@ func TestDashboardNamespace(t *testing.T) {
 		})
 
 		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{URL: ts.URL, OrgID: 2})
-		assert.Equal(t, "org-2", DashboardNamespace(ctx))
-		assert.Equal(t, "org-2", DashboardNamespace(ctx))
+		ns1, from1 := DashboardNamespace(ctx)
+		ns2, from2 := DashboardNamespace(ctx)
+		assert.Equal(t, "org-2", ns1)
+		assert.Equal(t, "org-2", ns2)
+		assert.True(t, from1)
+		assert.True(t, from2)
 		assert.Equal(t, int32(1), atomic.LoadInt32(&calls), "frontend settings should be fetched once and cached")
 	})
 }

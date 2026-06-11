@@ -603,6 +603,25 @@ func TestKubernetesClient_GroupVersions(t *testing.T) {
 			t.Error("absent group must not support any version")
 		}
 	})
+
+	t.Run("transient error is returned and not cached", func(t *testing.T) {
+		var calls int32
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			atomic.AddInt32(&calls, 1)
+			w.WriteHeader(http.StatusInternalServerError)
+		}))
+		defer ts.Close()
+
+		client := &KubernetesClient{BaseURL: ts.URL, HTTPClient: ts.Client()}
+		if _, err := client.GroupVersions(context.Background(), group); err == nil {
+			t.Fatal("expected an error on a 5xx discovery response")
+		}
+		// A transient failure must not be cached, so a second call re-probes.
+		_, _ = client.GroupVersions(context.Background(), group)
+		if got := atomic.LoadInt32(&calls); got != 2 {
+			t.Errorf("discovery calls = %d, want 2 (transient errors not cached)", got)
+		}
+	})
 }
 
 func TestKubernetesClient_ErrorMessage(t *testing.T) {
