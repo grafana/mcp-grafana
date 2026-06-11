@@ -476,6 +476,36 @@ func TestBuildRenderURL(t *testing.T) {
 	}
 }
 
+func TestBuildDashboardDeeplink(t *testing.T) {
+	panelID := 5
+	result, err := buildDashboardDeeplink("https://grafana.example.com/", GetPanelImageParams{
+		DashboardUID: "test-dash",
+		PanelID:      &panelID,
+		TimeRange: &RenderTimeRange{
+			From: "2026-04-28T12:45:00Z",
+			To:   "now",
+		},
+		Variables: map[string]StringOrSlice{
+			"var-datasource": {"prometheus"},
+			"var-instance":   {"server1", "server2"},
+		},
+	})
+	require.NoError(t, err)
+
+	parsed, err := url.Parse(result)
+	require.NoError(t, err)
+	assert.Equal(t, "https", parsed.Scheme)
+	assert.Equal(t, "grafana.example.com", parsed.Host)
+	assert.Equal(t, "/d/test-dash", parsed.Path)
+
+	query := parsed.Query()
+	assert.Equal(t, "5", query.Get("viewPanel"))
+	assert.Equal(t, toGrafanaTimeParam("2026-04-28T12:45:00Z"), query.Get("from"))
+	assert.Equal(t, "now", query.Get("to"))
+	assert.Equal(t, "prometheus", query.Get("var-datasource"))
+	assert.ElementsMatch(t, []string{"server1", "server2"}, query["var-instance"])
+}
+
 func TestGetPanelImage(t *testing.T) {
 	// Create a test PNG image (1x1 pixel)
 	testPNGData := []byte{
@@ -528,6 +558,36 @@ func TestGetPanelImage(t *testing.T) {
 		textContent, ok := result.Content[1].(mcp.TextContent)
 		require.True(t, ok, "second content item should be TextContent")
 		assert.Equal(t, server.URL+"/d/test-dash", textContent.Text)
+	})
+
+	t.Run("Deeplink uses public URL from GrafanaClient while rendering internal URL", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			assert.Contains(t, r.URL.Path, "/render/d/test-dash")
+
+			w.Header().Set("Content-Type", "image/png")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(testPNGData)
+		}))
+		defer server.Close()
+
+		grafanaCfg := mcpgrafana.GrafanaConfig{
+			URL:    server.URL,
+			APIKey: "test-api-key",
+		}
+		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), grafanaCfg)
+		ctx = mcpgrafana.WithGrafanaClient(ctx, &mcpgrafana.GrafanaClient{
+			PublicURL: "https://grafana.example.com",
+		})
+
+		result, err := getPanelImage(ctx, GetPanelImageParams{
+			DashboardUID: "test-dash",
+		})
+
+		require.NoError(t, err)
+		require.Len(t, result.Content, 2)
+		textContent, ok := result.Content[1].(mcp.TextContent)
+		require.True(t, ok)
+		assert.Equal(t, "https://grafana.example.com/d/test-dash", textContent.Text)
 	})
 
 	t.Run("Panel image with specific panel ID uses d-solo path and panelId param", func(t *testing.T) {
