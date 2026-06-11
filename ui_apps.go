@@ -9,8 +9,7 @@ import (
 
 const (
 	appMIMEType            = "text/html;profile=mcp-app"
-	panelViewerResourceURI = "ui://mcp-grafana/panel-viewer.html"
-	PanelViewerResourceURI = panelViewerResourceURI
+	PanelViewerResourceURI = "ui://mcp-grafana/panel-viewer.html"
 )
 
 // WithUIResource attaches a _meta.ui.resourceUri to a tool definition,
@@ -33,7 +32,7 @@ func WithUIResource(resourceURI string) mcp.ToolOption {
 func RegisterAppResources(s *server.MCPServer) {
 	s.AddResource(
 		mcp.NewResource(
-			panelViewerResourceURI,
+			PanelViewerResourceURI,
 			"Panel Viewer",
 			mcp.WithResourceDescription("Interactive HTML viewer for Grafana panel images"),
 			mcp.WithMIMEType(appMIMEType),
@@ -41,7 +40,7 @@ func RegisterAppResources(s *server.MCPServer) {
 		func(_ context.Context, _ mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
 			return []mcp.ResourceContents{
 				mcp.TextResourceContents{
-					URI:      panelViewerResourceURI,
+					URI:      PanelViewerResourceURI,
 					MIMEType: appMIMEType,
 					Text:     panelViewerAppHTML,
 				},
