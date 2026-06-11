@@ -23,6 +23,7 @@ type openSearchBackend struct {
 	baseURL         string
 	datasourceUID   string
 	configuredIndex string
+	timeField       string
 }
 
 func newOpenSearchBackend(ctx context.Context, ds *models.DataSource) (*openSearchBackend, error) {
@@ -53,6 +54,7 @@ func newOpenSearchBackend(ctx context.Context, ds *models.DataSource) (*openSear
 		baseURL:         baseURL,
 		datasourceUID:   ds.UID,
 		configuredIndex: configuredIndex,
+		timeField:       timeFieldFromDataSource(ds),
 	}, nil
 }
 
@@ -112,7 +114,7 @@ func (b *openSearchBackend) Search(ctx context.Context, index, query string, sta
 		"query":           luceneQuery,
 		"queryType":       "lucene",
 		"luceneQueryType": "RawDocument",
-		"timeField":       "@timestamp",
+		"timeField":       b.timeField,
 		"metrics": []map[string]interface{}{
 			{
 				"id":   "1",
@@ -139,7 +141,7 @@ func (b *openSearchBackend) Search(ctx context.Context, index, query string, sta
 		return nil, fmt.Errorf("opensearch query error: %s", queryResult.Error.Error())
 	}
 
-	return framesToDocuments(queryResult.Frames)
+	return framesToDocuments(queryResult.Frames, b.timeField)
 }
 
 // framesToDocuments converts the OpenSearch plugin's raw_document
@@ -147,8 +149,8 @@ func (b *openSearchBackend) Search(ctx context.Context, index, query string, sta
 //
 // The OpenSearch plugin returns a single frame with one column (named after the refId)
 // of type json.RawMessage. Each value in that column is a complete document object
-// containing _id, _index, _type, @timestamp (as array), and all source fields.
-func framesToDocuments(frames data.Frames) ([]ElasticsearchDocument, error) {
+// containing _id, _index, _type, the configured time field (as array), and all source fields.
+func framesToDocuments(frames data.Frames, timeField string) ([]ElasticsearchDocument, error) {
 	if len(frames) == 0 {
 		return []ElasticsearchDocument{}, nil
 	}
@@ -203,23 +205,24 @@ func framesToDocuments(frames data.Frames) ([]ElasticsearchDocument, error) {
 				if f, ok := val.(float64); ok {
 					doc.Score = &f
 				}
-			case "@timestamp":
-				// The plugin returns @timestamp as an array like ["2024-01-01T00:00:00Z"]
-				if arr, ok := val.([]interface{}); ok && len(arr) > 0 {
-					if ts, ok := arr[0].(string); ok {
+			default:
+				if key == timeField {
+					// The plugin returns timestamp field as an array like ["2024-01-01T00:00:00Z"]
+					if arr, ok := val.([]interface{}); ok && len(arr) > 0 {
+						if ts, ok := arr[0].(string); ok {
+							doc.Timestamp = ts
+							doc.Source[key] = ts
+						}
+					} else if ts, ok := val.(string); ok {
 						doc.Timestamp = ts
 						doc.Source[key] = ts
 					}
-				} else if ts, ok := val.(string); ok {
-					doc.Timestamp = ts
-					doc.Source[key] = ts
-				}
-			default:
-				// Skip unknown _-prefixed metadata fields
-				if strings.HasPrefix(key, "_") {
+				} else if strings.HasPrefix(key, "_") {
+					// Skip unknown `_` prefixed metadata fields
 					continue
+				} else {
+					doc.Source[key] = val
 				}
-				doc.Source[key] = val
 			}
 		}
 

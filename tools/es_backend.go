@@ -21,6 +21,9 @@ const (
 	// MaxSearchLimit is the maximum number of documents that can be requested
 	MaxSearchLimit = 100
 
+	// Default time field to use when not configured explicitly in a datasource
+	defaultTimeField = "@timestamp"
+
 	elasticsearchDatasourceType = "elasticsearch"
 	openSearchDatasourceType    = "grafana-opensearch-datasource"
 )
@@ -59,10 +62,26 @@ func esBackendForDatasource(ctx context.Context, uid string) (esBackend, error) 
 	}
 }
 
+// timeFieldFromDataSource reads the configured time field from datasource jsonData.
+func timeFieldFromDataSource(ds *models.DataSource) string {
+	if ds == nil {
+		return defaultTimeField
+	}
+	jsonData, ok := ds.JSONData.(map[string]interface{})
+	if !ok {
+		return defaultTimeField
+	}
+	if tf, ok := jsonData["timeField"].(string); ok && tf != "" {
+		return tf
+	}
+	return defaultTimeField
+}
+
 // elasticsearchBackend handles queries to an Elasticsearch datasource via Grafana proxy.
 type elasticsearchBackend struct {
 	httpClient *http.Client
 	baseURL    string
+	timeField  string
 }
 
 func newElasticsearchBackend(ctx context.Context, ds *models.DataSource) (*elasticsearchBackend, error) {
@@ -81,6 +100,7 @@ func newElasticsearchBackend(ctx context.Context, ds *models.DataSource) (*elast
 	return &elasticsearchBackend{
 		httpClient: client,
 		baseURL:    url,
+		timeField:  timeFieldFromDataSource(ds),
 	}, nil
 }
 
@@ -122,7 +142,7 @@ type msearchResponse struct {
 // Search performs a search query against Elasticsearch using the _msearch API.
 // Grafana's datasource proxy only allows POST requests to /_msearch for Elasticsearch.
 func (b *elasticsearchBackend) Search(ctx context.Context, index, query string, startTime, endTime *time.Time, limit int) ([]ElasticsearchDocument, error) {
-	searchQuery := buildElasticsearchQuery(query, startTime, endTime, limit)
+	searchQuery := buildElasticsearchQuery(query, startTime, endTime, limit, b.timeField)
 
 	// Build NDJSON payload for _msearch API
 	header := map[string]interface{}{
@@ -202,7 +222,7 @@ func (b *elasticsearchBackend) Search(ctx context.Context, index, query string, 
 		}
 		if source, ok := hit["_source"].(map[string]interface{}); ok {
 			doc.Source = source
-			switch ts := source["@timestamp"].(type) {
+			switch ts := source[b.timeField].(type) {
 			case string:
 				doc.Timestamp = ts
 			case float64:
@@ -222,12 +242,12 @@ func (b *elasticsearchBackend) Search(ctx context.Context, index, query string, 
 }
 
 // buildElasticsearchQuery constructs an Elasticsearch query DSL JSON object
-func buildElasticsearchQuery(query string, startTime, endTime *time.Time, size int) map[string]interface{} {
+func buildElasticsearchQuery(query string, startTime, endTime *time.Time, size int, timeField string) map[string]interface{} {
 	esQuery := map[string]interface{}{
 		"size": size,
 		"sort": []map[string]interface{}{
 			{
-				"@timestamp": map[string]string{
+				timeField: map[string]string{
 					"order": "desc",
 				},
 			},
@@ -241,13 +261,13 @@ func buildElasticsearchQuery(query string, startTime, endTime *time.Time, size i
 
 		if startTime != nil || endTime != nil {
 			rangeQuery := map[string]interface{}{
-				"@timestamp": map[string]interface{}{},
+				timeField: map[string]interface{}{},
 			}
 			if startTime != nil {
-				rangeQuery["@timestamp"].(map[string]interface{})["gte"] = startTime.Format(time.RFC3339)
+				rangeQuery[timeField].(map[string]interface{})["gte"] = startTime.Format(time.RFC3339)
 			}
 			if endTime != nil {
-				rangeQuery["@timestamp"].(map[string]interface{})["lte"] = endTime.Format(time.RFC3339)
+				rangeQuery[timeField].(map[string]interface{})["lte"] = endTime.Format(time.RFC3339)
 			}
 			mustClauses = append(mustClauses, map[string]interface{}{
 				"range": rangeQuery,
