@@ -9,9 +9,6 @@ services:
       GF_RENDERING_SERVER_URL: http://renderer:8081/render
       GF_RENDERING_CALLBACK_URL: http://grafana:3000/
       GF_RENDERING_RENDERER_TOKEN: integration-test-renderer-token
-      # dashboardNewLayouts enables dashboard schema v2 (dashboard.grafana.app
-      # v2beta1) so this instance can store and serve native v2 dashboards.
-      GF_FEATURE_TOGGLES_ENABLE: provisioning,kubernetesDashboards,dashboardNewLayouts
     ports:
       - 3000:3000/tcp
     volumes:
