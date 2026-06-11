@@ -799,6 +799,8 @@ func TestApplyFields(t *testing.T) {
 			{Key: "url", Target: "root", ValueType: "string"},
 			{Key: "basicAuth", Target: "root", ValueType: "boolean"},
 			{Key: "isDefault", Target: "root", ValueType: "boolean"},
+			{Key: "user", Target: "root", ValueType: "string"},
+			{Key: "basicAuthUser", Target: "root", ValueType: "string"},
 		},
 	}
 
@@ -831,6 +833,16 @@ func TestApplyFields(t *testing.T) {
 		body := &models.AddDataSourceCommand{}
 		applyFields(body, schema, map[string]any{"isDefault": true})
 		assert.True(t, body.IsDefault)
+	})
+
+	t.Run("root user fields are applied to body", func(t *testing.T) {
+		body := &models.AddDataSourceCommand{}
+		applyFields(body, schema, map[string]any{
+			"user":          "postgres",
+			"basicAuthUser": "viewer",
+		})
+		assert.Equal(t, "postgres", body.User)
+		assert.Equal(t, "viewer", body.BasicAuthUser)
 	})
 
 	t.Run("unknown fields are excluded", func(t *testing.T) {

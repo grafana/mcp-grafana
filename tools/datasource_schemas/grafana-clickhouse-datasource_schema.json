@@ -5,8 +5,8 @@
     "docURL": "https://grafana.com/grafana/plugins/grafana-clickhouse-datasource/",
     "fields": [
         {
-            "id": "jsonData.host",
-            "key": "host",
+            "id": "jsonData.server",
+            "key": "server",
             "label": "Server address",
             "description": "ClickHouse host address.",
             "valueType": "string",
@@ -1100,7 +1100,7 @@
             "id": "server",
             "title": "Server",
             "fieldRefs": [
-                "jsonData.host",
+                "jsonData.server",
                 "jsonData.port",
                 "jsonData.protocol",
                 "jsonData.secure",

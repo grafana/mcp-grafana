@@ -88,6 +88,15 @@ func TestBuildSchemaGuidance(t *testing.T) {
 		assert.Contains(t, guidance.Message, "Test Plugin")
 	})
 
+	t.Run("clickhouse server field uses persisted key", func(t *testing.T) {
+		schema, err := LoadDatasourceSchema("grafana-clickhouse-datasource")
+		require.NoError(t, err)
+		require.NotNil(t, schema)
+		keys := fieldKeys(BuildSchemaGuidance(schema, "create_datasource").Fields)
+		assert.Contains(t, keys, "server")
+		assert.NotContains(t, keys, "host")
+	})
+
 	t.Run("skips virtual fields", func(t *testing.T) {
 		schema := &DatasourceSchema{Fields: []DsSchemaField{
 			{Key: "visible", Target: "jsonData", ValueType: "string"},

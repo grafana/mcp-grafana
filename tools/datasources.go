@@ -186,6 +186,18 @@ func applyFields(body *models.AddDataSourceCommand, schema *datasourceschemas.Da
 				if b, ok := v.(bool); ok {
 					body.WithCredentials = b
 				}
+			case "user":
+				if s, ok := v.(string); ok {
+					body.User = s
+				}
+			case "basicAuthUser":
+				if s, ok := v.(string); ok {
+					body.BasicAuthUser = s
+				}
+			case "database":
+				if s, ok := v.(string); ok {
+					body.Database = s
+				}
 			}
 		} else if f.Section != "" {
 			section, ok := jsonData[f.Section].(map[string]any)
