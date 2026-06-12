@@ -144,7 +144,7 @@ func (b *elasticsearchBackend) Search(ctx context.Context, index, query string, 
 
 // executeMSearch runs an Elasticsearch-compatible _msearch request and converts hits to documents.
 func executeMSearch(ctx context.Context, client *http.Client, url string, index string,
-  searchQuery map[string]interface{}, timeField string) ([]ElasticsearchDocument, error) {
+	searchQuery map[string]interface{}, timeField string) ([]ElasticsearchDocument, error) {
 	header := map[string]interface{}{
 		"index":              index,
 		"ignore_unavailable": true,

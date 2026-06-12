@@ -188,7 +188,6 @@ func TestQuickwitIndexMatchesPattern(t *testing.T) {
 	}
 }
 
-
 func quickwitStrPtr(s string) *string {
 	return &s
 }
