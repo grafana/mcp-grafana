@@ -73,7 +73,7 @@ func TestGetPanelQueriesV2_WithVariableSubstitution(t *testing.T) {
 
 	queries, err := getPanelQueriesV2(spec, DashboardPanelQueriesParams{
 		UID:       "v2-test-uid",
-		PanelID:   intPtr(1),
+		PanelID:   intPtrV2(1),
 		Variables: map[string]string{"job": "web"},
 	})
 	require.NoError(t, err)
@@ -123,4 +123,4 @@ func TestDashboardSummaryV2(t *testing.T) {
 	assert.Equal(t, "custom", summary.Variables[1].Type)
 }
 
-func intPtr(i int) *int { return &i }
+func intPtrV2(i int) *int { return &i }
