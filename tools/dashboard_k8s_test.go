@@ -155,9 +155,10 @@ func TestFetchDashboard_FailsClosedOnTransientDiscoveryError(t *testing.T) {
 	assert.Contains(t, err.Error(), "capability", "should fail closed on inconclusive discovery, not use lossy legacy")
 }
 
-// TestUpdateDashboardV2_SetsFolderAnnotation verifies a v2 update honors folderUid
-// by writing the grafana.app/folder metadata annotation.
-func TestUpdateDashboardV2_SetsFolderAnnotation(t *testing.T) {
+// TestUpdateDashboardV2_SetsFolderAndMessageAnnotations verifies a v2 update
+// honors folderUid and message by writing the grafana.app/folder and
+// grafana.app/message metadata annotations.
+func TestUpdateDashboardV2_SetsFolderAndMessageAnnotations(t *testing.T) {
 	var putBody map[string]interface{}
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPut {
@@ -188,14 +189,15 @@ func TestUpdateDashboardV2_SetsFolderAnnotation(t *testing.T) {
 		},
 	}
 
-	_, err := updateDashboardV2(ctx, "u1", res, "folder-xyz")
+	_, err := updateDashboardV2(ctx, "u1", res, UpdateDashboardParams{FolderUID: "folder-xyz", Message: "tweak title"})
 	require.NoError(t, err)
 
 	md, ok := putBody["metadata"].(map[string]interface{})
 	require.True(t, ok)
 	ann, ok := md["annotations"].(map[string]interface{})
-	require.True(t, ok, "folder annotation should be written")
+	require.True(t, ok, "annotations should be written")
 	assert.Equal(t, "folder-xyz", ann["grafana.app/folder"])
+	assert.Equal(t, "tweak title", ann["grafana.app/message"])
 }
 
 // TestCreateOrUpdateDashboardV2_RespectsOverwriteFalse verifies a full-JSON v2

@@ -114,14 +114,7 @@ func fetchDashboardViaK8s(ctx context.Context, k8s *mcpgrafana.KubernetesClient,
 
 	obj, err := k8s.Get(ctx, dashboardDescriptor(dashboardReadVersion), ns, uid)
 	if err != nil {
-		// A 404 when the namespace was only derived from the org id (frontend
-		// settings was unavailable) may be a wrong-namespace miss rather than a
-		// truly missing dashboard — e.g. on Grafana Cloud the real namespace is
-		// "stacks-{id}", not "default"/"org-N". Surface that so it's diagnosable.
-		if isK8sNotFound(err) && !nsFromSettings {
-			return nil, fmt.Errorf("dashboard %q not found in namespace %q, which was derived from the org id because /api/frontend/settings was unavailable; the namespace may be wrong (e.g. Grafana Cloud uses \"stacks-{id}\"): %w", uid, ns, err)
-		}
-		return nil, fmt.Errorf("get dashboard via k8s api %s: %w", uid, err)
+		return nil, k8sDashboardErr("get", uid, ns, nsFromSettings, err)
 	}
 
 	// If the dashboard is stored as v2, the v1beta1 response is a lossy
@@ -313,7 +306,7 @@ func updateDashboardWithPatches(ctx context.Context, args UpdateDashboardParams)
 	// v2 dashboards are written back through the Kubernetes API to preserve the
 	// native schema (the legacy save endpoint would down-convert to v1).
 	if res.IsV2 {
-		return updateDashboardV2(ctx, args.UID, res, args.FolderUID)
+		return updateDashboardV2(ctx, args.UID, res, args)
 	}
 
 	// Restore identity fields so the Grafana API updates the existing
@@ -346,7 +339,7 @@ func updateDashboardWithPatches(ctx context.Context, args UpdateDashboardParams)
 // dashboard.grafana.app Kubernetes API, preserving the native v2 schema. The
 // supplied dashboardResult carries the full k8s object (including
 // metadata.resourceVersion) whose spec has already been mutated in place.
-func updateDashboardV2(ctx context.Context, uid string, res *dashboardResult, folderUID string) (*models.PostDashboardOKBody, error) {
+func updateDashboardV2(ctx context.Context, uid string, res *dashboardResult, args UpdateDashboardParams) (*models.PostDashboardOKBody, error) {
 	k8s := mcpgrafana.KubernetesClientFromContext(ctx)
 	if k8s == nil {
 		return nil, fmt.Errorf("a Kubernetes-capable Grafana is required to update a v2 dashboard, but no k8s client is available")
@@ -359,15 +352,13 @@ func updateDashboardV2(ctx context.Context, uid string, res *dashboardResult, fo
 	// reflected; set it explicitly to be safe against future refactors.
 	res.Object["spec"] = res.Spec
 
-	// Honor an explicit folder move (the v2 equivalent of folderUid).
-	if folderUID != "" {
-		setDashboardFolderAnnotation(res.Object, folderUID)
-	}
+	// Honor folderUid (move) and message (version-history note) via annotations.
+	applyV2WriteMetadata(res.Object, args)
 
-	ns, _ := mcpgrafana.DashboardNamespace(ctx)
+	ns, nsFromSettings := mcpgrafana.DashboardNamespace(ctx)
 	updated, err := k8s.Update(ctx, dashboardDescriptor(res.APIVersion), ns, uid, res.Object)
 	if err != nil {
-		return nil, fmt.Errorf("update v2 dashboard %s: %w", uid, err)
+		return nil, k8sDashboardErr("update", uid, ns, nsFromSettings, err)
 	}
 	return postDashboardOKBodyFromK8s(updated, uid), nil
 }
@@ -382,12 +373,16 @@ func postDashboardOKBodyFromK8s(obj map[string]interface{}, uid string) *models.
 		Status: &status,
 	}
 	if metadata, ok := obj["metadata"].(map[string]interface{}); ok {
+		// The legacy dashboard "version" is the k8s metadata.generation: Grafana's
+		// own unstructured->legacy conversion does exactly this mapping
+		// (spec["version"] = obj.GetGeneration()), so the value here matches what a
+		// legacy read elsewhere would report.
 		if generation, ok := metadata["generation"].(float64); ok {
 			version := int64(generation)
 			body.Version = &version
 		}
 		if annotations, ok := metadata["annotations"].(map[string]interface{}); ok {
-			if folderUID, ok := annotations["grafana.app/folder"].(string); ok {
+			if folderUID, ok := annotations[annoKeyFolder].(string); ok {
 				body.FolderUID = folderUID
 			}
 		}
@@ -395,10 +390,15 @@ func postDashboardOKBodyFromK8s(obj map[string]interface{}, uid string) *models.
 	return body
 }
 
-// setDashboardFolderAnnotation sets the folder UID on a k8s dashboard object via
-// the grafana.app/folder metadata annotation (the v2 equivalent of folderUid),
+// Grafana app-platform metadata annotations (see grafana/pkg/apimachinery/utils).
+const (
+	annoKeyFolder  = "grafana.app/folder"  // folder UID (v2 equivalent of folderUid)
+	annoKeyMessage = "grafana.app/message" // commit/version-history message
+)
+
+// setDashboardAnnotation sets a metadata annotation on a k8s dashboard object,
 // creating the metadata/annotations maps if needed.
-func setDashboardFolderAnnotation(obj map[string]interface{}, folderUID string) {
+func setDashboardAnnotation(obj map[string]interface{}, key, value string) {
 	metadata, ok := obj["metadata"].(map[string]interface{})
 	if !ok {
 		metadata = map[string]interface{}{}
@@ -409,13 +409,38 @@ func setDashboardFolderAnnotation(obj map[string]interface{}, folderUID string) 
 		annotations = map[string]interface{}{}
 		metadata["annotations"] = annotations
 	}
-	annotations["grafana.app/folder"] = folderUID
+	annotations[key] = value
+}
+
+// applyV2WriteMetadata applies the supplementary update_dashboard parameters that
+// the v2 (k8s) write path supports via metadata annotations: folderUid moves the
+// dashboard, and message records a version-history note (the app-platform
+// equivalents of the legacy save command fields).
+func applyV2WriteMetadata(obj map[string]interface{}, args UpdateDashboardParams) {
+	if args.FolderUID != "" {
+		setDashboardAnnotation(obj, annoKeyFolder, args.FolderUID)
+	}
+	if args.Message != "" {
+		setDashboardAnnotation(obj, annoKeyMessage, args.Message)
+	}
 }
 
 // isK8sNotFound reports whether err is (wraps) a Kubernetes API 404.
 func isK8sNotFound(err error) bool {
 	var apiErr *mcpgrafana.KubernetesAPIError
 	return errors.As(err, &apiErr) && apiErr.StatusCode == 404
+}
+
+// k8sDashboardErr wraps a dashboard k8s API error. When it is a 404 and the
+// namespace was only derived from the org id (frontend settings was
+// unavailable), it adds a hint that the namespace itself may be wrong (e.g.
+// Grafana Cloud uses "stacks-{id}") rather than the dashboard being absent — so
+// the same diagnostic applies to both reads and writes.
+func k8sDashboardErr(action, uid, ns string, nsFromSettings bool, err error) error {
+	if isK8sNotFound(err) && !nsFromSettings {
+		return fmt.Errorf("%s dashboard %q: not found in namespace %q, which was derived from the org id because /api/frontend/settings was unavailable; the namespace may be wrong (e.g. Grafana Cloud uses \"stacks-{id}\"): %w", action, uid, ns, err)
+	}
+	return fmt.Errorf("%s dashboard %q via k8s api: %w", action, uid, err)
 }
 
 // updateDashboardWithFullJSON performs a traditional full dashboard update
@@ -477,7 +502,12 @@ func createOrUpdateDashboardV2(ctx context.Context, args UpdateDashboardParams) 
 	}
 	delete(spec, "uid")
 
-	ns, _ := mcpgrafana.DashboardNamespace(ctx)
+	ns, nsFromSettings := mcpgrafana.DashboardNamespace(ctx)
+	// TODO: negotiate the version to write instead of hardcoding v2beta1 — e.g.
+	// discover the group's preferred/served v2 version via GET /apis/dashboard.grafana.app
+	// (it could be v2, v2beta1, v2alpha1 depending on the Grafana version) rather
+	// than assuming v2beta1. For an existing dashboard we already reuse its stored
+	// version below; this default only applies when creating a brand-new one.
 	version := "v2beta1"
 
 	// If a uid is given and the dashboard already exists, update it in place
@@ -499,12 +529,10 @@ func createOrUpdateDashboardV2(ctx context.Context, args UpdateDashboardParams) 
 			if existing.APIVersion != "" {
 				version = existing.APIVersion
 			}
-			if args.FolderUID != "" {
-				setDashboardFolderAnnotation(obj, args.FolderUID)
-			}
+			applyV2WriteMetadata(obj, args)
 			updated, err := k8s.Update(ctx, dashboardDescriptor(version), ns, uid, obj)
 			if err != nil {
-				return nil, fmt.Errorf("update v2 dashboard %s: %w", uid, err)
+				return nil, k8sDashboardErr("update", uid, ns, nsFromSettings, err)
 			}
 			return postDashboardOKBodyFromK8s(updated, uid), nil
 		case err != nil && !isK8sNotFound(err):
@@ -524,12 +552,10 @@ func createOrUpdateDashboardV2(ctx context.Context, args UpdateDashboardParams) 
 		"metadata":   metadata,
 		"spec":       spec,
 	}
-	if args.FolderUID != "" {
-		setDashboardFolderAnnotation(obj, args.FolderUID)
-	}
+	applyV2WriteMetadata(obj, args)
 	created, err := k8s.Create(ctx, dashboardDescriptor(version), ns, obj)
 	if err != nil {
-		return nil, fmt.Errorf("create v2 dashboard: %w", err)
+		return nil, k8sDashboardErr("create", uid, ns, nsFromSettings, err)
 	}
 	createdUID := uid
 	if createdUID == "" {
