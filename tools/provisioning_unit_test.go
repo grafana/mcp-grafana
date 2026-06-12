@@ -76,7 +76,7 @@ func repositoryListFixture() map[string]any {
 
 func TestListProvisioningRepositories_DefaultNamespace(t *testing.T) {
 	var capturedPath string
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := httptest.NewServer(withFrontendSettings("default", func(w http.ResponseWriter, r *http.Request) {
 		capturedPath = r.URL.Path
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(repositoryListFixture())
@@ -123,9 +123,11 @@ func TestListProvisioningRepositories_DefaultNamespace(t *testing.T) {
 	assert.Equal(t, "success", git.SyncState)
 }
 
-func TestListProvisioningRepositories_CustomNamespace(t *testing.T) {
+// The namespace is resolved from /api/frontend/settings, so a Cloud stack
+// namespace flows into the repositories path without any explicit argument.
+func TestListProvisioningRepositories_NamespaceFromSettings(t *testing.T) {
 	var capturedPath string
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := httptest.NewServer(withFrontendSettings("stacks-123", func(w http.ResponseWriter, r *http.Request) {
 		capturedPath = r.URL.Path
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"items": []any{}})
@@ -133,11 +135,45 @@ func TestListProvisioningRepositories_CustomNamespace(t *testing.T) {
 	defer ts.Close()
 
 	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: ts.URL})
-	out, err := listProvisioningRepositories(ctx, ListProvisioningRepositoriesParams{Namespace: "stacks-123"})
+	out, err := listProvisioningRepositories(ctx, ListProvisioningRepositoriesParams{})
 
 	require.NoError(t, err)
 	assert.Equal(t, "/apis/provisioning.grafana.app/v0alpha1/namespaces/stacks-123/repositories", capturedPath)
 	assert.Empty(t, out)
+}
+
+// When a reachable Grafana omits the namespace (pre-v10.2.3), the namespace
+// falls back to the OrgID-derived value.
+func TestListProvisioningRepositories_NamespaceFromOrgID(t *testing.T) {
+	var capturedPath string
+	ts := httptest.NewServer(withFrontendSettings("", func(w http.ResponseWriter, r *http.Request) {
+		capturedPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"items": []any{}})
+	}))
+	defer ts.Close()
+
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: ts.URL, OrgID: 2})
+	out, err := listProvisioningRepositories(ctx, ListProvisioningRepositoriesParams{})
+
+	require.NoError(t, err)
+	assert.Equal(t, "/apis/provisioning.grafana.app/v0alpha1/namespaces/org-2/repositories", capturedPath)
+	assert.Empty(t, out)
+}
+
+// When frontend settings is unreachable, listing fails loudly rather than
+// guessing a namespace that would misroute on Grafana Cloud.
+func TestListProvisioningRepositories_NamespaceUnavailable(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer ts.Close()
+
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: ts.URL, OrgID: 2})
+	_, err := listProvisioningRepositories(ctx, ListProvisioningRepositoriesParams{})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "frontend settings")
 }
 
 func TestListProvisioningRepositories_NoURLConfigured(t *testing.T) {
@@ -148,16 +184,8 @@ func TestListProvisioningRepositories_NoURLConfigured(t *testing.T) {
 	assert.Contains(t, err.Error(), "grafana URL is not configured")
 }
 
-func TestListProvisioningRepositories_RejectsTraversalNamespace(t *testing.T) {
-	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: "http://example.invalid"})
-	_, err := listProvisioningRepositories(ctx, ListProvisioningRepositoriesParams{Namespace: ".."})
-
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "namespace must not be a relative-directory reference")
-}
-
 func TestListProvisioningRepositories_HTTPError(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := httptest.NewServer(withFrontendSettings("default", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
 		_, _ = w.Write([]byte(`{"message":"forbidden"}`))
 	}))
@@ -176,7 +204,7 @@ func TestListProvisioningRepositories_HTTPError(t *testing.T) {
 
 func TestValidateProvisioningFile_Valid(t *testing.T) {
 	var capturedURI string
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := httptest.NewServer(withFrontendSettings("default", func(w http.ResponseWriter, r *http.Request) {
 		capturedURI = r.RequestURI
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -211,7 +239,7 @@ func TestValidateProvisioningFile_Valid(t *testing.T) {
 }
 
 func TestValidateProvisioningFile_AdmissionInvalid(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := httptest.NewServer(withFrontendSettings("default", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnprocessableEntity)
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -258,7 +286,7 @@ func TestValidateProvisioningFile_AdmissionInvalid(t *testing.T) {
 }
 
 func TestValidateProvisioningFile_StatusWithoutCauses(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := httptest.NewServer(withFrontendSettings("default", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnprocessableEntity)
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -299,8 +327,6 @@ func TestValidateProvisioningFile_RejectsTraversal(t *testing.T) {
 		{"path with backslash ..", ValidateProvisioningFileParams{Repo: "ok", Path: `a\..\b.json`}, "must not contain relative-directory segments"},
 		{"path is a single slash", ValidateProvisioningFileParams{Repo: "ok", Path: "/"}, "must reference a file"},
 		{"path is only slashes", ValidateProvisioningFileParams{Repo: "ok", Path: "///"}, "must reference a file"},
-		{"namespace is ..", ValidateProvisioningFileParams{Namespace: "..", Repo: "ok", Path: "x.json"}, "namespace must not be a relative-directory reference"},
-		{"namespace with slash", ValidateProvisioningFileParams{Namespace: "a/b", Repo: "ok", Path: "x.json"}, "namespace must not contain path separators"},
 	}
 	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: "http://example.invalid"})
 	for _, tc := range cases {
@@ -313,7 +339,7 @@ func TestValidateProvisioningFile_RejectsTraversal(t *testing.T) {
 }
 
 func TestValidateProvisioningFile_NonStatusError(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := httptest.NewServer(withFrontendSettings("default", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = w.Write([]byte(`<html>oops</html>`))
 	}))
@@ -329,7 +355,7 @@ func TestValidateProvisioningFile_NonStatusError(t *testing.T) {
 // A 5xx that carries a k8s Status body is a transient server failure, not a
 // verdict on the file: it must surface as a tool error, not valid:false.
 func TestValidateProvisioningFile_ServerErrorStatusIsError(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := httptest.NewServer(withFrontendSettings("default", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		_ = json.NewEncoder(w).Encode(map[string]any{

@@ -103,8 +103,9 @@ func getPanelImage(ctx context.Context, args GetPanelImageParams) (*mcp.CallTool
 		return nil, fmt.Errorf("grafana URL not configured. Please set GRAFANA_URL environment variable or X-Grafana-URL header")
 	}
 
-	// Build the render URL
-	renderURL, err := buildRenderURL(baseURL, args)
+	// Build the render URL. config.OrgID carries any per-call orgId override
+	// applied by OrgIDOverrideMiddleware (or the connection's org).
+	renderURL, err := buildRenderURL(baseURL, config.OrgID, args)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build render URL: %w", err)
 	}
@@ -174,7 +175,7 @@ func getPanelImage(ctx context.Context, args GetPanelImageParams) (*mcp.CallTool
 	}, nil
 }
 
-func buildRenderURL(baseURL string, args GetPanelImageParams) (string, error) {
+func buildRenderURL(baseURL string, orgID int64, args GetPanelImageParams) (string, error) {
 	// Validate that exactly one source is set.
 	hasUID := args.DashboardUID != ""
 	hasPreview := args.ProvisioningPreview != nil
@@ -274,6 +275,17 @@ func buildRenderURL(baseURL string, args GetPanelImageParams) (string, error) {
 		for _, v := range values {
 			params.Add(key, v)
 		}
+	}
+
+	// Select the org to render from. The image renderer drives a headless browser
+	// whose request org is set by the backend from the targetOrgId query param;
+	// the X-Grafana-Org-Id header (set by the transport) is ignored by the render
+	// path. We deliberately use targetOrgId rather than orgId: orgId is read by
+	// the frontend, which persists an org switch via /api/user/using — that would
+	// change the user's active org for every later request. targetOrgId only
+	// scopes this single render.
+	if orgID > 0 {
+		params.Set("targetOrgId", strconv.FormatInt(orgID, 10))
 	}
 
 	// Add kiosk mode options for cleaner rendering
