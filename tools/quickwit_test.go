@@ -219,7 +219,7 @@ func TestExecuteMSearch(t *testing.T) {
 		server.Client(),
 		buildURL(server.URL, "/_msearch"),
 		"idx",
-		buildElasticsearchQuery("*", nil, nil, 1, defaultTimeField),
+		esSearchQuery{query: "*", size: 1, timeField: defaultTimeField}.build(),
 		defaultTimeField,
 	)
 	require.NoError(t, err)

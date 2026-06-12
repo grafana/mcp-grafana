@@ -132,7 +132,13 @@ type msearchResponse struct {
 // Grafana's datasource proxy only allows POST requests to /_msearch for Elasticsearch.
 func (b *elasticsearchBackend) Search(ctx context.Context, index, query string, startTime, endTime *time.Time, limit int) ([]ElasticsearchDocument, error) {
 	url := buildURL(b.baseURL, "/_msearch")
-	searchQuery := buildElasticsearchQuery(query, startTime, endTime, limit, b.timeField)
+	searchQuery := esSearchQuery{
+		query:     query,
+		startTime: startTime,
+		endTime:   endTime,
+		size:      limit,
+		timeField: b.timeField,
+	}.build()
 	return executeMSearch(ctx, b.httpClient, url, index, searchQuery, b.timeField)
 }
 
@@ -233,81 +239,95 @@ func executeMSearch(ctx context.Context, client *http.Client, url string, index 
 	return documents, nil
 }
 
-// buildElasticsearchQuery constructs an Elasticsearch query DSL JSON object
-func buildElasticsearchQuery(query string, startTime, endTime *time.Time, size int, timeField string, sortFormat ...string) map[string]interface{} {
+// esSearchQuery collects fields to build an Elasticsearch query DSL JSON
+type esSearchQuery struct {
+	query     string
+	startTime *time.Time
+	endTime   *time.Time
+	size      int
+	timeField string
+	// sortFormat optionally sets the "format" on the time field sort clause,
+	// e.g. "epoch_nanos_int" for Quickwit nanosecond timestamps.
+	sortFormat string
+}
+
+// build constructs the Elasticsearch query DSL JSON
+func (q esSearchQuery) build() map[string]interface{} {
+	esQuery := map[string]interface{}{
+		"size": q.size,
+		"sort": []map[string]interface{}{
+			{
+				q.timeField: q.buildSortField(),
+			},
+		},
+		"query": q.buildQueryClause(),
+	}
+
+	return esQuery
+}
+
+func (q esSearchQuery) buildSortField() map[string]string {
 	sortField := map[string]string{
 		"order": "desc",
 	}
-	if len(sortFormat) > 0 && sortFormat[0] != "" {
-		sortField["format"] = sortFormat[0]
+	if q.sortFormat != "" {
+		sortField["format"] = q.sortFormat
 	}
+	return sortField
+}
 
-	esQuery := map[string]interface{}{
-		"size": size,
-		"sort": []map[string]interface{}{
-			{
-				timeField: sortField,
-			},
-		},
-	}
-
-	var queryClause map[string]interface{}
-
-	if startTime != nil || endTime != nil || query != "" {
-		mustClauses := []map[string]interface{}{}
-
-		if startTime != nil || endTime != nil {
-			rangeQuery := map[string]interface{}{
-				timeField: map[string]interface{}{},
-			}
-			if startTime != nil {
-				rangeQuery[timeField].(map[string]interface{})["gte"] = startTime.Format(time.RFC3339)
-			}
-			if endTime != nil {
-				rangeQuery[timeField].(map[string]interface{})["lte"] = endTime.Format(time.RFC3339)
-			}
-			mustClauses = append(mustClauses, map[string]interface{}{
-				"range": rangeQuery,
-			})
-		}
-
-		if query != "" {
-			var parsedQuery map[string]interface{}
-			if err := json.Unmarshal([]byte(query), &parsedQuery); err == nil {
-				if len(mustClauses) > 0 {
-					mustClauses = append(mustClauses, parsedQuery)
-				} else {
-					queryClause = parsedQuery
-				}
-			} else if len(mustClauses) > 0 {
-				mustClauses = append(mustClauses, map[string]interface{}{
-					"query_string": map[string]interface{}{
-						"query": query,
-					},
-				})
-			} else {
-				queryClause = map[string]interface{}{
-					"query_string": map[string]interface{}{
-						"query": query,
-					},
-				}
-			}
-		}
-
-		if queryClause == nil {
-			queryClause = map[string]interface{}{
-				"bool": map[string]interface{}{
-					"must": mustClauses,
-				},
-			}
-		}
-	} else {
-		queryClause = map[string]interface{}{
+func (q esSearchQuery) buildQueryClause() map[string]interface{} {
+	if q.startTime == nil && q.endTime == nil && q.query == "" {
+		return map[string]interface{}{
 			"match_all": map[string]interface{}{},
 		}
 	}
 
-	esQuery["query"] = queryClause
+	mustClauses := []map[string]interface{}{}
 
-	return esQuery
+	if rangeClause := q.buildRangeClause(); rangeClause != nil {
+		mustClauses = append(mustClauses, rangeClause)
+	}
+
+	if q.query != "" {
+		var parsedQuery map[string]interface{}
+		var textClause map[string]interface{}
+		if err := json.Unmarshal([]byte(q.query), &parsedQuery); err == nil {
+			textClause = parsedQuery
+		} else {
+			textClause = map[string]interface{}{
+				"query_string": map[string]interface{}{
+					"query": q.query,
+				},
+			}
+		}
+		if len(mustClauses) == 0 {
+			return textClause
+		}
+		mustClauses = append(mustClauses, textClause)
+	}
+
+	return map[string]interface{}{
+		"bool": map[string]interface{}{
+			"must": mustClauses,
+		},
+	}
+}
+
+func (q esSearchQuery) buildRangeClause() map[string]interface{} {
+	if q.startTime == nil && q.endTime == nil {
+		return nil
+	}
+	rangeQuery := map[string]interface{}{}
+	if q.startTime != nil {
+		rangeQuery["gte"] = q.startTime.Format(time.RFC3339)
+	}
+	if q.endTime != nil {
+		rangeQuery["lte"] = q.endTime.Format(time.RFC3339)
+	}
+	return map[string]interface{}{
+		"range": map[string]interface{}{
+			q.timeField: rangeQuery,
+		},
+	}
 }

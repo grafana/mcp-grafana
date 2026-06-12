@@ -107,8 +107,14 @@ func (b *quickwitBackend) Search(ctx context.Context, index, query string, start
 		return nil, err
 	}
 
-	sortFormat := quickwitTimestampSortFormat(b.timestampOutputFormat)
-	searchQuery := buildElasticsearchQuery(query, startTime, endTime, limit, b.timeField, sortFormat)
+	searchQuery := esSearchQuery{
+		query:      query,
+		startTime:  startTime,
+		endTime:    endTime,
+		size:       limit,
+		timeField:  b.timeField,
+		sortFormat: quickwitTimestampSortFormat(b.timestampOutputFormat),
+	}.build()
 	return executeMSearch(ctx, b.httpClient, buildURL(b.baseURL, "_elastic/_msearch"), resolvedIndex, searchQuery, b.timeField)
 }
 

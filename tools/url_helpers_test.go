@@ -7,11 +7,43 @@ import (
 )
 
 func TestBuildURL(t *testing.T) {
-	base := "http://proxy/api/datasources/proxy/uid"
+	const base = "http://proxy/api/datasources/proxy/uid"
 
-	assert.Equal(t, base+"/_msearch", buildURL(base, "/_msearch"))
-	assert.Equal(t, base+"/indexes", buildURL(base, "indexes"))
-	assert.Equal(t, base+"/indexes", buildURL(base, "/indexes"))
-	assert.Equal(t, base+"/indexes", buildURL(base+"/", "indexes"))
-	assert.Equal(t, base+"/indexes", buildURL(base+"/", "/indexes"))
+	tests := []struct {
+		name     string
+		baseURL  string
+		urlPath  string
+		expected string
+	}{
+		{
+			name:     "path with leading slash",
+			baseURL:  base,
+			urlPath:  "/_msearch",
+			expected: base + "/_msearch",
+		},
+		{
+			name:     "path without leading slash",
+			baseURL:  base,
+			urlPath:  "indexes",
+			expected: base + "/indexes",
+		},
+		{
+			name:     "base with trailing slash, path without leading slash",
+			baseURL:  base + "/",
+			urlPath:  "indexes",
+			expected: base + "/indexes",
+		},
+		{
+			name:     "base with trailing slash, path with leading slash",
+			baseURL:  base + "/",
+			urlPath:  "/indexes",
+			expected: base + "/indexes",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, buildURL(tt.baseURL, tt.urlPath))
+		})
+	}
 }
