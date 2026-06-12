@@ -105,6 +105,17 @@ func TestBuildSchemaGuidance(t *testing.T) {
 		assert.NotContains(t, fieldKeys(BuildSchemaGuidance(schema, "create_datasource").Fields), "apiKey")
 	})
 
+	t.Run("skips excluded PII/credential fields", func(t *testing.T) {
+		schema := &DatasourceSchema{Fields: []DsSchemaField{
+			{ID: "root.user", Key: "user", Target: "root", ValueType: "string", Required: true},
+			{ID: "root.basicAuthUser", Key: "basicAuthUser", Target: "root", ValueType: "string"},
+			{ID: "jsonData.user", Key: "user", Target: "jsonData", ValueType: "string", Required: true},
+		}}
+		keys := fieldKeys(BuildSchemaGuidance(schema, "create_datasource").Fields)
+		assert.NotContains(t, keys, "user")
+		assert.NotContains(t, keys, "basicAuthUser")
+	})
+
 	t.Run("skips experimental lifecycle fields", func(t *testing.T) {
 		schema := &DatasourceSchema{Fields: []DsSchemaField{
 			{Key: "beta", Target: "jsonData", ValueType: "string", Lifecycle: "experimental"},

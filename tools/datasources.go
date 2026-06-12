@@ -161,7 +161,7 @@ func applyFields(body *models.AddDataSourceCommand, schema *datasourceschemas.Da
 		// Skip unknown keys, secrets, and excluded PII/credential fields. The
 		// latter are never advertised in guidance, but skip them here too so a
 		// value is never written even if a caller sends one anyway.
-		if !ok || f.Target == "secureJsonData" || datasourceschemas.IsExcludedRootField(f) {
+		if !ok || f.Target == "secureJsonData" || datasourceschemas.IsExcludedField(f) {
 			continue
 		}
 		if f.Target == "root" {

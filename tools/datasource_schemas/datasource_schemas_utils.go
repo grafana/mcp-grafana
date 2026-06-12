@@ -32,6 +32,24 @@ var commonDatasourceFields = []DsSchemaField{
 	},
 }
 
+// excludedFieldIDs are fields we deliberately never advertise in guidance nor
+// apply during creation. They typically hold PII or credential material
+// (connection usernames at either root or jsonData target, basic-auth
+// usernames). Their matching secret (password/token) lives in secureJsonData,
+// which this tool also never sets, so the user finishes auth setup — username
+// included — in the Grafana UI.
+var excludedFieldIDs = map[string]bool{
+	"root.basicAuthUser": true,
+	"root.user":          true,
+	"jsonData.user":      true,
+}
+
+// IsExcludedField reports whether f is omitted for privacy or credential-handling
+// reasons.
+func IsExcludedField(f DsSchemaField) bool {
+	return excludedFieldIDs[f.ID]
+}
+
 // CommonDatasourceFields returns a copy of the shared root fields advertised in guidance.
 func CommonDatasourceFields() []DsSchemaField {
 	fields := make([]DsSchemaField, len(commonDatasourceFields))
@@ -175,8 +193,8 @@ func BuildSchemaGuidance(schema *DatasourceSchema, toolName string) *datasourceS
 			continue
 		}
 
-		// Never surface sensitive fields.
-		if f.Target == "secureJsonData" || f.ID == "root.basicAuthUser" {
+		// Never surface sensitive fields (secrets, or PII/credential usernames).
+		if f.Target == "secureJsonData" || IsExcludedField(f) {
 			continue
 		}
 		// Experimental fields are opt-in; omit from default guidance.

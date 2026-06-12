@@ -864,6 +864,7 @@ func TestApplyFields(t *testing.T) {
 			{Key: "timeInterval", Target: "jsonData", ValueType: "string"},
 			{Key: "basicAuthPassword", Target: "secureJsonData", ValueType: "string"},
 			{Key: "url", Target: "root", ValueType: "string"},
+			{ID: "root.user", Key: "user", Target: "root", ValueType: "string"},
 			{Key: "basicAuth", Target: "root", ValueType: "boolean"},
 			{Key: "isDefault", Target: "root", ValueType: "boolean"},
 		},
@@ -898,6 +899,24 @@ func TestApplyFields(t *testing.T) {
 		body := &models.AddDataSourceCommand{}
 		applyFields(body, schema, map[string]any{"isDefault": true})
 		assert.True(t, body.IsDefault)
+	})
+
+	t.Run("excluded root user is neither applied nor placed in jsonData", func(t *testing.T) {
+		body := &models.AddDataSourceCommand{}
+		result := applyFields(body, schema, map[string]any{"user": "postgres"})
+		assert.Empty(t, body.User)
+		assert.NotContains(t, result, "user")
+	})
+
+	t.Run("excluded jsonData user is not placed in jsonData", func(t *testing.T) {
+		s := &datasourceschemas.DatasourceSchema{
+			Fields: []datasourceschemas.DsSchemaField{
+				{ID: "jsonData.user", Key: "user", Target: "jsonData", ValueType: "string"},
+			},
+		}
+		body := &models.AddDataSourceCommand{}
+		result := applyFields(body, s, map[string]any{"user": "service-account"})
+		assert.NotContains(t, result, "user")
 	})
 
 	t.Run("unknown fields are excluded", func(t *testing.T) {
