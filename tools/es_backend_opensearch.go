@@ -79,7 +79,7 @@ func indexMatchesPattern(pattern, index string) bool {
 
 // Search executes a search query against an OpenSearch datasource using
 // the Grafana /api/ds/query endpoint with the OpenSearch plugin's query model.
-func (b *openSearchBackend) Search(ctx context.Context, index, query string, startTime, endTime *time.Time, limit int) ([]ElasticsearchDocument, error) {
+func (b *openSearchBackend) Search(ctx context.Context, index, query string, startTime, endTime time.Time, limit int) ([]ElasticsearchDocument, error) {
 	// Validate the requested index against the datasource's configured index pattern.
 	// The OpenSearch plugin always searches within the configured index, so requests
 	// for incompatible indices would silently return no results.
@@ -89,12 +89,12 @@ func (b *openSearchBackend) Search(ctx context.Context, index, query string, sta
 
 	// Determine time range
 	from := time.Now().Add(-10 * 365 * 24 * time.Hour) // Default: 10 years ago
-	if startTime != nil {
-		from = *startTime
+	if !startTime.IsZero() {
+		from = startTime
 	}
 	to := time.Now()
-	if endTime != nil {
-		to = *endTime
+	if !endTime.IsZero() {
+		to = endTime
 	}
 
 	// Use the user's query as-is. The OpenSearch plugin searches within the
