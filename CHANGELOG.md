@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Optional `startRfc3339`/`endRfc3339` time range parameters for `list_prometheus_metric_names` to restrict results to metrics active within a window
+- Optional per-call `orgId` argument on every tool for multi-org support
 
 ## [0.15.2] - 2026-06-04
 
