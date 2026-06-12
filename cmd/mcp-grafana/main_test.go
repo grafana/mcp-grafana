@@ -115,6 +115,34 @@ func TestBuildInstructions_ReflectsEnabledCategories(t *testing.T) {
 				"Available Capabilities:",
 			},
 		},
+		{
+			name:         "agento11y excluded unless opted in",
+			enabledTools: "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering,plugin,api,config,provisioning",
+			wantContains: []string{
+				"Search:",
+			},
+			wantNotContains: []string{
+				"Agent Observability:",
+			},
+		},
+		{
+			name:         "agento11y included when opted in",
+			enabledTools: "search,agento11y",
+			wantContains: []string{
+				"Agent Observability:",
+			},
+		},
+		{
+			name:         "agento11y disable flag overrides enabled list",
+			enabledTools: "search,agento11y",
+			disableFlags: map[string]bool{"agento11y": true},
+			wantContains: []string{
+				"Search:",
+			},
+			wantNotContains: []string{
+				"Agent Observability:",
+			},
+		},
 	}
 
 	for _, tc := range tests {
@@ -129,6 +157,9 @@ func TestBuildInstructions_ReflectsEnabledCategories(t *testing.T) {
 				}
 				if tc.disableFlags["proxied"] {
 					dt.proxied = true
+				}
+				if tc.disableFlags["agento11y"] {
+					dt.agentO11y = true
 				}
 			}
 
