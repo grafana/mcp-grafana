@@ -210,7 +210,8 @@ func BuildSchemaGuidance(schema *DatasourceSchema, toolName string) *datasourceS
 				"You MUST ask the user for the value of every required field (required=true) before calling %s again. "+
 				"Do NOT infer, guess, or use default values for required fields without explicit confirmation from the user. "+
 				"For optional fields, ask only if they are relevant to the user's setup. "+
-				"Once you have collected all required values from the user, call %s again with those values in the fields param.",
+				"Once you have collected all required values from the user, call %s again with those values in the fields param. "+
+				"The datasource display name is a REQUIRED top-level `name` argument (separate from the fields map) — always include it.",
 			schema.PluginName,
 			toolName,
 			toolName,
