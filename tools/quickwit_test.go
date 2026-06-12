@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -161,7 +162,7 @@ func TestQuickwitBackendSearch(t *testing.T) {
 		configuredIndex: "test-logs",
 	}
 
-	docs, err := backend.Search(context.Background(), "test-logs", "severity_text:ERROR", nil, nil, 10)
+	docs, err := backend.Search(context.Background(), "test-logs", "severity_text:ERROR", time.Time{}, time.Time{}, 10)
 	require.NoError(t, err)
 	require.Len(t, docs, 1)
 	assert.Equal(t, "test-logs", docs[0].Index)
@@ -230,7 +231,7 @@ func TestQuickwitBackendIndexValidation(t *testing.T) {
 	backend := &quickwitBackend{
 		configuredIndex: "test-logs",
 	}
-	_, err := backend.Search(context.Background(), "other-index", "*", nil, nil, 10)
+	_, err := backend.Search(context.Background(), "other-index", "*", time.Time{}, time.Time{}, 10)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not compatible")
 }

@@ -42,7 +42,7 @@ type ElasticsearchDocument struct {
 // datasource types, which both support Lucene query syntax.
 type esBackend interface {
 	// Search executes a search query and returns matching documents.
-	Search(ctx context.Context, index, query string, startTime, endTime *time.Time, limit int) ([]ElasticsearchDocument, error)
+	Search(ctx context.Context, index, query string, startTime, endTime time.Time, limit int) ([]ElasticsearchDocument, error)
 }
 
 // esBackendForDatasource looks up the datasource type and returns the appropriate backend.
@@ -130,7 +130,7 @@ type msearchResponse struct {
 
 // Search performs a search query against Elasticsearch using the _msearch API.
 // Grafana's datasource proxy only allows POST requests to /_msearch for Elasticsearch.
-func (b *elasticsearchBackend) Search(ctx context.Context, index, query string, startTime, endTime *time.Time, limit int) ([]ElasticsearchDocument, error) {
+func (b *elasticsearchBackend) Search(ctx context.Context, index, query string, startTime, endTime time.Time, limit int) ([]ElasticsearchDocument, error) {
 	url := buildURL(b.baseURL, "/_msearch")
 	searchQuery := esSearchQuery{
 		query:     query,
@@ -242,8 +242,8 @@ func executeMSearch(ctx context.Context, client *http.Client, url string, index 
 // esSearchQuery collects fields to build an Elasticsearch query DSL JSON
 type esSearchQuery struct {
 	query     string
-	startTime *time.Time
-	endTime   *time.Time
+	startTime time.Time
+	endTime   time.Time
 	size      int
 	timeField string
 	// sortFormat optionally sets the "format" on the time field sort clause,
@@ -277,7 +277,7 @@ func (q esSearchQuery) buildSortField() map[string]string {
 }
 
 func (q esSearchQuery) buildQueryClause() map[string]interface{} {
-	if q.startTime == nil && q.endTime == nil && q.query == "" {
+	if q.startTime.IsZero() && q.endTime.IsZero() && q.query == "" {
 		return map[string]interface{}{
 			"match_all": map[string]interface{}{},
 		}
@@ -315,14 +315,14 @@ func (q esSearchQuery) buildQueryClause() map[string]interface{} {
 }
 
 func (q esSearchQuery) buildRangeClause() map[string]interface{} {
-	if q.startTime == nil && q.endTime == nil {
+	if q.startTime.IsZero() && q.endTime.IsZero() {
 		return nil
 	}
 	rangeQuery := map[string]interface{}{}
-	if q.startTime != nil {
+	if !q.startTime.IsZero() {
 		rangeQuery["gte"] = q.startTime.Format(time.RFC3339)
 	}
-	if q.endTime != nil {
+	if !q.endTime.IsZero() {
 		rangeQuery["lte"] = q.endTime.Format(time.RFC3339)
 	}
 	return map[string]interface{}{

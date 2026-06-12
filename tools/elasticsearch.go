@@ -3,7 +3,6 @@ package tools
 import (
 	"context"
 	"fmt"
-	"time"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -27,25 +26,14 @@ func queryElasticsearch(ctx context.Context, args QueryElasticsearchParams) ([]E
 		return nil, fmt.Errorf("getting backend: %w", err)
 	}
 
-	// Parse time range if provided
-	var startTime, endTime *time.Time
-	if args.StartTime != "" {
-		t, err := parseStartTime(args.StartTime)
-		if err != nil {
-			return nil, fmt.Errorf("parsing start time: %w", err)
-		}
-		if !t.IsZero() {
-			startTime = &t
-		}
+	startTime, err := parseStartTime(args.StartTime)
+	if err != nil {
+		return nil, fmt.Errorf("parsing start time: %w", err)
 	}
-	if args.EndTime != "" {
-		t, err := parseEndTime(args.EndTime)
-		if err != nil {
-			return nil, fmt.Errorf("parsing end time: %w", err)
-		}
-		if !t.IsZero() {
-			endTime = &t
-		}
+
+	endTime, err := parseEndTime(args.EndTime)
+	if err != nil {
+		return nil, fmt.Errorf("parsing end time: %w", err)
 	}
 
 	// Apply limit constraints
