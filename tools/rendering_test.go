@@ -9,7 +9,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"testing"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/stretchr/testify/assert"
@@ -615,6 +617,130 @@ func TestGetPanelImage(t *testing.T) {
 			assert.Equal(t, "feature/branch", parsed.Query().Get("ref"))
 			assert.Equal(t, "7", parsed.Query().Get("viewPanel"))
 		})
+	})
+
+	t.Run("Deeplink prefers public Grafana URL over config URL", func(t *testing.T) {
+		// httptest server stands in for the internal endpoint; PublicURL is
+		// what the user's browser reaches.
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "image/png")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(testPNGData)
+		}))
+		defer server.Close()
+
+		const publicURL = "https://grafana.example.com"
+
+		grafanaCfg := mcpgrafana.GrafanaConfig{URL: server.URL, APIKey: "test-api-key"}
+		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), grafanaCfg)
+		ctx = mcpgrafana.WithGrafanaClient(ctx, &mcpgrafana.GrafanaClient{PublicURL: publicURL})
+
+		result, err := getPanelImage(ctx, GetPanelImageParams{DashboardUID: "test-dash"})
+		require.NoError(t, err)
+		require.Len(t, result.Content, 2)
+
+		text, ok := result.Content[1].(mcp.TextContent)
+		require.True(t, ok)
+		assert.Equal(t, publicURL+"/d/test-dash", text.Text)
+	})
+
+	t.Run("Deeplink mirrors render time range", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "image/png")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(testPNGData)
+		}))
+		defer server.Close()
+
+		grafanaCfg := mcpgrafana.GrafanaConfig{URL: server.URL, APIKey: "test-api-key"}
+		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), grafanaCfg)
+
+		result, err := getPanelImage(ctx, GetPanelImageParams{
+			DashboardUID: "test-dash",
+			TimeRange: &RenderTimeRange{
+				From: "now-6h",
+				To:   "now",
+			},
+		})
+		require.NoError(t, err)
+		require.Len(t, result.Content, 2)
+
+		text, ok := result.Content[1].(mcp.TextContent)
+		require.True(t, ok)
+		parsed, err := url.Parse(text.Text)
+		require.NoError(t, err)
+		assert.Equal(t, "/d/test-dash", parsed.Path)
+		assert.Equal(t, "now-6h", parsed.Query().Get("from"))
+		assert.Equal(t, "now", parsed.Query().Get("to"))
+	})
+
+	t.Run("Deeplink converts RFC3339 time range to epoch ms", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "image/png")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(testPNGData)
+		}))
+		defer server.Close()
+
+		grafanaCfg := mcpgrafana.GrafanaConfig{URL: server.URL, APIKey: "test-api-key"}
+		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), grafanaCfg)
+
+		const fromRFC = "2026-04-28T12:45:00Z"
+		const toRFC = "2026-04-28T13:00:00Z"
+		fromTime, err := time.Parse(time.RFC3339, fromRFC)
+		require.NoError(t, err)
+		toTime, err := time.Parse(time.RFC3339, toRFC)
+		require.NoError(t, err)
+
+		result, err := getPanelImage(ctx, GetPanelImageParams{
+			DashboardUID: "test-dash",
+			TimeRange: &RenderTimeRange{
+				From: fromRFC,
+				To:   toRFC,
+			},
+		})
+		require.NoError(t, err)
+		require.Len(t, result.Content, 2)
+
+		text, ok := result.Content[1].(mcp.TextContent)
+		require.True(t, ok)
+		parsed, err := url.Parse(text.Text)
+		require.NoError(t, err)
+		assert.Equal(t, strconv.FormatInt(fromTime.UnixMilli(), 10), parsed.Query().Get("from"))
+		assert.Equal(t, strconv.FormatInt(toTime.UnixMilli(), 10), parsed.Query().Get("to"))
+	})
+
+	t.Run("Deeplink mirrors dashboard variables", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "image/png")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(testPNGData)
+		}))
+		defer server.Close()
+
+		grafanaCfg := mcpgrafana.GrafanaConfig{URL: server.URL, APIKey: "test-api-key"}
+		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), grafanaCfg)
+
+		result, err := getPanelImage(ctx, GetPanelImageParams{
+			DashboardUID: "test-dash",
+			Variables: map[string]StringOrSlice{
+				"var-env":      {"prod"},
+				"var-instance": {"172.16.31.129", "172.16.32.99"},
+			},
+		})
+		require.NoError(t, err)
+		require.Len(t, result.Content, 2)
+
+		text, ok := result.Content[1].(mcp.TextContent)
+		require.True(t, ok)
+		parsed, err := url.Parse(text.Text)
+		require.NoError(t, err)
+		assert.Equal(t, "/d/test-dash", parsed.Path)
+		assert.Equal(t, "prod", parsed.Query().Get("var-env"))
+		assert.ElementsMatch(t,
+			[]string{"172.16.31.129", "172.16.32.99"},
+			parsed.Query()["var-instance"],
+		)
 	})
 
 	t.Run("Authentication header with API key", func(t *testing.T) {

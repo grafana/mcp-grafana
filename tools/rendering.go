@@ -162,7 +162,14 @@ func getPanelImage(ctx context.Context, args GetPanelImageParams) (*mcp.CallTool
 
 	// Return the image as base64 encoded data using MCP's image content type
 	base64Data := base64.StdEncoding.EncodeToString(imageData)
-	deeplink, err := buildDashboardDeeplink(baseURL, args)
+
+	// Build the deeplink against the user-facing public URL, not config.URL,
+	// which may be an in-cluster endpoint the browser can't reach.
+	deeplinkBase, err := grafanaBaseURLFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	deeplink, err := buildDashboardDeeplink(deeplinkBase, args)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build dashboard deeplink: %w", err)
 	}
@@ -291,8 +298,8 @@ func buildRenderURL(baseURL string, args GetPanelImageParams) (string, error) {
 }
 
 // buildDashboardDeeplink returns the Grafana UI URL for the rendered
-// dashboard or provisioning-preview file, with viewPanel=<id> appended when
-// a specific panel was rendered.
+// dashboard, mirroring buildRenderURL's view (panel, time range, variables)
+// so the deeplink matches the PNG.
 func buildDashboardDeeplink(baseURL string, args GetPanelImageParams) (string, error) {
 	baseURL = strings.TrimRight(baseURL, "/")
 
@@ -313,14 +320,34 @@ func buildDashboardDeeplink(baseURL string, args GetPanelImageParams) (string, e
 	if err != nil {
 		return "", err
 	}
-	if args.PanelID == nil {
+
+	extra := url.Values{}
+	if args.PanelID != nil {
+		extra.Set("viewPanel", strconv.Itoa(*args.PanelID))
+	}
+	if args.TimeRange != nil {
+		// Normalize RFC 3339 to epoch ms for Grafana's Scenes URL parser.
+		if args.TimeRange.From != "" {
+			extra.Set("from", toGrafanaTimeParam(args.TimeRange.From))
+		}
+		if args.TimeRange.To != "" {
+			extra.Set("to", toGrafanaTimeParam(args.TimeRange.To))
+		}
+	}
+	for key, values := range args.Variables {
+		for _, v := range values {
+			extra.Add(key, v)
+		}
+	}
+
+	if len(extra) == 0 {
 		return target, nil
 	}
 	separator := "?"
 	if strings.Contains(target, "?") {
 		separator = "&"
 	}
-	return fmt.Sprintf("%s%sviewPanel=%d", target, separator, *args.PanelID), nil
+	return target + separator + extra.Encode(), nil
 }
 
 var GetPanelImage = mcpgrafana.MustTool(
