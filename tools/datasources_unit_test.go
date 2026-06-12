@@ -293,6 +293,73 @@ func TestCreateDatasource_SchemaGuidancePhase(t *testing.T) {
 	assert.NotEmpty(t, guidance["message"])
 }
 
+func TestCreateDatasource_EmptyFieldsMapStaysInGuidancePhase(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("Grafana API must not be called when an empty fields map is sent on the first call")
+	}))
+	defer srv.Close()
+
+	ctx := mockDatasourcesCtx(srv)
+
+	// "fields": {} unmarshals to a non-nil empty map. Without schemaReviewed it
+	// must still be treated as the first phase and return guidance, not create.
+	result, err := createDatasource(ctx, CreateDatasourceParams{
+		Name:   "My Prometheus",
+		Type:   "prometheus",
+		Fields: map[string]any{},
+	})
+	require.NoError(t, err)
+	require.Len(t, result.Content, 1)
+
+	text, ok := result.Content[0].(mcp.TextContent)
+	require.True(t, ok)
+
+	var guidance map[string]any
+	require.NoError(t, json.Unmarshal([]byte(text.Text), &guidance))
+	assert.Equal(t, "prometheus", guidance["type"])
+	assert.NotEmpty(t, guidance["fields"])
+}
+
+func TestCreateDatasource_SchemaReviewedCreatesWithoutFields(t *testing.T) {
+	id := int64(9)
+	name := "My CloudWatch"
+	uid := "cw-uid"
+	msg := "Datasource added"
+	mockResp := models.AddDataSourceOKBody{
+		ID:         &id,
+		Name:       &name,
+		Message:    &msg,
+		Datasource: &models.DataSource{ID: id, UID: uid, Name: name, Type: "cloudwatch"},
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/datasources":
+			_ = json.NewEncoder(w).Encode(mockResp)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/datasources/uid/"+uid+"/health":
+			_ = json.NewEncoder(w).Encode(map[string]any{"message": "Data source connected"})
+		default:
+			assert.Failf(t, "unexpected request", "%s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	ctx := mockDatasourcesCtx(srv)
+	mcpgrafana.GrafanaClientFromContext(ctx).PublicURL = "https://grafana.example.com"
+
+	// cloudwatch has no required fields; schemaReviewed=true alone must let it
+	// create rather than loop in the guidance phase.
+	result, err := createDatasource(ctx, CreateDatasourceParams{
+		Name:           name,
+		Type:           "cloudwatch",
+		SchemaReviewed: true,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.False(t, result.IsError)
+}
+
 func TestCreateDatasource_NoSchemaCreatesDirectly(t *testing.T) {
 	id := int64(7)
 	name := "My Custom DS"

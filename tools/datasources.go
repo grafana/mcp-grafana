@@ -102,6 +102,7 @@ type CreateDatasourceParams struct {
 	WithCredentials bool           `json:"withCredentials,omitempty" jsonschema:"description=Whether Grafana should forward credentials such as cookies"`
 	IsDefault       bool           `json:"isDefault,omitempty" jsonschema:"description=Whether this should become the default datasource"`
 	Fields          map[string]any `json:"fields,omitempty" jsonschema:"description=Datasource field values to provision\\, keyed by field key from the schema returned on the first call. The server uses each field's target (root or jsonData) to place values correctly in the YAML. Example: {\"url\": \"http://prometheus:9090\"\\, \"httpMethod\": \"POST\"}."`
+	SchemaReviewed  bool           `json:"schemaReviewed,omitempty" jsonschema:"description=Set to true on the second call to confirm you reviewed the schema and collected values from the user."`
 }
 
 type CreateDatasourceResult struct {
@@ -157,7 +158,10 @@ func applyFields(body *models.AddDataSourceCommand, schema *datasourceschemas.Da
 	jsonData := make(map[string]any)
 	for inputKey, v := range inputFields {
 		f, ok := lookup[inputKey]
-		if !ok || f.Target == "secureJsonData" {
+		// Skip unknown keys, secrets, and excluded PII/credential fields. The
+		// latter are never advertised in guidance, but skip them here too so a
+		// value is never written even if a caller sends one anyway.
+		if !ok || f.Target == "secureJsonData" || datasourceschemas.IsExcludedRootField(f) {
 			continue
 		}
 		if f.Target == "root" {
@@ -210,7 +214,10 @@ func createDatasource(ctx context.Context, args CreateDatasourceParams) (*mcp.Ca
 	// With a schema: list schema fields and ask the user to fill them in.
 	// Without a schema: list the explicit params and ask for name + any others
 	// the user wants to set, then call again with those values.
-	if schema != nil && args.Fields == nil {
+	//
+	// Uses flag SchemaReviewed to distinguish between first call and a second call with no actual fields to provide
+	// for those datasources that have no required fields listed in their schema.
+	if schema != nil && !args.SchemaReviewed && len(args.Fields) == 0 {
 		text, _ := json.Marshal(datasourceschemas.BuildSchemaGuidance(schema, "create_datasource"))
 		return mcp.NewToolResultText(string(text)), nil
 	}
@@ -336,7 +343,7 @@ var ListDatasources = mcpgrafana.MustTool(
 
 var CreateDatasource = mcpgrafana.MustTool(
 	"create_datasource",
-	"Create a datasource. If type is ambiguous, call search_plugin_information first; install the plugin if needed. IMPORTANT: always call this tool twice. First call: provide only the type — the tool returns a field schema. After receiving the schema, you MUST ask the user for every required field value explicitly; do not infer or use defaults without user confirmation. Second call: provide the type plus the fields map populated with values confirmed by the user Never handle credentials — remind the user to rotate any detected. Returns UID, health check, and a config page link. ",
+	"Create a datasource. If type is ambiguous, call search_plugin_information first; install the plugin if needed. IMPORTANT: always call this tool twice. First call: provide only the type — the tool returns a field schema. After receiving the schema, you MUST ask the user for every required field value explicitly; do not infer or use defaults without user confirmation. Second call: provide the type, the display name in the top-level name argument, schemaReviewed=true, and the fields map populated with values confirmed by the user. Never handle credentials — remind the user to rotate any detected. Returns UID, health check, and a config page link. ",
 	createDatasource,
 	mcp.WithTitleAnnotation("Create datasource"),
 	mcp.WithIdempotentHintAnnotation(false),
