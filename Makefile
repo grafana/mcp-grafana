@@ -26,7 +26,8 @@ build: ## Build the binary.
 	go build -o dist/mcp-grafana ./cmd/mcp-grafana
 
 .PHONY: lint lint-jsonschema lint-jsonschema-fix lint-openapi
-lint: lint-jsonschema lint-openapi ## Lint the Go code.
+lint: lint-jsonschema lint-openapi ## Run format checks and lint the Go code.
+	gofmt -l . 
 	golangci-lint run
 
 lint-jsonschema: ## Lint for unescaped commas in jsonschema tags.
