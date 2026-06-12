@@ -238,6 +238,45 @@ func TestCreateOrUpdateDashboardV2_RespectsOverwriteFalse(t *testing.T) {
 	assert.False(t, wrote, "must not write when overwrite is false and the dashboard exists")
 }
 
+// TestCreateOrUpdateDashboardV2_RejectsV2BodyOverV1Stored verifies that replacing
+// a dashboard currently stored as classic v1 with a v2 full-JSON body is rejected
+// (Grafana pins the stored schema version, so it would be silently down-converted)
+// and that no write is attempted.
+func TestCreateOrUpdateDashboardV2_RejectsV2BodyOverV1Stored(t *testing.T) {
+	var wrote bool
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/dashboards/u1"):
+			// Existing dashboard is stored as classic v1 (no v2 conversion status).
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"apiVersion": "dashboard.grafana.app/v1beta1",
+				"kind":       "Dashboard",
+				"metadata":   map[string]interface{}{"name": "u1", "resourceVersion": "7"},
+				"spec":       map[string]interface{}{"title": "old", "panels": []interface{}{}},
+			})
+		case r.Method == http.MethodPut || r.Method == http.MethodPost:
+			wrote = true
+			w.WriteHeader(http.StatusInternalServerError)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer ts.Close()
+
+	k8s := &mcpgrafana.KubernetesClient{BaseURL: ts.URL, HTTPClient: ts.Client()}
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: ts.URL})
+	ctx = mcpgrafana.WithKubernetesClient(ctx, k8s)
+
+	_, err := createOrUpdateDashboardV2(ctx, UpdateDashboardParams{
+		Dashboard: map[string]interface{}{"uid": "u1", "title": "new", "elements": map[string]interface{}{}},
+		Overwrite: true,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "stored as classic v1")
+	assert.False(t, wrote, "must not write a v2 body over a v1-stored dashboard")
+}
+
 // TestCreateOrUpdateDashboardV2_DoesNotMutateInput verifies the caller's dashboard
 // map is not mutated (its uid survives) when saving a v2 dashboard.
 func TestCreateOrUpdateDashboardV2_DoesNotMutateInput(t *testing.T) {

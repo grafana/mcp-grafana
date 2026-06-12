@@ -140,6 +140,57 @@ func TestDashboardV2(t *testing.T) {
 	})
 }
 
+// TestDashboardV1ToV2Replace verifies that replacing a dashboard currently
+// stored as classic v1 with a full-JSON v2 body is rejected: Grafana pins the
+// stored schema version at creation, so the v2 body would be silently
+// down-converted to v1 — we fail closed instead of losing v2 content.
+func TestDashboardV1ToV2Replace(t *testing.T) {
+	ctx := newTestContext()
+	const uid = "mcp-v1-to-v2-test"
+
+	t.Run("create a classic v1 dashboard", func(t *testing.T) {
+		_, err := updateDashboard(ctx, UpdateDashboardParams{
+			Dashboard: map[string]interface{}{
+				"uid":           uid,
+				"title":         "MCP V1 to V2",
+				"schemaVersion": 39,
+				"tags":          []interface{}{"mcp-v1-to-v2"},
+				"panels": []interface{}{
+					map[string]interface{}{
+						"id":      1,
+						"title":   "Up",
+						"type":    "timeseries",
+						"gridPos": map[string]interface{}{"h": 8, "w": 24, "x": 0, "y": 0},
+						"targets": []interface{}{map[string]interface{}{"refId": "A", "expr": "up"}},
+					},
+				},
+			},
+			Message:   "create classic v1",
+			Overwrite: true,
+		})
+		require.NoError(t, err)
+
+		res, err := getDashboardByUID(ctx, GetDashboardByUIDParams{UID: uid})
+		require.NoError(t, err)
+		require.False(t, res.IsV2, "dashboard should start as classic v1")
+	})
+
+	t.Run("replacing it with a v2 body is rejected", func(t *testing.T) {
+		_, err := updateDashboard(ctx, UpdateDashboardParams{
+			Dashboard: minimalV2DashboardJSON(uid, "MCP V1 to V2 (attempted)"),
+			Message:   "attempt v2 replace",
+			Overwrite: true,
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "stored as classic v1")
+
+		// And it remains classic v1, unchanged.
+		res, err := getDashboardByUID(ctx, GetDashboardByUIDParams{UID: uid})
+		require.NoError(t, err)
+		assert.False(t, res.IsV2, "dashboard must remain classic v1")
+	})
+}
+
 // TestDashboardLegacyFallback targets the Grafana 11 instance (:3002), which
 // does not serve the dashboard.grafana.app v1beta1 API, confirming the tools
 // transparently fall back to the legacy REST API.

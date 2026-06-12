@@ -506,8 +506,8 @@ func createOrUpdateDashboardV2(ctx context.Context, args UpdateDashboardParams) 
 	// TODO: negotiate the version to write instead of hardcoding v2beta1 — e.g.
 	// discover the group's preferred/served v2 version via GET /apis/dashboard.grafana.app
 	// (it could be v2, v2beta1, v2alpha1 depending on the Grafana version) rather
-	// than assuming v2beta1. For an existing dashboard we already reuse its stored
-	// version below; this default only applies when creating a brand-new one.
+	// than assuming v2beta1. An existing v2 dashboard reuses its own stored version
+	// below; this default only applies when creating a brand-new dashboard.
 	version := "v2beta1"
 
 	// If a uid is given and the dashboard already exists, update it in place
@@ -524,11 +524,17 @@ func createOrUpdateDashboardV2(ctx context.Context, args UpdateDashboardParams) 
 			if !args.Overwrite {
 				return nil, fmt.Errorf("dashboard %q already exists; set overwrite=true to replace it", uid)
 			}
+			// Grafana pins a dashboard's stored schema version at creation: a
+			// dashboard stored as classic v1 cannot be replaced in place with a v2
+			// (elements/layout) body — Grafana silently down-converts it back to v1,
+			// dropping any v2-only content. Reject rather than lose data; the caller
+			// should create a new dashboard for v2.
+			if !existing.IsV2 {
+				return nil, fmt.Errorf("dashboard %q is stored as classic v1 and cannot be replaced in place with a v2 (elements/layout) body: Grafana pins the stored schema version, so the v2 content would be silently down-converted to v1. Create a new dashboard (a different uid) for the v2 version instead", uid)
+			}
 			obj := existing.Object
 			obj["spec"] = spec
-			if existing.APIVersion != "" {
-				version = existing.APIVersion
-			}
+			version = existing.APIVersion // an existing v2 dashboard's stored v2 version
 			applyV2WriteMetadata(obj, args)
 			updated, err := k8s.Update(ctx, dashboardDescriptor(version), ns, uid, obj)
 			if err != nil {
