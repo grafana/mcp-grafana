@@ -1,0 +1,119 @@
+{
+  "apiVersion": "dashboard.grafana.app/v2beta1",
+  "kind": "Dashboard",
+  "metadata": {
+    "name": "v2-test-uid",
+    "namespace": "default",
+    "resourceVersion": "42",
+    "generation": 3,
+    "annotations": {
+      "grafana.app/folder": "my-folder"
+    }
+  },
+  "spec": {
+    "title": "V2 Test Dashboard",
+    "description": "A dashboard stored in the v2 schema",
+    "tags": ["v2", "test"],
+    "timeSettings": {
+      "from": "now-6h",
+      "to": "now",
+      "autoRefresh": "30s"
+    },
+    "variables": [
+      {
+        "kind": "QueryVariable",
+        "spec": {
+          "name": "job",
+          "label": "Job",
+          "current": { "text": "api", "value": "api" },
+          "query": { "kind": "DataQuery", "group": "prometheus", "spec": {} }
+        }
+      },
+      {
+        "kind": "CustomVariable",
+        "spec": {
+          "name": "env",
+          "current": { "text": "prod", "value": "prod" },
+          "options": [{ "text": "prod", "value": "prod" }]
+        }
+      }
+    ],
+    "layout": {
+      "kind": "GridLayout",
+      "spec": {
+        "items": [
+          { "kind": "GridLayoutItem", "spec": { "x": 0, "y": 0, "width": 12, "height": 8, "element": { "kind": "ElementReference", "name": "panel-cpu" } } },
+          { "kind": "GridLayoutItem", "spec": { "x": 12, "y": 0, "width": 12, "height": 8, "element": { "kind": "ElementReference", "name": "panel-mem" } } }
+        ]
+      }
+    },
+    "elements": {
+      "panel-cpu": {
+        "kind": "Panel",
+        "spec": {
+          "id": 1,
+          "title": "CPU usage",
+          "description": "CPU by job",
+          "vizConfig": { "kind": "VizConfig", "group": "timeseries", "version": "", "spec": {} },
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "refId": "A",
+                    "hidden": false,
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": { "name": "prom-uid" },
+                      "spec": { "expr": "rate(cpu_seconds_total{job=\"$job\"}[5m])" }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "panel-mem": {
+        "kind": "Panel",
+        "spec": {
+          "id": 2,
+          "title": "Memory usage",
+          "vizConfig": { "kind": "VizConfig", "group": "stat", "version": "", "spec": {} },
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "refId": "A",
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "loki",
+                      "datasource": { "name": "loki-uid" },
+                      "spec": { "expr": "sum(container_memory_usage_bytes)" }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "lib-1": {
+        "kind": "LibraryPanel",
+        "spec": {
+          "id": 3,
+          "title": "Shared graph",
+          "libraryPanel": { "name": "shared", "uid": "lib-uid" }
+        }
+      }
+    }
+  },
+  "status": {}
+}
