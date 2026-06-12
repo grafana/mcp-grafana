@@ -51,6 +51,7 @@ var categoryDescription = map[string]string{
 	"prometheus":    "Prometheus: Run PromQL queries, retrieve metric metadata, and explore label names/values.",
 	"loki":          "Loki: Run LogQL queries, retrieve log metadata, and explore label names/values.",
 	"elasticsearch": "Elasticsearch and OpenSearch: Query Elasticsearch and OpenSearch datasources using Lucene syntax or Query DSL for logs and metrics.",
+	"quickwit":      "Quickwit: Query Quickwit datasources using Lucene syntax or Query DSL for logs and documents.",
 	"influxdb":      "InfluxDB: Query InfluxDB datasources.",
 	"alerting":      "Alerting: List and fetch alert rules and notification contact points.",
 	"dashboard":     "Dashboards: Search, retrieve, update, and create dashboards. Extract panel queries and datasource information.",
@@ -81,7 +82,7 @@ type disabledTools struct {
 	enabledTools string
 
 	search, datasource, incident,
-	prometheus, loki, elasticsearch, influxdb, alerting,
+	prometheus, loki, elasticsearch, quickwit, influxdb, alerting,
 	dashboard, folder, oncall, asserts, sift, admin,
 	pyroscope, navigation, proxied, annotations, rendering, cloudwatch, write,
 	examples, clickhouse, snowflake, graphite,
@@ -111,6 +112,7 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.prometheus, "disable-prometheus", false, "Disable prometheus tools")
 	flag.BoolVar(&dt.loki, "disable-loki", false, "Disable loki tools")
 	flag.BoolVar(&dt.elasticsearch, "disable-elasticsearch", false, "Disable elasticsearch and opensearch tools")
+	flag.BoolVar(&dt.quickwit, "disable-quickwit", false, "Disable quickwit tools")
 	flag.BoolVar(&dt.influxdb, "disable-influxdb", false, "Disable InfluxDB tools")
 	flag.BoolVar(&dt.alerting, "disable-alerting", false, "Disable alerting tools")
 	flag.BoolVar(&dt.dashboard, "disable-dashboard", false, "Disable dashboard tools")
@@ -170,6 +172,7 @@ func (dt *disabledTools) toolEntries() []toolEntry {
 		{tools.AddPrometheusTools, dt.prometheus, "prometheus"},
 		{tools.AddLokiTools, dt.loki, "loki"},
 		{tools.AddElasticsearchTools, dt.elasticsearch, "elasticsearch"},
+		{tools.AddQuickwitTools, dt.quickwit, "quickwit"},
 		{tools.AddInfluxDBTools, dt.influxdb, "influxdb"},
 		{func(mcp *server.MCPServer) { tools.AddAlertingTools(mcp, enableWriteTools) }, dt.alerting, "alerting"},
 		{func(mcp *server.MCPServer) { tools.AddDashboardTools(mcp, enableWriteTools) }, dt.dashboard, "dashboard"},

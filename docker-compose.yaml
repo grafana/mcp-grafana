@@ -4,6 +4,7 @@ services:
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "false"
       GF_INSTALL_PLUGINS: grafana-clickhouse-datasource,grafana-opensearch-datasource,elasticsearch 12.6.2
+      GF_PLUGINS_PREINSTALL_SYNC: quickwit-quickwit-datasource@0.6.0@https://github.com/quickwit-oss/quickwit-datasource/releases/download/v0.6.0/quickwit-quickwit-datasource-0.6.0.zip
       GF_LOG_LEVEL: debug
       GF_SERVER_ROUTER_LOGGING: "true"
       GF_RENDERING_SERVER_URL: http://renderer:8081/render
@@ -179,6 +180,26 @@ services:
         condition: service_healthy
     volumes:
       - ./testdata/opensearch-seed.sh:/seed.sh
+    entrypoint: ["sh", "/seed.sh"]
+
+  quickwit:
+    image: quickwit/quickwit:0.8.2
+    command: ["run"]
+    ports:
+      - "7280:7280"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:7280/health/livez || curl -sf http://localhost:7280/api/v1/version"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+
+  quickwit-seed:
+    image: curlimages/curl:8.18.0@sha256:d94d07ba9e7d6de898b6d96c1a072f6f8266c687af78a74f380087a0addf5d17
+    depends_on:
+      quickwit:
+        condition: service_healthy
+    volumes:
+      - ./testdata/quickwit-seed.sh:/seed.sh
     entrypoint: ["sh", "/seed.sh"]
 
   localstack:

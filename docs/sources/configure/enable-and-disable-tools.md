@@ -33,6 +33,7 @@ Some tool categories are disabled by default:
 - **snowflake** – Snowflake datasource tools (including queries against `SNOWFLAKE.TELEMETRY.EVENTS` event tables).
 - **cloudwatch** – CloudWatch tools.
 - **elasticsearch** – Elasticsearch query tool.
+- **quickwit** – Quickwit query tool.
 - **influxdb** – InfluxDB query tool (Flux and InfluxQL).
 - **admin** – Admin tools (teams, users, roles, permissions).
 

@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/grafana/grafana-openapi-client-go/models"
@@ -91,21 +90,9 @@ func newLokiClient(ctx context.Context, uid string, _ *models.DataSource) (*Clie
 	}, nil
 }
 
-// buildURL constructs a full URL for a Loki API endpoint
-func (c *Client) buildURL(urlPath string) string {
-	fullURL := c.baseURL
-	if !strings.HasSuffix(fullURL, "/") && !strings.HasPrefix(urlPath, "/") {
-		fullURL += "/"
-	} else if strings.HasSuffix(fullURL, "/") && strings.HasPrefix(urlPath, "/") {
-		// Remove the leading slash from urlPath to avoid double slash
-		urlPath = strings.TrimPrefix(urlPath, "/")
-	}
-	return fullURL + urlPath
-}
-
 // makeRequest makes an HTTP request to the Loki API and returns the response body
 func (c *Client) makeRequest(ctx context.Context, method, urlPath string, params url.Values) ([]byte, error) {
-	fullURL := c.buildURL(urlPath)
+	fullURL := buildURL(c.baseURL, urlPath)
 
 	u, err := url.Parse(fullURL)
 	if err != nil {
