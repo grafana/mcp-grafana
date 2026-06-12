@@ -93,7 +93,7 @@ func (b *quickwitBackend) resolveIndex(index string) (string, error) {
 	return b.configuredIndex, nil
 }
 
-func (b *quickwitBackend) Search(ctx context.Context, index, query string, startTime, endTime *time.Time, limit int) ([]ElasticsearchDocument, error) {
+func (b *quickwitBackend) Search(ctx context.Context, index, query string, startTime, endTime time.Time, limit int) ([]ElasticsearchDocument, error) {
 	resolvedIndex, err := b.resolveIndex(index)
 	if err != nil {
 		return nil, err
@@ -233,24 +233,14 @@ func queryQuickwit(ctx context.Context, args QueryQuickwitParams) ([]Elasticsear
 		return nil, fmt.Errorf("getting backend: %w", err)
 	}
 
-	var startTime, endTime *time.Time
-	if args.StartTime != "" {
-		t, err := parseStartTime(args.StartTime)
-		if err != nil {
-			return nil, fmt.Errorf("parsing start time: %w", err)
-		}
-		if !t.IsZero() {
-			startTime = &t
-		}
+	startTime, err := parseStartTime(args.StartTime)
+	if err != nil {
+		return nil, fmt.Errorf("parsing start time: %w", err)
 	}
-	if args.EndTime != "" {
-		t, err := parseEndTime(args.EndTime)
-		if err != nil {
-			return nil, fmt.Errorf("parsing end time: %w", err)
-		}
-		if !t.IsZero() {
-			endTime = &t
-		}
+
+	endTime, err := parseEndTime(args.EndTime)
+	if err != nil {
+		return nil, fmt.Errorf("parsing end time: %w", err)
 	}
 
 	limit := args.Limit

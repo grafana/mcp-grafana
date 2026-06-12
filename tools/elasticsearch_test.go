@@ -55,6 +55,21 @@ func TestElasticsearchTools(t *testing.T) {
 		assert.NotEmpty(t, result, "Should return documents within the time range")
 	})
 
+	t.Run("query elasticsearch with relative time range", func(t *testing.T) {
+		ctx := newTestContext()
+		result, err := queryElasticsearch(ctx, QueryElasticsearchParams{
+			DatasourceUID: "elasticsearch",
+			Index:         "test-logs-*",
+			Query:         "*",
+			StartTime:     "now-24h",
+			EndTime:       "now",
+			Limit:         10,
+		})
+		require.NoError(t, err)
+		assert.NotNil(t, result, "Should return a result")
+		assert.NotEmpty(t, result, "Should return documents within the relative time range")
+	})
+
 	t.Run("query elasticsearch with time range no results", func(t *testing.T) {
 		ctx := newTestContext()
 		// Use a time range far in the past that won't match any seeded data

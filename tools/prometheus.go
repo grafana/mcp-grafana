@@ -180,8 +180,8 @@ type ListPrometheusMetricNamesParams struct {
 	Regex         string `json:"regex" jsonschema:"description=The regex to match against the metric names"`
 	Limit         int    `json:"limit,omitempty" jsonschema:"default=10,description=The maximum number of results to return"`
 	Page          int    `json:"page,omitempty" jsonschema:"default=1,description=The page number to return"`
-	StartRFC3339  string `json:"startRfc3339,omitempty" jsonschema:"description=Optionally\\, the start time of the time range to filter the results by"`
-	EndRFC3339    string `json:"endRfc3339,omitempty" jsonschema:"description=Optionally\\, the end time of the time range to filter the results by"`
+	StartRFC3339  string `json:"startRfc3339,omitempty" jsonschema:"description=Optionally\\, the start time of the time range to filter the results by. Supports RFC3339 or relative time (e.g. 'now-1h')"`
+	EndRFC3339    string `json:"endRfc3339,omitempty" jsonschema:"description=Optionally\\, the end time of the time range to filter the results by. Supports RFC3339 or relative time (e.g. 'now')"`
 	ProjectName   string `json:"projectName,omitempty" jsonschema:"description=GCP project name to query (Cloud Monitoring datasources only). Overrides or substitutes the defaultProject configured on the datasource."`
 }
 
@@ -201,16 +201,13 @@ func listPrometheusMetricNames(ctx context.Context, args ListPrometheusMetricNam
 		page = 1
 	}
 
-	var startTime, endTime time.Time
-	if args.StartRFC3339 != "" {
-		if startTime, err = time.Parse(time.RFC3339, args.StartRFC3339); err != nil {
-			return nil, fmt.Errorf("parsing start time: %w", err)
-		}
+	startTime, err := parseStartTime(args.StartRFC3339)
+	if err != nil {
+		return nil, fmt.Errorf("parsing start time: %w", err)
 	}
-	if args.EndRFC3339 != "" {
-		if endTime, err = time.Parse(time.RFC3339, args.EndRFC3339); err != nil {
-			return nil, fmt.Errorf("parsing end time: %w", err)
-		}
+	endTime, err := parseEndTime(args.EndRFC3339)
+	if err != nil {
+		return nil, fmt.Errorf("parsing end time: %w", err)
 	}
 
 	// Get all metric names via the backend
@@ -308,8 +305,8 @@ func (s Selector) Matches(lbls labels.Labels) (bool, error) {
 type ListPrometheusLabelNamesParams struct {
 	DatasourceUID string     `json:"datasourceUid" jsonschema:"required,description=The UID of the datasource to query"`
 	Matches       []Selector `json:"matches,omitempty" jsonschema:"description=Optionally\\, a list of label matchers to filter the results by"`
-	StartRFC3339  string     `json:"startRfc3339,omitempty" jsonschema:"description=Optionally\\, the start time of the time range to filter the results by"`
-	EndRFC3339    string     `json:"endRfc3339,omitempty" jsonschema:"description=Optionally\\, the end time of the time range to filter the results by"`
+	StartRFC3339  string     `json:"startRfc3339,omitempty" jsonschema:"description=Optionally\\, the start time of the time range to filter the results by. Supports RFC3339 or relative time (e.g. 'now-1h')"`
+	EndRFC3339    string     `json:"endRfc3339,omitempty" jsonschema:"description=Optionally\\, the end time of the time range to filter the results by. Supports RFC3339 or relative time (e.g. 'now')"`
 	Limit         int        `json:"limit,omitempty" jsonschema:"default=100,description=Optionally\\, the maximum number of results to return"`
 	ProjectName   string     `json:"projectName,omitempty" jsonschema:"description=GCP project name to query (Cloud Monitoring datasources only). Overrides or substitutes the defaultProject configured on the datasource."`
 }
@@ -325,16 +322,13 @@ func listPrometheusLabelNames(ctx context.Context, args ListPrometheusLabelNames
 		limit = 100
 	}
 
-	var startTime, endTime time.Time
-	if args.StartRFC3339 != "" {
-		if startTime, err = time.Parse(time.RFC3339, args.StartRFC3339); err != nil {
-			return nil, fmt.Errorf("parsing start time: %w", err)
-		}
+	startTime, err := parseStartTime(args.StartRFC3339)
+	if err != nil {
+		return nil, fmt.Errorf("parsing start time: %w", err)
 	}
-	if args.EndRFC3339 != "" {
-		if endTime, err = time.Parse(time.RFC3339, args.EndRFC3339); err != nil {
-			return nil, fmt.Errorf("parsing end time: %w", err)
-		}
+	endTime, err := parseEndTime(args.EndRFC3339)
+	if err != nil {
+		return nil, fmt.Errorf("parsing end time: %w", err)
 	}
 
 	var matchers []string
@@ -368,8 +362,8 @@ type ListPrometheusLabelValuesParams struct {
 	DatasourceUID string     `json:"datasourceUid" jsonschema:"required,description=The UID of the datasource to query"`
 	LabelName     string     `json:"labelName" jsonschema:"required,description=The name of the label to query"`
 	Matches       []Selector `json:"matches,omitempty" jsonschema:"description=Optionally\\, a list of selectors to filter the results by"`
-	StartRFC3339  string     `json:"startRfc3339,omitempty" jsonschema:"description=Optionally\\, the start time of the query"`
-	EndRFC3339    string     `json:"endRfc3339,omitempty" jsonschema:"description=Optionally\\, the end time of the query"`
+	StartRFC3339  string     `json:"startRfc3339,omitempty" jsonschema:"description=Optionally\\, the start time of the query. Supports RFC3339 or relative time (e.g. 'now-1h')"`
+	EndRFC3339    string     `json:"endRfc3339,omitempty" jsonschema:"description=Optionally\\, the end time of the query. Supports RFC3339 or relative time (e.g. 'now')"`
 	Limit         int        `json:"limit,omitempty" jsonschema:"default=100,description=Optionally\\, the maximum number of results to return"`
 	ProjectName   string     `json:"projectName,omitempty" jsonschema:"description=GCP project name to query (Cloud Monitoring datasources only). Overrides or substitutes the defaultProject configured on the datasource."`
 }
@@ -385,16 +379,13 @@ func listPrometheusLabelValues(ctx context.Context, args ListPrometheusLabelValu
 		limit = 100
 	}
 
-	var startTime, endTime time.Time
-	if args.StartRFC3339 != "" {
-		if startTime, err = time.Parse(time.RFC3339, args.StartRFC3339); err != nil {
-			return nil, fmt.Errorf("parsing start time: %w", err)
-		}
+	startTime, err := parseStartTime(args.StartRFC3339)
+	if err != nil {
+		return nil, fmt.Errorf("parsing start time: %w", err)
 	}
-	if args.EndRFC3339 != "" {
-		if endTime, err = time.Parse(time.RFC3339, args.EndRFC3339); err != nil {
-			return nil, fmt.Errorf("parsing end time: %w", err)
-		}
+	endTime, err := parseEndTime(args.EndRFC3339)
+	if err != nil {
+		return nil, fmt.Errorf("parsing end time: %w", err)
 	}
 
 	var matchers []string

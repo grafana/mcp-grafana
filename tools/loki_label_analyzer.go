@@ -138,8 +138,8 @@ type GetLokiLabelCardinalityParams struct {
 	LabelNames      []string `json:"labelNames,omitempty" jsonschema:"description=Labels to measure. Omit to auto-discover."`
 	MaxLabels       int      `json:"maxLabels,omitempty" jsonschema:"description=Cap on auto-discovered labels (default 50)."`
 	MaxSampleValues int      `json:"maxSampleValues,omitempty" jsonschema:"description=Sample values per label (default 10\\, max 50)."`
-	StartRFC3339    string   `json:"startRfc3339,omitempty" jsonschema:"description=RFC3339 start (default: 1h ago)."`
-	EndRFC3339      string   `json:"endRfc3339,omitempty" jsonschema:"description=RFC3339 end (default: now)."`
+	StartRFC3339    string   `json:"startRfc3339,omitempty" jsonschema:"description=RFC3339 or relative (e.g. 'now-1h') start (default: 1h ago)."`
+	EndRFC3339      string   `json:"endRfc3339,omitempty" jsonschema:"description=RFC3339 or relative (e.g. 'now') end (default: now)."`
 }
 
 func getLokiLabelCardinality(ctx context.Context, args GetLokiLabelCardinalityParams) ([]LokiLabelCardinality, error) {
@@ -148,13 +148,13 @@ func getLokiLabelCardinality(ctx context.Context, args GetLokiLabelCardinalityPa
 		return nil, fmt.Errorf("creating Loki backend: %w", err)
 	}
 
-	start, err := parseRFC3339OrZero(args.StartRFC3339)
+	start, err := parseStartTime(args.StartRFC3339)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("parsing start time: %w", err)
 	}
-	end, err := parseRFC3339OrZero(args.EndRFC3339)
+	end, err := parseEndTime(args.EndRFC3339)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("parsing end time: %w", err)
 	}
 
 	labels := args.LabelNames
@@ -251,8 +251,8 @@ type AuditLokiLabelStrategyParams struct {
 	DatasourceUID      string            `json:"datasourceUid,omitempty" jsonschema:"description=Live mode: Loki/VictoriaLogs datasource UID. Either this or 'labels' is required."`
 	Selector           string            `json:"selector,omitempty" jsonschema:"description=Optional LogQL selector for live stats sample."`
 	MaxLabels          int               `json:"maxLabels,omitempty" jsonschema:"description=Live-mode label cap (default 50)."`
-	StartRFC3339       string            `json:"startRfc3339,omitempty" jsonschema:"description=RFC3339 start (default: 1h ago)."`
-	EndRFC3339         string            `json:"endRfc3339,omitempty" jsonschema:"description=RFC3339 end (default: now)."`
+	StartRFC3339       string            `json:"startRfc3339,omitempty" jsonschema:"description=RFC3339 or relative (e.g. 'now-1h') start (default: 1h ago)."`
+	EndRFC3339         string            `json:"endRfc3339,omitempty" jsonschema:"description=RFC3339 or relative (e.g. 'now') end (default: now)."`
 	Labels             []LabelDescriptor `json:"labels,omitempty" jsonschema:"description=Static mode: caller-supplied label set."`
 	ExpectedBaseLabels []string          `json:"expectedBaseLabels,omitempty" jsonschema:"description=Override the default recommended base labels."`
 }
@@ -361,8 +361,8 @@ func gatherLiveDescriptors(ctx context.Context, args AuditLokiLabelStrategyParam
 	if args.Selector != "" {
 		backend, err := lokiBackendForDatasource(ctx, args.DatasourceUID)
 		if err == nil {
-			start, _ := parseRFC3339OrZero(args.StartRFC3339)
-			end, _ := parseRFC3339OrZero(args.EndRFC3339)
+			start, _ := parseStartTime(args.StartRFC3339)
+			end, _ := parseEndTime(args.EndRFC3339)
 			if s, err := backend.QueryStats(ctx, args.Selector, start, end); err == nil {
 				stats = s
 			}
@@ -757,8 +757,8 @@ type DiagnoseLokiQueryPerformanceParams struct {
 	DatasourceUID string           `json:"datasourceUid,omitempty" jsonschema:"description=Datasource UID for live stats."`
 	LogQL         string           `json:"logql,omitempty" jsonschema:"description=Label-only selector for live stats."`
 	Metrics       QueryPerfMetrics `json:"metrics,omitempty" jsonschema:"description=Runtime metrics from metrics.go."`
-	StartRFC3339  string           `json:"startRfc3339,omitempty" jsonschema:"description=RFC3339 start."`
-	EndRFC3339    string           `json:"endRfc3339,omitempty" jsonschema:"description=RFC3339 end."`
+	StartRFC3339  string           `json:"startRfc3339,omitempty" jsonschema:"description=RFC3339 or relative (e.g. 'now-1h') start."`
+	EndRFC3339    string           `json:"endRfc3339,omitempty" jsonschema:"description=RFC3339 or relative (e.g. 'now') end."`
 }
 
 // QueryPerfDiagnosis is the structured output.
@@ -773,8 +773,8 @@ func diagnoseLokiQueryPerformance(ctx context.Context, args DiagnoseLokiQueryPer
 	if args.DatasourceUID != "" && args.LogQL != "" {
 		backend, err := lokiBackendForDatasource(ctx, args.DatasourceUID)
 		if err == nil {
-			start, _ := parseRFC3339OrZero(args.StartRFC3339)
-			end, _ := parseRFC3339OrZero(args.EndRFC3339)
+			start, _ := parseStartTime(args.StartRFC3339)
+			end, _ := parseEndTime(args.EndRFC3339)
 			s, statsErr := backend.QueryStats(ctx, args.LogQL, start, end)
 			if statsErr == nil {
 				stats = s
