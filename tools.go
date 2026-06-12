@@ -374,9 +374,21 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 	}
 
 	jsonSchema := createJSONSchemaFromHandler(toolHandler)
-	properties := make(map[string]any, jsonSchema.Properties.Len())
+	properties := make(map[string]any, jsonSchema.Properties.Len()+1)
 	for pair := jsonSchema.Properties.Oldest(); pair != nil; pair = pair.Next() {
 		properties[pair.Key] = pair.Value
+	}
+	// Advertise the optional per-call org selector on every tool, unless the
+	// tool's own arguments already define it. OrgIDOverrideMiddleware reads this
+	// argument and overrides the connection's org for the call.
+	if _, exists := properties[OrgIDArgument]; !exists {
+		properties[OrgIDArgument] = map[string]any{
+			"type": "integer",
+			"description": "Optional Grafana organization ID to target for this call, " +
+				"overriding the connection's default organization. Only takes effect for " +
+				"credentials that belong to more than one organization; leave unset to use " +
+				"the connection's configured org.",
+		}
 	}
 	// Use RawInputSchema with ToolArgumentsSchema to work around a Go limitation where type aliases
 	// don't inherit custom MarshalJSON methods. This ensures empty properties are included in the schema.

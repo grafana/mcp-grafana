@@ -321,6 +321,10 @@ func newServer(transport string, dt disabledTools, obs *observability.Observabil
 	s = server.NewMCPServer("mcp-grafana", mcpgrafana.Version(),
 		server.WithInstructions(instructions),
 		server.WithHooks(hooks),
+		// Honor an optional per-call "orgId" argument so a single connection can
+		// target multiple Grafana organizations (overrides the connection-level
+		// org for that call).
+		server.WithToolHandlerMiddleware(mcpgrafana.OrgIDOverrideMiddleware),
 	)
 
 	// Initialize ToolManager now that server is created
