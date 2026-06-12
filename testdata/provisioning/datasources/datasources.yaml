@@ -105,6 +105,13 @@ datasources:
       flavor: opensearch
       version: 3.6.0
       pplEnabled: false
+  - name: Quickwit
+    uid: quickwit
+    type: quickwit-quickwit-datasource
+    access: proxy
+    url: http://quickwit:7280/api/v1
+    jsonData:
+      index: test-logs
   - name: InfluxDB Flux
     uid: influxdb-flux
     type: influxdb
