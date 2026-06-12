@@ -2,12 +2,56 @@ package mcpgrafana
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
+	"github.com/invopop/jsonschema"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// schemaProperties unmarshals a tool's RawInputSchema and returns its properties.
+func schemaProperties(t *testing.T, tool Tool) map[string]any {
+	t.Helper()
+	var schema map[string]any
+	require.NoError(t, json.Unmarshal(tool.Tool.RawInputSchema, &schema))
+	props, _ := schema["properties"].(map[string]any)
+	return props
+}
+
+func TestInjectOrgIDProperty(t *testing.T) {
+	t.Run("adds an integer orgId to a property set", func(t *testing.T) {
+		props := map[string]any{"foo": &jsonschema.Schema{Type: "string"}}
+		injectOrgIDProperty(props)
+		require.Contains(t, props, "foo", "existing properties must be preserved")
+		schema, ok := props[OrgIDArgument].(*jsonschema.Schema)
+		require.True(t, ok)
+		assert.Equal(t, "integer", schema.Type)
+		assert.Equal(t, orgIDArgumentDescription, schema.Description)
+	})
+
+	t.Run("does not overwrite a property set that already declares orgId", func(t *testing.T) {
+		existing := &jsonschema.Schema{Type: "integer", Description: "custom org arg"}
+		props := map[string]any{OrgIDArgument: existing}
+		injectOrgIDProperty(props)
+		assert.Same(t, existing, props[OrgIDArgument], "a tool's own orgId definition must win")
+	})
+}
+
+// ConvertTool wires injectOrgIDProperty in via commonToolArguments, so a built
+// tool advertises orgId in its serialized schema.
+func TestConvertToolAdvertisesOrgID(t *testing.T) {
+	type fooParams struct {
+		Foo string `json:"foo,omitempty" jsonschema:"description=a foo"`
+	}
+	tool := MustTool("demo_tool", "demo", func(_ context.Context, _ fooParams) (string, error) { return "", nil })
+	props := schemaProperties(t, tool)
+	require.Contains(t, props, "foo")
+	orgID, ok := props[OrgIDArgument].(map[string]any)
+	require.True(t, ok, "orgId should be present in the serialized schema")
+	assert.Equal(t, "integer", orgID["type"])
+}
 
 func TestOrgIDFromArguments(t *testing.T) {
 	cases := []struct {
