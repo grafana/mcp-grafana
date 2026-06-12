@@ -4,15 +4,36 @@ import (
 	"context"
 	"strconv"
 
+	"github.com/invopop/jsonschema"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
 
 // OrgIDArgument is the name of the optional per-call tool argument that selects
 // which Grafana organization a tool call targets. It is advertised on every
-// native tool's input schema (see ConvertTool) and consumed by
+// native tool's input schema (see injectOrgIDProperty) and consumed by
 // OrgIDOverrideMiddleware.
 const OrgIDArgument = "orgId"
+
+// orgIDArgumentDescription documents the orgId argument advertised on every tool.
+const orgIDArgumentDescription = "Optional Grafana organization ID to target for this call, " +
+	"overriding the connection's default organization. Only takes effect for credentials that " +
+	"belong to more than one organization; leave unset to use the connection's configured org."
+
+// injectOrgIDProperty is an argumentInjector that advertises the optional orgId
+// argument on a tool's reflected property set (unless the tool already declares
+// it), so OrgIDOverrideMiddleware has something for clients to populate. Keeping
+// it here, beside the middleware that reads it, leaves ConvertTool free of orgId
+// specifics.
+func injectOrgIDProperty(properties map[string]any) {
+	if _, exists := properties[OrgIDArgument]; exists {
+		return
+	}
+	properties[OrgIDArgument] = &jsonschema.Schema{
+		Type:        "integer",
+		Description: orgIDArgumentDescription,
+	}
+}
 
 // OrgIDOverrideMiddleware returns a tool-handler middleware that lets a single
 // connection address multiple Grafana organizations. When a tool call carries
