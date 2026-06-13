@@ -3,12 +3,14 @@ package tools
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
@@ -22,6 +24,8 @@ const (
 	aiObservabilityBasePath = "/api/plugins/grafana-sigil-app/resources"
 
 	defaultAIObservabilityPageSize = 50
+
+	aiObservabilitySearchCursorPrefix = "ai_observability_search:"
 )
 
 func newAIObservabilityClient(ctx context.Context) (*Client, error) {
@@ -162,6 +166,13 @@ type AIObservabilitySearchResponse struct {
 	HasMore       bool                          `json:"has_more"`
 }
 
+type aiObservabilitySearchCursor struct {
+	Cursor    string                          `json:"cursor"`
+	Filters   string                          `json:"filters,omitempty"`
+	TimeRange *AIObservabilitySearchTimeRange `json:"time_range,omitempty"`
+	PageSize  int                             `json:"page_size,omitempty"`
+}
+
 // AIObservabilityScore is a single evaluation score for a generation.
 type AIObservabilityScore struct {
 	ScoreID          string                      `json:"score_id"`
@@ -228,6 +239,13 @@ func (c *Client) searchAIObservabilityConversations(ctx context.Context, req AIO
 	var resp AIObservabilitySearchResponse
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return nil, fmt.Errorf("failed to decode search response: %w", err)
+	}
+	if resp.NextCursor != "" {
+		nextCursor, err := encodeAIObservabilitySearchCursor(resp.NextCursor, req)
+		if err != nil {
+			return nil, fmt.Errorf("failed to encode search cursor: %w", err)
+		}
+		resp.NextCursor = nextCursor
 	}
 	return &resp, nil
 }
@@ -314,35 +332,96 @@ func (p ManageAIObservabilityConversationsParams) validate() error {
 // toSearchRequest builds the search request body. The time range defaults to
 // the last 24 hours client-side (the plugin requires both bounds).
 func (p ManageAIObservabilityConversationsParams) toSearchRequest() (AIObservabilitySearchRequest, error) {
-	startStr := p.StartTime
-	if startStr == "" {
-		startStr = "now-24h"
-	}
-	endStr := p.EndTime
-	if endStr == "" {
-		endStr = "now"
-	}
-
-	start, err := parseStartTime(startStr)
+	cursor, cursorContext, err := decodeAIObservabilitySearchCursor(p.Cursor)
 	if err != nil {
-		return AIObservabilitySearchRequest{}, fmt.Errorf("parsing start_time: %w", err)
-	}
-	end, err := parseEndTime(endStr)
-	if err != nil {
-		return AIObservabilitySearchRequest{}, fmt.Errorf("parsing end_time: %w", err)
+		return AIObservabilitySearchRequest{}, fmt.Errorf("parsing cursor: %w", err)
 	}
 
 	pageSize := p.Limit
+	if pageSize <= 0 && cursorContext != nil {
+		pageSize = cursorContext.PageSize
+	}
 	if pageSize <= 0 {
 		pageSize = defaultAIObservabilityPageSize
 	}
 
+	filters := p.Filters
+	if filters == "" && cursorContext != nil {
+		filters = cursorContext.Filters
+	}
+
+	startStr := p.StartTime
+	var start time.Time
+	if startStr == "" {
+		if cursorContext != nil && cursorContext.TimeRange != nil {
+			start = cursorContext.TimeRange.From
+		} else {
+			startStr = "now-24h"
+		}
+	}
+	endStr := p.EndTime
+	var end time.Time
+	if endStr == "" {
+		if cursorContext != nil && cursorContext.TimeRange != nil {
+			end = cursorContext.TimeRange.To
+		} else {
+			endStr = "now"
+		}
+	}
+
+	if startStr != "" {
+		start, err = parseStartTime(startStr)
+		if err != nil {
+			return AIObservabilitySearchRequest{}, fmt.Errorf("parsing start_time: %w", err)
+		}
+	}
+	if endStr != "" {
+		end, err = parseEndTime(endStr)
+		if err != nil {
+			return AIObservabilitySearchRequest{}, fmt.Errorf("parsing end_time: %w", err)
+		}
+	}
+
 	return AIObservabilitySearchRequest{
-		Filters:   p.Filters,
+		Filters:   filters,
 		TimeRange: &AIObservabilitySearchTimeRange{From: start, To: end},
 		PageSize:  pageSize,
-		Cursor:    p.Cursor,
+		Cursor:    cursor,
 	}, nil
+}
+
+func encodeAIObservabilitySearchCursor(cursor string, req AIObservabilitySearchRequest) (string, error) {
+	searchCursor := aiObservabilitySearchCursor{
+		Cursor:    cursor,
+		Filters:   req.Filters,
+		TimeRange: req.TimeRange,
+		PageSize:  req.PageSize,
+	}
+	data, err := json.Marshal(searchCursor)
+	if err != nil {
+		return "", err
+	}
+	return aiObservabilitySearchCursorPrefix + base64.RawURLEncoding.EncodeToString(data), nil
+}
+
+func decodeAIObservabilitySearchCursor(cursor string) (string, *aiObservabilitySearchCursor, error) {
+	if !strings.HasPrefix(cursor, aiObservabilitySearchCursorPrefix) {
+		return cursor, nil, nil
+	}
+
+	data, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(cursor, aiObservabilitySearchCursorPrefix))
+	if err != nil {
+		return "", nil, err
+	}
+
+	var searchCursor aiObservabilitySearchCursor
+	if err := json.Unmarshal(data, &searchCursor); err != nil {
+		return "", nil, err
+	}
+	if searchCursor.Cursor == "" {
+		return "", nil, fmt.Errorf("missing backend cursor")
+	}
+	return searchCursor.Cursor, &searchCursor, nil
 }
 
 func manageAIObservabilityConversations(ctx context.Context, args ManageAIObservabilityConversationsParams) (any, error) {

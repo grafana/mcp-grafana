@@ -134,7 +134,15 @@ func TestAIObservabilityManageConversations(t *testing.T) {
 				assert.True(t, conv.RatingSummary.LatestBadAt.Equal(time.Date(2025, 4, 23, 10, 30, 0, 0, time.UTC)))
 				require.NotNil(t, conv.EvalSummary)
 				assert.Equal(t, 1, conv.EvalSummary.FailCount)
-				assert.Equal(t, "next-tok", resp.NextCursor)
+				cursor, cursorContext, err := decodeAIObservabilitySearchCursor(resp.NextCursor)
+				require.NoError(t, err)
+				assert.Equal(t, "next-tok", cursor)
+				require.NotNil(t, cursorContext)
+				assert.Equal(t, `status = "error"`, cursorContext.Filters)
+				assert.Equal(t, 25, cursorContext.PageSize)
+				require.NotNil(t, cursorContext.TimeRange)
+				assert.True(t, cursorContext.TimeRange.From.Equal(time.Date(2025, 4, 23, 10, 0, 0, 0, time.UTC)))
+				assert.True(t, cursorContext.TimeRange.To.Equal(time.Date(2025, 4, 23, 11, 0, 0, 0, time.UTC)))
 				assert.True(t, resp.HasMore)
 			},
 		},
@@ -231,6 +239,62 @@ func TestAIObservabilityManageConversations(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestAIObservabilitySearchCursorPreservesContext(t *testing.T) {
+	start := time.Date(2025, 4, 23, 10, 0, 0, 0, time.UTC)
+	end := time.Date(2025, 4, 23, 11, 0, 0, 0, time.UTC)
+	var nextCursor string
+	requestNumber := 0
+
+	server, ctx := setupMockAIObservabilityServer(func(w http.ResponseWriter, r *http.Request) {
+		requestNumber++
+		require.Equal(t, http.MethodPost, r.Method)
+		require.Equal(t, "/api/plugins/grafana-sigil-app/resources/query/conversations/search", r.URL.Path)
+
+		var req AIObservabilitySearchRequest
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+		assert.Equal(t, `status = "error"`, req.Filters)
+		assert.Equal(t, 1, req.PageSize)
+		require.NotNil(t, req.TimeRange)
+		assert.True(t, req.TimeRange.From.Equal(start))
+		assert.True(t, req.TimeRange.To.Equal(end))
+
+		w.Header().Set("Content-Type", "application/json")
+		switch requestNumber {
+		case 1:
+			assert.Empty(t, req.Cursor)
+			_, err := w.Write([]byte(`{"conversations":[],"next_cursor":"backend-cursor-1","has_more":true}`))
+			require.NoError(t, err)
+		case 2:
+			assert.Equal(t, "backend-cursor-1", req.Cursor)
+			_, err := w.Write([]byte(`{"conversations":[],"has_more":false}`))
+			require.NoError(t, err)
+		default:
+			t.Fatalf("unexpected request %d", requestNumber)
+		}
+	})
+	defer server.Close()
+
+	first, err := manageAIObservabilityConversations(ctx, ManageAIObservabilityConversationsParams{
+		Operation: "search",
+		Filters:   `status = "error"`,
+		StartTime: start.Format(time.RFC3339),
+		EndTime:   end.Format(time.RFC3339),
+		Limit:     1,
+	})
+	require.NoError(t, err)
+	firstResp, ok := first.(*AIObservabilitySearchResponse)
+	require.True(t, ok)
+	require.NotEmpty(t, firstResp.NextCursor)
+	nextCursor = firstResp.NextCursor
+
+	_, err = manageAIObservabilityConversations(ctx, ManageAIObservabilityConversationsParams{
+		Operation: "search",
+		Cursor:    nextCursor,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 2, requestNumber)
 }
 
 func TestAIObservabilityManageGenerations(t *testing.T) {
