@@ -69,14 +69,14 @@ services:
     entrypoint: ["sh", "/seed.sh"]
 
   renderer:
-    image: grafana/grafana-image-renderer:latest@sha256:340c91e98ccd65001a3da4d0192fcf0ed13e95609a51a0d62c35a61b6ff28dff
+    image: grafana/grafana-image-renderer:latest@sha256:53063436a8bd676f9b9f66cd0a813903b01f7f426423c4fc5fd905c4976d5355
     environment:
       AUTH_TOKEN: integration-test-renderer-token
     ports:
       - 8081
 
   prometheus:
-    image: prom/prometheus@sha256:e4254400b85610324913f0dc4acf92603d9984e7519414c5a12811aa6146acc3
+    image: prom/prometheus@sha256:69f5241418838263316593f7274a304b095c40bcf22e57272865da91bd60a8ac
     ports:
       - "9090:9090"
     entrypoint: /etc/prometheus/entrypoint.sh
@@ -160,7 +160,7 @@ services:
     entrypoint: ["sh", "/seed.sh"]
 
   opensearch:
-    image: opensearchproject/opensearch:3.6.0@sha256:57bd3c879ad27123a9a6cd75e2adba504189d3131d00a669f3baf9210bc4538c
+    image: opensearchproject/opensearch:3.6.0@sha256:b5dd1512af2a99748c942cfbbd7f32162623336b210667d0fc6333c6321f171d
     environment:
       - discovery.type=single-node
       - DISABLE_SECURITY_PLUGIN=true
