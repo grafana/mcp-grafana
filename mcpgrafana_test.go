@@ -1071,6 +1071,31 @@ func TestBuildTransport(t *testing.T) {
 		require.NotNil(t, transport)
 	})
 
+	t.Run("nil base preserves configured BaseTransport", func(t *testing.T) {
+		var capturedReq *http.Request
+		usedBase := false
+		base := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+			usedBase = true
+			capturedReq = req
+			return &http.Response{StatusCode: 200}, nil
+		}}
+
+		cfg := &GrafanaConfig{
+			APIKey:        "test-key",
+			BaseTransport: base,
+		}
+		transport, err := BuildTransport(cfg, nil, WithoutOtel())
+		require.NoError(t, err)
+
+		req, _ := http.NewRequest("GET", "http://example.com", nil)
+		_, err = transport.RoundTrip(req)
+		require.NoError(t, err)
+
+		require.True(t, usedBase)
+		require.NotNil(t, capturedReq)
+		assert.Equal(t, "Bearer test-key", capturedReq.Header.Get("Authorization"))
+	})
+
 	t.Run("zero-value config produces working transport", func(t *testing.T) {
 		var capturedReq *http.Request
 		mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {

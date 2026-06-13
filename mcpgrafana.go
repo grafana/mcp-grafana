@@ -662,7 +662,7 @@ func BuildTransport(cfg *GrafanaConfig, base http.RoundTripper, opts ...Transpor
 	}
 
 	if base == nil {
-		base = http.DefaultTransport
+		base = cfg.HTTPTransport()
 	}
 	transport := base
 
