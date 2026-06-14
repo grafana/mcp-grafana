@@ -111,6 +111,34 @@ func TestBuildInstructions_ReflectsEnabledCategories(t *testing.T) {
 				"Available Capabilities:",
 			},
 		},
+		{
+			name:         "ai-observability excluded unless opted in",
+			enabledTools: "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering,plugin,api,config,provisioning",
+			wantContains: []string{
+				"Search:",
+			},
+			wantNotContains: []string{
+				"AI Observability:",
+			},
+		},
+		{
+			name:         "ai-observability included when opted in",
+			enabledTools: "search,ai-observability",
+			wantContains: []string{
+				"AI Observability:",
+			},
+		},
+		{
+			name:         "ai-observability disable flag overrides enabled list",
+			enabledTools: "search,ai-observability",
+			disableFlags: map[string]bool{"ai-observability": true},
+			wantContains: []string{
+				"Search:",
+			},
+			wantNotContains: []string{
+				"AI Observability:",
+			},
+		},
 	}
 
 	for _, tc := range tests {
@@ -125,6 +153,9 @@ func TestBuildInstructions_ReflectsEnabledCategories(t *testing.T) {
 				}
 				if tc.disableFlags["proxied"] {
 					dt.proxied = true
+				}
+				if tc.disableFlags["ai-observability"] {
+					dt.aiObservability = true
 				}
 			}
 
