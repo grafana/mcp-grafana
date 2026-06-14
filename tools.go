@@ -53,6 +53,17 @@ func (t *Tool) Register(mcp *server.MCPServer) {
 	mcp.AddTool(t.Tool, t.Handler)
 }
 
+// argumentInjector adds an argument shared by every native tool to the
+// structured property set reflected from a handler's parameter struct, before
+// ConvertTool marshals it into the input schema. This keeps cross-cutting
+// arguments (e.g. the per-call orgId selector) defined alongside their feature
+// rather than inline in ConvertTool, while still mutating the typed schema
+// rather than the serialized RawInputSchema bytes.
+type argumentInjector func(properties map[string]any)
+
+// commonToolArguments are applied, in order, to every tool built by ConvertTool.
+var commonToolArguments = []argumentInjector{injectOrgIDProperty}
+
 // MustTool creates a new Tool from the given name, description, and toolHandler.
 // It panics if the tool cannot be created, making it suitable for compile-time tool definitions where creation errors indicate programming mistakes.
 func MustTool[T any, R any](
@@ -374,9 +385,14 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 	}
 
 	jsonSchema := createJSONSchemaFromHandler(toolHandler)
-	properties := make(map[string]any, jsonSchema.Properties.Len())
+	properties := make(map[string]any, jsonSchema.Properties.Len()+len(commonToolArguments))
 	for pair := jsonSchema.Properties.Oldest(); pair != nil; pair = pair.Next() {
 		properties[pair.Key] = pair.Value
+	}
+	// Inject arguments shared by every tool (e.g. orgId) into the typed property
+	// set before it is serialized below.
+	for _, inject := range commonToolArguments {
+		inject(properties)
 	}
 	// Use RawInputSchema with ToolArgumentsSchema to work around a Go limitation where type aliases
 	// don't inherit custom MarshalJSON methods. This ensures empty properties are included in the schema.
