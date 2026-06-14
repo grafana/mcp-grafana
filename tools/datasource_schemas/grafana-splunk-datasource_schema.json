@@ -1,0 +1,309 @@
+{
+    "schemaVersion": "v1",
+    "pluginType": "grafana-splunk-datasource",
+    "pluginName": "Splunk",
+    "fields": [
+        {
+            "id": "root.url",
+            "key": "url",
+            "label": "URL",
+            "description": "Splunk management API URL (e.g. https://splunk:8089).",
+            "valueType": "string",
+            "semanticType": "url",
+            "target": "root",
+            "required": true
+        },
+        {
+            "id": "jsonData.apiURL",
+            "key": "apiURL",
+            "label": "API URL",
+            "description": "Override Splunk REST API URL.",
+            "valueType": "string",
+            "semanticType": "url",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.authType",
+            "key": "authType",
+            "label": "Authentication Type",
+            "description": "Splunk authentication method.",
+            "valueType": "string",
+            "target": "jsonData",
+            "defaultValue": "basicAuth",
+            "validations": [
+                {
+                    "type": "allowedValues",
+                    "values": [
+                        "basicAuth",
+                        "token",
+                        "oauth"
+                    ]
+                }
+            ]
+        },
+        {
+            "id": "jsonData.username",
+            "key": "username",
+            "label": "Username",
+            "description": "Splunk username for basic authentication.",
+            "valueType": "string",
+            "target": "jsonData",
+            "dependsOn": "jsonData.authType == 'basicAuth'"
+        },
+        {
+            "id": "jsonData.oauthPassThru",
+            "key": "oauthPassThru",
+            "label": "OAuth Pass-thru",
+            "description": "Forward the user's OAuth token to Splunk.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.pollSearchResult",
+            "key": "pollSearchResult",
+            "label": "Poll Search Results",
+            "description": "Poll for search results instead of blocking.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.streamMode",
+            "key": "streamMode",
+            "label": "Stream Mode",
+            "description": "Use streaming for search results.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.previewMode",
+            "key": "previewMode",
+            "label": "Preview Mode",
+            "description": "Use preview results for running searches.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.autoCancel",
+            "key": "autoCancel",
+            "label": "Auto Cancel",
+            "description": "Auto-cancel searches after this duration.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.statusBuckets",
+            "key": "statusBuckets",
+            "label": "Status Buckets",
+            "description": "Number of status buckets for search job.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.defaultEarliestTime",
+            "key": "defaultEarliestTime",
+            "label": "Default Earliest Time",
+            "description": "Default earliest time for searches (e.g. -24h).",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.internalFieldsFiltration",
+            "key": "internalFieldsFiltration",
+            "label": "Filter Internal Fields",
+            "description": "Filter out Splunk internal fields from results.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.internalFieldPattern",
+            "key": "internalFieldPattern",
+            "label": "Internal Field Pattern",
+            "description": "Regex pattern to identify internal fields.",
+            "valueType": "string",
+            "target": "jsonData",
+            "dependsOn": "jsonData.internalFieldsFiltration == true"
+        },
+        {
+            "id": "jsonData.minPollInterval",
+            "key": "minPollInterval",
+            "label": "Min Poll Interval (ms)",
+            "description": "Minimum poll interval in milliseconds.",
+            "valueType": "number",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.maxPollInterval",
+            "key": "maxPollInterval",
+            "label": "Max Poll Interval (ms)",
+            "description": "Maximum poll interval in milliseconds.",
+            "valueType": "number",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.tsField",
+            "key": "tsField",
+            "label": "Timestamp Field",
+            "description": "Name of the timestamp field.",
+            "valueType": "string",
+            "target": "jsonData",
+            "defaultValue": "_time"
+        },
+        {
+            "id": "jsonData.fieldSearchType",
+            "key": "fieldSearchType",
+            "label": "Field Search Type",
+            "description": "Type of field search to use.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.variableSearchLevel",
+            "key": "variableSearchLevel",
+            "label": "Variable Search Level",
+            "description": "Search level for template variables.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.maxResultCount",
+            "key": "maxResultCount",
+            "label": "Max Result Count",
+            "description": "Maximum number of results to return.",
+            "valueType": "number",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.timeoutInSeconds",
+            "key": "timeoutInSeconds",
+            "label": "Timeout (seconds)",
+            "description": "Request timeout in seconds.",
+            "valueType": "number",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.dataLinks",
+            "key": "dataLinks",
+            "label": "Data Links",
+            "description": "Custom data links configuration.",
+            "valueType": "array",
+            "target": "jsonData",
+            "item": {
+                "valueType": "object"
+            }
+        },
+        {
+            "id": "jsonData.keepCookies",
+            "key": "keepCookies",
+            "label": "Keep Cookies",
+            "description": "Cookie names to forward to Splunk.",
+            "valueType": "array",
+            "target": "jsonData",
+            "item": {
+                "valueType": "string"
+            }
+        },
+        {
+            "id": "jsonData.enableSecureSocksProxy",
+            "key": "enableSecureSocksProxy",
+            "label": "Secure Socks Proxy",
+            "description": "Enable secure SOCKS proxy.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "secureJsonData.basicAuthPassword",
+            "key": "basicAuthPassword",
+            "label": "Password",
+            "description": "Splunk password for basic authentication.",
+            "valueType": "string",
+            "target": "secureJsonData",
+            "semanticType": "password",
+            "dependsOn": "jsonData.authType == 'basicAuth'"
+        },
+        {
+            "id": "secureJsonData.authToken",
+            "key": "authToken",
+            "label": "Auth Token",
+            "description": "Splunk authentication token.",
+            "valueType": "string",
+            "target": "secureJsonData",
+            "semanticType": "token",
+            "dependsOn": "jsonData.authType == 'token'"
+        }
+    ],
+    "groups": [
+        {
+            "id": "connection",
+            "title": "Connection",
+            "fieldRefs": [
+                "root.url",
+                "jsonData.apiURL"
+            ]
+        },
+        {
+            "id": "auth",
+            "title": "Authentication",
+            "fieldRefs": [
+                "jsonData.authType",
+                "jsonData.username",
+                "secureJsonData.basicAuthPassword",
+                "secureJsonData.authToken",
+                "jsonData.oauthPassThru"
+            ]
+        },
+        {
+            "id": "search",
+            "title": "Search Settings",
+            "fieldRefs": [
+                "jsonData.pollSearchResult",
+                "jsonData.streamMode",
+                "jsonData.previewMode",
+                "jsonData.autoCancel",
+                "jsonData.statusBuckets",
+                "jsonData.defaultEarliestTime"
+            ]
+        },
+        {
+            "id": "fields",
+            "title": "Field Settings",
+            "fieldRefs": [
+                "jsonData.tsField",
+                "jsonData.internalFieldsFiltration",
+                "jsonData.internalFieldPattern",
+                "jsonData.fieldSearchType",
+                "jsonData.variableSearchLevel"
+            ]
+        },
+        {
+            "id": "advanced",
+            "title": "Advanced",
+            "fieldRefs": [
+                "jsonData.minPollInterval",
+                "jsonData.maxPollInterval",
+                "jsonData.maxResultCount",
+                "jsonData.timeoutInSeconds",
+                "jsonData.dataLinks",
+                "jsonData.keepCookies",
+                "jsonData.enableSecureSocksProxy"
+            ]
+        }
+    ]
+}

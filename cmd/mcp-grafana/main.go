@@ -167,7 +167,7 @@ func (dt *disabledTools) toolEntries() []toolEntry {
 	enableWriteTools := !dt.write
 	return []toolEntry{
 		{tools.AddSearchTools, dt.search, "search"},
-		{tools.AddDatasourceTools, dt.datasource, "datasource"},
+		{func(mcp *server.MCPServer) { tools.AddDatasourceTools(mcp, enableWriteTools) }, dt.datasource, "datasource"},
 		{func(mcp *server.MCPServer) { tools.AddIncidentTools(mcp, enableWriteTools) }, dt.incident, "incident"},
 		{tools.AddPrometheusTools, dt.prometheus, "prometheus"},
 		{tools.AddLokiTools, dt.loki, "loki"},

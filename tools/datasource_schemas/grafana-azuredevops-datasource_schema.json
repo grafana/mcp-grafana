@@ -1,0 +1,91 @@
+{
+    "schemaVersion": "v1",
+    "pluginType": "grafana-azuredevops-datasource",
+    "pluginName": "Azure DevOps",
+    "fields": [
+        {
+            "id": "jsonData.url",
+            "key": "url",
+            "label": "URL",
+            "description": "Azure DevOps organization URL.",
+            "valueType": "string",
+            "semanticType": "url",
+            "target": "jsonData",
+            "required": true
+        },
+        {
+            "id": "jsonData.authType",
+            "key": "authType",
+            "label": "Auth Type",
+            "description": "Authentication type.",
+            "valueType": "string",
+            "target": "jsonData",
+            "required": true,
+            "defaultValue": "patToken",
+            "validations": [
+                {
+                    "type": "allowedValues",
+                    "values": [
+                        "patToken"
+                    ]
+                }
+            ]
+        },
+        {
+            "id": "jsonData.projectsLimit",
+            "key": "projectsLimit",
+            "label": "Projects Limit",
+            "description": "Maximum number of projects to fetch.",
+            "valueType": "number",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.enableSecureSocksProxy",
+            "key": "enableSecureSocksProxy",
+            "label": "Secure Socks Proxy",
+            "description": "Enable secure SOCKS proxy.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.username",
+            "key": "username",
+            "label": "Username",
+            "description": "Azure DevOps username.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "secureJsonData.patToken",
+            "key": "patToken",
+            "label": "Personal Access Token",
+            "description": "Azure DevOps personal access token.",
+            "valueType": "string",
+            "semanticType": "token",
+            "target": "secureJsonData",
+            "required": true
+        }
+    ],
+    "groups": [
+        {
+            "id": "connection",
+            "title": "Connection",
+            "fieldRefs": [
+                "jsonData.url",
+                "jsonData.projectsLimit"
+            ]
+        },
+        {
+            "id": "auth",
+            "title": "Authentication",
+            "fieldRefs": [
+                "jsonData.authType",
+                "jsonData.username",
+                "secureJsonData.patToken"
+            ]
+        }
+    ]
+}
