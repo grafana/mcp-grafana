@@ -58,7 +58,7 @@ services:
       retries: 10
 
   provisioning-repo-seed:
-    image: curlimages/curl:8.18.0@sha256:d94d07ba9e7d6de898b6d96c1a072f6f8266c687af78a74f380087a0addf5d17
+    image: curlimages/curl:8.20.0@sha256:b3f1fb2a51d923260350d21b8654bbc607164a987e2f7c84a0ac199a67df812a
     depends_on:
       grafana:
         condition: service_healthy
@@ -86,7 +86,7 @@ services:
       - ./testdata/prometheus-entrypoint.sh:/etc/prometheus/entrypoint.sh
 
   loki:
-    image: grafana/loki:3.6.8@sha256:9db961170b729dc38277963cbb4a79941626388562cc455db61bf85564aa8945
+    image: grafana/loki:3.7.2@sha256:191d4fdfb7264f16989f0a57f320872620a5a7c2ceeec6229212c4190ec49b86
     ports:
       - "3100:3100"
     command: -config.file=/etc/loki/loki-config.yml
@@ -95,7 +95,7 @@ services:
       - ./testdata/loki-rules.yml:/loki/rules/fake/loki-rules.yml
 
   promtail:
-    image: grafana/promtail:3.6.8@sha256:6cfa64ec432b24a912d640e2edb940eeae2666f61861a66c121d763dd7241381
+    image: grafana/promtail:3.6.11@sha256:a761cb834cfaeee29745440d4884d6748f0a08d8f68928db1d707018c1dcfbe9
     volumes:
       - ./testdata/promtail-config.yml:/etc/promtail/config.yml
       - /var/run/docker.sock:/var/run/docker.sock
@@ -104,7 +104,7 @@ services:
       - loki
 
   pyroscope:
-    image: grafana/pyroscope:2.0.1@sha256:704889ae04768d982a0a71935bb054948993ddc3fe80234611d20877ba8be4c9
+    image: grafana/pyroscope:2.0.3@sha256:cfd00e7f73c2a5fe5e8a51d4790065e2343f5a20e41293c4fa3b9b03a91e3a40
     ports:
       - 4040:4040
 
@@ -127,7 +127,7 @@ services:
       - "3201:3201" # tempo instance 2
 
   alertmanager:
-    image: prom/alertmanager:v0.31.1@sha256:88b605de9aba0410775c1eb3438f951115054e0d307f23f274a4c705f51630c1
+    image: prom/alertmanager:v0.32.2@sha256:b85533a2eb45865835315810315f6951331b2dbc8c93a6cf9a51e156a006a706
     ports:
       - "9093:9093"
     volumes:
@@ -151,7 +151,7 @@ services:
       retries: 10
 
   elasticsearch-seed:
-    image: curlimages/curl:8.18.0@sha256:d94d07ba9e7d6de898b6d96c1a072f6f8266c687af78a74f380087a0addf5d17
+    image: curlimages/curl:8.20.0@sha256:b3f1fb2a51d923260350d21b8654bbc607164a987e2f7c84a0ac199a67df812a
     depends_on:
       elasticsearch:
         condition: service_healthy
@@ -160,7 +160,7 @@ services:
     entrypoint: ["sh", "/seed.sh"]
 
   opensearch:
-    image: opensearchproject/opensearch:3.6.0@sha256:57bd3c879ad27123a9a6cd75e2adba504189d3131d00a669f3baf9210bc4538c
+    image: opensearchproject/opensearch:3.7.0@sha256:123e6591a47b1d54686890551bdb35739c85193ecded381219fc9e059e18128f
     environment:
       - discovery.type=single-node
       - DISABLE_SECURITY_PLUGIN=true
@@ -174,7 +174,7 @@ services:
       retries: 10
 
   opensearch-seed:
-    image: curlimages/curl:8.12.1
+    image: curlimages/curl:8.20.0@sha256:b3f1fb2a51d923260350d21b8654bbc607164a987e2f7c84a0ac199a67df812a
     depends_on:
       opensearch:
         condition: service_healthy
@@ -194,7 +194,7 @@ services:
       retries: 15
 
   quickwit-seed:
-    image: curlimages/curl:8.18.0@sha256:d94d07ba9e7d6de898b6d96c1a072f6f8266c687af78a74f380087a0addf5d17
+    image: curlimages/curl:8.20.0@sha256:b3f1fb2a51d923260350d21b8654bbc607164a987e2f7c84a0ac199a67df812a
     depends_on:
       quickwit:
         condition: service_healthy
@@ -219,7 +219,7 @@ services:
       retries: 5
 
   influxdb:
-    image: influxdb:2.7
+    image: influxdb:2.9@sha256:003e028b675205f6148e5f30369fd3e854993b385f1e5e4d2d85bc9f8701bf28
     ports:
       - "8086:8086"
     environment:
@@ -236,7 +236,7 @@ services:
       retries: 10
 
   influxdb-seed:
-    image: curlimages/curl:8.18.0@sha256:d94d07ba9e7d6de898b6d96c1a072f6f8266c687af78a74f380087a0addf5d17
+    image: curlimages/curl:8.20.0@sha256:b3f1fb2a51d923260350d21b8654bbc607164a987e2f7c84a0ac199a67df812a
     depends_on:
       influxdb:
         condition: service_healthy
