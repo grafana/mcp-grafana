@@ -328,6 +328,7 @@ func newServer(transport string, dt disabledTools, obs *observability.Observabil
 	sm.SetMCPServer(s)
 
 	dt.processTools(s)
+	mcpgrafana.RegisterAppResources(s)
 	return s, stm, sm
 }
 

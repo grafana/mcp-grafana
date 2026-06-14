@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Optional `startRfc3339`/`endRfc3339` time range parameters for `list_prometheus_metric_names` to restrict results to metrics active within a window
+- Inline panel viewer for `get_panel_image` on [MCP Apps](https://modelcontextprotocol.io/)-aware hosts, with a dashboard deeplink fallback for other hosts ([#882](https://github.com/grafana/mcp-grafana/pull/882))
 
 ## [0.15.2] - 2026-06-04
 

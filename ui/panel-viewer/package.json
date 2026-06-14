@@ -1,0 +1,17 @@
+{
+  "name": "@mcp-grafana/panel-viewer-app",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "INPUT=mcp-app.html vite build",
+    "dev": "vite --open /mcp-app.html"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/ext-apps": "^1.7.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "vite": "^6.0.0",
+    "vite-plugin-singlefile": "^2.3.3"
+  }
+}
