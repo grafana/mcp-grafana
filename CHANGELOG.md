@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Optional `startRfc3339`/`endRfc3339` time range parameters for `list_prometheus_metric_names` to restrict results to metrics active within a window
+- `query_prometheus` now surfaces datasource `warnings` (e.g. partial responses from Thanos) in its result
 
 ## [0.15.2] - 2026-06-04
 
