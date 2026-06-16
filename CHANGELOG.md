@@ -5,12 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.16.0] - 2026-06-16
 
 ### Added
 
-- Optional `startRfc3339`/`endRfc3339` time range parameters for `list_prometheus_metric_names` to restrict results to metrics active within a window
-- `query_prometheus` now surfaces datasource `warnings` (e.g. partial responses from Thanos) in its result
+- `query_prometheus` now surfaces datasource `warnings` (e.g. partial responses from Thanos) in its result ([#946](https://github.com/grafana/mcp-grafana/pull/946))
+- Relative time syntax (e.g. `now-1h`, `now-7d`) is now accepted wherever tools take time range parameters ([#942](https://github.com/grafana/mcp-grafana/pull/942))
+- Native support for dashboard schema v2 in dashboard tools ([#937](https://github.com/grafana/mcp-grafana/pull/937))
+- Quickwit datasources are now supported by the search/query tools ([#941](https://github.com/grafana/mcp-grafana/pull/941))
+- Elasticsearch and OpenSearch queries now honor the datasource's configured `timeField` ([#909](https://github.com/grafana/mcp-grafana/pull/909))
+- `GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE` environment variable for reading a service account token from a file, enabling support for rotated tokens ([#935](https://github.com/grafana/mcp-grafana/pull/935))
+- BigQuery datasource support in `run_panel_query` ([#930](https://github.com/grafana/mcp-grafana/pull/930))
+- Optional `startRfc3339`/`endRfc3339` time range parameters for `list_prometheus_metric_names` to restrict results to metrics active within a window ([#927](https://github.com/grafana/mcp-grafana/pull/927))
+
+### Fixed
+
+- Elasticsearch requests now refuse to follow redirects that would silently drop the request body, preventing malformed downstream queries ([#951](https://github.com/grafana/mcp-grafana/pull/951))
+- Loki downstream calls now propagate configured HTTP headers via the shared transport ([#945](https://github.com/grafana/mcp-grafana/pull/945))
 
 ## [0.15.2] - 2026-06-04
 
@@ -275,6 +286,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Upgrade Docker base image packages to resolve critical OpenSSL CVE-2025-15467 (CVSS 9.8) ([#551](https://github.com/grafana/mcp-grafana/pull/551))
 
+[0.16.0]: https://github.com/grafana/mcp-grafana/compare/v0.15.2...v0.16.0
 [0.15.2]: https://github.com/grafana/mcp-grafana/compare/v0.15.1...v0.15.2
 [0.15.1]: https://github.com/grafana/mcp-grafana/compare/v0.15.0...v0.15.1
 [0.15.0]: https://github.com/grafana/mcp-grafana/compare/v0.14.0...v0.15.0
