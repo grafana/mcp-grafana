@@ -354,7 +354,7 @@ func extractPanelInfo(panel map[string]interface{}, queryIndex int) (*panelInfo,
 
 	// CloudWatch panels use structured targets rather than string expressions
 	if query == "" && normalizeDatasourceType(info.DatasourceType) != "cloudwatch" {
-		return nil, fmt.Errorf("could not extract query from panel target (checked: expr, query, expression, rawSql, rawQuery)")
+		return nil, fmt.Errorf("could not extract query from panel target (checked: expr, query, expression, rawSql, rawSQL, rawQuery)")
 	}
 	info.Query = query
 
