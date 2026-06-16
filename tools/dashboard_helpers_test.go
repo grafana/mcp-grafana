@@ -248,6 +248,13 @@ func TestExtractQueryExpression(t *testing.T) {
 			expected: "SELECT * FROM metrics WHERE time > $__from",
 		},
 		{
+			name: "athena rawSQL",
+			target: map[string]interface{}{
+				"rawSQL": "SELECT * FROM logs WHERE time > $__timeFilter",
+			},
+			expected: "SELECT * FROM logs WHERE time > $__timeFilter",
+		},
+		{
 			name:     "empty target",
 			target:   map[string]interface{}{},
 			expected: "",

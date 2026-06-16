@@ -255,6 +255,7 @@ func extractQueryExpression(target map[string]interface{}) string {
 		"query",      // Loki, ClickHouse, generic
 		"expression", // CloudWatch
 		"rawSql",     // SQL databases
+		"rawSQL",     // Athena (grafana-athena-datasource)
 		"rawQuery",   // Some datasources
 	}
 
