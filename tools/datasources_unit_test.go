@@ -429,10 +429,11 @@ func TestCreateDatasource_Success(t *testing.T) {
 	mcpgrafana.GrafanaClientFromContext(ctx).PublicURL = "https://grafana.example.com"
 
 	toolResult, err := createDatasource(ctx, CreateDatasourceParams{
-		Name:   name,
-		Type:   "prometheus",
-		URL:    "http://prometheus:9090",
-		Fields: map[string]any{"httpMethod": "POST", "timeInterval": "15s"},
+		Name:           name,
+		Type:           "prometheus",
+		URL:            "http://prometheus:9090",
+		Fields:         map[string]any{"httpMethod": "POST", "timeInterval": "15s"},
+		SchemaReviewed: true,
 	})
 	require.NoError(t, err)
 	require.NotNil(t, toolResult)
@@ -844,6 +845,7 @@ func TestCreateDatasource_SecureFieldsNotLeakedToJSONData(t *testing.T) {
 			"httpMethod":        "GET",
 			"basicAuthPassword": "s3cr3t", // secureJsonData field — must be dropped
 		},
+		SchemaReviewed: true,
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "GET", capturedJSONData["httpMethod"])
