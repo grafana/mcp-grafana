@@ -94,7 +94,8 @@ func newElasticsearchBackend(ctx context.Context, ds *models.DataSource) (*elast
 	}
 
 	client := &http.Client{
-		Transport: transport,
+		Transport:     transport,
+		CheckRedirect: refuseRedirect,
 	}
 
 	return &elasticsearchBackend{

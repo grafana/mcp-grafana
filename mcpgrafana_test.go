@@ -689,6 +689,15 @@ func TestWithGrafanaConfigNormalizesURL(t *testing.T) {
 		{"multiple trailing slashes stripped", "https://example.grafana.net///", "https://example.grafana.net"},
 		{"no trailing slash unchanged", "https://example.grafana.net", "https://example.grafana.net"},
 		{"empty string unchanged", "", ""},
+		{"surrounding whitespace trimmed", "  https://example.grafana.net/  ", "https://example.grafana.net"},
+		{"missing scheme defaults to https", "example.grafana.net", "https://example.grafana.net"},
+		{"missing scheme with path defaults to https", "example.grafana.net/grafana", "https://example.grafana.net/grafana"},
+		{"http scheme preserved", "http://localhost:3000", "http://localhost:3000"},
+		{"schemeless localhost defaults to http", "localhost:3000", "http://localhost:3000"},
+		{"schemeless localhost with path defaults to http", "localhost:3000/grafana", "http://localhost:3000/grafana"},
+		{"schemeless loopback ip defaults to http", "127.0.0.1:3000", "http://127.0.0.1:3000"},
+		{"schemeless ipv6 loopback defaults to http", "[::1]:3000", "http://[::1]:3000"},
+		{"schemeless with :// in query still gets scheme", "example.grafana.net/p?next=http://x", "https://example.grafana.net/p?next=http://x"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
