@@ -8,6 +8,7 @@ import (
 
 	"github.com/grafana/grafana-openapi-client-go/models"
 	mcpgrafana "github.com/grafana/mcp-grafana"
+	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	"github.com/prometheus/common/model"
 )
 
@@ -53,9 +54,9 @@ func newVictoriaMetricsBackend(ctx context.Context, uid string, ds *models.DataS
 
 // Query executes a PromQL/MetricsQL query via Grafana's /api/ds/query endpoint.
 // The VM plugin signals instant vs range with two boolean fields on the payload.
-func (b *victoriaMetricsBackend) Query(ctx context.Context, expr string, queryType string, start, end time.Time, stepSeconds int) (model.Value, error) {
+func (b *victoriaMetricsBackend) Query(ctx context.Context, expr string, queryType string, start, end time.Time, stepSeconds int) (model.Value, promv1.Warnings, error) {
 	if queryType != "instant" && queryType != "range" {
-		return nil, fmt.Errorf("invalid query type: %s", queryType)
+		return nil, nil, fmt.Errorf("invalid query type: %s", queryType)
 	}
 
 	if start.IsZero() && end.IsZero() {
@@ -88,8 +89,9 @@ func (b *victoriaMetricsBackend) Query(ctx context.Context, expr string, queryTy
 
 	resp, err := doDSQuery(ctx, b.httpClient, b.baseURL, dsQueryPayload(start, end, query))
 	if err != nil {
-		return nil, fmt.Errorf("querying VictoriaMetrics %s: %w", queryType, err)
+		return nil, nil, fmt.Errorf("querying VictoriaMetrics %s: %w", queryType, err)
 	}
 
-	return framesToPrometheusValue(resp, queryType)
+	v, err := framesToPrometheusValue(resp, queryType)
+	return v, nil, err
 }
