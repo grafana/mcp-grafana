@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/go-openapi/runtime/client"
@@ -688,6 +689,15 @@ func TestWithGrafanaConfigNormalizesURL(t *testing.T) {
 		{"multiple trailing slashes stripped", "https://example.grafana.net///", "https://example.grafana.net"},
 		{"no trailing slash unchanged", "https://example.grafana.net", "https://example.grafana.net"},
 		{"empty string unchanged", "", ""},
+		{"surrounding whitespace trimmed", "  https://example.grafana.net/  ", "https://example.grafana.net"},
+		{"missing scheme defaults to https", "example.grafana.net", "https://example.grafana.net"},
+		{"missing scheme with path defaults to https", "example.grafana.net/grafana", "https://example.grafana.net/grafana"},
+		{"http scheme preserved", "http://localhost:3000", "http://localhost:3000"},
+		{"schemeless localhost defaults to http", "localhost:3000", "http://localhost:3000"},
+		{"schemeless localhost with path defaults to http", "localhost:3000/grafana", "http://localhost:3000/grafana"},
+		{"schemeless loopback ip defaults to http", "127.0.0.1:3000", "http://127.0.0.1:3000"},
+		{"schemeless ipv6 loopback defaults to http", "[::1]:3000", "http://[::1]:3000"},
+		{"schemeless with :// in query still gets scheme", "example.grafana.net/p?next=http://x", "https://example.grafana.net/p?next=http://x"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1068,6 +1078,31 @@ func TestBuildTransport(t *testing.T) {
 		transport, err := BuildTransport(cfg, nil, WithoutOtel())
 		require.NoError(t, err)
 		require.NotNil(t, transport)
+	})
+
+	t.Run("nil base preserves configured BaseTransport", func(t *testing.T) {
+		var capturedReq *http.Request
+		usedBase := false
+		base := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+			usedBase = true
+			capturedReq = req
+			return &http.Response{StatusCode: 200}, nil
+		}}
+
+		cfg := &GrafanaConfig{
+			APIKey:        "test-key",
+			BaseTransport: base,
+		}
+		transport, err := BuildTransport(cfg, nil, WithoutOtel())
+		require.NoError(t, err)
+
+		req, _ := http.NewRequest("GET", "http://example.com", nil)
+		_, err = transport.RoundTrip(req)
+		require.NoError(t, err)
+
+		require.True(t, usedBase)
+		require.NotNil(t, capturedReq)
+		assert.Equal(t, "Bearer test-key", capturedReq.Header.Get("Authorization"))
 	})
 
 	t.Run("zero-value config produces working transport", func(t *testing.T) {
@@ -1553,6 +1588,79 @@ func clearPublicURLCache() {
 	publicURLCache.Range(func(key, _ any) bool {
 		publicURLCache.Delete(key)
 		return true
+	})
+}
+
+// clearNamespaceCache removes all entries from the namespaceCache for test isolation.
+func clearNamespaceCache() {
+	namespaceCache.Range(func(key, _ any) bool {
+		namespaceCache.Delete(key)
+		return true
+	})
+}
+
+func TestDashboardNamespace(t *testing.T) {
+	t.Cleanup(clearNamespaceCache)
+
+	t.Run("uses namespace from frontend settings", func(t *testing.T) {
+		t.Cleanup(clearNamespaceCache)
+		ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/api/frontend/settings" {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"appUrl": "https://grafana.example.com", "namespace": "stacks-123"}`))
+				return
+			}
+			w.WriteHeader(http.StatusNotFound)
+		})
+
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{URL: ts.URL, APIKey: "test-key", OrgID: 1})
+		ns, fromSettings := DashboardNamespace(ctx)
+		assert.Equal(t, "stacks-123", ns)
+		assert.True(t, fromSettings, "namespace came from frontend settings")
+	})
+
+	t.Run("falls back to default when settings omit namespace and org is 1", func(t *testing.T) {
+		t.Cleanup(clearNamespaceCache)
+		ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"appUrl": "https://grafana.example.com"}`))
+		})
+
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{URL: ts.URL, OrgID: 1})
+		ns, fromSettings := DashboardNamespace(ctx)
+		assert.Equal(t, "default", ns)
+		assert.False(t, fromSettings, "namespace fell back to the org-derived value")
+	})
+
+	t.Run("falls back to org-N when settings unavailable", func(t *testing.T) {
+		t.Cleanup(clearNamespaceCache)
+		ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+		})
+
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{URL: ts.URL, OrgID: 5})
+		ns, fromSettings := DashboardNamespace(ctx)
+		assert.Equal(t, "org-5", ns)
+		assert.False(t, fromSettings, "namespace fell back to the org-derived value")
+	})
+
+	t.Run("caches successful namespace lookups", func(t *testing.T) {
+		t.Cleanup(clearNamespaceCache)
+		var calls int32
+		ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+			atomic.AddInt32(&calls, 1)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"namespace": "org-2"}`))
+		})
+
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{URL: ts.URL, OrgID: 2})
+		ns1, from1 := DashboardNamespace(ctx)
+		ns2, from2 := DashboardNamespace(ctx)
+		assert.Equal(t, "org-2", ns1)
+		assert.Equal(t, "org-2", ns2)
+		assert.True(t, from1)
+		assert.True(t, from2)
+		assert.Equal(t, int32(1), atomic.LoadInt32(&calls), "frontend settings should be fetched once and cached")
 	})
 }
 

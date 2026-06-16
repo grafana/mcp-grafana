@@ -319,8 +319,60 @@ const (
 // WithGrafanaConfig adds Grafana configuration to the context.
 // This configuration includes API credentials, debug settings, and TLS options that will be used by all Grafana clients created from this context.
 func WithGrafanaConfig(ctx context.Context, config GrafanaConfig) context.Context {
-	config.URL = strings.TrimRight(config.URL, "/")
+	config.URL = normalizeGrafanaURL(config.URL)
 	return context.WithValue(ctx, grafanaConfigKey{}, config)
+}
+
+// normalizeGrafanaURL cleans up a configured Grafana URL so that requests built
+// from it are well-formed and don't trip avoidable redirects. It trims
+// surrounding whitespace and trailing slashes, and supplies a scheme when none
+// is provided — a schemeless value like "grafana.example.com" would otherwise
+// be parsed as a relative path and produce broken request URLs. Schemeless
+// local addresses default to http (local Grafana rarely serves TLS); everything
+// else defaults to https. An empty input is returned unchanged.
+func normalizeGrafanaURL(raw string) string {
+	u := strings.TrimRight(strings.TrimSpace(raw), "/")
+	if u == "" {
+		return ""
+	}
+	if !hasScheme(u) {
+		if isLocalHostPort(u) {
+			u = "http://" + u
+		} else {
+			u = "https://" + u
+		}
+	}
+	return u
+}
+
+// hasScheme reports whether u begins with a URL scheme (e.g. "https://"). It
+// looks for "://" in scheme position rather than anywhere in the string, so a
+// schemeless URL whose path or query happens to contain "://" (e.g. a query
+// parameter holding another URL) is still recognised as needing a scheme.
+func hasScheme(u string) bool {
+	i := strings.Index(u, "://")
+	if i <= 0 {
+		return false
+	}
+	// Anything path-, query-, or fragment-like before the "://" means it isn't
+	// a real scheme separator.
+	return !strings.ContainsAny(u[:i], "/?#")
+}
+
+// isLocalHostPort reports whether a schemeless URL points at a local address,
+// e.g. "localhost:3000", "127.0.0.1", or "[::1]:3000".
+func isLocalHostPort(hostPort string) bool {
+	// Drop any path/query so only the host[:port] is inspected.
+	if i := strings.IndexAny(hostPort, "/?"); i >= 0 {
+		hostPort = hostPort[:i]
+	}
+	host := hostPort
+	if h, _, err := net.SplitHostPort(hostPort); err == nil {
+		host = h
+	}
+	host = strings.ToLower(strings.Trim(host, "[]"))
+	return host == "localhost" || strings.HasSuffix(host, ".localhost") ||
+		host == "127.0.0.1" || host == "::1"
 }
 
 // GrafanaConfigFromContext extracts Grafana configuration from the context.
@@ -662,7 +714,7 @@ func BuildTransport(cfg *GrafanaConfig, base http.RoundTripper, opts ...Transpor
 	}
 
 	if base == nil {
-		base = http.DefaultTransport
+		base = cfg.HTTPTransport()
 	}
 	transport := base
 
@@ -894,20 +946,38 @@ func fetchPublicURL(ctx context.Context, cfg *GrafanaConfig) string {
 	return result.(string)
 }
 
+// frontendSettings holds the subset of /api/frontend/settings that the MCP
+// server cares about.
+type frontendSettings struct {
+	// AppURL is the public-facing URL (appUrl) of the Grafana instance.
+	AppURL string
+	// Namespace is the Kubernetes-style namespace for the requesting org,
+	// computed server-side by Grafana's namespacer (e.g. "default", "org-2",
+	// or "stacks-123" on Grafana Cloud). Empty if not reported.
+	Namespace string
+}
+
 // doFetchPublicURL performs the actual HTTP request to fetch the public URL.
 func doFetchPublicURL(ctx context.Context, cfg *GrafanaConfig) string {
+	return doFetchFrontendSettings(ctx, cfg).AppURL
+}
+
+// doFetchFrontendSettings performs the actual HTTP request to fetch the
+// Grafana frontend settings, returning the fields the MCP server uses.
+// On any error it returns a zero-value frontendSettings.
+func doFetchFrontendSettings(ctx context.Context, cfg *GrafanaConfig) frontendSettings {
 	logger := cfg.LoggerOrDefault()
 	settingsURL := cfg.URL + "/api/frontend/settings"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, settingsURL, nil)
 	if err != nil {
 		logger.Warn("Failed to create request for frontend settings", "error", err)
-		return ""
+		return frontendSettings{}
 	}
 
 	transport, err := BuildTransport(cfg, nil)
 	if err != nil {
 		logger.Warn("Failed to build transport for frontend settings request", "error", err)
-		return ""
+		return frontendSettings{}
 	}
 
 	httpClient := &http.Client{
@@ -918,34 +988,107 @@ func doFetchPublicURL(ctx context.Context, cfg *GrafanaConfig) string {
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		logger.Warn("Failed to fetch frontend settings", "error", err)
-		return ""
+		return frontendSettings{}
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		logger.Warn("Frontend settings request returned non-OK status", "status", resp.StatusCode)
-		return ""
+		return frontendSettings{}
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		logger.Warn("Failed to read frontend settings response", "error", err)
-		return ""
+		return frontendSettings{}
 	}
 
 	var settings struct {
-		AppURL string `json:"appUrl"`
+		AppURL    string `json:"appUrl"`
+		Namespace string `json:"namespace"`
 	}
 	if err := json.Unmarshal(body, &settings); err != nil {
 		logger.Warn("Failed to parse frontend settings response", "error", err)
-		return ""
+		return frontendSettings{}
 	}
 
 	publicURL := strings.TrimRight(settings.AppURL, "/")
 	if publicURL != "" {
 		logger.Info("Fetched public URL from Grafana frontend settings", "public_url", publicURL)
 	}
-	return publicURL
+	return frontendSettings{AppURL: publicURL, Namespace: settings.Namespace}
+}
+
+// namespaceCache caches the Kubernetes-style namespace per (Grafana URL, OrgID).
+// Unlike the public URL, the namespace depends on the org, so the cache key
+// includes the OrgID. Only non-empty results from frontend settings are cached;
+// the OrgID-derived fallback is cheap and recomputed on each miss.
+var namespaceCache sync.Map // map[string]string ("URL|orgID" -> namespace)
+
+// namespaceFlight deduplicates concurrent frontend-settings fetches for the
+// same (URL, OrgID).
+var namespaceFlight singleflight.Group
+
+// orgNamespace derives a Kubernetes-style namespace from an org ID, matching
+// Grafana authlib's OrgNamespaceFormatter (org 1 / unset maps to "default").
+func orgNamespace(orgID int64) string {
+	if orgID <= 1 {
+		return "default"
+	}
+	return fmt.Sprintf("org-%d", orgID)
+}
+
+// nsResult is the resolved namespace plus whether it came from frontend
+// settings (true) or the OrgID-derived fallback (false).
+type nsResult struct {
+	namespace    string
+	fromSettings bool
+}
+
+// DashboardNamespace returns the Kubernetes-style namespace to use for
+// dashboard.grafana.app API calls, given the Grafana config in ctx, and whether
+// it was resolved from Grafana's /api/frontend/settings (fromSettings=true) or
+// fell back to the OrgID-derived value (fromSettings=false).
+//
+// It prefers the namespace reported by /api/frontend/settings, which is correct
+// for both single-tenant ("default" / "org-N") and Grafana Cloud ("stacks-{id}"),
+// caching successful results per (URL, OrgID). If the settings endpoint is
+// unavailable or omits the namespace, it falls back to deriving the namespace
+// from the OrgID — which is correct on-prem but may be wrong on Grafana Cloud,
+// so callers can use fromSettings to qualify a subsequent not-found.
+func DashboardNamespace(ctx context.Context) (namespace string, fromSettings bool) {
+	cfg := GrafanaConfigFromContext(ctx)
+	fallback := orgNamespace(cfg.OrgID)
+
+	key := fmt.Sprintf("%s|%d", cfg.URL, cfg.OrgID)
+	if cached, ok := namespaceCache.Load(key); ok {
+		return cached.(string), true
+	}
+
+	result, _, _ := namespaceFlight.Do(key, func() (any, error) {
+		// Double-check cache inside singleflight.
+		if cached, ok := namespaceCache.Load(key); ok {
+			return nsResult{cached.(string), true}, nil
+		}
+
+		// Detached context with timeout so a cancelled caller doesn't fail the
+		// fetch for all waiters; re-inject the GrafanaConfig so the request
+		// carries the right auth and Org-ID header.
+		fetchCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		fetchCtx = WithGrafanaConfig(fetchCtx, cfg)
+
+		ns := doFetchFrontendSettings(fetchCtx, &cfg).Namespace
+		if ns != "" {
+			namespaceCache.Store(key, ns)
+			return nsResult{ns, true}, nil
+		}
+		// Don't cache the fallback, so a transient settings failure is retried.
+		return nsResult{fallback, false}, nil
+	})
+
+	r := result.(nsResult)
+	return r.namespace, r.fromSettings
 }
 
 // NewGrafanaClient creates a Grafana client with the provided URL and API key.
@@ -1152,6 +1295,51 @@ func GrafanaClientFromContext(ctx context.Context) *GrafanaClient {
 	return c
 }
 
+type kubernetesClientKey struct{}
+
+// ExtractKubernetesClientFromEnv is a StdioContextFunc that creates and injects a
+// Kubernetes-style API client into the context, used by tools that talk to
+// Grafana's app-platform APIs (e.g. dashboard.grafana.app). On failure it injects
+// a nil client; callers fall back to the legacy API.
+var ExtractKubernetesClientFromEnv server.StdioContextFunc = func(ctx context.Context) context.Context {
+	logger := LoggerFromContext(ctx)
+	client, err := NewKubernetesClient(ctx)
+	if err != nil {
+		logger.Warn("Failed to create Kubernetes client; k8s APIs will be unavailable", "error", err)
+		return WithKubernetesClient(ctx, nil)
+	}
+	return WithKubernetesClient(ctx, client)
+}
+
+// ExtractKubernetesClientFromHeaders is a HTTPContextFunc that creates and injects a
+// Kubernetes-style API client into the context for HTTP/SSE transports.
+var ExtractKubernetesClientFromHeaders httpContextFunc = func(ctx context.Context, req *http.Request) context.Context {
+	config := GrafanaConfigFromContext(ctx)
+	logger := config.LoggerOrDefault()
+	client, err := NewKubernetesClient(ctx)
+	if err != nil {
+		logger.Warn("Failed to create Kubernetes client; k8s APIs will be unavailable", "error", err)
+		return WithKubernetesClient(ctx, nil)
+	}
+	return WithKubernetesClient(ctx, client)
+}
+
+// WithKubernetesClient sets the Kubernetes-style API client in the context.
+func WithKubernetesClient(ctx context.Context, c *KubernetesClient) context.Context {
+	return context.WithValue(ctx, kubernetesClientKey{}, c)
+}
+
+// KubernetesClientFromContext retrieves the Kubernetes-style API client from the
+// context. Returns nil if no client has been set (or creation failed); callers
+// should handle nil by falling back to the legacy Grafana API.
+func KubernetesClientFromContext(ctx context.Context) *KubernetesClient {
+	c, ok := ctx.Value(kubernetesClientKey{}).(*KubernetesClient)
+	if !ok {
+		return nil
+	}
+	return c
+}
+
 type incidentClientKey struct{}
 
 // ExtractIncidentClientFromEnv is a StdioContextFunc that creates and injects a Grafana Incident client into the context.
@@ -1261,6 +1449,7 @@ func ComposedStdioContextFunc(config GrafanaConfig) server.StdioContextFunc {
 		},
 		ExtractGrafanaInfoFromEnv,
 		ExtractGrafanaClientFromEnv,
+		ExtractKubernetesClientFromEnv,
 		ExtractIncidentClientFromEnv,
 	)
 }
@@ -1269,13 +1458,14 @@ func ComposedStdioContextFunc(config GrafanaConfig) server.StdioContextFunc {
 // It sets up the complete context for SSE transport, extracting configuration from HTTP headers with environment variable fallbacks.
 // If cache is non-nil, clients are cached by credentials to avoid per-request transport allocation.
 func ComposedSSEContextFunc(config GrafanaConfig, cache ...*ClientCache) server.SSEContextFunc {
-	grafanaExtractor, incidentExtractor := clientExtractors(cache)
+	grafanaExtractor, k8sExtractor, incidentExtractor := clientExtractors(cache)
 	return ComposeSSEContextFuncs(
 		func(ctx context.Context, req *http.Request) context.Context {
 			return WithGrafanaConfig(ctx, config)
 		},
 		ExtractGrafanaInfoFromHeaders,
 		grafanaExtractor,
+		k8sExtractor,
 		incidentExtractor,
 	)
 }
@@ -1284,22 +1474,23 @@ func ComposedSSEContextFunc(config GrafanaConfig, cache ...*ClientCache) server.
 // It provides the complete context setup for HTTP transport, including header-based authentication and client configuration.
 // If cache is non-nil, clients are cached by credentials to avoid per-request transport allocation.
 func ComposedHTTPContextFunc(config GrafanaConfig, cache ...*ClientCache) server.HTTPContextFunc {
-	grafanaExtractor, incidentExtractor := clientExtractors(cache)
+	grafanaExtractor, k8sExtractor, incidentExtractor := clientExtractors(cache)
 	return ComposeHTTPContextFuncs(
 		func(ctx context.Context, req *http.Request) context.Context {
 			return WithGrafanaConfig(ctx, config)
 		},
 		ExtractGrafanaInfoFromHeaders,
 		grafanaExtractor,
+		k8sExtractor,
 		incidentExtractor,
 	)
 }
 
 // clientExtractors returns the appropriate client extraction functions,
 // using cached versions if a cache is provided.
-func clientExtractors(cache []*ClientCache) (httpContextFunc, httpContextFunc) {
+func clientExtractors(cache []*ClientCache) (grafana, k8s, incident httpContextFunc) {
 	if len(cache) > 0 && cache[0] != nil {
-		return extractGrafanaClientCached(cache[0]), extractIncidentClientCached(cache[0])
+		return extractGrafanaClientCached(cache[0]), extractKubernetesClientCached(cache[0]), extractIncidentClientCached(cache[0])
 	}
-	return ExtractGrafanaClientFromHeaders, ExtractIncidentClientFromHeaders
+	return ExtractGrafanaClientFromHeaders, ExtractKubernetesClientFromHeaders, ExtractIncidentClientFromHeaders
 }

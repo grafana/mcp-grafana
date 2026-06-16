@@ -3,7 +3,6 @@ package tools
 import (
 	"context"
 	"fmt"
-	"time"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -15,8 +14,8 @@ type QueryElasticsearchParams struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the Elasticsearch or OpenSearch datasource to query"`
 	Index         string `json:"index" jsonschema:"required,description=The index pattern to search (e.g.\\, 'logs-*'\\, 'filebeat-*'\\, or a specific index name)"`
 	Query         string `json:"query" jsonschema:"required,description=The search query. For Elasticsearch datasources\\, this can be either Lucene query syntax (e.g.\\, 'status:200 AND host:server1') or Elasticsearch Query DSL JSON (for advanced queries with aggregations). For OpenSearch datasources\\, only Lucene query syntax is supported."`
-	StartTime     string `json:"startTime,omitempty" jsonschema:"description=Optionally\\, the start time in RFC3339 format (e.g.\\, '2024-01-01T00:00:00Z'). Filters results to documents with @timestamp >= this value"`
-	EndTime       string `json:"endTime,omitempty" jsonschema:"description=Optionally\\, the end time in RFC3339 format (e.g.\\, '2024-01-01T23:59:59Z'). Filters results to documents with @timestamp <= this value"`
+	StartTime     string `json:"startTime,omitempty" jsonschema:"description=Optionally\\, the start time. Filters results to documents with the configured time field (default @timestamp) >= this value. Supports RFC3339 (e.g. '2024-01-01T00:00:00Z')\\, relative to now (e.g. 'now'\\, 'now-1h'\\, 'now-30m')\\, or Unix timestamps"`
+	EndTime       string `json:"endTime,omitempty" jsonschema:"description=Optionally\\, the end time. Filters results to documents with the configured time field (default @timestamp) <= this value. Supports RFC3339 (e.g. '2024-01-01T23:59:59Z')\\, relative to now (e.g. 'now'\\, 'now-1h')\\, or Unix timestamps"`
 	Limit         int    `json:"limit,omitempty" jsonschema:"default=10,description=Optionally\\, the maximum number of documents to return (max: 100\\, default: 10)"`
 }
 
@@ -27,21 +26,14 @@ func queryElasticsearch(ctx context.Context, args QueryElasticsearchParams) ([]E
 		return nil, fmt.Errorf("getting backend: %w", err)
 	}
 
-	// Parse time range if provided
-	var startTime, endTime *time.Time
-	if args.StartTime != "" {
-		t, err := time.Parse(time.RFC3339, args.StartTime)
-		if err != nil {
-			return nil, fmt.Errorf("parsing start time: %w", err)
-		}
-		startTime = &t
+	startTime, err := parseStartTime(args.StartTime)
+	if err != nil {
+		return nil, fmt.Errorf("parsing start time: %w", err)
 	}
-	if args.EndTime != "" {
-		t, err := time.Parse(time.RFC3339, args.EndTime)
-		if err != nil {
-			return nil, fmt.Errorf("parsing end time: %w", err)
-		}
-		endTime = &t
+
+	endTime, err := parseEndTime(args.EndTime)
+	if err != nil {
+		return nil, fmt.Errorf("parsing end time: %w", err)
 	}
 
 	// Apply limit constraints

@@ -19,6 +19,17 @@ func TestLokiTools(t *testing.T) {
 		assert.NotEmpty(t, result, "Should have at least one label name")
 	})
 
+	t.Run("list loki label names with relative time range", func(t *testing.T) {
+		ctx := newTestContext()
+		result, err := listLokiLabelNames(ctx, ListLokiLabelNamesParams{
+			DatasourceUID: "loki",
+			StartRFC3339:  "now-1h",
+			EndRFC3339:    "now",
+		})
+		require.NoError(t, err)
+		assert.NotEmpty(t, result, "Should have at least one label name")
+	})
+
 	t.Run("get loki label values", func(t *testing.T) {
 		ctx := newTestContext()
 		result, err := listLokiLabelValues(ctx, ListLokiLabelValuesParams{
