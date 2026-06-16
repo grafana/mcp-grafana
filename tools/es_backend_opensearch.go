@@ -36,8 +36,9 @@ func newOpenSearchBackend(ctx context.Context, ds *models.DataSource) (*openSear
 	}
 
 	client := &http.Client{
-		Transport: transport,
-		Timeout:   30 * time.Second,
+		Transport:     transport,
+		Timeout:       30 * time.Second,
+		CheckRedirect: refuseRedirect,
 	}
 
 	// The OpenSearch plugin stores the index pattern in jsonData.database,

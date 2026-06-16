@@ -319,8 +319,46 @@ const (
 // WithGrafanaConfig adds Grafana configuration to the context.
 // This configuration includes API credentials, debug settings, and TLS options that will be used by all Grafana clients created from this context.
 func WithGrafanaConfig(ctx context.Context, config GrafanaConfig) context.Context {
-	config.URL = strings.TrimRight(config.URL, "/")
+	config.URL = normalizeGrafanaURL(config.URL)
 	return context.WithValue(ctx, grafanaConfigKey{}, config)
+}
+
+// normalizeGrafanaURL cleans up a configured Grafana URL so that requests built
+// from it are well-formed and don't trip avoidable redirects. It trims
+// surrounding whitespace and trailing slashes, and supplies a scheme when none
+// is provided — a schemeless value like "grafana.example.com" would otherwise
+// be parsed as a relative path and produce broken request URLs. Schemeless
+// local addresses default to http (local Grafana rarely serves TLS); everything
+// else defaults to https. An empty input is returned unchanged.
+func normalizeGrafanaURL(raw string) string {
+	u := strings.TrimRight(strings.TrimSpace(raw), "/")
+	if u == "" {
+		return ""
+	}
+	if !strings.Contains(u, "://") {
+		if isLocalHostPort(u) {
+			u = "http://" + u
+		} else {
+			u = "https://" + u
+		}
+	}
+	return u
+}
+
+// isLocalHostPort reports whether a schemeless URL points at a local address,
+// e.g. "localhost:3000", "127.0.0.1", or "[::1]:3000".
+func isLocalHostPort(hostPort string) bool {
+	// Drop any path/query so only the host[:port] is inspected.
+	if i := strings.IndexAny(hostPort, "/?"); i >= 0 {
+		hostPort = hostPort[:i]
+	}
+	host := hostPort
+	if h, _, err := net.SplitHostPort(hostPort); err == nil {
+		host = h
+	}
+	host = strings.ToLower(strings.Trim(host, "[]"))
+	return host == "localhost" || strings.HasSuffix(host, ".localhost") ||
+		host == "127.0.0.1" || host == "::1"
 }
 
 // GrafanaConfigFromContext extracts Grafana configuration from the context.

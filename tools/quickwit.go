@@ -66,7 +66,7 @@ func newQuickwitBackend(ctx context.Context, ds *models.DataSource) (*quickwitBa
 	}
 
 	return &quickwitBackend{
-		httpClient:      &http.Client{Transport: transport},
+		httpClient:      &http.Client{Transport: transport, CheckRedirect: refuseRedirect},
 		baseURL:         proxyURL,
 		configuredIndex: indexFromQuickwitDataSource(ds),
 	}, nil
