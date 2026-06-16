@@ -45,7 +45,7 @@ You can look up defaults, choose `--disable-*` flags, or configure TLS without r
 
 - `--enabled-tools`: Comma-separated list of enabled tool **categories**. The default is exactly:
 
-  `search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering`
+  `search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering,snapshot`
 
   Categories **not** in that default string are off until you add them, including: `admin`, `elasticsearch`, `cloudwatch`, `examples`, `clickhouse`, `snowflake`, `influxdb`, `quickwit`, and `runpanelquery`. Pass a full comma-separated list to replace the default entirely, or use `--disable-*` flags to turn off pieces of the default set.
 
@@ -68,6 +68,7 @@ You can look up defaults, choose `--disable-*` flags, or configure TLS without r
 - `--disable-pyroscope`: Disable Pyroscope tools.
 - `--disable-navigation`: Disable navigation (deeplink) tools.
 - `--disable-rendering`: Disable rendering tools (panel or dashboard image export).
+- `--disable-snapshot`: Disable snapshot tools.
 - `--disable-cloudwatch`: Disable CloudWatch tools.
 - `--disable-examples`: Disable query examples tools.
 - `--disable-clickhouse`: Disable ClickHouse tools.
@@ -113,6 +114,11 @@ When enabled, the following writes are disabled:
 
 - `find_error_pattern_logs` (creates investigations)
 - `find_slow_requests` (creates investigations)
+
+**Snapshot tools**
+
+- `create_snapshot`
+- `delete_snapshot`
 
 Read operations (queries, lists, searches) stay available.
 
