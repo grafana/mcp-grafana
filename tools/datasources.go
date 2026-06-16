@@ -114,32 +114,22 @@ type CreateDatasourceResult struct {
 	Health    *DatasourceHealthResult `json:"health,omitempty"`
 }
 
-type noSchemaField struct {
-	Key         string `json:"key"`
-	Description string `json:"description"`
-	Required    bool   `json:"required,omitempty"`
-}
-
 type noSchemaGuidanceResult struct {
-	Type    string          `json:"type"`
-	Message string          `json:"message"`
-	Fields  []noSchemaField `json:"fields"`
+	Type    string `json:"type"`
+	Message string `json:"message"`
 }
 
 func noSchemaGuidance(pluginType string) *noSchemaGuidanceResult {
 	return &noSchemaGuidanceResult{
 		Type: pluginType,
+		// The relevant arguments are already defined in the tool's input schema,
+		// so we don't restate them here. We only convey what the schema can't:
+		// that no field schema exists and that values go into the top-level
+		// arguments, never the fields map.
 		Message: "No schema is available for this datasource type. " +
 			"You MUST ask the user for the value of every required field before calling create_datasource again. " +
-			"For optional fields, ask only if relevant to the user's setup.",
-		Fields: []noSchemaField{
-			{Key: "name", Description: "Display name for the datasource.", Required: true},
-			{Key: "url", Description: "Base URL of the datasource (e.g. http://localhost:8086)."},
-			{Key: "database", Description: "Database name, if applicable."},
-			{Key: "basicAuth", Description: "Set to true to enable basic authentication."},
-			{Key: "isDefault", Description: "Set to true to make this the default datasource."},
-			{Key: "withCredentials", Description: "Set to true to forward browser cookies/credentials."},
-		},
+			"Provide the collected values as top-level arguments — name (required), plus any relevant optional ones such as url, database, basicAuth, isDefault, or withCredentials. " +
+			"Do NOT use the fields map; it applies only to schema-based types.",
 	}
 }
 

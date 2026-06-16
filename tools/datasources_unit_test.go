@@ -255,16 +255,11 @@ func TestCreateDatasource_NoSchemaGuidancePhase(t *testing.T) {
 	var guidance map[string]any
 	require.NoError(t, json.Unmarshal([]byte(text.Text), &guidance))
 	assert.Equal(t, "nonexistent-plugin", guidance["type"])
-	assert.NotEmpty(t, guidance["message"])
-
-	fields, ok := guidance["fields"].([]any)
-	require.True(t, ok)
-	keys := make([]string, 0, len(fields))
-	for _, f := range fields {
-		fm := f.(map[string]any)
-		keys = append(keys, fm["key"].(string))
-	}
-	assert.Contains(t, keys, "name")
+	// Relevant arguments live in the tool's input schema, not the guidance body;
+	// the message must steer the caller to top-level args, not the fields map.
+	message, _ := guidance["message"].(string)
+	assert.Contains(t, message, "top-level arguments")
+	assert.Contains(t, message, "fields map")
 }
 
 func TestCreateDatasource_SchemaGuidancePhase(t *testing.T) {
