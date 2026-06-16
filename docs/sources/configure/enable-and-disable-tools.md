@@ -40,7 +40,7 @@ Some tool categories are disabled by default:
 `--enabled-tools` **replaces** the default list, so to add an optional category you must pass the full set. For example, to keep the defaults and also enable `runpanelquery` and `examples`:
 
 ```bash
-mcp-grafana --enabled-tools search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering,runpanelquery,examples
+mcp-grafana --enabled-tools search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering,snapshot,runpanelquery,examples
 ```
 
 Refer to [Command-line flags](../command-line-flags/) for the default list.
@@ -53,7 +53,7 @@ For tools that come from external MCP servers through Grafana (for example from 
 
 ## Run in read-only mode
 
-Use `--disable-write` to disable all write operations. The server can still read dashboards, run queries, and list resources, but it cannot create or update dashboards, incidents, alert rules, annotations, or investigations.
+Use `--disable-write` to disable all write operations. The server can still read dashboards, run queries, and list resources, but it cannot create or update dashboards, incidents, alert rules, annotations, snapshots, or investigations.
 
 ## Next steps
 
