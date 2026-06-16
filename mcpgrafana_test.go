@@ -697,6 +697,7 @@ func TestWithGrafanaConfigNormalizesURL(t *testing.T) {
 		{"schemeless localhost with path defaults to http", "localhost:3000/grafana", "http://localhost:3000/grafana"},
 		{"schemeless loopback ip defaults to http", "127.0.0.1:3000", "http://127.0.0.1:3000"},
 		{"schemeless ipv6 loopback defaults to http", "[::1]:3000", "http://[::1]:3000"},
+		{"schemeless with :// in query still gets scheme", "example.grafana.net/p?next=http://x", "https://example.grafana.net/p?next=http://x"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

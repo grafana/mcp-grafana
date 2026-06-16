@@ -335,7 +335,7 @@ func normalizeGrafanaURL(raw string) string {
 	if u == "" {
 		return ""
 	}
-	if !strings.Contains(u, "://") {
+	if !hasScheme(u) {
 		if isLocalHostPort(u) {
 			u = "http://" + u
 		} else {
@@ -343,6 +343,20 @@ func normalizeGrafanaURL(raw string) string {
 		}
 	}
 	return u
+}
+
+// hasScheme reports whether u begins with a URL scheme (e.g. "https://"). It
+// looks for "://" in scheme position rather than anywhere in the string, so a
+// schemeless URL whose path or query happens to contain "://" (e.g. a query
+// parameter holding another URL) is still recognised as needing a scheme.
+func hasScheme(u string) bool {
+	i := strings.Index(u, "://")
+	if i <= 0 {
+		return false
+	}
+	// Anything path-, query-, or fragment-like before the "://" means it isn't
+	// a real scheme separator.
+	return !strings.ContainsAny(u[:i], "/?#")
 }
 
 // isLocalHostPort reports whether a schemeless URL points at a local address,
