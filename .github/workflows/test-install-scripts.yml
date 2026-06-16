@@ -13,6 +13,9 @@ on:
       - '.github/workflows/test-install-scripts.yml'
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   test-nodejs-script:
     name: Test Node.js Script
