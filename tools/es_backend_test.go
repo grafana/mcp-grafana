@@ -54,7 +54,7 @@ func TestBuildElasticsearchQueryTimeField(t *testing.T) {
 	end := time.Date(2024, 1, 2, 0, 0, 0, 0, time.UTC)
 
 	t.Run("custom field in sort and range", func(t *testing.T) {
-		query := buildElasticsearchQuery("*", &start, &end, 10, "timestamp")
+		query := esSearchQuery{query: "*", startTime: start, endTime: end, size: 10, timeField: "timestamp"}.build()
 
 		sort, ok := query["sort"].([]map[string]interface{})
 		require.True(t, ok)
@@ -80,7 +80,7 @@ func TestBuildElasticsearchQueryTimeField(t *testing.T) {
 	})
 
 	t.Run("default field unchanged", func(t *testing.T) {
-		query := buildElasticsearchQuery("", &start, &end, 5, defaultTimeField)
+		query := esSearchQuery{startTime: start, endTime: end, size: 5, timeField: defaultTimeField}.build()
 
 		sort, ok := query["sort"].([]map[string]interface{})
 		require.True(t, ok)

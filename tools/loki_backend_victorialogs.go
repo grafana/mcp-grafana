@@ -95,11 +95,7 @@ func addVLTimeRange(params url.Values, start, end time.Time) {
 // the response body. POST is used for /query (which can carry large LogsQL
 // expressions); everything else is GET.
 func (b *victoriaLogsBackend) doRequest(ctx context.Context, method, urlPath string, params url.Values) ([]byte, error) {
-	fullURL := b.baseURL
-	if !strings.HasSuffix(fullURL, "/") && !strings.HasPrefix(urlPath, "/") {
-		fullURL += "/"
-	}
-	fullURL += urlPath
+	fullURL := buildURL(b.baseURL, urlPath)
 
 	var (
 		req *http.Request

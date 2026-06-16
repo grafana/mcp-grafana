@@ -42,7 +42,7 @@ type ElasticsearchDocument struct {
 // datasource types, which both support Lucene query syntax.
 type esBackend interface {
 	// Search executes a search query and returns matching documents.
-	Search(ctx context.Context, index, query string, startTime, endTime *time.Time, limit int) ([]ElasticsearchDocument, error)
+	Search(ctx context.Context, index, query string, startTime, endTime time.Time, limit int) ([]ElasticsearchDocument, error)
 }
 
 // esBackendForDatasource looks up the datasource type and returns the appropriate backend.
@@ -94,7 +94,8 @@ func newElasticsearchBackend(ctx context.Context, ds *models.DataSource) (*elast
 	}
 
 	client := &http.Client{
-		Transport: transport,
+		Transport:     transport,
+		CheckRedirect: refuseRedirect,
 	}
 
 	return &elasticsearchBackend{
@@ -102,17 +103,6 @@ func newElasticsearchBackend(ctx context.Context, ds *models.DataSource) (*elast
 		baseURL:    url,
 		timeField:  timeFieldFromDataSource(ds),
 	}, nil
-}
-
-// buildURL constructs a full URL for an Elasticsearch API endpoint
-func (b *elasticsearchBackend) buildURL(urlPath string) string {
-	fullURL := b.baseURL
-	if !strings.HasSuffix(fullURL, "/") && !strings.HasPrefix(urlPath, "/") {
-		fullURL += "/"
-	} else if strings.HasSuffix(fullURL, "/") && strings.HasPrefix(urlPath, "/") {
-		urlPath = strings.TrimPrefix(urlPath, "/")
-	}
-	return fullURL + urlPath
 }
 
 // elasticsearchResponse represents a generic Elasticsearch search response
@@ -141,10 +131,21 @@ type msearchResponse struct {
 
 // Search performs a search query against Elasticsearch using the _msearch API.
 // Grafana's datasource proxy only allows POST requests to /_msearch for Elasticsearch.
-func (b *elasticsearchBackend) Search(ctx context.Context, index, query string, startTime, endTime *time.Time, limit int) ([]ElasticsearchDocument, error) {
-	searchQuery := buildElasticsearchQuery(query, startTime, endTime, limit, b.timeField)
+func (b *elasticsearchBackend) Search(ctx context.Context, index, query string, startTime, endTime time.Time, limit int) ([]ElasticsearchDocument, error) {
+	url := buildURL(b.baseURL, "/_msearch")
+	searchQuery := esSearchQuery{
+		query:     query,
+		startTime: startTime,
+		endTime:   endTime,
+		size:      limit,
+		timeField: b.timeField,
+	}.build()
+	return executeMSearch(ctx, b.httpClient, url, index, searchQuery, b.timeField)
+}
 
-	// Build NDJSON payload for _msearch API
+// executeMSearch runs an Elasticsearch-compatible _msearch request and converts hits to documents.
+func executeMSearch(ctx context.Context, client *http.Client, url string, index string,
+	searchQuery map[string]interface{}, timeField string) ([]ElasticsearchDocument, error) {
 	header := map[string]interface{}{
 		"index":              index,
 		"ignore_unavailable": true,
@@ -166,15 +167,13 @@ func (b *elasticsearchBackend) Search(ctx context.Context, index, query string, 
 	payload.Write(queryBytes)
 	payload.WriteByte('\n')
 
-	fullURL := b.buildURL("/_msearch")
-
-	req, err := http.NewRequestWithContext(ctx, "POST", fullURL, &payload)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, &payload)
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-ndjson")
 
-	resp, err := b.httpClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("executing request: %w", err)
 	}
@@ -222,7 +221,7 @@ func (b *elasticsearchBackend) Search(ctx context.Context, index, query string, 
 		}
 		if source, ok := hit["_source"].(map[string]interface{}); ok {
 			doc.Source = source
-			switch ts := source[b.timeField].(type) {
+			switch ts := source[timeField].(type) {
 			case string:
 				doc.Timestamp = ts
 			case float64:
@@ -241,64 +240,95 @@ func (b *elasticsearchBackend) Search(ctx context.Context, index, query string, 
 	return documents, nil
 }
 
-// buildElasticsearchQuery constructs an Elasticsearch query DSL JSON object
-func buildElasticsearchQuery(query string, startTime, endTime *time.Time, size int, timeField string) map[string]interface{} {
+// esSearchQuery collects fields to build an Elasticsearch query DSL JSON
+type esSearchQuery struct {
+	query     string
+	startTime time.Time
+	endTime   time.Time
+	size      int
+	timeField string
+	// sortFormat optionally sets the "format" on the time field sort clause,
+	// e.g. "epoch_nanos_int" for Quickwit nanosecond timestamps.
+	sortFormat string
+}
+
+// build constructs the Elasticsearch query DSL JSON
+func (q esSearchQuery) build() map[string]interface{} {
 	esQuery := map[string]interface{}{
-		"size": size,
+		"size": q.size,
 		"sort": []map[string]interface{}{
 			{
-				timeField: map[string]string{
-					"order": "desc",
-				},
+				q.timeField: q.buildSortField(),
 			},
 		},
+		"query": q.buildQueryClause(),
 	}
 
-	var queryClause map[string]interface{}
+	return esQuery
+}
 
-	if startTime != nil || endTime != nil || query != "" {
-		mustClauses := []map[string]interface{}{}
+func (q esSearchQuery) buildSortField() map[string]string {
+	sortField := map[string]string{
+		"order": "desc",
+	}
+	if q.sortFormat != "" {
+		sortField["format"] = q.sortFormat
+	}
+	return sortField
+}
 
-		if startTime != nil || endTime != nil {
-			rangeQuery := map[string]interface{}{
-				timeField: map[string]interface{}{},
-			}
-			if startTime != nil {
-				rangeQuery[timeField].(map[string]interface{})["gte"] = startTime.Format(time.RFC3339)
-			}
-			if endTime != nil {
-				rangeQuery[timeField].(map[string]interface{})["lte"] = endTime.Format(time.RFC3339)
-			}
-			mustClauses = append(mustClauses, map[string]interface{}{
-				"range": rangeQuery,
-			})
-		}
-
-		if query != "" {
-			var parsedQuery map[string]interface{}
-			if err := json.Unmarshal([]byte(query), &parsedQuery); err == nil {
-				mustClauses = append(mustClauses, parsedQuery)
-			} else {
-				mustClauses = append(mustClauses, map[string]interface{}{
-					"query_string": map[string]interface{}{
-						"query": query,
-					},
-				})
-			}
-		}
-
-		queryClause = map[string]interface{}{
-			"bool": map[string]interface{}{
-				"must": mustClauses,
-			},
-		}
-	} else {
-		queryClause = map[string]interface{}{
+func (q esSearchQuery) buildQueryClause() map[string]interface{} {
+	if q.startTime.IsZero() && q.endTime.IsZero() && q.query == "" {
+		return map[string]interface{}{
 			"match_all": map[string]interface{}{},
 		}
 	}
 
-	esQuery["query"] = queryClause
+	mustClauses := []map[string]interface{}{}
 
-	return esQuery
+	if rangeClause := q.buildRangeClause(); rangeClause != nil {
+		mustClauses = append(mustClauses, rangeClause)
+	}
+
+	if q.query != "" {
+		var parsedQuery map[string]interface{}
+		var textClause map[string]interface{}
+		if err := json.Unmarshal([]byte(q.query), &parsedQuery); err == nil {
+			textClause = parsedQuery
+		} else {
+			textClause = map[string]interface{}{
+				"query_string": map[string]interface{}{
+					"query": q.query,
+				},
+			}
+		}
+		if len(mustClauses) == 0 {
+			return textClause
+		}
+		mustClauses = append(mustClauses, textClause)
+	}
+
+	return map[string]interface{}{
+		"bool": map[string]interface{}{
+			"must": mustClauses,
+		},
+	}
+}
+
+func (q esSearchQuery) buildRangeClause() map[string]interface{} {
+	if q.startTime.IsZero() && q.endTime.IsZero() {
+		return nil
+	}
+	rangeQuery := map[string]interface{}{}
+	if !q.startTime.IsZero() {
+		rangeQuery["gte"] = q.startTime.Format(time.RFC3339)
+	}
+	if !q.endTime.IsZero() {
+		rangeQuery["lte"] = q.endTime.Format(time.RFC3339)
+	}
+	return map[string]interface{}{
+		"range": map[string]interface{}{
+			q.timeField: rangeQuery,
+		},
+	}
 }
