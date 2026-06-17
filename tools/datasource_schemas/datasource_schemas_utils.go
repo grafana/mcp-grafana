@@ -42,6 +42,7 @@ var excludedFieldIDs = map[string]bool{
 	"root.basicAuthUser": true,
 	"root.user":          true,
 	"jsonData.user":      true,
+	"jsonData.username":  true,
 }
 
 // IsExcludedField reports whether f is omitted for privacy or credential-handling

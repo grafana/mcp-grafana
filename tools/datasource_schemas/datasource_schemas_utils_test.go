@@ -110,10 +110,12 @@ func TestBuildSchemaGuidance(t *testing.T) {
 			{ID: "root.user", Key: "user", Target: "root", ValueType: "string", Required: true},
 			{ID: "root.basicAuthUser", Key: "basicAuthUser", Target: "root", ValueType: "string"},
 			{ID: "jsonData.user", Key: "user", Target: "jsonData", ValueType: "string", Required: true},
+			{ID: "jsonData.username", Key: "username", Target: "jsonData", ValueType: "string"},
 		}}
 		keys := fieldKeys(BuildSchemaGuidance(schema, "create_datasource").Fields)
 		assert.NotContains(t, keys, "user")
 		assert.NotContains(t, keys, "basicAuthUser")
+		assert.NotContains(t, keys, "username")
 	})
 
 	t.Run("skips experimental lifecycle fields", func(t *testing.T) {
