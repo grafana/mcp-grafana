@@ -1,9 +1,12 @@
 package datasourceschemas
 
 import (
+	"context"
 	"embed"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 )
 
 //go:embed *.json
@@ -45,6 +48,9 @@ var excludedFieldIDs = map[string]bool{
 	"jsonData.username":  true,
 }
 
+
+
+var	schemaBaseURL = "https://plugins-cdn.grafana.net/%[1]s/%[2]s/public/plugins/%[1]s/schema/settings.schema.json"
 // IsExcludedField reports whether f is omitted for privacy or credential-handling
 // reasons.
 func IsExcludedField(f DsSchemaField) bool {
@@ -146,6 +152,32 @@ func LoadDatasourceSchema(pluginType string) (*DatasourceSchema, error) {
 	var s DatasourceSchema
 	if err := json.Unmarshal(data, &s); err != nil {
 		return nil, fmt.Errorf("parse schema for %s: %w", pluginType, err)
+	}
+	return &s, nil
+}
+
+// FetchDatasourceSchema retrieves a datasource schema from a remote URL.
+func FetchDatasourceSchema(ctx context.Context, pluginType, pluginVersion string) (*DatasourceSchema, error) {
+	url := fmt.Sprintf(schemaBaseURL, pluginType, pluginVersion)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build schema request: %w", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetch schema from %s: %w", url, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("fetch schema from %s: unexpected status %d", url, resp.StatusCode)
+	}
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read schema from %s: %w", url, err)
+	}
+	var s DatasourceSchema
+	if err := json.Unmarshal(data, &s); err != nil {
+		return nil, fmt.Errorf("parse schema from %s: %w", url, err)
 	}
 	return &s, nil
 }

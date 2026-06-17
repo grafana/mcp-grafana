@@ -21,6 +21,10 @@ import (
 const (
 	defaultListDataSourceLimit = 50
 	maxListDataSourceLimit     = 100
+
+	// infinityDatasourcePluginID identifies the Infinity datasource plugin in the
+	// Grafana plugins catalog and on the plugins CDN.
+	infinityDatasourcePluginID = "yesoreyeram-infinity-datasource"
 )
 
 type ListDatasourcesParams struct {
@@ -196,7 +200,19 @@ func applyFields(body *models.AddDataSourceCommand, schema *datasourceschemas.Da
 }
 
 func createDatasource(ctx context.Context, args CreateDatasourceParams) (*mcp.CallToolResult, error) {
-	schema, err := datasourceschemas.LoadDatasourceSchema(args.Type)
+	var schema *datasourceschemas.DatasourceSchema
+	var err error
+	if args.Type == infinityDatasourcePluginID {
+		var pluginVersion string
+		pluginVersion, err = fetchLatestPluginVersion(ctx, infinityDatasourcePluginID)
+		if err != nil {
+			return nil, fmt.Errorf("resolve %s plugin version: %w", infinityDatasourcePluginID, err)
+		}
+		schema, err = datasourceschemas.FetchDatasourceSchema(ctx, args.Type, pluginVersion)
+	} else {
+		schema, err = datasourceschemas.LoadDatasourceSchema(args.Type)
+	}
+
 	if err != nil {
 		return nil, err
 	}
