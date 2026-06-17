@@ -205,11 +205,12 @@ func createDatasource(ctx context.Context, args CreateDatasourceParams) (*mcp.Ca
 	// Without a schema: list the explicit params and ask for name + any others
 	// the user wants to set, then call again with those values.
 	//
-	// Creation for a schema-backed type is gated solely on the explicit
-	// SchemaReviewed flag, which the caller sets only after seeing the schema.
-	// This enforces the documented two-call flow: supplying a fields map alone
-	// (or an empty one) is never enough to skip guidance and create directly.
-	if schema != nil && !args.SchemaReviewed {
+	// Creation for a schema-backed type is gated on the explicit SchemaReviewed
+	// flag and required top-level name, which the caller sets only after seeing
+	// the schema. This enforces the documented two-call flow: supplying a fields
+	// map alone (or an empty one) is never enough to skip guidance and create
+	// directly.
+	if schema != nil && (!args.SchemaReviewed || args.Name == "") {
 		text, _ := json.Marshal(datasourceschemas.BuildSchemaGuidance(schema, "create_datasource"))
 		return mcp.NewToolResultText(string(text)), nil
 	}
