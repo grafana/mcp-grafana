@@ -578,6 +578,7 @@ type DatasourceHealthCheckResult struct {
 	Error   string `json:"error,omitempty"`
 }
 
+// BulkDatasourceHealthResult is the paginated, aggregated result of the check_datasources_health tool.
 type BulkDatasourceHealthResult struct {
 	Results   []DatasourceHealthCheckResult `json:"results"`
 	Total     int                           `json:"total"`   // Total matching datasources before pagination
@@ -675,6 +676,7 @@ var CheckDatasourcesHealth = mcpgrafana.MustTool(
 	mcp.WithReadOnlyHintAnnotation(true),
 )
 
+// AddDatasourceTools registers the datasource tools on the MCP server; write tools are registered only when enableWriteTools is true.
 func AddDatasourceTools(mcp *server.MCPServer, enableWriteTools bool) {
 	ListDatasources.Register(mcp)
 	GetDatasource.Register(mcp)

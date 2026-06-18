@@ -138,6 +138,7 @@ type datasourceSchemaGuidance struct {
 	Fields     []GuidanceField `json:"fields"`
 }
 
+// LoadDatasourceSchema loads the embedded schema for the given plugin type, returning (nil, nil) when no schema exists for it.
 func LoadDatasourceSchema(pluginType string) (*DatasourceSchema, error) {
 	data, err := datasourceSchemaFiles.ReadFile(fmt.Sprintf("%s_schema.json", pluginType))
 	if err != nil {
@@ -150,6 +151,7 @@ func LoadDatasourceSchema(pluginType string) (*DatasourceSchema, error) {
 	return &s, nil
 }
 
+// SchemaFieldInputKey returns the key callers use for f in the fields map, namespaced by section when present.
 func SchemaFieldInputKey(f DsSchemaField) string {
 	if f.Section == "" {
 		return f.Key
@@ -183,6 +185,7 @@ func toGuidanceField(f DsSchemaField) GuidanceField {
 	return gf
 }
 
+// BuildSchemaGuidance builds the field guidance sent to the LLM for the given schema and tool, omitting virtual and sensitive fields.
 func BuildSchemaGuidance(schema *DatasourceSchema, toolName string) *datasourceSchemaGuidance {
 	fields := make([]GuidanceField, 0, len(commonDatasourceFields)+len(schema.Fields))
 	for _, f := range commonDatasourceFields {
