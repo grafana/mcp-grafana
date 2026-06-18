@@ -451,7 +451,7 @@ func TestCreateDatasource_Success(t *testing.T) {
 	defer srv.Close()
 
 	ctx := mockDatasourcesCtx(srv)
-	mcpgrafana.GrafanaClientFromContext(ctx).PublicURL = "https://grafana.example.com"
+	mcpgrafana.GrafanaClientFromContext(ctx).PublicURL = "https://grafana.example.com/"
 
 	toolResult, err := createDatasource(ctx, CreateDatasourceParams{
 		Name:           name,
