@@ -427,7 +427,6 @@ type UpdateDatasourceResult struct {
 }
 
 func updateDatasource(ctx context.Context, args UpdateDatasourceParams) (*UpdateDatasourceResult, error) {
-	// pending add credential violation check
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
 
 	current, err := c.Datasources.GetDataSourceByUIDWithParams(
