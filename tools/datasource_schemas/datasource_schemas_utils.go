@@ -111,12 +111,28 @@ type DsSchemaField struct {
 	UI           *dsFieldUI          `json:"ui,omitempty"`
 }
 
-type DatasourceSchema struct {
-	PluginType string          `json:"pluginType"`
-	PluginName string          `json:"pluginName"`
-	DocURL     string          `json:"docURL"`
-	Fields     []DsSchemaField `json:"fields"`
+// SchemaInstruction is a free-text directive attached to a schema, used to
+// convey guidance the structured fields can't capture (e.g. "this datasource
+// supports basic auth, no auth, or forwarded OAuth — ask the user which to
+// use"). Only instructions tagged for the LLM are surfaced in guidance; see
+// instructionTagLLM.
+type SchemaInstruction struct {
+	Message string   `json:"message"`
+	Tags    []string `json:"tags,omitempty"`
 }
+
+type DatasourceSchema struct {
+	PluginType   string              `json:"pluginType"`
+	PluginName   string              `json:"pluginName"`
+	DocURL       string              `json:"docURL"`
+	Fields       []DsSchemaField     `json:"fields"`
+	Instructions []SchemaInstruction `json:"instructions,omitempty"`
+}
+
+// instructionTagLLM marks a SchemaInstruction as intended for the agent. Only
+// instructions carrying this tag are stripped out of the schema and surfaced in
+// the guidance sent to the LLM.
+const instructionTagLLM = "llm"
 
 // GuidanceField is the slim per-field representation sent to the LLM.
 // It contains only what is needed to prompt the user and populate the fields map.
@@ -128,6 +144,11 @@ type GuidanceField struct {
 	Type          string `json:"type"`
 	Default       any    `json:"default,omitempty"`
 	AllowedValues []any  `json:"allowedValues,omitempty"`
+	// DependsOn, when set, is the condition under which this field is relevant
+	// (e.g. "jsonData.selectedAuthType == 'github-app'"). The agent should only
+	// collect and send the field when the condition holds — typically after the
+	// user has chosen an auth method or other branching option.
+	DependsOn string `json:"dependsOn,omitempty"`
 }
 
 type datasourceSchemaGuidance struct {
@@ -135,7 +156,11 @@ type datasourceSchemaGuidance struct {
 	PluginName string          `json:"plugin_name"`
 	DocURL     string          `json:"doc_url,omitempty"`
 	Message    string          `json:"message"`
-	Fields     []GuidanceField `json:"fields"`
+	// Instructions are free-text, schema-authored directives (e.g. which auth
+	// methods are supported and how to pick one). They complement the structured
+	// Fields for cases the field schema can't express on its own.
+	Instructions []string        `json:"instructions,omitempty"`
+	Fields       []GuidanceField `json:"fields"`
 }
 
 // LoadDatasourceSchema loads the embedded schema for the given plugin type, returning (nil, nil) when no schema exists for it.
@@ -169,6 +194,7 @@ func toGuidanceField(f DsSchemaField) GuidanceField {
 		Required:    f.Required,
 		Type:        f.ValueType,
 		Default:     f.DefaultVal,
+		DependsOn:   f.DependsOn,
 	}
 	if f.UI != nil && len(f.UI.Options) > 0 {
 		for _, opt := range f.UI.Options {
@@ -209,11 +235,11 @@ func BuildSchemaGuidance(schema *DatasourceSchema, toolName string) *datasourceS
 		if f.ValueType == "array" || f.ValueType == "map" || f.ValueType == "object" {
 			continue
 		}
-		// Optional fields with a conditional dependency are advanced; skip them
-		// to keep the initial guidance focused on the common case.
-		if f.DependsOn != "" && !f.Required {
-			continue
-		}
+		// Conditional fields (those with a dependsOn) are kept and surfaced with
+		// their condition in GuidanceField.DependsOn. Many auth branches live on
+		// optional conditional fields — e.g. a GitHub App's appId/installationId
+		// only apply when selectedAuthType == 'github-app' — so dropping them
+		// would leave the agent unable to complete that auth path.
 
 		if f.Target != "root" && f.Target != "jsonData" {
 			continue
@@ -232,6 +258,8 @@ func BuildSchemaGuidance(schema *DatasourceSchema, toolName string) *datasourceS
 				"You MUST ask the user for the value of every required field (required=true) before calling %s again. "+
 				"Do NOT infer, guess, or use default values for required fields without explicit confirmation from the user. "+
 				"For optional fields, ask only if they are relevant to the user's setup. "+
+				"Some fields are conditional: a field with a `dependsOn` condition applies only when that condition holds (typically after the user picks an auth method or similar option). Ask for and send a conditional field only once its condition is satisfied. "+
+				"Follow any directives in the `instructions` array — they describe choices (such as which authentication method to use) that the fields alone don't capture. "+
 				"Once you have collected all required values from the user, call %s again with those values in the fields param and set schemaReviewed=true. "+
 				"The datasource display name is a REQUIRED top-level `name` argument (separate from the fields map) — always include it. "+
 				"If this datasource type has no required fields, schemaReviewed=true alone confirms you are ready to create it.",
@@ -239,6 +267,23 @@ func BuildSchemaGuidance(schema *DatasourceSchema, toolName string) *datasourceS
 			toolName,
 			toolName,
 		),
-		Fields: fields,
+		Instructions: llmInstructions(schema.Instructions),
+		Fields:       fields,
 	}
+}
+
+// llmInstructions returns the messages of instructions tagged for the LLM, in
+// schema order. Returns nil when there are none so the field is omitted from
+// the guidance JSON.
+func llmInstructions(instructions []SchemaInstruction) []string {
+	var out []string
+	for _, ins := range instructions {
+		for _, tag := range ins.Tags {
+			if tag == instructionTagLLM {
+				out = append(out, ins.Message)
+				break
+			}
+		}
+	}
+	return out
 }

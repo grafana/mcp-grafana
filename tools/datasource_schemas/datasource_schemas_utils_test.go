@@ -142,16 +142,43 @@ func TestBuildSchemaGuidance(t *testing.T) {
 		assert.Contains(t, keys, "simple")
 	})
 
-	t.Run("skips optional fields with dependsOn, keeps required ones", func(t *testing.T) {
+	t.Run("keeps conditional fields and surfaces their dependsOn condition", func(t *testing.T) {
 		schema := &DatasourceSchema{Fields: []DsSchemaField{
-			{Key: "optDep", Target: "jsonData", ValueType: "string", DependsOn: "other", Required: false},
+			{Key: "optDep", Target: "jsonData", ValueType: "string", DependsOn: "selectedAuthType == 'github-app'", Required: false},
 			{Key: "reqDep", Target: "jsonData", ValueType: "string", DependsOn: "other", Required: true},
 			{Key: "free", Target: "jsonData", ValueType: "string"},
 		}}
-		keys := fieldKeys(BuildSchemaGuidance(schema, "create_datasource").Fields)
-		assert.NotContains(t, keys, "optDep")
+		fields := BuildSchemaGuidance(schema, "create_datasource").Fields
+		keys := fieldKeys(fields)
+		assert.Contains(t, keys, "optDep")
 		assert.Contains(t, keys, "reqDep")
 		assert.Contains(t, keys, "free")
+
+		byKey := make(map[string]GuidanceField, len(fields))
+		for _, f := range fields {
+			byKey[f.Key] = f
+		}
+		assert.Equal(t, "selectedAuthType == 'github-app'", byKey["optDep"].DependsOn)
+		assert.Empty(t, byKey["free"].DependsOn)
+	})
+
+	t.Run("surfaces only llm-tagged instructions", func(t *testing.T) {
+		schema := &DatasourceSchema{
+			Instructions: []SchemaInstruction{
+				{Message: "Supports basic auth, no auth, or forwarded OAuth — ask which.", Tags: []string{"llm"}},
+				{Message: "internal note, not for the agent", Tags: []string{"docs"}},
+				{Message: "untagged note"},
+			},
+		}
+		guidance := BuildSchemaGuidance(schema, "create_datasource")
+		assert.Equal(t, []string{"Supports basic auth, no auth, or forwarded OAuth — ask which."}, guidance.Instructions)
+	})
+
+	t.Run("omits instructions when none are llm-tagged", func(t *testing.T) {
+		schema := &DatasourceSchema{
+			Instructions: []SchemaInstruction{{Message: "docs only", Tags: []string{"docs"}}},
+		}
+		assert.Nil(t, BuildSchemaGuidance(schema, "create_datasource").Instructions)
 	})
 
 	t.Run("section prefix applied to output key", func(t *testing.T) {
