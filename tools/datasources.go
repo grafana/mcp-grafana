@@ -680,7 +680,6 @@ func AddDatasourceTools(mcp *server.MCPServer, enableWriteTools bool) {
 	GetDatasource.Register(mcp)
 	CheckDatasourcesHealth.Register(mcp)
 	if enableWriteTools {
-		// TODO: since these tools are more for set up / admin, when merging to main, we should move them to the admin toolset
 		CreateDatasource.Register(mcp)
 		UpdateDatasource.Register(mcp)
 	}
