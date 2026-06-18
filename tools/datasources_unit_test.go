@@ -355,6 +355,31 @@ func TestCreateDatasource_SchemaReviewedCreatesWithoutFields(t *testing.T) {
 	assert.False(t, result.IsError)
 }
 
+func TestCreateDatasource_SchemaReviewedWithoutNameReturnsGuidance(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("Grafana API must not be called when schemaReviewed is true but name is missing")
+	}))
+	defer srv.Close()
+
+	ctx := mockDatasourcesCtx(srv)
+
+	result, err := createDatasource(ctx, CreateDatasourceParams{
+		Type:           "prometheus",
+		SchemaReviewed: true,
+	})
+	require.NoError(t, err)
+	require.Len(t, result.Content, 1)
+
+	text, ok := result.Content[0].(mcp.TextContent)
+	require.True(t, ok)
+
+	var guidance map[string]any
+	require.NoError(t, json.Unmarshal([]byte(text.Text), &guidance))
+	assert.Equal(t, "prometheus", guidance["type"])
+	message, _ := guidance["message"].(string)
+	assert.Contains(t, message, "top-level `name` argument")
+}
+
 func TestCreateDatasource_NoSchemaCreatesDirectly(t *testing.T) {
 	id := int64(7)
 	name := "My Custom DS"
@@ -426,7 +451,7 @@ func TestCreateDatasource_Success(t *testing.T) {
 	defer srv.Close()
 
 	ctx := mockDatasourcesCtx(srv)
-	mcpgrafana.GrafanaClientFromContext(ctx).PublicURL = "https://grafana.example.com"
+	mcpgrafana.GrafanaClientFromContext(ctx).PublicURL = "https://grafana.example.com/"
 
 	toolResult, err := createDatasource(ctx, CreateDatasourceParams{
 		Name:           name,
