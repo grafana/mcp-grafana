@@ -522,7 +522,11 @@ func newDatasourcesClient(ctx context.Context) (*datasourcesClient, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create transport: %w", err)
 	}
-	httpClient := &http.Client{Transport: transport}
+	timeout := cfg.Timeout
+	if timeout == 0 {
+		timeout = mcpgrafana.DefaultGrafanaClientTimeout
+	}
+	httpClient := &http.Client{Transport: transport, Timeout: timeout}
 
 	return &datasourcesClient{
 		httpClient: httpClient,
@@ -625,14 +629,11 @@ func checkDatasourcesHealth(ctx context.Context, args BulkCheckDatasourceHealthP
 	}
 
 	results := make([]DatasourceHealthCheckResult, len(targets))
-	sem := make(chan struct{}, 10)
 	var wg sync.WaitGroup
 	for i, ds := range targets {
 		wg.Add(1)
-		go func(i int, ds *models.DataSourceListItemDTO) {
+		go func() {
 			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
 			r := DatasourceHealthCheckResult{UID: ds.UID, Name: ds.Name, Type: ds.Type}
 			health, err := checkDatasourceHealth(ctx, CheckDatasourceHealthParams{UID: ds.UID})
 			if err != nil {
@@ -642,7 +643,7 @@ func checkDatasourcesHealth(ctx context.Context, args BulkCheckDatasourceHealthP
 				r.Message = health.Message
 			}
 			results[i] = r
-		}(i, ds)
+		}()
 	}
 	wg.Wait()
 
