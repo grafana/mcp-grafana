@@ -1,0 +1,93 @@
+{
+    "schemaVersion": "v1",
+    "pluginType": "graphite",
+    "pluginName": "Graphite",
+    "docURL": "https://grafana.com/docs/grafana/latest/datasources/graphite/configure/",
+    "fields": [
+        {
+            "id": "jsonData.graphiteVersion",
+            "key": "graphiteVersion",
+            "label": "Version",
+            "description": "This option controls what functions are available in the Graphite query editor. Use 1.1.x for Grafana Cloud Graphite.",
+            "valueType": "string",
+            "target": "jsonData",
+            "required": true,
+            "ui": {
+                "component": "select"
+            }
+        },
+        {
+            "id": "jsonData.graphiteType",
+            "key": "graphiteType",
+            "label": "Graphite backend type",
+            "description": "There are different types of Graphite compatible backends. Choosing Metrictank enables additional features like query processing metadata. Use Default for Grafana Cloud Graphite.",
+            "valueType": "string",
+            "target": "jsonData",
+            "required": true,
+            "defaultValue": "default",
+            "validations": [
+                {
+                    "type": "allowedValues",
+                    "values": [
+                        "default",
+                        "metrictank"
+                    ]
+                }
+            ],
+            "ui": {
+                "component": "select",
+                "options": [
+                    {
+                        "label": "Default",
+                        "value": "default"
+                    },
+                    {
+                        "label": "Metrictank",
+                        "value": "metrictank"
+                    }
+                ]
+            }
+        },
+        {
+            "id": "jsonData.rollupIndicatorEnabled",
+            "key": "rollupIndicatorEnabled",
+            "label": "Rollup indicator",
+            "description": "Shows up as an info icon in panel headers when data is aggregated. Only available when Metrictank is selected.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "dependsOn": "jsonData.graphiteType == 'metrictank'",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.importConfiguration",
+            "key": "importConfiguration",
+            "label": "Label mappings",
+            "description": "Graphite-to-Loki query import configuration for label mappings.",
+            "valueType": "map",
+            "target": "jsonData",
+            "item": {
+                "valueType": "object"
+            }
+        }
+    ],
+    "groups": [
+        {
+            "id": "graphite-details",
+            "title": "Graphite details",
+            "fieldRefs": [
+                "jsonData.graphiteVersion",
+                "jsonData.graphiteType",
+                "jsonData.rollupIndicatorEnabled"
+            ]
+        },
+        {
+            "id": "label-mappings",
+            "title": "Label mappings",
+            "fieldRefs": [
+                "jsonData.importConfiguration"
+            ]
+        }
+    ]
+}

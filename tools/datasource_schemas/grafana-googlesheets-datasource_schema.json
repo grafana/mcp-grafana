@@ -1,0 +1,224 @@
+{
+    "schemaVersion": "v1",
+    "pluginType": "grafana-googlesheets-datasource",
+    "pluginName": "Google Sheets",
+    "docURL": "https://grafana.com/docs/plugins/grafana-googlesheets-datasource/",
+    "fields": [
+        {
+            "id": "jsonData.authenticationType",
+            "key": "authenticationType",
+            "label": "Authentication type",
+            "description": "Which authentication mechanism the datasource uses to talk to Google APIs.",
+            "valueType": "string",
+            "target": "jsonData",
+            "required": true,
+            "defaultValue": "jwt",
+            "validations": [
+                {
+                    "type": "allowedValues",
+                    "values": [
+                        "jwt",
+                        "key",
+                        "gce",
+                        "workloadIdentityFederation"
+                    ]
+                }
+            ],
+            "ui": {
+                "component": "radio",
+                "options": [
+                    {
+                        "label": "Google JWT File",
+                        "value": "jwt"
+                    },
+                    {
+                        "label": "API Key",
+                        "value": "key"
+                    },
+                    {
+                        "label": "GCE Default Service Account",
+                        "value": "gce"
+                    },
+                    {
+                        "label": "Workload Identity Federation",
+                        "value": "workloadIdentityFederation"
+                    }
+                ]
+            }
+        },
+        {
+            "id": "jsonData.authType",
+            "key": "authType",
+            "label": "Auth type (alias)",
+            "description": "Alias for authenticationType. Used by some SDK versions.",
+            "valueType": "string",
+            "target": "jsonData",
+            "validations": [
+                {
+                    "type": "allowedValues",
+                    "values": [
+                        "jwt",
+                        "key",
+                        "gce",
+                        "workloadIdentityFederation"
+                    ]
+                }
+            ]
+        },
+        {
+            "id": "jsonData.defaultProject",
+            "key": "defaultProject",
+            "label": "Default Project",
+            "description": "GCP project ID. In JWT mode, the project_id from the service account JSON.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.clientEmail",
+            "key": "clientEmail",
+            "label": "Client Email",
+            "description": "Service account email address for JWT authentication.",
+            "valueType": "string",
+            "target": "jsonData",
+            "dependsOn": "jsonData.authenticationType == 'jwt'"
+        },
+        {
+            "id": "jsonData.tokenUri",
+            "key": "tokenUri",
+            "label": "Token URI",
+            "description": "OAuth2 token endpoint URI.",
+            "valueType": "string",
+            "target": "jsonData",
+            "defaultValue": "https://oauth2.googleapis.com/token",
+            "dependsOn": "jsonData.authenticationType == 'jwt'"
+        },
+        {
+            "id": "jsonData.privateKeyPath",
+            "key": "privateKeyPath",
+            "label": "Private Key Path",
+            "description": "Path to a local private key file on the Grafana server. Alternative to providing via secureJsonData. Not supported in hosted environments.",
+            "valueType": "string",
+            "target": "jsonData",
+            "dependsOn": "jsonData.authenticationType == 'jwt'"
+        },
+        {
+            "id": "jsonData.serviceAccountToImpersonate",
+            "key": "serviceAccountToImpersonate",
+            "label": "Service Account to Impersonate",
+            "description": "Email of the service account to impersonate.",
+            "valueType": "string",
+            "target": "jsonData",
+            "dependsOn": "jsonData.usingImpersonation == true"
+        },
+        {
+            "id": "jsonData.usingImpersonation",
+            "key": "usingImpersonation",
+            "label": "Service Account Impersonation",
+            "description": "Enable service account impersonation.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.workloadIdentityPoolProvider",
+            "key": "workloadIdentityPoolProvider",
+            "label": "Workload Identity Pool Provider",
+            "description": "The full resource name of the WIF provider.",
+            "valueType": "string",
+            "target": "jsonData",
+            "dependsOn": "jsonData.authenticationType == 'workloadIdentityFederation'"
+        },
+        {
+            "id": "jsonData.wifServiceAccountEmail",
+            "key": "wifServiceAccountEmail",
+            "label": "WIF Service Account Email",
+            "description": "Service account email for Workload Identity Federation.",
+            "valueType": "string",
+            "target": "jsonData",
+            "dependsOn": "jsonData.authenticationType == 'workloadIdentityFederation'"
+        },
+        {
+            "id": "jsonData.defaultSheetID",
+            "key": "defaultSheetID",
+            "label": "Default Spreadsheet ID",
+            "description": "Default Google Sheets spreadsheet ID for queries.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "secureJsonData.privateKey",
+            "key": "privateKey",
+            "label": "Private Key",
+            "description": "Service account private key for JWT authentication.",
+            "valueType": "string",
+            "semanticType": "token",
+            "target": "secureJsonData",
+            "dependsOn": "jsonData.authenticationType == 'jwt'",
+            "ui": {
+                "component": "textarea",
+                "rows": 7
+            }
+        },
+        {
+            "id": "secureJsonData.apiKey",
+            "key": "apiKey",
+            "label": "API Key",
+            "description": "Google API key. Spreadsheets must be publicly shared.",
+            "valueType": "string",
+            "semanticType": "token",
+            "target": "secureJsonData",
+            "dependsOn": "jsonData.authenticationType == 'key'"
+        },
+        {
+            "id": "secureJsonData.jwt",
+            "key": "jwt",
+            "label": "JWT Token",
+            "description": "Complete service account JSON file contents.",
+            "valueType": "string",
+            "semanticType": "token",
+            "target": "secureJsonData",
+            "dependsOn": "jsonData.authenticationType == 'jwt'"
+        }
+    ],
+    "groups": [
+        {
+            "id": "auth",
+            "title": "Authentication",
+            "fieldRefs": [
+                "jsonData.authenticationType",
+                "jsonData.defaultProject",
+                "jsonData.clientEmail",
+                "jsonData.tokenUri",
+                "jsonData.privateKeyPath",
+                "secureJsonData.privateKey",
+                "secureJsonData.apiKey",
+                "secureJsonData.jwt"
+            ]
+        },
+        {
+            "id": "impersonation",
+            "title": "Service Account Impersonation",
+            "fieldRefs": [
+                "jsonData.usingImpersonation",
+                "jsonData.serviceAccountToImpersonate"
+            ]
+        },
+        {
+            "id": "wif",
+            "title": "Workload Identity Federation",
+            "fieldRefs": [
+                "jsonData.workloadIdentityPoolProvider",
+                "jsonData.wifServiceAccountEmail"
+            ]
+        },
+        {
+            "id": "sheets-defaults",
+            "title": "Sheets defaults",
+            "fieldRefs": [
+                "jsonData.defaultSheetID"
+            ]
+        }
+    ]
+}
