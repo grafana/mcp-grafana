@@ -1,0 +1,75 @@
+{
+    "schemaVersion": "v1",
+    "pluginType": "grafana-pagerduty-datasource",
+    "pluginName": "PagerDuty",
+    "fields": [
+        {
+            "id": "jsonData.servers.url",
+            "key": "url",
+            "label": "Server URL",
+            "description": "PagerDuty API server URL.",
+            "valueType": "string",
+            "semanticType": "url",
+            "target": "jsonData",
+            "section": "servers",
+            "required": true
+        },
+        {
+            "id": "jsonData.servers.variables",
+            "key": "variables",
+            "label": "Server Variables",
+            "description": "Server URL template variables.",
+            "valueType": "map",
+            "target": "jsonData",
+            "section": "servers",
+            "item": {
+                "valueType": "string"
+            }
+        },
+        {
+            "id": "jsonData.auth.id",
+            "key": "id",
+            "label": "API Token",
+            "description": "PagerDuty API authentication token.",
+            "valueType": "string",
+            "target": "jsonData",
+            "section": "auth",
+            "required": true
+        },
+        {
+            "id": "jsonData.enableSecureSocksProxy",
+            "key": "enableSecureSocksProxy",
+            "label": "Secure Socks Proxy",
+            "description": "Enable secure SOCKS proxy.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        }
+    ],
+    "groups": [
+        {
+            "id": "connection",
+            "title": "Connection",
+            "fieldRefs": [
+                "jsonData.servers.url",
+                "jsonData.servers.variables"
+            ]
+        },
+        {
+            "id": "auth",
+            "title": "Authentication",
+            "fieldRefs": [
+                "jsonData.auth.id"
+            ]
+        },
+        {
+            "id": "advanced",
+            "title": "Advanced",
+            "fieldRefs": [
+                "jsonData.enableSecureSocksProxy"
+            ]
+        }
+    ]
+}

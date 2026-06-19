@@ -1,0 +1,48 @@
+{
+    "schemaVersion": "v1",
+    "pluginType": "jaeger",
+    "pluginName": "Jaeger",
+    "docURL": "https://grafana.com/docs/grafana/latest/datasources/jaeger/",
+    "fields": [
+        {
+            "id": "jsonData.nodeGraph.enabled",
+            "key": "enabled",
+            "label": "Enable node graph",
+            "description": "Shows the node graph visualization above the trace view.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "section": "nodeGraph",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.traceIdTimeParams.enabled",
+            "key": "enabled",
+            "label": "Enable Trace ID time params",
+            "description": "When enabled, Grafana will send start and end time parameters when querying by trace ID to improve query performance.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "section": "traceIdTimeParams",
+            "ui": {
+                "component": "switch"
+            }
+        }
+    ],
+    "groups": [
+        {
+            "id": "node-graph",
+            "title": "Node graph",
+            "fieldRefs": [
+                "jsonData.nodeGraph.enabled"
+            ]
+        },
+        {
+            "id": "traceid",
+            "title": "Trace ID lookup",
+            "fieldRefs": [
+                "jsonData.traceIdTimeParams.enabled"
+            ]
+        }
+    ]
+}

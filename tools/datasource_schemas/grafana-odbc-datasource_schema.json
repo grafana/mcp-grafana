@@ -1,0 +1,46 @@
+{
+    "schemaVersion": "v1",
+    "pluginType": "grafana-odbc-datasource",
+    "pluginName": "Sqlyze (ODBC)",
+    "fields": [
+        {
+            "id": "jsonData.driver",
+            "key": "driver",
+            "label": "Driver",
+            "description": "ODBC driver to use for the connection.",
+            "valueType": "string",
+            "target": "jsonData",
+            "required": true
+        },
+        {
+            "id": "jsonData.timeout",
+            "key": "timeout",
+            "label": "Timeout",
+            "description": "Connection timeout value.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.settings",
+            "key": "settings",
+            "label": "Connection Settings",
+            "description": "Key-value pairs for the ODBC connection string.",
+            "valueType": "array",
+            "target": "jsonData",
+            "item": {
+                "valueType": "object"
+            }
+        }
+    ],
+    "groups": [
+        {
+            "id": "connection",
+            "title": "Connection Settings",
+            "fieldRefs": [
+                "jsonData.driver",
+                "jsonData.timeout",
+                "jsonData.settings"
+            ]
+        }
+    ]
+}

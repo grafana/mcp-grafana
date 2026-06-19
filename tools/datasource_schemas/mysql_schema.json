@@ -1,0 +1,126 @@
+{
+    "schemaVersion": "v1",
+    "pluginType": "mysql",
+    "pluginName": "MySQL",
+    "docURL": "https://grafana.com/docs/grafana/latest/datasources/mysql/",
+    "fields": [
+        {
+            "id": "jsonData.database",
+            "key": "database",
+            "label": "Database",
+            "description": "MySQL database name.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.maxOpenConns",
+            "key": "maxOpenConns",
+            "label": "Max open connections",
+            "description": "Maximum number of open connections to the database. Default is unlimited.",
+            "valueType": "number",
+            "target": "jsonData",
+            "validations": [
+                {
+                    "type": "range",
+                    "min": 0
+                }
+            ]
+        },
+        {
+            "id": "jsonData.maxIdleConns",
+            "key": "maxIdleConns",
+            "label": "Max idle connections",
+            "description": "Maximum number of idle connections in the connection pool. Default is 2.",
+            "valueType": "number",
+            "target": "jsonData",
+            "defaultValue": 2,
+            "validations": [
+                {
+                    "type": "range",
+                    "min": 0
+                }
+            ]
+        },
+        {
+            "id": "jsonData.connMaxLifetime",
+            "key": "connMaxLifetime",
+            "label": "Max connection lifetime",
+            "description": "Maximum lifetime of a connection in seconds. Default is 14400 (4 hours).",
+            "valueType": "number",
+            "target": "jsonData",
+            "defaultValue": 14400,
+            "validations": [
+                {
+                    "type": "range",
+                    "min": 0
+                }
+            ]
+        },
+        {
+            "id": "jsonData.allowCleartextPasswords",
+            "key": "allowCleartextPasswords",
+            "label": "Allow cleartext passwords",
+            "description": "Allow sending passwords in cleartext. Needed for some authentication modes.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.timeInterval",
+            "key": "timeInterval",
+            "label": "Min time interval",
+            "description": "A lower limit for the auto group-by time interval. Recommended to be set to write frequency.",
+            "valueType": "string",
+            "semanticType": "duration",
+            "target": "jsonData",
+            "ui": {
+                "component": "input",
+                "placeholder": "1m"
+            }
+        },
+        {
+            "id": "secureJsonData.password",
+            "key": "password",
+            "label": "Password",
+            "description": "Database password.",
+            "valueType": "string",
+            "semanticType": "password",
+            "target": "secureJsonData"
+        }
+    ],
+    "groups": [
+        {
+            "id": "connection",
+            "title": "MySQL Connection",
+            "fieldRefs": [
+                "jsonData.database"
+            ]
+        },
+        {
+            "id": "connection-limits",
+            "title": "Connection Limits",
+            "fieldRefs": [
+                "jsonData.maxOpenConns",
+                "jsonData.maxIdleConns",
+                "jsonData.connMaxLifetime"
+            ]
+        },
+        {
+            "id": "settings",
+            "title": "Settings",
+            "fieldRefs": [
+                "jsonData.allowCleartextPasswords",
+                "jsonData.timeInterval"
+            ]
+        },
+        {
+            "id": "auth",
+            "title": "Authentication",
+            "fieldRefs": [
+                "secureJsonData.password"
+            ]
+        }
+    ]
+}

@@ -1,0 +1,80 @@
+{
+    "schemaVersion": "v1",
+    "pluginType": "grafana-splunkobservability-datasource",
+    "pluginName": "Splunk Observability Cloud",
+    "fields": [
+        {
+            "id": "jsonData.realmName",
+            "key": "realmName",
+            "label": "Realm",
+            "description": "Splunk Observability Cloud realm (e.g. us0, us1, eu0).",
+            "valueType": "string",
+            "target": "jsonData",
+            "required": true
+        },
+        {
+            "id": "jsonData.url_metrics_metadata",
+            "key": "url_metrics_metadata",
+            "label": "Metrics Metadata URL",
+            "description": "Override URL for metrics metadata API.",
+            "valueType": "string",
+            "semanticType": "url",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.url_signalflow",
+            "key": "url_signalflow",
+            "label": "SignalFlow URL",
+            "description": "Override URL for SignalFlow API.",
+            "valueType": "string",
+            "semanticType": "url",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.enableSecureSocksProxy",
+            "key": "enableSecureSocksProxy",
+            "label": "Secure Socks Proxy",
+            "description": "Enable secure SOCKS proxy.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "secureJsonData.accessToken",
+            "key": "accessToken",
+            "label": "Access Token",
+            "description": "Splunk Observability Cloud access token.",
+            "valueType": "string",
+            "target": "secureJsonData",
+            "required": true,
+            "semanticType": "token"
+        }
+    ],
+    "groups": [
+        {
+            "id": "connection",
+            "title": "Connection",
+            "fieldRefs": [
+                "jsonData.realmName"
+            ]
+        },
+        {
+            "id": "auth",
+            "title": "Authentication",
+            "fieldRefs": [
+                "secureJsonData.accessToken"
+            ]
+        },
+        {
+            "id": "advanced",
+            "title": "Advanced",
+            "fieldRefs": [
+                "jsonData.url_metrics_metadata",
+                "jsonData.url_signalflow",
+                "jsonData.enableSecureSocksProxy"
+            ]
+        }
+    ]
+}

@@ -1,0 +1,36 @@
+{
+    "schemaVersion": "v1",
+    "pluginType": "grafana-azure-monitor-datasource",
+    "pluginName": "Azure Monitor",
+    "fields": [
+        { "id": "jsonData.cloudName", "key": "cloudName", "label": "Azure Cloud", "description": "Azure cloud environment.", "valueType": "string", "target": "jsonData", "defaultValue": "azuremonitor", "validations": [{ "type": "allowedValues", "values": ["azuremonitor", "chinaazuremonitor", "govazuremonitor", "customizedazuremonitor"] }] },
+        { "id": "jsonData.azureAuthType", "key": "azureAuthType", "label": "Authentication", "description": "Azure AD authentication type.", "valueType": "string", "target": "jsonData", "defaultValue": "msi", "validations": [{ "type": "allowedValues", "values": ["clientsecret", "clientcertificate", "msi", "workloadidentity", "currentuser", "ad-password"] }] },
+        { "id": "jsonData.azureCredentials", "key": "azureCredentials", "label": "Azure Credentials", "description": "Azure credentials configuration object.", "valueType": "object", "target": "jsonData" },
+        { "id": "jsonData.tenantId", "key": "tenantId", "label": "Directory (Tenant) ID", "description": "Azure AD directory (tenant) ID.", "valueType": "string", "target": "jsonData" },
+        { "id": "jsonData.clientId", "key": "clientId", "label": "Application (Client) ID", "description": "Azure AD application (client) ID.", "valueType": "string", "target": "jsonData" },
+        { "id": "jsonData.subscriptionId", "key": "subscriptionId", "label": "Default Subscription", "description": "Default Azure subscription ID.", "valueType": "string", "target": "jsonData" },
+        { "id": "jsonData.basicLogsEnabled", "key": "basicLogsEnabled", "label": "Basic Logs", "description": "Enable Azure Monitor Basic Logs queries.", "valueType": "boolean", "target": "jsonData", "ui": { "component": "switch" } },
+        { "id": "jsonData.azureLogAnalyticsSameAs", "key": "azureLogAnalyticsSameAs", "label": "Same credentials for Log Analytics", "description": "Use the same credentials for Azure Log Analytics.", "valueType": "boolean", "target": "jsonData", "defaultValue": true, "ui": { "component": "switch" } },
+        { "id": "jsonData.logAnalyticsTenantId", "key": "logAnalyticsTenantId", "label": "Log Analytics Tenant ID", "description": "Azure AD tenant ID for Log Analytics.", "valueType": "string", "target": "jsonData", "dependsOn": "jsonData.azureLogAnalyticsSameAs == false" },
+        { "id": "jsonData.logAnalyticsClientId", "key": "logAnalyticsClientId", "label": "Log Analytics Client ID", "description": "Azure AD client ID for Log Analytics.", "valueType": "string", "target": "jsonData", "dependsOn": "jsonData.azureLogAnalyticsSameAs == false" },
+        { "id": "jsonData.logAnalyticsSubscriptionId", "key": "logAnalyticsSubscriptionId", "label": "Log Analytics Subscription", "description": "Azure subscription ID for Log Analytics.", "valueType": "string", "target": "jsonData", "dependsOn": "jsonData.azureLogAnalyticsSameAs == false" },
+        { "id": "jsonData.logAnalyticsDefaultWorkspace", "key": "logAnalyticsDefaultWorkspace", "label": "Default Workspace", "description": "Default Log Analytics workspace ID.", "valueType": "string", "target": "jsonData" },
+        { "id": "jsonData.appInsightsAppId", "key": "appInsightsAppId", "label": "Application Insights App ID", "description": "Application Insights application ID (deprecated).", "valueType": "string", "target": "jsonData" },
+        { "id": "jsonData.enableSecureSocksProxy", "key": "enableSecureSocksProxy", "label": "Secure Socks Proxy", "description": "Enable secure SOCKS proxy.", "valueType": "boolean", "target": "jsonData", "ui": { "component": "switch" } },
+        { "id": "jsonData.timeout", "key": "timeout", "label": "Timeout (seconds)", "description": "HTTP request timeout in seconds.", "valueType": "number", "target": "jsonData" },
+        { "id": "jsonData.keepCookies", "key": "keepCookies", "label": "Allowed Cookies", "description": "Cookie names to forward to Azure.", "valueType": "array", "target": "jsonData", "item": { "valueType": "string" } },
+        { "id": "jsonData.customizedRoutes", "key": "customizedRoutes", "label": "Custom Routes", "description": "Custom Azure API endpoint overrides.", "valueType": "map", "target": "jsonData", "item": { "valueType": "string" } },
+        { "id": "secureJsonData.clientSecret", "key": "clientSecret", "label": "Client Secret", "description": "Azure AD application client secret.", "valueType": "string", "target": "secureJsonData", "semanticType": "token" },
+        { "id": "secureJsonData.azureClientSecret", "key": "azureClientSecret", "label": "Azure Client Secret", "description": "Azure AD client secret (alternate field).", "valueType": "string", "target": "secureJsonData", "semanticType": "token" },
+        { "id": "secureJsonData.appInsightsApiKey", "key": "appInsightsApiKey", "label": "Application Insights API Key", "description": "Application Insights API key (deprecated).", "valueType": "string", "target": "secureJsonData", "semanticType": "token" },
+        { "id": "secureJsonData.logAnalyticsClientSecret", "key": "logAnalyticsClientSecret", "label": "Log Analytics Client Secret", "description": "Azure AD client secret for Log Analytics.", "valueType": "string", "target": "secureJsonData", "semanticType": "token", "dependsOn": "jsonData.azureLogAnalyticsSameAs == false" }
+    ],
+    "groups": [
+        { "id": "connection", "title": "Connection", "fieldRefs": ["jsonData.cloudName"] },
+        { "id": "auth", "title": "Authentication", "fieldRefs": ["jsonData.azureAuthType", "jsonData.azureCredentials", "jsonData.tenantId", "jsonData.clientId", "secureJsonData.clientSecret", "secureJsonData.azureClientSecret"] },
+        { "id": "subscription", "title": "Default Resources", "fieldRefs": ["jsonData.subscriptionId"] },
+        { "id": "logAnalytics", "title": "Azure Log Analytics", "fieldRefs": ["jsonData.azureLogAnalyticsSameAs", "jsonData.logAnalyticsTenantId", "jsonData.logAnalyticsClientId", "jsonData.logAnalyticsSubscriptionId", "jsonData.logAnalyticsDefaultWorkspace", "secureJsonData.logAnalyticsClientSecret", "jsonData.basicLogsEnabled"] },
+        { "id": "appInsights", "title": "Application Insights (deprecated)", "fieldRefs": ["jsonData.appInsightsAppId", "secureJsonData.appInsightsApiKey"] },
+        { "id": "advanced", "title": "Advanced", "fieldRefs": ["jsonData.timeout", "jsonData.keepCookies", "jsonData.customizedRoutes", "jsonData.enableSecureSocksProxy"] }
+    ]
+}

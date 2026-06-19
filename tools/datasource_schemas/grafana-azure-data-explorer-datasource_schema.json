@@ -1,0 +1,193 @@
+{
+    "schemaVersion": "v1",
+    "pluginType": "grafana-azure-data-explorer-datasource",
+    "pluginName": "Azure Data Explorer",
+    "docURL": "https://grafana.com/grafana/plugins/grafana-azure-data-explorer-datasource/",
+    "fields": [
+        {
+            "id": "jsonData.clusterUrl",
+            "key": "clusterUrl",
+            "label": "Cluster URL",
+            "description": "Azure Data Explorer cluster URL.",
+            "valueType": "string",
+            "semanticType": "url",
+            "target": "jsonData",
+            "required": true,
+            "ui": {
+                "component": "input",
+                "placeholder": "https://yourcluster.region.kusto.windows.net"
+            }
+        },
+        {
+            "id": "jsonData.defaultDatabase",
+            "key": "defaultDatabase",
+            "label": "Default Database",
+            "description": "Default database for queries.",
+            "valueType": "string",
+            "target": "jsonData",
+            "required": true
+        },
+        {
+            "id": "jsonData.azureAuthType",
+            "key": "azureAuthType",
+            "label": "Authentication",
+            "description": "Azure authentication type (clientsecret, msi, currentuser).",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.cloudName",
+            "key": "cloudName",
+            "label": "Azure Cloud",
+            "description": "Azure cloud environment.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.tenantId",
+            "key": "tenantId",
+            "label": "Directory (tenant) ID",
+            "description": "Azure Active Directory tenant ID.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.clientId",
+            "key": "clientId",
+            "label": "Application (client) ID",
+            "description": "Azure AD application client ID.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.minimalCache",
+            "key": "minimalCache",
+            "label": "Minimal Cache (seconds)",
+            "description": "Minimum cache duration in seconds for query results.",
+            "valueType": "number",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.defaultEditorMode",
+            "key": "defaultEditorMode",
+            "label": "Default Editor Mode",
+            "description": "Default query editor mode.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.queryTimeout",
+            "key": "queryTimeout",
+            "label": "Query Timeout",
+            "description": "Query timeout duration.",
+            "valueType": "string",
+            "semanticType": "duration",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.dataConsistency",
+            "key": "dataConsistency",
+            "label": "Data Consistency",
+            "description": "Query consistency level (strongconsistency or weakconsistency).",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.cacheMaxAge",
+            "key": "cacheMaxAge",
+            "label": "Cache Max Age",
+            "description": "Maximum age of cached query results.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.dynamicCaching",
+            "key": "dynamicCaching",
+            "label": "Dynamic Caching",
+            "description": "Enable dynamic caching of query results.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.useSchemaMapping",
+            "key": "useSchemaMapping",
+            "label": "Use Schema Mapping",
+            "description": "Enable schema mapping for queries.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.enableUserTracking",
+            "key": "enableUserTracking",
+            "label": "Enable User Tracking",
+            "description": "Send Grafana user info with queries.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "secureJsonData.clientSecret",
+            "key": "clientSecret",
+            "label": "Client Secret",
+            "description": "Azure AD application client secret.",
+            "valueType": "string",
+            "semanticType": "token",
+            "target": "secureJsonData"
+        }
+    ],
+    "groups": [
+        {
+            "id": "connection",
+            "title": "Connection",
+            "fieldRefs": [
+                "jsonData.clusterUrl",
+                "jsonData.defaultDatabase"
+            ]
+        },
+        {
+            "id": "auth",
+            "title": "Authentication",
+            "fieldRefs": [
+                "jsonData.azureAuthType",
+                "jsonData.cloudName",
+                "jsonData.tenantId",
+                "jsonData.clientId",
+                "secureJsonData.clientSecret"
+            ]
+        },
+        {
+            "id": "query-defaults",
+            "title": "Query defaults",
+            "fieldRefs": [
+                "jsonData.defaultEditorMode",
+                "jsonData.queryTimeout",
+                "jsonData.dataConsistency"
+            ]
+        },
+        {
+            "id": "caching",
+            "title": "Caching",
+            "fieldRefs": [
+                "jsonData.minimalCache",
+                "jsonData.cacheMaxAge",
+                "jsonData.dynamicCaching"
+            ]
+        },
+        {
+            "id": "advanced",
+            "title": "Advanced",
+            "fieldRefs": [
+                "jsonData.useSchemaMapping",
+                "jsonData.enableUserTracking"
+            ]
+        }
+    ]
+}

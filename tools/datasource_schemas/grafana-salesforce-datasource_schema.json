@@ -1,0 +1,191 @@
+{
+    "schemaVersion": "v1",
+    "pluginType": "grafana-salesforce-datasource",
+    "pluginName": "Salesforce",
+    "fields": [
+        {
+            "id": "jsonData.authType",
+            "key": "authType",
+            "label": "Authentication Type",
+            "description": "Salesforce authentication method.",
+            "valueType": "string",
+            "target": "jsonData",
+            "required": true,
+            "defaultValue": "user",
+            "validations": [
+                {
+                    "type": "allowedValues",
+                    "values": [
+                        "user",
+                        "jwt"
+                    ]
+                }
+            ],
+            "ui": {
+                "component": "select",
+                "options": [
+                    {
+                        "label": "Username & Password",
+                        "value": "user"
+                    },
+                    {
+                        "label": "JWT (Server-to-Server)",
+                        "value": "jwt"
+                    }
+                ]
+            }
+        },
+        {
+            "id": "jsonData.user",
+            "key": "user",
+            "label": "Username",
+            "description": "Salesforce username.",
+            "valueType": "string",
+            "target": "jsonData",
+            "required": true
+        },
+        {
+            "id": "jsonData.sandbox",
+            "key": "sandbox",
+            "label": "Sandbox",
+            "description": "Connect to a Salesforce sandbox environment.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.tokenUrl",
+            "key": "tokenUrl",
+            "label": "Token URL",
+            "description": "Salesforce OAuth token endpoint.",
+            "valueType": "string",
+            "semanticType": "url",
+            "target": "jsonData",
+            "validations": [
+                {
+                    "type": "allowedValues",
+                    "values": [
+                        "https://login.salesforce.com",
+                        "https://test.salesforce.com"
+                    ]
+                }
+            ]
+        },
+        {
+            "id": "jsonData.enableSecureSocksProxy",
+            "key": "enableSecureSocksProxy",
+            "label": "Secure Socks Proxy",
+            "description": "Enable secure SOCKS proxy.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "secureJsonData.password",
+            "key": "password",
+            "label": "Password",
+            "description": "Salesforce password.",
+            "valueType": "string",
+            "target": "secureJsonData",
+            "semanticType": "password",
+            "dependsOn": "jsonData.authType == 'user'"
+        },
+        {
+            "id": "secureJsonData.securityToken",
+            "key": "securityToken",
+            "label": "Security Token",
+            "description": "Salesforce security token appended to password.",
+            "valueType": "string",
+            "target": "secureJsonData",
+            "semanticType": "token",
+            "dependsOn": "jsonData.authType == 'user'"
+        },
+        {
+            "id": "secureJsonData.clientID",
+            "key": "clientID",
+            "label": "Consumer Key",
+            "description": "Salesforce Connected App consumer key.",
+            "valueType": "string",
+            "target": "secureJsonData",
+            "required": true
+        },
+        {
+            "id": "secureJsonData.clientSecret",
+            "key": "clientSecret",
+            "label": "Consumer Secret",
+            "description": "Salesforce Connected App consumer secret.",
+            "valueType": "string",
+            "target": "secureJsonData",
+            "semanticType": "token",
+            "dependsOn": "jsonData.authType == 'user'"
+        },
+        {
+            "id": "secureJsonData.cert",
+            "key": "cert",
+            "label": "Certificate",
+            "description": "X.509 certificate for JWT authentication.",
+            "valueType": "string",
+            "target": "secureJsonData",
+            "dependsOn": "jsonData.authType == 'jwt'",
+            "ui": {
+                "component": "textarea",
+                "rows": 7
+            }
+        },
+        {
+            "id": "secureJsonData.privateKey",
+            "key": "privateKey",
+            "label": "Private Key",
+            "description": "Private key for JWT signing.",
+            "valueType": "string",
+            "target": "secureJsonData",
+            "semanticType": "token",
+            "dependsOn": "jsonData.authType == 'jwt'",
+            "ui": {
+                "component": "textarea",
+                "rows": 7
+            }
+        }
+    ],
+    "groups": [
+        {
+            "id": "auth",
+            "title": "Authentication",
+            "fieldRefs": [
+                "jsonData.authType",
+                "jsonData.user",
+                "secureJsonData.clientID"
+            ]
+        },
+        {
+            "id": "user-auth",
+            "title": "Username & Password",
+            "fieldRefs": [
+                "secureJsonData.password",
+                "secureJsonData.securityToken",
+                "secureJsonData.clientSecret"
+            ]
+        },
+        {
+            "id": "jwt-auth",
+            "title": "JWT Authentication",
+            "fieldRefs": [
+                "secureJsonData.cert",
+                "secureJsonData.privateKey"
+            ]
+        },
+        {
+            "id": "settings",
+            "title": "Settings",
+            "fieldRefs": [
+                "jsonData.sandbox",
+                "jsonData.tokenUrl",
+                "jsonData.enableSecureSocksProxy"
+            ]
+        }
+    ]
+}

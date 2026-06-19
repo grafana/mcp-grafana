@@ -1,0 +1,115 @@
+{
+    "schemaVersion": "v1",
+    "pluginType": "grafana-azureprometheus-datasource",
+    "pluginName": "Azure Monitor managed service for Prometheus",
+    "fields": [
+        {
+            "id": "jsonData.azureAuthType",
+            "key": "azureAuthType",
+            "label": "Authentication",
+            "description": "Azure authentication type.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.cloudName",
+            "key": "cloudName",
+            "label": "Azure Cloud",
+            "description": "Azure cloud environment.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.tenantId",
+            "key": "tenantId",
+            "label": "Directory (tenant) ID",
+            "description": "Azure AD tenant ID.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.clientId",
+            "key": "clientId",
+            "label": "Application (client) ID",
+            "description": "Azure AD application client ID.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.azureEndpointResourceId",
+            "key": "azureEndpointResourceId",
+            "label": "Endpoint Resource ID",
+            "description": "Azure Monitor workspace resource ID.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.timeInterval",
+            "key": "timeInterval",
+            "label": "Scrape interval",
+            "description": "Prometheus scrape interval.",
+            "valueType": "string",
+            "semanticType": "duration",
+            "target": "jsonData",
+            "defaultValue": "15s"
+        },
+        {
+            "id": "jsonData.httpMethod",
+            "key": "httpMethod",
+            "label": "HTTP method",
+            "description": "HTTP method for queries.",
+            "valueType": "string",
+            "target": "jsonData",
+            "defaultValue": "POST",
+            "validations": [
+                {
+                    "type": "allowedValues",
+                    "values": [
+                        "GET",
+                        "POST"
+                    ]
+                }
+            ]
+        },
+        {
+            "id": "jsonData.customQueryParameters",
+            "key": "customQueryParameters",
+            "label": "Custom query parameters",
+            "description": "Additional query URL parameters.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "secureJsonData.clientSecret",
+            "key": "clientSecret",
+            "label": "Client Secret",
+            "description": "Azure AD application client secret.",
+            "valueType": "string",
+            "semanticType": "token",
+            "target": "secureJsonData"
+        }
+    ],
+    "groups": [
+        {
+            "id": "auth",
+            "title": "Authentication",
+            "fieldRefs": [
+                "jsonData.azureAuthType",
+                "jsonData.cloudName",
+                "jsonData.tenantId",
+                "jsonData.clientId",
+                "secureJsonData.clientSecret",
+                "jsonData.azureEndpointResourceId"
+            ]
+        },
+        {
+            "id": "prometheus",
+            "title": "Prometheus settings",
+            "fieldRefs": [
+                "jsonData.timeInterval",
+                "jsonData.httpMethod",
+                "jsonData.customQueryParameters"
+            ]
+        }
+    ]
+}

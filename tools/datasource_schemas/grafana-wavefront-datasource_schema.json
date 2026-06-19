@@ -1,0 +1,70 @@
+{
+    "schemaVersion": "v1",
+    "pluginType": "grafana-wavefront-datasource",
+    "pluginName": "Wavefront",
+    "fields": [
+        {
+            "id": "jsonData.url",
+            "key": "url",
+            "label": "URL",
+            "description": "Wavefront instance URL (e.g. https://mycompany.wavefront.com).",
+            "valueType": "string",
+            "semanticType": "url",
+            "target": "jsonData",
+            "required": true
+        },
+        {
+            "id": "jsonData.requestTimeout",
+            "key": "requestTimeout",
+            "label": "Request Timeout (s)",
+            "description": "API request timeout in seconds.",
+            "valueType": "number",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.enableSecureSocksProxy",
+            "key": "enableSecureSocksProxy",
+            "label": "Secure Socks Proxy",
+            "description": "Enable secure SOCKS proxy.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "secureJsonData.token",
+            "key": "token",
+            "label": "API Token",
+            "description": "Wavefront API token.",
+            "valueType": "string",
+            "target": "secureJsonData",
+            "required": true,
+            "semanticType": "token"
+        }
+    ],
+    "groups": [
+        {
+            "id": "connection",
+            "title": "Connection",
+            "fieldRefs": [
+                "jsonData.url"
+            ]
+        },
+        {
+            "id": "auth",
+            "title": "Authentication",
+            "fieldRefs": [
+                "secureJsonData.token"
+            ]
+        },
+        {
+            "id": "advanced",
+            "title": "Advanced",
+            "fieldRefs": [
+                "jsonData.requestTimeout",
+                "jsonData.enableSecureSocksProxy"
+            ]
+        }
+    ]
+}

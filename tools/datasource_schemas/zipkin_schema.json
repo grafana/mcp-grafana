@@ -1,0 +1,29 @@
+{
+    "schemaVersion": "v1",
+    "pluginType": "zipkin",
+    "pluginName": "Zipkin",
+    "docURL": "https://grafana.com/docs/grafana/latest/datasources/zipkin/",
+    "fields": [
+        {
+            "id": "jsonData.nodeGraph.enabled",
+            "key": "enabled",
+            "label": "Enable node graph",
+            "description": "Shows the node graph visualization above the trace view.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "section": "nodeGraph",
+            "ui": {
+                "component": "switch"
+            }
+        }
+    ],
+    "groups": [
+        {
+            "id": "node-graph",
+            "title": "Node graph",
+            "fieldRefs": [
+                "jsonData.nodeGraph.enabled"
+            ]
+        }
+    ]
+}

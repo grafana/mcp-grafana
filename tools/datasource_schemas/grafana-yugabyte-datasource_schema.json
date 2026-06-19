@@ -1,0 +1,20 @@
+{
+    "schemaVersion": "v1",
+    "pluginType": "grafana-yugabyte-datasource",
+    "pluginName": "YugabyteDB",
+    "fields": [
+        { "id": "jsonData.database", "key": "database", "label": "Database", "description": "YugabyteDB database name.", "valueType": "string", "target": "jsonData" },
+        { "id": "jsonData.maxOpenConns", "key": "maxOpenConns", "label": "Max Open Connections", "description": "Maximum number of open connections.", "valueType": "number", "target": "jsonData", "defaultValue": 100 },
+        { "id": "jsonData.maxIdleConns", "key": "maxIdleConns", "label": "Max Idle Connections", "description": "Maximum number of idle connections.", "valueType": "number", "target": "jsonData", "defaultValue": 100 },
+        { "id": "jsonData.connMaxLifetime", "key": "connMaxLifetime", "label": "Max Connection Lifetime", "description": "Maximum lifetime of a connection in seconds.", "valueType": "number", "target": "jsonData", "defaultValue": 14400 },
+        { "id": "jsonData.timeInterval", "key": "timeInterval", "label": "Min Time Interval", "description": "Minimum time interval between data points.", "valueType": "string", "semanticType": "duration", "target": "jsonData" },
+        { "id": "jsonData.enableSecureSocksProxy", "key": "enableSecureSocksProxy", "label": "Secure Socks Proxy", "description": "Enable secure SOCKS proxy.", "valueType": "boolean", "target": "jsonData", "ui": { "component": "switch" } },
+        { "id": "secureJsonData.password", "key": "password", "label": "Password", "description": "YugabyteDB password.", "valueType": "string", "target": "secureJsonData", "semanticType": "password" }
+    ],
+    "groups": [
+        { "id": "connection", "title": "Connection", "fieldRefs": ["jsonData.database"] },
+        { "id": "auth", "title": "Authentication", "fieldRefs": ["secureJsonData.password"] },
+        { "id": "pool", "title": "Connection Pool", "fieldRefs": ["jsonData.maxOpenConns", "jsonData.maxIdleConns", "jsonData.connMaxLifetime"] },
+        { "id": "advanced", "title": "Advanced", "fieldRefs": ["jsonData.timeInterval", "jsonData.enableSecureSocksProxy"] }
+    ]
+}

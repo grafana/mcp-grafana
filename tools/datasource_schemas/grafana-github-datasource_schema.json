@@ -1,0 +1,146 @@
+{
+    "schemaVersion": "v1",
+    "pluginType": "grafana-github-datasource",
+    "pluginName": "GitHub",
+    "fields": [
+        {
+            "id": "jsonData.selectedAuthType",
+            "key": "selectedAuthType",
+            "label": "Authentication Type",
+            "description": "GitHub authentication method.",
+            "valueType": "string",
+            "target": "jsonData",
+            "defaultValue": "personal-access-token",
+            "validations": [
+                {
+                    "type": "allowedValues",
+                    "values": [
+                        "personal-access-token",
+                        "github-app"
+                    ]
+                }
+            ],
+            "ui": {
+                "component": "select",
+                "options": [
+                    {
+                        "label": "Personal Access Token",
+                        "value": "personal-access-token"
+                    },
+                    {
+                        "label": "GitHub App",
+                        "value": "github-app"
+                    }
+                ]
+            }
+        },
+        {
+            "id": "jsonData.githubPlan",
+            "key": "githubPlan",
+            "label": "GitHub Plan",
+            "description": "GitHub license type.",
+            "valueType": "string",
+            "target": "jsonData",
+            "validations": [
+                {
+                    "type": "allowedValues",
+                    "values": [
+                        "github-basic",
+                        "github-enterprise-cloud",
+                        "github-enterprise-server"
+                    ]
+                }
+            ],
+            "ui": {
+                "component": "select",
+                "options": [
+                    {
+                        "label": "GitHub Basic",
+                        "value": "github-basic"
+                    },
+                    {
+                        "label": "Enterprise Cloud",
+                        "value": "github-enterprise-cloud"
+                    },
+                    {
+                        "label": "Enterprise Server",
+                        "value": "github-enterprise-server"
+                    }
+                ]
+            }
+        },
+        {
+            "id": "jsonData.githubUrl",
+            "key": "githubUrl",
+            "label": "GitHub URL",
+            "description": "GitHub Enterprise Server URL. Leave empty for github.com.",
+            "valueType": "string",
+            "semanticType": "url",
+            "target": "jsonData",
+            "dependsOn": "jsonData.githubPlan == 'github-enterprise-server'"
+        },
+        {
+            "id": "jsonData.appId",
+            "key": "appId",
+            "label": "App ID",
+            "description": "GitHub App ID.",
+            "valueType": "string",
+            "target": "jsonData",
+            "dependsOn": "jsonData.selectedAuthType == 'github-app'"
+        },
+        {
+            "id": "jsonData.installationId",
+            "key": "installationId",
+            "label": "Installation ID",
+            "description": "GitHub App installation ID.",
+            "valueType": "string",
+            "target": "jsonData",
+            "dependsOn": "jsonData.selectedAuthType == 'github-app'"
+        },
+        {
+            "id": "secureJsonData.accessToken",
+            "key": "accessToken",
+            "label": "Personal Access Token",
+            "description": "GitHub personal access token.",
+            "valueType": "string",
+            "semanticType": "token",
+            "target": "secureJsonData",
+            "dependsOn": "jsonData.selectedAuthType == 'personal-access-token'"
+        },
+        {
+            "id": "secureJsonData.privateKey",
+            "key": "privateKey",
+            "label": "Private Key",
+            "description": "GitHub App private key (PEM format).",
+            "valueType": "string",
+            "semanticType": "token",
+            "target": "secureJsonData",
+            "dependsOn": "jsonData.selectedAuthType == 'github-app'",
+            "ui": {
+                "component": "textarea",
+                "rows": 7
+            }
+        }
+    ],
+    "groups": [
+        {
+            "id": "auth",
+            "title": "Authentication",
+            "fieldRefs": [
+                "jsonData.selectedAuthType",
+                "jsonData.githubPlan",
+                "jsonData.githubUrl",
+                "secureJsonData.accessToken"
+            ]
+        },
+        {
+            "id": "github-app",
+            "title": "GitHub App",
+            "fieldRefs": [
+                "jsonData.appId",
+                "jsonData.installationId",
+                "secureJsonData.privateKey"
+            ]
+        }
+    ]
+}

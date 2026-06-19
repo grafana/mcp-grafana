@@ -1,0 +1,201 @@
+{
+    "schemaVersion": "v1",
+    "pluginType": "grafana-opensearch-datasource",
+    "pluginName": "OpenSearch",
+    "docURL": "https://grafana.com/grafana/plugins/grafana-opensearch-datasource/",
+    "fields": [
+        {
+            "id": "jsonData.database",
+            "key": "database",
+            "label": "Index name",
+            "description": "Name of the OpenSearch index.",
+            "valueType": "string",
+            "target": "jsonData",
+            "required": true
+        },
+        {
+            "id": "jsonData.timeField",
+            "key": "timeField",
+            "label": "Time field name",
+            "description": "Name of the time field. Default is @timestamp.",
+            "valueType": "string",
+            "target": "jsonData",
+            "required": true,
+            "defaultValue": "@timestamp"
+        },
+        {
+            "id": "jsonData.version",
+            "key": "version",
+            "label": "Version",
+            "description": "OpenSearch version.",
+            "valueType": "string",
+            "target": "jsonData",
+            "required": true
+        },
+        {
+            "id": "jsonData.flavor",
+            "key": "flavor",
+            "label": "Flavor",
+            "description": "Backend flavor: OpenSearch or Elasticsearch.",
+            "valueType": "string",
+            "target": "jsonData",
+            "required": true,
+            "defaultValue": "opensearch",
+            "validations": [
+                {
+                    "type": "allowedValues",
+                    "values": [
+                        "opensearch",
+                        "elasticsearch"
+                    ]
+                }
+            ],
+            "ui": {
+                "component": "select",
+                "options": [
+                    {
+                        "label": "OpenSearch",
+                        "value": "opensearch"
+                    },
+                    {
+                        "label": "Elasticsearch",
+                        "value": "elasticsearch"
+                    }
+                ]
+            }
+        },
+        {
+            "id": "jsonData.interval",
+            "key": "interval",
+            "label": "Index date pattern",
+            "description": "Index date time format for pattern-based indices.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.timeInterval",
+            "key": "timeInterval",
+            "label": "Min time interval",
+            "description": "A lower limit for the auto group-by time interval.",
+            "valueType": "string",
+            "semanticType": "duration",
+            "target": "jsonData",
+            "required": true,
+            "defaultValue": "10s"
+        },
+        {
+            "id": "jsonData.maxConcurrentShardRequests",
+            "key": "maxConcurrentShardRequests",
+            "label": "Max concurrent shard requests",
+            "description": "Number of shards queried simultaneously.",
+            "valueType": "number",
+            "target": "jsonData",
+            "defaultValue": 5
+        },
+        {
+            "id": "jsonData.logMessageField",
+            "key": "logMessageField",
+            "label": "Message field name",
+            "description": "Which field should be used as the log message.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.logLevelField",
+            "key": "logLevelField",
+            "label": "Level field name",
+            "description": "Which field should indicate the log level.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.pplEnabled",
+            "key": "pplEnabled",
+            "label": "PPL enabled",
+            "description": "Enable Piped Processing Language (PPL) support.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.sigV4Auth",
+            "key": "sigV4Auth",
+            "label": "SigV4 auth",
+            "description": "Enable AWS Signature Version 4 authentication.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.serverless",
+            "key": "serverless",
+            "label": "Serverless",
+            "description": "Enable for Amazon OpenSearch Serverless.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.enableSecureSocksProxy",
+            "key": "enableSecureSocksProxy",
+            "label": "Secure Socks Proxy",
+            "description": "Enable secure SOCKS proxy.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        }
+    ],
+    "groups": [
+        {
+            "id": "opensearch-details",
+            "title": "OpenSearch details",
+            "fieldRefs": [
+                "jsonData.database",
+                "jsonData.timeField",
+                "jsonData.version",
+                "jsonData.flavor",
+                "jsonData.interval",
+                "jsonData.timeInterval",
+                "jsonData.maxConcurrentShardRequests"
+            ]
+        },
+        {
+            "id": "logs",
+            "title": "Logs",
+            "fieldRefs": [
+                "jsonData.logMessageField",
+                "jsonData.logLevelField"
+            ]
+        },
+        {
+            "id": "features",
+            "title": "Features",
+            "fieldRefs": [
+                "jsonData.pplEnabled",
+                "jsonData.serverless"
+            ]
+        },
+        {
+            "id": "auth",
+            "title": "Authentication",
+            "fieldRefs": [
+                "jsonData.sigV4Auth"
+            ]
+        },
+        {
+            "id": "network",
+            "title": "Network",
+            "fieldRefs": [
+                "jsonData.enableSecureSocksProxy"
+            ]
+        }
+    ]
+}

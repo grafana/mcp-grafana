@@ -1,0 +1,176 @@
+{
+    "schemaVersion": "v1",
+    "pluginType": "grafana-oracle-datasource",
+    "pluginName": "Oracle Database",
+    "fields": [
+        {
+            "id": "root.url",
+            "key": "url",
+            "label": "URL",
+            "description": "Oracle connection string (host:port/service_name or TNS name).",
+            "valueType": "string",
+            "semanticType": "url",
+            "target": "root",
+            "required": true
+        },
+        {
+            "id": "jsonData.database",
+            "key": "database",
+            "label": "Database",
+            "description": "Database or service name.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.user",
+            "key": "user",
+            "label": "User",
+            "description": "Oracle database user.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.useTNSNamesBasedConnection",
+            "key": "useTNSNamesBasedConnection",
+            "label": "Use TNS Names",
+            "description": "Use TNS names for connection instead of host:port.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.tnsNamesEntry",
+            "key": "tnsNamesEntry",
+            "label": "TNS Names Entry",
+            "description": "TNS names entry to use for the connection.",
+            "valueType": "string",
+            "target": "jsonData",
+            "dependsOn": "jsonData.useTNSNamesBasedConnection == true"
+        },
+        {
+            "id": "jsonData.timezone_name",
+            "key": "timezone_name",
+            "label": "Timezone",
+            "description": "Oracle session timezone name.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.use_dst",
+            "key": "use_dst",
+            "label": "Use DST",
+            "description": "Enable daylight saving time adjustment.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.useKerberosAuthentication",
+            "key": "useKerberosAuthentication",
+            "label": "Kerberos Authentication",
+            "description": "Use Kerberos for authentication.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.connectionPoolSize",
+            "key": "connectionPoolSize",
+            "label": "Connection Pool Size",
+            "description": "Maximum number of connections in the pool.",
+            "valueType": "number",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.dataProxyTimeout",
+            "key": "dataProxyTimeout",
+            "label": "Data Proxy Timeout",
+            "description": "Timeout for data proxy requests in seconds.",
+            "valueType": "number",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.prefetchRowsCount",
+            "key": "prefetchRowsCount",
+            "label": "Prefetch Rows Count",
+            "description": "Number of rows to prefetch from Oracle.",
+            "valueType": "number",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.rowLimit",
+            "key": "rowLimit",
+            "label": "Row Limit",
+            "description": "Maximum number of rows returned per query.",
+            "valueType": "number",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.enableSecureSocksProxy",
+            "key": "enableSecureSocksProxy",
+            "label": "Secure Socks Proxy",
+            "description": "Enable secure SOCKS proxy.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "secureJsonData.password",
+            "key": "password",
+            "label": "Password",
+            "description": "Oracle database password.",
+            "valueType": "string",
+            "target": "secureJsonData",
+            "required": true,
+            "semanticType": "password"
+        }
+    ],
+    "groups": [
+        {
+            "id": "connection",
+            "title": "Connection",
+            "fieldRefs": [
+                "root.url",
+                "jsonData.database",
+                "jsonData.useTNSNamesBasedConnection",
+                "jsonData.tnsNamesEntry"
+            ]
+        },
+        {
+            "id": "auth",
+            "title": "Authentication",
+            "fieldRefs": [
+                "jsonData.user",
+                "secureJsonData.password",
+                "jsonData.useKerberosAuthentication"
+            ]
+        },
+        {
+            "id": "settings",
+            "title": "Settings",
+            "fieldRefs": [
+                "jsonData.timezone_name",
+                "jsonData.use_dst"
+            ]
+        },
+        {
+            "id": "advanced",
+            "title": "Advanced",
+            "fieldRefs": [
+                "jsonData.connectionPoolSize",
+                "jsonData.dataProxyTimeout",
+                "jsonData.prefetchRowsCount",
+                "jsonData.rowLimit",
+                "jsonData.enableSecureSocksProxy"
+            ]
+        }
+    ]
+}

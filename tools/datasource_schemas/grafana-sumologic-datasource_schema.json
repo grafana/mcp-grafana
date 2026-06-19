@@ -1,0 +1,92 @@
+{
+    "schemaVersion": "v1",
+    "pluginType": "grafana-sumologic-datasource",
+    "pluginName": "Sumo Logic",
+    "fields": [
+        {
+            "id": "jsonData.apiUrl",
+            "key": "apiUrl",
+            "label": "API Endpoint",
+            "description": "Sumo Logic API endpoint URL.",
+            "valueType": "string",
+            "semanticType": "url",
+            "target": "jsonData",
+            "required": true,
+            "ui": {
+                "component": "select"
+            }
+        },
+        {
+            "id": "jsonData.authMethod",
+            "key": "authMethod",
+            "label": "Authentication Method",
+            "description": "Sumo Logic authentication method.",
+            "valueType": "string",
+            "target": "jsonData",
+            "defaultValue": "accessKey"
+        },
+        {
+            "id": "jsonData.accessId",
+            "key": "accessId",
+            "label": "Access ID",
+            "description": "Sumo Logic access ID.",
+            "valueType": "string",
+            "target": "jsonData",
+            "required": true
+        },
+        {
+            "id": "jsonData.timeout",
+            "key": "timeout",
+            "label": "Timeout (seconds)",
+            "description": "API request timeout in seconds.",
+            "valueType": "number",
+            "target": "jsonData",
+            "defaultValue": 60
+        },
+        {
+            "id": "jsonData.interval",
+            "key": "interval",
+            "label": "Min Interval (seconds)",
+            "description": "Minimum time interval between data points in seconds.",
+            "valueType": "number",
+            "target": "jsonData",
+            "defaultValue": 15
+        },
+        {
+            "id": "secureJsonData.accessKey",
+            "key": "accessKey",
+            "label": "Access Key",
+            "description": "Sumo Logic access key.",
+            "valueType": "string",
+            "target": "secureJsonData",
+            "required": true,
+            "semanticType": "token"
+        }
+    ],
+    "groups": [
+        {
+            "id": "connection",
+            "title": "Connection",
+            "fieldRefs": [
+                "jsonData.apiUrl",
+                "jsonData.authMethod"
+            ]
+        },
+        {
+            "id": "auth",
+            "title": "Authentication",
+            "fieldRefs": [
+                "jsonData.accessId",
+                "secureJsonData.accessKey"
+            ]
+        },
+        {
+            "id": "settings",
+            "title": "Settings",
+            "fieldRefs": [
+                "jsonData.timeout",
+                "jsonData.interval"
+            ]
+        }
+    ]
+}

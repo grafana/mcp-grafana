@@ -1,0 +1,77 @@
+{
+    "schemaVersion": "v1",
+    "pluginType": "grafana-honeycomb-datasource",
+    "pluginName": "Honeycomb",
+    "fields": [
+        {
+            "id": "jsonData.hostname",
+            "key": "hostname",
+            "label": "Hostname",
+            "description": "Honeycomb API hostname.",
+            "valueType": "string",
+            "target": "jsonData",
+            "required": true,
+            "defaultValue": "https://api.honeycomb.io"
+        },
+        {
+            "id": "jsonData.team",
+            "key": "team",
+            "label": "Team",
+            "description": "Honeycomb team slug.",
+            "valueType": "string",
+            "target": "jsonData",
+            "required": true
+        },
+        {
+            "id": "jsonData.environment",
+            "key": "environment",
+            "label": "Environment",
+            "description": "Honeycomb environment name.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.retentionLimit",
+            "key": "retentionLimit",
+            "label": "Retention Limit",
+            "description": "Maximum retention period in days.",
+            "valueType": "number",
+            "target": "jsonData"
+        },
+        {
+            "id": "secureJsonData.apiKey",
+            "key": "apiKey",
+            "label": "API Key",
+            "description": "Honeycomb API key.",
+            "valueType": "string",
+            "target": "secureJsonData",
+            "required": true,
+            "semanticType": "token"
+        }
+    ],
+    "groups": [
+        {
+            "id": "connection",
+            "title": "Connection",
+            "fieldRefs": [
+                "jsonData.hostname",
+                "jsonData.team",
+                "jsonData.environment"
+            ]
+        },
+        {
+            "id": "auth",
+            "title": "Authentication",
+            "fieldRefs": [
+                "secureJsonData.apiKey"
+            ]
+        },
+        {
+            "id": "settings",
+            "title": "Settings",
+            "fieldRefs": [
+                "jsonData.retentionLimit"
+            ]
+        }
+    ]
+}

@@ -1,0 +1,448 @@
+{
+    "schemaVersion": "v1",
+    "pluginType": "grafana-postgresql-datasource",
+    "pluginName": "PostgreSQL",
+    "docURL": "https://grafana.com/docs/grafana/latest/datasources/postgres/",
+    "fields": [
+        {
+            "id": "root.url",
+            "key": "url",
+            "label": "Host",
+            "description": "PostgreSQL host:port. Example: localhost:5432.",
+            "valueType": "string",
+            "target": "root",
+            "required": true,
+            "ui": {
+                "component": "input",
+                "placeholder": "localhost:5432"
+            }
+        },
+        {
+            "id": "root.user",
+            "key": "user",
+            "label": "Username",
+            "description": "Database username.",
+            "valueType": "string",
+            "target": "root",
+            "required": true,
+            "ui": {
+                "component": "input",
+                "placeholder": "Username"
+            }
+        },
+        {
+            "id": "jsonData.database",
+            "key": "database",
+            "label": "Database",
+            "description": "PostgreSQL database name.",
+            "valueType": "string",
+            "target": "jsonData",
+            "required": true
+        },
+        {
+            "id": "jsonData.sslmode",
+            "key": "sslmode",
+            "label": "TLS/SSL Mode",
+            "description": "Determines whether or with what priority a secure TLS/SSL TCP/IP connection will be negotiated with the server.",
+            "valueType": "string",
+            "target": "jsonData",
+            "defaultValue": "disable",
+            "validations": [
+                {
+                    "type": "allowedValues",
+                    "values": [
+                        "disable",
+                        "require",
+                        "verify-ca",
+                        "verify-full"
+                    ]
+                }
+            ],
+            "ui": {
+                "component": "select",
+                "options": [
+                    {
+                        "label": "disable",
+                        "value": "disable"
+                    },
+                    {
+                        "label": "require",
+                        "value": "require"
+                    },
+                    {
+                        "label": "verify-ca",
+                        "value": "verify-ca"
+                    },
+                    {
+                        "label": "verify-full",
+                        "value": "verify-full"
+                    }
+                ]
+            }
+        },
+        {
+            "id": "jsonData.tlsConfigurationMethod",
+            "key": "tlsConfigurationMethod",
+            "label": "TLS configuration method",
+            "description": "How to provide TLS certificates.",
+            "valueType": "string",
+            "target": "jsonData",
+            "validations": [
+                {
+                    "type": "allowedValues",
+                    "values": [
+                        "file-path",
+                        "file-content"
+                    ]
+                }
+            ],
+            "ui": {
+                "component": "select",
+                "options": [
+                    {
+                        "label": "File path",
+                        "value": "file-path"
+                    },
+                    {
+                        "label": "Certificate content",
+                        "value": "file-content"
+                    }
+                ]
+            }
+        },
+        {
+            "id": "jsonData.sslRootCertFile",
+            "key": "sslRootCertFile",
+            "label": "TLS/SSL Root Certificate",
+            "description": "Path to the root certificate file on the server.",
+            "valueType": "string",
+            "target": "jsonData",
+            "dependsOn": "jsonData.tlsConfigurationMethod == 'file-path'"
+        },
+        {
+            "id": "jsonData.sslCertFile",
+            "key": "sslCertFile",
+            "label": "TLS/SSL Client Certificate",
+            "description": "Path to the client certificate file on the server.",
+            "valueType": "string",
+            "target": "jsonData",
+            "dependsOn": "jsonData.tlsConfigurationMethod == 'file-path'"
+        },
+        {
+            "id": "jsonData.sslKeyFile",
+            "key": "sslKeyFile",
+            "label": "TLS/SSL Client Key",
+            "description": "Path to the client key file on the server.",
+            "valueType": "string",
+            "target": "jsonData",
+            "dependsOn": "jsonData.tlsConfigurationMethod == 'file-path'"
+        },
+        {
+            "id": "jsonData.tlsSkipVerify",
+            "key": "tlsSkipVerify",
+            "label": "Skip TLS Verify",
+            "description": "Skip server certificate verification.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.postgresVersion",
+            "key": "postgresVersion",
+            "label": "PostgreSQL version",
+            "description": "PostgreSQL server version. Affects available query features.",
+            "valueType": "number",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.timescaledb",
+            "key": "timescaledb",
+            "label": "TimescaleDB",
+            "description": "Enable TimescaleDB features like time_bucket for time grouping.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.timeInterval",
+            "key": "timeInterval",
+            "label": "Min time interval",
+            "description": "A lower limit for the auto group-by time interval.",
+            "valueType": "string",
+            "semanticType": "duration",
+            "target": "jsonData",
+            "ui": {
+                "component": "input",
+                "placeholder": "1m"
+            }
+        },
+        {
+            "id": "jsonData.maxOpenConns",
+            "key": "maxOpenConns",
+            "label": "Max open connections",
+            "description": "Maximum number of open connections to the database.",
+            "valueType": "number",
+            "target": "jsonData",
+            "validations": [
+                {
+                    "type": "range",
+                    "min": 0
+                }
+            ]
+        },
+        {
+            "id": "jsonData.maxIdleConns",
+            "key": "maxIdleConns",
+            "label": "Max idle connections",
+            "description": "Maximum number of idle connections in the pool.",
+            "valueType": "number",
+            "target": "jsonData",
+            "defaultValue": 2,
+            "validations": [
+                {
+                    "type": "range",
+                    "min": 0
+                }
+            ]
+        },
+        {
+            "id": "jsonData.maxIdleConnsAuto",
+            "key": "maxIdleConnsAuto",
+            "label": "Auto max idle connections",
+            "description": "Let Grafana automatically manage the idle connection pool.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.connMaxLifetime",
+            "key": "connMaxLifetime",
+            "label": "Max connection lifetime",
+            "description": "Maximum lifetime of a connection in seconds.",
+            "valueType": "number",
+            "target": "jsonData",
+            "defaultValue": 14400,
+            "validations": [
+                {
+                    "type": "range",
+                    "min": 0
+                }
+            ]
+        },
+        {
+            "id": "jsonData.connectionTimeout",
+            "key": "connectionTimeout",
+            "label": "Connection timeout",
+            "description": "Connection timeout in seconds.",
+            "valueType": "number",
+            "target": "jsonData",
+            "validations": [
+                {
+                    "type": "range",
+                    "min": 0
+                }
+            ]
+        },
+        {
+            "id": "jsonData.timezone",
+            "key": "timezone",
+            "label": "Session timezone",
+            "description": "Specify the timezone used in the database session (e.g. Europe/Berlin).",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.servername",
+            "key": "servername",
+            "label": "TLS server name",
+            "description": "TLS server name for certificate verification.",
+            "valueType": "string",
+            "semanticType": "hostname",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.encrypt",
+            "key": "encrypt",
+            "label": "Encrypt",
+            "description": "Encryption mode.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.authenticationType",
+            "key": "authenticationType",
+            "label": "Authentication type",
+            "description": "Authentication mechanism used for the PostgreSQL connection.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.allowCleartextPasswords",
+            "key": "allowCleartextPasswords",
+            "label": "Allow cleartext passwords",
+            "description": "Allow sending passwords in cleartext.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.enableSecureSocksProxy",
+            "key": "enableSecureSocksProxy",
+            "label": "Secure Socks Proxy",
+            "description": "Enable secure SOCKS proxy.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.secureSocksProxyUsername",
+            "key": "secureSocksProxyUsername",
+            "label": "Secure Socks Proxy Username",
+            "description": "Username for the secure SOCKS proxy.",
+            "valueType": "boolean",
+            "target": "jsonData"
+        },
+        {
+            "id": "secureJsonData.password",
+            "key": "password",
+            "label": "Password",
+            "description": "Database password.",
+            "valueType": "string",
+            "semanticType": "password",
+            "target": "secureJsonData"
+        },
+        {
+            "id": "secureJsonData.tlsCACert",
+            "key": "tlsCACert",
+            "label": "TLS/SSL Root Certificate",
+            "description": "PEM-encoded root CA certificate content.",
+            "valueType": "string",
+            "target": "secureJsonData",
+            "dependsOn": "jsonData.tlsConfigurationMethod == 'file-content'",
+            "ui": {
+                "component": "textarea",
+                "rows": 7
+            }
+        },
+        {
+            "id": "secureJsonData.tlsClientCert",
+            "key": "tlsClientCert",
+            "label": "TLS/SSL Client Certificate",
+            "description": "PEM-encoded client certificate content.",
+            "valueType": "string",
+            "target": "secureJsonData",
+            "dependsOn": "jsonData.tlsConfigurationMethod == 'file-content'",
+            "ui": {
+                "component": "textarea",
+                "rows": 7
+            }
+        },
+        {
+            "id": "secureJsonData.tlsClientKey",
+            "key": "tlsClientKey",
+            "label": "TLS/SSL Client Key",
+            "description": "PEM-encoded client key content.",
+            "valueType": "string",
+            "semanticType": "token",
+            "target": "secureJsonData",
+            "dependsOn": "jsonData.tlsConfigurationMethod == 'file-content'",
+            "ui": {
+                "component": "textarea",
+                "rows": 7
+            }
+        }
+    ],
+    "groups": [
+        {
+            "id": "connection",
+            "title": "PostgreSQL Connection",
+            "fieldRefs": [
+                "root.url",
+                "jsonData.database"
+            ]
+        },
+        {
+            "id": "auth",
+            "title": "Authentication",
+            "fieldRefs": [
+                "root.user",
+                "secureJsonData.password",
+                "jsonData.authenticationType",
+                "jsonData.allowCleartextPasswords"
+            ]
+        },
+        {
+            "id": "tls",
+            "title": "TLS / SSL",
+            "fieldRefs": [
+                "jsonData.sslmode",
+                "jsonData.tlsConfigurationMethod",
+                "jsonData.sslRootCertFile",
+                "jsonData.sslCertFile",
+                "jsonData.sslKeyFile",
+                "jsonData.tlsSkipVerify",
+                "jsonData.servername",
+                "secureJsonData.tlsCACert",
+                "secureJsonData.tlsClientCert",
+                "secureJsonData.tlsClientKey"
+            ]
+        },
+        {
+            "id": "postgres-details",
+            "title": "PostgreSQL details",
+            "fieldRefs": [
+                "jsonData.postgresVersion",
+                "jsonData.timescaledb",
+                "jsonData.timeInterval",
+                "jsonData.timezone"
+            ]
+        },
+        {
+            "id": "connection-limits",
+            "title": "Connection Limits",
+            "fieldRefs": [
+                "jsonData.maxOpenConns",
+                "jsonData.maxIdleConns",
+                "jsonData.maxIdleConnsAuto",
+                "jsonData.connMaxLifetime",
+                "jsonData.connectionTimeout"
+            ]
+        },
+        {
+            "id": "network",
+            "title": "Network",
+            "fieldRefs": [
+                "jsonData.enableSecureSocksProxy",
+                "jsonData.secureSocksProxyUsername"
+            ]
+        }
+    ],
+    "relationships": [
+        {
+            "type": "pair",
+            "fields": [
+                "root.user",
+                "secureJsonData.password"
+            ],
+            "description": "Database credentials"
+        },
+        {
+            "type": "pair",
+            "fields": [
+                "secureJsonData.tlsClientCert",
+                "secureJsonData.tlsClientKey"
+            ],
+            "description": "TLS client certificate and key"
+        }
+    ]
+}

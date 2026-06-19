@@ -1,0 +1,156 @@
+{
+    "schemaVersion": "v1",
+    "pluginType": "grafana-mqtt-datasource",
+    "pluginName": "MQTT",
+    "docURL": "https://grafana.com/grafana/plugins/grafana-mqtt-datasource/",
+    "fields": [
+        {
+            "id": "jsonData.uri",
+            "key": "uri",
+            "label": "URI",
+            "description": "MQTT broker URI (e.g. tcp://localhost:1883 or ssl://broker:8883).",
+            "valueType": "string",
+            "target": "jsonData",
+            "required": true,
+            "ui": {
+                "component": "input",
+                "placeholder": "tcp://localhost:1883"
+            }
+        },
+        {
+            "id": "jsonData.username",
+            "key": "username",
+            "label": "Username",
+            "description": "MQTT broker username.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.clientID",
+            "key": "clientID",
+            "label": "Client ID",
+            "description": "MQTT client identifier. Leave empty for auto-generated.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.tlsAuth",
+            "key": "tlsAuth",
+            "label": "TLS Client Auth",
+            "description": "Enable TLS client certificate authentication.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "required": true,
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.tlsAuthWithCACert",
+            "key": "tlsAuthWithCACert",
+            "label": "With CA Cert",
+            "description": "Provide a CA certificate for TLS verification.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "required": true,
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.tlsSkipVerify",
+            "key": "tlsSkipVerify",
+            "label": "Skip TLS Verify",
+            "description": "Skip TLS certificate verification.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "required": true,
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "secureJsonData.password",
+            "key": "password",
+            "label": "Password",
+            "description": "MQTT broker password.",
+            "valueType": "string",
+            "semanticType": "password",
+            "target": "secureJsonData"
+        },
+        {
+            "id": "secureJsonData.tlsCACert",
+            "key": "tlsCACert",
+            "label": "CA Cert",
+            "description": "PEM-encoded CA certificate.",
+            "valueType": "string",
+            "target": "secureJsonData",
+            "dependsOn": "jsonData.tlsAuthWithCACert == true",
+            "ui": {
+                "component": "textarea",
+                "rows": 7
+            }
+        },
+        {
+            "id": "secureJsonData.tlsClientKey",
+            "key": "tlsClientKey",
+            "label": "Client Key",
+            "description": "PEM-encoded client private key.",
+            "valueType": "string",
+            "semanticType": "token",
+            "target": "secureJsonData",
+            "dependsOn": "jsonData.tlsAuth == true",
+            "ui": {
+                "component": "textarea",
+                "rows": 7
+            }
+        },
+        {
+            "id": "secureJsonData.tlsClientCert",
+            "key": "tlsClientCert",
+            "label": "Client Cert",
+            "description": "PEM-encoded client certificate.",
+            "valueType": "string",
+            "target": "secureJsonData",
+            "dependsOn": "jsonData.tlsAuth == true",
+            "ui": {
+                "component": "textarea",
+                "rows": 7
+            }
+        }
+    ],
+    "groups": [
+        {
+            "id": "connection",
+            "title": "Connection",
+            "fieldRefs": [
+                "jsonData.uri",
+                "jsonData.username",
+                "secureJsonData.password",
+                "jsonData.clientID"
+            ]
+        },
+        {
+            "id": "tls",
+            "title": "TLS / SSL",
+            "fieldRefs": [
+                "jsonData.tlsAuth",
+                "jsonData.tlsAuthWithCACert",
+                "jsonData.tlsSkipVerify",
+                "secureJsonData.tlsCACert",
+                "secureJsonData.tlsClientCert",
+                "secureJsonData.tlsClientKey"
+            ]
+        }
+    ],
+    "relationships": [
+        {
+            "type": "pair",
+            "fields": [
+                "secureJsonData.tlsClientCert",
+                "secureJsonData.tlsClientKey"
+            ],
+            "description": "TLS client certificate and key"
+        }
+    ]
+}
