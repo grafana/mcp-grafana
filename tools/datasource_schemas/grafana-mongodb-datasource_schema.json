@@ -1,0 +1,268 @@
+{
+    "schemaVersion": "v1",
+    "pluginType": "grafana-mongodb-datasource",
+    "pluginName": "MongoDB",
+    "fields": [
+        {
+            "id": "jsonData.connection",
+            "key": "connection",
+            "label": "Connection String",
+            "description": "MongoDB connection string (mongodb:// or mongodb+srv://).",
+            "valueType": "string",
+            "target": "jsonData",
+            "required": true
+        },
+        {
+            "id": "jsonData.authType",
+            "key": "authType",
+            "label": "Authentication Type",
+            "description": "MongoDB authentication method.",
+            "valueType": "string",
+            "target": "jsonData",
+            "defaultValue": "BasicAuth",
+            "validations": [
+                {
+                    "type": "allowedValues",
+                    "values": [
+                        "NoAuth",
+                        "BasicAuth",
+                        "custom-Kerberos"
+                    ]
+                }
+            ],
+            "ui": {
+                "component": "select",
+                "options": [
+                    {
+                        "label": "No Authentication",
+                        "value": "NoAuth"
+                    },
+                    {
+                        "label": "Basic Auth",
+                        "value": "BasicAuth"
+                    },
+                    {
+                        "label": "Kerberos",
+                        "value": "custom-Kerberos"
+                    }
+                ]
+            }
+        },
+        {
+            "id": "jsonData.user",
+            "key": "user",
+            "label": "Username",
+            "description": "MongoDB username.",
+            "valueType": "string",
+            "target": "jsonData",
+            "dependsOn": "jsonData.authType == 'BasicAuth'"
+        },
+        {
+            "id": "jsonData.serverName",
+            "key": "serverName",
+            "label": "Server Name",
+            "description": "Server name for TLS certificate validation.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.tlsAuth",
+            "key": "tlsAuth",
+            "label": "TLS Client Auth",
+            "description": "Enable TLS client certificate authentication.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.tlsAuthWithCACert",
+            "key": "tlsAuthWithCACert",
+            "label": "With CA Cert",
+            "description": "Provide a CA certificate.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.tlsSkipVerify",
+            "key": "tlsSkipVerify",
+            "label": "Skip TLS Verify",
+            "description": "Skip TLS certificate verification.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.skipTLSValidation",
+            "key": "skipTLSValidation",
+            "label": "Skip TLS Validation",
+            "description": "Skip TLS validation in the connection string.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.responseRowsLimit",
+            "key": "responseRowsLimit",
+            "label": "Response Rows Limit",
+            "description": "Maximum number of rows returned per query.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.validate",
+            "key": "validate",
+            "label": "Validate",
+            "description": "Validate connection on save.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.enableSecureSocksProxy",
+            "key": "enableSecureSocksProxy",
+            "label": "Secure Socks Proxy",
+            "description": "Enable secure SOCKS proxy.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.kerberosUser",
+            "key": "kerberosUser",
+            "label": "Kerberos User",
+            "description": "Kerberos principal name.",
+            "valueType": "string",
+            "target": "jsonData",
+            "dependsOn": "jsonData.authType == 'custom-Kerberos'"
+        },
+        {
+            "id": "jsonData.ccacheLookupFile",
+            "key": "ccacheLookupFile",
+            "label": "Ccache Lookup File",
+            "description": "Path to Kerberos credentials cache lookup file.",
+            "valueType": "string",
+            "target": "jsonData",
+            "dependsOn": "jsonData.authType == 'custom-Kerberos'"
+        },
+        {
+            "id": "jsonData.keyTabFilePath",
+            "key": "keyTabFilePath",
+            "label": "Keytab File Path",
+            "description": "Path to Kerberos keytab file.",
+            "valueType": "string",
+            "target": "jsonData",
+            "dependsOn": "jsonData.authType == 'custom-Kerberos'"
+        },
+        {
+            "id": "jsonData.globalCcacheFilePath",
+            "key": "globalCcacheFilePath",
+            "label": "Global Ccache File Path",
+            "description": "Path to global Kerberos credentials cache file.",
+            "valueType": "string",
+            "target": "jsonData",
+            "dependsOn": "jsonData.authType == 'custom-Kerberos'"
+        },
+        {
+            "id": "secureJsonData.password",
+            "key": "password",
+            "label": "Password",
+            "description": "MongoDB password.",
+            "valueType": "string",
+            "target": "secureJsonData",
+            "semanticType": "password",
+            "dependsOn": "jsonData.authType == 'BasicAuth'"
+        },
+        {
+            "id": "secureJsonData.kerberosPassword",
+            "key": "kerberosPassword",
+            "label": "Kerberos Password",
+            "description": "Kerberos authentication password.",
+            "valueType": "string",
+            "target": "secureJsonData",
+            "semanticType": "password",
+            "dependsOn": "jsonData.authType == 'custom-Kerberos'"
+        },
+        {
+            "id": "secureJsonData.basicAuthPassword",
+            "key": "basicAuthPassword",
+            "label": "Basic Auth Password",
+            "description": "Basic authentication password for HTTP proxy.",
+            "valueType": "string",
+            "target": "secureJsonData",
+            "semanticType": "password"
+        },
+        {
+            "id": "secureJsonData.tlsCertificateKeyFilePassword",
+            "key": "tlsCertificateKeyFilePassword",
+            "label": "TLS Certificate Key Password",
+            "description": "Password for the TLS certificate key file.",
+            "valueType": "string",
+            "target": "secureJsonData",
+            "semanticType": "password"
+        }
+    ],
+    "groups": [
+        {
+            "id": "connection",
+            "title": "Connection",
+            "fieldRefs": [
+                "jsonData.connection"
+            ]
+        },
+        {
+            "id": "auth",
+            "title": "Authentication",
+            "fieldRefs": [
+                "jsonData.authType",
+                "jsonData.user",
+                "secureJsonData.password"
+            ]
+        },
+        {
+            "id": "tls",
+            "title": "TLS / SSL",
+            "fieldRefs": [
+                "jsonData.serverName",
+                "jsonData.tlsAuth",
+                "jsonData.tlsAuthWithCACert",
+                "jsonData.tlsSkipVerify",
+                "jsonData.skipTLSValidation",
+                "secureJsonData.tlsCertificateKeyFilePassword"
+            ]
+        },
+        {
+            "id": "kerberos",
+            "title": "Kerberos",
+            "fieldRefs": [
+                "jsonData.kerberosUser",
+                "secureJsonData.kerberosPassword",
+                "jsonData.ccacheLookupFile",
+                "jsonData.keyTabFilePath",
+                "jsonData.globalCcacheFilePath"
+            ]
+        },
+        {
+            "id": "advanced",
+            "title": "Advanced",
+            "fieldRefs": [
+                "jsonData.responseRowsLimit",
+                "jsonData.validate",
+                "jsonData.enableSecureSocksProxy",
+                "secureJsonData.basicAuthPassword"
+            ]
+        }
+    ]
+}

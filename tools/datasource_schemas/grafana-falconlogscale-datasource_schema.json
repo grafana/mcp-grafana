@@ -1,0 +1,123 @@
+{
+    "schemaVersion": "v1",
+    "pluginType": "grafana-falconlogscale-datasource",
+    "pluginName": "CrowdStrike Falcon LogScale",
+    "docURL": "https://grafana.com/grafana/plugins/grafana-falconlogscale-datasource/",
+    "fields": [
+        {
+            "id": "jsonData.baseUrl",
+            "key": "baseUrl",
+            "label": "Base URL",
+            "description": "URL of your Falcon LogScale instance.",
+            "valueType": "string",
+            "semanticType": "url",
+            "target": "jsonData",
+            "required": true,
+            "ui": {
+                "component": "input"
+            }
+        },
+        {
+            "id": "jsonData.oauthPassThru",
+            "key": "oauthPassThru",
+            "label": "Forward OAuth Identity",
+            "description": "Forward the user's OAuth token.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.authenticateWithToken",
+            "key": "authenticateWithToken",
+            "label": "Authenticate with token",
+            "description": "Use a personal or ingest token for authentication.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "required": true,
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.defaultRepository",
+            "key": "defaultRepository",
+            "label": "Default Repository",
+            "description": "Default LogScale repository for queries.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.enableSecureSocksProxy",
+            "key": "enableSecureSocksProxy",
+            "label": "Secure Socks Proxy",
+            "description": "Enable secure SOCKS proxy.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.incrementalQuerying",
+            "key": "incrementalQuerying",
+            "label": "Incremental querying",
+            "description": "Enable incremental querying to cache results and fetch only new data.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "lifecycle": "experimental",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.incrementalQueryOverlapWindow",
+            "key": "incrementalQueryOverlapWindow",
+            "label": "Query overlap window",
+            "description": "Buffer of time added to incremental queries.",
+            "valueType": "string",
+            "semanticType": "duration",
+            "target": "jsonData",
+            "dependsOn": "jsonData.incrementalQuerying == true"
+        },
+        {
+            "id": "secureJsonData.accessToken",
+            "key": "accessToken",
+            "label": "Access Token",
+            "description": "Personal or ingest token for authentication.",
+            "valueType": "string",
+            "semanticType": "token",
+            "target": "secureJsonData",
+            "dependsOn": "jsonData.authenticateWithToken == true"
+        }
+    ],
+    "groups": [
+        {
+            "id": "connection",
+            "title": "Connection",
+            "fieldRefs": [
+                "jsonData.baseUrl",
+                "jsonData.defaultRepository"
+            ]
+        },
+        {
+            "id": "auth",
+            "title": "Authentication",
+            "fieldRefs": [
+                "jsonData.authenticateWithToken",
+                "secureJsonData.accessToken",
+                "jsonData.oauthPassThru"
+            ]
+        },
+        {
+            "id": "advanced",
+            "title": "Advanced",
+            "fieldRefs": [
+                "jsonData.enableSecureSocksProxy",
+                "jsonData.incrementalQuerying",
+                "jsonData.incrementalQueryOverlapWindow"
+            ]
+        }
+    ]
+}

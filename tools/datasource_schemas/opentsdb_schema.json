@@ -1,0 +1,102 @@
+{
+    "schemaVersion": "v1",
+    "pluginType": "opentsdb",
+    "pluginName": "OpenTSDB",
+    "docURL": "https://grafana.com/docs/grafana/latest/datasources/opentsdb/configure/",
+    "fields": [
+        {
+            "id": "jsonData.tsdbVersion",
+            "key": "tsdbVersion",
+            "label": "Version",
+            "description": "OpenTSDB version. Controls available features like filters (2.2+) and explicit tags (2.3+).",
+            "valueType": "number",
+            "target": "jsonData",
+            "required": true,
+            "defaultValue": 1,
+            "validations": [
+                {
+                    "type": "allowedValues",
+                    "values": [
+                        1,
+                        2,
+                        3,
+                        4
+                    ]
+                }
+            ],
+            "ui": {
+                "component": "select",
+                "options": [
+                    {
+                        "label": "<=2.1",
+                        "value": 1
+                    },
+                    {
+                        "label": "==2.2",
+                        "value": 2
+                    },
+                    {
+                        "label": "==2.3",
+                        "value": 3
+                    },
+                    {
+                        "label": "==2.4",
+                        "value": 4
+                    }
+                ]
+            }
+        },
+        {
+            "id": "jsonData.tsdbResolution",
+            "key": "tsdbResolution",
+            "label": "Resolution",
+            "description": "Time resolution of the data points.",
+            "valueType": "number",
+            "target": "jsonData",
+            "required": true,
+            "defaultValue": 1,
+            "validations": [
+                {
+                    "type": "allowedValues",
+                    "values": [
+                        1,
+                        2
+                    ]
+                }
+            ],
+            "ui": {
+                "component": "select",
+                "options": [
+                    {
+                        "label": "second",
+                        "value": 1
+                    },
+                    {
+                        "label": "millisecond",
+                        "value": 2
+                    }
+                ]
+            }
+        },
+        {
+            "id": "jsonData.lookupLimit",
+            "key": "lookupLimit",
+            "label": "Lookup limit",
+            "description": "Maximum number of results returned by metric lookups.",
+            "valueType": "number",
+            "target": "jsonData",
+            "required": true
+        }
+    ],
+    "groups": [
+        {
+            "id": "opentsdb-settings",
+            "title": "OpenTSDB settings",
+            "fieldRefs": [
+                "jsonData.tsdbVersion",
+                "jsonData.tsdbResolution",
+                "jsonData.lookupLimit"
+            ]
+        }
+    ]
+}

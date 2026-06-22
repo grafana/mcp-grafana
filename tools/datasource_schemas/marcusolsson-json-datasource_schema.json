@@ -1,0 +1,25 @@
+{
+    "schemaVersion": "v1",
+    "pluginType": "marcusolsson-json-datasource",
+    "pluginName": "JSON API",
+    "docURL": "https://grafana.com/grafana/plugins/marcusolsson-json-datasource/",
+    "fields": [
+        {
+            "id": "jsonData.queryParams",
+            "key": "queryParams",
+            "label": "Query Parameters",
+            "description": "Additional query parameters for HTTP requests.",
+            "valueType": "string",
+            "target": "jsonData"
+        }
+    ],
+    "groups": [
+        {
+            "id": "settings",
+            "title": "Settings",
+            "fieldRefs": [
+                "jsonData.queryParams"
+            ]
+        }
+    ]
+}
