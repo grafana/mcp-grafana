@@ -85,3 +85,31 @@ jobs:
 
       - name: Run unit tests
         run: make test-unit
+
+  # Catches forgotten `make build-ui` runs: rebuilds ui/*/dist from source
+  # and fails if it differs from what's checked in.
+  build-ui:
+    name: Verify UI bundles
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: ui/*/package-lock.json
+
+      - name: Rebuild UI bundles
+        run: make build-ui
+
+      - name: Fail if UI bundles drifted from sources
+        run: |
+          if ! git diff --exit-code -- ui; then
+            echo "::error::ui/*/dist is out of sync with sources. Run 'make build-ui' locally and commit."
+            exit 1
+          fi
