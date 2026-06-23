@@ -11,6 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Inline panel viewer for `get_panel_image` on [MCP Apps](https://modelcontextprotocol.io/)-aware hosts, with a dashboard deeplink fallback for other hosts ([#882](https://github.com/grafana/mcp-grafana/pull/882))
 
+## [0.17.0] - 2026-06-23
+
+### Added
+
+- Datasource management tools for creating and updating datasources via the MCP server, gated behind write tools, with schema-guided configuration that follows each datasource type's JSON schema and excludes sensitive credential fields ([#939](https://github.com/grafana/mcp-grafana/pull/939))
+
+### Fixed
+
+- Recognize the Athena plugin's `rawSQL` query field when extracting dashboard panel queries ([#956](https://github.com/grafana/mcp-grafana/pull/956))
+
 ## [0.16.0] - 2026-06-16
 
 ### Added
@@ -293,6 +303,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Upgrade Docker base image packages to resolve critical OpenSSL CVE-2025-15467 (CVSS 9.8) ([#551](https://github.com/grafana/mcp-grafana/pull/551))
 
+[0.17.0]: https://github.com/grafana/mcp-grafana/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/grafana/mcp-grafana/compare/v0.15.2...v0.16.0
 [0.15.2]: https://github.com/grafana/mcp-grafana/compare/v0.15.1...v0.15.2
 [0.15.1]: https://github.com/grafana/mcp-grafana/compare/v0.15.0...v0.15.1
