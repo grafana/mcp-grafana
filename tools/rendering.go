@@ -182,6 +182,7 @@ func getPanelImage(ctx context.Context, args GetPanelImageParams) (*mcp.CallTool
 				MIMEType: "image/png",
 			},
 			mcp.TextContent{
+				Meta: mcpgrafana.NewUIContentMeta(mcpgrafana.UIContentKindDeeplink),
 				Type: "text",
 				Text: deeplink,
 			},

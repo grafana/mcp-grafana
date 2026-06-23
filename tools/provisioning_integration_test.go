@@ -13,6 +13,8 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	mcpgrafana "github.com/grafana/mcp-grafana"
 )
 
 // These match testdata/provisioning-repo-seed.sh and the seeded git repo.
@@ -142,6 +144,13 @@ func TestRenderProvisioningPreview_Integration(t *testing.T) {
 			)
 			assert.Equal(t, tc.ref, parsed.Query().Get("ref"),
 				"deeplink ref query should match the requested branch")
+
+			// _meta.ui.kind marker that the panel viewer keys off.
+			require.NotNil(t, deeplink.Meta)
+			require.NotNil(t, deeplink.Meta.AdditionalFields)
+			ui, ok := deeplink.Meta.AdditionalFields["ui"].(map[string]any)
+			require.True(t, ok, "expected _meta.ui to be a map")
+			assert.Equal(t, mcpgrafana.UIContentKindDeeplink, ui["kind"])
 		})
 	}
 }

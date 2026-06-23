@@ -10,6 +10,9 @@ import (
 const (
 	appMIMEType            = "text/html;profile=mcp-app"
 	PanelViewerResourceURI = "ui://mcp-grafana/panel-viewer.html"
+
+	// UIContentKindDeeplink is the `_meta.ui.kind` value for a Grafana deeplink.
+	UIContentKindDeeplink = "deeplink"
 )
 
 // WithUIResource attaches a _meta.ui.resourceUri to a tool definition,
@@ -25,6 +28,18 @@ func WithUIResource(resourceURI string) mcp.ToolOption {
 		t.Meta.AdditionalFields["ui"] = map[string]any{
 			"resourceUri": resourceURI,
 		}
+	}
+}
+
+// NewUIContentMeta builds an *mcp.Meta that sets `_meta.ui.kind = kind`
+// on a tool-result content item. Use the UIContentKind* constants.
+func NewUIContentMeta(kind string) *mcp.Meta {
+	return &mcp.Meta{
+		AdditionalFields: map[string]any{
+			"ui": map[string]any{
+				"kind": kind,
+			},
+		},
 	}
 }
 

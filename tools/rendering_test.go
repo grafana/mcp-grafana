@@ -530,6 +530,7 @@ func TestGetPanelImage(t *testing.T) {
 		textContent, ok := result.Content[1].(mcp.TextContent)
 		require.True(t, ok, "second content item should be TextContent")
 		assert.Equal(t, server.URL+"/d/test-dash", textContent.Text)
+		assertDeeplinkMeta(t, textContent)
 	})
 
 	t.Run("Panel image with specific panel ID uses d-solo path and panelId param", func(t *testing.T) {
@@ -562,6 +563,7 @@ func TestGetPanelImage(t *testing.T) {
 		textContent, ok := result.Content[1].(mcp.TextContent)
 		require.True(t, ok)
 		assert.Equal(t, server.URL+"/d/test-dash?viewPanel=5", textContent.Text)
+		assertDeeplinkMeta(t, textContent)
 	})
 
 	t.Run("Provisioning preview deeplink uses /dashboard/provisioning route", func(t *testing.T) {
@@ -591,6 +593,7 @@ func TestGetPanelImage(t *testing.T) {
 				server.URL+"/dashboard/provisioning/my-repo/preview/folder/dashboard.json",
 				text.Text,
 			)
+			assertDeeplinkMeta(t, text)
 		})
 
 		t.Run("specific panel with ref", func(t *testing.T) {
@@ -616,6 +619,7 @@ func TestGetPanelImage(t *testing.T) {
 			)
 			assert.Equal(t, "feature/branch", parsed.Query().Get("ref"))
 			assert.Equal(t, "7", parsed.Query().Get("viewPanel"))
+			assertDeeplinkMeta(t, text)
 		})
 	})
 
@@ -642,6 +646,7 @@ func TestGetPanelImage(t *testing.T) {
 		text, ok := result.Content[1].(mcp.TextContent)
 		require.True(t, ok)
 		assert.Equal(t, publicURL+"/d/test-dash", text.Text)
+		assertDeeplinkMeta(t, text)
 	})
 
 	t.Run("Deeplink mirrors render time range", func(t *testing.T) {
@@ -988,4 +993,15 @@ func TestGetPanelImageToolMeta(t *testing.T) {
 	ui, ok := tool.Meta.AdditionalFields["ui"].(map[string]any)
 	require.True(t, ok, "expected _meta.ui to be a map")
 	assert.Equal(t, mcpgrafana.PanelViewerResourceURI, ui["resourceUri"])
+}
+
+// assertDeeplinkMeta checks the `_meta.ui.kind = "deeplink"` marker the
+// panel viewer uses to detect the deeplink content item.
+func assertDeeplinkMeta(t *testing.T, c mcp.TextContent) {
+	t.Helper()
+	require.NotNil(t, c.Meta)
+	require.NotNil(t, c.Meta.AdditionalFields)
+	ui, ok := c.Meta.AdditionalFields["ui"].(map[string]any)
+	require.True(t, ok, "expected _meta.ui to be a map, got %T", c.Meta.AdditionalFields["ui"])
+	assert.Equal(t, mcpgrafana.UIContentKindDeeplink, ui["kind"])
 }

@@ -10,6 +10,14 @@ const app = new App(
   { autoResize: true }
 );
 
+// Mirrors UIContentKindDeeplink in ui_apps.go.
+const DEEPLINK_KIND = "deeplink";
+
+const isDeeplinkItem = (item: any): boolean =>
+  item?.type === "text" &&
+  typeof item.text === "string" &&
+  item._meta?.ui?.kind === DEEPLINK_KIND;
+
 app.ontoolresult = (result: any) => {
   const content = result?.content;
   if (!content) return;
@@ -24,8 +32,8 @@ app.ontoolresult = (result: any) => {
       img.alt = "Grafana panel";
       containerEl.appendChild(img);
     }
-    if (item.type === "text" && item.text?.startsWith("http")) {
-      const url = item.text;
+    if (isDeeplinkItem(item)) {
+      const url = item.text as string;
       const a = document.createElement("a");
       a.href = url;
       a.textContent = "Open in Grafana";
