@@ -31,6 +31,15 @@ You can look up defaults, choose `--disable-*` flags, or configure TLS without r
 - `--endpoint-path`: HTTP path for the streamable-http MCP endpoint. Default: `/mcp`.
 - `--session-idle-timeout-minutes`: Idle timeout for streamable-http sessions, in minutes. Sessions with no activity for this duration are automatically reaped. Set to `0` to disable. Default: `30`.
 
+## Configure HTTP transport security
+
+The SSE and streamable-http transports validate `Host` and `Origin` headers on every route (`/sse`, `/mcp`, `/healthz`, `/metrics`) to block DNS-rebinding attacks. Stdio transport is unaffected.
+
+- `--allowed-hosts`: Comma-separated allowlist of `Host` header values. When unset (or when the parsed value is empty — for example, `,,,`), it falls back to loopback variants of `--address` (for example, `localhost:8000`, `127.0.0.1:8000`, `[::1]:8000`). Pass `*` to disable the check — only safe behind a trusted reverse proxy that rewrites `Host`.
+- `--allowed-origins`: Comma-separated allowlist of `Origin` header values. Empty by default — any request that carries an `Origin` header is rejected (browsers always send `Origin` for cross-origin requests, and no browser should be calling this server directly). Pass an explicit list to permit browser clients, or `*` to disable the check.
+
+When deploying behind an ingress or reverse proxy that forwards the original `Host`, set `--allowed-hosts` to the expected hostname (or `*` if the proxy is fully trusted). Kubernetes `httpGet` liveness/readiness probes send `Host: <pod-ip>:<port>` by default — either set `--allowed-hosts '*'`, override the probe's `host:` field, or use a `tcpSocket` probe. External `/metrics` scrapes must add the scrape source's `Host` to the allowlist (or use `--metrics-address` to bind metrics on a separate port, which is unaffected).
+
 ## Configure debug and logging
 
 - `--debug`: Enable debug mode for detailed HTTP request and response logging to and from the Grafana API.
