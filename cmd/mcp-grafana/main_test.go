@@ -2,7 +2,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os/exec"
 	"strings"
 	"testing"
@@ -10,6 +13,7 @@ import (
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/server"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -304,6 +308,150 @@ func TestHandleFlagsPostParse(t *testing.T) {
 			} else {
 				assert.NoError(t, err, "expected no error")
 			}
+		})
+	}
+}
+
+func TestSplitAndTrim(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want []string
+	}{
+		{"empty string", "", nil},
+		{"single value", "a", []string{"a"}},
+		{"comma separated", "a,b,c", []string{"a", "b", "c"}},
+		{"whitespace trimmed", " a , b , c ", []string{"a", "b", "c"}},
+		{"empty entries skipped", "a,,b, ,c", []string{"a", "b", "c"}},
+		{"only commas yields nil", ",,, , ,", nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, splitAndTrim(tc.in))
+		})
+	}
+}
+
+func TestHTTPSecurityConfigPolicy(t *testing.T) {
+	cases := []struct {
+		name           string
+		allowedHosts   string
+		allowedOrigins string
+		address        string
+		wantHosts      []string
+		wantOrigins    []string
+	}{
+		{
+			name:        "unset --allowed-hosts falls back to defaults",
+			address:     "localhost:8000",
+			wantHosts:   []string{"localhost:8000", "127.0.0.1:8000", "[::1]:8000"},
+			wantOrigins: nil,
+		},
+		{
+			// Regression guard: a malformed value that splits to empty must
+			// NOT silently disable Host validation.
+			name:         "comma-only --allowed-hosts falls back to defaults",
+			allowedHosts: ",,, ,",
+			address:      "localhost:8000",
+			wantHosts:    []string{"localhost:8000", "127.0.0.1:8000", "[::1]:8000"},
+			wantOrigins:  nil,
+		},
+		{
+			name:         "explicit --allowed-hosts overrides defaults",
+			allowedHosts: "mcp.example:8000, other.example:8000",
+			address:      "localhost:8000",
+			wantHosts:    []string{"mcp.example:8000", "other.example:8000"},
+		},
+		{
+			name:           "origins pass through",
+			allowedOrigins: "https://app.example",
+			address:        "localhost:8000",
+			wantHosts:      []string{"localhost:8000", "127.0.0.1:8000", "[::1]:8000"},
+			wantOrigins:    []string{"https://app.example"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			hsc := httpSecurityConfig{allowedHosts: tc.allowedHosts, allowedOrigins: tc.allowedOrigins}
+			got := hsc.policy(tc.address)
+			assert.Equal(t, tc.wantHosts, got.AllowedHosts)
+			assert.Equal(t, tc.wantOrigins, got.AllowedOrigins)
+		})
+	}
+}
+
+// TestSSEServerSuppressesWildcardCORS pins the load-bearing assumption behind
+// corsOrigins(): that passing any non-empty AllowedOrigins through
+// WithSSECORS makes mcp-go's corsConfig.enabled() return true, suppressing
+// the historical Access-Control-Allow-Origin: * default on /sse.
+//
+// The control sub-test boots an SSE server without our opt-in and asserts the
+// wildcard IS emitted, documenting the regression scenario. If a future
+// mcp-go bump removes the historical default, the control fails and we know
+// the sentinel workaround can be removed.
+func TestSSEServerSuppressesWildcardCORS(t *testing.T) {
+	hitSSE := func(t *testing.T, opts ...server.SSEOption) http.Header {
+		t.Helper()
+		mcpServer := server.NewMCPServer("test", "0")
+		sse := server.NewSSEServer(mcpServer, opts...)
+		ts := httptest.NewServer(sse)
+		t.Cleanup(ts.Close)
+
+		// Abort as soon as we have headers — SSE keeps the stream open.
+		ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+		defer cancel()
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/sse", nil)
+		require.NoError(t, err)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil && !errors.Is(err, context.DeadlineExceeded) {
+			require.NoError(t, err)
+		}
+		require.NotNil(t, resp)
+		t.Cleanup(func() { _ = resp.Body.Close() })
+		return resp.Header
+	}
+
+	t.Run("control: mcp-go emits the wildcard by default", func(t *testing.T) {
+		h := hitSSE(t)
+		assert.Equal(t, "*", h.Get("Access-Control-Allow-Origin"),
+			"mcp-go's historical default changed — sentinel workaround in corsOrigins() may be removable")
+	})
+
+	t.Run("opt-in via corsOrigins sentinel suppresses the wildcard", func(t *testing.T) {
+		hsc := httpSecurityConfig{}
+		h := hitSSE(t, server.WithSSECORS(server.WithCORSAllowedOrigins(hsc.corsOrigins()...)))
+		assert.Empty(t, h.Get("Access-Control-Allow-Origin"),
+			"sentinel did not suppress wildcard — mcp-go CORS contract may have changed")
+	})
+}
+
+func TestHTTPSecurityConfigCORSOrigins(t *testing.T) {
+	cases := []struct {
+		name           string
+		allowedOrigins string
+		want           []string
+	}{
+		{
+			// The sentinel keeps mcp-go's corsConfig.enabled() true so its
+			// SSE default of Access-Control-Allow-Origin: * is suppressed.
+			name: "unset returns the .invalid sentinel",
+			want: []string{"https://mcp-grafana.invalid"},
+		},
+		{
+			name:           "comma-only returns the sentinel",
+			allowedOrigins: ", ,",
+			want:           []string{"https://mcp-grafana.invalid"},
+		},
+		{
+			name:           "explicit origins pass through lowercased",
+			allowedOrigins: "HTTPS://App.Example, https://other.example",
+			want:           []string{"https://app.example", "https://other.example"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			hsc := httpSecurityConfig{allowedOrigins: tc.allowedOrigins}
+			assert.Equal(t, tc.want, hsc.corsOrigins())
 		})
 	}
 }

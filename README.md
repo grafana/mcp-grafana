@@ -392,6 +392,13 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 - `--base-path`: Base path for the SSE/streamable-http server
 - `--endpoint-path`: Endpoint path for the streamable-http server - default: `/`
 
+**HTTP Transport Security (SSE / streamable-http only):**
+
+`Host`/`Origin` validation is enforced on *every* route on the listener — `/sse`, `/mcp`, `/healthz`, and `/metrics` — so a DNS-rebinding browser cannot reach any of them. Stdio transport is unaffected.
+
+- `--allowed-hosts`: Comma-separated allowlist of `Host` header values. Defaults to loopback variants of `--address` (e.g. `localhost:8000,127.0.0.1:8000,[::1]:8000`). A value that parses to empty (unset, `,`, ` , `, etc.) also falls back to the defaults so a typo cannot silently disable the check. Requests with a `Host` header outside the allowlist are rejected with `403`. Pass `*` to disable the check — only safe when running behind a trusted reverse proxy that rewrites `Host`, or in an isolated network. K8s `httpGet` probes and external `/metrics` scrapes will need either an explicit hostname in this list, `*`, or a `tcpSocket` probe / a separate metrics port (`--metrics-address`).
+- `--allowed-origins`: Comma-separated allowlist of `Origin` header values. Empty by default — any request that carries an `Origin` header is rejected (browsers always send one for cross-origin requests, and no browser should be calling this server directly). Set to an explicit list to permit browser-based clients, or `*` to disable the check.
+
 **Debug and Logging:**
 - `--debug`: Enable debug mode for detailed HTTP request/response logging
 - `--log-level`: Log level (`debug`, `info`, `warn`, `error`) - default: `info`
