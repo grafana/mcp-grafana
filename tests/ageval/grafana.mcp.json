@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "grafana": {
+      "command": "/Users/vicenteortegatorres/projects/mcp-grafana/dist/mcp-grafana",
+      "args": ["--enabled-tools", "alerting"],
+      "env": {
+        "GRAFANA_URL": "http://localhost:3000",
+        "GRAFANA_USERNAME": "admin",
+        "GRAFANA_PASSWORD": "admin"
+      }
+    }
+  }
+}
