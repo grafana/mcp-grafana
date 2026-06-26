@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -139,7 +140,190 @@ var SearchFolders = mcpgrafana.MustTool(
 	mcp.WithReadOnlyHintAnnotation(true),
 )
 
+type dashboardSearchHitWithPath struct {
+	dashboardSearchHit
+	FolderPath string `json:"folderPath,omitempty"`
+}
+
+type SearchDashboardsDeepParams struct {
+	Query      string   `json:"query" jsonschema:"description=Query matched case-insensitively against title\\, description\\, tags\\, folder title\\, and reconstructed folder path. Empty string returns all dashboards."`
+	FolderPath string   `json:"folderPath,omitempty" jsonschema:"description=Optional. Limit results to dashboards inside this folder path (e.g. '/Ops/Production'). Includes all subfolders. Case insensitive."`
+	Tags       []string `json:"tags,omitempty" jsonschema:"description=Optional. Limit results to dashboards that have all of these tags (AND logic). Case insensitive."`
+}
+
+type SearchDashboardsDeepResult struct {
+	Dashboards []dashboardSearchHitWithPath `json:"dashboards"`
+	Total      int                          `json:"total"`
+}
+
+func fetchAllFolders(ctx context.Context) (map[string]*models.Hit, error) {
+	c := mcpgrafana.GrafanaClientFromContext(ctx)
+	folderMap := make(map[string]*models.Hit)
+	page := int64(1)
+	limit := int64(500)
+	for {
+		params := search.NewSearchParamsWithContext(ctx)
+		params.SetType(&folderTypeStr)
+		params.SetLimit(&limit)
+		params.SetPage(&page)
+		resp, err := c.Search.Search(params)
+		if err != nil {
+			return nil, fmt.Errorf("fetch folders page %d: %w", page, err)
+		}
+		for _, hit := range resp.Payload {
+			folderMap[hit.UID] = hit
+		}
+		if len(resp.Payload) == 0 {
+			break
+		}
+		page++
+	}
+	return folderMap, nil
+}
+
+func fetchAllDashboards(ctx context.Context) ([]*models.Hit, error) {
+	c := mcpgrafana.GrafanaClientFromContext(ctx)
+	var dashboards []*models.Hit
+	page := int64(1)
+	limit := int64(500)
+	for {
+		params := search.NewSearchParamsWithContext(ctx)
+		params.SetType(&dashboardTypeStr)
+		params.SetLimit(&limit)
+		params.SetPage(&page)
+		resp, err := c.Search.Search(params)
+		if err != nil {
+			return nil, fmt.Errorf("fetch dashboards page %d: %w", page, err)
+		}
+		dashboards = append(dashboards, resp.Payload...)
+		if len(resp.Payload) == 0 {
+			break
+		}
+		page++
+	}
+	return dashboards, nil
+}
+
+// buildFolderPath walks up the folder tree via folderMap and returns a slash-separated path.
+func buildFolderPath(folderUID string, folderMap map[string]*models.Hit) string {
+	if folderUID == "" {
+		return ""
+	}
+	var parts []string
+	uid := folderUID
+	for uid != "" {
+		folder, ok := folderMap[uid]
+		if !ok {
+			break
+		}
+		parts = append([]string{folder.Title}, parts...)
+		uid = folder.FolderUID
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "/" + strings.Join(parts, "/")
+}
+
+func hasAllTags(dashboardTags []string, filterTags []string) bool {
+	for _, ft := range filterTags {
+		found := false
+		for _, dt := range dashboardTags {
+			if strings.ToLower(dt) == ft {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
+func matchesDashboardQuery(query string, hit dashboardSearchHitWithPath) bool {
+	if strings.Contains(strings.ToLower(hit.Title), query) {
+		return true
+	}
+	if strings.Contains(strings.ToLower(hit.Description), query) {
+		return true
+	}
+	if strings.Contains(strings.ToLower(hit.FolderTitle), query) {
+		return true
+	}
+	if strings.Contains(strings.ToLower(hit.FolderPath), query) {
+		return true
+	}
+	for _, tag := range hit.Tags {
+		if strings.Contains(strings.ToLower(tag), query) {
+			return true
+		}
+	}
+	return false
+}
+
+func searchDashboardsDeep(ctx context.Context, args SearchDashboardsDeepParams) (*SearchDashboardsDeepResult, error) {
+	folderMap, err := fetchAllFolders(ctx)
+	if err != nil {
+		return nil, err
+	}
+	dashboards, err := fetchAllDashboards(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	query := strings.ToLower(args.Query)
+	folderFilter := ""
+	if args.FolderPath != "" {
+		folderFilter = strings.TrimRight(strings.ToLower(args.FolderPath), "/")
+	}
+	tagFilter := make([]string, len(args.Tags))
+	for i, t := range args.Tags {
+		tagFilter[i] = strings.ToLower(t)
+	}
+	var results []dashboardSearchHitWithPath
+	for _, d := range dashboards {
+		folderPath := buildFolderPath(d.FolderUID, folderMap)
+		hit := dashboardSearchHitWithPath{
+			dashboardSearchHit: dashboardSearchHit{
+				UID:         d.UID,
+				Title:       d.Title,
+				URL:         d.URL,
+				Type:        string(d.Type),
+				FolderUID:   d.FolderUID,
+				FolderTitle: d.FolderTitle,
+				Tags:        d.Tags,
+				Description: d.Description,
+			},
+			FolderPath: folderPath,
+		}
+		if folderFilter != "" && !strings.HasPrefix(strings.TrimRight(strings.ToLower(folderPath), "/")+"/", folderFilter+"/") {
+			continue
+		}
+		if !hasAllTags(hit.Tags, tagFilter) {
+			continue
+		}
+		if query == "" || matchesDashboardQuery(query, hit) {
+			results = append(results, hit)
+		}
+	}
+	return &SearchDashboardsDeepResult{
+		Dashboards: results,
+		Total:      len(results),
+	}, nil
+}
+
+var SearchDashboardsDeep = mcpgrafana.MustTool(
+	"search_dashboards_deep",
+	"Search for Grafana dashboards by a query string. Every attribute of the dashboard, tags and the folderPath will be checked if it contains the case insensitive query string. Returns a list of matching dashboards with details like title, UID, folder, tags, URL and folderPath.",
+	searchDashboardsDeep,
+	mcp.WithTitleAnnotation("Search dashboards deep"),
+	mcp.WithIdempotentHintAnnotation(true),
+	mcp.WithReadOnlyHintAnnotation(true),
+)
+
 func AddSearchTools(mcp *server.MCPServer) {
 	SearchDashboards.Register(mcp)
 	SearchFolders.Register(mcp)
+	SearchDashboardsDeep.Register(mcp)
 }
