@@ -613,6 +613,8 @@ func TestRenderLinkInMCPApp_AppliesKioskForGrafanaURLs(t *testing.T) {
 		structured := result.StructuredContent.(map[string]any)
 		assert.Contains(t, structured["url"].(string), "kiosk=true")
 		assert.Contains(t, structured["url"].(string), "from=now-1h")
+		// Grafana URLs opt into datapoint context forwarding for the MCP app.
+		assert.Contains(t, structured["url"].(string), "assistantContextTarget=")
 
 		// Text content surfaces the caller's URL unchanged so kiosk=true
 		// doesn't leak when the URL is copied or shared.

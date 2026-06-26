@@ -120,6 +120,32 @@ func addGrafanaKioskParam(rawURL, grafanaBaseURL, override string) string {
 	return target.String()
 }
 
+// addAssistantContextTargetParam lets the embedded Grafana panel post tooltip data-point
+// context to this MCP app. Grafana URLs only; '*' since the app iframe origin is opaque.
+func addAssistantContextTargetParam(rawURL, grafanaBaseURL string) string {
+	if grafanaBaseURL == "" {
+		return rawURL
+	}
+	target, err := url.Parse(rawURL)
+	if err != nil {
+		return rawURL
+	}
+	base, err := url.Parse(grafanaBaseURL)
+	if err != nil {
+		return rawURL
+	}
+	if !strings.EqualFold(target.Host, base.Host) {
+		return rawURL
+	}
+
+	q := target.Query()
+	if !q.Has("assistantContextTarget") {
+		q.Set("assistantContextTarget", "*")
+	}
+	target.RawQuery = q.Encode()
+	return target.String()
+}
+
 func normalizeEmbeddableURL(raw string) (string, error) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
@@ -155,7 +181,9 @@ func renderLinkInMCPApp(ctx context.Context, args RenderLinkInMCPAppParams) (*mc
 	if args.Kiosk != nil {
 		override = *args.Kiosk
 	}
-	iframeURL := addGrafanaKioskParam(safeURL, mcpgrafana.GrafanaConfigFromContext(ctx).URL, override)
+	grafanaURL := mcpgrafana.GrafanaConfigFromContext(ctx).URL
+	iframeURL := addGrafanaKioskParam(safeURL, grafanaURL, override)
+	iframeURL = addAssistantContextTargetParam(iframeURL, grafanaURL)
 
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{

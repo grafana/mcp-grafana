@@ -287,6 +287,68 @@
 
       attachResizeHandle();
 
+      function roundNum(n) {
+        return typeof n === "number" ? Math.round(n * 100) / 100 : n;
+      }
+
+      // One-line summary for the composer prompt; the full context goes to model context.
+      function summarizeDatapointContext(items) {
+        const byKind = {};
+        for (const it of items) {
+          if (it && it.data && it.data.kind) {
+            byKind[it.data.kind] = it.data;
+          }
+        }
+        const point = byKind["timeseries-datapoint"];
+        const series = byKind["timeseries-series"];
+        const panel = byKind["dashboard-panel"];
+        const parts = [];
+        if (point) {
+          const v = point.displayValue != null ? point.displayValue : point.value;
+          parts.push((point.series || "series") + " = " + v + " @ " + point.timestamp);
+        }
+        if (series && series.stats) {
+          const s = series.stats;
+          parts.push("stats: mean " + roundNum(s.mean) + ", min " + roundNum(s.min) + ", max " + roundNum(s.max) + ", stdDev " + roundNum(s.stdDev) + ", n=" + s.count);
+        }
+        if (panel) {
+          parts.push("panel '" + panel.panelTitle + "' (dashboard " + panel.dashboardUid + ")");
+        }
+        return parts.join("; ");
+      }
+
+      // Relay a datapoint context from the embedded Grafana panel: full payload to model
+      // context, short prompt to the composer.
+      function relayDatapointContext(data) {
+        const items = Array.isArray(data.context) ? data.context : [];
+        console.debug("[link-app] relaying grafana datapoint context", data);
+
+        sendRequest("ui/update-model-context", {
+          structuredContent: { grafanaDatapointContext: items },
+        }).catch((error) => {
+          console.debug("[link-app] ui/update-model-context unavailable:", error && error.message);
+        });
+
+        const text =
+          "I selected a data point in the embedded Grafana panel — " + summarizeDatapointContext(items) + ". " +
+          "Assess whether it's notable (compare the value to the series stats) and suggest useful follow-ups. " +
+          "The full point/series/panel context is attached.";
+        sendRequest("ui/message", { role: "user", content: [{ type: "text", text: text }] }).catch((error) => {
+          const message = error instanceof Error ? error.message : String(error);
+          console.error("[link-app] failed to forward datapoint context:", message);
+        });
+      }
+
+      function handleFrameMessage(event) {
+        if (event.source !== frameEl.contentWindow) {
+          return;
+        }
+        const data = event.data;
+        if (data && typeof data === "object" && data.type === "grafana/datapoint-context") {
+          relayDatapointContext(data);
+        }
+      }
+
       function handleMessage(event) {
         const message = event.data;
         if (!message || typeof message !== "object") {
@@ -317,6 +379,7 @@
 
       async function initialize() {
         window.addEventListener("message", handleMessage);
+        window.addEventListener("message", handleFrameMessage);
 
         if (window.parent === window) {
           const standaloneURL = sanitizeURL(new URLSearchParams(window.location.search).get("url"));
