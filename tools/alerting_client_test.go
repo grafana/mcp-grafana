@@ -183,6 +183,15 @@ func TestGetRulesOpts_queryValues(t *testing.T) {
 				"limit_alerts": {"200"},
 			},
 		},
+		{
+			name: "include internal labels is mapped",
+			opts: GetRulesOpts{
+				IncludeInternalLabels: true,
+			},
+			expected: url.Values{
+				"includeInternalLabels": {"true"},
+			},
+		},
 	}
 
 	for _, tc := range tests {
