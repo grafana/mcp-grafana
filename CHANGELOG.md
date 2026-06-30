@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Optional per-call `orgId` argument on every tool for multi-org support
+- Optional per-call `orgId` argument to target a Grafana organization, opt-in via `--dynamic-multi-org` (env `GRAFANA_DYNAMIC_MULTI_ORG`); also discovers proxied datasource tools across every org the credential can access
 
 ## [0.17.0] - 2026-06-23
 
