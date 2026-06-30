@@ -37,6 +37,8 @@ Proxied tools are enabled by default on this server. Pass `--disable-proxied` to
 
 With stdio transport, proxied tools are discovered once at startup. With SSE or streamable-http, discovery runs per MCP session when tools are listed or called.
 
+When [`--dynamic-multi-org`](../multi-organization-and-headers/) is enabled, discovery runs across every organization the credential can access (not just the default org), and proxied tools accept an optional `orgId` argument alongside `datasourceUid` to target a datasource in a specific organization.
+
 ## Next steps
 
 - [Enable and disable tools](../enable-and-disable-tools/)

@@ -9,7 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Optional per-call `orgId` argument to target a Grafana organization, opt-in via `--dynamic-multi-org` (env `GRAFANA_DYNAMIC_MULTI_ORG`); also discovers proxied datasource tools across every org the credential can access
+- Optional per-call `orgId` argument to target a Grafana organization, opt-in via the `--dynamic-multi-org` flag; also discovers proxied datasource tools across every org the credential can access
+- `user_info` tool reporting the current identity, whether it is a Grafana admin, and the organizations the credential can access (with roles)
 
 ## [0.17.0] - 2026-06-23
 

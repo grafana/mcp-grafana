@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/signal"
 	"slices"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -77,6 +76,7 @@ var categoryDescription = map[string]string{
 	"api":           "API: Make authenticated HTTP requests to any Grafana API endpoint with optional jq-style response filtering.",
 	"config":        "Config: Generate operator-facing configuration snippets (e.g. Alloy label-enforcement pipelines).",
 	"provisioning":  "Provisioning: List provisioning repositories (e.g. git-sync sources) to discover repository slugs for use with rendering tools.",
+	"user":          "User: Identify the current user/credential, its capabilities, and the organizations it can access.",
 }
 
 // disabledTools indicates whether each category of tools should be disabled.
@@ -88,7 +88,7 @@ type disabledTools struct {
 	dashboard, folder, oncall, asserts, sift, admin,
 	pyroscope, navigation, proxied, annotations, rendering, cloudwatch, write,
 	snapshot, examples, clickhouse, snowflake, graphite,
-	runpanelquery, athena, plugin, api, config, provisioning bool
+	runpanelquery, athena, plugin, api, config, provisioning, user bool
 }
 
 // Configuration for the Grafana client.
@@ -112,7 +112,7 @@ type grafanaConfig struct {
 }
 
 func (dt *disabledTools) addFlags() {
-	flag.StringVar(&dt.enabledTools, "enabled-tools", "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering,snapshot,plugin,api,config,provisioning", "A comma separated list of tools enabled for this server. Can be overwritten entirely or by disabling specific components, e.g. --disable-search.")
+	flag.StringVar(&dt.enabledTools, "enabled-tools", "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering,snapshot,plugin,api,config,provisioning,user", "A comma separated list of tools enabled for this server. Can be overwritten entirely or by disabling specific components, e.g. --disable-search.")
 	flag.BoolVar(&dt.search, "disable-search", false, "Disable search tools")
 	flag.BoolVar(&dt.datasource, "disable-datasource", false, "Disable datasource tools")
 	flag.BoolVar(&dt.incident, "disable-incident", false, "Disable incident tools")
@@ -146,6 +146,7 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.api, "disable-api", false, "Disable API tools")
 	flag.BoolVar(&dt.config, "disable-config", false, "Disable config-generation tools")
 	flag.BoolVar(&dt.provisioning, "disable-provisioning", false, "Disable provisioning tools")
+	flag.BoolVar(&dt.user, "disable-user", false, "Disable user info tools")
 }
 
 func (gc *grafanaConfig) addFlags() {
@@ -161,8 +162,7 @@ func (gc *grafanaConfig) addFlags() {
 	flag.IntVar(&gc.maxLokiLogLimit, "max-loki-log-limit", tools.MaxLokiLogLimit, "Maximum number of log lines returned per query_loki_logs call")
 
 	// Multi-org: allow per-call org selection via an optional orgId argument.
-	dynamicMultiOrgDefault, _ := strconv.ParseBool(os.Getenv("GRAFANA_DYNAMIC_MULTI_ORG"))
-	flag.BoolVar(&gc.dynamicMultiOrg, "dynamic-multi-org", dynamicMultiOrgDefault, "Allow tool calls to select a Grafana organization per call via an optional orgId argument (org is otherwise fixed at connection startup). Adds an orgId argument to every tool's schema. Env: GRAFANA_DYNAMIC_MULTI_ORG.")
+	flag.BoolVar(&gc.dynamicMultiOrg, "dynamic-multi-org", false, "Allow tool calls to select a Grafana organization per call via an optional orgId argument (org is otherwise fixed at connection startup). Adds an orgId argument to every tool's schema.")
 }
 
 // toolEntry pairs a tool registration function with its category and disable flag.
@@ -209,6 +209,7 @@ func (dt *disabledTools) toolEntries() []toolEntry {
 		{func(mcp *server.MCPServer) { tools.AddAPITools(mcp, enableWriteTools) }, dt.api, "api"},
 		{tools.AddConfigTools, dt.config, "config"},
 		{tools.AddProvisioningTools, dt.provisioning, "provisioning"},
+		{tools.AddUserTools, dt.user, "user"},
 	}
 }
 

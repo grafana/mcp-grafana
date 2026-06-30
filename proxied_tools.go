@@ -92,16 +92,76 @@ func resolveDefaultOrgID(ctx context.Context, logger *slog.Logger) int64 {
 // fetchUserOrgIDs lists the orgs the current user belongs to via /api/user/orgs.
 // Returns an error for identities that aren't users (e.g. service-account
 // tokens), so callers fall back to the single default org.
-func fetchUserOrgIDs(ctx context.Context) ([]int64, error) {
+// OrgInfo describes an organization the current user is a member of.
+type OrgInfo struct {
+	OrgID int64  `json:"orgId"`
+	Name  string `json:"name"`
+	Role  string `json:"role"`
+}
+
+// ListUserOrgs returns the organizations the current user belongs to
+// (GET /api/user/orgs). It returns an error for identities that cannot
+// enumerate orgs (e.g. service-account tokens, which are single-org).
+func ListUserOrgs(ctx context.Context) ([]OrgInfo, error) {
 	cfg := GrafanaConfigFromContext(ctx)
-	var resp []struct {
-		OrgID int64 `json:"orgId"`
-	}
-	if err := grafanaGetJSON(ctx, &cfg, "/api/user/orgs", &resp); err != nil {
+	var orgs []OrgInfo
+	if err := grafanaGetJSON(ctx, &cfg, "/api/user/orgs", &orgs); err != nil {
 		return nil, err
 	}
-	ids := make([]int64, 0, len(resp))
-	for _, o := range resp {
+	return orgs, nil
+}
+
+// DefaultOrgID returns the org the connection targets when no orgId is given.
+func DefaultOrgID(ctx context.Context) int64 {
+	return resolveDefaultOrgID(ctx, GrafanaConfigFromContext(ctx).LoggerOrDefault())
+}
+
+// UserInfo describes the signed-in identity for the current request.
+type UserInfo struct {
+	Login          string    `json:"login,omitempty"`
+	Email          string    `json:"email,omitempty"`
+	Name           string    `json:"name,omitempty"`
+	IsGrafanaAdmin bool      `json:"isGrafanaAdmin"`
+	CurrentOrgID   int64     `json:"currentOrgId"`
+	Orgs           []OrgInfo `json:"orgs"`
+}
+
+// CurrentUserInfo returns the signed-in user's identity (GET /api/user) plus the
+// organizations the credential can access (GET /api/user/orgs). Org membership
+// is best-effort: it is empty for identities that can't enumerate orgs (e.g.
+// service-account tokens), which remain scoped to their single CurrentOrgID.
+func CurrentUserInfo(ctx context.Context) (UserInfo, error) {
+	cfg := GrafanaConfigFromContext(ctx)
+	var u struct {
+		Login          string `json:"login"`
+		Email          string `json:"email"`
+		Name           string `json:"name"`
+		IsGrafanaAdmin bool   `json:"isGrafanaAdmin"`
+		OrgID          int64  `json:"orgId"`
+	}
+	if err := grafanaGetJSON(ctx, &cfg, "/api/user", &u); err != nil {
+		return UserInfo{}, err
+	}
+	info := UserInfo{
+		Login:          u.Login,
+		Email:          u.Email,
+		Name:           u.Name,
+		IsGrafanaAdmin: u.IsGrafanaAdmin,
+		CurrentOrgID:   u.OrgID,
+	}
+	if orgs, err := ListUserOrgs(ctx); err == nil {
+		info.Orgs = orgs
+	}
+	return info, nil
+}
+
+func fetchUserOrgIDs(ctx context.Context) ([]int64, error) {
+	orgs, err := ListUserOrgs(ctx)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]int64, 0, len(orgs))
+	for _, o := range orgs {
 		if o.OrgID > 0 {
 			ids = append(ids, o.OrgID)
 		}
