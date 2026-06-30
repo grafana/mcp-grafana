@@ -11,11 +11,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// schemaProperties unmarshals a tool's RawInputSchema and returns its properties.
-func schemaProperties(t *testing.T, tool Tool) map[string]any {
+// schemaProperties unmarshals a RawInputSchema and returns its properties.
+func schemaProperties(t *testing.T, raw []byte) map[string]any {
 	t.Helper()
 	var schema map[string]any
-	require.NoError(t, json.Unmarshal(tool.Tool.RawInputSchema, &schema))
+	require.NoError(t, json.Unmarshal(raw, &schema))
 	props, _ := schema["properties"].(map[string]any)
 	return props
 }
@@ -39,18 +39,30 @@ func TestInjectOrgIDProperty(t *testing.T) {
 	})
 }
 
-// ConvertTool wires injectOrgIDProperty in via commonToolArguments, so a built
-// tool advertises orgId in its serialized schema.
-func TestConvertToolAdvertisesOrgID(t *testing.T) {
+// resolveTool injects orgId into a registered tool's schema only when dynamic
+// multi-org is enabled.
+func TestResolveToolInjectsOrgID(t *testing.T) {
 	type fooParams struct {
 		Foo string `json:"foo,omitempty" jsonschema:"description=a foo"`
 	}
 	tool := MustTool("demo_tool", "demo", func(_ context.Context, _ fooParams) (string, error) { return "", nil })
-	props := schemaProperties(t, tool)
-	require.Contains(t, props, "foo")
-	orgID, ok := props[OrgIDArgument].(map[string]any)
-	require.True(t, ok, "orgId should be present in the serialized schema")
-	assert.Equal(t, "integer", orgID["type"])
+
+	t.Run("absent when disabled", func(t *testing.T) {
+		DynamicMultiOrgEnabled = false
+		props := schemaProperties(t, tool.resolveTool().RawInputSchema)
+		require.Contains(t, props, "foo")
+		assert.NotContains(t, props, OrgIDArgument, "orgId must not be advertised when dynamic multi-org is off")
+	})
+
+	t.Run("injected when enabled", func(t *testing.T) {
+		DynamicMultiOrgEnabled = true
+		t.Cleanup(func() { DynamicMultiOrgEnabled = false })
+		props := schemaProperties(t, tool.resolveTool().RawInputSchema)
+		require.Contains(t, props, "foo", "the handler's own arguments are preserved")
+		orgID, ok := props[OrgIDArgument].(map[string]any)
+		require.True(t, ok, "orgId should be advertised when enabled")
+		assert.Equal(t, "integer", orgID["type"])
+	})
 }
 
 func TestOrgIDFromArguments(t *testing.T) {
@@ -99,10 +111,13 @@ func TestOrgIDOverrideMiddleware(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	t.Run("override applies when orgId is provided", func(t *testing.T) {
+	t.Run("override applies and orgId is stripped from args", func(t *testing.T) {
 		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{OrgID: 1})
-		call(ctx, map[string]any{"orgId": float64(2)})
+		args := map[string]any{"orgId": float64(2), "other": "keep"}
+		call(ctx, args)
 		assert.Equal(t, int64(2), seen)
+		assert.NotContains(t, args, OrgIDArgument, "orgId must be stripped so it never reaches the handler / proxied upstream")
+		assert.Contains(t, args, "other", "other arguments are preserved")
 	})
 
 	t.Run("connection org is kept when orgId is absent", func(t *testing.T) {
@@ -111,9 +126,11 @@ func TestOrgIDOverrideMiddleware(t *testing.T) {
 		assert.Equal(t, int64(7), seen)
 	})
 
-	t.Run("invalid orgId leaves connection org untouched", func(t *testing.T) {
+	t.Run("invalid orgId is ignored but still stripped", func(t *testing.T) {
 		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{OrgID: 7})
-		call(ctx, map[string]any{"orgId": float64(0)})
+		args := map[string]any{"orgId": float64(0)}
+		call(ctx, args)
 		assert.Equal(t, int64(7), seen)
+		assert.NotContains(t, args, OrgIDArgument, "even an invalid orgId must not propagate downstream")
 	})
 }

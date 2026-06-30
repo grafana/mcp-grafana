@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -103,6 +104,11 @@ type grafanaConfig struct {
 
 	// Loki configuration
 	maxLokiLogLimit int
+
+	// dynamicMultiOrg allows tool calls to select a Grafana organization per
+	// call via an optional orgId argument. Off by default; startup-time
+	// multi-org (GRAFANA_ORG_ID / X-Grafana-Org-Id) is unaffected.
+	dynamicMultiOrg bool
 }
 
 func (dt *disabledTools) addFlags() {
@@ -153,6 +159,10 @@ func (gc *grafanaConfig) addFlags() {
 
 	// Loki configuration flags
 	flag.IntVar(&gc.maxLokiLogLimit, "max-loki-log-limit", tools.MaxLokiLogLimit, "Maximum number of log lines returned per query_loki_logs call")
+
+	// Multi-org: allow per-call org selection via an optional orgId argument.
+	dynamicMultiOrgDefault, _ := strconv.ParseBool(os.Getenv("GRAFANA_DYNAMIC_MULTI_ORG"))
+	flag.BoolVar(&gc.dynamicMultiOrg, "dynamic-multi-org", dynamicMultiOrgDefault, "Allow tool calls to select a Grafana organization per call via an optional orgId argument (org is otherwise fixed at connection startup). Adds an orgId argument to every tool's schema. Env: GRAFANA_DYNAMIC_MULTI_ORG.")
 }
 
 // toolEntry pairs a tool registration function with its category and disable flag.
@@ -318,14 +328,17 @@ func newServer(transport string, dt disabledTools, obs *observability.Observabil
 	// then register tools.
 	instructions := dt.buildInstructions()
 
-	s = server.NewMCPServer("mcp-grafana", mcpgrafana.Version(),
+	serverOpts := []server.ServerOption{
 		server.WithInstructions(instructions),
 		server.WithHooks(hooks),
+	}
+	if mcpgrafana.DynamicMultiOrgEnabled {
 		// Honor an optional per-call "orgId" argument so a single connection can
 		// target multiple Grafana organizations (overrides the connection-level
-		// org for that call).
-		server.WithToolHandlerMiddleware(mcpgrafana.OrgIDOverrideMiddleware),
-	)
+		// org for that call). Only wired in when --dynamic-multi-org is set.
+		serverOpts = append(serverOpts, server.WithToolHandlerMiddleware(mcpgrafana.OrgIDOverrideMiddleware))
+	}
+	s = server.NewMCPServer("mcp-grafana", mcpgrafana.Version(), serverOpts...)
 
 	// Initialize ToolManager now that server is created
 	stm = mcpgrafana.NewToolManager(sm, s, mcpgrafana.WithProxiedTools(!dt.proxied), mcpgrafana.WithToolManagerLogger(slog.Default()))
@@ -655,6 +668,10 @@ func main() {
 		fmt.Fprintf(os.Stderr, "internal error: unexpected flag action %v\n", action)
 		os.Exit(2)
 	}
+
+	// Enable per-call org selection before any tools are registered, so their
+	// schemas and the override middleware are wired in consistently.
+	mcpgrafana.DynamicMultiOrgEnabled = gc.dynamicMultiOrg
 
 	// Convert local grafanaConfig to mcpgrafana.GrafanaConfig
 	grafanaConfig := mcpgrafana.GrafanaConfig{

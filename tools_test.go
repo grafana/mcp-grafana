@@ -169,7 +169,7 @@ func TestConvertTool(t *testing.T) {
 		assert.Equal(t, "test error", resultString.Text)
 	})
 
-	t.Run("no-arg handler still advertises orgId", func(t *testing.T) {
+	t.Run("empty handler params", func(t *testing.T) {
 		tool, handler, err := ConvertTool("empty", "description", emptyToolHandler)
 
 		require.NoError(t, err)
@@ -194,10 +194,7 @@ func TestConvertTool(t *testing.T) {
 
 		properties, ok := inputSchema["properties"].(map[string]any)
 		require.True(t, ok, "properties should be a map")
-		// A no-arg handler reflects no properties of its own, but every tool
-		// carries the injected orgId argument (commonToolArguments).
-		assert.Len(t, properties, 1)
-		assert.Contains(t, properties, OrgIDArgument)
+		assert.Len(t, properties, 0)
 
 		// Test handler execution
 		ctx := context.Background()
@@ -597,10 +594,8 @@ func TestCreateJSONSchemaFromHandler(t *testing.T) {
 	assert.Equal(t, "An optional parameter", optionalProperty.Description)
 }
 
-func TestNoArgToolJSONSchema(t *testing.T) {
-	// Test that a no-arg handler generates a correct JSON schema whose properties
-	// is a well-formed object (the guarantee from #594) — here carrying the
-	// injected orgId argument that every tool advertises.
+func TestEmptyStructJSONSchema(t *testing.T) {
+	// Test that empty structs generate correct JSON schema with empty properties object
 	tool, _, err := ConvertTool("empty_tool", "An empty tool", emptyToolHandler)
 	require.NoError(t, err)
 
@@ -633,10 +628,7 @@ func TestNoArgToolJSONSchema(t *testing.T) {
 
 	propertiesMap, ok := properties.(map[string]any)
 	assert.True(t, ok, "properties should be a map")
-	// The handler declares no fields of its own; the only property is the
-	// injected orgId argument.
-	assert.Len(t, propertiesMap, 1, "properties should contain only the injected orgId")
-	assert.Contains(t, propertiesMap, OrgIDArgument)
+	assert.Len(t, propertiesMap, 0, "properties should be an empty map")
 }
 
 func TestValidateNoBooleanSchemas(t *testing.T) {

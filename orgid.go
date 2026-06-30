@@ -9,21 +9,26 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 )
 
+// DynamicMultiOrgEnabled controls per-call org selection: when true, tools
+// advertise the optional orgId argument and OrgIDOverrideMiddleware is wired in.
+// It is set from the --dynamic-multi-org flag before tools are registered.
+// Startup-time multi-org (GRAFANA_ORG_ID / the X-Grafana-Org-Id header on the
+// connection) works regardless of this flag.
+var DynamicMultiOrgEnabled bool
+
 // OrgIDArgument is the name of the optional per-call tool argument that selects
-// which Grafana organization a tool call targets. It is advertised on every
-// native tool's input schema (see injectOrgIDProperty) and consumed by
-// OrgIDOverrideMiddleware.
+// which Grafana organization a tool call targets. When dynamic multi-org is
+// enabled it is advertised on every native tool's input schema (see
+// injectOrgIDProperty) and consumed by OrgIDOverrideMiddleware.
 const OrgIDArgument = "orgId"
 
 // orgIDArgumentDescription documents the orgId argument advertised on every tool.
-const orgIDArgumentDescription = "Optional Grafana organization ID to target for this call, " +
-	"overriding the connection's default organization. Only takes effect for credentials that " +
-	"belong to more than one organization; leave unset to use the connection's configured org."
+const orgIDArgumentDescription = "Grafana org ID to target for this call, overriding the connection's default org."
 
-// injectOrgIDProperty is an argumentInjector that advertises the optional orgId
-// argument on a tool's reflected property set (unless the tool already declares
-// it), so OrgIDOverrideMiddleware has something for clients to populate. Keeping
-// it here, beside the middleware that reads it, leaves ConvertTool free of orgId
+// injectOrgIDProperty advertises the optional orgId argument on a tool's
+// reflected property set (unless the tool already declares it), so
+// OrgIDOverrideMiddleware has something for clients to populate. Keeping it here,
+// beside the middleware that reads it, leaves ConvertTool free of orgId
 // specifics.
 func injectOrgIDProperty(properties map[string]any) {
 	if _, exists := properties[OrgIDArgument]; exists {
@@ -48,12 +53,24 @@ func injectOrgIDProperty(properties map[string]any) {
 // member of — Grafana still enforces authorization, and a service-account token
 // remains bound to its single org. An absent, non-numeric, or non-positive
 // value leaves the connection-level OrgID untouched.
+//
+// The orgId argument is stripped from the request before the handler runs so it
+// never propagates downstream — in particular, proxied tools forward all
+// arguments to upstream datasource MCP servers, which must not receive a
+// Grafana-only orgId.
 func OrgIDOverrideMiddleware(next server.ToolHandlerFunc) server.ToolHandlerFunc {
 	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if orgID, ok := orgIDFromArguments(request.GetArguments()); ok {
-			if cfg := GrafanaConfigFromContext(ctx); cfg.OrgID != orgID {
-				cfg.OrgID = orgID
-				ctx = WithGrafanaConfig(ctx, cfg)
+		if args := request.GetArguments(); args != nil {
+			if _, present := args[OrgIDArgument]; present {
+				if orgID, ok := orgIDFromArguments(args); ok {
+					if cfg := GrafanaConfigFromContext(ctx); cfg.OrgID != orgID {
+						cfg.OrgID = orgID
+						ctx = WithGrafanaConfig(ctx, cfg)
+					}
+				}
+				// Strip it regardless of validity so it never reaches a handler
+				// (GetArguments returns the live map, so deletion propagates).
+				delete(args, OrgIDArgument)
 			}
 		}
 		return next(ctx, request)

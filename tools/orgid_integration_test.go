@@ -85,6 +85,46 @@ func callToolWithOrgID(ctx context.Context, tool mcpgrafana.Tool, args map[strin
 	return handler(ctx, req)
 }
 
+// TestOrgIDParameter_OptIn_Integration verifies the --dynamic-multi-org opt-in
+// end to end. It mirrors newServer's wiring: the OrgIDOverrideMiddleware is only
+// applied when mcpgrafana.DynamicMultiOrgEnabled is set. With the feature off, an
+// orgId argument is just an unknown argument the handler ignores, so the call
+// stays on the connection's default org; with it on, orgId routes the call. The
+// seeded dashboard exists only in the secondary org, so "found vs not found" is
+// the signal.
+func TestOrgIDParameter_OptIn_Integration(t *testing.T) {
+	ctx := newOrgRoutingContext(t, modernGrafanaURL)
+
+	// callDashboard mirrors the server: wrap with the override middleware only
+	// when the feature is enabled.
+	callDashboard := func(orgID int64) (*mcp.CallToolResult, error) {
+		handler := GetDashboardByUID.Handler
+		if mcpgrafana.DynamicMultiOrgEnabled {
+			handler = mcpgrafana.OrgIDOverrideMiddleware(handler)
+		}
+		req := mcp.CallToolRequest{}
+		req.Params.Name = GetDashboardByUID.Tool.Name
+		req.Params.Arguments = map[string]any{"uid": orgIDTestNSDashUID, "orgId": orgID}
+		return handler(ctx, req)
+	}
+
+	t.Run("disabled: orgId is ignored, call stays on the default org", func(t *testing.T) {
+		mcpgrafana.DynamicMultiOrgEnabled = false
+		res, err := callDashboard(orgIDTestOrg)
+		require.NoError(t, err)
+		assert.Truef(t, res.IsError, "with --dynamic-multi-org off, orgId must be ignored; the dashboard exists only in org %d", orgIDTestOrg)
+	})
+
+	t.Run("enabled: orgId routes the call to the target org", func(t *testing.T) {
+		mcpgrafana.DynamicMultiOrgEnabled = true
+		t.Cleanup(func() { mcpgrafana.DynamicMultiOrgEnabled = false })
+		res, err := callDashboard(orgIDTestOrg)
+		require.NoError(t, err)
+		require.Falsef(t, res.IsError, "with --dynamic-multi-org on, orgId should route to org %d: %s", orgIDTestOrg, textOrEmpty(res))
+		assert.Contains(t, resultText(t, res), orgIDTestNSDashTitle)
+	})
+}
+
 func resultText(t *testing.T, res *mcp.CallToolResult) string {
 	t.Helper()
 	require.NotEmpty(t, res.Content)
