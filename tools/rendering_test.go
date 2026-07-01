@@ -256,6 +256,18 @@ func TestBuildRenderURL(t *testing.T) {
 			},
 		},
 		{
+			name:    "With org ID",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				DashboardUID: "abc123",
+				PanelID:      intPtr(5),
+				OrgID:        intPtr(2),
+			},
+			contains: []string{
+				"orgId=2",
+			},
+		},
+		{
 			name:    "URL with trailing slash",
 			baseURL: "http://localhost:3000/",
 			args: GetPanelImageParams{
