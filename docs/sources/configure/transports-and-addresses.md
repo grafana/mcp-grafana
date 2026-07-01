@@ -49,3 +49,4 @@ Clients connect to the server URL (for example, `http://localhost:8000/sse` for 
 
 - [Server TLS (streamable-http)](../server-tls-streamable-http/) if you need HTTPS for the MCP server.
 - [Client TLS](../client-tls-grafana-connection/) if Grafana is behind mTLS or custom certificates.
+- [Deploy on Amazon Bedrock AgentCore Runtime](../../set-up/deploy-on-bedrock-agentcore/) to run the streamable-http server as a hosted MCP tool server on AWS.
