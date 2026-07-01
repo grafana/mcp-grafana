@@ -667,6 +667,8 @@ Forwarded headers are merged with any headers defined in `GRAFANA_EXTRA_HEADERS`
      helm install --set grafana.apiKey=<Grafana_ApiKey> --set grafana.url=<GrafanaUrl> my-release grafana/grafana-mcp
      ```
 
+   - **Deploy on Amazon Bedrock AgentCore Runtime**: run the server as a hosted MCP tool server on AWS. See [Deploy on Amazon Bedrock AgentCore Runtime](./docs/sources/set-up/deploy-on-bedrock-agentcore.md).
+
 
 3. Add the server configuration to your client configuration file. For example, for Claude Desktop:
 
