@@ -222,6 +222,10 @@ func shortenURL(ctx context.Context, longURL string) (string, error) {
 	if !strings.HasPrefix(path, "/") {
 		return "", fmt.Errorf("url must include an absolute path")
 	}
+	// Grafana's /api/short-urls endpoint rejects absolute paths
+	// (messageId "shorturl.absolute-path") and requires the path to be
+	// relative, so strip the leading slash before submitting.
+	path = strings.TrimPrefix(path, "/")
 
 	payload, err := json.Marshal(map[string]string{"path": path})
 	if err != nil {
