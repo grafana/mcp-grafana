@@ -390,7 +390,7 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 - `-t, --transport`: Transport type (`stdio`, `sse`, or `streamable-http`) - default: `stdio`
 - `--address`: The host and port for SSE/streamable-http server - default: `localhost:8000`
 - `--base-path`: Base path for the SSE/streamable-http server
-- `--endpoint-path`: Endpoint path for the streamable-http server - default: `/`
+- `--endpoint-path`: Endpoint path for the streamable-http server - default: `/mcp`
 
 **HTTP Transport Security (SSE / streamable-http only):**
 
