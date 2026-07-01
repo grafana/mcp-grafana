@@ -163,30 +163,30 @@ func getPanelImage(ctx context.Context, args GetPanelImageParams) (*mcp.CallTool
 	// Return the image as base64 encoded data using MCP's image content type
 	base64Data := base64.StdEncoding.EncodeToString(imageData)
 
-	// Build the deeplink against the user-facing public URL, not config.URL,
-	// which may be an in-cluster endpoint the browser can't reach.
-	deeplinkBase, err := grafanaBaseURLFromContext(ctx)
-	if err != nil {
-		return nil, err
-	}
-	deeplink, err := buildDashboardDeeplink(deeplinkBase, args)
-	if err != nil {
-		return nil, fmt.Errorf("failed to build dashboard deeplink: %w", err)
+	// Rendering succeeded, so always return the image. The deeplink is
+	// best-effort metadata added only if it builds successfully.
+	content := []mcp.Content{
+		mcp.ImageContent{
+			Type:     "image",
+			Data:     base64Data,
+			MIMEType: "image/png",
+		},
 	}
 
-	return &mcp.CallToolResult{
-		Content: []mcp.Content{
-			mcp.ImageContent{
-				Type:     "image",
-				Data:     base64Data,
-				MIMEType: "image/png",
-			},
-			mcp.TextContent{
+	// Use the public base URL, not config.URL, which may be an in-cluster
+	// endpoint the browser can't reach.
+	if deeplinkBase, err := grafanaBaseURLFromContext(ctx); err == nil {
+		if deeplink, err := buildDashboardDeeplink(deeplinkBase, args); err == nil {
+			content = append(content, mcp.TextContent{
 				Meta: mcpgrafana.NewUIContentMeta(mcpgrafana.UIContentKindDeeplink),
 				Type: "text",
 				Text: deeplink,
-			},
-		},
+			})
+		}
+	}
+
+	return &mcp.CallToolResult{
+		Content: content,
 	}, nil
 }
 
