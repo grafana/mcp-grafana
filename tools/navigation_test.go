@@ -441,7 +441,6 @@ func TestShortenURL(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "Bearer glsa_test_token", capturedAuth)
 	})
-	
 
 	t.Run("Rejects invalid URL", func(t *testing.T) {
 		ctx := newShortenTestContext("http://localhost:3000", "", "")
