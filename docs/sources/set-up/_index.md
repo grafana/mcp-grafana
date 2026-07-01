@@ -14,6 +14,6 @@ aliases: []
 
 # Set up the Grafana MCP server
 
-Choose how you install and run the Grafana MCP server. Start with `uvx` for the least setup, or use Docker, a downloaded binary, or Helm when that fits your environment. Refer to [Clients](../clients/) for client-specific steps and [Client configuration examples](client-configuration-examples/) for copy-paste MCP JSON (debug, TLS, and more).
+Choose how you install and run the Grafana MCP server. Start with `uvx` for the least setup, or use Docker, a downloaded binary, Helm, or Bedrock AgentCore when that fits your environment. Refer to [Clients](../clients/) for client-specific steps and [Client configuration examples](client-configuration-examples/) for copy-paste MCP JSON (debug, TLS, and more).
 
 {{< section withDescriptions="true" >}}
