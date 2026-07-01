@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Optional per-call `orgId` argument, where applicable, to target a Grafana organization, opt-in via the `--dynamic-multi-org` flag; also discovers proxied datasource tools across every org the credential can access. Tools that address no organization — documentation lookups, local config generation, static query examples — do not advertise it, since selecting one could not change their answer
 - `user_info` tool reporting the current identity, whether it is a Grafana admin, and the organizations the credential can access (with roles)
+- `--loki-enforced-matchers`: operator-configured LogQL label matchers AND-ed into every native-Loki query (logs, stats, patterns, and label enumeration) to restrict which streams the server can read. Fails closed on unparseable queries and refuses VictoriaLogs datasources while set. Pair with `--disable-api` so the raw datasource proxy cannot bypass it. A companion `--loki-label-enumeration-fallback` controls label-enumeration behaviour under purely-negative matchers ([#978](https://github.com/grafana/mcp-grafana/pull/978))
 
 ### Changed
 

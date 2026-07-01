@@ -163,6 +163,21 @@ The raw-SQL query tools — `query_clickhouse`, `query_snowflake`, `query_athena
 | `--disable-query` | Not registered | Not registered |
 | `--disable-query --enable-query` | Not registered | Not registered |
 
+## Restrict which Loki streams can be read
+
+- `--loki-enforced-matchers`: LogQL label matchers AND-ed into every native-Loki query to restrict which log streams can be read (e.g. `environment=~"prod|staging"`). Unparseable queries are rejected; VictoriaLogs datasources are refused while set.
+- `--loki-label-enumeration-fallback`: What the label-enumeration tools do when negative enforced matchers can't scope them: `reject` (default) or `unfiltered`.
+
+{{< admonition type="warning" >}}
+Enforcement applies only to the Loki query tools. Other tools can reach Loki log data through paths that never touch the enforced backend, so you must also disable them for the restriction to hold:
+
+- `--disable-api`: `grafana_api_request` can query the Loki datasource proxy directly (full bypass).
+- `--disable-rendering`: `get_panel_image` renders Loki panels server-side, producing images with unrestricted log lines.
+- `--disable-sift`: Sift investigations analyze Loki logs server-side across all streams.
+
+The server logs a warning at startup naming each of these that is still enabled. `run_panel_query` is safe (it reuses the enforced query path). Proxied tools currently expose only Tempo (traces), not Loki logs, so they are not a bypass today. Dashboard snapshots (`--disable-snapshot`) can embed log-panel data captured outside enforcement.
+{{< /admonition >}}
+
 ## Run in read-only mode
 
 `--disable-write` prevents write operations to Grafana. Use it with read-only service accounts, safer production assistants, or to avoid accidental changes. It also removes the raw-SQL query tools, which can write through the datasource; refer to the preceding section for `--enable-query`, which keeps them.

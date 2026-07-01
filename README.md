@@ -470,6 +470,8 @@ Caller authentication is enforced only when `--server-auth-token` is set. When i
 - `--loki-guardrail-mode`: Loki query cost guardrail for `query_loki_logs` - default: `off`. Loki does not enforce `max_query_bytes_read` on log queries without a line filter, so a broad selector over a wide range can scan terabytes; the guardrail requires a selective stream selector, caps the effective time range (including range-vector durations like `[30d]`), and pre-checks Loki's index/stats byte estimate before running the query. `shadow` logs queries that would be blocked but lets them run (it still pays the index/stats round trip); `enforce` rejects them with rewrite guidance the LLM can act on. On VictoriaLogs the guardrail applies only to selector-shaped (`{...}`) queries — when no selector parses (the normal brace-less LogsQL shape), the query passes through entirely, and the byte-budget check never applies (no cheap index estimate). Env fallback: `GRAFANA_LOKI_GUARDRAIL_MODE`.
 - `--loki-guardrail-max-bytes`: Maximum bytes a single `query_loki_logs` call may scan, estimated via Loki's index/stats API - default: `107374182400` (100 GiB). `0` disables the byte-budget check. Env fallback: `GRAFANA_LOKI_GUARDRAIL_MAX_BYTES`.
 - `--loki-guardrail-max-range`: Maximum effective time range for a single `query_loki_logs` call, including range-vector durations - default: `24h`. Accepts Go duration strings. `0` disables the range check. Env fallback: `GRAFANA_LOKI_GUARDRAIL_MAX_RANGE`.
+- `--loki-enforced-matchers`: LogQL label matchers AND-ed into every native-Loki query to restrict which log streams can be read (e.g. `environment=~"prod|staging"`). Requires `--disable-api`. See [Loki query enforcement](#loki-query-enforcement).
+- `--loki-label-enumeration-fallback`: What the label-enumeration tools do when negative enforced matchers can't scope them: `reject` (default) or `unfiltered`. See [Loki query enforcement](#loki-query-enforcement).
 - `--disable-search`: Disable search tools
 - `--disable-datasource`: Disable datasource tools
 - `--disable-incident`: Disable incident tools
@@ -1335,6 +1337,59 @@ docker run --rm -p 8000:8000 \
   grafana/mcp-grafana \
   -t streamable-http --metrics
 ```
+
+## Loki query enforcement
+
+`--loki-enforced-matchers` lets an operator restrict which Loki log streams the
+server can ever read, by AND-ing a fixed set of LogQL label matchers into every
+native-Loki query the server issues. This is useful when a datasource contains
+streams that must not be exposed (e.g. logs that may carry sensitive
+information) but you cannot restrict access at the Grafana or Loki layer (OSS has
+no per-datasource or per-user label access control).
+
+```bash
+# Only ever read prod/staging environments (allowlist)
+./mcp-grafana --loki-enforced-matchers 'environment=~"prod|staging"' --disable-api
+
+# Never read the vault or payments namespaces (exclusion)
+./mcp-grafana --loki-enforced-matchers 'namespace!~"vault|payments"' --disable-api
+```
+
+How it works:
+
+- The matchers are parsed once at startup (invalid input aborts the server) and
+  appended to every stream selector in each query. Because Loki AND-s matchers
+  within a selector, a user query can only ever **narrow** results within the
+  enforced bounds — it can never widen them. A user selector that conflicts with
+  the policy (e.g. asking for `{namespace="vault"}` under an exclusion) simply
+  returns nothing.
+- It covers `query_loki_logs`, `query_loki_stats`, `query_loki_patterns`,
+  `list_loki_label_names`, and `list_loki_label_values`.
+- It **fails closed**: any query that cannot be parsed is rejected rather than
+  sent unfiltered.
+- **VictoriaLogs** datasources use LogsQL, which cannot be safely rewritten, so
+  they are refused entirely while enforcement is enabled.
+- Purely-negative matchers cannot scope the label-enumeration endpoints (Loki
+  rejects a standalone selector with no positive matcher). Control that edge case
+  with `--loki-label-enumeration-fallback` (`reject` by default, or `unfiltered`
+  to allow unscoped enumeration of label *metadata* — log lines are never
+  exposed). Positive/allowlist matchers are not affected.
+
+> [!IMPORTANT]
+> Enforcement only applies to the Loki query tools. Other tools can reach Loki log
+> data through paths that never touch the enforced backend, so for the restriction
+> to actually hold you must also disable them:
+>
+> - `--disable-api` — `grafana_api_request` can query the Loki datasource proxy directly (full bypass).
+> - `--disable-rendering` — `get_panel_image` renders Loki panels server-side, producing images with unrestricted log lines.
+> - `--disable-sift` — Sift investigations analyze Loki logs server-side across all streams.
+>
+> The server logs a warning at startup naming each of these that is still enabled.
+> `run_panel_query` is safe (it reuses the enforced query path). Proxied tools
+> currently expose only Tempo (traces), not Loki logs, so they are not a bypass
+> today — but disable them (`--disable-proxied`) if that ever changes. Dashboard
+> snapshots (`--disable-snapshot`) can also embed log-panel data captured outside
+> enforcement.
 
 ## Troubleshooting
 
