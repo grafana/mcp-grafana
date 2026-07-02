@@ -72,6 +72,13 @@ func lokiBackendForDatasource(ctx context.Context, uid string) (lokiBackend, err
 
 	switch ds.Type {
 	case victoriaLogsDatasourceType:
+		// Enforced label matchers are expressed in LogQL and can only be
+		// injected into native-Loki queries. VictoriaLogs uses LogsQL, which
+		// we cannot safely rewrite, so fail closed rather than serve an
+		// unfiltered path around the enforcement policy.
+		if len(enforcedMatchers(ctx)) > 0 {
+			return nil, fmt.Errorf("loki label-matcher enforcement is enabled but datasource %q is VictoriaLogs (LogsQL); refusing to query it because the enforced matchers cannot be applied", uid)
+		}
 		return newVictoriaLogsBackend(ctx, uid, ds)
 	default:
 		return newLokiNativeBackend(ctx, uid, ds)
@@ -99,17 +106,29 @@ func formatRFC3339OrEmpty(t time.Time) string {
 }
 
 func (b *lokiNativeBackend) ListLabelNames(ctx context.Context, start, end time.Time) ([]string, error) {
-	return b.client.fetchData(ctx, "/loki/api/v1/labels", formatRFC3339OrEmpty(start), formatRFC3339OrEmpty(end))
+	query, err := labelEnumerationSelector(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return b.client.fetchData(ctx, "/loki/api/v1/labels", formatRFC3339OrEmpty(start), formatRFC3339OrEmpty(end), query)
 }
 
 func (b *lokiNativeBackend) ListLabelValues(ctx context.Context, labelName string, start, end time.Time) ([]string, error) {
 	urlPath := fmt.Sprintf("/loki/api/v1/label/%s/values", labelName)
-	return b.client.fetchData(ctx, urlPath, formatRFC3339OrEmpty(start), formatRFC3339OrEmpty(end))
+	query, err := labelEnumerationSelector(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return b.client.fetchData(ctx, urlPath, formatRFC3339OrEmpty(start), formatRFC3339OrEmpty(end), query)
 }
 
 func (b *lokiNativeBackend) QueryLogs(ctx context.Context, p lokiQueryParams) (*lokiQueryResult, error) {
+	enforcedQuery, err := enforceLogQL(ctx, p.Query)
+	if err != nil {
+		return nil, err
+	}
 	response, err := b.client.fetchQuery(ctx, fetchQueryParams{
-		Query:       p.Query,
+		Query:       enforcedQuery,
 		QueryType:   p.QueryType,
 		Start:       formatRFC3339OrEmpty(p.Start),
 		End:         formatRFC3339OrEmpty(p.End),
@@ -140,9 +159,17 @@ func (b *lokiNativeBackend) QueryLogs(ctx context.Context, p lokiQueryParams) (*
 }
 
 func (b *lokiNativeBackend) QueryStats(ctx context.Context, query string, start, end time.Time) (*Stats, error) {
-	return b.client.fetchStats(ctx, query, formatRFC3339OrEmpty(start), formatRFC3339OrEmpty(end))
+	enforcedQuery, err := enforceLogQL(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	return b.client.fetchStats(ctx, enforcedQuery, formatRFC3339OrEmpty(start), formatRFC3339OrEmpty(end))
 }
 
 func (b *lokiNativeBackend) QueryPatterns(ctx context.Context, query, step string, start, end time.Time) ([]Pattern, error) {
-	return b.client.fetchPatterns(ctx, query, formatRFC3339OrEmpty(start), formatRFC3339OrEmpty(end), step)
+	enforcedQuery, err := enforceLogQL(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	return b.client.fetchPatterns(ctx, enforcedQuery, formatRFC3339OrEmpty(start), formatRFC3339OrEmpty(end), step)
 }
