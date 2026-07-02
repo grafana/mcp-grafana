@@ -112,6 +112,10 @@ func getDashboardVersion(ctx context.Context, args GetDashboardVersionParams) (*
 		return nil, fmt.Errorf("get dashboard version %d for %q: %w", args.Version, args.UID, err)
 	}
 
+	if resp.Payload == nil {
+		return nil, fmt.Errorf("get dashboard version %d for %q: empty response from Grafana", args.Version, args.UID)
+	}
+
 	v := resp.Payload
 	detail := &DashboardVersionDetail{
 		Version:       v.Version,
