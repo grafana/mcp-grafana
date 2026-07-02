@@ -31,6 +31,7 @@ You can look up defaults, choose `--disable-*` flags, or configure TLS without r
 - `--base-path`: Base path for the SSE or streamable-http server.
 - `--endpoint-path`: HTTP path for the streamable-http MCP endpoint. Default: `/mcp`.
 - `--session-idle-timeout-minutes`: Idle timeout for streamable-http sessions, in minutes. Sessions with no activity for this duration are automatically reaped. Set to `0` to disable. Default: `30`.
+- `--instructions-append`: Text appended to the server instructions returned to MCP clients on initialize, so every connecting agent sees it.
 
 ## Configure HTTP transport security
 

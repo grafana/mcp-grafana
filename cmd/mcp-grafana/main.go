@@ -455,7 +455,17 @@ func (dt *disabledTools) buildInstructions() string {
 	return b.String()
 }
 
-func newServer(serverName, transport string, dt disabledTools, obs *observability.Observability, sessionIdleTimeoutMinutes int) (*server.MCPServer, *mcpgrafana.ToolManager, *mcpgrafana.SessionManager) {
+// appendInstructions appends operator-supplied text to the generated server
+// instructions, so every connecting agent sees it on initialize.
+// Empty/whitespace extra is a no-op.
+func appendInstructions(base, extra string) string {
+	if extra = strings.TrimSpace(extra); extra != "" {
+		return base + "\n" + extra + "\n"
+	}
+	return base
+}
+
+func newServer(serverName, transport string, dt disabledTools, obs *observability.Observability, sessionIdleTimeoutMinutes int, instructionsAppend string) (*server.MCPServer, *mcpgrafana.ToolManager, *mcpgrafana.SessionManager) {
 	sm := mcpgrafana.NewSessionManager(
 		mcpgrafana.WithSessionTTL(time.Duration(sessionIdleTimeoutMinutes)*time.Minute),
 		mcpgrafana.WithSessionMeterProvider(obs.MeterProvider()),
@@ -523,7 +533,7 @@ func newServer(serverName, transport string, dt disabledTools, obs *observabilit
 	// of enabled categories, so we need a temporary nil server reference first.
 	// Instead, we split: compute instructions from flags, then create server,
 	// then register tools.
-	instructions := dt.buildInstructions()
+	instructions := appendInstructions(dt.buildInstructions(), instructionsAppend)
 
 	serverOpts := []server.ServerOption{
 		server.WithInstructions(instructions),
@@ -787,7 +797,7 @@ func runMetricsServer(addr string, o *observability.Observability) {
 	}
 }
 
-func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt disabledTools, gc mcpgrafana.GrafanaConfig, tls tlsConfig, hsc httpSecurityConfig, ca callerAuthConfig, obs observability.Config, sessionIdleTimeoutMinutes int) error {
+func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt disabledTools, gc mcpgrafana.GrafanaConfig, tls tlsConfig, hsc httpSecurityConfig, ca callerAuthConfig, obs observability.Config, sessionIdleTimeoutMinutes int, instructionsAppend string) error {
 	stderrHandler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})
 	slog.SetDefault(slog.New(stderrHandler))
 
@@ -835,7 +845,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		defer clientCache.Close()
 	}
 
-	s, tm, sm := newServer(obs.ServerName, transport, dt, o, sessionIdleTimeoutMinutes)
+	s, tm, sm := newServer(obs.ServerName, transport, dt, o, sessionIdleTimeoutMinutes, instructionsAppend)
 	defer sm.Close()
 
 	// Create a context that will be cancelled on shutdown
@@ -986,6 +996,7 @@ func main() {
 	logLevel := flag.String("log-level", "info", "Log level (debug, info, warn, error)")
 	sessionIdleTimeoutMinutes := flag.Int("session-idle-timeout-minutes", 30, "Session idle timeout in minutes. Sessions with no activity for this duration are automatically reaped. Set to 0 to disable session reaping")
 	showVersion := flag.Bool("version", false, "Print the version and exit")
+	instructionsAppend := flag.String("instructions-append", "", "Text appended to the server instructions returned to MCP clients on initialize, so every connecting agent sees it.")
 	var dt disabledTools
 	dt.addFlags()
 	var gc grafanaConfig
@@ -1116,7 +1127,7 @@ func main() {
 		level = slog.LevelDebug
 	}
 
-	if err := run(transport, *addr, *basePath, *endpointPath, level, dt, grafanaConfig, tls, hsc, ca, obs, *sessionIdleTimeoutMinutes); err != nil {
+	if err := run(transport, *addr, *basePath, *endpointPath, level, dt, grafanaConfig, tls, hsc, ca, obs, *sessionIdleTimeoutMinutes, *instructionsAppend); err != nil {
 		panic(err)
 	}
 }
