@@ -621,7 +621,7 @@ func TestEmptyStructJSONSchema(t *testing.T) {
 	// Verify type is object
 	assert.Equal(t, "object", inputSchemaMap["type"], "inputSchema type should be object")
 
-	// Verify that properties key exists and is an empty object
+	// Verify that properties key exists and is an object (not null/bool/omitted).
 	properties, exists := inputSchemaMap["properties"]
 	assert.True(t, exists, "properties field should exist in inputSchema")
 	assert.NotNil(t, properties, "properties should not be nil")

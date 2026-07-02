@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Optional per-call `orgId` argument to target a Grafana organization, opt-in via the `--dynamic-multi-org` flag; also discovers proxied datasource tools across every org the credential can access
+- `user_info` tool reporting the current identity, whether it is a Grafana admin, and the organizations the credential can access (with roles)
+
 ## [0.17.0] - 2026-06-23
 
 ### Added

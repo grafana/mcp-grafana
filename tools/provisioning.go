@@ -15,10 +15,10 @@ import (
 	mcpgrafana "github.com/grafana/mcp-grafana"
 )
 
-// ListProvisioningRepositoriesParams accepts an optional namespace.
-type ListProvisioningRepositoriesParams struct {
-	Namespace string `json:"namespace,omitempty" jsonschema:"description=Kubernetes-style namespace to list repositories from. Defaults to 'default' which matches single-tenant Grafana deployments."`
-}
+// ListProvisioningRepositoriesParams takes no arguments: the namespace is
+// derived from the request's Grafana org (set the optional orgId argument to
+// target a different org).
+type ListProvisioningRepositoriesParams struct{}
 
 // ProvisioningRepository is a concise summary of a single repository, suitable
 // for an agent picking a repo slug to pass to other tools (e.g. as the
@@ -76,15 +76,20 @@ type repositoryItem struct {
 	} `json:"status"`
 }
 
-func listProvisioningRepositories(ctx context.Context, args ListProvisioningRepositoriesParams) ([]ProvisioningRepository, error) {
+func listProvisioningRepositories(ctx context.Context, _ ListProvisioningRepositoriesParams) ([]ProvisioningRepository, error) {
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
 	if cfg.URL == "" {
 		return nil, fmt.Errorf("grafana URL is not configured")
 	}
 
-	ns := args.Namespace
-	if ns == "" {
-		ns = "default"
+	// The namespace is derived from the request's org (default / org-N /
+	// stacks-{id}); an orgId override selects a different org. The resolved
+	// value is trusted and url.PathEscape'd into the URL below, so this slug
+	// check is just a sanity guard that surfaces a malformed namespace as a
+	// clear error instead of an opaque API failure.
+	ns, err := mcpgrafana.GrafanaNamespace(ctx)
+	if err != nil {
+		return nil, err
 	}
 	if err := validateRepoSlug("namespace", ns); err != nil {
 		return nil, err
@@ -166,10 +171,9 @@ var ListProvisioningRepositories = mcpgrafana.MustTool(
 // ValidateProvisioningFileParams identifies a single file to validate inside
 // a provisioning repository at a specific ref.
 type ValidateProvisioningFileParams struct {
-	Namespace string `json:"namespace,omitempty" jsonschema:"description=Kubernetes-style namespace to read the repository from. Defaults to 'default'."`
-	Repo      string `json:"repo" jsonschema:"required,description=Provisioning repository slug. Get one from list_provisioning_repositories."`
-	Path      string `json:"path" jsonschema:"required,description=File path within the repository (e.g. 'folder/dashboard.json')."`
-	Ref       string `json:"ref,omitempty" jsonschema:"description=Branch or commit SHA. Defaults to the repository's main branch."`
+	Repo string `json:"repo" jsonschema:"required,description=Provisioning repository slug. Get one from list_provisioning_repositories."`
+	Path string `json:"path" jsonschema:"required,description=File path within the repository (e.g. 'folder/dashboard.json')."`
+	Ref  string `json:"ref,omitempty" jsonschema:"description=Branch or commit SHA. Defaults to the repository's main branch."`
 }
 
 // ProvisioningResourceType captures the GVK+resource of the file's target.
@@ -289,9 +293,14 @@ func validateProvisioningFile(ctx context.Context, args ValidateProvisioningFile
 		return nil, fmt.Errorf("build transport: %w", err)
 	}
 
-	ns := args.Namespace
-	if ns == "" {
-		ns = "default"
+	// The namespace is derived from the request's org (default / org-N /
+	// stacks-{id}); an orgId override selects a different org. The resolved
+	// value is trusted and url.PathEscape'd into the URL below, so this slug
+	// check is just a sanity guard that surfaces a malformed namespace as a
+	// clear error instead of an opaque API failure.
+	ns, err := mcpgrafana.GrafanaNamespace(ctx)
+	if err != nil {
+		return nil, err
 	}
 	if err := validateRepoSlug("namespace", ns); err != nil {
 		return nil, err

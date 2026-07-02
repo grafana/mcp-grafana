@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"reflect"
 	"strings"
@@ -27,6 +28,14 @@ import (
 type Tool struct {
 	Tool    mcp.Tool
 	Handler server.ToolHandlerFunc
+
+	// Structured input schema reflected from the handler's parameter struct,
+	// retained so registration-time injectors (the dynamic orgId argument) can
+	// amend the typed schema and re-serialize it, rather than mutating the
+	// already-serialized RawInputSchema bytes. Populated by MustTool.
+	inputSchemaType       string
+	inputSchemaProperties map[string]any
+	inputSchemaRequired   []string
 }
 
 // HardError wraps an error to indicate it should propagate as a JSON-RPC protocol
@@ -44,13 +53,34 @@ func (e *HardError) Unwrap() error {
 	return e.Err
 }
 
-// Register adds the Tool to the given MCPServer.
+// Register adds the Tool to the given MCPServer, after resolving any
+// registration-time schema additions (see resolveTool).
 // It is a convenience method that calls server.MCPServer.AddTool with the Tool's metadata and handler,
 // allowing fluent tool registration in a single statement:
 //
 //	mcpgrafana.MustTool(name, description, toolHandler).Register(server)
 func (t *Tool) Register(mcp *server.MCPServer) {
-	mcp.AddTool(t.Tool, t.Handler)
+	mcp.AddTool(t.resolveTool(), t.Handler)
+}
+
+// resolveTool returns the mcp.Tool to register. When dynamic multi-org is
+// enabled it injects the optional per-call orgId argument into the typed schema
+// and re-serializes; otherwise it returns the tool unchanged. Proxied tools are
+// registered directly (not via this method), so they are never amended.
+func (t *Tool) resolveTool() mcp.Tool {
+	if !DynamicMultiOrgEnabled || t.inputSchemaProperties == nil {
+		return t.Tool
+	}
+	// Clone so the retained schema stays pristine if Register runs again.
+	properties := maps.Clone(t.inputSchemaProperties)
+	injectOrgIDProperty(properties)
+	raw, err := buildInputSchema(t.Tool.Name, t.inputSchemaType, properties, t.inputSchemaRequired)
+	if err != nil {
+		return t.Tool
+	}
+	resolved := t.Tool
+	resolved.RawInputSchema = raw
+	return resolved
 }
 
 // MustTool creates a new Tool from the given name, description, and toolHandler.
@@ -64,7 +94,15 @@ func MustTool[T any, R any](
 	if err != nil {
 		panic(err)
 	}
-	return Tool{Tool: tool, Handler: handler}
+	// Retain the structured schema so registration-time injectors can amend it.
+	schemaType, properties, required := reflectToolSchema(toolHandler)
+	return Tool{
+		Tool:                  tool,
+		Handler:               handler,
+		inputSchemaType:       schemaType,
+		inputSchemaProperties: properties,
+		inputSchemaRequired:   required,
+	}
 }
 
 // ToolHandlerFunc is the type of a handler function for a tool.
@@ -373,30 +411,9 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 		return mcp.NewToolResultText(string(returnBytes)), nil
 	}
 
-	jsonSchema := createJSONSchemaFromHandler(toolHandler)
-	properties := make(map[string]any, jsonSchema.Properties.Len())
-	for pair := jsonSchema.Properties.Oldest(); pair != nil; pair = pair.Next() {
-		properties[pair.Key] = pair.Value
-	}
-	// Use RawInputSchema with ToolArgumentsSchema to work around a Go limitation where type aliases
-	// don't inherit custom MarshalJSON methods. This ensures empty properties are included in the schema.
-	argumentsSchema := mcp.ToolArgumentsSchema{
-		Type:       jsonSchema.Type,
-		Properties: properties,
-		Required:   jsonSchema.Required,
-	}
-
-	// Marshal the schema to preserve empty properties
-	schemaBytes, err := json.Marshal(argumentsSchema)
+	schemaType, properties, required := reflectToolSchema(toolHandler)
+	schemaBytes, err := buildInputSchema(name, schemaType, properties, required)
 	if err != nil {
-		return zero, nil, fmt.Errorf("failed to marshal input schema: %w", err)
-	}
-
-	// Validate that no bare boolean schemas slipped through. The Mapper on the
-	// reflector handles interface{} types, but this check catches anything it
-	// misses and prevents future regressions. MustTool will panic at init time
-	// if this fails, making it impossible to register a tool with bare booleans.
-	if err := validateNoBooleanSchemas(name, schemaBytes); err != nil {
 		return zero, nil, err
 	}
 
@@ -409,6 +426,40 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 		option(&t)
 	}
 	return t, handler, nil
+}
+
+// reflectToolSchema reflects the structured JSON-schema input (type, properties,
+// required) from a handler's parameter struct.
+func reflectToolSchema(toolHandler any) (schemaType string, properties map[string]any, required []string) {
+	jsonSchema := createJSONSchemaFromHandler(toolHandler)
+	properties = make(map[string]any, jsonSchema.Properties.Len())
+	for pair := jsonSchema.Properties.Oldest(); pair != nil; pair = pair.Next() {
+		properties[pair.Key] = pair.Value
+	}
+	return jsonSchema.Type, properties, jsonSchema.Required
+}
+
+// buildInputSchema serializes a structured input schema to the RawInputSchema
+// bytes used by mcp.Tool. It uses RawInputSchema with ToolArgumentsSchema to
+// work around a Go limitation where type aliases don't inherit custom
+// MarshalJSON methods, which ensures empty properties are included in the
+// schema. It also rejects bare boolean schemas: the reflector's Mapper handles
+// interface{} types, but this catches anything it misses (callers panic at init
+// via MustTool, making it impossible to register a tool with bare booleans).
+func buildInputSchema(name, schemaType string, properties map[string]any, required []string) ([]byte, error) {
+	argumentsSchema := mcp.ToolArgumentsSchema{
+		Type:       schemaType,
+		Properties: properties,
+		Required:   required,
+	}
+	schemaBytes, err := json.Marshal(argumentsSchema)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal input schema: %w", err)
+	}
+	if err := validateNoBooleanSchemas(name, schemaBytes); err != nil {
+		return nil, err
+	}
+	return schemaBytes, nil
 }
 
 // extractTraceContext checks the request's _meta for W3C trace context headers
