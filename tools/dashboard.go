@@ -1214,4 +1214,6 @@ func AddDashboardTools(mcp *server.MCPServer, enableWriteTools bool) {
 	GetDashboardPanelQueries.Register(mcp)
 	GetDashboardProperty.Register(mcp)
 	GetDashboardSummary.Register(mcp)
+	ListDashboardVersions.Register(mcp)
+	GetDashboardVersion.Register(mcp)
 }
