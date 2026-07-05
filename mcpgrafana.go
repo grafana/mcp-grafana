@@ -27,6 +27,7 @@ import (
 	"github.com/grafana/grafana-openapi-client-go/client"
 	"github.com/grafana/incident-go"
 	"github.com/mark3labs/mcp-go/server"
+	"github.com/prometheus/prometheus/model/labels"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"golang.org/x/sync/singleflight"
 )
@@ -270,6 +271,27 @@ type GrafanaConfig struct {
 	// MaxLokiLogLimit is the maximum number of log lines that can be returned
 	// from Loki queries.
 	MaxLokiLogLimit int
+
+	// LokiEnforcedMatchers, when non-empty, is a set of label matchers that are
+	// AND-ed into every stream selector of every native-Loki query the server
+	// issues (query, stats, patterns, and label enumeration). It lets an
+	// operator restrict which log streams the MCP can ever read (e.g.
+	// `namespace!~"vault|payments"` to exclude streams that may contain
+	// sensitive information).
+	// Parsed once at startup; an empty slice disables enforcement.
+	// NOTE: this is only effective if raw datasource-proxy access is disabled
+	// (see --disable-api); otherwise a query can bypass the Loki tools entirely.
+	LokiEnforcedMatchers []*labels.Matcher
+
+	// LokiLabelEnumerationFallback controls what the label-enumeration tools
+	// (list_loki_label_names / list_loki_label_values) do when the enforced
+	// matchers cannot be applied to them — which happens only when the enforced
+	// set is purely negative, because Loki rejects a standalone selector with no
+	// positive matcher. Positive/allowlist matchers always scope cleanly and
+	// never hit this fallback. Valid values: "reject" (default, fail closed) and
+	// "unfiltered" (allow unscoped enumeration; never exposes log lines, only
+	// low-cardinality label metadata). Empty means "reject".
+	LokiLabelEnumerationFallback string
 
 	// BaseTransport is an optional base HTTP transport used as the innermost
 	// layer of the middleware chain in NewGrafanaClient. When set, it replaces

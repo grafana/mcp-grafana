@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `--loki-enforced-matchers`: operator-configured LogQL label matchers AND-ed into every native-Loki query (logs, stats, patterns, and label enumeration) to restrict which streams the server can read. Fails closed on unparseable queries and refuses VictoriaLogs datasources while set. Pair with `--disable-api` so the raw datasource proxy cannot bypass it. A companion `--loki-label-enumeration-fallback` controls label-enumeration behaviour under purely-negative matchers.
+
 ## [0.17.0] - 2026-06-23
 
 ### Added
