@@ -369,7 +369,7 @@ func (c *alertingClient) CreateSilence(ctx context.Context, silence *models.Post
 		_ = resp.Body.Close() //nolint:errcheck
 	}()
 
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusAccepted {
 		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 		_ = resp.Body.Close() //nolint:errcheck
 		return "", fmt.Errorf("grafana API returned status code %d: %s", resp.StatusCode, string(bodyBytes))
