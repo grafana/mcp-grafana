@@ -86,10 +86,12 @@ When deploying behind an ingress or reverse proxy that forwards the original `Ho
 - `--disable-annotations`: Disable annotation tools.
 - `--disable-proxied`: Disable proxied tools (tools from external MCP servers).
 - `--disable-provisioning`: Disable provisioning tools.
+- `--disable-user`: Disable user info tools.
 
 ## Configure tool limits
 
 - `--max-loki-log-limit`: Maximum number of log lines returned per `query_loki_logs` call.
+- `--dynamic-multi-org`: Allow tool calls to select a Grafana organization per call via an optional `orgId` argument. Off by default. See [Multi-organization support](../multi-organization-and-headers/).
 
 ## Run in read-only mode
 

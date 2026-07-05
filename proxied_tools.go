@@ -2,9 +2,11 @@ package mcpgrafana
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -33,17 +35,203 @@ var mcpEnabledDatasources = map[string]MCPDatasourceConfig{
 	// Future: add other datasource types here
 }
 
+// proxiedClientKey is the map key for a proxied client, scoped by org so the
+// same datasource UID in different orgs maps to distinct clients.
+func proxiedClientKey(orgID int64, datasourceType, datasourceUID string) string {
+	return fmt.Sprintf("%d|%s|%s", orgID, datasourceType, datasourceUID)
+}
+
 // DiscoveredDatasource represents a datasource that supports MCP
 type DiscoveredDatasource struct {
 	UID    string
 	Name   string
 	Type   string
 	MCPURL string // The MCP endpoint URL
+	OrgID  int64  // The Grafana org the datasource was discovered in
+}
+
+// accessibleOrgIDs returns the orgs to discover proxied datasources in, and the
+// connection's default org (used when a call omits orgId).
+//
+// With dynamic multi-org off it returns just the default org (current behavior).
+// With it on it returns every org the user belongs to (GET /api/user/orgs),
+// always including the default org; for credentials that can't enumerate orgs
+// (e.g. service-account tokens, which are single-org) it falls back to the
+// default org.
+func accessibleOrgIDs(ctx context.Context, logger *slog.Logger) (orgs []int64, defaultOrg int64) {
+	defaultOrg = resolveDefaultOrgID(ctx, logger)
+	if !DynamicMultiOrgEnabled {
+		return []int64{defaultOrg}, defaultOrg
+	}
+	userOrgs, err := fetchUserOrgIDs(ctx)
+	if err != nil || len(userOrgs) == 0 {
+		logger.DebugContext(ctx, "could not enumerate user orgs for proxied discovery; using default org", "error", err)
+		return []int64{defaultOrg}, defaultOrg
+	}
+	if !slices.Contains(userOrgs, defaultOrg) {
+		userOrgs = append(userOrgs, defaultOrg)
+	}
+	return userOrgs, defaultOrg
+}
+
+// resolveDefaultOrgID returns the org the connection targets when no orgId is
+// given: the current org reported by /api/org, falling back to the configured
+// OrgID (0 when unset, which Grafana treats as the identity's active org).
+func resolveDefaultOrgID(ctx context.Context, logger *slog.Logger) int64 {
+	cfg := GrafanaConfigFromContext(ctx)
+	var org struct {
+		ID int64 `json:"id"`
+	}
+	if err := grafanaGetJSON(ctx, &cfg, "/api/org", &org); err != nil || org.ID == 0 {
+		logger.DebugContext(ctx, "could not resolve default org from /api/org; using configured OrgID", "orgID", cfg.OrgID, "error", err)
+		return cfg.OrgID
+	}
+	return org.ID
+}
+
+// fetchUserOrgIDs lists the orgs the current user belongs to via /api/user/orgs.
+// Returns an error for identities that aren't users (e.g. service-account
+// tokens), so callers fall back to the single default org.
+// OrgInfo describes an organization the current user is a member of.
+type OrgInfo struct {
+	OrgID int64  `json:"orgId"`
+	Name  string `json:"name"`
+	Role  string `json:"role"`
+}
+
+// ListUserOrgs returns the organizations the current user belongs to
+// (GET /api/user/orgs). It returns an error for identities that cannot
+// enumerate orgs (e.g. service-account tokens, which are single-org).
+func ListUserOrgs(ctx context.Context) ([]OrgInfo, error) {
+	cfg := GrafanaConfigFromContext(ctx)
+	var orgs []OrgInfo
+	if err := grafanaGetJSON(ctx, &cfg, "/api/user/orgs", &orgs); err != nil {
+		return nil, err
+	}
+	return orgs, nil
+}
+
+// DefaultOrgID returns the org the connection targets when no orgId is given.
+func DefaultOrgID(ctx context.Context) int64 {
+	return resolveDefaultOrgID(ctx, GrafanaConfigFromContext(ctx).LoggerOrDefault())
+}
+
+// UserInfo describes the signed-in identity for the current request.
+type UserInfo struct {
+	Login          string    `json:"login,omitempty"`
+	Email          string    `json:"email,omitempty"`
+	Name           string    `json:"name,omitempty"`
+	IsGrafanaAdmin bool      `json:"isGrafanaAdmin"`
+	CurrentOrgID   int64     `json:"currentOrgId"`
+	Orgs           []OrgInfo `json:"orgs"`
+}
+
+// CurrentUserInfo returns the signed-in user's identity (GET /api/user) plus the
+// organizations the credential can access (GET /api/user/orgs). Org membership
+// is best-effort: it is empty for identities that can't enumerate orgs (e.g.
+// service-account tokens), which remain scoped to their single CurrentOrgID.
+func CurrentUserInfo(ctx context.Context) (UserInfo, error) {
+	cfg := GrafanaConfigFromContext(ctx)
+	var u struct {
+		Login          string `json:"login"`
+		Email          string `json:"email"`
+		Name           string `json:"name"`
+		IsGrafanaAdmin bool   `json:"isGrafanaAdmin"`
+		OrgID          int64  `json:"orgId"`
+	}
+	if err := grafanaGetJSON(ctx, &cfg, "/api/user", &u); err != nil {
+		return UserInfo{}, err
+	}
+	info := UserInfo{
+		Login:          u.Login,
+		Email:          u.Email,
+		Name:           u.Name,
+		IsGrafanaAdmin: u.IsGrafanaAdmin,
+		CurrentOrgID:   u.OrgID,
+	}
+	if orgs, err := ListUserOrgs(ctx); err == nil {
+		info.Orgs = orgs
+	}
+	return info, nil
+}
+
+func fetchUserOrgIDs(ctx context.Context) ([]int64, error) {
+	orgs, err := ListUserOrgs(ctx)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]int64, 0, len(orgs))
+	for _, o := range orgs {
+		if o.OrgID > 0 {
+			ids = append(ids, o.OrgID)
+		}
+	}
+	return ids, nil
+}
+
+// grafanaGetJSON performs an authenticated GET against the Grafana API and
+// decodes a JSON response, using the same transport chain as the rest of the
+// server (auth, OrgID header, TLS, etc.).
+func grafanaGetJSON(ctx context.Context, cfg *GrafanaConfig, path string, out any) error {
+	transport, err := BuildTransport(cfg, nil)
+	if err != nil {
+		return fmt.Errorf("build transport: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(cfg.URL, "/")+path, nil)
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Accept", "application/json")
+	resp, err := (&http.Client{Transport: transport, Timeout: 10 * time.Second}).Do(req)
+	if err != nil {
+		return fmt.Errorf("do request: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("GET %s: HTTP %d", path, resp.StatusCode)
+	}
+	return json.NewDecoder(resp.Body).Decode(out)
 }
 
 // discoverMCPDatasources discovers datasources that support MCP
-// Returns a list of datasources with MCP endpoints
-func discoverMCPDatasources(ctx context.Context, logger *slog.Logger) ([]DiscoveredDatasource, error) {
+// discoverMCPDatasources discovers MCP-capable datasources across every org the
+// credential can access (just the default org when dynamic multi-org is off),
+// returning the union tagged with the org each was found in, plus the default
+// org a call targets when it omits orgId. Per-org discovery runs in parallel.
+func discoverMCPDatasources(ctx context.Context, logger *slog.Logger) ([]DiscoveredDatasource, int64, error) {
+	orgs, defaultOrg := accessibleOrgIDs(ctx, logger)
+
+	perOrg := make([][]DiscoveredDatasource, len(orgs))
+	var wg sync.WaitGroup
+	for i, org := range orgs {
+		wg.Add(1)
+		go func(i int, org int64) {
+			defer wg.Done()
+			found, err := discoverMCPDatasourcesForOrg(ctx, org, logger)
+			if err != nil {
+				logger.DebugContext(ctx, "MCP datasource discovery failed for org", "org", org, "error", err)
+				return
+			}
+			perOrg[i] = found
+		}(i, org)
+	}
+	wg.Wait()
+
+	var discovered []DiscoveredDatasource
+	for _, found := range perOrg {
+		discovered = append(discovered, found...)
+	}
+	return discovered, defaultOrg, nil
+}
+
+// discoverMCPDatasourcesForOrg discovers MCP-capable datasources within a single
+// org. It scopes the request to orgID so the datasource list and MCP probes
+// carry X-Grafana-Org-Id: orgID, and tags each result with the org.
+func discoverMCPDatasourcesForOrg(ctx context.Context, orgID int64, logger *slog.Logger) ([]DiscoveredDatasource, error) {
+	cfg := GrafanaConfigFromContext(ctx)
+	cfg.OrgID = orgID
+	ctx = WithGrafanaConfig(ctx, cfg)
+
 	gc := GrafanaClientFromContext(ctx)
 	if gc == nil {
 		return nil, fmt.Errorf("grafana client not found in context")
@@ -149,6 +337,7 @@ func discoverMCPDatasources(ctx context.Context, logger *slog.Logger) ([]Discove
 						Name:   c.name,
 						Type:   c.dsType,
 						MCPURL: mcpURL,
+						OrgID:  orgID,
 					},
 					enabled: true,
 				}
@@ -194,6 +383,16 @@ func addDatasourceUidParameter(tool mcp.Tool, datasourceType string) mcp.Tool {
 	// Add to required fields
 	modifiedTool.InputSchema.Required = append(modifiedTool.InputSchema.Required, "datasourceUid")
 
+	// When dynamic multi-org is enabled, advertise the optional orgId so the
+	// datasourceUid can be resolved in a non-default org. OrgIDOverrideMiddleware
+	// reads it into the request context, which the handler uses to route.
+	if DynamicMultiOrgEnabled {
+		modifiedTool.InputSchema.Properties[OrgIDArgument] = map[string]any{
+			"type":        "integer",
+			"description": orgIDArgumentDescription,
+		}
+	}
+
 	return modifiedTool
 }
 
@@ -222,6 +421,10 @@ type ToolManager struct {
 	serverMode    bool // true if using server-wide tools (stdio), false for per-session (HTTP/SSE)
 	serverClients map[string]*ProxiedClient
 	clientsMutex  sync.RWMutex
+
+	// defaultOrgID is the org a proxied call targets when it omits orgId
+	// (server/stdio mode). Resolved during discovery.
+	defaultOrgID int64
 }
 
 // NewToolManager creates a new ToolManager
@@ -279,26 +482,26 @@ func (tm *ToolManager) InitializeAndRegisterServerTools(ctx context.Context) err
 	logger := tm.loggerFromCtx(ctx)
 
 	// Discover datasources with MCP support
-	discovered, err := discoverMCPDatasources(ctx, logger)
+	discovered, defaultOrg, err := discoverMCPDatasources(ctx, logger)
 	if err != nil {
 		return fmt.Errorf("failed to discover MCP datasources: %w", err)
 	}
+	tm.defaultOrgID = defaultOrg
 
 	if len(discovered) == 0 {
 		logger.InfoContext(ctx, "no MCP datasources discovered")
 		return nil
 	}
 
-	// Connect to each datasource and store in manager
+	// Connect to each datasource (in its org) and store in manager
 	tm.clientsMutex.Lock()
 	for _, ds := range discovered {
-		client, err := NewProxiedClient(ctx, ds.UID, ds.Name, ds.Type, ds.MCPURL)
+		client, err := NewProxiedClient(ctx, ds.OrgID, ds.UID, ds.Name, ds.Type, ds.MCPURL)
 		if err != nil {
-			logger.ErrorContext(ctx, "failed to create proxied client", "datasource", ds.UID, "error", err)
+			logger.ErrorContext(ctx, "failed to create proxied client", "datasource", ds.UID, "org", ds.OrgID, "error", err)
 			continue
 		}
-		key := ds.Type + "_" + ds.UID
-		tm.serverClients[key] = client
+		tm.serverClients[proxiedClientKey(ds.OrgID, ds.Type, ds.UID)] = client
 	}
 	clientCount := len(tm.serverClients)
 	tm.clientsMutex.Unlock()
@@ -358,7 +561,7 @@ func (tm *ToolManager) InitializeAndRegisterProxiedTools(ctx context.Context, se
 	// Step 1: Discover and connect (guaranteed to run exactly once per session)
 	state.initOnce.Do(func() {
 		// Discover datasources with MCP support
-		discovered, err := discoverMCPDatasources(ctx, logger)
+		discovered, defaultOrg, err := discoverMCPDatasources(ctx, logger)
 		if err != nil {
 			logger.ErrorContext(ctx, "failed to discover MCP datasources", "error", err)
 			state.mutex.Lock()
@@ -368,17 +571,17 @@ func (tm *ToolManager) InitializeAndRegisterProxiedTools(ctx context.Context, se
 		}
 
 		state.mutex.Lock()
-		// For each discovered datasource, create a proxied client
+		state.defaultOrgID = defaultOrg
+		// For each discovered datasource, create a proxied client scoped to its org
 		for _, ds := range discovered {
-			client, err := NewProxiedClient(ctx, ds.UID, ds.Name, ds.Type, ds.MCPURL)
+			client, err := NewProxiedClient(ctx, ds.OrgID, ds.UID, ds.Name, ds.Type, ds.MCPURL)
 			if err != nil {
-				logger.ErrorContext(ctx, "failed to create proxied client", "datasource", ds.UID, "error", err)
+				logger.ErrorContext(ctx, "failed to create proxied client", "datasource", ds.UID, "org", ds.OrgID, "error", err)
 				continue
 			}
 
-			// Store the client
-			key := ds.Type + "_" + ds.UID
-			state.proxiedClients[key] = client
+			// Store the client, keyed by org so the same UID in different orgs is distinct
+			state.proxiedClients[proxiedClientKey(ds.OrgID, ds.Type, ds.UID)] = client
 		}
 		state.proxiedToolsInitialized = true
 		state.mutex.Unlock()
@@ -441,25 +644,29 @@ func (tm *ToolManager) InitializeAndRegisterProxiedTools(ctx context.Context, se
 }
 
 // GetServerClient retrieves a proxied client from server-level storage (for stdio transport)
-func (tm *ToolManager) GetServerClient(datasourceType, datasourceUID string) (*ProxiedClient, error) {
+func (tm *ToolManager) GetServerClient(orgID int64, datasourceType, datasourceUID string) (*ProxiedClient, error) {
 	tm.clientsMutex.RLock()
 	defer tm.clientsMutex.RUnlock()
 
-	key := datasourceType + "_" + datasourceUID
+	// A call that omits orgId targets the connection's default org.
+	if orgID <= 0 {
+		orgID = tm.defaultOrgID
+	}
+	key := proxiedClientKey(orgID, datasourceType, datasourceUID)
 	client, exists := tm.serverClients[key]
 	if !exists {
-		// List available datasources to help with debugging
+		// List available datasources (in this org) to help with debugging
 		var availableUIDs []string
 		for _, c := range tm.serverClients {
-			if c.DatasourceType == datasourceType {
+			if c.DatasourceType == datasourceType && c.OrgID == orgID {
 				availableUIDs = append(availableUIDs, c.DatasourceUID)
 			}
 		}
 
 		if len(availableUIDs) > 0 {
-			return nil, fmt.Errorf("datasource '%s' not found. Available %s datasources: %v", datasourceUID, datasourceType, availableUIDs)
+			return nil, fmt.Errorf("datasource '%s' not found in org %d. Available %s datasources: %v", datasourceUID, orgID, datasourceType, availableUIDs)
 		}
-		return nil, fmt.Errorf("datasource '%s' not found. No %s datasources with MCP support are configured", datasourceUID, datasourceType)
+		return nil, fmt.Errorf("datasource '%s' not found in org %d. No %s datasources with MCP support are configured", datasourceUID, orgID, datasourceType)
 	}
 
 	return client, nil

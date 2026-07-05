@@ -192,6 +192,10 @@ Queries go through Grafana's Snowflake datasource (Grafana Enterprise plugin `gr
 - **List permissions for a resource:** List all permissions defined for a specific resource (dashboard, datasource, folder, etc.).
 - **Describe a Grafana resource:** List available permissions and assignment capabilities for a resource type.
 
+### User
+
+- **User info:** Get the current Grafana identity — login, email, name, whether it is a Grafana (server) admin, the current organization, and the organizations the credential can access (with roles). Use it to discover valid `orgId` values for [multi-organization](#multi-organization-support) requests.
+
 ### Navigation
 
 - **Generate deeplinks:** Create accurate deeplink URLs for Grafana resources instead of relying on LLM URL guessing.
@@ -303,6 +307,7 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `list_team_roles`                 | Admin                     | List roles for teams                                                                                         | `roles:read`                                           | `teams:id:7`                                        |
 | `get_resource_permissions`        | Admin                     | List permissions for a resource                                                                              | `permissions:read`                                     | `dashboards:uid:abcd1234`                           |
 | `get_resource_description`        | Admin                     | Describe a Grafana resource type                                                                             | `permissions:read`                                     | `dashboards:*`                                      |
+| `user_info`                       | User                      | Current identity, capabilities, and accessible organizations                                                 | None (signed-in user)                                  | —                                                   |
 | `search_dashboards`               | Search                    | Search for dashboards                                                                                        | `dashboards:read`                                      | `dashboards:*` or `dashboards:uid:abc123`           |
 | `get_dashboard_by_uid`            | Dashboard                 | Get a dashboard by uid                                                                                       | `dashboards:read`                                      | `dashboards:uid:abc123`                             |
 | `update_dashboard`                | Dashboard                 | Update or create a new dashboard                                                                             | `dashboards:create`, `dashboards:write`                | `dashboards:*`, `folders:*` or `folders:uid:xyz789` |
@@ -532,6 +537,14 @@ You can specify which organization to interact with using either:
 - **HTTP header:** Set `X-Grafana-Org-Id` when using SSE or streamable HTTP transports (header takes precedence over environment variable - meaning you can set a default org as well).
 
 When an organization ID is provided, the MCP server will set the `X-Grafana-Org-Id` header on all requests to Grafana, ensuring that operations are performed within the specified organization context.
+
+#### Dynamic (per-call) organization selection
+
+The options above fix the organization for the whole connection. To let a single connection target different organizations per tool call, start the server with the `--dynamic-multi-org` flag. This is off by default.
+
+When enabled, every tool accepts an optional `orgId` argument that overrides the connection's organization for that call (driving both the `X-Grafana-Org-Id` header and, for app-platform APIs, the resolved Kubernetes namespace). Proxied datasource tools are additionally discovered across every organization the credential can access. Calls that omit `orgId` use the connection's default organization.
+
+This only works for credentials that belong to more than one organization (e.g. a user or on-behalf-of identity); a service-account token remains bound to its single organization. Use the [`user_info`](#user) tool to discover which `orgId` values are valid.
 
 **Example with organization ID:**
 

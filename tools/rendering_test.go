@@ -150,6 +150,7 @@ func TestBuildRenderURL(t *testing.T) {
 	tests := []struct {
 		name        string
 		baseURL     string
+		orgID       int64
 		args        GetPanelImageParams
 		contains    []string
 		notContains []string
@@ -453,11 +454,37 @@ func TestBuildRenderURL(t *testing.T) {
 			},
 			expectError: true,
 		},
+		{
+			// targetOrgId (not orgId): orgId would make the renderer's frontend
+			// persist an org switch via /api/user/using; targetOrgId scopes the
+			// org to this single render.
+			name:    "targetOrgId is added to the render URL when set",
+			baseURL: "http://localhost:3000",
+			orgID:   2,
+			args: GetPanelImageParams{
+				DashboardUID: "abc123",
+			},
+			contains: []string{
+				"http://localhost:3000/render/d/abc123",
+				"targetOrgId=2",
+			},
+		},
+		{
+			name:    "no org param when unset (default org)",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				DashboardUID: "abc123",
+			},
+			notContains: []string{
+				"targetOrgId",
+				"orgId",
+			},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := buildRenderURL(tt.baseURL, tt.args)
+			result, err := buildRenderURL(tt.baseURL, tt.orgID, tt.args)
 			if tt.expectError {
 				require.Error(t, err)
 				return
