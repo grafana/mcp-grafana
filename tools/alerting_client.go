@@ -258,23 +258,23 @@ func (c *alertingClient) GetDatasourceRules(ctx context.Context, datasourceUID s
 // GetAlertGroupsOpts contains optional filtering parameters for the
 // Grafana built-in Alertmanager alerts/groups endpoint.
 type GetAlertGroupsOpts struct {
-	Active    bool     // Filter by active alerts
-	Silenced  bool     // Filter by silenced alerts
-	Inhibited bool     // Filter by inhibited alerts
+	Active    *bool    // Filter by active alerts (nil means no filter)
+	Silenced  *bool    // Filter by silenced alerts (nil means no filter)
+	Inhibited *bool    // Filter by inhibited alerts (nil means no filter)
 	Filter    []string // Label matchers (e.g., "severity=critical")
 	Receiver  string   // Filter by receiver name
 }
 
 func (o *GetAlertGroupsOpts) queryValues() url.Values {
 	params := url.Values{}
-	if o.Active {
-		params.Set("active", "true")
+	if o.Active != nil {
+		params.Set("active", strconv.FormatBool(*o.Active))
 	}
-	if o.Silenced {
-		params.Set("silenced", "true")
+	if o.Silenced != nil {
+		params.Set("silenced", strconv.FormatBool(*o.Silenced))
 	}
-	if o.Inhibited {
-		params.Set("inhibited", "true")
+	if o.Inhibited != nil {
+		params.Set("inhibited", strconv.FormatBool(*o.Inhibited))
 	}
 	for _, f := range o.Filter {
 		params.Add("filter", f)
