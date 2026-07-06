@@ -3,9 +3,11 @@ package mcpgrafana
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"sync/atomic"
 	"testing"
 )
 
@@ -364,16 +366,18 @@ func TestKubernetesClient_AuthAPIKey(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{
-		APIKey: "my-secret-token",
-	})
+	cfg := GrafanaConfig{APIKey: "my-secret-token"}
+	rt, err := BuildTransport(&cfg, nil)
+	if err != nil {
+		t.Fatalf("BuildTransport() error: %v", err)
+	}
 
 	client := &KubernetesClient{
 		BaseURL:    ts.URL,
-		HTTPClient: ts.Client(),
+		HTTPClient: &http.Client{Transport: rt},
 	}
 
-	_, err := client.Get(ctx, testDashboardDesc, "default", "test")
+	_, err = client.Get(context.Background(), testDashboardDesc, "default", "test")
 	if err != nil {
 		t.Fatalf("Get() error: %v", err)
 	}
@@ -399,18 +403,22 @@ func TestKubernetesClient_AuthOnBehalfOf(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{
+	cfg := GrafanaConfig{
 		AccessToken: "access-token-123",
 		IDToken:     "id-token-456",
 		APIKey:      "should-not-be-used",
-	})
+	}
+	rt, err := BuildTransport(&cfg, nil)
+	if err != nil {
+		t.Fatalf("BuildTransport() error: %v", err)
+	}
 
 	client := &KubernetesClient{
 		BaseURL:    ts.URL,
-		HTTPClient: ts.Client(),
+		HTTPClient: &http.Client{Transport: rt},
 	}
 
-	_, err := client.Get(ctx, testDashboardDesc, "default", "test")
+	_, err = client.Get(context.Background(), testDashboardDesc, "default", "test")
 	if err != nil {
 		t.Fatalf("Get() error: %v", err)
 	}
@@ -438,16 +446,18 @@ func TestKubernetesClient_AuthBasicAuth(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{
-		BasicAuth: url.UserPassword("admin", "secret"),
-	})
+	cfg := GrafanaConfig{BasicAuth: url.UserPassword("admin", "secret")}
+	rt, err := BuildTransport(&cfg, nil)
+	if err != nil {
+		t.Fatalf("BuildTransport() error: %v", err)
+	}
 
 	client := &KubernetesClient{
 		BaseURL:    ts.URL,
-		HTTPClient: ts.Client(),
+		HTTPClient: &http.Client{Transport: rt},
 	}
 
-	_, err := client.Get(ctx, testDashboardDesc, "default", "test")
+	_, err = client.Get(context.Background(), testDashboardDesc, "default", "test")
 	if err != nil {
 		t.Fatalf("Get() error: %v", err)
 	}
@@ -461,6 +471,157 @@ func TestKubernetesClient_AuthBasicAuth(t *testing.T) {
 	if capturedPass != "secret" {
 		t.Errorf("password = %q, want %q", capturedPass, "secret")
 	}
+}
+
+func TestKubernetesClient_Create(t *testing.T) {
+	var gotMethod, gotPath, gotBody string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"kind":     "Dashboard",
+			"metadata": map[string]interface{}{"name": "new-dash", "generation": 1},
+		})
+	}))
+	defer ts.Close()
+
+	client := &KubernetesClient{BaseURL: ts.URL, HTTPClient: ts.Client()}
+	obj := map[string]interface{}{
+		"apiVersion": "dashboard.grafana.app/v2beta1",
+		"kind":       "Dashboard",
+		"spec":       map[string]interface{}{"title": "New"},
+	}
+	result, err := client.Create(context.Background(), testDashboardDesc, "default", obj)
+	if err != nil {
+		t.Fatalf("Create() error: %v", err)
+	}
+
+	if gotMethod != http.MethodPost {
+		t.Errorf("method = %q, want POST", gotMethod)
+	}
+	if want := "/apis/dashboard.grafana.app/v2beta1/namespaces/default/dashboards"; gotPath != want {
+		t.Errorf("path = %q, want %q", gotPath, want)
+	}
+	if !json.Valid([]byte(gotBody)) || gotBody == "" {
+		t.Errorf("request body should be JSON, got %q", gotBody)
+	}
+	if md, _ := result["metadata"].(map[string]interface{}); md["name"] != "new-dash" {
+		t.Errorf("unexpected result: %v", result)
+	}
+}
+
+func TestKubernetesClient_Update(t *testing.T) {
+	var gotMethod, gotPath string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"kind":     "Dashboard",
+			"metadata": map[string]interface{}{"name": "my-dash", "generation": 5},
+		})
+	}))
+	defer ts.Close()
+
+	client := &KubernetesClient{BaseURL: ts.URL, HTTPClient: ts.Client()}
+	obj := map[string]interface{}{
+		"apiVersion": "dashboard.grafana.app/v2beta1",
+		"kind":       "Dashboard",
+		"metadata":   map[string]interface{}{"name": "my-dash", "resourceVersion": "42"},
+		"spec":       map[string]interface{}{"title": "Updated"},
+	}
+	if _, err := client.Update(context.Background(), testDashboardDesc, "default", "my-dash", obj); err != nil {
+		t.Fatalf("Update() error: %v", err)
+	}
+
+	if gotMethod != http.MethodPut {
+		t.Errorf("method = %q, want PUT", gotMethod)
+	}
+	if want := "/apis/dashboard.grafana.app/v2beta1/namespaces/default/dashboards/my-dash"; gotPath != want {
+		t.Errorf("path = %q, want %q", gotPath, want)
+	}
+}
+
+func TestKubernetesClient_GroupVersions(t *testing.T) {
+	const group = "dashboard.grafana.app"
+
+	t.Run("served group returns versions and caches them", func(t *testing.T) {
+		var calls int32
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/apis/"+group {
+				atomic.AddInt32(&calls, 1)
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"versions": []map[string]interface{}{{"version": "v0alpha1"}, {"version": "v1beta1"}, {"version": "v2beta1"}},
+				})
+				return
+			}
+			w.WriteHeader(http.StatusNotFound)
+		}))
+		defer ts.Close()
+
+		client := &KubernetesClient{BaseURL: ts.URL, HTTPClient: ts.Client()}
+
+		versions, err := client.GroupVersions(context.Background(), group)
+		if err != nil {
+			t.Fatalf("GroupVersions() error: %v", err)
+		}
+		if len(versions) != 3 {
+			t.Errorf("versions = %v, want 3", versions)
+		}
+		if !client.SupportsGroupVersion(context.Background(), group, "v1beta1") {
+			t.Error("expected v1beta1 to be supported")
+		}
+		if client.SupportsGroupVersion(context.Background(), group, "v1") {
+			t.Error("did not expect v1 to be supported")
+		}
+		// Repeated calls are served from cache (one HTTP request total).
+		_, _ = client.GroupVersions(context.Background(), group)
+		if got := atomic.LoadInt32(&calls); got != 1 {
+			t.Errorf("discovery calls = %d, want 1 (cached)", got)
+		}
+	})
+
+	t.Run("absent group returns empty and caches it", func(t *testing.T) {
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+		}))
+		defer ts.Close()
+
+		client := &KubernetesClient{BaseURL: ts.URL, HTTPClient: ts.Client()}
+		versions, err := client.GroupVersions(context.Background(), group)
+		if err != nil {
+			t.Fatalf("GroupVersions() error: %v", err)
+		}
+		if len(versions) != 0 {
+			t.Errorf("versions = %v, want empty for absent group", versions)
+		}
+		if client.SupportsGroupVersion(context.Background(), group, "v1beta1") {
+			t.Error("absent group must not support any version")
+		}
+	})
+
+	t.Run("transient error is returned and not cached", func(t *testing.T) {
+		var calls int32
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			atomic.AddInt32(&calls, 1)
+			w.WriteHeader(http.StatusInternalServerError)
+		}))
+		defer ts.Close()
+
+		client := &KubernetesClient{BaseURL: ts.URL, HTTPClient: ts.Client()}
+		if _, err := client.GroupVersions(context.Background(), group); err == nil {
+			t.Fatal("expected an error on a 5xx discovery response")
+		}
+		// A transient failure must not be cached, so a second call re-probes.
+		_, _ = client.GroupVersions(context.Background(), group)
+		if got := atomic.LoadInt32(&calls); got != 2 {
+			t.Errorf("discovery calls = %d, want 2 (transient errors not cached)", got)
+		}
+	})
 }
 
 func TestKubernetesClient_ErrorMessage(t *testing.T) {

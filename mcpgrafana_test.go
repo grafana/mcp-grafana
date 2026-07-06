@@ -1,11 +1,16 @@
 package mcpgrafana
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/go-openapi/runtime/client"
@@ -674,6 +679,35 @@ func TestTextMimeConsumerOverride(t *testing.T) {
 	}
 }
 
+func TestWithGrafanaConfigNormalizesURL(t *testing.T) {
+	tests := []struct {
+		name     string
+		inputURL string
+		wantURL  string
+	}{
+		{"trailing slash stripped", "https://example.grafana.net/", "https://example.grafana.net"},
+		{"multiple trailing slashes stripped", "https://example.grafana.net///", "https://example.grafana.net"},
+		{"no trailing slash unchanged", "https://example.grafana.net", "https://example.grafana.net"},
+		{"empty string unchanged", "", ""},
+		{"surrounding whitespace trimmed", "  https://example.grafana.net/  ", "https://example.grafana.net"},
+		{"missing scheme defaults to https", "example.grafana.net", "https://example.grafana.net"},
+		{"missing scheme with path defaults to https", "example.grafana.net/grafana", "https://example.grafana.net/grafana"},
+		{"http scheme preserved", "http://localhost:3000", "http://localhost:3000"},
+		{"schemeless localhost defaults to http", "localhost:3000", "http://localhost:3000"},
+		{"schemeless localhost with path defaults to http", "localhost:3000/grafana", "http://localhost:3000/grafana"},
+		{"schemeless loopback ip defaults to http", "127.0.0.1:3000", "http://127.0.0.1:3000"},
+		{"schemeless ipv6 loopback defaults to http", "[::1]:3000", "http://[::1]:3000"},
+		{"schemeless with :// in query still gets scheme", "example.grafana.net/p?next=http://x", "https://example.grafana.net/p?next=http://x"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{URL: tt.inputURL})
+			got := GrafanaConfigFromContext(ctx)
+			assert.Equal(t, tt.wantURL, got.URL)
+		})
+	}
+}
+
 func TestHTTPTracingConfiguration(t *testing.T) {
 	t.Run("HTTP tracing always enabled for context propagation", func(t *testing.T) {
 		// Create context (HTTP tracing always enabled)
@@ -764,13 +798,13 @@ func assertHasAttribute(t *testing.T, attributes []attribute.KeyValue, key strin
 func TestExtraHeadersFromEnv(t *testing.T) {
 	t.Run("empty env returns nil", func(t *testing.T) {
 		t.Setenv("GRAFANA_EXTRA_HEADERS", "")
-		headers := extraHeadersFromEnv()
+		headers := extraHeadersFromEnv(slog.Default())
 		assert.Nil(t, headers)
 	})
 
 	t.Run("valid JSON", func(t *testing.T) {
 		t.Setenv("GRAFANA_EXTRA_HEADERS", `{"X-Custom-Header": "custom-value", "X-Another": "another-value"}`)
-		headers := extraHeadersFromEnv()
+		headers := extraHeadersFromEnv(slog.Default())
 		assert.Equal(t, map[string]string{
 			"X-Custom-Header": "custom-value",
 			"X-Another":       "another-value",
@@ -779,13 +813,13 @@ func TestExtraHeadersFromEnv(t *testing.T) {
 
 	t.Run("invalid JSON returns nil", func(t *testing.T) {
 		t.Setenv("GRAFANA_EXTRA_HEADERS", "not-json")
-		headers := extraHeadersFromEnv()
+		headers := extraHeadersFromEnv(slog.Default())
 		assert.Nil(t, headers)
 	})
 
 	t.Run("empty object", func(t *testing.T) {
 		t.Setenv("GRAFANA_EXTRA_HEADERS", "{}")
-		headers := extraHeadersFromEnv()
+		headers := extraHeadersFromEnv(slog.Default())
 		assert.Equal(t, map[string]string{}, headers)
 	})
 }
@@ -848,6 +882,356 @@ func (m *capturingMockRT) RoundTrip(req *http.Request) (*http.Response, error) {
 // Keep the old name as an alias for backwards compatibility in case anything references it.
 type extraHeadersMockRT = capturingMockRT
 
+func TestAuthRoundTripper(t *testing.T) {
+	t.Run("sets OBO headers when access and ID tokens present", func(t *testing.T) {
+		var capturedReq *http.Request
+		mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+			capturedReq = req
+			return &http.Response{StatusCode: 200}, nil
+		}}
+
+		rt := NewAuthRoundTripper(mock, "access-tok", "id-tok", "api-key", nil)
+		req, _ := http.NewRequest("GET", "http://example.com", nil)
+		_, err := rt.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Equal(t, "access-tok", capturedReq.Header.Get("X-Access-Token"))
+		assert.Equal(t, "id-tok", capturedReq.Header.Get("X-Grafana-Id"))
+		assert.Empty(t, capturedReq.Header.Get("Authorization"))
+	})
+
+	t.Run("sets bearer token when only API key present", func(t *testing.T) {
+		var capturedReq *http.Request
+		mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+			capturedReq = req
+			return &http.Response{StatusCode: 200}, nil
+		}}
+
+		rt := NewAuthRoundTripper(mock, "", "", "my-api-key", nil)
+		req, _ := http.NewRequest("GET", "http://example.com", nil)
+		_, err := rt.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Equal(t, "Bearer my-api-key", capturedReq.Header.Get("Authorization"))
+		assert.Empty(t, capturedReq.Header.Get("X-Access-Token"))
+	})
+
+	t.Run("sets basic auth when only credentials present", func(t *testing.T) {
+		var capturedReq *http.Request
+		mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+			capturedReq = req
+			return &http.Response{StatusCode: 200}, nil
+		}}
+
+		rt := NewAuthRoundTripper(mock, "", "", "", url.UserPassword("user", "pass"))
+		req, _ := http.NewRequest("GET", "http://example.com", nil)
+		_, err := rt.RoundTrip(req)
+		require.NoError(t, err)
+
+		user, pass, ok := capturedReq.BasicAuth()
+		require.True(t, ok)
+		assert.Equal(t, "user", user)
+		assert.Equal(t, "pass", pass)
+	})
+
+	t.Run("does not modify original request", func(t *testing.T) {
+		mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+			return &http.Response{StatusCode: 200}, nil
+		}}
+
+		rt := NewAuthRoundTripper(mock, "", "", "my-key", nil)
+		req, _ := http.NewRequest("GET", "http://example.com", nil)
+		_, err := rt.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Empty(t, req.Header.Get("Authorization"))
+	})
+}
+
+func TestBuildTransport(t *testing.T) {
+	t.Run("default chain sets all headers", func(t *testing.T) {
+		var capturedReq *http.Request
+		mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+			capturedReq = req
+			return &http.Response{StatusCode: 200}, nil
+		}}
+
+		cfg := &GrafanaConfig{
+			APIKey:       "test-key",
+			OrgID:        42,
+			ExtraHeaders: map[string]string{"X-Custom": "val"},
+		}
+		transport, err := BuildTransport(cfg, mock)
+		require.NoError(t, err)
+
+		req, _ := http.NewRequest("GET", "http://example.com", nil)
+		_, err = transport.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Equal(t, "Bearer test-key", capturedReq.Header.Get("Authorization"))
+		assert.Equal(t, "42", capturedReq.Header.Get("X-Grafana-Org-Id"))
+		assert.Equal(t, "val", capturedReq.Header.Get("X-Custom"))
+		assert.Contains(t, capturedReq.Header.Get("User-Agent"), "mcp-grafana/")
+	})
+
+	t.Run("WithoutAuth skips auth headers", func(t *testing.T) {
+		var capturedReq *http.Request
+		mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+			capturedReq = req
+			return &http.Response{StatusCode: 200}, nil
+		}}
+
+		cfg := &GrafanaConfig{APIKey: "test-key", OrgID: 1}
+		transport, err := BuildTransport(cfg, mock, WithoutAuth(), WithoutOtel())
+		require.NoError(t, err)
+
+		req, _ := http.NewRequest("GET", "http://example.com", nil)
+		_, err = transport.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Empty(t, capturedReq.Header.Get("Authorization"))
+		assert.Equal(t, "1", capturedReq.Header.Get("X-Grafana-Org-Id"))
+	})
+
+	t.Run("WithoutOrgID skips org ID header", func(t *testing.T) {
+		var capturedReq *http.Request
+		mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+			capturedReq = req
+			return &http.Response{StatusCode: 200}, nil
+		}}
+
+		cfg := &GrafanaConfig{OrgID: 42}
+		transport, err := BuildTransport(cfg, mock, WithoutOrgID(), WithoutOtel())
+		require.NoError(t, err)
+
+		req, _ := http.NewRequest("GET", "http://example.com", nil)
+		_, err = transport.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Empty(t, capturedReq.Header.Get("X-Grafana-Org-Id"))
+	})
+
+	t.Run("WithoutUserAgent skips user agent header", func(t *testing.T) {
+		var capturedReq *http.Request
+		mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+			capturedReq = req
+			return &http.Response{StatusCode: 200}, nil
+		}}
+
+		cfg := &GrafanaConfig{}
+		transport, err := BuildTransport(cfg, mock, WithoutUserAgent(), WithoutOtel())
+		require.NoError(t, err)
+
+		req, _ := http.NewRequest("GET", "http://example.com", nil)
+		_, err = transport.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Empty(t, capturedReq.Header.Get("User-Agent"))
+	})
+
+	t.Run("auth takes precedence over extra headers for same key", func(t *testing.T) {
+		var capturedReq *http.Request
+		mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+			capturedReq = req
+			return &http.Response{StatusCode: 200}, nil
+		}}
+
+		cfg := &GrafanaConfig{
+			APIKey:       "real-key",
+			ExtraHeaders: map[string]string{"Authorization": "Bearer forwarded-key"},
+		}
+		transport, err := BuildTransport(cfg, mock, WithoutOtel())
+		require.NoError(t, err)
+
+		req, _ := http.NewRequest("GET", "http://example.com", nil)
+		_, err = transport.RoundTrip(req)
+		require.NoError(t, err)
+
+		// Auth is innermost, so it runs last and wins.
+		assert.Equal(t, "Bearer real-key", capturedReq.Header.Get("Authorization"))
+	})
+
+	t.Run("OBO auth takes precedence over extra headers", func(t *testing.T) {
+		var capturedReq *http.Request
+		mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+			capturedReq = req
+			return &http.Response{StatusCode: 200}, nil
+		}}
+
+		cfg := &GrafanaConfig{
+			AccessToken:  "real-access-tok",
+			IDToken:      "real-id-tok",
+			ExtraHeaders: map[string]string{"X-Access-Token": "forwarded-access-tok"},
+		}
+		transport, err := BuildTransport(cfg, mock, WithoutOtel())
+		require.NoError(t, err)
+
+		req, _ := http.NewRequest("GET", "http://example.com", nil)
+		_, err = transport.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Equal(t, "real-access-tok", capturedReq.Header.Get("X-Access-Token"))
+	})
+
+	t.Run("nil base uses default transport", func(t *testing.T) {
+		cfg := &GrafanaConfig{}
+		transport, err := BuildTransport(cfg, nil, WithoutOtel())
+		require.NoError(t, err)
+		require.NotNil(t, transport)
+	})
+
+	t.Run("nil base preserves configured BaseTransport", func(t *testing.T) {
+		var capturedReq *http.Request
+		usedBase := false
+		base := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+			usedBase = true
+			capturedReq = req
+			return &http.Response{StatusCode: 200}, nil
+		}}
+
+		cfg := &GrafanaConfig{
+			APIKey:        "test-key",
+			BaseTransport: base,
+		}
+		transport, err := BuildTransport(cfg, nil, WithoutOtel())
+		require.NoError(t, err)
+
+		req, _ := http.NewRequest("GET", "http://example.com", nil)
+		_, err = transport.RoundTrip(req)
+		require.NoError(t, err)
+
+		require.True(t, usedBase)
+		require.NotNil(t, capturedReq)
+		assert.Equal(t, "Bearer test-key", capturedReq.Header.Get("Authorization"))
+	})
+
+	t.Run("zero-value config produces working transport", func(t *testing.T) {
+		var capturedReq *http.Request
+		mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+			capturedReq = req
+			return &http.Response{StatusCode: 200}, nil
+		}}
+
+		cfg := &GrafanaConfig{}
+		transport, err := BuildTransport(cfg, mock, WithoutOtel())
+		require.NoError(t, err)
+
+		req, _ := http.NewRequest("GET", "http://example.com", nil)
+		_, err = transport.RoundTrip(req)
+		require.NoError(t, err)
+
+		// Should still get user-agent even with zero config
+		assert.Contains(t, capturedReq.Header.Get("User-Agent"), "mcp-grafana/")
+		// No auth, no org-id, no extra headers
+		assert.Empty(t, capturedReq.Header.Get("Authorization"))
+		assert.Empty(t, capturedReq.Header.Get("X-Grafana-Org-Id"))
+	})
+}
+
+func TestRedactHeaderValue(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"short", "[REDACTED]"},
+		{"exactly11ch", "[REDACTED]"},
+		{"exactly12char", "exac***char"},
+		{"glsa_1234567890abcdef", "glsa***cdef"},
+		{"Bearer glsa_abcdefghij", "Bear***ghij"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			assert.Equal(t, tt.want, redactHeaderValue(tt.input))
+		})
+	}
+}
+
+func TestDebugLoggingRedactsSensitiveHeaders(t *testing.T) {
+	var capturedReq *http.Request
+	mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+		capturedReq = req
+		return &http.Response{StatusCode: 200, Header: http.Header{}}, nil
+	}}
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	cfg := &GrafanaConfig{
+		APIKey: "glsa_supersecrettoken1234",
+		Debug:  true,
+		Logger: logger,
+	}
+	transport, err := BuildTransport(cfg, mock, WithoutOtel())
+	require.NoError(t, err)
+
+	req, _ := http.NewRequest("GET", "http://example.com/api/search", nil)
+	_, err = transport.RoundTrip(req)
+	require.NoError(t, err)
+
+	// The actual request to the server must still carry the real token.
+	assert.Equal(t, "Bearer glsa_supersecrettoken1234", capturedReq.Header.Get("Authorization"))
+
+	// The debug log output must NOT contain the full token.
+	logOutput := buf.String()
+	assert.NotContains(t, logOutput, "glsa_supersecrettoken1234")
+	// But it should contain the redacted version.
+	assert.Contains(t, logOutput, "Bear***1234")
+}
+
+func TestDebugLoggingRedactsOBOTokens(t *testing.T) {
+	var capturedReq *http.Request
+	mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+		capturedReq = req
+		return &http.Response{StatusCode: 200, Header: http.Header{}}, nil
+	}}
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	cfg := &GrafanaConfig{
+		AccessToken: "access_secret_token_val",
+		IDToken:     "id_secret_token_value",
+		Debug:       true,
+		Logger:      logger,
+	}
+	transport, err := BuildTransport(cfg, mock, WithoutOtel())
+	require.NoError(t, err)
+
+	req, _ := http.NewRequest("GET", "http://example.com/api/search", nil)
+	_, err = transport.RoundTrip(req)
+	require.NoError(t, err)
+
+	// Real tokens must reach the server.
+	assert.Equal(t, "access_secret_token_val", capturedReq.Header.Get("X-Access-Token"))
+	assert.Equal(t, "id_secret_token_value", capturedReq.Header.Get("X-Grafana-Id"))
+
+	logOutput := buf.String()
+	assert.NotContains(t, logOutput, "access_secret_token_val")
+	assert.NotContains(t, logOutput, "id_secret_token_value")
+}
+
+func TestDebugLoggingDisabledByDefault(t *testing.T) {
+	mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 200, Header: http.Header{}}, nil
+	}}
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	cfg := &GrafanaConfig{
+		APIKey: "glsa_supersecrettoken1234",
+		Logger: logger,
+	}
+	transport, err := BuildTransport(cfg, mock, WithoutOtel())
+	require.NoError(t, err)
+
+	req, _ := http.NewRequest("GET", "http://example.com/api/search", nil)
+	_, err = transport.RoundTrip(req)
+	require.NoError(t, err)
+
+	assert.Empty(t, buf.String())
+}
+
 func TestExtractGrafanaInfoWithExtraHeaders(t *testing.T) {
 	t.Run("extra headers from env in ExtractGrafanaInfoFromEnv", func(t *testing.T) {
 		t.Setenv("GRAFANA_EXTRA_HEADERS", `{"X-Tenant-ID": "tenant-123"}`)
@@ -862,6 +1246,85 @@ func TestExtractGrafanaInfoWithExtraHeaders(t *testing.T) {
 		ctx := ExtractGrafanaInfoFromHeaders(context.Background(), req)
 		config := GrafanaConfigFromContext(ctx)
 		assert.Equal(t, map[string]string{"X-Tenant-ID": "tenant-456"}, config.ExtraHeaders)
+	})
+}
+
+func TestServiceAccountTokenFromFile(t *testing.T) {
+	logger := slog.New(slog.DiscardHandler)
+
+	writeToken := func(t *testing.T, contents string) string {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "token")
+		require.NoError(t, os.WriteFile(path, []byte(contents), 0o600))
+		return path
+	}
+
+	t.Run("reads token from file", func(t *testing.T) {
+		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN", "")
+		t.Setenv("GRAFANA_API_KEY", "")
+		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE", writeToken(t, "file-token"))
+
+		_, apiKey := urlAndAPIKeyFromEnv(logger)
+		assert.Equal(t, "file-token", apiKey)
+	})
+
+	t.Run("trims surrounding whitespace and newlines", func(t *testing.T) {
+		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN", "")
+		t.Setenv("GRAFANA_API_KEY", "")
+		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE", writeToken(t, "  file-token\n"))
+
+		_, apiKey := urlAndAPIKeyFromEnv(logger)
+		assert.Equal(t, "file-token", apiKey)
+	})
+
+	t.Run("direct token takes precedence over file", func(t *testing.T) {
+		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN", "direct-token")
+		t.Setenv("GRAFANA_API_KEY", "")
+		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE", writeToken(t, "file-token"))
+
+		_, apiKey := urlAndAPIKeyFromEnv(logger)
+		assert.Equal(t, "direct-token", apiKey)
+	})
+
+	t.Run("file takes precedence over deprecated api key", func(t *testing.T) {
+		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN", "")
+		t.Setenv("GRAFANA_API_KEY", "deprecated-key")
+		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE", writeToken(t, "file-token"))
+
+		_, apiKey := urlAndAPIKeyFromEnv(logger)
+		assert.Equal(t, "file-token", apiKey)
+	})
+
+	t.Run("falls back to deprecated api key when file is missing", func(t *testing.T) {
+		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN", "")
+		t.Setenv("GRAFANA_API_KEY", "deprecated-key")
+		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE", filepath.Join(t.TempDir(), "does-not-exist"))
+
+		_, apiKey := urlAndAPIKeyFromEnv(logger)
+		assert.Equal(t, "deprecated-key", apiKey)
+	})
+
+	t.Run("empty file falls back to deprecated api key", func(t *testing.T) {
+		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN", "")
+		t.Setenv("GRAFANA_API_KEY", "deprecated-key")
+		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE", writeToken(t, "\n  \n"))
+
+		_, apiKey := urlAndAPIKeyFromEnv(logger)
+		assert.Equal(t, "deprecated-key", apiKey)
+	})
+
+	t.Run("rotated file is picked up on subsequent reads", func(t *testing.T) {
+		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN", "")
+		t.Setenv("GRAFANA_API_KEY", "")
+		path := writeToken(t, "old-token")
+		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE", path)
+
+		_, apiKey := urlAndAPIKeyFromEnv(logger)
+		require.Equal(t, "old-token", apiKey)
+
+		require.NoError(t, os.WriteFile(path, []byte("new-token"), 0o600))
+		_, apiKey = urlAndAPIKeyFromEnv(logger)
+		assert.Equal(t, "new-token", apiKey)
 	})
 }
 
@@ -1128,6 +1591,79 @@ func clearPublicURLCache() {
 	})
 }
 
+// clearNamespaceCache removes all entries from the namespaceCache for test isolation.
+func clearNamespaceCache() {
+	namespaceCache.Range(func(key, _ any) bool {
+		namespaceCache.Delete(key)
+		return true
+	})
+}
+
+func TestDashboardNamespace(t *testing.T) {
+	t.Cleanup(clearNamespaceCache)
+
+	t.Run("uses namespace from frontend settings", func(t *testing.T) {
+		t.Cleanup(clearNamespaceCache)
+		ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/api/frontend/settings" {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"appUrl": "https://grafana.example.com", "namespace": "stacks-123"}`))
+				return
+			}
+			w.WriteHeader(http.StatusNotFound)
+		})
+
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{URL: ts.URL, APIKey: "test-key", OrgID: 1})
+		ns, fromSettings := DashboardNamespace(ctx)
+		assert.Equal(t, "stacks-123", ns)
+		assert.True(t, fromSettings, "namespace came from frontend settings")
+	})
+
+	t.Run("falls back to default when settings omit namespace and org is 1", func(t *testing.T) {
+		t.Cleanup(clearNamespaceCache)
+		ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"appUrl": "https://grafana.example.com"}`))
+		})
+
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{URL: ts.URL, OrgID: 1})
+		ns, fromSettings := DashboardNamespace(ctx)
+		assert.Equal(t, "default", ns)
+		assert.False(t, fromSettings, "namespace fell back to the org-derived value")
+	})
+
+	t.Run("falls back to org-N when settings unavailable", func(t *testing.T) {
+		t.Cleanup(clearNamespaceCache)
+		ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+		})
+
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{URL: ts.URL, OrgID: 5})
+		ns, fromSettings := DashboardNamespace(ctx)
+		assert.Equal(t, "org-5", ns)
+		assert.False(t, fromSettings, "namespace fell back to the org-derived value")
+	})
+
+	t.Run("caches successful namespace lookups", func(t *testing.T) {
+		t.Cleanup(clearNamespaceCache)
+		var calls int32
+		ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+			atomic.AddInt32(&calls, 1)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"namespace": "org-2"}`))
+		})
+
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{URL: ts.URL, OrgID: 2})
+		ns1, from1 := DashboardNamespace(ctx)
+		ns2, from2 := DashboardNamespace(ctx)
+		assert.Equal(t, "org-2", ns1)
+		assert.Equal(t, "org-2", ns2)
+		assert.True(t, from1)
+		assert.True(t, from2)
+		assert.Equal(t, int32(1), atomic.LoadInt32(&calls), "frontend settings should be fetched once and cached")
+	})
+}
+
 func TestFetchPublicURL(t *testing.T) {
 	t.Cleanup(clearPublicURLCache)
 
@@ -1141,7 +1677,7 @@ func TestFetchPublicURL(t *testing.T) {
 			w.WriteHeader(http.StatusNotFound)
 		})
 
-		publicURL := fetchPublicURL(context.Background(), ts.URL, "test-key", nil, nil, nil)
+		publicURL := fetchPublicURL(context.Background(), &GrafanaConfig{URL: ts.URL, APIKey: "test-key"})
 		assert.Equal(t, "https://grafana.example.com", publicURL)
 	})
 
@@ -1150,7 +1686,7 @@ func TestFetchPublicURL(t *testing.T) {
 			w.WriteHeader(http.StatusInternalServerError)
 		})
 
-		publicURL := fetchPublicURL(context.Background(), ts.URL, "test-key", nil, nil, nil)
+		publicURL := fetchPublicURL(context.Background(), &GrafanaConfig{URL: ts.URL, APIKey: "test-key"})
 		assert.Equal(t, "", publicURL)
 	})
 
@@ -1160,7 +1696,7 @@ func TestFetchPublicURL(t *testing.T) {
 			_, _ = w.Write([]byte(`{"appUrl": ""}`))
 		})
 
-		publicURL := fetchPublicURL(context.Background(), ts.URL, "test-key", nil, nil, nil)
+		publicURL := fetchPublicURL(context.Background(), &GrafanaConfig{URL: ts.URL, APIKey: "test-key"})
 		assert.Equal(t, "", publicURL)
 	})
 
@@ -1169,7 +1705,7 @@ func TestFetchPublicURL(t *testing.T) {
 			_, _ = w.Write([]byte(`not json`))
 		})
 
-		publicURL := fetchPublicURL(context.Background(), ts.URL, "test-key", nil, nil, nil)
+		publicURL := fetchPublicURL(context.Background(), &GrafanaConfig{URL: ts.URL, APIKey: "test-key"})
 		assert.Equal(t, "", publicURL)
 	})
 
@@ -1181,7 +1717,7 @@ func TestFetchPublicURL(t *testing.T) {
 			_, _ = w.Write([]byte(`{"appUrl": "https://grafana.example.com"}`))
 		})
 
-		fetchPublicURL(context.Background(), ts.URL, "my-token", nil, nil, nil)
+		fetchPublicURL(context.Background(), &GrafanaConfig{URL: ts.URL, APIKey: "my-token"})
 		assert.Equal(t, "Bearer my-token", capturedAuth)
 	})
 
@@ -1194,9 +1730,27 @@ func TestFetchPublicURL(t *testing.T) {
 		})
 
 		auth := url.UserPassword("admin", "secret")
-		fetchPublicURL(context.Background(), ts.URL, "", auth, nil, nil)
+		fetchPublicURL(context.Background(), &GrafanaConfig{URL: ts.URL, BasicAuth: auth})
 		assert.Equal(t, "admin", capturedUser)
 		assert.Equal(t, "secret", capturedPass)
+	})
+
+	t.Run("sends OBO access and ID tokens", func(t *testing.T) {
+		var capturedAccessToken, capturedIDToken string
+		ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+			capturedAccessToken = r.Header.Get("X-Access-Token")
+			capturedIDToken = r.Header.Get("X-Grafana-Id")
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"appUrl": "https://grafana.example.com"}`))
+		})
+
+		fetchPublicURL(context.Background(), &GrafanaConfig{
+			URL:         ts.URL,
+			AccessToken: "obo-access-token",
+			IDToken:     "obo-id-token",
+		})
+		assert.Equal(t, "obo-access-token", capturedAccessToken)
+		assert.Equal(t, "obo-id-token", capturedIDToken)
 	})
 
 	t.Run("trims trailing slash from appUrl", func(t *testing.T) {
@@ -1205,7 +1759,7 @@ func TestFetchPublicURL(t *testing.T) {
 			_, _ = w.Write([]byte(`{"appUrl": "https://grafana.example.com/"}`))
 		})
 
-		publicURL := fetchPublicURL(context.Background(), ts.URL, "", nil, nil, nil)
+		publicURL := fetchPublicURL(context.Background(), &GrafanaConfig{URL: ts.URL})
 		assert.Equal(t, "https://grafana.example.com", publicURL)
 	})
 
@@ -1221,7 +1775,7 @@ func TestFetchPublicURL(t *testing.T) {
 			"X-Custom-Auth":   "proxy-token-123",
 			"X-Forwarded-For": "10.0.0.1",
 		}
-		fetchPublicURL(context.Background(), ts.URL, "", nil, nil, extraHeaders)
+		fetchPublicURL(context.Background(), &GrafanaConfig{URL: ts.URL, ExtraHeaders: extraHeaders})
 		assert.Equal(t, "proxy-token-123", capturedHeaders.Get("X-Custom-Auth"))
 		assert.Equal(t, "10.0.0.1", capturedHeaders.Get("X-Forwarded-For"))
 	})
@@ -1234,13 +1788,15 @@ func TestFetchPublicURL(t *testing.T) {
 			_, _ = w.Write([]byte(`{"appUrl": "https://grafana.example.com"}`))
 		})
 
+		cfg := &GrafanaConfig{URL: ts.URL, APIKey: "test-key"}
+
 		// First call should hit the server
-		publicURL := fetchPublicURL(context.Background(), ts.URL, "test-key", nil, nil, nil)
+		publicURL := fetchPublicURL(context.Background(), cfg)
 		assert.Equal(t, "https://grafana.example.com", publicURL)
 		assert.Equal(t, 1, callCount)
 
 		// Second call should use cache
-		publicURL = fetchPublicURL(context.Background(), ts.URL, "test-key", nil, nil, nil)
+		publicURL = fetchPublicURL(context.Background(), cfg)
 		assert.Equal(t, "https://grafana.example.com", publicURL)
 		assert.Equal(t, 1, callCount) // no additional HTTP call
 	})
@@ -1257,18 +1813,20 @@ func TestFetchPublicURL(t *testing.T) {
 			_, _ = w.Write([]byte(`{"appUrl": "https://grafana.example.com"}`))
 		})
 
+		cfg := &GrafanaConfig{URL: ts.URL, APIKey: "test-key"}
+
 		// First call fails
-		publicURL := fetchPublicURL(context.Background(), ts.URL, "test-key", nil, nil, nil)
+		publicURL := fetchPublicURL(context.Background(), cfg)
 		assert.Equal(t, "", publicURL)
 		assert.Equal(t, 1, callCount)
 
 		// Second call retries and succeeds (failures are not cached)
-		publicURL = fetchPublicURL(context.Background(), ts.URL, "test-key", nil, nil, nil)
+		publicURL = fetchPublicURL(context.Background(), cfg)
 		assert.Equal(t, "https://grafana.example.com", publicURL)
 		assert.Equal(t, 2, callCount)
 
 		// Third call uses cached success
-		publicURL = fetchPublicURL(context.Background(), ts.URL, "test-key", nil, nil, nil)
+		publicURL = fetchPublicURL(context.Background(), cfg)
 		assert.Equal(t, "https://grafana.example.com", publicURL)
 		assert.Equal(t, 2, callCount) // no additional HTTP call
 	})
@@ -1306,5 +1864,336 @@ func TestNewGrafanaClientFetchesPublicURL(t *testing.T) {
 		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{})
 		gc := NewGrafanaClient(ctx, ts.URL, "test-key", nil)
 		assert.Equal(t, "", gc.PublicURL)
+	})
+}
+
+func TestOrgIDRoundTripperContextOverride(t *testing.T) {
+	t.Run("context OrgID overrides captured value", func(t *testing.T) {
+		var capturedReq *http.Request
+		mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+			capturedReq = req
+			return &http.Response{StatusCode: 200}, nil
+		}}
+
+		rt := NewOrgIDRoundTripper(mock, 1)
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{OrgID: 99})
+		req, _ := http.NewRequestWithContext(ctx, "GET", "http://example.com", nil)
+		_, err := rt.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Equal(t, "99", capturedReq.Header.Get(grafana_client.OrgIDHeader))
+	})
+
+	t.Run("context OrgID used when captured value is zero", func(t *testing.T) {
+		var capturedReq *http.Request
+		mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+			capturedReq = req
+			return &http.Response{StatusCode: 200}, nil
+		}}
+
+		rt := NewOrgIDRoundTripper(mock, 0)
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{OrgID: 42})
+		req, _ := http.NewRequestWithContext(ctx, "GET", "http://example.com", nil)
+		_, err := rt.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Equal(t, "42", capturedReq.Header.Get(grafana_client.OrgIDHeader))
+	})
+
+	t.Run("falls back to captured value when context has no OrgID", func(t *testing.T) {
+		var capturedReq *http.Request
+		mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+			capturedReq = req
+			return &http.Response{StatusCode: 200}, nil
+		}}
+
+		rt := NewOrgIDRoundTripper(mock, 7)
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{})
+		req, _ := http.NewRequestWithContext(ctx, "GET", "http://example.com", nil)
+		_, err := rt.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Equal(t, "7", capturedReq.Header.Get(grafana_client.OrgIDHeader))
+	})
+
+	t.Run("no header when both captured and context are zero", func(t *testing.T) {
+		var capturedReq *http.Request
+		mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+			capturedReq = req
+			return &http.Response{StatusCode: 200}, nil
+		}}
+
+		rt := NewOrgIDRoundTripper(mock, 0)
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{})
+		req, _ := http.NewRequestWithContext(ctx, "GET", "http://example.com", nil)
+		_, err := rt.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Empty(t, capturedReq.Header.Get(grafana_client.OrgIDHeader))
+	})
+}
+
+func TestAuthRoundTripperContextOverride(t *testing.T) {
+	t.Run("context OBO tokens override captured API key", func(t *testing.T) {
+		var capturedReq *http.Request
+		mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+			capturedReq = req
+			return &http.Response{StatusCode: 200}, nil
+		}}
+
+		rt := NewAuthRoundTripper(mock, "", "", "captured-key", nil)
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{
+			AccessToken: "ctx-access",
+			IDToken:     "ctx-id",
+		})
+		req, _ := http.NewRequestWithContext(ctx, "GET", "http://example.com", nil)
+		_, err := rt.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Equal(t, "ctx-access", capturedReq.Header.Get("X-Access-Token"))
+		assert.Equal(t, "ctx-id", capturedReq.Header.Get("X-Grafana-Id"))
+		assert.Empty(t, capturedReq.Header.Get("Authorization"))
+	})
+
+	t.Run("context API key overrides captured API key", func(t *testing.T) {
+		var capturedReq *http.Request
+		mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+			capturedReq = req
+			return &http.Response{StatusCode: 200}, nil
+		}}
+
+		rt := NewAuthRoundTripper(mock, "", "", "captured-key", nil)
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{APIKey: "ctx-key"})
+		req, _ := http.NewRequestWithContext(ctx, "GET", "http://example.com", nil)
+		_, err := rt.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Equal(t, "Bearer ctx-key", capturedReq.Header.Get("Authorization"))
+	})
+
+	t.Run("context basic auth overrides captured basic auth", func(t *testing.T) {
+		var capturedReq *http.Request
+		mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+			capturedReq = req
+			return &http.Response{StatusCode: 200}, nil
+		}}
+
+		rt := NewAuthRoundTripper(mock, "", "", "", url.UserPassword("old-user", "old-pass"))
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{
+			BasicAuth: url.UserPassword("new-user", "new-pass"),
+		})
+		req, _ := http.NewRequestWithContext(ctx, "GET", "http://example.com", nil)
+		_, err := rt.RoundTrip(req)
+		require.NoError(t, err)
+
+		user, pass, ok := capturedReq.BasicAuth()
+		require.True(t, ok)
+		assert.Equal(t, "new-user", user)
+		assert.Equal(t, "new-pass", pass)
+	})
+
+	t.Run("falls back to captured values when context has no auth", func(t *testing.T) {
+		var capturedReq *http.Request
+		mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+			capturedReq = req
+			return &http.Response{StatusCode: 200}, nil
+		}}
+
+		rt := NewAuthRoundTripper(mock, "", "", "captured-key", nil)
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{})
+		req, _ := http.NewRequestWithContext(ctx, "GET", "http://example.com", nil)
+		_, err := rt.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Equal(t, "Bearer captured-key", capturedReq.Header.Get("Authorization"))
+	})
+
+	t.Run("context OBO tokens used when no captured auth exists", func(t *testing.T) {
+		var capturedReq *http.Request
+		mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+			capturedReq = req
+			return &http.Response{StatusCode: 200}, nil
+		}}
+
+		rt := NewAuthRoundTripper(mock, "", "", "", nil)
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{
+			AccessToken: "ctx-access",
+			IDToken:     "ctx-id",
+		})
+		req, _ := http.NewRequestWithContext(ctx, "GET", "http://example.com", nil)
+		_, err := rt.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Equal(t, "ctx-access", capturedReq.Header.Get("X-Access-Token"))
+		assert.Equal(t, "ctx-id", capturedReq.Header.Get("X-Grafana-Id"))
+	})
+}
+
+func TestExtraHeadersRoundTripperContextOverride(t *testing.T) {
+	t.Run("context headers override captured headers", func(t *testing.T) {
+		var capturedReq *http.Request
+		mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+			capturedReq = req
+			return &http.Response{StatusCode: 200}, nil
+		}}
+
+		rt := NewExtraHeadersRoundTripper(mock, map[string]string{
+			"X-Tenant": "captured-tenant",
+		})
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{
+			ExtraHeaders: map[string]string{"X-Tenant": "ctx-tenant"},
+		})
+		req, _ := http.NewRequestWithContext(ctx, "GET", "http://example.com", nil)
+		_, err := rt.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Equal(t, "ctx-tenant", capturedReq.Header.Get("X-Tenant"))
+	})
+
+	t.Run("context headers merged with captured headers", func(t *testing.T) {
+		var capturedReq *http.Request
+		mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+			capturedReq = req
+			return &http.Response{StatusCode: 200}, nil
+		}}
+
+		rt := NewExtraHeadersRoundTripper(mock, map[string]string{
+			"X-Static": "from-config",
+		})
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{
+			ExtraHeaders: map[string]string{"X-Dynamic": "from-context"},
+		})
+		req, _ := http.NewRequestWithContext(ctx, "GET", "http://example.com", nil)
+		_, err := rt.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Equal(t, "from-config", capturedReq.Header.Get("X-Static"))
+		assert.Equal(t, "from-context", capturedReq.Header.Get("X-Dynamic"))
+	})
+
+	t.Run("falls back to captured headers when context has none", func(t *testing.T) {
+		var capturedReq *http.Request
+		mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+			capturedReq = req
+			return &http.Response{StatusCode: 200}, nil
+		}}
+
+		rt := NewExtraHeadersRoundTripper(mock, map[string]string{
+			"X-Custom": "captured-value",
+		})
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{})
+		req, _ := http.NewRequestWithContext(ctx, "GET", "http://example.com", nil)
+		_, err := rt.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Equal(t, "captured-value", capturedReq.Header.Get("X-Custom"))
+	})
+
+	t.Run("context headers used when no captured headers exist", func(t *testing.T) {
+		var capturedReq *http.Request
+		mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+			capturedReq = req
+			return &http.Response{StatusCode: 200}, nil
+		}}
+
+		rt := NewExtraHeadersRoundTripper(mock, nil)
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{
+			ExtraHeaders: map[string]string{"X-From-Context": "value"},
+		})
+		req, _ := http.NewRequestWithContext(ctx, "GET", "http://example.com", nil)
+		_, err := rt.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Equal(t, "value", capturedReq.Header.Get("X-From-Context"))
+	})
+}
+
+func TestBuildTransportContextOverrides(t *testing.T) {
+	t.Run("context OrgID works even when construction-time OrgID is zero", func(t *testing.T) {
+		var capturedReq *http.Request
+		mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+			capturedReq = req
+			return &http.Response{StatusCode: 200}, nil
+		}}
+
+		cfg := &GrafanaConfig{OrgID: 0}
+		transport, err := BuildTransport(cfg, mock, WithoutOtel())
+		require.NoError(t, err)
+
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{OrgID: 55})
+		req, _ := http.NewRequestWithContext(ctx, "GET", "http://example.com", nil)
+		_, err = transport.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Equal(t, "55", capturedReq.Header.Get(grafana_client.OrgIDHeader))
+	})
+
+	t.Run("context ExtraHeaders work even when construction-time headers are empty", func(t *testing.T) {
+		var capturedReq *http.Request
+		mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+			capturedReq = req
+			return &http.Response{StatusCode: 200}, nil
+		}}
+
+		cfg := &GrafanaConfig{}
+		transport, err := BuildTransport(cfg, mock, WithoutOtel())
+		require.NoError(t, err)
+
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{
+			ExtraHeaders: map[string]string{"X-Request-Tenant": "tenant-42"},
+		})
+		req, _ := http.NewRequestWithContext(ctx, "GET", "http://example.com", nil)
+		_, err = transport.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Equal(t, "tenant-42", capturedReq.Header.Get("X-Request-Tenant"))
+	})
+
+	t.Run("context auth overrides work through BuildTransport", func(t *testing.T) {
+		var capturedReq *http.Request
+		mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+			capturedReq = req
+			return &http.Response{StatusCode: 200}, nil
+		}}
+
+		cfg := &GrafanaConfig{APIKey: "startup-key"}
+		transport, err := BuildTransport(cfg, mock, WithoutOtel())
+		require.NoError(t, err)
+
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{
+			AccessToken: "per-request-access",
+			IDToken:     "per-request-id",
+		})
+		req, _ := http.NewRequestWithContext(ctx, "GET", "http://example.com", nil)
+		_, err = transport.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Equal(t, "per-request-access", capturedReq.Header.Get("X-Access-Token"))
+		assert.Equal(t, "per-request-id", capturedReq.Header.Get("X-Grafana-Id"))
+		assert.Empty(t, capturedReq.Header.Get("Authorization"))
+	})
+
+	t.Run("no context overlay preserves existing behavior", func(t *testing.T) {
+		var capturedReq *http.Request
+		mock := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+			capturedReq = req
+			return &http.Response{StatusCode: 200}, nil
+		}}
+
+		cfg := &GrafanaConfig{
+			APIKey:       "my-key",
+			OrgID:        10,
+			ExtraHeaders: map[string]string{"X-Custom": "val"},
+		}
+		transport, err := BuildTransport(cfg, mock, WithoutOtel())
+		require.NoError(t, err)
+
+		req, _ := http.NewRequest("GET", "http://example.com", nil)
+		_, err = transport.RoundTrip(req)
+		require.NoError(t, err)
+
+		assert.Equal(t, "Bearer my-key", capturedReq.Header.Get("Authorization"))
+		assert.Equal(t, "10", capturedReq.Header.Get(grafana_client.OrgIDHeader))
+		assert.Equal(t, "val", capturedReq.Header.Get("X-Custom"))
 	})
 }

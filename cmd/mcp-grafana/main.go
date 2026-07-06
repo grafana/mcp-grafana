@@ -20,6 +20,7 @@ import (
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/grafana/mcp-grafana/observability"
 	"github.com/grafana/mcp-grafana/tools"
+	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"go.opentelemetry.io/otel/semconv/v1.40.0/mcpconv"
 )
 
@@ -36,16 +37,57 @@ func maybeAddTools(s *server.MCPServer, tf func(*server.MCPServer), enabledTools
 	tf(s)
 }
 
+// isCategoryEnabled reports whether a tool category is active given the
+// enabled-tools list and the per-category disable flag.
+func isCategoryEnabled(enabledTools []string, disabled bool, category string) bool {
+	return slices.Contains(enabledTools, category) && !disabled
+}
+
+// categoryDescription maps a tool category to the description shown in server instructions.
+var categoryDescription = map[string]string{
+	"search":        "Search: Find dashboards, folders, and other Grafana resources.",
+	"datasource":    "Datasources: List and fetch details for datasources.",
+	"incident":      "Incidents: Search, create, update, and resolve incidents in Grafana Incident.",
+	"prometheus":    "Prometheus: Run PromQL queries, retrieve metric metadata, and explore label names/values.",
+	"loki":          "Loki: Run LogQL queries, retrieve log metadata, and explore label names/values.",
+	"elasticsearch": "Elasticsearch and OpenSearch: Query Elasticsearch and OpenSearch datasources using Lucene syntax or Query DSL for logs and metrics.",
+	"quickwit":      "Quickwit: Query Quickwit datasources using Lucene syntax or Query DSL for logs and documents.",
+	"influxdb":      "InfluxDB: Query InfluxDB datasources.",
+	"alerting":      "Alerting: List and fetch alert rules and notification contact points.",
+	"dashboard":     "Dashboards: Search, retrieve, update, and create dashboards. Extract panel queries and datasource information.",
+	"folder":        "Folders: Manage dashboard folders.",
+	"oncall":        "OnCall: View and manage on-call schedules, shifts, teams, and users.",
+	"asserts":       "Asserts: Query and analyze assertion data.",
+	"sift":          "Sift Investigations: Start and manage Sift investigations, analyze logs/traces, find error patterns, and detect slow requests.",
+	"admin":         "Admin: List teams and perform administrative tasks.",
+	"pyroscope":     "Pyroscope: Profile applications and fetch profiling data.",
+	"navigation":    "Navigation: Generate deeplink URLs for Grafana resources like dashboards, panels, and Explore queries, with optional built-in shortening.",
+	"annotations":   "Annotations: Create and manage dashboard annotations.",
+	"rendering":     "Rendering: Export dashboard panels or full dashboards as PNG images (requires Grafana Image Renderer plugin).",
+	"snapshot":      "Snapshots: List, get, create, and delete dashboard snapshots.",
+	"plugin":        "Plugins: Check whether Grafana plugins are installed and fetch plugin details.",
+	"cloudwatch":    "CloudWatch: Query AWS CloudWatch datasources for metrics and logs.",
+	"examples":      "Examples: Query example tools.",
+	"clickhouse":    "ClickHouse: Query ClickHouse datasources via Grafana with macro and variable substitution support.",
+	"snowflake":     "Snowflake: Query Snowflake datasources via Grafana (including the SNOWFLAKE.TELEMETRY.EVENTS event table) with macro and variable substitution support.",
+	"runpanelquery": "Run Panel Query: Execute panel queries directly.",
+	"graphite":      "Graphite: Query Graphite datasources for metrics.",
+	"athena":        "Athena: Query Amazon Athena datasources via Grafana with SQL, macro substitution, and schema discovery.",
+	"api":           "API: Make authenticated HTTP requests to any Grafana API endpoint with optional jq-style response filtering.",
+	"config":        "Config: Generate operator-facing configuration snippets (e.g. Alloy label-enforcement pipelines).",
+	"provisioning":  "Provisioning: List provisioning repositories (e.g. git-sync sources) to discover repository slugs for use with rendering tools.",
+}
+
 // disabledTools indicates whether each category of tools should be disabled.
 type disabledTools struct {
 	enabledTools string
 
 	search, datasource, incident,
-	prometheus, loki, elasticsearch, alerting,
+	prometheus, loki, elasticsearch, quickwit, influxdb, alerting,
 	dashboard, folder, oncall, asserts, sift, admin,
 	pyroscope, navigation, proxied, annotations, rendering, cloudwatch, write,
-	examples, clickhouse, searchlogs,
-	runpanelquery bool
+	snapshot, examples, clickhouse, snowflake, graphite,
+	runpanelquery, athena, plugin, api, config, provisioning bool
 }
 
 type toolConfig struct {
@@ -73,13 +115,15 @@ func (tc *toolConfig) addFlags() {
 }
 
 func (dt *disabledTools) addFlags() {
-	flag.StringVar(&dt.enabledTools, "enabled-tools", "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering", "A comma separated list of tools enabled for this server. Can be overwritten entirely or by disabling specific components, e.g. --disable-search.")
+	flag.StringVar(&dt.enabledTools, "enabled-tools", "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering,snapshot,plugin,api,config,provisioning", "A comma separated list of tools enabled for this server. Can be overwritten entirely or by disabling specific components, e.g. --disable-search.")
 	flag.BoolVar(&dt.search, "disable-search", false, "Disable search tools")
 	flag.BoolVar(&dt.datasource, "disable-datasource", false, "Disable datasource tools")
 	flag.BoolVar(&dt.incident, "disable-incident", false, "Disable incident tools")
 	flag.BoolVar(&dt.prometheus, "disable-prometheus", false, "Disable prometheus tools")
 	flag.BoolVar(&dt.loki, "disable-loki", false, "Disable loki tools")
-	flag.BoolVar(&dt.elasticsearch, "disable-elasticsearch", false, "Disable elasticsearch tools")
+	flag.BoolVar(&dt.elasticsearch, "disable-elasticsearch", false, "Disable elasticsearch and opensearch tools")
+	flag.BoolVar(&dt.quickwit, "disable-quickwit", false, "Disable quickwit tools")
+	flag.BoolVar(&dt.influxdb, "disable-influxdb", false, "Disable InfluxDB tools")
 	flag.BoolVar(&dt.alerting, "disable-alerting", false, "Disable alerting tools")
 	flag.BoolVar(&dt.dashboard, "disable-dashboard", false, "Disable dashboard tools")
 	flag.BoolVar(&dt.folder, "disable-folder", false, "Disable folder tools")
@@ -93,11 +137,18 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.write, "disable-write", false, "Disable write tools (create/update operations)")
 	flag.BoolVar(&dt.annotations, "disable-annotations", false, "Disable annotation tools")
 	flag.BoolVar(&dt.rendering, "disable-rendering", false, "Disable rendering tools (panel/dashboard image export)")
+	flag.BoolVar(&dt.snapshot, "disable-snapshot", false, "Disable snapshot tools")
 	flag.BoolVar(&dt.cloudwatch, "disable-cloudwatch", false, "Disable CloudWatch tools")
 	flag.BoolVar(&dt.examples, "disable-examples", false, "Disable query examples tools")
 	flag.BoolVar(&dt.clickhouse, "disable-clickhouse", false, "Disable ClickHouse tools")
-	flag.BoolVar(&dt.searchlogs, "disable-searchlogs", false, "Disable search logs tools")
+	flag.BoolVar(&dt.snowflake, "disable-snowflake", false, "Disable Snowflake tools")
 	flag.BoolVar(&dt.runpanelquery, "disable-runpanelquery", false, "Disable run panel query tools")
+	flag.BoolVar(&dt.graphite, "disable-graphite", false, "Disable Graphite tools")
+	flag.BoolVar(&dt.athena, "disable-athena", false, "Disable Athena tools")
+	flag.BoolVar(&dt.plugin, "disable-plugin", false, "Disable plugin tools")
+	flag.BoolVar(&dt.api, "disable-api", false, "Disable API tools")
+	flag.BoolVar(&dt.config, "disable-config", false, "Disable config-generation tools")
+	flag.BoolVar(&dt.provisioning, "disable-provisioning", false, "Disable provisioning tools")
 }
 
 func (gc *grafanaConfig) addFlags() {
@@ -113,37 +164,140 @@ func (gc *grafanaConfig) addFlags() {
 	flag.IntVar(&gc.maxLokiLogLimit, "max-loki-log-limit", tools.MaxLokiLogLimit, "Maximum number of log lines returned per query_loki_logs call")
 }
 
-func (dt *disabledTools) addTools(s *server.MCPServer, tc toolConfig) {
-	enabledTools := strings.Split(dt.enabledTools, ",")
+// toolEntry pairs a tool registration function with its category and disable flag.
+type toolEntry struct {
+	adder    func(*server.MCPServer)
+	disabled bool
+	category string
+}
+
+// connectedOnlyDeferredCategories lists the tool categories that, when
+// --connected-only is enabled, are NOT registered at startup by toolEntries.
+// Instead they are discovered and registered dynamically (per Grafana
+// datasource/plugin) by ToolManager.DiscoverAndRegisterToolsStdio /
+// DiscoverAndRegisterToolsSession, driven by buildMappedTools and
+// registryPluginCategories below.
+var connectedOnlyDeferredCategories = map[string]bool{
+	"prometheus":    true,
+	"loki":          true,
+	"elasticsearch": true,
+	"pyroscope":     true,
+	"cloudwatch":    true,
+	"clickhouse":    true,
+	"oncall":        true,
+	"incident":      true,
+	"rendering":     true,
+	"sift":          true,
+}
+
+// toolEntries returns the ordered list of tool categories with their registration
+// functions. This is the single source of truth for category-to-adder mapping,
+// used by both processTools (registration) and buildInstructions (instructions).
+// When tc.onlyConnected is set, categories in connectedOnlyDeferredCategories are
+// excluded here since they're registered dynamically once connected datasources
+// and plugins are discovered (see DiscoverAndRegisterToolsStdio/Session).
+func (dt *disabledTools) toolEntries(tc toolConfig) []toolEntry {
 	enableWriteTools := !dt.write
-	maybeAddTools(s, tools.AddSearchTools, enabledTools, dt.search, "search")
-	maybeAddTools(s, tools.AddDatasourceTools, enabledTools, dt.datasource, "datasource")
-	maybeAddTools(s, func(mcp *server.MCPServer) { tools.AddAlertingTools(mcp, enableWriteTools) }, enabledTools, dt.alerting, "alerting")
-	maybeAddTools(s, func(mcp *server.MCPServer) { tools.AddDashboardTools(mcp, enableWriteTools) }, enabledTools, dt.dashboard, "dashboard")
-	maybeAddTools(s, func(mcp *server.MCPServer) { tools.AddFolderTools(mcp, enableWriteTools) }, enabledTools, dt.folder, "folder")
-	maybeAddTools(s, tools.AddAssertsTools, enabledTools, dt.asserts, "asserts")
-	maybeAddTools(s, tools.AddAdminTools, enabledTools, dt.admin, "admin")
-	maybeAddTools(s, tools.AddNavigationTools, enabledTools, dt.navigation, "navigation")
-	maybeAddTools(s, func(mcp *server.MCPServer) { tools.AddAnnotationTools(mcp, enableWriteTools) }, enabledTools, dt.annotations, "annotations")
-	maybeAddTools(s, tools.AddExamplesTools, enabledTools, dt.examples, "examples")
-	maybeAddTools(s, tools.AddSearchLogsTools, enabledTools, dt.searchlogs, "searchlogs")
-	maybeAddTools(s, tools.AddRunPanelQueryTools, enabledTools, dt.runpanelquery, "runpanelquery")
-
-	// Plugin Categories are included by DiscoverAndRegisterToolsStdio, DiscoverAndRegisterToolsSession when discovery is enabled
-	// Otherwise, include at startup
-	if !tc.onlyConnected {
-		maybeAddTools(s, tools.AddPrometheusTools, enabledTools, dt.prometheus, "prometheus")
-		maybeAddTools(s, tools.AddLokiTools, enabledTools, dt.loki, "loki")
-		maybeAddTools(s, tools.AddElasticsearchTools, enabledTools, dt.elasticsearch, "elasticsearch")
-		maybeAddTools(s, tools.AddPyroscopeTools, enabledTools, dt.pyroscope, "pyroscope")
-		maybeAddTools(s, tools.AddCloudWatchTools, enabledTools, dt.cloudwatch, "cloudwatch")
-		maybeAddTools(s, tools.AddClickHouseTools, enabledTools, dt.clickhouse, "clickhouse")
-
-		maybeAddTools(s, tools.AddOnCallTools, enabledTools, dt.oncall, "oncall")
-		maybeAddTools(s, func(mcp *server.MCPServer) { tools.AddIncidentTools(mcp, enableWriteTools) }, enabledTools, dt.incident, "incident")
-		maybeAddTools(s, tools.AddRenderingTools, enabledTools, dt.rendering, "rendering")
-		maybeAddTools(s, func(mcp *server.MCPServer) { tools.AddSiftTools(mcp, enableWriteTools) }, enabledTools, dt.sift, "sift")
+	entries := []toolEntry{
+		{tools.AddSearchTools, dt.search, "search"},
+		{func(mcp *server.MCPServer) { tools.AddDatasourceTools(mcp, enableWriteTools) }, dt.datasource, "datasource"},
+		{func(mcp *server.MCPServer) { tools.AddIncidentTools(mcp, enableWriteTools) }, dt.incident, "incident"},
+		{tools.AddPrometheusTools, dt.prometheus, "prometheus"},
+		{tools.AddLokiTools, dt.loki, "loki"},
+		{tools.AddElasticsearchTools, dt.elasticsearch, "elasticsearch"},
+		{tools.AddQuickwitTools, dt.quickwit, "quickwit"},
+		{tools.AddInfluxDBTools, dt.influxdb, "influxdb"},
+		{func(mcp *server.MCPServer) { tools.AddAlertingTools(mcp, enableWriteTools) }, dt.alerting, "alerting"},
+		{func(mcp *server.MCPServer) { tools.AddDashboardTools(mcp, enableWriteTools) }, dt.dashboard, "dashboard"},
+		{func(mcp *server.MCPServer) { tools.AddFolderTools(mcp, enableWriteTools) }, dt.folder, "folder"},
+		{tools.AddOnCallTools, dt.oncall, "oncall"},
+		{tools.AddAssertsTools, dt.asserts, "asserts"},
+		{func(mcp *server.MCPServer) { tools.AddSiftTools(mcp, enableWriteTools) }, dt.sift, "sift"},
+		{tools.AddAdminTools, dt.admin, "admin"},
+		{tools.AddPyroscopeTools, dt.pyroscope, "pyroscope"},
+		{func(mcp *server.MCPServer) { tools.AddNavigationTools(mcp, enableWriteTools) }, dt.navigation, "navigation"},
+		{func(mcp *server.MCPServer) { tools.AddAnnotationTools(mcp, enableWriteTools) }, dt.annotations, "annotations"},
+		{tools.AddRenderingTools, dt.rendering, "rendering"},
+		{func(mcp *server.MCPServer) { tools.AddSnapshotTools(mcp, enableWriteTools) }, dt.snapshot, "snapshot"},
+		{tools.AddCloudWatchTools, dt.cloudwatch, "cloudwatch"},
+		{tools.AddExamplesTools, dt.examples, "examples"},
+		{tools.AddClickHouseTools, dt.clickhouse, "clickhouse"},
+		{tools.AddSnowflakeTools, dt.snowflake, "snowflake"},
+		{tools.AddRunPanelQueryTools, dt.runpanelquery, "runpanelquery"},
+		{tools.AddGraphiteTools, dt.graphite, "graphite"},
+		{tools.AddAthenaTools, dt.athena, "athena"},
+		{func(mcp *server.MCPServer) { tools.AddPluginTools(mcp, enableWriteTools) }, dt.plugin, "plugin"},
+		{func(mcp *server.MCPServer) { tools.AddAPITools(mcp, enableWriteTools) }, dt.api, "api"},
+		{tools.AddConfigTools, dt.config, "config"},
+		{tools.AddProvisioningTools, dt.provisioning, "provisioning"},
 	}
+
+	if !tc.onlyConnected {
+		return entries
+	}
+
+	filtered := make([]toolEntry, 0, len(entries))
+	for _, e := range entries {
+		if connectedOnlyDeferredCategories[e.category] {
+			continue
+		}
+		filtered = append(filtered, e)
+	}
+	return filtered
+}
+
+// processTools registers enabled tool categories on the server.
+func (dt *disabledTools) processTools(s *server.MCPServer, tc toolConfig) {
+	enabledTools := strings.Split(dt.enabledTools, ",")
+	for _, e := range dt.toolEntries(tc) {
+		maybeAddTools(s, e.adder, enabledTools, e.disabled, e.category)
+	}
+}
+
+// buildInstructions constructs the server instruction string listing only
+// the capabilities that are actually enabled.
+func (dt *disabledTools) buildInstructions(tc toolConfig) string {
+	enabledTools := strings.Split(dt.enabledTools, ",")
+
+	var capabilities []string
+	for _, e := range dt.toolEntries(tc) {
+		if !isCategoryEnabled(enabledTools, e.disabled, e.category) {
+			continue
+		}
+		if desc, ok := categoryDescription[e.category]; ok {
+			capabilities = append(capabilities, desc)
+		}
+	}
+
+	// Proxied tools are registered via hooks (not maybeAddTools), so they
+	// are not in toolEntries. Include their description when enabled.
+	if !dt.proxied {
+		capabilities = append(capabilities, "Proxied Tools: Access tools from external MCP servers (like Tempo) through dynamic discovery.")
+	}
+
+	// When --connected-only is set, the deferred categories above are
+	// discovered dynamically instead of at startup; mention this so the
+	// instructions don't silently omit them.
+	if tc.onlyConnected {
+		capabilities = append(capabilities, "Connected-only mode: additional tool categories (Prometheus, Loki, Elasticsearch, Pyroscope, CloudWatch, ClickHouse, OnCall, Incident, Rendering, Sift) are enabled dynamically based on the datasources and plugins connected to this Grafana instance.")
+	}
+
+	var b strings.Builder
+	b.WriteString("This server provides access to your Grafana instance and the surrounding ecosystem.\n\n")
+
+	if len(capabilities) > 0 {
+		b.WriteString("Available Capabilities:\n")
+		for _, c := range capabilities {
+			b.WriteString("- ")
+			b.WriteString(c)
+			b.WriteString("\n")
+		}
+	} else {
+		b.WriteString("No tool categories are currently enabled.\n")
+	}
+
+	b.WriteString("\nTimestamp parameters without a timezone offset are interpreted as UTC. Include an offset like '-05:00' or use relative syntax like 'now-1h' to query in a different timezone.\n")
+	return b.String()
 }
 
 func newServer(transport string, dt disabledTools, tc toolConfig, obs *observability.Observability, sessionIdleTimeoutMinutes int) (*server.MCPServer, *mcpgrafana.ToolManager, *mcpgrafana.SessionManager) {
@@ -221,34 +375,22 @@ func newServer(transport string, dt disabledTools, tc toolConfig, obs *observabi
 	// Merge observability hooks with existing hooks
 	hooks = observability.MergeHooks(hooks, obs.MCPHooks())
 
+	// Register tools and build the instruction string from enabled categories.
+	// processTools both registers tools on the server and collects descriptions
+	// of enabled categories, so we need a temporary nil server reference first.
+	// Instead, we split: compute instructions from flags, then create server,
+	// then register tools.
+	instructions := dt.buildInstructions(tc)
+
 	s = server.NewMCPServer("mcp-grafana", mcpgrafana.Version(),
-		server.WithInstructions(`
-This server provides access to your Grafana instance and the surrounding ecosystem.
-
-Available Capabilities:
-- Dashboards: Search, retrieve, update, and create dashboards. Extract panel queries and datasource information.
-- Datasources: List and fetch details for datasources.
-- Prometheus & Loki: Run PromQL and LogQL queries, retrieve metric/log metadata, and explore label names/values.
-- ClickHouse: Query ClickHouse datasources via Grafana with macro and variable substitution support.
-- Elasticsearch: Query Elasticsearch datasources using Lucene syntax or Query DSL for logs and metrics.
-- Incidents: Search, create, update, and resolve incidents in Grafana Incident.
-- Sift Investigations: Start and manage Sift investigations, analyze logs/traces, find error patterns, and detect slow requests.
-- Alerting: List and fetch alert rules and notification contact points.
-- OnCall: View and manage on-call schedules, shifts, teams, and users.
-- Admin: List teams and perform administrative tasks.
-- Pyroscope: Profile applications and fetch profiling data.
-- Navigation: Generate deeplink URLs for Grafana resources like dashboards, panels, and Explore queries.
-- Rendering: Export dashboard panels or full dashboards as PNG images (requires Grafana Image Renderer plugin).
-- Proxied Tools: Access tools from external MCP servers (like Tempo) through dynamic discovery.
-
-Note that some of these capabilities may be disabled. Do not try to use features that are not available via tools.
-`),
+		server.WithInstructions(instructions),
 		server.WithHooks(hooks),
 	)
 
 	// Initialize ToolManager now that server is created
 	tmOpts := []mcpgrafana.ToolManagerOption{
 		mcpgrafana.WithProxiedTools(!dt.proxied),
+		mcpgrafana.WithToolManagerLogger(slog.Default()),
 	}
 	if tc.onlyConnected {
 		tmOpts = append(tmOpts, mcpgrafana.WithConnectedOnlyTools(mcpgrafana.ConnectedToolsConfig{
@@ -263,7 +405,7 @@ Note that some of these capabilities may be disabled. Do not try to use features
 	// unregister sessions from the SDK's internal session map.
 	sm.SetMCPServer(s)
 
-	dt.addTools(s,tc)
+	dt.processTools(s, tc)
 	return s, stm, sm
 }
 
@@ -333,6 +475,58 @@ func (tc *tlsConfig) addFlags() {
 	flag.StringVar(&tc.keyFile, "server.tls-key-file", "", "Path to TLS private key file for server HTTPS (required for TLS)")
 }
 
+// httpSecurityConfig holds the Host/Origin allowlists enforced on HTTP-based
+// transports. See DNSRebindingProtectionMiddleware for semantics.
+type httpSecurityConfig struct {
+	allowedHosts   string
+	allowedOrigins string
+}
+
+func (hsc *httpSecurityConfig) addFlags() {
+	flag.StringVar(&hsc.allowedHosts, "allowed-hosts", "", "Comma-separated allowlist of Host header values for the HTTP/SSE transports. Defaults to loopback variants of --address. Use \"*\" to disable validation (only safe behind a trusted reverse proxy that rewrites Host).")
+	flag.StringVar(&hsc.allowedOrigins, "allowed-origins", "", "Comma-separated allowlist of Origin header values for the HTTP/SSE transports. Empty (the default) rejects any request that carries an Origin header — appropriate for non-browser MCP clients. Use \"*\" to disable validation.")
+}
+
+// policy resolves the configured flags into a HostOriginPolicy. An
+// --allowed-hosts whose parsed form is empty (unset, "," " , ", etc.) falls
+// back to DefaultAllowedHosts so a malformed value cannot silently disable
+// the Host check.
+func (hsc httpSecurityConfig) policy(address string) mcpgrafana.HostOriginPolicy {
+	hosts := splitAndTrim(hsc.allowedHosts)
+	if len(hosts) == 0 {
+		hosts = mcpgrafana.DefaultAllowedHosts(address)
+	}
+	return mcpgrafana.HostOriginPolicy{
+		AllowedHosts:   hosts,
+		AllowedOrigins: splitAndTrim(hsc.allowedOrigins),
+	}
+}
+
+func (hsc httpSecurityConfig) corsOrigins() []string {
+	if origins := splitAndTrim(hsc.allowedOrigins); len(origins) > 0 {
+		for i, o := range origins {
+			origins[i] = strings.ToLower(o)
+		}
+		return origins
+	}
+	// Sentinel keeps mcp-go's corsConfig.enabled() true so its SSE default
+	// of Access-Control-Allow-Origin: * is suppressed.
+	return []string{"https://mcp-grafana.invalid"}
+}
+
+func splitAndTrim(s string) []string {
+	if s == "" {
+		return nil
+	}
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // httpServer represents a server with Start and Shutdown methods
 type httpServer interface {
 	Start(addr string) error
@@ -395,10 +589,10 @@ func runMetricsServer(addr string, o *observability.Observability) {
 	}
 }
 
-func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt disabledTools, tc toolConfig, gc mcpgrafana.GrafanaConfig, tls tlsConfig, obs observability.Config, sessionIdleTimeoutMinutes int) error {
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})))
+func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt disabledTools, tc toolConfig, gc mcpgrafana.GrafanaConfig, tls tlsConfig, hsc httpSecurityConfig, obs observability.Config, sessionIdleTimeoutMinutes int) error {
+	stderrHandler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})
+	slog.SetDefault(slog.New(stderrHandler))
 
-	// Set up observability (metrics and tracing)
 	o, err := observability.Setup(obs)
 	if err != nil {
 		return fmt.Errorf("failed to setup observability: %w", err)
@@ -411,11 +605,22 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		}
 	}()
 
+	// The otelslog bridge attaches trace_id / span_id from context, so log
+	// records correlate with the spans mcp-grafana already emits.
+	if lp := o.LoggerProvider(); lp != nil {
+		otlpHandler := otelslog.NewHandler("mcp-grafana", otelslog.WithLoggerProvider(lp))
+		slog.SetDefault(slog.New(observability.NewFanoutHandler(stderrHandler, otlpHandler)))
+		// Announce through the fanout so both stderr and OTLP subscribers see
+		// the startup signal. If the first OTLP batch fails, the stderr branch
+		// of the fanout still lands the record.
+		slog.Info("OTLP log export configured", "endpoint", observability.OTLPLogsEndpoint())
+	}
+
 	// Create a client cache for HTTP-based transports to avoid per-request
 	// transport allocation (see https://github.com/grafana/mcp-grafana/issues/682).
 	var clientCache *mcpgrafana.ClientCache
 	if transport != "stdio" {
-		clientCache = mcpgrafana.NewClientCache()
+		clientCache = mcpgrafana.NewClientCache(nil)
 		defer clientCache.Close()
 	}
 
@@ -483,12 +688,16 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 			server.WithSSEContextFunc(mcpgrafana.ComposedSSEContextFunc(gc, clientCache)),
 			server.WithStaticBasePath(basePath),
 			server.WithHTTPServer(httpSrv),
+			server.WithSSECORS(server.WithCORSAllowedOrigins(hsc.corsOrigins()...)),
 		)
 		mux := http.NewServeMux()
 		if basePath == "" {
 			basePath = "/"
 		}
-		mux.Handle(basePath, observability.WrapHandler(srv, basePath))
+		mux.Handle(basePath, observability.WrapHandler(
+			mcpgrafana.ValidateGrafanaURLMiddleware(srv),
+			basePath,
+		))
 		mux.HandleFunc("/healthz", handleHealthz)
 		if obs.MetricsEnabled {
 			if obs.MetricsAddress == "" {
@@ -497,7 +706,8 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 				go runMetricsServer(obs.MetricsAddress, o)
 			}
 		}
-		httpSrv.Handler = mux
+		// Wrap the full mux so /healthz and /metrics are validated too.
+		httpSrv.Handler = mcpgrafana.DNSRebindingProtectionMiddleware(hsc.policy(addr))(mux)
 		slog.Info("Starting Grafana MCP server using SSE transport",
 			"version", mcpgrafana.Version(), "address", addr, "basePath", basePath, "metrics", obs.MetricsEnabled)
 		return runHTTPServer(ctx, srv, addr, "SSE")
@@ -508,13 +718,17 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 			server.WithStateLess(dt.proxied), // Stateful when proxied tools enabled (requires sessions)
 			server.WithEndpointPath(endpointPath),
 			server.WithStreamableHTTPServer(httpSrv),
+			server.WithStreamableHTTPCORS(server.WithCORSAllowedOrigins(hsc.corsOrigins()...)),
 		}
 		if tls.certFile != "" || tls.keyFile != "" {
 			opts = append(opts, server.WithTLSCert(tls.certFile, tls.keyFile))
 		}
 		srv := server.NewStreamableHTTPServer(s, opts...)
 		mux := http.NewServeMux()
-		mux.Handle(endpointPath, observability.WrapHandler(srv, endpointPath))
+		mux.Handle(endpointPath, observability.WrapHandler(
+			mcpgrafana.ValidateGrafanaURLMiddleware(srv),
+			endpointPath,
+		))
 		mux.HandleFunc("/healthz", handleHealthz)
 		if obs.MetricsEnabled {
 			if obs.MetricsAddress == "" {
@@ -523,7 +737,8 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 				go runMetricsServer(obs.MetricsAddress, o)
 			}
 		}
-		httpSrv.Handler = mux
+		// Wrap the full mux so /healthz and /metrics are validated too.
+		httpSrv.Handler = mcpgrafana.DNSRebindingProtectionMiddleware(hsc.policy(addr))(mux)
 		slog.Info("Starting Grafana MCP server using StreamableHTTP transport",
 			"version", mcpgrafana.Version(), "address", addr, "endpointPath", endpointPath, "metrics", obs.MetricsEnabled)
 		return runHTTPServer(ctx, srv, addr, "StreamableHTTP")
@@ -555,14 +770,30 @@ func main() {
 	gc.addFlags()
 	var tls tlsConfig
 	tls.addFlags()
+	var hsc httpSecurityConfig
+	hsc.addFlags()
 	var obs observability.Config
 	flag.BoolVar(&obs.MetricsEnabled, "metrics", false, "Enable Prometheus metrics endpoint")
 	flag.StringVar(&obs.MetricsAddress, "metrics-address", "", "Separate address for metrics server (e.g., :9090). If empty, metrics are served on the main server at /metrics")
+	flag.DurationVar(&obs.SlowRequestThreshold, "slow-request-threshold", 0, "Log an event when any MCP request (tool invocation, list, resource read, etc.) takes longer than this threshold. Accepts Go duration strings, e.g. 500ms, 5s. Default 0 disables slow-request logging.")
+	var slowRequestLogLevelStr string
+	flag.StringVar(&slowRequestLogLevelStr, "slow-request-log-level", "warn", "Log level for slow-request events. One of \"info\" or \"warn\". Default \"warn\".")
 	flag.Parse()
 
-	if *showVersion {
+	action, slowLevel, err := handleFlagsPostParse(*showVersion, slowRequestLogLevelStr)
+	switch action {
+	case flagActionVersion:
 		fmt.Println(mcpgrafana.Version())
 		os.Exit(0)
+	case flagActionInvalidSlowLevel:
+		fmt.Fprintf(os.Stderr, "invalid --slow-request-log-level: %v\n", err)
+		os.Exit(2)
+	case flagActionContinue:
+		obs.SlowRequestLogLevel = slowLevel
+	default:
+		// flagActionUnset or any unexpected value — refuse to proceed silently.
+		fmt.Fprintf(os.Stderr, "internal error: unexpected flag action %v\n", action)
+		os.Exit(2)
 	}
 
 	// Convert local grafanaConfig to mcpgrafana.GrafanaConfig
@@ -591,7 +822,12 @@ func main() {
 		obs.NetworkTransport = mcpconv.NetworkTransportTCP
 	}
 
-	if err := run(transport, *addr, *basePath, *endpointPath, parseLevel(*logLevel), dt, tc, grafanaConfig, tls, obs, *sessionIdleTimeoutMinutes); err != nil {
+	level := parseLevel(*logLevel)
+	if grafanaConfig.Debug && level > slog.LevelDebug {
+		level = slog.LevelDebug
+	}
+
+	if err := run(transport, *addr, *basePath, *endpointPath, level, dt, tc, grafanaConfig, tls, hsc, obs, *sessionIdleTimeoutMinutes); err != nil {
 		panic(err)
 	}
 }
@@ -602,4 +838,56 @@ func parseLevel(level string) slog.Level {
 		return slog.LevelInfo
 	}
 	return l
+}
+
+// parseSlowRequestLogLevel parses the --slow-request-log-level flag value.
+// Only "info" and "warn" are accepted (case-insensitive). Any other value,
+// including the empty string or values with surrounding whitespace, returns
+// a non-nil error so main() can fail-fast on misconfiguration rather than
+// silently defaulting.
+//
+// On error the returned slog.Level is the zero value (slog.LevelInfo == 0).
+// Callers MUST check the error before using the level; using the zero level
+// on a rejected input would silently select INFO, which is not the CLI's
+// advertised default of WARN.
+func parseSlowRequestLogLevel(s string) (slog.Level, error) {
+	switch strings.ToLower(s) {
+	case "info":
+		return slog.LevelInfo, nil
+	case "warn":
+		return slog.LevelWarn, nil
+	default:
+		return 0, fmt.Errorf("must be \"info\" or \"warn\", got %q", s)
+	}
+}
+
+// flagAction encodes what main() should do after flag.Parse().
+// flagActionUnset is reserved as the zero value so an accidentally-zero-valued
+// return from a future code path trips the switch's default: case rather
+// than silently taking the Continue branch.
+type flagAction int
+
+const (
+	flagActionUnset flagAction = iota
+	flagActionContinue
+	flagActionVersion
+	flagActionInvalidSlowLevel
+)
+
+// handleFlagsPostParse decides what main() should do after flag.Parse().
+// It is pure (no os.Exit, no I/O) so it is unit-testable. --version
+// short-circuits before slow-request-log-level validation so it prints
+// regardless of other flags' values (matches pre-#756 behavior).
+//
+// The returned slog.Level is only meaningful when action == flagActionContinue;
+// the other branches return a zero level that the caller must not read.
+func handleFlagsPostParse(showVersion bool, slowLevelStr string) (flagAction, slog.Level, error) {
+	if showVersion {
+		return flagActionVersion, 0, nil
+	}
+	slowLevel, err := parseSlowRequestLogLevel(slowLevelStr)
+	if err != nil {
+		return flagActionInvalidSlowLevel, 0, err
+	}
+	return flagActionContinue, slowLevel, nil
 }

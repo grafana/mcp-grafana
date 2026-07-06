@@ -8,6 +8,21 @@
   },
   "version": "$VERSION",
   "icon": "assets/icon.png",
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://mcp.grafana.com/mcp",
+      "headers": [
+        {
+          "name": "X-Grafana-URL",
+          "description": "URL of your Grafana Cloud instance",
+          "placeholder": "https://<instance>.grafana.net",
+          "isRequired": false,
+          "isSecret": false
+        }
+      ]
+    }
+  ],
   "packages": [
     {
       "registryType": "oci",

@@ -44,19 +44,19 @@ var ListPyroscopeLabelNames = mcpgrafana.MustTool(
 type ListPyroscopeLabelNamesParams struct {
 	DataSourceUID string `json:"data_source_uid" jsonschema:"required,description=The UID of the datasource to query"`
 	Matchers      string `json:"matchers,omitempty" jsonschema:"Prometheus style matchers used t0 filter the result set (defaults to: {})"`
-	StartRFC3339  string `json:"start_rfc_3339,omitempty" jsonschema:"description=Optionally\\, the start time of the query in RFC3339 format (defaults to 1 hour ago)"`
-	EndRFC3339    string `json:"end_rfc_3339,omitempty" jsonschema:"description=Optionally\\, the end time of the query in RFC3339 format (defaults to now)"`
+	StartRFC3339  string `json:"start_rfc_3339,omitempty" jsonschema:"description=Optionally\\, the start time of the query in RFC3339 format or relative time (e.g. 'now-1h') (defaults to 1 hour ago)"`
+	EndRFC3339    string `json:"end_rfc_3339,omitempty" jsonschema:"description=Optionally\\, the end time of the query in RFC3339 format or relative time (e.g. 'now') (defaults to now)"`
 }
 
 func listPyroscopeLabelNames(ctx context.Context, args ListPyroscopeLabelNamesParams) ([]string, error) {
 	args.Matchers = stringOrDefault(args.Matchers, "{}")
 
-	start, err := rfc3339OrDefault(args.StartRFC3339, time.Time{})
+	start, err := parseStartTime(args.StartRFC3339)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse start timestamp %q: %w", args.StartRFC3339, err)
 	}
 
-	end, err := rfc3339OrDefault(args.EndRFC3339, time.Time{})
+	end, err := parseEndTime(args.EndRFC3339)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse end timestamp %q: %w", args.EndRFC3339, err)
 	}
@@ -104,8 +104,8 @@ type ListPyroscopeLabelValuesParams struct {
 	DataSourceUID string `json:"data_source_uid" jsonschema:"required,description=The UID of the datasource to query"`
 	Name          string `json:"name" jsonschema:"required,description=A label name"`
 	Matchers      string `json:"matchers,omitempty" jsonschema:"description=Optionally\\, Prometheus style matchers used to filter the result set (defaults to: {})"`
-	StartRFC3339  string `json:"start_rfc_3339,omitempty" jsonschema:"description=Optionally\\, the start time of the query in RFC3339 format (defaults to 1 hour ago)"`
-	EndRFC3339    string `json:"end_rfc_3339,omitempty" jsonschema:"description=Optionally\\, the end time of the query in RFC3339 format (defaults to now)"`
+	StartRFC3339  string `json:"start_rfc_3339,omitempty" jsonschema:"description=Optionally\\, the start time of the query in RFC3339 format or relative time (e.g. 'now-1h') (defaults to 1 hour ago)"`
+	EndRFC3339    string `json:"end_rfc_3339,omitempty" jsonschema:"description=Optionally\\, the end time of the query in RFC3339 format or relative time (e.g. 'now') (defaults to now)"`
 }
 
 func listPyroscopeLabelValues(ctx context.Context, args ListPyroscopeLabelValuesParams) ([]string, error) {
@@ -116,12 +116,12 @@ func listPyroscopeLabelValues(ctx context.Context, args ListPyroscopeLabelValues
 
 	args.Matchers = stringOrDefault(args.Matchers, "{}")
 
-	start, err := rfc3339OrDefault(args.StartRFC3339, time.Time{})
+	start, err := parseStartTime(args.StartRFC3339)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse start timestamp %q: %w", args.StartRFC3339, err)
 	}
 
-	end, err := rfc3339OrDefault(args.EndRFC3339, time.Time{})
+	end, err := parseEndTime(args.EndRFC3339)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse end timestamp %q: %w", args.EndRFC3339, err)
 	}
@@ -168,17 +168,17 @@ var ListPyroscopeProfileTypes = mcpgrafana.MustTool(
 
 type ListPyroscopeProfileTypesParams struct {
 	DataSourceUID string `json:"data_source_uid" jsonschema:"required,description=The UID of the datasource to query"`
-	StartRFC3339  string `json:"start_rfc_3339,omitempty" jsonschema:"description=Optionally\\, the start time of the query in RFC3339 format (defaults to 1 hour ago)"`
-	EndRFC3339    string `json:"end_rfc_3339,omitempty" jsonschema:"description=Optionally\\, the end time of the query in RFC3339 format (defaults to now)"`
+	StartRFC3339  string `json:"start_rfc_3339,omitempty" jsonschema:"description=Optionally\\, the start time of the query in RFC3339 format or relative time (e.g. 'now-1h') (defaults to 1 hour ago)"`
+	EndRFC3339    string `json:"end_rfc_3339,omitempty" jsonschema:"description=Optionally\\, the end time of the query in RFC3339 format or relative time (e.g. 'now') (defaults to now)"`
 }
 
 func listPyroscopeProfileTypes(ctx context.Context, args ListPyroscopeProfileTypesParams) ([]string, error) {
-	start, err := rfc3339OrDefault(args.StartRFC3339, time.Time{})
+	start, err := parseStartTime(args.StartRFC3339)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse start timestamp %q: %w", args.StartRFC3339, err)
 	}
 
-	end, err := rfc3339OrDefault(args.EndRFC3339, time.Time{})
+	end, err := parseEndTime(args.EndRFC3339)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse end timestamp %q: %w", args.EndRFC3339, err)
 	}
@@ -209,7 +209,6 @@ func listPyroscopeProfileTypes(ctx context.Context, args ListPyroscopeProfileTyp
 	return profileTypes, nil
 }
 
-
 func newPyroscopeClient(ctx context.Context, uid string) (*pyroscopeClient, error) {
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
 
@@ -217,14 +216,10 @@ func newPyroscopeClient(ctx context.Context, uid string) (*pyroscopeClient, erro
 	if err != nil {
 		return nil, fmt.Errorf("failed to create custom transport: %w", err)
 	}
-	transport = mcpgrafana.NewAuthRoundTripper(transport, cfg.AccessToken, cfg.IDToken, cfg.APIKey, cfg.BasicAuth)
-	transport = mcpgrafana.NewOrgIDRoundTripper(transport, cfg.OrgID)
 
 	httpClient := &http.Client{
-		Transport: mcpgrafana.NewUserAgentTransport(
-			transport,
-		),
-		Timeout: 10 * time.Second,
+		Transport: transport,
+		Timeout:   10 * time.Second,
 	}
 
 	_, err = getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: uid})
@@ -306,15 +301,14 @@ func (c *pyroscopeClient) get(ctx context.Context, path string, params url.Value
 	}()
 
 	if res.StatusCode < 200 || res.StatusCode > 299 {
-		body, err := io.ReadAll(res.Body)
+		body, err := io.ReadAll(io.LimitReader(res.Body, 1024))
 		if err != nil {
 			return nil, fmt.Errorf("pyroscope API failed with status code %d", res.StatusCode)
 		}
 		return nil, fmt.Errorf("pyroscope API failed with status code %d: %s", res.StatusCode, string(body))
 	}
 
-	const limit = 1024 * 1024 * 10 // 10MB limit
-	body, err := io.ReadAll(io.LimitReader(res.Body, limit))
+	body, err := readResponseBody(res.Body, defaultResponseLimitBytes)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
@@ -341,20 +335,6 @@ func stringOrDefault(s string, def string) string {
 		return def
 	}
 	return s
-}
-
-func rfc3339OrDefault(s string, def time.Time) (time.Time, error) {
-	s = strings.TrimSpace(s)
-
-	var err error
-	if s != "" {
-		def, err = time.Parse(time.RFC3339, s)
-		if err != nil {
-			return time.Time{}, err
-		}
-	}
-
-	return def, nil
 }
 
 func validateTimeRange(start time.Time, end time.Time) (time.Time, time.Time, error) {
@@ -384,7 +364,6 @@ func cleanupDotProfile(profile string) string {
 		return ""
 	})
 }
-
 
 var matchersRegex = regexp.MustCompile(`^\{.*\}$`)
 
@@ -462,8 +441,8 @@ type QueryPyroscopeParams struct {
 	GroupBy       []string `json:"group_by,omitempty" jsonschema:"description=Labels to group metrics series by"`
 	Step          float64  `json:"step,omitempty" jsonschema:"description=Seconds between metrics data points (default: auto)"`
 	MaxNodeDepth  int      `json:"max_node_depth,omitempty" jsonschema:"description=Max depth for profile call graph (default: 100)"`
-	StartRFC3339  string   `json:"start_rfc_3339,omitempty" jsonschema:"description=Start time in RFC3339 (defaults to 1 hour ago)"`
-	EndRFC3339    string   `json:"end_rfc_3339,omitempty" jsonschema:"description=End time in RFC3339 (defaults to now)"`
+	StartRFC3339  string   `json:"start_rfc_3339,omitempty" jsonschema:"description=Start time in RFC3339 or relative time (e.g. 'now-1h') (defaults to 1 hour ago)"`
+	EndRFC3339    string   `json:"end_rfc_3339,omitempty" jsonschema:"description=End time in RFC3339 or relative time (e.g. 'now') (defaults to now)"`
 }
 
 func queryPyroscope(ctx context.Context, args QueryPyroscopeParams) (string, error) {
@@ -481,12 +460,12 @@ func queryPyroscope(ctx context.Context, args QueryPyroscopeParams) (string, err
 		matchers = fmt.Sprintf("{%s}", matchers)
 	}
 
-	start, err := rfc3339OrDefault(args.StartRFC3339, time.Time{})
+	start, err := parseStartTime(args.StartRFC3339)
 	if err != nil {
 		return "", fmt.Errorf("failed to parse start timestamp %q: %w", args.StartRFC3339, err)
 	}
 
-	end, err := rfc3339OrDefault(args.EndRFC3339, time.Time{})
+	end, err := parseEndTime(args.EndRFC3339)
 	if err != nil {
 		return "", fmt.Errorf("failed to parse end timestamp %q: %w", args.EndRFC3339, err)
 	}

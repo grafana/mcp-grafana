@@ -20,14 +20,14 @@ func TestAssertsCloudIntegration(t *testing.T) {
 	ctx := createCloudTestContext(t, "Asserts", "ASSERTS_GRAFANA_URL", "ASSERTS_GRAFANA_API_KEY")
 
 	t.Run("get assertions", func(t *testing.T) {
-		// Set up time range for the last hour
+		// Set up time range for the last 24 hours
 		endTime := time.Now()
 		startTime := endTime.Add(-24 * time.Hour)
 
 		// Test parameters for a known service in the environment
 		params := GetAssertionsParams{
-			StartTime:  startTime,
-			EndTime:    endTime,
+			StartTime:  startTime.Format(time.RFC3339),
+			EndTime:    endTime.Format(time.RFC3339),
 			EntityType: "Service", // Adjust these values based on your actual environment
 			EntityName: "model-builder",
 			Env:        "dev-us-central-0",

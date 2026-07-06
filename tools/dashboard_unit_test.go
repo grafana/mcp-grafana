@@ -346,7 +346,6 @@ func TestApplyJSONPath_NestedArrayRemoval(t *testing.T) {
 	})
 }
 
-
 // Unit tests for sortArrayRemovesDescending
 // Validates: safe ordering of multiple array element removes
 func TestSortArrayRemovesDescending(t *testing.T) {

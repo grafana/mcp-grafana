@@ -510,12 +510,12 @@ func TestManageRules_ListRules(t *testing.T) {
 		},
 		{
 			name:    "invalid matcher type",
-			params:  ManageRulesReadParams{listFilterParams: listFilterParams{Matchers: []LabelMatcher{{Name: "severity", Type: ">>", Value: "critical"}}}, Operation: "list"},
-			wantErr: "invalid matcher type",
+			params:  ManageRulesReadParams{listFilterParams: listFilterParams{Matchers: []string{"severity>>critical"}}, Operation: "list"},
+			wantErr: "invalid matcher",
 		},
 		{
 			name:    "invalid regex matcher value",
-			params:  ManageRulesReadParams{listFilterParams: listFilterParams{Matchers: []LabelMatcher{{Name: "severity", Type: "=~", Value: "[invalid"}}}, Operation: "list"},
+			params:  ManageRulesReadParams{listFilterParams: listFilterParams{Matchers: []string{`severity=~[invalid`}}, Operation: "list"},
 			wantErr: "invalid matcher",
 		},
 		{
@@ -558,7 +558,7 @@ func TestManageRules_ListRules(t *testing.T) {
 					SearchRuleName: "cpu",
 					RuleType:       "alerting",
 					States:         []string{"firing"},
-					Matchers:       []LabelMatcher{{Name: "severity", Type: "=", Value: "critical"}},
+					Matchers:       []string{`severity="critical"`},
 				},
 				Operation: "list",
 				FolderUID: "test-folder",
@@ -581,7 +581,7 @@ func TestManageRules_ListRules(t *testing.T) {
 			name: "list with label selector filters matching rule",
 			params: ManageRulesReadParams{
 				listFilterParams: listFilterParams{
-					LabelSelectors: []Selector{{Filters: []LabelMatcher{{Name: "severity", Type: "=", Value: "critical"}}}},
+					LabelSelectors: []string{`{severity="critical"}`},
 				},
 				Operation: "list",
 			},
@@ -591,7 +591,7 @@ func TestManageRules_ListRules(t *testing.T) {
 			name: "list with label selector filters not matching",
 			params: ManageRulesReadParams{
 				listFilterParams: listFilterParams{
-					LabelSelectors: []Selector{{Filters: []LabelMatcher{{Name: "severity", Type: "=", Value: "warning"}}}},
+					LabelSelectors: []string{`{severity="warning"}`},
 				},
 				Operation: "list",
 			},
@@ -642,7 +642,7 @@ func TestManageRulesReadWrite_ValidationErrors(t *testing.T) {
 			call: func() (any, error) {
 				return manageRulesReadWrite(ctx, ManageRulesReadWriteParams{
 					Operation: "create", RuleGroup: "test-group", FolderUID: "test-folder",
-					Condition: "A", Data: []*AlertQuery{{RefID: "A"}},
+					Condition: "A", Data: []map[string]any{{"refId": "A"}},
 					NoDataState: "OK", ExecErrState: "OK", For: "5m", OrgID: 1,
 				})
 			},
@@ -653,7 +653,7 @@ func TestManageRulesReadWrite_ValidationErrors(t *testing.T) {
 			call: func() (any, error) {
 				return manageRulesReadWrite(ctx, ManageRulesReadWriteParams{
 					Operation: "update", Title: "Test Rule", RuleGroup: "test-group", FolderUID: "test-folder",
-					Condition: "A", Data: []*AlertQuery{{RefID: "A"}},
+					Condition: "A", Data: []map[string]any{{"refId": "A"}},
 					NoDataState: "OK", ExecErrState: "OK", For: "5m", OrgID: 1,
 				})
 			},
@@ -692,7 +692,7 @@ func TestManageRulesReadWriteParams_ToCreateParams(t *testing.T) {
 			RuleGroup:         "test-group",
 			FolderUID:         "test-folder",
 			Condition:         "B",
-			Data:              []*AlertQuery{{RefID: "A"}, {RefID: "B"}},
+			Data:              []map[string]any{{"refId": "A", "datasourceUid": "prom"}, {"refId": "B", "datasourceUid": "__expr__"}},
 			NoDataState:       "Alerting",
 			ExecErrState:      "OK",
 			For:               "10m",
@@ -702,7 +702,8 @@ func TestManageRulesReadWriteParams_ToCreateParams(t *testing.T) {
 			DisableProvenance: &disableProvenance,
 		}
 
-		result := params.toCreateParams()
+		result, err := params.toCreateParams()
+		require.NoError(t, err)
 		require.Equal(t, "Test Rule", result.Title)
 		require.Equal(t, "test-group", result.RuleGroup)
 		require.Equal(t, "test-folder", result.FolderUID)
@@ -726,7 +727,8 @@ func TestManageRulesReadWriteParams_ToCreateParams(t *testing.T) {
 			Title:     "Test Rule",
 		}
 
-		result := params.toCreateParams()
+		result, err := params.toCreateParams()
+		require.NoError(t, err)
 		require.Nil(t, result.UID)
 	})
 }
@@ -741,7 +743,7 @@ func TestManageRulesReadWriteParams_ToUpdateParams(t *testing.T) {
 			RuleGroup:         "updated-group",
 			FolderUID:         "updated-folder",
 			Condition:         "A",
-			Data:              []*AlertQuery{{RefID: "A"}},
+			Data:              []map[string]any{{"refId": "A", "datasourceUid": "prom"}},
 			NoDataState:       "NoData",
 			ExecErrState:      "Alerting",
 			For:               "15m",
@@ -751,7 +753,8 @@ func TestManageRulesReadWriteParams_ToUpdateParams(t *testing.T) {
 			DisableProvenance: &disableProvenance,
 		}
 
-		result := params.toUpdateParams()
+		result, err := params.toUpdateParams()
+		require.NoError(t, err)
 		require.Equal(t, "rule-uid-123", result.UID)
 		require.Equal(t, "Updated Rule", result.Title)
 		require.Equal(t, "updated-group", result.RuleGroup)
@@ -842,13 +845,16 @@ func TestMergeRuleDetail(t *testing.T) {
 		require.True(t, detail.IsPaused)
 		require.NotNil(t, detail.NotificationSettings)
 		require.Equal(t, "slack-notifications", *detail.NotificationSettings.Receiver)
-		require.Len(t, detail.Queries, 2)
-		require.Equal(t, "A", detail.Queries[0].RefID)
-		require.Equal(t, "prometheus-uid", detail.Queries[0].DatasourceUID)
-		require.Equal(t, "up{job=\"api\"}", detail.Queries[0].Expression)
-		require.Equal(t, "B", detail.Queries[1].RefID)
-		require.Equal(t, "__expr__", detail.Queries[1].DatasourceUID)
-		require.Equal(t, "$A > 0", detail.Queries[1].Expression)
+
+		// Full query data should be preserved for round-tripping
+		require.Len(t, detail.Data, 2, "Data should contain full query models from provisioning API")
+		require.Equal(t, "A", detail.Data[0].RefID)
+		require.Equal(t, "prometheus-uid", detail.Data[0].DatasourceUID)
+		model0, ok := detail.Data[0].Model.(map[string]any)
+		require.True(t, ok, "Data[0].Model should be a map")
+		require.Equal(t, "up{job=\"api\"}", model0["expr"])
+		require.Equal(t, "B", detail.Data[1].RefID)
+		require.Equal(t, "__expr__", detail.Data[1].DatasourceUID)
 
 		// Runtime fields
 		require.Equal(t, "firing", detail.State)
@@ -908,16 +914,55 @@ func TestMergeRuleDetail(t *testing.T) {
 		require.Equal(t, "A", *detail.Record.From, "the from identifier in recording config should match")
 		require.Equal(t, "cpu_usage_avg", *detail.Record.Metric, "the target metric name in recording config should match")
 
-		require.Len(t, detail.Queries, 1, "the queries slice should have length 1")
-		require.Equal(t, "A", detail.Queries[0].RefID, "the query refID should match")
-		require.Equal(t, "prometheus-uid", detail.Queries[0].DatasourceUID, "the query datasource UID should match")
-		require.Equal(t, "avg(up{job=\"api\"})", detail.Queries[0].Expression, "the query expression should match")
-
 		// Runtime fields
 		require.Equal(t, "normal", detail.State, "the rule state should be normalized from inactive to normal")
 		require.Equal(t, "ok", detail.Health, "the health status should match")
 		require.Equal(t, "recording", detail.Type, "the rule type should be 'recording'")
 		require.Equal(t, "2026-02-28T12:00:00Z", detail.LastEvaluation, "the last evaluation time should match formatted UTC time")
+	})
+
+	t.Run("Data preserves full Graphite query model for round-tripping", func(t *testing.T) {
+		title := "DLB Error Rate"
+		folderUID := "folder-1"
+		ruleGroup := "infra"
+		condition := "A"
+
+		graphiteModel := map[string]any{
+			"datasource": map[string]any{"type": "graphite", "uid": "000000004"},
+			"target":     "alias(asPercent(sumSeries(a), sumSeries(b)), 'error rate')",
+			"textEditor": true,
+			"intervalMs": float64(1000),
+			"refId":      "C",
+		}
+
+		provisioned := &models.ProvisionedAlertRule{
+			UID:       "rule-graphite",
+			Title:     &title,
+			FolderUID: &folderUID,
+			RuleGroup: &ruleGroup,
+			Condition: &condition,
+			Data: []*models.AlertQuery{
+				{
+					RefID:         "C",
+					DatasourceUID: "000000004",
+					Model:         graphiteModel,
+				},
+			},
+		}
+
+		detail := mergeRuleDetail(provisioned, nil)
+
+		// Data should have the full model for round-tripping
+		require.Len(t, detail.Data, 1, "Data must be populated with full query models")
+		require.Equal(t, "C", detail.Data[0].RefID)
+		require.Equal(t, "000000004", detail.Data[0].DatasourceUID)
+		model, ok := detail.Data[0].Model.(map[string]any)
+		require.True(t, ok)
+		require.Equal(t, "alias(asPercent(sumSeries(a), sumSeries(b)), 'error rate')", model["target"], "Graphite target must survive in Data")
+		require.Equal(t, true, model["textEditor"], "textEditor must survive in Data")
+		ds, ok := model["datasource"].(map[string]any)
+		require.True(t, ok)
+		require.Equal(t, "graphite", ds["type"])
 	})
 
 	t.Run("nil runtime leaves state fields empty", func(t *testing.T) {
@@ -939,7 +984,6 @@ func TestMergeRuleDetail(t *testing.T) {
 		require.Nil(t, detail.Alerts)
 		require.False(t, detail.IsPaused)
 		require.Nil(t, detail.NotificationSettings)
-		require.Nil(t, detail.Queries)
 	})
 
 	t.Run("provisioned with nil pointer fields", func(t *testing.T) {
@@ -1131,6 +1175,32 @@ func TestFilterSummaryByLabels(t *testing.T) {
 		for _, s := range filtered {
 			require.NotEqual(t, "r4", s.UID)
 		}
+	})
+}
+
+func TestFilterSummaryByRuleType(t *testing.T) {
+	summaries := []alertRuleSummary{
+		{UID: "r1", Title: "Alert 1", Type: "alerting"},
+		{UID: "r2", Title: "Recording 1", Type: "recording"},
+		{UID: "r3", Title: "Alert 2", Type: "alerting"},
+	}
+
+	t.Run("filter alerting", func(t *testing.T) {
+		filtered := filterSummaryByRuleType(summaries, "alerting")
+		require.Len(t, filtered, 2)
+		require.Equal(t, "r1", filtered[0].UID)
+		require.Equal(t, "r3", filtered[1].UID)
+	})
+
+	t.Run("filter recording", func(t *testing.T) {
+		filtered := filterSummaryByRuleType(summaries, "recording")
+		require.Len(t, filtered, 1)
+		require.Equal(t, "r2", filtered[0].UID)
+	})
+
+	t.Run("unknown type returns empty", func(t *testing.T) {
+		filtered := filterSummaryByRuleType(summaries, "unknown")
+		require.Empty(t, filtered)
 	})
 }
 
@@ -1333,8 +1403,8 @@ func TestConvertAlertQueries(t *testing.T) {
 	t.Run("preserves extra model fields for Graphite queries", func(t *testing.T) {
 		queries := []*AlertQuery{
 			{
-				RefID:         "C",
-				DatasourceUID: "000000004",
+				RefID:             "C",
+				DatasourceUID:     "000000004",
 				RelativeTimeRange: &RelativeTimeRange{From: 300, To: 0},
 				Model: AlertQueryModel{
 					Extra: map[string]any{
@@ -1482,85 +1552,119 @@ func TestAlertQueryModel_JSONRoundTrip(t *testing.T) {
 	})
 }
 
-func TestExtractQuerySummaries(t *testing.T) {
-	t.Run("extracts expr field (Prometheus)", func(t *testing.T) {
-		data := []*models.AlertQuery{
-			{
-				RefID:         "A",
-				DatasourceUID: "prometheus-uid",
-				Model: map[string]any{
-					"expr": `up{job="grafana"}`,
-				},
-			},
+func TestQuoteUnquotedLabelValues(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "already quoted",
+			input:    `{severity="critical"}`,
+			expected: `{severity="critical"}`,
+		},
+		{
+			name:     "unquoted value",
+			input:    `{severity=critical}`,
+			expected: `{severity="critical"}`,
+		},
+		{
+			name:     "unquoted regex",
+			input:    `{team=~backend.*}`,
+			expected: `{team=~"backend.*"}`,
+		},
+		{
+			name:     "quoted regex unchanged",
+			input:    `{team=~"backend.*"}`,
+			expected: `{team=~"backend.*"}`,
+		},
+		{
+			name:     "multiple unquoted",
+			input:    `{severity=critical, team=backend}`,
+			expected: `{severity="critical", team="backend"}`,
+		},
+		{
+			name:     "mixed quoted and unquoted",
+			input:    `{severity="critical", team=backend}`,
+			expected: `{severity="critical", team="backend"}`,
+		},
+		{
+			name:     "negation unquoted",
+			input:    `{env!=dev}`,
+			expected: `{env!="dev"}`,
+		},
+		{
+			name:     "negative regex unquoted",
+			input:    `{env!~staging.*}`,
+			expected: `{env!~"staging.*"}`,
+		},
+		{
+			name:     "empty selector",
+			input:    `{}`,
+			expected: `{}`,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result := quoteUnquotedLabelValues(tc.input)
+			require.Equal(t, tc.expected, result)
+		})
+	}
+}
+
+func TestBuildGetRulesOpts_StateValidation(t *testing.T) {
+	t.Run("valid states accepted", func(t *testing.T) {
+		for _, state := range []string{"firing", "pending", "normal", "recovering", "nodata", "error"} {
+			_, err := buildGetRulesOpts(listFilterParams{States: []string{state}}, "", "")
+			require.NoError(t, err, "state %q should be valid", state)
 		}
-		summaries := extractQuerySummaries(data)
-		require.Len(t, summaries, 1)
-		require.Equal(t, `up{job="grafana"}`, summaries[0].Expression)
 	})
 
-	t.Run("extracts expression field (Grafana expression)", func(t *testing.T) {
-		data := []*models.AlertQuery{
-			{
-				RefID:         "B",
-				DatasourceUID: "__expr__",
-				Model: map[string]any{
-					"expression": "A",
-				},
-			},
-		}
-		summaries := extractQuerySummaries(data)
-		require.Len(t, summaries, 1)
-		require.Equal(t, "A", summaries[0].Expression)
+	t.Run("invalid state rejected", func(t *testing.T) {
+		_, err := buildGetRulesOpts(listFilterParams{States: []string{"unknown"}}, "", "")
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "invalid state")
 	})
 
-	t.Run("extracts query field (Elasticsearch)", func(t *testing.T) {
-		data := []*models.AlertQuery{
-			{
-				RefID:         "A",
-				DatasourceUID: "elasticsearch-uid",
-				Model: map[string]any{
-					"query": `app:"random-service" AND error`,
-				},
-			},
-		}
-		summaries := extractQuerySummaries(data)
-		require.Len(t, summaries, 1)
-		require.Equal(t, `app:"random-service" AND error`, summaries[0].Expression)
+	t.Run("mixed valid and invalid states rejected", func(t *testing.T) {
+		_, err := buildGetRulesOpts(listFilterParams{States: []string{"firing", "bogus"}}, "", "")
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "invalid state")
+	})
+}
+
+func TestParseSelectorStrings_UnquotedValues(t *testing.T) {
+	t.Run("accepts unquoted values", func(t *testing.T) {
+		selectors, err := parseSelectorStrings([]string{`{severity=critical}`})
+		require.NoError(t, err)
+		require.Len(t, selectors, 1)
+		require.Len(t, selectors[0].Filters, 1)
+		require.Equal(t, "severity", selectors[0].Filters[0].Name)
+		require.Equal(t, "critical", selectors[0].Filters[0].Value)
 	})
 
-	t.Run("returns nil for empty data", func(t *testing.T) {
-		summaries := extractQuerySummaries(nil)
-		require.Nil(t, summaries)
+	t.Run("accepts already-quoted values", func(t *testing.T) {
+		selectors, err := parseSelectorStrings([]string{`{severity="critical"}`})
+		require.NoError(t, err)
+		require.Len(t, selectors, 1)
+		require.Equal(t, "critical", selectors[0].Filters[0].Value)
+	})
+}
+
+func TestParseMatcherStrings_UnquotedValues(t *testing.T) {
+	t.Run("accepts unquoted values", func(t *testing.T) {
+		matchers, err := parseMatcherStrings([]string{`severity=critical`})
+		require.NoError(t, err)
+		require.Len(t, matchers, 1)
+		require.Equal(t, "severity", matchers[0].Name)
+		require.Equal(t, "critical", matchers[0].Value)
 	})
 
-	t.Run("handles mixed datasource types", func(t *testing.T) {
-		data := []*models.AlertQuery{
-			{
-				RefID:         "A",
-				DatasourceUID: "elasticsearch-uid",
-				Model: map[string]any{
-					"query": `app:"random-service" AND log.level:"ERROR"`,
-				},
-			},
-			{
-				RefID:         "B",
-				DatasourceUID: "__expr__",
-				Model: map[string]any{
-					"expression": "A",
-				},
-			},
-			{
-				RefID:         "C",
-				DatasourceUID: "__expr__",
-				Model: map[string]any{
-					"expression": "B",
-				},
-			},
-		}
-		summaries := extractQuerySummaries(data)
-		require.Len(t, summaries, 3)
-		require.Equal(t, `app:"random-service" AND log.level:"ERROR"`, summaries[0].Expression)
-		require.Equal(t, "A", summaries[1].Expression)
-		require.Equal(t, "B", summaries[2].Expression)
+	t.Run("accepts already-quoted values", func(t *testing.T) {
+		matchers, err := parseMatcherStrings([]string{`severity="critical"`})
+		require.NoError(t, err)
+		require.Len(t, matchers, 1)
+		require.Equal(t, "critical", matchers[0].Value)
 	})
 }

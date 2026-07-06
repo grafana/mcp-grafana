@@ -1,0 +1,535 @@
+{
+    "schemaVersion": "v1",
+    "pluginType": "loki",
+    "pluginName": "Loki",
+    "docURL": "https://grafana.com/docs/grafana/latest/datasources/loki/configure-loki-data-source/",
+    "fields": [
+        {
+            "id": "root.url",
+            "key": "url",
+            "label": "URL",
+            "description": "URL of your Loki instance. If Loki is running locally, use http://localhost:3100.",
+            "valueType": "string",
+            "semanticType": "url",
+            "target": "root",
+            "required": true,
+            "ui": {
+                "component": "input",
+                "placeholder": "http://localhost:3100"
+            },
+            "validations": [
+                {
+                    "type": "pattern",
+                    "pattern": "^https?://",
+                    "message": "Must be a valid HTTP or HTTPS URL"
+                }
+            ]
+        },
+        {
+            "id": "root.basicAuth",
+            "key": "basicAuth",
+            "label": "Basic Auth",
+            "description": "Enable basic authentication.",
+            "valueType": "boolean",
+            "target": "root",
+            "defaultValue": false,
+            "tags": [
+                "managed-by:auth.method"
+            ]
+        },
+        {
+            "id": "auth.method",
+            "key": "authMethod",
+            "label": "Authentication method",
+            "description": "Choose an authentication method to access the data source.",
+            "valueType": "string",
+            "kind": "virtual",
+            "defaultValue": "no-auth",
+            "validations": [
+                {
+                    "type": "allowedValues",
+                    "values": [
+                        "no-auth",
+                        "basic-auth",
+                        "forward-oauth"
+                    ]
+                }
+            ],
+            "ui": {
+                "component": "select",
+                "options": [
+                    {
+                        "label": "No Authentication",
+                        "value": "no-auth",
+                        "description": "Data source is available without authentication"
+                    },
+                    {
+                        "label": "Basic authentication",
+                        "value": "basic-auth",
+                        "description": "Authenticate with your data source username and password"
+                    },
+                    {
+                        "label": "Forward OAuth Identity",
+                        "value": "forward-oauth",
+                        "description": "Forward the OAuth access token (and if available: the OIDC ID token) of the user querying the data source"
+                    }
+                ]
+            },
+            "storage": {
+                "type": "computed",
+                "read": "root.basicAuth == true ? 'basic-auth' : (jsonData.oauthPassThru == true ? 'forward-oauth' : 'no-auth')"
+            },
+            "effects": [
+                {
+                    "when": "value == 'no-auth'",
+                    "set": {
+                        "root.basicAuth": false,
+                        "jsonData.oauthPassThru": false
+                    }
+                },
+                {
+                    "when": "value == 'basic-auth'",
+                    "set": {
+                        "root.basicAuth": true,
+                        "jsonData.oauthPassThru": false
+                    }
+                },
+                {
+                    "when": "value == 'forward-oauth'",
+                    "set": {
+                        "root.basicAuth": false,
+                        "jsonData.oauthPassThru": true
+                    }
+                }
+            ]
+        },
+        {
+            "id": "root.basicAuthUser",
+            "key": "basicAuthUser",
+            "label": "User",
+            "description": "Username for basic authentication.",
+            "valueType": "string",
+            "target": "root",
+            "dependsOn": "auth.method == 'basic-auth'",
+            "requiredWhen": "auth.method == 'basic-auth'"
+        },
+        {
+            "id": "jsonData.oauthPassThru",
+            "key": "oauthPassThru",
+            "label": "Forward OAuth Identity",
+            "description": "Forward the OAuth access token (and if available: the OIDC ID token) of the user querying the data source.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "defaultValue": false,
+            "tags": [
+                "managed-by:auth.method"
+            ]
+        },
+        {
+            "id": "jsonData.manageAlerts",
+            "key": "manageAlerts",
+            "label": "Manage alert rules in Alerting UI",
+            "description": "Manage alert rules for this data source. To manage other alerting resources, add an Alertmanager data source.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "defaultValue": true,
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.maxLines",
+            "key": "maxLines",
+            "label": "Maximum lines",
+            "description": "Sets the maximum number of log lines returned by Loki. Increase the limit for larger result sets for ad-hoc analysis. Decrease if your browser is sluggish displaying log results. Default is 1000.",
+            "valueType": "string",
+            "target": "jsonData",
+            "defaultValue": "1000",
+            "ui": {
+                "component": "input",
+                "placeholder": "1000"
+            }
+        },
+        {
+            "id": "jsonData.derivedFields",
+            "key": "derivedFields",
+            "label": "Derived fields",
+            "description": "Derived fields can be used to extract new fields from a log message and create a link from its value.",
+            "valueType": "array",
+            "target": "jsonData",
+            "item": {
+                "valueType": "object",
+                "fields": [
+                    {
+                        "id": "derivedFields.item.name",
+                        "key": "name",
+                        "label": "Name",
+                        "description": "Name for the derived field. Used as the field label.",
+                        "valueType": "string",
+                        "isItemField": true,
+                        "required": true,
+                        "ui": {
+                            "component": "input",
+                            "placeholder": "Field name"
+                        }
+                    },
+                    {
+                        "id": "derivedFields.item.matcherRegex",
+                        "key": "matcherRegex",
+                        "label": "Regex / Label",
+                        "description": "Use to parse and capture some part of the log message, or derive the field from a label.",
+                        "valueType": "string",
+                        "isItemField": true,
+                        "required": true
+                    },
+                    {
+                        "id": "derivedFields.item.url",
+                        "key": "url",
+                        "label": "URL / Query",
+                        "description": "External link URL or internal query. Interpolate captured value using ${__value.raw}.",
+                        "valueType": "string",
+                        "isItemField": true,
+                        "ui": {
+                            "component": "input",
+                            "placeholder": "http://example.com/${__value.raw}"
+                        }
+                    },
+                    {
+                        "id": "derivedFields.item.urlDisplayLabel",
+                        "key": "urlDisplayLabel",
+                        "label": "URL Label",
+                        "description": "Override the button label when this derived field is found in a log.",
+                        "valueType": "string",
+                        "isItemField": true
+                    },
+                    {
+                        "id": "derivedFields.item.datasourceUid",
+                        "key": "datasourceUid",
+                        "label": "Internal link",
+                        "description": "Data source UID for internal link. Only tracing data sources are supported.",
+                        "valueType": "string",
+                        "semanticType": "datasourceUid",
+                        "isItemField": true
+                    },
+                    {
+                        "id": "derivedFields.item.matcherType",
+                        "key": "matcherType",
+                        "label": "Type",
+                        "description": "Whether to derive the field from a regex in the log line or from a label.",
+                        "valueType": "string",
+                        "isItemField": true,
+                        "defaultValue": "regex",
+                        "validations": [
+                            {
+                                "type": "allowedValues",
+                                "values": [
+                                    "label",
+                                    "regex"
+                                ]
+                            }
+                        ],
+                        "ui": {
+                            "component": "select",
+                            "options": [
+                                {
+                                    "label": "Regex in log line",
+                                    "value": "regex"
+                                },
+                                {
+                                    "label": "Label",
+                                    "value": "label"
+                                }
+                            ]
+                        }
+                    },
+                    {
+                        "id": "derivedFields.item.targetBlank",
+                        "key": "targetBlank",
+                        "label": "Open in new tab",
+                        "description": "Open the link in a new tab or window.",
+                        "valueType": "boolean",
+                        "isItemField": true,
+                        "ui": {
+                            "component": "switch"
+                        }
+                    }
+                ]
+            }
+        },
+        {
+            "id": "jsonData.alertmanager",
+            "key": "alertmanager",
+            "label": "Alertmanager",
+            "description": "UID of the Alertmanager data source that manages alerts for this Loki data source.",
+            "valueType": "string",
+            "semanticType": "datasourceUid",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.timeout",
+            "key": "timeout",
+            "label": "HTTP request timeout",
+            "description": "HTTP request timeout in seconds. Overrides the global dataproxy.timeout setting.",
+            "valueType": "number",
+            "target": "jsonData",
+            "ui": {
+                "component": "input",
+                "placeholder": "Timeout in seconds"
+            },
+            "validations": [
+                {
+                    "type": "range",
+                    "min": 0
+                }
+            ]
+        },
+        {
+            "id": "jsonData.serverName",
+            "key": "serverName",
+            "label": "TLS server name",
+            "description": "Controls the server name used for certificate common name/subject alternative name verification. Defaults to using the data source URL.",
+            "valueType": "string",
+            "semanticType": "hostname",
+            "target": "jsonData",
+            "dependsOn": "jsonData.tlsAuth == true"
+        },
+        {
+            "id": "jsonData.tlsAuth",
+            "key": "tlsAuth",
+            "label": "TLS Client Auth",
+            "description": "Enable TLS client certificate authentication.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.tlsAuthWithCACert",
+            "key": "tlsAuthWithCACert",
+            "label": "With CA Cert",
+            "description": "Verify self-signed TLS certificates using a CA certificate.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.tlsSkipVerify",
+            "key": "tlsSkipVerify",
+            "label": "Skip TLS Verify",
+            "description": "Skip TLS certificate verification. Use only for testing.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.keepCookies",
+            "key": "keepCookies",
+            "label": "Allowed cookies",
+            "description": "Grafana proxy deletes forwarded cookies by default. Specify cookies by name that should be forwarded to the data source.",
+            "valueType": "array",
+            "target": "jsonData",
+            "item": {
+                "valueType": "string"
+            },
+            "ui": {
+                "component": "list",
+                "placeholder": "New cookie (hit enter to add)"
+            }
+        },
+        {
+            "id": "jsonData.pdcInjected",
+            "key": "pdcInjected",
+            "label": "Private data source connect",
+            "description": "When enabled, connection is made via Grafana's Private Data Source Connect (PDC).",
+            "valueType": "boolean",
+            "target": "jsonData"
+        },
+        {
+            "id": "httpHeaders",
+            "key": "httpHeaders",
+            "label": "Custom HTTP Headers",
+            "description": "Additional headers sent with every request to the data source.",
+            "valueType": "array",
+            "target": "jsonData",
+            "item": {
+                "valueType": "object",
+                "fields": [
+                    {
+                        "id": "httpHeaders.item.name",
+                        "key": "name",
+                        "label": "Header Name",
+                        "valueType": "string",
+                        "isItemField": true,
+                        "validations": [
+                            {
+                                "type": "pattern",
+                                "pattern": "^[A-Za-z][A-Za-z0-9-]*$",
+                                "message": "Must be a valid HTTP header name"
+                            }
+                        ],
+                        "description": "HTTP header name."
+                    },
+                    {
+                        "id": "httpHeaders.item.value",
+                        "key": "value",
+                        "label": "Header Value",
+                        "valueType": "string",
+                        "isItemField": true,
+                        "description": "HTTP header value."
+                    }
+                ]
+            },
+            "storage": {
+                "type": "indexedPair",
+                "key": {
+                    "target": "jsonData",
+                    "pattern": "httpHeaderName{index}"
+                },
+                "value": {
+                    "target": "secureJsonData",
+                    "pattern": "httpHeaderValue{index}"
+                },
+                "startIndex": 1
+            },
+            "validations": [
+                {
+                    "type": "itemCount",
+                    "max": 10,
+                    "message": "Maximum 10 custom headers"
+                }
+            ]
+        },
+        {
+            "id": "secureJsonData.basicAuthPassword",
+            "key": "basicAuthPassword",
+            "label": "Password",
+            "description": "Password for basic authentication.",
+            "valueType": "string",
+            "semanticType": "password",
+            "target": "secureJsonData",
+            "dependsOn": "auth.method == 'basic-auth'"
+        },
+        {
+            "id": "secureJsonData.tlsCACert",
+            "key": "tlsCACert",
+            "label": "CA Cert",
+            "description": "PEM-encoded CA certificate to verify the Loki server's TLS certificate.",
+            "valueType": "string",
+            "target": "secureJsonData",
+            "dependsOn": "jsonData.tlsAuthWithCACert == true",
+            "ui": {
+                "component": "textarea",
+                "rows": 7,
+                "placeholder": "Begins with -----BEGIN CERTIFICATE-----"
+            }
+        },
+        {
+            "id": "secureJsonData.tlsClientCert",
+            "key": "tlsClientCert",
+            "label": "Client Cert",
+            "description": "PEM-encoded client certificate for TLS client authentication.",
+            "valueType": "string",
+            "target": "secureJsonData",
+            "dependsOn": "jsonData.tlsAuth == true",
+            "ui": {
+                "component": "textarea",
+                "rows": 7,
+                "placeholder": "Begins with -----BEGIN CERTIFICATE-----"
+            }
+        },
+        {
+            "id": "secureJsonData.tlsClientKey",
+            "key": "tlsClientKey",
+            "label": "Client Key",
+            "description": "PEM-encoded client private key for TLS client authentication.",
+            "valueType": "string",
+            "semanticType": "token",
+            "target": "secureJsonData",
+            "dependsOn": "jsonData.tlsAuth == true",
+            "ui": {
+                "component": "textarea",
+                "rows": 7,
+                "placeholder": "Begins with -----BEGIN RSA PRIVATE KEY-----"
+            }
+        }
+    ],
+    "groups": [
+        {
+            "id": "connection",
+            "title": "Connection",
+            "fieldRefs": [
+                "root.url"
+            ]
+        },
+        {
+            "id": "auth",
+            "title": "Authentication",
+            "fieldRefs": [
+                "auth.method",
+                "root.basicAuthUser",
+                "secureJsonData.basicAuthPassword"
+            ]
+        },
+        {
+            "id": "http-network",
+            "title": "HTTP / Network Settings",
+            "fieldRefs": [
+                "jsonData.tlsAuthWithCACert",
+                "secureJsonData.tlsCACert",
+                "jsonData.tlsAuth",
+                "jsonData.serverName",
+                "secureJsonData.tlsClientCert",
+                "secureJsonData.tlsClientKey",
+                "jsonData.tlsSkipVerify",
+                "httpHeaders",
+                "jsonData.keepCookies",
+                "jsonData.timeout",
+                "jsonData.pdcInjected"
+            ]
+        },
+        {
+            "id": "alerting",
+            "title": "Alerting",
+            "fieldRefs": [
+                "jsonData.manageAlerts"
+            ]
+        },
+        {
+            "id": "queries",
+            "title": "Queries",
+            "fieldRefs": [
+                "jsonData.maxLines"
+            ]
+        },
+        {
+            "id": "derived-fields",
+            "title": "Derived fields",
+            "fieldRefs": [
+                "jsonData.derivedFields"
+            ]
+        }
+    ],
+    "relationships": [
+        {
+            "type": "pair",
+            "fields": [
+                "root.basicAuthUser",
+                "secureJsonData.basicAuthPassword"
+            ],
+            "description": "Basic auth credentials"
+        },
+        {
+            "type": "pair",
+            "fields": [
+                "secureJsonData.tlsClientCert",
+                "secureJsonData.tlsClientKey"
+            ],
+            "description": "TLS client certificate and key"
+        }
+    ]
+}

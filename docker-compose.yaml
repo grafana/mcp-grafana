@@ -1,13 +1,15 @@
 services:
   grafana:
-    image: grafana/grafana:12.4.2@sha256:83749231c3835e390a3144e5e940203e42b9589761f20ef3169c716e734ad505
+    image: grafana/grafana:13.0.2@sha256:5dad0df181cb644a14e13617b913b261a54f7d4fd4510721dba420929f35bea2
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "false"
-      GF_INSTALL_PLUGINS: grafana-clickhouse-datasource
+      GF_INSTALL_PLUGINS: grafana-clickhouse-datasource,grafana-opensearch-datasource,elasticsearch 12.6.2
+      GF_PLUGINS_PREINSTALL_SYNC: quickwit-quickwit-datasource@0.6.0@https://github.com/quickwit-oss/quickwit-datasource/releases/download/v0.6.0/quickwit-quickwit-datasource-0.6.0.zip
       GF_LOG_LEVEL: debug
       GF_SERVER_ROUTER_LOGGING: "true"
       GF_RENDERING_SERVER_URL: http://renderer:8081/render
       GF_RENDERING_CALLBACK_URL: http://grafana:3000/
+      GF_RENDERING_RENDERER_TOKEN: integration-test-renderer-token
     ports:
       - 3000:3000/tcp
     volumes:
@@ -15,14 +17,66 @@ services:
       - ./testdata/dashboards:/var/lib/grafana/dashboards
       - type: tmpfs
         target: /var/lib/grafana/empty-alerts-folder
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:3000/api/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # grafana-legacy runs Grafana 11, which predates the v1beta1 dashboard API
+  # (it serves only dashboard.grafana.app v0alpha1/v1alpha1/v2alpha1, never
+  # v1beta1, and cannot store schema v2). The dashboard tools' capability check
+  # therefore falls back to the legacy REST API against this instance, letting
+  # integration tests exercise that path.
+  grafana-legacy:
+    image: grafana/grafana:11.6.14-security-01@sha256:b3545ba7fa9aad785202461740f96d51c457a72b418d71f8a01d0f82fcb67232
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_LOG_LEVEL: debug
+      GF_SERVER_ROUTER_LOGGING: "true"
+    ports:
+      - 3002:3000/tcp
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:3000/api/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  gitserver:
+    build: ./testdata/gitserver
+    ports:
+      - "8888:80"
+    volumes:
+      - ./testdata/provisioning-repo:/srv/seed:ro
+    # The entrypoint seeds the repo before exec'ing httpd, so a live server
+    # implies the repo is ready — a static GET / is enough, no need to spawn
+    # the upload-pack CGI.
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost/"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  provisioning-repo-seed:
+    image: curlimages/curl:8.18.0@sha256:d94d07ba9e7d6de898b6d96c1a072f6f8266c687af78a74f380087a0addf5d17
+    depends_on:
+      grafana:
+        condition: service_healthy
+      gitserver:
+        condition: service_healthy
+    volumes:
+      - ./testdata/provisioning-repo-seed.sh:/seed.sh
+    entrypoint: ["sh", "/seed.sh"]
 
   renderer:
-    image: grafana/grafana-image-renderer:latest@sha256:bdd4b9d3d529710406aa00fc567a0f3d637c94bdbfff569081ef88e8f157bee3
+    image: grafana/grafana-image-renderer:latest@sha256:340c91e98ccd65001a3da4d0192fcf0ed13e95609a51a0d62c35a61b6ff28dff
+    environment:
+      AUTH_TOKEN: integration-test-renderer-token
     ports:
       - 8081
 
   prometheus:
-    image: prom/prometheus@sha256:4a61322ac1103a0e3aea2a61ef1718422a48fa046441f299d71e660a3bc71ae9
+    image: prom/prometheus@sha256:e4254400b85610324913f0dc4acf92603d9984e7519414c5a12811aa6146acc3
     ports:
       - "9090:9090"
     entrypoint: /etc/prometheus/entrypoint.sh
@@ -50,7 +104,7 @@ services:
       - loki
 
   pyroscope:
-    image: grafana/pyroscope:1.19.1@sha256:d5d38187f7593fdf5643ba29e67099206e8d4dee6207f78d028ea3fe621cc04d
+    image: grafana/pyroscope:2.0.1@sha256:704889ae04768d982a0a71935bb054948993ddc3fe80234611d20877ba8be4c9
     ports:
       - 4040:4040
 
@@ -105,6 +159,49 @@ services:
       - ./testdata/elasticsearch-seed.sh:/seed.sh
     entrypoint: ["sh", "/seed.sh"]
 
+  opensearch:
+    image: opensearchproject/opensearch:3.6.0@sha256:57bd3c879ad27123a9a6cd75e2adba504189d3131d00a669f3baf9210bc4538c
+    environment:
+      - discovery.type=single-node
+      - DISABLE_SECURITY_PLUGIN=true
+      - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"
+    ports:
+      - "9201:9200"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health | grep -q '\"status\":\"green\"\\|\"status\":\"yellow\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  opensearch-seed:
+    image: curlimages/curl:8.12.1
+    depends_on:
+      opensearch:
+        condition: service_healthy
+    volumes:
+      - ./testdata/opensearch-seed.sh:/seed.sh
+    entrypoint: ["sh", "/seed.sh"]
+
+  quickwit:
+    image: quickwit/quickwit:0.8.2
+    command: ["run"]
+    ports:
+      - "7280:7280"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:7280/health/livez || curl -sf http://localhost:7280/api/v1/version"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+
+  quickwit-seed:
+    image: curlimages/curl:8.18.0@sha256:d94d07ba9e7d6de898b6d96c1a072f6f8266c687af78a74f380087a0addf5d17
+    depends_on:
+      quickwit:
+        condition: service_healthy
+    volumes:
+      - ./testdata/quickwit-seed.sh:/seed.sh
+    entrypoint: ["sh", "/seed.sh"]
+
   localstack:
     image: localstack/localstack:4.14@sha256:3ebc37595918b8accb852f8048fef2aff047d465167edd655528065b07bc364a
     ports:
@@ -121,8 +218,34 @@ services:
       timeout: 5s
       retries: 5
 
+  influxdb:
+    image: influxdb:2.7
+    ports:
+      - "8086:8086"
+    environment:
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: admin
+      DOCKER_INFLUXDB_INIT_PASSWORD: adminadmin
+      DOCKER_INFLUXDB_INIT_ORG: mcptests
+      DOCKER_INFLUXDB_INIT_BUCKET: metrics
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: mcptests-admin-token
+    healthcheck:
+      test: ["CMD", "influx", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  influxdb-seed:
+    image: curlimages/curl:8.18.0@sha256:d94d07ba9e7d6de898b6d96c1a072f6f8266c687af78a74f380087a0addf5d17
+    depends_on:
+      influxdb:
+        condition: service_healthy
+    volumes:
+      - ./testdata/influxdb-seed.sh:/seed.sh
+    entrypoint: ["sh", "/seed.sh"]
+
   clickhouse:
-    image: clickhouse/clickhouse-server:25.12@sha256:f42e90f635bafddfd5c0c25781332ff1c46bbe1424e49e2ce0c571958d4439e9
+    image: clickhouse/clickhouse-server:25.12@sha256:8a790dd3468db22b1d4e7b18a176f378ff5ff6053b9c48dd4ea1fa71a24c5ba6
     ports:
       - "8123:8123"
       - "9000:9000"
@@ -134,3 +257,26 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
+  graphite:
+    image: graphiteapp/graphite-statsd:latest@sha256:2d61228771119ddaee2f62d65739d3b5e903de36666e899703e47be1def571fe
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null 'http://127.0.0.1/metrics/find?query=*'"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+    volumes:
+      - graphite-whisper:/opt/graphite/storage/whisper
+
+  graphite-seed:
+    image: graphiteapp/graphite-statsd:latest@sha256:2d61228771119ddaee2f62d65739d3b5e903de36666e899703e47be1def571fe
+    depends_on:
+      graphite:
+        condition: service_healthy
+    volumes:
+      - graphite-whisper:/opt/graphite/storage/whisper
+      - ./testdata/graphite-seed.sh:/seed.sh
+    entrypoint: ["sh", "/seed.sh"]
+
+volumes:
+  graphite-whisper:

@@ -1,0 +1,4 @@
+# Force LF line endings for shell scripts so they execute correctly inside
+# the Alpine-based test containers even when checked out on Windows.
+*.sh text eol=lf
+testdata/*-entrypoint.sh text eol=lf

@@ -6,8 +6,12 @@
 package tools
 
 import (
+	"encoding/json"
 	"testing"
 
+	"github.com/grafana/grafana-openapi-client-go/models"
+	mcpgrafana "github.com/grafana/mcp-grafana"
+	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -18,8 +22,19 @@ func TestDatasourcesTools(t *testing.T) {
 		result, err := listDatasources(ctx, ListDatasourcesParams{})
 		require.NoError(t, err)
 
-		// Ten datasources are provisioned in the test environment (Prometheus, Prometheus Demo, Loki, Pyroscope, Tempo, Tempo Secondary, Alertmanager, ClickHouse and CloudWatch).
-		assert.Len(t, result.Datasources, 10)
+		// Verify the core datasources provisioned in the test environment are present.
+		uids := make(map[string]bool, len(result.Datasources))
+		for _, ds := range result.Datasources {
+			uids[ds.UID] = true
+		}
+		assert.True(t, uids["prometheus"], "prometheus datasource should be provisioned")
+		assert.True(t, uids["loki"], "loki datasource should be provisioned")
+		assert.True(t, uids["graphite"], "graphite datasource should be provisioned")
+		assert.True(t, uids["tempo"], "tempo datasource should be provisioned")
+		assert.True(t, uids["elasticsearch"], "elasticsearch datasource should be provisioned")
+		assert.True(t, uids["opensearch"], "opensearch datasource should be provisioned")
+		assert.True(t, uids["influxdb-flux"], "influxdb-flux datasource should be provisioned")
+		assert.True(t, uids["influxdb-influxql"], "influxdb-influxql datasource should be provisioned")
 	})
 
 	t.Run("list datasources for type", func(t *testing.T) {
@@ -64,5 +79,184 @@ func TestDatasourcesTools(t *testing.T) {
 		require.Error(t, err)
 		require.Nil(t, result)
 		assert.Contains(t, err.Error(), "either uid or name must be provided")
+	})
+}
+
+func TestCreateDatasourceTools(t *testing.T) {
+	t.Run("create datasource", func(t *testing.T) {
+		ctx := newTestContext()
+
+		toolResult, err := createDatasource(ctx, CreateDatasourceParams{
+			Name:           "mcp-test-prometheus",
+			Type:           "prometheus",
+			URL:            "http://prometheus:9090",
+			SchemaReviewed: true,
+		})
+		require.NoError(t, err)
+		require.NotNil(t, toolResult)
+		assert.False(t, toolResult.IsError)
+
+		require.Len(t, toolResult.Content, 2)
+		text, ok := toolResult.Content[0].(mcp.TextContent)
+		require.True(t, ok)
+
+		var result CreateDatasourceResult
+		require.NoError(t, json.Unmarshal([]byte(text.Text), &result))
+		assert.Equal(t, "mcp-test-prometheus", result.Name)
+		assert.NotEmpty(t, result.UID)
+
+		configPageURL := "http://localhost:3000/connections/datasources/edit/" + result.UID
+		assert.Contains(t, result.NextSteps, configPageURL)
+
+		link, ok := toolResult.Content[1].(mcp.ResourceLink)
+		require.True(t, ok)
+		assert.Equal(t, configPageURL, link.URI)
+		assert.Equal(t, result.Name, link.Name)
+
+		c := mcpgrafana.GrafanaClientFromContext(ctx)
+		t.Cleanup(func() {
+			_, _ = c.Datasources.DeleteDataSourceByUID(result.UID)
+		})
+	})
+
+	t.Run("create datasource - basicAuth flag", func(t *testing.T) {
+		ctx := newTestContext()
+
+		toolResult, err := createDatasource(ctx, CreateDatasourceParams{
+			Name:           "mcp-test-prometheus-basicauth",
+			Type:           "prometheus",
+			BasicAuth:      true,
+			SchemaReviewed: true,
+		})
+		require.NoError(t, err)
+		require.NotNil(t, toolResult)
+		assert.False(t, toolResult.IsError)
+
+		require.Len(t, toolResult.Content, 2)
+		text, ok := toolResult.Content[0].(mcp.TextContent)
+		require.True(t, ok)
+
+		var result CreateDatasourceResult
+		require.NoError(t, json.Unmarshal([]byte(text.Text), &result))
+		assert.Equal(t, "mcp-test-prometheus-basicauth", result.Name)
+		assert.NotEmpty(t, result.UID)
+
+		configPageURL := "http://localhost:3000/connections/datasources/edit/" + result.UID
+		assert.Contains(t, result.NextSteps, configPageURL)
+
+		link, ok := toolResult.Content[1].(mcp.ResourceLink)
+		require.True(t, ok)
+		assert.Equal(t, configPageURL, link.URI)
+		assert.Equal(t, result.Name, link.Name)
+
+		c := mcpgrafana.GrafanaClientFromContext(ctx)
+		t.Cleanup(func() {
+			_, _ = c.Datasources.DeleteDataSourceByUID(result.UID)
+		})
+	})
+}
+
+func TestCheckDatasourceHealthTool(t *testing.T) {
+	t.Run("check health of provisioned prometheus datasource", func(t *testing.T) {
+		ctx := newTestContext()
+		result, err := checkDatasourceHealth(ctx, CheckDatasourceHealthParams{UID: "prometheus"})
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Equal(t, "prometheus", result.UID)
+		assert.NotEmpty(t, result.Message)
+	})
+
+	t.Run("check health of non-existent datasource returns error", func(t *testing.T) {
+		ctx := newTestContext()
+		_, err := checkDatasourceHealth(ctx, CheckDatasourceHealthParams{UID: "non-existent-uid"})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "non-existent-uid")
+	})
+}
+
+func TestCheckDatasourcesHealthTool(t *testing.T) {
+	t.Run("check all datasources returns summary", func(t *testing.T) {
+		ctx := newTestContext()
+		result, err := checkDatasourcesHealth(ctx, BulkCheckDatasourceHealthParams{})
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Greater(t, result.Total, 0)
+		assert.Len(t, result.Results, result.Healthy+result.Unhealthy)
+		assert.LessOrEqual(t, len(result.Results), result.Total)
+	})
+
+	t.Run("filter by type returns only matching datasources", func(t *testing.T) {
+		ctx := newTestContext()
+		result, err := checkDatasourcesHealth(ctx, BulkCheckDatasourceHealthParams{Type: "prometheus"})
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Greater(t, result.Total, 0)
+		for _, r := range result.Results {
+			assert.Equal(t, "prometheus", r.Type)
+		}
+	})
+
+	t.Run("explicit uids checks only those datasources", func(t *testing.T) {
+		ctx := newTestContext()
+		result, err := checkDatasourcesHealth(ctx, BulkCheckDatasourceHealthParams{UIDs: []string{"prometheus", "loki"}})
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Equal(t, 2, result.Total)
+		uids := make([]string, len(result.Results))
+		for i, r := range result.Results {
+			uids[i] = r.UID
+		}
+		assert.ElementsMatch(t, []string{"prometheus", "loki"}, uids)
+	})
+}
+
+func TestUpdateDatasourceTool(t *testing.T) {
+	ctx := newTestContext()
+	c := mcpgrafana.GrafanaClientFromContext(ctx)
+
+	// Create a temporary datasource to test against so we don't modify provisioned ones.
+	dsAccess := models.DsAccess("proxy")
+	addResp, err := c.Datasources.AddDataSource(&models.AddDataSourceCommand{
+		Name:   "Integration Test DS",
+		Type:   "prometheus",
+		Access: dsAccess,
+		URL:    "http://prometheus:9090",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, addResp.Payload)
+	testUID := addResp.Payload.Datasource.UID
+
+	t.Cleanup(func() {
+		_, _ = c.Datasources.DeleteDataSourceByUID(testUID)
+	})
+
+	t.Run("update name", func(t *testing.T) {
+		newName := "Integration Test DS Updated"
+		result, err := updateDatasource(ctx, UpdateDatasourceParams{UID: testUID, Name: &newName})
+		require.NoError(t, err)
+		require.NotNil(t, result)
+	})
+
+	t.Run("update url", func(t *testing.T) {
+		newURL := "http://prometheus:9090"
+		result, err := updateDatasource(ctx, UpdateDatasourceParams{UID: testUID, URL: &newURL})
+		require.NoError(t, err)
+		require.NotNil(t, result)
+	})
+
+	t.Run("health check included in result", func(t *testing.T) {
+		newName := "Integration Test DS Health"
+		result, err := updateDatasource(ctx, UpdateDatasourceParams{UID: testUID, Name: &newName})
+		require.NoError(t, err)
+		require.NotNil(t, result.Health)
+		assert.Equal(t, testUID, result.Health.UID)
+		assert.NotEmpty(t, result.Health.Message)
+	})
+
+	t.Run("update non-existent datasource returns error", func(t *testing.T) {
+		newName := "Should Fail"
+		_, err := updateDatasource(ctx, UpdateDatasourceParams{UID: "non-existent-uid", Name: &newName})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
 	})
 }

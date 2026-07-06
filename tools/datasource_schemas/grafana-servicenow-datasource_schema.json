@@ -1,0 +1,169 @@
+{
+    "schemaVersion": "v1",
+    "pluginType": "grafana-servicenow-datasource",
+    "pluginName": "ServiceNow",
+    "fields": [
+        {
+            "id": "root.url",
+            "key": "url",
+            "label": "URL",
+            "description": "ServiceNow instance URL.",
+            "valueType": "string",
+            "semanticType": "url",
+            "target": "root",
+            "required": true
+        },
+        {
+            "id": "jsonData.authMethod",
+            "key": "authMethod",
+            "label": "Authentication Method",
+            "description": "Authentication method to use.",
+            "valueType": "string",
+            "target": "jsonData",
+            "defaultValue": "basicAuth",
+            "validations": [
+                {
+                    "type": "allowedValues",
+                    "values": [
+                        "basicAuth",
+                        "serviceNowOAuth"
+                    ]
+                }
+            ],
+            "ui": {
+                "component": "select",
+                "options": [
+                    {
+                        "label": "Basic Auth",
+                        "value": "basicAuth"
+                    },
+                    {
+                        "label": "OAuth 2.0",
+                        "value": "serviceNowOAuth"
+                    }
+                ]
+            }
+        },
+        {
+            "id": "root.basicAuth",
+            "key": "basicAuth",
+            "label": "Basic Auth",
+            "description": "Enable basic authentication.",
+            "valueType": "boolean",
+            "target": "root",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "root.basicAuthUser",
+            "key": "basicAuthUser",
+            "label": "Username",
+            "description": "ServiceNow username for basic auth.",
+            "valueType": "string",
+            "target": "root",
+            "dependsOn": "jsonData.authMethod == 'basicAuth'"
+        },
+        {
+            "id": "jsonData.oauthClientID",
+            "key": "oauthClientID",
+            "label": "OAuth Client ID",
+            "description": "OAuth 2.0 client ID.",
+            "valueType": "string",
+            "target": "jsonData",
+            "dependsOn": "jsonData.authMethod == 'serviceNowOAuth'"
+        },
+        {
+            "id": "jsonData.oauthEnabled",
+            "key": "oauthEnabled",
+            "label": "OAuth Enabled",
+            "description": "Legacy OAuth enabled flag (deprecated, use authMethod).",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.useSysTables",
+            "key": "useSysTables",
+            "label": "Use System Tables",
+            "description": "Enable querying sys_* tables.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.queryTimeoutSeconds",
+            "key": "queryTimeoutSeconds",
+            "label": "Query Timeout (seconds)",
+            "description": "Query timeout in seconds.",
+            "valueType": "number",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.enableSecureSocksProxy",
+            "key": "enableSecureSocksProxy",
+            "label": "Secure Socks Proxy",
+            "description": "Enable secure SOCKS proxy.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "secureJsonData.basicAuthPassword",
+            "key": "basicAuthPassword",
+            "label": "Password",
+            "description": "ServiceNow password for basic auth.",
+            "valueType": "string",
+            "target": "secureJsonData",
+            "semanticType": "password",
+            "dependsOn": "jsonData.authMethod == 'basicAuth'"
+        },
+        {
+            "id": "secureJsonData.oauthClientSecret",
+            "key": "oauthClientSecret",
+            "label": "OAuth Client Secret",
+            "description": "OAuth 2.0 client secret.",
+            "valueType": "string",
+            "target": "secureJsonData",
+            "semanticType": "token",
+            "dependsOn": "jsonData.authMethod == 'serviceNowOAuth'"
+        }
+    ],
+    "groups": [
+        {
+            "id": "connection",
+            "title": "Connection",
+            "fieldRefs": [
+                "root.url"
+            ]
+        },
+        {
+            "id": "auth",
+            "title": "Authentication",
+            "fieldRefs": [
+                "jsonData.authMethod",
+                "root.basicAuth",
+                "root.basicAuthUser",
+                "secureJsonData.basicAuthPassword",
+                "jsonData.oauthClientID",
+                "secureJsonData.oauthClientSecret",
+                "jsonData.oauthEnabled"
+            ]
+        },
+        {
+            "id": "settings",
+            "title": "Settings",
+            "fieldRefs": [
+                "jsonData.useSysTables",
+                "jsonData.queryTimeoutSeconds",
+                "jsonData.enableSecureSocksProxy"
+            ]
+        }
+    ]
+}

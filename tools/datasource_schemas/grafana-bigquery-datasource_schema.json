@@ -1,0 +1,148 @@
+{
+    "schemaVersion": "v1",
+    "pluginType": "grafana-bigquery-datasource",
+    "pluginName": "Google BigQuery",
+    "docURL": "https://grafana.com/grafana/plugins/grafana-bigquery-datasource/",
+    "fields": [
+        {
+            "id": "jsonData.authenticationType",
+            "key": "authenticationType",
+            "label": "Authentication type",
+            "description": "Google Cloud authentication mechanism (jwt, gce, or workloadIdentityFederation).",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.defaultProject",
+            "key": "defaultProject",
+            "label": "Default Project",
+            "description": "GCP project ID. The project_id from the service account JSON.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.clientEmail",
+            "key": "clientEmail",
+            "label": "Client Email",
+            "description": "Service account email address for JWT authentication.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.tokenUri",
+            "key": "tokenUri",
+            "label": "Token URI",
+            "description": "OAuth2 token endpoint URI.",
+            "valueType": "string",
+            "target": "jsonData",
+            "defaultValue": "https://oauth2.googleapis.com/token"
+        },
+        {
+            "id": "jsonData.flatRateProject",
+            "key": "flatRateProject",
+            "label": "Flat Rate Project",
+            "description": "Project used for flat-rate billing reservation.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.processingLocation",
+            "key": "processingLocation",
+            "label": "Processing Location",
+            "description": "BigQuery processing location (e.g. US, EU).",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.queryPriority",
+            "key": "queryPriority",
+            "label": "Query Priority",
+            "description": "BigQuery query priority (INTERACTIVE or BATCH).",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.enableSecureSocksProxy",
+            "key": "enableSecureSocksProxy",
+            "label": "Secure Socks Proxy",
+            "description": "Enable secure SOCKS proxy.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.MaxBytesBilled",
+            "key": "MaxBytesBilled",
+            "label": "Max Bytes Billed",
+            "description": "Limits the bytes billed per query. Queries exceeding this limit will fail.",
+            "valueType": "number",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.serviceEndpoint",
+            "key": "serviceEndpoint",
+            "label": "Service Endpoint",
+            "description": "Custom BigQuery API endpoint.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.oauthPassThru",
+            "key": "oauthPassThru",
+            "label": "Forward OAuth Identity",
+            "description": "Forward the user's OAuth token to BigQuery.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "secureJsonData.privateKey",
+            "key": "privateKey",
+            "label": "Private Key",
+            "description": "Service account private key for JWT authentication.",
+            "valueType": "string",
+            "semanticType": "token",
+            "target": "secureJsonData",
+            "ui": {
+                "component": "textarea",
+                "rows": 7
+            }
+        }
+    ],
+    "groups": [
+        {
+            "id": "auth",
+            "title": "Authentication",
+            "fieldRefs": [
+                "jsonData.authenticationType",
+                "jsonData.defaultProject",
+                "jsonData.clientEmail",
+                "jsonData.tokenUri",
+                "secureJsonData.privateKey"
+            ]
+        },
+        {
+            "id": "bigquery-details",
+            "title": "BigQuery details",
+            "fieldRefs": [
+                "jsonData.processingLocation",
+                "jsonData.queryPriority",
+                "jsonData.MaxBytesBilled",
+                "jsonData.flatRateProject",
+                "jsonData.serviceEndpoint"
+            ]
+        },
+        {
+            "id": "additional",
+            "title": "Additional settings",
+            "fieldRefs": [
+                "jsonData.enableSecureSocksProxy",
+                "jsonData.oauthPassThru"
+            ]
+        }
+    ]
+}

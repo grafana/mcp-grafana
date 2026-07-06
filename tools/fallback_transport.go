@@ -23,7 +23,8 @@ type datasourceFallbackTransport struct {
 }
 
 // fallbackEndpoints caches which datasource proxy paths need the fallback
-// endpoint. Key is the primary base path, value is true if fallback is needed.
+// endpoint. Key is the primary base path plus request path suffix, value is
+// true if fallback is needed.
 var fallbackEndpoints sync.Map
 
 func newDatasourceFallbackTransport(wrapped http.RoundTripper, primaryBase, fallbackBase string) http.RoundTripper {
@@ -35,8 +36,10 @@ func newDatasourceFallbackTransport(wrapped http.RoundTripper, primaryBase, fall
 }
 
 func (t *datasourceFallbackTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	cacheKey := t.fallbackCacheKey(req)
+
 	// Check cache: if we already know the fallback works, use it directly.
-	if useFallback, ok := fallbackEndpoints.Load(t.primaryBase); ok && useFallback.(bool) {
+	if useFallback, ok := fallbackEndpoints.Load(cacheKey); ok && useFallback.(bool) {
 		return t.wrapped.RoundTrip(t.rewriteRequest(req, t.primaryBase, t.fallbackBase))
 	}
 
@@ -50,6 +53,7 @@ func (t *datasourceFallbackTransport) RoundTrip(req *http.Request) (*http.Respon
 			return nil, fmt.Errorf("buffering request body for fallback: %w", err)
 		}
 		req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+		req.ContentLength = int64(len(bodyBytes))
 	}
 
 	resp, err := t.wrapped.RoundTrip(req)
@@ -75,12 +79,29 @@ func (t *datasourceFallbackTransport) RoundTrip(req *http.Request) (*http.Respon
 		return nil, retryErr
 	}
 
-	// If the fallback succeeded, remember it for future requests.
-	if retryResp.StatusCode != http.StatusForbidden && retryResp.StatusCode != http.StatusInternalServerError {
-		fallbackEndpoints.Store(t.primaryBase, true)
+	// Only cache the fallback path when the fallback actually returned a
+	// successful (2xx) response.  A 4xx from the fallback means neither path
+	// is working for this particular request; caching it would silently break
+	// all subsequent calls that would otherwise succeed via the primary path.
+	if retryResp.StatusCode >= 200 && retryResp.StatusCode < 300 {
+		fallbackEndpoints.Store(cacheKey, true)
 	}
 
 	return retryResp, nil
+}
+
+func (t *datasourceFallbackTransport) fallbackCacheKey(req *http.Request) string {
+	path := req.URL.EscapedPath()
+	if path == "" {
+		path = req.URL.Path
+	}
+
+	suffix, ok := strings.CutPrefix(path, t.primaryBase)
+	if !ok {
+		return t.primaryBase + "\x00" + path
+	}
+
+	return t.primaryBase + suffix
 }
 
 func (t *datasourceFallbackTransport) rewriteRequest(req *http.Request, from, to string) *http.Request {

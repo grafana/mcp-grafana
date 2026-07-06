@@ -5,3 +5,29 @@ run:
   go: "1.26"
   relative-path-mode: gomod
   allow-parallel-runners: true
+
+linters:
+  enable:
+    - depguard
+    - sloglint
+  settings:
+    depguard:
+      rules:
+        no-direct-otelhttp:
+          # Forbid importing otelhttp directly in tool files.
+          # All HTTP clients should use mcpgrafana.BuildTransport() which
+          # handles OTel tracing (plus auth, org-ID, user-agent) centrally.
+          list-mode: lax
+          files:
+            - "**/tools/*.go"
+            - "!**/*_test.go"
+          deny:
+            - pkg: "go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+              desc: "Use mcpgrafana.BuildTransport() instead of wrapping with otelhttp directly."
+    sloglint:
+      no-global: "all"
+  exclusions:
+    rules:
+      - linters:
+          - sloglint
+        path: "cmd/"

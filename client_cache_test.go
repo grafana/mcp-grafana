@@ -11,7 +11,7 @@ import (
 )
 
 func TestClientCache_GrafanaClient(t *testing.T) {
-	cache := NewClientCache()
+	cache := NewClientCache(nil)
 	defer cache.Close()
 
 	key := clientCacheKey{url: "http://localhost:3000", apiKey: "test-key", orgID: 1}
@@ -39,12 +39,12 @@ func TestClientCache_GrafanaClient(t *testing.T) {
 	assert.NotSame(t, client1, client3)
 	assert.Equal(t, 2, createCount)
 
-	g, _ := cache.Size()
+	g, _, _ := cache.Size()
 	assert.Equal(t, 2, g)
 }
 
 func TestClientCache_IncidentClient(t *testing.T) {
-	cache := NewClientCache()
+	cache := NewClientCache(nil)
 	defer cache.Close()
 
 	key := clientCacheKey{url: "http://localhost:3000", apiKey: "test-key", orgID: 1}
@@ -63,12 +63,12 @@ func TestClientCache_IncidentClient(t *testing.T) {
 	assert.Same(t, client1, client2)
 	assert.Equal(t, 1, createCount)
 
-	_, i := cache.Size()
+	_, i, _ := cache.Size()
 	assert.Equal(t, 1, i)
 }
 
 func TestClientCache_ConcurrentAccess(t *testing.T) {
-	cache := NewClientCache()
+	cache := NewClientCache(nil)
 	defer cache.Close()
 
 	key := clientCacheKey{url: "http://localhost:3000", apiKey: "test-key", orgID: 1}
@@ -106,16 +106,19 @@ func TestClientCache_ConcurrentAccess(t *testing.T) {
 }
 
 func TestClientCache_DifferentCredentials(t *testing.T) {
-	cache := NewClientCache()
+	cache := NewClientCache(nil)
 	defer cache.Close()
 
 	keys := []clientCacheKey{
-		{url: "http://host1:3000", apiKey: "key1", orgID: 1},
-		{url: "http://host1:3000", apiKey: "key2", orgID: 1},       // different key
-		{url: "http://host1:3000", apiKey: "key1", orgID: 2},       // different org
-		{url: "http://host2:3000", apiKey: "key1", orgID: 1},       // different url
-		{url: "http://host1:3000", apiKey: "key1", orgID: 1},       // same as first
+		{url: "http://host1:3000", apiKey: "key1", orgID: 1, forwardedHeaders: "X-WEBAUTH-USER=admin"},    // base key
+		{url: "http://host1:3000", apiKey: "key2", orgID: 1, forwardedHeaders: "X-WEBAUTH-USER=admin"},    // different key
+		{url: "http://host1:3000", apiKey: "key1", orgID: 2, forwardedHeaders: "X-WEBAUTH-USER=admin"},    // different org
+		{url: "http://host2:3000", apiKey: "key1", orgID: 1, forwardedHeaders: "X-WEBAUTH-USER=admin"},    // different url
+		{url: "http://host1:3000", apiKey: "key1", orgID: 1, forwardedHeaders: "X-WEBAUTH-USER=admin"},    // same as first
+		{url: "http://host1:3000", apiKey: "key1", orgID: 1, forwardedHeaders: "X-WEBAUTH-USER=john.doe"}, // different user
 	}
+
+	const numUniqueKeys = 5
 
 	clients := make([]*GrafanaClient, len(keys))
 	for i, key := range keys {
@@ -130,17 +133,18 @@ func TestClientCache_DifferentCredentials(t *testing.T) {
 	assert.NotSame(t, clients[0], clients[1])
 	assert.NotSame(t, clients[0], clients[2])
 	assert.NotSame(t, clients[0], clients[3])
+	assert.NotSame(t, clients[0], clients[5])
 
-	g, _ := cache.Size()
-	assert.Equal(t, 4, g) // 4 unique keys
+	g, _, _ := cache.Size()
+	assert.Equal(t, numUniqueKeys, g) // 5 unique keys
 }
 
 func TestCacheKeyFromRequest(t *testing.T) {
-	key1 := cacheKeyFromRequest("http://localhost:3000", "key1", nil, 1)
-	key2 := cacheKeyFromRequest("http://localhost:3000", "key1", nil, 1)
+	key1 := cacheKeyFromRequest("http://localhost:3000", "key1", nil, 1, nil)
+	key2 := cacheKeyFromRequest("http://localhost:3000", "key1", nil, 1, nil)
 	assert.Equal(t, key1, key2)
 
-	key3 := cacheKeyFromRequest("http://localhost:3000", "key1", url.UserPassword("admin", "pass"), 1)
+	key3 := cacheKeyFromRequest("http://localhost:3000", "key1", url.UserPassword("admin", "pass"), 1, nil)
 	assert.NotEqual(t, key1, key3)
 
 	assert.Equal(t, "admin", key3.username)
@@ -148,7 +152,7 @@ func TestCacheKeyFromRequest(t *testing.T) {
 }
 
 func TestClientCache_Close(t *testing.T) {
-	cache := NewClientCache()
+	cache := NewClientCache(nil)
 
 	key := clientCacheKey{url: "http://localhost:3000", apiKey: "key", orgID: 1}
 	cache.GetOrCreateGrafanaClient(key, func() *GrafanaClient {
@@ -158,13 +162,13 @@ func TestClientCache_Close(t *testing.T) {
 		return incident.NewClient("http://localhost:3000/incident", "key")
 	})
 
-	g, i := cache.Size()
+	g, i, _ := cache.Size()
 	assert.Equal(t, 1, g)
 	assert.Equal(t, 1, i)
 
 	cache.Close()
 
-	g, i = cache.Size()
+	g, i, _ = cache.Size()
 	assert.Equal(t, 0, g)
 	assert.Equal(t, 0, i)
 }

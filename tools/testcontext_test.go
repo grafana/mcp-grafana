@@ -16,21 +16,30 @@ import (
 // newTestContext creates a new context with the Grafana URL and service account token
 // from the environment variables GRAFANA_URL and GRAFANA_SERVICE_ACCOUNT_TOKEN (or deprecated GRAFANA_API_KEY).
 func newTestContext() context.Context {
-	cfg := client.DefaultTransportConfig()
-	cfg.Host = "localhost:3000"
-	cfg.Schemes = []string{"http"}
-	// Extract transport config from env vars, and set it on the context.
+	grafanaURL := "http://localhost:3000"
 	if u, ok := os.LookupEnv("GRAFANA_URL"); ok {
-		url, err := url.Parse(u)
-		if err != nil {
-			panic(fmt.Errorf("invalid %s: %w", "GRAFANA_URL", err))
-		}
-		cfg.Host = url.Host
-		// The Grafana client will always prefer HTTPS even if the URL is HTTP,
-		// so we need to limit the schemes to HTTP if the URL is HTTP.
-		if url.Scheme == "http" {
-			cfg.Schemes = []string{"http"}
-		}
+		grafanaURL = u
+	}
+	return newTestContextForURL(grafanaURL)
+}
+
+// newTestContextForURL builds a context targeting a specific Grafana base URL.
+// It wires both the legacy Grafana client and the Kubernetes-style client, so
+// dashboard tools exercise the same k8s-or-legacy routing as in production. Use
+// this to target the legacy instance (e.g. http://localhost:3002) directly.
+func newTestContextForURL(grafanaURL string) context.Context {
+	cfg := client.DefaultTransportConfig()
+	parsed, err := url.Parse(grafanaURL)
+	if err != nil {
+		panic(fmt.Errorf("invalid Grafana URL %q: %w", grafanaURL, err))
+	}
+	cfg.Host = parsed.Host
+	// The Grafana client will always prefer HTTPS even if the URL is HTTP,
+	// so we need to limit the schemes to HTTP if the URL is HTTP.
+	if parsed.Scheme == "http" {
+		cfg.Schemes = []string{"http"}
+	} else {
+		cfg.Schemes = []string{"https"}
 	}
 
 	// Check for the new service account token environment variable first
@@ -47,11 +56,19 @@ func newTestContext() context.Context {
 
 	grafanaCfg := mcpgrafana.GrafanaConfig{
 		Debug:     true,
-		URL:       "http://localhost:3000",
+		URL:       grafanaURL,
 		APIKey:    cfg.APIKey,
 		BasicAuth: cfg.BasicAuth,
 	}
 
 	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), grafanaCfg)
-	return mcpgrafana.WithGrafanaClient(ctx, &mcpgrafana.GrafanaClient{GrafanaHTTPAPI: client})
+	ctx = mcpgrafana.WithGrafanaClient(ctx, &mcpgrafana.GrafanaClient{GrafanaHTTPAPI: client})
+
+	// Wire the Kubernetes-style client too, so dashboard tools can reach the
+	// dashboard.grafana.app API (with automatic fallback to legacy when absent).
+	k8sClient, err := mcpgrafana.NewKubernetesClient(ctx)
+	if err != nil {
+		panic(fmt.Errorf("create kubernetes client: %w", err))
+	}
+	return mcpgrafana.WithKubernetesClient(ctx, k8sClient)
 }

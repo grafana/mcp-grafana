@@ -44,8 +44,11 @@ jobs:
           uv sync --all-groups
 
       - id: get-secrets
-        uses: grafana/shared-workflows/actions/get-vault-secrets@f1614b210386ac420af6807a997ac7f6d96e477a # get-vault-secrets/v1.3.1
+        uses: grafana/shared-workflows/actions/get-vault-secrets@a53fc80bc30b0a16a262520465db899fa3af08b7 # get-vault-secrets/v1.3.2
         with:
+          # Don't export secrets to $GITHUB_ENV for the whole job; consume them
+          # from this step's `secrets` output only where needed (see below).
+          export_env: false
           # Secrets placed in the ci/repo/grafana/mcp-grafana/<path> path in Vault
           repo_secrets: |
             ANTHROPIC_API_KEY=anthropic:api-key
@@ -65,7 +68,7 @@ jobs:
       - name: Start MCP server in background
         if: matrix.transport != 'stdio'
         run: |
-          nohup ./dist/mcp-grafana -t ${{ matrix.transport }} --enabled-tools search,datasource,incident,prometheus,loki,elasticsearch,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering,admin,clickhouse,cloudwatch > mcp.log 2>&1 &
+          nohup ./dist/mcp-grafana -t ${{ matrix.transport }} --enabled-tools search,datasource,incident,prometheus,loki,elasticsearch,influxdb,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering,admin,clickhouse,cloudwatch > mcp.log 2>&1 &
           sleep 2  # Give server time to start and create log file
           if [ ! -f mcp.log ]; then
             echo "Warning: mcp.log was not created. Server may have failed to start."
@@ -75,6 +78,8 @@ jobs:
         env:
           MCP_GRAFANA_PATH: ../dist/mcp-grafana
           MCP_TRANSPORT: ${{ matrix.transport }}
+          ANTHROPIC_API_KEY: ${{ fromJSON(steps.get-secrets.outputs.secrets).ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ fromJSON(steps.get-secrets.outputs.secrets).OPENAI_API_KEY }}
         run: |
           cd tests
           uv run pytest
