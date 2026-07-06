@@ -5,6 +5,7 @@ package tools
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -19,12 +20,140 @@ func intPtr(i int) *int {
 	return &i
 }
 
-func TestBuildRenderURL(t *testing.T) {
+func TestStringOrSlice_UnmarshalJSON(t *testing.T) {
 	tests := []struct {
 		name     string
-		baseURL  string
-		args     GetPanelImageParams
-		contains []string
+		input    string
+		expected StringOrSlice
+		wantErr  bool
+	}{
+		{
+			name:     "Single string value",
+			input:    `"prometheus"`,
+			expected: StringOrSlice{"prometheus"},
+		},
+		{
+			name:     "Array with single value",
+			input:    `["prometheus"]`,
+			expected: StringOrSlice{"prometheus"},
+		},
+		{
+			name:     "Array with multiple values",
+			input:    `["server1", "server2", "server3"]`,
+			expected: StringOrSlice{"server1", "server2", "server3"},
+		},
+		{
+			name:     "Empty array",
+			input:    `[]`,
+			expected: StringOrSlice{},
+		},
+		{
+			name:    "Invalid type (number)",
+			input:   `42`,
+			wantErr: true,
+		},
+		{
+			name:    "Invalid type (object)",
+			input:   `{"key": "value"}`,
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var result StringOrSlice
+			err := json.Unmarshal([]byte(tt.input), &result)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestStringOrSlice_MarshalJSON(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    StringOrSlice
+		expected string
+	}{
+		{
+			name:     "Single value marshals as string",
+			input:    StringOrSlice{"prometheus"},
+			expected: `"prometheus"`,
+		},
+		{
+			name:     "Multiple values marshal as array",
+			input:    StringOrSlice{"server1", "server2"},
+			expected: `["server1","server2"]`,
+		},
+		{
+			name:     "Empty slice marshals as empty array",
+			input:    StringOrSlice{},
+			expected: `[]`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := json.Marshal(tt.input)
+			require.NoError(t, err)
+			assert.JSONEq(t, tt.expected, string(result))
+		})
+	}
+}
+
+func TestGetPanelImageParams_UnmarshalVariables(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected map[string]StringOrSlice
+	}{
+		{
+			name:  "Single string values (backward compatible)",
+			input: `{"dashboardUid": "abc", "variables": {"var-datasource": "prometheus", "var-host": "server01"}}`,
+			expected: map[string]StringOrSlice{
+				"var-datasource": {"prometheus"},
+				"var-host":       {"server01"},
+			},
+		},
+		{
+			name:  "Multi-value array",
+			input: `{"dashboardUid": "abc", "variables": {"var-instance": ["172.16.31.129", "172.16.32.99"]}}`,
+			expected: map[string]StringOrSlice{
+				"var-instance": {"172.16.31.129", "172.16.32.99"},
+			},
+		},
+		{
+			name:  "Mixed single and multi-value",
+			input: `{"dashboardUid": "abc", "variables": {"var-datasource": "prometheus", "var-instance": ["server1", "server2"]}}`,
+			expected: map[string]StringOrSlice{
+				"var-datasource": {"prometheus"},
+				"var-instance":   {"server1", "server2"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var params GetPanelImageParams
+			err := json.Unmarshal([]byte(tt.input), &params)
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, params.Variables)
+		})
+	}
+}
+
+func TestBuildRenderURL(t *testing.T) {
+	tests := []struct {
+		name        string
+		baseURL     string
+		args        GetPanelImageParams
+		contains    []string
+		notContains []string
+		expectError bool
 	}{
 		{
 			name:    "Basic dashboard render",
@@ -41,7 +170,7 @@ func TestBuildRenderURL(t *testing.T) {
 			},
 		},
 		{
-			name:    "Panel render with custom dimensions",
+			name:    "Panel render with custom dimensions uses d-solo path",
 			baseURL: "http://localhost:3000",
 			args: GetPanelImageParams{
 				DashboardUID: "abc123",
@@ -50,10 +179,14 @@ func TestBuildRenderURL(t *testing.T) {
 				Height:       intPtr(600),
 			},
 			contains: []string{
-				"http://localhost:3000/render/d/abc123",
-				"viewPanel=5",
+				"http://localhost:3000/render/d-solo/abc123",
+				"panelId=5",
 				"width=800",
 				"height=600",
+			},
+			notContains: []string{
+				"/render/d/abc123",
+				"viewPanel=",
 			},
 		},
 		{
@@ -83,18 +216,32 @@ func TestBuildRenderURL(t *testing.T) {
 			},
 		},
 		{
-			name:    "With variables",
+			name:    "With single-value variables",
 			baseURL: "http://localhost:3000",
 			args: GetPanelImageParams{
 				DashboardUID: "abc123",
-				Variables: map[string]string{
-					"var-datasource": "prometheus",
-					"var-host":       "server01",
+				Variables: map[string]StringOrSlice{
+					"var-datasource": {"prometheus"},
+					"var-host":       {"server01"},
 				},
 			},
 			contains: []string{
 				"var-datasource=prometheus",
 				"var-host=server01",
+			},
+		},
+		{
+			name:    "With multi-value variables",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				DashboardUID: "abc123",
+				Variables: map[string]StringOrSlice{
+					"var-instance": {"172.16.31.129", "172.16.32.99"},
+				},
+			},
+			contains: []string{
+				"var-instance=172.16.31.129",
+				"var-instance=172.16.32.99",
 			},
 		},
 		{
@@ -118,15 +265,210 @@ func TestBuildRenderURL(t *testing.T) {
 				"http://localhost:3000/render/d/abc123",
 			},
 		},
+		{
+			name:    "Provisioning preview renders the preview path with ref",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				ProvisioningPreview: &ProvisioningPreview{
+					Repo: "my-repo",
+					Path: "folder/dashboard.json",
+					Ref:  "feature-branch",
+				},
+			},
+			contains: []string{
+				"http://localhost:3000/render/dashboard/provisioning/my-repo/preview/folder/dashboard.json",
+				"ref=feature-branch",
+				"kiosk=true",
+			},
+			notContains: []string{
+				"/render/d/",
+				"/render/d-solo/",
+			},
+		},
+		{
+			name:    "Provisioning preview without ref omits the ref query param",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				ProvisioningPreview: &ProvisioningPreview{
+					Repo: "my-repo",
+					Path: "dashboard.json",
+				},
+			},
+			contains: []string{
+				"http://localhost:3000/render/dashboard/provisioning/my-repo/preview/dashboard.json",
+			},
+			notContains: []string{
+				"ref=",
+			},
+		},
+		{
+			name:    "Provisioning preview escapes special characters in repo and path",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				ProvisioningPreview: &ProvisioningPreview{
+					Repo: "repo with space",
+					Path: "folder/dash?name#frag.json",
+				},
+			},
+			contains: []string{
+				"/render/dashboard/provisioning/repo%20with%20space/preview/folder/dash%3Fname%23frag.json",
+			},
+			notContains: []string{
+				"repo with space",
+				"dash?name",
+				"#frag",
+			},
+		},
+		{
+			// url.URL{}.EscapedPath() and url.PathEscape diverge on a few
+			// characters that are legal in a path but not in a single segment
+			// — notably `;` and `,`. The render URL should encode them the
+			// same way navigation/provisioning do (PathEscape semantics) for
+			// the single-segment repo slug.
+			name:    "Provisioning preview encodes segment-only-reserved chars in repo slug",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				ProvisioningPreview: &ProvisioningPreview{
+					Repo: "a;b,c",
+					Path: "dash.json",
+				},
+			},
+			contains: []string{
+				"/render/dashboard/provisioning/a%3Bb%2Cc/preview/dash.json",
+			},
+			notContains: []string{
+				"/provisioning/a;b,c/",
+			},
+		},
+		{
+			name:    "Provisioning preview with panel ID uses viewPanel (not d-solo)",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				ProvisioningPreview: &ProvisioningPreview{
+					Repo: "my-repo",
+					Path: "dashboard.json",
+					Ref:  "feature-branch",
+				},
+				PanelID: intPtr(7),
+			},
+			contains: []string{
+				"http://localhost:3000/render/dashboard/provisioning/my-repo/preview/dashboard.json",
+				"viewPanel=7",
+			},
+			notContains: []string{
+				"panelId=",
+				"/render/d-solo/",
+			},
+		},
+		{
+			name:        "Error: neither dashboardUid nor provisioningPreview",
+			baseURL:     "http://localhost:3000",
+			args:        GetPanelImageParams{},
+			expectError: true,
+		},
+		{
+			name:    "Error: both dashboardUid and provisioningPreview",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				DashboardUID: "abc123",
+				ProvisioningPreview: &ProvisioningPreview{
+					Repo: "my-repo",
+					Path: "dashboard.json",
+				},
+			},
+			expectError: true,
+		},
+		{
+			name:    "Error: provisioningPreview missing repo",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				ProvisioningPreview: &ProvisioningPreview{
+					Path: "dashboard.json",
+				},
+			},
+			expectError: true,
+		},
+		{
+			name:    "Error: provisioningPreview missing path",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				ProvisioningPreview: &ProvisioningPreview{
+					Repo: "my-repo",
+				},
+			},
+			expectError: true,
+		},
+		{
+			name:    "Error: provisioningPreview repo with slash",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				ProvisioningPreview: &ProvisioningPreview{
+					Repo: "evil/../../d",
+					Path: "dashboard.json",
+				},
+			},
+			expectError: true,
+		},
+		{
+			name:    "Error: provisioningPreview repo with backslash",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				ProvisioningPreview: &ProvisioningPreview{
+					Repo: `evil\..\d`,
+					Path: "dashboard.json",
+				},
+			},
+			expectError: true,
+		},
+		{
+			name:    "Error: provisioningPreview repo equals ..",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				ProvisioningPreview: &ProvisioningPreview{
+					Repo: "..",
+					Path: "dashboard.json",
+				},
+			},
+			expectError: true,
+		},
+		{
+			name:    "Error: provisioningPreview path with .. segment",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				ProvisioningPreview: &ProvisioningPreview{
+					Repo: "my-repo",
+					Path: "folder/../../etc/passwd",
+				},
+			},
+			expectError: true,
+		},
+		{
+			name:    "Error: provisioningPreview path is exactly ..",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				ProvisioningPreview: &ProvisioningPreview{
+					Repo: "my-repo",
+					Path: "..",
+				},
+			},
+			expectError: true,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result, err := buildRenderURL(tt.baseURL, tt.args)
+			if tt.expectError {
+				require.Error(t, err)
+				return
+			}
 			require.NoError(t, err)
 
 			for _, expected := range tt.contains {
 				assert.Contains(t, result, expected)
+			}
+			for _, unexpected := range tt.notContains {
+				assert.NotContains(t, result, unexpected)
 			}
 		})
 	}
@@ -187,9 +529,10 @@ func TestGetPanelImage(t *testing.T) {
 		}
 	})
 
-	t.Run("Panel image with specific panel ID", func(t *testing.T) {
+	t.Run("Panel image with specific panel ID uses d-solo path and panelId param", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			assert.Equal(t, "5", r.URL.Query().Get("viewPanel"))
+			assert.Contains(t, r.URL.Path, "/render/d-solo/test-dash")
+			assert.Equal(t, "5", r.URL.Query().Get("panelId"))
 
 			w.Header().Set("Content-Type", "image/png")
 			w.WriteHeader(http.StatusOK)
@@ -339,8 +682,36 @@ func TestGetPanelImage(t *testing.T) {
 
 		_, err := getPanelImage(ctx, GetPanelImageParams{
 			DashboardUID: "test-dash",
-			Variables: map[string]string{
-				"var-datasource": "prometheus",
+			Variables: map[string]StringOrSlice{
+				"var-datasource": {"prometheus"},
+			},
+		})
+
+		require.NoError(t, err)
+	})
+
+	t.Run("With multi-value dashboard variables", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Multi-value variables should appear as multiple query params
+			values := r.URL.Query()["var-instance"]
+			assert.ElementsMatch(t, []string{"172.16.31.129", "172.16.32.99"}, values)
+
+			w.Header().Set("Content-Type", "image/png")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(testPNGData)
+		}))
+		defer server.Close()
+
+		grafanaCfg := mcpgrafana.GrafanaConfig{
+			URL:    server.URL,
+			APIKey: "test-api-key",
+		}
+		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), grafanaCfg)
+
+		_, err := getPanelImage(ctx, GetPanelImageParams{
+			DashboardUID: "test-dash",
+			Variables: map[string]StringOrSlice{
+				"var-instance": {"172.16.31.129", "172.16.32.99"},
 			},
 		})
 
@@ -361,6 +732,56 @@ func TestGetPanelImage(t *testing.T) {
 			URL:    server.URL,
 			APIKey: "test-api-key",
 			OrgID:  2,
+		}
+		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), grafanaCfg)
+
+		_, err := getPanelImage(ctx, GetPanelImageParams{
+			DashboardUID: "test-dash",
+		})
+
+		require.NoError(t, err)
+	})
+
+	t.Run("BaseTransport is used when configured", func(t *testing.T) {
+		var baseTransportUsed bool
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "image/png")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(testPNGData)
+		}))
+		defer server.Close()
+
+		grafanaCfg := mcpgrafana.GrafanaConfig{
+			URL:    server.URL,
+			APIKey: "test-api-key",
+			BaseTransport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				baseTransportUsed = true
+				return http.DefaultTransport.RoundTrip(req)
+			}),
+		}
+		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), grafanaCfg)
+
+		_, err := getPanelImage(ctx, GetPanelImageParams{
+			DashboardUID: "test-dash",
+		})
+
+		require.NoError(t, err)
+		assert.True(t, baseTransportUsed, "expected BaseTransport to be used as the innermost transport layer")
+	})
+
+	t.Run("User-Agent header is set", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			assert.Contains(t, r.Header.Get("User-Agent"), "mcp-grafana/")
+
+			w.Header().Set("Content-Type", "image/png")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(testPNGData)
+		}))
+		defer server.Close()
+
+		grafanaCfg := mcpgrafana.GrafanaConfig{
+			URL:    server.URL,
+			APIKey: "test-api-key",
 		}
 		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), grafanaCfg)
 

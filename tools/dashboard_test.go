@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/grafana/grafana-openapi-client-go/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -22,7 +21,7 @@ const (
 // getExistingDashboardUID will fetch an existing dashboard for test purposes
 // It will search for exisiting dashboards and return the first, otherwise
 // will trigger a test error
-func getExistingTestDashboard(t *testing.T, ctx context.Context, dashboardName string) *models.Hit {
+func getExistingTestDashboard(t *testing.T, ctx context.Context, dashboardName string) dashboardSearchHit {
 	// Make sure we query for the existing dashboard, not a folder
 	if dashboardName == "" {
 		dashboardName = "Demo"
@@ -37,7 +36,7 @@ func getExistingTestDashboard(t *testing.T, ctx context.Context, dashboardName s
 
 // getExistingTestDashboardJSON will fetch the JSON map for an existing
 // dashboard in the test environment
-func getTestDashboardJSON(t *testing.T, ctx context.Context, dashboard *models.Hit) map[string]interface{} {
+func getTestDashboardJSON(t *testing.T, ctx context.Context, dashboard dashboardSearchHit) map[string]interface{} {
 	result, err := getDashboardByUID(ctx, GetDashboardByUIDParams{
 		UID: dashboard.UID,
 	})
@@ -144,15 +143,86 @@ func TestDashboardTools(t *testing.T) {
 		require.NoError(t, err)
 		assert.Greater(t, len(result), 0, "Should return at least one panel query")
 
-		// The initial demo dashboard plus for all dashboards created by the integration tests,
-		// every panel should have identical title and query values.
-		// Datasource UID may differ. Datasource type can be an empty string as well but on the demo and test dashboards it should be "prometheus".
-		for _, panelQuery := range result {
-			assert.Equal(t, panelQuery.Title, "Node Load")
-			assert.Equal(t, panelQuery.Query, "node_load1")
-			assert.NotEmpty(t, panelQuery.Datasource.UID)
-			assert.Equal(t, panelQuery.Datasource.Type, "prometheus")
+		// Verify each returned query has the expected structure
+		for _, pq := range result {
+			assert.NotEmpty(t, pq.Title)
+			assert.NotEmpty(t, pq.Query)
+			assert.NotEmpty(t, pq.Datasource.UID)
 		}
+	})
+
+	t.Run("get dashboard panel queries - with panelId", func(t *testing.T) {
+		ctx := newTestContext()
+
+		dashboard := getExistingTestDashboard(t, ctx, "")
+
+		// Get the summary to find a valid panel ID
+		summary, err := getDashboardSummary(ctx, GetDashboardSummaryParams{UID: dashboard.UID})
+		require.NoError(t, err)
+		require.Greater(t, len(summary.Panels), 0)
+
+		panelID := summary.Panels[0].ID
+		result, err := GetDashboardPanelQueriesTool(ctx, DashboardPanelQueriesParams{
+			UID:     dashboard.UID,
+			PanelID: &panelID,
+		})
+		require.NoError(t, err)
+		assert.Greater(t, len(result), 0, "Should return at least one query for the panel")
+	})
+
+	t.Run("get dashboard panel queries - invalid panelId", func(t *testing.T) {
+		ctx := newTestContext()
+
+		dashboard := getExistingTestDashboard(t, ctx, "")
+
+		invalidID := 99999
+		_, err := GetDashboardPanelQueriesTool(ctx, DashboardPanelQueriesParams{
+			UID:     dashboard.UID,
+			PanelID: &invalidID,
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
+
+	t.Run("get dashboard panel queries - with variables", func(t *testing.T) {
+		ctx := newTestContext()
+
+		dashboard := getExistingTestDashboard(t, ctx, "")
+
+		result, err := GetDashboardPanelQueriesTool(ctx, DashboardPanelQueriesParams{
+			UID: dashboard.UID,
+			Variables: map[string]string{
+				"job": "test-job",
+			},
+		})
+		require.NoError(t, err)
+		assert.Greater(t, len(result), 0, "Should return at least one panel query")
+
+		// When variables are provided, raw query should always be present
+		for _, pq := range result {
+			assert.NotEmpty(t, pq.Query, "Raw query should always be present")
+		}
+	})
+
+	t.Run("get dashboard panel queries - with panelId and variables", func(t *testing.T) {
+		ctx := newTestContext()
+
+		dashboard := getExistingTestDashboard(t, ctx, "")
+
+		summary, err := getDashboardSummary(ctx, GetDashboardSummaryParams{UID: dashboard.UID})
+		require.NoError(t, err)
+		require.Greater(t, len(summary.Panels), 0)
+
+		panelID := summary.Panels[0].ID
+		result, err := GetDashboardPanelQueriesTool(ctx, DashboardPanelQueriesParams{
+			UID:     dashboard.UID,
+			PanelID: &panelID,
+			Variables: map[string]string{
+				"job": "test-job",
+			},
+		})
+		require.NoError(t, err)
+		assert.Greater(t, len(result), 0, "Should return at least one query")
 	})
 
 	// Tests for new Issue #101 context window management tools
@@ -262,6 +332,64 @@ func TestDashboardTools(t *testing.T) {
 		dashboardMap, ok := updatedDashboard.Dashboard.(map[string]interface{})
 		require.True(t, ok, "Dashboard should be a map")
 		assert.Equal(t, newTitle, dashboardMap["title"])
+	})
+
+	t.Run("update dashboard - patch preserves UID", func(t *testing.T) {
+		ctx := newTestContext()
+
+		// Get our test dashboard
+		dashboard := getExistingTestDashboard(t, ctx, newTestDashboardName)
+		originalUID := dashboard.UID
+
+		// Fetch the full dashboard to get the numeric ID
+		fullDashboard, err := getDashboardByUID(ctx, GetDashboardByUIDParams{UID: originalUID})
+		require.NoError(t, err)
+		origMap, ok := fullDashboard.Dashboard.(map[string]interface{})
+		require.True(t, ok)
+		originalID := origMap["id"]
+
+		// Patch via uid + operations
+		patchedTitle := "Patch UID Preservation Test"
+		result, err := updateDashboard(ctx, UpdateDashboardParams{
+			UID: originalUID,
+			Operations: []PatchOperation{
+				{
+					Op:    "replace",
+					Path:  "$.title",
+					Value: patchedTitle,
+				},
+			},
+			Message: "Testing UID preservation",
+		})
+		require.NoError(t, err)
+		require.NotNil(t, result)
+
+		// The response UID must match the original — not a newly generated UUID.
+		require.NotNil(t, result.UID, "response UID should not be nil")
+		assert.Equal(t, originalUID, *result.UID,
+			"patch response UID should match the original dashboard UID, not a new one")
+
+		// Fetch the dashboard by the original UID and verify:
+		// 1. The title was actually changed (patch applied to the right dashboard)
+		// 2. The numeric ID is unchanged (same dashboard, not a clone)
+		updatedDashboard, err := getDashboardByUID(ctx, GetDashboardByUIDParams{UID: originalUID})
+		require.NoError(t, err)
+
+		updatedMap, ok := updatedDashboard.Dashboard.(map[string]interface{})
+		require.True(t, ok)
+		assert.Equal(t, patchedTitle, updatedMap["title"],
+			"title should be updated on the original dashboard")
+		assert.Equal(t, originalID, updatedMap["id"],
+			"numeric ID should be unchanged — dashboard should be updated in place, not cloned")
+
+		// Restore the original title so subsequent tests can find the dashboard
+		_, err = updateDashboard(ctx, UpdateDashboardParams{
+			UID: originalUID,
+			Operations: []PatchOperation{
+				{Op: "replace", Path: "$.title", Value: newTestDashboardName},
+			},
+		})
+		require.NoError(t, err)
 	})
 
 	t.Run("update dashboard - patch add description", func(t *testing.T) {

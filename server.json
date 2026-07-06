@@ -8,6 +8,21 @@
   },
   "version": "$VERSION",
   "icon": "assets/icon.png",
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://mcp.grafana.com/mcp",
+      "headers": [
+        {
+          "name": "X-Grafana-URL",
+          "description": "URL of your Grafana Cloud instance",
+          "placeholder": "https://<instance>.grafana.net",
+          "isRequired": false,
+          "isSecret": false
+        }
+      ]
+    }
+  ],
   "packages": [
     {
       "registryType": "oci",
@@ -57,6 +72,13 @@
           "format": "string",
           "isSecret": false,
           "name": "GRAFANA_EXTRA_HEADERS"
+        },
+        {
+          "description": "Comma-separated list of HTTP header names to forward from the incoming request to Grafana (SSE/streamable-http only). Example: Cookie,X-Session-Id",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": false,
+          "name": "GRAFANA_FORWARD_HEADERS"
         }
       ]
     }

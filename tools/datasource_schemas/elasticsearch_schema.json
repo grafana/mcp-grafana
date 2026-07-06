@@ -1,0 +1,276 @@
+{
+    "schemaVersion": "v1",
+    "pluginType": "elasticsearch",
+    "pluginName": "Elasticsearch",
+    "docURL": "https://grafana.com/docs/grafana/latest/datasources/elasticsearch/configure/",
+    "fields": [
+        {
+            "id": "jsonData.timeField",
+            "key": "timeField",
+            "label": "Time field name",
+            "description": "Name of the time field. Default is @timestamp.",
+            "valueType": "string",
+            "target": "jsonData",
+            "required": true,
+            "defaultValue": "@timestamp",
+            "ui": {
+                "component": "input",
+                "placeholder": "@timestamp"
+            }
+        },
+        {
+            "id": "jsonData.interval",
+            "key": "interval",
+            "label": "Index date pattern",
+            "description": "Index date time format for pattern-based indices.",
+            "valueType": "string",
+            "target": "jsonData",
+            "validations": [
+                {
+                    "type": "allowedValues",
+                    "values": [
+                        "Hourly",
+                        "Daily",
+                        "Weekly",
+                        "Monthly",
+                        "Yearly"
+                    ]
+                }
+            ],
+            "ui": {
+                "component": "select",
+                "options": [
+                    {
+                        "label": "No pattern",
+                        "value": ""
+                    },
+                    {
+                        "label": "Hourly",
+                        "value": "Hourly"
+                    },
+                    {
+                        "label": "Daily",
+                        "value": "Daily"
+                    },
+                    {
+                        "label": "Weekly",
+                        "value": "Weekly"
+                    },
+                    {
+                        "label": "Monthly",
+                        "value": "Monthly"
+                    },
+                    {
+                        "label": "Yearly",
+                        "value": "Yearly"
+                    }
+                ]
+            }
+        },
+        {
+            "id": "jsonData.timeInterval",
+            "key": "timeInterval",
+            "label": "Min time interval",
+            "description": "Lower limit for the auto group-by time interval. Recommended to match your write frequency (e.g. 1m). Default is 10s.",
+            "valueType": "string",
+            "semanticType": "duration",
+            "target": "jsonData",
+            "defaultValue": "10s",
+            "ui": {
+                "component": "input",
+                "placeholder": "10s"
+            }
+        },
+        {
+            "id": "jsonData.maxConcurrentShardRequests",
+            "key": "maxConcurrentShardRequests",
+            "label": "Max concurrent shard requests",
+            "description": "Number of shards queried simultaneously. Default is 5.",
+            "valueType": "number",
+            "target": "jsonData",
+            "defaultValue": 5
+        },
+        {
+            "id": "jsonData.logMessageField",
+            "key": "logMessageField",
+            "label": "Message field name",
+            "description": "Which field should be used as the log message.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.logLevelField",
+            "key": "logLevelField",
+            "label": "Level field name",
+            "description": "Which field should indicate the priority of the log message.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.dataLinks",
+            "key": "dataLinks",
+            "label": "Data links",
+            "description": "Create links from specified fields, accessible in the logs view.",
+            "valueType": "array",
+            "target": "jsonData",
+            "item": {
+                "valueType": "object",
+                "fields": [
+                    {
+                        "id": "dataLinks.item.field",
+                        "key": "field",
+                        "label": "Field",
+                        "description": "Name of the field used by the data link.",
+                        "valueType": "string",
+                        "isItemField": true,
+                        "required": true
+                    },
+                    {
+                        "id": "dataLinks.item.url",
+                        "key": "url",
+                        "label": "URL/query",
+                        "description": "Full link URL or query. Interpolate with ${__value.raw}.",
+                        "valueType": "string",
+                        "isItemField": true
+                    },
+                    {
+                        "id": "dataLinks.item.urlDisplayLabel",
+                        "key": "urlDisplayLabel",
+                        "label": "URL Label",
+                        "description": "Custom display label for the link.",
+                        "valueType": "string",
+                        "isItemField": true
+                    },
+                    {
+                        "id": "dataLinks.item.datasourceUid",
+                        "key": "datasourceUid",
+                        "label": "Internal link",
+                        "description": "Data source UID for internal link. Supports tracing data sources.",
+                        "valueType": "string",
+                        "semanticType": "datasourceUid",
+                        "isItemField": true
+                    }
+                ]
+            }
+        },
+        {
+            "id": "jsonData.includeFrozen",
+            "key": "includeFrozen",
+            "label": "Include frozen indices",
+            "description": "Include frozen indices in searches. Requires X-Pack.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.index",
+            "key": "index",
+            "label": "Index name",
+            "description": "Name of the Elasticsearch index.",
+            "valueType": "string",
+            "target": "jsonData",
+            "ui": {
+                "component": "input"
+            }
+        },
+        {
+            "id": "jsonData.sigV4Auth",
+            "key": "sigV4Auth",
+            "label": "SigV4 auth",
+            "description": "Enable AWS Signature Version 4 authentication.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.oauthPassThru",
+            "key": "oauthPassThru",
+            "label": "Forward OAuth Identity",
+            "description": "Forward the user's OAuth token to Elasticsearch.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.defaultQueryMode",
+            "key": "defaultQueryMode",
+            "label": "Default query mode",
+            "description": "Default query editor mode for new queries.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.apiKeyAuth",
+            "key": "apiKeyAuth",
+            "label": "API key auth",
+            "description": "Enable API key authentication.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "secureJsonData.apiKey",
+            "key": "apiKey",
+            "label": "API Key",
+            "description": "Elasticsearch API key for authentication.",
+            "valueType": "string",
+            "semanticType": "token",
+            "target": "secureJsonData",
+            "dependsOn": "jsonData.apiKeyAuth == true"
+        }
+    ],
+    "groups": [
+        {
+            "id": "elasticsearch-details",
+            "title": "Elasticsearch details",
+            "fieldRefs": [
+                "jsonData.index",
+                "jsonData.timeField",
+                "jsonData.interval",
+                "jsonData.timeInterval",
+                "jsonData.maxConcurrentShardRequests"
+            ]
+        },
+        {
+            "id": "logs",
+            "title": "Logs",
+            "fieldRefs": [
+                "jsonData.logMessageField",
+                "jsonData.logLevelField"
+            ]
+        },
+        {
+            "id": "data-links",
+            "title": "Data links",
+            "fieldRefs": [
+                "jsonData.dataLinks"
+            ]
+        },
+        {
+            "id": "auth",
+            "title": "Authentication",
+            "fieldRefs": [
+                "jsonData.sigV4Auth",
+                "jsonData.oauthPassThru",
+                "jsonData.apiKeyAuth",
+                "secureJsonData.apiKey"
+            ]
+        },
+        {
+            "id": "advanced",
+            "title": "Advanced",
+            "fieldRefs": [
+                "jsonData.includeFrozen",
+                "jsonData.defaultQueryMode"
+            ]
+        }
+    ]
+}

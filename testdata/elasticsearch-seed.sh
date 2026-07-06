@@ -83,4 +83,39 @@ echo "Indexed sample log data."
 # Refresh the index to make documents searchable immediately
 curl -sf -X POST "${ES_URL}/test-logs-2024/_refresh"
 echo ""
+echo "Indexed standard test logs."
+
+# Create index template and seed data using a custom time field (timestamp, not @timestamp)
+curl -sf -X PUT "${ES_URL}/_index_template/custom-time-logs-template" \
+  -H 'Content-Type: application/json' \
+  -d '{
+  "index_patterns": ["custom-time-logs-*"],
+  "template": {
+    "settings": {
+      "number_of_shards": 1,
+      "number_of_replicas": 0
+    },
+    "mappings": {
+      "properties": {
+        "timestamp": { "type": "date" },
+        "message": { "type": "text" },
+        "level": { "type": "keyword" },
+        "service": { "type": "keyword" }
+      }
+    }
+  }
+}'
+echo ""
+echo "Created custom-time index template."
+
+curl -sf -X POST "${ES_URL}/custom-time-logs-2024/_bulk" \
+  -H 'Content-Type: application/x-ndjson' \
+  -d '{"index":{}}
+{"timestamp":'"${O1}"',"message":"Custom time field log entry","level":"info","service":"custom-service"}
+'
+echo ""
+echo "Indexed custom-time log data."
+
+curl -sf -X POST "${ES_URL}/custom-time-logs-2024/_refresh"
+echo ""
 echo "Elasticsearch seeding complete."

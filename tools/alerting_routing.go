@@ -91,7 +91,9 @@ func manageRouting(ctx context.Context, args ManageRoutingParams) (any, error) {
 // getNotificationPolicies retrieves the full notification policy tree.
 func getNotificationPolicies(ctx context.Context) (*models.Route, error) {
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
-	resp, err := c.Provisioning.GetPolicyTree()
+	resp, err := c.Provisioning.GetPolicyTreeWithParams(
+		provisioning.NewGetPolicyTreeParamsWithContext(ctx),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("get notification policies: %w", err)
 	}
@@ -116,14 +118,16 @@ func getContactPointDetail(ctx context.Context, name string) ([]*models.Embedded
 
 // muteTimingSummary is a compact representation of a mute timing for list output.
 type muteTimingSummary struct {
-	Name          string                      `json:"name"`
-	TimeIntervals []*models.TimeIntervalItem  `json:"time_intervals,omitempty"`
+	Name          string                     `json:"name"`
+	TimeIntervals []*models.TimeIntervalItem `json:"time_intervals,omitempty"`
 }
 
 // getTimeIntervals retrieves all mute timings / time intervals.
 func getTimeIntervals(ctx context.Context) ([]muteTimingSummary, error) {
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
-	resp, err := c.Provisioning.GetMuteTimings()
+	resp, err := c.Provisioning.GetMuteTimingsWithParams(
+		provisioning.NewGetMuteTimingsParamsWithContext(ctx),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("get time intervals: %w", err)
 	}
@@ -140,7 +144,9 @@ func getTimeIntervals(ctx context.Context) ([]muteTimingSummary, error) {
 // getTimeInterval retrieves a specific mute timing by name.
 func getTimeInterval(ctx context.Context, name string) (*models.MuteTimeInterval, error) {
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
-	resp, err := c.Provisioning.GetMuteTiming(name)
+	resp, err := c.Provisioning.GetMuteTimingWithParams(
+		provisioning.NewGetMuteTimingParamsWithContext(ctx).WithName(name),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("get time interval %q: %w", name, err)
 	}

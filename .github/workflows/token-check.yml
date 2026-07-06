@@ -18,7 +18,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Go
-        uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
           go-version-file: go.mod
 
@@ -27,7 +27,7 @@ jobs:
 
       - name: Download baseline
         id: download-baseline
-        uses: dawidd6/action-download-artifact@9dde25e7413c6123b6062d4c9fc954d6ff005cfc
+        uses: dawidd6/action-download-artifact@09d0677378d50fef230b7cd4c0dea6dfe8883938
         with:
           branch: main
           name: token-baseline
@@ -38,8 +38,11 @@ jobs:
       - name: Get secrets
         id: get-secrets
         if: github.event.pull_request.head.repo.full_name == github.repository
-        uses: grafana/shared-workflows/actions/get-vault-secrets@a37de51f3d713a30a9e4b21bcdfbd38170020593 # get-vault-secrets/v1.3.0
+        uses: grafana/shared-workflows/actions/get-vault-secrets@a53fc80bc30b0a16a262520465db899fa3af08b7 # get-vault-secrets/v1.3.2
         with:
+          # Don't export secrets to $GITHUB_ENV for the whole job; consume them
+          # from this step's `secrets` output only where needed (see below).
+          export_env: false
           # Secrets placed in the ci/repo/grafana/mcp-grafana/<path> path in Vault
           repo_secrets: |
             ANTHROPIC_API_KEY=anthropic:api-key
@@ -49,7 +52,9 @@ jobs:
 
         with:
           command: ./dist/mcp-grafana
-          anthropic-api-key: ${{ env.ANTHROPIC_API_KEY }}
+          # On fork PRs the get-secrets step is skipped (its output is empty), so
+          # short-circuit to an empty key — matching the prior unset-env behavior.
+          anthropic-api-key: ${{ steps.get-secrets.outputs.secrets && fromJSON(steps.get-secrets.outputs.secrets).ANTHROPIC_API_KEY || '' }}
           baseline: ${{ steps.download-baseline.outputs.found_artifact == 'true' && 'baseline/token-baseline.json' || '' }}
           threshold-percent: "5"
           comment: true

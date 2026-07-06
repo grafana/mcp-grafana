@@ -87,6 +87,19 @@ func structPtrToolHandler(ctx context.Context, params testToolParams) (*TestResu
 	}, nil
 }
 
+func sliceToolHandler(ctx context.Context, params testToolParams) ([]TestResult, error) {
+	if params.Name == "error" {
+		return nil, errors.New("test error")
+	}
+	if params.Name == "nil" {
+		return nil, nil
+	}
+	if params.Name == "empty" {
+		return []TestResult{}, nil
+	}
+	return []TestResult{{Name: params.Name, Value: params.Value}}, nil
+}
+
 func TestConvertTool(t *testing.T) {
 	t.Run("valid handler conversion", func(t *testing.T) {
 		tool, handler, err := ConvertTool("test_tool", "A test tool", testToolHandler)
@@ -120,11 +133,7 @@ func TestConvertTool(t *testing.T) {
 		// Test handler execution
 		ctx := context.Background()
 		request := mcp.CallToolRequest{
-			Params: struct {
-				Name      string    `json:"name"`
-				Arguments any       `json:"arguments,omitempty"`
-				Meta      *mcp.Meta `json:"_meta,omitempty"`
-			}{
+			Params: mcp.CallToolParams{
 				Name: "test_tool",
 				Arguments: map[string]any{
 					"name":  "test",
@@ -142,11 +151,7 @@ func TestConvertTool(t *testing.T) {
 
 		// Test error handling
 		errorRequest := mcp.CallToolRequest{
-			Params: struct {
-				Name      string    `json:"name"`
-				Arguments any       `json:"arguments,omitempty"`
-				Meta      *mcp.Meta `json:"_meta,omitempty"`
-			}{
+			Params: mcp.CallToolParams{
 				Name: "test_tool",
 				Arguments: map[string]any{
 					"name":  "error",
@@ -194,11 +199,7 @@ func TestConvertTool(t *testing.T) {
 		// Test handler execution
 		ctx := context.Background()
 		request := mcp.CallToolRequest{
-			Params: struct {
-				Name      string    `json:"name"`
-				Arguments any       `json:"arguments,omitempty"`
-				Meta      *mcp.Meta `json:"_meta,omitempty"`
-			}{
+			Params: mcp.CallToolParams{
 				Name: "empty",
 			},
 		}
@@ -217,11 +218,7 @@ func TestConvertTool(t *testing.T) {
 		// Test normal string return
 		ctx := context.Background()
 		request := mcp.CallToolRequest{
-			Params: struct {
-				Name      string    `json:"name"`
-				Arguments any       `json:"arguments,omitempty"`
-				Meta      *mcp.Meta `json:"_meta,omitempty"`
-			}{
+			Params: mcp.CallToolParams{
 				Name: "string_tool",
 				Arguments: map[string]any{
 					"name":  "test",
@@ -240,11 +237,7 @@ func TestConvertTool(t *testing.T) {
 
 		// Test empty string return
 		emptyRequest := mcp.CallToolRequest{
-			Params: struct {
-				Name      string    `json:"name"`
-				Arguments any       `json:"arguments,omitempty"`
-				Meta      *mcp.Meta `json:"_meta,omitempty"`
-			}{
+			Params: mcp.CallToolParams{
 				Name: "string_tool",
 				Arguments: map[string]any{
 					"name":  "empty",
@@ -255,15 +248,15 @@ func TestConvertTool(t *testing.T) {
 
 		result, err = handler(ctx, emptyRequest)
 		require.NoError(t, err)
-		assert.Nil(t, result)
+		require.NotNil(t, result, "empty string should return non-nil result to prevent mcp-go crash")
+		require.Len(t, result.Content, 1)
+		emptyText, ok := result.Content[0].(mcp.TextContent)
+		require.True(t, ok)
+		assert.Equal(t, "", emptyText.Text)
 
 		// Test error return
 		errorRequest := mcp.CallToolRequest{
-			Params: struct {
-				Name      string    `json:"name"`
-				Arguments any       `json:"arguments,omitempty"`
-				Meta      *mcp.Meta `json:"_meta,omitempty"`
-			}{
+			Params: mcp.CallToolParams{
 				Name: "string_tool",
 				Arguments: map[string]any{
 					"name":  "error",
@@ -288,11 +281,7 @@ func TestConvertTool(t *testing.T) {
 		// Test normal string pointer return
 		ctx := context.Background()
 		request := mcp.CallToolRequest{
-			Params: struct {
-				Name      string    `json:"name"`
-				Arguments any       `json:"arguments,omitempty"`
-				Meta      *mcp.Meta `json:"_meta,omitempty"`
-			}{
+			Params: mcp.CallToolParams{
 				Name: "string_ptr_tool",
 				Arguments: map[string]any{
 					"name":  "test",
@@ -311,11 +300,7 @@ func TestConvertTool(t *testing.T) {
 
 		// Test nil string pointer return
 		nilRequest := mcp.CallToolRequest{
-			Params: struct {
-				Name      string    `json:"name"`
-				Arguments any       `json:"arguments,omitempty"`
-				Meta      *mcp.Meta `json:"_meta,omitempty"`
-			}{
+			Params: mcp.CallToolParams{
 				Name: "string_ptr_tool",
 				Arguments: map[string]any{
 					"name":  "nil",
@@ -326,15 +311,15 @@ func TestConvertTool(t *testing.T) {
 
 		result, err = handler(ctx, nilRequest)
 		require.NoError(t, err)
-		assert.Nil(t, result)
+		require.NotNil(t, result, "nil pointer should return a non-nil result to prevent mcp-go crash")
+		require.Len(t, result.Content, 1)
+		nullText, ok := result.Content[0].(mcp.TextContent)
+		require.True(t, ok)
+		assert.Equal(t, "null", nullText.Text)
 
 		// Test empty string pointer return
 		emptyRequest := mcp.CallToolRequest{
-			Params: struct {
-				Name      string    `json:"name"`
-				Arguments any       `json:"arguments,omitempty"`
-				Meta      *mcp.Meta `json:"_meta,omitempty"`
-			}{
+			Params: mcp.CallToolParams{
 				Name: "string_ptr_tool",
 				Arguments: map[string]any{
 					"name":  "empty",
@@ -345,15 +330,15 @@ func TestConvertTool(t *testing.T) {
 
 		result, err = handler(ctx, emptyRequest)
 		require.NoError(t, err)
-		assert.Nil(t, result)
+		require.NotNil(t, result, "empty *string should return non-nil result to prevent mcp-go crash")
+		require.Len(t, result.Content, 1)
+		emptyText, ok := result.Content[0].(mcp.TextContent)
+		require.True(t, ok)
+		assert.Equal(t, "", emptyText.Text)
 
 		// Test error return
 		errorRequest := mcp.CallToolRequest{
-			Params: struct {
-				Name      string    `json:"name"`
-				Arguments any       `json:"arguments,omitempty"`
-				Meta      *mcp.Meta `json:"_meta,omitempty"`
-			}{
+			Params: mcp.CallToolParams{
 				Name: "string_ptr_tool",
 				Arguments: map[string]any{
 					"name":  "error",
@@ -378,11 +363,7 @@ func TestConvertTool(t *testing.T) {
 		// Test normal struct return
 		ctx := context.Background()
 		request := mcp.CallToolRequest{
-			Params: struct {
-				Name      string    `json:"name"`
-				Arguments any       `json:"arguments,omitempty"`
-				Meta      *mcp.Meta `json:"_meta,omitempty"`
-			}{
+			Params: mcp.CallToolParams{
 				Name: "struct_tool",
 				Arguments: map[string]any{
 					"name":  "test",
@@ -402,11 +383,7 @@ func TestConvertTool(t *testing.T) {
 
 		// Test error return
 		errorRequest := mcp.CallToolRequest{
-			Params: struct {
-				Name      string    `json:"name"`
-				Arguments any       `json:"arguments,omitempty"`
-				Meta      *mcp.Meta `json:"_meta,omitempty"`
-			}{
+			Params: mcp.CallToolParams{
 				Name: "struct_tool",
 				Arguments: map[string]any{
 					"name":  "error",
@@ -431,11 +408,7 @@ func TestConvertTool(t *testing.T) {
 		// Test normal struct pointer return
 		ctx := context.Background()
 		request := mcp.CallToolRequest{
-			Params: struct {
-				Name      string    `json:"name"`
-				Arguments any       `json:"arguments,omitempty"`
-				Meta      *mcp.Meta `json:"_meta,omitempty"`
-			}{
+			Params: mcp.CallToolParams{
 				Name: "struct_ptr_tool",
 				Arguments: map[string]any{
 					"name":  "test",
@@ -455,11 +428,7 @@ func TestConvertTool(t *testing.T) {
 
 		// Test nil struct pointer return
 		nilRequest := mcp.CallToolRequest{
-			Params: struct {
-				Name      string    `json:"name"`
-				Arguments any       `json:"arguments,omitempty"`
-				Meta      *mcp.Meta `json:"_meta,omitempty"`
-			}{
+			Params: mcp.CallToolParams{
 				Name: "struct_ptr_tool",
 				Arguments: map[string]any{
 					"name":  "nil",
@@ -470,15 +439,15 @@ func TestConvertTool(t *testing.T) {
 
 		result, err = handler(ctx, nilRequest)
 		require.NoError(t, err)
-		assert.Nil(t, result)
+		require.NotNil(t, result, "nil pointer should return a non-nil result to prevent mcp-go crash")
+		require.Len(t, result.Content, 1)
+		nullText, ok := result.Content[0].(mcp.TextContent)
+		require.True(t, ok)
+		assert.Equal(t, "null", nullText.Text)
 
 		// Test error return
 		errorRequest := mcp.CallToolRequest{
-			Params: struct {
-				Name      string    `json:"name"`
-				Arguments any       `json:"arguments,omitempty"`
-				Meta      *mcp.Meta `json:"_meta,omitempty"`
-			}{
+			Params: mcp.CallToolParams{
 				Name: "struct_ptr_tool",
 				Arguments: map[string]any{
 					"name":  "error",
@@ -494,6 +463,69 @@ func TestConvertTool(t *testing.T) {
 		resultString, ok = result.Content[0].(mcp.TextContent)
 		require.True(t, ok)
 		assert.Equal(t, "test error", resultString.Text)
+	})
+
+	t.Run("slice return type - nil slice returns non-nil result", func(t *testing.T) {
+		// This test verifies the fix for https://github.com/grafana/mcp-grafana/issues/660
+		// where a nil slice return caused a nil pointer dereference in mcp-go.
+		_, handler, err := ConvertTool("slice_tool", "A slice tool", sliceToolHandler)
+		require.NoError(t, err)
+
+		ctx := context.Background()
+
+		// Test nil slice return - must NOT return nil result (causes mcp-go crash)
+		nilRequest := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Name: "slice_tool",
+				Arguments: map[string]any{
+					"name":  "nil",
+					"value": 1,
+				},
+			},
+		}
+
+		result, err := handler(ctx, nilRequest)
+		require.NoError(t, err)
+		require.NotNil(t, result, "nil slice must return non-nil result to prevent mcp-go nil pointer dereference")
+
+		// Test empty slice return - should return valid JSON array
+		emptyRequest := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Name: "slice_tool",
+				Arguments: map[string]any{
+					"name":  "empty",
+					"value": 1,
+				},
+			},
+		}
+
+		result, err = handler(ctx, emptyRequest)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		require.Len(t, result.Content, 1)
+		resultString, ok := result.Content[0].(mcp.TextContent)
+		require.True(t, ok)
+		assert.Equal(t, "[]", resultString.Text)
+
+		// Test normal slice return
+		normalRequest := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Name: "slice_tool",
+				Arguments: map[string]any{
+					"name":  "test",
+					"value": 42,
+				},
+			},
+		}
+
+		result, err = handler(ctx, normalRequest)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		require.Len(t, result.Content, 1)
+		resultString, ok = result.Content[0].(mcp.TextContent)
+		require.True(t, ok)
+		assert.Contains(t, resultString.Text, `"name":"test"`)
+		assert.Contains(t, resultString.Text, `"value":42`)
 	})
 
 	t.Run("invalid handler types", func(t *testing.T) {
@@ -512,11 +544,7 @@ func TestConvertTool(t *testing.T) {
 
 		// Test with invalid JSON
 		invalidRequest := mcp.CallToolRequest{
-			Params: struct {
-				Name      string    `json:"name"`
-				Arguments any       `json:"arguments,omitempty"`
-				Meta      *mcp.Meta `json:"_meta,omitempty"`
-			}{
+			Params: mcp.CallToolParams{
 				Arguments: map[string]any{
 					"name": make(chan int), // Channels can't be marshaled to JSON
 				},
@@ -529,11 +557,7 @@ func TestConvertTool(t *testing.T) {
 
 		// Test with type mismatch
 		mismatchRequest := mcp.CallToolRequest{
-			Params: struct {
-				Name      string    `json:"name"`
-				Arguments any       `json:"arguments,omitempty"`
-				Meta      *mcp.Meta `json:"_meta,omitempty"`
-			}{
+			Params: mcp.CallToolParams{
 				Arguments: map[string]any{
 					"name":  123, // Should be a string
 					"value": "not an int",
@@ -605,4 +629,124 @@ func TestEmptyStructJSONSchema(t *testing.T) {
 	propertiesMap, ok := properties.(map[string]any)
 	assert.True(t, ok, "properties should be a map")
 	assert.Len(t, propertiesMap, 0, "properties should be an empty map")
+}
+
+func TestValidateNoBooleanSchemas(t *testing.T) {
+	t.Run("rejects bare true in properties", func(t *testing.T) {
+		input := `{"type":"object","properties":{"model":true,"name":{"type":"string"}}}`
+		err := validateNoBooleanSchemas("test_tool", []byte(input))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "bare boolean schema")
+		assert.Contains(t, err.Error(), "test_tool")
+		assert.Contains(t, err.Error(), "properties.model")
+	})
+
+	t.Run("rejects bare false in properties", func(t *testing.T) {
+		input := `{"type":"object","properties":{"blocked":false}}`
+		err := validateNoBooleanSchemas("test_tool", []byte(input))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "bare boolean schema")
+	})
+
+	t.Run("rejects bare true in additionalProperties", func(t *testing.T) {
+		input := `{"type":"object","properties":{},"additionalProperties":true}`
+		err := validateNoBooleanSchemas("test_tool", []byte(input))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "additionalProperties")
+	})
+
+	t.Run("rejects bare true in items", func(t *testing.T) {
+		input := `{"type":"array","items":true}`
+		err := validateNoBooleanSchemas("test_tool", []byte(input))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "items")
+	})
+
+	t.Run("rejects nested bare booleans", func(t *testing.T) {
+		// Simulates the alert rule schema: properties -> data -> items -> properties -> model: true
+		input := `{
+			"type": "object",
+			"properties": {
+				"data": {
+					"type": "array",
+					"items": {
+						"type": "object",
+						"properties": {
+							"model": true,
+							"refId": {"type": "string"}
+						}
+					}
+				}
+			}
+		}`
+		err := validateNoBooleanSchemas("test_tool", []byte(input))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "model")
+	})
+
+	t.Run("rejects bare booleans in allOf/anyOf/oneOf", func(t *testing.T) {
+		input := `{"allOf":[true,{"type":"string"}]}`
+		err := validateNoBooleanSchemas("test_tool", []byte(input))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "allOf")
+	})
+
+	t.Run("accepts valid schemas without bare booleans", func(t *testing.T) {
+		input := `{
+			"type": "object",
+			"properties": {
+				"name": {"type": "string", "description": "A name"},
+				"count": {"type": "integer"},
+				"tags": {"type": "array", "items": {"type": "string"}}
+			},
+			"required": ["name"]
+		}`
+		err := validateNoBooleanSchemas("test_tool", []byte(input))
+		assert.NoError(t, err)
+	})
+
+	t.Run("does not flag non-schema boolean values", func(t *testing.T) {
+		// uniqueItems: true is a non-schema boolean — should be allowed
+		input := `{"type":"array","items":{"type":"string"},"uniqueItems":true}`
+		err := validateNoBooleanSchemas("test_tool", []byte(input))
+		assert.NoError(t, err)
+	})
+
+	t.Run("error message points to Mapper as the fix", func(t *testing.T) {
+		input := `{"type":"object","properties":{"data":true}}`
+		err := validateNoBooleanSchemas("my_tool", []byte(input))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "my_tool")
+		assert.Contains(t, err.Error(), "Mapper")
+		assert.Contains(t, err.Error(), "interface{}")
+	})
+}
+
+// interfaceFieldParams tests that tools with interface{} fields produce
+// valid schemas (the Mapper converts them to empty object schemas).
+type interfaceFieldParams struct {
+	Name  string `json:"name" jsonschema:"required,description=A name"`
+	Model any    `json:"model" jsonschema:"description=An arbitrary model"`
+}
+
+func interfaceFieldHandler(ctx context.Context, params interfaceFieldParams) (string, error) {
+	return params.Name, nil
+}
+
+func TestConvertToolHandlesInterfaceFields(t *testing.T) {
+	// The Mapper in the reflector should convert interface{}/any fields to
+	// empty object schemas {}, so ConvertTool should succeed (not error).
+	tool, _, err := ConvertTool("interface_tool", "Tool with interface field", interfaceFieldHandler)
+	require.NoError(t, err)
+
+	// Verify the schema contains an object for the model field, not bare true
+	var schema map[string]any
+	err = json.Unmarshal(tool.RawInputSchema, &schema)
+	require.NoError(t, err)
+
+	props := schema["properties"].(map[string]any)
+	model := props["model"]
+	modelObj, ok := model.(map[string]any)
+	require.True(t, ok, "model property should be an object schema, got %T", model)
+	t.Logf("model schema: %v", modelObj)
 }

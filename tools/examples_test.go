@@ -4,6 +4,7 @@ package tools
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -157,6 +158,35 @@ func TestGetQueryExamples_CloudWatch(t *testing.T) {
 	assert.True(t, foundLambda, "Expected 'Lambda Invocations' example")
 }
 
+func TestGetQueryExamples_InfluxDB(t *testing.T) {
+	result, err := getQueryExamples(context.Background(), GetQueryExamplesParams{
+		DatasourceType: "influxdb",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	assert.Equal(t, "influxdb", result.DatasourceType)
+	assert.NotEmpty(t, result.Examples)
+
+	// Every InfluxDB example should carry a query (unlike CloudWatch, which
+	// uses Namespace/MetricName). Both Flux and InfluxQL examples should be
+	// present so LLMs can pick based on the datasource's configured version.
+	var foundFlux, foundInfluxQL bool
+	for _, ex := range result.Examples {
+		assert.NotEmpty(t, ex.Query, "InfluxDB examples should have a query string")
+		assert.NotEmpty(t, ex.Name, "example should have a name")
+		assert.NotEmpty(t, ex.Description, "example should have a description")
+		if strings.Contains(ex.Query, "from(bucket:") {
+			foundFlux = true
+		}
+		if strings.Contains(ex.Query, "SELECT") || strings.Contains(ex.Query, "SHOW MEASUREMENTS") {
+			foundInfluxQL = true
+		}
+	}
+	assert.True(t, foundFlux, "expected at least one Flux example")
+	assert.True(t, foundInfluxQL, "expected at least one InfluxQL example")
+}
+
 func TestGetQueryExamples_CaseInsensitive(t *testing.T) {
 	testCases := []struct {
 		input    string
@@ -170,6 +200,8 @@ func TestGetQueryExamples_CaseInsensitive(t *testing.T) {
 		{"ClickHouse", "clickhouse"},
 		{"CLOUDWATCH", "cloudwatch"},
 		{"CloudWatch", "cloudwatch"},
+		{"INFLUXDB", "influxdb"},
+		{"InfluxDB", "influxdb"},
 	}
 
 	for _, tc := range testCases {
@@ -212,7 +244,7 @@ func TestGetQueryExamples_UnsupportedDatasource(t *testing.T) {
 }
 
 func TestGetQueryExamples_ExamplesHaveRequiredFields(t *testing.T) {
-	datasourceTypes := []string{"prometheus", "loki", "clickhouse", "cloudwatch"}
+	datasourceTypes := []string{"prometheus", "loki", "clickhouse", "cloudwatch", "influxdb"}
 
 	for _, dsType := range datasourceTypes {
 		t.Run(dsType, func(t *testing.T) {
@@ -245,4 +277,5 @@ func TestGetQueryExamples_ToolDefinition(t *testing.T) {
 	assert.Contains(t, GetQueryExamples.Tool.Description, "Loki")
 	assert.Contains(t, GetQueryExamples.Tool.Description, "ClickHouse")
 	assert.Contains(t, GetQueryExamples.Tool.Description, "CloudWatch")
+	assert.Contains(t, GetQueryExamples.Tool.Description, "InfluxDB")
 }

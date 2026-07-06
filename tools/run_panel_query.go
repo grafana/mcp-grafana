@@ -1,20 +1,15 @@
 package tools
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
 	"regexp"
 	"strings"
 	"time"
 
 	"github.com/grafana/grafana-openapi-client-go/client/datasources"
 	mcpgrafana "github.com/grafana/mcp-grafana"
-	"github.com/grafana/mcp-grafana/pkg/auth"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/prometheus/common/model"
@@ -29,7 +24,7 @@ type RunPanelQueryParams struct {
 	End            string            `json:"end" jsonschema:"description=Override end time (e.g. 'now'\\, RFC3339\\, Unix ms)"`
 	Variables      map[string]string `json:"variables" jsonschema:"description=Override dashboard variables (e.g. {\"job\": \"api-server\"})"`
 	DatasourceUID  string            `json:"datasourceUid,omitempty" jsonschema:"description=Override datasource UID"`
-	DatasourceType string            `json:"datasourceType,omitempty" jsonschema:"description=Override datasource type (prometheus\\, loki\\, grafana-clickhouse-datasource\\, cloudwatch)"`
+	DatasourceType string            `json:"datasourceType,omitempty" jsonschema:"description=Override datasource type (prometheus\\, loki\\, grafana-clickhouse-datasource\\, cloudwatch\\, influxdb\\, grafana-bigquery-datasource)"`
 }
 
 // QueryTimeRange represents the actual time range used for a panel query
@@ -225,8 +220,12 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 		results, err = executeClickHouseQuery(ctx, datasourceUID, query, params.Start, params.End)
 	case "cloudwatch":
 		results, err = executeCloudWatchPanelQuery(ctx, datasourceUID, panelData, params.Start, params.End, vars)
+	case "influxdb":
+		results, err = executeInfluxDBQuery(ctx, datasourceUID, panelData, query, params.Start, params.End)
+	case "bigquery":
+		results, err = executeBigQueryPanelQuery(ctx, datasourceUID, panelData, query, params.Start, params.End, vars)
 	default:
-		return nil, fmt.Errorf("datasource type '%s' is not supported by run_panel_query; use the native query tool (e.g. query_prometheus\\, query_loki_logs\\, query_clickhouse\\, query_cloudwatch) directly", datasourceType)
+		return nil, fmt.Errorf("datasource type '%s' is not supported by run_panel_query; use the native query tool (e.g. query_prometheus\\, query_loki_logs\\, query_clickhouse\\, query_cloudwatch\\, query_influxdb) directly", datasourceType)
 	}
 
 	if err != nil {
@@ -248,61 +247,6 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 		Results:        results,
 		Hints:          hints,
 	}, nil
-}
-
-// findPanelByID searches for a panel by ID in the dashboard, including nested panels in rows
-func findPanelByID(db map[string]interface{}, panelID int) (map[string]interface{}, error) {
-	panels := safeArray(db, "panels")
-	if panels == nil {
-		return nil, fmt.Errorf("dashboard has no panels")
-	}
-
-	for _, p := range panels {
-		panel, ok := p.(map[string]interface{})
-		if !ok {
-			continue
-		}
-
-		id := safeInt(panel, "id")
-		if id == panelID {
-			return panel, nil
-		}
-
-		// Check for nested panels in row type
-		if safeString(panel, "type") == "row" {
-			nestedPanels := safeArray(panel, "panels")
-			for _, np := range nestedPanels {
-				nestedPanel, ok := np.(map[string]interface{})
-				if !ok {
-					continue
-				}
-				if safeInt(nestedPanel, "id") == panelID {
-					return nestedPanel, nil
-				}
-			}
-		}
-	}
-
-	return nil, fmt.Errorf("panel with ID %d not found", panelID)
-}
-
-// extractQueryExpression extracts query string from a target
-func extractQueryExpression(target map[string]interface{}) string {
-	queryFields := []string{
-		"expr",       // Prometheus
-		"query",      // Loki, ClickHouse, generic
-		"expression", // CloudWatch
-		"rawSql",     // SQL databases
-		"rawQuery",   // Some datasources
-	}
-
-	for _, field := range queryFields {
-		if val := safeString(target, field); val != "" {
-			return val
-		}
-	}
-
-	return ""
 }
 
 // substituteTemplateVariables replaces template variables in a query string
@@ -410,7 +354,7 @@ func extractPanelInfo(panel map[string]interface{}, queryIndex int) (*panelInfo,
 
 	// CloudWatch panels use structured targets rather than string expressions
 	if query == "" && normalizeDatasourceType(info.DatasourceType) != "cloudwatch" {
-		return nil, fmt.Errorf("could not extract query from panel target (checked: expr, query, expression, rawSql, rawQuery)")
+		return nil, fmt.Errorf("could not extract query from panel target (checked: expr, query, expression, rawSql, rawSQL, rawQuery)")
 	}
 	info.Query = query
 
@@ -570,78 +514,116 @@ func executeCloudWatchPanelQuery(ctx context.Context, datasourceUID string, pane
 		target["refId"] = "A"
 	}
 
-	// Build /api/ds/query payload
-	payload := map[string]interface{}{
-		"queries": []map[string]interface{}{target},
-		"from":    fmt.Sprintf("%d", startTime.UnixMilli()),
-		"to":      fmt.Sprintf("%d", endTime.UnixMilli()),
-	}
-
-	return executeGrafanaDSQuery(ctx, payload)
+	return executeGrafanaDSQuery(ctx, dsQueryPayload(startTime, endTime, target))
 }
 
-// executeGrafanaDSQuery executes a query through Grafana's /api/ds/query endpoint
-func executeGrafanaDSQuery(ctx context.Context, payload map[string]interface{}) (interface{}, error) {
-	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
-	baseURL := strings.TrimRight(cfg.URL, "/")
-
-	// Create custom transport with TLS and extra headers support
-	transport, err := mcpgrafana.BuildTransport(&cfg, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create transport: %w", err)
-	}
-	transport = auth.NewAuthRoundTripper(transport, cfg.AccessToken, cfg.IDToken, cfg.APIKey, cfg.BasicAuth)
-	transport = mcpgrafana.NewOrgIDRoundTripper(transport, cfg.OrgID)
-
-	client := &http.Client{
-		Transport: mcpgrafana.NewUserAgentTransport(transport),
-		Timeout:   30 * time.Second,
-	}
-
-	payloadBytes, err := json.Marshal(payload)
-	if err != nil {
-		return nil, fmt.Errorf("marshaling query payload: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, "POST", baseURL+"/api/ds/query", bytes.NewReader(payloadBytes))
-	if err != nil {
-		return nil, fmt.Errorf("creating request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("executing query: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	bodyBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("reading response: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		// Try to extract error message from JSON response
-		var errResult map[string]interface{}
-		if json.Unmarshal(bodyBytes, &errResult) == nil {
-			if errMsg, ok := errResult["message"].(string); ok {
-				return nil, fmt.Errorf("query failed: %s", errMsg)
-			}
+// executeInfluxDBQuery runs an InfluxDB panel query using queryInfluxDB. The
+// panel's queryType field tells us which dialect to use (influxql vs flux);
+// fall back to inference from the datasource if the panel doesn't carry one.
+func executeInfluxDBQuery(ctx context.Context, datasourceUID string, panelData *panelInfo, query, start, end string) (*InfluxDBQueryResult, error) {
+	dialect := ""
+	if panelData != nil && panelData.RawTarget != nil {
+		if qt := safeString(panelData.RawTarget, "queryType"); qt != "" {
+			dialect = qt
 		}
-		return nil, fmt.Errorf("query failed with status %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
-	var result map[string]interface{}
-	if err := json.Unmarshal(bodyBytes, &result); err != nil {
-		return nil, fmt.Errorf("decoding response: %w", err)
+	return queryInfluxDB(ctx, InfluxDBQueryParams{
+		DatasourceUID: datasourceUID,
+		Query:         query,
+		Dialect:       dialect,
+		Start:         start,
+		End:           end,
+	})
+}
+
+// BigQueryDatasourceType is the type identifier for BigQuery datasources.
+const BigQueryDatasourceType = "grafana-bigquery-datasource"
+
+// BigQueryFormatTable is the format value for table/tabular query results.
+const BigQueryFormatTable = 1
+
+// BigQueryQueryResult represents the tabular result of a BigQuery panel query.
+type BigQueryQueryResult struct {
+	Columns        []string                 `json:"columns"`
+	Rows           []map[string]interface{} `json:"rows"`
+	RowCount       int                      `json:"rowCount"`
+	ProcessedQuery string                   `json:"processedQuery,omitempty"`
+}
+
+// executeBigQueryPanelQuery runs a BigQuery panel query via Grafana's /api/ds/query
+// endpoint. BigQuery is a SQL datasource (sqlds-based) whose backend plugin resolves
+// SQL macros such as $__timeFilter/$__timeFrom/$__timeGroup server-side, so we only
+// substitute the frontend-only macros ($__interval, $__range, etc.) here. The panel's
+// raw target is preserved so BigQuery-specific fields (location, project, dataset) reach
+// the backend; only rawSql, datasource, refId, and format are overridden.
+func executeBigQueryPanelQuery(ctx context.Context, datasourceUID string, panelData *panelInfo, query, start, end string, variables map[string]string) (*BigQueryQueryResult, error) {
+	if panelData == nil || panelData.RawTarget == nil {
+		return nil, fmt.Errorf("BigQuery panel target not available")
 	}
 
-	// Return the results from the response
-	if results, ok := result["results"].(map[string]interface{}); ok {
-		return results, nil
+	// Parse time range
+	startTime, err := parseTime(start)
+	if err != nil {
+		return nil, fmt.Errorf("parsing start time: %w", err)
+	}
+	endTime, err := parseTime(end)
+	if err != nil {
+		return nil, fmt.Errorf("parsing end time: %w", err)
 	}
 
-	return result, nil
+	// Substitute Grafana frontend macros; leave SQL macros for the backend plugin.
+	processedQuery := substituteGrafanaMacros(query, startTime, endTime)
+
+	// Deep copy the raw target and substitute variables in its fields (e.g. location).
+	target := substituteTemplateVariablesInMap(panelData.RawTarget, variables)
+
+	// Override the SQL with the fully-processed query and ensure required fields are set.
+	target["rawSql"] = processedQuery
+	target["datasource"] = map[string]interface{}{"uid": datasourceUID, "type": BigQueryDatasourceType}
+	if safeString(target, "refId") == "" {
+		target["refId"] = "A"
+	}
+	if _, ok := target["format"]; !ok {
+		target["format"] = BigQueryFormatTable
+	}
+
+	client, baseURL, err := newDSQueryHTTPClient(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := doDSQuery(ctx, client, baseURL, dsQueryPayload(startTime, endTime, target))
+	if err != nil {
+		return nil, err
+	}
+
+	columns, rows, err := framesToTabularRows(resp)
+	if err != nil {
+		return nil, err
+	}
+
+	return &BigQueryQueryResult{
+		Columns:        columns,
+		Rows:           rows,
+		RowCount:       len(rows),
+		ProcessedQuery: processedQuery,
+	}, nil
+}
+
+// executeGrafanaDSQuery executes a query through Grafana's /api/ds/query endpoint.
+func executeGrafanaDSQuery(ctx context.Context, payload map[string]interface{}) (interface{}, error) {
+	client, baseURL, err := newDSQueryHTTPClient(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := doDSQuery(ctx, client, baseURL, payload)
+	if err != nil {
+		return nil, err
+	}
+
+	return resp.Responses, nil
 }
 
 // substituteGrafanaMacros substitutes Grafana temporal macros ($__range, $__rate_interval, $__interval)
@@ -746,14 +728,18 @@ func getAvailableDatasourceUIDs(ctx context.Context, dsType string) []string {
 func normalizeDatasourceType(dsType string) string {
 	lower := strings.ToLower(dsType)
 	switch {
-	case lower == "prometheus":
+	case lower == "prometheus" || lower == "stackdriver":
 		return "prometheus"
 	case lower == "loki":
 		return "loki"
 	case lower == "cloudwatch":
 		return "cloudwatch"
+	case lower == "influxdb":
+		return "influxdb"
 	case strings.Contains(lower, "clickhouse"):
 		return "clickhouse"
+	case strings.Contains(lower, "bigquery"):
+		return "bigquery"
 	default:
 		return lower
 	}
@@ -770,6 +756,10 @@ func isEmptyPanelResult(results interface{}) bool {
 	case []LogEntry:
 		return len(v) == 0
 	case *ClickHouseQueryResult:
+		return v == nil || len(v.Rows) == 0
+	case *InfluxDBQueryResult:
+		return v == nil || len(v.Rows) == 0
+	case *BigQueryQueryResult:
 		return v == nil || len(v.Rows) == 0
 	case model.Value:
 		switch m := v.(type) {
@@ -814,6 +804,20 @@ func generatePanelQueryHints(datasourceType, query string) []string {
 			"- AWS region may be incorrect - verify the region setting in the datasource",
 			"- CloudWatch metrics may have longer retention periods than the selected time range",
 		)
+	case "influxdb":
+		hints = append(hints,
+			"- Bucket (v2/Flux) or database (v1/InfluxQL) name in the query may be wrong",
+			"- Measurement or field names may not exist - try a broader query like 'from(bucket: \"...\") |> range(start: -1h) |> limit(n: 5)' to inspect available data",
+			"- Tag filters may be too restrictive - remove them to see if the measurement has any points",
+			"- InfluxDB retention policy may have expired the data - check the bucket's retention settings",
+		)
+	case "bigquery":
+		hints = append(hints,
+			"- Table or dataset may be empty for this time range - try a COUNT(*) without the time filter to verify",
+			"- Column names or WHERE clause may not match the schema - check the table definition in BigQuery",
+			"- The $__timeFilter(column) macro may reference a column whose type or timezone doesn't match the time range",
+			"- The datasource's processing location may not match the dataset's region",
+		)
 	}
 
 	if query != "" {
@@ -834,7 +838,7 @@ func truncateString(s string, maxLen int) string {
 // RunPanelQuery is the tool definition for running panel queries
 var RunPanelQuery = mcpgrafana.MustTool(
 	"run_panel_query",
-	"Executes one or more dashboard panel queries with optional time range and variable overrides. Accepts an array of panel IDs to query in a single call. Fetches the dashboard\\, extracts queries from the specified panels\\, substitutes template variables and Grafana macros ($__range\\, $__rate_interval\\, $__interval)\\, and routes to the appropriate datasource (Prometheus\\, Loki\\, ClickHouse\\, or CloudWatch). Returns results keyed by panel ID - partial failures are allowed (some panels can succeed while others fail). Use get_dashboard_summary first to find panel IDs. If a panel uses a template variable datasource you cannot access\\, provide datasourceUid and datasourceType to override.",
+	"Executes one or more dashboard panel queries with optional time range and variable overrides. Accepts an array of panel IDs to query in a single call. Fetches the dashboard\\, extracts queries from the specified panels\\, substitutes template variables and Grafana macros ($__range\\, $__rate_interval\\, $__interval)\\, and routes to the appropriate datasource (Prometheus\\, Loki\\, ClickHouse\\, CloudWatch\\, InfluxDB\\, or BigQuery). Returns results keyed by panel ID - partial failures are allowed (some panels can succeed while others fail). Use get_dashboard_summary first to find panel IDs. If a panel uses a template variable datasource you cannot access\\, provide datasourceUid and datasourceType to override.",
 	runPanelQuery,
 	mcp.WithTitleAnnotation("Run panel query"),
 	mcp.WithIdempotentHintAnnotation(true),

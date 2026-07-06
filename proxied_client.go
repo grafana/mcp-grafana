@@ -2,14 +2,21 @@ package mcpgrafana
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
-	"log/slog"
+	"net/http"
 	"sync"
+	"time"
 
 	mcp_client "github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/client/transport"
 	"github.com/mark3labs/mcp-go/mcp"
+)
+
+const (
+	// mcpClientInitTimeout is the timeout for initializing a proxied MCP client
+	// (connecting, handshaking, and listing tools). Kept short to avoid blocking
+	// server startup when a datasource's MCP endpoint is slow or unreachable.
+	mcpClientInitTimeout = 30 * time.Second
 )
 
 // ProxiedClient represents a connection to a remote MCP server (e.g., Tempo datasource)
@@ -22,30 +29,35 @@ type ProxiedClient struct {
 	mutex          sync.RWMutex
 }
 
+// contextCauseOrErr returns the context cause if the error is due to context
+// cancellation, otherwise returns the original error.
+func contextCauseOrErr(ctx context.Context, err error) error {
+	if ctx.Err() != nil {
+		if cause := context.Cause(ctx); cause != nil {
+			return cause
+		}
+	}
+	return err
+}
+
 // NewProxiedClient creates a new connection to a remote MCP server
 func NewProxiedClient(ctx context.Context, datasourceUID, datasourceName, datasourceType, mcpEndpoint string) (*ProxiedClient, error) {
-	// Get Grafana config for authentication
 	config := GrafanaConfigFromContext(ctx)
+	logger := config.LoggerOrDefault()
 
-	// Build headers for authentication
-	headers := make(map[string]string)
-	if config.APIKey != "" {
-		headers["Authorization"] = "Bearer " + config.APIKey
-	} else if config.BasicAuth != nil {
-		auth := config.BasicAuth.String()
-		headers["Authorization"] = "Basic " + base64.StdEncoding.EncodeToString([]byte(auth))
+	initCtx, cancel := context.WithTimeoutCause(ctx, mcpClientInitTimeout,
+		fmt.Errorf("timed out after %s connecting to MCP server for datasource %s (%s) at %s", mcpClientInitTimeout, datasourceName, datasourceUID, mcpEndpoint))
+	defer cancel()
+
+	rt, err := BuildTransport(&config, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build transport: %w", err)
 	}
 
-	// Add org ID header if configured
-	if config.OrgID != 0 {
-		headers["X-Grafana-Org-Id"] = fmt.Sprintf("%d", config.OrgID)
-	}
-
-	// Create HTTP transport with authentication and org ID headers
-	slog.DebugContext(ctx, "connecting to MCP server", "datasource", datasourceUID, "url", mcpEndpoint)
+	logger.DebugContext(initCtx, "connecting to MCP server", "datasource", datasourceUID, "url", mcpEndpoint)
 	httpTransport, err := transport.NewStreamableHTTP(
 		mcpEndpoint,
-		transport.WithHTTPHeaders(headers),
+		transport.WithHTTPBasicClient(&http.Client{Transport: rt}),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create HTTP transport: %w", err)
@@ -62,21 +74,21 @@ func NewProxiedClient(ctx context.Context, datasourceUID, datasourceName, dataso
 		Version: Version(),
 	}
 
-	_, err = mcpClient.Initialize(ctx, initReq)
+	_, err = mcpClient.Initialize(initCtx, initReq)
 	if err != nil {
 		_ = mcpClient.Close()
-		return nil, fmt.Errorf("failed to initialize MCP client: %w", err)
+		return nil, fmt.Errorf("failed to initialize MCP client: %w", contextCauseOrErr(initCtx, err))
 	}
 
 	// List available tools from the remote server
 	listReq := mcp.ListToolsRequest{}
-	toolsResult, err := mcpClient.ListTools(ctx, listReq)
+	toolsResult, err := mcpClient.ListTools(initCtx, listReq)
 	if err != nil {
 		_ = mcpClient.Close()
-		return nil, fmt.Errorf("failed to list tools from remote MCP server: %w", err)
+		return nil, fmt.Errorf("failed to list tools from remote MCP server: %w", contextCauseOrErr(initCtx, err))
 	}
 
-	slog.DebugContext(ctx, "connected to proxied MCP server",
+	logger.DebugContext(initCtx, "connected to proxied MCP server",
 		"datasource", datasourceUID,
 		"type", datasourceType,
 		"tools", len(toolsResult.Tools))

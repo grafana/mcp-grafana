@@ -141,11 +141,11 @@ func TestManageRoutingParams_Validate(t *testing.T) {
 
 func TestManageRoutingParams_ToListContactPointsParams(t *testing.T) {
 	tests := []struct {
-		name          string
-		params        ManageRoutingParams
-		wantDSUID     *string
-		wantName      *string
-		wantLimit     int
+		name      string
+		params    ManageRoutingParams
+		wantDSUID *string
+		wantName  *string
+		wantLimit int
 	}{
 		{
 			name: "converts all fields",

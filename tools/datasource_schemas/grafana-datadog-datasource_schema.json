@@ -1,0 +1,145 @@
+{
+    "schemaVersion": "v1",
+    "pluginType": "grafana-datadog-datasource",
+    "pluginName": "Datadog",
+    "fields": [
+        {
+            "id": "jsonData.pluginMode",
+            "key": "pluginMode",
+            "label": "Plugin Mode",
+            "description": "Plugin mode: default or hosted-metrics.",
+            "valueType": "string",
+            "target": "jsonData",
+            "defaultValue": "default",
+            "validations": [
+                {
+                    "type": "allowedValues",
+                    "values": [
+                        "default",
+                        "hosted-metrics"
+                    ]
+                }
+            ]
+        },
+        {
+            "id": "jsonData.url",
+            "key": "url",
+            "label": "URL",
+            "description": "Datadog API URL.",
+            "valueType": "string",
+            "semanticType": "url",
+            "target": "jsonData",
+            "required": true
+        },
+        {
+            "id": "jsonData.logApiRateLimits",
+            "key": "logApiRateLimits",
+            "label": "Log API Rate Limits",
+            "description": "Log API rate limit warnings.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.disableDataLinks",
+            "key": "disableDataLinks",
+            "label": "Disable Data Links",
+            "description": "Disable automatic data links to Datadog.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.rateLimitEnabled",
+            "key": "rateLimitEnabled",
+            "label": "Rate Limit Enabled",
+            "description": "Enable rate limiting for metric queries.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.rateLimitMetrics",
+            "key": "rateLimitMetrics",
+            "label": "Rate Limit (metrics/s)",
+            "description": "Maximum number of metric queries per second.",
+            "valueType": "number",
+            "target": "jsonData",
+            "dependsOn": "jsonData.rateLimitEnabled == true"
+        },
+        {
+            "id": "jsonData.enableSecureSocksProxy",
+            "key": "enableSecureSocksProxy",
+            "label": "Secure Socks Proxy",
+            "description": "Enable secure SOCKS proxy.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.size",
+            "key": "size",
+            "label": "Query Size",
+            "description": "Default query result size.",
+            "valueType": "number",
+            "target": "jsonData"
+        },
+        {
+            "id": "secureJsonData.apiKey",
+            "key": "apiKey",
+            "label": "API Key",
+            "description": "Datadog API key.",
+            "valueType": "string",
+            "semanticType": "token",
+            "target": "secureJsonData",
+            "required": true
+        },
+        {
+            "id": "secureJsonData.appKey",
+            "key": "appKey",
+            "label": "Application Key",
+            "description": "Datadog application key.",
+            "valueType": "string",
+            "semanticType": "token",
+            "target": "secureJsonData",
+            "required": true
+        }
+    ],
+    "groups": [
+        {
+            "id": "connection",
+            "title": "Connection",
+            "fieldRefs": [
+                "jsonData.url",
+                "jsonData.pluginMode"
+            ]
+        },
+        {
+            "id": "auth",
+            "title": "Authentication",
+            "fieldRefs": [
+                "secureJsonData.apiKey",
+                "secureJsonData.appKey"
+            ]
+        },
+        {
+            "id": "settings",
+            "title": "Settings",
+            "fieldRefs": [
+                "jsonData.logApiRateLimits",
+                "jsonData.disableDataLinks",
+                "jsonData.rateLimitEnabled",
+                "jsonData.rateLimitMetrics",
+                "jsonData.size"
+            ]
+        }
+    ]
+}
