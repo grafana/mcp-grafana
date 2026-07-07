@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.1] - 2026-07-07
+
+### Fixed
+
+- Send the relative path (rather than an absolute URL) to the short-urls API when generating navigation deeplinks ([#976](https://github.com/grafana/mcp-grafana/pull/976))
+
+### Security
+
+- Block DNS rebinding attacks on the HTTP and SSE transports ([#957](https://github.com/grafana/mcp-grafana/pull/957))
+
 ## [0.17.0] - 2026-06-23
 
 ### Added
@@ -297,6 +307,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Upgrade Docker base image packages to resolve critical OpenSSL CVE-2025-15467 (CVSS 9.8) ([#551](https://github.com/grafana/mcp-grafana/pull/551))
 
+[0.17.1]: https://github.com/grafana/mcp-grafana/compare/v0.17.0...v0.17.1
 [0.17.0]: https://github.com/grafana/mcp-grafana/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/grafana/mcp-grafana/compare/v0.15.2...v0.16.0
 [0.15.2]: https://github.com/grafana/mcp-grafana/compare/v0.15.1...v0.15.2
