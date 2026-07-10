@@ -8,7 +8,9 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/grafana/grafana-openapi-client-go/models"
@@ -452,6 +454,7 @@ type QueryLokiLogsParams struct {
 	Direction     string `json:"direction,omitempty" jsonschema:"description=Optionally\\, the direction of the query: 'forward' (oldest first) or 'backward' (newest first\\, default)"`
 	QueryType     string `json:"queryType,omitempty" jsonschema:"description=Query type: 'range' (default) or 'instant'. Instant queries return a single value at one point in time. Range queries return values over a time window. Use 'instant' for metric queries when you want the current value."`
 	StepSeconds   int    `json:"stepSeconds,omitempty" jsonschema:"description=Resolution step in seconds for range metric queries. When running metric queries with queryType='range'\\, this controls the time resolution of the returned data points."`
+	Format        string `json:"format,omitempty" jsonschema:"enum=full,enum=compact,description=Output format for log (streams) queries: 'full' (default) returns every entry with its own label metadata; 'compact' groups lines by stream so each label set is emitted only once (and per-line structured/parsed metadata is dropped)\\, substantially reducing response size for broad queries. Ignored for metric queries."`
 }
 
 // QueryMetadata provides context about the query results for AI agents
@@ -467,8 +470,26 @@ type QueryMetadata struct {
 // QueryLokiLogsResult wraps the Loki query result with optional hints
 type QueryLokiLogsResult struct {
 	Data     []LogEntry        `json:"data"`
+	Streams  []CompactStream   `json:"streams,omitempty"` // Populated instead of per-entry labels when format=compact
 	Hints    *EmptyResultHints `json:"hints,omitempty"`
 	Metadata *QueryMetadata    `json:"metadata,omitempty"`
+}
+
+// CompactStream groups log lines that share the same label set. The compact
+// output format emits one CompactStream per distinct stream so labels aren't
+// repeated on every line; per-line structured metadata and parser-extracted
+// labels are intentionally omitted to minimise response size.
+type CompactStream struct {
+	Labels map[string]string `json:"labels"`
+	Lines  []CompactLine     `json:"lines"`
+}
+
+// CompactLine is a single log line in a CompactStream, carrying only the
+// timestamp and message. Named fields keep the compact payload self-describing
+// to an LLM while still avoiding the per-line label repetition of full output.
+type CompactLine struct {
+	Timestamp string `json:"timestamp"`
+	Line      string `json:"line"`
 }
 
 // LogEntry represents a single log entry or metric sample with metadata.
@@ -643,7 +664,54 @@ func parseLokiQueryResponse(response *lokiQueryResponse) ([]LogEntry, error) {
 // transport (native Loki vs VictoriaLogs) is selected by the backend
 // dispatch; this function owns parameter normalization, truncation
 // detection, metadata, and empty-result hints.
+// labelsKey builds a stable, collision-resistant key for a label set so
+// entries belonging to the same stream group together regardless of map
+// iteration order.
+func labelsKey(labels map[string]string) string {
+	keys := make([]string, 0, len(labels))
+	for k := range labels {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	for _, k := range keys {
+		b.WriteString(k)
+		b.WriteByte('=')
+		b.WriteString(labels[k])
+		b.WriteByte('\x00')
+	}
+	return b.String()
+}
+
+// compactLogEntries collapses a flat slice of log entries into one
+// CompactStream per distinct label set, preserving the order in which each
+// stream first appears and the order of lines within it. Per-line structured
+// metadata and parsed labels are dropped — the compact format trades that
+// detail for a much smaller payload on broad, multi-line queries.
+func compactLogEntries(entries []LogEntry) []CompactStream {
+	streams := make([]CompactStream, 0)
+	index := make(map[string]int, len(entries))
+	for _, e := range entries {
+		key := labelsKey(e.Labels)
+		i, ok := index[key]
+		if !ok {
+			i = len(streams)
+			index[key] = i
+			streams = append(streams, CompactStream{Labels: e.Labels, Lines: []CompactLine{}})
+		}
+		streams[i].Lines = append(streams[i].Lines, CompactLine{Timestamp: e.Timestamp, Line: e.Line})
+	}
+	return streams
+}
+
 func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) (*QueryLokiLogsResult, error) {
+	format := strings.ToLower(strings.TrimSpace(args.Format))
+	switch format {
+	case "", "full", "compact":
+	default:
+		return nil, fmt.Errorf("invalid format %q: must be 'full' or 'compact'", args.Format)
+	}
+
 	backend, err := lokiBackendForDatasource(ctx, args.DatasourceUID)
 	if err != nil {
 		return nil, fmt.Errorf("creating Loki backend: %w", err)
@@ -736,13 +804,21 @@ func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) (*QueryLokiLog
 		}
 	}
 
+	// Compact format only applies to log (streams) responses; metric results
+	// carry values rather than log lines and are left untouched. Data is kept
+	// as an empty array so the field's "always a JSON array" contract holds.
+	if format == "compact" && result.ResultType == "streams" {
+		out.Streams = compactLogEntries(out.Data)
+		out.Data = []LogEntry{}
+	}
+
 	return out, nil
 }
 
 // QueryLokiLogs is a tool for querying logs from Loki
 var QueryLokiLogs = mcpgrafana.MustTool(
 	"query_loki_logs",
-	"Executes a log query against a Loki or VictoriaLogs datasource and returns matching log entries (or metric samples on Loki). Defaults to the last hour, a limit of 10 entries, and 'backward' direction (newest first). The `logql` parameter takes LogQL on Loki and LogsQL on VictoriaLogs (e.g., Loki: `{app=\"foo\"} |= \"error\"`; VictoriaLogs: `{app=\"foo\"} \"error\"`). To count matching log lines precisely, use a `count_over_time()` metric query with queryType='instant'. Prefer using `query_loki_stats` first to cheaply check whether a stream contains data (avoiding expensive queries against empty streams) and `list_loki_label_names` / `list_loki_label_values` to verify labels exist before querying. Note: `query_loki_stats` returns approximate storage-level counts, not exact log line counts.",
+	"Executes a log query against a Loki or VictoriaLogs datasource and returns matching log entries (or metric samples on Loki). Defaults to the last hour, a limit of 10 entries, and 'backward' direction (newest first). The `logql` parameter takes LogQL on Loki and LogsQL on VictoriaLogs (e.g., Loki: `{app=\"foo\"} |= \"error\"`; VictoriaLogs: `{app=\"foo\"} \"error\"`). To count matching log lines precisely, use a `count_over_time()` metric query with queryType='instant'. Prefer using `query_loki_stats` first to cheaply check whether a stream contains data (avoiding expensive queries against empty streams) and `list_loki_label_names` / `list_loki_label_values` to verify labels exist before querying. Note: `query_loki_stats` returns approximate storage-level counts, not exact log line counts. For broad queries that match many lines, set `format` to 'compact' to group results by stream and avoid repeating label metadata on every line.",
 	queryLokiLogs,
 	mcp.WithTitleAnnotation("Query Loki logs"),
 	mcp.WithIdempotentHintAnnotation(true),
