@@ -75,6 +75,47 @@ func TestLokiTools(t *testing.T) {
 		}
 	})
 
+	t.Run("query loki logs compact format", func(t *testing.T) {
+		ctx := newTestContext()
+		// "Compact" (mixed case + trailing space) must normalise to "compact".
+		result, err := queryLokiLogs(ctx, QueryLokiLogsParams{
+			DatasourceUID: "loki",
+			LogQL:         `{container=~".+"}`,
+			Limit:         10,
+			Format:        "Compact ",
+		})
+		require.NoError(t, err)
+		require.NotNil(t, result, "Result should not be nil")
+
+		// Compact keeps data as an empty (non-nil) array and moves lines into streams.
+		assert.NotNil(t, result.Data, "Data should be a non-nil array in compact mode")
+		assert.Empty(t, result.Data, "Data should be empty in compact mode")
+
+		totalLines := 0
+		for _, stream := range result.Streams {
+			assert.NotNil(t, stream.Labels, "Compact stream should carry labels")
+			for _, line := range stream.Lines {
+				assert.NotEmpty(t, line.Timestamp, "Compact line should have a timestamp")
+				totalLines++
+			}
+		}
+		if result.Metadata != nil {
+			assert.Equal(t, result.Metadata.LinesReturned, totalLines,
+				"Compact stream lines should account for every returned line")
+		}
+	})
+
+	t.Run("query loki logs rejects invalid format", func(t *testing.T) {
+		ctx := newTestContext()
+		_, err := queryLokiLogs(ctx, QueryLokiLogsParams{
+			DatasourceUID: "loki",
+			LogQL:         `{container=~".+"}`,
+			Format:        "not-a-format",
+		})
+		require.Error(t, err, "Unknown format should be rejected")
+		assert.Contains(t, err.Error(), "invalid format")
+	})
+
 	t.Run("query loki logs with no results", func(t *testing.T) {
 		ctx := newTestContext()
 		// Use a query that's unlikely to match any logs
