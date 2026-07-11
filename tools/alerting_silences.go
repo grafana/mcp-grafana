@@ -82,6 +82,12 @@ func (p ManageSilencesParams) validate() error {
 	case "get":
 		return requireSilenceID(p.SilenceID, "get")
 	case "create":
+		// A POST that carries an id is treated as an update by the
+		// Alertmanager API, so an accidental silence_id here could
+		// silently overwrite an existing silence.
+		if p.SilenceID != nil && *p.SilenceID != "" {
+			return fmt.Errorf("silence_id must not be set for 'create' (use 'update' to modify an existing silence)")
+		}
 		return p.validateWritePayload()
 	case "update":
 		if err := requireSilenceID(p.SilenceID, "update"); err != nil {

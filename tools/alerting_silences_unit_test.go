@@ -69,6 +69,18 @@ func TestManageSilencesParams_Validate(t *testing.T) {
 			},
 		},
 		{
+			name: "create with silence_id is rejected",
+			params: ManageSilencesParams{
+				Operation: "create",
+				SilenceID: strPtr("abc123"),
+				Matchers:  validMatchers,
+				StartsAt:  &start,
+				EndsAt:    &end,
+				Comment:   &comment,
+			},
+			wantErr: "silence_id must not be set for 'create'",
+		},
+		{
 			name: "create without matchers",
 			params: ManageSilencesParams{
 				Operation: "create",
