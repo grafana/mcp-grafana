@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.2] - 2026-07-13
+
+### Security
+
+- Bind environment-configured credentials to the configured Grafana URL. A URL supplied in the `X-Grafana-URL` request header no longer causes the environment service-account token, deprecated API key, basic auth, or extra headers to be sent to a caller-specified host ([#XXX](https://github.com/grafana/mcp-grafana/pull/XXX))
+
 ## [0.17.1] - 2026-07-07
 
 ### Fixed
@@ -307,6 +313,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Upgrade Docker base image packages to resolve critical OpenSSL CVE-2025-15467 (CVSS 9.8) ([#551](https://github.com/grafana/mcp-grafana/pull/551))
 
+[0.17.2]: https://github.com/grafana/mcp-grafana/compare/v0.17.1...v0.17.2
 [0.17.1]: https://github.com/grafana/mcp-grafana/compare/v0.17.0...v0.17.1
 [0.17.0]: https://github.com/grafana/mcp-grafana/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/grafana/mcp-grafana/compare/v0.15.2...v0.16.0
