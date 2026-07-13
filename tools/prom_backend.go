@@ -93,16 +93,16 @@ func newPrometheusBackend(ctx context.Context, uid string, ds *models.DataSource
 		return nil, fmt.Errorf("failed to create custom transport: %w", err)
 	}
 
-	// Only convert POST→GET if the datasource is configured to use GET.
+	// Always convert POST→GET for Prometheus queries.
 	// The Prometheus client library sends POST first and only falls back to GET
-	// on 405/501 responses, but Grafana's datasource proxy returns 500 for POST
-	// requests to datasources configured with httpMethod: GET.
+	// on 405/501 responses. However, some Grafana datasource proxy deployments
+	// drop the POST body entirely (returning 422 "missing query arg" from the
+	// Prometheus API) or return 500 instead of 405/501, which prevents the
+	// client's built-in retry from working.
+	// Since the Prometheus HTTP API accepts both GET and POST, we always use GET
+	// to avoid body-handling issues in intermediate proxies.
 	// See https://github.com/grafana/mcp-grafana/issues/632
-	if jsonData, ok := ds.JSONData.(map[string]interface{}); ok {
-		if httpMethod, ok := jsonData["httpMethod"].(string); ok && strings.EqualFold(httpMethod, "GET") {
-			rt = &postToGetRoundTripper{underlying: rt}
-		}
-	}
+	rt = &postToGetRoundTripper{underlying: rt}
 
 	// Wrap with fallback transport: try the primary base first, fall back to
 	// the alternate for compatibility with different Grafana deployments (see
