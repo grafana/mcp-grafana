@@ -334,7 +334,7 @@ func extractGrafanaClientCached(cache *ClientCache) httpContextFunc {
 			logger.Warn("No org ID found in request headers or environment variables, using default org. Set GRAFANA_ORG_ID or pass X-Grafana-Org-Id header to target a specific org.")
 		}
 
-		u, apiKey, basicAuth, _ := extractKeyGrafanaInfoFromReq(req, logger)
+		u, apiKey, basicAuth, _, _ := extractKeyGrafanaInfoFromReq(req, logger)
 		key := cacheKeyFromRequest(u, apiKey, basicAuth, config.OrgID, req)
 
 		grafanaClient := cache.GetOrCreateGrafanaClient(key, func() *GrafanaClient {
@@ -352,7 +352,7 @@ func extractIncidentClientCached(cache *ClientCache) httpContextFunc {
 		config := GrafanaConfigFromContext(ctx)
 		logger := config.LoggerOrDefault()
 
-		grafanaURL, apiKey, _, orgID := extractKeyGrafanaInfoFromReq(req, logger)
+		grafanaURL, apiKey, _, orgID, _ := extractKeyGrafanaInfoFromReq(req, logger)
 		key := cacheKeyFromRequest(grafanaURL, apiKey, nil, orgID, req)
 
 		incidentClient := cache.GetOrCreateIncidentClient(key, func() *incident.Client {
@@ -381,7 +381,7 @@ func extractKubernetesClientCached(cache *ClientCache) httpContextFunc {
 		config := GrafanaConfigFromContext(ctx)
 		logger := config.LoggerOrDefault()
 
-		u, apiKey, basicAuth, _ := extractKeyGrafanaInfoFromReq(req, logger)
+		u, apiKey, basicAuth, _, _ := extractKeyGrafanaInfoFromReq(req, logger)
 		key := cacheKeyFromRequest(u, apiKey, basicAuth, config.OrgID, req)
 
 		k8sClient := cache.GetOrCreateK8sClient(key, func() *KubernetesClient {
