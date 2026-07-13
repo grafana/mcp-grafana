@@ -280,6 +280,94 @@ func TestExtractGrafanaInfoFromHeaders(t *testing.T) {
 	})
 }
 
+// TestExtractGrafanaInfoFromHeadersCredentialBinding verifies that
+// environment-configured credentials are bound to the environment-configured
+// Grafana URL. A request that supplies an X-Grafana-URL pointing at a different
+// instance must not receive the environment service-account token, basic auth,
+// or extra headers.
+func TestExtractGrafanaInfoFromHeadersCredentialBinding(t *testing.T) {
+	const envURL = "http://my-grafana.internal:3000"
+	const envToken = "env-service-account-token"
+
+	t.Run("foreign URL header does not receive env service account token", func(t *testing.T) {
+		t.Setenv("GRAFANA_URL", envURL)
+		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN", envToken)
+
+		req, err := http.NewRequest("GET", "http://example.com", nil)
+		require.NoError(t, err)
+		req.Header.Set(grafanaURLHeader, "http://attacker.example.com")
+
+		config := GrafanaConfigFromContext(ExtractGrafanaInfoFromHeaders(context.Background(), req))
+		assert.Equal(t, "http://attacker.example.com", config.URL)
+		assert.Empty(t, config.APIKey, "env token must not be sent to a caller-specified URL")
+	})
+
+	t.Run("foreign URL header does not receive env deprecated api key", func(t *testing.T) {
+		t.Setenv("GRAFANA_URL", envURL)
+		t.Setenv("GRAFANA_API_KEY", "env-deprecated-key")
+
+		req, err := http.NewRequest("GET", "http://example.com", nil)
+		require.NoError(t, err)
+		req.Header.Set(grafanaURLHeader, "http://attacker.example.com")
+
+		config := GrafanaConfigFromContext(ExtractGrafanaInfoFromHeaders(context.Background(), req))
+		assert.Empty(t, config.APIKey, "env api key must not be sent to a caller-specified URL")
+	})
+
+	t.Run("foreign URL header does not receive env basic auth", func(t *testing.T) {
+		t.Setenv("GRAFANA_URL", envURL)
+		t.Setenv("GRAFANA_USERNAME", "env-user")
+		t.Setenv("GRAFANA_PASSWORD", "env-pass")
+
+		req, err := http.NewRequest("GET", "http://example.com", nil)
+		require.NoError(t, err)
+		req.Header.Set(grafanaURLHeader, "http://attacker.example.com")
+
+		config := GrafanaConfigFromContext(ExtractGrafanaInfoFromHeaders(context.Background(), req))
+		assert.Nil(t, config.BasicAuth, "env basic auth must not be sent to a caller-specified URL")
+	})
+
+	t.Run("foreign URL header does not receive env extra headers", func(t *testing.T) {
+		t.Setenv("GRAFANA_URL", envURL)
+		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN", envToken)
+		t.Setenv("GRAFANA_EXTRA_HEADERS", `{"Authorization": "Bearer smuggled-secret"}`)
+
+		req, err := http.NewRequest("GET", "http://example.com", nil)
+		require.NoError(t, err)
+		req.Header.Set(grafanaURLHeader, "http://attacker.example.com")
+
+		config := GrafanaConfigFromContext(ExtractGrafanaInfoFromHeaders(context.Background(), req))
+		assert.Empty(t, config.ExtraHeaders, "env extra headers must not be sent to a caller-specified URL")
+	})
+
+	t.Run("URL header matching env URL still receives env token", func(t *testing.T) {
+		t.Setenv("GRAFANA_URL", envURL)
+		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN", envToken)
+
+		req, err := http.NewRequest("GET", "http://example.com", nil)
+		require.NoError(t, err)
+		// Same instance, only differing by a trailing slash — must still match.
+		req.Header.Set(grafanaURLHeader, envURL+"/")
+
+		config := GrafanaConfigFromContext(ExtractGrafanaInfoFromHeaders(context.Background(), req))
+		assert.Equal(t, envToken, config.APIKey, "env token should still be used for the env-configured instance")
+	})
+
+	t.Run("foreign URL with its own token uses the request token", func(t *testing.T) {
+		t.Setenv("GRAFANA_URL", envURL)
+		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN", envToken)
+
+		req, err := http.NewRequest("GET", "http://example.com", nil)
+		require.NoError(t, err)
+		req.Header.Set(grafanaURLHeader, "http://tenant.example.com")
+		req.Header.Set(grafanaServiceAccountTokenHeader, "tenant-token")
+
+		config := GrafanaConfigFromContext(ExtractGrafanaInfoFromHeaders(context.Background(), req))
+		assert.Equal(t, "http://tenant.example.com", config.URL)
+		assert.Equal(t, "tenant-token", config.APIKey, "caller-supplied token must be used, not the env token")
+	})
+}
+
 func TestExtractGrafanaClientPath(t *testing.T) {
 	t.Run("no custom path", func(t *testing.T) {
 		t.Setenv("GRAFANA_URL", "http://my-test-url.grafana.com/")
