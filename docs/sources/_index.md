@@ -1,6 +1,6 @@
 ---
 title: Open source Grafana MCP server
-menuTitle: Grafana MCP server
+menuTitle: Grafana OSS MCP server
 description: Connect AI assistants and LLM clients to Grafana using the Model Context Protocol.
 keywords:
   - MCP
