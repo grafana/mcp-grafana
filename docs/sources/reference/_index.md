@@ -8,6 +8,6 @@ aliases: []
 
 # Reference
 
-Technical reference for the Grafana MCP server, including the MCP tools permission table.
+Technical reference for the open source Grafana MCP server, including the MCP tools permission table.
 
 {{< section withDescriptions="true" >}}

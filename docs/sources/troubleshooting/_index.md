@@ -8,6 +8,6 @@ aliases: []
 
 # Troubleshooting
 
-Diagnose common problems with the Grafana MCP server and Grafana compatibility.
+Diagnose common problems with the open source Grafana MCP server and Grafana compatibility.
 
 {{< section withDescriptions="true" >}}

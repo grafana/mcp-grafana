@@ -15,6 +15,6 @@ aliases: []
 
 # Guides
 
-Step-by-step use cases for the Grafana MCP server: query metrics and logs, search and inspect dashboards, manage alert rules, generate deeplinks, run panel queries, and use Grafana Incident and Sift.
+Step-by-step use cases for the open source Grafana MCP server: query metrics and logs, search and inspect dashboards, manage alert rules, generate deeplinks, run panel queries, and use Grafana Incident and Sift.
 
 {{< section withDescriptions="true" >}}
