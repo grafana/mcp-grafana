@@ -43,7 +43,7 @@ func newTestObservability(t *testing.T) *observability.Observability {
 func TestNewServer_SessionIdleTimeoutZeroDisablesReaping(t *testing.T) {
 	obs := newTestObservability(t)
 	synctest.Test(t, func(t *testing.T) {
-		_, _, sm := newServer("stdio", disabledTools{enabledTools: "search"}, obs, 0)
+		_, _, sm := newServer("stdio", disabledTools{enabledTools: "search"}, toolConfig{}, obs, 0)
 		defer sm.Close()
 
 		session := &testClientSession{id: "should-persist"}
@@ -132,7 +132,7 @@ func TestBuildInstructions_ReflectsEnabledCategories(t *testing.T) {
 				}
 			}
 
-			instructions := dt.buildInstructions()
+			instructions := dt.buildInstructions(toolConfig{})
 
 			for _, want := range tc.wantContains {
 				assert.Contains(t, instructions, want, "instructions should contain %q", want)
@@ -147,14 +147,14 @@ func TestBuildInstructions_ReflectsEnabledCategories(t *testing.T) {
 func TestBuildInstructions_TimestampNote(t *testing.T) {
 	// The timestamp note should always be present regardless of enabled categories.
 	dt := disabledTools{enabledTools: "search"}
-	instructions := dt.buildInstructions()
+	instructions := dt.buildInstructions(toolConfig{})
 	assert.Contains(t, instructions, "Timestamp parameters without a timezone offset are interpreted as UTC")
 }
 
 func TestNewServer_SessionIdleTimeoutCustomValue(t *testing.T) {
 	obs := newTestObservability(t)
 	synctest.Test(t, func(t *testing.T) {
-		_, _, sm := newServer("stdio", disabledTools{enabledTools: "search"}, obs, 1)
+		_, _, sm := newServer("stdio", disabledTools{enabledTools: "search"}, toolConfig{},obs, 1)
 		defer sm.Close()
 
 		session := &testClientSession{id: "custom-ttl"}

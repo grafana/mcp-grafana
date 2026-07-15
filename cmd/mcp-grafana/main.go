@@ -90,6 +90,11 @@ type disabledTools struct {
 	runpanelquery, athena, plugin, api, config, provisioning bool
 }
 
+type toolConfig struct {
+	// If enabled, only initializes tools applicable to the targeted Grafana instance.
+	onlyConnected bool
+}
+
 // Configuration for the Grafana client.
 type grafanaConfig struct {
 	// Whether to enable debug mode for the Grafana transport.
@@ -103,6 +108,10 @@ type grafanaConfig struct {
 
 	// Loki configuration
 	maxLokiLogLimit int
+}
+
+func (tc *toolConfig) addFlags() {
+	flag.BoolVar(&tc.onlyConnected, "connected-only", false, "Only enable tools applicable to the targeted Grafana instance")
 }
 
 func (dt *disabledTools) addFlags() {
@@ -162,12 +171,34 @@ type toolEntry struct {
 	category string
 }
 
+// connectedOnlyDeferredCategories lists the tool categories that, when
+// --connected-only is enabled, are NOT registered at startup by toolEntries.
+// Instead they are discovered and registered dynamically (per Grafana
+// datasource/plugin) by ToolManager.DiscoverAndRegisterToolsStdio /
+// DiscoverAndRegisterToolsSession, driven by buildMappedTools and
+// registryPluginCategories below.
+var connectedOnlyDeferredCategories = map[string]bool{
+	"prometheus":    true,
+	"loki":          true,
+	"elasticsearch": true,
+	"pyroscope":     true,
+	"cloudwatch":    true,
+	"clickhouse":    true,
+	"oncall":        true,
+	"incident":      true,
+	"rendering":     true,
+	"sift":          true,
+}
+
 // toolEntries returns the ordered list of tool categories with their registration
 // functions. This is the single source of truth for category-to-adder mapping,
 // used by both processTools (registration) and buildInstructions (instructions).
-func (dt *disabledTools) toolEntries() []toolEntry {
+// When tc.onlyConnected is set, categories in connectedOnlyDeferredCategories are
+// excluded here since they're registered dynamically once connected datasources
+// and plugins are discovered (see DiscoverAndRegisterToolsStdio/Session).
+func (dt *disabledTools) toolEntries(tc toolConfig) []toolEntry {
 	enableWriteTools := !dt.write
-	return []toolEntry{
+	entries := []toolEntry{
 		{tools.AddSearchTools, dt.search, "search"},
 		{func(mcp *server.MCPServer) { tools.AddDatasourceTools(mcp, enableWriteTools) }, dt.datasource, "datasource"},
 		{func(mcp *server.MCPServer) { tools.AddIncidentTools(mcp, enableWriteTools) }, dt.incident, "incident"},
@@ -200,23 +231,36 @@ func (dt *disabledTools) toolEntries() []toolEntry {
 		{tools.AddConfigTools, dt.config, "config"},
 		{tools.AddProvisioningTools, dt.provisioning, "provisioning"},
 	}
+
+	if !tc.onlyConnected {
+		return entries
+	}
+
+	filtered := make([]toolEntry, 0, len(entries))
+	for _, e := range entries {
+		if connectedOnlyDeferredCategories[e.category] {
+			continue
+		}
+		filtered = append(filtered, e)
+	}
+	return filtered
 }
 
 // processTools registers enabled tool categories on the server.
-func (dt *disabledTools) processTools(s *server.MCPServer) {
+func (dt *disabledTools) processTools(s *server.MCPServer, tc toolConfig) {
 	enabledTools := strings.Split(dt.enabledTools, ",")
-	for _, e := range dt.toolEntries() {
+	for _, e := range dt.toolEntries(tc) {
 		maybeAddTools(s, e.adder, enabledTools, e.disabled, e.category)
 	}
 }
 
 // buildInstructions constructs the server instruction string listing only
 // the capabilities that are actually enabled.
-func (dt *disabledTools) buildInstructions() string {
+func (dt *disabledTools) buildInstructions(tc toolConfig) string {
 	enabledTools := strings.Split(dt.enabledTools, ",")
 
 	var capabilities []string
-	for _, e := range dt.toolEntries() {
+	for _, e := range dt.toolEntries(tc) {
 		if !isCategoryEnabled(enabledTools, e.disabled, e.category) {
 			continue
 		}
@@ -229,6 +273,13 @@ func (dt *disabledTools) buildInstructions() string {
 	// are not in toolEntries. Include their description when enabled.
 	if !dt.proxied {
 		capabilities = append(capabilities, "Proxied Tools: Access tools from external MCP servers (like Tempo) through dynamic discovery.")
+	}
+
+	// When --connected-only is set, the deferred categories above are
+	// discovered dynamically instead of at startup; mention this so the
+	// instructions don't silently omit them.
+	if tc.onlyConnected {
+		capabilities = append(capabilities, "Connected-only mode: additional tool categories (Prometheus, Loki, Elasticsearch, Pyroscope, CloudWatch, ClickHouse, OnCall, Incident, Rendering, Sift) are enabled dynamically based on the datasources and plugins connected to this Grafana instance.")
 	}
 
 	var b strings.Builder
@@ -249,7 +300,7 @@ func (dt *disabledTools) buildInstructions() string {
 	return b.String()
 }
 
-func newServer(transport string, dt disabledTools, obs *observability.Observability, sessionIdleTimeoutMinutes int) (*server.MCPServer, *mcpgrafana.ToolManager, *mcpgrafana.SessionManager) {
+func newServer(transport string, dt disabledTools, tc toolConfig, obs *observability.Observability, sessionIdleTimeoutMinutes int) (*server.MCPServer, *mcpgrafana.ToolManager, *mcpgrafana.SessionManager) {
 	sm := mcpgrafana.NewSessionManager(
 		mcpgrafana.WithSessionTTL(time.Duration(sessionIdleTimeoutMinutes) * time.Minute),
 	)
@@ -265,10 +316,10 @@ func newServer(transport string, dt disabledTools, obs *observability.Observabil
 		OnUnregisterSession: []server.OnUnregisterSessionHookFunc{sm.RemoveSession},
 	}
 
-	// Add proxied tools hooks if enabled and we're not running in stdio mode.
-	// (stdio mode is handled by InitializeAndRegisterServerTools; per-session tools
+	// Add (proxy tool hooks, datasource tools) dynamically if enabled and we're not running in stdio mode.
+	// (Stdio mode is handled by InitializeAndRegisterServerTools, InitDiscoverAndRegister; per-session
 	// are not supported).
-	if transport != "stdio" && !dt.proxied {
+	if transport != "stdio" && (!dt.proxied || tc.onlyConnected) {
 		// ensureSessionRegistered registers an ephemeral session in MCPServer.sessions
 		// if it's not already there. This is needed for horizontal scaling: when a
 		// request lands on a pod that didn't handle the initialize call, the SDK
@@ -289,9 +340,16 @@ func newServer(transport string, dt disabledTools, obs *observability.Observabil
 				ensureSessionRegistered(ctx)
 				if stm != nil {
 					if session := server.ClientSessionFromContext(ctx); session != nil {
-						stm.InitializeAndRegisterProxiedTools(ctx, session)
+						if !dt.proxied {
+							stm.InitializeAndRegisterProxiedTools(ctx, session)
+						}
+						// discover enabled
+						if tc.onlyConnected {
+							stm.DiscoverAndRegisterToolsSession(ctx, session)
+						}
 					}
 				}
+
 			},
 		}
 
@@ -301,7 +359,13 @@ func newServer(transport string, dt disabledTools, obs *observability.Observabil
 				ensureSessionRegistered(ctx)
 				if stm != nil {
 					if session := server.ClientSessionFromContext(ctx); session != nil {
-						stm.InitializeAndRegisterProxiedTools(ctx, session)
+						if !dt.proxied {
+							stm.InitializeAndRegisterProxiedTools(ctx, session)
+						}
+						// discover enabled
+						if tc.onlyConnected {
+							stm.DiscoverAndRegisterToolsSession(ctx, session)
+						}
 					}
 				}
 			},
@@ -316,7 +380,7 @@ func newServer(transport string, dt disabledTools, obs *observability.Observabil
 	// of enabled categories, so we need a temporary nil server reference first.
 	// Instead, we split: compute instructions from flags, then create server,
 	// then register tools.
-	instructions := dt.buildInstructions()
+	instructions := dt.buildInstructions(tc)
 
 	s = server.NewMCPServer("mcp-grafana", mcpgrafana.Version(),
 		server.WithInstructions(instructions),
@@ -324,14 +388,82 @@ func newServer(transport string, dt disabledTools, obs *observability.Observabil
 	)
 
 	// Initialize ToolManager now that server is created
-	stm = mcpgrafana.NewToolManager(sm, s, mcpgrafana.WithProxiedTools(!dt.proxied), mcpgrafana.WithToolManagerLogger(slog.Default()))
+	tmOpts := []mcpgrafana.ToolManagerOption{
+		mcpgrafana.WithProxiedTools(!dt.proxied),
+		mcpgrafana.WithToolManagerLogger(slog.Default()),
+	}
+	if tc.onlyConnected {
+		tmOpts = append(tmOpts, mcpgrafana.WithConnectedOnlyTools(mcpgrafana.ConnectedToolsConfig{
+			EnabledTools:     toolsState(&dt),
+			CategoryTools:    buildMappedTools(!dt.write),
+			PluginCategories: registryPluginCategories(),
+		}))
+	}
+	stm = mcpgrafana.NewToolManager(sm, s, tmOpts...)
 
 	// Give the SessionManager a reference to the MCPServer so the reaper can
 	// unregister sessions from the SDK's internal session map.
 	sm.SetMCPServer(s)
 
-	dt.processTools(s)
+	dt.processTools(s, tc)
 	return s, stm, sm
+}
+
+func maybeEnabledTool(category string, exclude bool, enabledMap map[string]bool, enabled []string) {
+	if exclude {
+		return
+	}
+
+	if slices.Contains(enabled, category) {
+		enabledMap[category] = true
+	}
+}
+
+// registryPluginCategories returns the mapping of plugin IDs to their supported tool categories.
+func registryPluginCategories() map[string][]string {
+	return map[string][]string{
+		"grafana-ml-app":         {tools.Sift},
+		"grafana-irm-app":        {tools.OnCall, tools.Incident},
+		"grafana-image-renderer": {tools.Rendering},
+	}
+}
+
+// returns tools map for datasources
+func buildMappedTools(enableWriteTools bool) map[string]func() []*mcpgrafana.Tool {
+	return map[string]func() []*mcpgrafana.Tool{
+		tools.LokiDatasourceType:          tools.GetLokiTools,
+		tools.PrometheusDataSourceType:    tools.GetPrometheusTools,
+		tools.PyroscopeDataSourceType:     tools.GetPyroscopeTools,
+		tools.ClickHouseDatasourceType:    tools.GetClickHouseTools,
+		tools.CloudWatchDatasourceType:    tools.GetCloudWatchTools,
+		tools.ElasticsearchDatasourceType: tools.GetElasticSearchTools,
+		tools.Incident: func() []*mcpgrafana.Tool {
+			return tools.GetIncidentTools(enableWriteTools)
+		},
+		tools.Sift: func() []*mcpgrafana.Tool {
+			return tools.GetSiftTools(enableWriteTools)
+		},
+		tools.Rendering: tools.GetRenderingTools,
+		tools.OnCall:    tools.GetOnCallTools,
+	}
+}
+
+func toolsState(dt *disabledTools) map[string]bool {
+	enabledTools := strings.Split(dt.enabledTools, ",")
+	enabledMap := map[string]bool{}
+
+	maybeEnabledTool(tools.PrometheusDataSourceType, dt.prometheus, enabledMap, enabledTools)
+	maybeEnabledTool(tools.LokiDatasourceType, dt.loki, enabledMap, enabledTools)
+	maybeEnabledTool(tools.ElasticsearchDatasourceType, dt.elasticsearch, enabledMap, enabledTools)
+	maybeEnabledTool(tools.PyroscopeDataSourceType, dt.pyroscope, enabledMap, enabledTools)
+	maybeEnabledTool(tools.CloudWatchDatasourceType, dt.cloudwatch, enabledMap, enabledTools)
+	maybeEnabledTool(tools.ClickHouseDatasourceType, dt.clickhouse, enabledMap, enabledTools)
+	maybeEnabledTool(tools.Incident, dt.incident, enabledMap, enabledTools)
+	maybeEnabledTool(tools.Sift, dt.sift, enabledMap, enabledTools)
+	maybeEnabledTool(tools.Rendering, dt.rendering, enabledMap, enabledTools)
+	maybeEnabledTool(tools.OnCall, dt.oncall, enabledMap, enabledTools)
+
+	return enabledMap
 }
 
 type tlsConfig struct {
@@ -439,7 +571,6 @@ func runHTTPServer(ctx context.Context, srv httpServer, addr, transportName stri
 			slog.Warn(fmt.Sprintf("%s server did not stop gracefully within timeout", transportName))
 		}
 	}
-
 	return nil
 }
 
@@ -458,7 +589,7 @@ func runMetricsServer(addr string, o *observability.Observability) {
 	}
 }
 
-func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt disabledTools, gc mcpgrafana.GrafanaConfig, tls tlsConfig, hsc httpSecurityConfig, obs observability.Config, sessionIdleTimeoutMinutes int) error {
+func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt disabledTools, tc toolConfig, gc mcpgrafana.GrafanaConfig, tls tlsConfig, hsc httpSecurityConfig, obs observability.Config, sessionIdleTimeoutMinutes int) error {
 	stderrHandler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})
 	slog.SetDefault(slog.New(stderrHandler))
 
@@ -493,7 +624,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		defer clientCache.Close()
 	}
 
-	s, tm, sm := newServer(transport, dt, o, sessionIdleTimeoutMinutes)
+	s, tm, sm := newServer(transport, dt, tc, o, sessionIdleTimeoutMinutes)
 	defer sm.Close()
 
 	// Create a context that will be cancelled on shutdown
@@ -525,11 +656,22 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		srv.SetContextFunc(cf)
 
 		// For stdio (single-tenant), initialize proxied tools on the server directly
-		if !dt.proxied {
+		if !dt.proxied || tc.onlyConnected {
 			stdioCtx := cf(ctx)
-			if err := tm.InitializeAndRegisterServerTools(stdioCtx); err != nil {
-				slog.Error("failed to initialize proxied tools for stdio", "error", err)
+
+			if !dt.proxied {
+				if err := tm.InitializeAndRegisterServerTools(stdioCtx); err != nil {
+					slog.Error("failed to initialize proxied tools for stdio", "error", err)
+				}
 			}
+
+			// Discover enabled, find and register connected tools on server directly for stdio
+			if tc.onlyConnected {
+				if err := tm.DiscoverAndRegisterToolsStdio(stdioCtx); err != nil {
+					slog.Error("failed to perform discovery of datasources for stdio", "error", err)
+				}
+			}
+
 		}
 
 		slog.Info("Starting Grafana MCP server using stdio transport", "version", mcpgrafana.Version())
@@ -620,6 +762,8 @@ func main() {
 	logLevel := flag.String("log-level", "info", "Log level (debug, info, warn, error)")
 	sessionIdleTimeoutMinutes := flag.Int("session-idle-timeout-minutes", 30, "Session idle timeout in minutes. Sessions with no activity for this duration are automatically reaped. Set to 0 to disable session reaping")
 	showVersion := flag.Bool("version", false, "Print the version and exit")
+	var tc toolConfig
+	tc.addFlags()
 	var dt disabledTools
 	dt.addFlags()
 	var gc grafanaConfig
@@ -683,7 +827,7 @@ func main() {
 		level = slog.LevelDebug
 	}
 
-	if err := run(transport, *addr, *basePath, *endpointPath, level, dt, grafanaConfig, tls, hsc, obs, *sessionIdleTimeoutMinutes); err != nil {
+	if err := run(transport, *addr, *basePath, *endpointPath, level, dt, tc, grafanaConfig, tls, hsc, obs, *sessionIdleTimeoutMinutes); err != nil {
 		panic(err)
 	}
 }

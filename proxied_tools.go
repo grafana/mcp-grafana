@@ -222,15 +222,28 @@ type ToolManager struct {
 	serverMode    bool // true if using server-wide tools (stdio), false for per-session (HTTP/SSE)
 	serverClients map[string]*ProxiedClient
 	clientsMutex  sync.RWMutex
+
+	// Option to add only tools which are connected to Grafana,
+	connectedOnly bool
+	enabledTools  map[string]bool
+	// Resolves tools of category(datasource)
+	categoryTools map[string]func() []*Tool
+	// Tool categories of a plugin
+	pluginCategories map[string][]string
 }
 
+// ToolManagerOption defines configuration functions for the ToolManager.
+type ToolManagerOption func(*ToolManager)
+
 // NewToolManager creates a new ToolManager
-func NewToolManager(sm *SessionManager, mcpServer *server.MCPServer, opts ...toolManagerOption) *ToolManager {
+func NewToolManager(sm *SessionManager, mcpServer *server.MCPServer, opts ...ToolManagerOption) *ToolManager {
 	tm := &ToolManager{
 		sm:            sm,
 		server:        mcpServer,
 		serverClients: make(map[string]*ProxiedClient),
 	}
+	// if enabled by manager, we maintain list
+
 	for _, opt := range opts {
 		opt(tm)
 	}
@@ -240,17 +253,32 @@ func NewToolManager(sm *SessionManager, mcpServer *server.MCPServer, opts ...too
 	return tm
 }
 
-type toolManagerOption func(*ToolManager)
-
 // WithProxiedTools sets whether proxied tools are enabled
-func WithProxiedTools(enabled bool) toolManagerOption {
+func WithProxiedTools(enabled bool) ToolManagerOption {
 	return func(tm *ToolManager) {
 		tm.enableProxiedTools = enabled
 	}
 }
 
+// ConnectedToolsConfig defines configuration for tools that require a connected Grafana instance.
+type ConnectedToolsConfig struct {
+	EnabledTools     map[string]bool
+	CategoryTools    map[string]func() []*Tool
+	PluginCategories map[string][]string
+}
+
+// WithConnectedOnlyTools initializes ToolManager internal state for enabled Tools when connectedOnly is true
+func WithConnectedOnlyTools(config ConnectedToolsConfig) ToolManagerOption {
+	return func(tm *ToolManager) {
+		tm.connectedOnly = true
+		tm.enabledTools = config.EnabledTools
+		tm.categoryTools = config.CategoryTools
+		tm.pluginCategories = config.PluginCategories
+	}
+}
+
 // WithToolManagerLogger sets the logger for the ToolManager.
-func WithToolManagerLogger(logger *slog.Logger) toolManagerOption {
+func WithToolManagerLogger(logger *slog.Logger) ToolManagerOption {
 	return func(tm *ToolManager) {
 		tm.logger = logger
 	}

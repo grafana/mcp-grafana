@@ -9,6 +9,10 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 )
 
+// ElasticsearchDatasourceType is the type identifier for Elasticsearch datasources.
+// Used by the connected-only tool discovery mapping in cmd/mcp-grafana/main.go.
+const ElasticsearchDatasourceType = elasticsearchDatasourceType
+
 // QueryElasticsearchParams defines the parameters for querying Elasticsearch or OpenSearch
 type QueryElasticsearchParams struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the Elasticsearch or OpenSearch datasource to query"`
@@ -57,6 +61,14 @@ var QueryElasticsearch = mcpgrafana.MustTool(
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
 )
+
+var elasticSearchTools = []*mcpgrafana.Tool{
+	&QueryElasticsearch,
+}
+
+func GetElasticSearchTools() []*mcpgrafana.Tool {
+	return elasticSearchTools
+}
 
 // AddElasticsearchTools registers all Elasticsearch and OpenSearch tools with the MCP server
 func AddElasticsearchTools(mcp *server.MCPServer) {

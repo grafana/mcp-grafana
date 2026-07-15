@@ -16,6 +16,11 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 )
 
+const (
+	// Sift is the identifier for the sift category.
+	Sift = "sift"
+)
+
 type investigationStatus string
 
 const (
@@ -415,17 +420,6 @@ var FindSlowRequests = mcpgrafana.MustTool(
 	mcp.WithReadOnlyHintAnnotation(true),
 )
 
-// AddSiftTools registers all Sift tools with the MCP server
-func AddSiftTools(mcp *server.MCPServer, enableWriteTools bool) {
-	GetSiftInvestigation.Register(mcp)
-	GetSiftAnalysis.Register(mcp)
-	ListSiftInvestigations.Register(mcp)
-	if enableWriteTools {
-		FindErrorPatternLogs.Register(mcp)
-		FindSlowRequests.Register(mcp)
-	}
-}
-
 // makeRequest is a helper method to make HTTP requests and handle common response patterns
 func (c *siftClient) makeRequest(ctx context.Context, method, path string, body []byte) ([]byte, error) {
 	var req *http.Request
@@ -642,4 +636,34 @@ func fetchErrorPatternLogExamples(ctx context.Context, patternMap map[string]any
 		}
 	}
 	return examples, nil
+}
+
+// AddSiftTools registers all Sift tools with the MCP server
+func AddSiftTools(mcp *server.MCPServer, enableWriteTools bool) {
+	GetSiftInvestigation.Register(mcp)
+	GetSiftAnalysis.Register(mcp)
+	ListSiftInvestigations.Register(mcp)
+	if enableWriteTools {
+		FindErrorPatternLogs.Register(mcp)
+		FindSlowRequests.Register(mcp)
+	}
+}
+
+var siftReadTools = []*mcpgrafana.Tool{
+	&GetSiftInvestigation,
+	&GetSiftAnalysis,
+	&ListSiftInvestigations,
+}
+
+var siftWriteTools = []*mcpgrafana.Tool{
+	&FindErrorPatternLogs,
+	&FindSlowRequests,
+}
+
+func GetSiftTools(enableWriteTools bool) []*mcpgrafana.Tool {
+	tools := siftReadTools
+	if enableWriteTools {
+		tools = append(tools, siftWriteTools...)
+	}
+	return tools
 }

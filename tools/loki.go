@@ -23,6 +23,10 @@ const (
 
 	// MaxLokiLogLimit is the maximum number of log lines that can be requested
 	MaxLokiLogLimit = 100
+
+	// LokiDatasourceType is the type identifier for Loki datasources.
+	// Used by the connected-only tool discovery mapping in cmd/mcp-grafana/main.go.
+	LokiDatasourceType = "loki"
 )
 
 type Client struct {
@@ -901,6 +905,18 @@ var QueryLokiPatterns = mcpgrafana.MustTool(
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
 )
+
+var lokiTools = []*mcpgrafana.Tool{
+	&ListLokiLabelNames,
+	&ListLokiLabelValues,
+	&QueryLokiStats,
+	&QueryLokiLogs,
+	&QueryLokiPatterns,
+}
+
+func GetLokiTools() []*mcpgrafana.Tool {
+	return lokiTools
+}
 
 // AddLokiTools registers all Loki tools with the MCP server.
 // Config-generation tools (e.g. suggest_loki_alloy_label_config) live in

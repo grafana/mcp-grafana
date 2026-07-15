@@ -58,6 +58,9 @@ type SessionState struct {
 	proxiedClients          map[string]*ProxiedClient // key: datasourceType_datasourceUID
 	toolToDatasources       map[string][]string       // key: toolName, value: list of datasource keys that support it
 	mutex                   sync.RWMutex
+
+	// Discovery of connected categories (datasources,plugin categories)
+	initDiscoveryOnce sync.Once
 }
 
 func newSessionState() *SessionState {
