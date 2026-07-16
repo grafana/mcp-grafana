@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -749,4 +750,125 @@ func TestConvertToolHandlesInterfaceFields(t *testing.T) {
 	modelObj, ok := model.(map[string]any)
 	require.True(t, ok, "model property should be an object schema, got %T", model)
 	t.Logf("model schema: %v", modelObj)
+}
+
+type embeddedTimeParams struct {
+	StartRFC3339 string `json:"start_rfc_3339,omitempty"`
+	EndRFC3339   string `json:"end_rfc_3339,omitempty"`
+}
+
+type unknownArgsParams struct {
+	embeddedTimeParams
+	DataSourceUID string `json:"data_source_uid" jsonschema:"required"`
+	Hidden        string `json:"-"`
+	Untagged      string
+}
+
+func TestUnknownArguments(t *testing.T) {
+	argType := reflect.TypeOf(unknownArgsParams{})
+
+	t.Run("known field names include promoted and untagged fields", func(t *testing.T) {
+		names := knownJSONFieldNames(argType)
+		assert.Equal(t, []string{"Untagged", "data_source_uid", "end_rfc_3339", "start_rfc_3339"}, names)
+	})
+
+	t.Run("accepts exact and case-insensitive keys", func(t *testing.T) {
+		args := []byte(`{"data_source_uid":"x","start_rfc_3339":"t","DATA_SOURCE_UID":"y","untagged":"z"}`)
+		assert.Empty(t, unknownArguments(args, argType))
+	})
+
+	t.Run("reports typo'd and unknown keys", func(t *testing.T) {
+		args := []byte(`{"data_source_uid":"x","start_rfc3339":"t","foo":1}`)
+		assert.Equal(t, []string{"foo", "start_rfc3339"}, unknownArguments(args, argType))
+	})
+
+	t.Run("error message names the keys and lists valid arguments", func(t *testing.T) {
+		msg := unknownArgumentsError([]string{"start_rfc3339"}, knownJSONFieldNames(argType))
+		assert.Contains(t, msg, `unknown argument "start_rfc3339"`)
+		assert.Contains(t, msg, "valid arguments: Untagged, data_source_uid, end_rfc_3339, start_rfc_3339")
+	})
+}
+
+func TestConvertToolRejectsUnknownArguments(t *testing.T) {
+	_, handler, err := ConvertTool("test_tool", "A test tool", testToolHandler)
+	require.NoError(t, err)
+	ctx := context.Background()
+
+	t.Run("typo'd argument returns tool error listing valid arguments", func(t *testing.T) {
+		request := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Name: "test_tool",
+				Arguments: map[string]any{
+					"name":    "test",
+					"value":   65,
+					"optionl": true,
+				},
+			},
+		}
+		result, err := handler(ctx, request)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.True(t, result.IsError)
+		text, ok := result.Content[0].(mcp.TextContent)
+		require.True(t, ok)
+		assert.Contains(t, text.Text, `unknown argument "optionl"`)
+		assert.Contains(t, text.Text, "valid arguments: name, optional, value")
+	})
+
+	t.Run("valid arguments still succeed", func(t *testing.T) {
+		request := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Name:      "test_tool",
+				Arguments: map[string]any{"name": "test", "value": 65},
+			},
+		}
+		result, err := handler(ctx, request)
+		require.NoError(t, err)
+		assert.False(t, result.IsError)
+	})
+
+	t.Run("empty-params tool rejects any argument", func(t *testing.T) {
+		_, emptyHandler, err := ConvertTool("empty", "description", emptyToolHandler)
+		require.NoError(t, err)
+		request := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Name:      "empty",
+				Arguments: map[string]any{"foo": "bar"},
+			},
+		}
+		result, err := emptyHandler(ctx, request)
+		require.NoError(t, err)
+		assert.True(t, result.IsError)
+		text, ok := result.Content[0].(mcp.TextContent)
+		require.True(t, ok)
+		assert.Contains(t, text.Text, "this tool takes no arguments")
+	})
+
+	t.Run("nil arguments succeed", func(t *testing.T) {
+		_, emptyHandler, err := ConvertTool("empty", "description", emptyToolHandler)
+		require.NoError(t, err)
+		request := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{Name: "empty"},
+		}
+		result, err := emptyHandler(ctx, request)
+		require.NoError(t, err)
+		assert.False(t, result.IsError)
+	})
+}
+
+func TestConvertToolSchemaDisallowsAdditionalProperties(t *testing.T) {
+	tool, _, err := ConvertTool("test_tool", "A test tool", testToolHandler)
+	require.NoError(t, err)
+
+	var schema map[string]any
+	err = json.Unmarshal(tool.RawInputSchema, &schema)
+	require.NoError(t, err)
+	require.Contains(t, schema, "additionalProperties")
+	assert.Equal(t, false, schema["additionalProperties"])
+}
+
+func TestValidateNoBooleanSchemasAllowsAdditionalPropertiesFalse(t *testing.T) {
+	input := `{"type":"object","properties":{"name":{"type":"string"}},"additionalProperties":false}`
+	err := validateNoBooleanSchemas("test_tool", []byte(input))
+	assert.NoError(t, err)
 }
