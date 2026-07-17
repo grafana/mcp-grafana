@@ -401,9 +401,9 @@ var SearchPlugins = mcpgrafana.MustTool(
 )
 
 func AddPluginTools(s *server.MCPServer, enableWrite bool) {
-	SearchPlugins.Register(s)
-	GetPlugin.Register(s)
-	if enableWrite {
-		InstallPlugin.Register(s)
-	}
+	// SearchPlugins.Register(s)
+	// GetPlugin.Register(s)
+	// if enableWrite {
+	// 	InstallPlugin.Register(s)
+	// }
 }

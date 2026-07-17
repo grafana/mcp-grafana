@@ -682,9 +682,9 @@ var CheckDatasourcesHealth = mcpgrafana.MustTool(
 func AddDatasourceTools(mcp *server.MCPServer, enableWriteTools bool) {
 	ListDatasources.Register(mcp)
 	GetDatasource.Register(mcp)
-	CheckDatasourcesHealth.Register(mcp)
+	// CheckDatasourcesHealth.Register(mcp)
 	if enableWriteTools {
-		CreateDatasource.Register(mcp)
-		UpdateDatasource.Register(mcp)
+		// CreateDatasource.Register(mcp)
+		// UpdateDatasource.Register(mcp)
 	}
 }
