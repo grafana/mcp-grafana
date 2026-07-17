@@ -101,8 +101,7 @@ type CreateDatasourceParams struct {
 	BasicAuth       bool           `json:"basicAuth,omitempty" jsonschema:"description=Whether Grafana should use basic auth"`
 	WithCredentials bool           `json:"withCredentials,omitempty" jsonschema:"description=Whether Grafana should forward credentials such as cookies"`
 	IsDefault       bool           `json:"isDefault,omitempty" jsonschema:"description=Whether this should become the default datasource"`
-	Fields          map[string]any `json:"fields,omitempty" jsonschema:"description=Datasource field values to provision\\, keyed by field key from the schema returned on the first call. The server uses each field's target (root or jsonData) to place values correctly in the YAML. Example: {\"url\": \"http://prometheus:9090\"\\, \"httpMethod\": \"POST\"}."`
-	SchemaReviewed  bool           `json:"schemaReviewed,omitempty" jsonschema:"description=Set to true on the second call to confirm you reviewed the schema and collected values from the user."`
+	JSONData        map[string]any `json:"jsonData,omitempty" jsonschema:"description=Non-secret plugin settings placed into the datasource's jsonData"`
 }
 
 type CreateDatasourceResult struct {
@@ -196,29 +195,9 @@ func applyFields(body *models.AddDataSourceCommand, schema *datasourceschemas.Da
 }
 
 func createDatasource(ctx context.Context, args CreateDatasourceParams) (*mcp.CallToolResult, error) {
-	schema, err := datasourceschemas.LoadDatasourceSchema(args.Type)
-	if err != nil {
-		return nil, err
-	}
-	// Phase 1: return field guidance before creation.
-	// With a schema: list schema fields and ask the user to fill them in.
-	// Without a schema: list the explicit params and ask for name + any others
-	// the user wants to set, then call again with those values.
-	//
-	// Creation for a schema-backed type is gated on the explicit SchemaReviewed
-	// flag and required top-level name, which the caller sets only after seeing
-	// the schema. This enforces the documented two-call flow: supplying a fields
-	// map alone (or an empty one) is never enough to skip guidance and create
-	// directly.
-	if schema != nil && (!args.SchemaReviewed || args.Name == "") {
-		text, _ := json.Marshal(datasourceschemas.BuildSchemaGuidance(schema, "create_datasource"))
-		return mcp.NewToolResultText(string(text)), nil
-	}
-	if schema == nil && args.Name == "" {
-		text, _ := json.Marshal(noSchemaGuidance(args.Type))
-		return mcp.NewToolResultText(string(text)), nil
-	}
-
+	// NOTE: temporary benchmark variant. The schema-guidance two-call flow has
+	// been removed so the tool creates directly from top-level args + jsonData.
+	// The schema helpers (applyFields, noSchemaGuidance) are intentionally kept.
 	dsAccess := args.Access
 	if dsAccess == "" {
 		// use grafana default
@@ -226,7 +205,6 @@ func createDatasource(ctx context.Context, args CreateDatasourceParams) (*mcp.Ca
 	}
 
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
-	// these are used as fallback in case the schema fails to load, that way we can still create a datasource with common, shared fields
 	body := &models.AddDataSourceCommand{
 		Name:            args.Name,
 		Type:            args.Type,
@@ -237,8 +215,8 @@ func createDatasource(ctx context.Context, args CreateDatasourceParams) (*mcp.Ca
 		IsDefault:       args.IsDefault,
 		WithCredentials: args.WithCredentials,
 	}
-	if schema != nil {
-		body.JSONData = models.JSON(applyFields(body, schema, args.Fields))
+	if args.JSONData != nil {
+		body.JSONData = models.JSON(args.JSONData)
 	}
 	resp, err := c.Datasources.AddDataSourceWithParams(
 		datasources.NewAddDataSourceParamsWithContext(ctx).WithBody(body),
@@ -337,7 +315,7 @@ var ListDatasources = mcpgrafana.MustTool(
 
 var CreateDatasource = mcpgrafana.MustTool(
 	"create_datasource",
-	"Create a datasource. If type is ambiguous, call search_plugin_information first; install the plugin if needed. IMPORTANT: always call this tool twice. First call: provide only the type — the tool returns a field schema. After receiving the schema, you MUST ask the user for every required field value explicitly; do not infer or use defaults without user confirmation. Second call: provide the type, the display name in the top-level name argument, schemaReviewed=true, and the fields map populated with values confirmed by the user. Never handle credentials — remind the user to rotate any detected. Returns UID, health check, and a config page link. ",
+	"Create a datasource. Provide the display name and type, plus any relevant top-level fields (url, access, database, basicAuth, isDefault, withCredentials) and non-secret plugin settings in jsonData. If type is ambiguous, call search_plugin_information first; install the plugin if needed. Never handle credentials — remind the user to rotate any detected. Returns UID, health check, and a config page link. ",
 	createDatasource,
 	mcp.WithTitleAnnotation("Create datasource"),
 	mcp.WithIdempotentHintAnnotation(false),
