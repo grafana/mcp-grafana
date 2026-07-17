@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
-	"sort"
 	"strings"
 
 	"github.com/invopop/jsonschema"
@@ -191,89 +190,6 @@ func collectStringSliceFieldNames(structType reflect.Type) map[string]bool {
 	return fields
 }
 
-// knownJSONFieldNames returns the JSON property names that encoding/json accepts
-// for the given struct type, following the same field visibility and embedding
-// promotion rules (via reflect.VisibleFields).
-func knownJSONFieldNames(structType reflect.Type) []string {
-	var names []string
-	for _, f := range reflect.VisibleFields(structType) {
-		if !f.IsExported() {
-			continue
-		}
-		name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
-		if name == "-" {
-			continue
-		}
-		if f.Anonymous && name == "" {
-			ft := f.Type
-			if ft.Kind() == reflect.Pointer {
-				ft = ft.Elem()
-			}
-			// An untagged embedded struct has its fields promoted; those fields
-			// appear as their own VisibleFields entries.
-			if ft.Kind() == reflect.Struct {
-				continue
-			}
-		}
-		if name == "" {
-			name = f.Name
-		}
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
-}
-
-// unknownArguments returns the top-level keys in the JSON-encoded arguments that
-// do not match any field of argType. Matching is case-insensitive, mirroring
-// encoding/json's fallback behavior, so every key reported here would otherwise
-// be silently dropped by the decoder.
-func unknownArguments(argBytes []byte, argType reflect.Type) []string {
-	if argType.Kind() != reflect.Struct {
-		return nil
-	}
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(argBytes, &raw); err != nil {
-		// Not a JSON object; leave it to the decode path to report.
-		return nil
-	}
-	known := make(map[string]bool)
-	for _, name := range knownJSONFieldNames(argType) {
-		known[strings.ToLower(name)] = true
-	}
-	var unknown []string
-	for key := range raw {
-		if !known[strings.ToLower(key)] {
-			unknown = append(unknown, key)
-		}
-	}
-	sort.Strings(unknown)
-	return unknown
-}
-
-// unknownArgumentsError builds the error message for a call carrying unknown
-// arguments. Listing the valid argument names makes the error self-correcting
-// for LLM callers.
-func unknownArgumentsError(unknown, known []string) string {
-	var sb strings.Builder
-	sb.WriteString("unknown argument")
-	if len(unknown) > 1 {
-		sb.WriteString("s")
-	}
-	for i, key := range unknown {
-		if i > 0 {
-			sb.WriteString(",")
-		}
-		fmt.Fprintf(&sb, " %q", key)
-	}
-	if len(known) > 0 {
-		fmt.Fprintf(&sb, "; valid arguments: %s", strings.Join(known, ", "))
-	} else {
-		sb.WriteString("; this tool takes no arguments")
-	}
-	return sb.String()
-}
-
 // ConvertTool converts a toolHandler function to an MCP Tool and ToolHandlerFunc.
 // The toolHandler must accept a context.Context and a struct with jsonschema tags for parameter documentation.
 // The struct fields define the tool's input schema, while the return value can be a string, struct, or *mcp.CallToolResult.
@@ -302,6 +218,14 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 	argType := handlerType.In(1)
 	if argType.Kind() != reflect.Struct {
 		return zero, nil, errors.New("tool handler second argument must be a struct")
+	}
+
+	// Built before the handler closure so it can validate incoming argument
+	// keys against the same schema that is advertised to clients.
+	jsonSchema := createJSONSchemaFromHandler(toolHandler)
+	properties := make(map[string]any, jsonSchema.Properties.Len())
+	for pair := jsonSchema.Properties.Oldest(); pair != nil; pair = pair.Next() {
+		properties[pair.Key] = pair.Value
 	}
 
 	handler := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -343,10 +267,9 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 		// otherwise leave the field zero-valued and the tool would answer a
 		// different question than the caller asked. The error is returned as a
 		// tool result (not a protocol error) so LLM callers can see it and retry.
-		if unknown := unknownArguments(argBytes, argType); len(unknown) > 0 {
-			msg := unknownArgumentsError(unknown, knownJSONFieldNames(argType))
+		if unknown := unknownArguments(request.Params.Arguments, properties); len(unknown) > 0 {
 			span.SetStatus(codes.Error, "unknown arguments")
-			return mcp.NewToolResultError(msg), nil
+			return mcp.NewToolResultError(unknownArgumentsError(unknown, properties)), nil
 		}
 
 		unmarshaledArgs := reflect.New(argType).Interface()
@@ -468,11 +391,6 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 		return mcp.NewToolResultText(string(returnBytes)), nil
 	}
 
-	jsonSchema := createJSONSchemaFromHandler(toolHandler)
-	properties := make(map[string]any, jsonSchema.Properties.Len())
-	for pair := jsonSchema.Properties.Oldest(); pair != nil; pair = pair.Next() {
-		properties[pair.Key] = pair.Value
-	}
 	// Use RawInputSchema with ToolArgumentsSchema to work around a Go limitation where type aliases
 	// don't inherit custom MarshalJSON methods. This ensures empty properties are included in the schema.
 	// additionalProperties: false advertises the strictness enforced above, so
