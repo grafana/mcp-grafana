@@ -14,7 +14,9 @@ aliases: []
 
 # Introduction to the Grafana MCP server
 
-This article outlines what the [Grafana MCP serve](https://github.com/grafana/mcp-grafana) is, what it can do, and how authentication and permissions work.
+This article outlines what the open source [Grafana MCP server](https://github.com/grafana/mcp-grafana) is, what it can do, and how authentication and permissions work.
+
+For Grafana Cloud's hosted MCP server, refer to [Grafana Cloud MCP server](https://grafana.com/docs/grafana-cloud/machine-learning/assistant/configure/cloud-mcp/).
 
 ## What you'll achieve
 
