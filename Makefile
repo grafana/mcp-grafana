@@ -12,6 +12,15 @@ help: ## Print this help message.
 build-image: ## Build the Docker image.
 	docker build -t mcp-grafana:latest .
 
+.PHONY: build-ui
+build-ui: ## Rebuild MCP App UI bundles under ui/. Requires Node; the built artifacts are committed for `go:embed`, so this only needs to run when ui/*/src changes.
+	@for dir in ui/*/; do \
+		if [ -f "$$dir/package.json" ]; then \
+			echo "Building $$dir..."; \
+			(cd "$$dir" && npm ci --ignore-scripts && npm run build); \
+		fi; \
+	done
+
 .PHONY: build
 build: ## Build the binary.
 	go build -o dist/mcp-grafana ./cmd/mcp-grafana

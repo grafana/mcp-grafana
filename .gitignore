@@ -3,12 +3,16 @@ __pycache__/
 *.py[oc]
 build/
 dist/
+!ui/*/dist/
 wheels/
 *.egg-info
 .DS_Store
 .vscode/
 .env
 .cursor/
+
+# UI app build artifacts
+ui/*/node_modules/
 
 # Virtual environments
 .venv
