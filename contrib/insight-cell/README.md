@@ -15,7 +15,21 @@ insight-cell trust metadata (verdict, attestation, provenance, reasoning).
 It works on representative **sample data** out of the box, and on **live
 Grafana** data once you add a token.
 
-![preview](docs/preview.png)
+### In Claude Desktop, on live Grafana Cloud data
+
+A live time-series **correlation** — two metrics reconciled onto a shared axis, with the agent's synthesis (memory-bound, not CPU-bound), carrying its query and "as of" line:
+
+<img width="720" alt="Live correlation time-series insight cell" src="https://github.com/user-attachments/assets/b828cc64-1921-4093-8645-aef19b2783d7" />
+
+A live alert-triage **worklist** with the query & provenance footer expanded — attestation, datasource, time range, RBAC scope, live/confidence/data-mode:
+
+<img width="720" alt="Live worklist insight cell with provenance footer" src="https://github.com/user-attachments/assets/9cb4e5c2-acdb-48a5-ba54-dd769a9db3c3" />
+
+A triage **worklist** that synthesizes three firing alerts into ranked findings — each with the *why* and a recommended fix action, not just raw metrics:
+
+<img width="720" alt="Triage worklist with recommended fix actions" src="https://github.com/user-attachments/assets/65be7c15-30e5-4ee0-93e0-65deee846ee0" />
+
+The full render-type gallery (sample data) is in [`docs/preview.png`](docs/preview.png).
 
 This builds on the approach Grafana is prototyping OSS-first in
 [`mcp-grafana` PR #825](https://github.com/grafana/mcp-grafana/pull/825), which
@@ -64,6 +78,47 @@ The tool result is emitted three ways so it degrades gracefully across hosts:
 > result forwarded to the iframe and keep only text content. To stay robust, the
 > cell payload is also embedded as JSON in a text content block, which the app
 > scans (`extractCell` in `src/mcp-app.ts`).
+
+---
+
+## Where the insight cell fits vs. panel-reuse
+
+Another approach to rendering Grafana in an MCP app is **panel-reuse**: import a
+real Grafana panel component (e.g. `TimeSeriesPanel.tsx`) and drive it with
+`PanelProps` + panel JSON through `applyFieldOverrides`. That gives
+**pixel-identical** fidelity for free. The two approaches sit on a
+**fidelity ↔ reach** frontier and are complementary — not competing.
+
+The decisive structural difference: **panel-reuse can only render things that are
+already a Grafana panel.** The highest-value agentic outputs aren't panels — a
+ranked alert-triage worklist, a root-cause narrative with evidence, a
+change-correlation timeline, a cost/cardinality breakdown, a before/after rule
+diff. Those have no panel to reuse; the render contract produces them natively.
+Put simply: *panel-reuse ports Grafana's **panels** out of the UI; the insight
+cell ports Grafana's **reasoning** out of the UI — and can embed the panels when
+fidelity calls for it.*
+
+| Dimension | Panel-reuse | Insight cell (this) |
+|---|---|---|
+| What it can render | Existing Grafana panel types (each extracted first) | Any `renderHint` — panels **plus** non-panel synthesis (worklist, RCA, timeline, cost, rule-diff) |
+| Fidelity | Pixel-identical (real component) | Grafana-styled; values formatted via `@grafana/data`; not pixel-identical |
+| Coupling | Grafana panel internals + `@grafana/ui` + React; version-pinned | Render contract + light libs; decoupled from Grafana's release cadence |
+| Portability | Runs where the Grafana React stack runs | Protocol-neutral: HTML / PNG / native / **text fallback**; any MCP host |
+| Trust/provenance | Added separately | First-class in `_meta` (attestation, provenance, reasoning) |
+| Adding a new output | Extract another React panel | One branch on the contract (or wrap a panel for fidelity) |
+
+**The insight cell is better suited when** the output isn't a standard panel
+(the synthesis views), needs to travel outside Grafana (any MCP host, degrading
+to text), or must be trustworthy/reconcilable/shareable on its own.
+
+**Panel-reuse is better suited when** pixel-fidelity of an existing panel matters
+— especially the exotic long tail (heatmaps, geomaps, node graphs, flame graphs),
+where re-drawing in a generic renderer isn't worth it.
+
+They compose: as core panels are **externalized** into standalone React
+components, the insight cell can consume panel-reuse as a high-fidelity renderer
+for specific types — so it's the **layer above** (the contract + trust surface +
+non-panel synthesis), able to embed real panels where they help.
 
 ---
 
