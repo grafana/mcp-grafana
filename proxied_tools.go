@@ -685,11 +685,9 @@ func (tm *ToolManager) runProxiedToolSetBuild(ctx context.Context, set *proxiedT
 	close(set.ready)
 
 	if abandoned {
-		for clientKey, client := range built.clients {
-			if err := client.Close(); err != nil {
-				tm.logger.Error("failed to close proxied client", "key", clientKey, "error", err)
-			}
-		}
+		// Close the freshly-built clients outside the lock (they were never
+		// published, so no other path can observe or close them).
+		tm.closeProxiedClients(built.clients)
 		logger.InfoContext(ctx, "proxied tool set abandoned during build; closed clients without publishing", "key", set.key)
 		return
 	}
@@ -709,18 +707,28 @@ func (tm *ToolManager) runProxiedToolSetBuild(ctx context.Context, set *proxiedT
 func (tm *ToolManager) releaseProxiedToolSet(set *proxiedToolSet) {
 	tm.proxiedSetsMu.Lock()
 	set.refs--
-	tm.maybeCloseProxiedToolSetLocked(set)
+	toClose := tm.takeClientsToCloseLocked(set)
 	tm.proxiedSetsMu.Unlock()
+
+	tm.closeProxiedClients(toClose)
 }
 
-// maybeCloseProxiedToolSetLocked closes a set's clients and removes it from the
-// cache when nothing references it and no call is in flight. Must be called with
-// proxiedSetsMu held. Closing is done under the lock; it is a local map/close
-// operation (no network I/O), and callers only reach it when inFlight==0 so no
-// live call can be blocked.
-func (tm *ToolManager) maybeCloseProxiedToolSetLocked(set *proxiedToolSet) {
+// takeClientsToCloseLocked decides whether a set can be torn down (refs==0,
+// inFlight==0, not already closed) and, if so, marks it closed, removes it from
+// the cache, and returns its clients for the caller to Close AFTER releasing the
+// lock. It returns nil when the set is still in use or already closed. Must be
+// called with proxiedSetsMu held.
+//
+// Closing is deliberately deferred to outside the lock: ProxiedClient.Close does
+// network I/O, and proxiedSetsMu serializes attach/release/acquire for ALL
+// credential keys, so closing under it would let a slow Close on one key stall
+// unrelated sessions. Setting closed=true under the lock keeps teardown
+// exactly-once (only the caller that flips closed collects the clients) and
+// keeps acquireProxiedClientForCall's closed check correct (an acquire either
+// runs before this selection and bumps inFlight, or sees closed afterwards).
+func (tm *ToolManager) takeClientsToCloseLocked(set *proxiedToolSet) map[string]*ProxiedClient {
 	if set.refs > 0 || set.inFlight > 0 || set.closed {
-		return
+		return nil
 	}
 	set.closed = true
 	// Remove from the cache if this set is still the entry for its key. A failed
@@ -728,7 +736,13 @@ func (tm *ToolManager) maybeCloseProxiedToolSetLocked(set *proxiedToolSet) {
 	if tm.proxiedSets[set.key] == set {
 		delete(tm.proxiedSets, set.key)
 	}
-	for clientKey, client := range set.clients {
+	return set.clients
+}
+
+// closeProxiedClients closes the given clients. It must be called WITHOUT
+// proxiedSetsMu held so a slow Close cannot stall unrelated sessions.
+func (tm *ToolManager) closeProxiedClients(clients map[string]*ProxiedClient) {
+	for clientKey, client := range clients {
 		if err := client.Close(); err != nil {
 			tm.logger.Error("failed to close proxied client", "key", clientKey, "error", err)
 		}
@@ -767,8 +781,10 @@ func (tm *ToolManager) acquireProxiedClientForCall(set *proxiedToolSet, datasour
 	release := func() {
 		tm.proxiedSetsMu.Lock()
 		set.inFlight--
-		tm.maybeCloseProxiedToolSetLocked(set)
+		toClose := tm.takeClientsToCloseLocked(set)
 		tm.proxiedSetsMu.Unlock()
+
+		tm.closeProxiedClients(toClose)
 	}
 	return client, release, nil
 }
@@ -801,46 +817,66 @@ func (tm *ToolManager) InitializeAndRegisterProxiedTools(ctx context.Context, se
 
 	key := proxiedToolSetKeyFromContext(ctx)
 
-	// Attach and register exactly once per session.
-	state.attachOnce.Do(func() {
-		// attachProxiedToolSet takes the reference AND binds the set to the
-		// session atomically (under proxiedSetsMu), so there is no window where a
-		// reference exists that teardown cannot find and release.
-		set, needsBuild := tm.attachProxiedToolSet(state, key)
+	// Serialize attach/build/register for this session and allow a later retry if
+	// this attempt does not end in a successful registration. proxiedInitMu is
+	// held for the whole attempt: concurrent hooks for the SAME session (e.g.
+	// OnBeforeListTools and OnBeforeCallTool) queue behind it, and the second one
+	// sees proxiedRegistered and returns, or retries if the first failed.
+	state.proxiedInitMu.Lock()
+	defer state.proxiedInitMu.Unlock()
 
-		// Reconcile against a teardown that raced this attach. A session may have
-		// been removed from the SessionManager (client DELETE / idle sweeper /
-		// reaper) between GetSession/CreateSession above and the bind inside
-		// attachProxiedToolSet. If so, that RemoveSession saw proxiedSet==nil and
-		// did not release, and no future teardown will fire for this (now
-		// untracked) session, so the ref we just took would leak. Detect it and
-		// release exactly once (releaseSessionProxiedToolSet is idempotent, so a
-		// RemoveSession that instead ran AFTER our bind is handled too, with no
-		// double release). We still run/await the build below so any live waiter
-		// for the same key is served.
-		if !tm.sm.sessionRegistered(sessionID, state) {
-			defer tm.releaseSessionProxiedToolSet(state)
-		}
+	if state.proxiedRegistered {
+		return
+	}
 
-		if needsBuild {
-			tm.runProxiedToolSetBuild(ctx, set, logger)
-		} else {
-			<-set.ready
-		}
+	// attachProxiedToolSet takes the reference AND binds the set to the session
+	// atomically (under proxiedSetsMu), so there is no window where a reference
+	// exists that teardown cannot find and release.
+	set, needsBuild := tm.attachProxiedToolSet(state, key)
 
-		// Read the published results under the lock: set.built/failed/tools are
-		// only stable once ready is closed, and are guarded by proxiedSetsMu.
-		tm.proxiedSetsMu.Lock()
-		usable := set.built && !set.failed
-		tools := set.tools
-		tm.proxiedSetsMu.Unlock()
+	// Reconcile against a teardown that raced this attach. A session may have been
+	// removed from the SessionManager (client DELETE / idle sweeper / reaper)
+	// between GetSession/CreateSession above and the bind inside
+	// attachProxiedToolSet. If so, that RemoveSession saw proxiedSet==nil and did
+	// not release, and no future teardown will fire for this (now untracked)
+	// session, so the ref we just took would leak. Detect it and release exactly
+	// once (releaseSessionProxiedToolSet is idempotent, so a RemoveSession that
+	// instead ran AFTER our bind is handled too, with no double release). We still
+	// run/await the build below so any live waiter for the same key is served.
+	if !tm.sm.sessionRegistered(sessionID, state) {
+		defer tm.releaseSessionProxiedToolSet(state)
+	}
 
-		// A failed or empty build produces no tools; nothing to register this
-		// time. The session keeps its reference and releases it on teardown.
-		if !usable || len(tools) == 0 {
-			return
-		}
+	if needsBuild {
+		tm.runProxiedToolSetBuild(ctx, set, logger)
+	} else {
+		<-set.ready
+	}
 
+	// Read the published results under the lock: set.built/failed/tools are only
+	// stable once ready is closed, and are guarded by proxiedSetsMu.
+	tm.proxiedSetsMu.Lock()
+	usable := set.built && !set.failed
+	tools := set.tools
+	tm.proxiedSetsMu.Unlock()
+
+	// A failed build (discovery error, cancellation, panic, or zero datasources
+	// discovered) is treated as transient and was de-cached. Do NOT mark this
+	// session registered: release its reference to the failed set, clear the
+	// binding, and return so the next hook invocation for this session retries a
+	// fresh attach (which triggers a fresh build). This keeps the failure
+	// transient for the session, matching the cache's behavior for later sessions.
+	//
+	// A usable build with zero tools is NOT a failure: the datasources were
+	// reachable but exposed no proxied tools. That is a valid, cached steady
+	// state, so the session keeps its reference and is marked registered (there
+	// is simply nothing to register); it must not retry forever.
+	if !usable {
+		tm.releaseSessionProxiedToolSet(state)
+		return
+	}
+
+	if len(tools) > 0 {
 		// Register the shared tools on this session. AddSessionTools is
 		// per-session SDK bookkeeping; it references the shared (now immutable)
 		// mcp.Tool values directly, with no per-session deep copy, JSON decode, or
@@ -859,7 +895,11 @@ func (tm *ToolManager) InitializeAndRegisterProxiedTools(ctx context.Context, se
 		} else {
 			logger.InfoContext(ctx, "registered proxied tools", "session", sessionID, "tools", len(tools))
 		}
-	})
+	}
+
+	// The attach succeeded (usable set, ref held). Mark the session registered so
+	// later hooks are no-ops; teardown will release the reference.
+	state.proxiedRegistered = true
 }
 
 // releaseSessionProxiedToolSet releases the session's reference to its shared

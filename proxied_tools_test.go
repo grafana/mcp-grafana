@@ -2,6 +2,7 @@ package mcpgrafana
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/url"
 	"sync"
@@ -84,32 +85,117 @@ func TestSessionManagerConcurrency(t *testing.T) {
 	})
 }
 
-func TestAttachOncePattern(t *testing.T) {
-	t.Run("verify sync.Once guarantees single execution", func(t *testing.T) {
-		var once sync.Once
-		var counter int32
+// TestProxiedToolsRegistrationGuard covers the per-session registration guard
+// that replaced the one-shot attachOnce: it must serialize concurrent hooks for
+// one session into a single successful registration, and it must NOT let a
+// failed/empty build consume the session's attempt (so a later hook retries).
+func TestProxiedToolsRegistrationGuard(t *testing.T) {
+	t.Run("concurrent hooks for one session build and register once", func(t *testing.T) {
+		var builds int32
+		tm, sm, srv := newToolManagerWithServer(t, func(ctx context.Context, logger *slog.Logger) (builtProxiedTools, error) {
+			atomic.AddInt32(&builds, 1)
+			time.Sleep(20 * time.Millisecond) // widen the window for concurrent hooks
+			return builtWithTool("tempo", "uid", "tempo_example"), nil
+		})
+
+		ctx := ctxWithCreds("http://grafana", "secret", nil, 1)
+		sess := newToolsCapableSession("guard-1")
+		sm.CreateSession(ctx, sess)
+		require.NoError(t, srv.RegisterSession(ctx, sess))
+
+		// Fire many concurrent hook invocations for the SAME session.
+		const hooks = 20
 		var wg sync.WaitGroup
-
-		// Simulate the attachOnce guard used in InitializeAndRegisterProxiedTools.
-		attach := func() {
-			atomic.AddInt32(&counter, 1)
-			// Simulate expensive attach work
-			time.Sleep(50 * time.Millisecond)
-		}
-
-		// Launch many concurrent calls
-		for i := 0; i < 1000; i++ {
-			wg.Add(1)
+		wg.Add(hooks)
+		for i := 0; i < hooks; i++ {
 			go func() {
 				defer wg.Done()
-				once.Do(attach)
+				tm.InitializeAndRegisterProxiedTools(ctx, sess)
 			}()
 		}
-
 		wg.Wait()
 
-		assert.Equal(t, int32(1), atomic.LoadInt32(&counter),
-			"sync.Once should guarantee the attach runs exactly once")
+		assert.Equal(t, int32(1), atomic.LoadInt32(&builds), "the set must be built exactly once")
+		assert.Len(t, sess.GetSessionTools(), 1, "the session must be registered with its tool exactly once")
+
+		state, ok := sm.GetSession("guard-1")
+		require.True(t, ok)
+		state.proxiedInitMu.Lock()
+		registered := state.proxiedRegistered
+		state.proxiedInitMu.Unlock()
+		assert.True(t, registered, "the session must be marked registered after success")
+
+		tm.proxiedSetsMu.Lock()
+		refs := 0
+		for _, s := range tm.proxiedSets {
+			refs = s.refs
+		}
+		size := len(tm.proxiedSets)
+		tm.proxiedSetsMu.Unlock()
+		assert.Equal(t, 1, size, "exactly one shared set is cached")
+		assert.Equal(t, 1, refs, "the session holds exactly one reference (no per-hook double-count)")
+	})
+
+	t.Run("failed build does not stick the session; a later hook retries and registers", func(t *testing.T) {
+		var attempt int32
+		tm, sm, srv := newToolManagerWithServer(t, func(ctx context.Context, logger *slog.Logger) (builtProxiedTools, error) {
+			if atomic.AddInt32(&attempt, 1) == 1 {
+				return builtProxiedTools{}, errors.New("transient discovery failure")
+			}
+			return builtWithTool("tempo", "uid", "tempo_example"), nil
+		})
+
+		ctx := ctxWithCreds("http://grafana", "secret", nil, 1)
+		sess := newToolsCapableSession("retry-1")
+		sm.CreateSession(ctx, sess)
+		require.NoError(t, srv.RegisterSession(ctx, sess))
+
+		// First hook: the build fails. The session must NOT be registered, must
+		// hold no reference, and the failed set must not be cached.
+		tm.InitializeAndRegisterProxiedTools(ctx, sess)
+
+		state, ok := sm.GetSession("retry-1")
+		require.True(t, ok)
+		state.proxiedInitMu.Lock()
+		registeredAfterFail := state.proxiedRegistered
+		state.proxiedInitMu.Unlock()
+		assert.False(t, registeredAfterFail, "a failed build must not mark the session registered")
+		assert.Empty(t, sess.GetSessionTools(), "no tools registered after a failed build")
+
+		tm.proxiedSetsMu.Lock()
+		sizeAfterFail := len(tm.proxiedSets)
+		tm.proxiedSetsMu.Unlock()
+		assert.Equal(t, 0, sizeAfterFail, "the failed set must not be left cached and its ref must be released")
+
+		// Second hook for the SAME session: the builder now succeeds. The session
+		// must retry, build afresh, and end up registered with its tool.
+		tm.InitializeAndRegisterProxiedTools(ctx, sess)
+
+		assert.Equal(t, int32(2), atomic.LoadInt32(&attempt), "the second hook must retry the build")
+		assert.Len(t, sess.GetSessionTools(), 1, "the session must be registered with its tool after retry")
+
+		state.proxiedInitMu.Lock()
+		registeredAfterRetry := state.proxiedRegistered
+		state.proxiedInitMu.Unlock()
+		assert.True(t, registeredAfterRetry, "the session must be marked registered after the successful retry")
+
+		tm.proxiedSetsMu.Lock()
+		sizeAfterRetry := len(tm.proxiedSets)
+		var refs int
+		for _, s := range tm.proxiedSets {
+			refs = s.refs
+		}
+		tm.proxiedSetsMu.Unlock()
+		assert.Equal(t, 1, sizeAfterRetry, "exactly one live set after the successful retry")
+		assert.Equal(t, 1, refs, "no ref leak across the failed->success transition")
+
+		// Teardown must balance the single reference: the set is released and its
+		// clients closed.
+		sm.RemoveSession(ctx, sess)
+		tm.proxiedSetsMu.Lock()
+		sizeAfterTeardown := len(tm.proxiedSets)
+		tm.proxiedSetsMu.Unlock()
+		assert.Equal(t, 0, sizeAfterTeardown, "teardown must release the session's reference")
 	})
 }
 
@@ -162,7 +248,10 @@ func TestSessionStateLifecycle(t *testing.T) {
 // and its reference counting without real discovery or network I/O.
 type testBuildFunc func(ctx context.Context, logger *slog.Logger) (builtProxiedTools, error)
 
-// newTestToolManager builds a ToolManager with an injected set builder.
+// newTestToolManager builds a ToolManager with an injected set builder and a nil
+// MCP server. Suitable for tests that never reach per-session tool registration
+// (they use no-tool builds); reaching AddSessionTools would panic on the nil
+// server, so use newToolManagerWithServer for registration-path tests.
 func newTestToolManager(t *testing.T, ttl time.Duration, build testBuildFunc) (*ToolManager, *SessionManager) {
 	t.Helper()
 	sm := NewSessionManager(WithSessionTTL(ttl))
@@ -173,7 +262,22 @@ func newTestToolManager(t *testing.T, ttl time.Duration, build testBuildFunc) (*
 	return tm, sm
 }
 
-// builtWith returns a build result holding a single proxied client.
+// newToolManagerWithServer is like newTestToolManager but wires a real
+// server.MCPServer, so builds that produce tools can exercise the per-session
+// AddSessionTools registration path. Sessions must be RegisterSession'd on the
+// returned server and must implement server.SessionWithTools.
+func newToolManagerWithServer(t *testing.T, build testBuildFunc) (*ToolManager, *SessionManager, *server.MCPServer) {
+	t.Helper()
+	sm := NewSessionManager(WithSessionTTL(time.Hour))
+	t.Cleanup(sm.Close)
+	srv := server.NewMCPServer("test", "1.0")
+	tm := NewToolManager(sm, srv, WithProxiedTools(true))
+	tm.buildSet = build
+	sm.SetToolManager(tm)
+	return tm, sm, srv
+}
+
+// builtWith returns a build result holding a single proxied client and no tools.
 func builtWith(clientType, clientUID string) builtProxiedTools {
 	return builtProxiedTools{
 		clients: map[string]*ProxiedClient{
@@ -181,6 +285,14 @@ func builtWith(clientType, clientUID string) builtProxiedTools {
 		},
 		toolToDatasources: map[string][]string{},
 	}
+}
+
+// builtWithTool returns a build result holding a single proxied client and one
+// tool, so it reaches the per-session registration path (AddSessionTools).
+func builtWithTool(clientType, clientUID, toolName string) builtProxiedTools {
+	b := builtWith(clientType, clientUID)
+	b.tools = []mcp.Tool{mcp.NewTool(toolName)}
+	return b
 }
 
 // setWith returns a builder that produces a single proxied client.
@@ -526,4 +638,40 @@ func (m *mockClientSession) Initialize() {
 
 func (m *mockClientSession) Initialized() bool {
 	return m.isInitialized
+}
+
+// toolsCapableSession implements server.SessionWithTools so AddSessionTools can
+// register per-session tools on it. Its tool map is guarded for the concurrent
+// hook test.
+type toolsCapableSession struct {
+	id    string
+	mu    sync.RWMutex
+	tools map[string]server.ServerTool
+}
+
+func newToolsCapableSession(id string) *toolsCapableSession {
+	return &toolsCapableSession{id: id, tools: map[string]server.ServerTool{}}
+}
+
+var _ server.SessionWithTools = (*toolsCapableSession)(nil)
+
+func (s *toolsCapableSession) SessionID() string                                   { return s.id }
+func (s *toolsCapableSession) NotificationChannel() chan<- mcp.JSONRPCNotification { return nil }
+func (s *toolsCapableSession) Initialize()                                         {}
+func (s *toolsCapableSession) Initialized() bool                                   { return true }
+
+func (s *toolsCapableSession) GetSessionTools() map[string]server.ServerTool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make(map[string]server.ServerTool, len(s.tools))
+	for k, v := range s.tools {
+		out[k] = v
+	}
+	return out
+}
+
+func (s *toolsCapableSession) SetSessionTools(tools map[string]server.ServerTool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.tools = tools
 }

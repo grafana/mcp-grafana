@@ -59,7 +59,16 @@ type SessionState struct {
 	// shared set; teardown releases the reference by that pointer (not by key),
 	// so the reference is balanced even for a set already dropped from the cache.
 	// proxiedSetReleased makes that release idempotent per session.
-	attachOnce         sync.Once
+	//
+	// proxiedInitMu serializes attach/build/register for this one session and
+	// proxiedRegistered records that it succeeded. A one-shot sync.Once is
+	// deliberately NOT used: a failed or empty build must NOT consume the
+	// session's attempt, or that session would be stuck without proxied tools
+	// forever even though the cache treats the failure as transient and lets
+	// other sessions rebuild. Leaving proxiedRegistered false on failure lets the
+	// next OnBeforeListTools/OnBeforeCallTool hook for this session retry.
+	proxiedInitMu      sync.Mutex
+	proxiedRegistered  bool
 	proxiedSet         *proxiedToolSet
 	proxiedSetReleased bool
 	mutex              sync.RWMutex
