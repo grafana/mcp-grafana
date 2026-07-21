@@ -276,8 +276,7 @@ func TestEndToEndProxiedToolsFlow(t *testing.T) {
 		// Attach a shared proxied tool set holding the client to the session.
 		key := ds.Type + "_" + ds.UID
 		set := &proxiedToolSet{
-			clients:           map[string]*ProxiedClient{key: client},
-			toolToDatasources: map[string][]string{},
+			clients: map[string]*ProxiedClient{key: client},
 		}
 		state.mutex.Lock()
 		state.proxiedSet = set
@@ -314,8 +313,7 @@ func TestEndToEndProxiedToolsFlow(t *testing.T) {
 
 		// A single shared set holds all the datasource clients for this session.
 		set := &proxiedToolSet{
-			clients:           map[string]*ProxiedClient{},
-			toolToDatasources: map[string][]string{},
+			clients: map[string]*ProxiedClient{},
 		}
 
 		// Try to connect to multiple datasources

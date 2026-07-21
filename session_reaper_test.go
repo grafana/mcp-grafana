@@ -76,7 +76,6 @@ func TestSessionManager_ReaperCleansUpProxiedClients(t *testing.T) {
 			clients: map[string]*ProxiedClient{
 				"tempo_test-uid": {DatasourceUID: "test-uid", DatasourceName: "Test", DatasourceType: "tempo"},
 			},
-			toolToDatasources: map[string][]string{},
 		}, nil
 	}
 	sm.SetToolManager(tm)

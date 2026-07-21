@@ -179,7 +179,6 @@ func builtWith(clientType, clientUID string) builtProxiedTools {
 		clients: map[string]*ProxiedClient{
 			clientType + "_" + clientUID: {DatasourceType: clientType, DatasourceUID: clientUID},
 		},
-		toolToDatasources: map[string][]string{},
 	}
 }
 

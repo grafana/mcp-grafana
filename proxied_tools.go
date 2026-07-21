@@ -317,7 +317,7 @@ func (k proxiedToolSetKey) String() string {
 // BEFORE the expensive discovery/connection runs, so a concurrent session for
 // the same key reuses it rather than building a second copy. The build itself
 // runs WITHOUT any lock and mutates only local variables; its results are
-// published into clients/tools/toolToDatasources in a single critical section
+// published into clients/tools in a single critical section
 // under proxiedSetsMu (see runProxiedToolSetBuild). This "build then publish"
 // ordering is essential: teardown (maybeCloseProxiedToolSetLocked) ranges over
 // clients while holding proxiedSetsMu, so clients must never be written outside
@@ -353,9 +353,6 @@ type proxiedToolSet struct {
 	// tools is the deduplicated, schema-rewritten set of proxied tools. Empty
 	// until built is true; immutable afterwards.
 	tools []mcp.Tool
-	// toolToDatasources maps a proxied tool name to the datasource keys that
-	// support it. Empty until built is true; immutable afterwards.
-	toolToDatasources map[string][]string
 
 	// refs is the number of live sessions currently attached to this set.
 	refs int
@@ -520,13 +517,12 @@ func (tm *ToolManager) InitializeAndRegisterServerTools(ctx context.Context) err
 // build runs so that nothing shared is mutated without the cache lock. It is
 // published into a proxiedToolSet in a single critical section.
 type builtProxiedTools struct {
-	clients           map[string]*ProxiedClient
-	tools             []mcp.Tool
-	toolToDatasources map[string][]string
+	clients map[string]*ProxiedClient
+	tools   []mcp.Tool
 }
 
 // buildProxiedToolSet discovers datasources, connects to them, and returns the
-// built clients/tools/toolToDatasources in LOCAL maps. It mutates no shared
+// built clients/tools in LOCAL maps. It mutates no shared
 // state, so it is safe to run without any lock while the placeholder set is
 // already reachable by teardown. It returns an error when the set could not be
 // built into a usable state (discovery failed or was cancelled). A successful
@@ -534,8 +530,7 @@ type builtProxiedTools struct {
 // "no proxied tools" result (an empty build, handled by the caller).
 func (tm *ToolManager) buildProxiedToolSet(ctx context.Context, logger *slog.Logger) (builtProxiedTools, error) {
 	built := builtProxiedTools{
-		clients:           make(map[string]*ProxiedClient),
-		toolToDatasources: make(map[string][]string),
+		clients: make(map[string]*ProxiedClient),
 	}
 
 	// Discover datasources with MCP support.
@@ -556,16 +551,15 @@ func (tm *ToolManager) buildProxiedToolSet(ctx context.Context, logger *slog.Log
 		built.clients[key] = client
 	}
 
-	// Collect unique tools and track which datasources support each one.
-	toolMap := make(map[string]mcp.Tool) // unique tools by name
-	for key, client := range built.clients {
+	// Collect unique tools by name.
+	toolMap := make(map[string]mcp.Tool)
+	for _, client := range built.clients {
 		for _, tool := range client.ListTools() {
 			// Tool name format: datasourceType_originalToolName (e.g., "tempo_traceql-search").
 			toolName := client.DatasourceType + "_" + tool.Name
 			if _, exists := toolMap[toolName]; !exists {
 				toolMap[toolName] = addDatasourceUidParameter(tool, client.DatasourceType)
 			}
-			built.toolToDatasources[toolName] = append(built.toolToDatasources[toolName], key)
 		}
 	}
 	for _, tool := range toolMap {
@@ -595,11 +589,10 @@ func (tm *ToolManager) attachProxiedToolSet(state *SessionState, key proxiedTool
 		set, needsBuild = existing, false
 	} else {
 		set = &proxiedToolSet{
-			key:               key,
-			ready:             make(chan struct{}),
-			clients:           make(map[string]*ProxiedClient),
-			toolToDatasources: make(map[string][]string),
-			refs:              1,
+			key:     key,
+			ready:   make(chan struct{}),
+			clients: make(map[string]*ProxiedClient),
+			refs:    1,
 		}
 		tm.proxiedSets[key] = set
 		needsBuild = true
@@ -675,7 +668,6 @@ func (tm *ToolManager) runProxiedToolSetBuild(ctx context.Context, set *proxiedT
 		// to read under the lock (teardown) or after <-ready (session use).
 		set.clients = built.clients
 		set.tools = built.tools
-		set.toolToDatasources = built.toolToDatasources
 		set.built = true
 	}
 	abandoned := set.refs == 0

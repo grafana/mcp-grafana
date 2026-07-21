@@ -40,7 +40,6 @@ func TestTeardownReleaseToZeroDuringBuild(t *testing.T) {
 			clients: map[string]*ProxiedClient{
 				"tempo_uid": newCloseCountingClient("tempo", "uid", &closes),
 			},
-			toolToDatasources: map[string][]string{},
 		}, nil
 	})
 
@@ -198,7 +197,7 @@ func TestEmptyBuildNotCached(t *testing.T) {
 	tm, sm := newTestToolManager(t, time.Hour, func(ctx context.Context, logger *slog.Logger) (builtProxiedTools, error) {
 		if atomic.AddInt32(&attempt, 1) == 1 {
 			// No error, but zero clients discovered.
-			return builtProxiedTools{clients: map[string]*ProxiedClient{}, toolToDatasources: map[string][]string{}}, nil
+			return builtProxiedTools{clients: map[string]*ProxiedClient{}}, nil
 		}
 		return builtWith("tempo", "uid"), nil
 	})
@@ -283,7 +282,6 @@ func TestInFlightCallBlocksClose(t *testing.T) {
 			clients: map[string]*ProxiedClient{
 				"tempo_uid": newCloseCountingClient("tempo", "uid", &closes),
 			},
-			toolToDatasources: map[string][]string{},
 		}, nil
 	})
 
