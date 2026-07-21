@@ -2,125 +2,23 @@ package mcpgrafana
 
 import (
 	"context"
+	"log/slog"
+	"net/url"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/server"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
-
-func TestSessionStateRaceConditions(t *testing.T) {
-	t.Run("concurrent initialization with sync.Once is safe", func(t *testing.T) {
-		state := newSessionState()
-
-		var initCounter int32
-		var wg sync.WaitGroup
-
-		// Launch 100 goroutines that all try to initialize at once
-		const numGoroutines = 100
-		wg.Add(numGoroutines)
-
-		for i := 0; i < numGoroutines; i++ {
-			go func() {
-				defer wg.Done()
-				state.initOnce.Do(func() {
-					// Simulate initialization work
-					atomic.AddInt32(&initCounter, 1)
-					time.Sleep(10 * time.Millisecond) // Simulate some work
-					state.mutex.Lock()
-					state.proxiedToolsInitialized = true
-					state.mutex.Unlock()
-				})
-			}()
-		}
-
-		wg.Wait()
-
-		// Verify initialization happened exactly once
-		assert.Equal(t, int32(1), atomic.LoadInt32(&initCounter),
-			"Initialization should run exactly once despite 100 concurrent calls")
-		assert.True(t, state.proxiedToolsInitialized)
-	})
-
-	t.Run("concurrent reads and writes with mutex protection", func(t *testing.T) {
-		state := newSessionState()
-		var wg sync.WaitGroup
-
-		// Writer goroutines
-		for i := 0; i < 10; i++ {
-			wg.Add(1)
-			go func(id int) {
-				defer wg.Done()
-				state.mutex.Lock()
-				key := "tempo_" + string(rune('a'+id))
-				state.proxiedClients[key] = &ProxiedClient{
-					DatasourceUID:  key,
-					DatasourceName: "Test " + key,
-					DatasourceType: "tempo",
-				}
-				state.mutex.Unlock()
-			}(i)
-		}
-
-		// Reader goroutines
-		for i := 0; i < 10; i++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				state.mutex.RLock()
-				_ = len(state.proxiedClients)
-				state.mutex.RUnlock()
-			}()
-		}
-
-		wg.Wait()
-
-		// Verify all writes succeeded
-		state.mutex.RLock()
-		count := len(state.proxiedClients)
-		state.mutex.RUnlock()
-
-		assert.Equal(t, 10, count, "All 10 clients should be stored")
-	})
-
-	t.Run("concurrent tool registration is safe", func(t *testing.T) {
-		state := newSessionState()
-		var wg sync.WaitGroup
-
-		// Multiple goroutines trying to register tools
-		const numGoroutines = 50
-		wg.Add(numGoroutines)
-
-		for i := 0; i < numGoroutines; i++ {
-			go func(id int) {
-				defer wg.Done()
-				state.mutex.Lock()
-				toolName := "tempo_tool-" + string(rune('a'+id%26))
-				if state.toolToDatasources[toolName] == nil {
-					state.toolToDatasources[toolName] = []string{}
-				}
-				state.toolToDatasources[toolName] = append(
-					state.toolToDatasources[toolName],
-					"datasource_"+string(rune('a'+id%26)),
-				)
-				state.mutex.Unlock()
-			}(i)
-		}
-
-		wg.Wait()
-
-		// Verify the tool mappings exist
-		state.mutex.RLock()
-		defer state.mutex.RUnlock()
-		assert.Greater(t, len(state.toolToDatasources), 0, "Should have tool mappings")
-	})
-}
 
 func TestSessionManagerConcurrency(t *testing.T) {
 	t.Run("concurrent session creation is safe", func(t *testing.T) {
 		sm := NewSessionManager()
+		defer sm.Close()
 		var wg sync.WaitGroup
 
 		// Create many sessions concurrently
@@ -148,6 +46,7 @@ func TestSessionManagerConcurrency(t *testing.T) {
 
 	t.Run("concurrent get and remove is safe", func(t *testing.T) {
 		sm := NewSessionManager()
+		defer sm.Close()
 
 		// Pre-populate sessions
 		for i := 0; i < 50; i++ {
@@ -185,16 +84,16 @@ func TestSessionManagerConcurrency(t *testing.T) {
 	})
 }
 
-func TestInitOncePattern(t *testing.T) {
+func TestAttachOncePattern(t *testing.T) {
 	t.Run("verify sync.Once guarantees single execution", func(t *testing.T) {
 		var once sync.Once
 		var counter int32
 		var wg sync.WaitGroup
 
-		// Simulate what happens in InitializeAndRegisterProxiedTools
-		initFunc := func() {
+		// Simulate the attachOnce guard used in InitializeAndRegisterProxiedTools.
+		attach := func() {
 			atomic.AddInt32(&counter, 1)
-			// Simulate expensive initialization
+			// Simulate expensive attach work
 			time.Sleep(50 * time.Millisecond)
 		}
 
@@ -203,76 +102,35 @@ func TestInitOncePattern(t *testing.T) {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				once.Do(initFunc)
+				once.Do(attach)
 			}()
 		}
 
 		wg.Wait()
 
 		assert.Equal(t, int32(1), atomic.LoadInt32(&counter),
-			"sync.Once should guarantee function runs exactly once")
-	})
-
-	t.Run("sync.Once with different functions only runs first", func(t *testing.T) {
-		var once sync.Once
-		var result string
-		var mu sync.Mutex
-
-		once.Do(func() {
-			mu.Lock()
-			result = "first"
-			mu.Unlock()
-		})
-
-		once.Do(func() {
-			mu.Lock()
-			result = "second"
-			mu.Unlock()
-		})
-
-		mu.Lock()
-		finalResult := result
-		mu.Unlock()
-
-		assert.Equal(t, "first", finalResult, "Only first function should execute")
+			"sync.Once should guarantee the attach runs exactly once")
 	})
 }
 
-func TestProxiedToolsInitializationFlow(t *testing.T) {
-	t.Run("initialization state transitions are correct", func(t *testing.T) {
-		state := newSessionState()
+func TestSessionStateLifecycle(t *testing.T) {
+	t.Run("create and get session", func(t *testing.T) {
+		sm := NewSessionManager()
+		defer sm.Close()
 
-		// Initial state
-		assert.False(t, state.proxiedToolsInitialized)
-		assert.Empty(t, state.proxiedClients)
-		assert.Empty(t, state.proxiedTools)
+		mockSession := &mockClientSession{id: "test-session-123"}
+		sm.CreateSession(context.Background(), mockSession)
 
-		// Simulate initialization
-		state.initOnce.Do(func() {
-			state.mutex.Lock()
-			state.proxiedToolsInitialized = true
-			state.proxiedClients["tempo_test"] = &ProxiedClient{
-				DatasourceUID:  "test",
-				DatasourceName: "Test",
-				DatasourceType: "tempo",
-			}
-			state.mutex.Unlock()
-		})
-
-		// Verify state after initialization
-		state.mutex.RLock()
-		initialized := state.proxiedToolsInitialized
-		clientCount := len(state.proxiedClients)
-		state.mutex.RUnlock()
-
-		assert.True(t, initialized)
-		assert.Equal(t, 1, clientCount)
+		state, exists := sm.GetSession("test-session-123")
+		assert.True(t, exists)
+		require.NotNil(t, state)
+		assert.Nil(t, state.proxiedSet)
 	})
 
 	t.Run("multiple sessions maintain separate state", func(t *testing.T) {
 		sm := NewSessionManager()
+		defer sm.Close()
 
-		// Create two sessions
 		session1 := &mockClientSession{id: "session-1"}
 		session2 := &mockClientSession{id: "session-2"}
 
@@ -282,160 +140,364 @@ func TestProxiedToolsInitializationFlow(t *testing.T) {
 		state1, _ := sm.GetSession("session-1")
 		state2, _ := sm.GetSession("session-2")
 
-		// Initialize only session1
-		state1.initOnce.Do(func() {
-			state1.mutex.Lock()
-			state1.proxiedToolsInitialized = true
-			state1.mutex.Unlock()
-		})
+		state1.mutex.Lock()
+		state1.proxiedSet = &proxiedToolSet{}
+		state1.mutex.Unlock()
 
-		// Verify states are independent
-		assert.True(t, state1.proxiedToolsInitialized)
-		assert.False(t, state2.proxiedToolsInitialized)
+		state1.mutex.RLock()
+		set1 := state1.proxiedSet
+		state1.mutex.RUnlock()
+		state2.mutex.RLock()
+		set2 := state2.proxiedSet
+		state2.mutex.RUnlock()
+
+		assert.NotNil(t, set1)
+		assert.Nil(t, set2)
 		assert.NotSame(t, state1, state2)
 	})
 }
 
-func TestRaceConditionDemonstration(t *testing.T) {
-	t.Run("old pattern WITHOUT sync.Once would have race condition", func(t *testing.T) {
-		// This test demonstrates what WOULD happen with the old mutex-check pattern
-		state := newSessionState()
+// testBuildFunc matches ToolManager.buildSet: it returns the built results in
+// local maps (never mutating shared state), so tests exercise the shared cache
+// and its reference counting without real discovery or network I/O.
+type testBuildFunc func(ctx context.Context, logger *slog.Logger) (builtProxiedTools, error)
 
-		var discoveryCallCount int32
-		var wg sync.WaitGroup
+// newTestToolManager builds a ToolManager with an injected set builder.
+func newTestToolManager(t *testing.T, ttl time.Duration, build testBuildFunc) (*ToolManager, *SessionManager) {
+	t.Helper()
+	sm := NewSessionManager(WithSessionTTL(ttl))
+	t.Cleanup(sm.Close)
+	tm := NewToolManager(sm, nil, WithProxiedTools(true))
+	tm.buildSet = build
+	sm.SetToolManager(tm)
+	return tm, sm
+}
 
-		// Simulate the OLD pattern (mutex check, unlock, then do work)
-		oldPatternInitialize := func() {
-			state.mutex.Lock()
-			// Check if already initialized
-			if state.proxiedToolsInitialized {
-				state.mutex.Unlock()
-				return
-			}
-			alreadyDiscovered := state.proxiedToolsInitialized
-			state.mutex.Unlock() // ❌ OLD PATTERN: Unlock before expensive work
+// builtWith returns a build result holding a single proxied client.
+func builtWith(clientType, clientUID string) builtProxiedTools {
+	return builtProxiedTools{
+		clients: map[string]*ProxiedClient{
+			clientType + "_" + clientUID: {DatasourceType: clientType, DatasourceUID: clientUID},
+		},
+		toolToDatasources: map[string][]string{},
+	}
+}
 
-			if !alreadyDiscovered {
-				// Simulate discovery work that should only happen once
-				atomic.AddInt32(&discoveryCallCount, 1)
-				time.Sleep(10 * time.Millisecond) // Simulate expensive operation
+// setWith returns a builder that produces a single proxied client.
+func setWith(clientType, clientUID string) testBuildFunc {
+	return func(ctx context.Context, logger *slog.Logger) (builtProxiedTools, error) {
+		return builtWith(clientType, clientUID), nil
+	}
+}
 
-				state.mutex.Lock()
-				state.proxiedToolsInitialized = true
-				state.mutex.Unlock()
-			}
-		}
-
-		// Launch concurrent initializations
-		const numGoroutines = 10
-		wg.Add(numGoroutines)
-		for i := 0; i < numGoroutines; i++ {
-			go func() {
-				defer wg.Done()
-				oldPatternInitialize()
-			}()
-		}
-		wg.Wait()
-
-		// With the old pattern, multiple goroutines can get past the check
-		// and call discovery multiple times
-		count := atomic.LoadInt32(&discoveryCallCount)
-		if count > 1 {
-			t.Logf("OLD PATTERN: Discovery called %d times (race condition!)", count)
-		}
-		// We can't assert > 1 reliably because timing matters, but this demonstrates the problem
-	})
-
-	t.Run("new pattern WITH sync.Once prevents race condition", func(t *testing.T) {
-		// This test demonstrates the NEW pattern with sync.Once
-		state := newSessionState()
-
-		var discoveryCallCount int32
-		var wg sync.WaitGroup
-
-		// NEW pattern: sync.Once guarantees single execution
-		newPatternInitialize := func() {
-			state.initOnce.Do(func() {
-				// Simulate discovery work that should only happen once
-				atomic.AddInt32(&discoveryCallCount, 1)
-				time.Sleep(10 * time.Millisecond) // Simulate expensive operation
-
-				state.mutex.Lock()
-				state.proxiedToolsInitialized = true
-				state.mutex.Unlock()
-			})
-		}
-
-		// Launch concurrent initializations
-		const numGoroutines = 10
-		wg.Add(numGoroutines)
-		for i := 0; i < numGoroutines; i++ {
-			go func() {
-				defer wg.Done()
-				newPatternInitialize()
-			}()
-		}
-		wg.Wait()
-
-		// With sync.Once, discovery is guaranteed to run exactly once
-		count := atomic.LoadInt32(&discoveryCallCount)
-		assert.Equal(t, int32(1), count, "NEW PATTERN: Discovery must be called exactly once")
+// ctxWithCreds returns a context carrying the given credential-bearing config.
+func ctxWithCreds(grafanaURL, apiKey string, basicAuth *url.Userinfo, orgID int64) context.Context {
+	return WithGrafanaConfig(context.Background(), GrafanaConfig{
+		URL:       grafanaURL,
+		APIKey:    apiKey,
+		BasicAuth: basicAuth,
+		OrgID:     orgID,
 	})
 }
 
-func TestRaceDetector(t *testing.T) {
-	// This test is primarily valuable when run with -race flag
-	t.Run("stress test with race detector", func(t *testing.T) {
+// withExtraHeaders returns a copy of cfg with the given ExtraHeaders set.
+func withExtraHeaders(cfg GrafanaConfig, headers map[string]string) GrafanaConfig {
+	cfg.ExtraHeaders = headers
+	return cfg
+}
 
-		sm := NewSessionManager()
+// TestProxiedToolSetSharing is the regression guard for the per-session
+// duplication that caused proxied clients and tools to scale with the number of
+// live sessions (linear memory growth, OOM under session churn). It verifies:
+//   - multiple sessions with identical credentials share exactly ONE
+//     proxiedToolSet (cache size stays 1);
+//   - distinct credentials produce distinct entries;
+//   - reaping/closing the last session for a key closes its clients exactly
+//     once and removes the entry, while earlier detaches leave them open.
+func TestProxiedToolSetSharing(t *testing.T) {
+	t.Run("identical credentials share exactly one set", func(t *testing.T) {
+		var builds int32
+		tm, sm := newTestToolManager(t, time.Hour, func(ctx context.Context, logger *slog.Logger) (builtProxiedTools, error) {
+			atomic.AddInt32(&builds, 1)
+			return builtWith("tempo", "uid"), nil
+		})
+
+		ctx := ctxWithCreds("http://grafana", "secret", nil, 1)
+
+		// Many concurrent sessions with identical credentials must all resolve to
+		// the same shared set: before the fix each of these built and stored its
+		// own copy of the clients and tools, so heap grew linearly with this count.
+		const numSessions = 25
 		var wg sync.WaitGroup
-
-		// Create a mix of operations happening concurrently
-		for i := 0; i < 20; i++ {
-			sessionID := "stress-session-" + string(rune('a'+i%10))
-
-			// Create session
-			wg.Add(1)
-			go func(sid string) {
+		wg.Add(numSessions)
+		for i := 0; i < numSessions; i++ {
+			go func(id int) {
 				defer wg.Done()
-				mockSession := &mockClientSession{id: sid}
-				sm.CreateSession(context.Background(), mockSession)
-			}(sessionID)
-
-			// Initialize session state
-			wg.Add(1)
-			go func(sid string) {
-				defer wg.Done()
-				time.Sleep(time.Millisecond) // Let creation happen first
-				state, exists := sm.GetSession(sid)
-				if exists {
-					state.initOnce.Do(func() {
-						state.mutex.Lock()
-						state.proxiedToolsInitialized = true
-						state.mutex.Unlock()
-					})
-				}
-			}(sessionID)
-
-			// Read session state
-			wg.Add(1)
-			go func(sid string) {
-				defer wg.Done()
-				time.Sleep(2 * time.Millisecond)
-				state, exists := sm.GetSession(sid)
-				if exists {
-					state.mutex.RLock()
-					_ = state.proxiedToolsInitialized
-					state.mutex.RUnlock()
-				}
-			}(sessionID)
+				sess := &mockClientSession{id: "shared-" + string(rune('a'+id%26)) + "-" + string(rune('0'+id/26))}
+				sm.CreateSession(ctx, sess)
+				tm.InitializeAndRegisterProxiedTools(ctx, sess)
+			}(i)
 		}
-
 		wg.Wait()
 
-		// If we get here without race detector warnings, we're good
-		t.Log("Stress test completed without race conditions")
+		tm.proxiedSetsMu.Lock()
+		cacheSize := len(tm.proxiedSets)
+		var refs int
+		for _, s := range tm.proxiedSets {
+			refs = s.refs
+		}
+		tm.proxiedSetsMu.Unlock()
+
+		assert.Equal(t, 1, cacheSize, "identical credentials must produce exactly one shared set")
+		assert.Equal(t, int32(1), atomic.LoadInt32(&builds), "the set must be built at most once per key")
+		assert.Equal(t, numSessions, refs, "every session must hold a reference to the shared set")
+
+		// All sessions must reference the very same underlying set pointer.
+		s1, _ := sm.GetSession("shared-a-0")
+		s2, _ := sm.GetSession("shared-b-0")
+		require.NotNil(t, s1)
+		require.NotNil(t, s2)
+		s1.mutex.RLock()
+		set1 := s1.proxiedSet
+		s1.mutex.RUnlock()
+		s2.mutex.RLock()
+		set2 := s2.proxiedSet
+		s2.mutex.RUnlock()
+		assert.Same(t, set1, set2, "sessions with identical credentials must share the same set")
 	})
+
+	t.Run("distinct credentials produce distinct sets", func(t *testing.T) {
+		tm, sm := newTestToolManager(t, time.Hour, setWith("tempo", "uid"))
+
+		// Different URL, apiKey, orgID, basic-auth user, and basic-auth password
+		// must each key to a distinct set. Also verify that identical credentials
+		// (the repeated first entry) do not add a second entry.
+		ctxs := []context.Context{
+			ctxWithCreds("http://a", "k1", nil, 1),
+			ctxWithCreds("http://a", "k1", nil, 1), // duplicate of the first
+			ctxWithCreds("http://b", "k1", nil, 1),
+			ctxWithCreds("http://a", "k2", nil, 1),
+			ctxWithCreds("http://a", "k1", nil, 2),
+			ctxWithCreds("http://a", "", url.UserPassword("u1", "p1"), 1),
+			ctxWithCreds("http://a", "", url.UserPassword("u2", "p1"), 1),
+			ctxWithCreds("http://a", "", url.UserPassword("u1", "p2"), 1),
+		}
+
+		for i, ctx := range ctxs {
+			sess := &mockClientSession{id: "distinct-" + string(rune('a'+i))}
+			sm.CreateSession(ctx, sess)
+			tm.InitializeAndRegisterProxiedTools(ctx, sess)
+		}
+
+		tm.proxiedSetsMu.Lock()
+		cacheSize := len(tm.proxiedSets)
+		tm.proxiedSetsMu.Unlock()
+
+		// 8 contexts, one is a duplicate, so 7 distinct keys.
+		assert.Equal(t, 7, cacheSize, "each distinct credential set must produce its own entry")
+	})
+
+	t.Run("access and id tokens are part of the key", func(t *testing.T) {
+		tm, sm := newTestToolManager(t, time.Hour, setWith("tempo", "uid"))
+
+		base := GrafanaConfig{URL: "http://grafana", APIKey: "shared", OrgID: 1}
+
+		cfgA := base
+		cfgA.AccessToken = "userA-access"
+		cfgA.IDToken = "userA-id"
+
+		cfgB := base
+		cfgB.AccessToken = "userB-access"
+		cfgB.IDToken = "userB-id"
+
+		for i, cfg := range []GrafanaConfig{cfgA, cfgB} {
+			ctx := WithGrafanaConfig(context.Background(), cfg)
+			sess := &mockClientSession{id: "token-" + string(rune('a'+i))}
+			sm.CreateSession(ctx, sess)
+			tm.InitializeAndRegisterProxiedTools(ctx, sess)
+		}
+
+		tm.proxiedSetsMu.Lock()
+		cacheSize := len(tm.proxiedSets)
+		tm.proxiedSetsMu.Unlock()
+
+		assert.Equal(t, 2, cacheSize, "per-user access/id tokens must not collide on a shared instance")
+	})
+
+	t.Run("TLS material and extra headers are part of the key", func(t *testing.T) {
+		tm, sm := newTestToolManager(t, time.Hour, setWith("tempo", "uid"))
+
+		base := GrafanaConfig{URL: "http://grafana", APIKey: "shared", OrgID: 1}
+
+		// Each of these differs from base only in a field that changes the built
+		// client (TLS client identity, CA, skip-verify, or forwarded/extra
+		// headers). Sharing one client across them would bleed one session's TLS
+		// cert or headers into another's requests, so each must key distinctly.
+		mkTLS := func(mutate func(*TLSConfig)) GrafanaConfig {
+			cfg := base
+			cfg.TLSConfig = &TLSConfig{}
+			mutate(cfg.TLSConfig)
+			return cfg
+		}
+
+		cfgs := []GrafanaConfig{
+			base, // no TLS, no extra headers
+			mkTLS(func(t *TLSConfig) { t.CertFile = "/a/client-a.pem"; t.KeyFile = "/a/client-a.key" }),
+			mkTLS(func(t *TLSConfig) { t.CertFile = "/b/client-b.pem"; t.KeyFile = "/b/client-b.key" }),
+			mkTLS(func(t *TLSConfig) { t.CAFile = "/ca/roots-a.pem" }),
+			mkTLS(func(t *TLSConfig) { t.CAFile = "/ca/roots-b.pem" }),
+			mkTLS(func(t *TLSConfig) { t.SkipVerify = true }),
+			withExtraHeaders(base, map[string]string{"X-Webauth-User": "alice"}),
+			withExtraHeaders(base, map[string]string{"X-Webauth-User": "bob"}),
+		}
+		// Append a duplicate of the alice-headers config to prove identical
+		// header sets collapse to one entry.
+		cfgs = append(cfgs, withExtraHeaders(base, map[string]string{"X-Webauth-User": "alice"}))
+
+		for i, cfg := range cfgs {
+			ctx := WithGrafanaConfig(context.Background(), cfg)
+			sess := &mockClientSession{id: "tlskey-" + string(rune('a'+i))}
+			sm.CreateSession(ctx, sess)
+			tm.InitializeAndRegisterProxiedTools(ctx, sess)
+		}
+
+		tm.proxiedSetsMu.Lock()
+		cacheSize := len(tm.proxiedSets)
+		tm.proxiedSetsMu.Unlock()
+
+		// 9 configs, one duplicate (alice headers), so 8 distinct keys.
+		assert.Equal(t, 8, cacheSize, "TLS material and extra headers must each key distinctly (no client bleed)")
+	})
+
+	t.Run("ambiguous header maps do not collide", func(t *testing.T) {
+		tm, sm := newTestToolManager(t, time.Hour, setWith("tempo", "uid"))
+
+		base := GrafanaConfig{URL: "http://grafana", APIKey: "shared", OrgID: 1}
+
+		// These two header maps serialize to the same string under a naive
+		// name=value,name=value join, but are genuinely different and must key
+		// distinctly. A collision would share one built client (header bleed).
+		a := withExtraHeaders(base, map[string]string{"H": "a,b=c"})
+		b := withExtraHeaders(base, map[string]string{"H": "a", "b": "c"})
+
+		for i, cfg := range []GrafanaConfig{a, b} {
+			ctx := WithGrafanaConfig(context.Background(), cfg)
+			sess := &mockClientSession{id: "ambig-" + string(rune('a'+i))}
+			sm.CreateSession(ctx, sess)
+			tm.InitializeAndRegisterProxiedTools(ctx, sess)
+		}
+
+		tm.proxiedSetsMu.Lock()
+		cacheSize := len(tm.proxiedSets)
+		tm.proxiedSetsMu.Unlock()
+		assert.Equal(t, 2, cacheSize, "distinct header maps must not collide under key serialization")
+	})
+
+	t.Run("timeout is part of the key", func(t *testing.T) {
+		tm, sm := newTestToolManager(t, time.Hour, setWith("tempo", "uid"))
+
+		base := GrafanaConfig{URL: "http://grafana", APIKey: "shared", OrgID: 1}
+		a := base
+		a.Timeout = 5 * time.Second
+		b := base
+		b.Timeout = 30 * time.Second
+
+		for i, cfg := range []GrafanaConfig{a, b} {
+			ctx := WithGrafanaConfig(context.Background(), cfg)
+			sess := &mockClientSession{id: "timeout-" + string(rune('a'+i))}
+			sm.CreateSession(ctx, sess)
+			tm.InitializeAndRegisterProxiedTools(ctx, sess)
+		}
+
+		tm.proxiedSetsMu.Lock()
+		cacheSize := len(tm.proxiedSets)
+		tm.proxiedSetsMu.Unlock()
+		assert.Equal(t, 2, cacheSize, "different Timeout values bake different transports, so must key distinctly")
+	})
+
+	t.Run("entry is removed only when the last session detaches", func(t *testing.T) {
+		tm, sm := newTestToolManager(t, time.Hour, setWith("tempo", "uid"))
+
+		ctx := ctxWithCreds("http://grafana", "secret", nil, 1)
+
+		sessA := &mockClientSession{id: "life-a"}
+		sessB := &mockClientSession{id: "life-b"}
+		sm.CreateSession(ctx, sessA)
+		sm.CreateSession(ctx, sessB)
+		tm.InitializeAndRegisterProxiedTools(ctx, sessA)
+		tm.InitializeAndRegisterProxiedTools(ctx, sessB)
+
+		tm.proxiedSetsMu.Lock()
+		require.Len(t, tm.proxiedSets, 1)
+		var key proxiedToolSetKey
+		for k, s := range tm.proxiedSets {
+			key = k
+			assert.Equal(t, 2, s.refs, "both sessions must reference the set")
+		}
+		tm.proxiedSetsMu.Unlock()
+
+		// First session goes away: the shared set must survive because the other
+		// session still uses it (closing here would break the live session).
+		sm.RemoveSession(ctx, sessA)
+		tm.proxiedSetsMu.Lock()
+		s, ok := tm.proxiedSets[key]
+		require.True(t, ok, "entry must survive while other sessions reference it")
+		assert.Equal(t, 1, s.refs)
+		tm.proxiedSetsMu.Unlock()
+
+		// Last session goes away: the entry (and its clients) is torn down. The
+		// entry is deleted in a single branch reached exactly once per key, so
+		// its clients are closed exactly once.
+		sm.RemoveSession(ctx, sessB)
+		tm.proxiedSetsMu.Lock()
+		_, ok = tm.proxiedSets[key]
+		tm.proxiedSetsMu.Unlock()
+		assert.False(t, ok, "entry must be removed once the last session detaches")
+	})
+
+	t.Run("release is idempotent per session", func(t *testing.T) {
+		tm, sm := newTestToolManager(t, time.Hour, setWith("tempo", "uid"))
+
+		ctx := ctxWithCreds("http://grafana", "secret", nil, 1)
+		sess := &mockClientSession{id: "idem"}
+		sm.CreateSession(ctx, sess)
+		tm.InitializeAndRegisterProxiedTools(ctx, sess)
+
+		state, ok := sm.GetSession("idem")
+		require.True(t, ok)
+
+		// Two releases of the same session must decrement refs exactly once, so
+		// the entry is removed and stays removed. A second decrement would drive
+		// refs below zero and could close another key's clients.
+		tm.releaseSessionProxiedToolSet(state)
+		tm.releaseSessionProxiedToolSet(state)
+
+		tm.proxiedSetsMu.Lock()
+		cacheSize := len(tm.proxiedSets)
+		tm.proxiedSetsMu.Unlock()
+		assert.Equal(t, 0, cacheSize, "the entry must be removed after the single owning session releases it")
+	})
+}
+
+func TestReaperReleasesSharedSet(t *testing.T) {
+	tm, sm := newTestToolManager(t, 100*time.Millisecond, setWith("tempo", "uid"))
+
+	ctx := ctxWithCreds("http://grafana", "secret", nil, 1)
+	sess := &mockClientSession{id: "reaped"}
+	sm.CreateSession(ctx, sess)
+	tm.InitializeAndRegisterProxiedTools(ctx, sess)
+
+	tm.proxiedSetsMu.Lock()
+	require.Len(t, tm.proxiedSets, 1)
+	tm.proxiedSetsMu.Unlock()
+
+	// Reaping the idle session must release the shared set (dropping refs to zero
+	// and removing the entry), so idle-session churn cannot leak sets.
+	require.Eventually(t, func() bool {
+		tm.proxiedSetsMu.Lock()
+		defer tm.proxiedSetsMu.Unlock()
+		return len(tm.proxiedSets) == 0
+	}, 2*time.Second, 25*time.Millisecond, "reaping the last session must release the shared set")
 }
 
 // mockClientSession implements server.ClientSession for testing
@@ -444,6 +506,8 @@ type mockClientSession struct {
 	notifChannel  chan mcp.JSONRPCNotification
 	isInitialized bool
 }
+
+var _ server.ClientSession = (*mockClientSession)(nil)
 
 func (m *mockClientSession) SessionID() string {
 	return m.id
