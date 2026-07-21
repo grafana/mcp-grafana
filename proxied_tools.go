@@ -299,11 +299,22 @@ func serializeHeaders(headers map[string]string) string {
 	return sb.String()
 }
 
-// String returns a redacted string representation for logging.
+// String returns a redacted string representation for logging: secret-bearing
+// fields (apiKey, accessToken, idToken, basicAuthPass) are reduced to a present/
+// absent bool, never their value.
 func (k proxiedToolSetKey) String() string {
 	return fmt.Sprintf("url=%s apiKey=%t accessToken=%t idToken=%t orgID=%d timeout=%s basicAuth=%t tlsCert=%t tlsCA=%t tlsSkipVerify=%t extraHeaders=%t",
 		k.url, k.apiKey != "", k.accessToken != "", k.idToken != "", k.orgID, k.timeout, k.basicAuthUser != "",
 		k.tlsCertFile != "", k.tlsCAFile != "", k.tlsSkipVerify, k.extraHeaders != "")
+}
+
+// LogValue makes proxiedToolSetKey a slog.LogValuer so that logging it (e.g.
+// slog "key", set.key) emits the redacted String() form. slog does NOT honor
+// fmt.Stringer for Any values, so without this the raw struct fields (including
+// the secret apiKey/accessToken/idToken/basicAuthPass) would be reflected into
+// logs.
+func (k proxiedToolSetKey) LogValue() slog.Value {
+	return slog.StringValue(k.String())
 }
 
 // proxiedToolSet is the shared, credential-keyed result of discovering and

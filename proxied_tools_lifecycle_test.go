@@ -1,10 +1,12 @@
 package mcpgrafana
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"log/slog"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -13,6 +15,32 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// TestProxiedToolSetKeyNotLoggedInClear guards that logging a proxiedToolSetKey
+// emits the redacted form and never the raw secret values. slog does not honor
+// fmt.Stringer for Any values, so the key implements slog.LogValuer.
+func TestProxiedToolSetKeyNotLoggedInClear(t *testing.T) {
+	// JSONHandler reflects an Any value's struct fields (unlike TextHandler,
+	// which formats via fmt and would honor String()), so it is the handler that
+	// actually leaks without a slog.LogValuer. Use it so this test truly guards.
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+
+	key := proxiedToolSetKeyFromContext(WithGrafanaConfig(context.Background(), GrafanaConfig{
+		URL:         "http://grafana",
+		APIKey:      "super-secret-api-key",
+		AccessToken: "super-secret-access-token",
+		IDToken:     "super-secret-id-token",
+	}))
+
+	logger.Info("built proxied tool set", "key", key)
+
+	out := buf.String()
+	for _, secret := range []string{"super-secret-api-key", "super-secret-access-token", "super-secret-id-token"} {
+		assert.False(t, strings.Contains(out, secret), "secret %q must not appear in logs; got: %s", secret, out)
+	}
+	assert.True(t, strings.Contains(out, "apiKey=true"), "redacted form should report presence, not value")
+}
 
 // TestTeardownReleaseToZeroDuringBuild is the real-overlap regression guard for
 // the "build then publish" fix. It forces the dangerous interleaving the naive
