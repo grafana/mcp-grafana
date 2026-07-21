@@ -390,6 +390,33 @@ func TestInFlightCallBlocksClose(t *testing.T) {
 	assert.Equal(t, int32(1), atomic.LoadInt32(&closes), "the client must be Closed exactly once after the call returns")
 }
 
+// TestFailedBuildClosesClients guards that when a build errors AFTER connecting
+// some clients, those freshly-built clients are closed rather than leaked. The
+// failed set is de-cached and not published, so nothing else can close them.
+func TestFailedBuildClosesClients(t *testing.T) {
+	var closes int32
+	tm, sm := newTestToolManager(t, time.Hour, func(ctx context.Context, logger *slog.Logger) (builtProxiedTools, error) {
+		// A builder that connected a client, then hit an error.
+		return builtProxiedTools{
+			clients: map[string]*ProxiedClient{
+				"tempo_uid": newCloseCountingClient("tempo", "uid", &closes),
+			},
+			toolToDatasources: map[string][]string{},
+		}, errors.New("failed after connecting a client")
+	})
+
+	ctx := ctxWithCreds("http://grafana", "secret", nil, 1)
+	sess := &mockClientSession{id: "failclose"}
+	sm.CreateSession(ctx, sess)
+	tm.InitializeAndRegisterProxiedTools(ctx, sess)
+
+	tm.proxiedSetsMu.Lock()
+	size := len(tm.proxiedSets)
+	tm.proxiedSetsMu.Unlock()
+	assert.Equal(t, 0, size, "a failed build must not be cached")
+	assert.Equal(t, int32(1), atomic.LoadInt32(&closes), "clients connected before the error must be Closed, not leaked")
+}
+
 // newCloseCountingClient returns a ProxiedClient whose Close increments closes.
 // Its underlying Client is nil, so Close only runs the counter (all these tests
 // need to observe). The counter lets us assert "closed exactly once".

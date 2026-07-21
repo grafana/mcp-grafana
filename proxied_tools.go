@@ -536,11 +536,22 @@ type builtProxiedTools struct {
 // built into a usable state (discovery failed or was cancelled). A successful
 // discovery that finds zero MCP datasources is not an error: it is a legitimate
 // "no proxied tools" result (an empty build, handled by the caller).
-func (tm *ToolManager) buildProxiedToolSet(ctx context.Context, logger *slog.Logger) (builtProxiedTools, error) {
-	built := builtProxiedTools{
+func (tm *ToolManager) buildProxiedToolSet(ctx context.Context, logger *slog.Logger) (built builtProxiedTools, err error) {
+	built = builtProxiedTools{
 		clients:           make(map[string]*ProxiedClient),
 		toolToDatasources: make(map[string][]string),
 	}
+
+	// Convert a panic into an error while KEEPING the clients connected so far in
+	// the named return, so the caller's non-publish path closes them instead of
+	// leaking their remote connections. (The caller also recovers, but only the
+	// caller's own frame; a panic here would otherwise discard `built` entirely.)
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("panic building proxied tool set: %v", r)
+			logger.ErrorContext(ctx, "panic building proxied tool set", "error", r)
+		}
+	}()
 
 	// Discover datasources with MCP support.
 	discovered, err := discoverMCPDatasources(ctx, logger)
@@ -646,6 +657,14 @@ func (tm *ToolManager) attachProxiedToolSet(state *SessionState, key proxiedTool
 func (tm *ToolManager) runProxiedToolSetBuild(ctx context.Context, set *proxiedToolSet, logger *slog.Logger) {
 	buildCtx := context.WithoutCancel(ctx)
 
+	// buildSet is expected to convert its own panics into an error while
+	// returning any clients it already connected (buildProxiedToolSet does this
+	// via named returns), so a panic's partial clients are reaped by the
+	// non-publish path below. This outer recover is a last-resort guard that only
+	// fires if a builder panics past its own recovery: it keeps this goroutine and
+	// any ready-waiters alive by turning the panic into a failed build. In that
+	// escaped-panic case built is the zero value, so a builder that connects
+	// clients MUST recover internally to avoid leaking them.
 	var built builtProxiedTools
 	var buildErr error
 	func() {
@@ -692,19 +711,26 @@ func (tm *ToolManager) runProxiedToolSetBuild(ctx context.Context, set *proxiedT
 		set.built = true
 	}
 	abandoned := set.refs == 0
+	published := !abandoned && !failed
 	size := len(tm.proxiedSets)
 	tm.proxiedSetsMu.Unlock()
 
 	close(set.ready)
 
-	if abandoned {
-		// Close the freshly-built clients outside the lock (they were never
-		// published, so no other path can observe or close them).
+	// On any non-publish outcome the freshly-built clients were NOT stored on the
+	// set, so no teardown path can observe or close them: close them here (once,
+	// outside the lock) or their remote connections leak. This covers both the
+	// abandoned case (all sessions left mid-build) and the failed case where the
+	// builder connected some clients before erroring or panicking.
+	if !published {
 		tm.closeProxiedClients(built.clients)
+	}
+
+	switch {
+	case abandoned:
 		logger.InfoContext(ctx, "proxied tool set abandoned during build; closed clients without publishing", "key", set.key)
 		return
-	}
-	if failed {
+	case failed:
 		logger.InfoContext(ctx, "proxied tool set build failed; not caching", "key", set.key, "error", buildErr)
 		return
 	}
