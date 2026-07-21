@@ -190,39 +190,89 @@ func TestFailedBuildNotCached(t *testing.T) {
 	assert.Equal(t, 1, refs, "only the second session references the rebuilt set")
 }
 
-// TestEmptyBuildNotCached verifies that a successful build that finds no MCP
-// datasources is treated as a transient "no proxied tools" result: it is not
-// left cached, so a later session (when a datasource has appeared) rebuilds.
-func TestEmptyBuildNotCached(t *testing.T) {
-	var attempt int32
+// TestEmptyBuildCachedAndReused verifies that a SUCCESSFUL build that finds no
+// MCP datasources is a stable "this instance has no proxied tools" result: the
+// empty set is cached (not de-cached), the session is registered so it does not
+// retry, and a second session for the same key reuses the cached empty set
+// WITHOUT re-running discovery. This is the regression guard for empty builds
+// re-running full discovery on every hook on no-MCP-datasource instances.
+func TestEmptyBuildCachedAndReused(t *testing.T) {
+	var discoveries int32
 	tm, sm := newTestToolManager(t, time.Hour, func(ctx context.Context, logger *slog.Logger) (builtProxiedTools, error) {
-		if atomic.AddInt32(&attempt, 1) == 1 {
-			// No error, but zero clients discovered.
-			return builtProxiedTools{clients: map[string]*ProxiedClient{}, toolToDatasources: map[string][]string{}}, nil
-		}
-		return builtWith("tempo", "uid"), nil
+		atomic.AddInt32(&discoveries, 1)
+		// Successful discovery, but this instance exposes no MCP datasources.
+		return builtProxiedTools{clients: map[string]*ProxiedClient{}, toolToDatasources: map[string][]string{}}, nil
 	})
 
 	ctx := ctxWithCreds("http://grafana", "secret", nil, 1)
 
+	// First session: builds once, gets an empty set, registers, keeps its ref.
 	sess1 := &mockClientSession{id: "empty-1"}
 	sm.CreateSession(ctx, sess1)
 	tm.InitializeAndRegisterProxiedTools(ctx, sess1)
 
 	tm.proxiedSetsMu.Lock()
 	sizeAfterEmpty := len(tm.proxiedSets)
+	var refsAfter1 int
+	for _, s := range tm.proxiedSets {
+		refsAfter1 = s.refs
+	}
 	tm.proxiedSetsMu.Unlock()
-	assert.Equal(t, 0, sizeAfterEmpty, "an empty build must not be left cached")
+	assert.Equal(t, 1, sizeAfterEmpty, "a successful empty build must be cached")
+	assert.Equal(t, 1, refsAfter1, "the first session must keep a reference to the empty set")
 
+	state1, ok := sm.GetSession("empty-1")
+	require.True(t, ok)
+	state1.proxiedInitMu.Lock()
+	registered1 := state1.proxiedRegistered
+	state1.proxiedInitMu.Unlock()
+	assert.True(t, registered1, "the session must be registered on an empty-but-successful build")
+
+	// Repeated hooks for the SAME session must not re-run discovery.
+	tm.InitializeAndRegisterProxiedTools(ctx, sess1)
+	tm.InitializeAndRegisterProxiedTools(ctx, sess1)
+	assert.Equal(t, int32(1), atomic.LoadInt32(&discoveries), "repeated hooks for one session must not re-run discovery")
+
+	// A second session with the SAME credentials must reuse the cached empty set,
+	// not trigger a fresh discovery.
 	sess2 := &mockClientSession{id: "empty-2"}
 	sm.CreateSession(ctx, sess2)
 	tm.InitializeAndRegisterProxiedTools(ctx, sess2)
 
 	tm.proxiedSetsMu.Lock()
-	sizeAfterRetry := len(tm.proxiedSets)
+	sizeAfterReuse := len(tm.proxiedSets)
+	var refsAfter2 int
+	for _, s := range tm.proxiedSets {
+		refsAfter2 = s.refs
+	}
 	tm.proxiedSetsMu.Unlock()
-	assert.Equal(t, int32(2), atomic.LoadInt32(&attempt), "the next session must rebuild after an empty result")
-	assert.Equal(t, 1, sizeAfterRetry, "the non-empty rebuild must be cached")
+	assert.Equal(t, int32(1), atomic.LoadInt32(&discoveries), "a second same-key session must reuse the cached empty set (no re-discovery)")
+	assert.Equal(t, 1, sizeAfterReuse, "the cached empty set must still be the only entry")
+	assert.Equal(t, 2, refsAfter2, "both sessions must reference the shared empty set")
+
+	// Both sessions must reference the very same underlying set pointer.
+	s1set := sessionSet(t, sm, "empty-1")
+	s2set := sessionSet(t, sm, "empty-2")
+	assert.Same(t, s1set, s2set, "same-credential sessions must share one empty set")
+
+	// Teardown must balance both references and remove the entry.
+	sm.RemoveSession(ctx, sess1)
+	sm.RemoveSession(ctx, sess2)
+	tm.proxiedSetsMu.Lock()
+	sizeAfterTeardown := len(tm.proxiedSets)
+	tm.proxiedSetsMu.Unlock()
+	assert.Equal(t, 0, sizeAfterTeardown, "teardown must release both references to the empty set")
+}
+
+// sessionSet returns the shared proxiedToolSet bound to a session, for identity
+// assertions.
+func sessionSet(t *testing.T, sm *SessionManager, id string) *proxiedToolSet {
+	t.Helper()
+	state, ok := sm.GetSession(id)
+	require.True(t, ok)
+	state.mutex.RLock()
+	defer state.mutex.RUnlock()
+	return state.proxiedSet
 }
 
 // TestBuildPanicUnblocksWaitersAndDeCaches guards that a panic in the builder

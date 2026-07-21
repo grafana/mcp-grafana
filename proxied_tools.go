@@ -339,12 +339,16 @@ type proxiedToolSet struct {
 
 	// built reports that the build completed and published its results into the
 	// clients/tools maps. Until built is true the maps are empty placeholders and
-	// must not be treated as the set's contents.
+	// must not be treated as the set's contents. A build that discovers zero MCP
+	// datasources is still a successful build: built is true and the maps are
+	// legitimately empty (see failed for the transient case).
 	built bool
-	// failed reports that the build did not produce a usable set (discovery
-	// error, cancellation, panic, or zero clients). A failed set is removed from
-	// the cache so the next session rebuilds; waiters treat it as "no proxied
-	// tools this time" rather than a permanently cached empty set.
+	// failed reports that the build hit a TRANSIENT error (discovery error,
+	// context cancellation, or panic). A failed set is removed from the cache so
+	// the next session rebuilds and retries. It is NOT set for a successful build
+	// that simply found no MCP datasources: that empty result is stable, so the
+	// set is published (built=true, failed=false, empty maps) and cached, and
+	// sessions do not re-run discovery on every hook.
 	failed bool
 
 	// clients keyed by datasourceType_datasourceUID. Empty until built is true;
@@ -625,9 +629,16 @@ func (tm *ToolManager) attachProxiedToolSet(state *SessionState, key proxiedTool
 // for the other sessions waiting on the same set. ready is always closed, even
 // on panic, so concurrent waiters never block indefinitely.
 //
-// Failure handling: on discovery error, panic, or zero clients the set is marked
-// failed and removed from the cache so the next session rebuilds, rather than
-// leaving a poisoned empty entry cached forever.
+// Outcome handling, three cases:
+//   - TRANSIENT ERROR (buildErr != nil: discovery error, context cancel, panic):
+//     the set is marked failed and removed from the cache so the next session
+//     rebuilds and retries, rather than leaving a poisoned entry cached.
+//   - EMPTY SUCCESS (buildErr == nil, zero MCP datasources discovered): a stable
+//     "this instance has no proxied tools" result. The set is published with
+//     empty maps (built=true, failed=false) and KEPT in the cache, so sessions do
+//     not re-run full discovery on every hook. Only a real config change (a new
+//     datasource) surfaces after the cached set is torn down and rebuilt.
+//   - SUCCESS WITH CLIENTS: published and cached as usual.
 //
 // Teardown-during-build: if every session left while the build ran (refs==0 at
 // publish time), the freshly-built local clients are closed right here and never
@@ -647,9 +658,10 @@ func (tm *ToolManager) runProxiedToolSetBuild(ctx context.Context, set *proxiedT
 		built, buildErr = tm.buildSet(buildCtx, logger)
 	}()
 
-	// len(built.clients)==0 covers both a genuine "no MCP datasources" result and
-	// one where every client dial failed; a rebuild is cheap and correct for both.
-	failed := buildErr != nil || len(built.clients) == 0
+	// Only a real error is transient/failed. A successful build that found zero
+	// MCP datasources is a stable empty result and must be cached (built, empty),
+	// not de-cached, so sessions do not re-discover on every hook.
+	failed := buildErr != nil
 
 	tm.proxiedSetsMu.Lock()
 
@@ -671,8 +683,9 @@ func (tm *ToolManager) runProxiedToolSetBuild(ctx context.Context, set *proxiedT
 			delete(tm.proxiedSets, set.key)
 		}
 	default:
-		// Publish the build results. After this the maps are immutable and safe
-		// to read under the lock (teardown) or after <-ready (session use).
+		// Publish the build results (which may be legitimately empty). After this
+		// the maps are immutable and safe to read under the lock (teardown) or
+		// after <-ready (session use).
 		set.clients = built.clients
 		set.tools = built.tools
 		set.toolToDatasources = built.toolToDatasources
@@ -692,7 +705,7 @@ func (tm *ToolManager) runProxiedToolSetBuild(ctx context.Context, set *proxiedT
 		return
 	}
 	if failed {
-		logger.InfoContext(ctx, "proxied tool set build produced no usable tools; not caching", "key", set.key, "error", buildErr)
+		logger.InfoContext(ctx, "proxied tool set build failed; not caching", "key", set.key, "error", buildErr)
 		return
 	}
 	logger.InfoContext(ctx, "built proxied tool set", "key", set.key, "datasources", len(set.clients), "tools", len(set.tools), "cache_size", size)
@@ -860,17 +873,18 @@ func (tm *ToolManager) InitializeAndRegisterProxiedTools(ctx context.Context, se
 	tools := set.tools
 	tm.proxiedSetsMu.Unlock()
 
-	// A failed build (discovery error, cancellation, panic, or zero datasources
-	// discovered) is treated as transient and was de-cached. Do NOT mark this
-	// session registered: release its reference to the failed set, clear the
-	// binding, and return so the next hook invocation for this session retries a
-	// fresh attach (which triggers a fresh build). This keeps the failure
-	// transient for the session, matching the cache's behavior for later sessions.
+	// A failed build (transient: discovery error, cancellation, or panic) was
+	// de-cached. Do NOT mark this session registered: release its reference to
+	// the failed set, clear the binding, and return so the next hook invocation
+	// for this session retries a fresh attach (which triggers a fresh build).
+	// This keeps the failure transient for the session, matching the cache's
+	// behavior for later sessions.
 	//
-	// A usable build with zero tools is NOT a failure: the datasources were
-	// reachable but exposed no proxied tools. That is a valid, cached steady
-	// state, so the session keeps its reference and is marked registered (there
-	// is simply nothing to register); it must not retry forever.
+	// A usable build with zero tools is NOT a failure: either the instance has no
+	// MCP datasources, or its datasources exposed no tools. That is a stable,
+	// cached result, so the session keeps its reference and is marked registered
+	// (there is simply nothing to register); it must not retry, so repeated hooks
+	// do not re-run discovery.
 	if !usable {
 		tm.releaseSessionProxiedToolSet(state)
 		return
