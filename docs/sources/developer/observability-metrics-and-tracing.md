@@ -54,7 +54,7 @@ When using SSE or streamable HTTP transports, enable Prometheus metrics with `--
 
 ## Enable OpenTelemetry tracing
 
-When `OTEL_EXPORTER_OTLP_ENDPOINT` is set, the server exports traces via OTLP/gRPC.
+When `OTEL_EXPORTER_OTLP_ENDPOINT` (or the signal-specific `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`) is set, the server exports traces via OTLP/gRPC.
 
 Local example:
 ```bash
@@ -77,7 +77,13 @@ Tool call spans follow naming like `tools/call <tool_name>` and include attribut
 
 ## Enable OpenTelemetry logs
 
-When `OTEL_EXPORTER_OTLP_ENDPOINT` (or the signal-specific `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`) is set — the same trigger as tracing — the server also exports structured logs via OTLP/gRPC in addition to the existing plain-text stderr output. Logs carry `trace_id` and `span_id` from the active span so they correlate with exported traces.
+When `OTEL_EXPORTER_OTLP_ENDPOINT` (or the signal-specific `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`) is set, the server also exports structured logs via OTLP/gRPC in addition to the existing plain-text stderr output. Logs carry `trace_id` and `span_id` from the active span so they correlate with exported traces.
+
+Traces and logs resolve their endpoints independently, so the two signals can be enabled separately:
+
+- Setting only `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` enables tracing **without** log export.
+- Setting only `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` enables log export without tracing.
+- Setting the generic `OTEL_EXPORTER_OTLP_ENDPOINT` enables both.
 
 ```bash
 # Send logs and traces to a local OTel collector
