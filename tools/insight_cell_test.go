@@ -167,6 +167,25 @@ func TestRenderInsightCellNilArraysDefaultToEmpty(t *testing.T) {
 	assert.Empty(t, findings)
 }
 
+func TestRenderInsightCellKeepsZeroRangeBound(t *testing.T) {
+	zero := 0.0
+	five := 5.0
+	res, err := renderInsightCell(context.Background(), RenderInsightCellParams{
+		Panel:    "stat",
+		Mappings: []icValueMapping{{Type: "range", From: &zero, To: &five, Text: "low"}},
+		Frames:   []icDataFrame{{Fields: []icField{{Name: "value", Type: "number", Values: []any{2.0}}}}},
+	})
+	require.NoError(t, err)
+	payload := decodeCellPayload(t, res)
+
+	mappings := payload["renderHint"].(map[string]any)["mappings"].([]any)
+	require.Len(t, mappings, 1)
+	m := mappings[0].(map[string]any)
+	from, ok := m["from"]
+	require.True(t, ok, "a range bound of 0 must not be dropped")
+	assert.Equal(t, 0.0, from)
+}
+
 func TestRenderInsightCellRequiresPanel(t *testing.T) {
 	_, err := renderInsightCell(context.Background(), RenderInsightCellParams{})
 	require.Error(t, err)

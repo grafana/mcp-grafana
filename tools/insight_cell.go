@@ -61,12 +61,12 @@ type icThreshold struct {
 }
 
 type icValueMapping struct {
-	Type  string  `json:"type"` // value | range
-	Value any     `json:"value,omitempty"`
-	From  float64 `json:"from,omitempty"`
-	To    float64 `json:"to,omitempty"`
-	Text  string  `json:"text,omitempty"`
-	Color string  `json:"color,omitempty"`
+	Type  string   `json:"type"` // value | range
+	Value any      `json:"value,omitempty"`
+	From  *float64 `json:"from,omitempty"` // pointer so a legitimate 0 bound isn't dropped
+	To    *float64 `json:"to,omitempty"`   // pointer so a legitimate 0 bound isn't dropped
+	Text  string   `json:"text,omitempty"`
+	Color string   `json:"color,omitempty"`
 }
 
 type icRenderHint struct {
