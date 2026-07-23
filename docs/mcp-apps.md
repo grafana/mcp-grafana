@@ -72,8 +72,8 @@ the analysis, and passes the results here. The tool does not query datasources o
 
 Render types:
 
-- **Core panels:** `timeseries`, `stat`, `bar`, `table` (read `frames`), `logs` (read `logs`),
-  `trace` (read `trace`).
+- **Core panels:** `timeseries`, `stat`, `bullet` (a value vs a target/SLO with qualitative
+  bands), `bar`, `table` (read `frames`), `logs` (read `logs`), `trace` (read `trace`).
 - **Synthesis views:** `worklist` (ranked triage), `rca` (root cause → evidence), `timeline`
   (change correlation), `cost` (cardinality/spend drivers).
 - **Guardrailed write:** `rulediff` renders a proposed alert-rule change as a before/after diff.

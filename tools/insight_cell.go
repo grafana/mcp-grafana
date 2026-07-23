@@ -79,6 +79,8 @@ type icRenderHint struct {
 	Description string           `json:"description,omitempty"`
 	ValueField  string           `json:"valueField,omitempty"`
 	Sort        string           `json:"sort,omitempty"`
+	Target      *float64         `json:"target,omitempty"` // bullet: target/SLO marker
+	Max         *float64         `json:"max,omitempty"`    // bullet: axis max
 }
 
 type icLogLine struct {
@@ -265,7 +267,7 @@ type insightCell struct {
 // RenderInsightCellParams is what the agent supplies after it has gathered the
 // data. Populate only the fields relevant to `panel`; everything else is optional.
 type RenderInsightCellParams struct {
-	Panel string `json:"panel" jsonschema:"required,enum=timeseries,enum=stat,enum=bar,enum=table,enum=logs,enum=trace,enum=worklist,enum=rca,enum=rulediff,enum=timeline,enum=cost,description=Which panel type to render. Core panels (timeseries/stat/bar/table) read 'frames'. 'logs'/'trace' read their own fields. Synthesis views: 'worklist' = ranked actionable findings (alert triage/deprecations); 'rca' = root-cause investigation (findings->root cause->evidence); 'rulediff' = a proposed alert-rule fix as a before/after diff; 'timeline' = change-correlation (deploys/config/alerts on a time axis); 'cost' = cost/cardinality drivers."`
+	Panel string `json:"panel" jsonschema:"required,enum=timeseries,enum=stat,enum=bullet,enum=bar,enum=table,enum=logs,enum=trace,enum=worklist,enum=rca,enum=rulediff,enum=timeline,enum=cost,description=Which panel type to render. Core panels (timeseries/stat/bar/table) read 'frames'. 'bullet' = a single value vs a target/SLO with qualitative threshold bands (reads 'frames' + target/max; more compact than a gauge). 'logs'/'trace' read their own fields. Synthesis views: 'worklist' = ranked actionable findings (alert triage/deprecations); 'rca' = root-cause investigation (findings->root cause->evidence); 'rulediff' = a proposed alert-rule fix as a before/after diff; 'timeline' = change-correlation (deploys/config/alerts on a time axis); 'cost' = cost/cardinality drivers."`
 
 	Title      string `json:"title,omitempty" jsonschema:"description=Panel title / the question being answered."`
 	Verdict    string `json:"verdict,omitempty" jsonschema:"description=One-line answer shown as the insight title (your conclusion about the data)."`
@@ -283,6 +285,8 @@ type RenderInsightCellParams struct {
 	Mappings   []icValueMapping `json:"mappings,omitempty" jsonschema:"description=Value mappings: map a specific value or numeric range to display text/color."`
 	ValueField string           `json:"valueField,omitempty" jsonschema:"description=stat: which field to read as the value (default: last numeric field)."`
 	Sort       string           `json:"sort,omitempty" jsonschema:"enum=desc,enum=asc,enum=none,description=bar: sort direction for ranked bars."`
+	Target     *float64         `json:"target,omitempty" jsonschema:"description=bullet: the target/SLO marker drawn as a tick."`
+	Max        *float64         `json:"max,omitempty" jsonschema:"description=bullet: axis max; omit to derive from value/target/thresholds."`
 
 	// Data channels (populate the one matching `panel`)
 	Frames []icDataFrame    `json:"frames,omitempty" jsonschema:"description=For timeseries/stat/bar/table: the columnar data (Grafana-style frames) you got from a query tool. A frame has fields[] each with name\\, type (time|number|string) and values[]."`
@@ -382,6 +386,8 @@ func buildInsightCell(ctx context.Context, args RenderInsightCellParams) (*insig
 		Description: args.Insight,
 		ValueField:  args.ValueField,
 		Sort:        args.Sort,
+		Target:      args.Target,
+		Max:         args.Max,
 	}
 
 	cell := &insightCell{
@@ -442,6 +448,8 @@ func defaultTitleForPanel(panel string) string {
 		return "Change timeline"
 	case "cost":
 		return "Cost & cardinality"
+	case "bullet":
+		return "Value vs target"
 	default:
 		return strings.Title(panel) //nolint:staticcheck // simple ASCII panel names
 	}

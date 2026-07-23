@@ -110,6 +110,30 @@ func TestRenderInsightCellWorklistLive(t *testing.T) {
 	assert.NotNil(t, cell.Actions)
 }
 
+func TestRenderInsightCellBullet(t *testing.T) {
+	target := 1.0
+	max := 1.2
+	res, err := renderInsightCell(context.Background(), RenderInsightCellParams{
+		Panel:   "bullet",
+		Verdict: "p95 latency 0.82s vs 1s SLO",
+		Unit:    "s",
+		Target:  &target,
+		Max:     &max,
+		Frames: []icDataFrame{{
+			Fields: []icField{{Name: "value", Type: "number", Values: []any{0.82}}},
+		}},
+	})
+	require.NoError(t, err)
+
+	cell, ok := res.StructuredContent.(*insightCell)
+	require.True(t, ok)
+	assert.Equal(t, "bullet", cell.RenderHint.Type)
+	require.NotNil(t, cell.RenderHint.Target)
+	assert.Equal(t, 1.0, *cell.RenderHint.Target)
+	require.NotNil(t, cell.RenderHint.Max)
+	assert.Equal(t, 1.2, *cell.RenderHint.Max)
+}
+
 func TestRenderInsightCellRequiresPanel(t *testing.T) {
 	_, err := renderInsightCell(context.Background(), RenderInsightCellParams{})
 	require.Error(t, err)

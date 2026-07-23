@@ -287,7 +287,7 @@ function vizToolbar(
 }
 
 function labelFor(t: PanelType): string {
-  return { timeseries: "Time series", stat: "Stat", bar: "Bar chart", table: "Table", logs: "Logs", trace: "Trace", worklist: "Worklist", rca: "Investigation", rulediff: "Rule fix", timeline: "Timeline", cost: "Cost" }[t];
+  return { timeseries: "Time series", stat: "Stat", bar: "Bar chart", table: "Table", logs: "Logs", trace: "Trace", worklist: "Worklist", rca: "Investigation", rulediff: "Rule fix", timeline: "Timeline", cost: "Cost", bullet: "Bullet" }[t];
 }
 
 // --- insight (agent explanation) ---------------------------------------------
@@ -398,6 +398,7 @@ function renderPanel(cell: InsightCell, ctx: RenderCtx): Panel {
     case "rulediff": return ruleDiffPanel(cell);
     case "timeline": return timelinePanel(cell);
     case "cost": return costPanel(cell);
+    case "bullet": return bulletPanel(cell);
     default: return { node: el("div", "empty", `Unsupported panel type: ${(cell.renderHint as any).type}`) };
   }
 }
@@ -414,7 +415,7 @@ function switchableTypes(frame: DataFrame | undefined, current: PanelType): Pane
   const hasStr = frame.fields.some((f) => f.type === "string");
   const set = new Set<PanelType>();
   set.add("table");
-  if (hasNum) set.add("stat");
+  if (hasNum) { set.add("stat"); set.add("bullet"); }
   if (hasTime && hasNum) set.add("timeseries");
   if (hasStr && hasNum) set.add("bar");
   set.delete(current);
@@ -588,20 +589,100 @@ function statPanel(cell: InsightCell): Panel {
     const d = ((value - prev) / Math.abs(prev)) * 100;
     node.append(el("div", `stat-delta ${d >= 0 ? "up" : "down"}`, `${d >= 0 ? "▲" : "▼"} ${Math.abs(d).toFixed(0)}% vs start of window`));
   }
-  if (series.length > 1) node.append(sparkline(series, dv.color));
-  return { node, toolbar: { changeTypes: switchableTypes(frame, "stat") } };
+  let mount: (() => void) | undefined;
+  if (series.length > 1) {
+    const host = el("div", "spark");
+    node.append(host);
+    mount = () => mountSparkline(host, series, dv.color);
+  }
+  return { node, mount, toolbar: { changeTypes: switchableTypes(frame, "stat") } };
 }
 
-function sparkline(series: number[], color?: string): SVGSVGElement {
-  const w = 220, h = 46, pad = 3;
-  const min = Math.min(...series), max = Math.max(...series), span = max - min || 1;
-  const pts = series.map((v, i) => `${(pad + (i / (series.length - 1)) * (w - pad * 2)).toFixed(1)},${(h - pad - ((v - min) / span) * (h - pad * 2)).toFixed(1)}`).join(" ");
-  const s = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  s.setAttribute("width", String(w)); s.setAttribute("height", String(h)); s.setAttribute("class", "spark");
-  const p = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
-  p.setAttribute("points", pts); p.setAttribute("fill", "none"); p.setAttribute("stroke", color ?? cssVar("--accent"));
-  p.setAttribute("stroke-width", "2"); p.setAttribute("stroke-linejoin", "round"); p.setAttribute("stroke-linecap", "round");
-  s.append(p); return s;
+/** A minimal uPlot sparkline (no axes/legend/cursor), on the same stack as timeseries. */
+function mountSparkline(host: HTMLElement, series: number[], color?: string) {
+  const stroke = color ?? cssVar("--accent");
+  const h = 46;
+  const width = () => Math.max(120, host.clientWidth || 220);
+  const xs = series.map((_, i) => i);
+  const opts: uPlot.Options = {
+    width: width(), height: h,
+    cursor: { show: false },
+    legend: { show: false },
+    scales: { x: { time: false } },
+    axes: [{ show: false }, { show: false }],
+    series: [{}, { stroke, width: 2, fill: sparkFill(stroke), points: { show: false } }],
+  };
+  const u = new uPlot(opts, [xs, series], host);
+  new ResizeObserver(() => u.setSize({ width: width(), height: h })).observe(host);
+}
+
+/** Translucent area fill derived from a #rrggbb stroke (else no fill). */
+function sparkFill(stroke: string): string | undefined {
+  const m = /^#([0-9a-f]{6})$/i.exec(stroke.trim());
+  if (!m) return undefined;
+  const n = parseInt(m[1], 16);
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, 0.15)`;
+}
+
+/** #rrggbb -> rgba(...,a); returns the input unchanged if not a hex color. */
+function tint(color: string, a: number): string {
+  const m = /^#([0-9a-f]{6})$/i.exec(color.trim());
+  if (!m) return color;
+  const n = parseInt(m[1], 16);
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`;
+}
+
+// --- bullet (compact measure vs target, with qualitative bands) --------------
+
+function bulletPanel(cell: InsightCell): Panel {
+  const node = el("div", "panel");
+  const frame = firstFrame(cell);
+  const rh = cell.renderHint;
+  const valueField = frame?.fields.find((f) => f.name === (rh.valueField ?? "value")) ??
+    frame?.fields.filter((f) => f.type === "number").at(-1);
+  const series = (valueField?.values ?? []).map(Number).filter((n) => !Number.isNaN(n));
+  const value = series.at(-1);
+  const toolbar = { changeTypes: switchableTypes(frame, "bullet") };
+  if (value == null) { node.append(el("div", "empty", "No value")); return { node, toolbar }; }
+
+  const thresholds = [...(rh.thresholds ?? [])].sort((a, b) => a.value - b.value);
+  const target = rh.target;
+  const dv = displayValue(value, { unit: rh.unit, decimals: rh.decimals, thresholds: rh.thresholds, mappings: rh.mappings });
+  const nums = [value, ...(target != null ? [target] : []), ...thresholds.map((t) => t.value)].filter((n) => Number.isFinite(n));
+  const max = rh.max ?? Math.max(...nums, 1) * 1.1;
+  const pct = (n: number) => Math.max(0, Math.min(100, (n / max) * 100));
+
+  const wrap = el("div", "bullet");
+  const head = el("div", "bullet-head");
+  head.append(el("span", "bullet-value mono", dv.text));
+  if (target != null) head.append(el("span", "bullet-target-label mono", `target ${fmtNum(target, rh.unit)}`));
+  if (dv.color) (head.firstChild as HTMLElement).style.color = dv.color;
+  wrap.append(head);
+
+  // qualitative bands from thresholds (faint threshold colors), square corners.
+  const track = el("div", "bullet-track");
+  const bounds = [0, ...thresholds.map((t) => t.value), max];
+  const bandColors = [resolveColor("ok"), ...thresholds.map((t) => resolveColor(t.color))];
+  for (let i = 0; i < bounds.length - 1; i++) {
+    const seg = el("div", "bullet-band");
+    seg.style.left = `${pct(bounds[i])}%`;
+    seg.style.width = `${pct(bounds[i + 1]) - pct(bounds[i])}%`;
+    seg.style.background = tint(bandColors[i] ?? cssVar("--track"), 0.18);
+    track.append(seg);
+  }
+  // measure bar (thin, overlaid) + target tick
+  const measure = el("div", "bullet-measure");
+  measure.style.width = `${pct(value)}%`;
+  measure.style.background = dv.color ?? cssVar("--ink");
+  track.append(measure);
+  if (target != null) {
+    const tk = el("div", "bullet-target");
+    tk.style.left = `${pct(target)}%`;
+    track.append(tk);
+  }
+  wrap.append(track);
+  node.append(wrap);
+  return { node, toolbar };
 }
 
 // --- bar ---------------------------------------------------------------------
@@ -618,14 +699,17 @@ function barPanel(cell: InsightCell): Panel {
   if (cell.renderHint.sort !== "none") rows.sort((a, b) => cell.renderHint.sort === "asc" ? a.value - b.value : b.value - a.value);
   const max = Math.max(...rows.map((r) => r.value), 1);
 
+  // Grafana bar-gauge style: one consistent series color (field color, else the
+  // classic green), not a per-bar rainbow.
+  const barColor = val.color ?? PALETTE[0];
   const list = el("div", "bars");
-  rows.forEach((r, i) => {
+  rows.forEach((r) => {
     const row = el("div", "bar-row");
     row.append(el("div", "bar-label", r.label));
     const track = el("div", "bar-track");
     const fill = el("div", "bar-fill");
     fill.style.width = `${(r.value / max) * 100}%`;
-    fill.style.background = PALETTE[i % PALETTE.length];
+    fill.style.background = barColor;
     track.append(fill); row.append(track);
     row.append(el("div", "bar-value mono", fmtNum(r.value, val.unit)));
     list.append(row);
@@ -914,12 +998,6 @@ function timelinePanel(cell: InsightCell): Panel {
 
 // --- cost / cardinality ------------------------------------------------------
 
-function seriesFmtR(n: number): string {
-  if (n >= 1e6) return `${(n / 1e6).toFixed(2)}M`;
-  if (n >= 1e3) return `${(n / 1e3).toFixed(0)}k`;
-  return String(Math.round(n));
-}
-
 function costPanel(cell: InsightCell): Panel {
   const node = el("div", "panel");
   const c = cell.cost;
@@ -937,7 +1015,7 @@ function costPanel(cell: InsightCell): Panel {
     const row = el("div", "cost-row");
     const head = el("div", "cost-head");
     head.append(el("span", "cost-name mono", d.name));
-    const primary = d.series != null ? `${seriesFmtR(d.series)} series` : d.value != null ? fmtNum(d.value, d.unit) : "";
+    const primary = d.series != null ? `${fmtNum(d.series, "short")} series` : d.value != null ? fmtNum(d.value, d.unit) : "";
     head.append(el("span", "cost-val mono", primary + (d.pct != null ? `  ·  ${d.pct.toFixed(0)}%` : "")));
     row.append(head);
     const trk = el("div", "cost-track");
