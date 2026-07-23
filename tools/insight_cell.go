@@ -305,6 +305,7 @@ type RenderInsightCellParams struct {
 	RuleSummary  string             `json:"ruleSummary,omitempty" jsonschema:"description=For panel='rulediff': one line — what the fix does and why."`
 	Changes      []icRuleDiffChange `json:"changes,omitempty" jsonschema:"description=For panel='rulediff': the before/after changes you're proposing."`
 	ProposedRule map[string]any     `json:"proposedRule,omitempty" jsonschema:"description=For panel='rulediff': the full updated alert-rule JSON to pass to update_alert_rule when applied."`
+	Applied      bool               `json:"applied,omitempty" jsonschema:"description=For panel='rulediff': set true when re-rendering the diff after update_alert_rule succeeded\\, so the cell shows the APPLIED state."`
 
 	// timeline
 	Events []icChangeEvent `json:"events,omitempty" jsonschema:"description=For panel='timeline': change events (deploys/config/alerts) to correlate against an incident. Mark the correlated one."`
@@ -447,6 +448,7 @@ func buildInsightCell(ctx context.Context, args RenderInsightCellParams) (*insig
 			Summary:   args.RuleSummary,
 			Changes:   orEmpty(args.Changes),
 			Proposed:  args.ProposedRule,
+			Applied:   args.Applied,
 		}
 	}
 	if len(args.Events) > 0 {

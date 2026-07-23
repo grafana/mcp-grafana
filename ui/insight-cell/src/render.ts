@@ -182,11 +182,13 @@ function headerRow(cell: InsightCell): HTMLElement {
   const right = el("div", "head-right");
   const shareBtn = el("button", "share-btn");
   shareBtn.append(svg(IC.share, "ic"), document.createTextNode("Share"), svg(IC.chevron, "ic"));
+  // Only offer actions that actually work here: copy the cell's real Grafana
+  // link (when it has one) and download the payload. Cross-user share needs a
+  // server-side store + retrieval tool — out of scope for this render surface.
+  const link = cellLink(cell);
   const share = dropdown(shareBtn, [
-    { label: "Share with a user", onClick: () => toast(head, "Sharing with a user isn’t wired in this prototype") },
-    { label: "Copy link", onClick: () => copyText(head, cellLink(cell), "Link copied") },
+    ...(link ? [{ label: "Copy link", onClick: () => copyText(head, link, "Link copied") }] : []),
     { label: "Download", onClick: () => downloadJson(head, cell) },
-    { label: "Add to Grafana notebook", onClick: () => toast(head, "Add to notebook isn’t wired in this prototype") },
   ]);
   right.append(share);
 
@@ -196,9 +198,8 @@ function headerRow(cell: InsightCell): HTMLElement {
   return head;
 }
 
-function cellLink(cell: InsightCell): string {
-  const link = cell.actions.find((a) => a.kind === "link");
-  return link?.url ?? "https://grafana.net/insight-cell/(prototype)";
+function cellLink(cell: InsightCell): string | undefined {
+  return cell.actions.find((a) => a.kind === "link")?.url;
 }
 
 async function copyText(anchor: HTMLElement, text: string, ok: string) {
