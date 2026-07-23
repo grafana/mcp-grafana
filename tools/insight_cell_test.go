@@ -215,6 +215,19 @@ func TestRenderInsightCellTimelineDefaultsBounds(t *testing.T) {
 	assert.NotEmpty(t, cell.Timeline.To, "timeline.to must default to the computed range, not empty")
 }
 
+func TestRenderInsightCellQueryAlwaysArray(t *testing.T) {
+	// The common no-query (sample) path must still emit query as [] not null —
+	// the UI iterates meta.query and refresh reads query[0].
+	res, err := renderInsightCell(context.Background(), RenderInsightCellParams{Panel: "stat"})
+	require.NoError(t, err)
+	payload := decodeCellPayload(t, res)
+
+	meta, ok := payload["meta"].(map[string]any)
+	require.True(t, ok, "meta must be a JSON object")
+	_, isArray := meta["query"].([]any)
+	require.True(t, isArray, "meta.query must be a JSON array, not null")
+}
+
 func TestRenderInsightCellRequiresPanel(t *testing.T) {
 	_, err := renderInsightCell(context.Background(), RenderInsightCellParams{})
 	require.Error(t, err)

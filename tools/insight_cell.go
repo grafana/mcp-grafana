@@ -371,7 +371,9 @@ func buildInsightCell(ctx context.Context, args RenderInsightCellParams) (*insig
 		datasource = args.DatasourceUID
 	}
 
-	var queries []icQueryRef
+	// Always an array (never nil): the UI iterates meta.query and refresh reads
+	// query[0], so a JSON null would blank the common no-query (sample) path.
+	queries := []icQueryRef{}
 	if args.Query != "" {
 		queries = []icQueryRef{{Ref: "A", Expr: args.Query, DatasourceUID: args.DatasourceUID}}
 	}
@@ -409,30 +411,30 @@ func buildInsightCell(ctx context.Context, args RenderInsightCellParams) (*insig
 			DataMode:    dataMode,
 		},
 	}
-	if cell.Actions == nil {
-		cell.Actions = []icAction{}
+	// These slice fields are marshalled without omitempty and the UI iterates
+	// them, so a nil slice (JSON `null`) would make the renderer throw and blank
+	// the cell. Normalise every such field to an empty slice via orEmpty.
+	cell.Actions = orEmpty(cell.Actions)
+	if cell.Trace != nil {
+		cell.Trace.Spans = orEmpty(cell.Trace.Spans)
+	}
+	for i := range cell.Frames {
+		cell.Frames[i].Fields = orEmpty(cell.Frames[i].Fields)
+		for j := range cell.Frames[i].Fields {
+			cell.Frames[i].Fields[j].Values = orEmpty(cell.Frames[i].Fields[j].Values)
+		}
 	}
 
-	// Synthesis-view payloads. The list fields (findings/changes/drivers) are
-	// marshalled without omitempty and the UI iterates them, so default nil to an
-	// empty slice — a JSON `null` would make the renderer throw and blank the cell.
+	// Synthesis-view payloads.
 	if args.RootCause != nil || len(args.Findings) > 0 || len(args.Checks) > 0 {
-		findings := args.Findings
-		if findings == nil {
-			findings = []icRcaFinding{}
-		}
-		cell.RCA = &icRcaPayload{RootCause: args.RootCause, Checks: args.Checks, Findings: findings}
+		cell.RCA = &icRcaPayload{RootCause: args.RootCause, Checks: args.Checks, Findings: orEmpty(args.Findings)}
 	}
 	if args.RuleTitle != "" || len(args.Changes) > 0 {
-		changes := args.Changes
-		if changes == nil {
-			changes = []icRuleDiffChange{}
-		}
 		cell.RuleDiff = &icRuleDiffPayload{
 			RuleTitle: args.RuleTitle,
 			RuleUID:   args.RuleUID,
 			Summary:   args.RuleSummary,
-			Changes:   changes,
+			Changes:   orEmpty(args.Changes),
 			Proposed:  args.ProposedRule,
 		}
 	}
@@ -449,14 +451,20 @@ func buildInsightCell(ctx context.Context, args RenderInsightCellParams) (*insig
 		cell.Timeline = &icTimelinePayload{From: from, To: to, Events: args.Events}
 	}
 	if len(args.Drivers) > 0 || args.CostTotal != nil {
-		drivers := args.Drivers
-		if drivers == nil {
-			drivers = []icCostDriver{}
-		}
-		cell.Cost = &icCostPayload{Total: args.CostTotal, Drivers: drivers, Headroom: args.Headroom}
+		cell.Cost = &icCostPayload{Total: args.CostTotal, Drivers: orEmpty(args.Drivers), Headroom: args.Headroom}
 	}
 
 	return cell, nil
+}
+
+// orEmpty returns s, or an empty (non-nil) slice when s is nil, so a UI-iterated
+// contract field never marshals as JSON `null`. Prefer this over per-field
+// guards so a newly added slice field is one call away from being safe.
+func orEmpty[T any](s []T) []T {
+	if s == nil {
+		return []T{}
+	}
+	return s
 }
 
 func defaultTitleForPanel(panel string) string {
