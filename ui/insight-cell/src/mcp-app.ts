@@ -79,10 +79,13 @@ async function runAction(a: InsightCellAction, cell: InsightCell, btn: HTMLButto
     btn.textContent = "Working…";
     if (a.kind === "refresh") {
       const res = await app.callServerTool({ name: "render_insight_cell", arguments: specFrom(cell) });
-      applyResult(res);
+      if (!applyResult(res)) restoreButton(btn, a);
     } else if (a.kind === "tool" && a.tool) {
       const res = await app.callServerTool({ name: a.tool, arguments: a.args ?? {} });
-      applyResult(res);
+      // Not every tool returns a cell (e.g. a write like update_alert_rule), so
+      // if there's nothing to re-render, re-enable the control instead of
+      // leaving it stuck on "Working…".
+      if (!applyResult(res)) restoreButton(btn, a);
     }
   } catch (err) {
     btn.disabled = false;
@@ -91,9 +94,20 @@ async function runAction(a: InsightCellAction, cell: InsightCell, btn: HTMLButto
   }
 }
 
-function applyResult(result: any) {
+/** Re-render if the result carries a cell. Returns whether it did. */
+function applyResult(result: any): boolean {
   const next = extractCell(result);
-  if (next) renderInto(root, next, runAction);
+  if (next) {
+    renderInto(root, next, runAction);
+    return true;
+  }
+  return false;
+}
+
+/** Re-enable an action button after a call that didn't re-render the cell. */
+function restoreButton(btn: HTMLButtonElement, a: InsightCellAction) {
+  btn.disabled = false;
+  btn.textContent = a.label;
 }
 
 /**
