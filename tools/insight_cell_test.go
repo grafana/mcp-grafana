@@ -134,6 +134,39 @@ func TestRenderInsightCellBullet(t *testing.T) {
 	assert.Equal(t, 1.2, *cell.RenderHint.Max)
 }
 
+func TestRenderInsightCellSurfacesInsight(t *testing.T) {
+	insight := "Errors held under 1% across the window; no action needed."
+	res, err := renderInsightCell(context.Background(), RenderInsightCellParams{
+		Panel:   "stat",
+		Verdict: "Nominal",
+		Insight: insight,
+		Frames:  []icDataFrame{{Fields: []icField{{Name: "value", Type: "number", Values: []any{0.4}}}}},
+	})
+	require.NoError(t, err)
+
+	cell := res.StructuredContent.(*insightCell)
+	assert.Equal(t, insight, cell.RenderHint.Description, "insight rides on renderHint.description")
+
+	text := res.Content[0].(mcp.TextContent).Text
+	assert.Contains(t, text, insight, "insight must appear in the text fallback")
+}
+
+func TestRenderInsightCellNilArraysDefaultToEmpty(t *testing.T) {
+	// rca with a root cause but no findings — findings must serialize as [] not null.
+	res, err := renderInsightCell(context.Background(), RenderInsightCellParams{
+		Panel:     "rca",
+		RootCause: &icRcaRoot{Title: "Bad deploy", Confidence: "high"},
+	})
+	require.NoError(t, err)
+	payload := decodeCellPayload(t, res)
+
+	rca, ok := payload["rca"].(map[string]any)
+	require.True(t, ok)
+	findings, ok := rca["findings"].([]any)
+	require.True(t, ok, "findings must be a JSON array, not null")
+	assert.Empty(t, findings)
+}
+
 func TestRenderInsightCellRequiresPanel(t *testing.T) {
 	_, err := renderInsightCell(context.Background(), RenderInsightCellParams{})
 	require.Error(t, err)

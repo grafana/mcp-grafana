@@ -78,7 +78,7 @@ async function runAction(a: InsightCellAction, cell: InsightCell, btn: HTMLButto
     btn.disabled = true;
     btn.textContent = "Working…";
     if (a.kind === "refresh") {
-      const res = await app.callServerTool({ name: "grafana_render", arguments: specFrom(cell) });
+      const res = await app.callServerTool({ name: "render_insight_cell", arguments: specFrom(cell) });
       applyResult(res);
     } else if (a.kind === "tool" && a.tool) {
       const res = await app.callServerTool({ name: a.tool, arguments: a.args ?? {} });
@@ -96,24 +96,76 @@ function applyResult(result: any) {
   if (next) renderInto(root, next, runAction);
 }
 
-/** Reconstruct the render spec from a cell so refresh reproduces it. */
+/**
+ * Reconstruct the render_insight_cell arguments from a cell so a refresh
+ * reproduces it. render_insight_cell is a render substrate — it repackages the
+ * data it's given rather than re-querying — so we pass the full payload back,
+ * not just panel/title/query (which would redraw an empty cell).
+ */
 function specFrom(cell: InsightCell): Record<string, unknown> {
-  const from = new Date(cell.meta.timeRange.from).getTime();
-  const to = new Date(cell.meta.timeRange.to).getTime();
-  const rangeHours = Math.max(1, Math.round((to - from) / 3600_000));
-  return {
-    panel: cell.renderHint.type,
-    title: cell.renderHint.title,
+  const rh = cell.renderHint;
+  const rd = cell.rulediff;
+  const args: Record<string, unknown> = {
+    panel: rh.type,
+    title: rh.title,
+    verdict: cell.meta.verdict,
+    insight: rh.description,
     query: cell.meta.query[0]?.expr,
     datasourceUid: cell.meta.query[0]?.datasourceUid,
-    rangeHours,
+    unit: rh.unit,
+    decimals: rh.decimals,
+    thresholds: rh.thresholds,
+    mappings: rh.mappings,
+    valueField: rh.valueField,
+    sort: rh.sort,
+    target: rh.target,
+    max: rh.max,
+    frames: cell.frames,
+    logs: cell.logs,
+    trace: cell.trace,
+    items: cell.worklist,
+    rootCause: cell.rca?.rootCause,
+    checks: cell.rca?.checks,
+    findings: cell.rca?.findings,
+    ruleTitle: rd?.ruleTitle,
+    ruleUid: rd?.ruleUid,
+    ruleSummary: rd?.summary,
+    changes: rd?.changes,
+    proposedRule: rd?.proposed,
+    events: cell.timeline?.events,
+    from: cell.timeline?.from,
+    to: cell.timeline?.to,
+    drivers: cell.cost?.drivers,
+    costTotal: cell.cost?.total,
+    headroom: cell.cost?.headroom,
+    callout: cell.callout,
+    actions: cell.actions,
   };
+  // Drop undefined so we don't send a wall of null args.
+  for (const k of Object.keys(args)) if (args[k] === undefined) delete args[k];
+  return args;
+}
+
+/** Reject non-http(s) schemes (e.g. javascript:, data:) before linking. */
+function safeHttpUrl(raw: string): string | null {
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol === "http:" || parsed.protocol === "https:") return parsed.toString();
+  } catch {
+    // Not a parseable absolute URL.
+  }
+  return null;
 }
 
 async function openLink(url: string) {
+  const safe = safeHttpUrl(url);
+  if (!safe) {
+    console.error("[insight-cell] refusing to open non-http(s) url:", url);
+    return;
+  }
   const a = app as any;
-  if (typeof a.openLink === "function") return a.openLink({ url });
-  if (typeof a.sendOpenLink === "function") return a.sendOpenLink({ url });
-  if (typeof a.openExternal === "function") return a.openExternal({ url });
-  window.open(url, "_blank", "noopener");
+  if (typeof a.openLink === "function") return a.openLink({ url: safe });
+  if (typeof a.sendOpenLink === "function") return a.sendOpenLink({ url: safe });
+  if (typeof a.openExternal === "function") return a.openExternal({ url: safe });
+  window.open(safe, "_blank", "noopener");
 }

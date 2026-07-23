@@ -413,16 +413,26 @@ func buildInsightCell(ctx context.Context, args RenderInsightCellParams) (*insig
 		cell.Actions = []icAction{}
 	}
 
-	// Synthesis-view payloads.
+	// Synthesis-view payloads. The list fields (findings/changes/drivers) are
+	// marshalled without omitempty and the UI iterates them, so default nil to an
+	// empty slice — a JSON `null` would make the renderer throw and blank the cell.
 	if args.RootCause != nil || len(args.Findings) > 0 || len(args.Checks) > 0 {
-		cell.RCA = &icRcaPayload{RootCause: args.RootCause, Checks: args.Checks, Findings: args.Findings}
+		findings := args.Findings
+		if findings == nil {
+			findings = []icRcaFinding{}
+		}
+		cell.RCA = &icRcaPayload{RootCause: args.RootCause, Checks: args.Checks, Findings: findings}
 	}
 	if args.RuleTitle != "" || len(args.Changes) > 0 {
+		changes := args.Changes
+		if changes == nil {
+			changes = []icRuleDiffChange{}
+		}
 		cell.RuleDiff = &icRuleDiffPayload{
 			RuleTitle: args.RuleTitle,
 			RuleUID:   args.RuleUID,
 			Summary:   args.RuleSummary,
-			Changes:   args.Changes,
+			Changes:   changes,
 			Proposed:  args.ProposedRule,
 		}
 	}
@@ -430,7 +440,11 @@ func buildInsightCell(ctx context.Context, args RenderInsightCellParams) (*insig
 		cell.Timeline = &icTimelinePayload{From: args.From, To: args.To, Events: args.Events}
 	}
 	if len(args.Drivers) > 0 || args.CostTotal != nil {
-		cell.Cost = &icCostPayload{Total: args.CostTotal, Drivers: args.Drivers, Headroom: args.Headroom}
+		drivers := args.Drivers
+		if drivers == nil {
+			drivers = []icCostDriver{}
+		}
+		cell.Cost = &icCostPayload{Total: args.CostTotal, Drivers: drivers, Headroom: args.Headroom}
 	}
 
 	return cell, nil
@@ -473,6 +487,11 @@ func insightCellResult(cell *insightCell) (*mcp.CallToolResult, error) {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s [%s, %s data]\n", cell.RenderHint.Title, cell.RenderHint.Type, cell.Meta.DataMode)
 	fmt.Fprintf(&b, "Verdict: %s\n", cell.Meta.Verdict)
+	// The agent's 2–4 sentence explanation rides on renderHint.description; include
+	// it so hosts without MCP Apps still surface the analysis, not just the verdict.
+	if cell.RenderHint.Description != "" {
+		fmt.Fprintf(&b, "%s\n", cell.RenderHint.Description)
+	}
 	if cell.Callout != nil {
 		fmt.Fprintf(&b, "%s: %s\n", cell.Callout.Title, cell.Callout.Body)
 	}
