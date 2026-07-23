@@ -186,6 +186,35 @@ func TestRenderInsightCellKeepsZeroRangeBound(t *testing.T) {
 	assert.Equal(t, 0.0, from)
 }
 
+func TestRenderInsightCellKeepsZeroCostMetric(t *testing.T) {
+	zero := 0.0
+	res, err := renderInsightCell(context.Background(), RenderInsightCellParams{
+		Panel:   "cost",
+		Drivers: []icCostDriver{{Name: "idle_series", Pct: &zero, Series: &zero}},
+	})
+	require.NoError(t, err)
+	payload := decodeCellPayload(t, res)
+
+	d := payload["cost"].(map[string]any)["drivers"].([]any)[0].(map[string]any)
+	pct, ok := d["pct"]
+	require.True(t, ok, "a 0%% cost share must not be dropped")
+	assert.Equal(t, 0.0, pct)
+}
+
+func TestRenderInsightCellTimelineDefaultsBounds(t *testing.T) {
+	res, err := renderInsightCell(context.Background(), RenderInsightCellParams{
+		Panel:  "timeline",
+		Events: []icChangeEvent{{Time: "2026-07-23T10:00:00Z", Title: "deploy v2", Kind: "deploy"}},
+		// from/to intentionally omitted
+	})
+	require.NoError(t, err)
+
+	cell := res.StructuredContent.(*insightCell)
+	require.NotNil(t, cell.Timeline)
+	assert.NotEmpty(t, cell.Timeline.From, "timeline.from must default to the computed range, not empty")
+	assert.NotEmpty(t, cell.Timeline.To, "timeline.to must default to the computed range, not empty")
+}
+
 func TestRenderInsightCellRequiresPanel(t *testing.T) {
 	_, err := renderInsightCell(context.Background(), RenderInsightCellParams{})
 	require.Error(t, err)

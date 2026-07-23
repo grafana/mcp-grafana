@@ -180,12 +180,12 @@ type icTimelinePayload struct {
 }
 
 type icCostDriver struct {
-	Name   string  `json:"name"`
-	Series float64 `json:"series,omitempty"`
-	Value  float64 `json:"value,omitempty"`
-	Unit   string  `json:"unit,omitempty"`
-	Pct    float64 `json:"pct,omitempty"`
-	Note   string  `json:"note,omitempty"`
+	Name   string   `json:"name"`
+	Series *float64 `json:"series,omitempty"` // pointer so a legitimate 0 isn't dropped
+	Value  *float64 `json:"value,omitempty"`  // pointer so a legitimate 0 isn't dropped
+	Unit   string   `json:"unit,omitempty"`
+	Pct    *float64 `json:"pct,omitempty"` // pointer so a legitimate 0% isn't dropped
+	Note   string   `json:"note,omitempty"`
 }
 
 type icCostTotal struct {
@@ -437,7 +437,16 @@ func buildInsightCell(ctx context.Context, args RenderInsightCellParams) (*insig
 		}
 	}
 	if len(args.Events) > 0 {
-		cell.Timeline = &icTimelinePayload{From: args.From, To: args.To, Events: args.Events}
+		// Default the axis bounds to the computed time range so the UI never builds
+		// the timeline from empty (Invalid Date -> NaN pin positions).
+		from, to := args.From, args.To
+		if from == "" {
+			from = fromISO
+		}
+		if to == "" {
+			to = toISO
+		}
+		cell.Timeline = &icTimelinePayload{From: from, To: to, Events: args.Events}
 	}
 	if len(args.Drivers) > 0 || args.CostTotal != nil {
 		drivers := args.Drivers
