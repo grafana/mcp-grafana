@@ -110,10 +110,26 @@ function specFrom(cell: InsightCell): Record<string, unknown> {
   };
 }
 
+/** Reject non-http(s) schemes (e.g. javascript:, data:) before linking. */
+function safeHttpUrl(raw: string): string | null {
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol === "http:" || parsed.protocol === "https:") return parsed.toString();
+  } catch {
+    // Not a parseable absolute URL.
+  }
+  return null;
+}
+
 async function openLink(url: string) {
+  const safe = safeHttpUrl(url);
+  if (!safe) {
+    console.error("[insight-cell] refusing to open non-http(s) url:", url);
+    return;
+  }
   const a = app as any;
-  if (typeof a.openLink === "function") return a.openLink({ url });
-  if (typeof a.sendOpenLink === "function") return a.sendOpenLink({ url });
-  if (typeof a.openExternal === "function") return a.openExternal({ url });
-  window.open(url, "_blank", "noopener");
+  if (typeof a.openLink === "function") return a.openLink({ url: safe });
+  if (typeof a.sendOpenLink === "function") return a.sendOpenLink({ url: safe });
+  if (typeof a.openExternal === "function") return a.openExternal({ url: safe });
+  window.open(safe, "_blank", "noopener");
 }

@@ -299,7 +299,10 @@ function insightSection(cell: InsightCell): HTMLElement {
   wrap.append(el("div", "ico", tone === "info" ? "ⓘ" : "⚠"));
   const body = el("div", "insight-body");
   body.append(el("div", "insight-title", c?.title ?? cell.meta.verdict));
-  if (c?.body) body.append(el("div", "insight-text", c.body));
+  // The agent's 2–4 sentence explanation rides on renderHint.description; show it
+  // when there's no callout body, so `insight` always surfaces.
+  const explanation = c?.body ?? cell.renderHint.description;
+  if (explanation) body.append(el("div", "insight-text", explanation));
   wrap.append(body);
   return wrap;
 }
@@ -434,7 +437,12 @@ function timeseriesPanel(cell: InsightCell, ctx: RenderCtx): Panel {
 
   const timeField = frame.fields.find((f) => f.type === "time");
   const seriesFields = frame.fields.filter((f) => f.type === "number");
-  const times = (timeField?.values ?? []) as number[];
+  // uPlot's time scale is epoch-seconds, but Grafana-style frames carry time in
+  // epoch-milliseconds. Detect ms (values past ~2001 in ms ≈ 1e12) and convert,
+  // so a real query tool's frames render with a correct x-axis either way.
+  const times = ((timeField?.values ?? []) as number[]).map((t) =>
+    t != null && Math.abs(t) > 1e12 ? t / 1000 : t,
+  );
   const data: uPlot.AlignedData = [times, ...seriesFields.map((f) => f.values as (number | null)[])];
 
   const toolbar: PanelToolbar = { changeTypes: switchableTypes(frame, "timeseries") };
@@ -889,7 +897,7 @@ function rcaPanel(cell: InsightCell): Panel {
 
   // Findings
   const list = el("div", "rca-findings");
-  for (const f of rca.findings) {
+  for (const f of rca.findings ?? []) {
     const row = el("div", "rca-finding");
     const dot = el("span", `rca-dot ${f.severity ?? "neutral"}`);
     row.append(dot);
@@ -925,7 +933,7 @@ function ruleDiffPanel(cell: InsightCell): Panel {
   if (rd.summary) node.append(el("div", "rd-summary", rd.summary));
 
   const list = el("div", "rd-changes");
-  for (const c of rd.changes) {
+  for (const c of rd.changes ?? []) {
     const chg = el("div", "rd-change");
     chg.append(el("div", "rd-field", c.field));
     const diff = el("div", "rd-diff");
@@ -1001,7 +1009,7 @@ function timelinePanel(cell: InsightCell): Panel {
 function costPanel(cell: InsightCell): Panel {
   const node = el("div", "panel");
   const c = cell.cost;
-  if (!c || !c.drivers.length) { node.append(el("div", "empty", "No cost data")); return { node }; }
+  if (!c || !c.drivers?.length) { node.append(el("div", "empty", "No cost data")); return { node }; }
 
   if (c.total) {
     const tot = el("div", "cost-total");
