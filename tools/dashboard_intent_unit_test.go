@@ -21,7 +21,7 @@ func TestProjectIntent_FullBlock(t *testing.T) {
 			"notes":          "Watch for deploy regressions.",
 		},
 		"failureModes": []interface{}{
-			map[string]interface{}{"tag": "db-slow", "description": "DB latency spike."},
+			map[string]interface{}{"tag": "db-slow", "description": "DB latency spike.", "alertRuleUid": "rule-db-slow"},
 			map[string]interface{}{"tag": "pod-oom"},
 		},
 		"relatedSlos": []interface{}{
@@ -31,10 +31,10 @@ func TestProjectIntent_FullBlock(t *testing.T) {
 			map[string]interface{}{"title": "Checkout runbook", "url": "https://wiki/checkout"},
 		},
 		"provenance": map[string]interface{}{
-			"purpose":                            "author-written",
-			"expected_behavior.normal_range":     "author-written",
-			"expected_behavior.alert_threshold":  "lifted-from-alert",
-			"failure_modes":                      "assistant-unconfirmed",
+			"purpose":                           "author-written",
+			"expected_behavior.normal_range":    "author-written",
+			"expected_behavior.alert_threshold": "lifted-from-alert",
+			"failure_modes":                     "assistant-unconfirmed",
 		},
 		"lastVerifiedAt": "2026-05-21T11:00:00Z",
 	}
@@ -52,7 +52,9 @@ func TestProjectIntent_FullBlock(t *testing.T) {
 	require.Len(t, intent.FailureModes, 2)
 	assert.Equal(t, "db-slow", intent.FailureModes[0].Tag)
 	assert.Equal(t, "DB latency spike.", intent.FailureModes[0].Description)
+	assert.Equal(t, "rule-db-slow", intent.FailureModes[0].AlertRuleUID)
 	assert.Equal(t, "pod-oom", intent.FailureModes[1].Tag)
+	assert.Empty(t, intent.FailureModes[1].AlertRuleUID)
 	require.Len(t, intent.RelatedSLOs, 1)
 	assert.Equal(t, "99.9%", intent.RelatedSLOs[0].Target)
 	require.Len(t, intent.Runbooks, 1)

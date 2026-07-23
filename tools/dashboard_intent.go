@@ -55,6 +55,10 @@ type ExpectedBehavior struct {
 type FailureMode struct {
 	Tag         string `json:"tag"`
 	Description string `json:"description,omitempty"`
+	// AlertRuleUID references the Grafana alert rule whose firing state drives
+	// this failure mode's badge in the dashboard UI. Empty when the mode is
+	// declared-only (not tied to a rule).
+	AlertRuleUID string `json:"alert_rule_uid,omitempty"`
 }
 
 type RelatedSLO struct {
@@ -128,9 +132,9 @@ type ListDashboardIntentParams struct {
 // dashboard in one call — preferred over repeatedly calling
 // get_dashboard_intent for every panel.
 type DashboardIntentBundle struct {
-	DashboardUID string             `json:"dashboard_uid"`
-	Dashboard    *DashboardIntent   `json:"dashboard,omitempty"`
-	Panels       []DashboardIntent  `json:"panels"`
+	DashboardUID string            `json:"dashboard_uid"`
+	Dashboard    *DashboardIntent  `json:"dashboard,omitempty"`
+	Panels       []DashboardIntent `json:"panels"`
 }
 
 func listDashboardIntent(ctx context.Context, args ListDashboardIntentParams) (*DashboardIntentBundle, error) {
@@ -234,8 +238,9 @@ func projectIntent(raw interface{}, uid string, panelID *int) (*DashboardIntent,
 			continue
 		}
 		intent.FailureModes = append(intent.FailureModes, FailureMode{
-			Tag:         tag,
-			Description: safeString(fm, "description"),
+			Tag:          tag,
+			Description:  safeString(fm, "description"),
+			AlertRuleUID: safeString(fm, "alertRuleUid"),
 		})
 	}
 
