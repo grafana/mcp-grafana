@@ -74,8 +74,8 @@ registerAppTool(
       "it matters) so the cell displays your analysis under the title.",
     inputSchema: {
       panel: z
-        .enum(["timeseries", "stat", "bar", "table", "logs", "trace", "worklist", "rca", "rulediff", "timeline", "cost"])
-        .describe("Which panel type to render. 'worklist' = a ranked, actionable findings list (alert triage, deprecations, tasks). 'rca' = a root-cause investigation (findings → root cause → evidence), ideally from Sift / find_slow_requests / find_error_pattern_logs. 'rulediff' = a proposed alert-rule fix shown as a before/after diff with an 'Apply changes' action that writes it via the provisioning API. 'timeline' = a change-correlation timeline (deploys/config/alerts on a time axis, ideally from get_annotations) to decide if an incident lines up with a change vs a resource/anomaly. 'cost' = a cost/cardinality breakdown (what drives active series) that quantifies the 'adding headroom costs money' trade-off."),
+        .enum(["timeseries", "stat", "bar", "table", "logs", "trace", "worklist", "rca", "rulediff", "timeline", "cost", "bullet"])
+        .describe("Which panel type to render. 'worklist' = a ranked, actionable findings list (alert triage, deprecations, tasks). 'rca' = a root-cause investigation (findings → root cause → evidence), ideally from Sift / find_slow_requests / find_error_pattern_logs. 'rulediff' = a proposed alert-rule fix shown as a before/after diff with an 'Apply changes' action that writes it via the provisioning API. 'timeline' = a change-correlation timeline (deploys/config/alerts on a time axis, ideally from get_annotations) to decide if an incident lines up with a change vs a resource/anomaly. 'cost' = a cost/cardinality breakdown (what drives active series) that quantifies the 'adding headroom costs money' trade-off. 'bullet' = a compact single value against a target/SLO with qualitative threshold bands (use for one KPI vs a goal; more compact than a gauge)."),
       title: z.string().optional().describe("Panel title / the question being answered."),
       query: z.string().optional().describe("PromQL/LogQL/TraceQL. Used for live timeseries/stat; ignored in sample mode."),
       verdict: z.string().optional().describe("One-line answer shown as the insight title (your conclusion about the data)."),
@@ -85,6 +85,8 @@ registerAppTool(
       datasourceUid: z.string().optional().describe("Datasource UID to query (defaults to GRAFANA_PROM_DS_UID)."),
       unit: z.string().optional().describe("Grafana unit id for the values so they format like Grafana: bytes, s, ms, percent, percentunit, reqps, short, Bps, … Drives axis/tooltip/stat formatting. Set this when you know the metric's unit."),
       decimals: z.number().optional().describe("Fixed decimal places; omit for automatic precision."),
+      target: z.number().optional().describe("For panel='bullet': the target/SLO marker drawn as a tick."),
+      max: z.number().optional().describe("For panel='bullet': axis max; omit to derive from value/target/thresholds."),
       thresholds: z.array(z.object({
         value: z.number(),
         color: z.string().describe("green | orange | red | yellow, or a hex color"),

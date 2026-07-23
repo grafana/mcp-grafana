@@ -63,6 +63,9 @@ export interface RenderSpec {
   decimals?: number;
   thresholds?: Threshold[];
   mappings?: ValueMapping[];
+  /** For panel="bullet": target/SLO marker and optional axis max. */
+  target?: number;
+  max?: number;
   /** For panel="worklist": the agent's synthesized, ranked findings. */
   items?: WorklistItem[];
   /** For panel="rca": the agent's (or Sift's) investigation result. */
@@ -88,7 +91,7 @@ export function isLiveConfigured(): boolean {
   return Boolean(GRAFANA_URL && GRAFANA_TOKEN && PROM_DS_UID);
 }
 
-const PROM_PANELS: PanelType[] = ["timeseries", "stat", "bar", "table"];
+const PROM_PANELS: PanelType[] = ["timeseries", "stat", "bar", "table", "bullet"];
 
 export async function getCell(spec: RenderSpec): Promise<InsightCell> {
   const base = Boolean(GRAFANA_URL && GRAFANA_TOKEN);
@@ -212,6 +215,8 @@ function applyAgentNarrative(cell: InsightCell, spec: RenderSpec) {
   // Agent-supplied field config (Backend B) overrides inferred renderHint.
   if (spec.unit != null) cell.renderHint.unit = spec.unit;
   if (spec.decimals != null) cell.renderHint.decimals = spec.decimals;
+  if (spec.target != null) cell.renderHint.target = spec.target;
+  if (spec.max != null) cell.renderHint.max = spec.max;
   if (spec.thresholds?.length) cell.renderHint.thresholds = spec.thresholds;
   if (spec.mappings?.length) cell.renderHint.mappings = spec.mappings;
   if (spec.items?.length) cell.worklist = spec.items;
@@ -281,6 +286,7 @@ export function mockCell(spec: RenderSpec): InsightCell {
     case "rulediff": return mockRuleDiff(spec);
     case "timeline": return mockTimeline(spec);
     case "cost": return mockCost(spec);
+    case "bullet": return mockBullet(spec);
   }
 }
 
@@ -900,6 +906,29 @@ function mockStat(spec: RenderSpec): InsightCell {
   };
 }
 
+function mockBullet(spec: RenderSpec): InsightCell {
+  const frames: DataFrame[] = [
+    { name: "p95", fields: [{ name: "value", type: "number", values: [0.82], unit: "s" }] },
+  ];
+  return {
+    renderHint: {
+      type: "bullet",
+      title: spec.title ?? `${spec.service ?? "checkout-service"} p95 latency vs SLO`,
+      unit: "s",
+      target: 1.0,
+      max: 1.2,
+      thresholds: [{ value: 0.5, color: "warn" }, { value: 1.0, color: "crit" }],
+    },
+    frames,
+    callout: { tone: "warn", title: "p95 is 0.82s, inside the warn band and approaching the 1s SLO", body: "Below the 1s target for now, but past the 0.5s warn threshold and trending up. A compact bullet shows the measure against the SLO and the qualitative bands in one row." },
+    actions: [
+      { label: "Show the trend", kind: "tool", tool: "grafana_render", args: { panel: "timeseries", title: "latency trend" }, primary: true },
+      { label: "Refresh", kind: "refresh" },
+    ],
+    meta: baseMeta(spec, { verdict: "p95 latency 0.82s vs 1s SLO — warn band, trending toward breach." }),
+  };
+}
+
 function mockBar(spec: RenderSpec): InsightCell {
   const frames: DataFrame[] = [
     { name: "errors_by_endpoint", fields: [
@@ -1000,6 +1029,7 @@ async function liveCell(spec: RenderSpec): Promise<InsightCell> {
   switch (spec.panel) {
     case "timeseries": return liveTimeseries(spec);
     case "stat": return liveStat(spec);
+    case "bullet": { const c = await liveStat(spec); c.renderHint.type = "bullet"; return c; }
     case "bar": return liveBar(spec);
     case "table": return liveTable(spec);
     case "logs": return liveLogs(spec);

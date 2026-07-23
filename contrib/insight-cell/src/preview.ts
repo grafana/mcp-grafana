@@ -8,7 +8,7 @@ import { mockCell } from "./data.js";
 import type { PanelType } from "./schema.js";
 
 const gallery = document.getElementById("gallery")!;
-const all: PanelType[] = ["timeseries", "stat", "bar", "table", "logs", "trace", "worklist", "rca", "rulediff", "timeline", "cost"];
+const all: PanelType[] = ["timeseries", "stat", "bar", "table", "logs", "trace", "worklist", "rca", "rulediff", "timeline", "cost", "bullet"];
 // #<type> in the URL renders only that panel (handy for focused screenshots).
 const only = location.hash.replace("#", "");
 const types: PanelType[] = all.includes(only as PanelType) ? [only as PanelType] : all;

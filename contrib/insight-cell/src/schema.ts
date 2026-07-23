@@ -12,7 +12,7 @@
 // The tool emits it three ways: content[].text (fallback), structuredContent
 // (this object), and _meta["grafana.insightCell/v0"] (the trust metadata).
 
-export type PanelType = "timeseries" | "stat" | "bar" | "table" | "logs" | "trace" | "worklist" | "rca" | "rulediff" | "timeline" | "cost";
+export type PanelType = "timeseries" | "stat" | "bar" | "table" | "logs" | "trace" | "worklist" | "rca" | "rulediff" | "timeline" | "cost" | "bullet";
 
 export type Tone = "ok" | "warn" | "crit" | "neutral";
 
@@ -69,6 +69,10 @@ export interface RenderHint {
   valueField?: string;
   /** bar: sort direction for ranked bars. */
   sort?: "desc" | "asc" | "none";
+  /** bullet: target/SLO marker drawn as a tick. */
+  target?: number;
+  /** bullet: axis max (else derived from value/target/thresholds). */
+  max?: number;
 }
 
 // --- Logs & traces get their own payloads (not natural as frames) ------------
