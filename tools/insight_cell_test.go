@@ -1,0 +1,116 @@
+package tools
+
+import (
+	"context"
+	"encoding/json"
+	"testing"
+
+	mcpgrafana "github.com/grafana/mcp-grafana"
+	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestRenderInsightCellToolMeta(t *testing.T) {
+	tool := RenderInsightCell.Tool
+	require.NotNil(t, tool.Meta, "render_insight_cell should have _meta for MCP Apps")
+	require.NotNil(t, tool.Meta.AdditionalFields)
+
+	ui, ok := tool.Meta.AdditionalFields["ui"].(map[string]any)
+	require.True(t, ok, "expected _meta.ui to be a map")
+	assert.Equal(t, mcpgrafana.InsightCellResourceURI, ui["resourceUri"])
+}
+
+// decodeCellPayload finds the embedded application/json resource block and
+// unmarshals it back into a generic map — the channel Claude Desktop keeps.
+func decodeCellPayload(t *testing.T, res *mcp.CallToolResult) map[string]any {
+	t.Helper()
+	require.GreaterOrEqual(t, len(res.Content), 2, "expected text + resource content items")
+
+	_, ok := res.Content[0].(mcp.TextContent)
+	require.True(t, ok, "first content item should be the text verdict")
+
+	embedded, ok := res.Content[1].(mcp.EmbeddedResource)
+	require.True(t, ok, "second content item should be an embedded resource")
+	rc, ok := embedded.Resource.(mcp.TextResourceContents)
+	require.True(t, ok)
+	assert.Equal(t, "application/json", rc.MIMEType)
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal([]byte(rc.Text), &payload))
+	return payload
+}
+
+func TestRenderInsightCellStat(t *testing.T) {
+	res, err := renderInsightCell(context.Background(), RenderInsightCellParams{
+		Panel:   "stat",
+		Title:   "Error rate",
+		Verdict: "Error rate is nominal",
+		Insight: "Errors held under 1% across the window.",
+		Unit:    "percent",
+		Frames: []icDataFrame{{
+			Fields: []icField{{Name: "value", Type: "number", Values: []any{0.42}}},
+		}},
+	})
+	require.NoError(t, err)
+	require.False(t, res.IsError)
+
+	// structuredContent carries the typed cell.
+	cell, ok := res.StructuredContent.(*insightCell)
+	require.True(t, ok, "structuredContent should be an *insightCell")
+	assert.Equal(t, "stat", cell.RenderHint.Type)
+	assert.Equal(t, "percent", cell.RenderHint.Unit)
+	assert.Equal(t, "mock", cell.Meta.DataMode, "no query -> sample/mock data mode")
+	assert.False(t, cell.Meta.Attestation.Live)
+
+	// _meta carries the resource URI and the trust profile.
+	require.NotNil(t, res.Result.Meta)
+	fields := res.Result.Meta.AdditionalFields
+	ui, ok := fields["ui"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, mcpgrafana.InsightCellResourceURI, ui["resourceUri"])
+	trust, ok := fields[insightCellMetaKey].(map[string]any)
+	require.True(t, ok, "expected the %s trust block", insightCellMetaKey)
+	reasoning, ok := trust["reasoning"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "agent", reasoning["source"])
+	assert.Equal(t, "Error rate is nominal", reasoning["verdict"])
+
+	// The embedded JSON resource round-trips to a cell.
+	payload := decodeCellPayload(t, res)
+	assert.Contains(t, payload, "renderHint")
+}
+
+func TestRenderInsightCellWorklistLive(t *testing.T) {
+	res, err := renderInsightCell(context.Background(), RenderInsightCellParams{
+		Panel:         "worklist",
+		Verdict:       "1 needs action now",
+		Query:         `ALERTS{alertstate="firing"}`,
+		DatasourceUID: "prom-uid",
+		Items: []icWorklistItem{
+			{Title: "HighErrorRate", Priority: "critical", Status: "firing 22m", Why: "Sustained and climbing."},
+		},
+	})
+	require.NoError(t, err)
+
+	cell, ok := res.StructuredContent.(*insightCell)
+	require.True(t, ok)
+	assert.Equal(t, "worklist", cell.RenderHint.Type)
+	require.Len(t, cell.Worklist, 1)
+	assert.Equal(t, "HighErrorRate", cell.Worklist[0].Title)
+
+	// A query + datasource -> live attestation and a recorded query.
+	assert.Equal(t, "live", cell.Meta.DataMode)
+	assert.True(t, cell.Meta.Attestation.Live)
+	require.Len(t, cell.Meta.Query, 1)
+	assert.Equal(t, `ALERTS{alertstate="firing"}`, cell.Meta.Query[0].Expr)
+	assert.Equal(t, "prom-uid", cell.Meta.Query[0].DatasourceUID)
+
+	// actions is always a (possibly empty) array, never null, so the UI can iterate.
+	assert.NotNil(t, cell.Actions)
+}
+
+func TestRenderInsightCellRequiresPanel(t *testing.T) {
+	_, err := renderInsightCell(context.Background(), RenderInsightCellParams{})
+	require.Error(t, err)
+}
