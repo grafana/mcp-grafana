@@ -365,8 +365,19 @@ func buildInsightCell(ctx context.Context, args RenderInsightCellParams) (*insig
 		dataMode = "live"
 	}
 	datasource := "sample (no live datasource)"
-	if cfg := mcpgrafana.GrafanaConfigFromContext(ctx); cfg.URL != "" && live {
-		datasource = fmt.Sprintf("%s (%s)", cfg.URL, args.DatasourceUID)
+	if live {
+		// Prefer the public app URL (what a user can actually open) over the
+		// configured URL, which may be an in-cluster endpoint. This string shows
+		// in the cell header, text fallback, and trust _meta.
+		base, err := grafanaBaseURLFromContext(ctx)
+		if err != nil || base == "" {
+			base = mcpgrafana.GrafanaConfigFromContext(ctx).URL
+		}
+		if base != "" {
+			datasource = fmt.Sprintf("%s (%s)", base, args.DatasourceUID)
+		} else {
+			datasource = args.DatasourceUID
+		}
 	} else if args.DatasourceUID != "" {
 		datasource = args.DatasourceUID
 	}

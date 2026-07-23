@@ -1009,7 +1009,9 @@ function timelinePanel(cell: InsightCell): Panel {
 function costPanel(cell: InsightCell): Panel {
   const node = el("div", "panel");
   const c = cell.cost;
-  if (!c || !c.drivers?.length) { node.append(el("div", "empty", "No cost data")); return { node }; }
+  // A cost cell is valid with just a headline total (no ranked drivers), so only
+  // bail when there's neither.
+  if (!c || (!c.drivers?.length && !c.total)) { node.append(el("div", "empty", "No cost data")); return { node }; }
 
   if (c.total) {
     const tot = el("div", "cost-total");
@@ -1017,9 +1019,11 @@ function costPanel(cell: InsightCell): Panel {
     node.append(tot);
   }
 
-  const max = Math.max(...c.drivers.map((d) => d.series ?? d.value ?? 0), 1);
+  const drivers = c.drivers ?? [];
+  if (drivers.length) {
+  const max = Math.max(...drivers.map((d) => d.series ?? d.value ?? 0), 1);
   const list = el("div", "cost-list");
-  c.drivers.forEach((d, i) => {
+  drivers.forEach((d, i) => {
     const row = el("div", "cost-row");
     const head = el("div", "cost-head");
     head.append(el("span", "cost-name mono", d.name));
@@ -1035,6 +1039,7 @@ function costPanel(cell: InsightCell): Panel {
     list.append(row);
   });
   node.append(list);
+  }
 
   if (c.headroom) {
     const hr = el("div", "cost-headroom");
