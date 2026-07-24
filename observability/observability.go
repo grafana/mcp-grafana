@@ -12,7 +12,6 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -135,12 +134,11 @@ func newSlowRequestLogger(level slog.Level) *slog.Logger {
 // a global MeterProvider. The otelhttp instrumentation will automatically
 // use this provider for HTTP metrics.
 //
-// Tracing configuration is handled via standard OTEL_* environment variables
-// (e.g., OTEL_EXPORTER_OTLP_ENDPOINT, OTEL_TRACES_SAMPLER).
-//
-// Log export is enabled when OTEL_EXPORTER_OTLP_ENDPOINT or
-// OTEL_EXPORTER_OTLP_LOGS_ENDPOINT is set; use LoggerProvider() to retrieve
-// the provider for wiring into an slog.Handler (e.g., via the otelslog bridge).
+// Trace export is gated on OTLPTracesEndpoint and log export on
+// OTLPLogsEndpoint; use LoggerProvider() to retrieve the log provider for
+// wiring into an slog.Handler (e.g., via the otelslog bridge). Other tracing
+// behaviour is configured via standard OTEL_* environment variables
+// (e.g., OTEL_TRACES_SAMPLER).
 func Setup(cfg Config) (_ *Observability, err error) {
 	// Ensure OTel SDK internal errors (async export failures, queue drops, etc.)
 	// surface through slog instead of the stdlib log package where operators
@@ -197,15 +195,10 @@ func Setup(cfg Config) (_ *Observability, err error) {
 		return nil, err
 	}
 
-	// Set up OTLP trace exporter when OTEL_EXPORTER_OTLP_ENDPOINT is configured
-	// and OTEL_TRACES_EXPORTER is not set to "none".
+	// Set up OTLP trace exporter when a traces endpoint is configured.
 	// The gRPC exporter respects standard OTEL_* env vars for endpoint, headers,
 	// TLS (OTEL_EXPORTER_OTLP_INSECURE), etc.
-	otlpEndpoint := os.Getenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT")
-	if otlpEndpoint == "" {
-		otlpEndpoint = os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
-	}
-	if otlpEndpoint != "" && !strings.EqualFold(os.Getenv("OTEL_TRACES_EXPORTER"), "none") {
+	if OTLPTracesEndpoint() != "" {
 		traceExporter, traceErr := otlptracegrpc.New(context.Background())
 		if traceErr != nil {
 			return nil, traceErr
@@ -568,4 +561,11 @@ func MergeHooks(hooks ...*server.Hooks) *server.Hooks {
 // not set).
 func (o *Observability) LoggerProvider() *sdklog.LoggerProvider {
 	return o.loggerProvider
+}
+
+// TracerProvider returns the OTLP tracer provider, or nil if OTLP tracing is
+// not configured (OTEL_EXPORTER_OTLP_ENDPOINT / OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+// not set).
+func (o *Observability) TracerProvider() *sdktrace.TracerProvider {
+	return o.tracerProvider
 }

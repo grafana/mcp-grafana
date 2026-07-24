@@ -72,8 +72,45 @@ func TestSetup(t *testing.T) {
 		assert.NoError(t, err)
 	})
 
-	t.Run("logger provider populated when OTLP logs endpoint set", func(t *testing.T) {
+	t.Run("traces endpoint enables tracing but not log export", func(t *testing.T) {
 		t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")
+		t.Setenv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", "")
+		t.Setenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "http://localhost:4317")
+		t.Setenv("OTEL_EXPORTER_OTLP_TRACES_INSECURE", "true")
+		cfg := Config{MetricsEnabled: false}
+
+		obs, err := Setup(cfg)
+		require.NoError(t, err)
+		require.NotNil(t, obs)
+		assert.NotNil(t, obs.tracerProvider, "tracer provider should be set when traces endpoint is configured")
+		assert.Nil(t, obs.LoggerProvider(), "log export must stay off when only the traces endpoint is set")
+
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		assert.NoError(t, obs.Shutdown(shutdownCtx))
+	})
+
+	t.Run("generic endpoint enables both tracing and log export", func(t *testing.T) {
+		t.Setenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "")
+		t.Setenv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", "")
+		t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317")
+		t.Setenv("OTEL_EXPORTER_OTLP_INSECURE", "true")
+		cfg := Config{MetricsEnabled: false}
+
+		obs, err := Setup(cfg)
+		require.NoError(t, err)
+		require.NotNil(t, obs)
+		assert.NotNil(t, obs.tracerProvider, "generic endpoint should enable trace export")
+		assert.NotNil(t, obs.LoggerProvider(), "generic endpoint should enable log export")
+
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		assert.NoError(t, obs.Shutdown(shutdownCtx))
+	})
+
+	t.Run("logs endpoint enables log export but not tracing", func(t *testing.T) {
+		t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")
+		t.Setenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "")
 		t.Setenv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", "http://localhost:4317")
 		t.Setenv("OTEL_EXPORTER_OTLP_LOGS_INSECURE", "true")
 		cfg := Config{MetricsEnabled: false}
@@ -82,6 +119,7 @@ func TestSetup(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, obs)
 		require.NotNil(t, obs.LoggerProvider())
+		assert.Nil(t, obs.tracerProvider, "trace export must stay off when only the logs endpoint is set")
 
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()

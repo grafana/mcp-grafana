@@ -486,6 +486,12 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		slog.Info("OTLP log export configured", "endpoint", observability.OTLPLogsEndpoint())
 	}
 
+	// Announced after the log fanout so this line is itself exported when both
+	// signals are on.
+	if o.TracerProvider() != nil {
+		slog.Info("OTLP trace export configured", "endpoint", observability.OTLPTracesEndpoint())
+	}
+
 	// Create a client cache for HTTP-based transports to avoid per-request
 	// transport allocation (see https://github.com/grafana/mcp-grafana/issues/682).
 	var clientCache *mcpgrafana.ClientCache

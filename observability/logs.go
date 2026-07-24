@@ -29,6 +29,21 @@ func OTLPLogsEndpoint() string {
 	return os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
 }
 
+// OTLPTracesEndpoint returns the resolved OTLP traces endpoint, preferring the
+// signal-specific OTEL_EXPORTER_OTLP_TRACES_ENDPOINT over the generic
+// OTEL_EXPORTER_OTLP_ENDPOINT. Returns "" when neither is set, or when
+// OTEL_TRACES_EXPORTER=none is set, which are both signals that OTLP trace
+// export is disabled.
+func OTLPTracesEndpoint() string {
+	if strings.EqualFold(os.Getenv("OTEL_TRACES_EXPORTER"), "none") {
+		return ""
+	}
+	if v := os.Getenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"); v != "" {
+		return v
+	}
+	return os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+}
+
 type fanoutHandler struct {
 	children []slog.Handler
 }
