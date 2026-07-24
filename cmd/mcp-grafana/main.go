@@ -76,6 +76,7 @@ var categoryDescription = map[string]string{
 	"api":           "API: Make authenticated HTTP requests to any Grafana API endpoint with optional jq-style response filtering.",
 	"config":        "Config: Generate operator-facing configuration snippets (e.g. Alloy label-enforcement pipelines).",
 	"provisioning":  "Provisioning: List provisioning repositories (e.g. git-sync sources) to discover repository slugs for use with rendering tools.",
+	"sql":           "SQL: Query SQL datasources (MySQL, PostgreSQL, MSSQL) via Grafana with schema discovery.",
 }
 
 // disabledTools indicates whether each category of tools should be disabled.
@@ -87,7 +88,8 @@ type disabledTools struct {
 	dashboard, folder, oncall, asserts, sift, admin,
 	pyroscope, navigation, proxied, annotations, rendering, cloudwatch, write,
 	snapshot, examples, clickhouse, snowflake, graphite,
-	runpanelquery, athena, plugin, api, config, provisioning bool
+	runpanelquery, athena, plugin, api, config, provisioning,
+	sql bool
 }
 
 // Configuration for the Grafana client.
@@ -140,6 +142,7 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.api, "disable-api", false, "Disable API tools")
 	flag.BoolVar(&dt.config, "disable-config", false, "Disable config-generation tools")
 	flag.BoolVar(&dt.provisioning, "disable-provisioning", false, "Disable provisioning tools")
+	flag.BoolVar(&dt.sql, "disable-sql", false, "Disable SQL tools (MySQL, etc.)")
 }
 
 func (gc *grafanaConfig) addFlags() {
@@ -199,6 +202,7 @@ func (dt *disabledTools) toolEntries() []toolEntry {
 		{func(mcp *server.MCPServer) { tools.AddAPITools(mcp, enableWriteTools) }, dt.api, "api"},
 		{tools.AddConfigTools, dt.config, "config"},
 		{tools.AddProvisioningTools, dt.provisioning, "provisioning"},
+		{tools.AddSQLTools, dt.sql, "sql"},
 	}
 }
 
