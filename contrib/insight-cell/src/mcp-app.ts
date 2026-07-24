@@ -81,7 +81,15 @@ async function runAction(a: InsightCellAction, cell: InsightCell, btn: HTMLButto
       const res = await app.callServerTool({ name: "grafana_render", arguments: specFrom(cell) });
       if (!applyResult(res)) restoreButton(btn, a);
     } else if (a.kind === "tool" && a.tool) {
-      const res = await app.callServerTool({ name: a.tool, arguments: a.args ?? {} });
+      // share_cell needs the full payload; only the iframe has it, so pass it here.
+      const args = a.tool === "share_cell" ? { ...(a.args ?? {}), cell } : (a.args ?? {});
+      const res = await app.callServerTool({ name: a.tool, arguments: args });
+      if (a.tool === "share_cell") {
+        // Copy the minted link; the re-rendered callout still shows it if the
+        // host sandbox blocks the clipboard.
+        const url = extractCell(res)?.meta.shared?.url;
+        if (url) navigator.clipboard?.writeText(url).catch(() => { /* callout has the link */ });
+      }
       // Not every tool returns a cell (e.g. a write like update_alert_rule), so
       // if there's nothing to re-render, re-enable the control instead of
       // leaving it stuck on "Working…".

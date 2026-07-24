@@ -7,7 +7,8 @@
 // result carries the human verdict (content), the renderable render-contract
 // payload (structuredContent), and the trust metadata (_meta).
 //
-// Transports:  default -> stdio (Claude Desktop);  MCP_HTTP=1 -> HTTP :3001.
+// Transports:  default -> stdio (Claude Desktop);  MCP_HTTP=1 -> HTTP :3210
+// (override with MCP_HTTP_PORT; share links mint against the same port).
 // loadenv must be the FIRST import: it reads .env from the project dir before
 // ./src/data.js reads process.env (so live creds work under Claude Desktop).
 import "./src/loadenv.js";
@@ -24,6 +25,7 @@ import { z } from "zod";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { getCell, applyAlertRule, isLiveConfigured, type RenderSpec } from "./src/data.js";
+import { saveSharedCell, loadSharedCell, shareUrl, httpPort } from "./src/store.js";
 import type { InsightCell } from "./src/schema.js";
 
 const log = (...args: unknown[]) => console.error("[insight-cell]", ...args);
@@ -53,6 +55,24 @@ function cellResult(cell: InsightCell, uri: string) {
     structuredContent: cell as unknown as Record<string, unknown>,
     _meta: { ui: { resourceUri: uri } } as Record<string, unknown>,
   };
+}
+
+// Layer A trust profile, attached to every result that carries a cell.
+function withTrustMeta(result: ReturnType<typeof cellResult>, cell: InsightCell) {
+  result._meta["grafana.insightCell/v0"] = {
+    query: cell.meta.query,
+    attestation: cell.meta.attestation,
+    provenance: cell.meta.provenance,
+    renderHint: cell.renderHint,
+    ...(cell.meta.shared ? { shared: cell.meta.shared } : {}),
+    reasoning: {
+      question: cell.meta.question,
+      verdict: cell.meta.verdict,
+      confidence: cell.meta.confidence,
+      source: "agent",
+    },
+  };
+  return result;
 }
 
 registerAppTool(
@@ -165,19 +185,94 @@ registerAppTool(
     const cell = await getCell(spec);
     log(`grafana_render(${spec.panel}) -> ${cell.meta.dataMode}`);
 
-    const result = cellResult(cell, resourceUri);
-    // Enrich _meta with the insight-cell trust profile (Layer A).
-    result._meta["grafana.insightCell/v0"] = {
-      query: cell.meta.query,
-      attestation: cell.meta.attestation,
-      provenance: cell.meta.provenance,
-      renderHint: cell.renderHint,
-      reasoning: {
-        question: cell.meta.question,
-        verdict: cell.meta.verdict,
-        confidence: cell.meta.confidence,
-        source: "agent",
+    return withTrustMeta(cellResult(cell, resourceUri), cell);
+  },
+);
+
+// Share a cell: persist the full payload and mint a link. Invoked by the share
+// icon on the cell chrome (the iframe passes the current cell), or directly by
+// the agent with a cell it just rendered.
+registerAppTool(
+  server,
+  "share_cell",
+  {
+    title: "Share an insight cell",
+    description:
+      "Persist an insight cell and return a share link another user can open. Their agent opens it " +
+      "with open_shared_cell (rendered live in their MCP Apps host); in a plain browser the same " +
+      "link is a read-only page. Called by the share button on a rendered cell, which passes the " +
+      "current cell payload; can also be called directly with the structuredContent of a previous " +
+      "grafana_render result.",
+    inputSchema: {
+      cell: z.record(z.unknown()).optional().describe("The full insight-cell payload to share (the share button passes it automatically)."),
+    },
+    _meta: { ui: { resourceUri } },
+  },
+  async (args) => {
+    const cell = args.cell as InsightCell | undefined;
+    if (!cell?.renderHint || !cell.meta) {
+      return { content: [{ type: "text" as const, text: "share_cell needs the full cell payload — use the share button on a rendered cell, or pass the structuredContent of a grafana_render result as `cell`." }] };
+    }
+    // Re-sharing a shared cell should mint a clean record, not nest share chrome.
+    delete cell.meta.shared;
+    if (cell.callout?.title.startsWith("Shared")) delete cell.callout;
+    cell.actions = cell.actions.filter((a) => a.label !== "Open share page");
+
+    const rec = saveSharedCell(cell, process.env.USER);
+    const url = shareUrl(rec.id);
+    log(`share_cell -> ${url}`);
+
+    const out: InsightCell = {
+      ...cell,
+      callout: {
+        tone: "info",
+        title: "Shared — link ready",
+        body: `${url} — send it to a teammate. Pasted into an MCP Apps host with this server connected, their agent renders it live; in a plain browser it opens as a read-only page.`,
       },
+      actions: [...cell.actions, { label: "Open share page", kind: "link", icon: "external", url }],
+      meta: { ...cell.meta, shared: { id: rec.id, at: rec.at, by: rec.by, url } },
+    };
+    const result = withTrustMeta(cellResult(out, resourceUri), out);
+    result.content[0] = { type: "text" as const, text: `Shared: ${url}\nGive this link to the recipient (Slack, etc.). ${result.content[0].type === "text" ? (result.content[0] as { text: string }).text : ""}` };
+    return result;
+  },
+);
+
+// Open a cell someone shared: load the snapshot and re-emit it through the same
+// three-channel result, so the recipient's host renders it like a fresh cell.
+registerAppTool(
+  server,
+  "open_shared_cell",
+  {
+    title: "Open a shared insight cell",
+    description:
+      "Open an insight cell another user shared. Call this whenever the user pastes a share link " +
+      "(http://…/cells/<id> or insightcell://cells/<id>) or asks to open a shared cell; pass the " +
+      "link or bare id. Renders the snapshot exactly as the sender saw it, with the share " +
+      "provenance attached; the cell's refresh action re-runs its query with the current user's " +
+      "credentials, so datasource permissions still apply on re-materialize.",
+    inputSchema: {
+      link: z.string().describe("The share link or bare cell id."),
+    },
+    _meta: { ui: { resourceUri } },
+  },
+  async ({ link }) => {
+    const rec = loadSharedCell(link);
+    if (!rec) {
+      return { content: [{ type: "text" as const, text: `No shared cell found for "${link}". The id may be wrong, or the cell was shared into a different store (this prototype's store is local: ~/.grafana-insight-cell/cells).` }] };
+    }
+    log(`open_shared_cell(${rec.id}) <- shared by ${rec.by ?? "unknown"} at ${rec.at}`);
+    const cell: InsightCell = {
+      ...rec.cell,
+      meta: { ...rec.cell.meta, shared: { id: rec.id, at: rec.at, by: rec.by, url: shareUrl(rec.id) } },
+    };
+    const result = withTrustMeta(cellResult(cell, resourceUri), cell);
+    result.content[0] = {
+      type: "text" as const,
+      text:
+        `Shared insight cell from ${rec.by ?? "unknown"}, shared ${rec.at}. Snapshot data as the sender saw it ` +
+        `(as of ${cell.meta.attestation.asOf}); the refresh action re-runs the query with your credentials.\n` +
+        (result.content[0].type === "text" ? (result.content[0] as { text: string }).text : ""),
     };
     return result;
   },
@@ -280,7 +375,25 @@ async function main() {
       await server.connect(transport);
       await transport.handleRequest(req, res, req.body);
     });
-    app.listen(3001, () => log("HTTP transport on http://localhost:3001/mcp"));
+    // Read-only share page: the same link a recipient's agent opens via
+    // open_shared_cell renders in a plain browser too (graceful degradation).
+    app.get("/cells/:id", async (req, res) => {
+      const rec = loadSharedCell(req.params.id);
+      if (!rec) { res.status(404).type("text").send("Unknown or expired share id."); return; }
+      if (req.query.json != null || (req.headers.accept ?? "").includes("application/json")) { res.json(rec); return; }
+      let html: string;
+      try {
+        html = await fs.readFile(path.join(import.meta.dirname, "dist", "shared.html"), "utf-8");
+      } catch {
+        res.status(500).type("text").send("shared.html not built — run `npm run build`.");
+        return;
+      }
+      const cell = { ...rec.cell, meta: { ...rec.cell.meta, shared: { id: rec.id, at: rec.at, by: rec.by } } };
+      const payload = JSON.stringify(cell).replace(/</g, "\\u003c");
+      res.type("html").send(html.replace("/*__CELL_PAYLOAD__*/", `window.__INSIGHT_CELL__ = ${payload};`));
+    });
+    const port = httpPort();
+    app.listen(port, () => log(`HTTP transport on http://localhost:${port}/mcp · share pages on http://localhost:${port}/cells/<id>`));
   } else {
     const transport = new StdioServerTransport();
     await server.connect(transport);

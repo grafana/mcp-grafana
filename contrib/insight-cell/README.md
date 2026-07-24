@@ -129,6 +129,8 @@ MCP host (e.g. Claude Desktop)  ──stdio──▶  server.ts (MCP server)
                                               ├─ tool: grafana_render(panel, query?, …)
                                               │     → InsightCell + _meta.ui.resourceUri
                                               ├─ tool: apply_alert_rule(uid, rule)   (write)
+                                              ├─ tools: share_cell / open_shared_cell
+                                              │     → persist a cell → link → reopen in another session
                                               ├─ resource: ui://…/render-surface.html  (the generic renderer)
                                               └─ src/data.ts → Grafana HTTP API  (or sample data)
 ```
@@ -145,8 +147,10 @@ MCP host (e.g. Claude Desktop)  ──stdio──▶  server.ts (MCP server)
 | `src/render.ts` | Generic renderer: shared chrome + one sub-renderer per type |
 | `src/format.ts` | Value formatting via `@grafana/data`'s field-config pipeline (correct units/thresholds/mappings) |
 | `src/mcp-app.ts` | App-bridge wiring: receive tool result, render, route actions |
+| `src/store.ts` | Shared-cell store: persist/load cells for `share_cell` / `open_shared_cell` |
+| `src/shared.ts` / `shared.html` | Read-only browser page a share link opens without an MCP host |
 | `src/preview.ts` / `preview.html` | Standalone browser gallery (no host needed) |
-| `smoketest.mjs` | End-to-end protocol test |
+| `smoketest.mjs` | End-to-end protocol test (includes the share → reopen roundtrip) |
 
 ---
 
@@ -239,14 +243,41 @@ credentials it runs in demo mode and writes nothing.
 
 ---
 
+## Share a cell with another user
+
+Any rendered cell can be handed to another user's agentic session — the
+persist → address → retrieve loop:
+
+1. **Sender:** open the **Share ▾** menu on the cell → **Copy link** (or tell
+   the agent "share this cell"). `share_cell` persists the full cell JSON to
+   `~/.grafana-insight-cell/cells/<id>.json` and mints a link
+   (`http://localhost:3210/cells/<id>`), which is copied to the clipboard and
+   shown on the re-rendered cell.
+2. **Recipient (agentic):** paste the link into any MCP Apps host with this
+   server connected — the agent calls `open_shared_cell` and the cell renders
+   inline, fully interactive. The snapshot shows exactly what the sender saw
+   (attestation + `shared by` provenance preserved); the **refresh** action
+   re-runs `meta.query` with the *recipient's* credentials, so datasource
+   permissions still apply on re-materialize (recipe mode).
+3. **Recipient (no agent):** the same link in a plain browser is a read-only
+   share page, served by the HTTP mode (below).
+
+The store is a local directory, so cross-machine sharing needs the store
+hosted — the production shape is an org-scoped resource behind the hosted MCP
+server, which is why the Go surface (#1008) keeps share out of scope.
+
+---
+
 ## Alternative: a Streamable HTTP transport
 
 ```bash
-npm run serve:http    # Streamable HTTP on :3001
+npm run serve:http    # Streamable HTTP on :3210 (MCP_HTTP_PORT to override)
+                      # also serves the read-only share pages at /cells/<id>
 ```
 
 Useful for hosts that connect over HTTP instead of stdio (e.g. via a tunnel as a
-custom connector).
+custom connector). Share links mint against the same port; set
+`INSIGHT_CELL_SHARE_URL` when tunnelling.
 
 ---
 

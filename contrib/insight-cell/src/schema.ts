@@ -249,6 +249,8 @@ export interface InsightCellMeta {
   dataMode: "mock" | "live";
   /** Real result summary for live queries, e.g. "6 series · 241 points · step 15s". */
   resultInfo?: string;
+  /** Set when the cell was persisted via share_cell / reopened via open_shared_cell. */
+  shared?: { id: string; at: string; by?: string; url?: string };
 }
 
 // --- The cell ----------------------------------------------------------------

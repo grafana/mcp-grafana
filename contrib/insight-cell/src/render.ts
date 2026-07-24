@@ -71,7 +71,7 @@ export function renderInto(root: HTMLElement, cell: InsightCell, onAction: Actio
   const viz = vizSection(cell, rerender, { onAction, cell });
   const fu = followUpRow(cell, onAction);
   root.append(
-    headerRow(cell),
+    headerRow(cell, onAction),
     viz.section,
     insightSection(cell),
     ...(fu ? [fu] : []),
@@ -167,7 +167,7 @@ function dropdown(trigger: HTMLElement, items: Array<{ label: string; onClick: (
 
 // --- header ------------------------------------------------------------------
 
-function headerRow(cell: InsightCell): HTMLElement {
+function headerRow(cell: InsightCell, onAction: ActionHandler): HTMLElement {
   const head = el("div", "head");
 
   const left = el("div", "head-left");
@@ -180,13 +180,13 @@ function headerRow(cell: InsightCell): HTMLElement {
   head.append(left);
 
   const right = el("div", "head-right");
-  const shareBtn = el("button", "share-btn");
+  const shareBtn = el("button", "share-btn") as HTMLButtonElement;
   shareBtn.append(svg(IC.share, "ic"), document.createTextNode("Share"), svg(IC.chevron, "ic"));
   const share = dropdown(shareBtn, [
-    { label: "Share with a user", onClick: () => toast(head, "Sharing with a user isn’t wired in this prototype") },
-    { label: "Copy link", onClick: () => copyText(head, cellLink(cell), "Link copied") },
-    { label: "Download", onClick: () => downloadJson(head, cell) },
-    { label: "Add to Grafana notebook", onClick: () => toast(head, "Add to notebook isn’t wired in this prototype") },
+    // Persists the cell via share_cell, copies the minted link, re-renders with it.
+    { label: "Copy link", onClick: () => onAction({ label: "Copy link", kind: "tool", tool: "share_cell" }, cell, shareBtn) },
+    { label: "Download as Markdown", onClick: () => downloadMarkdown(head, cell) },
+    { label: "Open in Investigations", onClick: () => onAction({ kind: "link", label: "Open in Investigations", url: investigationsUrl(cell) }, cell, shareBtn) },
   ]);
   right.append(share);
 
@@ -196,9 +196,30 @@ function headerRow(cell: InsightCell): HTMLElement {
   return head;
 }
 
-function cellLink(cell: InsightCell): string {
-  const link = cell.actions.find((a) => a.kind === "link");
-  return link?.url ?? "https://grafana.net/insight-cell/(prototype)";
+/** Derive the Grafana base origin from a link action, else provenance, else a placeholder. */
+function grafanaBase(cell: InsightCell): string {
+  const link = cell.actions.find((a) => a.kind === "link" && a.url);
+  if (link?.url) { try { return new URL(link.url).origin; } catch { /* fall through */ } }
+  const m = /https?:\/\/[^\s)]+/.exec(cell.meta.provenance.datasource ?? "");
+  if (m) { try { return new URL(m[0]).origin; } catch { /* fall through */ } }
+  return "https://your-stack.grafana.net";
+}
+
+/**
+ * Deep link into Grafana's Investigations app (grafana-ml-app), scoped to the
+ * cell's time range (Grafana honours from/to/orgId app-wide). Deeper
+ * query-seeding depends on that app's URL API.
+ */
+function investigationsUrl(cell: InsightCell): string {
+  const base = grafanaBase(cell);
+  const from = new Date(cell.meta.timeRange.from).getTime();
+  const to = new Date(cell.meta.timeRange.to).getTime();
+  const p = new URLSearchParams();
+  if (Number.isFinite(from)) p.set("from", String(from));
+  if (Number.isFinite(to)) p.set("to", String(to));
+  if (cell.meta.provenance.orgId != null) p.set("orgId", String(cell.meta.provenance.orgId));
+  const qs = p.toString();
+  return `${base}/a/grafana-ml-app/investigations${qs ? `?${qs}` : ""}`;
 }
 
 async function copyText(anchor: HTMLElement, text: string, ok: string) {
@@ -206,17 +227,132 @@ async function copyText(anchor: HTMLElement, text: string, ok: string) {
   catch { toast(anchor, "Clipboard blocked by the host sandbox"); }
 }
 
-function downloadJson(anchor: HTMLElement, cell: InsightCell) {
+function downloadMarkdown(anchor: HTMLElement, cell: InsightCell) {
   try {
-    const blob = new Blob([JSON.stringify(cell, null, 2)], { type: "application/json" });
+    const blob = new Blob([cellToMarkdown(cell)], { type: "text/markdown" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `insight-cell-${cell.renderHint.type}.json`;
+    a.download = `insight-cell-${cell.renderHint.type}.md`;
     a.click();
     URL.revokeObjectURL(url);
-    toast(anchor, "Downloaded cell JSON");
+    toast(anchor, "Downloaded finding as Markdown");
   } catch { toast(anchor, "Download blocked by the host sandbox"); }
+}
+
+/** Serialize a cell to a shareable Markdown finding (verdict + data + provenance). */
+function cellToMarkdown(cell: InsightCell): string {
+  const rh = cell.renderHint;
+  const m = cell.meta;
+  const out: string[] = [];
+  out.push(`# ${rh.title}`, "");
+  out.push(`*As of ${new Date(m.attestation.asOf).toLocaleString()} · ${m.provenance.datasource} · ${m.provenance.author} · ${m.attestation.live ? "live" : "sample"} data*`, "");
+  const verdict = cell.callout?.title ?? m.verdict;
+  if (verdict) out.push(`**${verdict}**`, "");
+  if (cell.callout?.body) out.push(cell.callout.body, "");
+  const body = markdownBody(cell);
+  if (body) out.push(body, "");
+  out.push("## Query & provenance", "");
+  for (const q of m.query) out.push(`**${q.ref}** · ${q.datasourceUid}`, "", "```", q.expr, "```", "");
+  out.push(`- Time range: ${new Date(m.timeRange.from).toLocaleString()} → ${new Date(m.timeRange.to).toLocaleString()}`);
+  if (m.resultInfo) out.push(`- Result: ${m.resultInfo}`);
+  out.push(`- Confidence: ${m.confidence} · Data mode: ${m.dataMode}`);
+  if (m.provenance.rbacScope) out.push(`- RBAC scope: ${m.provenance.rbacScope}`);
+  out.push("", "---", "*Generated from a Grafana insight cell.*", "");
+  return out.join("\n");
+}
+
+/** Type-specific body of the Markdown export. */
+function markdownBody(cell: InsightCell): string {
+  const o: string[] = [];
+  if (cell.worklist?.length) {
+    for (const it of cell.worklist) {
+      o.push(`### ${(it.priority ?? "").toUpperCase() || "—"} · ${it.title}${it.status ? ` (${it.status})` : ""}`);
+      if (it.why) o.push("", it.why);
+      if (it.actions?.length) o.push("", `Actions: ${it.actions.map((a) => a.label).join(", ")}`);
+      o.push("");
+    }
+    return o.join("\n").trim();
+  }
+  if (cell.rca) {
+    const r = cell.rca;
+    if (r.rootCause) { o.push(`**Root cause (${r.rootCause.confidence} confidence):** ${r.rootCause.title}`); if (r.rootCause.detail) o.push("", r.rootCause.detail); o.push(""); }
+    if (r.checks?.length) o.push(`Checked: ${r.checks.join(", ")}`, "");
+    if (r.findings.length) {
+      o.push("### Findings", "");
+      for (const f of r.findings) {
+        o.push(`- **${f.kind ?? "finding"}${f.severity ? ` (${f.severity})` : ""}:** ${f.title}`);
+        if (f.detail) o.push(`  ${f.detail}`);
+        if (f.evidence) o.push(`  \`${f.evidence}\``);
+      }
+    }
+    return o.join("\n").trim();
+  }
+  if (cell.timeline) {
+    o.push("### Change timeline", "");
+    for (const e of cell.timeline.events) {
+      o.push(`- ${new Date(e.time).toLocaleString()} · ${e.kind ?? "event"} · ${e.title}${e.correlated ? " (correlated)" : ""}`);
+      if (e.detail) o.push(`  ${e.detail}`);
+    }
+    return o.join("\n").trim();
+  }
+  if (cell.cost) {
+    const c = cell.cost;
+    if (c.total) o.push(`**${c.total.label}**`, "");
+    o.push("| Driver | Value | Share | Note |", "| --- | --- | --- | --- |");
+    for (const d of c.drivers) {
+      const val = d.series != null ? `${fmtNum(d.series, "short")} series` : d.value != null ? fmtNum(d.value, d.unit) : "";
+      o.push(`| ${d.name} | ${val} | ${d.pct != null ? d.pct.toFixed(0) + "%" : ""} | ${d.note ?? ""} |`);
+    }
+    if (c.headroom) o.push("", `> **${c.headroom.label}** ${c.headroom.detail}`);
+    return o.join("\n").trim();
+  }
+  if (cell.rulediff) {
+    const rd = cell.rulediff;
+    o.push(`**${rd.ruleTitle}**${rd.applied ? " (applied)" : " (proposed)"}`);
+    if (rd.summary) o.push("", rd.summary);
+    o.push("");
+    for (const c of rd.changes) {
+      o.push(`- **${c.field}:** \`${c.before}\` → \`${c.after}\``);
+      if (c.rationale) o.push(`  ${c.rationale}`);
+    }
+    return o.join("\n").trim();
+  }
+  if (cell.logs?.length) {
+    o.push("```");
+    for (const l of cell.logs.slice(0, 100)) o.push(`${new Date(l.time).toLocaleTimeString()} ${l.level.toUpperCase()} ${l.line}`);
+    o.push("```");
+    return o.join("\n");
+  }
+  if (cell.trace) {
+    o.push(`Trace ${cell.trace.traceId} · ${cell.trace.durationMs} ms`, "");
+    for (const s of cell.trace.spans) o.push(`- ${s.name} (${s.service}) ${s.durationMs} ms${s.rootCause ? " [root cause]" : ""}`);
+    return o.join("\n");
+  }
+  if (cell.frames?.length) return framesToMarkdown(cell.frames);
+  return "";
+}
+
+function framesToMarkdown(frames: DataFrame[]): string {
+  const o: string[] = [];
+  for (const f of frames) {
+    const cols = f.fields;
+    if (!cols.length) continue;
+    const nRows = Math.max(0, ...cols.map((c) => c.values.length));
+    const cap = Math.min(nRows, 30);
+    o.push(`| ${cols.map((c) => c.name).join(" | ")} |`, `| ${cols.map(() => "---").join(" | ")} |`);
+    for (let r = 0; r < cap; r++) {
+      o.push(`| ${cols.map((c) => {
+        const v = c.values[r];
+        if (c.type === "time" && typeof v === "number") return new Date(v * 1000).toLocaleTimeString();
+        if (c.type === "number" && v != null) return fmtNum(Number(v), c.unit);
+        return v == null ? "" : String(v);
+      }).join(" | ")} |`);
+    }
+    if (nRows > cap) o.push("", `_(${nRows - cap} more rows omitted)_`);
+    o.push("");
+  }
+  return o.join("\n").trim();
 }
 
 // --- visualization section ---------------------------------------------------
@@ -372,6 +508,11 @@ function queryProvenance(cell: InsightCell, onAction: ActionHandler): HTMLElemen
   if (m.provenance.orgId != null) prov.append(provRow("org id", String(m.provenance.orgId), true));
   prov.append(provRow("confidence", m.confidence));
   prov.append(provRow("data mode", m.dataMode));
+  if (m.shared) {
+    prov.append(provRow("shared by", m.shared.by ?? "unknown"));
+    prov.append(provRow("shared at", new Date(m.shared.at).toLocaleString(), true));
+    if (m.shared.url) prov.append(provRow("share link", m.shared.url, true));
+  }
   body.append(prov);
 
   toggle.addEventListener("click", () => { const open = wrap.classList.toggle("open"); toggle.classList.toggle("open", open); });

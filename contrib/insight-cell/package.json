@@ -5,8 +5,9 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "build": "INPUT=mcp-app.html vite build",
+    "build": "INPUT=mcp-app.html vite build && INPUT=shared.html vite build",
     "build:preview": "INPUT=preview.html vite build",
+    "build:shared": "INPUT=shared.html vite build",
     "start": "tsx server.ts",
     "serve": "tsx server.ts",
     "serve:http": "MCP_HTTP=1 tsx server.ts",
