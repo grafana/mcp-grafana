@@ -525,7 +525,7 @@ volumes:
 Surrounding whitespace (including a trailing newline) is trimmed from the file contents. If both `GRAFANA_SERVICE_ACCOUNT_TOKEN` and `GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE` are set, the inline token takes precedence.
 
 ### Multi-Organization Support
- 
+
 You can specify which organization to interact with using either:
 
 - **Environment variable:** Set `GRAFANA_ORG_ID` to the numeric organization ID
@@ -1118,6 +1118,14 @@ Tool call spans follow semconv naming (`tools/call <tool_name>`) and include att
 When `OTEL_EXPORTER_OTLP_ENDPOINT` (or the signal-specific `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`) is set, the server also exports structured logs via OTLP/gRPC in addition to the existing plain-text stderr output. The `otelslog` bridge automatically attaches `trace_id` and `span_id` from the active span, so log records correlate with the traces the server already emits.
 
 Traces and logs resolve their endpoints independently, so the two signals can be enabled separately: setting only `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` enables tracing **without** log export, setting only `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` enables log export without tracing, and the generic `OTEL_EXPORTER_OTLP_ENDPOINT` enables both.
+
+If you use the generic `OTEL_EXPORTER_OTLP_ENDPOINT` but want to disable log export (e.g. your backend does not support the `LogsService`), set:
+
+```bash
+OTEL_LOGS_EXPORTER=none
+```
+
+This prevents the server from creating an OTLP logs exporter regardless of the endpoint configuration, avoiding errors like `unknown service opentelemetry.proto.collector.logs.v1.LogsService`.
 
 Stderr logging is unchanged when OTLP logging is enabled; you can continue to rely on container logs or pipe stderr to `/dev/null` if you prefer.
 
