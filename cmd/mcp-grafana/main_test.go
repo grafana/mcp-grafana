@@ -553,8 +553,8 @@ func TestValidateServerName(t *testing.T) {
 		{"forward slash", "name/path", true},
 		{"backslash", "name\\path", true},
 		{"colon", "name:colon", true},
-		{"zero-width character", "name‍zwj", true},
-		{"RTL override", "name‮rtl", true},
+		{"zero-width character", "name\u200dzwj", true},
+		{"RTL override", "name\u202ertl", true},
 		{"exceeds max length", strings.Repeat("a", 129), true},
 	}
 	for _, tc := range tests {
