@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"regexp"
 	"slices"
 	"strings"
 	"syscall"
@@ -23,6 +24,33 @@ import (
 	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"go.opentelemetry.io/otel/semconv/v1.40.0/mcpconv"
 )
+
+const defaultServerName = "mcp-grafana"
+
+var serverNamePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*$`)
+
+func validateServerName(name string) error {
+	if name == "" {
+		return fmt.Errorf("server name must not be empty; expected 1–128 characters matching %s", serverNamePattern)
+	}
+	if len(name) > 128 {
+		return fmt.Errorf("server name %q is too long (%d characters); maximum is 128", name, len(name))
+	}
+	if !serverNamePattern.MatchString(name) {
+		return fmt.Errorf("server name %q contains invalid characters; must match %s (start with alphanumeric, then alphanumerics, dots, hyphens, or underscores)", name, serverNamePattern)
+	}
+	return nil
+}
+
+func resolveServerName(flagValue string, flagExplicitlySet bool, envValue, defaultValue string) string {
+	if flagExplicitlySet {
+		return flagValue
+	}
+	if envValue != "" {
+		return envValue
+	}
+	return defaultValue
+}
 
 func maybeAddTools(s *server.MCPServer, tf func(*server.MCPServer), enabledTools []string, disable bool, category string) {
 	if !slices.Contains(enabledTools, category) {
@@ -249,7 +277,7 @@ func (dt *disabledTools) buildInstructions() string {
 	return b.String()
 }
 
-func newServer(transport string, dt disabledTools, obs *observability.Observability, sessionIdleTimeoutMinutes int) (*server.MCPServer, *mcpgrafana.ToolManager, *mcpgrafana.SessionManager) {
+func newServer(serverName, transport string, dt disabledTools, obs *observability.Observability, sessionIdleTimeoutMinutes int) (*server.MCPServer, *mcpgrafana.ToolManager, *mcpgrafana.SessionManager) {
 	sm := mcpgrafana.NewSessionManager(
 		mcpgrafana.WithSessionTTL(time.Duration(sessionIdleTimeoutMinutes) * time.Minute),
 	)
@@ -318,7 +346,7 @@ func newServer(transport string, dt disabledTools, obs *observability.Observabil
 	// then register tools.
 	instructions := dt.buildInstructions()
 
-	s = server.NewMCPServer("mcp-grafana", mcpgrafana.Version(),
+	s = server.NewMCPServer(serverName, mcpgrafana.Version(),
 		server.WithInstructions(instructions),
 		server.WithHooks(hooks),
 	)
@@ -478,7 +506,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 	// The otelslog bridge attaches trace_id / span_id from context, so log
 	// records correlate with the spans mcp-grafana already emits.
 	if lp := o.LoggerProvider(); lp != nil {
-		otlpHandler := otelslog.NewHandler("mcp-grafana", otelslog.WithLoggerProvider(lp))
+		otlpHandler := otelslog.NewHandler(defaultServerName, otelslog.WithLoggerProvider(lp))
 		slog.SetDefault(slog.New(observability.NewFanoutHandler(stderrHandler, otlpHandler)))
 		// Announce through the fanout so both stderr and OTLP subscribers see
 		// the startup signal. If the first OTLP batch fails, the stderr branch
@@ -500,7 +528,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		defer clientCache.Close()
 	}
 
-	s, tm, sm := newServer(transport, dt, o, sessionIdleTimeoutMinutes)
+	s, tm, sm := newServer(obs.ServerName, transport, dt, o, sessionIdleTimeoutMinutes)
 	defer sm.Close()
 
 	// Create a context that will be cancelled on shutdown
@@ -621,6 +649,8 @@ func main() {
 		"stdio",
 		"Transport type (stdio, sse or streamable-http)",
 	)
+	var serverName string
+	flag.StringVar(&serverName, "server-name", defaultServerName, "Server name used in the MCP handshake and OTel service.name. Overrides GRAFANA_MCP_SERVER_NAME env var.")
 	addr := flag.String("address", "localhost:8000", "The host and port to start the sse server on")
 	basePath := flag.String("base-path", "", "Base path for the sse server")
 	endpointPath := flag.String("endpoint-path", "/mcp", "Endpoint path for the streamable-http server")
@@ -659,6 +689,22 @@ func main() {
 		os.Exit(2)
 	}
 
+	serverNameFlagSet := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "server-name" {
+			serverNameFlagSet = true
+		}
+	})
+	serverName = resolveServerName(serverName, serverNameFlagSet, os.Getenv("GRAFANA_MCP_SERVER_NAME"), defaultServerName)
+	if err := validateServerName(serverName); err != nil {
+		source := "--server-name"
+		if !serverNameFlagSet {
+			source = "GRAFANA_MCP_SERVER_NAME"
+		}
+		fmt.Fprintf(os.Stderr, "invalid %s: %v\n", source, err)
+		os.Exit(2)
+	}
+
 	// Convert local grafanaConfig to mcpgrafana.GrafanaConfig
 	grafanaConfig := mcpgrafana.GrafanaConfig{
 		Debug:           gc.debug,
@@ -674,7 +720,7 @@ func main() {
 	}
 
 	// Set OTel resource identity
-	obs.ServerName = "mcp-grafana"
+	obs.ServerName = serverName
 	obs.ServerVersion = mcpgrafana.Version()
 
 	// Map transport flag to semconv network.transport values
