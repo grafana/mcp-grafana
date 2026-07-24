@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -196,10 +197,15 @@ func Setup(cfg Config) (_ *Observability, err error) {
 		return nil, err
 	}
 
-	// Set up OTLP trace exporter when OTEL_EXPORTER_OTLP_ENDPOINT is configured.
+	// Set up OTLP trace exporter when OTEL_EXPORTER_OTLP_ENDPOINT is configured
+	// and OTEL_TRACES_EXPORTER is not set to "none".
 	// The gRPC exporter respects standard OTEL_* env vars for endpoint, headers,
 	// TLS (OTEL_EXPORTER_OTLP_INSECURE), etc.
-	if os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") != "" {
+	otlpEndpoint := os.Getenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT")
+	if otlpEndpoint == "" {
+		otlpEndpoint = os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+	}
+	if otlpEndpoint != "" && !strings.EqualFold(os.Getenv("OTEL_TRACES_EXPORTER"), "none") {
 		traceExporter, traceErr := otlptracegrpc.New(context.Background())
 		if traceErr != nil {
 			return nil, traceErr
