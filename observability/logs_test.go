@@ -296,6 +296,23 @@ func TestOTLPLogsEndpoint_EmptyWhenNeitherSet(t *testing.T) {
 	assert.Empty(t, OTLPLogsEndpoint())
 }
 
+// TestOTLPLogsEndpoint_NoneExporterDisables verifies that setting
+// OTEL_LOGS_EXPORTER=none returns "" even when an endpoint is configured,
+// so the caller skips OTLP log export entirely.
+func TestOTLPLogsEndpoint_NoneExporterDisables(t *testing.T) {
+	t.Setenv("OTEL_LOGS_EXPORTER", "none")
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4317")
+	assert.Empty(t, OTLPLogsEndpoint())
+}
+
+// TestOTLPLogsEndpoint_NoneExporterCaseInsensitive verifies that the "none"
+// check is case-insensitive (e.g. "NONE" or "None" also disables export).
+func TestOTLPLogsEndpoint_NoneExporterCaseInsensitive(t *testing.T) {
+	t.Setenv("OTEL_LOGS_EXPORTER", "NONE")
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4317")
+	assert.Empty(t, OTLPLogsEndpoint())
+}
+
 // TestFanoutHandler_PanicWritesStackToStderr verifies that handleChild writes
 // the panic message AND a stack trace directly to os.Stderr before returning
 // the error. slog.Logger discards errors returned from Handle, so without this

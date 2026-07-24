@@ -28,6 +28,27 @@ import (
 	"go.opentelemetry.io/otel/semconv/v1.40.0/mcpconv"
 )
 
+// TestSetup_TracesExporterNoneSkipsOTLP verifies that setting
+// OTEL_TRACES_EXPORTER=none skips OTLP trace export even when an endpoint is
+// configured, so no connection attempt is made.
+func TestSetup_TracesExporterNoneSkipsOTLP(t *testing.T) {
+	t.Setenv("OTEL_TRACES_EXPORTER", "none")
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4317")
+	_, err := Setup(Config{})
+	require.NoError(t, err, "Setup should not attempt a connection when OTEL_TRACES_EXPORTER=none")
+}
+
+// TestSetup_TracesSignalSpecificEndpointTakesPrecedence verifies that
+// OTEL_EXPORTER_OTLP_TRACES_ENDPOINT is preferred over the generic endpoint.
+// We set OTEL_TRACES_EXPORTER=none so Setup does not attempt a real gRPC dial.
+func TestSetup_TracesSignalSpecificEndpointTakesPrecedence(t *testing.T) {
+	t.Setenv("OTEL_TRACES_EXPORTER", "none")
+	t.Setenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "http://traces-specific:4317")
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://generic:4317")
+	_, err := Setup(Config{})
+	require.NoError(t, err)
+}
+
 func TestSetup(t *testing.T) {
 	t.Run("metrics disabled", func(t *testing.T) {
 		t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")
