@@ -2,6 +2,7 @@ package tools
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -10,10 +11,14 @@ import (
 )
 
 // datasourceFallbackTransport is an http.RoundTripper that tries a primary
-// datasource proxy URL path and falls back to an alternate on 403 or 500
+// datasource proxy URL path and falls back to an alternate on 403, 404 or 500
 // responses. This handles compatibility between different Grafana deployments:
 //   - Azure Managed Grafana requires /api/datasources/uid/{uid}/resources
 //   - AWS Managed Grafana requires /api/datasources/proxy/uid/{uid}
+//   - Grafana before 9.0 has neither uid-based route; requests to them fall
+//     into the numeric :id route and fail with a 500
+//   - Grafana 13+ disables the deprecated numeric-id routes by default,
+//     returning a 404
 //
 // See https://github.com/grafana/mcp-grafana/issues/524
 type datasourceFallbackTransport struct {
@@ -61,11 +66,17 @@ func (t *datasourceFallbackTransport) RoundTrip(req *http.Request) (*http.Respon
 		return nil, err
 	}
 
-	if resp.StatusCode != http.StatusForbidden && resp.StatusCode != http.StatusInternalServerError {
+	if resp.StatusCode != http.StatusForbidden && resp.StatusCode != http.StatusNotFound && resp.StatusCode != http.StatusInternalServerError {
 		return resp, nil
 	}
 
-	// Got 403 or 500 — try the fallback endpoint.
+	// Got 403, 404 or 500 — try the fallback endpoint. A missing route
+	// surfaces differently per deployment: 403 on some managed platforms, 404
+	// when the route is not registered (e.g. the numeric-id routes disabled by
+	// default on Grafana 13+), and 500 when a uid-based path falls into the
+	// numeric :id route on Grafana before 9.0. A 404 from the datasource
+	// itself just costs one duplicate request, and the fallback path is only
+	// cached on a 2xx response.
 	resp.Body.Close() //nolint:errcheck
 
 	retryReq := t.rewriteRequest(req, t.primaryBase, t.fallbackBase)
@@ -114,8 +125,18 @@ func (t *datasourceFallbackTransport) rewriteRequest(req *http.Request, from, to
 }
 
 // datasourceProxyPaths returns the /resources and /proxy base paths for a
-// given datasource UID.
-func datasourceProxyPaths(uid string) (resourcesBase, proxyBase string) {
+// given datasource UID. When the datasource was resolved through the
+// frontend-settings fallback (see datasources_fallback.go), the metadata API
+// was inaccessible to this token, which means either Grafana before 9.0
+// (where the uid-based routes do not exist; only /api/datasources/proxy/{id})
+// or a newer Grafana with an RBAC-restricted token (where the numeric-id
+// routes may be disabled — they are off by default since Grafana 13). In that
+// case return the uid-based proxy route plus the numeric-id route, and let
+// the fallback transport use whichever the deployment supports.
+func datasourceProxyPaths(ctx context.Context, uid string) (resourcesBase, proxyBase string) {
+	if numericBase, ok := fallbackProxyBase(ctx, uid); ok {
+		return fmt.Sprintf("/api/datasources/proxy/uid/%s", uid), numericBase
+	}
 	resourcesBase = fmt.Sprintf("/api/datasources/uid/%s/resources", uid)
 	proxyBase = fmt.Sprintf("/api/datasources/proxy/uid/%s", uid)
 	return

@@ -45,15 +45,23 @@ type ListDatasourcesResult struct {
 
 func listDatasources(ctx context.Context, args ListDatasourcesParams) (*ListDatasourcesResult, error) {
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
+	var list models.DataSourceList
 	resp, err := c.Datasources.GetDataSourcesWithParams(
 		datasources.NewGetDataSourcesParamsWithContext(ctx),
 	)
-	if err != nil {
+	if err == nil {
+		list = resp.Payload
+	} else if fb, fbErr := fallbackDatasourceList(ctx); fbErr == nil {
+		// The datasources API is not accessible to this token (e.g. it
+		// requires Org Admin before Grafana 9.0); fall back to frontend settings
+		// (see datasources_fallback.go).
+		list = fb
+	} else {
 		return nil, fmt.Errorf("list datasources: %w", err)
 	}
 
 	// Filter by type if specified
-	datasources := filterDatasources(resp.Payload, args.Type)
+	datasources := filterDatasources(list, args.Type)
 	total := len(datasources)
 
 	// Apply default limit if not specified
@@ -367,6 +375,12 @@ func getDatasourceByUID(ctx context.Context, args GetDatasourceByUIDParams) (*mo
 		if strings.Contains(err.Error(), "404") {
 			return nil, fmt.Errorf("datasource with UID '%s' not found. Please check if the datasource exists and is accessible", args.UID)
 		}
+		// The datasource metadata API is not accessible to this token (e.g.
+		// it requires Org Admin before Grafana 9.0); fall back to frontend
+		// settings (see datasources_fallback.go).
+		if ds, fbErr := fallbackDatasourceByUID(ctx, args.UID); fbErr == nil {
+			return ds, nil
+		}
 		return nil, fmt.Errorf("get datasource by uid %s: %w", args.UID, err)
 	}
 	return datasource.Payload, nil
@@ -382,6 +396,12 @@ func getDatasourceByName(ctx context.Context, args GetDatasourceByNameParams) (*
 		datasources.NewGetDataSourceByNameParamsWithContext(ctx).WithName(args.Name),
 	)
 	if err != nil {
+		// The datasource metadata API is not accessible to this token (e.g.
+		// it requires Org Admin before Grafana 9.0); fall back to frontend
+		// settings (see datasources_fallback.go).
+		if ds, fbErr := fallbackDatasourceByName(ctx, args.Name); fbErr == nil {
+			return ds, nil
+		}
 		return nil, fmt.Errorf("get datasource by name %s: %w", args.Name, err)
 	}
 	return datasource.Payload, nil

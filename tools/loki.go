@@ -68,7 +68,7 @@ type Pattern struct {
 func newLokiClient(ctx context.Context, uid string, _ *models.DataSource) (*Client, error) {
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
 	grafanaURL := cfg.URL
-	resourcesBase, proxyBase := datasourceProxyPaths(uid)
+	resourcesBase, proxyBase := datasourceProxyPaths(ctx, uid)
 	url := grafanaURL + proxyBase
 
 	transport, err := mcpgrafana.BuildTransport(&cfg, nil)

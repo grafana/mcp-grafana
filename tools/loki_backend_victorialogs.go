@@ -38,7 +38,7 @@ type victoriaLogsBackend struct {
 // churning callers later.
 func newVictoriaLogsBackend(ctx context.Context, uid string, _ *models.DataSource) (*victoriaLogsBackend, error) {
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
-	resourcesBase, proxyBase := datasourceProxyPaths(uid)
+	resourcesBase, proxyBase := datasourceProxyPaths(ctx, uid)
 	baseURL := trimTrailingSlash(cfg.URL) + proxyBase
 
 	transport, err := mcpgrafana.BuildTransport(&cfg, nil)

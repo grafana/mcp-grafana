@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"strings"
@@ -277,7 +278,7 @@ func TestDatasourceFallbackTransport_NoRetryOn4xx(t *testing.T) {
 }
 
 func TestDatasourceProxyPaths(t *testing.T) {
-	resources, proxy := datasourceProxyPaths("my-uid-123")
+	resources, proxy := datasourceProxyPaths(context.Background(), "my-uid-123")
 	assert.Equal(t, "/api/datasources/uid/my-uid-123/resources", resources)
 	assert.Equal(t, "/api/datasources/proxy/uid/my-uid-123", proxy)
 }

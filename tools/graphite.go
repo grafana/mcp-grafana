@@ -38,7 +38,7 @@ func newGraphiteClient(ctx context.Context, uid string) (*GraphiteClient, error)
 
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
 	grafanaURL := cfg.URL
-	resourcesBase, proxyBase := datasourceProxyPaths(uid)
+	resourcesBase, proxyBase := datasourceProxyPaths(ctx, uid)
 	baseURL := grafanaURL + proxyBase
 
 	transport, err := mcpgrafana.BuildTransport(&cfg, nil)

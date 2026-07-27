@@ -69,7 +69,7 @@ type prometheusBackend struct {
 func newPrometheusBackend(ctx context.Context, uid string, ds *models.DataSource) (*prometheusBackend, error) {
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
 	grafanaURL := trimTrailingSlash(cfg.URL)
-	resourcesBase, proxyBase := datasourceProxyPaths(uid)
+	resourcesBase, proxyBase := datasourceProxyPaths(ctx, uid)
 	url := grafanaURL + resourcesBase
 
 	rt, err := mcpgrafana.BuildTransport(&cfg, api.DefaultRoundTripper)
