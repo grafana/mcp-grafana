@@ -25,6 +25,7 @@ import (
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/semconv/v1.40.0/mcpconv"
 )
 
@@ -749,6 +750,148 @@ func TestBuildOperationAttrs(t *testing.T) {
 			assert.NotEqual(t, "gen_ai.tool.name", string(a.Key),
 				"non-tools/call method must not emit gen_ai.tool.name")
 		}
+	})
+
+	// Bounded arg-derived dimensions land on the metric; the high-cardinality
+	// target does not.
+	t.Run("tools/call includes bounded arg dims but not target", func(t *testing.T) {
+		ctx := context.Background()
+		req := &mcp.CallToolRequest{}
+		req.Params.Name = "create_datasource"
+		req.Params.Arguments = map[string]any{"operation": "create", "type": "prometheus", "name": "prod"}
+
+		attrs := obs.buildOperationAttrs(ctx, "tools/call", req, nil)
+
+		got := map[string]string{}
+		for _, a := range attrs {
+			got[string(a.Key)] = a.Value.AsString()
+		}
+		assert.Equal(t, "create", got[attrKeyToolOperation])
+		assert.Equal(t, "prometheus", got[attrKeyToolResourceType])
+		_, hasTarget := got[attrKeyToolTarget]
+		assert.False(t, hasTarget, "target is high-cardinality and must not be a metric attribute")
+	})
+
+	// Tools without operation/type arguments keep their prior series identity —
+	// the dimensions are simply absent.
+	t.Run("tools/call without arg dims omits them", func(t *testing.T) {
+		ctx := context.Background()
+		req := &mcp.CallToolRequest{}
+		req.Params.Name = "list_datasources"
+
+		attrs := obs.buildOperationAttrs(ctx, "tools/call", req, nil)
+
+		for _, a := range attrs {
+			assert.NotEqual(t, attrKeyToolOperation, string(a.Key))
+			assert.NotEqual(t, attrKeyToolResourceType, string(a.Key))
+		}
+	})
+}
+
+func TestToolArgDimensions(t *testing.T) {
+	mkReq := func(args map[string]any) *mcp.CallToolRequest {
+		req := &mcp.CallToolRequest{}
+		req.Params.Arguments = args
+		return req
+	}
+
+	tests := []struct {
+		name    string
+		method  mcp.MCPMethod
+		message any
+		want    toolArgDims
+	}{
+		{
+			name:    "create: type + name -> resource_type + target(name)",
+			method:  "tools/call",
+			message: mkReq(map[string]any{"type": "prometheus", "name": "prod"}),
+			want:    toolArgDims{resourceType: "prometheus", target: "prod"},
+		},
+		{
+			name:    "operation + uid -> operation + target(uid)",
+			method:  "tools/call",
+			message: mkReq(map[string]any{"operation": "update", "uid": "abc"}),
+			want:    toolArgDims{operation: "update", target: "abc"},
+		},
+		{
+			name:    "uid preferred over name for target",
+			method:  "tools/call",
+			message: mkReq(map[string]any{"uid": "u1", "name": "n1"}),
+			want:    toolArgDims{target: "u1"},
+		},
+		{
+			name:    "non-string arg is ignored",
+			method:  "tools/call",
+			message: mkReq(map[string]any{"type": 42, "name": "prod"}),
+			want:    toolArgDims{target: "prod"},
+		},
+		{
+			name:    "no args -> zero value",
+			method:  "tools/call",
+			message: mkReq(nil),
+			want:    toolArgDims{},
+		},
+		{
+			name:    "non-tools/call method -> zero value",
+			method:  "tools/list",
+			message: mkReq(map[string]any{"operation": "x"}),
+			want:    toolArgDims{},
+		},
+		{
+			name:    "wrong-type message -> zero value",
+			method:  "tools/call",
+			message: "not-a-CallToolRequest",
+			want:    toolArgDims{},
+		},
+		{
+			name:    "nil message -> zero value",
+			method:  "tools/call",
+			message: nil,
+			want:    toolArgDims{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, toolArgDimensions(tt.method, tt.message))
+		})
+	}
+}
+
+func TestEnrichSpanWithToolDims(t *testing.T) {
+	obs := &Observability{}
+
+	t.Run("sets operation, resource_type, and target on a recording span", func(t *testing.T) {
+		sr := tracetest.NewSpanRecorder()
+		tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(sr))
+		ctx, span := tp.Tracer("test").Start(context.Background(), "op")
+
+		req := &mcp.CallToolRequest{}
+		req.Params.Name = "update_datasource"
+		req.Params.Arguments = map[string]any{"operation": "update", "type": "loki", "uid": "abc123"}
+
+		obs.enrichSpanWithToolDims(ctx, "tools/call", req)
+		span.End()
+
+		ended := sr.Ended()
+		require.Len(t, ended, 1)
+		got := map[string]string{}
+		for _, a := range ended[0].Attributes() {
+			got[string(a.Key)] = a.Value.AsString()
+		}
+		assert.Equal(t, "update", got[attrKeyToolOperation])
+		assert.Equal(t, "loki", got[attrKeyToolResourceType])
+		assert.Equal(t, "abc123", got[attrKeyToolTarget], "target (high-cardinality) belongs on the span")
+	})
+
+	t.Run("no-op when span is not recording", func(t *testing.T) {
+		// context.Background() carries a non-recording no-op span: must not panic
+		// and must record nothing.
+		req := &mcp.CallToolRequest{}
+		req.Params.Arguments = map[string]any{"uid": "abc"}
+		assert.NotPanics(t, func() {
+			obs.enrichSpanWithToolDims(context.Background(), "tools/call", req)
+		})
 	})
 }
 

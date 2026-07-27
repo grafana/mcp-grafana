@@ -31,6 +31,7 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.40.0"
 	"go.opentelemetry.io/otel/semconv/v1.40.0/mcpconv"
+	"go.opentelemetry.io/otel/trace"
 )
 
 var otelErrHandlerOnce sync.Once
@@ -320,6 +321,20 @@ func (o *Observability) buildOperationAttrs(ctx context.Context, method mcp.MCPM
 		attrs = append(attrs, o.operationDuration.AttrGenAIToolName(name))
 	}
 
+	// Bounded, low-cardinality dimensions derived from the tool-call arguments,
+	// so per-call durations can be sliced by sub-operation and resource type
+	// (e.g. create_datasource by plugin type). Appended only when present, so
+	// tools without these arguments keep their existing metric series identity.
+	// The high-cardinality target (datasource name/uid) is deliberately NOT put
+	// on the metric — it goes on the span instead (see enrichSpanWithToolDims).
+	dims := toolArgDimensions(method, message)
+	if dims.operation != "" {
+		attrs = append(attrs, attribute.String(attrKeyToolOperation, dims.operation))
+	}
+	if dims.resourceType != "" {
+		attrs = append(attrs, attribute.String(attrKeyToolResourceType, dims.resourceType))
+	}
+
 	// error.type when there's an error
 	if err != nil {
 		attrs = append(attrs, o.operationDuration.AttrErrorType(mcpconv.ErrorTypeAttr(errorTypeName(err))))
@@ -363,6 +378,92 @@ func toolNameFromMessage(method mcp.MCPMethod, message any) (string, bool) {
 		return "", false
 	}
 	return req.Params.Name, true
+}
+
+// Attribute keys for tool-argument-derived telemetry dimensions. operation and
+// resourceType are bounded enough to be metric labels; target is
+// high-cardinality and span-only.
+const (
+	attrKeyToolOperation    = "mcp.tool.operation"
+	attrKeyToolResourceType = "mcp.tool.resource_type"
+	attrKeyToolTarget       = "mcp.tool.target"
+)
+
+// toolArgDims holds the tool-call argument dimensions used to enrich telemetry.
+type toolArgDims struct {
+	// operation is a bounded sub-action discriminator taken from the "operation"
+	// argument (e.g. alerting_manage_rules "list"/"create"/"update"). Empty for
+	// tools without an operation argument.
+	operation string
+	// resourceType is a bounded resource discriminator taken from the "type"
+	// argument (e.g. the datasource plugin type on create_datasource). Empty when
+	// absent. Assumes such "type" arguments are enums/plugin ids, not free text.
+	resourceType string
+	// target identifies the specific entity acted on: the "uid" argument when
+	// present, else "name". High-cardinality — span-only, never a metric label.
+	// It is the correlation key for reconstructing task spans across calls.
+	target string
+}
+
+// toolArgDimensions extracts telemetry dimensions from a tools/call request's
+// arguments. It returns the zero value for non-tools/call methods, a nil or
+// wrong-type message, or arguments that are not a JSON object — mirroring
+// toolNameFromMessage's gating so metrics and spans agree on when "a tool call
+// reached."
+func toolArgDimensions(method mcp.MCPMethod, message any) toolArgDims {
+	if method != "tools/call" {
+		return toolArgDims{}
+	}
+	req, ok := message.(*mcp.CallToolRequest)
+	if !ok || req == nil {
+		return toolArgDims{}
+	}
+	args := req.GetArguments()
+	dims := toolArgDims{
+		operation:    stringArg(args, "operation"),
+		resourceType: stringArg(args, "type"),
+		target:       stringArg(args, "uid"),
+	}
+	if dims.target == "" {
+		dims.target = stringArg(args, "name")
+	}
+	return dims
+}
+
+// stringArg returns args[key] when it holds a string, else "".
+func stringArg(args map[string]any, key string) string {
+	if v, ok := args[key].(string); ok {
+		return v
+	}
+	return ""
+}
+
+// enrichSpanWithToolDims attaches the tool-argument dimensions to the active
+// span when one is recording, including the high-cardinality target that is
+// kept off metrics. It is a no-op when no span is recording (e.g. stdio
+// transport, or tracing not configured) or the message is not a tools/call
+// request. Attributes land on whatever span is active for the request
+// (typically the otelhttp server span), enabling trace-level filtering and
+// task-span correlation by target.
+func (o *Observability) enrichSpanWithToolDims(ctx context.Context, method mcp.MCPMethod, message any) {
+	span := trace.SpanFromContext(ctx)
+	if !span.IsRecording() {
+		return
+	}
+	dims := toolArgDimensions(method, message)
+	var spanAttrs []attribute.KeyValue
+	if dims.operation != "" {
+		spanAttrs = append(spanAttrs, attribute.String(attrKeyToolOperation, dims.operation))
+	}
+	if dims.resourceType != "" {
+		spanAttrs = append(spanAttrs, attribute.String(attrKeyToolResourceType, dims.resourceType))
+	}
+	if dims.target != "" {
+		spanAttrs = append(spanAttrs, attribute.String(attrKeyToolTarget, dims.target))
+	}
+	if len(spanAttrs) > 0 {
+		span.SetAttributes(spanAttrs...)
+	}
 }
 
 // maybeLogSlowRequest emits a slog event at o.slowRequestLogLevel when the
@@ -450,6 +551,7 @@ func (o *Observability) MCPHooks() *server.Hooks {
 					return
 				}
 				duration := time.Since(startTime.(time.Time))
+				o.enrichSpanWithToolDims(ctx, method, message)
 				if o.metricsEnabled() {
 					attrs := o.buildOperationAttrs(ctx, method, message, nil)
 					o.operationDuration.Record(ctx, duration.Seconds(), mcpconv.MethodNameAttr(method), attrs...)
@@ -465,6 +567,7 @@ func (o *Observability) MCPHooks() *server.Hooks {
 					return
 				}
 				duration := time.Since(startTime.(time.Time))
+				o.enrichSpanWithToolDims(ctx, method, message)
 				if o.metricsEnabled() {
 					attrs := o.buildOperationAttrs(ctx, method, message, err)
 					o.operationDuration.Record(ctx, duration.Seconds(), mcpconv.MethodNameAttr(method), attrs...)
