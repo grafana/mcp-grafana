@@ -32,7 +32,8 @@ Current apps:
 | Panel Viewer | `ui://mcp-grafana/panel-viewer.html` | `get_panel_image` |
 | Insight Cell | `ui://mcp-grafana/insight-cell.html` | `render_insight_cell` |
 
-To add a new one, use the **`author-mcp-app`** skill (`.claude/skills/author-mcp-app/`).
+To add a new one: scaffold `ui/<name>/` (copy an existing app's Vite config), add a `UIApp` entry
+to the registry in `ui_apps.go`, add its `//go:embed` line in `ui_embed.go`, and run `make build-ui`.
 
 ## Linking a tool to an app
 
@@ -63,12 +64,13 @@ Hosts differ in what they preserve, so a result carries the render payload three
 
 The insight cell is a generic surface: **one contract + one renderer that dispatches on
 `renderHint.type`**. Adding a visualization is a new branch in the renderer, not a new app. The Go
-types in `tools/insight_cell.go` mirror `contrib/insight-cell/src/schema.ts` (the source of truth
+types in `tools/insight_cell.go` mirror `ui/insight-cell/src/schema.ts` (the source of truth
 for field names — they must match, since the embedded UI reads them).
 
 `render_insight_cell` is a **render substrate**: the agent gathers data with the existing query
-tools (`query_prometheus`, `query_loki_logs`, `list_alert_rules`, `get_annotations`, Sift, …), does
-the analysis, and passes the results here. The tool does not query datasources or fabricate data.
+tools (`query_prometheus`, `query_loki_logs`, `alerting_manage_rules`, `get_annotations`, Sift, …),
+does the analysis, and passes the results here. The tool does not query datasources or fabricate
+data.
 
 Render types:
 
@@ -76,9 +78,13 @@ Render types:
   bands), `bar`, `table` (read `frames`), `logs` (read `logs`), `trace` (read `trace`).
 - **Synthesis views:** `worklist` (ranked triage), `rca` (root cause → evidence), `timeline`
   (change correlation), `cost` (cardinality/spend drivers).
-- **Guardrailed write:** `rulediff` renders a proposed alert-rule change as a before/after diff.
-  Applying it routes to the existing **write-gated** `update_alert_rule` tool — the cell proposes,
-  it does not write.
+- **Proposal view:** `rulediff` renders a proposed alert-rule change as a before/after diff. The
+  cell proposes, it does not write — and it *cannot*: the tool is annotated `ReadOnlyHint` and the
+  cell is structurally read-only. Action kinds are limited to `link` / `refresh` / `ask` (anything
+  else is stripped server-side), and the only server tool the UI ever calls is
+  `render_insight_cell` itself, for refresh. Applying a rulediff travels the `ask` path: the action
+  hands text back to the agent, the agent performs the write with the existing write-gated
+  `alerting_manage_rules` tool, then re-renders the cell with `applied=true`.
 
 ### The trust profile: `_meta["grafana.insightCell/v0"]`
 
@@ -96,6 +102,12 @@ host. It contains:
 
 ## Testing
 
-Use the **`test-insight-cell`** skill (`.claude/skills/test-insight-cell/`) to build, run the
-contract tests, drive every panel type over the protocol, and render in a host. The fastest visual
-loop is `--dev-cors` + the MCP Apps basic-host, matching #825's development flow.
+- **Contract tests:** `go test ./tools/ -run InsightCell` and `go test . -run AppResources` cover
+  the three output channels, the trust `_meta`, and app registration.
+- **Protocol integration test:** `tools/insight_cell_integration_test.go` (build tag
+  `integration`, no external services needed) drives every panel type through an in-process MCP
+  client and asserts the full result shape, plus `resources/read` of the embedded bundle.
+- **Visual check:** render in a host with MCP Apps support. The fastest loop is `--dev-cors` on the
+  streamable-HTTP transport + the
+  [MCP Apps basic-host](https://github.com/modelcontextprotocol/ext-apps/tree/main/examples/basic-host),
+  matching #825's development flow; or load the plugin in Claude Desktop.

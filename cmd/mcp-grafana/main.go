@@ -109,7 +109,7 @@ type grafanaConfig struct {
 }
 
 func (dt *disabledTools) addFlags() {
-	flag.StringVar(&dt.enabledTools, "enabled-tools", "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering,snapshot,plugin,api,config,provisioning,insight-cell", "A comma separated list of tools enabled for this server. Can be overwritten entirely or by disabling specific components, e.g. --disable-search.")
+	flag.StringVar(&dt.enabledTools, "enabled-tools", "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering,snapshot,plugin,api,config,provisioning", "A comma separated list of tools enabled for this server. Can be overwritten entirely or by disabling specific components, e.g. --disable-search.")
 	flag.BoolVar(&dt.search, "disable-search", false, "Disable search tools")
 	flag.BoolVar(&dt.datasource, "disable-datasource", false, "Disable datasource tools")
 	flag.BoolVar(&dt.incident, "disable-incident", false, "Disable incident tools")
@@ -144,7 +144,7 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.config, "disable-config", false, "Disable config-generation tools")
 	flag.BoolVar(&dt.provisioning, "disable-provisioning", false, "Disable provisioning tools")
 	flag.BoolVar(&dt.agento11y, "disable-agento11y", false, "Disable Agent Observability tools")
-	flag.BoolVar(&dt.insightcell, "disable-insight-cell", false, "Disable insight-cell rendering tools (MCP App render surface)")
+	flag.BoolVar(&dt.insightcell, "disable-insight-cell", false, "Disable insight-cell rendering tools (MCP App render surface). Opt-in: not in the default --enabled-tools list; add 'insight-cell' there to enable.")
 }
 
 func (gc *grafanaConfig) addFlags() {

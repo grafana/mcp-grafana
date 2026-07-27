@@ -64,8 +64,8 @@ func TestRenderInsightCellStat(t *testing.T) {
 	assert.False(t, cell.Meta.Attestation.Live)
 
 	// _meta carries the resource URI and the trust profile.
-	require.NotNil(t, res.Result.Meta)
-	fields := res.Result.Meta.AdditionalFields
+	require.NotNil(t, res.Meta)
+	fields := res.Meta.AdditionalFields
 	ui, ok := fields["ui"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, mcpgrafana.InsightCellResourceURI, ui["resourceUri"])

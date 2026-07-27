@@ -1,11 +1,10 @@
-// Backend B (real): format values through Grafana's own field-config pipeline.
+// Format values through Grafana's own field-config pipeline.
 //
 // Uses @grafana/data's `getDisplayProcessor` — the per-field core of
 // `applyFieldOverrides` — so units, decimals, thresholds, and value mappings
 // come out exactly as a Grafana panel renders them (e.g. "1.46 MiB", "23.4 ms",
 // threshold colors like #F2495C). Runs in the browser/iframe bundle only
-// (@grafana/data doesn't import cleanly in Node). This is IC-9: in real
-// mcp-grafana the same code lives in the ui/ app.
+// (@grafana/data doesn't import cleanly in Node).
 //
 // Cost: ~+760 KB to the embedded bundle. That's the real price of authentic
 // Grafana formatting in a standalone MCP-App bundle (mcp-grafana pays it too).

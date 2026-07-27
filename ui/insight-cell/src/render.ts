@@ -311,7 +311,7 @@ function insightSection(cell: InsightCell): HTMLElement {
 // --- follow-up actions -------------------------------------------------------
 
 function followUpRow(cell: InsightCell, onAction: ActionHandler): HTMLElement | null {
-  const acts = cell.actions.filter((a) => a.kind === "tool" || a.kind === "ask");
+  const acts = cell.actions.filter((a) => a.kind === "ask");
   const link = cell.actions.find((a) => a.kind === "link");
   if (!acts.length && !link) return null; // refresh moved to the query & provenance line
 
@@ -367,7 +367,6 @@ function queryProvenance(cell: InsightCell, onAction: ActionHandler): HTMLElemen
   prov.append(provRow("datasource", m.provenance.datasource));
   prov.append(provRow("time range", `${new Date(m.timeRange.from).toLocaleString()} → ${new Date(m.timeRange.to).toLocaleString()}`, true));
   prov.append(provRow("as of", new Date(m.attestation.asOf).toLocaleString(), true));
-  if (m.resultInfo) prov.append(provRow("result", m.resultInfo, true));
   prov.append(provRow("live", String(m.attestation.live)));
   if (m.provenance.rbacScope) prov.append(provRow("RBAC scope", m.provenance.rbacScope));
   if (m.provenance.orgId != null) prov.append(provRow("org id", String(m.provenance.orgId), true));

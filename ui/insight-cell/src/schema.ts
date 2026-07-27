@@ -217,14 +217,15 @@ export interface InsightCellAction {
   label: string;
   /**
    * link    -> opens `url` via the host
-   * tool    -> calls `tool` with `args` on the MCP server (drill / new artifact)
-   * refresh -> re-runs the producing tool (reproduce)
+   * refresh -> re-runs render_insight_cell with the same payload (reproduce)
    * ask     -> sends `text` to the agent as the next question (select-and-ask)
+   *
+   * Deliberately no kind that calls an arbitrary MCP tool: the cell is
+   * structurally read-only (the tool is annotated ReadOnlyHint). Writes go
+   * through the agent — use an "ask" action whose text requests them.
    */
-  kind: "link" | "tool" | "refresh" | "ask";
+  kind: "link" | "refresh" | "ask";
   url?: string;
-  tool?: string;
-  args?: Record<string, unknown>;
   text?: string;
   primary?: boolean;
   /** "trend" | "external" — render as an icon-only button instead of a labelled pill. */
@@ -247,8 +248,6 @@ export interface InsightCellMeta {
   provenance: { author: string; datasource: string; orgId?: number; rbacScope?: string };
   query: Array<{ ref: string; expr: string; datasourceUid: string }>;
   dataMode: "mock" | "live";
-  /** Real result summary for live queries, e.g. "6 series · 241 points · step 15s". */
-  resultInfo?: string;
 }
 
 // --- The cell ----------------------------------------------------------------

@@ -1,6 +1,9 @@
 // MCP App UI. Runs in the host's sandboxed iframe. Receives the tool result via
 // the App bridge, renders the insight cell (any panel type), and routes actions
-// (refresh / drill / open link) back through the host.
+// back through the host. The cell is structurally read-only: the only server
+// tool it ever calls is render_insight_cell (refresh). Everything else is a
+// link (host open) or an "ask" (text handed back to the agent) — writes happen
+// agent-side, never from inside the cell.
 
 import { App } from "@modelcontextprotocol/ext-apps";
 import "./styles.css";
@@ -71,25 +74,26 @@ async function runAction(a: InsightCellAction, cell: InsightCell, btn: HTMLButto
     }
     if (a.kind === "ask" && a.text) {
       // Select-and-ask: hand the selection to the agent as the next question.
-      // The agent responds and typically renders a new cell.
+      // The agent responds and typically renders a new cell. Writes (e.g.
+      // applying a rulediff) also travel this path: the agent performs them
+      // with its own write-gated tools — the cell never calls one.
       await app.sendMessage({ role: "user", content: [{ type: "text", text: a.text }] });
       return;
     }
+    if (a.kind !== "refresh") return; // refresh is the only server call the cell can make
+    const prev = btn.innerHTML; // icon-only buttons store their glyph as markup, not a text label
     btn.disabled = true;
     btn.textContent = "Working…";
-    if (a.kind === "refresh") {
+    try {
       const res = await app.callServerTool({ name: "render_insight_cell", arguments: specFrom(cell) });
-      if (!applyResult(res)) restoreButton(btn, a);
-    } else if (a.kind === "tool" && a.tool) {
-      const res = await app.callServerTool({ name: a.tool, arguments: a.args ?? {} });
-      // Not every tool returns a cell (e.g. a write like update_alert_rule), so
-      // if there's nothing to re-render, re-enable the control instead of
-      // leaving it stuck on "Working…".
-      if (!applyResult(res)) restoreButton(btn, a);
+      // If the result somehow carries no cell, re-enable the control instead
+      // of leaving it stuck on "Working…".
+      if (!applyResult(res)) restoreButton(btn, prev);
+    } catch (err) {
+      restoreButton(btn, prev);
+      throw err;
     }
   } catch (err) {
-    btn.disabled = false;
-    btn.textContent = "Failed — retry";
     console.error(err);
   }
 }
@@ -104,10 +108,14 @@ function applyResult(result: any): boolean {
   return false;
 }
 
-/** Re-enable an action button after a call that didn't re-render the cell. */
-function restoreButton(btn: HTMLButtonElement, a: InsightCellAction) {
+/**
+ * Re-enable an action button after a call that didn't re-render the cell,
+ * restoring its original markup (icon-only buttons carry an SVG glyph that
+ * a plain-text label would clobber).
+ */
+function restoreButton(btn: HTMLButtonElement, prevHTML: string) {
   btn.disabled = false;
-  btn.textContent = a.label;
+  btn.innerHTML = prevHTML;
 }
 
 /**
@@ -146,6 +154,7 @@ function specFrom(cell: InsightCell): Record<string, unknown> {
     ruleSummary: rd?.summary,
     changes: rd?.changes,
     proposedRule: rd?.proposed,
+    applied: rd?.applied,
     events: cell.timeline?.events,
     from: cell.timeline?.from,
     to: cell.timeline?.to,
