@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Agent Observability tools: `agento11y_manage_conversations` and `agento11y_manage_generations` in a new `agento11y` category, excluded from the default tool set ([#944](https://github.com/grafana/mcp-grafana/pull/944))
 - Inline panel viewer for `get_panel_image` on [MCP Apps](https://modelcontextprotocol.io/)-aware hosts, with a dashboard deeplink fallback for other hosts. The deeplink text content is tagged with `_meta.ui.kind = "deeplink"` so viewers can locate it structurally instead of by string matching ([#882](https://github.com/grafana/mcp-grafana/pull/882))
 
 ## [0.17.2] - 2026-07-13
