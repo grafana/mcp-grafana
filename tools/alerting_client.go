@@ -25,7 +25,6 @@ const (
 	defaultTimeout              = 30 * time.Second
 	rulesEndpointPath           = "/api/prometheus/grafana/api/v1/rules"
 	alertmanagerAlertsGroupsPath = "/api/alertmanager/grafana/api/v2/alerts/groups"
-	alertmanagerSilencesPath     = "/api/alertmanager/grafana/api/v2/silences"
 )
 
 type alertingClient struct {
@@ -306,83 +305,6 @@ func (c *alertingClient) GetAlertGroups(ctx context.Context, opts *GetAlertGroup
 	}
 
 	return groups, nil
-}
-
-// GetSilencesOpts contains optional filtering parameters for the
-// Grafana built-in Alertmanager silences endpoint.
-type GetSilencesOpts struct {
-	Filter []string // Label matchers (e.g., "severity=critical")
-}
-
-func (o *GetSilencesOpts) queryValues() url.Values {
-	params := url.Values{}
-	for _, f := range o.Filter {
-		params.Add("filter", f)
-	}
-	return params
-}
-
-// GetSilences fetches current silences from the Grafana built-in Alertmanager.
-func (c *alertingClient) GetSilences(ctx context.Context, opts *GetSilencesOpts) ([]*models.GettableSilence, error) {
-	var params url.Values
-	if opts != nil {
-		params = opts.queryValues()
-	}
-	resp, err := c.makeRequest(ctx, alertmanagerSilencesPath, params)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get silences: %w", err)
-	}
-	defer func() {
-		_ = resp.Body.Close() //nolint:errcheck
-	}()
-
-	var silences []*models.GettableSilence
-	decoder := json.NewDecoder(resp.Body)
-	if err := decoder.Decode(&silences); err != nil {
-		return nil, fmt.Errorf("failed to decode silences response: %w", err)
-	}
-
-	return silences, nil
-}
-
-// CreateSilence creates a new silence in the Grafana built-in Alertmanager.
-// Returns the silence ID of the created silence.
-func (c *alertingClient) CreateSilence(ctx context.Context, silence *models.PostableSilence) (string, error) {
-	body, err := json.Marshal(silence)
-	if err != nil {
-		return "", fmt.Errorf("failed to marshal silence: %w", err)
-	}
-
-	u := c.baseURL.JoinPath(alertmanagerSilencesPath)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), strings.NewReader(string(body)))
-	if err != nil {
-		return "", fmt.Errorf("failed to create silence request: %w", err)
-	}
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("failed to execute silence create request: %w", err)
-	}
-	defer func() {
-		_ = resp.Body.Close() //nolint:errcheck
-	}()
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusAccepted {
-		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		_ = resp.Body.Close() //nolint:errcheck
-		return "", fmt.Errorf("grafana API returned status code %d: %s", resp.StatusCode, string(bodyBytes))
-	}
-
-	var result struct {
-		SilenceID string `json:"silenceID"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", fmt.Errorf("failed to decode silence create response: %w", err)
-	}
-
-	return result.SilenceID, nil
 }
 
 // GetAlertmanagerConfig queries an Alertmanager datasource for its configuration

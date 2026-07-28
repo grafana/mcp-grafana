@@ -64,8 +64,4 @@ func AddAlertingTools(mcp *server.MCPServer, enableWriteTools bool) {
 	}
 	ManageRouting.Register(mcp)
 	ListNotificationGroups.Register(mcp)
-	ListSilences.Register(mcp)
-	if enableWriteTools {
-		CreateSilence.Register(mcp)
-	}
 }
