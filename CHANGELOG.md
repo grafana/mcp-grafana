@@ -5,12 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.0.0] - 2026-07-28
 
 ### Added
 
 - Agent Observability tools: `agento11y_manage_conversations` and `agento11y_manage_generations` in a new `agento11y` category, excluded from the default tool set ([#944](https://github.com/grafana/mcp-grafana/pull/944))
 - Inline panel viewer for `get_panel_image` on [MCP Apps](https://modelcontextprotocol.io/)-aware hosts, with a dashboard deeplink fallback for other hosts. The deeplink text content is tagged with `_meta.ui.kind = "deeplink"` so viewers can locate it structurally instead of by string matching ([#882](https://github.com/grafana/mcp-grafana/pull/882))
+
+### Fixed
+
+- Enable OTLP trace export with the signal-specific `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` environment variable, so operators can ship traces without also exporting logs; the generic `OTEL_EXPORTER_OTLP_ENDPOINT` still enables both signals ([#1004](https://github.com/grafana/mcp-grafana/pull/1004))
+
+### Changed
+
+- Tool calls with unknown argument keys are now rejected with an error naming the unknown keys and listing the valid ones, instead of silently ignoring them and answering from default values ([#997](https://github.com/grafana/mcp-grafana/pull/997))
 
 ## [0.17.2] - 2026-07-13
 
@@ -320,6 +328,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Upgrade Docker base image packages to resolve critical OpenSSL CVE-2025-15467 (CVSS 9.8) ([#551](https://github.com/grafana/mcp-grafana/pull/551))
 
+[1.0.0]: https://github.com/grafana/mcp-grafana/compare/v0.17.2...v1.0.0
 [0.17.2]: https://github.com/grafana/mcp-grafana/compare/v0.17.1...v0.17.2
 [0.17.1]: https://github.com/grafana/mcp-grafana/compare/v0.17.0...v0.17.1
 [0.17.0]: https://github.com/grafana/mcp-grafana/compare/v0.16.0...v0.17.0
