@@ -391,7 +391,7 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 - `--address`: The host and port for SSE/streamable-http server - default: `localhost:8000`
 - `--base-path`: Base path for the SSE/streamable-http server
 - `--endpoint-path`: Endpoint path for the streamable-http server - default: `/`
-- `--server-name`: Server name used in the MCP handshake and OTel `service.name` - default: `grafana-mcp-server`. Overrides `GRAFANA_MCP_SERVER_NAME` env var
+- `--server-name`: Server name used in the MCP handshake and OTel `service.name` - default: `mcp-grafana`. Overrides `GRAFANA_MCP_SERVER_NAME` env var
 
 **HTTP Transport Security (SSE / streamable-http only):**
 
