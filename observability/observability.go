@@ -322,24 +322,23 @@ func (o *Observability) buildOperationAttrs(ctx context.Context, method mcp.MCPM
 		attrs = append(attrs, o.operationDuration.AttrGenAIToolName(name))
 	}
 
-	// Argument-derived dimensions for slicing per-call durations, gated by the
-	// toolMetricDims allowlist (arguments are raw client input; see there). The
-	// high-cardinality target is span-only (see enrichSpanWithToolDims).
-	dims := toolArgDimensions(method, message)
-	allowed := toolMetricDims[name] // zero value (both false) for unlisted tools
-	if allowed.operation && dims.operation != "" {
-		attrs = append(attrs, attribute.String(attrKeyToolOperation, dims.operation))
+	// Argument-derived and phase dimensions for slicing per-call durations, via
+	// the same allowlist-gated helper external consumers use. Reading args into
+	// locals is free of cardinality risk; only allowlisted dimensions become
+	// labels. The high-cardinality target is span-only (see enrichSpanWithToolDims).
+	var args map[string]any
+	if req, ok := message.(*mcp.CallToolRequest); ok && req != nil {
+		args = req.GetArguments()
 	}
-	if allowed.resourceType && dims.resourceType != "" {
-		attrs = append(attrs, attribute.String(attrKeyToolResourceType, dims.resourceType))
+	md := ToolMetricDimensions(name, args, result)
+	if md.Operation != "" {
+		attrs = append(attrs, attribute.String(attrKeyToolOperation, md.Operation))
 	}
-
-	// mcp.tool.phase: which phase of a multi-call flow this was, as declared by
-	// the tool on its result (e.g. create_datasource "schema" guidance vs
-	// "created"). Bounded, so safe as a metric label. Only present on success
-	// (errors carry no result).
-	if phase := toolPhaseFromResult(result); phase != "" {
-		attrs = append(attrs, attribute.String(attrKeyToolPhase, phase))
+	if md.ResourceType != "" {
+		attrs = append(attrs, attribute.String(attrKeyToolResourceType, md.ResourceType))
+	}
+	if md.Phase != "" {
+		attrs = append(attrs, attribute.String(attrKeyToolPhase, md.Phase))
 	}
 
 	// error.type when there's an error
