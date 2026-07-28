@@ -265,6 +265,13 @@ func BuildUpdateSchemaGuidance(schema *DatasourceSchema) *datasourceSchemaGuidan
 	}
 	fields = appendSchemaFields(fields, schema)
 
+	// For updates nothing is required: omitted fields keep their current value.
+	// Clear the create-time required flag so the structured guidance does not
+	// contradict the message below (agents tend to trust the flag over prose).
+	for i := range fields {
+		fields[i].Required = false
+	}
+
 	return &datasourceSchemaGuidance{
 		Type:       schema.PluginType,
 		PluginName: schema.PluginName,
@@ -274,6 +281,7 @@ func BuildUpdateSchemaGuidance(schema *DatasourceSchema) *datasourceSchemaGuidan
 				"Only send the fields you want to change — any field you omit keeps its current value, so nothing here is required. "+
 				"Ask the user which settings they want to change and confirm each new value; do NOT infer, guess, or reset fields the user did not mention. "+
 				"Once you have collected the changes from the user, call update_datasource again with the uid, the changed values in the fields param, and schemaReviewed=true. "+
+				"To rename the datasource, pass the new display name as the top-level `name` argument (separate from the fields map). "+
 				"Secrets (passwords, tokens, and other secureJsonData) cannot be set here — direct the user to the Grafana UI to change those.",
 			schema.PluginName,
 		),
