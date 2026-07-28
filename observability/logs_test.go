@@ -296,6 +296,23 @@ func TestOTLPLogsEndpoint_EmptyWhenNeitherSet(t *testing.T) {
 	assert.Empty(t, OTLPLogsEndpoint())
 }
 
+// TestOTLPLogsEndpoint_DisabledByExporterNone verifies that setting
+// OTEL_LOGS_EXPORTER=none disables OTLP log export even when an endpoint is
+// configured via the generic OTEL_EXPORTER_OTLP_ENDPOINT.
+func TestOTLPLogsEndpoint_DisabledByExporterNone(t *testing.T) {
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://generic:4317")
+	t.Setenv("OTEL_LOGS_EXPORTER", "none")
+	assert.Empty(t, OTLPLogsEndpoint())
+}
+
+// TestOTLPLogsEndpoint_DisabledByExporterNoneCaseInsensitive verifies that
+// OTEL_LOGS_EXPORTER=None (mixed case) is also recognised.
+func TestOTLPLogsEndpoint_DisabledByExporterNoneCaseInsensitive(t *testing.T) {
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://generic:4317")
+	t.Setenv("OTEL_LOGS_EXPORTER", "None")
+	assert.Empty(t, OTLPLogsEndpoint())
+}
+
 // TestOTLPTracesEndpoint_TracesEndpointTakesPrecedence verifies that when both
 // the signal-specific and generic OTEL endpoint env vars are set,
 // OTLPTracesEndpoint returns the signal-specific value.

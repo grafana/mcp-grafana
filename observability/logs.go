@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"runtime/debug"
+	"strings"
 
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
@@ -15,9 +16,13 @@ import (
 
 // OTLPLogsEndpoint returns the resolved OTLP logs endpoint, preferring the
 // signal-specific OTEL_EXPORTER_OTLP_LOGS_ENDPOINT over the generic
-// OTEL_EXPORTER_OTLP_ENDPOINT. Returns "" when neither is set, which is the
-// signal that OTLP log export is disabled.
+// OTEL_EXPORTER_OTLP_ENDPOINT. Returns "" when neither is set or when
+// OTEL_LOGS_EXPORTER is set to "none", which is the signal that OTLP log
+// export is disabled.
 func OTLPLogsEndpoint() string {
+	if strings.EqualFold(os.Getenv("OTEL_LOGS_EXPORTER"), "none") {
+		return ""
+	}
 	if v := os.Getenv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT"); v != "" {
 		return v
 	}
