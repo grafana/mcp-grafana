@@ -73,8 +73,4 @@ func AddAlertingTools(mcp *server.MCPServer, enableWriteTools bool) {
 		ManageSilencesRead.Register(mcp)
 	}
 	ListNotificationGroups.Register(mcp)
-	ListSilences.Register(mcp)
-	if enableWriteTools {
-		CreateSilence.Register(mcp)
-	}
 }
