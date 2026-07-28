@@ -317,21 +317,20 @@ func (o *Observability) buildOperationAttrs(ctx context.Context, method mcp.MCPM
 	// one definition of "tools/call request reached." The bool distinguishes
 	// "no valid request" (skip emission) from "valid request, empty Name"
 	// (emit ""), preserving pre-existing OTel attribute presence semantics.
-	if name, ok := toolNameFromMessage(method, message); ok {
+	name, ok := toolNameFromMessage(method, message)
+	if ok {
 		attrs = append(attrs, o.operationDuration.AttrGenAIToolName(name))
 	}
 
-	// Bounded, low-cardinality dimensions derived from the tool-call arguments,
-	// so per-call durations can be sliced by sub-operation and resource type
-	// (e.g. create_datasource by plugin type). Appended only when present, so
-	// tools without these arguments keep their existing metric series identity.
-	// The high-cardinality target (datasource name/uid) is deliberately NOT put
-	// on the metric — it goes on the span instead (see enrichSpanWithToolDims).
+	// Argument-derived dimensions for slicing per-call durations, gated by the
+	// toolMetricDims allowlist (arguments are raw client input; see there). The
+	// high-cardinality target is span-only (see enrichSpanWithToolDims).
 	dims := toolArgDimensions(method, message)
-	if dims.operation != "" {
+	allowed := toolMetricDims[name] // zero value (both false) for unlisted tools
+	if allowed.operation && dims.operation != "" {
 		attrs = append(attrs, attribute.String(attrKeyToolOperation, dims.operation))
 	}
-	if dims.resourceType != "" {
+	if allowed.resourceType && dims.resourceType != "" {
 		attrs = append(attrs, attribute.String(attrKeyToolResourceType, dims.resourceType))
 	}
 
@@ -406,7 +405,33 @@ const (
 // actually did (e.g. a no-schema type that creates directly) rather than what
 // the request asked for. Tools MUST keep the value set bounded/low-cardinality,
 // since it becomes a Prometheus label.
+//
+// Living in result _meta, it is also transmitted to the client — intentional: a
+// non-sensitive flow-control signal for telling schema guidance from an actual
+// creation.
 const ToolPhaseMetaKey = attrKeyToolPhase
+
+// metricDimSet declares which tool-argument-derived dimensions a given tool is
+// allowed to contribute as BOUNDED metric labels.
+type metricDimSet struct {
+	operation    bool
+	resourceType bool
+}
+
+// toolMetricDims is the opt-in allowlist of which argument-derived dimensions
+// each tool may emit as metric labels. Tool-call arguments are raw client input,
+// so recording them unconditionally would let a caller drive unbounded metric
+// cardinality. Only listed tools contribute a label, and only for a dimension
+// whose argument is a bounded enum/fixed set (operation enums; create_datasource's
+// plugin "type"). Unlisted tools (e.g. list_datasources's free-text "type") emit
+// none. Spans are exempt by design — enrichSpanWithToolDims attaches all dims.
+var toolMetricDims = map[string]metricDimSet{
+	"alerting_manage_rules":          {operation: true},
+	"alerting_manage_routing":        {operation: true},
+	"agento11y_manage_conversations": {operation: true},
+	"agento11y_manage_generations":   {operation: true},
+	"create_datasource":              {resourceType: true},
+}
 
 // toolArgDims holds the tool-call argument dimensions used to enrich telemetry.
 type toolArgDims struct {
@@ -471,6 +496,34 @@ func toolPhaseFromResult(result any) string {
 		return v
 	}
 	return ""
+}
+
+// ToolMetricDims are the bounded, allowlist-approved dimensions safe to attach
+// as metric labels. Target is excluded (span-only). A field is "" when the tool
+// is not allowlisted for it or the value is absent.
+type ToolMetricDims struct {
+	Operation    string
+	ResourceType string
+	Phase        string
+}
+
+// ToolMetricDimensions returns the metric-safe label dimensions for a tools/call,
+// applying the same allowlist/extraction the server's own metrics use. It lets
+// external consumers (e.g. the hosted Cloud MCP server, which records tool
+// metrics via its own middleware) stay in lockstep with the allowlist instead of
+// re-deriving it. args is the raw argument map (request.GetArguments()); result
+// is the *mcp.CallToolResult for the phase, and may be nil on the error path.
+func ToolMetricDimensions(toolName string, args map[string]any, result any) ToolMetricDims {
+	allowed := toolMetricDims[toolName]
+	var d ToolMetricDims
+	if allowed.operation {
+		d.Operation = stringArg(args, "operation")
+	}
+	if allowed.resourceType {
+		d.ResourceType = stringArg(args, "type")
+	}
+	d.Phase = toolPhaseFromResult(result)
+	return d
 }
 
 // enrichSpanWithToolDims attaches the tool-argument dimensions to the active
@@ -553,25 +606,24 @@ func errorTypeName(err error) string {
 	return "_OTHER"
 }
 
-// MCPHooks returns server.Hooks that record MCP protocol metrics and/or
-// emit slow-request logs, depending on configuration. These hooks should
-// be merged with any existing hooks using MergeHooks.
+// MCPHooks returns server.Hooks that record MCP metrics, enrich the active trace
+// span with tool dimensions, and/or emit slow-request logs, per configuration.
+// Merge with existing hooks via MergeHooks.
 //
-// The gate truth table (metrics × slow-log):
-//   - both disabled → empty hooks (zero-overhead path preserved)
-//   - metrics on, slow-log off → full hook set (session + request)
-//   - metrics off, slow-log on → request hooks only (no session hooks;
-//     operationDuration.Record is NOT called — it would nil-deref the
-//     uninitialised instrument)
-//   - both on → full hook set, both actions fire inside each hook body
-//
-// Every operationDuration.Record call is guarded by o.metricsEnabled()
-// inside the hook body so that enabling slow-log without metrics stays safe.
+// Gate (metrics, slow-log, tracing):
+//   - all off → empty hooks (zero-overhead path)
+//   - any on → request hooks registered; span enrichment runs whenever a span is
+//     recording, while metric recording and slow-log emission are each guarded
+//     in the hook body. Tracing must gate here too, else a tracing-only
+//     deployment (traces on, --metrics off, no slow-log) would register no hooks
+//     and never enrich its spans.
+//   - session hooks only when metrics are on (session duration is a metric).
 func (o *Observability) MCPHooks() *server.Hooks {
 	metricsOn := o.metricsEnabled()
 	slowLogOn := o.slowRequestThreshold > 0
+	tracingOn := o.tracerProvider != nil
 
-	if !metricsOn && !slowLogOn {
+	if !metricsOn && !slowLogOn && !tracingOn {
 		// Nothing to do, return empty hooks
 		return &server.Hooks{}
 	}

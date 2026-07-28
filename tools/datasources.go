@@ -34,7 +34,9 @@ const (
 )
 
 // withToolPhase declares a telemetry phase on a tool result via _meta so the
-// observability hooks can record it. Returns r for call-site chaining.
+// observability hooks can record it; returns r for chaining. _meta is sent to
+// the client — intentional; the phase is a non-sensitive signal, not private
+// data (see observability.ToolPhaseMetaKey).
 func withToolPhase(r *mcp.CallToolResult, phase string) *mcp.CallToolResult {
 	if r.Meta == nil {
 		r.Meta = &mcp.Meta{}

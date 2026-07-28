@@ -46,11 +46,25 @@ When using SSE or streamable HTTP transports, enable Prometheus metrics with `--
 
 | Metric | Type | Description |
 |--------|------|-------------|
-| `mcp_server_operation_duration_seconds` | Histogram | MCP operation duration (labels: `mcp_method_name`, `gen_ai_tool_name`, `error_type`, `network_transport`, `mcp_protocol_version`) |
+| `mcp_server_operation_duration_seconds` | Histogram | MCP operation duration (labels: `mcp_method_name`, `gen_ai_tool_name`, `error_type`, `network_transport`, `mcp_protocol_version`, and — for `tools/call` on selected tools — `mcp_tool_operation`, `mcp_tool_resource_type`, `mcp_tool_phase`) |
 | `mcp_server_session_duration_seconds` | Histogram | MCP client session duration (labels: `network_transport`, `mcp_protocol_version`) |
 | `http_server_request_duration_seconds` | Histogram | HTTP server request duration (from otelhttp) |
 
 **Note**: Metrics are only available when using SSE or streamable HTTP transports. They are **not** available with stdio transport.
+
+### Tool-call dimension labels
+
+For `tools/call` operations, `mcp_server_operation_duration_seconds` can carry up to three additional low-cardinality labels so durations are sliceable by what the call was actually doing:
+
+| Label | Source | Notes |
+|-------|--------|-------|
+| `mcp_tool_operation` | the tool's `operation` argument | Multiplexer tools whose `operation` is a bounded enum (e.g. `alerting_manage_rules`). |
+| `mcp_tool_resource_type` | the tool's `type` argument | e.g. the datasource plugin type on `create_datasource`. |
+| `mcp_tool_phase` | the tool's result `_meta` | Distinguishes phases of a multi-call flow (e.g. `create_datasource` schema-guidance vs. actual creation). |
+
+`mcp_tool_operation` and `mcp_tool_resource_type` are emitted only for an explicit **allowlist** of tools whose corresponding argument is a bounded enum / fixed set. Tool-call arguments are raw client input, so recording them as labels indiscriminately would let a caller drive unbounded metric-series cardinality. Tools not on the allowlist emit none of the argument-derived labels.
+
+The high-cardinality **target** of a call (the datasource `uid`, else `name`) is deliberately **not** a metric label. It is attached only to the trace span as `mcp.tool.target` (see below), where it serves as the correlation key for reconstructing a multi-call task across spans.
 
 ## Enable OpenTelemetry tracing
 
@@ -74,6 +88,10 @@ OTEL_EXPORTER_OTLP_HEADERS="Authorization=Basic ..." \
 ```
 
 Tool call spans follow naming like `tools/call <tool_name>` and include attributes such as `gen_ai.tool.name`, `mcp.method.name`, and `mcp.session.id`. The server supports W3C trace context propagation from the `_meta` field of tool call requests.
+
+Tool-call spans additionally carry the tool-argument dimensions `mcp.tool.operation`, `mcp.tool.resource_type`, and `mcp.tool.phase` (the same values described under [Tool-call dimension labels](#tool-call-dimension-labels)), plus the high-cardinality `mcp.tool.target` (the datasource `uid`, else `name`). `mcp.tool.target` is **span-only** — it is never a metric label — and is the correlation key for stitching a multi-call task (e.g. schema-guidance call followed by creation) together across spans.
+
+Unlike the metric labels, the span attributes are attached for **all** tools, not just an allowlist, since traces are high-cardinality by design. They require an **HTTP transport** (SSE or streamable-http, so a server span exists to enrich) **and tracing enabled** — they do **not** require `--metrics`. With stdio, or with tracing disabled, no span is recording and enrichment is a no-op.
 
 ## Enable OpenTelemetry logs
 
