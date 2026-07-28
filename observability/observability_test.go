@@ -659,7 +659,7 @@ func TestBuildOperationAttrs(t *testing.T) {
 
 	t.Run("basic method attrs", func(t *testing.T) {
 		ctx := context.Background()
-		attrs := obs.buildOperationAttrs(ctx, "tools/list", nil, nil)
+		attrs := obs.buildOperationAttrs(ctx, "tools/list", nil, nil, nil)
 
 		// Should have network.transport
 		found := false
@@ -677,7 +677,7 @@ func TestBuildOperationAttrs(t *testing.T) {
 		req := &mcp.CallToolRequest{}
 		req.Params.Name = "search_dashboards"
 
-		attrs := obs.buildOperationAttrs(ctx, "tools/call", req, nil)
+		attrs := obs.buildOperationAttrs(ctx, "tools/call", req, nil, nil)
 
 		found := false
 		for _, a := range attrs {
@@ -692,7 +692,7 @@ func TestBuildOperationAttrs(t *testing.T) {
 	t.Run("error includes error.type", func(t *testing.T) {
 		ctx := context.Background()
 		testErr := errors.New("something failed")
-		attrs := obs.buildOperationAttrs(ctx, "tools/call", nil, testErr)
+		attrs := obs.buildOperationAttrs(ctx, "tools/call", nil, nil, testErr)
 
 		found := false
 		for _, a := range attrs {
@@ -713,7 +713,7 @@ func TestBuildOperationAttrs(t *testing.T) {
 		ctx := context.Background()
 		req := &mcp.CallToolRequest{} // zero value: Params.Name == ""
 
-		attrs := obs.buildOperationAttrs(ctx, "tools/call", req, nil)
+		attrs := obs.buildOperationAttrs(ctx, "tools/call", req, nil, nil)
 
 		var foundEmpty bool
 		for _, a := range attrs {
@@ -732,7 +732,7 @@ func TestBuildOperationAttrs(t *testing.T) {
 	// tool-name attribute.
 	t.Run("tools/call with wrong-type message does NOT emit gen_ai.tool.name", func(t *testing.T) {
 		ctx := context.Background()
-		attrs := obs.buildOperationAttrs(ctx, "tools/call", "not-a-CallToolRequest", nil)
+		attrs := obs.buildOperationAttrs(ctx, "tools/call", "not-a-CallToolRequest", nil, nil)
 		for _, a := range attrs {
 			assert.NotEqual(t, "gen_ai.tool.name", string(a.Key),
 				"wrong-type message must not emit gen_ai.tool.name")
@@ -745,7 +745,7 @@ func TestBuildOperationAttrs(t *testing.T) {
 		ctx := context.Background()
 		req := &mcp.CallToolRequest{}
 		req.Params.Name = "query_prometheus"
-		attrs := obs.buildOperationAttrs(ctx, "tools/list", req, nil)
+		attrs := obs.buildOperationAttrs(ctx, "tools/list", req, nil, nil)
 		for _, a := range attrs {
 			assert.NotEqual(t, "gen_ai.tool.name", string(a.Key),
 				"non-tools/call method must not emit gen_ai.tool.name")
@@ -760,7 +760,7 @@ func TestBuildOperationAttrs(t *testing.T) {
 		req.Params.Name = "create_datasource"
 		req.Params.Arguments = map[string]any{"operation": "create", "type": "prometheus", "name": "prod"}
 
-		attrs := obs.buildOperationAttrs(ctx, "tools/call", req, nil)
+		attrs := obs.buildOperationAttrs(ctx, "tools/call", req, nil, nil)
 
 		got := map[string]string{}
 		for _, a := range attrs {
@@ -779,13 +779,76 @@ func TestBuildOperationAttrs(t *testing.T) {
 		req := &mcp.CallToolRequest{}
 		req.Params.Name = "list_datasources"
 
-		attrs := obs.buildOperationAttrs(ctx, "tools/call", req, nil)
+		attrs := obs.buildOperationAttrs(ctx, "tools/call", req, nil, nil)
 
 		for _, a := range attrs {
 			assert.NotEqual(t, attrKeyToolOperation, string(a.Key))
 			assert.NotEqual(t, attrKeyToolResourceType, string(a.Key))
 		}
 	})
+
+	// Phase comes from the result's _meta (result-based), not the request.
+	t.Run("tools/call includes phase declared on the result", func(t *testing.T) {
+		ctx := context.Background()
+		req := &mcp.CallToolRequest{}
+		req.Params.Name = "create_datasource"
+		res := mcp.NewToolResultText("{}")
+		res.Meta = &mcp.Meta{AdditionalFields: map[string]any{ToolPhaseMetaKey: "created"}}
+
+		attrs := obs.buildOperationAttrs(ctx, "tools/call", req, res, nil)
+
+		var found bool
+		for _, a := range attrs {
+			if string(a.Key) == attrKeyToolPhase {
+				assert.Equal(t, "created", a.Value.AsString())
+				found = true
+			}
+		}
+		assert.True(t, found, "should emit mcp.tool.phase from result meta")
+	})
+
+	// No result (e.g. the error path) means no phase attribute.
+	t.Run("tools/call with nil result omits phase", func(t *testing.T) {
+		ctx := context.Background()
+		req := &mcp.CallToolRequest{}
+		req.Params.Name = "create_datasource"
+
+		attrs := obs.buildOperationAttrs(ctx, "tools/call", req, nil, nil)
+
+		for _, a := range attrs {
+			assert.NotEqual(t, attrKeyToolPhase, string(a.Key))
+		}
+	})
+}
+
+func TestToolPhaseFromResult(t *testing.T) {
+	mkResult := func(meta map[string]any) *mcp.CallToolResult {
+		r := mcp.NewToolResultText("{}")
+		if meta != nil {
+			r.Meta = &mcp.Meta{AdditionalFields: meta}
+		}
+		return r
+	}
+
+	tests := []struct {
+		name   string
+		result any
+		want   string
+	}{
+		{"phase created", mkResult(map[string]any{ToolPhaseMetaKey: "created"}), "created"},
+		{"phase schema", mkResult(map[string]any{ToolPhaseMetaKey: "schema"}), "schema"},
+		{"meta without phase key", mkResult(map[string]any{"other": "x"}), ""},
+		{"non-string phase is ignored", mkResult(map[string]any{ToolPhaseMetaKey: 42}), ""},
+		{"result without meta", mkResult(nil), ""},
+		{"nil result", nil, ""},
+		{"wrong-type result", "not-a-CallToolResult", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, toolPhaseFromResult(tt.result))
+		})
+	}
 }
 
 func TestToolArgDimensions(t *testing.T) {
@@ -861,7 +924,7 @@ func TestToolArgDimensions(t *testing.T) {
 func TestEnrichSpanWithToolDims(t *testing.T) {
 	obs := &Observability{}
 
-	t.Run("sets operation, resource_type, and target on a recording span", func(t *testing.T) {
+	t.Run("sets operation, resource_type, target, and phase on a recording span", func(t *testing.T) {
 		sr := tracetest.NewSpanRecorder()
 		tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(sr))
 		ctx, span := tp.Tracer("test").Start(context.Background(), "op")
@@ -869,8 +932,10 @@ func TestEnrichSpanWithToolDims(t *testing.T) {
 		req := &mcp.CallToolRequest{}
 		req.Params.Name = "update_datasource"
 		req.Params.Arguments = map[string]any{"operation": "update", "type": "loki", "uid": "abc123"}
+		res := mcp.NewToolResultText("{}")
+		res.Meta = &mcp.Meta{AdditionalFields: map[string]any{ToolPhaseMetaKey: "created"}}
 
-		obs.enrichSpanWithToolDims(ctx, "tools/call", req)
+		obs.enrichSpanWithToolDims(ctx, "tools/call", req, res)
 		span.End()
 
 		ended := sr.Ended()
@@ -882,6 +947,7 @@ func TestEnrichSpanWithToolDims(t *testing.T) {
 		assert.Equal(t, "update", got[attrKeyToolOperation])
 		assert.Equal(t, "loki", got[attrKeyToolResourceType])
 		assert.Equal(t, "abc123", got[attrKeyToolTarget], "target (high-cardinality) belongs on the span")
+		assert.Equal(t, "created", got[attrKeyToolPhase])
 	})
 
 	t.Run("no-op when span is not recording", func(t *testing.T) {
@@ -890,7 +956,7 @@ func TestEnrichSpanWithToolDims(t *testing.T) {
 		req := &mcp.CallToolRequest{}
 		req.Params.Arguments = map[string]any{"uid": "abc"}
 		assert.NotPanics(t, func() {
-			obs.enrichSpanWithToolDims(context.Background(), "tools/call", req)
+			obs.enrichSpanWithToolDims(context.Background(), "tools/call", req, nil)
 		})
 	})
 }

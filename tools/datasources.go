@@ -15,6 +15,7 @@ import (
 	"github.com/grafana/grafana-openapi-client-go/client/datasources"
 	"github.com/grafana/grafana-openapi-client-go/models"
 	mcpgrafana "github.com/grafana/mcp-grafana"
+	"github.com/grafana/mcp-grafana/observability"
 	datasourceschemas "github.com/grafana/mcp-grafana/tools/datasource_schemas"
 )
 
@@ -22,6 +23,28 @@ const (
 	defaultListDataSourceLimit = 50
 	maxListDataSourceLimit     = 100
 )
+
+// create_datasource telemetry phases, declared on the tool result via
+// observability.ToolPhaseMetaKey so the server's per-call metric/span can
+// distinguish a schema-guidance call from an actual creation. Keep this set
+// small — the value becomes a bounded Prometheus label (mcp_tool_phase).
+const (
+	dsPhaseSchema  = "schema"  // returned field guidance (schema or no-schema); nothing created
+	dsPhaseCreated = "created" // a datasource was created
+)
+
+// withToolPhase declares a telemetry phase on a tool result via _meta so the
+// observability hooks can record it. Returns r for call-site chaining.
+func withToolPhase(r *mcp.CallToolResult, phase string) *mcp.CallToolResult {
+	if r.Meta == nil {
+		r.Meta = &mcp.Meta{}
+	}
+	if r.Meta.AdditionalFields == nil {
+		r.Meta.AdditionalFields = map[string]any{}
+	}
+	r.Meta.AdditionalFields[observability.ToolPhaseMetaKey] = phase
+	return r
+}
 
 type ListDatasourcesParams struct {
 	Type   string `json:"type,omitempty" jsonschema:"description=The type of datasources to search for. For example\\, 'prometheus'\\, 'loki'\\, 'tempo'\\, etc..."`
@@ -212,11 +235,11 @@ func createDatasource(ctx context.Context, args CreateDatasourceParams) (*mcp.Ca
 	// directly.
 	if schema != nil && (!args.SchemaReviewed || args.Name == "") {
 		text, _ := json.Marshal(datasourceschemas.BuildSchemaGuidance(schema, "create_datasource"))
-		return mcp.NewToolResultText(string(text)), nil
+		return withToolPhase(mcp.NewToolResultText(string(text)), dsPhaseSchema), nil
 	}
 	if schema == nil && args.Name == "" {
 		text, _ := json.Marshal(noSchemaGuidance(args.Type))
-		return mcp.NewToolResultText(string(text)), nil
+		return withToolPhase(mcp.NewToolResultText(string(text)), dsPhaseSchema), nil
 	}
 
 	dsAccess := args.Access
@@ -287,13 +310,13 @@ func createDatasource(ctx context.Context, args CreateDatasourceParams) (*mcp.Ca
 			Name:        result.Name,
 			Description: "Datasource configuration page",
 		})
-		return toolResult, nil
+		return withToolPhase(toolResult, dsPhaseCreated), nil
 	}
 	b, err := json.Marshal(result)
 	if err != nil {
 		return nil, fmt.Errorf("marshal result: %w", err)
 	}
-	return mcp.NewToolResultText(string(b)), nil
+	return withToolPhase(mcp.NewToolResultText(string(b)), dsPhaseCreated), nil
 }
 
 // filterDatasources returns only datasources of the specified type `t`. If `t`

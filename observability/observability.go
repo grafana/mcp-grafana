@@ -310,7 +310,7 @@ func (o *Observability) metricsEnabled() bool {
 }
 
 // buildOperationAttrs assembles semconv attributes for an operation duration recording.
-func (o *Observability) buildOperationAttrs(ctx context.Context, method mcp.MCPMethod, message any, err error) []attribute.KeyValue {
+func (o *Observability) buildOperationAttrs(ctx context.Context, method mcp.MCPMethod, message any, result any, err error) []attribute.KeyValue {
 	var attrs []attribute.KeyValue
 
 	// Centralised through toolNameFromMessage so metrics and slow-log share
@@ -333,6 +333,14 @@ func (o *Observability) buildOperationAttrs(ctx context.Context, method mcp.MCPM
 	}
 	if dims.resourceType != "" {
 		attrs = append(attrs, attribute.String(attrKeyToolResourceType, dims.resourceType))
+	}
+
+	// mcp.tool.phase: which phase of a multi-call flow this was, as declared by
+	// the tool on its result (e.g. create_datasource "schema" guidance vs
+	// "created"). Bounded, so safe as a metric label. Only present on success
+	// (errors carry no result).
+	if phase := toolPhaseFromResult(result); phase != "" {
+		attrs = append(attrs, attribute.String(attrKeyToolPhase, phase))
 	}
 
 	// error.type when there's an error
@@ -387,7 +395,18 @@ const (
 	attrKeyToolOperation    = "mcp.tool.operation"
 	attrKeyToolResourceType = "mcp.tool.resource_type"
 	attrKeyToolTarget       = "mcp.tool.target"
+	attrKeyToolPhase        = "mcp.tool.phase"
 )
+
+// ToolPhaseMetaKey is the result _meta key a tool sets to declare which phase of
+// a multi-call flow a given call represents — e.g. create_datasource's
+// schema-guidance response vs the actual creation. When present, its string
+// value is surfaced as the bounded mcp.tool.phase metric label (and span
+// attribute). Because it is read from the result, it reflects what the tool
+// actually did (e.g. a no-schema type that creates directly) rather than what
+// the request asked for. Tools MUST keep the value set bounded/low-cardinality,
+// since it becomes a Prometheus label.
+const ToolPhaseMetaKey = attrKeyToolPhase
 
 // toolArgDims holds the tool-call argument dimensions used to enrich telemetry.
 type toolArgDims struct {
@@ -438,6 +457,22 @@ func stringArg(args map[string]any, key string) string {
 	return ""
 }
 
+// toolPhaseFromResult reads the phase a tool declared on its result via the
+// ToolPhaseMetaKey _meta field. Returns "" when result is not a non-nil
+// *mcp.CallToolResult, carries no _meta, or the value is absent/not a string.
+// This is authoritative — it reflects what the tool actually did — as opposed
+// to phase inferred from the request arguments.
+func toolPhaseFromResult(result any) string {
+	res, ok := result.(*mcp.CallToolResult)
+	if !ok || res == nil || res.Meta == nil {
+		return ""
+	}
+	if v, ok := res.Meta.AdditionalFields[ToolPhaseMetaKey].(string); ok {
+		return v
+	}
+	return ""
+}
+
 // enrichSpanWithToolDims attaches the tool-argument dimensions to the active
 // span when one is recording, including the high-cardinality target that is
 // kept off metrics. It is a no-op when no span is recording (e.g. stdio
@@ -445,7 +480,7 @@ func stringArg(args map[string]any, key string) string {
 // request. Attributes land on whatever span is active for the request
 // (typically the otelhttp server span), enabling trace-level filtering and
 // task-span correlation by target.
-func (o *Observability) enrichSpanWithToolDims(ctx context.Context, method mcp.MCPMethod, message any) {
+func (o *Observability) enrichSpanWithToolDims(ctx context.Context, method mcp.MCPMethod, message any, result any) {
 	span := trace.SpanFromContext(ctx)
 	if !span.IsRecording() {
 		return
@@ -460,6 +495,9 @@ func (o *Observability) enrichSpanWithToolDims(ctx context.Context, method mcp.M
 	}
 	if dims.target != "" {
 		spanAttrs = append(spanAttrs, attribute.String(attrKeyToolTarget, dims.target))
+	}
+	if phase := toolPhaseFromResult(result); phase != "" {
+		spanAttrs = append(spanAttrs, attribute.String(attrKeyToolPhase, phase))
 	}
 	if len(spanAttrs) > 0 {
 		span.SetAttributes(spanAttrs...)
@@ -551,9 +589,9 @@ func (o *Observability) MCPHooks() *server.Hooks {
 					return
 				}
 				duration := time.Since(startTime.(time.Time))
-				o.enrichSpanWithToolDims(ctx, method, message)
+				o.enrichSpanWithToolDims(ctx, method, message, result)
 				if o.metricsEnabled() {
-					attrs := o.buildOperationAttrs(ctx, method, message, nil)
+					attrs := o.buildOperationAttrs(ctx, method, message, result, nil)
 					o.operationDuration.Record(ctx, duration.Seconds(), mcpconv.MethodNameAttr(method), attrs...)
 				}
 				toolName, _ := toolNameFromMessage(method, message)
@@ -567,9 +605,9 @@ func (o *Observability) MCPHooks() *server.Hooks {
 					return
 				}
 				duration := time.Since(startTime.(time.Time))
-				o.enrichSpanWithToolDims(ctx, method, message)
+				o.enrichSpanWithToolDims(ctx, method, message, nil)
 				if o.metricsEnabled() {
-					attrs := o.buildOperationAttrs(ctx, method, message, err)
+					attrs := o.buildOperationAttrs(ctx, method, message, nil, err)
 					o.operationDuration.Record(ctx, duration.Seconds(), mcpconv.MethodNameAttr(method), attrs...)
 				}
 				toolName, _ := toolNameFromMessage(method, message)
