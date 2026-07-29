@@ -63,14 +63,14 @@ var (
 	// errAssistantTimeout indicates the HTTP request/stream timed out.
 	errAssistantTimeout = errors.New("request to Grafana Assistant timed out")
 	// errAssistantTaskFailed indicates the agent task failed server-side.
-	errAssistantTaskFailed = errors.New("Grafana Assistant task failed")
+	errAssistantTaskFailed = errors.New("the Grafana Assistant task failed")
 	// errAssistantTaskCanceled indicates the agent task was canceled server-side.
-	errAssistantTaskCanceled = errors.New("Grafana Assistant task was canceled")
+	errAssistantTaskCanceled = errors.New("the Grafana Assistant task was canceled")
 	// errAssistantTaskTimeout indicates the agent task timed out server-side.
-	errAssistantTaskTimeout = errors.New("Grafana Assistant task exceeded its server-side timeout")
+	errAssistantTaskTimeout = errors.New("the Grafana Assistant task exceeded its server-side timeout")
 	// errAssistantIncompleteStream indicates the SSE stream ended before a
 	// terminal task state was seen, so any accumulated reply is partial.
-	errAssistantIncompleteStream = errors.New("Grafana Assistant stream ended before the task completed")
+	errAssistantIncompleteStream = errors.New("the Grafana Assistant stream ended before the task completed")
 )
 
 // AskAssistantParams is the input for the ask_assistant tool.
@@ -535,7 +535,7 @@ func parseAssistantEvent(data string, result *AskAssistantResult, texts *[]strin
 		return false, nil
 	}
 	if resp.Error != nil {
-		return false, fmt.Errorf("Grafana Assistant error %d: %s", resp.Error.Code, resp.Error.Message)
+		return false, fmt.Errorf("received an error from Grafana Assistant (%d): %s", resp.Error.Code, resp.Error.Message)
 	}
 	if resp.Result == nil {
 		return false, nil
