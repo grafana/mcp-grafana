@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- `query_pyroscope` now returns a per-function table (`pprof -top` style: flat/cum per fully-qualified function name) by default instead of a line-level DOT call graph. The DOT call graph remains available via `format="dot"` and no longer deletes the `other` truncation node ([#1025](https://github.com/grafana/mcp-grafana/pull/1025))
+
 ## [1.0.0] - 2026-07-28
 
 ### Added
