@@ -194,6 +194,10 @@ func newAssistantClient(ctx context.Context) (*assistantClient, error) {
 	}
 
 	return &assistantClient{
+		// Intentionally no http.Client.Timeout: this is a long-lived SSE
+		// stream and a client-level timeout would abort it mid-read. The whole
+		// call is bounded by the caller's context deadline
+		// (assistantDefaultTimeout) instead.
 		httpClient: &http.Client{Transport: transport},
 		url:        strings.TrimSuffix(cfg.URL, "/"),
 	}, nil
@@ -453,7 +457,11 @@ func terminalStateError(state string) error {
 func drainAssistantStream(ctx context.Context, body io.ReadCloser) (*AskAssistantResult, error) {
 	defer func() { _ = body.Close() }()
 
-	scanner := bufio.NewScanner(body)
+	// Bound total bytes consumed so a runaway or adversarial stream cannot
+	// grow memory without limit over the (up to 5-minute) call. If the cap is
+	// hit mid-stream the reply is truncated and falls through to the
+	// errAssistantIncompleteStream path below.
+	scanner := bufio.NewScanner(io.LimitReader(body, defaultResponseLimitBytes))
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 
 	var texts []string

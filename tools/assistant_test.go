@@ -156,38 +156,13 @@ func TestAskAssistant_TaskFailedSurfacesError(t *testing.T) {
 
 	result, err := askAssistant(assistantCtx(server.URL), AskAssistantParams{Prompt: "boom"})
 	require.ErrorIs(t, err, errAssistantTaskFailed)
-	// Partial output is preserved even on terminal failure.
+	// Partial output is preserved on the result even on terminal failure...
 	require.NotNil(t, result)
 	assert.Equal(t, "partial output", result.Response)
 	assert.Equal(t, "ctx-fail", result.ContextID)
-}
-
-func TestAskAssistant_TaskFailedErrorCarriesPartialOutput(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		writeSSE(w,
-			sseFrame(t, map[string]any{
-				"kind":      "artifact-update",
-				"taskId":    "task-3",
-				"contextId": "ctx-fail",
-				"artifact": map[string]any{
-					"name":  "step.message",
-					"parts": []map[string]any{{"kind": "text", "text": "partial output"}},
-				},
-			}),
-			sseFrame(t, map[string]any{
-				"kind":      "status-update",
-				"taskId":    "task-3",
-				"contextId": "ctx-fail",
-				"status":    map[string]any{"state": "failed"},
-			}),
-		)
-	}))
-	defer server.Close()
-
-	_, err := askAssistant(assistantCtx(server.URL), AskAssistantParams{Prompt: "boom"})
-	require.ErrorIs(t, err, errAssistantTaskFailed)
-	// The MCP wrapper only surfaces err.Error() on failure, so the partial
-	// reply and contextId must be embedded in the error to survive.
+	// ...and, since the MCP wrapper only surfaces err.Error() on failure, the
+	// partial reply and contextId are also embedded in the error so a client
+	// can still recover them and resume.
 	assert.Contains(t, err.Error(), "partial output")
 	assert.Contains(t, err.Error(), "ctx-fail")
 }
