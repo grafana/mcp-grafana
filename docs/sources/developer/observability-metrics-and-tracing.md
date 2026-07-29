@@ -10,7 +10,8 @@ keywords:
   - logs
   - MCP
 weight: 2
-aliases: []
+aliases:
+  - /docs/grafana-cloud/machine-learning/mcp/developer/observability-metrics-and-tracing/
 ---
 
 # Observability (metrics, tracing, and logs)

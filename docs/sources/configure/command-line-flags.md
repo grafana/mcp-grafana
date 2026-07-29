@@ -8,7 +8,8 @@ keywords:
   - MCP
   - TLS
 weight: 7
-aliases: []
+aliases:
+  - /docs/grafana-cloud/machine-learning/mcp/configure/command-line-flags/
 ---
 
 # Command-line flags
@@ -21,7 +22,7 @@ You can look up defaults, choose `--disable-*` flags, or configure TLS without r
 
 ## Before you begin
 
-- You need a way to run `mcp-grafana` on your machine—for example, a [release binary](../set-up/install-the-binary/), [`uvx`](../set-up/install-with-uvx/), or a [container](../set-up/install-with-docker/).
+- You need a way to run `mcp-grafana` on your machine—for example, a [release binary](../../set-up/install-the-binary/), [`uvx`](../../set-up/install-with-uvx/), or a [container](../../set-up/install-with-docker/).
 
 ## Configure transport and HTTP options
 
