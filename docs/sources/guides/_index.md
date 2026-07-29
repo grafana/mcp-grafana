@@ -10,7 +10,8 @@ keywords:
   - dashboards
   - MCP
 weight: 30
-aliases: []
+aliases:
+  - /docs/grafana-cloud/machine-learning/mcp/guides/
 ---
 
 # Guides

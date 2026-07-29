@@ -8,7 +8,8 @@ keywords:
   - MCP
   - TLS
 weight: 7
-aliases: []
+aliases:
+  - /docs/grafana-cloud/machine-learning/mcp/configure/command-line-flags/
 ---
 
 # Command-line flags
@@ -21,7 +22,7 @@ You can look up defaults, choose `--disable-*` flags, or configure TLS without r
 
 ## Before you begin
 
-- You need a way to run `mcp-grafana` on your machine—for example, a [release binary](../set-up/install-the-binary/), [`uvx`](../set-up/install-with-uvx/), or a [container](../set-up/install-with-docker/).
+- You need a way to run `mcp-grafana` on your machine—for example, a [release binary](../../set-up/install-the-binary/), [`uvx`](../../set-up/install-with-uvx/), or a [container](../../set-up/install-with-docker/).
 
 ## Configure transport and HTTP options
 
@@ -56,7 +57,7 @@ When deploying behind an ingress or reverse proxy that forwards the original `Ho
 
   `search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering,snapshot`
 
-  Categories **not** in that default string are off until you add them, including: `admin`, `elasticsearch`, `cloudwatch`, `examples`, `clickhouse`, `snowflake`, `influxdb`, `quickwit`, and `runpanelquery`. Pass a full comma-separated list to replace the default entirely, or use `--disable-*` flags to turn off pieces of the default set.
+  Categories **not** in that default string are off until you add them, including: `admin`, `agento11y`, `elasticsearch`, `cloudwatch`, `examples`, `clickhouse`, `snowflake`, `influxdb`, `quickwit`, and `runpanelquery`. Pass a full comma-separated list to replace the default entirely, or use `--disable-*` flags to turn off pieces of the default set.
 
 - `--disable-search`: Disable search tools.
 - `--disable-datasource`: Disable datasource tools.
@@ -86,6 +87,7 @@ When deploying behind an ingress or reverse proxy that forwards the original `Ho
 - `--disable-annotations`: Disable annotation tools.
 - `--disable-proxied`: Disable proxied tools (tools from external MCP servers).
 - `--disable-provisioning`: Disable provisioning tools.
+- `--disable-agento11y`: Disable Agent Observability tools.
 
 ## Configure tool limits
 

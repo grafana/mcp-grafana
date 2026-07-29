@@ -8,7 +8,8 @@ keywords:
   - read-only
   - MCP
 weight: 3
-aliases: []
+aliases:
+  - /docs/grafana-cloud/machine-learning/mcp/configure/enable-and-disable-tools/
 ---
 
 # Enable and disable tools
@@ -35,6 +36,7 @@ Some tool categories are disabled by default:
 - **elasticsearch** – Elasticsearch query tool.
 - **quickwit** – Quickwit query tool.
 - **influxdb** – InfluxDB query tool (Flux and InfluxQL).
+- **agento11y** – Agent Observability tools for LLM conversations, generations, and evaluation scores.
 - **admin** – Admin tools (teams, users, roles, permissions).
 
 `--enabled-tools` **replaces** the default list, so to add an optional category you must pass the full set. For example, to keep the defaults and also enable `runpanelquery` and `examples`:

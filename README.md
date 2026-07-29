@@ -151,6 +151,14 @@ Queries go through Grafana's Snowflake datasource (Grafana Enterprise plugin `gr
 
 - **Query Quickwit:** Execute search queries against Quickwit datasources using Lucene query syntax or partial Elasticsearch-compatible Query DSL. Supports filtering by time range and retrieving logs or other indexed documents. Returns documents with their index, ID, source fields, and optional relevance score.
 
+### Agent Observability
+
+> **Note:** Agent Observability tools are **disabled by default** and work only in Grafana Cloud. To enable them, add `agento11y` to your `--enabled-tools` flag.
+
+- **List and search conversations:** List recent LLM conversations or search them with a filter expression (model, provider, agent, status, error type, eval results, and more) over a time range. Search results include error counts, rating summaries, evaluation summaries, and trace IDs.
+- **Get conversation detail:** Fetch a single conversation with all its generations, including prompts and outputs.
+- **Get generation detail and scores:** Fetch a single generation by ID, and its evaluation scores (evaluator, score key, value, passed, explanation).
+
 ### Incidents
 
 - **Search, create, and update incidents:** Manage incidents in Grafana Incident, including searching, creating, and adding activities to incidents.
@@ -367,6 +375,8 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `list_pyroscope_profile_types`    | Pyroscope                 | List available profile types                                                                                 | `datasources:query`                                    | `datasources:uid:pyroscope-uid`                     |
 | `query_pyroscope`                 | Pyroscope                 | Query profiles, metrics, or both from Pyroscope                                                              | `datasources:query`                                    | `datasources:uid:pyroscope-uid`                     |
 | `get_assertions`                  | Asserts                   | Get assertion summary for a given entity                                                                     | Plugin-specific permissions                            | Plugin-specific scopes                              |
+| `agento11y_manage_conversations` | Agent Observability*  | List, search, and fetch LLM conversations from Grafana Agent Observability                              | `grafana-agento11y-app.conversations:read`                 | N/A                                                 |
+| `agento11y_manage_generations` | Agent Observability*    | Fetch LLM generation details and evaluation scores from Grafana Agent Observability                     | `grafana-agento11y-app.data:read`                          | N/A                                                 |
 | `generate_deeplink`               | Navigation                | Generate accurate deeplink URLs for Grafana resources                                                        | None (read-only URL generation)                        | N/A                                                 |
 | `get_annotations`                 | Annotations               | Fetch annotations with filters                                                                               | `annotations:read`                                     | `annotations:*` or `annotations:id:123`             |
 | `create_annotation`               | Annotations               | Create a new annotation (standard or Graphite format)                                                        | `annotations:write`                                    | `annotations:*`                                     |
@@ -390,7 +400,7 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 - `-t, --transport`: Transport type (`stdio`, `sse`, or `streamable-http`) - default: `stdio`
 - `--address`: The host and port for SSE/streamable-http server - default: `localhost:8000`
 - `--base-path`: Base path for the SSE/streamable-http server
-- `--endpoint-path`: Endpoint path for the streamable-http server - default: `/`
+- `--endpoint-path`: Endpoint path for the streamable-http server - default: `/mcp`
 - `--server-name`: Server name used in the MCP handshake and OTel `service.name` - default: `mcp-grafana`. Overrides `GRAFANA_MCP_SERVER_NAME` env var
 
 **HTTP Transport Security (SSE / streamable-http only):**
@@ -404,6 +414,10 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 - `--debug`: Enable debug mode for detailed HTTP request/response logging
 - `--log-level`: Log level (`debug`, `info`, `warn`, `error`) - default: `info`
 
+**Grafana Client Options:**
+- `--grafana-timeout`: Time limit for requests made by the Grafana client. Accepts Go duration strings (e.g., `10s`, `500ms`) - default: `10s`
+- `--include-args-in-spans`: Include tool call arguments in OpenTelemetry spans. Only enable in non-production environments or when arguments are known not to contain PII - default: `false`
+
 **Observability:**
 - `--metrics`: Enable Prometheus metrics endpoint at `/metrics`
 - `--metrics-address`: Separate address for metrics server (e.g., `:9090`). If empty, metrics are served on the main server
@@ -414,7 +428,7 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 - `--session-idle-timeout-minutes`: Session idle timeout in minutes. Sessions with no activity for this duration are automatically reaped - default: `30`. Set to `0` to disable session reaping. Only relevant for SSE and streamable-http transports.
 
 **Tool Configuration:**
-- `--enabled-tools`: Comma-separated list of enabled categories - default: all categories except `admin`, `athena`, `clickhouse`, `cloudwatch`, `elasticsearch`, `examples`, `graphite`, `quickwit`, `runpanelquery`, and `snowflake`. To enable disabled categories, add them to the list (e.g., `"search,datasource,...,snowflake"`)
+- `--enabled-tools`: Comma-separated list of enabled categories - default: all categories except `admin`, `agento11y`, `athena`, `clickhouse`, `cloudwatch`, `elasticsearch`, `examples`, `graphite`, `quickwit`, `runpanelquery`, and `snowflake`. To enable disabled categories, add them to the list (e.g., `"search,datasource,...,snowflake"`)
 - `--max-loki-log-limit`: Maximum number of log lines returned per `query_loki_logs` call - default: `100`. Note: Set this at least 1 below Loki's server-side `max_entries_limit_per_query` to allow truncation detection (the tool requests `limit+1` internally to detect if more data exists).
 - `--disable-search`: Disable search tools
 - `--disable-datasource`: Disable datasource tools
@@ -443,6 +457,7 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 - `--disable-graphite`: Disable Graphite tools
 - `--disable-athena`: Disable Athena tools
 - `--disable-provisioning`: Disable provisioning tools
+- `--disable-agento11y`: Disable Agent Observability tools
 
 ### Read-Only Mode
 
@@ -526,7 +541,7 @@ volumes:
 Surrounding whitespace (including a trailing newline) is trimmed from the file contents. If both `GRAFANA_SERVICE_ACCOUNT_TOKEN` and `GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE` are set, the inline token takes precedence.
 
 ### Multi-Organization Support
- 
+
 You can specify which organization to interact with using either:
 
 - **Environment variable:** Set `GRAFANA_ORG_ID` to the numeric organization ID
@@ -1119,6 +1134,14 @@ Tool call spans follow semconv naming (`tools/call <tool_name>`) and include att
 When `OTEL_EXPORTER_OTLP_ENDPOINT` (or the signal-specific `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`) is set, the server also exports structured logs via OTLP/gRPC in addition to the existing plain-text stderr output. The `otelslog` bridge automatically attaches `trace_id` and `span_id` from the active span, so log records correlate with the traces the server already emits.
 
 Traces and logs resolve their endpoints independently, so the two signals can be enabled separately: setting only `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` enables tracing **without** log export, setting only `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` enables log export without tracing, and the generic `OTEL_EXPORTER_OTLP_ENDPOINT` enables both.
+
+If you use the generic `OTEL_EXPORTER_OTLP_ENDPOINT` but want to disable log export (e.g. your backend does not support the `LogsService`), set:
+
+```bash
+OTEL_LOGS_EXPORTER=none
+```
+
+This prevents the server from creating an OTLP logs exporter regardless of the endpoint configuration, avoiding errors like `unknown service opentelemetry.proto.collector.logs.v1.LogsService`.
 
 Stderr logging is unchanged when OTLP logging is enabled; you can continue to rely on container logs or pipe stderr to `/dev/null` if you prefer.
 

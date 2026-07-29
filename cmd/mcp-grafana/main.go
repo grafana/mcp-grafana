@@ -104,6 +104,7 @@ var categoryDescription = map[string]string{
 	"api":           "API: Make authenticated HTTP requests to any Grafana API endpoint with optional jq-style response filtering.",
 	"config":        "Config: Generate operator-facing configuration snippets (e.g. Alloy label-enforcement pipelines).",
 	"provisioning":  "Provisioning: List provisioning repositories (e.g. git-sync sources) to discover repository slugs for use with rendering tools.",
+	"agento11y":     "Agent Observability: Search and inspect LLM conversations, generations, and evaluation scores from Grafana Agent Observability.",
 }
 
 // disabledTools indicates whether each category of tools should be disabled.
@@ -115,7 +116,8 @@ type disabledTools struct {
 	dashboard, folder, oncall, asserts, sift, admin,
 	pyroscope, navigation, proxied, annotations, rendering, cloudwatch, write,
 	snapshot, examples, clickhouse, snowflake, graphite,
-	runpanelquery, athena, plugin, api, config, provisioning bool
+	runpanelquery, athena, plugin, api, config, provisioning,
+	agento11y bool
 }
 
 // Configuration for the Grafana client.
@@ -131,6 +133,12 @@ type grafanaConfig struct {
 
 	// Loki configuration
 	maxLokiLogLimit int
+
+	// includeArgsInSpans enables logging of tool arguments in OpenTelemetry spans.
+	includeArgsInSpans bool
+
+	// timeout is the time limit for requests made by the Grafana client.
+	timeout time.Duration
 }
 
 func (dt *disabledTools) addFlags() {
@@ -168,6 +176,7 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.api, "disable-api", false, "Disable API tools")
 	flag.BoolVar(&dt.config, "disable-config", false, "Disable config-generation tools")
 	flag.BoolVar(&dt.provisioning, "disable-provisioning", false, "Disable provisioning tools")
+	flag.BoolVar(&dt.agento11y, "disable-agento11y", false, "Disable Agent Observability tools")
 }
 
 func (gc *grafanaConfig) addFlags() {
@@ -181,6 +190,9 @@ func (gc *grafanaConfig) addFlags() {
 
 	// Loki configuration flags
 	flag.IntVar(&gc.maxLokiLogLimit, "max-loki-log-limit", tools.MaxLokiLogLimit, "Maximum number of log lines returned per query_loki_logs call")
+
+	flag.BoolVar(&gc.includeArgsInSpans, "include-args-in-spans", false, "Include tool call arguments in OpenTelemetry spans. Only enable in non-production environments or when arguments are known not to contain PII.")
+	flag.DurationVar(&gc.timeout, "grafana-timeout", mcpgrafana.DefaultGrafanaClientTimeout, "Time limit for requests made by the Grafana client. Accepts Go duration strings, e.g. 10s, 500ms.")
 }
 
 // toolEntry pairs a tool registration function with its category and disable flag.
@@ -227,6 +239,7 @@ func (dt *disabledTools) toolEntries() []toolEntry {
 		{func(mcp *server.MCPServer) { tools.AddAPITools(mcp, enableWriteTools) }, dt.api, "api"},
 		{tools.AddConfigTools, dt.config, "config"},
 		{tools.AddProvisioningTools, dt.provisioning, "provisioning"},
+		{tools.AddAgento11yTools, dt.agento11y, "agento11y"},
 	}
 }
 
@@ -357,6 +370,11 @@ func newServer(serverName, transport string, dt disabledTools, obs *observabilit
 	// Give the SessionManager a reference to the MCPServer so the reaper can
 	// unregister sessions from the SDK's internal session map.
 	sm.SetMCPServer(s)
+
+	// Give the SessionManager a reference to the ToolManager so tearing down a
+	// session releases its reference to the shared proxied tool set (closing the
+	// underlying clients only when the last session using them is gone).
+	sm.SetToolManager(stm)
 
 	dt.processTools(s)
 	mcpgrafana.RegisterAppResources(s)
@@ -612,6 +630,15 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 			server.WithEndpointPath(endpointPath),
 			server.WithStreamableHTTPServer(httpSrv),
 			server.WithStreamableHTTPCORS(server.WithCORSAllowedOrigins(hsc.corsOrigins()...)),
+			// Enable the SDK's idle-session sweeper so per-session transport state
+			// (the tool/resource maps populated by AddSessionTools, keyed by
+			// session ID in the server's shared stores) is freed when a client
+			// disconnects without sending a DELETE. Without it, UnregisterSession
+			// only drops the session handle and those stores grow without bound,
+			// leaking a fixed amount of memory per session that is ever created.
+			// Use the same idle timeout as our own SessionManager reaper so the
+			// two teardown paths stay aligned; a zero value disables both.
+			server.WithSessionIdleTTL(time.Duration(sessionIdleTimeoutMinutes) * time.Minute),
 		}
 		if tls.certFile != "" || tls.keyFile != "" {
 			opts = append(opts, server.WithTLSCert(tls.certFile, tls.keyFile))
@@ -707,8 +734,10 @@ func main() {
 
 	// Convert local grafanaConfig to mcpgrafana.GrafanaConfig
 	grafanaConfig := mcpgrafana.GrafanaConfig{
-		Debug:           gc.debug,
-		MaxLokiLogLimit: gc.maxLokiLogLimit,
+		Debug:                   gc.debug,
+		MaxLokiLogLimit:         gc.maxLokiLogLimit,
+		IncludeArgumentsInSpans: gc.includeArgsInSpans,
+		Timeout:                 gc.timeout,
 	}
 	if gc.tlsCertFile != "" || gc.tlsKeyFile != "" || gc.tlsCAFile != "" || gc.tlsSkipVerify {
 		grafanaConfig.TLSConfig = &mcpgrafana.TLSConfig{
