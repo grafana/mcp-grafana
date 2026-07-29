@@ -462,21 +462,22 @@ func drainAssistantStream(ctx context.Context, body io.ReadCloser) (*AskAssistan
 	// hit mid-stream the reply is truncated and falls through to the
 	// errAssistantIncompleteStream path below.
 	scanner := bufio.NewScanner(io.LimitReader(body, defaultResponseLimitBytes))
-	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+	// Permit a single SSE frame up to the same ceiling as the whole stream: a
+	// large final step.message can exceed the 64KB default token size, which
+	// would otherwise fail with "token too long".
+	scanner.Buffer(make([]byte, 64*1024), int(defaultResponseLimitBytes))
 
 	var texts []string
 	result := &AskAssistantResult{}
 	var streamErr error
 	var sawTerminal bool
 
+	// No in-loop context check: context cancellation already unblocks Scan via
+	// the request context, and checking here would discard a terminal frame
+	// that Scan has already returned (reporting a timeout for a task that in
+	// fact completed). Any frame Scan hands us is parsed before we consider the
+	// deadline below.
 	for scanner.Scan() {
-		if ctx.Err() != nil {
-			if ctx.Err() == context.DeadlineExceeded {
-				return finalizeAssistantResult(result, texts, errAssistantTimeout)
-			}
-			return finalizeAssistantResult(result, texts, ctx.Err())
-		}
-
 		line := strings.TrimSpace(scanner.Text())
 		if !strings.HasPrefix(line, "data:") {
 			continue
@@ -497,7 +498,10 @@ func drainAssistantStream(ctx context.Context, body io.ReadCloser) (*AskAssistan
 		}
 	}
 
-	if streamErr == nil {
+	// A terminal state (success or a task-level error) is authoritative even if
+	// the deadline fired in the same tick, so only map context/stream errors
+	// when we did not reach one.
+	if streamErr == nil && !sawTerminal {
 		switch {
 		case ctx.Err() == context.DeadlineExceeded:
 			streamErr = errAssistantTimeout
@@ -506,7 +510,7 @@ func drainAssistantStream(ctx context.Context, body io.ReadCloser) (*AskAssistan
 		default:
 			if err := scanner.Err(); err != nil {
 				streamErr = fmt.Errorf("reading assistant stream: %w", err)
-			} else if !sawTerminal {
+			} else {
 				// The stream closed cleanly but never reported a terminal task
 				// state, so the reply is truncated. Report it rather than
 				// passing off possibly-empty text as a completed answer.

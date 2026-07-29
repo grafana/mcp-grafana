@@ -202,6 +202,31 @@ func TestAskAssistant_IncompleteStreamReportsError(t *testing.T) {
 	assert.Contains(t, err.Error(), "ctx-inc")
 }
 
+func TestAskAssistant_LargeSingleFrame(t *testing.T) {
+	// A single step.message larger than bufio.Scanner's 64KB default token
+	// size must not fail with "token too long".
+	big := strings.Repeat("x", 2*1024*1024) // 2 MB, > the old 1 MB scanner cap
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeSSE(w, sseFrame(t, map[string]any{
+			"kind":      "task",
+			"id":        "task-big",
+			"contextId": "ctx-big",
+			"status":    map[string]any{"state": "completed"},
+			"artifacts": []map[string]any{{
+				"name":  "step.message",
+				"parts": []map[string]any{{"kind": "text", "text": big}},
+			}},
+		}))
+	}))
+	defer server.Close()
+
+	result, err := askAssistant(assistantCtx(server.URL), AskAssistantParams{Prompt: "hi"})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, big, result.Response)
+	assert.Equal(t, "ctx-big", result.ContextID)
+}
+
 func TestAskAssistant_JSONRPCErrorFrame(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
