@@ -334,6 +334,11 @@ func newServer(transport string, dt disabledTools, obs *observability.Observabil
 	// unregister sessions from the SDK's internal session map.
 	sm.SetMCPServer(s)
 
+	// Give the SessionManager a reference to the ToolManager so tearing down a
+	// session releases its reference to the shared proxied tool set (closing the
+	// underlying clients only when the last session using them is gone).
+	sm.SetToolManager(stm)
+
 	dt.processTools(s)
 	mcpgrafana.RegisterAppResources(s)
 	return s, stm, sm
@@ -588,6 +593,15 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 			server.WithEndpointPath(endpointPath),
 			server.WithStreamableHTTPServer(httpSrv),
 			server.WithStreamableHTTPCORS(server.WithCORSAllowedOrigins(hsc.corsOrigins()...)),
+			// Enable the SDK's idle-session sweeper so per-session transport state
+			// (the tool/resource maps populated by AddSessionTools, keyed by
+			// session ID in the server's shared stores) is freed when a client
+			// disconnects without sending a DELETE. Without it, UnregisterSession
+			// only drops the session handle and those stores grow without bound,
+			// leaking a fixed amount of memory per session that is ever created.
+			// Use the same idle timeout as our own SessionManager reaper so the
+			// two teardown paths stay aligned; a zero value disables both.
+			server.WithSessionIdleTTL(time.Duration(sessionIdleTimeoutMinutes) * time.Minute),
 		}
 		if tls.certFile != "" || tls.keyFile != "" {
 			opts = append(opts, server.WithTLSCert(tls.certFile, tls.keyFile))
