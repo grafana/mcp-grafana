@@ -105,6 +105,12 @@ type grafanaConfig struct {
 
 	// Loki configuration
 	maxLokiLogLimit int
+
+	// includeArgsInSpans enables logging of tool arguments in OpenTelemetry spans.
+	includeArgsInSpans bool
+
+	// timeout is the time limit for requests made by the Grafana client.
+	timeout time.Duration
 }
 
 func (dt *disabledTools) addFlags() {
@@ -156,6 +162,9 @@ func (gc *grafanaConfig) addFlags() {
 
 	// Loki configuration flags
 	flag.IntVar(&gc.maxLokiLogLimit, "max-loki-log-limit", tools.MaxLokiLogLimit, "Maximum number of log lines returned per query_loki_logs call")
+
+	flag.BoolVar(&gc.includeArgsInSpans, "include-args-in-spans", false, "Include tool call arguments in OpenTelemetry spans. Only enable in non-production environments or when arguments are known not to contain PII.")
+	flag.DurationVar(&gc.timeout, "grafana-timeout", mcpgrafana.DefaultGrafanaClientTimeout, "Time limit for requests made by the Grafana client. Accepts Go duration strings, e.g. 10s, 500ms.")
 }
 
 // toolEntry pairs a tool registration function with its category and disable flag.
@@ -665,8 +674,10 @@ func main() {
 
 	// Convert local grafanaConfig to mcpgrafana.GrafanaConfig
 	grafanaConfig := mcpgrafana.GrafanaConfig{
-		Debug:           gc.debug,
-		MaxLokiLogLimit: gc.maxLokiLogLimit,
+		Debug:                   gc.debug,
+		MaxLokiLogLimit:         gc.maxLokiLogLimit,
+		IncludeArgumentsInSpans: gc.includeArgsInSpans,
+		Timeout:                 gc.timeout,
 	}
 	if gc.tlsCertFile != "" || gc.tlsKeyFile != "" || gc.tlsCAFile != "" || gc.tlsSkipVerify {
 		grafanaConfig.TLSConfig = &mcpgrafana.TLSConfig{
