@@ -75,6 +75,8 @@ OTEL_EXPORTER_OTLP_HEADERS="Authorization=Basic ..." \
 
 Tool call spans follow naming like `tools/call <tool_name>` and include attributes such as `gen_ai.tool.name`, `mcp.method.name`, and `mcp.session.id`. The server supports W3C trace context propagation from the `_meta` field of tool call requests.
 
+Tool call arguments are excluded from spans by default. Pass `--include-args-in-spans` to add them as the `gen_ai.tool.call.arguments` attribute — only enable this in non-production environments or when you're certain the arguments don't contain PII.
+
 ## Enable OpenTelemetry logs
 
 When `OTEL_EXPORTER_OTLP_ENDPOINT` (or the signal-specific `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`) is set, the server also exports structured logs via OTLP/gRPC in addition to the existing plain-text stderr output. Logs carry `trace_id` and `span_id` from the active span so they correlate with exported traces.
