@@ -4,11 +4,13 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/grafana/grafana-openapi-client-go/models"
 	"github.com/prometheus/client_golang/api"
 	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	"github.com/stretchr/testify/assert"
@@ -59,4 +61,43 @@ func TestPrometheusBackendQuery_NoWarnings(t *testing.T) {
 	_, warnings, err := b.Query(context.Background(), "up", "instant", time.Time{}, time.Unix(1700000000, 0), 0)
 	require.NoError(t, err)
 	assert.Empty(t, warnings)
+}
+
+func TestBackendForDatasource_RejectsTempoDatasource(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/api/datasources/uid/tempo-uid", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(&models.DataSource{
+			UID:  "tempo-uid",
+			Type: "tempo",
+		})
+	}))
+	t.Cleanup(server.Close)
+
+	ctx := mockDatasourcesCtx(server)
+
+	backend, err := backendForDatasource(ctx, "tempo-uid")
+	require.Error(t, err)
+	assert.Nil(t, backend)
+	assert.Contains(t, err.Error(), `datasource tempo-uid is of type "tempo", which is not a supported Prometheus-compatible datasource`)
+}
+
+func TestBackendForDatasource_AcceptsPrometheusDatasource(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/api/datasources/uid/prom-uid", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(&models.DataSource{
+			UID:  "prom-uid",
+			Type: "prometheus",
+		})
+	}))
+	t.Cleanup(server.Close)
+
+	ctx := mockDatasourcesCtx(server)
+
+	backend, err := backendForDatasource(ctx, "prom-uid")
+	require.NoError(t, err)
+	assert.NotNil(t, backend)
 }
