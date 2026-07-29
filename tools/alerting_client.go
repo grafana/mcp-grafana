@@ -22,8 +22,8 @@ import (
 )
 
 const (
-	defaultTimeout              = 30 * time.Second
-	rulesEndpointPath           = "/api/prometheus/grafana/api/v1/rules"
+	defaultTimeout               = 30 * time.Second
+	rulesEndpointPath            = "/api/prometheus/grafana/api/v1/rules"
 	alertmanagerAlertsGroupsPath = "/api/alertmanager/grafana/api/v2/alerts/groups"
 )
 
@@ -298,9 +298,13 @@ func (c *alertingClient) GetAlertGroups(ctx context.Context, opts *GetAlertGroup
 		_ = resp.Body.Close() //nolint:errcheck
 	}()
 
+	bodyBytes, err := readResponseBody(resp.Body, defaultResponseLimitBytes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read alert groups response: %w", err)
+	}
+
 	var groups []*models.AlertGroup
-	decoder := json.NewDecoder(resp.Body)
-	if err := decoder.Decode(&groups); err != nil {
+	if err := json.Unmarshal(bodyBytes, &groups); err != nil {
 		return nil, fmt.Errorf("failed to decode alert groups response: %w", err)
 	}
 
