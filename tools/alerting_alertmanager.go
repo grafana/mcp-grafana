@@ -13,9 +13,9 @@ import (
 // ListNotificationGroupsParams is the param struct for the
 // alerting_list_notification_groups tool.
 type ListNotificationGroupsParams struct {
-	Active    *bool    `json:"active,omitempty" jsonschema:"description=Filter for active alerts (omit to include all states)"`
-	Silenced  *bool    `json:"silenced,omitempty" jsonschema:"description=Filter for silenced alerts (omit to include all states)"`
-	Inhibited *bool    `json:"inhibited,omitempty" jsonschema:"description=Filter for inhibited alerts (omit to include all states)"`
+	Active    *bool    `json:"active,omitempty" jsonschema:"description=Return active alerts. When omitted the API defaults to true. To see only active alerts set active=true and silenced=false and inhibited=false."`
+	Silenced  *bool    `json:"silenced,omitempty" jsonschema:"description=Return silenced alerts. When omitted the API defaults to true. Set to false to exclude silenced alerts."`
+	Inhibited *bool    `json:"inhibited,omitempty" jsonschema:"description=Return inhibited alerts. When omitted the API defaults to true. Set to false to exclude inhibited alerts."`
 	Filter    []string `json:"filter,omitempty" jsonschema:"description=Label matchers to filter by (e.g. 'severity=critical')"`
 	Receiver  string   `json:"receiver,omitempty" jsonschema:"description=Filter by receiver name"`
 }
