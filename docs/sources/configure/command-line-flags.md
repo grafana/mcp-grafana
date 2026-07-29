@@ -45,6 +45,11 @@ When deploying behind an ingress or reverse proxy that forwards the original `Ho
 - `--debug`: Enable debug mode for detailed HTTP request and response logging to and from the Grafana API.
 - `--log-level`: Log level (`debug`, `info`, `warn`, `error`). Default: `info`.
 
+## Configure the Grafana client
+
+- `--grafana-timeout`: Time limit for requests made by the Grafana client. Accepts Go duration strings, e.g. `10s`, `500ms`. Default: `10s`.
+- `--include-args-in-spans`: Include tool call arguments in OpenTelemetry spans. Only enable in non-production environments or when arguments are known not to contain PII. Default: `false`.
+
 ## Configure observability endpoints
 
 - `--metrics`: Expose a Prometheus metrics endpoint at `/metrics` (SSE and streamable-http only).
