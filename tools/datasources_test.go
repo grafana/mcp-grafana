@@ -230,24 +230,49 @@ func TestUpdateDatasourceTool(t *testing.T) {
 		_, _ = c.Datasources.DeleteDataSourceByUID(testUID)
 	})
 
+	// parseUpdate unwraps the JSON text content of a successful update call.
+	parseUpdate := func(t *testing.T, res *mcp.CallToolResult) UpdateDatasourceResult {
+		t.Helper()
+		require.NotNil(t, res)
+		require.Len(t, res.Content, 1)
+		text, ok := res.Content[0].(mcp.TextContent)
+		require.True(t, ok)
+		var r UpdateDatasourceResult
+		require.NoError(t, json.Unmarshal([]byte(text.Text), &r))
+		return r
+	}
+
+	t.Run("first call returns schema guidance", func(t *testing.T) {
+		res, err := updateDatasource(ctx, UpdateDatasourceParams{UID: testUID})
+		require.NoError(t, err)
+		require.Len(t, res.Content, 1)
+		text, ok := res.Content[0].(mcp.TextContent)
+		require.True(t, ok)
+		var guidance map[string]any
+		require.NoError(t, json.Unmarshal([]byte(text.Text), &guidance))
+		assert.Equal(t, "prometheus", guidance["type"])
+		assert.NotEmpty(t, guidance["fields"])
+	})
+
 	t.Run("update name", func(t *testing.T) {
 		newName := "Integration Test DS Updated"
-		result, err := updateDatasource(ctx, UpdateDatasourceParams{UID: testUID, Name: &newName})
+		res, err := updateDatasource(ctx, UpdateDatasourceParams{UID: testUID, Name: &newName, SchemaReviewed: true})
 		require.NoError(t, err)
-		require.NotNil(t, result)
+		require.NotNil(t, res)
 	})
 
 	t.Run("update url", func(t *testing.T) {
 		newURL := "http://prometheus:9090"
-		result, err := updateDatasource(ctx, UpdateDatasourceParams{UID: testUID, URL: &newURL})
+		res, err := updateDatasource(ctx, UpdateDatasourceParams{UID: testUID, URL: &newURL, SchemaReviewed: true})
 		require.NoError(t, err)
-		require.NotNil(t, result)
+		require.NotNil(t, res)
 	})
 
 	t.Run("health check included in result", func(t *testing.T) {
 		newName := "Integration Test DS Health"
-		result, err := updateDatasource(ctx, UpdateDatasourceParams{UID: testUID, Name: &newName})
+		res, err := updateDatasource(ctx, UpdateDatasourceParams{UID: testUID, Name: &newName, SchemaReviewed: true})
 		require.NoError(t, err)
+		result := parseUpdate(t, res)
 		require.NotNil(t, result.Health)
 		assert.Equal(t, testUID, result.Health.UID)
 		assert.NotEmpty(t, result.Health.Message)
@@ -255,7 +280,7 @@ func TestUpdateDatasourceTool(t *testing.T) {
 
 	t.Run("update non-existent datasource returns error", func(t *testing.T) {
 		newName := "Should Fail"
-		_, err := updateDatasource(ctx, UpdateDatasourceParams{UID: "non-existent-uid", Name: &newName})
+		_, err := updateDatasource(ctx, UpdateDatasourceParams{UID: "non-existent-uid", Name: &newName, SchemaReviewed: true})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not found")
 	})
