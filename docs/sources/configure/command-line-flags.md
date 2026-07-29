@@ -8,7 +8,8 @@ keywords:
   - MCP
   - TLS
 weight: 7
-aliases: []
+aliases:
+  - /docs/grafana-cloud/machine-learning/mcp/configure/command-line-flags/
 ---
 
 # Command-line flags
@@ -21,7 +22,7 @@ You can look up defaults, choose `--disable-*` flags, or configure TLS without r
 
 ## Before you begin
 
-- You need a way to run `mcp-grafana` on your machine—for example, a [release binary](../set-up/install-the-binary/), [`uvx`](../set-up/install-with-uvx/), or a [container](../set-up/install-with-docker/).
+- You need a way to run `mcp-grafana` on your machine—for example, a [release binary](../../set-up/install-the-binary/), [`uvx`](../../set-up/install-with-uvx/), or a [container](../../set-up/install-with-docker/).
 
 ## Configure transport and HTTP options
 
@@ -44,11 +45,6 @@ When deploying behind an ingress or reverse proxy that forwards the original `Ho
 
 - `--debug`: Enable debug mode for detailed HTTP request and response logging to and from the Grafana API.
 - `--log-level`: Log level (`debug`, `info`, `warn`, `error`). Default: `info`.
-
-## Configure the Grafana client
-
-- `--grafana-timeout`: Time limit for requests made by the Grafana client. Accepts Go duration strings, e.g. `10s`, `500ms`. Default: `10s`.
-- `--include-args-in-spans`: Include tool call arguments in OpenTelemetry spans. Only enable in non-production environments or when arguments are known not to contain PII. Default: `false`.
 
 ## Configure observability endpoints
 

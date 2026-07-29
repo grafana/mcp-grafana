@@ -8,7 +8,8 @@ keywords:
   - streamable-http
   - MCP
 weight: 5
-aliases: []
+aliases:
+  - /docs/grafana-cloud/machine-learning/mcp/configure/server-tls-streamable-http/
 ---
 
 # Server TLS (streamable-http)

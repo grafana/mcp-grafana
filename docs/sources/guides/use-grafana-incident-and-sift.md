@@ -8,7 +8,8 @@ keywords:
   - investigations
   - MCP
 weight: 7
-aliases: []
+aliases:
+  - /docs/grafana-cloud/machine-learning/mcp/guides/use-grafana-incident-and-sift/
 ---
 
 # Use Grafana Incident and Sift

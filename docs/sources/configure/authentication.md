@@ -8,7 +8,8 @@ keywords:
   - token
   - MCP
 weight: 1
-aliases: []
+aliases:
+  - /docs/grafana-cloud/machine-learning/mcp/configure/authentication/
 ---
 
 # Authentication
