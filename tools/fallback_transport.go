@@ -10,10 +10,14 @@ import (
 )
 
 // datasourceFallbackTransport is an http.RoundTripper that tries a primary
-// datasource proxy URL path and falls back to an alternate on 403 or 500
+// datasource proxy URL path and falls back to an alternate on 401, 403 or 500
 // responses. This handles compatibility between different Grafana deployments:
 //   - Azure Managed Grafana requires /api/datasources/uid/{uid}/resources
 //   - AWS Managed Grafana requires /api/datasources/proxy/uid/{uid}
+//
+// The 401 fallback also covers datasources with basic auth: the /resources
+// proxy does not always forward the datasource's configured basic auth to the
+// upstream (which then answers 401), whereas the legacy /proxy path does.
 //
 // See https://github.com/grafana/mcp-grafana/issues/524
 type datasourceFallbackTransport struct {
@@ -61,11 +65,13 @@ func (t *datasourceFallbackTransport) RoundTrip(req *http.Request) (*http.Respon
 		return nil, err
 	}
 
-	if resp.StatusCode != http.StatusForbidden && resp.StatusCode != http.StatusInternalServerError {
+	if resp.StatusCode != http.StatusUnauthorized &&
+		resp.StatusCode != http.StatusForbidden &&
+		resp.StatusCode != http.StatusInternalServerError {
 		return resp, nil
 	}
 
-	// Got 403 or 500 — try the fallback endpoint.
+	// Got 401, 403 or 500 — try the fallback endpoint.
 	resp.Body.Close() //nolint:errcheck
 
 	retryReq := t.rewriteRequest(req, t.primaryBase, t.fallbackBase)
