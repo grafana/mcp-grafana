@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Agent Observability eval control-plane tools `agento11y_manage_evaluators` and `agento11y_manage_eval_rules`, in the opt-in `agento11y` category. Reads cover evaluators, evaluator templates, template versions, the judge provider and model catalog, eval rules, and guards. The write operations (evaluator upsert, fork, test, and delete; rule and guard create, update, preview, and delete) need `grafana-agento11y-app.eval:write` and are registered only when write tools are enabled ([#1028](https://github.com/grafana/mcp-grafana/pull/1028))
+
 ### Changed
 
 - `query_pyroscope` now returns a per-function table (`pprof -top` style: flat/cum per fully-qualified function name) by default instead of a line-level DOT call graph. The DOT call graph remains available via `format="dot"` and no longer deletes the `other` truncation node ([#1025](https://github.com/grafana/mcp-grafana/pull/1025))
