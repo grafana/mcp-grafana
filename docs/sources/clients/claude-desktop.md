@@ -7,7 +7,8 @@ keywords:
   - MCP
   - client
 weight: 1
-aliases: []
+aliases:
+  - /docs/grafana-cloud/machine-learning/mcp/clients/claude-desktop/
 ---
 
 # Claude Desktop

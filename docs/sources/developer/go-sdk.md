@@ -8,7 +8,8 @@ keywords:
   - library
   - MCP
 weight: 1
-aliases: []
+aliases:
+  - /docs/grafana-cloud/machine-learning/mcp/developer/go-sdk/
 ---
 
 # Go SDK (programmatic use)

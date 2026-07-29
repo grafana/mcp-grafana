@@ -1,6 +1,6 @@
 ---
 title: Open source Grafana MCP server
-menuTitle: Grafana OSS MCP server
+menuTitle: OSS MCP server
 description: Connect AI assistants and LLM clients to Grafana using the Model Context Protocol.
 keywords:
   - MCP
@@ -9,7 +9,8 @@ keywords:
   - AI
   - LLM
 weight: 1
-aliases: []
+aliases:
+  - /docs/grafana-cloud/machine-learning/mcp/
 ---
 
 # Open source Grafana MCP server
@@ -22,12 +23,12 @@ The Grafana MCP server is a [Model Context Protocol (MCP)](https://modelcontextp
 
 Grafana offers two MCP server options:
 
-| Option | Best for | Authentication |
-| --- | --- | --- |
-| Open source Grafana MCP server | Running and managing the MCP server yourself for Grafana Cloud or self-managed Grafana | Service account token |
-| [Grafana Cloud MCP server](https://grafana.com/docs/grafana-cloud/machine-learning/assistant/configure/cloud-mcp/) | Connecting external AI agents to Grafana Cloud without installing a local server | OAuth 2.1 browser authorization, scoped to the signed-in Grafana user |
+| Option                                                                          | Best for                                                                               | Authentication                                                        |
+| ------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| Open source Grafana MCP server                                                  | Running and managing the MCP server yourself for Grafana Cloud or self-managed Grafana | Service account token                                                 |
+| [Grafana Cloud MCP server](/docs/grafana-cloud/ai-tools/mcp-servers/cloud-mcp/) | Connecting external AI agents to Grafana Cloud without installing a local server       | OAuth 2.1 browser authorization, scoped to the signed-in Grafana user |
 
-Use this documentation for the open source server. For Grafana Cloud's hosted MCP server, refer to [Grafana Cloud MCP server](https://grafana.com/docs/grafana-cloud/machine-learning/assistant/configure/cloud-mcp/).
+Use this documentation for the open source server. For Grafana Cloud's hosted MCP server, refer to [Grafana Cloud MCP server](/docs/grafana-cloud/ai-tools/mcp-servers/cloud-mcp/).
 
 ## Overview
 

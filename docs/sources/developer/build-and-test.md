@@ -8,7 +8,8 @@ keywords:
   - tests
   - development
 weight: 3
-aliases: []
+aliases:
+  - /docs/grafana-cloud/machine-learning/mcp/developer/build-and-test/
 ---
 
 # Build, test, and lint

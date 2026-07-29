@@ -8,7 +8,8 @@ keywords:
   - metrics
   - MCP
 weight: 1
-aliases: []
+aliases:
+  - /docs/grafana-cloud/machine-learning/mcp/guides/query-metrics-with-prometheus/
 ---
 
 # Query metrics with Prometheus

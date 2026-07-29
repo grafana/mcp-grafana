@@ -10,7 +10,8 @@ keywords:
   - logs
   - MCP
 weight: 2
-aliases: []
+aliases:
+  - /docs/grafana-cloud/machine-learning/mcp/developer/observability-metrics-and-tracing/
 ---
 
 # Observability (metrics, tracing, and logs)
@@ -74,8 +75,6 @@ OTEL_EXPORTER_OTLP_HEADERS="Authorization=Basic ..." \
 ```
 
 Tool call spans follow naming like `tools/call <tool_name>` and include attributes such as `gen_ai.tool.name`, `mcp.method.name`, and `mcp.session.id`. The server supports W3C trace context propagation from the `_meta` field of tool call requests.
-
-Tool call arguments are excluded from spans by default. Pass `--include-args-in-spans` to add them as the `gen_ai.tool.call.arguments` attribute — only enable this in non-production environments or when you're certain the arguments don't contain PII.
 
 ## Enable OpenTelemetry logs
 

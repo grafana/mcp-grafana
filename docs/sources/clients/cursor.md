@@ -7,7 +7,8 @@ keywords:
   - MCP
   - client
 weight: 2
-aliases: []
+aliases:
+  - /docs/grafana-cloud/machine-learning/mcp/clients/cursor/
 ---
 
 # Cursor

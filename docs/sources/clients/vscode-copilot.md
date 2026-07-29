@@ -8,7 +8,8 @@ keywords:
   - MCP
   - client
 weight: 4
-aliases: []
+aliases:
+  - /docs/grafana-cloud/machine-learning/mcp/clients/vscode-copilot/
 ---
 
 # VS Code and GitHub Copilot

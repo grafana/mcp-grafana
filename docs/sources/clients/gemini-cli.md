@@ -8,7 +8,8 @@ keywords:
   - MCP
   - client
 weight: 6
-aliases: []
+aliases:
+  - /docs/grafana-cloud/machine-learning/mcp/clients/gemini-cli/
 ---
 
 # Gemini CLI

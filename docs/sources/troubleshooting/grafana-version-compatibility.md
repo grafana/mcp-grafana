@@ -7,7 +7,8 @@ keywords:
   - compatibility
   - upgrade
 weight: 1
-aliases: []
+aliases:
+  - /docs/grafana-cloud/machine-learning/mcp/troubleshooting/grafana-version-compatibility/
 ---
 
 # Grafana version compatibility

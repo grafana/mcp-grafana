@@ -3,7 +3,8 @@ title: Troubleshooting
 menuTitle: Troubleshooting
 description: Fix common issues when running the Grafana MCP server.
 weight: 50
-aliases: []
+aliases:
+  - /docs/grafana-cloud/machine-learning/mcp/troubleshooting/
 ---
 
 # Troubleshooting

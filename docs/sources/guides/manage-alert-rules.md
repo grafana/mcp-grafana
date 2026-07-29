@@ -8,7 +8,8 @@ keywords:
   - contact points
   - MCP
 weight: 4
-aliases: []
+aliases:
+  - /docs/grafana-cloud/machine-learning/mcp/guides/manage-alert-rules/
 ---
 
 # Manage alert rules

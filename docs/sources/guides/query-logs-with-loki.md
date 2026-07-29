@@ -8,7 +8,8 @@ keywords:
   - logs
   - MCP
 weight: 2
-aliases: []
+aliases:
+  - /docs/grafana-cloud/machine-learning/mcp/guides/query-logs-with-loki/
 ---
 
 # Query logs with Loki

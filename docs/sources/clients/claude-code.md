@@ -8,7 +8,8 @@ keywords:
   - MCP
   - client
 weight: 5
-aliases: []
+aliases:
+  - /docs/grafana-cloud/machine-learning/mcp/clients/claude-code/
 ---
 
 # Claude Code

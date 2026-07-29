@@ -10,7 +10,8 @@ keywords:
   - time series
   - MCP
 weight: 8
-aliases: []
+aliases:
+  - /docs/grafana-cloud/machine-learning/mcp/guides/query-metrics-with-influxdb/
 ---
 
 # Query metrics with InfluxDB

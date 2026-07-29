@@ -9,7 +9,8 @@ keywords:
   - Grafana
   - MCP
 weight: 4
-aliases: []
+aliases:
+  - /docs/grafana-cloud/machine-learning/mcp/configure/client-tls-grafana-connection/
 ---
 
 # Client TLS (Grafana connection)

@@ -9,7 +9,8 @@ keywords:
   - streamable-http
   - MCP
 weight: 2
-aliases: []
+aliases:
+  - /docs/grafana-cloud/machine-learning/mcp/configure/transports-and-addresses/
 ---
 
 # Transports and addresses

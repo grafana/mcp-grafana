@@ -8,7 +8,8 @@ keywords:
   - MCP
   - client
 weight: 7
-aliases: []
+aliases:
+  - /docs/grafana-cloud/machine-learning/mcp/clients/windsurf/
 ---
 
 # Windsurf

@@ -8,7 +8,8 @@ keywords:
   - Tempo
   - datasource
 weight: 4
-aliases: []
+aliases:
+  - /docs/grafana-cloud/machine-learning/mcp/configure/proxied-tools/
 ---
 
 # Proxied tools

@@ -7,7 +7,8 @@ keywords:
   - Kubernetes
   - MCP
 weight: 4
-aliases: []
+aliases:
+  - /docs/grafana-cloud/machine-learning/mcp/set-up/deploy-with-helm/
 ---
 
 # Deploy with Helm

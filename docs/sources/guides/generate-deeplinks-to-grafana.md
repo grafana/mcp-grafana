@@ -8,7 +8,8 @@ keywords:
   - Explore
   - MCP
 weight: 5
-aliases: []
+aliases:
+  - /docs/grafana-cloud/machine-learning/mcp/guides/generate-deeplinks-to-grafana/
 ---
 
 # Generate deeplinks to Grafana

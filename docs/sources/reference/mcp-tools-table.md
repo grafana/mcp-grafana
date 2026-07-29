@@ -8,6 +8,7 @@ keywords:
   - RBAC
 weight: 1
 aliases:
+  - /docs/grafana-cloud/machine-learning/mcp/reference/mcp-tools-table/
   - ../features-and-rbac/
 ---
 
