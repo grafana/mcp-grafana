@@ -258,11 +258,13 @@ func TestCloudGetAlertGroup(t *testing.T) {
 	// First, get a list of alert groups to find a valid ID to test with
 	alertGroups, err := listAlertGroups(ctx, ListAlertGroupsParams{})
 	require.NoError(t, err, "Should not error when listing alert groups")
-	require.NotEmpty(t, alertGroups, "Should have at least one alert group to test with")
-
-	alertGroupID := alertGroups[0].ID
 
 	t.Run("get alert group by ID", func(t *testing.T) {
+		if len(alertGroups) == 0 {
+			t.Skip("No alert groups available in the test instance to fetch by ID")
+		}
+
+		alertGroupID := alertGroups[0].ID
 		result, err := getAlertGroup(ctx, GetAlertGroupParams{
 			AlertGroupID: alertGroupID,
 		})

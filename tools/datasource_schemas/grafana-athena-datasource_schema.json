@@ -1,0 +1,147 @@
+{
+    "schemaVersion": "v1",
+    "pluginType": "grafana-athena-datasource",
+    "pluginName": "Amazon Athena",
+    "docURL": "https://grafana.com/grafana/plugins/grafana-athena-datasource/",
+    "fields": [
+        {
+            "id": "jsonData.authType",
+            "key": "authType",
+            "label": "Authentication Provider",
+            "description": "AWS authentication method.",
+            "valueType": "string",
+            "target": "jsonData",
+            "defaultValue": "default"
+        },
+        {
+            "id": "jsonData.defaultRegion",
+            "key": "defaultRegion",
+            "label": "Default Region",
+            "description": "AWS region for Athena queries.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.assumeRoleArn",
+            "key": "assumeRoleArn",
+            "label": "Assume Role ARN",
+            "description": "ARN of the IAM role to assume.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.externalId",
+            "key": "externalId",
+            "label": "External ID",
+            "description": "External ID for cross-account role assumption.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.profile",
+            "key": "profile",
+            "label": "Credentials Profile Name",
+            "description": "AWS credentials profile name.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.endpoint",
+            "key": "endpoint",
+            "label": "Endpoint",
+            "description": "Optional custom endpoint for Athena.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.catalog",
+            "key": "catalog",
+            "label": "Catalog",
+            "description": "Athena data catalog name.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.database",
+            "key": "database",
+            "label": "Database",
+            "description": "Athena database name.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.workgroup",
+            "key": "workgroup",
+            "label": "Workgroup",
+            "description": "Athena workgroup name.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.outputLocation",
+            "key": "outputLocation",
+            "label": "Output Location",
+            "description": "S3 output location for query results (e.g. s3://bucket/path).",
+            "valueType": "string",
+            "target": "jsonData",
+            "ui": {
+                "component": "input",
+                "placeholder": "s3://bucket/path"
+            }
+        },
+        {
+            "id": "secureJsonData.accessKey",
+            "key": "accessKey",
+            "label": "Access Key ID",
+            "description": "AWS access key ID.",
+            "valueType": "string",
+            "semanticType": "token",
+            "target": "secureJsonData"
+        },
+        {
+            "id": "secureJsonData.secretKey",
+            "key": "secretKey",
+            "label": "Secret Access Key",
+            "description": "AWS secret access key.",
+            "valueType": "string",
+            "semanticType": "token",
+            "target": "secureJsonData"
+        },
+        {
+            "id": "secureJsonData.sessionToken",
+            "key": "sessionToken",
+            "label": "Session Token",
+            "description": "AWS temporary session token.",
+            "valueType": "string",
+            "semanticType": "token",
+            "target": "secureJsonData"
+        }
+    ],
+    "groups": [
+        {
+            "id": "auth",
+            "title": "Authentication",
+            "fieldRefs": [
+                "jsonData.authType",
+                "jsonData.defaultRegion",
+                "jsonData.profile",
+                "jsonData.assumeRoleArn",
+                "jsonData.externalId",
+                "jsonData.endpoint",
+                "secureJsonData.accessKey",
+                "secureJsonData.secretKey",
+                "secureJsonData.sessionToken"
+            ]
+        },
+        {
+            "id": "athena-details",
+            "title": "Athena details",
+            "fieldRefs": [
+                "jsonData.catalog",
+                "jsonData.database",
+                "jsonData.workgroup",
+                "jsonData.outputLocation"
+            ]
+        }
+    ]
+}

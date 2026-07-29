@@ -19,8 +19,10 @@ import (
 // promBackend abstracts the differences between datasource types that support
 // PromQL-compatible queries (native Prometheus, Cloud Monitoring, etc.).
 type promBackend interface {
-	// Query executes a PromQL query (instant or range) and returns the result.
-	Query(ctx context.Context, expr string, queryType string, start, end time.Time, stepSeconds int) (model.Value, error)
+	// Query executes a PromQL query (instant or range) and returns the result
+	// along with any warnings the datasource reported (e.g. partial responses
+	// from a Thanos store).
+	Query(ctx context.Context, expr string, queryType string, start, end time.Time, stepSeconds int) (model.Value, promv1.Warnings, error)
 
 	// LabelNames returns label names, optionally filtered by matchers and time range.
 	LabelNames(ctx context.Context, matchers []string, start, end time.Time) ([]string, error)
@@ -101,27 +103,27 @@ func newPrometheusBackend(ctx context.Context, uid string, ds *models.DataSource
 	return &prometheusBackend{api: promv1.NewAPI(c)}, nil
 }
 
-func (b *prometheusBackend) Query(ctx context.Context, expr string, queryType string, start, end time.Time, stepSeconds int) (model.Value, error) {
+func (b *prometheusBackend) Query(ctx context.Context, expr string, queryType string, start, end time.Time, stepSeconds int) (model.Value, promv1.Warnings, error) {
 	switch queryType {
 	case "range":
 		step := time.Duration(stepSeconds) * time.Second
-		result, _, err := b.api.QueryRange(ctx, expr, promv1.Range{
+		result, warnings, err := b.api.QueryRange(ctx, expr, promv1.Range{
 			Start: start,
 			End:   end,
 			Step:  step,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("querying Prometheus range: %w", err)
+			return nil, nil, fmt.Errorf("querying Prometheus range: %w", err)
 		}
-		return result, nil
+		return result, warnings, nil
 	case "instant":
-		result, _, err := b.api.Query(ctx, expr, end)
+		result, warnings, err := b.api.Query(ctx, expr, end)
 		if err != nil {
-			return nil, fmt.Errorf("querying Prometheus instant: %w", err)
+			return nil, nil, fmt.Errorf("querying Prometheus instant: %w", err)
 		}
-		return result, nil
+		return result, warnings, nil
 	default:
-		return nil, fmt.Errorf("invalid query type: %s", queryType)
+		return nil, nil, fmt.Errorf("invalid query type: %s", queryType)
 	}
 }
 

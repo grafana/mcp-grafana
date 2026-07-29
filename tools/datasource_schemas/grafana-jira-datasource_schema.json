@@ -1,0 +1,178 @@
+{
+    "schemaVersion": "v1",
+    "pluginType": "grafana-jira-datasource",
+    "pluginName": "Jira",
+    "fields": [
+        {
+            "id": "jsonData.url",
+            "key": "url",
+            "label": "URL",
+            "description": "Jira instance URL.",
+            "valueType": "string",
+            "semanticType": "url",
+            "target": "jsonData",
+            "required": true
+        },
+        {
+            "id": "jsonData.hosting",
+            "key": "hosting",
+            "label": "Hosting",
+            "description": "Jira hosting type.",
+            "valueType": "string",
+            "target": "jsonData",
+            "required": true,
+            "validations": [
+                {
+                    "type": "allowedValues",
+                    "values": [
+                        "cloud",
+                        "server"
+                    ]
+                }
+            ],
+            "ui": {
+                "component": "select",
+                "options": [
+                    {
+                        "label": "Cloud",
+                        "value": "cloud"
+                    },
+                    {
+                        "label": "Server / Data Center",
+                        "value": "server"
+                    }
+                ]
+            }
+        },
+        {
+            "id": "jsonData.authMethod",
+            "key": "authMethod",
+            "label": "Authentication Method",
+            "description": "Authentication method to use.",
+            "valueType": "string",
+            "target": "jsonData",
+            "defaultValue": "basicAuth",
+            "validations": [
+                {
+                    "type": "allowedValues",
+                    "values": [
+                        "basicAuth",
+                        "oauth2"
+                    ]
+                }
+            ],
+            "ui": {
+                "component": "select",
+                "options": [
+                    {
+                        "label": "Basic Auth (API Token)",
+                        "value": "basicAuth"
+                    },
+                    {
+                        "label": "OAuth 2.0",
+                        "value": "oauth2"
+                    }
+                ]
+            }
+        },
+        {
+            "id": "jsonData.user",
+            "key": "user",
+            "label": "Email / Username",
+            "description": "Jira user email (Cloud) or username (Server).",
+            "valueType": "string",
+            "target": "jsonData",
+            "dependsOn": "jsonData.authMethod == 'basicAuth'"
+        },
+        {
+            "id": "jsonData.scopedToken",
+            "key": "scopedToken",
+            "label": "Scoped Token",
+            "description": "Use scoped OAuth token.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.cloudId",
+            "key": "cloudId",
+            "label": "Cloud ID",
+            "description": "Jira Cloud site ID for OAuth.",
+            "valueType": "string",
+            "target": "jsonData",
+            "dependsOn": "jsonData.hosting == 'cloud'"
+        },
+        {
+            "id": "jsonData.oauthClientID",
+            "key": "oauthClientID",
+            "label": "OAuth Client ID",
+            "description": "OAuth 2.0 client ID.",
+            "valueType": "string",
+            "target": "jsonData",
+            "dependsOn": "jsonData.authMethod == 'oauth2'"
+        },
+        {
+            "id": "jsonData.enableSecureSocksProxy",
+            "key": "enableSecureSocksProxy",
+            "label": "Secure Socks Proxy",
+            "description": "Enable secure SOCKS proxy.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "secureJsonData.token",
+            "key": "token",
+            "label": "API Token / Password",
+            "description": "Jira API token (Cloud) or password (Server).",
+            "valueType": "string",
+            "target": "secureJsonData",
+            "semanticType": "token",
+            "dependsOn": "jsonData.authMethod == 'basicAuth'"
+        },
+        {
+            "id": "secureJsonData.oauthClientSecret",
+            "key": "oauthClientSecret",
+            "label": "OAuth Client Secret",
+            "description": "OAuth 2.0 client secret.",
+            "valueType": "string",
+            "target": "secureJsonData",
+            "semanticType": "token",
+            "dependsOn": "jsonData.authMethod == 'oauth2'"
+        }
+    ],
+    "groups": [
+        {
+            "id": "connection",
+            "title": "Connection",
+            "fieldRefs": [
+                "jsonData.url",
+                "jsonData.hosting",
+                "jsonData.cloudId"
+            ]
+        },
+        {
+            "id": "auth",
+            "title": "Authentication",
+            "fieldRefs": [
+                "jsonData.authMethod",
+                "jsonData.user",
+                "secureJsonData.token",
+                "jsonData.oauthClientID",
+                "secureJsonData.oauthClientSecret",
+                "jsonData.scopedToken"
+            ]
+        },
+        {
+            "id": "advanced",
+            "title": "Advanced",
+            "fieldRefs": [
+                "jsonData.enableSecureSocksProxy"
+            ]
+        }
+    ]
+}

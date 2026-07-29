@@ -1,0 +1,101 @@
+{
+    "schemaVersion": "v1",
+    "pluginType": "grafana-x-ray-datasource",
+    "pluginName": "AWS X-Ray",
+    "docURL": "https://grafana.com/grafana/plugins/grafana-x-ray-datasource/",
+    "fields": [
+        {
+            "id": "jsonData.authType",
+            "key": "authType",
+            "label": "Authentication Provider",
+            "description": "AWS authentication method.",
+            "valueType": "string",
+            "target": "jsonData",
+            "defaultValue": "default"
+        },
+        {
+            "id": "jsonData.defaultRegion",
+            "key": "defaultRegion",
+            "label": "Default Region",
+            "description": "AWS region.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.assumeRoleArn",
+            "key": "assumeRoleArn",
+            "label": "Assume Role ARN",
+            "description": "ARN of the IAM role to assume.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.externalId",
+            "key": "externalId",
+            "label": "External ID",
+            "description": "External ID for cross-account role assumption.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.profile",
+            "key": "profile",
+            "label": "Credentials Profile Name",
+            "description": "AWS credentials profile name.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.endpoint",
+            "key": "endpoint",
+            "label": "Endpoint",
+            "description": "Optional custom X-Ray endpoint.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "secureJsonData.accessKey",
+            "key": "accessKey",
+            "label": "Access Key ID",
+            "description": "AWS access key ID.",
+            "valueType": "string",
+            "semanticType": "token",
+            "target": "secureJsonData"
+        },
+        {
+            "id": "secureJsonData.secretKey",
+            "key": "secretKey",
+            "label": "Secret Access Key",
+            "description": "AWS secret access key.",
+            "valueType": "string",
+            "semanticType": "token",
+            "target": "secureJsonData"
+        },
+        {
+            "id": "secureJsonData.sessionToken",
+            "key": "sessionToken",
+            "label": "Session Token",
+            "description": "AWS temporary session token.",
+            "valueType": "string",
+            "semanticType": "token",
+            "target": "secureJsonData"
+        }
+    ],
+    "groups": [
+        {
+            "id": "auth",
+            "title": "Authentication",
+            "fieldRefs": [
+                "jsonData.authType",
+                "jsonData.defaultRegion",
+                "jsonData.profile",
+                "jsonData.assumeRoleArn",
+                "jsonData.externalId",
+                "jsonData.endpoint",
+                "secureJsonData.accessKey",
+                "secureJsonData.secretKey",
+                "secureJsonData.sessionToken"
+            ]
+        }
+    ]
+}

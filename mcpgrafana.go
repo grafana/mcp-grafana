@@ -319,8 +319,60 @@ const (
 // WithGrafanaConfig adds Grafana configuration to the context.
 // This configuration includes API credentials, debug settings, and TLS options that will be used by all Grafana clients created from this context.
 func WithGrafanaConfig(ctx context.Context, config GrafanaConfig) context.Context {
-	config.URL = strings.TrimRight(config.URL, "/")
+	config.URL = normalizeGrafanaURL(config.URL)
 	return context.WithValue(ctx, grafanaConfigKey{}, config)
+}
+
+// normalizeGrafanaURL cleans up a configured Grafana URL so that requests built
+// from it are well-formed and don't trip avoidable redirects. It trims
+// surrounding whitespace and trailing slashes, and supplies a scheme when none
+// is provided — a schemeless value like "grafana.example.com" would otherwise
+// be parsed as a relative path and produce broken request URLs. Schemeless
+// local addresses default to http (local Grafana rarely serves TLS); everything
+// else defaults to https. An empty input is returned unchanged.
+func normalizeGrafanaURL(raw string) string {
+	u := strings.TrimRight(strings.TrimSpace(raw), "/")
+	if u == "" {
+		return ""
+	}
+	if !hasScheme(u) {
+		if isLocalHostPort(u) {
+			u = "http://" + u
+		} else {
+			u = "https://" + u
+		}
+	}
+	return u
+}
+
+// hasScheme reports whether u begins with a URL scheme (e.g. "https://"). It
+// looks for "://" in scheme position rather than anywhere in the string, so a
+// schemeless URL whose path or query happens to contain "://" (e.g. a query
+// parameter holding another URL) is still recognised as needing a scheme.
+func hasScheme(u string) bool {
+	i := strings.Index(u, "://")
+	if i <= 0 {
+		return false
+	}
+	// Anything path-, query-, or fragment-like before the "://" means it isn't
+	// a real scheme separator.
+	return !strings.ContainsAny(u[:i], "/?#")
+}
+
+// isLocalHostPort reports whether a schemeless URL points at a local address,
+// e.g. "localhost:3000", "127.0.0.1", or "[::1]:3000".
+func isLocalHostPort(hostPort string) bool {
+	// Drop any path/query so only the host[:port] is inspected.
+	if i := strings.IndexAny(hostPort, "/?"); i >= 0 {
+		hostPort = hostPort[:i]
+	}
+	host := hostPort
+	if h, _, err := net.SplitHostPort(hostPort); err == nil {
+		host = h
+	}
+	host = strings.ToLower(strings.Trim(host, "[]"))
+	return host == "localhost" || strings.HasSuffix(host, ".localhost") ||
+		host == "127.0.0.1" || host == "::1"
 }
 
 // GrafanaConfigFromContext extracts Grafana configuration from the context.
@@ -726,35 +778,62 @@ func extractKeyGrafanaInfoFromEnv(logger *slog.Logger) (url, apiKey string, auth
 }
 
 // Tries to get grafana info from a request.
-// Gets info from environment if it can't get it from request
-func extractKeyGrafanaInfoFromReq(req *http.Request, logger *slog.Logger) (grafanaUrl, apiKey string, auth *url.Userinfo, orgId int64) {
+// Gets info from environment if it can't get it from request.
+//
+// envCredsAllowed reports whether environment-configured credentials were
+// eligible to be used for this request. Environment credentials are bound to the
+// environment-configured Grafana URL: if a request supplies an X-Grafana-URL
+// header pointing at a different instance, environment credentials are withheld
+// so that a caller-controlled URL cannot receive them.
+func extractKeyGrafanaInfoFromReq(req *http.Request, logger *slog.Logger) (grafanaUrl, apiKey string, auth *url.Userinfo, orgId int64, envCredsAllowed bool) {
 	eUrl, eApiKey, eAuth, eOrgId := extractKeyGrafanaInfoFromEnv(logger)
 	username, password, _ := req.BasicAuth()
 
 	grafanaUrl, apiKey = urlAndAPIKeyFromHeaders(req)
-	// If anything is missing, check if we can get it from the environment
+	envCredsAllowed = requestTargetsEnvURL(grafanaUrl, eUrl)
+
+	// If no URL was supplied in the request, use the environment URL.
 	if grafanaUrl == "" {
 		grafanaUrl = eUrl
 	}
 
-	if apiKey == "" {
+	// Fall back to the environment token only when it is bound to the target URL.
+	if apiKey == "" && envCredsAllowed {
 		apiKey = eApiKey
 	}
 
-	// Use environment configured auth if nothing was passed in request
+	// Use request basic auth if supplied; otherwise fall back to the environment
+	// credentials only when they are bound to the target URL.
 	if username == "" && password == "" {
-		auth = eAuth
+		if envCredsAllowed {
+			auth = eAuth
+		}
 	} else {
 		auth = url.UserPassword(username, password)
 	}
 
-	// extract org ID from header, fall back to environment
+	// extract org ID from header, fall back to environment.
+	// The org ID is not a secret, so it is not gated on the target URL.
 	orgId = orgIdFromHeaders(req, logger)
 	if orgId == 0 {
 		orgId = eOrgId
 	}
 
 	return
+}
+
+// requestTargetsEnvURL reports whether a request's X-Grafana-URL points at the
+// same Grafana instance as the environment configuration, meaning it is safe to
+// attach environment-configured credentials. An empty requestURL means the
+// caller did not override the URL, so the environment URL (and its credentials)
+// apply. A non-empty requestURL only matches when it normalizes to the same
+// value as the environment URL; anything else is treated as a foreign target and
+// environment credentials are withheld.
+func requestTargetsEnvURL(requestURL, envURL string) bool {
+	if requestURL == "" {
+		return true
+	}
+	return normalizeGrafanaURL(requestURL) == normalizeGrafanaURL(envURL)
 }
 
 // ExtractGrafanaInfoFromEnv is a StdioContextFunc that extracts Grafana configuration from environment variables.
@@ -796,13 +875,22 @@ var ExtractGrafanaInfoFromHeaders httpContextFunc = func(ctx context.Context, re
 	config := GrafanaConfigFromContext(ctx)
 	logger := config.LoggerOrDefault()
 
-	u, apiKey, basicAuth, orgID := extractKeyGrafanaInfoFromReq(req, logger)
+	u, apiKey, basicAuth, orgID, envCredsAllowed := extractKeyGrafanaInfoFromReq(req, logger)
 
 	config.URL = u
 	config.APIKey = apiKey
 	config.BasicAuth = basicAuth
 	config.OrgID = orgID
-	config.ExtraHeaders = mergeHeaders(extraHeadersFromEnv(logger), forwardedHeadersFromRequest(req))
+
+	// Environment extra headers may carry credentials (e.g. an Authorization
+	// header), so they are bound to the environment-configured URL just like the
+	// service-account token. When a request targets a foreign URL, only headers
+	// the operator explicitly opted to forward (GRAFANA_FORWARD_HEADERS) are sent.
+	var envHeaders map[string]string
+	if envCredsAllowed {
+		envHeaders = extraHeadersFromEnv(logger)
+	}
+	config.ExtraHeaders = mergeHeaders(envHeaders, forwardedHeadersFromRequest(req))
 	return WithGrafanaConfig(ctx, config)
 }
 
@@ -1220,7 +1308,7 @@ var ExtractGrafanaClientFromHeaders httpContextFunc = func(ctx context.Context, 
 	}
 
 	// Extract transport config from request headers, and set it on the context.
-	u, apiKey, basicAuth, _ := extractKeyGrafanaInfoFromReq(req, logger)
+	u, apiKey, basicAuth, _, _ := extractKeyGrafanaInfoFromReq(req, logger)
 	logger.Debug("Creating Grafana client", "url", u, "api_key_set", apiKey != "", "basic_auth_set", basicAuth != nil)
 
 	grafanaClient := NewGrafanaClient(ctx, u, apiKey, basicAuth)
@@ -1322,7 +1410,7 @@ var ExtractIncidentClientFromEnv server.StdioContextFunc = func(ctx context.Cont
 var ExtractIncidentClientFromHeaders httpContextFunc = func(ctx context.Context, req *http.Request) context.Context {
 	config := GrafanaConfigFromContext(ctx)
 	logger := config.LoggerOrDefault()
-	grafanaURL, apiKey, _, orgID := extractKeyGrafanaInfoFromReq(req, logger)
+	grafanaURL, apiKey, _, orgID, _ := extractKeyGrafanaInfoFromReq(req, logger)
 	incidentURL := fmt.Sprintf("%s/api/plugins/grafana-irm-app/resources/api/v1/", grafanaURL)
 	client := incident.NewClient(incidentURL, apiKey)
 

@@ -64,6 +64,7 @@ var categoryDescription = map[string]string{
 	"navigation":    "Navigation: Generate deeplink URLs for Grafana resources like dashboards, panels, and Explore queries, with optional built-in shortening.",
 	"annotations":   "Annotations: Create and manage dashboard annotations.",
 	"rendering":     "Rendering: Export dashboard panels or full dashboards as PNG images (requires Grafana Image Renderer plugin).",
+	"snapshot":      "Snapshots: List, get, create, and delete dashboard snapshots.",
 	"plugin":        "Plugins: Check whether Grafana plugins are installed and fetch plugin details.",
 	"cloudwatch":    "CloudWatch: Query AWS CloudWatch datasources for metrics and logs.",
 	"examples":      "Examples: Query example tools.",
@@ -75,6 +76,7 @@ var categoryDescription = map[string]string{
 	"api":           "API: Make authenticated HTTP requests to any Grafana API endpoint with optional jq-style response filtering.",
 	"config":        "Config: Generate operator-facing configuration snippets (e.g. Alloy label-enforcement pipelines).",
 	"provisioning":  "Provisioning: List provisioning repositories (e.g. git-sync sources) to discover repository slugs for use with rendering tools.",
+	"agento11y":     "Agent Observability: Search and inspect LLM conversations, generations, and evaluation scores from Grafana Agent Observability.",
 }
 
 // disabledTools indicates whether each category of tools should be disabled.
@@ -85,8 +87,9 @@ type disabledTools struct {
 	prometheus, loki, elasticsearch, quickwit, influxdb, alerting,
 	dashboard, folder, oncall, asserts, sift, admin,
 	pyroscope, navigation, proxied, annotations, rendering, cloudwatch, write,
-	examples, clickhouse, snowflake, graphite,
-	runpanelquery, athena, plugin, api, config, provisioning bool
+	snapshot, examples, clickhouse, snowflake, graphite,
+	runpanelquery, athena, plugin, api, config, provisioning,
+	agento11y bool
 }
 
 // Configuration for the Grafana client.
@@ -105,7 +108,7 @@ type grafanaConfig struct {
 }
 
 func (dt *disabledTools) addFlags() {
-	flag.StringVar(&dt.enabledTools, "enabled-tools", "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering,plugin,api,config,provisioning", "A comma separated list of tools enabled for this server. Can be overwritten entirely or by disabling specific components, e.g. --disable-search.")
+	flag.StringVar(&dt.enabledTools, "enabled-tools", "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering,snapshot,plugin,api,config,provisioning", "A comma separated list of tools enabled for this server. Can be overwritten entirely or by disabling specific components, e.g. --disable-search.")
 	flag.BoolVar(&dt.search, "disable-search", false, "Disable search tools")
 	flag.BoolVar(&dt.datasource, "disable-datasource", false, "Disable datasource tools")
 	flag.BoolVar(&dt.incident, "disable-incident", false, "Disable incident tools")
@@ -127,6 +130,7 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.write, "disable-write", false, "Disable write tools (create/update operations)")
 	flag.BoolVar(&dt.annotations, "disable-annotations", false, "Disable annotation tools")
 	flag.BoolVar(&dt.rendering, "disable-rendering", false, "Disable rendering tools (panel/dashboard image export)")
+	flag.BoolVar(&dt.snapshot, "disable-snapshot", false, "Disable snapshot tools")
 	flag.BoolVar(&dt.cloudwatch, "disable-cloudwatch", false, "Disable CloudWatch tools")
 	flag.BoolVar(&dt.examples, "disable-examples", false, "Disable query examples tools")
 	flag.BoolVar(&dt.clickhouse, "disable-clickhouse", false, "Disable ClickHouse tools")
@@ -138,6 +142,7 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.api, "disable-api", false, "Disable API tools")
 	flag.BoolVar(&dt.config, "disable-config", false, "Disable config-generation tools")
 	flag.BoolVar(&dt.provisioning, "disable-provisioning", false, "Disable provisioning tools")
+	flag.BoolVar(&dt.agento11y, "disable-agento11y", false, "Disable Agent Observability tools")
 }
 
 func (gc *grafanaConfig) addFlags() {
@@ -167,7 +172,7 @@ func (dt *disabledTools) toolEntries() []toolEntry {
 	enableWriteTools := !dt.write
 	return []toolEntry{
 		{tools.AddSearchTools, dt.search, "search"},
-		{tools.AddDatasourceTools, dt.datasource, "datasource"},
+		{func(mcp *server.MCPServer) { tools.AddDatasourceTools(mcp, enableWriteTools) }, dt.datasource, "datasource"},
 		{func(mcp *server.MCPServer) { tools.AddIncidentTools(mcp, enableWriteTools) }, dt.incident, "incident"},
 		{tools.AddPrometheusTools, dt.prometheus, "prometheus"},
 		{tools.AddLokiTools, dt.loki, "loki"},
@@ -185,6 +190,7 @@ func (dt *disabledTools) toolEntries() []toolEntry {
 		{func(mcp *server.MCPServer) { tools.AddNavigationTools(mcp, enableWriteTools) }, dt.navigation, "navigation"},
 		{func(mcp *server.MCPServer) { tools.AddAnnotationTools(mcp, enableWriteTools) }, dt.annotations, "annotations"},
 		{tools.AddRenderingTools, dt.rendering, "rendering"},
+		{func(mcp *server.MCPServer) { tools.AddSnapshotTools(mcp, enableWriteTools) }, dt.snapshot, "snapshot"},
 		{tools.AddCloudWatchTools, dt.cloudwatch, "cloudwatch"},
 		{tools.AddExamplesTools, dt.examples, "examples"},
 		{tools.AddClickHouseTools, dt.clickhouse, "clickhouse"},
@@ -196,6 +202,7 @@ func (dt *disabledTools) toolEntries() []toolEntry {
 		{func(mcp *server.MCPServer) { tools.AddAPITools(mcp, enableWriteTools) }, dt.api, "api"},
 		{tools.AddConfigTools, dt.config, "config"},
 		{tools.AddProvisioningTools, dt.provisioning, "provisioning"},
+		{tools.AddAgento11yTools, dt.agento11y, "agento11y"},
 	}
 }
 
@@ -328,6 +335,7 @@ func newServer(transport string, dt disabledTools, obs *observability.Observabil
 	sm.SetMCPServer(s)
 
 	dt.processTools(s)
+	mcpgrafana.RegisterAppResources(s)
 	return s, stm, sm
 }
 
@@ -338,6 +346,58 @@ type tlsConfig struct {
 func (tc *tlsConfig) addFlags() {
 	flag.StringVar(&tc.certFile, "server.tls-cert-file", "", "Path to TLS certificate file for server HTTPS (required for TLS)")
 	flag.StringVar(&tc.keyFile, "server.tls-key-file", "", "Path to TLS private key file for server HTTPS (required for TLS)")
+}
+
+// httpSecurityConfig holds the Host/Origin allowlists enforced on HTTP-based
+// transports. See DNSRebindingProtectionMiddleware for semantics.
+type httpSecurityConfig struct {
+	allowedHosts   string
+	allowedOrigins string
+}
+
+func (hsc *httpSecurityConfig) addFlags() {
+	flag.StringVar(&hsc.allowedHosts, "allowed-hosts", "", "Comma-separated allowlist of Host header values for the HTTP/SSE transports. Defaults to loopback variants of --address. Use \"*\" to disable validation (only safe behind a trusted reverse proxy that rewrites Host).")
+	flag.StringVar(&hsc.allowedOrigins, "allowed-origins", "", "Comma-separated allowlist of Origin header values for the HTTP/SSE transports. Empty (the default) rejects any request that carries an Origin header — appropriate for non-browser MCP clients. Use \"*\" to disable validation.")
+}
+
+// policy resolves the configured flags into a HostOriginPolicy. An
+// --allowed-hosts whose parsed form is empty (unset, "," " , ", etc.) falls
+// back to DefaultAllowedHosts so a malformed value cannot silently disable
+// the Host check.
+func (hsc httpSecurityConfig) policy(address string) mcpgrafana.HostOriginPolicy {
+	hosts := splitAndTrim(hsc.allowedHosts)
+	if len(hosts) == 0 {
+		hosts = mcpgrafana.DefaultAllowedHosts(address)
+	}
+	return mcpgrafana.HostOriginPolicy{
+		AllowedHosts:   hosts,
+		AllowedOrigins: splitAndTrim(hsc.allowedOrigins),
+	}
+}
+
+func (hsc httpSecurityConfig) corsOrigins() []string {
+	if origins := splitAndTrim(hsc.allowedOrigins); len(origins) > 0 {
+		for i, o := range origins {
+			origins[i] = strings.ToLower(o)
+		}
+		return origins
+	}
+	// Sentinel keeps mcp-go's corsConfig.enabled() true so its SSE default
+	// of Access-Control-Allow-Origin: * is suppressed.
+	return []string{"https://mcp-grafana.invalid"}
+}
+
+func splitAndTrim(s string) []string {
+	if s == "" {
+		return nil
+	}
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // httpServer represents a server with Start and Shutdown methods
@@ -403,7 +463,7 @@ func runMetricsServer(addr string, o *observability.Observability) {
 	}
 }
 
-func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt disabledTools, gc mcpgrafana.GrafanaConfig, tls tlsConfig, obs observability.Config, sessionIdleTimeoutMinutes int) error {
+func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt disabledTools, gc mcpgrafana.GrafanaConfig, tls tlsConfig, hsc httpSecurityConfig, obs observability.Config, sessionIdleTimeoutMinutes int) error {
 	stderrHandler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})
 	slog.SetDefault(slog.New(stderrHandler))
 
@@ -428,6 +488,12 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		// the startup signal. If the first OTLP batch fails, the stderr branch
 		// of the fanout still lands the record.
 		slog.Info("OTLP log export configured", "endpoint", observability.OTLPLogsEndpoint())
+	}
+
+	// Announced after the log fanout so this line is itself exported when both
+	// signals are on.
+	if o.TracerProvider() != nil {
+		slog.Info("OTLP trace export configured", "endpoint", observability.OTLPTracesEndpoint())
 	}
 
 	// Create a client cache for HTTP-based transports to avoid per-request
@@ -491,6 +557,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 			server.WithSSEContextFunc(mcpgrafana.ComposedSSEContextFunc(gc, clientCache)),
 			server.WithStaticBasePath(basePath),
 			server.WithHTTPServer(httpSrv),
+			server.WithSSECORS(server.WithCORSAllowedOrigins(hsc.corsOrigins()...)),
 		)
 		mux := http.NewServeMux()
 		if basePath == "" {
@@ -508,7 +575,8 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 				go runMetricsServer(obs.MetricsAddress, o)
 			}
 		}
-		httpSrv.Handler = mux
+		// Wrap the full mux so /healthz and /metrics are validated too.
+		httpSrv.Handler = mcpgrafana.DNSRebindingProtectionMiddleware(hsc.policy(addr))(mux)
 		slog.Info("Starting Grafana MCP server using SSE transport",
 			"version", mcpgrafana.Version(), "address", addr, "basePath", basePath, "metrics", obs.MetricsEnabled)
 		return runHTTPServer(ctx, srv, addr, "SSE")
@@ -519,6 +587,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 			server.WithStateLess(dt.proxied), // Stateful when proxied tools enabled (requires sessions)
 			server.WithEndpointPath(endpointPath),
 			server.WithStreamableHTTPServer(httpSrv),
+			server.WithStreamableHTTPCORS(server.WithCORSAllowedOrigins(hsc.corsOrigins()...)),
 		}
 		if tls.certFile != "" || tls.keyFile != "" {
 			opts = append(opts, server.WithTLSCert(tls.certFile, tls.keyFile))
@@ -537,7 +606,8 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 				go runMetricsServer(obs.MetricsAddress, o)
 			}
 		}
-		httpSrv.Handler = mux
+		// Wrap the full mux so /healthz and /metrics are validated too.
+		httpSrv.Handler = mcpgrafana.DNSRebindingProtectionMiddleware(hsc.policy(addr))(mux)
 		slog.Info("Starting Grafana MCP server using StreamableHTTP transport",
 			"version", mcpgrafana.Version(), "address", addr, "endpointPath", endpointPath, "metrics", obs.MetricsEnabled)
 		return runHTTPServer(ctx, srv, addr, "StreamableHTTP")
@@ -567,6 +637,8 @@ func main() {
 	gc.addFlags()
 	var tls tlsConfig
 	tls.addFlags()
+	var hsc httpSecurityConfig
+	hsc.addFlags()
 	var obs observability.Config
 	flag.BoolVar(&obs.MetricsEnabled, "metrics", false, "Enable Prometheus metrics endpoint")
 	flag.StringVar(&obs.MetricsAddress, "metrics-address", "", "Separate address for metrics server (e.g., :9090). If empty, metrics are served on the main server at /metrics")
@@ -622,7 +694,7 @@ func main() {
 		level = slog.LevelDebug
 	}
 
-	if err := run(transport, *addr, *basePath, *endpointPath, level, dt, grafanaConfig, tls, obs, *sessionIdleTimeoutMinutes); err != nil {
+	if err := run(transport, *addr, *basePath, *endpointPath, level, dt, grafanaConfig, tls, hsc, obs, *sessionIdleTimeoutMinutes); err != nil {
 		panic(err)
 	}
 }

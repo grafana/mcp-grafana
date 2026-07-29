@@ -1,0 +1,34 @@
+{
+    "schemaVersion": "v1",
+    "pluginType": "marcusolsson-csv-datasource",
+    "pluginName": "CSV",
+    "docURL": "https://grafana.com/grafana/plugins/marcusolsson-csv-datasource/",
+    "fields": [
+        {
+            "id": "jsonData.storage",
+            "key": "storage",
+            "label": "Storage",
+            "description": "Data storage type (local or http).",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.queryParams",
+            "key": "queryParams",
+            "label": "Query Parameters",
+            "description": "Additional query parameters for HTTP requests.",
+            "valueType": "string",
+            "target": "jsonData"
+        }
+    ],
+    "groups": [
+        {
+            "id": "settings",
+            "title": "Settings",
+            "fieldRefs": [
+                "jsonData.storage",
+                "jsonData.queryParams"
+            ]
+        }
+    ]
+}

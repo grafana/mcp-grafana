@@ -1,0 +1,1232 @@
+{
+    "schemaVersion": "v1",
+    "pluginType": "grafana-clickhouse-datasource",
+    "pluginName": "ClickHouse",
+    "docURL": "https://grafana.com/grafana/plugins/grafana-clickhouse-datasource/",
+    "fields": [
+        {
+            "id": "jsonData.host",
+            "key": "host",
+            "label": "Server address",
+            "description": "ClickHouse host address.",
+            "valueType": "string",
+            "target": "jsonData",
+            "required": true,
+            "storage": {
+                "type": "computed",
+                "read": "jsonData.server"
+            },
+            "ui": {
+                "component": "input",
+                "placeholder": "Server address"
+            }
+        },
+        {
+            "id": "jsonData.port",
+            "key": "port",
+            "label": "Server port",
+            "description": "ClickHouse server port.",
+            "valueType": "number",
+            "target": "jsonData",
+            "required": true,
+            "defaultValue": 9000,
+            "overrides": [
+                {
+                    "when": "jsonData.protocol == 'native'",
+                    "description": "ClickHouse server port (default for native: 9000).",
+                    "defaultValue": 9000
+                },
+                {
+                    "when": "jsonData.protocol == 'http'",
+                    "description": "ClickHouse server port (default for http: 8123).",
+                    "defaultValue": 8123
+                }
+            ]
+        },
+        {
+            "id": "jsonData.protocol",
+            "key": "protocol",
+            "label": "Protocol",
+            "description": "Native or HTTP for server protocol. Native uses ClickHouse's binary TCP interface for better performance.",
+            "valueType": "string",
+            "target": "jsonData",
+            "required": true,
+            "defaultValue": "native",
+            "validations": [
+                {
+                    "type": "allowedValues",
+                    "values": [
+                        "native",
+                        "http"
+                    ]
+                }
+            ],
+            "ui": {
+                "component": "radio",
+                "options": [
+                    {
+                        "label": "Native",
+                        "value": "native"
+                    },
+                    {
+                        "label": "HTTP",
+                        "value": "http"
+                    }
+                ]
+            }
+        },
+        {
+            "id": "jsonData.username",
+            "key": "username",
+            "label": "Username",
+            "description": "ClickHouse username. We recommend configuring a read-only user.",
+            "valueType": "string",
+            "target": "jsonData",
+            "ui": {
+                "component": "input",
+                "placeholder": "default"
+            }
+        },
+        {
+            "id": "jsonData.version",
+            "key": "version",
+            "label": "Plugin version",
+            "description": "Plugin version this config was saved with.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.secure",
+            "key": "secure",
+            "label": "Secure connection",
+            "description": "Enable when your ClickHouse server uses TLS. Update the port to a TLS-enabled port when enabled.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.path",
+            "key": "path",
+            "label": "HTTP URL Path",
+            "description": "Additional URL path for HTTP requests. Default: /",
+            "valueType": "string",
+            "target": "jsonData",
+            "dependsOn": "jsonData.protocol == 'http'",
+            "ui": {
+                "component": "input",
+                "placeholder": "additional-path"
+            }
+        },
+        {
+            "id": "jsonData.tlsSkipVerify",
+            "key": "tlsSkipVerify",
+            "label": "Skip TLS Verify",
+            "description": "Skip TLS certificate verification.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.tlsAuth",
+            "key": "tlsAuth",
+            "label": "TLS Client Auth",
+            "description": "Enable TLS client certificate authentication.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.tlsAuthWithCACert",
+            "key": "tlsAuthWithCACert",
+            "label": "With CA Cert",
+            "description": "Provide a CA certificate for TLS verification.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.defaultDatabase",
+            "key": "defaultDatabase",
+            "label": "Default database",
+            "description": "The default database used by the query builder.",
+            "valueType": "string",
+            "target": "jsonData",
+            "ui": {
+                "component": "input",
+                "placeholder": "default"
+            }
+        },
+        {
+            "id": "jsonData.defaultTable",
+            "key": "defaultTable",
+            "label": "Default table",
+            "description": "The default table used by the query builder.",
+            "valueType": "string",
+            "target": "jsonData",
+            "ui": {
+                "component": "input",
+                "placeholder": "table"
+            }
+        },
+        {
+            "id": "jsonData.connMaxLifetime",
+            "key": "connMaxLifetime",
+            "label": "Connection Max Lifetime (minutes)",
+            "description": "Maximum lifetime of a connection in minutes.",
+            "valueType": "string",
+            "target": "jsonData",
+            "ui": {
+                "component": "input",
+                "placeholder": "5"
+            }
+        },
+        {
+            "id": "jsonData.dialTimeout",
+            "key": "dialTimeout",
+            "label": "Dial Timeout (seconds)",
+            "description": "Timeout in seconds for establishing a connection. Default: 10.",
+            "valueType": "string",
+            "target": "jsonData",
+            "defaultValue": "10",
+            "ui": {
+                "component": "input",
+                "placeholder": "10"
+            }
+        },
+        {
+            "id": "jsonData.maxIdleConns",
+            "key": "maxIdleConns",
+            "label": "Max Idle Connections",
+            "description": "Maximum number of idle connections.",
+            "valueType": "string",
+            "target": "jsonData",
+            "ui": {
+                "component": "input",
+                "placeholder": "25"
+            }
+        },
+        {
+            "id": "jsonData.maxOpenConns",
+            "key": "maxOpenConns",
+            "label": "Max Open Connections",
+            "description": "Maximum number of open connections.",
+            "valueType": "string",
+            "target": "jsonData",
+            "ui": {
+                "component": "input",
+                "placeholder": "50"
+            }
+        },
+        {
+            "id": "jsonData.queryTimeout",
+            "key": "queryTimeout",
+            "label": "Query Timeout (seconds)",
+            "description": "Timeout in seconds for read queries. Default: 60.",
+            "valueType": "string",
+            "target": "jsonData",
+            "defaultValue": "60",
+            "ui": {
+                "component": "input",
+                "placeholder": "60"
+            }
+        },
+        {
+            "id": "jsonData.validateSql",
+            "key": "validateSql",
+            "label": "Validate SQL",
+            "description": "Validate SQL in the editor.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.forwardGrafanaHeaders",
+            "key": "forwardGrafanaHeaders",
+            "label": "Forward Grafana HTTP Headers",
+            "description": "Forward Grafana HTTP Headers to datasource.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "dependsOn": "jsonData.protocol == 'http'",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.enableRowLimit",
+            "key": "enableRowLimit",
+            "label": "Enable row limit",
+            "description": "Enable using the Grafana row limit setting to limit the number of rows returned from ClickHouse. Only supported for Grafana >= 11.0.0.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "secureJsonData.password",
+            "key": "password",
+            "label": "Password",
+            "description": "ClickHouse user password.",
+            "valueType": "string",
+            "semanticType": "password",
+            "target": "secureJsonData"
+        },
+        {
+            "id": "secureJsonData.tlsCACert",
+            "key": "tlsCACert",
+            "label": "CA Cert",
+            "description": "PEM-encoded CA certificate.",
+            "valueType": "string",
+            "target": "secureJsonData",
+            "dependsOn": "jsonData.tlsAuthWithCACert == true",
+            "ui": {
+                "component": "textarea",
+                "rows": 7
+            }
+        },
+        {
+            "id": "secureJsonData.tlsClientCert",
+            "key": "tlsClientCert",
+            "label": "Client Cert",
+            "description": "PEM-encoded client certificate.",
+            "valueType": "string",
+            "target": "secureJsonData",
+            "dependsOn": "jsonData.tlsAuth == true",
+            "ui": {
+                "component": "textarea",
+                "rows": 7
+            }
+        },
+        {
+            "id": "secureJsonData.tlsClientKey",
+            "key": "tlsClientKey",
+            "label": "Client Key",
+            "description": "PEM-encoded client private key.",
+            "valueType": "string",
+            "semanticType": "token",
+            "target": "secureJsonData",
+            "dependsOn": "jsonData.tlsAuth == true",
+            "ui": {
+                "component": "textarea",
+                "rows": 7
+            }
+        },
+        {
+            "id": "jsonData.logs.defaultDatabase",
+            "key": "defaultDatabase",
+            "label": "Default log database",
+            "description": "The default database used by the logs query builder.",
+            "valueType": "string",
+            "target": "jsonData",
+            "section": "logs",
+            "ui": {
+                "component": "input",
+                "placeholder": "default"
+            }
+        },
+        {
+            "id": "jsonData.logs.defaultTable",
+            "key": "defaultTable",
+            "label": "Default log table",
+            "description": "The default table used by the logs query builder.",
+            "valueType": "string",
+            "target": "jsonData",
+            "section": "logs",
+            "defaultValue": "otel_logs",
+            "ui": {
+                "component": "input",
+                "placeholder": "otel_logs"
+            }
+        },
+        {
+            "id": "jsonData.logs.otelEnabled",
+            "key": "otelEnabled",
+            "label": "Use OTel",
+            "description": "Enable OpenTelemetry schema versioning for log column mappings.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "section": "logs",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.logs.otelVersion",
+            "key": "otelVersion",
+            "label": "OTel version",
+            "description": "OpenTelemetry schema version for log columns. Select the version that matches your OTel ClickHouse exporter.",
+            "valueType": "string",
+            "target": "jsonData",
+            "section": "logs",
+            "defaultValue": "latest",
+            "dependsOn": "jsonData.logs.otelEnabled == true",
+            "validations": [
+                {
+                    "type": "allowedValues",
+                    "values": [
+                        "latest",
+                        "1.29.0"
+                    ]
+                }
+            ],
+            "ui": {
+                "component": "select",
+                "options": [
+                    {
+                        "label": "latest (1.2.9)",
+                        "value": "latest"
+                    },
+                    {
+                        "label": "1.2.9",
+                        "value": "1.29.0"
+                    }
+                ]
+            }
+        },
+        {
+            "id": "jsonData.logs.filterTimeColumn",
+            "key": "filterTimeColumn",
+            "label": "Filter Time column",
+            "description": "Column for time-based partition filtering (lower precision).",
+            "valueType": "string",
+            "target": "jsonData",
+            "section": "logs",
+            "ui": {
+                "component": "input",
+                "placeholder": "filter_time_column"
+            },
+            "overrides": [
+                {
+                    "when": "jsonData.logs.otelEnabled == true",
+                    "readOnly": true,
+                    "description": "Set by OTel schema version",
+                    "placeholder": "TimestampTime"
+                }
+            ]
+        },
+        {
+            "id": "jsonData.logs.timeColumn",
+            "key": "timeColumn",
+            "label": "Time column",
+            "description": "Column for the log timestamp.",
+            "valueType": "string",
+            "target": "jsonData",
+            "section": "logs",
+            "ui": {
+                "component": "input",
+                "placeholder": "time_column"
+            },
+            "overrides": [
+                {
+                    "when": "jsonData.logs.otelEnabled == true",
+                    "readOnly": true,
+                    "description": "Set by OTel schema version",
+                    "placeholder": "Timestamp"
+                }
+            ]
+        },
+        {
+            "id": "jsonData.logs.levelColumn",
+            "key": "levelColumn",
+            "label": "Log Level column",
+            "description": "Column for the log level.",
+            "valueType": "string",
+            "target": "jsonData",
+            "section": "logs",
+            "ui": {
+                "component": "input",
+                "placeholder": "log_level_column"
+            },
+            "overrides": [
+                {
+                    "when": "jsonData.logs.otelEnabled == true",
+                    "readOnly": true,
+                    "description": "Set by OTel schema version",
+                    "placeholder": "SeverityText"
+                }
+            ]
+        },
+        {
+            "id": "jsonData.logs.messageColumn",
+            "key": "messageColumn",
+            "label": "Log Message column",
+            "description": "Column for the log message body.",
+            "valueType": "string",
+            "target": "jsonData",
+            "section": "logs",
+            "ui": {
+                "component": "input",
+                "placeholder": "log_message_column"
+            },
+            "overrides": [
+                {
+                    "when": "jsonData.logs.otelEnabled == true",
+                    "readOnly": true,
+                    "description": "Set by OTel schema version",
+                    "placeholder": "Body"
+                }
+            ]
+        },
+        {
+            "id": "jsonData.logs.showLogLinks",
+            "key": "showLogLinks",
+            "label": "Show \"View logs\" links",
+            "description": "Show \"View logs\" links on trace_id fields for log-to-trace correlation.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "section": "logs",
+            "defaultValue": true,
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.logs.selectContextColumns",
+            "key": "selectContextColumns",
+            "label": "Auto-Select Columns",
+            "description": "When enabled, always include context columns in log queries.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "section": "logs",
+            "defaultValue": true,
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.logs.contextColumns",
+            "key": "contextColumns",
+            "label": "Context Columns",
+            "description": "Column names used for identifying a log's source context.",
+            "valueType": "array",
+            "target": "jsonData",
+            "section": "logs",
+            "item": {
+                "valueType": "string"
+            }
+        },
+        {
+            "id": "jsonData.traces.defaultDatabase",
+            "key": "defaultDatabase",
+            "label": "Default trace database",
+            "description": "The default database used by the trace query builder.",
+            "valueType": "string",
+            "target": "jsonData",
+            "section": "traces",
+            "ui": {
+                "component": "input",
+                "placeholder": "default"
+            }
+        },
+        {
+            "id": "jsonData.traces.defaultTable",
+            "key": "defaultTable",
+            "label": "Default trace table",
+            "description": "The default table used by the trace query builder.",
+            "valueType": "string",
+            "target": "jsonData",
+            "section": "traces",
+            "defaultValue": "otel_traces",
+            "ui": {
+                "component": "input",
+                "placeholder": "otel_traces"
+            }
+        },
+        {
+            "id": "jsonData.traces.otelEnabled",
+            "key": "otelEnabled",
+            "label": "Use OTel",
+            "description": "Enable OpenTelemetry schema versioning for trace column mappings.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "section": "traces",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.traces.otelVersion",
+            "key": "otelVersion",
+            "label": "OTel version",
+            "description": "OpenTelemetry schema version for trace columns. Select the version that matches your OTel ClickHouse exporter.",
+            "valueType": "string",
+            "target": "jsonData",
+            "section": "traces",
+            "defaultValue": "latest",
+            "dependsOn": "jsonData.traces.otelEnabled == true",
+            "validations": [
+                {
+                    "type": "allowedValues",
+                    "values": [
+                        "latest",
+                        "1.29.0"
+                    ]
+                }
+            ],
+            "ui": {
+                "component": "select",
+                "options": [
+                    {
+                        "label": "latest (1.2.9)",
+                        "value": "latest"
+                    },
+                    {
+                        "label": "1.2.9",
+                        "value": "1.29.0"
+                    }
+                ]
+            }
+        },
+        {
+            "id": "jsonData.traces.traceIdColumn",
+            "key": "traceIdColumn",
+            "label": "Trace ID column",
+            "description": "Column for the trace ID.",
+            "valueType": "string",
+            "target": "jsonData",
+            "section": "traces",
+            "ui": {
+                "component": "input",
+                "placeholder": "trace_id_column"
+            },
+            "overrides": [
+                {
+                    "when": "jsonData.traces.otelEnabled == true",
+                    "readOnly": true,
+                    "description": "Set by OTel schema version",
+                    "placeholder": "TraceId"
+                }
+            ]
+        },
+        {
+            "id": "jsonData.traces.spanIdColumn",
+            "key": "spanIdColumn",
+            "label": "Span ID column",
+            "description": "Column for the span ID.",
+            "valueType": "string",
+            "target": "jsonData",
+            "section": "traces",
+            "ui": {
+                "component": "input",
+                "placeholder": "span_id_column"
+            },
+            "overrides": [
+                {
+                    "when": "jsonData.traces.otelEnabled == true",
+                    "readOnly": true,
+                    "description": "Set by OTel schema version",
+                    "placeholder": "SpanId"
+                }
+            ]
+        },
+        {
+            "id": "jsonData.traces.operationNameColumn",
+            "key": "operationNameColumn",
+            "label": "Operation Name column",
+            "description": "Column for the operation/span name.",
+            "valueType": "string",
+            "target": "jsonData",
+            "section": "traces",
+            "ui": {
+                "component": "input",
+                "placeholder": "operation_name_column"
+            },
+            "overrides": [
+                {
+                    "when": "jsonData.traces.otelEnabled == true",
+                    "readOnly": true,
+                    "description": "Set by OTel schema version",
+                    "placeholder": "SpanName"
+                }
+            ]
+        },
+        {
+            "id": "jsonData.traces.parentSpanIdColumn",
+            "key": "parentSpanIdColumn",
+            "label": "Parent Span ID column",
+            "description": "Column for the parent span ID.",
+            "valueType": "string",
+            "target": "jsonData",
+            "section": "traces",
+            "ui": {
+                "component": "input",
+                "placeholder": "parent_span_id_column"
+            },
+            "overrides": [
+                {
+                    "when": "jsonData.traces.otelEnabled == true",
+                    "readOnly": true,
+                    "description": "Set by OTel schema version",
+                    "placeholder": "ParentSpanId"
+                }
+            ]
+        },
+        {
+            "id": "jsonData.traces.serviceNameColumn",
+            "key": "serviceNameColumn",
+            "label": "Service Name column",
+            "description": "Column for the service name.",
+            "valueType": "string",
+            "target": "jsonData",
+            "section": "traces",
+            "ui": {
+                "component": "input",
+                "placeholder": "service_name_column"
+            },
+            "overrides": [
+                {
+                    "when": "jsonData.traces.otelEnabled == true",
+                    "readOnly": true,
+                    "description": "Set by OTel schema version",
+                    "placeholder": "ServiceName"
+                }
+            ]
+        },
+        {
+            "id": "jsonData.traces.durationColumn",
+            "key": "durationColumn",
+            "label": "Duration Time column",
+            "description": "Column for the span duration.",
+            "valueType": "string",
+            "target": "jsonData",
+            "section": "traces",
+            "ui": {
+                "component": "input",
+                "placeholder": "duration_time_column"
+            },
+            "overrides": [
+                {
+                    "when": "jsonData.traces.otelEnabled == true",
+                    "readOnly": true,
+                    "description": "Set by OTel schema version",
+                    "placeholder": "Duration"
+                }
+            ]
+        },
+        {
+            "id": "jsonData.traces.durationUnit",
+            "key": "durationUnit",
+            "label": "Duration Unit",
+            "description": "The unit of time used for the duration column.",
+            "valueType": "string",
+            "target": "jsonData",
+            "section": "traces",
+            "defaultValue": "nanoseconds",
+            "validations": [
+                {
+                    "type": "allowedValues",
+                    "values": [
+                        "seconds",
+                        "milliseconds",
+                        "microseconds",
+                        "nanoseconds"
+                    ]
+                }
+            ],
+            "ui": {
+                "component": "select",
+                "options": [
+                    {
+                        "label": "Seconds",
+                        "value": "seconds"
+                    },
+                    {
+                        "label": "Milliseconds",
+                        "value": "milliseconds"
+                    },
+                    {
+                        "label": "Microseconds",
+                        "value": "microseconds"
+                    },
+                    {
+                        "label": "Nanoseconds",
+                        "value": "nanoseconds"
+                    }
+                ]
+            }
+        },
+        {
+            "id": "jsonData.traces.startTimeColumn",
+            "key": "startTimeColumn",
+            "label": "Start Time column",
+            "description": "Column for the span start time.",
+            "valueType": "string",
+            "target": "jsonData",
+            "section": "traces",
+            "ui": {
+                "component": "input",
+                "placeholder": "start_time_column"
+            },
+            "overrides": [
+                {
+                    "when": "jsonData.traces.otelEnabled == true",
+                    "readOnly": true,
+                    "description": "Set by OTel schema version",
+                    "placeholder": "Timestamp"
+                }
+            ]
+        },
+        {
+            "id": "jsonData.traces.tagsColumn",
+            "key": "tagsColumn",
+            "label": "Tags column",
+            "description": "Column for the span attributes/tags.",
+            "valueType": "string",
+            "target": "jsonData",
+            "section": "traces",
+            "ui": {
+                "component": "input",
+                "placeholder": "tags_column"
+            },
+            "overrides": [
+                {
+                    "when": "jsonData.traces.otelEnabled == true",
+                    "readOnly": true,
+                    "description": "Set by OTel schema version",
+                    "placeholder": "SpanAttributes"
+                }
+            ]
+        },
+        {
+            "id": "jsonData.traces.serviceTagsColumn",
+            "key": "serviceTagsColumn",
+            "label": "Service Tags column",
+            "description": "Column for the resource/service attributes.",
+            "valueType": "string",
+            "target": "jsonData",
+            "section": "traces",
+            "ui": {
+                "component": "input",
+                "placeholder": "service_tags_column"
+            },
+            "overrides": [
+                {
+                    "when": "jsonData.traces.otelEnabled == true",
+                    "readOnly": true,
+                    "description": "Set by OTel schema version",
+                    "placeholder": "ResourceAttributes"
+                }
+            ]
+        },
+        {
+            "id": "jsonData.traces.kindColumn",
+            "key": "kindColumn",
+            "label": "Kind column",
+            "description": "Column for the span kind.",
+            "valueType": "string",
+            "target": "jsonData",
+            "section": "traces",
+            "ui": {
+                "component": "input",
+                "placeholder": "kind_column"
+            },
+            "overrides": [
+                {
+                    "when": "jsonData.traces.otelEnabled == true",
+                    "readOnly": true,
+                    "description": "Set by OTel schema version",
+                    "placeholder": "SpanKind"
+                }
+            ]
+        },
+        {
+            "id": "jsonData.traces.statusCodeColumn",
+            "key": "statusCodeColumn",
+            "label": "Status Code column",
+            "description": "Column for the span status code.",
+            "valueType": "string",
+            "target": "jsonData",
+            "section": "traces",
+            "ui": {
+                "component": "input",
+                "placeholder": "status_code_column"
+            },
+            "overrides": [
+                {
+                    "when": "jsonData.traces.otelEnabled == true",
+                    "readOnly": true,
+                    "description": "Set by OTel schema version",
+                    "placeholder": "StatusCode"
+                }
+            ]
+        },
+        {
+            "id": "jsonData.traces.statusMessageColumn",
+            "key": "statusMessageColumn",
+            "label": "Status Message column",
+            "description": "Column for the span status message.",
+            "valueType": "string",
+            "target": "jsonData",
+            "section": "traces",
+            "ui": {
+                "component": "input",
+                "placeholder": "status_message_column"
+            },
+            "overrides": [
+                {
+                    "when": "jsonData.traces.otelEnabled == true",
+                    "readOnly": true,
+                    "description": "Set by OTel schema version",
+                    "placeholder": "StatusMessage"
+                }
+            ]
+        },
+        {
+            "id": "jsonData.traces.stateColumn",
+            "key": "stateColumn",
+            "label": "State column",
+            "description": "Column for the trace state.",
+            "valueType": "string",
+            "target": "jsonData",
+            "section": "traces",
+            "ui": {
+                "component": "input",
+                "placeholder": "state_column"
+            },
+            "overrides": [
+                {
+                    "when": "jsonData.traces.otelEnabled == true",
+                    "readOnly": true,
+                    "description": "Set by OTel schema version",
+                    "placeholder": "TraceState"
+                }
+            ]
+        },
+        {
+            "id": "jsonData.traces.instrumentationLibraryNameColumn",
+            "key": "instrumentationLibraryNameColumn",
+            "label": "Library Name column",
+            "description": "Column for the instrumentation library name.",
+            "valueType": "string",
+            "target": "jsonData",
+            "section": "traces",
+            "ui": {
+                "component": "input",
+                "placeholder": "library_name_column"
+            }
+        },
+        {
+            "id": "jsonData.traces.instrumentationLibraryVersionColumn",
+            "key": "instrumentationLibraryVersionColumn",
+            "label": "Library Version column",
+            "description": "Column for the instrumentation library version.",
+            "valueType": "string",
+            "target": "jsonData",
+            "section": "traces",
+            "ui": {
+                "component": "input",
+                "placeholder": "library_version_column"
+            }
+        },
+        {
+            "id": "jsonData.traces.flattenNested",
+            "key": "flattenNested",
+            "label": "Use Flatten Nested",
+            "description": "Enable if your traces table was created with flatten_nested=1.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "section": "traces",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.traces.traceEventsColumnPrefix",
+            "key": "traceEventsColumnPrefix",
+            "label": "Events prefix",
+            "description": "Prefix for the events columns (Events.Timestamp, Events.Name, etc.).",
+            "valueType": "string",
+            "target": "jsonData",
+            "section": "traces",
+            "defaultValue": "Events",
+            "ui": {
+                "component": "input",
+                "placeholder": "events_prefix"
+            }
+        },
+        {
+            "id": "jsonData.traces.traceLinksColumnPrefix",
+            "key": "traceLinksColumnPrefix",
+            "label": "Links prefix",
+            "description": "Prefix for the links columns (Links.TraceId, Links.TraceState, etc.).",
+            "valueType": "string",
+            "target": "jsonData",
+            "section": "traces",
+            "defaultValue": "Links",
+            "ui": {
+                "component": "input",
+                "placeholder": "links_prefix"
+            }
+        },
+        {
+            "id": "jsonData.traces.showTraceLinks",
+            "key": "showTraceLinks",
+            "label": "Show \"View trace\" links",
+            "description": "Show \"View trace\" links on trace_id fields for trace correlation.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "section": "traces",
+            "defaultValue": true,
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.aliasTables",
+            "key": "aliasTables",
+            "label": "Column Alias Tables",
+            "description": "Alias tables with (alias String, select String, type String) schema for column selection.",
+            "valueType": "array",
+            "target": "jsonData",
+            "item": {
+                "valueType": "object",
+                "fields": [
+                    {
+                        "id": "aliasTables.item.targetDatabase",
+                        "key": "targetDatabase",
+                        "label": "Target Database",
+                        "description": "Database name of the target table.",
+                        "valueType": "string",
+                        "isItemField": true,
+                        "ui": {
+                            "component": "input",
+                            "placeholder": "(optional)"
+                        }
+                    },
+                    {
+                        "id": "aliasTables.item.targetTable",
+                        "key": "targetTable",
+                        "label": "Target Table",
+                        "description": "Name of the target table.",
+                        "valueType": "string",
+                        "isItemField": true,
+                        "required": true,
+                        "ui": {
+                            "component": "input",
+                            "placeholder": "Target Table"
+                        }
+                    },
+                    {
+                        "id": "aliasTables.item.aliasDatabase",
+                        "key": "aliasDatabase",
+                        "label": "Alias Database",
+                        "description": "Database name of the alias table.",
+                        "valueType": "string",
+                        "isItemField": true,
+                        "ui": {
+                            "component": "input",
+                            "placeholder": "(optional)"
+                        }
+                    },
+                    {
+                        "id": "aliasTables.item.aliasTable",
+                        "key": "aliasTable",
+                        "label": "Alias Table",
+                        "description": "Name of the alias table.",
+                        "valueType": "string",
+                        "isItemField": true,
+                        "required": true,
+                        "ui": {
+                            "component": "input",
+                            "placeholder": "Alias Table"
+                        }
+                    }
+                ]
+            }
+        },
+        {
+            "id": "jsonData.customSettings",
+            "key": "customSettings",
+            "label": "Custom Settings",
+            "description": "Key-value pairs appended to each query's SETTINGS clause.",
+            "valueType": "array",
+            "target": "jsonData",
+            "item": {
+                "valueType": "object",
+                "fields": [
+                    {
+                        "id": "customSettings.item.setting",
+                        "key": "setting",
+                        "label": "Setting",
+                        "description": "ClickHouse SETTINGS key name.",
+                        "valueType": "string",
+                        "isItemField": true,
+                        "required": true,
+                        "ui": {
+                            "component": "input",
+                            "placeholder": "Setting"
+                        }
+                    },
+                    {
+                        "id": "customSettings.item.value",
+                        "key": "value",
+                        "label": "Value",
+                        "description": "Value for the ClickHouse setting.",
+                        "valueType": "string",
+                        "isItemField": true,
+                        "required": true,
+                        "ui": {
+                            "component": "input",
+                            "placeholder": "Value"
+                        }
+                    }
+                ]
+            }
+        },
+        {
+            "id": "jsonData.hideTableNameInAdhocFilters",
+            "key": "hideTableNameInAdhocFilters",
+            "label": "Hide table name in ad hoc filters",
+            "description": "Show only column names in ad hoc filter keys instead of the full table.column format.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        }
+    ],
+    "groups": [
+        {
+            "id": "server",
+            "title": "Server",
+            "fieldRefs": [
+                "jsonData.host",
+                "jsonData.port",
+                "jsonData.protocol",
+                "jsonData.secure",
+                "jsonData.path"
+            ]
+        },
+        {
+            "id": "credentials",
+            "title": "Credentials",
+            "fieldRefs": [
+                "jsonData.username",
+                "secureJsonData.password"
+            ]
+        },
+        {
+            "id": "tls",
+            "title": "TLS / SSL",
+            "fieldRefs": [
+                "jsonData.tlsSkipVerify",
+                "jsonData.tlsAuth",
+                "jsonData.tlsAuthWithCACert",
+                "secureJsonData.tlsCACert",
+                "secureJsonData.tlsClientCert",
+                "secureJsonData.tlsClientKey"
+            ]
+        },
+        {
+            "id": "defaults",
+            "title": "Default DB and table",
+            "fieldRefs": [
+                "jsonData.defaultDatabase",
+                "jsonData.defaultTable"
+            ]
+        },
+        {
+            "id": "query-settings",
+            "title": "Query settings",
+            "fieldRefs": [
+                "jsonData.dialTimeout",
+                "jsonData.queryTimeout",
+                "jsonData.connMaxLifetime",
+                "jsonData.maxIdleConns",
+                "jsonData.maxOpenConns",
+                "jsonData.validateSql"
+            ]
+        },
+        {
+            "id": "logs",
+            "title": "Logs configuration",
+            "description": "Default settings for log queries.",
+            "optional": true,
+            "fieldRefs": [
+                "jsonData.logs.defaultDatabase",
+                "jsonData.logs.defaultTable",
+                "jsonData.logs.otelEnabled",
+                "jsonData.logs.otelVersion",
+                "jsonData.logs.filterTimeColumn",
+                "jsonData.logs.timeColumn",
+                "jsonData.logs.levelColumn",
+                "jsonData.logs.messageColumn",
+                "jsonData.logs.showLogLinks",
+                "jsonData.logs.selectContextColumns",
+                "jsonData.logs.contextColumns"
+            ]
+        },
+        {
+            "id": "traces",
+            "title": "Traces configuration",
+            "description": "Default settings for trace queries.",
+            "optional": true,
+            "fieldRefs": [
+                "jsonData.traces.defaultDatabase",
+                "jsonData.traces.defaultTable",
+                "jsonData.traces.otelEnabled",
+                "jsonData.traces.otelVersion",
+                "jsonData.traces.traceIdColumn",
+                "jsonData.traces.spanIdColumn",
+                "jsonData.traces.operationNameColumn",
+                "jsonData.traces.parentSpanIdColumn",
+                "jsonData.traces.serviceNameColumn",
+                "jsonData.traces.durationColumn",
+                "jsonData.traces.durationUnit",
+                "jsonData.traces.startTimeColumn",
+                "jsonData.traces.tagsColumn",
+                "jsonData.traces.serviceTagsColumn",
+                "jsonData.traces.kindColumn",
+                "jsonData.traces.statusCodeColumn",
+                "jsonData.traces.statusMessageColumn",
+                "jsonData.traces.stateColumn",
+                "jsonData.traces.instrumentationLibraryNameColumn",
+                "jsonData.traces.instrumentationLibraryVersionColumn",
+                "jsonData.traces.flattenNested",
+                "jsonData.traces.traceEventsColumnPrefix",
+                "jsonData.traces.traceLinksColumnPrefix",
+                "jsonData.traces.showTraceLinks"
+            ]
+        },
+        {
+            "id": "alias-tables",
+            "title": "Column Alias Tables",
+            "description": "Provide alias tables for column selection.",
+            "optional": true,
+            "fieldRefs": [
+                "jsonData.aliasTables"
+            ]
+        },
+        {
+            "id": "additional",
+            "title": "Additional settings",
+            "optional": true,
+            "fieldRefs": [
+                "jsonData.forwardGrafanaHeaders",
+                "jsonData.enableRowLimit",
+                "jsonData.hideTableNameInAdhocFilters",
+                "jsonData.customSettings"
+            ]
+        }
+    ],
+    "relationships": [
+        {
+            "type": "pair",
+            "fields": [
+                "secureJsonData.tlsClientCert",
+                "secureJsonData.tlsClientKey"
+            ],
+            "description": "TLS client certificate and key"
+        }
+    ]
+}

@@ -1,0 +1,148 @@
+{
+    "schemaVersion": "v1",
+    "pluginType": "grafana-iot-sitewise-datasource",
+    "pluginName": "AWS IoT SiteWise",
+    "docURL": "https://grafana.com/grafana/plugins/grafana-iot-sitewise-datasource/",
+    "fields": [
+        {
+            "id": "jsonData.authType",
+            "key": "authType",
+            "label": "Authentication Provider",
+            "description": "AWS authentication method.",
+            "valueType": "string",
+            "target": "jsonData",
+            "defaultValue": "default"
+        },
+        {
+            "id": "jsonData.defaultRegion",
+            "key": "defaultRegion",
+            "label": "Default Region",
+            "description": "AWS region.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.assumeRoleArn",
+            "key": "assumeRoleArn",
+            "label": "Assume Role ARN",
+            "description": "ARN of the IAM role to assume.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.externalId",
+            "key": "externalId",
+            "label": "External ID",
+            "description": "External ID for cross-account role assumption.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.profile",
+            "key": "profile",
+            "label": "Credentials Profile Name",
+            "description": "AWS credentials profile name.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.endpoint",
+            "key": "endpoint",
+            "label": "Endpoint",
+            "description": "Optional custom IoT SiteWise endpoint.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.edgeAuthMode",
+            "key": "edgeAuthMode",
+            "label": "Edge Auth Mode",
+            "description": "Authentication mode for edge gateway connections.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.edgeAuthUser",
+            "key": "edgeAuthUser",
+            "label": "Edge Auth User",
+            "description": "Username for edge gateway authentication.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "secureJsonData.accessKey",
+            "key": "accessKey",
+            "label": "Access Key ID",
+            "description": "AWS access key ID.",
+            "valueType": "string",
+            "semanticType": "token",
+            "target": "secureJsonData"
+        },
+        {
+            "id": "secureJsonData.secretKey",
+            "key": "secretKey",
+            "label": "Secret Access Key",
+            "description": "AWS secret access key.",
+            "valueType": "string",
+            "semanticType": "token",
+            "target": "secureJsonData"
+        },
+        {
+            "id": "secureJsonData.sessionToken",
+            "key": "sessionToken",
+            "label": "Session Token",
+            "description": "AWS temporary session token.",
+            "valueType": "string",
+            "semanticType": "token",
+            "target": "secureJsonData"
+        },
+        {
+            "id": "secureJsonData.edgeAuthPass",
+            "key": "edgeAuthPass",
+            "label": "Edge Auth Password",
+            "description": "Password for edge gateway authentication.",
+            "valueType": "string",
+            "semanticType": "password",
+            "target": "secureJsonData"
+        },
+        {
+            "id": "secureJsonData.cert",
+            "key": "cert",
+            "label": "Certificate",
+            "description": "TLS certificate for edge gateway.",
+            "valueType": "string",
+            "target": "secureJsonData",
+            "ui": {
+                "component": "textarea",
+                "rows": 7
+            }
+        }
+    ],
+    "groups": [
+        {
+            "id": "auth",
+            "title": "Authentication",
+            "fieldRefs": [
+                "jsonData.authType",
+                "jsonData.defaultRegion",
+                "jsonData.profile",
+                "jsonData.assumeRoleArn",
+                "jsonData.externalId",
+                "jsonData.endpoint",
+                "secureJsonData.accessKey",
+                "secureJsonData.secretKey",
+                "secureJsonData.sessionToken"
+            ]
+        },
+        {
+            "id": "edge",
+            "title": "Edge Gateway",
+            "fieldRefs": [
+                "jsonData.edgeAuthMode",
+                "jsonData.edgeAuthUser",
+                "secureJsonData.edgeAuthPass",
+                "secureJsonData.cert"
+            ]
+        }
+    ]
+}

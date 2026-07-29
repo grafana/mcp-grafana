@@ -223,7 +223,10 @@ func shortenURL(ctx context.Context, longURL string) (string, error) {
 		return "", fmt.Errorf("url must include an absolute path")
 	}
 
-	payload, err := json.Marshal(map[string]string{"path": path})
+	// /api/short-urls rejects absolute paths, so strip the leading slash.
+	relativePath := strings.TrimPrefix(path, "/")
+
+	payload, err := json.Marshal(map[string]string{"path": relativePath})
 	if err != nil {
 		return "", fmt.Errorf("marshal short-url payload: %w", err)
 	}

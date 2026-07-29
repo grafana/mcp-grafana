@@ -77,10 +77,10 @@ func (b *cloudMonitoringBackend) project() (string, error) {
 }
 
 // Query executes a PromQL query via Grafana's /api/ds/query endpoint.
-func (b *cloudMonitoringBackend) Query(ctx context.Context, expr string, queryType string, start, end time.Time, stepSeconds int) (model.Value, error) {
+func (b *cloudMonitoringBackend) Query(ctx context.Context, expr string, queryType string, start, end time.Time, stepSeconds int) (model.Value, promv1.Warnings, error) {
 	project, err := b.project()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	step := fmt.Sprintf("%ds", stepSeconds)
 	if stepSeconds == 0 {
@@ -119,10 +119,11 @@ func (b *cloudMonitoringBackend) Query(ctx context.Context, expr string, queryTy
 
 	resp, err := doDSQuery(ctx, b.httpClient, b.baseURL, dsQueryPayload(start, end, query))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	return framesToPrometheusValue(resp, queryType)
+	v, err := framesToPrometheusValue(resp, queryType)
+	return v, nil, err
 }
 
 // LabelNames returns label names by issuing a TIME_SERIES_LIST HEADERS query

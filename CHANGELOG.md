@@ -5,11 +5,65 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.0.0] - 2026-07-28
 
 ### Added
 
-- Optional `startRfc3339`/`endRfc3339` time range parameters for `list_prometheus_metric_names` to restrict results to metrics active within a window
+- Agent Observability tools: `agento11y_manage_conversations` and `agento11y_manage_generations` in a new `agento11y` category, excluded from the default tool set ([#944](https://github.com/grafana/mcp-grafana/pull/944))
+- Inline panel viewer for `get_panel_image` on [MCP Apps](https://modelcontextprotocol.io/)-aware hosts, with a dashboard deeplink fallback for other hosts. The deeplink text content is tagged with `_meta.ui.kind = "deeplink"` so viewers can locate it structurally instead of by string matching ([#882](https://github.com/grafana/mcp-grafana/pull/882))
+
+### Fixed
+
+- Enable OTLP trace export with the signal-specific `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` environment variable, so operators can ship traces without also exporting logs; the generic `OTEL_EXPORTER_OTLP_ENDPOINT` still enables both signals ([#1004](https://github.com/grafana/mcp-grafana/pull/1004))
+
+### Changed
+
+- Tool calls with unknown argument keys are now rejected with an error naming the unknown keys and listing the valid ones, instead of silently ignoring them and answering from default values ([#997](https://github.com/grafana/mcp-grafana/pull/997))
+
+## [0.17.2] - 2026-07-13
+
+### Security
+
+- Bind environment-configured credentials to the configured Grafana URL. A URL supplied in the `X-Grafana-URL` request header no longer causes the environment service-account token, deprecated API key, basic auth, or extra headers to be sent to a caller-specified host ([#XXX](https://github.com/grafana/mcp-grafana/pull/XXX))
+
+## [0.17.1] - 2026-07-07
+
+### Fixed
+
+- Send the relative path (rather than an absolute URL) to the short-urls API when generating navigation deeplinks ([#976](https://github.com/grafana/mcp-grafana/pull/976))
+
+### Security
+
+- Block DNS rebinding attacks on the HTTP and SSE transports ([#957](https://github.com/grafana/mcp-grafana/pull/957))
+
+## [0.17.0] - 2026-06-23
+
+### Added
+
+- Datasource management tools for creating and updating datasources via the MCP server, gated behind write tools, with schema-guided configuration that follows each datasource type's JSON schema and excludes sensitive credential fields ([#939](https://github.com/grafana/mcp-grafana/pull/939))
+
+### Fixed
+
+- Recognize the Athena plugin's `rawSQL` query field when extracting dashboard panel queries ([#956](https://github.com/grafana/mcp-grafana/pull/956))
+
+## [0.16.0] - 2026-06-16
+
+### Added
+
+- Snapshot tools (`list_snapshots`, `get_snapshot`, `create_snapshot`, `delete_snapshot`) for managing Grafana dashboard snapshots ([#949](https://github.com/grafana/mcp-grafana/pull/949))
+- Native dashboard schema v2 support in the dashboard tools ([#937](https://github.com/grafana/mcp-grafana/pull/937))
+- Quickwit datasource support ([#941](https://github.com/grafana/mcp-grafana/pull/941))
+- BigQuery datasource support in `run_panel_query` ([#930](https://github.com/grafana/mcp-grafana/pull/930))
+- Elasticsearch and OpenSearch tools now honor the datasource-configured `timeField` ([#909](https://github.com/grafana/mcp-grafana/pull/909))
+- Relative time syntax (e.g. `now-1h`) for time range parameters across tools ([#942](https://github.com/grafana/mcp-grafana/pull/942))
+- `GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE` environment variable to read the service account token from a file, supporting rotated tokens ([#935](https://github.com/grafana/mcp-grafana/pull/935))
+- Optional `startRfc3339`/`endRfc3339` time range parameters for `list_prometheus_metric_names` to restrict results to metrics active within a window ([#927](https://github.com/grafana/mcp-grafana/pull/927))
+- `query_prometheus` now surfaces datasource `warnings` (e.g. partial responses from Thanos) in its result ([#946](https://github.com/grafana/mcp-grafana/pull/946))
+
+### Fixed
+
+- Elasticsearch client now refuses HTTP redirects that would drop the request body, preventing malformed queries against redirecting endpoints ([#951](https://github.com/grafana/mcp-grafana/pull/951))
+- Propagate forwarded headers to downstream Loki calls by using the configured HTTP transport ([#945](https://github.com/grafana/mcp-grafana/pull/945))
 
 ## [0.15.2] - 2026-06-04
 
@@ -274,6 +328,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Upgrade Docker base image packages to resolve critical OpenSSL CVE-2025-15467 (CVSS 9.8) ([#551](https://github.com/grafana/mcp-grafana/pull/551))
 
+[1.0.0]: https://github.com/grafana/mcp-grafana/compare/v0.17.2...v1.0.0
+[0.17.2]: https://github.com/grafana/mcp-grafana/compare/v0.17.1...v0.17.2
+[0.17.1]: https://github.com/grafana/mcp-grafana/compare/v0.17.0...v0.17.1
+[0.17.0]: https://github.com/grafana/mcp-grafana/compare/v0.16.0...v0.17.0
+[0.16.0]: https://github.com/grafana/mcp-grafana/compare/v0.15.2...v0.16.0
 [0.15.2]: https://github.com/grafana/mcp-grafana/compare/v0.15.1...v0.15.2
 [0.15.1]: https://github.com/grafana/mcp-grafana/compare/v0.15.0...v0.15.1
 [0.15.0]: https://github.com/grafana/mcp-grafana/compare/v0.14.0...v0.15.0

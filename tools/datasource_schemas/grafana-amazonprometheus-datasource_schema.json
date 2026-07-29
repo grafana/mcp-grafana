@@ -1,0 +1,156 @@
+{
+    "schemaVersion": "v1",
+    "pluginType": "grafana-amazonprometheus-datasource",
+    "pluginName": "Amazon Managed Service for Prometheus",
+    "fields": [
+        {
+            "id": "jsonData.authType",
+            "key": "authType",
+            "label": "Authentication Provider",
+            "description": "AWS authentication method.",
+            "valueType": "string",
+            "target": "jsonData",
+            "defaultValue": "default"
+        },
+        {
+            "id": "jsonData.defaultRegion",
+            "key": "defaultRegion",
+            "label": "Default Region",
+            "description": "AWS region.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.assumeRoleArn",
+            "key": "assumeRoleArn",
+            "label": "Assume Role ARN",
+            "description": "ARN of the IAM role to assume.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.externalId",
+            "key": "externalId",
+            "label": "External ID",
+            "description": "External ID for cross-account role assumption.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.profile",
+            "key": "profile",
+            "label": "Credentials Profile Name",
+            "description": "AWS credentials profile name.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.endpoint",
+            "key": "endpoint",
+            "label": "Endpoint",
+            "description": "Amazon Managed Prometheus workspace endpoint URL.",
+            "valueType": "string",
+            "semanticType": "url",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.sigv4Service",
+            "key": "sigv4Service",
+            "label": "SigV4 Service",
+            "description": "AWS service name for SigV4 signing. Default: aps.",
+            "valueType": "string",
+            "target": "jsonData",
+            "defaultValue": "aps"
+        },
+        {
+            "id": "jsonData.timeInterval",
+            "key": "timeInterval",
+            "label": "Scrape interval",
+            "description": "Sets the scrape and evaluation interval.",
+            "valueType": "string",
+            "semanticType": "duration",
+            "target": "jsonData",
+            "defaultValue": "15s"
+        },
+        {
+            "id": "jsonData.httpMethod",
+            "key": "httpMethod",
+            "label": "HTTP method",
+            "description": "HTTP method for queries.",
+            "valueType": "string",
+            "target": "jsonData",
+            "defaultValue": "POST",
+            "validations": [
+                {
+                    "type": "allowedValues",
+                    "values": [
+                        "GET",
+                        "POST"
+                    ]
+                }
+            ]
+        },
+        {
+            "id": "jsonData.customQueryParameters",
+            "key": "customQueryParameters",
+            "label": "Custom query parameters",
+            "description": "Add custom parameters to the query URL.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "secureJsonData.accessKey",
+            "key": "accessKey",
+            "label": "Access Key ID",
+            "description": "AWS access key ID.",
+            "valueType": "string",
+            "semanticType": "token",
+            "target": "secureJsonData"
+        },
+        {
+            "id": "secureJsonData.secretKey",
+            "key": "secretKey",
+            "label": "Secret Access Key",
+            "description": "AWS secret access key.",
+            "valueType": "string",
+            "semanticType": "token",
+            "target": "secureJsonData"
+        },
+        {
+            "id": "secureJsonData.sessionToken",
+            "key": "sessionToken",
+            "label": "Session Token",
+            "description": "AWS temporary session token.",
+            "valueType": "string",
+            "semanticType": "token",
+            "target": "secureJsonData"
+        }
+    ],
+    "groups": [
+        {
+            "id": "auth",
+            "title": "Authentication",
+            "fieldRefs": [
+                "jsonData.authType",
+                "jsonData.defaultRegion",
+                "jsonData.profile",
+                "jsonData.assumeRoleArn",
+                "jsonData.externalId",
+                "jsonData.endpoint",
+                "secureJsonData.accessKey",
+                "secureJsonData.secretKey",
+                "secureJsonData.sessionToken"
+            ]
+        },
+        {
+            "id": "prometheus",
+            "title": "Prometheus settings",
+            "fieldRefs": [
+                "jsonData.sigv4Service",
+                "jsonData.timeInterval",
+                "jsonData.httpMethod",
+                "jsonData.customQueryParameters"
+            ]
+        }
+    ]
+}

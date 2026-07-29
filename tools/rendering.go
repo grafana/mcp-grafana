@@ -163,14 +163,30 @@ func getPanelImage(ctx context.Context, args GetPanelImageParams) (*mcp.CallTool
 	// Return the image as base64 encoded data using MCP's image content type
 	base64Data := base64.StdEncoding.EncodeToString(imageData)
 
-	return &mcp.CallToolResult{
-		Content: []mcp.Content{
-			mcp.ImageContent{
-				Type:     "image",
-				Data:     base64Data,
-				MIMEType: "image/png",
-			},
+	// Rendering succeeded, so always return the image. The deeplink is
+	// best-effort metadata added only if it builds successfully.
+	content := []mcp.Content{
+		mcp.ImageContent{
+			Type:     "image",
+			Data:     base64Data,
+			MIMEType: "image/png",
 		},
+	}
+
+	// Use the public base URL, not config.URL, which may be an in-cluster
+	// endpoint the browser can't reach.
+	if deeplinkBase, err := grafanaBaseURLFromContext(ctx); err == nil {
+		if deeplink, err := buildDashboardDeeplink(deeplinkBase, args); err == nil {
+			content = append(content, mcp.TextContent{
+				Meta: mcpgrafana.NewUIContentMeta(mcpgrafana.UIContentKindDeeplink),
+				Type: "text",
+				Text: deeplink,
+			})
+		}
+	}
+
+	return &mcp.CallToolResult{
+		Content: content,
 	}, nil
 }
 
@@ -282,6 +298,59 @@ func buildRenderURL(baseURL string, args GetPanelImageParams) (string, error) {
 	return fmt.Sprintf("%s%s?%s", baseURL, renderPath, params.Encode()), nil
 }
 
+// buildDashboardDeeplink returns the Grafana UI URL for the rendered
+// dashboard, mirroring buildRenderURL's view (panel, time range, variables)
+// so the deeplink matches the PNG.
+func buildDashboardDeeplink(baseURL string, args GetPanelImageParams) (string, error) {
+	baseURL = strings.TrimRight(baseURL, "/")
+
+	var uid *string
+	if args.DashboardUID != "" {
+		uid = &args.DashboardUID
+	}
+	var preview *DeeplinkProvisioningPreview
+	if args.ProvisioningPreview != nil {
+		preview = &DeeplinkProvisioningPreview{
+			Repo: args.ProvisioningPreview.Repo,
+			Path: args.ProvisioningPreview.Path,
+			Ref:  args.ProvisioningPreview.Ref,
+		}
+	}
+
+	target, err := buildDashboardTargetURL(baseURL, uid, preview)
+	if err != nil {
+		return "", err
+	}
+
+	extra := url.Values{}
+	if args.PanelID != nil {
+		extra.Set("viewPanel", strconv.Itoa(*args.PanelID))
+	}
+	if args.TimeRange != nil {
+		// Normalize RFC 3339 to epoch ms for Grafana's Scenes URL parser.
+		if args.TimeRange.From != "" {
+			extra.Set("from", toGrafanaTimeParam(args.TimeRange.From))
+		}
+		if args.TimeRange.To != "" {
+			extra.Set("to", toGrafanaTimeParam(args.TimeRange.To))
+		}
+	}
+	for key, values := range args.Variables {
+		for _, v := range values {
+			extra.Add(key, v)
+		}
+	}
+
+	if len(extra) == 0 {
+		return target, nil
+	}
+	separator := "?"
+	if strings.Contains(target, "?") {
+		separator = "&"
+	}
+	return target + separator + extra.Encode(), nil
+}
+
 var GetPanelImage = mcpgrafana.MustTool(
 	"get_panel_image",
 	"Render a Grafana dashboard panel or full dashboard as a PNG image. Returns the image as base64 encoded data. Requires the Grafana Image Renderer service to be installed. "+
@@ -291,6 +360,7 @@ var GetPanelImage = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("Get panel or dashboard image"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithUIResource(mcpgrafana.PanelViewerResourceURI),
 )
 
 func AddRenderingTools(mcp *server.MCPServer) {

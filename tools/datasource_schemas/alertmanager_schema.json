@@ -1,0 +1,66 @@
+{
+    "schemaVersion": "v1",
+    "pluginType": "alertmanager",
+    "pluginName": "Alertmanager",
+    "docURL": "https://grafana.com/docs/grafana/latest/datasources/alertmanager/",
+    "fields": [
+        {
+            "id": "jsonData.implementation",
+            "key": "implementation",
+            "label": "Implementation",
+            "description": "The Alertmanager implementation type.",
+            "valueType": "string",
+            "target": "jsonData",
+            "defaultValue": "mimir",
+            "validations": [
+                {
+                    "type": "allowedValues",
+                    "values": [
+                        "cortex",
+                        "mimir",
+                        "prometheus"
+                    ]
+                }
+            ],
+            "ui": {
+                "component": "select",
+                "options": [
+                    {
+                        "label": "Mimir",
+                        "value": "mimir"
+                    },
+                    {
+                        "label": "Cortex",
+                        "value": "cortex"
+                    },
+                    {
+                        "label": "Prometheus",
+                        "value": "prometheus"
+                    }
+                ]
+            }
+        },
+        {
+            "id": "jsonData.handleGrafanaManagedAlerts",
+            "key": "handleGrafanaManagedAlerts",
+            "label": "Receive Grafana Alerts",
+            "description": "When enabled, Grafana-managed alerts are sent to this Alertmanager.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "defaultValue": false,
+            "ui": {
+                "component": "switch"
+            }
+        }
+    ],
+    "groups": [
+        {
+            "id": "settings",
+            "title": "Alertmanager Settings",
+            "fieldRefs": [
+                "jsonData.implementation",
+                "jsonData.handleGrafanaManagedAlerts"
+            ]
+        }
+    ]
+}
