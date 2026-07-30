@@ -132,9 +132,10 @@ func noSchemaGuidance(pluginType string) *noSchemaGuidanceResult {
 	}
 }
 
-// applyFields routes Fields values to the body (root-target keys) or into the
-// returned jsonData map. secureJsonData keys are never written.
-func applyFields(body *models.AddDataSourceCommand, schema *datasourceschemas.DatasourceSchema, inputFields map[string]any) map[string]any {
+// fieldLookup maps each field's input key (namespaced by section when present)
+// to its schema definition, combining the shared common fields with the
+// type-specific schema fields.
+func fieldLookup(schema *datasourceschemas.DatasourceSchema) map[string]datasourceschemas.DsSchemaField {
 	commonFields := datasourceschemas.CommonDatasourceFields()
 	lookup := make(map[string]datasourceschemas.DsSchemaField, len(commonFields)+len(schema.Fields))
 	for _, f := range commonFields {
@@ -143,6 +144,13 @@ func applyFields(body *models.AddDataSourceCommand, schema *datasourceschemas.Da
 	for _, f := range schema.Fields {
 		lookup[datasourceschemas.SchemaFieldInputKey(f)] = f
 	}
+	return lookup
+}
+
+// applyFields routes Fields values to the body (root-target keys) or into the
+// returned jsonData map. secureJsonData keys are never written.
+func applyFields(body *models.AddDataSourceCommand, schema *datasourceschemas.DatasourceSchema, inputFields map[string]any) map[string]any {
+	lookup := fieldLookup(schema)
 
 	jsonData := make(map[string]any)
 	for inputKey, v := range inputFields {
@@ -192,6 +200,70 @@ func applyFields(body *models.AddDataSourceCommand, schema *datasourceschemas.Da
 		}
 	}
 	return jsonData
+}
+
+// applyUpdateFields overlays Fields onto an update command: root-target keys are
+// written to cmd, while jsonData keys are merged into (and override entries of)
+// the supplied jsonData map so callers can change individual plugin settings
+// without restating the whole jsonData blob. secureJsonData and excluded fields
+// are never written, and uid is ignored because the update targets a fixed UID.
+func applyUpdateFields(cmd *models.UpdateDataSourceCommand, schema *datasourceschemas.DatasourceSchema, inputFields, jsonData map[string]any) map[string]any {
+	lookup := fieldLookup(schema)
+	if jsonData == nil {
+		jsonData = make(map[string]any)
+	}
+	for inputKey, v := range inputFields {
+		f, ok := lookup[inputKey]
+		// Skip unknown keys, secrets, and excluded PII/credential fields.
+		if !ok || f.Target == "secureJsonData" || datasourceschemas.IsExcludedField(f) {
+			continue
+		}
+		if f.Target == "root" {
+			switch f.Key {
+			case "url":
+				if s, ok := v.(string); ok {
+					cmd.URL = s
+				}
+			case "basicAuth":
+				if b, ok := v.(bool); ok {
+					cmd.BasicAuth = b
+				}
+			case "isDefault":
+				if b, ok := v.(bool); ok {
+					cmd.IsDefault = b
+				}
+			case "access":
+				if s, ok := v.(string); ok {
+					cmd.Access = models.DsAccess(s)
+				}
+			case "withCredentials":
+				if b, ok := v.(bool); ok {
+					cmd.WithCredentials = b
+				}
+			}
+		} else if f.Section != "" {
+			section, ok := jsonData[f.Section].(map[string]any)
+			if !ok {
+				section = make(map[string]any)
+				jsonData[f.Section] = section
+			}
+			section[f.Key] = v
+		} else {
+			jsonData[f.Key] = v
+		}
+	}
+	return jsonData
+}
+
+func noUpdateSchemaGuidance(pluginType string) *noSchemaGuidanceResult {
+	return &noSchemaGuidanceResult{
+		Type: pluginType,
+		Message: "No schema is available for this datasource type. " +
+			"Only send the fields you want to change; any field you omit keeps its current value. " +
+			"Ask the user which settings to change and confirm each new value, then call update_datasource again with schemaReviewed=true and the changed values as top-level arguments — uid (required) plus any of name, url, access, database, basicAuth, isDefault, or jsonData. " +
+			"Do NOT use the fields map; it applies only to schema-based types. " +
+			"Secrets cannot be set here — direct the user to the Grafana UI.",
+	}
 }
 
 func createDatasource(ctx context.Context, args CreateDatasourceParams) (*mcp.CallToolResult, error) {
@@ -324,7 +396,7 @@ var CreateDatasource = mcpgrafana.MustTool(
 
 var UpdateDatasource = mcpgrafana.MustTool(
 	"update_datasource",
-	"Update non-secret datasource fields by UID. Omitted fields are preserved. For secrets, direct the user to the Grafana UI.",
+	"Update non-secret datasource fields by UID. Omitted fields are preserved. IMPORTANT: always call this tool twice. First call: provide only the uid — the tool returns the datasource's field schema. After receiving the schema, ask the user which fields they want to change and confirm each new value; do not infer or reset fields the user did not mention. Second call: provide the uid, schemaReviewed=true, and the changed values in the fields map. Returns an update message and a health check. For secrets, direct the user to the Grafana UI.",
 	updateDatasource,
 	mcp.WithTitleAnnotation("Update datasource"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -391,14 +463,16 @@ var GetDatasource = mcpgrafana.MustTool(
 )
 
 type UpdateDatasourceParams struct {
-	UID       string                 `json:"uid" jsonschema:"required,description=UID of the datasource to update"`
-	Name      *string                `json:"name,omitempty" jsonschema:"description=Display name"`
-	URL       *string                `json:"url,omitempty" jsonschema:"description=Base URL"`
-	Access    *string                `json:"access,omitempty" jsonschema:"description=proxy or direct"`
-	Database  *string                `json:"database,omitempty" jsonschema:"description=Database name"`
-	BasicAuth *bool                  `json:"basicAuth,omitempty" jsonschema:"description=Enable basic auth"`
-	IsDefault *bool                  `json:"isDefault,omitempty" jsonschema:"description=Make this the default datasource"`
-	JSONData  map[string]interface{} `json:"jsonData,omitempty" jsonschema:"description=Non-secret plugin settings; replaces existing jsonData when set"`
+	UID            string                 `json:"uid" jsonschema:"required,description=UID of the datasource to update"`
+	Name           *string                `json:"name,omitempty" jsonschema:"description=Display name"`
+	URL            *string                `json:"url,omitempty" jsonschema:"description=Base URL"`
+	Access         *string                `json:"access,omitempty" jsonschema:"description=proxy or direct"`
+	Database       *string                `json:"database,omitempty" jsonschema:"description=Database name"`
+	BasicAuth      *bool                  `json:"basicAuth,omitempty" jsonschema:"description=Enable basic auth"`
+	IsDefault      *bool                  `json:"isDefault,omitempty" jsonschema:"description=Make this the default datasource"`
+	JSONData       map[string]interface{} `json:"jsonData,omitempty" jsonschema:"description=Non-secret plugin settings; replaces existing jsonData when set"`
+	Fields         map[string]any         `json:"fields,omitempty" jsonschema:"description=Datasource field values to change\\, keyed by field key from the schema returned on the first call. The server uses each field's target (root or jsonData) to place values correctly\\, merging jsonData changes into the existing settings. Only include the fields you want to change. Example: {\"httpMethod\": \"POST\"}."`
+	SchemaReviewed bool                   `json:"schemaReviewed,omitempty" jsonschema:"description=Set to true on the second call to confirm you reviewed the schema and collected the changes from the user."`
 }
 
 type UpdateDatasourceResult struct {
@@ -406,7 +480,7 @@ type UpdateDatasourceResult struct {
 	Health  *DatasourceHealthResult `json:"health,omitempty"`
 }
 
-func updateDatasource(ctx context.Context, args UpdateDatasourceParams) (*UpdateDatasourceResult, error) {
+func updateDatasource(ctx context.Context, args UpdateDatasourceParams) (*mcp.CallToolResult, error) {
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
 
 	current, err := c.Datasources.GetDataSourceByUIDWithParams(
@@ -420,6 +494,26 @@ func updateDatasource(ctx context.Context, args UpdateDatasourceParams) (*Update
 	}
 
 	ds := current.Payload
+
+	schema, err := datasourceschemas.LoadDatasourceSchema(ds.Type)
+	if err != nil {
+		return nil, err
+	}
+
+	// Phase 1: return field guidance before updating, mirroring create_datasource.
+	// The datasource's type — and therefore its schema — is only known after the
+	// fetch above, so unlike create this phase performs a read; it never writes.
+	if !args.SchemaReviewed {
+		var guidance any
+		if schema != nil {
+			guidance = datasourceschemas.BuildUpdateSchemaGuidance(schema)
+		} else {
+			guidance = noUpdateSchemaGuidance(ds.Type)
+		}
+		text, _ := json.Marshal(guidance)
+		return mcp.NewToolResultText(string(text)), nil
+	}
+
 	cmd := &models.UpdateDataSourceCommand{
 		Name:            ds.Name,
 		Type:            ds.Type,
@@ -457,6 +551,16 @@ func updateDatasource(ctx context.Context, args UpdateDatasourceParams) (*Update
 		cmd.JSONData = models.JSON(args.JSONData)
 	}
 
+	// Overlay schema-based field values last, merging into the (preserved or
+	// replaced) jsonData so callers can change plugin settings by key without
+	// restating the whole jsonData blob.
+	if schema != nil && len(args.Fields) > 0 {
+		// models.JSON is an untyped interface; the decoded value is a JSON object,
+		// so recover the underlying map to merge into (nil when unset).
+		existing, _ := cmd.JSONData.(map[string]any)
+		cmd.JSONData = models.JSON(applyUpdateFields(cmd, schema, args.Fields, existing))
+	}
+
 	resp, err := c.Datasources.UpdateDataSourceByUIDWithParams(
 		datasources.NewUpdateDataSourceByUIDParamsWithContext(ctx).WithUID(args.UID).WithBody(cmd),
 	)
@@ -476,7 +580,11 @@ func updateDatasource(ctx context.Context, args UpdateDatasourceParams) (*Update
 		result.Health = health
 	}
 
-	return result, nil
+	b, err := json.Marshal(result)
+	if err != nil {
+		return nil, fmt.Errorf("marshal result: %w", err)
+	}
+	return mcp.NewToolResultText(string(b)), nil
 }
 
 type CheckDatasourceHealthParams struct {

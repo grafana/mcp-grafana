@@ -27,6 +27,12 @@ type ProxiedClient struct {
 	Client         *mcp_client.Client
 	Tools          []mcp.Tool
 	mutex          sync.RWMutex
+
+	// closeHook, when set, runs inside Close (under the client mutex). It is a
+	// test seam so lifecycle tests can observe exactly how many times a client is
+	// Closed without standing up a real remote MCP transport. Always nil in
+	// production; do not use it for behavior.
+	closeHook func()
 }
 
 // contextCauseOrErr returns the context cause if the error is due to context
@@ -149,6 +155,10 @@ func (pc *ProxiedClient) ListTools() []mcp.Tool {
 func (pc *ProxiedClient) Close() error {
 	pc.mutex.Lock()
 	defer pc.mutex.Unlock()
+
+	if pc.closeHook != nil {
+		pc.closeHook()
+	}
 
 	if pc.Client != nil {
 		if err := pc.Client.Close(); err != nil {

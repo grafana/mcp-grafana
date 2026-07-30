@@ -3,7 +3,8 @@ title: Reference
 menuTitle: Reference
 description: MCP tools table and technical reference for the Grafana MCP server.
 weight: 14
-aliases: []
+aliases:
+  - /docs/grafana-cloud/machine-learning/mcp/reference/
 ---
 
 # Reference

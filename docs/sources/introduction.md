@@ -9,14 +9,15 @@ keywords:
   - RBAC
   - Grafana
 weight: 5
-aliases: []
+aliases:
+  - /docs/grafana-cloud/machine-learning/mcp/introduction/
 ---
 
 # Introduction to the Grafana MCP server
 
 This article outlines what the open source [Grafana MCP server](https://github.com/grafana/mcp-grafana) is, what it can do, and how authentication and permissions work.
 
-For Grafana Cloud's hosted MCP server, refer to [Grafana Cloud MCP server](https://grafana.com/docs/grafana-cloud/machine-learning/assistant/configure/cloud-mcp/).
+For Grafana Cloud's hosted MCP server, refer to [Grafana Cloud MCP server](/docs/grafana-cloud/ai-tools/mcp-servers/cloud-mcp/).
 
 ## What you'll achieve
 
