@@ -105,6 +105,7 @@ var categoryDescription = map[string]string{
 	"config":        "Config: Generate operator-facing configuration snippets (e.g. Alloy label-enforcement pipelines).",
 	"provisioning":  "Provisioning: List provisioning repositories (e.g. git-sync sources) to discover repository slugs for use with rendering tools.",
 	"agento11y":     "Agent Observability: Search and inspect LLM conversations, generations, and evaluation scores from Grafana Agent Observability.",
+	"assistant":     "Assistant: Ask Grafana Assistant open-ended questions and get a full text reply (requires the Grafana Assistant plugin).",
 }
 
 // disabledTools indicates whether each category of tools should be disabled.
@@ -117,7 +118,7 @@ type disabledTools struct {
 	pyroscope, navigation, proxied, annotations, rendering, cloudwatch, write,
 	snapshot, examples, clickhouse, snowflake, graphite,
 	runpanelquery, athena, plugin, api, config, provisioning,
-	agento11y bool
+	agento11y, assistant bool
 }
 
 // Configuration for the Grafana client.
@@ -177,6 +178,7 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.config, "disable-config", false, "Disable config-generation tools")
 	flag.BoolVar(&dt.provisioning, "disable-provisioning", false, "Disable provisioning tools")
 	flag.BoolVar(&dt.agento11y, "disable-agento11y", false, "Disable Agent Observability tools")
+	flag.BoolVar(&dt.assistant, "disable-assistant", false, "Disable Grafana Assistant tools")
 }
 
 func (gc *grafanaConfig) addFlags() {
@@ -240,6 +242,7 @@ func (dt *disabledTools) toolEntries() []toolEntry {
 		{tools.AddConfigTools, dt.config, "config"},
 		{tools.AddProvisioningTools, dt.provisioning, "provisioning"},
 		{tools.AddAgento11yTools, dt.agento11y, "agento11y"},
+		{func(mcp *server.MCPServer) { tools.AddAssistantTools(mcp, enableWriteTools) }, dt.assistant, "assistant"},
 	}
 }
 
@@ -259,6 +262,12 @@ func (dt *disabledTools) buildInstructions() string {
 	var capabilities []string
 	for _, e := range dt.toolEntries() {
 		if !isCategoryEnabled(enabledTools, e.disabled, e.category) {
+			continue
+		}
+		// The assistant category is entirely write-gated: AddAssistantTools
+		// registers no tools when write tools are disabled. Don't advertise a
+		// capability the server won't actually expose.
+		if e.category == "assistant" && dt.write {
 			continue
 		}
 		if desc, ok := categoryDescription[e.category]; ok {
