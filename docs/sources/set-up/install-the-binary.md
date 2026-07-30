@@ -8,7 +8,8 @@ keywords:
   - install
   - MCP
 weight: 3
-aliases: []
+aliases:
+  - /docs/grafana-cloud/machine-learning/mcp/set-up/install-the-binary/
 ---
 
 # Install the binary
