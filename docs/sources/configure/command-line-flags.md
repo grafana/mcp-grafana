@@ -57,7 +57,7 @@ When deploying behind an ingress or reverse proxy that forwards the original `Ho
 
   `search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering,snapshot`
 
-  Categories **not** in that default string are off until you add them, including: `admin`, `agento11y`, `elasticsearch`, `cloudwatch`, `examples`, `clickhouse`, `snowflake`, `influxdb`, `quickwit`, and `runpanelquery`. Pass a full comma-separated list to replace the default entirely, or use `--disable-*` flags to turn off pieces of the default set.
+  Categories **not** in that default string are off until you add them, including: `admin`, `agento11y`, `assistant`, `elasticsearch`, `cloudwatch`, `examples`, `clickhouse`, `snowflake`, `influxdb`, `quickwit`, and `runpanelquery`. Pass a full comma-separated list to replace the default entirely, or use `--disable-*` flags to turn off pieces of the default set.
 
 - `--disable-search`: Disable search tools.
 - `--disable-datasource`: Disable datasource tools.
@@ -88,6 +88,7 @@ When deploying behind an ingress or reverse proxy that forwards the original `Ho
 - `--disable-proxied`: Disable proxied tools (tools from external MCP servers).
 - `--disable-provisioning`: Disable provisioning tools.
 - `--disable-agento11y`: Disable Agent Observability tools.
+- `--disable-assistant`: Disable Grafana Assistant tools.
 
 ## Configure tool limits
 

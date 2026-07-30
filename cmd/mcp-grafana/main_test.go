@@ -143,6 +143,45 @@ func TestBuildInstructions_ReflectsEnabledCategories(t *testing.T) {
 				"Agent Observability:",
 			},
 		},
+		{
+			name:         "assistant excluded unless opted in",
+			enabledTools: "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering,plugin,api,config,provisioning",
+			wantContains: []string{
+				"Search:",
+			},
+			wantNotContains: []string{
+				"Assistant:",
+			},
+		},
+		{
+			name:         "assistant included when opted in",
+			enabledTools: "search,assistant",
+			wantContains: []string{
+				"Assistant:",
+			},
+		},
+		{
+			name:         "assistant disable flag overrides enabled list",
+			enabledTools: "search,assistant",
+			disableFlags: map[string]bool{"assistant": true},
+			wantContains: []string{
+				"Search:",
+			},
+			wantNotContains: []string{
+				"Assistant:",
+			},
+		},
+		{
+			name:         "assistant excluded when write disabled",
+			enabledTools: "search,assistant",
+			disableFlags: map[string]bool{"write": true},
+			wantContains: []string{
+				"Search:",
+			},
+			wantNotContains: []string{
+				"Assistant:",
+			},
+		},
 	}
 
 	for _, tc := range tests {
@@ -160,6 +199,12 @@ func TestBuildInstructions_ReflectsEnabledCategories(t *testing.T) {
 				}
 				if tc.disableFlags["agento11y"] {
 					dt.agento11y = true
+				}
+				if tc.disableFlags["assistant"] {
+					dt.assistant = true
+				}
+				if tc.disableFlags["write"] {
+					dt.write = true
 				}
 			}
 
