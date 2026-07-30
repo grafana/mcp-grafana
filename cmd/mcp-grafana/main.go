@@ -77,6 +77,7 @@ var categoryDescription = map[string]string{
 	"config":        "Config: Generate operator-facing configuration snippets (e.g. Alloy label-enforcement pipelines).",
 	"provisioning":  "Provisioning: List provisioning repositories (e.g. git-sync sources) to discover repository slugs for use with rendering tools.",
 	"agento11y":     "Agent Observability: Search and inspect LLM conversations, generations, and evaluation scores from Grafana Agent Observability.",
+	"insight-cell":  "Insight Cell: Render data you've gathered as an interactive 'insight cell' (a core panel, logs, trace, or a synthesis view: worklist/rca/rulediff/timeline/cost) via an MCP App.",
 }
 
 // disabledTools indicates whether each category of tools should be disabled.
@@ -89,7 +90,7 @@ type disabledTools struct {
 	pyroscope, navigation, proxied, annotations, rendering, cloudwatch, write,
 	snapshot, examples, clickhouse, snowflake, graphite,
 	runpanelquery, athena, plugin, api, config, provisioning,
-	agento11y bool
+	agento11y, insightcell bool
 }
 
 // Configuration for the Grafana client.
@@ -149,6 +150,7 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.config, "disable-config", false, "Disable config-generation tools")
 	flag.BoolVar(&dt.provisioning, "disable-provisioning", false, "Disable provisioning tools")
 	flag.BoolVar(&dt.agento11y, "disable-agento11y", false, "Disable Agent Observability tools")
+	flag.BoolVar(&dt.insightcell, "disable-insight-cell", false, "Disable insight-cell rendering tools (MCP App render surface). Opt-in: not in the default --enabled-tools list; add 'insight-cell' there to enable.")
 }
 
 func (gc *grafanaConfig) addFlags() {
@@ -212,6 +214,7 @@ func (dt *disabledTools) toolEntries() []toolEntry {
 		{tools.AddConfigTools, dt.config, "config"},
 		{tools.AddProvisioningTools, dt.provisioning, "provisioning"},
 		{tools.AddAgento11yTools, dt.agento11y, "agento11y"},
+		{tools.AddInsightCellTools, dt.insightcell, "insight-cell"},
 	}
 }
 

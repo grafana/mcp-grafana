@@ -389,8 +389,19 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `get_panel_image`                 | Rendering                 | Render a stored dashboard or panel — or a provisioning preview from a repository branch — as a PNG image     | `dashboards:read`                                      | `dashboards:uid:abc123`                             |
 | `list_provisioning_repositories`  | Provisioning              | List provisioning repositories (e.g. git-sync sources) with their source URL, branch, sync state, and health | `provisioning.repositories:read`                       | N/A                                                 |
 | `validate_provisioning_file`      | Provisioning              | Dry-run-apply a file from a provisioning repository and report admission validation errors                   | `provisioning.repositories:read`                       | N/A                                                 |
+| `render_insight_cell`             | Insight Cell*             | Render gathered data as an interactive "insight cell" (core panel, logs, trace, or a synthesis view) via an MCP App | None (renders agent-supplied data)                     | N/A                                                 |
 
 _* Disabled by default. Add category to `--enabled-tools` to enable._
+
+### MCP Apps
+
+Some tools return interactive HTML UIs that render inline in hosts supporting the
+[MCP Apps extension](https://modelcontextprotocol.io/extensions/apps/overview) (Claude Desktop,
+VS Code Copilot, Goose, …); other hosts fall back to the text result. `get_panel_image` returns a
+panel viewer, and `render_insight_cell` returns a generic Grafana render surface (the "insight
+cell"). The insight-cell tool is opt-in: add `insight-cell` to `--enabled-tools` to expose it. See
+[docs/mcp-apps.md](docs/mcp-apps.md) for the framework, the render contract, and how to add a new
+app.
 
 ## CLI Flags Reference
 
