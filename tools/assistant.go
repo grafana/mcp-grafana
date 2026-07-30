@@ -131,9 +131,14 @@ func askAssistant(ctx context.Context, args AskAssistantParams) (*AskAssistantRe
 // annotateAssistantError folds any partial reply captured before a failure into
 // the error. The shared MCP tool wrapper discards the handler's result value
 // whenever the error is non-nil and surfaces only err.Error() to the client, so
-// without this the caller would lose both the partial text and the contextId
-// needed to resume the conversation. The sentinel is preserved via %w so
-// errors.Is still works for callers/tests.
+// without this the caller would lose both the partial text and the contextId.
+// The sentinel is preserved via %w so errors.Is still works for callers/tests.
+//
+// The contextId guidance depends on the failure: a terminal server state means
+// the task is finished and the conversation is free to continue, but a
+// client-side timeout or a truncated stream leaves the server task running
+// (the A2A backend detaches task execution from the request), so continuing the
+// same conversation immediately can conflict with the still-running task.
 func annotateAssistantError(result *AskAssistantResult, err error) error {
 	if err == nil || result == nil {
 		return err
@@ -144,12 +149,26 @@ func annotateAssistantError(result *AskAssistantResult, err error) error {
 		extra.WriteString(result.Response)
 	}
 	if result.ContextID != "" {
-		fmt.Fprintf(&extra, "\n\ncontextId (pass to ask_assistant to resume this conversation): %s", result.ContextID)
+		if assistantTaskFinished(err) {
+			fmt.Fprintf(&extra, "\n\ncontextId (pass to ask_assistant to continue this conversation): %s", result.ContextID)
+		} else {
+			fmt.Fprintf(&extra, "\n\ncontextId: %s — the previous task may still be running server-side; wait for it to finish before continuing this conversation to avoid a conflict.", result.ContextID)
+		}
 	}
 	if extra.Len() == 0 {
 		return err
 	}
 	return fmt.Errorf("%w%s", err, extra.String())
+}
+
+// assistantTaskFinished reports whether err represents a terminal server-side
+// task state (as opposed to a client-side timeout or a truncated stream, where
+// the task may still be running). Only in the terminal case is it safe to
+// continue the same conversation right away.
+func assistantTaskFinished(err error) bool {
+	return errors.Is(err, errAssistantTaskFailed) ||
+		errors.Is(err, errAssistantTaskCanceled) ||
+		errors.Is(err, errAssistantTaskTimeout)
 }
 
 // AskAssistant is the ask_assistant tool. The assistant may mutate stack state

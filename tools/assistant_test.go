@@ -162,9 +162,11 @@ func TestAskAssistant_TaskFailedSurfacesError(t *testing.T) {
 	assert.Equal(t, "ctx-fail", result.ContextID)
 	// ...and, since the MCP wrapper only surfaces err.Error() on failure, the
 	// partial reply and contextId are also embedded in the error so a client
-	// can still recover them and resume.
+	// can still recover them. A terminal server state means the task is
+	// finished, so continuing the conversation is safe.
 	assert.Contains(t, err.Error(), "partial output")
 	assert.Contains(t, err.Error(), "ctx-fail")
+	assert.Contains(t, err.Error(), "continue this conversation")
 }
 
 func TestAskAssistant_IncompleteStreamReportsError(t *testing.T) {
@@ -197,9 +199,13 @@ func TestAskAssistant_IncompleteStreamReportsError(t *testing.T) {
 	require.NotNil(t, result)
 	assert.Equal(t, "half an answer", result.Response)
 	assert.Equal(t, "ctx-inc", result.ContextID)
-	// And they are echoed into the error so an MCP client can see them.
+	// And they are echoed into the error so an MCP client can see them. Because
+	// the stream was truncated, the server task may still be running, so the
+	// error warns against continuing the conversation immediately rather than
+	// advertising a safe resume.
 	assert.Contains(t, err.Error(), "half an answer")
 	assert.Contains(t, err.Error(), "ctx-inc")
+	assert.Contains(t, err.Error(), "may still be running")
 }
 
 func TestAskAssistant_LargeSingleFrame(t *testing.T) {
