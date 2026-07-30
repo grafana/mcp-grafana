@@ -69,8 +69,20 @@ type prometheusBackend struct {
 func newPrometheusBackend(ctx context.Context, uid string, ds *models.DataSource) (*prometheusBackend, error) {
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
 	grafanaURL := trimTrailingSlash(cfg.URL)
-	resourcesBase, proxyBase := datasourceProxyPaths(ctx, uid)
-	url := grafanaURL + resourcesBase
+	resourcesBase, proxyBase := datasourceProxyPaths(uid)
+	primaryBase, fallbackBase := resourcesBase, proxyBase
+	if numericBase, ok := fallbackProxyBase(ctx, uid); ok {
+		// The datasource was resolved through the frontend-settings fallback,
+		// meaning this deployment's metadata API is inaccessible — in practice
+		// Grafana before 9.0, which has no uid-based routes at all (8.x answers
+		// them with a 400 "id is invalid", 7.x with a 500). Route through the
+		// numeric-id proxy path directly, keeping the uid-based proxy route
+		// only as the transport-level fallback for the opposite case: a newer
+		// Grafana with an RBAC-restricted token, where the numeric routes may
+		// be disabled (404, off by default since Grafana 13).
+		primaryBase, fallbackBase = numericBase, proxyBase
+	}
+	url := grafanaURL + primaryBase
 
 	rt, err := mcpgrafana.BuildTransport(&cfg, api.DefaultRoundTripper)
 	if err != nil {
@@ -88,9 +100,10 @@ func newPrometheusBackend(ctx context.Context, uid string, ds *models.DataSource
 		}
 	}
 
-	// Wrap with fallback transport: try /resources first, fall back to /proxy
-	// on 403/500 for compatibility with different managed Grafana deployments.
-	rt = newDatasourceFallbackTransport(rt, resourcesBase, proxyBase)
+	// Wrap with fallback transport: try the primary base first, fall back to
+	// the alternate on 403/404/500 for compatibility with different Grafana
+	// deployments.
+	rt = newDatasourceFallbackTransport(rt, primaryBase, fallbackBase)
 
 	c, err := api.NewClient(api.Config{
 		Address:      url,

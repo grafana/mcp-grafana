@@ -30,9 +30,13 @@ import (
 // GET /api/frontend/settings is served to any authenticated role and includes
 // every datasource's numeric id, uid, name, type and (non-secret) jsonData.
 // The helpers in this file resolve datasources from it when the metadata API
-// fails, and record the numeric id so datasourceProxyPaths can route the
-// datasource proxy through the numeric-id path, which exists on all Grafana
-// versions.
+// fails, and record the numeric id so the datasource client constructors (see
+// newPrometheusBackend) can route the datasource proxy through the numeric-id
+// path directly. That route choice matters: the uid-based proxy routes only
+// exist from Grafana 9.0 — requests to them fall into the numeric :id route
+// and fail with a status that varies per version (verified live: 400 "id is
+// invalid" on 8.5, 500 "Unable to load datasource meta data" on 7.5) — so the
+// numeric path must be the primary, not a retry target.
 
 // fallbackProxyIDs maps fallbackProxyIDKey results to the numeric datasource
 // id resolved via /api/frontend/settings. Entries are only added when the
@@ -83,9 +87,10 @@ func fallbackProxyIDKey(ctx context.Context, kind, id string) string {
 }
 
 // fallbackProxyBase returns the numeric-id datasource proxy base path for an
-// identifier previously resolved through the frontend-settings fallback. The
-// uid entry is consulted before the name entry, mirroring the resolution
-// precedence of fallbackDatasourceByUID.
+// identifier previously resolved through the frontend-settings fallback, or
+// ok=false when the datasource was resolved normally (in which case callers
+// keep the modern uid-based routes). The uid entry is consulted before the
+// name entry, mirroring the resolution precedence of fallbackDatasourceByUID.
 func fallbackProxyBase(ctx context.Context, uid string) (string, bool) {
 	for _, kind := range []string{"uid", "name"} {
 		if id, ok := fallbackProxyIDs.Load(fallbackProxyIDKey(ctx, kind, uid)); ok {

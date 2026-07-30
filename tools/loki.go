@@ -68,17 +68,25 @@ type Pattern struct {
 func newLokiClient(ctx context.Context, uid string, _ *models.DataSource) (*Client, error) {
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
 	grafanaURL := cfg.URL
-	resourcesBase, proxyBase := datasourceProxyPaths(ctx, uid)
-	url := grafanaURL + proxyBase
+	resourcesBase, proxyBase := datasourceProxyPaths(uid)
+	primaryBase, fallbackBase := proxyBase, resourcesBase
+	if numericBase, ok := fallbackProxyBase(ctx, uid); ok {
+		// Legacy-compatible routing — see newPrometheusBackend for the full
+		// rationale: route through the numeric-id proxy path directly, keeping
+		// the uid-based proxy route as the transport-level fallback.
+		primaryBase, fallbackBase = numericBase, proxyBase
+	}
+	url := grafanaURL + primaryBase
 
 	transport, err := mcpgrafana.BuildTransport(&cfg, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create custom transport: %w", err)
 	}
 
-	// Wrap with fallback transport: try /proxy first, fall back to /resources
-	// on 403/500 for compatibility with different managed Grafana deployments.
-	rt := newDatasourceFallbackTransport(transport, proxyBase, resourcesBase)
+	// Wrap with fallback transport: try the primary base first, fall back to
+	// the alternate on 403/404/500 for compatibility with different Grafana
+	// deployments.
+	rt := newDatasourceFallbackTransport(transport, primaryBase, fallbackBase)
 
 	client := &http.Client{
 		Transport: rt,

@@ -2,7 +2,6 @@ package tools
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -125,18 +124,8 @@ func (t *datasourceFallbackTransport) rewriteRequest(req *http.Request, from, to
 }
 
 // datasourceProxyPaths returns the /resources and /proxy base paths for a
-// given datasource UID. When the datasource was resolved through the
-// frontend-settings fallback (see datasources_fallback.go), the metadata API
-// was inaccessible to this token, which means either Grafana before 9.0
-// (where the uid-based routes do not exist; only /api/datasources/proxy/{id})
-// or a newer Grafana with an RBAC-restricted token (where the numeric-id
-// routes may be disabled — they are off by default since Grafana 13). In that
-// case return the uid-based proxy route plus the numeric-id route, and let
-// the fallback transport use whichever the deployment supports.
-func datasourceProxyPaths(ctx context.Context, uid string) (resourcesBase, proxyBase string) {
-	if numericBase, ok := fallbackProxyBase(ctx, uid); ok {
-		return fmt.Sprintf("/api/datasources/proxy/uid/%s", uid), numericBase
-	}
+// given datasource UID.
+func datasourceProxyPaths(uid string) (resourcesBase, proxyBase string) {
 	resourcesBase = fmt.Sprintf("/api/datasources/uid/%s/resources", uid)
 	proxyBase = fmt.Sprintf("/api/datasources/proxy/uid/%s", uid)
 	return

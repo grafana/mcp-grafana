@@ -87,32 +87,28 @@ func TestListDatasources_FrontendSettingsFallback(t *testing.T) {
 	assert.Equal(t, 1, filtered.Total)
 }
 
-func TestDatasourceProxyPaths_FallbackNumericID(t *testing.T) {
+func TestFallbackProxyBase_NumericID(t *testing.T) {
 	server := newFallbackTestServer()
 	defer server.Close()
 	ctx := mockDatasourcesCtx(server)
 
-	// Before any fallback resolution, uid-based paths are returned.
-	resources, proxy := datasourceProxyPaths(ctx, "prom-uid")
-	assert.Equal(t, "/api/datasources/uid/prom-uid/resources", resources)
-	assert.Equal(t, "/api/datasources/proxy/uid/prom-uid", proxy)
+	// Before any fallback resolution, there is no numeric base to use.
+	_, ok := fallbackProxyBase(ctx, "prom-uid")
+	assert.False(t, ok)
 
 	// Resolving through the fallback records the numeric id...
 	_, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: "prom-uid"})
 	require.NoError(t, err)
 
-	// ...after which the paths are the uid-based proxy route plus the
-	// numeric-id route, so the fallback transport can use whichever route the
-	// deployment supports (pre-9.0 has only the numeric one; 13+ disables it
-	// by default).
-	resources, proxy = datasourceProxyPaths(ctx, "prom-uid")
-	assert.Equal(t, "/api/datasources/proxy/uid/prom-uid", resources)
-	assert.Equal(t, "/api/datasources/proxy/4", proxy)
+	// ...after which the numeric-id proxy base is available for the client
+	// constructors to route through directly.
+	base, ok := fallbackProxyBase(ctx, "prom-uid")
+	require.True(t, ok)
+	assert.Equal(t, "/api/datasources/proxy/4", base)
 
-	// Datasources the fallback never resolved keep the uid-based routes.
-	resources, proxy = datasourceProxyPaths(ctx, "untouched-uid")
-	assert.Equal(t, "/api/datasources/uid/untouched-uid/resources", resources)
-	assert.Equal(t, "/api/datasources/proxy/uid/untouched-uid", proxy)
+	// Datasources the fallback never resolved keep the modern uid routes.
+	_, ok = fallbackProxyBase(ctx, "untouched-uid")
+	assert.False(t, ok)
 }
 
 // Resolved ids are scoped per org and credential material: in multi-tenant
@@ -125,31 +121,28 @@ func TestFallbackProxyIDs_ScopedPerOrgAndCredential(t *testing.T) {
 
 	_, err := getDatasourceByUID(ctxA, GetDatasourceByUIDParams{UID: "prom-uid"})
 	require.NoError(t, err)
-	_, proxy := datasourceProxyPaths(ctxA, "prom-uid")
-	require.Equal(t, "/api/datasources/proxy/4", proxy)
+	base, ok := fallbackProxyBase(ctxA, "prom-uid")
+	require.True(t, ok)
+	require.Equal(t, "/api/datasources/proxy/4", base)
 
-	// Same URL, different org: uid-based routes, no cached id.
+	// Same URL, different org: no cached id visible.
 	ctxB := mcpgrafana.WithGrafanaConfig(ctxA, mcpgrafana.GrafanaConfig{URL: server.URL, OrgID: 2})
-	resources, proxy := datasourceProxyPaths(ctxB, "prom-uid")
-	assert.Equal(t, "/api/datasources/uid/prom-uid/resources", resources)
-	assert.Equal(t, "/api/datasources/proxy/uid/prom-uid", proxy)
+	_, ok = fallbackProxyBase(ctxB, "prom-uid")
+	assert.False(t, ok)
 
 	// Same URL, different credentials: also isolated. Covers every auth
 	// mechanism, including basic auth and ExtraHeaders-based tenants.
 	ctxC := mcpgrafana.WithGrafanaConfig(ctxA, mcpgrafana.GrafanaConfig{URL: server.URL, APIKey: "another-tenant-token"})
-	resources, proxy = datasourceProxyPaths(ctxC, "prom-uid")
-	assert.Equal(t, "/api/datasources/uid/prom-uid/resources", resources)
-	assert.Equal(t, "/api/datasources/proxy/uid/prom-uid", proxy)
+	_, ok = fallbackProxyBase(ctxC, "prom-uid")
+	assert.False(t, ok)
 
 	ctxD := mcpgrafana.WithGrafanaConfig(ctxA, mcpgrafana.GrafanaConfig{URL: server.URL, BasicAuth: url.UserPassword("tenant", "secret")})
-	resources, proxy = datasourceProxyPaths(ctxD, "prom-uid")
-	assert.Equal(t, "/api/datasources/uid/prom-uid/resources", resources)
-	assert.Equal(t, "/api/datasources/proxy/uid/prom-uid", proxy)
+	_, ok = fallbackProxyBase(ctxD, "prom-uid")
+	assert.False(t, ok)
 
 	ctxE := mcpgrafana.WithGrafanaConfig(ctxA, mcpgrafana.GrafanaConfig{URL: server.URL, ExtraHeaders: map[string]string{"X-Tenant-Auth": "abc"}})
-	resources, proxy = datasourceProxyPaths(ctxE, "prom-uid")
-	assert.Equal(t, "/api/datasources/uid/prom-uid/resources", resources)
-	assert.Equal(t, "/api/datasources/proxy/uid/prom-uid", proxy)
+	_, ok = fallbackProxyBase(ctxE, "prom-uid")
+	assert.False(t, ok)
 }
 
 // A datasource whose name equals another datasource's uid must not shadow it:
@@ -186,9 +179,10 @@ func TestFallbackProxyIDs_UIDAndNameDoNotCollide(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(20), ds.ID)
 
-	// ...and the cached proxy path must follow the same precedence.
-	_, proxy := datasourceProxyPaths(ctx, "conflict")
-	assert.Equal(t, "/api/datasources/proxy/20", proxy)
+	// ...and the cached proxy base must follow the same precedence.
+	base, ok := fallbackProxyBase(ctx, "conflict")
+	require.True(t, ok)
+	assert.Equal(t, "/api/datasources/proxy/20", base)
 }
 
 // A missing route can surface as a 404 (e.g. the deprecated numeric-id routes
