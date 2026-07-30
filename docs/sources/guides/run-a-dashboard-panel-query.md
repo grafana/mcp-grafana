@@ -8,7 +8,8 @@ keywords:
   - runpanelquery
   - MCP
 weight: 6
-aliases: []
+aliases:
+  - /docs/grafana-cloud/machine-learning/mcp/guides/run-a-dashboard-panel-query/
 ---
 
 # Run a dashboard panel query

@@ -9,7 +9,8 @@ keywords:
   - VS Code
   - client
 weight: 8
-aliases: []
+aliases:
+  - /docs/grafana-cloud/machine-learning/mcp/clients/
 ---
 
 # Set up by client

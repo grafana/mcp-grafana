@@ -7,7 +7,8 @@ keywords:
   - healthz
   - MCP
 weight: 8
-aliases: []
+aliases:
+  - /docs/grafana-cloud/machine-learning/mcp/configure/health-check-endpoint/
 ---
 
 # Health check endpoint

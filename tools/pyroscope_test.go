@@ -100,6 +100,30 @@ func TestPyroscopeTools(t *testing.T) {
 		assert.Equal(t, "profile", parsed["query_type"])
 		assert.NotNil(t, parsed["profile"])
 		assert.Nil(t, parsed["metrics"], "metrics should not be present for profile-only")
+
+		table, ok := parsed["profile"].(string)
+		require.True(t, ok, "profile should be a string")
+		assert.Contains(t, table, "Total:")
+		assert.Contains(t, table, "flat%")
+		assert.Contains(t, table, "functions by flat (self) value")
+	})
+
+	t.Run("query Pyroscope profile DOT format", func(t *testing.T) {
+		ctx := newTestContext()
+		result, err := queryPyroscope(ctx, QueryPyroscopeParams{
+			DataSourceUID: "pyroscope",
+			ProfileType:   "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
+			Matchers:      `{service_name="pyroscope"}`,
+			QueryType:     "profile",
+			Format:        "dot",
+		})
+		require.NoError(t, err)
+
+		var parsed map[string]any
+		require.NoError(t, json.Unmarshal([]byte(result), &parsed))
+		dot, ok := parsed["profile"].(string)
+		require.True(t, ok, "profile should be a string")
+		assert.Contains(t, dot, "digraph")
 	})
 
 	t.Run("query Pyroscope metrics only", func(t *testing.T) {

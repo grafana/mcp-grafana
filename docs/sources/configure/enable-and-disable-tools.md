@@ -8,7 +8,8 @@ keywords:
   - read-only
   - MCP
 weight: 3
-aliases: []
+aliases:
+  - /docs/grafana-cloud/machine-learning/mcp/configure/enable-and-disable-tools/
 ---
 
 # Enable and disable tools
