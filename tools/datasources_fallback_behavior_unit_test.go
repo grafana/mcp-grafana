@@ -215,6 +215,33 @@ func TestQueryPrometheus_ModernPathUnchanged(t *testing.T) {
 	}
 }
 
+// Callers may reference a datasource by name (fallbackDatasourceByUID
+// resolves names as a convenience). The uid-based transport fallback must
+// then be built from the datasource's *resolved* uid, not the caller's
+// string: on a deployment with the numeric routes disabled,
+// /api/datasources/proxy/uid/{name} would miss.
+func TestQueryPrometheus_NameReferenceUsesResolvedUID(t *testing.T) {
+	f := newFakeGrafana(legacyProfiles["grafana-13-rbac"])
+	defer f.Close()
+
+	resetFallbackCache()
+	ctx := mockDatasourcesCtx(f.Server)
+	result, err := queryPrometheus(ctx, QueryPrometheusParams{
+		DatasourceUID: "Prometheus", // the *name*; the uid is "prometheus"
+		Expr:          "time()",
+		QueryType:     "instant",
+		EndTime:       "now",
+	})
+	require.NoError(t, err)
+	assert.Contains(t, result.String(), "42")
+
+	data := f.dataRequests()
+	require.GreaterOrEqual(t, len(data), 2)
+	assert.True(t, strings.HasPrefix(data[0], "/api/datasources/proxy/1/"), "got %q", data[0])
+	assert.True(t, strings.HasPrefix(data[1], "/api/datasources/proxy/uid/prometheus/"),
+		"transport fallback must use the resolved uid, got %q", data[1])
+}
+
 // The native Loki client shares the proxy routing; it must work on Grafana
 // 8.x the same way.
 func TestLokiClient_LegacyGrafana85(t *testing.T) {

@@ -71,7 +71,7 @@ func newPrometheusBackend(ctx context.Context, uid string, ds *models.DataSource
 	grafanaURL := trimTrailingSlash(cfg.URL)
 	resourcesBase, proxyBase := datasourceProxyPaths(uid)
 	primaryBase, fallbackBase := resourcesBase, proxyBase
-	if numericBase, ok := fallbackProxyBase(ctx, uid); ok {
+	if numericBase, uidBase, ok := fallbackProxyBases(ctx, uid); ok {
 		// The datasource was resolved through the frontend-settings fallback,
 		// meaning this deployment's metadata API is inaccessible — in practice
 		// Grafana before 9.0, which has no uid-based routes at all (8.x answers
@@ -80,7 +80,7 @@ func newPrometheusBackend(ctx context.Context, uid string, ds *models.DataSource
 		// only as the transport-level fallback for the opposite case: a newer
 		// Grafana with an RBAC-restricted token, where the numeric routes may
 		// be disabled (404, off by default since Grafana 13).
-		primaryBase, fallbackBase = numericBase, proxyBase
+		primaryBase, fallbackBase = numericBase, uidBase
 	}
 	url := grafanaURL + primaryBase
 

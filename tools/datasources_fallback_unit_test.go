@@ -93,7 +93,7 @@ func TestFallbackProxyBase_NumericID(t *testing.T) {
 	ctx := mockDatasourcesCtx(server)
 
 	// Before any fallback resolution, there is no numeric base to use.
-	_, ok := fallbackProxyBase(ctx, "prom-uid")
+	_, _, ok := fallbackProxyBases(ctx, "prom-uid")
 	assert.False(t, ok)
 
 	// Resolving through the fallback records the numeric id...
@@ -102,12 +102,13 @@ func TestFallbackProxyBase_NumericID(t *testing.T) {
 
 	// ...after which the numeric-id proxy base is available for the client
 	// constructors to route through directly.
-	base, ok := fallbackProxyBase(ctx, "prom-uid")
+	primary, secondary, ok := fallbackProxyBases(ctx, "prom-uid")
 	require.True(t, ok)
-	assert.Equal(t, "/api/datasources/proxy/4", base)
+	assert.Equal(t, "/api/datasources/proxy/4", primary)
+	assert.Equal(t, "/api/datasources/proxy/uid/prom-uid", secondary)
 
 	// Datasources the fallback never resolved keep the modern uid routes.
-	_, ok = fallbackProxyBase(ctx, "untouched-uid")
+	_, _, ok = fallbackProxyBases(ctx, "untouched-uid")
 	assert.False(t, ok)
 }
 
@@ -121,27 +122,27 @@ func TestFallbackProxyIDs_ScopedPerOrgAndCredential(t *testing.T) {
 
 	_, err := getDatasourceByUID(ctxA, GetDatasourceByUIDParams{UID: "prom-uid"})
 	require.NoError(t, err)
-	base, ok := fallbackProxyBase(ctxA, "prom-uid")
+	primary, _, ok := fallbackProxyBases(ctxA, "prom-uid")
 	require.True(t, ok)
-	require.Equal(t, "/api/datasources/proxy/4", base)
+	require.Equal(t, "/api/datasources/proxy/4", primary)
 
 	// Same URL, different org: no cached id visible.
 	ctxB := mcpgrafana.WithGrafanaConfig(ctxA, mcpgrafana.GrafanaConfig{URL: server.URL, OrgID: 2})
-	_, ok = fallbackProxyBase(ctxB, "prom-uid")
+	_, _, ok = fallbackProxyBases(ctxB, "prom-uid")
 	assert.False(t, ok)
 
 	// Same URL, different credentials: also isolated. Covers every auth
 	// mechanism, including basic auth and ExtraHeaders-based tenants.
 	ctxC := mcpgrafana.WithGrafanaConfig(ctxA, mcpgrafana.GrafanaConfig{URL: server.URL, APIKey: "another-tenant-token"})
-	_, ok = fallbackProxyBase(ctxC, "prom-uid")
+	_, _, ok = fallbackProxyBases(ctxC, "prom-uid")
 	assert.False(t, ok)
 
 	ctxD := mcpgrafana.WithGrafanaConfig(ctxA, mcpgrafana.GrafanaConfig{URL: server.URL, BasicAuth: url.UserPassword("tenant", "secret")})
-	_, ok = fallbackProxyBase(ctxD, "prom-uid")
+	_, _, ok = fallbackProxyBases(ctxD, "prom-uid")
 	assert.False(t, ok)
 
 	ctxE := mcpgrafana.WithGrafanaConfig(ctxA, mcpgrafana.GrafanaConfig{URL: server.URL, ExtraHeaders: map[string]string{"X-Tenant-Auth": "abc"}})
-	_, ok = fallbackProxyBase(ctxE, "prom-uid")
+	_, _, ok = fallbackProxyBases(ctxE, "prom-uid")
 	assert.False(t, ok)
 }
 
@@ -179,10 +180,12 @@ func TestFallbackProxyIDs_UIDAndNameDoNotCollide(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(20), ds.ID)
 
-	// ...and the cached proxy base must follow the same precedence.
-	base, ok := fallbackProxyBase(ctx, "conflict")
+	// ...and the cached proxy bases must follow the same precedence, with the
+	// uid-based fallback built from the winning datasource's real uid.
+	primary, secondary, ok := fallbackProxyBases(ctx, "conflict")
 	require.True(t, ok)
-	assert.Equal(t, "/api/datasources/proxy/20", base)
+	assert.Equal(t, "/api/datasources/proxy/20", primary)
+	assert.Equal(t, "/api/datasources/proxy/uid/conflict", secondary)
 }
 
 // A missing route can surface as a 404 (e.g. the deprecated numeric-id routes

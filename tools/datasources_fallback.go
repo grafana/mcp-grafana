@@ -38,8 +38,16 @@ import (
 // invalid" on 8.5, 500 "Unable to load datasource meta data" on 7.5) — so the
 // numeric path must be the primary, not a retry target.
 
-// fallbackProxyIDs maps fallbackProxyIDKey results to the numeric datasource
-// id resolved via /api/frontend/settings. Entries are only added when the
+// fallbackRoute is the cached result of a frontend-settings resolution: the
+// numeric datasource id plus the datasource's real uid, so route construction
+// never depends on which identifier (uid or name) the caller happened to use.
+type fallbackRoute struct {
+	id  int64
+	uid string
+}
+
+// fallbackProxyIDs maps fallbackProxyIDKey results to the fallbackRoute
+// resolved via /api/frontend/settings. Entries are only added when the
 // datasource metadata API was inaccessible, which is also the signal that the
 // uid-based proxy routes are likely unavailable.
 var fallbackProxyIDs sync.Map
@@ -86,18 +94,30 @@ func fallbackProxyIDKey(ctx context.Context, kind, id string) string {
 	return strings.TrimRight(cfg.URL, "/") + "\x00" + strconv.FormatInt(cfg.OrgID, 10) + "\x00" + hex.EncodeToString(cred[:8]) + "\x00" + kind + "\x00" + id
 }
 
-// fallbackProxyBase returns the numeric-id datasource proxy base path for an
-// identifier previously resolved through the frontend-settings fallback, or
-// ok=false when the datasource was resolved normally (in which case callers
-// keep the modern uid-based routes). The uid entry is consulted before the
-// name entry, mirroring the resolution precedence of fallbackDatasourceByUID.
-func fallbackProxyBase(ctx context.Context, uid string) (string, bool) {
+// fallbackProxyBases returns the datasource proxy base paths for an
+// identifier previously resolved through the frontend-settings fallback:
+// the numeric-id route as the primary, and a uid-based proxy route as the
+// transport-level fallback. The fallback is built from the datasource's
+// *resolved* uid, not the caller-supplied identifier — callers may reference
+// datasources by name, and /api/datasources/proxy/uid/{name} would miss.
+// ok=false means the datasource was resolved normally, and callers keep the
+// modern uid-based routes. The uid entry is consulted before the name entry,
+// mirroring the resolution precedence of fallbackDatasourceByUID.
+func fallbackProxyBases(ctx context.Context, identifier string) (primaryBase, fallbackBase string, ok bool) {
 	for _, kind := range []string{"uid", "name"} {
-		if id, ok := fallbackProxyIDs.Load(fallbackProxyIDKey(ctx, kind, uid)); ok {
-			return fmt.Sprintf("/api/datasources/proxy/%d", id), true
+		if v, found := fallbackProxyIDs.Load(fallbackProxyIDKey(ctx, kind, identifier)); found {
+			route := v.(fallbackRoute)
+			uid := route.uid
+			if uid == "" {
+				// Very old datasources may predate uids entirely; fall back
+				// to the caller's identifier as a best effort.
+				uid = identifier
+			}
+			return fmt.Sprintf("/api/datasources/proxy/%d", route.id),
+				fmt.Sprintf("/api/datasources/proxy/uid/%s", uid), true
 		}
 	}
-	return "", false
+	return "", "", false
 }
 
 // frontendSettingsDatasource mirrors the datasource entries of
@@ -167,11 +187,12 @@ func rememberFallbackDatasource(ctx context.Context, ds frontendSettingsDatasour
 	if ds.ID == 0 {
 		return
 	}
+	route := fallbackRoute{id: ds.ID, uid: ds.UID}
 	if ds.UID != "" {
-		fallbackProxyIDs.Store(fallbackProxyIDKey(ctx, "uid", ds.UID), ds.ID)
+		fallbackProxyIDs.Store(fallbackProxyIDKey(ctx, "uid", ds.UID), route)
 	}
 	if ds.Name != "" {
-		fallbackProxyIDs.Store(fallbackProxyIDKey(ctx, "name", ds.Name), ds.ID)
+		fallbackProxyIDs.Store(fallbackProxyIDKey(ctx, "name", ds.Name), route)
 	}
 }
 

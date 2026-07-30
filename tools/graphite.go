@@ -40,11 +40,11 @@ func newGraphiteClient(ctx context.Context, uid string) (*GraphiteClient, error)
 	grafanaURL := cfg.URL
 	resourcesBase, proxyBase := datasourceProxyPaths(uid)
 	primaryBase, fallbackBase := proxyBase, resourcesBase
-	if numericBase, ok := fallbackProxyBase(ctx, uid); ok {
+	if numericBase, uidBase, ok := fallbackProxyBases(ctx, uid); ok {
 		// Legacy-compatible routing — see newPrometheusBackend for the full
 		// rationale: route through the numeric-id proxy path directly, keeping
 		// the uid-based proxy route as the transport-level fallback.
-		primaryBase, fallbackBase = numericBase, proxyBase
+		primaryBase, fallbackBase = numericBase, uidBase
 	}
 	baseURL := grafanaURL + primaryBase
 

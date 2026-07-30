@@ -40,11 +40,11 @@ func newVictoriaLogsBackend(ctx context.Context, uid string, _ *models.DataSourc
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
 	resourcesBase, proxyBase := datasourceProxyPaths(uid)
 	primaryBase, fallbackBase := proxyBase, resourcesBase
-	if numericBase, ok := fallbackProxyBase(ctx, uid); ok {
+	if numericBase, uidBase, ok := fallbackProxyBases(ctx, uid); ok {
 		// Legacy-compatible routing — see newPrometheusBackend for the full
 		// rationale: route through the numeric-id proxy path directly, keeping
 		// the uid-based proxy route as the transport-level fallback.
-		primaryBase, fallbackBase = numericBase, proxyBase
+		primaryBase, fallbackBase = numericBase, uidBase
 	}
 	baseURL := trimTrailingSlash(cfg.URL) + primaryBase
 
