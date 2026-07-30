@@ -134,6 +134,10 @@ function specFrom(cell: InsightCell): Record<string, unknown> {
     insight: rh.description,
     query: cell.meta.query[0]?.expr,
     datasourceUid: cell.meta.query[0]?.datasourceUid,
+    // A refresh replays the data the cell already holds — it does not re-query.
+    // Carry the original attestation stamp so the server doesn't restamp old
+    // data as fresh (attestation.asOf / timeRange anchor on dataAsOf).
+    dataAsOf: cell.meta.attestation.asOf,
     unit: rh.unit,
     decimals: rh.decimals,
     thresholds: rh.thresholds,

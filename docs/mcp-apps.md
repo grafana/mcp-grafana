@@ -91,9 +91,14 @@ Render types:
 Every result carries a trust profile alongside the data, so the cell is auditable regardless of
 host. It contains:
 
-- `query` — the expressions and datasource UIDs the data came from.
-- `attestation` — `{ asOf, live }`: when it was produced and whether it reflects a live datasource.
-- `provenance` — `{ author, datasource, orgId?, rbacScope? }`.
+- `query` — the expressions and datasource UIDs the data came from, as declared by the agent.
+- `attestation` — `{ asOf, live }`: when the data was gathered (agent-suppliable via `dataAsOf`;
+  a refresh replay preserves the original stamp) and whether the agent declared a live
+  query + datasource. Declarations are recorded, not verified — the server cannot check that
+  the frames actually came from the recorded query.
+- `provenance` — `{ renderedBy, datasource, orgId?, rbacScope? }`. `renderedBy` names who
+  packaged/rendered the cell (this server), deliberately not `author`: the data itself is
+  agent-supplied and unverified.
 - `renderHint` — the declarative "how to draw it" (type, unit, thresholds, mappings, …).
 - `reasoning` — `{ question, verdict, confidence, source }`; `source: "agent"` marks agent analysis.
 

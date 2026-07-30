@@ -175,7 +175,7 @@ function headerRow(cell: InsightCell): HTMLElement {
   const m = cell.meta;
   const sub = el("div", "attest");
   const ts = el("span", "mono", new Date(m.attestation.asOf).toLocaleString());
-  sub.append(ts, document.createTextNode(` · ${m.provenance.datasource} · ${m.provenance.author}`));
+  sub.append(ts, document.createTextNode(` · ${m.provenance.datasource} · ${m.provenance.renderedBy}`));
   left.append(sub);
   head.append(left);
 
@@ -363,11 +363,11 @@ function queryProvenance(cell: InsightCell, onAction: ActionHandler): HTMLElemen
 
   const m = cell.meta;
   const prov = el("div", "qp-prov");
-  prov.append(provRow("author", m.provenance.author));
-  prov.append(provRow("datasource", m.provenance.datasource));
+  prov.append(provRow("rendered by", m.provenance.renderedBy));
+  prov.append(provRow("datasource (declared)", m.provenance.datasource));
   prov.append(provRow("time range", `${new Date(m.timeRange.from).toLocaleString()} → ${new Date(m.timeRange.to).toLocaleString()}`, true));
   prov.append(provRow("as of", new Date(m.attestation.asOf).toLocaleString(), true));
-  prov.append(provRow("live", String(m.attestation.live)));
+  prov.append(provRow("live (declared)", String(m.attestation.live)));
   if (m.provenance.rbacScope) prov.append(provRow("RBAC scope", m.provenance.rbacScope));
   if (m.provenance.orgId != null) prov.append(provRow("org id", String(m.provenance.orgId), true));
   prov.append(provRow("confidence", m.confidence));

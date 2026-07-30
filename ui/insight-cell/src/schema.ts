@@ -244,8 +244,10 @@ export interface InsightCellMeta {
   verdict: string;
   confidence: "low" | "medium" | "high";
   timeRange: { from: string; to: string };
+  // Agent-declared, not verified: the server repackages what the agent
+  // gathered; renderedBy names who rendered the cell, not who produced the data.
   attestation: { asOf: string; live: boolean };
-  provenance: { author: string; datasource: string; orgId?: number; rbacScope?: string };
+  provenance: { renderedBy: string; datasource: string; orgId?: number; rbacScope?: string };
   query: Array<{ ref: string; expr: string; datasourceUid: string }>;
   dataMode: "mock" | "live";
 }

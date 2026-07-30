@@ -76,9 +76,16 @@ func TestRenderInsightCellStat(t *testing.T) {
 	assert.Equal(t, "agent", reasoning["source"])
 	assert.Equal(t, "Error rate is nominal", reasoning["verdict"])
 
-	// The embedded JSON resource round-trips to a cell.
+	// The embedded JSON resource round-trips to a cell, and provenance names
+	// who rendered the cell (renderedBy), not an implied data author.
 	payload := decodeCellPayload(t, res)
 	assert.Contains(t, payload, "renderHint")
+	meta, ok := payload["meta"].(map[string]any)
+	require.True(t, ok)
+	prov, ok := meta["provenance"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "Grafana MCP", prov["renderedBy"])
+	assert.NotContains(t, prov, "author")
 }
 
 func TestRenderInsightCellWorklistLive(t *testing.T) {
@@ -248,4 +255,41 @@ func TestRenderInsightCellQueryAlwaysArray(t *testing.T) {
 func TestRenderInsightCellRequiresPanel(t *testing.T) {
 	_, err := renderInsightCell(context.Background(), RenderInsightCellParams{})
 	require.Error(t, err)
+}
+
+func TestRenderInsightCellRejectsUnknownPanel(t *testing.T) {
+	// The jsonschema enum is advisory to the model only; the handler must
+	// enforce it itself.
+	_, err := renderInsightCell(context.Background(), RenderInsightCellParams{Panel: "gauge"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown panel")
+	assert.Contains(t, err.Error(), "timeseries", "error should list the valid panels")
+}
+
+func TestRenderInsightCellPreservesDataAsOf(t *testing.T) {
+	// A refresh replays the same data through the tool with the original
+	// attestation stamp; the server must anchor asOf and the time range on it
+	// instead of restamping time.Now(), or stale data would claim to be fresh.
+	rangeHours := 2
+	res, err := renderInsightCell(context.Background(), RenderInsightCellParams{
+		Panel:      "stat",
+		DataAsOf:   "2026-07-28T10:00:00Z",
+		RangeHours: &rangeHours,
+	})
+	require.NoError(t, err)
+
+	cell, ok := res.StructuredContent.(*insightCell)
+	require.True(t, ok)
+	assert.Equal(t, "2026-07-28T10:00:00Z", cell.Meta.Attestation.AsOf)
+	assert.Equal(t, "2026-07-28T10:00:00Z", cell.Meta.TimeRange.To)
+	assert.Equal(t, "2026-07-28T08:00:00Z", cell.Meta.TimeRange.From)
+}
+
+func TestRenderInsightCellRejectsMalformedDataAsOf(t *testing.T) {
+	_, err := renderInsightCell(context.Background(), RenderInsightCellParams{
+		Panel:    "stat",
+		DataAsOf: "yesterday",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "dataAsOf")
 }

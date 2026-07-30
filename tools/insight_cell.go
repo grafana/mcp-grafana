@@ -221,14 +221,19 @@ type icQueryRef struct {
 	DatasourceUID string `json:"datasourceUid"`
 }
 
+// icAttestation and icProvenance are agent-declared, not verified: the server
+// cannot check that the frames actually came from the recorded query and
+// datasource — it repackages what the agent gathered. Hence "renderedBy"
+// (what this server did) rather than "author" (which would imply the data
+// itself is vouched for), and "declaredLive"/"declared" wording in the UI.
 type icAttestation struct {
 	AsOf string `json:"asOf"`
-	Live bool   `json:"live"`
+	Live bool   `json:"live"` // agent declared a query + datasource; not verified
 }
 
 type icProvenance struct {
-	Author     string `json:"author"`
-	Datasource string `json:"datasource"`
+	RenderedBy string `json:"renderedBy"` // who packaged/rendered the cell, not who produced the data
+	Datasource string `json:"datasource"` // agent-declared origin of the data
 	OrgID      int    `json:"orgId,omitempty"`
 	RBACScope  string `json:"rbacScope,omitempty"`
 }
@@ -277,9 +282,10 @@ type RenderInsightCellParams struct {
 	Insight    string `json:"insight,omitempty" jsonschema:"description=2-4 sentence explanation shown under the title: what the data shows and why it matters."`
 	Confidence string `json:"confidence,omitempty" jsonschema:"enum=low,enum=medium,enum=high,description=Your confidence in the verdict. Defaults to medium."`
 
-	Query         string `json:"query,omitempty" jsonschema:"description=The PromQL/LogQL/TraceQL expression the data came from (recorded in provenance; not executed here)."`
-	DatasourceUID string `json:"datasourceUid,omitempty" jsonschema:"description=UID of the datasource the data came from (recorded in provenance)."`
+	Query         string `json:"query,omitempty" jsonschema:"description=The PromQL/LogQL/TraceQL expression the data came from (recorded as agent-declared provenance; not executed or verified here)."`
+	DatasourceUID string `json:"datasourceUid,omitempty" jsonschema:"description=UID of the datasource the data came from (recorded as agent-declared provenance; not verified here)."`
 	RangeHours    *int   `json:"rangeHours,omitempty" jsonschema:"description=Look-back window in hours for the recorded time range (default 1)."`
+	DataAsOf      string `json:"dataAsOf,omitempty" jsonschema:"description=RFC3339 timestamp of when you actually gathered the data from the query tools. Defaults to now\\, which is only correct if you just fetched it. Keep the original stamp when re-rendering the same data (the cell's refresh action does this automatically) so stale data never claims to be fresh."`
 
 	// renderHint field config (chart types)
 	Unit       string           `json:"unit,omitempty" jsonschema:"description=Grafana unit id so values format like Grafana: bytes\\, s\\, ms\\, percent\\, percentunit\\, reqps\\, short\\, Bps\\, ..."`
@@ -329,6 +335,23 @@ type RenderInsightCellParams struct {
 
 // --- Handler -----------------------------------------------------------------
 
+// panelNames mirrors the enum on RenderInsightCellParams.Panel. The jsonschema
+// enum is advisory to the model only — nothing enforces it at call time — so
+// the handler validates against this list itself.
+var panelNames = []string{
+	"timeseries", "stat", "bullet", "bar", "table",
+	"logs", "trace",
+	"worklist", "rca", "rulediff", "timeline", "cost",
+}
+
+var validPanels = func() map[string]bool {
+	m := make(map[string]bool, len(panelNames))
+	for _, p := range panelNames {
+		m[p] = true
+	}
+	return m
+}()
+
 func renderInsightCell(ctx context.Context, args RenderInsightCellParams) (*mcp.CallToolResult, error) {
 	cell, err := buildInsightCell(ctx, args)
 	if err != nil {
@@ -340,6 +363,9 @@ func renderInsightCell(ctx context.Context, args RenderInsightCellParams) (*mcp.
 func buildInsightCell(ctx context.Context, args RenderInsightCellParams) (*insightCell, error) {
 	if args.Panel == "" {
 		return nil, fmt.Errorf("panel is required")
+	}
+	if !validPanels[args.Panel] {
+		return nil, fmt.Errorf("unknown panel %q, must be one of: %s", args.Panel, strings.Join(panelNames, ", "))
 	}
 
 	confidence := args.Confidence
@@ -355,16 +381,30 @@ func buildInsightCell(ctx context.Context, args RenderInsightCellParams) (*insig
 		title = defaultTitleForPanel(args.Panel)
 	}
 
-	now := time.Now().UTC()
+	// Anchor the recorded time range and attestation on when the data was
+	// gathered, not on when this handler runs: a refresh replays the same data
+	// through this tool, and stamping time.Now() would make stale data claim to
+	// be fresh. First renders (no dataAsOf) default to now, which matches the
+	// "query first, then render" flow the tool description prescribes.
+	anchor := time.Now().UTC()
+	if args.DataAsOf != "" {
+		parsed, err := time.Parse(time.RFC3339, args.DataAsOf)
+		if err != nil {
+			return nil, fmt.Errorf("dataAsOf must be an RFC3339 timestamp, got %q: %w", args.DataAsOf, err)
+		}
+		anchor = parsed.UTC()
+	}
 	rangeHours := 1
 	if args.RangeHours != nil && *args.RangeHours > 0 {
 		rangeHours = *args.RangeHours
 	}
-	fromISO := now.Add(-time.Duration(rangeHours) * time.Hour).Format(time.RFC3339)
-	toISO := now.Format(time.RFC3339)
+	fromISO := anchor.Add(-time.Duration(rangeHours) * time.Hour).Format(time.RFC3339)
+	toISO := anchor.Format(time.RFC3339)
 
-	// Provenance / attestation. "live" means the agent recorded a query + datasource
-	// it read from a real datasource; otherwise this is representative/sample content.
+	// Provenance / attestation. "live" means the agent *declared* a query +
+	// datasource it read from a real datasource; otherwise this is
+	// representative/sample content. The declaration is not verified here —
+	// see the icAttestation/icProvenance comment.
 	live := args.Query != "" && args.DatasourceUID != ""
 	dataMode := "mock"
 	if live {
@@ -423,7 +463,7 @@ func buildInsightCell(ctx context.Context, args RenderInsightCellParams) (*insig
 			Confidence:  confidence,
 			TimeRange:   icTimeRange{From: fromISO, To: toISO},
 			Attestation: icAttestation{AsOf: toISO, Live: live},
-			Provenance:  icProvenance{Author: "Grafana MCP", Datasource: datasource},
+			Provenance:  icProvenance{RenderedBy: "Grafana MCP", Datasource: datasource},
 			Query:       queries,
 			DataMode:    dataMode,
 		},
@@ -532,6 +572,18 @@ func verdictOrDefault(verdict, panel string) string {
 
 // insightCellResult packages a cell into the three-channel tool result plus the
 // _meta trust profile.
+//
+// The full cell is deliberately emitted twice — structuredContent (the spec
+// channel) and an embedded application/json resource block — because host
+// support is inconsistent: some hosts drop structuredContent entirely, and
+// Claude Desktop converts the resource block to a text block the app then
+// scans (see extractCell in ui/insight-cell/src/mcp-app.ts for the fallback
+// order). Together with the tool-call arguments the same frames/table payload
+// can therefore travel through model context ~2-3x. That token cost is the
+// price of rendering on hosts we don't control; revisit dropping the embedded
+// block once structuredContent forwarding is reliable across major hosts.
+// Keep payloads small: the tool description steers agents to pass shaped,
+// analysis-sized data, not raw query dumps.
 func insightCellResult(cell *insightCell) (*mcp.CallToolResult, error) {
 	payload, err := json.Marshal(cell)
 	if err != nil {
