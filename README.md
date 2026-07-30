@@ -159,6 +159,12 @@ Queries go through Grafana's Snowflake datasource (Grafana Enterprise plugin `gr
 - **Get conversation detail:** Fetch a single conversation with all its generations, including prompts and outputs.
 - **Get generation detail and scores:** Fetch a single generation by ID, and its evaluation scores (evaluator, score key, value, passed, explanation).
 
+### Grafana Assistant
+
+> **Note:** Assistant tools are **disabled by default** and require the [Grafana Assistant](https://grafana.com/docs/grafana-cloud/machine-learning/assistant/) plugin (`grafana-assistant-app`) to be installed on the target Grafana instance. They are also **write tools** (the assistant may mutate stack state), so they are skipped when `--disable-write` is set. To enable them, add `assistant` to your `--enabled-tools` flag.
+
+- **Ask the assistant:** Send a natural-language prompt to Grafana Assistant and wait for the full text reply. The assistant may use tools, metrics, logs, and other stack context—broader than firing one isolated data-source query. Pass the returned `contextId` back in a follow-up call to continue the same conversation. Complex tasks can take several minutes; the call blocks until the reply is done or the request times out (5 minutes).
+
 ### Incidents
 
 - **Search, create, and update incidents:** Manage incidents in Grafana Incident, including searching, creating, and adding activities to incidents.
@@ -377,6 +383,7 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `get_assertions`                  | Asserts                   | Get assertion summary for a given entity                                                                     | Plugin-specific permissions                            | Plugin-specific scopes                              |
 | `agento11y_manage_conversations` | Agent Observability*  | List, search, and fetch LLM conversations from Grafana Agent Observability                              | `grafana-agento11y-app.conversations:read`                 | N/A                                                 |
 | `agento11y_manage_generations` | Agent Observability*    | Fetch LLM generation details and evaluation scores from Grafana Agent Observability                     | `grafana-agento11y-app.data:read`                          | N/A                                                 |
+| `ask_assistant`                   | Assistant*                | Send a prompt to Grafana Assistant and return the full text reply (multi-turn via `contextId`)              | Plugin-specific permissions                            | Plugin-specific scopes                              |
 | `generate_deeplink`               | Navigation                | Generate accurate deeplink URLs for Grafana resources                                                        | None (read-only URL generation)                        | N/A                                                 |
 | `get_annotations`                 | Annotations               | Fetch annotations with filters                                                                               | `annotations:read`                                     | `annotations:*` or `annotations:id:123`             |
 | `create_annotation`               | Annotations               | Create a new annotation (standard or Graphite format)                                                        | `annotations:write`                                    | `annotations:*`                                     |
@@ -427,7 +434,7 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 - `--session-idle-timeout-minutes`: Session idle timeout in minutes. Sessions with no activity for this duration are automatically reaped - default: `30`. Set to `0` to disable session reaping. Only relevant for SSE and streamable-http transports.
 
 **Tool Configuration:**
-- `--enabled-tools`: Comma-separated list of enabled categories - default: all categories except `admin`, `agento11y`, `athena`, `clickhouse`, `cloudwatch`, `elasticsearch`, `examples`, `graphite`, `quickwit`, `runpanelquery`, and `snowflake`. To enable disabled categories, add them to the list (e.g., `"search,datasource,...,snowflake"`)
+- `--enabled-tools`: Comma-separated list of enabled categories - default: all categories except `admin`, `agento11y`, `assistant`, `athena`, `clickhouse`, `cloudwatch`, `elasticsearch`, `examples`, `graphite`, `quickwit`, `runpanelquery`, and `snowflake`. To enable disabled categories, add them to the list (e.g., `"search,datasource,...,snowflake"`)
 - `--max-loki-log-limit`: Maximum number of log lines returned per `query_loki_logs` call - default: `100`. Note: Set this at least 1 below Loki's server-side `max_entries_limit_per_query` to allow truncation detection (the tool requests `limit+1` internally to detect if more data exists).
 - `--disable-search`: Disable search tools
 - `--disable-datasource`: Disable datasource tools
@@ -457,6 +464,7 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 - `--disable-athena`: Disable Athena tools
 - `--disable-provisioning`: Disable provisioning tools
 - `--disable-agento11y`: Disable Agent Observability tools
+- `--disable-assistant`: Disable Grafana Assistant tools
 
 ### Read-Only Mode
 
