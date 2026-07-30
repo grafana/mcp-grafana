@@ -37,6 +37,7 @@ Some tool categories are disabled by default:
 - **quickwit** – Quickwit query tool.
 - **influxdb** – InfluxDB query tool (Flux and InfluxQL).
 - **agento11y** – Agent Observability tools for LLM conversations, generations, and evaluation scores.
+- **assistant** – Grafana Assistant tool (`ask_assistant`); requires the Grafana Assistant plugin and is write-gated.
 - **admin** – Admin tools (teams, users, roles, permissions).
 
 `--enabled-tools` **replaces** the default list, so to add an optional category you must pass the full set. For example, to keep the defaults and also enable `runpanelquery` and `examples`:
