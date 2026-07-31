@@ -18,7 +18,7 @@ func TestAppResourcesRegistry(t *testing.T) {
 		byURI[app.URI] = app
 	}
 
-	for _, uri := range []string{PanelViewerResourceURI} {
+	for _, uri := range []string{PanelViewerResourceURI, InsightCellResourceURI} {
 		app, ok := byURI[uri]
 		require.True(t, ok, "expected an app registered at %s", uri)
 		assert.NotEmpty(t, app.Name)

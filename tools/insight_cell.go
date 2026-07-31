@@ -17,11 +17,10 @@
 //     to a text block an app can scan)
 //   - structuredContent  the insightCell (the spec channel)
 //
-// plus _meta = { "grafana.insightCell/v0": <trust profile> }.
+// plus _meta = { ui.resourceUri, "grafana.insightCell/v0": <trust profile> }.
 //
-// The MCP App that renders this contract visually (a sandboxed-iframe UI served
-// over the Resources API, per docs/mcp-apps.md) ships in a follow-up PR; until
-// then hosts consume the text verdict and the JSON payload.
+// The UI that renders these lives in ui/insight-cell/ and is embedded via
+// mcpgrafana.InsightCellResourceURI (see ui_apps.go / ui_embed.go).
 package tools
 
 import (
@@ -39,9 +38,8 @@ import (
 // insightCellMetaKey is the _meta namespace for the insight-cell trust profile.
 const insightCellMetaKey = "grafana.insightCell/v0"
 
-// --- Render contract ----------------------------------------------------------
-// JSON field names are the contract the (follow-up) insight-cell UI reads —
-// they must stay in lockstep with its schema.ts mirror once that lands.
+// --- Render contract (mirrors ui/insight-cell/src/schema.ts) -----------------
+// JSON field names must match schema.ts exactly — the embedded UI reads them.
 
 type icField struct {
 	Name   string `json:"name"`
@@ -587,6 +585,7 @@ func insightCellResult(cell *insightCell) (*mcp.CallToolResult, error) {
 		Result: mcp.Result{
 			Meta: &mcp.Meta{
 				AdditionalFields: map[string]any{
+					"ui":               map[string]any{"resourceUri": mcpgrafana.InsightCellResourceURI},
 					insightCellMetaKey: trust,
 				},
 			},
@@ -608,19 +607,20 @@ func insightCellResult(cell *insightCell) (*mcp.CallToolResult, error) {
 
 var RenderInsightCell = mcpgrafana.MustTool(
 	"render_insight_cell",
-	"Package a Grafana result you have gathered as a structured 'insight cell': a core panel "+
+	"Render a Grafana result you have gathered as an interactive 'insight cell' in the chat: a core panel "+
 		"(timeseries, stat, bar, table), a logs view, a trace waterfall, or a synthesis view — 'worklist' (ranked, "+
 		"actionable findings for alert triage / deprecations), 'rca' (root-cause investigation), 'timeline' (change "+
 		"correlation) or 'cost' (cardinality/cost drivers) — with a verdict, attestation, provenance and follow-up "+
-		"actions. The result is a text verdict plus the cell as JSON; it is not rendered visually in the chat (the "+
-		"MCP App surface for that ships separately). This packages data you already have: first use the query tools "+
-		"(query_prometheus, query_loki_logs, alerting_manage_rules, get_annotations, Sift, ...), do the analysis, "+
-		"then pass the results here as 'frames' (chart types) or the matching payload (items/findings/events/drivers), "+
-		"along with a one-line 'verdict' and a 2-4 sentence 'insight'. It does not query datasources itself, and the "+
-		"cell is read-only — it never invokes other MCP tools; writes happen when you call the write-gated tool yourself.",
+		"actions. This renders data you already have: first use the query tools (query_prometheus, query_loki_logs, "+
+		"alerting_manage_rules, get_annotations, Sift, ...), do the analysis, then pass the results here as 'frames' "+
+		"(chart types) or the matching payload (items/findings/events/drivers), along with a one-line 'verdict' and a "+
+		"2-4 sentence 'insight'. It does not query datasources itself, and the rendered cell is read-only — it never "+
+		"invokes other MCP tools; writes happen when you call the write-gated tool yourself. Hosts without MCP Apps "+
+		"support still get the text verdict and the JSON payload.",
 	renderInsightCell,
-	mcp.WithTitleAnnotation("Package a Grafana insight cell"),
+	mcp.WithTitleAnnotation("Render a Grafana insight cell"),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithUIResource(mcpgrafana.InsightCellResourceURI),
 )
 
 func AddInsightCellTools(mcp *server.MCPServer) {

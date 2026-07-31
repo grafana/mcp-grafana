@@ -1,8 +1,9 @@
-// Protocol-level integration test for render_insight_cell. Unlike the other
-// integration tests this needs no external services: the tool is a render
-// substrate (it repackages agent-supplied data), so the whole path —
-// tools/call over MCP for every panel type, the three output channels and the
-// trust _meta — is exercised against an in-process server.
+// Protocol-level integration test for render_insight_cell and its MCP App
+// resource. Unlike the other integration tests this needs no external services:
+// the tool is a render substrate (it repackages agent-supplied data), so the
+// whole path — tools/call over MCP for every panel type, the three output
+// channels, the trust _meta, and resources/read of the embedded UI bundle — is
+// exercised against an in-process server.
 //go:build integration
 // +build integration
 
@@ -13,6 +14,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -23,8 +25,11 @@ import (
 func newInsightCellClient(t *testing.T) *client.Client {
 	t.Helper()
 
-	s := server.NewMCPServer("mcp-grafana-test", "0.0.0")
+	s := server.NewMCPServer("mcp-grafana-test", "0.0.0",
+		server.WithResourceCapabilities(false, true),
+	)
 	AddInsightCellTools(s)
+	mcpgrafana.RegisterAppResources(s)
 
 	c, err := client.NewInProcessClient(s)
 	require.NoError(t, err)
@@ -153,8 +158,11 @@ func TestInsightCellIntegrationPanelTypes(t *testing.T) {
 			require.True(t, ok, "structuredContent should be an object, got %T", res.StructuredContent)
 			assert.Equal(t, panel, renderHintType(t, sc))
 
-			// _meta: the trust profile.
+			// _meta: the app resource URI and the trust profile.
 			require.NotNil(t, res.Meta)
+			ui, ok := res.Meta.AdditionalFields["ui"].(map[string]any)
+			require.True(t, ok, "_meta.ui should be present")
+			assert.Equal(t, mcpgrafana.InsightCellResourceURI, ui["resourceUri"])
 			trust, ok := res.Meta.AdditionalFields["grafana.insightCell/v0"].(map[string]any)
 			require.True(t, ok, "_meta should carry the grafana.insightCell/v0 trust profile")
 			reasoning, ok := trust["reasoning"].(map[string]any)
@@ -235,4 +243,21 @@ func TestInsightCellIntegrationReadOnly(t *testing.T) {
 		kind, _ := a.(map[string]any)["kind"].(string)
 		assert.Contains(t, []string{"link", "refresh", "ask"}, kind)
 	}
+}
+
+// TestInsightCellIntegrationAppResource reads the embedded MCP App bundle over
+// the Resources API — what a host does after seeing _meta.ui.resourceUri.
+func TestInsightCellIntegrationAppResource(t *testing.T) {
+	c := newInsightCellClient(t)
+
+	req := mcp.ReadResourceRequest{}
+	req.Params.URI = mcpgrafana.InsightCellResourceURI
+	res, err := c.ReadResource(context.Background(), req)
+	require.NoError(t, err)
+	require.Len(t, res.Contents, 1)
+
+	html, ok := res.Contents[0].(mcp.TextResourceContents)
+	require.True(t, ok, "app resource should be text contents, got %T", res.Contents[0])
+	assert.Contains(t, html.MIMEType, "text/html")
+	assert.Contains(t, html.Text, "<html", "should serve the built single-file bundle")
 }

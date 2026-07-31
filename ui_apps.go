@@ -12,6 +12,10 @@ const (
 
 	// PanelViewerResourceURI is the MCP App that renders get_panel_image results.
 	PanelViewerResourceURI = "ui://mcp-grafana/panel-viewer.html"
+	// InsightCellResourceURI is the generic "insight cell" render surface that
+	// draws any core Grafana panel (timeseries/stat/bar/table), logs, traces and
+	// synthesis views (worklist/rca/timeline/cost) from a single render contract.
+	InsightCellResourceURI = "ui://mcp-grafana/insight-cell.html"
 
 	// UIContentKindDeeplink is the `_meta.ui.kind` value for a Grafana deeplink.
 	UIContentKindDeeplink = "deeplink"
@@ -41,6 +45,12 @@ var appResources = []UIApp{
 		Name:        "Panel Viewer",
 		Description: "Interactive HTML viewer for Grafana panel images",
 		HTML:        panelViewerAppHTML,
+	},
+	{
+		URI:         InsightCellResourceURI,
+		Name:        "Insight Cell",
+		Description: "Generic Grafana render surface: draws any core panel, logs, traces and synthesis views from one render contract",
+		HTML:        insightCellAppHTML,
 	},
 }
 

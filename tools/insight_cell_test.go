@@ -5,10 +5,21 @@ import (
 	"encoding/json"
 	"testing"
 
+	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestRenderInsightCellToolMeta(t *testing.T) {
+	tool := RenderInsightCell.Tool
+	require.NotNil(t, tool.Meta, "render_insight_cell should have _meta for MCP Apps")
+	require.NotNil(t, tool.Meta.AdditionalFields)
+
+	ui, ok := tool.Meta.AdditionalFields["ui"].(map[string]any)
+	require.True(t, ok, "expected _meta.ui to be a map")
+	assert.Equal(t, mcpgrafana.InsightCellResourceURI, ui["resourceUri"])
+}
 
 // decodeCellPayload finds the embedded application/json resource block and
 // unmarshals it back into a generic map — the channel Claude Desktop keeps.
@@ -52,9 +63,12 @@ func TestRenderInsightCellStat(t *testing.T) {
 	assert.Equal(t, "synthesized", cell.Meta.DataMode, "no query -> synthesized data mode")
 	assert.False(t, cell.Meta.Attestation.Live)
 
-	// _meta carries the trust profile.
+	// _meta carries the resource URI and the trust profile.
 	require.NotNil(t, res.Meta)
 	fields := res.Meta.AdditionalFields
+	ui, ok := fields["ui"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, mcpgrafana.InsightCellResourceURI, ui["resourceUri"])
 	trust, ok := fields[insightCellMetaKey].(map[string]any)
 	require.True(t, ok, "expected the %s trust block", insightCellMetaKey)
 	reasoning, ok := trust["reasoning"].(map[string]any)
