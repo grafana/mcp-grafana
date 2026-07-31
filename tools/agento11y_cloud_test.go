@@ -269,6 +269,76 @@ func TestAgento11yCloudIntegration(t *testing.T) {
 		assert.Equal(t, id, rule.RuleID, "fetched rule id should match the requested id")
 	})
 
+	// The collection subtests are read-only on purpose: this suite runs against a
+	// real stack, so bookmarking a conversation or creating a collection would
+	// leave curation data behind.
+	t.Run("list saved conversations", func(t *testing.T) {
+		result, err := manageAgento11yEvalCollectionsRead(ctx, ManageAgento11yEvalCollectionsReadParams{
+			Operation:                     "list_saved_conversations",
+			agento11yEvalCollectionFields: agento11yEvalCollectionFields{Limit: 10},
+		})
+		require.NoError(t, err, "Failed to list Agent Observability saved conversations")
+
+		resp, ok := result.(*Agento11ySavedConversationsResponse)
+		require.True(t, ok, "list_saved_conversations should return *Agento11ySavedConversationsResponse")
+		assert.LessOrEqual(t, len(resp.Items), 10, "list_saved_conversations should respect the requested limit")
+		if len(resp.Items) == 0 {
+			t.Log("no saved conversations on this instance, skipping saved conversation assertions")
+			return
+		}
+		for _, saved := range resp.Items {
+			assert.NotEmpty(t, saved.SavedID, "listed saved conversation should have a saved_id")
+			assert.NotEmpty(t, saved.ConversationID, "listed saved conversation should have a conversation_id")
+		}
+		assert.GreaterOrEqual(t, resp.TotalCount, int64(len(resp.Items)), "total_count should cover at least the returned page")
+
+		id := resp.Items[0].SavedID
+		detail, err := manageAgento11yEvalCollectionsRead(ctx, ManageAgento11yEvalCollectionsReadParams{
+			Operation: "get_saved_conversation",
+			SavedID:   id,
+		})
+		require.NoError(t, err, "Failed to get saved conversation %s", id)
+
+		saved, ok := detail.(*Agento11ySavedConversation)
+		require.True(t, ok)
+		assert.Equal(t, id, saved.SavedID, "fetched saved conversation id should match the requested id")
+	})
+
+	t.Run("list collections", func(t *testing.T) {
+		result, err := manageAgento11yEvalCollectionsRead(ctx, ManageAgento11yEvalCollectionsReadParams{
+			Operation:                     "list_collections",
+			agento11yEvalCollectionFields: agento11yEvalCollectionFields{Limit: 10},
+		})
+		require.NoError(t, err, "Failed to list Agent Observability collections")
+
+		resp, ok := result.(*agento11yListResponse[Agento11yCollection])
+		require.True(t, ok, "list_collections should return *agento11yListResponse[Agento11yCollection]")
+		assert.LessOrEqual(t, len(resp.Items), 10, "list_collections should respect the requested limit")
+		if len(resp.Items) == 0 {
+			t.Log("no collections on this instance, skipping collection assertions")
+			return
+		}
+		for _, collection := range resp.Items {
+			assert.NotEmpty(t, collection.CollectionID, "listed collection should have a collection_id")
+			assert.NotEmpty(t, collection.Name, "listed collection should have a name")
+		}
+
+		id := resp.Items[0].CollectionID
+		members, err := manageAgento11yEvalCollectionsRead(ctx, ManageAgento11yEvalCollectionsReadParams{
+			Operation:                     "list_collection_members",
+			CollectionID:                  id,
+			agento11yEvalCollectionFields: agento11yEvalCollectionFields{Limit: 10},
+		})
+		require.NoError(t, err, "Failed to list members of collection %s", id)
+
+		memberResp, ok := members.(*agento11yListResponse[Agento11ySavedConversation])
+		require.True(t, ok, "list_collection_members should return *agento11yListResponse[Agento11ySavedConversation]")
+		assert.LessOrEqual(t, len(memberResp.Items), 10, "list_collection_members should respect the requested limit")
+		for _, member := range memberResp.Items {
+			assert.NotEmpty(t, member.SavedID, "collection member should have a saved_id")
+		}
+	})
+
 	t.Run("list guards", func(t *testing.T) {
 		result, err := manageAgento11yEvalRulesRead(ctx, ManageAgento11yEvalRulesReadParams{
 			Operation:               "list_guards",

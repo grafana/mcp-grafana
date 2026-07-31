@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Agent Observability tool `agento11y_manage_eval_collections`, in the opt-in `agento11y` category. Reads cover saved conversations, the collections that group them, and the membership in both directions. The write operations (bookmark and delete a saved conversation; create, update, and delete a collection; add and remove collection members) need `grafana-agento11y-app.eval:write` and are registered only when write tools are enabled
 - Agent Observability eval control-plane tools `agento11y_manage_evaluators` and `agento11y_manage_eval_rules`, in the opt-in `agento11y` category. Reads cover evaluators, evaluator templates, template versions, the judge provider and model catalog, eval rules, and guards. The write operations (evaluator upsert, fork, test, and delete; rule and guard create, update, preview, and delete) need `grafana-agento11y-app.eval:write` and are registered only when write tools are enabled ([#1028](https://github.com/grafana/mcp-grafana/pull/1028))
 
 ### Changed
