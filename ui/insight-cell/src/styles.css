@@ -82,7 +82,9 @@ html, body {
 /* dropdown menu */
 .dropdown { position: relative; display: inline-flex; }
 .menu {
-  position: absolute; top: calc(100% + 6px); right: 0; z-index: 20;
+  /* fixed, positioned from the trigger rect at open time (see dropdown() in
+     render.ts) so ancestors with overflow:hidden (.viz-box) can't clip it */
+  position: fixed; z-index: 40;
   min-width: 210px; background: var(--card); border: 1px solid var(--border);
   border-radius: 10px; box-shadow: 0 6px 24px rgba(16,24,40,.14); padding: 6px;
   display: none; flex-direction: column;
@@ -94,6 +96,24 @@ html, body {
   padding: 8px 10px; border-radius: 7px;
 }
 .menu-item:hover { background: var(--track); }
+
+/* manual-fallback text panel (sandbox blocked clipboard/download) */
+.text-panel {
+  margin-top: 12px; border: 1px solid var(--border); border-radius: 10px;
+  background: var(--card); padding: 10px;
+}
+.text-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.text-panel-title { font-size: 12.5px; color: var(--muted); }
+.text-panel-close {
+  font: inherit; font-size: 12px; line-height: 1; cursor: pointer;
+  background: transparent; border: none; color: var(--muted); padding: 4px 6px; border-radius: 6px;
+}
+.text-panel-close:hover { background: var(--track); color: var(--ink); }
+.text-panel-body {
+  width: 100%; box-sizing: border-box; resize: vertical; font-size: 12px;
+  background: var(--bg); color: var(--ink); border: 1px solid var(--border);
+  border-radius: 8px; padding: 8px;
+}
 
 /* toast */
 .toast {

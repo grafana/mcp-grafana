@@ -132,12 +132,16 @@ function specFrom(cell: InsightCell): Record<string, unknown> {
     title: rh.title,
     verdict: cell.meta.verdict,
     insight: rh.description,
+    confidence: cell.meta.confidence,
     query: cell.meta.query[0]?.expr,
     datasourceUid: cell.meta.query[0]?.datasourceUid,
     // A refresh replays the data the cell already holds — it does not re-query.
     // Carry the original attestation stamp so the server doesn't restamp old
     // data as fresh (attestation.asOf / timeRange anchor on dataAsOf).
     dataAsOf: cell.meta.attestation.asOf,
+    // The contract stores the resolved timeRange, not the rangeHours input;
+    // derive it back so a replay doesn't shrink the window to the 1h default.
+    rangeHours: rangeHoursFrom(cell.meta.timeRange),
     unit: rh.unit,
     decimals: rh.decimals,
     thresholds: rh.thresholds,
@@ -171,6 +175,14 @@ function specFrom(cell: InsightCell): Record<string, unknown> {
   // Drop undefined so we don't send a wall of null args.
   for (const k of Object.keys(args)) if (args[k] === undefined) delete args[k];
   return args;
+}
+
+/** Whole hours spanned by a recorded time range, for replaying as rangeHours. */
+function rangeHoursFrom(tr: { from: string; to: string } | undefined): number | undefined {
+  if (!tr) return undefined;
+  const ms = Date.parse(tr.to) - Date.parse(tr.from);
+  if (!Number.isFinite(ms) || ms <= 0) return undefined;
+  return Math.max(1, Math.round(ms / 3_600_000));
 }
 
 /** Reject non-http(s) schemes (e.g. javascript:, data:) before linking. */

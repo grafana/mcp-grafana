@@ -66,6 +66,9 @@ interface Panel {
 
 export function renderInto(root: HTMLElement, cell: InsightCell, onAction: ActionHandler) {
   root.innerHTML = "";
+  // A dropdown menu open during a re-render is portaled to <body> (see
+  // dropdown()) and would outlive its cell; sweep any strays.
+  document.querySelectorAll("body > .menu").forEach((m) => m.remove());
   const rerender = (next: InsightCell) => renderInto(root, next, onAction);
 
   const viz = vizSection(cell, rerender, { onAction, cell });
@@ -148,18 +151,40 @@ function toast(anchor: HTMLElement, msg: string) {
 function dropdown(trigger: HTMLElement, items: Array<{ label: string; onClick: () => void }>): HTMLElement {
   const wrap = el("div", "dropdown");
   const menu = el("div", "menu");
+  let close = () => {};
   for (const it of items) {
     const mi = el("button", "menu-item", it.label);
-    mi.addEventListener("click", (e) => { e.stopPropagation(); menu.classList.remove("open"); it.onClick(); });
+    mi.addEventListener("click", (e) => { e.stopPropagation(); close(); it.onClick(); });
     menu.append(mi);
   }
+  const open = () => {
+    // Portal the menu to <body> and position it fixed from the trigger rect:
+    // inside the cell it gets clipped by .viz-box's overflow:hidden, and
+    // position:fixed alone isn't enough because .viz-toolbar animates with a
+    // transform, which makes it the containing block for fixed descendants.
+    const r = trigger.getBoundingClientRect();
+    document.body.append(menu);
+    menu.style.top = `${r.bottom + 6}px`;
+    menu.style.right = `${Math.max(0, document.documentElement.clientWidth - r.right)}px`;
+    menu.classList.add("open");
+    close = () => {
+      menu.classList.remove("open");
+      wrap.append(menu); // back into the cell so a re-render sweeps it away
+      document.removeEventListener("click", close);
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", close);
+    };
+    setTimeout(() => {
+      document.addEventListener("click", close);
+      // A fixed menu doesn't track its trigger; close instead of drifting.
+      window.addEventListener("scroll", close, true);
+      window.addEventListener("resize", close);
+    }, 0);
+  };
   trigger.addEventListener("click", (e) => {
     e.stopPropagation();
-    const open = menu.classList.toggle("open");
-    if (open) {
-      const close = () => { menu.classList.remove("open"); document.removeEventListener("click", close); };
-      setTimeout(() => document.addEventListener("click", close), 0);
-    }
+    if (menu.classList.contains("open")) close();
+    else open();
   });
   wrap.append(trigger, menu);
   return wrap;
@@ -203,21 +228,69 @@ function cellLink(cell: InsightCell): string | undefined {
 }
 
 async function copyText(anchor: HTMLElement, text: string, ok: string) {
-  try { await navigator.clipboard.writeText(text); toast(anchor, ok); }
-  catch { toast(anchor, "Clipboard blocked by the host sandbox"); }
+  try { await navigator.clipboard.writeText(text); toast(anchor, ok); return; }
+  catch { /* async clipboard needs a permission many host sandboxes don't grant */ }
+  if (legacyCopy(text)) { toast(anchor, ok); return; }
+  // Nothing the sandbox lets us write to — surface the text for a manual copy
+  // instead of a toast pretending it worked.
+  showTextPanel(anchor, "Copy is blocked by the host sandbox — select and copy manually:", text);
+}
+
+/** execCommand("copy") often works under a user gesture where the async clipboard API is denied. */
+function legacyCopy(text: string): boolean {
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.setAttribute("readonly", "");
+  ta.style.cssText = "position:fixed;left:-9999px;top:0";
+  document.body.append(ta);
+  ta.select();
+  let ok = false;
+  try { ok = document.execCommand("copy"); } catch { /* not permitted here */ }
+  ta.remove();
+  return ok;
 }
 
 function downloadJson(anchor: HTMLElement, cell: InsightCell) {
+  const json = JSON.stringify(cell, null, 2);
+  // Attempt a blob download, but don't claim success: a sandbox without
+  // allow-downloads swallows the click without throwing, so whether a file
+  // landed is unknowable from inside the iframe. Always show the JSON
+  // alongside so there is a way to save it either way.
   try {
-    const blob = new Blob([JSON.stringify(cell, null, 2)], { type: "application/json" });
+    const blob = new Blob([json], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
     a.download = `insight-cell-${cell.renderHint.type}.json`;
     a.click();
     URL.revokeObjectURL(url);
-    toast(anchor, "Downloaded cell JSON");
-  } catch { toast(anchor, "Download blocked by the host sandbox"); }
+  } catch { /* fall through to the manual panel */ }
+  showTextPanel(anchor, "Download attempted — if the host blocked it, copy the JSON below:", json);
+}
+
+/**
+ * An inline, dismissable panel with selectable text: the guaranteed fallback
+ * when the host sandbox blocks the clipboard or downloads.
+ */
+function showTextPanel(anchor: HTMLElement, title: string, text: string) {
+  const card = anchor.closest(".card") ?? anchor;
+  card.querySelector(".text-panel")?.remove();
+  const panel = el("div", "text-panel");
+  const head = el("div", "text-panel-head");
+  head.append(el("span", "text-panel-title", title));
+  const close = el("button", "text-panel-close", "✕") as HTMLButtonElement;
+  close.setAttribute("aria-label", "Close");
+  close.addEventListener("click", () => panel.remove());
+  head.append(close);
+  const ta = document.createElement("textarea");
+  ta.className = "text-panel-body mono";
+  ta.readOnly = true;
+  ta.value = text;
+  ta.rows = Math.min(10, Math.max(3, text.split("\n").length));
+  ta.addEventListener("focus", () => ta.select());
+  panel.append(head, ta);
+  card.append(panel);
+  ta.focus();
 }
 
 // --- visualization section ---------------------------------------------------

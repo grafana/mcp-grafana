@@ -67,6 +67,11 @@ The insight cell is a generic surface: **one contract + one renderer that dispat
 types in `tools/insight_cell.go` mirror `ui/insight-cell/src/schema.ts` (the source of truth
 for field names — they must match, since the embedded UI reads them).
 
+Note the asymmetry between input and output: `renderHint` is part of the *output* contract,
+assembled server-side. The tool *input* is a flat `panel` string plus individual field-config
+arguments (`unit`, `thresholds`, `mappings`, …) — calling the tool with a `renderHint` object
+fails with unknown arguments.
+
 `render_insight_cell` is a **render substrate**: the agent gathers data with the existing query
 tools (`query_prometheus`, `query_loki_logs`, `alerting_manage_rules`, `get_annotations`, Sift, …),
 does the analysis, and passes the results here. The tool does not query datasources or fabricate
@@ -283,7 +288,8 @@ never privilege.
 - **Protocol integration test:** `tools/insight_cell_integration_test.go` (build tag
   `integration`, no external services needed) drives every panel type through an in-process MCP
   client and asserts the full result shape, plus `resources/read` of the embedded bundle.
-- **Visual check:** render in a host with MCP Apps support. The fastest loop is `--dev-cors` on the
-  streamable-HTTP transport + the
-  [MCP Apps basic-host](https://github.com/modelcontextprotocol/ext-apps/tree/main/examples/basic-host),
-  matching #825's development flow; or load the plugin in Claude Desktop.
+- **Visual check:** render in a host with MCP Apps support. The fastest loop is the
+  streamable-HTTP transport with `--allowed-origins '*'` (dev only — it disables Origin
+  validation) + the
+  [MCP Apps basic-host](https://github.com/modelcontextprotocol/ext-apps/tree/main/examples/basic-host);
+  or load the server in Claude Desktop.
