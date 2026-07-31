@@ -246,7 +246,7 @@ type icMeta struct {
 	Attestation icAttestation `json:"attestation"`
 	Provenance  icProvenance  `json:"provenance"`
 	Query       []icQueryRef  `json:"query"`
-	DataMode    string        `json:"dataMode"` // mock | live
+	DataMode    string        `json:"dataMode"` // agent-supplied | synthesized (declared, not verified)
 }
 
 type icTimeRange struct {
@@ -401,16 +401,19 @@ func buildInsightCell(ctx context.Context, args RenderInsightCellParams) (*insig
 	fromISO := anchor.Add(-time.Duration(rangeHours) * time.Hour).Format(time.RFC3339)
 	toISO := anchor.Format(time.RFC3339)
 
-	// Provenance / attestation. "live" means the agent *declared* a query +
-	// datasource it read from a real datasource; otherwise this is
-	// representative/sample content. The declaration is not verified here —
+	// Provenance / attestation. "agent-supplied" means the agent *declared* a
+	// query + datasource it read the data from — it should be real, but the
+	// server cannot verify that the frames actually came from that query.
+	// "synthesized" means no such declaration: representative/sample content or
+	// synthesis-view material assembled by the agent. Deliberately not called
+	// "live"/"mock" so the label never claims more than the server can check —
 	// see the icAttestation/icProvenance comment.
 	live := args.Query != "" && args.DatasourceUID != ""
-	dataMode := "mock"
+	dataMode := "synthesized"
 	if live {
-		dataMode = "live"
+		dataMode = "agent-supplied"
 	}
-	datasource := "sample (no live datasource)"
+	datasource := "sample (no datasource declared)"
 	if live {
 		// Prefer the public app URL (what a user can actually open) over the
 		// configured URL, which may be an in-cluster endpoint. This string shows
@@ -601,11 +604,7 @@ func insightCellResult(cell *insightCell) (*mcp.CallToolResult, error) {
 	if cell.Callout != nil {
 		fmt.Fprintf(&b, "%s: %s\n", cell.Callout.Title, cell.Callout.Body)
 	}
-	live := "sample"
-	if cell.Meta.Attestation.Live {
-		live = "live"
-	}
-	fmt.Fprintf(&b, "As of %s · %s.", cell.Meta.Attestation.AsOf, live)
+	fmt.Fprintf(&b, "As of %s · %s data.", cell.Meta.Attestation.AsOf, cell.Meta.DataMode)
 
 	// The insight-cell trust profile (Layer A) carried in _meta.
 	trust := map[string]any{

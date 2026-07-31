@@ -107,8 +107,11 @@ host. It contains:
 - `renderHint` — the declarative "how to draw it" (type, unit, thresholds, mappings, …).
 - `reasoning` — `{ question, verdict, confidence, source }`; `source: "agent"` marks agent analysis.
 
-`dataMode` is `"live"` only when both a `query` and a `datasourceUid` are supplied; otherwise
-`"mock"` (representative/sample content).
+`dataMode` is `"agent-supplied"` when both a `query` and a `datasourceUid` are declared — the
+frames *should* come from a real datasource read, but the server cannot verify that they do —
+and `"synthesized"` otherwise (representative/sample or synthesis-view content assembled by the
+agent). The labels are deliberately not `"live"`/`"mock"`: every claim in the cell is
+agent-declared, and the wording should never promise verification the substrate can't perform.
 
 ## Insight-cell architecture, end to end
 
@@ -226,7 +229,7 @@ flowchart TD
     R["render_insight_cell result:<br/>text verdict + embedded JSON + structuredContent + _meta"] --> Q{Host supports<br/>MCP Apps?}
     Q -- yes --> F["resources/read the ui:// bundle"]
     F --> I["interactive cell in a sandboxed iframe:<br/>chart, provenance drawer, refresh / ask / link"]
-    Q -- no --> T["_meta.ui ignored;<br/>content[0] text carries the analysis:<br/>title, verdict, insight, 'As of ... - live'"]
+    Q -- no --> T["_meta.ui ignored;<br/>content[0] text carries the analysis:<br/>title, verdict, insight, 'As of ... - agent-supplied data'"]
     T --> J["full cell JSON still in context<br/>(embedded resource block)"]
     J --> P["agent can quote exact numbers,<br/>save the cell, or replay it into<br/>render_insight_cell on an Apps host later"]
 ```

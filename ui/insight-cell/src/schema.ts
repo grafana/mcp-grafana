@@ -249,7 +249,10 @@ export interface InsightCellMeta {
   attestation: { asOf: string; live: boolean };
   provenance: { renderedBy: string; datasource: string; orgId?: number; rbacScope?: string };
   query: Array<{ ref: string; expr: string; datasourceUid: string }>;
-  dataMode: "mock" | "live";
+  // "agent-supplied": a query + datasource were declared for the data (should
+  // be real; unverifiable). "synthesized": no declaration — sample or
+  // synthesis-view content assembled by the agent.
+  dataMode: "agent-supplied" | "synthesized";
 }
 
 // --- The cell ----------------------------------------------------------------

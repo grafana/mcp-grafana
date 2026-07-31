@@ -60,7 +60,7 @@ func TestRenderInsightCellStat(t *testing.T) {
 	require.True(t, ok, "structuredContent should be an *insightCell")
 	assert.Equal(t, "stat", cell.RenderHint.Type)
 	assert.Equal(t, "percent", cell.RenderHint.Unit)
-	assert.Equal(t, "mock", cell.Meta.DataMode, "no query -> sample/mock data mode")
+	assert.Equal(t, "synthesized", cell.Meta.DataMode, "no query -> synthesized data mode")
 	assert.False(t, cell.Meta.Attestation.Live)
 
 	// _meta carries the resource URI and the trust profile.
@@ -107,7 +107,7 @@ func TestRenderInsightCellWorklistLive(t *testing.T) {
 	assert.Equal(t, "HighErrorRate", cell.Worklist[0].Title)
 
 	// A query + datasource -> live attestation and a recorded query.
-	assert.Equal(t, "live", cell.Meta.DataMode)
+	assert.Equal(t, "agent-supplied", cell.Meta.DataMode)
 	assert.True(t, cell.Meta.Attestation.Live)
 	require.Len(t, cell.Meta.Query, 1)
 	assert.Equal(t, `ALERTS{alertstate="firing"}`, cell.Meta.Query[0].Expr)

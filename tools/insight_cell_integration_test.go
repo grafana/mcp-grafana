@@ -173,10 +173,10 @@ func TestInsightCellIntegrationPanelTypes(t *testing.T) {
 			require.True(t, ok)
 			assert.Equal(t, "agent", reasoning["source"])
 
-			// No query supplied -> sample/mock data mode.
+			// No query supplied -> synthesized data mode.
 			meta, ok := cell["meta"].(map[string]any)
 			require.True(t, ok)
-			assert.Equal(t, "mock", meta["dataMode"])
+			assert.Equal(t, "synthesized", meta["dataMode"])
 		})
 	}
 }
@@ -198,7 +198,7 @@ func TestInsightCellIntegrationLiveDataMode(t *testing.T) {
 
 	meta, ok := cellFromResult(t, res)["meta"].(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, "live", meta["dataMode"])
+	assert.Equal(t, "agent-supplied", meta["dataMode"])
 	attestation, ok := meta["attestation"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, true, attestation["live"])
