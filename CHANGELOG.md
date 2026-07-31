@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- A `GRAFANA_URL` without a scheme is normalized where it enters the process, so the API client and the client cache resolve the same instance as the rest of the server. `GRAFANA_URL=127.0.0.1:3000` used to panic at startup, and a schemeless hostname produced requests with no host while tools built from `GrafanaConfig.URL` kept working ([#1032](https://github.com/grafana/mcp-grafana/issues/1032))
+- A `GRAFANA_URL` without a scheme is normalized where it enters the process, so the API client and the client cache resolve the same instance as the rest of the server. `GRAFANA_URL=127.0.0.1:3000` used to panic at startup, and a schemeless hostname produced requests with no host while tools built from `GrafanaConfig.URL` kept working ([#1034](https://github.com/grafana/mcp-grafana/pull/1034))
 
 ### Changed
 
