@@ -17,6 +17,7 @@
 package tools
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -171,6 +172,120 @@ func TestAgento11yCloudIntegration(t *testing.T) {
 		for _, score := range scores.Items {
 			assert.Equal(t, genID, score.GenerationID, "score should belong to the requested generation")
 			assert.NotEmpty(t, score.ScoreKey, "score should have a score_key")
+		}
+	})
+
+	t.Run("list evaluators", func(t *testing.T) {
+		result, err := manageAgento11yEvaluatorsRead(ctx, ManageAgento11yEvaluatorsReadParams{
+			Operation: "list_evaluators",
+		})
+		require.NoError(t, err, "Failed to list Agent Observability evaluators")
+
+		resp, ok := result.(*agento11yListResponse[Agento11yEvaluatorDefinition])
+		require.True(t, ok, "list_evaluators should return *agento11yListResponse[Agento11yEvaluatorDefinition]")
+		if len(resp.Items) == 0 {
+			t.Log("no evaluators on this instance, skipping evaluator assertions")
+			return
+		}
+		for _, evaluator := range resp.Items {
+			assert.NotEmpty(t, evaluator.EvaluatorID, "listed evaluator should have an evaluator_id")
+			assert.NotEmpty(t, evaluator.Kind, "listed evaluator should have a kind")
+		}
+
+		// Drill into the first evaluator: this is the path an agent takes from a
+		// failed score to the definition that produced it.
+		id := resp.Items[0].EvaluatorID
+		detail, err := manageAgento11yEvaluatorsRead(ctx, ManageAgento11yEvaluatorsReadParams{
+			Operation:   "get_evaluator",
+			EvaluatorID: id,
+		})
+		require.NoError(t, err, "Failed to get evaluator %s", id)
+
+		evaluator, ok := detail.(*Agento11yEvaluatorDefinition)
+		require.True(t, ok)
+		assert.Equal(t, id, evaluator.EvaluatorID, "fetched evaluator id should match the requested id")
+	})
+
+	t.Run("list templates", func(t *testing.T) {
+		result, err := manageAgento11yEvaluatorsRead(ctx, ManageAgento11yEvaluatorsReadParams{
+			Operation:                "list_templates",
+			agento11yEvaluatorFields: agento11yEvaluatorFields{Limit: 10},
+		})
+		// /eval/templates only exists on stacks that configure a template store,
+		// so a 404 here is a deployment property rather than a tool failure. Every
+		// other error, permission and decode failures included, must fail the test.
+		if err != nil && strings.Contains(err.Error(), "status 404") {
+			t.Skipf("list_templates unavailable on this instance (no evaluator template store): %v", err)
+		}
+		require.NoError(t, err, "Failed to list Agent Observability evaluator templates")
+
+		resp, ok := result.(*agento11yListResponse[Agento11yTemplateDefinition])
+		require.True(t, ok, "list_templates should return *agento11yListResponse[Agento11yTemplateDefinition]")
+		assert.LessOrEqual(t, len(resp.Items), 10, "list_templates should respect the requested limit")
+		for _, template := range resp.Items {
+			assert.NotEmpty(t, template.TemplateID, "listed template should have a template_id")
+		}
+	})
+
+	t.Run("list judge providers", func(t *testing.T) {
+		result, err := manageAgento11yEvaluatorsRead(ctx, ManageAgento11yEvaluatorsReadParams{
+			Operation: "list_judge_providers",
+		})
+		require.NoError(t, err, "Failed to list Agent Observability judge providers")
+
+		resp, ok := result.(*Agento11yJudgeProvidersResponse)
+		require.True(t, ok, "list_judge_providers should return *Agento11yJudgeProvidersResponse")
+		for _, provider := range resp.Providers {
+			assert.NotEmpty(t, provider.ID, "listed judge provider should have an id")
+		}
+	})
+
+	t.Run("list rules", func(t *testing.T) {
+		result, err := manageAgento11yEvalRulesRead(ctx, ManageAgento11yEvalRulesReadParams{
+			Operation: "list_rules",
+		})
+		require.NoError(t, err, "Failed to list Agent Observability eval rules")
+
+		resp, ok := result.(*agento11yListResponse[Agento11yRuleDefinition])
+		require.True(t, ok, "list_rules should return *agento11yListResponse[Agento11yRuleDefinition]")
+		if len(resp.Items) == 0 {
+			t.Log("no eval rules on this instance, skipping rule assertions")
+			return
+		}
+		for _, rule := range resp.Items {
+			assert.NotEmpty(t, rule.RuleID, "listed rule should have a rule_id")
+			assert.NotEmpty(t, rule.Selector, "listed rule should have a selector")
+		}
+
+		id := resp.Items[0].RuleID
+		detail, err := manageAgento11yEvalRulesRead(ctx, ManageAgento11yEvalRulesReadParams{
+			Operation: "get_rule",
+			RuleID:    id,
+		})
+		require.NoError(t, err, "Failed to get eval rule %s", id)
+
+		rule, ok := detail.(*Agento11yRuleDefinition)
+		require.True(t, ok)
+		assert.Equal(t, id, rule.RuleID, "fetched rule id should match the requested id")
+	})
+
+	t.Run("list guards", func(t *testing.T) {
+		result, err := manageAgento11yEvalRulesRead(ctx, ManageAgento11yEvalRulesReadParams{
+			Operation:               "list_guards",
+			agento11yEvalRuleFields: agento11yEvalRuleFields{Limit: 10},
+		})
+		require.NoError(t, err, "Failed to list Agent Observability guards")
+
+		resp, ok := result.(*agento11yListResponse[Agento11yHookRuleDefinition])
+		require.True(t, ok, "list_guards should return *agento11yListResponse[Agento11yHookRuleDefinition]")
+		assert.LessOrEqual(t, len(resp.Items), 10, "list_guards should respect the requested limit")
+		if len(resp.Items) == 0 {
+			t.Log("no guards on this instance, skipping guard assertions")
+			return
+		}
+		for _, guard := range resp.Items {
+			assert.NotEmpty(t, guard.RuleID, "listed guard should have a rule_id")
+			assert.NotEmpty(t, guard.ActionOnFail, "listed guard should have an action_on_fail")
 		}
 	})
 }

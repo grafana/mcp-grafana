@@ -132,6 +132,11 @@ When enabled, the following writes are disabled:
 - `create_snapshot`
 - `delete_snapshot`
 
+**Agent Observability tools**
+
+- `agento11y_manage_evaluators` (upsert, delete, fork, and test evaluators)
+- `agento11y_manage_eval_rules` (create, update, delete, and preview eval rules and guards)
+
 Read operations (queries, lists, searches) stay available.
 
 ## Configure client TLS for Grafana
