@@ -220,6 +220,19 @@ type TLSConfig struct {
 	SkipVerify bool
 }
 
+// Loki guardrail modes for GrafanaConfig.LokiGuardrailMode.
+const (
+	// LokiGuardrailOff disables the Loki query cost guardrail (default).
+	LokiGuardrailOff = "off"
+	// LokiGuardrailShadow evaluates the guardrail and logs queries that
+	// would be blocked, but always lets them run. It pays the same
+	// index/stats round trip as enforce mode.
+	LokiGuardrailShadow = "shadow"
+	// LokiGuardrailEnforce rejects blocked queries with a tool error
+	// containing rewrite guidance.
+	LokiGuardrailEnforce = "enforce"
+)
+
 // GrafanaConfig represents the full configuration for Grafana clients.
 // It includes connection details, authentication credentials, debug settings, and TLS options used throughout the MCP server's lifecycle.
 type GrafanaConfig struct {
@@ -270,6 +283,24 @@ type GrafanaConfig struct {
 	// MaxLokiLogLimit is the maximum number of log lines that can be returned
 	// from Loki queries.
 	MaxLokiLogLimit int
+
+	// LokiGuardrailMode controls the query cost guardrail for query_loki_logs.
+	// One of LokiGuardrailOff (default), LokiGuardrailShadow, or
+	// LokiGuardrailEnforce. Loki does not enforce max_query_bytes_read on log
+	// queries without a line filter, so the guardrail requires selective
+	// stream selectors, bounds the effective time range, and pre-checks the
+	// byte estimate from Loki's index/stats API before admitting a query.
+	LokiGuardrailMode string
+
+	// LokiGuardrailMaxBytes is the maximum number of bytes a single
+	// query_loki_logs call may scan, estimated via Loki's index/stats API
+	// before the query runs. Zero disables the byte-budget check.
+	LokiGuardrailMaxBytes int64
+
+	// LokiGuardrailMaxRange is the maximum effective time range allowed for
+	// a single query_loki_logs call, including range-vector durations like
+	// [30d]. Zero disables the range check.
+	LokiGuardrailMaxRange time.Duration
 
 	// BaseTransport is an optional base HTTP transport used as the innermost
 	// layer of the middleware chain in NewGrafanaClient. When set, it replaces

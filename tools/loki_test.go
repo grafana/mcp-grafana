@@ -54,7 +54,7 @@ func TestLokiTools(t *testing.T) {
 		assert.GreaterOrEqual(t, result.Streams, 0, "Should have a valid streams count")
 		assert.GreaterOrEqual(t, result.Chunks, 0, "Should have a valid chunks count")
 		assert.GreaterOrEqual(t, result.Entries, 0, "Should have a valid entries count")
-		assert.GreaterOrEqual(t, result.Bytes, 0, "Should have a valid bytes count")
+		assert.GreaterOrEqual(t, result.Bytes, int64(0), "Should have a valid bytes count")
 	})
 
 	t.Run("query loki logs", func(t *testing.T) {
