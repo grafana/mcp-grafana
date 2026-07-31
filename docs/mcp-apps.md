@@ -105,6 +105,177 @@ host. It contains:
 `dataMode` is `"live"` only when both a `query` and a `datasourceUid` are supplied; otherwise
 `"mock"` (representative/sample content).
 
+## Insight-cell architecture, end to end
+
+This section is the complete picture: every component, who calls what, where the cell sits in an
+agentic workflow, what happens on hosts that cannot render, and how identity works across the
+deployment modes.
+
+### Components
+
+Everything ships inside the `mcp-grafana` binary; there is no separate service.
+
+| Component | File(s) | Role |
+|---|---|---|
+| Render contract | `tools/insight_cell.go` (Go structs) ↔ `ui/insight-cell/src/schema.ts` (TS mirror) | The `insightCell` JSON: `renderHint` + data payload + `meta` (verdict, attestation, provenance, query refs). Field names must match on both sides. |
+| Tool handler | `tools/insight_cell.go` | Validates input (panel enum, RFC3339 `dataAsOf`), normalises the payload (`orEmpty`, `sanitizeActions`), builds the three-channel result + trust `_meta`. Makes **no data queries** — it only reads the already-configured Grafana base URL to format the datasource display string. |
+| App registry | `ui_apps.go` | `WithUIResource` puts `_meta.ui.resourceUri` on the tool; `RegisterAppResources` serves the bundle at `ui://mcp-grafana/insight-cell.html` over the MCP Resources API. |
+| Embedded bundle | `ui_embed.go` + `ui/insight-cell/dist/mcp-app.html` | Single self-contained HTML file (Vite + singlefile), committed and `//go:embed`-ed, so building the server needs no Node. |
+| App bridge | `ui/insight-cell/src/mcp-app.ts` | Runs in the host's sandboxed iframe. `extractCell` (channel fallback ladder), `runAction` (link/refresh/ask), `specFrom` (cell → tool-args round trip for refresh). |
+| Renderer | `ui/insight-cell/src/render.ts` + `format.ts` | One renderer dispatching on `renderHint.type`; Grafana-style unit/threshold/mapping formatting. Plain DOM, no framework. |
+| Enablement | `cmd/mcp-grafana/main.go` | Opt-in tool category: `insight-cell` is **not** in the default `--enabled-tools` list; add it there to enable (`--disable-insight-cell` also exists). |
+
+```mermaid
+flowchart LR
+    subgraph Host["MCP host (Claude Desktop, GCX, Cursor, ...)"]
+        M["model / agent loop"]
+        IF["sandboxed iframe<br/>(MCP Apps hosts only)"]
+    end
+    subgraph Server["mcp-grafana (one binary)"]
+        QT["query tools<br/>query_prometheus, query_loki_logs,<br/>alerting_manage_rules, ..."]
+        RT["render_insight_cell<br/>tools/insight_cell.go"]
+        RES["Resources API<br/>ui://mcp-grafana/insight-cell.html"]
+    end
+    G["Grafana<br/>datasources + HTTP APIs"]
+
+    M -->|"1: gather + analyse"| QT
+    QT --> G
+    M -->|"2: render (data travels in the args)"| RT
+    Host -->|"3: resources/read (Apps hosts only)"| RES
+    IF -->|"refresh: the only server tool the cell can call"| RT
+```
+
+### Where it sits in an agentic workflow
+
+The cell is the **last step of an investigation, not a data source**. The intended loop:
+
+1. **Gather** — the agent calls the existing query tools; data flows under the session's identity
+   and RBAC.
+2. **Analyse** — the agent does the reasoning in its own context: correlates, ranks, forms a
+   verdict.
+3. **Render** — the agent calls `render_insight_cell` with the *shaped* result (frames or a
+   synthesis payload), a one-line `verdict`, a 2–4 sentence `insight`, and the declared
+   `query`/`datasourceUid`/`dataAsOf` provenance.
+4. **Interact** — the user reads the cell and drives follow-ups through its actions; every write
+   goes back through the agent, never from the cell.
+
+```mermaid
+sequenceDiagram
+    actor U as User
+    participant H as Host (model + chat)
+    participant S as mcp-grafana
+    participant G as Grafana
+    participant A as Insight cell (iframe)
+
+    U->>H: "Why is checkout erroring?"
+    H->>S: query_prometheus / query_loki_logs / ...
+    S->>G: queries (session identity, RBAC applies)
+    G-->>S: data
+    S-->>H: results
+    Note over H: agent analyses, shapes frames,<br/>writes verdict + insight
+    H->>S: render_insight_cell(panel, frames, verdict, query, dataAsOf, ...)
+    S-->>H: text verdict + JSON payload + structuredContent + _meta
+    alt host supports MCP Apps
+        H->>S: resources/read ui://mcp-grafana/insight-cell.html
+        S-->>H: embedded bundle
+        H->>A: iframe + tool result
+        A->>A: extractCell → render
+        U->>A: click "refresh"
+        A->>S: render_insight_cell (same payload, original dataAsOf)
+        S-->>A: re-render, attestation stamp preserved
+        U->>A: click an "ask" action (e.g. "Apply this change")
+        A->>H: sendMessage(action text) — back to the agent
+        H->>S: alerting_manage_rules (write-gated, agent-side)
+        H->>S: render_insight_cell(..., applied=true)
+    else no MCP Apps support
+        H->>U: shows content[0] text verdict (JSON stays in context)
+    end
+```
+
+### How it calls tools (and how tools call it)
+
+The calling relationships are deliberately narrow:
+
+- **Agent → `render_insight_cell`**: the only way a cell comes to exist. The data travels *in the
+  tool arguments*; the handler repackages, it never fetches.
+- **Cell → server**: exactly one tool, `render_insight_cell` itself, for refresh — the bridge
+  replays the cell's own payload (`specFrom`) with the original `dataAsOf`, so a re-render never
+  claims stale data is fresh. The call rides the host's existing MCP session; the iframe holds no
+  connection details of its own.
+- **Cell → host**: `link` (host opens an `http(s)`-validated URL) and `ask` (the action's text is
+  handed back to the agent as the next user message). `ask` is the designed path for anything
+  beyond re-rendering: the agent receives the text and decides, with its own write-gated tools,
+  whether to act.
+- **Nothing else.** Unknown action kinds are stripped server-side (`sanitizeActions`), which is
+  what makes the tool's `ReadOnlyHint` annotation structurally true rather than aspirational.
+
+### When the host can't render: is the MCP App still needed?
+
+No. The MCP App is **one consumer of the contract, not a dependency of the tool**. A host that
+does not support the Apps extension never fetches the `ui://` resource — it just ignores
+`_meta.ui` (an unknown namespace) and consumes the result like any other tool result. Nothing on
+the server behaves differently.
+
+```mermaid
+flowchart TD
+    R["render_insight_cell result:<br/>text verdict + embedded JSON + structuredContent + _meta"] --> Q{Host supports<br/>MCP Apps?}
+    Q -- yes --> F["resources/read the ui:// bundle"]
+    F --> I["interactive cell in a sandboxed iframe:<br/>chart, provenance drawer, refresh / ask / link"]
+    Q -- no --> T["_meta.ui ignored;<br/>content[0] text carries the analysis:<br/>title, verdict, insight, 'As of ... - live'"]
+    T --> J["full cell JSON still in context<br/>(embedded resource block)"]
+    J --> P["agent can quote exact numbers,<br/>save the cell, or replay it into<br/>render_insight_cell on an Apps host later"]
+```
+
+What survives without a renderer, by design:
+
+- **The analysis** — verdict, insight, callout, and the attestation line all ride in the plain-text
+  block, so a terminal host (e.g. a CLI agent) surfaces the reasoning verbatim.
+- **The full payload** — the embedded JSON block keeps every frame value and the trust metadata in
+  model context; the agent can cite exact numbers or diff two cells.
+- **Portability** — the cell JSON round-trips back into `render_insight_cell` arguments (that is
+  exactly what refresh does), so a cell produced on a text-only host can be re-rendered later on a
+  host that has Apps support.
+
+What is genuinely lost: in-place interactivity (the actions become data the agent may offer as
+suggestions, not buttons), the visual encodings, and the trust-profile drawer (the `_meta` profile
+still travels; the host just doesn't display it).
+
+### Deployments and auth
+
+The cell itself is **credential-free**: the iframe never sees a token, a Grafana URL it can call,
+or a datasource credential. Identity lives entirely at the MCP-server boundary, and everything the
+cell displays was fetched earlier by query tools under that same identity — so a cell can never
+show data its session couldn't query. How that identity is established depends on how the server
+runs (see the README for full configuration):
+
+| Mode | Transport | Identity | Notes |
+|---|---|---|---|
+| Local / per-user | stdio | `GRAFANA_SERVICE_ACCOUNT_TOKEN` (or `_FILE` for rotation; basic auth via `GRAFANA_USERNAME`/`GRAFANA_PASSWORD` also works) from the environment | One process, one identity. Typical for desktop hosts and CLIs spawning the binary. |
+| Shared / multi-tenant | SSE / streamable-HTTP | Per-request headers: `X-Grafana-URL`, `X-Grafana-Service-Account-Token`, optional `X-Grafana-Org-Id` | One process serves many callers, each with their own Grafana + credentials. TLS flags for both client and server sides; `Host`/`Origin` validation guards against DNS rebinding. |
+| On-behalf-of (inside Grafana Cloud machinery) | HTTP | `X-Access-Token` + `X-Grafana-Id` forwarded to Grafana | Access-policy token plus the calling user's id token; requests execute as that user. |
+| Hosted Grafana Cloud MCP server | HTTP (remote) | OAuth 2.1 browser authorization, scoped to the signed-in Grafana user | See [Grafana Cloud MCP server](https://grafana.com/docs/grafana-cloud/machine-learning/assistant/configure/cloud-mcp/). The tool surface there is operated by Grafana Cloud; `insight-cell` is an opt-in category wherever the server runs. |
+
+```mermaid
+flowchart LR
+    subgraph Local["Local (stdio)"]
+        C1["desktop host / CLI"] -->|"spawns"| S1["mcp-grafana<br/>env: GRAFANA_URL + SA token"]
+    end
+    subgraph Shared["Self-hosted HTTP"]
+        C2["many MCP clients"] -->|"X-Grafana-URL +<br/>X-Grafana-Service-Account-Token<br/>per request"| S2["mcp-grafana<br/>(SSE / streamable-HTTP)"]
+    end
+    subgraph Cloud["Grafana Cloud"]
+        C3["remote MCP client"] -->|"OAuth 2.1,<br/>scoped to the signed-in user"| S3["hosted MCP server"]
+    end
+    S1 --> G["Grafana<br/>(RBAC enforced here)"]
+    S2 --> G
+    S3 --> G
+```
+
+In every mode the trust chain is the same: **Grafana enforces RBAC on the query tools → the agent
+declares what it queried → the server records the declaration (attestation/provenance, unverified
+by design — see the trust profile above) → the cell displays it.** The renderer adds presentation,
+never privilege.
+
 ## Testing
 
 - **Contract tests:** `go test ./tools/ -run InsightCell` and `go test . -run AppResources` cover
