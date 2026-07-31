@@ -412,8 +412,8 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 **Transport Options:**
 - `-t, --transport`: Transport type (`stdio`, `sse`, or `streamable-http`) - default: `stdio`
 - `--address`: The host and port for SSE/streamable-http server - default: `localhost:8000`
-- `--base-path`: Base path for the SSE/streamable-http server
-- `--endpoint-path`: Endpoint path for the streamable-http server - default: `/mcp`
+- `--base-path`: Base path for the SSE/streamable-http server. Prefixes every route on the listener, `/healthz` and `/metrics` included, so a single path-routed reverse-proxy rule covers the whole service. Both operational endpoints stay mounted at the server root as well
+- `--endpoint-path`: Endpoint path for the streamable-http server, appended to `--base-path` - default: `/mcp`
 
 **HTTP Transport Security (SSE / streamable-http only):**
 
@@ -1069,6 +1069,9 @@ curl http://localhost:8000/healthz
 
 # With custom address
 curl http://localhost:9090/healthz
+
+# With --base-path /my-base (the root path keeps working too)
+curl http://localhost:8000/my-base/healthz
 ```
 
 **Note:** The health check endpoint is only available when using SSE or streamable HTTP transports. It is not available when using the stdio transport (`-t stdio`), as stdio does not expose an HTTP server.
