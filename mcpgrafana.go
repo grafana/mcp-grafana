@@ -53,7 +53,11 @@ const (
 )
 
 func urlAndAPIKeyFromEnv(logger *slog.Logger) (string, string) {
-	u := strings.TrimRight(os.Getenv(grafanaURLEnvVar), "/")
+	// Normalized here, at the point the value enters the process, so that every
+	// consumer — the config in the context, the API client, and the client cache
+	// key — derives from the same URL. Normalizing only in WithGrafanaConfig left
+	// the earlier consumers reading the raw string.
+	u := normalizeGrafanaURL(os.Getenv(grafanaURLEnvVar))
 
 	// Check for the new service account token environment variable first.
 	apiKey := os.Getenv(grafanaServiceAccountTokenEnvVar)

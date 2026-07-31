@@ -38,6 +38,12 @@ func TestValidateGrafanaURL(t *testing.T) {
 		// Invalid inputs.
 		{"empty string", "", true},
 		{"slash-only trims to empty", "/", true},
+		// A schemeless value is accepted from GRAFANA_URL, where
+		// normalizeGrafanaURL supplies the scheme, but not from a caller-supplied
+		// header: guessing a scheme for a caller-controlled host would widen what
+		// the header is allowed to name.
+		{"schemeless host rejected", "grafana.example.com", true},
+		{"schemeless host and port rejected", "grafana.example.com:3000", true},
 		{"plain text", "not a url", true},
 		{"invalid percent encoding", "http://%gg", true},
 		{"javascript scheme", "javascript:alert(1)", true},
@@ -84,6 +90,7 @@ func TestValidateGrafanaURLMiddleware(t *testing.T) {
 		{"malformed percent encoding rejected", true, "http://%gg", http.StatusBadRequest, false},
 		{"javascript scheme rejected", true, "javascript:alert(1)", http.StatusBadRequest, false},
 		{"relative path rejected", true, "/relative", http.StatusBadRequest, false},
+		{"schemeless header rejected", true, "grafana.example.com", http.StatusBadRequest, false},
 		{"trim-to-empty slash rejected", true, "/", http.StatusBadRequest, false},
 		{"empty host rejected", true, "http://", http.StatusBadRequest, false},
 		{"CR-LF injection attempt rejected", true, "http://foo\r\nX-Injected: 1", http.StatusBadRequest, false},
