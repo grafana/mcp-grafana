@@ -12,7 +12,7 @@
 // The tool emits it three ways: content[].text (fallback), structuredContent
 // (this object), and _meta["grafana.insightCell/v0"] (the trust metadata).
 
-export type PanelType = "timeseries" | "stat" | "bar" | "table" | "logs" | "trace" | "worklist" | "rca" | "timeline" | "cost" | "bullet";
+export type PanelType = "timeseries" | "stat" | "bar" | "table" | "logs" | "trace" | "worklist" | "rca" | "rulediff" | "timeline" | "cost" | "bullet";
 
 export type Tone = "ok" | "warn" | "crit" | "neutral";
 
@@ -143,6 +143,29 @@ export interface RcaPayload {
   findings: RcaFinding[];
 }
 
+// --- rulediff (propose an alert-rule fix → before/after → apply) --------------
+
+export interface RuleDiffChange {
+  /** What's changing — e.g. "Condition", "For (grace period)", "No-data state". */
+  field: string;
+  before: string;
+  after: string;
+  /** One line: why this change. The reasoning is the value. */
+  rationale?: string;
+}
+
+export interface RuleDiffPayload {
+  ruleTitle: string;
+  ruleUid?: string;
+  /** One line: what the fix does and why. */
+  summary?: string;
+  changes: RuleDiffChange[];
+  /** Full provisioning alert-rule payload to PUT when applied (opaque pass-through). */
+  proposed?: Record<string, unknown>;
+  /** Set true after apply_alert_rule writes it via the provisioning API. */
+  applied?: boolean;
+}
+
 // --- timeline (change-correlation: deploys/config/alerts on a time axis) ------
 
 export type ChangeKind = "deploy" | "config" | "alert" | "scale" | "incident" | "other";
@@ -246,6 +269,8 @@ export interface InsightCell {
   worklist?: WorklistItem[];
   /** Populated for rca. */
   rca?: RcaPayload;
+  /** Populated for rulediff. */
+  rulediff?: RuleDiffPayload;
   /** Populated for timeline. */
   timeline?: TimelinePayload;
   /** Populated for cost. */

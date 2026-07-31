@@ -74,9 +74,9 @@ async function runAction(a: InsightCellAction, cell: InsightCell, btn: HTMLButto
     }
     if (a.kind === "ask" && a.text) {
       // Select-and-ask: hand the selection to the agent as the next question.
-      // The agent responds and typically renders a new cell. Writes also
-      // travel this path: the agent performs them with its own write-gated
-      // tools — the cell never calls one.
+      // The agent responds and typically renders a new cell. Writes (e.g.
+      // applying a rulediff) also travel this path: the agent performs them
+      // with its own write-gated tools — the cell never calls one.
       await app.sendMessage({ role: "user", content: [{ type: "text", text: a.text }] });
       return;
     }
@@ -126,6 +126,7 @@ function restoreButton(btn: HTMLButtonElement, prevHTML: string) {
  */
 function specFrom(cell: InsightCell): Record<string, unknown> {
   const rh = cell.renderHint;
+  const rd = cell.rulediff;
   const args: Record<string, unknown> = {
     panel: rh.type,
     title: rh.title,
@@ -156,6 +157,12 @@ function specFrom(cell: InsightCell): Record<string, unknown> {
     rootCause: cell.rca?.rootCause,
     checks: cell.rca?.checks,
     findings: cell.rca?.findings,
+    ruleTitle: rd?.ruleTitle,
+    ruleUid: rd?.ruleUid,
+    ruleSummary: rd?.summary,
+    changes: rd?.changes,
+    proposedRule: rd?.proposed,
+    applied: rd?.applied,
     events: cell.timeline?.events,
     from: cell.timeline?.from,
     to: cell.timeline?.to,

@@ -78,7 +78,7 @@ var categoryDescription = map[string]string{
 	"provisioning":  "Provisioning: List provisioning repositories (e.g. git-sync sources) to discover repository slugs for use with rendering tools.",
 	"agento11y":     "Agent Observability: Search and inspect LLM conversations, generations, and evaluation scores from Grafana Agent Observability, and read or manage its eval configuration (evaluators, templates, eval rules, and guards) and its curated saved conversations and collections.",
 	"assistant":     "Assistant: Ask Grafana Assistant open-ended questions and get a full text reply (requires the Grafana Assistant plugin).",
-	"insight-cell":  "Insight Cell: Render data you've gathered as an interactive 'insight cell' (a core panel, logs, trace, or a synthesis view: worklist/rca/timeline/cost) via an MCP App.",
+	"insight-cell":  "Insight Cell: Render data you've gathered as an interactive 'insight cell' (a core panel, logs, trace, or a synthesis view: worklist/rca/rulediff/timeline/cost) via an MCP App.",
 }
 
 // disabledTools indicates whether each category of tools should be disabled.

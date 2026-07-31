@@ -129,6 +129,10 @@ func TestInsightCellIntegrationPanelTypes(t *testing.T) {
 			"rootCause": map[string]any{"title": "Pod OOM", "confidence": "high"},
 			"findings":  []any{map[string]any{"title": "restarts spiked", "evidence": "kube_pod_container_status_restarts_total"}},
 		},
+		"rulediff": {
+			"ruleTitle": "High error rate",
+			"changes":   []any{map[string]any{"field": "for", "before": "1m", "after": "5m"}},
+		},
 		"timeline": {"events": []any{
 			map[string]any{"time": "2026-07-27T09:30:00Z", "title": "deploy api v2", "kind": "deploy", "correlated": true},
 		}},
@@ -225,13 +229,13 @@ func TestInsightCellIntegrationReadOnly(t *testing.T) {
 
 	// Actions with a kind that isn't link/refresh/ask never reach the cell.
 	res := callRenderInsightCell(t, c, map[string]any{
-		"panel":   "worklist",
-		"verdict": "one alert needs action now",
-		"items":   []any{map[string]any{"title": "Silence flapping alert", "priority": "high"}},
+		"panel":   "rulediff",
+		"verdict": "raise the for duration",
+		"changes": []any{map[string]any{"field": "for", "before": "1m", "after": "5m"}},
 		"actions": []any{
 			map[string]any{"label": "Apply via tool", "kind": "tool"},
 			map[string]any{"label": "Runbook", "kind": "link", "url": "https://example.com/runbook"},
-			map[string]any{"label": "Silence it", "kind": "ask", "text": "Silence the flapping alert via the appropriate write-gated tool."},
+			map[string]any{"label": "Apply this change", "kind": "ask", "text": "Apply the proposed rule change via alerting_manage_rules, then re-render with applied=true."},
 		},
 	})
 

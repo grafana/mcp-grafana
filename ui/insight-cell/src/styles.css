@@ -354,6 +354,29 @@ table.grid tbody tr:hover { background: var(--track); }
 .rca-detail { font-size: 12.5px; color: var(--muted); margin-top: 3px; line-height: 1.45; }
 .rca-evidence { font-size: 11.5px; color: var(--muted); background: var(--track); border-radius: 6px; padding: 5px 9px; margin-top: 5px; word-break: break-word; }
 
+/* rulediff */
+.rd-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 6px; }
+.rd-rule { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.rd-rule-name { font-size: 15px; font-weight: 700; }
+.rd-uid { font-size: 11px; color: var(--faint); }
+.rd-badge { font-size: 10px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+.rd-badge.proposed { background: rgba(217,130,11,.14); color: var(--warn); }
+.rd-badge.applied { background: rgba(41,163,90,.15); color: var(--ok); }
+.rd-summary { font-size: 13px; color: var(--muted); line-height: 1.45; margin-bottom: 12px; }
+.rd-changes { display: flex; flex-direction: column; }
+.rd-change { padding: 12px 0; border-top: 1px solid var(--border); }
+.rd-change:first-child { border-top: none; padding-top: 0; }
+.rd-field { font-size: 10px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--faint); margin-bottom: 6px; }
+.rd-diff { display: flex; flex-direction: column; gap: 3px; border-radius: 8px; overflow: hidden; }
+.rd-line { display: grid; grid-template-columns: 16px 1fr; align-items: start; gap: 6px; padding: 6px 9px; }
+.rd-line.before { background: color-mix(in srgb, var(--crit) 8%, transparent); }
+.rd-line.after { background: color-mix(in srgb, var(--ok) 10%, transparent); }
+.rd-mark { font-family: var(--mono); font-weight: 700; text-align: center; }
+.rd-line.before .rd-mark { color: var(--crit); }
+.rd-line.after .rd-mark { color: var(--ok); }
+.rd-code { font-size: 12px; line-height: 1.5; word-break: break-word; color: var(--ink); }
+.rd-rationale { font-size: 12.5px; color: var(--muted); margin-top: 7px; line-height: 1.45; }
+
 /* timeline (change correlation) */
 .tl-track { position: relative; height: 32px; margin: 4px 6px 2px; }
 .tl-axis { position: absolute; top: 15px; left: 0; right: 0; height: 2px; background: var(--border); border-radius: 2px; }

@@ -361,7 +361,7 @@ function vizToolbar(
 }
 
 function labelFor(t: PanelType): string {
-  return { timeseries: "Time series", stat: "Stat", bar: "Bar chart", table: "Table", logs: "Logs", trace: "Trace", worklist: "Worklist", rca: "Investigation", timeline: "Timeline", cost: "Cost", bullet: "Bullet" }[t];
+  return { timeseries: "Time series", stat: "Stat", bar: "Bar chart", table: "Table", logs: "Logs", trace: "Trace", worklist: "Worklist", rca: "Investigation", rulediff: "Rule fix", timeline: "Timeline", cost: "Cost", bullet: "Bullet" }[t];
 }
 
 // --- insight (agent explanation) ---------------------------------------------
@@ -471,6 +471,7 @@ function renderPanel(cell: InsightCell, ctx: RenderCtx): Panel {
     case "trace": return tracePanel(cell);
     case "worklist": return worklistPanel(cell, ctx);
     case "rca": return rcaPanel(cell);
+    case "rulediff": return ruleDiffPanel(cell);
     case "timeline": return timelinePanel(cell);
     case "cost": return costPanel(cell);
     case "bullet": return bulletPanel(cell);
@@ -982,6 +983,41 @@ function rcaPanel(cell: InsightCell): Panel {
     if (f.evidence) main.append(el("div", "rca-evidence mono", f.evidence));
     row.append(main);
     list.append(row);
+  }
+  node.append(list);
+  return { node };
+}
+
+// --- rulediff (propose an alert-rule fix → before/after → apply) -------------
+
+function ruleDiffPanel(cell: InsightCell): Panel {
+  const node = el("div", "panel");
+  const rd = cell.rulediff;
+  if (!rd) { node.append(el("div", "empty", "No rule change")); return { node }; }
+
+  const head = el("div", "rd-head");
+  const title = el("div", "rd-rule");
+  title.append(el("span", "rd-rule-name", rd.ruleTitle));
+  if (rd.ruleUid) title.append(el("span", "rd-uid mono", rd.ruleUid));
+  head.append(title);
+  head.append(el("span", `rd-badge ${rd.applied ? "applied" : "proposed"}`, rd.applied ? "Applied" : "Proposed"));
+  node.append(head);
+
+  if (rd.summary) node.append(el("div", "rd-summary", rd.summary));
+
+  const list = el("div", "rd-changes");
+  for (const c of rd.changes ?? []) {
+    const chg = el("div", "rd-change");
+    chg.append(el("div", "rd-field", c.field));
+    const diff = el("div", "rd-diff");
+    const before = el("div", "rd-line before");
+    before.append(el("span", "rd-mark", "−"), el("span", "rd-code mono", c.before));
+    const after = el("div", "rd-line after");
+    after.append(el("span", "rd-mark", "+"), el("span", "rd-code mono", c.after));
+    diff.append(before, after);
+    chg.append(diff);
+    if (c.rationale) chg.append(el("div", "rd-rationale", c.rationale));
+    list.append(chg);
   }
   node.append(list);
   return { node };

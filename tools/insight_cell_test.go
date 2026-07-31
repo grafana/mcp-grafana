@@ -174,6 +174,23 @@ func TestRenderInsightCellNilArraysDefaultToEmpty(t *testing.T) {
 	assert.Empty(t, findings)
 }
 
+func TestRenderInsightCellRuleDiffApplied(t *testing.T) {
+	// Re-rendering a rulediff with applied=true must reach the payload, so the
+	// UI can show the APPLIED state after a successful update_alert_rule.
+	res, err := renderInsightCell(context.Background(), RenderInsightCellParams{
+		Panel:     "rulediff",
+		RuleTitle: "HighSystemLoad",
+		Changes:   []icRuleDiffChange{{Field: "Condition", Before: "load > 2", After: "load / cores > 0.8"}},
+		Applied:   true,
+	})
+	require.NoError(t, err)
+	payload := decodeCellPayload(t, res)
+
+	rd, ok := payload["rulediff"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, true, rd["applied"])
+}
+
 func TestRenderInsightCellKeepsZeroRangeBound(t *testing.T) {
 	zero := 0.0
 	five := 5.0

@@ -83,12 +83,13 @@ Render types:
   bands), `bar`, `table` (read `frames`), `logs` (read `logs`), `trace` (read `trace`).
 - **Synthesis views:** `worklist` (ranked triage), `rca` (root cause → evidence), `timeline`
   (change correlation), `cost` (cardinality/spend drivers).
-The cell displays and proposes, it does not write — and it *cannot*: the tool is annotated
-`ReadOnlyHint` and the cell is structurally read-only. Action kinds are limited to `link` /
-`refresh` / `ask` (anything else is stripped server-side), and the only server tool the UI ever
-calls is `render_insight_cell` itself, for refresh. Writes travel the `ask` path: the action hands
-text back to the agent, and the agent performs the write with its own write-gated tools, then
-re-renders the cell.
+- **Proposal view:** `rulediff` renders a proposed alert-rule change as a before/after diff. The
+  cell proposes, it does not write — and it *cannot*: the tool is annotated `ReadOnlyHint` and the
+  cell is structurally read-only. Action kinds are limited to `link` / `refresh` / `ask` (anything
+  else is stripped server-side), and the only server tool the UI ever calls is
+  `render_insight_cell` itself, for refresh. Applying a rulediff travels the `ask` path: the action
+  hands text back to the agent, the agent performs the write with the existing write-gated
+  `alerting_manage_rules` tool, then re-renders the cell with `applied=true`.
 
 ### The trust profile: `_meta["grafana.insightCell/v0"]`
 
@@ -190,10 +191,10 @@ sequenceDiagram
         U->>A: click "refresh"
         A->>S: render_insight_cell (same payload, original dataAsOf)
         S-->>A: re-render, attestation stamp preserved
-        U->>A: click an "ask" action (e.g. "Fix this")
+        U->>A: click an "ask" action (e.g. "Apply this change")
         A->>H: sendMessage(action text) — back to the agent
-        H->>S: a write-gated tool (agent-side, never from the cell)
-        H->>S: render_insight_cell(...) with the updated state
+        H->>S: alerting_manage_rules (write-gated, agent-side)
+        H->>S: render_insight_cell(..., applied=true)
     else no MCP Apps support
         H->>U: shows content[0] text verdict (JSON stays in context)
     end

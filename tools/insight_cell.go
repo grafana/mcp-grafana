@@ -1,20 +1,20 @@
-// The insight-cell tool packages any Grafana result the agent has gathered as a
-// structured "insight cell" — a core panel (timeseries/stat/bar/table), a
-// logs/trace view, or a synthesis view (worklist/rca/timeline/cost) — carrying
-// a verdict, attestation, provenance and follow-up actions.
+// The insight-cell tool renders any Grafana result the agent has gathered as an
+// interactive "insight cell" in an MCP host — a core panel (timeseries/stat/bar/
+// table), a logs/trace view, or a synthesis view (worklist/rca/rulediff/timeline/
+// cost) — carrying a verdict, attestation, provenance and drill actions.
 //
 // It is a *render substrate*: the agent does the analysis with the existing query
 // tools (query_prometheus, query_loki_logs, alerting_manage_rules, get_annotations,
 // …) and hands the assembled data here; the tool packages it into the render
 // contract and the trust metadata. It does NOT query datasources or fabricate data
-// itself, and the cell is structurally read-only: it can never invoke another MCP
-// tool (see sanitizeActions). Writes go through the agent.
+// itself, and the rendered cell is structurally read-only: it can never invoke
+// another MCP tool (see sanitizeActions). Writes go through the agent.
 //
 // The result rides three channels so it degrades across hosts:
-//   - content[0]  a text verdict (what hosts without MCP Apps surface)
+//   - content[0]  a text verdict (fallback for hosts without MCP Apps)
 //   - content[1]  an embedded application/json resource block (kept by hosts that
 //     drop structuredContent, e.g. Claude Desktop, which converts it
-//     to a text block an app can scan)
+//     to a text block the app scans)
 //   - structuredContent  the insightCell (the spec channel)
 //
 // plus _meta = { ui.resourceUri, "grafana.insightCell/v0": <trust profile> }.
@@ -152,6 +152,22 @@ type icRcaPayload struct {
 	Findings  []icRcaFinding `json:"findings"`
 }
 
+type icRuleDiffChange struct {
+	Field     string `json:"field"`
+	Before    string `json:"before"`
+	After     string `json:"after"`
+	Rationale string `json:"rationale,omitempty"`
+}
+
+type icRuleDiffPayload struct {
+	RuleTitle string             `json:"ruleTitle"`
+	RuleUID   string             `json:"ruleUid,omitempty"`
+	Summary   string             `json:"summary,omitempty"`
+	Changes   []icRuleDiffChange `json:"changes"`
+	Proposed  map[string]any     `json:"proposed,omitempty"`
+	Applied   bool               `json:"applied,omitempty"`
+}
+
 type icChangeEvent struct {
 	Time       string   `json:"time"`
 	Title      string   `json:"title"`
@@ -246,6 +262,7 @@ type insightCell struct {
 	Trace      *icTracePayload    `json:"trace,omitempty"`
 	Worklist   []icWorklistItem   `json:"worklist,omitempty"`
 	RCA        *icRcaPayload      `json:"rca,omitempty"`
+	RuleDiff   *icRuleDiffPayload `json:"rulediff,omitempty"`
 	Timeline   *icTimelinePayload `json:"timeline,omitempty"`
 	Cost       *icCostPayload     `json:"cost,omitempty"`
 	Callout    *icCallout         `json:"callout,omitempty"`
@@ -258,7 +275,7 @@ type insightCell struct {
 // RenderInsightCellParams is what the agent supplies after it has gathered the
 // data. Populate only the fields relevant to `panel`; everything else is optional.
 type RenderInsightCellParams struct {
-	Panel string `json:"panel" jsonschema:"required,enum=timeseries,enum=stat,enum=bullet,enum=bar,enum=table,enum=logs,enum=trace,enum=worklist,enum=rca,enum=timeline,enum=cost,description=Which panel type to render. Core panels (timeseries/stat/bar/table) read 'frames'. 'bullet' = a single value vs a target/SLO with qualitative threshold bands (reads 'frames' + target/max; more compact than a gauge). 'logs'/'trace' read their own fields. Synthesis views: 'worklist' = ranked actionable findings (alert triage/deprecations); 'rca' = root-cause investigation (findings->root cause->evidence); 'timeline' = change-correlation (deploys/config/alerts on a time axis); 'cost' = cost/cardinality drivers."`
+	Panel string `json:"panel" jsonschema:"required,enum=timeseries,enum=stat,enum=bullet,enum=bar,enum=table,enum=logs,enum=trace,enum=worklist,enum=rca,enum=rulediff,enum=timeline,enum=cost,description=Which panel type to render. Core panels (timeseries/stat/bar/table) read 'frames'. 'bullet' = a single value vs a target/SLO with qualitative threshold bands (reads 'frames' + target/max; more compact than a gauge). 'logs'/'trace' read their own fields. Synthesis views: 'worklist' = ranked actionable findings (alert triage/deprecations); 'rca' = root-cause investigation (findings->root cause->evidence); 'rulediff' = a proposed alert-rule fix as a before/after diff; 'timeline' = change-correlation (deploys/config/alerts on a time axis); 'cost' = cost/cardinality drivers."`
 
 	Title      string `json:"title,omitempty" jsonschema:"description=Panel title / the question being answered."`
 	Verdict    string `json:"verdict,omitempty" jsonschema:"description=One-line answer shown as the insight title (your conclusion about the data)."`
@@ -291,6 +308,16 @@ type RenderInsightCellParams struct {
 	Checks    []string       `json:"checks,omitempty" jsonschema:"description=For panel='rca': what you examined (error logs\\, slow requests\\, recent deploys\\, ...)."`
 	Findings  []icRcaFinding `json:"findings,omitempty" jsonschema:"description=For panel='rca': ranked findings with evidence\\, ideally from Sift / find_slow_requests / find_error_pattern_logs / get_annotations."`
 
+	// rulediff — the cell only *proposes*; it cannot write. Applying goes through
+	// the agent calling the write-gated alerting_manage_rules tool, then
+	// re-rendering the cell with applied=true.
+	RuleTitle    string             `json:"ruleTitle,omitempty" jsonschema:"description=For panel='rulediff': the alert rule's name."`
+	RuleUID      string             `json:"ruleUid,omitempty" jsonschema:"description=For panel='rulediff': the alert rule UID (from alerting_manage_rules operation 'list'). Needed when the user asks you to apply the change via alerting_manage_rules."`
+	RuleSummary  string             `json:"ruleSummary,omitempty" jsonschema:"description=For panel='rulediff': one line — what the fix does and why."`
+	Changes      []icRuleDiffChange `json:"changes,omitempty" jsonschema:"description=For panel='rulediff': the before/after changes you're proposing."`
+	ProposedRule map[string]any     `json:"proposedRule,omitempty" jsonschema:"description=For panel='rulediff': the full updated alert-rule JSON to pass to alerting_manage_rules (operation 'update') if the user asks to apply it."`
+	Applied      bool               `json:"applied,omitempty" jsonschema:"description=For panel='rulediff': set true when re-rendering the diff after alerting_manage_rules applied it\\, so the cell shows the APPLIED state."`
+
 	// timeline
 	Events []icChangeEvent `json:"events,omitempty" jsonschema:"description=For panel='timeline': change events (deploys/config/alerts) to correlate against an incident. Mark the correlated one."`
 	From   string          `json:"from,omitempty" jsonschema:"description=For panel='timeline': ISO window start."`
@@ -303,7 +330,7 @@ type RenderInsightCellParams struct {
 
 	// chrome
 	Callout *icCallout `json:"callout,omitempty" jsonschema:"description=Optional callout banner shown above the panel (tone: warn|crit|info)."`
-	Actions []icAction `json:"actions,omitempty" jsonschema:"description=Follow-up actions shown under the panel. kind 'link' opens a URL; 'refresh' re-runs render_insight_cell with the same payload; 'ask' sends the action's text back to you (the agent) as the next message. The cell is read-only and cannot invoke MCP tools itself — for a write\\, add an 'ask' action (e.g. label 'Apply this change') whose text asks you to perform it with the appropriate write-gated tool\\, then re-render the cell."`
+	Actions []icAction `json:"actions,omitempty" jsonschema:"description=Follow-up actions shown under the panel. kind 'link' opens a URL; 'refresh' re-runs render_insight_cell with the same payload; 'ask' sends the action's text back to you (the agent) as the next message. The cell is read-only and cannot invoke MCP tools itself — for a write like applying a rulediff\\, add an 'ask' action (e.g. label 'Apply this change') whose text asks you to apply it via alerting_manage_rules and re-render with applied=true."`
 }
 
 // --- Handler -----------------------------------------------------------------
@@ -314,7 +341,7 @@ type RenderInsightCellParams struct {
 var panelNames = []string{
 	"timeseries", "stat", "bullet", "bar", "table",
 	"logs", "trace",
-	"worklist", "rca", "timeline", "cost",
+	"worklist", "rca", "rulediff", "timeline", "cost",
 }
 
 var validPanels = func() map[string]bool {
@@ -465,6 +492,16 @@ func buildInsightCell(ctx context.Context, args RenderInsightCellParams) (*insig
 	if args.RootCause != nil || len(args.Findings) > 0 || len(args.Checks) > 0 {
 		cell.RCA = &icRcaPayload{RootCause: args.RootCause, Checks: args.Checks, Findings: orEmpty(args.Findings)}
 	}
+	if args.RuleTitle != "" || len(args.Changes) > 0 {
+		cell.RuleDiff = &icRuleDiffPayload{
+			RuleTitle: args.RuleTitle,
+			RuleUID:   args.RuleUID,
+			Summary:   args.RuleSummary,
+			Changes:   orEmpty(args.Changes),
+			Proposed:  args.ProposedRule,
+			Applied:   args.Applied,
+		}
+	}
 	if len(args.Events) > 0 {
 		// Default the axis bounds to the computed time range so the UI never builds
 		// the timeline from empty (Invalid Date -> NaN pin positions).
@@ -516,6 +553,8 @@ func defaultTitleForPanel(panel string) string {
 		return "Worklist"
 	case "rca":
 		return "Root cause"
+	case "rulediff":
+		return "Proposed rule change"
 	case "timeline":
 		return "Change timeline"
 	case "cost":
@@ -609,14 +648,14 @@ var RenderInsightCell = mcpgrafana.MustTool(
 	"render_insight_cell",
 	"Render a Grafana result you have gathered as an interactive 'insight cell' in the chat: a core panel "+
 		"(timeseries, stat, bar, table), a logs view, a trace waterfall, or a synthesis view — 'worklist' (ranked, "+
-		"actionable findings for alert triage / deprecations), 'rca' (root-cause investigation), 'timeline' (change "+
-		"correlation) or 'cost' (cardinality/cost drivers) — with a verdict, attestation, provenance and follow-up "+
-		"actions. This renders data you already have: first use the query tools (query_prometheus, query_loki_logs, "+
-		"alerting_manage_rules, get_annotations, Sift, ...), do the analysis, then pass the results here as 'frames' "+
-		"(chart types) or the matching payload (items/findings/events/drivers), along with a one-line 'verdict' and a "+
-		"2-4 sentence 'insight'. It does not query datasources itself, and the rendered cell is read-only — it never "+
-		"invokes other MCP tools; writes happen when you call the write-gated tool yourself. Hosts without MCP Apps "+
-		"support still get the text verdict and the JSON payload.",
+		"actionable findings for alert triage / deprecations), 'rca' (root-cause investigation), 'rulediff' (a proposed "+
+		"alert-rule fix shown as a before/after diff), 'timeline' (change correlation) or 'cost' (cardinality/cost drivers) "+
+		"— with a verdict, attestation, provenance and follow-up actions. This renders data you already have: first use the "+
+		"query tools (query_prometheus, query_loki_logs, alerting_manage_rules, get_annotations, Sift, ...), do the analysis, "+
+		"then pass the results here as 'frames' (chart types) or the matching payload (items/findings/changes/events/drivers), "+
+		"along with a one-line 'verdict' and a 2-4 sentence 'insight'. It does not query datasources itself, and the rendered "+
+		"cell is read-only — it never invokes other MCP tools; writes (like applying a rulediff) happen when you call the "+
+		"write-gated tool yourself. Hosts without MCP Apps support still get the text verdict and the JSON payload.",
 	renderInsightCell,
 	mcp.WithTitleAnnotation("Render a Grafana insight cell"),
 	mcp.WithReadOnlyHintAnnotation(true),
