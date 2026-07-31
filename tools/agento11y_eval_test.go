@@ -1013,18 +1013,21 @@ func decodeRequestBody(t *testing.T, r *http.Request) map[string]any {
 }
 
 // TestAddAgento11yToolsWriteGating checks the write-gating contract that
-// --disable-write relies on: both eval tool names stay registered either way,
+// --disable-write relies on: every eval tool name stays registered either way,
 // exactly one variant of each is registered, every advertised operation is one
-// the tool accepts, and in read-only mode the write operations are absent from
+// the tool accepts and is named in its "unknown operation" message, and in
+// read-only mode the write operations are absent from the description and from
 // the whole schema, parameter descriptions included.
 func TestAddAgento11yToolsWriteGating(t *testing.T) {
 	writeOperations := map[string][]string{
-		"agento11y_manage_evaluators": {"upsert_evaluator", "delete_evaluator", "fork_template", "test_evaluator"},
-		"agento11y_manage_eval_rules": {"create_rule", "update_rule", "delete_rule", "preview_rule", "create_guard", "update_guard", "delete_guard"},
+		"agento11y_manage_evaluators":       {"upsert_evaluator", "delete_evaluator", "fork_template", "test_evaluator"},
+		"agento11y_manage_eval_rules":       {"create_rule", "update_rule", "delete_rule", "preview_rule", "create_guard", "update_guard", "delete_guard"},
+		"agento11y_manage_eval_collections": {"save_conversation", "delete_saved_conversation", "create_collection", "update_collection", "delete_collection", "add_collection_members", "remove_collection_member"},
 	}
 	readOperations := map[string][]string{
-		"agento11y_manage_evaluators": {"list_evaluators", "get_evaluator", "list_templates", "get_template", "list_template_versions", "list_judge_providers", "list_judge_models"},
-		"agento11y_manage_eval_rules": {"list_rules", "get_rule", "list_guards", "get_guard"},
+		"agento11y_manage_evaluators":       {"list_evaluators", "get_evaluator", "list_templates", "get_template", "list_template_versions", "list_judge_providers", "list_judge_models"},
+		"agento11y_manage_eval_rules":       {"list_rules", "get_rule", "list_guards", "get_guard"},
+		"agento11y_manage_eval_collections": {"list_saved_conversations", "get_saved_conversation", "list_collections_for_saved_conversation", "list_collections", "get_collection", "list_collection_members"},
 	}
 
 	for _, tc := range []struct {
@@ -1049,10 +1052,17 @@ func TestAddAgento11yToolsWriteGating(t *testing.T) {
 						assert.Contains(t, tool.operations, operation, "%s should advertise the write operation %s", name, operation)
 						continue
 					}
-					// Not just absent from the enum: an operation named in a
-					// parameter description is an operation the model is told
-					// exists, and the read variant rejects all of these.
+					// Not just absent from the enum: an operation named in the
+					// description or a parameter description is an operation the
+					// model is told exists, and the read variant rejects all of these.
 					assert.NotContains(t, tool.schema, operation, "%s must not mention the write operation %s anywhere in its read-only schema", name, operation)
+					assert.NotContains(t, tool.description, operation, "%s must not mention the write operation %s in its read-only description", name, operation)
+				}
+
+				if tc.enableWriteTools {
+					// A model that cannot see the required role reads a 403 as a
+					// broken tool.
+					assert.Contains(t, tool.description, "grafana-agento11y-app.eval:write", "%s should name the permission its writes need", name)
 				}
 
 				// A typo in an enum= tag would advertise an operation that always
@@ -1062,6 +1072,15 @@ func TestAddAgento11yToolsWriteGating(t *testing.T) {
 					if err != nil {
 						assert.NotContains(t, err.Error(), "unknown operation", "%s advertises %s but does not accept it", name, operation)
 					}
+				}
+
+				// The "unknown operation" message is the one message whose job is to
+				// let a model correct itself, and every tool spells its operation
+				// list out separately from the enum= tags, so the two can drift.
+				rejected := validateAgento11yEvalOperation(name, "not_an_operation", tc.enableWriteTools)
+				require.Error(t, rejected, "%s should reject an operation it does not have", name)
+				for _, operation := range tool.operations {
+					assert.Contains(t, rejected.Error(), operation, "%s advertises %s but its unknown-operation message does not list it", name, operation)
 				}
 			}
 		})
@@ -1078,6 +1097,10 @@ func validateAgento11yEvalOperation(tool, operation string, enableWriteTools boo
 		return ManageAgento11yEvaluatorsReadWriteParams{Operation: operation}.validate()
 	case tool == "agento11y_manage_evaluators":
 		return ManageAgento11yEvaluatorsReadParams{Operation: operation}.validate()
+	case tool == "agento11y_manage_eval_collections" && enableWriteTools:
+		return ManageAgento11yEvalCollectionsReadWriteParams{Operation: operation}.validate()
+	case tool == "agento11y_manage_eval_collections":
+		return ManageAgento11yEvalCollectionsReadParams{Operation: operation}.validate()
 	case enableWriteTools:
 		return ManageAgento11yEvalRulesReadWriteParams{Operation: operation}.validate()
 	default:
@@ -1087,8 +1110,9 @@ func validateAgento11yEvalOperation(tool, operation string, enableWriteTools boo
 
 // agento11yAdvertisedTool is one eval tool as a client sees it in tools/list.
 type agento11yAdvertisedTool struct {
-	operations []string
-	schema     string // the raw input schema, descriptions included
+	operations  []string
+	schema      string // the raw input schema, descriptions included
+	description string
 }
 
 // listAgento11yEvalTools registers the Agent Observability category and returns
@@ -1107,6 +1131,7 @@ func listAgento11yEvalTools(t *testing.T, enableWriteTools bool) map[string]agen
 		Result struct {
 			Tools []struct {
 				Name        string          `json:"name"`
+				Description string          `json:"description"`
 				InputSchema json.RawMessage `json:"inputSchema"`
 			} `json:"tools"`
 		} `json:"result"`
@@ -1115,7 +1140,9 @@ func listAgento11yEvalTools(t *testing.T, enableWriteTools bool) map[string]agen
 
 	tools := map[string]agento11yAdvertisedTool{}
 	for _, tool := range listed.Result.Tools {
-		if tool.Name != "agento11y_manage_evaluators" && tool.Name != "agento11y_manage_eval_rules" {
+		switch tool.Name {
+		case "agento11y_manage_evaluators", "agento11y_manage_eval_rules", "agento11y_manage_eval_collections":
+		default:
 			continue
 		}
 		_, duplicate := tools[tool.Name]
@@ -1131,8 +1158,9 @@ func listAgento11yEvalTools(t *testing.T, enableWriteTools bool) map[string]agen
 		require.NoError(t, json.Unmarshal(tool.InputSchema, &schema))
 
 		tools[tool.Name] = agento11yAdvertisedTool{
-			operations: schema.Properties.Operation.Enum,
-			schema:     string(tool.InputSchema),
+			operations:  schema.Properties.Operation.Enum,
+			schema:      string(tool.InputSchema),
+			description: tool.Description,
 		}
 	}
 	return tools

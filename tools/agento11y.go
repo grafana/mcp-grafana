@@ -593,6 +593,64 @@ func manageAgento11yEvalRulesDescription(readOnly bool) string {
 	)
 }
 
+const manageAgento11yEvalCollectionsDescriptionFmt = `%s
+
+Two linked resources:
+- A saved conversation (/eval/saved-conversations) is a bookmark on one conversation, keyed by a saved_id you choose. It gives that conversation a stable ID, a name, and tags a collection can reference. It does not preserve the conversation: retention deletes the bookmark and its collection memberships together with the conversation it points at.
+- A collection (/eval/collections) is a named group of saved conversations, used as the source material for offline evaluation. Collections hold saved conversations, never raw conversation IDs, so a conversation must already be bookmarked before a collection accepts it.
+
+Operations:
+- 'list_saved_conversations': bookmarked conversations in this tenant, filterable by source ('telemetry' for bookmarked production traffic, 'manual' for hand-built ones). Also reports total_count for the whole filtered set, not just the page
+- 'get_saved_conversation': one bookmark by ID
+- 'list_collections_for_saved_conversation': the collections one bookmark belongs to (unpaginated)
+- 'list_collections': collections in this tenant, each with its member_count
+- 'get_collection': one collection by ID
+- 'list_collection_members': the saved conversations in a collection%s
+
+Identifiers: saved_id is caller-chosen and accepts letters, digits, '_', '.', ':', and '-' (looser than the evaluator and rule IDs, which reject hyphens). collection_id is a UUID assigned by the server when a collection is created; it cannot be chosen.
+
+List rows are already enriched: every saved conversation in 'list_saved_conversations' and 'list_collection_members' embeds the collections it belongs to plus generation_count, total_tokens, agent_names, models, model_providers, and tags. Read those fields instead of calling 'list_collections_for_saved_conversation' per row, which is one request per result. An absent collections field means the row was not enriched; an empty array means the row genuinely belongs to no collection.
+
+Pagination: when a response carries next_cursor, call the same operation again with cursor set to it. Echo the value back exactly; never construct or increment one. 'list_saved_conversations' returns an opaque numeric value while 'list_collections' and 'list_collection_members' return the last row ID, so a cursor from one operation passed to another fails or silently skips rows. Keep the same source filter across pages.
+
+Permissions: reads need grafana-agento11y-app.data:read (Agento11y Editor or Admin). %s
+
+When to use:
+- Reading what is already curated: which collections exist, how large they are, and what is in them%s
+
+When NOT to use:
+- Searching or reading live conversations and generations (use agento11y_manage_conversations and agento11y_manage_generations)
+- Inspecting evaluators or the rules that schedule them (use agento11y_manage_evaluators and agento11y_manage_eval_rules)%s`
+
+func manageAgento11yEvalCollectionsDescription(readOnly bool) string {
+	if readOnly {
+		return fmt.Sprintf(manageAgento11yEvalCollectionsDescriptionFmt,
+			"Read the curated conversations of Grafana Agent Observability (the grafana-agento11y-app plugin): saved conversations and the collections that group them.",
+			"",
+			"This variant performs no writes.",
+			"",
+			"\n- Bookmarking a conversation, or creating and filling collections (read-only tool)",
+		)
+	}
+	return fmt.Sprintf(manageAgento11yEvalCollectionsDescriptionFmt,
+		"Manage the curated conversations of Grafana Agent Observability (the grafana-agento11y-app plugin): bookmark conversations as saved conversations and group them into collections.",
+		`
+- 'save_conversation': bookmark a live conversation by conversation_id. saved_id is optional and defaults to 'saved-<conversation_id>'; a conversation can only be saved once, so a repeat returns 409 naming the existing saved_id
+- 'delete_saved_conversation': delete a bookmark by saved_id. Idempotent, and it also removes the bookmark from every collection it belonged to, with no separate membership cleanup. On a source='manual' bookmark the backend goes further and deletes the underlying conversation and its generations, so the content itself is gone
+- 'create_collection': create an empty collection from a name and optional description. The response carries the server-assigned collection_id needed by the membership operations
+- 'update_collection': patch a collection's name or description. Omitted fields are left unchanged, and an explicitly empty description clears it
+- 'delete_collection': delete a collection and its memberships in one transaction. Idempotent, and the saved conversations themselves are kept
+- 'add_collection_members': add saved_ids to a collection. Every ID must already be a saved conversation (a missing one returns 400 naming it), and re-adding an existing member is a no-op
+- 'remove_collection_member': drop one saved conversation from a collection. Idempotent, and the bookmark itself is kept`,
+		"Every write needs grafana-agento11y-app.eval:write, granted only by the Agento11y Admin role; an Editor token gets 403.",
+		`
+- Turning a triaged failure into a regression collection: 'save_conversation', then 'create_collection' or 'add_collection_members'
+- Bookmarking a conversation found via agento11y_manage_conversations so a collection can reference it by a stable ID
+- Collection hygiene: renaming a collection, or removing a conversation that no longer belongs in it`,
+		"",
+	)
+}
+
 var ManageAgento11yEvaluatorsRead = mcpgrafana.MustTool(
 	"agento11y_manage_evaluators",
 	manageAgento11yEvaluatorsDescription(true),
@@ -607,6 +665,15 @@ var ManageAgento11yEvalRulesRead = mcpgrafana.MustTool(
 	manageAgento11yEvalRulesDescription(true),
 	manageAgento11yEvalRulesRead,
 	mcp.WithTitleAnnotation("Manage Agent Observability eval rules and guards"),
+	mcp.WithIdempotentHintAnnotation(true),
+	mcp.WithReadOnlyHintAnnotation(true),
+)
+
+var ManageAgento11yEvalCollectionsRead = mcpgrafana.MustTool(
+	"agento11y_manage_eval_collections",
+	manageAgento11yEvalCollectionsDescription(true),
+	manageAgento11yEvalCollectionsRead,
+	mcp.WithTitleAnnotation("Manage Agent Observability saved conversations and collections"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
 )
@@ -627,14 +694,24 @@ var ManageAgento11yEvalRulesReadWrite = mcpgrafana.MustTool(
 	mcp.WithDestructiveHintAnnotation(true),
 )
 
+var ManageAgento11yEvalCollectionsReadWrite = mcpgrafana.MustTool(
+	"agento11y_manage_eval_collections",
+	manageAgento11yEvalCollectionsDescription(false),
+	manageAgento11yEvalCollectionsReadWrite,
+	mcp.WithTitleAnnotation("Manage Agent Observability saved conversations and collections"),
+	mcp.WithDestructiveHintAnnotation(true),
+)
+
 func AddAgento11yTools(mcp *server.MCPServer, enableWriteTools bool) {
 	ManageAgento11yConversations.Register(mcp)
 	ManageAgento11yGenerations.Register(mcp)
 	if enableWriteTools {
 		ManageAgento11yEvaluatorsReadWrite.Register(mcp)
 		ManageAgento11yEvalRulesReadWrite.Register(mcp)
+		ManageAgento11yEvalCollectionsReadWrite.Register(mcp)
 	} else {
 		ManageAgento11yEvaluatorsRead.Register(mcp)
 		ManageAgento11yEvalRulesRead.Register(mcp)
+		ManageAgento11yEvalCollectionsRead.Register(mcp)
 	}
 }
