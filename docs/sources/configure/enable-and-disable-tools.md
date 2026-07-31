@@ -36,7 +36,7 @@ Some tool categories are disabled by default:
 - **elasticsearch** – Elasticsearch query tool.
 - **quickwit** – Quickwit query tool.
 - **influxdb** – InfluxDB query tool (Flux and InfluxQL).
-- **agento11y** – Agent Observability tools for LLM conversations, generations, evaluation scores, evaluators, eval rules, and guards.
+- **agento11y** – Agent Observability tools for LLM conversations, generations, evaluation scores, evaluators, eval rules, guards, saved conversations, and collections.
 - **assistant** – Grafana Assistant tool (`ask_assistant`); requires the Grafana Assistant plugin and is write-gated.
 - **admin** – Admin tools (teams, users, roles, permissions).
 
@@ -56,7 +56,7 @@ For tools that come from external MCP servers through Grafana (for example from 
 
 ## Run in read-only mode
 
-Use `--disable-write` to disable all write operations. The server can still read dashboards, run queries, and list resources, but it cannot create or update dashboards, incidents, alert rules, annotations, snapshots, investigations, or Agent Observability evaluators, eval rules, and guards.
+Use `--disable-write` to disable all write operations. The server can still read dashboards, run queries, and list resources, but it cannot create or update dashboards, incidents, alert rules, annotations, snapshots, investigations, or Agent Observability evaluators, eval rules, guards, saved conversations, and collections.
 
 ## Next steps
 
