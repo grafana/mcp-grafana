@@ -42,11 +42,19 @@ func newAgento11yClient(ctx context.Context) (*Client, error) {
 // resources API and returns the response body; bodies larger than
 // defaultResponseLimitBytes are rejected with an error.
 func (c *Client) fetchAgento11y(ctx context.Context, method, urlPath string, query url.Values, reqBody any) ([]byte, error) {
+	body, _, err := c.fetchAgento11yWithStatus(ctx, method, urlPath, query, reqBody)
+	return body, err
+}
+
+// fetchAgento11yWithStatus is fetchAgento11y plus the response status code, for
+// callers that decode the body and need to tell 204 No Content apart from a
+// route that answered 200 with nothing.
+func (c *Client) fetchAgento11yWithStatus(ctx context.Context, method, urlPath string, query url.Values, reqBody any) ([]byte, int, error) {
 	var bodyReader io.Reader
 	if reqBody != nil {
 		jsonData, err := json.Marshal(reqBody)
 		if err != nil {
-			return nil, fmt.Errorf("failed to marshal request body: %w", err)
+			return nil, 0, fmt.Errorf("failed to marshal request body: %w", err)
 		}
 		bodyReader = bytes.NewReader(jsonData)
 	}
@@ -58,7 +66,7 @@ func (c *Client) fetchAgento11y(ctx context.Context, method, urlPath string, que
 
 	req, err := http.NewRequestWithContext(ctx, method, fullURL, bodyReader)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		return nil, 0, fmt.Errorf("failed to create request: %w", err)
 	}
 	if reqBody != nil {
 		req.Header.Set("Content-Type", "application/json")
@@ -66,7 +74,7 @@ func (c *Client) fetchAgento11y(ctx context.Context, method, urlPath string, que
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to execute request: %w", err)
+		return nil, 0, fmt.Errorf("failed to execute request: %w", err)
 	}
 	defer func() {
 		_ = resp.Body.Close() //nolint:errcheck
@@ -74,14 +82,33 @@ func (c *Client) fetchAgento11y(ctx context.Context, method, urlPath string, que
 
 	body, err := readResponseBody(resp.Body, defaultResponseLimitBytes)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read response body: %w", err)
+		return nil, resp.StatusCode, fmt.Errorf("failed to read response body: %w", err)
 	}
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(body))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, resp.StatusCode, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(body))
 	}
 
-	return body, nil
+	return body, resp.StatusCode, nil
+}
+
+// fetchAgento11yJSON executes a request and decodes the JSON response into T.
+// A 204 No Content response carries no body and yields the zero value; any other
+// status without a decodable body is an error, so a route that answers 200 with
+// nothing is not reported as an empty result.
+func fetchAgento11yJSON[T any](ctx context.Context, c *Client, method, urlPath string, query url.Values, reqBody any) (T, error) {
+	var out T
+	body, status, err := c.fetchAgento11yWithStatus(ctx, method, urlPath, query, reqBody)
+	if err != nil {
+		return out, err
+	}
+	if status == http.StatusNoContent {
+		return out, nil
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		return out, fmt.Errorf("failed to decode %s %s response: %w", method, urlPath, err)
+	}
+	return out, nil
 }
 
 // Agento11yConversation is a list item from GET /query/conversations.
@@ -464,7 +491,150 @@ When NOT to use:
 	mcp.WithReadOnlyHintAnnotation(true),
 )
 
-func AddAgento11yTools(mcp *server.MCPServer) {
+const manageAgento11yEvaluatorsDescriptionFmt = `%s
+
+An evaluator is a scoring function (kind: llm_judge, json_schema, regex, or heuristic) that scores generations. The scores returned by agento11y_manage_generations operation 'scores' name the evaluator that produced them. Templates are versioned starting points for evaluators. Judge providers and models are the LLM backends an llm_judge evaluator can use.
+
+Operations:
+- 'list_evaluators': evaluators in this tenant (paginated)
+- 'get_evaluator': one evaluator by ID, with its kind, config, and output_keys
+- 'list_templates': evaluator templates, filterable by scope ('global' for built-ins, 'tenant' for locally created ones)
+- 'get_template': one template with its config, output_keys, and version list
+- 'list_template_versions': version history of a template, each version with its config and output_keys
+- 'list_judge_providers': judge providers configured on this stack
+- 'list_judge_models': judge models, optionally filtered by provider%s
+
+Identifiers (evaluator_id, template_id) accept only letters, digits, '_', and '.'; hyphens are rejected by the API. Template operations need a stack with the evaluator template store configured and return 404 otherwise. Pagination: when a response carries next_cursor, call the same operation again with cursor set to it.
+
+Permissions: reads need grafana-agento11y-app.data:read (Agento11y Editor or Admin). %s
+
+When to use:
+- A score from agento11y_manage_generations names an evaluator and you need to see what it checks
+- Inspecting a template before deriving an evaluator from it%s
+
+When NOT to use:
+- Finding which rule scheduled an evaluator, or which guard enforces it (use agento11y_manage_eval_rules)
+- Listing conversations, generations, or scores (use agento11y_manage_conversations and agento11y_manage_generations)%s`
+
+func manageAgento11yEvaluatorsDescription(readOnly bool) string {
+	if readOnly {
+		return fmt.Sprintf(manageAgento11yEvaluatorsDescriptionFmt,
+			"Read the evaluator catalog of Grafana Agent Observability (the grafana-agento11y-app plugin): evaluators, evaluator templates, and the judge model catalog.",
+			"",
+			"This variant performs no writes.",
+			"",
+			"\n- Creating, updating, or deleting evaluators (read-only tool)",
+		)
+	}
+	return fmt.Sprintf(manageAgento11yEvaluatorsDescriptionFmt,
+		"Manage the evaluator catalog of Grafana Agent Observability (the grafana-agento11y-app plugin): read evaluators, evaluator templates, and the judge model catalog, and create, test, or delete evaluators.",
+		`
+- 'upsert_evaluator': create or update an evaluator from an inline 'definition'. POST is create-or-update keyed on definition.evaluator_id; there is no separate update operation, and re-using an existing 'version' returns 409, so bump the version to change an evaluator
+- 'delete_evaluator': soft-delete an evaluator by ID. Rules and guards that reference it keep the reference and silently stop producing scores, so check agento11y_manage_eval_rules first
+- 'fork_template': derive a new evaluator from a template in one call. Prefer this over copying 'get_template' output into 'upsert_evaluator', which the API rejects
+- 'test_evaluator': run an inline evaluator definition against one generation and return its scores without persisting anything. Useful for tuning a judge config before 'upsert_evaluator'`,
+		"Every write, plus 'test_evaluator' (which persists nothing), needs grafana-agento11y-app.eval:write, granted only by the Agento11y Admin role; an Editor token gets 403.",
+		`
+- Tuning an llm_judge config against a real generation with 'test_evaluator' before storing it
+- Creating an evaluator so a rule or guard can reference it`,
+		"",
+	)
+}
+
+const manageAgento11yEvalRulesDescriptionFmt = `%s
+
+Two different resources with different runtime behavior:
+- Eval rules (/eval/rules) are asynchronous. A rule selects production traffic (selector, match filters, sample_rate) and schedules its evaluator_ids to score matching generations after the fact. Rules only observe; they never change a request.
+- Guards (/eval/hook-rules; there is no /eval/guards path) run inline on the request path and can deny it, redact content, or block tool calls. A guard is inert until the agent application calls the hooks endpoint (POST /eval/hooks:evaluate) itself: a stored guard on its own changes nothing.
+
+Operations:
+- 'list_rules': asynchronous eval rules in this tenant (paginated)
+- 'get_rule': one eval rule by ID
+- 'list_guards': guards, read from /eval/hook-rules (paginated)
+- 'get_guard': one guard by ID%s
+
+Identifiers (rule_id) accept only letters, digits, '_', and '.'; hyphens are rejected by the API. Rule selectors: user_visible_turn, all_assistant_generations, tool_call_steps, errored_generations, conversation (guards also accept 'all'). Match keys are arrays and include agent_name, agent_version, operation_name, model.provider, model.name, mode, error.type, error.category, and tags.<key>. Pagination: when a response carries next_cursor, call the same operation again with cursor set to it.
+
+Permissions: reads need grafana-agento11y-app.data:read (Agento11y Editor or Admin). %s
+
+When to use:
+- A score names an evaluator and you need to know which rule scheduled it and on what traffic
+- Auditing which guards are live and whether they warn or deny%s
+
+When NOT to use:
+- Inspecting what an evaluator checks, or the template it came from (use agento11y_manage_evaluators)
+- Listing conversations, generations, or scores (use agento11y_manage_conversations and agento11y_manage_generations)%s`
+
+func manageAgento11yEvalRulesDescription(readOnly bool) string {
+	if readOnly {
+		return fmt.Sprintf(manageAgento11yEvalRulesDescriptionFmt,
+			"Read the evaluation rules and guards of Grafana Agent Observability (the grafana-agento11y-app plugin): the configuration that decides when evaluators run.",
+			"",
+			"This variant performs no writes.",
+			"",
+			"\n- Creating, updating, or deleting rules and guards (read-only tool)",
+		)
+	}
+	return fmt.Sprintf(manageAgento11yEvalRulesDescriptionFmt,
+		"Manage the evaluation rules and guards of Grafana Agent Observability (the grafana-agento11y-app plugin): the configuration that decides when evaluators run.",
+		`
+- 'create_rule': create an asynchronous eval rule from an inline 'definition'
+- 'update_rule': patch an existing rule; send only the fields to change (rule_id is taken from the 'rule_id' parameter and must not appear in the definition)
+- 'delete_rule': delete a rule by ID
+- 'preview_rule': dry-run a selector, match, and sample_rate against recent traffic and return how many generations would match and be sampled, plus example generations. Run this before creating a rule that spends judge tokens
+- 'create_guard': create an inline guard (stored as a hook rule)
+- 'update_guard': full replace of a guard (PUT, not PATCH) — omitted fields reset to server defaults, so send the complete definition, normally a 'get_guard' result with your edits applied
+- 'delete_guard': delete a guard by ID`,
+		"Every write, plus 'preview_rule' (which persists nothing), needs grafana-agento11y-app.eval:write, granted only by the Agento11y Admin role; an Editor token gets 403.",
+		`
+- Binding a new evaluator to production traffic with 'create_rule', after checking the blast radius with 'preview_rule'
+- Adding a guard, or promoting one from warn to deny after watching its false-positive rate`,
+		"",
+	)
+}
+
+var ManageAgento11yEvaluatorsRead = mcpgrafana.MustTool(
+	"agento11y_manage_evaluators",
+	manageAgento11yEvaluatorsDescription(true),
+	manageAgento11yEvaluatorsRead,
+	mcp.WithTitleAnnotation("Manage Agent Observability evaluators"),
+	mcp.WithIdempotentHintAnnotation(true),
+	mcp.WithReadOnlyHintAnnotation(true),
+)
+
+var ManageAgento11yEvalRulesRead = mcpgrafana.MustTool(
+	"agento11y_manage_eval_rules",
+	manageAgento11yEvalRulesDescription(true),
+	manageAgento11yEvalRulesRead,
+	mcp.WithTitleAnnotation("Manage Agent Observability eval rules and guards"),
+	mcp.WithIdempotentHintAnnotation(true),
+	mcp.WithReadOnlyHintAnnotation(true),
+)
+
+var ManageAgento11yEvaluatorsReadWrite = mcpgrafana.MustTool(
+	"agento11y_manage_evaluators",
+	manageAgento11yEvaluatorsDescription(false),
+	manageAgento11yEvaluatorsReadWrite,
+	mcp.WithTitleAnnotation("Manage Agent Observability evaluators"),
+	mcp.WithDestructiveHintAnnotation(true),
+)
+
+var ManageAgento11yEvalRulesReadWrite = mcpgrafana.MustTool(
+	"agento11y_manage_eval_rules",
+	manageAgento11yEvalRulesDescription(false),
+	manageAgento11yEvalRulesReadWrite,
+	mcp.WithTitleAnnotation("Manage Agent Observability eval rules and guards"),
+	mcp.WithDestructiveHintAnnotation(true),
+)
+
+func AddAgento11yTools(mcp *server.MCPServer, enableWriteTools bool) {
 	ManageAgento11yConversations.Register(mcp)
 	ManageAgento11yGenerations.Register(mcp)
+	if enableWriteTools {
+		ManageAgento11yEvaluatorsReadWrite.Register(mcp)
+		ManageAgento11yEvalRulesReadWrite.Register(mcp)
+	} else {
+		ManageAgento11yEvaluatorsRead.Register(mcp)
+		ManageAgento11yEvalRulesRead.Register(mcp)
+	}
 }
