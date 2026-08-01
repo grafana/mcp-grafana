@@ -439,6 +439,75 @@ func TestExtractTemplateVariables(t *testing.T) {
 			},
 			want: map[string]string{},
 		},
+		{
+			name: "constant variable without current falls back to query",
+			dashboard: map[string]interface{}{
+				"templating": map[string]interface{}{
+					"list": []interface{}{
+						map[string]interface{}{
+							"name":  "conversionRate",
+							"type":  "constant",
+							"query": "158.87",
+						},
+					},
+				},
+			},
+			want: map[string]string{
+				"conversionRate": "158.87",
+			},
+		},
+		{
+			name: "textbox variable without current falls back to query",
+			dashboard: map[string]interface{}{
+				"templating": map[string]interface{}{
+					"list": []interface{}{
+						map[string]interface{}{
+							"name":  "daysBack",
+							"type":  "textbox",
+							"query": "30",
+						},
+					},
+				},
+			},
+			want: map[string]string{
+				"daysBack": "30",
+			},
+		},
+		{
+			name: "current takes precedence over query for constant",
+			dashboard: map[string]interface{}{
+				"templating": map[string]interface{}{
+					"list": []interface{}{
+						map[string]interface{}{
+							"name":  "margin",
+							"type":  "constant",
+							"query": "1",
+							"current": map[string]interface{}{
+								"value": "1.5",
+							},
+						},
+					},
+				},
+			},
+			want: map[string]string{
+				"margin": "1.5",
+			},
+		},
+		{
+			name: "query variable does not fall back to its datasource query",
+			dashboard: map[string]interface{}{
+				"templating": map[string]interface{}{
+					"list": []interface{}{
+						map[string]interface{}{
+							"name":  "job",
+							"type":  "query",
+							"query": "label_values(up, job)",
+						},
+					},
+				},
+			},
+			want: map[string]string{},
+		},
 	}
 
 	for _, tt := range tests {
