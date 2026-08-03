@@ -16,6 +16,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	datasourceschemas "github.com/grafana/mcp-grafana/tools/datasource_schemas"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	promclient "github.com/prometheus/client_golang/prometheus"
@@ -325,7 +326,8 @@ func (o *Observability) buildOperationAttrs(ctx context.Context, method mcp.MCPM
 	// Argument-derived and phase dimensions for slicing per-call durations, via
 	// the same allowlist-gated helper external consumers use. Reading args into
 	// locals is free of cardinality risk; only allowlisted dimensions become
-	// labels. The high-cardinality target is span-only (see enrichSpanWithToolDims).
+	// labels, and only with allowlisted values (others collapse to "other"). The
+	// high-cardinality target is span-only (see enrichSpanWithToolDims).
 	var args map[string]any
 	if req, ok := message.(*mcp.CallToolRequest); ok && req != nil {
 		args = req.GetArguments()
@@ -387,8 +389,9 @@ func toolNameFromMessage(method mcp.MCPMethod, message any) (string, bool) {
 }
 
 // Attribute keys for tool-argument-derived telemetry dimensions. operation and
-// resourceType are bounded enough to be metric labels; target is
-// high-cardinality and span-only.
+// resourceType become metric labels once bounded by the toolMetricDims value
+// allowlist; target is high-cardinality and span-only. Spans carry the raw,
+// unbounded values for all of them.
 const (
 	attrKeyToolOperation    = "mcp.tool.operation"
 	attrKeyToolResourceType = "mcp.tool.resource_type"
@@ -410,37 +413,69 @@ const (
 // creation.
 const ToolPhaseMetaKey = attrKeyToolPhase
 
-// metricDimSet declares which tool-argument-derived dimensions a given tool is
-// allowed to contribute as BOUNDED metric labels.
+// metricDimValueOther is the single bucket every non-allowlisted value collapses
+// into.
+const metricDimValueOther = "other"
+
+// metricDimSet declares which tool-argument-derived dimensions a given tool may
+// contribute as BOUNDED metric labels, and for each one the exact set of values
+// permitted. A nil set means the tool contributes nothing for that dimension.
 type metricDimSet struct {
-	operation    bool
-	resourceType bool
+	operations    map[string]struct{}
+	resourceTypes map[string]struct{}
 }
 
 // toolMetricDims is the opt-in allowlist of which argument-derived dimensions
-// each tool may emit as metric labels. Tool-call arguments are raw client input,
-// so recording them unconditionally would let a caller drive unbounded metric
-// cardinality. Only listed tools contribute a label, and only for a dimension
-// whose argument is a bounded enum/fixed set (operation enums; create_datasource's
-// plugin "type"). Unlisted tools (e.g. list_datasources's free-text "type") emit
-// none. Spans are exempt by design — enrichSpanWithToolDims attaches all dims.
+// each tool may emit as metric labels, and which values those labels may carry.
+// A label is emitted only for a listed tool, only for a dimension that tool
+// opts into, and only with a value in that dimension's set — everything else
 var toolMetricDims = map[string]metricDimSet{
-	"alerting_manage_rules":          {operation: true},
-	"alerting_manage_routing":        {operation: true},
-	"agento11y_manage_conversations": {operation: true},
-	"agento11y_manage_generations":   {operation: true},
-	"create_datasource":              {resourceType: true},
+	"alerting_manage_rules": {operations: valueSet("list", "get", "versions", "create", "update", "delete")},
+	"alerting_manage_routing": {operations: valueSet(
+		"get_notification_policies", "get_contact_points", "get_contact_point",
+		"get_time_intervals", "get_time_interval",
+	)},
+	"agento11y_manage_conversations": {operations: valueSet("list", "search", "get")},
+	"agento11y_manage_generations":   {operations: valueSet("get", "scores")},
+	"create_datasource":              {resourceTypes: datasourcePluginTypes},
+}
+
+// datasourcePluginTypes bounds create_datasource's mcp.tool.resource_type label
+// to the plugin types we ship a schema for. Types outside the set remain
+// creatable — they just report as metricDimValueOther rather than each becoming
+// its own series.
+var datasourcePluginTypes = valueSet(datasourceschemas.KnownPluginTypes()...)
+
+// valueSet builds a membership set for metricDimSet.
+func valueSet(values ...string) map[string]struct{} {
+	set := make(map[string]struct{}, len(values))
+	for _, v := range values {
+		set[v] = struct{}{}
+	}
+	return set
+}
+
+// boundedMetricValue maps v onto the allowed value set: v itself when allowed,
+// metricDimValueOther when not, and "" when absent — an unset argument keeps the
+// label off the series entirely rather than counting as "other".
+func boundedMetricValue(v string, allowed map[string]struct{}) string {
+	if v == "" {
+		return ""
+	}
+	if _, ok := allowed[v]; ok {
+		return v
+	}
+	return metricDimValueOther
 }
 
 // toolArgDims holds the tool-call argument dimensions used to enrich telemetry.
 type toolArgDims struct {
-	// operation is a bounded sub-action discriminator taken from the "operation"
+	// operation is the sub-action discriminator taken from the "operation"
 	// argument (e.g. alerting_manage_rules "list"/"create"/"update"). Empty for
 	// tools without an operation argument.
 	operation string
-	// resourceType is a bounded resource discriminator taken from the "type"
-	// argument (e.g. the datasource plugin type on create_datasource). Empty when
-	// absent. Assumes such "type" arguments are enums/plugin ids, not free text.
+	// resourceType is a resource discriminator taken from the "type" argument
+	// (e.g. the datasource plugin type on create_datasource). Empty when absent.
 	resourceType string
 	// target identifies the specific entity acted on: the "uid" argument when
 	// present, else "name". High-cardinality — span-only, never a metric label.
@@ -499,7 +534,8 @@ func toolPhaseFromResult(result any) string {
 
 // ToolMetricDims are the bounded, allowlist-approved dimensions safe to attach
 // as metric labels. Target is excluded (span-only). A field is "" when the tool
-// is not allowlisted for it or the value is absent.
+// is not allowlisted for it or the value is absent, and "other" when the tool is
+// allowlisted for it but the caller's value is not.
 type ToolMetricDims struct {
 	Operation    string
 	ResourceType string
@@ -507,19 +543,21 @@ type ToolMetricDims struct {
 }
 
 // ToolMetricDimensions returns the metric-safe label dimensions for a tools/call,
-// applying the same allowlist/extraction the server's own metrics use. It lets
-// external consumers (e.g. the hosted Cloud MCP server, which records tool
+// applying the same tool-and-value allowlist the server's own metrics use:
+// argument-derived values outside the allowed set come back as "other", so the
+// returned Operation/ResourceType are safe to use as labels for any input. It
+// lets external consumers (e.g. the hosted Cloud MCP server, which records tool
 // metrics via its own middleware) stay in lockstep with the allowlist instead of
 // re-deriving it. args is the raw argument map (request.GetArguments()); result
 // is the *mcp.CallToolResult for the phase, and may be nil on the error path.
 func ToolMetricDimensions(toolName string, args map[string]any, result any) ToolMetricDims {
 	allowed := toolMetricDims[toolName]
 	var d ToolMetricDims
-	if allowed.operation {
-		d.Operation = stringArg(args, "operation")
+	if allowed.operations != nil {
+		d.Operation = boundedMetricValue(stringArg(args, "operation"), allowed.operations)
 	}
-	if allowed.resourceType {
-		d.ResourceType = stringArg(args, "type")
+	if allowed.resourceTypes != nil {
+		d.ResourceType = boundedMetricValue(stringArg(args, "type"), allowed.resourceTypes)
 	}
 	d.Phase = toolPhaseFromResult(result)
 	return d

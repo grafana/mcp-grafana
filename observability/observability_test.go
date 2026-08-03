@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	datasourceschemas "github.com/grafana/mcp-grafana/tools/datasource_schemas"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/stretchr/testify/assert"
@@ -939,6 +940,45 @@ func TestToolMetricDimensions(t *testing.T) {
 		got := ToolMetricDimensions("create_datasource",
 			map[string]any{"operation": "should-be-ignored", "type": "prometheus"}, nil)
 		assert.Equal(t, ToolMetricDims{ResourceType: "prometheus"}, got)
+	})
+
+	t.Run("un-allowlisted operation value collapses to other", func(t *testing.T) {
+		// The tool rejects this operation, but the call is instrumented either
+		// way, so without value bounding the label would take the caller's string.
+		got := ToolMetricDimensions("alerting_manage_rules",
+			map[string]any{"operation": "attacker-chosen-" + strings.Repeat("x", 32)}, nil)
+		assert.Equal(t, ToolMetricDims{Operation: metricDimValueOther}, got)
+	})
+
+	t.Run("un-allowlisted datasource type collapses to other", func(t *testing.T) {
+		// create_datasource's "type" is free text and unknown types still succeed
+		// on the schema-guidance path, so this is the reachable-with-2xx case.
+		got := ToolMetricDimensions("create_datasource",
+			map[string]any{"type": "not-a-real-plugin-2f8c"}, nil)
+		assert.Equal(t, ToolMetricDims{ResourceType: metricDimValueOther}, got)
+	})
+
+	t.Run("absent argument stays empty rather than other", func(t *testing.T) {
+		got := ToolMetricDimensions("alerting_manage_rules", map[string]any{}, nil)
+		assert.Equal(t, ToolMetricDims{}, got)
+	})
+
+	t.Run("every shipped plugin type is an allowed resource_type", func(t *testing.T) {
+		for _, pluginType := range datasourceschemas.KnownPluginTypes() {
+			got := ToolMetricDimensions("create_datasource", map[string]any{"type": pluginType}, nil)
+			assert.Equal(t, pluginType, got.ResourceType)
+		}
+	})
+
+	t.Run("resource_type cardinality is bounded regardless of input", func(t *testing.T) {
+		seen := map[string]struct{}{}
+		for _, injected := range []string{"a", "b", "c", "prometheus", "loki", "loki'; DROP", ""} {
+			d := ToolMetricDimensions("create_datasource", map[string]any{"type": injected}, nil)
+			seen[d.ResourceType] = struct{}{}
+		}
+		// "", "prometheus", "loki" and one shared "other" bucket — the three
+		// junk values do not each mint a series.
+		assert.Len(t, seen, 4)
 	})
 
 	t.Run("non-allowlisted tool drops caller-injected dims", func(t *testing.T) {
