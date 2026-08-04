@@ -705,6 +705,7 @@ var ManageAgento11yEvalCollectionsReadWrite = mcpgrafana.MustTool(
 func AddAgento11yTools(mcp *server.MCPServer, enableWriteTools bool) {
 	ManageAgento11yConversations.Register(mcp)
 	ManageAgento11yGenerations.Register(mcp)
+	ManageAgento11yAgents.Register(mcp)
 	if enableWriteTools {
 		ManageAgento11yEvaluatorsReadWrite.Register(mcp)
 		ManageAgento11yEvalRulesReadWrite.Register(mcp)
