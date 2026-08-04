@@ -479,7 +479,11 @@ type toolArgDims struct {
 	resourceType string
 	// target identifies the specific entity acted on: the "uid" argument when
 	// present, else "name". High-cardinality — span-only, never a metric label.
-	// It is the correlation key for reconstructing task spans across calls.
+	// Empty whenever the call names no entity, which includes create_datasource's
+	// first (phase=schema) call: the datasource does not exist yet, so there is
+	// nothing to key on. Correlating that call with the later phase=created one
+	// therefore relies on the shared trace when the client propagates context,
+	// else on mcp.session.id plus resource_type — not on target.
 	target string
 }
 
@@ -568,8 +572,8 @@ func ToolMetricDimensions(toolName string, args map[string]any, result any) Tool
 // kept off metrics. It is a no-op when no span is recording (e.g. stdio
 // transport, or tracing not configured) or the message is not a tools/call
 // request. Attributes land on whatever span is active for the request
-// (typically the otelhttp server span), enabling trace-level filtering and
-// task-span correlation by target.
+// (typically the otelhttp server span), enabling trace-level filtering and —
+// for calls that name an entity — task-span correlation by target.
 func (o *Observability) enrichSpanWithToolDims(ctx context.Context, method mcp.MCPMethod, message any, result any) {
 	span := trace.SpanFromContext(ctx)
 	if !span.IsRecording() {

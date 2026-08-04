@@ -65,7 +65,7 @@ For `tools/call`, `mcp_server_operation_duration_seconds` can carry up to three 
 
 Arguments are raw client input, so the two argument-derived labels are allowlisted by tool **and** by value: unlisted tools emit neither, and unlisted values collapse into one `other` bucket, giving each label a fixed maximum series count. Tool validation alone would not bound them — a rejected `operation` is still instrumented, and `create_datasource`'s `type` is free text that succeeds for unknown values. `mcp_tool_phase` is exempt: the tool sets it on its own result, and tools must keep that value set small.
 
-The high-cardinality **target** of a call (the datasource `uid`, else `name`) is never a metric label — it is span-only as `mcp.tool.target` (see below).
+The high-cardinality **target** of a call (the datasource `uid`, else `name`) is never a metric label — it is span-only as `mcp.tool.target`, and empty for calls that name no entity (see below).
 
 ## Enable OpenTelemetry tracing
 
@@ -90,7 +90,7 @@ OTEL_EXPORTER_OTLP_HEADERS="Authorization=Basic ..." \
 
 Tool call spans follow naming like `tools/call <tool_name>` and include attributes such as `gen_ai.tool.name`, `mcp.method.name`, and `mcp.session.id`. The server supports W3C trace context propagation from the `_meta` field of tool call requests.
 
-Tool-call spans also carry the [tool-call dimensions](#tool-call-dimension-labels) `mcp.tool.operation`, `mcp.tool.resource_type`, and `mcp.tool.phase`, plus the span-only `mcp.tool.target` (the datasource `uid`, else `name`) — the correlation key for stitching a multi-call task, such as schema guidance followed by creation, together across spans. Unlike the metric labels, these are attached for **all** tools with their **raw** values (no allowlist, no `other` bucket), since traces are high-cardinality by design. They require an **HTTP transport** (SSE or streamable-http, so a server span exists to enrich) **and tracing enabled**, but **not** `--metrics`; with stdio or tracing off, enrichment is a no-op.
+Tool-call spans also carry the [tool-call dimensions](#tool-call-dimension-labels) `mcp.tool.operation`, `mcp.tool.resource_type`, and `mcp.tool.phase`, plus the span-only `mcp.tool.target` (the datasource `uid`, else `name`) for grouping the spans that touch one entity. `mcp.tool.target` is empty when a call names no entity — notably `create_datasource`'s `phase=schema` call, where the datasource does not exist yet — so stitching that call to the later `phase=created` one relies on the shared trace (when the client propagates context via `_meta`) or on `mcp.session.id` plus `mcp_tool_resource_type`, rather than on the target. Unlike the metric labels, these are attached for **all** tools with their **raw** values (no allowlist, no `other` bucket), since traces are high-cardinality by design. They require an **HTTP transport** (SSE or streamable-http, so a server span exists to enrich) **and tracing enabled**, but **not** `--metrics`; with stdio or tracing off, enrichment is a no-op.
 
 ## Enable OpenTelemetry logs
 
