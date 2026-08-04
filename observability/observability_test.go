@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	datasourceschemas "github.com/grafana/mcp-grafana/tools/datasource_schemas"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/stretchr/testify/assert"
@@ -25,6 +26,7 @@ import (
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/semconv/v1.40.0/mcpconv"
 )
 
@@ -307,7 +309,7 @@ func TestMCPHooks_MetricsDisabled(t *testing.T) {
 	hooks := obs.MCPHooks()
 	require.NotNil(t, hooks)
 
-	// Hooks should be empty when metrics disabled
+	// Hooks should be empty when metrics, slow-log, and tracing are all disabled
 	assert.Empty(t, hooks.OnRegisterSession)
 	assert.Empty(t, hooks.OnUnregisterSession)
 	assert.Empty(t, hooks.OnAfterInitialize)
@@ -316,6 +318,55 @@ func TestMCPHooks_MetricsDisabled(t *testing.T) {
 	assert.Empty(t, hooks.OnError)
 	assert.Empty(t, hooks.OnBeforeCallTool)
 	assert.Empty(t, hooks.OnAfterCallTool)
+}
+
+// A tracing-only deployment (metrics off, no slow-log, OTLP tracing on) must
+// still register the request hooks so span enrichment runs — otherwise
+// span-only dimensions like mcp.tool.target never attach. Session hooks stay
+// off because session duration is a metric.
+func TestMCPHooks_TracingOnly(t *testing.T) {
+	obs := &Observability{tracerProvider: sdktrace.NewTracerProvider()}
+	require.False(t, obs.metricsEnabled())
+
+	hooks := obs.MCPHooks()
+	require.NotNil(t, hooks)
+
+	assert.Len(t, hooks.OnBeforeAny, 1)
+	assert.Len(t, hooks.OnSuccess, 1)
+	assert.Len(t, hooks.OnError, 1)
+
+	// No session hooks without metrics.
+	assert.Empty(t, hooks.OnRegisterSession)
+	assert.Empty(t, hooks.OnUnregisterSession)
+}
+
+// End-to-end: with a recording span in context, the OnSuccess hook attaches the
+// tool dimensions — including the high-cardinality target — to that span, even
+// when metrics are off.
+func TestMCPHooks_TracingOnlyEnrichesSpan(t *testing.T) {
+	recorder := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	obs := &Observability{tracerProvider: tp}
+
+	hooks := obs.MCPHooks()
+
+	ctx, span := tp.Tracer("test").Start(context.Background(), "tools/call")
+	req := &mcp.CallToolRequest{}
+	req.Params.Name = "update_datasource"
+	req.Params.Arguments = map[string]any{"uid": "abc123"}
+
+	requestID := "req-trace-1"
+	hooks.OnBeforeAny[0](ctx, requestID, "tools/call", req)
+	hooks.OnSuccess[0](ctx, requestID, "tools/call", req, nil)
+	span.End()
+
+	ended := recorder.Ended()
+	require.Len(t, ended, 1)
+	got := map[string]string{}
+	for _, a := range ended[0].Attributes() {
+		got[string(a.Key)] = a.Value.AsString()
+	}
+	assert.Equal(t, "abc123", got[attrKeyToolTarget], "target must be attached to the span in a tracing-only deployment")
 }
 
 func TestMCPHooks_MetricsEnabled(t *testing.T) {
@@ -658,7 +709,7 @@ func TestBuildOperationAttrs(t *testing.T) {
 
 	t.Run("basic method attrs", func(t *testing.T) {
 		ctx := context.Background()
-		attrs := obs.buildOperationAttrs(ctx, "tools/list", nil, nil)
+		attrs := obs.buildOperationAttrs(ctx, "tools/list", nil, nil, nil)
 
 		// Should have network.transport
 		found := false
@@ -676,7 +727,7 @@ func TestBuildOperationAttrs(t *testing.T) {
 		req := &mcp.CallToolRequest{}
 		req.Params.Name = "search_dashboards"
 
-		attrs := obs.buildOperationAttrs(ctx, "tools/call", req, nil)
+		attrs := obs.buildOperationAttrs(ctx, "tools/call", req, nil, nil)
 
 		found := false
 		for _, a := range attrs {
@@ -691,7 +742,7 @@ func TestBuildOperationAttrs(t *testing.T) {
 	t.Run("error includes error.type", func(t *testing.T) {
 		ctx := context.Background()
 		testErr := errors.New("something failed")
-		attrs := obs.buildOperationAttrs(ctx, "tools/call", nil, testErr)
+		attrs := obs.buildOperationAttrs(ctx, "tools/call", nil, nil, testErr)
 
 		found := false
 		for _, a := range attrs {
@@ -712,7 +763,7 @@ func TestBuildOperationAttrs(t *testing.T) {
 		ctx := context.Background()
 		req := &mcp.CallToolRequest{} // zero value: Params.Name == ""
 
-		attrs := obs.buildOperationAttrs(ctx, "tools/call", req, nil)
+		attrs := obs.buildOperationAttrs(ctx, "tools/call", req, nil, nil)
 
 		var foundEmpty bool
 		for _, a := range attrs {
@@ -731,7 +782,7 @@ func TestBuildOperationAttrs(t *testing.T) {
 	// tool-name attribute.
 	t.Run("tools/call with wrong-type message does NOT emit gen_ai.tool.name", func(t *testing.T) {
 		ctx := context.Background()
-		attrs := obs.buildOperationAttrs(ctx, "tools/call", "not-a-CallToolRequest", nil)
+		attrs := obs.buildOperationAttrs(ctx, "tools/call", "not-a-CallToolRequest", nil, nil)
 		for _, a := range attrs {
 			assert.NotEqual(t, "gen_ai.tool.name", string(a.Key),
 				"wrong-type message must not emit gen_ai.tool.name")
@@ -744,11 +795,349 @@ func TestBuildOperationAttrs(t *testing.T) {
 		ctx := context.Background()
 		req := &mcp.CallToolRequest{}
 		req.Params.Name = "query_prometheus"
-		attrs := obs.buildOperationAttrs(ctx, "tools/list", req, nil)
+		attrs := obs.buildOperationAttrs(ctx, "tools/list", req, nil, nil)
 		for _, a := range attrs {
 			assert.NotEqual(t, "gen_ai.tool.name", string(a.Key),
 				"non-tools/call method must not emit gen_ai.tool.name")
 		}
+	})
+
+	// Allowlisted resource_type dimension lands on the metric; the
+	// high-cardinality target does not. create_datasource is allowlisted for
+	// resource_type only, so an injected "operation" arg is NOT emitted.
+	t.Run("allowlisted tool emits only its allowed dim, never target", func(t *testing.T) {
+		ctx := context.Background()
+		req := &mcp.CallToolRequest{}
+		req.Params.Name = "create_datasource"
+		req.Params.Arguments = map[string]any{"operation": "create", "type": "prometheus", "name": "prod"}
+
+		attrs := obs.buildOperationAttrs(ctx, "tools/call", req, nil, nil)
+
+		got := map[string]string{}
+		for _, a := range attrs {
+			got[string(a.Key)] = a.Value.AsString()
+		}
+		assert.Equal(t, "prometheus", got[attrKeyToolResourceType])
+		_, hasOperation := got[attrKeyToolOperation]
+		assert.False(t, hasOperation, "create_datasource is not allowlisted for operation; injected operation must be dropped")
+		_, hasTarget := got[attrKeyToolTarget]
+		assert.False(t, hasTarget, "target is high-cardinality and must not be a metric attribute")
+	})
+
+	// A tool allowlisted for operation emits it.
+	t.Run("allowlisted operation tool emits operation", func(t *testing.T) {
+		ctx := context.Background()
+		req := &mcp.CallToolRequest{}
+		req.Params.Name = "alerting_manage_rules"
+		req.Params.Arguments = map[string]any{"operation": "list"}
+
+		attrs := obs.buildOperationAttrs(ctx, "tools/call", req, nil, nil)
+
+		got := map[string]string{}
+		for _, a := range attrs {
+			got[string(a.Key)] = a.Value.AsString()
+		}
+		assert.Equal(t, "list", got[attrKeyToolOperation])
+	})
+
+	// Security case: a tool NOT on the allowlist must never contribute
+	// argument-derived labels, even when the caller injects operation/type —
+	// this is what bounds caller-driven metric cardinality.
+	t.Run("non-allowlisted tool drops caller-injected arg dims", func(t *testing.T) {
+		ctx := context.Background()
+		req := &mcp.CallToolRequest{}
+		req.Params.Name = "list_datasources"
+		req.Params.Arguments = map[string]any{"operation": "evil", "type": "arbitrary-free-text"}
+
+		attrs := obs.buildOperationAttrs(ctx, "tools/call", req, nil, nil)
+
+		for _, a := range attrs {
+			assert.NotEqual(t, attrKeyToolOperation, string(a.Key))
+			assert.NotEqual(t, attrKeyToolResourceType, string(a.Key))
+		}
+	})
+
+	// Phase comes from the result's _meta (result-based), not the request.
+	t.Run("tools/call includes phase declared on the result", func(t *testing.T) {
+		ctx := context.Background()
+		req := &mcp.CallToolRequest{}
+		req.Params.Name = "create_datasource"
+		res := mcp.NewToolResultText("{}")
+		res.Meta = &mcp.Meta{AdditionalFields: map[string]any{ToolPhaseMetaKey: "created"}}
+
+		attrs := obs.buildOperationAttrs(ctx, "tools/call", req, res, nil)
+
+		var found bool
+		for _, a := range attrs {
+			if string(a.Key) == attrKeyToolPhase {
+				assert.Equal(t, "created", a.Value.AsString())
+				found = true
+			}
+		}
+		assert.True(t, found, "should emit mcp.tool.phase from result meta")
+	})
+
+	// No result (e.g. the error path) means no phase attribute.
+	t.Run("tools/call with nil result omits phase", func(t *testing.T) {
+		ctx := context.Background()
+		req := &mcp.CallToolRequest{}
+		req.Params.Name = "create_datasource"
+
+		attrs := obs.buildOperationAttrs(ctx, "tools/call", req, nil, nil)
+
+		for _, a := range attrs {
+			assert.NotEqual(t, attrKeyToolPhase, string(a.Key))
+		}
+	})
+}
+
+func TestToolPhaseFromResult(t *testing.T) {
+	mkResult := func(meta map[string]any) *mcp.CallToolResult {
+		r := mcp.NewToolResultText("{}")
+		if meta != nil {
+			r.Meta = &mcp.Meta{AdditionalFields: meta}
+		}
+		return r
+	}
+
+	tests := []struct {
+		name   string
+		result any
+		want   string
+	}{
+		{"phase created", mkResult(map[string]any{ToolPhaseMetaKey: "created"}), "created"},
+		{"phase schema", mkResult(map[string]any{ToolPhaseMetaKey: "schema"}), "schema"},
+		{"meta without phase key", mkResult(map[string]any{"other": "x"}), ""},
+		{"non-string phase is ignored", mkResult(map[string]any{ToolPhaseMetaKey: 42}), ""},
+		{"result without meta", mkResult(nil), ""},
+		{"nil result", nil, ""},
+		{"wrong-type result", "not-a-CallToolResult", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, toolPhaseFromResult(tt.result))
+		})
+	}
+}
+
+func TestToolMetricDimensions(t *testing.T) {
+	mkResult := func(phase string) *mcp.CallToolResult {
+		r := mcp.NewToolResultText("{}")
+		if phase != "" {
+			r.Meta = &mcp.Meta{AdditionalFields: map[string]any{ToolPhaseMetaKey: phase}}
+		}
+		return r
+	}
+
+	t.Run("allowlisted operation tool returns operation only", func(t *testing.T) {
+		got := ToolMetricDimensions("alerting_manage_rules",
+			map[string]any{"operation": "list", "type": "should-be-ignored"}, nil)
+		assert.Equal(t, ToolMetricDims{Operation: "list"}, got)
+	})
+
+	t.Run("allowlisted resource_type tool returns resource_type only", func(t *testing.T) {
+		got := ToolMetricDimensions("create_datasource",
+			map[string]any{"operation": "should-be-ignored", "type": "prometheus"}, nil)
+		assert.Equal(t, ToolMetricDims{ResourceType: "prometheus"}, got)
+	})
+
+	t.Run("un-allowlisted operation value collapses to other", func(t *testing.T) {
+		// The tool rejects this operation, but the call is instrumented either
+		// way, so without value bounding the label would take the caller's string.
+		got := ToolMetricDimensions("alerting_manage_rules",
+			map[string]any{"operation": "attacker-chosen-" + strings.Repeat("x", 32)}, nil)
+		assert.Equal(t, ToolMetricDims{Operation: metricDimValueOther}, got)
+	})
+
+	t.Run("un-allowlisted datasource type collapses to other", func(t *testing.T) {
+		// create_datasource's "type" is free text and unknown types still succeed
+		// on the schema-guidance path, so this is the reachable-with-2xx case.
+		got := ToolMetricDimensions("create_datasource",
+			map[string]any{"type": "not-a-real-plugin-2f8c"}, nil)
+		assert.Equal(t, ToolMetricDims{ResourceType: metricDimValueOther}, got)
+	})
+
+	t.Run("absent argument stays empty rather than other", func(t *testing.T) {
+		got := ToolMetricDimensions("alerting_manage_rules", map[string]any{}, nil)
+		assert.Equal(t, ToolMetricDims{}, got)
+	})
+
+	t.Run("every shipped plugin type is an allowed resource_type", func(t *testing.T) {
+		for _, pluginType := range datasourceschemas.KnownPluginTypes() {
+			got := ToolMetricDimensions("create_datasource", map[string]any{"type": pluginType}, nil)
+			assert.Equal(t, pluginType, got.ResourceType)
+		}
+	})
+
+	t.Run("resource_type cardinality is bounded regardless of input", func(t *testing.T) {
+		seen := map[string]struct{}{}
+		for _, injected := range []string{"a", "b", "c", "prometheus", "loki", "loki'; DROP", ""} {
+			d := ToolMetricDimensions("create_datasource", map[string]any{"type": injected}, nil)
+			seen[d.ResourceType] = struct{}{}
+		}
+		// "", "prometheus", "loki" and one shared "other" bucket — the three
+		// junk values do not each mint a series.
+		assert.Len(t, seen, 4)
+	})
+
+	t.Run("non-allowlisted tool drops caller-injected dims", func(t *testing.T) {
+		got := ToolMetricDimensions("list_datasources",
+			map[string]any{"operation": "evil", "type": "arbitrary-free-text"}, nil)
+		assert.Equal(t, ToolMetricDims{}, got)
+	})
+
+	t.Run("phase is read from result regardless of allowlist", func(t *testing.T) {
+		got := ToolMetricDimensions("create_datasource",
+			map[string]any{"type": "loki"}, mkResult("created"))
+		assert.Equal(t, ToolMetricDims{ResourceType: "loki", Phase: "created"}, got)
+	})
+
+	t.Run("nil result yields empty phase", func(t *testing.T) {
+		got := ToolMetricDimensions("alerting_manage_rules", map[string]any{"operation": "get"}, nil)
+		assert.Equal(t, "", got.Phase)
+	})
+
+	t.Run("parity with buildOperationAttrs for an allowlisted tool", func(t *testing.T) {
+		// The facade must emit exactly the arg-derived labels the server's own
+		// metric path emits, so external consumers stay in lockstep.
+		obs := &Observability{}
+		req := &mcp.CallToolRequest{}
+		req.Params.Name = "create_datasource"
+		req.Params.Arguments = map[string]any{"operation": "inject", "type": "tempo", "name": "n"}
+		res := mkResult("created")
+
+		attrs := obs.buildOperationAttrs(context.Background(), "tools/call", req, res, nil)
+		fromAttrs := map[string]string{}
+		for _, a := range attrs {
+			switch string(a.Key) {
+			case attrKeyToolOperation, attrKeyToolResourceType, attrKeyToolPhase:
+				fromAttrs[string(a.Key)] = a.Value.AsString()
+			}
+		}
+
+		d := ToolMetricDimensions(req.Params.Name, req.GetArguments(), res)
+		facade := map[string]string{}
+		if d.Operation != "" {
+			facade[attrKeyToolOperation] = d.Operation
+		}
+		if d.ResourceType != "" {
+			facade[attrKeyToolResourceType] = d.ResourceType
+		}
+		if d.Phase != "" {
+			facade[attrKeyToolPhase] = d.Phase
+		}
+		assert.Equal(t, fromAttrs, facade)
+	})
+}
+
+func TestToolArgDimensions(t *testing.T) {
+	mkReq := func(args map[string]any) *mcp.CallToolRequest {
+		req := &mcp.CallToolRequest{}
+		req.Params.Arguments = args
+		return req
+	}
+
+	tests := []struct {
+		name    string
+		method  mcp.MCPMethod
+		message any
+		want    toolArgDims
+	}{
+		{
+			name:    "create: type + name -> resource_type + target(name)",
+			method:  "tools/call",
+			message: mkReq(map[string]any{"type": "prometheus", "name": "prod"}),
+			want:    toolArgDims{resourceType: "prometheus", target: "prod"},
+		},
+		{
+			name:    "operation + uid -> operation + target(uid)",
+			method:  "tools/call",
+			message: mkReq(map[string]any{"operation": "update", "uid": "abc"}),
+			want:    toolArgDims{operation: "update", target: "abc"},
+		},
+		{
+			name:    "uid preferred over name for target",
+			method:  "tools/call",
+			message: mkReq(map[string]any{"uid": "u1", "name": "n1"}),
+			want:    toolArgDims{target: "u1"},
+		},
+		{
+			name:    "non-string arg is ignored",
+			method:  "tools/call",
+			message: mkReq(map[string]any{"type": 42, "name": "prod"}),
+			want:    toolArgDims{target: "prod"},
+		},
+		{
+			name:    "no args -> zero value",
+			method:  "tools/call",
+			message: mkReq(nil),
+			want:    toolArgDims{},
+		},
+		{
+			name:    "non-tools/call method -> zero value",
+			method:  "tools/list",
+			message: mkReq(map[string]any{"operation": "x"}),
+			want:    toolArgDims{},
+		},
+		{
+			name:    "wrong-type message -> zero value",
+			method:  "tools/call",
+			message: "not-a-CallToolRequest",
+			want:    toolArgDims{},
+		},
+		{
+			name:    "nil message -> zero value",
+			method:  "tools/call",
+			message: nil,
+			want:    toolArgDims{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, toolArgDimensions(tt.method, tt.message))
+		})
+	}
+}
+
+func TestEnrichSpanWithToolDims(t *testing.T) {
+	obs := &Observability{}
+
+	t.Run("sets operation, resource_type, target, and phase on a recording span", func(t *testing.T) {
+		sr := tracetest.NewSpanRecorder()
+		tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(sr))
+		ctx, span := tp.Tracer("test").Start(context.Background(), "op")
+
+		req := &mcp.CallToolRequest{}
+		req.Params.Name = "update_datasource"
+		req.Params.Arguments = map[string]any{"operation": "update", "type": "loki", "uid": "abc123"}
+		res := mcp.NewToolResultText("{}")
+		res.Meta = &mcp.Meta{AdditionalFields: map[string]any{ToolPhaseMetaKey: "created"}}
+
+		obs.enrichSpanWithToolDims(ctx, "tools/call", req, res)
+		span.End()
+
+		ended := sr.Ended()
+		require.Len(t, ended, 1)
+		got := map[string]string{}
+		for _, a := range ended[0].Attributes() {
+			got[string(a.Key)] = a.Value.AsString()
+		}
+		assert.Equal(t, "update", got[attrKeyToolOperation])
+		assert.Equal(t, "loki", got[attrKeyToolResourceType])
+		assert.Equal(t, "abc123", got[attrKeyToolTarget], "target (high-cardinality) belongs on the span")
+		assert.Equal(t, "created", got[attrKeyToolPhase])
+	})
+
+	t.Run("no-op when span is not recording", func(t *testing.T) {
+		// context.Background() carries a non-recording no-op span: must not panic
+		// and must record nothing.
+		req := &mcp.CallToolRequest{}
+		req.Params.Arguments = map[string]any{"uid": "abc"}
+		assert.NotPanics(t, func() {
+			obs.enrichSpanWithToolDims(context.Background(), "tools/call", req, nil)
+		})
 	})
 }
 

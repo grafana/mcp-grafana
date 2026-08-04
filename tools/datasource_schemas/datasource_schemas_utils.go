@@ -4,6 +4,7 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 //go:embed *.json
@@ -149,6 +150,27 @@ func LoadDatasourceSchema(pluginType string) (*DatasourceSchema, error) {
 		return nil, fmt.Errorf("parse schema for %s: %w", pluginType, err)
 	}
 	return &s, nil
+}
+
+// KnownPluginTypes returns every plugin type that has an embedded schema, in
+// filename order. Datasources of other types are still creatable (they take the
+// no-schema guidance path), so this is not a validation set — it is the bounded
+// value set telemetry uses to keep a caller-supplied "type" from becoming an
+// unbounded metric label (see observability.ToolMetricDimensions).
+// TODO: once schemas are fetched from the plugins CDN rather than embedded, this
+// should read from there
+func KnownPluginTypes() []string {
+	entries, err := datasourceSchemaFiles.ReadDir(".")
+	if err != nil {
+		return nil // embedded FS, so unreachable in practice
+	}
+	types := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if t, ok := strings.CutSuffix(e.Name(), "_schema.json"); ok {
+			types = append(types, t)
+		}
+	}
+	return types
 }
 
 // SchemaFieldInputKey returns the key callers use for f in the fields map, namespaced by section when present.
