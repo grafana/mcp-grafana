@@ -158,6 +158,15 @@ Queries go through Grafana's Snowflake datasource (Grafana Enterprise plugin `gr
 - **List and search conversations:** List recent LLM conversations or search them with a filter expression (model, provider, agent, status, error type, eval results, and more) over a time range. Search results include error counts, rating summaries, evaluation summaries, and trace IDs.
 - **Get conversation detail:** Fetch a single conversation with all its generations, including prompts and outputs.
 - **Get generation detail and scores:** Fetch a single generation by ID, and its evaluation scores (evaluator, score key, value, passed, explanation).
+- **Inspect evaluators and templates:** Read the evaluators a score came from, the templates they were derived from, and the judge providers and models available to LLM-judge evaluators. With write tools enabled, also create, fork, test, and delete evaluators.
+- **Inspect eval rules and guards:** Read the asynchronous eval rules that bind evaluators to production traffic, and the guards (hook rules) that run inline and can warn or deny. With write tools enabled, also create, update, preview, and delete them. Writes and the non-persisting `preview_rule` and `test_evaluator` operations need the `grafana-agento11y-app.eval:write` permission, granted by the Agento11y Admin role.
+- **Curate saved conversations and collections:** Read the saved conversations (bookmarks that give a conversation a stable ID, name, and tags) and the collections that group them, including each collection's member count and the collections embedded in every saved-conversation row. With write tools enabled, also bookmark a conversation, create and edit collections, and add or remove members. These writes need the same `grafana-agento11y-app.eval:write` permission.
+
+### Grafana Assistant
+
+> **Note:** Assistant tools are **disabled by default** and require the [Grafana Assistant](https://grafana.com/docs/grafana-cloud/machine-learning/assistant/) plugin (`grafana-assistant-app`) to be installed on the target Grafana instance. They are also **write tools** (the assistant may mutate stack state), so they are skipped when `--disable-write` is set. To enable them, add `assistant` to your `--enabled-tools` flag.
+
+- **Ask the assistant:** Send a natural-language prompt to Grafana Assistant and wait for the full text reply. The assistant may use tools, metrics, logs, and other stack context—broader than firing one isolated data-source query. Pass the returned `contextId` back in a follow-up call to continue the same conversation. Complex tasks can take several minutes; the call blocks until the reply is done or the request times out (5 minutes).
 
 ### Incidents
 
@@ -377,6 +386,10 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `get_assertions`                  | Asserts                   | Get assertion summary for a given entity                                                                     | Plugin-specific permissions                            | Plugin-specific scopes                              |
 | `agento11y_manage_conversations` | Agent Observability*  | List, search, and fetch LLM conversations from Grafana Agent Observability                              | `grafana-agento11y-app.conversations:read`                 | N/A                                                 |
 | `agento11y_manage_generations` | Agent Observability*    | Fetch LLM generation details and evaluation scores from Grafana Agent Observability                     | `grafana-agento11y-app.data:read`                          | N/A                                                 |
+| `agento11y_manage_evaluators` | Agent Observability*    | Manage evaluators, evaluator templates, and the judge catalog (list, get, upsert, fork, test, delete)    | `grafana-agento11y-app.data:read` + `grafana-agento11y-app.eval:write` for mutations and tests | N/A                                                 |
+| `agento11y_manage_eval_rules` | Agent Observability*    | Manage eval rules and guards (list, get, create, update, preview, delete)                               | `grafana-agento11y-app.data:read` + `grafana-agento11y-app.eval:write` for mutations and previews | N/A                                                 |
+| `agento11y_manage_eval_collections` | Agent Observability* | Manage saved conversations and the collections that group them (list, get, save, create, update, delete, add and remove members) | `grafana-agento11y-app.data:read` + `grafana-agento11y-app.eval:write` for mutations | N/A                                                 |
+| `ask_assistant`                   | Assistant*                | Send a prompt to Grafana Assistant and return the full text reply (multi-turn via `contextId`)              | Plugin-specific permissions                            | Plugin-specific scopes                              |
 | `generate_deeplink`               | Navigation                | Generate accurate deeplink URLs for Grafana resources                                                        | None (read-only URL generation)                        | N/A                                                 |
 | `get_annotations`                 | Annotations               | Fetch annotations with filters                                                                               | `annotations:read`                                     | `annotations:*` or `annotations:id:123`             |
 | `create_annotation`               | Annotations               | Create a new annotation (standard or Graphite format)                                                        | `annotations:write`                                    | `annotations:*`                                     |
@@ -411,7 +424,7 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 - `-t, --transport`: Transport type (`stdio`, `sse`, or `streamable-http`) - default: `stdio`
 - `--address`: The host and port for SSE/streamable-http server - default: `localhost:8000`
 - `--base-path`: Base path for the SSE/streamable-http server
-- `--endpoint-path`: Endpoint path for the streamable-http server - default: `/`
+- `--endpoint-path`: Endpoint path for the streamable-http server - default: `/mcp`
 
 **HTTP Transport Security (SSE / streamable-http only):**
 
@@ -424,6 +437,10 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 - `--debug`: Enable debug mode for detailed HTTP request/response logging
 - `--log-level`: Log level (`debug`, `info`, `warn`, `error`) - default: `info`
 
+**Grafana Client Options:**
+- `--grafana-timeout`: Time limit for requests made by the Grafana client. Accepts Go duration strings (e.g., `10s`, `500ms`) - default: `10s`
+- `--include-args-in-spans`: Include tool call arguments in OpenTelemetry spans. Only enable in non-production environments or when arguments are known not to contain PII - default: `false`
+
 **Observability:**
 - `--metrics`: Enable Prometheus metrics endpoint at `/metrics`
 - `--metrics-address`: Separate address for metrics server (e.g., `:9090`). If empty, metrics are served on the main server
@@ -434,7 +451,7 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 - `--session-idle-timeout-minutes`: Session idle timeout in minutes. Sessions with no activity for this duration are automatically reaped - default: `30`. Set to `0` to disable session reaping. Only relevant for SSE and streamable-http transports.
 
 **Tool Configuration:**
-- `--enabled-tools`: Comma-separated list of enabled categories - default: all categories except `admin`, `agento11y`, `athena`, `clickhouse`, `cloudwatch`, `elasticsearch`, `examples`, `graphite`, `quickwit`, `runpanelquery`, and `snowflake`. To enable disabled categories, add them to the list (e.g., `"search,datasource,...,snowflake"`)
+- `--enabled-tools`: Comma-separated list of enabled categories - default: all categories except `admin`, `agento11y`, `assistant`, `athena`, `clickhouse`, `cloudwatch`, `elasticsearch`, `examples`, `graphite`, `quickwit`, `runpanelquery`, and `snowflake`. To enable disabled categories, add them to the list (e.g., `"search,datasource,...,snowflake"`)
 - `--max-loki-log-limit`: Maximum number of log lines returned per `query_loki_logs` call - default: `100`. Note: Set this at least 1 below Loki's server-side `max_entries_limit_per_query` to allow truncation detection (the tool requests `limit+1` internally to detect if more data exists).
 - `--disable-search`: Disable search tools
 - `--disable-datasource`: Disable datasource tools
@@ -464,6 +481,7 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 - `--disable-athena`: Disable Athena tools
 - `--disable-provisioning`: Disable provisioning tools
 - `--disable-agento11y`: Disable Agent Observability tools
+- `--disable-assistant`: Disable Grafana Assistant tools
 
 ### Read-Only Mode
 
@@ -500,6 +518,11 @@ When `--disable-write` is enabled, the following write operations are disabled:
 **Snapshot Tools:**
 - `create_snapshot`
 - `delete_snapshot`
+
+**Agent Observability Tools:**
+- `agento11y_manage_evaluators` (upsert, delete, fork, test evaluator operations)
+- `agento11y_manage_eval_rules` (create, update, delete, preview rule and guard operations)
+- `agento11y_manage_eval_collections` (save and delete saved conversations; create, update, delete collections; add and remove collection members)
 
 All read operations remain available, allowing you to query dashboards, run PromQL/LogQL queries, list resources, and retrieve data.
 
@@ -547,7 +570,7 @@ volumes:
 Surrounding whitespace (including a trailing newline) is trimmed from the file contents. If both `GRAFANA_SERVICE_ACCOUNT_TOKEN` and `GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE` are set, the inline token takes precedence.
 
 ### Multi-Organization Support
- 
+
 You can specify which organization to interact with using either:
 
 - **Environment variable:** Set `GRAFANA_ORG_ID` to the numeric organization ID
@@ -1140,6 +1163,14 @@ Tool call spans follow semconv naming (`tools/call <tool_name>`) and include att
 When `OTEL_EXPORTER_OTLP_ENDPOINT` (or the signal-specific `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`) is set, the server also exports structured logs via OTLP/gRPC in addition to the existing plain-text stderr output. The `otelslog` bridge automatically attaches `trace_id` and `span_id` from the active span, so log records correlate with the traces the server already emits.
 
 Traces and logs resolve their endpoints independently, so the two signals can be enabled separately: setting only `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` enables tracing **without** log export, setting only `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` enables log export without tracing, and the generic `OTEL_EXPORTER_OTLP_ENDPOINT` enables both.
+
+If you use the generic `OTEL_EXPORTER_OTLP_ENDPOINT` but want to disable log export (e.g. your backend does not support the `LogsService`), set:
+
+```bash
+OTEL_LOGS_EXPORTER=none
+```
+
+This prevents the server from creating an OTLP logs exporter regardless of the endpoint configuration, avoiding errors like `unknown service opentelemetry.proto.collector.logs.v1.LogsService`.
 
 Stderr logging is unchanged when OTLP logging is enabled; you can continue to rely on container logs or pipe stderr to `/dev/null` if you prefer.
 
