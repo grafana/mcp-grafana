@@ -36,7 +36,7 @@ Some tool categories are disabled by default:
 - **elasticsearch** – Elasticsearch query tool.
 - **quickwit** – Quickwit query tool.
 - **influxdb** – InfluxDB query tool (Flux and InfluxQL).
-- **agento11y** – Agent Observability tools for LLM conversations, generations, evaluation scores, evaluators, eval rules, guards, saved conversations, and collections.
+- **agento11y** – Agent Observability tools for LLM conversations, generations, evaluation scores, agents, evaluators, eval rules, guards, saved conversations, and collections.
 - **assistant** – Grafana Assistant tool (`ask_assistant`); requires the Grafana Assistant plugin and is write-gated.
 - **admin** – Admin tools (teams, users, roles, permissions).
 

@@ -1018,16 +1018,22 @@ func decodeRequestBody(t *testing.T, r *http.Request) map[string]any {
 // the tool accepts and is named in its "unknown operation" message, and in
 // read-only mode the write operations are absent from the description and from
 // the whole schema, parameter descriptions included.
+//
+// agento11y_manage_agents has no write operations, so it is here only for the
+// "registered either way, once, with an accurate operation list" half of the
+// contract.
 func TestAddAgento11yToolsWriteGating(t *testing.T) {
 	writeOperations := map[string][]string{
 		"agento11y_manage_evaluators":       {"upsert_evaluator", "delete_evaluator", "fork_template", "test_evaluator"},
 		"agento11y_manage_eval_rules":       {"create_rule", "update_rule", "delete_rule", "preview_rule", "create_guard", "update_guard", "delete_guard"},
 		"agento11y_manage_eval_collections": {"save_conversation", "delete_saved_conversation", "create_collection", "update_collection", "delete_collection", "add_collection_members", "remove_collection_member"},
+		"agento11y_manage_agents":           nil,
 	}
 	readOperations := map[string][]string{
 		"agento11y_manage_evaluators":       {"list_evaluators", "get_evaluator", "list_templates", "get_template", "list_template_versions", "list_judge_providers", "list_judge_models"},
 		"agento11y_manage_eval_rules":       {"list_rules", "get_rule", "list_guards", "get_guard"},
 		"agento11y_manage_eval_collections": {"list_saved_conversations", "get_saved_conversation", "list_collections_for_saved_conversation", "list_collections", "get_collection", "list_collection_members"},
+		"agento11y_manage_agents":           {"list", "get", "list_versions", "list_version_scores"},
 	}
 
 	for _, tc := range []struct {
@@ -1059,7 +1065,7 @@ func TestAddAgento11yToolsWriteGating(t *testing.T) {
 					assert.NotContains(t, tool.description, operation, "%s must not mention the write operation %s in its read-only description", name, operation)
 				}
 
-				if tc.enableWriteTools {
+				if tc.enableWriteTools && len(writeOperations[name]) > 0 {
 					// A model that cannot see the required role reads a 403 as a
 					// broken tool.
 					assert.Contains(t, tool.description, "grafana-agento11y-app.eval:write", "%s should name the permission its writes need", name)
@@ -1093,6 +1099,8 @@ func TestAddAgento11yToolsWriteGating(t *testing.T) {
 // between the advertised enum and the implementation.
 func validateAgento11yEvalOperation(tool, operation string, enableWriteTools bool) error {
 	switch {
+	case tool == "agento11y_manage_agents":
+		return ManageAgento11yAgentsParams{Operation: operation}.validate()
 	case tool == "agento11y_manage_evaluators" && enableWriteTools:
 		return ManageAgento11yEvaluatorsReadWriteParams{Operation: operation}.validate()
 	case tool == "agento11y_manage_evaluators":
@@ -1141,7 +1149,7 @@ func listAgento11yEvalTools(t *testing.T, enableWriteTools bool) map[string]agen
 	tools := map[string]agento11yAdvertisedTool{}
 	for _, tool := range listed.Result.Tools {
 		switch tool.Name {
-		case "agento11y_manage_evaluators", "agento11y_manage_eval_rules", "agento11y_manage_eval_collections":
+		case "agento11y_manage_evaluators", "agento11y_manage_eval_rules", "agento11y_manage_eval_collections", "agento11y_manage_agents":
 		default:
 			continue
 		}
