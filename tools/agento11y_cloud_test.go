@@ -175,6 +175,76 @@ func TestAgento11yCloudIntegration(t *testing.T) {
 		}
 	})
 
+	t.Run("list agents and drill into one", func(t *testing.T) {
+		result, err := manageAgento11yAgents(ctx, ManageAgento11yAgentsParams{
+			Operation: "list",
+			Limit:     10,
+		})
+		require.NoError(t, err, "Failed to list Agent Observability agents")
+
+		resp, ok := result.(*agento11yListResponse[Agento11yAgent])
+		require.True(t, ok, "list should return *agento11yListResponse[Agento11yAgent]")
+		assert.LessOrEqual(t, len(resp.Items), 10, "list should respect the requested limit")
+		if len(resp.Items) == 0 {
+			t.Log("no agents in the catalog on this instance, skipping agent assertions")
+			return
+		}
+		for _, agent := range resp.Items {
+			assert.NotEmpty(t, agent.LatestEffectiveVersion, "listed agent should have a latest_effective_version")
+		}
+
+		// The first name can legitimately be empty (the unnamed agent), and
+		// passing it through unchanged must still address that agent.
+		name := resp.Items[0].AgentName
+		detailResult, err := manageAgento11yAgents(ctx, ManageAgento11yAgentsParams{
+			Operation: "get",
+			AgentName: &name,
+		})
+		require.NoError(t, err, "Failed to get agent %q", name)
+
+		detail, ok := detailResult.(map[string]any)
+		require.True(t, ok)
+		assert.Equal(t, name, detail["agent_name"], "fetched agent name should match the requested name")
+		assert.NotEmpty(t, detail["effective_version"], "agent detail should carry an effective_version")
+
+		versionsResult, err := manageAgento11yAgents(ctx, ManageAgento11yAgentsParams{
+			Operation: "list_versions",
+			AgentName: &name,
+			Limit:     10,
+		})
+		require.NoError(t, err, "Failed to list versions of agent %q", name)
+
+		versions, ok := versionsResult.(*agento11yListResponse[Agento11yAgentVersion])
+		require.True(t, ok, "list_versions should return *agento11yListResponse[Agento11yAgentVersion]")
+		assert.LessOrEqual(t, len(versions.Items), 10, "list_versions should respect the requested limit")
+		for _, version := range versions.Items {
+			assert.NotEmpty(t, version.EffectiveVersion, "listed version should have an effective_version")
+		}
+
+		// Score aggregates need a non-blank name, and an agent with no scored
+		// generations returns an empty list rather than an error.
+		if strings.TrimSpace(name) == "" {
+			t.Log("first catalog agent is the unnamed agent, skipping version scores")
+			return
+		}
+		scoresResult, err := manageAgento11yAgents(ctx, ManageAgento11yAgentsParams{
+			Operation: "list_version_scores",
+			AgentName: &name,
+			StartTime: time.Now().Add(-30 * 24 * time.Hour).Format(time.RFC3339),
+			EndTime:   time.Now().Format(time.RFC3339),
+		})
+		require.NoError(t, err, "Failed to get version scores of agent %q", name)
+
+		scores, ok := scoresResult.(*agento11yListResponse[Agento11yAgentVersionScore])
+		require.True(t, ok, "list_version_scores should return *agento11yListResponse[Agento11yAgentVersionScore]")
+		for _, item := range scores.Items {
+			assert.NotEmpty(t, item.EffectiveVersion, "score aggregate should name the version it belongs to")
+			for _, evaluator := range item.Evaluators {
+				assert.NotEmpty(t, evaluator.ScoreKey, "score aggregate evaluator should have a score_key")
+			}
+		}
+	})
+
 	t.Run("list evaluators", func(t *testing.T) {
 		result, err := manageAgento11yEvaluatorsRead(ctx, ManageAgento11yEvaluatorsReadParams{
 			Operation: "list_evaluators",
