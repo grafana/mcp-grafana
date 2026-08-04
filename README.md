@@ -1,5 +1,7 @@
 # Grafana MCP server
 
+[![MCP Toplist](https://mcptoplist.com/badge/io.github.grafana%2Fmcp-grafana.svg)](https://mcptoplist.com/server/io.github.grafana%2Fmcp-grafana)
+
 [![Unit Tests](https://github.com/grafana/mcp-grafana/actions/workflows/unit.yml/badge.svg)](https://github.com/grafana/mcp-grafana/actions/workflows/unit.yml)
 [![Integration Tests](https://github.com/grafana/mcp-grafana/actions/workflows/integration.yml/badge.svg)](https://github.com/grafana/mcp-grafana/actions/workflows/integration.yml)
 [![E2E Tests](https://github.com/grafana/mcp-grafana/actions/workflows/e2e.yml/badge.svg)](https://github.com/grafana/mcp-grafana/actions/workflows/e2e.yml)
