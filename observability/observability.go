@@ -428,7 +428,7 @@ type metricDimSet struct {
 // toolMetricDims is the opt-in allowlist of which argument-derived dimensions
 // each tool may emit as metric labels, and which values those labels may carry.
 // A label is emitted only for a listed tool, only for a dimension that tool
-// opts into, and only with a value in that dimension's set — everything else
+// opts into, and only with a value in that dimension's set - everything else becomes metricDimValueOther
 var toolMetricDims = map[string]metricDimSet{
 	"alerting_manage_rules": {operations: valueSet("list", "get", "versions", "create", "update", "delete")},
 	"alerting_manage_routing": {operations: valueSet(
