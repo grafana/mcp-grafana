@@ -370,6 +370,7 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `query_snowflake`                 | Snowflake*                | Execute SQL queries with macro/variable substitution                                                         | `datasources:query`                                    | `datasources:uid:*`                                 |
 | `alerting_manage_rules`           | Alerting                  | Manage alert rules (list, get, versions, create, update, delete)                                             | `alert.rules:read` + `alert.rules:write` for mutations | `folders:*` or `folders:uid:alerts-folder`          |
 | `alerting_manage_routing`         | Alerting                  | Manage notification policies, contact points, and time intervals                                             | `alert.notifications:read`                             | Global scope                                        |
+| `alerting_manage_silences`        | Alerting                  | Manage alerting silences (list, get, create, update, expire)                                                 | `alert.instances:read` + `alert.instances:write` for mutations | Global scope                                        |
 | `list_oncall_schedules`           | OnCall                    | List schedules from Grafana OnCall                                                                           | `grafana-oncall-app.schedules:read`                    | Plugin-specific scopes                              |
 | `get_oncall_shift`                | OnCall                    | Get details for a specific OnCall shift                                                                      | `grafana-oncall-app.schedules:read`                    | Plugin-specific scopes                              |
 | `get_current_oncall_users`        | OnCall                    | Get users currently on-call for a specific schedule                                                          | `grafana-oncall-app.schedules:read`                    | Plugin-specific scopes                              |
@@ -510,6 +511,7 @@ When `--disable-write` is enabled, the following write operations are disabled:
 
 **Alerting Tools:**
 - `alerting_manage_rules` (create, update, delete operations)
+- `alerting_manage_silences` (create, update, delete operations)
 
 **Annotation Tools:**
 - `create_annotation`
