@@ -38,10 +38,6 @@ func TestValidateGrafanaURL(t *testing.T) {
 		// Invalid inputs.
 		{"empty string", "", true},
 		{"slash-only trims to empty", "/", true},
-		// A schemeless value is accepted from GRAFANA_URL, where
-		// normalizeGrafanaURL supplies the scheme, but not from a caller-supplied
-		// header: guessing a scheme for a caller-controlled host would widen what
-		// the header is allowed to name.
 		{"schemeless host rejected", "grafana.example.com", true},
 		{"schemeless host and port rejected", "grafana.example.com:3000", true},
 		{"plain text", "not a url", true},
