@@ -3,12 +3,31 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestFetchStats_IncludesIngesterCaveat(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/loki/api/v1/index/stats", r.URL.Path)
+		assert.Equal(t, `{container="mcp-envoy"}`, r.URL.Query().Get("query"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"streams":0,"chunks":0,"entries":0,"bytes":0}`))
+	}))
+	defer server.Close()
+
+	client := &Client{httpClient: server.Client(), baseURL: server.URL}
+	stats, err := client.fetchStats(context.Background(), `{container="mcp-envoy"}`, "", "")
+	require.NoError(t, err)
+	assert.Equal(t, 0, stats.Streams)
+	require.Len(t, stats.Caveats, 1)
+	assert.Contains(t, stats.Caveats[0], "exclude data still held in ingesters")
+}
 
 func TestEnforceLogLimit(t *testing.T) {
 	tests := []struct {
