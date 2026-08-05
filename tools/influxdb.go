@@ -218,6 +218,8 @@ Flux example:    from(bucket: "metrics") |> range(start: -1h) |> filter(fn: (r) 
 	mcp.WithTitleAnnotation("Query InfluxDB"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 // AddInfluxDBTools registers all InfluxDB tools with the MCP server.

@@ -240,6 +240,8 @@ Example: SELECT Timestamp, Body FROM otel_logs WHERE $__timeFilter(Timestamp)`,
 	mcp.WithTitleAnnotation("Query ClickHouse"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 // ListClickHouseTablesParams defines the parameters for listing ClickHouse tables
@@ -306,6 +308,8 @@ var ListClickHouseTables = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("List ClickHouse tables"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 // DescribeClickHouseTableParams defines the parameters for describing a ClickHouse table
@@ -383,6 +387,8 @@ var DescribeClickHouseTable = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("Describe ClickHouse table"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 // AddClickHouseTools registers all ClickHouse tools with the MCP server

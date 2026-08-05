@@ -469,6 +469,8 @@ When NOT to use:
 	mcp.WithTitleAnnotation("Manage Agent Observability conversations"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 var ManageAgento11yGenerations = mcpgrafana.MustTool(
@@ -489,6 +491,8 @@ When NOT to use:
 	mcp.WithTitleAnnotation("Manage Agent Observability generations"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 const manageAgento11yEvaluatorsDescriptionFmt = `%s
@@ -658,6 +662,8 @@ var ManageAgento11yEvaluatorsRead = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("Manage Agent Observability evaluators"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 var ManageAgento11yEvalRulesRead = mcpgrafana.MustTool(
@@ -667,6 +673,8 @@ var ManageAgento11yEvalRulesRead = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("Manage Agent Observability eval rules and guards"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 var ManageAgento11yEvalCollectionsRead = mcpgrafana.MustTool(
@@ -676,6 +684,8 @@ var ManageAgento11yEvalCollectionsRead = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("Manage Agent Observability saved conversations and collections"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 var ManageAgento11yEvaluatorsReadWrite = mcpgrafana.MustTool(
@@ -683,7 +693,9 @@ var ManageAgento11yEvaluatorsReadWrite = mcpgrafana.MustTool(
 	manageAgento11yEvaluatorsDescription(false),
 	manageAgento11yEvaluatorsReadWrite,
 	mcp.WithTitleAnnotation("Manage Agent Observability evaluators"),
+	mcp.WithReadOnlyHintAnnotation(false),
 	mcp.WithDestructiveHintAnnotation(true),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 var ManageAgento11yEvalRulesReadWrite = mcpgrafana.MustTool(
@@ -691,7 +703,9 @@ var ManageAgento11yEvalRulesReadWrite = mcpgrafana.MustTool(
 	manageAgento11yEvalRulesDescription(false),
 	manageAgento11yEvalRulesReadWrite,
 	mcp.WithTitleAnnotation("Manage Agent Observability eval rules and guards"),
+	mcp.WithReadOnlyHintAnnotation(false),
 	mcp.WithDestructiveHintAnnotation(true),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 var ManageAgento11yEvalCollectionsReadWrite = mcpgrafana.MustTool(
@@ -699,7 +713,9 @@ var ManageAgento11yEvalCollectionsReadWrite = mcpgrafana.MustTool(
 	manageAgento11yEvalCollectionsDescription(false),
 	manageAgento11yEvalCollectionsReadWrite,
 	mcp.WithTitleAnnotation("Manage Agent Observability saved conversations and collections"),
+	mcp.WithReadOnlyHintAnnotation(false),
 	mcp.WithDestructiveHintAnnotation(true),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 func AddAgento11yTools(mcp *server.MCPServer, enableWriteTools bool) {

@@ -241,6 +241,8 @@ var ListAthenaCatalogs = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("List Athena catalogs"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 type ListAthenaDatabasesParams struct {
@@ -282,6 +284,8 @@ var ListAthenaDatabases = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("List Athena databases"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 type ListAthenaTablesParams struct {
@@ -327,6 +331,8 @@ var ListAthenaTables = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("List Athena tables"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 type DescribeAthenaTableParams struct {
@@ -379,6 +385,8 @@ var DescribeAthenaTable = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("Describe Athena table"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 type AthenaQueryParams struct {
@@ -519,6 +527,8 @@ Example: SELECT request_time, status FROM my_table WHERE $__timeFilter(request_t
 	mcp.WithTitleAnnotation("Query Athena"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 // AddAthenaTools registers all Athena tools with the MCP server.

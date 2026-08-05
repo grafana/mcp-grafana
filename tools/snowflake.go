@@ -241,6 +241,8 @@ Example: SELECT TIMESTAMP, RECORD['severity_text']::STRING AS LEVEL, VALUE FROM 
 	mcp.WithTitleAnnotation("Query Snowflake"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 // ListSnowflakeTablesParams defines the parameters for listing Snowflake tables
@@ -319,6 +321,8 @@ var ListSnowflakeTables = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("List Snowflake tables"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 // DescribeSnowflakeTableParams defines the parameters for describing a Snowflake table
@@ -401,6 +405,8 @@ var DescribeSnowflakeTable = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("Describe Snowflake table"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 // AddSnowflakeTools registers all Snowflake tools with the MCP server

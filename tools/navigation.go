@@ -315,6 +315,9 @@ var GenerateDeeplink = mcpgrafana.MustTool(
 	generateDeeplink,
 	mcp.WithTitleAnnotation("Generate navigation deeplink"),
 	mcp.WithIdempotentHintAnnotation(false),
+	mcp.WithReadOnlyHintAnnotation(false),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 var GenerateDeeplinkReadOnly = mcpgrafana.MustTool(
@@ -324,6 +327,8 @@ var GenerateDeeplinkReadOnly = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("Generate navigation deeplink"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 func AddNavigationTools(mcp *server.MCPServer, enableWriteTools bool) {
