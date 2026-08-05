@@ -3,16 +3,23 @@ package tools
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
 
 func boolPtr(b bool) *bool { return &b }
 
+// rfc3339 renders an offset from now, so tests exercising the "already
+// expired" check stay valid as the clock moves.
+func rfc3339(offset time.Duration) string {
+	return time.Now().Add(offset).UTC().Format(time.RFC3339)
+}
+
 func TestManageSilencesParams_Validate(t *testing.T) {
 	validMatchers := []SilenceMatcherParam{{Name: "severity", Value: "critical"}}
-	start := "2026-07-11T10:00:00Z"
-	end := "2026-07-11T12:00:00Z"
+	start := rfc3339(time.Hour)
+	end := rfc3339(2 * time.Hour)
 	comment := "maintenance window"
 
 	tests := []struct {
@@ -176,6 +183,49 @@ func TestManageSilencesParams_Validate(t *testing.T) {
 			wantErr: "comment is required",
 		},
 		{
+			name: "create with ends_at before starts_at",
+			params: ManageSilencesParams{
+				Operation: "create",
+				Matchers:  validMatchers,
+				StartsAt:  &end,
+				EndsAt:    &start,
+				Comment:   &comment,
+			},
+			wantErr: "must be after starts_at",
+		},
+		{
+			name: "create with a zero-length window",
+			params: ManageSilencesParams{
+				Operation: "create",
+				Matchers:  validMatchers,
+				StartsAt:  &start,
+				EndsAt:    &start,
+				Comment:   &comment,
+			},
+			wantErr: "must be after starts_at",
+		},
+		{
+			name: "create with a window entirely in the past",
+			params: ManageSilencesParams{
+				Operation: "create",
+				Matchers:  validMatchers,
+				StartsAt:  strPtr(rfc3339(-2 * time.Hour)),
+				EndsAt:    strPtr(rfc3339(-time.Hour)),
+				Comment:   &comment,
+			},
+			wantErr: "is in the past",
+		},
+		{
+			name: "create starting in the past but ending in the future is valid",
+			params: ManageSilencesParams{
+				Operation: "create",
+				Matchers:  validMatchers,
+				StartsAt:  strPtr(rfc3339(-time.Hour)),
+				EndsAt:    &end,
+				Comment:   &comment,
+			},
+		},
+		{
 			name: "update with all required fields is valid",
 			params: ManageSilencesParams{
 				Operation: "update",
@@ -185,6 +235,30 @@ func TestManageSilencesParams_Validate(t *testing.T) {
 				EndsAt:    &end,
 				Comment:   &comment,
 			},
+		},
+		{
+			name: "update with a window that already closed points at delete",
+			params: ManageSilencesParams{
+				Operation: "update",
+				SilenceID: strPtr("sil-1"),
+				Matchers:  validMatchers,
+				StartsAt:  strPtr(rfc3339(-time.Hour)),
+				EndsAt:    strPtr(rfc3339(-time.Minute)),
+				Comment:   &comment,
+			},
+			wantErr: "use the 'delete' operation to expire a silence early",
+		},
+		{
+			name: "update still rejects an inverted window",
+			params: ManageSilencesParams{
+				Operation: "update",
+				SilenceID: strPtr("sil-1"),
+				Matchers:  validMatchers,
+				StartsAt:  &end,
+				EndsAt:    &start,
+				Comment:   &comment,
+			},
+			wantErr: "must be after starts_at",
 		},
 		{
 			name: "update without silence_id",
@@ -379,18 +453,23 @@ func TestToPostableSilence(t *testing.T) {
 			EndsAt:    &end,
 			Comment:   &comment,
 		}
-		s := p.toPostableSilence()
+		s, err := p.toPostableSilence()
+		require.NoError(t, err)
 		require.Empty(t, s.ID)
-		require.Equal(t, defaultSilenceCreatedBy, s.CreatedBy)
-		require.Equal(t, start, s.StartsAt)
-		require.Equal(t, end, s.EndsAt)
-		require.Equal(t, comment, s.Comment)
+		require.Equal(t, defaultSilenceCreatedBy, *s.CreatedBy)
+		require.Equal(t, comment, *s.Comment)
+		require.True(t, time.Time(*s.StartsAt).Equal(mustParseRFC3339(t, start)))
+		require.True(t, time.Time(*s.EndsAt).Equal(mustParseRFC3339(t, end)))
 		require.Len(t, s.Matchers, 1)
-		require.Equal(t, "severity", s.Matchers[0].Name)
+		require.Equal(t, "severity", *s.Matchers[0].Name)
+		require.Equal(t, "critical", *s.Matchers[0].Value)
+		require.NotNil(t, s.Matchers[0].IsRegex)
+		require.False(t, *s.Matchers[0].IsRegex)
 		require.NotNil(t, s.Matchers[0].IsEqual)
 		require.False(t, *s.Matchers[0].IsEqual)
 
-		// created_by must be present in the outgoing JSON, not just the struct.
+		// created_by must be present in the outgoing JSON, not just the struct,
+		// and the timestamps must survive the strfmt.DateTime round-trip.
 		raw, err := json.Marshal(s)
 		require.NoError(t, err)
 		var decoded map[string]any
@@ -398,6 +477,13 @@ func TestToPostableSilence(t *testing.T) {
 		require.Equal(t, defaultSilenceCreatedBy, decoded["createdBy"])
 		_, hasID := decoded["id"]
 		require.False(t, hasID, "id should be omitted for create")
+
+		gotStart, err := time.Parse(time.RFC3339, decoded["startsAt"].(string))
+		require.NoError(t, err)
+		require.True(t, gotStart.Equal(mustParseRFC3339(t, start)))
+		gotEnd, err := time.Parse(time.RFC3339, decoded["endsAt"].(string))
+		require.NoError(t, err)
+		require.True(t, gotEnd.Equal(mustParseRFC3339(t, end)))
 	})
 
 	t.Run("explicit created_by is preserved", func(t *testing.T) {
@@ -409,7 +495,9 @@ func TestToPostableSilence(t *testing.T) {
 			Comment:   &comment,
 			CreatedBy: strPtr("alice"),
 		}
-		require.Equal(t, "alice", p.toPostableSilence().CreatedBy)
+		s, err := p.toPostableSilence()
+		require.NoError(t, err)
+		require.Equal(t, "alice", *s.CreatedBy)
 	})
 
 	t.Run("update carries silence id through", func(t *testing.T) {
@@ -421,7 +509,8 @@ func TestToPostableSilence(t *testing.T) {
 			EndsAt:    &end,
 			Comment:   &comment,
 		}
-		s := p.toPostableSilence()
+		s, err := p.toPostableSilence()
+		require.NoError(t, err)
 		require.Equal(t, "sil-42", s.ID)
 
 		raw, err := json.Marshal(s)
@@ -430,4 +519,23 @@ func TestToPostableSilence(t *testing.T) {
 		require.NoError(t, json.Unmarshal(raw, &decoded))
 		require.Equal(t, "sil-42", decoded["id"])
 	})
+
+	t.Run("unparseable timestamps surface an error", func(t *testing.T) {
+		p := ManageSilencesParams{
+			Operation: "create",
+			Matchers:  []SilenceMatcherParam{{Name: "severity", Value: "critical"}},
+			StartsAt:  strPtr("not-a-timestamp"),
+			EndsAt:    &end,
+			Comment:   &comment,
+		}
+		_, err := p.toPostableSilence()
+		require.ErrorContains(t, err, "starts_at must be a valid RFC3339 timestamp")
+	})
+}
+
+func mustParseRFC3339(t *testing.T, v string) time.Time {
+	t.Helper()
+	parsed, err := time.Parse(time.RFC3339, v)
+	require.NoError(t, err)
+	return parsed
 }

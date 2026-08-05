@@ -10,7 +10,9 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/go-openapi/strfmt"
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/prometheus/alertmanager/api/v2/models"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
 )
@@ -21,7 +23,7 @@ Operations:
 - 'list': list existing silences. Optionally filter by rule_uid (matches the __alert_rule_uid__ label) or by matchers.
 - 'get': retrieve a single silence by silence_id.
 - 'create': create a new silence. Requires matchers, starts_at, ends_at (RFC3339) and comment.
-- 'update': modify an existing silence by silence_id (re-creates it with the same id). Requires matchers, starts_at, ends_at and comment.
+- 'update': modify an existing silence by silence_id. Requires matchers, starts_at, ends_at and comment. The id is only kept when the posted matchers and starts_at match the stored ones, so pass back the starts_at returned by 'get'; otherwise Alertmanager expires the old silence and returns a new id.
 - 'delete': expire/remove a silence by silence_id.
 
 When to use:
@@ -69,7 +71,7 @@ type ManageSilencesParams struct {
 	SilenceID *string               `json:"silence_id,omitempty" jsonschema:"description=The silence id (required for 'get'\\, 'update' and 'delete')"`
 	RuleUID   *string               `json:"rule_uid,omitempty" jsonschema:"description=Optional: filter listed silences to those scoped to this alert rule UID (matches the __alert_rule_uid__ label). Only used with 'list'."`
 	Matchers  []SilenceMatcherParam `json:"matchers,omitempty" jsonschema:"description=Label matchers. Required (at least one) for 'create' and 'update'. For 'list'\\, used as an optional filter."`
-	StartsAt  *string               `json:"starts_at,omitempty" jsonschema:"description=Silence start time in RFC3339 format\\, e.g. '2026-07-11T10:00:00Z' (required for 'create' and 'update')"`
+	StartsAt  *string               `json:"starts_at,omitempty" jsonschema:"description=Silence start time in RFC3339 format\\, e.g. '2026-07-11T10:00:00Z' (required for 'create' and 'update'). Grafana clamps a start time in the past to the moment of creation\\, so for 'update' pass back the starts_at returned by 'get' to keep the silence id stable."`
 	EndsAt    *string               `json:"ends_at,omitempty" jsonschema:"description=Silence end time in RFC3339 format\\, e.g. '2026-07-11T12:00:00Z' (required for 'create' and 'update')"`
 	Comment   *string               `json:"comment,omitempty" jsonschema:"description=A human-readable comment explaining the silence (required for 'create' and 'update')"`
 	CreatedBy *string               `json:"created_by,omitempty" jsonschema:"description=Author of the silence. Defaults to 'grafana-assistant'."`
@@ -138,11 +140,26 @@ func (p ManageSilencesParams) validateWritePayload() error {
 			return fmt.Errorf("matcher at index %d: name is required", i)
 		}
 	}
-	if err := requireRFC3339("starts_at", p.StartsAt); err != nil {
+	startsAt, err := parseRFC3339("starts_at", p.StartsAt)
+	if err != nil {
 		return err
 	}
-	if err := requireRFC3339("ends_at", p.EndsAt); err != nil {
+	endsAt, err := parseRFC3339("ends_at", p.EndsAt)
+	if err != nil {
 		return err
+	}
+	// Grafana rejects this server-side with a generic 400, so catching it here
+	// costs a round-trip less and names the offending fields.
+	if !endsAt.After(startsAt) {
+		return fmt.Errorf("ends_at (%s) must be after starts_at (%s)", *p.EndsAt, *p.StartsAt)
+	}
+	// A window that has already closed silences nothing. Expiring a silence
+	// early is what 'delete' is for, so it is not a reason to allow it here.
+	if !endsAt.After(time.Now()) {
+		if p.Operation == "update" {
+			return fmt.Errorf("ends_at (%s) is in the past; use the 'delete' operation to expire a silence early", *p.EndsAt)
+		}
+		return fmt.Errorf("ends_at (%s) is in the past, so the silence would be expired on creation", *p.EndsAt)
 	}
 	if p.Comment == nil || *p.Comment == "" {
 		return fmt.Errorf("comment is required for create/update")
@@ -150,14 +167,15 @@ func (p ManageSilencesParams) validateWritePayload() error {
 	return nil
 }
 
-func requireRFC3339(field string, v *string) error {
+func parseRFC3339(field string, v *string) (time.Time, error) {
 	if v == nil || *v == "" {
-		return fmt.Errorf("%s is required for create/update", field)
+		return time.Time{}, fmt.Errorf("%s is required for create/update", field)
 	}
-	if _, err := time.Parse(time.RFC3339, *v); err != nil {
-		return fmt.Errorf("%s must be a valid RFC3339 timestamp: %w", field, err)
+	t, err := time.Parse(time.RFC3339, *v)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("%s must be a valid RFC3339 timestamp: %w", field, err)
 	}
-	return nil
+	return t, nil
 }
 
 // buildSilenceFilters converts an optional rule UID and matcher list into the
@@ -194,68 +212,52 @@ func matcherToFilterString(m SilenceMatcherParam) string {
 	return fmt.Sprintf("%s%s%q", m.Name, op, m.Value)
 }
 
-// silenceMatcher is the wire representation of a matcher in the Alertmanager v2 API.
-type silenceMatcher struct {
-	Name    string `json:"name"`
-	Value   string `json:"value"`
-	IsRegex bool   `json:"isRegex"`
-	IsEqual *bool  `json:"isEqual,omitempty"`
-}
+// toPostableSilence builds the Alertmanager v2 request body for create/update,
+// applying the created_by default and carrying the silence id through for
+// updates. SilenceMatcherParam stays the tool-facing input shape (plain fields
+// so the generated JSON schema is readable); models.Matcher is what goes on the
+// wire.
+func (p ManageSilencesParams) toPostableSilence() (models.PostableSilence, error) {
+	startsAt, err := parseRFC3339("starts_at", p.StartsAt)
+	if err != nil {
+		return models.PostableSilence{}, err
+	}
+	endsAt, err := parseRFC3339("ends_at", p.EndsAt)
+	if err != nil {
+		return models.PostableSilence{}, err
+	}
 
-// postableSilence is the request body for creating or updating a silence.
-// A non-empty ID turns a create into an update.
-type postableSilence struct {
-	ID        string           `json:"id,omitempty"`
-	Matchers  []silenceMatcher `json:"matchers"`
-	StartsAt  string           `json:"startsAt"`
-	EndsAt    string           `json:"endsAt"`
-	Comment   string           `json:"comment"`
-	CreatedBy string           `json:"createdBy"`
-}
-
-// gettableSilence is the response shape for list/get.
-type gettableSilence struct {
-	ID        string           `json:"id"`
-	Status    *silenceStatus   `json:"status,omitempty"`
-	UpdatedAt string           `json:"updatedAt,omitempty"`
-	Matchers  []silenceMatcher `json:"matchers"`
-	StartsAt  string           `json:"startsAt"`
-	EndsAt    string           `json:"endsAt"`
-	Comment   string           `json:"comment"`
-	CreatedBy string           `json:"createdBy"`
-}
-
-type silenceStatus struct {
-	State string `json:"state"`
-}
-
-// toPostableSilence builds the wire body for create/update, applying the
-// created_by default and carrying the silence id through for updates.
-func (p ManageSilencesParams) toPostableSilence() postableSilence {
 	createdBy := defaultSilenceCreatedBy
 	if p.CreatedBy != nil && *p.CreatedBy != "" {
 		createdBy = *p.CreatedBy
 	}
-	matchers := make([]silenceMatcher, 0, len(p.Matchers))
+	comment := derefSilenceStr(p.Comment)
+
+	matchers := make(models.Matchers, 0, len(p.Matchers))
 	for _, m := range p.Matchers {
-		matchers = append(matchers, silenceMatcher{
-			Name:    m.Name,
-			Value:   m.Value,
-			IsRegex: m.IsRegex,
+		name, value, isRegex := m.Name, m.Value, m.IsRegex
+		matchers = append(matchers, &models.Matcher{
+			Name:    &name,
+			Value:   &value,
+			IsRegex: &isRegex,
 			IsEqual: m.IsEqual,
 		})
 	}
-	s := postableSilence{
-		Matchers:  matchers,
-		StartsAt:  derefSilenceStr(p.StartsAt),
-		EndsAt:    derefSilenceStr(p.EndsAt),
-		Comment:   derefSilenceStr(p.Comment),
-		CreatedBy: createdBy,
+
+	start, end := strfmt.DateTime(startsAt), strfmt.DateTime(endsAt)
+	s := models.PostableSilence{
+		Silence: models.Silence{
+			Matchers:  matchers,
+			StartsAt:  &start,
+			EndsAt:    &end,
+			Comment:   &comment,
+			CreatedBy: &createdBy,
+		},
 	}
 	if p.SilenceID != nil {
 		s.ID = *p.SilenceID
 	}
-	return s
+	return s, nil
 }
 
 func derefSilenceStr(v *string) string {
@@ -285,7 +287,7 @@ func manageSilencesRead(ctx context.Context, args ManageSilencesReadParams) (any
 	return nil, fmt.Errorf("alerting_manage_silences: unknown operation %q", args.Operation)
 }
 
-func manageSilences(ctx context.Context, args ManageSilencesParams) (any, error) {
+func manageSilencesReadWrite(ctx context.Context, args ManageSilencesParams) (any, error) {
 	if err := args.validate(); err != nil {
 		return nil, fmt.Errorf("alerting_manage_silences: %w", err)
 	}
@@ -301,7 +303,11 @@ func manageSilences(ctx context.Context, args ManageSilencesParams) (any, error)
 	case "get":
 		return c.getSilence(ctx, *args.SilenceID)
 	case "create", "update":
-		return c.createOrUpdateSilence(ctx, args.toPostableSilence())
+		s, err := args.toPostableSilence()
+		if err != nil {
+			return nil, fmt.Errorf("alerting_manage_silences: %w", err)
+		}
+		return c.createOrUpdateSilence(ctx, s)
 	case "delete":
 		return c.deleteSilence(ctx, *args.SilenceID)
 	}
@@ -343,8 +349,13 @@ func (c *alertingClient) silenceRequest(ctx context.Context, method, path string
 		_ = resp.Body.Close() //nolint:errcheck
 	}()
 
-	bodyBytes, err := io.ReadAll(resp.Body)
+	bodyBytes, err := readResponseBody(resp.Body, defaultResponseLimitBytes)
 	if err != nil {
+		// Keep the status code even when the body is unreadable or oversized:
+		// it is usually the only actionable part of a failed request.
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return fmt.Errorf("grafana API returned status code %d and the response body could not be read: %w", resp.StatusCode, err)
+		}
 		return fmt.Errorf("failed to read response body from %s: %w", p, err)
 	}
 
@@ -361,20 +372,20 @@ func (c *alertingClient) silenceRequest(ctx context.Context, method, path string
 	return nil
 }
 
-func (c *alertingClient) listSilences(ctx context.Context, filters []string) ([]gettableSilence, error) {
+func (c *alertingClient) listSilences(ctx context.Context, filters []string) (models.GettableSilences, error) {
 	params := url.Values{}
 	for _, f := range filters {
 		params.Add("filter", f)
 	}
-	var out []gettableSilence
+	var out models.GettableSilences
 	if err := c.silenceRequest(ctx, http.MethodGet, silencesBasePath+"/silences", params, nil, &out); err != nil {
 		return nil, fmt.Errorf("failed to list silences: %w", err)
 	}
 	return out, nil
 }
 
-func (c *alertingClient) getSilence(ctx context.Context, id string) (*gettableSilence, error) {
-	var out gettableSilence
+func (c *alertingClient) getSilence(ctx context.Context, id string) (*models.GettableSilence, error) {
+	var out models.GettableSilence
 	path := silencesBasePath + "/silence/" + url.PathEscape(id)
 	if err := c.silenceRequest(ctx, http.MethodGet, path, nil, nil, &out); err != nil {
 		return nil, fmt.Errorf("failed to get silence %q: %w", id, err)
@@ -382,12 +393,15 @@ func (c *alertingClient) getSilence(ctx context.Context, id string) (*gettableSi
 	return &out, nil
 }
 
-// createSilenceResponse is the body returned by POST /silences.
+// createSilenceResponse is the body returned by POST /silences. The generated
+// equivalent (models.PostSilencesOKBody) lives in the alertmanager restapi
+// operations package, which would drag in the go-openapi runtime for a
+// single-field envelope, so it stays hand-rolled here.
 type createSilenceResponse struct {
 	SilenceID string `json:"silenceID"`
 }
 
-func (c *alertingClient) createOrUpdateSilence(ctx context.Context, s postableSilence) (*createSilenceResponse, error) {
+func (c *alertingClient) createOrUpdateSilence(ctx context.Context, s models.PostableSilence) (*createSilenceResponse, error) {
 	var out createSilenceResponse
 	if err := c.silenceRequest(ctx, http.MethodPost, silencesBasePath+"/silences", nil, s, &out); err != nil {
 		return nil, fmt.Errorf("failed to create/update silence: %w", err)
@@ -404,8 +418,9 @@ func (c *alertingClient) deleteSilence(ctx context.Context, id string) (any, err
 }
 
 // ManageSilencesRead is the read-only variant (list/get). It shares the tool
-// name with ManageSilences so the agent-side allow-list does not fork; exactly
-// one of the two is registered depending on whether write tools are enabled.
+// name with ManageSilencesReadWrite so the agent-side allow-list does not fork;
+// exactly one of the two is registered depending on whether write tools are
+// enabled.
 var ManageSilencesRead = mcpgrafana.MustTool(
 	"alerting_manage_silences",
 	manageSilencesReadDescription,
@@ -415,12 +430,12 @@ var ManageSilencesRead = mcpgrafana.MustTool(
 	mcp.WithReadOnlyHintAnnotation(true),
 )
 
-// ManageSilences is the write-capable variant (create/update/delete silences),
-// so it is not marked read-only.
-var ManageSilences = mcpgrafana.MustTool(
+// ManageSilencesReadWrite is the write-capable variant (create/update/delete
+// silences), so it is not marked read-only.
+var ManageSilencesReadWrite = mcpgrafana.MustTool(
 	"alerting_manage_silences",
 	manageSilencesDescription,
-	manageSilences,
+	manageSilencesReadWrite,
 	mcp.WithTitleAnnotation("Manage alerting silences"),
 	mcp.WithDestructiveHintAnnotation(true),
 )
