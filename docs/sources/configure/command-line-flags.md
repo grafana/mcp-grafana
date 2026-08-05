@@ -28,7 +28,7 @@ You can look up defaults, choose `--disable-*` flags, or configure TLS without r
 
 - `-t` / `--transport`: Transport type (`stdio`, `sse`, or `streamable-http`). Default: `stdio`.
 - `--address`: Host and port for the SSE or streamable-http server. Default: `localhost:8000`.
-- `--base-path`: Base path for the SSE or streamable-http server. Every route is served under the prefix, including `/healthz` and `/metrics`, so a single path-routed reverse-proxy rule covers the whole service. With `--base-path /my-base`, SSE is at `/my-base/sse`, streamable-http at `/my-base/mcp`, and the operational endpoints at `/my-base/healthz` and `/my-base/metrics`. Both endpoints stay mounted at the server root as well, so existing probes keep working.
+- `--base-path`: Base path for the SSE or streamable-http server. With `--base-path /my-base`, SSE is at `/my-base/sse` and streamable-http at `/my-base/mcp`. `/healthz` and `/metrics` are internal-only endpoints for probes and scrapers and always stay at the server root, never under this prefix.
 - `--endpoint-path`: HTTP path for the streamable-http MCP endpoint, appended to `--base-path`. Default: `/mcp`.
 - `--session-idle-timeout-minutes`: Idle timeout for streamable-http sessions, in minutes. Sessions with no activity for this duration are automatically reaped. Set to `0` to disable. Default: `30`.
 

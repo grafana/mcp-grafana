@@ -491,37 +491,32 @@ func normalizeBasePath(basePath string) string {
 
 // newHTTPMux builds the mux shared by the SSE and streamable-http transports.
 //
-// mcpPattern is the ServeMux pattern the MCP handler is mounted on; basePath is
-// the reverse-proxy prefix from --base-path. metricsHandler is nil when metrics
-// are disabled or served on their own address.
+// mcpPattern is the ServeMux pattern the MCP handler is mounted on.
+// metricsHandler is nil when metrics are disabled or served on their own
+// address.
 //
-// The operational endpoints are mounted at the server root and, when a base
-// path is set, under it as well, so one path-routed proxy rule covers the whole
-// service while probes already pointing at the root keep working.
-func newHTTPMux(mcpPattern string, mcpHandler http.Handler, basePath string, metricsHandler http.Handler) *http.ServeMux {
+// /healthz and /metrics are internal-only endpoints consumed by
+// infrastructure (liveness probes, scrapers), not by MCP clients, so they are
+// mounted at the server root only — never under --base-path. Putting them on
+// the same prefix as the application endpoints would make it harder for a
+// reverse proxy to expose the API while keeping these internal.
+func newHTTPMux(mcpPattern string, mcpHandler http.Handler, metricsHandler http.Handler) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.Handle(mcpPattern, observability.WrapHandler(mcpHandler, mcpPattern))
 
-	prefixes := []string{""}
-	if base := normalizeBasePath(basePath); base != "" {
-		prefixes = append(prefixes, base)
+	// A configurable endpoint path can collide with an operational path;
+	// registering the same pattern twice would panic, so keep the MCP mount
+	// and warn instead.
+	if mcpPattern == "/healthz" {
+		slog.Warn("Not mounting health endpoint: path is taken by the MCP endpoint", "path", mcpPattern)
+	} else {
+		mux.HandleFunc("/healthz", handleHealthz)
 	}
-	for _, prefix := range prefixes {
-		// A configurable endpoint path can collide with an operational path;
-		// registering the same pattern twice would panic, so keep the MCP mount
-		// and warn instead.
-		if pattern := prefix + "/healthz"; pattern == mcpPattern {
-			slog.Warn("Not mounting health endpoint: path is taken by the MCP endpoint", "path", pattern)
+	if metricsHandler != nil {
+		if mcpPattern == "/metrics" {
+			slog.Warn("Not mounting metrics endpoint: path is taken by the MCP endpoint", "path", mcpPattern)
 		} else {
-			mux.HandleFunc(pattern, handleHealthz)
-		}
-		if metricsHandler == nil {
-			continue
-		}
-		if pattern := prefix + "/metrics"; pattern == mcpPattern {
-			slog.Warn("Not mounting metrics endpoint: path is taken by the MCP endpoint", "path", pattern)
-		} else {
-			mux.Handle(pattern, metricsHandler)
+			mux.Handle("/metrics", metricsHandler)
 		}
 	}
 	return mux
@@ -532,13 +527,13 @@ func newSSEMux(mcpHandler http.Handler, basePath string, metricsHandler http.Han
 	// The SSE server routes on the full request path (<base>/sse,
 	// <base>/message), so it needs the subtree pattern: an exact-match mount on
 	// the base path itself never reaches it.
-	return newHTTPMux(normalizeBasePath(basePath)+"/", mcpHandler, basePath, metricsHandler)
+	return newHTTPMux(normalizeBasePath(basePath)+"/", mcpHandler, metricsHandler)
 }
 
 // newStreamableHTTPMux mounts the streamable-http handler and the operational
 // endpoints.
 func newStreamableHTTPMux(mcpHandler http.Handler, basePath, endpointPath string, metricsHandler http.Handler) *http.ServeMux {
-	return newHTTPMux(streamableEndpointPath(basePath, endpointPath), mcpHandler, basePath, metricsHandler)
+	return newHTTPMux(streamableEndpointPath(basePath, endpointPath), mcpHandler, metricsHandler)
 }
 
 // streamableEndpointPath is where the streamable-http server listens once
@@ -732,7 +727,7 @@ func main() {
 		"Transport type (stdio, sse or streamable-http)",
 	)
 	addr := flag.String("address", "localhost:8000", "The host and port to start the sse server on")
-	basePath := flag.String("base-path", "", "Base path for the sse or streamable-http server. Also serves /healthz and /metrics under the prefix, so one reverse-proxy rule covers the whole service")
+	basePath := flag.String("base-path", "", "Base path for the sse or streamable-http server. /healthz and /metrics are always served at the root, not under this prefix")
 	endpointPath := flag.String("endpoint-path", "/mcp", "Endpoint path for the streamable-http server")
 	logLevel := flag.String("log-level", "info", "Log level (debug, info, warn, error)")
 	sessionIdleTimeoutMinutes := flag.Int("session-idle-timeout-minutes", 30, "Session idle timeout in minutes. Sessions with no activity for this duration are automatically reaped. Set to 0 to disable session reaping")

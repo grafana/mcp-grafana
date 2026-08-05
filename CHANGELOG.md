@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- `--base-path` now covers the whole listener, so a single path-routed reverse-proxy rule reaches every route: `/healthz` and `/metrics` are served under the prefix as well (both stay mounted at the server root for existing probes), the SSE endpoints are reachable when the flag is given without a trailing slash, and the streamable-http endpoint is mounted under the prefix as the flag documentation already promised ([#1033](https://github.com/grafana/mcp-grafana/pull/1033))
+- `--base-path` now correctly prefixes the application routes: the SSE endpoints are reachable when the flag is given without a trailing slash, and the streamable-http endpoint is mounted under the prefix as the flag documentation already promised. `/healthz` and `/metrics` stay internal-only, mounted at the server root regardless of `--base-path` ([#1033](https://github.com/grafana/mcp-grafana/pull/1033))
 
 ### Changed
 

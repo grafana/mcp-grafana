@@ -46,13 +46,13 @@ mcp-grafana -t streamable-http --address :9090
 
 Clients connect to the server URL (for example, `http://localhost:8000/sse` for SSE). For streamable-http, the default endpoint path is `/mcp` (override with `--endpoint-path` if your client expects a different path).
 
-`--base-path` prefixes every route on the listener, including `/healthz` and `/metrics`, so one path-routed reverse-proxy rule covers the whole service:
+`--base-path` prefixes the application routes on the listener:
 
 ```bash
 mcp-grafana -t sse --address :8000 --base-path /my-base --metrics
 ```
 
-serves `/my-base/sse`, `/my-base/healthz`, and `/my-base/metrics`. The operational endpoints remain available at the server root too, so probes pointing at `/healthz` keep working.
+serves `/my-base/sse`. `/healthz` and `/metrics` are internal-only endpoints for probes and scrapers, so they always stay at the server root — never under `--base-path` — regardless of this flag.
 
 ## Next steps
 
