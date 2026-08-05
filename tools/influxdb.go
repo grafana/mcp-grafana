@@ -217,8 +217,11 @@ Flux example:    from(bucket: "metrics") |> range(start: -1h) |> filter(fn: (r) 
 	queryInfluxDB,
 	mcp.WithTitleAnnotation("Query InfluxDB"),
 	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
+	// The query is passed through unfiltered: InfluxQL supports DELETE/DROP
+	// and Flux can write via to(), so this executes writes if the datasource
+	// credentials permit it — not read-only, potentially destructive.
+	mcp.WithReadOnlyHintAnnotation(false),
+	mcp.WithDestructiveHintAnnotation(true),
 	mcp.WithOpenWorldHintAnnotation(false),
 )
 

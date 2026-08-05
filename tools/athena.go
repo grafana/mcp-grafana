@@ -526,8 +526,11 @@ Example: SELECT request_time, status FROM my_table WHERE $__timeFilter(request_t
 	queryAthena,
 	mcp.WithTitleAnnotation("Query Athena"),
 	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
+	// The raw SQL is passed through unfiltered, so DML/DDL (INSERT, DROP,
+	// CREATE TABLE AS) executes if the datasource credentials permit it —
+	// not read-only, potentially destructive.
+	mcp.WithReadOnlyHintAnnotation(false),
+	mcp.WithDestructiveHintAnnotation(true),
 	mcp.WithOpenWorldHintAnnotation(false),
 )
 

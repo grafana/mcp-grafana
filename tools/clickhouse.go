@@ -239,8 +239,11 @@ Example: SELECT Timestamp, Body FROM otel_logs WHERE $__timeFilter(Timestamp)`,
 	queryClickHouse,
 	mcp.WithTitleAnnotation("Query ClickHouse"),
 	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
+	// The raw SQL is passed through unfiltered, so a DELETE/DROP executes if
+	// the datasource credentials permit it — not read-only, potentially
+	// destructive.
+	mcp.WithReadOnlyHintAnnotation(false),
+	mcp.WithDestructiveHintAnnotation(true),
 	mcp.WithOpenWorldHintAnnotation(false),
 )
 

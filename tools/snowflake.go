@@ -240,8 +240,11 @@ Example: SELECT TIMESTAMP, RECORD['severity_text']::STRING AS LEVEL, VALUE FROM 
 	querySnowflake,
 	mcp.WithTitleAnnotation("Query Snowflake"),
 	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
+	// The raw SQL is passed through unfiltered, so a DELETE/DROP executes if
+	// the datasource credentials permit it — not read-only, potentially
+	// destructive.
+	mcp.WithReadOnlyHintAnnotation(false),
+	mcp.WithDestructiveHintAnnotation(true),
 	mcp.WithOpenWorldHintAnnotation(false),
 )
 
