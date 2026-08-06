@@ -53,7 +53,7 @@ const (
 )
 
 func urlAndAPIKeyFromEnv(logger *slog.Logger) (string, string) {
-	u := strings.TrimRight(os.Getenv(grafanaURLEnvVar), "/")
+	u := normalizeGrafanaURL(os.Getenv(grafanaURLEnvVar))
 
 	// Check for the new service account token environment variable first.
 	apiKey := os.Getenv(grafanaServiceAccountTokenEnvVar)
