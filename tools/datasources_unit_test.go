@@ -149,6 +149,73 @@ func TestListDatasources_TypeFilter(t *testing.T) {
 	})
 }
 
+func TestListDatasources_NameFilter(t *testing.T) {
+	mockDS := []*models.DataSource{
+		{ID: 1, UID: "prom-prod-eu", Name: "prometheus-prod-eu", Type: "prometheus"},
+		{ID: 2, UID: "prom-prod-us", Name: "prometheus-prod-us", Type: "prometheus"},
+		{ID: 3, UID: "prom-dev", Name: "prometheus-dev", Type: "prometheus"},
+		{ID: 4, UID: "loki-prod-eu", Name: "loki-prod-eu", Type: "loki"},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(mockDS)
+	}))
+	defer server.Close()
+
+	ctx := mockDatasourcesCtx(server)
+
+	t.Run("empty name does not filter", func(t *testing.T) {
+		result, err := listDatasources(ctx, ListDatasourcesParams{Name: ""})
+		require.NoError(t, err)
+		assert.Equal(t, 4, result.Total)
+	})
+
+	t.Run("substring match across types", func(t *testing.T) {
+		result, err := listDatasources(ctx, ListDatasourcesParams{Name: "prod"})
+		require.NoError(t, err)
+		assert.Equal(t, 3, result.Total)
+		uids := make([]string, len(result.Datasources))
+		for i, ds := range result.Datasources {
+			uids[i] = ds.UID
+		}
+		assert.ElementsMatch(t, []string{"prom-prod-eu", "prom-prod-us", "loki-prod-eu"}, uids)
+	})
+
+	t.Run("case-insensitive match", func(t *testing.T) {
+		result, err := listDatasources(ctx, ListDatasourcesParams{Name: "PROD-EU"})
+		require.NoError(t, err)
+		assert.Equal(t, 2, result.Total)
+	})
+
+	t.Run("composes with type filter (AND)", func(t *testing.T) {
+		result, err := listDatasources(ctx, ListDatasourcesParams{Type: "prometheus", Name: "prod"})
+		require.NoError(t, err)
+		assert.Equal(t, 2, result.Total)
+		for _, ds := range result.Datasources {
+			assert.Equal(t, "prometheus", ds.Type)
+			assert.Contains(t, ds.Name, "prod")
+		}
+	})
+
+	t.Run("no match returns empty", func(t *testing.T) {
+		result, err := listDatasources(ctx, ListDatasourcesParams{Name: "does-not-exist"})
+		require.NoError(t, err)
+		assert.Equal(t, 0, result.Total)
+		assert.Empty(t, result.Datasources)
+	})
+
+	t.Run("name filter respects pagination", func(t *testing.T) {
+		// 3 datasources match "prod"; ask for page 2 with limit 2.
+		result, err := listDatasources(ctx, ListDatasourcesParams{Name: "prod", Limit: 2, Offset: 2})
+		require.NoError(t, err)
+		assert.Equal(t, 3, result.Total)
+		assert.Len(t, result.Datasources, 1)
+		assert.False(t, result.HasMore)
+	})
+}
+
 func TestGetDatasource_RoutesToUID(t *testing.T) {
 	mockDS := &models.DataSource{
 		ID:   1,
