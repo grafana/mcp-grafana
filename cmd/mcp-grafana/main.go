@@ -383,6 +383,74 @@ func (hsc *httpSecurityConfig) addFlags() {
 	flag.StringVar(&hsc.allowedOrigins, "allowed-origins", "", "Comma-separated allowlist of Origin header values for the HTTP/SSE transports. Empty (the default) rejects any request that carries an Origin header — appropriate for non-browser MCP clients. Use \"*\" to disable validation.")
 }
 
+// serverAuthTokenEnvVar is the env fallback for --server-auth-token, so the
+// secret need not appear in the process arguments.
+const serverAuthTokenEnvVar = "MCP_GRAFANA_SERVER_TOKEN"
+
+// callerAuthConfig configures authentication of *callers* to the HTTP/SSE
+// transports — distinct from the credentials the server uses to reach Grafana.
+// It gates who may invoke the MCP server at all.
+type callerAuthConfig struct {
+	// token, when non-empty, is required as "Authorization: Bearer <token>" on
+	// every request to the MCP endpoint.
+	token string
+
+	// allowUnauthenticated permits a non-loopback bind without a caller token.
+	// INSECURE: only behind a trusted proxy that authenticates callers.
+	allowUnauthenticated bool
+}
+
+func (ca *callerAuthConfig) addFlags() {
+	flag.StringVar(&ca.token, "server-auth-token", "", "Bearer token that callers must present in the Authorization header to use the HTTP/SSE transports. Falls back to the "+serverAuthTokenEnvVar+" environment variable. When set, unauthenticated requests are rejected with 401. Has no effect on the stdio transport.")
+	flag.BoolVar(&ca.allowUnauthenticated, "allow-unauthenticated", false, "Allow the HTTP/SSE server to bind to a non-loopback address without --server-auth-token. INSECURE: only use behind a trusted proxy that authenticates callers. By default the server refuses to start unauthenticated on a public address.")
+}
+
+// resolveToken returns the caller token, falling back to the env var. It is
+// trimmed so whitespace from a secrets mount can't produce a never-matching token.
+func (ca callerAuthConfig) resolveToken() string {
+	if t := strings.TrimSpace(ca.token); t != "" {
+		return t
+	}
+	return strings.TrimSpace(os.Getenv(serverAuthTokenEnvVar))
+}
+
+// checkCallerAuthPolicy enforces the fail-closed bind rule for network
+// transports: an externally reachable listener must not accept unauthenticated
+// callers. Rules, in order:
+//
+//   - Caller token configured → authenticated; any bind is fine.
+//   - Loopback bind → only local processes can reach it; allowed.
+//   - --allow-unauthenticated → assume a trusted proxy in front; allowed (warns).
+//   - Otherwise (non-loopback, no token) → refused.
+//
+// It deliberately ignores which Grafana credentials are configured, so the safe
+// default doesn't hinge on an evolving inventory of credential sources.
+func checkCallerAuthPolicy(transport, address, token string, allowUnauthenticated bool) error {
+	if token != "" {
+		slog.Info("Caller authentication enabled: requests must present a valid bearer token", "transport", transport)
+		return nil
+	}
+	if mcpgrafana.IsLoopbackOnlyBind(address) {
+		slog.Warn("No caller authentication configured. The server is bound to a loopback address, so only local processes can reach it. Set --server-auth-token (or "+serverAuthTokenEnvVar+") to require authentication for non-local callers.", "address", address)
+		return nil
+	}
+	if allowUnauthenticated {
+		slog.Warn("SECURITY: serving on a non-loopback address with NO caller authentication because --allow-unauthenticated was set. Anyone who can reach this address can invoke MCP tools and use any Grafana credentials the server is configured with. Ensure a trusted proxy authenticates callers.", "address", address)
+		return nil
+	}
+	return fmt.Errorf("refusing to start %s transport on non-loopback address %q without caller authentication: set --server-auth-token (or %s) to require a bearer token, or pass --allow-unauthenticated if a trusted proxy in front of this server authenticates callers", transport, address, serverAuthTokenEnvVar)
+}
+
+// withCallerAuth wraps h with bearer-token authentication when a token is
+// configured, and returns it unchanged otherwise. Only the MCP endpoint is
+// wrapped; health/metrics endpoints stay open.
+func withCallerAuth(token string, h http.Handler) http.Handler {
+	if token == "" {
+		return h
+	}
+	return mcpgrafana.RequireBearerToken(token, slog.Default())(h)
+}
+
 // policy resolves the configured flags into a HostOriginPolicy. An
 // --allowed-hosts whose parsed form is empty (unset, "," " , ", etc.) falls
 // back to DefaultAllowedHosts so a malformed value cannot silently disable
@@ -486,7 +554,7 @@ func runMetricsServer(addr string, o *observability.Observability) {
 	}
 }
 
-func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt disabledTools, gc mcpgrafana.GrafanaConfig, tls tlsConfig, hsc httpSecurityConfig, obs observability.Config, sessionIdleTimeoutMinutes int) error {
+func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt disabledTools, gc mcpgrafana.GrafanaConfig, tls tlsConfig, hsc httpSecurityConfig, ca callerAuthConfig, obs observability.Config, sessionIdleTimeoutMinutes int) error {
 	stderrHandler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})
 	slog.SetDefault(slog.New(stderrHandler))
 
@@ -551,6 +619,21 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		}
 	}()
 
+	// Resolve the caller-auth token once and enforce the fail-closed bind
+	// policy before we start listening. stdio is a local pipe, so it is exempt.
+	callerToken := ca.resolveToken()
+	if transport == "sse" || transport == "streamable-http" {
+		if err := checkCallerAuthPolicy(transport, addr, callerToken, ca.allowUnauthenticated); err != nil {
+			return err
+		}
+		// With caller auth active, Authorization holds the caller token (stripped
+		// after validation). Forwarding it to Grafana would leak it, so refuse the
+		// contradictory combination.
+		if callerToken != "" && mcpgrafana.ForwardsAuthorizationHeader() {
+			return fmt.Errorf("refusing to start: caller authentication is enabled (--server-auth-token / %s) while GRAFANA_FORWARD_HEADERS forwards the Authorization header. Authorization is reserved for MCP caller authentication and would leak to Grafana. Remove Authorization from GRAFANA_FORWARD_HEADERS, or unset the caller token to run in proxy-forwarding mode", serverAuthTokenEnvVar)
+		}
+	}
+
 	// Start the appropriate server based on transport
 	switch transport {
 	case "stdio":
@@ -586,10 +669,10 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		if basePath == "" {
 			basePath = "/"
 		}
-		mux.Handle(basePath, observability.WrapHandler(
+		mux.Handle(basePath, withCallerAuth(callerToken, observability.WrapHandler(
 			mcpgrafana.ValidateGrafanaURLMiddleware(srv),
 			basePath,
-		))
+		)))
 		mux.HandleFunc("/healthz", handleHealthz)
 		if obs.MetricsEnabled {
 			if obs.MetricsAddress == "" {
@@ -626,10 +709,10 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		}
 		srv := server.NewStreamableHTTPServer(s, opts...)
 		mux := http.NewServeMux()
-		mux.Handle(endpointPath, observability.WrapHandler(
+		mux.Handle(endpointPath, withCallerAuth(callerToken, observability.WrapHandler(
 			mcpgrafana.ValidateGrafanaURLMiddleware(srv),
 			endpointPath,
-		))
+		)))
 		mux.HandleFunc("/healthz", handleHealthz)
 		if obs.MetricsEnabled {
 			if obs.MetricsAddress == "" {
@@ -671,6 +754,8 @@ func main() {
 	tls.addFlags()
 	var hsc httpSecurityConfig
 	hsc.addFlags()
+	var ca callerAuthConfig
+	ca.addFlags()
 	var obs observability.Config
 	flag.BoolVar(&obs.MetricsEnabled, "metrics", false, "Enable Prometheus metrics endpoint")
 	flag.StringVar(&obs.MetricsAddress, "metrics-address", "", "Separate address for metrics server (e.g., :9090). If empty, metrics are served on the main server at /metrics")
@@ -728,7 +813,7 @@ func main() {
 		level = slog.LevelDebug
 	}
 
-	if err := run(transport, *addr, *basePath, *endpointPath, level, dt, grafanaConfig, tls, hsc, obs, *sessionIdleTimeoutMinutes); err != nil {
+	if err := run(transport, *addr, *basePath, *endpointPath, level, dt, grafanaConfig, tls, hsc, ca, obs, *sessionIdleTimeoutMinutes); err != nil {
 		panic(err)
 	}
 }
