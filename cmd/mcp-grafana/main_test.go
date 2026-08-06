@@ -531,3 +531,146 @@ func TestHTTPSecurityConfigCORSOrigins(t *testing.T) {
 		})
 	}
 }
+
+// Regression test for https://github.com/grafana/mcp-grafana/issues/1021:
+// the SSE handler was mounted on an exact-match pattern so nothing under
+// --base-path was routed to it at all. /healthz and /metrics are
+// internal-only endpoints and stay mounted at the server root regardless of
+// --base-path.
+func TestHTTPMuxHonoursBasePath(t *testing.T) {
+	const (
+		mcpBody     = "mcp"
+		metricsBody = "metrics"
+	)
+	mcpHandler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(mcpBody))
+	})
+	metricsHandler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(metricsBody))
+	})
+
+	get := func(t *testing.T, mux *http.ServeMux, path string) (int, string) {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		return rec.Code, rec.Body.String()
+	}
+	assertBody := func(t *testing.T, mux *http.ServeMux, path, want string) {
+		t.Helper()
+		code, body := get(t, mux, path)
+		assert.Equal(t, http.StatusOK, code, "GET %s", path)
+		assert.Equal(t, want, body, "GET %s", path)
+	}
+
+	t.Run("sse", func(t *testing.T) {
+		cases := []struct {
+			name     string
+			basePath string
+			// paths the MCP (SSE) handler must serve
+			mcpPaths []string
+			// paths that must not reach the MCP handler
+			unroutedPaths []string
+		}{
+			{
+				name:     "no base path",
+				basePath: "",
+				mcpPaths: []string{"/sse", "/message"},
+			},
+			{
+				name:          "base path without trailing slash",
+				basePath:      "/my-custom-base",
+				mcpPaths:      []string{"/my-custom-base/sse", "/my-custom-base/message"},
+				unroutedPaths: []string{"/sse", "/message"},
+			},
+			{
+				name:          "base path with trailing slash",
+				basePath:      "/my-custom-base/",
+				mcpPaths:      []string{"/my-custom-base/sse", "/my-custom-base/message"},
+				unroutedPaths: []string{"/sse", "/message"},
+			},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				mux := newSSEMux(mcpHandler, tc.basePath, metricsHandler)
+				for _, p := range tc.mcpPaths {
+					assertBody(t, mux, p, mcpBody)
+				}
+				assertBody(t, mux, "/healthz", "ok")
+				assertBody(t, mux, "/metrics", metricsBody)
+				// The base path is a prefix, not an alias: the MCP endpoints
+				// must not stay reachable at the server root as well.
+				for _, p := range tc.unroutedPaths {
+					code, _ := get(t, mux, p)
+					assert.Equal(t, http.StatusNotFound, code, "GET %s", p)
+				}
+				// /healthz and /metrics are internal-only and must never answer
+				// under --base-path. The SSE mux uses a subtree pattern, so a
+				// request for <base>/healthz falls through to the MCP handler
+				// rather than 404ing — it must not reach the operational one.
+				if base := normalizeBasePath(tc.basePath); base != "" {
+					_, body := get(t, mux, base+"/healthz")
+					assert.NotEqual(t, "ok", body, "GET %s/healthz reached the operational health handler", base)
+					_, body = get(t, mux, base+"/metrics")
+					assert.NotEqual(t, metricsBody, body, "GET %s/metrics reached the operational metrics handler", base)
+				}
+			})
+		}
+	})
+
+	t.Run("streamable-http", func(t *testing.T) {
+		cases := []struct {
+			name         string
+			basePath     string
+			endpointPath string
+			mcpPath      string
+		}{
+			{
+				name:         "no base path",
+				endpointPath: "/mcp",
+				mcpPath:      "/mcp",
+			},
+			{
+				name:         "base path prefixes the endpoint",
+				basePath:     "/my-custom-base",
+				endpointPath: "/mcp",
+				mcpPath:      "/my-custom-base/mcp",
+			},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				mux := newStreamableHTTPMux(mcpHandler, tc.basePath, tc.endpointPath, metricsHandler)
+				assertBody(t, mux, tc.mcpPath, mcpBody)
+				assertBody(t, mux, "/healthz", "ok")
+				assertBody(t, mux, "/metrics", metricsBody)
+				// /healthz and /metrics must never answer under --base-path.
+				if base := normalizeBasePath(tc.basePath); base != "" {
+					code, _ := get(t, mux, base+"/healthz")
+					assert.Equal(t, http.StatusNotFound, code, "GET %s/healthz", base)
+					code, _ = get(t, mux, base+"/metrics")
+					assert.Equal(t, http.StatusNotFound, code, "GET %s/metrics", base)
+				}
+			})
+		}
+	})
+
+	t.Run("metrics are absent when disabled", func(t *testing.T) {
+		mux := newSSEMux(mcpHandler, "/my-custom-base", nil)
+		_, body := get(t, mux, "/metrics")
+		assert.NotEqual(t, metricsBody, body, "GET /metrics reached the metrics handler")
+	})
+
+	// --endpoint-path is free-form, so it can name an operational path.
+	// Registering the same pattern twice panics, so the MCP mount wins and the
+	// remaining operational mount must still come up. Collision only happens
+	// when the resolved MCP endpoint lands exactly on the root operational
+	// path — with a base path set, the endpoint lives under the prefix and
+	// the root /healthz stays free.
+	t.Run("endpoint path colliding with an operational path does not panic", func(t *testing.T) {
+		var mux *http.ServeMux
+		require.NotPanics(t, func() {
+			mux = newStreamableHTTPMux(mcpHandler, "", "/healthz", metricsHandler)
+		})
+		assertBody(t, mux, "/healthz", mcpBody)
+		assertBody(t, mux, "/metrics", metricsBody)
+	})
+}

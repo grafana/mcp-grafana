@@ -46,6 +46,14 @@ mcp-grafana -t streamable-http --address :9090
 
 Clients connect to the server URL (for example, `http://localhost:8000/sse` for SSE). For streamable-http, the default endpoint path is `/mcp` (override with `--endpoint-path` if your client expects a different path).
 
+`--base-path` prefixes the application routes on the listener:
+
+```bash
+mcp-grafana -t sse --address :8000 --base-path /my-base --metrics
+```
+
+serves `/my-base/sse`. `/healthz` and `/metrics` are internal-only endpoints for probes and scrapers, so they always stay at the server root — never under `--base-path` — regardless of this flag.
+
 ## Next steps
 
 - [Server TLS (streamable-http)](../server-tls-streamable-http/) if you need HTTPS for the MCP server.
