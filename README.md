@@ -996,16 +996,16 @@ grafanaConfig := mcpgrafana.GrafanaConfig{
 contextFunc := mcpgrafana.ComposedStdioContextFunc(grafanaConfig)
 ```
 
-**URL validation when creating clients programmatically:**
+**URL validation:**
 
-When calling `NewGrafanaClient` directly, pre-validate untrusted URLs to avoid a reachable panic:
+When calling `NewGrafanaClient` directly (stdio or programmatic construction), pre-validate URLs to avoid a reachable panic:
 
 ```go
-if err := mcpgrafana.ValidateGrafanaURL(untrustedURL); err != nil {
+if err := mcpgrafana.ValidateGrafanaURL(urlFromHeader); err != nil {
     http.Error(w, err.Error(), http.StatusBadRequest)
     return
 }
-client := mcpgrafana.NewGrafanaClient(ctx, untrustedURL, apiKey, nil)
+client := mcpgrafana.NewGrafanaClient(ctx, urlFromHeader, apiKey, nil)
 ```
 
 ### Server TLS Configuration (Streamable HTTP Transport Only)
