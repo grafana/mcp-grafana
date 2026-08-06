@@ -26,6 +26,11 @@ const (
 	rulesEndpointPath = "/api/prometheus/grafana/api/v1/rules"
 )
 
+const (
+	alertRuleUIDLabel          = "__alert_rule_uid__"
+	alertRuleNamespaceUIDLabel = "__alert_rule_namespace_uid__"
+)
+
 type alertingClient struct {
 	baseURL    *url.URL
 	httpClient *http.Client
@@ -102,6 +107,9 @@ type GetRulesOpts struct {
 	States       []string // Filter by rule state (e.g. "firing", "pending", "normal", "nodata", "error")
 	RuleLimit    int      // Maximum number of rules to return (max 200)
 	LimitAlerts  int      // Maximum number of alert instances per rule (max 200)
+	// IncludeInternalLabels asks Grafana to include internal labels such as
+	// rule UID and namespace UID in Prometheus-compatible responses.
+	IncludeInternalLabels bool
 	// Matchers filters alert instances by labels. Each matcher is JSON-encoded
 	// as a Prometheus matcher object (e.g. {"type":0,"name":"severity","value":"critical"}).
 	// Multiple matchers are AND-ed together.
@@ -141,6 +149,9 @@ func (o *GetRulesOpts) queryValues() url.Values {
 	}
 	if limitAlerts > 0 {
 		params.Set("limit_alerts", strconv.Itoa(limitAlerts))
+	}
+	if o.IncludeInternalLabels {
+		params.Set("includeInternalLabels", "true")
 	}
 	for _, m := range o.Matchers {
 		b, err := json.Marshal(m)
