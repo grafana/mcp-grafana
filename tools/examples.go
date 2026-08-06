@@ -294,6 +294,8 @@ var GetQueryExamples = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("Get query examples"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 // AddExamplesTools registers all example-related tools to the MCP server.
