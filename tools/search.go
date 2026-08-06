@@ -107,6 +107,8 @@ var SearchDashboards = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("Search dashboards"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 type SearchFoldersParams struct {
@@ -137,6 +139,8 @@ var SearchFolders = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("Search folders"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 func AddSearchTools(mcp *server.MCPServer) {

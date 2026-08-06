@@ -329,4 +329,6 @@ When NOT to use:
 	mcp.WithTitleAnnotation("Manage Agent Observability agents"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )

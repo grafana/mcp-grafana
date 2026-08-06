@@ -161,6 +161,8 @@ var ListProvisioningRepositories = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("List provisioning repositories"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 // ValidateProvisioningFileParams identifies a single file to validate inside
@@ -379,6 +381,8 @@ var ValidateProvisioningFile = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("Validate provisioning file"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 func AddProvisioningTools(s *server.MCPServer) {

@@ -231,6 +231,8 @@ var ListSnapshotsTool = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("List snapshots"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 var GetSnapshotTool = mcpgrafana.MustTool(
@@ -240,6 +242,8 @@ var GetSnapshotTool = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("Get snapshot"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 var CreateSnapshotTool = mcpgrafana.MustTool(
@@ -248,6 +252,9 @@ var CreateSnapshotTool = mcpgrafana.MustTool(
 	createSnapshot,
 	mcp.WithTitleAnnotation("Create snapshot"),
 	mcp.WithIdempotentHintAnnotation(false),
+	mcp.WithReadOnlyHintAnnotation(false),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 var DeleteSnapshotTool = mcpgrafana.MustTool(
@@ -256,7 +263,9 @@ var DeleteSnapshotTool = mcpgrafana.MustTool(
 	deleteSnapshot,
 	mcp.WithTitleAnnotation("Delete snapshot"),
 	mcp.WithIdempotentHintAnnotation(false),
+	mcp.WithReadOnlyHintAnnotation(false),
 	mcp.WithDestructiveHintAnnotation(true),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 func AddSnapshotTools(s *server.MCPServer, enableWriteTools bool) {

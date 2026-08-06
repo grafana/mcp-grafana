@@ -60,6 +60,8 @@ var ListPrometheusMetricMetadata = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("List Prometheus metric metadata"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 type QueryPrometheusParams struct {
@@ -182,6 +184,8 @@ var QueryPrometheus = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("Query Prometheus metrics"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 type ListPrometheusMetricNamesParams struct {
@@ -262,6 +266,8 @@ var ListPrometheusMetricNames = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("List Prometheus metric names"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 type LabelMatcher struct {
@@ -365,6 +371,8 @@ var ListPrometheusLabelNames = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("List Prometheus label names"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 type ListPrometheusLabelValuesParams struct {
@@ -422,6 +430,8 @@ var ListPrometheusLabelValues = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("List Prometheus label values"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 // PrometheusHistogramResult wraps histogram query results with debugging info
@@ -576,6 +586,8 @@ Time formats: 'now-1h', '2026-02-02T19:00:00Z', '1738519200000' (Unix ms)`,
 	mcp.WithTitleAnnotation("Query Prometheus histogram percentile"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 func AddPrometheusTools(mcp *server.MCPServer) {

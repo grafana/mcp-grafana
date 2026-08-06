@@ -179,9 +179,10 @@ var AskAssistant = mcpgrafana.MustTool(
 	askAssistantDescription,
 	askAssistant,
 	mcp.WithTitleAnnotation("Ask Grafana Assistant"),
-	mcp.WithReadOnlyHintAnnotation(false),
 	mcp.WithIdempotentHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(true),
+	mcp.WithReadOnlyHintAnnotation(false),
+	mcp.WithDestructiveHintAnnotation(true),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 // AddAssistantTools registers the assistant tools with the MCP server. The

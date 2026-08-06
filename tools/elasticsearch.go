@@ -56,6 +56,8 @@ var QueryElasticsearch = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("Query Elasticsearch"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 // AddElasticsearchTools registers all Elasticsearch and OpenSearch tools with the MCP server

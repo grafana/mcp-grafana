@@ -233,6 +233,8 @@ var QueryGraphite = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("Query Graphite metrics"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 // GraphiteMetricNode is a node in the Graphite metric hierarchy as returned
@@ -308,6 +310,8 @@ var ListGraphiteMetrics = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("List Graphite metrics"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 // ListGraphiteTagsParams defines the parameters for the list_graphite_tags tool.
@@ -355,6 +359,8 @@ var ListGraphiteTags = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("List Graphite tags"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 // computeSeriesDensity derives data-density statistics from the parsed
@@ -499,6 +505,8 @@ var QueryGraphiteDensity = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("Query Graphite metric density"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 // AddGraphiteTools registers all Graphite tools with the MCP server.

@@ -262,6 +262,8 @@ var QueryQuickwit = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("Query Quickwit"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 // AddQuickwitTools registers all Quickwit tools with the MCP server.

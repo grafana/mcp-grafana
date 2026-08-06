@@ -1011,4 +1011,6 @@ var AnalyzeLokiLabels = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("Analyze Loki label strategy"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )

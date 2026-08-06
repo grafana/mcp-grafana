@@ -89,6 +89,8 @@ var ListIncidents = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("List incidents"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 type CreateIncidentParams struct {
@@ -126,6 +128,9 @@ var CreateIncident = mcpgrafana.MustTool(
 	"Create a new Grafana incident. Requires title, severity, and room prefix. Allows setting status and labels. This tool should be used judiciously and sparingly, and only after confirmation from the user, as it may notify or alarm lots of people.",
 	createIncident,
 	mcp.WithTitleAnnotation("Create incident"),
+	mcp.WithReadOnlyHintAnnotation(false),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 type AddActivityToIncidentParams struct {
@@ -154,6 +159,9 @@ var AddActivityToIncident = mcpgrafana.MustTool(
 	"Add a note (userNote activity) to an existing incident's timeline using its ID. The note body can include URLs which will be attached as context. Use this to add context to an incident.",
 	addActivityToIncident,
 	mcp.WithTitleAnnotation("Add activity to incident"),
+	mcp.WithReadOnlyHintAnnotation(false),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 func AddIncidentTools(mcp *server.MCPServer, enableWriteTools bool) {
@@ -190,4 +198,6 @@ var GetIncident = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("Get incident details"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )

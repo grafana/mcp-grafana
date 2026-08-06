@@ -192,6 +192,8 @@ var ListOnCallSchedules = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("List OnCall schedules"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 // --- Shifts ---
@@ -242,6 +244,8 @@ var GetOnCallShift = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("Get OnCall shift"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 // --- Current On-Call Users ---
@@ -310,6 +314,8 @@ var GetCurrentOnCallUsers = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("Get current on-call users"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 // --- Teams ---
@@ -361,6 +367,8 @@ var ListOnCallTeams = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("List OnCall teams"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 // --- Users ---
@@ -431,6 +439,8 @@ var ListOnCallUsers = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("List OnCall users"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 // --- Alert Groups ---
@@ -520,6 +530,8 @@ var ListAlertGroups = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("List IRM alert groups"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 type GetAlertGroupParams struct {
@@ -565,6 +577,8 @@ var GetAlertGroup = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("Get IRM alert group"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 func AddOnCallTools(mcp *server.MCPServer) {

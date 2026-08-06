@@ -359,8 +359,10 @@ var GetPanelImage = mcpgrafana.MustTool(
 	getPanelImage,
 	mcp.WithTitleAnnotation("Get panel or dashboard image"),
 	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithUIResource(mcpgrafana.PanelViewerResourceURI),
+	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 func AddRenderingTools(mcp *server.MCPServer) {

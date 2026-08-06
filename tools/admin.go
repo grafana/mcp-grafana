@@ -38,6 +38,8 @@ var ListTeams = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("List teams"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 type ListUsersByOrgParams struct{}
@@ -60,6 +62,8 @@ var ListUsersByOrg = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("List users by org"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 type ListAllRolesParams struct {
@@ -89,6 +93,8 @@ var ListAllRoles = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("List all roles"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 type GetRoleDetailsParams struct {
@@ -113,6 +119,8 @@ var GetRoleDetails = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("Get role details"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 type GetRoleAssignmentsParams struct {
@@ -137,6 +145,8 @@ var GetRoleAssignments = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("Get role assignments"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 type ListUserRolesParams struct {
@@ -162,6 +172,8 @@ var ListUserRoles = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("List user roles"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 type ListTeamRolesParams struct {
@@ -187,6 +199,8 @@ var ListTeamRoles = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("List team roles"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 type GetResourcePermissionsParams struct {
@@ -212,6 +226,8 @@ var GetResourcePermissions = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("Get resource permissions"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 type GetResourceDescriptionParams struct {
@@ -239,6 +255,8 @@ var GetResourceDescription = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("Get resource description"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 func AddAdminTools(mcp *server.MCPServer) {

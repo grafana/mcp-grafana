@@ -148,6 +148,8 @@ var GetAssertions = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("Get assertions summary"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 func AddAssertsTools(mcp *server.MCPServer) {

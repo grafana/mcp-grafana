@@ -44,6 +44,8 @@ var ListPyroscopeLabelNames = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("List Pyroscope label names"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 type ListPyroscopeLabelNamesParams struct {
@@ -103,6 +105,8 @@ var ListPyroscopeLabelValues = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("List Pyroscope label values"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 type ListPyroscopeLabelValuesParams struct {
@@ -169,6 +173,8 @@ var ListPyroscopeProfileTypes = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("List Pyroscope profile types"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 type ListPyroscopeProfileTypesParams struct {
@@ -622,6 +628,8 @@ var QueryPyroscope = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("Query Pyroscope"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 type QueryPyroscopeParams struct {

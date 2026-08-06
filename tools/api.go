@@ -177,6 +177,9 @@ var APIRequest = mcpgrafana.MustTool(
 		"Use this for API endpoints that don't have a dedicated tool.",
 	apiRequest,
 	mcp.WithTitleAnnotation("Grafana API request"),
+	mcp.WithReadOnlyHintAnnotation(false),
+	mcp.WithDestructiveHintAnnotation(true),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 var APIRequestReadOnly = mcpgrafana.MustTool(
@@ -189,6 +192,8 @@ var APIRequestReadOnly = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("Grafana API request"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 func AddAPITools(mcp *server.MCPServer, enableWriteTools bool) {

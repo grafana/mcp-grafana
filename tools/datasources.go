@@ -430,6 +430,8 @@ var ListDatasources = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("List datasources"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 var CreateDatasource = mcpgrafana.MustTool(
@@ -439,6 +441,8 @@ var CreateDatasource = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("Create datasource"),
 	mcp.WithIdempotentHintAnnotation(false),
 	mcp.WithReadOnlyHintAnnotation(false),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 var UpdateDatasource = mcpgrafana.MustTool(
@@ -448,6 +452,8 @@ var UpdateDatasource = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("Update datasource"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(false),
+	mcp.WithDestructiveHintAnnotation(true),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 type GetDatasourceByUIDParams struct {
@@ -507,6 +513,8 @@ var GetDatasource = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("Get datasource"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 type UpdateDatasourceParams struct {
@@ -809,6 +817,8 @@ var CheckDatasourcesHealth = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("Check datasources health"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 // AddDatasourceTools registers the datasource tools on the MCP server; write tools are registered only when enableWriteTools is true.
