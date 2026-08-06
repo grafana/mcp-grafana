@@ -318,6 +318,8 @@ Cross-account monitoring: Use accountId to query metrics from a specific source 
 	mcp.WithTitleAnnotation("Query CloudWatch"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 // ListCloudWatchNamespacesParams defines the parameters for listing CloudWatch namespaces
@@ -423,6 +425,8 @@ var ListCloudWatchNamespaces = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("List CloudWatch namespaces"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 // ListCloudWatchMetricsParams defines the parameters for listing CloudWatch metrics
@@ -483,6 +487,8 @@ var ListCloudWatchMetrics = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("List CloudWatch metrics"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 // ListCloudWatchDimensionsParams defines the parameters for listing CloudWatch dimensions
@@ -545,6 +551,8 @@ var ListCloudWatchDimensions = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("List CloudWatch dimensions"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 // AddCloudWatchTools registers all CloudWatch tools with the MCP server
