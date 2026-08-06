@@ -563,8 +563,13 @@ func parseLokiQueryResponse(response *lokiQueryResponse) ([]LogEntry, error) {
 						continue
 					}
 
+					var timestamp string
+					if err := json.Unmarshal(value[0], &timestamp); err != nil {
+						continue
+					}
+
 					entry := LogEntry{
-						Timestamp: string(value[0]),
+						Timestamp: timestamp,
 						Line:      logLine,
 						Labels:    stream.Stream,
 					}
