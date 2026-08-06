@@ -112,6 +112,10 @@ type grafanaConfig struct {
 
 	// timeout is the time limit for requests made by the Grafana client.
 	timeout time.Duration
+
+	// browserCookieAuth enables authenticating with the Grafana session cookie
+	// held by the user's browser. stdio transport only.
+	browserCookieAuth bool
 }
 
 func (dt *disabledTools) addFlags() {
@@ -167,6 +171,8 @@ func (gc *grafanaConfig) addFlags() {
 
 	flag.BoolVar(&gc.includeArgsInSpans, "include-args-in-spans", false, "Include tool call arguments in OpenTelemetry spans. Only enable in non-production environments or when arguments are known not to contain PII.")
 	flag.DurationVar(&gc.timeout, "grafana-timeout", mcpgrafana.DefaultGrafanaClientTimeout, "Time limit for requests made by the Grafana client. Accepts Go duration strings, e.g. 10s, 500ms.")
+
+	flag.BoolVar(&gc.browserCookieAuth, "browser-cookie-auth", false, "Authenticate using the Grafana session cookie from your browser, refreshing it automatically when Grafana rotates it. Requires -t stdio, and is ignored when a service account token or basic auth is configured. Can also be set with GRAFANA_BROWSER_COOKIE_AUTH=true.")
 }
 
 // toolEntry pairs a tool registration function with its category and disable flag.
@@ -486,6 +492,11 @@ func runMetricsServer(addr string, o *observability.Observability) {
 	}
 }
 
+// errStartupReported signals that run failed for a reason that has already been
+// reported to the operator in a readable form. main exits non-zero on it
+// without the stack trace it prints for genuinely unexpected failures.
+var errStartupReported = errors.New("startup failed")
+
 func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt disabledTools, gc mcpgrafana.GrafanaConfig, tls tlsConfig, hsc httpSecurityConfig, obs observability.Config, sessionIdleTimeoutMinutes int) error {
 	stderrHandler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})
 	slog.SetDefault(slog.New(stderrHandler))
@@ -517,6 +528,18 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 	// signals are on.
 	if o.TracerProvider() != nil {
 		slog.Info("OTLP trace export configured", "endpoint", observability.OTLPTracesEndpoint())
+	}
+
+	// Resolve a browser session cookie before any client is built, so that a
+	// missing or expired browser login is reported here rather than as a 401 on
+	// the first tool call. No-op unless cookie auth was requested.
+	//
+	// "You are not logged in" is an expected operator-facing condition, not a
+	// bug, so it is reported as a log line and a non-zero exit rather than a
+	// panic with a stack trace.
+	if err := mcpgrafana.SetupBrowserCookieAuth(context.Background(), transport, &gc); err != nil {
+		slog.Error(err.Error())
+		return errStartupReported
 	}
 
 	// Create a client cache for HTTP-based transports to avoid per-request
@@ -695,6 +718,28 @@ func main() {
 		os.Exit(2)
 	}
 
+	// Collapse the flag onto the env var so downstream code has a single signal
+	// to read. The flag is the override: setting it on with the env var unset
+	// (or absent) still enables cookie auth.
+	if gc.browserCookieAuth {
+		if err := os.Setenv("GRAFANA_BROWSER_COOKIE_AUTH", "true"); err != nil {
+			fmt.Fprintf(os.Stderr, "could not enable browser cookie auth: %v\n", err)
+			os.Exit(2)
+		}
+	}
+	// Reject the unsupported transport combination here, alongside the other
+	// flag validation, so it reads as the configuration error it is rather than
+	// arriving as a panic out of run(). SetupBrowserCookieAuth re-checks this
+	// for callers that use the library directly.
+	if mcpgrafana.BrowserCookieAuthEnabled() && transport != "stdio" {
+		fmt.Fprintf(os.Stderr,
+			"browser cookie authentication requires -t stdio, but -t %s was given.\n"+
+				"A browser session cookie identifies the user who started the server, so on a shared HTTP\n"+
+				"server it would authenticate every client as that user. Use GRAFANA_SERVICE_ACCOUNT_TOKEN instead.\n",
+			transport)
+		os.Exit(2)
+	}
+
 	// Convert local grafanaConfig to mcpgrafana.GrafanaConfig
 	grafanaConfig := mcpgrafana.GrafanaConfig{
 		Debug:                   gc.debug,
@@ -729,6 +774,11 @@ func main() {
 	}
 
 	if err := run(transport, *addr, *basePath, *endpointPath, level, dt, grafanaConfig, tls, hsc, obs, *sessionIdleTimeoutMinutes); err != nil {
+		// Already-reported startup failures are operator errors, not bugs;
+		// a stack trace would only bury the explanation.
+		if errors.Is(err, errStartupReported) {
+			os.Exit(1)
+		}
 		panic(err)
 	}
 }

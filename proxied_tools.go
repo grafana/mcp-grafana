@@ -232,6 +232,11 @@ func parseProxiedToolName(toolName string) (string, string, error) {
 // http.RoundTripper (an interface value that is not reliably comparable) and is
 // process-constant (set once at server construction, never per request/session),
 // so it cannot differ between two sessions and needs no differentiation.
+//
+// GrafanaConfig.CookieProvider is omitted for the same two reasons, plus a
+// third: it is only ever set on the stdio transport, which has a single session
+// and no cross-tenant sharing to guard against. ExtractGrafanaInfoFromHeaders
+// clears it, so a session built from an HTTP request never carries one.
 type proxiedToolSetKey struct {
 	url           string
 	apiKey        string

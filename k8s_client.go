@@ -24,6 +24,7 @@ import (
 //  1. AccessToken + IDToken (on-behalf-of)
 //  2. APIKey (bearer token)
 //  3. BasicAuth
+//  4. CookieProvider (browser session cookie; stdio transport only)
 type KubernetesClient struct {
 	// BaseURL is the root URL of the Grafana instance (e.g. "http://localhost:3000").
 	BaseURL string

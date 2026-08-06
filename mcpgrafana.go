@@ -255,6 +255,17 @@ type GrafanaConfig struct {
 	// It is used for on-behalf-of auth in Grafana Cloud.
 	IDToken string
 
+	// CookieProvider supplies a Grafana browser session cookie for requests that
+	// have no other credential. It is an interface rather than a string because
+	// Grafana rotates grafana_session server-side: the provider is consulted per
+	// request so a mid-session refresh takes effect without rebuilding clients.
+	//
+	// Only ever set on the stdio transport. Attaching one operator's personal
+	// session cookie to requests on a shared HTTP server would authenticate
+	// every caller as that operator, so cmd/mcp-grafana refuses the combination
+	// at startup.
+	CookieProvider CookieProvider
+
 	// TLSConfig holds TLS configuration for all Grafana clients.
 	TLSConfig *TLSConfig
 
@@ -558,19 +569,33 @@ func NewExtraHeadersRoundTripper(rt http.RoundTripper, headers map[string]string
 
 // AuthRoundTripper wraps an http.RoundTripper to add authentication headers.
 // It supports on-behalf-of (OBO) auth via access/ID tokens, API key bearer
-// auth, and HTTP basic auth, in that priority order.
+// auth, HTTP basic auth, and browser session cookies, in that priority order.
+//
+// Session cookies rank last so that they can never shadow an explicitly
+// configured credential.
 type AuthRoundTripper struct {
 	accessToken string
 	idToken     string
 	apiKey      string
 	basicAuth   *url.Userinfo
+	cookies     CookieProvider
 	underlying  http.RoundTripper
+}
+
+// AuthRoundTripperOption configures optional behaviour of an AuthRoundTripper.
+type AuthRoundTripperOption func(*AuthRoundTripper)
+
+// WithCookieProvider supplies browser session cookies as a last-resort
+// credential, used only when no token or basic auth is available.
+func WithCookieProvider(p CookieProvider) AuthRoundTripperOption {
+	return func(rt *AuthRoundTripper) { rt.cookies = p }
 }
 
 func (rt *AuthRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	clonedReq := req.Clone(req.Context())
 
 	accessToken, idToken, apiKey, basicAuth := rt.accessToken, rt.idToken, rt.apiKey, rt.basicAuth
+	cookies := rt.cookies
 	cfg := GrafanaConfigFromContext(req.Context())
 	if cfg.AccessToken != "" {
 		accessToken = cfg.AccessToken
@@ -584,31 +609,47 @@ func (rt *AuthRoundTripper) RoundTrip(req *http.Request) (*http.Response, error)
 	if cfg.BasicAuth != nil {
 		basicAuth = cfg.BasicAuth
 	}
+	if cfg.CookieProvider != nil {
+		cookies = cfg.CookieProvider
+	}
 
-	if accessToken != "" && idToken != "" {
+	switch {
+	case accessToken != "" && idToken != "":
 		clonedReq.Header.Set("X-Access-Token", accessToken)
 		clonedReq.Header.Set("X-Grafana-Id", idToken)
-	} else if apiKey != "" {
+	case apiKey != "":
 		clonedReq.Header.Set("Authorization", "Bearer "+apiKey)
-	} else if basicAuth != nil {
+	case basicAuth != nil:
 		password, _ := basicAuth.Password()
 		clonedReq.SetBasicAuth(basicAuth.Username(), password)
+	case cookies != nil:
+		// AddCookie appends rather than replacing, so a Cookie header already
+		// set by an outer layer (GRAFANA_EXTRA_HEADERS, GRAFANA_FORWARD_HEADERS)
+		// survives alongside the session cookie. This layer is innermost, so a
+		// Header.Set here would silently discard it.
+		for _, c := range cookies.Cookies(req.Context()) {
+			clonedReq.AddCookie(c)
+		}
 	}
 
 	return rt.underlying.RoundTrip(clonedReq)
 }
 
-func NewAuthRoundTripper(rt http.RoundTripper, accessToken, idToken, apiKey string, basicAuth *url.Userinfo) *AuthRoundTripper {
+func NewAuthRoundTripper(rt http.RoundTripper, accessToken, idToken, apiKey string, basicAuth *url.Userinfo, opts ...AuthRoundTripperOption) *AuthRoundTripper {
 	if rt == nil {
 		rt = http.DefaultTransport
 	}
-	return &AuthRoundTripper{
+	art := &AuthRoundTripper{
 		accessToken: accessToken,
 		idToken:     idToken,
 		apiKey:      apiKey,
 		basicAuth:   basicAuth,
 		underlying:  rt,
 	}
+	for _, o := range opts {
+		o(art)
+	}
+	return art
 }
 
 // sensitiveHeaders lists HTTP header names whose values must be redacted in
@@ -696,10 +737,14 @@ func WithoutUserAgent() TransportOption {
 // BuildTransport constructs an http.RoundTripper with the standard middleware
 // chain derived from cfg. The default chain (innermost to outermost) is:
 //
-//	base → TLS → debugLogging → Auth → ExtraHeaders → OrgID → UserAgent → otelhttp
+//	base → TLS → debugLogging → Auth → SessionRefresh → ExtraHeaders → OrgID → UserAgent → otelhttp
 //
 // Auth is innermost among the header-setting layers so that credentials take
 // precedence over any forwarded/extra headers with the same keys.
+//
+// SessionRefresh wraps Auth (and is a no-op unless cfg.CookieProvider is set)
+// so that when Grafana rejects a rotated browser session cookie, the replayed
+// request re-enters Auth and is signed with the refreshed cookie.
 //
 // When cfg.Debug is true a debug-logging layer is added just above the base
 // transport. It sees the fully-decorated request (all headers set by outer
@@ -742,8 +787,14 @@ func BuildTransport(cfg *GrafanaConfig, base http.RoundTripper, opts ...Transpor
 
 	// Auth (innermost header layer — wins on conflicts with ExtraHeaders)
 	if !options.withoutAuth {
-		transport = NewAuthRoundTripper(transport, cfg.AccessToken, cfg.IDToken, cfg.APIKey, cfg.BasicAuth)
+		transport = NewAuthRoundTripper(transport, cfg.AccessToken, cfg.IDToken, cfg.APIKey, cfg.BasicAuth,
+			WithCookieProvider(cfg.CookieProvider))
 	}
+
+	// Session refresh sits just outside the auth layer so that a replayed
+	// request passes back through it and picks up the refreshed cookie.
+	// It is a no-op when no CookieProvider is configured.
+	transport = NewSessionRefreshRoundTripper(transport, cfg.CookieProvider, cfg.LoggerOrDefault())
 
 	// Extra headers (always included so per-request context overrides work)
 	transport = NewExtraHeadersRoundTripper(transport, cfg.ExtraHeaders)
@@ -852,7 +903,7 @@ var ExtractGrafanaInfoFromEnv server.StdioContextFunc = func(ctx context.Context
 
 	extraHeaders := extraHeadersFromEnv(logger)
 
-	logger.Info("Using Grafana configuration", "url", parsedURL.Redacted(), "api_key_set", apiKey != "", "basic_auth_set", basicAuth != nil, "org_id", orgID, "extra_headers_count", len(extraHeaders))
+	logger.Info("Using Grafana configuration", "url", parsedURL.Redacted(), "api_key_set", apiKey != "", "basic_auth_set", basicAuth != nil, "cookie_auth_set", config.CookieProvider != nil, "org_id", orgID, "extra_headers_count", len(extraHeaders))
 	config.URL = u
 	config.APIKey = apiKey
 	config.BasicAuth = basicAuth
@@ -881,6 +932,13 @@ var ExtractGrafanaInfoFromHeaders httpContextFunc = func(ctx context.Context, re
 	config.APIKey = apiKey
 	config.BasicAuth = basicAuth
 	config.OrgID = orgID
+
+	// Browser session cookies belong to whoever started the process, so they
+	// must never be attached to a request that arrived over the network — that
+	// would authenticate every caller as the operator. cmd/mcp-grafana already
+	// refuses to enable cookie auth on the HTTP transports; this clear makes the
+	// guarantee hold for library embedders that build their own config too.
+	config.CookieProvider = nil
 
 	// Environment extra headers may carry credentials (e.g. an Authorization
 	// header), so they are bound to the environment-configured URL just like the
@@ -1240,14 +1298,19 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 					// (handled by the OpenAPI client). OBO tokens still need
 					// transport-level injection since the OpenAPI client
 					// doesn't support them natively.
+					// CookieProvider must be carried here too: the OpenAPI
+					// client knows nothing about session cookies, so without it
+					// every call made through this client — the bulk of the
+					// tool surface — would go out unauthenticated.
 					oboConfig := GrafanaConfig{
-						AccessToken:  config.AccessToken,
-						IDToken:      config.IDToken,
-						OrgID:        config.OrgID,
-						TLSConfig:    config.TLSConfig,
-						ExtraHeaders: config.ExtraHeaders,
-						Debug:        config.Debug,
-						Logger:       config.Logger,
+						AccessToken:    config.AccessToken,
+						IDToken:        config.IDToken,
+						OrgID:          config.OrgID,
+						TLSConfig:      config.TLSConfig,
+						ExtraHeaders:   config.ExtraHeaders,
+						CookieProvider: config.CookieProvider,
+						Debug:          config.Debug,
+						Logger:         config.Logger,
 					}
 					// Panic matches the existing TLS error handling above
 					// (line ~887). The only realistic failure is a TLS
@@ -1266,14 +1329,15 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 
 	// Fetch the public URL from Grafana's frontend settings.
 	fetchCfg := &GrafanaConfig{
-		URL:          grafanaURL,
-		APIKey:       apiKey,
-		BasicAuth:    auth,
-		AccessToken:  config.AccessToken,
-		IDToken:      config.IDToken,
-		TLSConfig:    config.TLSConfig,
-		ExtraHeaders: config.ExtraHeaders,
-		Logger:       config.Logger,
+		URL:            grafanaURL,
+		APIKey:         apiKey,
+		BasicAuth:      auth,
+		AccessToken:    config.AccessToken,
+		IDToken:        config.IDToken,
+		TLSConfig:      config.TLSConfig,
+		ExtraHeaders:   config.ExtraHeaders,
+		CookieProvider: config.CookieProvider,
+		Logger:         config.Logger,
 	}
 	publicURL := fetchPublicURL(ctx, fetchCfg)
 

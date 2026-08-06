@@ -431,6 +431,7 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 **Grafana Client Options:**
 - `--grafana-timeout`: Time limit for requests made by the Grafana client. Accepts Go duration strings (e.g., `10s`, `500ms`) - default: `10s`
 - `--include-args-in-spans`: Include tool call arguments in OpenTelemetry spans. Only enable in non-production environments or when arguments are known not to contain PII - default: `false`
+- `--browser-cookie-auth`: Authenticate with the Grafana session cookie from your browser, refreshing it automatically when Grafana rotates it. Requires `-t stdio`, and is skipped when a service account token or basic auth is configured. See [Browser Session Cookie Authentication](#browser-session-cookie-authentication-stdio-only) - default: `false`
 
 **Observability:**
 - `--metrics`: Enable Prometheus metrics endpoint at `/metrics`
@@ -559,6 +560,44 @@ volumes:
 ```
 
 Surrounding whitespace (including a trailing newline) is trimmed from the file contents. If both `GRAFANA_SERVICE_ACCOUNT_TOKEN` and `GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE` are set, the inline token takes precedence.
+
+### Browser Session Cookie Authentication (stdio only)
+
+If your Grafana is behind SSO and you cannot easily mint a service account token, `mcp-grafana` can authenticate as *you* by reusing the `grafana_session` cookie your browser already holds:
+
+```json
+{
+  "mcpServers": {
+    "grafana": {
+      "command": "mcp-grafana",
+      "args": ["-t", "stdio", "--browser-cookie-auth"],
+      "env": {
+        "GRAFANA_URL": "https://grafana.internal"
+      }
+    }
+  }
+}
+```
+
+Equivalently, set `GRAFANA_BROWSER_COOKIE_AUTH=true`.
+
+On startup the server looks for a session in this order, **validating each candidate against `/api/user` before trusting it**:
+
+1. A previously validated session saved at `~/.mcp-grafana/session.json` (skipped once past its expiry).
+2. The `grafana_session` cookie held by your installed browsers — Chrome, Chromium, Brave, Edge, Firefox, Safari, Opera and Vivaldi are searched.
+
+Grafana rotates `grafana_session` server-side, so a cookie captured once goes stale while the server is still running. When Grafana rejects a request with `401`/`403`, the server re-reads the cookie from your browser and replays the request automatically — you stay logged in without restarting anything. Concurrent failures collapse into a single re-read.
+
+Validated sessions are cached at `~/.mcp-grafana/session.json` with `0600` permissions (override the directory with `MCP_GRAFANA_HOME`). The cookie is redacted from `--debug` output.
+
+**Constraints, by design:**
+
+- **stdio transport only.** The server refuses to start with `-t sse` or `-t streamable-http`. A browser session cookie identifies the person who launched the process, so on a shared HTTP server it would authenticate every client as that person.
+- **Lowest precedence.** If `GRAFANA_SERVICE_ACCOUNT_TOKEN` or `GRAFANA_USERNAME`/`GRAFANA_PASSWORD` is set, that credential is used and cookie auth is skipped. A session cookie can never shadow an explicit credential.
+- **No headless login.** If no browser holds a live Grafana session, startup fails and asks you to log in. The server never drives a browser or prompts for credentials.
+- **You only get your own permissions.** Unlike a service account, this session carries exactly the access your Grafana user has.
+
+Platform notes: on macOS, the first read may prompt for Keychain access. On Windows, Chrome 127+ App-Bound Encryption can prevent reading Chrome's cookie store — use Firefox or a service account token there.
 
 ### Multi-Organization Support
 
