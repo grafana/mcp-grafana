@@ -239,7 +239,7 @@ Snowflake event tables (telemetry from logging APIs/auto-instrumentation) live i
 Example: SELECT TIMESTAMP, RECORD['severity_text']::STRING AS LEVEL, VALUE FROM SNOWFLAKE.TELEMETRY.EVENTS WHERE $__timeFilter(TIMESTAMP) AND RECORD_TYPE = 'LOG'`,
 	querySnowflake,
 	mcp.WithTitleAnnotation("Query Snowflake"),
-	mcp.WithIdempotentHintAnnotation(true),
+	mcp.WithIdempotentHintAnnotation(false),
 	// The raw SQL is passed through unfiltered, so a DELETE/DROP executes if
 	// the datasource credentials permit it — not read-only, potentially
 	// destructive.

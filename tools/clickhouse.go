@@ -238,7 +238,7 @@ Time formats: 'now-1h', '2026-02-02T19:00:00Z', '1738519200000' (Unix ms)
 Example: SELECT Timestamp, Body FROM otel_logs WHERE $__timeFilter(Timestamp)`,
 	queryClickHouse,
 	mcp.WithTitleAnnotation("Query ClickHouse"),
-	mcp.WithIdempotentHintAnnotation(true),
+	mcp.WithIdempotentHintAnnotation(false),
 	// The raw SQL is passed through unfiltered, so a DELETE/DROP executes if
 	// the datasource credentials permit it — not read-only, potentially
 	// destructive.

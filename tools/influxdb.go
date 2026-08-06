@@ -216,7 +216,7 @@ InfluxQL example: SELECT mean("value") FROM "cpu" WHERE time > now() - 1h GROUP 
 Flux example:    from(bucket: "metrics") |> range(start: -1h) |> filter(fn: (r) => r._measurement == "cpu")`,
 	queryInfluxDB,
 	mcp.WithTitleAnnotation("Query InfluxDB"),
-	mcp.WithIdempotentHintAnnotation(true),
+	mcp.WithIdempotentHintAnnotation(false),
 	// The query is passed through unfiltered: InfluxQL supports DELETE/DROP
 	// and Flux can write via to(), so this executes writes if the datasource
 	// credentials permit it — not read-only, potentially destructive.
