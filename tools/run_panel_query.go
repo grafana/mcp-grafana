@@ -24,7 +24,7 @@ type RunPanelQueryParams struct {
 	End            string            `json:"end" jsonschema:"description=Override end time (e.g. 'now'\\, RFC3339\\, Unix ms)"`
 	Variables      map[string]string `json:"variables" jsonschema:"description=Override dashboard variables (e.g. {\"job\": \"api-server\"})"`
 	DatasourceUID  string            `json:"datasourceUid,omitempty" jsonschema:"description=Override datasource UID"`
-	DatasourceType string            `json:"datasourceType,omitempty" jsonschema:"description=Override datasource type (prometheus\\, loki\\, grafana-clickhouse-datasource\\, cloudwatch\\, influxdb\\, grafana-bigquery-datasource)"`
+	DatasourceType string            `json:"datasourceType,omitempty" jsonschema:"description=Override datasource type (prometheus\\, loki\\, grafana-clickhouse-datasource\\, cloudwatch\\, influxdb\\, grafana-bigquery-datasource\\, mssql)"`
 }
 
 // QueryTimeRange represents the actual time range used for a panel query
@@ -223,7 +223,9 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 	case "influxdb":
 		results, err = executeInfluxDBQuery(ctx, datasourceUID, panelData, query, params.Start, params.End)
 	case "bigquery":
-		results, err = executeBigQueryPanelQuery(ctx, datasourceUID, panelData, query, params.Start, params.End, vars)
+		results, err = executeSQLPanelQuery(ctx, datasourceUID, panelData, query, params.Start, params.End, vars, BigQueryDatasourceType)
+	case "mssql":
+		results, err = executeSQLPanelQuery(ctx, datasourceUID, panelData, query, params.Start, params.End, vars, MSSQLDatasourceType)
 	default:
 		return nil, fmt.Errorf("datasource type '%s' is not supported by run_panel_query; use the native query tool (e.g. query_prometheus\\, query_loki_logs\\, query_clickhouse\\, query_cloudwatch\\, query_influxdb) directly", datasourceType)
 	}
@@ -540,26 +542,43 @@ func executeInfluxDBQuery(ctx context.Context, datasourceUID string, panelData *
 // BigQueryDatasourceType is the type identifier for BigQuery datasources.
 const BigQueryDatasourceType = "grafana-bigquery-datasource"
 
-// BigQueryFormatTable is the format value for table/tabular query results.
-const BigQueryFormatTable = 1
+// MSSQLDatasourceType is the type identifier for Microsoft SQL Server datasources.
+const MSSQLDatasourceType = "mssql"
 
-// BigQueryQueryResult represents the tabular result of a BigQuery panel query.
-type BigQueryQueryResult struct {
+// SQLFormatTable is the format value for table/tabular query results on sqlds-based
+// datasources such as BigQuery, whose query model takes a numeric format enum.
+const SQLFormatTable = 1
+
+// MSSQLFormatTable is the format value for table/tabular query results on MSSQL, whose
+// sqleng-based query model unmarshals format into a string and fails on a number.
+const MSSQLFormatTable = "table"
+
+// defaultSQLFormat returns the table format value understood by the given datasource.
+func defaultSQLFormat(datasourceType string) interface{} {
+	if datasourceType == MSSQLDatasourceType {
+		return MSSQLFormatTable
+	}
+	return SQLFormatTable
+}
+
+// SQLQueryResult represents the tabular result of a SQL panel query.
+type SQLQueryResult struct {
 	Columns        []string                 `json:"columns"`
 	Rows           []map[string]interface{} `json:"rows"`
 	RowCount       int                      `json:"rowCount"`
 	ProcessedQuery string                   `json:"processedQuery,omitempty"`
 }
 
-// executeBigQueryPanelQuery runs a BigQuery panel query via Grafana's /api/ds/query
-// endpoint. BigQuery is a SQL datasource (sqlds-based) whose backend plugin resolves
-// SQL macros such as $__timeFilter/$__timeFrom/$__timeGroup server-side, so we only
-// substitute the frontend-only macros ($__interval, $__range, etc.) here. The panel's
-// raw target is preserved so BigQuery-specific fields (location, project, dataset) reach
-// the backend; only rawSql, datasource, refId, and format are overridden.
-func executeBigQueryPanelQuery(ctx context.Context, datasourceUID string, panelData *panelInfo, query, start, end string, variables map[string]string) (*BigQueryQueryResult, error) {
+// executeSQLPanelQuery runs a panel query against a SQL datasource via Grafana's
+// /api/ds/query endpoint. Those datasources resolve SQL macros such as
+// $__timeFilter/$__timeFrom/$__timeGroup server-side in their backend plugin, so we
+// only substitute the frontend-only macros ($__interval, $__range, etc.) here. The
+// panel's raw target is preserved so datasource-specific fields (BigQuery's location,
+// project and dataset, for example) reach the backend; only rawSql, datasource, refId
+// and format are overridden.
+func executeSQLPanelQuery(ctx context.Context, datasourceUID string, panelData *panelInfo, query, start, end string, variables map[string]string, datasourceType string) (*SQLQueryResult, error) {
 	if panelData == nil || panelData.RawTarget == nil {
-		return nil, fmt.Errorf("BigQuery panel target not available")
+		return nil, fmt.Errorf("SQL panel target not available")
 	}
 
 	// Parse time range
@@ -580,12 +599,12 @@ func executeBigQueryPanelQuery(ctx context.Context, datasourceUID string, panelD
 
 	// Override the SQL with the fully-processed query and ensure required fields are set.
 	target["rawSql"] = processedQuery
-	target["datasource"] = map[string]interface{}{"uid": datasourceUID, "type": BigQueryDatasourceType}
+	target["datasource"] = map[string]interface{}{"uid": datasourceUID, "type": datasourceType}
 	if safeString(target, "refId") == "" {
 		target["refId"] = "A"
 	}
 	if _, ok := target["format"]; !ok {
-		target["format"] = BigQueryFormatTable
+		target["format"] = defaultSQLFormat(datasourceType)
 	}
 
 	client, baseURL, err := newDSQueryHTTPClient(ctx)
@@ -603,7 +622,7 @@ func executeBigQueryPanelQuery(ctx context.Context, datasourceUID string, panelD
 		return nil, err
 	}
 
-	return &BigQueryQueryResult{
+	return &SQLQueryResult{
 		Columns:        columns,
 		Rows:           rows,
 		RowCount:       len(rows),
@@ -738,6 +757,8 @@ func normalizeDatasourceType(dsType string) string {
 		return "influxdb"
 	case strings.Contains(lower, "clickhouse"):
 		return "clickhouse"
+	case lower == "mssql":
+		return "mssql"
 	case strings.Contains(lower, "bigquery"):
 		return "bigquery"
 	default:
@@ -759,7 +780,7 @@ func isEmptyPanelResult(results interface{}) bool {
 		return v == nil || len(v.Rows) == 0
 	case *InfluxDBQueryResult:
 		return v == nil || len(v.Rows) == 0
-	case *BigQueryQueryResult:
+	case *SQLQueryResult:
 		return v == nil || len(v.Rows) == 0
 	case model.Value:
 		switch m := v.(type) {
@@ -817,6 +838,13 @@ func generatePanelQueryHints(datasourceType, query string) []string {
 			"- Column names or WHERE clause may not match the schema - check the table definition in BigQuery",
 			"- The $__timeFilter(column) macro may reference a column whose type or timezone doesn't match the time range",
 			"- The datasource's processing location may not match the dataset's region",
+		)
+	case "mssql":
+		hints = append(hints,
+			"- Table may be empty for this time range - try a COUNT(*) without the time filter to verify",
+			"- Column names or WHERE clause may not match the schema - check the table definition in SQL Server",
+			"- The $__timeFilter(column) macro may reference a column whose type or timezone doesn't match the time range",
+			"- The datasource login may lack SELECT permission on the referenced tables",
 		)
 	}
 
