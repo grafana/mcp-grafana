@@ -78,6 +78,7 @@ var categoryDescription = map[string]string{
 	"provisioning":  "Provisioning: List provisioning repositories (e.g. git-sync sources) to discover repository slugs for use with rendering tools.",
 	"agento11y":     "Agent Observability: Search and inspect LLM conversations, generations, and evaluation scores from Grafana Agent Observability, read its agent catalog (system prompts, tools, version history, and per-version scores), and read or manage its eval configuration (evaluators, templates, eval rules, and guards) and its curated saved conversations and collections.",
 	"assistant":     "Assistant: Ask Grafana Assistant open-ended questions and get a full text reply (requires the Grafana Assistant plugin).",
+	"insight-cell":  "Insight Cell: Render data you've gathered as an interactive 'insight cell' (a core panel, logs, trace, or a synthesis view: worklist/rca/rulediff/timeline/cost) via an MCP App.",
 }
 
 // disabledTools indicates whether each category of tools should be disabled.
@@ -90,7 +91,7 @@ type disabledTools struct {
 	pyroscope, navigation, proxied, annotations, rendering, cloudwatch, write,
 	snapshot, examples, clickhouse, snowflake, graphite,
 	runpanelquery, athena, plugin, api, config, provisioning,
-	agento11y, assistant bool
+	agento11y, assistant, insightcell bool
 }
 
 // Configuration for the Grafana client.
@@ -151,6 +152,7 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.provisioning, "disable-provisioning", false, "Disable provisioning tools")
 	flag.BoolVar(&dt.agento11y, "disable-agento11y", false, "Disable Agent Observability tools")
 	flag.BoolVar(&dt.assistant, "disable-assistant", false, "Disable Grafana Assistant tools")
+	flag.BoolVar(&dt.insightcell, "disable-insight-cell", false, "Disable insight-cell tools. Opt-in: not in the default --enabled-tools list; add 'insight-cell' there to enable.")
 }
 
 func (gc *grafanaConfig) addFlags() {
@@ -215,6 +217,7 @@ func (dt *disabledTools) toolEntries() []toolEntry {
 		{tools.AddProvisioningTools, dt.provisioning, "provisioning"},
 		{func(mcp *server.MCPServer) { tools.AddAgento11yTools(mcp, enableWriteTools) }, dt.agento11y, "agento11y"},
 		{func(mcp *server.MCPServer) { tools.AddAssistantTools(mcp, enableWriteTools) }, dt.assistant, "assistant"},
+		{tools.AddInsightCellTools, dt.insightcell, "insight-cell"},
 	}
 }
 
