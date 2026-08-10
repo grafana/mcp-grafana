@@ -569,11 +569,11 @@ func TestCheckCallerAuthPolicy(t *testing.T) {
 		// warns about the missing token rather than about public exposure.
 		{"no token, loopback", "127.0.0.1:8000", "", "WARN", "bound to a loopback address"},
 
-		// No token on a reachable bind: warns that it will refuse to start in a
-		// future release, but starts today (backward compatible).
-		{"no token, public bind", "0.0.0.0:8000", "", "WARN", "startup error in a future release"},
-		{"no token, wildcard port", ":8000", "", "WARN", "startup error in a future release"},
-		{"no token, routable IP", "192.168.1.5:8000", "", "WARN", "startup error in a future release"},
+		// No token on a reachable bind: logged at ERROR (highest --log-level, so
+		// the exposure can't be filtered out); starts today (backward compatible).
+		{"no token, public bind", "0.0.0.0:8000", "", "ERROR", "startup error in a future release"},
+		{"no token, wildcard port", ":8000", "", "ERROR", "startup error in a future release"},
+		{"no token, routable IP", "192.168.1.5:8000", "", "ERROR", "startup error in a future release"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

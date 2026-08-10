@@ -415,8 +415,9 @@ func (ca callerAuthConfig) resolveToken() string {
 //
 //   - Token configured → callers are authenticated; logged at INFO.
 //   - Loopback bind → only local processes can connect; logged at WARN with a hint.
-//   - Non-loopback bind, no token → reachable and unauthenticated; logged at WARN.
-//     This will refuse to start in a future major release.
+//   - Non-loopback bind, no token → reachable and unauthenticated; logged at ERROR
+//     (the highest --log-level, so the exposure can't be filtered out) and will
+//     refuse to start in a future major release.
 //
 // A nil logger falls back to slog.Default().
 func checkCallerAuthPolicy(transport, address, token string, logger *slog.Logger) {
@@ -431,7 +432,9 @@ func checkCallerAuthPolicy(transport, address, token string, logger *slog.Logger
 		logger.Warn("No caller authentication configured. The server is bound to a loopback address, so only local processes can reach it. Set --server-auth-token (or "+serverAuthTokenEnvVar+") to require authentication for non-local callers.", "address", address)
 		return
 	}
-	logger.Warn("SECURITY: serving on a non-loopback address with NO caller authentication. Anyone who can reach this address can invoke MCP tools and use any Grafana credentials the server is configured with. This will become a startup error in a future release: set --server-auth-token (or "+serverAuthTokenEnvVar+") to require a bearer token.", "address", address)
+	// Logged at ERROR (not WARN) so the exposure is visible even under
+	// --log-level error; error is the highest configurable level.
+	logger.Error("SECURITY: serving on a non-loopback address with NO caller authentication. Anyone who can reach this address can invoke MCP tools and use any Grafana credentials the server is configured with. This will become a startup error in a future release: set --server-auth-token (or "+serverAuthTokenEnvVar+") to require a bearer token.", "address", address)
 }
 
 // withCallerAuth wraps h with bearer-token authentication when a token is

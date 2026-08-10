@@ -430,7 +430,7 @@ Optionally require MCP clients to authenticate *to the server*. This is separate
 
 - `--server-auth-token`: Bearer token callers must send as `Authorization: Bearer <token>`. Falls back to the `MCP_GRAFANA_SERVER_TOKEN` environment variable. When set, requests without a valid token are rejected with `401` before any tool runs. Prefer the env var so the secret isn't visible in the process arguments.
 
-Caller authentication is enforced only when `--server-auth-token` is set. When it isn't and the server binds a non-loopback address, the server **starts but logs a loud security warning** (loopback and stdio are unaffected); a future major release will make that a startup error. Use TLS (or TLS termination) whenever caller auth is enabled on a non-loopback address. When caller auth is enabled, the validated `Authorization` header is stripped before requests reach Grafana; combining `--server-auth-token` with `GRAFANA_FORWARD_HEADERS=Authorization` is rejected at startup.
+Caller authentication is enforced only when `--server-auth-token` is set. When it isn't and the server binds a non-loopback address, the server **starts but logs a security error** — emitted at the `error` log level so it isn't hidden by `--log-level` (loopback and stdio are unaffected); a future major release will make that a startup error. Use TLS (or TLS termination) whenever caller auth is enabled on a non-loopback address. When caller auth is enabled, the validated `Authorization` header is stripped before requests reach Grafana; combining `--server-auth-token` with `GRAFANA_FORWARD_HEADERS=Authorization` is rejected at startup.
 
 **Debug and Logging:**
 - `--debug`: Enable debug mode for detailed HTTP request/response logging
@@ -666,7 +666,7 @@ Forwarded headers are merged with any headers defined in `GRAFANA_EXTRA_HEADERS`
      docker run --rm -i -e GRAFANA_URL=https://myinstance.grafana.net -e GRAFANA_SERVICE_ACCOUNT_TOKEN=<your service account token> grafana/mcp-grafana -t stdio
      ```
 
-     > **Note — secure the networked modes:** In SSE and streamable-http modes the container binds a non-loopback address (`0.0.0.0:8000`). Without a caller token the server **starts but logs a loud security warning** (and will refuse to start in a future major release). Set `MCP_GRAFANA_SERVER_TOKEN` to require an `Authorization: Bearer <token>` from clients (recommended). STDIO mode is unaffected. See [Caller Authentication](#cli-flags-reference).
+     > **Note — secure the networked modes:** In SSE and streamable-http modes the container binds a non-loopback address (`0.0.0.0:8000`). Without a caller token the server **starts but logs a security error** (at the `error` log level, so it isn't hidden by `--log-level`; and it will refuse to start in a future major release). Set `MCP_GRAFANA_SERVER_TOKEN` to require an `Authorization: Bearer <token>` from clients (recommended). STDIO mode is unaffected. See [Caller Authentication](#cli-flags-reference).
 
      2. **SSE Mode**: In this mode, the server runs as an HTTP server that clients connect to. You must expose port 8000 using the `-p` flag:
 
