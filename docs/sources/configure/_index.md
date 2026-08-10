@@ -8,7 +8,8 @@ keywords:
   - transport
   - MCP
 weight: 20
-aliases: []
+aliases:
+  - /docs/grafana-cloud/machine-learning/mcp/configure/
 ---
 
 # Configure the Grafana MCP server

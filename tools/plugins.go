@@ -129,6 +129,8 @@ var GetPlugin = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("Get plugin"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 type InstallPluginParams struct {
@@ -230,9 +232,10 @@ var InstallPlugin = mcpgrafana.MustTool(
 	"Install a Grafana plugin by its plugin ID. If the version is not already confirmed with the user, omit it — the tool will look up the latest version and return it for confirmation before installing.",
 	installPlugin,
 	mcp.WithTitleAnnotation("Install plugin"),
-	mcp.WithReadOnlyHintAnnotation(false),
-	mcp.WithDestructiveHintAnnotation(true),
 	mcp.WithIdempotentHintAnnotation(false),
+	mcp.WithReadOnlyHintAnnotation(false),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(true),
 )
 
 // catalogPlugin mirrors the relevant fields from the Grafana plugin catalog list API.
@@ -398,6 +401,8 @@ var SearchPlugins = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("Search plugins"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(true),
 )
 
 func AddPluginTools(s *server.MCPServer, enableWrite bool) {

@@ -1,9 +1,11 @@
 package tools
 
 import (
+	"strings"
 	"testing"
 	"time"
 
+	querierv1 "github.com/grafana/pyroscope/api/gen/proto/go/querier/v1"
 	typesv1 "github.com/grafana/pyroscope/api/gen/proto/go/types/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -142,4 +144,107 @@ func TestQueryPyroscope_QueryTypeValidation(t *testing.T) {
 			assert.Contains(t, err.Error(), tc.wantErr)
 		})
 	}
+}
+
+func TestQueryPyroscope_FormatValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		format  string
+		wantErr string
+	}{
+		{name: "invalid rejected", format: "unknown", wantErr: `invalid format "unknown"`},
+		{name: "flamegraph rejected", format: "flamegraph", wantErr: `invalid format "flamegraph"`},
+		{name: "json rejected", format: "json", wantErr: `invalid format "json"`},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := queryPyroscope(t.Context(), QueryPyroscopeParams{
+				DataSourceUID: "fake",
+				ProfileType:   "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
+				Format:        tc.format,
+			})
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.wantErr)
+		})
+	}
+}
+
+// testFlameGraph builds the flame graph for the call tree (values are quads
+// of [xOffset, total, self, nameIndex] with delta-encoded offsets):
+//
+//	total (180)
+//	+- main.entry (150) -> main.mid (150, self 50) -> main.mid (100, recursion) -> main.leaf (100)
+//	+- other (30, server-side truncation bucket)
+func testFlameGraph() *querierv1.FlameGraph {
+	return &querierv1.FlameGraph{
+		Names: []string{"total", "main.entry", "main.mid", "main.leaf", "other"},
+		Total: 180,
+		Levels: []*querierv1.Level{
+			{Values: []int64{0, 180, 0, 0}},
+			{Values: []int64{0, 150, 0, 1, 0, 30, 30, 4}},
+			{Values: []int64{0, 150, 50, 2}},
+			{Values: []int64{50, 100, 0, 2}},
+			{Values: []int64{50, 100, 100, 3}},
+		},
+	}
+}
+
+func TestBuildProfileTable(t *testing.T) {
+	table, err := buildProfileTable(testFlameGraph(), "nanoseconds", 100)
+	require.NoError(t, err)
+
+	lines := strings.Split(strings.TrimRight(table, "\n"), "\n")
+	require.Len(t, lines, 7, table)
+
+	assert.Equal(t, "Total: 180ns", lines[0])
+	assert.Equal(t, "Showing top 3 out of 3 functions by flat (self) value, accounting for 83.33% of the total", lines[1])
+	assert.Contains(t, lines[2], `16.67% of the total was collapsed into an "other" bucket`)
+	assert.Contains(t, lines[3], "flat%")
+	assert.Contains(t, lines[3], "cum%")
+
+	// Ranked by flat; recursion counted once in cum; entry gets cum only.
+	assert.Regexp(t, `^\s+100ns\s+55.56%\s+55.56%\s+100ns\s+55.56%\s+main.leaf$`, lines[4])
+	assert.Regexp(t, `^\s+50ns\s+27.78%\s+83.33%\s+150ns\s+83.33%\s+main.mid$`, lines[5])
+	assert.Regexp(t, `^\s+0\S*\s+0.00%\s+83.33%\s+150ns\s+83.33%\s+main.entry$`, lines[6])
+
+	assert.NotContains(t, table, `  other`, "truncation bucket must not appear as a function row")
+	assert.NotContains(t, table, `  total`, "synthetic root must not appear as a function row")
+}
+
+func TestBuildProfileTable_MaxRows(t *testing.T) {
+	table, err := buildProfileTable(testFlameGraph(), "nanoseconds", 1)
+	require.NoError(t, err)
+
+	assert.Contains(t, table, "Showing top 1 out of 3 functions by flat (self) value, accounting for 55.56% of the total")
+	assert.Contains(t, table, "main.leaf")
+	assert.NotContains(t, table, "main.mid")
+}
+
+func TestBuildProfileTable_Empty(t *testing.T) {
+	_, err := buildProfileTable(&querierv1.FlameGraph{Names: []string{"total"}, Levels: []*querierv1.Level{{Values: []int64{0, 0, 0, 0}}}}, "nanoseconds", 100)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "empty profile")
+
+	_, err = buildProfileTable(nil, "nanoseconds", 100)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "empty profile")
+}
+
+func TestSampleUnitFromProfileType(t *testing.T) {
+	assert.Equal(t, "nanoseconds", sampleUnitFromProfileType("process_cpu:cpu:nanoseconds:cpu:nanoseconds"))
+	assert.Equal(t, "bytes", sampleUnitFromProfileType("memory:alloc_space:bytes:space:bytes"))
+	assert.Equal(t, "", sampleUnitFromProfileType("garbage"))
+}
+
+func TestFormatSampleValue(t *testing.T) {
+	assert.Equal(t, "615.26s", formatSampleValue(615_260_000_000, "nanoseconds"))
+	assert.Equal(t, "1.50ms", formatSampleValue(1_500_000, "nanoseconds"))
+	assert.Equal(t, "2.00us", formatSampleValue(2_000, "nanoseconds"))
+	assert.Equal(t, "999ns", formatSampleValue(999, "nanoseconds"))
+	assert.Equal(t, "1.42GB", formatSampleValue(1_525_000_000, "bytes"))
+	assert.Equal(t, "1.45MB", formatSampleValue(1_525_000, "bytes"))
+	assert.Equal(t, "1.49kB", formatSampleValue(1_525, "bytes"))
+	assert.Equal(t, "42B", formatSampleValue(42, "bytes"))
+	assert.Equal(t, "12345", formatSampleValue(12345, "count"))
 }
