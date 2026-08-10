@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"log/slog"
@@ -554,35 +555,34 @@ func TestCallerAuthConfigResolveToken(t *testing.T) {
 
 func TestCheckCallerAuthPolicy(t *testing.T) {
 	cases := []struct {
-		name                 string
-		address              string
-		token                string
-		allowUnauthenticated bool
-		wantErr              bool
+		name      string
+		address   string
+		token     string
+		wantLevel string // "INFO" or "WARN"
+		wantMsg   string // substring expected in the emitted log line
 	}{
 		// A caller token authenticates every request, so any bind is fine.
-		{"token set, public bind is fine", "0.0.0.0:8000", "tok", false, false},
-		{"token set, loopback bind is fine", "localhost:8000", "tok", false, false},
+		{"token set, public bind", "0.0.0.0:8000", "tok", "INFO", "Caller authentication enabled"},
+		{"token set, loopback bind", "localhost:8000", "tok", "INFO", "Caller authentication enabled"},
 
-		// No caller token: loopback is fine (local only), non-loopback is refused
-		// regardless of what Grafana credentials happen to be configured.
-		{"no token, loopback allowed", "127.0.0.1:8000", "", false, false},
-		{"no token, public bind refused", "0.0.0.0:8000", "", false, true},
-		{"no token, wildcard port refused", ":8000", "", false, true},
-		{"no token, routable IP refused", "192.168.1.5:8000", "", false, true},
+		// No token on a loopback bind: only local processes can connect, so this
+		// warns about the missing token rather than about public exposure.
+		{"no token, loopback", "127.0.0.1:8000", "", "WARN", "bound to a loopback address"},
 
-		// The explicit escape hatch for a trusted authenticating proxy.
-		{"no token, public bind allowed with override", "0.0.0.0:8000", "", true, false},
-		{"no token, routable IP allowed with override", "192.168.1.5:8000", "", true, false},
+		// No token on a reachable bind: logged at ERROR (highest --log-level, so
+		// the exposure can't be filtered out); starts today (backward compatible).
+		{"no token, public bind", "0.0.0.0:8000", "", "ERROR", "startup error in a future release"},
+		{"no token, wildcard port", ":8000", "", "ERROR", "startup error in a future release"},
+		{"no token, routable IP", "192.168.1.5:8000", "", "ERROR", "startup error in a future release"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := checkCallerAuthPolicy("streamable-http", tc.address, tc.token, tc.allowUnauthenticated)
-			if tc.wantErr {
-				require.Error(t, err)
-			} else {
-				require.NoError(t, err)
-			}
+			var buf bytes.Buffer
+			logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+			checkCallerAuthPolicy("streamable-http", tc.address, tc.token, logger)
+			out := buf.String()
+			assert.Contains(t, out, tc.wantMsg)
+			assert.Contains(t, out, `"level":"`+tc.wantLevel+`"`)
 		})
 	}
 }
