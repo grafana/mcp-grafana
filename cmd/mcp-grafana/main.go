@@ -682,6 +682,15 @@ func warnLokiEnforcementBypasses(dt disabledTools) {
 				"disable_with", b.flag, "reason", b.reason)
 		}
 	}
+	// The assistant category is write-gated: AddAssistantTools registers
+	// ask_assistant only when write tools are enabled, so it is a bypass only
+	// then. Keying the warning on the category alone would fire when no
+	// assistant tool is actually registered.
+	if isCategoryEnabled(enabledTools, dt.assistant, "assistant") && !dt.write {
+		slog.Warn("Loki label-matcher enforcement can be bypassed by an enabled tool",
+			"disable_with", "--disable-assistant",
+			"reason", "ask_assistant delegates to Grafana Assistant, which reads Loki server-side across all streams; enforced matchers are not applied to what it reports back")
+	}
 	if isCategoryEnabled(enabledTools, dt.proxied, "proxied") {
 		slog.Info("Loki label-matcher enforcement: proxied tools currently expose only Tempo (traces), not Loki logs, so they are not a bypass today — this would change if proxying is extended to log datasources (disable with --disable-proxied)")
 	}
