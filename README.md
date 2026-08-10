@@ -1242,6 +1242,7 @@ How it works:
 > - `--disable-api` — `grafana_api_request` can query the Loki datasource proxy directly (full bypass).
 > - `--disable-rendering` — `get_panel_image` renders Loki panels server-side, producing images with unrestricted log lines.
 > - `--disable-sift` — Sift investigations analyze Loki logs server-side across all streams.
+> - `--disable-assistant` — `ask_assistant` delegates to Grafana Assistant, which reads Loki server-side across all streams. Only registered when write tools are enabled, so `--disable-write` closes it too.
 >
 > The server logs a warning at startup naming each of these that is still enabled.
 > `run_panel_query` is safe (it reuses the enforced query path). Proxied tools
