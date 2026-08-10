@@ -241,6 +241,8 @@ var ListAthenaCatalogs = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("List Athena catalogs"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 type ListAthenaDatabasesParams struct {
@@ -282,6 +284,8 @@ var ListAthenaDatabases = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("List Athena databases"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 type ListAthenaTablesParams struct {
@@ -327,6 +331,8 @@ var ListAthenaTables = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("List Athena tables"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 type DescribeAthenaTableParams struct {
@@ -379,6 +385,8 @@ var DescribeAthenaTable = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("Describe Athena table"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 type AthenaQueryParams struct {
@@ -517,8 +525,13 @@ Athena queries are async — Grafana handles polling. Use LIMIT and partition-aw
 Example: SELECT request_time, status FROM my_table WHERE $__timeFilter(request_time) LIMIT 100`,
 	queryAthena,
 	mcp.WithTitleAnnotation("Query Athena"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithIdempotentHintAnnotation(false),
+	// The raw SQL is passed through unfiltered, so DML/DDL (INSERT, DROP,
+	// CREATE TABLE AS) executes if the datasource credentials permit it —
+	// not read-only, potentially destructive.
+	mcp.WithReadOnlyHintAnnotation(false),
+	mcp.WithDestructiveHintAnnotation(true),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 // AddAthenaTools registers all Athena tools with the MCP server.

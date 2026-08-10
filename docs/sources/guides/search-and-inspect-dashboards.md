@@ -8,7 +8,8 @@ keywords:
   - panels
   - MCP
 weight: 3
-aliases: []
+aliases:
+  - /docs/grafana-cloud/machine-learning/mcp/guides/search-and-inspect-dashboards/
 ---
 
 # Search and inspect dashboards

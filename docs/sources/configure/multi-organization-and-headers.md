@@ -8,7 +8,8 @@ keywords:
   - headers
   - MCP
 weight: 6
-aliases: []
+aliases:
+  - /docs/grafana-cloud/machine-learning/mcp/configure/multi-organization-and-headers/
 ---
 
 # Multi-organization and headers

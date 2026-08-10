@@ -50,6 +50,8 @@ var UserInfoTool = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("Get current user info"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 func AddUserTools(s *server.MCPServer) {

@@ -8,6 +8,7 @@ keywords:
   - RBAC
 weight: 1
 aliases:
+  - /docs/grafana-cloud/machine-learning/mcp/reference/mcp-tools-table/
   - ../features-and-rbac/
 ---
 
@@ -103,6 +104,13 @@ The following table lists MCP tools, required RBAC permissions, and typical scop
 | `list_pyroscope_profile_types`    | Pyroscope      | List available profile types                                                                                 | `datasources:query`                                    | `datasources:uid:pyroscope-uid`                     |
 | `query_pyroscope`                 | Pyroscope      | Query profiles, metrics, or both from Pyroscope                                                              | `datasources:query`                                    | `datasources:uid:pyroscope-uid`                     |
 | `get_assertions`                  | Asserts        | Get assertion summary for a given entity                                                                     | Plugin-specific permissions                            | Plugin-specific scopes                              |
+| `agento11y_manage_conversations` | Agent Observability* | List, search, and fetch LLM conversations from Grafana Agent Observability                        | `grafana-agento11y-app.conversations:read`                 | N/A                                                 |
+| `agento11y_manage_generations` | Agent Observability* | Fetch LLM generation details and evaluation scores from Grafana Agent Observability                 | `grafana-agento11y-app.data:read`                          | N/A                                                 |
+| `agento11y_manage_agents` | Agent Observability* | Read the agent catalog: list agents, get one agent version in full, list version history, and per-version score aggregates | `grafana-agento11y-app.data:read`                          | N/A                                                 |
+| `agento11y_manage_evaluators` | Agent Observability* | Manage evaluators, evaluator templates, and the judge catalog (list, get, upsert, fork, test, delete) | `grafana-agento11y-app.data:read` + `grafana-agento11y-app.eval:write` for mutations and tests | N/A                                                 |
+| `agento11y_manage_eval_rules` | Agent Observability* | Manage eval rules and guards (list, get, create, update, preview, delete)                           | `grafana-agento11y-app.data:read` + `grafana-agento11y-app.eval:write` for mutations and previews | N/A                                                 |
+| `agento11y_manage_eval_collections` | Agent Observability* | Manage saved conversations and the collections that group them (list, get, save, create, update, delete, add and remove members) | `grafana-agento11y-app.data:read` + `grafana-agento11y-app.eval:write` for mutations | N/A                                                 |
+| `ask_assistant`                   | Assistant*     | Send a prompt to Grafana Assistant and return the full text reply (multi-turn via `contextId`)               | Plugin-specific permissions                            | Plugin-specific scopes                              |
 | `generate_deeplink`               | Navigation     | Generate accurate deeplink URLs for Grafana resources                                                        | None (read-only URL generation)                        | N/A                                                 |
 | `get_annotations`                 | Annotations    | Fetch annotations with filters                                                                               | `annotations:read`                                     | `annotations:*` or `annotations:id:123`             |
 | `create_annotation`               | Annotations    | Create a new annotation (standard or Graphite format)                                                        | `annotations:write`                                    | `annotations:*`                                     |

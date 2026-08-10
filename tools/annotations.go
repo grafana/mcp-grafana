@@ -61,6 +61,8 @@ var GetAnnotationsTool = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("Get Annotations"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 // CreateAnnotationInput creates a new annotation, optionally in Graphite format.
@@ -134,6 +136,9 @@ var CreateAnnotationTool = mcpgrafana.MustTool(
 	createAnnotation,
 	mcp.WithTitleAnnotation("Create Annotation"),
 	mcp.WithIdempotentHintAnnotation(false),
+	mcp.WithReadOnlyHintAnnotation(false),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 // UpdateAnnotationInput updates only the provided fields of an annotation (PATCH semantics).
@@ -183,8 +188,10 @@ var UpdateAnnotationTool = mcpgrafana.MustTool(
 	"Updates the provided properties of an annotation by ID. Only fields included in the request are modified; omitted fields are left unchanged.",
 	updateAnnotation,
 	mcp.WithTitleAnnotation("Update Annotation"),
-	mcp.WithDestructiveHintAnnotation(true),
 	mcp.WithIdempotentHintAnnotation(false),
+	mcp.WithReadOnlyHintAnnotation(false),
+	mcp.WithDestructiveHintAnnotation(true),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 // GetAnnotationTagsInput defines filters for retrieving annotation tags.
@@ -217,6 +224,8 @@ var GetAnnotationTagsTool = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("Get Annotation Tags"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 func AddAnnotationTools(mcp *server.MCPServer, enableWriteTools bool) {

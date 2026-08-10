@@ -4,6 +4,7 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 //go:embed *.json
@@ -151,6 +152,27 @@ func LoadDatasourceSchema(pluginType string) (*DatasourceSchema, error) {
 	return &s, nil
 }
 
+// KnownPluginTypes returns every plugin type that has an embedded schema, in
+// filename order. Datasources of other types are still creatable (they take the
+// no-schema guidance path), so this is not a validation set — it is the bounded
+// value set telemetry uses to keep a caller-supplied "type" from becoming an
+// unbounded metric label (see observability.ToolMetricDimensions).
+// TODO: once schemas are fetched from the plugins CDN rather than embedded, this
+// should read from there
+func KnownPluginTypes() []string {
+	entries, err := datasourceSchemaFiles.ReadDir(".")
+	if err != nil {
+		return nil // embedded FS, so unreachable in practice
+	}
+	types := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if t, ok := strings.CutSuffix(e.Name(), "_schema.json"); ok {
+			types = append(types, t)
+		}
+	}
+	return types
+}
+
 // SchemaFieldInputKey returns the key callers use for f in the fields map, namespaced by section when present.
 func SchemaFieldInputKey(f DsSchemaField) string {
 	if f.Section == "" {
@@ -185,13 +207,10 @@ func toGuidanceField(f DsSchemaField) GuidanceField {
 	return gf
 }
 
-// BuildSchemaGuidance builds the field guidance sent to the LLM for the given schema and tool, omitting virtual and sensitive fields.
-func BuildSchemaGuidance(schema *DatasourceSchema, toolName string) *datasourceSchemaGuidance {
-	fields := make([]GuidanceField, 0, len(commonDatasourceFields)+len(schema.Fields))
-	for _, f := range commonDatasourceFields {
-		fields = append(fields, toGuidanceField(f))
-	}
-
+// appendSchemaFields appends the slim per-field guidance for the schema's
+// type-specific fields, omitting virtual, sensitive, experimental, complex, and
+// conditional-optional fields. The shared common fields are added by the caller.
+func appendSchemaFields(fields []GuidanceField, schema *DatasourceSchema) []GuidanceField {
 	for _, f := range schema.Fields {
 		if f.Kind == "virtual" {
 			continue
@@ -222,6 +241,16 @@ func BuildSchemaGuidance(schema *DatasourceSchema, toolName string) *datasourceS
 		f.Key = SchemaFieldInputKey(f)
 		fields = append(fields, toGuidanceField(f))
 	}
+	return fields
+}
+
+// BuildSchemaGuidance builds the field guidance sent to the LLM for the given schema and tool, omitting virtual and sensitive fields.
+func BuildSchemaGuidance(schema *DatasourceSchema, toolName string) *datasourceSchemaGuidance {
+	fields := make([]GuidanceField, 0, len(commonDatasourceFields)+len(schema.Fields))
+	for _, f := range commonDatasourceFields {
+		fields = append(fields, toGuidanceField(f))
+	}
+	fields = appendSchemaFields(fields, schema)
 
 	return &datasourceSchemaGuidance{
 		Type:       schema.PluginType,
@@ -238,6 +267,45 @@ func BuildSchemaGuidance(schema *DatasourceSchema, toolName string) *datasourceS
 			schema.PluginName,
 			toolName,
 			toolName,
+		),
+		Fields: fields,
+	}
+}
+
+// BuildUpdateSchemaGuidance builds the field guidance for update_datasource. It
+// mirrors BuildSchemaGuidance but tailors the message to update semantics —
+// nothing is required and omitted fields keep their current value — and drops
+// the uid common field, since a datasource's uid is its identifier and cannot be
+// changed via an update.
+func BuildUpdateSchemaGuidance(schema *DatasourceSchema) *datasourceSchemaGuidance {
+	fields := make([]GuidanceField, 0, len(commonDatasourceFields)+len(schema.Fields))
+	for _, f := range commonDatasourceFields {
+		if f.Key == "uid" {
+			continue
+		}
+		fields = append(fields, toGuidanceField(f))
+	}
+	fields = appendSchemaFields(fields, schema)
+
+	// For updates nothing is required: omitted fields keep their current value.
+	// Clear the create-time required flag so the structured guidance does not
+	// contradict the message below (agents tend to trust the flag over prose).
+	for i := range fields {
+		fields[i].Required = false
+	}
+
+	return &datasourceSchemaGuidance{
+		Type:       schema.PluginType,
+		PluginName: schema.PluginName,
+		DocURL:     schema.DocURL,
+		Message: fmt.Sprintf(
+			"Schema for %s datasource. "+
+				"Only send the fields you want to change — any field you omit keeps its current value, so nothing here is required. "+
+				"Ask the user which settings they want to change and confirm each new value; do NOT infer, guess, or reset fields the user did not mention. "+
+				"Once you have collected the changes from the user, call update_datasource again with the uid, the changed values in the fields param, and schemaReviewed=true. "+
+				"To rename the datasource, pass the new display name as the top-level `name` argument (separate from the fields map). "+
+				"Secrets (passwords, tokens, and other secureJsonData) cannot be set here — direct the user to the Grafana UI to change those.",
+			schema.PluginName,
 		),
 		Fields: fields,
 	}

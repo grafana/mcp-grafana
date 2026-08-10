@@ -8,7 +8,8 @@ keywords:
   - MCP
   - TLS
 weight: 7
-aliases: []
+aliases:
+  - /docs/grafana-cloud/machine-learning/mcp/configure/command-line-flags/
 ---
 
 # Command-line flags
@@ -21,7 +22,7 @@ You can look up defaults, choose `--disable-*` flags, or configure TLS without r
 
 ## Before you begin
 
-- You need a way to run `mcp-grafana` on your machine—for example, a [release binary](../set-up/install-the-binary/), [`uvx`](../set-up/install-with-uvx/), or a [container](../set-up/install-with-docker/).
+- You need a way to run `mcp-grafana` on your machine—for example, a [release binary](../../set-up/install-the-binary/), [`uvx`](../../set-up/install-with-uvx/), or a [container](../../set-up/install-with-docker/).
 
 ## Configure transport and HTTP options
 
@@ -40,6 +41,30 @@ The SSE and streamable-http transports validate `Host` and `Origin` headers on e
 
 When deploying behind an ingress or reverse proxy that forwards the original `Host`, set `--allowed-hosts` to the expected hostname (or `*` if the proxy is fully trusted). Kubernetes `httpGet` liveness/readiness probes send `Host: <pod-ip>:<port>` by default — either set `--allowed-hosts '*'`, override the probe's `host:` field, or use a `tcpSocket` probe. External `/metrics` scrapes must add the scrape source's `Host` to the allowlist (or use `--metrics-address` to bind metrics on a separate port, which is unaffected).
 
+## Configure caller authentication
+
+The SSE and streamable-http transports can authenticate the **caller** (the MCP client connecting to `mcp-grafana`). This is separate from the credentials the server uses to reach Grafana: it controls _who may invoke the server_, so an unauthenticated client can't borrow the server's Grafana identity or run tools. Stdio is a local pipe and is never affected.
+
+- `--server-auth-token`: Bearer token that callers must present in the `Authorization: Bearer <token>` header. Falls back to the `MCP_GRAFANA_SERVER_TOKEN` environment variable. When set, requests without a valid token are rejected with `401` before any tool runs. Prefer the environment variable over the flag so the secret doesn't appear in the process argument list.
+
+### Bind policy
+
+Caller authentication is enforced only when `--server-auth-token` is set. When it isn't, the network transports warn (but still start) on an externally reachable address:
+
+| Transport / bind | Behavior |
+| --- | --- |
+| `stdio` | No caller authentication (local pipe). |
+| SSE / streamable-http on a loopback address (`localhost`, `127.0.0.1`, `::1`) | Caller token optional. |
+| SSE / streamable-http on any other address | Starts and logs a **security error** (at the `error` log level, so it isn't suppressed by `--log-level`) unless `--server-auth-token` is set. |
+
+{{< admonition type="note" >}}
+The permissive default preserves backward compatibility for existing deployments (such as the container's `0.0.0.0` bind). A future major release will make an unauthenticated non-loopback bind a startup error. Set `--server-auth-token` now to require caller authentication and prepare for that change.
+{{< /admonition >}}
+
+Bearer authentication only protects the token in transit if the connection is encrypted. Terminate TLS in front of the server, or use [server TLS for streamable-http](../server-tls-streamable-http/), whenever you set `--server-auth-token` on a non-loopback address.
+
+When caller authentication is enabled, the `Authorization` header is reserved for the caller token and is stripped after validation, so it is never forwarded to Grafana. Setting `--server-auth-token` together with `GRAFANA_FORWARD_HEADERS=Authorization` is contradictory and the server refuses to start; remove `Authorization` from `GRAFANA_FORWARD_HEADERS`, or unset the caller token to run in proxy-forwarding mode.
+
 ## Configure debug and logging
 
 - `--debug`: Enable debug mode for detailed HTTP request and response logging to and from the Grafana API.
@@ -56,7 +81,7 @@ When deploying behind an ingress or reverse proxy that forwards the original `Ho
 
   `search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering,snapshot`
 
-  Categories **not** in that default string are off until you add them, including: `admin`, `elasticsearch`, `cloudwatch`, `examples`, `clickhouse`, `snowflake`, `influxdb`, `quickwit`, and `runpanelquery`. Pass a full comma-separated list to replace the default entirely, or use `--disable-*` flags to turn off pieces of the default set.
+  Categories **not** in that default string are off until you add them, including: `admin`, `agento11y`, `assistant`, `elasticsearch`, `cloudwatch`, `examples`, `clickhouse`, `snowflake`, `influxdb`, `quickwit`, and `runpanelquery`. Pass a full comma-separated list to replace the default entirely, or use `--disable-*` flags to turn off pieces of the default set.
 
 - `--disable-search`: Disable search tools.
 - `--disable-datasource`: Disable datasource tools.
@@ -86,6 +111,8 @@ When deploying behind an ingress or reverse proxy that forwards the original `Ho
 - `--disable-annotations`: Disable annotation tools.
 - `--disable-proxied`: Disable proxied tools (tools from external MCP servers).
 - `--disable-provisioning`: Disable provisioning tools.
+- `--disable-agento11y`: Disable Agent Observability tools.
+- `--disable-assistant`: Disable Grafana Assistant tools.
 - `--disable-user`: Disable user info tools.
 
 ## Configure tool limits
@@ -130,6 +157,12 @@ When enabled, the following writes are disabled:
 
 - `create_snapshot`
 - `delete_snapshot`
+
+**Agent Observability tools**
+
+- `agento11y_manage_evaluators` (upsert, delete, fork, and test evaluators)
+- `agento11y_manage_eval_rules` (create, update, delete, and preview eval rules and guards)
+- `agento11y_manage_eval_collections` (save and delete saved conversations; create, update, and delete collections; add and remove collection members)
 
 Read operations (queries, lists, searches) stay available.
 

@@ -258,6 +258,14 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 		return zero, nil, errors.New("tool handler second argument must be a struct")
 	}
 
+	// Built before the handler closure so it can validate incoming argument
+	// keys against the same schema that is advertised to clients.
+	jsonSchema := createJSONSchemaFromHandler(toolHandler)
+	properties := make(map[string]any, jsonSchema.Properties.Len())
+	for pair := jsonSchema.Properties.Oldest(); pair != nil; pair = pair.Next() {
+		properties[pair.Key] = pair.Value
+	}
+
 	handler := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		config := GrafanaConfigFromContext(ctx)
 
@@ -290,6 +298,16 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 		// Add arguments as span attribute only if adding args to trace attributes is enabled
 		if config.IncludeArgumentsInSpans {
 			span.SetAttributes(attribute.String("gen_ai.tool.call.arguments", string(argBytes)))
+		}
+
+		// Reject unknown argument keys instead of silently dropping them: a typo'd
+		// optional argument (e.g. "start_rfc3339" for "start_rfc_3339") would
+		// otherwise leave the field zero-valued and the tool would answer a
+		// different question than the caller asked. The error is returned as a
+		// tool result (not a protocol error) so LLM callers can see it and retry.
+		if unknown := unknownArguments(request.Params.Arguments, properties); len(unknown) > 0 {
+			span.SetStatus(codes.Error, "unknown arguments")
+			return mcp.NewToolResultError(unknownArgumentsError(unknown, properties)), nil
 		}
 
 		unmarshaledArgs := reflect.New(argType).Interface()
@@ -411,8 +429,9 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 		return mcp.NewToolResultText(string(returnBytes)), nil
 	}
 
-	schemaType, properties, required := reflectToolSchema(toolHandler)
-	schemaBytes, err := buildInputSchema(name, schemaType, properties, required)
+	// Reuse the schema reflected above for validation, so the advertised schema
+	// and the validated key set cannot drift apart.
+	schemaBytes, err := buildInputSchema(name, jsonSchema.Type, properties, jsonSchema.Required)
 	if err != nil {
 		return zero, nil, err
 	}
@@ -447,10 +466,14 @@ func reflectToolSchema(toolHandler any) (schemaType string, properties map[strin
 // interface{} types, but this catches anything it misses (callers panic at init
 // via MustTool, making it impossible to register a tool with bare booleans).
 func buildInputSchema(name, schemaType string, properties map[string]any, required []string) ([]byte, error) {
+	// additionalProperties: false advertises the strictness enforced by the
+	// handler, so schema-validating clients (and providers with strict function
+	// calling) catch unknown arguments before the call reaches the server.
 	argumentsSchema := mcp.ToolArgumentsSchema{
-		Type:       schemaType,
-		Properties: properties,
-		Required:   required,
+		Type:                 schemaType,
+		Properties:           properties,
+		Required:             required,
+		AdditionalProperties: false,
 	}
 	schemaBytes, err := json.Marshal(argumentsSchema)
 	if err != nil {
@@ -570,6 +593,13 @@ func checkSchemaNode(toolName string, v any, path string) error {
 	for _, key := range schemaValuedKeys {
 		if val, exists := obj[key]; exists {
 			if b, ok := val.(bool); ok {
+				// additionalProperties: false is valid, universally supported
+				// (OpenAI structured outputs even requires it), and emitted on
+				// purpose by ConvertTool. Only bare `true` — typically from
+				// interface{} fields — is known to break providers.
+				if key == "additionalProperties" && !b {
+					continue
+				}
 				return fmt.Errorf(
 					"tool %q has bare boolean schema (%v) at %s.%s; "+
 						"this is likely caused by an interface{}/any field — "+
