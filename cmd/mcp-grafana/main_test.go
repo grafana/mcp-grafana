@@ -531,3 +531,58 @@ func TestHTTPSecurityConfigCORSOrigins(t *testing.T) {
 		})
 	}
 }
+
+func TestCallerAuthConfigResolveToken(t *testing.T) {
+	t.Run("flag takes precedence and is trimmed", func(t *testing.T) {
+		t.Setenv(serverAuthTokenEnvVar, "from-env")
+		ca := callerAuthConfig{token: "  from-flag  "}
+		assert.Equal(t, "from-flag", ca.resolveToken())
+	})
+
+	t.Run("falls back to env when flag empty", func(t *testing.T) {
+		t.Setenv(serverAuthTokenEnvVar, "  from-env  ")
+		ca := callerAuthConfig{}
+		assert.Equal(t, "from-env", ca.resolveToken())
+	})
+
+	t.Run("empty when neither set", func(t *testing.T) {
+		t.Setenv(serverAuthTokenEnvVar, "")
+		ca := callerAuthConfig{}
+		assert.Empty(t, ca.resolveToken())
+	})
+}
+
+func TestCheckCallerAuthPolicy(t *testing.T) {
+	cases := []struct {
+		name                 string
+		address              string
+		token                string
+		allowUnauthenticated bool
+		wantErr              bool
+	}{
+		// A caller token authenticates every request, so any bind is fine.
+		{"token set, public bind is fine", "0.0.0.0:8000", "tok", false, false},
+		{"token set, loopback bind is fine", "localhost:8000", "tok", false, false},
+
+		// No caller token: loopback is fine (local only), non-loopback is refused
+		// regardless of what Grafana credentials happen to be configured.
+		{"no token, loopback allowed", "127.0.0.1:8000", "", false, false},
+		{"no token, public bind refused", "0.0.0.0:8000", "", false, true},
+		{"no token, wildcard port refused", ":8000", "", false, true},
+		{"no token, routable IP refused", "192.168.1.5:8000", "", false, true},
+
+		// The explicit escape hatch for a trusted authenticating proxy.
+		{"no token, public bind allowed with override", "0.0.0.0:8000", "", true, false},
+		{"no token, routable IP allowed with override", "192.168.1.5:8000", "", true, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := checkCallerAuthPolicy("streamable-http", tc.address, tc.token, tc.allowUnauthenticated)
+			if tc.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
