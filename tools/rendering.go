@@ -262,7 +262,7 @@ func buildRenderURL(baseURL string, args GetPanelImageParams) (string, error) {
 		}
 	}
 	if args.OrgID != nil {
-		params.Set("orgId", strconv.Itoa(*args.OrgID))
+		params.Set("targetOrgId", strconv.Itoa(*args.OrgID))
 	}
 
 	// Set dimensions

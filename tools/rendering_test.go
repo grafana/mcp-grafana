@@ -268,7 +268,7 @@ func TestBuildRenderURL(t *testing.T) {
 				OrgID:        intPtr(2),
 			},
 			contains: []string{
-				"orgId=2",
+				"targetOrgId=2",
 			},
 		},
 		{
