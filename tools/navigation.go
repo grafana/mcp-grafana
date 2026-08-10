@@ -57,17 +57,15 @@ func grafanaBaseURLFromContext(ctx context.Context) (string, error) {
 	}
 
 	if baseURL == "" {
-		return "", fmt.Errorf("grafana url not configured. Please set GRAFANA_URL environment variable or X-Grafana-URL header")
+		return "", fmt.Errorf("grafana url not configured. Please set GRAFANA_URL environment variable")
 	}
 
-	// Validate baseURL separately from the inbound X-Grafana-URL middleware:
-	// gc.PublicURL is populated by fetchPublicURL from Grafana's
+	// Validate baseURL because gc.PublicURL is populated by fetchPublicURL from Grafana's
 	// /api/frontend/settings appUrl response, which is not covered by the
-	// middleware at the HTTP transport boundary. A misconfigured Grafana can
-	// therefore return a malformed appUrl that flows into deeplink construction
+	// configured URL validation. A misconfigured Grafana can return a malformed appUrl that flows into deeplink construction
 	// (e.g. http://%gg/d/<uid>) unless checked here.
 	if err := mcpgrafana.ValidateGrafanaURL(baseURL); err != nil {
-		return "", fmt.Errorf("grafana url is invalid: %w. Please set GRAFANA_URL environment variable or X-Grafana-URL header", err)
+		return "", fmt.Errorf("grafana url is invalid: %w. Please set GRAFANA_URL environment variable", err)
 	}
 	return baseURL, nil
 }
@@ -223,7 +221,10 @@ func shortenURL(ctx context.Context, longURL string) (string, error) {
 		return "", fmt.Errorf("url must include an absolute path")
 	}
 
-	payload, err := json.Marshal(map[string]string{"path": path})
+	// /api/short-urls rejects absolute paths, so strip the leading slash.
+	relativePath := strings.TrimPrefix(path, "/")
+
+	payload, err := json.Marshal(map[string]string{"path": relativePath})
 	if err != nil {
 		return "", fmt.Errorf("marshal short-url payload: %w", err)
 	}
@@ -312,6 +313,9 @@ var GenerateDeeplink = mcpgrafana.MustTool(
 	generateDeeplink,
 	mcp.WithTitleAnnotation("Generate navigation deeplink"),
 	mcp.WithIdempotentHintAnnotation(false),
+	mcp.WithReadOnlyHintAnnotation(false),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 var GenerateDeeplinkReadOnly = mcpgrafana.MustTool(
@@ -321,6 +325,8 @@ var GenerateDeeplinkReadOnly = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("Generate navigation deeplink"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 func AddNavigationTools(mcp *server.MCPServer, enableWriteTools bool) {

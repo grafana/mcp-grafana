@@ -8,11 +8,12 @@ keywords:
   - transport
   - MCP
 weight: 20
-aliases: []
+aliases:
+  - /docs/grafana-cloud/machine-learning/mcp/configure/
 ---
 
 # Configure the Grafana MCP server
 
-Configure how the server connects to Grafana, which tools are enabled, and how clients connect to the server.
+Configure the open source Grafana MCP server: how it connects to Grafana, which tools are enabled, and how clients connect to the server.
 
 {{< section withDescriptions="true" >}}

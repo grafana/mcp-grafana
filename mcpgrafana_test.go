@@ -57,7 +57,7 @@ func TestExtractIncidentClientFromHeaders(t *testing.T) {
 		assert.Equal(t, "http://my-test-url.grafana.com/api/plugins/grafana-irm-app/resources/api/v1/", client.RemoteHost)
 	})
 
-	t.Run("with headers, no env", func(t *testing.T) {
+	t.Run("URL header ignored without env", func(t *testing.T) {
 		req, err := http.NewRequest("GET", "http://example.com", nil)
 		req.Header.Set(grafanaURLHeader, "http://my-test-url.grafana.com")
 		require.NoError(t, err)
@@ -65,11 +65,11 @@ func TestExtractIncidentClientFromHeaders(t *testing.T) {
 
 		client := IncidentClientFromContext(ctx)
 		require.NotNil(t, client)
-		assert.Equal(t, "http://my-test-url.grafana.com/api/plugins/grafana-irm-app/resources/api/v1/", client.RemoteHost)
+		assert.Equal(t, "http://localhost:3000/api/plugins/grafana-irm-app/resources/api/v1/", client.RemoteHost)
 	})
 
-	t.Run("with headers, with env", func(t *testing.T) {
-		t.Setenv("GRAFANA_URL", "will-not-be-used")
+	t.Run("URL header ignored with env", func(t *testing.T) {
+		t.Setenv("GRAFANA_URL", "http://configured.grafana.com")
 		req, err := http.NewRequest("GET", "http://example.com", nil)
 		req.Header.Set(grafanaURLHeader, "http://my-test-url.grafana.com")
 		require.NoError(t, err)
@@ -77,7 +77,7 @@ func TestExtractIncidentClientFromHeaders(t *testing.T) {
 
 		client := IncidentClientFromContext(ctx)
 		require.NotNil(t, client)
-		assert.Equal(t, "http://my-test-url.grafana.com/api/plugins/grafana-irm-app/resources/api/v1/", client.RemoteHost)
+		assert.Equal(t, "http://configured.grafana.com/api/plugins/grafana-irm-app/resources/api/v1/", client.RemoteHost)
 	})
 }
 
@@ -134,20 +134,19 @@ func TestExtractGrafanaInfoFromHeaders(t *testing.T) {
 		assert.Equal(t, "my-service-account-token", config.APIKey)
 	})
 
-	t.Run("with headers, no env", func(t *testing.T) {
+	t.Run("URL header ignored without env", func(t *testing.T) {
 		req, err := http.NewRequest("GET", "http://example.com", nil)
 		require.NoError(t, err)
 		req.Header.Set(grafanaURLHeader, "http://my-test-url.grafana.com")
 		req.Header.Set(grafanaAPIKeyHeader, "my-test-api-key")
 		ctx := ExtractGrafanaInfoFromHeaders(context.Background(), req)
 		config := GrafanaConfigFromContext(ctx)
-		assert.Equal(t, "http://my-test-url.grafana.com", config.URL)
+		assert.Equal(t, defaultGrafanaURL, config.URL)
 		assert.Equal(t, "my-test-api-key", config.APIKey)
 	})
 
-	t.Run("with headers, with env", func(t *testing.T) {
-		// Env vars should be ignored if headers are present.
-		t.Setenv("GRAFANA_URL", "will-not-be-used")
+	t.Run("URL header ignored with env", func(t *testing.T) {
+		t.Setenv("GRAFANA_URL", "http://configured.grafana.com")
 		t.Setenv("GRAFANA_API_KEY", "will-not-be-used")
 		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN", "will-not-be-used")
 
@@ -157,7 +156,7 @@ func TestExtractGrafanaInfoFromHeaders(t *testing.T) {
 		req.Header.Set(grafanaAPIKeyHeader, "my-test-api-key")
 		ctx := ExtractGrafanaInfoFromHeaders(context.Background(), req)
 		config := GrafanaConfigFromContext(ctx)
-		assert.Equal(t, "http://my-test-url.grafana.com", config.URL)
+		assert.Equal(t, "http://configured.grafana.com", config.URL)
 		assert.Equal(t, "my-test-api-key", config.APIKey)
 	})
 
@@ -172,7 +171,7 @@ func TestExtractGrafanaInfoFromHeaders(t *testing.T) {
 		req.Header.Set(grafanaServiceAccountTokenHeader, "my-service-account-token")
 		ctx := ExtractGrafanaInfoFromHeaders(context.Background(), req)
 		config := GrafanaConfigFromContext(ctx)
-		assert.Equal(t, "http://my-test-url.grafana.com", config.URL)
+		assert.Equal(t, defaultGrafanaURL, config.URL)
 		assert.Equal(t, "my-service-account-token", config.APIKey)
 	})
 
@@ -188,7 +187,7 @@ func TestExtractGrafanaInfoFromHeaders(t *testing.T) {
 		req.Header.Set(grafanaAPIKeyHeader, "my-deprecated-api-key")
 		ctx := ExtractGrafanaInfoFromHeaders(context.Background(), req)
 		config := GrafanaConfigFromContext(ctx)
-		assert.Equal(t, "http://my-test-url.grafana.com", config.URL)
+		assert.Equal(t, defaultGrafanaURL, config.URL)
 		assert.Equal(t, "my-service-account-token", config.APIKey)
 	})
 
@@ -280,6 +279,27 @@ func TestExtractGrafanaInfoFromHeaders(t *testing.T) {
 	})
 }
 
+func TestExtractGrafanaInfoFromHeadersIgnoresURLHeader(t *testing.T) {
+	const envURL = "http://my-grafana.internal:3000"
+	const envToken = "env-service-account-token"
+	t.Setenv("GRAFANA_URL", envURL)
+	t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN", envToken)
+	t.Setenv("GRAFANA_USERNAME", "env-user")
+	t.Setenv("GRAFANA_PASSWORD", "env-pass")
+	t.Setenv("GRAFANA_EXTRA_HEADERS", `{"Authorization": "Bearer configured-secret"}`)
+
+	req, err := http.NewRequest("GET", "http://example.com", nil)
+	require.NoError(t, err)
+	req.Header.Set(grafanaURLHeader, "http://other.example.com")
+
+	config := GrafanaConfigFromContext(ExtractGrafanaInfoFromHeaders(context.Background(), req))
+	assert.Equal(t, envURL, config.URL)
+	assert.Equal(t, envToken, config.APIKey)
+	require.NotNil(t, config.BasicAuth)
+	assert.Equal(t, "env-user", config.BasicAuth.Username())
+	assert.Equal(t, "Bearer configured-secret", config.ExtraHeaders["Authorization"])
+}
+
 func TestExtractGrafanaClientPath(t *testing.T) {
 	t.Run("no custom path", func(t *testing.T) {
 		t.Setenv("GRAFANA_URL", "http://my-test-url.grafana.com/")
@@ -347,20 +367,19 @@ func TestExtractGrafanaClientFromHeaders(t *testing.T) {
 		assert.Equal(t, "/api", url.basePath)
 	})
 
-	t.Run("with headers, no env", func(t *testing.T) {
+	t.Run("URL header ignored without env", func(t *testing.T) {
 		req, err := http.NewRequest("GET", "http://example.com", nil)
 		require.NoError(t, err)
 		req.Header.Set(grafanaURLHeader, "http://my-test-url.grafana.com")
 		ctx := ExtractGrafanaClientFromHeaders(context.Background(), req)
 		c := GrafanaClientFromContext(ctx)
 		url := minURLFromClient(c)
-		assert.Equal(t, "my-test-url.grafana.com", url.host)
+		assert.Equal(t, "localhost:3000", url.host)
 		assert.Equal(t, "/api", url.basePath)
 	})
 
-	t.Run("with headers, with env", func(t *testing.T) {
-		// Env vars should be ignored if headers are present.
-		t.Setenv("GRAFANA_URL", "will-not-be-used")
+	t.Run("URL header ignored with env", func(t *testing.T) {
+		t.Setenv("GRAFANA_URL", "http://configured.grafana.com")
 
 		req, err := http.NewRequest("GET", "http://example.com", nil)
 		require.NoError(t, err)
@@ -368,7 +387,7 @@ func TestExtractGrafanaClientFromHeaders(t *testing.T) {
 		ctx := ExtractGrafanaClientFromHeaders(context.Background(), req)
 		c := GrafanaClientFromContext(ctx)
 		url := minURLFromClient(c)
-		assert.Equal(t, "my-test-url.grafana.com", url.host)
+		assert.Equal(t, "configured.grafana.com", url.host)
 		assert.Equal(t, "/api", url.basePath)
 	})
 }

@@ -8,7 +8,8 @@ keywords:
   - MCP
   - quick start
 weight: 1
-aliases: []
+aliases:
+  - /docs/grafana-cloud/machine-learning/mcp/set-up/install-with-uvx/
 ---
 
 # Install with uvx

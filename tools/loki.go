@@ -228,6 +228,8 @@ var ListLokiLabelNames = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("List Loki label names"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 // ListLokiLabelValuesParams defines the parameters for listing Loki label values
@@ -275,6 +277,8 @@ var ListLokiLabelValues = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("List Loki label values"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 // LokiLogStream represents a stream of log entries from Loki (resultType: "streams")
@@ -753,6 +757,8 @@ var QueryLokiLogs = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("Query Loki logs"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 // fetchStats is a method to fetch stats data from Loki API
@@ -865,6 +871,8 @@ var QueryLokiStats = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("Get Loki log statistics"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 // QueryLokiPatternsParams defines the parameters for querying Loki patterns
@@ -906,6 +914,8 @@ var QueryLokiPatterns = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("Query Loki patterns"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 // AddLokiTools registers all Loki tools with the MCP server.

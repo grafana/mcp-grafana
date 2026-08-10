@@ -76,6 +76,8 @@ var categoryDescription = map[string]string{
 	"api":           "API: Make authenticated HTTP requests to any Grafana API endpoint with optional jq-style response filtering.",
 	"config":        "Config: Generate operator-facing configuration snippets (e.g. Alloy label-enforcement pipelines).",
 	"provisioning":  "Provisioning: List provisioning repositories (e.g. git-sync sources) to discover repository slugs for use with rendering tools.",
+	"agento11y":     "Agent Observability: Search and inspect LLM conversations, generations, and evaluation scores from Grafana Agent Observability, read its agent catalog (system prompts, tools, version history, and per-version scores), and read or manage its eval configuration (evaluators, templates, eval rules, and guards) and its curated saved conversations and collections.",
+	"assistant":     "Assistant: Ask Grafana Assistant open-ended questions and get a full text reply (requires the Grafana Assistant plugin).",
 }
 
 // disabledTools indicates whether each category of tools should be disabled.
@@ -87,7 +89,8 @@ type disabledTools struct {
 	dashboard, folder, oncall, asserts, sift, admin,
 	pyroscope, navigation, proxied, annotations, rendering, cloudwatch, write,
 	snapshot, examples, clickhouse, snowflake, graphite,
-	runpanelquery, athena, plugin, api, config, provisioning bool
+	runpanelquery, athena, plugin, api, config, provisioning,
+	agento11y, assistant bool
 }
 
 // Configuration for the Grafana client.
@@ -103,6 +106,12 @@ type grafanaConfig struct {
 
 	// Loki configuration
 	maxLokiLogLimit int
+
+	// includeArgsInSpans enables logging of tool arguments in OpenTelemetry spans.
+	includeArgsInSpans bool
+
+	// timeout is the time limit for requests made by the Grafana client.
+	timeout time.Duration
 
 	// lokiEnforcedMatchers, when non-empty, is a LogQL label-matcher expression
 	// (e.g. `namespace!~"vault|payments"`) AND-ed into every native-Loki query.
@@ -149,6 +158,8 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.api, "disable-api", false, "Disable API tools")
 	flag.BoolVar(&dt.config, "disable-config", false, "Disable config-generation tools")
 	flag.BoolVar(&dt.provisioning, "disable-provisioning", false, "Disable provisioning tools")
+	flag.BoolVar(&dt.agento11y, "disable-agento11y", false, "Disable Agent Observability tools")
+	flag.BoolVar(&dt.assistant, "disable-assistant", false, "Disable Grafana Assistant tools")
 }
 
 func (gc *grafanaConfig) addFlags() {
@@ -162,6 +173,10 @@ func (gc *grafanaConfig) addFlags() {
 
 	// Loki configuration flags
 	flag.IntVar(&gc.maxLokiLogLimit, "max-loki-log-limit", tools.MaxLokiLogLimit, "Maximum number of log lines returned per query_loki_logs call")
+
+	flag.BoolVar(&gc.includeArgsInSpans, "include-args-in-spans", false, "Include tool call arguments in OpenTelemetry spans. Only enable in non-production environments or when arguments are known not to contain PII.")
+	flag.DurationVar(&gc.timeout, "grafana-timeout", mcpgrafana.DefaultGrafanaClientTimeout, "Time limit for requests made by the Grafana client. Accepts Go duration strings, e.g. 10s, 500ms.")
+
 	flag.StringVar(&gc.lokiEnforcedMatchers, "loki-enforced-matchers", "", "LogQL label matchers AND-ed into every native-Loki query to restrict readable streams (e.g. `namespace!~\"vault|payments\"`). Queries that cannot be parsed are rejected. Requires --disable-api to be effective, otherwise it can be bypassed via the raw datasource proxy.")
 	flag.StringVar(&gc.lokiLabelEnumerationFallback, "loki-label-enumeration-fallback", tools.LabelEnumFallbackReject, "Behaviour of list_loki_label_names/list_loki_label_values when --loki-enforced-matchers cannot scope them (purely-negative matchers only): 'reject' (fail closed) or 'unfiltered' (allow unscoped enumeration of label metadata; never exposes log lines).")
 }
@@ -210,6 +225,8 @@ func (dt *disabledTools) toolEntries() []toolEntry {
 		{func(mcp *server.MCPServer) { tools.AddAPITools(mcp, enableWriteTools) }, dt.api, "api"},
 		{tools.AddConfigTools, dt.config, "config"},
 		{tools.AddProvisioningTools, dt.provisioning, "provisioning"},
+		{func(mcp *server.MCPServer) { tools.AddAgento11yTools(mcp, enableWriteTools) }, dt.agento11y, "agento11y"},
+		{func(mcp *server.MCPServer) { tools.AddAssistantTools(mcp, enableWriteTools) }, dt.assistant, "assistant"},
 	}
 }
 
@@ -229,6 +246,12 @@ func (dt *disabledTools) buildInstructions() string {
 	var capabilities []string
 	for _, e := range dt.toolEntries() {
 		if !isCategoryEnabled(enabledTools, e.disabled, e.category) {
+			continue
+		}
+		// The assistant category is entirely write-gated: AddAssistantTools
+		// registers no tools when write tools are disabled. Don't advertise a
+		// capability the server won't actually expose.
+		if e.category == "assistant" && dt.write {
 			continue
 		}
 		if desc, ok := categoryDescription[e.category]; ok {
@@ -341,7 +364,13 @@ func newServer(transport string, dt disabledTools, obs *observability.Observabil
 	// unregister sessions from the SDK's internal session map.
 	sm.SetMCPServer(s)
 
+	// Give the SessionManager a reference to the ToolManager so tearing down a
+	// session releases its reference to the shared proxied tool set (closing the
+	// underlying clients only when the last session using them is gone).
+	sm.SetToolManager(stm)
+
 	dt.processTools(s)
+	mcpgrafana.RegisterAppResources(s)
 	return s, stm, sm
 }
 
@@ -366,6 +395,70 @@ func (hsc *httpSecurityConfig) addFlags() {
 	flag.StringVar(&hsc.allowedOrigins, "allowed-origins", "", "Comma-separated allowlist of Origin header values for the HTTP/SSE transports. Empty (the default) rejects any request that carries an Origin header — appropriate for non-browser MCP clients. Use \"*\" to disable validation.")
 }
 
+// serverAuthTokenEnvVar is the env fallback for --server-auth-token, so the
+// secret need not appear in the process arguments.
+const serverAuthTokenEnvVar = "MCP_GRAFANA_SERVER_TOKEN"
+
+// callerAuthConfig configures authentication of *callers* to the HTTP/SSE
+// transports — distinct from the credentials the server uses to reach Grafana.
+// It gates who may invoke the MCP server at all.
+type callerAuthConfig struct {
+	// token, when non-empty, is required as "Authorization: Bearer <token>" on
+	// every request to the MCP endpoint.
+	token string
+}
+
+func (ca *callerAuthConfig) addFlags() {
+	flag.StringVar(&ca.token, "server-auth-token", "", "Bearer token that callers must present in the Authorization header to use the HTTP/SSE transports. Falls back to the "+serverAuthTokenEnvVar+" environment variable. When set, unauthenticated requests are rejected with 401. Has no effect on the stdio transport.")
+}
+
+// resolveToken returns the caller token, falling back to the env var. It is
+// trimmed so whitespace from a secrets mount can't produce a never-matching token.
+func (ca callerAuthConfig) resolveToken() string {
+	if t := strings.TrimSpace(ca.token); t != "" {
+		return t
+	}
+	return strings.TrimSpace(os.Getenv(serverAuthTokenEnvVar))
+}
+
+// checkCallerAuthPolicy logs the caller-authentication posture of a network
+// transport at startup. Caller auth is enforced only when a token is configured
+// (see withCallerAuth); this surfaces the posture so it isn't silently exposed:
+//
+//   - Token configured → callers are authenticated; logged at INFO.
+//   - Loopback bind → only local processes can connect; logged at WARN with a hint.
+//   - Non-loopback bind, no token → reachable and unauthenticated; logged at ERROR
+//     (the highest --log-level, so the exposure can't be filtered out) and will
+//     refuse to start in a future major release.
+//
+// A nil logger falls back to slog.Default().
+func checkCallerAuthPolicy(transport, address, token string, logger *slog.Logger) {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	if token != "" {
+		logger.Info("Caller authentication enabled: requests must present a valid bearer token", "transport", transport)
+		return
+	}
+	if mcpgrafana.IsLoopbackOnlyBind(address) {
+		logger.Warn("No caller authentication configured. The server is bound to a loopback address, so only local processes can reach it. Set --server-auth-token (or "+serverAuthTokenEnvVar+") to require authentication for non-local callers.", "address", address)
+		return
+	}
+	// Logged at ERROR (not WARN) so the exposure is visible even under
+	// --log-level error; error is the highest configurable level.
+	logger.Error("SECURITY: serving on a non-loopback address with NO caller authentication. Anyone who can reach this address can invoke MCP tools and use any Grafana credentials the server is configured with. This will become a startup error in a future release: set --server-auth-token (or "+serverAuthTokenEnvVar+") to require a bearer token.", "address", address)
+}
+
+// withCallerAuth wraps h with bearer-token authentication when a token is
+// configured, and returns it unchanged otherwise. Only the MCP endpoint is
+// wrapped; health/metrics endpoints stay open.
+func withCallerAuth(token string, h http.Handler) http.Handler {
+	if token == "" {
+		return h
+	}
+	return mcpgrafana.RequireBearerToken(token, slog.Default())(h)
+}
+
 // policy resolves the configured flags into a HostOriginPolicy. An
 // --allowed-hosts whose parsed form is empty (unset, "," " , ", etc.) falls
 // back to DefaultAllowedHosts so a malformed value cannot silently disable
@@ -379,6 +472,31 @@ func (hsc httpSecurityConfig) policy(address string) mcpgrafana.HostOriginPolicy
 		AllowedHosts:   hosts,
 		AllowedOrigins: splitAndTrim(hsc.allowedOrigins),
 	}
+}
+
+func (hsc httpSecurityConfig) corsOrigins() []string {
+	if origins := splitAndTrim(hsc.allowedOrigins); len(origins) > 0 {
+		for i, o := range origins {
+			origins[i] = strings.ToLower(o)
+		}
+		return origins
+	}
+	// Sentinel keeps mcp-go's corsConfig.enabled() true so its SSE default
+	// of Access-Control-Allow-Origin: * is suppressed.
+	return []string{"https://mcp-grafana.invalid"}
+}
+
+func splitAndTrim(s string) []string {
+	if s == "" {
+		return nil
+	}
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // warnLokiEnforcementBypasses logs, at startup, every enabled tool through which
@@ -414,31 +532,6 @@ func warnLokiEnforcementBypasses(dt disabledTools) {
 	if isCategoryEnabled(enabledTools, dt.snapshot, "snapshot") {
 		slog.Info("Loki label-matcher enforcement: dashboard snapshots can return log-panel data captured outside enforcement (e.g. pre-existing snapshots); disable with --disable-snapshot if snapshots may contain restricted logs")
 	}
-}
-
-func (hsc httpSecurityConfig) corsOrigins() []string {
-	if origins := splitAndTrim(hsc.allowedOrigins); len(origins) > 0 {
-		for i, o := range origins {
-			origins[i] = strings.ToLower(o)
-		}
-		return origins
-	}
-	// Sentinel keeps mcp-go's corsConfig.enabled() true so its SSE default
-	// of Access-Control-Allow-Origin: * is suppressed.
-	return []string{"https://mcp-grafana.invalid"}
-}
-
-func splitAndTrim(s string) []string {
-	if s == "" {
-		return nil
-	}
-	var out []string
-	for _, p := range strings.Split(s, ",") {
-		if p = strings.TrimSpace(p); p != "" {
-			out = append(out, p)
-		}
-	}
-	return out
 }
 
 // httpServer represents a server with Start and Shutdown methods
@@ -504,7 +597,7 @@ func runMetricsServer(addr string, o *observability.Observability) {
 	}
 }
 
-func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt disabledTools, gc mcpgrafana.GrafanaConfig, tls tlsConfig, hsc httpSecurityConfig, obs observability.Config, sessionIdleTimeoutMinutes int) error {
+func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt disabledTools, gc mcpgrafana.GrafanaConfig, tls tlsConfig, hsc httpSecurityConfig, ca callerAuthConfig, obs observability.Config, sessionIdleTimeoutMinutes int) error {
 	stderrHandler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})
 	slog.SetDefault(slog.New(stderrHandler))
 
@@ -529,6 +622,12 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		// the startup signal. If the first OTLP batch fails, the stderr branch
 		// of the fanout still lands the record.
 		slog.Info("OTLP log export configured", "endpoint", observability.OTLPLogsEndpoint())
+	}
+
+	// Announced after the log fanout so this line is itself exported when both
+	// signals are on.
+	if o.TracerProvider() != nil {
+		slog.Info("OTLP trace export configured", "endpoint", observability.OTLPTracesEndpoint())
 	}
 
 	// Create a client cache for HTTP-based transports to avoid per-request
@@ -562,6 +661,19 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 			_ = os.Stdin.Close()
 		}
 	}()
+
+	// Resolve the caller-auth token once and surface the auth posture before we
+	// start listening. stdio is a local pipe, so it is exempt.
+	callerToken := ca.resolveToken()
+	if transport == "sse" || transport == "streamable-http" {
+		checkCallerAuthPolicy(transport, addr, callerToken, slog.Default())
+		// With caller auth active, Authorization holds the caller token (stripped
+		// after validation). Forwarding it to Grafana would leak it, so refuse the
+		// contradictory combination.
+		if callerToken != "" && mcpgrafana.ForwardsAuthorizationHeader() {
+			return fmt.Errorf("refusing to start: caller authentication is enabled (--server-auth-token / %s) while GRAFANA_FORWARD_HEADERS forwards the Authorization header. Authorization is reserved for MCP caller authentication and would leak to Grafana. Remove Authorization from GRAFANA_FORWARD_HEADERS, or unset the caller token to run in proxy-forwarding mode", serverAuthTokenEnvVar)
+		}
+	}
 
 	// Start the appropriate server based on transport
 	switch transport {
@@ -598,10 +710,10 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		if basePath == "" {
 			basePath = "/"
 		}
-		mux.Handle(basePath, observability.WrapHandler(
-			mcpgrafana.ValidateGrafanaURLMiddleware(srv),
+		mux.Handle(basePath, withCallerAuth(callerToken, observability.WrapHandler(
+			mcpgrafana.ValidateGrafanaURLMiddleware(srv), //nolint:staticcheck // Retained temporarily to reject malformed legacy headers.
 			basePath,
-		))
+		)))
 		mux.HandleFunc("/healthz", handleHealthz)
 		if obs.MetricsEnabled {
 			if obs.MetricsAddress == "" {
@@ -623,16 +735,25 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 			server.WithEndpointPath(endpointPath),
 			server.WithStreamableHTTPServer(httpSrv),
 			server.WithStreamableHTTPCORS(server.WithCORSAllowedOrigins(hsc.corsOrigins()...)),
+			// Enable the SDK's idle-session sweeper so per-session transport state
+			// (the tool/resource maps populated by AddSessionTools, keyed by
+			// session ID in the server's shared stores) is freed when a client
+			// disconnects without sending a DELETE. Without it, UnregisterSession
+			// only drops the session handle and those stores grow without bound,
+			// leaking a fixed amount of memory per session that is ever created.
+			// Use the same idle timeout as our own SessionManager reaper so the
+			// two teardown paths stay aligned; a zero value disables both.
+			server.WithSessionIdleTTL(time.Duration(sessionIdleTimeoutMinutes) * time.Minute),
 		}
 		if tls.certFile != "" || tls.keyFile != "" {
 			opts = append(opts, server.WithTLSCert(tls.certFile, tls.keyFile))
 		}
 		srv := server.NewStreamableHTTPServer(s, opts...)
 		mux := http.NewServeMux()
-		mux.Handle(endpointPath, observability.WrapHandler(
-			mcpgrafana.ValidateGrafanaURLMiddleware(srv),
+		mux.Handle(endpointPath, withCallerAuth(callerToken, observability.WrapHandler(
+			mcpgrafana.ValidateGrafanaURLMiddleware(srv), //nolint:staticcheck // Retained temporarily to reject malformed legacy headers.
 			endpointPath,
-		))
+		)))
 		mux.HandleFunc("/healthz", handleHealthz)
 		if obs.MetricsEnabled {
 			if obs.MetricsAddress == "" {
@@ -674,6 +795,8 @@ func main() {
 	tls.addFlags()
 	var hsc httpSecurityConfig
 	hsc.addFlags()
+	var ca callerAuthConfig
+	ca.addFlags()
 	var obs observability.Config
 	flag.BoolVar(&obs.MetricsEnabled, "metrics", false, "Enable Prometheus metrics endpoint")
 	flag.StringVar(&obs.MetricsAddress, "metrics-address", "", "Separate address for metrics server (e.g., :9090). If empty, metrics are served on the main server at /metrics")
@@ -700,8 +823,10 @@ func main() {
 
 	// Convert local grafanaConfig to mcpgrafana.GrafanaConfig
 	grafanaConfig := mcpgrafana.GrafanaConfig{
-		Debug:           gc.debug,
-		MaxLokiLogLimit: gc.maxLokiLogLimit,
+		Debug:                   gc.debug,
+		MaxLokiLogLimit:         gc.maxLokiLogLimit,
+		IncludeArgumentsInSpans: gc.includeArgsInSpans,
+		Timeout:                 gc.timeout,
 	}
 	if gc.tlsCertFile != "" || gc.tlsKeyFile != "" || gc.tlsCAFile != "" || gc.tlsSkipVerify {
 		grafanaConfig.TLSConfig = &mcpgrafana.TLSConfig{
@@ -748,7 +873,7 @@ func main() {
 		level = slog.LevelDebug
 	}
 
-	if err := run(transport, *addr, *basePath, *endpointPath, level, dt, grafanaConfig, tls, hsc, obs, *sessionIdleTimeoutMinutes); err != nil {
+	if err := run(transport, *addr, *basePath, *endpointPath, level, dt, grafanaConfig, tls, hsc, ca, obs, *sessionIdleTimeoutMinutes); err != nil {
 		panic(err)
 	}
 }

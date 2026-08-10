@@ -160,4 +160,6 @@ var ManageRouting = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("Manage alerting routing"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
