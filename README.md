@@ -542,7 +542,7 @@ When an organization ID is provided, the MCP server will set the `X-Grafana-Org-
 
 The options above fix the organization for the whole connection. To let a single connection target different organizations per tool call, start the server with the `--dynamic-multi-org` flag. This is off by default.
 
-When enabled, every tool accepts an optional `orgId` argument that overrides the connection's organization for that call (driving both the `X-Grafana-Org-Id` header and, for app-platform APIs, the resolved Kubernetes namespace). Proxied datasource tools are additionally discovered across every organization the credential can access. Calls that omit `orgId` use the connection's default organization.
+When enabled, every native tool accepts an optional `orgId` argument that overrides the connection's organization for that call (driving both the `X-Grafana-Org-Id` header and, for app-platform APIs, the resolved Kubernetes namespace). Calls that omit `orgId` use the connection's default organization.
 
 This only works for credentials that belong to more than one organization (e.g. a user or on-behalf-of identity); a service-account token remains bound to its single organization. Use the [`user_info`](#user) tool to discover which `orgId` values are valid.
 

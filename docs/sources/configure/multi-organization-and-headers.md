@@ -36,8 +36,7 @@ The settings above fix the organization for the whole connection. To let a singl
 
 When enabled:
 
-- Every tool accepts an optional `orgId` argument that overrides the connection's organization for that call, setting both the `X-Grafana-Org-Id` header and, for app-platform APIs, the resolved Kubernetes namespace. Calls that omit `orgId` use the connection's default organization.
-- Proxied datasource tools are discovered across every organization the credential can access, so you can target a datasource in any of those orgs with `orgId` plus its `datasourceUid`.
+- Every native tool accepts an optional `orgId` argument that overrides the connection's organization for that call, setting both the `X-Grafana-Org-Id` header and, for app-platform APIs, the resolved Kubernetes namespace. Calls that omit `orgId` use the connection's default organization.
 
 This only works for credentials that belong to more than one organization (for example a user or on-behalf-of identity); a service-account token stays bound to its single organization. Call the `user_info` tool to discover which `orgId` values are valid.
 

@@ -55,9 +55,8 @@ type SessionState struct {
 	initOnce                sync.Once
 	proxiedToolsInitialized bool
 	proxiedTools            []mcp.Tool
-	proxiedClients          map[string]*ProxiedClient // key: proxiedClientKey(org, type, uid)
-	toolToDatasources       map[string][]string       // key: toolName, value: list of client keys that support it
-	defaultOrgID            int64                     // org targeted when a proxied call omits orgId
+	proxiedClients          map[string]*ProxiedClient // key: datasourceType_datasourceUID
+	toolToDatasources       map[string][]string       // key: toolName, value: list of datasource keys that support it
 	mutex                   sync.RWMutex
 }
 
@@ -275,7 +274,7 @@ func (sm *SessionManager) reapStaleSessions() {
 }
 
 // GetProxiedClient retrieves a proxied client for the given datasource
-func (sm *SessionManager) GetProxiedClient(ctx context.Context, orgID int64, datasourceType, datasourceUID string) (*ProxiedClient, error) {
+func (sm *SessionManager) GetProxiedClient(ctx context.Context, datasourceType, datasourceUID string) (*ProxiedClient, error) {
 	session := server.ClientSessionFromContext(ctx)
 	if session == nil {
 		return nil, fmt.Errorf("session not found in context")
@@ -289,24 +288,20 @@ func (sm *SessionManager) GetProxiedClient(ctx context.Context, orgID int64, dat
 	state.mutex.RLock()
 	defer state.mutex.RUnlock()
 
-	// A call that omits orgId targets the connection's default org.
-	if orgID <= 0 {
-		orgID = state.defaultOrgID
-	}
-	key := proxiedClientKey(orgID, datasourceType, datasourceUID)
+	key := datasourceType + "_" + datasourceUID
 	client, exists := state.proxiedClients[key]
 	if !exists {
-		// List available datasources (in this org) to help with debugging
+		// List available datasources to help with debugging
 		var availableUIDs []string
 		for _, c := range state.proxiedClients {
-			if c.DatasourceType == datasourceType && c.OrgID == orgID {
+			if c.DatasourceType == datasourceType {
 				availableUIDs = append(availableUIDs, c.DatasourceUID)
 			}
 		}
 		if len(availableUIDs) > 0 {
-			return nil, fmt.Errorf("datasource '%s' not found in org %d. Available %s datasources: %v", datasourceUID, orgID, datasourceType, availableUIDs)
+			return nil, fmt.Errorf("datasource '%s' not found. Available %s datasources: %v", datasourceUID, datasourceType, availableUIDs)
 		}
-		return nil, fmt.Errorf("datasource '%s' not found in org %d. No %s datasources with MCP support are configured", datasourceUID, orgID, datasourceType)
+		return nil, fmt.Errorf("datasource '%s' not found. No %s datasources with MCP support are configured", datasourceUID, datasourceType)
 	}
 
 	return client, nil

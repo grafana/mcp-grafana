@@ -55,23 +55,18 @@ func (h *ProxiedToolHandler) Handle(ctx context.Context, request mcp.CallToolReq
 		return nil, fmt.Errorf("failed to parse tool name: %w", err)
 	}
 
-	// Resolve the target org: OrgIDOverrideMiddleware sets cfg.OrgID from the
-	// optional orgId argument (and strips it); 0 means "the connection's default
-	// org", which GetProxiedClient/GetServerClient normalize.
-	orgID := GrafanaConfigFromContext(ctx).OrgID
-
-	// Get the proxied client for this (org, datasource)
+	// Get the proxied client for this datasource
 	var client *ProxiedClient
 
 	if h.toolManager.serverMode {
 		// Server mode (stdio): clients stored at manager level
-		client, err = h.toolManager.GetServerClient(orgID, datasourceType, datasourceUID)
+		client, err = h.toolManager.GetServerClient(datasourceType, datasourceUID)
 	} else {
 		// Session mode (HTTP/SSE): clients stored per-session
-		client, err = h.sessionManager.GetProxiedClient(ctx, orgID, datasourceType, datasourceUID)
+		client, err = h.sessionManager.GetProxiedClient(ctx, datasourceType, datasourceUID)
 		if err != nil {
 			// Fallback to server-level in case of mixed mode
-			client, err = h.toolManager.GetServerClient(orgID, datasourceType, datasourceUID)
+			client, err = h.toolManager.GetServerClient(datasourceType, datasourceUID)
 		}
 	}
 

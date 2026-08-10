@@ -2,7 +2,12 @@ package mcpgrafana
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/invopop/jsonschema"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -109,4 +114,87 @@ func orgIDFromArguments(args map[string]any) (int64, bool) {
 		return 0, false
 	}
 	return orgID, true
+}
+
+// OrgInfo describes an organization the current user is a member of.
+type OrgInfo struct {
+	OrgID int64  `json:"orgId"`
+	Name  string `json:"name"`
+	Role  string `json:"role"`
+}
+
+// ListUserOrgs returns the organizations the current user belongs to
+// (GET /api/user/orgs) — the set of values OrgIDArgument can usefully name. It
+// returns an error for identities that cannot enumerate orgs (e.g.
+// service-account tokens, which are single-org).
+func ListUserOrgs(ctx context.Context) ([]OrgInfo, error) {
+	cfg := GrafanaConfigFromContext(ctx)
+	var orgs []OrgInfo
+	if err := grafanaGetJSON(ctx, &cfg, "/api/user/orgs", &orgs); err != nil {
+		return nil, err
+	}
+	return orgs, nil
+}
+
+// UserInfo describes the signed-in identity for the current request.
+type UserInfo struct {
+	Login          string    `json:"login,omitempty"`
+	Email          string    `json:"email,omitempty"`
+	Name           string    `json:"name,omitempty"`
+	IsGrafanaAdmin bool      `json:"isGrafanaAdmin"`
+	CurrentOrgID   int64     `json:"currentOrgId"`
+	Orgs           []OrgInfo `json:"orgs"`
+}
+
+// CurrentUserInfo returns the signed-in user's identity (GET /api/user) plus the
+// organizations the credential can access (GET /api/user/orgs). Org membership
+// is best-effort: it is empty for identities that can't enumerate orgs (e.g.
+// service-account tokens), which remain scoped to their single CurrentOrgID.
+func CurrentUserInfo(ctx context.Context) (UserInfo, error) {
+	cfg := GrafanaConfigFromContext(ctx)
+	var u struct {
+		Login          string `json:"login"`
+		Email          string `json:"email"`
+		Name           string `json:"name"`
+		IsGrafanaAdmin bool   `json:"isGrafanaAdmin"`
+		OrgID          int64  `json:"orgId"`
+	}
+	if err := grafanaGetJSON(ctx, &cfg, "/api/user", &u); err != nil {
+		return UserInfo{}, err
+	}
+	info := UserInfo{
+		Login:          u.Login,
+		Email:          u.Email,
+		Name:           u.Name,
+		IsGrafanaAdmin: u.IsGrafanaAdmin,
+		CurrentOrgID:   u.OrgID,
+	}
+	if orgs, err := ListUserOrgs(ctx); err == nil {
+		info.Orgs = orgs
+	}
+	return info, nil
+}
+
+// grafanaGetJSON performs an authenticated GET against the Grafana API and
+// decodes a JSON response, using the same transport chain as the rest of the
+// server (auth, OrgID header, TLS, etc.).
+func grafanaGetJSON(ctx context.Context, cfg *GrafanaConfig, path string, out any) error {
+	transport, err := BuildTransport(cfg, nil)
+	if err != nil {
+		return fmt.Errorf("build transport: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(cfg.URL, "/")+path, nil)
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Accept", "application/json")
+	resp, err := (&http.Client{Transport: transport, Timeout: 10 * time.Second}).Do(req)
+	if err != nil {
+		return fmt.Errorf("do request: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("GET %s: HTTP %d", path, resp.StatusCode)
+	}
+	return json.NewDecoder(resp.Body).Decode(out)
 }
