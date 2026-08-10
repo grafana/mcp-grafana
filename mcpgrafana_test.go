@@ -9,12 +9,14 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
 
 	"github.com/go-openapi/runtime/client"
 	grafana_client "github.com/grafana/grafana-openapi-client-go/client"
+	"github.com/grafana/grafana-openapi-client-go/client/datasources"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -2215,4 +2217,149 @@ func TestBuildTransportContextOverrides(t *testing.T) {
 		assert.Equal(t, "10", capturedReq.Header.Get(grafana_client.OrgIDHeader))
 		assert.Equal(t, "val", capturedReq.Header.Get("X-Custom"))
 	})
+}
+
+// normalizeGrafanaURL accepts a schemeless GRAFANA_URL and TestNormalizeGrafanaURL
+// pins that behavior, but it used to run only at the end of the chain, in
+// WithGrafanaConfig. Consumers reading the environment value earlier saw the raw
+// string and disagreed with GrafanaConfig.URL about the target instance — see
+// https://github.com/grafana/mcp-grafana/issues/1032.
+
+// The normalizer runs at the environment boundary and again in
+// WithGrafanaConfig, so it has to be idempotent: a second pass must not move the
+// value.
+func TestNormalizeGrafanaURLIsIdempotent(t *testing.T) {
+	for _, raw := range []string{
+		"",
+		"   ",
+		"https://grafana.example.com",
+		"https://grafana.example.com/",
+		"https://grafana.example.com///",
+		"  https://grafana.example.com/  ",
+		"grafana.example.com",
+		"grafana.example.com/grafana/",
+		"localhost:3000",
+		"127.0.0.1:3000",
+		"[::1]:3000",
+		"http://grafana.example.com/grafana",
+	} {
+		t.Run(raw, func(t *testing.T) {
+			once := normalizeGrafanaURL(raw)
+			assert.Equal(t, once, normalizeGrafanaURL(once), "second pass changed the value")
+		})
+	}
+}
+
+// Whatever spelling of GRAFANA_URL the operator uses, GrafanaConfig.URL and the
+// API client must resolve to the same place — including the path, which subpath
+// deployments depend on.
+func TestEnvURLSpellingsAgreeAcrossConsumers(t *testing.T) {
+	cases := []struct {
+		name string
+		// %s is replaced with the test server's host:port
+		envTemplate string
+		wantConfig  string
+		wantPath    string
+	}{
+		{"canonical", "http://%s", "http://%s", "/api/datasources"},
+		{"trailing slash", "http://%s/", "http://%s", "/api/datasources"},
+		{"surrounding whitespace", "  http://%s  ", "http://%s", "/api/datasources"},
+		{"schemeless loopback defaults to http", "%s", "http://%s", "/api/datasources"},
+		{"subpath preserved", "http://%s/grafana", "http://%s/grafana", "/grafana/api/datasources"},
+		{"schemeless subpath", "%s/grafana/", "http://%s/grafana", "/grafana/api/datasources"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotPaths []string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotPaths = append(gotPaths, r.URL.Path)
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`[]`))
+			}))
+			defer srv.Close()
+			hostPort := strings.TrimPrefix(srv.URL, "http://")
+
+			t.Setenv("GRAFANA_URL", strings.ReplaceAll(tc.envTemplate, "%s", hostPort))
+
+			var ctx context.Context
+			require.NotPanics(t, func() {
+				ctx = ExtractGrafanaInfoFromEnv(context.Background())
+			})
+			assert.Equal(t, strings.ReplaceAll(tc.wantConfig, "%s", hostPort), GrafanaConfigFromContext(ctx).URL)
+
+			ctx = ExtractGrafanaClientFromEnv(ctx)
+			_, err := GrafanaClientFromContext(ctx).Datasources.GetDataSourcesWithParams(
+				datasources.NewGetDataSourcesParamsWithContext(ctx),
+			)
+			require.NoError(t, err)
+			assert.Contains(t, gotPaths, tc.wantPath,
+				"the API client did not reach the configured host and path; saw %v", gotPaths)
+		})
+	}
+}
+
+// An unset or blank GRAFANA_URL must still fall back to the documented default
+// rather than producing a client with no host.
+func TestBlankEnvURLFallsBackToDefault(t *testing.T) {
+	for _, raw := range []string{"", "   "} {
+		t.Run(strconv.Quote(raw), func(t *testing.T) {
+			t.Setenv("GRAFANA_URL", raw)
+			config := GrafanaConfigFromContext(ExtractGrafanaInfoFromEnv(context.Background()))
+			assert.Equal(t, defaultGrafanaURL, config.URL)
+		})
+	}
+}
+
+// Normalizing the environment URL must not move the boundary that binds
+// environment credentials to the environment instance.
+func TestSchemelessEnvURLKeepsCredentialBinding(t *testing.T) {
+	const envToken = "env-service-account-token"
+
+	t.Run("same instance spelled with a scheme still receives env credentials", func(t *testing.T) {
+		t.Setenv("GRAFANA_URL", "grafana.example.com")
+		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN", envToken)
+
+		req, err := http.NewRequest("GET", "http://example.com", nil)
+		require.NoError(t, err)
+		req.Header.Set(grafanaURLHeader, "https://grafana.example.com")
+
+		config := GrafanaConfigFromContext(ExtractGrafanaInfoFromHeaders(context.Background(), req))
+		assert.Equal(t, envToken, config.APIKey)
+	})
+
+	t.Run("foreign URL still has env credentials withheld", func(t *testing.T) {
+		t.Setenv("GRAFANA_URL", "grafana.example.com")
+		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN", envToken)
+
+		req, err := http.NewRequest("GET", "http://example.com", nil)
+		require.NoError(t, err)
+		req.Header.Set(grafanaURLHeader, "https://attacker.example.com")
+
+		config := GrafanaConfigFromContext(ExtractGrafanaInfoFromHeaders(context.Background(), req))
+		assert.Empty(t, config.APIKey, "env token must not be sent to a caller-specified URL")
+	})
+}
+
+// The cached client extractors derive their cache key from the URL the request
+// resolves to, so spellings of GRAFANA_URL that name one instance must collapse
+// to one value before they reach the key — otherwise a single instance occupies
+// an extra cache entry per spelling.
+func TestEnvURLSpellingsResolveToOneValue(t *testing.T) {
+	logger := slog.New(slog.DiscardHandler)
+	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+
+	const canonical = "https://grafana.example.com"
+	for _, spelling := range []string{
+		canonical,
+		canonical + "/",
+		"  " + canonical + "  ",
+		"grafana.example.com",
+	} {
+		t.Run(spelling, func(t *testing.T) {
+			t.Setenv("GRAFANA_URL", spelling)
+			resolvedURL, _, _, _, _ := extractKeyGrafanaInfoFromReq(req, logger)
+			assert.Equal(t, canonical, resolvedURL)
+		})
+	}
 }

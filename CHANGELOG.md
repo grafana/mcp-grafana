@@ -23,6 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Restrict the Prometheus backend to known Prometheus-compatible datasource types ([#1006](https://github.com/grafana/mcp-grafana/pull/1006))
 - Respect `OTEL_LOGS_EXPORTER=none` to disable OTLP log export ([#1012](https://github.com/grafana/mcp-grafana/pull/1012))
 
+### Fixed
+
+- A `GRAFANA_URL` without a scheme is normalized where it enters the process, so the API client and the client cache resolve the same instance as the rest of the server. `GRAFANA_URL=127.0.0.1:3000` used to panic at startup, and a schemeless hostname produced requests with no host while tools built from `GrafanaConfig.URL` kept working ([#1034](https://github.com/grafana/mcp-grafana/pull/1034))
+
 ### Changed
 
 - Enrich telemetry to include more tool dimensions ([#1016](https://github.com/grafana/mcp-grafana/pull/1016))
