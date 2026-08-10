@@ -670,7 +670,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 			basePath = "/"
 		}
 		mux.Handle(basePath, withCallerAuth(callerToken, observability.WrapHandler(
-			mcpgrafana.ValidateGrafanaURLMiddleware(srv),
+			mcpgrafana.ValidateGrafanaURLMiddleware(srv), //nolint:staticcheck // Retained temporarily to reject malformed legacy headers.
 			basePath,
 		)))
 		mux.HandleFunc("/healthz", handleHealthz)
@@ -710,7 +710,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		srv := server.NewStreamableHTTPServer(s, opts...)
 		mux := http.NewServeMux()
 		mux.Handle(endpointPath, withCallerAuth(callerToken, observability.WrapHandler(
-			mcpgrafana.ValidateGrafanaURLMiddleware(srv),
+			mcpgrafana.ValidateGrafanaURLMiddleware(srv), //nolint:staticcheck // Retained temporarily to reject malformed legacy headers.
 			endpointPath,
 		)))
 		mux.HandleFunc("/healthz", handleHealthz)
