@@ -394,15 +394,10 @@ type callerAuthConfig struct {
 	// token, when non-empty, is required as "Authorization: Bearer <token>" on
 	// every request to the MCP endpoint.
 	token string
-
-	// allowUnauthenticated permits a non-loopback bind without a caller token.
-	// INSECURE: only behind a trusted proxy that authenticates callers.
-	allowUnauthenticated bool
 }
 
 func (ca *callerAuthConfig) addFlags() {
 	flag.StringVar(&ca.token, "server-auth-token", "", "Bearer token that callers must present in the Authorization header to use the HTTP/SSE transports. Falls back to the "+serverAuthTokenEnvVar+" environment variable. When set, unauthenticated requests are rejected with 401. Has no effect on the stdio transport.")
-	flag.BoolVar(&ca.allowUnauthenticated, "allow-unauthenticated", false, "Allow the HTTP/SSE server to bind to a non-loopback address without --server-auth-token. INSECURE: only use behind a trusted proxy that authenticates callers. By default the server refuses to start unauthenticated on a public address.")
 }
 
 // resolveToken returns the caller token, falling back to the env var. It is
@@ -414,31 +409,29 @@ func (ca callerAuthConfig) resolveToken() string {
 	return strings.TrimSpace(os.Getenv(serverAuthTokenEnvVar))
 }
 
-// checkCallerAuthPolicy enforces the fail-closed bind rule for network
-// transports: an externally reachable listener must not accept unauthenticated
-// callers. Rules, in order:
+// checkCallerAuthPolicy logs the caller-authentication posture of a network
+// transport at startup. Caller auth is enforced only when a token is configured
+// (see withCallerAuth); this surfaces the posture so it isn't silently exposed:
 //
-//   - Caller token configured → authenticated; any bind is fine.
-//   - Loopback bind → only local processes can reach it; allowed.
-//   - --allow-unauthenticated → assume a trusted proxy in front; allowed (warns).
-//   - Otherwise (non-loopback, no token) → refused.
+//   - Token configured → callers are authenticated; logged at INFO.
+//   - Loopback bind → only local processes can connect; logged at WARN with a hint.
+//   - Non-loopback bind, no token → reachable and unauthenticated; logged at WARN.
+//     This will refuse to start in a future major release.
 //
-// It deliberately ignores which Grafana credentials are configured, so the safe
-// default doesn't hinge on an evolving inventory of credential sources.
-func checkCallerAuthPolicy(transport, address, token string, allowUnauthenticated bool) error {
+// A nil logger falls back to slog.Default().
+func checkCallerAuthPolicy(transport, address, token string, logger *slog.Logger) {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	if token != "" {
-		slog.Info("Caller authentication enabled: requests must present a valid bearer token", "transport", transport)
-		return nil
+		logger.Info("Caller authentication enabled: requests must present a valid bearer token", "transport", transport)
+		return
 	}
 	if mcpgrafana.IsLoopbackOnlyBind(address) {
-		slog.Warn("No caller authentication configured. The server is bound to a loopback address, so only local processes can reach it. Set --server-auth-token (or "+serverAuthTokenEnvVar+") to require authentication for non-local callers.", "address", address)
-		return nil
+		logger.Warn("No caller authentication configured. The server is bound to a loopback address, so only local processes can reach it. Set --server-auth-token (or "+serverAuthTokenEnvVar+") to require authentication for non-local callers.", "address", address)
+		return
 	}
-	if allowUnauthenticated {
-		slog.Warn("SECURITY: serving on a non-loopback address with NO caller authentication because --allow-unauthenticated was set. Anyone who can reach this address can invoke MCP tools and use any Grafana credentials the server is configured with. Ensure a trusted proxy authenticates callers.", "address", address)
-		return nil
-	}
-	return fmt.Errorf("refusing to start %s transport on non-loopback address %q without caller authentication: set --server-auth-token (or %s) to require a bearer token, or pass --allow-unauthenticated if a trusted proxy in front of this server authenticates callers", transport, address, serverAuthTokenEnvVar)
+	logger.Warn("SECURITY: serving on a non-loopback address with NO caller authentication. Anyone who can reach this address can invoke MCP tools and use any Grafana credentials the server is configured with. This will become a startup error in a future release: set --server-auth-token (or "+serverAuthTokenEnvVar+") to require a bearer token.", "address", address)
 }
 
 // withCallerAuth wraps h with bearer-token authentication when a token is
@@ -619,13 +612,11 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		}
 	}()
 
-	// Resolve the caller-auth token once and enforce the fail-closed bind
-	// policy before we start listening. stdio is a local pipe, so it is exempt.
+	// Resolve the caller-auth token once and surface the auth posture before we
+	// start listening. stdio is a local pipe, so it is exempt.
 	callerToken := ca.resolveToken()
 	if transport == "sse" || transport == "streamable-http" {
-		if err := checkCallerAuthPolicy(transport, addr, callerToken, ca.allowUnauthenticated); err != nil {
-			return err
-		}
+		checkCallerAuthPolicy(transport, addr, callerToken, slog.Default())
 		// With caller auth active, Authorization holds the caller token (stripped
 		// after validation). Forwarding it to Grafana would leak it, so refuse the
 		// contradictory combination.

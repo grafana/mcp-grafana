@@ -46,17 +46,20 @@ When deploying behind an ingress or reverse proxy that forwards the original `Ho
 The SSE and streamable-http transports can authenticate the **caller** (the MCP client connecting to `mcp-grafana`). This is separate from the credentials the server uses to reach Grafana: it controls _who may invoke the server_, so an unauthenticated client can't borrow the server's Grafana identity or run tools. Stdio is a local pipe and is never affected.
 
 - `--server-auth-token`: Bearer token that callers must present in the `Authorization: Bearer <token>` header. Falls back to the `MCP_GRAFANA_SERVER_TOKEN` environment variable. When set, requests without a valid token are rejected with `401` before any tool runs. Prefer the environment variable over the flag so the secret doesn't appear in the process argument list.
-- `--allow-unauthenticated`: Permit binding to a non-loopback address **without** a caller token. Insecure on its own — only use it when a trusted proxy in front of `mcp-grafana` authenticates callers.
 
-### Fail-closed bind policy
+### Bind policy
 
-To avoid accidentally exposing an unauthenticated server, the network transports refuse to start on an externally reachable address unless callers are authenticated:
+Caller authentication is enforced only when `--server-auth-token` is set. When it isn't, the network transports warn (but still start) on an externally reachable address:
 
 | Transport / bind | Behavior |
 | --- | --- |
 | `stdio` | No caller authentication (local pipe). |
 | SSE / streamable-http on a loopback address (`localhost`, `127.0.0.1`, `::1`) | Caller token optional. |
-| SSE / streamable-http on any other address | **Requires** `--server-auth-token`, or an explicit `--allow-unauthenticated`. Otherwise the server exits with an error. |
+| SSE / streamable-http on any other address | Starts and logs a **security warning** unless `--server-auth-token` is set. |
+
+{{< admonition type="note" >}}
+The permissive default preserves backward compatibility for existing deployments (such as the container's `0.0.0.0` bind). A future major release will make an unauthenticated non-loopback bind a startup error. Set `--server-auth-token` now to require caller authentication and prepare for that change.
+{{< /admonition >}}
 
 Bearer authentication only protects the token in transit if the connection is encrypted. Terminate TLS in front of the server, or use [server TLS for streamable-http](../server-tls-streamable-http/), whenever you set `--server-auth-token` on a non-loopback address.
 
