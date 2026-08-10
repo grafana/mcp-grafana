@@ -41,7 +41,7 @@ func refuseRedirect(req *http.Request, via []*http.Request) error {
 
 	return fmt.Errorf(
 		"refusing to follow HTTP redirect from %s to %s: it changes the request method from %s to %s and drops the request body, which would silently corrupt the query; "+
-			"check that your Grafana URL (GRAFANA_URL or X-Grafana-URL) uses the correct scheme and host and matches Grafana's configured root_url",
+			"check that GRAFANA_URL uses the correct scheme and host and matches Grafana's configured root_url",
 		prev.URL, req.URL, prev.Method, req.Method,
 	)
 }

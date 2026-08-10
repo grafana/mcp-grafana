@@ -100,7 +100,7 @@ func getPanelImage(ctx context.Context, args GetPanelImageParams) (*mcp.CallTool
 	baseURL := config.URL
 
 	if baseURL == "" {
-		return nil, fmt.Errorf("grafana URL not configured. Please set GRAFANA_URL environment variable or X-Grafana-URL header")
+		return nil, fmt.Errorf("grafana URL not configured. Please set GRAFANA_URL environment variable")
 	}
 
 	// Build the render URL

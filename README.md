@@ -996,15 +996,9 @@ grafanaConfig := mcpgrafana.GrafanaConfig{
 contextFunc := mcpgrafana.ComposedStdioContextFunc(grafanaConfig)
 ```
 
-**URL validation when wiring your own HTTP server:**
+**URL validation:**
 
-When library consumers wire mcp-grafana's context functions into their own `http.Server`, install `ValidateGrafanaURLMiddleware` to reject malformed `X-Grafana-URL` headers with 400 Bad Request (matching the binary's behavior):
-
-```go
-mux.Handle(path, mcpgrafana.ValidateGrafanaURLMiddleware(yourMCPHandler))
-```
-
-When calling `NewGrafanaClient` directly (stdio or programmatic construction), pre-validate untrusted URLs to avoid a reachable panic:
+When calling `NewGrafanaClient` directly (stdio or programmatic construction), pre-validate URLs to avoid a reachable panic:
 
 ```go
 if err := mcpgrafana.ValidateGrafanaURL(urlFromHeader); err != nil {
@@ -1013,8 +1007,6 @@ if err := mcpgrafana.ValidateGrafanaURL(urlFromHeader); err != nil {
 }
 client := mcpgrafana.NewGrafanaClient(ctx, urlFromHeader, apiKey, nil)
 ```
-
-Both patterns share `ValidateGrafanaURL` as the single validator.
 
 ### Server TLS Configuration (Streamable HTTP Transport Only)
 

@@ -72,7 +72,6 @@ def grafana_env():
 @pytest.fixture
 def grafana_headers():
     headers = {
-        "X-Grafana-URL": os.environ.get("GRAFANA_URL", DEFAULT_GRAFANA_URL),
     }
     # Check for the new service account token environment variable first
     if key := os.environ.get("GRAFANA_SERVICE_ACCOUNT_TOKEN"):
