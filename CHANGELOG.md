@@ -5,17 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.1.0] - 2026-08-10
 
 ### Added
 
-- Agent Observability tool `agento11y_manage_agents`, in the opt-in `agento11y` category. Read-only: `list` for the agent catalog, `get` for one agent version in full (system prompt, tools, models), `list_versions` for an agent's version history, and `list_version_scores` for evaluation score aggregates per version. Needs `grafana-agento11y-app.data:read` and is registered whether or not write tools are enabled
-- Agent Observability tool `agento11y_manage_eval_collections`, in the opt-in `agento11y` category. Reads cover saved conversations, the collections that group them, and the membership in both directions. The write operations (bookmark and delete a saved conversation; create, update, and delete a collection; add and remove collection members) need `grafana-agento11y-app.eval:write` and are registered only when write tools are enabled
+- Optional bearer-token caller authentication for the SSE and streamable-http transports via `--server-auth-token` / `MCP_GRAFANA_SERVER_TOKEN`. When set, callers must present `Authorization: Bearer <token>` and unauthenticated requests are rejected with `401` before any tool runs. Caller authentication is enforced only when a token is configured; when it isn't, a non-loopback bind still starts but logs a security error at startup ([#1059](https://github.com/grafana/mcp-grafana/pull/1059), [#1060](https://github.com/grafana/mcp-grafana/pull/1060))
+- `ask_assistant` tool (opt-in, write-gated) for asking Grafana Assistant open-ended questions and getting a full text reply ([#1026](https://github.com/grafana/mcp-grafana/pull/1026))
+- Agent Observability tool `agento11y_manage_agents`, in the opt-in `agento11y` category. Read-only: `list` for the agent catalog, `get` for one agent version in full (system prompt, tools, models), `list_versions` for an agent's version history, and `list_version_scores` for evaluation score aggregates per version. Needs `grafana-agento11y-app.data:read` and is registered whether or not write tools are enabled ([#1036](https://github.com/grafana/mcp-grafana/pull/1036))
+- Agent Observability tool `agento11y_manage_eval_collections`, in the opt-in `agento11y` category. Reads cover saved conversations, the collections that group them, and the membership in both directions. The write operations (bookmark and delete a saved conversation; create, update, and delete a collection; add and remove collection members) need `grafana-agento11y-app.eval:write` and are registered only when write tools are enabled ([#1035](https://github.com/grafana/mcp-grafana/pull/1035))
 - Agent Observability eval control-plane tools `agento11y_manage_evaluators` and `agento11y_manage_eval_rules`, in the opt-in `agento11y` category. Reads cover evaluators, evaluator templates, template versions, the judge provider and model catalog, eval rules, and guards. The write operations (evaluator upsert, fork, test, and delete; rule and guard create, update, preview, and delete) need `grafana-agento11y-app.eval:write` and are registered only when write tools are enabled ([#1028](https://github.com/grafana/mcp-grafana/pull/1028))
+- CLI flags to include tool arguments in OpenTelemetry spans and to configure the Grafana client request timeout ([#1023](https://github.com/grafana/mcp-grafana/pull/1023))
+
+### Fixed
+
+- Declare `readOnly`/`destructive`/`openWorld` hints on every tool ([#1051](https://github.com/grafana/mcp-grafana/pull/1051))
+- Proxied-tools memory scaling with session count and unbounded per-session tool-store growth ([#1001](https://github.com/grafana/mcp-grafana/pull/1001))
+- Restrict the Prometheus backend to known Prometheus-compatible datasource types ([#1006](https://github.com/grafana/mcp-grafana/pull/1006))
+- Respect `OTEL_LOGS_EXPORTER=none` to disable OTLP log export ([#1012](https://github.com/grafana/mcp-grafana/pull/1012))
 
 ### Changed
 
+- Enrich telemetry to include more tool dimensions ([#1016](https://github.com/grafana/mcp-grafana/pull/1016))
 - `query_pyroscope` now returns a per-function table (`pprof -top` style: flat/cum per fully-qualified function name) by default instead of a line-level DOT call graph. The DOT call graph remains available via `format="dot"` and no longer deletes the `other` truncation node ([#1025](https://github.com/grafana/mcp-grafana/pull/1025))
+
+### Removed
+
+- Support for the undocumented `X-Grafana-URL` header ([#1052](https://github.com/grafana/mcp-grafana/pull/1052))
 
 ## [1.0.0] - 2026-07-28
 
@@ -340,6 +355,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Upgrade Docker base image packages to resolve critical OpenSSL CVE-2025-15467 (CVSS 9.8) ([#551](https://github.com/grafana/mcp-grafana/pull/551))
 
+[1.1.0]: https://github.com/grafana/mcp-grafana/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/grafana/mcp-grafana/compare/v0.17.2...v1.0.0
 [0.17.2]: https://github.com/grafana/mcp-grafana/compare/v0.17.1...v0.17.2
 [0.17.1]: https://github.com/grafana/mcp-grafana/compare/v0.17.0...v0.17.1
