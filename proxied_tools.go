@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -41,11 +42,105 @@ type DiscoveredDatasource struct {
 	Name   string
 	Type   string
 	MCPURL string // The MCP endpoint URL
+	OrgID  int64  // The Grafana org the datasource was discovered in
 }
 
-// discoverMCPDatasources discovers datasources that support MCP
-// Returns a list of datasources with MCP endpoints
-func discoverMCPDatasources(ctx context.Context, logger *slog.Logger) ([]DiscoveredDatasource, error) {
+// proxiedClientKey is the map key for a proxied client, scoped by org so the
+// same datasource UID in different orgs maps to distinct clients.
+func proxiedClientKey(orgID int64, datasourceType, datasourceUID string) string {
+	return fmt.Sprintf("%d|%s|%s", orgID, datasourceType, datasourceUID)
+}
+
+// accessibleOrgIDs returns the orgs to discover proxied datasources in, and the
+// connection's default org (used when a call omits orgId).
+//
+// With dynamic multi-org off it returns just the default org (current behavior).
+// With it on it returns every org the user belongs to (GET /api/user/orgs),
+// always including the default org; for credentials that can't enumerate orgs
+// (e.g. service-account tokens, which are single-org) it falls back to the
+// default org.
+func accessibleOrgIDs(ctx context.Context, logger *slog.Logger) (orgs []int64, defaultOrg int64) {
+	defaultOrg = resolveDefaultOrgID(ctx, logger)
+	if !DynamicMultiOrgEnabled {
+		return []int64{defaultOrg}, defaultOrg
+	}
+	userOrgs, err := ListUserOrgs(ctx)
+	if err != nil || len(userOrgs) == 0 {
+		logger.DebugContext(ctx, "could not enumerate user orgs for proxied discovery; using default org", "error", err)
+		return []int64{defaultOrg}, defaultOrg
+	}
+	ids := make([]int64, 0, len(userOrgs))
+	for _, o := range userOrgs {
+		if o.OrgID > 0 {
+			ids = append(ids, o.OrgID)
+		}
+	}
+	if len(ids) == 0 {
+		return []int64{defaultOrg}, defaultOrg
+	}
+	if !slices.Contains(ids, defaultOrg) {
+		ids = append(ids, defaultOrg)
+	}
+	return ids, defaultOrg
+}
+
+// discoverMCPDatasources discovers MCP-capable datasources across every org the
+// credential can access (just the default org when dynamic multi-org is off),
+// returning the union tagged with the org each was found in, plus the default
+// org a call targets when it omits orgId. Per-org discovery runs in parallel.
+func discoverMCPDatasources(ctx context.Context, logger *slog.Logger) ([]DiscoveredDatasource, int64, error) {
+	orgs, defaultOrg := accessibleOrgIDs(ctx, logger)
+
+	perOrg := make([][]DiscoveredDatasource, len(orgs))
+	errs := make([]error, len(orgs))
+	var wg sync.WaitGroup
+	for i, org := range orgs {
+		wg.Add(1)
+		go func(i int, org int64) {
+			defer wg.Done()
+			perOrg[i], errs[i] = discoverMCPDatasourcesForOrg(ctx, org, logger)
+		}(i, org)
+	}
+	wg.Wait()
+
+	// Report an error only when every org failed. The caller treats an error as
+	// transient (the set is dropped from the cache and rebuilt), while a nil error
+	// publishes a stable result -- so a total failure must not be reported as
+	// "successfully found nothing", and one unreachable org among several must not
+	// discard the orgs that did resolve.
+	var firstErr error
+	failed := 0
+	for i, err := range errs {
+		if err == nil {
+			continue
+		}
+		failed++
+		if firstErr == nil {
+			firstErr = err
+		}
+		logger.DebugContext(ctx, "MCP datasource discovery failed for org", "org", orgs[i], "error", err)
+	}
+	if failed == len(orgs) {
+		return nil, defaultOrg, firstErr
+	}
+
+	var discovered []DiscoveredDatasource
+	for _, found := range perOrg {
+		discovered = append(discovered, found...)
+	}
+	return discovered, defaultOrg, nil
+}
+
+// discoverMCPDatasourcesForOrg discovers MCP-capable datasources within a single
+// org. It scopes the request to orgID so the datasource list and MCP probes carry
+// X-Grafana-Org-Id: orgID (OrgIDRoundTripper reads the org from the request
+// context), and tags each result with the org.
+func discoverMCPDatasourcesForOrg(ctx context.Context, orgID int64, logger *slog.Logger) ([]DiscoveredDatasource, error) {
+	if orgID > 0 {
+		cfg := GrafanaConfigFromContext(ctx)
+		cfg.OrgID = orgID
+		ctx = WithGrafanaConfig(ctx, cfg)
+	}
 	gc := GrafanaClientFromContext(ctx)
 	if gc == nil {
 		return nil, fmt.Errorf("grafana client not found in context")
@@ -151,6 +246,7 @@ func discoverMCPDatasources(ctx context.Context, logger *slog.Logger) ([]Discove
 						Name:   c.name,
 						Type:   c.dsType,
 						MCPURL: mcpURL,
+						OrgID:  orgID,
 					},
 					enabled: true,
 				}
@@ -195,6 +291,19 @@ func addDatasourceUidParameter(tool mcp.Tool, datasourceType string) mcp.Tool {
 
 	// Add to required fields
 	modifiedTool.InputSchema.Required = append(modifiedTool.InputSchema.Required, "datasourceUid")
+
+	// When dynamic multi-org is enabled, advertise the optional orgId so the
+	// datasourceUid can be resolved in a non-default org. Proxied tools are
+	// registered directly rather than through Tool.Register, so the native
+	// injector never sees them and the property is added here instead.
+	// OrgIDOverrideMiddleware reads it into the request context and strips it, so
+	// it is never forwarded to the upstream datasource MCP server.
+	if DynamicMultiOrgEnabled {
+		modifiedTool.InputSchema.Properties[OrgIDArgument] = map[string]any{
+			"type":        "integer",
+			"description": orgIDArgumentDescription,
+		}
+	}
 
 	return modifiedTool
 }
@@ -362,7 +471,7 @@ type proxiedToolSet struct {
 	// sessions do not re-run discovery on every hook.
 	failed bool
 
-	// clients keyed by datasourceType_datasourceUID. Empty until built is true;
+	// clients keyed by proxiedClientKey(org, type, uid). Empty until built is true;
 	// published in one critical section and immutable afterwards.
 	clients map[string]*ProxiedClient
 	// tools is the deduplicated, schema-rewritten set of proxied tools. Empty
@@ -371,6 +480,10 @@ type proxiedToolSet struct {
 	// toolToDatasources maps a proxied tool name to the datasource keys that
 	// support it. Empty until built is true; immutable afterwards.
 	toolToDatasources map[string][]string
+	// defaultOrgID is the org a call targets when it omits orgId. Resolved during
+	// the build. Every session sharing this set shares the same connection-level
+	// org, because proxiedToolSetKey includes OrgID.
+	defaultOrgID int64
 
 	// refs is the number of live sessions currently attached to this set.
 	refs int
@@ -396,6 +509,9 @@ type ToolManager struct {
 	serverMode    bool // true if using server-wide tools (stdio), false for per-session (HTTP/SSE)
 	serverClients map[string]*ProxiedClient
 	clientsMutex  sync.RWMutex
+	// defaultOrgID is the org a proxied call targets when it omits orgId in
+	// server (stdio) mode. Resolved during discovery; guarded by clientsMutex.
+	defaultOrgID int64
 
 	// For HTTP/SSE transport: shared, credential-keyed proxied tool sets.
 	// Sessions with identical credentials share a single entry, so memory no
@@ -476,7 +592,7 @@ func (tm *ToolManager) InitializeAndRegisterServerTools(ctx context.Context) err
 	logger := tm.loggerFromCtx(ctx)
 
 	// Discover datasources with MCP support
-	discovered, err := discoverMCPDatasources(ctx, logger)
+	discovered, defaultOrg, err := discoverMCPDatasources(ctx, logger)
 	if err != nil {
 		return fmt.Errorf("failed to discover MCP datasources: %w", err)
 	}
@@ -486,16 +602,16 @@ func (tm *ToolManager) InitializeAndRegisterServerTools(ctx context.Context) err
 		return nil
 	}
 
-	// Connect to each datasource and store in manager
+	// Connect to each datasource (in its org) and store in manager
 	tm.clientsMutex.Lock()
+	tm.defaultOrgID = defaultOrg
 	for _, ds := range discovered {
-		client, err := NewProxiedClient(ctx, ds.UID, ds.Name, ds.Type, ds.MCPURL)
+		client, err := NewProxiedClient(ctx, ds.OrgID, ds.UID, ds.Name, ds.Type, ds.MCPURL)
 		if err != nil {
-			logger.ErrorContext(ctx, "failed to create proxied client", "datasource", ds.UID, "error", err)
+			logger.ErrorContext(ctx, "failed to create proxied client", "datasource", ds.UID, "org", ds.OrgID, "error", err)
 			continue
 		}
-		key := ds.Type + "_" + ds.UID
-		tm.serverClients[key] = client
+		tm.serverClients[proxiedClientKey(ds.OrgID, ds.Type, ds.UID)] = client
 	}
 	clientCount := len(tm.serverClients)
 	tm.clientsMutex.Unlock()
@@ -538,6 +654,7 @@ type builtProxiedTools struct {
 	clients           map[string]*ProxiedClient
 	tools             []mcp.Tool
 	toolToDatasources map[string][]string
+	defaultOrgID      int64
 }
 
 // buildProxiedToolSet discovers datasources, connects to them, and returns the
@@ -565,21 +682,21 @@ func (tm *ToolManager) buildProxiedToolSet(ctx context.Context, logger *slog.Log
 	}()
 
 	// Discover datasources with MCP support.
-	discovered, err := discoverMCPDatasources(ctx, logger)
+	discovered, defaultOrg, err := discoverMCPDatasources(ctx, logger)
 	if err != nil {
 		logger.ErrorContext(ctx, "failed to discover MCP datasources", "error", err)
 		return built, fmt.Errorf("failed to discover MCP datasources: %w", err)
 	}
+	built.defaultOrgID = defaultOrg
 
-	// Connect to each discovered datasource.
+	// Connect to each discovered datasource, in the org it was found in.
 	for _, ds := range discovered {
-		client, err := NewProxiedClient(ctx, ds.UID, ds.Name, ds.Type, ds.MCPURL)
+		client, err := NewProxiedClient(ctx, ds.OrgID, ds.UID, ds.Name, ds.Type, ds.MCPURL)
 		if err != nil {
-			logger.ErrorContext(ctx, "failed to create proxied client", "datasource", ds.UID, "error", err)
+			logger.ErrorContext(ctx, "failed to create proxied client", "datasource", ds.UID, "org", ds.OrgID, "error", err)
 			continue
 		}
-		key := ds.Type + "_" + ds.UID
-		built.clients[key] = client
+		built.clients[proxiedClientKey(ds.OrgID, ds.Type, ds.UID)] = client
 	}
 
 	// Collect unique tools and track which datasources support each one.
@@ -719,6 +836,7 @@ func (tm *ToolManager) runProxiedToolSetBuild(ctx context.Context, set *proxiedT
 		set.clients = built.clients
 		set.tools = built.tools
 		set.toolToDatasources = built.toolToDatasources
+		set.defaultOrgID = built.defaultOrgID
 		set.built = true
 	}
 	abandoned := set.refs == 0
@@ -804,7 +922,7 @@ func (tm *ToolManager) closeProxiedClients(clients map[string]*ProxiedClient) {
 // client while the call runs. The returned release func MUST be called (deferred)
 // once the call completes; it decrements the in-flight count and closes the set
 // if it was the last thing keeping it alive.
-func (tm *ToolManager) acquireProxiedClientForCall(set *proxiedToolSet, datasourceType, datasourceUID string) (*ProxiedClient, func(), error) {
+func (tm *ToolManager) acquireProxiedClientForCall(set *proxiedToolSet, orgID int64, datasourceType, datasourceUID string) (*ProxiedClient, func(), error) {
 	tm.proxiedSetsMu.Lock()
 	defer tm.proxiedSetsMu.Unlock()
 
@@ -812,19 +930,22 @@ func (tm *ToolManager) acquireProxiedClientForCall(set *proxiedToolSet, datasour
 		return nil, nil, fmt.Errorf("datasource '%s' is no longer available", datasourceUID)
 	}
 
-	key := datasourceType + "_" + datasourceUID
-	client, ok := set.clients[key]
+	// A call that omits orgId targets the connection's default org.
+	if orgID <= 0 {
+		orgID = set.defaultOrgID
+	}
+	client, ok := set.clients[proxiedClientKey(orgID, datasourceType, datasourceUID)]
 	if !ok {
 		var availableUIDs []string
 		for _, c := range set.clients {
-			if c.DatasourceType == datasourceType {
+			if c.DatasourceType == datasourceType && c.OrgID == orgID {
 				availableUIDs = append(availableUIDs, c.DatasourceUID)
 			}
 		}
 		if len(availableUIDs) > 0 {
-			return nil, nil, fmt.Errorf("datasource '%s' not found. Available %s datasources: %v", datasourceUID, datasourceType, availableUIDs)
+			return nil, nil, fmt.Errorf("datasource '%s' not found in org %d. Available %s datasources: %v", datasourceUID, orgID, datasourceType, availableUIDs)
 		}
-		return nil, nil, fmt.Errorf("datasource '%s' not found. No %s datasources with MCP support are configured", datasourceUID, datasourceType)
+		return nil, nil, fmt.Errorf("datasource '%s' not found in org %d. No %s datasources with MCP support are configured", datasourceUID, orgID, datasourceType)
 	}
 
 	set.inFlight++
@@ -973,25 +1094,28 @@ func (tm *ToolManager) releaseSessionProxiedToolSet(state *SessionState) {
 }
 
 // GetServerClient retrieves a proxied client from server-level storage (for stdio transport)
-func (tm *ToolManager) GetServerClient(datasourceType, datasourceUID string) (*ProxiedClient, error) {
+func (tm *ToolManager) GetServerClient(orgID int64, datasourceType, datasourceUID string) (*ProxiedClient, error) {
 	tm.clientsMutex.RLock()
 	defer tm.clientsMutex.RUnlock()
 
-	key := datasourceType + "_" + datasourceUID
-	client, exists := tm.serverClients[key]
+	// A call that omits orgId targets the connection's default org.
+	if orgID <= 0 {
+		orgID = tm.defaultOrgID
+	}
+	client, exists := tm.serverClients[proxiedClientKey(orgID, datasourceType, datasourceUID)]
 	if !exists {
-		// List available datasources to help with debugging
+		// List available datasources (in this org) to help with debugging
 		var availableUIDs []string
 		for _, c := range tm.serverClients {
-			if c.DatasourceType == datasourceType {
+			if c.DatasourceType == datasourceType && c.OrgID == orgID {
 				availableUIDs = append(availableUIDs, c.DatasourceUID)
 			}
 		}
 
 		if len(availableUIDs) > 0 {
-			return nil, fmt.Errorf("datasource '%s' not found. Available %s datasources: %v", datasourceUID, datasourceType, availableUIDs)
+			return nil, fmt.Errorf("datasource '%s' not found in org %d. Available %s datasources: %v", datasourceUID, orgID, datasourceType, availableUIDs)
 		}
-		return nil, fmt.Errorf("datasource '%s' not found. No %s datasources with MCP support are configured", datasourceUID, datasourceType)
+		return nil, fmt.Errorf("datasource '%s' not found in org %d. No %s datasources with MCP support are configured", datasourceUID, orgID, datasourceType)
 	}
 
 	return client, nil

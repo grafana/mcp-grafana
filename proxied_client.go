@@ -24,6 +24,7 @@ type ProxiedClient struct {
 	DatasourceUID  string
 	DatasourceName string
 	DatasourceType string
+	OrgID          int64
 	Client         *mcp_client.Client
 	Tools          []mcp.Tool
 	mutex          sync.RWMutex
@@ -47,9 +48,14 @@ func contextCauseOrErr(ctx context.Context, err error) error {
 }
 
 // NewProxiedClient creates a new connection to a remote MCP server
-func NewProxiedClient(ctx context.Context, datasourceUID, datasourceName, datasourceType, mcpEndpoint string) (*ProxiedClient, error) {
+func NewProxiedClient(ctx context.Context, orgID int64, datasourceUID, datasourceName, datasourceType, mcpEndpoint string) (*ProxiedClient, error) {
 	config := GrafanaConfigFromContext(ctx)
 	logger := config.LoggerOrDefault()
+
+	// Bake the org into this client's transport so every request to the datasource
+	// proxy carries X-Grafana-Org-Id: orgID, independent of the per-call context.
+	config.OrgID = orgID
+	ctx = WithGrafanaConfig(ctx, config)
 
 	initCtx, cancel := context.WithTimeoutCause(ctx, mcpClientInitTimeout,
 		fmt.Errorf("timed out after %s connecting to MCP server for datasource %s (%s) at %s", mcpClientInitTimeout, datasourceName, datasourceUID, mcpEndpoint))
@@ -103,6 +109,7 @@ func NewProxiedClient(ctx context.Context, datasourceUID, datasourceName, dataso
 		DatasourceUID:  datasourceUID,
 		DatasourceName: datasourceName,
 		DatasourceType: datasourceType,
+		OrgID:          orgID,
 		Client:         mcpClient,
 		Tools:          toolsResult.Tools,
 	}, nil

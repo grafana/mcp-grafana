@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -134,6 +135,21 @@ func ListUserOrgs(ctx context.Context) ([]OrgInfo, error) {
 		return nil, err
 	}
 	return orgs, nil
+}
+
+// resolveDefaultOrgID returns the org the connection targets when no orgId is
+// given: the current org reported by /api/org, falling back to the configured
+// OrgID (0 when unset, which Grafana treats as the identity's active org).
+func resolveDefaultOrgID(ctx context.Context, logger *slog.Logger) int64 {
+	cfg := GrafanaConfigFromContext(ctx)
+	var org struct {
+		ID int64 `json:"id"`
+	}
+	if err := grafanaGetJSON(ctx, &cfg, "/api/org", &org); err != nil || org.ID == 0 {
+		logger.DebugContext(ctx, "could not resolve default org from /api/org; using configured OrgID", "orgID", cfg.OrgID, "error", err)
+		return cfg.OrgID
+	}
+	return org.ID
 }
 
 // UserInfo describes the signed-in identity for the current request.
