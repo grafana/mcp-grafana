@@ -2311,34 +2311,22 @@ func TestBlankEnvURLFallsBackToDefault(t *testing.T) {
 	}
 }
 
-// Normalizing the environment URL must not move the boundary that binds
-// environment credentials to the environment instance.
-func TestSchemelessEnvURLKeepsCredentialBinding(t *testing.T) {
+// A schemeless GRAFANA_URL must still reach the header path as the one
+// environment URL. X-Grafana-URL cannot name another instance since #1052, so
+// the env token always applies; TestExtractGrafanaInfoFromHeadersIgnoresURLHeader
+// pins that.
+func TestSchemelessEnvURLReachesHeaderPath(t *testing.T) {
 	const envToken = "env-service-account-token"
 
-	t.Run("same instance spelled with a scheme still receives env credentials", func(t *testing.T) {
-		t.Setenv("GRAFANA_URL", "grafana.example.com")
-		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN", envToken)
+	t.Setenv("GRAFANA_URL", "grafana.example.com")
+	t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN", envToken)
 
-		req, err := http.NewRequest("GET", "http://example.com", nil)
-		require.NoError(t, err)
-		req.Header.Set(grafanaURLHeader, "https://grafana.example.com")
+	req, err := http.NewRequest("GET", "http://example.com", nil)
+	require.NoError(t, err)
 
-		config := GrafanaConfigFromContext(ExtractGrafanaInfoFromHeaders(context.Background(), req))
-		assert.Equal(t, envToken, config.APIKey)
-	})
-
-	t.Run("foreign URL still has env credentials withheld", func(t *testing.T) {
-		t.Setenv("GRAFANA_URL", "grafana.example.com")
-		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN", envToken)
-
-		req, err := http.NewRequest("GET", "http://example.com", nil)
-		require.NoError(t, err)
-		req.Header.Set(grafanaURLHeader, "https://attacker.example.com")
-
-		config := GrafanaConfigFromContext(ExtractGrafanaInfoFromHeaders(context.Background(), req))
-		assert.Empty(t, config.APIKey, "env token must not be sent to a caller-specified URL")
-	})
+	config := GrafanaConfigFromContext(ExtractGrafanaInfoFromHeaders(context.Background(), req))
+	assert.Equal(t, "https://grafana.example.com", config.URL)
+	assert.Equal(t, envToken, config.APIKey)
 }
 
 // The cached client extractors derive their cache key from the URL the request
@@ -2358,7 +2346,7 @@ func TestEnvURLSpellingsResolveToOneValue(t *testing.T) {
 	} {
 		t.Run(spelling, func(t *testing.T) {
 			t.Setenv("GRAFANA_URL", spelling)
-			resolvedURL, _, _, _, _ := extractKeyGrafanaInfoFromReq(req, logger)
+			resolvedURL, _, _, _ := extractKeyGrafanaInfoFromReq(req, logger)
 			assert.Equal(t, canonical, resolvedURL)
 		})
 	}
