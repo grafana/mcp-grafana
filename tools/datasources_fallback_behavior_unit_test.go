@@ -98,6 +98,7 @@ func newFakeGrafana(profile legacyProfile) *fakeGrafana {
 		case path == "/api/frontend/settings":
 			_, _ = w.Write([]byte(`{
 				"datasources": {
+					"-- Grafana --": {"id": -1, "uid": "grafana", "type": "datasource"},
 					"Prometheus": {"id": 1, "uid": "prometheus", "type": "prometheus", "jsonData": {}},
 					"Loki": {"id": 3, "uid": "loki", "type": "loki", "jsonData": {}}
 				},
@@ -240,6 +241,29 @@ func TestQueryPrometheus_NameReferenceUsesResolvedUID(t *testing.T) {
 	assert.True(t, strings.HasPrefix(data[0], "/api/datasources/proxy/1/"), "got %q", data[0])
 	assert.True(t, strings.HasPrefix(data[1], "/api/datasources/proxy/uid/prometheus/"),
 		"transport fallback must use the resolved uid, got %q", data[1])
+}
+
+// Name references are matched case-insensitively, and the routing cache must
+// agree with that: a query referencing the datasource by a differently-cased
+// name has to reach the numeric-id route end to end.
+func TestQueryPrometheus_CaseInsensitiveNameReference(t *testing.T) {
+	f := newFakeGrafana(legacyProfiles["grafana-8.5"])
+	defer f.Close()
+
+	resetFallbackCache()
+	ctx := mockDatasourcesCtx(f.Server)
+	result, err := queryPrometheus(ctx, QueryPrometheusParams{
+		DatasourceUID: "PROMETHEUS", // the name is "Prometheus", the uid "prometheus"
+		Expr:          "time()",
+		QueryType:     "instant",
+		EndTime:       "now",
+	})
+	require.NoError(t, err)
+	assert.Contains(t, result.String(), "42")
+
+	data := f.dataRequests()
+	require.NotEmpty(t, data)
+	assert.True(t, strings.HasPrefix(data[0], "/api/datasources/proxy/1/"), "got %q", data[0])
 }
 
 // The native Loki client shares the proxy routing; it must work on Grafana

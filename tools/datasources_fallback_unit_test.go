@@ -23,7 +23,7 @@ func newFallbackTestServer() *httptest.Server {
 		if r.URL.Path == "/api/frontend/settings" {
 			_, _ = w.Write([]byte(`{
 				"datasources": {
-					"-- Grafana --": {"type": "datasource"},
+					"-- Grafana --": {"id": -1, "uid": "grafana", "type": "datasource"},
 					"Main Prom": {"id": 4, "uid": "prom-uid", "type": "prometheus", "jsonData": {"httpMethod": "POST"}},
 					"Loki": {"id": 7, "uid": "loki-uid", "type": "loki"}
 				},
@@ -49,10 +49,12 @@ func TestGetDatasourceByUID_FrontendSettingsFallback(t *testing.T) {
 	assert.Equal(t, "prometheus", ds.Type)
 	assert.True(t, ds.IsDefault)
 
-	// Unknown uid keeps returning the original metadata error.
+	// An unknown uid surfaces as not-found — not as the misleading
+	// permission error from the metadata API.
 	_, err = getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: "nope"})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "get datasource by uid nope")
+	assert.Contains(t, err.Error(), "not found")
+	assert.NotContains(t, err.Error(), "Permission denied")
 }
 
 func TestGetDatasourceByName_FrontendSettingsFallback(t *testing.T) {
@@ -66,6 +68,31 @@ func TestGetDatasourceByName_FrontendSettingsFallback(t *testing.T) {
 	assert.Equal(t, "loki-uid", ds.UID)
 	assert.Equal(t, "loki", ds.Type)
 	assert.False(t, ds.IsDefault)
+
+	// Name matching is case-insensitive, mirroring the metadata API.
+	ds, err = getDatasourceByName(ctx, GetDatasourceByNameParams{Name: "loki"})
+	require.NoError(t, err)
+	assert.Equal(t, int64(7), ds.ID)
+
+	// An unknown name surfaces as not-found, not as a permission error.
+	_, err = getDatasourceByName(ctx, GetDatasourceByNameParams{Name: "asda"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+	assert.NotContains(t, err.Error(), "Permission denied")
+}
+
+// Health checks need the metadata API and the uid-based health route; on
+// deployments where the fallback engages they cannot work, and the tool must
+// say so explicitly instead of surfacing a permission error.
+func TestCheckDatasourcesHealth_UnsupportedOnFallbackDeployments(t *testing.T) {
+	server := newFallbackTestServer()
+	defer server.Close()
+	ctx := mockDatasourcesCtx(server)
+
+	_, err := checkDatasourcesHealth(ctx, BulkCheckDatasourceHealthParams{UIDs: []string{"prom-uid"}})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not supported")
+	assert.NotContains(t, err.Error(), "Permission denied")
 }
 
 func TestListDatasources_FrontendSettingsFallback(t *testing.T) {
@@ -75,9 +102,13 @@ func TestListDatasources_FrontendSettingsFallback(t *testing.T) {
 
 	result, err := listDatasources(ctx, ListDatasourcesParams{})
 	require.NoError(t, err)
-	// The "-- Grafana --" pseudo datasource is skipped.
+	// The "-- Grafana --" pseudo datasource (id -1, uid "grafana" on 8.5) is
+	// skipped: only entries with positive ids are real datasources.
 	assert.Equal(t, 2, result.Total)
 	require.Len(t, result.Datasources, 2)
+	for _, ds := range result.Datasources {
+		assert.Positive(t, ds.ID, "pseudo datasource leaked into the list: %+v", ds)
+	}
 	assert.Equal(t, "Loki", result.Datasources[0].Name)
 	assert.Equal(t, "Main Prom", result.Datasources[1].Name)
 	assert.True(t, result.Datasources[1].IsDefault)

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -64,6 +65,13 @@ var fallbackProxyIDs sync.Map
 //     datasource whose name equals another datasource's uid cannot shadow it.
 func fallbackProxyIDKey(ctx context.Context, kind, id string) string {
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
+
+	// Name matching is case-insensitive (mirroring the metadata API), so
+	// name-kind keys are normalized on both store and lookup. Uids stay
+	// case-sensitive.
+	if kind == "name" {
+		id = strings.ToLower(id)
+	}
 
 	h := sha256.New()
 	for _, part := range []string{cfg.APIKey, cfg.AccessToken, cfg.IDToken} {
@@ -171,6 +179,14 @@ func fetchFrontendSettingsDatasources(ctx context.Context) (map[string]frontendS
 	}
 
 	for name, ds := range settings.Datasources {
+		// Drop the built-in pseudo datasources ("-- Grafana --", "-- Mixed --",
+		// ...): they carry non-positive ids (-1 etc., or none at all), are not
+		// queryable through the datasource proxy, and the metadata API never
+		// returns them either.
+		if ds.ID <= 0 {
+			delete(settings.Datasources, name)
+			continue
+		}
 		if ds.Name == "" {
 			ds.Name = name
 			settings.Datasources[name] = ds
@@ -184,7 +200,7 @@ func fetchFrontendSettingsDatasources(ctx context.Context) (map[string]frontendS
 // datasourceProxyPaths lookups hit regardless of which identifier the caller
 // used.
 func rememberFallbackDatasource(ctx context.Context, ds frontendSettingsDatasource) {
-	if ds.ID == 0 {
+	if ds.ID <= 0 {
 		return
 	}
 	route := fallbackRoute{id: ds.ID, uid: ds.UID}
@@ -208,8 +224,17 @@ func (d frontendSettingsDatasource) toDataSource(defaultName string) *models.Dat
 	}
 }
 
+// errFallbackDatasourceNotFound reports that /api/frontend/settings was read
+// successfully but contains no datasource matching the identifier — i.e. the
+// datasource genuinely does not exist, as opposed to the settings themselves
+// being unavailable. Callers use this to surface a not-found message instead
+// of the original (permission) error, so agents can tell a typo from a
+// credentials problem.
+var errFallbackDatasourceNotFound = errors.New("datasource not found in frontend settings")
+
 // fallbackDatasourceByUID resolves a datasource by uid — or by name, which
 // dashboards on older Grafana commonly use — from /api/frontend/settings.
+// Name matching is case-insensitive, mirroring the metadata API's behavior.
 func fallbackDatasourceByUID(ctx context.Context, uid string) (*models.DataSource, error) {
 	dss, defaultName, err := fetchFrontendSettingsDatasources(ctx)
 	if err != nil {
@@ -222,16 +247,17 @@ func fallbackDatasourceByUID(ctx context.Context, uid string) (*models.DataSourc
 		}
 	}
 	for name, ds := range dss {
-		if name == uid {
+		if strings.EqualFold(name, uid) {
 			rememberFallbackDatasource(ctx, ds)
 			return ds.toDataSource(defaultName), nil
 		}
 	}
-	return nil, fmt.Errorf("datasource %q not found in frontend settings", uid)
+	return nil, fmt.Errorf("%w: %q", errFallbackDatasourceNotFound, uid)
 }
 
 // fallbackDatasourceByName resolves a datasource by name from
-// /api/frontend/settings, which keys datasources by name.
+// /api/frontend/settings, which keys datasources by name. Matching is
+// case-insensitive, mirroring the metadata API's behavior.
 func fallbackDatasourceByName(ctx context.Context, name string) (*models.DataSource, error) {
 	dss, defaultName, err := fetchFrontendSettingsDatasources(ctx)
 	if err != nil {
@@ -241,7 +267,13 @@ func fallbackDatasourceByName(ctx context.Context, name string) (*models.DataSou
 		rememberFallbackDatasource(ctx, ds)
 		return ds.toDataSource(defaultName), nil
 	}
-	return nil, fmt.Errorf("datasource %q not found in frontend settings", name)
+	for n, ds := range dss {
+		if strings.EqualFold(n, name) {
+			rememberFallbackDatasource(ctx, ds)
+			return ds.toDataSource(defaultName), nil
+		}
+	}
+	return nil, fmt.Errorf("%w: %q", errFallbackDatasourceNotFound, name)
 }
 
 // fallbackDatasourceList lists datasources from /api/frontend/settings.
@@ -252,10 +284,6 @@ func fallbackDatasourceList(ctx context.Context) (models.DataSourceList, error) 
 	}
 	list := make(models.DataSourceList, 0, len(dss))
 	for name, ds := range dss {
-		// Skip the built-in pseudo datasources ("-- Grafana --" etc.).
-		if ds.ID == 0 && ds.UID == "" {
-			continue
-		}
 		rememberFallbackDatasource(ctx, ds)
 		list = append(list, &models.DataSourceListItemDTO{
 			ID:        ds.ID,

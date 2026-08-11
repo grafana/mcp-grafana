@@ -140,6 +140,34 @@ func TestLegacyGrafana8DatasourceFallback(t *testing.T) {
 		assert.NotEmpty(t, result.String())
 	})
 
+	t.Run("get datasource by lowercase name", func(t *testing.T) {
+		ds, err := getDatasourceByName(ctx, GetDatasourceByNameParams{Name: "prometheus"})
+		require.NoError(t, err)
+		assert.Equal(t, int64(1), ds.ID)
+		assert.Equal(t, "Prometheus", ds.Name)
+	})
+
+	t.Run("list excludes pseudo datasources", func(t *testing.T) {
+		result, err := listDatasources(ctx, ListDatasourcesParams{})
+		require.NoError(t, err)
+		for _, ds := range result.Datasources {
+			assert.Positive(t, ds.ID, "pseudo datasource leaked into the list: %+v", ds)
+		}
+	})
+
+	t.Run("unknown uid reports not found", func(t *testing.T) {
+		_, err := getDatasourceByUID(ctx, GetDatasourceByUIDParams{UID: "does-not-exist"})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+		assert.NotContains(t, err.Error(), "Permission denied")
+	})
+
+	t.Run("datasource health reports unsupported", func(t *testing.T) {
+		_, err := checkDatasourcesHealth(ctx, BulkCheckDatasourceHealthParams{UIDs: []string{"prometheus"}})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not supported")
+	})
+
 	t.Run("list prometheus label names", func(t *testing.T) {
 		names, err := listPrometheusLabelNames(ctx, ListPrometheusLabelNamesParams{DatasourceUID: "prometheus"})
 		require.NoError(t, err)
