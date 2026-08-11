@@ -67,7 +67,7 @@ func TestDiscoverMCPDatasources(t *testing.T) {
 	ctx := newProxiedToolsTestContext(t)
 
 	t.Run("discovers tempo datasources", func(t *testing.T) {
-		discovered, err := discoverMCPDatasources(ctx, slog.Default())
+		discovered, _, err := discoverMCPDatasources(ctx, slog.Default())
 		require.NoError(t, err)
 
 		// Should find two Tempo datasources from docker-compose
@@ -93,7 +93,7 @@ func TestDiscoverMCPDatasources(t *testing.T) {
 
 	t.Run("returns error when grafana client not in context", func(t *testing.T) {
 		emptyCtx := context.Background()
-		discovered, err := discoverMCPDatasources(emptyCtx, slog.Default())
+		discovered, _, err := discoverMCPDatasources(emptyCtx, slog.Default())
 		assert.Error(t, err)
 		assert.Nil(t, discovered)
 		assert.Contains(t, err.Error(), "grafana client not found in context")
@@ -113,7 +113,7 @@ func TestDiscoverMCPDatasources(t *testing.T) {
 		ctx := WithGrafanaConfig(context.Background(), grafanaCfg)
 		ctx = WithGrafanaClient(ctx, &GrafanaClient{GrafanaHTTPAPI: grafanaClient})
 
-		discovered, err := discoverMCPDatasources(ctx, slog.Default())
+		discovered, _, err := discoverMCPDatasources(ctx, slog.Default())
 		assert.Error(t, err)
 		assert.Nil(t, discovered)
 		assert.Contains(t, err.Error(), "Unauthorized")
@@ -228,7 +228,7 @@ func TestEndToEndProxiedToolsFlow(t *testing.T) {
 
 	t.Run("full flow from discovery to tool call", func(t *testing.T) {
 		// Step 1: Discover MCP datasources
-		discovered, err := discoverMCPDatasources(ctx, slog.Default())
+		discovered, _, err := discoverMCPDatasources(ctx, slog.Default())
 		require.NoError(t, err)
 		require.GreaterOrEqual(t, len(discovered), 1, "Should discover at least one Tempo datasource")
 
@@ -237,7 +237,7 @@ func TestEndToEndProxiedToolsFlow(t *testing.T) {
 		t.Logf("Testing with datasource: %s (UID: %s, URL: %s)", ds.Name, ds.UID, ds.MCPURL)
 
 		// Step 2: Create a proxied client connection
-		client, err := NewProxiedClient(ctx, ds.UID, ds.Name, ds.Type, ds.MCPURL)
+		client, err := NewProxiedClient(ctx, ds.OrgID, ds.UID, ds.Name, ds.Type, ds.MCPURL)
 		if err != nil {
 			t.Skipf("Skipping end-to-end test: Tempo MCP endpoint not available: %v", err)
 			return
@@ -298,7 +298,7 @@ func TestEndToEndProxiedToolsFlow(t *testing.T) {
 	})
 
 	t.Run("multiple datasources in single session", func(t *testing.T) {
-		discovered, err := discoverMCPDatasources(ctx, slog.Default())
+		discovered, _, err := discoverMCPDatasources(ctx, slog.Default())
 		require.NoError(t, err)
 
 		if len(discovered) < 2 {
@@ -325,7 +325,7 @@ func TestEndToEndProxiedToolsFlow(t *testing.T) {
 				break // Test with first 2 datasources
 			}
 
-			client, err := NewProxiedClient(ctx, ds.UID, ds.Name, ds.Type, ds.MCPURL)
+			client, err := NewProxiedClient(ctx, ds.OrgID, ds.UID, ds.Name, ds.Type, ds.MCPURL)
 			if err != nil {
 				t.Logf("Could not connect to datasource %s: %v", ds.UID, err)
 				continue

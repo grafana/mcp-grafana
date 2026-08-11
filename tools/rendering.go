@@ -103,8 +103,9 @@ func getPanelImage(ctx context.Context, args GetPanelImageParams) (*mcp.CallTool
 		return nil, fmt.Errorf("grafana URL not configured. Please set GRAFANA_URL environment variable")
 	}
 
-	// Build the render URL
-	renderURL, err := buildRenderURL(baseURL, args)
+	// Build the render URL. config.OrgID carries any per-call orgId override
+	// applied by OrgIDOverrideMiddleware (or the connection's org).
+	renderURL, err := buildRenderURL(baseURL, config.OrgID, args)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build render URL: %w", err)
 	}
@@ -175,7 +176,7 @@ func getPanelImage(ctx context.Context, args GetPanelImageParams) (*mcp.CallTool
 
 	// Use the public base URL, not config.URL, which may be an in-cluster
 	// endpoint the browser can't reach.
-	if deeplinkBase, err := grafanaBaseURLFromContext(ctx); err == nil {
+	if deeplinkBase, err := grafanaBaseURLFromContext(ctx); err == nil && deeplinkResolvesInRenderOrg(ctx, config.OrgID) {
 		if deeplink, err := buildDashboardDeeplink(deeplinkBase, args); err == nil {
 			content = append(content, mcp.TextContent{
 				Meta: mcpgrafana.NewUIContentMeta(mcpgrafana.UIContentKindDeeplink),
@@ -190,7 +191,7 @@ func getPanelImage(ctx context.Context, args GetPanelImageParams) (*mcp.CallTool
 	}, nil
 }
 
-func buildRenderURL(baseURL string, args GetPanelImageParams) (string, error) {
+func buildRenderURL(baseURL string, orgID int64, args GetPanelImageParams) (string, error) {
 	// Validate that exactly one source is set.
 	hasUID := args.DashboardUID != ""
 	hasPreview := args.ProvisioningPreview != nil
@@ -292,10 +293,45 @@ func buildRenderURL(baseURL string, args GetPanelImageParams) (string, error) {
 		}
 	}
 
+	// Select the org to render from. The image renderer drives a headless browser
+	// whose request org is set by the backend from the targetOrgId query param;
+	// the X-Grafana-Org-Id header (set by the transport) is ignored by the render
+	// path. We deliberately use targetOrgId rather than orgId: orgId is read by
+	// the frontend, which persists an org switch via /api/user/using — that would
+	// change the user's active org for every later request. targetOrgId only
+	// scopes this single render.
+	if orgID > 0 {
+		params.Set("targetOrgId", strconv.FormatInt(orgID, 10))
+	}
+
 	// Add kiosk mode options for cleaner rendering
 	params.Set("kiosk", "true")
 
 	return fmt.Sprintf("%s%s?%s", baseURL, renderPath, params.Encode()), nil
+}
+
+// deeplinkResolvesInRenderOrg reports whether a dashboard URL carrying no org
+// would open in renderOrg for this identity.
+//
+// The link cannot carry one: `?orgId=N` is intercepted by Grafana's global
+// OrgRedirect middleware, which persists the switch onto the user's record, and
+// neither targetOrgId (render backend only) nor X-Grafana-Org-Id (not sendable
+// by a browser) substitutes. So when the render org is not where the viewer would
+// land, omit the link rather than point it at the wrong dashboard — UIDs are
+// unique only within an org. The image is unaffected.
+//
+// A non-positive renderOrg means no org reached the render (as in
+// buildRenderURL and OrgIDRoundTripper), so it used the identity's own org and
+// the link agrees. A failed lookup omits the link.
+func deeplinkResolvesInRenderOrg(ctx context.Context, renderOrg int64) bool {
+	if renderOrg <= 0 {
+		return true
+	}
+	viewerOrg, err := mcpgrafana.UserPersistedOrgID(ctx)
+	if err != nil {
+		return false
+	}
+	return viewerOrg == renderOrg
 }
 
 // buildDashboardDeeplink returns the Grafana UI URL for the rendered

@@ -78,6 +78,7 @@ var categoryDescription = map[string]string{
 	"provisioning":  "Provisioning: List provisioning repositories (e.g. git-sync sources) to discover repository slugs for use with rendering tools.",
 	"agento11y":     "Agent Observability: Search and inspect LLM conversations, generations, and evaluation scores from Grafana Agent Observability, read its agent catalog (system prompts, tools, version history, and per-version scores), and read or manage its eval configuration (evaluators, templates, eval rules, and guards) and its curated saved conversations and collections.",
 	"assistant":     "Assistant: Ask Grafana Assistant open-ended questions and get a full text reply (requires the Grafana Assistant plugin).",
+	"user":          "User: Identify the current user/credential, its capabilities, and the organizations it can access.",
 }
 
 // disabledTools indicates whether each category of tools should be disabled.
@@ -90,7 +91,7 @@ type disabledTools struct {
 	pyroscope, navigation, proxied, annotations, rendering, cloudwatch, write,
 	snapshot, examples, clickhouse, snowflake, graphite,
 	runpanelquery, athena, plugin, api, config, provisioning,
-	agento11y, assistant bool
+	agento11y, assistant, user bool
 }
 
 // Configuration for the Grafana client.
@@ -112,10 +113,15 @@ type grafanaConfig struct {
 
 	// timeout is the time limit for requests made by the Grafana client.
 	timeout time.Duration
+
+	// dynamicMultiOrg allows tool calls to select a Grafana organization per
+	// call via an optional orgId argument. Off by default; startup-time
+	// multi-org (GRAFANA_ORG_ID / X-Grafana-Org-Id) is unaffected.
+	dynamicMultiOrg bool
 }
 
 func (dt *disabledTools) addFlags() {
-	flag.StringVar(&dt.enabledTools, "enabled-tools", "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering,snapshot,plugin,api,config,provisioning", "A comma separated list of tools enabled for this server. Can be overwritten entirely or by disabling specific components, e.g. --disable-search.")
+	flag.StringVar(&dt.enabledTools, "enabled-tools", "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering,snapshot,plugin,api,config,provisioning,user", "A comma separated list of tools enabled for this server. Can be overwritten entirely or by disabling specific components, e.g. --disable-search.")
 	flag.BoolVar(&dt.search, "disable-search", false, "Disable search tools")
 	flag.BoolVar(&dt.datasource, "disable-datasource", false, "Disable datasource tools")
 	flag.BoolVar(&dt.incident, "disable-incident", false, "Disable incident tools")
@@ -151,6 +157,7 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.provisioning, "disable-provisioning", false, "Disable provisioning tools")
 	flag.BoolVar(&dt.agento11y, "disable-agento11y", false, "Disable Agent Observability tools")
 	flag.BoolVar(&dt.assistant, "disable-assistant", false, "Disable Grafana Assistant tools")
+	flag.BoolVar(&dt.user, "disable-user", false, "Disable user info tools")
 }
 
 func (gc *grafanaConfig) addFlags() {
@@ -167,6 +174,9 @@ func (gc *grafanaConfig) addFlags() {
 
 	flag.BoolVar(&gc.includeArgsInSpans, "include-args-in-spans", false, "Include tool call arguments in OpenTelemetry spans. Only enable in non-production environments or when arguments are known not to contain PII.")
 	flag.DurationVar(&gc.timeout, "grafana-timeout", mcpgrafana.DefaultGrafanaClientTimeout, "Time limit for requests made by the Grafana client. Accepts Go duration strings, e.g. 10s, 500ms.")
+
+	// Multi-org: allow per-call org selection via an optional orgId argument.
+	flag.BoolVar(&gc.dynamicMultiOrg, "dynamic-multi-org", false, "Allow tool calls to select a Grafana organization per call via an optional orgId argument (org is otherwise fixed at connection startup). Adds an orgId argument to every tool's schema.")
 }
 
 // toolEntry pairs a tool registration function with its category and disable flag.
@@ -215,6 +225,7 @@ func (dt *disabledTools) toolEntries() []toolEntry {
 		{tools.AddProvisioningTools, dt.provisioning, "provisioning"},
 		{func(mcp *server.MCPServer) { tools.AddAgento11yTools(mcp, enableWriteTools) }, dt.agento11y, "agento11y"},
 		{func(mcp *server.MCPServer) { tools.AddAssistantTools(mcp, enableWriteTools) }, dt.assistant, "assistant"},
+		{tools.AddUserTools, dt.user, "user"},
 	}
 }
 
@@ -340,10 +351,17 @@ func newServer(transport string, dt disabledTools, obs *observability.Observabil
 	// then register tools.
 	instructions := dt.buildInstructions()
 
-	s = server.NewMCPServer("mcp-grafana", mcpgrafana.Version(),
+	serverOpts := []server.ServerOption{
 		server.WithInstructions(instructions),
 		server.WithHooks(hooks),
-	)
+	}
+	if mcpgrafana.DynamicMultiOrgEnabled {
+		// Honor an optional per-call "orgId" argument so a single connection can
+		// target multiple Grafana organizations (overrides the connection-level
+		// org for that call). Only wired in when --dynamic-multi-org is set.
+		serverOpts = append(serverOpts, server.WithToolHandlerMiddleware(mcpgrafana.OrgIDOverrideMiddleware))
+	}
+	s = server.NewMCPServer("mcp-grafana", mcpgrafana.Version(), serverOpts...)
 
 	// Initialize ToolManager now that server is created
 	stm = mcpgrafana.NewToolManager(sm, s, mcpgrafana.WithProxiedTools(!dt.proxied), mcpgrafana.WithToolManagerLogger(slog.Default()))
@@ -773,6 +791,10 @@ func main() {
 		fmt.Fprintf(os.Stderr, "internal error: unexpected flag action %v\n", action)
 		os.Exit(2)
 	}
+
+	// Enable per-call org selection before any tools are registered, so their
+	// schemas and the override middleware are wired in consistently.
+	mcpgrafana.DynamicMultiOrgEnabled = gc.dynamicMultiOrg
 
 	// Convert local grafanaConfig to mcpgrafana.GrafanaConfig
 	grafanaConfig := mcpgrafana.GrafanaConfig{
