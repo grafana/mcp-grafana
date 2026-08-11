@@ -137,7 +137,7 @@ func ListUserOrgs(ctx context.Context) ([]OrgInfo, error) {
 	return orgs, nil
 }
 
-// UserDefaultOrgID returns the org stored on the signed-in user's record — the
+// UserPersistedOrgID returns the org stored on the signed-in user's record — the
 // org a browser session for this identity lands in. Unlike /api/org it is not
 // request-scoped, so GRAFANA_ORG_ID, an X-Grafana-Org-Id header and a per-call
 // orgId override all leave it unchanged. Tools that hand a URL to a human use it
@@ -147,7 +147,10 @@ func ListUserOrgs(ctx context.Context) ([]OrgInfo, error) {
 // For identities that are not users (e.g. service-account tokens) Grafana
 // reports the request org here instead; those are single-org, so the comparison
 // is trivially satisfied.
-func UserDefaultOrgID(ctx context.Context) (int64, error) {
+//
+// This is the opposite of what UserInfo.CurrentOrgID wants: that reports the org
+// calls target, so it resolves request-scoped. Do not collapse the two.
+func UserPersistedOrgID(ctx context.Context) (int64, error) {
 	cfg := GrafanaConfigFromContext(ctx)
 	var u struct {
 		OrgID int64 `json:"orgId"`
@@ -158,16 +161,16 @@ func UserDefaultOrgID(ctx context.Context) (int64, error) {
 	return u.OrgID, nil
 }
 
-// resolveDefaultOrgID returns the org the connection targets when no orgId is
+// resolveConnectionOrgID returns the org the connection targets when no orgId is
 // given: the current org reported by /api/org, falling back to the configured
 // OrgID (0 when unset, which Grafana treats as the identity's active org).
-func resolveDefaultOrgID(ctx context.Context, logger *slog.Logger) int64 {
+func resolveConnectionOrgID(ctx context.Context, logger *slog.Logger) int64 {
 	cfg := GrafanaConfigFromContext(ctx)
 	var org struct {
 		ID int64 `json:"id"`
 	}
 	if err := grafanaGetJSON(ctx, &cfg, "/api/org", &org); err != nil || org.ID == 0 {
-		logger.DebugContext(ctx, "could not resolve default org from /api/org; using configured OrgID", "orgID", cfg.OrgID, "error", err)
+		logger.DebugContext(ctx, "could not resolve connection org from /api/org; using configured OrgID", "orgID", cfg.OrgID, "error", err)
 		return cfg.OrgID
 	}
 	return org.ID
@@ -175,18 +178,29 @@ func resolveDefaultOrgID(ctx context.Context, logger *slog.Logger) int64 {
 
 // UserInfo describes the signed-in identity for the current request.
 type UserInfo struct {
-	Login          string    `json:"login,omitempty"`
-	Email          string    `json:"email,omitempty"`
-	Name           string    `json:"name,omitempty"`
-	IsGrafanaAdmin bool      `json:"isGrafanaAdmin"`
-	CurrentOrgID   int64     `json:"currentOrgId"`
-	Orgs           []OrgInfo `json:"orgs"`
+	Login          string `json:"login,omitempty"`
+	Email          string `json:"email,omitempty"`
+	Name           string `json:"name,omitempty"`
+	IsGrafanaAdmin bool   `json:"isGrafanaAdmin"`
+	// CurrentOrgID is the org this connection's calls target when they carry no
+	// orgId, not the org persisted on the user record.
+	CurrentOrgID int64     `json:"currentOrgId"`
+	Orgs         []OrgInfo `json:"orgs"`
 }
 
 // CurrentUserInfo returns the signed-in user's identity (GET /api/user) plus the
 // organizations the credential can access (GET /api/user/orgs). Org membership
 // is best-effort: it is empty for identities that can't enumerate orgs (e.g.
 // service-account tokens), which remain scoped to their single CurrentOrgID.
+//
+// CurrentOrgID is resolved request-scoped rather than taken from /api/user,
+// which reports the org persisted on the user record and so ignores
+// GRAFANA_ORG_ID and the X-Grafana-Org-Id header. Reporting the persisted value
+// would tell a client that calls target one org while they actually reach
+// another. (UserPersistedOrgID deliberately wants the persisted value — it answers
+// a different question.) The /api/user value remains the last fallback, for when
+// neither /api/org nor the config names an org: Grafana then applies the
+// identity's own org, which is exactly what /api/user reports.
 func CurrentUserInfo(ctx context.Context) (UserInfo, error) {
 	cfg := GrafanaConfigFromContext(ctx)
 	var u struct {
@@ -199,12 +213,16 @@ func CurrentUserInfo(ctx context.Context) (UserInfo, error) {
 	if err := grafanaGetJSON(ctx, &cfg, "/api/user", &u); err != nil {
 		return UserInfo{}, err
 	}
+	currentOrg := resolveConnectionOrgID(ctx, cfg.LoggerOrDefault())
+	if currentOrg <= 0 {
+		currentOrg = u.OrgID
+	}
 	info := UserInfo{
 		Login:          u.Login,
 		Email:          u.Email,
 		Name:           u.Name,
 		IsGrafanaAdmin: u.IsGrafanaAdmin,
-		CurrentOrgID:   u.OrgID,
+		CurrentOrgID:   currentOrg,
 	}
 	if orgs, err := ListUserOrgs(ctx); err == nil {
 		info.Orgs = orgs

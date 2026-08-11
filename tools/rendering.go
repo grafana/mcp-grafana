@@ -327,7 +327,7 @@ func deeplinkResolvesInRenderOrg(ctx context.Context, renderOrg int64) bool {
 	if renderOrg <= 0 {
 		return true
 	}
-	viewerOrg, err := mcpgrafana.UserDefaultOrgID(ctx)
+	viewerOrg, err := mcpgrafana.UserPersistedOrgID(ctx)
 	if err != nil {
 		return false
 	}

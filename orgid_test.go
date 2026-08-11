@@ -3,6 +3,9 @@ package mcpgrafana
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/invopop/jsonschema"
@@ -132,5 +135,60 @@ func TestOrgIDOverrideMiddleware(t *testing.T) {
 		call(ctx, args)
 		assert.Equal(t, int64(7), seen)
 		assert.NotContains(t, args, OrgIDArgument, "even an invalid orgId must not propagate downstream")
+	})
+}
+
+// user_info's currentOrgId must name the org this connection's calls actually
+// reach. /api/user reports the org persisted on the user record and ignores
+// GRAFANA_ORG_ID and X-Grafana-Org-Id, so reporting it would tell a client that
+// calls target one org while they reach another.
+func TestCurrentUserInfoOrgIsRequestScoped(t *testing.T) {
+	// persistedOrg is what /api/user reports; requestOrg is what /api/org
+	// reports. A zero requestOrg serves 404, standing in for an unavailable
+	// endpoint.
+	server := func(t *testing.T, persistedOrg, requestOrg int64) context.Context {
+		t.Helper()
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			switch r.URL.Path {
+			case "/api/user":
+				_, _ = fmt.Fprintf(w, `{"login":"admin","orgId":%d}`, persistedOrg)
+			case "/api/org":
+				if requestOrg == 0 {
+					w.WriteHeader(http.StatusNotFound)
+					return
+				}
+				_, _ = fmt.Fprintf(w, `{"id":%d}`, requestOrg)
+			case "/api/user/orgs":
+				_, _ = fmt.Fprintf(w, `[{"orgId":%d},{"orgId":%d}]`, persistedOrg, requestOrg)
+			default:
+				w.WriteHeader(http.StatusNotFound)
+			}
+		}))
+		t.Cleanup(ts.Close)
+		return WithGrafanaConfig(context.Background(), GrafanaConfig{URL: ts.URL})
+	}
+
+	t.Run("request org wins over the persisted org", func(t *testing.T) {
+		info, err := CurrentUserInfo(server(t, 1, 2))
+		require.NoError(t, err)
+		assert.Equal(t, int64(2), info.CurrentOrgID, "must report the org calls reach, not the user's stored org")
+		assert.Equal(t, "admin", info.Login)
+	})
+
+	t.Run("falls back to the persisted org when no org is resolvable", func(t *testing.T) {
+		// Neither /api/org nor the config names an org, so Grafana applies the
+		// identity's own org -- which is what /api/user reports.
+		info, err := CurrentUserInfo(server(t, 5, 0))
+		require.NoError(t, err)
+		assert.Equal(t, int64(5), info.CurrentOrgID)
+	})
+
+	t.Run("UserPersistedOrgID still reports the persisted org", func(t *testing.T) {
+		// The two must not converge: the deeplink gate needs the browser-session
+		// org, which is the persisted one.
+		got, err := UserPersistedOrgID(server(t, 1, 2))
+		require.NoError(t, err)
+		assert.Equal(t, int64(1), got)
 	})
 }

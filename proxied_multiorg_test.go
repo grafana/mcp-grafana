@@ -39,7 +39,7 @@ func orgsTestServer(t *testing.T, userOrgsStatus int, userOrgsBody string) *http
 func TestAccessibleOrgIDs(t *testing.T) {
 	logger := slog.Default()
 
-	t.Run("disabled returns only the default org", func(t *testing.T) {
+	t.Run("disabled returns only the connection org", func(t *testing.T) {
 		ts := orgsTestServer(t, http.StatusOK, `[{"orgId":1},{"orgId":2}]`)
 		DynamicMultiOrgEnabled = false
 		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{URL: ts.URL})
@@ -58,7 +58,7 @@ func TestAccessibleOrgIDs(t *testing.T) {
 		assert.Equal(t, int64(1), def)
 	})
 
-	t.Run("enabled falls back to the default org when orgs are not enumerable", func(t *testing.T) {
+	t.Run("enabled falls back to the connection org when orgs are not enumerable", func(t *testing.T) {
 		// e.g. a service-account token: /api/user/orgs is not available.
 		ts := orgsTestServer(t, http.StatusForbidden, "")
 		DynamicMultiOrgEnabled = true
@@ -69,7 +69,7 @@ func TestAccessibleOrgIDs(t *testing.T) {
 		assert.Equal(t, int64(1), def)
 	})
 
-	t.Run("enabled includes the default org when the user list omits it", func(t *testing.T) {
+	t.Run("enabled includes the connection org when the user list omits it", func(t *testing.T) {
 		// /api/org reports org 1 but membership only lists org 2: the default must
 		// still be discovered, or a call omitting orgId would find no clients.
 		ts := orgsTestServer(t, http.StatusOK, `[{"orgId":2}]`)
@@ -83,7 +83,7 @@ func TestAccessibleOrgIDs(t *testing.T) {
 }
 
 func TestGetServerClientOrgKeyed(t *testing.T) {
-	tm := &ToolManager{serverClients: map[string]*ProxiedClient{}, defaultOrgID: 2}
+	tm := &ToolManager{serverClients: map[string]*ProxiedClient{}, connectionOrgID: 2}
 	want := &ProxiedClient{DatasourceUID: "x", DatasourceType: "tempo", OrgID: 2}
 	tm.serverClients[proxiedClientKey(2, "tempo", "x")] = want
 
@@ -93,7 +93,7 @@ func TestGetServerClientOrgKeyed(t *testing.T) {
 		assert.Same(t, want, got)
 	})
 
-	t.Run("org 0 normalizes to the default org", func(t *testing.T) {
+	t.Run("org 0 normalizes to the connection org", func(t *testing.T) {
 		got, err := tm.GetServerClient(0, "tempo", "x")
 		require.NoError(t, err)
 		assert.Same(t, want, got)
@@ -108,7 +108,7 @@ func TestGetServerClientOrgKeyed(t *testing.T) {
 
 // The shared, credential-keyed proxiedToolSet holds clients for every org the
 // credential can reach, so the same lookup rules as the stdio path must hold on
-// the set: exact org match, 0 normalizing to the set's default org, and a
+// the set: exact org match, 0 normalizing to the set's connection org, and a
 // non-matching org failing rather than silently returning another org's client.
 func TestAcquireProxiedClientForCallOrgKeyed(t *testing.T) {
 	org2 := &ProxiedClient{DatasourceUID: "x", DatasourceType: "tempo", OrgID: 2}
@@ -120,8 +120,8 @@ func TestAcquireProxiedClientForCallOrgKeyed(t *testing.T) {
 				proxiedClientKey(2, "tempo", "x"): org2,
 				proxiedClientKey(3, "tempo", "x"): org3,
 			},
-			defaultOrgID: 2,
-			built:        true,
+			connectionOrgID: 2,
+			built:           true,
 			// One live session reference, so releasing an in-flight call does not
 			// tear the set down mid-test.
 			refs: 1,
@@ -143,7 +143,7 @@ func TestAcquireProxiedClientForCallOrgKeyed(t *testing.T) {
 		assert.Same(t, org3, got3)
 	})
 
-	t.Run("org 0 normalizes to the set's default org", func(t *testing.T) {
+	t.Run("org 0 normalizes to the set's connection org", func(t *testing.T) {
 		tm, _ := newTestToolManager(t, time.Hour, nil)
 		got, release, err := tm.acquireProxiedClientForCall(newSet(), 0, "tempo", "x")
 		require.NoError(t, err)
