@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.1] - 2026-08-11
+
+### Added
+
+- `list_datasources` accepts a `name` filter that matches a case-insensitive substring of the datasource name. It applies before pagination and combines with the existing `type` filter, so instances with thousands of datasources can return a result set that fits in an LLM context window ([#973](https://github.com/grafana/mcp-grafana/pull/973))
+
+### Fixed
+
+- A `GRAFANA_URL` without a scheme is normalized where it enters the process, so the API client and the client cache resolve the same instance as the rest of the server. `GRAFANA_URL=127.0.0.1:3000` used to panic at startup, and a schemeless hostname produced requests with no host while tools built from `GrafanaConfig.URL` kept working ([#1034](https://github.com/grafana/mcp-grafana/pull/1034))
+
 ## [1.1.0] - 2026-08-10
 
 ### Added
@@ -22,7 +32,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Proxied-tools memory scaling with session count and unbounded per-session tool-store growth ([#1001](https://github.com/grafana/mcp-grafana/pull/1001))
 - Restrict the Prometheus backend to known Prometheus-compatible datasource types ([#1006](https://github.com/grafana/mcp-grafana/pull/1006))
 - Respect `OTEL_LOGS_EXPORTER=none` to disable OTLP log export ([#1012](https://github.com/grafana/mcp-grafana/pull/1012))
-- A `GRAFANA_URL` without a scheme is normalized where it enters the process, so the API client and the client cache resolve the same instance as the rest of the server. `GRAFANA_URL=127.0.0.1:3000` used to panic at startup, and a schemeless hostname produced requests with no host while tools built from `GrafanaConfig.URL` kept working ([#1034](https://github.com/grafana/mcp-grafana/pull/1034))
 
 ### Changed
 
@@ -356,6 +365,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Upgrade Docker base image packages to resolve critical OpenSSL CVE-2025-15467 (CVSS 9.8) ([#551](https://github.com/grafana/mcp-grafana/pull/551))
 
+[1.1.1]: https://github.com/grafana/mcp-grafana/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/grafana/mcp-grafana/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/grafana/mcp-grafana/compare/v0.17.2...v1.0.0
 [0.17.2]: https://github.com/grafana/mcp-grafana/compare/v0.17.1...v0.17.2
