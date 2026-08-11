@@ -50,6 +50,7 @@ func withToolPhase(r *mcp.CallToolResult, phase string) *mcp.CallToolResult {
 
 type ListDatasourcesParams struct {
 	Type   string `json:"type,omitempty" jsonschema:"description=The type of datasources to search for. For example\\, 'prometheus'\\, 'loki'\\, 'tempo'\\, etc..."`
+	Name   string `json:"name,omitempty" jsonschema:"description=Case-insensitive substring match on the datasource name. For example\\, 'prod' matches datasources named 'prometheus-prod-eu' and 'loki-prod-us'. Useful on instances with many datasources where filtering by type alone returns too many results."`
 	Limit  int    `json:"limit,omitempty" jsonschema:"default=50,description=Maximum number of datasources to return (max 100)"`
 	Offset int    `json:"offset,omitempty" jsonschema:"default=0,description=Number of datasources to skip for pagination"`
 }
@@ -77,8 +78,8 @@ func listDatasources(ctx context.Context, args ListDatasourcesParams) (*ListData
 		return nil, fmt.Errorf("list datasources: %w", err)
 	}
 
-	// Filter by type if specified
-	datasources := filterDatasources(resp.Payload, args.Type)
+	// Filter by type and/or name if specified
+	datasources := filterDatasources(resp.Payload, args.Type, args.Name)
 	total := len(datasources)
 
 	// Apply default limit if not specified
@@ -393,18 +394,24 @@ func createDatasource(ctx context.Context, args CreateDatasourceParams) (*mcp.Ca
 	return withToolPhase(mcp.NewToolResultText(string(b)), dsPhaseCreated), nil
 }
 
-// filterDatasources returns only datasources of the specified type `t`. If `t`
-// is an empty string no filtering is done.
-func filterDatasources(datasources models.DataSourceList, t string) models.DataSourceList {
-	if t == "" {
+// filterDatasources returns only datasources whose type contains `t` and
+// whose name contains `name`, both as case-insensitive substring matches.
+// Empty arguments are treated as wildcards (no filtering on that field).
+func filterDatasources(datasources models.DataSourceList, t, name string) models.DataSourceList {
+	if t == "" && name == "" {
 		return datasources
 	}
-	filtered := models.DataSourceList{}
 	t = strings.ToLower(t)
+	name = strings.ToLower(name)
+	filtered := models.DataSourceList{}
 	for _, ds := range datasources {
-		if strings.Contains(strings.ToLower(ds.Type), t) {
-			filtered = append(filtered, ds)
+		if t != "" && !strings.Contains(strings.ToLower(ds.Type), t) {
+			continue
 		}
+		if name != "" && !strings.Contains(strings.ToLower(ds.Name), name) {
+			continue
+		}
+		filtered = append(filtered, ds)
 	}
 	return filtered
 }
@@ -425,7 +432,7 @@ func summarizeDatasources(dataSources models.DataSourceList) []dataSourceSummary
 
 var ListDatasources = mcpgrafana.MustTool(
 	"list_datasources",
-	"List all configured datasources in Grafana. Use this to discover available datasources and their UIDs. Supports filtering by type and pagination.",
+	"List all configured datasources in Grafana. Use this to discover available datasources and their UIDs. Supports filtering by type and/or name (case-insensitive substring match) and pagination.",
 	listDatasources,
 	mcp.WithTitleAnnotation("List datasources"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -753,7 +760,7 @@ func checkDatasourcesHealth(ctx context.Context, args BulkCheckDatasourceHealthP
 			}
 		}
 	} else {
-		all = filterDatasources(resp.Payload, args.Type)
+		all = filterDatasources(resp.Payload, args.Type, "")
 	}
 
 	limit := 10
