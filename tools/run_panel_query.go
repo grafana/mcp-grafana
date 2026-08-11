@@ -843,6 +843,8 @@ var RunPanelQuery = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("Run panel query"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 // AddRunPanelQueryTools registers run panel query tools with the MCP server

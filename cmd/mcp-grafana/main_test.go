@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"log/slog"
@@ -116,6 +117,73 @@ func TestBuildInstructions_ReflectsEnabledCategories(t *testing.T) {
 				"Available Capabilities:",
 			},
 		},
+		{
+			name:         "agento11y excluded unless opted in",
+			enabledTools: "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering,plugin,api,config,provisioning",
+			wantContains: []string{
+				"Search:",
+			},
+			wantNotContains: []string{
+				"Agent Observability:",
+			},
+		},
+		{
+			name:         "agento11y included when opted in",
+			enabledTools: "search,agento11y",
+			wantContains: []string{
+				"Agent Observability:",
+			},
+		},
+		{
+			name:         "agento11y disable flag overrides enabled list",
+			enabledTools: "search,agento11y",
+			disableFlags: map[string]bool{"agento11y": true},
+			wantContains: []string{
+				"Search:",
+			},
+			wantNotContains: []string{
+				"Agent Observability:",
+			},
+		},
+		{
+			name:         "assistant excluded unless opted in",
+			enabledTools: "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering,plugin,api,config,provisioning",
+			wantContains: []string{
+				"Search:",
+			},
+			wantNotContains: []string{
+				"Assistant:",
+			},
+		},
+		{
+			name:         "assistant included when opted in",
+			enabledTools: "search,assistant",
+			wantContains: []string{
+				"Assistant:",
+			},
+		},
+		{
+			name:         "assistant disable flag overrides enabled list",
+			enabledTools: "search,assistant",
+			disableFlags: map[string]bool{"assistant": true},
+			wantContains: []string{
+				"Search:",
+			},
+			wantNotContains: []string{
+				"Assistant:",
+			},
+		},
+		{
+			name:         "assistant excluded when write disabled",
+			enabledTools: "search,assistant",
+			disableFlags: map[string]bool{"write": true},
+			wantContains: []string{
+				"Search:",
+			},
+			wantNotContains: []string{
+				"Assistant:",
+			},
+		},
 	}
 
 	for _, tc := range tests {
@@ -130,6 +198,15 @@ func TestBuildInstructions_ReflectsEnabledCategories(t *testing.T) {
 				}
 				if tc.disableFlags["proxied"] {
 					dt.proxied = true
+				}
+				if tc.disableFlags["agento11y"] {
+					dt.agento11y = true
+				}
+				if tc.disableFlags["assistant"] {
+					dt.assistant = true
+				}
+				if tc.disableFlags["write"] {
+					dt.write = true
 				}
 			}
 
@@ -650,6 +727,60 @@ func TestValidateServerName_ErrorMessages(t *testing.T) {
 			for _, sub := range tc.wantSubstrings {
 				assert.Contains(t, err.Error(), sub)
 			}
+		})
+	}
+}
+
+func TestCallerAuthConfigResolveToken(t *testing.T) {
+	t.Run("flag takes precedence and is trimmed", func(t *testing.T) {
+		t.Setenv(serverAuthTokenEnvVar, "from-env")
+		ca := callerAuthConfig{token: "  from-flag  "}
+		assert.Equal(t, "from-flag", ca.resolveToken())
+	})
+
+	t.Run("falls back to env when flag empty", func(t *testing.T) {
+		t.Setenv(serverAuthTokenEnvVar, "  from-env  ")
+		ca := callerAuthConfig{}
+		assert.Equal(t, "from-env", ca.resolveToken())
+	})
+
+	t.Run("empty when neither set", func(t *testing.T) {
+		t.Setenv(serverAuthTokenEnvVar, "")
+		ca := callerAuthConfig{}
+		assert.Empty(t, ca.resolveToken())
+	})
+}
+
+func TestCheckCallerAuthPolicy(t *testing.T) {
+	cases := []struct {
+		name      string
+		address   string
+		token     string
+		wantLevel string // "INFO" or "WARN"
+		wantMsg   string // substring expected in the emitted log line
+	}{
+		// A caller token authenticates every request, so any bind is fine.
+		{"token set, public bind", "0.0.0.0:8000", "tok", "INFO", "Caller authentication enabled"},
+		{"token set, loopback bind", "localhost:8000", "tok", "INFO", "Caller authentication enabled"},
+
+		// No token on a loopback bind: only local processes can connect, so this
+		// warns about the missing token rather than about public exposure.
+		{"no token, loopback", "127.0.0.1:8000", "", "WARN", "bound to a loopback address"},
+
+		// No token on a reachable bind: logged at ERROR (highest --log-level, so
+		// the exposure can't be filtered out); starts today (backward compatible).
+		{"no token, public bind", "0.0.0.0:8000", "", "ERROR", "startup error in a future release"},
+		{"no token, wildcard port", ":8000", "", "ERROR", "startup error in a future release"},
+		{"no token, routable IP", "192.168.1.5:8000", "", "ERROR", "startup error in a future release"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+			checkCallerAuthPolicy("streamable-http", tc.address, tc.token, logger)
+			out := buf.String()
+			assert.Contains(t, out, tc.wantMsg)
+			assert.Contains(t, out, `"level":"`+tc.wantLevel+`"`)
 		})
 	}
 }
