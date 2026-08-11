@@ -137,6 +137,27 @@ func ListUserOrgs(ctx context.Context) ([]OrgInfo, error) {
 	return orgs, nil
 }
 
+// UserDefaultOrgID returns the org stored on the signed-in user's record — the
+// org a browser session for this identity lands in. Unlike /api/org it is not
+// request-scoped, so GRAFANA_ORG_ID, an X-Grafana-Org-Id header and a per-call
+// orgId override all leave it unchanged. Tools that hand a URL to a human use it
+// to tell whether a link without an explicit org would resolve in the org they
+// actually rendered from.
+//
+// For identities that are not users (e.g. service-account tokens) Grafana
+// reports the request org here instead; those are single-org, so the comparison
+// is trivially satisfied.
+func UserDefaultOrgID(ctx context.Context) (int64, error) {
+	cfg := GrafanaConfigFromContext(ctx)
+	var u struct {
+		OrgID int64 `json:"orgId"`
+	}
+	if err := grafanaGetJSON(ctx, &cfg, "/api/user", &u); err != nil {
+		return 0, err
+	}
+	return u.OrgID, nil
+}
+
 // resolveDefaultOrgID returns the org the connection targets when no orgId is
 // given: the current org reported by /api/org, falling back to the configured
 // OrgID (0 when unset, which Grafana treats as the identity's active org).

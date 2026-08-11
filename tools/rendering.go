@@ -176,7 +176,7 @@ func getPanelImage(ctx context.Context, args GetPanelImageParams) (*mcp.CallTool
 
 	// Use the public base URL, not config.URL, which may be an in-cluster
 	// endpoint the browser can't reach.
-	if deeplinkBase, err := grafanaBaseURLFromContext(ctx); err == nil {
+	if deeplinkBase, err := grafanaBaseURLFromContext(ctx); err == nil && deeplinkResolvesInRenderOrg(ctx, config.OrgID) {
 		if deeplink, err := buildDashboardDeeplink(deeplinkBase, args); err == nil {
 			content = append(content, mcp.TextContent{
 				Meta: mcpgrafana.NewUIContentMeta(mcpgrafana.UIContentKindDeeplink),
@@ -308,6 +308,30 @@ func buildRenderURL(baseURL string, orgID int64, args GetPanelImageParams) (stri
 	params.Set("kiosk", "true")
 
 	return fmt.Sprintf("%s%s?%s", baseURL, renderPath, params.Encode()), nil
+}
+
+// deeplinkResolvesInRenderOrg reports whether a dashboard URL carrying no org
+// would open in renderOrg for this identity.
+//
+// The link cannot carry one: `?orgId=N` is intercepted by Grafana's global
+// OrgRedirect middleware, which persists the switch onto the user's record, and
+// neither targetOrgId (render backend only) nor X-Grafana-Org-Id (not sendable
+// by a browser) substitutes. So when the render org is not where the viewer would
+// land, omit the link rather than point it at the wrong dashboard — UIDs are
+// unique only within an org. The image is unaffected.
+//
+// A non-positive renderOrg means no org reached the render (as in
+// buildRenderURL and OrgIDRoundTripper), so it used the identity's own org and
+// the link agrees. A failed lookup omits the link.
+func deeplinkResolvesInRenderOrg(ctx context.Context, renderOrg int64) bool {
+	if renderOrg <= 0 {
+		return true
+	}
+	viewerOrg, err := mcpgrafana.UserDefaultOrgID(ctx)
+	if err != nil {
+		return false
+	}
+	return viewerOrg == renderOrg
 }
 
 // buildDashboardDeeplink returns the Grafana UI URL for the rendered
