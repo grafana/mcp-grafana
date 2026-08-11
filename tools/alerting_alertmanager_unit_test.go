@@ -242,4 +242,3 @@ func TestParseMatcherStrings_AlertmanagerConversion(t *testing.T) {
 		require.Nil(t, ls)
 	})
 }
-
