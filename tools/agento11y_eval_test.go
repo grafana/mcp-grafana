@@ -6,7 +6,9 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"regexp"
 	"testing"
 
 	"github.com/mark3labs/mcp-go/server"
@@ -1027,12 +1029,16 @@ func TestAddAgento11yToolsWriteGating(t *testing.T) {
 		"agento11y_manage_evaluators":       {"upsert_evaluator", "delete_evaluator", "fork_template", "test_evaluator"},
 		"agento11y_manage_eval_rules":       {"create_rule", "update_rule", "delete_rule", "preview_rule", "create_guard", "update_guard", "delete_guard"},
 		"agento11y_manage_eval_collections": {"save_conversation", "delete_saved_conversation", "create_collection", "update_collection", "delete_collection", "add_collection_members", "remove_collection_member"},
+		"agento11y_manage_experiments":      {"update", "cancel"},
+		"agento11y_manage_test_suites":      {"create_suite", "update_suite", "create_draft_version", "publish_version", "upsert_test_case", "delete_test_case"},
 		"agento11y_manage_agents":           nil,
 	}
 	readOperations := map[string][]string{
 		"agento11y_manage_evaluators":       {"list_evaluators", "get_evaluator", "list_templates", "get_template", "list_template_versions", "list_judge_providers", "list_judge_models"},
 		"agento11y_manage_eval_rules":       {"list_rules", "get_rule", "list_guards", "get_guard"},
 		"agento11y_manage_eval_collections": {"list_saved_conversations", "get_saved_conversation", "list_collections_for_saved_conversation", "list_collections", "get_collection", "list_collection_members"},
+		"agento11y_manage_experiments":      {"list", "get", "get_report", "list_trials", "list_scores", "get_trial", "list_trial_scores", "list_trial_artifacts", "list_facets"},
+		"agento11y_manage_test_suites":      {"list_suites", "get_suite", "list_test_cases", "get_test_case"},
 		"agento11y_manage_agents":           {"list", "get", "list_versions", "list_version_scores"},
 	}
 
@@ -1061,8 +1067,8 @@ func TestAddAgento11yToolsWriteGating(t *testing.T) {
 					// Not just absent from the enum: an operation named in the
 					// description or a parameter description is an operation the
 					// model is told exists, and the read variant rejects all of these.
-					assert.NotContains(t, tool.schema, operation, "%s must not mention the write operation %s anywhere in its read-only schema", name, operation)
-					assert.NotContains(t, tool.description, operation, "%s must not mention the write operation %s in its read-only description", name, operation)
+					assertOperationUnmentioned(t, tool.schema, operation, "%s must not mention the write operation %s anywhere in its read-only schema", name, operation)
+					assertOperationUnmentioned(t, tool.description, operation, "%s must not mention the write operation %s in its read-only description", name, operation)
 				}
 
 				if tc.enableWriteTools && len(writeOperations[name]) > 0 {
@@ -1093,6 +1099,18 @@ func TestAddAgento11yToolsWriteGating(t *testing.T) {
 	}
 }
 
+// assertOperationUnmentioned fails when text names the operation as a word.
+//
+// The match is bounded rather than a substring search because an operation name
+// can sit inside a word the read-only variant must still be free to use:
+// 'cancel' inside the status value "canceled", which its status filter
+// advertises.
+func assertOperationUnmentioned(t *testing.T, text, operation, msg string, args ...any) {
+	t.Helper()
+	word := regexp.MustCompile(`\b` + regexp.QuoteMeta(operation) + `\b`)
+	assert.NotRegexp(t, word, text, fmt.Sprintf(msg, args...))
+}
+
 // validateAgento11yEvalOperation runs the param validation of the registered
 // variant of an eval tool with no arguments besides the operation, so a missing
 // required parameter is expected and only "unknown operation" is a mismatch
@@ -1109,6 +1127,14 @@ func validateAgento11yEvalOperation(tool, operation string, enableWriteTools boo
 		return ManageAgento11yEvalCollectionsReadWriteParams{Operation: operation}.validate()
 	case tool == "agento11y_manage_eval_collections":
 		return ManageAgento11yEvalCollectionsReadParams{Operation: operation}.validate()
+	case tool == "agento11y_manage_experiments" && enableWriteTools:
+		return ManageAgento11yExperimentsReadWriteParams{Operation: operation}.validate()
+	case tool == "agento11y_manage_experiments":
+		return ManageAgento11yExperimentsReadParams{Operation: operation}.validate()
+	case tool == "agento11y_manage_test_suites" && enableWriteTools:
+		return ManageAgento11yTestSuitesReadWriteParams{Operation: operation}.validate()
+	case tool == "agento11y_manage_test_suites":
+		return ManageAgento11yTestSuitesReadParams{Operation: operation}.validate()
 	case enableWriteTools:
 		return ManageAgento11yEvalRulesReadWriteParams{Operation: operation}.validate()
 	default:
@@ -1149,7 +1175,7 @@ func listAgento11yEvalTools(t *testing.T, enableWriteTools bool) map[string]agen
 	tools := map[string]agento11yAdvertisedTool{}
 	for _, tool := range listed.Result.Tools {
 		switch tool.Name {
-		case "agento11y_manage_evaluators", "agento11y_manage_eval_rules", "agento11y_manage_eval_collections", "agento11y_manage_agents":
+		case "agento11y_manage_evaluators", "agento11y_manage_eval_rules", "agento11y_manage_eval_collections", "agento11y_manage_experiments", "agento11y_manage_test_suites", "agento11y_manage_agents":
 		default:
 			continue
 		}

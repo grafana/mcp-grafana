@@ -409,6 +409,184 @@ func TestAgento11yCloudIntegration(t *testing.T) {
 		}
 	})
 
+	// Read-only on purpose: renaming or canceling an experiment on a real stack
+	// changes data someone owns.
+	t.Run("list experiments", func(t *testing.T) {
+		result, err := manageAgento11yExperimentsRead(ctx, ManageAgento11yExperimentsReadParams{
+			Operation:                 "list",
+			agento11yExperimentFields: agento11yExperimentFields{Limit: 10},
+		})
+		require.NoError(t, err, "Failed to list Agent Observability experiments")
+
+		resp, ok := result.(*agento11yListResponse[Agento11yExperiment])
+		require.True(t, ok, "list should return *agento11yListResponse[Agento11yExperiment]")
+		assert.LessOrEqual(t, len(resp.Items), 10, "list should respect the requested limit")
+		if len(resp.Items) == 0 {
+			t.Log("no experiments on this instance, skipping experiment assertions")
+			return
+		}
+		for _, experiment := range resp.Items {
+			assert.NotEmpty(t, experiment.ExperimentID, "listed experiment should have an experiment_id")
+			assert.Contains(t, []string{"running", "completed", "failed", "canceled"}, experiment.Status,
+				"listed experiment should carry one of the four wire statuses")
+		}
+
+		id := resp.Items[0].ExperimentID
+		detail, err := manageAgento11yExperimentsRead(ctx, ManageAgento11yExperimentsReadParams{
+			Operation:    "get",
+			ExperimentID: id,
+		})
+		require.NoError(t, err, "Failed to get experiment %s", id)
+
+		experiment, ok := detail.(*Agento11yExperiment)
+		require.True(t, ok)
+		assert.Equal(t, id, experiment.ExperimentID, "fetched experiment id should match the requested id")
+
+		trials, err := manageAgento11yExperimentsRead(ctx, ManageAgento11yExperimentsReadParams{
+			Operation:                 "list_trials",
+			ExperimentID:              id,
+			agento11yExperimentFields: agento11yExperimentFields{Limit: 10},
+		})
+		require.NoError(t, err, "Failed to list trials of experiment %s", id)
+
+		trialResp, ok := trials.(*agento11yListResponse[Agento11yTestCaseTrial])
+		require.True(t, ok, "list_trials should return *agento11yListResponse[Agento11yTestCaseTrial]")
+		assert.LessOrEqual(t, len(trialResp.Items), 10, "list_trials should respect the requested limit")
+		if len(trialResp.Items) == 0 {
+			t.Log("experiment has no trials, skipping trial assertions")
+			return
+		}
+
+		trialID := trialResp.Items[0].TrialID
+		scores, err := manageAgento11yExperimentsRead(ctx, ManageAgento11yExperimentsReadParams{
+			Operation:                 "list_trial_scores",
+			TrialID:                   trialID,
+			agento11yExperimentFields: agento11yExperimentFields{Limit: 10},
+		})
+		require.NoError(t, err, "Failed to list scores of trial %s", trialID)
+
+		scoreResp, ok := scores.(*agento11yListResponse[Agento11yEvalScore])
+		require.True(t, ok, "list_trial_scores should return *agento11yListResponse[Agento11yEvalScore]")
+		for _, score := range scoreResp.Items {
+			assert.NotEmpty(t, score.ScoreID, "trial score should have a score_id")
+		}
+	})
+
+	t.Run("get_report stays within its row limit", func(t *testing.T) {
+		listed, err := manageAgento11yExperimentsRead(ctx, ManageAgento11yExperimentsReadParams{
+			Operation:                 "list",
+			agento11yExperimentFields: agento11yExperimentFields{Status: "completed", Limit: 1},
+		})
+		require.NoError(t, err, "Failed to list completed Agent Observability experiments")
+
+		resp, ok := listed.(*agento11yListResponse[Agento11yExperiment])
+		require.True(t, ok)
+		if len(resp.Items) == 0 {
+			t.Skip("no completed experiments on this instance")
+		}
+
+		id := resp.Items[0].ExperimentID
+		result, err := manageAgento11yExperimentsRead(ctx, ManageAgento11yExperimentsReadParams{
+			Operation:                 "get_report",
+			ExperimentID:              id,
+			agento11yExperimentFields: agento11yExperimentFields{RowLimit: 5},
+		})
+		require.NoError(t, err, "Failed to get the report of experiment %s", id)
+
+		report, ok := result.(*Agento11yCompactExperimentReport)
+		require.True(t, ok, "get_report should return *Agento11yCompactExperimentReport")
+		assert.LessOrEqual(t, len(report.Rows), 5, "get_report should respect the requested row limit")
+		assert.Equal(t, len(report.Rows) < report.TotalRowCount, report.RowsTruncated,
+			"rows_truncated should say whether rows were dropped")
+	})
+
+	t.Run("list experiment facets", func(t *testing.T) {
+		result, err := manageAgento11yExperimentsRead(ctx, ManageAgento11yExperimentsReadParams{
+			Operation: "list_facets",
+		})
+		require.NoError(t, err, "Failed to list Agent Observability experiment facets")
+
+		facets, ok := result.(*Agento11yExperimentFacets)
+		require.True(t, ok, "list_facets should return *Agento11yExperimentFacets")
+		for _, suite := range facets.Suites {
+			assert.NotEmpty(t, suite, "a reported suite facet should not be blank")
+		}
+	})
+
+	// Read-only on purpose: creating a test suite or publishing a version on a
+	// real stack changes what the next experiment replays.
+	t.Run("list test suites", func(t *testing.T) {
+		result, err := manageAgento11yTestSuitesRead(ctx, ManageAgento11yTestSuitesReadParams{
+			Operation:                "list_suites",
+			agento11yTestSuiteFields: agento11yTestSuiteFields{Limit: 10},
+		})
+		require.NoError(t, err, "Failed to list Agent Observability test suites")
+
+		resp, ok := result.(*agento11yListResponse[Agento11yTestSuite])
+		require.True(t, ok, "list_suites should return *agento11yListResponse[Agento11yTestSuite]")
+		assert.LessOrEqual(t, len(resp.Items), 10, "list_suites should respect the requested limit")
+		if len(resp.Items) == 0 {
+			t.Log("no test suites on this instance, skipping test suite assertions")
+			return
+		}
+		for _, suite := range resp.Items {
+			assert.NotEmpty(t, suite.SuiteID, "listed test suite should have a suite_id")
+			assert.NotEmpty(t, suite.Name, "listed test suite should have a name")
+		}
+
+		id := resp.Items[0].SuiteID
+		detail, err := manageAgento11yTestSuitesRead(ctx, ManageAgento11yTestSuitesReadParams{
+			Operation: "get_suite",
+			SuiteID:   id,
+		})
+		require.NoError(t, err, "Failed to get test suite %s", id)
+
+		suite, ok := detail.(*Agento11yTestSuite)
+		require.True(t, ok)
+		assert.Equal(t, id, suite.SuiteID, "fetched test suite id should match the requested id")
+		if len(suite.Versions) == 0 {
+			t.Log("test suite has no versions, skipping version and test case assertions")
+			return
+		}
+		for _, version := range suite.Versions {
+			assert.NotEmpty(t, version.Version, "a reported version should have a version string")
+			if !version.Published {
+				assert.Nil(t, version.PublishedAt, "an unpublished version should have no publish time")
+			}
+		}
+
+		version := suite.Versions[0].Version
+		cases, err := manageAgento11yTestSuitesRead(ctx, ManageAgento11yTestSuitesReadParams{
+			Operation:                "list_test_cases",
+			SuiteID:                  id,
+			Version:                  version,
+			agento11yTestSuiteFields: agento11yTestSuiteFields{Limit: 10},
+		})
+		require.NoError(t, err, "Failed to list test cases of %s version %s", id, version)
+
+		caseResp, ok := cases.(*agento11yListResponse[Agento11yTestCase])
+		require.True(t, ok, "list_test_cases should return *agento11yListResponse[Agento11yTestCase]")
+		assert.LessOrEqual(t, len(caseResp.Items), 10, "list_test_cases should respect the requested limit")
+		if len(caseResp.Items) == 0 {
+			t.Log("test suite version has no test cases, skipping test case assertions")
+			return
+		}
+
+		caseID := caseResp.Items[0].TestCaseID
+		caseDetail, err := manageAgento11yTestSuitesRead(ctx, ManageAgento11yTestSuitesReadParams{
+			Operation:  "get_test_case",
+			SuiteID:    id,
+			Version:    version,
+			TestCaseID: caseID,
+		})
+		require.NoError(t, err, "Failed to get test case %s", caseID)
+
+		testCase, ok := caseDetail.(*Agento11yTestCase)
+		require.True(t, ok)
+		assert.Equal(t, caseID, testCase.TestCaseID, "fetched test case id should match the requested id")
+		assert.NotEmpty(t, testCase.Input, "a test case always carries an input")
+	})
+
 	t.Run("list guards", func(t *testing.T) {
 		result, err := manageAgento11yEvalRulesRead(ctx, ManageAgento11yEvalRulesReadParams{
 			Operation:               "list_guards",

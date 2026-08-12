@@ -437,7 +437,17 @@ var toolMetricDims = map[string]metricDimSet{
 	)},
 	"agento11y_manage_conversations": {operations: valueSet("list", "search", "get")},
 	"agento11y_manage_generations":   {operations: valueSet("get", "scores")},
-	"create_datasource":              {resourceTypes: datasourcePluginTypes},
+	"agento11y_manage_experiments": {operations: valueSet(
+		"list", "get", "get_report", "list_trials", "list_scores",
+		"get_trial", "list_trial_scores", "list_trial_artifacts", "list_facets",
+		"update", "cancel",
+	)},
+	"agento11y_manage_test_suites": {operations: valueSet(
+		"list_suites", "get_suite", "list_test_cases", "get_test_case",
+		"create_suite", "update_suite", "create_draft_version", "publish_version",
+		"upsert_test_case", "delete_test_case",
+	)},
+	"create_datasource": {resourceTypes: datasourcePluginTypes},
 }
 
 // datasourcePluginTypes bounds create_datasource's mcp.tool.resource_type label
