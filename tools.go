@@ -167,8 +167,12 @@ func isIntegerKind(kind reflect.Kind) bool {
 }
 
 // collectStringSliceFieldNames returns the set of JSON field names that map to
-// []string types. This enables coercing a bare string into a single-element
-// array, which LLMs frequently send for array-typed parameters.
+// []string (or pointer-to-[]string) types. This enables coercing a bare string
+// into a single-element array, which LLMs frequently send for array-typed
+// parameters. A pointer is dereferenced first, matching collectIntFieldNames:
+// a parameter is declared as *[]string when an omitted list and an explicitly
+// empty one mean different things, and that choice must not cost it the
+// coercion.
 func collectStringSliceFieldNames(structType reflect.Type) map[string]bool {
 	fields := make(map[string]bool)
 	for _, f := range reflect.VisibleFields(structType) {
@@ -176,6 +180,9 @@ func collectStringSliceFieldNames(structType reflect.Type) map[string]bool {
 			continue
 		}
 		ft := f.Type
+		if ft.Kind() == reflect.Pointer {
+			ft = ft.Elem()
+		}
 		if ft.Kind() == reflect.Slice && ft.Elem().Kind() == reflect.String {
 			name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
 			if name == "-" {

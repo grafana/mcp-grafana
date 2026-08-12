@@ -161,6 +161,8 @@ When enabled, the following writes are disabled:
 - `agento11y_manage_evaluators` (upsert, delete, fork, and test evaluators)
 - `agento11y_manage_eval_rules` (create, update, delete, and preview eval rules and guards)
 - `agento11y_manage_eval_collections` (save and delete saved conversations; create, update, and delete collections; add and remove collection members)
+- `agento11y_manage_experiments` (update and cancel experiments)
+- `agento11y_manage_test_suites` (create and update test suites; create and publish versions; upsert and delete test cases)
 
 Read operations (queries, lists, searches) stay available.
 
