@@ -13,12 +13,13 @@ import (
 	"testing/synctest"
 	"time"
 
+	mcpgrafana "github.com/grafana/mcp-grafana"
+	"github.com/grafana/mcp-grafana/observability"
+	"github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/grafana/mcp-grafana/observability"
 )
 
 // testClientSession implements server.ClientSession for unit tests.
@@ -44,7 +45,7 @@ func newTestObservability(t *testing.T) *observability.Observability {
 func TestNewServer_SessionIdleTimeoutZeroDisablesReaping(t *testing.T) {
 	obs := newTestObservability(t)
 	synctest.Test(t, func(t *testing.T) {
-		_, _, sm := newServer("stdio", disabledTools{enabledTools: "search"}, obs, 0)
+		_, _, sm := newServer(defaultServerName, "stdio", disabledTools{enabledTools: "search"}, obs, 0)
 		defer sm.Close()
 
 		session := &testClientSession{id: "should-persist"}
@@ -231,7 +232,7 @@ func TestBuildInstructions_TimestampNote(t *testing.T) {
 func TestNewServer_SessionIdleTimeoutCustomValue(t *testing.T) {
 	obs := newTestObservability(t)
 	synctest.Test(t, func(t *testing.T) {
-		_, _, sm := newServer("stdio", disabledTools{enabledTools: "search"}, obs, 1)
+		_, _, sm := newServer(defaultServerName, "stdio", disabledTools{enabledTools: "search"}, obs, 1)
 		defer sm.Close()
 
 		session := &testClientSession{id: "custom-ttl"}
@@ -529,6 +530,203 @@ func TestHTTPSecurityConfigCORSOrigins(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			hsc := httpSecurityConfig{allowedOrigins: tc.allowedOrigins}
 			assert.Equal(t, tc.want, hsc.corsOrigins())
+		})
+	}
+}
+
+func getServerNameFromInitialize(t *testing.T, s *server.MCPServer) string {
+	t.Helper()
+	c, err := client.NewInProcessClient(s)
+	require.NoError(t, err)
+	require.NoError(t, c.Start(context.Background()))
+	t.Cleanup(func() { _ = c.Close() })
+
+	result, err := c.Initialize(context.Background(), mcp.InitializeRequest{})
+	require.NoError(t, err)
+	return result.ServerInfo.Name
+}
+
+func TestResolveServerName(t *testing.T) {
+	tests := []struct {
+		name              string
+		flagValue         string
+		flagExplicitlySet bool
+		envValue          string
+		want              string
+	}{
+		{
+			name:              "no flag no env returns default",
+			flagValue:         defaultServerName,
+			flagExplicitlySet: false,
+			envValue:          "",
+			want:              defaultServerName,
+		},
+		{
+			name:              "flag set wins over nothing",
+			flagValue:         "my-custom-server",
+			flagExplicitlySet: true,
+			envValue:          "",
+			want:              "my-custom-server",
+		},
+		{
+			name:              "env set and flag not explicitly set returns env",
+			flagValue:         defaultServerName,
+			flagExplicitlySet: false,
+			envValue:          "env-server",
+			want:              "env-server",
+		},
+		{
+			name:              "both set flag wins",
+			flagValue:         "flag-server",
+			flagExplicitlySet: true,
+			envValue:          "env-server",
+			want:              "flag-server",
+		},
+		{
+			name:              "flag explicitly set to default overrides env",
+			flagValue:         defaultServerName,
+			flagExplicitlySet: true,
+			envValue:          "env-server",
+			want:              defaultServerName,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := resolveServerName(tc.flagValue, tc.flagExplicitlySet, tc.envValue, defaultServerName)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+func TestValidateServerName(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantErr bool
+	}{
+		{"default", "mcp-grafana", false},
+		{"typical multi-instance", "grafana-project-a", false},
+		{"dot-separated", "mcp-grafana.staging", false},
+		{"mixed case underscores digits", "My_Custom_Server_v2", false},
+		{"minimum length", "a", false},
+		{"maximum length", strings.Repeat("X", 128), false},
+		{"starts with letter then digits", "g123", false},
+		{"starts with digit", "1server", false},
+
+		{"empty string", "", true},
+		{"whitespace only", " ", true},
+		{"contains space", "my server", true},
+		{"contains tab", "name\t", true},
+		{"contains newline", "name\n", true},
+		{"starts with hyphen", "-starts-hyphen", true},
+		{"starts with dot", ".dotfile", true},
+		{"starts with underscore", "_leading_underscore", true},
+		{"non-ASCII unicode", "café-server", true},
+		{"cyrillic", "сервер", true},
+		{"ANSI escape", "name\x1b[31m", true},
+		{"null byte", "name\x00", true},
+		{"shell metacharacter semicolon", "server;rm -rf /", true},
+		{"shell command substitution", "$(whoami)", true},
+		{"forward slash", "name/path", true},
+		{"backslash", "name\\path", true},
+		{"colon", "name:colon", true},
+		{"zero-width character", "name\u200dzwj", true},
+		{"RTL override", "name\u202ertl", true},
+		{"exceeds max length", strings.Repeat("a", 129), true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateServerName(tc.input)
+			if tc.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestNewServer_DefaultServerName(t *testing.T) {
+	obs := newTestObservability(t)
+	s, _, sm := newServer(defaultServerName, "stdio", disabledTools{enabledTools: "search"}, obs, 0)
+	defer sm.Close()
+
+	name := getServerNameFromInitialize(t, s)
+	assert.Equal(t, "mcp-grafana", name)
+}
+
+func TestNewServer_CustomServerName(t *testing.T) {
+	obs := newTestObservability(t)
+	s, _, sm := newServer("my-custom-server", "stdio", disabledTools{enabledTools: "search"}, obs, 0)
+	defer sm.Close()
+
+	name := getServerNameFromInitialize(t, s)
+	assert.Equal(t, "my-custom-server", name)
+}
+
+func TestNewServer_MultiInstanceDistinctNames(t *testing.T) {
+	obs := newTestObservability(t)
+
+	sAlpha, _, smAlpha := newServer("instance-alpha", "stdio", disabledTools{enabledTools: "search"}, obs, 0)
+	defer smAlpha.Close()
+	sBeta, _, smBeta := newServer("instance-beta", "stdio", disabledTools{enabledTools: "search"}, obs, 0)
+	defer smBeta.Close()
+
+	nameAlpha := getServerNameFromInitialize(t, sAlpha)
+	nameBeta := getServerNameFromInitialize(t, sBeta)
+
+	assert.Equal(t, "instance-alpha", nameAlpha)
+	assert.Equal(t, "instance-beta", nameBeta)
+	assert.NotEqual(t, nameAlpha, nameBeta)
+}
+
+func TestCustomServerName_DoesNotAffectUserAgent(t *testing.T) {
+	obs := newTestObservability(t)
+	s, _, sm := newServer("my-custom-instance", "stdio", disabledTools{enabledTools: "search"}, obs, 0)
+	defer sm.Close()
+
+	name := getServerNameFromInitialize(t, s)
+	assert.Equal(t, "my-custom-instance", name)
+
+	ua := mcpgrafana.UserAgent()
+	assert.Contains(t, ua, "mcp-grafana/")
+	assert.NotContains(t, ua, "my-custom-instance")
+}
+
+func TestValidateServerName_ErrorMessages(t *testing.T) {
+	tests := []struct {
+		name           string
+		input          string
+		wantSubstrings []string
+	}{
+		{
+			name:           "empty string mentions empty",
+			input:          "",
+			wantSubstrings: []string{"must not be empty"},
+		},
+		{
+			name:           "too long mentions length",
+			input:          strings.Repeat("a", 129),
+			wantSubstrings: []string{"too long", "129", "128"},
+		},
+		{
+			name:           "invalid chars includes name and pattern",
+			input:          "my server",
+			wantSubstrings: []string{"my server", "invalid characters"},
+		},
+		{
+			name:           "leading hyphen includes name",
+			input:          "-bad",
+			wantSubstrings: []string{"-bad", "invalid characters"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateServerName(tc.input)
+			require.Error(t, err)
+			for _, sub := range tc.wantSubstrings {
+				assert.Contains(t, err.Error(), sub)
+			}
 		})
 	}
 }
