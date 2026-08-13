@@ -132,6 +132,12 @@ func requireSilenceID(id *string, operation string) error {
 
 // validateWritePayload checks the fields shared by 'create' and 'update'.
 func (p ManageSilencesParams) validateWritePayload() error {
+	// rule_uid only scopes 'list'. Dropping it silently on a write would post
+	// just the given matchers, so a caller aiming at one rule would end up
+	// silencing every rule those matchers touch.
+	if p.RuleUID != nil && *p.RuleUID != "" {
+		return fmt.Errorf("rule_uid must not be set for '%s' (it only filters 'list'); to scope a silence to one rule, pass a matcher with name %q", p.Operation, ruleUIDLabel)
+	}
 	if len(p.Matchers) == 0 {
 		return fmt.Errorf("matchers is required and must contain at least one matcher")
 	}
