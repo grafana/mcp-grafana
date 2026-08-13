@@ -428,6 +428,8 @@ var ManageSilencesRead = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("Manage alerting silences"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 // ManageSilencesReadWrite is the write-capable variant (create/update/delete
@@ -437,5 +439,7 @@ var ManageSilencesReadWrite = mcpgrafana.MustTool(
 	manageSilencesDescription,
 	manageSilencesReadWrite,
 	mcp.WithTitleAnnotation("Manage alerting silences"),
+	mcp.WithReadOnlyHintAnnotation(false),
 	mcp.WithDestructiveHintAnnotation(true),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
