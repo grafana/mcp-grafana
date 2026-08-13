@@ -561,7 +561,12 @@ type AuthRoundTripper struct {
 	idToken     string
 	apiKey      string
 	basicAuth   *url.Userinfo
-	underlying  http.RoundTripper
+	// boundURL is the Grafana URL this transport was constructed for. It is
+	// the fallback host binding for requests that carry no GrafanaConfig in
+	// their context, so construction-time credentials stay bound to the
+	// instance they were configured for.
+	boundURL   string
+	underlying http.RoundTripper
 }
 
 func (rt *AuthRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -582,17 +587,53 @@ func (rt *AuthRoundTripper) RoundTrip(req *http.Request) (*http.Response, error)
 		basicAuth = cfg.BasicAuth
 	}
 
-	if accessToken != "" && idToken != "" {
-		clonedReq.Header.Set("X-Access-Token", accessToken)
-		clonedReq.Header.Set("X-Grafana-Id", idToken)
-	} else if apiKey != "" {
-		clonedReq.Header.Set("Authorization", "Bearer "+apiKey)
-	} else if basicAuth != nil {
-		password, _ := basicAuth.Password()
-		clonedReq.SetBasicAuth(basicAuth.Username(), password)
+	// Attach credentials only when the request targets the configured Grafana
+	// host. A redirect can carry the request to a different host; net/http
+	// strips a cross-host Authorization header on redirect but does not strip
+	// X-Access-Token, X-Grafana-Id, or basic auth, and this transport would
+	// re-add any of them on the next hop regardless. Withholding on a host
+	// mismatch keeps the credential from following a redirect off the bound
+	// instance, extending the same URL binding that requestTargetsEnvURL
+	// already applies to environment credentials.
+	// Prefer the per-request URL; fall back to the URL this transport was
+	// constructed for so a request without a GrafanaConfig does not escape the
+	// binding and carry construction-time credentials to an arbitrary host.
+	boundURL := cfg.URL
+	if boundURL == "" {
+		boundURL = rt.boundURL
+	}
+	if requestTargetsBoundHost(req.URL, boundURL) {
+		if accessToken != "" && idToken != "" {
+			clonedReq.Header.Set("X-Access-Token", accessToken)
+			clonedReq.Header.Set("X-Grafana-Id", idToken)
+		} else if apiKey != "" {
+			clonedReq.Header.Set("Authorization", "Bearer "+apiKey)
+		} else if basicAuth != nil {
+			password, _ := basicAuth.Password()
+			clonedReq.SetBasicAuth(basicAuth.Username(), password)
+		}
 	}
 
 	return rt.underlying.RoundTrip(clonedReq)
+}
+
+// requestTargetsBoundHost reports whether reqURL is on the same host as the
+// configured Grafana instance boundURL. An empty boundURL (no configured
+// instance) is treated as a match, preserving prior behavior for callers that
+// do not set a Grafana URL. A boundURL that does not parse is treated as no
+// match, failing closed.
+func requestTargetsBoundHost(reqURL *url.URL, boundURL string) bool {
+	if reqURL == nil {
+		return false
+	}
+	if boundURL == "" {
+		return true
+	}
+	b, err := url.Parse(boundURL)
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(reqURL.Hostname(), b.Hostname())
 }
 
 func NewAuthRoundTripper(rt http.RoundTripper, accessToken, idToken, apiKey string, basicAuth *url.Userinfo) *AuthRoundTripper {
@@ -739,7 +780,9 @@ func BuildTransport(cfg *GrafanaConfig, base http.RoundTripper, opts ...Transpor
 
 	// Auth (innermost header layer — wins on conflicts with ExtraHeaders)
 	if !options.withoutAuth {
-		transport = NewAuthRoundTripper(transport, cfg.AccessToken, cfg.IDToken, cfg.APIKey, cfg.BasicAuth)
+		authRT := NewAuthRoundTripper(transport, cfg.AccessToken, cfg.IDToken, cfg.APIKey, cfg.BasicAuth)
+		authRT.boundURL = cfg.URL
+		transport = authRT
 	}
 
 	// Extra headers (always included so per-request context overrides work)
