@@ -57,6 +57,13 @@
           "format": "string",
           "isSecret": false,
           "name": "GRAFANA_EXTRA_HEADERS"
+        },
+        {
+          "description": "Absolute directory under which local Explore rendering artifacts may be written",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": false,
+          "name": "GRAFANA_ARTIFACT_OUTPUT_ROOT"
         }
       ]
     }

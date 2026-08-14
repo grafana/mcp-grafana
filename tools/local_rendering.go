@@ -16,8 +16,8 @@ import (
 	"github.com/chromedp/chromedp"
 	"github.com/mark3labs/mcp-go/mcp"
 
-	"github.com/grafana/mcp-grafana/auth"
 	mcpgrafana "github.com/grafana/mcp-grafana"
+	"github.com/grafana/mcp-grafana/auth"
 )
 
 const (
@@ -187,6 +187,15 @@ func buildLocalRenderURL(baseURL string, args RenderPanelLocalParams) (string, e
 // renderWithChrome launches a headless Chrome instance, navigates to the URL,
 // waits for all network requests to complete (network idle), and takes a screenshot.
 func renderWithChrome(ctx context.Context, targetURL, cookie, domain string, width, height, scale int, timeout time.Duration) ([]byte, error) {
+	return renderWithChromeActions(ctx, targetURL, cookie, domain, width, height, scale, timeout,
+		waitForNetworkIdle(networkQuietDuration, minWaitAfterNav),
+		captureViewportScreenshot(),
+	)
+}
+
+// renderWithChromeActions runs a browser render with caller-provided readiness
+// and capture actions. Each invocation owns its allocator and browser context.
+func renderWithChromeActions(ctx context.Context, targetURL, cookie, domain string, width, height, scale int, timeout time.Duration, actions ...chromedp.Action) ([]byte, error) {
 	opts := append(chromedp.DefaultExecAllocatorOptions[:],
 		chromedp.Flag("headless", true),
 		chromedp.Flag("disable-gpu", true),
@@ -206,33 +215,43 @@ func renderWithChrome(ctx context.Context, targetURL, cookie, domain string, wid
 	defer timeoutCancel()
 
 	var screenshotBuf []byte
+	renderCtx := context.WithValue(timeoutCtx, screenshotBufferKey{}, &screenshotBuf)
 
-	err := chromedp.Run(timeoutCtx,
+	baseActions := []chromedp.Action{
 		// Inject session cookie before navigation
 		network.Enable(),
 		setCookieAction(cookie, domain),
 
 		// Navigate to dashboard
 		chromedp.Navigate(targetURL),
-
-		// Wait for network idle (all HTTP requests completed + quiet period)
-		waitForNetworkIdle(timeoutCtx, networkQuietDuration, minWaitAfterNav),
-
-		// Take screenshot
-		chromedp.ActionFunc(func(ctx context.Context) error {
-			var err error
-			screenshotBuf, err = page.CaptureScreenshot().
-				WithFormat(page.CaptureScreenshotFormatPng).
-				WithCaptureBeyondViewport(false).
-				Do(ctx)
-			return err
-		}),
-	)
-	if err != nil {
-		return nil, err
 	}
+	actions = append(baseActions, actions...)
+	err := chromedp.Run(renderCtx, actions...)
+	return screenshotBuf, err
+}
 
-	return screenshotBuf, nil
+func captureViewportScreenshot() chromedp.Action {
+	return chromedp.ActionFunc(func(ctx context.Context) error {
+		var err error
+		var screenshotBuf []byte
+		screenshotBuf, err = page.CaptureScreenshot().
+			WithFormat(page.CaptureScreenshotFormatPng).
+			WithCaptureBeyondViewport(false).
+			Do(ctx)
+		if err != nil {
+			return err
+		}
+		return storeScreenshot(ctx, screenshotBuf)
+	})
+}
+
+type screenshotBufferKey struct{}
+
+func storeScreenshot(ctx context.Context, data []byte) error {
+	if buffer, ok := ctx.Value(screenshotBufferKey{}).(*[]byte); ok {
+		*buffer = data
+	}
+	return nil
 }
 
 // setCookieAction creates a chromedp action that sets the grafana_session cookie.
@@ -249,7 +268,7 @@ func setCookieAction(cookie, domain string) chromedp.Action {
 // waitForNetworkIdle waits until all in-flight HTTP requests have completed
 // and no new requests start for the specified quiet duration.
 // This is more reliable than CSS selector polling because it's Grafana-version-agnostic.
-func waitForNetworkIdle(ctx context.Context, quietDuration, minWait time.Duration) chromedp.Action {
+func waitForNetworkIdle(quietDuration, minWait time.Duration) chromedp.Action {
 	return chromedp.ActionFunc(func(actionCtx context.Context) error {
 		var mu sync.Mutex
 		pending := make(map[network.RequestID]bool)
@@ -282,8 +301,8 @@ func waitForNetworkIdle(ctx context.Context, quietDuration, minWait time.Duratio
 
 		for {
 			select {
-			case <-ctx.Done():
-				return fmt.Errorf("timeout waiting for network idle: %w", ctx.Err())
+			case <-actionCtx.Done():
+				return fmt.Errorf("timeout waiting for network idle: %w", actionCtx.Err())
 			case <-ticker.C:
 				mu.Lock()
 				pendingCount := len(pending)

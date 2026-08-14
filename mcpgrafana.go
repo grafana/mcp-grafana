@@ -40,7 +40,8 @@ const (
 
 	grafanaExtraHeadersEnvVar = "GRAFANA_EXTRA_HEADERS"
 
-	grafanaAuthBrowserEnvVar = "GRAFANA_AUTH_BROWSER"
+	grafanaAuthBrowserEnvVar  = "GRAFANA_AUTH_BROWSER"
+	grafanaArtifactRootEnvVar = "GRAFANA_ARTIFACT_OUTPUT_ROOT"
 
 	grafanaURLHeader    = "X-Grafana-URL"
 	grafanaAPIKeyHeader = "X-Grafana-API-Key"
@@ -188,6 +189,10 @@ type GrafanaConfig struct {
 	// When true, the server opens a browser for SSO login and captures the
 	// grafana_session cookie instead of requiring a service account token.
 	BrowserAuth bool
+
+	// ArtifactOutputRoot restricts paths written by local rendering tools.
+	// An empty value disables artifact-writing tools until configured.
+	ArtifactOutputRoot string
 }
 
 const (
@@ -473,6 +478,9 @@ var ExtractGrafanaInfoFromEnv server.StdioContextFunc = func(ctx context.Context
 		config.BrowserAuth = true
 		slog.Info("Browser-based authentication enabled via GRAFANA_AUTH_BROWSER")
 	}
+	if artifactRoot := os.Getenv(grafanaArtifactRootEnvVar); artifactRoot != "" {
+		config.ArtifactOutputRoot = artifactRoot
+	}
 
 	return WithGrafanaConfig(ctx, config)
 }
@@ -495,6 +503,9 @@ var ExtractGrafanaInfoFromHeaders httpContextFunc = func(ctx context.Context, re
 	config.BasicAuth = basicAuth
 	config.OrgID = orgID
 	config.ExtraHeaders = extraHeadersFromEnv()
+	if artifactRoot := os.Getenv(grafanaArtifactRootEnvVar); artifactRoot != "" {
+		config.ArtifactOutputRoot = artifactRoot
+	}
 	return WithGrafanaConfig(ctx, config)
 }
 
