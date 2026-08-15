@@ -395,6 +395,15 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 			return nil, fmt.Errorf("failed to marshal return value: %s", err)
 		}
 
+		// Optionally offer the result as GCF instead of JSON in the model-facing
+		// text block. encodeGCF only substitutes when GCF is a smaller, lossless
+		// encoding, so this never grows or alters a result.
+		if GrafanaConfigFromContext(ctx).GCFEnabled() {
+			if wire, ok := encodeGCF(returnBytes); ok {
+				return mcp.NewToolResultText(wire), nil
+			}
+		}
+
 		return mcp.NewToolResultText(string(returnBytes)), nil
 	}
 

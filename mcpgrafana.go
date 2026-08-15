@@ -283,6 +283,20 @@ type GrafanaConfig struct {
 	// to inject their own slog.Logger for consistent structured logging with
 	// per-request context such as tenant_id.
 	Logger *slog.Logger
+
+	// OutputFormat selects how structured tool results are serialized in the
+	// model-facing text content block. "json" (the default) is unchanged; "gcf"
+	// encodes results as Graph Compact Format (https://gcformat.com) when that is
+	// a smaller, lossless encoding, and otherwise falls back to JSON per result.
+	OutputFormat string
+}
+
+// GCFEnabled reports whether tool results should be offered as GCF in the
+// model-facing content block. The encoding is applied per result only when it
+// is both smaller than and a lossless round-trip of the JSON (see encodeGCF), so
+// enabling it never grows a result and never changes its meaning.
+func (c GrafanaConfig) GCFEnabled() bool {
+	return strings.EqualFold(strings.TrimSpace(c.OutputFormat), "gcf")
 }
 
 // HTTPTransport returns the base HTTP transport for this config.

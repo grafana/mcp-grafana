@@ -445,6 +445,9 @@ Caller authentication is enforced only when `--server-auth-token` is set. When i
 - `--grafana-timeout`: Time limit for requests made by the Grafana client. Accepts Go duration strings (e.g., `10s`, `500ms`) - default: `10s`
 - `--include-args-in-spans`: Include tool call arguments in OpenTelemetry spans. Only enable in non-production environments or when arguments are known not to contain PII - default: `false`
 
+**Response Encoding:**
+- `--output-format`: Serialization for structured tool results in the model-facing text block: `json` (default) or `gcf`. Also settable via the `GRAFANA_OUTPUT_FORMAT` environment variable. See [Response Format](#response-format-gcf).
+
 **Observability:**
 - `--metrics`: Enable Prometheus metrics endpoint at `/metrics`
 - `--metrics-address`: Separate address for metrics server (e.g., `:9090`). If empty, metrics are served on the main server
@@ -574,6 +577,18 @@ volumes:
 ```
 
 Surrounding whitespace (including a trailing newline) is trimmed from the file contents. If both `GRAFANA_SERVICE_ACCOUNT_TOKEN` and `GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE` are set, the inline token takes precedence.
+
+### Response Format (GCF)
+
+By default, structured tool results are serialized as JSON in the text content block the model reads. Setting `--output-format=gcf` (or `GRAFANA_OUTPUT_FORMAT=gcf`) instead offers each result as [Graph Compact Format](https://gcformat.com), a token-optimized encoding that factors the repeated field names out of uniform record arrays (the shape returned by list tools like `list_datasources`, `list_teams`, `list_users_by_org`, `alerting_manage_rules`, and `list_incidents`).
+
+The substitution is applied **per result and only when it helps**:
+
+- **Never larger.** If GCF is not smaller than the JSON for a given result, that result stays JSON. On real Grafana output this yields roughly 28-33% fewer tokens on uniform inventory lists (datasources, teams, users) at realistic sizes, and a no-op on tiny or high-entropy results.
+- **Never lossy.** Every substituted result is decoded and compared back to the original before it is used; on any encoding error (including an integer outside GCF's canonical int64 domain) the result falls back to JSON, so a tool call is never dropped or altered.
+- **Opt-in and additive.** The default (`json`) is unchanged, and `structuredContent` (where a tool sets it) is untouched.
+
+GCF is MIT-licensed and its `gcf-go` encoder is zero-dependency. It is designed and evaluated for how accurately models read the compact form, not just for size; format, spec, SDKs, and benchmarks are at [gcformat.com](https://gcformat.com).
 
 ### Multi-Organization Support
 
