@@ -27,7 +27,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
-	"go.opentelemetry.io/otel/semconv/v1.40.0/mcpconv"
+	"go.opentelemetry.io/otel/semconv/v1.41.0/mcpconv"
 )
 
 func TestSetup(t *testing.T) {

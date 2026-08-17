@@ -22,7 +22,7 @@ import (
 	"github.com/grafana/mcp-grafana/observability"
 	"github.com/grafana/mcp-grafana/tools"
 	"go.opentelemetry.io/contrib/bridges/otelslog"
-	"go.opentelemetry.io/otel/semconv/v1.40.0/mcpconv"
+	"go.opentelemetry.io/otel/semconv/v1.41.0/mcpconv"
 )
 
 const defaultServerName = "mcp-grafana"
@@ -140,6 +140,15 @@ type grafanaConfig struct {
 
 	// timeout is the time limit for requests made by the Grafana client.
 	timeout time.Duration
+
+	// lokiEnforcedMatchers, when non-empty, is a LogQL label-matcher expression
+	// (e.g. `namespace!~"vault|payments"`) AND-ed into every native-Loki query.
+	lokiEnforcedMatchers string
+
+	// lokiLabelEnumerationFallback controls list_loki_label_names /
+	// list_loki_label_values behaviour when the enforced matchers cannot scope
+	// them (purely-negative matchers only): "reject" or "unfiltered".
+	lokiLabelEnumerationFallback string
 }
 
 func (dt *disabledTools) addFlags() {
@@ -195,6 +204,9 @@ func (gc *grafanaConfig) addFlags() {
 
 	flag.BoolVar(&gc.includeArgsInSpans, "include-args-in-spans", false, "Include tool call arguments in OpenTelemetry spans. Only enable in non-production environments or when arguments are known not to contain PII.")
 	flag.DurationVar(&gc.timeout, "grafana-timeout", mcpgrafana.DefaultGrafanaClientTimeout, "Time limit for requests made by the Grafana client. Accepts Go duration strings, e.g. 10s, 500ms.")
+
+	flag.StringVar(&gc.lokiEnforcedMatchers, "loki-enforced-matchers", "", "LogQL label matchers AND-ed into every native-Loki query to restrict readable streams (e.g. `namespace!~\"vault|payments\"`). Queries that cannot be parsed are rejected. Requires --disable-api to be effective, otherwise it can be bypassed via the raw datasource proxy.")
+	flag.StringVar(&gc.lokiLabelEnumerationFallback, "loki-label-enumeration-fallback", tools.LabelEnumFallbackReject, "Behaviour of list_loki_label_names/list_loki_label_values when --loki-enforced-matchers cannot scope them (purely-negative matchers only): 'reject' (fail closed) or 'unfiltered' (allow unscoped enumeration of label metadata; never exposes log lines).")
 }
 
 // toolEntry pairs a tool registration function with its category and disable flag.
@@ -513,6 +525,50 @@ func splitAndTrim(s string) []string {
 		}
 	}
 	return out
+}
+
+// warnLokiEnforcementBypasses logs, at startup, every enabled tool through which
+// an LLM could reach Loki log data WITHOUT going through the enforced Loki
+// backend — so --loki-enforced-matchers would not apply. Each line names the
+// mechanism and the flag that closes it. Proxied tools get an informational
+// note rather than a warning because they currently expose only Tempo (traces),
+// not Loki logs, so they are not a bypass today.
+func warnLokiEnforcementBypasses(dt disabledTools) {
+	// A category is only a live bypass if it is actually active, which depends on
+	// BOTH the --enabled-tools allowlist and its per-category --disable-* flag
+	// (see isCategoryEnabled) — not the disable flag alone.
+	enabledTools := strings.Split(dt.enabledTools, ",")
+	type bypass struct {
+		category string
+		disabled bool
+		flag     string
+		reason   string
+	}
+	for _, b := range []bypass{
+		{"api", dt.api, "--disable-api", "grafana_api_request can query the Loki datasource proxy directly, fully bypassing enforcement"},
+		{"rendering", dt.rendering, "--disable-rendering", "get_panel_image renders Loki panels server-side via the Grafana renderer, producing images that contain unrestricted log lines"},
+		{"sift", dt.sift, "--disable-sift", "Sift investigations (e.g. find_error_pattern_logs) analyze Loki logs server-side across all streams; enforced matchers are not applied to that analysis"},
+	} {
+		if isCategoryEnabled(enabledTools, b.disabled, b.category) {
+			slog.Warn("Loki label-matcher enforcement can be bypassed by an enabled tool",
+				"disable_with", b.flag, "reason", b.reason)
+		}
+	}
+	// The assistant category is write-gated: AddAssistantTools registers
+	// ask_assistant only when write tools are enabled, so it is a bypass only
+	// then. Keying the warning on the category alone would fire when no
+	// assistant tool is actually registered.
+	if isCategoryEnabled(enabledTools, dt.assistant, "assistant") && !dt.write {
+		slog.Warn("Loki label-matcher enforcement can be bypassed by an enabled tool",
+			"disable_with", "--disable-assistant",
+			"reason", "ask_assistant delegates to Grafana Assistant, which reads Loki server-side across all streams; enforced matchers are not applied to what it reports back")
+	}
+	if isCategoryEnabled(enabledTools, dt.proxied, "proxied") {
+		slog.Info("Loki label-matcher enforcement: proxied tools currently expose only Tempo (traces), not Loki logs, so they are not a bypass today — this would change if proxying is extended to log datasources (disable with --disable-proxied)")
+	}
+	if isCategoryEnabled(enabledTools, dt.snapshot, "snapshot") {
+		slog.Info("Loki label-matcher enforcement: dashboard snapshots can return log-panel data captured outside enforcement (e.g. pre-existing snapshots); disable with --disable-snapshot if snapshots may contain restricted logs")
+	}
 }
 
 // httpServer represents a server with Start and Shutdown methods
@@ -834,6 +890,25 @@ func main() {
 			CAFile:     gc.tlsCAFile,
 			SkipVerify: gc.tlsSkipVerify,
 		}
+	}
+
+	// Parse enforced Loki label matchers once at startup so bad configuration
+	// fails fast rather than silently disabling the restriction.
+	enforcedMatchers, err := tools.ParseEnforcedMatchers(gc.lokiEnforcedMatchers)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "invalid --loki-enforced-matchers: %v\n", err)
+		os.Exit(2)
+	}
+	if len(enforcedMatchers) > 0 {
+		grafanaConfig.LokiEnforcedMatchers = enforcedMatchers
+		switch gc.lokiLabelEnumerationFallback {
+		case tools.LabelEnumFallbackReject, tools.LabelEnumFallbackUnfiltered:
+			grafanaConfig.LokiLabelEnumerationFallback = gc.lokiLabelEnumerationFallback
+		default:
+			fmt.Fprintf(os.Stderr, "invalid --loki-label-enumeration-fallback %q: must be %q or %q\n", gc.lokiLabelEnumerationFallback, tools.LabelEnumFallbackReject, tools.LabelEnumFallbackUnfiltered)
+			os.Exit(2)
+		}
+		warnLokiEnforcementBypasses(dt)
 	}
 
 	// Set OTel resource identity
