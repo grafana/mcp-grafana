@@ -26,6 +26,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/exporters/prometheus"
+	"go.opentelemetry.io/otel/metric"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	sdkresource "go.opentelemetry.io/otel/sdk/resource"
@@ -812,4 +813,20 @@ func (o *Observability) LoggerProvider() *sdklog.LoggerProvider {
 // not set).
 func (o *Observability) TracerProvider() *sdktrace.TracerProvider {
 	return o.tracerProvider
+}
+
+// MeterProvider returns the metric.MeterProvider backing this Observability
+// instance's metrics, or nil if metrics are not enabled (Config.MetricsEnabled
+// was false). Pass the result into mcp-grafana constructors that accept a
+// meter provider (e.g. NewClientCache's WithClientCacheMeterProvider,
+// NewSessionManager's WithSessionMeterProvider) so their metrics are recorded
+// against this provider explicitly, rather than relying on those constructors
+// reading otel.GetMeterProvider() at construction time — which silently
+// becomes a no-op in any process that installs its own global provider (e.g.
+// a noop one) for reasons unrelated to mcp-grafana.
+func (o *Observability) MeterProvider() metric.MeterProvider {
+	if o.meterProvider == nil {
+		return nil
+	}
+	return o.meterProvider
 }
