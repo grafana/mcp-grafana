@@ -11,10 +11,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
-
 	mcpgrafana "github.com/grafana/mcp-grafana"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 type GetPluginParams struct {
@@ -126,11 +124,11 @@ var GetPlugin = mcpgrafana.MustTool(
 	"get_plugin",
 	"Check whether a Grafana plugin is installed and retrieve its details (name, version, type, enabled status). Returns installed=false when the plugin is not found. Use install_plugin when a plugin is not installed to install plugin after confirming this action with the user.",
 	getPlugin,
-	mcp.WithTitleAnnotation("Get plugin"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Get plugin"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 type InstallPluginParams struct {
@@ -231,11 +229,11 @@ var InstallPlugin = mcpgrafana.MustTool(
 	"install_plugin",
 	"Install a Grafana plugin by its plugin ID. If the version is not already confirmed with the user, omit it — the tool will look up the latest version and return it for confirmation before installing.",
 	installPlugin,
-	mcp.WithTitleAnnotation("Install plugin"),
-	mcp.WithIdempotentHintAnnotation(false),
-	mcp.WithReadOnlyHintAnnotation(false),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(true),
+	mcpgrafana.WithTitleAnnotation("Install plugin"),
+	mcpgrafana.WithIdempotentHintAnnotation(false),
+	mcpgrafana.WithReadOnlyHintAnnotation(false),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(true),
 )
 
 // catalogPlugin mirrors the relevant fields from the Grafana plugin catalog list API.
@@ -398,14 +396,14 @@ var SearchPlugins = mcpgrafana.MustTool(
 		"it returns the exact pluginId to pass to get_plugin or install_plugin. "+
 		"Results include warnings for enterprise-only or Angular-based plugins.",
 	searchPlugins,
-	mcp.WithTitleAnnotation("Search plugins"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(true),
+	mcpgrafana.WithTitleAnnotation("Search plugins"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(true),
 )
 
-func AddPluginTools(s *server.MCPServer, enableWrite bool) {
+func AddPluginTools(s *mcp.Server, enableWrite bool) {
 	SearchPlugins.Register(s)
 	GetPlugin.Register(s)
 	if enableWrite {

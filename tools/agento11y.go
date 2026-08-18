@@ -12,8 +12,7 @@ import (
 	"time"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 const (
@@ -466,11 +465,11 @@ When to use:
 When NOT to use:
 - Fetching a single generation or its evaluation scores (use agento11y_manage_generations)`,
 	manageAgento11yConversations,
-	mcp.WithTitleAnnotation("Manage Agent Observability conversations"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Manage Agent Observability conversations"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 var ManageAgento11yGenerations = mcpgrafana.MustTool(
@@ -488,11 +487,11 @@ When to use:
 When NOT to use:
 - Searching or listing conversations (use agento11y_manage_conversations)`,
 	manageAgento11yGenerations,
-	mcp.WithTitleAnnotation("Manage Agent Observability generations"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Manage Agent Observability generations"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 const manageAgento11yEvaluatorsDescriptionFmt = `%s
@@ -762,108 +761,108 @@ var ManageAgento11yEvaluatorsRead = mcpgrafana.MustTool(
 	"agento11y_manage_evaluators",
 	manageAgento11yEvaluatorsDescription(true),
 	manageAgento11yEvaluatorsRead,
-	mcp.WithTitleAnnotation("Manage Agent Observability evaluators"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Manage Agent Observability evaluators"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 var ManageAgento11yEvalRulesRead = mcpgrafana.MustTool(
 	"agento11y_manage_eval_rules",
 	manageAgento11yEvalRulesDescription(true),
 	manageAgento11yEvalRulesRead,
-	mcp.WithTitleAnnotation("Manage Agent Observability eval rules and guards"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Manage Agent Observability eval rules and guards"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 var ManageAgento11yEvalCollectionsRead = mcpgrafana.MustTool(
 	"agento11y_manage_eval_collections",
 	manageAgento11yEvalCollectionsDescription(true),
 	manageAgento11yEvalCollectionsRead,
-	mcp.WithTitleAnnotation("Manage Agent Observability saved conversations and collections"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Manage Agent Observability saved conversations and collections"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 var ManageAgento11yExperimentsRead = mcpgrafana.MustTool(
 	"agento11y_manage_experiments",
 	manageAgento11yExperimentsDescription(true),
 	manageAgento11yExperimentsRead,
-	mcp.WithTitleAnnotation("Manage Agent Observability experiments"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Manage Agent Observability experiments"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 var ManageAgento11yTestSuitesRead = mcpgrafana.MustTool(
 	"agento11y_manage_test_suites",
 	manageAgento11yTestSuitesDescription(true),
 	manageAgento11yTestSuitesRead,
-	mcp.WithTitleAnnotation("Manage Agent Observability test suites"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Manage Agent Observability test suites"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 var ManageAgento11yEvaluatorsReadWrite = mcpgrafana.MustTool(
 	"agento11y_manage_evaluators",
 	manageAgento11yEvaluatorsDescription(false),
 	manageAgento11yEvaluatorsReadWrite,
-	mcp.WithTitleAnnotation("Manage Agent Observability evaluators"),
-	mcp.WithReadOnlyHintAnnotation(false),
-	mcp.WithDestructiveHintAnnotation(true),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Manage Agent Observability evaluators"),
+	mcpgrafana.WithReadOnlyHintAnnotation(false),
+	mcpgrafana.WithDestructiveHintAnnotation(true),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 var ManageAgento11yEvalRulesReadWrite = mcpgrafana.MustTool(
 	"agento11y_manage_eval_rules",
 	manageAgento11yEvalRulesDescription(false),
 	manageAgento11yEvalRulesReadWrite,
-	mcp.WithTitleAnnotation("Manage Agent Observability eval rules and guards"),
-	mcp.WithReadOnlyHintAnnotation(false),
-	mcp.WithDestructiveHintAnnotation(true),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Manage Agent Observability eval rules and guards"),
+	mcpgrafana.WithReadOnlyHintAnnotation(false),
+	mcpgrafana.WithDestructiveHintAnnotation(true),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 var ManageAgento11yEvalCollectionsReadWrite = mcpgrafana.MustTool(
 	"agento11y_manage_eval_collections",
 	manageAgento11yEvalCollectionsDescription(false),
 	manageAgento11yEvalCollectionsReadWrite,
-	mcp.WithTitleAnnotation("Manage Agent Observability saved conversations and collections"),
-	mcp.WithReadOnlyHintAnnotation(false),
-	mcp.WithDestructiveHintAnnotation(true),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Manage Agent Observability saved conversations and collections"),
+	mcpgrafana.WithReadOnlyHintAnnotation(false),
+	mcpgrafana.WithDestructiveHintAnnotation(true),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 var ManageAgento11yExperimentsReadWrite = mcpgrafana.MustTool(
 	"agento11y_manage_experiments",
 	manageAgento11yExperimentsDescription(false),
 	manageAgento11yExperimentsReadWrite,
-	mcp.WithTitleAnnotation("Manage Agent Observability experiments"),
-	mcp.WithReadOnlyHintAnnotation(false),
-	mcp.WithDestructiveHintAnnotation(true),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Manage Agent Observability experiments"),
+	mcpgrafana.WithReadOnlyHintAnnotation(false),
+	mcpgrafana.WithDestructiveHintAnnotation(true),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 var ManageAgento11yTestSuitesReadWrite = mcpgrafana.MustTool(
 	"agento11y_manage_test_suites",
 	manageAgento11yTestSuitesDescription(false),
 	manageAgento11yTestSuitesReadWrite,
-	mcp.WithTitleAnnotation("Manage Agent Observability test suites"),
-	mcp.WithReadOnlyHintAnnotation(false),
-	mcp.WithDestructiveHintAnnotation(true),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Manage Agent Observability test suites"),
+	mcpgrafana.WithReadOnlyHintAnnotation(false),
+	mcpgrafana.WithDestructiveHintAnnotation(true),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
-func AddAgento11yTools(mcp *server.MCPServer, enableWriteTools bool) {
+func AddAgento11yTools(mcp *mcp.Server, enableWriteTools bool) {
 	ManageAgento11yConversations.Register(mcp)
 	ManageAgento11yGenerations.Register(mcp)
 	ManageAgento11yAgents.Register(mcp)

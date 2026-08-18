@@ -12,8 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	mcpgrafana "github.com/grafana/mcp-grafana"
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 type investigationStatus string
@@ -174,11 +173,11 @@ var GetSiftInvestigation = mcpgrafana.MustTool(
 	"get_sift_investigation",
 	"Retrieves an existing Sift investigation by its UUID. The ID should be provided as a string in UUID format (e.g. '02adab7c-bf5b-45f2-9459-d71a2c29e11b').",
 	getSiftInvestigation,
-	mcp.WithTitleAnnotation("Get Sift investigation"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Get Sift investigation"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 // GetSiftAnalysisParams defines the parameters for retrieving a specific analysis
@@ -218,11 +217,11 @@ var GetSiftAnalysis = mcpgrafana.MustTool(
 	"get_sift_analysis",
 	"Retrieves a specific analysis from an investigation by its UUID. The investigation ID and analysis ID should be provided as strings in UUID format.",
 	getSiftAnalysis,
-	mcp.WithTitleAnnotation("Get Sift analysis"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Get Sift analysis"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 // ListSiftInvestigationsParams defines the parameters for retrieving investigations
@@ -255,11 +254,11 @@ var ListSiftInvestigations = mcpgrafana.MustTool(
 	"list_sift_investigations",
 	"Retrieves a list of Sift investigations with an optional limit. If no limit is specified, defaults to 10 investigations.",
 	listSiftInvestigations,
-	mcp.WithTitleAnnotation("List Sift investigations"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("List Sift investigations"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 // FindErrorPatternLogsParams defines the parameters for running an ErrorPatternLogs check
@@ -350,10 +349,10 @@ var FindErrorPatternLogs = mcpgrafana.MustTool(
 	"find_error_pattern_logs",
 	"Searches Loki logs for elevated error patterns compared to the last day's average, waits for the analysis to complete, and returns the results including any patterns found.",
 	findErrorPatternLogs,
-	mcp.WithTitleAnnotation("Find error patterns in logs"),
-	mcp.WithReadOnlyHintAnnotation(false),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Find error patterns in logs"),
+	mcpgrafana.WithReadOnlyHintAnnotation(false),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 // FindSlowRequestsParams defines the parameters for running an SlowRequests check
@@ -419,14 +418,14 @@ var FindSlowRequests = mcpgrafana.MustTool(
 	"find_slow_requests",
 	"Searches relevant Tempo datasources for slow requests, waits for the analysis to complete, and returns the results.",
 	findSlowRequests,
-	mcp.WithTitleAnnotation("Find slow requests"),
-	mcp.WithReadOnlyHintAnnotation(false),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Find slow requests"),
+	mcpgrafana.WithReadOnlyHintAnnotation(false),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 // AddSiftTools registers all Sift tools with the MCP server
-func AddSiftTools(mcp *server.MCPServer, enableWriteTools bool) {
+func AddSiftTools(mcp *mcp.Server, enableWriteTools bool) {
 	GetSiftInvestigation.Register(mcp)
 	GetSiftAnalysis.Register(mcp)
 	ListSiftInvestigations.Register(mcp)

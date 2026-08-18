@@ -9,8 +9,7 @@ import (
 	"time"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 const (
@@ -237,14 +236,14 @@ Time formats: 'now-1h', '2026-02-02T19:00:00Z', '1738519200000' (Unix ms)
 
 Example: SELECT Timestamp, Body FROM otel_logs WHERE $__timeFilter(Timestamp)`,
 	queryClickHouse,
-	mcp.WithTitleAnnotation("Query ClickHouse"),
-	mcp.WithIdempotentHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Query ClickHouse"),
+	mcpgrafana.WithIdempotentHintAnnotation(false),
 	// The raw SQL is passed through unfiltered, so a DELETE/DROP executes if
 	// the datasource credentials permit it — not read-only, potentially
 	// destructive.
-	mcp.WithReadOnlyHintAnnotation(false),
-	mcp.WithDestructiveHintAnnotation(true),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithReadOnlyHintAnnotation(false),
+	mcpgrafana.WithDestructiveHintAnnotation(true),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 // ListClickHouseTablesParams defines the parameters for listing ClickHouse tables
@@ -308,11 +307,11 @@ var ListClickHouseTables = mcpgrafana.MustTool(
 	"list_clickhouse_tables",
 	"START HERE for ClickHouse: List available tables (name, database, engine, row count, size). NEXT: Use describe_clickhouse_table to see column schemas.",
 	listClickHouseTables,
-	mcp.WithTitleAnnotation("List ClickHouse tables"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("List ClickHouse tables"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 // DescribeClickHouseTableParams defines the parameters for describing a ClickHouse table
@@ -387,15 +386,15 @@ var DescribeClickHouseTable = mcpgrafana.MustTool(
 	"describe_clickhouse_table",
 	"Get column schema for a ClickHouse table. Pass the database from list_clickhouse_tables results. NEXT: Use query_clickhouse with discovered column names.",
 	describeClickHouseTable,
-	mcp.WithTitleAnnotation("Describe ClickHouse table"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Describe ClickHouse table"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 // AddClickHouseTools registers all ClickHouse tools with the MCP server
-func AddClickHouseTools(mcp *server.MCPServer) {
+func AddClickHouseTools(mcp *mcp.Server) {
 	QueryClickHouse.Register(mcp)
 	ListClickHouseTables.Register(mcp)
 	DescribeClickHouseTable.Register(mcp)

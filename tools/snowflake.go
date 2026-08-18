@@ -9,8 +9,7 @@ import (
 	"time"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 const (
@@ -238,14 +237,14 @@ Snowflake event tables (telemetry from logging APIs/auto-instrumentation) live i
 
 Example: SELECT TIMESTAMP, RECORD['severity_text']::STRING AS LEVEL, VALUE FROM SNOWFLAKE.TELEMETRY.EVENTS WHERE $__timeFilter(TIMESTAMP) AND RECORD_TYPE = 'LOG'`,
 	querySnowflake,
-	mcp.WithTitleAnnotation("Query Snowflake"),
-	mcp.WithIdempotentHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Query Snowflake"),
+	mcpgrafana.WithIdempotentHintAnnotation(false),
 	// The raw SQL is passed through unfiltered, so a DELETE/DROP executes if
 	// the datasource credentials permit it — not read-only, potentially
 	// destructive.
-	mcp.WithReadOnlyHintAnnotation(false),
-	mcp.WithDestructiveHintAnnotation(true),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithReadOnlyHintAnnotation(false),
+	mcpgrafana.WithDestructiveHintAnnotation(true),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 // ListSnowflakeTablesParams defines the parameters for listing Snowflake tables
@@ -321,11 +320,11 @@ var ListSnowflakeTables = mcpgrafana.MustTool(
 	"list_snowflake_tables",
 	"START HERE for Snowflake: List available tables (database, schema, name, kind, row count, size) via INFORMATION_SCHEMA. NEXT: Use describe_snowflake_table to see column schemas.",
 	listSnowflakeTables,
-	mcp.WithTitleAnnotation("List Snowflake tables"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("List Snowflake tables"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 // DescribeSnowflakeTableParams defines the parameters for describing a Snowflake table
@@ -405,15 +404,15 @@ var DescribeSnowflakeTable = mcpgrafana.MustTool(
 	"describe_snowflake_table",
 	"Get column schema for a Snowflake table. Pass the database/schema from list_snowflake_tables results. NEXT: Use query_snowflake with discovered column names.",
 	describeSnowflakeTable,
-	mcp.WithTitleAnnotation("Describe Snowflake table"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Describe Snowflake table"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 // AddSnowflakeTools registers all Snowflake tools with the MCP server
-func AddSnowflakeTools(mcp *server.MCPServer) {
+func AddSnowflakeTools(mcp *mcp.Server) {
 	QuerySnowflake.Register(mcp)
 	ListSnowflakeTables.Register(mcp)
 	DescribeSnowflakeTable.Register(mcp)

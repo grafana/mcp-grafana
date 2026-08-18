@@ -13,8 +13,7 @@ import (
 	"time"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 const (
@@ -238,11 +237,11 @@ var ListAthenaCatalogs = mcpgrafana.MustTool(
 	"list_athena_catalogs",
 	"START HERE for Athena: List available data catalogs (e.g. AwsDataCatalog, Iceberg connectors). NEXT: Use list_athena_databases with a catalog.",
 	listAthenaCatalogs,
-	mcp.WithTitleAnnotation("List Athena catalogs"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("List Athena catalogs"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 type ListAthenaDatabasesParams struct {
@@ -281,11 +280,11 @@ var ListAthenaDatabases = mcpgrafana.MustTool(
 	"list_athena_databases",
 	"List databases in an Athena catalog. Use after list_athena_catalogs. NEXT: Use list_athena_tables with a database.",
 	listAthenaDatabases,
-	mcp.WithTitleAnnotation("List Athena databases"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("List Athena databases"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 type ListAthenaTablesParams struct {
@@ -328,11 +327,11 @@ var ListAthenaTables = mcpgrafana.MustTool(
 	"list_athena_tables",
 	"List tables in an Athena database. Use after list_athena_databases. NEXT: Use describe_athena_table to see column schemas before querying.",
 	listAthenaTables,
-	mcp.WithTitleAnnotation("List Athena tables"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("List Athena tables"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 type DescribeAthenaTableParams struct {
@@ -382,11 +381,11 @@ var DescribeAthenaTable = mcpgrafana.MustTool(
 	"describe_athena_table",
 	"Get column names for an Athena table. Use after list_athena_tables. NEXT: Use query_athena with discovered column names.",
 	describeAthenaTable,
-	mcp.WithTitleAnnotation("Describe Athena table"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Describe Athena table"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 type AthenaQueryParams struct {
@@ -524,18 +523,18 @@ Athena queries are async — Grafana handles polling. Use LIMIT and partition-aw
 
 Example: SELECT request_time, status FROM my_table WHERE $__timeFilter(request_time) LIMIT 100`,
 	queryAthena,
-	mcp.WithTitleAnnotation("Query Athena"),
-	mcp.WithIdempotentHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Query Athena"),
+	mcpgrafana.WithIdempotentHintAnnotation(false),
 	// The raw SQL is passed through unfiltered, so DML/DDL (INSERT, DROP,
 	// CREATE TABLE AS) executes if the datasource credentials permit it —
 	// not read-only, potentially destructive.
-	mcp.WithReadOnlyHintAnnotation(false),
-	mcp.WithDestructiveHintAnnotation(true),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithReadOnlyHintAnnotation(false),
+	mcpgrafana.WithDestructiveHintAnnotation(true),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 // AddAthenaTools registers all Athena tools with the MCP server.
-func AddAthenaTools(s *server.MCPServer) {
+func AddAthenaTools(s *mcp.Server) {
 	ListAthenaCatalogs.Register(s)
 	ListAthenaDatabases.Register(s)
 	ListAthenaTables.Register(s)

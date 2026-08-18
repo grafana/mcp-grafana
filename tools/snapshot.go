@@ -9,10 +9,8 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
-
 	mcpgrafana "github.com/grafana/mcp-grafana"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 type ListSnapshotsParams struct {
@@ -228,47 +226,47 @@ var ListSnapshotsTool = mcpgrafana.MustTool(
 	"list_snapshots",
 	"List Grafana dashboard snapshots with optional query and result limit filters.",
 	listSnapshots,
-	mcp.WithTitleAnnotation("List snapshots"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("List snapshots"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 var GetSnapshotTool = mcpgrafana.MustTool(
 	"get_snapshot",
 	"Get a Grafana snapshot by key, including snapshot metadata and dashboard payload.",
 	getSnapshot,
-	mcp.WithTitleAnnotation("Get snapshot"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Get snapshot"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 var CreateSnapshotTool = mcpgrafana.MustTool(
 	"create_snapshot",
 	"Create a Grafana snapshot from a full dashboard payload. Supports optional expiration and external snapshot fields.",
 	createSnapshot,
-	mcp.WithTitleAnnotation("Create snapshot"),
-	mcp.WithIdempotentHintAnnotation(false),
-	mcp.WithReadOnlyHintAnnotation(false),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Create snapshot"),
+	mcpgrafana.WithIdempotentHintAnnotation(false),
+	mcpgrafana.WithReadOnlyHintAnnotation(false),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 var DeleteSnapshotTool = mcpgrafana.MustTool(
 	"delete_snapshot",
 	"Delete a Grafana snapshot by snapshot key.",
 	deleteSnapshot,
-	mcp.WithTitleAnnotation("Delete snapshot"),
-	mcp.WithIdempotentHintAnnotation(false),
-	mcp.WithReadOnlyHintAnnotation(false),
-	mcp.WithDestructiveHintAnnotation(true),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Delete snapshot"),
+	mcpgrafana.WithIdempotentHintAnnotation(false),
+	mcpgrafana.WithReadOnlyHintAnnotation(false),
+	mcpgrafana.WithDestructiveHintAnnotation(true),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
-func AddSnapshotTools(s *server.MCPServer, enableWriteTools bool) {
+func AddSnapshotTools(s *mcp.Server, enableWriteTools bool) {
 	ListSnapshotsTool.Register(s)
 	GetSnapshotTool.Register(s)
 	if enableWriteTools {

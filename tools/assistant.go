@@ -25,8 +25,7 @@ import (
 
 	"github.com/google/uuid"
 	mcpgrafana "github.com/grafana/mcp-grafana"
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 const (
@@ -178,16 +177,16 @@ var AskAssistant = mcpgrafana.MustTool(
 	"ask_assistant",
 	askAssistantDescription,
 	askAssistant,
-	mcp.WithTitleAnnotation("Ask Grafana Assistant"),
-	mcp.WithIdempotentHintAnnotation(false),
-	mcp.WithReadOnlyHintAnnotation(false),
-	mcp.WithDestructiveHintAnnotation(true),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Ask Grafana Assistant"),
+	mcpgrafana.WithIdempotentHintAnnotation(false),
+	mcpgrafana.WithReadOnlyHintAnnotation(false),
+	mcpgrafana.WithDestructiveHintAnnotation(true),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 // AddAssistantTools registers the assistant tools with the MCP server. The
 // assistant may perform write operations, so it is gated behind enableWriteTools.
-func AddAssistantTools(mcp *server.MCPServer, enableWriteTools bool) {
+func AddAssistantTools(mcp *mcp.Server, enableWriteTools bool) {
 	if enableWriteTools {
 		AskAssistant.Register(mcp)
 	}

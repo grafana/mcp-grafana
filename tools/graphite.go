@@ -12,8 +12,7 @@ import (
 	"time"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 const (
@@ -230,11 +229,11 @@ var QueryGraphite = mcpgrafana.MustTool(
 	"query_graphite",
 	"WORKFLOW: list_graphite_metrics -> query_graphite.\n\nExecutes a Graphite render API query against a Graphite datasource and returns matching metric series with their datapoints. Supports the full Graphite target expression language including wildcard patterns (e.g. 'servers.web*.cpu.load5'), aggregation functions (e.g. 'sumSeries(app.*.requests)'), and tag-based queries (e.g. 'seriesByTag(\\'name=cpu.load\\')'). Datapoints with no recorded value are returned with a null value field. Time range defaults to the last hour if not specified.",
 	queryGraphite,
-	mcp.WithTitleAnnotation("Query Graphite metrics"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Query Graphite metrics"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 // GraphiteMetricNode is a node in the Graphite metric hierarchy as returned
@@ -307,11 +306,11 @@ var ListGraphiteMetrics = mcpgrafana.MustTool(
 	"list_graphite_metrics",
 	"Discover available metric paths in a Graphite datasource by browsing the metric tree. Returns nodes matching the query pattern\\, each indicating whether it is a leaf metric (has data) or an expandable branch (has children). Use '*' as a wildcard at any level to enumerate the tree (e.g. '*' → top-level nodes\\, 'servers.*' → all second-level nodes under 'servers'). Drill down progressively to find the full metric path before querying with query_graphite.",
 	listGraphiteMetrics,
-	mcp.WithTitleAnnotation("List Graphite metrics"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("List Graphite metrics"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 // ListGraphiteTagsParams defines the parameters for the list_graphite_tags tool.
@@ -356,11 +355,11 @@ var ListGraphiteTags = mcpgrafana.MustTool(
 	"list_graphite_tags",
 	"List available tag names in a Graphite datasource that uses tag-based metrics. Returns a list of tag name strings (e.g. [\"name\"\\, \"env\"\\, \"region\"]). These tags can be used to build tag-based target expressions for query_graphite (e.g. seriesByTag('name=cpu.load\\,env=prod')). Optionally filter by a prefix. Requires Graphite to be configured with tag support.",
 	listGraphiteTags,
-	mcp.WithTitleAnnotation("List Graphite tags"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("List Graphite tags"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 // computeSeriesDensity derives data-density statistics from the parsed
@@ -502,15 +501,15 @@ var QueryGraphiteDensity = mcpgrafana.MustTool(
 		"Supports wildcard targets (e.g. 'obox-cl*.sys.sessions') to diagnose stale, sparse, or dead metrics across a cluster. "+
 		"A fillRatio of 0 with lastSeen null means the series reported no data in the requested window.",
 	queryGraphiteDensity,
-	mcp.WithTitleAnnotation("Query Graphite metric density"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Query Graphite metric density"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 // AddGraphiteTools registers all Graphite tools with the MCP server.
-func AddGraphiteTools(mcp *server.MCPServer) {
+func AddGraphiteTools(mcp *mcp.Server) {
 	QueryGraphite.Register(mcp)
 	ListGraphiteMetrics.Register(mcp)
 	ListGraphiteTags.Register(mcp)
