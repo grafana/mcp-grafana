@@ -301,7 +301,8 @@ func (dt *disabledTools) buildInstructions() string {
 
 func newServer(serverName, transport string, dt disabledTools, obs *observability.Observability, sessionIdleTimeoutMinutes int) (*server.MCPServer, *mcpgrafana.ToolManager, *mcpgrafana.SessionManager) {
 	sm := mcpgrafana.NewSessionManager(
-		mcpgrafana.WithSessionTTL(time.Duration(sessionIdleTimeoutMinutes) * time.Minute),
+		mcpgrafana.WithSessionTTL(time.Duration(sessionIdleTimeoutMinutes)*time.Minute),
+		mcpgrafana.WithSessionMeterProvider(obs.MeterProvider()),
 	)
 
 	// Declare variables that will be initialized after server creation.
@@ -615,7 +616,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 	// transport allocation (see https://github.com/grafana/mcp-grafana/issues/682).
 	var clientCache *mcpgrafana.ClientCache
 	if transport != "stdio" {
-		clientCache = mcpgrafana.NewClientCache(nil)
+		clientCache = mcpgrafana.NewClientCache(nil, mcpgrafana.WithClientCacheMeterProvider(o.MeterProvider()))
 		defer clientCache.Close()
 	}
 
