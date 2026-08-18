@@ -375,7 +375,11 @@ func newServer(serverName, transport string, dt disabledTools, obs *observabilit
 	)
 
 	// Initialize ToolManager now that server is created
-	stm = mcpgrafana.NewToolManager(sm, s, mcpgrafana.WithProxiedTools(!dt.proxied), mcpgrafana.WithToolManagerLogger(slog.Default()))
+	stm = mcpgrafana.NewToolManager(sm, s,
+		mcpgrafana.WithProxiedTools(!dt.proxied),
+		mcpgrafana.WithToolManagerLogger(slog.Default()),
+		mcpgrafana.WithToolManagerMeterProvider(obs.MeterProvider()),
+	)
 
 	// Give the SessionManager a reference to the MCPServer so the reaper can
 	// unregister sessions from the SDK's internal session map.

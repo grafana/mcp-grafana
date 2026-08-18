@@ -11,6 +11,10 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
+
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
@@ -21,7 +25,76 @@ const (
 	// mcpProbeTimeout is the timeout for probing a single datasource's MCP endpoint.
 	// This is kept short to avoid slow startup when datasources are unreachable.
 	mcpProbeTimeout = 5 * time.Second
+
+	// proxiedToolsMeterName is the OTel meter name for discovery/connect metrics,
+	// matching the convention used by clientCacheMeterName/sessionMeterName.
+	proxiedToolsMeterName = "mcp-grafana"
 )
+
+// discoveryMetrics holds OTel instruments for MCP datasource discovery (probe)
+// and connection (buildProxiedToolSet) observability.
+type discoveryMetrics struct {
+	probeSuccess              metric.Int64Counter // Probes that found a datasource is MCP-enabled
+	probeDeterministicFailure metric.Int64Counter // Probes with a clean non-retryable response (e.g. 404): not MCP-enabled
+	probeTransientFailure     metric.Int64Counter // Probes that exhausted retries on a transient error (timeout/network/5xx)
+	probeRetries              metric.Int64Counter // Probe attempts issued as a retry (attempts beyond the first)
+
+	connectSuccess              metric.Int64Counter // Proxied client connections established
+	connectDeterministicFailure metric.Int64Counter // Connections that failed for a non-retryable reason (e.g. auth)
+	connectTransientFailure     metric.Int64Counter // Connections that exhausted retries on a transient error
+	connectRetries              metric.Int64Counter // Connect attempts issued as a retry (attempts beyond the first)
+}
+
+func newDiscoveryMetrics(mp metric.MeterProvider) discoveryMetrics {
+	if mp == nil {
+		mp = otel.GetMeterProvider()
+	}
+	meter := mp.Meter(proxiedToolsMeterName)
+
+	probeSuccess, _ := meter.Int64Counter("mcp.discovery.probe_success",
+		metric.WithDescription("Number of MCP-support probes that found a datasource is MCP-enabled"),
+		metric.WithUnit("{probe}"),
+	)
+	probeDeterministicFailure, _ := meter.Int64Counter("mcp.discovery.probe_deterministic_failure",
+		metric.WithDescription("Number of MCP-support probes that got a clean non-retryable response (e.g. 404)"),
+		metric.WithUnit("{probe}"),
+	)
+	probeTransientFailure, _ := meter.Int64Counter("mcp.discovery.probe_transient_failure",
+		metric.WithDescription("Number of MCP-support probes that exhausted retries on a transient error"),
+		metric.WithUnit("{probe}"),
+	)
+	probeRetries, _ := meter.Int64Counter("mcp.discovery.probe_retries",
+		metric.WithDescription("Number of MCP-support probe attempts issued as a retry"),
+		metric.WithUnit("{attempt}"),
+	)
+	connectSuccess, _ := meter.Int64Counter("mcp.discovery.connect_success",
+		metric.WithDescription("Number of proxied MCP client connections established"),
+		metric.WithUnit("{connection}"),
+	)
+	connectDeterministicFailure, _ := meter.Int64Counter("mcp.discovery.connect_deterministic_failure",
+		metric.WithDescription("Number of proxied MCP client connections that failed for a non-retryable reason"),
+		metric.WithUnit("{connection}"),
+	)
+	connectTransientFailure, _ := meter.Int64Counter("mcp.discovery.connect_transient_failure",
+		metric.WithDescription("Number of proxied MCP client connections that exhausted retries on a transient error"),
+		metric.WithUnit("{connection}"),
+	)
+	connectRetries, _ := meter.Int64Counter("mcp.discovery.connect_retries",
+		metric.WithDescription("Number of proxied MCP client connect attempts issued as a retry"),
+		metric.WithUnit("{attempt}"),
+	)
+
+	return discoveryMetrics{
+		probeSuccess:                probeSuccess,
+		probeDeterministicFailure:   probeDeterministicFailure,
+		probeTransientFailure:       probeTransientFailure,
+		probeRetries:                probeRetries,
+		connectSuccess:              connectSuccess,
+		connectDeterministicFailure: connectDeterministicFailure,
+		connectTransientFailure:     connectTransientFailure,
+		connectRetries:              connectRetries,
+	}
+}
 
 // MCPDatasourceConfig defines configuration for a datasource type that supports MCP
 type MCPDatasourceConfig struct {
@@ -43,12 +116,13 @@ type DiscoveredDatasource struct {
 	MCPURL string // The MCP endpoint URL
 }
 
-// discoverMCPDatasources discovers datasources that support MCP
-// Returns a list of datasources with MCP endpoints
-func discoverMCPDatasources(ctx context.Context, logger *slog.Logger) ([]DiscoveredDatasource, error) {
+// discoverMCPDatasources discovers datasources that support MCP.
+// Returns the list of datasources with MCP endpoints and the number of
+// candidates considered (datasources of an MCP-enabled type, before probing).
+func discoverMCPDatasources(ctx context.Context, logger *slog.Logger, metrics discoveryMetrics) ([]DiscoveredDatasource, int, error) {
 	gc := GrafanaClientFromContext(ctx)
 	if gc == nil {
-		return nil, fmt.Errorf("grafana client not found in context")
+		return nil, 0, fmt.Errorf("grafana client not found in context")
 	}
 
 	var discovered []DiscoveredDatasource
@@ -58,13 +132,13 @@ func discoverMCPDatasources(ctx context.Context, logger *slog.Logger) ([]Discove
 		datasources.NewGetDataSourcesParamsWithContext(ctx),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list datasources: %w", err)
+		return nil, 0, fmt.Errorf("failed to list datasources: %w", err)
 	}
 
 	// Get the Grafana base URL from context
 	config := GrafanaConfigFromContext(ctx)
 	if config.URL == "" {
-		return nil, fmt.Errorf("grafana url not found in context")
+		return nil, 0, fmt.Errorf("grafana url not found in context")
 	}
 	grafanaBaseURL := config.URL
 
@@ -92,12 +166,12 @@ func discoverMCPDatasources(ctx context.Context, logger *slog.Logger) ([]Discove
 
 	if len(candidates) == 0 {
 		logger.DebugContext(ctx, "no candidate MCP datasources found")
-		return nil, nil
+		return nil, 0, nil
 	}
 
 	transport, err := BuildTransport(&config, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create transport: %w", err)
+		return nil, len(candidates), fmt.Errorf("failed to create transport: %w", err)
 	}
 
 	httpClient := &http.Client{
@@ -105,7 +179,7 @@ func discoverMCPDatasources(ctx context.Context, logger *slog.Logger) ([]Discove
 		Timeout:   mcpProbeTimeout,
 	}
 
-	// Probe candidates in parallel with timeout
+	// Probe candidates in parallel, retrying transient failures.
 	type probeResult struct {
 		ds      DiscoveredDatasource
 		enabled bool
@@ -119,43 +193,75 @@ func discoverMCPDatasources(ctx context.Context, logger *slog.Logger) ([]Discove
 			defer wg.Done()
 
 			probeURL := fmt.Sprintf("%s/api/datasources/proxy/uid/%s%s", grafanaBaseURL, c.uid, c.dsConfig.EndpointPath)
+			typeAttr := metric.WithAttributes(attribute.String("datasource.type", c.dsType))
 
-			probeCtx, cancel := context.WithTimeoutCause(ctx, mcpProbeTimeout,
-				fmt.Errorf("timed out after %s probing MCP endpoint for datasource %s (%s) at %s", mcpProbeTimeout, c.name, c.uid, probeURL))
-			defer cancel()
+			doProbe := func(attemptNum int) (struct{}, error) {
+				if attemptNum > 1 {
+					metrics.probeRetries.Add(ctx, 1, typeAttr)
+				}
 
-			// Check if the datasource instance has MCP enabled
-			// We use a DELETE request to probe the MCP endpoint since:
-			// - GET would start an event stream and hang
-			// - POST doesn't work with the Grafana OpenAPI client
-			// - DELETE returns 200 if MCP is enabled, 404 if not
-			req, err := http.NewRequestWithContext(probeCtx, http.MethodDelete, probeURL, nil)
-			if err != nil {
-				logger.DebugContext(ctx, "failed to create probe request", "datasource", c.uid, "error", err)
-				return
+				probeCtx, cancel := context.WithTimeoutCause(ctx, mcpProbeTimeout,
+					fmt.Errorf("timed out after %s probing MCP endpoint for datasource %s (%s) at %s (attempt %d/%d)",
+						mcpProbeTimeout, c.name, c.uid, probeURL, attemptNum, mcpRetryMaxAttempts))
+				defer cancel()
+
+				// Check if the datasource instance has MCP enabled
+				// We use a DELETE request to probe the MCP endpoint since:
+				// - GET would start an event stream and hang
+				// - POST doesn't work with the Grafana OpenAPI client
+				// - DELETE returns 200 if MCP is enabled, 404 if not
+				req, err := http.NewRequestWithContext(probeCtx, http.MethodDelete, probeURL, nil)
+				if err != nil {
+					return struct{}{}, fmt.Errorf("failed to create probe request: %w", err)
+				}
+
+				resp, err := httpClient.Do(req)
+				if err != nil {
+					return struct{}{}, newTransientError(contextCauseOrErr(probeCtx, err))
+				}
+				defer func() { _ = resp.Body.Close() }()
+
+				switch {
+				case resp.StatusCode == http.StatusOK:
+					return struct{}{}, nil
+				case resp.StatusCode >= 500:
+					return struct{}{}, newTransientError(fmt.Errorf("probe returned server error status %d", resp.StatusCode))
+				default:
+					return struct{}{}, fmt.Errorf("probe returned non-OK status %d", resp.StatusCode)
+				}
 			}
 
-			resp, err := httpClient.Do(req)
-			if err != nil {
-				logger.DebugContext(ctx, "MCP probe failed", "datasource", c.uid, "error", contextCauseOrErr(probeCtx, err))
-				return
-			}
-			defer func() { _ = resp.Body.Close() }()
+			_, probeErr := withRetry(ctx, defaultRetryPolicy,
+				fmt.Sprintf("MCP probe for datasource %s (%s)", c.name, c.uid), doProbe)
 
-			// MCP is enabled if we get a 200 response
-			if resp.StatusCode == http.StatusOK {
-				mcpURL := fmt.Sprintf("%s/api/datasources/proxy/uid/%s%s", grafanaBaseURL, c.uid, c.dsConfig.EndpointPath)
+			switch {
+			case probeErr == nil:
+				metrics.probeSuccess.Add(ctx, 1, typeAttr)
 				results <- probeResult{
 					ds: DiscoveredDatasource{
 						UID:    c.uid,
 						Name:   c.name,
 						Type:   c.dsType,
-						MCPURL: mcpURL,
+						MCPURL: probeURL,
 					},
 					enabled: true,
 				}
-			} else {
-				logger.DebugContext(ctx, "MCP probe returned non-OK status", "datasource", c.uid, "status", resp.StatusCode, "url", probeURL)
+			case isTransient(probeErr):
+				metrics.probeTransientFailure.Add(ctx, 1, typeAttr)
+				logger.WarnContext(ctx, "MCP probe failed after retries; excluding datasource from proxied tool set",
+					"datasource", c.uid, "name", c.name, "type", c.dsType, "error", probeErr)
+				results <- probeResult{}
+			default:
+				// A clean non-OK response (typically 404) just means this
+				// datasource instance doesn't have MCP enabled, which is a
+				// routine, expected outcome for many Tempo datasources, not a
+				// failure. Debug (not Warn) keeps that from drowning out the
+				// transient case above, which is the one worth an operator's
+				// attention.
+				metrics.probeDeterministicFailure.Add(ctx, 1, typeAttr)
+				logger.DebugContext(ctx, "MCP probe determined datasource does not support MCP; excluding it",
+					"datasource", c.uid, "name", c.name, "type", c.dsType, "error", probeErr)
+				results <- probeResult{}
 			}
 		}(c)
 	}
@@ -174,7 +280,7 @@ func discoverMCPDatasources(ctx context.Context, logger *slog.Logger) ([]Discove
 	}
 
 	logger.DebugContext(ctx, "discovered MCP datasources", "count", len(discovered), "candidates", len(candidates))
-	return discovered, nil
+	return discovered, len(candidates), nil
 }
 
 // addDatasourceUidParameter adds a required datasourceUid parameter to a tool's input schema
@@ -412,6 +518,12 @@ type ToolManager struct {
 	// defaults to buildProxiedToolSet and is a field only so tests can inject a
 	// fake builder that avoids real discovery/network I/O.
 	buildSet func(ctx context.Context, logger *slog.Logger) (builtProxiedTools, error)
+
+	// metrics holds OTel instruments for discovery/connect observability.
+	metrics discoveryMetrics
+	// meterProvider is the metric.MeterProvider used to build metrics, set via
+	// WithToolManagerMeterProvider.
+	meterProvider metric.MeterProvider
 }
 
 // NewToolManager creates a new ToolManager
@@ -425,6 +537,7 @@ func NewToolManager(sm *SessionManager, mcpServer *server.MCPServer, opts ...too
 	for _, opt := range opts {
 		opt(tm)
 	}
+	tm.metrics = newDiscoveryMetrics(tm.meterProvider)
 	if tm.logger == nil {
 		tm.logger = slog.Default()
 	}
@@ -453,6 +566,19 @@ func WithToolManagerLogger(logger *slog.Logger) toolManagerOption {
 	}
 }
 
+// WithToolManagerMeterProvider sets the metric.MeterProvider used to create
+// the ToolManager's discovery/connect OTel instruments. If unset (or passed
+// as nil), the ToolManager falls back to otel.GetMeterProvider(), matching
+// the pre-existing behavior. Callers embedding mcp-grafana as a library and
+// running with a non-global MeterProvider (e.g. because the process resets
+// the global provider to a noop for unrelated reasons) should pass their own
+// provider here so these metrics actually reach a scrapeable registry.
+func WithToolManagerMeterProvider(mp metric.MeterProvider) toolManagerOption {
+	return func(tm *ToolManager) {
+		tm.meterProvider = mp
+	}
+}
+
 // loggerFromCtx returns the logger from the context's GrafanaConfig if available,
 // otherwise falls back to the ToolManager's logger.
 func (tm *ToolManager) loggerFromCtx(ctx context.Context) *slog.Logger {
@@ -476,7 +602,7 @@ func (tm *ToolManager) InitializeAndRegisterServerTools(ctx context.Context) err
 	logger := tm.loggerFromCtx(ctx)
 
 	// Discover datasources with MCP support
-	discovered, err := discoverMCPDatasources(ctx, logger)
+	discovered, _, err := discoverMCPDatasources(ctx, logger, tm.metrics)
 	if err != nil {
 		return fmt.Errorf("failed to discover MCP datasources: %w", err)
 	}
@@ -531,6 +657,15 @@ func (tm *ToolManager) InitializeAndRegisterServerTools(ctx context.Context) err
 	return nil
 }
 
+// buildStats summarizes how a build's candidate datasources fared, for the
+// "built proxied tool set" summary log. Zero-value-safe: builders that don't
+// populate it (e.g. test seams) simply report zeros.
+type buildStats struct {
+	candidates    int // datasources of an MCP-enabled type, before probing
+	discovered    int // candidates that passed the MCP probe
+	connectFailed int // discovered datasources that failed to connect (after retries)
+}
+
 // builtProxiedTools is the result of a build, held in local variables while the
 // build runs so that nothing shared is mutated without the cache lock. It is
 // published into a proxiedToolSet in a single critical section.
@@ -538,6 +673,7 @@ type builtProxiedTools struct {
 	clients           map[string]*ProxiedClient
 	tools             []mcp.Tool
 	toolToDatasources map[string][]string
+	stats             buildStats
 }
 
 // buildProxiedToolSet discovers datasources, connects to them, and returns the
@@ -565,21 +701,102 @@ func (tm *ToolManager) buildProxiedToolSet(ctx context.Context, logger *slog.Log
 	}()
 
 	// Discover datasources with MCP support.
-	discovered, err := discoverMCPDatasources(ctx, logger)
+	discovered, candidateCount, err := discoverMCPDatasources(ctx, logger, tm.metrics)
 	if err != nil {
 		logger.ErrorContext(ctx, "failed to discover MCP datasources", "error", err)
 		return built, fmt.Errorf("failed to discover MCP datasources: %w", err)
 	}
 
-	// Connect to each discovered datasource.
+	// Connect to each discovered datasource in parallel, retrying transient
+	// failures, mirroring the probe step's concurrency pattern in
+	// discoverMCPDatasources. A failed connect is non-fatal to the overall
+	// build: it just excludes that datasource.
+	type connectResult struct {
+		key    string
+		client *ProxiedClient
+		failed bool
+	}
+	connectResults := make(chan connectResult, len(discovered))
+	var connectWg sync.WaitGroup
+
 	for _, ds := range discovered {
-		client, err := NewProxiedClient(ctx, ds.UID, ds.Name, ds.Type, ds.MCPURL)
-		if err != nil {
-			logger.ErrorContext(ctx, "failed to create proxied client", "datasource", ds.UID, "error", err)
+		connectWg.Add(1)
+		go func(ds DiscoveredDatasource) {
+			defer connectWg.Done()
+
+			typeAttr := metric.WithAttributes(attribute.String("datasource.type", ds.Type))
+			description := fmt.Sprintf("connect to MCP server for datasource %s (%s)", ds.Name, ds.UID)
+
+			// Connect work now runs in its own goroutine (parallelized, unlike
+			// the sequential loop this replaced), so a panic here would
+			// otherwise crash the whole process instead of being turned into
+			// an error by buildProxiedToolSet's top-level recover, which only
+			// guards its own goroutine. Recover here too, closing any client
+			// that connected before the panic so it isn't leaked, and report
+			// this candidate as failed rather than letting the panic escape.
+			var client *ProxiedClient
+			defer func() {
+				if r := recover(); r != nil {
+					logger.ErrorContext(ctx, "panic connecting to proxied MCP client; excluding datasource",
+						"datasource", ds.UID, "name", ds.Name, "type", ds.Type, "panic", r)
+					tm.metrics.connectDeterministicFailure.Add(ctx, 1, typeAttr)
+					if client != nil {
+						if err := client.Close(); err != nil {
+							logger.ErrorContext(ctx, "failed to close proxied client after panic", "datasource", ds.UID, "error", err)
+						}
+					}
+					connectResults <- connectResult{failed: true}
+				}
+			}()
+
+			var connectErr error
+			client, connectErr = withRetry(ctx, defaultRetryPolicy, description,
+				func(attemptNum int) (*ProxiedClient, error) {
+					if attemptNum > 1 {
+						tm.metrics.connectRetries.Add(ctx, 1, typeAttr)
+					}
+					c, err := NewProxiedClient(ctx, ds.UID, ds.Name, ds.Type, ds.MCPURL)
+					if err != nil {
+						return nil, classifyConnectError(err)
+					}
+					return c, nil
+				})
+
+			if connectErr != nil {
+				if isTransient(connectErr) {
+					tm.metrics.connectTransientFailure.Add(ctx, 1, typeAttr)
+				} else {
+					tm.metrics.connectDeterministicFailure.Add(ctx, 1, typeAttr)
+				}
+				logger.WarnContext(ctx, "failed to create proxied client after retries; excluding datasource from proxied tool set",
+					"datasource", ds.UID, "name", ds.Name, "type", ds.Type, "error", connectErr)
+				connectResults <- connectResult{failed: true}
+				return
+			}
+
+			tm.metrics.connectSuccess.Add(ctx, 1, typeAttr)
+			connectResults <- connectResult{key: ds.Type + "_" + ds.UID, client: client}
+		}(ds)
+	}
+
+	go func() {
+		connectWg.Wait()
+		close(connectResults)
+	}()
+
+	connectFailed := 0
+	for r := range connectResults {
+		if r.failed {
+			connectFailed++
 			continue
 		}
-		key := ds.Type + "_" + ds.UID
-		built.clients[key] = client
+		built.clients[r.key] = r.client
+	}
+
+	built.stats = buildStats{
+		candidates:    candidateCount,
+		discovered:    len(discovered),
+		connectFailed: connectFailed,
 	}
 
 	// Collect unique tools and track which datasources support each one.
@@ -745,7 +962,9 @@ func (tm *ToolManager) runProxiedToolSetBuild(ctx context.Context, set *proxiedT
 		logger.InfoContext(ctx, "proxied tool set build failed; not caching", "key", set.key, "error", buildErr)
 		return
 	}
-	logger.InfoContext(ctx, "built proxied tool set", "key", set.key, "datasources", len(set.clients), "tools", len(set.tools), "cache_size", size)
+	logger.InfoContext(ctx, "built proxied tool set", "key", set.key,
+		"candidates", built.stats.candidates, "discovered", built.stats.discovered, "connect_failed", built.stats.connectFailed,
+		"datasources", len(set.clients), "tools", len(set.tools), "cache_size", size)
 }
 
 // releaseProxiedToolSet decrements a set's reference count and, once no session
