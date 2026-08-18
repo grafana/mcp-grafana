@@ -77,8 +77,32 @@ type clientCacheMetrics struct {
 	size    metric.Int64Gauge   // Current number of cached clients
 }
 
-func newClientCacheMetrics() clientCacheMetrics {
-	meter := otel.GetMeterProvider().Meter(clientCacheMeterName)
+// clientCacheConfig holds configuration gathered from ClientCacheOptions.
+type clientCacheConfig struct {
+	meterProvider metric.MeterProvider
+}
+
+// ClientCacheOption configures a ClientCache created via NewClientCache.
+type ClientCacheOption func(*clientCacheConfig)
+
+// WithClientCacheMeterProvider sets the metric.MeterProvider used to create
+// the client cache's OTel instruments. If unset (or passed as nil), the
+// cache falls back to otel.GetMeterProvider(), matching the pre-existing
+// behavior. Callers embedding mcp-grafana as a library and running with a
+// non-global MeterProvider (e.g. because the process resets the global
+// provider to a noop for unrelated reasons) should pass their own provider
+// here so these metrics actually reach a scrapeable registry.
+func WithClientCacheMeterProvider(mp metric.MeterProvider) ClientCacheOption {
+	return func(c *clientCacheConfig) {
+		c.meterProvider = mp
+	}
+}
+
+func newClientCacheMetrics(mp metric.MeterProvider) clientCacheMetrics {
+	if mp == nil {
+		mp = otel.GetMeterProvider()
+	}
+	meter := mp.Meter(clientCacheMeterName)
 
 	lookups, _ := meter.Int64Counter("mcp.client_cache.lookups",
 		metric.WithDescription("Total number of client cache lookups"),
@@ -127,15 +151,19 @@ type ClientCache struct {
 }
 
 // NewClientCache creates a new client cache.
-func NewClientCache(logger *slog.Logger) *ClientCache {
+func NewClientCache(logger *slog.Logger, opts ...ClientCacheOption) *ClientCache {
 	if logger == nil {
 		logger = slog.Default()
+	}
+	var cfg clientCacheConfig
+	for _, opt := range opts {
+		opt(&cfg)
 	}
 	return &ClientCache{
 		grafanaClients:  make(map[clientCacheKey]*GrafanaClient),
 		incidentClients: make(map[clientCacheKey]*incident.Client),
 		k8sClients:      make(map[clientCacheKey]*KubernetesClient),
-		metrics:         newClientCacheMetrics(),
+		metrics:         newClientCacheMetrics(cfg.meterProvider),
 		logger:          logger,
 	}
 }
