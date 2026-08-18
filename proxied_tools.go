@@ -45,8 +45,11 @@ type discoveryMetrics struct {
 	connectRetries              metric.Int64Counter // Connect attempts issued as a retry (attempts beyond the first)
 }
 
-func newDiscoveryMetrics() discoveryMetrics {
-	meter := otel.GetMeterProvider().Meter(proxiedToolsMeterName)
+func newDiscoveryMetrics(mp metric.MeterProvider) discoveryMetrics {
+	if mp == nil {
+		mp = otel.GetMeterProvider()
+	}
+	meter := mp.Meter(proxiedToolsMeterName)
 
 	probeSuccess, _ := meter.Int64Counter("mcp.discovery.probe_success",
 		metric.WithDescription("Number of MCP-support probes that found a datasource is MCP-enabled"),
@@ -518,6 +521,9 @@ type ToolManager struct {
 
 	// metrics holds OTel instruments for discovery/connect observability.
 	metrics discoveryMetrics
+	// meterProvider is the metric.MeterProvider used to build metrics, set via
+	// WithToolManagerMeterProvider.
+	meterProvider metric.MeterProvider
 }
 
 // NewToolManager creates a new ToolManager
@@ -527,11 +533,11 @@ func NewToolManager(sm *SessionManager, mcpServer *server.MCPServer, opts ...too
 		server:        mcpServer,
 		serverClients: make(map[string]*ProxiedClient),
 		proxiedSets:   make(map[proxiedToolSetKey]*proxiedToolSet),
-		metrics:       newDiscoveryMetrics(),
 	}
 	for _, opt := range opts {
 		opt(tm)
 	}
+	tm.metrics = newDiscoveryMetrics(tm.meterProvider)
 	if tm.logger == nil {
 		tm.logger = slog.Default()
 	}
@@ -557,6 +563,19 @@ func WithProxiedTools(enabled bool) toolManagerOption {
 func WithToolManagerLogger(logger *slog.Logger) toolManagerOption {
 	return func(tm *ToolManager) {
 		tm.logger = logger
+	}
+}
+
+// WithToolManagerMeterProvider sets the metric.MeterProvider used to create
+// the ToolManager's discovery/connect OTel instruments. If unset (or passed
+// as nil), the ToolManager falls back to otel.GetMeterProvider(), matching
+// the pre-existing behavior. Callers embedding mcp-grafana as a library and
+// running with a non-global MeterProvider (e.g. because the process resets
+// the global provider to a noop for unrelated reasons) should pass their own
+// provider here so these metrics actually reach a scrapeable registry.
+func WithToolManagerMeterProvider(mp metric.MeterProvider) toolManagerOption {
+	return func(tm *ToolManager) {
+		tm.meterProvider = mp
 	}
 }
 

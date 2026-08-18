@@ -18,6 +18,8 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 )
 
 // fakeDatasource describes one tempo-type datasource to serve from the fake
@@ -97,7 +99,7 @@ func TestDiscoverMCPDatasources_ProbeRetry(t *testing.T) {
 		handler, callCount := scriptedHandler(t, http.StatusServiceUnavailable, http.StatusOK)
 		_, ctx := newFakeGrafana(t, fakeDatasource{uid: "flaky", name: "Flaky Tempo", handler: handler})
 
-		discovered, candidateCount, err := discoverMCPDatasources(ctx, slog.Default(), newDiscoveryMetrics())
+		discovered, candidateCount, err := discoverMCPDatasources(ctx, slog.Default(), newDiscoveryMetrics(nil))
 		require.NoError(t, err)
 
 		assert.Equal(t, 1, candidateCount)
@@ -110,7 +112,7 @@ func TestDiscoverMCPDatasources_ProbeRetry(t *testing.T) {
 		handler, callCount := scriptedHandler(t, http.StatusNotFound)
 		_, ctx := newFakeGrafana(t, fakeDatasource{uid: "unsupported", name: "Not MCP", handler: handler})
 
-		discovered, candidateCount, err := discoverMCPDatasources(ctx, slog.Default(), newDiscoveryMetrics())
+		discovered, candidateCount, err := discoverMCPDatasources(ctx, slog.Default(), newDiscoveryMetrics(nil))
 		require.NoError(t, err)
 
 		assert.Equal(t, 1, candidateCount)
@@ -122,7 +124,7 @@ func TestDiscoverMCPDatasources_ProbeRetry(t *testing.T) {
 		handler, callCount := scriptedHandler(t, http.StatusServiceUnavailable, http.StatusServiceUnavailable, http.StatusServiceUnavailable)
 		_, ctx := newFakeGrafana(t, fakeDatasource{uid: "down", name: "Down Tempo", handler: handler})
 
-		discovered, candidateCount, err := discoverMCPDatasources(ctx, slog.Default(), newDiscoveryMetrics())
+		discovered, candidateCount, err := discoverMCPDatasources(ctx, slog.Default(), newDiscoveryMetrics(nil))
 		require.NoError(t, err)
 
 		assert.Equal(t, 1, candidateCount)
@@ -138,7 +140,7 @@ func TestDiscoverMCPDatasources_ProbeRetry(t *testing.T) {
 			fakeDatasource{uid: "bad", name: "Bad Tempo", handler: badHandler},
 		)
 
-		discovered, candidateCount, err := discoverMCPDatasources(ctx, slog.Default(), newDiscoveryMetrics())
+		discovered, candidateCount, err := discoverMCPDatasources(ctx, slog.Default(), newDiscoveryMetrics(nil))
 		require.NoError(t, err)
 
 		assert.Equal(t, 2, candidateCount)
@@ -147,6 +149,33 @@ func TestDiscoverMCPDatasources_ProbeRetry(t *testing.T) {
 		assert.Equal(t, int32(1), goodCalls())
 		assert.Equal(t, int32(1), badCalls())
 	})
+}
+
+// TestDiscoverMCPDatasources_MetricsUseInjectedMeterProvider verifies that
+// newDiscoveryMetrics routes its instruments to an explicitly given provider
+// instead of the (possibly noop) global one, so discovery/connect metrics
+// reach a scrapeable registry in deployments that reset
+// otel.GetMeterProvider() for reasons unrelated to mcp-grafana (see issue
+// #1072).
+func TestDiscoverMCPDatasources_MetricsUseInjectedMeterProvider(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+
+	handler, _ := scriptedHandler(t, http.StatusOK)
+	_, ctx := newFakeGrafana(t, fakeDatasource{uid: "good", name: "Good Tempo", handler: handler})
+
+	_, _, err := discoverMCPDatasources(ctx, slog.Default(), newDiscoveryMetrics(provider))
+	require.NoError(t, err)
+
+	var data metricdata.ResourceMetrics
+	require.NoError(t, reader.Collect(context.Background(), &data))
+	require.Len(t, data.ScopeMetrics, 1)
+
+	names := make(map[string]bool)
+	for _, m := range data.ScopeMetrics[0].Metrics {
+		names[m.Name] = true
+	}
+	assert.True(t, names["mcp.discovery.probe_success"])
 }
 
 func TestBuildProxiedToolSet_ConnectFailureExcludedOthersSucceed(t *testing.T) {
