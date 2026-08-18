@@ -249,8 +249,14 @@ func discoverMCPDatasources(ctx context.Context, logger *slog.Logger, metrics di
 					"datasource", c.uid, "name", c.name, "type", c.dsType, "error", probeErr)
 				results <- probeResult{}
 			default:
+				// A clean non-OK response (typically 404) just means this
+				// datasource instance doesn't have MCP enabled, which is a
+				// routine, expected outcome for many Tempo datasources, not a
+				// failure. Debug (not Warn) keeps that from drowning out the
+				// transient case above, which is the one worth an operator's
+				// attention.
 				metrics.probeDeterministicFailure.Add(ctx, 1, typeAttr)
-				logger.WarnContext(ctx, "MCP probe determined datasource does not support MCP; excluding it",
+				logger.DebugContext(ctx, "MCP probe determined datasource does not support MCP; excluding it",
 					"datasource", c.uid, "name", c.name, "type", c.dsType, "error", probeErr)
 				results <- probeResult{}
 			}
@@ -702,7 +708,30 @@ func (tm *ToolManager) buildProxiedToolSet(ctx context.Context, logger *slog.Log
 			typeAttr := metric.WithAttributes(attribute.String("datasource.type", ds.Type))
 			description := fmt.Sprintf("connect to MCP server for datasource %s (%s)", ds.Name, ds.UID)
 
-			client, connectErr := withRetry(ctx, defaultRetryPolicy, description,
+			// Connect work now runs in its own goroutine (parallelized, unlike
+			// the sequential loop this replaced), so a panic here would
+			// otherwise crash the whole process instead of being turned into
+			// an error by buildProxiedToolSet's top-level recover, which only
+			// guards its own goroutine. Recover here too, closing any client
+			// that connected before the panic so it isn't leaked, and report
+			// this candidate as failed rather than letting the panic escape.
+			var client *ProxiedClient
+			defer func() {
+				if r := recover(); r != nil {
+					logger.ErrorContext(ctx, "panic connecting to proxied MCP client; excluding datasource",
+						"datasource", ds.UID, "name", ds.Name, "type", ds.Type, "panic", r)
+					tm.metrics.connectDeterministicFailure.Add(ctx, 1, typeAttr)
+					if client != nil {
+						if err := client.Close(); err != nil {
+							logger.ErrorContext(ctx, "failed to close proxied client after panic", "datasource", ds.UID, "error", err)
+						}
+					}
+					connectResults <- connectResult{failed: true}
+				}
+			}()
+
+			var connectErr error
+			client, connectErr = withRetry(ctx, defaultRetryPolicy, description,
 				func(attemptNum int) (*ProxiedClient, error) {
 					if attemptNum > 1 {
 						tm.metrics.connectRetries.Add(ctx, 1, typeAttr)
