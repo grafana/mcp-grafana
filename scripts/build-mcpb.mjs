@@ -15,7 +15,7 @@
  */
 
 import { spawn } from "node:child_process";
-import { copyFileSync, chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, chmodSync, mkdirSync, openSync, closeSync, readFileSync, readSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -156,6 +156,48 @@ async function collectTools(binary) {
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
+/**
+ * Fails if the macOS binary is not a fat Mach-O carrying both architectures.
+ *
+ * This is the property the published bundle lacked, and nothing else in the
+ * build would notice its absence: a single-architecture binary packs and
+ * validates perfectly well, then fails at launch on half of all Macs.
+ */
+function assertUniversalMachO(binary) {
+  const FAT_MAGIC = 0xcafebabe;
+  const CPU_TYPE_X86_64 = 0x01000007;
+  const CPU_TYPE_ARM64 = 0x0100000c;
+
+  const header = Buffer.alloc(8);
+  const fd = openSync(binary, "r");
+  try {
+    readSync(fd, header, 0, header.length, 0);
+    const magic = header.readUInt32BE(0);
+    if (magic !== FAT_MAGIC) {
+      throw new Error(`${binary} is not a universal binary (magic 0x${magic.toString(16)})`);
+    }
+
+    const count = header.readUInt32BE(4);
+    const architectures = new Set();
+    const entry = Buffer.alloc(20);
+    for (let i = 0; i < count; i++) {
+      readSync(fd, entry, 0, entry.length, 8 + i * entry.length);
+      architectures.add(entry.readUInt32BE(0));
+    }
+    for (const [cpuType, name] of [
+      [CPU_TYPE_ARM64, "arm64"],
+      [CPU_TYPE_X86_64, "x86_64"],
+    ]) {
+      if (!architectures.has(cpuType)) {
+        throw new Error(`${binary} has no ${name} slice; Macs on that architecture cannot run it`);
+      }
+    }
+    console.error(`verified universal binary with ${count} architectures`);
+  } finally {
+    closeSync(fd);
+  }
+}
+
 function run(command, args, options = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { stdio: "inherit", ...options });
@@ -189,6 +231,8 @@ async function main() {
     stageBinary(source, path.join(staging, dest));
     console.error(`staged ${dest}`);
   }
+
+  assertUniversalMachO(path.join(staging, "server/darwin/mcp-grafana"));
 
   stageBinary(path.join(repoRoot, "mcpb", "launch.sh"), path.join(staging, "server/linux/launch.sh"));
   copyFileSync(path.join(repoRoot, "mcpb", "icon.png"), path.join(staging, "icon.png"));
