@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -204,13 +204,8 @@ func TestConvertToolWithStringToIntConversion(t *testing.T) {
 	_, handler, err := ConvertTool("test_int_tool", "A test tool with int params", testIntHandler)
 	require.NoError(t, err)
 
-	makeRequest := func(args map[string]any) mcp.CallToolRequest {
-		return mcp.CallToolRequest{
-			Params: mcp.CallToolParams{
-				Name:      "test_int_tool",
-				Arguments: args,
-			},
-		}
+	makeRequest := func(args map[string]any) *mcp.CallToolRequest {
+		return newCallToolRequest("test_int_tool", args)
 	}
 
 	tests := []struct {
@@ -550,13 +545,8 @@ func TestUnmarshalWithStringToSliceCoercion(t *testing.T) {
 		_, h, err := ConvertTool("test", "test", handler)
 		require.NoError(t, err)
 
-		result, err := h(context.Background(), mcp.CallToolRequest{
-			Params: mcp.CallToolParams{
-				Name:      "test",
-				Arguments: map[string]any{"labels": "test"},
-			},
-		})
+		result, err := h(context.Background(), newCallToolRequest("test", map[string]any{"labels": "test"}))
 		require.NoError(t, err)
-		assert.Equal(t, "ok", result.Content[0].(mcp.TextContent).Text)
+		assert.Equal(t, "ok", result.Content[0].(*mcp.TextContent).Text)
 	})
 }

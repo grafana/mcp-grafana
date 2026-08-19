@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -600,10 +600,9 @@ func TestAgento11yManageAgents(t *testing.T) {
 func TestAgento11yManageAgentsToolContract(t *testing.T) {
 	tool := ManageAgento11yAgents.Tool
 
-	require.NotNil(t, tool.Annotations.ReadOnlyHint, "the tool should carry a read-only hint")
-	assert.True(t, *tool.Annotations.ReadOnlyHint)
-	require.NotNil(t, tool.Annotations.IdempotentHint, "the tool should carry an idempotent hint")
-	assert.True(t, *tool.Annotations.IdempotentHint)
+	require.NotNil(t, tool.Annotations, "the tool should carry annotations")
+	assert.True(t, tool.Annotations.ReadOnlyHint, "the tool should carry a read-only hint")
+	assert.True(t, tool.Annotations.IdempotentHint, "the tool should carry an idempotent hint")
 
 	for _, guidance := range []string{
 		// Which changes mint a new version is the least obvious thing about the
@@ -666,9 +665,7 @@ func TestAgento11yManageAgentsToolArgumentBinding(t *testing.T) {
 			})
 			defer server.Close()
 
-			result, err := ManageAgento11yAgents.Handler(ctx, mcp.CallToolRequest{
-				Params: mcp.CallToolParams{Name: "agento11y_manage_agents", Arguments: tc.arguments},
-			})
+			result, err := ManageAgento11yAgents.Handler(ctx, newCallToolRequest("agento11y_manage_agents", tc.arguments))
 			require.NoError(t, err, "the MCP handler reports tool failures in the result, not as a transport error")
 			require.NotNil(t, result)
 
@@ -688,7 +685,7 @@ func resultText(t *testing.T, result *mcp.CallToolResult) string {
 	t.Helper()
 	var parts []string
 	for _, content := range result.Content {
-		if text, ok := content.(mcp.TextContent); ok {
+		if text, ok := content.(*mcp.TextContent); ok {
 			parts = append(parts, text.Text)
 		}
 	}

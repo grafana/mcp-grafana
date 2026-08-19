@@ -971,15 +971,15 @@ func TestAgento11yManageExperimentsGetReport(t *testing.T) {
 func TestAgento11yManageExperimentsToolContract(t *testing.T) {
 	read := ManageAgento11yExperimentsRead.Tool
 	require.NotNil(t, read.Annotations.ReadOnlyHint)
-	assert.True(t, *read.Annotations.ReadOnlyHint)
+	assert.True(t, read.Annotations.ReadOnlyHint)
 	require.NotNil(t, read.Annotations.IdempotentHint)
-	assert.True(t, *read.Annotations.IdempotentHint)
+	assert.True(t, read.Annotations.IdempotentHint)
 	require.NotNil(t, read.Annotations.DestructiveHint)
 	assert.False(t, *read.Annotations.DestructiveHint)
 
 	write := ManageAgento11yExperimentsReadWrite.Tool
 	require.NotNil(t, write.Annotations.ReadOnlyHint)
-	assert.False(t, *write.Annotations.ReadOnlyHint, "the write variant cancels experiments")
+	assert.False(t, write.Annotations.ReadOnlyHint, "the write variant cancels experiments")
 	require.NotNil(t, write.Annotations.DestructiveHint)
 	assert.True(t, *write.Annotations.DestructiveHint)
 
