@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -135,6 +136,11 @@ type grafanaConfig struct {
 	// Loki configuration
 	maxLokiLogLimit int
 
+	// Loki query cost guardrail configuration
+	lokiGuardrailMode     string
+	lokiGuardrailMaxBytes int64
+	lokiGuardrailMaxRange time.Duration
+
 	// includeArgsInSpans enables logging of tool arguments in OpenTelemetry spans.
 	includeArgsInSpans bool
 
@@ -193,8 +199,56 @@ func (gc *grafanaConfig) addFlags() {
 	// Loki configuration flags
 	flag.IntVar(&gc.maxLokiLogLimit, "max-loki-log-limit", tools.MaxLokiLogLimit, "Maximum number of log lines returned per query_loki_logs call")
 
+	// Loki query cost guardrail flags
+	flag.StringVar(&gc.lokiGuardrailMode, "loki-guardrail-mode", mcpgrafana.LokiGuardrailOff, "Loki query cost guardrail mode for query_loki_logs: 'off' (default), 'shadow' (evaluate and log queries that would be blocked, but let them run; still pays the index/stats round trip), or 'enforce' (reject blocked queries with rewrite guidance). Falls back to the GRAFANA_LOKI_GUARDRAIL_MODE environment variable when the flag is not set.")
+	flag.Int64Var(&gc.lokiGuardrailMaxBytes, "loki-guardrail-max-bytes", 100<<30, "Maximum bytes a single query_loki_logs call may scan, estimated via Loki's index/stats API before running the query. 0 disables the byte-budget check. Only applies when the guardrail is not 'off'. Falls back to the GRAFANA_LOKI_GUARDRAIL_MAX_BYTES environment variable when the flag is not set.")
+	flag.DurationVar(&gc.lokiGuardrailMaxRange, "loki-guardrail-max-range", 24*time.Hour, "Maximum effective time range for a single query_loki_logs call, including range-vector durations like [30d]. Accepts Go duration strings, e.g. 24h. 0 disables the range check. Only applies when the guardrail is not 'off'. Falls back to the GRAFANA_LOKI_GUARDRAIL_MAX_RANGE environment variable when the flag is not set.")
+
 	flag.BoolVar(&gc.includeArgsInSpans, "include-args-in-spans", false, "Include tool call arguments in OpenTelemetry spans. Only enable in non-production environments or when arguments are known not to contain PII.")
 	flag.DurationVar(&gc.timeout, "grafana-timeout", mcpgrafana.DefaultGrafanaClientTimeout, "Time limit for requests made by the Grafana client. Accepts Go duration strings, e.g. 10s, 500ms.")
+}
+
+// applyLokiGuardrailEnv fills guardrail settings from GRAFANA_LOKI_GUARDRAIL_*
+// environment variables for flags not set on the command line. Explicit flags
+// win; the env fallback exists because container/sidecar deployments (the
+// guardrail's main audience) configure via environment.
+func (gc *grafanaConfig) applyLokiGuardrailEnv(setFlags map[string]bool) error {
+	if v := os.Getenv("GRAFANA_LOKI_GUARDRAIL_MODE"); v != "" && !setFlags["loki-guardrail-mode"] {
+		gc.lokiGuardrailMode = v
+	}
+	if v := os.Getenv("GRAFANA_LOKI_GUARDRAIL_MAX_BYTES"); v != "" && !setFlags["loki-guardrail-max-bytes"] {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			return fmt.Errorf("invalid GRAFANA_LOKI_GUARDRAIL_MAX_BYTES %q: %w", v, err)
+		}
+		gc.lokiGuardrailMaxBytes = n
+	}
+	if v := os.Getenv("GRAFANA_LOKI_GUARDRAIL_MAX_RANGE"); v != "" && !setFlags["loki-guardrail-max-range"] {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return fmt.Errorf("invalid GRAFANA_LOKI_GUARDRAIL_MAX_RANGE %q: %w", v, err)
+		}
+		gc.lokiGuardrailMaxRange = d
+	}
+	return nil
+}
+
+// validateLokiGuardrail rejects invalid guardrail settings (unknown mode,
+// negative limits) after flag and env processing. Extracted from main so the
+// validation is unit-testable.
+func (gc *grafanaConfig) validateLokiGuardrail() error {
+	switch gc.lokiGuardrailMode {
+	case mcpgrafana.LokiGuardrailOff, mcpgrafana.LokiGuardrailShadow, mcpgrafana.LokiGuardrailEnforce:
+	default:
+		return fmt.Errorf("invalid Loki guardrail mode %q (--loki-guardrail-mode or GRAFANA_LOKI_GUARDRAIL_MODE): must be one of off, shadow, enforce", gc.lokiGuardrailMode)
+	}
+	if gc.lokiGuardrailMaxBytes < 0 {
+		return fmt.Errorf("invalid Loki guardrail max bytes %d (--loki-guardrail-max-bytes or GRAFANA_LOKI_GUARDRAIL_MAX_BYTES): must be >= 0 (0 disables the byte-budget check)", gc.lokiGuardrailMaxBytes)
+	}
+	if gc.lokiGuardrailMaxRange < 0 {
+		return fmt.Errorf("invalid Loki guardrail max range %s (--loki-guardrail-max-range or GRAFANA_LOKI_GUARDRAIL_MAX_RANGE): must be >= 0 (0 disables the range check)", gc.lokiGuardrailMaxRange)
+	}
+	return nil
 }
 
 // toolEntry pairs a tool registration function with its category and disable flag.
@@ -825,10 +879,27 @@ func main() {
 		os.Exit(2)
 	}
 
+	setFlags := map[string]bool{}
+	flag.Visit(func(f *flag.Flag) { setFlags[f.Name] = true })
+	if err := gc.applyLokiGuardrailEnv(setFlags); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	if err := gc.validateLokiGuardrail(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	if gc.lokiGuardrailMode != mcpgrafana.LokiGuardrailOff {
+		slog.Info("Loki guardrail enabled", "mode", gc.lokiGuardrailMode, "max_bytes", gc.lokiGuardrailMaxBytes, "max_range", gc.lokiGuardrailMaxRange)
+	}
+
 	// Convert local grafanaConfig to mcpgrafana.GrafanaConfig
 	grafanaConfig := mcpgrafana.GrafanaConfig{
 		Debug:                   gc.debug,
 		MaxLokiLogLimit:         gc.maxLokiLogLimit,
+		LokiGuardrailMode:       gc.lokiGuardrailMode,
+		LokiGuardrailMaxBytes:   gc.lokiGuardrailMaxBytes,
+		LokiGuardrailMaxRange:   gc.lokiGuardrailMaxRange,
 		IncludeArgumentsInSpans: gc.includeArgsInSpans,
 		Timeout:                 gc.timeout,
 	}

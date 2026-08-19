@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Opt-in Loki query cost guardrail for `query_loki_logs` (`--loki-guardrail-mode` / `GRAFANA_LOKI_GUARDRAIL_MODE`, `off` by default, with `shadow` and `enforce` modes). Because Loki query cost is bytes *scanned* — determined only by the stream selector and time range, not line filters — the guardrail requires a selective stream selector, caps the time range (`--loki-guardrail-max-range`, default 24h), and pre-checks Loki's `index/stats` byte estimate against a budget (`--loki-guardrail-max-bytes`, default 100GiB). Blocked queries return an MCP tool error with rewrite guidance; unparseable queries fail open ([#1031](https://github.com/grafana/mcp-grafana/pull/1031))
+
+### Changed
+
+- `tools.Stats.Bytes` is now `int64` (was `int`) so index/stats byte counts cannot overflow on 32-bit platforms; Go API consumers of the exported struct may need a cast ([#1031](https://github.com/grafana/mcp-grafana/pull/1031))
+
 ## [1.1.0] - 2026-08-10
 
 ### Added

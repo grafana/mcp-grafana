@@ -177,7 +177,7 @@ func TestVictoriaLogsBackend_QueryStats_AppendsCountPipe(t *testing.T) {
 	// Other fields should remain zero — VL does not expose them.
 	assert.Equal(t, 0, stats.Streams)
 	assert.Equal(t, 0, stats.Chunks)
-	assert.Equal(t, 0, stats.Bytes)
+	assert.Equal(t, int64(0), stats.Bytes)
 
 	// Confirm we appended a stats pipe.
 	q := fake.lastForm.Get("query")

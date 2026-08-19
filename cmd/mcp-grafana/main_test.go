@@ -390,6 +390,139 @@ func TestHandleFlagsPostParse(t *testing.T) {
 	}
 }
 
+// TestApplyLokiGuardrailEnv locks in the flag-over-env precedence: env vars
+// only fill in guardrail settings for flags not set on the command line,
+// including a flag explicitly set to its default value.
+func TestApplyLokiGuardrailEnv(t *testing.T) {
+	// Flag defaults as registered in addFlags.
+	defaults := grafanaConfig{
+		lokiGuardrailMode:     "off",
+		lokiGuardrailMaxBytes: 100 << 30,
+		lokiGuardrailMaxRange: 24 * time.Hour,
+	}
+
+	tests := []struct {
+		name          string
+		env           map[string]string
+		setFlags      map[string]bool
+		wantMode      string
+		wantMaxBytes  int64
+		wantMaxRange  time.Duration
+		wantErrSubstr string
+	}{
+		{
+			name: "env-only applies to all three settings",
+			env: map[string]string{
+				"GRAFANA_LOKI_GUARDRAIL_MODE":      "enforce",
+				"GRAFANA_LOKI_GUARDRAIL_MAX_BYTES": "1073741824",
+				"GRAFANA_LOKI_GUARDRAIL_MAX_RANGE": "6h",
+			},
+			wantMode:     "enforce",
+			wantMaxBytes: 1 << 30,
+			wantMaxRange: 6 * time.Hour,
+		},
+		{
+			name: "flag-set wins over env",
+			env: map[string]string{
+				"GRAFANA_LOKI_GUARDRAIL_MODE":      "enforce",
+				"GRAFANA_LOKI_GUARDRAIL_MAX_BYTES": "1073741824",
+				"GRAFANA_LOKI_GUARDRAIL_MAX_RANGE": "6h",
+			},
+			setFlags: map[string]bool{
+				"loki-guardrail-mode":      true,
+				"loki-guardrail-max-bytes": true,
+				"loki-guardrail-max-range": true,
+			},
+			// Values stay at the flag defaults: an explicit
+			// --loki-guardrail-mode=off must not be overridden by env even
+			// though it equals the default.
+			wantMode:     defaults.lokiGuardrailMode,
+			wantMaxBytes: defaults.lokiGuardrailMaxBytes,
+			wantMaxRange: defaults.lokiGuardrailMaxRange,
+		},
+		{
+			name: "flag-set is per setting",
+			env: map[string]string{
+				"GRAFANA_LOKI_GUARDRAIL_MODE":      "shadow",
+				"GRAFANA_LOKI_GUARDRAIL_MAX_RANGE": "6h",
+			},
+			setFlags:     map[string]bool{"loki-guardrail-max-range": true},
+			wantMode:     "shadow",
+			wantMaxBytes: defaults.lokiGuardrailMaxBytes,
+			wantMaxRange: defaults.lokiGuardrailMaxRange,
+		},
+		{
+			name:         "empty env ignored",
+			env:          map[string]string{"GRAFANA_LOKI_GUARDRAIL_MODE": ""},
+			wantMode:     defaults.lokiGuardrailMode,
+			wantMaxBytes: defaults.lokiGuardrailMaxBytes,
+			wantMaxRange: defaults.lokiGuardrailMaxRange,
+		},
+		{
+			name:          "invalid MAX_BYTES errors",
+			env:           map[string]string{"GRAFANA_LOKI_GUARDRAIL_MAX_BYTES": "10GiB"},
+			wantErrSubstr: "GRAFANA_LOKI_GUARDRAIL_MAX_BYTES",
+		},
+		{
+			name:          "invalid MAX_RANGE errors",
+			env:           map[string]string{"GRAFANA_LOKI_GUARDRAIL_MAX_RANGE": "1fortnight"},
+			wantErrSubstr: "GRAFANA_LOKI_GUARDRAIL_MAX_RANGE",
+		},
+	}
+
+	envVars := []string{
+		"GRAFANA_LOKI_GUARDRAIL_MODE",
+		"GRAFANA_LOKI_GUARDRAIL_MAX_BYTES",
+		"GRAFANA_LOKI_GUARDRAIL_MAX_RANGE",
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, k := range envVars {
+				t.Setenv(k, tc.env[k])
+			}
+			gc := defaults
+			err := gc.applyLokiGuardrailEnv(tc.setFlags)
+			if tc.wantErrSubstr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tc.wantErrSubstr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantMode, gc.lokiGuardrailMode)
+			assert.Equal(t, tc.wantMaxBytes, gc.lokiGuardrailMaxBytes)
+			assert.Equal(t, tc.wantMaxRange, gc.lokiGuardrailMaxRange)
+		})
+	}
+}
+
+// TestValidateLokiGuardrail covers the startup validation extracted from
+// main: unknown modes and negative limits must be rejected.
+func TestValidateLokiGuardrail(t *testing.T) {
+	tests := []struct {
+		name          string
+		gc            grafanaConfig
+		wantErrSubstr string
+	}{
+		{name: "off is valid", gc: grafanaConfig{lokiGuardrailMode: "off"}},
+		{name: "shadow with limits is valid", gc: grafanaConfig{lokiGuardrailMode: "shadow", lokiGuardrailMaxBytes: 100 << 30, lokiGuardrailMaxRange: 24 * time.Hour}},
+		{name: "zero limits disable checks", gc: grafanaConfig{lokiGuardrailMode: "enforce"}},
+		{name: "unknown mode rejected", gc: grafanaConfig{lokiGuardrailMode: "Enforce"}, wantErrSubstr: "invalid Loki guardrail mode"},
+		{name: "negative max bytes rejected", gc: grafanaConfig{lokiGuardrailMode: "enforce", lokiGuardrailMaxBytes: -1}, wantErrSubstr: "GRAFANA_LOKI_GUARDRAIL_MAX_BYTES"},
+		{name: "negative max range rejected", gc: grafanaConfig{lokiGuardrailMode: "enforce", lokiGuardrailMaxRange: -time.Hour}, wantErrSubstr: "GRAFANA_LOKI_GUARDRAIL_MAX_RANGE"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.gc.validateLokiGuardrail()
+			if tc.wantErrSubstr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tc.wantErrSubstr)
+				return
+			}
+			assert.NoError(t, err)
+		})
+	}
+}
+
 func TestSplitAndTrim(t *testing.T) {
 	cases := []struct {
 		name string
