@@ -831,18 +831,18 @@ func TestIsEmptyPanelResult(t *testing.T) {
 			expected: false,
 		},
 		{
-			name:     "nil BigQueryQueryResult",
-			results:  (*BigQueryQueryResult)(nil),
+			name:     "nil SQLQueryResult",
+			results:  (*SQLQueryResult)(nil),
 			expected: true,
 		},
 		{
-			name:     "empty BigQueryQueryResult",
-			results:  &BigQueryQueryResult{Rows: []map[string]interface{}{}},
+			name:     "empty SQLQueryResult",
+			results:  &SQLQueryResult{Rows: []map[string]interface{}{}},
 			expected: true,
 		},
 		{
-			name: "non-empty BigQueryQueryResult",
-			results: &BigQueryQueryResult{
+			name: "non-empty SQLQueryResult",
+			results: &SQLQueryResult{
 				Rows: []map[string]interface{}{{"count": 42}},
 			},
 			expected: false,
@@ -927,6 +927,17 @@ func TestGeneratePanelQueryHints(t *testing.T) {
 				"processing location",
 			},
 		},
+		{
+			name:           "mssql hints",
+			datasourceType: "mssql",
+			query:          "SELECT COUNT(*) FROM revenue WHERE $__timeFilter(ts)",
+			containsHints: []string{
+				"No data found",
+				"Time range",
+				"COUNT(*)",
+				"SELECT permission",
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -1002,6 +1013,8 @@ func TestNormalizeDatasourceType(t *testing.T) {
 		{"influxdb", "influxdb"},
 		{"InfluxDB", "influxdb"},
 		{"grafana-bigquery-datasource", "bigquery"},
+		{"mssql", "mssql"},
+		{"MSSQL", "mssql"},
 		{"bigquery", "bigquery"},
 		{"BigQuery", "bigquery"},
 		{"some-other-type", "some-other-type"},
@@ -1148,11 +1161,49 @@ func TestExtractPanelInfo_BigQuery(t *testing.T) {
 	assert.Equal(t, "US", info.RawTarget["location"])
 }
 
-func TestExecuteBigQueryPanelQuery_NilTarget(t *testing.T) {
+func TestExecuteSQLPanelQuery_NilTarget(t *testing.T) {
 	// A missing raw target should produce a clear error rather than panicking.
-	_, err := executeBigQueryPanelQuery(t.Context(), "bigquery-uid", &panelInfo{}, "SELECT 1", "now-1h", "now", nil)
+	_, err := executeSQLPanelQuery(t.Context(), "bigquery-uid", &panelInfo{}, "SELECT 1", "now-1h", "now", nil, BigQueryDatasourceType)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "BigQuery panel target not available")
+	assert.Contains(t, err.Error(), "SQL panel target not available")
+
+	_, err = executeSQLPanelQuery(t.Context(), "mssql-uid", &panelInfo{}, "SELECT 1", "now-1h", "now", nil, MSSQLDatasourceType)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "SQL panel target not available")
+}
+
+func TestDefaultSQLFormat(t *testing.T) {
+	// BigQuery's sqlds query model takes a numeric format enum, MSSQL's sqleng model
+	// unmarshals format into a string and errors on a number.
+	assert.Equal(t, SQLFormatTable, defaultSQLFormat(BigQueryDatasourceType))
+	assert.Equal(t, MSSQLFormatTable, defaultSQLFormat(MSSQLDatasourceType))
+}
+
+func TestExtractPanelInfoMSSQL(t *testing.T) {
+	// MSSQL panels carry their statement in rawSql, like the other SQL datasources,
+	// and the raw target must survive so format is not overridden.
+	panel := map[string]interface{}{
+		"id":    81,
+		"title": "Revenue",
+		"datasource": map[string]interface{}{
+			"uid":  "mssql-uid",
+			"type": "mssql",
+		},
+		"targets": []interface{}{
+			map[string]interface{}{
+				"refId":  "A",
+				"rawSql": "DECLARE @From datetime = $__timeFrom(); SELECT SUM(amount) FROM revenue WHERE ts >= @From",
+				"format": "table",
+			},
+		},
+	}
+
+	info, err := extractPanelInfo(panel, 0)
+	require.NoError(t, err)
+	assert.Equal(t, "mssql-uid", info.DatasourceUID)
+	assert.Equal(t, "mssql", info.DatasourceType)
+	assert.Contains(t, info.Query, "$__timeFrom()")
+	assert.Equal(t, "table", info.RawTarget["format"])
 }
 
 func TestSubstituteTemplateVariablesInMap(t *testing.T) {
