@@ -25,7 +25,7 @@ Fixes #
 | --- | --- | --- |
 | `` | new / changed | default-on / opt-in category |
 
-**Token cost:** <!-- The Token Analysis check will comment this automatically — no need to fill it in unless you want to explain a large delta. -->
+**Token cost:** <!-- From the Token Analysis check's run summary, or `make token-check` locally. Please paste the change if this adds a default-on tool — it's the most useful number for reviewing the proposal. -->
 
 **Why not extend an existing tool?** <!-- Only needed for new tools. -->
 
