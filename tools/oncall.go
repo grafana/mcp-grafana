@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"reflect"
 	"strings"
 
@@ -581,7 +582,114 @@ var GetAlertGroup = mcpgrafana.MustTool(
 	mcp.WithOpenWorldHintAnnotation(false),
 )
 
-func AddOnCallTools(mcp *server.MCPServer) {
+type UpdateAlertGroupParams struct {
+	AlertGroupID string `json:"alertGroupId" jsonschema:"required,description=The ID of the alert group to update"`
+	State        string `json:"state" jsonschema:"required,description=New state for the alert group. One of: acknowledged\\, unacknowledged\\, resolved\\, unresolved"`
+}
+
+type UpdateAlertGroupResult struct {
+	AlertGroupID string `json:"alertGroupId"`
+	Action       string `json:"action"`
+	Updated      bool   `json:"updated"`
+	State        string `json:"state,omitempty"`
+	StateWarning string `json:"stateWarning,omitempty"`
+}
+
+// alertGroupActionForState maps a requested end state onto the OnCall action
+// endpoint that produces it. OnCall has no single "set the state" endpoint;
+// every transition is its own POST, and "unacknowledged"/"unresolved" name
+// transitions rather than states (OnCall itself only ever reports new,
+// acknowledged, resolved or silenced).
+func alertGroupActionForState(state string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(state)) {
+	case "acknowledged":
+		return "acknowledge", nil
+	case "unacknowledged":
+		return "unacknowledge", nil
+	case "resolved":
+		return "resolve", nil
+	case "unresolved":
+		return "unresolve", nil
+	default:
+		return "", fmt.Errorf("unsupported alert group state %q: expected acknowledged, unacknowledged, resolved, or unresolved", state)
+	}
+}
+
+// updateAlertGroup transitions an alert group and then reads it back, so the
+// caller is told OnCall's real resulting state instead of the transition it
+// asked for. The write has already been committed by the time the read runs,
+// so a read failure is reported in stateWarning rather than as a tool error:
+// failing the call would invite a caller to retry a mutation that has already
+// happened. Note this means the tool wants alert-groups:read alongside
+// alert-groups:write to return a state at all.
+func updateAlertGroup(ctx context.Context, args UpdateAlertGroupParams) (*UpdateAlertGroupResult, error) {
+	if strings.TrimSpace(args.AlertGroupID) == "" {
+		return nil, fmt.Errorf("alertGroupId is required")
+	}
+
+	action, err := alertGroupActionForState(args.State)
+	if err != nil {
+		return nil, err
+	}
+
+	if useOncallProxy(ctx) {
+		err = proxyUpdateAlertGroup(ctx, args.AlertGroupID, action)
+	} else {
+		err = amixrUpdateAlertGroup(ctx, args.AlertGroupID, action)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	result := &UpdateAlertGroupResult{
+		AlertGroupID: args.AlertGroupID,
+		Action:       action,
+		Updated:      true,
+	}
+
+	ag, err := getAlertGroup(ctx, GetAlertGroupParams{AlertGroupID: args.AlertGroupID})
+	if err != nil {
+		result.StateWarning = fmt.Sprintf(
+			"the %s succeeded but the resulting state could not be read back (does the caller have alert-groups:read?): %s",
+			action, err,
+		)
+		return result, nil
+	}
+	result.State = ag.State
+
+	return result, nil
+}
+
+func amixrUpdateAlertGroup(ctx context.Context, alertGroupID, action string) error {
+	client, err := oncallClientFromContext(ctx)
+	if err != nil {
+		return fmt.Errorf("getting OnCall client: %w", err)
+	}
+
+	path := fmt.Sprintf("alert_groups/%s/%s", url.PathEscape(alertGroupID), action)
+	req, err := client.NewRequest(http.MethodPost, path, nil)
+	if err != nil {
+		return fmt.Errorf("creating OnCall %s request for alert group %s: %w", action, alertGroupID, err)
+	}
+
+	if _, err := client.Do(req, nil); err != nil {
+		return fmt.Errorf("%s OnCall alert group %s: %w", action, alertGroupID, err)
+	}
+	return nil
+}
+
+var UpdateAlertGroup = mcpgrafana.MustTool(
+	"update_alert_group",
+	"Update the state of a Grafana OnCall alert group: acknowledge, unacknowledge, resolve, or unresolve it by ID. Returns the alert group's resulting OnCall state (one of new, acknowledged, resolved, silenced), or a stateWarning explaining why that state could not be read back after a successful update.",
+	updateAlertGroup,
+	mcp.WithTitleAnnotation("Update IRM alert group"),
+	mcp.WithIdempotentHintAnnotation(false),
+	mcp.WithReadOnlyHintAnnotation(false),
+	mcp.WithDestructiveHintAnnotation(true),
+	mcp.WithOpenWorldHintAnnotation(false),
+)
+
+func AddOnCallTools(mcp *server.MCPServer, enableWriteTools bool) {
 	ListOnCallSchedules.Register(mcp)
 	GetOnCallShift.Register(mcp)
 	GetCurrentOnCallUsers.Register(mcp)
@@ -589,6 +697,9 @@ func AddOnCallTools(mcp *server.MCPServer) {
 	ListOnCallUsers.Register(mcp)
 	ListAlertGroups.Register(mcp)
 	GetAlertGroup.Register(mcp)
+	if enableWriteTools {
+		UpdateAlertGroup.Register(mcp)
+	}
 }
 
 // helpers for converting amixr pointer types

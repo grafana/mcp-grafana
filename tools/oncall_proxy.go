@@ -292,6 +292,32 @@ func proxyGetAlertGroup(ctx context.Context, id string) (*OnCallAlertGroup, erro
 	return internal.toOnCallAlertGroup(), nil
 }
 
+// proxyUpdateAlertGroup posts an alert group state action through the IRM
+// plugin proxy. It is the OBO counterpart to amixrUpdateAlertGroup.
+func proxyUpdateAlertGroup(ctx context.Context, id, action string) error {
+	client, err := newOncallProxyClient(ctx)
+	if err != nil {
+		return fmt.Errorf("creating proxy client: %w", err)
+	}
+
+	path := fmt.Sprintf(
+		"%s%s/%s/",
+		proxyAlertGroupsPath,
+		url.PathEscape(id),
+		url.PathEscape(action),
+	)
+	resp, err := client.doRequest(ctx, http.MethodPost, path, nil)
+	if err != nil {
+		return fmt.Errorf("%s alert group %s: %w", action, id, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return fmt.Errorf("%s alert group %s: %w", action, id, handleProxyErrorResponse(resp))
+	}
+	return nil
+}
+
 func proxyListSchedules(ctx context.Context, args ListOnCallSchedulesParams) ([]*ScheduleSummary, error) {
 	client, err := newOncallProxyClient(ctx)
 	if err != nil {
