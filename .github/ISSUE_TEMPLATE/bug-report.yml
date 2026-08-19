@@ -1,0 +1,102 @@
+name: Bug report
+description: Something isn't working as documented
+labels: ["bug", "needs triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting this. The version and client fields below are the ones that most often decide whether we can reproduce a problem — several past reports turned out to be already fixed in a later release, so they're worth filling in accurately.
+
+        **Security issues:** please don't report suspected vulnerabilities here. Follow Grafana's [security disclosure process](https://github.com/grafana/mcp-grafana/security/policy) instead.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you expected, and what happened instead. Paste the full error if there is one.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Include the tool call or prompt if the problem is with a specific tool.
+      placeholder: |
+        1. Start the server with `--transport streamable-http`
+        2. Ask the assistant to ...
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: mcp-grafana version
+      description: |
+        The output of `mcp-grafana --version`, or the Docker image tag. Please check against the [latest release](https://github.com/grafana/mcp-grafana/releases) before filing — if you're several versions behind, it's worth trying a newer one first.
+      placeholder: "v1.1.0"
+    validations:
+      required: true
+
+  - type: input
+    id: grafana
+    attributes:
+      label: Grafana version
+      description: And whether it's Grafana Cloud or self-hosted.
+      placeholder: "12.0.1, self-hosted"
+    validations:
+      required: true
+
+  - type: input
+    id: client
+    attributes:
+      label: MCP client
+      description: |
+        Which client you're using, and its version. Some client-side limitations look like server bugs — for example, a client whose proxy rejects a particular schema shape can make tools appear to vanish entirely.
+      placeholder: "Claude Desktop 1.2.3 / Claude Code / custom SDK client"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: transport
+    attributes:
+      label: Transport
+      options:
+        - stdio
+        - streamable-http
+        - sse
+        - "Not sure"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install
+    attributes:
+      label: How did you install it?
+      options:
+        - Docker image
+        - Binary from a GitHub release
+        - Desktop extension (.mcpb / .dxt)
+        - Built from source with `go build` or `make build`
+        - Other / not sure
+    validations:
+      required: true
+
+  - type: input
+    id: platform
+    attributes:
+      label: Operating system and CPU architecture
+      description: Please include the architecture — `arm64` vs `x86_64` matters for the prebuilt binaries and the desktop extension.
+      placeholder: "macOS 15, x86_64 (Intel) / Linux, arm64"
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Run with `--debug` if you can. Please redact tokens, URLs and anything else sensitive.
+      render: text
+    validations:
+      required: false

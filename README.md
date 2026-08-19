@@ -1218,7 +1218,9 @@ This typically indicates that you are using a Grafana version earlier than 9.0. 
 
 ## Development
 
-Contributions are welcome! Please open an issue or submit a pull request if you have any suggestions or improvements.
+Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) first — it covers what belongs in this server and how to propose it.
+
+If you're **adding a new tool**, please [open a tool proposal](https://github.com/grafana/mcp-grafana/issues/new?template=new-tool-proposal.yml) before writing the code. Every default-on tool is sent to the model on every request by every user, so we'd rather discuss the idea than decline a finished pull request. Bug fixes, docs, tests and new parameters on existing tools need no proposal — just send a PR.
 
 This project is written in Go. Install Go following the instructions for your platform.
 
