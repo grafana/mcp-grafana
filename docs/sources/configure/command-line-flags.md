@@ -117,6 +117,9 @@ When caller authentication is enabled, the `Authorization` header is reserved fo
 ## Configure tool limits
 
 - `--max-loki-log-limit`: Maximum number of log lines returned per `query_loki_logs` call.
+- `--loki-guardrail-mode`: Loki query cost guardrail for `query_loki_logs`: `off` (default), `shadow` (log queries that would be blocked, but let them run), or `enforce` (reject them with rewrite guidance). The guardrail requires a selective stream selector, caps the effective time range (including range-vector durations like `[30d]`), and pre-checks Loki's index/stats byte estimate before running the query. On VictoriaLogs it applies only to selector-shaped (`{...}`) queries — brace-less LogsQL passes through entirely and the byte-budget check never applies. Falls back to the `GRAFANA_LOKI_GUARDRAIL_MODE` environment variable.
+- `--loki-guardrail-max-bytes`: Maximum bytes a single `query_loki_logs` call may scan, estimated via Loki's index/stats API. Defaults to 100 GiB; `0` disables the byte-budget check. Falls back to `GRAFANA_LOKI_GUARDRAIL_MAX_BYTES`.
+- `--loki-guardrail-max-range`: Maximum effective time range for a single `query_loki_logs` call, including range-vector durations. Defaults to `24h`; `0` disables the range check. Falls back to `GRAFANA_LOKI_GUARDRAIL_MAX_RANGE`.
 
 ## Run in read-only mode
 
@@ -140,6 +143,10 @@ When enabled, the following writes are disabled:
 **Alerting tools**
 
 - `alerting_manage_rules` (create, update, delete)
+
+**OnCall tools**
+
+- `update_alert_group`
 
 **Annotation tools**
 

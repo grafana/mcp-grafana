@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Troubleshooting guide
+    url: https://github.com/grafana/mcp-grafana/blob/main/docs/troubleshooting.md
+    about: Common setup and connection problems — worth checking before filing a bug.
+  - name: Security vulnerability
+    url: https://github.com/grafana/mcp-grafana/security/policy
+    about: Please report suspected vulnerabilities through Grafana's disclosure process, not as a public issue.
+  - name: Grafana documentation
+    url: https://grafana.com/docs/
+    about: For questions about Grafana itself rather than this MCP server.

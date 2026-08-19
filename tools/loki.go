@@ -40,10 +40,10 @@ type LabelResponse struct {
 
 // Stats represents the statistics returned by Loki's index/stats endpoint
 type Stats struct {
-	Streams int `json:"streams"`
-	Chunks  int `json:"chunks"`
-	Entries int `json:"entries"`
-	Bytes   int `json:"bytes"`
+	Streams int   `json:"streams"`
+	Chunks  int   `json:"chunks"`
+	Entries int   `json:"entries"`
+	Bytes   int64 `json:"bytes"`
 }
 
 // patternsAPIResponse represents the raw response from Loki's patterns API
@@ -742,6 +742,10 @@ func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) (*QueryLokiLog
 		return nil, fmt.Errorf("parsing end time: %w", err)
 	}
 
+	if err := guardLokiQuery(ctx, backend, args.LogQL, args.QueryType, startTime, endTime); err != nil {
+		return nil, err
+	}
+
 	limit := enforceLogLimit(ctx, args.Limit)
 	queryLimit := limit + 1 // ask for one extra so we can detect truncation
 
@@ -822,7 +826,7 @@ func queryLokiLogs(ctx context.Context, args QueryLokiLogsParams) (*QueryLokiLog
 // QueryLokiLogs is a tool for querying logs from Loki
 var QueryLokiLogs = mcpgrafana.MustTool(
 	"query_loki_logs",
-	"Executes a log query against a Loki or VictoriaLogs datasource and returns matching log entries (or metric samples on Loki). Defaults to the last hour, a limit of 10 entries, and 'backward' direction (newest first). The `logql` parameter takes LogQL on Loki and LogsQL on VictoriaLogs (e.g., Loki: `{app=\"foo\"} |= \"error\"`; VictoriaLogs: `{app=\"foo\"} \"error\"`). To count matching log lines precisely, use a `count_over_time()` metric query with queryType='instant'. Prefer using `query_loki_stats` first to cheaply check whether a stream contains data (avoiding expensive queries against empty streams) and `list_loki_label_names` / `list_loki_label_values` to verify labels exist before querying. Note: `query_loki_stats` returns approximate storage-level counts, not exact log line counts. For broad queries that match many lines, set `format` to 'compact' to group results by stream and avoid repeating label metadata on every line.",
+	"Executes a log query against a Loki or VictoriaLogs datasource and returns matching log entries (or metric samples on Loki). Defaults to the last hour, a limit of 10 entries, and 'backward' direction (newest first). The `logql` parameter takes LogQL on Loki and LogsQL on VictoriaLogs (e.g., Loki: `{app=\"foo\"} |= \"error\"`; VictoriaLogs: `{app=\"foo\"} \"error\"`). To count matching log lines precisely, use a `count_over_time()` metric query with queryType='instant'. Prefer using `query_loki_stats` first to cheaply check whether a stream contains data (avoiding expensive queries against empty streams) and `list_loki_label_names` / `list_loki_label_values` to verify labels exist before querying. Note: `query_loki_stats` returns approximate storage-level counts, not exact log line counts. For broad queries that match many lines, set `format` to 'compact' to group results by stream and avoid repeating label metadata on every line. If this server enables the Loki cost guardrail, expensive queries are rejected before execution: query cost is bytes SCANNED, determined only by the stream selector and time range — line filters (|=) and parsers (| json) reduce what is returned, not what is scanned. Use a stream selector with at least one selective positive label matcher (never `{}`, `=~\".*\"`/`=~\".+\"`, or negative-only matchers), keep time ranges narrow, and check size with `query_loki_stats` first; rejected queries return rewrite guidance.",
 	queryLokiLogs,
 	mcp.WithTitleAnnotation("Query Loki logs"),
 	mcp.WithIdempotentHintAnnotation(true),
