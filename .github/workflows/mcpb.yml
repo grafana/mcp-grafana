@@ -19,6 +19,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
+          # Tags, so the snapshot version reads 1.2.3-SNAPSHOT-<commit> rather
+          # than 0.0.0-SNAPSHOT-<commit>.
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Set up Go
@@ -41,3 +44,13 @@ jobs:
       # carries both architectures, and fails if the server reports no tools.
       - name: Pack bundle
         run: node scripts/build-mcpb.mjs
+
+      # So the bundle can be installed and tried on a real machine before a
+      # release ships it. Snapshot builds are labelled -SNAPSHOT-<commit>.
+      - name: Upload bundle
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: mcp-grafana-mcpb
+          path: dist/*.mcpb
+          retention-days: 7
+          if-no-files-found: error

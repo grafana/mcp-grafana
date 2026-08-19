@@ -244,9 +244,10 @@ async function main() {
 
   const manifest = JSON.parse(readFileSync(path.join(repoRoot, "mcpb", "manifest.template.json"), "utf8"));
   const metadata = JSON.parse(readFileSync(path.join(dist, "metadata.json"), "utf8"));
-  // `tag` is the release being built; `version` carries a snapshot suffix for
-  // local builds, where there is no tag.
-  const version = (args.version ?? metadata.tag ?? metadata.version).replace(/^v/, "");
+  // `version` is the release version when building a tag, and carries a
+  // -SNAPSHOT-<commit> suffix otherwise. Deliberately not `tag`, which would
+  // label a snapshot build as the release it was built after.
+  const version = (args.version ?? metadata.version).replace(/^v/, "");
   manifest.version = version;
   manifest.tools = tools;
   writeFileSync(path.join(staging, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
