@@ -138,6 +138,23 @@ jobs:
               per_page: 100,
             });
 
+            // listFiles stops at 3000 files, so "no workflow file in the list" is
+            // only meaningful if we actually saw the whole list — otherwise a fork
+            // could bury a rewritten token-check.yml behind the cap and have the
+            // guard above pass. pr.changed_files carries the true count.
+            const expectedFileCount = pr.changed_files;
+            if (
+              typeof expectedFileCount !== 'number' ||
+              changedFiles.length < expectedFileCount
+            ) {
+              core.warning(
+                `Saw ${changedFiles.length} of ${expectedFileCount} changed files for PR ` +
+                  `#${prNumber}, so it cannot be shown that .github/workflows/ is untouched. ` +
+                  'Skipping the comment — read the run directly.'
+              );
+              return;
+            }
+
             const touchesWorkflows = changedFiles.some((f) =>
               f.filename.startsWith('.github/workflows/')
             );
