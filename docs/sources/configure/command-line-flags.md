@@ -136,6 +136,7 @@ When enabled, the following writes are disabled:
 
 - `create_incident`
 - `add_activity_to_incident`
+- `update_incident`
 
 **Alerting tools**
 

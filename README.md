@@ -342,6 +342,7 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `list_incidents`                  | Incident                  | List incidents in Grafana Incident                                                                           | Viewer role                                            | N/A                                                 |
 | `create_incident`                 | Incident                  | Create an incident in Grafana Incident                                                                       | Editor role                                            | N/A                                                 |
 | `add_activity_to_incident`        | Incident                  | Add an activity item to an incident in Grafana Incident                                                      | Editor role                                            | N/A                                                 |
+| `update_incident`                 | Incident                  | Update an incident in Grafana Incident (status, severity, or title)                                          | Editor role                                            | N/A                                                 |
 | `get_incident`                    | Incident                  | Get a single incident by ID                                                                                  | Viewer role                                            | N/A                                                 |
 | `query_loki_logs`                 | Loki                      | Query and retrieve logs using LogQL (either log or metric queries)                                           | `datasources:query`                                    | `datasources:uid:loki-uid`                          |
 | `list_loki_label_names`           | Loki                      | List all available label names in logs                                                                       | `datasources:query`                                    | `datasources:uid:loki-uid`                          |
@@ -507,6 +508,7 @@ When `--disable-write` is enabled, the following write operations are disabled:
 **Incident Tools:**
 - `create_incident`
 - `add_activity_to_incident`
+- `update_incident`
 
 **Alerting Tools:**
 - `alerting_manage_rules` (create, update, delete operations)

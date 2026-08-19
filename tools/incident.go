@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/grafana/incident-go"
@@ -169,6 +170,7 @@ func AddIncidentTools(mcp *server.MCPServer, enableWriteTools bool) {
 	if enableWriteTools {
 		CreateIncident.Register(mcp)
 		AddActivityToIncident.Register(mcp)
+		UpdateIncident.Register(mcp)
 	}
 	GetIncident.Register(mcp)
 }
@@ -198,6 +200,76 @@ var GetIncident = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("Get incident details"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
+)
+
+type UpdateIncidentParams struct {
+	IncidentID string `json:"incidentId" jsonschema:"required,description=The ID of the incident to update"`
+	Status     string `json:"status" jsonschema:"description=The new status of the incident. Valid values: 'active'\\, 'resolved'"`
+	Severity   string `json:"severity" jsonschema:"description=The new severity of the incident\\, e.g. 'minor'\\, 'major'\\, 'critical'"`
+	Title      string `json:"title" jsonschema:"description=The new title of the incident"`
+}
+
+// updateIncident applies the requested changes to an incident.
+//
+// Grafana Incident has no single 'update incident' endpoint: status, severity
+// and title each have their own endpoint. Fields are therefore applied one at a
+// time, and the incident returned by the last successful call is returned. If a
+// later call fails, earlier changes have already been applied, so the error
+// names the field that failed.
+func updateIncident(ctx context.Context, args UpdateIncidentParams) (*incident.Incident, error) {
+	if args.IncidentID == "" {
+		return nil, errors.New("incidentId is required")
+	}
+	if args.Status == "" && args.Severity == "" && args.Title == "" {
+		return nil, errors.New("at least one of status, severity or title must be provided")
+	}
+
+	c := mcpgrafana.IncidentClientFromContext(ctx)
+	is := incident.NewIncidentsService(c)
+
+	var updated *incident.Incident
+	if args.Status != "" {
+		resp, err := is.UpdateStatus(ctx, incident.UpdateStatusRequest{
+			IncidentID: args.IncidentID,
+			Status:     args.Status,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("update incident status: %w", err)
+		}
+		updated = &resp.Incident
+	}
+	if args.Severity != "" {
+		resp, err := is.UpdateSeverity(ctx, incident.UpdateSeverityRequest{
+			IncidentID: args.IncidentID,
+			Severity:   args.Severity,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("update incident severity: %w", err)
+		}
+		updated = &resp.Incident
+	}
+	if args.Title != "" {
+		resp, err := is.UpdateTitle(ctx, incident.UpdateTitleRequest{
+			IncidentID: args.IncidentID,
+			Title:      args.Title,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("update incident title: %w", err)
+		}
+		updated = &resp.Incident
+	}
+	return updated, nil
+}
+
+var UpdateIncident = mcpgrafana.MustTool(
+	"update_incident",
+	"Update an existing Grafana incident by ID. Allows changing the status ('active' or 'resolved'), the severity, and the title. Only the provided fields are changed. Use this to resolve an incident or to correct its severity or title as part of an on-call workflow.",
+	updateIncident,
+	mcp.WithTitleAnnotation("Update incident"),
+	mcp.WithReadOnlyHintAnnotation(false),
+	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithDestructiveHintAnnotation(false),
 	mcp.WithOpenWorldHintAnnotation(false),
 )
