@@ -12,8 +12,9 @@ import (
 )
 
 // newFakeUpstreamClient builds an in-process MCP server exposing one tool, one
-// resource, and one prompt, then connects a ProxiedClient to it. The returned
-// client is suitable for testing handler dispatch logic without HTTP.
+// resource, one resource template, and one prompt, then connects a
+// ProxiedClient to it. The returned client is suitable for testing handler
+// dispatch logic without HTTP.
 func newFakeUpstreamClient(t *testing.T, datasourceUID, datasourceName, datasourceType string) *ProxiedClient {
 	t.Helper()
 
@@ -47,6 +48,20 @@ func newFakeUpstreamClient(t *testing.T, datasourceUID, datasourceName, datasour
 				URI:      "docs://traceql/basic",
 				MIMEType: "text/markdown",
 				Text:     "# TraceQL\nbasic docs",
+			},
+		}, nil
+	})
+
+	srv.AddResourceTemplate(mcp.NewResourceTemplate(
+		"docs://traceql/{section}",
+		"TraceQL Section",
+		mcp.WithTemplateMIMEType("text/markdown"),
+	), func(_ context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+		return []mcp.ResourceContents{
+			mcp.TextResourceContents{
+				URI:      req.Params.URI,
+				MIMEType: "text/markdown",
+				Text:     "# TraceQL\ntemplated docs for " + req.Params.URI,
 			},
 		}, nil
 	})
@@ -86,17 +101,20 @@ func newFakeUpstreamClient(t *testing.T, datasourceUID, datasourceName, datasour
 	require.NoError(t, err)
 	resources, err := mcpClient.ListResources(ctx, mcp.ListResourcesRequest{})
 	require.NoError(t, err)
+	templates, err := mcpClient.ListResourceTemplates(ctx, mcp.ListResourceTemplatesRequest{})
+	require.NoError(t, err)
 	prompts, err := mcpClient.ListPrompts(ctx, mcp.ListPromptsRequest{})
 	require.NoError(t, err)
 
 	pc := &ProxiedClient{
-		DatasourceUID:  datasourceUID,
-		DatasourceName: datasourceName,
-		DatasourceType: datasourceType,
-		Client:         mcpClient,
-		Tools:          tools.Tools,
-		Resources:      resources.Resources,
-		Prompts:        prompts.Prompts,
+		DatasourceUID:     datasourceUID,
+		DatasourceName:    datasourceName,
+		DatasourceType:    datasourceType,
+		Client:            mcpClient,
+		Tools:             tools.Tools,
+		Resources:         resources.Resources,
+		ResourceTemplates: templates.ResourceTemplates,
+		Prompts:           prompts.Prompts,
 	}
 	t.Cleanup(func() { _ = pc.Close() })
 	return pc
@@ -192,6 +210,9 @@ func TestProxiedClient_FetchesAllCapabilities(t *testing.T) {
 
 	assert.Len(t, pc.ListResources(), 1)
 	assert.Equal(t, "docs://traceql/basic", pc.ListResources()[0].URI)
+
+	require.Len(t, pc.ListResourceTemplates(), 1)
+	assert.Equal(t, "docs://traceql/{section}", pc.ListResourceTemplates()[0].URITemplate.Raw())
 
 	assert.Len(t, pc.ListPrompts(), 1)
 	assert.Equal(t, "trace-summary", pc.ListPrompts()[0].Name)

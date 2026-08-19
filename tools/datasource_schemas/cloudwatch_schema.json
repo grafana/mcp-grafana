@@ -1,0 +1,372 @@
+{
+    "schemaVersion": "v1",
+    "pluginType": "cloudwatch",
+    "pluginName": "Amazon CloudWatch",
+    "docURL": "https://grafana.com/docs/grafana/latest/datasources/aws-cloudwatch/configure/",
+    "fields": [
+        {
+            "id": "jsonData.authType",
+            "key": "authType",
+            "label": "Authentication Provider",
+            "description": "AWS authentication method. The default SDK provider extracts credentials from environment variables or IAM roles.",
+            "valueType": "string",
+            "target": "jsonData",
+            "defaultValue": "default",
+            "validations": [
+                {
+                    "type": "allowedValues",
+                    "values": [
+                        "default",
+                        "credentials",
+                        "keys",
+                        "ec2_iam_role",
+                        "grafana_assume_role",
+                        "arn"
+                    ]
+                }
+            ],
+            "ui": {
+                "component": "select",
+                "options": [
+                    {
+                        "label": "AWS SDK Default",
+                        "value": "default"
+                    },
+                    {
+                        "label": "Credentials file",
+                        "value": "credentials"
+                    },
+                    {
+                        "label": "Access & secret key",
+                        "value": "keys"
+                    },
+                    {
+                        "label": "EC2 IAM Role",
+                        "value": "ec2_iam_role"
+                    },
+                    {
+                        "label": "Grafana Assume Role",
+                        "value": "grafana_assume_role"
+                    },
+                    {
+                        "label": "Assume Role ARN (deprecated)",
+                        "value": "arn"
+                    }
+                ]
+            }
+        },
+        {
+            "id": "jsonData.defaultRegion",
+            "key": "defaultRegion",
+            "label": "Default Region",
+            "description": "AWS region. Example: us-west-2.",
+            "valueType": "string",
+            "target": "jsonData",
+            "ui": {
+                "component": "select"
+            }
+        },
+        {
+            "id": "jsonData.profile",
+            "key": "profile",
+            "label": "Credentials Profile Name",
+            "description": "AWS credentials profile name from the shared credentials file.",
+            "valueType": "string",
+            "target": "jsonData",
+            "dependsOn": "jsonData.authType == 'credentials'"
+        },
+        {
+            "id": "jsonData.assumeRoleArn",
+            "key": "assumeRoleArn",
+            "label": "Assume Role ARN",
+            "description": "ARN of the IAM role to assume.",
+            "valueType": "string",
+            "target": "jsonData",
+            "ui": {
+                "component": "input",
+                "placeholder": "arn:aws:iam::123456789012:role/grafana"
+            }
+        },
+        {
+            "id": "jsonData.externalId",
+            "key": "externalId",
+            "label": "External ID",
+            "description": "External ID for cross-account role assumption.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.endpoint",
+            "key": "endpoint",
+            "label": "Endpoint",
+            "description": "Optional custom endpoint for the AWS service. Leave empty for default CloudWatch endpoint.",
+            "valueType": "string",
+            "target": "jsonData",
+            "ui": {
+                "component": "input",
+                "placeholder": "https://monitoring.us-east-1.amazonaws.com"
+            }
+        },
+        {
+            "id": "jsonData.customMetricsNamespaces",
+            "key": "customMetricsNamespaces",
+            "label": "Namespaces of Custom Metrics",
+            "description": "Add custom metric namespaces, separated by commas. Custom metrics cannot be auto-loaded.",
+            "valueType": "string",
+            "target": "jsonData",
+            "ui": {
+                "component": "input",
+                "placeholder": "Namespace1,Namespace2"
+            }
+        },
+        {
+            "id": "jsonData.logsTimeout",
+            "key": "logsTimeout",
+            "label": "Query Result Timeout",
+            "description": "Grafana polls for CloudWatch Logs results every second until Done status or timeout is exceeded. Must be a valid duration string. Default is 30m.",
+            "valueType": "string",
+            "semanticType": "duration",
+            "target": "jsonData",
+            "defaultValue": "30m",
+            "ui": {
+                "component": "input",
+                "placeholder": "30m"
+            }
+        },
+        {
+            "id": "jsonData.logGroups",
+            "key": "logGroups",
+            "label": "Default Log Groups",
+            "description": "Default log groups for CloudWatch Logs queries.",
+            "valueType": "array",
+            "target": "jsonData",
+            "item": {
+                "valueType": "object",
+                "fields": [
+                    {
+                        "id": "logGroups.item.arn",
+                        "key": "arn",
+                        "label": "ARN",
+                        "description": "Log group ARN.",
+                        "valueType": "string",
+                        "isItemField": true,
+                        "required": true
+                    },
+                    {
+                        "id": "logGroups.item.name",
+                        "key": "name",
+                        "label": "Name",
+                        "description": "Log group name.",
+                        "valueType": "string",
+                        "isItemField": true,
+                        "required": true
+                    }
+                ]
+            }
+        },
+        {
+            "id": "jsonData.defaultLogGroups",
+            "key": "defaultLogGroups",
+            "label": "Default Log Groups (legacy)",
+            "description": "Legacy log group names. Use logGroups instead.",
+            "valueType": "array",
+            "target": "jsonData",
+            "lifecycle": "deprecated",
+            "item": {
+                "valueType": "string"
+            }
+        },
+        {
+            "id": "jsonData.tracingDatasourceUid",
+            "key": "tracingDatasourceUid",
+            "label": "Application Signals Data source",
+            "description": "Application Signals data source containing traces. Grafana creates links from logs containing @xrayTraceId.",
+            "valueType": "string",
+            "semanticType": "datasourceUid",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.enableSecureSocksProxy",
+            "key": "enableSecureSocksProxy",
+            "label": "Secure Socks Proxy",
+            "description": "Enable secure SOCKS proxy.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.timeField",
+            "key": "timeField",
+            "label": "Time field",
+            "description": "Field used for time-based queries.",
+            "valueType": "string",
+            "target": "jsonData",
+            "defaultValue": "@timestamp"
+        },
+        {
+            "id": "jsonData.database",
+            "key": "database",
+            "label": "Database",
+            "description": "Database name.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.proxyType",
+            "key": "proxyType",
+            "label": "Proxy type",
+            "description": "HTTP proxy configuration type.",
+            "valueType": "string",
+            "target": "jsonData",
+            "validations": [
+                {
+                    "type": "allowedValues",
+                    "values": [
+                        "none",
+                        "env",
+                        "url"
+                    ]
+                }
+            ],
+            "ui": {
+                "component": "select",
+                "options": [
+                    {
+                        "label": "None",
+                        "value": "none"
+                    },
+                    {
+                        "label": "Environment",
+                        "value": "env"
+                    },
+                    {
+                        "label": "URL",
+                        "value": "url"
+                    }
+                ]
+            }
+        },
+        {
+            "id": "jsonData.proxyUrl",
+            "key": "proxyUrl",
+            "label": "Proxy URL",
+            "description": "HTTP proxy URL.",
+            "valueType": "string",
+            "semanticType": "url",
+            "target": "jsonData",
+            "dependsOn": "jsonData.proxyType == 'url'"
+        },
+        {
+            "id": "jsonData.proxyUsername",
+            "key": "proxyUsername",
+            "label": "Proxy username",
+            "description": "Username for proxy authentication.",
+            "valueType": "string",
+            "target": "jsonData",
+            "dependsOn": "jsonData.proxyType == 'url'"
+        },
+        {
+            "id": "secureJsonData.accessKey",
+            "key": "accessKey",
+            "label": "Access Key ID",
+            "description": "AWS access key ID.",
+            "valueType": "string",
+            "semanticType": "token",
+            "target": "secureJsonData",
+            "dependsOn": "jsonData.authType == 'keys'"
+        },
+        {
+            "id": "secureJsonData.secretKey",
+            "key": "secretKey",
+            "label": "Secret Access Key",
+            "description": "AWS secret access key.",
+            "valueType": "string",
+            "semanticType": "token",
+            "target": "secureJsonData",
+            "dependsOn": "jsonData.authType == 'keys'"
+        },
+        {
+            "id": "secureJsonData.sessionToken",
+            "key": "sessionToken",
+            "label": "Session Token",
+            "description": "AWS temporary session token (optional).",
+            "valueType": "string",
+            "semanticType": "token",
+            "target": "secureJsonData",
+            "dependsOn": "jsonData.authType == 'keys'"
+        },
+        {
+            "id": "secureJsonData.proxyPassword",
+            "key": "proxyPassword",
+            "label": "Proxy password",
+            "description": "Password for proxy authentication.",
+            "valueType": "string",
+            "semanticType": "password",
+            "target": "secureJsonData",
+            "dependsOn": "jsonData.proxyType == 'url'"
+        }
+    ],
+    "groups": [
+        {
+            "id": "auth",
+            "title": "Authentication",
+            "fieldRefs": [
+                "jsonData.authType",
+                "jsonData.defaultRegion",
+                "jsonData.profile",
+                "jsonData.assumeRoleArn",
+                "jsonData.externalId",
+                "jsonData.endpoint",
+                "secureJsonData.accessKey",
+                "secureJsonData.secretKey",
+                "secureJsonData.sessionToken"
+            ]
+        },
+        {
+            "id": "metrics",
+            "title": "CloudWatch Metrics",
+            "fieldRefs": [
+                "jsonData.customMetricsNamespaces"
+            ]
+        },
+        {
+            "id": "logs",
+            "title": "CloudWatch Logs",
+            "fieldRefs": [
+                "jsonData.logsTimeout",
+                "jsonData.logGroups",
+                "jsonData.defaultLogGroups"
+            ]
+        },
+        {
+            "id": "tracing",
+            "title": "Application Signals Trace Link",
+            "fieldRefs": [
+                "jsonData.tracingDatasourceUid"
+            ]
+        },
+        {
+            "id": "proxy",
+            "title": "Proxy",
+            "fieldRefs": [
+                "jsonData.proxyType",
+                "jsonData.proxyUrl",
+                "jsonData.proxyUsername",
+                "secureJsonData.proxyPassword",
+                "jsonData.enableSecureSocksProxy"
+            ]
+        }
+    ],
+    "relationships": [
+        {
+            "type": "datasourceReference",
+            "fields": [
+                "jsonData.tracingDatasourceUid"
+            ],
+            "description": "Application Signals data source for trace links",
+            "targetPluginType": "grafana-x-ray-datasource"
+        }
+    ]
+}

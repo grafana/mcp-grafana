@@ -54,14 +54,11 @@ func ValidateGrafanaURL(u string) error {
 
 // ValidateGrafanaURLMiddleware returns an http.Handler middleware that rejects
 // requests whose X-Grafana-URL header is present but fails ValidateGrafanaURL,
-// responding with 400 Bad Request. Requests without the header pass through
-// unchanged (downstream extractors apply the env-variable fallback).
+// responding with 400 Bad Request. Valid values pass through but do not affect
+// the configured Grafana URL.
 //
-// Library consumers that wire mcp-grafana's context functions into their own
-// http.Server should install this middleware to match the binary's defensive
-// behavior. Consumers that call NewGrafanaClient directly (stdio or
-// programmatic construction) should pre-validate the URL with
-// ValidateGrafanaURL instead.
+// Deprecated: X-Grafana-URL no longer configures the Grafana client. This
+// middleware is retained temporarily to preserve malformed-header handling.
 func ValidateGrafanaURLMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if raw := r.Header.Get(grafanaURLHeader); raw != "" {

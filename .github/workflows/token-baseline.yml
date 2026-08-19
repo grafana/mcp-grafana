@@ -28,7 +28,7 @@ jobs:
         run: make build
 
       - id: get-secrets
-        uses: grafana/shared-workflows/actions/get-vault-secrets@f1614b210386ac420af6807a997ac7f6d96e477a # get-vault-secrets/v1.3.1
+        uses: grafana/shared-workflows/actions/get-vault-secrets@2e3743a1f8abfd3e921e53a7726ec0744c11bb01 # get-vault-secrets/v2.0.1
         with:
           # Secrets placed in the ci/repo/grafana/mcp-grafana/<path> path in Vault
           repo_secrets: |
@@ -38,7 +38,7 @@ jobs:
         uses: sd2k/mcp-tokens-action@014db1a0f233c4559d5b056983855b0b71c99fa2
         with:
           command: ./dist/mcp-grafana
-          anthropic-api-key: ${{ env.ANTHROPIC_API_KEY }}
+          anthropic-api-key: ${{ fromJSON(steps.get-secrets.outputs.secrets).ANTHROPIC_API_KEY }}
           all-providers: true
           output: token-baseline.json
 

@@ -8,7 +8,8 @@ keywords:
   - Claude
   - Docker
 weight: 5
-aliases: []
+aliases:
+  - /docs/grafana-cloud/machine-learning/mcp/set-up/client-configuration-examples/
 ---
 
 # Client configuration examples

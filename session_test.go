@@ -13,7 +13,6 @@ import (
 	"net/url"
 	"os"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/go-openapi/strfmt"
@@ -68,7 +67,7 @@ func TestDiscoverMCPDatasources(t *testing.T) {
 	ctx := newProxiedToolsTestContext(t)
 
 	t.Run("discovers tempo datasources", func(t *testing.T) {
-		discovered, err := discoverMCPDatasources(ctx, slog.Default())
+		discovered, _, err := discoverMCPDatasources(ctx, slog.Default(), newDiscoveryMetrics(nil))
 		require.NoError(t, err)
 
 		// Should find two Tempo datasources from docker-compose
@@ -94,7 +93,7 @@ func TestDiscoverMCPDatasources(t *testing.T) {
 
 	t.Run("returns error when grafana client not in context", func(t *testing.T) {
 		emptyCtx := context.Background()
-		discovered, err := discoverMCPDatasources(emptyCtx, slog.Default())
+		discovered, _, err := discoverMCPDatasources(emptyCtx, slog.Default(), newDiscoveryMetrics(nil))
 		assert.Error(t, err)
 		assert.Nil(t, discovered)
 		assert.Contains(t, err.Error(), "grafana client not found in context")
@@ -114,7 +113,7 @@ func TestDiscoverMCPDatasources(t *testing.T) {
 		ctx := WithGrafanaConfig(context.Background(), grafanaCfg)
 		ctx = WithGrafanaClient(ctx, &GrafanaClient{GrafanaHTTPAPI: grafanaClient})
 
-		discovered, err := discoverMCPDatasources(ctx, slog.Default())
+		discovered, _, err := discoverMCPDatasources(ctx, slog.Default(), newDiscoveryMetrics(nil))
 		assert.Error(t, err)
 		assert.Nil(t, discovered)
 		assert.Contains(t, err.Error(), "Unauthorized")
@@ -182,136 +181,6 @@ func TestToolNamespacing(t *testing.T) {
 	})
 }
 
-func TestSessionStateLifecycle(t *testing.T) {
-	t.Run("create and get session", func(t *testing.T) {
-		sm := NewSessionManager()
-
-		// Create mock session
-		mockSession := &mockClientSession{id: "test-session-123"}
-
-		sm.CreateSession(context.Background(), mockSession)
-
-		state, exists := sm.GetSession("test-session-123")
-		assert.True(t, exists)
-		assert.NotNil(t, state)
-		assert.NotNil(t, state.proxiedClients)
-		assert.False(t, state.proxiedToolsInitialized)
-	})
-
-	t.Run("remove session cleans up clients", func(t *testing.T) {
-		sm := NewSessionManager()
-
-		mockSession := &mockClientSession{id: "test-session-456"}
-		sm.CreateSession(context.Background(), mockSession)
-
-		state, _ := sm.GetSession("test-session-456")
-
-		// Add a mock proxied client
-		mockClient := &ProxiedClient{
-			DatasourceUID:  "test-uid",
-			DatasourceName: "Test Datasource",
-			DatasourceType: "tempo",
-		}
-		state.proxiedClients["tempo_test-uid"] = mockClient
-
-		// Remove session
-		sm.RemoveSession(context.Background(), mockSession)
-
-		// Session should be gone
-		_, exists := sm.GetSession("test-session-456")
-		assert.False(t, exists)
-	})
-
-	t.Run("get non-existent session", func(t *testing.T) {
-		sm := NewSessionManager()
-
-		state, exists := sm.GetSession("non-existent")
-		assert.False(t, exists)
-		assert.Nil(t, state)
-	})
-}
-
-func TestConcurrentInitializationRaceCondition(t *testing.T) {
-	t.Run("concurrent initialization calls should be safe", func(t *testing.T) {
-		sm := NewSessionManager()
-		mockSession := &mockClientSession{id: "race-test-session"}
-		sm.CreateSession(context.Background(), mockSession)
-
-		state, exists := sm.GetSession("race-test-session")
-		require.True(t, exists)
-
-		// Track how many times the initialization logic runs
-		var initCount int
-		var initCountMutex sync.Mutex
-
-		// Create a custom initOnce to track calls
-		state.initOnce = sync.Once{}
-
-		// Simulate the initialization work that should run exactly once
-		initWork := func() {
-			initCountMutex.Lock()
-			initCount++
-			initCountMutex.Unlock()
-			// Simulate some work
-			state.mutex.Lock()
-			state.proxiedToolsInitialized = true
-			state.proxiedClients["tempo_test"] = &ProxiedClient{
-				DatasourceUID:  "test",
-				DatasourceName: "Test",
-				DatasourceType: "tempo",
-			}
-			state.mutex.Unlock()
-		}
-
-		// Launch multiple goroutines that all try to initialize concurrently
-		const numGoroutines = 10
-		var wg sync.WaitGroup
-		wg.Add(numGoroutines)
-
-		for i := 0; i < numGoroutines; i++ {
-			go func() {
-				defer wg.Done()
-				// This should be the pattern used in InitializeAndRegisterProxiedCapabilities
-				state.initOnce.Do(initWork)
-			}()
-		}
-
-		wg.Wait()
-
-		// Verify initialization ran exactly once
-		assert.Equal(t, 1, initCount, "Initialization should run exactly once despite concurrent calls")
-		assert.True(t, state.proxiedToolsInitialized, "State should be initialized")
-		assert.Len(t, state.proxiedClients, 1, "Should have exactly one client")
-	})
-
-	t.Run("sync.Once prevents double initialization", func(t *testing.T) {
-		sm := NewSessionManager()
-		mockSession := &mockClientSession{id: "double-init-test"}
-		sm.CreateSession(context.Background(), mockSession)
-
-		state, _ := sm.GetSession("double-init-test")
-
-		callCount := 0
-
-		// First call
-		state.initOnce.Do(func() {
-			callCount++
-		})
-
-		// Second call should not execute
-		state.initOnce.Do(func() {
-			callCount++
-		})
-
-		// Third call should also not execute
-		state.initOnce.Do(func() {
-			callCount++
-		})
-
-		assert.Equal(t, 1, callCount, "sync.Once should ensure function runs exactly once")
-	})
-}
-
 func TestProxiedClientLifecycle(t *testing.T) {
 	ctx := newProxiedToolsTestContext(t)
 
@@ -359,7 +228,7 @@ func TestEndToEndProxiedToolsFlow(t *testing.T) {
 
 	t.Run("full flow from discovery to tool call", func(t *testing.T) {
 		// Step 1: Discover MCP datasources
-		discovered, err := discoverMCPDatasources(ctx, slog.Default())
+		discovered, _, err := discoverMCPDatasources(ctx, slog.Default(), newDiscoveryMetrics(nil))
 		require.NoError(t, err)
 		require.GreaterOrEqual(t, len(discovered), 1, "Should discover at least one Tempo datasource")
 
@@ -397,20 +266,27 @@ func TestEndToEndProxiedToolsFlow(t *testing.T) {
 
 		// Step 5: Test session integration
 		sm := NewSessionManager()
+		defer sm.Close()
 		mockSession := &mockClientSession{id: "e2e-test-session"}
 		sm.CreateSession(ctx, mockSession)
 
 		state, exists := sm.GetSession("e2e-test-session")
 		require.True(t, exists)
 
-		// Store the proxied client in session state
+		// Attach a shared proxied tool set holding the client to the session.
 		key := ds.Type + "_" + ds.UID
-		state.proxiedClients[key] = client
+		set := &proxiedToolSet{
+			clients:           map[string]*ProxiedClient{key: client},
+			toolToDatasources: map[string][]string{},
+		}
+		state.mutex.Lock()
+		state.proxiedSet = set
+		state.mutex.Unlock()
 
-		// Step 6: Verify client is stored correctly in session
-		retrievedClient, exists := state.proxiedClients[key]
-		require.True(t, exists, "Client should be stored in session state")
-		assert.Equal(t, client, retrievedClient, "Should retrieve the same client from session")
+		// Step 6: Verify client is stored correctly in the shared set
+		retrievedClient, exists := set.clients[key]
+		require.True(t, exists, "Client should be stored in the shared proxied tool set")
+		assert.Equal(t, client, retrievedClient, "Should retrieve the same client from the set")
 
 		// Step 7: Test ProxiedToolHandler flow
 		handler := NewProxiedToolHandler(sm, nil, modifiedTool.Name)
@@ -422,7 +298,7 @@ func TestEndToEndProxiedToolsFlow(t *testing.T) {
 	})
 
 	t.Run("multiple datasources in single session", func(t *testing.T) {
-		discovered, err := discoverMCPDatasources(ctx, slog.Default())
+		discovered, _, err := discoverMCPDatasources(ctx, slog.Default(), newDiscoveryMetrics(nil))
 		require.NoError(t, err)
 
 		if len(discovered) < 2 {
@@ -430,10 +306,17 @@ func TestEndToEndProxiedToolsFlow(t *testing.T) {
 		}
 
 		sm := NewSessionManager()
+		defer sm.Close()
 		mockSession := &mockClientSession{id: "multi-ds-test-session"}
 		sm.CreateSession(ctx, mockSession)
 
 		state, _ := sm.GetSession("multi-ds-test-session")
+
+		// A single shared set holds all the datasource clients for this session.
+		set := &proxiedToolSet{
+			clients:           map[string]*ProxiedClient{},
+			toolToDatasources: map[string][]string{},
+		}
 
 		// Try to connect to multiple datasources
 		connectedCount := 0
@@ -452,7 +335,7 @@ func TestEndToEndProxiedToolsFlow(t *testing.T) {
 			}()
 
 			key := ds.Type + "_" + ds.UID
-			state.proxiedClients[key] = client
+			set.clients[key] = client
 			connectedCount++
 
 			t.Logf("Connected to datasource %s with %d tools", ds.UID, len(client.Tools))
@@ -462,8 +345,12 @@ func TestEndToEndProxiedToolsFlow(t *testing.T) {
 			t.Skip("Could not connect to any Tempo datasources")
 		}
 
+		state.mutex.Lock()
+		state.proxiedSet = set
+		state.mutex.Unlock()
+
 		// Verify each client is stored correctly
-		for key, client := range state.proxiedClients {
+		for key, client := range set.clients {
 			parts := strings.Split(key, "_")
 			require.Len(t, parts, 2, "Key should have format type_uid")
 			assert.NotNil(t, client, "Client should not be nil")

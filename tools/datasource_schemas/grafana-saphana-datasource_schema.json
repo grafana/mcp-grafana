@@ -1,0 +1,198 @@
+{
+    "schemaVersion": "v1",
+    "pluginType": "grafana-saphana-datasource",
+    "pluginName": "SAP HANA",
+    "fields": [
+        {
+            "id": "jsonData.server",
+            "key": "server",
+            "label": "Server",
+            "description": "SAP HANA server hostname.",
+            "valueType": "string",
+            "target": "jsonData",
+            "required": true
+        },
+        {
+            "id": "jsonData.port",
+            "key": "port",
+            "label": "Port",
+            "description": "SAP HANA server port.",
+            "valueType": "number",
+            "target": "jsonData",
+            "defaultValue": 443
+        },
+        {
+            "id": "jsonData.username",
+            "key": "username",
+            "label": "Username",
+            "description": "SAP HANA database user.",
+            "valueType": "string",
+            "target": "jsonData",
+            "required": true
+        },
+        {
+            "id": "jsonData.instance",
+            "key": "instance",
+            "label": "Instance Number",
+            "description": "SAP HANA instance number.",
+            "valueType": "number",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.databaseName",
+            "key": "databaseName",
+            "label": "Database Name",
+            "description": "SAP HANA database name.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.defaultSchema",
+            "key": "defaultSchema",
+            "label": "Default Schema",
+            "description": "Default schema for queries.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.timeout",
+            "key": "timeout",
+            "label": "Timeout",
+            "description": "Connection timeout.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.tlsSkipVerify",
+            "key": "tlsSkipVerify",
+            "label": "Skip TLS Verify",
+            "description": "Skip TLS certificate verification.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.tlsAuth",
+            "key": "tlsAuth",
+            "label": "TLS Client Auth",
+            "description": "Enable TLS client certificate authentication.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.tlsAuthWithCACert",
+            "key": "tlsAuthWithCACert",
+            "label": "With CA Cert",
+            "description": "Provide a CA certificate.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.enableSecureSocksProxy",
+            "key": "enableSecureSocksProxy",
+            "label": "Secure Socks Proxy",
+            "description": "Enable secure SOCKS proxy.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "secureJsonData.password",
+            "key": "password",
+            "label": "Password",
+            "description": "SAP HANA database password.",
+            "valueType": "string",
+            "target": "secureJsonData",
+            "required": true,
+            "semanticType": "password"
+        },
+        {
+            "id": "secureJsonData.tlsCACert",
+            "key": "tlsCACert",
+            "label": "CA Cert",
+            "description": "PEM-encoded CA certificate.",
+            "valueType": "string",
+            "target": "secureJsonData",
+            "ui": {
+                "component": "textarea",
+                "rows": 7
+            }
+        },
+        {
+            "id": "secureJsonData.tlsClientCert",
+            "key": "tlsClientCert",
+            "label": "Client Cert",
+            "description": "PEM-encoded client certificate.",
+            "valueType": "string",
+            "target": "secureJsonData",
+            "ui": {
+                "component": "textarea",
+                "rows": 7
+            }
+        },
+        {
+            "id": "secureJsonData.tlsClientKey",
+            "key": "tlsClientKey",
+            "label": "Client Key",
+            "description": "PEM-encoded client private key.",
+            "valueType": "string",
+            "target": "secureJsonData",
+            "semanticType": "token",
+            "ui": {
+                "component": "textarea",
+                "rows": 7
+            }
+        }
+    ],
+    "groups": [
+        {
+            "id": "connection",
+            "title": "Connection",
+            "fieldRefs": [
+                "jsonData.server",
+                "jsonData.port",
+                "jsonData.instance",
+                "jsonData.databaseName",
+                "jsonData.defaultSchema"
+            ]
+        },
+        {
+            "id": "auth",
+            "title": "Authentication",
+            "fieldRefs": [
+                "jsonData.username",
+                "secureJsonData.password"
+            ]
+        },
+        {
+            "id": "tls",
+            "title": "TLS / SSL",
+            "fieldRefs": [
+                "jsonData.tlsSkipVerify",
+                "jsonData.tlsAuth",
+                "jsonData.tlsAuthWithCACert",
+                "secureJsonData.tlsCACert",
+                "secureJsonData.tlsClientCert",
+                "secureJsonData.tlsClientKey"
+            ]
+        },
+        {
+            "id": "advanced",
+            "title": "Advanced",
+            "fieldRefs": [
+                "jsonData.timeout",
+                "jsonData.enableSecureSocksProxy"
+            ]
+        }
+    ]
+}

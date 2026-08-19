@@ -1,0 +1,135 @@
+{
+    "schemaVersion": "v1",
+    "pluginType": "grafana-appdynamics-datasource",
+    "pluginName": "AppDynamics",
+    "fields": [
+        {
+            "id": "root.url",
+            "key": "url",
+            "label": "URL",
+            "description": "AppDynamics controller URL.",
+            "valueType": "string",
+            "semanticType": "url",
+            "target": "root",
+            "required": true
+        },
+        {
+            "id": "root.basicAuth",
+            "key": "basicAuth",
+            "label": "Basic Auth",
+            "description": "Enable basic authentication.",
+            "valueType": "boolean",
+            "target": "root"
+        },
+        {
+            "id": "root.basicAuthUser",
+            "key": "basicAuthUser",
+            "label": "User",
+            "description": "Username for basic authentication.",
+            "valueType": "string",
+            "target": "root",
+            "dependsOn": "root.basicAuth == true"
+        },
+        {
+            "id": "jsonData.clientName",
+            "key": "clientName",
+            "label": "Client Name",
+            "description": "AppDynamics API client name.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.clientDomain",
+            "key": "clientDomain",
+            "label": "Client Domain",
+            "description": "AppDynamics account domain.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.analyticsURL",
+            "key": "analyticsURL",
+            "label": "Analytics URL",
+            "description": "AppDynamics Analytics API URL.",
+            "valueType": "string",
+            "semanticType": "url",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.globalAccountName",
+            "key": "globalAccountName",
+            "label": "Global Account Name",
+            "description": "AppDynamics global account name for analytics.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.enableSecureSocksProxy",
+            "key": "enableSecureSocksProxy",
+            "label": "Secure Socks Proxy",
+            "description": "Enable secure SOCKS proxy.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "secureJsonData.basicAuthPassword",
+            "key": "basicAuthPassword",
+            "label": "Password",
+            "description": "Basic auth password.",
+            "valueType": "string",
+            "semanticType": "password",
+            "target": "secureJsonData"
+        },
+        {
+            "id": "secureJsonData.clientSecret",
+            "key": "clientSecret",
+            "label": "Client Secret",
+            "description": "AppDynamics API client secret.",
+            "valueType": "string",
+            "semanticType": "token",
+            "target": "secureJsonData"
+        },
+        {
+            "id": "secureJsonData.analyticsAPIKey",
+            "key": "analyticsAPIKey",
+            "label": "Analytics API Key",
+            "description": "AppDynamics Analytics API key.",
+            "valueType": "string",
+            "semanticType": "token",
+            "target": "secureJsonData"
+        }
+    ],
+    "groups": [
+        {
+            "id": "connection",
+            "title": "Connection",
+            "fieldRefs": [
+                "root.url"
+            ]
+        },
+        {
+            "id": "auth",
+            "title": "Authentication",
+            "fieldRefs": [
+                "root.basicAuth",
+                "root.basicAuthUser",
+                "secureJsonData.basicAuthPassword",
+                "jsonData.clientName",
+                "jsonData.clientDomain",
+                "secureJsonData.clientSecret"
+            ]
+        },
+        {
+            "id": "analytics",
+            "title": "Analytics",
+            "fieldRefs": [
+                "jsonData.analyticsURL",
+                "jsonData.globalAccountName",
+                "secureJsonData.analyticsAPIKey"
+            ]
+        }
+    ]
+}

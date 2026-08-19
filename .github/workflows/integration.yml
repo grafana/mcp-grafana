@@ -127,7 +127,7 @@ jobs:
           cache: true
 
       - id: get-secrets
-        uses: grafana/shared-workflows/actions/get-vault-secrets@f1614b210386ac420af6807a997ac7f6d96e477a # get-vault-secrets/v1.3.1
+        uses: grafana/shared-workflows/actions/get-vault-secrets@2e3743a1f8abfd3e921e53a7726ec0744c11bb01 # get-vault-secrets/v2.0.1
         with:
           # Secrets placed in the ci/repo/grafana/mcp-grafana/<path> path in Vault
           repo_secrets: |
@@ -140,4 +140,7 @@ jobs:
           GRAFANA_URL: ${{ vars.CLOUD_GRAFANA_URL }}
           ASSERTS_GRAFANA_URL: ${{ vars.ASSERTS_GRAFANA_URL }}
           DATASOURCEDEV_GRAFANA_URL: ${{ vars.DATASOURCEDEV_GRAFANA_URL }}
+          GRAFANA_SERVICE_ACCOUNT_TOKEN: ${{ fromJSON(steps.get-secrets.outputs.secrets).GRAFANA_SERVICE_ACCOUNT_TOKEN }}
+          ASSERTS_GRAFANA_SERVICE_ACCOUNT_TOKEN: ${{ fromJSON(steps.get-secrets.outputs.secrets).ASSERTS_GRAFANA_SERVICE_ACCOUNT_TOKEN }}
+          DATASOURCEDEV_GRAFANA_SERVICE_ACCOUNT_TOKEN: ${{ fromJSON(steps.get-secrets.outputs.secrets).DATASOURCEDEV_GRAFANA_SERVICE_ACCOUNT_TOKEN }}
         run: make test-cloud

@@ -9,12 +9,15 @@ keywords:
   - RBAC
   - Grafana
 weight: 5
-aliases: []
+aliases:
+  - /docs/grafana-cloud/machine-learning/mcp/introduction/
 ---
 
 # Introduction to the Grafana MCP server
 
-This article outlines what the [Grafana MCP serve](https://github.com/grafana/mcp-grafana) is, what it can do, and how authentication and permissions work.
+This article outlines what the open source [Grafana MCP server](https://github.com/grafana/mcp-grafana) is, what it can do, and how authentication and permissions work.
+
+For Grafana Cloud's hosted MCP server, refer to [Grafana Cloud MCP server](/docs/grafana-cloud/ai-tools/mcp-servers/cloud-mcp/).
 
 ## What you'll achieve
 
@@ -30,7 +33,7 @@ The [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) is a standa
 
 ## Tools and capabilities
 
-The server exposes many tools, grouped by area: dashboards (search, get summary, get panel queries, update, patch), folders (search, create), datasources (list and query Prometheus, Loki, InfluxDB, ClickHouse, Snowflake, CloudWatch, Elasticsearch, Pyroscope), alerting (rules and routing), incidents (Grafana Incident), Sift (investigations, error patterns, slow requests), OnCall (schedules, alert groups), navigation (deeplinks), annotations, and rendering (panel or dashboard images). It can also expose [proxied tools](../configure/proxied-tools/) from external MCP servers reachable through Grafana (for example from Grafana Tempo). Some tool categories are disabled by default to save context window; you enable them with [Enable and disable tools](../configure/enable-and-disable-tools/). For dashboards, prefer `get_dashboard_summary` and `get_dashboard_property` over `get_dashboard_by_uid` when you do not need the full JSON, to manage context window use.
+The server exposes many tools, grouped by area: dashboards (search, get summary, get panel queries, update, patch), folders (search, create), datasources (list and query Prometheus, Loki, InfluxDB, ClickHouse, Snowflake, CloudWatch, Elasticsearch, Pyroscope), alerting (rules and routing), incidents (Grafana Incident), Sift (investigations, error patterns, slow requests), OnCall (schedules, alert groups), navigation (deeplinks), annotations, snapshots (list, get, create, delete), and rendering (panel or dashboard images). It can also expose [proxied tools](../configure/proxied-tools/) from external MCP servers reachable through Grafana (for example from Grafana Tempo). Some tool categories are disabled by default to save context window; you enable them with [Enable and disable tools](../configure/enable-and-disable-tools/). For dashboards, prefer `get_dashboard_summary` and `get_dashboard_property` over `get_dashboard_by_uid` when you do not need the full JSON, to manage context window use.
 
 ## Authentication and RBAC
 

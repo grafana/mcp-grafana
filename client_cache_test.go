@@ -1,6 +1,7 @@
 package mcpgrafana
 
 import (
+	"context"
 	"net/url"
 	"sync"
 	"testing"
@@ -8,6 +9,8 @@ import (
 	"github.com/grafana/incident-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 )
 
 func TestClientCache_GrafanaClient(t *testing.T) {
@@ -39,7 +42,7 @@ func TestClientCache_GrafanaClient(t *testing.T) {
 	assert.NotSame(t, client1, client3)
 	assert.Equal(t, 2, createCount)
 
-	g, _ := cache.Size()
+	g, _, _ := cache.Size()
 	assert.Equal(t, 2, g)
 }
 
@@ -63,7 +66,7 @@ func TestClientCache_IncidentClient(t *testing.T) {
 	assert.Same(t, client1, client2)
 	assert.Equal(t, 1, createCount)
 
-	_, i := cache.Size()
+	_, i, _ := cache.Size()
 	assert.Equal(t, 1, i)
 }
 
@@ -135,7 +138,7 @@ func TestClientCache_DifferentCredentials(t *testing.T) {
 	assert.NotSame(t, clients[0], clients[3])
 	assert.NotSame(t, clients[0], clients[5])
 
-	g, _ := cache.Size()
+	g, _, _ := cache.Size()
 	assert.Equal(t, numUniqueKeys, g) // 5 unique keys
 }
 
@@ -162,13 +165,48 @@ func TestClientCache_Close(t *testing.T) {
 		return incident.NewClient("http://localhost:3000/incident", "key")
 	})
 
-	g, i := cache.Size()
+	g, i, _ := cache.Size()
 	assert.Equal(t, 1, g)
 	assert.Equal(t, 1, i)
 
 	cache.Close()
 
-	g, i = cache.Size()
+	g, i, _ = cache.Size()
 	assert.Equal(t, 0, g)
 	assert.Equal(t, 0, i)
+}
+
+// TestClientCache_MetricsUseInjectedMeterProvider verifies that
+// WithClientCacheMeterProvider routes the cache's instruments to the given
+// provider instead of the (possibly noop) global one, so metrics reach a
+// scrapeable registry in deployments that reset otel.GetMeterProvider() for
+// reasons unrelated to mcp-grafana (see issue #1072).
+func TestClientCache_MetricsUseInjectedMeterProvider(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+
+	cache := NewClientCache(nil, WithClientCacheMeterProvider(provider))
+	defer cache.Close()
+
+	key := clientCacheKey{url: "http://localhost:3000", apiKey: "key", orgID: 1}
+	cache.GetOrCreateGrafanaClient(key, func() *GrafanaClient {
+		return &GrafanaClient{}
+	})
+	// Second lookup for the same key should record a hit.
+	cache.GetOrCreateGrafanaClient(key, func() *GrafanaClient {
+		return &GrafanaClient{}
+	})
+
+	var data metricdata.ResourceMetrics
+	require.NoError(t, reader.Collect(context.Background(), &data))
+	require.Len(t, data.ScopeMetrics, 1)
+
+	names := make(map[string]bool)
+	for _, m := range data.ScopeMetrics[0].Metrics {
+		names[m.Name] = true
+	}
+	assert.True(t, names["mcp.client_cache.lookups"])
+	assert.True(t, names["mcp.client_cache.hits"])
+	assert.True(t, names["mcp.client_cache.misses"])
+	assert.True(t, names["mcp.client_cache.size"])
 }

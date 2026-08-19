@@ -1,0 +1,124 @@
+{
+    "schemaVersion": "v1",
+    "pluginType": "stackdriver",
+    "pluginName": "Google Cloud Monitoring",
+    "docURL": "https://grafana.com/docs/grafana/latest/datasources/google-cloud-monitoring/",
+    "fields": [
+        {
+            "id": "jsonData.authenticationType",
+            "key": "authenticationType",
+            "label": "Authentication type",
+            "description": "Google Cloud authentication mechanism.",
+            "valueType": "string",
+            "target": "jsonData",
+            "validations": [
+                {
+                    "type": "allowedValues",
+                    "values": [
+                        "jwt",
+                        "gce",
+                        "workloadIdentityFederation"
+                    ]
+                }
+            ],
+            "ui": {
+                "component": "select"
+            }
+        },
+        {
+            "id": "jsonData.defaultProject",
+            "key": "defaultProject",
+            "label": "Default Project",
+            "description": "GCP project ID from the service account JSON.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.gceDefaultProject",
+            "key": "gceDefaultProject",
+            "label": "GCE Default Project",
+            "description": "Default GCE project. Used when running on Google Compute Engine.",
+            "valueType": "string",
+            "target": "jsonData",
+            "dependsOn": "jsonData.authenticationType == 'gce'"
+        },
+        {
+            "id": "jsonData.clientEmail",
+            "key": "clientEmail",
+            "label": "Client Email",
+            "description": "Service account email address for JWT authentication.",
+            "valueType": "string",
+            "target": "jsonData",
+            "dependsOn": "jsonData.authenticationType == 'jwt'"
+        },
+        {
+            "id": "jsonData.tokenUri",
+            "key": "tokenUri",
+            "label": "Token URI",
+            "description": "OAuth2 token endpoint URI.",
+            "valueType": "string",
+            "target": "jsonData",
+            "defaultValue": "https://oauth2.googleapis.com/token",
+            "dependsOn": "jsonData.authenticationType == 'jwt'"
+        },
+        {
+            "id": "jsonData.enableSecureSocksProxy",
+            "key": "enableSecureSocksProxy",
+            "label": "Secure Socks Proxy",
+            "description": "Enable secure SOCKS proxy.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "jsonData.universeDomain",
+            "key": "universeDomain",
+            "label": "Universe Domain",
+            "description": "Google Cloud universe domain. Defaults to googleapis.com.",
+            "valueType": "string",
+            "target": "jsonData",
+            "ui": {
+                "component": "input",
+                "placeholder": "googleapis.com"
+            }
+        },
+        {
+            "id": "secureJsonData.privateKey",
+            "key": "privateKey",
+            "label": "Private Key",
+            "description": "Service account private key for JWT authentication.",
+            "valueType": "string",
+            "semanticType": "token",
+            "target": "secureJsonData",
+            "dependsOn": "jsonData.authenticationType == 'jwt'",
+            "ui": {
+                "component": "textarea",
+                "rows": 7
+            }
+        }
+    ],
+    "groups": [
+        {
+            "id": "auth",
+            "title": "Authentication",
+            "fieldRefs": [
+                "jsonData.authenticationType",
+                "jsonData.defaultProject",
+                "jsonData.gceDefaultProject",
+                "jsonData.clientEmail",
+                "jsonData.tokenUri",
+                "secureJsonData.privateKey"
+            ]
+        },
+        {
+            "id": "additional",
+            "title": "Additional settings",
+            "fieldRefs": [
+                "jsonData.enableSecureSocksProxy",
+                "jsonData.universeDomain"
+            ]
+        }
+    ]
+}

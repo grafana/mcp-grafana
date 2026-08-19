@@ -1,0 +1,81 @@
+{
+    "schemaVersion": "v1",
+    "pluginType": "grafana-surrealdb-datasource",
+    "pluginName": "SurrealDB",
+    "docURL": "https://grafana.com/grafana/plugins/grafana-surrealdb-datasource/",
+    "fields": [
+        {
+            "id": "jsonData.endpoint",
+            "key": "endpoint",
+            "label": "Endpoint",
+            "description": "SurrealDB HTTP endpoint URL.",
+            "valueType": "string",
+            "semanticType": "url",
+            "target": "jsonData",
+            "ui": {
+                "component": "input"
+            }
+        },
+        {
+            "id": "jsonData.database",
+            "key": "database",
+            "label": "Database",
+            "description": "SurrealDB database name.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.namespace",
+            "key": "namespace",
+            "label": "Namespace",
+            "description": "SurrealDB namespace.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.scope",
+            "key": "scope",
+            "label": "Scope",
+            "description": "SurrealDB authentication scope.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.username",
+            "key": "username",
+            "label": "Username",
+            "description": "SurrealDB username.",
+            "valueType": "string",
+            "target": "jsonData"
+        },
+        {
+            "id": "secureJsonData.password",
+            "key": "password",
+            "label": "Password",
+            "description": "SurrealDB password.",
+            "valueType": "string",
+            "semanticType": "password",
+            "target": "secureJsonData"
+        }
+    ],
+    "groups": [
+        {
+            "id": "connection",
+            "title": "Connection",
+            "fieldRefs": [
+                "jsonData.endpoint",
+                "jsonData.namespace",
+                "jsonData.database",
+                "jsonData.scope"
+            ]
+        },
+        {
+            "id": "auth",
+            "title": "Authentication",
+            "fieldRefs": [
+                "jsonData.username",
+                "secureJsonData.password"
+            ]
+        }
+    ]
+}

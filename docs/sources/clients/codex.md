@@ -8,7 +8,8 @@ keywords:
   - MCP
   - client
 weight: 3
-aliases: []
+aliases:
+  - /docs/grafana-cloud/machine-learning/mcp/clients/codex/
 ---
 
 # Codex CLI

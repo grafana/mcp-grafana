@@ -12,6 +12,8 @@ import (
 	mcp_client "github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/client/transport"
 	"github.com/mark3labs/mcp-go/mcp"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 )
 
 const (
@@ -19,11 +21,113 @@ const (
 	// (connecting, handshaking, and listing tools). Kept short to avoid blocking
 	// server startup when a datasource's MCP endpoint is slow or unreachable.
 	mcpClientInitTimeout = 30 * time.Second
+
+	// mcpRetryMaxAttempts is the total number of attempts (including the first)
+	// made for a probe or connect operation before giving up on a candidate.
+	mcpRetryMaxAttempts = 2
+	// mcpRetryBackoff is the base backoff between retry attempts; attempt N
+	// waits N*mcpRetryBackoff before retrying.
+	mcpRetryBackoff = 250 * time.Millisecond
 )
 
-// ProxiedClient represents a connection to a remote MCP server (e.g., Tempo datasource).
-// It caches the upstream server's tools, resources, resource templates, and prompts
-// so they can be re-advertised by the parent server without re-querying the upstream.
+// retryPolicy configures withRetry.
+type retryPolicy struct {
+	maxAttempts int
+	backoff     time.Duration
+}
+
+// defaultRetryPolicy is used for both MCP-support probes and client connects.
+var defaultRetryPolicy = retryPolicy{maxAttempts: mcpRetryMaxAttempts, backoff: mcpRetryBackoff}
+
+// transientError marks a failure as retryable (a timeout, network/dial error,
+// or server error that may well succeed on a subsequent attempt). Any error
+// NOT wrapped as a transientError is treated as deterministic by withRetry and
+// is never retried.
+type transientError struct{ err error }
+
+// newTransientError wraps err as transient. Returns nil if err is nil, so it
+// can be used directly as a return value: `return result, newTransientError(err)`.
+func newTransientError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &transientError{err: err}
+}
+
+func (e *transientError) Error() string { return e.err.Error() }
+func (e *transientError) Unwrap() error { return e.err }
+
+// isTransient reports whether err (or anything it wraps) is a transientError.
+func isTransient(err error) bool {
+	var te *transientError
+	return errors.As(err, &te)
+}
+
+// withRetry runs attempt up to policy.maxAttempts times. attempt receives the
+// 1-based attempt number, so callers can distinguish first tries from retries
+// (e.g. for metrics) or build a fresh per-attempt timeout context.
+//
+//   - attempt returns (result, nil): success, returned immediately.
+//   - attempt returns a transientError (see newTransientError): retried after
+//     waiting attemptNum*policy.backoff, unless attempts are exhausted or ctx
+//     is done first.
+//   - attempt returns any other non-nil error: deterministic, returned
+//     immediately with no retry.
+//
+// On exhaustion, the returned error wraps the last attempt's error with the
+// attempt count, and still satisfies isTransient, so a caller's final log
+// message is self-describing (e.g. "... failed after 2 attempts: <err>").
+func withRetry[T any](ctx context.Context, policy retryPolicy, description string, attempt func(attemptNum int) (T, error)) (T, error) {
+	var zero T
+	var lastErr error
+	for n := 1; n <= policy.maxAttempts; n++ {
+		result, err := attempt(n)
+		if err == nil {
+			return result, nil
+		}
+		if !isTransient(err) {
+			return zero, err
+		}
+		lastErr = err
+		if n == policy.maxAttempts {
+			break
+		}
+
+		select {
+		case <-time.After(time.Duration(n) * policy.backoff):
+		case <-ctx.Done():
+			return zero, newTransientError(contextCauseOrErr(ctx, ctx.Err()))
+		}
+	}
+	return zero, newTransientError(fmt.Errorf("%s failed after %d attempts: %w", description, policy.maxAttempts, lastErr))
+}
+
+// classifyConnectError decides whether a NewProxiedClient failure is worth
+// retrying. Auth rejections are deterministic: retrying with the same
+// credentials cannot help. Everything else (handshake timeout, dial/network
+// error, or any other Initialize/ListTools failure) is treated as transient.
+//
+// This deliberately over-retries a few genuinely deterministic failures we
+// can't cheaply classify (e.g. a persistently-misconfigured endpoint), at the
+// cost of one extra mcpClientInitTimeout-bounded attempt per candidate. That
+// trade-off favors fixing the under-retry of transient failures that caused
+// production flapping over precisely classifying every failure mode.
+func classifyConnectError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var authErr *transport.AuthorizationRequiredError
+	var oauthErr *transport.OAuthAuthorizationRequiredError
+	if errors.As(err, &authErr) || errors.As(err, &oauthErr) {
+		return err
+	}
+	return newTransientError(err)
+}
+
+// ProxiedClient represents a connection to a remote MCP server (e.g., Tempo
+// datasource). It caches the upstream server's tools, resources, resource
+// templates, and prompts so they can be re-advertised by the parent server
+// without re-querying the upstream.
 type ProxiedClient struct {
 	DatasourceUID     string
 	DatasourceName    string
@@ -34,6 +138,12 @@ type ProxiedClient struct {
 	ResourceTemplates []mcp.ResourceTemplate
 	Prompts           []mcp.Prompt
 	mutex             sync.RWMutex
+
+	// closeHook, when set, runs inside Close (under the client mutex). It is a
+	// test seam so lifecycle tests can observe exactly how many times a client is
+	// Closed without standing up a real remote MCP transport. Always nil in
+	// production; do not use it for behavior.
+	closeHook func()
 }
 
 // contextCauseOrErr returns the context cause if the error is due to context
@@ -47,8 +157,30 @@ func contextCauseOrErr(ctx context.Context, err error) error {
 	return err
 }
 
+// proxiedClientOption configures NewProxiedClient.
+type proxiedClientOption func(*proxiedClientOptions)
+
+type proxiedClientOptions struct {
+	metrics *discoveryMetrics
+}
+
+// withProxiedClientMetrics lets the caller (the ToolManager, which owns the
+// injected MeterProvider) hand its instruments to NewProxiedClient so the
+// upstream capability inventory taken at connect time is recorded. Optional:
+// call sites without a MeterProvider (tests) omit it and record nothing.
+func withProxiedClientMetrics(m discoveryMetrics) proxiedClientOption {
+	return func(o *proxiedClientOptions) {
+		o.metrics = &m
+	}
+}
+
 // NewProxiedClient creates a new connection to a remote MCP server
-func NewProxiedClient(ctx context.Context, datasourceUID, datasourceName, datasourceType, mcpEndpoint string) (*ProxiedClient, error) {
+func NewProxiedClient(ctx context.Context, datasourceUID, datasourceName, datasourceType, mcpEndpoint string, opts ...proxiedClientOption) (*ProxiedClient, error) {
+	var options proxiedClientOptions
+	for _, opt := range opts {
+		opt(&options)
+	}
+
 	config := GrafanaConfigFromContext(ctx)
 	logger := config.LoggerOrDefault()
 
@@ -87,9 +219,10 @@ func NewProxiedClient(ctx context.Context, datasourceUID, datasourceName, dataso
 		return nil, fmt.Errorf("failed to initialize MCP client: %w", contextCauseOrErr(initCtx, err))
 	}
 
-	// List available tools from the remote server. Tools are mandatory: if the
-	// upstream advertises no tool capability we still try (some servers do not
-	// declare capabilities precisely) and tolerate METHOD_NOT_FOUND gracefully.
+	// List available tools from the remote server. A server that answers
+	// METHOD_NOT_FOUND has no tools but may still expose resources or prompts,
+	// so that case is tolerated rather than failing the connection; any other
+	// error is a real connect failure.
 	var tools []mcp.Tool
 	toolsResult, err := mcpClient.ListTools(initCtx, mcp.ListToolsRequest{})
 	switch {
@@ -105,28 +238,12 @@ func NewProxiedClient(ctx context.Context, datasourceUID, datasourceName, dataso
 
 	caps := mcpClient.GetServerCapabilities()
 
-	// Fetch resources and resource templates if advertised. Many servers (Tempo
-	// included) register resources without explicitly declaring the capability,
-	// so we also probe when caps.Resources is nil and ignore METHOD_NOT_FOUND.
-	resources, resourceTemplates := listRemoteResources(initCtx, mcpClient, caps, logger, datasourceUID)
-
-	// Fetch prompts only if advertised. We don't probe blindly here because
-	// stricter upstreams may treat unknown methods as errors and we have no
-	// reason to expect a prompt-less server to suddenly grow prompts.
-	var prompts []mcp.Prompt
-	if caps.Prompts != nil {
-		promptsResult, err := mcpClient.ListPrompts(initCtx, mcp.ListPromptsRequest{})
-		switch {
-		case err == nil:
-			prompts = promptsResult.Prompts
-		case errors.Is(err, mcp.ErrMethodNotFound):
-			logger.DebugContext(initCtx, "remote MCP server advertised prompts but returned method not found",
-				"datasource", datasourceUID)
-		default:
-			logger.WarnContext(initCtx, "failed to list prompts from remote MCP server",
-				"datasource", datasourceUID, "error", err)
-		}
-	}
+	// Fetch resources and resource templates. Many servers (Tempo included)
+	// register resources without declaring the capability, so these are probed
+	// even when caps.Resources is nil, and every failure is non-fatal.
+	inventory := remoteInventory{caps: caps, uid: datasourceUID, dsType: datasourceType, metrics: options.metrics}
+	resources, resourceTemplates := inventory.listResources(initCtx, mcpClient, logger)
+	prompts := inventory.listPrompts(initCtx, mcpClient, logger)
 
 	logger.DebugContext(initCtx, "connected to proxied MCP server",
 		"datasource", datasourceUID,
@@ -148,18 +265,33 @@ func NewProxiedClient(ctx context.Context, datasourceUID, datasourceName, dataso
 	}, nil
 }
 
-// listRemoteResources fetches resources and resource templates from the upstream
-// server. Errors are logged and treated as empty results so a partially-supporting
-// upstream still works.
-func listRemoteResources(
-	ctx context.Context,
-	c *mcp_client.Client,
-	caps mcp.ServerCapabilities,
-	logger *slog.Logger,
-	datasourceUID string,
-) ([]mcp.Resource, []mcp.ResourceTemplate) {
-	// We probe even when caps.Resources is nil because many MCP servers
-	// (Tempo today) register resources without setting the capability flag.
+// remoteInventory gathers the non-tool capabilities of one upstream MCP server.
+// Unlike tools/list, none of these lists are required for a usable connection:
+// every failure is logged (and counted, when metrics were supplied) and yields
+// an empty result, so a partially-supporting upstream still proxies whatever it
+// does expose.
+type remoteInventory struct {
+	caps    mcp.ServerCapabilities
+	uid     string
+	dsType  string
+	metrics *discoveryMetrics
+}
+
+// recordListFailure counts an upstream capability listing that failed for a
+// reason other than METHOD_NOT_FOUND (which is a supported answer, not a
+// failure).
+func (ri remoteInventory) recordListFailure(ctx context.Context, capability string) {
+	if ri.metrics == nil || ri.metrics.upstreamListFailure == nil {
+		return
+	}
+	ri.metrics.upstreamListFailure.Add(ctx, 1, metric.WithAttributes(
+		attribute.String(attrDatasourceType, ri.dsType),
+		attribute.String(attrProxiedCapability, capability),
+	))
+}
+
+// listResources fetches the upstream's static resources and resource templates.
+func (ri remoteInventory) listResources(ctx context.Context, c *mcp_client.Client, logger *slog.Logger) ([]mcp.Resource, []mcp.ResourceTemplate) {
 	var resources []mcp.Resource
 	resourcesResult, err := c.ListResources(ctx, mcp.ListResourcesRequest{})
 	switch {
@@ -167,16 +299,18 @@ func listRemoteResources(
 		resources = resourcesResult.Resources
 	case errors.Is(err, mcp.ErrMethodNotFound):
 		logger.DebugContext(ctx, "remote MCP server does not support resources/list",
-			"datasource", datasourceUID)
+			"datasource", ri.uid)
 	default:
-		// If capability was advertised this is a real failure; otherwise it is
-		// merely informational.
-		if caps.Resources != nil {
+		ri.recordListFailure(ctx, capabilityResources)
+		// A failure is only noteworthy when the capability was advertised;
+		// otherwise this was a speculative probe of a server that likely has no
+		// resources at all.
+		if ri.caps.Resources != nil {
 			logger.WarnContext(ctx, "failed to list resources from remote MCP server",
-				"datasource", datasourceUID, "error", err)
+				"datasource", ri.uid, "error", err)
 		} else {
 			logger.DebugContext(ctx, "resources/list probe failed",
-				"datasource", datasourceUID, "error", err)
+				"datasource", ri.uid, "error", err)
 		}
 	}
 
@@ -187,18 +321,43 @@ func listRemoteResources(
 		resourceTemplates = templatesResult.ResourceTemplates
 	case errors.Is(err, mcp.ErrMethodNotFound):
 		logger.DebugContext(ctx, "remote MCP server does not support resources/templates/list",
-			"datasource", datasourceUID)
+			"datasource", ri.uid)
 	default:
-		if caps.Resources != nil {
+		ri.recordListFailure(ctx, capabilityResourceTemplates)
+		if ri.caps.Resources != nil {
 			logger.WarnContext(ctx, "failed to list resource templates from remote MCP server",
-				"datasource", datasourceUID, "error", err)
+				"datasource", ri.uid, "error", err)
 		} else {
 			logger.DebugContext(ctx, "resources/templates/list probe failed",
-				"datasource", datasourceUID, "error", err)
+				"datasource", ri.uid, "error", err)
 		}
 	}
 
 	return resources, resourceTemplates
+}
+
+// listPrompts fetches the upstream's prompts, but only when the capability is
+// advertised. Prompts are not probed blindly (unlike resources): stricter
+// upstreams may treat an unknown method as an error, and there is no reason to
+// expect a server that declares no prompts to have any.
+func (ri remoteInventory) listPrompts(ctx context.Context, c *mcp_client.Client, logger *slog.Logger) []mcp.Prompt {
+	if ri.caps.Prompts == nil {
+		return nil
+	}
+
+	promptsResult, err := c.ListPrompts(ctx, mcp.ListPromptsRequest{})
+	switch {
+	case err == nil:
+		return promptsResult.Prompts
+	case errors.Is(err, mcp.ErrMethodNotFound):
+		logger.DebugContext(ctx, "remote MCP server advertised prompts but returned method not found",
+			"datasource", ri.uid)
+	default:
+		ri.recordListFailure(ctx, capabilityPrompts)
+		logger.WarnContext(ctx, "failed to list prompts from remote MCP server",
+			"datasource", ri.uid, "error", err)
+	}
+	return nil
 }
 
 // CallTool forwards a tool call to the remote MCP server
@@ -206,6 +365,7 @@ func (pc *ProxiedClient) CallTool(ctx context.Context, toolName string, argument
 	pc.mutex.RLock()
 	defer pc.mutex.RUnlock()
 
+	// Validate the tool exists
 	var toolExists bool
 	for _, tool := range pc.Tools {
 		if tool.Name == toolName {
@@ -247,6 +407,7 @@ func (pc *ProxiedClient) ListTools() []mcp.Tool {
 func (pc *ProxiedClient) ListResources() []mcp.Resource {
 	pc.mutex.RLock()
 	defer pc.mutex.RUnlock()
+
 	result := make([]mcp.Resource, len(pc.Resources))
 	copy(result, pc.Resources)
 	return result
@@ -256,6 +417,7 @@ func (pc *ProxiedClient) ListResources() []mcp.Resource {
 func (pc *ProxiedClient) ListResourceTemplates() []mcp.ResourceTemplate {
 	pc.mutex.RLock()
 	defer pc.mutex.RUnlock()
+
 	result := make([]mcp.ResourceTemplate, len(pc.ResourceTemplates))
 	copy(result, pc.ResourceTemplates)
 	return result
@@ -265,16 +427,21 @@ func (pc *ProxiedClient) ListResourceTemplates() []mcp.ResourceTemplate {
 func (pc *ProxiedClient) ListPrompts() []mcp.Prompt {
 	pc.mutex.RLock()
 	defer pc.mutex.RUnlock()
+
 	result := make([]mcp.Prompt, len(pc.Prompts))
 	copy(result, pc.Prompts)
 	return result
 }
 
-// ReadResource forwards a resources/read call to the remote MCP server.
-// uri is the upstream's original URI (not the namespaced URI exposed to clients).
+// ReadResource forwards a resources/read call to the remote MCP server. uri is
+// the upstream's original URI, not the namespaced URN exposed to clients.
 func (pc *ProxiedClient) ReadResource(ctx context.Context, uri string) (*mcp.ReadResourceResult, error) {
+	pc.mutex.RLock()
+	defer pc.mutex.RUnlock()
+
 	req := mcp.ReadResourceRequest{}
 	req.Params.URI = uri
+
 	result, err := pc.Client.ReadResource(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read resource on remote MCP server: %w", err)
@@ -282,12 +449,16 @@ func (pc *ProxiedClient) ReadResource(ctx context.Context, uri string) (*mcp.Rea
 	return result, nil
 }
 
-// GetPrompt forwards a prompts/get call to the remote MCP server.
-// promptName is the upstream's original prompt name (not the namespaced name).
+// GetPrompt forwards a prompts/get call to the remote MCP server. promptName is
+// the upstream's original prompt name, not the namespaced name.
 func (pc *ProxiedClient) GetPrompt(ctx context.Context, promptName string, args map[string]string) (*mcp.GetPromptResult, error) {
+	pc.mutex.RLock()
+	defer pc.mutex.RUnlock()
+
 	req := mcp.GetPromptRequest{}
 	req.Params.Name = promptName
 	req.Params.Arguments = args
+
 	result, err := pc.Client.GetPrompt(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get prompt on remote MCP server: %w", err)
@@ -299,6 +470,10 @@ func (pc *ProxiedClient) GetPrompt(ctx context.Context, promptName string, args 
 func (pc *ProxiedClient) Close() error {
 	pc.mutex.Lock()
 	defer pc.mutex.Unlock()
+
+	if pc.closeHook != nil {
+		pc.closeHook()
+	}
 
 	if pc.Client != nil {
 		if err := pc.Client.Close(); err != nil {

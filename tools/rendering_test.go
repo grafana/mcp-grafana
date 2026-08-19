@@ -8,8 +8,12 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strconv"
 	"testing"
+	"time"
 
+	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -153,6 +157,7 @@ func TestBuildRenderURL(t *testing.T) {
 		args        GetPanelImageParams
 		contains    []string
 		notContains []string
+		expectError bool
 	}{
 		{
 			name:    "Basic dashboard render",
@@ -264,11 +269,203 @@ func TestBuildRenderURL(t *testing.T) {
 				"http://localhost:3000/render/d/abc123",
 			},
 		},
+		{
+			name:    "Provisioning preview renders the preview path with ref",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				ProvisioningPreview: &ProvisioningPreview{
+					Repo: "my-repo",
+					Path: "folder/dashboard.json",
+					Ref:  "feature-branch",
+				},
+			},
+			contains: []string{
+				"http://localhost:3000/render/dashboard/provisioning/my-repo/preview/folder/dashboard.json",
+				"ref=feature-branch",
+				"kiosk=true",
+			},
+			notContains: []string{
+				"/render/d/",
+				"/render/d-solo/",
+			},
+		},
+		{
+			name:    "Provisioning preview without ref omits the ref query param",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				ProvisioningPreview: &ProvisioningPreview{
+					Repo: "my-repo",
+					Path: "dashboard.json",
+				},
+			},
+			contains: []string{
+				"http://localhost:3000/render/dashboard/provisioning/my-repo/preview/dashboard.json",
+			},
+			notContains: []string{
+				"ref=",
+			},
+		},
+		{
+			name:    "Provisioning preview escapes special characters in repo and path",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				ProvisioningPreview: &ProvisioningPreview{
+					Repo: "repo with space",
+					Path: "folder/dash?name#frag.json",
+				},
+			},
+			contains: []string{
+				"/render/dashboard/provisioning/repo%20with%20space/preview/folder/dash%3Fname%23frag.json",
+			},
+			notContains: []string{
+				"repo with space",
+				"dash?name",
+				"#frag",
+			},
+		},
+		{
+			// url.URL{}.EscapedPath() and url.PathEscape diverge on a few
+			// characters that are legal in a path but not in a single segment
+			// — notably `;` and `,`. The render URL should encode them the
+			// same way navigation/provisioning do (PathEscape semantics) for
+			// the single-segment repo slug.
+			name:    "Provisioning preview encodes segment-only-reserved chars in repo slug",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				ProvisioningPreview: &ProvisioningPreview{
+					Repo: "a;b,c",
+					Path: "dash.json",
+				},
+			},
+			contains: []string{
+				"/render/dashboard/provisioning/a%3Bb%2Cc/preview/dash.json",
+			},
+			notContains: []string{
+				"/provisioning/a;b,c/",
+			},
+		},
+		{
+			name:    "Provisioning preview with panel ID uses viewPanel (not d-solo)",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				ProvisioningPreview: &ProvisioningPreview{
+					Repo: "my-repo",
+					Path: "dashboard.json",
+					Ref:  "feature-branch",
+				},
+				PanelID: intPtr(7),
+			},
+			contains: []string{
+				"http://localhost:3000/render/dashboard/provisioning/my-repo/preview/dashboard.json",
+				"viewPanel=7",
+			},
+			notContains: []string{
+				"panelId=",
+				"/render/d-solo/",
+			},
+		},
+		{
+			name:        "Error: neither dashboardUid nor provisioningPreview",
+			baseURL:     "http://localhost:3000",
+			args:        GetPanelImageParams{},
+			expectError: true,
+		},
+		{
+			name:    "Error: both dashboardUid and provisioningPreview",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				DashboardUID: "abc123",
+				ProvisioningPreview: &ProvisioningPreview{
+					Repo: "my-repo",
+					Path: "dashboard.json",
+				},
+			},
+			expectError: true,
+		},
+		{
+			name:    "Error: provisioningPreview missing repo",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				ProvisioningPreview: &ProvisioningPreview{
+					Path: "dashboard.json",
+				},
+			},
+			expectError: true,
+		},
+		{
+			name:    "Error: provisioningPreview missing path",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				ProvisioningPreview: &ProvisioningPreview{
+					Repo: "my-repo",
+				},
+			},
+			expectError: true,
+		},
+		{
+			name:    "Error: provisioningPreview repo with slash",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				ProvisioningPreview: &ProvisioningPreview{
+					Repo: "evil/../../d",
+					Path: "dashboard.json",
+				},
+			},
+			expectError: true,
+		},
+		{
+			name:    "Error: provisioningPreview repo with backslash",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				ProvisioningPreview: &ProvisioningPreview{
+					Repo: `evil\..\d`,
+					Path: "dashboard.json",
+				},
+			},
+			expectError: true,
+		},
+		{
+			name:    "Error: provisioningPreview repo equals ..",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				ProvisioningPreview: &ProvisioningPreview{
+					Repo: "..",
+					Path: "dashboard.json",
+				},
+			},
+			expectError: true,
+		},
+		{
+			name:    "Error: provisioningPreview path with .. segment",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				ProvisioningPreview: &ProvisioningPreview{
+					Repo: "my-repo",
+					Path: "folder/../../etc/passwd",
+				},
+			},
+			expectError: true,
+		},
+		{
+			name:    "Error: provisioningPreview path is exactly ..",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				ProvisioningPreview: &ProvisioningPreview{
+					Repo: "my-repo",
+					Path: "..",
+				},
+			},
+			expectError: true,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result, err := buildRenderURL(tt.baseURL, tt.args)
+			if tt.expectError {
+				require.Error(t, err)
+				return
+			}
 			require.NoError(t, err)
 
 			for _, expected := range tt.contains {
@@ -319,21 +516,21 @@ func TestGetPanelImage(t *testing.T) {
 
 		require.NoError(t, err)
 		require.NotNil(t, result)
-		require.Len(t, result.Content, 1)
+		require.Len(t, result.Content, 2)
 
-		// Check that the content is image content with base64 data
-		content := result.Content[0]
-		imageContent, ok := content.(interface {
-			GetData() string
-			GetMimeType() string
-		})
-		if ok {
-			assert.Equal(t, "image/png", imageContent.GetMimeType())
-			// Verify base64 decoding works
-			decoded, err := base64.StdEncoding.DecodeString(imageContent.GetData())
-			require.NoError(t, err)
-			assert.Equal(t, testPNGData, decoded)
-		}
+		// Check image content
+		imageContent, ok := result.Content[0].(mcp.ImageContent)
+		require.True(t, ok, "first content item should be ImageContent")
+		assert.Equal(t, "image/png", imageContent.MIMEType)
+		decoded, err := base64.StdEncoding.DecodeString(imageContent.Data)
+		require.NoError(t, err)
+		assert.Equal(t, testPNGData, decoded)
+
+		// Check deeplink content
+		textContent, ok := result.Content[1].(mcp.TextContent)
+		require.True(t, ok, "second content item should be TextContent")
+		assert.Equal(t, server.URL+"/d/test-dash", textContent.Text)
+		assertDeeplinkMeta(t, textContent)
 	})
 
 	t.Run("Panel image with specific panel ID uses d-solo path and panelId param", func(t *testing.T) {
@@ -361,6 +558,194 @@ func TestGetPanelImage(t *testing.T) {
 
 		require.NoError(t, err)
 		require.NotNil(t, result)
+		require.Len(t, result.Content, 2)
+
+		textContent, ok := result.Content[1].(mcp.TextContent)
+		require.True(t, ok)
+		assert.Equal(t, server.URL+"/d/test-dash?viewPanel=5", textContent.Text)
+		assertDeeplinkMeta(t, textContent)
+	})
+
+	t.Run("Provisioning preview deeplink uses /dashboard/provisioning route", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "image/png")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(testPNGData)
+		}))
+		defer server.Close()
+
+		grafanaCfg := mcpgrafana.GrafanaConfig{URL: server.URL, APIKey: "test-api-key"}
+		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), grafanaCfg)
+
+		t.Run("full dashboard, no ref", func(t *testing.T) {
+			result, err := getPanelImage(ctx, GetPanelImageParams{
+				ProvisioningPreview: &ProvisioningPreview{
+					Repo: "my-repo",
+					Path: "folder/dashboard.json",
+				},
+			})
+			require.NoError(t, err)
+			require.Len(t, result.Content, 2)
+
+			text, ok := result.Content[1].(mcp.TextContent)
+			require.True(t, ok)
+			assert.Equal(t,
+				server.URL+"/dashboard/provisioning/my-repo/preview/folder/dashboard.json",
+				text.Text,
+			)
+			assertDeeplinkMeta(t, text)
+		})
+
+		t.Run("specific panel with ref", func(t *testing.T) {
+			panelID := 7
+			result, err := getPanelImage(ctx, GetPanelImageParams{
+				ProvisioningPreview: &ProvisioningPreview{
+					Repo: "my-repo",
+					Path: "dashboard.json",
+					Ref:  "feature/branch",
+				},
+				PanelID: &panelID,
+			})
+			require.NoError(t, err)
+			require.Len(t, result.Content, 2)
+
+			text, ok := result.Content[1].(mcp.TextContent)
+			require.True(t, ok)
+			parsed, err := url.Parse(text.Text)
+			require.NoError(t, err)
+			assert.Equal(t,
+				"/dashboard/provisioning/my-repo/preview/dashboard.json",
+				parsed.Path,
+			)
+			assert.Equal(t, "feature/branch", parsed.Query().Get("ref"))
+			assert.Equal(t, "7", parsed.Query().Get("viewPanel"))
+			assertDeeplinkMeta(t, text)
+		})
+	})
+
+	t.Run("Deeplink prefers public Grafana URL over config URL", func(t *testing.T) {
+		// httptest server stands in for the internal endpoint; PublicURL is
+		// what the user's browser reaches.
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "image/png")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(testPNGData)
+		}))
+		defer server.Close()
+
+		const publicURL = "https://grafana.example.com"
+
+		grafanaCfg := mcpgrafana.GrafanaConfig{URL: server.URL, APIKey: "test-api-key"}
+		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), grafanaCfg)
+		ctx = mcpgrafana.WithGrafanaClient(ctx, &mcpgrafana.GrafanaClient{PublicURL: publicURL})
+
+		result, err := getPanelImage(ctx, GetPanelImageParams{DashboardUID: "test-dash"})
+		require.NoError(t, err)
+		require.Len(t, result.Content, 2)
+
+		text, ok := result.Content[1].(mcp.TextContent)
+		require.True(t, ok)
+		assert.Equal(t, publicURL+"/d/test-dash", text.Text)
+		assertDeeplinkMeta(t, text)
+	})
+
+	t.Run("Deeplink mirrors render time range", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "image/png")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(testPNGData)
+		}))
+		defer server.Close()
+
+		grafanaCfg := mcpgrafana.GrafanaConfig{URL: server.URL, APIKey: "test-api-key"}
+		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), grafanaCfg)
+
+		result, err := getPanelImage(ctx, GetPanelImageParams{
+			DashboardUID: "test-dash",
+			TimeRange: &RenderTimeRange{
+				From: "now-6h",
+				To:   "now",
+			},
+		})
+		require.NoError(t, err)
+		require.Len(t, result.Content, 2)
+
+		text, ok := result.Content[1].(mcp.TextContent)
+		require.True(t, ok)
+		parsed, err := url.Parse(text.Text)
+		require.NoError(t, err)
+		assert.Equal(t, "/d/test-dash", parsed.Path)
+		assert.Equal(t, "now-6h", parsed.Query().Get("from"))
+		assert.Equal(t, "now", parsed.Query().Get("to"))
+	})
+
+	t.Run("Deeplink converts RFC3339 time range to epoch ms", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "image/png")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(testPNGData)
+		}))
+		defer server.Close()
+
+		grafanaCfg := mcpgrafana.GrafanaConfig{URL: server.URL, APIKey: "test-api-key"}
+		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), grafanaCfg)
+
+		const fromRFC = "2026-04-28T12:45:00Z"
+		const toRFC = "2026-04-28T13:00:00Z"
+		fromTime, err := time.Parse(time.RFC3339, fromRFC)
+		require.NoError(t, err)
+		toTime, err := time.Parse(time.RFC3339, toRFC)
+		require.NoError(t, err)
+
+		result, err := getPanelImage(ctx, GetPanelImageParams{
+			DashboardUID: "test-dash",
+			TimeRange: &RenderTimeRange{
+				From: fromRFC,
+				To:   toRFC,
+			},
+		})
+		require.NoError(t, err)
+		require.Len(t, result.Content, 2)
+
+		text, ok := result.Content[1].(mcp.TextContent)
+		require.True(t, ok)
+		parsed, err := url.Parse(text.Text)
+		require.NoError(t, err)
+		assert.Equal(t, strconv.FormatInt(fromTime.UnixMilli(), 10), parsed.Query().Get("from"))
+		assert.Equal(t, strconv.FormatInt(toTime.UnixMilli(), 10), parsed.Query().Get("to"))
+	})
+
+	t.Run("Deeplink mirrors dashboard variables", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "image/png")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(testPNGData)
+		}))
+		defer server.Close()
+
+		grafanaCfg := mcpgrafana.GrafanaConfig{URL: server.URL, APIKey: "test-api-key"}
+		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), grafanaCfg)
+
+		result, err := getPanelImage(ctx, GetPanelImageParams{
+			DashboardUID: "test-dash",
+			Variables: map[string]StringOrSlice{
+				"var-env":      {"prod"},
+				"var-instance": {"172.16.31.129", "172.16.32.99"},
+			},
+		})
+		require.NoError(t, err)
+		require.Len(t, result.Content, 2)
+
+		text, ok := result.Content[1].(mcp.TextContent)
+		require.True(t, ok)
+		parsed, err := url.Parse(text.Text)
+		require.NoError(t, err)
+		assert.Equal(t, "/d/test-dash", parsed.Path)
+		assert.Equal(t, "prod", parsed.Query().Get("var-env"))
+		assert.ElementsMatch(t,
+			[]string{"172.16.31.129", "172.16.32.99"},
+			parsed.Query()["var-instance"],
+		)
 	})
 
 	t.Run("Authentication header with API key", func(t *testing.T) {
@@ -548,4 +933,75 @@ func TestGetPanelImage(t *testing.T) {
 
 		require.NoError(t, err)
 	})
+
+	t.Run("BaseTransport is used when configured", func(t *testing.T) {
+		var baseTransportUsed bool
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "image/png")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(testPNGData)
+		}))
+		defer server.Close()
+
+		grafanaCfg := mcpgrafana.GrafanaConfig{
+			URL:    server.URL,
+			APIKey: "test-api-key",
+			BaseTransport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				baseTransportUsed = true
+				return http.DefaultTransport.RoundTrip(req)
+			}),
+		}
+		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), grafanaCfg)
+
+		_, err := getPanelImage(ctx, GetPanelImageParams{
+			DashboardUID: "test-dash",
+		})
+
+		require.NoError(t, err)
+		assert.True(t, baseTransportUsed, "expected BaseTransport to be used as the innermost transport layer")
+	})
+
+	t.Run("User-Agent header is set", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			assert.Contains(t, r.Header.Get("User-Agent"), "mcp-grafana/")
+
+			w.Header().Set("Content-Type", "image/png")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(testPNGData)
+		}))
+		defer server.Close()
+
+		grafanaCfg := mcpgrafana.GrafanaConfig{
+			URL:    server.URL,
+			APIKey: "test-api-key",
+		}
+		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), grafanaCfg)
+
+		_, err := getPanelImage(ctx, GetPanelImageParams{
+			DashboardUID: "test-dash",
+		})
+
+		require.NoError(t, err)
+	})
+}
+
+func TestGetPanelImageToolMeta(t *testing.T) {
+	tool := GetPanelImage.Tool
+	require.NotNil(t, tool.Meta, "get_panel_image should have _meta for MCP Apps")
+	require.NotNil(t, tool.Meta.AdditionalFields)
+
+	ui, ok := tool.Meta.AdditionalFields["ui"].(map[string]any)
+	require.True(t, ok, "expected _meta.ui to be a map")
+	assert.Equal(t, mcpgrafana.PanelViewerResourceURI, ui["resourceUri"])
+}
+
+// assertDeeplinkMeta checks the `_meta.ui.kind = "deeplink"` marker the
+// panel viewer uses to detect the deeplink content item.
+func assertDeeplinkMeta(t *testing.T, c mcp.TextContent) {
+	t.Helper()
+	require.NotNil(t, c.Meta)
+	require.NotNil(t, c.Meta.AdditionalFields)
+	ui, ok := c.Meta.AdditionalFields["ui"].(map[string]any)
+	require.True(t, ok, "expected _meta.ui to be a map, got %T", c.Meta.AdditionalFields["ui"])
+	assert.Equal(t, mcpgrafana.UIContentKindDeeplink, ui["kind"])
 }

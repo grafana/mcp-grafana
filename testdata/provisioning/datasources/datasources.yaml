@@ -74,6 +74,15 @@ datasources:
       index: test-logs-*
       timeField: "@timestamp"
       esVersion: 8.17.0
+  - name: Elasticsearch Custom Time
+    uid: elasticsearch-custom-time
+    type: elasticsearch
+    access: proxy
+    url: http://elasticsearch:9200
+    jsonData:
+      index: custom-time-logs-*
+      timeField: timestamp
+      esVersion: 8.17.0
   - name: OpenSearch
     uid: opensearch
     type: grafana-opensearch-datasource
@@ -85,6 +94,24 @@ datasources:
       flavor: opensearch
       version: 3.6.0
       pplEnabled: false
+  - name: OpenSearch Custom Time
+    uid: opensearch-custom-time
+    type: grafana-opensearch-datasource
+    access: proxy
+    url: http://opensearch:9200
+    jsonData:
+      database: custom-time-logs-*
+      timeField: timestamp
+      flavor: opensearch
+      version: 3.6.0
+      pplEnabled: false
+  - name: Quickwit
+    uid: quickwit
+    type: quickwit-quickwit-datasource
+    access: proxy
+    url: http://quickwit:7280/api/v1
+    jsonData:
+      index: test-logs
   - name: InfluxDB Flux
     uid: influxdb-flux
     type: influxdb

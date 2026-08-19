@@ -2,8 +2,12 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -11,6 +15,8 @@ import (
 	"github.com/grafana/grafana-openapi-client-go/client/datasources"
 	"github.com/grafana/grafana-openapi-client-go/models"
 	mcpgrafana "github.com/grafana/mcp-grafana"
+	"github.com/grafana/mcp-grafana/observability"
+	datasourceschemas "github.com/grafana/mcp-grafana/tools/datasource_schemas"
 )
 
 const (
@@ -18,8 +24,33 @@ const (
 	maxListDataSourceLimit     = 100
 )
 
+// create_datasource telemetry phases, declared on the tool result via
+// observability.ToolPhaseMetaKey so the server's per-call metric/span can
+// distinguish a schema-guidance call from an actual creation. Keep this set
+// small — the value becomes a bounded Prometheus label (mcp_tool_phase).
+const (
+	dsPhaseSchema  = "schema"  // returned field guidance (schema or no-schema); nothing created
+	dsPhaseCreated = "created" // a datasource was created
+)
+
+// withToolPhase declares a telemetry phase on a tool result via _meta so the
+// observability hooks can record it; returns r for chaining. _meta is sent to
+// the client — intentional; the phase is a non-sensitive signal, not private
+// data (see observability.ToolPhaseMetaKey).
+func withToolPhase(r *mcp.CallToolResult, phase string) *mcp.CallToolResult {
+	if r.Meta == nil {
+		r.Meta = &mcp.Meta{}
+	}
+	if r.Meta.AdditionalFields == nil {
+		r.Meta.AdditionalFields = map[string]any{}
+	}
+	r.Meta.AdditionalFields[observability.ToolPhaseMetaKey] = phase
+	return r
+}
+
 type ListDatasourcesParams struct {
 	Type   string `json:"type,omitempty" jsonschema:"description=The type of datasources to search for. For example\\, 'prometheus'\\, 'loki'\\, 'tempo'\\, etc..."`
+	Name   string `json:"name,omitempty" jsonschema:"description=Case-insensitive substring match on the datasource name. For example\\, 'prod' matches datasources named 'prometheus-prod-eu' and 'loki-prod-us'. Useful on instances with many datasources where filtering by type alone returns too many results."`
 	Limit  int    `json:"limit,omitempty" jsonschema:"default=50,description=Maximum number of datasources to return (max 100)"`
 	Offset int    `json:"offset,omitempty" jsonschema:"default=0,description=Number of datasources to skip for pagination"`
 }
@@ -47,8 +78,8 @@ func listDatasources(ctx context.Context, args ListDatasourcesParams) (*ListData
 		return nil, fmt.Errorf("list datasources: %w", err)
 	}
 
-	// Filter by type if specified
-	datasources := filterDatasources(resp.Payload, args.Type)
+	// Filter by type and/or name if specified
+	datasources := filterDatasources(resp.Payload, args.Type, args.Name)
 	total := len(datasources)
 
 	// Apply default limit if not specified
@@ -87,18 +118,300 @@ func listDatasources(ctx context.Context, args ListDatasourcesParams) (*ListData
 	}, nil
 }
 
-// filterDatasources returns only datasources of the specified type `t`. If `t`
-// is an empty string no filtering is done.
-func filterDatasources(datasources models.DataSourceList, t string) models.DataSourceList {
-	if t == "" {
+type CreateDatasourceParams struct {
+	Name            string         `json:"name" jsonschema:"required,description=Datasource display name"`
+	Type            string         `json:"type" jsonschema:"required,description=Grafana datasource plugin type\\, for example prometheus"`
+	URL             string         `json:"url,omitempty" jsonschema:"description=Datasource base URL when required by the plugin"`
+	Access          string         `json:"access,omitempty" jsonschema:"description=How Grafana should access the datasource (proxy or direct)"`
+	Database        string         `json:"database,omitempty" jsonschema:"description=Optional database name"`
+	BasicAuth       bool           `json:"basicAuth,omitempty" jsonschema:"description=Whether Grafana should use basic auth"`
+	WithCredentials bool           `json:"withCredentials,omitempty" jsonschema:"description=Whether Grafana should forward credentials such as cookies"`
+	IsDefault       bool           `json:"isDefault,omitempty" jsonschema:"description=Whether this should become the default datasource"`
+	Fields          map[string]any `json:"fields,omitempty" jsonschema:"description=Datasource field values to provision\\, keyed by field key from the schema returned on the first call. The server uses each field's target (root or jsonData) to place values correctly in the YAML. Example: {\"url\": \"http://prometheus:9090\"\\, \"httpMethod\": \"POST\"}."`
+	SchemaReviewed  bool           `json:"schemaReviewed,omitempty" jsonschema:"description=Set to true on the second call to confirm you reviewed the schema and collected values from the user."`
+}
+
+type CreateDatasourceResult struct {
+	Message   string                  `json:"message"`
+	ID        int64                   `json:"id"`
+	UID       string                  `json:"uid"`
+	Name      string                  `json:"name"`
+	NextSteps string                  `json:"nextSteps,omitempty"`
+	Health    *DatasourceHealthResult `json:"health,omitempty"`
+}
+
+type noSchemaGuidanceResult struct {
+	Type    string `json:"type"`
+	Message string `json:"message"`
+}
+
+func noSchemaGuidance(pluginType string) *noSchemaGuidanceResult {
+	return &noSchemaGuidanceResult{
+		Type: pluginType,
+		// The relevant arguments are already defined in the tool's input schema,
+		// so we don't restate them here. We only convey what the schema can't:
+		// that no field schema exists and that values go into the top-level
+		// arguments, never the fields map.
+		Message: "No schema is available for this datasource type. " +
+			"You MUST ask the user for the value of every required field before calling create_datasource again. " +
+			"Provide the collected values as top-level arguments — name (required), plus any relevant optional ones such as url, database, basicAuth, isDefault, or withCredentials. " +
+			"Do NOT use the fields map; it applies only to schema-based types.",
+	}
+}
+
+// fieldLookup maps each field's input key (namespaced by section when present)
+// to its schema definition, combining the shared common fields with the
+// type-specific schema fields.
+func fieldLookup(schema *datasourceschemas.DatasourceSchema) map[string]datasourceschemas.DsSchemaField {
+	commonFields := datasourceschemas.CommonDatasourceFields()
+	lookup := make(map[string]datasourceschemas.DsSchemaField, len(commonFields)+len(schema.Fields))
+	for _, f := range commonFields {
+		lookup[datasourceschemas.SchemaFieldInputKey(f)] = f
+	}
+	for _, f := range schema.Fields {
+		lookup[datasourceschemas.SchemaFieldInputKey(f)] = f
+	}
+	return lookup
+}
+
+// applyFields routes Fields values to the body (root-target keys) or into the
+// returned jsonData map. secureJsonData keys are never written.
+func applyFields(body *models.AddDataSourceCommand, schema *datasourceschemas.DatasourceSchema, inputFields map[string]any) map[string]any {
+	lookup := fieldLookup(schema)
+
+	jsonData := make(map[string]any)
+	for inputKey, v := range inputFields {
+		f, ok := lookup[inputKey]
+		// Skip unknown keys, secrets, and excluded PII/credential fields. The
+		// latter are never advertised in guidance, but skip them here too so a
+		// value is never written even if a caller sends one anyway.
+		if !ok || f.Target == "secureJsonData" || datasourceschemas.IsExcludedField(f) {
+			continue
+		}
+		if f.Target == "root" {
+			switch f.Key {
+			case "url":
+				if s, ok := v.(string); ok {
+					body.URL = s
+				}
+			case "basicAuth":
+				if b, ok := v.(bool); ok {
+					body.BasicAuth = b
+				}
+			case "isDefault":
+				if b, ok := v.(bool); ok {
+					body.IsDefault = b
+				}
+			case "uid":
+				if s, ok := v.(string); ok {
+					body.UID = s
+				}
+			case "access":
+				if s, ok := v.(string); ok {
+					body.Access = models.DsAccess(s)
+				}
+			case "withCredentials":
+				if b, ok := v.(bool); ok {
+					body.WithCredentials = b
+				}
+			}
+		} else if f.Section != "" {
+			section, ok := jsonData[f.Section].(map[string]any)
+			if !ok {
+				section = make(map[string]any)
+				jsonData[f.Section] = section
+			}
+			section[f.Key] = v
+		} else {
+			jsonData[f.Key] = v
+		}
+	}
+	return jsonData
+}
+
+// applyUpdateFields overlays Fields onto an update command: root-target keys are
+// written to cmd, while jsonData keys are merged into (and override entries of)
+// the supplied jsonData map so callers can change individual plugin settings
+// without restating the whole jsonData blob. secureJsonData and excluded fields
+// are never written, and uid is ignored because the update targets a fixed UID.
+func applyUpdateFields(cmd *models.UpdateDataSourceCommand, schema *datasourceschemas.DatasourceSchema, inputFields, jsonData map[string]any) map[string]any {
+	lookup := fieldLookup(schema)
+	if jsonData == nil {
+		jsonData = make(map[string]any)
+	}
+	for inputKey, v := range inputFields {
+		f, ok := lookup[inputKey]
+		// Skip unknown keys, secrets, and excluded PII/credential fields.
+		if !ok || f.Target == "secureJsonData" || datasourceschemas.IsExcludedField(f) {
+			continue
+		}
+		if f.Target == "root" {
+			switch f.Key {
+			case "url":
+				if s, ok := v.(string); ok {
+					cmd.URL = s
+				}
+			case "basicAuth":
+				if b, ok := v.(bool); ok {
+					cmd.BasicAuth = b
+				}
+			case "isDefault":
+				if b, ok := v.(bool); ok {
+					cmd.IsDefault = b
+				}
+			case "access":
+				if s, ok := v.(string); ok {
+					cmd.Access = models.DsAccess(s)
+				}
+			case "withCredentials":
+				if b, ok := v.(bool); ok {
+					cmd.WithCredentials = b
+				}
+			}
+		} else if f.Section != "" {
+			section, ok := jsonData[f.Section].(map[string]any)
+			if !ok {
+				section = make(map[string]any)
+				jsonData[f.Section] = section
+			}
+			section[f.Key] = v
+		} else {
+			jsonData[f.Key] = v
+		}
+	}
+	return jsonData
+}
+
+func noUpdateSchemaGuidance(pluginType string) *noSchemaGuidanceResult {
+	return &noSchemaGuidanceResult{
+		Type: pluginType,
+		Message: "No schema is available for this datasource type. " +
+			"Only send the fields you want to change; any field you omit keeps its current value. " +
+			"Ask the user which settings to change and confirm each new value, then call update_datasource again with schemaReviewed=true and the changed values as top-level arguments — uid (required) plus any of name, url, access, database, basicAuth, isDefault, or jsonData. " +
+			"Do NOT use the fields map; it applies only to schema-based types. " +
+			"Secrets cannot be set here — direct the user to the Grafana UI.",
+	}
+}
+
+func createDatasource(ctx context.Context, args CreateDatasourceParams) (*mcp.CallToolResult, error) {
+	schema, err := datasourceschemas.LoadDatasourceSchema(args.Type)
+	if err != nil {
+		return nil, err
+	}
+	// Phase 1: return field guidance before creation.
+	// With a schema: list schema fields and ask the user to fill them in.
+	// Without a schema: list the explicit params and ask for name + any others
+	// the user wants to set, then call again with those values.
+	//
+	// Creation for a schema-backed type is gated on the explicit SchemaReviewed
+	// flag and required top-level name, which the caller sets only after seeing
+	// the schema. This enforces the documented two-call flow: supplying a fields
+	// map alone (or an empty one) is never enough to skip guidance and create
+	// directly.
+	if schema != nil && (!args.SchemaReviewed || args.Name == "") {
+		text, _ := json.Marshal(datasourceschemas.BuildSchemaGuidance(schema, "create_datasource"))
+		return withToolPhase(mcp.NewToolResultText(string(text)), dsPhaseSchema), nil
+	}
+	if schema == nil && args.Name == "" {
+		text, _ := json.Marshal(noSchemaGuidance(args.Type))
+		return withToolPhase(mcp.NewToolResultText(string(text)), dsPhaseSchema), nil
+	}
+
+	dsAccess := args.Access
+	if dsAccess == "" {
+		// use grafana default
+		dsAccess = "proxy"
+	}
+
+	c := mcpgrafana.GrafanaClientFromContext(ctx)
+	// these are used as fallback in case the schema fails to load, that way we can still create a datasource with common, shared fields
+	body := &models.AddDataSourceCommand{
+		Name:            args.Name,
+		Type:            args.Type,
+		URL:             args.URL,
+		Access:          models.DsAccess(dsAccess),
+		Database:        args.Database,
+		BasicAuth:       args.BasicAuth,
+		IsDefault:       args.IsDefault,
+		WithCredentials: args.WithCredentials,
+	}
+	if schema != nil {
+		body.JSONData = models.JSON(applyFields(body, schema, args.Fields))
+	}
+	resp, err := c.Datasources.AddDataSourceWithParams(
+		datasources.NewAddDataSourceParamsWithContext(ctx).WithBody(body),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create datasource: %w", err)
+	}
+	p := resp.Payload
+	result := &CreateDatasourceResult{}
+
+	if p.Message != nil {
+		result.Message = *p.Message
+	}
+	if p.ID != nil {
+		result.ID = *p.ID
+	}
+	if p.Name != nil {
+		result.Name = *p.Name
+	}
+	if p.Datasource != nil {
+		result.UID = p.Datasource.UID
+	}
+	if result.UID != "" {
+		health, err := checkDatasourceHealth(ctx, CheckDatasourceHealthParams{UID: result.UID})
+		if err != nil {
+			result.Health = &DatasourceHealthResult{UID: result.UID, Message: fmt.Sprintf("health check failed: %s", err)}
+		} else {
+			result.Health = health
+		}
+
+		grafanaURL := c.PublicURL
+		if grafanaURL == "" {
+			grafanaURL = mcpgrafana.GrafanaConfigFromContext(ctx).URL
+		}
+		grafanaURL = strings.TrimRight(grafanaURL, "/")
+		configPageURL := fmt.Sprintf("%s/connections/datasources/edit/%s", grafanaURL, result.UID)
+		result.NextSteps = fmt.Sprintf("Visit the datasource configuration page to finish setting it up: %s", configPageURL)
+		b, err := json.Marshal(result)
+		if err != nil {
+			return nil, fmt.Errorf("marshal result: %w", err)
+		}
+		toolResult := mcp.NewToolResultText(string(b))
+		toolResult.Content = append(toolResult.Content, mcp.ResourceLink{
+			Type:        "resource_link",
+			URI:         configPageURL,
+			Name:        result.Name,
+			Description: "Datasource configuration page",
+		})
+		return withToolPhase(toolResult, dsPhaseCreated), nil
+	}
+	b, err := json.Marshal(result)
+	if err != nil {
+		return nil, fmt.Errorf("marshal result: %w", err)
+	}
+	return withToolPhase(mcp.NewToolResultText(string(b)), dsPhaseCreated), nil
+}
+
+// filterDatasources returns only datasources whose type contains `t` and
+// whose name contains `name`, both as case-insensitive substring matches.
+// Empty arguments are treated as wildcards (no filtering on that field).
+func filterDatasources(datasources models.DataSourceList, t, name string) models.DataSourceList {
+	if t == "" && name == "" {
 		return datasources
 	}
-	filtered := models.DataSourceList{}
 	t = strings.ToLower(t)
+	name = strings.ToLower(name)
+	filtered := models.DataSourceList{}
 	for _, ds := range datasources {
-		if strings.Contains(strings.ToLower(ds.Type), t) {
-			filtered = append(filtered, ds)
+		if t != "" && !strings.Contains(strings.ToLower(ds.Type), t) {
+			continue
 		}
+		if name != "" && !strings.Contains(strings.ToLower(ds.Name), name) {
+			continue
+		}
+		filtered = append(filtered, ds)
 	}
 	return filtered
 }
@@ -119,11 +432,35 @@ func summarizeDatasources(dataSources models.DataSourceList) []dataSourceSummary
 
 var ListDatasources = mcpgrafana.MustTool(
 	"list_datasources",
-	"List all configured datasources in Grafana. Use this to discover available datasources and their UIDs. Supports filtering by type and pagination.",
+	"List all configured datasources in Grafana. Use this to discover available datasources and their UIDs. Supports filtering by type and/or name (case-insensitive substring match) and pagination.",
 	listDatasources,
 	mcp.WithTitleAnnotation("List datasources"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
+)
+
+var CreateDatasource = mcpgrafana.MustTool(
+	"create_datasource",
+	"Create a datasource. If type is ambiguous, call search_plugin_information first; install the plugin if needed. IMPORTANT: always call this tool twice. First call: provide only the type — the tool returns a field schema. After receiving the schema, you MUST ask the user for every required field value explicitly; do not infer or use defaults without user confirmation. Second call: provide the type, the display name in the top-level name argument, schemaReviewed=true, and the fields map populated with values confirmed by the user. Never handle credentials — remind the user to rotate any detected. Returns UID, health check, and a config page link. ",
+	createDatasource,
+	mcp.WithTitleAnnotation("Create datasource"),
+	mcp.WithIdempotentHintAnnotation(false),
+	mcp.WithReadOnlyHintAnnotation(false),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
+)
+
+var UpdateDatasource = mcpgrafana.MustTool(
+	"update_datasource",
+	"Update non-secret datasource fields by UID. Omitted fields are preserved. IMPORTANT: always call this tool twice. First call: provide only the uid — the tool returns the datasource's field schema. After receiving the schema, ask the user which fields they want to change and confirm each new value; do not infer or reset fields the user did not mention. Second call: provide the uid, schemaReviewed=true, and the changed values in the fields map. Returns an update message and a health check. For secrets, direct the user to the Grafana UI.",
+	updateDatasource,
+	mcp.WithTitleAnnotation("Update datasource"),
+	mcp.WithIdempotentHintAnnotation(true),
+	mcp.WithReadOnlyHintAnnotation(false),
+	mcp.WithDestructiveHintAnnotation(true),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 type GetDatasourceByUIDParams struct {
@@ -183,9 +520,321 @@ var GetDatasource = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("Get datasource"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
-func AddDatasourceTools(mcp *server.MCPServer) {
+type UpdateDatasourceParams struct {
+	UID            string                 `json:"uid" jsonschema:"required,description=UID of the datasource to update"`
+	Name           *string                `json:"name,omitempty" jsonschema:"description=Display name"`
+	URL            *string                `json:"url,omitempty" jsonschema:"description=Base URL"`
+	Access         *string                `json:"access,omitempty" jsonschema:"description=proxy or direct"`
+	Database       *string                `json:"database,omitempty" jsonschema:"description=Database name"`
+	BasicAuth      *bool                  `json:"basicAuth,omitempty" jsonschema:"description=Enable basic auth"`
+	IsDefault      *bool                  `json:"isDefault,omitempty" jsonschema:"description=Make this the default datasource"`
+	JSONData       map[string]interface{} `json:"jsonData,omitempty" jsonschema:"description=Non-secret plugin settings; replaces existing jsonData when set"`
+	Fields         map[string]any         `json:"fields,omitempty" jsonschema:"description=Datasource field values to change\\, keyed by field key from the schema returned on the first call. The server uses each field's target (root or jsonData) to place values correctly\\, merging jsonData changes into the existing settings. Only include the fields you want to change. Example: {\"httpMethod\": \"POST\"}."`
+	SchemaReviewed bool                   `json:"schemaReviewed,omitempty" jsonschema:"description=Set to true on the second call to confirm you reviewed the schema and collected the changes from the user."`
+}
+
+type UpdateDatasourceResult struct {
+	Message string                  `json:"message,omitempty"`
+	Health  *DatasourceHealthResult `json:"health,omitempty"`
+}
+
+func updateDatasource(ctx context.Context, args UpdateDatasourceParams) (*mcp.CallToolResult, error) {
+	c := mcpgrafana.GrafanaClientFromContext(ctx)
+
+	current, err := c.Datasources.GetDataSourceByUIDWithParams(
+		datasources.NewGetDataSourceByUIDParamsWithContext(ctx).WithUID(args.UID),
+	)
+	if err != nil {
+		if strings.Contains(err.Error(), "404") {
+			return nil, fmt.Errorf("datasource with UID '%s' not found", args.UID)
+		}
+		return nil, fmt.Errorf("get datasource by uid %s: %w", args.UID, err)
+	}
+
+	ds := current.Payload
+
+	schema, err := datasourceschemas.LoadDatasourceSchema(ds.Type)
+	if err != nil {
+		return nil, err
+	}
+
+	// Phase 1: return field guidance before updating, mirroring create_datasource.
+	// The datasource's type — and therefore its schema — is only known after the
+	// fetch above, so unlike create this phase performs a read; it never writes.
+	if !args.SchemaReviewed {
+		var guidance any
+		if schema != nil {
+			guidance = datasourceschemas.BuildUpdateSchemaGuidance(schema)
+		} else {
+			guidance = noUpdateSchemaGuidance(ds.Type)
+		}
+		text, _ := json.Marshal(guidance)
+		return mcp.NewToolResultText(string(text)), nil
+	}
+
+	cmd := &models.UpdateDataSourceCommand{
+		Name:            ds.Name,
+		Type:            ds.Type,
+		Access:          ds.Access,
+		URL:             ds.URL,
+		User:            ds.User,
+		Database:        ds.Database,
+		BasicAuth:       ds.BasicAuth,
+		BasicAuthUser:   ds.BasicAuthUser,
+		WithCredentials: ds.WithCredentials,
+		IsDefault:       ds.IsDefault,
+		JSONData:        models.JSON(ds.JSONData),
+		Version:         ds.Version,
+	}
+
+	if args.Name != nil {
+		cmd.Name = *args.Name
+	}
+	if args.URL != nil {
+		cmd.URL = *args.URL
+	}
+	if args.Access != nil {
+		cmd.Access = models.DsAccess(*args.Access)
+	}
+	if args.Database != nil {
+		cmd.Database = *args.Database
+	}
+	if args.BasicAuth != nil {
+		cmd.BasicAuth = *args.BasicAuth
+	}
+	if args.IsDefault != nil {
+		cmd.IsDefault = *args.IsDefault
+	}
+	if args.JSONData != nil {
+		cmd.JSONData = models.JSON(args.JSONData)
+	}
+
+	// Overlay schema-based field values last, merging into the (preserved or
+	// replaced) jsonData so callers can change plugin settings by key without
+	// restating the whole jsonData blob.
+	if schema != nil && len(args.Fields) > 0 {
+		// models.JSON is an untyped interface; the decoded value is a JSON object,
+		// so recover the underlying map to merge into (nil when unset).
+		existing, _ := cmd.JSONData.(map[string]any)
+		cmd.JSONData = models.JSON(applyUpdateFields(cmd, schema, args.Fields, existing))
+	}
+
+	resp, err := c.Datasources.UpdateDataSourceByUIDWithParams(
+		datasources.NewUpdateDataSourceByUIDParamsWithContext(ctx).WithUID(args.UID).WithBody(cmd),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("update datasource %s: %w", args.UID, err)
+	}
+
+	result := &UpdateDatasourceResult{}
+	if resp.Payload.Message != nil {
+		result.Message = *resp.Payload.Message
+	}
+
+	health, err := checkDatasourceHealth(ctx, CheckDatasourceHealthParams{UID: args.UID})
+	if err != nil {
+		result.Health = &DatasourceHealthResult{UID: args.UID, Message: fmt.Sprintf("health check failed: %s", err)}
+	} else {
+		result.Health = health
+	}
+
+	b, err := json.Marshal(result)
+	if err != nil {
+		return nil, fmt.Errorf("marshal result: %w", err)
+	}
+	return mcp.NewToolResultText(string(b)), nil
+}
+
+type CheckDatasourceHealthParams struct {
+	UID string `json:"uid" jsonschema:"required,description=The UID of the datasource to health-check"`
+}
+
+type DatasourceHealthResult struct {
+	UID     string `json:"uid"`
+	Status  string `json:"status,omitempty"` // "OK", "ERROR", or "UNKNOWN"
+	Message string `json:"message"`
+}
+
+type datasourcesClient struct {
+	httpClient *http.Client
+	baseURL    string
+}
+
+func newDatasourcesClient(ctx context.Context) (*datasourcesClient, error) {
+	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
+	baseURL := strings.TrimRight(cfg.URL, "/") + "/api/datasources"
+
+	transport, err := mcpgrafana.BuildTransport(&cfg, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create transport: %w", err)
+	}
+	timeout := cfg.Timeout
+	if timeout == 0 {
+		timeout = mcpgrafana.DefaultGrafanaClientTimeout
+	}
+	httpClient := &http.Client{Transport: transport, Timeout: timeout}
+
+	return &datasourcesClient{
+		httpClient: httpClient,
+		baseURL:    baseURL,
+	}, nil
+}
+
+func checkDatasourceHealth(ctx context.Context, args CheckDatasourceHealthParams) (*DatasourceHealthResult, error) {
+	client, err := newDatasourcesClient(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("check datasource health %s: %w", args.UID, err)
+	}
+	endpoint := client.baseURL + "/uid/" + args.UID + "/health"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request %s: %w", args.UID, err)
+	}
+
+	resp, err := client.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("check datasource health %s: %w", args.UID, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return nil, fmt.Errorf("check datasource health %s: HTTP %d: %s", args.UID, resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	result := &DatasourceHealthResult{UID: args.UID}
+	if err := json.NewDecoder(resp.Body).Decode(result); err != nil {
+		return nil, fmt.Errorf("check datasource health %s: %w", args.UID, err)
+	}
+	return result, nil
+}
+
+type BulkCheckDatasourceHealthParams struct {
+	Type   string   `json:"type,omitempty" jsonschema:"description=Plugin type filter; omit to check all"`
+	UIDs   []string `json:"uids,omitempty" jsonschema:"description=UIDs to check"`
+	Offset int      `json:"offset,omitempty" jsonschema:"default=0,description=Number to skip for pagination"`
+}
+
+type DatasourceHealthCheckResult struct {
+	UID     string `json:"uid"`
+	Name    string `json:"name"`
+	Type    string `json:"type"`
+	Status  string `json:"status,omitempty"` // "OK", "ERROR", or "UNKNOWN"
+	Message string `json:"message,omitempty"`
+	Error   string `json:"error,omitempty"`
+}
+
+// BulkDatasourceHealthResult is the paginated, aggregated result of the check_datasources_health tool.
+type BulkDatasourceHealthResult struct {
+	Results   []DatasourceHealthCheckResult `json:"results"`
+	Total     int                           `json:"total"`   // Total matching datasources before pagination
+	Checked   int                           `json:"checked"` // Number of datasources health-checked in this page
+	Healthy   int                           `json:"healthy"`
+	Unhealthy int                           `json:"unhealthy"`
+	HasMore   bool                          `json:"hasMore"` // Whether more datasources exist beyond this page
+}
+
+func checkDatasourcesHealth(ctx context.Context, args BulkCheckDatasourceHealthParams) (*BulkDatasourceHealthResult, error) {
+	c := mcpgrafana.GrafanaClientFromContext(ctx)
+
+	resp, err := c.Datasources.GetDataSourcesWithParams(
+		datasources.NewGetDataSourcesParamsWithContext(ctx),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list datasources: %w", err)
+	}
+
+	var all models.DataSourceList
+	if len(args.UIDs) > 0 {
+		uidSet := make(map[string]bool, len(args.UIDs))
+		for _, u := range args.UIDs {
+			uidSet[u] = true
+		}
+		for _, ds := range resp.Payload {
+			if uidSet[ds.UID] {
+				all = append(all, ds)
+			}
+		}
+	} else {
+		all = filterDatasources(resp.Payload, args.Type, "")
+	}
+
+	limit := 10
+
+	offset := args.Offset
+	if offset < 0 {
+		offset = 0
+	}
+
+	var targets models.DataSourceList
+	if offset < len(all) {
+		end := offset + limit
+		if end > len(all) {
+			end = len(all)
+		}
+		targets = all[offset:end]
+	}
+
+	results := make([]DatasourceHealthCheckResult, len(targets))
+	var wg sync.WaitGroup
+	for i, ds := range targets {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			r := DatasourceHealthCheckResult{UID: ds.UID, Name: ds.Name, Type: ds.Type}
+			health, err := checkDatasourceHealth(ctx, CheckDatasourceHealthParams{UID: ds.UID})
+			if err != nil {
+				r.Error = err.Error()
+			} else {
+				r.Status = health.Status
+				r.Message = health.Message
+			}
+			results[i] = r
+		}()
+	}
+	wg.Wait()
+
+	healthy, unhealthy := 0, 0
+	for _, r := range results {
+		if r.Error != "" || r.Status != "OK" {
+			unhealthy++
+		} else {
+			healthy++
+		}
+	}
+
+	return &BulkDatasourceHealthResult{
+		Results:   results,
+		Total:     len(all),
+		Checked:   len(results),
+		Healthy:   healthy,
+		Unhealthy: unhealthy,
+		HasMore:   offset+len(results) < len(all),
+	}, nil
+}
+
+var CheckDatasourcesHealth = mcpgrafana.MustTool(
+	"check_datasources_health",
+	"Check datasource health. Filter by type or UIDs; omit both to check all.",
+	checkDatasourcesHealth,
+	mcp.WithTitleAnnotation("Check datasources health"),
+	mcp.WithIdempotentHintAnnotation(true),
+	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
+)
+
+// AddDatasourceTools registers the datasource tools on the MCP server; write tools are registered only when enableWriteTools is true.
+func AddDatasourceTools(mcp *server.MCPServer, enableWriteTools bool) {
 	ListDatasources.Register(mcp)
 	GetDatasource.Register(mcp)
+	CheckDatasourcesHealth.Register(mcp)
+	if enableWriteTools {
+		CreateDatasource.Register(mcp)
+		UpdateDatasource.Register(mcp)
+	}
 }

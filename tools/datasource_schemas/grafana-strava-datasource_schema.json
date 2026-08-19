@@ -1,0 +1,64 @@
+{
+    "schemaVersion": "v1",
+    "pluginType": "grafana-strava-datasource",
+    "pluginName": "Strava",
+    "fields": [
+        {
+            "id": "jsonData.clientID",
+            "key": "clientID",
+            "label": "Client ID",
+            "description": "Strava API application client ID.",
+            "valueType": "string",
+            "target": "jsonData",
+            "required": true
+        },
+        {
+            "id": "jsonData.cacheTTL",
+            "key": "cacheTTL",
+            "label": "Cache TTL",
+            "description": "Cache time-to-live duration (e.g. 1h, 30m).",
+            "valueType": "string",
+            "semanticType": "duration",
+            "target": "jsonData"
+        },
+        {
+            "id": "jsonData.oauthPassThru",
+            "key": "oauthPassThru",
+            "label": "OAuth Pass-thru",
+            "description": "Forward the user's OAuth token to Strava.",
+            "valueType": "boolean",
+            "target": "jsonData",
+            "ui": {
+                "component": "switch"
+            }
+        },
+        {
+            "id": "secureJsonData.clientSecret",
+            "key": "clientSecret",
+            "label": "Client Secret",
+            "description": "Strava API application client secret.",
+            "valueType": "string",
+            "target": "secureJsonData",
+            "required": true,
+            "semanticType": "token"
+        }
+    ],
+    "groups": [
+        {
+            "id": "auth",
+            "title": "Authentication",
+            "fieldRefs": [
+                "jsonData.clientID",
+                "secureJsonData.clientSecret",
+                "jsonData.oauthPassThru"
+            ]
+        },
+        {
+            "id": "settings",
+            "title": "Settings",
+            "fieldRefs": [
+                "jsonData.cacheTTL"
+            ]
+        }
+    ]
+}

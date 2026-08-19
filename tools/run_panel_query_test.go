@@ -830,6 +830,23 @@ func TestIsEmptyPanelResult(t *testing.T) {
 			},
 			expected: false,
 		},
+		{
+			name:     "nil BigQueryQueryResult",
+			results:  (*BigQueryQueryResult)(nil),
+			expected: true,
+		},
+		{
+			name:     "empty BigQueryQueryResult",
+			results:  &BigQueryQueryResult{Rows: []map[string]interface{}{}},
+			expected: true,
+		},
+		{
+			name: "non-empty BigQueryQueryResult",
+			results: &BigQueryQueryResult{
+				Rows: []map[string]interface{}{{"count": 42}},
+			},
+			expected: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -897,6 +914,17 @@ func TestGeneratePanelQueryHints(t *testing.T) {
 				"No data found",
 				"Bucket",
 				"Measurement",
+			},
+		},
+		{
+			name:           "bigquery hints",
+			datasourceType: "grafana-bigquery-datasource",
+			query:          "SELECT COUNT(*) FROM `proj.ds.tbl` WHERE $__timeFilter(ts)",
+			containsHints: []string{
+				"No data found",
+				"Time range",
+				"COUNT(*)",
+				"processing location",
 			},
 		},
 	}
@@ -973,6 +1001,9 @@ func TestNormalizeDatasourceType(t *testing.T) {
 		{"ClickHouse", "clickhouse"},
 		{"influxdb", "influxdb"},
 		{"InfluxDB", "influxdb"},
+		{"grafana-bigquery-datasource", "bigquery"},
+		{"bigquery", "bigquery"},
+		{"BigQuery", "bigquery"},
 		{"some-other-type", "some-other-type"},
 		{"", ""},
 	}
@@ -1087,6 +1118,41 @@ func TestExtractPanelInfo_CloudWatch(t *testing.T) {
 			assert.NotEmpty(t, info.RawTarget["namespace"], "RawTarget should contain CloudWatch fields")
 		})
 	}
+}
+
+func TestExtractPanelInfo_BigQuery(t *testing.T) {
+	panel := map[string]interface{}{
+		"id":    1,
+		"title": "BigQuery Failed Tests",
+		"datasource": map[string]interface{}{
+			"uid":  "bigquery-uid",
+			"type": "grafana-bigquery-datasource",
+		},
+		"targets": []interface{}{
+			map[string]interface{}{
+				"refId":    "A",
+				"rawSql":   "SELECT count(*) FROM `proj.ds.tbl` WHERE $__timeFilter(ts)",
+				"location": "US",
+				"format":   float64(1),
+			},
+		},
+	}
+
+	info, err := extractPanelInfo(panel, 0)
+	require.NoError(t, err)
+	assert.Equal(t, "bigquery-uid", info.DatasourceUID)
+	assert.Equal(t, "grafana-bigquery-datasource", info.DatasourceType)
+	// BigQuery uses rawSql, which extractQueryExpression should pick up.
+	assert.Equal(t, "SELECT count(*) FROM `proj.ds.tbl` WHERE $__timeFilter(ts)", info.Query)
+	// The raw target is preserved so BigQuery-specific fields (e.g. location) survive.
+	assert.Equal(t, "US", info.RawTarget["location"])
+}
+
+func TestExecuteBigQueryPanelQuery_NilTarget(t *testing.T) {
+	// A missing raw target should produce a clear error rather than panicking.
+	_, err := executeBigQueryPanelQuery(t.Context(), "bigquery-uid", &panelInfo{}, "SELECT 1", "now-1h", "now", nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "BigQuery panel target not available")
 }
 
 func TestSubstituteTemplateVariablesInMap(t *testing.T) {

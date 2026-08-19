@@ -1,0 +1,72 @@
+{
+    "schemaVersion": "v1",
+    "pluginType": "grafana-looker-datasource",
+    "pluginName": "Looker",
+    "fields": [
+        {
+            "id": "jsonData.base_url",
+            "key": "base_url",
+            "label": "Base URL",
+            "description": "Looker instance API URL (e.g. https://mycompany.looker.com).",
+            "valueType": "string",
+            "semanticType": "url",
+            "target": "jsonData",
+            "required": true
+        },
+        {
+            "id": "jsonData.auth_type",
+            "key": "auth_type",
+            "label": "Authentication Type",
+            "description": "Looker authentication type.",
+            "valueType": "string",
+            "target": "jsonData",
+            "required": true,
+            "defaultValue": "client_credentials",
+            "validations": [
+                {
+                    "type": "allowedValues",
+                    "values": [
+                        "client_credentials"
+                    ]
+                }
+            ]
+        },
+        {
+            "id": "jsonData.client_id",
+            "key": "client_id",
+            "label": "Client ID",
+            "description": "Looker API client ID.",
+            "valueType": "string",
+            "target": "jsonData",
+            "required": true
+        },
+        {
+            "id": "secureJsonData.client_secret",
+            "key": "client_secret",
+            "label": "Client Secret",
+            "description": "Looker API client secret.",
+            "valueType": "string",
+            "target": "secureJsonData",
+            "required": true,
+            "semanticType": "token"
+        }
+    ],
+    "groups": [
+        {
+            "id": "connection",
+            "title": "Connection",
+            "fieldRefs": [
+                "jsonData.base_url"
+            ]
+        },
+        {
+            "id": "auth",
+            "title": "Client Credentials",
+            "fieldRefs": [
+                "jsonData.auth_type",
+                "jsonData.client_id",
+                "secureJsonData.client_secret"
+            ]
+        }
+    ]
+}
