@@ -11,8 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/grafana/grafana-openapi-client-go/client/datasources"
 )
@@ -177,26 +176,48 @@ func discoverMCPDatasources(ctx context.Context, logger *slog.Logger) ([]Discove
 	return discovered, nil
 }
 
-// addDatasourceUidParameter adds a required datasourceUid parameter to a tool's input schema
-func addDatasourceUidParameter(tool mcp.Tool, datasourceType string) mcp.Tool {
-	modifiedTool := tool
+// addDatasourceUidParameter adds a required datasourceUid parameter to a
+// tool's input schema and returns a new *mcp.Tool with the modified name and
+// schema. tool.InputSchema is expected to be a map[string]any: that's what a
+// remote tool's schema decodes to on the client side after a wire round trip
+// (see mcp.Tool.InputSchema's doc).
+func addDatasourceUidParameter(tool *mcp.Tool, datasourceType string) *mcp.Tool {
+	modifiedTool := *tool
 	// Prefix tool name with datasource type (e.g., "tempo_traceql-search")
 	modifiedTool.Name = datasourceType + "_" + tool.Name
 
-	// Add datasourceUid to the input schema
-	if modifiedTool.InputSchema.Properties == nil {
-		modifiedTool.InputSchema.Properties = make(map[string]any)
+	schema, ok := modifiedTool.InputSchema.(map[string]any)
+	if !ok || schema == nil {
+		schema = map[string]any{"type": "object"}
 	}
 
-	modifiedTool.InputSchema.Properties["datasourceUid"] = map[string]any{
+	properties, ok := schema["properties"].(map[string]any)
+	if !ok || properties == nil {
+		properties = make(map[string]any)
+	}
+	properties["datasourceUid"] = map[string]any{
 		"type":        "string",
 		"description": "UID of the " + datasourceType + " datasource to query",
 	}
+	schema["properties"] = properties
 
-	// Add to required fields
-	modifiedTool.InputSchema.Required = append(modifiedTool.InputSchema.Required, "datasourceUid")
+	// Add to required fields. The decoded value may be []any (from JSON) or,
+	// in the stdio in-process path, []string.
+	var required []string
+	switch existing := schema["required"].(type) {
+	case []any:
+		for _, r := range existing {
+			if s, ok := r.(string); ok {
+				required = append(required, s)
+			}
+		}
+	case []string:
+		required = append(required, existing...)
+	}
+	schema["required"] = append(required, "datasourceUid")
 
-	return modifiedTool
+	modifiedTool.InputSchema = schema
+	return &modifiedTool
 }
 
 // parseProxiedToolName extracts datasource type and original tool name from a proxied tool name
@@ -367,7 +388,7 @@ type proxiedToolSet struct {
 	clients map[string]*ProxiedClient
 	// tools is the deduplicated, schema-rewritten set of proxied tools. Empty
 	// until built is true; immutable afterwards.
-	tools []mcp.Tool
+	tools []*mcp.Tool
 	// toolToDatasources maps a proxied tool name to the datasource keys that
 	// support it. Empty until built is true; immutable afterwards.
 	toolToDatasources map[string][]string
@@ -385,17 +406,26 @@ type proxiedToolSet struct {
 // ToolManager manages proxied tools (either per-session or server-wide)
 type ToolManager struct {
 	sm     *SessionManager
-	server *server.MCPServer
 	logger *slog.Logger
 
 	// Whether to enable proxied tools.
 	enableProxiedTools bool
 
-	// For stdio transport: store clients at manager level (single-tenant).
-	// These will be unused for HTTP/SSE transports.
+	// For stdio transport: single-tenant, single *mcp.Server and store of
+	// clients at manager level. Unused for HTTP/SSE transports.
 	serverMode    bool // true if using server-wide tools (stdio), false for per-session (HTTP/SSE)
+	server        *mcp.Server
 	serverClients map[string]*ProxiedClient
 	clientsMutex  sync.RWMutex
+
+	// For HTTP/SSE transport: each session gets its own *mcp.Server (built by
+	// the caller inside its getServer callback and registered here via
+	// RegisterSessionServer), since the official SDK has no per-session tool
+	// registration API (mark3labs' AddSessionTools). InitializeAndRegisterProxiedTools
+	// looks a session's server up here to add its discovered tools directly.
+	// There is no SDK session-disconnect hook (see SessionManager's doc), so
+	// entries are removed only when SessionManager reaps the session.
+	sessionServers sync.Map // sessionID string -> *mcp.Server
 
 	// For HTTP/SSE transport: shared, credential-keyed proxied tool sets.
 	// Sessions with identical credentials share a single entry, so memory no
@@ -415,10 +445,9 @@ type ToolManager struct {
 }
 
 // NewToolManager creates a new ToolManager
-func NewToolManager(sm *SessionManager, mcpServer *server.MCPServer, opts ...toolManagerOption) *ToolManager {
+func NewToolManager(sm *SessionManager, opts ...toolManagerOption) *ToolManager {
 	tm := &ToolManager{
 		sm:            sm,
-		server:        mcpServer,
 		serverClients: make(map[string]*ProxiedClient),
 		proxiedSets:   make(map[proxiedToolSetKey]*proxiedToolSet),
 	}
@@ -451,6 +480,30 @@ func WithToolManagerLogger(logger *slog.Logger) toolManagerOption {
 	return func(tm *ToolManager) {
 		tm.logger = logger
 	}
+}
+
+// WithServer sets the single, process-wide *mcp.Server used for stdio's
+// server-wide tool registration (InitializeAndRegisterServerTools). It is
+// unused for HTTP/SSE transports, which register tools per session via
+// RegisterSessionServer instead.
+func WithServer(s *mcp.Server) toolManagerOption {
+	return func(tm *ToolManager) {
+		tm.server = s
+	}
+}
+
+// RegisterSessionServer associates a session's own *mcp.Server (built by the
+// caller's getServer callback) with its session ID, so
+// InitializeAndRegisterProxiedTools can find it later to add discovered
+// proxied tools directly onto that session's server.
+func (tm *ToolManager) RegisterSessionServer(sessionID string, s *mcp.Server) {
+	tm.sessionServers.Store(sessionID, s)
+}
+
+// UnregisterSessionServer removes a session's server mapping. Called when the
+// session is reaped, since there is no earlier SDK signal that it disconnected.
+func (tm *ToolManager) UnregisterSessionServer(sessionID string) {
+	tm.sessionServers.Delete(sessionID)
 }
 
 // loggerFromCtx returns the logger from the context's GrafanaConfig if available,
@@ -509,13 +562,12 @@ func (tm *ToolManager) InitializeAndRegisterServerTools(ctx context.Context) err
 
 	// Collect and register all unique tools
 	tm.clientsMutex.RLock()
-	toolMap := make(map[string]mcp.Tool)
+	toolMap := make(map[string]*mcp.Tool)
 	for _, client := range tm.serverClients {
 		for _, tool := range client.ListTools() {
 			toolName := client.DatasourceType + "_" + tool.Name
 			if _, exists := toolMap[toolName]; !exists {
-				modifiedTool := addDatasourceUidParameter(tool, client.DatasourceType)
-				toolMap[toolName] = modifiedTool
+				toolMap[toolName] = addDatasourceUidParameter(tool, client.DatasourceType)
 			}
 		}
 	}
@@ -536,7 +588,7 @@ func (tm *ToolManager) InitializeAndRegisterServerTools(ctx context.Context) err
 // published into a proxiedToolSet in a single critical section.
 type builtProxiedTools struct {
 	clients           map[string]*ProxiedClient
-	tools             []mcp.Tool
+	tools             []*mcp.Tool
 	toolToDatasources map[string][]string
 }
 
@@ -583,7 +635,7 @@ func (tm *ToolManager) buildProxiedToolSet(ctx context.Context, logger *slog.Log
 	}
 
 	// Collect unique tools and track which datasources support each one.
-	toolMap := make(map[string]mcp.Tool) // unique tools by name
+	toolMap := make(map[string]*mcp.Tool) // unique tools by name
 	for key, client := range built.clients {
 		for _, tool := range client.ListTools() {
 			// Tool name format: datasourceType_originalToolName (e.g., "tempo_traceql-search").
@@ -840,38 +892,31 @@ func (tm *ToolManager) acquireProxiedClientForCall(set *proxiedToolSet, datasour
 }
 
 // InitializeAndRegisterProxiedTools attaches the calling session to a shared,
-// credential-keyed proxied tool set and registers that set's tools on the
-// session. The shared set is discovered/connected/rewritten at most once per
-// distinct credential set, so multiple concurrent sessions with identical
-// credentials reuse a single set instead of each building their own. This is
-// called from OnBeforeListTools and OnBeforeCallTool hooks for HTTP/SSE
-// transports and is idempotent per session.
-func (tm *ToolManager) InitializeAndRegisterProxiedTools(ctx context.Context, session server.ClientSession) {
+// credential-keyed proxied tool set and registers that set's tools directly on
+// the session's own *mcp.Server (found via RegisterSessionServer - the official
+// SDK has no per-session tool registration API, so each session gets its own
+// server instance rather than an overlay on a shared one). The shared set is
+// discovered/connected/rewritten at most once per distinct credential set, so
+// multiple concurrent sessions with identical credentials reuse a single set
+// instead of each building their own. This is called from
+// GrafanaContextMiddleware for HTTP/SSE transports and is idempotent per
+// session.
+func (tm *ToolManager) InitializeAndRegisterProxiedTools(ctx context.Context, sessionID string) {
 	if !tm.enableProxiedTools {
 		return
 	}
 
 	logger := tm.loggerFromCtx(ctx)
 
-	sessionID := session.SessionID()
-	state, exists := tm.sm.GetSession(sessionID)
-	if !exists {
-		// Session exists in server context but not in our SessionManager yet.
-		tm.sm.CreateSession(ctx, session)
-		state, exists = tm.sm.GetSession(sessionID)
-		if !exists {
-			logger.ErrorContext(ctx, "failed to create session in SessionManager", "sessionID", sessionID)
-			return
-		}
-	}
+	state := tm.sm.TouchOrCreateSession(sessionID)
 
 	key := proxiedToolSetKeyFromContext(ctx)
 
 	// Serialize attach/build/register for this session and allow a later retry if
 	// this attempt does not end in a successful registration. proxiedInitMu is
-	// held for the whole attempt: concurrent hooks for the SAME session (e.g.
-	// OnBeforeListTools and OnBeforeCallTool) queue behind it, and the second one
-	// sees proxiedRegistered and returns, or retries if the first failed.
+	// held for the whole attempt: concurrent calls for the SAME session queue
+	// behind it, and a later one sees proxiedRegistered and returns, or retries
+	// if the first attempt failed.
 	state.proxiedInitMu.Lock()
 	defer state.proxiedInitMu.Unlock()
 
@@ -884,15 +929,15 @@ func (tm *ToolManager) InitializeAndRegisterProxiedTools(ctx context.Context, se
 	// exists that teardown cannot find and release.
 	set, needsBuild := tm.attachProxiedToolSet(state, key)
 
-	// Reconcile against a teardown that raced this attach. A session may have been
-	// removed from the SessionManager (client DELETE / idle sweeper / reaper)
-	// between GetSession/CreateSession above and the bind inside
-	// attachProxiedToolSet. If so, that RemoveSession saw proxiedSet==nil and did
-	// not release, and no future teardown will fire for this (now untracked)
-	// session, so the ref we just took would leak. Detect it and release exactly
-	// once (releaseSessionProxiedToolSet is idempotent, so a RemoveSession that
-	// instead ran AFTER our bind is handled too, with no double release). We still
-	// run/await the build below so any live waiter for the same key is served.
+	// Reconcile against a teardown (reap) that raced this attach. A session may
+	// have been removed from the SessionManager between TouchOrCreateSession
+	// above and the bind inside attachProxiedToolSet. If so, that reap saw
+	// proxiedSet==nil and did not release, and no future reap will fire for this
+	// (now untracked) session, so the ref we just took would leak. Detect it and
+	// release exactly once (releaseSessionProxiedToolSet is idempotent, so a reap
+	// that instead ran AFTER our bind is handled too, with no double release). We
+	// still run/await the build below so any live waiter for the same key is
+	// served.
 	if !tm.sm.sessionRegistered(sessionID, state) {
 		defer tm.releaseSessionProxiedToolSet(state)
 	}
@@ -912,15 +957,15 @@ func (tm *ToolManager) InitializeAndRegisterProxiedTools(ctx context.Context, se
 
 	// A failed build (transient: discovery error, cancellation, or panic) was
 	// de-cached. Do NOT mark this session registered: release its reference to
-	// the failed set, clear the binding, and return so the next hook invocation
-	// for this session retries a fresh attach (which triggers a fresh build).
-	// This keeps the failure transient for the session, matching the cache's
-	// behavior for later sessions.
+	// the failed set, clear the binding, and return so the next call for this
+	// session retries a fresh attach (which triggers a fresh build). This keeps
+	// the failure transient for the session, matching the cache's behavior for
+	// later sessions.
 	//
 	// A usable build with zero tools is NOT a failure: either the instance has no
 	// MCP datasources, or its datasources exposed no tools. That is a stable,
 	// cached result, so the session keeps its reference and is marked registered
-	// (there is simply nothing to register); it must not retry, so repeated hooks
+	// (there is simply nothing to register); it must not retry, so repeated calls
 	// do not re-run discovery.
 	if !usable {
 		tm.releaseSessionProxiedToolSet(state)
@@ -928,28 +973,21 @@ func (tm *ToolManager) InitializeAndRegisterProxiedTools(ctx context.Context, se
 	}
 
 	if len(tools) > 0 {
-		// Register the shared tools on this session. AddSessionTools is
-		// per-session SDK bookkeeping; it references the shared (now immutable)
-		// mcp.Tool values directly, with no per-session deep copy, JSON decode, or
-		// client dial.
-		serverTools := make([]server.ServerTool, 0, len(tools))
-		for _, tool := range tools {
-			handler := NewProxiedToolHandler(tm.sm, tm, tool.Name)
-			serverTools = append(serverTools, server.ServerTool{
-				Tool:    tool,
-				Handler: handler.Handle,
-			})
-		}
-
-		if err := tm.server.AddSessionTools(sessionID, serverTools...); err != nil {
-			logger.WarnContext(ctx, "failed to add session tools", "session", sessionID, "error", err)
+		sessionServer, ok := tm.sessionServers.Load(sessionID)
+		if !ok {
+			logger.WarnContext(ctx, "no server registered for session; cannot add proxied tools", "session", sessionID)
 		} else {
+			s := sessionServer.(*mcp.Server)
+			for _, tool := range tools {
+				handler := NewProxiedToolHandler(tm.sm, tm, tool.Name)
+				s.AddTool(tool, handler.Handle)
+			}
 			logger.InfoContext(ctx, "registered proxied tools", "session", sessionID, "tools", len(tools))
 		}
 	}
 
 	// The attach succeeded (usable set, ref held). Mark the session registered so
-	// later hooks are no-ops; teardown will release the reference.
+	// later calls are no-ops; the reaper will release the reference.
 	state.proxiedRegistered = true
 }
 

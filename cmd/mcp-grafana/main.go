@@ -15,8 +15,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/grafana/mcp-grafana/observability"
@@ -52,7 +51,7 @@ func resolveServerName(flagValue string, flagExplicitlySet bool, envValue, defau
 	return defaultValue
 }
 
-func maybeAddTools(s *server.MCPServer, tf func(*server.MCPServer), enabledTools []string, disable bool, category string) {
+func maybeAddTools(s *mcp.Server, tf func(*mcp.Server), enabledTools []string, disable bool, category string) {
 	if !slices.Contains(enabledTools, category) {
 		slog.Debug("Not enabling tools", "category", category)
 		return
@@ -199,7 +198,7 @@ func (gc *grafanaConfig) addFlags() {
 
 // toolEntry pairs a tool registration function with its category and disable flag.
 type toolEntry struct {
-	adder    func(*server.MCPServer)
+	adder    func(*mcp.Server)
 	disabled bool
 	category string
 }
@@ -211,25 +210,25 @@ func (dt *disabledTools) toolEntries() []toolEntry {
 	enableWriteTools := !dt.write
 	return []toolEntry{
 		{tools.AddSearchTools, dt.search, "search"},
-		{func(mcp *server.MCPServer) { tools.AddDatasourceTools(mcp, enableWriteTools) }, dt.datasource, "datasource"},
-		{func(mcp *server.MCPServer) { tools.AddIncidentTools(mcp, enableWriteTools) }, dt.incident, "incident"},
+		{func(mcp *mcp.Server) { tools.AddDatasourceTools(mcp, enableWriteTools) }, dt.datasource, "datasource"},
+		{func(mcp *mcp.Server) { tools.AddIncidentTools(mcp, enableWriteTools) }, dt.incident, "incident"},
 		{tools.AddPrometheusTools, dt.prometheus, "prometheus"},
 		{tools.AddLokiTools, dt.loki, "loki"},
 		{tools.AddElasticsearchTools, dt.elasticsearch, "elasticsearch"},
 		{tools.AddQuickwitTools, dt.quickwit, "quickwit"},
 		{tools.AddInfluxDBTools, dt.influxdb, "influxdb"},
-		{func(mcp *server.MCPServer) { tools.AddAlertingTools(mcp, enableWriteTools) }, dt.alerting, "alerting"},
-		{func(mcp *server.MCPServer) { tools.AddDashboardTools(mcp, enableWriteTools) }, dt.dashboard, "dashboard"},
-		{func(mcp *server.MCPServer) { tools.AddFolderTools(mcp, enableWriteTools) }, dt.folder, "folder"},
+		{func(mcp *mcp.Server) { tools.AddAlertingTools(mcp, enableWriteTools) }, dt.alerting, "alerting"},
+		{func(mcp *mcp.Server) { tools.AddDashboardTools(mcp, enableWriteTools) }, dt.dashboard, "dashboard"},
+		{func(mcp *mcp.Server) { tools.AddFolderTools(mcp, enableWriteTools) }, dt.folder, "folder"},
 		{tools.AddOnCallTools, dt.oncall, "oncall"},
 		{tools.AddAssertsTools, dt.asserts, "asserts"},
-		{func(mcp *server.MCPServer) { tools.AddSiftTools(mcp, enableWriteTools) }, dt.sift, "sift"},
+		{func(mcp *mcp.Server) { tools.AddSiftTools(mcp, enableWriteTools) }, dt.sift, "sift"},
 		{tools.AddAdminTools, dt.admin, "admin"},
 		{tools.AddPyroscopeTools, dt.pyroscope, "pyroscope"},
-		{func(mcp *server.MCPServer) { tools.AddNavigationTools(mcp, enableWriteTools) }, dt.navigation, "navigation"},
-		{func(mcp *server.MCPServer) { tools.AddAnnotationTools(mcp, enableWriteTools) }, dt.annotations, "annotations"},
+		{func(mcp *mcp.Server) { tools.AddNavigationTools(mcp, enableWriteTools) }, dt.navigation, "navigation"},
+		{func(mcp *mcp.Server) { tools.AddAnnotationTools(mcp, enableWriteTools) }, dt.annotations, "annotations"},
 		{tools.AddRenderingTools, dt.rendering, "rendering"},
-		{func(mcp *server.MCPServer) { tools.AddSnapshotTools(mcp, enableWriteTools) }, dt.snapshot, "snapshot"},
+		{func(mcp *mcp.Server) { tools.AddSnapshotTools(mcp, enableWriteTools) }, dt.snapshot, "snapshot"},
 		{tools.AddCloudWatchTools, dt.cloudwatch, "cloudwatch"},
 		{tools.AddExamplesTools, dt.examples, "examples"},
 		{tools.AddClickHouseTools, dt.clickhouse, "clickhouse"},
@@ -237,17 +236,17 @@ func (dt *disabledTools) toolEntries() []toolEntry {
 		{tools.AddRunPanelQueryTools, dt.runpanelquery, "runpanelquery"},
 		{tools.AddGraphiteTools, dt.graphite, "graphite"},
 		{tools.AddAthenaTools, dt.athena, "athena"},
-		{func(mcp *server.MCPServer) { tools.AddPluginTools(mcp, enableWriteTools) }, dt.plugin, "plugin"},
-		{func(mcp *server.MCPServer) { tools.AddAPITools(mcp, enableWriteTools) }, dt.api, "api"},
+		{func(mcp *mcp.Server) { tools.AddPluginTools(mcp, enableWriteTools) }, dt.plugin, "plugin"},
+		{func(mcp *mcp.Server) { tools.AddAPITools(mcp, enableWriteTools) }, dt.api, "api"},
 		{tools.AddConfigTools, dt.config, "config"},
 		{tools.AddProvisioningTools, dt.provisioning, "provisioning"},
-		{func(mcp *server.MCPServer) { tools.AddAgento11yTools(mcp, enableWriteTools) }, dt.agento11y, "agento11y"},
-		{func(mcp *server.MCPServer) { tools.AddAssistantTools(mcp, enableWriteTools) }, dt.assistant, "assistant"},
+		{func(mcp *mcp.Server) { tools.AddAgento11yTools(mcp, enableWriteTools) }, dt.agento11y, "agento11y"},
+		{func(mcp *mcp.Server) { tools.AddAssistantTools(mcp, enableWriteTools) }, dt.assistant, "assistant"},
 	}
 }
 
 // processTools registers enabled tool categories on the server.
-func (dt *disabledTools) processTools(s *server.MCPServer) {
+func (dt *disabledTools) processTools(s *mcp.Server) {
 	enabledTools := strings.Split(dt.enabledTools, ",")
 	for _, e := range dt.toolEntries() {
 		maybeAddTools(s, e.adder, enabledTools, e.disabled, e.category)
@@ -299,95 +298,94 @@ func (dt *disabledTools) buildInstructions() string {
 	return b.String()
 }
 
-func newServer(serverName, transport string, dt disabledTools, obs *observability.Observability, sessionIdleTimeoutMinutes int) (*server.MCPServer, *mcpgrafana.ToolManager, *mcpgrafana.SessionManager) {
-	sm := mcpgrafana.NewSessionManager(
-		mcpgrafana.WithSessionTTL(time.Duration(sessionIdleTimeoutMinutes) * time.Minute),
-	)
-
-	// Declare variables that will be initialized after server creation.
-	// The hooks below capture these by pointer, so they must be declared first.
-	var stm *mcpgrafana.ToolManager
-	var s *server.MCPServer
-
-	// Create hooks
-	hooks := &server.Hooks{
-		OnRegisterSession:   []server.OnRegisterSessionHookFunc{sm.CreateSession},
-		OnUnregisterSession: []server.OnUnregisterSessionHookFunc{sm.RemoveSession},
-	}
-
-	// Add proxied tools hooks if enabled and we're not running in stdio mode.
-	// (stdio mode is handled by InitializeAndRegisterServerTools; per-session tools
-	// are not supported).
-	if transport != "stdio" && !dt.proxied {
-		// ensureSessionRegistered registers an ephemeral session in MCPServer.sessions
-		// if it's not already there. This is needed for horizontal scaling: when a
-		// request lands on a pod that didn't handle the initialize call, the SDK
-		// creates an ephemeral session that isn't registered, causing AddSessionTools
-		// to fail with ErrSessionNotFound. RegisterSession uses LoadOrStore
-		// internally, so this is a no-op for already-registered sessions.
-		ensureSessionRegistered := func(ctx context.Context) {
-			if s != nil {
-				if session := server.ClientSessionFromContext(ctx); session != nil {
-					_ = s.RegisterSession(ctx, session)
-				}
-			}
-		}
-
-		// OnBeforeListTools: Discover, connect, and register tools
-		hooks.OnBeforeListTools = []server.OnBeforeListToolsFunc{
-			func(ctx context.Context, id any, request *mcp.ListToolsRequest) {
-				ensureSessionRegistered(ctx)
-				if stm != nil {
-					if session := server.ClientSessionFromContext(ctx); session != nil {
-						stm.InitializeAndRegisterProxiedTools(ctx, session)
-					}
-				}
-			},
-		}
-
-		// OnBeforeCallTool: Fallback in case client calls tool without listing first
-		hooks.OnBeforeCallTool = []server.OnBeforeCallToolFunc{
-			func(ctx context.Context, id any, request *mcp.CallToolRequest) {
-				ensureSessionRegistered(ctx)
-				if stm != nil {
-					if session := server.ClientSessionFromContext(ctx); session != nil {
-						stm.InitializeAndRegisterProxiedTools(ctx, session)
-					}
-				}
-			},
-		}
-	}
-
-	// Merge observability hooks with existing hooks
-	hooks = observability.MergeHooks(hooks, obs.MCPHooks())
-
-	// Register tools and build the instruction string from enabled categories.
-	// processTools both registers tools on the server and collects descriptions
-	// of enabled categories, so we need a temporary nil server reference first.
-	// Instead, we split: compute instructions from flags, then create server,
-	// then register tools.
-	instructions := dt.buildInstructions()
-
-	s = server.NewMCPServer(serverName, mcpgrafana.Version(),
-		server.WithInstructions(instructions),
-		server.WithHooks(hooks),
-	)
-
-	// Initialize ToolManager now that server is created
-	stm = mcpgrafana.NewToolManager(sm, s, mcpgrafana.WithProxiedTools(!dt.proxied), mcpgrafana.WithToolManagerLogger(slog.Default()))
-
-	// Give the SessionManager a reference to the MCPServer so the reaper can
-	// unregister sessions from the SDK's internal session map.
-	sm.SetMCPServer(s)
-
-	// Give the SessionManager a reference to the ToolManager so tearing down a
-	// session releases its reference to the shared proxied tool set (closing the
-	// underlying clients only when the last session using them is gone).
-	sm.SetToolManager(stm)
-
+// newBaseServer constructs an *mcp.Server with tools/resources registered and
+// the observability middleware attached — common to every transport and,
+// under HTTP transports, to every session's own server instance (see
+// sessionServerFactory).
+func newBaseServer(serverName string, dt disabledTools, obs *observability.Observability, instructions string) *mcp.Server {
+	s := mcp.NewServer(&mcp.Implementation{Name: serverName, Version: mcpgrafana.Version()}, &mcp.ServerOptions{
+		Instructions: instructions,
+	})
 	dt.processTools(s)
 	mcpgrafana.RegisterAppResources(s)
-	return s, stm, sm
+	s.AddReceivingMiddleware(obs.MCPMiddleware())
+	return s
+}
+
+// newStdioServer builds the single, process-wide server used for the stdio
+// transport. stdio is inherently single-tenant (one session for the whole
+// process lifetime), so unlike HTTP transports there is no per-session server
+// factory: proxied tools, if enabled, are discovered and registered once at
+// startup via ToolManager.InitializeAndRegisterServerTools.
+func newStdioServer(serverName string, dt disabledTools, obs *observability.Observability) (*mcp.Server, *mcpgrafana.ToolManager) {
+	s := newBaseServer(serverName, dt, obs, dt.buildInstructions())
+	stm := mcpgrafana.NewToolManager(nil,
+		mcpgrafana.WithProxiedTools(!dt.proxied),
+		mcpgrafana.WithToolManagerLogger(slog.Default()),
+		mcpgrafana.WithServer(s),
+	)
+	return s, stm
+}
+
+// sessionServerFactory returns the getServer callback passed to
+// NewSSEHandler/NewStreamableHTTPHandler for HTTP-based transports. The
+// official SDK has no per-session tool registration API (mark3labs'
+// AddSessionTools), so each session gets its own *mcp.Server instance instead
+// of a shared one with a per-session tool overlay; InitializeAndRegisterProxiedTools
+// later finds a session's instance via ToolManager.RegisterSessionServer to
+// add its discovered proxied tools directly.
+//
+// When stateless (proxied tools disabled), every request is its own ephemeral
+// session and getServer is invoked per REQUEST, not per session — see
+// StreamableHTTPOptions.Stateless. There is no session-scoped state to
+// isolate in that case, so a single shared server is built once and reused,
+// avoiding re-registering all ~35 tool categories on every call.
+func sessionServerFactory(serverName string, dt disabledTools, obs *observability.Observability, sm *mcpgrafana.SessionManager, stm *mcpgrafana.ToolManager, httpFn httpContextFunc, stateless bool) func(*http.Request) *mcp.Server {
+	instructions := dt.buildInstructions()
+	proxiedEnabled := !dt.proxied
+
+	buildServer := func() *mcp.Server {
+		s := newBaseServer(serverName, dt, obs, instructions)
+		s.AddReceivingMiddleware(
+			mcpgrafana.GrafanaContextMiddleware(httpFn),
+			sessionTrackingMiddleware(s, sm, stm, proxiedEnabled),
+		)
+		return s
+	}
+
+	if stateless {
+		shared := buildServer()
+		return func(*http.Request) *mcp.Server { return shared }
+	}
+	return func(*http.Request) *mcp.Server { return buildServer() }
+}
+
+// httpContextFunc mirrors the unexported type of the same name in the root
+// package (mcpgrafana.ComposedHTTPContextFunc's return type) so it can be
+// named here without exporting it from that package.
+type httpContextFunc = func(ctx context.Context, req *http.Request) context.Context
+
+// sessionTrackingMiddleware records session activity and, for tools/list and
+// tools/call, attaches the session to its shared proxied tool set (mirroring
+// mark3labs' OnBeforeListTools/OnBeforeCallTool hooks). s is the specific
+// *mcp.Server this middleware is attached to: each session gets its own (see
+// sessionServerFactory), so closing over it is how a later
+// InitializeAndRegisterProxiedTools call finds the right instance to add
+// discovered tools to.
+func sessionTrackingMiddleware(s *mcp.Server, sm *mcpgrafana.SessionManager, stm *mcpgrafana.ToolManager, proxiedEnabled bool) mcp.Middleware {
+	return func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			if session := req.GetSession(); session != nil {
+				sessionID := session.ID()
+				sm.TouchOrCreateSession(sessionID)
+				if proxiedEnabled && (method == "tools/list" || method == "tools/call") {
+					stm.RegisterSessionServer(sessionID, s)
+					stm.InitializeAndRegisterProxiedTools(ctx, sessionID)
+				}
+			}
+			return next(ctx, method, req)
+		}
+	}
 }
 
 type tlsConfig struct {
@@ -490,16 +488,54 @@ func (hsc httpSecurityConfig) policy(address string) mcpgrafana.HostOriginPolicy
 	}
 }
 
+// corsOrigins returns the configured allowed Origins, lowercased. Unlike
+// mark3labs (which defaulted SSE to a wildcard Access-Control-Allow-Origin
+// unless suppressed), the official SDK sets no CORS headers at all — see
+// corsMiddleware — so an empty result here already means "no CORS headers,
+// browsers blocked" with no sentinel needed to force that outcome.
 func (hsc httpSecurityConfig) corsOrigins() []string {
-	if origins := splitAndTrim(hsc.allowedOrigins); len(origins) > 0 {
-		for i, o := range origins {
-			origins[i] = strings.ToLower(o)
-		}
-		return origins
+	origins := splitAndTrim(hsc.allowedOrigins)
+	for i, o := range origins {
+		origins[i] = strings.ToLower(o)
 	}
-	// Sentinel keeps mcp-go's corsConfig.enabled() true so its SSE default
-	// of Access-Control-Allow-Origin: * is suppressed.
-	return []string{"https://mcp-grafana.invalid"}
+	return origins
+}
+
+// corsMiddleware sets CORS response headers for the configured allowed
+// origins. The official SDK has no built-in CORS handling at all (unlike
+// mark3labs' SSE/StreamableHTTP servers, which defaulted to a wildcard
+// Access-Control-Allow-Origin that mcp-grafana had to actively suppress). By
+// default (no --allowed-origins), this sets no headers, so browsers are
+// blocked and non-browser MCP clients are unaffected — matching the
+// secure-by-default posture documented on httpSecurityConfig.
+func corsMiddleware(allowedOrigins []string) func(http.Handler) http.Handler {
+	allowed := make(map[string]bool, len(allowedOrigins))
+	allowAll := false
+	for _, o := range allowedOrigins {
+		if o == "*" {
+			allowAll = true
+		}
+		allowed[o] = true
+	}
+	return func(next http.Handler) http.Handler {
+		if !allowAll && len(allowed) == 0 {
+			return next
+		}
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			origin := r.Header.Get("Origin")
+			if origin != "" && (allowAll || allowed[strings.ToLower(origin)]) {
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+				w.Header().Set("Vary", "Origin")
+				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+				w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Mcp-Session-Id, Authorization, Mcp-Protocol-Version, Last-Event-ID")
+				if r.Method == http.MethodOptions {
+					w.WriteHeader(http.StatusNoContent)
+					return
+				}
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 func splitAndTrim(s string) []string {
@@ -515,18 +551,35 @@ func splitAndTrim(s string) []string {
 	return out
 }
 
-// httpServer represents a server with Start and Shutdown methods
-type httpServer interface {
-	Start(addr string) error
-	Shutdown(ctx context.Context) error
+// isBenignStdioClose reports whether err represents the normal stdio
+// shutdown path: the client (or our own SIGINT/SIGTERM handler) closed
+// stdin, which Server.Run surfaces as an error wrapping the SDK's internal,
+// unexported jsonrpc2.ErrServerClosing sentinel (e.g. "server is closing:
+// EOF") rather than a clean nil or context.Canceled return. Since that
+// sentinel isn't importable, this matches on its stable error text; a
+// genuinely unexpected failure (bad handshake, protocol violation) has a
+// different message and is still treated as fatal.
+func isBenignStdioClose(err error) bool {
+	return strings.Contains(err.Error(), "server is closing")
 }
 
-// runHTTPServer handles the common logic for running HTTP-based servers
-func runHTTPServer(ctx context.Context, srv httpServer, addr, transportName string) error {
+// runHTTPServer handles the common logic for running HTTP-based servers. The
+// official SDK's transport handlers are plain http.Handlers with no owned
+// http.Server (unlike mark3labs' NewSSEServer/NewStreamableHTTPServer, which
+// wrapped their own); srv.Addr and srv.Handler must already be set, and
+// certFile/keyFile (both empty for plain HTTP) select ListenAndServeTLS vs
+// ListenAndServe.
+func runHTTPServer(ctx context.Context, srv *http.Server, certFile, keyFile, transportName string) error {
 	// Start server in a goroutine
 	serverErr := make(chan error, 1)
 	go func() {
-		if err := srv.Start(addr); err != nil {
+		var err error
+		if certFile != "" || keyFile != "" {
+			err = srv.ListenAndServeTLS(certFile, keyFile)
+		} else {
+			err = srv.ListenAndServe()
+		}
+		if err != nil {
 			serverErr <- err
 		}
 		close(serverErr)
@@ -619,9 +672,6 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		defer clientCache.Close()
 	}
 
-	s, tm, sm := newServer(obs.ServerName, transport, dt, o, sessionIdleTimeoutMinutes)
-	defer sm.Close()
-
 	// Create a context that will be cancelled on shutdown
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -659,13 +709,15 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 	// Start the appropriate server based on transport
 	switch transport {
 	case "stdio":
-		srv := server.NewStdioServer(s)
-		cf := mcpgrafana.ComposedStdioContextFunc(gc)
-		srv.SetContextFunc(cf)
+		s, tm := newStdioServer(obs.ServerName, dt, o)
+
+		// stdio is single-tenant: context is set up once for the whole process
+		// (there's no per-call HTTP request to derive it from), unlike HTTP
+		// transports where GrafanaContextMiddleware runs per call.
+		stdioCtx := mcpgrafana.ComposedStdioContextFunc(gc)(ctx)
 
 		// For stdio (single-tenant), initialize proxied tools on the server directly
 		if !dt.proxied {
-			stdioCtx := cf(ctx)
 			if err := tm.InitializeAndRegisterServerTools(stdioCtx); err != nil {
 				slog.Error("failed to initialize proxied tools for stdio", "error", err)
 			}
@@ -673,26 +725,29 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 
 		slog.Info("Starting Grafana MCP server using stdio transport", "version", mcpgrafana.Version())
 
-		err := srv.Listen(ctx, os.Stdin, os.Stdout)
-		if err != nil && err != context.Canceled {
+		err := s.Run(stdioCtx, &mcp.StdioTransport{})
+		if err != nil && !errors.Is(err, context.Canceled) && !isBenignStdioClose(err) {
 			return fmt.Errorf("server error: %v", err)
 		}
 		return nil
 
 	case "sse":
-		httpSrv := &http.Server{Addr: addr}
-		srv := server.NewSSEServer(s,
-			server.WithSSEContextFunc(mcpgrafana.ComposedSSEContextFunc(gc, clientCache)),
-			server.WithStaticBasePath(basePath),
-			server.WithHTTPServer(httpSrv),
-			server.WithSSECORS(server.WithCORSAllowedOrigins(hsc.corsOrigins()...)),
-		)
-		mux := http.NewServeMux()
+		sm := mcpgrafana.NewSessionManager(mcpgrafana.WithSessionTTL(time.Duration(sessionIdleTimeoutMinutes) * time.Minute))
+		defer sm.Close()
+		stm := mcpgrafana.NewToolManager(sm, mcpgrafana.WithProxiedTools(!dt.proxied), mcpgrafana.WithToolManagerLogger(slog.Default()))
+		sm.SetToolManager(stm)
+
+		httpFn := mcpgrafana.ComposedHTTPContextFunc(gc, clientCache)
+		getServer := sessionServerFactory(obs.ServerName, dt, o, sm, stm, httpFn, false /* SSE is always stateful */)
+		sseHandler := mcp.NewSSEHandler(getServer, nil)
+
 		if basePath == "" {
 			basePath = "/"
 		}
+		mux := http.NewServeMux()
 		mux.Handle(basePath, withCallerAuth(callerToken, observability.WrapHandler(
-			mcpgrafana.ValidateGrafanaURLMiddleware(srv), //nolint:staticcheck // Retained temporarily to reject malformed legacy headers.
+			corsMiddleware(hsc.corsOrigins())(
+				mcpgrafana.ValidateGrafanaURLMiddleware(sseHandler)), //nolint:staticcheck // Retained temporarily to reject malformed legacy headers.
 			basePath,
 		)))
 		mux.HandleFunc("/healthz", handleHealthz)
@@ -704,35 +759,37 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 			}
 		}
 		// Wrap the full mux so /healthz and /metrics are validated too.
-		httpSrv.Handler = mcpgrafana.DNSRebindingProtectionMiddleware(hsc.policy(addr))(mux)
+		httpSrv := &http.Server{
+			Addr:    addr,
+			Handler: mcpgrafana.DNSRebindingProtectionMiddleware(hsc.policy(addr))(mux),
+		}
 		slog.Info("Starting Grafana MCP server using SSE transport",
 			"version", mcpgrafana.Version(), "address", addr, "basePath", basePath, "metrics", obs.MetricsEnabled)
-		return runHTTPServer(ctx, srv, addr, "SSE")
+		return runHTTPServer(ctx, httpSrv, "", "", "SSE")
 	case "streamable-http":
-		httpSrv := &http.Server{Addr: addr}
-		opts := []server.StreamableHTTPOption{
-			server.WithHTTPContextFunc(mcpgrafana.ComposedHTTPContextFunc(gc, clientCache)),
-			server.WithStateLess(dt.proxied), // Stateful when proxied tools enabled (requires sessions)
-			server.WithEndpointPath(endpointPath),
-			server.WithStreamableHTTPServer(httpSrv),
-			server.WithStreamableHTTPCORS(server.WithCORSAllowedOrigins(hsc.corsOrigins()...)),
-			// Enable the SDK's idle-session sweeper so per-session transport state
-			// (the tool/resource maps populated by AddSessionTools, keyed by
-			// session ID in the server's shared stores) is freed when a client
-			// disconnects without sending a DELETE. Without it, UnregisterSession
-			// only drops the session handle and those stores grow without bound,
-			// leaking a fixed amount of memory per session that is ever created.
-			// Use the same idle timeout as our own SessionManager reaper so the
-			// two teardown paths stay aligned; a zero value disables both.
-			server.WithSessionIdleTTL(time.Duration(sessionIdleTimeoutMinutes) * time.Minute),
-		}
-		if tls.certFile != "" || tls.keyFile != "" {
-			opts = append(opts, server.WithTLSCert(tls.certFile, tls.keyFile))
-		}
-		srv := server.NewStreamableHTTPServer(s, opts...)
+		sm := mcpgrafana.NewSessionManager(mcpgrafana.WithSessionTTL(time.Duration(sessionIdleTimeoutMinutes) * time.Minute))
+		defer sm.Close()
+		stm := mcpgrafana.NewToolManager(sm, mcpgrafana.WithProxiedTools(!dt.proxied), mcpgrafana.WithToolManagerLogger(slog.Default()))
+		sm.SetToolManager(stm)
+
+		httpFn := mcpgrafana.ComposedHTTPContextFunc(gc, clientCache)
+		// Stateful when proxied tools are enabled (requires sessions); stateless
+		// otherwise, in which case getServer builds one shared server used for
+		// every (ephemeral, per-request) session - see sessionServerFactory.
+		getServer := sessionServerFactory(obs.ServerName, dt, o, sm, stm, httpFn, dt.proxied)
+		streamableHandler := mcp.NewStreamableHTTPHandler(getServer, &mcp.StreamableHTTPOptions{
+			Stateless: dt.proxied,
+			// Replaces mark3labs' WithSessionIdleTTL: per-session transport state is
+			// freed when a client goes idle for this long without a new request.
+			// Kept in sync with our own SessionManager reaper TTL so the two
+			// teardown paths stay aligned; a zero value disables both.
+			SessionTimeout: time.Duration(sessionIdleTimeoutMinutes) * time.Minute,
+		})
+
 		mux := http.NewServeMux()
 		mux.Handle(endpointPath, withCallerAuth(callerToken, observability.WrapHandler(
-			mcpgrafana.ValidateGrafanaURLMiddleware(srv), //nolint:staticcheck // Retained temporarily to reject malformed legacy headers.
+			corsMiddleware(hsc.corsOrigins())(
+				mcpgrafana.ValidateGrafanaURLMiddleware(streamableHandler)), //nolint:staticcheck // Retained temporarily to reject malformed legacy headers.
 			endpointPath,
 		)))
 		mux.HandleFunc("/healthz", handleHealthz)
@@ -744,10 +801,13 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 			}
 		}
 		// Wrap the full mux so /healthz and /metrics are validated too.
-		httpSrv.Handler = mcpgrafana.DNSRebindingProtectionMiddleware(hsc.policy(addr))(mux)
+		httpSrv := &http.Server{
+			Addr:    addr,
+			Handler: mcpgrafana.DNSRebindingProtectionMiddleware(hsc.policy(addr))(mux),
+		}
 		slog.Info("Starting Grafana MCP server using StreamableHTTP transport",
 			"version", mcpgrafana.Version(), "address", addr, "endpointPath", endpointPath, "metrics", obs.MetricsEnabled)
-		return runHTTPServer(ctx, srv, addr, "StreamableHTTP")
+		return runHTTPServer(ctx, httpSrv, tls.certFile, tls.keyFile, "StreamableHTTP")
 	default:
 		return fmt.Errorf("invalid transport type: %s. Must be 'stdio', 'sse' or 'streamable-http'", transport)
 	}

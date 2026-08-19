@@ -9,7 +9,7 @@ import (
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/grafana/mcp-grafana/tools"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 func main() {
@@ -84,15 +84,16 @@ func fullTLSExample() {
 	fmt.Printf("  - Skip verify: %v\n", tlsConfig.SkipVerify)
 	fmt.Printf("  - Debug mode: %v\n", grafanaConfig.Debug)
 
-	// Create context functions for different transport types
+	// Create context functions for different transport types. HTTP-based
+	// transports (SSE, streamable HTTP) share one context func, applied per
+	// call via mcpgrafana.GrafanaContextMiddleware rather than once per
+	// connection.
 	stdioFunc := mcpgrafana.ComposedStdioContextFunc(grafanaConfig)
-	sseFunc := mcpgrafana.ComposedSSEContextFunc(grafanaConfig)
 	httpFunc := mcpgrafana.ComposedHTTPContextFunc(grafanaConfig)
 
 	fmt.Printf("✓ Context functions created for all transport types\n")
 
 	_ = stdioFunc
-	_ = sseFunc
 	_ = httpFunc
 }
 
@@ -112,19 +113,17 @@ grafanaConfig := mcpgrafana.GrafanaConfig{
 }
 
 // Create MCP server
-s := server.NewMCPServer("mcp-grafana", "1.0.0")
+s := mcp.NewServer(&mcp.Implementation{Name: "mcp-grafana", Version: "1.0.0"}, nil)
 
 // Add tools
 tools.AddSearchTools(s)
 tools.AddDatasourceTools(s, false)
 // ... add other tools as needed
 
-// Create stdio server with TLS support
-srv := server.NewStdioServer(s)
-srv.SetContextFunc(mcpgrafana.ComposedStdioContextFunc(grafanaConfig))
-
-// Start server
-srv.Listen(ctx, os.Stdin, os.Stdout)`)
+// Start the server over stdio, with the Grafana config applied once for the
+// whole process (stdio is single-tenant: one session for its lifetime).
+ctx := mcpgrafana.ComposedStdioContextFunc(grafanaConfig)(context.Background())
+s.Run(ctx, &mcp.StdioTransport{})`)
 }
 
 func runServerWithTLS() {
@@ -152,24 +151,21 @@ func runServerWithTLS() {
 	}
 
 	// Create MCP server
-	s := server.NewMCPServer("mcp-grafana-tls-example", "1.0.0")
+	s := mcp.NewServer(&mcp.Implementation{Name: "mcp-grafana-tls-example", Version: "1.0.0"}, nil)
 
 	// Add some basic tools
 	tools.AddSearchTools(s)
 	tools.AddDatasourceTools(s, false) // Read-only mode (no write tools)
 	tools.AddDashboardTools(s, false)  // Read-only mode (no write tools)
 
-	// Create stdio server with TLS-enabled context function
-	srv := server.NewStdioServer(s)
-	srv.SetContextFunc(mcpgrafana.ComposedStdioContextFunc(grafanaConfig))
-
 	fmt.Printf("Starting MCP Grafana server with TLS support...\n")
 	fmt.Printf("Grafana URL: %s\n", os.Getenv("GRAFANA_URL"))
 	fmt.Printf("TLS Skip Verify: %v\n", tlsConfig.SkipVerify)
 
-	// Start the server
-	ctx := context.Background()
-	if err := srv.Listen(ctx, os.Stdin, os.Stdout); err != nil {
+	// Start the server over stdio, with the Grafana config applied once for
+	// the whole process (stdio is single-tenant: one session for its lifetime).
+	ctx := mcpgrafana.ComposedStdioContextFunc(grafanaConfig)(context.Background())
+	if err := s.Run(ctx, &mcp.StdioTransport{}); err != nil {
 		log.Fatalf("Server error: %v", err)
 	}
 }

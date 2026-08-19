@@ -2,10 +2,10 @@ package mcpgrafana
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // ProxiedToolHandler implements the CallToolHandler interface for proxied tools
@@ -25,17 +25,18 @@ func NewProxiedToolHandler(sm *SessionManager, tm *ToolManager, toolName string)
 }
 
 // Handle forwards the tool call to the appropriate remote MCP server
-func (h *ProxiedToolHandler) Handle(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	// Check if session is in context
-	session := server.ClientSessionFromContext(ctx)
-	if session == nil {
+func (h *ProxiedToolHandler) Handle(ctx context.Context, request *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	// Check if session is present on the request
+	if request.Session == nil {
 		return nil, fmt.Errorf("session not found in context")
 	}
 
 	// Extract arguments
-	args, ok := request.Params.Arguments.(map[string]any)
-	if !ok {
-		return nil, fmt.Errorf("invalid arguments type")
+	var args map[string]any
+	if request.Params != nil && len(request.Params.Arguments) > 0 {
+		if err := json.Unmarshal(request.Params.Arguments, &args); err != nil {
+			return nil, fmt.Errorf("invalid arguments type")
+		}
 	}
 
 	// Extract required datasourceUid parameter
@@ -69,7 +70,7 @@ func (h *ProxiedToolHandler) Handle(ctx context.Context, request mcp.CallToolReq
 		client, err = h.toolManager.GetServerClient(datasourceType, datasourceUID)
 	} else {
 		// Session mode (HTTP/SSE): clients live in the session's shared set.
-		client, release, err = h.sessionManager.GetProxiedClient(ctx, datasourceType, datasourceUID)
+		client, release, err = h.sessionManager.GetProxiedClient(request.Session.ID(), datasourceType, datasourceUID)
 		if err != nil {
 			// Fallback to server-level in case of mixed mode.
 			client, err = h.toolManager.GetServerClient(datasourceType, datasourceUID)

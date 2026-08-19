@@ -7,9 +7,7 @@ import (
 	"sync"
 	"time"
 
-	mcp_client "github.com/mark3labs/mcp-go/client"
-	"github.com/mark3labs/mcp-go/client/transport"
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 const (
@@ -24,8 +22,8 @@ type ProxiedClient struct {
 	DatasourceUID  string
 	DatasourceName string
 	DatasourceType string
-	Client         *mcp_client.Client
-	Tools          []mcp.Tool
+	Session        *mcp.ClientSession
+	Tools          []*mcp.Tool
 	mutex          sync.RWMutex
 
 	// closeHook, when set, runs inside Close (under the client mutex). It is a
@@ -61,36 +59,26 @@ func NewProxiedClient(ctx context.Context, datasourceUID, datasourceName, dataso
 	}
 
 	logger.DebugContext(initCtx, "connecting to MCP server", "datasource", datasourceUID, "url", mcpEndpoint)
-	httpTransport, err := transport.NewStreamableHTTP(
-		mcpEndpoint,
-		transport.WithHTTPBasicClient(&http.Client{Transport: rt}),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create HTTP transport: %w", err)
+	clientTransport := &mcp.StreamableClientTransport{
+		Endpoint:   mcpEndpoint,
+		HTTPClient: &http.Client{Transport: rt},
 	}
 
-	// Create MCP client
-	mcpClient := mcp_client.NewClient(httpTransport)
-
-	// Initialize the connection
-	initReq := mcp.InitializeRequest{}
-	initReq.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
-	initReq.Params.ClientInfo = mcp.Implementation{
+	client := mcp.NewClient(&mcp.Implementation{
 		Name:    "mcp-grafana-proxy",
 		Version: Version(),
-	}
+	}, nil)
 
-	_, err = mcpClient.Initialize(initCtx, initReq)
+	// Connect performs the initialize handshake.
+	session, err := client.Connect(initCtx, clientTransport, nil)
 	if err != nil {
-		_ = mcpClient.Close()
 		return nil, fmt.Errorf("failed to initialize MCP client: %w", contextCauseOrErr(initCtx, err))
 	}
 
 	// List available tools from the remote server
-	listReq := mcp.ListToolsRequest{}
-	toolsResult, err := mcpClient.ListTools(initCtx, listReq)
+	toolsResult, err := session.ListTools(initCtx, nil)
 	if err != nil {
-		_ = mcpClient.Close()
+		_ = session.Close()
 		return nil, fmt.Errorf("failed to list tools from remote MCP server: %w", contextCauseOrErr(initCtx, err))
 	}
 
@@ -103,7 +91,7 @@ func NewProxiedClient(ctx context.Context, datasourceUID, datasourceName, dataso
 		DatasourceUID:  datasourceUID,
 		DatasourceName: datasourceName,
 		DatasourceType: datasourceType,
-		Client:         mcpClient,
+		Session:        session,
 		Tools:          toolsResult.Tools,
 	}, nil
 }
@@ -125,13 +113,11 @@ func (pc *ProxiedClient) CallTool(ctx context.Context, toolName string, argument
 		return nil, fmt.Errorf("tool %s not found in remote MCP server", toolName)
 	}
 
-	// Create the call tool request
-	req := mcp.CallToolRequest{}
-	req.Params.Name = toolName
-	req.Params.Arguments = arguments
-
 	// Forward the call to the remote server
-	result, err := pc.Client.CallTool(ctx, req)
+	result, err := pc.Session.CallTool(ctx, &mcp.CallToolParams{
+		Name:      toolName,
+		Arguments: arguments,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to call tool on remote MCP server: %w", err)
 	}
@@ -141,12 +127,12 @@ func (pc *ProxiedClient) CallTool(ctx context.Context, toolName string, argument
 
 // ListTools returns the tools available from this remote server
 // Note: This method doesn't take a context parameter as the tools are cached locally
-func (pc *ProxiedClient) ListTools() []mcp.Tool {
+func (pc *ProxiedClient) ListTools() []*mcp.Tool {
 	pc.mutex.RLock()
 	defer pc.mutex.RUnlock()
 
 	// Return a copy to prevent external modification
-	result := make([]mcp.Tool, len(pc.Tools))
+	result := make([]*mcp.Tool, len(pc.Tools))
 	copy(result, pc.Tools)
 	return result
 }
@@ -160,8 +146,8 @@ func (pc *ProxiedClient) Close() error {
 		pc.closeHook()
 	}
 
-	if pc.Client != nil {
-		if err := pc.Client.Close(); err != nil {
+	if pc.Session != nil {
+		if err := pc.Session.Close(); err != nil {
 			return fmt.Errorf("failed to close MCP client: %w", err)
 		}
 	}

@@ -7,7 +7,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mark3labs/mcp-go/server"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/metric"
 )
@@ -66,7 +65,7 @@ type SessionState struct {
 	// session's attempt, or that session would be stuck without proxied tools
 	// forever even though the cache treats the failure as transient and lets
 	// other sessions rebuild. Leaving proxiedRegistered false on failure lets the
-	// next OnBeforeListTools/OnBeforeCallTool hook for this session retry.
+	// next call's touch-or-create path retry.
 	proxiedInitMu      sync.Mutex
 	proxiedRegistered  bool
 	proxiedSet         *proxiedToolSet
@@ -100,7 +99,16 @@ func WithSessionLogger(logger *slog.Logger) SessionManagerOption {
 	}
 }
 
-// SessionManager manages client sessions and their state
+// SessionManager manages client sessions and their state.
+//
+// Unlike mark3labs, the official go-sdk exposes no session-disconnect hook
+// (ServerSessionOptions.onClose exists but is unexported, and ServerOptions
+// has no general connect/disconnect callback), so cleanup here relies
+// entirely on the idle reaper rather than an immediate on-disconnect
+// notification paired with a reaper backstop. A session's proxied tool set
+// reference (and its underlying remote MCP connections) is therefore held
+// for up to sessionTTL after a client actually disconnects, not released
+// the instant it does.
 type SessionManager struct {
 	sessions   map[string]*SessionState
 	mutex      sync.RWMutex
@@ -111,26 +119,10 @@ type SessionManager struct {
 	metrics    sessionMetrics
 	logger     *slog.Logger
 
-	// mcpServer is an optional reference to the MCP server, used to unregister
-	// sessions from the SDK's internal session map when they are reaped. This
-	// prevents a memory leak when sessions are registered via RegisterSession
-	// in horizontal scaling scenarios (where ephemeral sessions are registered
-	// so that AddSessionTools can find them).
-	mcpServer *server.MCPServer
-
 	// toolManager is an optional reference to the ToolManager, used on session
 	// teardown to release the session's reference to its shared proxied tool
 	// set (closing the underlying clients only when the last session detaches).
 	toolManager *ToolManager
-}
-
-// SetMCPServer sets the MCP server reference for session cleanup. When set,
-// the reaper will call MCPServer.UnregisterSession for reaped sessions to
-// prevent a memory leak in the SDK's internal session map.
-func (sm *SessionManager) SetMCPServer(s *server.MCPServer) {
-	sm.mutex.Lock()
-	defer sm.mutex.Unlock()
-	sm.mcpServer = s
 }
 
 // SetToolManager sets the ToolManager reference for session cleanup. When set,
@@ -168,15 +160,24 @@ func (sm *SessionManager) recordActiveSessionCount() {
 	sm.metrics.activeSessions.Record(context.Background(), int64(len(sm.sessions)))
 }
 
-func (sm *SessionManager) CreateSession(ctx context.Context, session server.ClientSession) {
+// TouchOrCreateSession records activity for sessionID, creating its state if
+// this is the first time it's been seen. It is the equivalent of mark3labs'
+// OnRegisterSession hook, called lazily on the first call for a session
+// (typically from GrafanaContextMiddleware) rather than at connection time,
+// since the official SDK has no dedicated session-registration hook.
+func (sm *SessionManager) TouchOrCreateSession(sessionID string) *SessionState {
 	sm.mutex.Lock()
 	defer sm.mutex.Unlock()
 
-	sessionID := session.SessionID()
-	if _, exists := sm.sessions[sessionID]; !exists {
-		sm.sessions[sessionID] = newSessionState()
+	state, exists := sm.sessions[sessionID]
+	if !exists {
+		state = newSessionState()
+		sm.sessions[sessionID] = state
 		sm.recordActiveSessionCount()
+	} else {
+		state.lastActivity = time.Now()
 	}
+	return state
 }
 
 func (sm *SessionManager) GetSession(sessionID string) (*SessionState, bool) {
@@ -191,10 +192,10 @@ func (sm *SessionManager) GetSession(sessionID string) (*SessionState, bool) {
 }
 
 // sessionRegistered reports whether sessionID is still tracked and maps to the
-// exact state pointer given. It is used to detect a teardown that raced an
-// attach: if the session was removed (or replaced by a newer state) since the
-// state was obtained, the caller must release the reference it took, because no
-// future RemoveSession will fire for this untracked state.
+// exact state pointer given. It is used to detect a teardown (reap) that raced
+// an attach: if the session was removed (or replaced by a newer state) since
+// the state was obtained, the caller must release the reference it took,
+// because no future reap will fire for this untracked state.
 func (sm *SessionManager) sessionRegistered(sessionID string, state *SessionState) bool {
 	sm.mutex.RLock()
 	defer sm.mutex.RUnlock()
@@ -202,32 +203,18 @@ func (sm *SessionManager) sessionRegistered(sessionID string, state *SessionStat
 	return exists && current == state
 }
 
-func (sm *SessionManager) RemoveSession(ctx context.Context, session server.ClientSession) {
-	sm.mutex.Lock()
-	sessionID := session.SessionID()
-	state, exists := sm.sessions[sessionID]
-	delete(sm.sessions, sessionID)
-	sm.recordActiveSessionCount()
-	sm.mutex.Unlock()
-
-	if !exists {
-		return
-	}
-
-	sm.cleanupSessionState(state)
-}
-
 // cleanupSessionState releases the session's reference to its shared proxied
-// tool set. The set's clients are closed only when the last referencing session
-// is torn down; other live sessions sharing the same credentials keep them
-// open.
-func (sm *SessionManager) cleanupSessionState(state *SessionState) {
+// tool set and drops its registered *mcp.Server (if any). The set's clients
+// are closed only when the last referencing session is torn down; other live
+// sessions sharing the same credentials keep them open.
+func (sm *SessionManager) cleanupSessionState(sessionID string, state *SessionState) {
 	sm.mutex.RLock()
 	tm := sm.toolManager
 	sm.mutex.RUnlock()
 
 	if tm != nil {
 		tm.releaseSessionProxiedToolSet(state)
+		tm.UnregisterSessionServer(sessionID)
 	}
 }
 
@@ -248,8 +235,8 @@ func (sm *SessionManager) Close() {
 		sm.recordActiveSessionCount()
 		sm.mutex.Unlock()
 
-		for _, state := range sessions {
-			sm.cleanupSessionState(state)
+		for id, state := range sessions {
+			sm.cleanupSessionState(id, state)
 		}
 		sm.logger.Debug("SessionManager closed", "cleaned_sessions", len(sessions))
 	})
@@ -277,13 +264,14 @@ func (sm *SessionManager) runReaper() {
 }
 
 // reapStaleSessions removes sessions that have been idle longer than the TTL.
+// This is the SessionManager's only cleanup path (see the type doc): the
+// official SDK gives no earlier signal that a session has disconnected.
 func (sm *SessionManager) reapStaleSessions() {
 	now := time.Now()
 
 	sm.mutex.Lock()
 	var stale []*SessionState
 	var staleIDs []string
-	mcpSrv := sm.mcpServer
 	for id, state := range sm.sessions {
 		if now.Sub(state.lastActivity) > sm.sessionTTL {
 			stale = append(stale, state)
@@ -301,31 +289,19 @@ func (sm *SessionManager) reapStaleSessions() {
 		sm.logger.Info("Reaping stale sessions", "count", len(stale), "session_ids", staleIDs)
 	}
 
-	ctx := context.Background()
 	for i, state := range stale {
-		sm.cleanupSessionState(state)
-		// Also unregister from MCPServer.sessions to prevent a memory leak.
-		// Sessions may have been registered there via RegisterSession in the
-		// OnBeforeListTools/OnBeforeCallTool hooks for horizontal scaling support.
-		if mcpSrv != nil {
-			mcpSrv.UnregisterSession(ctx, staleIDs[i])
-		}
+		sm.cleanupSessionState(staleIDs[i], state)
 	}
 }
 
 // GetProxiedClient retrieves a proxied client for the given datasource and
 // registers an in-flight call against its shared set, so the client cannot be
-// Closed by a concurrent teardown (RemoveSession / reaper) while the returned
-// client is still in use. The caller MUST invoke the returned release func
-// (deferred) once the call completes; only then may the set be torn down. On
-// error the release func is nil and must not be called.
-func (sm *SessionManager) GetProxiedClient(ctx context.Context, datasourceType, datasourceUID string) (*ProxiedClient, func(), error) {
-	session := server.ClientSessionFromContext(ctx)
-	if session == nil {
-		return nil, nil, fmt.Errorf("session not found in context")
-	}
-
-	state, exists := sm.GetSession(session.SessionID())
+// Closed by a concurrent teardown (the reaper) while the returned client is
+// still in use. The caller MUST invoke the returned release func (deferred)
+// once the call completes; only then may the set be torn down. On error the
+// release func is nil and must not be called.
+func (sm *SessionManager) GetProxiedClient(sessionID, datasourceType, datasourceUID string) (*ProxiedClient, func(), error) {
+	state, exists := sm.GetSession(sessionID)
 	if !exists {
 		return nil, nil, fmt.Errorf("session not found")
 	}

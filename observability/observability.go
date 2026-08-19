@@ -7,6 +7,7 @@ package observability
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -17,8 +18,7 @@ import (
 	"time"
 
 	datasourceschemas "github.com/grafana/mcp-grafana/tools/datasource_schemas"
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	promclient "github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -103,9 +103,6 @@ type Observability struct {
 
 	// Network transport for attribute enrichment
 	networkTransport mcpconv.NetworkTransportAttr
-
-	// Track request start times for duration calculation
-	requestStartTimes sync.Map // map[any]time.Time keyed by request ID
 
 	// Per-session metadata (protocol version, start time)
 	sessions sync.Map // map[string]*sessionMeta keyed by session ID
@@ -310,15 +307,30 @@ func (o *Observability) metricsEnabled() bool {
 	return o.operationDuration.Inst() != nil
 }
 
+// argsFromRequest best-effort unmarshals a CallToolRequest's raw wire
+// arguments into a map for telemetry dimension extraction. Returns nil on any
+// failure (non-object arguments, malformed JSON) - dimension extraction below
+// treats a nil map as "nothing to report," matching prior behaviour.
+func argsFromRequest(req *mcp.CallToolRequest) map[string]any {
+	if req == nil || req.Params == nil || len(req.Params.Arguments) == 0 {
+		return nil
+	}
+	var args map[string]any
+	if err := json.Unmarshal(req.Params.Arguments, &args); err != nil {
+		return nil
+	}
+	return args
+}
+
 // buildOperationAttrs assembles semconv attributes for an operation duration recording.
-func (o *Observability) buildOperationAttrs(ctx context.Context, method mcp.MCPMethod, message any, result any, err error) []attribute.KeyValue {
+func (o *Observability) buildOperationAttrs(method string, req mcp.Request, result any, err error) []attribute.KeyValue {
 	var attrs []attribute.KeyValue
 
 	// Centralised through toolNameFromMessage so metrics and slow-log share
 	// one definition of "tools/call request reached." The bool distinguishes
 	// "no valid request" (skip emission) from "valid request, empty Name"
 	// (emit ""), preserving pre-existing OTel attribute presence semantics.
-	name, ok := toolNameFromMessage(method, message)
+	name, ok := toolNameFromMessage(method, req)
 	if ok {
 		attrs = append(attrs, o.operationDuration.AttrGenAIToolName(name))
 	}
@@ -329,8 +341,8 @@ func (o *Observability) buildOperationAttrs(ctx context.Context, method mcp.MCPM
 	// labels, and only with allowlisted values (others collapse to "other"). The
 	// high-cardinality target is span-only (see enrichSpanWithToolDims).
 	var args map[string]any
-	if req, ok := message.(*mcp.CallToolRequest); ok && req != nil {
-		args = req.GetArguments()
+	if ctReq, ok := req.(*mcp.CallToolRequest); ok && ctReq != nil {
+		args = argsFromRequest(ctReq)
 	}
 	md := ToolMetricDimensions(name, args, result)
 	if md.Operation != "" {
@@ -353,10 +365,10 @@ func (o *Observability) buildOperationAttrs(ctx context.Context, method mcp.MCPM
 		attrs = append(attrs, o.operationDuration.AttrNetworkTransport(o.networkTransport))
 	}
 
-	// mcp.protocol.version from session context
+	// mcp.protocol.version from session metadata captured on initialize.
 	// Note: mcp.session.id is a span-only attribute (not on metrics) to avoid cardinality explosion.
-	if session := server.ClientSessionFromContext(ctx); session != nil {
-		if meta, ok := o.sessions.Load(session.SessionID()); ok {
+	if session := req.GetSession(); session != nil {
+		if meta, ok := o.sessions.Load(session.ID()); ok {
 			sm := meta.(*sessionMeta)
 			if pv, ok := sm.protocolVersion.Load().(string); ok && pv != "" {
 				attrs = append(attrs, o.operationDuration.AttrProtocolVersion(pv))
@@ -367,25 +379,25 @@ func (o *Observability) buildOperationAttrs(ctx context.Context, method mcp.MCPM
 	return attrs
 }
 
-// toolNameFromMessage extracts the tool name from an MCP hook's message
-// argument when the method is tools/call and the message is a non-nil
-// *mcp.CallToolRequest. Returns (name, true) when the assertion succeeds,
-// including when the name is the empty string. Returns ("", false) for
-// wrong method, nil message, or wrong-type message.
+// toolNameFromMessage extracts the tool name from an MCP request when the
+// method is tools/call and req is a non-nil *mcp.CallToolRequest. Returns
+// (name, true) when the assertion succeeds, including when the name is the
+// empty string. Returns ("", false) for wrong method, nil req, or wrong-type
+// req.
 //
 // The bool lets callers distinguish "no valid tools/call request reached"
 // (don't emit attributes) from "valid request reached, Name happens to be
 // empty" (emit with empty value). buildOperationAttrs uses the bool to
 // preserve pre-existing metric series identity for zero-value Params.Name.
-func toolNameFromMessage(method mcp.MCPMethod, message any) (string, bool) {
+func toolNameFromMessage(method string, req mcp.Request) (string, bool) {
 	if method != "tools/call" {
 		return "", false
 	}
-	req, ok := message.(*mcp.CallToolRequest)
-	if !ok || req == nil {
+	ctReq, ok := req.(*mcp.CallToolRequest)
+	if !ok || ctReq == nil || ctReq.Params == nil {
 		return "", false
 	}
-	return req.Params.Name, true
+	return ctReq.Params.Name, true
 }
 
 // Attribute keys for tool-argument-derived telemetry dimensions. operation and
@@ -502,15 +514,15 @@ type toolArgDims struct {
 // wrong-type message, or arguments that are not a JSON object — mirroring
 // toolNameFromMessage's gating so metrics and spans agree on when "a tool call
 // reached."
-func toolArgDimensions(method mcp.MCPMethod, message any) toolArgDims {
+func toolArgDimensions(method string, req mcp.Request) toolArgDims {
 	if method != "tools/call" {
 		return toolArgDims{}
 	}
-	req, ok := message.(*mcp.CallToolRequest)
-	if !ok || req == nil {
+	ctReq, ok := req.(*mcp.CallToolRequest)
+	if !ok || ctReq == nil {
 		return toolArgDims{}
 	}
-	args := req.GetArguments()
+	args := argsFromRequest(ctReq)
 	dims := toolArgDims{
 		operation:    stringArg(args, "operation"),
 		resourceType: stringArg(args, "type"),
@@ -540,7 +552,7 @@ func toolPhaseFromResult(result any) string {
 	if !ok || res == nil || res.Meta == nil {
 		return ""
 	}
-	if v, ok := res.Meta.AdditionalFields[ToolPhaseMetaKey].(string); ok {
+	if v, ok := res.Meta[ToolPhaseMetaKey].(string); ok {
 		return v
 	}
 	return ""
@@ -584,12 +596,12 @@ func ToolMetricDimensions(toolName string, args map[string]any, result any) Tool
 // request. Attributes land on whatever span is active for the request
 // (typically the otelhttp server span), enabling trace-level filtering and —
 // for calls that name an entity — task-span correlation by target.
-func (o *Observability) enrichSpanWithToolDims(ctx context.Context, method mcp.MCPMethod, message any, result any) {
+func (o *Observability) enrichSpanWithToolDims(ctx context.Context, method string, req mcp.Request, result any) {
 	span := trace.SpanFromContext(ctx)
 	if !span.IsRecording() {
 		return
 	}
-	dims := toolArgDimensions(method, message)
+	dims := toolArgDimensions(method, req)
 	var spanAttrs []attribute.KeyValue
 	if dims.operation != "" {
 		spanAttrs = append(spanAttrs, attribute.String(attrKeyToolOperation, dims.operation))
@@ -618,7 +630,7 @@ func (o *Observability) enrichSpanWithToolDims(ctx context.Context, method mcp.M
 // A nil ctx is defensively coerced to context.Background() because some MCP
 // transports (notably stdio) may invoke hooks without a request-scoped
 // context, and slog.LogAttrs on a nil ctx can panic.
-func (o *Observability) maybeLogSlowRequest(ctx context.Context, method mcp.MCPMethod, toolName string, duration time.Duration, err error) {
+func (o *Observability) maybeLogSlowRequest(ctx context.Context, method string, toolName string, duration time.Duration, err error) {
 	if o.slowRequestThreshold <= 0 || duration <= o.slowRequestThreshold {
 		return
 	}
@@ -626,7 +638,7 @@ func (o *Observability) maybeLogSlowRequest(ctx context.Context, method mcp.MCPM
 		ctx = context.Background()
 	}
 	attrs := []slog.Attr{
-		slog.String("mcp.method", string(method)),
+		slog.String("mcp.method", method),
 		slog.Duration("duration", duration),
 		slog.Duration("threshold", o.slowRequestThreshold),
 	}
@@ -657,147 +669,83 @@ func errorTypeName(err error) string {
 	return "_OTHER"
 }
 
-// MCPHooks returns server.Hooks that record MCP metrics, enrich the active trace
-// span with tool dimensions, and/or emit slow-request logs, per configuration.
-// Merge with existing hooks via MergeHooks.
+// MCPMiddleware returns an mcp.Middleware that records MCP metrics, enriches
+// the active trace span with tool dimensions, and/or emits slow-request logs,
+// per configuration. Register it via Server.AddReceivingMiddleware.
+//
+// This replaces the mark3labs OnBeforeAny/OnSuccess/OnError hook trio (three
+// separately-registered callbacks correlated by a requestStartTimes map keyed
+// on request ID) with a single middleware closure: start/duration/outcome are
+// all in one function's scope, so no correlation map is needed.
+//
+// Session-duration tracking is NOT ported: mark3labs' OnUnregisterSession
+// fired immediately on disconnect, but the official SDK exposes no
+// session-disconnect hook at all (see SessionManager's doc in the root
+// package), so there is no reliable moment to record a session's final
+// duration. Per-call protocol-version enrichment (captured on "initialize")
+// is preserved since it only needs a "session seen" moment, not a "session
+// ended" one.
 //
 // Gate (metrics, slow-log, tracing):
-//   - all off → empty hooks (zero-overhead path)
-//   - any on → request hooks registered; span enrichment runs whenever a span is
-//     recording, while metric recording and slow-log emission are each guarded
-//     in the hook body. Tracing must gate here too, else a tracing-only
-//     deployment (traces on, --metrics off, no slow-log) would register no hooks
-//     and never enrich its spans.
-//   - session hooks only when metrics are on (session duration is a metric).
-func (o *Observability) MCPHooks() *server.Hooks {
+//   - all off → a no-op middleware (zero-overhead path)
+//   - any on → span enrichment runs whenever a span is recording, while metric
+//     recording and slow-log emission are each guarded in the middleware body.
+//     Tracing must gate here too, else a tracing-only deployment (traces on,
+//     --metrics off, no slow-log) would register nothing and never enrich its
+//     spans.
+func (o *Observability) MCPMiddleware() mcp.Middleware {
 	metricsOn := o.metricsEnabled()
 	slowLogOn := o.slowRequestThreshold > 0
 	tracingOn := o.tracerProvider != nil
 
 	if !metricsOn && !slowLogOn && !tracingOn {
-		// Nothing to do, return empty hooks
-		return &server.Hooks{}
+		return func(next mcp.MethodHandler) mcp.MethodHandler { return next }
 	}
 
-	hooks := &server.Hooks{
-		OnBeforeAny: []server.BeforeAnyHookFunc{
-			func(ctx context.Context, id any, method mcp.MCPMethod, message any) {
-				o.requestStartTimes.Store(id, time.Now())
-			},
-		},
-		OnSuccess: []server.OnSuccessHookFunc{
-			func(ctx context.Context, id any, method mcp.MCPMethod, message any, result any) {
-				startTime, ok := o.requestStartTimes.LoadAndDelete(id)
-				if !ok {
-					return
+	return func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			if metricsOn && method == "initialize" {
+				if session := req.GetSession(); session != nil {
+					o.sessions.LoadOrStore(session.ID(), &sessionMeta{startTime: time.Now()})
 				}
-				duration := time.Since(startTime.(time.Time))
-				o.enrichSpanWithToolDims(ctx, method, message, result)
-				if o.metricsEnabled() {
-					attrs := o.buildOperationAttrs(ctx, method, message, result, nil)
-					o.operationDuration.Record(ctx, duration.Seconds(), mcpconv.MethodNameAttr(method), attrs...)
-				}
-				toolName, _ := toolNameFromMessage(method, message)
-				o.maybeLogSlowRequest(ctx, method, toolName, duration, nil)
-			},
-		},
-		OnError: []server.OnErrorHookFunc{
-			func(ctx context.Context, id any, method mcp.MCPMethod, message any, err error) {
-				startTime, ok := o.requestStartTimes.LoadAndDelete(id)
-				if !ok {
-					return
-				}
-				duration := time.Since(startTime.(time.Time))
-				o.enrichSpanWithToolDims(ctx, method, message, nil)
-				if o.metricsEnabled() {
-					attrs := o.buildOperationAttrs(ctx, method, message, nil, err)
-					o.operationDuration.Record(ctx, duration.Seconds(), mcpconv.MethodNameAttr(method), attrs...)
-				}
-				toolName, _ := toolNameFromMessage(method, message)
-				o.maybeLogSlowRequest(ctx, method, toolName, duration, err)
-			},
-		},
-	}
+			}
 
-	// Session-tracking hooks only populate when metrics are enabled —
-	// slow-log does not need session metadata.
-	if metricsOn {
-		hooks.OnRegisterSession = []server.OnRegisterSessionHookFunc{
-			func(ctx context.Context, session server.ClientSession) {
-				o.sessions.Store(session.SessionID(), &sessionMeta{
-					startTime: time.Now(),
-				})
-			},
-		}
-		hooks.OnUnregisterSession = []server.OnUnregisterSessionHookFunc{
-			func(ctx context.Context, session server.ClientSession) {
-				sid := session.SessionID()
-				if meta, ok := o.sessions.LoadAndDelete(sid); ok {
-					sm := meta.(*sessionMeta)
-					duration := time.Since(sm.startTime).Seconds()
-					var attrs []attribute.KeyValue
-					if o.networkTransport != "" {
-						attrs = append(attrs, o.sessionDuration.AttrNetworkTransport(o.networkTransport))
-					}
-					if pv, ok := sm.protocolVersion.Load().(string); ok && pv != "" {
-						attrs = append(attrs, o.sessionDuration.AttrProtocolVersion(pv))
-					}
-					o.sessionDuration.Record(ctx, duration, attrs...)
+			start := time.Now()
+			result, err := next(ctx, method, req)
+			duration := time.Since(start)
+
+			if err != nil {
+				o.enrichSpanWithToolDims(ctx, method, req, nil)
+			} else {
+				o.enrichSpanWithToolDims(ctx, method, req, result)
+			}
+			if metricsOn {
+				var attrs []attribute.KeyValue
+				if err != nil {
+					attrs = o.buildOperationAttrs(method, req, nil, err)
+				} else {
+					attrs = o.buildOperationAttrs(method, req, result, nil)
 				}
-			},
-		}
-		hooks.OnAfterInitialize = []server.OnAfterInitializeFunc{
-			func(ctx context.Context, id any, message *mcp.InitializeRequest, result *mcp.InitializeResult) {
-				if result == nil {
-					return
-				}
-				if session := server.ClientSessionFromContext(ctx); session != nil {
-					if meta, ok := o.sessions.Load(session.SessionID()); ok {
-						meta.(*sessionMeta).protocolVersion.Store(result.ProtocolVersion)
+				o.operationDuration.Record(ctx, duration.Seconds(), mcpconv.MethodNameAttr(method), attrs...)
+			}
+			toolName, _ := toolNameFromMessage(method, req)
+			o.maybeLogSlowRequest(ctx, method, toolName, duration, err)
+
+			// Capture the negotiated protocol version once initialize succeeds, for
+			// later per-call metric enrichment (buildOperationAttrs).
+			if metricsOn && method == "initialize" && err == nil {
+				if initResult, ok := result.(*mcp.InitializeResult); ok && initResult != nil {
+					if session := req.GetSession(); session != nil {
+						if meta, ok := o.sessions.Load(session.ID()); ok {
+							meta.(*sessionMeta).protocolVersion.Store(initResult.ProtocolVersion)
+						}
 					}
 				}
-			},
+			}
+
+			return result, err
 		}
 	}
-
-	return hooks
-}
-
-// MergeHooks combines multiple Hooks into one, preserving all hook functions.
-func MergeHooks(hooks ...*server.Hooks) *server.Hooks {
-	merged := &server.Hooks{}
-	for _, h := range hooks {
-		if h == nil {
-			continue
-		}
-		merged.OnRegisterSession = append(merged.OnRegisterSession, h.OnRegisterSession...)
-		merged.OnUnregisterSession = append(merged.OnUnregisterSession, h.OnUnregisterSession...)
-		merged.OnBeforeAny = append(merged.OnBeforeAny, h.OnBeforeAny...)
-		merged.OnSuccess = append(merged.OnSuccess, h.OnSuccess...)
-		merged.OnError = append(merged.OnError, h.OnError...)
-		merged.OnRequestInitialization = append(merged.OnRequestInitialization, h.OnRequestInitialization...)
-		merged.OnBeforeInitialize = append(merged.OnBeforeInitialize, h.OnBeforeInitialize...)
-		merged.OnAfterInitialize = append(merged.OnAfterInitialize, h.OnAfterInitialize...)
-		merged.OnBeforePing = append(merged.OnBeforePing, h.OnBeforePing...)
-		merged.OnAfterPing = append(merged.OnAfterPing, h.OnAfterPing...)
-		merged.OnBeforeSetLevel = append(merged.OnBeforeSetLevel, h.OnBeforeSetLevel...)
-		merged.OnAfterSetLevel = append(merged.OnAfterSetLevel, h.OnAfterSetLevel...)
-		merged.OnBeforeListResources = append(merged.OnBeforeListResources, h.OnBeforeListResources...)
-		merged.OnAfterListResources = append(merged.OnAfterListResources, h.OnAfterListResources...)
-		merged.OnBeforeListResourceTemplates = append(merged.OnBeforeListResourceTemplates, h.OnBeforeListResourceTemplates...)
-		merged.OnAfterListResourceTemplates = append(merged.OnAfterListResourceTemplates, h.OnAfterListResourceTemplates...)
-		merged.OnBeforeReadResource = append(merged.OnBeforeReadResource, h.OnBeforeReadResource...)
-		merged.OnAfterReadResource = append(merged.OnAfterReadResource, h.OnAfterReadResource...)
-		merged.OnBeforeListPrompts = append(merged.OnBeforeListPrompts, h.OnBeforeListPrompts...)
-		merged.OnAfterListPrompts = append(merged.OnAfterListPrompts, h.OnAfterListPrompts...)
-		merged.OnBeforeGetPrompt = append(merged.OnBeforeGetPrompt, h.OnBeforeGetPrompt...)
-		merged.OnAfterGetPrompt = append(merged.OnAfterGetPrompt, h.OnAfterGetPrompt...)
-		merged.OnBeforeListTools = append(merged.OnBeforeListTools, h.OnBeforeListTools...)
-		merged.OnAfterListTools = append(merged.OnAfterListTools, h.OnAfterListTools...)
-		merged.OnBeforeCallTool = append(merged.OnBeforeCallTool, h.OnBeforeCallTool...)
-		merged.OnAfterCallTool = append(merged.OnAfterCallTool, h.OnAfterCallTool...)
-	}
-	return merged
 }
 
 // LoggerProvider returns the OTLP log provider, or nil if OTLP logging is
