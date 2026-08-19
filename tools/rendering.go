@@ -2,7 +2,6 @@ package tools
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,8 +12,7 @@ import (
 	"time"
 
 	"github.com/invopop/jsonschema"
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
 )
@@ -160,15 +158,11 @@ func getPanelImage(ctx context.Context, args GetPanelImageParams) (*mcp.CallTool
 		return nil, fmt.Errorf("failed to read image data: %w", err)
 	}
 
-	// Return the image as base64 encoded data using MCP's image content type
-	base64Data := base64.StdEncoding.EncodeToString(imageData)
-
-	// Rendering succeeded, so always return the image. The deeplink is
-	// best-effort metadata added only if it builds successfully.
+	// Return the image using MCP's image content type. Data is raw bytes -
+	// the SDK base64-encodes []byte fields automatically when marshaling.
 	content := []mcp.Content{
-		mcp.ImageContent{
-			Type:     "image",
-			Data:     base64Data,
+		&mcp.ImageContent{
+			Data:     imageData,
 			MIMEType: "image/png",
 		},
 	}
@@ -177,9 +171,8 @@ func getPanelImage(ctx context.Context, args GetPanelImageParams) (*mcp.CallTool
 	// endpoint the browser can't reach.
 	if deeplinkBase, err := grafanaBaseURLFromContext(ctx); err == nil {
 		if deeplink, err := buildDashboardDeeplink(deeplinkBase, args); err == nil {
-			content = append(content, mcp.TextContent{
+			content = append(content, &mcp.TextContent{
 				Meta: mcpgrafana.NewUIContentMeta(mcpgrafana.UIContentKindDeeplink),
-				Type: "text",
 				Text: deeplink,
 			})
 		}
@@ -357,14 +350,14 @@ var GetPanelImage = mcpgrafana.MustTool(
 		"Either dashboardUid (for stored dashboards) or provisioningPreview (for dashboards staged on a provisioning repository branch, e.g. a git-sync PR) must be supplied. "+
 		"Use this for generating visual snapshots of dashboards for reports, alerts, or presentations.",
 	getPanelImage,
-	mcp.WithTitleAnnotation("Get panel or dashboard image"),
-	mcp.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithTitleAnnotation("Get panel or dashboard image"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
 	mcpgrafana.WithUIResource(mcpgrafana.PanelViewerResourceURI),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
-func AddRenderingTools(mcp *server.MCPServer) {
+func AddRenderingTools(mcp *mcp.Server) {
 	GetPanelImage.Register(mcp)
 }

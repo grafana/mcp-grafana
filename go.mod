@@ -17,6 +17,7 @@ require (
 	github.com/invopop/jsonschema v0.13.0
 	github.com/itchyny/gojq v0.12.19
 	github.com/mark3labs/mcp-go v0.55.0
+	github.com/modelcontextprotocol/go-sdk v1.7.0
 	github.com/prometheus/alertmanager v0.31.1
 	github.com/prometheus/client_golang v1.23.2
 	github.com/prometheus/common v0.67.5
@@ -99,7 +100,7 @@ require (
 	github.com/google/gnostic-models v0.7.0 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/go-querystring v1.2.0 // indirect
-	github.com/google/jsonschema-go v0.4.2 // indirect
+	github.com/google/jsonschema-go v0.4.3 // indirect
 	github.com/gorilla/mux v1.8.1 // indirect
 	github.com/grafana/otel-profiling-go v0.5.1 // indirect
 	github.com/grafana/pyroscope-go/godeltaprof v0.1.9 // indirect
@@ -142,6 +143,8 @@ require (
 	github.com/prometheus/procfs v0.19.2 // indirect
 	github.com/prometheus/sigv4 v0.4.1 // indirect
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2 // indirect
+	github.com/segmentio/asm v1.1.3 // indirect
+	github.com/segmentio/encoding v0.5.4 // indirect
 	github.com/shopspring/decimal v1.4.0 // indirect
 	github.com/spf13/cast v1.10.0 // indirect
 	github.com/wk8/go-ordered-map/v2 v2.1.8 // indirect
@@ -165,6 +168,7 @@ require (
 	golang.org/x/sys v0.45.0 // indirect
 	golang.org/x/telemetry v0.0.0-20260409153401-be6f6cb8b1fa // indirect
 	golang.org/x/text v0.37.0 // indirect
+	golang.org/x/time v0.15.0 // indirect
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260401024825-9d38bb4040a9 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260401024825-9d38bb4040a9 // indirect

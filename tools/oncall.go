@@ -10,8 +10,7 @@ import (
 
 	aapi "github.com/grafana/amixr-api-go-client"
 	mcpgrafana "github.com/grafana/mcp-grafana"
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // getOnCallURLFromSettings retrieves the OnCall API URL from the Grafana settings endpoint.
@@ -189,11 +188,11 @@ var ListOnCallSchedules = mcpgrafana.MustTool(
 	"list_oncall_schedules",
 	"List Grafana OnCall schedules, optionally filtering by team ID. If a specific schedule ID is provided, retrieves details for only that schedule. Returns a list of schedule summaries including ID, name, team ID, timezone, and shift IDs. Supports pagination.",
 	listOnCallSchedules,
-	mcp.WithTitleAnnotation("List OnCall schedules"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("List OnCall schedules"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 // --- Shifts ---
@@ -241,11 +240,11 @@ var GetOnCallShift = mcpgrafana.MustTool(
 	"get_oncall_shift",
 	"Get detailed information for a specific Grafana OnCall shift using its ID. A shift represents a designated time period within a schedule when users are actively on-call. Returns the full shift details.",
 	getOnCallShift,
-	mcp.WithTitleAnnotation("Get OnCall shift"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Get OnCall shift"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 // --- Current On-Call Users ---
@@ -311,11 +310,11 @@ var GetCurrentOnCallUsers = mcpgrafana.MustTool(
 	"get_current_oncall_users",
 	"Get the list of users currently on-call for a specific Grafana OnCall schedule ID. Returns the schedule ID, name, and a list of detailed user objects for those currently on call.",
 	getCurrentOnCallUsers,
-	mcp.WithTitleAnnotation("Get current on-call users"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Get current on-call users"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 // --- Teams ---
@@ -364,11 +363,11 @@ var ListOnCallTeams = mcpgrafana.MustTool(
 	"list_oncall_teams",
 	"List teams configured in Grafana OnCall. Returns a list of team objects with their details. Supports pagination.",
 	listOnCallTeams,
-	mcp.WithTitleAnnotation("List OnCall teams"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("List OnCall teams"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 // --- Users ---
@@ -436,11 +435,11 @@ var ListOnCallUsers = mcpgrafana.MustTool(
 	"list_oncall_users",
 	"List users from Grafana OnCall. These are OnCall users (separate from Grafana users). Can retrieve all users in the OnCall directory, a specific user by ID, or filter by username. Returns a list of user objects with their details. Supports pagination.",
 	listOnCallUsers,
-	mcp.WithTitleAnnotation("List OnCall users"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("List OnCall users"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 // --- Alert Groups ---
@@ -527,11 +526,11 @@ var ListAlertGroups = mcpgrafana.MustTool(
 	"list_alert_groups",
 	"List alert groups from Grafana OnCall with filtering options. Supports filtering by alert group ID, route ID, integration ID, state (new, acknowledged, resolved, silenced), team ID, time range, labels, and name. For time ranges, use format '{start}_{end}' ISO 8601 timestamp range (e.g., '2025-01-19T00:00:00_2025-01-19T23:59:59' for a specific day). For labels, use format 'key:value' (e.g., ['env:prod', 'severity:high']). Returns a list of alert group objects with their details. Supports pagination.",
 	listAlertGroups,
-	mcp.WithTitleAnnotation("List IRM alert groups"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("List IRM alert groups"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 type GetAlertGroupParams struct {
@@ -574,14 +573,14 @@ var GetAlertGroup = mcpgrafana.MustTool(
 	"get_alert_group",
 	"Get a specific alert group from Grafana OnCall by its ID. Returns the full alert group details.",
 	getAlertGroup,
-	mcp.WithTitleAnnotation("Get IRM alert group"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Get IRM alert group"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
-func AddOnCallTools(mcp *server.MCPServer) {
+func AddOnCallTools(mcp *mcp.Server) {
 	ListOnCallSchedules.Register(mcp)
 	GetOnCallShift.Register(mcp)
 	GetCurrentOnCallUsers.Register(mcp)

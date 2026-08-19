@@ -9,14 +9,12 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
-
 	"github.com/grafana/grafana-openapi-client-go/client/datasources"
 	"github.com/grafana/grafana-openapi-client-go/models"
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/grafana/mcp-grafana/observability"
 	datasourceschemas "github.com/grafana/mcp-grafana/tools/datasource_schemas"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 const (
@@ -39,12 +37,9 @@ const (
 // data (see observability.ToolPhaseMetaKey).
 func withToolPhase(r *mcp.CallToolResult, phase string) *mcp.CallToolResult {
 	if r.Meta == nil {
-		r.Meta = &mcp.Meta{}
+		r.Meta = mcp.Meta{}
 	}
-	if r.Meta.AdditionalFields == nil {
-		r.Meta.AdditionalFields = map[string]any{}
-	}
-	r.Meta.AdditionalFields[observability.ToolPhaseMetaKey] = phase
+	r.Meta[observability.ToolPhaseMetaKey] = phase
 	return r
 }
 
@@ -310,11 +305,11 @@ func createDatasource(ctx context.Context, args CreateDatasourceParams) (*mcp.Ca
 	// directly.
 	if schema != nil && (!args.SchemaReviewed || args.Name == "") {
 		text, _ := json.Marshal(datasourceschemas.BuildSchemaGuidance(schema, "create_datasource"))
-		return withToolPhase(mcp.NewToolResultText(string(text)), dsPhaseSchema), nil
+		return withToolPhase(mcpgrafana.NewToolResultText(string(text)), dsPhaseSchema), nil
 	}
 	if schema == nil && args.Name == "" {
 		text, _ := json.Marshal(noSchemaGuidance(args.Type))
-		return withToolPhase(mcp.NewToolResultText(string(text)), dsPhaseSchema), nil
+		return withToolPhase(mcpgrafana.NewToolResultText(string(text)), dsPhaseSchema), nil
 	}
 
 	dsAccess := args.Access
@@ -378,9 +373,8 @@ func createDatasource(ctx context.Context, args CreateDatasourceParams) (*mcp.Ca
 		if err != nil {
 			return nil, fmt.Errorf("marshal result: %w", err)
 		}
-		toolResult := mcp.NewToolResultText(string(b))
-		toolResult.Content = append(toolResult.Content, mcp.ResourceLink{
-			Type:        "resource_link",
+		toolResult := mcpgrafana.NewToolResultText(string(b))
+		toolResult.Content = append(toolResult.Content, &mcp.ResourceLink{
 			URI:         configPageURL,
 			Name:        result.Name,
 			Description: "Datasource configuration page",
@@ -391,7 +385,7 @@ func createDatasource(ctx context.Context, args CreateDatasourceParams) (*mcp.Ca
 	if err != nil {
 		return nil, fmt.Errorf("marshal result: %w", err)
 	}
-	return withToolPhase(mcp.NewToolResultText(string(b)), dsPhaseCreated), nil
+	return withToolPhase(mcpgrafana.NewToolResultText(string(b)), dsPhaseCreated), nil
 }
 
 // filterDatasources returns only datasources whose type contains `t` and
@@ -434,33 +428,33 @@ var ListDatasources = mcpgrafana.MustTool(
 	"list_datasources",
 	"List all configured datasources in Grafana. Use this to discover available datasources and their UIDs. Supports filtering by type and/or name (case-insensitive substring match) and pagination.",
 	listDatasources,
-	mcp.WithTitleAnnotation("List datasources"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("List datasources"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 var CreateDatasource = mcpgrafana.MustTool(
 	"create_datasource",
 	"Create a datasource. If type is ambiguous, call search_plugin_information first; install the plugin if needed. IMPORTANT: always call this tool twice. First call: provide only the type — the tool returns a field schema. After receiving the schema, you MUST ask the user for every required field value explicitly; do not infer or use defaults without user confirmation. Second call: provide the type, the display name in the top-level name argument, schemaReviewed=true, and the fields map populated with values confirmed by the user. Never handle credentials — remind the user to rotate any detected. Returns UID, health check, and a config page link. ",
 	createDatasource,
-	mcp.WithTitleAnnotation("Create datasource"),
-	mcp.WithIdempotentHintAnnotation(false),
-	mcp.WithReadOnlyHintAnnotation(false),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Create datasource"),
+	mcpgrafana.WithIdempotentHintAnnotation(false),
+	mcpgrafana.WithReadOnlyHintAnnotation(false),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 var UpdateDatasource = mcpgrafana.MustTool(
 	"update_datasource",
 	"Update non-secret datasource fields by UID. Omitted fields are preserved. IMPORTANT: always call this tool twice. First call: provide only the uid — the tool returns the datasource's field schema. After receiving the schema, ask the user which fields they want to change and confirm each new value; do not infer or reset fields the user did not mention. Second call: provide the uid, schemaReviewed=true, and the changed values in the fields map. Returns an update message and a health check. For secrets, direct the user to the Grafana UI.",
 	updateDatasource,
-	mcp.WithTitleAnnotation("Update datasource"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(false),
-	mcp.WithDestructiveHintAnnotation(true),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Update datasource"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(false),
+	mcpgrafana.WithDestructiveHintAnnotation(true),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 type GetDatasourceByUIDParams struct {
@@ -517,11 +511,11 @@ var GetDatasource = mcpgrafana.MustTool(
 	"get_datasource",
 	"Retrieves detailed information about a specific datasource by UID or name. Returns the full datasource model, including name, type, URL, access settings, JSON data, and secure JSON field status. Provide either uid or name; uid takes priority if both are given.",
 	getDatasource,
-	mcp.WithTitleAnnotation("Get datasource"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Get datasource"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 type UpdateDatasourceParams struct {
@@ -573,7 +567,7 @@ func updateDatasource(ctx context.Context, args UpdateDatasourceParams) (*mcp.Ca
 			guidance = noUpdateSchemaGuidance(ds.Type)
 		}
 		text, _ := json.Marshal(guidance)
-		return mcp.NewToolResultText(string(text)), nil
+		return mcpgrafana.NewToolResultText(string(text)), nil
 	}
 
 	cmd := &models.UpdateDataSourceCommand{
@@ -646,7 +640,7 @@ func updateDatasource(ctx context.Context, args UpdateDatasourceParams) (*mcp.Ca
 	if err != nil {
 		return nil, fmt.Errorf("marshal result: %w", err)
 	}
-	return mcp.NewToolResultText(string(b)), nil
+	return mcpgrafana.NewToolResultText(string(b)), nil
 }
 
 type CheckDatasourceHealthParams struct {
@@ -821,15 +815,15 @@ var CheckDatasourcesHealth = mcpgrafana.MustTool(
 	"check_datasources_health",
 	"Check datasource health. Filter by type or UIDs; omit both to check all.",
 	checkDatasourcesHealth,
-	mcp.WithTitleAnnotation("Check datasources health"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Check datasources health"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 // AddDatasourceTools registers the datasource tools on the MCP server; write tools are registered only when enableWriteTools is true.
-func AddDatasourceTools(mcp *server.MCPServer, enableWriteTools bool) {
+func AddDatasourceTools(mcp *mcp.Server, enableWriteTools bool) {
 	ListDatasources.Register(mcp)
 	GetDatasource.Register(mcp)
 	CheckDatasourcesHealth.Register(mcp)

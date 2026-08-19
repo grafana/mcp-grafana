@@ -7,8 +7,7 @@ import (
 	"strings"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // This file hosts config-generation tools — outputs that operators paste
@@ -117,14 +116,14 @@ var SuggestLokiAlloyLabelConfig = mcpgrafana.MustTool(
 	"suggest_loki_alloy_label_config",
 	"Generates an Alloy loki.process snippet enforcing an approved label set via stage.label_keep, with optional log-level normalisation and soft-enforcement placeholders.",
 	suggestLokiAlloyLabelConfig,
-	mcp.WithTitleAnnotation("Suggest Alloy label enforcement config"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Suggest Alloy label enforcement config"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 // AddConfigTools registers the config-generation tool set.
-func AddConfigTools(s *server.MCPServer) {
+func AddConfigTools(s *mcp.Server) {
 	SuggestLokiAlloyLabelConfig.Register(s)
 }

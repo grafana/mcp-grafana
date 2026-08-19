@@ -13,8 +13,7 @@ import (
 
 	"github.com/grafana/grafana-openapi-client-go/models"
 	mcpgrafana "github.com/grafana/mcp-grafana"
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 const (
@@ -219,11 +218,11 @@ var ListLokiLabelNames = mcpgrafana.MustTool(
 	"list_loki_label_names",
 	"Lists all available label/field names (keys) found in logs within a specified Loki or VictoriaLogs datasource and time range. Returns a list of unique label strings (e.g., `[\"app\", \"env\", \"pod\"]`). If the time range is not provided, it defaults to the last hour.",
 	listLokiLabelNames,
-	mcp.WithTitleAnnotation("List Loki label names"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("List Loki label names"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 // ListLokiLabelValuesParams defines the parameters for listing Loki label values
@@ -268,11 +267,11 @@ var ListLokiLabelValues = mcpgrafana.MustTool(
 	"list_loki_label_values",
 	"Retrieves all unique values associated with a specific `labelName` within a Loki or VictoriaLogs datasource and time range. Returns a list of string values (e.g., for `labelName=\"env\"`, might return `[\"prod\", \"staging\", \"dev\"]`). Useful for discovering filter options. Defaults to the last hour if the time range is omitted.",
 	listLokiLabelValues,
-	mcp.WithTitleAnnotation("List Loki label values"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("List Loki label values"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 // LokiLogStream represents a stream of log entries from Loki (resultType: "streams")
@@ -748,11 +747,11 @@ var QueryLokiLogs = mcpgrafana.MustTool(
 	"query_loki_logs",
 	"Executes a log query against a Loki or VictoriaLogs datasource and returns matching log entries (or metric samples on Loki). Defaults to the last hour, a limit of 10 entries, and 'backward' direction (newest first). The `logql` parameter takes LogQL on Loki and LogsQL on VictoriaLogs (e.g., Loki: `{app=\"foo\"} |= \"error\"`; VictoriaLogs: `{app=\"foo\"} \"error\"`). To count matching log lines precisely, use a `count_over_time()` metric query with queryType='instant'. Prefer using `query_loki_stats` first to cheaply check whether a stream contains data (avoiding expensive queries against empty streams) and `list_loki_label_names` / `list_loki_label_values` to verify labels exist before querying. Note: `query_loki_stats` returns approximate storage-level counts, not exact log line counts.",
 	queryLokiLogs,
-	mcp.WithTitleAnnotation("Query Loki logs"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Query Loki logs"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 // fetchStats is a method to fetch stats data from Loki API
@@ -862,11 +861,11 @@ var QueryLokiStats = mcpgrafana.MustTool(
 	"query_loki_stats",
 	"Retrieves index-level statistics about log streams matching a given selector within a Loki or VictoriaLogs datasource and time range. Returns an object containing the count of streams, chunks, entries, and total bytes (e.g., `{\"streams\": 5, \"chunks\": 50, \"entries\": 10000, \"bytes\": 512000}`). **Important**: the `entries` count reflects storage-level index entries (chunk metadata), NOT the number of individual log lines matching the selector. To count actual matching log lines, use `query_loki_logs` with a `count_over_time()` metric query instead. On VictoriaLogs only `entries` is populated; the other fields remain zero. The `logql` parameter **must** be a simple label selector (e.g., `{app=\"nginx\", env=\"prod\"}`) and does not support line filters, parsers, or aggregations. Defaults to the last hour if the time range is omitted.",
 	queryLokiStats,
-	mcp.WithTitleAnnotation("Get Loki log statistics"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Get Loki log statistics"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 // QueryLokiPatternsParams defines the parameters for querying Loki patterns
@@ -905,17 +904,17 @@ var QueryLokiPatterns = mcpgrafana.MustTool(
 	"query_loki_patterns",
 	"Retrieves detected log patterns from a Loki datasource for a given stream selector and time range. Returns a list of patterns, each containing a pattern string and a total count of occurrences. Patterns help identify common log structures and anomalies. The `logql` parameter must be a stream selector (e.g., `{job=\"nginx\"}`) and does not support line filters or aggregations. Defaults to the last hour if the time range is omitted. **Not supported on VictoriaLogs** datasources - use a `| stats` pipeline instead.",
 	queryLokiPatterns,
-	mcp.WithTitleAnnotation("Query Loki patterns"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Query Loki patterns"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 // AddLokiTools registers all Loki tools with the MCP server.
 // Config-generation tools (e.g. suggest_loki_alloy_label_config) live in
 // the separate "config" category — see tools.AddConfigTools.
-func AddLokiTools(mcp *server.MCPServer) {
+func AddLokiTools(mcp *mcp.Server) {
 	ListLokiLabelNames.Register(mcp)
 	ListLokiLabelValues.Register(mcp)
 	QueryLokiStats.Register(mcp)

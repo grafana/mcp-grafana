@@ -5,8 +5,7 @@ import (
 	"fmt"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // QueryElasticsearchParams defines the parameters for querying Elasticsearch or OpenSearch
@@ -53,14 +52,14 @@ var QueryElasticsearch = mcpgrafana.MustTool(
 	"query_elasticsearch",
 	"Executes a search query against an Elasticsearch or OpenSearch datasource and retrieves matching documents. Supports Lucene query syntax (e.g., 'status:200 AND host:server1') for both Elasticsearch and OpenSearch. Elasticsearch Query DSL JSON is also supported for Elasticsearch datasources only (not OpenSearch). Returns a list of documents with their index, ID, source fields, and optional score. Use this to search logs, metrics, or any indexed data stored in Elasticsearch or OpenSearch. Defaults to 10 results and sorts by @timestamp in descending order (newest first).",
 	queryElasticsearch,
-	mcp.WithTitleAnnotation("Query Elasticsearch"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Query Elasticsearch"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 // AddElasticsearchTools registers all Elasticsearch and OpenSearch tools with the MCP server
-func AddElasticsearchTools(mcp *server.MCPServer) {
+func AddElasticsearchTools(mcp *mcp.Server) {
 	QueryElasticsearch.Register(mcp)
 }

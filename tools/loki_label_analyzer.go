@@ -8,8 +8,7 @@ import (
 	"strings"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // The functions in this file translate the Grafana Professional Services
@@ -926,7 +925,7 @@ func buildPerfSummary(findings []QueryPerfFinding, stats *Stats) string {
 
 // AddLokiLabelAnalyzerTools registers the label-analyzer tool set.
 // AddLokiTools calls this so the standard Loki bundle includes them.
-func AddLokiLabelAnalyzerTools(s *server.MCPServer) {
+func AddLokiLabelAnalyzerTools(s *mcp.Server) {
 	AnalyzeLokiLabels.Register(s)
 }
 
@@ -1008,9 +1007,9 @@ var AnalyzeLokiLabels = mcpgrafana.MustTool(
 	"analyze_loki_labels",
 	"Audits a Loki label strategy and optionally diagnoses query performance. Returns per-label verdicts, missing base labels, normalisation issues, and a recommended set. Pass datasourceUid for live cardinality or labels for static scoring; both may be combined.",
 	analyzeLokiLabels,
-	mcp.WithTitleAnnotation("Analyze Loki label strategy"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Analyze Loki label strategy"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )

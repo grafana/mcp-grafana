@@ -10,8 +10,7 @@ import (
 	"strings"
 
 	"github.com/invopop/jsonschema"
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -25,8 +24,8 @@ import (
 // The simplest way to create a Tool is to use MustTool for compile-time tool creation,
 // or ConvertTool if you need runtime tool creation with proper error handling.
 type Tool struct {
-	Tool    mcp.Tool
-	Handler server.ToolHandlerFunc
+	Tool    *mcp.Tool
+	Handler mcp.ToolHandler
 }
 
 // HardError wraps an error to indicate it should propagate as a JSON-RPC protocol
@@ -44,13 +43,52 @@ func (e *HardError) Unwrap() error {
 	return e.Err
 }
 
-// Register adds the Tool to the given MCPServer.
-// It is a convenience method that calls server.MCPServer.AddTool with the Tool's metadata and handler,
+// Register adds the Tool to the given Server.
+// It is a convenience method that calls Server.AddTool with the Tool's metadata and handler,
 // allowing fluent tool registration in a single statement:
 //
 //	mcpgrafana.MustTool(name, description, toolHandler).Register(server)
-func (t *Tool) Register(mcp *server.MCPServer) {
-	mcp.AddTool(t.Tool, t.Handler)
+func (t *Tool) Register(s *mcp.Server) {
+	s.AddTool(t.Tool, t.Handler)
+}
+
+// ToolOption configures optional metadata (annotations) on a Tool. It mirrors
+// the small subset of mark3labs' mcp.ToolOption surface this codebase used,
+// since the official SDK exposes annotations as plain struct fields rather
+// than functional options.
+type ToolOption func(*mcp.Tool)
+
+// ensureAnnotations returns t.Annotations, allocating it if necessary.
+func ensureAnnotations(t *mcp.Tool) *mcp.ToolAnnotations {
+	if t.Annotations == nil {
+		t.Annotations = &mcp.ToolAnnotations{}
+	}
+	return t.Annotations
+}
+
+// WithTitleAnnotation sets the tool's human-readable title annotation.
+func WithTitleAnnotation(title string) ToolOption {
+	return func(t *mcp.Tool) { ensureAnnotations(t).Title = title }
+}
+
+// WithReadOnlyHintAnnotation sets whether the tool does not modify its environment.
+func WithReadOnlyHintAnnotation(value bool) ToolOption {
+	return func(t *mcp.Tool) { ensureAnnotations(t).ReadOnlyHint = value }
+}
+
+// WithDestructiveHintAnnotation sets whether the tool may perform destructive updates.
+func WithDestructiveHintAnnotation(value bool) ToolOption {
+	return func(t *mcp.Tool) { ensureAnnotations(t).DestructiveHint = &value }
+}
+
+// WithIdempotentHintAnnotation sets whether repeated calls with the same arguments are a no-op.
+func WithIdempotentHintAnnotation(value bool) ToolOption {
+	return func(t *mcp.Tool) { ensureAnnotations(t).IdempotentHint = value }
+}
+
+// WithOpenWorldHintAnnotation sets whether the tool interacts with an open world of external entities.
+func WithOpenWorldHintAnnotation(value bool) ToolOption {
+	return func(t *mcp.Tool) { ensureAnnotations(t).OpenWorldHint = &value }
 }
 
 // MustTool creates a new Tool from the given name, description, and toolHandler.
@@ -58,7 +96,7 @@ func (t *Tool) Register(mcp *server.MCPServer) {
 func MustTool[T any, R any](
 	name, description string,
 	toolHandler ToolHandlerFunc[T, R],
-	options ...mcp.ToolOption,
+	options ...ToolOption,
 ) Tool {
 	tool, handler, err := ConvertTool(name, description, toolHandler, options...)
 	if err != nil {
@@ -197,34 +235,59 @@ func collectStringSliceFieldNames(structType reflect.Type) map[string]bool {
 	return fields
 }
 
-// ConvertTool converts a toolHandler function to an MCP Tool and ToolHandlerFunc.
+// toolArgumentsSchema mirrors the shape mark3labs' mcp.ToolArgumentsSchema
+// marshaled to, so that existing tool schemas (and their tests) are
+// unaffected by the SDK migration. Required is omitted when empty, matching
+// the previous behaviour.
+type toolArgumentsSchema struct {
+	Type                 string         `json:"type"`
+	Properties           map[string]any `json:"properties"`
+	Required             []string       `json:"required,omitempty"`
+	AdditionalProperties any            `json:"additionalProperties,omitempty"`
+}
+
+// NewToolResultText builds a *mcp.CallToolResult carrying a single text content item.
+func NewToolResultText(text string) *mcp.CallToolResult {
+	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: text}}}
+}
+
+// NewToolResultError builds a *mcp.CallToolResult carrying a single text content
+// item and IsError set, i.e. a tool-level error surfaced to the model rather
+// than a JSON-RPC protocol error.
+func NewToolResultError(text string) *mcp.CallToolResult {
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{&mcp.TextContent{Text: text}},
+		IsError: true,
+	}
+}
+
+// ConvertTool converts a toolHandler function to an MCP Tool and mcp.ToolHandler.
 // The toolHandler must accept a context.Context and a struct with jsonschema tags for parameter documentation.
 // The struct fields define the tool's input schema, while the return value can be a string, struct, or *mcp.CallToolResult.
 // This function automatically generates JSON schema from the struct type and wraps the handler with OpenTelemetry instrumentation.
-func ConvertTool[T any, R any](name, description string, toolHandler ToolHandlerFunc[T, R], options ...mcp.ToolOption) (mcp.Tool, server.ToolHandlerFunc, error) {
-	zero := mcp.Tool{}
+func ConvertTool[T any, R any](name, description string, toolHandler ToolHandlerFunc[T, R], options ...ToolOption) (*mcp.Tool, mcp.ToolHandler, error) {
 	handlerValue := reflect.ValueOf(toolHandler)
 	handlerType := handlerValue.Type()
 	if handlerType.Kind() != reflect.Func {
-		return zero, nil, errors.New("tool handler must be a function")
+		return nil, nil, errors.New("tool handler must be a function")
 	}
 	if handlerType.NumIn() != 2 {
-		return zero, nil, errors.New("tool handler must have 2 arguments")
+		return nil, nil, errors.New("tool handler must have 2 arguments")
 	}
 	if handlerType.NumOut() != 2 {
-		return zero, nil, errors.New("tool handler must return 2 values")
+		return nil, nil, errors.New("tool handler must return 2 values")
 	}
 	if handlerType.In(0) != reflect.TypeOf((*context.Context)(nil)).Elem() {
-		return zero, nil, errors.New("tool handler first argument must be context.Context")
+		return nil, nil, errors.New("tool handler first argument must be context.Context")
 	}
 	// We no longer check the type of the first return value
 	if handlerType.Out(1).Kind() != reflect.Interface {
-		return zero, nil, errors.New("tool handler second return value must be error")
+		return nil, nil, errors.New("tool handler second return value must be error")
 	}
 
 	argType := handlerType.In(1)
 	if argType.Kind() != reflect.Struct {
-		return zero, nil, errors.New("tool handler second argument must be a struct")
+		return nil, nil, errors.New("tool handler second argument must be a struct")
 	}
 
 	// Built before the handler closure so it can validate incoming argument
@@ -235,7 +298,7 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 		properties[pair.Key] = pair.Value
 	}
 
-	handler := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	handler := func(ctx context.Context, request *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		config := GrafanaConfigFromContext(ctx)
 
 		// Extract W3C trace context from request _meta if present
@@ -253,15 +316,18 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 			semconv.GenAIToolName(name),
 			attribute.String("mcp.method.name", "tools/call"),
 		)
-		if session := server.ClientSessionFromContext(ctx); session != nil {
-			span.SetAttributes(semconv.McpSessionID(session.SessionID()))
+		if request.Session != nil {
+			span.SetAttributes(semconv.McpSessionID(request.Session.ID()))
 		}
 
-		argBytes, err := json.Marshal(request.Params.Arguments)
-		if err != nil {
-			span.RecordError(err)
-			span.SetStatus(codes.Error, "failed to marshal arguments")
-			return nil, fmt.Errorf("marshal args: %w", err)
+		// Arguments arrive as raw wire bytes; unmarshaling/validating them is
+		// this wrapper's responsibility (see mcp.AddTool's documentation).
+		var argBytes json.RawMessage
+		if request.Params != nil {
+			argBytes = request.Params.Arguments
+		}
+		if len(argBytes) == 0 {
+			argBytes = json.RawMessage("{}")
 		}
 
 		// Add arguments as span attribute only if adding args to trace attributes is enabled
@@ -269,14 +335,20 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 			span.SetAttributes(attribute.String("gen_ai.tool.call.arguments", string(argBytes)))
 		}
 
+		var rawArgs map[string]any
+		if err := json.Unmarshal(argBytes, &rawArgs); err != nil {
+			// Non-object argument shapes are left to the decode path below to report.
+			rawArgs = nil
+		}
+
 		// Reject unknown argument keys instead of silently dropping them: a typo'd
 		// optional argument (e.g. "start_rfc3339" for "start_rfc_3339") would
 		// otherwise leave the field zero-valued and the tool would answer a
 		// different question than the caller asked. The error is returned as a
 		// tool result (not a protocol error) so LLM callers can see it and retry.
-		if unknown := unknownArguments(request.Params.Arguments, properties); len(unknown) > 0 {
+		if unknown := unknownArguments(rawArgs, properties); len(unknown) > 0 {
 			span.SetStatus(codes.Error, "unknown arguments")
-			return mcp.NewToolResultError(unknownArgumentsError(unknown, properties)), nil
+			return NewToolResultError(unknownArgumentsError(unknown, properties)), nil
 		}
 
 		unmarshaledArgs := reflect.New(argType).Interface()
@@ -334,15 +406,7 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 			if errors.As(handlerErr, &hardErr) {
 				return nil, hardErr.Err
 			}
-			return &mcp.CallToolResult{
-				Content: []mcp.Content{
-					mcp.TextContent{
-						Type: "text",
-						Text: handlerErr.Error(),
-					},
-				},
-				IsError: true,
-			}, nil
+			return NewToolResultError(handlerErr.Error()), nil
 		}
 
 		// Tool execution completed successfully
@@ -357,10 +421,9 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 			output[0].Kind() == reflect.Func
 
 		if isNilable && output[0].IsNil() {
-			// Return an empty text result instead of nil to avoid a nil pointer
-			// dereference in mcp-go's request_handler.go when it dereferences
-			// the *CallToolResult. A nil slice/map is a valid "no results" response.
-			return mcp.NewToolResultText("null"), nil
+			// Return an empty text result instead of nil. A nil slice/map is a
+			// valid "no results" response.
+			return NewToolResultText("null"), nil
 		}
 
 		returnVal := output[0].Interface()
@@ -379,14 +442,14 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 
 		// Case 3: String or *string
 		if str, ok := returnVal.(string); ok {
-			return mcp.NewToolResultText(str), nil
+			return NewToolResultText(str), nil
 		}
 
 		if strPtr, ok := returnVal.(*string); ok {
 			if strPtr == nil {
-				return mcp.NewToolResultText(""), nil
+				return NewToolResultText(""), nil
 			}
-			return mcp.NewToolResultText(*strPtr), nil
+			return NewToolResultText(*strPtr), nil
 		}
 
 		// Case 4: Any other type - marshal to JSON
@@ -395,25 +458,23 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 			return nil, fmt.Errorf("failed to marshal return value: %s", err)
 		}
 
-		return mcp.NewToolResultText(string(returnBytes)), nil
+		return NewToolResultText(string(returnBytes)), nil
 	}
 
-	// Use RawInputSchema with ToolArgumentsSchema to work around a Go limitation where type aliases
-	// don't inherit custom MarshalJSON methods. This ensures empty properties are included in the schema.
-	// additionalProperties: false advertises the strictness enforced above, so
-	// schema-validating clients (and providers with strict function calling)
-	// catch unknown arguments before the call reaches the server.
-	argumentsSchema := mcp.ToolArgumentsSchema{
+	// Marshal the schema ourselves (rather than relying on the SDK's own
+	// jsonschema-go-based inference) so we keep invopop/jsonschema and this
+	// package's existing validation/coercion behaviour unchanged.
+	// Tool.InputSchema accepts any value that marshals to valid JSON Schema.
+	argumentsSchema := toolArgumentsSchema{
 		Type:                 jsonSchema.Type,
 		Properties:           properties,
 		Required:             jsonSchema.Required,
 		AdditionalProperties: false,
 	}
 
-	// Marshal the schema to preserve empty properties
 	schemaBytes, err := json.Marshal(argumentsSchema)
 	if err != nil {
-		return zero, nil, fmt.Errorf("failed to marshal input schema: %w", err)
+		return nil, nil, fmt.Errorf("failed to marshal input schema: %w", err)
 	}
 
 	// Validate that no bare boolean schemas slipped through. The Mapper on the
@@ -421,16 +482,16 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 	// misses and prevents future regressions. MustTool will panic at init time
 	// if this fails, making it impossible to register a tool with bare booleans.
 	if err := validateNoBooleanSchemas(name, schemaBytes); err != nil {
-		return zero, nil, err
+		return nil, nil, err
 	}
 
-	t := mcp.Tool{
-		Name:           name,
-		Description:    description,
-		RawInputSchema: schemaBytes,
+	t := &mcp.Tool{
+		Name:        name,
+		Description: description,
+		InputSchema: json.RawMessage(schemaBytes),
 	}
 	for _, option := range options {
-		option(&t)
+		option(t)
 	}
 	return t, handler, nil
 }
@@ -438,11 +499,11 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 // extractTraceContext checks the request's _meta for W3C trace context headers
 // (traceparent/tracestate) and returns a context with the extracted span context
 // so that the tool span becomes a child of the caller's trace.
-func extractTraceContext(ctx context.Context, request mcp.CallToolRequest) context.Context {
-	if request.Params.Meta == nil {
+func extractTraceContext(ctx context.Context, request *mcp.CallToolRequest) context.Context {
+	if request.Params == nil {
 		return ctx
 	}
-	fields := request.Params.Meta.AdditionalFields
+	fields := request.Params.Meta
 	if len(fields) == 0 {
 		return ctx
 	}

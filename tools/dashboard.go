@@ -14,8 +14,7 @@ import (
 
 	"github.com/PaesslerAG/gval"
 	"github.com/PaesslerAG/jsonpath"
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/grafana/grafana-openapi-client-go/client/dashboards"
 	"github.com/grafana/grafana-openapi-client-go/models"
@@ -671,21 +670,21 @@ var GetDashboardByUID = mcpgrafana.MustTool(
 	"get_dashboard_by_uid",
 	"Retrieves the complete dashboard, including panels, variables, and settings, for a specific dashboard identified by its UID. The response includes 'apiVersion' and 'isV2': when 'isV2' is true the dashboard uses the v2 schema (panels live under 'elements' keyed by name, arranged by 'layout'; variables under 'variables'), otherwise it is classic v1 ('panels[]' with 'templating.list'). WARNING: Large dashboards can consume significant context window space. Consider using get_dashboard_summary for overview or get_dashboard_property for specific data instead.",
 	getDashboardByUID,
-	mcp.WithTitleAnnotation("Get dashboard details"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Get dashboard details"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 var UpdateDashboard = mcpgrafana.MustTool(
 	"update_dashboard",
 	"Create or update a dashboard. Two modes: (1) Full JSON — provide 'dashboard' for new dashboards or complete replacements. (2) Patch — provide 'uid' + 'operations' to make targeted changes to an existing dashboard. One of these two modes is required; 'folderUid'\\, 'message'\\, and 'overwrite' are supplementary and do nothing on their own. Dashboard authoring guidance: if a saved query must support one\\, many\\, or All values from a multi-select variable inside a regex expression or matcher\\, save '${var:regex}' rather than plain '$var'. Saved dashboard annotation queries/definitions must be written into dashboard JSON under 'annotations.list'; the create_annotation tool creates annotation events and does not add a reusable dashboard annotation query/definition to the saved dashboard. For stat panels over the current dashboard range\\, make the query return the range-level result the stat should display; panel-side reduction only reduces returned series and does not compute peak-over-range or ratio-of-peaks semantics for you. Patch operations support JSONPaths like '$.panels[0].targets[0].expr'\\, '$.panels[1].title'\\, '$.panels[2].targets[0].datasource'\\, '$.templating.list/-'\\, and '$.annotations.list/-'. Append to arrays with '/- ' syntax: '$.panels/- '. Remove by index: {\"op\": \"remove\"\\, \"path\": \"$.panels[2]\"}. Multiple removes on the same array are automatically reordered to avoid index-shifting issues. Note: only numeric array indices are supported in patch paths; filter expressions like [?(@.id==2)] and wildcards like [*] are not supported. v2 dashboards (check 'isV2' from get_dashboard_by_uid) use a different shape: patch '$.elements.<name>.spec.title' or '$.elements.<name>.spec.data.spec.queries[0].spec' and edit '$.variables'/'$.layout' rather than '$.panels'/'$.templating.list'. Full-JSON saves containing top-level 'elements'/'layout' are written as v2 and require a Kubernetes-capable Grafana. After creating or updating a dashboard\\, verify that panel queries return data by using `run_panel_query` or the appropriate query tool (`query_prometheus`\\, `query_loki_logs`\\, etc.) to validate expressions before considering the task complete.",
 	updateDashboard,
-	mcp.WithTitleAnnotation("Create or update dashboard"),
-	mcp.WithReadOnlyHintAnnotation(false),
-	mcp.WithDestructiveHintAnnotation(true),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Create or update dashboard"),
+	mcpgrafana.WithReadOnlyHintAnnotation(false),
+	mcpgrafana.WithDestructiveHintAnnotation(true),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 type DashboardPanelQueriesParams struct {
@@ -754,11 +753,11 @@ var GetDashboardPanelQueries = mcpgrafana.MustTool(
 	"get_dashboard_panel_queries",
 	"Retrieve panel queries from a Grafana dashboard. Supports all datasource types (Prometheus, Loki, CloudWatch, SQL, etc.) and row-nested panels. Optionally filter to a specific panel by ID with `panelId`. Optionally provide `variables` for template variable substitution, which populates `processedQuery` and `requiredVariables` fields. Returns an array of objects with fields: title, query (raw expression), datasource (object with uid and type), and optionally processedQuery, refId, and requiredVariables.",
 	GetDashboardPanelQueriesTool,
-	mcp.WithTitleAnnotation("Get dashboard panel queries"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Get dashboard panel queries"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 // GetDashboardPropertyParams defines parameters for getting specific dashboard properties
@@ -806,11 +805,11 @@ var GetDashboardProperty = mcpgrafana.MustTool(
 	"get_dashboard_property",
 	"Get specific parts of a dashboard using JSONPath expressions to minimize context window usage. JSONPath targets the dashboard's native schema. Classic v1 paths: '$.title' (title)\\, '$.panels[*].title' (all panel titles)\\, '$.panels[0]' (first panel)\\, '$.templating.list' (variables)\\, '$.annotations.list' (saved dashboard annotation queries/definitions)\\, '$.tags' (tags)\\, '$.panels[*].targets[*].expr' (all queries). v2 dashboards (see isV2 from get_dashboard_by_uid) use different paths: '$.title'\\, '$.elements' (panels\\, keyed by name)\\, '$.variables' (variables)\\, '$.annotations'. Use this instead of get_dashboard_by_uid when you only need specific dashboard properties.",
 	getDashboardProperty,
-	mcp.WithTitleAnnotation("Get dashboard property"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Get dashboard property"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 // GetDashboardSummaryParams defines parameters for getting a dashboard summary
@@ -921,11 +920,11 @@ var GetDashboardSummary = mcpgrafana.MustTool(
 	"get_dashboard_summary",
 	"Get a compact summary of a dashboard including title\\, panel count\\, panel types\\, variables\\, and other metadata without the full JSON. Use this for dashboard overview and planning modifications without consuming large context windows.",
 	getDashboardSummary,
-	mcp.WithTitleAnnotation("Get dashboard summary"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Get dashboard summary"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 // applyJSONPath applies a value to a JSONPath or removes it if remove=true
@@ -1216,7 +1215,7 @@ func extractVariableSummary(variable map[string]interface{}) VariableSummary {
 	}
 }
 
-func AddDashboardTools(mcp *server.MCPServer, enableWriteTools bool) {
+func AddDashboardTools(mcp *mcp.Server, enableWriteTools bool) {
 	GetDashboardByUID.Register(mcp)
 	if enableWriteTools {
 		UpdateDashboard.Register(mcp)

@@ -8,8 +8,7 @@ import (
 	"net/http"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 func newAssertsClient(ctx context.Context) (*Client, error) {
@@ -145,13 +144,13 @@ var GetAssertions = mcpgrafana.MustTool(
 	"get_assertions",
 	"Get assertion summary for a given entity with its type, name, env, site, namespace, and a time range",
 	getAssertions,
-	mcp.WithTitleAnnotation("Get assertions summary"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Get assertions summary"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
-func AddAssertsTools(mcp *server.MCPServer) {
+func AddAssertsTools(mcp *mcp.Server) {
 	GetAssertions.Register(mcp)
 }

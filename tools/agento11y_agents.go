@@ -12,7 +12,6 @@ import (
 
 	"github.com/grafana/grafana-plugin-sdk-go/backend/gtime"
 	mcpgrafana "github.com/grafana/mcp-grafana"
-	"github.com/mark3labs/mcp-go/mcp"
 )
 
 // Agent catalog of Agent Observability (/query/agents on the
@@ -326,9 +325,9 @@ When NOT to use:
 - Reading individual conversations, generations, or their scores (use agento11y_manage_conversations and agento11y_manage_generations)
 - Inspecting evaluators or the rules that schedule them (use agento11y_manage_evaluators and agento11y_manage_eval_rules)`,
 	manageAgento11yAgents,
-	mcp.WithTitleAnnotation("Manage Agent Observability agents"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Manage Agent Observability agents"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )

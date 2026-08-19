@@ -9,8 +9,7 @@ import (
 	"strings"
 
 	"github.com/itchyny/gojq"
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
 )
@@ -176,10 +175,10 @@ var APIRequest = mcpgrafana.MustTool(
 		"Supports any Grafana API endpoint with optional jq-style response filtering. "+
 		"Use this for API endpoints that don't have a dedicated tool.",
 	apiRequest,
-	mcp.WithTitleAnnotation("Grafana API request"),
-	mcp.WithReadOnlyHintAnnotation(false),
-	mcp.WithDestructiveHintAnnotation(true),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Grafana API request"),
+	mcpgrafana.WithReadOnlyHintAnnotation(false),
+	mcpgrafana.WithDestructiveHintAnnotation(true),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
 var APIRequestReadOnly = mcpgrafana.MustTool(
@@ -189,14 +188,14 @@ var APIRequestReadOnly = mcpgrafana.MustTool(
 		"Use this for API endpoints that don't have a dedicated tool. "+
 		"Only GET requests are allowed.",
 	apiRequestReadOnly,
-	mcp.WithTitleAnnotation("Grafana API request"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(false),
+	mcpgrafana.WithTitleAnnotation("Grafana API request"),
+	mcpgrafana.WithIdempotentHintAnnotation(true),
+	mcpgrafana.WithReadOnlyHintAnnotation(true),
+	mcpgrafana.WithDestructiveHintAnnotation(false),
+	mcpgrafana.WithOpenWorldHintAnnotation(false),
 )
 
-func AddAPITools(mcp *server.MCPServer, enableWriteTools bool) {
+func AddAPITools(mcp *mcp.Server, enableWriteTools bool) {
 	if enableWriteTools {
 		APIRequest.Register(mcp)
 	} else {
