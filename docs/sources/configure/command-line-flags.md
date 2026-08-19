@@ -141,6 +141,10 @@ When enabled, the following writes are disabled:
 
 - `alerting_manage_rules` (create, update, delete)
 
+**OnCall tools**
+
+- `update_alert_group`
+
 **Annotation tools**
 
 - `create_annotation`
