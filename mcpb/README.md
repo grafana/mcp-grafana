@@ -30,8 +30,11 @@ the resolver matches on the OS alone, and no manifest version has an architectur
 architecture-keyed override validates and is then ignored.
 
 macOS therefore gets a single universal binary carrying both architectures. Linux has no equivalent
-format, so it ships both binaries behind `launch.sh`. Windows ships one amd64 binary, which Windows
-on ARM runs under emulation.
+format, so it ships both binaries behind `launch.sh`, which the manifest runs as an argument to
+`/bin/sh`. That way the script only needs to be readable, and a host that drops execute bits while
+unpacking ([mcpb#294](https://github.com/modelcontextprotocol/mcpb/issues/294)) cannot leave the
+Linux server unstartable. Windows ships one amd64 binary, which Windows on ARM runs under
+emulation.
 
 ## Signing
 

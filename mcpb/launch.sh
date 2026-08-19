@@ -3,8 +3,14 @@
 #
 # MCPB manifests can only vary the server command per OS, not per CPU
 # architecture (https://github.com/modelcontextprotocol/mcpb/issues/10), so on
-# Linux the manifest points at this script instead of a binary. macOS needs no
+# Linux the manifest runs this script instead of a binary. macOS needs no
 # equivalent: its binary is a universal Mach-O carrying both architectures.
+#
+# The manifest invokes this as an argument to /bin/sh rather than executing it
+# directly, so it only needs to be readable. A host that drops execute bits when
+# unpacking (https://github.com/modelcontextprotocol/mcpb/issues/294) would
+# otherwise leave the whole Linux server unstartable, with no opportunity for
+# the workaround below to run.
 set -eu
 
 # CDPATH would make `cd` resolve the relative path somewhere unexpected.

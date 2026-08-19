@@ -54,7 +54,8 @@
           "command": "${__dirname}/server/win32-x64/mcp-grafana.exe"
         },
         "linux": {
-          "command": "${__dirname}/server/linux/launch.sh"
+          "command": "/bin/sh",
+          "args": ["${__dirname}/server/linux/launch.sh"]
         }
       }
     }
