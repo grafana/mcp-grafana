@@ -77,7 +77,12 @@ jobs:
           comment: false
 
       - name: Write summary for the comment job
-        if: always()
+        # Only when the analysis actually measured something. Without the second
+        # condition a failed checkout or `make build` would still publish an empty
+        # summary, and the comment job would overwrite a real previous result with
+        # "counts were not available". A threshold failure still produces counts,
+        # so genuine failures are unaffected.
+        if: always() && steps.analyze.outputs.total-tokens != ''
         # Every value below is passed through the environment rather than
         # interpolated into the script, so tool names and failure text can't be
         # read as shell. The consuming workflow re-validates all of it.
@@ -164,7 +169,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload summary
-        if: always()
+        if: always() && steps.analyze.outputs.total-tokens != ''
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v5.0.0
         with:
           name: token-analysis

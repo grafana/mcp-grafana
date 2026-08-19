@@ -117,16 +117,59 @@ jobs:
               return;
             }
 
-            // Take pass/fail from the triggering run's conclusion, not from the
-            // artifact. token-check.yml fails its job when the threshold is
-            // exceeded, so the conclusion is a faithful signal that GitHub owns —
-            // whereas a fork could simply write "passed": true into the artifact
-            // and have the comment contradict its own red check.
+            // For `pull_request` events the workflow definition itself comes from
+            // the pull request's head, forks included. So a fork can keep the
+            // "Token Analysis" name, replace the analysis with a stub that exits 0,
+            // upload an artifact of its choosing, and have this job post an
+            // official-looking green result. Matching the head SHA does not help:
+            // the head is the attacker's own.
+            //
+            // The guarantee we actually need is "the workflow that produced this
+            // artifact was ours". A pull request that does not touch
+            // .github/workflows/ runs the definitions from the base branch, so
+            // checking that is sufficient — and refusing otherwise is cheap,
+            // because a pull request that does change CI needs a human reading the
+            // run anyway. This costs nothing to honest contributors: the tool
+            // changes we care about measuring never touch workflow files.
+            const changedFiles = await github.paginate(github.rest.pulls.listFiles, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+              per_page: 100,
+            });
+
+            const touchesWorkflows = changedFiles.some((f) =>
+              f.filename.startsWith('.github/workflows/')
+            );
+
+            if (touchesWorkflows) {
+              core.warning(
+                `PR #${prNumber} modifies .github/workflows/, so the analysis it produced ` +
+                  'cannot be trusted to be ours. Skipping the comment — read the run directly.'
+              );
+              return;
+            }
+
+            // Safe to trust the run's conclusion now that we know our own workflow
+            // definition produced it. token-check.yml fails its job when the
+            // threshold is exceeded, so this is a signal GitHub owns rather than
+            // one the artifact can assert.
             const passed = context.payload.workflow_run.conclusion === 'success';
             const total = num(raw.total);
             const baseline = num(raw.baseline);
             const diff = num(raw.diff);
             const diffPercent = num(raw.diff_percent);
+
+            // With no measurement there is nothing worth saying, and saying it
+            // anyway would replace a good earlier result with a worse one. The run
+            // itself carries the failure.
+            if (total === null) {
+              core.warning(
+                'The summary carried no token counts, so there is nothing to report. ' +
+                  'Leaving any existing comment in place.'
+              );
+              return;
+            }
 
             // Tool names in this repo are snake_case; filter to that and cap the
             // length so a crafted name can't inject markdown or bloat the comment.
@@ -167,23 +210,25 @@ jobs:
               );
             } else if (total !== null) {
               lines.push(`**Total tokens:** ${total}`, '');
-            } else {
-              lines.push('_Token counts were not available for this run._', '');
             }
 
             if (!passed && raw.failure_reason) {
-              // Strip markdown structure and defuse :emoji: shortcodes, so a crafted
-              // reason can't forge a heading or a green tick inside our own comment.
-              // A genuine reason ("Token usage increased by 4.6% (limit 5%)") is
-              // unaffected by both passes.
+              // Allow-list rather than strip: the genuine reason is prose about
+              // numbers ("Token usage increased by 4.6% (limit 5%)"), so anything
+              // outside this set is not something we need to reproduce. Blacklisting
+              // markdown characters missed two things — `@` still produces real
+              // notifications from the bot account, and a bare URL still autolinks,
+              // which together make mention-spam and phishing possible from an
+              // official-looking comment.
               const reason = String(raw.failure_reason)
-                .replace(/[`\r\n|<>*_#[\]]/g, ' ')
-                .replace(/:([a-z0-9_+-]+):/gi, '$1')
+                .replace(/[^A-Za-z0-9 .,%()'+-]/g, ' ')
                 .replace(/\s+/g, ' ')
                 .trim()
                 .slice(0, 300);
+              // Rendered as a code span as well, so even a character that slipped
+              // through the filter cannot autolink or become a mention.
               if (reason) {
-                lines.push(`**Reason:** ${reason}`, '');
+                lines.push(`**Reason:** \`${reason}\``, '');
               }
             }
 
