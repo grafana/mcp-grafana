@@ -5,8 +5,7 @@ on:
 
 permissions: {}
 
-# One analysis per pull request; superseded pushes are cancelled. The comment
-# workflow tolerates a cancelled run (no artifact means it does nothing).
+# One analysis per pull request; superseded pushes are cancelled.
 concurrency:
   group: token-analysis-${{ github.workflow }}-${{ github.event.pull_request.number }}
   cancel-in-progress: true
@@ -15,11 +14,12 @@ jobs:
   analyze:
     name: Analyze token usage
     runs-on: ubuntu-latest
-    # No pull-requests: write here on purpose. GitHub gives fork pull requests a
-    # read-only token regardless of what we ask for, so commenting from this job
-    # can never work for external contributors. The comment is posted by
-    # token-comment.yml, which runs on workflow_run in the base repo context and
-    # consumes only the artifact this job uploads.
+    # No pull-requests: write, and no PR comment. GitHub gives fork pull requests
+    # a read-only token regardless of what a workflow asks for, so the action's
+    # commenting could never work for external contributors — which is precisely
+    # who we most need to show a tool's token cost to. The result is written to
+    # the run's job summary instead, which needs no permissions and no secrets and
+    # therefore works identically on forks.
     permissions:
       contents: read # to check out the repository
       id-token: write # to authenticate to Vault via OIDC for the Anthropic API key
@@ -60,9 +60,9 @@ jobs:
 
       - name: Analyze tokens
         id: analyze
-        # Don't fail the step here: we want the summary written and uploaded even
-        # when the threshold is exceeded, so the comment still gets posted. The
-        # threshold is enforced in the final step instead.
+        # Don't fail the step here: the job summary should still be written when the
+        # threshold is exceeded, since that's exactly the case someone needs to
+        # read. The threshold is enforced in the final step instead.
         continue-on-error: true
         uses: sd2k/mcp-tokens-action@014db1a0f233c4559d5b056983855b0b71c99fa2
         with:
@@ -74,20 +74,17 @@ jobs:
           anthropic-api-key: ${{ steps.get-secrets.outputs.secrets && fromJSON(steps.get-secrets.outputs.secrets).ANTHROPIC_API_KEY || '' }}
           baseline: ${{ steps.download-baseline.outputs.found_artifact == 'true' && 'baseline/token-baseline.json' || '' }}
           threshold-percent: "5"
+          # Commenting is deliberately off; see the note on permissions above.
           comment: false
 
-      - name: Write summary for the comment job
-        # Only when the analysis actually measured something. Without the second
-        # condition a failed checkout or `make build` would still publish an empty
-        # summary, and the comment job would overwrite a real previous result with
-        # "counts were not available". A threshold failure still produces counts,
-        # so genuine failures are unaffected.
+      - name: Write job summary
+        # Only when the analysis actually measured something, so a failed checkout
+        # or `make build` doesn't render an empty table. A threshold failure still
+        # produces counts, so genuine over-budget runs are unaffected.
         if: always() && steps.analyze.outputs.total-tokens != ''
-        # Every value below is passed through the environment rather than
-        # interpolated into the script, so tool names and failure text can't be
-        # read as shell. The consuming workflow re-validates all of it.
+        # Values are passed through the environment rather than interpolated into
+        # the script, so tool names and failure text can't be read as shell.
         env:
-          PR_NUMBER: ${{ github.event.pull_request.number }}
           PASSED: ${{ steps.analyze.outputs.passed }}
           PROVIDER: ${{ steps.analyze.outputs.provider }}
           TOTAL: ${{ steps.analyze.outputs.total-tokens }}
@@ -98,42 +95,12 @@ jobs:
           FAILURE_REASON: ${{ steps.analyze.outputs.failure-reason }}
         run: |
           set -euo pipefail
-          mkdir -p token-analysis
 
-          # tool-changes is a JSON array; fall back to [] if it's absent or
-          # malformed so the comment job always gets well-formed input.
+          # tool-changes is a JSON array; fall back to [] if absent or malformed.
           if ! printf '%s' "${TOOL_CHANGES:-}" | jq -e 'type == "array"' >/dev/null 2>&1; then
             TOOL_CHANGES='[]'
           fi
 
-          jq -n \
-            --arg pr "${PR_NUMBER:-}" \
-            --arg passed "${PASSED:-}" \
-            --arg provider "${PROVIDER:-}" \
-            --arg total "${TOTAL:-}" \
-            --arg baseline "${BASELINE:-}" \
-            --arg diff "${DIFF:-}" \
-            --arg diff_percent "${DIFF_PERCENT:-}" \
-            --arg failure_reason "${FAILURE_REASON:-}" \
-            --argjson tool_changes "$TOOL_CHANGES" \
-            '{
-              pr: $pr,
-              passed: $passed,
-              provider: $provider,
-              total: $total,
-              baseline: $baseline,
-              diff: $diff,
-              diff_percent: $diff_percent,
-              failure_reason: $failure_reason,
-              tool_changes: $tool_changes
-            }' > token-analysis/summary.json
-
-          echo "Wrote summary for PR #${PR_NUMBER:-unknown}:"
-          cat token-analysis/summary.json
-
-          # Also render the result into this run's job summary. This needs no
-          # permissions and no secrets, so it works on fork pull requests as-is
-          # and remains available even if the workflow_run comment is disabled.
           {
             echo "## MCP Token Analysis"
             echo
@@ -144,13 +111,17 @@ jobs:
             fi
             echo
             if [ -n "${BASELINE:-}" ] && [ "${BASELINE:-}" != "null" ]; then
+              # The action emits diff and diff-percent unsigned, so add a leading
+              # "+" for increases to make the direction obvious at a glance.
+              sign=""
+              case "${DIFF:-}" in -* | "") ;; *) sign="+" ;; esac
               echo "| Metric | Value |"
               echo "|--------|-------|"
               echo "| Baseline | ${BASELINE} tokens |"
-              echo "| Current | ${TOTAL:-?} tokens |"
-              echo "| Change | ${DIFF:-?} (${DIFF_PERCENT:-?}%) |"
+              echo "| Current | ${TOTAL} tokens |"
+              echo "| Change | ${sign}${DIFF:-?} (${sign}${DIFF_PERCENT:-?}%) |"
             else
-              echo "**Total tokens:** ${TOTAL:-unknown}"
+              echo "**Total tokens:** ${TOTAL}"
             fi
             echo
             if [ "${PASSED:-}" != "true" ] && [ -n "${FAILURE_REASON:-}" ]; then
@@ -165,17 +136,18 @@ jobs:
               printf '%s' "$TOOL_CHANGES" | jq -r \
                 '.[] | "| `\(.name)` | \(.change_type) | \(.diff) |"'
               echo
+              if printf '%s' "$TOOL_CHANGES" | jq -e 'any(.[]; .change_type == "added")' >/dev/null; then
+                echo "This pull request adds a tool. Every default-on tool is sent to the"
+                echo "model on every request, so see CONTRIBUTING.md for which tier it"
+                echo "should ship in — an opt-in category costs other users nothing."
+                echo
+              fi
+            fi
+            if [ "${PROVIDER:-}" = "tiktoken" ]; then
+              echo "<sub>Counted with tiktoken, which is approximate. Exact Anthropic counts"
+              echo "need credentials that fork pull requests cannot access.</sub>"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload summary
-        if: always() && steps.analyze.outputs.total-tokens != ''
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v5.0.0
-        with:
-          name: token-analysis
-          path: token-analysis/summary.json
-          retention-days: 7
-          if-no-files-found: error
 
       - name: Enforce token threshold
         if: always() && steps.analyze.outputs.passed != 'true'
