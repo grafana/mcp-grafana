@@ -11,8 +11,7 @@ import (
 	"regexp"
 	"testing"
 
-	"github.com/mark3labs/mcp-go/server"
-
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -1154,26 +1153,36 @@ type agento11yAdvertisedTool struct {
 func listAgento11yEvalTools(t *testing.T, enableWriteTools bool) map[string]agento11yAdvertisedTool {
 	t.Helper()
 
-	srv := server.NewMCPServer("test", "0")
+	ctx := context.Background()
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0"}, nil)
 	AddAgento11yTools(srv, enableWriteTools)
 
-	response := srv.HandleMessage(context.Background(), []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
-	raw, err := json.Marshal(response)
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+	serverSession, err := srv.Connect(ctx, serverTransport, nil)
+	require.NoError(t, err)
+	defer serverSession.Close()
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	require.NoError(t, err)
+	defer clientSession.Close()
+
+	toolsResult, err := clientSession.ListTools(ctx, nil)
+	require.NoError(t, err)
+	raw, err := json.Marshal(toolsResult)
 	require.NoError(t, err)
 
 	var listed struct {
-		Result struct {
-			Tools []struct {
-				Name        string          `json:"name"`
-				Description string          `json:"description"`
-				InputSchema json.RawMessage `json:"inputSchema"`
-			} `json:"tools"`
-		} `json:"result"`
+		Tools []struct {
+			Name        string          `json:"name"`
+			Description string          `json:"description"`
+			InputSchema json.RawMessage `json:"inputSchema"`
+		} `json:"tools"`
 	}
 	require.NoError(t, json.Unmarshal(raw, &listed))
 
 	tools := map[string]agento11yAdvertisedTool{}
-	for _, tool := range listed.Result.Tools {
+	for _, tool := range listed.Tools {
 		switch tool.Name {
 		case "agento11y_manage_evaluators", "agento11y_manage_eval_rules", "agento11y_manage_eval_collections", "agento11y_manage_experiments", "agento11y_manage_test_suites", "agento11y_manage_agents":
 		default:
