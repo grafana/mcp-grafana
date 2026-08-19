@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"reflect"
 	"strings"
 
@@ -545,15 +546,40 @@ func getAlertGroup(ctx context.Context, args GetAlertGroupParams) (*OnCallAlertG
 	return amixrGetAlertGroup(ctx, args.AlertGroupID)
 }
 
+// oncallAlertGroupPublic mirrors the public OnCall API's alert group response.
+//
+// It exists because aapi.AlertGroup omits last_alert, and aapi.Alert types its
+// payload as a fixed struct that would discard integration-specific fields. The
+// request below therefore bypasses aapi.AlertGroupService and decodes into this
+// type instead.
+type oncallAlertGroupPublic struct {
+	ID             string            `json:"id"`
+	IntegrationID  string            `json:"integration_id"`
+	AlertsCount    int               `json:"alerts_count"`
+	State          string            `json:"state"`
+	CreatedAt      string            `json:"created_at"`
+	ResolvedAt     string            `json:"resolved_at"`
+	AcknowledgedAt string            `json:"acknowledged_at"`
+	Title          string            `json:"title"`
+	Permalinks     map[string]string `json:"permalinks"`
+	LastAlert      *OnCallLastAlert  `json:"last_alert"`
+}
+
 func amixrGetAlertGroup(ctx context.Context, alertGroupID string) (*OnCallAlertGroup, error) {
 	client, err := oncallClientFromContext(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("getting OnCall client: %w", err)
 	}
 
-	alertGroupService := aapi.NewAlertGroupService(client)
-	ag, _, err := alertGroupService.GetAlertGroup(alertGroupID)
+	// Mirrors aapi.AlertGroupService.GetAlertGroup's path construction.
+	path := fmt.Sprintf("alert_groups/%s/", url.PathEscape(alertGroupID))
+	req, err := client.NewRequest(http.MethodGet, path, nil)
 	if err != nil {
+		return nil, fmt.Errorf("creating OnCall alert group request %s: %w", alertGroupID, err)
+	}
+
+	var ag oncallAlertGroupPublic
+	if _, err := client.Do(req, &ag); err != nil {
 		return nil, fmt.Errorf("getting OnCall alert group %s: %w", alertGroupID, err)
 	}
 
@@ -567,12 +593,13 @@ func amixrGetAlertGroup(ctx context.Context, alertGroupID string) (*OnCallAlertG
 		AcknowledgedAt: ag.AcknowledgedAt,
 		Title:          ag.Title,
 		Permalinks:     ag.Permalinks,
+		LastAlert:      ag.LastAlert,
 	}, nil
 }
 
 var GetAlertGroup = mcpgrafana.MustTool(
 	"get_alert_group",
-	"Get a specific alert group from Grafana OnCall by its ID. Returns the full alert group details.",
+	"Get a specific alert group from Grafana OnCall by its ID. Returns the full alert group details, including the most recent alert and its raw payload when the OnCall API provides them. Alert payloads carry integration-specific fingerprints (for example Sentry's payload.data.event.hashes or Alertmanager's payload.alerts[].fingerprint) that identify recurring alerts across different alert groups.",
 	getAlertGroup,
 	mcp.WithTitleAnnotation("Get IRM alert group"),
 	mcp.WithIdempotentHintAnnotation(true),
