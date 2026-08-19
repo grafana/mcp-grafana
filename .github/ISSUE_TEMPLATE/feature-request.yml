@@ -1,0 +1,44 @@
+name: Feature request
+description: Suggest an improvement that isn't a new tool
+labels: ["enhancement", "needs triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this for CLI flags, auth methods, transports, output formats, performance, docs and anything else that isn't a new MCP tool.
+
+        **Proposing a new tool?** Please use the **New tool proposal** template instead — it asks a few extra questions about naming and cost that we need in order to give you an answer.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve?
+      description: Please describe the situation rather than the solution — it often turns out there's an easier way in, or that something already supports it.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like to see?
+    validations:
+      required: true
+
+  - type: textarea
+    id: workaround
+    attributes:
+      label: How are you working around it today?
+    validations:
+      required: false
+
+  - type: dropdown
+    id: contribute
+    attributes:
+      label: Would you be willing to implement this?
+      description: No obligation at all — it just helps us prioritise, and we'll offer pointers if you'd like to try.
+      options:
+        - "Yes, with some guidance"
+        - "Yes"
+        - "No"
+    validations:
+      required: false
