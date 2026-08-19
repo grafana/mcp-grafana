@@ -5,13 +5,24 @@ on:
 
 permissions: {}
 
+# One analysis per pull request; superseded pushes are cancelled.
+concurrency:
+  group: token-analysis-${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   analyze:
+    name: Analyze token usage
     runs-on: ubuntu-latest
+    # No pull-requests: write, and no PR comment. GitHub gives fork pull requests
+    # a read-only token regardless of what a workflow asks for, so the action's
+    # commenting could never work for external contributors — which is precisely
+    # who we most need to show a tool's token cost to. The result is written to
+    # the run's job summary instead, which needs no permissions and no secrets and
+    # therefore works identically on forks.
     permissions:
-      contents: read
-      id-token: write
-      pull-requests: write
+      contents: read # to check out the repository
+      id-token: write # to authenticate to Vault via OIDC for the Anthropic API key
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -45,16 +56,106 @@ jobs:
             ANTHROPIC_API_KEY=anthropic:api-key
 
       - name: Analyze tokens
+        id: analyze
+        # Don't fail the step here: the job summary should still be written when the
+        # threshold is exceeded, since that's exactly the case someone needs to
+        # read. The threshold is enforced in the final step instead.
+        continue-on-error: true
         uses: sd2k/mcp-tokens-action@014db1a0f233c4559d5b056983855b0b71c99fa2
-
         with:
           command: ./dist/mcp-grafana
           # On fork PRs the get-secrets step is skipped (its output is empty), so
           # short-circuit to an empty key — matching the prior unset-env behavior.
+          # The action falls back to tiktoken, which is accurate enough to review
+          # a tool's cost against the 5% threshold.
           anthropic-api-key: ${{ steps.get-secrets.outputs.secrets && fromJSON(steps.get-secrets.outputs.secrets).ANTHROPIC_API_KEY || '' }}
           baseline: ${{ steps.download-baseline.outputs.found_artifact == 'true' && 'baseline/token-baseline.json' || '' }}
           threshold-percent: "5"
-          comment: true
-          comment-on-pass: true
-          max-tool-changes: "10"
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          # Commenting is deliberately off; see the note on permissions above.
+          comment: false
+
+      - name: Write job summary
+        # Only when the analysis actually measured something, so a failed checkout
+        # or `make build` doesn't render an empty table. A threshold failure still
+        # produces counts, so genuine over-budget runs are unaffected.
+        if: always() && steps.analyze.outputs.total-tokens != ''
+        # Values are passed through the environment rather than interpolated into
+        # the script, so tool names and failure text can't be read as shell.
+        env:
+          PASSED: ${{ steps.analyze.outputs.passed }}
+          PROVIDER: ${{ steps.analyze.outputs.provider }}
+          TOTAL: ${{ steps.analyze.outputs.total-tokens }}
+          BASELINE: ${{ steps.analyze.outputs.baseline-tokens }}
+          DIFF: ${{ steps.analyze.outputs.diff }}
+          DIFF_PERCENT: ${{ steps.analyze.outputs.diff-percent }}
+          TOOL_CHANGES: ${{ steps.analyze.outputs.tool-changes }}
+          FAILURE_REASON: ${{ steps.analyze.outputs.failure-reason }}
+        run: |
+          set -euo pipefail
+
+          # tool-changes is a JSON array; fall back to [] if absent or malformed.
+          if ! printf '%s' "${TOOL_CHANGES:-}" | jq -e 'type == "array"' >/dev/null 2>&1; then
+            TOOL_CHANGES='[]'
+          fi
+
+          {
+            echo "## MCP Token Analysis"
+            echo
+            if [ "${PASSED:-}" = "true" ]; then
+              echo ":white_check_mark: **Passed**"
+            else
+              echo ":x: **Failed**"
+            fi
+            echo
+            if [ -n "${BASELINE:-}" ] && [ "${BASELINE:-}" != "null" ]; then
+              # The action emits diff and diff-percent unsigned, so add a leading
+              # "+" for increases to make the direction obvious at a glance.
+              sign=""
+              case "${DIFF:-}" in -* | "") ;; *) sign="+" ;; esac
+              echo "| Metric | Value |"
+              echo "|--------|-------|"
+              echo "| Baseline | ${BASELINE} tokens |"
+              echo "| Current | ${TOTAL} tokens |"
+              echo "| Change | ${sign}${DIFF:-?} (${sign}${DIFF_PERCENT:-?}%) |"
+            else
+              echo "**Total tokens:** ${TOTAL}"
+            fi
+            echo
+            if [ "${PASSED:-}" != "true" ] && [ -n "${FAILURE_REASON:-}" ]; then
+              echo "**Reason:** ${FAILURE_REASON}"
+              echo
+            fi
+            if [ "$TOOL_CHANGES" != "[]" ]; then
+              echo "### Tool changes"
+              echo
+              echo "| Tool | Change | Tokens |"
+              echo "|------|--------|--------|"
+              printf '%s' "$TOOL_CHANGES" | jq -r \
+                '.[] | "| `\(.name)` | \(.change_type) | \(.diff) |"'
+              echo
+              if printf '%s' "$TOOL_CHANGES" | jq -e 'any(.[]; .change_type == "added")' >/dev/null; then
+                echo "This pull request adds a tool. Every default-on tool is sent to the"
+                echo "model on every request, so see CONTRIBUTING.md for which tier it"
+                echo "should ship in — an opt-in category costs other users nothing."
+                echo
+              fi
+            fi
+            if [ "${PROVIDER:-}" = "tiktoken" ]; then
+              echo "<sub>Counted with tiktoken, which is approximate. Exact Anthropic counts"
+              echo "need credentials that fork pull requests cannot access.</sub>"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Enforce token threshold
+        if: always() && steps.analyze.outputs.passed != 'true'
+        env:
+          FAILURE_REASON: ${{ steps.analyze.outputs.failure-reason }}
+          OUTCOME: ${{ steps.analyze.outcome }}
+        run: |
+          set -euo pipefail
+          if [ "$OUTCOME" != "success" ] && [ -z "${FAILURE_REASON:-}" ]; then
+            echo "::error::Token analysis did not complete. See the 'Analyze tokens' step above."
+          else
+            echo "::error::${FAILURE_REASON:-Token usage exceeded the allowed increase.}"
+          fi
+          exit 1
