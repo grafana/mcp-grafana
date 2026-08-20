@@ -1,0 +1,99 @@
+name: New tool proposal
+description: Propose a new MCP tool, or a change to an existing tool's name or input/output shape
+title: "[Tool proposal]: "
+labels: ["tool proposal", "needs triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for proposing a tool.
+
+        **Please open this before writing the code.** Every default-on tool is sent to the model on every request by every user, so adding one is a shared cost we have to weigh. We would much rather discuss the idea here than decline a finished pull request — see [CONTRIBUTING.md](https://github.com/grafana/mcp-grafana/blob/main/CONTRIBUTING.md).
+
+        If you've already written it, that's fine — link the PR at the bottom and we'll review the idea first.
+
+        Not proposing a new tool? Use the **Bug report** or **Feature request** templates instead. Bug fixes, docs, tests and new parameters on existing tools don't need a proposal at all.
+
+  - type: textarea
+    id: question
+    attributes:
+      label: What question should this tool let a user answer?
+      description: Phrase it as something a person would ask their assistant, not as an API endpoint.
+      placeholder: "Which of my alert rules fired most often last week?"
+    validations:
+      required: true
+
+  - type: textarea
+    id: existing
+    attributes:
+      label: Why can't an existing tool do this?
+      description: |
+        Please check the [tool table in the README](https://github.com/grafana/mcp-grafana#tools) first. If an existing tool is close, could it take one more optional parameter instead? Extending a tool is far cheaper than adding one, so this is the question most likely to change our answer.
+      placeholder: "`list_alert_groups` returns groups but has no way to filter by ..."
+    validations:
+      required: true
+
+  - type: dropdown
+    id: tier
+    attributes:
+      label: Which tier are you proposing?
+      description: |
+        **Default-on** means every user pays for it in every request, so the bar is "useful to most people using Grafana through an MCP client". **Opt-in** means it ships behind `--enabled-tools` and costs nothing to anyone who doesn't enable it — the bar is much lower, and most new tools belong here.
+
+        Niche, datasource-specific, Cloud-only, plugin-dependent or administrative tools should be opt-in. Proposing opt-in yourself makes this much easier to say yes to.
+      options:
+        - Opt-in category (behind --enabled-tools)
+        - Default-on (part of the default tool set)
+        - Not sure — happy to be advised
+    validations:
+      required: true
+
+  - type: input
+    id: category
+    attributes:
+      label: Which category would it live in?
+      description: An existing category from the README table, or a new one if you're proposing a new opt-in group.
+      placeholder: "loki, or a new `tempo` category"
+    validations:
+      required: true
+
+  - type: textarea
+    id: shape
+    attributes:
+      label: Proposed name, inputs and outputs
+      description: |
+        A rough sketch is fine. Names are permanent once shipped, so it's worth getting right here rather than in review. Keep descriptions and schemas as small as they can be while still being usable — that's the token cost.
+      placeholder: |
+        Name: list_tempo_services
+        Inputs: datasourceUid (required), start/end (optional)
+        Output: array of service names
+      render: text
+    validations:
+      required: true
+
+  - type: dropdown
+    id: writes
+    attributes:
+      label: Does it modify anything in Grafana?
+      description: Anything that creates, updates or deletes must be gated behind `--disable-write`.
+      options:
+        - "No — read-only"
+        - "Yes — it creates, updates or deletes something"
+    validations:
+      required: true
+
+  - type: input
+    id: rbac
+    attributes:
+      label: Required RBAC permissions and scopes
+      description: Needed for the README tool table. Leave blank if you're not sure and we'll help.
+      placeholder: "`alert.rules:read`, scope `folders:*`"
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Anything else?
+      description: |
+        Who asked for this, whether you're willing to implement it, a link to an existing PR or prototype, or how you're working around it today. If you used an AI assistant to explore this, that's completely fine — please just say so, and make sure you've read what it produced.
+    validations:
+      required: false

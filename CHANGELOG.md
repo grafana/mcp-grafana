@@ -9,7 +9,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Opt-in Loki query cost guardrail for `query_loki_logs` (`--loki-guardrail-mode` / `GRAFANA_LOKI_GUARDRAIL_MODE`, `off` by default, with `shadow` and `enforce` modes). Because Loki query cost is bytes *scanned* — determined only by the stream selector and time range, not line filters — the guardrail requires a selective stream selector, caps the time range (`--loki-guardrail-max-range`, default 24h), and pre-checks Loki's `index/stats` byte estimate against a budget (`--loki-guardrail-max-bytes`, default 100GiB). Blocked queries return an MCP tool error with rewrite guidance; unparseable queries fail open ([#1031](https://github.com/grafana/mcp-grafana/pull/1031))
+
+### Changed
+
+- `tools.Stats.Bytes` is now `int64` (was `int`) so index/stats byte counts cannot overflow on 32-bit platforms; Go API consumers of the exported struct may need a cast ([#1031](https://github.com/grafana/mcp-grafana/pull/1031))
+
+## [1.1.0] - 2026-08-10
+
+### Added
+
+- Optional bearer-token caller authentication for the SSE and streamable-http transports via `--server-auth-token` / `MCP_GRAFANA_SERVER_TOKEN`. When set, callers must present `Authorization: Bearer <token>` and unauthenticated requests are rejected with `401` before any tool runs. Caller authentication is enforced only when a token is configured; when it isn't, a non-loopback bind still starts but logs a security error at startup ([#1059](https://github.com/grafana/mcp-grafana/pull/1059), [#1060](https://github.com/grafana/mcp-grafana/pull/1060))
+- `ask_assistant` tool (opt-in, write-gated) for asking Grafana Assistant open-ended questions and getting a full text reply ([#1026](https://github.com/grafana/mcp-grafana/pull/1026))
+- Agent Observability tool `agento11y_manage_test_suites`, in the opt-in `agento11y` category. Reads cover the test suites that offline experiments run against, one suite with its full version history, and the test cases of one version. The write operations (create and update a suite; open a draft version; publish it; upsert and delete a test case) need `grafana-agento11y-app.eval:write` and are registered only when write tools are enabled. `upsert_test_case` replaces the whole case rather than merging into it, and a published version rejects every edit, so changing a published suite means opening a new draft
+- Agent Observability tool `agento11y_manage_experiments`, in the opt-in `agento11y` category. Reads cover the experiment list and filter facets, one experiment with its headline result, a per-test-case report, an experiment's trials and scores, and one trial with its scores and artifact metadata. `get_report` is trimmed to `row_limit` rows (default 50, max 500) because the route is not paginated upstream and nests every test case input, score, and artifact record. The write operations (`update` and `cancel`) need `grafana-agento11y-app.eval:write` and are registered only when write tools are enabled. Creating experiments and trials is not exposed: the plugin proxy blocks those routes
+- Agent Observability tool `agento11y_manage_agents`, in the opt-in `agento11y` category. Read-only: `list` for the agent catalog, `get` for one agent version in full (system prompt, tools, models), `list_versions` for an agent's version history, and `list_version_scores` for evaluation score aggregates per version. Needs `grafana-agento11y-app.data:read` and is registered whether or not write tools are enabled ([#1036](https://github.com/grafana/mcp-grafana/pull/1036))
+- Agent Observability tool `agento11y_manage_eval_collections`, in the opt-in `agento11y` category. Reads cover saved conversations, the collections that group them, and the membership in both directions. The write operations (bookmark and delete a saved conversation; create, update, and delete a collection; add and remove collection members) need `grafana-agento11y-app.eval:write` and are registered only when write tools are enabled ([#1035](https://github.com/grafana/mcp-grafana/pull/1035))
+- Agent Observability eval control-plane tools `agento11y_manage_evaluators` and `agento11y_manage_eval_rules`, in the opt-in `agento11y` category. Reads cover evaluators, evaluator templates, template versions, the judge provider and model catalog, eval rules, and guards. The write operations (evaluator upsert, fork, test, and delete; rule and guard create, update, preview, and delete) need `grafana-agento11y-app.eval:write` and are registered only when write tools are enabled ([#1028](https://github.com/grafana/mcp-grafana/pull/1028))
+- CLI flags to include tool arguments in OpenTelemetry spans and to configure the Grafana client request timeout ([#1023](https://github.com/grafana/mcp-grafana/pull/1023))
+
+### Fixed
+
+- Declare `readOnly`/`destructive`/`openWorld` hints on every tool ([#1051](https://github.com/grafana/mcp-grafana/pull/1051))
+- Proxied-tools memory scaling with session count and unbounded per-session tool-store growth ([#1001](https://github.com/grafana/mcp-grafana/pull/1001))
+- Restrict the Prometheus backend to known Prometheus-compatible datasource types ([#1006](https://github.com/grafana/mcp-grafana/pull/1006))
+- Respect `OTEL_LOGS_EXPORTER=none` to disable OTLP log export ([#1012](https://github.com/grafana/mcp-grafana/pull/1012))
+- A `GRAFANA_URL` without a scheme is normalized where it enters the process, so the API client and the client cache resolve the same instance as the rest of the server. `GRAFANA_URL=127.0.0.1:3000` used to panic at startup, and a schemeless hostname produced requests with no host while tools built from `GrafanaConfig.URL` kept working ([#1034](https://github.com/grafana/mcp-grafana/pull/1034))
+
+### Changed
+
+- Enrich telemetry to include more tool dimensions ([#1016](https://github.com/grafana/mcp-grafana/pull/1016))
+- `query_pyroscope` now returns a per-function table (`pprof -top` style: flat/cum per fully-qualified function name) by default instead of a line-level DOT call graph. The DOT call graph remains available via `format="dot"` and no longer deletes the `other` truncation node ([#1025](https://github.com/grafana/mcp-grafana/pull/1025))
+
+### Removed
+
+- Support for the undocumented `X-Grafana-URL` header ([#1052](https://github.com/grafana/mcp-grafana/pull/1052))
+
+## [1.0.0] - 2026-07-28
+
+### Added
+
+- Agent Observability tools: `agento11y_manage_conversations` and `agento11y_manage_generations` in a new `agento11y` category, excluded from the default tool set ([#944](https://github.com/grafana/mcp-grafana/pull/944))
 - Inline panel viewer for `get_panel_image` on [MCP Apps](https://modelcontextprotocol.io/)-aware hosts, with a dashboard deeplink fallback for other hosts. The deeplink text content is tagged with `_meta.ui.kind = "deeplink"` so viewers can locate it structurally instead of by string matching ([#882](https://github.com/grafana/mcp-grafana/pull/882))
+
+### Fixed
+
+- Enable OTLP trace export with the signal-specific `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` environment variable, so operators can ship traces without also exporting logs; the generic `OTEL_EXPORTER_OTLP_ENDPOINT` still enables both signals ([#1004](https://github.com/grafana/mcp-grafana/pull/1004))
+
+### Changed
+
+- Tool calls with unknown argument keys are now rejected with an error naming the unknown keys and listing the valid ones, instead of silently ignoring them and answering from default values ([#997](https://github.com/grafana/mcp-grafana/pull/997))
 
 ## [0.17.2] - 2026-07-13
 
@@ -319,6 +368,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Upgrade Docker base image packages to resolve critical OpenSSL CVE-2025-15467 (CVSS 9.8) ([#551](https://github.com/grafana/mcp-grafana/pull/551))
 
+[1.1.0]: https://github.com/grafana/mcp-grafana/compare/v1.0.0...v1.1.0
+[1.0.0]: https://github.com/grafana/mcp-grafana/compare/v0.17.2...v1.0.0
 [0.17.2]: https://github.com/grafana/mcp-grafana/compare/v0.17.1...v0.17.2
 [0.17.1]: https://github.com/grafana/mcp-grafana/compare/v0.17.0...v0.17.1
 [0.17.0]: https://github.com/grafana/mcp-grafana/compare/v0.16.0...v0.17.0

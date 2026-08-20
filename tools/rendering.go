@@ -100,7 +100,7 @@ func getPanelImage(ctx context.Context, args GetPanelImageParams) (*mcp.CallTool
 	baseURL := config.URL
 
 	if baseURL == "" {
-		return nil, fmt.Errorf("grafana URL not configured. Please set GRAFANA_URL environment variable or X-Grafana-URL header")
+		return nil, fmt.Errorf("grafana URL not configured. Please set GRAFANA_URL environment variable")
 	}
 
 	// Build the render URL
@@ -359,8 +359,10 @@ var GetPanelImage = mcpgrafana.MustTool(
 	getPanelImage,
 	mcp.WithTitleAnnotation("Get panel or dashboard image"),
 	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
 	mcpgrafana.WithUIResource(mcpgrafana.PanelViewerResourceURI),
+	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 func AddRenderingTools(mcp *server.MCPServer) {

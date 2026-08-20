@@ -149,6 +149,73 @@ func TestListDatasources_TypeFilter(t *testing.T) {
 	})
 }
 
+func TestListDatasources_NameFilter(t *testing.T) {
+	mockDS := []*models.DataSource{
+		{ID: 1, UID: "prom-prod-eu", Name: "prometheus-prod-eu", Type: "prometheus"},
+		{ID: 2, UID: "prom-prod-us", Name: "prometheus-prod-us", Type: "prometheus"},
+		{ID: 3, UID: "prom-dev", Name: "prometheus-dev", Type: "prometheus"},
+		{ID: 4, UID: "loki-prod-eu", Name: "loki-prod-eu", Type: "loki"},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(mockDS)
+	}))
+	defer server.Close()
+
+	ctx := mockDatasourcesCtx(server)
+
+	t.Run("empty name does not filter", func(t *testing.T) {
+		result, err := listDatasources(ctx, ListDatasourcesParams{Name: ""})
+		require.NoError(t, err)
+		assert.Equal(t, 4, result.Total)
+	})
+
+	t.Run("substring match across types", func(t *testing.T) {
+		result, err := listDatasources(ctx, ListDatasourcesParams{Name: "prod"})
+		require.NoError(t, err)
+		assert.Equal(t, 3, result.Total)
+		uids := make([]string, len(result.Datasources))
+		for i, ds := range result.Datasources {
+			uids[i] = ds.UID
+		}
+		assert.ElementsMatch(t, []string{"prom-prod-eu", "prom-prod-us", "loki-prod-eu"}, uids)
+	})
+
+	t.Run("case-insensitive match", func(t *testing.T) {
+		result, err := listDatasources(ctx, ListDatasourcesParams{Name: "PROD-EU"})
+		require.NoError(t, err)
+		assert.Equal(t, 2, result.Total)
+	})
+
+	t.Run("composes with type filter (AND)", func(t *testing.T) {
+		result, err := listDatasources(ctx, ListDatasourcesParams{Type: "prometheus", Name: "prod"})
+		require.NoError(t, err)
+		assert.Equal(t, 2, result.Total)
+		for _, ds := range result.Datasources {
+			assert.Equal(t, "prometheus", ds.Type)
+			assert.Contains(t, ds.Name, "prod")
+		}
+	})
+
+	t.Run("no match returns empty", func(t *testing.T) {
+		result, err := listDatasources(ctx, ListDatasourcesParams{Name: "does-not-exist"})
+		require.NoError(t, err)
+		assert.Equal(t, 0, result.Total)
+		assert.Empty(t, result.Datasources)
+	})
+
+	t.Run("name filter respects pagination", func(t *testing.T) {
+		// 3 datasources match "prod"; ask for page 2 with limit 2.
+		result, err := listDatasources(ctx, ListDatasourcesParams{Name: "prod", Limit: 2, Offset: 2})
+		require.NoError(t, err)
+		assert.Equal(t, 3, result.Total)
+		assert.Len(t, result.Datasources, 1)
+		assert.False(t, result.HasMore)
+	})
+}
+
 func TestGetDatasource_RoutesToUID(t *testing.T) {
 	mockDS := &models.DataSource{
 		ID:   1,
@@ -520,6 +587,19 @@ func newUpdateDatasourceServer(t *testing.T, current *models.DataSource, capture
 	}))
 }
 
+// parseUpdateResult unwraps the JSON text content of a successful
+// updateDatasource call into an UpdateDatasourceResult.
+func parseUpdateResult(t *testing.T, res *mcp.CallToolResult) UpdateDatasourceResult {
+	t.Helper()
+	require.NotNil(t, res)
+	require.Len(t, res.Content, 1)
+	text, ok := res.Content[0].(mcp.TextContent)
+	require.True(t, ok)
+	var r UpdateDatasourceResult
+	require.NoError(t, json.Unmarshal([]byte(text.Text), &r))
+	return r
+}
+
 func TestUpdateDatasource_MergesProvidedFields(t *testing.T) {
 	current := &models.DataSource{
 		ID:   1,
@@ -533,12 +613,97 @@ func TestUpdateDatasource_MergesProvidedFields(t *testing.T) {
 	defer srv.Close()
 
 	newName := "New Name"
-	_, err := updateDatasource(mockDatasourcesCtx(srv), UpdateDatasourceParams{UID: "prom-1", Name: &newName})
+	_, err := updateDatasource(mockDatasourcesCtx(srv), UpdateDatasourceParams{UID: "prom-1", Name: &newName, SchemaReviewed: true})
 	require.NoError(t, err)
 
 	assert.Equal(t, "New Name", captured.Name)
 	assert.Equal(t, "http://old:9090", captured.URL) // unprovided field preserved from current
 	assert.Equal(t, "prometheus", captured.Type)
+}
+
+func TestUpdateDatasource_SchemaGuidancePhase(t *testing.T) {
+	current := &models.DataSource{ID: 1, UID: "prom-1", Name: "Prometheus", Type: "prometheus"}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/datasources/uid/"+current.UID:
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(current)
+		default:
+			// The guidance phase must read the datasource but never write it.
+			assert.Failf(t, "unexpected request", "%s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	// No schemaReviewed → Phase 1: return schema guidance, do not update.
+	result, err := updateDatasource(mockDatasourcesCtx(srv), UpdateDatasourceParams{UID: "prom-1"})
+	require.NoError(t, err)
+	require.Len(t, result.Content, 1)
+
+	text, ok := result.Content[0].(mcp.TextContent)
+	require.True(t, ok)
+
+	var guidance map[string]any
+	require.NoError(t, json.Unmarshal([]byte(text.Text), &guidance))
+	assert.Equal(t, "prometheus", guidance["type"])
+	assert.NotEmpty(t, guidance["fields"])
+	message, _ := guidance["message"].(string)
+	assert.Contains(t, message, "schemaReviewed=true")
+}
+
+func TestUpdateDatasource_NoSchemaGuidancePhase(t *testing.T) {
+	current := &models.DataSource{ID: 1, UID: "custom-1", Name: "Custom", Type: "nonexistent-plugin"}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/datasources/uid/"+current.UID:
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(current)
+		default:
+			assert.Failf(t, "unexpected request", "%s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	result, err := updateDatasource(mockDatasourcesCtx(srv), UpdateDatasourceParams{UID: "custom-1"})
+	require.NoError(t, err)
+	require.Len(t, result.Content, 1)
+
+	text, ok := result.Content[0].(mcp.TextContent)
+	require.True(t, ok)
+
+	var guidance map[string]any
+	require.NoError(t, json.Unmarshal([]byte(text.Text), &guidance))
+	assert.Equal(t, "nonexistent-plugin", guidance["type"])
+	message, _ := guidance["message"].(string)
+	assert.Contains(t, message, "top-level arguments")
+	assert.Contains(t, message, "fields map")
+}
+
+func TestUpdateDatasource_MergesSchemaFieldsIntoJSONData(t *testing.T) {
+	current := &models.DataSource{
+		ID:       1,
+		UID:      "prom-1",
+		Name:     "Prometheus",
+		Type:     "prometheus",
+		JSONData: map[string]any{"timeInterval": "15s"},
+	}
+	var captured models.UpdateDataSourceCommand
+	srv := newUpdateDatasourceServer(t, current, &captured, "OK", "OK")
+	defer srv.Close()
+
+	_, err := updateDatasource(mockDatasourcesCtx(srv), UpdateDatasourceParams{
+		UID:            "prom-1",
+		Fields:         map[string]any{"httpMethod": "POST"},
+		SchemaReviewed: true,
+	})
+	require.NoError(t, err)
+
+	jsonData, ok := captured.JSONData.(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "POST", jsonData["httpMethod"])  // new value applied
+	assert.Equal(t, "15s", jsonData["timeInterval"]) // existing value preserved
 }
 
 func TestUpdateDatasource_HealthCheckIncludedInResult(t *testing.T) {
@@ -547,8 +712,9 @@ func TestUpdateDatasource_HealthCheckIncludedInResult(t *testing.T) {
 	defer srv.Close()
 
 	newURL := "http://new:9090"
-	result, err := updateDatasource(mockDatasourcesCtx(srv), UpdateDatasourceParams{UID: "prom-1", URL: &newURL})
+	res, err := updateDatasource(mockDatasourcesCtx(srv), UpdateDatasourceParams{UID: "prom-1", URL: &newURL, SchemaReviewed: true})
 	require.NoError(t, err)
+	result := parseUpdateResult(t, res)
 	require.NotNil(t, result.Health)
 	assert.Equal(t, "prom-1", result.Health.UID)
 	assert.Equal(t, "Data source is working", result.Health.Message)
@@ -560,8 +726,9 @@ func TestUpdateDatasource_HealthCheckFailureIsNonFatal(t *testing.T) {
 	defer srv.Close()
 
 	newURL := "http://bad-host:9090"
-	result, err := updateDatasource(mockDatasourcesCtx(srv), UpdateDatasourceParams{UID: "prom-1", URL: &newURL})
+	res, err := updateDatasource(mockDatasourcesCtx(srv), UpdateDatasourceParams{UID: "prom-1", URL: &newURL, SchemaReviewed: true})
 	require.NoError(t, err)
+	result := parseUpdateResult(t, res)
 	require.NotNil(t, result.Health)
 	assert.Equal(t, "ERROR", result.Health.Status)
 	assert.Equal(t, "connection refused", result.Health.Message)
@@ -596,7 +763,7 @@ func TestUpdateDatasource_PreservesPlainTextAuthFields(t *testing.T) {
 	defer srv.Close()
 
 	newURL := "http://prometheus:9090"
-	_, err := updateDatasource(mockDatasourcesCtx(srv), UpdateDatasourceParams{UID: "prom-1", URL: &newURL})
+	_, err := updateDatasource(mockDatasourcesCtx(srv), UpdateDatasourceParams{UID: "prom-1", URL: &newURL, SchemaReviewed: true})
 	require.NoError(t, err)
 
 	assert.Equal(t, "db-user", captured.User)

@@ -177,6 +177,8 @@ var GetSiftInvestigation = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("Get Sift investigation"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 // GetSiftAnalysisParams defines the parameters for retrieving a specific analysis
@@ -219,6 +221,8 @@ var GetSiftAnalysis = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("Get Sift analysis"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 // ListSiftInvestigationsParams defines the parameters for retrieving investigations
@@ -254,6 +258,8 @@ var ListSiftInvestigations = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("List Sift investigations"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 // FindErrorPatternLogsParams defines the parameters for running an ErrorPatternLogs check
@@ -345,7 +351,9 @@ var FindErrorPatternLogs = mcpgrafana.MustTool(
 	"Searches Loki logs for elevated error patterns compared to the last day's average, waits for the analysis to complete, and returns the results including any patterns found.",
 	findErrorPatternLogs,
 	mcp.WithTitleAnnotation("Find error patterns in logs"),
-	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithReadOnlyHintAnnotation(false),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 // FindSlowRequestsParams defines the parameters for running an SlowRequests check
@@ -412,7 +420,9 @@ var FindSlowRequests = mcpgrafana.MustTool(
 	"Searches relevant Tempo datasources for slow requests, waits for the analysis to complete, and returns the results.",
 	findSlowRequests,
 	mcp.WithTitleAnnotation("Find slow requests"),
-	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithReadOnlyHintAnnotation(false),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 // AddSiftTools registers all Sift tools with the MCP server

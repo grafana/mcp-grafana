@@ -46,6 +46,37 @@ func TestIncidentTools(t *testing.T) {
 		assert.Equal(t, "active", result.Status)
 	})
 
+	t.Run("update incident", func(t *testing.T) {
+		ctx := newIncidentTestContext()
+		result, err := updateIncident(ctx, UpdateIncidentParams{
+			IncidentID: "incident-123",
+			Status:     "resolved",
+			Severity:   "major",
+			Title:      "high latency in web requests",
+		})
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Equal(t, "incident-123", result.IncidentID)
+	})
+
+	t.Run("update incident requires an incident ID", func(t *testing.T) {
+		ctx := newIncidentTestContext()
+		_, err := updateIncident(ctx, UpdateIncidentParams{
+			Status: "resolved",
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "incidentId is required")
+	})
+
+	t.Run("update incident requires at least one field", func(t *testing.T) {
+		ctx := newIncidentTestContext()
+		_, err := updateIncident(ctx, UpdateIncidentParams{
+			IncidentID: "incident-123",
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "at least one of status, severity or title")
+	})
+
 	t.Run("add activity to incident", func(t *testing.T) {
 		ctx := newIncidentTestContext()
 		result, err := addActivityToIncident(ctx, AddActivityToIncidentParams{

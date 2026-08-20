@@ -189,3 +189,30 @@ func TestBuildSchemaGuidance(t *testing.T) {
 		assert.ElementsMatch(t, []any{"GET", "POST"}, methodField.AllowedValues)
 	})
 }
+
+func TestBuildUpdateSchemaGuidance(t *testing.T) {
+	t.Run("drops the uid common field", func(t *testing.T) {
+		schema := &DatasourceSchema{PluginType: "test-plugin", PluginName: "Test"}
+		keys := fieldKeys(BuildUpdateSchemaGuidance(schema).Fields)
+		assert.NotContains(t, keys, "uid")
+		assert.Contains(t, keys, "isDefault")
+	})
+
+	t.Run("clears required flag on every field", func(t *testing.T) {
+		schema := &DatasourceSchema{Fields: []DsSchemaField{
+			{Key: "url", Target: "root", ValueType: "string", Required: true},
+			{Key: "httpMethod", Target: "jsonData", ValueType: "string", Required: true},
+		}}
+		guidance := BuildUpdateSchemaGuidance(schema)
+		require.NotEmpty(t, guidance.Fields)
+		for _, f := range guidance.Fields {
+			assert.False(t, f.Required, "field %q should not be required for updates", f.Key)
+		}
+	})
+
+	t.Run("message mentions the top-level name argument for rename", func(t *testing.T) {
+		schema := &DatasourceSchema{PluginType: "test-plugin", PluginName: "Test Plugin"}
+		guidance := BuildUpdateSchemaGuidance(schema)
+		assert.Contains(t, guidance.Message, "name")
+	})
+}

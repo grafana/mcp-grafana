@@ -151,6 +151,26 @@ Queries go through Grafana's Snowflake datasource (Grafana Enterprise plugin `gr
 
 - **Query Quickwit:** Execute search queries against Quickwit datasources using Lucene query syntax or partial Elasticsearch-compatible Query DSL. Supports filtering by time range and retrieving logs or other indexed documents. Returns documents with their index, ID, source fields, and optional relevance score.
 
+### Agent Observability
+
+> **Note:** Agent Observability tools are **disabled by default** and work only in Grafana Cloud. To enable them, add `agento11y` to your `--enabled-tools` flag.
+
+- **List and search conversations:** List recent LLM conversations or search them with a filter expression (model, provider, agent, status, error type, eval results, and more) over a time range. Search results include error counts, rating summaries, evaluation summaries, and trace IDs.
+- **Get conversation detail:** Fetch a single conversation with all its generations, including prompts and outputs.
+- **Get generation detail and scores:** Fetch a single generation by ID, and its evaluation scores (evaluator, score key, value, passed, explanation).
+- **Read the agent catalog:** List the agents that send telemetry, fetch one agent version in full (complete system prompt, every tool with its JSON schema, and the models it ran on), walk an agent's version history, and compare evaluation score aggregates per version. Effective versions are `sha256:` hashes that a tool change never affects; for an agent that reports no version of its own they hash the system prompt, so a prompt edit mints a new version. Catalog and version rows carry a `token_estimate`, which is worth checking before fetching a full prompt.
+- **Inspect evaluators and templates:** Read the evaluators a score came from, the templates they were derived from, and the judge providers and models available to LLM-judge evaluators. With write tools enabled, also create, fork, test, and delete evaluators.
+- **Inspect eval rules and guards:** Read the asynchronous eval rules that bind evaluators to production traffic, and the guards (hook rules) that run inline and can warn or deny. With write tools enabled, also create, update, preview, and delete them. Writes and the non-persisting `preview_rule` and `test_evaluator` operations need the `grafana-agento11y-app.eval:write` permission, granted by the Agento11y Admin role.
+- **Curate saved conversations and collections:** Read the saved conversations (bookmarks that give a conversation a stable ID, name, and tags) and the collections that group them, including each collection's member count and the collections embedded in every saved-conversation row. With write tools enabled, also bookmark a conversation, create and edit collections, and add or remove members. These writes need the same `grafana-agento11y-app.eval:write` permission.
+- **Read and edit test suites:** List the versioned test suites that offline experiments run against, read one with its full version history, and page through the test cases of a version. With write tools enabled, also create a suite, rename or retag it, open a draft version, publish it, and write or delete its test cases. A published version is frozen, so an edit means opening a new draft. These writes need `grafana-agento11y-app.eval:write`.
+- **Read offline experiments:** List the evaluation runs over a test suite and read one with its headline pass rate, cost, and token totals. Drill down through a per-test-case report to trials, their scores with each judge's explanation, and their artifact metadata. With write tools enabled, also rename or retag an experiment and cancel a running one, which need `grafana-agento11y-app.eval:write`. Experiments are created by SDK runners, not by this tool.
+
+### Grafana Assistant
+
+> **Note:** Assistant tools are **disabled by default** and require the [Grafana Assistant](https://grafana.com/docs/grafana-cloud/machine-learning/assistant/) plugin (`grafana-assistant-app`) to be installed on the target Grafana instance. They are also **write tools** (the assistant may mutate stack state), so they are skipped when `--disable-write` is set. To enable them, add `assistant` to your `--enabled-tools` flag.
+
+- **Ask the assistant:** Send a natural-language prompt to Grafana Assistant and wait for the full text reply. The assistant may use tools, metrics, logs, and other stack context—broader than firing one isolated data-source query. Pass the returned `contextId` back in a follow-up call to continue the same conversation. Complex tasks can take several minutes; the call blocks until the reply is done or the request times out (5 minutes).
+
 ### Incidents
 
 - **Search, create, and update incidents:** Manage incidents in Grafana Incident, including searching, creating, and adding activities to incidents.
@@ -322,6 +342,7 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `list_incidents`                  | Incident                  | List incidents in Grafana Incident                                                                           | Viewer role                                            | N/A                                                 |
 | `create_incident`                 | Incident                  | Create an incident in Grafana Incident                                                                       | Editor role                                            | N/A                                                 |
 | `add_activity_to_incident`        | Incident                  | Add an activity item to an incident in Grafana Incident                                                      | Editor role                                            | N/A                                                 |
+| `update_incident`                 | Incident                  | Update an incident in Grafana Incident (status, severity, or title)                                          | Editor role                                            | N/A                                                 |
 | `get_incident`                    | Incident                  | Get a single incident by ID                                                                                  | Viewer role                                            | N/A                                                 |
 | `query_loki_logs`                 | Loki                      | Query and retrieve logs using LogQL (either log or metric queries)                                           | `datasources:query`                                    | `datasources:uid:loki-uid`                          |
 | `list_loki_label_names`           | Loki                      | List all available label names in logs                                                                       | `datasources:query`                                    | `datasources:uid:loki-uid`                          |
@@ -357,6 +378,7 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `list_oncall_users`               | OnCall                    | List users from Grafana OnCall                                                                               | `grafana-oncall-app.user-settings:read`                | Plugin-specific scopes                              |
 | `list_alert_groups`               | OnCall                    | List alert groups from Grafana OnCall with filtering options                                                 | `grafana-oncall-app.alert-groups:read`                 | Plugin-specific scopes                              |
 | `get_alert_group`                 | OnCall                    | Get a specific alert group from Grafana OnCall by its ID                                                     | `grafana-oncall-app.alert-groups:read`                 | Plugin-specific scopes                              |
+| `update_alert_group`              | OnCall                    | Acknowledge, unacknowledge, resolve, or unresolve an alert group                                             | `grafana-oncall-app.alert-groups:write` (and `:read`)  | Plugin-specific scopes                              |
 | `get_sift_investigation`          | Sift                      | Retrieve an existing Sift investigation by its UUID                                                          | Viewer role                                            | N/A                                                 |
 | `get_sift_analysis`               | Sift                      | Retrieve a specific analysis from a Sift investigation                                                       | Viewer role                                            | N/A                                                 |
 | `list_sift_investigations`        | Sift                      | Retrieve a list of Sift investigations with an optional limit                                                | Viewer role                                            | N/A                                                 |
@@ -367,6 +389,15 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `list_pyroscope_profile_types`    | Pyroscope                 | List available profile types                                                                                 | `datasources:query`                                    | `datasources:uid:pyroscope-uid`                     |
 | `query_pyroscope`                 | Pyroscope                 | Query profiles, metrics, or both from Pyroscope                                                              | `datasources:query`                                    | `datasources:uid:pyroscope-uid`                     |
 | `get_assertions`                  | Asserts                   | Get assertion summary for a given entity                                                                     | Plugin-specific permissions                            | Plugin-specific scopes                              |
+| `agento11y_manage_conversations` | Agent Observability*  | List, search, and fetch LLM conversations from Grafana Agent Observability                              | `grafana-agento11y-app.conversations:read`                 | N/A                                                 |
+| `agento11y_manage_generations` | Agent Observability*    | Fetch LLM generation details and evaluation scores from Grafana Agent Observability                     | `grafana-agento11y-app.data:read`                          | N/A                                                 |
+| `agento11y_manage_agents` | Agent Observability*         | Read the agent catalog: list agents, get one agent version in full, list version history, and per-version score aggregates | `grafana-agento11y-app.data:read`                          | N/A                                                 |
+| `agento11y_manage_evaluators` | Agent Observability*    | Manage evaluators, evaluator templates, and the judge catalog (list, get, upsert, fork, test, delete)    | `grafana-agento11y-app.data:read` + `grafana-agento11y-app.eval:write` for mutations and tests | N/A                                                 |
+| `agento11y_manage_eval_rules` | Agent Observability*    | Manage eval rules and guards (list, get, create, update, preview, delete)                               | `grafana-agento11y-app.data:read` + `grafana-agento11y-app.eval:write` for mutations and previews | N/A                                                 |
+| `agento11y_manage_eval_collections` | Agent Observability* | Manage saved conversations and the collections that group them (list, get, save, create, update, delete, add and remove members) | `grafana-agento11y-app.data:read` + `grafana-agento11y-app.eval:write` for mutations | N/A                                                 |
+| `agento11y_manage_experiments` | Agent Observability* | Read offline experiments, their trials, scores, artifact metadata, and filter facets; update and cancel an experiment | `grafana-agento11y-app.data:read` + `grafana-agento11y-app.eval:write` for mutations | N/A                                                 |
+| `agento11y_manage_test_suites` | Agent Observability* | Manage the test suites that offline experiments run against, their versions, and their test cases (list, get, create, update, draft, publish, upsert, delete) | `grafana-agento11y-app.data:read` + `grafana-agento11y-app.eval:write` for mutations | N/A                                                 |
+| `ask_assistant`                   | Assistant*                | Send a prompt to Grafana Assistant and return the full text reply (multi-turn via `contextId`)              | Plugin-specific permissions                            | Plugin-specific scopes                              |
 | `generate_deeplink`               | Navigation                | Generate accurate deeplink URLs for Grafana resources                                                        | None (read-only URL generation)                        | N/A                                                 |
 | `get_annotations`                 | Annotations               | Fetch annotations with filters                                                                               | `annotations:read`                                     | `annotations:*` or `annotations:id:123`             |
 | `create_annotation`               | Annotations               | Create a new annotation (standard or Graphite format)                                                        | `annotations:write`                                    | `annotations:*`                                     |
@@ -390,7 +421,8 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 - `-t, --transport`: Transport type (`stdio`, `sse`, or `streamable-http`) - default: `stdio`
 - `--address`: The host and port for SSE/streamable-http server - default: `localhost:8000`
 - `--base-path`: Base path for the SSE/streamable-http server
-- `--endpoint-path`: Endpoint path for the streamable-http server - default: `/`
+- `--endpoint-path`: Endpoint path for the streamable-http server - default: `/mcp`
+- `--server-name`: Server name used in the MCP handshake and OTel `service.name` - default: `mcp-grafana`. Overrides `GRAFANA_MCP_SERVER_NAME` env var
 
 **HTTP Transport Security (SSE / streamable-http only):**
 
@@ -399,9 +431,21 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 - `--allowed-hosts`: Comma-separated allowlist of `Host` header values. Defaults to loopback variants of `--address` (e.g. `localhost:8000,127.0.0.1:8000,[::1]:8000`). A value that parses to empty (unset, `,`, ` , `, etc.) also falls back to the defaults so a typo cannot silently disable the check. Requests with a `Host` header outside the allowlist are rejected with `403`. Pass `*` to disable the check — only safe when running behind a trusted reverse proxy that rewrites `Host`, or in an isolated network. K8s `httpGet` probes and external `/metrics` scrapes will need either an explicit hostname in this list, `*`, or a `tcpSocket` probe / a separate metrics port (`--metrics-address`).
 - `--allowed-origins`: Comma-separated allowlist of `Origin` header values. Empty by default — any request that carries an `Origin` header is rejected (browsers always send one for cross-origin requests, and no browser should be calling this server directly). Set to an explicit list to permit browser-based clients, or `*` to disable the check.
 
+**Caller Authentication (SSE / streamable-http only):**
+
+Optionally require MCP clients to authenticate *to the server*. This is separate from the credentials the server uses to reach Grafana. Stdio is unaffected.
+
+- `--server-auth-token`: Bearer token callers must send as `Authorization: Bearer <token>`. Falls back to the `MCP_GRAFANA_SERVER_TOKEN` environment variable. When set, requests without a valid token are rejected with `401` before any tool runs. Prefer the env var so the secret isn't visible in the process arguments.
+
+Caller authentication is enforced only when `--server-auth-token` is set. When it isn't and the server binds a non-loopback address, the server **starts but logs a security error** — emitted at the `error` log level so it isn't hidden by `--log-level` (loopback and stdio are unaffected); a future major release will make that a startup error. Use TLS (or TLS termination) whenever caller auth is enabled on a non-loopback address. When caller auth is enabled, the validated `Authorization` header is stripped before requests reach Grafana; combining `--server-auth-token` with `GRAFANA_FORWARD_HEADERS=Authorization` is rejected at startup.
+
 **Debug and Logging:**
 - `--debug`: Enable debug mode for detailed HTTP request/response logging
 - `--log-level`: Log level (`debug`, `info`, `warn`, `error`) - default: `info`
+
+**Grafana Client Options:**
+- `--grafana-timeout`: Time limit for requests made by the Grafana client. Accepts Go duration strings (e.g., `10s`, `500ms`) - default: `10s`
+- `--include-args-in-spans`: Include tool call arguments in OpenTelemetry spans. Only enable in non-production environments or when arguments are known not to contain PII - default: `false`
 
 **Observability:**
 - `--metrics`: Enable Prometheus metrics endpoint at `/metrics`
@@ -413,8 +457,11 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 - `--session-idle-timeout-minutes`: Session idle timeout in minutes. Sessions with no activity for this duration are automatically reaped - default: `30`. Set to `0` to disable session reaping. Only relevant for SSE and streamable-http transports.
 
 **Tool Configuration:**
-- `--enabled-tools`: Comma-separated list of enabled categories - default: all categories except `admin`, `athena`, `clickhouse`, `cloudwatch`, `elasticsearch`, `examples`, `graphite`, `quickwit`, `runpanelquery`, and `snowflake`. To enable disabled categories, add them to the list (e.g., `"search,datasource,...,snowflake"`)
+- `--enabled-tools`: Comma-separated list of enabled categories - default: all categories except `admin`, `agento11y`, `assistant`, `athena`, `clickhouse`, `cloudwatch`, `elasticsearch`, `examples`, `graphite`, `quickwit`, `runpanelquery`, and `snowflake`. To enable disabled categories, add them to the list (e.g., `"search,datasource,...,snowflake"`)
 - `--max-loki-log-limit`: Maximum number of log lines returned per `query_loki_logs` call - default: `100`. Note: Set this at least 1 below Loki's server-side `max_entries_limit_per_query` to allow truncation detection (the tool requests `limit+1` internally to detect if more data exists).
+- `--loki-guardrail-mode`: Loki query cost guardrail for `query_loki_logs` - default: `off`. Loki does not enforce `max_query_bytes_read` on log queries without a line filter, so a broad selector over a wide range can scan terabytes; the guardrail requires a selective stream selector, caps the effective time range (including range-vector durations like `[30d]`), and pre-checks Loki's index/stats byte estimate before running the query. `shadow` logs queries that would be blocked but lets them run (it still pays the index/stats round trip); `enforce` rejects them with rewrite guidance the LLM can act on. On VictoriaLogs the guardrail applies only to selector-shaped (`{...}`) queries — when no selector parses (the normal brace-less LogsQL shape), the query passes through entirely, and the byte-budget check never applies (no cheap index estimate). Env fallback: `GRAFANA_LOKI_GUARDRAIL_MODE`.
+- `--loki-guardrail-max-bytes`: Maximum bytes a single `query_loki_logs` call may scan, estimated via Loki's index/stats API - default: `107374182400` (100 GiB). `0` disables the byte-budget check. Env fallback: `GRAFANA_LOKI_GUARDRAIL_MAX_BYTES`.
+- `--loki-guardrail-max-range`: Maximum effective time range for a single `query_loki_logs` call, including range-vector durations - default: `24h`. Accepts Go duration strings. `0` disables the range check. Env fallback: `GRAFANA_LOKI_GUARDRAIL_MAX_RANGE`.
 - `--disable-search`: Disable search tools
 - `--disable-datasource`: Disable datasource tools
 - `--disable-incident`: Disable incident tools
@@ -442,6 +489,8 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 - `--disable-graphite`: Disable Graphite tools
 - `--disable-athena`: Disable Athena tools
 - `--disable-provisioning`: Disable provisioning tools
+- `--disable-agento11y`: Disable Agent Observability tools
+- `--disable-assistant`: Disable Grafana Assistant tools
 
 ### Read-Only Mode
 
@@ -463,9 +512,13 @@ When `--disable-write` is enabled, the following write operations are disabled:
 **Incident Tools:**
 - `create_incident`
 - `add_activity_to_incident`
+- `update_incident`
 
 **Alerting Tools:**
 - `alerting_manage_rules` (create, update, delete operations)
+
+**OnCall Tools:**
+- `update_alert_group`
 
 **Annotation Tools:**
 - `create_annotation`
@@ -478,6 +531,13 @@ When `--disable-write` is enabled, the following write operations are disabled:
 **Snapshot Tools:**
 - `create_snapshot`
 - `delete_snapshot`
+
+**Agent Observability Tools:**
+- `agento11y_manage_evaluators` (upsert, delete, fork, test evaluator operations)
+- `agento11y_manage_eval_rules` (create, update, delete, preview rule and guard operations)
+- `agento11y_manage_eval_collections` (save and delete saved conversations; create, update, delete collections; add and remove collection members)
+- `agento11y_manage_experiments` (update and cancel experiment operations)
+- `agento11y_manage_test_suites` (create and update test suites; create and publish versions; upsert and delete test cases)
 
 All read operations remain available, allowing you to query dashboards, run PromQL/LogQL queries, list resources, and retrieve data.
 
@@ -525,7 +585,7 @@ volumes:
 Surrounding whitespace (including a trailing newline) is trimmed from the file contents. If both `GRAFANA_SERVICE_ACCOUNT_TOKEN` and `GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE` are set, the inline token takes precedence.
 
 ### Multi-Organization Support
- 
+
 You can specify which organization to interact with using either:
 
 - **Environment variable:** Set `GRAFANA_ORG_ID` to the numeric organization ID
@@ -622,18 +682,20 @@ Forwarded headers are merged with any headers defined in `GRAFANA_EXTRA_HEADERS`
      docker run --rm -i -e GRAFANA_URL=https://myinstance.grafana.net -e GRAFANA_SERVICE_ACCOUNT_TOKEN=<your service account token> grafana/mcp-grafana -t stdio
      ```
 
+     > **Note — secure the networked modes:** In SSE and streamable-http modes the container binds a non-loopback address (`0.0.0.0:8000`). Without a caller token the server **starts but logs a security error** (at the `error` log level, so it isn't hidden by `--log-level`; and it will refuse to start in a future major release). Set `MCP_GRAFANA_SERVER_TOKEN` to require an `Authorization: Bearer <token>` from clients (recommended). STDIO mode is unaffected. See [Caller Authentication](#cli-flags-reference).
+
      2. **SSE Mode**: In this mode, the server runs as an HTTP server that clients connect to. You must expose port 8000 using the `-p` flag:
 
      ```bash
      docker pull grafana/mcp-grafana
-     docker run --rm -p 8000:8000 -e GRAFANA_URL=http://localhost:3000 -e GRAFANA_SERVICE_ACCOUNT_TOKEN=<your service account token> grafana/mcp-grafana
+     docker run --rm -p 8000:8000 -e GRAFANA_URL=http://localhost:3000 -e GRAFANA_SERVICE_ACCOUNT_TOKEN=<your service account token> -e MCP_GRAFANA_SERVER_TOKEN=<caller auth token> grafana/mcp-grafana
      ```
 
      3. **Streamable HTTP Mode**: In this mode, the server operates as an independent process that can handle multiple client connections. You must expose port 8000 using the `-p` flag: For this mode you must explicitly override the default with `-t streamable-http`
 
      ```bash
      docker pull grafana/mcp-grafana
-     docker run --rm -p 8000:8000 -e GRAFANA_URL=http://localhost:3000 -e GRAFANA_SERVICE_ACCOUNT_TOKEN=<your service account token> grafana/mcp-grafana -t streamable-http
+     docker run --rm -p 8000:8000 -e GRAFANA_URL=http://localhost:3000 -e GRAFANA_SERVICE_ACCOUNT_TOKEN=<your service account token> -e MCP_GRAFANA_SERVER_TOKEN=<caller auth token> grafana/mcp-grafana -t streamable-http
      ```
 
      For HTTPS streamable HTTP mode with server TLS certificates:
@@ -644,6 +706,7 @@ Forwarded headers are merged with any headers defined in `GRAFANA_EXTRA_HEADERS`
        -v /path/to/certs:/certs:ro \
        -e GRAFANA_URL=http://localhost:3000 \
        -e GRAFANA_SERVICE_ACCOUNT_TOKEN=<your service account token> \
+       -e MCP_GRAFANA_SERVER_TOKEN=<caller auth token> \
        grafana/mcp-grafana \
        -t streamable-http \
        -addr :8443 \
@@ -960,15 +1023,9 @@ grafanaConfig := mcpgrafana.GrafanaConfig{
 contextFunc := mcpgrafana.ComposedStdioContextFunc(grafanaConfig)
 ```
 
-**URL validation when wiring your own HTTP server:**
+**URL validation:**
 
-When library consumers wire mcp-grafana's context functions into their own `http.Server`, install `ValidateGrafanaURLMiddleware` to reject malformed `X-Grafana-URL` headers with 400 Bad Request (matching the binary's behavior):
-
-```go
-mux.Handle(path, mcpgrafana.ValidateGrafanaURLMiddleware(yourMCPHandler))
-```
-
-When calling `NewGrafanaClient` directly (stdio or programmatic construction), pre-validate untrusted URLs to avoid a reachable panic:
+When calling `NewGrafanaClient` directly (stdio or programmatic construction), pre-validate URLs to avoid a reachable panic:
 
 ```go
 if err := mcpgrafana.ValidateGrafanaURL(urlFromHeader); err != nil {
@@ -977,8 +1034,6 @@ if err := mcpgrafana.ValidateGrafanaURL(urlFromHeader); err != nil {
 }
 client := mcpgrafana.NewGrafanaClient(ctx, urlFromHeader, apiKey, nil)
 ```
-
-Both patterns share `ValidateGrafanaURL` as the single validator.
 
 ### Server TLS Configuration (Streamable HTTP Transport Only)
 
@@ -1119,6 +1174,14 @@ When `OTEL_EXPORTER_OTLP_ENDPOINT` (or the signal-specific `OTEL_EXPORTER_OTLP_L
 
 Traces and logs resolve their endpoints independently, so the two signals can be enabled separately: setting only `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` enables tracing **without** log export, setting only `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` enables log export without tracing, and the generic `OTEL_EXPORTER_OTLP_ENDPOINT` enables both.
 
+If you use the generic `OTEL_EXPORTER_OTLP_ENDPOINT` but want to disable log export (e.g. your backend does not support the `LogsService`), set:
+
+```bash
+OTEL_LOGS_EXPORTER=none
+```
+
+This prevents the server from creating an OTLP logs exporter regardless of the endpoint configuration, avoiding errors like `unknown service opentelemetry.proto.collector.logs.v1.LogsService`.
+
 Stderr logging is unchanged when OTLP logging is enabled; you can continue to rely on container logs or pipe stderr to `/dev/null` if you prefer.
 
 ```bash
@@ -1164,7 +1227,9 @@ This typically indicates that you are using a Grafana version earlier than 9.0. 
 
 ## Development
 
-Contributions are welcome! Please open an issue or submit a pull request if you have any suggestions or improvements.
+Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) first — it covers what belongs in this server and how to propose it.
+
+If you're **adding a new tool**, please [open a tool proposal](https://github.com/grafana/mcp-grafana/issues/new?template=new-tool-proposal.yml) before writing the code. Every default-on tool is sent to the model on every request by every user, so we'd rather discuss the idea than decline a finished pull request. Bug fixes, docs, tests and new parameters on existing tools need no proposal — just send a PR.
 
 This project is written in Go. Install Go following the instructions for your platform.
 
