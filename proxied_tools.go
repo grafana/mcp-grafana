@@ -1136,11 +1136,24 @@ func (tm *ToolManager) InitializeAndRegisterProxiedTools(ctx context.Context, se
 	// already-held reference instead of attaching again, which would take a
 	// second reference this session will never balance with a second release.
 	state.mutex.RLock()
-	set := state.proxiedSet
+	existingSet := state.proxiedSet
 	state.mutex.RUnlock()
 
+	var set *proxiedToolSet
 	var needsBuild bool
-	if set == nil || set.key != key {
+	if existingSet != nil && existingSet.key == key {
+		set = existingSet
+	} else {
+		if existingSet != nil {
+			// The session's credentials changed since an earlier hook invocation
+			// left it attached to a different set (e.g. a rotated access/ID token
+			// between the timed-out attempt and this retry). Release that stale
+			// reference before taking a new one: attachProxiedToolSet below would
+			// otherwise overwrite state.proxiedSet without ever releasing it,
+			// leaking the old set's reference (and its clients) forever.
+			tm.releaseSessionProxiedToolSet(state)
+		}
+
 		// attachProxiedToolSet takes the reference AND binds the set to the
 		// session atomically (under proxiedSetsMu), so there is no window where a
 		// reference exists that teardown cannot find and release.

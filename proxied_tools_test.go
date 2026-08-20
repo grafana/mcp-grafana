@@ -347,6 +347,70 @@ func TestProxiedToolSet_SessionAttachWaitBudget(t *testing.T) {
 		tm.proxiedSetsMu.Unlock()
 		assert.Equal(t, 0, sizeAfterTeardown, "teardown must release B's reference and drop the now-unused entry")
 	})
+
+	t.Run("credentials rotating during a timed-out wait release the stale set instead of leaking it", func(t *testing.T) {
+		// Key A's build blocks; key B's build returns immediately. Branching on
+		// the context lets a single injected builder serve both keys.
+		aStarted := make(chan struct{})
+		aRelease := make(chan struct{})
+		build := func(ctx context.Context, logger *slog.Logger) (builtProxiedTools, error) {
+			if GrafanaConfigFromContext(ctx).URL == "http://a" {
+				close(aStarted)
+				<-aRelease
+			}
+			return builtWithTool("tempo", "uid", "tempo_example"), nil
+		}
+		tm, sm, srv := newToolManagerWithServer(t, build)
+		tm.sessionAttachWaitBudget = 10 * time.Millisecond
+
+		sess := newToolsCapableSession("rotate-1")
+		ctxA := ctxWithCreds("http://a", "secret", nil, 1)
+		sm.CreateSession(ctxA, sess)
+		require.NoError(t, srv.RegisterSession(ctxA, sess))
+
+		// First hook: attaches to key A's set and times out waiting on its
+		// (still blocked) build.
+		tm.InitializeAndRegisterProxiedTools(ctxA, sess)
+		<-aStarted
+		assert.Empty(t, sess.GetSessionTools())
+
+		tm.proxiedSetsMu.Lock()
+		require.Len(t, tm.proxiedSets, 1, "key A's set is cached")
+		var setA *proxiedToolSet
+		for _, s := range tm.proxiedSets {
+			setA = s
+		}
+		refsA := setA.refs
+		tm.proxiedSetsMu.Unlock()
+		assert.Equal(t, 1, refsA, "the session holds A's only reference while its wait is pending")
+
+		// Second hook for the SAME session, but with rotated credentials (key
+		// B) -- e.g. a refreshed access/ID token. Before the fix, this
+		// overwrote state.proxiedSet from A to B without ever releasing A's
+		// reference, leaking it (and eventually its clients) forever.
+		ctxB := ctxWithCreds("http://b", "secret", nil, 1)
+		tm.InitializeAndRegisterProxiedTools(ctxB, sess)
+
+		tm.proxiedSetsMu.Lock()
+		refsAAfterRotation := setA.refs
+		var setB *proxiedToolSet
+		for _, s := range tm.proxiedSets {
+			if s != setA {
+				setB = s
+			}
+		}
+		tm.proxiedSetsMu.Unlock()
+		assert.Equal(t, 0, refsAAfterRotation, "the stale reference to A must be released on credential rotation, not leaked")
+		require.NotNil(t, setB, "key B must have its own set")
+		assert.Len(t, sess.GetSessionTools(), 1, "B's build is immediate, so the session registers on this same call")
+
+		// Let A's now-abandoned (refs==0) build finish; the existing
+		// abandoned-build path closes it without publishing.
+		close(aRelease)
+		<-setA.ready
+
+		sm.RemoveSession(ctxB, sess)
+	})
 }
 
 func TestSessionStateLifecycle(t *testing.T) {
