@@ -186,3 +186,61 @@ func TestCategorizedLabelsBackwardCompat(t *testing.T) {
 	require.Len(t, streams[0].Values, 1)
 	require.Len(t, streams[0].Values[0], 2) // Only timestamp + line, no third element
 }
+
+func TestCompactLogEntries(t *testing.T) {
+	t.Run("empty input returns empty, non-nil slice", func(t *testing.T) {
+		got := compactLogEntries(nil)
+		assert.NotNil(t, got)
+		assert.Empty(t, got)
+	})
+
+	t.Run("groups lines by stream, preserving order and dropping metadata", func(t *testing.T) {
+		backend := map[string]string{"app": "backend", "pod": "backend-1"}
+		worker := map[string]string{"app": "worker", "pod": "worker-1"}
+		entries := []LogEntry{
+			{Timestamp: "t1", Line: "b-one", Labels: backend, StructuredMetadata: map[string]string{"trace_id": "x"}},
+			{Timestamp: "t2", Line: "w-one", Labels: worker},
+			{Timestamp: "t3", Line: "b-two", Labels: backend, Parsed: map[string]string{"level": "error"}},
+		}
+
+		got := compactLogEntries(entries)
+
+		// Two distinct streams, in first-seen order.
+		require.Len(t, got, 2)
+		assert.Equal(t, backend, got[0].Labels)
+		assert.Equal(t, worker, got[1].Labels)
+
+		// Lines land under the right stream, in order, as named timestamp/line pairs.
+		assert.Equal(t, []CompactLine{{Timestamp: "t1", Line: "b-one"}, {Timestamp: "t3", Line: "b-two"}}, got[0].Lines)
+		assert.Equal(t, []CompactLine{{Timestamp: "t2", Line: "w-one"}}, got[1].Lines)
+	})
+
+	t.Run("label sets are compared by content, not map identity", func(t *testing.T) {
+		// Same labels supplied as two independently-constructed maps must
+		// still collapse into a single stream.
+		entries := []LogEntry{
+			{Timestamp: "t1", Line: "one", Labels: map[string]string{"a": "1", "b": "2"}},
+			{Timestamp: "t2", Line: "two", Labels: map[string]string{"b": "2", "a": "1"}},
+		}
+
+		got := compactLogEntries(entries)
+
+		require.Len(t, got, 1)
+		assert.Equal(t, []CompactLine{{Timestamp: "t1", Line: "one"}, {Timestamp: "t2", Line: "two"}}, got[0].Lines)
+	})
+}
+
+func TestQueryLokiLogsFormatValidation(t *testing.T) {
+	// Unknown format values must be rejected before any backend call, so a typo
+	// can't silently fall back to full output. Datasource resolution happens
+	// after validation, so an invalid format fails fast without a live backend.
+	for _, bad := range []string{"flat", "summary", "comapct", "compact-ish"} {
+		_, err := queryLokiLogs(context.Background(), QueryLokiLogsParams{
+			DatasourceUID: "loki",
+			LogQL:         `{app="x"}`,
+			Format:        bad,
+		})
+		require.Error(t, err, "format %q should be rejected", bad)
+		assert.Contains(t, err.Error(), "invalid format")
+	}
+}
