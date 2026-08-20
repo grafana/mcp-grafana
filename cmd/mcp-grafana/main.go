@@ -115,7 +115,7 @@ var categoryDescription = map[string]string{
 // isn't there, so these say what the category can still do.
 var categoryDescriptionNoQuery = map[string]string{
 	"prometheus": "Prometheus: Retrieve metric metadata and explore metric names and label names/values. Query execution is disabled.",
-	"loki":       "Loki: Retrieve log metadata and explore label names/values. Query execution is disabled.",
+	"loki":       "Loki: Retrieve log metadata and index stats, explore label names/values, and audit label strategy. Log query execution is disabled.",
 	"pyroscope":  "Pyroscope: Explore profile types and label names/values. Query execution is disabled.",
 	"cloudwatch": "CloudWatch: List AWS CloudWatch namespaces, metrics, and dimensions. Query execution is disabled.",
 	"clickhouse": "ClickHouse: List tables and describe table schemas in ClickHouse datasources. Query execution is disabled.",

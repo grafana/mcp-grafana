@@ -997,9 +997,7 @@ var safeQueryToolNames = []string{
 	"query_prometheus",
 	"query_prometheus_histogram",
 	"query_loki_logs",
-	"query_loki_stats",
 	"query_loki_patterns",
-	"analyze_loki_labels",
 	"query_elasticsearch",
 	"query_quickwit",
 	"query_graphite",
@@ -1031,6 +1029,10 @@ var metadataToolNames = []string{
 	"list_prometheus_metric_metadata",
 	"list_loki_label_names",
 	"list_loki_label_values",
+	// Both send a selector to the datasource but read the index rather than
+	// returning log content, so query gating does not apply to them.
+	"query_loki_stats",
+	"analyze_loki_labels",
 	"list_clickhouse_tables",
 	"describe_clickhouse_table",
 	"list_snowflake_tables",
