@@ -134,6 +134,8 @@ _* Categories marked with `*` are off until you add them to `--enabled-tools`._
 
 `update_dashboard` supports full JSON replacement and patch-style updates (`uid` plus `operations`). Prefer patches for small changes so you do not send large dashboard JSON to the model.
 
+For schema-v2 dashboards, a full replacement fails closed when it would change the top-level layout kind. Use targeted patches for normal edits. Set `allowLayoutChange` only when a structural conversion, such as `TabsLayout` to `RowsLayout`, is intentional.
+
 To limit context use when working with dashboards ([issue #101](https://github.com/grafana/mcp-grafana/issues/101)):
 
 - Use `get_dashboard_summary` for an overview before edits.

@@ -236,10 +236,11 @@ type UpdateDashboardParams struct {
 	Operations []PatchOperation `json:"operations,omitempty" jsonschema:"description=Array of patch operations for targeted updates. More efficient than full dashboard JSON for small changes. Common paths: '$.templating.list/-' to add a variable\\, '$.annotations.list/-' to add a saved dashboard annotation query/definition\\, '$.panels[0].targets[0].expr' to replace a panel query."`
 
 	// Common parameters
-	FolderUID string `json:"folderUid,omitempty" jsonschema:"description=The UID of the dashboard's folder"`
-	Message   string `json:"message,omitempty" jsonschema:"description=Set a commit message for the version history"`
-	Overwrite bool   `json:"overwrite,omitempty" jsonschema:"description=Overwrite the dashboard if it exists. Otherwise create one"`
-	UserID    int64  `json:"userId,omitempty" jsonschema:"description=ID of the user making the change"`
+	FolderUID         string `json:"folderUid,omitempty" jsonschema:"description=The UID of the dashboard's folder"`
+	Message           string `json:"message,omitempty" jsonschema:"description=Set a commit message for the version history"`
+	Overwrite         bool   `json:"overwrite,omitempty" jsonschema:"description=Overwrite the dashboard if it exists. Otherwise create one"`
+	AllowLayoutChange bool   `json:"allowLayoutChange,omitempty" jsonschema:"description=Allow a full schema-v2 replacement to change the top-level layout kind. Omit for normal updates so accidental TabsLayout-to-RowsLayout conversions fail closed."`
+	UserID            int64  `json:"userId,omitempty" jsonschema:"description=ID of the user making the change"`
 }
 
 // updateDashboard intelligently handles dashboard updates using either full JSON or patch operations.
@@ -532,6 +533,9 @@ func createOrUpdateDashboardV2(ctx context.Context, args UpdateDashboardParams) 
 			if !existing.IsV2 {
 				return nil, fmt.Errorf("dashboard %q is stored as classic v1 and cannot be replaced in place with a v2 (elements/layout) body: Grafana pins the stored schema version, so the v2 content would be silently down-converted to v1. Create a new dashboard (a different uid) for the v2 version instead", uid)
 			}
+			if err := validateV2LayoutChange(existing.Spec, spec, args.AllowLayoutChange); err != nil {
+				return nil, fmt.Errorf("dashboard %q: %w", uid, err)
+			}
 			obj := existing.Object
 			obj["spec"] = spec
 			version = existing.APIVersion // an existing v2 dashboard's stored v2 version
@@ -568,6 +572,33 @@ func createOrUpdateDashboardV2(ctx context.Context, args UpdateDashboardParams) 
 		createdUID = k8sNestedString(created, "metadata", "name")
 	}
 	return postDashboardOKBodyFromK8s(created, createdUID), nil
+}
+
+// validateV2LayoutChange prevents a full replacement from silently flattening
+// or otherwise changing a dashboard's top-level layout. Targeted patch mode can
+// still edit layout details; changing the layout kind through full replacement
+// requires an explicit opt-in because it affects the dashboard's entire shape.
+func validateV2LayoutChange(existing, replacement map[string]interface{}, allow bool) error {
+	if allow {
+		return nil
+	}
+
+	existingKind := v2LayoutKind(existing)
+	replacementKind := v2LayoutKind(replacement)
+	if existingKind == "" || replacementKind == "" || existingKind == replacementKind {
+		return nil
+	}
+
+	return fmt.Errorf("full schema-v2 replacement would change the top-level layout kind from %s to %s; use targeted patch operations, or set allowLayoutChange=true when this structural conversion is intentional", existingKind, replacementKind)
+}
+
+func v2LayoutKind(spec map[string]interface{}) string {
+	layout, ok := spec["layout"].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+	kind, _ := layout["kind"].(string)
+	return kind
 }
 
 // sortArrayRemovesDescending reorders remove operations on the same array

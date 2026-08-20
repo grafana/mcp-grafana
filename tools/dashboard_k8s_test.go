@@ -301,3 +301,102 @@ func TestCreateOrUpdateDashboardV2_DoesNotMutateInput(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "newdash", input["uid"], "caller's dashboard map must not be mutated")
 }
+
+func TestCreateOrUpdateDashboardV2_RejectsImplicitLayoutChange(t *testing.T) {
+	var wrote bool
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(existingV2Dashboard("TabsLayout"))
+		case http.MethodPut:
+			wrote = true
+			w.WriteHeader(http.StatusInternalServerError)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer ts.Close()
+
+	k8s := &mcpgrafana.KubernetesClient{BaseURL: ts.URL, HTTPClient: ts.Client()}
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: ts.URL})
+	ctx = mcpgrafana.WithKubernetesClient(ctx, k8s)
+
+	_, err := createOrUpdateDashboardV2(ctx, UpdateDashboardParams{
+		Dashboard: replacementV2Dashboard("u1", "RowsLayout"),
+		Overwrite: true,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "would change the top-level layout kind from TabsLayout to RowsLayout")
+	assert.Contains(t, err.Error(), "allowLayoutChange=true")
+	assert.False(t, wrote, "must not write an implicit top-level layout conversion")
+}
+
+func TestCreateOrUpdateDashboardV2_AllowsExplicitLayoutChangeAndPreservesFolder(t *testing.T) {
+	var putBody map[string]interface{}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(existingV2Dashboard("TabsLayout"))
+		case http.MethodPut:
+			_ = json.NewDecoder(r.Body).Decode(&putBody)
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(putBody)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer ts.Close()
+
+	k8s := &mcpgrafana.KubernetesClient{BaseURL: ts.URL, HTTPClient: ts.Client()}
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: ts.URL})
+	ctx = mcpgrafana.WithKubernetesClient(ctx, k8s)
+
+	_, err := createOrUpdateDashboardV2(ctx, UpdateDashboardParams{
+		Dashboard:         replacementV2Dashboard("u1", "RowsLayout"),
+		Overwrite:         true,
+		AllowLayoutChange: true,
+	})
+	require.NoError(t, err)
+
+	metadata, ok := putBody["metadata"].(map[string]interface{})
+	require.True(t, ok)
+	annotations, ok := metadata["annotations"].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, "folder-1", annotations["grafana.app/folder"])
+
+	spec, ok := putBody["spec"].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, "RowsLayout", v2LayoutKind(spec))
+}
+
+func existingV2Dashboard(layoutKind string) map[string]interface{} {
+	return map[string]interface{}{
+		"apiVersion": "dashboard.grafana.app/v2beta1",
+		"kind":       "Dashboard",
+		"metadata": map[string]interface{}{
+			"name":            "u1",
+			"resourceVersion": "3",
+			"annotations": map[string]interface{}{
+				"grafana.app/folder": "folder-1",
+			},
+		},
+		"spec": replacementV2Dashboard("", layoutKind),
+	}
+}
+
+func replacementV2Dashboard(uid, layoutKind string) map[string]interface{} {
+	dashboard := map[string]interface{}{
+		"title":    "dashboard",
+		"elements": map[string]interface{}{},
+		"layout": map[string]interface{}{
+			"kind": layoutKind,
+			"spec": map[string]interface{}{},
+		},
+	}
+	if uid != "" {
+		dashboard["uid"] = uid
+	}
+	return dashboard
+}
