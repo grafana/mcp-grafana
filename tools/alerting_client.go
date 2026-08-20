@@ -22,9 +22,8 @@ import (
 )
 
 const (
-	defaultTimeout               = 30 * time.Second
-	rulesEndpointPath            = "/api/prometheus/grafana/api/v1/rules"
-	alertmanagerAlertsGroupsPath = "/api/alertmanager/grafana/api/v2/alerts/groups"
+	defaultTimeout    = 30 * time.Second
+	rulesEndpointPath = "/api/prometheus/grafana/api/v1/rules"
 )
 
 type alertingClient struct {
@@ -252,63 +251,6 @@ func (c *alertingClient) GetDatasourceRules(ctx context.Context, datasourceUID s
 	}
 
 	return &response.Data, nil
-}
-
-// GetAlertGroupsOpts contains optional filtering parameters for the
-// Grafana built-in Alertmanager alerts/groups endpoint.
-type GetAlertGroupsOpts struct {
-	Active    *bool    // Filter by active alerts (nil means no filter)
-	Silenced  *bool    // Filter by silenced alerts (nil means no filter)
-	Inhibited *bool    // Filter by inhibited alerts (nil means no filter)
-	Filter    []string // Label matchers (e.g., "severity=critical")
-	Receiver  string   // Filter by receiver name
-}
-
-func (o *GetAlertGroupsOpts) queryValues() url.Values {
-	params := url.Values{}
-	if o.Active != nil {
-		params.Set("active", strconv.FormatBool(*o.Active))
-	}
-	if o.Silenced != nil {
-		params.Set("silenced", strconv.FormatBool(*o.Silenced))
-	}
-	if o.Inhibited != nil {
-		params.Set("inhibited", strconv.FormatBool(*o.Inhibited))
-	}
-	for _, f := range o.Filter {
-		params.Add("filter", f)
-	}
-	if o.Receiver != "" {
-		params.Set("receiver", o.Receiver)
-	}
-	return params
-}
-
-// GetAlertGroups fetches alert groups from the Grafana built-in Alertmanager.
-func (c *alertingClient) GetAlertGroups(ctx context.Context, opts *GetAlertGroupsOpts) ([]*models.AlertGroup, error) {
-	var params url.Values
-	if opts != nil {
-		params = opts.queryValues()
-	}
-	resp, err := c.makeRequest(ctx, alertmanagerAlertsGroupsPath, params)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get alert groups: %w", err)
-	}
-	defer func() {
-		_ = resp.Body.Close() //nolint:errcheck
-	}()
-
-	bodyBytes, err := readResponseBody(resp.Body, defaultResponseLimitBytes)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read alert groups response: %w", err)
-	}
-
-	var groups []*models.AlertGroup
-	if err := json.Unmarshal(bodyBytes, &groups); err != nil {
-		return nil, fmt.Errorf("failed to decode alert groups response: %w", err)
-	}
-
-	return groups, nil
 }
 
 // GetAlertmanagerConfig queries an Alertmanager datasource for its configuration

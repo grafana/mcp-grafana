@@ -68,9 +68,8 @@ func AddAlertingTools(mcp *server.MCPServer, enableWriteTools bool) {
 	}
 	ManageRouting.Register(mcp)
 	if enableWriteTools {
-		ManageSilencesReadWrite.Register(mcp)
+		ManageAlertmanagerReadWrite.Register(mcp)
 	} else {
-		ManageSilencesRead.Register(mcp)
+		ManageAlertmanagerRead.Register(mcp)
 	}
-	ListNotificationGroups.Register(mcp)
 }
