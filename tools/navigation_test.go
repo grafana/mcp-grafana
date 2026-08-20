@@ -73,11 +73,13 @@ func TestGenerateDeeplink(t *testing.T) {
 
 		result, err := generateDeeplink(ctx, params)
 		require.NoError(t, err)
-		assert.Contains(t, result, "http://localhost:3000/explore?left=")
+		assert.Contains(t, result, "http://localhost:3000/explore?")
+		assert.Contains(t, result, "schemaVersion=1")
+		assert.Contains(t, result, "panes=")
 		assert.Contains(t, result, "prometheus-uid")
 	})
 
-	t.Run("Explore deeplink with time range inside left JSON", func(t *testing.T) {
+	t.Run("Explore deeplink with time range inside the pane", func(t *testing.T) {
 		params := GenerateDeeplinkParams{
 			ResourceType:  "explore",
 			DatasourceUID: stringPtr("prometheus-uid"),
@@ -93,18 +95,24 @@ func TestGenerateDeeplink(t *testing.T) {
 		u, err := url.Parse(result)
 		require.NoError(t, err)
 
-		leftRaw := u.Query().Get("left")
-		require.NotEmpty(t, leftRaw)
+		panesRaw := u.Query().Get("panes")
+		require.NotEmpty(t, panesRaw)
+		assert.Equal(t, "1", u.Query().Get("schemaVersion"))
+		assert.Empty(t, u.Query().Get("left"), "the pre-10.2 left param must not be emitted")
 
-		// Range must be inside `left`, not as top-level URL params.
-		assert.Contains(t, leftRaw, `"range"`)
-		assert.Contains(t, leftRaw, "now-1h")
-		assert.Contains(t, leftRaw, "now")
+		// Range must be inside the pane, not as top-level URL params.
+		var panes map[string]map[string]any
+		require.NoError(t, json.Unmarshal([]byte(panesRaw), &panes))
+		require.Len(t, panes, 1)
+		pane := panes["a"]
+		require.NotNil(t, pane)
+		assert.Equal(t, "prometheus-uid", pane["datasource"])
+		assert.Equal(t, map[string]any{"from": "now-1h", "to": "now"}, pane["range"])
 		assert.Empty(t, u.Query().Get("from"), "from should not be a top-level URL param for explore")
 		assert.Empty(t, u.Query().Get("to"), "to should not be a top-level URL param for explore")
 
-		// There must be exactly one `left` param.
-		assert.Len(t, u.Query()["left"], 1)
+		// There must be exactly one `panes` param.
+		assert.Len(t, u.Query()["panes"], 1)
 	})
 
 	t.Run("Explore deeplink with queries", func(t *testing.T) {
@@ -123,10 +131,43 @@ func TestGenerateDeeplink(t *testing.T) {
 		u, err := url.Parse(result)
 		require.NoError(t, err)
 
-		leftRaw := u.Query().Get("left")
-		assert.Contains(t, leftRaw, `"queries"`)
-		assert.Contains(t, leftRaw, `"expr"`)
-		assert.Contains(t, leftRaw, "up")
+		var panes map[string]map[string]any
+		require.NoError(t, json.Unmarshal([]byte(u.Query().Get("panes")), &panes))
+		queries, ok := panes["a"]["queries"].([]any)
+		require.True(t, ok)
+		require.Len(t, queries, 1)
+		q := queries[0].(map[string]any)
+		assert.Equal(t, "A", q["refId"])
+		assert.Equal(t, "up", q["expr"])
+		// A query with no explicit datasource inherits the pane's uid, which
+		// the pane query format expects.
+		assert.Equal(t, map[string]any{"uid": "prometheus-uid"}, q["datasource"])
+	})
+
+	t.Run("Explore deeplink preserves a datasource-specific query model", func(t *testing.T) {
+		params := GenerateDeeplinkParams{
+			ResourceType:  "explore",
+			DatasourceUID: stringPtr("gcp-uid"),
+			Queries: []map[string]interface{}{
+				{
+					"refId":      "A",
+					"queryType":  "promQL",
+					"datasource": map[string]string{"type": "stackdriver", "uid": "gcp-uid"},
+				},
+			},
+		}
+
+		result, err := generateDeeplink(ctx, params)
+		require.NoError(t, err)
+		u, err := url.Parse(result)
+		require.NoError(t, err)
+
+		var panes map[string]map[string]any
+		require.NoError(t, json.Unmarshal([]byte(u.Query().Get("panes")), &panes))
+		q := panes["a"]["queries"].([]any)[0].(map[string]any)
+		assert.Equal(t, "promQL", q["queryType"], "queryType must survive into the URL")
+		assert.Equal(t, map[string]any{"type": "stackdriver", "uid": "gcp-uid"}, q["datasource"],
+			"a caller-supplied datasource, including its plugin type, must be preserved")
 	})
 
 	t.Run("With time range on dashboard", func(t *testing.T) {
