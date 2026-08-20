@@ -394,9 +394,13 @@ var DescribeClickHouseTable = mcpgrafana.MustTool(
 	mcp.WithOpenWorldHintAnnotation(false),
 )
 
-// AddClickHouseTools registers all ClickHouse tools with the MCP server
-func AddClickHouseTools(mcp *server.MCPServer) {
-	QueryClickHouse.Register(mcp)
+// AddClickHouseTools registers all ClickHouse tools with the MCP server.
+// query_clickhouse is registered only when enableQueryTools is true; the schema
+// discovery tools stay available either way.
+func AddClickHouseTools(mcp *server.MCPServer, enableQueryTools bool) {
+	if enableQueryTools {
+		QueryClickHouse.Register(mcp)
+	}
 	ListClickHouseTables.Register(mcp)
 	DescribeClickHouseTable.Register(mcp)
 }

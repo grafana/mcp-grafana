@@ -88,6 +88,7 @@ When caller authentication is enabled, the `Authorization` header is reserved fo
 - `--disable-incident`: Disable incident tools.
 - `--disable-prometheus`: Disable Prometheus tools.
 - `--disable-write`: Disable write tools (read-only mode; refer to the following section).
+- `--disable-query`: Disable query tools (tools that execute a query against a datasource; refer to the following section).
 - `--disable-loki`: Disable Loki tools.
 - `--disable-elasticsearch`: Disable Elasticsearch tools.
 - `--disable-quickwit`: Disable Quickwit tools.
@@ -122,6 +123,27 @@ When caller authentication is enabled, the `Authorization` header is reserved fo
 - `--loki-guardrail-max-range`: Maximum effective time range for a single `query_loki_logs` call, including range-vector durations. Defaults to `24h`; `0` disables the range check. Falls back to `GRAFANA_LOKI_GUARDRAIL_MAX_RANGE`.
 
 The guardrail's decisions are also exported as OTel counters (`mcp_loki_guardrail_admitted_total`, `_would_block_total`, `_blocked_total`, `_fail_open_total`), which is the recommended way to size the affected population before promoting from `shadow` to `enforce`. See [Observability](../../developer/observability-metrics-and-tracing/#loki-cost-guardrail-metrics).
+
+## Run without query execution
+
+`--disable-query` removes the tools that execute a query against a datasource, and leaves the metadata and discovery tools in place. It is independent of `--disable-write`, so you can use either flag, both, or neither.
+
+Use it when the assistant should be able to explore what exists — datasources, dashboards, metric names, labels, table schemas — without running potentially expensive or data-revealing queries; for example, with a service account that has `datasources:read` but not `datasources:query`.
+
+The following tools are not registered when the flag is set:
+
+- Prometheus: `query_prometheus`, `query_prometheus_histogram`
+- Loki: `query_loki_logs`, `query_loki_stats`, `query_loki_patterns`, `analyze_loki_labels`
+- Elasticsearch and OpenSearch, Quickwit, InfluxDB: `query_elasticsearch`, `query_quickwit`, `query_influxdb`
+- SQL datasources: `query_clickhouse`, `query_snowflake`, `query_athena`
+- Graphite: `query_graphite`, `query_graphite_density`
+- CloudWatch: `query_cloudwatch`
+- Pyroscope: `query_pyroscope`
+- Panels: `run_panel_query`
+
+The `elasticsearch`, `quickwit`, `influxdb`, and `runpanelquery` categories contain nothing else, so they expose no tools at all when queries are disabled. Sibling tools such as `list_prometheus_metric_names`, `list_loki_label_values`, `describe_clickhouse_table`, and `list_cloudwatch_metrics` remain available.
+
+The flag gates the query tools; it doesn't police every path to a datasource. `grafana_api_request` — itself restricted to GET requests under `--disable-write` — and `get_panel_image`, which renders a panel server-side, are unaffected.
 
 ## Run in read-only mode
 

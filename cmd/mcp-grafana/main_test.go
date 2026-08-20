@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -174,6 +175,46 @@ func TestBuildInstructions_ReflectsEnabledCategories(t *testing.T) {
 			},
 		},
 		{
+			name:         "query-only categories excluded when query disabled",
+			enabledTools: "search,elasticsearch,quickwit,influxdb,runpanelquery",
+			disableFlags: map[string]bool{"query": true},
+			wantContains: []string{
+				"Search:",
+			},
+			wantNotContains: []string{
+				"Elasticsearch and OpenSearch:",
+				"Quickwit:",
+				"InfluxDB:",
+				"Run Panel Query:",
+			},
+		},
+		{
+			name:         "partially gated categories describe what remains when query disabled",
+			enabledTools: "prometheus,loki,clickhouse",
+			disableFlags: map[string]bool{"query": true},
+			wantContains: []string{
+				"Prometheus: Retrieve metric metadata",
+				"Loki: Retrieve log metadata",
+				"ClickHouse: List tables and describe table schemas",
+				"Query execution is disabled.",
+			},
+			wantNotContains: []string{
+				"Run PromQL queries",
+				"Run LogQL queries",
+			},
+		},
+		{
+			name:         "query categories described normally by default",
+			enabledTools: "prometheus,elasticsearch",
+			wantContains: []string{
+				"Run PromQL queries",
+				"Elasticsearch and OpenSearch:",
+			},
+			wantNotContains: []string{
+				"Query execution is disabled.",
+			},
+		},
+		{
 			name:         "assistant excluded when write disabled",
 			enabledTools: "search,assistant",
 			disableFlags: map[string]bool{"write": true},
@@ -207,6 +248,9 @@ func TestBuildInstructions_ReflectsEnabledCategories(t *testing.T) {
 				}
 				if tc.disableFlags["write"] {
 					dt.write = true
+				}
+				if tc.disableFlags["query"] {
+					dt.query = true
 				}
 			}
 
@@ -944,4 +988,123 @@ func TestSOCKS5ProxyFromEnv(t *testing.T) {
 		assert.Contains(t, err.Error(), "GRAFANA_SOCKS5_PROXY")
 		assert.NotContains(t, err.Error(), "secretpw")
 	})
+}
+
+// queryToolNames are the tools that execute a query against a datasource, and
+// so must disappear when --disable-query is set.
+var queryToolNames = []string{
+	"query_prometheus",
+	"query_prometheus_histogram",
+	"query_loki_logs",
+	"query_loki_stats",
+	"query_loki_patterns",
+	"analyze_loki_labels",
+	"query_elasticsearch",
+	"query_quickwit",
+	"query_influxdb",
+	"query_clickhouse",
+	"query_snowflake",
+	"query_athena",
+	"query_graphite",
+	"query_graphite_density",
+	"query_cloudwatch",
+	"query_pyroscope",
+	"run_panel_query",
+}
+
+// metadataToolNames are discovery tools that live in the same categories as the
+// query tools and must survive --disable-query.
+var metadataToolNames = []string{
+	"list_prometheus_metric_names",
+	"list_prometheus_label_names",
+	"list_prometheus_label_values",
+	"list_prometheus_metric_metadata",
+	"list_loki_label_names",
+	"list_loki_label_values",
+	"list_clickhouse_tables",
+	"describe_clickhouse_table",
+	"list_snowflake_tables",
+	"describe_snowflake_table",
+	"list_athena_catalogs",
+	"list_athena_databases",
+	"list_athena_tables",
+	"describe_athena_table",
+	"list_graphite_metrics",
+	"list_graphite_tags",
+	"list_cloudwatch_namespaces",
+	"list_cloudwatch_metrics",
+	"list_cloudwatch_dimensions",
+	"list_pyroscope_label_names",
+	"list_pyroscope_label_values",
+	"list_pyroscope_profile_types",
+}
+
+// registerAllCategories registers every known tool category on a fresh server
+// and returns the set of advertised tool names.
+func registerAllCategories(t *testing.T, dt disabledTools) map[string]bool {
+	t.Helper()
+
+	categories := make([]string, 0, len(dt.toolEntries()))
+	for _, e := range dt.toolEntries() {
+		categories = append(categories, e.category)
+	}
+	dt.enabledTools = strings.Join(categories, ",")
+
+	srv := server.NewMCPServer("test", "0")
+	dt.processTools(srv)
+
+	response := srv.HandleMessage(context.Background(), []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
+	raw, err := json.Marshal(response)
+	require.NoError(t, err)
+
+	var listed struct {
+		Result struct {
+			Tools []struct {
+				Name string `json:"name"`
+			} `json:"tools"`
+		} `json:"result"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &listed))
+
+	names := make(map[string]bool, len(listed.Result.Tools))
+	for _, tool := range listed.Result.Tools {
+		names[tool.Name] = true
+	}
+	return names
+}
+
+func TestProcessTools_QueryToolsRegisteredByDefault(t *testing.T) {
+	names := registerAllCategories(t, disabledTools{})
+	for _, name := range append(append([]string{}, queryToolNames...), metadataToolNames...) {
+		assert.True(t, names[name], "%s should be registered by default", name)
+	}
+}
+
+func TestProcessTools_DisableQueryRemovesOnlyQueryTools(t *testing.T) {
+	names := registerAllCategories(t, disabledTools{query: true})
+	for _, name := range queryToolNames {
+		assert.False(t, names[name], "%s should not be registered with --disable-query", name)
+	}
+	for _, name := range metadataToolNames {
+		assert.True(t, names[name], "%s should survive --disable-query", name)
+	}
+	// --disable-query is independent of --disable-write: write tools stay.
+	assert.True(t, names["update_dashboard"], "write tools should be unaffected by --disable-query")
+}
+
+func TestProcessTools_DisableQueryIndependentOfDisableWrite(t *testing.T) {
+	names := registerAllCategories(t, disabledTools{write: true})
+	for _, name := range queryToolNames {
+		assert.True(t, names[name], "%s should survive --disable-write", name)
+	}
+	assert.False(t, names["update_dashboard"], "write tools should be gone with --disable-write")
+
+	both := registerAllCategories(t, disabledTools{write: true, query: true})
+	for _, name := range queryToolNames {
+		assert.False(t, both[name], "%s should be gone with both flags set", name)
+	}
+	assert.False(t, both["update_dashboard"], "write tools should be gone with both flags set")
+	for _, name := range metadataToolNames {
+		assert.True(t, both[name], "%s should survive both flags", name)
+	}
 }

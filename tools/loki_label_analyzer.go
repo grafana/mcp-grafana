@@ -925,7 +925,9 @@ func buildPerfSummary(findings []QueryPerfFinding, stats *Stats) string {
 // ---------------------------------------------------------------------------
 
 // AddLokiLabelAnalyzerTools registers the label-analyzer tool set.
-// AddLokiTools calls this so the standard Loki bundle includes them.
+// AddLokiTools calls this so the standard Loki bundle includes them, but only
+// when query tools are enabled: the audit samples live stats by sending a
+// selector to the datasource.
 func AddLokiLabelAnalyzerTools(s *server.MCPServer) {
 	AnalyzeLokiLabels.Register(s)
 }

@@ -226,6 +226,10 @@ Flux example:    from(bucket: "metrics") |> range(start: -1h) |> filter(fn: (r) 
 )
 
 // AddInfluxDBTools registers all InfluxDB tools with the MCP server.
-func AddInfluxDBTools(mcp *server.MCPServer) {
-	QueryInfluxDB.Register(mcp)
+// Every tool in this category executes a query, so nothing is registered when
+// enableQueryTools is false.
+func AddInfluxDBTools(mcp *server.MCPServer, enableQueryTools bool) {
+	if enableQueryTools {
+		QueryInfluxDB.Register(mcp)
+	}
 }
