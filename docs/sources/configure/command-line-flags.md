@@ -134,7 +134,7 @@ Use it when the assistant should be able to explore what exists — datasources,
 The following tools are not registered when the flag is set:
 
 - Prometheus: `query_prometheus`, `query_prometheus_histogram`
-- Loki: `query_loki_logs`, `query_loki_stats`, `query_loki_patterns`, `analyze_loki_labels`
+- Loki: `query_loki_logs`, `query_loki_patterns` (`query_loki_stats` and `analyze_loki_labels` read the index rather than returning log content, so they stay registered)
 - Elasticsearch and OpenSearch, Quickwit: `query_elasticsearch`, `query_quickwit`
 - SQL datasources: `query_clickhouse`, `query_snowflake`, `query_athena`, `query_influxdb`
 - Graphite: `query_graphite`, `query_graphite_density`

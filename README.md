@@ -576,9 +576,9 @@ When `--disable-query` is enabled, the following tools are not registered:
 
 **Loki Tools:**
 - `query_loki_logs`
-- `query_loki_stats`
 - `query_loki_patterns`
-- `analyze_loki_labels` (samples live stats for a selector)
+
+`query_loki_stats` and `analyze_loki_labels` stay registered: both send a selector to the datasource, but they read the index and return stream, chunk, and byte counts rather than log content.
 
 **Elasticsearch/OpenSearch and Quickwit Tools:**
 - `query_elasticsearch`
@@ -605,7 +605,7 @@ When `--disable-query` is enabled, the following tools are not registered:
 **Run Panel Query Tools:**
 - `run_panel_query`
 
-The `elasticsearch`, `quickwit`, `influxdb`, and `runpanelquery` categories contain nothing else, so they register no tools at all when queries are disabled. Everything else in those categories' sibling tools — `list_prometheus_metric_names`, `list_loki_label_values`, `describe_clickhouse_table`, `list_cloudwatch_metrics`, and so on — remains available.
+The `elasticsearch`, `quickwit`, `influxdb`, and `runpanelquery` categories contain nothing else, so they register no tools at all when queries are disabled. The sibling tools in every other category — `list_prometheus_metric_names`, `list_loki_label_values`, `describe_clickhouse_table`, `list_cloudwatch_metrics`, and so on — remain available.
 
 Note that `--disable-query` gates the query tools; it does not police other paths to a datasource. `grafana_api_request` (in the `api` category, itself restricted to GET requests under `--disable-write`) and `get_panel_image`, which renders a panel server-side, are unaffected.
 
