@@ -68,6 +68,30 @@ func TestDatasourceFallbackTransport_PrimarySucceeds(t *testing.T) {
 	assert.Len(t, mock.requests, 1, "should not retry when primary succeeds")
 }
 
+func TestDatasourceFallbackTransport_FallbackOn401(t *testing.T) {
+	resetFallbackCache()
+
+	mock := &mockTransport{
+		responses: map[string]*http.Response{
+			"/api/datasources/uid/test-uid/resources": newMockResponse(http.StatusUnauthorized),
+			"/api/datasources/proxy/uid/test-uid":     newMockResponse(http.StatusOK),
+		},
+	}
+
+	rt := newDatasourceFallbackTransport(mock,
+		"/api/datasources/uid/test-uid/resources",
+		"/api/datasources/proxy/uid/test-uid",
+	)
+
+	req, _ := http.NewRequest("POST", "http://grafana.example.com/api/datasources/uid/test-uid/resources/api/v1/query", nil)
+	resp, err := rt.RoundTrip(req)
+
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Len(t, mock.requests, 2, "should retry with fallback on 401")
+	assert.Contains(t, mock.requests[1].URL.Path, "/api/datasources/proxy/uid/test-uid/api/v1/query")
+}
+
 func TestDatasourceFallbackTransport_FallbackOn403(t *testing.T) {
 	resetFallbackCache()
 
@@ -273,7 +297,7 @@ func TestDatasourceFallbackTransport_NoRetryOn4xx(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
-	assert.Len(t, mock.requests, 1, "should not retry on non-403/500 errors")
+	assert.Len(t, mock.requests, 1, "should not retry on 4xx errors other than 401/403")
 }
 
 func TestDatasourceProxyPaths(t *testing.T) {
