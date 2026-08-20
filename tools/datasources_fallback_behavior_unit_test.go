@@ -266,6 +266,44 @@ func TestQueryPrometheus_CaseInsensitiveNameReference(t *testing.T) {
 	assert.True(t, strings.HasPrefix(data[0], "/api/datasources/proxy/1/"), "got %q", data[0])
 }
 
+// The shared transport cache is keyed by bare path strings, and numeric-id
+// paths like /api/datasources/proxy/1/... are identical across tenants. A
+// newer-Grafana tenant whose numeric routes are disabled must not pin the
+// uid-based path for a Grafana 8.x tenant sharing the same datasource id —
+// legacy-mode transports therefore bypass the shared cache entirely.
+func TestQueryPrometheus_NoCrossTenantCachePoisoning(t *testing.T) {
+	resetFallbackCache()
+
+	// Tenant A: numeric routes disabled; the transport retry lands on the
+	// uid-based route. Before the fix this recorded a fallback cache hit for
+	// the bare path "/api/datasources/proxy/1/api/v1/query".
+	fA := newFakeGrafana(legacyProfiles["grafana-13-rbac"])
+	defer fA.Close()
+	ctxA := mockDatasourcesCtx(fA.Server)
+	resultA, err := queryPrometheus(ctxA, QueryPrometheusParams{
+		DatasourceUID: "prometheus", Expr: "time()", QueryType: "instant", EndTime: "now",
+	})
+	require.NoError(t, err)
+	assert.Contains(t, resultA.String(), "42")
+
+	// Tenant B: Grafana 8.5 with the same datasource id. Its query must still
+	// go through the numeric primary — a poisoned cache would rewrite it to
+	// the uid route, which answers 400 there.
+	fB := newFakeGrafana(legacyProfiles["grafana-8.5"])
+	defer fB.Close()
+	ctxB := mockDatasourcesCtx(fB.Server)
+	resultB, err := queryPrometheus(ctxB, QueryPrometheusParams{
+		DatasourceUID: "prometheus", Expr: "time()", QueryType: "instant", EndTime: "now",
+	})
+	require.NoError(t, err)
+	assert.Contains(t, resultB.String(), "42")
+
+	data := fB.dataRequests()
+	require.NotEmpty(t, data)
+	assert.True(t, strings.HasPrefix(data[0], "/api/datasources/proxy/1/"),
+		"tenant B must not inherit tenant A's cached fallback, got %q", data[0])
+}
+
 // The native Loki client shares the proxy routing; it must work on Grafana
 // 8.x the same way.
 func TestLokiClient_LegacyGrafana85(t *testing.T) {

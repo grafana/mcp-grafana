@@ -24,6 +24,14 @@ type datasourceFallbackTransport struct {
 	wrapped      http.RoundTripper
 	primaryBase  string // e.g., "/api/datasources/uid/{uid}/resources"
 	fallbackBase string // e.g., "/api/datasources/proxy/uid/{uid}"
+	// skipCache disables the process-wide fallbackEndpoints cache. The cache
+	// key is a path string with no notion of the Grafana instance, org or
+	// credentials, which is fine for uid-based paths (uids rarely collide
+	// across tenants) but not for the numeric-id paths used in legacy mode:
+	// /api/datasources/proxy/1/... is the same string on every tenant, so a
+	// Grafana 13+ tenant recording a fallback hit would pin the uid-based
+	// path for a Grafana 8.x tenant, whose uid routes answer 400.
+	skipCache bool
 }
 
 // fallbackEndpoints caches which datasource proxy paths need the fallback
@@ -39,12 +47,30 @@ func newDatasourceFallbackTransport(wrapped http.RoundTripper, primaryBase, fall
 	}
 }
 
+// newLegacyDatasourceFallbackTransport is the variant used when the
+// datasource was resolved through the frontend-settings fallback (see
+// datasources_fallback.go): primary is the numeric-id proxy path and the
+// shared endpoint cache is skipped, because numeric-id paths collide across
+// tenants (see skipCache). The cache buys nothing here anyway — the numeric
+// primary is expected to succeed on the deployments that use this mode, and
+// the retry only fires in the rare newer-Grafana-with-restricted-token case.
+func newLegacyDatasourceFallbackTransport(wrapped http.RoundTripper, primaryBase, fallbackBase string) http.RoundTripper {
+	return &datasourceFallbackTransport{
+		wrapped:      wrapped,
+		primaryBase:  primaryBase,
+		fallbackBase: fallbackBase,
+		skipCache:    true,
+	}
+}
+
 func (t *datasourceFallbackTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	cacheKey := t.fallbackCacheKey(req)
 
 	// Check cache: if we already know the fallback works, use it directly.
-	if useFallback, ok := fallbackEndpoints.Load(cacheKey); ok && useFallback.(bool) {
-		return t.wrapped.RoundTrip(t.rewriteRequest(req, t.primaryBase, t.fallbackBase))
+	if !t.skipCache {
+		if useFallback, ok := fallbackEndpoints.Load(cacheKey); ok && useFallback.(bool) {
+			return t.wrapped.RoundTrip(t.rewriteRequest(req, t.primaryBase, t.fallbackBase))
+		}
 	}
 
 	// Buffer the request body so we can replay it on retry.
@@ -93,7 +119,7 @@ func (t *datasourceFallbackTransport) RoundTrip(req *http.Request) (*http.Respon
 	// successful (2xx) response.  A 4xx from the fallback means neither path
 	// is working for this particular request; caching it would silently break
 	// all subsequent calls that would otherwise succeed via the primary path.
-	if retryResp.StatusCode >= 200 && retryResp.StatusCode < 300 {
+	if !t.skipCache && retryResp.StatusCode >= 200 && retryResp.StatusCode < 300 {
 		fallbackEndpoints.Store(cacheKey, true)
 	}
 

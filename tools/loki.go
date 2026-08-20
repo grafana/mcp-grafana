@@ -70,11 +70,13 @@ func newLokiClient(ctx context.Context, uid string, _ *models.DataSource) (*Clie
 	grafanaURL := cfg.URL
 	resourcesBase, proxyBase := datasourceProxyPaths(uid)
 	primaryBase, fallbackBase := proxyBase, resourcesBase
+	legacyMode := false
 	if numericBase, uidBase, ok := fallbackProxyBases(ctx, uid); ok {
 		// Legacy-compatible routing — see newPrometheusBackend for the full
 		// rationale: route through the numeric-id proxy path directly, keeping
 		// the uid-based proxy route as the transport-level fallback.
 		primaryBase, fallbackBase = numericBase, uidBase
+		legacyMode = true
 	}
 	url := grafanaURL + primaryBase
 
@@ -86,7 +88,12 @@ func newLokiClient(ctx context.Context, uid string, _ *models.DataSource) (*Clie
 	// Wrap with fallback transport: try the primary base first, fall back to
 	// the alternate on 403/404/500 for compatibility with different Grafana
 	// deployments.
-	rt := newDatasourceFallbackTransport(transport, primaryBase, fallbackBase)
+	var rt http.RoundTripper
+	if legacyMode {
+		rt = newLegacyDatasourceFallbackTransport(transport, primaryBase, fallbackBase)
+	} else {
+		rt = newDatasourceFallbackTransport(transport, primaryBase, fallbackBase)
+	}
 
 	client := &http.Client{
 		Transport: rt,

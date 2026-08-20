@@ -73,6 +73,7 @@ func newPrometheusBackend(ctx context.Context, uid string, ds *models.DataSource
 	grafanaURL := trimTrailingSlash(cfg.URL)
 	resourcesBase, proxyBase := datasourceProxyPaths(uid)
 	primaryBase, fallbackBase := resourcesBase, proxyBase
+	legacyMode := false
 	if numericBase, uidBase, ok := fallbackProxyBases(ctx, uid); ok {
 		// The datasource was resolved through the frontend-settings fallback,
 		// meaning this deployment's metadata API is inaccessible — in practice
@@ -83,6 +84,7 @@ func newPrometheusBackend(ctx context.Context, uid string, ds *models.DataSource
 		// Grafana with an RBAC-restricted token, where the numeric routes may
 		// be disabled (404, off by default since Grafana 13).
 		primaryBase, fallbackBase = numericBase, uidBase
+		legacyMode = true
 	}
 	url := grafanaURL + primaryBase
 
@@ -105,7 +107,11 @@ func newPrometheusBackend(ctx context.Context, uid string, ds *models.DataSource
 	// Wrap with fallback transport: try the primary base first, fall back to
 	// the alternate on 403/404/500 for compatibility with different Grafana
 	// deployments.
-	rt = newDatasourceFallbackTransport(rt, primaryBase, fallbackBase)
+	if legacyMode {
+		rt = newLegacyDatasourceFallbackTransport(rt, primaryBase, fallbackBase)
+	} else {
+		rt = newDatasourceFallbackTransport(rt, primaryBase, fallbackBase)
+	}
 
 	c, err := api.NewClient(api.Config{
 		Address:      url,
