@@ -26,6 +26,22 @@ const (
 	// This is kept short to avoid slow startup when datasources are unreachable.
 	mcpProbeTimeout = 5 * time.Second
 
+	// defaultSessionAttachWaitBudget bounds how long a single hook invocation
+	// (OnBeforeListTools / OnBeforeCallTool) waits for a shared proxiedToolSet
+	// build before giving up for this call. The build itself is NOT bounded by
+	// this and keeps running in the background (see runProxiedToolSetBuild's use
+	// of context.WithoutCancel): a build with several candidates, each retried
+	// on transient failures, can take tens of seconds, and blocking a request
+	// for that long risks losing a race against the caller's own timeout or the
+	// session being torn down before tools can be registered on it. Giving up
+	// after a short, fixed budget keeps that race window small; the session's
+	// next hook invocation retries the (by then very likely already published)
+	// attach for free. Chosen short enough to stay well under realistic client/
+	// infra timeouts, long enough that a build with zero or one retried
+	// candidate still normally completes within it. Held on ToolManager as
+	// sessionAttachWaitBudget (defaulting to this) so tests can shorten it.
+	defaultSessionAttachWaitBudget = 3 * time.Second
+
 	// proxiedToolsMeterName is the OTel meter name for discovery/connect metrics,
 	// matching the convention used by clientCacheMeterName/sessionMeterName.
 	proxiedToolsMeterName = "mcp-grafana"
@@ -519,6 +535,13 @@ type ToolManager struct {
 	// fake builder that avoids real discovery/network I/O.
 	buildSet func(ctx context.Context, logger *slog.Logger) (builtProxiedTools, error)
 
+	// sessionAttachWaitBudget bounds how long InitializeAndRegisterProxiedTools
+	// waits for a shared proxiedToolSet build before giving up for one hook
+	// invocation; see defaultSessionAttachWaitBudget's doc comment. It defaults
+	// to that constant and is a field only so tests can shorten it instead of
+	// waiting out the real budget.
+	sessionAttachWaitBudget time.Duration
+
 	// metrics holds OTel instruments for discovery/connect observability.
 	metrics discoveryMetrics
 	// meterProvider is the metric.MeterProvider used to build metrics, set via
@@ -543,6 +566,9 @@ func NewToolManager(sm *SessionManager, mcpServer *server.MCPServer, opts ...too
 	}
 	if tm.buildSet == nil {
 		tm.buildSet = tm.buildProxiedToolSet
+	}
+	if tm.sessionAttachWaitBudget == 0 {
+		tm.sessionAttachWaitBudget = defaultSessionAttachWaitBudget
 	}
 	if tm.proxiedSets == nil {
 		tm.proxiedSets = make(map[proxiedToolSetKey]*proxiedToolSet)
@@ -1065,6 +1091,12 @@ func (tm *ToolManager) acquireProxiedClientForCall(set *proxiedToolSet, datasour
 // credentials reuse a single set instead of each building their own. This is
 // called from OnBeforeListTools and OnBeforeCallTool hooks for HTTP/SSE
 // transports and is idempotent per session.
+//
+// A call waits for the build for at most tm.sessionAttachWaitBudget, not for
+// however long the build actually takes: the build runs in the background and
+// keeps going past that budget, so a call that gives up here registers
+// nothing now but leaves its reference in place for a later hook invocation
+// to retry, by which point the build has very likely already published.
 func (tm *ToolManager) InitializeAndRegisterProxiedTools(ctx context.Context, session server.ClientSession) {
 	if !tm.enableProxiedTools {
 		return
@@ -1098,28 +1130,60 @@ func (tm *ToolManager) InitializeAndRegisterProxiedTools(ctx context.Context, se
 		return
 	}
 
-	// attachProxiedToolSet takes the reference AND binds the set to the session
-	// atomically (under proxiedSetsMu), so there is no window where a reference
-	// exists that teardown cannot find and release.
-	set, needsBuild := tm.attachProxiedToolSet(state, key)
+	// If an earlier hook invocation for this session already attached to this
+	// exact credential-keyed set but gave up waiting (sessionAttachWaitBudget
+	// elapsed before the build published), reuse that same attachment and its
+	// already-held reference instead of attaching again, which would take a
+	// second reference this session will never balance with a second release.
+	state.mutex.RLock()
+	set := state.proxiedSet
+	state.mutex.RUnlock()
 
-	// Reconcile against a teardown that raced this attach. A session may have been
-	// removed from the SessionManager (client DELETE / idle sweeper / reaper)
-	// between GetSession/CreateSession above and the bind inside
-	// attachProxiedToolSet. If so, that RemoveSession saw proxiedSet==nil and did
-	// not release, and no future teardown will fire for this (now untracked)
-	// session, so the ref we just took would leak. Detect it and release exactly
-	// once (releaseSessionProxiedToolSet is idempotent, so a RemoveSession that
-	// instead ran AFTER our bind is handled too, with no double release). We still
-	// run/await the build below so any live waiter for the same key is served.
-	if !tm.sm.sessionRegistered(sessionID, state) {
-		defer tm.releaseSessionProxiedToolSet(state)
+	var needsBuild bool
+	if set == nil || set.key != key {
+		// attachProxiedToolSet takes the reference AND binds the set to the
+		// session atomically (under proxiedSetsMu), so there is no window where a
+		// reference exists that teardown cannot find and release.
+		set, needsBuild = tm.attachProxiedToolSet(state, key)
+
+		// Reconcile against a teardown that raced this attach. A session may have
+		// been removed from the SessionManager (client DELETE / idle sweeper /
+		// reaper) between GetSession/CreateSession above and the bind inside
+		// attachProxiedToolSet. If so, that RemoveSession saw proxiedSet==nil and
+		// did not release, and no future teardown will fire for this (now
+		// untracked) session, so the ref we just took would leak. Detect it and
+		// release exactly once (releaseSessionProxiedToolSet is idempotent, so a
+		// RemoveSession that instead ran AFTER our bind is handled too, with no
+		// double release). We still run/await the build below so any live waiter
+		// for the same key is served.
+		if !tm.sm.sessionRegistered(sessionID, state) {
+			defer tm.releaseSessionProxiedToolSet(state)
+		}
 	}
 
 	if needsBuild {
-		tm.runProxiedToolSetBuild(ctx, set, logger)
-	} else {
-		<-set.ready
+		// Run the build in its own goroutine rather than inline, so that EVERY
+		// caller (first and followers alike) waits on set.ready the same way and
+		// can give up after tm.sessionAttachWaitBudget without cutting the build
+		// itself short: runProxiedToolSetBuild already detaches from ctx via
+		// context.WithoutCancel internally, so it keeps running for whichever
+		// session (this one, on retry, or another) asks next.
+		go tm.runProxiedToolSetBuild(ctx, set, logger)
+	}
+
+	select {
+	case <-set.ready:
+	case <-time.After(tm.sessionAttachWaitBudget):
+		// The build is still running. Don't register anything now: this
+		// session's reference to the set is left in place (state.proxiedSet
+		// stays bound, proxiedRegistered stays false), so the next
+		// OnBeforeListTools/OnBeforeCallTool hook for this session retries the
+		// attach above, reuses this same reference, and very likely finds the
+		// build already published. This is an expected, routine outcome for a
+		// build with several or slow-to-probe candidates, not a failure.
+		logger.DebugContext(ctx, "proxied tool set build still in progress after wait budget; will retry on next hook invocation",
+			"session", sessionID, "wait", tm.sessionAttachWaitBudget)
+		return
 	}
 
 	// Read the published results under the lock: set.built/failed/tools are only
