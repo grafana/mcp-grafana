@@ -124,9 +124,31 @@ var categoryDescriptionNoQuery = map[string]string{
 	"athena":     "Athena: Discover catalogs, databases, tables, and table schemas in Amazon Athena datasources. Query execution is disabled.",
 }
 
-// queryOnlyCategories register no tools at all when --disable-query is set,
-// because every tool they contain executes a query.
+// queryOnlyCategories register no tools at all when their query tools are
+// disabled, because every tool they contain executes a query.
 var queryOnlyCategories = []string{"elasticsearch", "quickwit", "influxdb", "runpanelquery"}
+
+// mutatingQueryCategories hold query tools that pass raw SQL or InfluxQL to the
+// datasource unfiltered: query_clickhouse can run DROP TABLE, query_influxdb can
+// run DELETE, and so on, whenever the datasource credentials permit it. They are
+// query tools and write tools at once, so read-only mode removes them along with
+// the rest of the write tools, and --enable-query puts them back for operators
+// whose datasource credentials are known to be read-only.
+var mutatingQueryCategories = []string{"clickhouse", "snowflake", "athena", "influxdb"}
+
+// queryToolsEnabled reports whether a category's query tools should be
+// registered. --disable-query turns off every query tool; --disable-write
+// additionally turns off the ones that can mutate data, unless --enable-query
+// overrides it.
+func (dt *disabledTools) queryToolsEnabled(category string) bool {
+	if dt.query {
+		return false
+	}
+	if slices.Contains(mutatingQueryCategories, category) {
+		return !dt.write || dt.enableQuery
+	}
+	return true
+}
 
 // disabledTools indicates whether each category of tools should be disabled.
 type disabledTools struct {
@@ -135,7 +157,7 @@ type disabledTools struct {
 	search, datasource, incident,
 	prometheus, loki, elasticsearch, quickwit, influxdb, alerting,
 	dashboard, folder, oncall, asserts, sift, admin,
-	pyroscope, navigation, proxied, annotations, rendering, cloudwatch, write, query,
+	pyroscope, navigation, proxied, annotations, rendering, cloudwatch, write, query, enableQuery,
 	snapshot, examples, clickhouse, snowflake, graphite,
 	runpanelquery, athena, plugin, api, config, provisioning,
 	agento11y, assistant bool
@@ -189,6 +211,7 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.proxied, "disable-proxied", false, "Disable proxied tools (tools from external MCP servers)")
 	flag.BoolVar(&dt.write, "disable-write", false, "Disable write tools (create/update operations)")
 	flag.BoolVar(&dt.query, "disable-query", false, "Disable query tools (tools that execute a query against a datasource, e.g. query_prometheus, query_loki_logs, run_panel_query). Metadata and discovery tools stay available.")
+	flag.BoolVar(&dt.enableQuery, "enable-query", false, "Keep the raw-SQL query tools (query_clickhouse, query_snowflake, query_athena, query_influxdb) registered even under --disable-write. They pass the query through unfiltered, so they can mutate data if the datasource credentials permit it; use this when those credentials are known to be read-only. Has no effect if --disable-query is also set.")
 	flag.BoolVar(&dt.annotations, "disable-annotations", false, "Disable annotation tools")
 	flag.BoolVar(&dt.rendering, "disable-rendering", false, "Disable rendering tools (panel/dashboard image export)")
 	flag.BoolVar(&dt.snapshot, "disable-snapshot", false, "Disable snapshot tools")
@@ -300,6 +323,7 @@ type toolEntry struct {
 func (dt *disabledTools) toolEntries() []toolEntry {
 	enableWriteTools := !dt.write
 	enableQueryTools := !dt.query
+	enableMutatingQueryTools := dt.queryToolsEnabled("clickhouse")
 	return []toolEntry{
 		{tools.AddSearchTools, dt.search, "search"},
 		{func(mcp *server.MCPServer) { tools.AddDatasourceTools(mcp, enableWriteTools) }, dt.datasource, "datasource"},
@@ -308,7 +332,7 @@ func (dt *disabledTools) toolEntries() []toolEntry {
 		{func(mcp *server.MCPServer) { tools.AddLokiTools(mcp, enableQueryTools) }, dt.loki, "loki"},
 		{func(mcp *server.MCPServer) { tools.AddElasticsearchTools(mcp, enableQueryTools) }, dt.elasticsearch, "elasticsearch"},
 		{func(mcp *server.MCPServer) { tools.AddQuickwitTools(mcp, enableQueryTools) }, dt.quickwit, "quickwit"},
-		{func(mcp *server.MCPServer) { tools.AddInfluxDBTools(mcp, enableQueryTools) }, dt.influxdb, "influxdb"},
+		{func(mcp *server.MCPServer) { tools.AddInfluxDBTools(mcp, enableMutatingQueryTools) }, dt.influxdb, "influxdb"},
 		{func(mcp *server.MCPServer) { tools.AddAlertingTools(mcp, enableWriteTools) }, dt.alerting, "alerting"},
 		{func(mcp *server.MCPServer) { tools.AddDashboardTools(mcp, enableWriteTools) }, dt.dashboard, "dashboard"},
 		{func(mcp *server.MCPServer) { tools.AddFolderTools(mcp, enableWriteTools) }, dt.folder, "folder"},
@@ -323,11 +347,11 @@ func (dt *disabledTools) toolEntries() []toolEntry {
 		{func(mcp *server.MCPServer) { tools.AddSnapshotTools(mcp, enableWriteTools) }, dt.snapshot, "snapshot"},
 		{func(mcp *server.MCPServer) { tools.AddCloudWatchTools(mcp, enableQueryTools) }, dt.cloudwatch, "cloudwatch"},
 		{tools.AddExamplesTools, dt.examples, "examples"},
-		{func(mcp *server.MCPServer) { tools.AddClickHouseTools(mcp, enableQueryTools) }, dt.clickhouse, "clickhouse"},
-		{func(mcp *server.MCPServer) { tools.AddSnowflakeTools(mcp, enableQueryTools) }, dt.snowflake, "snowflake"},
+		{func(mcp *server.MCPServer) { tools.AddClickHouseTools(mcp, enableMutatingQueryTools) }, dt.clickhouse, "clickhouse"},
+		{func(mcp *server.MCPServer) { tools.AddSnowflakeTools(mcp, enableMutatingQueryTools) }, dt.snowflake, "snowflake"},
 		{func(mcp *server.MCPServer) { tools.AddRunPanelQueryTools(mcp, enableQueryTools) }, dt.runpanelquery, "runpanelquery"},
 		{func(mcp *server.MCPServer) { tools.AddGraphiteTools(mcp, enableQueryTools) }, dt.graphite, "graphite"},
-		{func(mcp *server.MCPServer) { tools.AddAthenaTools(mcp, enableQueryTools) }, dt.athena, "athena"},
+		{func(mcp *server.MCPServer) { tools.AddAthenaTools(mcp, enableMutatingQueryTools) }, dt.athena, "athena"},
 		{func(mcp *server.MCPServer) { tools.AddPluginTools(mcp, enableWriteTools) }, dt.plugin, "plugin"},
 		{func(mcp *server.MCPServer) { tools.AddAPITools(mcp, enableWriteTools) }, dt.api, "api"},
 		{tools.AddConfigTools, dt.config, "config"},
@@ -339,6 +363,9 @@ func (dt *disabledTools) toolEntries() []toolEntry {
 
 // processTools registers enabled tool categories on the server.
 func (dt *disabledTools) processTools(s *server.MCPServer) {
+	if dt.query && dt.enableQuery {
+		slog.Warn("--enable-query has no effect because --disable-query is set; no query tools will be registered")
+	}
 	enabledTools := strings.Split(dt.enabledTools, ",")
 	for _, e := range dt.toolEntries() {
 		maybeAddTools(s, e.adder, enabledTools, e.disabled, e.category)
@@ -362,11 +389,11 @@ func (dt *disabledTools) buildInstructions() string {
 			continue
 		}
 		// Likewise for categories whose every tool executes a query: they
-		// register nothing at all when --disable-query is set.
-		if dt.query && slices.Contains(queryOnlyCategories, e.category) {
-			continue
-		}
-		if dt.query {
+		// register nothing at all once their query tools are gated off.
+		if !dt.queryToolsEnabled(e.category) {
+			if slices.Contains(queryOnlyCategories, e.category) {
+				continue
+			}
 			if desc, ok := categoryDescriptionNoQuery[e.category]; ok {
 				capabilities = append(capabilities, desc)
 				continue

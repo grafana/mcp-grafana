@@ -204,6 +204,32 @@ func TestBuildInstructions_ReflectsEnabledCategories(t *testing.T) {
 			},
 		},
 		{
+			name:         "raw-SQL categories reflect read-only mode",
+			enabledTools: "clickhouse,influxdb,athena",
+			disableFlags: map[string]bool{"write": true},
+			wantContains: []string{
+				"ClickHouse: List tables and describe table schemas",
+				"Athena: Discover catalogs, databases, tables",
+				"Query execution is disabled.",
+			},
+			wantNotContains: []string{
+				"InfluxDB:",
+			},
+		},
+		{
+			name:         "raw-SQL categories restored by enable-query",
+			enabledTools: "clickhouse,influxdb,athena",
+			disableFlags: map[string]bool{"write": true, "enableQuery": true},
+			wantContains: []string{
+				"ClickHouse: Query ClickHouse datasources",
+				"InfluxDB:",
+				"Athena: Query Amazon Athena datasources",
+			},
+			wantNotContains: []string{
+				"Query execution is disabled.",
+			},
+		},
+		{
 			name:         "query categories described normally by default",
 			enabledTools: "prometheus,elasticsearch",
 			wantContains: []string{
@@ -251,6 +277,9 @@ func TestBuildInstructions_ReflectsEnabledCategories(t *testing.T) {
 				}
 				if tc.disableFlags["query"] {
 					dt.query = true
+				}
+				if tc.disableFlags["enableQuery"] {
+					dt.enableQuery = true
 				}
 			}
 
@@ -990,9 +1019,9 @@ func TestSOCKS5ProxyFromEnv(t *testing.T) {
 	})
 }
 
-// queryToolNames are the tools that execute a query against a datasource, and
-// so must disappear when --disable-query is set.
-var queryToolNames = []string{
+// safeQueryToolNames execute a query the query language cannot use to mutate
+// data. --disable-query removes them; --disable-write must not.
+var safeQueryToolNames = []string{
 	"query_prometheus",
 	"query_prometheus_histogram",
 	"query_loki_logs",
@@ -1001,16 +1030,25 @@ var queryToolNames = []string{
 	"analyze_loki_labels",
 	"query_elasticsearch",
 	"query_quickwit",
-	"query_influxdb",
-	"query_clickhouse",
-	"query_snowflake",
-	"query_athena",
 	"query_graphite",
 	"query_graphite_density",
 	"query_cloudwatch",
 	"query_pyroscope",
 	"run_panel_query",
 }
+
+// mutatingQueryToolNames pass raw SQL or InfluxQL through unfiltered, so they
+// can write when the datasource credentials permit it. Both --disable-query and
+// --disable-write remove them; --enable-query overrides the latter.
+var mutatingQueryToolNames = []string{
+	"query_clickhouse",
+	"query_snowflake",
+	"query_athena",
+	"query_influxdb",
+}
+
+// queryToolNames are every tool that executes a query against a datasource.
+var queryToolNames = append(append([]string{}, safeQueryToolNames...), mutatingQueryToolNames...)
 
 // metadataToolNames are discovery tools that live in the same categories as the
 // query tools and must survive --disable-query.
@@ -1092,19 +1130,54 @@ func TestProcessTools_DisableQueryRemovesOnlyQueryTools(t *testing.T) {
 	assert.True(t, names["update_dashboard"], "write tools should be unaffected by --disable-query")
 }
 
-func TestProcessTools_DisableQueryIndependentOfDisableWrite(t *testing.T) {
+func TestProcessTools_DisableWriteRemovesMutatingQueryTools(t *testing.T) {
 	names := registerAllCategories(t, disabledTools{write: true})
-	for _, name := range queryToolNames {
-		assert.True(t, names[name], "%s should survive --disable-write", name)
+	for _, name := range safeQueryToolNames {
+		assert.True(t, names[name], "%s cannot mutate data and should survive --disable-write", name)
+	}
+	for _, name := range mutatingQueryToolNames {
+		assert.False(t, names[name], "%s passes raw SQL through and should be gone with --disable-write", name)
 	}
 	assert.False(t, names["update_dashboard"], "write tools should be gone with --disable-write")
-
-	both := registerAllCategories(t, disabledTools{write: true, query: true})
-	for _, name := range queryToolNames {
-		assert.False(t, both[name], "%s should be gone with both flags set", name)
-	}
-	assert.False(t, both["update_dashboard"], "write tools should be gone with both flags set")
 	for _, name := range metadataToolNames {
-		assert.True(t, both[name], "%s should survive both flags", name)
+		assert.True(t, names[name], "%s should survive --disable-write", name)
+	}
+}
+
+func TestProcessTools_EnableQueryOverridesDisableWrite(t *testing.T) {
+	names := registerAllCategories(t, disabledTools{write: true, enableQuery: true})
+	for _, name := range queryToolNames {
+		assert.True(t, names[name], "%s should be restored by --enable-query", name)
+	}
+	// The override is scoped to query execution: real write tools stay gone.
+	assert.False(t, names["update_dashboard"], "--enable-query must not re-enable write tools")
+	assert.False(t, names["create_folder"], "--enable-query must not re-enable write tools")
+	assert.False(t, names["create_annotation"], "--enable-query must not re-enable write tools")
+}
+
+func TestProcessTools_EnableQueryAloneChangesNothing(t *testing.T) {
+	defaults := registerAllCategories(t, disabledTools{})
+	names := registerAllCategories(t, disabledTools{enableQuery: true})
+	assert.Equal(t, defaults, names, "--enable-query on its own should be a no-op")
+}
+
+func TestProcessTools_DisableQueryBeatsEnableQuery(t *testing.T) {
+	names := registerAllCategories(t, disabledTools{query: true, enableQuery: true})
+	for _, name := range queryToolNames {
+		assert.False(t, names[name], "%s should be gone: --disable-query wins over --enable-query", name)
+	}
+	for _, name := range metadataToolNames {
+		assert.True(t, names[name], "%s should survive --disable-query", name)
+	}
+}
+
+func TestProcessTools_BothDisableFlags(t *testing.T) {
+	names := registerAllCategories(t, disabledTools{write: true, query: true})
+	for _, name := range queryToolNames {
+		assert.False(t, names[name], "%s should be gone with both flags set", name)
+	}
+	assert.False(t, names["update_dashboard"], "write tools should be gone with both flags set")
+	for _, name := range metadataToolNames {
+		assert.True(t, names[name], "%s should survive both flags", name)
 	}
 }
