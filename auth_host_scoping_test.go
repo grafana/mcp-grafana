@@ -52,7 +52,7 @@ func TestAuthRoundTripper_WithholdsCredentialsOffBoundHost(t *testing.T) {
 		require.NoError(t, err)
 		resp, err := rt.RoundTrip(req)
 		require.NoError(t, err)
-		resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 	}
 
 	assert.Equal(t, "Bearer secret-api-key", rec.credByHost["grafana.example.com"],
@@ -74,7 +74,7 @@ func TestAuthRoundTripper_EmptyBoundURLPreservesBehavior(t *testing.T) {
 	require.NoError(t, err)
 	resp, err := rt.RoundTrip(req)
 	require.NoError(t, err)
-	resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	assert.Equal(t, "Bearer secret-api-key", rec.credByHost["anywhere.example.com"],
 		"with no bound URL, credential attaches as before")
