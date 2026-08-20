@@ -412,9 +412,13 @@ var DescribeSnowflakeTable = mcpgrafana.MustTool(
 	mcp.WithOpenWorldHintAnnotation(false),
 )
 
-// AddSnowflakeTools registers all Snowflake tools with the MCP server
-func AddSnowflakeTools(mcp *server.MCPServer) {
-	QuerySnowflake.Register(mcp)
+// AddSnowflakeTools registers all Snowflake tools with the MCP server.
+// query_snowflake is registered only when enableQueryTools is true; the schema
+// discovery tools stay available either way.
+func AddSnowflakeTools(mcp *server.MCPServer, enableQueryTools bool) {
+	if enableQueryTools {
+		QuerySnowflake.Register(mcp)
+	}
 	ListSnowflakeTables.Register(mcp)
 	DescribeSnowflakeTable.Register(mcp)
 }

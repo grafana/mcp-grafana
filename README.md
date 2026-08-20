@@ -468,6 +468,7 @@ Caller authentication is enforced only when `--server-auth-token` is set. When i
 - `--disable-incident`: Disable incident tools
 - `--disable-prometheus`: Disable prometheus tools
 - `--disable-write`: Disable write tools (create/update operations)
+- `--disable-query`: Disable query tools (tools that execute a query against a datasource); metadata and discovery tools stay available
 - `--disable-loki`: Disable loki tools
 - `--disable-elasticsearch`: Disable elasticsearch and opensearch tools
 - `--disable-quickwit`: Disable quickwit tools
@@ -542,6 +543,49 @@ When `--disable-write` is enabled, the following write operations are disabled:
 - `agento11y_manage_test_suites` (create and update test suites; create and publish versions; upsert and delete test cases)
 
 All read operations remain available, allowing you to query dashboards, run PromQL/LogQL queries, list resources, and retrieve data.
+
+### Query-Free Mode
+
+The `--disable-query` flag removes the tools that execute a query against a datasource, while leaving the metadata and discovery tools in place. It is independent of `--disable-write`: use either, both, or neither. This is useful when you want an assistant that can explore what exists — datasources, dashboards, metric names, labels, table schemas — without running potentially expensive or data-revealing queries, for example when the service account has `datasources:read` but not `datasources:query`.
+
+When `--disable-query` is enabled, the following tools are not registered:
+
+**Prometheus Tools:**
+- `query_prometheus`
+- `query_prometheus_histogram`
+
+**Loki Tools:**
+- `query_loki_logs`
+- `query_loki_stats`
+- `query_loki_patterns`
+- `analyze_loki_labels` (samples live stats for a selector)
+
+**Elasticsearch/OpenSearch, Quickwit, and InfluxDB Tools:**
+- `query_elasticsearch`
+- `query_quickwit`
+- `query_influxdb`
+
+**SQL Datasource Tools:**
+- `query_clickhouse`
+- `query_snowflake`
+- `query_athena`
+
+**Graphite Tools:**
+- `query_graphite`
+- `query_graphite_density`
+
+**CloudWatch Tools:**
+- `query_cloudwatch`
+
+**Pyroscope Tools:**
+- `query_pyroscope`
+
+**Run Panel Query Tools:**
+- `run_panel_query`
+
+The `elasticsearch`, `quickwit`, `influxdb`, and `runpanelquery` categories contain nothing else, so they register no tools at all when queries are disabled. Everything else in those categories' sibling tools — `list_prometheus_metric_names`, `list_loki_label_values`, `describe_clickhouse_table`, `list_cloudwatch_metrics`, and so on — remains available.
+
+Note that `--disable-query` gates the query tools; it does not police other paths to a datasource. `grafana_api_request` (in the `api` category, itself restricted to GET requests under `--disable-write`) and `get_panel_image`, which renders a panel server-side, are unaffected.
 
 **Client TLS Configuration (for Grafana connections):**
 - `--tls-cert-file`: Path to TLS certificate file for client authentication

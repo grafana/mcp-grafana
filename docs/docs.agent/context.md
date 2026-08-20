@@ -95,7 +95,7 @@ Order articles from foundational to advanced configuration.
 ### Enable and disable tools
 
 - **Context:** README.md (Tool Configuration, --enabled-tools, --disable-*)
-- **Include:** --enabled-tools for runpanelquery, examples, clickhouse, cloudwatch, etc. --disable-* by category (including snapshot). Read-only mode (--disable-write).
+- **Include:** --enabled-tools for runpanelquery, examples, clickhouse, cloudwatch, etc. --disable-* by category (including snapshot). Read-only mode (--disable-write). Query-free mode (--disable-query).
 - **Exclude:** Full tool list (refer to README or introduction).
 
 ### Client TLS (Grafana connection)

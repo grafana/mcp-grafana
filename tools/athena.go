@@ -535,10 +535,14 @@ Example: SELECT request_time, status FROM my_table WHERE $__timeFilter(request_t
 )
 
 // AddAthenaTools registers all Athena tools with the MCP server.
-func AddAthenaTools(s *server.MCPServer) {
+// query_athena is registered only when enableQueryTools is true; the catalog
+// and schema discovery tools stay available either way.
+func AddAthenaTools(s *server.MCPServer, enableQueryTools bool) {
 	ListAthenaCatalogs.Register(s)
 	ListAthenaDatabases.Register(s)
 	ListAthenaTables.Register(s)
 	DescribeAthenaTable.Register(s)
-	QueryAthena.Register(s)
+	if enableQueryTools {
+		QueryAthena.Register(s)
+	}
 }
