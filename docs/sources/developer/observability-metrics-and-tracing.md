@@ -67,6 +67,31 @@ Arguments are raw client input, so the two argument-derived labels are allowlist
 
 The high-cardinality **target** of a call (the datasource `uid`, else `name`) is never a metric label — it is span-only as `mcp.tool.target`, and empty for calls that name no entity (see below).
 
+### Proxied MCP server metrics
+
+When proxying the MCP servers embedded in Grafana datasources (see the Proxied MCP Servers section of the README), the server also reports how discovery, connection, and re-exposure of the upstream surface went. These are emitted under any transport, but as with every metric here they are only scrapeable when `--metrics` is on, which requires an HTTP transport.
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `mcp_discovery_probe_success_total` | Counter | MCP-support probes that found a datasource is MCP-enabled (label: `datasource_type`) |
+| `mcp_discovery_probe_deterministic_failure_total` | Counter | Probes that got a clean non-retryable answer, e.g. a `404` from a datasource with no MCP endpoint (label: `datasource_type`) |
+| `mcp_discovery_probe_transient_failure_total` | Counter | Probes that exhausted their retries on a timeout, network error, or `5xx` (label: `datasource_type`) |
+| `mcp_discovery_probe_retries_total` | Counter | Probe attempts issued as a retry (label: `datasource_type`) |
+| `mcp_discovery_connect_success_total` | Counter | Upstream connections established (label: `datasource_type`) |
+| `mcp_discovery_connect_deterministic_failure_total` | Counter | Connections that failed for a non-retryable reason, e.g. an auth rejection (label: `datasource_type`) |
+| `mcp_discovery_connect_transient_failure_total` | Counter | Connections that exhausted their retries on a transient error (label: `datasource_type`) |
+| `mcp_discovery_connect_retries_total` | Counter | Connect attempts issued as a retry (label: `datasource_type`) |
+| `mcp_discovery_upstream_list_failure_total` | Counter | Upstream capability listings that failed with something other than method-not-found (labels: `datasource_type`, `mcp_proxied_capability`) |
+| `mcp_proxied_capabilities_registered_total` | Counter | Upstream capabilities re-exposed to clients (labels: `mcp_proxied_capability`, `mcp_proxied_scope`) |
+| `mcp_proxied_capabilities_skipped_total` | Counter | Upstream capabilities discovered but not re-exposed (labels: `mcp_proxied_capability`, `mcp_proxied_skip_reason`) |
+| `mcp_proxied_register_failure_total` | Counter | Failures registering proxied capabilities on a session (labels: `mcp_proxied_capability`, `mcp_proxied_scope`) |
+
+All the labels are low cardinality by construction: `datasource_type` and `mcp_proxied_capability` (`tools`, `resources`, `resource_templates`, `prompts`) come from closed sets, `mcp_proxied_scope` is `server` (registered once at startup, stdio) or `session` (registered per session, HTTP transports), and `mcp_proxied_skip_reason` is one of a fixed set of literals. The datasource **UID** is deliberately absent from all of them — with one series per datasource instance it belongs on spans, not metrics.
+
+The two failure counters are worth alerting on: an upstream listing that fails is tolerated at connect time, so without `mcp_discovery_upstream_list_failure_total` a datasource proxying no resources looks exactly like one that has none. `mcp_proxied_capabilities_skipped_total` reports the known gaps — `mcp_proxied_skip_reason="no_session_prompt_support"` for upstream prompts on an HTTP transport (they cannot be scoped to one session, so they are dropped rather than shared across tenants), and `unnamespaceable_template` for an upstream resource template this server cannot rewrite into a routable namespaced form.
+
+Proxied `resources/read` and `prompts/get` requests are timed by `mcp_server_operation_duration_seconds` like any other MCP operation, under `mcp_method_name="resources/read"` and `mcp_method_name="prompts/get"`.
+
 ## Enable OpenTelemetry tracing
 
 When `OTEL_EXPORTER_OTLP_ENDPOINT` (or the signal-specific `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`) is set, the server exports traces via OTLP/gRPC.
@@ -89,6 +114,8 @@ OTEL_EXPORTER_OTLP_HEADERS="Authorization=Basic ..." \
 ```
 
 Tool call spans follow naming like `tools/call <tool_name>` and include attributes such as `gen_ai.tool.name`, `mcp.method.name`, and `mcp.session.id`. The server supports W3C trace context propagation from the `_meta` field of tool call requests.
+
+Spans for proxied `resources/read` and `prompts/get` requests carry which datasource instance and upstream target the request was routed to: `datasource.type`, `datasource.uid`, and either `mcp.proxied.upstream.uri` (the original upstream URI recovered from the namespaced URN) or `mcp.proxied.upstream.prompt`. These are span-only for the same reason as `mcp.tool.target` — a UID or resource URI is one series per instance — and they are what turns "a proxied read failed" into "this datasource's `docs://traceql/metrics` failed". Like the tool dimensions they need an HTTP transport and tracing enabled.
 
 Tool-call spans also carry the [tool-call dimensions](#tool-call-dimension-labels) `mcp.tool.operation`, `mcp.tool.resource_type`, and `mcp.tool.phase`, plus the span-only `mcp.tool.target` (the datasource `uid`, else `name`) for grouping the spans that touch one entity. `mcp.tool.target` is empty when a call names no entity — notably `create_datasource`'s `phase=schema` call, where the datasource does not exist yet — so stitching that call to the later `phase=created` one relies on the shared trace (when the client propagates context via `_meta`) or on `mcp.session.id` plus `mcp_tool_resource_type`, rather than on the target. Unlike the metric labels, these are attached for **all** tools with their **raw** values (no allowlist, no `other` bucket), since traces are high-cardinality by design. They require an **HTTP transport** (SSE or streamable-http, so a server span exists to enrich) **and tracing enabled**, but **not** `--metrics`; with stdio or tracing off, enrichment is a no-op.
 

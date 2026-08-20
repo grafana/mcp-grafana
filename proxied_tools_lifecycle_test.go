@@ -80,7 +80,7 @@ func TestTeardownReleaseToZeroDuringBuild(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		tm.InitializeAndRegisterProxiedTools(ctx, sess)
+		tm.InitializeAndRegisterProxiedCapabilities(ctx, sess)
 	}()
 
 	<-buildStarted // build is in flight; the session is already bound to the set
@@ -151,7 +151,7 @@ func TestTeardownBetweenAttachAndBind(t *testing.T) {
 		// Attach.
 		go func() {
 			defer wg.Done()
-			tm.InitializeAndRegisterProxiedTools(ctx, sess)
+			tm.InitializeAndRegisterProxiedCapabilities(ctx, sess)
 		}()
 		// Teardown, racing the attach: it may land before, during, or after the
 		// attach/bind. Whenever it lands, the session's ref must be releasable.
@@ -193,7 +193,7 @@ func TestFailedBuildNotCached(t *testing.T) {
 	// First session: build fails. The entry must not remain cached.
 	sess1 := &mockClientSession{id: "fail-1"}
 	sm.CreateSession(ctx, sess1)
-	tm.InitializeAndRegisterProxiedTools(ctx, sess1)
+	tm.InitializeAndRegisterProxiedCapabilities(ctx, sess1)
 
 	tm.proxiedSetsMu.Lock()
 	sizeAfterFailure := len(tm.proxiedSets)
@@ -203,7 +203,7 @@ func TestFailedBuildNotCached(t *testing.T) {
 	// Second session, same credentials: must rebuild (attempt 2) and succeed.
 	sess2 := &mockClientSession{id: "fail-2"}
 	sm.CreateSession(ctx, sess2)
-	tm.InitializeAndRegisterProxiedTools(ctx, sess2)
+	tm.InitializeAndRegisterProxiedCapabilities(ctx, sess2)
 
 	tm.proxiedSetsMu.Lock()
 	sizeAfterRetry := len(tm.proxiedSets)
@@ -237,7 +237,7 @@ func TestEmptyBuildCachedAndReused(t *testing.T) {
 	// First session: builds once, gets an empty set, registers, keeps its ref.
 	sess1 := &mockClientSession{id: "empty-1"}
 	sm.CreateSession(ctx, sess1)
-	tm.InitializeAndRegisterProxiedTools(ctx, sess1)
+	tm.InitializeAndRegisterProxiedCapabilities(ctx, sess1)
 
 	tm.proxiedSetsMu.Lock()
 	sizeAfterEmpty := len(tm.proxiedSets)
@@ -257,15 +257,15 @@ func TestEmptyBuildCachedAndReused(t *testing.T) {
 	assert.True(t, registered1, "the session must be registered on an empty-but-successful build")
 
 	// Repeated hooks for the SAME session must not re-run discovery.
-	tm.InitializeAndRegisterProxiedTools(ctx, sess1)
-	tm.InitializeAndRegisterProxiedTools(ctx, sess1)
+	tm.InitializeAndRegisterProxiedCapabilities(ctx, sess1)
+	tm.InitializeAndRegisterProxiedCapabilities(ctx, sess1)
 	assert.Equal(t, int32(1), atomic.LoadInt32(&discoveries), "repeated hooks for one session must not re-run discovery")
 
 	// A second session with the SAME credentials must reuse the cached empty set,
 	// not trigger a fresh discovery.
 	sess2 := &mockClientSession{id: "empty-2"}
 	sm.CreateSession(ctx, sess2)
-	tm.InitializeAndRegisterProxiedTools(ctx, sess2)
+	tm.InitializeAndRegisterProxiedCapabilities(ctx, sess2)
 
 	tm.proxiedSetsMu.Lock()
 	sizeAfterReuse := len(tm.proxiedSets)
@@ -318,14 +318,14 @@ func TestBuildPanicUnblocksWaitersAndDeCaches(t *testing.T) {
 	ctx := ctxWithCreds("http://grafana", "secret", nil, 1)
 
 	// The first attach triggers the panicking build. runProxiedToolSetBuild
-	// recovers it, so InitializeAndRegisterProxiedTools must return (not panic)
+	// recovers it, so InitializeAndRegisterProxiedCapabilities must return (not panic)
 	// and must not leave the session's goroutine blocked on <-ready.
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		sess := &mockClientSession{id: "panic-1"}
 		sm.CreateSession(ctx, sess)
-		tm.InitializeAndRegisterProxiedTools(ctx, sess)
+		tm.InitializeAndRegisterProxiedCapabilities(ctx, sess)
 	}()
 
 	select {
@@ -342,7 +342,7 @@ func TestBuildPanicUnblocksWaitersAndDeCaches(t *testing.T) {
 	// A later session with the same key must rebuild successfully.
 	sess2 := &mockClientSession{id: "panic-2"}
 	sm.CreateSession(ctx, sess2)
-	tm.InitializeAndRegisterProxiedTools(ctx, sess2)
+	tm.InitializeAndRegisterProxiedCapabilities(ctx, sess2)
 
 	tm.proxiedSetsMu.Lock()
 	sizeAfterRetry := len(tm.proxiedSets)
@@ -368,7 +368,7 @@ func TestInFlightCallBlocksClose(t *testing.T) {
 	ctx := ctxWithCreds("http://grafana", "secret", nil, 1)
 	sess := &mockClientSession{id: "inflight"}
 	sm.CreateSession(ctx, sess)
-	tm.InitializeAndRegisterProxiedTools(ctx, sess)
+	tm.InitializeAndRegisterProxiedCapabilities(ctx, sess)
 
 	state, ok := sm.GetSession("inflight")
 	require.True(t, ok)
@@ -436,7 +436,7 @@ func TestFailedBuildClosesClients(t *testing.T) {
 	ctx := ctxWithCreds("http://grafana", "secret", nil, 1)
 	sess := &mockClientSession{id: "failclose"}
 	sm.CreateSession(ctx, sess)
-	tm.InitializeAndRegisterProxiedTools(ctx, sess)
+	tm.InitializeAndRegisterProxiedCapabilities(ctx, sess)
 
 	tm.proxiedSetsMu.Lock()
 	size := len(tm.proxiedSets)

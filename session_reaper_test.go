@@ -86,7 +86,7 @@ func TestSessionManager_ReaperCleansUpProxiedClients(t *testing.T) {
 	session := &testClientSession{id: "cleanup-session"}
 	ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{URL: "http://grafana", APIKey: "secret"})
 	sm.CreateSession(ctx, session)
-	tm.InitializeAndRegisterProxiedTools(ctx, session)
+	tm.InitializeAndRegisterProxiedCapabilities(ctx, session)
 
 	tm.proxiedSetsMu.Lock()
 	require.Len(t, tm.proxiedSets, 1)

@@ -332,7 +332,7 @@ func (dt *disabledTools) buildInstructions() string {
 	// Proxied tools are registered via hooks (not maybeAddTools), so they
 	// are not in toolEntries. Include their description when enabled.
 	if !dt.proxied {
-		capabilities = append(capabilities, "Proxied Tools: Access tools from external MCP servers (like Tempo) through dynamic discovery.")
+		capabilities = append(capabilities, "Proxied MCP Servers: Full proxy (tools, resources, and resource templates) for external MCP servers (like Tempo) discovered via Grafana datasources.")
 	}
 
 	var b strings.Builder
@@ -370,9 +370,18 @@ func newServer(serverName, transport string, dt disabledTools, obs *observabilit
 		OnUnregisterSession: []server.OnUnregisterSessionHookFunc{sm.RemoveSession},
 	}
 
-	// Add proxied tools hooks if enabled and we're not running in stdio mode.
-	// (stdio mode is handled by InitializeAndRegisterServerTools; per-session tools
-	// are not supported).
+	// Add proxied capabilities hooks if enabled and we're not running in stdio mode.
+	// (stdio mode is handled by InitializeAndRegisterServerTools; per-session
+	// registration is not supported.)
+	//
+	// We wire every list/call entry point for tools, resources, resource
+	// templates, and prompts. The resource capability is advertised at
+	// initialize time (see below), so a client may read or enumerate resources
+	// before it ever lists tools. Without a hook on those entry points the lazy
+	// per-session registration would never run for such a client and it would
+	// see an empty list despite the advertised capability. The prompt hooks are
+	// there for the same reason should per-session prompts become registerable.
+	// InitializeAndRegisterProxiedCapabilities is idempotent.
 	if transport != "stdio" && !dt.proxied {
 		// ensureSessionRegistered registers an ephemeral session in MCPServer.sessions
 		// if it's not already there. This is needed for horizontal scaling: when a
@@ -388,28 +397,35 @@ func newServer(serverName, transport string, dt disabledTools, obs *observabilit
 			}
 		}
 
-		// OnBeforeListTools: Discover, connect, and register tools
-		hooks.OnBeforeListTools = []server.OnBeforeListToolsFunc{
-			func(ctx context.Context, id any, request *mcp.ListToolsRequest) {
-				ensureSessionRegistered(ctx)
-				if stm != nil {
-					if session := server.ClientSessionFromContext(ctx); session != nil {
-						stm.InitializeAndRegisterProxiedTools(ctx, session)
-					}
+		registerProxied := func(ctx context.Context) {
+			ensureSessionRegistered(ctx)
+			if stm != nil {
+				if session := server.ClientSessionFromContext(ctx); session != nil {
+					stm.InitializeAndRegisterProxiedCapabilities(ctx, session)
 				}
-			},
+			}
 		}
 
-		// OnBeforeCallTool: Fallback in case client calls tool without listing first
+		hooks.OnBeforeListTools = []server.OnBeforeListToolsFunc{
+			func(ctx context.Context, _ any, _ *mcp.ListToolsRequest) { registerProxied(ctx) },
+		}
 		hooks.OnBeforeCallTool = []server.OnBeforeCallToolFunc{
-			func(ctx context.Context, id any, request *mcp.CallToolRequest) {
-				ensureSessionRegistered(ctx)
-				if stm != nil {
-					if session := server.ClientSessionFromContext(ctx); session != nil {
-						stm.InitializeAndRegisterProxiedTools(ctx, session)
-					}
-				}
-			},
+			func(ctx context.Context, _ any, _ *mcp.CallToolRequest) { registerProxied(ctx) },
+		}
+		hooks.OnBeforeListResources = []server.OnBeforeListResourcesFunc{
+			func(ctx context.Context, _ any, _ *mcp.ListResourcesRequest) { registerProxied(ctx) },
+		}
+		hooks.OnBeforeListResourceTemplates = []server.OnBeforeListResourceTemplatesFunc{
+			func(ctx context.Context, _ any, _ *mcp.ListResourceTemplatesRequest) { registerProxied(ctx) },
+		}
+		hooks.OnBeforeReadResource = []server.OnBeforeReadResourceFunc{
+			func(ctx context.Context, _ any, _ *mcp.ReadResourceRequest) { registerProxied(ctx) },
+		}
+		hooks.OnBeforeListPrompts = []server.OnBeforeListPromptsFunc{
+			func(ctx context.Context, _ any, _ *mcp.ListPromptsRequest) { registerProxied(ctx) },
+		}
+		hooks.OnBeforeGetPrompt = []server.OnBeforeGetPromptFunc{
+			func(ctx context.Context, _ any, _ *mcp.GetPromptRequest) { registerProxied(ctx) },
 		}
 	}
 
@@ -423,10 +439,29 @@ func newServer(serverName, transport string, dt disabledTools, obs *observabilit
 	// then register tools.
 	instructions := dt.buildInstructions()
 
-	s = server.NewMCPServer(serverName, mcpgrafana.Version(),
+	serverOpts := []server.ServerOption{
 		server.WithInstructions(instructions),
 		server.WithHooks(hooks),
-	)
+	}
+	// When proxying is enabled, declare the resource capability (with
+	// listChanged) upfront so clients see it during the initial `initialize`
+	// exchange. Resources and resource templates from upstream MCP servers (e.g.
+	// Tempo) are registered lazily per session, but mcp-go advertises
+	// capabilities only at initialize time, so they would otherwise be invisible
+	// to clients that enumerate resources before anything is registered.
+	//
+	// The prompt capability is deliberately NOT declared here. On HTTP/SSE
+	// transports no proxied prompt is ever registered (mcp-go has no
+	// AddSessionPrompts, so a prompt cannot be scoped to one session), and
+	// declaring the capability would advertise a surface that is always empty.
+	// On stdio, AddPrompts registers the capability implicitly at startup,
+	// before the server begins serving, so a proxied prompt is still advertised
+	// there when one actually exists.
+	if !dt.proxied {
+		serverOpts = append(serverOpts, server.WithResourceCapabilities(false, true))
+	}
+
+	s = server.NewMCPServer(serverName, mcpgrafana.Version(), serverOpts...)
 
 	// Initialize ToolManager now that server is created
 	stm = mcpgrafana.NewToolManager(sm, s,

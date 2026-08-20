@@ -247,6 +247,21 @@ Queries go through Grafana's Snowflake datasource (Grafana Enterprise plugin `gr
 - **List provisioning repositories:** List provisioning repositories configured for this Grafana instance (e.g. git-sync sources), returning each repository's slug along with its source URL, branch, path, sync state, and health.
 - **Validate provisioning file:** Dry-run-apply a file from a provisioning repository at a given branch or commit. Returns whether it would be accepted, the resource action (create/update), the target resource type, and any structured validation errors — the same admission surface Grafana's PR commenter uses.
 
+### Proxied MCP Servers
+
+Some Grafana datasources embed their own MCP server (today: **Tempo**, via the `query_frontend.mcp_server.enabled` setting). When `--disable-proxied` is not set, mcp-grafana discovers these datasources — once at startup on the stdio transport, or lazily on first use on the HTTP/SSE transports — and re-exposes the upstream server's capabilities through the same Grafana process:
+
+- **Tools** are renamed `<datasourceType>_<originalName>` and gain a required `datasourceUid` argument that selects which datasource instance to call.
+- **Resources** and **resource templates** are exposed under namespaced URNs of the form `urn:mcp-grafana:<datasourceType>:<datasourceUid>:<percent-encoded-original-uri>`. The original URI is recovered server-side before forwarding, so clients never need to know it.
+- **Prompts** are exposed as `<datasourceType>_<originalName>` with an injected required `datasourceUid` argument, on the **stdio transport only**.
+  - _Note:_ on HTTP/SSE transports upstream prompts are skipped, and the prompt capability is not advertised. mcp-go has no per-session prompt registration, so a proxied prompt could only be registered server-wide, where one tenant's prompts would be visible to every other session. Tempo exposes no prompts today, so this only affects future upstream servers. Skipped prompts are logged and counted (`mcp_proxied_capabilities_skipped_total{mcp_proxied_skip_reason="no_session_prompt_support"}`).
+
+**Permissions.** Every proxied call is forwarded through Grafana's datasource proxy at `/api/datasources/proxy/uid/<uid>/api/mcp` using the caller's existing credentials. As a result:
+
+- The Grafana service account (or on-behalf-of user identified by `X-Access-Token` + `X-Grafana-Id`) needs `datasources:query` on each datasource UID it intends to use, exactly the same as for normal datasource queries.
+- Grafana itself attaches the datasource's saved authentication (basic, bearer, custom headers, `X-Scope-OrgID`, etc.) when forwarding to the upstream MCP endpoint, so the caller never needs direct Tempo credentials.
+- Multi-tenant isolation is preserved: upstream connections are keyed by the full set of credentials the caller presents (URL, API key, access/ID token, org ID, basic auth, TLS material, and forwarded headers), so two sessions share a connection only when every one of those matches. Tools, resources, and resource templates are registered per session, scoping the namespaced URIs to the session that discovered them.
+
 The list of tools is configurable, so you can choose which tools you want to make available to the MCP client.
 This is useful if you don't use certain functionality or if you don't want to take up too much of the context window.
 To disable a category of tools, use the `--disable-<category>` flag when starting the server. For example, to disable

@@ -110,7 +110,7 @@ func TestProxiedToolsRegistrationGuard(t *testing.T) {
 		for i := 0; i < hooks; i++ {
 			go func() {
 				defer wg.Done()
-				tm.InitializeAndRegisterProxiedTools(ctx, sess)
+				tm.InitializeAndRegisterProxiedCapabilities(ctx, sess)
 			}()
 		}
 		wg.Wait()
@@ -152,7 +152,7 @@ func TestProxiedToolsRegistrationGuard(t *testing.T) {
 
 		// First hook: the build fails. The session must NOT be registered, must
 		// hold no reference, and the failed set must not be cached.
-		tm.InitializeAndRegisterProxiedTools(ctx, sess)
+		tm.InitializeAndRegisterProxiedCapabilities(ctx, sess)
 
 		state, ok := sm.GetSession("retry-1")
 		require.True(t, ok)
@@ -169,7 +169,7 @@ func TestProxiedToolsRegistrationGuard(t *testing.T) {
 
 		// Second hook for the SAME session: the builder now succeeds. The session
 		// must retry, build afresh, and end up registered with its tool.
-		tm.InitializeAndRegisterProxiedTools(ctx, sess)
+		tm.InitializeAndRegisterProxiedCapabilities(ctx, sess)
 
 		assert.Equal(t, int32(2), atomic.LoadInt32(&attempt), "the second hook must retry the build")
 		assert.Len(t, sess.GetSessionTools(), 1, "the session must be registered with its tool after retry")
@@ -347,7 +347,7 @@ func TestProxiedToolSetSharing(t *testing.T) {
 				defer wg.Done()
 				sess := &mockClientSession{id: "shared-" + string(rune('a'+id%26)) + "-" + string(rune('0'+id/26))}
 				sm.CreateSession(ctx, sess)
-				tm.InitializeAndRegisterProxiedTools(ctx, sess)
+				tm.InitializeAndRegisterProxiedCapabilities(ctx, sess)
 			}(i)
 		}
 		wg.Wait()
@@ -398,7 +398,7 @@ func TestProxiedToolSetSharing(t *testing.T) {
 		for i, ctx := range ctxs {
 			sess := &mockClientSession{id: "distinct-" + string(rune('a'+i))}
 			sm.CreateSession(ctx, sess)
-			tm.InitializeAndRegisterProxiedTools(ctx, sess)
+			tm.InitializeAndRegisterProxiedCapabilities(ctx, sess)
 		}
 
 		tm.proxiedSetsMu.Lock()
@@ -426,7 +426,7 @@ func TestProxiedToolSetSharing(t *testing.T) {
 			ctx := WithGrafanaConfig(context.Background(), cfg)
 			sess := &mockClientSession{id: "token-" + string(rune('a'+i))}
 			sm.CreateSession(ctx, sess)
-			tm.InitializeAndRegisterProxiedTools(ctx, sess)
+			tm.InitializeAndRegisterProxiedCapabilities(ctx, sess)
 		}
 
 		tm.proxiedSetsMu.Lock()
@@ -470,7 +470,7 @@ func TestProxiedToolSetSharing(t *testing.T) {
 			ctx := WithGrafanaConfig(context.Background(), cfg)
 			sess := &mockClientSession{id: "tlskey-" + string(rune('a'+i))}
 			sm.CreateSession(ctx, sess)
-			tm.InitializeAndRegisterProxiedTools(ctx, sess)
+			tm.InitializeAndRegisterProxiedCapabilities(ctx, sess)
 		}
 
 		tm.proxiedSetsMu.Lock()
@@ -496,7 +496,7 @@ func TestProxiedToolSetSharing(t *testing.T) {
 			ctx := WithGrafanaConfig(context.Background(), cfg)
 			sess := &mockClientSession{id: "ambig-" + string(rune('a'+i))}
 			sm.CreateSession(ctx, sess)
-			tm.InitializeAndRegisterProxiedTools(ctx, sess)
+			tm.InitializeAndRegisterProxiedCapabilities(ctx, sess)
 		}
 
 		tm.proxiedSetsMu.Lock()
@@ -518,7 +518,7 @@ func TestProxiedToolSetSharing(t *testing.T) {
 			ctx := WithGrafanaConfig(context.Background(), cfg)
 			sess := &mockClientSession{id: "timeout-" + string(rune('a'+i))}
 			sm.CreateSession(ctx, sess)
-			tm.InitializeAndRegisterProxiedTools(ctx, sess)
+			tm.InitializeAndRegisterProxiedCapabilities(ctx, sess)
 		}
 
 		tm.proxiedSetsMu.Lock()
@@ -536,8 +536,8 @@ func TestProxiedToolSetSharing(t *testing.T) {
 		sessB := &mockClientSession{id: "life-b"}
 		sm.CreateSession(ctx, sessA)
 		sm.CreateSession(ctx, sessB)
-		tm.InitializeAndRegisterProxiedTools(ctx, sessA)
-		tm.InitializeAndRegisterProxiedTools(ctx, sessB)
+		tm.InitializeAndRegisterProxiedCapabilities(ctx, sessA)
+		tm.InitializeAndRegisterProxiedCapabilities(ctx, sessB)
 
 		tm.proxiedSetsMu.Lock()
 		require.Len(t, tm.proxiedSets, 1)
@@ -573,7 +573,7 @@ func TestProxiedToolSetSharing(t *testing.T) {
 		ctx := ctxWithCreds("http://grafana", "secret", nil, 1)
 		sess := &mockClientSession{id: "idem"}
 		sm.CreateSession(ctx, sess)
-		tm.InitializeAndRegisterProxiedTools(ctx, sess)
+		tm.InitializeAndRegisterProxiedCapabilities(ctx, sess)
 
 		state, ok := sm.GetSession("idem")
 		require.True(t, ok)
@@ -597,7 +597,7 @@ func TestReaperReleasesSharedSet(t *testing.T) {
 	ctx := ctxWithCreds("http://grafana", "secret", nil, 1)
 	sess := &mockClientSession{id: "reaped"}
 	sm.CreateSession(ctx, sess)
-	tm.InitializeAndRegisterProxiedTools(ctx, sess)
+	tm.InitializeAndRegisterProxiedCapabilities(ctx, sess)
 
 	tm.proxiedSetsMu.Lock()
 	require.Len(t, tm.proxiedSets, 1)
