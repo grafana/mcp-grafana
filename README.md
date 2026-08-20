@@ -469,6 +469,7 @@ Caller authentication is enforced only when `--server-auth-token` is set. When i
 - `--disable-prometheus`: Disable prometheus tools
 - `--disable-write`: Disable write tools (create/update operations)
 - `--disable-query`: Disable query tools (tools that execute a query against a datasource); metadata and discovery tools stay available
+- `--enable-query`: Keep the raw-SQL query tools (`query_clickhouse`, `query_snowflake`, `query_athena`, `query_influxdb`) registered even under `--disable-write`
 - `--disable-loki`: Disable loki tools
 - `--disable-elasticsearch`: Disable elasticsearch and opensearch tools
 - `--disable-quickwit`: Disable quickwit tools
@@ -535,6 +536,15 @@ When `--disable-write` is enabled, the following write operations are disabled:
 - `create_snapshot`
 - `delete_snapshot`
 
+**Raw-SQL Query Tools:**
+
+These execute whatever query you give them without inspecting it, so they can write when the datasource credentials permit it — `query_clickhouse` will run a `DROP TABLE`, `query_influxdb` will run a `DELETE`. Read-only mode therefore removes them. Pass `--enable-query` to keep them when the datasource credentials are known to be read-only.
+
+- `query_clickhouse`
+- `query_snowflake`
+- `query_athena`
+- `query_influxdb`
+
 **Agent Observability Tools:**
 - `agento11y_manage_evaluators` (upsert, delete, fork, test evaluator operations)
 - `agento11y_manage_eval_rules` (create, update, delete, preview rule and guard operations)
@@ -542,11 +552,21 @@ When `--disable-write` is enabled, the following write operations are disabled:
 - `agento11y_manage_experiments` (update and cancel experiment operations)
 - `agento11y_manage_test_suites` (create and update test suites; create and publish versions; upsert and delete test cases)
 
-All read operations remain available, allowing you to query dashboards, run PromQL/LogQL queries, list resources, and retrieve data.
+All read operations remain available, allowing you to query dashboards, run PromQL/LogQL queries, list resources, and retrieve data. The query languages that cannot express a write — PromQL, LogQL, TraceQL, the Elasticsearch DSL, Graphite, CloudWatch — keep their query tools in read-only mode; only the raw-SQL ones listed above are removed.
 
 ### Query-Free Mode
 
-The `--disable-query` flag removes the tools that execute a query against a datasource, while leaving the metadata and discovery tools in place. It is independent of `--disable-write`: use either, both, or neither. This is useful when you want an assistant that can explore what exists — datasources, dashboards, metric names, labels, table schemas — without running potentially expensive or data-revealing queries, for example when the service account has `datasources:read` but not `datasources:query`.
+The `--disable-query` flag removes every tool that executes a query against a datasource, while leaving the metadata and discovery tools in place. This is useful when you want an assistant that can explore what exists — datasources, dashboards, metric names, labels, table schemas — without running potentially expensive or data-revealing queries, for example when the service account has `datasources:read` but not `datasources:query`.
+
+It is the strongest of the three query settings, and it wins over `--enable-query`:
+
+| Flags | Safe query tools (`query_prometheus`, `query_loki_logs`, `run_panel_query`, …) | Raw-SQL query tools (`query_clickhouse`, `query_snowflake`, `query_athena`, `query_influxdb`) |
+| --- | --- | --- |
+| _(none)_ | registered | registered |
+| `--disable-write` | registered | **not registered** |
+| `--disable-write --enable-query` | registered | registered |
+| `--disable-query` | not registered | not registered |
+| `--disable-query --enable-query` | not registered | not registered |
 
 When `--disable-query` is enabled, the following tools are not registered:
 
@@ -560,12 +580,14 @@ When `--disable-query` is enabled, the following tools are not registered:
 - `query_loki_patterns`
 - `analyze_loki_labels` (samples live stats for a selector)
 
-**Elasticsearch/OpenSearch, Quickwit, and InfluxDB Tools:**
+**Elasticsearch/OpenSearch and Quickwit Tools:**
 - `query_elasticsearch`
 - `query_quickwit`
+
+**InfluxDB Tools** (also removed by `--disable-write`, see above)**:**
 - `query_influxdb`
 
-**SQL Datasource Tools:**
+**SQL Datasource Tools** (also removed by `--disable-write`, see above)**:**
 - `query_clickhouse`
 - `query_snowflake`
 - `query_athena`

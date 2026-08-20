@@ -395,10 +395,12 @@ var DescribeClickHouseTable = mcpgrafana.MustTool(
 )
 
 // AddClickHouseTools registers all ClickHouse tools with the MCP server.
-// query_clickhouse is registered only when enableQueryTools is true; the schema
-// discovery tools stay available either way.
-func AddClickHouseTools(mcp *server.MCPServer, enableQueryTools bool) {
-	if enableQueryTools {
+// query_clickhouse passes the SQL through unfiltered, so it is a write tool as
+// well as a query tool: the caller decides via enableQueryTool, which is false
+// under --disable-query, and under --disable-write unless --enable-query
+// overrides it. The schema discovery tools stay available either way.
+func AddClickHouseTools(mcp *server.MCPServer, enableQueryTool bool) {
+	if enableQueryTool {
 		QueryClickHouse.Register(mcp)
 	}
 	ListClickHouseTables.Register(mcp)

@@ -46,7 +46,7 @@ so anything that helps them reproduce your setup is genuinely useful.
 - [ ] CLA signed (required to merge)
 - [ ] README tool table updated, with RBAC permissions and scopes, if this adds a tool
 - [ ] Any write operation respects `--disable-write`
-- [ ] Any datasource query execution respects `--disable-query`
+- [ ] Any datasource query execution respects `--disable-query` (and `--disable-write` too, if the query is passed through unfiltered)
 
 <!--
 Note on CI: workflow runs on fork PRs need manual maintainer approval, on every

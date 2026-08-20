@@ -226,10 +226,13 @@ Flux example:    from(bucket: "metrics") |> range(start: -1h) |> filter(fn: (r) 
 )
 
 // AddInfluxDBTools registers all InfluxDB tools with the MCP server.
-// Every tool in this category executes a query, so nothing is registered when
-// enableQueryTools is false.
-func AddInfluxDBTools(mcp *server.MCPServer, enableQueryTools bool) {
-	if enableQueryTools {
+// query_influxdb passes the query through unfiltered, and InfluxQL has DELETE
+// and DROP, so it is a write tool as well as a query tool: the caller decides
+// via enableQueryTool, which is false under --disable-query, and under
+// --disable-write unless --enable-query overrides it. It is the only tool in
+// this category, so nothing is registered when it is gated off.
+func AddInfluxDBTools(mcp *server.MCPServer, enableQueryTool bool) {
+	if enableQueryTool {
 		QueryInfluxDB.Register(mcp)
 	}
 }
