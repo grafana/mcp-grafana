@@ -12,7 +12,7 @@ This provides access to your Grafana instance and the surrounding ecosystem.
 
 ## Quick Start
 
-Requires [uv](https://docs.astral.sh/uv/getting-started/installation/). Add the following to your MCP client configuration (e.g. Claude Desktop, Cursor):
+Requires [uv](https://docs.astral.sh/uv/getting-started/installation/). Add the following to your MCP client configuration (e.g. Claude Desktop, Cursor, [Gamut](https://www.gamut.so/mcp/analytics-marketing/grafana)):
 
 ```json
 {
