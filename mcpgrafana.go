@@ -1325,6 +1325,9 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 							IdleConnTimeout:       90 * time.Second,
 						}
 					}
+					if tokenFile := serviceAccountTokenFileFromEnv(); tokenFile != "" {
+						base = &tokenFileRoundTripper{path: tokenFile, underlying: base}
+					}
 					// Use BuildTransport but skip APIKey/BasicAuth auth
 					// (handled by the OpenAPI client). OBO tokens still need
 					// transport-level injection since the OpenAPI client
