@@ -199,6 +199,220 @@ func TestProxiedToolsRegistrationGuard(t *testing.T) {
 	})
 }
 
+// TestProxiedToolSet_SessionAttachWaitBudget covers the fix for a session
+// whose first hook invocation triggers (or attaches to) a proxiedToolSet build
+// that is still running when tm.sessionAttachWaitBudget elapses. Before this
+// fix, the triggering session's hook blocked for the ENTIRE build (which can
+// take tens of seconds once a candidate needs retries), and if that session
+// was torn down before the build finished, its later, otherwise-unreachable
+// AddSessionTools call failed with "session not found". Bounding the wait
+// instead lets the hook return promptly without registering anything, while
+// the build keeps running in the background (on its own context, detached
+// from any one caller) for whichever session asks next.
+func TestProxiedToolSet_SessionAttachWaitBudget(t *testing.T) {
+	// newBlockingBuild returns a testBuildFunc that signals buildStarted as soon
+	// as it runs and then blocks until release is closed, so tests control
+	// exactly when the build finishes instead of racing a real sleep duration.
+	newBlockingBuild := func(buildStarted chan struct{}, release chan struct{}) testBuildFunc {
+		return func(ctx context.Context, logger *slog.Logger) (builtProxiedTools, error) {
+			close(buildStarted)
+			<-release
+			return builtWithTool("tempo", "uid", "tempo_example"), nil
+		}
+	}
+
+	t.Run("a waiter that exceeds the budget returns without registering, and its retry picks up the completed build", func(t *testing.T) {
+		buildStarted := make(chan struct{})
+		release := make(chan struct{})
+		tm, sm, srv := newToolManagerWithServer(t, newBlockingBuild(buildStarted, release))
+		tm.sessionAttachWaitBudget = 10 * time.Millisecond
+
+		ctx := ctxWithCreds("http://grafana", "secret", nil, 1)
+		sess := newToolsCapableSession("budget-1")
+		sm.CreateSession(ctx, sess)
+		require.NoError(t, srv.RegisterSession(ctx, sess))
+
+		// First hook: triggers the build, which blocks on release. The wait
+		// budget elapses well before that, so this call must return promptly
+		// without registering anything.
+		start := time.Now()
+		tm.InitializeAndRegisterProxiedTools(ctx, sess)
+		elapsed := time.Since(start)
+
+		<-buildStarted // the build did start (needsBuild path ran)
+		assert.Less(t, elapsed, time.Second, "the hook must return once the wait budget elapses, not block for the whole build")
+		assert.Empty(t, sess.GetSessionTools(), "no tools may be registered while the build is still running")
+
+		state, ok := sm.GetSession("budget-1")
+		require.True(t, ok)
+		state.proxiedInitMu.Lock()
+		registered := state.proxiedRegistered
+		state.proxiedInitMu.Unlock()
+		assert.False(t, registered, "a session that timed out waiting must not be marked registered")
+
+		state.mutex.RLock()
+		boundSet := state.proxiedSet
+		state.mutex.RUnlock()
+		require.NotNil(t, boundSet, "the session must keep its reference so the build isn't abandoned")
+
+		// Let the build finish and publish.
+		close(release)
+		<-boundSet.ready
+
+		// Second hook for the SAME session: must reuse the existing attachment
+		// (not take a second reference) and register immediately since the set
+		// is already published.
+		tm.InitializeAndRegisterProxiedTools(ctx, sess)
+		assert.Len(t, sess.GetSessionTools(), 1, "the retry must register the tool once the build has published")
+
+		state.proxiedInitMu.Lock()
+		registered = state.proxiedRegistered
+		state.proxiedInitMu.Unlock()
+		assert.True(t, registered, "the session must be marked registered after the retry succeeds")
+
+		tm.proxiedSetsMu.Lock()
+		var refs int
+		for _, s := range tm.proxiedSets {
+			refs = s.refs
+		}
+		tm.proxiedSetsMu.Unlock()
+		assert.Equal(t, 1, refs, "the session must hold exactly one reference despite two attach attempts")
+	})
+
+	t.Run("a session torn down while waiting does not disrupt the shared build for a session that stays attached", func(t *testing.T) {
+		buildStarted := make(chan struct{})
+		release := make(chan struct{})
+		tm, sm, srv := newToolManagerWithServer(t, newBlockingBuild(buildStarted, release))
+		tm.sessionAttachWaitBudget = 10 * time.Millisecond
+
+		ctx := ctxWithCreds("http://grafana", "secret", nil, 1)
+		sessA := newToolsCapableSession("race-a")
+		sessB := newToolsCapableSession("race-b")
+		sm.CreateSession(ctx, sessA)
+		sm.CreateSession(ctx, sessB)
+		require.NoError(t, srv.RegisterSession(ctx, sessA))
+		require.NoError(t, srv.RegisterSession(ctx, sessB))
+
+		// A triggers the build and times out waiting for it.
+		tm.InitializeAndRegisterProxiedTools(ctx, sessA)
+		<-buildStarted
+		assert.Empty(t, sessA.GetSessionTools())
+
+		// B attaches to the SAME in-progress build (a follower, needsBuild=false)
+		// and also times out waiting.
+		tm.InitializeAndRegisterProxiedTools(ctx, sessB)
+		assert.Empty(t, sessB.GetSessionTools())
+
+		tm.proxiedSetsMu.Lock()
+		require.Len(t, tm.proxiedSets, 1, "exactly one shared set, even though neither session has registered yet")
+		var set *proxiedToolSet
+		for _, s := range tm.proxiedSets {
+			set = s
+		}
+		refsBoth := set.refs
+		tm.proxiedSetsMu.Unlock()
+		assert.Equal(t, 2, refsBoth, "both A and B hold a reference even though both are still (or were) waiting")
+
+		// A is torn down while the build is still running. Because B still
+		// references the set, it must survive: this is exactly the scenario that
+		// used to end in "failed to add session tools: session not found" for A
+		// once the build finally published -- with the bounded wait, A already
+		// gave up long before this and never reaches that call at all.
+		sm.RemoveSession(ctx, sessA)
+
+		tm.proxiedSetsMu.Lock()
+		_, stillCached := tm.proxiedSets[set.key]
+		refsAfterA := set.refs
+		tm.proxiedSetsMu.Unlock()
+		assert.True(t, stillCached, "the set must survive A's teardown because B still references it")
+		assert.Equal(t, 1, refsAfterA, "A's reference must be released, leaving B's")
+
+		// Let the build finish and publish.
+		close(release)
+		<-set.ready
+
+		// B's retry now finds the published set and registers.
+		tm.InitializeAndRegisterProxiedTools(ctx, sessB)
+		assert.Len(t, sessB.GetSessionTools(), 1, "B's retry must register the tool once the build has published")
+
+		tm.proxiedSetsMu.Lock()
+		refsFinal := set.refs
+		tm.proxiedSetsMu.Unlock()
+		assert.Equal(t, 1, refsFinal, "B must hold exactly one reference despite two attach attempts")
+
+		// Teardown balances B's single reference.
+		sm.RemoveSession(ctx, sessB)
+		tm.proxiedSetsMu.Lock()
+		sizeAfterTeardown := len(tm.proxiedSets)
+		tm.proxiedSetsMu.Unlock()
+		assert.Equal(t, 0, sizeAfterTeardown, "teardown must release B's reference and drop the now-unused entry")
+	})
+
+	t.Run("credentials rotating during a timed-out wait release the stale set instead of leaking it", func(t *testing.T) {
+		// Key A's build blocks; key B's build returns immediately. Branching on
+		// the context lets a single injected builder serve both keys.
+		aStarted := make(chan struct{})
+		aRelease := make(chan struct{})
+		build := func(ctx context.Context, logger *slog.Logger) (builtProxiedTools, error) {
+			if GrafanaConfigFromContext(ctx).URL == "http://a" {
+				close(aStarted)
+				<-aRelease
+			}
+			return builtWithTool("tempo", "uid", "tempo_example"), nil
+		}
+		tm, sm, srv := newToolManagerWithServer(t, build)
+		tm.sessionAttachWaitBudget = 10 * time.Millisecond
+
+		sess := newToolsCapableSession("rotate-1")
+		ctxA := ctxWithCreds("http://a", "secret", nil, 1)
+		sm.CreateSession(ctxA, sess)
+		require.NoError(t, srv.RegisterSession(ctxA, sess))
+
+		// First hook: attaches to key A's set and times out waiting on its
+		// (still blocked) build.
+		tm.InitializeAndRegisterProxiedTools(ctxA, sess)
+		<-aStarted
+		assert.Empty(t, sess.GetSessionTools())
+
+		tm.proxiedSetsMu.Lock()
+		require.Len(t, tm.proxiedSets, 1, "key A's set is cached")
+		var setA *proxiedToolSet
+		for _, s := range tm.proxiedSets {
+			setA = s
+		}
+		refsA := setA.refs
+		tm.proxiedSetsMu.Unlock()
+		assert.Equal(t, 1, refsA, "the session holds A's only reference while its wait is pending")
+
+		// Second hook for the SAME session, but with rotated credentials (key
+		// B) -- e.g. a refreshed access/ID token. Before the fix, this
+		// overwrote state.proxiedSet from A to B without ever releasing A's
+		// reference, leaking it (and eventually its clients) forever.
+		ctxB := ctxWithCreds("http://b", "secret", nil, 1)
+		tm.InitializeAndRegisterProxiedTools(ctxB, sess)
+
+		tm.proxiedSetsMu.Lock()
+		refsAAfterRotation := setA.refs
+		var setB *proxiedToolSet
+		for _, s := range tm.proxiedSets {
+			if s != setA {
+				setB = s
+			}
+		}
+		tm.proxiedSetsMu.Unlock()
+		assert.Equal(t, 0, refsAAfterRotation, "the stale reference to A must be released on credential rotation, not leaked")
+		require.NotNil(t, setB, "key B must have its own set")
+		assert.Len(t, sess.GetSessionTools(), 1, "B's build is immediate, so the session registers on this same call")
+
+		// Let A's now-abandoned (refs==0) build finish; the existing
+		// abandoned-build path closes it without publishing.
+		close(aRelease)
+		<-setA.ready
+
+		sm.RemoveSession(ctxB, sess)
+	})
+}
+
 func TestSessionStateLifecycle(t *testing.T) {
 	t.Run("create and get session", func(t *testing.T) {
 		sm := NewSessionManager()
