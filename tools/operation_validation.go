@@ -1,9 +1,76 @@
 package tools
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 )
+
+// ErrUnknownOperation is returned by OperationValidator.Check (and should be
+// returned by any hand-rolled per-operation validator or dispatcher) when an
+// operation value isn't one the checker owns. It's the shared sentinel
+// behind the read/write delegation pattern: a tool that validates or
+// dispatches a subset of a domain's operations returns this bare sentinel
+// for operations outside its subset, so a caller composing two such
+// checkers can tell "not mine" apart from "mine, and invalid" using
+// errors.Is, and only then fall through to the next checker. See
+// DelegateValidation and DelegateDispatch below, and OperationValidator.Check
+// vs Validate.
+var ErrUnknownOperation = errors.New("unknown operation")
+
+// UnknownOperationError formats the final, user-facing "unknown operation"
+// error once every checker in a delegation chain has rejected it. known
+// should list every operation across the whole chain (e.g. a read
+// validator's operations plus a write validator's), not just the last
+// checker's subset, so the message tells the caller the full menu.
+func UnknownOperationError(operation string, known ...string) error {
+	return fmt.Errorf("unknown operation %q, must be one of: %s", operation, strings.Join(known, ", "))
+}
+
+// DelegateValidation is the read/write delegation idiom for a validate()
+// method: try the primary checker's result first; if it reports
+// ErrUnknownOperation (the operation isn't one the primary checker owns),
+// run fallback and return its result instead. A non-nil, non-sentinel error
+// from the primary (e.g. a required-field violation) is returned as-is,
+// without ever running fallback — an operation the primary owns is not
+// retried elsewhere just because it was invalid.
+//
+// Typical use, from a read/write params struct's validate():
+//
+//	func (p WriteParams) validate() error {
+//		return DelegateValidation(p.readRequest().validate(p.Operation), func() error {
+//			return NewOperationValidator(p.Operation, "create", "update", "delete").
+//				Require("create", ...).
+//				Validate()
+//		})
+//	}
+func DelegateValidation(err error, fallback func() error) error {
+	if errors.Is(err, ErrUnknownOperation) {
+		return fallback()
+	}
+	return err
+}
+
+// DelegateDispatch is DelegateValidation's counterpart for a handler's
+// dispatch: try the primary dispatcher's (result, err) first; if err is
+// ErrUnknownOperation, run fallback and return its result instead. Any
+// other result or error from the primary — including a successful one — is
+// returned as-is.
+//
+// Typical use, from a read/write tool's handler:
+//
+//	func writeHandler(ctx context.Context, args WriteParams) (any, error) {
+//		result, err := readDispatch(ctx, args.readRequest())
+//		return DelegateDispatch(result, err, func() (any, error) {
+//			switch args.Operation { ... }
+//		})
+//	}
+func DelegateDispatch[R any](result R, err error, fallback func() (R, error)) (R, error) {
+	if errors.Is(err, ErrUnknownOperation) {
+		return fallback()
+	}
+	return result, err
+}
 
 // OpField describes one parameter's presence for per-operation validation.
 // Name is the JSON field name to use in error messages; Missing reports
@@ -118,12 +185,16 @@ func (v *OperationValidator) ExactlyOneFor(op string, fields ...OpField) *Operat
 	return v
 }
 
-// Validate runs the registered checks in order: unknown operation, mutually
-// exclusive groups, exactly-one groups, then required fields for the active
-// operation. It returns the first violation found.
-func (v *OperationValidator) Validate() error {
+// Check runs the same logic as Validate, but reports an unrecognized
+// operation as the bare ErrUnknownOperation sentinel instead of a formatted
+// message. Use Check (with DelegateValidation) when this validator is one
+// link in a read/write delegation chain and a later link needs to detect
+// "not mine" via errors.Is before producing the final, combined error
+// message; use Validate when this validator is the final word (a read-only
+// tool, or the last checker in a chain).
+func (v *OperationValidator) Check() error {
 	if !containsString(v.known, v.operation) {
-		return fmt.Errorf("unknown operation %q, must be one of: %s", v.operation, strings.Join(v.known, ", "))
+		return ErrUnknownOperation
 	}
 
 	for _, g := range v.exclusive {
@@ -157,6 +228,18 @@ func (v *OperationValidator) Validate() error {
 	}
 
 	return nil
+}
+
+// Validate is Check, with an unrecognized operation formatted into the
+// final user-facing message (via UnknownOperationError) instead of the bare
+// ErrUnknownOperation sentinel. See Check's doc comment for when to use
+// which.
+func (v *OperationValidator) Validate() error {
+	err := v.Check()
+	if errors.Is(err, ErrUnknownOperation) {
+		return UnknownOperationError(v.operation, v.known...)
+	}
+	return err
 }
 
 func containsString(values []string, target string) bool {
