@@ -182,25 +182,33 @@ func TestLokiGuardrailReasonsStaticChecks(t *testing.T) {
 	end := time.Now()
 	start := end.Add(-time.Hour)
 
-	reasons := lokiGuardrailReasons(context.Background(), config, true, `{cluster=~".+"} |= "error"`, "", start, end, nil)
+	reasons := lokiGuardrailReasons(context.Background(), config, true, `{cluster=~".+"} |= "error"`, "", start, end, nil).reasons
 	require.Len(t, reasons, 1)
-	assert.Contains(t, reasons[0], "selective")
-	assert.Contains(t, reasons[0], `{cluster=~".+"}`)
+	assert.Equal(t, guardrailReasonSelector, reasons[0].kind)
+	assert.Contains(t, reasons[0].message, "selective")
+	assert.Contains(t, reasons[0].message, `{cluster=~".+"}`)
 
-	reasons = lokiGuardrailReasons(context.Background(), config, true, `{namespace="foo", app="bar"}`, "", end.Add(-48*time.Hour), end, nil)
+	reasons = lokiGuardrailReasons(context.Background(), config, true, `{namespace="foo", app="bar"}`, "", end.Add(-48*time.Hour), end, nil).reasons
 	require.Len(t, reasons, 1)
-	assert.Contains(t, reasons[0], "time range")
+	assert.Equal(t, guardrailReasonRange, reasons[0].kind)
+	assert.Contains(t, reasons[0].message, "time range")
 
 	// A catch-all on either side of a binary expression is flagged.
-	reasons = lokiGuardrailReasons(context.Background(), config, true, `sum(rate({app="x"}[5m])) / sum(rate({cluster=~".+"}[5m]))`, "", start, end, nil)
+	reasons = lokiGuardrailReasons(context.Background(), config, true, `sum(rate({app="x"}[5m])) / sum(rate({cluster=~".+"}[5m]))`, "", start, end, nil).reasons
 	require.Len(t, reasons, 1)
-	assert.Contains(t, reasons[0], `{cluster=~".+"}`)
+	assert.Contains(t, reasons[0].message, `{cluster=~".+"}`)
 
 	// Unparseable queries pass through: Loki rejects them with a proper error.
-	assert.Empty(t, lokiGuardrailReasons(context.Background(), config, true, `{app=="x"}`, "", start, end, nil))
+	// They are a fail-open, not a clean admission — the guardrail never
+	// reached a verdict.
+	outcome := lokiGuardrailReasons(context.Background(), config, true, `{app=="x"}`, "", start, end, nil)
+	assert.Empty(t, outcome.reasons)
+	assert.Equal(t, guardrailCauseUnparseable, outcome.failOpen)
 
-	// Selective selector within the range cap is allowed.
-	assert.Empty(t, lokiGuardrailReasons(context.Background(), config, true, `{namespace="foo", app="bar"}`, "", start, end, nil))
+	// Selective selector within the range cap is allowed outright.
+	outcome = lokiGuardrailReasons(context.Background(), config, true, `{namespace="foo", app="bar"}`, "", start, end, nil)
+	assert.Empty(t, outcome.reasons)
+	assert.Empty(t, outcome.failOpen)
 }
 
 func TestLokiGuardrailReasonsRangeVector(t *testing.T) {
@@ -208,29 +216,31 @@ func TestLokiGuardrailReasonsRangeVector(t *testing.T) {
 	end := time.Now()
 
 	// Instant metric query: no window of its own, cost set by the vector.
-	reasons := lokiGuardrailReasons(context.Background(), config, true, `sum(count_over_time({namespace="foo"}[30d]))`, "instant", time.Time{}, time.Time{}, nil)
+	reasons := lokiGuardrailReasons(context.Background(), config, true, `sum(count_over_time({namespace="foo"}[30d]))`, "instant", time.Time{}, time.Time{}, nil).reasons
 	require.Len(t, reasons, 1)
-	assert.Contains(t, reasons[0], "range vector")
+	assert.Equal(t, guardrailReasonRange, reasons[0].kind)
+	assert.Contains(t, reasons[0].message, "range vector")
 
 	// The vector duration counts on top of the range query window.
-	reasons = lokiGuardrailReasons(context.Background(), config, true, `rate({namespace="foo"}[20h])`, "", end.Add(-8*time.Hour), end, nil)
+	reasons = lokiGuardrailReasons(context.Background(), config, true, `rate({namespace="foo"}[20h])`, "", end.Add(-8*time.Hour), end, nil).reasons
 	require.Len(t, reasons, 1)
-	assert.Contains(t, reasons[0], "time range")
+	assert.Contains(t, reasons[0].message, "time range")
 
 	// A small vector on an instant query is fine.
-	assert.Empty(t, lokiGuardrailReasons(context.Background(), config, true, `sum(count_over_time({namespace="foo"}[1h]))`, "instant", time.Time{}, time.Time{}, nil))
+	assert.Empty(t, lokiGuardrailReasons(context.Background(), config, true, `sum(count_over_time({namespace="foo"}[1h]))`, "instant", time.Time{}, time.Time{}, nil).reasons)
 
 	// Fractional durations (Loki's time.ParseDuration fallback) count too:
 	// [720.5h] on an instant query must not fail open past the range cap.
-	reasons = lokiGuardrailReasons(context.Background(), config, true, `sum(count_over_time({namespace="foo"}[720.5h]))`, "instant", time.Time{}, time.Time{}, nil)
+	reasons = lokiGuardrailReasons(context.Background(), config, true, `sum(count_over_time({namespace="foo"}[720.5h]))`, "instant", time.Time{}, time.Time{}, nil).reasons
 	require.Len(t, reasons, 1)
-	assert.Contains(t, reasons[0], "range vector")
+	assert.Equal(t, guardrailReasonRange, reasons[0].kind)
+	assert.Contains(t, reasons[0].message, "range vector")
 
 	// A multi-century span saturates end.Sub(start) at MaxInt64; adding the
 	// vector duration must saturate too, not wrap negative and fail open.
-	reasons = lokiGuardrailReasons(context.Background(), config, true, `sum(count_over_time({namespace="foo"}[7d]))`, "", time.Date(1000, 1, 1, 0, 0, 0, 0, time.UTC), end, nil)
+	reasons = lokiGuardrailReasons(context.Background(), config, true, `sum(count_over_time({namespace="foo"}[7d]))`, "", time.Date(1000, 1, 1, 0, 0, 0, 0, time.UTC), end, nil).reasons
 	require.Len(t, reasons, 1)
-	assert.Contains(t, reasons[0], "time range")
+	assert.Contains(t, reasons[0].message, "time range")
 }
 
 func TestLokiGuardrailReasonsByteBudget(t *testing.T) {
@@ -243,9 +253,10 @@ func TestLokiGuardrailReasonsByteBudget(t *testing.T) {
 		gotQuery = query
 		return &Stats{Bytes: 200 << 30}, nil
 	}
-	reasons := lokiGuardrailReasons(context.Background(), config, true, `{namespace="foo", app="bar"} |= "error"`, "", start, end, overBudget)
+	reasons := lokiGuardrailReasons(context.Background(), config, true, `{namespace="foo", app="bar"} |= "error"`, "", start, end, overBudget).reasons
 	require.Len(t, reasons, 1)
-	assert.Contains(t, reasons[0], "budget")
+	assert.Equal(t, guardrailReasonBytes, reasons[0].kind)
+	assert.Contains(t, reasons[0].message, "budget")
 	// The estimate is for the bare selector: line filters do not reduce
 	// bytes scanned.
 	assert.Equal(t, `{namespace="foo", app="bar"}`, gotQuery)
@@ -253,7 +264,7 @@ func TestLokiGuardrailReasonsByteBudget(t *testing.T) {
 	underBudget := func(ctx context.Context, query string, s, e time.Time) (*Stats, error) {
 		return &Stats{Bytes: 1 << 30}, nil
 	}
-	assert.Empty(t, lokiGuardrailReasons(context.Background(), config, true, `{namespace="foo", app="bar"}`, "", start, end, underBudget))
+	assert.Empty(t, lokiGuardrailReasons(context.Background(), config, true, `{namespace="foo", app="bar"}`, "", start, end, underBudget).reasons)
 }
 
 func TestLokiGuardrailReasonsByteBudgetInstantWindow(t *testing.T) {
@@ -267,9 +278,10 @@ func TestLokiGuardrailReasonsByteBudgetInstantWindow(t *testing.T) {
 		gotStart, gotEnd = s, e
 		return &Stats{Bytes: 200 << 30}, nil
 	}
-	reasons := lokiGuardrailReasons(context.Background(), config, true, `sum(count_over_time({namespace="foo"}[6h]))`, "instant", time.Time{}, end, statsFn)
+	reasons := lokiGuardrailReasons(context.Background(), config, true, `sum(count_over_time({namespace="foo"}[6h]))`, "instant", time.Time{}, end, statsFn).reasons
 	require.Len(t, reasons, 1)
-	assert.Contains(t, reasons[0], "budget")
+	assert.Equal(t, guardrailReasonBytes, reasons[0].kind)
+	assert.Contains(t, reasons[0].message, "budget")
 	assert.Equal(t, end, gotEnd)
 	assert.Equal(t, end.Add(-6*time.Hour), gotStart)
 }
@@ -287,9 +299,10 @@ func TestLokiGuardrailReasonsSumsSelectors(t *testing.T) {
 
 	// Both sides of a binary expression are scanned; their estimates sum.
 	logql := `sum(rate({namespace="a", app="x"}[5m])) / sum(rate({namespace="a", app="y"}[5m]))`
-	reasons := lokiGuardrailReasons(context.Background(), config, true, logql, "", start, end, statsFn)
+	reasons := lokiGuardrailReasons(context.Background(), config, true, logql, "", start, end, statsFn).reasons
 	require.Len(t, reasons, 1)
-	assert.Contains(t, reasons[0], "budget")
+	assert.Equal(t, guardrailReasonBytes, reasons[0].kind)
+	assert.Contains(t, reasons[0].message, "budget")
 	assert.Equal(t, []string{`{namespace="a", app="x"}`, `{namespace="a", app="y"}`}, queries)
 
 	// Repeated selectors are fetched once but each occurrence counts: both
@@ -297,9 +310,10 @@ func TestLokiGuardrailReasonsSumsSelectors(t *testing.T) {
 	// twice is over budget — with a single stats round trip.
 	queries = nil
 	logql = `sum(rate({namespace="a", app="x"}[5m])) / sum(rate({namespace="a", app="x"}[10m]))`
-	reasons = lokiGuardrailReasons(context.Background(), config, true, logql, "", start, end, statsFn)
+	reasons = lokiGuardrailReasons(context.Background(), config, true, logql, "", start, end, statsFn).reasons
 	require.Len(t, reasons, 1)
-	assert.Contains(t, reasons[0], "budget")
+	assert.Equal(t, guardrailReasonBytes, reasons[0].kind)
+	assert.Contains(t, reasons[0].message, "budget")
 	assert.Len(t, queries, 1)
 }
 
@@ -314,9 +328,10 @@ func TestLokiGuardrailReasonsByteSumSaturates(t *testing.T) {
 		return &Stats{Bytes: math.MaxInt64 / 2}, nil
 	}
 	logql := `sum(rate({app="x"}[5m])) + sum(rate({app="x"}[5m])) + sum(rate({app="x"}[5m]))`
-	reasons := lokiGuardrailReasons(context.Background(), config, true, logql, "", start, end, statsFn)
+	reasons := lokiGuardrailReasons(context.Background(), config, true, logql, "", start, end, statsFn).reasons
 	require.Len(t, reasons, 1)
-	assert.Contains(t, reasons[0], "budget")
+	assert.Equal(t, guardrailReasonBytes, reasons[0].kind)
+	assert.Contains(t, reasons[0].message, "budget")
 }
 
 func TestLokiGuardrailReasonsByteCheckSkippedWithoutWindow(t *testing.T) {
@@ -329,7 +344,7 @@ func TestLokiGuardrailReasonsByteCheckSkippedWithoutWindow(t *testing.T) {
 		called = true
 		return &Stats{Bytes: 200 << 30}, nil
 	}
-	assert.Empty(t, lokiGuardrailReasons(context.Background(), config, true, `{namespace="foo"}`, "instant", time.Time{}, time.Time{}, statsFn))
+	assert.Empty(t, lokiGuardrailReasons(context.Background(), config, true, `{namespace="foo"}`, "instant", time.Time{}, time.Time{}, statsFn).reasons)
 	assert.False(t, called)
 }
 
@@ -341,7 +356,9 @@ func TestLokiGuardrailReasonsStatsFailureFailsOpen(t *testing.T) {
 	boom := func(ctx context.Context, query string, s, e time.Time) (*Stats, error) {
 		return nil, errors.New("boom")
 	}
-	assert.Empty(t, lokiGuardrailReasons(context.Background(), config, true, `{namespace="foo", app="bar"}`, "", start, end, boom))
+	outcome := lokiGuardrailReasons(context.Background(), config, true, `{namespace="foo", app="bar"}`, "", start, end, boom)
+	assert.Empty(t, outcome.reasons)
+	assert.Equal(t, guardrailCauseEstimateFailed, outcome.failOpen)
 }
 
 func TestLokiGuardrailReasonsPartialTotalOverBudgetStillBlocks(t *testing.T) {
@@ -359,9 +376,10 @@ func TestLokiGuardrailReasonsPartialTotalOverBudgetStillBlocks(t *testing.T) {
 		return nil, errors.New("boom")
 	}
 	logql := `sum(rate({namespace="a", app="x"}[5m])) / sum(rate({namespace="a", app="y"}[5m]))`
-	reasons := lokiGuardrailReasons(context.Background(), config, true, logql, "", start, end, statsFn)
+	reasons := lokiGuardrailReasons(context.Background(), config, true, logql, "", start, end, statsFn).reasons
 	require.Len(t, reasons, 1)
-	assert.Contains(t, reasons[0], "budget")
+	assert.Equal(t, guardrailReasonBytes, reasons[0].kind)
+	assert.Contains(t, reasons[0].message, "budget")
 
 	// Under budget when the error hits: the verdict is still undetermined, so
 	// fail open as before.
@@ -371,7 +389,9 @@ func TestLokiGuardrailReasonsPartialTotalOverBudgetStillBlocks(t *testing.T) {
 		}
 		return nil, errors.New("boom")
 	}
-	assert.Empty(t, lokiGuardrailReasons(context.Background(), config, true, logql, "", start, end, statsFn))
+	outcome := lokiGuardrailReasons(context.Background(), config, true, logql, "", start, end, statsFn)
+	assert.Empty(t, outcome.reasons)
+	assert.Equal(t, guardrailCauseEstimateFailed, outcome.failOpen)
 }
 
 func TestLokiGuardrailReasonsStatsSkippedForBlockedQuery(t *testing.T) {
@@ -384,7 +404,7 @@ func TestLokiGuardrailReasonsStatsSkippedForBlockedQuery(t *testing.T) {
 		called = true
 		return &Stats{}, nil
 	}
-	reasons := lokiGuardrailReasons(context.Background(), config, true, `{cluster=~".+"}`, "", start, end, statsFn)
+	reasons := lokiGuardrailReasons(context.Background(), config, true, `{cluster=~".+"}`, "", start, end, statsFn).reasons
 	require.NotEmpty(t, reasons)
 	assert.False(t, called, "index/stats round trip must be skipped when static checks already block")
 }
