@@ -410,6 +410,19 @@ func extractTemplateVariables(db map[string]interface{}) map[string]string {
 				}
 			}
 		}
+
+		// Constant and textbox variables hold their value in "query" and are
+		// frequently saved without a "current" at all. Without this fallback
+		// the raw $name survives substitution and reaches the datasource,
+		// which for SQL datasources is a syntax error.
+		if variables[name] == "" {
+			switch safeString(variable, "type") {
+			case "constant", "textbox":
+				if q := safeString(variable, "query"); q != "" {
+					variables[name] = q
+				}
+			}
+		}
 	}
 
 	return variables
