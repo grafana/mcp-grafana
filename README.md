@@ -226,12 +226,13 @@ A single read-only tool, `admin_read`, covers Grafana admin and RBAC information
 
 ### Annotations
 
-- **Get Annotations:** Query annotations with filters. Supports time range, dashboard UID, tags, and match mode.
-- **Create Annotation:** Create a new annotation on a dashboard or panel.
-- **Create Graphite Annotation:** Create annotations using Graphite format (`what`, `when`, `tags`, `data`).
-- **Update Annotation:** Replace all fields of an existing annotation (full update).
-- **Patch Annotation:** Update only specific fields of an annotation (partial update).
-- **Get Annotation Tags:** List available annotation tags with optional filtering.
+`annotations_read` covers fetching annotations and tags; `annotations_write` covers creating, updating, and deleting them.
+
+- **list:** Query annotations with filters. Supports time range, dashboard UID, panel ID, tags, and match mode.
+- **tags:** List available annotation tags with optional filtering.
+- **create:** Create a new annotation on a dashboard or panel, or organization-wide. Set `format` to `graphite` to create a Graphite-format annotation (`what`, `when`, `tags`, `data`) instead.
+- **update:** Update only the provided fields of an existing annotation (partial update).
+- **delete:** Delete an annotation by ID.
 
 ### Snapshots
 
@@ -395,10 +396,8 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `agento11y_manage_test_suites` | Agent Observability* | Manage the test suites that offline experiments run against, their versions, and their test cases (list, get, create, update, draft, publish, upsert, delete) | `grafana-agento11y-app.data:read` + `grafana-agento11y-app.eval:write` for mutations | N/A                                                 |
 | `ask_assistant`                   | Assistant*                | Send a prompt to Grafana Assistant and return the full text reply (multi-turn via `contextId`)              | Plugin-specific permissions                            | Plugin-specific scopes                              |
 | `generate_deeplink`               | Navigation                | Generate accurate deeplink URLs for Grafana resources                                                        | None (read-only URL generation)                        | N/A                                                 |
-| `get_annotations`                 | Annotations               | Fetch annotations with filters                                                                               | `annotations:read`                                     | `annotations:*` or `annotations:id:123`             |
-| `create_annotation`               | Annotations               | Create a new annotation (standard or Graphite format)                                                        | `annotations:write`                                    | `annotations:*`                                     |
-| `update_annotation`               | Annotations               | Update specific fields of an annotation (partial update)                                                     | `annotations:write`                                    | `annotations:*`                                     |
-| `get_annotation_tags`             | Annotations               | List annotation tags with optional filtering                                                                 | `annotations:read`                                     | `annotations:*`                                     |
+| `annotations_read`                | Annotations               | Fetch annotations and annotation tags with filters (operations: `list`, `tags`)                              | `annotations:read`                                     | `annotations:*` or `annotations:id:123`             |
+| `annotations_write`               | Annotations               | Create, update, or delete an annotation (operations: `create`, `update`, `delete`)                           | `annotations:write`                                    | `annotations:*`                                     |
 | `list_snapshots`                  | Snapshot                  | List dashboard snapshots with optional query and limit filters                                               | `dashboards:read`                                      | `dashboards:*` or `dashboards:uid:abc123`           |
 | `get_snapshot`                    | Snapshot                  | Get snapshot metadata and dashboard payload by snapshot key                                                  | `dashboards:read`                                      | `dashboards:*` or `dashboards:uid:abc123`           |
 | `create_snapshot`                 | Snapshot                  | Create a dashboard snapshot from a full dashboard payload                                                    | `dashboards:write`                                     | `dashboards:*` or `dashboards:uid:abc123`           |
@@ -518,8 +517,7 @@ When `--disable-write` is enabled, the following write operations are disabled:
 - `update_alert_group`
 
 **Annotation Tools:**
-- `create_annotation`
-- `update_annotation`
+- `annotations_write` (create, update, delete operations)
 
 **Sift Tools:**
 - `find_error_pattern_logs` (creates investigations)

@@ -151,8 +151,7 @@ When enabled, the following writes are disabled:
 
 **Annotation tools**
 
-- `create_annotation`
-- `update_annotation`
+- `annotations_write` (create, update, delete operations)
 
 **Sift tools**
 
