@@ -22,6 +22,7 @@ import (
 	promclient "github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/contrib/propagators/autoprop"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
@@ -141,7 +142,11 @@ func newSlowRequestLogger(level slog.Level) *slog.Logger {
 // OTLPLogsEndpoint; use LoggerProvider() to retrieve the log provider for
 // wiring into an slog.Handler (e.g., via the otelslog bridge). Other tracing
 // behaviour is configured via standard OTEL_* environment variables
-// (e.g., OTEL_TRACES_SAMPLER).
+// (e.g., OTEL_TRACES_SAMPLER, OTEL_PROPAGATORS).
+//
+// Setup also installs the global TextMapPropagator used for trace-context
+// propagation over HTTP. This happens regardless of whether trace export is
+// enabled, so it must be called before serving requests.
 func Setup(cfg Config) (_ *Observability, err error) {
 	// Ensure OTel SDK internal errors (async export failures, queue drops, etc.)
 	// surface through slog instead of the stdlib log package where operators
@@ -158,6 +163,23 @@ func Setup(cfg Config) (_ *Observability, err error) {
 			fmt.Fprintf(os.Stderr, "otel sdk error: %v\n", err)
 		}))
 	})
+
+	// Install a global TextMapPropagator so the server takes part in W3C
+	// trace-context propagation over the HTTP transports. Both otelhttp
+	// wrappers already in place consult the global propagator: the server
+	// handler (see WrapHandler) extracts an inbound traceparent/tracestate so
+	// our spans continue the caller's trace, and the client transport (see
+	// mcpgrafana.BuildTransport) injects one so Grafana's spans continue ours.
+	// The OTel default is a no-op propagator, which is why every hop otherwise
+	// started a brand-new, disconnected trace.
+	//
+	// autoprop honours the standard OTEL_PROPAGATORS environment variable and
+	// defaults to tracecontext+baggage. This is set unconditionally, not only
+	// when trace export is configured: with no tracer provider installed the
+	// extracted span context still rides through the non-recording spans and
+	// is injected on outbound calls, so a server with tracing off passes the
+	// caller's trace context through to Grafana instead of dropping it.
+	otel.SetTextMapPropagator(autoprop.NewTextMapPropagator())
 
 	logger := cfg.Logger
 	if logger == nil {
@@ -302,6 +324,11 @@ func (o *Observability) MetricsHandler() http.Handler {
 //   - http.server.response.body.size (histogram)
 //
 // The operation parameter is used as the span name.
+//
+// The server span is parented to any trace context carried by the incoming
+// request headers, as read by the global TextMapPropagator installed by Setup;
+// with no propagator installed, inbound trace context is ignored and the span
+// starts a new trace.
 func WrapHandler(h http.Handler, operation string) http.Handler {
 	return otelhttp.NewHandler(h, operation)
 }

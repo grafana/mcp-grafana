@@ -90,6 +90,21 @@ OTEL_EXPORTER_OTLP_HEADERS="Authorization=Basic ..." \
 
 Tool call spans follow naming like `tools/call <tool_name>` and include attributes such as `gen_ai.tool.name`, `mcp.method.name`, and `mcp.session.id`. The server supports W3C trace context propagation from the `_meta` field of tool call requests.
 
+### Trace context propagation
+
+Under an HTTP transport (SSE or streamable-http) the server takes part in [W3C trace context](https://www.w3.org/TR/trace-context/) propagation on both sides, so a caller, mcp-grafana, and Grafana appear as one connected trace:
+
+- **Inbound**: a `traceparent`/`tracestate` header on the incoming request (from an MCP client or an upstream proxy) parents the server span, continuing the caller's trace instead of starting a new one.
+- **Outbound**: requests to the Grafana API carry a `traceparent` naming mcp-grafana's own span, so Grafana's spans hang off ours.
+
+Propagation is always active — it does not require `OTEL_EXPORTER_OTLP_ENDPOINT`. With trace export off, no spans are recorded but an inbound trace context is still passed through to Grafana rather than dropped.
+
+The propagators used are configured with the standard [`OTEL_PROPAGATORS`](https://opentelemetry.io/docs/languages/sdk-configuration/general/#otel_propagators) environment variable, defaulting to `tracecontext,baggage`. Set it to interoperate with a non-W3C system (`b3`, `b3multi`, `jaeger`, `xray`, `ottrace`, in any comma-separated combination) or to `none` to disable propagation entirely.
+
+Tool call requests may also carry `traceparent`/`tracestate` in their MCP `_meta` field; when present, that context parents the tool span. This is the only propagation channel available under stdio, where there is no HTTP request to read headers from.
+
+Listing `traceparent` or `tracestate` in `GRAFANA_FORWARD_HEADERS` is not needed and no longer has an effect: forwarding the *caller's* `traceparent` verbatim would parent Grafana's spans onto the caller and cut mcp-grafana out of the middle of the trace, so a forwarded value never overrides the propagated one. Forwarded trace headers still apply when propagation is disabled with `OTEL_PROPAGATORS=none`.
+
 Tool-call spans also carry the [tool-call dimensions](#tool-call-dimension-labels) `mcp.tool.operation`, `mcp.tool.resource_type`, and `mcp.tool.phase`, plus the span-only `mcp.tool.target` (the datasource `uid`, else `name`) for grouping the spans that touch one entity. `mcp.tool.target` is empty when a call names no entity — notably `create_datasource`'s `phase=schema` call, where the datasource does not exist yet — so stitching that call to the later `phase=created` one relies on the shared trace (when the client propagates context via `_meta`) or on `mcp.session.id` plus `mcp_tool_resource_type`, rather than on the target. Unlike the metric labels, these are attached for **all** tools with their **raw** values (no allowlist, no `other` bucket), since traces are high-cardinality by design. They require an **HTTP transport** (SSE or streamable-http, so a server span exists to enrich) **and tracing enabled**, but **not** `--metrics`; with stdio or tracing off, enrichment is a no-op.
 
 ## Enable OpenTelemetry logs

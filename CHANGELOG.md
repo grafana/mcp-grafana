@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `tools.Stats.Bytes` is now `int64` (was `int`) so index/stats byte counts cannot overflow on 32-bit platforms; Go API consumers of the exported struct may need a cast ([#1031](https://github.com/grafana/mcp-grafana/pull/1031))
 
+### Fixed
+
+- Distributed traces are no longer broken over the HTTP transports: the server now installs a global OTel `TextMapPropagator` (via `autoprop`, honouring `OTEL_PROPAGATORS`, default `tracecontext,baggage`), so an inbound `traceparent` continues the caller's trace and outbound Grafana API requests carry one of their own. Previously every hop started a disconnected trace. Trace context forwarded via `GRAFANA_FORWARD_HEADERS` no longer overrides the propagated value, which would have cut mcp-grafana out of the middle of the trace ([#1084](https://github.com/grafana/mcp-grafana/issues/1084))
+
 ## [1.1.0] - 2026-08-10
 
 ### Added

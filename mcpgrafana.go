@@ -28,6 +28,7 @@ import (
 	"github.com/grafana/incident-go"
 	"github.com/mark3labs/mcp-go/server"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -568,10 +569,40 @@ func (t *ExtraHeadersRoundTripper) RoundTrip(req *http.Request) (*http.Response,
 	if cfg := GrafanaConfigFromContext(req.Context()); len(cfg.ExtraHeaders) > 0 {
 		headers = mergeHeaders(t.headers, cfg.ExtraHeaders)
 	}
-	for k, v := range headers {
-		clonedReq.Header.Set(k, v)
+	if len(headers) > 0 {
+		propagated := propagatedHeaderFields()
+		for k, v := range headers {
+			// Never overwrite a trace-context header the OTel propagator has
+			// already injected for this request. A traceparent forwarded from
+			// the incoming request (GRAFANA_FORWARD_HEADERS) names the caller's
+			// span, so writing it here would re-parent Grafana's spans onto the
+			// caller and cut mcp-grafana out of the middle of the trace. When
+			// nothing was injected — tracing not wired up, or no active span —
+			// the forwarded value is still applied, preserving the behaviour
+			// operators relied on before the propagator existed.
+			if _, ok := propagated[textproto.CanonicalMIMEHeaderKey(k)]; ok && clonedReq.Header.Get(k) != "" {
+				continue
+			}
+			clonedReq.Header.Set(k, v)
+		}
 	}
 	return t.underlying.RoundTrip(clonedReq)
+}
+
+// propagatedHeaderFields returns the canonicalised names of the headers the
+// globally configured OTel TextMapPropagator writes when injecting trace
+// context (e.g. traceparent, tracestate, baggage). Returns nil when no
+// propagator is configured, i.e. when nothing is ever injected.
+func propagatedHeaderFields() map[string]struct{} {
+	fields := otel.GetTextMapPropagator().Fields()
+	if len(fields) == 0 {
+		return nil
+	}
+	set := make(map[string]struct{}, len(fields))
+	for _, f := range fields {
+		set[textproto.CanonicalMIMEHeaderKey(f)] = struct{}{}
+	}
+	return set
 }
 
 func NewExtraHeadersRoundTripper(rt http.RoundTripper, headers map[string]string) *ExtraHeadersRoundTripper {
