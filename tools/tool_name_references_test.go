@@ -63,14 +63,18 @@ func registerAllToolsForDriftTest(srv *server.MCPServer) {
 // name reference in prose or hint text:
 //
 //   - triggerWordRe: a snake_case identifier of 2+ segments immediately
-//     following a verb that this codebase consistently uses to point at
-//     another tool ("Use X", "use X", "via X", "call X", "run X", "prefer
-//     X"/"preferred X"), optionally backtick-quoted. Field/parameter names
-//     are also frequently mentioned in prose (e.g. "rule_uid is required"),
-//     but they don't follow these verbs in practice — this codebase's
-//     convention is to name the *tool*, not the *parameter*, after these
-//     words. The one observed exception is a parameter *assignment* like
-//     `Use query_type="both"`, which the '=' exclusion below filters out.
+//     following a verb (in whatever inflection appears in this codebase)
+//     that points at another tool: "Use X", "use X", "via X", "call X" /
+//     "calling X", "run X", "invoke X", "prefer X"/"preferred X", "created
+//     with X"/"created via X", optionally backtick-quoted. Field/parameter
+//     names are also frequently mentioned in prose (e.g. "rule_uid is
+//     required"), but they don't follow these verbs in practice — this
+//     codebase's convention is to name the *tool*, not the *parameter*,
+//     after these words. The one observed exception is a parameter
+//     *assignment* like `Use query_type="both"`, which the '=' exclusion
+//     below filters out.
+//   - theToolRe: a snake_case identifier of 2+ segments in "the X tool"
+//     ("the create_annotation tool creates...").
 //   - backtickRe: a snake_case identifier of 2+ segments that is the entire
 //     content of a backtick-quoted span, e.g. "the `query_prometheus` tool".
 //     Backtick-quoting a snake_case token is reserved in this codebase for
@@ -80,13 +84,19 @@ func registerAllToolsForDriftTest(srv *server.MCPServer) {
 //
 // What this deliberately does NOT catch: identifiers that are tool names by
 // coincidence but appear without one of these signals (e.g. a parameter
-// named identically to a tool, mentioned in plain prose with no verb or
-// backticks); multi-word or CamelCase references; and prose that describes
-// an operation of a consolidated tool (those are operation values, not tool
-// names, and aren't expected to match a registered tool name at all).
+// named identically to a tool, mentioned in plain prose with no verb,
+// backticks, or "the ... tool" wrapper); multi-word or CamelCase references;
+// and prose that describes an operation of a consolidated tool (those are
+// operation values, not tool names, and aren't expected to match a
+// registered tool name at all). When you rename a tool, grep the old name
+// across non-test .go files by hand once as a final check — this matcher
+// narrows the search, it does not replace it.
 var (
 	triggerWordRe = regexp.MustCompile(
-		`\b(?i:use|via|call|run|invoke|prefer(?:red)?)\s+(?:(?i:using)\s+)?` + "`?" + `([a-z][a-z0-9]*(?:_[a-z0-9]+)+)` + "`?",
+		`\b(?i:use|via|call(?:ing|ed|s)?|run|invoke|prefer(?:red)?|created?\s+(?:with|via))\s+(?:(?i:using)\s+)?` + "`?" + `([a-z][a-z0-9]*(?:_[a-z0-9]+)+)` + "`?",
+	)
+	theToolRe = regexp.MustCompile(
+		`\bthe\s+` + "`?" + `([a-z][a-z0-9]*(?:_[a-z0-9]+)+)` + "`?" + `\s+tool\b`,
 	)
 	backtickRe = regexp.MustCompile("`([a-z][a-z0-9]*(?:_[a-z0-9]+)+)`")
 )
@@ -114,6 +124,9 @@ func findToolNameReferences(source, text string) []toolNameReference {
 			continue // parameter assignment, e.g. `query_type="both"`, not a tool call
 		}
 		refs = append(refs, toolNameReference{source: source, token: tok})
+	}
+	for _, m := range theToolRe.FindAllStringSubmatchIndex(text, -1) {
+		refs = append(refs, toolNameReference{source: source, token: text[m[2]:m[3]]})
 	}
 	for _, m := range backtickRe.FindAllStringSubmatchIndex(text, -1) {
 		refs = append(refs, toolNameReference{source: source, token: text[m[2]:m[3]]})
