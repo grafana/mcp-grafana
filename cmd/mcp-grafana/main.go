@@ -146,6 +146,10 @@ type grafanaConfig struct {
 
 	// timeout is the time limit for requests made by the Grafana client.
 	timeout time.Duration
+
+	// outputFormat selects how structured tool results are serialized for the
+	// model: "json" (default) or "gcf".
+	outputFormat string
 }
 
 func (dt *disabledTools) addFlags() {
@@ -187,6 +191,15 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.assistant, "disable-assistant", false, "Disable Grafana Assistant tools")
 }
 
+// outputFormatFromEnv returns the default output format, honoring
+// GRAFANA_OUTPUT_FORMAT when set so the format can be configured without a flag.
+func outputFormatFromEnv() string {
+	if v := strings.TrimSpace(os.Getenv("GRAFANA_OUTPUT_FORMAT")); v != "" {
+		return v
+	}
+	return "json"
+}
+
 func (gc *grafanaConfig) addFlags() {
 	flag.BoolVar(&gc.debug, "debug", false, "Enable debug mode for the Grafana transport")
 
@@ -206,6 +219,7 @@ func (gc *grafanaConfig) addFlags() {
 
 	flag.BoolVar(&gc.includeArgsInSpans, "include-args-in-spans", false, "Include tool call arguments in OpenTelemetry spans. Only enable in non-production environments or when arguments are known not to contain PII.")
 	flag.DurationVar(&gc.timeout, "grafana-timeout", mcpgrafana.DefaultGrafanaClientTimeout, "Time limit for requests made by the Grafana client. Accepts Go duration strings, e.g. 10s, 500ms.")
+	flag.StringVar(&gc.outputFormat, "output-format", outputFormatFromEnv(), "Serialization for structured tool results in the model-facing text block: 'json' (default) or 'gcf' (Graph Compact Format, applied per result only when smaller and lossless). Also settable via GRAFANA_OUTPUT_FORMAT.")
 }
 
 // applyLokiGuardrailEnv fills guardrail settings from GRAFANA_LOKI_GUARDRAIL_*
@@ -902,6 +916,7 @@ func main() {
 		LokiGuardrailMaxRange:   gc.lokiGuardrailMaxRange,
 		IncludeArgumentsInSpans: gc.includeArgsInSpans,
 		Timeout:                 gc.timeout,
+		OutputFormat:            gc.outputFormat,
 	}
 	if gc.tlsCertFile != "" || gc.tlsKeyFile != "" || gc.tlsCAFile != "" || gc.tlsSkipVerify {
 		grafanaConfig.TLSConfig = &mcpgrafana.TLSConfig{
