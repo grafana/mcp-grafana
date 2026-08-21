@@ -10,14 +10,18 @@ import (
 )
 
 // datasourceFallbackTransport is an http.RoundTripper that tries a primary
-// datasource proxy URL path and falls back to an alternate on 403, 404 or 500
-// responses. This handles compatibility between different Grafana deployments:
+// datasource proxy URL path and falls back to an alternate on 401, 403, 404
+// or 500 responses. This handles compatibility between different Grafana deployments:
 //   - Azure Managed Grafana requires /api/datasources/uid/{uid}/resources
 //   - AWS Managed Grafana requires /api/datasources/proxy/uid/{uid}
 //   - Grafana before 9.0 has neither uid-based route; requests to them fall
 //     into the numeric :id route and fail with a 500
 //   - Grafana 13+ disables the deprecated numeric-id routes by default,
 //     returning a 404
+//
+// The 401 fallback also covers datasources with basic auth: the /resources
+// proxy does not always forward the datasource's configured basic auth to the
+// upstream (which then answers 401), whereas the legacy /proxy path does.
 //
 // See https://github.com/grafana/mcp-grafana/issues/524
 type datasourceFallbackTransport struct {
@@ -91,17 +95,21 @@ func (t *datasourceFallbackTransport) RoundTrip(req *http.Request) (*http.Respon
 		return nil, err
 	}
 
-	if resp.StatusCode != http.StatusForbidden && resp.StatusCode != http.StatusNotFound && resp.StatusCode != http.StatusInternalServerError {
+	if resp.StatusCode != http.StatusUnauthorized &&
+		resp.StatusCode != http.StatusForbidden &&
+		resp.StatusCode != http.StatusNotFound &&
+		resp.StatusCode != http.StatusInternalServerError {
 		return resp, nil
 	}
 
-	// Got 403, 404 or 500 — try the fallback endpoint. A missing route
+	// Got 401, 403, 404 or 500 — try the fallback endpoint. A missing route
 	// surfaces differently per deployment: 403 on some managed platforms, 404
 	// when the route is not registered (e.g. the numeric-id routes disabled by
-	// default on Grafana 13+), and 500 when a uid-based path falls into the
-	// numeric :id route on Grafana before 9.0. A 404 from the datasource
-	// itself just costs one duplicate request, and the fallback path is only
-	// cached on a 2xx response.
+	// default on Grafana 13+), 500 when a uid-based path falls into the
+	// numeric :id route on Grafana before 9.0, and 401 when the /resources
+	// proxy does not forward a datasource's basic auth. A 404 from the
+	// datasource itself just costs one duplicate request, and the fallback
+	// path is only cached on a 2xx response.
 	resp.Body.Close() //nolint:errcheck
 
 	retryReq := t.rewriteRequest(req, t.primaryBase, t.fallbackBase)
