@@ -23,11 +23,16 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 )
 
-func AddPyroscopeTools(mcp *server.MCPServer) {
+// AddPyroscopeTools registers the Pyroscope tools on the MCP server.
+// query_pyroscope is registered only when enableQueryTools is true; the
+// label and profile-type listing tools stay available either way.
+func AddPyroscopeTools(mcp *server.MCPServer, enableQueryTools bool) {
 	ListPyroscopeLabelNames.Register(mcp)
 	ListPyroscopeLabelValues.Register(mcp)
 	ListPyroscopeProfileTypes.Register(mcp)
-	QueryPyroscope.Register(mcp)
+	if enableQueryTools {
+		QueryPyroscope.Register(mcp)
+	}
 }
 
 const listPyroscopeLabelNamesToolPrompt = `

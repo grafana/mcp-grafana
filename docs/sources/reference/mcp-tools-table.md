@@ -200,7 +200,7 @@ dashboards:uid:alerts-dashboard (dashboards:read)
 
 ## Enable or disable tools
 
-You can limit which tools the server exposes with `--enabled-tools`, `--disable-<category>`, and `--disable-write`. Refer to [Enable and disable tools](../../configure/enable-and-disable-tools/) and [Command-line flags](../../configure/command-line-flags/).
+You can limit which tools the server exposes with `--enabled-tools`, `--disable-<category>`, `--disable-write`, `--disable-query`, and `--enable-query`. Refer to [Enable and disable tools](../../configure/enable-and-disable-tools/) and [Command-line flags](../../configure/command-line-flags/).
 
 ## Panel and dashboard images
 

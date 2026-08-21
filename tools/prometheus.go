@@ -590,10 +590,15 @@ Time formats: 'now-1h', '2026-02-02T19:00:00Z', '1738519200000' (Unix ms)`,
 	mcp.WithOpenWorldHintAnnotation(false),
 )
 
-func AddPrometheusTools(mcp *server.MCPServer) {
+// AddPrometheusTools registers the Prometheus tools on the MCP server. The
+// tools that execute PromQL are registered only when enableQueryTools is true;
+// the metadata tools stay available either way.
+func AddPrometheusTools(mcp *server.MCPServer, enableQueryTools bool) {
 	ListPrometheusMetricMetadata.Register(mcp)
-	QueryPrometheus.Register(mcp)
-	QueryPrometheusHistogram.Register(mcp)
+	if enableQueryTools {
+		QueryPrometheus.Register(mcp)
+		QueryPrometheusHistogram.Register(mcp)
+	}
 	ListPrometheusMetricNames.Register(mcp)
 	ListPrometheusLabelNames.Register(mcp)
 	ListPrometheusLabelValues.Register(mcp)
