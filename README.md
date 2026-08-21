@@ -662,6 +662,8 @@ GRAFANA_FORWARD_HEADERS=Cookie,X-Session-Id
 
 Forwarded headers are merged with any headers defined in `GRAFANA_EXTRA_HEADERS`. If a header name appears in both, the value from the incoming request takes precedence for that request.
 
+Trace context headers (`traceparent`, `tracestate`, `baggage`) are the exception: the server propagates trace context itself, so a forwarded value never overrides the one it injects. See [observability](docs/sources/developer/observability-metrics-and-tracing.md#trace-context-propagation).
+
 2. You have several options to install `mcp-grafana`:
 
    - **uvx (recommended)**: If you have [uv](https://docs.astral.sh/uv/getting-started/installation/) installed, no extra setup is needed — `uvx` will automatically download and run the server:
