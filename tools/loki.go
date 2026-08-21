@@ -88,8 +88,8 @@ func newLokiClient(ctx context.Context, uid string, _ *models.DataSource) (*Clie
 	}
 
 	// Wrap with fallback transport: try the primary base first, fall back to
-	// the alternate on 403/404/500 for compatibility with different Grafana
-	// deployments.
+	// the alternate for compatibility with different Grafana deployments (see
+	// fallback_transport.go for the per-mode retry rules).
 	var rt http.RoundTripper
 	if legacyMode {
 		rt = newLegacyDatasourceFallbackTransport(transport, primaryBase, fallbackBase)

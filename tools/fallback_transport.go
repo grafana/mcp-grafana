@@ -10,14 +10,19 @@ import (
 )
 
 // datasourceFallbackTransport is an http.RoundTripper that tries a primary
-// datasource proxy URL path and falls back to an alternate on 401, 403, 404
-// or 500 responses. This handles compatibility between different Grafana deployments:
+// datasource proxy URL path and falls back to an alternate on 401, 403 or 500
+// responses. This handles compatibility between different Grafana deployments:
 //   - Azure Managed Grafana requires /api/datasources/uid/{uid}/resources
 //   - AWS Managed Grafana requires /api/datasources/proxy/uid/{uid}
-//   - Grafana before 9.0 has neither uid-based route; requests to them fall
-//     into the numeric :id route and fail with a 500
-//   - Grafana 13+ disables the deprecated numeric-id routes by default,
-//     returning a 404
+//
+// In legacy mode (datasource resolved through the frontend-settings fallback,
+// see datasources_fallback.go) the retry rules differ: the primary is the
+// numeric-id proxy path, and the only reason its uid-based fallback exists is
+// deployments that disable the deprecated numeric routes (404, default since
+// Grafana 13). Legacy mode therefore retries on 404 only — on pre-9.0 the
+// uid routes answer garbage (400 "id is invalid" on 8.x, 500 on 7.x), so
+// retrying a genuine 401/403/500 from the working numeric primary would mask
+// the real error with a routing error.
 //
 // The 401 fallback also covers datasources with basic auth: the /resources
 // proxy does not always forward the datasource's configured basic auth to the
@@ -28,14 +33,29 @@ type datasourceFallbackTransport struct {
 	wrapped      http.RoundTripper
 	primaryBase  string // e.g., "/api/datasources/uid/{uid}/resources"
 	fallbackBase string // e.g., "/api/datasources/proxy/uid/{uid}"
-	// skipCache disables the process-wide fallbackEndpoints cache. The cache
-	// key is a path string with no notion of the Grafana instance, org or
-	// credentials, which is fine for uid-based paths (uids rarely collide
-	// across tenants) but not for the numeric-id paths used in legacy mode:
-	// /api/datasources/proxy/1/... is the same string on every tenant, so a
-	// Grafana 13+ tenant recording a fallback hit would pin the uid-based
-	// path for a Grafana 8.x tenant, whose uid routes answer 400.
-	skipCache bool
+	// legacy marks transports whose datasource was resolved through the
+	// frontend-settings fallback. It changes two behaviors:
+	//   - retries happen on 404 only (see the type comment), and
+	//   - the process-wide fallbackEndpoints cache is skipped: its key is a
+	//     path string with no notion of the Grafana instance, org or
+	//     credentials, which is fine for uid-based paths (uids rarely collide
+	//     across tenants) but not for numeric-id paths —
+	//     /api/datasources/proxy/1/... is the same string on every tenant, so
+	//     a Grafana 13+ tenant recording a fallback hit would pin the
+	//     uid-based path for a Grafana 8.x tenant, whose uid routes answer
+	//     400.
+	legacy bool
+}
+
+// shouldRetry reports whether the primary response status warrants trying
+// the fallback base.
+func (t *datasourceFallbackTransport) shouldRetry(status int) bool {
+	if t.legacy {
+		return status == http.StatusNotFound
+	}
+	return status == http.StatusUnauthorized ||
+		status == http.StatusForbidden ||
+		status == http.StatusInternalServerError
 }
 
 // fallbackEndpoints caches which datasource proxy paths need the fallback
@@ -53,17 +73,18 @@ func newDatasourceFallbackTransport(wrapped http.RoundTripper, primaryBase, fall
 
 // newLegacyDatasourceFallbackTransport is the variant used when the
 // datasource was resolved through the frontend-settings fallback (see
-// datasources_fallback.go): primary is the numeric-id proxy path and the
-// shared endpoint cache is skipped, because numeric-id paths collide across
-// tenants (see skipCache). The cache buys nothing here anyway — the numeric
-// primary is expected to succeed on the deployments that use this mode, and
-// the retry only fires in the rare newer-Grafana-with-restricted-token case.
+// datasources_fallback.go): primary is the numeric-id proxy path, retries
+// happen on 404 only, and the shared endpoint cache is skipped (see the
+// legacy field). The numeric primary is expected to succeed on the
+// deployments that use this mode; the retry only fires in the rare
+// newer-Grafana-with-restricted-token case where the numeric routes are
+// disabled.
 func newLegacyDatasourceFallbackTransport(wrapped http.RoundTripper, primaryBase, fallbackBase string) http.RoundTripper {
 	return &datasourceFallbackTransport{
 		wrapped:      wrapped,
 		primaryBase:  primaryBase,
 		fallbackBase: fallbackBase,
-		skipCache:    true,
+		legacy:       true,
 	}
 }
 
@@ -71,7 +92,7 @@ func (t *datasourceFallbackTransport) RoundTrip(req *http.Request) (*http.Respon
 	cacheKey := t.fallbackCacheKey(req)
 
 	// Check cache: if we already know the fallback works, use it directly.
-	if !t.skipCache {
+	if !t.legacy {
 		if useFallback, ok := fallbackEndpoints.Load(cacheKey); ok && useFallback.(bool) {
 			return t.wrapped.RoundTrip(t.rewriteRequest(req, t.primaryBase, t.fallbackBase))
 		}
@@ -95,21 +116,12 @@ func (t *datasourceFallbackTransport) RoundTrip(req *http.Request) (*http.Respon
 		return nil, err
 	}
 
-	if resp.StatusCode != http.StatusUnauthorized &&
-		resp.StatusCode != http.StatusForbidden &&
-		resp.StatusCode != http.StatusNotFound &&
-		resp.StatusCode != http.StatusInternalServerError {
+	if !t.shouldRetry(resp.StatusCode) {
 		return resp, nil
 	}
 
-	// Got 401, 403, 404 or 500 — try the fallback endpoint. A missing route
-	// surfaces differently per deployment: 403 on some managed platforms, 404
-	// when the route is not registered (e.g. the numeric-id routes disabled by
-	// default on Grafana 13+), 500 when a uid-based path falls into the
-	// numeric :id route on Grafana before 9.0, and 401 when the /resources
-	// proxy does not forward a datasource's basic auth. A 404 from the
-	// datasource itself just costs one duplicate request, and the fallback
-	// path is only cached on a 2xx response.
+	// A retryable status — try the fallback endpoint (see the type comment
+	// for which statuses are retryable in which mode, and why).
 	resp.Body.Close() //nolint:errcheck
 
 	retryReq := t.rewriteRequest(req, t.primaryBase, t.fallbackBase)
@@ -127,7 +139,7 @@ func (t *datasourceFallbackTransport) RoundTrip(req *http.Request) (*http.Respon
 	// successful (2xx) response.  A 4xx from the fallback means neither path
 	// is working for this particular request; caching it would silently break
 	// all subsequent calls that would otherwise succeed via the primary path.
-	if !t.skipCache && retryResp.StatusCode >= 200 && retryResp.StatusCode < 300 {
+	if !t.legacy && retryResp.StatusCode >= 200 && retryResp.StatusCode < 300 {
 		fallbackEndpoints.Store(cacheKey, true)
 	}
 

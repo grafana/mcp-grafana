@@ -219,10 +219,10 @@ func TestFallbackProxyIDs_UIDAndNameDoNotCollide(t *testing.T) {
 	assert.Equal(t, "/api/datasources/proxy/uid/conflict", secondary)
 }
 
-// A missing route can surface as a 404 (e.g. the deprecated numeric-id routes
-// are disabled by default on Grafana 13+); the fallback transport must retry
-// the alternate path in that case too.
-func TestFallbackTransport_RetriesOnNotFound(t *testing.T) {
+// In legacy mode a missing route surfaces as a 404 (the deprecated
+// numeric-id routes are disabled by default on Grafana 13+); the legacy
+// transport must retry the alternate path in that case — and only that case.
+func TestFallbackTransport_LegacyRetriesOnNotFoundOnly(t *testing.T) {
 	resetFallbackCache()
 
 	var requests []*http.Request
@@ -234,7 +234,7 @@ func TestFallbackTransport_RetriesOnNotFound(t *testing.T) {
 		return newMockResponse(http.StatusOK), nil
 	})
 
-	rt := newDatasourceFallbackTransport(mock,
+	rt := newLegacyDatasourceFallbackTransport(mock,
 		"/api/datasources/proxy/4",
 		"/api/datasources/proxy/uid/prom-uid",
 	)

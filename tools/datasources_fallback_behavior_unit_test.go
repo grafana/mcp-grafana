@@ -43,6 +43,7 @@ type legacyProfile struct {
 	// numericProxyStatus is the response for /api/datasources/proxy/{id}/*
 	// when non-zero; 0 means serve the datasource payload normally.
 	numericProxyStatus int
+	numericProxyBody   string
 }
 
 var legacyProfiles = map[string]legacyProfile{
@@ -120,7 +121,11 @@ func newFakeGrafana(profile legacyProfile) *fakeGrafana {
 		case strings.HasPrefix(path, "/api/datasources/proxy/"):
 			if profile.numericProxyStatus != 0 {
 				w.WriteHeader(profile.numericProxyStatus)
-				_, _ = w.Write([]byte(`{"message":"Not found"}`))
+				body := profile.numericProxyBody
+				if body == "" {
+					body = `{"message":"Not found"}`
+				}
+				_, _ = w.Write([]byte(body))
 				return
 			}
 			serveDatasource(w, path)
@@ -264,6 +269,43 @@ func TestQueryPrometheus_CaseInsensitiveNameReference(t *testing.T) {
 	data := f.dataRequests()
 	require.NotEmpty(t, data)
 	assert.True(t, strings.HasPrefix(data[0], "/api/datasources/proxy/1/"), "got %q", data[0])
+}
+
+// A genuine error from the working numeric primary (here: the datasource
+// timing out with a 500) must reach the caller as-is. Retrying it against
+// the uid-based route — which answers 400 "id is invalid" on Grafana 8.x —
+// would mask the real error with a routing error, so legacy mode retries on
+// 404 only.
+func TestQueryPrometheus_LegacyRealErrorsNotMasked(t *testing.T) {
+	f := newFakeGrafana(legacyProfile{
+		uidProxyStatus:     http.StatusBadRequest,
+		uidProxyBody:       `{"message":"id is invalid"}`,
+		numericProxyStatus: http.StatusInternalServerError,
+		numericProxyBody:   `{"status":"error","errorType":"timeout","error":"query timed out"}`,
+	})
+	defer f.Close()
+
+	resetFallbackCache()
+	ctx := mockDatasourcesCtx(f.Server)
+	_, err := queryPrometheus(ctx, QueryPrometheusParams{
+		DatasourceUID: "prometheus",
+		Expr:          "time()",
+		QueryType:     "instant",
+		EndTime:       "now",
+	})
+	require.Error(t, err)
+	// The client surfaces the primary's real status (the response body lands
+	// in the error detail); the essential property is that the 500 from the
+	// numeric primary is what reaches the caller...
+	assert.Contains(t, err.Error(), "server error: 500")
+	// ...and not the uid route's routing garbage.
+	assert.NotContains(t, err.Error(), "id is invalid")
+
+	// The uid-based route must not have been consulted at all.
+	for _, p := range f.dataRequests() {
+		assert.False(t, strings.HasPrefix(p, "/api/datasources/proxy/uid/"),
+			"real primary error must not trigger a uid-route retry, got %q", p)
+	}
 }
 
 // The shared transport cache is keyed by bare path strings, and numeric-id
