@@ -983,6 +983,9 @@ type frontendSettings struct {
 	// computed server-side by Grafana's namespacer (e.g. "default", "org-2",
 	// or "stacks-123" on Grafana Cloud). Empty if not reported.
 	Namespace string
+	// Version is the Grafana version reported by buildInfo.version
+	// (e.g. "12.1.0"). Empty if not reported.
+	Version string
 }
 
 // doFetchPublicURL performs the actual HTTP request to fetch the public URL.
@@ -1034,6 +1037,9 @@ func doFetchFrontendSettings(ctx context.Context, cfg *GrafanaConfig) frontendSe
 	var settings struct {
 		AppURL    string `json:"appUrl"`
 		Namespace string `json:"namespace"`
+		BuildInfo struct {
+			Version string `json:"version"`
+		} `json:"buildInfo"`
 	}
 	if err := json.Unmarshal(body, &settings); err != nil {
 		logger.Warn("Failed to parse frontend settings response", "error", err)
@@ -1044,7 +1050,11 @@ func doFetchFrontendSettings(ctx context.Context, cfg *GrafanaConfig) frontendSe
 	if publicURL != "" {
 		logger.Info("Fetched public URL from Grafana frontend settings", "public_url", publicURL)
 	}
-	return frontendSettings{AppURL: publicURL, Namespace: settings.Namespace}
+	return frontendSettings{
+		AppURL:    publicURL,
+		Namespace: settings.Namespace,
+		Version:   settings.BuildInfo.Version,
+	}
 }
 
 // namespaceCache caches the Kubernetes-style namespace per (Grafana URL, OrgID).
@@ -1117,6 +1127,62 @@ func DashboardNamespace(ctx context.Context) (namespace string, fromSettings boo
 
 	r := result.(nsResult)
 	return r.namespace, r.fromSettings
+}
+
+// versionCache caches the Grafana version per Grafana URL. Unlike the
+// namespace, the version does not depend on the org, so the URL alone is the
+// cache key. Only non-empty results are cached, so a transient settings
+// failure doesn't pin the version to "unknown" for the process lifetime.
+var versionCache sync.Map // map[string]string (grafanaURL -> version)
+
+// versionFlight deduplicates concurrent frontend-settings fetches for the same
+// Grafana URL.
+var versionFlight singleflight.Group
+
+// GrafanaVersion returns the version of the Grafana instance described by the
+// GrafanaConfig in ctx, as reported by buildInfo.version in
+// /api/frontend/settings (e.g. "12.1.0"). It is fetched lazily on first use
+// and cached per Grafana URL.
+//
+// It fails soft: if the settings endpoint is unavailable, unauthorised, or
+// omits buildInfo, it returns an empty string rather than an error. Callers
+// MUST treat the empty string as "version unknown" and behave as they would
+// without the information.
+//
+// Because unknown is indistinguishable from old here, do not use this to gate
+// anything that must fail closed — a caller lacking permission to read the
+// settings endpoint gets the same empty string as an ancient Grafana. Prefer
+// capability detection (e.g. KubernetesClient.GroupVersions) for that, and
+// keep this for advisory uses: error hints, tool descriptions, telemetry.
+func GrafanaVersion(ctx context.Context) string {
+	cfg := GrafanaConfigFromContext(ctx)
+
+	if cached, ok := versionCache.Load(cfg.URL); ok {
+		return cached.(string)
+	}
+
+	result, _, _ := versionFlight.Do(cfg.URL, func() (any, error) {
+		// Double-check cache inside singleflight.
+		if cached, ok := versionCache.Load(cfg.URL); ok {
+			return cached.(string), nil
+		}
+
+		// Detached context with timeout so a cancelled caller doesn't fail the
+		// fetch for all waiters; re-inject the GrafanaConfig so the request
+		// carries the right auth and Org-ID header.
+		fetchCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		fetchCtx = WithGrafanaConfig(fetchCtx, cfg)
+
+		version := doFetchFrontendSettings(fetchCtx, &cfg).Version
+		// Don't cache an unknown version, so a transient failure is retried.
+		if version != "" {
+			versionCache.Store(cfg.URL, version)
+		}
+		return version, nil
+	})
+
+	return result.(string)
 }
 
 // NewGrafanaClient creates a Grafana client with the provided URL and API key.
