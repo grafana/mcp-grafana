@@ -1,10 +1,14 @@
 package tools
 
 import (
+	"context"
 	"encoding/json"
+	"net/http"
+	"net/url"
 	"testing"
 	"time"
 
+	"github.com/prometheus/alertmanager/api/v2/models"
 	"github.com/stretchr/testify/require"
 )
 
@@ -16,7 +20,7 @@ func rfc3339(offset time.Duration) string {
 	return time.Now().Add(offset).UTC().Format(time.RFC3339)
 }
 
-func TestManageSilencesParams_Validate(t *testing.T) {
+func TestManageAlertmanagerParams_Validate(t *testing.T) {
 	validMatchers := []SilenceMatcherParam{{Name: "severity", Value: "critical"}}
 	start := rfc3339(time.Hour)
 	end := rfc3339(2 * time.Hour)
@@ -24,42 +28,57 @@ func TestManageSilencesParams_Validate(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		params  ManageSilencesParams
+		params  ManageAlertmanagerParams
 		wantErr string
 	}{
 		{
 			name:   "list is valid with no params",
-			params: ManageSilencesParams{Operation: "list"},
+			params: ManageAlertmanagerParams{Operation: "list"},
+		},
+		{
+			name:   "list_alert_groups is valid with no params",
+			params: ManageAlertmanagerParams{Operation: "list_alert_groups"},
+		},
+		{
+			name: "list_alert_groups with all filters is valid",
+			params: ManageAlertmanagerParams{
+				Operation: "list_alert_groups",
+				Active:    boolPtr(true),
+				Silenced:  boolPtr(false),
+				Inhibited: boolPtr(false),
+				Filter:    []string{"severity=critical"},
+				Receiver:  "slack-ops",
+			},
 		},
 		{
 			name: "list with rule_uid filter is valid",
-			params: ManageSilencesParams{
+			params: ManageAlertmanagerParams{
 				Operation: "list",
 				RuleUID:   strPtr("abc123"),
 			},
 		},
 		{
 			name: "list with matcher filter is valid",
-			params: ManageSilencesParams{
+			params: ManageAlertmanagerParams{
 				Operation: "list",
 				Matchers:  validMatchers,
 			},
 		},
 		{
 			name: "get with silence_id is valid",
-			params: ManageSilencesParams{
+			params: ManageAlertmanagerParams{
 				Operation: "get",
 				SilenceID: strPtr("sil-1"),
 			},
 		},
 		{
 			name:    "get without silence_id",
-			params:  ManageSilencesParams{Operation: "get"},
+			params:  ManageAlertmanagerParams{Operation: "get"},
 			wantErr: "silence_id is required",
 		},
 		{
 			name: "get with empty silence_id",
-			params: ManageSilencesParams{
+			params: ManageAlertmanagerParams{
 				Operation: "get",
 				SilenceID: strPtr(""),
 			},
@@ -67,7 +86,7 @@ func TestManageSilencesParams_Validate(t *testing.T) {
 		},
 		{
 			name: "create with all required fields is valid",
-			params: ManageSilencesParams{
+			params: ManageAlertmanagerParams{
 				Operation: "create",
 				Matchers:  validMatchers,
 				StartsAt:  &start,
@@ -77,7 +96,7 @@ func TestManageSilencesParams_Validate(t *testing.T) {
 		},
 		{
 			name: "create with silence_id is rejected",
-			params: ManageSilencesParams{
+			params: ManageAlertmanagerParams{
 				Operation: "create",
 				SilenceID: strPtr("abc123"),
 				Matchers:  validMatchers,
@@ -89,7 +108,7 @@ func TestManageSilencesParams_Validate(t *testing.T) {
 		},
 		{
 			name: "create with rule_uid is rejected",
-			params: ManageSilencesParams{
+			params: ManageAlertmanagerParams{
 				Operation: "create",
 				RuleUID:   strPtr("abc123"),
 				Matchers:  validMatchers,
@@ -101,7 +120,7 @@ func TestManageSilencesParams_Validate(t *testing.T) {
 		},
 		{
 			name: "update with rule_uid is rejected",
-			params: ManageSilencesParams{
+			params: ManageAlertmanagerParams{
 				Operation: "update",
 				SilenceID: strPtr("sil-1"),
 				RuleUID:   strPtr("abc123"),
@@ -114,7 +133,7 @@ func TestManageSilencesParams_Validate(t *testing.T) {
 		},
 		{
 			name: "create without matchers",
-			params: ManageSilencesParams{
+			params: ManageAlertmanagerParams{
 				Operation: "create",
 				StartsAt:  &start,
 				EndsAt:    &end,
@@ -124,7 +143,7 @@ func TestManageSilencesParams_Validate(t *testing.T) {
 		},
 		{
 			name: "create with empty matchers slice",
-			params: ManageSilencesParams{
+			params: ManageAlertmanagerParams{
 				Operation: "create",
 				Matchers:  []SilenceMatcherParam{},
 				StartsAt:  &start,
@@ -135,7 +154,7 @@ func TestManageSilencesParams_Validate(t *testing.T) {
 		},
 		{
 			name: "create with matcher missing name",
-			params: ManageSilencesParams{
+			params: ManageAlertmanagerParams{
 				Operation: "create",
 				Matchers:  []SilenceMatcherParam{{Value: "critical"}},
 				StartsAt:  &start,
@@ -146,7 +165,7 @@ func TestManageSilencesParams_Validate(t *testing.T) {
 		},
 		{
 			name: "create without starts_at",
-			params: ManageSilencesParams{
+			params: ManageAlertmanagerParams{
 				Operation: "create",
 				Matchers:  validMatchers,
 				EndsAt:    &end,
@@ -156,7 +175,7 @@ func TestManageSilencesParams_Validate(t *testing.T) {
 		},
 		{
 			name: "create without ends_at",
-			params: ManageSilencesParams{
+			params: ManageAlertmanagerParams{
 				Operation: "create",
 				Matchers:  validMatchers,
 				StartsAt:  &start,
@@ -166,7 +185,7 @@ func TestManageSilencesParams_Validate(t *testing.T) {
 		},
 		{
 			name: "create with invalid starts_at",
-			params: ManageSilencesParams{
+			params: ManageAlertmanagerParams{
 				Operation: "create",
 				Matchers:  validMatchers,
 				StartsAt:  strPtr("not-a-timestamp"),
@@ -177,7 +196,7 @@ func TestManageSilencesParams_Validate(t *testing.T) {
 		},
 		{
 			name: "create with invalid ends_at",
-			params: ManageSilencesParams{
+			params: ManageAlertmanagerParams{
 				Operation: "create",
 				Matchers:  validMatchers,
 				StartsAt:  &start,
@@ -188,7 +207,7 @@ func TestManageSilencesParams_Validate(t *testing.T) {
 		},
 		{
 			name: "create without comment",
-			params: ManageSilencesParams{
+			params: ManageAlertmanagerParams{
 				Operation: "create",
 				Matchers:  validMatchers,
 				StartsAt:  &start,
@@ -198,7 +217,7 @@ func TestManageSilencesParams_Validate(t *testing.T) {
 		},
 		{
 			name: "create with empty comment",
-			params: ManageSilencesParams{
+			params: ManageAlertmanagerParams{
 				Operation: "create",
 				Matchers:  validMatchers,
 				StartsAt:  &start,
@@ -209,7 +228,7 @@ func TestManageSilencesParams_Validate(t *testing.T) {
 		},
 		{
 			name: "create with ends_at before starts_at",
-			params: ManageSilencesParams{
+			params: ManageAlertmanagerParams{
 				Operation: "create",
 				Matchers:  validMatchers,
 				StartsAt:  &end,
@@ -220,7 +239,7 @@ func TestManageSilencesParams_Validate(t *testing.T) {
 		},
 		{
 			name: "create with a zero-length window",
-			params: ManageSilencesParams{
+			params: ManageAlertmanagerParams{
 				Operation: "create",
 				Matchers:  validMatchers,
 				StartsAt:  &start,
@@ -231,7 +250,7 @@ func TestManageSilencesParams_Validate(t *testing.T) {
 		},
 		{
 			name: "create with a window entirely in the past",
-			params: ManageSilencesParams{
+			params: ManageAlertmanagerParams{
 				Operation: "create",
 				Matchers:  validMatchers,
 				StartsAt:  strPtr(rfc3339(-2 * time.Hour)),
@@ -242,7 +261,7 @@ func TestManageSilencesParams_Validate(t *testing.T) {
 		},
 		{
 			name: "create starting in the past but ending in the future is valid",
-			params: ManageSilencesParams{
+			params: ManageAlertmanagerParams{
 				Operation: "create",
 				Matchers:  validMatchers,
 				StartsAt:  strPtr(rfc3339(-time.Hour)),
@@ -252,7 +271,7 @@ func TestManageSilencesParams_Validate(t *testing.T) {
 		},
 		{
 			name: "update with all required fields is valid",
-			params: ManageSilencesParams{
+			params: ManageAlertmanagerParams{
 				Operation: "update",
 				SilenceID: strPtr("sil-1"),
 				Matchers:  validMatchers,
@@ -263,7 +282,7 @@ func TestManageSilencesParams_Validate(t *testing.T) {
 		},
 		{
 			name: "update with a window that already closed points at delete",
-			params: ManageSilencesParams{
+			params: ManageAlertmanagerParams{
 				Operation: "update",
 				SilenceID: strPtr("sil-1"),
 				Matchers:  validMatchers,
@@ -275,7 +294,7 @@ func TestManageSilencesParams_Validate(t *testing.T) {
 		},
 		{
 			name: "update still rejects an inverted window",
-			params: ManageSilencesParams{
+			params: ManageAlertmanagerParams{
 				Operation: "update",
 				SilenceID: strPtr("sil-1"),
 				Matchers:  validMatchers,
@@ -287,7 +306,7 @@ func TestManageSilencesParams_Validate(t *testing.T) {
 		},
 		{
 			name: "update without silence_id",
-			params: ManageSilencesParams{
+			params: ManageAlertmanagerParams{
 				Operation: "update",
 				Matchers:  validMatchers,
 				StartsAt:  &start,
@@ -298,7 +317,7 @@ func TestManageSilencesParams_Validate(t *testing.T) {
 		},
 		{
 			name: "update without matchers still fails on payload",
-			params: ManageSilencesParams{
+			params: ManageAlertmanagerParams{
 				Operation: "update",
 				SilenceID: strPtr("sil-1"),
 				StartsAt:  &start,
@@ -309,24 +328,24 @@ func TestManageSilencesParams_Validate(t *testing.T) {
 		},
 		{
 			name: "delete with silence_id is valid",
-			params: ManageSilencesParams{
+			params: ManageAlertmanagerParams{
 				Operation: "delete",
 				SilenceID: strPtr("sil-1"),
 			},
 		},
 		{
 			name:    "delete without silence_id",
-			params:  ManageSilencesParams{Operation: "delete"},
+			params:  ManageAlertmanagerParams{Operation: "delete"},
 			wantErr: "silence_id is required",
 		},
 		{
 			name:    "unknown operation",
-			params:  ManageSilencesParams{Operation: "expire"},
+			params:  ManageAlertmanagerParams{Operation: "expire"},
 			wantErr: "unknown operation",
 		},
 		{
 			name:    "empty operation",
-			params:  ManageSilencesParams{Operation: ""},
+			params:  ManageAlertmanagerParams{Operation: ""},
 			wantErr: "unknown operation",
 		},
 	}
@@ -344,19 +363,32 @@ func TestManageSilencesParams_Validate(t *testing.T) {
 	}
 }
 
-func TestManageSilencesReadParams_Validate(t *testing.T) {
+func TestManageAlertmanagerReadParams_Validate(t *testing.T) {
 	tests := []struct {
 		name    string
-		params  ManageSilencesReadParams
+		params  ManageAlertmanagerReadParams
 		wantErr string
 	}{
 		{
 			name:   "list is valid",
-			params: ManageSilencesReadParams{Operation: "list"},
+			params: ManageAlertmanagerReadParams{Operation: "list"},
+		},
+		{
+			name:   "list_alert_groups is valid",
+			params: ManageAlertmanagerReadParams{Operation: "list_alert_groups"},
+		},
+		{
+			name: "list_alert_groups with filters is valid",
+			params: ManageAlertmanagerReadParams{
+				Operation: "list_alert_groups",
+				Active:    boolPtr(true),
+				Filter:    []string{"severity=critical"},
+				Receiver:  "oncall-slack",
+			},
 		},
 		{
 			name: "list with filters is valid",
-			params: ManageSilencesReadParams{
+			params: ManageAlertmanagerReadParams{
 				Operation: "list",
 				RuleUID:   strPtr("abc123"),
 				Matchers:  []SilenceMatcherParam{{Name: "severity", Value: "critical"}},
@@ -364,29 +396,29 @@ func TestManageSilencesReadParams_Validate(t *testing.T) {
 		},
 		{
 			name: "get with silence_id is valid",
-			params: ManageSilencesReadParams{
+			params: ManageAlertmanagerReadParams{
 				Operation: "get",
 				SilenceID: strPtr("sil-1"),
 			},
 		},
 		{
 			name:    "get without silence_id",
-			params:  ManageSilencesReadParams{Operation: "get"},
+			params:  ManageAlertmanagerReadParams{Operation: "get"},
 			wantErr: "silence_id is required",
 		},
 		{
 			name:    "create is rejected by read-only variant",
-			params:  ManageSilencesReadParams{Operation: "create"},
+			params:  ManageAlertmanagerReadParams{Operation: "create"},
 			wantErr: "unknown operation",
 		},
 		{
 			name:    "delete is rejected by read-only variant",
-			params:  ManageSilencesReadParams{Operation: "delete"},
+			params:  ManageAlertmanagerReadParams{Operation: "delete"},
 			wantErr: "unknown operation",
 		},
 		{
 			name:    "empty operation",
-			params:  ManageSilencesReadParams{Operation: ""},
+			params:  ManageAlertmanagerReadParams{Operation: ""},
 			wantErr: "unknown operation",
 		},
 	}
@@ -471,7 +503,7 @@ func TestToPostableSilence(t *testing.T) {
 	comment := "maintenance"
 
 	t.Run("create applies created_by default and no id", func(t *testing.T) {
-		p := ManageSilencesParams{
+		p := ManageAlertmanagerParams{
 			Operation: "create",
 			Matchers:  []SilenceMatcherParam{{Name: "severity", Value: "critical", IsEqual: boolPtr(false)}},
 			StartsAt:  &start,
@@ -512,7 +544,7 @@ func TestToPostableSilence(t *testing.T) {
 	})
 
 	t.Run("explicit created_by is preserved", func(t *testing.T) {
-		p := ManageSilencesParams{
+		p := ManageAlertmanagerParams{
 			Operation: "create",
 			Matchers:  []SilenceMatcherParam{{Name: "severity", Value: "critical"}},
 			StartsAt:  &start,
@@ -526,7 +558,7 @@ func TestToPostableSilence(t *testing.T) {
 	})
 
 	t.Run("update carries silence id through", func(t *testing.T) {
-		p := ManageSilencesParams{
+		p := ManageAlertmanagerParams{
 			Operation: "update",
 			SilenceID: strPtr("sil-42"),
 			Matchers:  []SilenceMatcherParam{{Name: "severity", Value: "critical"}},
@@ -546,7 +578,7 @@ func TestToPostableSilence(t *testing.T) {
 	})
 
 	t.Run("unparseable timestamps surface an error", func(t *testing.T) {
-		p := ManageSilencesParams{
+		p := ManageAlertmanagerParams{
 			Operation: "create",
 			Matchers:  []SilenceMatcherParam{{Name: "severity", Value: "critical"}},
 			StartsAt:  strPtr("not-a-timestamp"),
@@ -563,4 +595,188 @@ func mustParseRFC3339(t *testing.T, v string) time.Time {
 	parsed, err := time.Parse(time.RFC3339, v)
 	require.NoError(t, err)
 	return parsed
+}
+
+func TestGetAlertGroupsOpts_queryValues(t *testing.T) {
+	tests := []struct {
+		name     string
+		opts     GetAlertGroupsOpts
+		expected url.Values
+	}{
+		{
+			name:     "empty opts produces empty values",
+			opts:     GetAlertGroupsOpts{},
+			expected: url.Values{},
+		},
+		{
+			name: "active=true excludes other states",
+			opts: GetAlertGroupsOpts{
+				Active:    boolPtr(true),
+				Silenced:  boolPtr(false),
+				Inhibited: boolPtr(false),
+			},
+			expected: url.Values{
+				"active":    {"true"},
+				"silenced":  {"false"},
+				"inhibited": {"false"},
+			},
+		},
+		{
+			name: "nil bools are omitted (API defaults apply)",
+			opts: GetAlertGroupsOpts{
+				Filter:   []string{"severity=critical"},
+				Receiver: "team-slack",
+			},
+			expected: url.Values{
+				"filter":   {"severity=critical"},
+				"receiver": {"team-slack"},
+			},
+		},
+		{
+			name: "all fields populated",
+			opts: GetAlertGroupsOpts{
+				Active:    boolPtr(true),
+				Silenced:  boolPtr(true),
+				Inhibited: boolPtr(false),
+				Filter:    []string{"severity=critical", "grafana_folder=Platform"},
+				Receiver:  "oncall-slack",
+			},
+			expected: url.Values{
+				"active":    {"true"},
+				"silenced":  {"true"},
+				"inhibited": {"false"},
+				"filter":    {"severity=critical", "grafana_folder=Platform"},
+				"receiver":  {"oncall-slack"},
+			},
+		},
+		{
+			name: "explicit false sent for all states",
+			opts: GetAlertGroupsOpts{
+				Active:    boolPtr(false),
+				Silenced:  boolPtr(false),
+				Inhibited: boolPtr(false),
+			},
+			expected: url.Values{
+				"active":    {"false"},
+				"silenced":  {"false"},
+				"inhibited": {"false"},
+			},
+		},
+		{
+			name: "multiple filters",
+			opts: GetAlertGroupsOpts{
+				Filter: []string{"severity=critical", "alertname=HighCPU"},
+			},
+			expected: url.Values{
+				"filter": {"severity=critical", "alertname=HighCPU"},
+			},
+		},
+		{
+			name: "receiver only",
+			opts: GetAlertGroupsOpts{
+				Receiver: "slack-ops",
+			},
+			expected: url.Values{
+				"receiver": {"slack-ops"},
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := tc.opts.queryValues()
+			require.Equal(t, tc.expected, got)
+		})
+	}
+}
+
+func TestAlertingClient_GetAlertGroups(t *testing.T) {
+	mockAlertGroup := &models.AlertGroup{
+		Labels:   models.LabelSet{"alertname": "HighCPU", "grafana_folder": "Production"},
+		Receiver: &models.Receiver{Name: strPtr("slack-ops")},
+		Alerts: []*models.GettableAlert{
+			{
+				Alert: models.Alert{
+					Labels: models.LabelSet{"instance": "server-1"},
+				},
+				Annotations: models.LabelSet{
+					"summary":     "CPU usage high",
+					"description": "CPU usage above 90% on server-1",
+				},
+				Status: &models.AlertStatus{State: strPtr("active")},
+			},
+		},
+	}
+
+	t.Run("success without opts", func(t *testing.T) {
+		server, client := setupMockServer(func(w http.ResponseWriter, r *http.Request) {
+			require.Equal(t, "/api/alertmanager/grafana/api/v2/alerts/groups", r.URL.Path)
+			require.Equal(t, "Bearer test-api-key", r.Header.Get("Authorization"))
+			require.Empty(t, r.URL.RawQuery)
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			err := json.NewEncoder(w).Encode([]*models.AlertGroup{mockAlertGroup})
+			require.NoError(t, err)
+		})
+		defer server.Close()
+
+		groups, err := client.GetAlertGroups(context.Background(), nil)
+		require.NoError(t, err)
+		require.Len(t, groups, 1)
+		require.Equal(t, "HighCPU", groups[0].Labels["alertname"])
+	})
+
+	t.Run("success with opts", func(t *testing.T) {
+		server, client := setupMockServer(func(w http.ResponseWriter, r *http.Request) {
+			require.Equal(t, "/api/alertmanager/grafana/api/v2/alerts/groups", r.URL.Path)
+			q := r.URL.Query()
+			require.Equal(t, "true", q.Get("active"))
+			require.Equal(t, "false", q.Get("silenced"))
+			require.Equal(t, "false", q.Get("inhibited"))
+			require.Equal(t, "slack-ops", q.Get("receiver"))
+			require.Equal(t, []string{"severity=critical"}, q["filter"])
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			err := json.NewEncoder(w).Encode([]*models.AlertGroup{mockAlertGroup})
+			require.NoError(t, err)
+		})
+		defer server.Close()
+
+		opts := &GetAlertGroupsOpts{
+			Active:    boolPtr(true),
+			Silenced:  boolPtr(false),
+			Inhibited: boolPtr(false),
+			Filter:    []string{"severity=critical"},
+			Receiver:  "slack-ops",
+		}
+		groups, err := client.GetAlertGroups(context.Background(), opts)
+		require.NoError(t, err)
+		require.Len(t, groups, 1)
+	})
+
+	t.Run("server error", func(t *testing.T) {
+		server, client := setupMockServer(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, err := w.Write([]byte("internal error"))
+			require.NoError(t, err)
+		})
+		defer server.Close()
+
+		groups, err := client.GetAlertGroups(context.Background(), nil)
+		require.Error(t, err)
+		require.Nil(t, groups)
+		require.ErrorContains(t, err, "500")
+	})
+
+	t.Run("network error", func(t *testing.T) {
+		server, client := setupMockServer(func(w http.ResponseWriter, r *http.Request) {})
+		server.Close()
+
+		groups, err := client.GetAlertGroups(context.Background(), nil)
+		require.Error(t, err)
+		require.Nil(t, groups)
+		require.ErrorContains(t, err, "failed to execute request")
+	})
 }
