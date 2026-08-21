@@ -416,8 +416,8 @@ func toolNameFromMessage(method mcp.MCPMethod, message any) (string, bool) {
 	return req.Params.Name, true
 }
 
-// Attribute keys for tool-argument-derived telemetry dimensions. operation and
-// resourceType become metric labels once bounded by the toolMetricDims value
+// Attribute keys for tool telemetry dimensions. operation, resourceType and
+// phase become metric labels once bounded by the toolMetricDims value
 // allowlist; target is high-cardinality and span-only. Spans carry the raw,
 // unbounded values for all of them.
 const (
@@ -430,11 +430,16 @@ const (
 // ToolPhaseMetaKey is the result _meta key a tool sets to declare which phase of
 // a multi-call flow a given call represents — e.g. create_datasource's
 // schema-guidance response vs the actual creation. When present, its string
-// value is surfaced as the bounded mcp.tool.phase metric label (and span
-// attribute). Because it is read from the result, it reflects what the tool
-// actually did (e.g. a no-schema type that creates directly) rather than what
-// the request asked for. Tools MUST keep the value set bounded/low-cardinality,
-// since it becomes a Prometheus label.
+// value is surfaced as the mcp.tool.phase metric label, bounded by the
+// toolMetricDims allowlist, and as an unbounded span attribute. Because it is
+// read from the result, it reflects what the tool actually did (e.g. a no-schema
+// type that creates directly) rather than what the request asked for.
+//
+// A tool that declares a phase must also list its value set under phases in
+// toolMetricDims, or the phase is dropped from the metric entirely. The
+// allowlist — not the tool author — is what keeps the label low-cardinality:
+// results proxied from a remote MCP server are not authored in this repo, so
+// their _meta cannot be trusted to hold a bounded value.
 //
 // Living in result _meta, it is also transmitted to the client — intentional: a
 // non-sensitive flow-control signal for telling schema guidance from an actual
@@ -445,16 +450,17 @@ const ToolPhaseMetaKey = attrKeyToolPhase
 // into.
 const metricDimValueOther = "other"
 
-// metricDimSet declares which tool-argument-derived dimensions a given tool may
-// contribute as BOUNDED metric labels, and for each one the exact set of values
-// permitted. A nil set means the tool contributes nothing for that dimension.
+// metricDimSet declares which dimensions a given tool may contribute as BOUNDED
+// metric labels, and for each one the exact set of values permitted. A nil set
+// means the tool contributes nothing for that dimension.
 type metricDimSet struct {
 	operations    map[string]struct{}
 	resourceTypes map[string]struct{}
+	phases        map[string]struct{}
 }
 
-// toolMetricDims is the opt-in allowlist of which argument-derived dimensions
-// each tool may emit as metric labels, and which values those labels may carry.
+// toolMetricDims is the opt-in allowlist of which dimensions each tool may emit
+// as metric labels, and which values those labels may carry.
 // A label is emitted only for a listed tool, only for a dimension that tool
 // opts into, and only with a value in that dimension's set - everything else becomes metricDimValueOther
 var toolMetricDims = map[string]metricDimSet{
@@ -475,7 +481,13 @@ var toolMetricDims = map[string]metricDimSet{
 		"create_suite", "update_suite", "create_draft_version", "publish_version",
 		"upsert_test_case", "delete_test_case",
 	)},
-	"create_datasource": {resourceTypes: datasourcePluginTypes},
+	"create_datasource": {
+		resourceTypes: datasourcePluginTypes,
+		// Mirrors dsPhaseSchema/dsPhaseCreated in tools/datasources.go, which
+		// sets these on the result _meta. Duplicated rather than shared because
+		// tools imports this package, so the constants cannot be imported back.
+		phases: valueSet("schema", "created"),
+	},
 }
 
 // datasourcePluginTypes bounds create_datasource's mcp.tool.resource_type label
@@ -585,13 +597,15 @@ type ToolMetricDims struct {
 }
 
 // ToolMetricDimensions returns the metric-safe label dimensions for a tools/call,
-// applying the same tool-and-value allowlist the server's own metrics use:
-// argument-derived values outside the allowed set come back as "other", so the
-// returned Operation/ResourceType are safe to use as labels for any input. It
-// lets external consumers (e.g. the hosted Cloud MCP server, which records tool
-// metrics via its own middleware) stay in lockstep with the allowlist instead of
-// re-deriving it. args is the raw argument map (request.GetArguments()); result
-// is the *mcp.CallToolResult for the phase, and may be nil on the error path.
+// applying the same tool-and-value allowlist the server's own metrics use: a
+// value outside the allowed set comes back as "other", so every field of the
+// returned struct is safe to use as a label for any input — including Phase,
+// which is read from the result and therefore remote-controlled for tools
+// proxied from another MCP server. It lets external consumers (e.g. the hosted
+// Cloud MCP server, which records tool metrics via its own middleware) stay in
+// lockstep with the allowlist instead of re-deriving it. args is the raw
+// argument map (request.GetArguments()); result is the *mcp.CallToolResult for
+// the phase, and may be nil on the error path.
 func ToolMetricDimensions(toolName string, args map[string]any, result any) ToolMetricDims {
 	allowed := toolMetricDims[toolName]
 	var d ToolMetricDims
@@ -601,7 +615,9 @@ func ToolMetricDimensions(toolName string, args map[string]any, result any) Tool
 	if allowed.resourceTypes != nil {
 		d.ResourceType = boundedMetricValue(stringArg(args, "type"), allowed.resourceTypes)
 	}
-	d.Phase = toolPhaseFromResult(result)
+	if allowed.phases != nil {
+		d.Phase = boundedMetricValue(toolPhaseFromResult(result), allowed.phases)
+	}
 	return d
 }
 
@@ -628,6 +644,10 @@ func (o *Observability) enrichSpanWithToolDims(ctx context.Context, method mcp.M
 	if dims.target != "" {
 		spanAttrs = append(spanAttrs, attribute.String(attrKeyToolTarget, dims.target))
 	}
+	// Raw, unbounded — as with operation and resourceType above, and for the
+	// same reason: span attributes are not metric-series dimensions, and a span
+	// carrying the phase a proxied server actually reported is more useful for
+	// debugging than one collapsed to "other".
 	if phase := toolPhaseFromResult(result); phase != "" {
 		spanAttrs = append(spanAttrs, attribute.String(attrKeyToolPhase, phase))
 	}

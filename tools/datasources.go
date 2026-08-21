@@ -28,7 +28,9 @@ const (
 // create_datasource telemetry phases, declared on the tool result via
 // observability.ToolPhaseMetaKey so the server's per-call metric/span can
 // distinguish a schema-guidance call from an actual creation. Keep this set
-// small — the value becomes a bounded Prometheus label (mcp_tool_phase).
+// small — the value becomes a bounded Prometheus label (mcp_tool_phase). Adding
+// a phase here means adding it to create_datasource's phases set in
+// observability.toolMetricDims too, or the metric drops it.
 const (
 	dsPhaseSchema  = "schema"  // returned field guidance (schema or no-schema); nothing created
 	dsPhaseCreated = "created" // a datasource was created
