@@ -15,6 +15,7 @@ package tools
 import (
 	"testing"
 
+	"github.com/grafana/grafana-openapi-client-go/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -75,5 +76,22 @@ func TestAdminToolsIntegration(t *testing.T) {
 		assert.NotNil(t, desc, "Description should not be nil")
 		assert.NotEmpty(t, desc.Assignments, "Should have assignments capabilities")
 		assert.NotEmpty(t, desc.Permissions, "Should have permissions capabilities")
+	})
+
+	// The tests above exercise the individual handlers directly; this one
+	// goes through the consolidated admin_read entrypoint end to end for a
+	// representative operation, to catch any wiring mistake in adminRead's
+	// dispatch that per-handler tests wouldn't see.
+	t.Run("admin_read describe_resource operation", func(t *testing.T) {
+		ctx := createCloudTestContext(t, "Admin", "GRAFANA_URL", "GRAFANA_API_KEY")
+		result, err := adminRead(ctx, AdminReadParams{
+			Operation:    "describe_resource",
+			ResourceType: "dashboards",
+		})
+		require.NoError(t, err)
+		desc, ok := result.(*models.Description)
+		require.True(t, ok, "admin_read describe_resource should return *models.Description")
+		assert.NotEmpty(t, desc.Assignments)
+		assert.NotEmpty(t, desc.Permissions)
 	})
 }
