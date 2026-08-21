@@ -1620,6 +1620,14 @@ func clearNamespaceCache() {
 	})
 }
 
+// clearVersionCache removes all entries from the versionCache for test isolation.
+func clearVersionCache() {
+	versionCache.Range(func(key, _ any) bool {
+		versionCache.Delete(key)
+		return true
+	})
+}
+
 func TestDashboardNamespace(t *testing.T) {
 	t.Cleanup(clearNamespaceCache)
 
@@ -1682,6 +1690,94 @@ func TestDashboardNamespace(t *testing.T) {
 		assert.True(t, from1)
 		assert.True(t, from2)
 		assert.Equal(t, int32(1), atomic.LoadInt32(&calls), "frontend settings should be fetched once and cached")
+	})
+}
+
+func TestGrafanaVersion(t *testing.T) {
+	t.Cleanup(clearVersionCache)
+
+	t.Run("returns version from frontend settings buildInfo", func(t *testing.T) {
+		t.Cleanup(clearVersionCache)
+		ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/api/frontend/settings" {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"appUrl": "https://grafana.example.com", "buildInfo": {"version": "12.1.0", "edition": "Enterprise"}}`))
+				return
+			}
+			w.WriteHeader(http.StatusNotFound)
+		})
+
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{URL: ts.URL, APIKey: "test-key"})
+		assert.Equal(t, "12.1.0", GrafanaVersion(ctx))
+	})
+
+	t.Run("returns empty when settings omit buildInfo", func(t *testing.T) {
+		t.Cleanup(clearVersionCache)
+		ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"appUrl": "https://grafana.example.com"}`))
+		})
+
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{URL: ts.URL})
+		assert.Empty(t, GrafanaVersion(ctx), "unknown version must fail soft, not error")
+	})
+
+	t.Run("returns empty when settings are unavailable", func(t *testing.T) {
+		t.Cleanup(clearVersionCache)
+		ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusUnauthorized)
+		})
+
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{URL: ts.URL})
+		assert.Empty(t, GrafanaVersion(ctx), "an unauthorised settings endpoint must fail soft")
+	})
+
+	t.Run("caches successful lookups", func(t *testing.T) {
+		t.Cleanup(clearVersionCache)
+		var calls int32
+		ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+			atomic.AddInt32(&calls, 1)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"buildInfo": {"version": "11.6.3"}}`))
+		})
+
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{URL: ts.URL})
+		assert.Equal(t, "11.6.3", GrafanaVersion(ctx))
+		assert.Equal(t, "11.6.3", GrafanaVersion(ctx))
+		assert.Equal(t, int32(1), atomic.LoadInt32(&calls), "frontend settings should be fetched once and cached")
+	})
+
+	t.Run("does not cache failures", func(t *testing.T) {
+		t.Cleanup(clearVersionCache)
+		var calls int32
+		ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+			if atomic.AddInt32(&calls, 1) == 1 {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"buildInfo": {"version": "12.2.0"}}`))
+		})
+
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{URL: ts.URL})
+		assert.Empty(t, GrafanaVersion(ctx))
+		assert.Equal(t, "12.2.0", GrafanaVersion(ctx), "a transient failure should be retried, not cached")
+	})
+
+	t.Run("is keyed on url alone, not org id", func(t *testing.T) {
+		t.Cleanup(clearVersionCache)
+		var calls int32
+		ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+			atomic.AddInt32(&calls, 1)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"buildInfo": {"version": "12.1.0"}}`))
+		})
+
+		// The version of an instance doesn't vary by org, so a second org
+		// hitting the same URL should reuse the cached entry.
+		assert.Equal(t, "12.1.0", GrafanaVersion(WithGrafanaConfig(context.Background(), GrafanaConfig{URL: ts.URL, OrgID: 1})))
+		assert.Equal(t, "12.1.0", GrafanaVersion(WithGrafanaConfig(context.Background(), GrafanaConfig{URL: ts.URL, OrgID: 7})))
+		assert.Equal(t, int32(1), atomic.LoadInt32(&calls), "version cache should not be partitioned by org")
 	})
 }
 
