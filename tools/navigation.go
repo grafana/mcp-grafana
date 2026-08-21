@@ -40,6 +40,14 @@ type DeeplinkProvisioningPreview struct {
 	PullRequestURL string `json:"pullRequestUrl,omitempty" jsonschema:"description=Upstream pull request URL to surface in Grafana's preview banner."`
 }
 
+const (
+	// exploreSchemaVersion is the Explore URL state schema used by Grafana 10.2+.
+	exploreSchemaVersion = "1"
+	// explorePaneID keys the single pane this tool generates. Grafana uses
+	// short random ids in the UI; any stable key works for a one-pane link.
+	explorePaneID = "a"
+)
+
 type TimeRange struct {
 	From string `json:"from" jsonschema:"description=Start time (e.g.\\, 'now-1h')"`
 	To   string `json:"to" jsonschema:"description=End time (e.g.\\, 'now')"`
@@ -105,13 +113,33 @@ func generateDeeplinkWithMode(ctx context.Context, args GenerateDeeplinkParams, 
 			return "", fmt.Errorf("datasourceUid is required for explore links")
 		}
 
-		// Build the full explore state inside `left` — Grafana Explore reads
-		// datasource, queries, and range all from this single JSON object.
-		exploreState := map[string]interface{}{
+		// Grafana 10.2+ reads Explore state from `panes` (keyed by pane id)
+		// alongside schemaVersion, not from the pre-10.2 `left` parameter.
+		// Links built with `left` are migrated on load, and that migration is
+		// lossy for datasource-specific query models: a Cloud Monitoring
+		// PromQL query arrives as queryType "promQL" with a sibling
+		// promQLQuery, and comes back as an empty Builder query with
+		// promQLQuery nested inside timeSeriesList, rendering nothing.
+		pane := map[string]interface{}{
 			"datasource": *args.DatasourceUID,
 		}
 		if len(args.Queries) > 0 {
-			exploreState["queries"] = args.Queries
+			// Queries carry their own datasource reference in the pane format.
+			// Preserve a caller-supplied one — it may include the plugin type,
+			// which some query editors need to select the right editor mode —
+			// and only fall back to the uid when absent.
+			queries := make([]map[string]interface{}, 0, len(args.Queries))
+			for _, q := range args.Queries {
+				enriched := make(map[string]interface{}, len(q)+1)
+				for k, v := range q {
+					enriched[k] = v
+				}
+				if _, ok := enriched["datasource"]; !ok {
+					enriched["datasource"] = map[string]string{"uid": *args.DatasourceUID}
+				}
+				queries = append(queries, enriched)
+			}
+			pane["queries"] = queries
 		}
 		if args.TimeRange != nil {
 			rangeObj := map[string]string{}
@@ -122,20 +150,21 @@ func generateDeeplinkWithMode(ctx context.Context, args GenerateDeeplinkParams, 
 				rangeObj["to"] = toGrafanaTimeParam(args.TimeRange.To)
 			}
 			if len(rangeObj) > 0 {
-				exploreState["range"] = rangeObj
+				pane["range"] = rangeObj
 			}
 		}
 
-		leftJSON, err := json.Marshal(exploreState)
+		panesJSON, err := json.Marshal(map[string]interface{}{explorePaneID: pane})
 		if err != nil {
-			return "", fmt.Errorf("failed to marshal explore state: %w", err)
+			return "", fmt.Errorf("failed to marshal explore panes: %w", err)
 		}
 
 		params := url.Values{}
-		params.Set("left", string(leftJSON))
+		params.Set("schemaVersion", exploreSchemaVersion)
+		params.Set("panes", string(panesJSON))
 		deeplink = fmt.Sprintf("%s/explore?%s", baseURL, params.Encode())
 
-		// For explore, time range is already embedded in `left` — skip the
+		// For explore, the time range is embedded in the pane — skip the
 		// generic time range block below by clearing it.
 		args.TimeRange = nil
 
