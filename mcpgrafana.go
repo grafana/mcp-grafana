@@ -29,6 +29,7 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/metric"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -315,6 +316,16 @@ type GrafanaConfig struct {
 	// to inject their own slog.Logger for consistent structured logging with
 	// per-request context such as tenant_id.
 	Logger *slog.Logger
+
+	// MeterProvider is an optional OTel metric.MeterProvider used by
+	// instrumentation that lives inside tool handlers (which have no
+	// constructor to take a WithXxxMeterProvider option), such as the Loki
+	// cost guardrail. When unset, otel.GetMeterProvider() is used.
+	//
+	// Setting this matters for embedders whose process installs a noop
+	// global provider: without it every recording is silently dropped. It
+	// mirrors Logger above — the same injection point, for the other signal.
+	MeterProvider metric.MeterProvider
 }
 
 // HTTPTransport returns the base HTTP transport for this config.
@@ -332,6 +343,15 @@ func (c GrafanaConfig) LoggerOrDefault() *slog.Logger {
 		return c.Logger
 	}
 	return slog.Default()
+}
+
+// MeterProviderOrDefault returns the configured meter provider, or the global
+// otel.GetMeterProvider() if none is set.
+func (c GrafanaConfig) MeterProviderOrDefault() metric.MeterProvider {
+	if c.MeterProvider != nil {
+		return c.MeterProvider
+	}
+	return otel.GetMeterProvider()
 }
 
 // LoggerFromContext extracts the logger from the GrafanaConfig in the context.

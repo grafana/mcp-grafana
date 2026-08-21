@@ -31,6 +31,35 @@ var warnUnknownGuardrailModeOnce sync.Once
 // a real backend.
 type lokiStatsFunc func(ctx context.Context, query string, start, end time.Time) (*Stats, error)
 
+// guardrailReason is one failed guardrail check: the machine-readable kind
+// that becomes the `reason` metric attribute, plus the human-readable message
+// that goes into logs and the rewrite guidance returned to the caller. The
+// kind is carried alongside the message rather than derived from it, so
+// grouping by which check tripped never depends on matching prose.
+type guardrailReason struct {
+	kind    string
+	message string
+}
+
+// guardrailOutcome is the guardrail's verdict on one query. Exactly one of
+// three states holds: reasons is non-empty (the query failed a check),
+// failOpen is set (the guardrail could not reach a verdict and admits the
+// query), or both are zero (the query passed every enabled check).
+type guardrailOutcome struct {
+	reasons  []guardrailReason
+	failOpen string // "" unless the guardrail admitted without a verdict
+}
+
+// messages returns the human-readable reason strings, for logging and for
+// the error returned in enforce mode.
+func (o guardrailOutcome) messages() []string {
+	out := make([]string, len(o.reasons))
+	for i, r := range o.reasons {
+		out[i] = r.message
+	}
+	return out
+}
+
 // guardLokiQuery applies the opt-in Loki query cost guardrail to a
 // query_loki_logs call before it reaches the datasource. Loki's own
 // max_query_bytes_read limit is not enforced on log queries without a line
@@ -74,22 +103,33 @@ func guardLokiQuery(ctx context.Context, backend lokiBackend, logql, queryType s
 		statsFn = backend.QueryStats
 	}
 
-	reasons := lokiGuardrailReasons(ctx, config, native, logql, queryType, start, end, statsFn)
-	if len(reasons) == 0 {
+	metrics := lokiGuardrailInstrumentsFor(config.MeterProviderOrDefault())
+	backendLabel := guardrailBackendLabel(backend)
+
+	outcome := lokiGuardrailReasons(ctx, config, native, logql, queryType, start, end, statsFn)
+	if outcome.failOpen != "" {
+		metrics.recordFailOpen(ctx, backendLabel, outcome.failOpen)
 		return nil
 	}
+	if len(outcome.reasons) == 0 {
+		metrics.recordAdmitted(ctx, backendLabel)
+		return nil
+	}
+	enforced := mode != mcpgrafana.LokiGuardrailShadow
+	metrics.recordBlocked(ctx, enforced, backendLabel, outcome.reasons[0].kind)
 
 	// Log the extracted selectors (the basis of the decision) rather than
 	// the full LogQL, which may embed sensitive literals in line filters;
 	// the full query is available at debug level.
 	logger := config.LoggerOrDefault()
+	reasons := outcome.messages()
 	selectors := parseLogQLSelectors(logql)
 	raws := make([]string, len(selectors))
 	for i, sel := range selectors {
 		raws[i] = sel.raw
 	}
 	logger.DebugContext(ctx, "loki guardrail query detail", "logql", logql)
-	if mode == mcpgrafana.LokiGuardrailShadow {
+	if !enforced {
 		logger.WarnContext(ctx, "loki guardrail would block query", "reasons", strings.Join(reasons, "; "), "selectors", strings.Join(raws, " "))
 		return nil
 	}
@@ -104,16 +144,18 @@ func guardLokiQuery(ctx context.Context, backend lokiBackend, logql, queryType s
 		strings.Join(reasons, "; "), rangeHint)
 }
 
-// lokiGuardrailReasons returns the list of block reasons for a query, empty
-// when allowed. logql must already have # comments stripped (guardLokiQuery
-// does this once for both the checks and the logging). Queries with no
-// parseable stream selector pass through: invalid syntax is rejected by Loki
-// with a proper error, and guessing here risks blocking legitimate syntax
-// the parser doesn't know. The fail-open is logged at warn on native Loki so
-// shadow-mode rollouts can spot query shapes the parser misses; on other
-// backends (VictoriaLogs), where brace-less queries are the normal shape, it
-// logs at debug to avoid per-query noise.
-func lokiGuardrailReasons(ctx context.Context, config mcpgrafana.GrafanaConfig, native bool, logql, queryType string, start, end time.Time, statsFn lokiStatsFunc) []string {
+// lokiGuardrailReasons returns the guardrail's verdict on a query: the block
+// reasons (empty when allowed) or the fail-open cause. logql must already
+// have # comments stripped (guardLokiQuery does this once for both the checks
+// and the logging). Queries with no parseable stream selector pass through:
+// invalid syntax is rejected by Loki with a proper error, and guessing here
+// risks blocking legitimate syntax the parser doesn't know. The fail-open is
+// logged at warn on native Loki so shadow-mode rollouts can spot query shapes
+// the parser misses; on other backends (VictoriaLogs), where brace-less
+// queries are the normal shape, it logs at debug to avoid per-query noise —
+// the fail_open counter is recorded either way, since a dashboard cannot tell
+// "nothing would be blocked" from "the guardrail is not looking" without it.
+func lokiGuardrailReasons(ctx context.Context, config mcpgrafana.GrafanaConfig, native bool, logql, queryType string, start, end time.Time, statsFn lokiStatsFunc) guardrailOutcome {
 	selectors := parseLogQLSelectors(logql)
 	if len(selectors) == 0 {
 		logger := config.LoggerOrDefault()
@@ -123,13 +165,16 @@ func lokiGuardrailReasons(ctx context.Context, config mcpgrafana.GrafanaConfig, 
 			logger.DebugContext(ctx, "loki guardrail found no parseable stream selector; passing query through (fail-open)")
 		}
 		logger.DebugContext(ctx, "loki guardrail query detail", "logql", logql)
-		return nil
+		return guardrailOutcome{failOpen: guardrailCauseUnparseable}
 	}
 
-	var reasons []string
+	var reasons []guardrailReason
 	for _, sel := range selectors {
 		if !hasSelectivePositiveMatcher(sel.matchers) {
-			reasons = append(reasons, fmt.Sprintf("the stream selector %s has no selective label matcher (catch-all, empty, or negative-only selectors scan every stream)", sel.raw))
+			reasons = append(reasons, guardrailReason{
+				kind:    guardrailReasonSelector,
+				message: fmt.Sprintf("the stream selector %s has no selective label matcher (catch-all, empty, or negative-only selectors scan every stream)", sel.raw),
+			})
 		}
 	}
 
@@ -153,11 +198,11 @@ func lokiGuardrailReasons(ctx context.Context, config mcpgrafana.GrafanaConfig, 
 			effective += vecDur
 		}
 		if effective > config.LokiGuardrailMaxRange {
-			reason := fmt.Sprintf("the time range (%s) exceeds the maximum allowed (%s)", effective.Round(time.Minute), config.LokiGuardrailMaxRange)
+			message := fmt.Sprintf("the time range (%s) exceeds the maximum allowed (%s)", effective.Round(time.Minute), config.LokiGuardrailMaxRange)
 			if vecDur > 0 {
-				reason = fmt.Sprintf("the time range (%s, including the %s range vector) exceeds the maximum allowed (%s)", effective.Round(time.Minute), vecDur, config.LokiGuardrailMaxRange)
+				message = fmt.Sprintf("the time range (%s, including the %s range vector) exceeds the maximum allowed (%s)", effective.Round(time.Minute), vecDur, config.LokiGuardrailMaxRange)
 			}
-			reasons = append(reasons, reason)
+			reasons = append(reasons, guardrailReason{kind: guardrailReasonRange, message: message})
 		}
 	}
 
@@ -168,13 +213,22 @@ func lokiGuardrailReasons(ctx context.Context, config mcpgrafana.GrafanaConfig, 
 	// selector-only estimates are accurate for exactly the queries that hurt.
 	if len(reasons) == 0 && config.LokiGuardrailMaxBytes > 0 && statsFn != nil {
 		if statsStart, statsEnd, ok := guardrailStatsWindow(instant, start, end, vecDur); ok {
-			if total, ok := sumSelectorBytes(ctx, config, selectors, statsStart, statsEnd, statsFn); ok && total > config.LokiGuardrailMaxBytes {
-				reasons = append(reasons, fmt.Sprintf("Loki estimates this query would scan %s, above the %s budget",
-					humanizeBytes(total), humanizeBytes(config.LokiGuardrailMaxBytes)))
+			total, ok := sumSelectorBytes(ctx, config, selectors, statsStart, statsEnd, statsFn)
+			switch {
+			case !ok:
+				// The static checks passed but the budget check did not
+				// happen, so this query was admitted without a full verdict.
+				return guardrailOutcome{failOpen: guardrailCauseEstimateFailed}
+			case total > config.LokiGuardrailMaxBytes:
+				reasons = append(reasons, guardrailReason{
+					kind: guardrailReasonBytes,
+					message: fmt.Sprintf("Loki estimates this query would scan %s, above the %s budget",
+						humanizeBytes(total), humanizeBytes(config.LokiGuardrailMaxBytes)),
+				})
 			}
 		}
 	}
-	return reasons
+	return guardrailOutcome{reasons: reasons}
 }
 
 // guardrailStatsWindow computes the window for the index/stats estimate.

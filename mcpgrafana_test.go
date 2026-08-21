@@ -23,6 +23,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
@@ -2446,4 +2447,17 @@ func TestEnvURLSpellingsResolveToOneValue(t *testing.T) {
 			assert.Equal(t, canonical, resolvedURL)
 		})
 	}
+}
+
+// TestMeterProviderOrDefault covers the injection path that tool-level
+// instrumentation (the Loki cost guardrail) relies on. An embedder whose
+// process installs a noop global provider drops every recording unless a
+// provider is passed explicitly, so the accessor must prefer the configured
+// one and only fall back to the global.
+func TestMeterProviderOrDefault(t *testing.T) {
+	provider := sdkmetric.NewMeterProvider()
+	cfg := GrafanaConfig{MeterProvider: provider}
+	assert.Same(t, provider, cfg.MeterProviderOrDefault())
+
+	assert.Equal(t, otel.GetMeterProvider(), GrafanaConfig{}.MeterProviderOrDefault())
 }

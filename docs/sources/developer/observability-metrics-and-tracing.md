@@ -67,6 +67,33 @@ Arguments are raw client input, so the two argument-derived labels are allowlist
 
 The high-cardinality **target** of a call (the datasource `uid`, else `name`) is never a metric label — it is span-only as `mcp.tool.target`, and empty for calls that name no entity (see below).
 
+### Loki cost guardrail metrics
+
+When the [Loki query cost guardrail](../../configure/command-line-flags/) is enabled (`--loki-guardrail-mode` is `shadow` or `enforce`), every `query_loki_logs` call it evaluates increments exactly one of four counters:
+
+| Metric | Type | Incremented when |
+|--------|------|------------------|
+| `mcp_loki_guardrail_admitted_total` | Counter | The query passed every enabled check |
+| `mcp_loki_guardrail_would_block_total` | Counter | The query failed a check in `shadow` mode and ran anyway |
+| `mcp_loki_guardrail_blocked_total` | Counter | The query failed a check in `enforce` mode and was rejected |
+| `mcp_loki_guardrail_fail_open_total` | Counter | The guardrail could not reach a verdict and admitted the query |
+
+The four partition the guarded population, so their sum is the number of calls the guardrail evaluated, and each is a query count rather than a check count.
+
+**Labels:**
+
+| Label | On | Values |
+|-------|-----|--------|
+| `reason` | `would_block`, `blocked` | `selector` (no selective label matcher), `range` (effective time range over the cap), `bytes` (index/stats estimate over the budget) |
+| `cause` | `fail_open` | `unparseable` (no stream selector the scanner recognises), `estimate_failed` (index/stats unavailable) |
+| `backend` | all four | `loki`, `victorialogs`, `unknown` |
+
+A query can trip more than one check. It is counted **once**, labelled with the check that ran first — `selector`, then `range`, then `bytes`. That ordering is deliberate: the selectivity check is unconditional, so a query attributed to `selector` would not be admitted by raising `--loki-guardrail-max-range` or `--loki-guardrail-max-bytes`. When promoting from `shadow` to `enforce`, read `sum(rate(mcp_loki_guardrail_would_block_total[5m]))` for the size of the affected population and `sum by (reason) (...)` for whether tuning the bounds would shrink it.
+
+Watch `mcp_loki_guardrail_fail_open_total` alongside them: a quiet `would_block` rate means "nothing would be blocked" only if the fail-open rate is also low. A high `cause="unparseable"` rate on `backend="loki"` means the guardrail's LogQL scanner does not recognise the query shapes in use, which calls for improving the scanner rather than tuning the bounds. On `backend="victorialogs"` a high `unparseable` rate is expected — brace-less LogsQL is the normal shape there, and the byte-budget check never runs on that backend at all, which is why `backend` is a label rather than being folded together.
+
+Neither the stream selector nor the LogQL is exported as a label: both are unbounded, and line filters can carry sensitive literals. The extracted selectors are logged at `WARN` and the full query at `DEBUG` instead.
+
 ## Enable OpenTelemetry tracing
 
 When `OTEL_EXPORTER_OTLP_ENDPOINT` (or the signal-specific `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`) is set, the server exports traces via OTLP/gRPC.
