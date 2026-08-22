@@ -62,6 +62,19 @@ func TestOperationValidator_RequiredField(t *testing.T) {
 			Validate()
 		require.NoError(t, err)
 	})
+
+	t.Run("map field", func(t *testing.T) {
+		err := NewOperationValidator("create", "create").
+			Require("create", MapField("dashboard", map[string]any{})).
+			Validate()
+		require.Error(t, err)
+		assert.EqualError(t, err, "dashboard is required for 'create' operation")
+
+		err = NewOperationValidator("create", "create").
+			Require("create", MapField("dashboard", map[string]any{"title": "x"})).
+			Validate()
+		require.NoError(t, err)
+	})
 }
 
 func TestOperationValidator_MutuallyExclusive(t *testing.T) {

@@ -161,8 +161,7 @@ When enabled, the following writes are disabled:
 
 **Snapshot tools**
 
-- `create_snapshot`
-- `delete_snapshot`
+- `snapshots_write` (create, delete operations)
 
 **Agent Observability tools**
 
