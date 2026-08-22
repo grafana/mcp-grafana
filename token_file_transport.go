@@ -67,6 +67,9 @@ func (t *tokenFileRoundTripper) RoundTrip(req *http.Request) (*http.Response, er
 	token, err := os.ReadFile(t.path)
 	if err != nil {
 		if t.fallbackToken != "" {
+			if authorization == "" || authorization == "Bearer "+strings.TrimSpace(t.fallbackToken) {
+				clonedReq.Header.Set("Authorization", "Bearer "+strings.TrimSpace(t.fallbackToken))
+			}
 			return t.underlying.RoundTrip(markTokenFileAuth(clonedReq))
 		}
 		return nil, fmt.Errorf("read Grafana service account token file: %w", err)

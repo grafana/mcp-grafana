@@ -153,6 +153,25 @@ func TestTokenFileRoundTripperProtectsFallbackCredentialsFromAuthLayers(t *testi
 	require.Empty(t, captured.Header.Get(grafanaServiceAccountTokenHeader))
 }
 
+func TestTokenFileRoundTripperAppliesFallbackWhenFileReadFails(t *testing.T) {
+	var captured *http.Request
+	transport := &tokenFileRoundTripper{
+		path:          t.TempDir() + "/missing-token",
+		fallbackToken: "fallback-token",
+		underlying: &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+			captured = req
+			return &http.Response{StatusCode: http.StatusNoContent}, nil
+		}},
+	}
+	req, err := http.NewRequest(http.MethodGet, "http://example.com", nil)
+	require.NoError(t, err)
+
+	_, err = transport.RoundTrip(req)
+	require.NoError(t, err)
+	require.NotNil(t, captured)
+	require.Equal(t, "Bearer fallback-token", captured.Header.Get("Authorization"))
+}
+
 func TestNewGrafanaClientUsesRotatedTokenFile(t *testing.T) {
 	tokenFile := t.TempDir() + "/token"
 	require.NoError(t, os.WriteFile(tokenFile, []byte("first-token"), 0o600))
