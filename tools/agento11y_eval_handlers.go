@@ -2,7 +2,6 @@ package tools
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -91,7 +90,7 @@ func (c *Client) listAgento11yJudgeModels(ctx context.Context, provider string) 
 }
 
 // agento11yEvaluatorRead runs the evaluator read operations shared by the read
-// and read-write variants of agento11y_manage_evaluators. Operations it does not
+// and write variants of agento11y_evals_read/agento11y_evals_write. Operations it does not
 // handle return errAgento11yUnknownOperation.
 func (c *Client) agento11yEvaluatorRead(ctx context.Context, operation string, r agento11yEvaluatorReadRequest) (any, error) {
 	switch operation {
@@ -112,23 +111,6 @@ func (c *Client) agento11yEvaluatorRead(ctx context.Context, operation string, r
 	default:
 		return nil, errAgento11yUnknownOperation
 	}
-}
-
-func manageAgento11yEvaluatorsRead(ctx context.Context, args ManageAgento11yEvaluatorsReadParams) (any, error) {
-	if err := args.validate(); err != nil {
-		return nil, fmt.Errorf("agento11y_manage_evaluators: %w", err)
-	}
-
-	client, err := newAgento11yClient(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Agent Observability client: %w", err)
-	}
-
-	result, err := client.agento11yEvaluatorRead(ctx, args.Operation, args.readRequest())
-	if errors.Is(err, errAgento11yUnknownOperation) {
-		return nil, fmt.Errorf("agento11y_manage_evaluators: unknown operation %q", args.Operation)
-	}
-	return result, err
 }
 
 // upsertAgento11yEvaluator creates or updates an evaluator. POST is
@@ -177,10 +159,19 @@ func (c *Client) testAgento11yEvaluator(ctx context.Context, definition map[stri
 	return &resp, nil
 }
 
+// agento11yEvaluatorWriteRequest is the input of an evaluator write operation,
+// assembled by agento11y_evals_write from its flat params.
+type agento11yEvaluatorWriteRequest struct {
+	EvaluatorID  string
+	TemplateID   string
+	Definition   map[string]any
+	GenerationID string
+}
+
 // agento11yEvaluatorWrite runs the write operations of
-// agento11y_manage_evaluators. Operations it does not handle return
-// errAgento11yUnknownOperation.
-func (c *Client) agento11yEvaluatorWrite(ctx context.Context, operation string, p ManageAgento11yEvaluatorsReadWriteParams) (any, error) {
+// agento11y_evals_write's evaluator sub-domain. Operations it does not handle
+// return errAgento11yUnknownOperation.
+func (c *Client) agento11yEvaluatorWrite(ctx context.Context, operation string, p agento11yEvaluatorWriteRequest) (any, error) {
 	switch operation {
 	case "upsert_evaluator":
 		return c.upsertAgento11yEvaluator(ctx, p.Definition)
@@ -196,28 +187,6 @@ func (c *Client) agento11yEvaluatorWrite(ctx context.Context, operation string, 
 	default:
 		return nil, errAgento11yUnknownOperation
 	}
-}
-
-func manageAgento11yEvaluatorsReadWrite(ctx context.Context, args ManageAgento11yEvaluatorsReadWriteParams) (any, error) {
-	if err := args.validate(); err != nil {
-		return nil, fmt.Errorf("agento11y_manage_evaluators: %w", err)
-	}
-
-	client, err := newAgento11yClient(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Agent Observability client: %w", err)
-	}
-
-	result, err := client.agento11yEvaluatorRead(ctx, args.Operation, args.readRequest())
-	if !errors.Is(err, errAgento11yUnknownOperation) {
-		return result, err
-	}
-
-	result, err = client.agento11yEvaluatorWrite(ctx, args.Operation, args)
-	if errors.Is(err, errAgento11yUnknownOperation) {
-		return nil, fmt.Errorf("agento11y_manage_evaluators: unknown operation %q", args.Operation)
-	}
-	return result, err
 }
 
 func (c *Client) listAgento11yEvalRules(ctx context.Context, limit int, cursor string) (*agento11yListResponse[Agento11yRuleDefinition], error) {
@@ -255,7 +224,7 @@ func (c *Client) getAgento11yGuard(ctx context.Context, id string) (*Agento11yHo
 }
 
 // agento11yEvalRuleRead runs the rule and guard read operations shared by the
-// read and read-write variants of agento11y_manage_eval_rules. Operations it
+// read and write variants of agento11y_evals_read/agento11y_evals_write. Operations it
 // does not handle return errAgento11yUnknownOperation.
 func (c *Client) agento11yEvalRuleRead(ctx context.Context, operation string, r agento11yEvalRuleReadRequest) (any, error) {
 	switch operation {
@@ -270,23 +239,6 @@ func (c *Client) agento11yEvalRuleRead(ctx context.Context, operation string, r 
 	default:
 		return nil, errAgento11yUnknownOperation
 	}
-}
-
-func manageAgento11yEvalRulesRead(ctx context.Context, args ManageAgento11yEvalRulesReadParams) (any, error) {
-	if err := args.validate(); err != nil {
-		return nil, fmt.Errorf("agento11y_manage_eval_rules: %w", err)
-	}
-
-	client, err := newAgento11yClient(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Agent Observability client: %w", err)
-	}
-
-	result, err := client.agento11yEvalRuleRead(ctx, args.Operation, args.readRequest())
-	if errors.Is(err, errAgento11yUnknownOperation) {
-		return nil, fmt.Errorf("agento11y_manage_eval_rules: unknown operation %q", args.Operation)
-	}
-	return result, err
 }
 
 func (c *Client) createAgento11yEvalRule(ctx context.Context, definition map[string]any) (*Agento11yRuleDefinition, error) {
@@ -356,10 +308,19 @@ func (c *Client) deleteAgento11yGuard(ctx context.Context, id string) error {
 	return err
 }
 
-// agento11yEvalRuleWrite runs the write operations of
-// agento11y_manage_eval_rules. Operations it does not handle return
+// agento11yEvalRuleWriteRequest is the input of a rule or guard write
+// operation, assembled by agento11y_evals_write from its flat params. RuleID
+// addresses either a rule or a guard, matching the pre-consolidation
+// ManageAgento11yEvalRulesReadWriteParams.RuleID's dual use.
+type agento11yEvalRuleWriteRequest struct {
+	RuleID     string
+	Definition map[string]any
+}
+
+// agento11yEvalRuleWrite runs the write operations of agento11y_evals_write's
+// eval rule and guard sub-domain. Operations it does not handle return
 // errAgento11yUnknownOperation.
-func (c *Client) agento11yEvalRuleWrite(ctx context.Context, operation string, p ManageAgento11yEvalRulesReadWriteParams) (any, error) {
+func (c *Client) agento11yEvalRuleWrite(ctx context.Context, operation string, p agento11yEvalRuleWriteRequest) (any, error) {
 	switch operation {
 	case "create_rule":
 		return c.createAgento11yEvalRule(ctx, p.Definition)
@@ -384,26 +345,4 @@ func (c *Client) agento11yEvalRuleWrite(ctx context.Context, operation string, p
 	default:
 		return nil, errAgento11yUnknownOperation
 	}
-}
-
-func manageAgento11yEvalRulesReadWrite(ctx context.Context, args ManageAgento11yEvalRulesReadWriteParams) (any, error) {
-	if err := args.validate(); err != nil {
-		return nil, fmt.Errorf("agento11y_manage_eval_rules: %w", err)
-	}
-
-	client, err := newAgento11yClient(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Agent Observability client: %w", err)
-	}
-
-	result, err := client.agento11yEvalRuleRead(ctx, args.Operation, args.readRequest())
-	if !errors.Is(err, errAgento11yUnknownOperation) {
-		return result, err
-	}
-
-	result, err = client.agento11yEvalRuleWrite(ctx, args.Operation, args)
-	if errors.Is(err, errAgento11yUnknownOperation) {
-		return nil, fmt.Errorf("agento11y_manage_eval_rules: unknown operation %q", args.Operation)
-	}
-	return result, err
 }

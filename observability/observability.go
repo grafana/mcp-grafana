@@ -463,15 +463,33 @@ var toolMetricDims = map[string]metricDimSet{
 		"get_notification_policies", "get_contact_points", "get_contact_point",
 		"get_time_intervals", "get_time_interval",
 	)},
-	"agento11y_manage_conversations": {operations: valueSet("list", "search", "get")},
-	"agento11y_manage_generations":   {operations: valueSet("get", "scores")},
-	"agento11y_manage_experiments": {operations: valueSet(
-		"list", "get", "get_report", "list_trials", "list_scores",
-		"get_trial", "list_trial_scores", "list_trial_artifacts", "list_facets",
-		"update", "cancel",
+	// agento11y_read merges the pre-consolidation agento11y_manage_agents,
+	// agento11y_manage_conversations, and agento11y_manage_generations tools.
+	// Only the conversation and generation operations were previously
+	// allowlisted here (renamed to their namespaced agento11y_read
+	// equivalents, e.g. "list" -> "list_conversations"); the agent catalog
+	// operations were never opted in and stay that way, falling back to
+	// metricDimValueOther like before.
+	"agento11y_read": {operations: valueSet(
+		"list_conversations", "search_conversations", "get_conversation",
+		"get_generation", "list_generation_scores",
 	)},
-	"agento11y_manage_test_suites": {operations: valueSet(
+	// agento11y_evals_read and agento11y_evals_write merge the pre-consolidation
+	// agento11y_manage_evaluators, agento11y_manage_eval_rules,
+	// agento11y_manage_eval_collections, agento11y_manage_experiments, and
+	// agento11y_manage_test_suites tools. Only the experiment and test-suite
+	// operations were previously allowlisted (split here by read/write, and
+	// the experiment ones renamed to their namespaced equivalents, e.g.
+	// "list" -> "list_experiments"); evaluator, eval rule/guard, and saved
+	// conversation/collection operations were never opted in and stay that
+	// way.
+	"agento11y_evals_read": {operations: valueSet(
+		"list_experiments", "get_experiment", "get_experiment_report", "list_experiment_trials", "list_experiment_scores",
+		"get_trial", "list_trial_scores", "list_trial_artifacts", "list_experiment_facets",
 		"list_suites", "get_suite", "list_test_cases", "get_test_case",
+	)},
+	"agento11y_evals_write": {operations: valueSet(
+		"update_experiment", "cancel_experiment",
 		"create_suite", "update_suite", "create_draft_version", "publish_version",
 		"upsert_test_case", "delete_test_case",
 	)},

@@ -29,22 +29,22 @@ func TestAgento11yCloudIntegration(t *testing.T) {
 	ctx := createCloudTestContext(t, "Agento11y", "AGENTO11Y_GRAFANA_URL", "AGENTO11Y_GRAFANA_API_KEY")
 
 	t.Run("list conversations", func(t *testing.T) {
-		result, err := manageAgento11yConversations(ctx, ManageAgento11yConversationsParams{
-			Operation: "list",
+		result, err := agento11yRead(ctx, Agento11yReadParams{
+			Operation: "list_conversations",
 		})
 		require.NoError(t, err, "Failed to list Agent Observability conversations")
 		require.NotNil(t, result)
 
 		resp, ok := result.(*agento11yListResponse[Agento11yConversation])
-		require.True(t, ok, "list should return *agento11yListResponse[Agento11yConversation]")
+		require.True(t, ok, "list_conversations should return *agento11yListResponse[Agento11yConversation]")
 		for _, conv := range resp.Items {
 			assert.NotEmpty(t, conv.ID, "listed conversation should have an id")
 		}
 	})
 
 	t.Run("search respects page size", func(t *testing.T) {
-		result, err := manageAgento11yConversations(ctx, ManageAgento11yConversationsParams{
-			Operation: "search",
+		result, err := agento11yRead(ctx, Agento11yReadParams{
+			Operation: "search_conversations",
 			Limit:     5,
 		})
 		require.NoError(t, err, "Failed to search Agent Observability conversations")
@@ -57,8 +57,8 @@ func TestAgento11yCloudIntegration(t *testing.T) {
 	t.Run("search with filter expression and explicit RFC3339 range", func(t *testing.T) {
 		end := time.Now()
 		start := end.Add(-7 * 24 * time.Hour)
-		result, err := manageAgento11yConversations(ctx, ManageAgento11yConversationsParams{
-			Operation: "search",
+		result, err := agento11yRead(ctx, Agento11yReadParams{
+			Operation: "search_conversations",
 			Filters:   `status = "error"`,
 			StartTime: start.Format(time.RFC3339),
 			EndTime:   end.Format(time.RFC3339),
@@ -85,8 +85,8 @@ func TestAgento11yCloudIntegration(t *testing.T) {
 		startStr := start.Format(time.RFC3339)
 		endStr := end.Format(time.RFC3339)
 
-		first, err := manageAgento11yConversations(ctx, ManageAgento11yConversationsParams{
-			Operation: "search",
+		first, err := agento11yRead(ctx, Agento11yReadParams{
+			Operation: "search_conversations",
 			StartTime: startStr,
 			EndTime:   endStr,
 			Limit:     1,
@@ -99,8 +99,8 @@ func TestAgento11yCloudIntegration(t *testing.T) {
 			return
 		}
 
-		second, err := manageAgento11yConversations(ctx, ManageAgento11yConversationsParams{
-			Operation: "search",
+		second, err := agento11yRead(ctx, Agento11yReadParams{
+			Operation: "search_conversations",
 			StartTime: startStr,
 			EndTime:   endStr,
 			Limit:     1,
@@ -111,8 +111,8 @@ func TestAgento11yCloudIntegration(t *testing.T) {
 	})
 
 	t.Run("drill down from search into generation and scores", func(t *testing.T) {
-		result, err := manageAgento11yConversations(ctx, ManageAgento11yConversationsParams{
-			Operation: "search",
+		result, err := agento11yRead(ctx, Agento11yReadParams{
+			Operation: "search_conversations",
 			StartTime: "now-30d",
 			Limit:     5,
 		})
@@ -128,8 +128,8 @@ func TestAgento11yCloudIntegration(t *testing.T) {
 		convID := resp.Conversations[0].ConversationID
 		require.NotEmpty(t, convID, "search result must carry a conversation_id to drill down")
 
-		detailResult, err := manageAgento11yConversations(ctx, ManageAgento11yConversationsParams{
-			Operation:      "get",
+		detailResult, err := agento11yRead(ctx, Agento11yReadParams{
+			Operation:      "get_conversation",
 			ConversationID: convID,
 		})
 		require.NoError(t, err, "Failed to get conversation %s", convID)
@@ -149,8 +149,8 @@ func TestAgento11yCloudIntegration(t *testing.T) {
 		require.True(t, ok, "generation has no string generation_id")
 		require.NotEmpty(t, genID)
 
-		genResult, err := manageAgento11yGenerations(ctx, ManageAgento11yGenerationsParams{
-			Operation:    "get",
+		genResult, err := agento11yRead(ctx, Agento11yReadParams{
+			Operation:    "get_generation",
 			GenerationID: genID,
 		})
 		require.NoError(t, err, "Failed to get generation %s", genID)
@@ -159,8 +159,8 @@ func TestAgento11yCloudIntegration(t *testing.T) {
 		require.True(t, ok)
 		assert.Equal(t, genID, genDetail["generation_id"], "fetched generation id should match the requested id")
 
-		scoresResult, err := manageAgento11yGenerations(ctx, ManageAgento11yGenerationsParams{
-			Operation:    "scores",
+		scoresResult, err := agento11yRead(ctx, Agento11yReadParams{
+			Operation:    "list_generation_scores",
 			GenerationID: genID,
 			Limit:        10,
 		})
@@ -176,15 +176,15 @@ func TestAgento11yCloudIntegration(t *testing.T) {
 	})
 
 	t.Run("list agents and drill into one", func(t *testing.T) {
-		result, err := manageAgento11yAgents(ctx, ManageAgento11yAgentsParams{
-			Operation: "list",
+		result, err := agento11yRead(ctx, Agento11yReadParams{
+			Operation: "list_agents",
 			Limit:     10,
 		})
 		require.NoError(t, err, "Failed to list Agent Observability agents")
 
 		resp, ok := result.(*agento11yListResponse[Agento11yAgent])
-		require.True(t, ok, "list should return *agento11yListResponse[Agento11yAgent]")
-		assert.LessOrEqual(t, len(resp.Items), 10, "list should respect the requested limit")
+		require.True(t, ok, "list_agents should return *agento11yListResponse[Agento11yAgent]")
+		assert.LessOrEqual(t, len(resp.Items), 10, "list_agents should respect the requested limit")
 		if len(resp.Items) == 0 {
 			t.Log("no agents in the catalog on this instance, skipping agent assertions")
 			return
@@ -196,8 +196,8 @@ func TestAgento11yCloudIntegration(t *testing.T) {
 		// The first name can legitimately be empty (the unnamed agent), and
 		// passing it through unchanged must still address that agent.
 		name := resp.Items[0].AgentName
-		detailResult, err := manageAgento11yAgents(ctx, ManageAgento11yAgentsParams{
-			Operation: "get",
+		detailResult, err := agento11yRead(ctx, Agento11yReadParams{
+			Operation: "get_agent",
 			AgentName: &name,
 		})
 		require.NoError(t, err, "Failed to get agent %q", name)
@@ -207,16 +207,16 @@ func TestAgento11yCloudIntegration(t *testing.T) {
 		assert.Equal(t, name, detail["agent_name"], "fetched agent name should match the requested name")
 		assert.NotEmpty(t, detail["effective_version"], "agent detail should carry an effective_version")
 
-		versionsResult, err := manageAgento11yAgents(ctx, ManageAgento11yAgentsParams{
-			Operation: "list_versions",
+		versionsResult, err := agento11yRead(ctx, Agento11yReadParams{
+			Operation: "list_agent_versions",
 			AgentName: &name,
 			Limit:     10,
 		})
 		require.NoError(t, err, "Failed to list versions of agent %q", name)
 
 		versions, ok := versionsResult.(*agento11yListResponse[Agento11yAgentVersion])
-		require.True(t, ok, "list_versions should return *agento11yListResponse[Agento11yAgentVersion]")
-		assert.LessOrEqual(t, len(versions.Items), 10, "list_versions should respect the requested limit")
+		require.True(t, ok, "list_agent_versions should return *agento11yListResponse[Agento11yAgentVersion]")
+		assert.LessOrEqual(t, len(versions.Items), 10, "list_agent_versions should respect the requested limit")
 		for _, version := range versions.Items {
 			assert.NotEmpty(t, version.EffectiveVersion, "listed version should have an effective_version")
 		}
@@ -227,8 +227,8 @@ func TestAgento11yCloudIntegration(t *testing.T) {
 			t.Log("first catalog agent is the unnamed agent, skipping version scores")
 			return
 		}
-		scoresResult, err := manageAgento11yAgents(ctx, ManageAgento11yAgentsParams{
-			Operation: "list_version_scores",
+		scoresResult, err := agento11yRead(ctx, Agento11yReadParams{
+			Operation: "list_agent_version_scores",
 			AgentName: &name,
 			StartTime: time.Now().Add(-30 * 24 * time.Hour).Format(time.RFC3339),
 			EndTime:   time.Now().Format(time.RFC3339),
@@ -236,7 +236,7 @@ func TestAgento11yCloudIntegration(t *testing.T) {
 		require.NoError(t, err, "Failed to get version scores of agent %q", name)
 
 		scores, ok := scoresResult.(*agento11yListResponse[Agento11yAgentVersionScore])
-		require.True(t, ok, "list_version_scores should return *agento11yListResponse[Agento11yAgentVersionScore]")
+		require.True(t, ok, "list_agent_version_scores should return *agento11yListResponse[Agento11yAgentVersionScore]")
 		for _, item := range scores.Items {
 			assert.NotEmpty(t, item.EffectiveVersion, "score aggregate should name the version it belongs to")
 			for _, evaluator := range item.Evaluators {
@@ -246,7 +246,7 @@ func TestAgento11yCloudIntegration(t *testing.T) {
 	})
 
 	t.Run("list evaluators", func(t *testing.T) {
-		result, err := manageAgento11yEvaluatorsRead(ctx, ManageAgento11yEvaluatorsReadParams{
+		result, err := agento11yEvalsRead(ctx, Agento11yEvalsReadParams{
 			Operation: "list_evaluators",
 		})
 		require.NoError(t, err, "Failed to list Agent Observability evaluators")
@@ -265,7 +265,7 @@ func TestAgento11yCloudIntegration(t *testing.T) {
 		// Drill into the first evaluator: this is the path an agent takes from a
 		// failed score to the definition that produced it.
 		id := resp.Items[0].EvaluatorID
-		detail, err := manageAgento11yEvaluatorsRead(ctx, ManageAgento11yEvaluatorsReadParams{
+		detail, err := agento11yEvalsRead(ctx, Agento11yEvalsReadParams{
 			Operation:   "get_evaluator",
 			EvaluatorID: id,
 		})
@@ -277,9 +277,9 @@ func TestAgento11yCloudIntegration(t *testing.T) {
 	})
 
 	t.Run("list templates", func(t *testing.T) {
-		result, err := manageAgento11yEvaluatorsRead(ctx, ManageAgento11yEvaluatorsReadParams{
-			Operation:                "list_templates",
-			agento11yEvaluatorFields: agento11yEvaluatorFields{Limit: 10},
+		result, err := agento11yEvalsRead(ctx, Agento11yEvalsReadParams{
+			Operation: "list_templates",
+			Limit:     10,
 		})
 		// /eval/templates only exists on stacks that configure a template store,
 		// so a 404 here is a deployment property rather than a tool failure. Every
@@ -298,7 +298,7 @@ func TestAgento11yCloudIntegration(t *testing.T) {
 	})
 
 	t.Run("list judge providers", func(t *testing.T) {
-		result, err := manageAgento11yEvaluatorsRead(ctx, ManageAgento11yEvaluatorsReadParams{
+		result, err := agento11yEvalsRead(ctx, Agento11yEvalsReadParams{
 			Operation: "list_judge_providers",
 		})
 		require.NoError(t, err, "Failed to list Agent Observability judge providers")
@@ -311,7 +311,7 @@ func TestAgento11yCloudIntegration(t *testing.T) {
 	})
 
 	t.Run("list rules", func(t *testing.T) {
-		result, err := manageAgento11yEvalRulesRead(ctx, ManageAgento11yEvalRulesReadParams{
+		result, err := agento11yEvalsRead(ctx, Agento11yEvalsReadParams{
 			Operation: "list_rules",
 		})
 		require.NoError(t, err, "Failed to list Agent Observability eval rules")
@@ -328,7 +328,7 @@ func TestAgento11yCloudIntegration(t *testing.T) {
 		}
 
 		id := resp.Items[0].RuleID
-		detail, err := manageAgento11yEvalRulesRead(ctx, ManageAgento11yEvalRulesReadParams{
+		detail, err := agento11yEvalsRead(ctx, Agento11yEvalsReadParams{
 			Operation: "get_rule",
 			RuleID:    id,
 		})
@@ -343,9 +343,9 @@ func TestAgento11yCloudIntegration(t *testing.T) {
 	// real stack, so bookmarking a conversation or creating a collection would
 	// leave curation data behind.
 	t.Run("list saved conversations", func(t *testing.T) {
-		result, err := manageAgento11yEvalCollectionsRead(ctx, ManageAgento11yEvalCollectionsReadParams{
-			Operation:                     "list_saved_conversations",
-			agento11yEvalCollectionFields: agento11yEvalCollectionFields{Limit: 10},
+		result, err := agento11yEvalsRead(ctx, Agento11yEvalsReadParams{
+			Operation: "list_saved_conversations",
+			Limit:     10,
 		})
 		require.NoError(t, err, "Failed to list Agent Observability saved conversations")
 
@@ -363,7 +363,7 @@ func TestAgento11yCloudIntegration(t *testing.T) {
 		assert.GreaterOrEqual(t, resp.TotalCount, int64(len(resp.Items)), "total_count should cover at least the returned page")
 
 		id := resp.Items[0].SavedID
-		detail, err := manageAgento11yEvalCollectionsRead(ctx, ManageAgento11yEvalCollectionsReadParams{
+		detail, err := agento11yEvalsRead(ctx, Agento11yEvalsReadParams{
 			Operation: "get_saved_conversation",
 			SavedID:   id,
 		})
@@ -375,9 +375,9 @@ func TestAgento11yCloudIntegration(t *testing.T) {
 	})
 
 	t.Run("list collections", func(t *testing.T) {
-		result, err := manageAgento11yEvalCollectionsRead(ctx, ManageAgento11yEvalCollectionsReadParams{
-			Operation:                     "list_collections",
-			agento11yEvalCollectionFields: agento11yEvalCollectionFields{Limit: 10},
+		result, err := agento11yEvalsRead(ctx, Agento11yEvalsReadParams{
+			Operation: "list_collections",
+			Limit:     10,
 		})
 		require.NoError(t, err, "Failed to list Agent Observability collections")
 
@@ -394,10 +394,10 @@ func TestAgento11yCloudIntegration(t *testing.T) {
 		}
 
 		id := resp.Items[0].CollectionID
-		members, err := manageAgento11yEvalCollectionsRead(ctx, ManageAgento11yEvalCollectionsReadParams{
-			Operation:                     "list_collection_members",
-			CollectionID:                  id,
-			agento11yEvalCollectionFields: agento11yEvalCollectionFields{Limit: 10},
+		members, err := agento11yEvalsRead(ctx, Agento11yEvalsReadParams{
+			Operation:    "list_collection_members",
+			CollectionID: id,
+			Limit:        10,
 		})
 		require.NoError(t, err, "Failed to list members of collection %s", id)
 
@@ -412,15 +412,15 @@ func TestAgento11yCloudIntegration(t *testing.T) {
 	// Read-only on purpose: renaming or canceling an experiment on a real stack
 	// changes data someone owns.
 	t.Run("list experiments", func(t *testing.T) {
-		result, err := manageAgento11yExperimentsRead(ctx, ManageAgento11yExperimentsReadParams{
-			Operation:                 "list",
-			agento11yExperimentFields: agento11yExperimentFields{Limit: 10},
+		result, err := agento11yEvalsRead(ctx, Agento11yEvalsReadParams{
+			Operation: "list_experiments",
+			Limit:     10,
 		})
 		require.NoError(t, err, "Failed to list Agent Observability experiments")
 
 		resp, ok := result.(*agento11yListResponse[Agento11yExperiment])
-		require.True(t, ok, "list should return *agento11yListResponse[Agento11yExperiment]")
-		assert.LessOrEqual(t, len(resp.Items), 10, "list should respect the requested limit")
+		require.True(t, ok, "list_experiments should return *agento11yListResponse[Agento11yExperiment]")
+		assert.LessOrEqual(t, len(resp.Items), 10, "list_experiments should respect the requested limit")
 		if len(resp.Items) == 0 {
 			t.Log("no experiments on this instance, skipping experiment assertions")
 			return
@@ -432,8 +432,8 @@ func TestAgento11yCloudIntegration(t *testing.T) {
 		}
 
 		id := resp.Items[0].ExperimentID
-		detail, err := manageAgento11yExperimentsRead(ctx, ManageAgento11yExperimentsReadParams{
-			Operation:    "get",
+		detail, err := agento11yEvalsRead(ctx, Agento11yEvalsReadParams{
+			Operation:    "get_experiment",
 			ExperimentID: id,
 		})
 		require.NoError(t, err, "Failed to get experiment %s", id)
@@ -442,26 +442,26 @@ func TestAgento11yCloudIntegration(t *testing.T) {
 		require.True(t, ok)
 		assert.Equal(t, id, experiment.ExperimentID, "fetched experiment id should match the requested id")
 
-		trials, err := manageAgento11yExperimentsRead(ctx, ManageAgento11yExperimentsReadParams{
-			Operation:                 "list_trials",
-			ExperimentID:              id,
-			agento11yExperimentFields: agento11yExperimentFields{Limit: 10},
+		trials, err := agento11yEvalsRead(ctx, Agento11yEvalsReadParams{
+			Operation:    "list_experiment_trials",
+			ExperimentID: id,
+			Limit:        10,
 		})
 		require.NoError(t, err, "Failed to list trials of experiment %s", id)
 
 		trialResp, ok := trials.(*agento11yListResponse[Agento11yTestCaseTrial])
-		require.True(t, ok, "list_trials should return *agento11yListResponse[Agento11yTestCaseTrial]")
-		assert.LessOrEqual(t, len(trialResp.Items), 10, "list_trials should respect the requested limit")
+		require.True(t, ok, "list_experiment_trials should return *agento11yListResponse[Agento11yTestCaseTrial]")
+		assert.LessOrEqual(t, len(trialResp.Items), 10, "list_experiment_trials should respect the requested limit")
 		if len(trialResp.Items) == 0 {
 			t.Log("experiment has no trials, skipping trial assertions")
 			return
 		}
 
 		trialID := trialResp.Items[0].TrialID
-		scores, err := manageAgento11yExperimentsRead(ctx, ManageAgento11yExperimentsReadParams{
-			Operation:                 "list_trial_scores",
-			TrialID:                   trialID,
-			agento11yExperimentFields: agento11yExperimentFields{Limit: 10},
+		scores, err := agento11yEvalsRead(ctx, Agento11yEvalsReadParams{
+			Operation: "list_trial_scores",
+			TrialID:   trialID,
+			Limit:     10,
 		})
 		require.NoError(t, err, "Failed to list scores of trial %s", trialID)
 
@@ -472,10 +472,11 @@ func TestAgento11yCloudIntegration(t *testing.T) {
 		}
 	})
 
-	t.Run("get_report stays within its row limit", func(t *testing.T) {
-		listed, err := manageAgento11yExperimentsRead(ctx, ManageAgento11yExperimentsReadParams{
-			Operation:                 "list",
-			agento11yExperimentFields: agento11yExperimentFields{Status: "completed", Limit: 1},
+	t.Run("get_experiment_report stays within its row limit", func(t *testing.T) {
+		listed, err := agento11yEvalsRead(ctx, Agento11yEvalsReadParams{
+			Operation: "list_experiments",
+			Status:    "completed",
+			Limit:     1,
 		})
 		require.NoError(t, err, "Failed to list completed Agent Observability experiments")
 
@@ -486,28 +487,28 @@ func TestAgento11yCloudIntegration(t *testing.T) {
 		}
 
 		id := resp.Items[0].ExperimentID
-		result, err := manageAgento11yExperimentsRead(ctx, ManageAgento11yExperimentsReadParams{
-			Operation:                 "get_report",
-			ExperimentID:              id,
-			agento11yExperimentFields: agento11yExperimentFields{RowLimit: 5},
+		result, err := agento11yEvalsRead(ctx, Agento11yEvalsReadParams{
+			Operation:    "get_experiment_report",
+			ExperimentID: id,
+			RowLimit:     5,
 		})
 		require.NoError(t, err, "Failed to get the report of experiment %s", id)
 
 		report, ok := result.(*Agento11yCompactExperimentReport)
-		require.True(t, ok, "get_report should return *Agento11yCompactExperimentReport")
-		assert.LessOrEqual(t, len(report.Rows), 5, "get_report should respect the requested row limit")
+		require.True(t, ok, "get_experiment_report should return *Agento11yCompactExperimentReport")
+		assert.LessOrEqual(t, len(report.Rows), 5, "get_experiment_report should respect the requested row limit")
 		assert.Equal(t, len(report.Rows) < report.TotalRowCount, report.RowsTruncated,
 			"rows_truncated should say whether rows were dropped")
 	})
 
 	t.Run("list experiment facets", func(t *testing.T) {
-		result, err := manageAgento11yExperimentsRead(ctx, ManageAgento11yExperimentsReadParams{
-			Operation: "list_facets",
+		result, err := agento11yEvalsRead(ctx, Agento11yEvalsReadParams{
+			Operation: "list_experiment_facets",
 		})
 		require.NoError(t, err, "Failed to list Agent Observability experiment facets")
 
 		facets, ok := result.(*Agento11yExperimentFacets)
-		require.True(t, ok, "list_facets should return *Agento11yExperimentFacets")
+		require.True(t, ok, "list_experiment_facets should return *Agento11yExperimentFacets")
 		for _, suite := range facets.Suites {
 			assert.NotEmpty(t, suite, "a reported suite facet should not be blank")
 		}
@@ -516,9 +517,9 @@ func TestAgento11yCloudIntegration(t *testing.T) {
 	// Read-only on purpose: creating a test suite or publishing a version on a
 	// real stack changes what the next experiment replays.
 	t.Run("list test suites", func(t *testing.T) {
-		result, err := manageAgento11yTestSuitesRead(ctx, ManageAgento11yTestSuitesReadParams{
-			Operation:                "list_suites",
-			agento11yTestSuiteFields: agento11yTestSuiteFields{Limit: 10},
+		result, err := agento11yEvalsRead(ctx, Agento11yEvalsReadParams{
+			Operation: "list_suites",
+			Limit:     10,
 		})
 		require.NoError(t, err, "Failed to list Agent Observability test suites")
 
@@ -535,7 +536,7 @@ func TestAgento11yCloudIntegration(t *testing.T) {
 		}
 
 		id := resp.Items[0].SuiteID
-		detail, err := manageAgento11yTestSuitesRead(ctx, ManageAgento11yTestSuitesReadParams{
+		detail, err := agento11yEvalsRead(ctx, Agento11yEvalsReadParams{
 			Operation: "get_suite",
 			SuiteID:   id,
 		})
@@ -556,11 +557,11 @@ func TestAgento11yCloudIntegration(t *testing.T) {
 		}
 
 		version := suite.Versions[0].Version
-		cases, err := manageAgento11yTestSuitesRead(ctx, ManageAgento11yTestSuitesReadParams{
-			Operation:                "list_test_cases",
-			SuiteID:                  id,
-			Version:                  version,
-			agento11yTestSuiteFields: agento11yTestSuiteFields{Limit: 10},
+		cases, err := agento11yEvalsRead(ctx, Agento11yEvalsReadParams{
+			Operation: "list_test_cases",
+			SuiteID:   id,
+			Version:   version,
+			Limit:     10,
 		})
 		require.NoError(t, err, "Failed to list test cases of %s version %s", id, version)
 
@@ -573,7 +574,7 @@ func TestAgento11yCloudIntegration(t *testing.T) {
 		}
 
 		caseID := caseResp.Items[0].TestCaseID
-		caseDetail, err := manageAgento11yTestSuitesRead(ctx, ManageAgento11yTestSuitesReadParams{
+		caseDetail, err := agento11yEvalsRead(ctx, Agento11yEvalsReadParams{
 			Operation:  "get_test_case",
 			SuiteID:    id,
 			Version:    version,
@@ -588,9 +589,9 @@ func TestAgento11yCloudIntegration(t *testing.T) {
 	})
 
 	t.Run("list guards", func(t *testing.T) {
-		result, err := manageAgento11yEvalRulesRead(ctx, ManageAgento11yEvalRulesReadParams{
-			Operation:               "list_guards",
-			agento11yEvalRuleFields: agento11yEvalRuleFields{Limit: 10},
+		result, err := agento11yEvalsRead(ctx, Agento11yEvalsReadParams{
+			Operation: "list_guards",
+			Limit:     10,
 		})
 		require.NoError(t, err, "Failed to list Agent Observability guards")
 

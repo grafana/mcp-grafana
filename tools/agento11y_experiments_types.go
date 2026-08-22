@@ -1,9 +1,7 @@
 package tools
 
 import (
-	"errors"
 	"fmt"
-	"strings"
 	"time"
 )
 
@@ -295,27 +293,27 @@ type Agento11yCompactScore struct {
 }
 
 // agento11yExperimentFields are the filter and pagination parameters shared by
-// the read and read-write variants of agento11y_manage_experiments. The ID and
+// the read and write variants of agento11y_evals_read/agento11y_evals_write. The ID and
 // body parameters are declared on each variant separately, because their
 // guidance names the operations that use them and the read variant must not
 // advertise operations it rejects.
 type agento11yExperimentFields struct {
-	SuiteID   string `json:"suite_id,omitempty" jsonschema:"description=Test suite ID filter (for 'list')"`
-	Status    string `json:"status,omitempty" jsonschema:"enum=running,enum=completed,enum=failed,enum=canceled,description=Experiment status filter (for 'list'). A finished run is 'completed'; there is no 'succeeded' status."`
-	Source    string `json:"source,omitempty" jsonschema:"enum=collection,enum=external,description=Experiment origin filter: 'collection' for runs built from a saved collection\\, 'external' for runs reported by an SDK runner (for 'list' and 'list_facets')"`
-	CreatedBy string `json:"created_by,omitempty" jsonschema:"description=Owner filter\\, matched against the values 'list_facets' reports under owners (for 'list')"`
+	SuiteID   string `json:"suite_id,omitempty" jsonschema:"description=Test suite ID filter (for 'list_experiments')"`
+	Status    string `json:"status,omitempty" jsonschema:"enum=running,enum=completed,enum=failed,enum=canceled,description=Experiment status filter (for 'list_experiments'). A finished run is 'completed'; there is no 'succeeded' status."`
+	Source    string `json:"source,omitempty" jsonschema:"enum=collection,enum=external,description=Experiment origin filter: 'collection' for runs built from a saved collection\\, 'external' for runs reported by an SDK runner (for 'list_experiments' and 'list_experiment_facets')"`
+	CreatedBy string `json:"created_by,omitempty" jsonschema:"description=Owner filter\\, matched against the values 'list_experiment_facets' reports under owners (for 'list_experiments')"`
 	// Named tag, not tags, so it does not collide with the replacement tag list
-	// the read-write variant declares for 'update'. Repeating it is what the API
+	// the read-write variant declares for 'update_experiment'. Repeating it is what the API
 	// expects, and each value becomes its own tag= query parameter.
-	Tag           []string `json:"tag,omitempty" jsonschema:"description=Experiment tag filter (for 'list'). Several tags match an experiment carrying any of them\\, not all of them."`
-	From          string   `json:"from,omitempty" jsonschema:"description=Start of the created_at window in RFC3339 or relative format (e.g. now-7d)\\, for 'list' and 'list_facets'"`
-	To            string   `json:"to,omitempty" jsonschema:"description=End of the created_at window in RFC3339 or relative format (e.g. now)\\, for 'list' and 'list_facets'"`
-	CompletedFrom string   `json:"completed_from,omitempty" jsonschema:"description=Start of the completed_at window in RFC3339 or relative format (for 'list'). 'from' and 'to' filter created_at; this pair filters completed_at instead\\, so it drops runs that have not finished."`
-	CompletedTo   string   `json:"completed_to,omitempty" jsonschema:"description=End of the completed_at window in RFC3339 or relative format (for 'list')"`
-	Order         string   `json:"order,omitempty" jsonschema:"enum=created_at_desc,enum=completed_at_desc,description=Sort order for 'list'\\, newest first either way. Defaults to 'created_at_desc'. 'completed_at_desc' returns a single page and cannot be combined with a cursor."`
+	Tag           []string `json:"tag,omitempty" jsonschema:"description=Experiment tag filter (for 'list_experiments'). Several tags match an experiment carrying any of them\\, not all of them."`
+	From          string   `json:"from,omitempty" jsonschema:"description=Start of the created_at window in RFC3339 or relative format (e.g. now-7d)\\, for 'list_experiments' and 'list_experiment_facets'"`
+	To            string   `json:"to,omitempty" jsonschema:"description=End of the created_at window in RFC3339 or relative format (e.g. now)\\, for 'list_experiments' and 'list_experiment_facets'"`
+	CompletedFrom string   `json:"completed_from,omitempty" jsonschema:"description=Start of the completed_at window in RFC3339 or relative format (for 'list_experiments'). 'from' and 'to' filter created_at; this pair filters completed_at instead\\, so it drops runs that have not finished."`
+	CompletedTo   string   `json:"completed_to,omitempty" jsonschema:"description=End of the completed_at window in RFC3339 or relative format (for 'list_experiments')"`
+	Order         string   `json:"order,omitempty" jsonschema:"enum=created_at_desc,enum=completed_at_desc,description=Sort order for 'list_experiments'\\, newest first either way. Defaults to 'created_at_desc'. 'completed_at_desc' returns a single page and cannot be combined with a cursor."`
 	Limit         int      `json:"limit,omitempty" jsonschema:"description=Maximum number of results per page (default 50\\, max 500) (for the paginated list operations)"`
 	Cursor        string   `json:"cursor,omitempty" jsonschema:"description=Pagination cursor from a previous response's next_cursor\\, echoed back exactly and never constructed or incremented. Repeat the same filters as the first call\\, using absolute RFC3339 times."`
-	RowLimit      int      `json:"row_limit,omitempty" jsonschema:"description=Maximum number of test case rows 'get_report' returns (default 50\\, max 500). The report route is not paginated\\, so this trims the returned rows and sets rows_truncated; it does not reduce what the plugin sends."`
+	RowLimit      int      `json:"row_limit,omitempty" jsonschema:"description=Maximum number of test case rows 'get_experiment_report' returns (default 50\\, max 500). The report route is not paginated\\, so this trims the returned rows and sets rows_truncated; it does not reduce what the plugin sends."`
 }
 
 // agento11yExperimentReadRequest is the input of an experiment read operation,
@@ -328,22 +326,22 @@ type agento11yExperimentReadRequest struct {
 }
 
 // validateOperation validates the read operations of
-// agento11y_manage_experiments. Operations it does not handle return
+// agento11y_evals_read/agento11y_evals_write. Operations it does not handle return
 // errAgento11yUnknownOperation.
 func (r agento11yExperimentReadRequest) validateOperation(operation string) error {
 	switch operation {
-	case "list":
+	case "list_experiments":
 		if err := r.validateListFilters(); err != nil {
 			return err
 		}
-	case "list_facets":
+	case "list_experiment_facets":
 		if err := r.rejectFacetFilters(); err != nil {
 			return err
 		}
 		if err := validateAgento11yExperimentSource(r.Source); err != nil {
 			return err
 		}
-	case "get", "get_report", "list_trials", "list_scores":
+	case "get_experiment", "get_experiment_report", "list_experiment_trials", "list_experiment_scores":
 		if r.ExperimentID == "" {
 			return fmt.Errorf("experiment_id is required for %q operation", operation)
 		}
@@ -358,16 +356,16 @@ func (r agento11yExperimentReadRequest) validateOperation(operation string) erro
 }
 
 // rejectUnusedFilters refuses a filter on an operation whose route does not
-// send it. The filters are declared once for every operation, so 'list_trials'
+// send it. The filters are declared once for every operation, so 'list_experiment_trials'
 // with status reads like a trial filter while the route answers with every
 // trial of the run. A trial carries the experiment status names, which makes
 // that superset look like the narrowed answer, the same failure
 // rejectFacetFilters guards against. Pagination is left out: limit and cursor
 // are either read by the route or harmless on one that returns a single object.
 func (r agento11yExperimentReadRequest) rejectUnusedFilters(operation string) error {
-	listOnly := []string{"list"}
+	listOnly := []string{"list_experiments"}
 	// The facets route narrows its own answer by source and the created_at window.
-	listAndFacets := []string{"list", "list_facets"}
+	listAndFacets := []string{"list_experiments", "list_experiment_facets"}
 
 	field, readBy := agento11yFirstUnusedParam(operation, []agento11yParamUse{
 		{name: "suite_id", set: r.SuiteID != "", operations: listOnly},
@@ -380,7 +378,7 @@ func (r agento11yExperimentReadRequest) rejectUnusedFilters(operation string) er
 		{name: "source", set: r.Source != "", operations: listAndFacets},
 		{name: "from", set: r.From != "", operations: listAndFacets},
 		{name: "to", set: r.To != "", operations: listAndFacets},
-		{name: "row_limit", set: r.RowLimit != 0, operations: []string{"get_report"}},
+		{name: "row_limit", set: r.RowLimit != 0, operations: []string{"get_experiment_report"}},
 	})
 	if field == "" {
 		return nil
@@ -450,7 +448,7 @@ func (r agento11yExperimentReadRequest) rejectFacetFilters() error {
 		{"completed_to", r.CompletedTo != ""},
 	} {
 		if ignored.set {
-			return fmt.Errorf("%s is not read by 'list_facets', which reports the options across every experiment in the tenant; only source, from, and to narrow it", ignored.name)
+			return fmt.Errorf("%s is not read by 'list_experiment_facets', which reports the options across every experiment in the tenant; only source, from, and to narrow it", ignored.name)
 		}
 	}
 	return nil
@@ -492,135 +490,4 @@ func validateAgento11yExperimentSource(source string) error {
 	}
 }
 
-const agento11yExperimentReadOperations = "list, get, get_report, list_trials, list_scores, get_trial, list_trial_scores, list_trial_artifacts, list_facets"
-
-const agento11yExperimentAllOperations = agento11yExperimentReadOperations + ", update, cancel"
-
-// ManageAgento11yExperimentsReadParams is the param struct for the read-only
-// version of agento11y_manage_experiments.
-type ManageAgento11yExperimentsReadParams struct {
-	agento11yExperimentFields
-
-	Operation    string `json:"operation" jsonschema:"required,enum=list,enum=get,enum=get_report,enum=list_trials,enum=list_scores,enum=get_trial,enum=list_trial_scores,enum=list_trial_artifacts,enum=list_facets,description=The operation to perform: 'list' for the experiments in this tenant\\, 'get' for one experiment with its headline result\\, 'get_report' for the per-test-case breakdown\\, 'list_trials' for one experiment's trials page by page\\, 'list_scores' for every score in one experiment\\, 'get_trial' for one trial in full\\, 'list_trial_scores' for one trial's scores with their explanations\\, 'list_trial_artifacts' for one trial's artifact metadata\\, 'list_facets' for the distinct suites\\, owners\\, and tags to filter by"`
-	ExperimentID string `json:"experiment_id,omitempty" jsonschema:"description=Experiment ID from 'list' (required for 'get'\\, 'get_report'\\, 'list_trials'\\, and 'list_scores')"`
-	TrialID      string `json:"trial_id,omitempty" jsonschema:"description=Trial ID from 'list_trials' or 'get_report' (required for 'get_trial'\\, 'list_trial_scores'\\, and 'list_trial_artifacts')"`
-}
-
-func (p ManageAgento11yExperimentsReadParams) readRequest() agento11yExperimentReadRequest {
-	return agento11yExperimentReadRequest{
-		agento11yExperimentFields: p.agento11yExperimentFields,
-		ExperimentID:              p.ExperimentID,
-		TrialID:                   p.TrialID,
-	}
-}
-
-func (p ManageAgento11yExperimentsReadParams) validate() error {
-	err := p.readRequest().validateOperation(p.Operation)
-	if errors.Is(err, errAgento11yUnknownOperation) {
-		return fmt.Errorf("unknown operation %q, must be one of: %s", p.Operation, agento11yExperimentReadOperations)
-	}
-	return err
-}
-
-// ManageAgento11yExperimentsReadWriteParams is the param struct for the
-// read-write version of agento11y_manage_experiments.
-type ManageAgento11yExperimentsReadWriteParams struct {
-	agento11yExperimentFields
-
-	Operation    string `json:"operation" jsonschema:"required,enum=list,enum=get,enum=get_report,enum=list_trials,enum=list_scores,enum=get_trial,enum=list_trial_scores,enum=list_trial_artifacts,enum=list_facets,enum=update,enum=cancel,description=The operation to perform. Reads: 'list'\\, 'get'\\, 'get_report'\\, 'list_trials'\\, 'list_scores'\\, 'get_trial'\\, 'list_trial_scores'\\, 'list_trial_artifacts'\\, 'list_facets'. Writes: 'update' (PATCH the name\\, description\\, tags\\, or metadata of an experiment)\\, 'cancel' (stop a running experiment)"`
-	ExperimentID string `json:"experiment_id,omitempty" jsonschema:"description=Experiment ID from 'list'. Required for 'get'\\, 'get_report'\\, 'list_trials'\\, 'list_scores'\\, 'update'\\, and 'cancel'."`
-	TrialID      string `json:"trial_id,omitempty" jsonschema:"description=Trial ID from 'list_trials' or 'get_report' (required for 'get_trial'\\, 'list_trial_scores'\\, and 'list_trial_artifacts')"`
-
-	Name        *string        `json:"name,omitempty" jsonschema:"description=New experiment name (for 'update'). An omitted field is left unchanged\\, and a blank name is rejected. A finished experiment accepts only description and tags\\, so renaming one returns 409."`
-	Description *string        `json:"description,omitempty" jsonschema:"description=New experiment description (for 'update'). An omitted field is left unchanged and an explicitly empty string clears it."`
-	Tags        *[]string      `json:"tags,omitempty" jsonschema:"description=Replacement tag list for 'update'. It overwrites the whole list rather than adding to it\\, so run 'get' first and send the existing tags plus the new ones; an explicitly empty array clears them. The tag filter for 'list' is the separate 'tag' parameter."`
-	Metadata    map[string]any `json:"metadata,omitempty" jsonschema:"description=Replacement metadata object (for 'update'). A finished experiment rejects it with 409."`
-}
-
-func (p ManageAgento11yExperimentsReadWriteParams) readRequest() agento11yExperimentReadRequest {
-	return agento11yExperimentReadRequest{
-		agento11yExperimentFields: p.agento11yExperimentFields,
-		ExperimentID:              p.ExperimentID,
-		TrialID:                   p.TrialID,
-	}
-}
-
-func (p ManageAgento11yExperimentsReadWriteParams) validate() error {
-	err := p.readRequest().validateOperation(p.Operation)
-	if !errors.Is(err, errAgento11yUnknownOperation) {
-		if err != nil {
-			return err
-		}
-		return p.rejectUpdateFields()
-	}
-
-	switch p.Operation {
-	case "update":
-		if p.ExperimentID == "" {
-			return fmt.Errorf("experiment_id is required for 'update' operation")
-		}
-		if p.Name == nil && p.Description == nil && p.Tags == nil && p.Metadata == nil {
-			return fmt.Errorf("at least one of name, description, tags, or metadata is required for 'update' operation (an omitted field is left unchanged)")
-		}
-		if p.Name != nil && strings.TrimSpace(*p.Name) == "" {
-			return fmt.Errorf("name must not be blank for 'update' operation (omit it to leave the name unchanged)")
-		}
-		return p.rejectUnusedTrialID()
-	case "cancel":
-		if p.ExperimentID == "" {
-			return fmt.Errorf("experiment_id is required for 'cancel' operation")
-		}
-		// The cancel route sends no body, so a field meant for 'update' is
-		// dropped on the way out while the experiment still stops.
-		if field := p.updateOnlyField(); field != "" {
-			return fmt.Errorf("%s is not accepted by 'cancel' operation, which would drop it: it is only read by 'update'", field)
-		}
-		return p.rejectUnusedTrialID()
-	default:
-		return fmt.Errorf("unknown operation %q, must be one of: %s", p.Operation, agento11yExperimentAllOperations)
-	}
-}
-
-// rejectUpdateFields refuses an 'update' body field on a read operation. This
-// variant declares the fields for 'update', so a read operation would otherwise
-// accept and drop them. 'tags' is the sharp one: it reads like the 'tag' filter,
-// so 'list' or 'list_facets' with tags would answer across the whole tenant.
-func (p ManageAgento11yExperimentsReadWriteParams) rejectUpdateFields() error {
-	field := p.updateOnlyField()
-	if field == "" {
-		return nil
-	}
-	hint := ""
-	if field == "tags" {
-		hint = "; the tag filter for the read operations is the separate 'tag' parameter"
-	}
-	return fmt.Errorf("%s is only read by the 'update' operation, not by %q%s", field, p.Operation, hint)
-}
-
-// rejectUnusedTrialID refuses a trial ID on a write operation. Both write routes
-// address an experiment, so a trial ID is dropped: 'cancel' with one reads as
-// trial-scoped and stops every trial of the run instead, and still reports
-// success.
-func (p ManageAgento11yExperimentsReadWriteParams) rejectUnusedTrialID() error {
-	if p.TrialID == "" {
-		return nil
-	}
-	return agento11yUnusedParamError("trial_id", p.Operation, []string{"get_trial", "list_trial_scores", "list_trial_artifacts"})
-}
-
-// updateOnlyField reports the first body field that is set and that only the
-// 'update' route sends.
-func (p ManageAgento11yExperimentsReadWriteParams) updateOnlyField() string {
-	switch {
-	case p.Name != nil:
-		return "name"
-	case p.Description != nil:
-		return "description"
-	case p.Tags != nil:
-		return "tags"
-	case p.Metadata != nil:
-		return "metadata"
-	default:
-		return ""
-	}
-}
+const agento11yExperimentReadOperations = "list_experiments, get_experiment, get_experiment_report, list_experiment_trials, list_experiment_scores, get_trial, list_trial_scores, list_trial_artifacts, list_experiment_facets"

@@ -2,7 +2,6 @@ package tools
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -55,7 +54,7 @@ func (c *Client) getAgento11yTestCase(ctx context.Context, suiteID, version, tes
 }
 
 // agento11yTestSuiteRead runs the test suite read operations shared by the read
-// and read-write variants of agento11y_manage_test_suites. Operations it does
+// and write variants of agento11y_evals_read/agento11y_evals_write. Operations it does
 // not handle return errAgento11yUnknownOperation.
 func (c *Client) agento11yTestSuiteRead(ctx context.Context, operation string, r agento11yTestSuiteReadRequest) (any, error) {
 	switch operation {
@@ -72,27 +71,10 @@ func (c *Client) agento11yTestSuiteRead(ctx context.Context, operation string, r
 	}
 }
 
-func manageAgento11yTestSuitesRead(ctx context.Context, args ManageAgento11yTestSuitesReadParams) (any, error) {
-	if err := args.validate(); err != nil {
-		return nil, fmt.Errorf("agento11y_manage_test_suites: %w", err)
-	}
-
-	client, err := newAgento11yClient(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Agent Observability client: %w", err)
-	}
-
-	result, err := client.agento11yTestSuiteRead(ctx, args.Operation, args.readRequest())
-	if errors.Is(err, errAgento11yUnknownOperation) {
-		return nil, fmt.Errorf("agento11y_manage_test_suites: unknown operation %q", args.Operation)
-	}
-	return result, err
-}
-
 // createAgento11yTestSuite creates a suite. The API rejects a body field it
 // does not know, so an unset parameter is left out instead of sent as a zero
 // value. A new suite has no version: create_draft_version opens the first one.
-func (c *Client) createAgento11yTestSuite(ctx context.Context, p ManageAgento11yTestSuitesReadWriteParams) (*Agento11yTestSuite, error) {
+func (c *Client) createAgento11yTestSuite(ctx context.Context, p agento11yTestSuiteWriteRequest) (*Agento11yTestSuite, error) {
 	body := map[string]any{}
 	if p.Name != nil {
 		body["name"] = *p.Name
@@ -118,7 +100,7 @@ func (c *Client) createAgento11yTestSuite(ctx context.Context, p ManageAgento11y
 // because the API reads them as optional pointers: an absent field is left
 // unchanged while an explicitly empty description or tag list clears it. The
 // response carries the version history, like get_suite.
-func (c *Client) updateAgento11yTestSuite(ctx context.Context, p ManageAgento11yTestSuitesReadWriteParams) (*Agento11yTestSuite, error) {
+func (c *Client) updateAgento11yTestSuite(ctx context.Context, p agento11yTestSuiteWriteRequest) (*Agento11yTestSuite, error) {
 	body := map[string]any{}
 	if p.Name != nil {
 		body["name"] = *p.Name
@@ -141,7 +123,7 @@ func (c *Client) updateAgento11yTestSuite(ctx context.Context, p ManageAgento11y
 // string is assigned upstream, so it is not sent. By default every test case of
 // the latest published version is copied into the new one; empty_draft starts
 // from nothing instead.
-func (c *Client) createAgento11yTestSuiteVersion(ctx context.Context, p ManageAgento11yTestSuitesReadWriteParams) (*Agento11yTestSuiteVersion, error) {
+func (c *Client) createAgento11yTestSuiteVersion(ctx context.Context, p agento11yTestSuiteWriteRequest) (*Agento11yTestSuiteVersion, error) {
 	body := map[string]any{"empty_draft": p.EmptyDraft}
 	if p.Changelog != "" {
 		body["changelog"] = p.Changelog
@@ -170,7 +152,7 @@ func (c *Client) publishAgento11yTestSuiteVersion(ctx context.Context, suiteID, 
 // upsertAgento11yTestCase writes a whole test case into a draft version. The
 // route replaces the stored case rather than merging into it, so a field left
 // out here is cleared on an existing case.
-func (c *Client) upsertAgento11yTestCase(ctx context.Context, p ManageAgento11yTestSuitesReadWriteParams) (*Agento11yTestCase, error) {
+func (c *Client) upsertAgento11yTestCase(ctx context.Context, p agento11yTestSuiteWriteRequest) (*Agento11yTestCase, error) {
 	body := map[string]any{"input": p.Input}
 	if p.TestCaseID != "" {
 		body["test_case_id"] = p.TestCaseID
@@ -212,9 +194,9 @@ func (c *Client) deleteAgento11yTestCase(ctx context.Context, suiteID, version, 
 }
 
 // agento11yTestSuiteWrite runs the write operations of
-// agento11y_manage_test_suites. Operations it does not handle return
+// agento11y_evals_read/agento11y_evals_write. Operations it does not handle return
 // errAgento11yUnknownOperation.
-func (c *Client) agento11yTestSuiteWrite(ctx context.Context, operation string, p ManageAgento11yTestSuitesReadWriteParams) (any, error) {
+func (c *Client) agento11yTestSuiteWrite(ctx context.Context, operation string, p agento11yTestSuiteWriteRequest) (any, error) {
 	switch operation {
 	case "create_suite":
 		return c.createAgento11yTestSuite(ctx, p)
@@ -234,26 +216,4 @@ func (c *Client) agento11yTestSuiteWrite(ctx context.Context, operation string, 
 	default:
 		return nil, errAgento11yUnknownOperation
 	}
-}
-
-func manageAgento11yTestSuitesReadWrite(ctx context.Context, args ManageAgento11yTestSuitesReadWriteParams) (any, error) {
-	if err := args.validate(); err != nil {
-		return nil, fmt.Errorf("agento11y_manage_test_suites: %w", err)
-	}
-
-	client, err := newAgento11yClient(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Agent Observability client: %w", err)
-	}
-
-	result, err := client.agento11yTestSuiteRead(ctx, args.Operation, args.readRequest())
-	if !errors.Is(err, errAgento11yUnknownOperation) {
-		return result, err
-	}
-
-	result, err = client.agento11yTestSuiteWrite(ctx, args.Operation, args)
-	if errors.Is(err, errAgento11yUnknownOperation) {
-		return nil, fmt.Errorf("agento11y_manage_test_suites: unknown operation %q", args.Operation)
-	}
-	return result, err
 }

@@ -2,7 +2,6 @@ package tools
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -89,7 +88,7 @@ func (c *Client) listAgento11yCollectionMembers(ctx context.Context, collectionI
 
 // agento11yEvalCollectionRead runs the saved conversation and collection read
 // operations shared by the read and read-write variants of
-// agento11y_manage_eval_collections. Operations it does not handle return
+// agento11y_evals_read/agento11y_evals_write. Operations it does not handle return
 // errAgento11yUnknownOperation.
 func (c *Client) agento11yEvalCollectionRead(ctx context.Context, operation string, r agento11yEvalCollectionReadRequest) (any, error) {
 	switch operation {
@@ -108,23 +107,6 @@ func (c *Client) agento11yEvalCollectionRead(ctx context.Context, operation stri
 	default:
 		return nil, errAgento11yUnknownOperation
 	}
-}
-
-func manageAgento11yEvalCollectionsRead(ctx context.Context, args ManageAgento11yEvalCollectionsReadParams) (any, error) {
-	if err := args.validate(); err != nil {
-		return nil, fmt.Errorf("agento11y_manage_eval_collections: %w", err)
-	}
-
-	client, err := newAgento11yClient(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Agent Observability client: %w", err)
-	}
-
-	result, err := client.agento11yEvalCollectionRead(ctx, args.Operation, args.readRequest())
-	if errors.Is(err, errAgento11yUnknownOperation) {
-		return nil, fmt.Errorf("agento11y_manage_eval_collections: unknown operation %q", args.Operation)
-	}
-	return result, err
 }
 
 // saveAgento11yConversation bookmarks a live conversation. An omitted saved_id
@@ -220,10 +202,23 @@ func (c *Client) removeAgento11yCollectionMember(ctx context.Context, collection
 	return err
 }
 
+// agento11yEvalCollectionWriteRequest is the input of a saved conversation or
+// collection write operation, assembled by agento11y_evals_write from its flat
+// params.
+type agento11yEvalCollectionWriteRequest struct {
+	SavedID        string
+	CollectionID   string
+	ConversationID string
+	Name           string
+	Description    *string
+	Tags           map[string]string
+	SavedIDs       []string
+}
+
 // agento11yEvalCollectionWrite runs the write operations of
-// agento11y_manage_eval_collections. Operations it does not handle return
-// errAgento11yUnknownOperation.
-func (c *Client) agento11yEvalCollectionWrite(ctx context.Context, operation string, p ManageAgento11yEvalCollectionsReadWriteParams) (any, error) {
+// agento11y_evals_write's saved conversation and collection sub-domain.
+// Operations it does not handle return errAgento11yUnknownOperation.
+func (c *Client) agento11yEvalCollectionWrite(ctx context.Context, operation string, p agento11yEvalCollectionWriteRequest) (any, error) {
 	switch operation {
 	case "save_conversation":
 		return c.saveAgento11yConversation(ctx, p.SavedID, p.ConversationID, p.Name, p.Tags)
@@ -256,26 +251,4 @@ func (c *Client) agento11yEvalCollectionWrite(ctx context.Context, operation str
 	default:
 		return nil, errAgento11yUnknownOperation
 	}
-}
-
-func manageAgento11yEvalCollectionsReadWrite(ctx context.Context, args ManageAgento11yEvalCollectionsReadWriteParams) (any, error) {
-	if err := args.validate(); err != nil {
-		return nil, fmt.Errorf("agento11y_manage_eval_collections: %w", err)
-	}
-
-	client, err := newAgento11yClient(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Agent Observability client: %w", err)
-	}
-
-	result, err := client.agento11yEvalCollectionRead(ctx, args.Operation, args.readRequest())
-	if !errors.Is(err, errAgento11yUnknownOperation) {
-		return result, err
-	}
-
-	result, err = client.agento11yEvalCollectionWrite(ctx, args.Operation, args)
-	if errors.Is(err, errAgento11yUnknownOperation) {
-		return nil, fmt.Errorf("agento11y_manage_eval_collections: unknown operation %q", args.Operation)
-	}
-	return result, err
 }
