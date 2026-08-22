@@ -206,6 +206,28 @@ func apiKeyFromHeaders(req *http.Request) string {
 	return req.Header.Get(grafanaAPIKeyHeader)
 }
 
+type requestScopedAuthContextKey struct{}
+
+func requestHasGrafanaCredentials(req *http.Request) bool {
+	if apiKeyFromHeaders(req) != "" || req.Header.Get("Authorization") != "" {
+		return true
+	}
+	username, password, _ := req.BasicAuth()
+	return username != "" || password != ""
+}
+
+func markRequestScopedAuth(ctx context.Context, req *http.Request) context.Context {
+	if !requestHasGrafanaCredentials(req) {
+		return ctx
+	}
+	return context.WithValue(ctx, requestScopedAuthContextKey{}, true)
+}
+
+func requestScopedAuthIsProtected(ctx context.Context) bool {
+	protected, _ := ctx.Value(requestScopedAuthContextKey{}).(bool)
+	return protected
+}
+
 // grafanaConfigKey is the context key for Grafana configuration.
 type grafanaConfigKey struct{}
 
@@ -572,6 +594,9 @@ func (t *ExtraHeadersRoundTripper) RoundTrip(req *http.Request) (*http.Response,
 	if len(headers) > 0 {
 		propagated := propagatedHeaderFields()
 		for k, v := range headers {
+			if tokenFileAuthIsProtected(clonedReq.Context()) && isTokenFileCredentialHeader(textproto.CanonicalMIMEHeaderKey(k)) {
+				continue
+			}
 			// Never overwrite a trace-context header the OTel propagator has
 			// already injected for this request. A traceparent forwarded from
 			// the incoming request (GRAFANA_FORWARD_HEADERS) names the caller's
@@ -647,9 +672,9 @@ func (rt *AuthRoundTripper) RoundTrip(req *http.Request) (*http.Response, error)
 	if accessToken != "" && idToken != "" {
 		clonedReq.Header.Set("X-Access-Token", accessToken)
 		clonedReq.Header.Set("X-Grafana-Id", idToken)
-	} else if apiKey != "" {
+	} else if apiKey != "" && !tokenFileAuthIsProtected(clonedReq.Context()) {
 		clonedReq.Header.Set("Authorization", "Bearer "+apiKey)
-	} else if basicAuth != nil {
+	} else if basicAuth != nil && !tokenFileAuthIsProtected(clonedReq.Context()) {
 		password, _ := basicAuth.Password()
 		clonedReq.SetBasicAuth(basicAuth.Username(), password)
 	}
@@ -779,14 +804,32 @@ func BuildTransport(cfg *GrafanaConfig, base http.RoundTripper, opts ...Transpor
 
 	// TLS
 	if cfg.TLSConfig != nil {
-		t, ok := base.(*http.Transport)
+		tlsBase := base
+		var restoreTokenFile func(http.RoundTripper) http.RoundTripper
+		if tokenFileTransport, ok := base.(*tokenFileRoundTripper); ok {
+			if _, ok := tokenFileTransport.underlying.(*http.Transport); !ok {
+				return nil, fmt.Errorf("cannot apply TLS configuration to token-file transport around %T", tokenFileTransport.underlying)
+			}
+			// Apply TLS to the network transport without discarding the
+			// token-file layer that reloads credentials for every request.
+			tlsBase = tokenFileTransport.underlying
+			restoreTokenFile = func(transport http.RoundTripper) http.RoundTripper {
+				wrapped := *tokenFileTransport
+				wrapped.underlying = transport
+				return &wrapped
+			}
+		}
+		t, ok := tlsBase.(*http.Transport)
 		if !ok {
-			t = http.DefaultTransport.(*http.Transport).Clone()
+			return nil, fmt.Errorf("cannot apply TLS configuration to non-*http.Transport base %T", tlsBase)
 		}
 		var err error
 		transport, err = cfg.TLSConfig.HTTPTransport(t)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create TLS transport: %w", err)
+		}
+		if restoreTokenFile != nil {
+			transport = restoreTokenFile(transport)
 		}
 	}
 
@@ -914,7 +957,7 @@ var ExtractGrafanaInfoFromHeaders httpContextFunc = func(ctx context.Context, re
 	config.OrgID = orgID
 
 	config.ExtraHeaders = mergeHeaders(extraHeadersFromEnv(logger), forwardedHeadersFromRequest(req))
-	return WithGrafanaConfig(ctx, config)
+	return WithGrafanaConfig(markRequestScopedAuth(ctx, req), config)
 }
 
 // WithOnBehalfOfAuth adds the Grafana access token and user token to the Grafana config.
@@ -1243,7 +1286,15 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 		cfg.Schemes = []string{"http"}
 	}
 
-	if apiKey != "" {
+	tokenFile := serviceAccountTokenFileFromEnv()
+	// A file configured for stdio remains authoritative even when the
+	// deprecated GRAFANA_API_KEY fallback is also present. HTTP requests that
+	// supplied credentials in their headers are explicitly request-scoped and
+	// must not be converted into file-rotation clients, even if the values
+	// happen to match the file at construction time.
+	tokenFileRotation := tokenFile != "" && !requestScopedAuthIsProtected(ctx) &&
+		(tokenFileMatchesAPIKey(tokenFile, apiKey) || os.Getenv(grafanaAPIEnvVar) != "")
+	if apiKey != "" && !tokenFileRotation {
 		cfg.APIKey = apiKey
 	}
 
@@ -1346,7 +1397,7 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 					if err != nil {
 						panic(fmt.Errorf("failed to build transport: %w", err))
 					}
-					if tokenFile := serviceAccountTokenFileFromEnv(); tokenFile != "" && tokenFileMatchesAPIKey(tokenFile, apiKey) {
+					if tokenFileRotation {
 						wrapped = &tokenFileRoundTripper{
 							path:          tokenFile,
 							fallbackToken: apiKey,
@@ -1407,6 +1458,7 @@ var ExtractGrafanaClientFromHeaders httpContextFunc = func(ctx context.Context, 
 	u, apiKey, basicAuth, _ := extractKeyGrafanaInfoFromReq(req, logger)
 	logger.Debug("Creating Grafana client", "url", u, "api_key_set", apiKey != "", "basic_auth_set", basicAuth != nil)
 
+	ctx = markRequestScopedAuth(ctx, req)
 	grafanaClient := NewGrafanaClient(ctx, u, apiKey, basicAuth)
 	return WithGrafanaClient(ctx, grafanaClient)
 }
