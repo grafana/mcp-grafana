@@ -355,7 +355,17 @@ func (sm *SessionManager) GetProxiedClient(ctx context.Context, datasourceType, 
 	tm := sm.toolManager
 	sm.mutex.RUnlock()
 
-	if set == nil || tm == nil {
+	if tm == nil {
+		// Distinct from the "no datasources discovered" case below: this means
+		// the SessionManager was never given a ToolManager reference (a caller
+		// wiring bug — see SetToolManager), not that discovery came up empty.
+		// Every proxied tool call would fail with this until the wiring is
+		// fixed, regardless of how well discovery/registration went, so it's
+		// worth its own message rather than looking like a permissions or
+		// discovery problem.
+		return nil, nil, fmt.Errorf("session manager has no tool manager configured (internal wiring error: SessionManager.SetToolManager was never called)")
+	}
+	if set == nil {
 		return nil, nil, fmt.Errorf("datasource '%s' not found. No %s datasources with MCP support are configured", datasourceUID, datasourceType)
 	}
 

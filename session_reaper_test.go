@@ -81,7 +81,6 @@ func TestSessionManager_ReaperCleansUpProxiedClients(t *testing.T) {
 			toolToDatasources: map[string][]string{},
 		}, nil
 	}
-	sm.SetToolManager(tm)
 
 	session := &testClientSession{id: "cleanup-session"}
 	ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{URL: "http://grafana", APIKey: "secret"})
