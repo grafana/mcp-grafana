@@ -504,7 +504,7 @@ func scoreLabel(d LabelDescriptor) LabelVerdict {
 	case bandUnknown:
 		v.Verdict = "review"
 		v.Confidence = "low"
-		v.Reasons = append(v.Reasons, "Cardinality unknown — run get_loki_label_cardinality on this label.")
+		v.Reasons = append(v.Reasons, "Cardinality unknown — run analyze_loki_labels on this label.")
 	}
 
 	// Dynamic label warning: extracted fields must stay tightly bounded.
