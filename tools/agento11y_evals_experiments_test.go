@@ -4,6 +4,7 @@
 package tools
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"reflect"
@@ -18,14 +19,14 @@ import (
 func TestAgento11yManageExperimentsRead(t *testing.T) {
 	testCases := []struct {
 		name        string
-		params      ManageAgento11yExperimentsReadParams
+		params      Agento11yEvalsReadParams
 		handler     func(t *testing.T, w http.ResponseWriter, r *http.Request) // nil: server must not be called
 		wantErr     string
 		checkResult func(t *testing.T, result any)
 	}{
 		{
 			name:   "list sends the default limit and no filters",
-			params: ManageAgento11yExperimentsReadParams{Operation: "list"},
+			params: Agento11yEvalsReadParams{Operation: "list_experiments"},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				require.Equal(t, http.MethodGet, r.Method)
 				require.Equal(t, "/api/plugins/grafana-agento11y-app/resources/eval/experiments", r.URL.Path)
@@ -77,21 +78,19 @@ func TestAgento11yManageExperimentsRead(t *testing.T) {
 		},
 		{
 			name: "list keeps every tag as its own query parameter",
-			params: ManageAgento11yExperimentsReadParams{
-				Operation: "list",
-				agento11yExperimentFields: agento11yExperimentFields{
-					SuiteID:   "suite-1",
-					Status:    "completed",
-					Source:    "external",
-					CreatedBy: "runner@grafana.com",
-					// The empty value must be dropped rather than sent, because an
-					// empty tag= matches nothing upstream.
-					Tag:    []string{"critical", "", "nightly"},
-					From:   "2026-01-01T00:00:00Z",
-					To:     "2026-01-08T00:00:00Z",
-					Limit:  25,
-					Cursor: "42",
-				},
+			params: Agento11yEvalsReadParams{
+				Operation:        "list_experiments",
+				SuiteID:          "suite-1",
+				Status:           "completed",
+				ExperimentSource: "external",
+				CreatedBy:        "runner@grafana.com",
+				// The empty value must be dropped rather than sent, because an
+				// empty tag= matches nothing upstream.
+				Tag:    []string{"critical", "", "nightly"},
+				From:   "2026-01-01T00:00:00Z",
+				To:     "2026-01-08T00:00:00Z",
+				Limit:  25,
+				Cursor: "42",
 			},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				query := r.URL.Query()
@@ -117,13 +116,11 @@ func TestAgento11yManageExperimentsRead(t *testing.T) {
 		},
 		{
 			name: "list forwards a completed_at window and its order",
-			params: ManageAgento11yExperimentsReadParams{
-				Operation: "list",
-				agento11yExperimentFields: agento11yExperimentFields{
-					Order:         "completed_at_desc",
-					CompletedFrom: "2026-01-01T00:00:00Z",
-					CompletedTo:   "2026-01-08T00:00:00Z",
-				},
+			params: Agento11yEvalsReadParams{
+				Operation:     "list_experiments",
+				Order:         "completed_at_desc",
+				CompletedFrom: "2026-01-01T00:00:00Z",
+				CompletedTo:   "2026-01-08T00:00:00Z",
 			},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				query := r.URL.Query()
@@ -136,7 +133,7 @@ func TestAgento11yManageExperimentsRead(t *testing.T) {
 		},
 		{
 			name:   "get escapes the experiment id",
-			params: ManageAgento11yExperimentsReadParams{Operation: "get", ExperimentID: "exp/1 2"},
+			params: Agento11yEvalsReadParams{Operation: "get_experiment", ExperimentID: "exp/1 2"},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				require.Equal(t, http.MethodGet, r.Method)
 				require.Equal(t, "/api/plugins/grafana-agento11y-app/resources/eval/experiments/exp/1 2", r.URL.Path)
@@ -152,7 +149,7 @@ func TestAgento11yManageExperimentsRead(t *testing.T) {
 		},
 		{
 			name:   "list_trials paginates the experiment's trials",
-			params: ManageAgento11yExperimentsReadParams{Operation: "list_trials", ExperimentID: "exp-1", agento11yExperimentFields: agento11yExperimentFields{Limit: 10, Cursor: "7"}},
+			params: Agento11yEvalsReadParams{Operation: "list_experiment_trials", ExperimentID: "exp-1", Limit: 10, Cursor: "7"},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				require.Equal(t, "/api/plugins/grafana-agento11y-app/resources/eval/experiments/exp-1/trials", r.URL.Path)
 				require.Equal(t, "10", r.URL.Query().Get("limit"))
@@ -174,7 +171,7 @@ func TestAgento11yManageExperimentsRead(t *testing.T) {
 		},
 		{
 			name:   "list_scores reads the experiment's scores",
-			params: ManageAgento11yExperimentsReadParams{Operation: "list_scores", ExperimentID: "exp-1"},
+			params: Agento11yEvalsReadParams{Operation: "list_experiment_scores", ExperimentID: "exp-1"},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				require.Equal(t, "/api/plugins/grafana-agento11y-app/resources/eval/experiments/exp-1/scores", r.URL.Path)
 
@@ -194,7 +191,7 @@ func TestAgento11yManageExperimentsRead(t *testing.T) {
 		},
 		{
 			name:   "get_trial reads the top-level trial route",
-			params: ManageAgento11yExperimentsReadParams{Operation: "get_trial", TrialID: "trial/1"},
+			params: Agento11yEvalsReadParams{Operation: "get_trial", TrialID: "trial/1"},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				require.Equal(t, "/api/plugins/grafana-agento11y-app/resources/eval/test-case-trials/trial%2F1", r.URL.EscapedPath())
 
@@ -213,7 +210,7 @@ func TestAgento11yManageExperimentsRead(t *testing.T) {
 		},
 		{
 			name:   "list_trial_scores keeps the judge explanation",
-			params: ManageAgento11yExperimentsReadParams{Operation: "list_trial_scores", TrialID: "trial-1"},
+			params: Agento11yEvalsReadParams{Operation: "list_trial_scores", TrialID: "trial-1"},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				require.Equal(t, "/api/plugins/grafana-agento11y-app/resources/eval/test-case-trials/trial-1/scores", r.URL.Path)
 
@@ -228,7 +225,7 @@ func TestAgento11yManageExperimentsRead(t *testing.T) {
 		},
 		{
 			name:   "list_trial_artifacts returns metadata and a content ref",
-			params: ManageAgento11yExperimentsReadParams{Operation: "list_trial_artifacts", TrialID: "trial-1"},
+			params: Agento11yEvalsReadParams{Operation: "list_trial_artifacts", TrialID: "trial-1"},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				require.Equal(t, "/api/plugins/grafana-agento11y-app/resources/eval/test-case-trials/trial-1/artifacts", r.URL.Path)
 
@@ -244,14 +241,12 @@ func TestAgento11yManageExperimentsRead(t *testing.T) {
 		},
 		{
 			name: "list_facets sends only the filters the route reads",
-			params: ManageAgento11yExperimentsReadParams{
-				Operation: "list_facets",
-				agento11yExperimentFields: agento11yExperimentFields{
-					Source: "collection",
-					From:   "2026-01-01T00:00:00Z",
-					To:     "2026-01-08T00:00:00Z",
-					Limit:  10,
-				},
+			params: Agento11yEvalsReadParams{
+				Operation:        "list_experiment_facets",
+				ExperimentSource: "collection",
+				From:             "2026-01-01T00:00:00Z",
+				To:               "2026-01-08T00:00:00Z",
+				Limit:            10,
 			},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				require.Equal(t, "/api/plugins/grafana-agento11y-app/resources/eval/experiment-facets", r.URL.Path)
@@ -276,97 +271,97 @@ func TestAgento11yManageExperimentsRead(t *testing.T) {
 		},
 		{
 			name:    "unknown operation names only the read operations",
-			params:  ManageAgento11yExperimentsReadParams{Operation: "cancel"},
-			wantErr: `unknown operation "cancel", must be one of: ` + agento11yExperimentReadOperations,
+			params:  Agento11yEvalsReadParams{Operation: "cancel_experiment"},
+			wantErr: `unknown operation "cancel_experiment", must be one of: ` + agento11yEvalsReadOperations,
 		},
 		{
 			name:    "get requires an experiment id",
-			params:  ManageAgento11yExperimentsReadParams{Operation: "get"},
-			wantErr: `experiment_id is required for "get" operation`,
+			params:  Agento11yEvalsReadParams{Operation: "get_experiment"},
+			wantErr: `experiment_id is required for "get_experiment" operation`,
 		},
 		{
 			name:    "get_report requires an experiment id",
-			params:  ManageAgento11yExperimentsReadParams{Operation: "get_report"},
-			wantErr: `experiment_id is required for "get_report" operation`,
+			params:  Agento11yEvalsReadParams{Operation: "get_experiment_report"},
+			wantErr: `experiment_id is required for "get_experiment_report" operation`,
 		},
 		{
 			name:    "list_trials requires an experiment id",
-			params:  ManageAgento11yExperimentsReadParams{Operation: "list_trials"},
-			wantErr: `experiment_id is required for "list_trials" operation`,
+			params:  Agento11yEvalsReadParams{Operation: "list_experiment_trials"},
+			wantErr: `experiment_id is required for "list_experiment_trials" operation`,
 		},
 		{
 			name:    "list_scores requires an experiment id",
-			params:  ManageAgento11yExperimentsReadParams{Operation: "list_scores"},
-			wantErr: `experiment_id is required for "list_scores" operation`,
+			params:  Agento11yEvalsReadParams{Operation: "list_experiment_scores"},
+			wantErr: `experiment_id is required for "list_experiment_scores" operation`,
 		},
 		{
 			name:    "get_trial requires a trial id",
-			params:  ManageAgento11yExperimentsReadParams{Operation: "get_trial"},
+			params:  Agento11yEvalsReadParams{Operation: "get_trial"},
 			wantErr: `trial_id is required for "get_trial" operation`,
 		},
 		{
 			name:    "list_trial_scores requires a trial id",
-			params:  ManageAgento11yExperimentsReadParams{Operation: "list_trial_scores"},
+			params:  Agento11yEvalsReadParams{Operation: "list_trial_scores"},
 			wantErr: `trial_id is required for "list_trial_scores" operation`,
 		},
 		{
 			name:    "list_trial_artifacts requires a trial id",
-			params:  ManageAgento11yExperimentsReadParams{Operation: "list_trial_artifacts"},
+			params:  Agento11yEvalsReadParams{Operation: "list_trial_artifacts"},
 			wantErr: `trial_id is required for "list_trial_artifacts" operation`,
 		},
 		{
 			name: "completed_at ordering rejects a cursor",
-			params: ManageAgento11yExperimentsReadParams{
-				Operation:                 "list",
-				agento11yExperimentFields: agento11yExperimentFields{Order: "completed_at_desc", Cursor: "42"},
+			params: Agento11yEvalsReadParams{
+				Operation: "list_experiments",
+				Order:     "completed_at_desc", Cursor: "42",
 			},
 			wantErr: "order 'completed_at_desc' cannot be combined with a cursor",
 		},
 		{
 			name: "an unknown order is rejected",
-			params: ManageAgento11yExperimentsReadParams{
-				Operation:                 "list",
-				agento11yExperimentFields: agento11yExperimentFields{Order: "created_at_asc"},
+			params: Agento11yEvalsReadParams{
+				Operation: "list_experiments",
+				Order:     "created_at_asc",
 			},
 			wantErr: `unknown order "created_at_asc", must be one of: created_at_desc, completed_at_desc`,
 		},
 		{
 			name: "an unknown status is rejected",
-			params: ManageAgento11yExperimentsReadParams{
-				Operation:                 "list",
-				agento11yExperimentFields: agento11yExperimentFields{Status: "succeeded"},
+			params: Agento11yEvalsReadParams{
+				Operation: "list_experiments",
+				Status:    "succeeded",
 			},
 			wantErr: `unknown status "succeeded", must be one of: running, completed, failed, canceled`,
 		},
 		{
 			name: "an unknown source is rejected",
-			params: ManageAgento11yExperimentsReadParams{
-				Operation:                 "list",
-				agento11yExperimentFields: agento11yExperimentFields{Source: "manual"},
+			params: Agento11yEvalsReadParams{
+				Operation:        "list_experiments",
+				ExperimentSource: "manual",
 			},
 			wantErr: `unknown source "manual", must be one of: collection, external`,
 		},
 		{
 			name: "a reversed created_at window is rejected",
-			params: ManageAgento11yExperimentsReadParams{
-				Operation:                 "list",
-				agento11yExperimentFields: agento11yExperimentFields{From: "2026-01-08T00:00:00Z", To: "2026-01-01T00:00:00Z"},
+			params: Agento11yEvalsReadParams{
+				Operation: "list_experiments",
+				From:      "2026-01-08T00:00:00Z", To: "2026-01-01T00:00:00Z",
 			},
 			wantErr: "from must not be after to",
 		},
 		{
 			name: "a reversed completed_at window is rejected",
-			params: ManageAgento11yExperimentsReadParams{
-				Operation:                 "list",
-				agento11yExperimentFields: agento11yExperimentFields{CompletedFrom: "2026-01-08T00:00:00Z", CompletedTo: "2026-01-01T00:00:00Z"},
+			params: Agento11yEvalsReadParams{
+				Operation:     "list_experiments",
+				CompletedFrom: "2026-01-08T00:00:00Z", CompletedTo: "2026-01-01T00:00:00Z",
 			},
 			wantErr: "completed_from must not be after completed_to",
 		},
 		{
 			name: "a reversed window is rejected on list_facets too",
-			params: ManageAgento11yExperimentsReadParams{
-				Operation:                 "list_facets",
-				agento11yExperimentFields: agento11yExperimentFields{From: "2026-01-08T00:00:00Z", To: "2026-01-01T00:00:00Z"},
+			params: Agento11yEvalsReadParams{
+				Operation: "list_experiment_facets",
+				From:      "2026-01-08T00:00:00Z", To: "2026-01-01T00:00:00Z",
 			},
 			wantErr: "from must not be after to",
 		},
@@ -374,85 +369,85 @@ func TestAgento11yManageExperimentsRead(t *testing.T) {
 			// Dropping the filter would answer with every suite in the tenant while
 			// looking like the answer for suite-1.
 			name: "list_facets rejects a filter it would have to ignore",
-			params: ManageAgento11yExperimentsReadParams{
-				Operation:                 "list_facets",
-				agento11yExperimentFields: agento11yExperimentFields{SuiteID: "suite-1"},
+			params: Agento11yEvalsReadParams{
+				Operation: "list_experiment_facets",
+				SuiteID:   "suite-1",
 			},
-			wantErr: "suite_id is not read by 'list_facets'",
+			wantErr: "suite_id is not read by 'list_experiment_facets'",
 		},
 		{
 			name: "list_facets rejects a tag filter it would have to ignore",
-			params: ManageAgento11yExperimentsReadParams{
-				Operation:                 "list_facets",
-				agento11yExperimentFields: agento11yExperimentFields{Tag: []string{"critical"}},
+			params: Agento11yEvalsReadParams{
+				Operation: "list_experiment_facets",
+				Tag:       []string{"critical"},
 			},
-			wantErr: "tag is not read by 'list_facets'",
+			wantErr: "tag is not read by 'list_experiment_facets'",
 		},
 		{
 			// The trial statuses are the experiment status names, so a dropped
 			// filter answers with every trial of the run while reading like the
 			// running ones.
 			name: "list_trials rejects a status filter it would drop",
-			params: ManageAgento11yExperimentsReadParams{
-				Operation:                 "list_trials",
-				ExperimentID:              "exp-1",
-				agento11yExperimentFields: agento11yExperimentFields{Status: "running"},
+			params: Agento11yEvalsReadParams{
+				Operation:    "list_experiment_trials",
+				ExperimentID: "exp-1",
+				Status:       "running",
 			},
-			wantErr: `status is not accepted by "list_trials" operation, which would drop it: it is only read by 'list'`,
+			wantErr: `status is not accepted by "list_experiment_trials" operation, which would drop it: it is only read by 'list_experiments'`,
 		},
 		{
 			name: "list_scores rejects a suite filter it would drop",
-			params: ManageAgento11yExperimentsReadParams{
-				Operation:                 "list_scores",
-				ExperimentID:              "exp-1",
-				agento11yExperimentFields: agento11yExperimentFields{SuiteID: "suite-1"},
+			params: Agento11yEvalsReadParams{
+				Operation:    "list_experiment_scores",
+				ExperimentID: "exp-1",
+				SuiteID:      "suite-1",
 			},
-			wantErr: `suite_id is not accepted by "list_scores" operation, which would drop it: it is only read by 'list'`,
+			wantErr: `suite_id is not accepted by "list_experiment_scores" operation, which would drop it: it is only read by 'list_experiments'`,
 		},
 		{
 			name: "get_trial rejects a tag filter it would drop",
-			params: ManageAgento11yExperimentsReadParams{
-				Operation:                 "get_trial",
-				TrialID:                   "trial-1",
-				agento11yExperimentFields: agento11yExperimentFields{Tag: []string{"critical"}},
+			params: Agento11yEvalsReadParams{
+				Operation: "get_trial",
+				TrialID:   "trial-1",
+				Tag:       []string{"critical"},
 			},
-			wantErr: `tag is not accepted by "get_trial" operation, which would drop it: it is only read by 'list'`,
+			wantErr: `tag is not accepted by "get_trial" operation, which would drop it: it is only read by 'list_experiments'`,
 		},
 		{
 			// row_limit trims the report rows; on a paginated route it reads like
 			// limit and would leave the page at its default size.
 			name: "list_trials rejects the report row limit",
-			params: ManageAgento11yExperimentsReadParams{
-				Operation:                 "list_trials",
-				ExperimentID:              "exp-1",
-				agento11yExperimentFields: agento11yExperimentFields{RowLimit: 100},
+			params: Agento11yEvalsReadParams{
+				Operation:    "list_experiment_trials",
+				ExperimentID: "exp-1",
+				RowLimit:     100,
 			},
-			wantErr: `row_limit is not accepted by "list_trials" operation, which would drop it: it is only read by 'get_report'`,
+			wantErr: `row_limit is not accepted by "list_experiment_trials" operation, which would drop it: it is only read by 'get_experiment_report'`,
 		},
 		{
 			name: "get_report rejects a source filter it would drop",
-			params: ManageAgento11yExperimentsReadParams{
-				Operation:                 "get_report",
-				ExperimentID:              "exp-1",
-				agento11yExperimentFields: agento11yExperimentFields{Source: "collection"},
+			params: Agento11yEvalsReadParams{
+				Operation:        "get_experiment_report",
+				ExperimentID:     "exp-1",
+				ExperimentSource: "collection",
 			},
-			wantErr: `source is not accepted by "get_report" operation, which would drop it: it is only read by 'list', 'list_facets'`,
+			wantErr: `source is not accepted by "get_experiment_report" operation, which would drop it: it is only read by 'list_experiments', 'list_experiment_facets'`,
 		},
 		{
 			// The bound re-resolves on the next call, moving the window the cursor
 			// was issued against.
 			name: "a cursor is rejected alongside a relative bound",
-			params: ManageAgento11yExperimentsReadParams{
-				Operation:                 "list",
-				agento11yExperimentFields: agento11yExperimentFields{Cursor: "42", From: "now-7d"},
+			params: Agento11yEvalsReadParams{
+				Operation: "list_experiments",
+				Cursor:    "42", From: "now-7d",
 			},
 			wantErr: `from="now-7d" is relative and re-resolves between calls`,
 		},
 		{
 			name: "a cursor is accepted alongside an absolute bound",
-			params: ManageAgento11yExperimentsReadParams{
-				Operation:                 "list",
-				agento11yExperimentFields: agento11yExperimentFields{Cursor: "42", From: "2026-01-01T00:00:00Z"},
+			params: Agento11yEvalsReadParams{
+				Operation: "list_experiments",
+				Cursor:    "42", From: "2026-01-01T00:00:00Z",
 			},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				assert.Equal(t, "42", r.URL.Query().Get("cursor"))
@@ -461,9 +456,9 @@ func TestAgento11yManageExperimentsRead(t *testing.T) {
 		},
 		{
 			name: "a relative bound is accepted on a first page",
-			params: ManageAgento11yExperimentsReadParams{
-				Operation:                 "list",
-				agento11yExperimentFields: agento11yExperimentFields{From: "now-7d"},
+			params: Agento11yEvalsReadParams{
+				Operation: "list_experiments",
+				From:      "now-7d",
 			},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				assert.True(t, r.URL.Query().Has("from"), "a relative bound is resolved and sent")
@@ -472,9 +467,9 @@ func TestAgento11yManageExperimentsRead(t *testing.T) {
 		},
 		{
 			name: "an unparsable time bound is rejected",
-			params: ManageAgento11yExperimentsReadParams{
-				Operation:                 "list",
-				agento11yExperimentFields: agento11yExperimentFields{From: "last tuesday"},
+			params: Agento11yEvalsReadParams{
+				Operation: "list_experiments",
+				From:      "last tuesday",
 			},
 			wantErr: "parsing from",
 		},
@@ -491,7 +486,7 @@ func TestAgento11yManageExperimentsRead(t *testing.T) {
 			})
 			defer server.Close()
 
-			result, err := manageAgento11yExperimentsRead(ctx, tc.params)
+			result, err := agento11yEvalsRead(ctx, tc.params)
 			if tc.wantErr != "" {
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), tc.wantErr)
@@ -515,30 +510,24 @@ func TestAgento11yManageExperimentsReadWrite(t *testing.T) {
 
 	testCases := []struct {
 		name        string
-		params      ManageAgento11yExperimentsReadWriteParams
+		params      Agento11yEvalsWriteParams
 		handler     func(t *testing.T, w http.ResponseWriter, r *http.Request) // nil: server must not be called
 		wantErr     string
 		checkResult func(t *testing.T, result any)
 	}{
 		{
-			name:   "the read operations are reachable from the write variant",
-			params: ManageAgento11yExperimentsReadWriteParams{Operation: "get", ExperimentID: "exp-1"},
-			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
-				require.Equal(t, http.MethodGet, r.Method)
-				require.Equal(t, "/api/plugins/grafana-agento11y-app/resources/eval/experiments/exp-1", r.URL.Path)
-
-				writeJSONResponse(t, w, `{"experiment_id":"exp-1","name":"nightly","status":"completed"}`)
-			},
-			checkResult: func(t *testing.T, result any) {
-				experiment, ok := result.(*Agento11yExperiment)
-				require.True(t, ok)
-				assert.Equal(t, "exp-1", experiment.ExperimentID)
-			},
+			// Under the disjoint-operation split, agento11y_evals_write no
+			// longer reaches the read dispatch at all for a sibling read
+			// operation - see TestAgento11yEvalsWriteRejectsReadOperations
+			// for the general case across every domain.
+			name:    "a read operation is rejected, not dispatched",
+			params:  Agento11yEvalsWriteParams{Operation: "get_experiment", ExperimentID: "exp-1"},
+			wantErr: `"get_experiment" is an agento11y_evals_read operation, not agento11y_evals_write`,
 		},
 		{
 			name: "update sends only the supplied fields",
-			params: ManageAgento11yExperimentsReadWriteParams{
-				Operation:    "update",
+			params: Agento11yEvalsWriteParams{
+				Operation:    "update_experiment",
 				ExperimentID: "exp-1",
 				Name:         &name,
 				Tags:         &tags,
@@ -566,8 +555,8 @@ func TestAgento11yManageExperimentsReadWrite(t *testing.T) {
 		},
 		{
 			name: "update sends a description and a metadata object",
-			params: ManageAgento11yExperimentsReadWriteParams{
-				Operation:    "update",
+			params: Agento11yEvalsWriteParams{
+				Operation:    "update_experiment",
 				ExperimentID: "exp-1",
 				Description:  &description,
 				Metadata:     map[string]any{"triage_owner": "alice"},
@@ -584,8 +573,8 @@ func TestAgento11yManageExperimentsReadWrite(t *testing.T) {
 		},
 		{
 			name: "update clears a description and a tag list explicitly",
-			params: ManageAgento11yExperimentsReadWriteParams{
-				Operation:    "update",
+			params: Agento11yEvalsWriteParams{
+				Operation:    "update_experiment",
 				ExperimentID: "exp-1",
 				Description:  &emptyDescription,
 				Tags:         &noTags,
@@ -600,7 +589,7 @@ func TestAgento11yManageExperimentsReadWrite(t *testing.T) {
 		},
 		{
 			name:   "cancel appends the action after the id is escaped",
-			params: ManageAgento11yExperimentsReadWriteParams{Operation: "cancel", ExperimentID: "exp/1"},
+			params: Agento11yEvalsWriteParams{Operation: "cancel_experiment", ExperimentID: "exp/1"},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				require.Equal(t, http.MethodPost, r.Method)
 				// The plugin proxy forwards a POST only when the last path segment
@@ -621,7 +610,7 @@ func TestAgento11yManageExperimentsReadWrite(t *testing.T) {
 			// that already finished is left alone and the call still succeeds, so
 			// the returned status is the only thing that says nothing was stopped.
 			name:   "cancel of a finished run returns it unchanged",
-			params: ManageAgento11yExperimentsReadWriteParams{Operation: "cancel", ExperimentID: "exp-1"},
+			params: Agento11yEvalsWriteParams{Operation: "cancel_experiment", ExperimentID: "exp-1"},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				writeJSONResponse(t, w, `{"experiment_id":"exp-1","name":"nightly","status":"failed"}`)
 			},
@@ -633,17 +622,17 @@ func TestAgento11yManageExperimentsReadWrite(t *testing.T) {
 		},
 		{
 			name:    "update requires an experiment id",
-			params:  ManageAgento11yExperimentsReadWriteParams{Operation: "update", Name: &name},
-			wantErr: "experiment_id is required for 'update' operation",
+			params:  Agento11yEvalsWriteParams{Operation: "update_experiment", Name: &name},
+			wantErr: "experiment_id is required for 'update_experiment' operation",
 		},
 		{
 			name:    "update requires at least one field",
-			params:  ManageAgento11yExperimentsReadWriteParams{Operation: "update", ExperimentID: "exp-1"},
+			params:  Agento11yEvalsWriteParams{Operation: "update_experiment", ExperimentID: "exp-1"},
 			wantErr: "at least one of name, description, tags, or metadata is required",
 		},
 		{
 			name:   "metadata alone satisfies the update field requirement",
-			params: ManageAgento11yExperimentsReadWriteParams{Operation: "update", ExperimentID: "exp-1", Metadata: map[string]any{"triaged": true}},
+			params: Agento11yEvalsWriteParams{Operation: "update_experiment", ExperimentID: "exp-1", Metadata: map[string]any{"triaged": true}},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				assert.Equal(t, map[string]any{"triaged": true}, decodeRequestBody(t, r)["metadata"])
 				writeJSONResponse(t, w, `{"experiment_id":"exp-1","name":"nightly","status":"running"}`)
@@ -651,95 +640,57 @@ func TestAgento11yManageExperimentsReadWrite(t *testing.T) {
 		},
 		{
 			name:    "update rejects a blank name",
-			params:  ManageAgento11yExperimentsReadWriteParams{Operation: "update", ExperimentID: "exp-1", Name: &blank},
-			wantErr: "name must not be blank for 'update' operation",
+			params:  Agento11yEvalsWriteParams{Operation: "update_experiment", ExperimentID: "exp-1", Name: &blank},
+			wantErr: "name must not be blank for 'update_experiment' operation",
 		},
 		{
 			name:    "cancel requires an experiment id",
-			params:  ManageAgento11yExperimentsReadWriteParams{Operation: "cancel"},
-			wantErr: "experiment_id is required for 'cancel' operation",
+			params:  Agento11yEvalsWriteParams{Operation: "cancel_experiment"},
+			wantErr: "experiment_id is required for 'cancel_experiment' operation",
 		},
 		{
 			// Cancel sends no body, so a patch set alongside it would stop the
 			// experiment and report success having discarded the patch.
 			name:    "cancel rejects an update tag list rather than dropping it",
-			params:  ManageAgento11yExperimentsReadWriteParams{Operation: "cancel", ExperimentID: "exp-1", Tags: &tags},
-			wantErr: `tags is not accepted by 'cancel' operation, which would drop it: it is only read by 'update'`,
+			params:  Agento11yEvalsWriteParams{Operation: "cancel_experiment", ExperimentID: "exp-1", Tags: &tags},
+			wantErr: `tags is not accepted by 'cancel_experiment' operation, which would drop it: it is only read by 'update_experiment'`,
 		},
 		{
 			name:    "cancel rejects an update name rather than dropping it",
-			params:  ManageAgento11yExperimentsReadWriteParams{Operation: "cancel", ExperimentID: "exp-1", Name: &name},
-			wantErr: `name is not accepted by 'cancel' operation, which would drop it: it is only read by 'update'`,
+			params:  Agento11yEvalsWriteParams{Operation: "cancel_experiment", ExperimentID: "exp-1", Name: &name},
+			wantErr: `name is not accepted by 'cancel_experiment' operation, which would drop it: it is only read by 'update_experiment'`,
 		},
 		{
 			name:    "cancel rejects update metadata rather than dropping it",
-			params:  ManageAgento11yExperimentsReadWriteParams{Operation: "cancel", ExperimentID: "exp-1", Metadata: map[string]any{"triaged": true}},
-			wantErr: `metadata is not accepted by 'cancel' operation, which would drop it: it is only read by 'update'`,
+			params:  Agento11yEvalsWriteParams{Operation: "cancel_experiment", ExperimentID: "exp-1", Metadata: map[string]any{"triaged": true}},
+			wantErr: `metadata is not accepted by 'cancel_experiment' operation, which would drop it: it is only read by 'update_experiment'`,
 		},
 		{
 			// Cancel stops the whole experiment, so a trial ID alongside it would
 			// cancel every trial of the run while reading as trial-scoped.
 			name:    "cancel rejects a trial id rather than dropping it",
-			params:  ManageAgento11yExperimentsReadWriteParams{Operation: "cancel", ExperimentID: "exp-1", TrialID: "trial-1"},
-			wantErr: `trial_id is not accepted by "cancel" operation, which would drop it: it is only read by 'get_trial', 'list_trial_scores', 'list_trial_artifacts'`,
+			params:  Agento11yEvalsWriteParams{Operation: "cancel_experiment", ExperimentID: "exp-1", TrialID: "trial-1"},
+			wantErr: `trial_id is not accepted by "cancel_experiment" operation, which would drop it: it is only read by 'get_trial', 'list_trial_scores', 'list_trial_artifacts'`,
 		},
 		{
 			name:    "update rejects a trial id rather than dropping it",
-			params:  ManageAgento11yExperimentsReadWriteParams{Operation: "update", ExperimentID: "exp-1", TrialID: "trial-1", Name: &name},
-			wantErr: `trial_id is not accepted by "update" operation, which would drop it: it is only read by 'get_trial', 'list_trial_scores', 'list_trial_artifacts'`,
+			params:  Agento11yEvalsWriteParams{Operation: "update_experiment", ExperimentID: "exp-1", TrialID: "trial-1", Name: &name},
+			wantErr: `trial_id is not accepted by "update_experiment" operation, which would drop it: it is only read by 'get_trial', 'list_trial_scores', 'list_trial_artifacts'`,
 		},
 		{
 			name:    "unknown operation names every operation the variant has",
-			params:  ManageAgento11yExperimentsReadWriteParams{Operation: "create"},
-			wantErr: `unknown operation "create", must be one of: ` + agento11yExperimentAllOperations,
+			params:  Agento11yEvalsWriteParams{Operation: "create"},
+			wantErr: `unknown operation "create", must be one of: ` + agento11yEvalsWriteOperations,
 		},
 		{
-			name: "list validation still applies on the write variant",
-			params: ManageAgento11yExperimentsReadWriteParams{
-				Operation:                 "list",
-				agento11yExperimentFields: agento11yExperimentFields{Order: "completed_at_desc", Cursor: "42"},
-			},
-			wantErr: "order 'completed_at_desc' cannot be combined with a cursor",
-		},
-		{
-			// 'tags' is the update field and 'tag' is the filter. Accepting 'tags'
-			// on 'list' and dropping it would answer across the whole tenant.
-			name:    "list rejects the update tag list rather than dropping it",
-			params:  ManageAgento11yExperimentsReadWriteParams{Operation: "list", Tags: &tags},
-			wantErr: "tags is only read by the 'update' operation, not by \"list\"; the tag filter for the read operations is the separate 'tag' parameter",
-		},
-		{
-			// rejectFacetFilters guards 'tag' and structurally cannot see 'tags'.
-			name:    "list_facets rejects the update tag list too",
-			params:  ManageAgento11yExperimentsReadWriteParams{Operation: "list_facets", Tags: &tags},
-			wantErr: `tags is only read by the 'update' operation, not by "list_facets"`,
-		},
-		{
-			name:    "a read operation rejects the update name",
-			params:  ManageAgento11yExperimentsReadWriteParams{Operation: "get", ExperimentID: "exp-1", Name: &name},
-			wantErr: `name is only read by the 'update' operation, not by "get"`,
-		},
-		{
-			name:    "a read operation rejects the update description",
-			params:  ManageAgento11yExperimentsReadWriteParams{Operation: "get", ExperimentID: "exp-1", Description: &description},
-			wantErr: `description is only read by the 'update' operation, not by "get"`,
-		},
-		{
-			name:    "a read operation rejects the update metadata",
-			params:  ManageAgento11yExperimentsReadWriteParams{Operation: "list_trials", ExperimentID: "exp-1", Metadata: map[string]any{"triaged": true}},
-			wantErr: `metadata is only read by the 'update' operation, not by "list_trials"`,
-		},
-		{
-			// The 'tag' filter is not an update field, so it still reaches the wire.
-			name: "the tag filter still reaches the query on the write variant",
-			params: ManageAgento11yExperimentsReadWriteParams{
-				Operation:                 "list",
-				agento11yExperimentFields: agento11yExperimentFields{Tag: []string{"critical"}},
-			},
-			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
-				assert.Equal(t, []string{"critical"}, r.URL.Query()["tag"])
-				writeJSONResponse(t, w, `{"items":[],"next_cursor":""}`)
-			},
+			// Under the split, agento11y_evals_write has no Order, Tag, or
+			// Tags-as-a-list-filter fields at all for experiments reads - the
+			// read-only filtering fields live only on Agento11yEvalsReadParams.
+			// A caller confusing the two gets the sibling-operation error
+			// rather than a dropped-field or field-conflict message.
+			name:    "list_experiments and list_experiment_facets are rejected as sibling read operations, not field-validated",
+			params:  Agento11yEvalsWriteParams{Operation: "list_experiments", Tags: &tags},
+			wantErr: `"list_experiments" is an agento11y_evals_read operation, not agento11y_evals_write`,
 		},
 	}
 
@@ -754,7 +705,7 @@ func TestAgento11yManageExperimentsReadWrite(t *testing.T) {
 			})
 			defer server.Close()
 
-			result, err := manageAgento11yExperimentsReadWrite(ctx, tc.params)
+			result, err := agento11yEvalsWrite(ctx, tc.params)
 			if tc.wantErr != "" {
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), tc.wantErr)
@@ -820,7 +771,7 @@ func TestAgento11yManageExperimentsGetReport(t *testing.T) {
 		})
 		defer server.Close()
 
-		result, err := manageAgento11yExperimentsRead(ctx, ManageAgento11yExperimentsReadParams{Operation: "get_report", ExperimentID: "exp-1"})
+		result, err := agento11yEvalsRead(ctx, Agento11yEvalsReadParams{Operation: "get_experiment_report", ExperimentID: "exp-1"})
 		require.NoError(t, err)
 
 		report, ok := result.(*Agento11yCompactExperimentReport)
@@ -904,7 +855,7 @@ func TestAgento11yManageExperimentsGetReport(t *testing.T) {
 		})
 		defer server.Close()
 
-		result, err := manageAgento11yExperimentsRead(ctx, ManageAgento11yExperimentsReadParams{Operation: "get_report", ExperimentID: "exp-1"})
+		result, err := agento11yEvalsRead(ctx, Agento11yEvalsReadParams{Operation: "get_experiment_report", ExperimentID: "exp-1"})
 		require.NoError(t, err)
 
 		report, ok := result.(*Agento11yCompactExperimentReport)
@@ -948,10 +899,10 @@ func TestAgento11yManageExperimentsGetReport(t *testing.T) {
 			})
 			defer server.Close()
 
-			result, err := manageAgento11yExperimentsRead(ctx, ManageAgento11yExperimentsReadParams{
-				Operation:                 "get_report",
-				ExperimentID:              "exp-1",
-				agento11yExperimentFields: agento11yExperimentFields{RowLimit: tc.rowLimit},
+			result, err := agento11yEvalsRead(ctx, Agento11yEvalsReadParams{
+				Operation:    "get_experiment_report",
+				ExperimentID: "exp-1",
+				RowLimit:     tc.rowLimit,
 			})
 			require.NoError(t, err)
 
@@ -964,25 +915,14 @@ func TestAgento11yManageExperimentsGetReport(t *testing.T) {
 	}
 }
 
-// TestAgento11yManageExperimentsToolContract pins the parts of the advertised
-// tool a client relies on but no request test touches: the annotations that
-// tell a caller whether it is safe to run, and the guidance that keeps it from
-// fetching an unbounded report or paginating with a window that moves.
-func TestAgento11yManageExperimentsToolContract(t *testing.T) {
-	read := ManageAgento11yExperimentsRead.Tool
-	require.NotNil(t, read.Annotations.ReadOnlyHint)
-	assert.True(t, *read.Annotations.ReadOnlyHint)
-	require.NotNil(t, read.Annotations.IdempotentHint)
-	assert.True(t, *read.Annotations.IdempotentHint)
-	require.NotNil(t, read.Annotations.DestructiveHint)
-	assert.False(t, *read.Annotations.DestructiveHint)
-
-	write := ManageAgento11yExperimentsReadWrite.Tool
-	require.NotNil(t, write.Annotations.ReadOnlyHint)
-	assert.False(t, *write.Annotations.ReadOnlyHint, "the write variant cancels experiments")
-	require.NotNil(t, write.Annotations.DestructiveHint)
-	assert.True(t, *write.Annotations.DestructiveHint)
-
+// TestAgento11yEvalsExperimentGuidance pins the experiment-specific parts of
+// agento11y_evals_read/_write's merged description that no request test
+// touches: the guidance that keeps a caller from fetching an unbounded report
+// or paginating with a window that moves. The tool-wide annotations (read-only
+// hints, the eval:write permission note, disjoint operations) are covered once
+// for all five sub-domains by TestAgento11yEvalsSplitOperationsAreDisjoint in
+// agento11y_evals_test.go, not repeated here.
+func TestAgento11yEvalsExperimentGuidance(t *testing.T) {
 	for _, guidance := range []string{
 		// The report is fetched whole, so a caller that does not know the ceiling
 		// reads a failed call as a missing experiment.
@@ -992,9 +932,8 @@ func TestAgento11yManageExperimentsToolContract(t *testing.T) {
 		// A 403 is unreadable without the role that causes it.
 		"grafana-agento11y-app.data:read",
 	} {
-		assert.Contains(t, read.Description, guidance)
+		assert.Contains(t, Agento11yEvalsRead.Tool.Description, guidance)
 	}
-	assert.Contains(t, write.Description, "grafana-agento11y-app.eval:write")
 }
 
 // TestAgento11yExperimentRoutesAvoidDeadEndpoints pins the proxied routes this
@@ -1002,37 +941,49 @@ func TestAgento11yManageExperimentsToolContract(t *testing.T) {
 // the plugin proxy but no longer exists upstream, and the creation and
 // finalization routes answer 405 at the proxy.
 func TestAgento11yExperimentRoutesAvoidDeadEndpoints(t *testing.T) {
-	for _, params := range []ManageAgento11yExperimentsReadWriteParams{
-		{Operation: "list"},
-		{Operation: "get", ExperimentID: "exp-1"},
-		{Operation: "get_report", ExperimentID: "exp-1"},
-		{Operation: "list_trials", ExperimentID: "exp-1"},
-		{Operation: "list_scores", ExperimentID: "exp-1"},
-		{Operation: "list_facets"},
-		{Operation: "update", ExperimentID: "exp-1", Metadata: map[string]any{"triaged": true}},
-		{Operation: "cancel", ExperimentID: "exp-1"},
+	checkRequestPath := func(t *testing.T, dispatch func(ctx context.Context) (any, error)) {
+		t.Helper()
+		var requested []string
+		server, ctx := setupMockAgento11yServer(func(w http.ResponseWriter, r *http.Request) {
+			requested = append(requested, r.Method+" "+r.URL.Path)
+			writeJSONResponse(t, w, `{"experiment_id":"exp-1","items":[],"next_cursor":"","rows":[]}`)
+		})
+		defer server.Close()
+
+		_, err := dispatch(ctx)
+		require.NoError(t, err)
+		require.Len(t, requested, 1, "each operation makes exactly one request")
+
+		const base = "/api/plugins/grafana-agento11y-app/resources"
+		for _, dead := range []string{
+			"GET " + base + "/eval/experiment-summaries",
+			"POST " + base + "/eval/experiments",
+			"POST " + base + "/eval/experiments/exp-1:finalize",
+			"POST " + base + "/eval/experiments/exp-1/trials",
+		} {
+			assert.NotEqual(t, dead, requested[0], "%s has no working handler behind the plugin proxy", dead)
+		}
+	}
+
+	for _, params := range []Agento11yEvalsReadParams{
+		{Operation: "list_experiments"},
+		{Operation: "get_experiment", ExperimentID: "exp-1"},
+		{Operation: "get_experiment_report", ExperimentID: "exp-1"},
+		{Operation: "list_experiment_trials", ExperimentID: "exp-1"},
+		{Operation: "list_experiment_scores", ExperimentID: "exp-1"},
+		{Operation: "list_experiment_facets"},
 	} {
 		t.Run(params.Operation, func(t *testing.T) {
-			var requested []string
-			server, ctx := setupMockAgento11yServer(func(w http.ResponseWriter, r *http.Request) {
-				requested = append(requested, r.Method+" "+r.URL.Path)
-				writeJSONResponse(t, w, `{"experiment_id":"exp-1","items":[],"next_cursor":"","rows":[]}`)
-			})
-			defer server.Close()
+			checkRequestPath(t, func(ctx context.Context) (any, error) { return agento11yEvalsRead(ctx, params) })
+		})
+	}
 
-			_, err := manageAgento11yExperimentsReadWrite(ctx, params)
-			require.NoError(t, err)
-			require.Len(t, requested, 1, "each operation makes exactly one request")
-
-			const base = "/api/plugins/grafana-agento11y-app/resources"
-			for _, dead := range []string{
-				"GET " + base + "/eval/experiment-summaries",
-				"POST " + base + "/eval/experiments",
-				"POST " + base + "/eval/experiments/exp-1:finalize",
-				"POST " + base + "/eval/experiments/exp-1/trials",
-			} {
-				assert.NotEqual(t, dead, requested[0], "%s has no working handler behind the plugin proxy", dead)
-			}
+	for _, params := range []Agento11yEvalsWriteParams{
+		{Operation: "update_experiment", ExperimentID: "exp-1", Metadata: map[string]any{"triaged": true}},
+		{Operation: "cancel_experiment", ExperimentID: "exp-1"},
+	} {
+		t.Run(params.Operation, func(t *testing.T) {
+			checkRequestPath(t, func(ctx context.Context) (any, error) { return agento11yEvalsWrite(ctx, params) })
 		})
 	}
 }

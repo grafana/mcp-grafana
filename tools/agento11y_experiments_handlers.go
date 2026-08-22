@@ -2,8 +2,6 @@ package tools
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"net/http"
 	"net/url"
 	"time"
@@ -219,20 +217,23 @@ func (c *Client) listAgento11yExperimentFacets(ctx context.Context, r agento11yE
 	return &resp, nil
 }
 
-// agento11yExperimentRead runs the experiment read operations shared by the
-// read and read-write variants of agento11y_manage_experiments. Operations it
-// does not handle return errAgento11yUnknownOperation.
+// agento11yExperimentRead runs the read operations of agento11y_evals_read's
+// experiment sub-domain. Operations it does not handle return
+// errAgento11yUnknownOperation. Operation names are namespaced with
+// "experiment"/"trial" (list_experiments, get_experiment, ... rather than the
+// pre-consolidation tool's bare list/get) because agento11y_evals_read merges
+// five sub-domains that would otherwise collide on those generic names.
 func (c *Client) agento11yExperimentRead(ctx context.Context, operation string, r agento11yExperimentReadRequest) (any, error) {
 	switch operation {
-	case "list":
+	case "list_experiments":
 		return c.listAgento11yExperiments(ctx, r)
-	case "get":
+	case "get_experiment":
 		return c.getAgento11yExperiment(ctx, r.ExperimentID)
-	case "get_report":
+	case "get_experiment_report":
 		return c.getAgento11yExperimentReport(ctx, r.ExperimentID, r.RowLimit)
-	case "list_trials":
+	case "list_experiment_trials":
 		return c.listAgento11yExperimentTrials(ctx, r.ExperimentID, r.Limit, r.Cursor)
-	case "list_scores":
+	case "list_experiment_scores":
 		return c.listAgento11yExperimentScores(ctx, r.ExperimentID, r.Limit, r.Cursor)
 	case "get_trial":
 		return c.getAgento11yTrial(ctx, r.TrialID)
@@ -240,36 +241,29 @@ func (c *Client) agento11yExperimentRead(ctx context.Context, operation string, 
 		return c.listAgento11yTrialScores(ctx, r.TrialID, r.Limit, r.Cursor)
 	case "list_trial_artifacts":
 		return c.listAgento11yTrialArtifacts(ctx, r.TrialID, r.Limit, r.Cursor)
-	case "list_facets":
+	case "list_experiment_facets":
 		return c.listAgento11yExperimentFacets(ctx, r)
 	default:
 		return nil, errAgento11yUnknownOperation
 	}
 }
 
-func manageAgento11yExperimentsRead(ctx context.Context, args ManageAgento11yExperimentsReadParams) (any, error) {
-	if err := args.validate(); err != nil {
-		return nil, fmt.Errorf("agento11y_manage_experiments: %w", err)
-	}
-
-	client, err := newAgento11yClient(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Agent Observability client: %w", err)
-	}
-
-	result, err := client.agento11yExperimentRead(ctx, args.Operation, args.readRequest())
-	if errors.Is(err, errAgento11yUnknownOperation) {
-		return nil, fmt.Errorf("agento11y_manage_experiments: unknown operation %q", args.Operation)
-	}
-	return result, err
+// agento11yExperimentWriteRequest is the input of an experiment write
+// operation, assembled by agento11y_evals_write from its flat params.
+type agento11yExperimentWriteRequest struct {
+	ExperimentID string
+	Name         *string
+	Description  *string
+	Tags         *[]string
+	Metadata     map[string]any
 }
 
 // updateAgento11yExperiment patches an experiment. Only the supplied fields are
 // sent, because the API reads them as optional pointers: an absent field is
 // left unchanged while an explicitly empty description or tag list clears it.
 // Status is not among them; a finished run rejects a status change with 409 and
-// points at cancel.
-func (c *Client) updateAgento11yExperiment(ctx context.Context, p ManageAgento11yExperimentsReadWriteParams) (*Agento11yExperiment, error) {
+// points at cancel_experiment.
+func (c *Client) updateAgento11yExperiment(ctx context.Context, p agento11yExperimentWriteRequest) (*Agento11yExperiment, error) {
 	body := map[string]any{}
 	if p.Name != nil {
 		body["name"] = *p.Name
@@ -303,38 +297,16 @@ func (c *Client) cancelAgento11yExperiment(ctx context.Context, experimentID str
 	return &resp, nil
 }
 
-// agento11yExperimentWrite runs the write operations of
-// agento11y_manage_experiments. Operations it does not handle return
+// agento11yExperimentWrite runs the write operations of agento11y_evals_write's
+// experiment sub-domain. Operations it does not handle return
 // errAgento11yUnknownOperation.
-func (c *Client) agento11yExperimentWrite(ctx context.Context, operation string, p ManageAgento11yExperimentsReadWriteParams) (any, error) {
+func (c *Client) agento11yExperimentWrite(ctx context.Context, operation string, p agento11yExperimentWriteRequest) (any, error) {
 	switch operation {
-	case "update":
+	case "update_experiment":
 		return c.updateAgento11yExperiment(ctx, p)
-	case "cancel":
+	case "cancel_experiment":
 		return c.cancelAgento11yExperiment(ctx, p.ExperimentID)
 	default:
 		return nil, errAgento11yUnknownOperation
 	}
-}
-
-func manageAgento11yExperimentsReadWrite(ctx context.Context, args ManageAgento11yExperimentsReadWriteParams) (any, error) {
-	if err := args.validate(); err != nil {
-		return nil, fmt.Errorf("agento11y_manage_experiments: %w", err)
-	}
-
-	client, err := newAgento11yClient(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Agent Observability client: %w", err)
-	}
-
-	result, err := client.agento11yExperimentRead(ctx, args.Operation, args.readRequest())
-	if !errors.Is(err, errAgento11yUnknownOperation) {
-		return result, err
-	}
-
-	result, err = client.agento11yExperimentWrite(ctx, args.Operation, args)
-	if errors.Is(err, errAgento11yUnknownOperation) {
-		return nil, fmt.Errorf("agento11y_manage_experiments: unknown operation %q", args.Operation)
-	}
-	return result, err
 }

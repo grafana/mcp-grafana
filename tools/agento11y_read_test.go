@@ -4,6 +4,7 @@
 package tools
 
 import (
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
@@ -24,19 +25,19 @@ func agento11yAgentName(name string) *string {
 // "sha256:" prefix plus 64 lowercase hex characters.
 const agento11yEffectiveVersion = "sha256:" + "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
-func TestAgento11yManageAgents(t *testing.T) {
+func TestAgento11yReadAgents(t *testing.T) {
 	const agentsPath = "/api/plugins/grafana-agento11y-app/resources/query/agents"
 
 	testCases := []struct {
 		name        string
-		params      ManageAgento11yAgentsParams
+		params      Agento11yReadParams
 		handler     func(t *testing.T, w http.ResponseWriter, r *http.Request) // nil: server must not be called
 		wantErr     string
 		checkResult func(t *testing.T, result any)
 	}{
 		{
-			name:   "list sends the default page size and no filters",
-			params: ManageAgento11yAgentsParams{Operation: "list"},
+			name:   "list_agents sends the default page size and no filters",
+			params: Agento11yReadParams{Operation: "list_agents"},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				require.Equal(t, http.MethodGet, r.Method)
 				require.Equal(t, agentsPath, r.URL.Path)
@@ -71,7 +72,7 @@ func TestAgento11yManageAgents(t *testing.T) {
 			},
 			checkResult: func(t *testing.T, result any) {
 				resp, ok := result.(*agento11yListResponse[Agento11yAgent])
-				require.True(t, ok, "list should return *agento11yListResponse[Agento11yAgent]")
+				require.True(t, ok, "list_agents should return *agento11yListResponse[Agento11yAgent]")
 				require.Len(t, resp.Items, 2)
 
 				named := resp.Items[0]
@@ -98,9 +99,9 @@ func TestAgento11yManageAgents(t *testing.T) {
 			},
 		},
 		{
-			name: "list sends the name prefix and epoch second seen bounds",
-			params: ManageAgento11yAgentsParams{
-				Operation:  "list",
+			name: "list_agents sends the name prefix and epoch second seen bounds",
+			params: Agento11yReadParams{
+				Operation:  "list_agents",
 				NamePrefix: "claude",
 				StartTime:  "2026-07-01T10:00:00Z",
 				EndTime:    "2026-07-30T09:00:00Z",
@@ -118,8 +119,8 @@ func TestAgento11yManageAgents(t *testing.T) {
 			},
 		},
 		{
-			name:   "list resolves relative time bounds to epoch seconds",
-			params: ManageAgento11yAgentsParams{Operation: "list", StartTime: "now-7d", EndTime: "now"},
+			name:   "list_agents resolves relative time bounds to epoch seconds",
+			params: Agento11yReadParams{Operation: "list_agents", StartTime: "now-7d", EndTime: "now"},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				query := r.URL.Query()
 
@@ -135,9 +136,9 @@ func TestAgento11yManageAgents(t *testing.T) {
 			},
 		},
 		{
-			name: "list forwards the cursor with the absolute filters unchanged",
-			params: ManageAgento11yAgentsParams{
-				Operation:  "list",
+			name: "list_agents forwards the cursor with the absolute filters unchanged",
+			params: Agento11yReadParams{
+				Operation:  "list_agents",
 				NamePrefix: "claude",
 				StartTime:  "2026-07-01T10:00:00Z",
 				EndTime:    "2026-07-30T09:00:00Z",
@@ -160,33 +161,33 @@ func TestAgento11yManageAgents(t *testing.T) {
 			},
 		},
 		{
-			name:    "list with a cursor and a relative start time is rejected",
-			params:  ManageAgento11yAgentsParams{Operation: "list", Cursor: "agents-tok", StartTime: "now-7d"},
+			name:    "list_agents with a cursor and a relative start time is rejected",
+			params:  Agento11yReadParams{Operation: "list_agents", Cursor: "agents-tok", StartTime: "now-7d"},
 			wantErr: "start_time=\"now-7d\" is relative",
 		},
 		{
-			name:    "list with a cursor and a relative end time is rejected",
-			params:  ManageAgento11yAgentsParams{Operation: "list", Cursor: "agents-tok", EndTime: "now"},
+			name:    "list_agents with a cursor and a relative end time is rejected",
+			params:  Agento11yReadParams{Operation: "list_agents", Cursor: "agents-tok", EndTime: "now"},
 			wantErr: "end_time=\"now\" is relative",
 		},
 		{
 			// A bare duration has no "now" in it but still resolves against the
 			// wall clock, so it drifts exactly like "now-7d" does.
-			name:    "list with a cursor and a bare duration start time is rejected",
-			params:  ManageAgento11yAgentsParams{Operation: "list", Cursor: "agents-tok", StartTime: "7d"},
+			name:    "list_agents with a cursor and a bare duration start time is rejected",
+			params:  Agento11yReadParams{Operation: "list_agents", Cursor: "agents-tok", StartTime: "7d"},
 			wantErr: "start_time=\"7d\" is relative",
 		},
 		{
-			name:    "list with a cursor and a bare duration end time is rejected",
-			params:  ManageAgento11yAgentsParams{Operation: "list", Cursor: "agents-tok", EndTime: "30m"},
+			name:    "list_agents with a cursor and a bare duration end time is rejected",
+			params:  Agento11yReadParams{Operation: "list_agents", Cursor: "agents-tok", EndTime: "30m"},
 			wantErr: "end_time=\"30m\" is relative",
 		},
 		{
 			// An epoch in milliseconds is absolute, so it must not be mistaken
 			// for a duration and rejected.
-			name: "list with a cursor and epoch millisecond bounds is allowed",
-			params: ManageAgento11yAgentsParams{
-				Operation: "list",
+			name: "list_agents with a cursor and epoch millisecond bounds is allowed",
+			params: Agento11yReadParams{
+				Operation: "list_agents",
 				Cursor:    "agents-tok",
 				StartTime: "1767225600000",
 				EndTime:   "1767830400000",
@@ -201,18 +202,18 @@ func TestAgento11yManageAgents(t *testing.T) {
 			},
 		},
 		{
-			name:    "list with an unparseable start time is rejected",
-			params:  ManageAgento11yAgentsParams{Operation: "list", StartTime: "not-a-date"},
+			name:    "list_agents with an unparseable start time is rejected",
+			params:  Agento11yReadParams{Operation: "list_agents", StartTime: "not-a-date"},
 			wantErr: "parsing start_time",
 		},
 		{
-			name:    "list with an unparseable end time is rejected",
-			params:  ManageAgento11yAgentsParams{Operation: "list", EndTime: "not-a-date"},
+			name:    "list_agents with an unparseable end time is rejected",
+			params:  Agento11yReadParams{Operation: "list_agents", EndTime: "not-a-date"},
 			wantErr: "parsing end_time",
 		},
 		{
-			name:   "get sends the agent name and no version",
-			params: ManageAgento11yAgentsParams{Operation: "get", AgentName: agento11yAgentName("claude-code")},
+			name:   "get_agent sends the agent name and no version",
+			params: Agento11yReadParams{Operation: "get_agent", AgentName: agento11yAgentName("claude-code")},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				require.Equal(t, http.MethodGet, r.Method)
 				require.Equal(t, agentsPath+"/lookup", r.URL.Path)
@@ -234,7 +235,7 @@ func TestAgento11yManageAgents(t *testing.T) {
 			},
 			checkResult: func(t *testing.T, result any) {
 				detail, ok := result.(map[string]any)
-				require.True(t, ok, "get should return the raw agent object")
+				require.True(t, ok, "get_agent should return the raw agent object")
 				assert.Equal(t, "claude-code", detail["agent_name"])
 				assert.Equal(t, agento11yEffectiveVersion, detail["effective_version"])
 				assert.Equal(t, "You are Claude Code, a coding agent.", detail["system_prompt"])
@@ -247,8 +248,8 @@ func TestAgento11yManageAgents(t *testing.T) {
 			},
 		},
 		{
-			name:   "get sends the name key for the unnamed agent",
-			params: ManageAgento11yAgentsParams{Operation: "get", AgentName: agento11yAgentName("")},
+			name:   "get_agent sends the name key for the unnamed agent",
+			params: Agento11yReadParams{Operation: "get_agent", AgentName: agento11yAgentName("")},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				// The upstream handler answers 400 when the key is absent and
 				// treats an empty value as the unnamed agent, so the key must be
@@ -265,9 +266,9 @@ func TestAgento11yManageAgents(t *testing.T) {
 			},
 		},
 		{
-			name: "get forwards an effective version",
-			params: ManageAgento11yAgentsParams{
-				Operation: "get",
+			name: "get_agent forwards an effective version",
+			params: Agento11yReadParams{
+				Operation: "get_agent",
 				AgentName: agento11yAgentName("claude-code"),
 				Version:   agento11yEffectiveVersion,
 			},
@@ -284,40 +285,40 @@ func TestAgento11yManageAgents(t *testing.T) {
 			},
 		},
 		{
-			name: "get with a declared version is rejected",
-			params: ManageAgento11yAgentsParams{
-				Operation: "get",
+			name: "get_agent with a declared version is rejected",
+			params: Agento11yReadParams{
+				Operation: "get_agent",
 				AgentName: agento11yAgentName("claude-code"),
 				Version:   "1.4.2",
 			},
 			wantErr: "'sha256:<64 lowercase hex>'",
 		},
 		{
-			name: "get with an uppercase hex version is rejected",
-			params: ManageAgento11yAgentsParams{
-				Operation: "get",
+			name: "get_agent with an uppercase hex version is rejected",
+			params: Agento11yReadParams{
+				Operation: "get_agent",
 				AgentName: agento11yAgentName("claude-code"),
 				Version:   "sha256:0123456789ABCDEF0123456789abcdef0123456789abcdef0123456789abcdef",
 			},
 			wantErr: "must be an effective version",
 		},
 		{
-			name: "get with a short hex version is rejected",
-			params: ManageAgento11yAgentsParams{
-				Operation: "get",
+			name: "get_agent with a short hex version is rejected",
+			params: Agento11yReadParams{
+				Operation: "get_agent",
 				AgentName: agento11yAgentName("claude-code"),
 				Version:   "sha256:0123abcd",
 			},
 			wantErr: "must be an effective version",
 		},
 		{
-			name:    "get without an agent name is rejected",
-			params:  ManageAgento11yAgentsParams{Operation: "get"},
-			wantErr: "agent_name is required for \"get\" operation",
+			name:    "get_agent without an agent name is rejected",
+			params:  Agento11yReadParams{Operation: "get_agent"},
+			wantErr: "agent_name is required for \"get_agent\" operation",
 		},
 		{
-			name:   "get surfaces a 404 for an unknown agent",
-			params: ManageAgento11yAgentsParams{Operation: "get", AgentName: agento11yAgentName("does-not-exist")},
+			name:   "get_agent surfaces a 404 for an unknown agent",
+			params: Agento11yReadParams{Operation: "get_agent", AgentName: agento11yAgentName("does-not-exist")},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusNotFound)
 				_, err := w.Write([]byte("404 page not found\n"))
@@ -326,8 +327,8 @@ func TestAgento11yManageAgents(t *testing.T) {
 			wantErr: "request failed with status 404: 404 page not found",
 		},
 		{
-			name:   "list_versions sends the name and the default page size",
-			params: ManageAgento11yAgentsParams{Operation: "list_versions", AgentName: agento11yAgentName("claude-code")},
+			name:   "list_agent_versions sends the name and the default page size",
+			params: Agento11yReadParams{Operation: "list_agent_versions", AgentName: agento11yAgentName("claude-code")},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				require.Equal(t, http.MethodGet, r.Method)
 				require.Equal(t, agentsPath+"/versions", r.URL.Path)
@@ -356,7 +357,7 @@ func TestAgento11yManageAgents(t *testing.T) {
 			},
 			checkResult: func(t *testing.T, result any) {
 				resp, ok := result.(*agento11yListResponse[Agento11yAgentVersion])
-				require.True(t, ok, "list_versions should return *agento11yListResponse[Agento11yAgentVersion]")
+				require.True(t, ok, "list_agent_versions should return *agento11yListResponse[Agento11yAgentVersion]")
 				require.Len(t, resp.Items, 2)
 
 				version := resp.Items[0]
@@ -378,8 +379,8 @@ func TestAgento11yManageAgents(t *testing.T) {
 			},
 		},
 		{
-			name:   "list_versions sends the name key for the unnamed agent",
-			params: ManageAgento11yAgentsParams{Operation: "list_versions", AgentName: agento11yAgentName("")},
+			name:   "list_agent_versions sends the name key for the unnamed agent",
+			params: Agento11yReadParams{Operation: "list_agent_versions", AgentName: agento11yAgentName("")},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				assert.Contains(t, r.URL.Query(), "name", "the name key must be sent even when empty")
 				assert.Equal(t, "", r.URL.Query().Get("name"))
@@ -393,9 +394,9 @@ func TestAgento11yManageAgents(t *testing.T) {
 			},
 		},
 		{
-			name: "list_versions forwards the limit and cursor",
-			params: ManageAgento11yAgentsParams{
-				Operation: "list_versions",
+			name: "list_agent_versions forwards the limit and cursor",
+			params: Agento11yReadParams{
+				Operation: "list_agent_versions",
 				AgentName: agento11yAgentName("claude-code"),
 				Limit:     10,
 				Cursor:    "versions-tok",
@@ -415,14 +416,14 @@ func TestAgento11yManageAgents(t *testing.T) {
 			},
 		},
 		{
-			name:    "list_versions without an agent name is rejected",
-			params:  ManageAgento11yAgentsParams{Operation: "list_versions"},
-			wantErr: "agent_name is required for \"list_versions\" operation",
+			name:    "list_agent_versions without an agent name is rejected",
+			params:  Agento11yReadParams{Operation: "list_agent_versions"},
+			wantErr: "agent_name is required for \"list_agent_versions\" operation",
 		},
 		{
-			name: "list_version_scores sends RFC3339 window bounds",
-			params: ManageAgento11yAgentsParams{
-				Operation: "list_version_scores",
+			name: "list_agent_version_scores sends RFC3339 window bounds",
+			params: Agento11yReadParams{
+				Operation: "list_agent_version_scores",
 				AgentName: agento11yAgentName("claude-code"),
 				StartTime: "2026-07-01T10:00:00Z",
 				EndTime:   "2026-07-30T09:00:00Z",
@@ -453,7 +454,7 @@ func TestAgento11yManageAgents(t *testing.T) {
 			},
 			checkResult: func(t *testing.T, result any) {
 				resp, ok := result.(*agento11yListResponse[Agento11yAgentVersionScore])
-				require.True(t, ok, "list_version_scores should return *agento11yListResponse[Agento11yAgentVersionScore]")
+				require.True(t, ok, "list_agent_version_scores should return *agento11yListResponse[Agento11yAgentVersionScore]")
 				require.Len(t, resp.Items, 1)
 
 				item := resp.Items[0]
@@ -482,13 +483,13 @@ func TestAgento11yManageAgents(t *testing.T) {
 			},
 		},
 		{
-			name:   "list_version_scores without a window omits from, to, and cursor",
-			params: ManageAgento11yAgentsParams{Operation: "list_version_scores", AgentName: agento11yAgentName("claude-code")},
+			name:   "list_agent_version_scores without a window omits from, to, and cursor",
+			params: Agento11yReadParams{Operation: "list_agent_version_scores", AgentName: agento11yAgentName("claude-code")},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				query := r.URL.Query()
 				assert.Equal(t, "claude-code", query.Get("name"))
 				for _, key := range []string{"from", "to", "cursor", "limit"} {
-					assert.NotContains(t, query, key, "%s should not be sent by list_version_scores", key)
+					assert.NotContains(t, query, key, "%s should not be sent by list_agent_version_scores", key)
 				}
 
 				writeJSONResponse(t, w, `{"items":[]}`)
@@ -501,56 +502,56 @@ func TestAgento11yManageAgents(t *testing.T) {
 			},
 		},
 		{
-			name:    "list_version_scores without an agent name is rejected",
-			params:  ManageAgento11yAgentsParams{Operation: "list_version_scores"},
-			wantErr: "agent_name is required for 'list_version_scores' operation",
+			name:    "list_agent_version_scores without an agent name is rejected",
+			params:  Agento11yReadParams{Operation: "list_agent_version_scores"},
+			wantErr: "agent_name is required for 'list_agent_version_scores' operation",
 		},
 		{
-			name:    "list_version_scores with an empty agent name is rejected",
-			params:  ManageAgento11yAgentsParams{Operation: "list_version_scores", AgentName: agento11yAgentName("")},
+			name:    "list_agent_version_scores with an empty agent name is rejected",
+			params:  Agento11yReadParams{Operation: "list_agent_version_scores", AgentName: agento11yAgentName("")},
 			wantErr: "agent_name must not be blank",
 		},
 		{
-			name:    "list_version_scores with a whitespace-only agent name is rejected",
-			params:  ManageAgento11yAgentsParams{Operation: "list_version_scores", AgentName: agento11yAgentName("   ")},
+			name:    "list_agent_version_scores with a whitespace-only agent name is rejected",
+			params:  Agento11yReadParams{Operation: "list_agent_version_scores", AgentName: agento11yAgentName("   ")},
 			wantErr: "agent_name must not be blank",
 		},
 		{
-			name:    "version on list is rejected",
-			params:  ManageAgento11yAgentsParams{Operation: "list", Version: agento11yEffectiveVersion},
-			wantErr: "version is only valid for 'get' operation, not \"list\"",
+			name:    "version on list_agents is rejected",
+			params:  Agento11yReadParams{Operation: "list_agents", Version: agento11yEffectiveVersion},
+			wantErr: "version is only valid for 'get_agent' operation, not \"list_agents\"",
 		},
 		{
-			name: "version on list_versions is rejected",
-			params: ManageAgento11yAgentsParams{
-				Operation: "list_versions",
+			name: "version on list_agent_versions is rejected",
+			params: Agento11yReadParams{
+				Operation: "list_agent_versions",
 				AgentName: agento11yAgentName("claude-code"),
 				Version:   agento11yEffectiveVersion,
 			},
-			wantErr: "version is only valid for 'get' operation",
+			wantErr: "version is only valid for 'get_agent' operation",
 		},
 		{
-			name: "version on list_version_scores is rejected",
-			params: ManageAgento11yAgentsParams{
-				Operation: "list_version_scores",
+			name: "version on list_agent_version_scores is rejected",
+			params: Agento11yReadParams{
+				Operation: "list_agent_version_scores",
 				AgentName: agento11yAgentName("claude-code"),
 				Version:   agento11yEffectiveVersion,
 			},
-			wantErr: "version is only valid for 'get' operation",
+			wantErr: "version is only valid for 'get_agent' operation",
 		},
 		{
 			name:    "unknown operation names every supported operation",
-			params:  ManageAgento11yAgentsParams{Operation: "delete"},
-			wantErr: "unknown operation \"delete\", must be one of: list, get, list_versions, list_version_scores",
+			params:  Agento11yReadParams{Operation: "delete"},
+			wantErr: "unknown operation \"delete\", must be one of: " + agento11yReadOperations,
 		},
 		{
 			name:    "empty operation is rejected",
-			params:  ManageAgento11yAgentsParams{},
+			params:  Agento11yReadParams{},
 			wantErr: "unknown operation \"\"",
 		},
 		{
 			name:   "upstream permission error is surfaced",
-			params: ManageAgento11yAgentsParams{Operation: "list"},
+			params: Agento11yReadParams{Operation: "list_agents"},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusForbidden)
 				_, err := w.Write([]byte(`{"error":"missing grafana-agento11y-app.data:read"}`))
@@ -559,8 +560,8 @@ func TestAgento11yManageAgents(t *testing.T) {
 			wantErr: "request failed with status 403: {\"error\":\"missing grafana-agento11y-app.data:read\"}",
 		},
 		{
-			name:   "malformed list payload is a decode error",
-			params: ManageAgento11yAgentsParams{Operation: "list"},
+			name:   "malformed list_agents payload is a decode error",
+			params: Agento11yReadParams{Operation: "list_agents"},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				writeJSONResponse(t, w, `{not json`)
 			},
@@ -579,7 +580,7 @@ func TestAgento11yManageAgents(t *testing.T) {
 			})
 			defer server.Close()
 
-			result, err := manageAgento11yAgents(ctx, tc.params)
+			result, err := agento11yRead(ctx, tc.params)
 			if tc.wantErr != "" {
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), tc.wantErr)
@@ -593,12 +594,12 @@ func TestAgento11yManageAgents(t *testing.T) {
 	}
 }
 
-// TestAgento11yManageAgentsToolContract pins the parts of the advertised tool a
+// TestAgento11yReadToolContract pins the parts of the advertised tool a
 // client relies on but no request test touches: the read-only annotations that
 // tell a caller it is safe to run, and the guidance that keeps it from fetching
 // a huge prompt or filtering conversations by a key that does not exist.
-func TestAgento11yManageAgentsToolContract(t *testing.T) {
-	tool := ManageAgento11yAgents.Tool
+func TestAgento11yReadToolContract(t *testing.T) {
+	tool := Agento11yRead.Tool
 
 	require.NotNil(t, tool.Annotations.ReadOnlyHint, "the tool should carry a read-only hint")
 	assert.True(t, *tool.Annotations.ReadOnlyHint)
@@ -612,10 +613,11 @@ func TestAgento11yManageAgentsToolContract(t *testing.T) {
 		// A prompt edit only mints one when the agent declares no version of its
 		// own, so the condition has to travel with the claim.
 		"a hash of the system prompt",
-		// 'get' can be tens of thousands of tokens, so the cheap size signal
-		// has to be named.
+		// 'get_agent' can be tens of thousands of tokens, so the cheap size
+		// signal has to be named.
 		"token_estimate.total",
-		// The catalog is only useful with the conversation tools.
+		// The catalog is only useful with the conversation operations, now
+		// merged into the same tool.
 		`agent = "<name>"`,
 		// The cursor is bound to the filters it was issued with.
 		"absolute RFC3339 times",
@@ -625,20 +627,17 @@ func TestAgento11yManageAgentsToolContract(t *testing.T) {
 		assert.Contains(t, tool.Description, guidance)
 	}
 
-	// An agent version is not usable as a conversation-search filter key: the
-	// Doris path has no column for it and generation search rejects it, so
-	// advertising it here would send a model down a dead end.
-	assert.NotContains(t, tool.Description, "agent.version")
-	// No operation touches a route needing eval:write.
+	// No operation touches a route needing eval:write: agento11y_read has no
+	// write half.
 	assert.NotContains(t, tool.Description, "eval:write")
 }
 
-// TestAgento11yManageAgentsToolArgumentBinding calls through the registered
-// tool handler rather than the Go function, because the whole point of making
+// TestAgento11yReadToolArgumentBinding calls through the registered tool
+// handler rather than the Go function, because the whole point of making
 // agent_name a *string is what happens to the JSON a client actually sends: an
 // omitted key must stay omitted instead of arriving as "", which is how the
 // unnamed agent is addressed.
-func TestAgento11yManageAgentsToolArgumentBinding(t *testing.T) {
+func TestAgento11yReadToolArgumentBinding(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		arguments map[string]any
@@ -647,12 +646,12 @@ func TestAgento11yManageAgentsToolArgumentBinding(t *testing.T) {
 	}{
 		{
 			name:      "an explicitly empty agent_name reaches the lookup route",
-			arguments: map[string]any{"operation": "get", "agent_name": ""},
+			arguments: map[string]any{"operation": "get_agent", "agent_name": ""},
 			called:    true,
 		},
 		{
 			name:      "an omitted agent_name is rejected",
-			arguments: map[string]any{"operation": "get"},
+			arguments: map[string]any{"operation": "get_agent"},
 			wantErr:   "agent_name is required",
 		},
 	} {
@@ -666,8 +665,8 @@ func TestAgento11yManageAgentsToolArgumentBinding(t *testing.T) {
 			})
 			defer server.Close()
 
-			result, err := ManageAgento11yAgents.Handler(ctx, mcp.CallToolRequest{
-				Params: mcp.CallToolParams{Name: "agento11y_manage_agents", Arguments: tc.arguments},
+			result, err := Agento11yRead.Handler(ctx, mcp.CallToolRequest{
+				Params: mcp.CallToolParams{Name: "agento11y_read", Arguments: tc.arguments},
 			})
 			require.NoError(t, err, "the MCP handler reports tool failures in the result, not as a transport error")
 			require.NotNil(t, result)
@@ -740,5 +739,366 @@ func TestAgento11yAgentEffectiveVersionPattern(t *testing.T) {
 		{version: "", want: false},
 	} {
 		assert.Equal(t, tc.want, agento11yEffectiveVersionPattern.MatchString(tc.version), "pattern match for %q", tc.version)
+	}
+}
+
+func TestAgento11yReadConversations(t *testing.T) {
+	testCases := []struct {
+		name        string
+		params      Agento11yReadParams
+		handler     func(t *testing.T, w http.ResponseWriter, r *http.Request) // nil: server must not be called
+		wantErr     string
+		checkResult func(t *testing.T, result any)
+	}{
+		{
+			name:   "list_conversations recent conversations",
+			params: Agento11yReadParams{Operation: "list_conversations"},
+			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
+				require.Equal(t, http.MethodGet, r.Method)
+				require.Equal(t, "/api/plugins/grafana-agento11y-app/resources/query/conversations", r.URL.Path)
+				require.Equal(t, "Bearer test-api-key", r.Header.Get("Authorization"))
+				require.Equal(t, "50", r.URL.Query().Get("limit"))
+
+				w.Header().Set("Content-Type", "application/json")
+				_, err := w.Write([]byte(`{"items":[{
+					"id": "conv-1",
+					"title": "Hello",
+					"generation_count": 2,
+					"annotation_summary": {"annotation_count": 3, "latest_annotation_type": "note", "latest_annotated_at": "2025-04-23T10:00:00Z"}
+				}],"next_cursor":"list-tok"}`))
+				require.NoError(t, err)
+			},
+			checkResult: func(t *testing.T, result any) {
+				resp, ok := result.(*agento11yListResponse[Agento11yConversation])
+				require.True(t, ok)
+				require.Len(t, resp.Items, 1)
+				assert.Equal(t, "conv-1", resp.Items[0].ID)
+				assert.Equal(t, "Hello", resp.Items[0].Title)
+				assert.Equal(t, 2, resp.Items[0].GenerationCount)
+				require.NotNil(t, resp.Items[0].AnnotationSummary)
+				assert.Equal(t, 3, resp.Items[0].AnnotationSummary.AnnotationCount)
+				assert.Equal(t, "note", resp.Items[0].AnnotationSummary.LatestAnnotationType)
+				assert.Equal(t, "list-tok", resp.NextCursor)
+			},
+		},
+		{
+			name:   "list_conversations passes limit and cursor through",
+			params: Agento11yReadParams{Operation: "list_conversations", Limit: 10, Cursor: "abc"},
+			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
+				require.Equal(t, "10", r.URL.Query().Get("limit"))
+				require.Equal(t, "abc", r.URL.Query().Get("cursor"))
+
+				w.Header().Set("Content-Type", "application/json")
+				_, err := w.Write([]byte(`{"items":[]}`))
+				require.NoError(t, err)
+			},
+		},
+		{
+			name: "search_conversations with filters and concrete time range",
+			params: Agento11yReadParams{
+				Operation: "search_conversations",
+				Filters:   `status = "error"`,
+				StartTime: "2025-04-23T10:00:00Z",
+				EndTime:   "2025-04-23T11:00:00Z",
+				Limit:     25,
+				Cursor:    "cursor-1",
+			},
+			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
+				require.Equal(t, http.MethodPost, r.Method)
+				require.Equal(t, "/api/plugins/grafana-agento11y-app/resources/query/conversations/search", r.URL.Path)
+				require.Equal(t, "Bearer test-api-key", r.Header.Get("Authorization"))
+				require.Equal(t, "application/json", r.Header.Get("Content-Type"))
+
+				var req Agento11ySearchRequest
+				require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+				assert.Equal(t, `status = "error"`, req.Filters)
+				assert.Equal(t, 25, req.PageSize)
+				assert.Equal(t, "cursor-1", req.Cursor)
+				require.NotNil(t, req.TimeRange)
+				assert.True(t, req.TimeRange.From.Equal(time.Date(2025, 4, 23, 10, 0, 0, 0, time.UTC)))
+				assert.True(t, req.TimeRange.To.Equal(time.Date(2025, 4, 23, 11, 0, 0, 0, time.UTC)))
+
+				w.Header().Set("Content-Type", "application/json")
+				_, err := w.Write([]byte(`{
+					"conversations": [{
+						"conversation_id": "conv-1",
+						"conversation_title": "Broken run",
+						"generation_count": 3,
+						"models": ["claude-opus-4-6"],
+						"agents": ["claude-code"],
+						"error_count": 2,
+						"has_errors": true,
+						"trace_ids": ["trace-1"],
+						"rating_summary": {"total_count": 1, "good_count": 0, "bad_count": 1, "latest_rated_at": "2025-04-23T10:30:00Z", "latest_bad_at": "2025-04-23T10:30:00Z", "has_bad_rating": true},
+						"annotation_count": 0,
+						"eval_summary": {"total_scores": 4, "pass_count": 3, "fail_count": 1}
+					}],
+					"next_cursor": "next-tok",
+					"has_more": true
+				}`))
+				require.NoError(t, err)
+			},
+			checkResult: func(t *testing.T, result any) {
+				resp, ok := result.(*Agento11ySearchResponse)
+				require.True(t, ok)
+				require.Len(t, resp.Conversations, 1)
+				conv := resp.Conversations[0]
+				assert.Equal(t, "conv-1", conv.ConversationID)
+				assert.Equal(t, 2, conv.ErrorCount)
+				assert.True(t, conv.HasErrors)
+				require.NotNil(t, conv.RatingSummary)
+				assert.True(t, conv.RatingSummary.HasBadRating)
+				assert.True(t, conv.RatingSummary.LatestRatedAt.Equal(time.Date(2025, 4, 23, 10, 30, 0, 0, time.UTC)))
+				assert.True(t, conv.RatingSummary.LatestBadAt.Equal(time.Date(2025, 4, 23, 10, 30, 0, 0, time.UTC)))
+				require.NotNil(t, conv.EvalSummary)
+				assert.Equal(t, 1, conv.EvalSummary.FailCount)
+				assert.Equal(t, "next-tok", resp.NextCursor)
+				assert.True(t, resp.HasMore)
+			},
+		},
+		{
+			name:   "search_conversations defaults to last 24 hours",
+			params: Agento11yReadParams{Operation: "search_conversations"},
+			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
+				var req Agento11ySearchRequest
+				require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+				require.NotNil(t, req.TimeRange)
+				assert.WithinDuration(t, time.Now(), req.TimeRange.To, time.Minute)
+				assert.WithinDuration(t, time.Now().Add(-24*time.Hour), req.TimeRange.From, time.Minute)
+				assert.Equal(t, 50, req.PageSize)
+
+				w.Header().Set("Content-Type", "application/json")
+				_, err := w.Write([]byte(`{"conversations":[],"has_more":false}`))
+				require.NoError(t, err)
+			},
+		},
+		{
+			name:   "get_conversation detail",
+			params: Agento11yReadParams{Operation: "get_conversation", ConversationID: "conv-123"},
+			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
+				require.Equal(t, http.MethodGet, r.Method)
+				require.Equal(t, "/api/plugins/grafana-agento11y-app/resources/query/conversations/conv-123", r.URL.Path)
+
+				w.Header().Set("Content-Type", "application/json")
+				_, err := w.Write([]byte(`{"id":"conv-123","generations":[{"id":"gen-1"}]}`))
+				require.NoError(t, err)
+			},
+			checkResult: func(t *testing.T, result any) {
+				detail, ok := result.(map[string]any)
+				require.True(t, ok)
+				assert.Equal(t, "conv-123", detail["id"])
+				assert.Len(t, detail["generations"], 1)
+			},
+		},
+		{
+			name:    "get_conversation without conversation_id",
+			params:  Agento11yReadParams{Operation: "get_conversation"},
+			wantErr: "conversation_id is required",
+		},
+		{
+			name:    "unknown operation",
+			params:  Agento11yReadParams{Operation: "delete_conversation"},
+			wantErr: "unknown operation",
+		},
+		{
+			name:    "search_conversations with invalid start time",
+			params:  Agento11yReadParams{Operation: "search_conversations", StartTime: "not-a-date"},
+			wantErr: "parsing start_time",
+		},
+		{
+			name:    "search_conversations with cursor but no explicit time range is rejected",
+			params:  Agento11yReadParams{Operation: "search_conversations", Cursor: "tok-1"},
+			wantErr: "paginating with a cursor requires",
+		},
+		{
+			name: "search_conversations with cursor and explicit time range passes bounds through unchanged",
+			params: Agento11yReadParams{
+				Operation: "search_conversations",
+				Filters:   `status = "error"`,
+				StartTime: "2025-04-23T10:00:00Z",
+				EndTime:   "2025-04-23T11:00:00Z",
+				Cursor:    "tok-1",
+			},
+			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
+				var req Agento11ySearchRequest
+				require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+				assert.Equal(t, "tok-1", req.Cursor)
+				assert.Equal(t, `status = "error"`, req.Filters)
+				require.NotNil(t, req.TimeRange)
+				assert.True(t, req.TimeRange.From.Equal(time.Date(2025, 4, 23, 10, 0, 0, 0, time.UTC)))
+				assert.True(t, req.TimeRange.To.Equal(time.Date(2025, 4, 23, 11, 0, 0, 0, time.UTC)))
+
+				w.Header().Set("Content-Type", "application/json")
+				_, err := w.Write([]byte(`{"conversations":[],"has_more":false}`))
+				require.NoError(t, err)
+			},
+		},
+		{
+			name:   "upstream error is returned",
+			params: Agento11yReadParams{Operation: "list_conversations"},
+			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusForbidden)
+				_, err := w.Write([]byte(`{"error":"missing grafana-agento11y-app.conversations:read"}`))
+				require.NoError(t, err)
+			},
+			wantErr: "request failed with status 403",
+		},
+		{
+			name:   "oversized response is rejected",
+			params: Agento11yReadParams{Operation: "get_conversation", ConversationID: "conv-big"},
+			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
+				_, err := w.Write(make([]byte, defaultResponseLimitBytes+1))
+				require.NoError(t, err)
+			},
+			wantErr: "exceeds maximum size",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			server, ctx := setupMockAgento11yServer(func(w http.ResponseWriter, r *http.Request) {
+				if tc.handler == nil {
+					t.Error("server should not be called for validation failures")
+					return
+				}
+				tc.handler(t, w, r)
+			})
+			defer server.Close()
+
+			result, err := agento11yRead(ctx, tc.params)
+			if tc.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tc.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			if tc.checkResult != nil {
+				tc.checkResult(t, result)
+			}
+		})
+	}
+}
+
+func TestAgento11yReadGenerations(t *testing.T) {
+	testCases := []struct {
+		name        string
+		params      Agento11yReadParams
+		handler     func(t *testing.T, w http.ResponseWriter, r *http.Request) // nil: server must not be called
+		wantErr     string
+		checkResult func(t *testing.T, result any)
+	}{
+		{
+			name:   "get_generation detail",
+			params: Agento11yReadParams{Operation: "get_generation", GenerationID: "gen-123"},
+			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
+				require.Equal(t, http.MethodGet, r.Method)
+				require.Equal(t, "/api/plugins/grafana-agento11y-app/resources/query/generations/gen-123", r.URL.Path)
+				require.Equal(t, "Bearer test-api-key", r.Header.Get("Authorization"))
+
+				w.Header().Set("Content-Type", "application/json")
+				_, err := w.Write([]byte(`{"id":"gen-123","model":{"name":"claude-opus-4-6"},"status":"error"}`))
+				require.NoError(t, err)
+			},
+			checkResult: func(t *testing.T, result any) {
+				detail, ok := result.(map[string]any)
+				require.True(t, ok)
+				assert.Equal(t, "gen-123", detail["id"])
+				assert.Equal(t, "error", detail["status"])
+			},
+		},
+		{
+			name:   "list_generation_scores",
+			params: Agento11yReadParams{Operation: "list_generation_scores", GenerationID: "gen-123"},
+			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
+				require.Equal(t, http.MethodGet, r.Method)
+				require.Equal(t, "/api/plugins/grafana-agento11y-app/resources/query/generations/gen-123/scores", r.URL.Path)
+				require.Equal(t, "50", r.URL.Query().Get("limit"))
+
+				w.Header().Set("Content-Type", "application/json")
+				_, err := w.Write([]byte(`{
+					"items": [{
+						"score_id": "score-1",
+						"generation_id": "gen-123",
+						"evaluator_id": "eval-1",
+						"evaluator_version": "v1",
+						"experiment_id": "exp-1",
+						"score_key": "helpfulness",
+						"score_type": "number",
+						"value": {"number": 0.9},
+						"passed": true,
+						"explanation": "response addressed the question"
+					}],
+					"next_cursor": "score-tok"
+				}`))
+				require.NoError(t, err)
+			},
+			checkResult: func(t *testing.T, result any) {
+				resp, ok := result.(*agento11yListResponse[Agento11yScore])
+				require.True(t, ok)
+				require.Len(t, resp.Items, 1)
+				score := resp.Items[0]
+				assert.Equal(t, "eval-1", score.EvaluatorID)
+				assert.Equal(t, "exp-1", score.ExperimentID)
+				assert.Equal(t, "helpfulness", score.ScoreKey)
+				assert.Equal(t, "number", score.ScoreType)
+				require.NotNil(t, score.Value.Number)
+				assert.Equal(t, 0.9, *score.Value.Number)
+				require.NotNil(t, score.Passed)
+				assert.True(t, *score.Passed)
+				assert.Equal(t, "response addressed the question", score.Explanation)
+				assert.Equal(t, "score-tok", resp.NextCursor)
+			},
+		},
+		{
+			name:   "list_generation_scores passes limit and cursor through",
+			params: Agento11yReadParams{Operation: "list_generation_scores", GenerationID: "gen-123", Limit: 5, Cursor: "tok-2"},
+			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
+				require.Equal(t, "5", r.URL.Query().Get("limit"))
+				require.Equal(t, "tok-2", r.URL.Query().Get("cursor"))
+
+				w.Header().Set("Content-Type", "application/json")
+				_, err := w.Write([]byte(`{"items":[]}`))
+				require.NoError(t, err)
+			},
+		},
+		{
+			name:    "get_generation without generation_id",
+			params:  Agento11yReadParams{Operation: "get_generation"},
+			wantErr: "generation_id is required",
+		},
+		{
+			name:    "list_generation_scores without generation_id",
+			params:  Agento11yReadParams{Operation: "list_generation_scores"},
+			wantErr: "generation_id is required",
+		},
+		{
+			name:    "unknown operation",
+			params:  Agento11yReadParams{Operation: "list", GenerationID: "gen-123"},
+			wantErr: "unknown operation",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			server, ctx := setupMockAgento11yServer(func(w http.ResponseWriter, r *http.Request) {
+				if tc.handler == nil {
+					t.Error("server should not be called for validation failures")
+					return
+				}
+				tc.handler(t, w, r)
+			})
+			defer server.Close()
+
+			result, err := agento11yRead(ctx, tc.params)
+			if tc.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tc.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			if tc.checkResult != nil {
+				tc.checkResult(t, result)
+			}
+		})
 	}
 }

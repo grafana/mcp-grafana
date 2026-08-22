@@ -11,10 +11,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestAgento11yManageEvalCollectionsRead(t *testing.T) {
+func TestAgento11yEvalsReadEvalCollections(t *testing.T) {
 	testCases := []struct {
 		name            string
-		params          ManageAgento11yEvalCollectionsReadParams
+		params          Agento11yEvalsReadParams
 		handler         func(t *testing.T, w http.ResponseWriter, r *http.Request) // nil: server must not be called
 		wantErr         string
 		wantErrExcludes string // text the error must not carry, for a remap that should not fire
@@ -22,7 +22,7 @@ func TestAgento11yManageEvalCollectionsRead(t *testing.T) {
 	}{
 		{
 			name:   "list saved conversations sends the default limit and keeps total_count",
-			params: ManageAgento11yEvalCollectionsReadParams{Operation: "list_saved_conversations"},
+			params: Agento11yEvalsReadParams{Operation: "list_saved_conversations"},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				require.Equal(t, http.MethodGet, r.Method)
 				require.Equal(t, "/api/plugins/grafana-agento11y-app/resources/eval/saved-conversations", r.URL.Path)
@@ -68,9 +68,9 @@ func TestAgento11yManageEvalCollectionsRead(t *testing.T) {
 		},
 		{
 			name: "list saved conversations forwards limit, cursor, and source",
-			params: ManageAgento11yEvalCollectionsReadParams{
-				Operation:                     "list_saved_conversations",
-				agento11yEvalCollectionFields: agento11yEvalCollectionFields{Limit: 25, Cursor: "120", Source: "telemetry"},
+			params: Agento11yEvalsReadParams{
+				Operation: "list_saved_conversations",
+				Limit:     25, Cursor: "120", Source: "telemetry",
 			},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				require.Equal(t, "25", r.URL.Query().Get("limit"))
@@ -88,7 +88,7 @@ func TestAgento11yManageEvalCollectionsRead(t *testing.T) {
 		},
 		{
 			name:   "an explicitly empty collections array stays non-nil",
-			params: ManageAgento11yEvalCollectionsReadParams{Operation: "list_saved_conversations"},
+			params: Agento11yEvalsReadParams{Operation: "list_saved_conversations"},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				writeJSONResponse(t, w, `{"items":[
 					{"saved_id":"saved-empty","collections":[]},
@@ -108,7 +108,7 @@ func TestAgento11yManageEvalCollectionsRead(t *testing.T) {
 		},
 		{
 			name:   "get saved conversation",
-			params: ManageAgento11yEvalCollectionsReadParams{Operation: "get_saved_conversation", SavedID: "saved-conv-1"},
+			params: Agento11yEvalsReadParams{Operation: "get_saved_conversation", SavedID: "saved-conv-1"},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				require.Equal(t, http.MethodGet, r.Method)
 				require.Equal(t, "/api/plugins/grafana-agento11y-app/resources/eval/saved-conversations/saved-conv-1", r.URL.Path)
@@ -125,7 +125,7 @@ func TestAgento11yManageEvalCollectionsRead(t *testing.T) {
 		},
 		{
 			name:   "missing saved conversation reports the id the bare 404 body omits",
-			params: ManageAgento11yEvalCollectionsReadParams{Operation: "get_saved_conversation", SavedID: "saved-missing"},
+			params: Agento11yEvalsReadParams{Operation: "get_saved_conversation", SavedID: "saved-missing"},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				http.NotFound(w, r)
 			},
@@ -134,7 +134,7 @@ func TestAgento11yManageEvalCollectionsRead(t *testing.T) {
 		},
 		{
 			name:   "a descriptive 404 on the same route is passed through, not remapped",
-			params: ManageAgento11yEvalCollectionsReadParams{Operation: "get_saved_conversation", SavedID: "saved-conv-1"},
+			params: Agento11yEvalsReadParams{Operation: "get_saved_conversation", SavedID: "saved-conv-1"},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				// What the plugin proxy answers when the app is not installed, and
 				// what an older plugin build answers for a route it does not have.
@@ -147,7 +147,7 @@ func TestAgento11yManageEvalCollectionsRead(t *testing.T) {
 		},
 		{
 			name:   "list collections for a saved conversation",
-			params: ManageAgento11yEvalCollectionsReadParams{Operation: "list_collections_for_saved_conversation", SavedID: "saved-conv-1"},
+			params: Agento11yEvalsReadParams{Operation: "list_collections_for_saved_conversation", SavedID: "saved-conv-1"},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				require.Equal(t, http.MethodGet, r.Method)
 				require.Equal(t, "/api/plugins/grafana-agento11y-app/resources/eval/saved-conversations/saved-conv-1/collections", r.URL.Path)
@@ -165,7 +165,7 @@ func TestAgento11yManageEvalCollectionsRead(t *testing.T) {
 		},
 		{
 			name:   "list collections",
-			params: ManageAgento11yEvalCollectionsReadParams{Operation: "list_collections", agento11yEvalCollectionFields: agento11yEvalCollectionFields{Limit: 10, Cursor: "collection-9"}},
+			params: Agento11yEvalsReadParams{Operation: "list_collections", Limit: 10, Cursor: "collection-9"},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				require.Equal(t, http.MethodGet, r.Method)
 				require.Equal(t, "/api/plugins/grafana-agento11y-app/resources/eval/collections", r.URL.Path)
@@ -185,7 +185,7 @@ func TestAgento11yManageEvalCollectionsRead(t *testing.T) {
 		},
 		{
 			name:   "list collections ignores a source filter it cannot use",
-			params: ManageAgento11yEvalCollectionsReadParams{Operation: "list_collections", agento11yEvalCollectionFields: agento11yEvalCollectionFields{Source: "manual"}},
+			params: Agento11yEvalsReadParams{Operation: "list_collections", Source: "manual"},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				require.False(t, r.URL.Query().Has("source"))
 
@@ -194,7 +194,7 @@ func TestAgento11yManageEvalCollectionsRead(t *testing.T) {
 		},
 		{
 			name:   "get collection",
-			params: ManageAgento11yEvalCollectionsReadParams{Operation: "get_collection", CollectionID: "collection-1"},
+			params: Agento11yEvalsReadParams{Operation: "get_collection", CollectionID: "collection-1"},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				require.Equal(t, http.MethodGet, r.Method)
 				require.Equal(t, "/api/plugins/grafana-agento11y-app/resources/eval/collections/collection-1", r.URL.Path)
@@ -210,7 +210,7 @@ func TestAgento11yManageEvalCollectionsRead(t *testing.T) {
 		},
 		{
 			name:   "unknown collection surfaces the descriptive 404 body",
-			params: ManageAgento11yEvalCollectionsReadParams{Operation: "get_collection", CollectionID: "collection-missing"},
+			params: Agento11yEvalsReadParams{Operation: "get_collection", CollectionID: "collection-missing"},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusNotFound)
 				_, err := w.Write([]byte(`collection "collection-missing" not found`))
@@ -220,10 +220,10 @@ func TestAgento11yManageEvalCollectionsRead(t *testing.T) {
 		},
 		{
 			name: "list collection members forwards its own cursor space",
-			params: ManageAgento11yEvalCollectionsReadParams{
-				Operation:                     "list_collection_members",
-				CollectionID:                  "collection-1",
-				agento11yEvalCollectionFields: agento11yEvalCollectionFields{Cursor: "saved-conv-9"},
+			params: Agento11yEvalsReadParams{
+				Operation:    "list_collection_members",
+				CollectionID: "collection-1",
+				Cursor:       "saved-conv-9",
 			},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				require.Equal(t, http.MethodGet, r.Method)
@@ -245,42 +245,42 @@ func TestAgento11yManageEvalCollectionsRead(t *testing.T) {
 		},
 		{
 			name:    "get saved conversation without saved_id",
-			params:  ManageAgento11yEvalCollectionsReadParams{Operation: "get_saved_conversation"},
+			params:  Agento11yEvalsReadParams{Operation: "get_saved_conversation"},
 			wantErr: `saved_id is required for "get_saved_conversation"`,
 		},
 		{
 			name:    "list collections for a saved conversation without saved_id",
-			params:  ManageAgento11yEvalCollectionsReadParams{Operation: "list_collections_for_saved_conversation"},
+			params:  Agento11yEvalsReadParams{Operation: "list_collections_for_saved_conversation"},
 			wantErr: `saved_id is required for "list_collections_for_saved_conversation"`,
 		},
 		{
 			name:    "get collection without collection_id",
-			params:  ManageAgento11yEvalCollectionsReadParams{Operation: "get_collection"},
+			params:  Agento11yEvalsReadParams{Operation: "get_collection"},
 			wantErr: `collection_id is required for "get_collection"`,
 		},
 		{
 			name:    "list collection members without collection_id",
-			params:  ManageAgento11yEvalCollectionsReadParams{Operation: "list_collection_members"},
+			params:  Agento11yEvalsReadParams{Operation: "list_collection_members"},
 			wantErr: `collection_id is required for "list_collection_members"`,
 		},
 		{
 			name:    "unsupported source filter",
-			params:  ManageAgento11yEvalCollectionsReadParams{Operation: "list_saved_conversations", agento11yEvalCollectionFields: agento11yEvalCollectionFields{Source: "telemetryy"}},
+			params:  Agento11yEvalsReadParams{Operation: "list_saved_conversations", Source: "telemetryy"},
 			wantErr: `unknown source "telemetryy", must be one of: telemetry, manual`,
 		},
 		{
 			name:    "write operation is rejected by the read variant",
-			params:  ManageAgento11yEvalCollectionsReadParams{Operation: "save_conversation"},
+			params:  Agento11yEvalsReadParams{Operation: "save_conversation"},
 			wantErr: "unknown operation",
 		},
 		{
 			name:    "unknown operation lists the read operations",
-			params:  ManageAgento11yEvalCollectionsReadParams{Operation: "list"},
-			wantErr: `unknown operation "list", must be one of: list_saved_conversations, get_saved_conversation, list_collections_for_saved_conversation, list_collections, get_collection, list_collection_members`,
+			params:  Agento11yEvalsReadParams{Operation: "list"},
+			wantErr: `unknown operation "list", must be one of: ` + agento11yEvalsReadOperations,
 		},
 		{
 			name:   "permission error surfaces the plugin body",
-			params: ManageAgento11yEvalCollectionsReadParams{Operation: "list_collections"},
+			params: Agento11yEvalsReadParams{Operation: "list_collections"},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusForbidden)
 				_, err := w.Write([]byte(`permission denied: grafana-agento11y-app.data:read required`))
@@ -301,7 +301,7 @@ func TestAgento11yManageEvalCollectionsRead(t *testing.T) {
 			})
 			defer server.Close()
 
-			result, err := manageAgento11yEvalCollectionsRead(ctx, tc.params)
+			result, err := agento11yEvalsRead(ctx, tc.params)
 			if tc.wantErr != "" {
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), tc.wantErr)
@@ -318,23 +318,23 @@ func TestAgento11yManageEvalCollectionsRead(t *testing.T) {
 	}
 }
 
-func TestAgento11yManageEvalCollectionsReadWrite(t *testing.T) {
+func TestAgento11yEvalsWriteEvalCollections(t *testing.T) {
 	emptyDescription := ""
 	description := "failures worth re-running"
 
 	testCases := []struct {
 		name        string
-		params      ManageAgento11yEvalCollectionsReadWriteParams
+		params      Agento11yEvalsWriteParams
 		handler     func(t *testing.T, w http.ResponseWriter, r *http.Request) // nil: server must not be called
 		wantErr     string
 		checkResult func(t *testing.T, result any)
 	}{
 		{
 			name: "save conversation derives the saved id and omits server-owned fields",
-			params: ManageAgento11yEvalCollectionsReadWriteParams{
+			params: Agento11yEvalsWriteParams{
 				Operation:      "save_conversation",
 				ConversationID: "conv-1",
-				Name:           "Failure",
+				Name:           agento11yPtr("Failure"),
 			},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				require.Equal(t, http.MethodPost, r.Method)
@@ -357,12 +357,12 @@ func TestAgento11yManageEvalCollectionsReadWrite(t *testing.T) {
 		},
 		{
 			name: "save conversation keeps an explicit saved id and sends tags",
-			params: ManageAgento11yEvalCollectionsReadWriteParams{
-				Operation:      "save_conversation",
-				SavedID:        "regression:2026-04-23",
-				ConversationID: "conv-1",
-				Name:           "Failure",
-				Tags:           map[string]string{"team": "triage"},
+			params: Agento11yEvalsWriteParams{
+				Operation:        "save_conversation",
+				SavedID:          "regression:2026-04-23",
+				ConversationID:   "conv-1",
+				Name:             agento11yPtr("Failure"),
+				ConversationTags: map[string]string{"team": "triage"},
 			},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				body := decodeRequestBody(t, r)
@@ -374,11 +374,11 @@ func TestAgento11yManageEvalCollectionsReadWrite(t *testing.T) {
 		},
 		{
 			name: "save conversation with an empty tag map omits tags",
-			params: ManageAgento11yEvalCollectionsReadWriteParams{
-				Operation:      "save_conversation",
-				ConversationID: "conv-1",
-				Name:           "Failure",
-				Tags:           map[string]string{},
+			params: Agento11yEvalsWriteParams{
+				Operation:        "save_conversation",
+				ConversationID:   "conv-1",
+				Name:             agento11yPtr("Failure"),
+				ConversationTags: map[string]string{},
 			},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				body := decodeRequestBody(t, r)
@@ -392,10 +392,10 @@ func TestAgento11yManageEvalCollectionsReadWrite(t *testing.T) {
 		},
 		{
 			name: "an already saved conversation surfaces the 409 body",
-			params: ManageAgento11yEvalCollectionsReadWriteParams{
+			params: Agento11yEvalsWriteParams{
 				Operation:      "save_conversation",
 				ConversationID: "conv-1",
-				Name:           "Failure",
+				Name:           agento11yPtr("Failure"),
 			},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusConflict)
@@ -406,7 +406,7 @@ func TestAgento11yManageEvalCollectionsReadWrite(t *testing.T) {
 		},
 		{
 			name:   "delete saved conversation handles 204 with an empty body",
-			params: ManageAgento11yEvalCollectionsReadWriteParams{Operation: "delete_saved_conversation", SavedID: "saved-conv-1"},
+			params: Agento11yEvalsWriteParams{Operation: "delete_saved_conversation", SavedID: "saved-conv-1"},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				require.Equal(t, http.MethodDelete, r.Method)
 				require.Equal(t, "/api/plugins/grafana-agento11y-app/resources/eval/saved-conversations/saved-conv-1", r.URL.Path)
@@ -423,9 +423,9 @@ func TestAgento11yManageEvalCollectionsReadWrite(t *testing.T) {
 		},
 		{
 			name: "create collection omits the server-assigned id",
-			params: ManageAgento11yEvalCollectionsReadWriteParams{
+			params: Agento11yEvalsWriteParams{
 				Operation: "create_collection",
-				Name:      "Regression set",
+				Name:      agento11yPtr("Regression set"),
 			},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				require.Equal(t, http.MethodPost, r.Method)
@@ -447,9 +447,9 @@ func TestAgento11yManageEvalCollectionsReadWrite(t *testing.T) {
 		},
 		{
 			name: "create collection sends a supplied description",
-			params: ManageAgento11yEvalCollectionsReadWriteParams{
+			params: Agento11yEvalsWriteParams{
 				Operation:   "create_collection",
-				Name:        "Regression set",
+				Name:        agento11yPtr("Regression set"),
 				Description: &description,
 			},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
@@ -461,10 +461,10 @@ func TestAgento11yManageEvalCollectionsReadWrite(t *testing.T) {
 		},
 		{
 			name: "update collection patches only the fields it was given",
-			params: ManageAgento11yEvalCollectionsReadWriteParams{
+			params: Agento11yEvalsWriteParams{
 				Operation:    "update_collection",
 				CollectionID: "collection-1",
-				Name:         "Renamed",
+				Name:         agento11yPtr("Renamed"),
 			},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				require.Equal(t, http.MethodPatch, r.Method)
@@ -485,7 +485,7 @@ func TestAgento11yManageEvalCollectionsReadWrite(t *testing.T) {
 		},
 		{
 			name: "update collection sends an explicitly empty description to clear it",
-			params: ManageAgento11yEvalCollectionsReadWriteParams{
+			params: Agento11yEvalsWriteParams{
 				Operation:    "update_collection",
 				CollectionID: "collection-1",
 				Description:  &emptyDescription,
@@ -506,7 +506,7 @@ func TestAgento11yManageEvalCollectionsReadWrite(t *testing.T) {
 		},
 		{
 			name:   "delete collection handles 204 with an empty body",
-			params: ManageAgento11yEvalCollectionsReadWriteParams{Operation: "delete_collection", CollectionID: "collection-1"},
+			params: Agento11yEvalsWriteParams{Operation: "delete_collection", CollectionID: "collection-1"},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				require.Equal(t, http.MethodDelete, r.Method)
 				require.Equal(t, "/api/plugins/grafana-agento11y-app/resources/eval/collections/collection-1", r.URL.Path)
@@ -521,7 +521,7 @@ func TestAgento11yManageEvalCollectionsReadWrite(t *testing.T) {
 		},
 		{
 			name: "add collection members turns the status body into a receipt",
-			params: ManageAgento11yEvalCollectionsReadWriteParams{
+			params: Agento11yEvalsWriteParams{
 				Operation:    "add_collection_members",
 				CollectionID: "collection-1",
 				SavedIDs:     []string{"saved-conv-1", "saved-conv-2"},
@@ -545,7 +545,7 @@ func TestAgento11yManageEvalCollectionsReadWrite(t *testing.T) {
 		},
 		{
 			name: "an unknown saved id surfaces the 400 body",
-			params: ManageAgento11yEvalCollectionsReadWriteParams{
+			params: Agento11yEvalsWriteParams{
 				Operation:    "add_collection_members",
 				CollectionID: "collection-1",
 				SavedIDs:     []string{"saved-missing"},
@@ -559,7 +559,7 @@ func TestAgento11yManageEvalCollectionsReadWrite(t *testing.T) {
 		},
 		{
 			name: "remove collection member handles 204 with an empty body",
-			params: ManageAgento11yEvalCollectionsReadWriteParams{
+			params: Agento11yEvalsWriteParams{
 				Operation:    "remove_collection_member",
 				CollectionID: "collection-1",
 				SavedID:      "saved-conv-1",
@@ -577,128 +577,132 @@ func TestAgento11yManageEvalCollectionsReadWrite(t *testing.T) {
 			},
 		},
 		{
-			name:   "read operations still work in the write variant",
-			params: ManageAgento11yEvalCollectionsReadWriteParams{Operation: "list_saved_conversations"},
-			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
-				require.Equal(t, http.MethodGet, r.Method)
-				require.Equal(t, "/api/plugins/grafana-agento11y-app/resources/eval/saved-conversations", r.URL.Path)
-
-				writeJSONResponse(t, w, `{"items":[],"total_count":0}`)
-			},
+			// Under the disjoint-operation split, agento11y_evals_write no
+			// longer reaches the read dispatch for a sibling read operation -
+			// see TestAgento11yEvalsWriteRejectsReadOperations in
+			// agento11y_evals_test.go for the general case across every domain.
+			name:    "a read operation is rejected, not dispatched",
+			params:  Agento11yEvalsWriteParams{Operation: "list_saved_conversations"},
+			wantErr: `"list_saved_conversations" is an agento11y_evals_read operation, not agento11y_evals_write`,
 		},
 		{
 			name:    "save conversation without conversation_id",
-			params:  ManageAgento11yEvalCollectionsReadWriteParams{Operation: "save_conversation", Name: "Failure"},
+			params:  Agento11yEvalsWriteParams{Operation: "save_conversation", Name: agento11yPtr("Failure")},
 			wantErr: "conversation_id is required for 'save_conversation'",
 		},
 		{
 			name:    "save conversation without a name",
-			params:  ManageAgento11yEvalCollectionsReadWriteParams{Operation: "save_conversation", ConversationID: "conv-1"},
+			params:  Agento11yEvalsWriteParams{Operation: "save_conversation", ConversationID: "conv-1"},
 			wantErr: "name is required for 'save_conversation'",
 		},
 		{
 			name: "save conversation with an invalid saved_id",
-			params: ManageAgento11yEvalCollectionsReadWriteParams{
+			params: Agento11yEvalsWriteParams{
 				Operation:      "save_conversation",
 				SavedID:        "saved conversation",
 				ConversationID: "conv-1",
-				Name:           "Failure",
+				Name:           agento11yPtr("Failure"),
 			},
 			wantErr: `saved_id "saved conversation" is invalid`,
 		},
 		{
 			name: "save conversation whose conversation_id derives an invalid saved_id",
-			params: ManageAgento11yEvalCollectionsReadWriteParams{
+			params: Agento11yEvalsWriteParams{
 				Operation:      "save_conversation",
 				ConversationID: "conv 1/2",
-				Name:           "Failure",
+				Name:           agento11yPtr("Failure"),
 			},
 			wantErr: `the saved_id derived from conversation_id, "saved-conv 1/2", is invalid`,
 		},
 		{
 			name:    "delete saved conversation without saved_id",
-			params:  ManageAgento11yEvalCollectionsReadWriteParams{Operation: "delete_saved_conversation"},
+			params:  Agento11yEvalsWriteParams{Operation: "delete_saved_conversation"},
 			wantErr: "saved_id is required for 'delete_saved_conversation'",
 		},
 		{
 			name:    "create collection without a name",
-			params:  ManageAgento11yEvalCollectionsReadWriteParams{Operation: "create_collection"},
+			params:  Agento11yEvalsWriteParams{Operation: "create_collection"},
 			wantErr: "name is required for 'create_collection'",
 		},
 		{
 			// The API creates an empty collection, so accepting saved_ids here
 			// would report success for members that were never added.
 			name:    "create collection with saved_ids it would drop",
-			params:  ManageAgento11yEvalCollectionsReadWriteParams{Operation: "create_collection", Name: "Regression set", SavedIDs: []string{"saved-conv-1"}},
+			params:  Agento11yEvalsWriteParams{Operation: "create_collection", Name: agento11yPtr("Regression set"), SavedIDs: []string{"saved-conv-1"}},
 			wantErr: "saved_ids is not accepted by 'create_collection' operation",
 		},
 		{
 			// The ID is server-assigned, so accepting one here would hand back a
 			// collection the caller cannot address by the ID it asked for.
 			name:    "create collection with a collection_id it would drop",
-			params:  ManageAgento11yEvalCollectionsReadWriteParams{Operation: "create_collection", Name: "Regression set", CollectionID: "collection-1"},
+			params:  Agento11yEvalsWriteParams{Operation: "create_collection", Name: agento11yPtr("Regression set"), CollectionID: "collection-1"},
 			wantErr: "collection_id is not accepted by 'create_collection' operation",
 		},
 		{
 			name: "save conversation with a collection_id it would drop",
-			params: ManageAgento11yEvalCollectionsReadWriteParams{
+			params: Agento11yEvalsWriteParams{
 				Operation:      "save_conversation",
 				ConversationID: "conv-1",
-				Name:           "Failure",
+				Name:           agento11yPtr("Failure"),
 				CollectionID:   "collection-1",
 			},
 			wantErr: "collection_id is not accepted by 'save_conversation' operation",
 		},
 		{
 			name:    "update collection without collection_id",
-			params:  ManageAgento11yEvalCollectionsReadWriteParams{Operation: "update_collection", Name: "Renamed"},
+			params:  Agento11yEvalsWriteParams{Operation: "update_collection", Name: agento11yPtr("Renamed")},
 			wantErr: "collection_id is required for 'update_collection'",
 		},
 		{
 			name:    "update collection without any field to change",
-			params:  ManageAgento11yEvalCollectionsReadWriteParams{Operation: "update_collection", CollectionID: "collection-1"},
+			params:  Agento11yEvalsWriteParams{Operation: "update_collection", CollectionID: "collection-1"},
 			wantErr: "at least one of name or description is required for 'update_collection'",
 		},
 		{
 			name:    "update collection with a blank name",
-			params:  ManageAgento11yEvalCollectionsReadWriteParams{Operation: "update_collection", CollectionID: "collection-1", Name: "   "},
+			params:  Agento11yEvalsWriteParams{Operation: "update_collection", CollectionID: "collection-1", Name: agento11yPtr("   ")},
 			wantErr: "name must not be blank for 'update_collection'",
 		},
 		{
 			name:    "delete collection without collection_id",
-			params:  ManageAgento11yEvalCollectionsReadWriteParams{Operation: "delete_collection"},
+			params:  Agento11yEvalsWriteParams{Operation: "delete_collection"},
 			wantErr: "collection_id is required for 'delete_collection'",
 		},
 		{
 			name:    "add collection members without collection_id",
-			params:  ManageAgento11yEvalCollectionsReadWriteParams{Operation: "add_collection_members", SavedIDs: []string{"saved-conv-1"}},
+			params:  Agento11yEvalsWriteParams{Operation: "add_collection_members", SavedIDs: []string{"saved-conv-1"}},
 			wantErr: "collection_id is required for 'add_collection_members'",
 		},
 		{
 			name:    "add collection members with an empty saved id list",
-			params:  ManageAgento11yEvalCollectionsReadWriteParams{Operation: "add_collection_members", CollectionID: "collection-1", SavedIDs: []string{}},
+			params:  Agento11yEvalsWriteParams{Operation: "add_collection_members", CollectionID: "collection-1", SavedIDs: []string{}},
 			wantErr: "saved_ids is required for 'add_collection_members'",
 		},
 		{
 			name:    "remove collection member without saved_id",
-			params:  ManageAgento11yEvalCollectionsReadWriteParams{Operation: "remove_collection_member", CollectionID: "collection-1"},
+			params:  Agento11yEvalsWriteParams{Operation: "remove_collection_member", CollectionID: "collection-1"},
 			wantErr: "saved_id is required for 'remove_collection_member'",
 		},
 		{
-			name:    "unknown operation lists every operation",
-			params:  ManageAgento11yEvalCollectionsReadWriteParams{Operation: "bookmark_conversation"},
-			wantErr: `unknown operation "bookmark_conversation", must be one of: list_saved_conversations, get_saved_conversation, list_collections_for_saved_conversation, list_collections, get_collection, list_collection_members, save_conversation, delete_saved_conversation, create_collection, update_collection, delete_collection, add_collection_members, remove_collection_member`,
+			name:    "unknown operation lists every write operation",
+			params:  Agento11yEvalsWriteParams{Operation: "bookmark_conversation"},
+			wantErr: `unknown operation "bookmark_conversation", must be one of: ` + agento11yEvalsWriteOperations,
 		},
 		{
-			name:    "unsupported source filter is rejected in the write variant too",
-			params:  ManageAgento11yEvalCollectionsReadWriteParams{Operation: "list_saved_conversations", agento11yEvalCollectionFields: agento11yEvalCollectionFields{Source: "both"}},
-			wantErr: `unknown source "both", must be one of: telemetry, manual`,
+			// list_saved_conversations is a read operation: under the
+			// disjoint-operation split it no longer exists on the write side
+			// at all (there is no Source field here to reject a bad filter
+			// value on), so the write tool reports it as belonging to the
+			// sibling read tool rather than as a source-validation failure.
+			name:    "a sibling read operation is named specifically, not treated as unknown",
+			params:  Agento11yEvalsWriteParams{Operation: "list_saved_conversations"},
+			wantErr: `"list_saved_conversations" is an agento11y_evals_read operation, not agento11y_evals_write`,
 		},
 		{
 			name: "write permission error surfaces the plugin body",
-			params: ManageAgento11yEvalCollectionsReadWriteParams{
+			params: Agento11yEvalsWriteParams{
 				Operation: "create_collection",
-				Name:      "Regression set",
+				Name:      agento11yPtr("Regression set"),
 			},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusForbidden)
@@ -720,7 +724,7 @@ func TestAgento11yManageEvalCollectionsReadWrite(t *testing.T) {
 			})
 			defer server.Close()
 
-			result, err := manageAgento11yEvalCollectionsReadWrite(ctx, tc.params)
+			result, err := agento11yEvalsWrite(ctx, tc.params)
 			if tc.wantErr != "" {
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), tc.wantErr)

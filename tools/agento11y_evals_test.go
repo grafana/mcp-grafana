@@ -6,9 +6,8 @@ package tools
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
-	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/mark3labs/mcp-go/server"
@@ -17,17 +16,24 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestAgento11yManageEvaluatorsRead(t *testing.T) {
+// agento11yPtr returns a pointer to v, for the *string/*[]string fields
+// Agento11yEvalsWriteParams shares across sub-domains (nil means "omitted",
+// distinct from an explicitly zero value).
+func agento11yPtr[T any](v T) *T {
+	return &v
+}
+
+func TestAgento11yEvalsReadEvaluators(t *testing.T) {
 	testCases := []struct {
 		name        string
-		params      ManageAgento11yEvaluatorsReadParams
+		params      Agento11yEvalsReadParams
 		handler     func(t *testing.T, w http.ResponseWriter, r *http.Request) // nil: server must not be called
 		wantErr     string
 		checkResult func(t *testing.T, result any)
 	}{
 		{
 			name:   "list evaluators sends the default limit",
-			params: ManageAgento11yEvaluatorsReadParams{Operation: "list_evaluators"},
+			params: Agento11yEvalsReadParams{Operation: "list_evaluators"},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				require.Equal(t, http.MethodGet, r.Method)
 				require.Equal(t, "/api/plugins/grafana-agento11y-app/resources/eval/evaluators", r.URL.Path)
@@ -58,7 +64,7 @@ func TestAgento11yManageEvaluatorsRead(t *testing.T) {
 		},
 		{
 			name:   "list evaluators passes limit and cursor through",
-			params: ManageAgento11yEvaluatorsReadParams{Operation: "list_evaluators", agento11yEvaluatorFields: agento11yEvaluatorFields{Limit: 25, Cursor: "100"}},
+			params: Agento11yEvalsReadParams{Operation: "list_evaluators", Limit: 25, Cursor: "100"},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				require.Equal(t, "25", r.URL.Query().Get("limit"))
 				require.Equal(t, "100", r.URL.Query().Get("cursor"))
@@ -68,7 +74,7 @@ func TestAgento11yManageEvaluatorsRead(t *testing.T) {
 		},
 		{
 			name:   "get evaluator",
-			params: ManageAgento11yEvaluatorsReadParams{Operation: "get_evaluator", EvaluatorID: "quality.helpfulness"},
+			params: Agento11yEvalsReadParams{Operation: "get_evaluator", EvaluatorID: "quality.helpfulness"},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				require.Equal(t, http.MethodGet, r.Method)
 				require.Equal(t, "/api/plugins/grafana-agento11y-app/resources/eval/evaluators/quality.helpfulness", r.URL.Path)
@@ -97,7 +103,7 @@ func TestAgento11yManageEvaluatorsRead(t *testing.T) {
 		},
 		{
 			name:   "list templates preserves scope and pagination",
-			params: ManageAgento11yEvaluatorsReadParams{Operation: "list_templates", agento11yEvaluatorFields: agento11yEvaluatorFields{Scope: "tenant", Limit: 25, Cursor: "100"}},
+			params: Agento11yEvalsReadParams{Operation: "list_templates", Scope: "tenant", Limit: 25, Cursor: "100"},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				require.Equal(t, http.MethodGet, r.Method)
 				require.Equal(t, "/api/plugins/grafana-agento11y-app/resources/eval/templates", r.URL.Path)
@@ -124,7 +130,7 @@ func TestAgento11yManageEvaluatorsRead(t *testing.T) {
 		},
 		{
 			name:   "list templates without scope omits the filter",
-			params: ManageAgento11yEvaluatorsReadParams{Operation: "list_templates"},
+			params: Agento11yEvalsReadParams{Operation: "list_templates"},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				require.False(t, r.URL.Query().Has("scope"))
 				require.Equal(t, "50", r.URL.Query().Get("limit"))
@@ -134,7 +140,7 @@ func TestAgento11yManageEvaluatorsRead(t *testing.T) {
 		},
 		{
 			name:   "get template is returned untyped",
-			params: ManageAgento11yEvaluatorsReadParams{Operation: "get_template", TemplateID: "template.helpfulness"},
+			params: Agento11yEvalsReadParams{Operation: "get_template", TemplateID: "template.helpfulness"},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				require.Equal(t, http.MethodGet, r.Method)
 				require.Equal(t, "/api/plugins/grafana-agento11y-app/resources/eval/templates/template.helpfulness", r.URL.Path)
@@ -157,7 +163,7 @@ func TestAgento11yManageEvaluatorsRead(t *testing.T) {
 		},
 		{
 			name:   "list template versions",
-			params: ManageAgento11yEvaluatorsReadParams{Operation: "list_template_versions", TemplateID: "template.helpfulness"},
+			params: Agento11yEvalsReadParams{Operation: "list_template_versions", TemplateID: "template.helpfulness"},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				require.Equal(t, http.MethodGet, r.Method)
 				require.Equal(t, "/api/plugins/grafana-agento11y-app/resources/eval/templates/template.helpfulness/versions", r.URL.Path)
@@ -182,7 +188,7 @@ func TestAgento11yManageEvaluatorsRead(t *testing.T) {
 		},
 		{
 			name:   "list judge providers decodes the providers envelope",
-			params: ManageAgento11yEvaluatorsReadParams{Operation: "list_judge_providers"},
+			params: Agento11yEvalsReadParams{Operation: "list_judge_providers"},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				require.Equal(t, http.MethodGet, r.Method)
 				require.Equal(t, "/api/plugins/grafana-agento11y-app/resources/eval/judge/providers", r.URL.Path)
@@ -200,7 +206,7 @@ func TestAgento11yManageEvaluatorsRead(t *testing.T) {
 		},
 		{
 			name:   "list judge models preserves the provider filter",
-			params: ManageAgento11yEvaluatorsReadParams{Operation: "list_judge_models", agento11yEvaluatorFields: agento11yEvaluatorFields{Provider: "openai"}},
+			params: Agento11yEvalsReadParams{Operation: "list_judge_models", Provider: "openai"},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				require.Equal(t, http.MethodGet, r.Method)
 				require.Equal(t, "/api/plugins/grafana-agento11y-app/resources/eval/judge/models", r.URL.Path)
@@ -219,32 +225,32 @@ func TestAgento11yManageEvaluatorsRead(t *testing.T) {
 		},
 		{
 			name:    "get evaluator without evaluator_id",
-			params:  ManageAgento11yEvaluatorsReadParams{Operation: "get_evaluator"},
+			params:  Agento11yEvalsReadParams{Operation: "get_evaluator"},
 			wantErr: "evaluator_id is required",
 		},
 		{
 			name:    "get template without template_id",
-			params:  ManageAgento11yEvaluatorsReadParams{Operation: "get_template"},
+			params:  Agento11yEvalsReadParams{Operation: "get_template"},
 			wantErr: "template_id is required",
 		},
 		{
 			name:    "list template versions without template_id",
-			params:  ManageAgento11yEvaluatorsReadParams{Operation: "list_template_versions"},
+			params:  Agento11yEvalsReadParams{Operation: "list_template_versions"},
 			wantErr: "template_id is required",
 		},
 		{
 			name:    "write operation is rejected by the read variant",
-			params:  ManageAgento11yEvaluatorsReadParams{Operation: "upsert_evaluator"},
+			params:  Agento11yEvalsReadParams{Operation: "upsert_evaluator"},
 			wantErr: "unknown operation",
 		},
 		{
 			name:    "unknown operation",
-			params:  ManageAgento11yEvaluatorsReadParams{Operation: "list"},
+			params:  Agento11yEvalsReadParams{Operation: "list"},
 			wantErr: "unknown operation",
 		},
 		{
 			name:   "permission error surfaces the plugin body",
-			params: ManageAgento11yEvaluatorsReadParams{Operation: "list_evaluators"},
+			params: Agento11yEvalsReadParams{Operation: "list_evaluators"},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusForbidden)
 				_, err := w.Write([]byte(`permission denied: grafana-agento11y-app.data:read required`))
@@ -265,7 +271,7 @@ func TestAgento11yManageEvaluatorsRead(t *testing.T) {
 			})
 			defer server.Close()
 
-			result, err := manageAgento11yEvaluatorsRead(ctx, tc.params)
+			result, err := agento11yEvalsRead(ctx, tc.params)
 			if tc.wantErr != "" {
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), tc.wantErr)
@@ -279,17 +285,17 @@ func TestAgento11yManageEvaluatorsRead(t *testing.T) {
 	}
 }
 
-func TestAgento11yManageEvalRulesRead(t *testing.T) {
+func TestAgento11yEvalsReadEvalRules(t *testing.T) {
 	testCases := []struct {
 		name        string
-		params      ManageAgento11yEvalRulesReadParams
+		params      Agento11yEvalsReadParams
 		handler     func(t *testing.T, w http.ResponseWriter, r *http.Request) // nil: server must not be called
 		wantErr     string
 		checkResult func(t *testing.T, result any)
 	}{
 		{
 			name:   "list rules sends the default limit",
-			params: ManageAgento11yEvalRulesReadParams{Operation: "list_rules"},
+			params: Agento11yEvalsReadParams{Operation: "list_rules"},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				require.Equal(t, http.MethodGet, r.Method)
 				require.Equal(t, "/api/plugins/grafana-agento11y-app/resources/eval/rules", r.URL.Path)
@@ -320,7 +326,7 @@ func TestAgento11yManageEvalRulesRead(t *testing.T) {
 		},
 		{
 			name:   "get rule",
-			params: ManageAgento11yEvalRulesReadParams{Operation: "get_rule", RuleID: "my.rule"},
+			params: Agento11yEvalsReadParams{Operation: "get_rule", RuleID: "my.rule"},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				require.Equal(t, http.MethodGet, r.Method)
 				require.Equal(t, "/api/plugins/grafana-agento11y-app/resources/eval/rules/my.rule", r.URL.Path)
@@ -344,7 +350,7 @@ func TestAgento11yManageEvalRulesRead(t *testing.T) {
 		},
 		{
 			name:   "list guards reads hook-rules",
-			params: ManageAgento11yEvalRulesReadParams{Operation: "list_guards", agento11yEvalRuleFields: agento11yEvalRuleFields{Limit: 10, Cursor: "5"}},
+			params: Agento11yEvalsReadParams{Operation: "list_guards", Limit: 10, Cursor: "5"},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				require.Equal(t, http.MethodGet, r.Method)
 				require.Equal(t, "/api/plugins/grafana-agento11y-app/resources/eval/hook-rules", r.URL.Path)
@@ -379,7 +385,7 @@ func TestAgento11yManageEvalRulesRead(t *testing.T) {
 		},
 		{
 			name:   "get guard reads one hook-rule",
-			params: ManageAgento11yEvalRulesReadParams{Operation: "get_guard", RuleID: "guard.safety"},
+			params: Agento11yEvalsReadParams{Operation: "get_guard", RuleID: "guard.safety"},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
 				require.Equal(t, http.MethodGet, r.Method)
 				require.Equal(t, "/api/plugins/grafana-agento11y-app/resources/eval/hook-rules/guard.safety", r.URL.Path)
@@ -403,22 +409,22 @@ func TestAgento11yManageEvalRulesRead(t *testing.T) {
 		},
 		{
 			name:    "get rule without rule_id",
-			params:  ManageAgento11yEvalRulesReadParams{Operation: "get_rule"},
+			params:  Agento11yEvalsReadParams{Operation: "get_rule"},
 			wantErr: "rule_id is required",
 		},
 		{
 			name:    "get guard without rule_id",
-			params:  ManageAgento11yEvalRulesReadParams{Operation: "get_guard"},
+			params:  Agento11yEvalsReadParams{Operation: "get_guard"},
 			wantErr: "rule_id is required",
 		},
 		{
 			name:    "write operation is rejected by the read variant",
-			params:  ManageAgento11yEvalRulesReadParams{Operation: "create_rule"},
+			params:  Agento11yEvalsReadParams{Operation: "create_rule"},
 			wantErr: "unknown operation",
 		},
 		{
 			name:    "unknown operation",
-			params:  ManageAgento11yEvalRulesReadParams{Operation: "list"},
+			params:  Agento11yEvalsReadParams{Operation: "list"},
 			wantErr: "unknown operation",
 		},
 	}
@@ -434,7 +440,7 @@ func TestAgento11yManageEvalRulesRead(t *testing.T) {
 			})
 			defer server.Close()
 
-			result, err := manageAgento11yEvalRulesRead(ctx, tc.params)
+			result, err := agento11yEvalsRead(ctx, tc.params)
 			if tc.wantErr != "" {
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), tc.wantErr)
@@ -456,17 +462,17 @@ func writeJSONResponse(t *testing.T, w http.ResponseWriter, body string) {
 	require.NoError(t, err)
 }
 
-func TestAgento11yManageEvaluatorsReadWrite(t *testing.T) {
+func TestAgento11yEvalsWriteEvaluators(t *testing.T) {
 	testCases := []struct {
 		name        string
-		params      ManageAgento11yEvaluatorsReadWriteParams
+		params      Agento11yEvalsWriteParams
 		handler     func(t *testing.T, w http.ResponseWriter, r *http.Request) // nil: server must not be called
 		wantErr     string
 		checkResult func(t *testing.T, result any)
 	}{
 		{
 			name: "upsert evaluator posts the definition with the ID in the body",
-			params: ManageAgento11yEvaluatorsReadWriteParams{
+			params: Agento11yEvalsWriteParams{
 				Operation: "upsert_evaluator",
 				Definition: map[string]any{
 					"evaluator_id": "quality.helpfulness",
@@ -496,7 +502,7 @@ func TestAgento11yManageEvaluatorsReadWrite(t *testing.T) {
 		},
 		{
 			name: "delete evaluator handles 204 with an empty body",
-			params: ManageAgento11yEvaluatorsReadWriteParams{
+			params: Agento11yEvalsWriteParams{
 				Operation:   "delete_evaluator",
 				EvaluatorID: "quality.helpfulness",
 			},
@@ -515,7 +521,7 @@ func TestAgento11yManageEvaluatorsReadWrite(t *testing.T) {
 		},
 		{
 			name: "fork template keeps the :fork action suffix unescaped",
-			params: ManageAgento11yEvaluatorsReadWriteParams{
+			params: Agento11yEvalsWriteParams{
 				Operation:  "fork_template",
 				TemplateID: "template.helpfulness",
 				Definition: map[string]any{"evaluator_id": "quality.helpfulness"},
@@ -539,7 +545,7 @@ func TestAgento11yManageEvaluatorsReadWrite(t *testing.T) {
 		},
 		{
 			name: "test evaluator posts to the resources-root action",
-			params: ManageAgento11yEvaluatorsReadWriteParams{
+			params: Agento11yEvalsWriteParams{
 				Operation:    "test_evaluator",
 				GenerationID: "gen-123",
 				Definition: map[string]any{
@@ -577,23 +583,17 @@ func TestAgento11yManageEvaluatorsReadWrite(t *testing.T) {
 			},
 		},
 		{
-			name:   "read operations still work in the write variant",
-			params: ManageAgento11yEvaluatorsReadWriteParams{Operation: "list_evaluators"},
-			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
-				require.Equal(t, http.MethodGet, r.Method)
-				require.Equal(t, "/api/plugins/grafana-agento11y-app/resources/eval/evaluators", r.URL.Path)
-
-				writeJSONResponse(t, w, `{"items":[]}`)
-			},
-			checkResult: func(t *testing.T, result any) {
-				resp, ok := result.(*agento11yListResponse[Agento11yEvaluatorDefinition])
-				require.True(t, ok)
-				assert.Empty(t, resp.Items)
-			},
+			// Under the disjoint-operation split, agento11y_evals_write no
+			// longer reaches the read dispatch for a sibling read operation -
+			// see TestAgento11yEvalsWriteRejectsReadOperations below for the
+			// general case across every domain.
+			name:    "a read operation is rejected, not dispatched",
+			params:  Agento11yEvalsWriteParams{Operation: "list_evaluators"},
+			wantErr: `"list_evaluators" is an agento11y_evals_read operation, not agento11y_evals_write`,
 		},
 		{
 			name: "missing eval:write permission surfaces the plugin body",
-			params: ManageAgento11yEvaluatorsReadWriteParams{
+			params: Agento11yEvalsWriteParams{
 				Operation:  "upsert_evaluator",
 				Definition: map[string]any{"evaluator_id": "quality.helpfulness"},
 			},
@@ -606,7 +606,7 @@ func TestAgento11yManageEvaluatorsReadWrite(t *testing.T) {
 		},
 		{
 			name: "version conflict surfaces the 409 body",
-			params: ManageAgento11yEvaluatorsReadWriteParams{
+			params: Agento11yEvalsWriteParams{
 				Operation:  "upsert_evaluator",
 				Definition: map[string]any{"evaluator_id": "quality.helpfulness", "version": "v1"},
 			},
@@ -619,12 +619,12 @@ func TestAgento11yManageEvaluatorsReadWrite(t *testing.T) {
 		},
 		{
 			name:    "upsert without definition",
-			params:  ManageAgento11yEvaluatorsReadWriteParams{Operation: "upsert_evaluator"},
+			params:  Agento11yEvalsWriteParams{Operation: "upsert_evaluator"},
 			wantErr: "definition is required for 'upsert_evaluator'",
 		},
 		{
 			name: "upsert without an evaluator_id in the definition",
-			params: ManageAgento11yEvaluatorsReadWriteParams{
+			params: Agento11yEvalsWriteParams{
 				Operation:  "upsert_evaluator",
 				Definition: map[string]any{"kind": "regex", "version": "v1"},
 			},
@@ -632,7 +632,7 @@ func TestAgento11yManageEvaluatorsReadWrite(t *testing.T) {
 		},
 		{
 			name: "upsert rejects an evaluator_id parameter that disagrees with the definition",
-			params: ManageAgento11yEvaluatorsReadWriteParams{
+			params: Agento11yEvalsWriteParams{
 				Operation:   "upsert_evaluator",
 				EvaluatorID: "from.param",
 				Definition:  map[string]any{"evaluator_id": "from.definition", "kind": "regex"},
@@ -641,7 +641,7 @@ func TestAgento11yManageEvaluatorsReadWrite(t *testing.T) {
 		},
 		{
 			name: "upsert accepts an evaluator_id parameter that matches the definition",
-			params: ManageAgento11yEvaluatorsReadWriteParams{
+			params: Agento11yEvalsWriteParams{
 				Operation:   "upsert_evaluator",
 				EvaluatorID: "quality.helpfulness",
 				Definition:  map[string]any{"evaluator_id": "quality.helpfulness", "kind": "regex"},
@@ -657,17 +657,17 @@ func TestAgento11yManageEvaluatorsReadWrite(t *testing.T) {
 		},
 		{
 			name:    "delete without evaluator_id",
-			params:  ManageAgento11yEvaluatorsReadWriteParams{Operation: "delete_evaluator"},
+			params:  Agento11yEvalsWriteParams{Operation: "delete_evaluator"},
 			wantErr: "evaluator_id is required for 'delete_evaluator'",
 		},
 		{
 			name:    "fork without template_id",
-			params:  ManageAgento11yEvaluatorsReadWriteParams{Operation: "fork_template", Definition: map[string]any{"evaluator_id": "x"}},
+			params:  Agento11yEvalsWriteParams{Operation: "fork_template", Definition: map[string]any{"evaluator_id": "x"}},
 			wantErr: "template_id is required for 'fork_template'",
 		},
 		{
 			name: "fork without definition",
-			params: ManageAgento11yEvaluatorsReadWriteParams{
+			params: Agento11yEvalsWriteParams{
 				Operation:  "fork_template",
 				TemplateID: "template.helpfulness",
 			},
@@ -675,7 +675,7 @@ func TestAgento11yManageEvaluatorsReadWrite(t *testing.T) {
 		},
 		{
 			name: "fork without an evaluator_id in the definition",
-			params: ManageAgento11yEvaluatorsReadWriteParams{
+			params: Agento11yEvalsWriteParams{
 				Operation:  "fork_template",
 				TemplateID: "template.helpfulness",
 				Definition: map[string]any{"version": "v2"},
@@ -684,12 +684,12 @@ func TestAgento11yManageEvaluatorsReadWrite(t *testing.T) {
 		},
 		{
 			name:    "test without generation_id",
-			params:  ManageAgento11yEvaluatorsReadWriteParams{Operation: "test_evaluator", Definition: map[string]any{"kind": "regex"}},
+			params:  Agento11yEvalsWriteParams{Operation: "test_evaluator", Definition: map[string]any{"kind": "regex"}},
 			wantErr: "generation_id is required for 'test_evaluator'",
 		},
 		{
 			name: "test rejects a definition carrying evaluator_id",
-			params: ManageAgento11yEvaluatorsReadWriteParams{
+			params: Agento11yEvalsWriteParams{
 				Operation:    "test_evaluator",
 				GenerationID: "gen-123",
 				Definition:   map[string]any{"evaluator_id": "quality.helpfulness", "kind": "regex"},
@@ -698,8 +698,8 @@ func TestAgento11yManageEvaluatorsReadWrite(t *testing.T) {
 		},
 		{
 			name:    "unknown operation lists the write operations",
-			params:  ManageAgento11yEvaluatorsReadWriteParams{Operation: "create_evaluator"},
-			wantErr: "unknown operation \"create_evaluator\", must be one of: list_evaluators, get_evaluator, list_templates, get_template, list_template_versions, list_judge_providers, list_judge_models, upsert_evaluator, delete_evaluator, fork_template, test_evaluator",
+			params:  Agento11yEvalsWriteParams{Operation: "create_evaluator"},
+			wantErr: "unknown operation \"create_evaluator\", must be one of: " + agento11yEvalsWriteOperations,
 		},
 	}
 
@@ -714,7 +714,7 @@ func TestAgento11yManageEvaluatorsReadWrite(t *testing.T) {
 			})
 			defer server.Close()
 
-			result, err := manageAgento11yEvaluatorsReadWrite(ctx, tc.params)
+			result, err := agento11yEvalsWrite(ctx, tc.params)
 			if tc.wantErr != "" {
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), tc.wantErr)
@@ -728,17 +728,17 @@ func TestAgento11yManageEvaluatorsReadWrite(t *testing.T) {
 	}
 }
 
-func TestAgento11yManageEvalRulesReadWrite(t *testing.T) {
+func TestAgento11yEvalsWriteEvalRules(t *testing.T) {
 	testCases := []struct {
 		name        string
-		params      ManageAgento11yEvalRulesReadWriteParams
+		params      Agento11yEvalsWriteParams
 		handler     func(t *testing.T, w http.ResponseWriter, r *http.Request) // nil: server must not be called
 		wantErr     string
 		checkResult func(t *testing.T, result any)
 	}{
 		{
 			name: "create rule",
-			params: ManageAgento11yEvalRulesReadWriteParams{
+			params: Agento11yEvalsWriteParams{
 				Operation: "create_rule",
 				Definition: map[string]any{
 					"rule_id":       "my.rule",
@@ -767,7 +767,7 @@ func TestAgento11yManageEvalRulesReadWrite(t *testing.T) {
 		},
 		{
 			name: "update rule patches without a rule_id key",
-			params: ManageAgento11yEvalRulesReadWriteParams{
+			params: Agento11yEvalsWriteParams{
 				Operation: "update_rule",
 				RuleID:    "my.rule",
 				Definition: map[string]any{
@@ -793,7 +793,7 @@ func TestAgento11yManageEvalRulesReadWrite(t *testing.T) {
 		},
 		{
 			name: "delete rule handles 204 with an empty body",
-			params: ManageAgento11yEvalRulesReadWriteParams{
+			params: Agento11yEvalsWriteParams{
 				Operation: "delete_rule",
 				RuleID:    "my.rule",
 			},
@@ -811,7 +811,7 @@ func TestAgento11yManageEvalRulesReadWrite(t *testing.T) {
 		},
 		{
 			name: "preview rule uses the action endpoint",
-			params: ManageAgento11yEvalRulesReadWriteParams{
+			params: Agento11yEvalsWriteParams{
 				Operation: "preview_rule",
 				Definition: map[string]any{
 					"selector":    "user_visible_turn",
@@ -849,7 +849,7 @@ func TestAgento11yManageEvalRulesReadWrite(t *testing.T) {
 		},
 		{
 			name: "create guard posts to hook-rules",
-			params: ManageAgento11yEvalRulesReadWriteParams{
+			params: Agento11yEvalsWriteParams{
 				Operation: "create_guard",
 				Definition: map[string]any{
 					"rule_id":        "guard.safety",
@@ -877,7 +877,7 @@ func TestAgento11yManageEvalRulesReadWrite(t *testing.T) {
 		},
 		{
 			name: "update guard is a full replace with PUT",
-			params: ManageAgento11yEvalRulesReadWriteParams{
+			params: Agento11yEvalsWriteParams{
 				Operation: "update_guard",
 				RuleID:    "guard.safety",
 				Definition: map[string]any{
@@ -909,7 +909,7 @@ func TestAgento11yManageEvalRulesReadWrite(t *testing.T) {
 		},
 		{
 			name: "delete guard deletes a hook-rule",
-			params: ManageAgento11yEvalRulesReadWriteParams{
+			params: Agento11yEvalsWriteParams{
 				Operation: "delete_guard",
 				RuleID:    "guard.safety",
 			},
@@ -926,18 +926,17 @@ func TestAgento11yManageEvalRulesReadWrite(t *testing.T) {
 			},
 		},
 		{
-			name:   "read operations still work in the write variant",
-			params: ManageAgento11yEvalRulesReadWriteParams{Operation: "list_guards"},
-			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
-				require.Equal(t, http.MethodGet, r.Method)
-				require.Equal(t, "/api/plugins/grafana-agento11y-app/resources/eval/hook-rules", r.URL.Path)
-
-				writeJSONResponse(t, w, `{"items":[]}`)
-			},
+			// Under the disjoint-operation split, agento11y_evals_write no
+			// longer reaches the read dispatch for a sibling read operation -
+			// see TestAgento11yEvalsWriteRejectsReadOperations below for the
+			// general case across every domain.
+			name:    "a read operation is rejected, not dispatched",
+			params:  Agento11yEvalsWriteParams{Operation: "list_guards"},
+			wantErr: `"list_guards" is an agento11y_evals_read operation, not agento11y_evals_write`,
 		},
 		{
 			name: "rejected redact shape surfaces the 400 body",
-			params: ManageAgento11yEvalRulesReadWriteParams{
+			params: Agento11yEvalsWriteParams{
 				Operation: "create_guard",
 				Definition: map[string]any{
 					"rule_id": "guard.safety",
@@ -953,17 +952,17 @@ func TestAgento11yManageEvalRulesReadWrite(t *testing.T) {
 		},
 		{
 			name:    "create rule without definition",
-			params:  ManageAgento11yEvalRulesReadWriteParams{Operation: "create_rule"},
+			params:  Agento11yEvalsWriteParams{Operation: "create_rule"},
 			wantErr: `definition is required for "create_rule"`,
 		},
 		{
 			name:    "update rule without rule_id",
-			params:  ManageAgento11yEvalRulesReadWriteParams{Operation: "update_rule", Definition: map[string]any{"enabled": false}},
+			params:  Agento11yEvalsWriteParams{Operation: "update_rule", Definition: map[string]any{"enabled": false}},
 			wantErr: `rule_id is required for "update_rule"`,
 		},
 		{
 			name: "update guard without definition",
-			params: ManageAgento11yEvalRulesReadWriteParams{
+			params: Agento11yEvalsWriteParams{
 				Operation: "update_guard",
 				RuleID:    "guard.safety",
 			},
@@ -971,13 +970,13 @@ func TestAgento11yManageEvalRulesReadWrite(t *testing.T) {
 		},
 		{
 			name:    "delete guard without rule_id",
-			params:  ManageAgento11yEvalRulesReadWriteParams{Operation: "delete_guard"},
+			params:  Agento11yEvalsWriteParams{Operation: "delete_guard"},
 			wantErr: `rule_id is required for "delete_guard"`,
 		},
 		{
 			name:    "unknown operation lists the write operations",
-			params:  ManageAgento11yEvalRulesReadWriteParams{Operation: "upsert_rule"},
-			wantErr: "unknown operation \"upsert_rule\", must be one of: list_rules, get_rule, list_guards, get_guard, create_rule, update_rule, delete_rule, preview_rule, create_guard, update_guard, delete_guard",
+			params:  Agento11yEvalsWriteParams{Operation: "upsert_rule"},
+			wantErr: "unknown operation \"upsert_rule\", must be one of: " + agento11yEvalsWriteOperations,
 		},
 	}
 
@@ -992,7 +991,7 @@ func TestAgento11yManageEvalRulesReadWrite(t *testing.T) {
 			})
 			defer server.Close()
 
-			result, err := manageAgento11yEvalRulesReadWrite(ctx, tc.params)
+			result, err := agento11yEvalsWrite(ctx, tc.params)
 			if tc.wantErr != "" {
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), tc.wantErr)
@@ -1014,34 +1013,13 @@ func decodeRequestBody(t *testing.T, r *http.Request) map[string]any {
 	return body
 }
 
-// TestAddAgento11yToolsWriteGating checks the write-gating contract that
-// --disable-write relies on: every eval tool name stays registered either way,
-// exactly one variant of each is registered, every advertised operation is one
-// the tool accepts and is named in its "unknown operation" message, and in
-// read-only mode the write operations are absent from the description and from
-// the whole schema, parameter descriptions included.
-//
-// agento11y_manage_agents has no write operations, so it is here only for the
-// "registered either way, once, with an accurate operation list" half of the
-// contract.
-func TestAddAgento11yToolsWriteGating(t *testing.T) {
-	writeOperations := map[string][]string{
-		"agento11y_manage_evaluators":       {"upsert_evaluator", "delete_evaluator", "fork_template", "test_evaluator"},
-		"agento11y_manage_eval_rules":       {"create_rule", "update_rule", "delete_rule", "preview_rule", "create_guard", "update_guard", "delete_guard"},
-		"agento11y_manage_eval_collections": {"save_conversation", "delete_saved_conversation", "create_collection", "update_collection", "delete_collection", "add_collection_members", "remove_collection_member"},
-		"agento11y_manage_experiments":      {"update", "cancel"},
-		"agento11y_manage_test_suites":      {"create_suite", "update_suite", "create_draft_version", "publish_version", "upsert_test_case", "delete_test_case"},
-		"agento11y_manage_agents":           nil,
-	}
-	readOperations := map[string][]string{
-		"agento11y_manage_evaluators":       {"list_evaluators", "get_evaluator", "list_templates", "get_template", "list_template_versions", "list_judge_providers", "list_judge_models"},
-		"agento11y_manage_eval_rules":       {"list_rules", "get_rule", "list_guards", "get_guard"},
-		"agento11y_manage_eval_collections": {"list_saved_conversations", "get_saved_conversation", "list_collections_for_saved_conversation", "list_collections", "get_collection", "list_collection_members"},
-		"agento11y_manage_experiments":      {"list", "get", "get_report", "list_trials", "list_scores", "get_trial", "list_trial_scores", "list_trial_artifacts", "list_facets"},
-		"agento11y_manage_test_suites":      {"list_suites", "get_suite", "list_test_cases", "get_test_case"},
-		"agento11y_manage_agents":           {"list", "get", "list_versions", "list_version_scores"},
-	}
-
+// TestAddAgento11yToolsRegistration checks the registration contract that
+// --disable-write relies on for the split-name shape: agento11y_read and
+// agento11y_evals_read are registered unconditionally, agento11y_evals_write
+// is registered if and only if write tools are enabled (never re-registered
+// under the same name with a narrower schema, unlike the pre-consolidation
+// single-name dual-schema tools), and no tool name is registered twice.
+func TestAddAgento11yToolsRegistration(t *testing.T) {
 	for _, tc := range []struct {
 		name             string
 		enableWriteTools bool
@@ -1050,108 +1028,113 @@ func TestAddAgento11yToolsWriteGating(t *testing.T) {
 		{name: "write tools disabled", enableWriteTools: false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			advertised := listAgento11yEvalTools(t, tc.enableWriteTools)
+			advertised := listAgento11yTools(t, tc.enableWriteTools)
 
-			for name, reads := range readOperations {
-				tool, ok := advertised[name]
-				require.True(t, ok, "%s should be registered whether or not write tools are enabled", name)
-				for _, operation := range reads {
-					assert.Contains(t, tool.operations, operation, "%s should advertise the read operation %s", name, operation)
-				}
-
-				for _, operation := range writeOperations[name] {
-					if tc.enableWriteTools {
-						assert.Contains(t, tool.operations, operation, "%s should advertise the write operation %s", name, operation)
-						continue
-					}
-					// Not just absent from the enum: an operation named in the
-					// description or a parameter description is an operation the
-					// model is told exists, and the read variant rejects all of these.
-					assertOperationUnmentioned(t, tool.schema, operation, "%s must not mention the write operation %s anywhere in its read-only schema", name, operation)
-					assertOperationUnmentioned(t, tool.description, operation, "%s must not mention the write operation %s in its read-only description", name, operation)
-				}
-
-				if tc.enableWriteTools && len(writeOperations[name]) > 0 {
-					// A model that cannot see the required role reads a 403 as a
-					// broken tool.
-					assert.Contains(t, tool.description, "grafana-agento11y-app.eval:write", "%s should name the permission its writes need", name)
-				}
-
-				// A typo in an enum= tag would advertise an operation that always
-				// answers "unknown operation", which no other test would notice.
-				for _, operation := range tool.operations {
-					err := validateAgento11yEvalOperation(name, operation, tc.enableWriteTools)
-					if err != nil {
-						assert.NotContains(t, err.Error(), "unknown operation", "%s advertises %s but does not accept it", name, operation)
-					}
-				}
-
-				// The "unknown operation" message is the one message whose job is to
-				// let a model correct itself, and every tool spells its operation
-				// list out separately from the enum= tags, so the two can drift.
-				rejected := validateAgento11yEvalOperation(name, "not_an_operation", tc.enableWriteTools)
-				require.Error(t, rejected, "%s should reject an operation it does not have", name)
-				for _, operation := range tool.operations {
-					assert.Contains(t, rejected.Error(), operation, "%s advertises %s but its unknown-operation message does not list it", name, operation)
-				}
+			for _, name := range []string{"agento11y_read", "agento11y_evals_read"} {
+				_, ok := advertised[name]
+				assert.True(t, ok, "%s should be registered whether or not write tools are enabled", name)
 			}
+
+			_, hasWrite := advertised["agento11y_evals_write"]
+			assert.Equal(t, tc.enableWriteTools, hasWrite, "agento11y_evals_write should be registered only when write tools are enabled")
+
+			// agento11y_read has no write half at all: it must never appear
+			// under a "_write" name.
+			_, hasReadWrite := advertised["agento11y_write"]
+			assert.False(t, hasReadWrite, "agento11y_read has no write counterpart")
 		})
 	}
 }
 
-// assertOperationUnmentioned fails when text names the operation as a word.
-//
-// The match is bounded rather than a substring search because an operation name
-// can sit inside a word the read-only variant must still be free to use:
-// 'cancel' inside the status value "canceled", which its status filter
-// advertises.
-func assertOperationUnmentioned(t *testing.T, text, operation, msg string, args ...any) {
-	t.Helper()
-	word := regexp.MustCompile(`\b` + regexp.QuoteMeta(operation) + `\b`)
-	assert.NotRegexp(t, word, text, fmt.Sprintf(msg, args...))
+// TestAgento11yEvalsSplitOperationsAreDisjoint checks the core invariant the
+// split-name convention exists to guarantee: agento11y_evals_read and
+// agento11y_evals_write advertise non-overlapping operation enums, so
+// name-based write-tool classification (as grafana-assistant-app's
+// discoverWriteTools does) never has to guess, and neither tool's schema
+// silently grants the other's capability.
+func TestAgento11yEvalsSplitOperationsAreDisjoint(t *testing.T) {
+	advertised := listAgento11yTools(t, true)
+
+	readTool, ok := advertised["agento11y_evals_read"]
+	require.True(t, ok)
+	writeTool, ok := advertised["agento11y_evals_write"]
+	require.True(t, ok)
+
+	require.NotEmpty(t, readTool.operations)
+	require.NotEmpty(t, writeTool.operations)
+
+	for _, op := range writeTool.operations {
+		assert.NotContains(t, readTool.operations, op, "agento11y_evals_write's %q operation must not also be one of agento11y_evals_read's", op)
+	}
+	for _, op := range readTool.operations {
+		assert.NotContains(t, writeTool.operations, op, "agento11y_evals_read's %q operation must not also be one of agento11y_evals_write's", op)
+	}
+
+	// A model that cannot see the required role reads a 403 as a broken tool.
+	assert.Contains(t, writeTool.description, "grafana-agento11y-app.eval:write", "agento11y_evals_write should name the permission its writes need")
 }
 
-// validateAgento11yEvalOperation runs the param validation of the registered
-// variant of an eval tool with no arguments besides the operation, so a missing
-// required parameter is expected and only "unknown operation" is a mismatch
-// between the advertised enum and the implementation.
-func validateAgento11yEvalOperation(tool, operation string, enableWriteTools bool) error {
-	switch {
-	case tool == "agento11y_manage_agents":
-		return ManageAgento11yAgentsParams{Operation: operation}.validate()
-	case tool == "agento11y_manage_evaluators" && enableWriteTools:
-		return ManageAgento11yEvaluatorsReadWriteParams{Operation: operation}.validate()
-	case tool == "agento11y_manage_evaluators":
-		return ManageAgento11yEvaluatorsReadParams{Operation: operation}.validate()
-	case tool == "agento11y_manage_eval_collections" && enableWriteTools:
-		return ManageAgento11yEvalCollectionsReadWriteParams{Operation: operation}.validate()
-	case tool == "agento11y_manage_eval_collections":
-		return ManageAgento11yEvalCollectionsReadParams{Operation: operation}.validate()
-	case tool == "agento11y_manage_experiments" && enableWriteTools:
-		return ManageAgento11yExperimentsReadWriteParams{Operation: operation}.validate()
-	case tool == "agento11y_manage_experiments":
-		return ManageAgento11yExperimentsReadParams{Operation: operation}.validate()
-	case tool == "agento11y_manage_test_suites" && enableWriteTools:
-		return ManageAgento11yTestSuitesReadWriteParams{Operation: operation}.validate()
-	case tool == "agento11y_manage_test_suites":
-		return ManageAgento11yTestSuitesReadParams{Operation: operation}.validate()
-	case enableWriteTools:
-		return ManageAgento11yEvalRulesReadWriteParams{Operation: operation}.validate()
-	default:
-		return ManageAgento11yEvalRulesReadParams{Operation: operation}.validate()
+// TestAgento11yEvalsWriteRejectsReadOperations is the write-side half of the
+// disjoint-operation contract at the validation layer: every operation
+// agento11y_evals_read owns must be rejected by Agento11yEvalsWriteParams with
+// a specific "call agento11y_evals_read instead" error, never accepted. This
+// is TestDelegation_SplitNameDisjointOperations's pattern
+// (tools/operation_validation_test.go) exercised against the real domain.
+func TestAgento11yEvalsWriteRejectsReadOperations(t *testing.T) {
+	for _, op := range strings.Split(agento11yEvalsReadOperations, ", ") {
+		t.Run(op, func(t *testing.T) {
+			err := Agento11yEvalsWriteParams{Operation: op}.validate()
+			require.Error(t, err, "agento11y_evals_write must never silently accept a read operation")
+			assert.Contains(t, err.Error(), "agento11y_evals_read operation, not agento11y_evals_write")
+		})
 	}
 }
 
-// agento11yAdvertisedTool is one eval tool as a client sees it in tools/list.
+// TestAgento11yEvalsReadRejectsWriteOperations is the read-side half: every
+// operation agento11y_evals_write owns is genuinely unknown to
+// Agento11yEvalsReadParams, since the read tool has no sibling-aware
+// delegation to a write tool it doesn't implement.
+func TestAgento11yEvalsReadRejectsWriteOperations(t *testing.T) {
+	for _, op := range strings.Split(agento11yEvalsWriteOperations, ", ") {
+		t.Run(op, func(t *testing.T) {
+			err := Agento11yEvalsReadParams{Operation: op}.validate()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "unknown operation")
+		})
+	}
+}
+
+// TestAgento11yEvalsAdvertisedOperationsAreImplemented catches drift between
+// an enum= jsonschema tag and the switch statements that dispatch it: every
+// operation agento11y_evals_read/_write advertises must validate without an
+// "unknown operation" error (a missing required field is fine and expected).
+func TestAgento11yEvalsAdvertisedOperationsAreImplemented(t *testing.T) {
+	advertised := listAgento11yTools(t, true)
+
+	for _, op := range advertised["agento11y_evals_read"].operations {
+		err := Agento11yEvalsReadParams{Operation: op}.validate()
+		if err != nil {
+			assert.NotContains(t, err.Error(), "unknown operation", "agento11y_evals_read advertises %q but does not accept it", op)
+		}
+	}
+	for _, op := range advertised["agento11y_evals_write"].operations {
+		err := Agento11yEvalsWriteParams{Operation: op}.validate()
+		if err != nil {
+			assert.NotContains(t, err.Error(), "unknown operation", "agento11y_evals_write advertises %q but does not accept it", op)
+		}
+	}
+}
+
+// agento11yAdvertisedTool is one agento11y tool as a client sees it in tools/list.
 type agento11yAdvertisedTool struct {
 	operations  []string
 	schema      string // the raw input schema, descriptions included
 	description string
 }
 
-// listAgento11yEvalTools registers the Agent Observability category and returns
-// the advertised eval tools, failing if a tool name is registered more than once.
-func listAgento11yEvalTools(t *testing.T, enableWriteTools bool) map[string]agento11yAdvertisedTool {
+// listAgento11yTools registers the Agent Observability category and returns
+// the advertised tools, failing if a tool name is registered more than once.
+func listAgento11yTools(t *testing.T, enableWriteTools bool) map[string]agento11yAdvertisedTool {
 	t.Helper()
 
 	srv := server.NewMCPServer("test", "0")
@@ -1175,7 +1158,7 @@ func listAgento11yEvalTools(t *testing.T, enableWriteTools bool) map[string]agen
 	tools := map[string]agento11yAdvertisedTool{}
 	for _, tool := range listed.Result.Tools {
 		switch tool.Name {
-		case "agento11y_manage_evaluators", "agento11y_manage_eval_rules", "agento11y_manage_eval_collections", "agento11y_manage_experiments", "agento11y_manage_test_suites", "agento11y_manage_agents":
+		case "agento11y_read", "agento11y_evals_read", "agento11y_evals_write":
 		default:
 			continue
 		}
