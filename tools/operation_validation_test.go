@@ -218,8 +218,9 @@ func TestDelegateDispatch(t *testing.T) {
 // delegation idiom for the two shapes a consolidated domain can take.
 // Copy whichever matches your domain's shape.
 
-// TestDelegation_SingleNameDualSchema is the shape alerting_manage_rules and
-// the agento11y_manage_* tools use: ONE tool name, registered with either a
+// TestDelegation_SingleNameDualSchema is the shape alerting_manage_rules
+// uses (and the agento11y_manage_* tools used, before #1092's agento11y
+// consolidation replaced them): ONE tool name, registered with either a
 // narrower read-only schema or a fuller read+write schema depending on
 // enableWriteTools. Because only one schema is ever live at a time, the
 // read+write variant's validate() and dispatch must themselves handle every
