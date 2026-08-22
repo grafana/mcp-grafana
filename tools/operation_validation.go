@@ -98,6 +98,12 @@ func SliceField[T any](name string, value []T) OpField {
 	return OpField{Name: name, Missing: len(value) == 0}
 }
 
+// MapField is a convenience OpField constructor for a required map
+// parameter, missing when empty.
+func MapField[K comparable, V any](name string, value map[K]V) OpField {
+	return OpField{Name: name, Missing: len(value) == 0}
+}
+
 // exclusiveGroup is a set of fields that are either mutually exclusive (at
 // most one set) or that require exactly one to be set. op, when non-empty,
 // scopes the check to a single operation; an empty op applies the check

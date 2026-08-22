@@ -235,10 +235,12 @@ A single read-only tool, `admin_read`, covers Grafana admin and RBAC information
 
 ### Snapshots
 
-- **List snapshots:** List dashboard snapshots with optional query and limit filters.
-- **Get snapshot:** Retrieve snapshot metadata and dashboard payload by snapshot key.
-- **Create snapshot:** Create a dashboard snapshot from a full dashboard payload, with optional expiration and external snapshot options.
-- **Delete snapshot:** Delete a snapshot by snapshot key.
+`snapshots_read` covers listing and retrieving snapshots; `snapshots_write` covers creating and deleting them.
+
+- **list:** List dashboard snapshots with optional query and limit filters.
+- **get:** Retrieve snapshot metadata and dashboard payload by snapshot key.
+- **create:** Create a dashboard snapshot from a full dashboard payload, with optional expiration and external snapshot options.
+- **delete:** Delete a snapshot by snapshot key.
 
 ### Rendering
 
@@ -399,10 +401,8 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `create_annotation`               | Annotations               | Create a new annotation (standard or Graphite format)                                                        | `annotations:write`                                    | `annotations:*`                                     |
 | `update_annotation`               | Annotations               | Update specific fields of an annotation (partial update)                                                     | `annotations:write`                                    | `annotations:*`                                     |
 | `get_annotation_tags`             | Annotations               | List annotation tags with optional filtering                                                                 | `annotations:read`                                     | `annotations:*`                                     |
-| `list_snapshots`                  | Snapshot                  | List dashboard snapshots with optional query and limit filters                                               | `dashboards:read`                                      | `dashboards:*` or `dashboards:uid:abc123`           |
-| `get_snapshot`                    | Snapshot                  | Get snapshot metadata and dashboard payload by snapshot key                                                  | `dashboards:read`                                      | `dashboards:*` or `dashboards:uid:abc123`           |
-| `create_snapshot`                 | Snapshot                  | Create a dashboard snapshot from a full dashboard payload                                                    | `dashboards:write`                                     | `dashboards:*` or `dashboards:uid:abc123`           |
-| `delete_snapshot`                 | Snapshot                  | Delete a dashboard snapshot by snapshot key                                                                  | `dashboards:write`                                     | `dashboards:*` or `dashboards:uid:abc123`           |
+| `snapshots_read`                  | Snapshot                  | List and retrieve dashboard snapshots (operations: `list`, `get`)                                            | `dashboards:read`                                      | `dashboards:*` or `dashboards:uid:abc123`           |
+| `snapshots_write`                 | Snapshot                  | Create or delete a dashboard snapshot (operations: `create`, `delete`)                                       | `dashboards:write`                                     | `dashboards:*` or `dashboards:uid:abc123`           |
 | `get_panel_image`                 | Rendering                 | Render a stored dashboard or panel — or a provisioning preview from a repository branch — as a PNG image     | `dashboards:read`                                      | `dashboards:uid:abc123`                             |
 | `list_provisioning_repositories`  | Provisioning              | List provisioning repositories (e.g. git-sync sources) with their source URL, branch, sync state, and health | `provisioning.repositories:read`                       | N/A                                                 |
 | `validate_provisioning_file`      | Provisioning              | Dry-run-apply a file from a provisioning repository and report admission validation errors                   | `provisioning.repositories:read`                       | N/A                                                 |
@@ -526,8 +526,7 @@ When `--disable-write` is enabled, the following write operations are disabled:
 - `find_slow_requests` (creates investigations)
 
 **Snapshot Tools:**
-- `create_snapshot`
-- `delete_snapshot`
+- `snapshots_write` (create, delete operations)
 
 **Agent Observability Tools:**
 - `agento11y_manage_evaluators` (upsert, delete, fork, test evaluator operations)
