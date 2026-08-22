@@ -118,7 +118,7 @@ func TestCloudSiftInvestigations(t *testing.T) {
 
 	t.Run("find error patterns", func(t *testing.T) {
 		// Find error patterns
-		analysis, err := findErrorPatternLogs(ctx, FindErrorPatternLogsParams{
+		analysis, err := findErrorPatternLogs(ctx, SiftWriteParams{
 			Name: "Test Sift",
 			Labels: map[string]string{
 				"namespace": "hosted-grafana",
@@ -135,5 +135,33 @@ func TestCloudSiftInvestigations(t *testing.T) {
 		assert.NotEmpty(t, analysis.Name, "Analysis should have a name")
 		assert.NotEmpty(t, analysis.InvestigationID, "Analysis should have an investigation ID")
 		assert.NotEmpty(t, analysis.Result.Message, "Analysis  should have a message")
+	})
+
+	// The tests above exercise the individual handlers directly; this one
+	// goes through the consolidated sift_read/sift_write entrypoints end to
+	// end, to catch any wiring mistake in their dispatch that per-handler
+	// tests wouldn't see.
+	t.Run("sift_read and sift_write entrypoints", func(t *testing.T) {
+		listed, err := siftRead(ctx, SiftReadParams{Operation: "list_investigations", Limit: 1})
+		require.NoError(t, err)
+		assert.NotNil(t, listed)
+
+		found, err := siftRead(ctx, SiftReadParams{Operation: "get_investigation", InvestigationID: investigationID})
+		require.NoError(t, err)
+		assert.NotNil(t, found)
+
+		created, err := siftWrite(ctx, SiftWriteParams{
+			Operation: "find_slow_requests",
+			Name:      "Test Sift entrypoint",
+			Labels: map[string]string{
+				"namespace": "hosted-grafana",
+				"cluster":   "dev-eu-west-2",
+				"slug":      "mcptests",
+			},
+			Start: time.Now().Add(-5 * time.Minute),
+			End:   time.Now(),
+		})
+		require.NoError(t, err)
+		assert.NotNil(t, created)
 	})
 }

@@ -156,8 +156,7 @@ When enabled, the following writes are disabled:
 
 **Sift tools**
 
-- `find_error_pattern_logs` (creates investigations)
-- `find_slow_requests` (creates investigations)
+- `sift_write` (find_error_pattern_logs, find_slow_requests operations — both create investigations)
 
 **Snapshot tools**
 
