@@ -177,11 +177,13 @@ Queries go through Grafana's Snowflake datasource (Grafana Enterprise plugin `gr
 
 ### Sift Investigations
 
-- **List Sift investigations:** Retrieve a list of Sift investigations, with support for a limit parameter.
-- **Get Sift investigation:** Retrieve details of a specific Sift investigation by its UUID.
-- **Get Sift analyses:** Retrieve a specific analysis from a Sift investigation.
-- **Find error patterns in logs:** Detect elevated error patterns in Loki logs using Sift.
-- **Find slow requests:** Detect slow requests using Sift (Tempo).
+`sift_read` covers retrieving investigations and analyses; `sift_write` covers creating new investigations.
+
+- **list_investigations:** Retrieve a list of Sift investigations, with support for a limit parameter.
+- **get_investigation:** Retrieve details of a specific Sift investigation by its UUID.
+- **get_analysis:** Retrieve a specific analysis from a Sift investigation.
+- **find_error_pattern_logs:** Detect elevated error patterns in Loki logs using Sift.
+- **find_slow_requests:** Detect slow requests using Sift (Tempo).
 
 ### Alerting
 
@@ -375,11 +377,8 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `list_alert_groups`               | OnCall                    | List alert groups from Grafana OnCall with filtering options                                                 | `grafana-oncall-app.alert-groups:read`                 | Plugin-specific scopes                              |
 | `get_alert_group`                 | OnCall                    | Get a specific alert group from Grafana OnCall by its ID                                                     | `grafana-oncall-app.alert-groups:read`                 | Plugin-specific scopes                              |
 | `update_alert_group`              | OnCall                    | Acknowledge, unacknowledge, resolve, or unresolve an alert group                                             | `grafana-oncall-app.alert-groups:write` (and `:read`)  | Plugin-specific scopes                              |
-| `get_sift_investigation`          | Sift                      | Retrieve an existing Sift investigation by its UUID                                                          | Viewer role                                            | N/A                                                 |
-| `get_sift_analysis`               | Sift                      | Retrieve a specific analysis from a Sift investigation                                                       | Viewer role                                            | N/A                                                 |
-| `list_sift_investigations`        | Sift                      | Retrieve a list of Sift investigations with an optional limit                                                | Viewer role                                            | N/A                                                 |
-| `find_error_pattern_logs`         | Sift                      | Finds elevated error patterns in Loki logs.                                                                  | Editor role                                            | N/A                                                 |
-| `find_slow_requests`              | Sift                      | Finds slow requests from the relevant tempo datasources.                                                     | Editor role                                            | N/A                                                 |
+| `sift_read`                       | Sift                      | Retrieve Sift investigations and analyses (operations: `list_investigations`, `get_investigation`, `get_analysis`) | Viewer role                                     | N/A                                                 |
+| `sift_write`                      | Sift                      | Create a Sift investigation to find error patterns or slow requests (operations: `find_error_pattern_logs`, `find_slow_requests`) | Editor role                              | N/A                                                 |
 | `list_pyroscope_label_names`      | Pyroscope                 | List label names matching a selector                                                                         | `datasources:query`                                    | `datasources:uid:pyroscope-uid`                     |
 | `list_pyroscope_label_values`     | Pyroscope                 | List label values matching a selector for a label name                                                       | `datasources:query`                                    | `datasources:uid:pyroscope-uid`                     |
 | `list_pyroscope_profile_types`    | Pyroscope                 | List available profile types                                                                                 | `datasources:query`                                    | `datasources:uid:pyroscope-uid`                     |
@@ -522,8 +521,7 @@ When `--disable-write` is enabled, the following write operations are disabled:
 - `update_annotation`
 
 **Sift Tools:**
-- `find_error_pattern_logs` (creates investigations)
-- `find_slow_requests` (creates investigations)
+- `sift_write` (find_error_pattern_logs, find_slow_requests operations — both create investigations)
 
 **Snapshot Tools:**
 - `create_snapshot`
