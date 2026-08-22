@@ -173,7 +173,13 @@ Queries go through Grafana's Snowflake datasource (Grafana Enterprise plugin `gr
 
 ### Incidents
 
-- **Search, create, and update incidents:** Manage incidents in Grafana Incident, including searching, creating, and adding activities to incidents.
+`incidents_read` covers listing and retrieving incidents; `incidents_write` covers creating, updating, and adding activity notes.
+
+- **list:** Search incidents in Grafana Incident, with optional status and drill filters.
+- **get:** Retrieve a single incident by ID.
+- **create:** Create a new incident. Use judiciously — it may notify or alarm many people.
+- **update:** Update an existing incident's status, severity, or title.
+- **add_activity:** Add a note to an incident's timeline.
 
 ### Sift Investigations
 
@@ -334,11 +340,8 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `list_prometheus_label_names`     | Prometheus                | List label names matching a selector                                                                         | `datasources:query`                                    | `datasources:uid:prometheus-uid`                    |
 | `list_prometheus_label_values`    | Prometheus                | List values for a specific label                                                                             | `datasources:query`                                    | `datasources:uid:prometheus-uid`                    |
 | `query_prometheus_histogram`      | Prometheus                | Calculate histogram percentile values                                                                        | `datasources:query`                                    | `datasources:uid:prometheus-uid`                    |
-| `list_incidents`                  | Incident                  | List incidents in Grafana Incident                                                                           | Viewer role                                            | N/A                                                 |
-| `create_incident`                 | Incident                  | Create an incident in Grafana Incident                                                                       | Editor role                                            | N/A                                                 |
-| `add_activity_to_incident`        | Incident                  | Add an activity item to an incident in Grafana Incident                                                      | Editor role                                            | N/A                                                 |
-| `update_incident`                 | Incident                  | Update an incident in Grafana Incident (status, severity, or title)                                          | Editor role                                            | N/A                                                 |
-| `get_incident`                    | Incident                  | Get a single incident by ID                                                                                  | Viewer role                                            | N/A                                                 |
+| `incidents_read`                  | Incident                  | List or get Grafana incidents (operations: `list`, `get`)                                                    | Viewer role                                            | N/A                                                 |
+| `incidents_write`                 | Incident                  | Create, update, or add an activity note to an incident (operations: `create`, `update`, `add_activity`)      | Editor role                                            | N/A                                                 |
 | `query_loki_logs`                 | Loki                      | Query and retrieve logs using LogQL (either log or metric queries)                                           | `datasources:query`                                    | `datasources:uid:loki-uid`                          |
 | `list_loki_label_names`           | Loki                      | List all available label names in logs                                                                       | `datasources:query`                                    | `datasources:uid:loki-uid`                          |
 | `list_loki_label_values`          | Loki                      | List values for a specific log label                                                                         | `datasources:query`                                    | `datasources:uid:loki-uid`                          |
@@ -506,9 +509,7 @@ When `--disable-write` is enabled, the following write operations are disabled:
 - `create_folder`
 
 **Incident Tools:**
-- `create_incident`
-- `add_activity_to_incident`
-- `update_incident`
+- `incidents_write` (create, update, add_activity operations)
 
 **Alerting Tools:**
 - `alerting_manage_rules` (create, update, delete operations)
