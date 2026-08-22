@@ -472,7 +472,6 @@ func newTestToolManager(t *testing.T, ttl time.Duration, build testBuildFunc) (*
 	t.Cleanup(sm.Close)
 	tm := NewToolManager(sm, nil, WithProxiedTools(true))
 	tm.buildSet = build
-	sm.SetToolManager(tm)
 	return tm, sm
 }
 
@@ -487,7 +486,6 @@ func newToolManagerWithServer(t *testing.T, build testBuildFunc) (*ToolManager, 
 	srv := server.NewMCPServer("test", "1.0")
 	tm := NewToolManager(sm, srv, WithProxiedTools(true))
 	tm.buildSet = build
-	sm.SetToolManager(tm)
 	return tm, sm, srv
 }
 
