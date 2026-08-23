@@ -739,3 +739,99 @@ func TestGenerateDeeplink_ExploreISO8601TimeRange(t *testing.T) {
 	assert.Contains(t, result, "1777382100000")
 	assert.NotContains(t, result, "2026-04-28")
 }
+
+func TestSupportsExplorePanes(t *testing.T) {
+	for _, tc := range []struct {
+		version string
+		want    bool
+	}{
+		{"10.2.0", true},
+		{"10.2.3", true},
+		{"10.3.0", true},
+		{"11.0.0", true},
+		{"12.1.0", true},
+		{"10.1.9", false},
+		{"10.0.0", false},
+		{"9.5.21", false},
+		{"9.0.0", false},
+		{"10.2.0-64123pre", true},
+		{"10.1.0-64123pre", false},
+		{"v11.0.0", true},
+		{"10", false},
+		{"11", true},
+		// Unknown versions keep the pane format: GrafanaVersion fails soft, so
+		// an unreadable settings endpoint must not downgrade every link.
+		{"", true},
+		{"unknown", true},
+		{"10.x", true},
+	} {
+		t.Run(tc.version, func(t *testing.T) {
+			assert.Equal(t, tc.want, supportsExplorePanes(tc.version))
+		})
+	}
+}
+
+// newVersionedGrafanaContext returns a context pointing at a Grafana whose
+// frontend settings report the given version. Each call gets its own server
+// URL, which is also the version cache key, so subtests stay isolated.
+func newVersionedGrafanaContext(t *testing.T, version string) context.Context {
+	t.Helper()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/frontend/settings" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"buildInfo": {"version": "` + version + `"}}`))
+	}))
+	t.Cleanup(ts.Close)
+	return mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: ts.URL})
+}
+
+func TestGenerateDeeplink_ExploreFormatByGrafanaVersion(t *testing.T) {
+	params := GenerateDeeplinkParams{
+		ResourceType:  "explore",
+		DatasourceUID: stringPtr("prometheus-uid"),
+		Queries: []map[string]interface{}{
+			{"refId": "A", "expr": "up"},
+		},
+		TimeRange: &TimeRange{From: "now-1h", To: "now"},
+	}
+
+	t.Run("10.2 and later use panes", func(t *testing.T) {
+		result, err := generateDeeplink(newVersionedGrafanaContext(t, "12.1.0"), params)
+		require.NoError(t, err)
+
+		u, err := url.Parse(result)
+		require.NoError(t, err)
+		assert.Empty(t, u.Query().Get("left"))
+		assert.Equal(t, "1", u.Query().Get("schemaVersion"))
+
+		var panes map[string]map[string]any
+		require.NoError(t, json.Unmarshal([]byte(u.Query().Get("panes")), &panes))
+		assert.Equal(t, "prometheus-uid", panes["a"]["datasource"])
+		assert.Equal(t, map[string]any{"from": "now-1h", "to": "now"}, panes["a"]["range"])
+	})
+
+	t.Run("before 10.2 falls back to left", func(t *testing.T) {
+		result, err := generateDeeplink(newVersionedGrafanaContext(t, "9.5.21"), params)
+		require.NoError(t, err)
+
+		u, err := url.Parse(result)
+		require.NoError(t, err)
+		assert.Empty(t, u.Query().Get("panes"))
+		assert.Empty(t, u.Query().Get("schemaVersion"))
+
+		var left map[string]any
+		require.NoError(t, json.Unmarshal([]byte(u.Query().Get("left")), &left))
+		assert.Equal(t, "prometheus-uid", left["datasource"])
+		assert.Equal(t, map[string]any{"from": "now-1h", "to": "now"}, left["range"])
+
+		queries, ok := left["queries"].([]any)
+		require.True(t, ok)
+		require.Len(t, queries, 1)
+		// The legacy format takes queries verbatim: Grafana 9 resolves them
+		// against the top-level datasource.
+		assert.Equal(t, map[string]any{"refId": "A", "expr": "up"}, queries[0])
+	})
+}
