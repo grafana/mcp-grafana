@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `observability.ToolMetricDimensions` now bounds the `mcp.tool.phase` metric label against the `toolMetricDims` allowlist, like `mcp.tool.operation` and `mcp.tool.resource_type`. Phase is read from a tool result's `_meta`, and results proxied from an MCP-enabled datasource come from a remote server rather than from this repo, so the label was unbounded-cardinality in the general case. A tool that does not opt into `phases` now contributes no phase, and an opted-in tool reporting an unexpected value reports `other`. Behaviour is unchanged for every in-tree tool: `create_datasource` is the only producer, with `schema` and `created` ([#1094](https://github.com/grafana/mcp-grafana/issues/1094))
 - Distributed traces are no longer broken over the HTTP transports: the server now installs a global OTel `TextMapPropagator` (via `autoprop`, honouring `OTEL_PROPAGATORS`, default `tracecontext,baggage`), so an inbound `traceparent` continues the caller's trace and outbound Grafana API requests carry one of their own. Previously every hop started a disconnected trace. Trace context forwarded via `GRAFANA_FORWARD_HEADERS` no longer overrides the propagated value, which would have cut mcp-grafana out of the middle of the trace ([#1084](https://github.com/grafana/mcp-grafana/issues/1084))
 
 ## [1.1.0] - 2026-08-10

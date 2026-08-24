@@ -987,7 +987,7 @@ func TestToolMetricDimensions(t *testing.T) {
 		assert.Equal(t, ToolMetricDims{}, got)
 	})
 
-	t.Run("phase is read from result regardless of allowlist", func(t *testing.T) {
+	t.Run("allowlisted phase is read from the result", func(t *testing.T) {
 		got := ToolMetricDimensions("create_datasource",
 			map[string]any{"type": "loki"}, mkResult("created"))
 		assert.Equal(t, ToolMetricDims{ResourceType: "loki", Phase: "created"}, got)
@@ -1028,6 +1028,128 @@ func TestToolMetricDimensions(t *testing.T) {
 			facade[attrKeyToolPhase] = d.Phase
 		}
 		assert.Equal(t, fromAttrs, facade)
+	})
+}
+
+func TestToolMetricDimensionsPhaseIsBounded(t *testing.T) {
+	// Phase comes from the result's _meta, and a proxied tool's result is
+	// produced by a remote MCP server rather than by this repo — so the phase
+	// must be bounded by the allowlist exactly like the argument-derived
+	// dimensions, not trusted to be low-cardinality.
+	mkResult := func(meta map[string]any) *mcp.CallToolResult {
+		r := mcp.NewToolResultText("{}")
+		if meta != nil {
+			r.Meta = &mcp.Meta{AdditionalFields: meta}
+		}
+		return r
+	}
+
+	tests := []struct {
+		name     string
+		toolName string
+		result   any
+		want     string
+	}{
+		{
+			// The case that matters: a tool proxied from an MCP-enabled
+			// datasource can put anything in _meta, and it must not reach a label.
+			name:     "tool absent from the allowlist contributes no phase",
+			toolName: "tempo_traceql-search",
+			result:   mkResult(map[string]any{ToolPhaseMetaKey: "attacker-chosen-" + strings.Repeat("x", 32)}),
+			want:     "",
+		},
+		{
+			name:     "allowlisted tool that does not opt into phases contributes no phase",
+			toolName: "alerting_manage_rules",
+			result:   mkResult(map[string]any{ToolPhaseMetaKey: "created"}),
+			want:     "",
+		},
+		{
+			name:     "opted-in tool passes through an allowed phase (schema)",
+			toolName: "create_datasource",
+			result:   mkResult(map[string]any{ToolPhaseMetaKey: "schema"}),
+			want:     "schema",
+		},
+		{
+			name:     "opted-in tool passes through an allowed phase (created)",
+			toolName: "create_datasource",
+			result:   mkResult(map[string]any{ToolPhaseMetaKey: "created"}),
+			want:     "created",
+		},
+		{
+			name:     "opted-in tool collapses an unexpected phase to other",
+			toolName: "create_datasource",
+			result:   mkResult(map[string]any{ToolPhaseMetaKey: "not-a-real-phase-7b1e"}),
+			want:     metricDimValueOther,
+		},
+		{
+			// Absent stays absent rather than becoming "other", matching
+			// boundedMetricValue's semantics for the other dimensions.
+			name:     "meta without a phase key stays empty",
+			toolName: "create_datasource",
+			result:   mkResult(map[string]any{"other": "x"}),
+			want:     "",
+		},
+		{
+			name:     "result without meta stays empty",
+			toolName: "create_datasource",
+			result:   mkResult(nil),
+			want:     "",
+		},
+		{
+			name:     "non-string phase stays empty",
+			toolName: "create_datasource",
+			result:   mkResult(map[string]any{ToolPhaseMetaKey: 42}),
+			want:     "",
+		},
+		{
+			name:     "nil result stays empty",
+			toolName: "create_datasource",
+			result:   nil,
+			want:     "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ToolMetricDimensions(tt.toolName, nil, tt.result)
+			assert.Equal(t, tt.want, got.Phase)
+		})
+	}
+
+	t.Run("phase cardinality is bounded regardless of remote input", func(t *testing.T) {
+		seen := map[string]struct{}{}
+		for _, injected := range []string{"a", "b", "c", "schema", "created", "created'; DROP", ""} {
+			d := ToolMetricDimensions("create_datasource", nil,
+				mkResult(map[string]any{ToolPhaseMetaKey: injected}))
+			seen[d.Phase] = struct{}{}
+		}
+		// "", "schema", "created" and one shared "other" bucket — the four junk
+		// values do not each mint a series.
+		assert.Len(t, seen, 4)
+	})
+
+	t.Run("every phase create_datasource declares is allowlisted", func(t *testing.T) {
+		// Guards the duplicated literals: tools/datasources.go declares
+		// dsPhaseSchema/dsPhaseCreated, and this package cannot import them.
+		for _, phase := range []string{"schema", "created"} {
+			got := ToolMetricDimensions("create_datasource", nil,
+				mkResult(map[string]any{ToolPhaseMetaKey: phase}))
+			assert.Equal(t, phase, got.Phase)
+		}
+	})
+
+	t.Run("buildOperationAttrs drops an un-allowlisted tool's phase", func(t *testing.T) {
+		obs := &Observability{}
+		req := &mcp.CallToolRequest{}
+		req.Params.Name = "tempo_traceql-search"
+
+		attrs := obs.buildOperationAttrs(context.Background(), "tools/call", req,
+			mkResult(map[string]any{ToolPhaseMetaKey: "remote-chosen"}), nil)
+
+		for _, a := range attrs {
+			assert.NotEqual(t, attrKeyToolPhase, string(a.Key))
+		}
 	})
 }
 
