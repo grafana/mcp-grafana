@@ -573,6 +573,15 @@ func NewToolManager(sm *SessionManager, mcpServer *server.MCPServer, opts ...too
 	if tm.proxiedSets == nil {
 		tm.proxiedSets = make(map[proxiedToolSetKey]*proxiedToolSet)
 	}
+	// Every session-mode call path (SessionManager.GetProxiedClient) needs
+	// sm.toolManager to look up a session's shared proxied client set; without
+	// it, every proxied tool call fails as if no datasources were discovered,
+	// no matter how well discovery/registration went. Wiring it here, rather
+	// than leaving it to the caller, means a caller that only calls
+	// NewToolManager can't forget this step.
+	if sm != nil {
+		sm.SetToolManager(tm)
+	}
 	return tm
 }
 
