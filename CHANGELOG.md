@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Bumped `mcp-go` from v0.55.0 to v0.58.0, picking up fixes for tool-filter scans on the `tools/call` hot path, raw JSON preservation for tool arguments and `structuredContent`, schema tags on nested fields, multi-line SSE `data` fields, and HEAD requests returning 200. This also inherits mcp-go's new default-on DNS rebinding protection, which returns 403 when a request arrives over a loopback connection with a non-loopback `Host` header — a second check underneath `DNSRebindingProtectionMiddleware` that `--allowed-hosts` cannot loosen. Default deployments are unaffected, since `DefaultAllowedHosts` already restricts `Host` to loopback variants; operators who widen `--allowed-hosts` while a same-host reverse proxy forwards over loopback preserving a non-localhost `Host` should configure the proxy to rewrite `Host` to localhost ([#1097](https://github.com/grafana/mcp-grafana/pull/1097))
 - `tools.Stats.Bytes` is now `int64` (was `int`) so index/stats byte counts cannot overflow on 32-bit platforms; Go API consumers of the exported struct may need a cast ([#1031](https://github.com/grafana/mcp-grafana/pull/1031))
 
 ### Fixed
