@@ -106,6 +106,8 @@ var SearchDocsTool = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("Search Docs"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(true),
 )
 
 // Get doc
@@ -156,6 +158,8 @@ var GetDocTool = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("Get Doc"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(true),
 )
 
 // Get doc outline
@@ -197,6 +201,8 @@ var GetDocOutlineTool = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("Get Doc Outline"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(true),
 )
 
 // List products
@@ -234,6 +240,8 @@ var ListProductsTool = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("List Doc Products"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(true),
 )
 
 // AddDocsTools registers all documentation tools on the MCP server.
