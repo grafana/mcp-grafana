@@ -1007,6 +1007,27 @@ func TestGeneratePanelQueryHints(t *testing.T) {
 				"SELECT permission",
 			},
 		},
+		{
+			name:           "postgres hints (modern identifier)",
+			datasourceType: "grafana-postgresql-datasource",
+			query:          "SELECT COUNT(*) FROM revenue WHERE $__timeFilter(ts)",
+			containsHints: []string{
+				"No data found",
+				"Time range",
+				"COUNT(*)",
+				"PostgreSQL",
+				"search_path",
+			},
+		},
+		{
+			name:           "postgres hints (legacy identifier)",
+			datasourceType: "postgres",
+			query:          "SELECT COUNT(*) FROM revenue WHERE $__timeFilter(ts)",
+			containsHints: []string{
+				"No data found",
+				"PostgreSQL",
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -1086,6 +1107,10 @@ func TestNormalizeDatasourceType(t *testing.T) {
 		{"MSSQL", "mssql"},
 		{"bigquery", "bigquery"},
 		{"BigQuery", "bigquery"},
+		{"postgres", "postgres"},
+		{"Postgres", "postgres"},
+		{"grafana-postgresql-datasource", "postgres"},
+		{"Grafana-PostgreSQL-Datasource", "postgres"},
 		{"some-other-type", "some-other-type"},
 		{"", ""},
 	}
@@ -1239,6 +1264,10 @@ func TestExecuteSQLPanelQuery_NilTarget(t *testing.T) {
 	_, err = executeSQLPanelQuery(t.Context(), "mssql-uid", &panelInfo{}, "SELECT 1", "now-1h", "now", nil, MSSQLDatasourceType)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "SQL panel target not available")
+
+	_, err = executeSQLPanelQuery(t.Context(), "postgres-uid", &panelInfo{}, "SELECT 1", "now-1h", "now", nil, PostgresDatasourceType)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "SQL panel target not available")
 }
 
 func TestDefaultSQLFormat(t *testing.T) {
@@ -1246,6 +1275,10 @@ func TestDefaultSQLFormat(t *testing.T) {
 	// unmarshals format into a string and errors on a number.
 	assert.Equal(t, SQLFormatTable, defaultSQLFormat(BigQueryDatasourceType))
 	assert.Equal(t, MSSQLFormatTable, defaultSQLFormat(MSSQLDatasourceType))
+	// PostgreSQL is also sqleng-based, so it uses the string table format under
+	// both its modern and legacy datasource identifiers.
+	assert.Equal(t, MSSQLFormatTable, defaultSQLFormat(PostgresDatasourceType))
+	assert.Equal(t, MSSQLFormatTable, defaultSQLFormat(PostgresLegacyDatasourceType))
 }
 
 func TestExtractPanelInfoMSSQL(t *testing.T) {
@@ -1273,6 +1306,49 @@ func TestExtractPanelInfoMSSQL(t *testing.T) {
 	assert.Equal(t, "mssql", info.DatasourceType)
 	assert.Contains(t, info.Query, "$__timeFrom()")
 	assert.Equal(t, "table", info.RawTarget["format"])
+}
+
+func TestExtractPanelInfoPostgres(t *testing.T) {
+	// PostgreSQL panels carry their statement in rawSql like the other SQL
+	// datasources, and the raw target must survive so datasource-specific fields
+	// (e.g. format) and the format override are preserved.
+	tests := []struct {
+		name       string
+		dsType     string
+		wantDSType string
+	}{
+		{name: "modern identifier", dsType: "grafana-postgresql-datasource", wantDSType: "grafana-postgresql-datasource"},
+		{name: "legacy identifier", dsType: "postgres", wantDSType: "postgres"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			panel := map[string]interface{}{
+				"id":    91,
+				"title": "Reconciliation",
+				"datasource": map[string]interface{}{
+					"uid":  "postgres-uid",
+					"type": tt.dsType,
+				},
+				"targets": []interface{}{
+					map[string]interface{}{
+						"refId":  "A",
+						"rawSql": "SELECT $__timeGroup(ts, '1h') AS t, count(*) FROM checks WHERE $__timeFilter(ts) GROUP BY 1",
+						"format": "table",
+					},
+				},
+			}
+
+			info, err := extractPanelInfo(panel, 0)
+			require.NoError(t, err)
+			assert.Equal(t, "postgres-uid", info.DatasourceUID)
+			assert.Equal(t, tt.wantDSType, info.DatasourceType)
+			assert.Contains(t, info.Query, "$__timeGroup(ts, '1h')")
+			assert.Contains(t, info.Query, "$__timeFilter(ts)")
+			// The raw target survives so the panel's saved format is preserved.
+			assert.Equal(t, "table", info.RawTarget["format"])
+		})
+	}
 }
 
 func TestSubstituteTemplateVariablesInMap(t *testing.T) {
