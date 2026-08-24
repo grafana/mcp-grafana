@@ -1093,10 +1093,18 @@ func cachedSharedSettings(cfg *GrafanaConfig) (sharedSettings, bool) {
 	}
 
 	settings, ok := loadFrontendSettings(cfg)
-	if !ok {
-		return sharedSettings{}, false
+	if ok {
+		return sharedSettings{AppURL: settings.AppURL, Version: settings.Version}, true
 	}
-	return sharedSettings{AppURL: settings.AppURL, Version: settings.Version}, true
+
+	// This org's fetch failed, but these fields do not depend on the org, and
+	// the fetch singleflight is keyed by (URL, OrgID) — so a fetch for another
+	// org may have populated them while this one was in flight. Prefer that over
+	// reporting unknown, which is what a URL-keyed flight would have given us.
+	if cached, ok := sharedSettingsCache.Load(cfg.URL); ok {
+		return cached.(sharedSettings), true
+	}
+	return sharedSettings{}, false
 }
 
 // frontendSettings holds the subset of /api/frontend/settings that the MCP

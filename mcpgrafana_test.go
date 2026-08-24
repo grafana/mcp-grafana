@@ -2208,6 +2208,28 @@ func TestFrontendSettingsCachesOnlySuccesses(t *testing.T) {
 		assert.Empty(t, GrafanaVersion(WithGrafanaConfig(context.Background(), cfg)))
 		assert.Equal(t, "11.0.0", GrafanaVersion(WithGrafanaConfig(context.Background(), cfg)))
 	})
+
+	// The fetch singleflight is keyed by (URL, OrgID) so that the org-scoped
+	// namespace stays correct, which means two orgs can be in flight for the
+	// same instance at once. One org's fetch failing must not discard the
+	// org-independent version the other one just cached.
+	t.Run("a failed fetch still sees settings cached for another org", func(t *testing.T) {
+		t.Cleanup(clearFrontendSettingsCaches)
+		var ts *httptest.Server
+		ts = newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+			// Stand in for a concurrent fetch for a different org that landed
+			// while this org's request was in flight.
+			sharedSettingsCache.Store(ts.URL, sharedSettings{
+				AppURL:  "https://grafana.example.com",
+				Version: "12.1.0",
+			})
+			w.WriteHeader(http.StatusForbidden)
+		})
+
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{URL: ts.URL, OrgID: 5})
+		assert.Equal(t, "12.1.0", GrafanaVersion(ctx),
+			"a version already cached for the instance must survive this org's own fetch failing")
+	})
 }
 
 func TestOrgIDRoundTripperContextOverride(t *testing.T) {
