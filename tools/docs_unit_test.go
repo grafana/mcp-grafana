@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/grafana/mcp-doc-server/pkg/grafanadocs"
 	"github.com/stretchr/testify/assert"
@@ -293,4 +294,24 @@ func TestLoadDocsIndex_IgnoresCallerCancellation(t *testing.T) {
 	got, err := loadDocsIndex(ctx)
 	require.NoError(t, err)
 	require.Equal(t, idx, got)
+}
+
+func TestLoadDocsIndex_TimesOutDetachedLoad(t *testing.T) {
+	ResetDocsIndex()
+	oldTimeout := docsIndexLoadTimeout
+	t.Cleanup(func() {
+		ResetDocsIndex()
+		loadIndexFn = grafanadocs.LoadIndex
+		docsIndexLoadTimeout = oldTimeout
+	})
+	docsIndexLoadTimeout = 20 * time.Millisecond
+
+	loadIndexFn = func(ctx context.Context, _ string) (*grafanadocs.Index, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+
+	_, err := loadDocsIndex(context.Background())
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.DeadlineExceeded)
 }

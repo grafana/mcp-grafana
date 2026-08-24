@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/grafana/mcp-doc-server/pkg/grafanadocs"
 	mcpgrafana "github.com/grafana/mcp-grafana"
@@ -29,15 +30,20 @@ var (
 
 	// loadIndexFn is grafanadocs.LoadIndex in production; tests stub it.
 	loadIndexFn = grafanadocs.LoadIndex
+
+	// docsIndexLoadTimeout bounds a detached index fetch so a stalled
+	// LoadIndex cannot hold docsIndexMu forever. Matches grafanadocs'
+	// HTTP client timeout. Overridable in tests.
+	docsIndexLoadTimeout = 60 * time.Second
 )
 
 // loadDocsIndex lazily loads the documentation index on first successful use.
 // Failures are not cached: a cancelled or timed-out first request must not
 // poison later calls. The fetch is detached from the caller's cancellation
-// (context.WithoutCancel) so one cancelled tool call cannot abort an in-flight
-// load that concurrent callers are waiting on. A one-shot sync.Once is
-// deliberately not used — see session.go's proxied-tool init for the same
-// reason, and fetchPublicURL for success-only caching.
+// so one cancelled tool call cannot abort an in-flight load that concurrent
+// callers are waiting on, but it still has its own timeout (same pattern as
+// fetchPublicURL). A one-shot sync.Once is deliberately not used — see
+// session.go's proxied-tool init for the same reason.
 func loadDocsIndex(ctx context.Context) (*grafanadocs.Index, error) {
 	docsIndexMu.RLock()
 	idx := docsIndex
@@ -52,7 +58,9 @@ func loadDocsIndex(ctx context.Context) (*grafanadocs.Index, error) {
 		return docsIndex, nil
 	}
 
-	idx, err := loadIndexFn(context.WithoutCancel(ctx), docsIndexURL)
+	loadCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), docsIndexLoadTimeout)
+	defer cancel()
+	idx, err := loadIndexFn(loadCtx, docsIndexURL)
 	if err != nil {
 		return nil, err
 	}
