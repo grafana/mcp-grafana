@@ -79,7 +79,7 @@ When caller authentication is enabled, the `Authorization` header is reserved fo
 
 - `--enabled-tools`: Comma-separated list of enabled tool **categories**. The default is exactly:
 
-  `search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering,snapshot`
+  `search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering,snapshot,docs`
 
   Categories **not** in that default string are off until you add them, including: `admin`, `agento11y`, `assistant`, `elasticsearch`, `cloudwatch`, `examples`, `clickhouse`, `snowflake`, `influxdb`, `quickwit`, and `runpanelquery`. Pass a full comma-separated list to replace the default entirely, or use `--disable-*` flags to turn off pieces of the default set.
 
@@ -113,6 +113,7 @@ When caller authentication is enabled, the `Authorization` header is reserved fo
 - `--disable-provisioning`: Disable provisioning tools.
 - `--disable-agento11y`: Disable Agent Observability tools.
 - `--disable-assistant`: Disable Grafana Assistant tools.
+- `--disable-docs`: Disable documentation tools.
 
 ## Configure tool limits
 
