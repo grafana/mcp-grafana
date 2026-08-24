@@ -6,8 +6,8 @@ import (
 	"os"
 	"sync"
 
-	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/grafana/mcp-doc-server/pkg/grafanadocs"
+	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
@@ -24,25 +24,48 @@ func defaultDocsIndexURL() string {
 }
 
 var (
-	docsIndex     *grafanadocs.Index
-	docsIndexOnce sync.Once
-	docsIndexErr  error
+	docsIndexMu sync.RWMutex
+	docsIndex   *grafanadocs.Index
+
+	// loadIndexFn is grafanadocs.LoadIndex in production; tests stub it.
+	loadIndexFn = grafanadocs.LoadIndex
 )
 
-// loadDocsIndex lazily loads the documentation index on first use.
+// loadDocsIndex lazily loads the documentation index on first successful use.
+// Failures are not cached: a cancelled or timed-out first request must not
+// poison later calls. The fetch is detached from the caller's cancellation
+// (context.WithoutCancel) so one cancelled tool call cannot abort an in-flight
+// load that concurrent callers are waiting on. A one-shot sync.Once is
+// deliberately not used — see session.go's proxied-tool init for the same
+// reason, and fetchPublicURL for success-only caching.
 func loadDocsIndex(ctx context.Context) (*grafanadocs.Index, error) {
-	docsIndexOnce.Do(func() {
-		docsIndex, docsIndexErr = grafanadocs.LoadIndex(ctx, docsIndexURL)
-	})
-	return docsIndex, docsIndexErr
+	docsIndexMu.RLock()
+	idx := docsIndex
+	docsIndexMu.RUnlock()
+	if idx != nil {
+		return idx, nil
+	}
+
+	docsIndexMu.Lock()
+	defer docsIndexMu.Unlock()
+	if docsIndex != nil {
+		return docsIndex, nil
+	}
+
+	idx, err := loadIndexFn(context.WithoutCancel(ctx), docsIndexURL)
+	if err != nil {
+		return nil, err
+	}
+	docsIndex = idx
+	return docsIndex, nil
 }
 
 // ResetDocsIndex clears the cached index so the next call reloads it.
 // Exported for testing only.
 func ResetDocsIndex() {
-	docsIndexOnce = sync.Once{}
+	docsIndexMu.Lock()
 	docsIndex = nil
-	docsIndexErr = nil
+	docsIndexMu.Unlock()
 }
 
 // Search docs

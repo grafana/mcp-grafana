@@ -4,9 +4,11 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/grafana/mcp-doc-server/pkg/grafanadocs"
@@ -41,8 +43,9 @@ func withTestDocsIndex(t *testing.T) {
 	t.Cleanup(ResetDocsIndex)
 
 	idx := loadTestIndex(t)
+	docsIndexMu.Lock()
 	docsIndex = idx
-	docsIndexOnce.Do(func() {})
+	docsIndexMu.Unlock()
 }
 
 func TestSearchDocs_FindsResults(t *testing.T) {
@@ -232,4 +235,62 @@ func TestGetDocOutlineTool_ToolDefinition(t *testing.T) {
 func TestListProductsTool_ToolDefinition(t *testing.T) {
 	assert.Equal(t, "list_products", ListProductsTool.Tool.Name)
 	assert.Contains(t, ListProductsTool.Tool.Description, "product documentation groups")
+}
+
+func TestLoadDocsIndex_RetriesAfterFailure(t *testing.T) {
+	ResetDocsIndex()
+	t.Cleanup(func() {
+		ResetDocsIndex()
+		loadIndexFn = grafanadocs.LoadIndex
+	})
+
+	idx := loadTestIndex(t)
+	var calls atomic.Int32
+	loadIndexFn = func(ctx context.Context, _ string) (*grafanadocs.Index, error) {
+		n := calls.Add(1)
+		if n == 1 {
+			return nil, errors.New("transient index fetch failure")
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		return idx, nil
+	}
+
+	_, err := loadDocsIndex(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "transient index fetch failure")
+
+	got, err := loadDocsIndex(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, idx, got)
+	assert.Equal(t, int32(2), calls.Load())
+
+	got, err = loadDocsIndex(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, idx, got)
+	assert.Equal(t, int32(2), calls.Load(), "successful load must be cached")
+}
+
+func TestLoadDocsIndex_IgnoresCallerCancellation(t *testing.T) {
+	ResetDocsIndex()
+	t.Cleanup(func() {
+		ResetDocsIndex()
+		loadIndexFn = grafanadocs.LoadIndex
+	})
+
+	idx := loadTestIndex(t)
+	loadIndexFn = func(ctx context.Context, _ string) (*grafanadocs.Index, error) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		return idx, nil
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	got, err := loadDocsIndex(ctx)
+	require.NoError(t, err)
+	require.Equal(t, idx, got)
 }
