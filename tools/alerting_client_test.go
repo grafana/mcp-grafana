@@ -136,7 +136,7 @@ func TestGetRulesOpts_queryValues(t *testing.T) {
 				"state":            {"firing", "pending"},
 				"rule_limit":       {"10"},
 				"limit_alerts":     {"5"},
-				"matcher":          {`{"Type":0,"Name":"severity","Value":"critical"}`},
+				"matcher":          {`{"name":"severity","value":"critical","isRegex":false}`},
 			},
 		},
 		{
@@ -172,6 +172,15 @@ func TestGetRulesOpts_queryValues(t *testing.T) {
 			},
 			expected: url.Values{
 				"rule_limit": {"200"},
+			},
+		},
+		{
+			name: "regex matcher sets isRegex true",
+			opts: GetRulesOpts{
+				Matchers: []*labels.Matcher{labels.MustNewMatcher(labels.MatchRegexp, "team", "backend.*")},
+			},
+			expected: url.Values{
+				"matcher": {`{"name":"team","value":"backend.*","isRegex":true}`},
 			},
 		},
 		{
@@ -245,7 +254,7 @@ func TestAlertingClient_GetRules_WithOpts(t *testing.T) {
 				t.Helper()
 				q := r.URL.Query()
 				require.Equal(t, "cpu-alert", q.Get("search.rule_name"))
-				require.Equal(t, `{"Type":0,"Name":"severity","Value":"critical"}`, q.Get("matcher"))
+				require.Equal(t, `{"name":"severity","value":"critical","isRegex":false}`, q.Get("matcher"))
 				require.Equal(t, "5", q.Get("limit_alerts"))
 			},
 		},
@@ -273,7 +282,7 @@ func TestAlertingClient_GetRules_WithOpts(t *testing.T) {
 				require.Equal(t, []string{"firing", "pending"}, q["state"])
 				require.Equal(t, "20", q.Get("rule_limit"))
 				require.Equal(t, "3", q.Get("limit_alerts"))
-				require.Equal(t, `{"Type":0,"Name":"team","Value":"alerting"}`, q.Get("matcher"))
+				require.Equal(t, `{"name":"team","value":"alerting","isRegex":false}`, q.Get("matcher"))
 			},
 		},
 	}

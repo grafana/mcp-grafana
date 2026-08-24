@@ -143,13 +143,24 @@ func (o *GetRulesOpts) queryValues() url.Values {
 		params.Set("limit_alerts", strconv.Itoa(limitAlerts))
 	}
 	for _, m := range o.Matchers {
-		b, err := json.Marshal(m)
+		b, err := json.Marshal(apiMatcher{
+			Name:    m.Name,
+			Value:   m.Value,
+			IsRegex: m.Type == labels.MatchRegexp || m.Type == labels.MatchNotRegexp,
+		})
 		if err != nil {
 			continue
 		}
 		params.Add("matcher", string(b))
 	}
 	return params
+}
+
+// apiMatcher is the JSON shape the "matcher" query parameter expects.
+type apiMatcher struct {
+	Name    string `json:"name"`
+	Value   string `json:"value"`
+	IsRegex bool   `json:"isRegex"`
 }
 
 func (c *alertingClient) GetRules(ctx context.Context, opts *GetRulesOpts) (*rulesResponse, error) {
