@@ -24,7 +24,7 @@ type RunPanelQueryParams struct {
 	End            string            `json:"end" jsonschema:"description=Override end time (e.g. 'now'\\, RFC3339\\, Unix ms)"`
 	Variables      map[string]string `json:"variables" jsonschema:"description=Override dashboard variables (e.g. {\"job\": \"api-server\"})"`
 	DatasourceUID  string            `json:"datasourceUid,omitempty" jsonschema:"description=Override datasource UID"`
-	DatasourceType string            `json:"datasourceType,omitempty" jsonschema:"description=Override datasource type (prometheus\\, loki\\, grafana-clickhouse-datasource\\, cloudwatch\\, influxdb\\, grafana-bigquery-datasource\\, mssql)"`
+	DatasourceType string            `json:"datasourceType,omitempty" jsonschema:"description=Override datasource type (prometheus\\, loki\\, grafana-clickhouse-datasource\\, cloudwatch\\, influxdb\\, grafana-bigquery-datasource\\, mssql\\, grafana-postgresql-datasource\\, postgres)"`
 }
 
 // QueryTimeRange represents the actual time range used for a panel query
@@ -226,6 +226,11 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 		results, err = executeSQLPanelQuery(ctx, datasourceUID, panelData, query, params.Start, params.End, vars, BigQueryDatasourceType)
 	case "mssql":
 		results, err = executeSQLPanelQuery(ctx, datasourceUID, panelData, query, params.Start, params.End, vars, MSSQLDatasourceType)
+	case "postgres":
+		// PostgreSQL exposes two datasource identifiers (grafana-postgresql-datasource
+		// and the legacy postgres); pass the resolved type through so the datasource
+		// object sent to Grafana matches what the panel actually declared.
+		results, err = executeSQLPanelQuery(ctx, datasourceUID, panelData, query, params.Start, params.End, vars, datasourceType)
 	default:
 		return nil, fmt.Errorf("datasource type '%s' is not supported by run_panel_query; use the native query tool (e.g. query_prometheus\\, query_loki_logs\\, query_clickhouse\\, query_cloudwatch\\, query_influxdb) directly", datasourceType)
 	}
@@ -558,6 +563,13 @@ const BigQueryDatasourceType = "grafana-bigquery-datasource"
 // MSSQLDatasourceType is the type identifier for Microsoft SQL Server datasources.
 const MSSQLDatasourceType = "mssql"
 
+// PostgresDatasourceType is the modern type identifier for PostgreSQL datasources.
+const PostgresDatasourceType = "grafana-postgresql-datasource"
+
+// PostgresLegacyDatasourceType is the legacy identifier that older and provisioned
+// Grafana installations still expose for the same PostgreSQL datasource.
+const PostgresLegacyDatasourceType = "postgres"
+
 // SQLFormatTable is the format value for table/tabular query results on sqlds-based
 // datasources such as BigQuery, whose query model takes a numeric format enum.
 const SQLFormatTable = 1
@@ -568,10 +580,14 @@ const MSSQLFormatTable = "table"
 
 // defaultSQLFormat returns the table format value understood by the given datasource.
 func defaultSQLFormat(datasourceType string) interface{} {
-	if datasourceType == MSSQLDatasourceType {
+	switch normalizeDatasourceType(datasourceType) {
+	case "mssql", "postgres":
+		// MSSQL and PostgreSQL both use Grafana's sqleng backend, whose query model
+		// unmarshals format into a string and errors on a number.
 		return MSSQLFormatTable
+	default:
+		return SQLFormatTable
 	}
-	return SQLFormatTable
 }
 
 // SQLQueryResult represents the tabular result of a SQL panel query.
@@ -772,6 +788,8 @@ func normalizeDatasourceType(dsType string) string {
 		return "clickhouse"
 	case lower == "mssql":
 		return "mssql"
+	case lower == "postgres" || lower == "grafana-postgresql-datasource":
+		return "postgres"
 	case strings.Contains(lower, "bigquery"):
 		return "bigquery"
 	default:
@@ -859,6 +877,13 @@ func generatePanelQueryHints(datasourceType, query string) []string {
 			"- The $__timeFilter(column) macro may reference a column whose type or timezone doesn't match the time range",
 			"- The datasource login may lack SELECT permission on the referenced tables",
 		)
+	case "postgres":
+		hints = append(hints,
+			"- Table may be empty for this time range - try a COUNT(*) without the time filter to verify",
+			"- Column names or WHERE clause may not match the schema - check the table definition in PostgreSQL",
+			"- The $__timeFilter(column) macro may reference a column whose type or timezone doesn't match the time range",
+			"- The datasource role may lack SELECT privilege on the referenced tables, or the schema may not be on the search_path",
+		)
 	}
 
 	if query != "" {
@@ -879,7 +904,7 @@ func truncateString(s string, maxLen int) string {
 // RunPanelQuery is the tool definition for running panel queries
 var RunPanelQuery = mcpgrafana.MustTool(
 	"run_panel_query",
-	"Executes one or more dashboard panel queries with optional time range and variable overrides. Accepts an array of panel IDs to query in a single call. Fetches the dashboard\\, extracts queries from the specified panels\\, substitutes template variables and Grafana macros ($__range\\, $__rate_interval\\, $__interval)\\, and routes to the appropriate datasource (Prometheus\\, Loki\\, ClickHouse\\, CloudWatch\\, InfluxDB\\, or BigQuery). Returns results keyed by panel ID - partial failures are allowed (some panels can succeed while others fail). Use get_dashboard_summary first to find panel IDs. If a panel uses a template variable datasource you cannot access\\, provide datasourceUid and datasourceType to override.",
+	"Executes one or more dashboard panel queries with optional time range and variable overrides. Accepts an array of panel IDs to query in a single call. Fetches the dashboard\\, extracts queries from the specified panels\\, substitutes template variables and Grafana macros ($__range\\, $__rate_interval\\, $__interval)\\, and routes to the appropriate datasource (Prometheus\\, Loki\\, ClickHouse\\, CloudWatch\\, InfluxDB\\, BigQuery\\, MSSQL\\, or PostgreSQL). Returns results keyed by panel ID - partial failures are allowed (some panels can succeed while others fail). Use get_dashboard_summary first to find panel IDs. If a panel uses a template variable datasource you cannot access\\, provide datasourceUid and datasourceType to override.",
 	runPanelQuery,
 	mcp.WithTitleAnnotation("Run panel query"),
 	mcp.WithIdempotentHintAnnotation(true),
