@@ -136,7 +136,7 @@ func TestGetRulesOpts_queryValues(t *testing.T) {
 				"state":            {"firing", "pending"},
 				"rule_limit":       {"10"},
 				"limit_alerts":     {"5"},
-				"matcher":          {`{"Type":0,"Name":"severity","Value":"critical"}`},
+				"matcher":          {`{"name":"severity","value":"critical","isRegex":false,"isEqual":true}`},
 			},
 		},
 		{
@@ -193,6 +193,59 @@ func TestGetRulesOpts_queryValues(t *testing.T) {
 	}
 }
 
+func TestGetRulesOpts_queryValues_matcherEncoding(t *testing.T) {
+	// Grafana unmarshals each `matcher` param into an alertmanager
+	// pkg/labels.Matcher, so the JSON must use lowercase name/value plus the
+	// isRegex/isEqual booleans. Verify every Prometheus match type maps onto the
+	// correct booleans.
+	tests := []struct {
+		name     string
+		matcher  *labels.Matcher
+		expected string
+	}{
+		{
+			name:     "equal",
+			matcher:  labels.MustNewMatcher(labels.MatchEqual, "severity", "critical"),
+			expected: `{"name":"severity","value":"critical","isRegex":false,"isEqual":true}`,
+		},
+		{
+			name:     "not equal",
+			matcher:  labels.MustNewMatcher(labels.MatchNotEqual, "severity", "critical"),
+			expected: `{"name":"severity","value":"critical","isRegex":false,"isEqual":false}`,
+		},
+		{
+			name:     "regex",
+			matcher:  labels.MustNewMatcher(labels.MatchRegexp, "pod", "api-.*"),
+			expected: `{"name":"pod","value":"api-.*","isRegex":true,"isEqual":true}`,
+		},
+		{
+			name:     "not regex",
+			matcher:  labels.MustNewMatcher(labels.MatchNotRegexp, "pod", "api-.*"),
+			expected: `{"name":"pod","value":"api-.*","isRegex":true,"isEqual":false}`,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			opts := GetRulesOpts{Matchers: []*labels.Matcher{tc.matcher}}
+			require.Equal(t, tc.expected, opts.queryValues().Get("matcher"))
+		})
+	}
+}
+
+func TestGetRulesOpts_queryValues_multipleMatchers(t *testing.T) {
+	opts := GetRulesOpts{
+		Matchers: []*labels.Matcher{
+			labels.MustNewMatcher(labels.MatchEqual, "team", "backend"),
+			labels.MustNewMatcher(labels.MatchRegexp, "env", "prod.*"),
+		},
+	}
+	require.Equal(t, []string{
+		`{"name":"team","value":"backend","isRegex":false,"isEqual":true}`,
+		`{"name":"env","value":"prod.*","isRegex":true,"isEqual":true}`,
+	}, opts.queryValues()["matcher"])
+}
+
 func TestAlertingClient_GetRules_WithOpts(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -245,7 +298,7 @@ func TestAlertingClient_GetRules_WithOpts(t *testing.T) {
 				t.Helper()
 				q := r.URL.Query()
 				require.Equal(t, "cpu-alert", q.Get("search.rule_name"))
-				require.Equal(t, `{"Type":0,"Name":"severity","Value":"critical"}`, q.Get("matcher"))
+				require.Equal(t, `{"name":"severity","value":"critical","isRegex":false,"isEqual":true}`, q.Get("matcher"))
 				require.Equal(t, "5", q.Get("limit_alerts"))
 			},
 		},
@@ -273,7 +326,7 @@ func TestAlertingClient_GetRules_WithOpts(t *testing.T) {
 				require.Equal(t, []string{"firing", "pending"}, q["state"])
 				require.Equal(t, "20", q.Get("rule_limit"))
 				require.Equal(t, "3", q.Get("limit_alerts"))
-				require.Equal(t, `{"Type":0,"Name":"team","Value":"alerting"}`, q.Get("matcher"))
+				require.Equal(t, `{"name":"team","value":"alerting","isRegex":false,"isEqual":true}`, q.Get("matcher"))
 			},
 		},
 	}
