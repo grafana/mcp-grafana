@@ -667,6 +667,13 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		slog.Info("OTLP trace export configured", "endpoint", observability.OTLPTracesEndpoint())
 	}
 
+	// Instrumentation that lives inside tool handlers (the Loki cost
+	// guardrail) has no constructor to take a meter provider option, so it
+	// reads one off the GrafanaConfig instead. Set explicitly rather than
+	// relying on otel.GetMeterProvider() so the counters land on this
+	// process's provider.
+	gc.MeterProvider = o.MeterProvider()
+
 	// Create a client cache for HTTP-based transports to avoid per-request
 	// transport allocation (see https://github.com/grafana/mcp-grafana/issues/682).
 	var clientCache *mcpgrafana.ClientCache

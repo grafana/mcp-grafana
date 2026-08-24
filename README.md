@@ -1126,6 +1126,19 @@ When using the SSE or streamable HTTP transports, enable Prometheus metrics with
 
 **Note:** Metrics are only available when using SSE or streamable HTTP transports. They are not available with the stdio transport.
 
+When the [Loki cost guardrail](#cli-flags-reference) (`--loki-guardrail-mode`) is enabled, four more counters record its decisions:
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `mcp_loki_guardrail_admitted_total` | Counter | Queries that passed every enabled check (labels: `backend`) |
+| `mcp_loki_guardrail_would_block_total` | Counter | Queries that failed a check in `shadow` mode and ran anyway (labels: `backend`, `reason`) |
+| `mcp_loki_guardrail_blocked_total` | Counter | Queries rejected in `enforce` mode (labels: `backend`, `reason`) |
+| `mcp_loki_guardrail_fail_open_total` | Counter | Queries the guardrail could not evaluate and admitted (labels: `backend`, `cause`) |
+
+`reason` is one of `selector`, `range`, `bytes`; `cause` is one of `unparseable`, `estimate_failed`; `backend` is one of `loki`, `victorialogs`, `unknown`. A query that trips several checks is counted once, labelled with the check that ran first (`selector`, then `range`, then `bytes`), so the four counters partition the guarded population. See [Observability](docs/sources/developer/observability-metrics-and-tracing.md#loki-cost-guardrail-metrics) for how to read them during a `shadow` → `enforce` rollout.
+
+Library embedders should set `GrafanaConfig.MeterProvider` (the metrics counterpart of `GrafanaConfig.Logger`): the guardrail runs inside a tool handler, so it has no constructor option, and a process that installs a noop global `MeterProvider` would otherwise drop every recording.
+
 #### Slow-request logging
 
 The `--slow-request-threshold` flag emits a structured log event whenever an MCP request (tool invocation, list, resource read, etc.) exceeds the given duration. It is useful for diagnosing slow queries and tool calls without drowning in the full debug log.
