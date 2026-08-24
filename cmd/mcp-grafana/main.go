@@ -437,12 +437,9 @@ func newServer(serverName, transport string, dt disabledTools, obs *observabilit
 
 	// Give the SessionManager a reference to the MCPServer so the reaper can
 	// unregister sessions from the SDK's internal session map.
+	// (NewToolManager above already wires the SessionManager's ToolManager
+	// reference back onto sm, so no separate SetToolManager call is needed here.)
 	sm.SetMCPServer(s)
-
-	// Give the SessionManager a reference to the ToolManager so tearing down a
-	// session releases its reference to the shared proxied tool set (closing the
-	// underlying clients only when the last session using them is gone).
-	sm.SetToolManager(stm)
 
 	dt.processTools(s)
 	mcpgrafana.RegisterAppResources(s)
