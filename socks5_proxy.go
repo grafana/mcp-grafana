@@ -69,3 +69,58 @@ func ValidateSOCKS5ProxyURL(raw string) error {
 	_, err := parseSOCKS5ProxyURL(raw)
 	return err
 }
+
+// clientTransport builds the standard middleware transport for cfg (see
+// BuildTransport) and applies the SOCKS5 fail-closed policy in one place, so
+// every caller that assigns a transport to an http.Client treats a
+// misconfiguration identically instead of re-implementing the decision.
+//
+// The returned RoundTripper is always safe to assign to an http.Client:
+//
+//   - build succeeded                        → the built transport, ok=true
+//   - build failed, SOCKS5 proxy configured   → a fail-closed transport that
+//     rejects every request (so traffic can never silently bypass the proxy),
+//     ok=true
+//   - build failed, no proxy configured        → nil, ok=false (the caller
+//     should keep its existing/default transport)
+//
+// Build failures are logged via cfg's logger.
+func (cfg *GrafanaConfig) clientTransport(base http.RoundTripper, opts ...TransportOption) (http.RoundTripper, bool) {
+	transport, err := BuildTransport(cfg, base, opts...)
+	if err == nil {
+		return transport, true
+	}
+	logger := cfg.LoggerOrDefault()
+	if cfg.SOCKS5ProxyURL != "" {
+		logger.Error("Failed to build HTTP transport, failing closed because a SOCKS5 proxy is configured", "error", err)
+		return failClosedTransport(err), true
+	}
+	logger.Error("Failed to build HTTP transport, falling back to the default transport", "error", err)
+	return nil, false
+}
+
+// ProxyOnlyTransport returns an http.RoundTripper that routes requests through
+// the configured SOCKS5 proxy, if any, but applies no other middleware. Use it
+// for requests to third-party services (e.g. the grafana.com plugin catalog)
+// that must honour the proxy in an egress-restricted network but must never
+// receive Grafana credentials, forwarded headers, or org identifiers.
+//
+// The returned RoundTripper is always safe to use:
+//
+//   - no proxy configured         → http.DefaultTransport
+//   - proxy configured & valid    → a clone of http.DefaultTransport with Proxy set
+//   - proxy configured & invalid  → a fail-closed transport that rejects every
+//     request, so the request never bypasses the proxy
+func (cfg *GrafanaConfig) ProxyOnlyTransport() http.RoundTripper {
+	if cfg.SOCKS5ProxyURL == "" {
+		return http.DefaultTransport
+	}
+	proxyURL, err := parseSOCKS5ProxyURL(cfg.SOCKS5ProxyURL)
+	if err != nil {
+		cfg.LoggerOrDefault().Error("Failed to parse SOCKS5 proxy URL, failing closed", "error", err)
+		return failClosedTransport(err)
+	}
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.Proxy = http.ProxyURL(proxyURL)
+	return t
+}

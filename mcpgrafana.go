@@ -1386,14 +1386,21 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 						Debug:          config.Debug,
 						Logger:         config.Logger,
 					}
-					// Panic matches the existing TLS error handling above
-					// (line ~887). The only realistic failures are a TLS or
-					// SOCKS5 proxy misconfiguration; the CLI validates the
-					// proxy URL at startup, and base is always an
-					// *http.Transport here.
 					wrapped, err := BuildTransport(&oboConfig, base)
 					if err != nil {
-						panic(fmt.Errorf("failed to build transport: %w", err))
+						if config.SOCKS5ProxyURL != "" {
+							// Fail closed: a default transport would bypass the
+							// configured proxy. Install a transport that rejects
+							// every request so the failure surfaces as a graceful
+							// tool error rather than aborting request handling
+							// with a panic (matching the OnCall/incident paths).
+							wrapped = failClosedTransport(err)
+						} else {
+							// No proxy configured; a TLS/transport build failure
+							// here is a genuine misconfiguration with no safe
+							// fallback. Panic matches the TLS error handling above.
+							panic(fmt.Errorf("failed to build transport: %w", err))
+						}
 					}
 					transportField.Set(reflect.ValueOf(wrapped))
 					transportInstalled = true
@@ -1403,9 +1410,11 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 		}
 	}
 	if config.SOCKS5ProxyURL != "" && !transportInstalled {
-		// Fail closed: the reflection above could not replace the OpenAPI
-		// client's transport, so its default transport would bypass the
-		// configured proxy. Panic matches the transport error handling above.
+		// Fail closed: the reflection above could not reach the OpenAPI
+		// client's transport field at all, so there is nowhere to install a
+		// fail-closed transport and its default transport would bypass the
+		// configured proxy. This is a defensive guard against a structural
+		// change in the go-openapi runtime and is unreachable in practice.
 		panic(fmt.Errorf("SOCKS5 proxy is configured but the Grafana OpenAPI client's transport could not be replaced"))
 	}
 
@@ -1541,16 +1550,10 @@ var ExtractIncidentClientFromEnv server.StdioContextFunc = func(ctx context.Cont
 	logger.Debug("Creating Incident client", "url", parsedURL.Redacted(), "api_key_set", apiKey != "")
 	client := incident.NewClient(incidentURL, apiKey)
 
-	transport, err := BuildTransport(&config, nil, WithoutAuth())
-	switch {
-	case err == nil:
+	// clientTransport applies the SOCKS5 fail-closed policy; on a non-proxy
+	// build failure it returns ok=false and we keep the client's default.
+	if transport, ok := config.clientTransport(nil, WithoutAuth()); ok {
 		client.HTTPClient.Transport = transport
-	case config.SOCKS5ProxyURL != "":
-		// Fail closed: a default transport would bypass the configured proxy.
-		logger.Error("Failed to create custom transport for incident client, failing closed because a SOCKS5 proxy is configured", "error", err)
-		client.HTTPClient.Transport = failClosedTransport(err)
-	default:
-		logger.Error("Failed to create custom transport for incident client, using default", "error", err)
 	}
 
 	return context.WithValue(ctx, incidentClientKey{}, client)
@@ -1568,16 +1571,10 @@ var ExtractIncidentClientFromHeaders httpContextFunc = func(ctx context.Context,
 	// Use orgID from the request headers rather than config, since
 	// the incident client may be created with a different org context.
 	config.OrgID = orgID
-	transport, err := BuildTransport(&config, nil, WithoutAuth())
-	switch {
-	case err == nil:
+	// clientTransport applies the SOCKS5 fail-closed policy; on a non-proxy
+	// build failure it returns ok=false and we keep the client's default.
+	if transport, ok := config.clientTransport(nil, WithoutAuth()); ok {
 		client.HTTPClient.Transport = transport
-	case config.SOCKS5ProxyURL != "":
-		// Fail closed: a default transport would bypass the configured proxy.
-		logger.Error("Failed to create custom transport for incident client, failing closed because a SOCKS5 proxy is configured", "error", err)
-		client.HTTPClient.Transport = failClosedTransport(err)
-	default:
-		logger.Error("Failed to create custom transport for incident client, using default", "error", err)
 	}
 
 	return context.WithValue(ctx, incidentClientKey{}, client)

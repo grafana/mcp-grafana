@@ -165,7 +165,12 @@ func fetchLatestPluginVersion(ctx context.Context, pluginID string) (string, err
 	if err != nil {
 		return "", fmt.Errorf("create request: %w", err)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	// grafana.com is a third party: honour a configured SOCKS5 proxy (so this
+	// request works in egress-restricted networks and never bypasses the proxy)
+	// but send no Grafana credentials or forwarded headers to it.
+	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
+	httpClient := &http.Client{Transport: cfg.ProxyOnlyTransport()}
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("do request: %w", err)
 	}
@@ -322,7 +327,12 @@ func searchPlugins(ctx context.Context, args SearchPluginsParams) (*SearchPlugin
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	// grafana.com is a third party: honour a configured SOCKS5 proxy (so this
+	// request works in egress-restricted networks and never bypasses the proxy)
+	// but send no Grafana credentials or forwarded headers to it.
+	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
+	httpClient := &http.Client{Transport: cfg.ProxyOnlyTransport()}
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("fetch plugin catalog: %w", err)
 	}
