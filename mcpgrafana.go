@@ -999,56 +999,138 @@ type GrafanaClient struct {
 	// URL when the MCP server accesses Grafana via an internal URL behind a load
 	// balancer or reverse proxy.
 	PublicURL string
+
+	// Version is the Grafana version reported by buildInfo.version in
+	// /api/frontend/settings (e.g. "12.1.0"), fetched by the same request as
+	// PublicURL when the client is built. It is empty when the instance did not
+	// report a version or the settings endpoint was unreachable, so callers must
+	// treat the empty string as "unknown" rather than "old" — see GrafanaVersion,
+	// which prefers this field precisely so that tools can read the version
+	// without paying for a request of their own.
+	Version string
 }
 
 func makeBasePath(path string) string {
 	return strings.Join([]string{strings.TrimRight(path, "/"), "api"}, "/")
 }
 
-// publicURLCache caches successfully fetched public URLs per Grafana URL.
-// Only non-empty (successful) results are cached; failures are retried on
-// subsequent calls so that transient errors at startup don't permanently
-// disable the feature.
-var publicURLCache sync.Map // map[string]string (grafanaURL -> publicURL)
+// sharedSettingsCache caches the org-independent half of a successful
+// /api/frontend/settings fetch — the public URL and the Grafana version —
+// keyed by Grafana URL. Neither field varies by org, so partitioning this
+// cache by org would just multiply identical requests.
+//
+// Only successful fetches are cached, so a transient error at startup is
+// retried rather than pinned for the process lifetime. A fetch that succeeds
+// but omits a field IS cached: "this instance does not report a version" is a
+// real answer, and re-asking on every call would not produce a better one.
+var sharedSettingsCache sync.Map // map[string]sharedSettings (grafanaURL -> settings)
 
-// publicURLFlight deduplicates concurrent fetchPublicURL calls for the same
-// Grafana URL, preventing thundering-herd HTTP requests and race conditions
-// where a failing goroutine could overwrite a successful result.
-var publicURLFlight singleflight.Group
+// frontendSettingsFlight deduplicates concurrent /api/frontend/settings fetches,
+// preventing thundering-herd HTTP requests and races where a failing goroutine
+// could overwrite a successful result. It is keyed by (URL, OrgID) — the widest
+// key any consumer needs — because the namespace field is org-scoped even
+// though the cached public URL and version are not.
+var frontendSettingsFlight singleflight.Group
 
-// fetchPublicURL fetches the public URL (appUrl) from Grafana's frontend settings API.
-// It returns the appUrl if available, or an empty string if the request fails.
-// Successful results are cached permanently; failures are retried on subsequent calls.
-// Concurrent calls for the same grafanaURL are coalesced via singleflight.
-func fetchPublicURL(ctx context.Context, cfg *GrafanaConfig) string {
-	// Check cache first (only successful results are cached)
-	if cached, ok := publicURLCache.Load(cfg.URL); ok {
-		return cached.(string)
-	}
+// sharedSettings holds the parts of /api/frontend/settings that do not depend
+// on the requesting org, and so can be cached per Grafana URL.
+type sharedSettings struct {
+	AppURL  string
+	Version string
+}
 
-	// Use singleflight to coalesce concurrent requests for the same URL
-	result, _, _ := publicURLFlight.Do(cfg.URL, func() (any, error) {
-		// Double-check cache inside singleflight (another goroutine may have populated it)
-		if cached, ok := publicURLCache.Load(cfg.URL); ok {
-			return cached.(string), nil
+// settingsResult pairs the fetched settings with whether the fetch succeeded.
+// singleflight hands back a single value, and success cannot be inferred from
+// the value itself: an instance may legitimately report none of these fields,
+// which is a successful fetch that happens to be empty.
+type settingsResult struct {
+	settings frontendSettings
+	ok       bool
+}
+
+// frontendSettingsKey builds the (URL, OrgID) cache key shared by the
+// namespace cache and the fetch singleflight.
+func frontendSettingsKey(grafanaURL string, orgID int64) string {
+	return fmt.Sprintf("%s|%d", grafanaURL, orgID)
+}
+
+// loadFrontendSettings fetches /api/frontend/settings and populates every cache
+// that a consumer of that endpoint reads: the URL-keyed sharedSettingsCache and
+// the org-keyed namespaceCache. It is the single point at which this endpoint is
+// requested, so one round trip serves the public URL, the version, and the
+// namespace instead of one round trip each.
+//
+// Concurrent callers for the same (URL, OrgID) are coalesced via singleflight.
+// Failures are not cached.
+func loadFrontendSettings(cfg *GrafanaConfig) (frontendSettings, bool) {
+	key := frontendSettingsKey(cfg.URL, cfg.OrgID)
+
+	result, _, _ := frontendSettingsFlight.Do(key, func() (any, error) {
+		// Double-check the caches inside the singleflight: another goroutine may
+		// have populated them between this caller's own lookup and this closure
+		// starting. The namespace and the shared fields are cached separately, so
+		// the fetch is only skippable when both are present.
+		if cachedShared, sharedOK := sharedSettingsCache.Load(cfg.URL); sharedOK {
+			if cachedNS, nsOK := namespaceCache.Load(key); nsOK {
+				s := cachedShared.(sharedSettings)
+				return settingsResult{frontendSettings{
+					AppURL:    s.AppURL,
+					Namespace: cachedNS.(string),
+					Version:   s.Version,
+				}, true}, nil
+			}
 		}
 
-		// Use a detached context with timeout so that a cancelled request
-		// context from the first caller doesn't fail the fetch for all waiters.
+		// Detached context with timeout so a cancelled caller doesn't fail the
+		// fetch for all waiters; re-inject the GrafanaConfig so the request
+		// carries the right auth and Org-ID header.
 		fetchCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
+		fetchCtx = WithGrafanaConfig(fetchCtx, *cfg)
 
-		publicURL := doFetchPublicURL(fetchCtx, cfg)
-
-		// Only cache successful (non-empty) results so transient failures are retried
-		if publicURL != "" {
-			publicURLCache.Store(cfg.URL, publicURL)
+		settings, ok := doFetchFrontendSettings(fetchCtx, cfg)
+		if !ok {
+			// Don't cache failures, so a transient error is retried.
+			return settingsResult{}, nil
 		}
 
-		return publicURL, nil
+		sharedSettingsCache.Store(cfg.URL, sharedSettings{
+			AppURL:  settings.AppURL,
+			Version: settings.Version,
+		})
+		// An absent namespace is not cached: unlike the version, there is a
+		// cheap org-derived fallback, and caching the miss would pin it.
+		if settings.Namespace != "" {
+			namespaceCache.Store(key, settings.Namespace)
+		}
+
+		return settingsResult{settings, true}, nil
 	})
 
-	return result.(string)
+	r := result.(settingsResult)
+	return r.settings, r.ok
+}
+
+// cachedSharedSettings returns the org-independent settings for cfg's Grafana
+// URL, fetching them only if they are not already cached.
+func cachedSharedSettings(cfg *GrafanaConfig) (sharedSettings, bool) {
+	if cached, ok := sharedSettingsCache.Load(cfg.URL); ok {
+		return cached.(sharedSettings), true
+	}
+
+	settings, ok := loadFrontendSettings(cfg)
+	if ok {
+		return sharedSettings{AppURL: settings.AppURL, Version: settings.Version}, true
+	}
+
+	// This org's fetch failed, but these fields do not depend on the org, and
+	// the fetch singleflight is keyed by (URL, OrgID) — so a fetch for another
+	// org may have populated them while this one was in flight. Prefer that over
+	// reporting unknown, which is what a URL-keyed flight would have given us.
+	if cached, ok := sharedSettingsCache.Load(cfg.URL); ok {
+		return cached.(sharedSettings), true
+	}
+	return sharedSettings{}, false
 }
 
 // frontendSettings holds the subset of /api/frontend/settings that the MCP
@@ -1065,27 +1147,28 @@ type frontendSettings struct {
 	Version string
 }
 
-// doFetchPublicURL performs the actual HTTP request to fetch the public URL.
-func doFetchPublicURL(ctx context.Context, cfg *GrafanaConfig) string {
-	return doFetchFrontendSettings(ctx, cfg).AppURL
-}
-
 // doFetchFrontendSettings performs the actual HTTP request to fetch the
-// Grafana frontend settings, returning the fields the MCP server uses.
-// On any error it returns a zero-value frontendSettings.
-func doFetchFrontendSettings(ctx context.Context, cfg *GrafanaConfig) frontendSettings {
+// Grafana frontend settings, returning the fields the MCP server uses and
+// whether the request succeeded. On any error it returns a zero-value
+// frontendSettings and false.
+//
+// Success is reported separately rather than inferred from the returned fields,
+// because an instance can legitimately report none of them — callers cache on
+// success, and must not treat such a response as a failure to be retried
+// forever.
+func doFetchFrontendSettings(ctx context.Context, cfg *GrafanaConfig) (frontendSettings, bool) {
 	logger := cfg.LoggerOrDefault()
 	settingsURL := cfg.URL + "/api/frontend/settings"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, settingsURL, nil)
 	if err != nil {
 		logger.Warn("Failed to create request for frontend settings", "error", err)
-		return frontendSettings{}
+		return frontendSettings{}, false
 	}
 
 	transport, err := BuildTransport(cfg, nil)
 	if err != nil {
 		logger.Warn("Failed to build transport for frontend settings request", "error", err)
-		return frontendSettings{}
+		return frontendSettings{}, false
 	}
 
 	httpClient := &http.Client{
@@ -1096,19 +1179,19 @@ func doFetchFrontendSettings(ctx context.Context, cfg *GrafanaConfig) frontendSe
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		logger.Warn("Failed to fetch frontend settings", "error", err)
-		return frontendSettings{}
+		return frontendSettings{}, false
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		logger.Warn("Frontend settings request returned non-OK status", "status", resp.StatusCode)
-		return frontendSettings{}
+		return frontendSettings{}, false
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		logger.Warn("Failed to read frontend settings response", "error", err)
-		return frontendSettings{}
+		return frontendSettings{}, false
 	}
 
 	var settings struct {
@@ -1120,7 +1203,7 @@ func doFetchFrontendSettings(ctx context.Context, cfg *GrafanaConfig) frontendSe
 	}
 	if err := json.Unmarshal(body, &settings); err != nil {
 		logger.Warn("Failed to parse frontend settings response", "error", err)
-		return frontendSettings{}
+		return frontendSettings{}, false
 	}
 
 	publicURL := strings.TrimRight(settings.AppURL, "/")
@@ -1131,18 +1214,18 @@ func doFetchFrontendSettings(ctx context.Context, cfg *GrafanaConfig) frontendSe
 		AppURL:    publicURL,
 		Namespace: settings.Namespace,
 		Version:   settings.BuildInfo.Version,
-	}
+	}, true
 }
 
 // namespaceCache caches the Kubernetes-style namespace per (Grafana URL, OrgID).
-// Unlike the public URL, the namespace depends on the org, so the cache key
-// includes the OrgID. Only non-empty results from frontend settings are cached;
+// Unlike the public URL and version, the namespace depends on the org, so the
+// cache key includes the OrgID and this cache stays separate from
+// sharedSettingsCache. Only non-empty results from frontend settings are cached;
 // the OrgID-derived fallback is cheap and recomputed on each miss.
+//
+// Entries are written by loadFrontendSettings, so a fetch made for any consumer
+// of /api/frontend/settings warms this cache too.
 var namespaceCache sync.Map // map[string]string ("URL|orgID" -> namespace)
-
-// namespaceFlight deduplicates concurrent frontend-settings fetches for the
-// same (URL, OrgID).
-var namespaceFlight singleflight.Group
 
 // orgNamespace derives a Kubernetes-style namespace from an org ID, matching
 // Grafana authlib's OrgNamespaceFormatter (org 1 / unset maps to "default").
@@ -1151,13 +1234,6 @@ func orgNamespace(orgID int64) string {
 		return "default"
 	}
 	return fmt.Sprintf("org-%d", orgID)
-}
-
-// nsResult is the resolved namespace plus whether it came from frontend
-// settings (true) or the OrgID-derived fallback (false).
-type nsResult struct {
-	namespace    string
-	fromSettings bool
 }
 
 // DashboardNamespace returns the Kubernetes-style namespace to use for
@@ -1173,53 +1249,28 @@ type nsResult struct {
 // so callers can use fromSettings to qualify a subsequent not-found.
 func DashboardNamespace(ctx context.Context) (namespace string, fromSettings bool) {
 	cfg := GrafanaConfigFromContext(ctx)
-	fallback := orgNamespace(cfg.OrgID)
 
-	key := fmt.Sprintf("%s|%d", cfg.URL, cfg.OrgID)
-	if cached, ok := namespaceCache.Load(key); ok {
+	if cached, ok := namespaceCache.Load(frontendSettingsKey(cfg.URL, cfg.OrgID)); ok {
 		return cached.(string), true
 	}
 
-	result, _, _ := namespaceFlight.Do(key, func() (any, error) {
-		// Double-check cache inside singleflight.
-		if cached, ok := namespaceCache.Load(key); ok {
-			return nsResult{cached.(string), true}, nil
-		}
-
-		// Detached context with timeout so a cancelled caller doesn't fail the
-		// fetch for all waiters; re-inject the GrafanaConfig so the request
-		// carries the right auth and Org-ID header.
-		fetchCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		fetchCtx = WithGrafanaConfig(fetchCtx, cfg)
-
-		ns := doFetchFrontendSettings(fetchCtx, &cfg).Namespace
-		if ns != "" {
-			namespaceCache.Store(key, ns)
-			return nsResult{ns, true}, nil
-		}
-		// Don't cache the fallback, so a transient settings failure is retried.
-		return nsResult{fallback, false}, nil
-	})
-
-	r := result.(nsResult)
-	return r.namespace, r.fromSettings
+	settings, ok := loadFrontendSettings(&cfg)
+	if !ok || settings.Namespace == "" {
+		// Fall back to the org-derived namespace. It is not cached, so a
+		// transient settings failure is retried rather than pinned.
+		return orgNamespace(cfg.OrgID), false
+	}
+	return settings.Namespace, true
 }
 
-// versionCache caches the Grafana version per Grafana URL. Unlike the
-// namespace, the version does not depend on the org, so the URL alone is the
-// cache key. Only non-empty results are cached, so a transient settings
-// failure doesn't pin the version to "unknown" for the process lifetime.
-var versionCache sync.Map // map[string]string (grafanaURL -> version)
-
-// versionFlight deduplicates concurrent frontend-settings fetches for the same
-// Grafana URL.
-var versionFlight singleflight.Group
-
 // GrafanaVersion returns the version of the Grafana instance described by the
-// GrafanaConfig in ctx, as reported by buildInfo.version in
-// /api/frontend/settings (e.g. "12.1.0"). It is fetched lazily on first use
-// and cached per Grafana URL.
+// context, as reported by buildInfo.version in /api/frontend/settings
+// (e.g. "12.1.0").
+//
+// It is answered from the GrafanaClient in ctx when there is one, since that
+// client already fetched the version when it was built — so the usual call
+// costs nothing. Only when no client is in context, or its version is unknown,
+// does this fall back to a lazy fetch cached per Grafana URL.
 //
 // It fails soft: if the settings endpoint is unavailable, unauthorised, or
 // omits buildInfo, it returns an empty string rather than an error. Callers
@@ -1232,39 +1283,24 @@ var versionFlight singleflight.Group
 // capability detection (e.g. KubernetesClient.GroupVersions) for that, and
 // keep this for advisory uses: error hints, tool descriptions, telemetry.
 func GrafanaVersion(ctx context.Context) string {
-	cfg := GrafanaConfigFromContext(ctx)
-
-	if cached, ok := versionCache.Load(cfg.URL); ok {
-		return cached.(string)
+	// The client in context carries the version fetched when it was built, so
+	// the common path needs no request of its own. An empty version there means
+	// unknown, which the shared cache below may already be able to answer.
+	if gc := GrafanaClientFromContext(ctx); gc != nil && gc.Version != "" {
+		return gc.Version
 	}
 
-	result, _, _ := versionFlight.Do(cfg.URL, func() (any, error) {
-		// Double-check cache inside singleflight.
-		if cached, ok := versionCache.Load(cfg.URL); ok {
-			return cached.(string), nil
-		}
-
-		// Detached context with timeout so a cancelled caller doesn't fail the
-		// fetch for all waiters; re-inject the GrafanaConfig so the request
-		// carries the right auth and Org-ID header.
-		fetchCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		fetchCtx = WithGrafanaConfig(fetchCtx, cfg)
-
-		version := doFetchFrontendSettings(fetchCtx, &cfg).Version
-		// Don't cache an unknown version, so a transient failure is retried.
-		if version != "" {
-			versionCache.Store(cfg.URL, version)
-		}
-		return version, nil
-	})
-
-	return result.(string)
+	cfg := GrafanaConfigFromContext(ctx)
+	settings, ok := cachedSharedSettings(&cfg)
+	if !ok {
+		return ""
+	}
+	return settings.Version
 }
 
 // NewGrafanaClient creates a Grafana client with the provided URL and API key.
 // The client is automatically configured with the correct HTTP scheme, debug settings from context, custom TLS configuration if present, and OpenTelemetry instrumentation for distributed tracing.
-// It also fetches the Grafana instance's public URL from /api/frontend/settings for use in deep link generation.
+// It also fetches the Grafana instance's public URL and version from /api/frontend/settings, for deep link generation and version-dependent behaviour respectively.
 // The org ID is read from the GrafanaConfig in the context, which should be set by ExtractGrafanaInfoFromEnv or ExtractGrafanaInfoFromHeaders before calling this function.
 func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.Userinfo) *GrafanaClient {
 	cfg := client.DefaultTransportConfig()
@@ -1418,7 +1454,9 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 		panic(fmt.Errorf("SOCKS5 proxy is configured but the Grafana OpenAPI client's transport could not be replaced"))
 	}
 
-	// Fetch the public URL from Grafana's frontend settings.
+	// Fetch the public URL and version from Grafana's frontend settings. Both
+	// come from the same request, so carrying the version on the client here
+	// spares every tool that needs it a round trip of its own.
 	fetchCfg := &GrafanaConfig{
 		URL:            grafanaURL,
 		APIKey:         apiKey,
@@ -1430,11 +1468,13 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 		SOCKS5ProxyURL: config.SOCKS5ProxyURL,
 		Logger:         config.Logger,
 	}
-	publicURL := fetchPublicURL(ctx, fetchCfg)
+	// A failed fetch yields zero values, leaving both fields empty as before.
+	settings, _ := cachedSharedSettings(fetchCfg)
 
 	return &GrafanaClient{
 		GrafanaHTTPAPI: grafanaClient,
-		PublicURL:      publicURL,
+		PublicURL:      settings.AppURL,
+		Version:        settings.Version,
 	}
 }
 
