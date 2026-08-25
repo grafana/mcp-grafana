@@ -349,25 +349,28 @@ func parseProxiedToolName(toolName string) (string, string, error) {
 //     and are sent on every request; a serialized, unambiguous form is used
 //     because a map is neither comparable nor usable as a struct field of a map
 //     key.
+//   - socks5ProxyURL: the proxy is baked into the built transport, and the URL
+//     may carry proxy credentials.
 //
 // GrafanaConfig.BaseTransport is intentionally NOT part of the key: it is an
 // http.RoundTripper (an interface value that is not reliably comparable) and is
 // process-constant (set once at server construction, never per request/session),
 // so it cannot differ between two sessions and needs no differentiation.
 type proxiedToolSetKey struct {
-	url           string
-	apiKey        string
-	accessToken   string
-	idToken       string
-	orgID         int64
-	timeout       time.Duration
-	basicAuthUser string
-	basicAuthPass string
-	tlsCertFile   string
-	tlsKeyFile    string
-	tlsCAFile     string
-	tlsSkipVerify bool
-	extraHeaders  string // sorted, unambiguously-encoded ExtraHeaders
+	url            string
+	apiKey         string
+	accessToken    string
+	idToken        string
+	orgID          int64
+	timeout        time.Duration
+	basicAuthUser  string
+	basicAuthPass  string
+	tlsCertFile    string
+	tlsKeyFile     string
+	tlsCAFile      string
+	tlsSkipVerify  bool
+	extraHeaders   string // sorted, unambiguously-encoded ExtraHeaders
+	socks5ProxyURL string
 }
 
 // proxiedToolSetKeyFromContext builds a proxiedToolSetKey from the GrafanaConfig
@@ -375,13 +378,14 @@ type proxiedToolSetKey struct {
 func proxiedToolSetKeyFromContext(ctx context.Context) proxiedToolSetKey {
 	config := GrafanaConfigFromContext(ctx)
 	key := proxiedToolSetKey{
-		url:          config.URL,
-		apiKey:       config.APIKey,
-		accessToken:  config.AccessToken,
-		idToken:      config.IDToken,
-		orgID:        config.OrgID,
-		timeout:      config.Timeout,
-		extraHeaders: serializeHeaders(config.ExtraHeaders),
+		url:            config.URL,
+		apiKey:         config.APIKey,
+		accessToken:    config.AccessToken,
+		idToken:        config.IDToken,
+		orgID:          config.OrgID,
+		timeout:        config.Timeout,
+		extraHeaders:   serializeHeaders(config.ExtraHeaders),
+		socks5ProxyURL: config.SOCKS5ProxyURL,
 	}
 	if config.BasicAuth != nil {
 		key.basicAuthUser = config.BasicAuth.Username()
@@ -422,18 +426,18 @@ func serializeHeaders(headers map[string]string) string {
 }
 
 // String returns a redacted string representation for logging: secret-bearing
-// fields (apiKey, accessToken, idToken, basicAuthPass) are reduced to a present/
-// absent bool, never their value.
+// fields (apiKey, accessToken, idToken, basicAuthPass, socks5ProxyURL) are
+// reduced to a present/absent bool, never their value.
 func (k proxiedToolSetKey) String() string {
-	return fmt.Sprintf("url=%s apiKey=%t accessToken=%t idToken=%t orgID=%d timeout=%s basicAuth=%t tlsCert=%t tlsCA=%t tlsSkipVerify=%t extraHeaders=%t",
+	return fmt.Sprintf("url=%s apiKey=%t accessToken=%t idToken=%t orgID=%d timeout=%s basicAuth=%t tlsCert=%t tlsCA=%t tlsSkipVerify=%t extraHeaders=%t socks5Proxy=%t",
 		k.url, k.apiKey != "", k.accessToken != "", k.idToken != "", k.orgID, k.timeout, k.basicAuthUser != "",
-		k.tlsCertFile != "", k.tlsCAFile != "", k.tlsSkipVerify, k.extraHeaders != "")
+		k.tlsCertFile != "", k.tlsCAFile != "", k.tlsSkipVerify, k.extraHeaders != "", k.socks5ProxyURL != "")
 }
 
 // LogValue makes proxiedToolSetKey a slog.LogValuer so that logging it (e.g.
 // slog "key", set.key) emits the redacted String() form. slog does NOT honor
 // fmt.Stringer for Any values, so without this the raw struct fields (including
-// the secret apiKey/accessToken/idToken/basicAuthPass) would be reflected into
+// the secret apiKey/accessToken/idToken/basicAuthPass/socks5ProxyURL) would be reflected into
 // logs.
 func (k proxiedToolSetKey) LogValue() slog.Value {
 	return slog.StringValue(k.String())
