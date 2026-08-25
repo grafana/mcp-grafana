@@ -5,9 +5,8 @@ package tools
 import (
 	"context"
 	"errors"
-	"net/http"
-	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -125,6 +124,15 @@ func TestListProducts_ReturnsProducts(t *testing.T) {
 	assert.Contains(t, names, "Grafana Loki")
 }
 
+func withStubbedDoc(t *testing.T, content string) {
+	t.Helper()
+	orig := fetchDocFn
+	t.Cleanup(func() { fetchDocFn = orig })
+	fetchDocFn = func(_ context.Context, rawURL string) (*grafanadocs.Doc, error) {
+		return &grafanadocs.Doc{URL: rawURL, Content: []byte(content)}, nil
+	}
+}
+
 func TestGetDoc_FetchesAndExcerpts(t *testing.T) {
 	docContent := `---
 title: Test Page
@@ -144,28 +152,17 @@ Set the following options:
 
 Here is an example.
 `
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/markdown")
-		_, _ = w.Write([]byte(docContent))
-	}))
-	defer srv.Close()
+	withStubbedDoc(t, docContent)
 
 	result, err := getDoc(context.Background(), GetDocParams{
-		URL:   srv.URL + "/docs/test/",
+		URL:   "https://grafana.com/docs/test/",
 		Limit: 5,
 	})
-
-	if err != nil && strings.Contains(err.Error(), "rejected") {
-		t.Skip("allowlist blocks non-grafana.com URLs in production; skipping fetch test")
-	}
-
-	if err == nil {
-		assert.NotEmpty(t, result.Content)
-		assert.Equal(t, srv.URL+"/docs/test/", result.URL)
-		assert.Greater(t, result.TotalLines, 0)
-		assert.Equal(t, 1, result.ReturnedRange[0])
-	}
+	require.NoError(t, err)
+	assert.NotEmpty(t, result.Content)
+	assert.Equal(t, "https://grafana.com/docs/test/", result.URL)
+	assert.Greater(t, result.TotalLines, 0)
+	assert.Equal(t, 1, result.ReturnedRange[0])
 }
 
 func TestGetDocOutline_ReturnsHeadings(t *testing.T) {
@@ -185,26 +182,51 @@ More content.
 
 End.
 `
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/markdown")
-		_, _ = w.Write([]byte(docContent))
-	}))
-	defer srv.Close()
+	withStubbedDoc(t, docContent)
 
 	result, err := getDocOutline(context.Background(), GetDocOutlineParams{
-		URL: srv.URL + "/docs/test/",
+		URL: "https://grafana.com/docs/test/",
 	})
+	require.NoError(t, err)
+	require.NotEmpty(t, result.Headings)
+	assert.Equal(t, "Page Title", result.Headings[0].Text)
+	assert.Equal(t, 1, result.Headings[0].Level)
+}
 
-	if err != nil && strings.Contains(err.Error(), "rejected") {
-		t.Skip("allowlist blocks non-grafana.com URLs in production; skipping fetch test")
+func TestGetDoc_PropagatesFetchError(t *testing.T) {
+	orig := fetchDocFn
+	t.Cleanup(func() { fetchDocFn = orig })
+	fetchDocFn = func(context.Context, string) (*grafanadocs.Doc, error) {
+		return nil, errors.New("network timeout")
 	}
 
-	if err == nil {
-		require.NotEmpty(t, result.Headings)
-		assert.Equal(t, "Page Title", result.Headings[0].Text)
-		assert.Equal(t, 1, result.Headings[0].Level)
+	_, err := getDoc(context.Background(), GetDocParams{
+		URL: "https://grafana.com/docs/test/",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "network timeout")
+}
+
+func TestGetDocOutline_PropagatesFetchError(t *testing.T) {
+	orig := fetchDocFn
+	t.Cleanup(func() { fetchDocFn = orig })
+	fetchDocFn = func(context.Context, string) (*grafanadocs.Doc, error) {
+		return nil, errors.New("network timeout")
 	}
+
+	_, err := getDocOutline(context.Background(), GetDocOutlineParams{
+		URL: "https://grafana.com/docs/test/",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "network timeout")
+}
+
+func TestGetDoc_RejectsNonGrafanaURL(t *testing.T) {
+	_, err := getDoc(context.Background(), GetDocParams{
+		URL: "https://example.com/docs/test/",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "rejected")
 }
 
 func TestSearchDocs_RespectLimit(t *testing.T) {
@@ -314,4 +336,54 @@ func TestLoadDocsIndex_TimesOutDetachedLoad(t *testing.T) {
 	_, err := loadDocsIndex(context.Background())
 	require.Error(t, err)
 	assert.ErrorIs(t, err, context.DeadlineExceeded)
+}
+
+func TestLoadDocsIndex_CoalescesConcurrentLoads(t *testing.T) {
+	ResetDocsIndex()
+	t.Cleanup(func() {
+		ResetDocsIndex()
+		loadIndexFn = grafanadocs.LoadIndex
+	})
+
+	want := loadTestIndex(t)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var calls atomic.Int32
+	loadIndexFn = func(ctx context.Context, _ string) (*grafanadocs.Index, error) {
+		if calls.Add(1) == 1 {
+			close(started)
+		}
+		select {
+		case <-release:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		return want, nil
+	}
+
+	const n = 8
+	var wg sync.WaitGroup
+	wg.Add(n)
+	got := make([]*grafanadocs.Index, n)
+	errs := make([]error, n)
+	for i := 0; i < n; i++ {
+		go func(idx int) {
+			defer wg.Done()
+			got[idx], errs[idx] = loadDocsIndex(context.Background())
+		}(i)
+	}
+
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("index load never started")
+	}
+	close(release)
+	wg.Wait()
+
+	for i := 0; i < n; i++ {
+		require.NoError(t, errs[i])
+		assert.Same(t, want, got[i])
+	}
+	assert.Equal(t, int32(1), calls.Load(), "concurrent callers must share one in-flight load")
 }

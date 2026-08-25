@@ -11,6 +11,7 @@ import (
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"golang.org/x/sync/singleflight"
 )
 
 // docsIndexURL is the URL for the Grafana documentation index.
@@ -25,25 +26,29 @@ func defaultDocsIndexURL() string {
 }
 
 var (
-	docsIndexMu sync.RWMutex
-	docsIndex   *grafanadocs.Index
+	docsIndexMu     sync.RWMutex
+	docsIndex       *grafanadocs.Index
+	docsIndexFlight singleflight.Group
 
 	// loadIndexFn is grafanadocs.LoadIndex in production; tests stub it.
 	loadIndexFn = grafanadocs.LoadIndex
 
+	// fetchDocFn is grafanadocs.FetchDoc in production; tests stub it.
+	fetchDocFn = grafanadocs.FetchDoc
+
 	// docsIndexLoadTimeout bounds a detached index fetch so a stalled
-	// LoadIndex cannot hold docsIndexMu forever. Matches grafanadocs'
-	// HTTP client timeout. Overridable in tests.
+	// LoadIndex cannot run forever. Matches grafanadocs' HTTP client
+	// timeout. Overridable in tests.
 	docsIndexLoadTimeout = 60 * time.Second
 )
 
 // loadDocsIndex lazily loads the documentation index on first successful use.
 // Failures are not cached: a cancelled or timed-out first request must not
-// poison later calls. The fetch is detached from the caller's cancellation
-// so one cancelled tool call cannot abort an in-flight load that concurrent
-// callers are waiting on, but it still has its own timeout (same pattern as
-// fetchPublicURL). A one-shot sync.Once is deliberately not used — see
-// session.go's proxied-tool init for the same reason.
+// poison later calls. Concurrent first loads are coalesced with singleflight
+// so the network fetch runs outside docsIndexMu (same pattern as
+// fetchPublicURL and ClientCache). The fetch is detached from the caller's
+// cancellation so one cancelled tool call cannot abort an in-flight load
+// that concurrent callers are waiting on, but it still has its own timeout.
 func loadDocsIndex(ctx context.Context) (*grafanadocs.Index, error) {
 	docsIndexMu.RLock()
 	idx := docsIndex
@@ -52,20 +57,30 @@ func loadDocsIndex(ctx context.Context) (*grafanadocs.Index, error) {
 		return idx, nil
 	}
 
-	docsIndexMu.Lock()
-	defer docsIndexMu.Unlock()
-	if docsIndex != nil {
-		return docsIndex, nil
-	}
+	v, err, _ := docsIndexFlight.Do(docsIndexURL, func() (any, error) {
+		docsIndexMu.RLock()
+		idx := docsIndex
+		docsIndexMu.RUnlock()
+		if idx != nil {
+			return idx, nil
+		}
 
-	loadCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), docsIndexLoadTimeout)
-	defer cancel()
-	idx, err := loadIndexFn(loadCtx, docsIndexURL)
+		loadCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), docsIndexLoadTimeout)
+		defer cancel()
+		idx, err := loadIndexFn(loadCtx, docsIndexURL)
+		if err != nil {
+			return nil, err
+		}
+
+		docsIndexMu.Lock()
+		docsIndex = idx
+		docsIndexMu.Unlock()
+		return idx, nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	docsIndex = idx
-	return docsIndex, nil
+	return v.(*grafanadocs.Index), nil
 }
 
 // ResetDocsIndex clears the cached index so the next call reloads it.
@@ -158,7 +173,7 @@ type GetDocResult struct {
 }
 
 func getDoc(ctx context.Context, args GetDocParams) (*GetDocResult, error) {
-	doc, err := grafanadocs.FetchDoc(ctx, args.URL)
+	doc, err := fetchDocFn(ctx, args.URL)
 	if err != nil {
 		return nil, fmt.Errorf("fetch doc: %w", err)
 	}
@@ -211,7 +226,7 @@ type GetDocOutlineResult struct {
 }
 
 func getDocOutline(ctx context.Context, args GetDocOutlineParams) (*GetDocOutlineResult, error) {
-	doc, err := grafanadocs.FetchDoc(ctx, args.URL)
+	doc, err := fetchDocFn(ctx, args.URL)
 	if err != nil {
 		return nil, fmt.Errorf("fetch doc: %w", err)
 	}
