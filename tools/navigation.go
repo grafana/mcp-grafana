@@ -60,7 +60,7 @@ func grafanaBaseURLFromContext(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("grafana url not configured. Please set GRAFANA_URL environment variable")
 	}
 
-	// Validate baseURL because gc.PublicURL is populated by fetchPublicURL from Grafana's
+	// Validate baseURL because gc.PublicURL is populated from Grafana's
 	// /api/frontend/settings appUrl response, which is not covered by the
 	// configured URL validation. A misconfigured Grafana can return a malformed appUrl that flows into deeplink construction
 	// (e.g. http://%gg/d/<uid>) unless checked here.
