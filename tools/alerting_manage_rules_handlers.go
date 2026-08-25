@@ -99,7 +99,7 @@ func getAlertRuleDetail(ctx context.Context, uid string, limitAlerts int) (*aler
 		return nil, fmt.Errorf("creating alerting client for rule %s: %w", uid, err)
 	}
 
-	opts := &GetRulesOpts{LimitAlerts: limitAlerts}
+	opts := &GetRulesOpts{LimitAlerts: limitAlerts, IncludeInternalLabels: true}
 	if alertRule.Payload.FolderUID != nil {
 		opts.FolderUID = *alertRule.Payload.FolderUID
 	}
@@ -199,7 +199,7 @@ func normalizeState(state string) string {
 func findRuleInResponse(resp *rulesResponse, uid string) *alertingRule {
 	for _, group := range resp.Data.RuleGroups {
 		for i, rule := range group.Rules {
-			if rule.UID == uid {
+			if rule.UID == uid || rule.Labels.Get(alertRuleUIDLabel) == uid {
 				return &group.Rules[i]
 			}
 		}
@@ -212,6 +212,10 @@ func listGrafanaRules(ctx context.Context, opts *GetRulesOpts, labelSelectors []
 	if err != nil {
 		return nil, fmt.Errorf("creating alerting client: %w", err)
 	}
+	if opts == nil {
+		opts = &GetRulesOpts{}
+	}
+	opts.IncludeInternalLabels = true
 
 	resp, err := client.GetRules(ctx, opts)
 	if err != nil {
@@ -264,12 +268,24 @@ func convertRulesResponseToSummary(resp *rulesResponse) []alertRuleSummary {
 	var result []alertRuleSummary
 	for _, group := range resp.Data.RuleGroups {
 		for _, rule := range group.Rules {
+			labels := publicRuleLabels(rule.Labels)
+			uid := rule.UID
+			if uid == "" {
+				uid = rule.Labels.Get(alertRuleUIDLabel)
+			}
+			folderUID := group.FolderUID
+			if folderUID == "" {
+				folderUID = rule.FolderUID
+			}
+			if folderUID == "" {
+				folderUID = rule.Labels.Get(alertRuleNamespaceUIDLabel)
+			}
 			summary := alertRuleSummary{
-				UID:       rule.UID,
+				UID:       uid,
 				Title:     rule.Name,
 				State:     normalizeState(rule.State),
 				Health:    rule.Health,
-				FolderUID: group.FolderUID,
+				FolderUID: folderUID,
 				RuleGroup: group.Name,
 			}
 			if rule.Duration > 0 {
@@ -278,14 +294,27 @@ func convertRulesResponseToSummary(resp *rulesResponse) []alertRuleSummary {
 			if !rule.LastEvaluation.IsZero() {
 				summary.LastEvaluation = rule.LastEvaluation.Format(time.RFC3339)
 			}
-			if !rule.Labels.IsEmpty() {
-				summary.Labels = rule.Labels.Map()
+			if len(labels) > 0 {
+				summary.Labels = labels
 			}
 			if !rule.Annotations.IsEmpty() {
 				summary.Annotations = rule.Annotations.Map()
 			}
 			result = append(result, summary)
 		}
+	}
+	return result
+}
+
+func publicRuleLabels(lbls labels.Labels) map[string]string {
+	if lbls.IsEmpty() {
+		return nil
+	}
+	result := lbls.Map()
+	delete(result, alertRuleUIDLabel)
+	delete(result, alertRuleNamespaceUIDLabel)
+	if len(result) == 0 {
+		return nil
 	}
 	return result
 }
