@@ -184,15 +184,21 @@ func getPanelImage(ctx context.Context, args GetPanelImageParams) (*mcp.CallTool
 		},
 	}
 
-	// Use the public base URL, not config.URL, which may be an in-cluster
-	// endpoint the browser can't reach.
-	if deeplinkBase, err := grafanaBaseURLFromContext(ctx); err == nil {
-		if deeplink, err := buildDashboardDeeplink(deeplinkBase, args); err == nil {
-			content = append(content, mcp.TextContent{
-				Meta: mcpgrafana.NewUIContentMeta(mcpgrafana.UIContentKindDeeplink),
-				Type: "text",
-				Text: deeplink,
-			})
+	// A browser deeplink cannot safely preserve a per-call org: orgId changes
+	// the user's default org, targetOrgId is ignored by the frontend, and a
+	// browser link cannot set X-Grafana-Org-Id. Omit it rather than risk linking
+	// to a different dashboard with the same UID in the user's current org.
+	if args.OrgID == nil {
+		// Use the public base URL, not config.URL, which may be an in-cluster
+		// endpoint the browser can't reach.
+		if deeplinkBase, err := grafanaBaseURLFromContext(ctx); err == nil {
+			if deeplink, err := buildDashboardDeeplink(deeplinkBase, args); err == nil {
+				content = append(content, mcp.TextContent{
+					Meta: mcpgrafana.NewUIContentMeta(mcpgrafana.UIContentKindDeeplink),
+					Type: "text",
+					Text: deeplink,
+				})
+			}
 		}
 	}
 

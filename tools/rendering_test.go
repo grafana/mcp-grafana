@@ -3,9 +3,11 @@
 package tools
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -995,6 +997,41 @@ func TestGetPanelImage(t *testing.T) {
 
 		require.NoError(t, err)
 	})
+}
+
+func TestGetPanelImagePerCallOrgIDOmitDeeplink(t *testing.T) {
+	testPNGData := []byte("test PNG")
+	grafanaCfg := mcpgrafana.GrafanaConfig{
+		URL:    "http://grafana.test",
+		APIKey: "test-api-key",
+		OrgID:  1,
+		BaseTransport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			assert.Equal(t, "2", req.Header.Get("X-Grafana-Org-Id"))
+			assert.Equal(t, "2", req.URL.Query().Get("targetOrgId"))
+			assert.Empty(t, req.URL.Query().Get("orgId"))
+
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(bytes.NewReader(testPNGData)),
+				Request:    req,
+			}, nil
+		}),
+	}
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), grafanaCfg)
+
+	result, err := getPanelImage(ctx, GetPanelImageParams{
+		DashboardUID: "test-dash",
+		OrgID:        intPtr(2),
+	})
+
+	require.NoError(t, err)
+	require.Len(t, result.Content, 1)
+	image, ok := result.Content[0].(mcp.ImageContent)
+	require.True(t, ok, "only content item should be ImageContent")
+	decoded, err := base64.StdEncoding.DecodeString(image.Data)
+	require.NoError(t, err)
+	assert.Equal(t, testPNGData, decoded)
 }
 
 func TestGetPanelImageToolMeta(t *testing.T) {
