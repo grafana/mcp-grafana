@@ -636,6 +636,32 @@ You can add arbitrary HTTP headers to all Grafana API requests using the `GRAFAN
 }
 ```
 
+### SOCKS5 Proxy
+
+You can route all requests this server makes to Grafana through a SOCKS5 proxy using the `GRAFANA_SOCKS5_PROXY` environment variable. The proxy is scoped to this server's Grafana traffic: it does not modify the global `HTTP_PROXY`/`HTTPS_PROXY` variables, and when set it overrides their proxy selection for Grafana transports only, without affecting other MCP servers or your shell session. When unset, behavior is unchanged.
+
+The URL must use the `socks5://` or `socks5h://` scheme (Go treats them identically: hostname resolution is delegated to the proxy) and may include credentials, e.g. `socks5://user:pass@127.0.0.1:1080`.
+
+**Example:**
+
+```json
+{
+  "mcpServers": {
+    "grafana": {
+      "command": "mcp-grafana",
+      "args": [],
+      "env": {
+        "GRAFANA_URL": "http://localhost:3000",
+        "GRAFANA_SERVICE_ACCOUNT_TOKEN": "<your token>",
+        "GRAFANA_SOCKS5_PROXY": "socks5://127.0.0.1:1080"
+      }
+    }
+  }
+}
+```
+
+An invalid proxy URL is a startup error, and if building a proxied connection fails at runtime the server fails closed rather than silently sending Grafana traffic directly.
+
 ### Forwarding Headers from the Client (SSE/Streamable-HTTP Only)
 
 When the MCP server runs behind a gateway or reverse proxy that handles SSO (e.g. an AWS ALB with OIDC), each user's session cookie must reach Grafana so it can associate the request with the authenticated user. The `GRAFANA_FORWARD_HEADERS` environment variable enables this by specifying a comma-separated allowlist of header names to copy from the **incoming** HTTP request to every outbound Grafana API request.

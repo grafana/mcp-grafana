@@ -279,6 +279,16 @@ type GrafanaConfig struct {
 	// Parsed from GRAFANA_EXTRA_HEADERS environment variable as JSON object.
 	ExtraHeaders map[string]string
 
+	// SOCKS5ProxyURL is an optional SOCKS5 proxy URL (socks5:// or socks5h://,
+	// treated identically: hostname resolution is delegated to the proxy)
+	// applied to all Grafana traffic built via BuildTransport. It is scoped to
+	// this configuration and independent of the HTTP_PROXY/HTTPS_PROXY
+	// environment variables. The CLI populates it from GRAFANA_SOCKS5_PROXY.
+	// When set, BuildTransport returns an error if BaseTransport is present
+	// but is not an *http.Transport, since the proxy cannot be applied to an
+	// opaque RoundTripper.
+	SOCKS5ProxyURL string
+
 	// MaxLokiLogLimit is the maximum number of log lines that can be returned
 	// from Loki queries.
 	MaxLokiLogLimit int
@@ -794,6 +804,22 @@ func BuildTransport(cfg *GrafanaConfig, base http.RoundTripper, opts ...Transpor
 
 	if base == nil {
 		base = cfg.HTTPTransport()
+	}
+
+	// SOCKS5 proxy (applied to the innermost *http.Transport so the TLS layer
+	// below clones it with the proxy already in place).
+	if cfg.SOCKS5ProxyURL != "" {
+		proxyURL, err := parseSOCKS5ProxyURL(cfg.SOCKS5ProxyURL)
+		if err != nil {
+			return nil, err
+		}
+		t, ok := base.(*http.Transport)
+		if !ok {
+			return nil, fmt.Errorf("SOCKS5 proxy requires the base transport to be an *http.Transport, got %T", base)
+		}
+		t = t.Clone()
+		t.Proxy = http.ProxyURL(proxyURL)
+		base = t
 	}
 	transport := base
 
@@ -1320,6 +1346,7 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 	// The OpenAPI client handles APIKey/BasicAuth itself, so we skip transport-
 	// level auth and only inject OBO tokens (which the OpenAPI client doesn't
 	// know about) via the AuthRoundTripper.
+	transportInstalled := false
 	v := reflect.ValueOf(grafanaClient.Transport)
 	if v.Kind() == reflect.Ptr && !v.IsNil() {
 		v = v.Elem()
@@ -1350,39 +1377,49 @@ func NewGrafanaClient(ctx context.Context, grafanaURL, apiKey string, auth *url.
 					// transport-level injection since the OpenAPI client
 					// doesn't support them natively.
 					oboConfig := GrafanaConfig{
-						AccessToken:  config.AccessToken,
-						IDToken:      config.IDToken,
-						OrgID:        config.OrgID,
-						TLSConfig:    config.TLSConfig,
-						ExtraHeaders: config.ExtraHeaders,
-						Debug:        config.Debug,
-						Logger:       config.Logger,
+						AccessToken:    config.AccessToken,
+						IDToken:        config.IDToken,
+						OrgID:          config.OrgID,
+						TLSConfig:      config.TLSConfig,
+						ExtraHeaders:   config.ExtraHeaders,
+						SOCKS5ProxyURL: config.SOCKS5ProxyURL,
+						Debug:          config.Debug,
+						Logger:         config.Logger,
 					}
 					// Panic matches the existing TLS error handling above
-					// (line ~887). The only realistic failure is a TLS
-					// misconfiguration, which can't happen here since base
-					// is always an *http.Transport.
+					// (line ~887). The only realistic failures are a TLS or
+					// SOCKS5 proxy misconfiguration; the CLI validates the
+					// proxy URL at startup, and base is always an
+					// *http.Transport here.
 					wrapped, err := BuildTransport(&oboConfig, base)
 					if err != nil {
 						panic(fmt.Errorf("failed to build transport: %w", err))
 					}
 					transportField.Set(reflect.ValueOf(wrapped))
+					transportInstalled = true
 					logger.Debug("HTTP tracing, user agent tracking, and timeout enabled for Grafana client", "timeout", timeout)
 				}
 			}
 		}
 	}
+	if config.SOCKS5ProxyURL != "" && !transportInstalled {
+		// Fail closed: the reflection above could not replace the OpenAPI
+		// client's transport, so its default transport would bypass the
+		// configured proxy. Panic matches the transport error handling above.
+		panic(fmt.Errorf("SOCKS5 proxy is configured but the Grafana OpenAPI client's transport could not be replaced"))
+	}
 
 	// Fetch the public URL from Grafana's frontend settings.
 	fetchCfg := &GrafanaConfig{
-		URL:          grafanaURL,
-		APIKey:       apiKey,
-		BasicAuth:    auth,
-		AccessToken:  config.AccessToken,
-		IDToken:      config.IDToken,
-		TLSConfig:    config.TLSConfig,
-		ExtraHeaders: config.ExtraHeaders,
-		Logger:       config.Logger,
+		URL:            grafanaURL,
+		APIKey:         apiKey,
+		BasicAuth:      auth,
+		AccessToken:    config.AccessToken,
+		IDToken:        config.IDToken,
+		TLSConfig:      config.TLSConfig,
+		ExtraHeaders:   config.ExtraHeaders,
+		SOCKS5ProxyURL: config.SOCKS5ProxyURL,
+		Logger:         config.Logger,
 	}
 	publicURL := fetchPublicURL(ctx, fetchCfg)
 
@@ -1505,10 +1542,15 @@ var ExtractIncidentClientFromEnv server.StdioContextFunc = func(ctx context.Cont
 	client := incident.NewClient(incidentURL, apiKey)
 
 	transport, err := BuildTransport(&config, nil, WithoutAuth())
-	if err != nil {
-		logger.Error("Failed to create custom transport for incident client, using default", "error", err)
-	} else {
+	switch {
+	case err == nil:
 		client.HTTPClient.Transport = transport
+	case config.SOCKS5ProxyURL != "":
+		// Fail closed: a default transport would bypass the configured proxy.
+		logger.Error("Failed to create custom transport for incident client, failing closed because a SOCKS5 proxy is configured", "error", err)
+		client.HTTPClient.Transport = failClosedTransport(err)
+	default:
+		logger.Error("Failed to create custom transport for incident client, using default", "error", err)
 	}
 
 	return context.WithValue(ctx, incidentClientKey{}, client)
@@ -1527,10 +1569,15 @@ var ExtractIncidentClientFromHeaders httpContextFunc = func(ctx context.Context,
 	// the incident client may be created with a different org context.
 	config.OrgID = orgID
 	transport, err := BuildTransport(&config, nil, WithoutAuth())
-	if err != nil {
-		logger.Error("Failed to create custom transport for incident client, using default", "error", err)
-	} else {
+	switch {
+	case err == nil:
 		client.HTTPClient.Transport = transport
+	case config.SOCKS5ProxyURL != "":
+		// Fail closed: a default transport would bypass the configured proxy.
+		logger.Error("Failed to create custom transport for incident client, failing closed because a SOCKS5 proxy is configured", "error", err)
+		client.HTTPClient.Transport = failClosedTransport(err)
+	default:
+		logger.Error("Failed to create custom transport for incident client, using default", "error", err)
 	}
 
 	return context.WithValue(ctx, incidentClientKey{}, client)
