@@ -7,9 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-08-25
+
 ### Added
 
+- `alerting_manage_silences` tool (opt-in, read/write-gated) to list, create, and expire Grafana alert silences ([#991](https://github.com/grafana/mcp-grafana/pull/991))
+- `update_incident` tool to update fields on an existing incident ([#1080](https://github.com/grafana/mcp-grafana/pull/1080))
+- `update_alert_group` tool to acknowledge and resolve Grafana OnCall alert groups ([#1083](https://github.com/grafana/mcp-grafana/pull/1083))
+- `get_alert_group` now returns the last alert payload for the group, so callers can inspect the triggering alert without a second lookup ([#1081](https://github.com/grafana/mcp-grafana/pull/1081))
+- Agent Observability `agento11y_manage_experiments` and `agento11y_manage_test_suites` tools, in the opt-in `agento11y` category ([#1062](https://github.com/grafana/mcp-grafana/pull/1062))
+- Compact output format for `query_loki_logs`, reducing token usage for large log result sets ([#990](https://github.com/grafana/mcp-grafana/pull/990))
 - Opt-in Loki query cost guardrail for `query_loki_logs` (`--loki-guardrail-mode` / `GRAFANA_LOKI_GUARDRAIL_MODE`, `off` by default, with `shadow` and `enforce` modes). Because Loki query cost is bytes *scanned* — determined only by the stream selector and time range, not line filters — the guardrail requires a selective stream selector, caps the time range (`--loki-guardrail-max-range`, default 24h), and pre-checks Loki's `index/stats` byte estimate against a budget (`--loki-guardrail-max-bytes`, default 100GiB). Blocked queries return an MCP tool error with rewrite guidance; unparseable queries fail open ([#1031](https://github.com/grafana/mcp-grafana/pull/1031))
+- OpenTelemetry counters recording Loki cost-guardrail decisions (allowed, blocked, failed-open), so operators can observe the guardrail's impact ([#1095](https://github.com/grafana/mcp-grafana/pull/1095))
+- `run_panel_query` now supports PostgreSQL ([#1112](https://github.com/grafana/mcp-grafana/pull/1112)) and MSSQL ([#1042](https://github.com/grafana/mcp-grafana/pull/1042)) datasources
+- Datasource resolution falls back to `/api/frontend/settings` when the datasource metadata API is forbidden, so tools keep working on instances that restrict it ([#1015](https://github.com/grafana/mcp-grafana/pull/1015))
+- `GrafanaVersion(ctx)` exposes the targeted Grafana version to tools, so they can gate behaviour on it instead of inferring capability from API versions ([#1091](https://github.com/grafana/mcp-grafana/pull/1091))
+- Optional `orgId` parameter on `get_panel_image` to render a panel for a specific organisation ([#903](https://github.com/grafana/mcp-grafana/pull/903))
+- `list_datasources` now supports filtering by name ([#973](https://github.com/grafana/mcp-grafana/pull/973))
+- `--server-name` flag (and `GRAFANA_MCP_SERVER_NAME` env var) to set a custom MCP server name in the handshake and OTel `service.name`, so operators can distinguish multiple instances ([#1011](https://github.com/grafana/mcp-grafana/pull/1011))
+- Scoped SOCKS5 egress proxy via `GRAFANA_SOCKS5_PROXY`, routing outbound Grafana traffic through a SOCKS5 proxy ([#1119](https://github.com/grafana/mcp-grafana/pull/1119))
+- An MCP Bundle (`.mcpb`) for Claude Desktop is now built and attached on release ([#1077](https://github.com/grafana/mcp-grafana/pull/1077))
 
 ### Changed
 
@@ -22,6 +39,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Closed two gaps in the `GRAFANA_SOCKS5_PROXY` egress guarantee. The `install_plugin` and `search_plugin_information` tools reached the grafana.com plugin catalog via `http.DefaultClient`, bypassing the configured SOCKS5 proxy entirely; these requests now route through the proxy (carrying no Grafana credentials or forwarded headers) and fail closed when it is misconfigured. `NewGrafanaClient` now installs a fail-closed transport instead of panicking when the proxy cannot be applied, matching the OnCall and incident paths, and the per-call fail-closed logic is centralised in one helper ([#1121](https://github.com/grafana/mcp-grafana/pull/1121))
 - `observability.ToolMetricDimensions` now bounds the `mcp.tool.phase` metric label against the `toolMetricDims` allowlist, like `mcp.tool.operation` and `mcp.tool.resource_type`. Phase is read from a tool result's `_meta`, and results proxied from an MCP-enabled datasource come from a remote server rather than from this repo, so the label was unbounded-cardinality in the general case. A tool that does not opt into `phases` now contributes no phase, and an opted-in tool reporting an unexpected value reports `other`. Behaviour is unchanged for every in-tree tool: `create_datasource` is the only producer, with `schema` and `created` ([#1094](https://github.com/grafana/mcp-grafana/issues/1094))
 - Distributed traces are no longer broken over the HTTP transports: the server now installs a global OTel `TextMapPropagator` (via `autoprop`, honouring `OTEL_PROPAGATORS`, default `tracecontext,baggage`), so an inbound `traceparent` continues the caller's trace and outbound Grafana API requests carry one of their own. Previously every hop started a disconnected trace. Trace context forwarded via `GRAFANA_FORWARD_HEADERS` no longer overrides the propagated value, which would have cut mcp-grafana out of the middle of the trace ([#1084](https://github.com/grafana/mcp-grafana/issues/1084))
+- Grafana-managed alert rule UIDs are recovered from the internal `__alert_rule_uid__` / `__alert_rule_namespace_uid__` labels when older Grafana responses omit the top-level UID fields; those internal labels are stripped from the returned summary so they don't surface as user labels ([#968](https://github.com/grafana/mcp-grafana/pull/968))
+- Alert rule matchers are now encoded in the JSON shape Grafana expects, fixing rule create/update requests that Grafana previously rejected ([#1111](https://github.com/grafana/mcp-grafana/pull/1111))
+- `run_panel_query` now resolves constant and textbox dashboard variables from their query field, so panels using them return correct results ([#1041](https://github.com/grafana/mcp-grafana/pull/1041))
+- Datasource queries fall back to the legacy proxy on a `401`, restoring queries against datasources the metadata proxy rejects ([#1022](https://github.com/grafana/mcp-grafana/pull/1022))
+- URL shortening for navigation deeplinks now sends a relative path, fixing link generation on some deployments ([#974](https://github.com/grafana/mcp-grafana/pull/974))
+- `GRAFANA_URL` is normalized where it enters the process (trailing slash trimmed, missing scheme supplied), so the config, API client, and client-cache key all agree on the target. Previously a schemeless value such as `127.0.0.1:3000` could panic at startup or produce hostless requests ([#1034](https://github.com/grafana/mcp-grafana/pull/1034))
+- Proxied tools auto-wire `SetToolManager` and report a clearer error when the tool manager is nil ([#1102](https://github.com/grafana/mcp-grafana/pull/1102))
+- The session wait when building a proxied tool set is now bounded, so a slow or unavailable datasource can no longer hang tool discovery ([#1087](https://github.com/grafana/mcp-grafana/pull/1087))
+- Transient proxied-tool discovery/connect failures are retried and connections are established in parallel, making proxied tool startup faster and more resilient ([#1071](https://github.com/grafana/mcp-grafana/pull/1071))
+- The client cache and session OTel meters are now injectable, so embedders can supply their own instrumentation ([#1073](https://github.com/grafana/mcp-grafana/pull/1073))
 
 ## [1.1.0] - 2026-08-10
 
@@ -376,6 +403,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Upgrade Docker base image packages to resolve critical OpenSSL CVE-2025-15467 (CVSS 9.8) ([#551](https://github.com/grafana/mcp-grafana/pull/551))
 
+[1.2.0]: https://github.com/grafana/mcp-grafana/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/grafana/mcp-grafana/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/grafana/mcp-grafana/compare/v0.17.2...v1.0.0
 [0.17.2]: https://github.com/grafana/mcp-grafana/compare/v0.17.1...v0.17.2
