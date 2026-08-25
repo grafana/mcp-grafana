@@ -180,6 +180,95 @@ func TestValidateSOCKS5ProxyURL(t *testing.T) {
 	assert.Error(t, ValidateSOCKS5ProxyURL("http://proxy.example.com:1080"))
 }
 
+func TestProxyOnlyTransport(t *testing.T) {
+	const proxyRaw = "socks5://proxy.example.com:1080"
+	req, _ := http.NewRequest("GET", "https://grafana.com/api/plugins", nil)
+
+	t.Run("no proxy returns the default transport", func(t *testing.T) {
+		cfg := &GrafanaConfig{}
+		assert.Same(t, http.DefaultTransport, cfg.ProxyOnlyTransport())
+	})
+
+	t.Run("valid proxy is applied to a clone of the default transport", func(t *testing.T) {
+		cfg := &GrafanaConfig{SOCKS5ProxyURL: proxyRaw}
+		rt := cfg.ProxyOnlyTransport()
+		assert.NotSame(t, http.DefaultTransport, rt, "must not mutate the shared default transport")
+		ht, ok := rt.(*http.Transport)
+		require.True(t, ok, "expected *http.Transport, got %T", rt)
+		proxyURL, err := ht.Proxy(req)
+		require.NoError(t, err)
+		require.NotNil(t, proxyURL)
+		assert.Equal(t, proxyRaw, proxyURL.String())
+	})
+
+	t.Run("invalid proxy fails closed", func(t *testing.T) {
+		cfg := &GrafanaConfig{SOCKS5ProxyURL: "http://proxy.example.com:1080"}
+		rt := cfg.ProxyOnlyTransport()
+		_, err := rt.RoundTrip(req)
+		require.Error(t, err, "a misconfigured proxy must reject requests, never send them directly")
+	})
+}
+
+func TestClientTransport(t *testing.T) {
+	t.Run("success returns the built transport", func(t *testing.T) {
+		cfg := &GrafanaConfig{}
+		rt, ok := cfg.clientTransport(nil, WithoutAuth())
+		require.True(t, ok)
+		require.NotNil(t, rt)
+	})
+
+	t.Run("fails closed when a proxy is configured but the build fails", func(t *testing.T) {
+		// A non-*http.Transport base makes BuildTransport fail when a SOCKS5
+		// proxy is configured.
+		mock := &capturingMockRT{fn: func(*http.Request) (*http.Response, error) {
+			return &http.Response{StatusCode: 200}, nil
+		}}
+		cfg := &GrafanaConfig{SOCKS5ProxyURL: "socks5://proxy.example.com:1080", BaseTransport: mock}
+		rt, ok := cfg.clientTransport(nil, WithoutAuth())
+		require.True(t, ok, "a fail-closed transport must still be returned")
+		req, _ := http.NewRequest("GET", "http://grafana.example.com", nil)
+		_, err := rt.RoundTrip(req)
+		require.Error(t, err)
+	})
+
+	t.Run("returns ok=false when the build fails and no proxy is configured", func(t *testing.T) {
+		// A missing CA file makes BuildTransport fail without any proxy set.
+		cfg := &GrafanaConfig{TLSConfig: &TLSConfig{CAFile: "/nonexistent/ca.pem"}}
+		rt, ok := cfg.clientTransport(nil, WithoutAuth())
+		assert.False(t, ok, "caller should fall back to its default transport")
+		assert.Nil(t, rt)
+	})
+}
+
+// TestNewGrafanaClientFailsClosedOnTransportError verifies finding #2's fix:
+// when a SOCKS5 proxy is configured but the OpenAPI client's transport cannot
+// be built, NewGrafanaClient installs a fail-closed transport instead of
+// panicking, so requests fail gracefully rather than aborting the caller.
+func TestNewGrafanaClientFailsClosedOnTransportError(t *testing.T) {
+	baseCalled := false
+	// A non-*http.Transport base makes the OBO BuildTransport call fail while a
+	// SOCKS5 proxy is configured. Point the proxy at an unreachable local port
+	// so the public-URL fetch fails fast rather than hitting the network.
+	mock := &capturingMockRT{fn: func(*http.Request) (*http.Response, error) {
+		baseCalled = true
+		return &http.Response{StatusCode: 200}, nil
+	}}
+	ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{
+		SOCKS5ProxyURL: "socks5://127.0.0.1:1",
+		BaseTransport:  mock,
+	})
+
+	var c *GrafanaClient
+	require.NotPanics(t, func() {
+		c = NewGrafanaClient(ctx, "http://grafana.example.com", "test-key", nil)
+	})
+	require.NotNil(t, c)
+
+	_, err := c.Search.Search(nil, nil)
+	require.Error(t, err, "the fail-closed transport must reject OpenAPI calls")
+	assert.False(t, baseCalled, "no request may reach the base transport")
+}
+
 // innermostTransport builds a transport with all optional layers disabled and
 // unwraps the always-present ExtraHeaders layer, returning the innermost
 // RoundTripper that BuildTransport produced.
