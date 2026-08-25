@@ -94,7 +94,7 @@ func ResetDocsIndex() {
 // Search docs
 
 type SearchDocsParams struct {
-	Query   string `json:"query" jsonschema:"required,description=Search query for Grafana documentation"`
+	Query   string `json:"query,omitempty" jsonschema:"description=Search query for Grafana documentation. Omit to list all available product groups."`
 	Product string `json:"product,omitempty" jsonschema:"description=Filter results to a specific product (e.g. 'Grafana Tempo'\\, 'Grafana Loki')"`
 	Limit   int    `json:"limit,omitempty" jsonschema:"description=Maximum results to return (default 5)"`
 }
@@ -106,15 +106,30 @@ type searchDocsEntry struct {
 	Product     string `json:"product"`
 }
 
+type listProductEntry struct {
+	Name  string `json:"name"`
+	Count int    `json:"count"`
+}
+
 type SearchDocsResult struct {
-	Results []searchDocsEntry `json:"results"`
-	Message string            `json:"message,omitempty"`
+	Results  []searchDocsEntry  `json:"results,omitempty"`
+	Products []listProductEntry `json:"products,omitempty"`
+	Message  string             `json:"message,omitempty"`
 }
 
 func searchDocs(ctx context.Context, args SearchDocsParams) (*SearchDocsResult, error) {
 	idx, err := loadDocsIndex(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("load docs index: %w", err)
+	}
+
+	if args.Query == "" {
+		products := idx.Products()
+		result := make([]listProductEntry, len(products))
+		for i, p := range products {
+			result[i] = listProductEntry{Name: p.Name, Count: p.Count}
+		}
+		return &SearchDocsResult{Products: result}, nil
 	}
 
 	opts := grafanadocs.SearchOpts{
@@ -126,7 +141,7 @@ func searchDocs(ctx context.Context, args SearchDocsParams) (*SearchDocsResult, 
 	if len(entries) == 0 {
 		msg := "No results found."
 		if opts.Product != "" {
-			msg += " Try broadening the product filter or using list_products to see available products."
+			msg += " Try broadening the product filter or call search_docs with no query to see available products."
 		} else {
 			msg += " Try different search terms."
 		}
@@ -147,7 +162,7 @@ func searchDocs(ctx context.Context, args SearchDocsParams) (*SearchDocsResult, 
 
 var SearchDocsTool = mcpgrafana.MustTool(
 	"search_docs",
-	"Search Grafana documentation. Returns matching pages with title, URL, description, and product.",
+	"Search Grafana documentation. Returns matching pages with title, URL, description, and product. Call with no query to list available product groups.",
 	searchDocs,
 	mcp.WithTitleAnnotation("Search Docs"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -159,59 +174,11 @@ var SearchDocsTool = mcpgrafana.MustTool(
 // Get doc
 
 type GetDocParams struct {
-	URL     string `json:"url" jsonschema:"required,description=The grafana.com/docs/ URL to fetch"`
-	Section string `json:"section,omitempty" jsonschema:"description=Heading text to extract (returns only that section)"`
-	Offset  int    `json:"offset,omitempty" jsonschema:"description=Line offset for paging (0-indexed)"`
-	Limit   int    `json:"limit,omitempty" jsonschema:"description=Max lines to return (default ~80)"`
-}
-
-type GetDocResult struct {
-	Content       string `json:"content"`
-	URL           string `json:"url"`
-	TotalLines    int    `json:"total_lines"`
-	ReturnedRange [2]int `json:"returned_range"`
-}
-
-func getDoc(ctx context.Context, args GetDocParams) (*GetDocResult, error) {
-	doc, err := fetchDocFn(ctx, args.URL)
-	if err != nil {
-		return nil, fmt.Errorf("fetch doc: %w", err)
-	}
-
-	opts := grafanadocs.ExcerptOpts{
-		Section: args.Section,
-		Offset:  args.Offset,
-		Limit:   args.Limit,
-	}
-	result := grafanadocs.Excerpt(doc, opts)
-
-	if result.Content == "" && args.Section != "" {
-		return nil, fmt.Errorf("section %q not found; use get_doc_outline to see available headings", args.Section)
-	}
-
-	return &GetDocResult{
-		Content:       result.Content,
-		URL:           doc.URL,
-		TotalLines:    result.Total,
-		ReturnedRange: [2]int{result.Start, result.End},
-	}, nil
-}
-
-var GetDocTool = mcpgrafana.MustTool(
-	"get_doc",
-	"Fetch a Grafana documentation page. Returns cleaned markdown content. Supports section extraction by heading name and offset/limit paging for bounded retrieval.",
-	getDoc,
-	mcp.WithTitleAnnotation("Get Doc"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(true),
-)
-
-// Get doc outline
-
-type GetDocOutlineParams struct {
-	URL string `json:"url" jsonschema:"required,description=The grafana.com/docs/ URL"`
+	URL         string `json:"url" jsonschema:"required,description=The grafana.com/docs/ URL to fetch"`
+	OutlineOnly bool   `json:"outline_only,omitempty" jsonschema:"description=Return only the heading outline (use to discover section names before fetching content)"`
+	Section     string `json:"section,omitempty" jsonschema:"description=Heading text to extract (returns only that section)"`
+	Offset      int    `json:"offset,omitempty" jsonschema:"description=Line offset for paging (0-indexed)"`
+	Limit       int    `json:"limit,omitempty" jsonschema:"description=Max lines to return (default ~80)"`
 }
 
 type docHeading struct {
@@ -220,70 +187,53 @@ type docHeading struct {
 	Line  int    `json:"line"`
 }
 
-type GetDocOutlineResult struct {
-	URL      string       `json:"url"`
-	Headings []docHeading `json:"headings"`
+type GetDocResult struct {
+	URL           string       `json:"url"`
+	Headings      []docHeading `json:"headings,omitempty"`
+	Content       string       `json:"content,omitempty"`
+	TotalLines    int          `json:"total_lines,omitempty"`
+	ReturnedRange [2]int       `json:"returned_range,omitempty"`
 }
 
-func getDocOutline(ctx context.Context, args GetDocOutlineParams) (*GetDocOutlineResult, error) {
+func getDoc(ctx context.Context, args GetDocParams) (*GetDocResult, error) {
 	doc, err := fetchDocFn(ctx, args.URL)
 	if err != nil {
 		return nil, fmt.Errorf("fetch doc: %w", err)
 	}
 
-	headings := grafanadocs.Outline(doc)
-	result := make([]docHeading, len(headings))
-	for i, h := range headings {
-		result[i] = docHeading{Level: h.Level, Text: h.Text, Line: h.Line}
+	if args.OutlineOnly {
+		headings := grafanadocs.Outline(doc)
+		result := make([]docHeading, len(headings))
+		for i, h := range headings {
+			result[i] = docHeading{Level: h.Level, Text: h.Text, Line: h.Line}
+		}
+		return &GetDocResult{URL: doc.URL, Headings: result}, nil
 	}
 
-	return &GetDocOutlineResult{URL: doc.URL, Headings: result}, nil
-}
+	opts := grafanadocs.ExcerptOpts{
+		Section: args.Section,
+		Offset:  args.Offset,
+		Limit:   args.Limit,
+	}
+	excerpt := grafanadocs.Excerpt(doc, opts)
 
-var GetDocOutlineTool = mcpgrafana.MustTool(
-	"get_doc_outline",
-	"Get the heading outline of a Grafana documentation page. Use this to find section names before calling get_doc with a section parameter.",
-	getDocOutline,
-	mcp.WithTitleAnnotation("Get Doc Outline"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
-	mcp.WithOpenWorldHintAnnotation(true),
-)
-
-// List products
-
-type ListProductsParams struct{}
-
-type listProductEntry struct {
-	Name  string `json:"name"`
-	Count int    `json:"count"`
-}
-
-type ListProductsResult struct {
-	Products []listProductEntry `json:"products"`
-}
-
-func listProducts(ctx context.Context, args ListProductsParams) (*ListProductsResult, error) {
-	idx, err := loadDocsIndex(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("load docs index: %w", err)
+	if excerpt.Content == "" && args.Section != "" {
+		return nil, fmt.Errorf("section %q not found; call get_doc with outline_only=true to see available headings", args.Section)
 	}
 
-	products := idx.Products()
-	result := make([]listProductEntry, len(products))
-	for i, p := range products {
-		result[i] = listProductEntry{Name: p.Name, Count: p.Count}
-	}
-
-	return &ListProductsResult{Products: result}, nil
+	return &GetDocResult{
+		URL:           doc.URL,
+		Content:       excerpt.Content,
+		TotalLines:    excerpt.Total,
+		ReturnedRange: [2]int{excerpt.Start, excerpt.End},
+	}, nil
 }
 
-var ListProductsTool = mcpgrafana.MustTool(
-	"list_products",
-	"List all Grafana product documentation groups with their entry counts.",
-	listProducts,
-	mcp.WithTitleAnnotation("List Doc Products"),
+var GetDocTool = mcpgrafana.MustTool(
+	"get_doc",
+	"Fetch a Grafana documentation page. Set outline_only=true to get the heading structure first, then call again with a section name for bounded retrieval.",
+	getDoc,
+	mcp.WithTitleAnnotation("Get Doc"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
 	mcp.WithDestructiveHintAnnotation(false),
@@ -294,6 +244,4 @@ var ListProductsTool = mcpgrafana.MustTool(
 func AddDocsTools(mcp *server.MCPServer) {
 	SearchDocsTool.Register(mcp)
 	GetDocTool.Register(mcp)
-	GetDocOutlineTool.Register(mcp)
-	ListProductsTool.Register(mcp)
 }

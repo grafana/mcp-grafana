@@ -105,15 +105,16 @@ func TestSearchDocs_NoResultsWithProductFilter(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Empty(t, result.Results)
-	assert.Contains(t, result.Message, "list_products")
+	assert.Contains(t, result.Message, "search_docs with no query")
 }
 
-func TestListProducts_ReturnsProducts(t *testing.T) {
+func TestSearchDocs_EmptyQueryListsProducts(t *testing.T) {
 	withTestDocsIndex(t)
 
-	result, err := listProducts(context.Background(), ListProductsParams{})
+	result, err := searchDocs(context.Background(), SearchDocsParams{})
 	require.NoError(t, err)
 	require.NotEmpty(t, result.Products)
+	assert.Empty(t, result.Results)
 
 	names := make([]string, len(result.Products))
 	for i, p := range result.Products {
@@ -165,7 +166,7 @@ Here is an example.
 	assert.Equal(t, 1, result.ReturnedRange[0])
 }
 
-func TestGetDocOutline_ReturnsHeadings(t *testing.T) {
+func TestGetDoc_OutlineOnly(t *testing.T) {
 	docContent := `# Page Title
 
 Intro text.
@@ -184,11 +185,13 @@ End.
 `
 	withStubbedDoc(t, docContent)
 
-	result, err := getDocOutline(context.Background(), GetDocOutlineParams{
-		URL: "https://grafana.com/docs/test/",
+	result, err := getDoc(context.Background(), GetDocParams{
+		URL:         "https://grafana.com/docs/test/",
+		OutlineOnly: true,
 	})
 	require.NoError(t, err)
 	require.NotEmpty(t, result.Headings)
+	assert.Empty(t, result.Content)
 	assert.Equal(t, "Page Title", result.Headings[0].Text)
 	assert.Equal(t, 1, result.Headings[0].Level)
 }
@@ -207,15 +210,16 @@ func TestGetDoc_PropagatesFetchError(t *testing.T) {
 	assert.Contains(t, err.Error(), "network timeout")
 }
 
-func TestGetDocOutline_PropagatesFetchError(t *testing.T) {
+func TestGetDoc_OutlineOnly_PropagatesFetchError(t *testing.T) {
 	orig := fetchDocFn
 	t.Cleanup(func() { fetchDocFn = orig })
 	fetchDocFn = func(context.Context, string) (*grafanadocs.Doc, error) {
 		return nil, errors.New("network timeout")
 	}
 
-	_, err := getDocOutline(context.Background(), GetDocOutlineParams{
-		URL: "https://grafana.com/docs/test/",
+	_, err := getDoc(context.Background(), GetDocParams{
+		URL:         "https://grafana.com/docs/test/",
+		OutlineOnly: true,
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "network timeout")
@@ -248,16 +252,6 @@ func TestSearchDocs_ToolDefinition(t *testing.T) {
 func TestGetDocTool_ToolDefinition(t *testing.T) {
 	assert.Equal(t, "get_doc", GetDocTool.Tool.Name)
 	assert.Contains(t, GetDocTool.Tool.Description, "Fetch a Grafana documentation page")
-}
-
-func TestGetDocOutlineTool_ToolDefinition(t *testing.T) {
-	assert.Equal(t, "get_doc_outline", GetDocOutlineTool.Tool.Name)
-	assert.Contains(t, GetDocOutlineTool.Tool.Description, "heading outline")
-}
-
-func TestListProductsTool_ToolDefinition(t *testing.T) {
-	assert.Equal(t, "list_products", ListProductsTool.Tool.Name)
-	assert.Contains(t, ListProductsTool.Tool.Description, "product documentation groups")
 }
 
 func TestLoadDocsIndex_RetriesAfterFailure(t *testing.T) {
