@@ -535,6 +535,7 @@ func TestManageRules_ListRules(t *testing.T) {
 			assertRequest: func(t *testing.T, r *http.Request) {
 				t.Helper()
 				require.Equal(t, "/api/prometheus/grafana/api/v1/rules", r.URL.Path)
+				require.Equal(t, "true", r.URL.Query().Get("includeInternalLabels"))
 			},
 			expectedRules: []alertRuleSummary{expectedMockRuleSummary},
 		},
@@ -1128,6 +1129,34 @@ func TestConvertRulesResponseToSummary(t *testing.T) {
 		require.Len(t, summaries, 1)
 		require.Empty(t, summaries[0].LastEvaluation)
 	})
+
+	t.Run("fills Grafana-managed UID from internal labels when response omits top-level UID", func(t *testing.T) {
+		resp := &rulesResponse{}
+		resp.Data.RuleGroups = []ruleGroup{
+			{
+				Name: "LegacyGroup",
+				Rules: []alertingRule{
+					{
+						Name:   "Legacy Alert",
+						State:  "inactive",
+						Health: "ok",
+						Labels: labels.FromStrings(
+							"severity", "critical",
+							"__alert_rule_uid__", "legacy-rule-uid",
+							"__alert_rule_namespace_uid__", "legacy-folder-uid",
+						),
+					},
+				},
+			},
+		}
+
+		summaries := convertRulesResponseToSummary(resp)
+		require.Len(t, summaries, 1)
+		require.Equal(t, "legacy-rule-uid", summaries[0].UID)
+		require.Equal(t, "legacy-folder-uid", summaries[0].FolderUID)
+		require.Equal(t, "LegacyGroup", summaries[0].RuleGroup)
+		require.Equal(t, map[string]string{"severity": "critical"}, summaries[0].Labels)
+	})
 }
 
 func TestFilterSummaryByLabels(t *testing.T) {
@@ -1256,6 +1285,25 @@ func TestFindRuleInResponse(t *testing.T) {
 		require.NotNil(t, rule)
 		require.Equal(t, "Rule Three", rule.Name)
 		require.Equal(t, "pending", rule.State)
+	})
+
+	t.Run("finds rule by internal UID label when top-level UID is missing", func(t *testing.T) {
+		legacyResp := &rulesResponse{}
+		legacyResp.Data.RuleGroups = []ruleGroup{
+			{
+				Name: "legacy-group",
+				Rules: []alertingRule{
+					{
+						Name:   "Legacy Rule",
+						Labels: labels.FromStrings(alertRuleUIDLabel, "legacy-uid"),
+					},
+				},
+			},
+		}
+
+		rule := findRuleInResponse(legacyResp, "legacy-uid")
+		require.NotNil(t, rule)
+		require.Equal(t, "Legacy Rule", rule.Name)
 	})
 
 	t.Run("returns nil for nonexistent UID", func(t *testing.T) {
