@@ -38,6 +38,8 @@ func TestValidateGrafanaURL(t *testing.T) {
 		// Invalid inputs.
 		{"empty string", "", true},
 		{"slash-only trims to empty", "/", true},
+		{"schemeless host rejected", "grafana.example.com", true},
+		{"schemeless host and port rejected", "grafana.example.com:3000", true},
 		{"plain text", "not a url", true},
 		{"invalid percent encoding", "http://%gg", true},
 		{"javascript scheme", "javascript:alert(1)", true},
@@ -84,6 +86,7 @@ func TestValidateGrafanaURLMiddleware(t *testing.T) {
 		{"malformed percent encoding rejected", true, "http://%gg", http.StatusBadRequest, false},
 		{"javascript scheme rejected", true, "javascript:alert(1)", http.StatusBadRequest, false},
 		{"relative path rejected", true, "/relative", http.StatusBadRequest, false},
+		{"schemeless header rejected", true, "grafana.example.com", http.StatusBadRequest, false},
 		{"trim-to-empty slash rejected", true, "/", http.StatusBadRequest, false},
 		{"empty host rejected", true, "http://", http.StatusBadRequest, false},
 		{"CR-LF injection attempt rejected", true, "http://foo\r\nX-Injected: 1", http.StatusBadRequest, false},
@@ -189,45 +192,47 @@ func TestValidateGrafanaURLMiddleware(t *testing.T) {
 }
 
 // Smoke coverage for ExtractGrafanaClientFromHeaders client construction.
-// These two tests exercise the extractor end-to-end (header parsing -> client
-// wiring -> real HTTP call against a test server) without depending on
-// sentinel-specific machinery.
+// These tests exercise the extractor end-to-end through a real HTTP call.
 
-func TestExtractGrafanaClientFromHeaders_ValidURL(t *testing.T) {
-	t.Setenv("GRAFANA_URL", "")
+func TestExtractGrafanaClientFromHeaders_IgnoresURLHeader(t *testing.T) {
 	t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN", "test-token")
 
-	// hitCount tracks that the extractor wired a client pointed at THIS test
-	// server (not defaultGrafanaURL or anything else). A request counter is
-	// the cheapest durable assertion that the header-URL actually flowed
-	// through to client construction.
-	var hitCount int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		atomic.AddInt32(&hitCount, 1)
+	var configuredHitCount int32
+	configuredServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&configuredHitCount, 1)
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"meta":{},"dashboard":{}}`))
 	}))
-	defer srv.Close()
+	defer configuredServer.Close()
+	t.Setenv("GRAFANA_URL", configuredServer.URL)
+
+	var headerHitCount int32
+	headerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&headerHitCount, 1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer headerServer.Close()
 
 	req, err := http.NewRequest(http.MethodGet, "http://example.com", nil)
 	require.NoError(t, err)
-	req.Header.Set(grafanaURLHeader, srv.URL)
+	req.Header.Set(grafanaURLHeader, headerServer.URL)
 
 	ctx := ExtractGrafanaClientFromHeaders(context.Background(), req)
 	c := GrafanaClientFromContext(ctx)
-	require.NotNil(t, c, "extractor must attach a client when header URL is valid")
+	require.NotNil(t, c, "extractor must attach a client")
 
 	_, apiErr := c.Dashboards.GetDashboardByUID("any-uid")
-	// The call reaches the test server, which returns skeletal JSON. The
+	// The call reaches the configured test server, which returns skeletal JSON. The
 	// openapi client may succeed or return a schema-mismatch error; either
-	// is acceptable. What's NOT acceptable is a URL-parse error, which
-	// would indicate the extractor wired garbage instead of the header URL.
+	// is acceptable. A URL-parse error would indicate invalid client wiring.
 	if apiErr != nil {
 		assert.NotContains(t, apiErr.Error(), "parse",
-			"valid-header path must not produce a URL-parse error; got %v", apiErr)
+			"configured URL must not produce a URL-parse error; got %v", apiErr)
 	}
-	assert.Greater(t, int(atomic.LoadInt32(&hitCount)), 0,
-		"extractor must wire a client that actually reaches the header-supplied URL")
+	assert.Greater(t, int(atomic.LoadInt32(&configuredHitCount)), 0,
+		"extractor must wire a client that reaches GRAFANA_URL")
+	assert.Zero(t, atomic.LoadInt32(&headerHitCount),
+		"extractor must ignore X-Grafana-URL when selecting the destination")
 }
 
 func TestExtractGrafanaClientFromHeaders_NoHeader(t *testing.T) {

@@ -9,18 +9,21 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
 
 	"github.com/go-openapi/runtime/client"
 	grafana_client "github.com/grafana/grafana-openapi-client-go/client"
+	"github.com/grafana/grafana-openapi-client-go/client/datasources"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
@@ -57,7 +60,7 @@ func TestExtractIncidentClientFromHeaders(t *testing.T) {
 		assert.Equal(t, "http://my-test-url.grafana.com/api/plugins/grafana-irm-app/resources/api/v1/", client.RemoteHost)
 	})
 
-	t.Run("with headers, no env", func(t *testing.T) {
+	t.Run("URL header ignored without env", func(t *testing.T) {
 		req, err := http.NewRequest("GET", "http://example.com", nil)
 		req.Header.Set(grafanaURLHeader, "http://my-test-url.grafana.com")
 		require.NoError(t, err)
@@ -65,11 +68,11 @@ func TestExtractIncidentClientFromHeaders(t *testing.T) {
 
 		client := IncidentClientFromContext(ctx)
 		require.NotNil(t, client)
-		assert.Equal(t, "http://my-test-url.grafana.com/api/plugins/grafana-irm-app/resources/api/v1/", client.RemoteHost)
+		assert.Equal(t, "http://localhost:3000/api/plugins/grafana-irm-app/resources/api/v1/", client.RemoteHost)
 	})
 
-	t.Run("with headers, with env", func(t *testing.T) {
-		t.Setenv("GRAFANA_URL", "will-not-be-used")
+	t.Run("URL header ignored with env", func(t *testing.T) {
+		t.Setenv("GRAFANA_URL", "http://configured.grafana.com")
 		req, err := http.NewRequest("GET", "http://example.com", nil)
 		req.Header.Set(grafanaURLHeader, "http://my-test-url.grafana.com")
 		require.NoError(t, err)
@@ -77,7 +80,7 @@ func TestExtractIncidentClientFromHeaders(t *testing.T) {
 
 		client := IncidentClientFromContext(ctx)
 		require.NotNil(t, client)
-		assert.Equal(t, "http://my-test-url.grafana.com/api/plugins/grafana-irm-app/resources/api/v1/", client.RemoteHost)
+		assert.Equal(t, "http://configured.grafana.com/api/plugins/grafana-irm-app/resources/api/v1/", client.RemoteHost)
 	})
 }
 
@@ -134,20 +137,19 @@ func TestExtractGrafanaInfoFromHeaders(t *testing.T) {
 		assert.Equal(t, "my-service-account-token", config.APIKey)
 	})
 
-	t.Run("with headers, no env", func(t *testing.T) {
+	t.Run("URL header ignored without env", func(t *testing.T) {
 		req, err := http.NewRequest("GET", "http://example.com", nil)
 		require.NoError(t, err)
 		req.Header.Set(grafanaURLHeader, "http://my-test-url.grafana.com")
 		req.Header.Set(grafanaAPIKeyHeader, "my-test-api-key")
 		ctx := ExtractGrafanaInfoFromHeaders(context.Background(), req)
 		config := GrafanaConfigFromContext(ctx)
-		assert.Equal(t, "http://my-test-url.grafana.com", config.URL)
+		assert.Equal(t, defaultGrafanaURL, config.URL)
 		assert.Equal(t, "my-test-api-key", config.APIKey)
 	})
 
-	t.Run("with headers, with env", func(t *testing.T) {
-		// Env vars should be ignored if headers are present.
-		t.Setenv("GRAFANA_URL", "will-not-be-used")
+	t.Run("URL header ignored with env", func(t *testing.T) {
+		t.Setenv("GRAFANA_URL", "http://configured.grafana.com")
 		t.Setenv("GRAFANA_API_KEY", "will-not-be-used")
 		t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN", "will-not-be-used")
 
@@ -157,7 +159,7 @@ func TestExtractGrafanaInfoFromHeaders(t *testing.T) {
 		req.Header.Set(grafanaAPIKeyHeader, "my-test-api-key")
 		ctx := ExtractGrafanaInfoFromHeaders(context.Background(), req)
 		config := GrafanaConfigFromContext(ctx)
-		assert.Equal(t, "http://my-test-url.grafana.com", config.URL)
+		assert.Equal(t, "http://configured.grafana.com", config.URL)
 		assert.Equal(t, "my-test-api-key", config.APIKey)
 	})
 
@@ -172,7 +174,7 @@ func TestExtractGrafanaInfoFromHeaders(t *testing.T) {
 		req.Header.Set(grafanaServiceAccountTokenHeader, "my-service-account-token")
 		ctx := ExtractGrafanaInfoFromHeaders(context.Background(), req)
 		config := GrafanaConfigFromContext(ctx)
-		assert.Equal(t, "http://my-test-url.grafana.com", config.URL)
+		assert.Equal(t, defaultGrafanaURL, config.URL)
 		assert.Equal(t, "my-service-account-token", config.APIKey)
 	})
 
@@ -188,7 +190,7 @@ func TestExtractGrafanaInfoFromHeaders(t *testing.T) {
 		req.Header.Set(grafanaAPIKeyHeader, "my-deprecated-api-key")
 		ctx := ExtractGrafanaInfoFromHeaders(context.Background(), req)
 		config := GrafanaConfigFromContext(ctx)
-		assert.Equal(t, "http://my-test-url.grafana.com", config.URL)
+		assert.Equal(t, defaultGrafanaURL, config.URL)
 		assert.Equal(t, "my-service-account-token", config.APIKey)
 	})
 
@@ -280,6 +282,27 @@ func TestExtractGrafanaInfoFromHeaders(t *testing.T) {
 	})
 }
 
+func TestExtractGrafanaInfoFromHeadersIgnoresURLHeader(t *testing.T) {
+	const envURL = "http://my-grafana.internal:3000"
+	const envToken = "env-service-account-token"
+	t.Setenv("GRAFANA_URL", envURL)
+	t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN", envToken)
+	t.Setenv("GRAFANA_USERNAME", "env-user")
+	t.Setenv("GRAFANA_PASSWORD", "env-pass")
+	t.Setenv("GRAFANA_EXTRA_HEADERS", `{"Authorization": "Bearer configured-secret"}`)
+
+	req, err := http.NewRequest("GET", "http://example.com", nil)
+	require.NoError(t, err)
+	req.Header.Set(grafanaURLHeader, "http://other.example.com")
+
+	config := GrafanaConfigFromContext(ExtractGrafanaInfoFromHeaders(context.Background(), req))
+	assert.Equal(t, envURL, config.URL)
+	assert.Equal(t, envToken, config.APIKey)
+	require.NotNil(t, config.BasicAuth)
+	assert.Equal(t, "env-user", config.BasicAuth.Username())
+	assert.Equal(t, "Bearer configured-secret", config.ExtraHeaders["Authorization"])
+}
+
 func TestExtractGrafanaClientPath(t *testing.T) {
 	t.Run("no custom path", func(t *testing.T) {
 		t.Setenv("GRAFANA_URL", "http://my-test-url.grafana.com/")
@@ -347,20 +370,19 @@ func TestExtractGrafanaClientFromHeaders(t *testing.T) {
 		assert.Equal(t, "/api", url.basePath)
 	})
 
-	t.Run("with headers, no env", func(t *testing.T) {
+	t.Run("URL header ignored without env", func(t *testing.T) {
 		req, err := http.NewRequest("GET", "http://example.com", nil)
 		require.NoError(t, err)
 		req.Header.Set(grafanaURLHeader, "http://my-test-url.grafana.com")
 		ctx := ExtractGrafanaClientFromHeaders(context.Background(), req)
 		c := GrafanaClientFromContext(ctx)
 		url := minURLFromClient(c)
-		assert.Equal(t, "my-test-url.grafana.com", url.host)
+		assert.Equal(t, "localhost:3000", url.host)
 		assert.Equal(t, "/api", url.basePath)
 	})
 
-	t.Run("with headers, with env", func(t *testing.T) {
-		// Env vars should be ignored if headers are present.
-		t.Setenv("GRAFANA_URL", "will-not-be-used")
+	t.Run("URL header ignored with env", func(t *testing.T) {
+		t.Setenv("GRAFANA_URL", "http://configured.grafana.com")
 
 		req, err := http.NewRequest("GET", "http://example.com", nil)
 		require.NoError(t, err)
@@ -368,7 +390,7 @@ func TestExtractGrafanaClientFromHeaders(t *testing.T) {
 		ctx := ExtractGrafanaClientFromHeaders(context.Background(), req)
 		c := GrafanaClientFromContext(ctx)
 		url := minURLFromClient(c)
-		assert.Equal(t, "my-test-url.grafana.com", url.host)
+		assert.Equal(t, "configured.grafana.com", url.host)
 		assert.Equal(t, "/api", url.basePath)
 	})
 }
@@ -1599,6 +1621,14 @@ func clearNamespaceCache() {
 	})
 }
 
+// clearVersionCache removes all entries from the versionCache for test isolation.
+func clearVersionCache() {
+	versionCache.Range(func(key, _ any) bool {
+		versionCache.Delete(key)
+		return true
+	})
+}
+
 func TestDashboardNamespace(t *testing.T) {
 	t.Cleanup(clearNamespaceCache)
 
@@ -1661,6 +1691,94 @@ func TestDashboardNamespace(t *testing.T) {
 		assert.True(t, from1)
 		assert.True(t, from2)
 		assert.Equal(t, int32(1), atomic.LoadInt32(&calls), "frontend settings should be fetched once and cached")
+	})
+}
+
+func TestGrafanaVersion(t *testing.T) {
+	t.Cleanup(clearVersionCache)
+
+	t.Run("returns version from frontend settings buildInfo", func(t *testing.T) {
+		t.Cleanup(clearVersionCache)
+		ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/api/frontend/settings" {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"appUrl": "https://grafana.example.com", "buildInfo": {"version": "12.1.0", "edition": "Enterprise"}}`))
+				return
+			}
+			w.WriteHeader(http.StatusNotFound)
+		})
+
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{URL: ts.URL, APIKey: "test-key"})
+		assert.Equal(t, "12.1.0", GrafanaVersion(ctx))
+	})
+
+	t.Run("returns empty when settings omit buildInfo", func(t *testing.T) {
+		t.Cleanup(clearVersionCache)
+		ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"appUrl": "https://grafana.example.com"}`))
+		})
+
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{URL: ts.URL})
+		assert.Empty(t, GrafanaVersion(ctx), "unknown version must fail soft, not error")
+	})
+
+	t.Run("returns empty when settings are unavailable", func(t *testing.T) {
+		t.Cleanup(clearVersionCache)
+		ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusUnauthorized)
+		})
+
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{URL: ts.URL})
+		assert.Empty(t, GrafanaVersion(ctx), "an unauthorised settings endpoint must fail soft")
+	})
+
+	t.Run("caches successful lookups", func(t *testing.T) {
+		t.Cleanup(clearVersionCache)
+		var calls int32
+		ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+			atomic.AddInt32(&calls, 1)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"buildInfo": {"version": "11.6.3"}}`))
+		})
+
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{URL: ts.URL})
+		assert.Equal(t, "11.6.3", GrafanaVersion(ctx))
+		assert.Equal(t, "11.6.3", GrafanaVersion(ctx))
+		assert.Equal(t, int32(1), atomic.LoadInt32(&calls), "frontend settings should be fetched once and cached")
+	})
+
+	t.Run("does not cache failures", func(t *testing.T) {
+		t.Cleanup(clearVersionCache)
+		var calls int32
+		ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+			if atomic.AddInt32(&calls, 1) == 1 {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"buildInfo": {"version": "12.2.0"}}`))
+		})
+
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{URL: ts.URL})
+		assert.Empty(t, GrafanaVersion(ctx))
+		assert.Equal(t, "12.2.0", GrafanaVersion(ctx), "a transient failure should be retried, not cached")
+	})
+
+	t.Run("is keyed on url alone, not org id", func(t *testing.T) {
+		t.Cleanup(clearVersionCache)
+		var calls int32
+		ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
+			atomic.AddInt32(&calls, 1)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"buildInfo": {"version": "12.1.0"}}`))
+		})
+
+		// The version of an instance doesn't vary by org, so a second org
+		// hitting the same URL should reuse the cached entry.
+		assert.Equal(t, "12.1.0", GrafanaVersion(WithGrafanaConfig(context.Background(), GrafanaConfig{URL: ts.URL, OrgID: 1})))
+		assert.Equal(t, "12.1.0", GrafanaVersion(WithGrafanaConfig(context.Background(), GrafanaConfig{URL: ts.URL, OrgID: 7})))
+		assert.Equal(t, int32(1), atomic.LoadInt32(&calls), "version cache should not be partitioned by org")
 	})
 }
 
@@ -2196,4 +2314,150 @@ func TestBuildTransportContextOverrides(t *testing.T) {
 		assert.Equal(t, "10", capturedReq.Header.Get(grafana_client.OrgIDHeader))
 		assert.Equal(t, "val", capturedReq.Header.Get("X-Custom"))
 	})
+}
+
+// normalizeGrafanaURL accepts a schemeless GRAFANA_URL and TestNormalizeGrafanaURL
+// pins that behavior, but it used to run only at the end of the chain, in
+// WithGrafanaConfig. Consumers reading the environment value earlier saw the raw
+// string and disagreed with GrafanaConfig.URL about the target instance — see
+// https://github.com/grafana/mcp-grafana/issues/1032.
+
+// The normalizer runs at the environment boundary and again in
+// WithGrafanaConfig, so it has to be idempotent: a second pass must not move the
+// value.
+func TestNormalizeGrafanaURLIsIdempotent(t *testing.T) {
+	for _, raw := range []string{
+		"",
+		"   ",
+		"https://grafana.example.com",
+		"https://grafana.example.com/",
+		"https://grafana.example.com///",
+		"  https://grafana.example.com/  ",
+		"grafana.example.com",
+		"grafana.example.com/grafana/",
+		"localhost:3000",
+		"127.0.0.1:3000",
+		"[::1]:3000",
+		"http://grafana.example.com/grafana",
+	} {
+		t.Run(raw, func(t *testing.T) {
+			once := normalizeGrafanaURL(raw)
+			assert.Equal(t, once, normalizeGrafanaURL(once), "second pass changed the value")
+		})
+	}
+}
+
+// Whatever spelling of GRAFANA_URL the operator uses, GrafanaConfig.URL and the
+// API client must resolve to the same place — including the path, which subpath
+// deployments depend on.
+func TestEnvURLSpellingsAgreeAcrossConsumers(t *testing.T) {
+	cases := []struct {
+		name string
+		// %s is replaced with the test server's host:port
+		envTemplate string
+		wantConfig  string
+		wantPath    string
+	}{
+		{"canonical", "http://%s", "http://%s", "/api/datasources"},
+		{"trailing slash", "http://%s/", "http://%s", "/api/datasources"},
+		{"surrounding whitespace", "  http://%s  ", "http://%s", "/api/datasources"},
+		{"schemeless loopback defaults to http", "%s", "http://%s", "/api/datasources"},
+		{"subpath preserved", "http://%s/grafana", "http://%s/grafana", "/grafana/api/datasources"},
+		{"schemeless subpath", "%s/grafana/", "http://%s/grafana", "/grafana/api/datasources"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotPaths []string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotPaths = append(gotPaths, r.URL.Path)
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`[]`))
+			}))
+			defer srv.Close()
+			hostPort := strings.TrimPrefix(srv.URL, "http://")
+
+			t.Setenv("GRAFANA_URL", strings.ReplaceAll(tc.envTemplate, "%s", hostPort))
+
+			var ctx context.Context
+			require.NotPanics(t, func() {
+				ctx = ExtractGrafanaInfoFromEnv(context.Background())
+			})
+			assert.Equal(t, strings.ReplaceAll(tc.wantConfig, "%s", hostPort), GrafanaConfigFromContext(ctx).URL)
+
+			ctx = ExtractGrafanaClientFromEnv(ctx)
+			_, err := GrafanaClientFromContext(ctx).Datasources.GetDataSourcesWithParams(
+				datasources.NewGetDataSourcesParamsWithContext(ctx),
+			)
+			require.NoError(t, err)
+			assert.Contains(t, gotPaths, tc.wantPath,
+				"the API client did not reach the configured host and path; saw %v", gotPaths)
+		})
+	}
+}
+
+// An unset or blank GRAFANA_URL must still fall back to the documented default
+// rather than producing a client with no host.
+func TestBlankEnvURLFallsBackToDefault(t *testing.T) {
+	for _, raw := range []string{"", "   "} {
+		t.Run(strconv.Quote(raw), func(t *testing.T) {
+			t.Setenv("GRAFANA_URL", raw)
+			config := GrafanaConfigFromContext(ExtractGrafanaInfoFromEnv(context.Background()))
+			assert.Equal(t, defaultGrafanaURL, config.URL)
+		})
+	}
+}
+
+// A schemeless GRAFANA_URL must still reach the header path as the one
+// environment URL. X-Grafana-URL cannot name another instance since #1052, so
+// the env token always applies; TestExtractGrafanaInfoFromHeadersIgnoresURLHeader
+// pins that.
+func TestSchemelessEnvURLReachesHeaderPath(t *testing.T) {
+	const envToken = "env-service-account-token"
+
+	t.Setenv("GRAFANA_URL", "grafana.example.com")
+	t.Setenv("GRAFANA_SERVICE_ACCOUNT_TOKEN", envToken)
+
+	req, err := http.NewRequest("GET", "http://example.com", nil)
+	require.NoError(t, err)
+
+	config := GrafanaConfigFromContext(ExtractGrafanaInfoFromHeaders(context.Background(), req))
+	assert.Equal(t, "https://grafana.example.com", config.URL)
+	assert.Equal(t, envToken, config.APIKey)
+}
+
+// The cached client extractors derive their cache key from the URL the request
+// resolves to, so spellings of GRAFANA_URL that name one instance must collapse
+// to one value before they reach the key — otherwise a single instance occupies
+// an extra cache entry per spelling.
+func TestEnvURLSpellingsResolveToOneValue(t *testing.T) {
+	logger := slog.New(slog.DiscardHandler)
+	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+
+	const canonical = "https://grafana.example.com"
+	for _, spelling := range []string{
+		canonical,
+		canonical + "/",
+		"  " + canonical + "  ",
+		"grafana.example.com",
+	} {
+		t.Run(spelling, func(t *testing.T) {
+			t.Setenv("GRAFANA_URL", spelling)
+			resolvedURL, _, _, _ := extractKeyGrafanaInfoFromReq(req, logger)
+			assert.Equal(t, canonical, resolvedURL)
+		})
+	}
+}
+
+// TestMeterProviderOrDefault covers the injection path that tool-level
+// instrumentation (the Loki cost guardrail) relies on. An embedder whose
+// process installs a noop global provider drops every recording unless a
+// provider is passed explicitly, so the accessor must prefer the configured
+// one and only fall back to the global.
+func TestMeterProviderOrDefault(t *testing.T) {
+	provider := sdkmetric.NewMeterProvider()
+	cfg := GrafanaConfig{MeterProvider: provider}
+	assert.Same(t, provider, cfg.MeterProviderOrDefault())
+
+	assert.Equal(t, otel.GetMeterProvider(), GrafanaConfig{}.MeterProviderOrDefault())
 }

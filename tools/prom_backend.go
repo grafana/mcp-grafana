@@ -53,6 +53,8 @@ func backendForDatasource(ctx context.Context, uid string, projectOverride ...st
 		return newCloudMonitoringBackend(ctx, ds, proj)
 	case victoriaMetricsDatasourceType:
 		return newVictoriaMetricsBackend(ctx, uid, ds)
+	case "tempo":
+		return nil, fmt.Errorf("datasource %s is of type %q, which is not a supported Prometheus-compatible datasource", uid, ds.Type)
 	default:
 		// For prometheus, thanos, cortex, mimir, and any other Prometheus-compatible datasource,
 		// use the native Prometheus client via the datasource proxy.
@@ -70,7 +72,21 @@ func newPrometheusBackend(ctx context.Context, uid string, ds *models.DataSource
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
 	grafanaURL := trimTrailingSlash(cfg.URL)
 	resourcesBase, proxyBase := datasourceProxyPaths(uid)
-	url := grafanaURL + resourcesBase
+	primaryBase, fallbackBase := resourcesBase, proxyBase
+	legacyMode := false
+	if numericBase, uidBase, ok := fallbackProxyBases(ctx, uid); ok {
+		// The datasource was resolved through the frontend-settings fallback,
+		// meaning this deployment's metadata API is inaccessible — in practice
+		// Grafana before 9.0, which has no uid-based routes at all (8.x answers
+		// them with a 400 "id is invalid", 7.x with a 500). Route through the
+		// numeric-id proxy path directly, keeping the uid-based proxy route
+		// only as the transport-level fallback for the opposite case: a newer
+		// Grafana with an RBAC-restricted token, where the numeric routes may
+		// be disabled (404, off by default since Grafana 13).
+		primaryBase, fallbackBase = numericBase, uidBase
+		legacyMode = true
+	}
+	url := grafanaURL + primaryBase
 
 	rt, err := mcpgrafana.BuildTransport(&cfg, api.DefaultRoundTripper)
 	if err != nil {
@@ -88,9 +104,14 @@ func newPrometheusBackend(ctx context.Context, uid string, ds *models.DataSource
 		}
 	}
 
-	// Wrap with fallback transport: try /resources first, fall back to /proxy
-	// on 403/500 for compatibility with different managed Grafana deployments.
-	rt = newDatasourceFallbackTransport(rt, resourcesBase, proxyBase)
+	// Wrap with fallback transport: try the primary base first, fall back to
+	// the alternate for compatibility with different Grafana deployments (see
+	// fallback_transport.go for the per-mode retry rules).
+	if legacyMode {
+		rt = newLegacyDatasourceFallbackTransport(rt, primaryBase, fallbackBase)
+	} else {
+		rt = newDatasourceFallbackTransport(rt, primaryBase, fallbackBase)
+	}
 
 	c, err := api.NewClient(api.Config{
 		Address:      url,

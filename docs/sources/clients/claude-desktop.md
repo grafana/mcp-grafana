@@ -7,7 +7,8 @@ keywords:
   - MCP
   - client
 weight: 1
-aliases: []
+aliases:
+  - /docs/grafana-cloud/machine-learning/mcp/clients/claude-desktop/
 ---
 
 # Claude Desktop
@@ -22,17 +23,23 @@ This guide helps you set up the `mcp-grafana` server for Claude Desktop.
 
 ## Installation
 
-### Option 1: Go install
+### Option 1: Desktop extension (.mcpb)
+
+Download `mcp-grafana_<version>.mcpb` from [GitHub Releases](https://github.com/grafana/mcp-grafana/releases) and open it with Claude Desktop. The bundle carries the server binary for every supported platform, and Claude Desktop prompts you for your Grafana URL and credentials, so you do not need to edit any configuration file. Skip the rest of this page if you install this way.
+
+Bundles are not code-signed, and the copy listed in Claude Desktop's extension directory may lag behind the latest release.
+
+### Option 2: Go install
 
 ```bash
 GOBIN="$HOME/go/bin" go install github.com/grafana/mcp-grafana/cmd/mcp-grafana@latest
 ```
 
-### Option 2: Download binary
+### Option 3: Download binary
 
 Get the latest release from [GitHub Releases](https://github.com/grafana/mcp-grafana/releases) and add to your PATH.
 
-### Option 3: Docker
+### Option 4: Docker
 
 No installation needed – use Docker in the configuration below.
 

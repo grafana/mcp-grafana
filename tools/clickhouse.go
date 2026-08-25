@@ -238,8 +238,13 @@ Time formats: 'now-1h', '2026-02-02T19:00:00Z', '1738519200000' (Unix ms)
 Example: SELECT Timestamp, Body FROM otel_logs WHERE $__timeFilter(Timestamp)`,
 	queryClickHouse,
 	mcp.WithTitleAnnotation("Query ClickHouse"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithIdempotentHintAnnotation(false),
+	// The raw SQL is passed through unfiltered, so a DELETE/DROP executes if
+	// the datasource credentials permit it — not read-only, potentially
+	// destructive.
+	mcp.WithReadOnlyHintAnnotation(false),
+	mcp.WithDestructiveHintAnnotation(true),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 // ListClickHouseTablesParams defines the parameters for listing ClickHouse tables
@@ -306,6 +311,8 @@ var ListClickHouseTables = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("List ClickHouse tables"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 // DescribeClickHouseTableParams defines the parameters for describing a ClickHouse table
@@ -383,6 +390,8 @@ var DescribeClickHouseTable = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("Describe ClickHouse table"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 // AddClickHouseTools registers all ClickHouse tools with the MCP server

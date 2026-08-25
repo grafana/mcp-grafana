@@ -18,6 +18,24 @@ type OnCallAlertGroup struct {
 	Permalinks     map[string]string `json:"permalinks,omitempty"`
 	Labels         any               `json:"labels,omitempty"`
 	Team           string            `json:"team,omitempty"`
+	// LastAlert is the most recent alert in the group, including its raw
+	// payload. Only populated by get_alert_group on the public OnCall API
+	// path; the IRM proxy's internal endpoint does not expose it.
+	LastAlert *OnCallLastAlert `json:"last_alert,omitempty"`
+}
+
+// OnCallLastAlert is the most recent alert in an alert group.
+//
+// Payload is decoded as an arbitrary JSON object rather than a typed struct
+// because its contents are entirely determined by the integration that sent
+// the alert. Keeping it untyped preserves source-specific fields an agent
+// needs to correlate recurring alerts, such as Sentry's
+// payload.data.event.hashes[0] or Alertmanager's payload.alerts[0].fingerprint.
+type OnCallLastAlert struct {
+	ID           string         `json:"id"`
+	AlertGroupID string         `json:"alert_group_id"`
+	CreatedAt    string         `json:"created_at"`
+	Payload      map[string]any `json:"payload,omitempty"`
 }
 
 // OnCallUser represents an OnCall user returned by MCP tools.

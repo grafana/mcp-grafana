@@ -8,7 +8,8 @@ keywords:
   - observability
   - MCP
 weight: 40
-aliases: []
+aliases:
+  - /docs/grafana-cloud/machine-learning/mcp/developer/
 ---
 
 # Developer

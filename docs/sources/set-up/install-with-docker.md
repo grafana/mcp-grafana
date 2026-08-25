@@ -7,7 +7,8 @@ keywords:
   - MCP
   - container
 weight: 2
-aliases: []
+aliases:
+  - /docs/grafana-cloud/machine-learning/mcp/set-up/install-with-docker/
 ---
 
 # Install with Docker

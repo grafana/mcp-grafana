@@ -55,23 +55,32 @@ func (h *ProxiedToolHandler) Handle(ctx context.Context, request mcp.CallToolReq
 		return nil, fmt.Errorf("failed to parse tool name: %w", err)
 	}
 
-	// Get the proxied client for this datasource
+	// Get the proxied client for this datasource.
 	var client *ProxiedClient
+	// release, when non-nil, must be called once the forwarded call completes.
+	// For the session (HTTP/SSE) path it holds an in-flight reference on the
+	// shared set so the client cannot be Closed by a concurrent teardown while
+	// the call is running. The stdio path is single-tenant/process-level and
+	// needs no such guard, so its release is nil.
+	var release func()
 
 	if h.toolManager.serverMode {
 		// Server mode (stdio): clients stored at manager level
 		client, err = h.toolManager.GetServerClient(datasourceType, datasourceUID)
 	} else {
-		// Session mode (HTTP/SSE): clients stored per-session
-		client, err = h.sessionManager.GetProxiedClient(ctx, datasourceType, datasourceUID)
+		// Session mode (HTTP/SSE): clients live in the session's shared set.
+		client, release, err = h.sessionManager.GetProxiedClient(ctx, datasourceType, datasourceUID)
 		if err != nil {
-			// Fallback to server-level in case of mixed mode
+			// Fallback to server-level in case of mixed mode.
 			client, err = h.toolManager.GetServerClient(datasourceType, datasourceUID)
 		}
 	}
 
 	if err != nil {
-		return nil, fmt.Errorf("datasource '%s' not found or not accessible. Ensure the datasource exists and you have permission to access it", datasourceUID)
+		return nil, fmt.Errorf("datasource '%s' not found or not accessible. Ensure the datasource exists and you have permission to access it: %w", datasourceUID, err)
+	}
+	if release != nil {
+		defer release()
 	}
 
 	// Remove datasourceUid from args before forwarding to remote server

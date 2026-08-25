@@ -46,6 +46,8 @@ var ManageRulesRead = mcpgrafana.MustTool(
 	mcp.WithTitleAnnotation("Manage alert rules"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 var ManageRulesReadWrite = mcpgrafana.MustTool(
@@ -53,7 +55,9 @@ var ManageRulesReadWrite = mcpgrafana.MustTool(
 	manageAlertRulesDescription(false),
 	manageRulesReadWrite,
 	mcp.WithTitleAnnotation("Manage alert rules"),
+	mcp.WithReadOnlyHintAnnotation(false),
 	mcp.WithDestructiveHintAnnotation(true),
+	mcp.WithOpenWorldHintAnnotation(false),
 )
 
 func AddAlertingTools(mcp *server.MCPServer, enableWriteTools bool) {
@@ -63,4 +67,9 @@ func AddAlertingTools(mcp *server.MCPServer, enableWriteTools bool) {
 		ManageRulesRead.Register(mcp)
 	}
 	ManageRouting.Register(mcp)
+	if enableWriteTools {
+		ManageSilencesReadWrite.Register(mcp)
+	} else {
+		ManageSilencesRead.Register(mcp)
+	}
 }

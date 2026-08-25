@@ -424,7 +424,7 @@ func TestShortenURL(t *testing.T) {
 		result, err := shortenURL(ctx, "https://grafana.example.com/explore?left=%7B%22datasource%22%3A%22abc%22%7D")
 		require.NoError(t, err)
 		assert.Equal(t, "https://grafana.example.com/goto/abc123", result)
-		assert.Equal(t, "/explore?left=%7B%22datasource%22%3A%22abc%22%7D", capturedPath)
+		assert.Equal(t, "explore?left=%7B%22datasource%22%3A%22abc%22%7D", capturedPath)
 	})
 
 	t.Run("Includes auth headers", func(t *testing.T) {

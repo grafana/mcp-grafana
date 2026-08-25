@@ -39,17 +39,31 @@ type victoriaLogsBackend struct {
 func newVictoriaLogsBackend(ctx context.Context, uid string, _ *models.DataSource) (*victoriaLogsBackend, error) {
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
 	resourcesBase, proxyBase := datasourceProxyPaths(uid)
-	baseURL := trimTrailingSlash(cfg.URL) + proxyBase
+	primaryBase, fallbackBase := proxyBase, resourcesBase
+	legacyMode := false
+	if numericBase, uidBase, ok := fallbackProxyBases(ctx, uid); ok {
+		// Legacy-compatible routing — see newPrometheusBackend for the full
+		// rationale: route through the numeric-id proxy path directly, keeping
+		// the uid-based proxy route as the transport-level fallback.
+		primaryBase, fallbackBase = numericBase, uidBase
+		legacyMode = true
+	}
+	baseURL := trimTrailingSlash(cfg.URL) + primaryBase
 
 	transport, err := mcpgrafana.BuildTransport(&cfg, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create custom transport: %w", err)
 	}
 
-	// Mirror the native Loki client: try /proxy first and fall back to
-	// /resources on 403/500 for compatibility with managed Grafana
-	// deployments. See fallback_transport.go for the rationale.
-	rt := newDatasourceFallbackTransport(transport, proxyBase, resourcesBase)
+	// Mirror the native Loki client: try the primary base first and fall back
+	// to the alternate for compatibility with different Grafana deployments.
+	// See fallback_transport.go for the per-mode retry rules.
+	var rt http.RoundTripper
+	if legacyMode {
+		rt = newLegacyDatasourceFallbackTransport(transport, primaryBase, fallbackBase)
+	} else {
+		rt = newDatasourceFallbackTransport(transport, primaryBase, fallbackBase)
+	}
 
 	return &victoriaLogsBackend{
 		httpClient: &http.Client{Transport: rt, Timeout: 30 * time.Second},
