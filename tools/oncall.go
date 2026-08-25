@@ -80,6 +80,7 @@ func oncallClientFromContext(ctx context.Context) (*aapi.Client, error) {
 	// Customize the HTTP client's transport using reflection since the
 	// OnCall client doesn't expose its HTTP client directly. Auth is
 	// handled by the OnCall library (API key passed above), so we skip it.
+	transportInstalled := false
 	clientValue := reflect.ValueOf(client)
 	if clientValue.Kind() == reflect.Ptr && !clientValue.IsNil() {
 		clientValue = clientValue.Elem()
@@ -95,13 +96,24 @@ func oncallClientFromContext(ctx context.Context) (*aapi.Client, error) {
 				if httpClient, ok := httpClientField.Interface().(*http.Client); ok {
 					transport, err := mcpgrafana.BuildTransport(&cfg, nil, mcpgrafana.WithoutAuth())
 					if err != nil {
+						if cfg.SOCKS5ProxyURL != "" {
+							// Fail closed: a default transport would bypass the configured proxy.
+							return nil, fmt.Errorf("building transport for OnCall client: %w", err)
+						}
 						mcpgrafana.LoggerFromContext(ctx).Error("Failed to build transport for OnCall client", "error", err)
 					} else {
 						httpClient.Transport = transport
+						transportInstalled = true
 					}
 				}
 			}
 		}
+	}
+	if cfg.SOCKS5ProxyURL != "" && !transportInstalled {
+		// Fail closed: the reflection above could not reach the OnCall
+		// client's HTTP client, so its default transport would bypass the
+		// configured proxy.
+		return nil, fmt.Errorf("SOCKS5 proxy is configured but the OnCall client's transport could not be replaced")
 	}
 
 	return client, nil

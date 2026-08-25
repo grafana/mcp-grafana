@@ -233,6 +233,22 @@ func (gc *grafanaConfig) applyLokiGuardrailEnv(setFlags map[string]bool) error {
 	return nil
 }
 
+// socks5ProxyFromEnv reads GRAFANA_SOCKS5_PROXY and validates it so a
+// misconfigured proxy fails at startup instead of surfacing later when the
+// first Grafana client is built. The error names the env var but never the
+// raw value, which may contain proxy credentials. Extracted from main so the
+// handling is unit-testable.
+func socks5ProxyFromEnv() (string, error) {
+	raw := os.Getenv("GRAFANA_SOCKS5_PROXY")
+	if raw == "" {
+		return "", nil
+	}
+	if err := mcpgrafana.ValidateSOCKS5ProxyURL(raw); err != nil {
+		return "", fmt.Errorf("invalid GRAFANA_SOCKS5_PROXY: %w", err)
+	}
+	return raw, nil
+}
+
 // validateLokiGuardrail rejects invalid guardrail settings (unknown mode,
 // negative limits) after flag and env processing. Extracted from main so the
 // validation is unit-testable.
@@ -897,6 +913,12 @@ func main() {
 		slog.Info("Loki guardrail enabled", "mode", gc.lokiGuardrailMode, "max_bytes", gc.lokiGuardrailMaxBytes, "max_range", gc.lokiGuardrailMaxRange)
 	}
 
+	socks5Proxy, err := socks5ProxyFromEnv()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+
 	// Convert local grafanaConfig to mcpgrafana.GrafanaConfig
 	grafanaConfig := mcpgrafana.GrafanaConfig{
 		Debug:                   gc.debug,
@@ -906,6 +928,7 @@ func main() {
 		LokiGuardrailMaxRange:   gc.lokiGuardrailMaxRange,
 		IncludeArgumentsInSpans: gc.includeArgsInSpans,
 		Timeout:                 gc.timeout,
+		SOCKS5ProxyURL:          socks5Proxy,
 	}
 	if gc.tlsCertFile != "" || gc.tlsKeyFile != "" || gc.tlsCAFile != "" || gc.tlsSkipVerify {
 		grafanaConfig.TLSConfig = &mcpgrafana.TLSConfig{
