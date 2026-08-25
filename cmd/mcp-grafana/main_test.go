@@ -917,3 +917,31 @@ func TestCheckCallerAuthPolicy(t *testing.T) {
 		})
 	}
 }
+
+// TestSOCKS5ProxyFromEnv locks in GRAFANA_SOCKS5_PROXY handling: unset or
+// empty leaves the proxy disabled, a valid URL is returned verbatim, and an
+// invalid URL is a startup error that does not leak the raw value (it may
+// contain proxy credentials).
+func TestSOCKS5ProxyFromEnv(t *testing.T) {
+	t.Run("unset env leaves proxy empty", func(t *testing.T) {
+		t.Setenv("GRAFANA_SOCKS5_PROXY", "")
+		raw, err := socks5ProxyFromEnv()
+		require.NoError(t, err)
+		assert.Empty(t, raw)
+	})
+
+	t.Run("valid URL is returned verbatim", func(t *testing.T) {
+		t.Setenv("GRAFANA_SOCKS5_PROXY", "socks5://127.0.0.1:1080")
+		raw, err := socks5ProxyFromEnv()
+		require.NoError(t, err)
+		assert.Equal(t, "socks5://127.0.0.1:1080", raw)
+	})
+
+	t.Run("invalid URL is an error naming the env var but not the value", func(t *testing.T) {
+		t.Setenv("GRAFANA_SOCKS5_PROXY", "http://user:secretpw@proxy.example.com:1080")
+		_, err := socks5ProxyFromEnv()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "GRAFANA_SOCKS5_PROXY")
+		assert.NotContains(t, err.Error(), "secretpw")
+	})
+}
