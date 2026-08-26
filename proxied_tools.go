@@ -167,7 +167,22 @@ func accessibleOrgIDs(ctx context.Context, logger *slog.Logger) (orgs []int64, c
 	if len(ids) == 0 {
 		return []int64{connectionOrg}, connectionOrg
 	}
-	if !slices.Contains(ids, connectionOrg) {
+	if connectionOrg <= 0 {
+		// /api/org was unavailable and no org is configured, so a call that omits
+		// orgId lands on the identity's own org. Ask for that directly: leaving it
+		// at 0 would both discover the same datasources a second time under a
+		// placeholder key (0 scopes no request, so it sees the identity's own org
+		// again) and leave connectionOrgID at 0, which no discovered client is
+		// keyed by.
+		if persisted, err := UserPersistedOrgID(ctx); err == nil && persisted > 0 {
+			connectionOrg = persisted
+		} else {
+			logger.DebugContext(ctx, "could not resolve the connection org; a call omitting orgId has no org to target", "error", err)
+		}
+	}
+	// Only a real org is worth discovering, and appending a non-positive one would
+	// duplicate the identity's own org under a placeholder key.
+	if connectionOrg > 0 && !slices.Contains(ids, connectionOrg) {
 		ids = append(ids, connectionOrg)
 	}
 	return ids, connectionOrg

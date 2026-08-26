@@ -13,15 +13,31 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// orgsTestServer serves the /api/org and /api/user/orgs endpoints used by
-// accessibleOrgIDs. userOrgsStatus controls the /api/user/orgs response.
+// orgsTestServer serves the /api/org, /api/user and /api/user/orgs endpoints used
+// by accessibleOrgIDs. userOrgsStatus controls the /api/user/orgs response.
 func orgsTestServer(t *testing.T, userOrgsStatus int, userOrgsBody string) *httptest.Server {
+	return orgsTestServerWithOrg(t, `{"id":1,"name":"Main Org."}`, http.StatusOK, userOrgsStatus, userOrgsBody)
+}
+
+// orgsTestServerWithOrg additionally controls /api/org (orgBody, or a 404 when
+// empty) and /api/user (userStatus), so the degraded paths can be exercised.
+func orgsTestServerWithOrg(t *testing.T, orgBody string, userStatus, userOrgsStatus int, userOrgsBody string) *httptest.Server {
 	t.Helper()
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/api/org":
-			_, _ = w.Write([]byte(`{"id":1,"name":"Main Org."}`))
+			if orgBody == "" {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			_, _ = w.Write([]byte(orgBody))
+		case "/api/user":
+			if userStatus != http.StatusOK {
+				w.WriteHeader(userStatus)
+				return
+			}
+			_, _ = w.Write([]byte(`{"orgId":3}`))
 		case "/api/user/orgs":
 			if userOrgsStatus != http.StatusOK {
 				w.WriteHeader(userOrgsStatus)
@@ -79,6 +95,43 @@ func TestAccessibleOrgIDs(t *testing.T) {
 		orgs, def := accessibleOrgIDs(ctx, logger)
 		assert.ElementsMatch(t, []int64{1, 2}, orgs)
 		assert.Equal(t, int64(1), def)
+	})
+}
+
+// A zero connection org must never reach the discovery list: 0 scopes no request,
+// so it would rediscover the identity's own org under a placeholder key, doubling
+// the clients for those datasources, and would leave connectionOrgID at 0, which
+// no discovered client is keyed by.
+func TestAccessibleOrgIDsZeroConnectionOrg(t *testing.T) {
+	logger := slog.Default()
+	DynamicMultiOrgEnabled = true
+	t.Cleanup(func() { DynamicMultiOrgEnabled = false })
+
+	t.Run("falls back to the identity's own org when /api/org is unavailable", func(t *testing.T) {
+		// /api/org 404s and nothing is configured, but /api/user reports org 3.
+		ts := orgsTestServerWithOrg(t, "", http.StatusOK, http.StatusOK, `[{"orgId":1},{"orgId":2}]`)
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{URL: ts.URL})
+		orgs, connectionOrg := accessibleOrgIDs(ctx, logger)
+		assert.Equal(t, int64(3), connectionOrg, "a call omitting orgId must target a real org")
+		assert.ElementsMatch(t, []int64{1, 2, 3}, orgs)
+		assert.NotContains(t, orgs, int64(0), "0 must never be discovered")
+	})
+
+	t.Run("no placeholder org when neither endpoint can resolve one", func(t *testing.T) {
+		ts := orgsTestServerWithOrg(t, "", http.StatusForbidden, http.StatusOK, `[{"orgId":1},{"orgId":2}]`)
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{URL: ts.URL})
+		orgs, connectionOrg := accessibleOrgIDs(ctx, logger)
+		assert.Equal(t, int64(0), connectionOrg)
+		assert.ElementsMatch(t, []int64{1, 2}, orgs, "membership is still discovered, without a 0 entry")
+		assert.NotContains(t, orgs, int64(0))
+	})
+
+	t.Run("a configured org is used when /api/org is unavailable", func(t *testing.T) {
+		ts := orgsTestServerWithOrg(t, "", http.StatusOK, http.StatusOK, `[{"orgId":1},{"orgId":2}]`)
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{URL: ts.URL, OrgID: 7})
+		orgs, connectionOrg := accessibleOrgIDs(ctx, logger)
+		assert.Equal(t, int64(7), connectionOrg, "GRAFANA_ORG_ID wins over the persisted org")
+		assert.ElementsMatch(t, []int64{1, 2, 7}, orgs)
 	})
 }
 
