@@ -39,16 +39,31 @@ func newGraphiteClient(ctx context.Context, uid string) (*GraphiteClient, error)
 	cfg := mcpgrafana.GrafanaConfigFromContext(ctx)
 	grafanaURL := cfg.URL
 	resourcesBase, proxyBase := datasourceProxyPaths(uid)
-	baseURL := grafanaURL + proxyBase
+	primaryBase, fallbackBase := proxyBase, resourcesBase
+	legacyMode := false
+	if numericBase, uidBase, ok := fallbackProxyBases(ctx, uid); ok {
+		// Legacy-compatible routing — see newPrometheusBackend for the full
+		// rationale: route through the numeric-id proxy path directly, keeping
+		// the uid-based proxy route as the transport-level fallback.
+		primaryBase, fallbackBase = numericBase, uidBase
+		legacyMode = true
+	}
+	baseURL := grafanaURL + primaryBase
 
 	transport, err := mcpgrafana.BuildTransport(&cfg, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create custom transport: %w", err)
 	}
 
-	// Wrap with fallback transport: try /proxy first, fall back to /resources
-	// on 403/500 for compatibility with different managed Grafana deployments.
-	rt := newDatasourceFallbackTransport(transport, proxyBase, resourcesBase)
+	// Wrap with fallback transport: try the primary base first, fall back to
+	// the alternate for compatibility with different Grafana deployments (see
+	// fallback_transport.go for the per-mode retry rules).
+	var rt http.RoundTripper
+	if legacyMode {
+		rt = newLegacyDatasourceFallbackTransport(transport, primaryBase, fallbackBase)
+	} else {
+		rt = newDatasourceFallbackTransport(transport, primaryBase, fallbackBase)
+	}
 
 	client := &http.Client{Transport: rt}
 	return &GraphiteClient{httpClient: client, baseURL: baseURL}, nil

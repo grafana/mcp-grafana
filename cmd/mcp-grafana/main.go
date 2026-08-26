@@ -9,7 +9,9 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -23,6 +25,33 @@ import (
 	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"go.opentelemetry.io/otel/semconv/v1.40.0/mcpconv"
 )
+
+const defaultServerName = "mcp-grafana"
+
+var serverNamePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*$`)
+
+func validateServerName(name string) error {
+	if name == "" {
+		return fmt.Errorf("server name must not be empty; expected 1–128 characters matching %s", serverNamePattern)
+	}
+	if len(name) > 128 {
+		return fmt.Errorf("server name %q is too long (%d characters); maximum is 128", name, len(name))
+	}
+	if !serverNamePattern.MatchString(name) {
+		return fmt.Errorf("server name %q contains invalid characters; must match %s (start with alphanumeric, then alphanumerics, dots, hyphens, or underscores)", name, serverNamePattern)
+	}
+	return nil
+}
+
+func resolveServerName(flagValue string, flagExplicitlySet bool, envValue, defaultValue string) string {
+	if flagExplicitlySet {
+		return flagValue
+	}
+	if envValue != "" {
+		return envValue
+	}
+	return defaultValue
+}
 
 func maybeAddTools(s *server.MCPServer, tf func(*server.MCPServer), enabledTools []string, disable bool, category string) {
 	if !slices.Contains(enabledTools, category) {
@@ -76,7 +105,7 @@ var categoryDescription = map[string]string{
 	"api":           "API: Make authenticated HTTP requests to any Grafana API endpoint with optional jq-style response filtering.",
 	"config":        "Config: Generate operator-facing configuration snippets (e.g. Alloy label-enforcement pipelines).",
 	"provisioning":  "Provisioning: List provisioning repositories (e.g. git-sync sources) to discover repository slugs for use with rendering tools.",
-	"agento11y":     "Agent Observability: Search and inspect LLM conversations, generations, and evaluation scores from Grafana Agent Observability, read its agent catalog (system prompts, tools, version history, and per-version scores), and read or manage its eval configuration (evaluators, templates, eval rules, and guards) and its curated saved conversations and collections.",
+	"agento11y":     "Agent Observability: Search and inspect LLM conversations, generations, and evaluation scores from Grafana Agent Observability. Read its agent catalog (system prompts, tools, version history, and per-version scores). Read or manage its eval configuration (evaluators, templates, eval rules, and guards), its curated saved conversations and collections, its offline experiments with their trials and scores, and the versioned test suites those experiments run against.",
 	"assistant":     "Assistant: Ask Grafana Assistant open-ended questions and get a full text reply (requires the Grafana Assistant plugin).",
 	"user":          "User: Identify the current user/credential, its capabilities, and the organizations it can access.",
 }
@@ -107,6 +136,11 @@ type grafanaConfig struct {
 
 	// Loki configuration
 	maxLokiLogLimit int
+
+	// Loki query cost guardrail configuration
+	lokiGuardrailMode     string
+	lokiGuardrailMaxBytes int64
+	lokiGuardrailMaxRange time.Duration
 
 	// includeArgsInSpans enables logging of tool arguments in OpenTelemetry spans.
 	includeArgsInSpans bool
@@ -172,11 +206,75 @@ func (gc *grafanaConfig) addFlags() {
 	// Loki configuration flags
 	flag.IntVar(&gc.maxLokiLogLimit, "max-loki-log-limit", tools.MaxLokiLogLimit, "Maximum number of log lines returned per query_loki_logs call")
 
+	// Loki query cost guardrail flags
+	flag.StringVar(&gc.lokiGuardrailMode, "loki-guardrail-mode", mcpgrafana.LokiGuardrailOff, "Loki query cost guardrail mode for query_loki_logs: 'off' (default), 'shadow' (evaluate and log queries that would be blocked, but let them run; still pays the index/stats round trip), or 'enforce' (reject blocked queries with rewrite guidance). Falls back to the GRAFANA_LOKI_GUARDRAIL_MODE environment variable when the flag is not set.")
+	flag.Int64Var(&gc.lokiGuardrailMaxBytes, "loki-guardrail-max-bytes", 100<<30, "Maximum bytes a single query_loki_logs call may scan, estimated via Loki's index/stats API before running the query. 0 disables the byte-budget check. Only applies when the guardrail is not 'off'. Falls back to the GRAFANA_LOKI_GUARDRAIL_MAX_BYTES environment variable when the flag is not set.")
+	flag.DurationVar(&gc.lokiGuardrailMaxRange, "loki-guardrail-max-range", 24*time.Hour, "Maximum effective time range for a single query_loki_logs call, including range-vector durations like [30d]. Accepts Go duration strings, e.g. 24h. 0 disables the range check. Only applies when the guardrail is not 'off'. Falls back to the GRAFANA_LOKI_GUARDRAIL_MAX_RANGE environment variable when the flag is not set.")
+
 	flag.BoolVar(&gc.includeArgsInSpans, "include-args-in-spans", false, "Include tool call arguments in OpenTelemetry spans. Only enable in non-production environments or when arguments are known not to contain PII.")
 	flag.DurationVar(&gc.timeout, "grafana-timeout", mcpgrafana.DefaultGrafanaClientTimeout, "Time limit for requests made by the Grafana client. Accepts Go duration strings, e.g. 10s, 500ms.")
 
 	// Multi-org: allow per-call org selection via an optional orgId argument.
 	flag.BoolVar(&gc.dynamicMultiOrg, "dynamic-multi-org", false, "Allow tool calls to select a Grafana organization per call via an optional orgId argument (org is otherwise fixed at connection startup). Adds an orgId argument to every tool's schema.")
+}
+
+// applyLokiGuardrailEnv fills guardrail settings from GRAFANA_LOKI_GUARDRAIL_*
+// environment variables for flags not set on the command line. Explicit flags
+// win; the env fallback exists because container/sidecar deployments (the
+// guardrail's main audience) configure via environment.
+func (gc *grafanaConfig) applyLokiGuardrailEnv(setFlags map[string]bool) error {
+	if v := os.Getenv("GRAFANA_LOKI_GUARDRAIL_MODE"); v != "" && !setFlags["loki-guardrail-mode"] {
+		gc.lokiGuardrailMode = v
+	}
+	if v := os.Getenv("GRAFANA_LOKI_GUARDRAIL_MAX_BYTES"); v != "" && !setFlags["loki-guardrail-max-bytes"] {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			return fmt.Errorf("invalid GRAFANA_LOKI_GUARDRAIL_MAX_BYTES %q: %w", v, err)
+		}
+		gc.lokiGuardrailMaxBytes = n
+	}
+	if v := os.Getenv("GRAFANA_LOKI_GUARDRAIL_MAX_RANGE"); v != "" && !setFlags["loki-guardrail-max-range"] {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return fmt.Errorf("invalid GRAFANA_LOKI_GUARDRAIL_MAX_RANGE %q: %w", v, err)
+		}
+		gc.lokiGuardrailMaxRange = d
+	}
+	return nil
+}
+
+// socks5ProxyFromEnv reads GRAFANA_SOCKS5_PROXY and validates it so a
+// misconfigured proxy fails at startup instead of surfacing later when the
+// first Grafana client is built. The error names the env var but never the
+// raw value, which may contain proxy credentials. Extracted from main so the
+// handling is unit-testable.
+func socks5ProxyFromEnv() (string, error) {
+	raw := os.Getenv("GRAFANA_SOCKS5_PROXY")
+	if raw == "" {
+		return "", nil
+	}
+	if err := mcpgrafana.ValidateSOCKS5ProxyURL(raw); err != nil {
+		return "", fmt.Errorf("invalid GRAFANA_SOCKS5_PROXY: %w", err)
+	}
+	return raw, nil
+}
+
+// validateLokiGuardrail rejects invalid guardrail settings (unknown mode,
+// negative limits) after flag and env processing. Extracted from main so the
+// validation is unit-testable.
+func (gc *grafanaConfig) validateLokiGuardrail() error {
+	switch gc.lokiGuardrailMode {
+	case mcpgrafana.LokiGuardrailOff, mcpgrafana.LokiGuardrailShadow, mcpgrafana.LokiGuardrailEnforce:
+	default:
+		return fmt.Errorf("invalid Loki guardrail mode %q (--loki-guardrail-mode or GRAFANA_LOKI_GUARDRAIL_MODE): must be one of off, shadow, enforce", gc.lokiGuardrailMode)
+	}
+	if gc.lokiGuardrailMaxBytes < 0 {
+		return fmt.Errorf("invalid Loki guardrail max bytes %d (--loki-guardrail-max-bytes or GRAFANA_LOKI_GUARDRAIL_MAX_BYTES): must be >= 0 (0 disables the byte-budget check)", gc.lokiGuardrailMaxBytes)
+	}
+	if gc.lokiGuardrailMaxRange < 0 {
+		return fmt.Errorf("invalid Loki guardrail max range %s (--loki-guardrail-max-range or GRAFANA_LOKI_GUARDRAIL_MAX_RANGE): must be >= 0 (0 disables the range check)", gc.lokiGuardrailMaxRange)
+	}
+	return nil
 }
 
 // toolEntry pairs a tool registration function with its category and disable flag.
@@ -203,7 +301,7 @@ func (dt *disabledTools) toolEntries() []toolEntry {
 		{func(mcp *server.MCPServer) { tools.AddAlertingTools(mcp, enableWriteTools) }, dt.alerting, "alerting"},
 		{func(mcp *server.MCPServer) { tools.AddDashboardTools(mcp, enableWriteTools) }, dt.dashboard, "dashboard"},
 		{func(mcp *server.MCPServer) { tools.AddFolderTools(mcp, enableWriteTools) }, dt.folder, "folder"},
-		{tools.AddOnCallTools, dt.oncall, "oncall"},
+		{func(mcp *server.MCPServer) { tools.AddOnCallTools(mcp, enableWriteTools) }, dt.oncall, "oncall"},
 		{tools.AddAssertsTools, dt.asserts, "asserts"},
 		{func(mcp *server.MCPServer) { tools.AddSiftTools(mcp, enableWriteTools) }, dt.sift, "sift"},
 		{tools.AddAdminTools, dt.admin, "admin"},
@@ -282,9 +380,10 @@ func (dt *disabledTools) buildInstructions() string {
 	return b.String()
 }
 
-func newServer(transport string, dt disabledTools, obs *observability.Observability, sessionIdleTimeoutMinutes int) (*server.MCPServer, *mcpgrafana.ToolManager, *mcpgrafana.SessionManager) {
+func newServer(serverName, transport string, dt disabledTools, obs *observability.Observability, sessionIdleTimeoutMinutes int) (*server.MCPServer, *mcpgrafana.ToolManager, *mcpgrafana.SessionManager) {
 	sm := mcpgrafana.NewSessionManager(
-		mcpgrafana.WithSessionTTL(time.Duration(sessionIdleTimeoutMinutes) * time.Minute),
+		mcpgrafana.WithSessionTTL(time.Duration(sessionIdleTimeoutMinutes)*time.Minute),
+		mcpgrafana.WithSessionMeterProvider(obs.MeterProvider()),
 	)
 
 	// Declare variables that will be initialized after server creation.
@@ -361,19 +460,20 @@ func newServer(transport string, dt disabledTools, obs *observability.Observabil
 		// org for that call). Only wired in when --dynamic-multi-org is set.
 		serverOpts = append(serverOpts, server.WithToolHandlerMiddleware(mcpgrafana.OrgIDOverrideMiddleware))
 	}
-	s = server.NewMCPServer("mcp-grafana", mcpgrafana.Version(), serverOpts...)
+	s = server.NewMCPServer(serverName, mcpgrafana.Version(), serverOpts...)
 
 	// Initialize ToolManager now that server is created
-	stm = mcpgrafana.NewToolManager(sm, s, mcpgrafana.WithProxiedTools(!dt.proxied), mcpgrafana.WithToolManagerLogger(slog.Default()))
+	stm = mcpgrafana.NewToolManager(sm, s,
+		mcpgrafana.WithProxiedTools(!dt.proxied),
+		mcpgrafana.WithToolManagerLogger(slog.Default()),
+		mcpgrafana.WithToolManagerMeterProvider(obs.MeterProvider()),
+	)
 
 	// Give the SessionManager a reference to the MCPServer so the reaper can
 	// unregister sessions from the SDK's internal session map.
+	// (NewToolManager above already wires the SessionManager's ToolManager
+	// reference back onto sm, so no separate SetToolManager call is needed here.)
 	sm.SetMCPServer(s)
-
-	// Give the SessionManager a reference to the ToolManager so tearing down a
-	// session releases its reference to the shared proxied tool set (closing the
-	// underlying clients only when the last session using them is gone).
-	sm.SetToolManager(stm)
 
 	dt.processTools(s)
 	mcpgrafana.RegisterAppResources(s)
@@ -587,7 +687,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 	// The otelslog bridge attaches trace_id / span_id from context, so log
 	// records correlate with the spans mcp-grafana already emits.
 	if lp := o.LoggerProvider(); lp != nil {
-		otlpHandler := otelslog.NewHandler("mcp-grafana", otelslog.WithLoggerProvider(lp))
+		otlpHandler := otelslog.NewHandler(defaultServerName, otelslog.WithLoggerProvider(lp))
 		slog.SetDefault(slog.New(observability.NewFanoutHandler(stderrHandler, otlpHandler)))
 		// Announce through the fanout so both stderr and OTLP subscribers see
 		// the startup signal. If the first OTLP batch fails, the stderr branch
@@ -601,15 +701,22 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		slog.Info("OTLP trace export configured", "endpoint", observability.OTLPTracesEndpoint())
 	}
 
+	// Instrumentation that lives inside tool handlers (the Loki cost
+	// guardrail) has no constructor to take a meter provider option, so it
+	// reads one off the GrafanaConfig instead. Set explicitly rather than
+	// relying on otel.GetMeterProvider() so the counters land on this
+	// process's provider.
+	gc.MeterProvider = o.MeterProvider()
+
 	// Create a client cache for HTTP-based transports to avoid per-request
 	// transport allocation (see https://github.com/grafana/mcp-grafana/issues/682).
 	var clientCache *mcpgrafana.ClientCache
 	if transport != "stdio" {
-		clientCache = mcpgrafana.NewClientCache(nil)
+		clientCache = mcpgrafana.NewClientCache(nil, mcpgrafana.WithClientCacheMeterProvider(o.MeterProvider()))
 		defer clientCache.Close()
 	}
 
-	s, tm, sm := newServer(transport, dt, o, sessionIdleTimeoutMinutes)
+	s, tm, sm := newServer(obs.ServerName, transport, dt, o, sessionIdleTimeoutMinutes)
 	defer sm.Close()
 
 	// Create a context that will be cancelled on shutdown
@@ -752,6 +859,8 @@ func main() {
 		"stdio",
 		"Transport type (stdio, sse or streamable-http)",
 	)
+	var serverName string
+	flag.StringVar(&serverName, "server-name", defaultServerName, "Server name used in the MCP handshake and OTel service.name. Overrides GRAFANA_MCP_SERVER_NAME env var.")
 	addr := flag.String("address", "localhost:8000", "The host and port to start the sse server on")
 	basePath := flag.String("base-path", "", "Base path for the sse server")
 	endpointPath := flag.String("endpoint-path", "/mcp", "Endpoint path for the streamable-http server")
@@ -792,6 +901,42 @@ func main() {
 		os.Exit(2)
 	}
 
+	serverNameFlagSet := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "server-name" {
+			serverNameFlagSet = true
+		}
+	})
+	serverName = resolveServerName(serverName, serverNameFlagSet, os.Getenv("GRAFANA_MCP_SERVER_NAME"), defaultServerName)
+	if err := validateServerName(serverName); err != nil {
+		source := "--server-name"
+		if !serverNameFlagSet {
+			source = "GRAFANA_MCP_SERVER_NAME"
+		}
+		fmt.Fprintf(os.Stderr, "invalid %s: %v\n", source, err)
+		os.Exit(2)
+	}
+
+	setFlags := map[string]bool{}
+	flag.Visit(func(f *flag.Flag) { setFlags[f.Name] = true })
+	if err := gc.applyLokiGuardrailEnv(setFlags); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	if err := gc.validateLokiGuardrail(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	if gc.lokiGuardrailMode != mcpgrafana.LokiGuardrailOff {
+		slog.Info("Loki guardrail enabled", "mode", gc.lokiGuardrailMode, "max_bytes", gc.lokiGuardrailMaxBytes, "max_range", gc.lokiGuardrailMaxRange)
+	}
+
+	socks5Proxy, err := socks5ProxyFromEnv()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+
 	// Enable per-call org selection before any tools are registered, so their
 	// schemas and the override middleware are wired in consistently.
 	mcpgrafana.DynamicMultiOrgEnabled = gc.dynamicMultiOrg
@@ -800,8 +945,12 @@ func main() {
 	grafanaConfig := mcpgrafana.GrafanaConfig{
 		Debug:                   gc.debug,
 		MaxLokiLogLimit:         gc.maxLokiLogLimit,
+		LokiGuardrailMode:       gc.lokiGuardrailMode,
+		LokiGuardrailMaxBytes:   gc.lokiGuardrailMaxBytes,
+		LokiGuardrailMaxRange:   gc.lokiGuardrailMaxRange,
 		IncludeArgumentsInSpans: gc.includeArgsInSpans,
 		Timeout:                 gc.timeout,
+		SOCKS5ProxyURL:          socks5Proxy,
 	}
 	if gc.tlsCertFile != "" || gc.tlsKeyFile != "" || gc.tlsCAFile != "" || gc.tlsSkipVerify {
 		grafanaConfig.TLSConfig = &mcpgrafana.TLSConfig{
@@ -813,7 +962,7 @@ func main() {
 	}
 
 	// Set OTel resource identity
-	obs.ServerName = "mcp-grafana"
+	obs.ServerName = serverName
 	obs.ServerVersion = mcpgrafana.Version()
 
 	// Map transport flag to semconv network.transport values

@@ -655,6 +655,109 @@ func manageAgento11yEvalCollectionsDescription(readOnly bool) string {
 	)
 }
 
+const manageAgento11yExperimentsDescriptionFmt = `%s
+
+An experiment is one offline run of an agent over a test suite. Each test case in the suite produces one or more trials, each trial is scored by the experiment's evaluators, and the experiment reports a pass rate. Experiments are created by SDK runners, not from here.
+
+Operations:
+- 'list': experiments in this tenant, filterable by suite_id, status, source, created_by, tag, and a created_at or completed_at window. Each row carries the same result summary as 'get', so finding the experiment that regressed needs no second call
+- 'get': one experiment with its result summary: pass rate, average final score, total cost and tokens
+- 'get_report': the per-test-case breakdown, trimmed by row_limit. The test case input and expected values, the score records, and the artifact records are dropped because those fields have no size bound; each trial keeps its error message, a score_count, an artifact_count, and the IDs the drill-downs take
+- 'list_trials': one experiment's trials, paginated. Prefer this over 'get_report' on a large suite. It reports no cost or token counts: only the report path fills those in
+- 'list_scores': every score in one experiment, paginated
+- 'get_trial': one trial in full, including the test case snapshot with its input and expected values
+- 'list_trial_scores': one trial's scores, with the explanation each judge wrote
+- 'list_trial_artifacts': one trial's artifact metadata, with a content_ref rather than the bytes
+- 'list_facets': the distinct suites, owners, and tags across every experiment in the tenant, for building a 'list' filter. Only source, from, and to narrow it; it rejects a filter it would otherwise have to ignore%s
+
+Size: 'get_report' is fetched whole before it is trimmed, and a response above 10 MiB fails the call rather than arriving truncated.
+
+Pagination: when a response carries next_cursor, call the same operation again with cursor set to it, repeating the first page's filters with absolute RFC3339 times. A relative bound such as now-7d re-resolves between calls and moves the window the cursor was issued against, so it is rejected alongside a cursor.
+
+Permissions: reads need grafana-agento11y-app.data:read (Agento11y Editor or Admin). %s
+
+When to use:
+- Finding the last experiment for a suite after a suspected regression: 'list' by suite_id, then read the pass rate off the row
+- Finding which test cases an experiment failed on, then reading one failing trial in full%s
+
+When NOT to use:
+- Reading scores on live production traffic (use agento11y_manage_generations and agento11y_manage_conversations)
+- Inspecting the test cases a suite defines, or editing them (use agento11y_manage_test_suites)
+- Inspecting what an evaluator checks (use agento11y_manage_evaluators)%s`
+
+func manageAgento11yExperimentsDescription(readOnly bool) string {
+	if readOnly {
+		return fmt.Sprintf(manageAgento11yExperimentsDescriptionFmt,
+			"Read the offline experiments of Grafana Agent Observability (the grafana-agento11y-app plugin), their trials, and their scores.",
+			"",
+			"This variant performs no writes.",
+			"",
+			"\n- Renaming, retagging, or stopping an experiment (read-only tool)",
+		)
+	}
+	return fmt.Sprintf(manageAgento11yExperimentsDescriptionFmt,
+		"Manage the offline experiments of Grafana Agent Observability (the grafana-agento11y-app plugin), their trials, and their scores.",
+		`
+- 'update': patch an experiment's name, description, tags, or metadata. Only the experiment's created_by may patch it, so patching an experiment someone else started answers 401
+- 'cancel': stop a running experiment. It checks no owner, so any caller with the write permission can stop any experiment. An experiment that already finished is left alone: the call answers 200 and returns it unchanged instead of failing, so read the status on the result rather than assume a run was stopped`,
+		"Both writes need grafana-agento11y-app.eval:write, granted only by the Agento11y Admin role; an Editor token gets 403.",
+		`
+- Labelling an experiment after triage, so 'list' by tag finds it later
+- Stopping an experiment that is burning judge tokens on a broken candidate`,
+		"",
+	)
+}
+
+const manageAgento11yTestSuitesDescriptionFmt = `%s
+
+A test suite is the input side of an offline experiment: a named set of test cases that an SDK runner replays against an agent. Suites are versioned, and a test case belongs to one version rather than to the suite, so every test case operation takes both suite_id and version.
+
+A version is either a draft or published. A draft accepts test case edits; publishing freezes it and makes it the suite's latest_version, which is the version a runner picks up. A suite has at most one draft at a time.
+
+Operations:
+- 'list_suites': the test suites in this tenant, newest first. The rows carry no version history
+- 'get_suite': one suite with its full version history under versions
+- 'list_test_cases': the test cases of one suite version, oldest first, paginated
+- 'get_test_case': one test case in full, with its free-form input and expected values%s
+
+Pagination: when a response carries next_cursor, call the same operation again with cursor set to it.
+
+Permissions: reads need grafana-agento11y-app.data:read (Agento11y Editor or Admin). %s
+
+When to use:
+- Reading the test cases at the version an experiment used, after it reported a failing case%s
+
+When NOT to use:
+- Reading how a suite scored, or the trials, scores, and artifacts behind it (use agento11y_manage_experiments)
+- Changing what an evaluator checks (use agento11y_manage_evaluators)%s`
+
+func manageAgento11yTestSuitesDescription(readOnly bool) string {
+	if readOnly {
+		return fmt.Sprintf(manageAgento11yTestSuitesDescriptionFmt,
+			"Read the test suites of Grafana Agent Observability (the grafana-agento11y-app plugin), their versions, and their test cases.",
+			"",
+			"This variant performs no writes.",
+			"",
+			"\n- Editing a suite, its versions, or its test cases (read-only tool)",
+		)
+	}
+	return fmt.Sprintf(manageAgento11yTestSuitesDescriptionFmt,
+		"Manage the test suites of Grafana Agent Observability (the grafana-agento11y-app plugin), their versions, and their test cases.",
+		`
+- 'create_suite': a new empty suite. It has no version yet, so follow it with 'create_draft_version'
+- 'update_suite': patch a suite's name, description, or tags
+- 'create_draft_version': open a new editable version. A suite that already has a draft answers 409
+- 'publish_version': freeze a draft. There is no unpublish; a published version answers 409 to a second publish and to every test case edit, so changing a published suite means a new draft
+- 'upsert_test_case': write a whole test case into a draft version. It replaces the stored case rather than merging into it, so a field left out is cleared; read the case with 'get_test_case' first and send it back complete
+- 'delete_test_case': remove one test case from a draft version. Deleting a test case that is already gone answers 404`,
+		"Every write needs grafana-agento11y-app.eval:write, granted only by the Agento11y Admin role; an Editor token gets 403.",
+		`
+- Adding a regression case to a suite, then publishing the draft so the next experiment picks it up
+- Correcting a test case whose expected value was wrong`,
+		"",
+	)
+}
+
 var ManageAgento11yEvaluatorsRead = mcpgrafana.MustTool(
 	"agento11y_manage_evaluators",
 	manageAgento11yEvaluatorsDescription(true),
@@ -682,6 +785,28 @@ var ManageAgento11yEvalCollectionsRead = mcpgrafana.MustTool(
 	manageAgento11yEvalCollectionsDescription(true),
 	manageAgento11yEvalCollectionsRead,
 	mcp.WithTitleAnnotation("Manage Agent Observability saved conversations and collections"),
+	mcp.WithIdempotentHintAnnotation(true),
+	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
+)
+
+var ManageAgento11yExperimentsRead = mcpgrafana.MustTool(
+	"agento11y_manage_experiments",
+	manageAgento11yExperimentsDescription(true),
+	manageAgento11yExperimentsRead,
+	mcp.WithTitleAnnotation("Manage Agent Observability experiments"),
+	mcp.WithIdempotentHintAnnotation(true),
+	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
+)
+
+var ManageAgento11yTestSuitesRead = mcpgrafana.MustTool(
+	"agento11y_manage_test_suites",
+	manageAgento11yTestSuitesDescription(true),
+	manageAgento11yTestSuitesRead,
+	mcp.WithTitleAnnotation("Manage Agent Observability test suites"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
 	mcp.WithDestructiveHintAnnotation(false),
@@ -718,6 +843,26 @@ var ManageAgento11yEvalCollectionsReadWrite = mcpgrafana.MustTool(
 	mcp.WithOpenWorldHintAnnotation(false),
 )
 
+var ManageAgento11yExperimentsReadWrite = mcpgrafana.MustTool(
+	"agento11y_manage_experiments",
+	manageAgento11yExperimentsDescription(false),
+	manageAgento11yExperimentsReadWrite,
+	mcp.WithTitleAnnotation("Manage Agent Observability experiments"),
+	mcp.WithReadOnlyHintAnnotation(false),
+	mcp.WithDestructiveHintAnnotation(true),
+	mcp.WithOpenWorldHintAnnotation(false),
+)
+
+var ManageAgento11yTestSuitesReadWrite = mcpgrafana.MustTool(
+	"agento11y_manage_test_suites",
+	manageAgento11yTestSuitesDescription(false),
+	manageAgento11yTestSuitesReadWrite,
+	mcp.WithTitleAnnotation("Manage Agent Observability test suites"),
+	mcp.WithReadOnlyHintAnnotation(false),
+	mcp.WithDestructiveHintAnnotation(true),
+	mcp.WithOpenWorldHintAnnotation(false),
+)
+
 func AddAgento11yTools(mcp *server.MCPServer, enableWriteTools bool) {
 	ManageAgento11yConversations.Register(mcp)
 	ManageAgento11yGenerations.Register(mcp)
@@ -726,9 +871,13 @@ func AddAgento11yTools(mcp *server.MCPServer, enableWriteTools bool) {
 		ManageAgento11yEvaluatorsReadWrite.Register(mcp)
 		ManageAgento11yEvalRulesReadWrite.Register(mcp)
 		ManageAgento11yEvalCollectionsReadWrite.Register(mcp)
+		ManageAgento11yExperimentsReadWrite.Register(mcp)
+		ManageAgento11yTestSuitesReadWrite.Register(mcp)
 	} else {
 		ManageAgento11yEvaluatorsRead.Register(mcp)
 		ManageAgento11yEvalRulesRead.Register(mcp)
 		ManageAgento11yEvalCollectionsRead.Register(mcp)
+		ManageAgento11yExperimentsRead.Register(mcp)
+		ManageAgento11yTestSuitesRead.Register(mcp)
 	}
 }

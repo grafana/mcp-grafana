@@ -28,6 +28,8 @@ func TestToolMetricDimsMatchToolEnums(t *testing.T) {
 		{"alerting_manage_routing", ManageRoutingParams{}},
 		{"agento11y_manage_conversations", ManageAgento11yConversationsParams{}},
 		{"agento11y_manage_generations", ManageAgento11yGenerationsParams{}},
+		{"agento11y_manage_experiments", ManageAgento11yExperimentsReadWriteParams{}},
+		{"agento11y_manage_test_suites", ManageAgento11yTestSuitesReadWriteParams{}},
 	}
 
 	for _, tc := range cases {

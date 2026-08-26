@@ -60,7 +60,7 @@ func grafanaBaseURLFromContext(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("grafana url not configured. Please set GRAFANA_URL environment variable")
 	}
 
-	// Validate baseURL because gc.PublicURL is populated by fetchPublicURL from Grafana's
+	// Validate baseURL because gc.PublicURL is populated from Grafana's
 	// /api/frontend/settings appUrl response, which is not covered by the
 	// configured URL validation. A misconfigured Grafana can return a malformed appUrl that flows into deeplink construction
 	// (e.g. http://%gg/d/<uid>) unless checked here.
@@ -220,6 +220,10 @@ func shortenURL(ctx context.Context, longURL string) (string, error) {
 	if !strings.HasPrefix(path, "/") {
 		return "", fmt.Errorf("url must include an absolute path")
 	}
+	// Grafana's /api/short-urls endpoint rejects absolute paths
+	// (messageId "shorturl.absolute-path") and requires the path to be
+	// relative, so strip the leading slash before submitting.
+	path = strings.TrimPrefix(path, "/")
 
 	// /api/short-urls rejects absolute paths, so strip the leading slash.
 	relativePath := strings.TrimPrefix(path, "/")

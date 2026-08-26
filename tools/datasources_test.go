@@ -45,6 +45,35 @@ func TestDatasourcesTools(t *testing.T) {
 		assert.Len(t, result.Datasources, 2)
 	})
 
+	t.Run("list datasources by name", func(t *testing.T) {
+		ctx := newTestContext()
+
+		// Case-insensitive substring match on the datasource Name field.
+		// The provisioned names are "InfluxDB Flux" and "InfluxDB InfluxQL";
+		// the lowercase query proves case-insensitivity.
+		result, err := listDatasources(ctx, ListDatasourcesParams{Name: "influxdb"})
+		require.NoError(t, err)
+		uids := make([]string, len(result.Datasources))
+		for i, ds := range result.Datasources {
+			uids[i] = ds.UID
+		}
+		assert.ElementsMatch(t, []string{"influxdb-flux", "influxdb-influxql"}, uids)
+
+		// Name composes with the type filter (AND). "Custom Time" is provisioned
+		// for both an elasticsearch and an opensearch datasource, so the name
+		// substring alone is ambiguous across types; adding the type narrows the
+		// match to just the elasticsearch one.
+		result, err = listDatasources(ctx, ListDatasourcesParams{Type: "elasticsearch", Name: "custom"})
+		require.NoError(t, err)
+		require.Len(t, result.Datasources, 1)
+		assert.Equal(t, "elasticsearch-custom-time", result.Datasources[0].UID)
+
+		// No match returns an empty list.
+		result, err = listDatasources(ctx, ListDatasourcesParams{Name: "does-not-exist"})
+		require.NoError(t, err)
+		assert.Empty(t, result.Datasources)
+	})
+
 	t.Run("get datasource by uid", func(t *testing.T) {
 		ctx := newTestContext()
 		result, err := getDatasource(ctx, GetDatasourceParams{

@@ -26,8 +26,11 @@ type sessionMetrics struct {
 	sessionsReaped metric.Int64Counter // Total sessions removed by the reaper
 }
 
-func newSessionMetrics() sessionMetrics {
-	meter := otel.GetMeterProvider().Meter(sessionMeterName)
+func newSessionMetrics(mp metric.MeterProvider) sessionMetrics {
+	if mp == nil {
+		mp = otel.GetMeterProvider()
+	}
+	meter := mp.Meter(sessionMeterName)
 
 	active, _ := meter.Int64Gauge("mcp.sessions.active",
 		metric.WithDescription("Current number of active MCP sessions"),
@@ -100,16 +103,30 @@ func WithSessionLogger(logger *slog.Logger) SessionManagerOption {
 	}
 }
 
+// WithSessionMeterProvider sets the metric.MeterProvider used to create the
+// SessionManager's OTel instruments. If unset (or passed as nil), the
+// SessionManager falls back to otel.GetMeterProvider(), matching the
+// pre-existing behavior. Callers embedding mcp-grafana as a library and
+// running with a non-global MeterProvider (e.g. because the process resets
+// the global provider to a noop for unrelated reasons) should pass their own
+// provider here so these metrics actually reach a scrapeable registry.
+func WithSessionMeterProvider(mp metric.MeterProvider) SessionManagerOption {
+	return func(sm *SessionManager) {
+		sm.meterProvider = mp
+	}
+}
+
 // SessionManager manages client sessions and their state
 type SessionManager struct {
-	sessions   map[string]*SessionState
-	mutex      sync.RWMutex
-	sessionTTL time.Duration
-	stopReaper chan struct{}
-	reaperDone chan struct{}
-	closeOnce  sync.Once
-	metrics    sessionMetrics
-	logger     *slog.Logger
+	sessions      map[string]*SessionState
+	mutex         sync.RWMutex
+	sessionTTL    time.Duration
+	stopReaper    chan struct{}
+	reaperDone    chan struct{}
+	closeOnce     sync.Once
+	metrics       sessionMetrics
+	meterProvider metric.MeterProvider
+	logger        *slog.Logger
 
 	// mcpServer is an optional reference to the MCP server, used to unregister
 	// sessions from the SDK's internal session map when they are reaped. This
@@ -148,11 +165,11 @@ func NewSessionManager(opts ...SessionManagerOption) *SessionManager {
 		sessionTTL: DefaultSessionTTL,
 		stopReaper: make(chan struct{}),
 		reaperDone: make(chan struct{}),
-		metrics:    newSessionMetrics(),
 	}
 	for _, opt := range opts {
 		opt(sm)
 	}
+	sm.metrics = newSessionMetrics(sm.meterProvider)
 	if sm.logger == nil {
 		sm.logger = slog.Default()
 	}
@@ -338,7 +355,17 @@ func (sm *SessionManager) GetProxiedClient(ctx context.Context, orgID int64, dat
 	tm := sm.toolManager
 	sm.mutex.RUnlock()
 
-	if set == nil || tm == nil {
+	if tm == nil {
+		// Distinct from the "no datasources discovered" case below: this means
+		// the SessionManager was never given a ToolManager reference (a caller
+		// wiring bug — see SetToolManager), not that discovery came up empty.
+		// Every proxied tool call would fail with this until the wiring is
+		// fixed, regardless of how well discovery/registration went, so it's
+		// worth its own message rather than looking like a permissions or
+		// discovery problem.
+		return nil, nil, fmt.Errorf("session manager has no tool manager configured (internal wiring error: SessionManager.SetToolManager was never called)")
+	}
+	if set == nil {
 		return nil, nil, fmt.Errorf("datasource '%s' not found. No %s datasources with MCP support are configured", datasourceUID, datasourceType)
 	}
 

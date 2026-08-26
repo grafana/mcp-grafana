@@ -26,6 +26,11 @@ const (
 	rulesEndpointPath = "/api/prometheus/grafana/api/v1/rules"
 )
 
+const (
+	alertRuleUIDLabel          = "__alert_rule_uid__"
+	alertRuleNamespaceUIDLabel = "__alert_rule_namespace_uid__"
+)
+
 type alertingClient struct {
 	baseURL    *url.URL
 	httpClient *http.Client
@@ -102,10 +107,37 @@ type GetRulesOpts struct {
 	States       []string // Filter by rule state (e.g. "firing", "pending", "normal", "nodata", "error")
 	RuleLimit    int      // Maximum number of rules to return (max 200)
 	LimitAlerts  int      // Maximum number of alert instances per rule (max 200)
+	// IncludeInternalLabels asks Grafana to include internal labels such as
+	// rule UID and namespace UID in Prometheus-compatible responses.
+	IncludeInternalLabels bool
 	// Matchers filters alert instances by labels. Each matcher is JSON-encoded
-	// as a Prometheus matcher object (e.g. {"type":0,"name":"severity","value":"critical"}).
+	// in the shape Grafana expects (e.g. {"name":"severity","value":"critical","isRegex":false,"isEqual":true}).
 	// Multiple matchers are AND-ed together.
 	Matchers []*labels.Matcher
+}
+
+// ruleMatcherJSON is the JSON shape Grafana's Prometheus rules API expects for
+// each `matcher` query parameter. Grafana unmarshals it into an
+// alertmanager pkg/labels.Matcher, which reads the lowercase name/value fields
+// plus the isRegex/isEqual booleans. Prometheus' own labels.Matcher marshals
+// with capitalized field names and a numeric Type instead, which Grafana
+// silently ignores — so we cannot json.Marshal the matcher directly.
+type ruleMatcherJSON struct {
+	Name    string `json:"name"`
+	Value   string `json:"value"`
+	IsRegex bool   `json:"isRegex"`
+	IsEqual bool   `json:"isEqual"`
+}
+
+// toRuleMatcherJSON converts a Prometheus label matcher into the shape Grafana
+// expects, mapping the match type onto the isRegex/isEqual booleans.
+func toRuleMatcherJSON(m *labels.Matcher) ruleMatcherJSON {
+	return ruleMatcherJSON{
+		Name:    m.Name,
+		Value:   m.Value,
+		IsRegex: m.Type == labels.MatchRegexp || m.Type == labels.MatchNotRegexp,
+		IsEqual: m.Type == labels.MatchEqual || m.Type == labels.MatchRegexp,
+	}
 }
 
 func (o *GetRulesOpts) queryValues() url.Values {
@@ -142,8 +174,14 @@ func (o *GetRulesOpts) queryValues() url.Values {
 	if limitAlerts > 0 {
 		params.Set("limit_alerts", strconv.Itoa(limitAlerts))
 	}
+	if o.IncludeInternalLabels {
+		params.Set("includeInternalLabels", "true")
+	}
 	for _, m := range o.Matchers {
-		b, err := json.Marshal(m)
+		if m == nil {
+			continue
+		}
+		b, err := json.Marshal(toRuleMatcherJSON(m))
 		if err != nil {
 			continue
 		}

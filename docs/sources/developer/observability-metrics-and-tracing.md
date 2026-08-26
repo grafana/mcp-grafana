@@ -67,6 +67,33 @@ Arguments are raw client input, so the two argument-derived labels are allowlist
 
 The high-cardinality **target** of a call (the datasource `uid`, else `name`) is never a metric label — it is span-only as `mcp.tool.target`, and empty for calls that name no entity (see below).
 
+### Loki cost guardrail metrics
+
+When the [Loki query cost guardrail](../../configure/command-line-flags/) is enabled (`--loki-guardrail-mode` is `shadow` or `enforce`), every `query_loki_logs` call it evaluates increments exactly one of four counters:
+
+| Metric | Type | Incremented when |
+|--------|------|------------------|
+| `mcp_loki_guardrail_admitted_total` | Counter | The query passed every enabled check |
+| `mcp_loki_guardrail_would_block_total` | Counter | The query failed a check in `shadow` mode and ran anyway |
+| `mcp_loki_guardrail_blocked_total` | Counter | The query failed a check in `enforce` mode and was rejected |
+| `mcp_loki_guardrail_fail_open_total` | Counter | The guardrail could not reach a verdict and admitted the query |
+
+The four partition the guarded population, so their sum is the number of calls the guardrail evaluated, and each is a query count rather than a check count.
+
+**Labels:**
+
+| Label | On | Values |
+|-------|-----|--------|
+| `reason` | `would_block`, `blocked` | `selector` (no selective label matcher), `range` (effective time range over the cap), `bytes` (index/stats estimate over the budget) |
+| `cause` | `fail_open` | `unparseable` (no stream selector the scanner recognises), `estimate_failed` (index/stats unavailable) |
+| `backend` | all four | `loki`, `victorialogs`, `unknown` |
+
+A query can trip more than one check. It is counted **once**, labelled with the check that ran first — `selector`, then `range`, then `bytes`. That ordering is deliberate: the selectivity check is unconditional, so a query attributed to `selector` would not be admitted by raising `--loki-guardrail-max-range` or `--loki-guardrail-max-bytes`. When promoting from `shadow` to `enforce`, read `sum(rate(mcp_loki_guardrail_would_block_total[5m]))` for the size of the affected population and `sum by (reason) (...)` for whether tuning the bounds would shrink it.
+
+Watch `mcp_loki_guardrail_fail_open_total` alongside them: a quiet `would_block` rate means "nothing would be blocked" only if the fail-open rate is also low. A high `cause="unparseable"` rate on `backend="loki"` means the guardrail's LogQL scanner does not recognise the query shapes in use, which calls for improving the scanner rather than tuning the bounds. On `backend="victorialogs"` a high `unparseable` rate is expected — brace-less LogsQL is the normal shape there, and the byte-budget check never runs on that backend at all, which is why `backend` is a label rather than being folded together.
+
+Neither the stream selector nor the LogQL is exported as a label: both are unbounded, and line filters can carry sensitive literals. The extracted selectors are logged at `WARN` and the full query at `DEBUG` instead.
+
 ## Enable OpenTelemetry tracing
 
 When `OTEL_EXPORTER_OTLP_ENDPOINT` (or the signal-specific `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`) is set, the server exports traces via OTLP/gRPC.
@@ -89,6 +116,21 @@ OTEL_EXPORTER_OTLP_HEADERS="Authorization=Basic ..." \
 ```
 
 Tool call spans follow naming like `tools/call <tool_name>` and include attributes such as `gen_ai.tool.name`, `mcp.method.name`, and `mcp.session.id`. The server supports W3C trace context propagation from the `_meta` field of tool call requests.
+
+### Trace context propagation
+
+Under an HTTP transport (SSE or streamable-http) the server takes part in [W3C trace context](https://www.w3.org/TR/trace-context/) propagation on both sides, so a caller, mcp-grafana, and Grafana appear as one connected trace:
+
+- **Inbound**: a `traceparent`/`tracestate` header on the incoming request (from an MCP client or an upstream proxy) parents the server span, continuing the caller's trace instead of starting a new one.
+- **Outbound**: requests to the Grafana API carry a `traceparent` naming mcp-grafana's own span, so Grafana's spans hang off ours.
+
+Propagation is always active — it does not require `OTEL_EXPORTER_OTLP_ENDPOINT`. With trace export off, no spans are recorded but an inbound trace context is still passed through to Grafana rather than dropped.
+
+The propagators used are configured with the standard [`OTEL_PROPAGATORS`](https://opentelemetry.io/docs/languages/sdk-configuration/general/#otel_propagators) environment variable, defaulting to `tracecontext,baggage`. Set it to interoperate with a non-W3C system (`b3`, `b3multi`, `jaeger`, `xray`, `ottrace`, in any comma-separated combination) or to `none` to disable propagation entirely.
+
+Tool call requests may also carry `traceparent`/`tracestate` in their MCP `_meta` field; when present, that context parents the tool span. This is the only propagation channel available under stdio, where there is no HTTP request to read headers from.
+
+Listing `traceparent` or `tracestate` in `GRAFANA_FORWARD_HEADERS` is not needed and no longer has an effect: forwarding the *caller's* `traceparent` verbatim would parent Grafana's spans onto the caller and cut mcp-grafana out of the middle of the trace, so a forwarded value never overrides the propagated one. Forwarded trace headers still apply when propagation is disabled with `OTEL_PROPAGATORS=none`.
 
 Tool-call spans also carry the [tool-call dimensions](#tool-call-dimension-labels) `mcp.tool.operation`, `mcp.tool.resource_type`, and `mcp.tool.phase`, plus the span-only `mcp.tool.target` (the datasource `uid`, else `name`) for grouping the spans that touch one entity. `mcp.tool.target` is empty when a call names no entity — notably `create_datasource`'s `phase=schema` call, where the datasource does not exist yet — so stitching that call to the later `phase=created` one relies on the shared trace (when the client propagates context via `_meta`) or on `mcp.session.id` plus `mcp_tool_resource_type`, rather than on the target. Unlike the metric labels, these are attached for **all** tools with their **raw** values (no allowlist, no `other` bucket), since traces are high-cardinality by design. They require an **HTTP transport** (SSE or streamable-http, so a server span exists to enrich) **and tracing enabled**, but **not** `--metrics`; with stdio or tracing off, enrichment is a no-op.
 

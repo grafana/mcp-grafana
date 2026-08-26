@@ -103,9 +103,16 @@ func getPanelImage(ctx context.Context, args GetPanelImageParams) (*mcp.CallTool
 		return nil, fmt.Errorf("grafana URL not configured. Please set GRAFANA_URL environment variable")
 	}
 
-	// Build the render URL. config.OrgID carries any per-call orgId override
-	// applied by OrgIDOverrideMiddleware (or the connection's org).
-	renderURL, err := buildRenderURL(baseURL, config.OrgID, args)
+	// The org to render from comes from config.OrgID, which
+	// OrgIDOverrideMiddleware sets from the per-call orgId argument when dynamic
+	// multi-org is enabled and which otherwise carries the connection's org. This
+	// tool declares no orgId of its own, so it behaves like every other tool: the
+	// argument exists only when --dynamic-multi-org is set. Reading the org from
+	// the context also keeps the X-Grafana-Org-Id header the transport adds in
+	// step with the render URL's targetOrgId.
+	renderOrg := config.OrgID
+
+	renderURL, err := buildRenderURL(baseURL, renderOrg, args)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build render URL: %w", err)
 	}
@@ -176,7 +183,7 @@ func getPanelImage(ctx context.Context, args GetPanelImageParams) (*mcp.CallTool
 
 	// Use the public base URL, not config.URL, which may be an in-cluster
 	// endpoint the browser can't reach.
-	if deeplinkBase, err := grafanaBaseURLFromContext(ctx); err == nil && deeplinkResolvesInRenderOrg(ctx, config.OrgID) {
+	if deeplinkBase, err := grafanaBaseURLFromContext(ctx); err == nil && deeplinkResolvesInRenderOrg(ctx, renderOrg) {
 		if deeplink, err := buildDashboardDeeplink(deeplinkBase, args); err == nil {
 			content = append(content, mcp.TextContent{
 				Meta: mcpgrafana.NewUIContentMeta(mcpgrafana.UIContentKindDeeplink),
@@ -251,7 +258,6 @@ func buildRenderURL(baseURL string, orgID int64, args GetPanelImageParams) (stri
 			params.Set("panelId", strconv.Itoa(*args.PanelID))
 		}
 	}
-
 	// Set dimensions
 	width := 1000
 	height := 500
@@ -320,9 +326,10 @@ func buildRenderURL(baseURL string, orgID int64, args GetPanelImageParams) (stri
 // land, omit the link rather than point it at the wrong dashboard — UIDs are
 // unique only within an org. The image is unaffected.
 //
-// A non-positive renderOrg means no org reached the render (as in
-// buildRenderURL and OrgIDRoundTripper), so it used the identity's own org and
-// the link agrees. A failed lookup omits the link.
+// A non-positive renderOrg means no org reached the render (as in buildRenderURL
+// and OrgIDRoundTripper), so it used the identity's own org and the link agrees,
+// checked without a request. Any other org needs the lookup, whether it came
+// from a per-call orgId or from the connection; a failed lookup omits the link.
 func deeplinkResolvesInRenderOrg(ctx context.Context, renderOrg int64) bool {
 	if renderOrg <= 0 {
 		return true

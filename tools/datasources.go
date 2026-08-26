@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -27,7 +28,9 @@ const (
 // create_datasource telemetry phases, declared on the tool result via
 // observability.ToolPhaseMetaKey so the server's per-call metric/span can
 // distinguish a schema-guidance call from an actual creation. Keep this set
-// small — the value becomes a bounded Prometheus label (mcp_tool_phase).
+// small — the value becomes a bounded Prometheus label (mcp_tool_phase). Adding
+// a phase here means adding it to create_datasource's phases set in
+// observability.toolMetricDims too, or the metric drops it.
 const (
 	dsPhaseSchema  = "schema"  // returned field guidance (schema or no-schema); nothing created
 	dsPhaseCreated = "created" // a datasource was created
@@ -50,6 +53,7 @@ func withToolPhase(r *mcp.CallToolResult, phase string) *mcp.CallToolResult {
 
 type ListDatasourcesParams struct {
 	Type   string `json:"type,omitempty" jsonschema:"description=The type of datasources to search for. For example\\, 'prometheus'\\, 'loki'\\, 'tempo'\\, etc..."`
+	Name   string `json:"name,omitempty" jsonschema:"description=Case-insensitive substring match on the datasource name. For example\\, 'prod' matches datasources named 'prometheus-prod-eu' and 'loki-prod-us'. Useful on instances with many datasources where filtering by type alone returns too many results."`
 	Limit  int    `json:"limit,omitempty" jsonschema:"default=50,description=Maximum number of datasources to return (max 100)"`
 	Offset int    `json:"offset,omitempty" jsonschema:"default=0,description=Number of datasources to skip for pagination"`
 }
@@ -70,15 +74,23 @@ type ListDatasourcesResult struct {
 
 func listDatasources(ctx context.Context, args ListDatasourcesParams) (*ListDatasourcesResult, error) {
 	c := mcpgrafana.GrafanaClientFromContext(ctx)
+	var list models.DataSourceList
 	resp, err := c.Datasources.GetDataSourcesWithParams(
 		datasources.NewGetDataSourcesParamsWithContext(ctx),
 	)
-	if err != nil {
+	if err == nil {
+		list = resp.Payload
+	} else if fb, fbErr := fallbackDatasourceList(ctx); fbErr == nil {
+		// The datasources API is not accessible to this token (e.g. it
+		// requires Org Admin before Grafana 9.0); fall back to frontend settings
+		// (see datasources_fallback.go).
+		list = fb
+	} else {
 		return nil, fmt.Errorf("list datasources: %w", err)
 	}
 
-	// Filter by type if specified
-	datasources := filterDatasources(resp.Payload, args.Type)
+	// Filter by type and/or name if specified
+	datasources := filterDatasources(list, args.Type, args.Name)
 	total := len(datasources)
 
 	// Apply default limit if not specified
@@ -393,18 +405,24 @@ func createDatasource(ctx context.Context, args CreateDatasourceParams) (*mcp.Ca
 	return withToolPhase(mcp.NewToolResultText(string(b)), dsPhaseCreated), nil
 }
 
-// filterDatasources returns only datasources of the specified type `t`. If `t`
-// is an empty string no filtering is done.
-func filterDatasources(datasources models.DataSourceList, t string) models.DataSourceList {
-	if t == "" {
+// filterDatasources returns only datasources whose type contains `t` and
+// whose name contains `name`, both as case-insensitive substring matches.
+// Empty arguments are treated as wildcards (no filtering on that field).
+func filterDatasources(datasources models.DataSourceList, t, name string) models.DataSourceList {
+	if t == "" && name == "" {
 		return datasources
 	}
-	filtered := models.DataSourceList{}
 	t = strings.ToLower(t)
+	name = strings.ToLower(name)
+	filtered := models.DataSourceList{}
 	for _, ds := range datasources {
-		if strings.Contains(strings.ToLower(ds.Type), t) {
-			filtered = append(filtered, ds)
+		if t != "" && !strings.Contains(strings.ToLower(ds.Type), t) {
+			continue
 		}
+		if name != "" && !strings.Contains(strings.ToLower(ds.Name), name) {
+			continue
+		}
+		filtered = append(filtered, ds)
 	}
 	return filtered
 }
@@ -425,7 +443,7 @@ func summarizeDatasources(dataSources models.DataSourceList) []dataSourceSummary
 
 var ListDatasources = mcpgrafana.MustTool(
 	"list_datasources",
-	"List all configured datasources in Grafana. Use this to discover available datasources and their UIDs. Supports filtering by type and pagination.",
+	"List all configured datasources in Grafana. Use this to discover available datasources and their UIDs. Supports filtering by type and/or name (case-insensitive substring match) and pagination.",
 	listDatasources,
 	mcp.WithTitleAnnotation("List datasources"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -470,6 +488,19 @@ func getDatasourceByUID(ctx context.Context, args GetDatasourceByUIDParams) (*mo
 		if strings.Contains(err.Error(), "404") {
 			return nil, fmt.Errorf("datasource with UID '%s' not found. Please check if the datasource exists and is accessible", args.UID)
 		}
+		// The datasource metadata API is not accessible to this token (e.g.
+		// it requires Org Admin before Grafana 9.0); fall back to frontend
+		// settings (see datasources_fallback.go).
+		ds, fbErr := fallbackDatasourceByUID(ctx, args.UID)
+		if fbErr == nil {
+			return ds, nil
+		}
+		if errors.Is(fbErr, errFallbackDatasourceNotFound) {
+			// The settings were readable and the datasource is genuinely
+			// absent: report not-found rather than the misleading permission
+			// error, so agents can tell a typo from a credentials problem.
+			return nil, fmt.Errorf("datasource with UID '%s' not found. Please check if the datasource exists and is accessible", args.UID)
+		}
 		return nil, fmt.Errorf("get datasource by uid %s: %w", args.UID, err)
 	}
 	return datasource.Payload, nil
@@ -485,6 +516,16 @@ func getDatasourceByName(ctx context.Context, args GetDatasourceByNameParams) (*
 		datasources.NewGetDataSourceByNameParamsWithContext(ctx).WithName(args.Name),
 	)
 	if err != nil {
+		// The datasource metadata API is not accessible to this token (e.g.
+		// it requires Org Admin before Grafana 9.0); fall back to frontend
+		// settings (see datasources_fallback.go).
+		ds, fbErr := fallbackDatasourceByName(ctx, args.Name)
+		if fbErr == nil {
+			return ds, nil
+		}
+		if errors.Is(fbErr, errFallbackDatasourceNotFound) {
+			return nil, fmt.Errorf("datasource with name '%s' not found. Please check if the datasource exists and is accessible", args.Name)
+		}
 		return nil, fmt.Errorf("get datasource by name %s: %w", args.Name, err)
 	}
 	return datasource.Payload, nil
@@ -738,6 +779,14 @@ func checkDatasourcesHealth(ctx context.Context, args BulkCheckDatasourceHealthP
 		datasources.NewGetDataSourcesParamsWithContext(ctx),
 	)
 	if err != nil {
+		// Health checks require the datasource metadata API and the
+		// per-datasource health endpoint (a uid-based route that only exists
+		// from Grafana 9.0). On deployments where the metadata API is
+		// inaccessible to this token (see datasources_fallback.go), say so
+		// explicitly instead of surfacing a confusing permission error.
+		if _, _, fbErr := fetchFrontendSettingsDatasources(ctx); fbErr == nil {
+			return nil, fmt.Errorf("checking datasource health is not supported on this Grafana deployment: the datasource metadata API is not accessible to this token, and health checks require it. Datasource discovery still works via the list_datasources tool")
+		}
 		return nil, fmt.Errorf("list datasources: %w", err)
 	}
 
@@ -753,7 +802,7 @@ func checkDatasourcesHealth(ctx context.Context, args BulkCheckDatasourceHealthP
 			}
 		}
 	} else {
-		all = filterDatasources(resp.Payload, args.Type)
+		all = filterDatasources(resp.Payload, args.Type, "")
 	}
 
 	limit := 10

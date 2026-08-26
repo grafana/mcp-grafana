@@ -3,14 +3,17 @@
 package tools
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -259,6 +262,18 @@ func TestBuildRenderURL(t *testing.T) {
 			},
 			contains: []string{
 				"scale=2",
+			},
+		},
+		{
+			name:    "With org ID",
+			baseURL: "http://localhost:3000",
+			orgID:   2,
+			args: GetPanelImageParams{
+				DashboardUID: "abc123",
+				PanelID:      intPtr(5),
+			},
+			contains: []string{
+				"targetOrgId=2",
 			},
 		},
 		{
@@ -1077,6 +1092,54 @@ func TestGetPanelImage(t *testing.T) {
 
 		require.NoError(t, err)
 	})
+}
+
+// The org reaches this tool through GrafanaConfig, set by OrgIDOverrideMiddleware
+// from a per-call orgId or carried from the connection. The render must be scoped
+// to it, and the deeplink withheld when it is not where the viewer would land.
+func TestGetPanelImageOrgIDOmitDeeplink(t *testing.T) {
+	testPNGData := []byte("test PNG")
+	grafanaCfg := mcpgrafana.GrafanaConfig{
+		URL:    "http://grafana.test",
+		APIKey: "test-api-key",
+		OrgID:  2,
+		BaseTransport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			// /api/user is the deeplink gate's viewer-org lookup; report org 1 so
+			// it differs from the render org and the link is withheld.
+			if req.URL.Path == "/api/user" {
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Body:       io.NopCloser(strings.NewReader(`{"orgId":1}`)),
+					Request:    req,
+				}, nil
+			}
+
+			assert.Equal(t, "2", req.Header.Get("X-Grafana-Org-Id"))
+			assert.Equal(t, "2", req.URL.Query().Get("targetOrgId"))
+			assert.Empty(t, req.URL.Query().Get("orgId"))
+
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(bytes.NewReader(testPNGData)),
+				Request:    req,
+			}, nil
+		}),
+	}
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), grafanaCfg)
+
+	result, err := getPanelImage(ctx, GetPanelImageParams{
+		DashboardUID: "test-dash",
+	})
+
+	require.NoError(t, err)
+	require.Len(t, result.Content, 1)
+	image, ok := result.Content[0].(mcp.ImageContent)
+	require.True(t, ok, "only content item should be ImageContent")
+	decoded, err := base64.StdEncoding.DecodeString(image.Data)
+	require.NoError(t, err)
+	assert.Equal(t, testPNGData, decoded)
 }
 
 func TestGetPanelImageToolMeta(t *testing.T) {

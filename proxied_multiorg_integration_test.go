@@ -39,7 +39,7 @@ func TestProxiedMultiOrgDiscovery_Integration(t *testing.T) {
 
 	ctx := newMultiOrgProxiedContext(t)
 
-	discovered, _, err := discoverMCPDatasources(ctx, slog.Default())
+	discovered, _, _, err := discoverMCPDatasources(ctx, slog.Default(), newDiscoveryMetrics(nil))
 	require.NoError(t, err)
 
 	var org2Tempo *DiscoveredDatasource

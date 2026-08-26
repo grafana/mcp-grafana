@@ -118,6 +118,11 @@ When caller authentication is enabled, the `Authorization` header is reserved fo
 ## Configure tool limits
 
 - `--max-loki-log-limit`: Maximum number of log lines returned per `query_loki_logs` call.
+- `--loki-guardrail-mode`: Loki query cost guardrail for `query_loki_logs`: `off` (default), `shadow` (log queries that would be blocked, but let them run), or `enforce` (reject them with rewrite guidance). The guardrail requires a selective stream selector, caps the effective time range (including range-vector durations like `[30d]`), and pre-checks Loki's index/stats byte estimate before running the query. On VictoriaLogs it applies only to selector-shaped (`{...}`) queries — brace-less LogsQL passes through entirely and the byte-budget check never applies. Falls back to the `GRAFANA_LOKI_GUARDRAIL_MODE` environment variable.
+- `--loki-guardrail-max-bytes`: Maximum bytes a single `query_loki_logs` call may scan, estimated via Loki's index/stats API. Defaults to 100 GiB; `0` disables the byte-budget check. Falls back to `GRAFANA_LOKI_GUARDRAIL_MAX_BYTES`.
+- `--loki-guardrail-max-range`: Maximum effective time range for a single `query_loki_logs` call, including range-vector durations. Defaults to `24h`; `0` disables the range check. Falls back to `GRAFANA_LOKI_GUARDRAIL_MAX_RANGE`.
+
+The guardrail's decisions are also exported as OTel counters (`mcp_loki_guardrail_admitted_total`, `_would_block_total`, `_blocked_total`, `_fail_open_total`), which is the recommended way to size the affected population before promoting from `shadow` to `enforce`. See [Observability](../../developer/observability-metrics-and-tracing/#loki-cost-guardrail-metrics).
 - `--dynamic-multi-org`: Allow tool calls to select a Grafana organization per call via an optional `orgId` argument. Off by default. See [Multi-organization support](../multi-organization-and-headers/).
 
 ## Run in read-only mode
@@ -138,10 +143,15 @@ When enabled, the following writes are disabled:
 
 - `create_incident`
 - `add_activity_to_incident`
+- `update_incident`
 
 **Alerting tools**
 
 - `alerting_manage_rules` (create, update, delete)
+
+**OnCall tools**
+
+- `update_alert_group`
 
 **Annotation tools**
 
@@ -163,6 +173,8 @@ When enabled, the following writes are disabled:
 - `agento11y_manage_evaluators` (upsert, delete, fork, and test evaluators)
 - `agento11y_manage_eval_rules` (create, update, delete, and preview eval rules and guards)
 - `agento11y_manage_eval_collections` (save and delete saved conversations; create, update, and delete collections; add and remove collection members)
+- `agento11y_manage_experiments` (update and cancel experiments)
+- `agento11y_manage_test_suites` (create and update test suites; create and publish versions; upsert and delete test cases)
 
 Read operations (queries, lists, searches) stay available.
 

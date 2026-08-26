@@ -82,7 +82,7 @@ func (h *ProxiedToolHandler) Handle(ctx context.Context, request mcp.CallToolReq
 	}
 
 	if err != nil {
-		return nil, fmt.Errorf("datasource '%s' not found or not accessible. Ensure the datasource exists and you have permission to access it", datasourceUID)
+		return nil, fmt.Errorf("datasource '%s' not found or not accessible. Ensure the datasource exists and you have permission to access it: %w", datasourceUID, err)
 	}
 	if release != nil {
 		defer release()

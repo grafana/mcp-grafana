@@ -16,7 +16,7 @@ require (
 	github.com/grafana/pyroscope/api v1.3.2
 	github.com/invopop/jsonschema v0.13.0
 	github.com/itchyny/gojq v0.12.19
-	github.com/mark3labs/mcp-go v0.55.0
+	github.com/mark3labs/mcp-go v0.58.0
 	github.com/prometheus/alertmanager v0.31.1
 	github.com/prometheus/client_golang v1.23.2
 	github.com/prometheus/common v0.67.5
@@ -24,6 +24,7 @@ require (
 	github.com/stretchr/testify v1.11.1
 	go.opentelemetry.io/contrib/bridges/otelslog v0.18.0
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.67.0
+	go.opentelemetry.io/contrib/propagators/autoprop v0.68.0
 	go.opentelemetry.io/otel v1.43.0
 	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc v0.19.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.42.0
@@ -71,8 +72,8 @@ require (
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-openapi/analysis v0.24.3 // indirect
 	github.com/go-openapi/errors v0.22.7 // indirect
-	github.com/go-openapi/jsonpointer v0.22.5 // indirect
-	github.com/go-openapi/jsonreference v0.21.5 // indirect
+	github.com/go-openapi/jsonpointer v1.0.0 // indirect
+	github.com/go-openapi/jsonreference v1.0.0 // indirect
 	github.com/go-openapi/loads v0.23.3 // indirect
 	github.com/go-openapi/spec v0.22.4 // indirect
 	github.com/go-openapi/swag v0.25.4 // indirect
@@ -150,12 +151,16 @@ require (
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.65.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/httptrace/otelhttptrace v0.67.0 // indirect
-	go.opentelemetry.io/contrib/propagators/jaeger v1.40.0 // indirect
+	go.opentelemetry.io/contrib/propagators/aws v1.43.0 // indirect
+	go.opentelemetry.io/contrib/propagators/b3 v1.43.0 // indirect
+	go.opentelemetry.io/contrib/propagators/jaeger v1.43.0 // indirect
+	go.opentelemetry.io/contrib/propagators/ot v1.43.0 // indirect
 	go.opentelemetry.io/contrib/samplers/jaegerremote v0.34.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.42.0 // indirect
 	go.opentelemetry.io/otel/log v0.19.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.10.0 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
+	go.uber.org/multierr v1.11.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.4 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/exp v0.0.0-20260218203240-3dfff04db8fa // indirect

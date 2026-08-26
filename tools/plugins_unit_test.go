@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
@@ -31,6 +32,32 @@ func pluginTestContext(t *testing.T, serverURL string) context.Context {
 	t.Helper()
 	cfg := mcpgrafana.GrafanaConfig{URL: serverURL}
 	return mcpgrafana.WithGrafanaConfig(context.Background(), cfg)
+}
+
+// TestSearchPlugins_RoutesCatalogThroughProxy is the regression test for the
+// grafana.com proxy-bypass bug: when a SOCKS5 proxy is configured, the plugin
+// catalog request must be dialed through the proxy, never sent directly to
+// grafana.com. With the proxy pointed at an unreachable port, the request must
+// fail rather than reach the (directly addressable) catalog server.
+func TestSearchPlugins_RoutesCatalogThroughProxy(t *testing.T) {
+	var directHits atomic.Int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		directHits.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(catalogListResponse{})
+	}))
+	t.Cleanup(func() {
+		grafanaComCatalogURL = "https://grafana.com/api/plugins"
+		ts.Close()
+	})
+	grafanaComCatalogURL = ts.URL
+
+	ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{
+		SOCKS5ProxyURL: "socks5://127.0.0.1:1",
+	})
+	_, err := searchPlugins(ctx, SearchPluginsParams{Query: "loki"})
+	require.Error(t, err, "request must be routed through the (unreachable) proxy, not sent directly")
+	assert.Zero(t, directHits.Load(), "the catalog request must not bypass the proxy")
 }
 
 func TestGetPlugin_Found(t *testing.T) {
