@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/itchyny/gojq"
@@ -68,7 +69,11 @@ func apiRequestReadOnly(ctx context.Context, args APIRequestReadOnlyParams) (*AP
 		method = http.MethodGet
 	}
 	if method != http.MethodGet {
-		if method != http.MethodPost || !readOnlyPOSTEndpoints[args.Endpoint] {
+		endpointPath := args.Endpoint
+		if u, err := url.Parse(args.Endpoint); err == nil {
+			endpointPath = u.Path
+		}
+		if method != http.MethodPost || !readOnlyPOSTEndpoints[endpointPath] {
 			return nil, fmt.Errorf("method %s to endpoint %s is not allowed in read-only mode; only GET requests and POST to read-only query endpoints (e.g. /api/ds/query) are permitted", method, args.Endpoint)
 		}
 	}
@@ -217,9 +222,8 @@ var APIRequestReadOnly = mcpgrafana.MustTool(
 		"Only GET requests are allowed, except POST to read-only query endpoints such as /api/ds/query.",
 	apiRequestReadOnly,
 	mcp.WithTitleAnnotation("Grafana API request"),
-	mcp.WithIdempotentHintAnnotation(true),
-	mcp.WithReadOnlyHintAnnotation(true),
-	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithReadOnlyHintAnnotation(false),
+	mcp.WithDestructiveHintAnnotation(true),
 	mcp.WithOpenWorldHintAnnotation(false),
 )
 

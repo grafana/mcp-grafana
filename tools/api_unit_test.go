@@ -269,6 +269,24 @@ func TestAPIRequest_ReadOnlyAllowsPOSTToDsQuery(t *testing.T) {
 	assert.Equal(t, http.StatusOK, result.Status)
 }
 
+func TestAPIRequest_ReadOnlyAllowsPOSTToDsQueryWithQueryString(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"results":{}}`))
+	}))
+	t.Cleanup(ts.Close)
+
+	ctx := apiTestContext(t, ts.URL)
+	result, err := apiRequestReadOnly(ctx, APIRequestReadOnlyParams{
+		Endpoint: "/api/ds/query?ds_type=prometheus",
+		Method:   "POST",
+		Body:     `{"queries":[{"refId":"A"}]}`,
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, result.Status)
+}
+
 func TestAPIRequest_ReadOnlyAllowsGET(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
