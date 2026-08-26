@@ -221,7 +221,7 @@ func TestAPIRequest_AuthHeadersIncluded(t *testing.T) {
 func TestAPIRequest_ReadOnlyRejectsNonGET(t *testing.T) {
 	ctx := apiTestContext(t, "http://localhost")
 
-	for _, method := range []string{"POST", "PUT", "PATCH", "DELETE"} {
+	for _, method := range []string{"PUT", "PATCH", "DELETE"} {
 		_, err := apiRequestReadOnly(ctx, APIRequestReadOnlyParams{
 			Endpoint: "/api/org",
 			Method:   method,
@@ -229,6 +229,62 @@ func TestAPIRequest_ReadOnlyRejectsNonGET(t *testing.T) {
 		require.Error(t, err, "method %s should be rejected", method)
 		assert.Contains(t, err.Error(), "not allowed in read-only mode")
 	}
+}
+
+func TestAPIRequest_ReadOnlyRejectsPOSTToNonAllowedEndpoint(t *testing.T) {
+	ctx := apiTestContext(t, "http://localhost")
+
+	_, err := apiRequestReadOnly(ctx, APIRequestReadOnlyParams{
+		Endpoint: "/api/annotations",
+		Method:   "POST",
+		Body:     `{"text":"test"}`,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not allowed in read-only mode")
+}
+
+func TestAPIRequest_ReadOnlyAllowsPOSTToDsQuery(t *testing.T) {
+	var capturedMethod string
+	var capturedBody string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedMethod = r.Method
+		body, _ := io.ReadAll(r.Body)
+		capturedBody = string(body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"results":{}}`))
+	}))
+	t.Cleanup(ts.Close)
+
+	ctx := apiTestContext(t, ts.URL)
+	queryBody := `{"queries":[{"refId":"A","datasource":{"uid":"test"},"expr":"up"}]}`
+	result, err := apiRequestReadOnly(ctx, APIRequestReadOnlyParams{
+		Endpoint: "/api/ds/query",
+		Method:   "POST",
+		Body:     queryBody,
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, http.MethodPost, capturedMethod)
+	assert.Equal(t, queryBody, capturedBody)
+	assert.Equal(t, http.StatusOK, result.Status)
+}
+
+func TestAPIRequest_ReadOnlyAllowsPOSTToDsQueryWithQueryString(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"results":{}}`))
+	}))
+	t.Cleanup(ts.Close)
+
+	ctx := apiTestContext(t, ts.URL)
+	result, err := apiRequestReadOnly(ctx, APIRequestReadOnlyParams{
+		Endpoint: "/api/ds/query?ds_type=prometheus",
+		Method:   "POST",
+		Body:     `{"queries":[{"refId":"A"}]}`,
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, result.Status)
 }
 
 func TestAPIRequest_ReadOnlyAllowsGET(t *testing.T) {
@@ -258,18 +314,43 @@ func TestAPIRequest_ReadOnlyDefaultMethodIsGET(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestAPIRequest_ReadOnlyParamsHasNoBodyField(t *testing.T) {
+func TestAPIRequest_GetOnlyRejectsAllNonGET(t *testing.T) {
+	ctx := apiTestContext(t, "http://localhost")
+
+	for _, method := range []string{"POST", "PUT", "PATCH", "DELETE"} {
+		_, err := apiRequestReadOnlyGetOnly(ctx, APIRequestReadOnlyGetOnlyParams{
+			Endpoint: "/api/org",
+			Method:   method,
+		})
+		require.Error(t, err, "method %s should be rejected", method)
+		assert.Contains(t, err.Error(), "not allowed in read-only mode")
+	}
+}
+
+func TestAPIRequest_GetOnlyRejectsPOSTToDsQuery(t *testing.T) {
+	ctx := apiTestContext(t, "http://localhost")
+
+	_, err := apiRequestReadOnlyGetOnly(ctx, APIRequestReadOnlyGetOnlyParams{
+		Endpoint: "/api/ds/query",
+		Method:   "POST",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not allowed in read-only mode")
+}
+
+func TestAPIRequest_GetOnlyAllowsGET(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		assert.Empty(t, body)
+		assert.Equal(t, http.MethodGet, r.Method)
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{}`))
+		_, _ = w.Write([]byte(`{"ok":true}`))
 	}))
 	t.Cleanup(ts.Close)
 
 	ctx := apiTestContext(t, ts.URL)
-	_, err := apiRequestReadOnly(ctx, APIRequestReadOnlyParams{Endpoint: "/api/org"})
+	result, err := apiRequestReadOnlyGetOnly(ctx, APIRequestReadOnlyGetOnlyParams{Endpoint: "/api/org"})
+
 	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, result.Status)
 }
 
 func TestAPIRequest_MethodCaseInsensitive(t *testing.T) {
