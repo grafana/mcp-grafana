@@ -23,6 +23,12 @@ var allowedMethods = map[string]bool{
 	http.MethodDelete: true,
 }
 
+// readOnlyPOSTEndpoints lists POST endpoints that are semantically read-only
+// (e.g. query endpoints that require POST for their request body).
+var readOnlyPOSTEndpoints = map[string]bool{
+	"/api/ds/query": true,
+}
+
 type APIRequestParams struct {
 	Endpoint string            `json:"endpoint" jsonschema:"required,description=The API path relative to the Grafana base URL (e.g. '/api/org'\\, '/api/dashboards/uid/abc123'). Must start with '/'."`
 	Method   string            `json:"method,omitempty" jsonschema:"enum=GET,enum=POST,enum=PUT,enum=PATCH,enum=DELETE,description=HTTP method. Defaults to GET"`
@@ -32,6 +38,14 @@ type APIRequestParams struct {
 }
 
 type APIRequestReadOnlyParams struct {
+	Endpoint string            `json:"endpoint" jsonschema:"required,description=The API path relative to the Grafana base URL (e.g. '/api/org'\\, '/api/dashboards/uid/abc123'\\, '/api/ds/query'). Must start with '/'."`
+	Method   string            `json:"method,omitempty" jsonschema:"enum=GET,enum=POST,description=HTTP method. Defaults to GET. POST is only allowed for specific read-only query endpoints such as /api/ds/query."`
+	Body     string            `json:"body,omitempty" jsonschema:"description=Request body (JSON string). Used with POST requests to read-only query endpoints such as /api/ds/query."`
+	Headers  map[string]string `json:"headers,omitempty" jsonschema:"description=Additional HTTP headers to include in the request."`
+	JQ       string            `json:"jq,omitempty" jsonschema:"description=A jq expression to filter or transform the JSON response (e.g. '.dashboards[] | .title')."`
+}
+
+type APIRequestReadOnlyGetOnlyParams struct {
 	Endpoint string            `json:"endpoint" jsonschema:"required,description=The API path relative to the Grafana base URL (e.g. '/api/org'\\, '/api/dashboards/uid/abc123'). Must start with '/'."`
 	Method   string            `json:"method,omitempty" jsonschema:"enum=GET,description=HTTP method. Only GET is allowed in read-only mode"`
 	Headers  map[string]string `json:"headers,omitempty" jsonschema:"description=Additional HTTP headers to include in the request."`
@@ -49,6 +63,19 @@ func apiRequest(ctx context.Context, args APIRequestParams) (*APIRequestResult, 
 }
 
 func apiRequestReadOnly(ctx context.Context, args APIRequestReadOnlyParams) (*APIRequestResult, error) {
+	method := strings.ToUpper(args.Method)
+	if method == "" {
+		method = http.MethodGet
+	}
+	if method != http.MethodGet {
+		if method != http.MethodPost || !readOnlyPOSTEndpoints[args.Endpoint] {
+			return nil, fmt.Errorf("method %s to endpoint %s is not allowed in read-only mode; only GET requests and POST to read-only query endpoints (e.g. /api/ds/query) are permitted", method, args.Endpoint)
+		}
+	}
+	return doAPIRequest(ctx, args.Endpoint, method, args.Body, args.Headers, args.JQ)
+}
+
+func apiRequestReadOnlyGetOnly(ctx context.Context, args APIRequestReadOnlyGetOnlyParams) (*APIRequestResult, error) {
 	method := strings.ToUpper(args.Method)
 	if method == "" {
 		method = http.MethodGet
@@ -187,7 +214,7 @@ var APIRequestReadOnly = mcpgrafana.MustTool(
 	"Make an authenticated HTTP request to the Grafana API. Similar to 'gh api' for GitHub. "+
 		"Supports any Grafana API endpoint with optional jq-style response filtering. "+
 		"Use this for API endpoints that don't have a dedicated tool. "+
-		"Only GET requests are allowed.",
+		"Only GET requests are allowed, except POST to read-only query endpoints such as /api/ds/query.",
 	apiRequestReadOnly,
 	mcp.WithTitleAnnotation("Grafana API request"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -196,10 +223,26 @@ var APIRequestReadOnly = mcpgrafana.MustTool(
 	mcp.WithOpenWorldHintAnnotation(false),
 )
 
-func AddAPITools(mcp *server.MCPServer, enableWriteTools bool) {
+var APIRequestReadOnlyGetOnly = mcpgrafana.MustTool(
+	"grafana_api_request",
+	"Make an authenticated HTTP request to the Grafana API. Similar to 'gh api' for GitHub. "+
+		"Supports any Grafana API endpoint with optional jq-style response filtering. "+
+		"Use this for API endpoints that don't have a dedicated tool. "+
+		"Only GET requests are allowed.",
+	apiRequestReadOnlyGetOnly,
+	mcp.WithTitleAnnotation("Grafana API request"),
+	mcp.WithIdempotentHintAnnotation(true),
+	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
+)
+
+func AddAPITools(mcp *server.MCPServer, enableWriteTools bool, enableQueryTools bool) {
 	if enableWriteTools {
 		APIRequest.Register(mcp)
-	} else {
+	} else if enableQueryTools {
 		APIRequestReadOnly.Register(mcp)
+	} else {
+		APIRequestReadOnlyGetOnly.Register(mcp)
 	}
 }

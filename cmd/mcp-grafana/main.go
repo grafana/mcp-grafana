@@ -353,7 +353,7 @@ func (dt *disabledTools) toolEntries() []toolEntry {
 		{func(mcp *server.MCPServer) { tools.AddGraphiteTools(mcp, enableQueryTools) }, dt.graphite, "graphite"},
 		{func(mcp *server.MCPServer) { tools.AddAthenaTools(mcp, enableMutatingQueryTools) }, dt.athena, "athena"},
 		{func(mcp *server.MCPServer) { tools.AddPluginTools(mcp, enableWriteTools) }, dt.plugin, "plugin"},
-		{func(mcp *server.MCPServer) { tools.AddAPITools(mcp, enableWriteTools) }, dt.api, "api"},
+		{func(mcp *server.MCPServer) { tools.AddAPITools(mcp, enableWriteTools, enableQueryTools) }, dt.api, "api"},
 		{tools.AddConfigTools, dt.config, "config"},
 		{tools.AddProvisioningTools, dt.provisioning, "provisioning"},
 		{func(mcp *server.MCPServer) { tools.AddAgento11yTools(mcp, enableWriteTools) }, dt.agento11y, "agento11y"},
