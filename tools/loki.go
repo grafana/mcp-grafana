@@ -1010,11 +1010,18 @@ var QueryLokiPatterns = mcpgrafana.MustTool(
 // AddLokiTools registers all Loki tools with the MCP server.
 // Config-generation tools (e.g. suggest_loki_alloy_label_config) live in
 // the separate "config" category — see tools.AddConfigTools.
-func AddLokiTools(mcp *server.MCPServer) {
+// The tools that return log content are registered only when enableQueryTools
+// is true. The metadata tools stay available either way, including
+// query_loki_stats and the label analyzer: both send a selector to the
+// datasource, but they read the index and return stream/chunk/byte counts, never
+// log lines.
+func AddLokiTools(mcp *server.MCPServer, enableQueryTools bool) {
 	ListLokiLabelNames.Register(mcp)
 	ListLokiLabelValues.Register(mcp)
 	QueryLokiStats.Register(mcp)
-	QueryLokiLogs.Register(mcp)
-	QueryLokiPatterns.Register(mcp)
+	if enableQueryTools {
+		QueryLokiLogs.Register(mcp)
+		QueryLokiPatterns.Register(mcp)
+	}
 	AddLokiLabelAnalyzerTools(mcp)
 }

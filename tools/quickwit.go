@@ -267,6 +267,10 @@ var QueryQuickwit = mcpgrafana.MustTool(
 )
 
 // AddQuickwitTools registers all Quickwit tools with the MCP server.
-func AddQuickwitTools(mcp *server.MCPServer) {
-	QueryQuickwit.Register(mcp)
+// Every tool in this category executes a query, so nothing is registered when
+// enableQueryTools is false.
+func AddQuickwitTools(mcp *server.MCPServer, enableQueryTools bool) {
+	if enableQueryTools {
+		QueryQuickwit.Register(mcp)
+	}
 }

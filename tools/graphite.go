@@ -525,9 +525,13 @@ var QueryGraphiteDensity = mcpgrafana.MustTool(
 )
 
 // AddGraphiteTools registers all Graphite tools with the MCP server.
-func AddGraphiteTools(mcp *server.MCPServer) {
-	QueryGraphite.Register(mcp)
+// The query tools are registered only when enableQueryTools is true; the
+// metric and tag listing tools stay available either way.
+func AddGraphiteTools(mcp *server.MCPServer, enableQueryTools bool) {
 	ListGraphiteMetrics.Register(mcp)
 	ListGraphiteTags.Register(mcp)
-	QueryGraphiteDensity.Register(mcp)
+	if enableQueryTools {
+		QueryGraphite.Register(mcp)
+		QueryGraphiteDensity.Register(mcp)
+	}
 }

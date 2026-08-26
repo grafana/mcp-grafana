@@ -555,9 +555,13 @@ var ListCloudWatchDimensions = mcpgrafana.MustTool(
 	mcp.WithOpenWorldHintAnnotation(false),
 )
 
-// AddCloudWatchTools registers all CloudWatch tools with the MCP server
-func AddCloudWatchTools(mcp *server.MCPServer) {
-	QueryCloudWatch.Register(mcp)
+// AddCloudWatchTools registers all CloudWatch tools with the MCP server.
+// query_cloudwatch is registered only when enableQueryTools is true; the
+// namespace, metric, and dimension listing tools stay available either way.
+func AddCloudWatchTools(mcp *server.MCPServer, enableQueryTools bool) {
+	if enableQueryTools {
+		QueryCloudWatch.Register(mcp)
+	}
 	ListCloudWatchNamespaces.Register(mcp)
 	ListCloudWatchMetrics.Register(mcp)
 	ListCloudWatchDimensions.Register(mcp)

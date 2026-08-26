@@ -60,7 +60,11 @@ var QueryElasticsearch = mcpgrafana.MustTool(
 	mcp.WithOpenWorldHintAnnotation(false),
 )
 
-// AddElasticsearchTools registers all Elasticsearch and OpenSearch tools with the MCP server
-func AddElasticsearchTools(mcp *server.MCPServer) {
-	QueryElasticsearch.Register(mcp)
+// AddElasticsearchTools registers all Elasticsearch and OpenSearch tools with the MCP server.
+// Every tool in this category executes a query, so nothing is registered when
+// enableQueryTools is false.
+func AddElasticsearchTools(mcp *server.MCPServer, enableQueryTools bool) {
+	if enableQueryTools {
+		QueryElasticsearch.Register(mcp)
+	}
 }
