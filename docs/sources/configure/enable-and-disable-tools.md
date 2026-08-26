@@ -58,6 +58,14 @@ For tools that come from external MCP servers through Grafana (for example from 
 
 Use `--disable-write` to disable all write operations. The server can still read dashboards, run queries, and list resources, but it cannot create or update dashboards, incidents, alert groups, alert rules, annotations, snapshots, investigations, or Agent Observability evaluators, eval rules, guards, saved conversations, and collections.
 
+Read-only mode also removes `query_clickhouse`, `query_snowflake`, `query_athena`, and `query_influxdb`: they pass the query to the datasource unfiltered, so they can write whenever the datasource credentials permit it. Add `--enable-query` to keep them when those credentials are known to be read-only.
+
+## Run without query execution
+
+Use `--disable-query` to remove every tool that executes a query against a datasource, such as `query_prometheus`, `query_loki_logs`, `query_clickhouse`, and `run_panel_query`. The server can still list datasources and dashboards, explore metric names, labels, and table schemas, and generate deeplinks, but it can't run the queries themselves.
+
+`--disable-query` is the strongest of the three query settings: it wins over `--enable-query`, and it removes the query tools that `--disable-write` leaves in place. Refer to [Command-line flags](../command-line-flags/) for the full list of affected tools.
+
 ## Next steps
 
 - [Introduction](../../introduction/) for an overview of tools and RBAC.

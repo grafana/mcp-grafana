@@ -913,7 +913,11 @@ var RunPanelQuery = mcpgrafana.MustTool(
 	mcp.WithOpenWorldHintAnnotation(false),
 )
 
-// AddRunPanelQueryTools registers run panel query tools with the MCP server
-func AddRunPanelQueryTools(mcp *server.MCPServer) {
-	RunPanelQuery.Register(mcp)
+// AddRunPanelQueryTools registers run panel query tools with the MCP server.
+// Every tool in this category executes a query, so nothing is registered when
+// enableQueryTools is false.
+func AddRunPanelQueryTools(mcp *server.MCPServer, enableQueryTools bool) {
+	if enableQueryTools {
+		RunPanelQuery.Register(mcp)
+	}
 }
