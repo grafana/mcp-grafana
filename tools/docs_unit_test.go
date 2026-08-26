@@ -4,6 +4,7 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"sync"
@@ -194,6 +195,13 @@ End.
 	assert.Empty(t, result.Content)
 	assert.Equal(t, "Page Title", result.Headings[0].Text)
 	assert.Equal(t, 1, result.Headings[0].Level)
+
+	// An outline-only response has no page range, so returned_range must be
+	// omitted from the JSON rather than serialized as a misleading [0, 0].
+	assert.Nil(t, result.ReturnedRange)
+	encoded, err := json.Marshal(result)
+	require.NoError(t, err)
+	assert.NotContains(t, string(encoded), "returned_range")
 }
 
 func TestGetDoc_PropagatesFetchError(t *testing.T) {

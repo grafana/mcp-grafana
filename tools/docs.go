@@ -192,7 +192,7 @@ type GetDocResult struct {
 	Headings      []docHeading `json:"headings,omitempty"`
 	Content       string       `json:"content,omitempty"`
 	TotalLines    int          `json:"total_lines,omitempty"`
-	ReturnedRange [2]int       `json:"returned_range,omitempty"`
+	ReturnedRange *[2]int      `json:"returned_range,omitempty"`
 }
 
 func getDoc(ctx context.Context, args GetDocParams) (*GetDocResult, error) {
@@ -225,7 +225,7 @@ func getDoc(ctx context.Context, args GetDocParams) (*GetDocResult, error) {
 		URL:           doc.URL,
 		Content:       excerpt.Content,
 		TotalLines:    excerpt.Total,
-		ReturnedRange: [2]int{excerpt.Start, excerpt.End},
+		ReturnedRange: &[2]int{excerpt.Start, excerpt.End},
 	}, nil
 }
 
