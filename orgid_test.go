@@ -44,6 +44,29 @@ func TestInjectOrgIDProperty(t *testing.T) {
 
 // resolveTool injects orgId into a registered tool's schema only when dynamic
 // multi-org is enabled.
+// A tool that addresses no Grafana organization must not advertise orgId even
+// when dynamic multi-org is on: the argument is inert there (the middleware
+// strips it and the handler never reads it), and advertising it suggests the
+// answer is org-scoped when it is not.
+func TestResolveToolNotOrgScoped(t *testing.T) {
+	type fooParams struct {
+		Foo string `json:"foo,omitempty" jsonschema:"description=a foo"`
+	}
+	handler := func(_ context.Context, _ fooParams) (string, error) { return "", nil }
+	scoped := MustTool("scoped_tool", "demo", handler)
+	unscoped := MustTool("unscoped_tool", "demo", handler).NotOrgScoped()
+
+	DynamicMultiOrgEnabled = true
+	t.Cleanup(func() { DynamicMultiOrgEnabled = false })
+
+	props := schemaProperties(t, unscoped.resolveTool().RawInputSchema)
+	require.Contains(t, props, "foo", "the handler's own arguments are preserved")
+	assert.NotContains(t, props, OrgIDArgument)
+
+	// The marker is per-tool, not global.
+	assert.Contains(t, schemaProperties(t, scoped.resolveTool().RawInputSchema), OrgIDArgument)
+}
+
 func TestResolveToolInjectsOrgID(t *testing.T) {
 	type fooParams struct {
 		Foo string `json:"foo,omitempty" jsonschema:"description=a foo"`

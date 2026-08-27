@@ -9,12 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Optional per-call `orgId` argument to target a Grafana organization, opt-in via the `--dynamic-multi-org` flag; also discovers proxied datasource tools across every org the credential can access
+- Optional per-call `orgId` argument, where applicable, to target a Grafana organization, opt-in via the `--dynamic-multi-org` flag; also discovers proxied datasource tools across every org the credential can access. Tools that address no organization — documentation lookups, local config generation, static query examples — do not advertise it, since selecting one could not change their answer
 - `user_info` tool reporting the current identity, whether it is a Grafana admin, and the organizations the credential can access (with roles)
 
 ### Changed
 
-- `get_panel_image` no longer declares its own `orgId` argument, using the per-call `orgId` injected into every native tool instead. The argument is therefore only advertised with `--dynamic-multi-org`, and without that flag a call passing `orgId` is rejected as an unknown argument. Renders still scope the organization with `targetOrgId` rather than `orgId`, so they do not change the user's active organization, and an organization fixed by `GRAFANA_ORG_ID` or the `X-Grafana-Org-Id` header now sets `targetOrgId` too.
+- `get_panel_image` no longer declares its own `orgId` argument, using the per-call `orgId` injected into the native tools where an organization applies instead. The argument is therefore only advertised with `--dynamic-multi-org`, and without that flag a call passing `orgId` is rejected as an unknown argument. Renders still scope the organization with `targetOrgId` rather than `orgId`, so they do not change the user's active organization, and an organization fixed by `GRAFANA_ORG_ID` or the `X-Grafana-Org-Id` header now sets `targetOrgId` too.
 - `get_panel_image` returns the dashboard deeplink only when it would open in the organization the image was rendered from, which now also accounts for an organization fixed on the connection rather than passed per call. A link cannot carry an organization safely — `?orgId=N` is intercepted by Grafana's `OrgRedirect` middleware, which persists the switch onto the viewer's user record — so for any other organization the image is returned without a deeplink (and without the MCP Apps panel-viewer fallback) rather than with one that can resolve to a different dashboard of the same UID.
 
 ## [1.2.0] - 2026-08-25

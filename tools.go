@@ -36,6 +36,20 @@ type Tool struct {
 	inputSchemaType       string
 	inputSchemaProperties map[string]any
 	inputSchemaRequired   []string
+
+	// notOrgScoped suppresses the injected orgId argument (see NotOrgScoped).
+	notOrgScoped bool
+}
+
+// NotOrgScoped marks a tool that never addresses a Grafana organization, so the
+// per-call orgId argument is not injected into its schema even when dynamic
+// multi-org is enabled. Use it for tools that reach no Grafana instance at all
+// (documentation lookups, local config generation): the argument would be inert
+// there, and advertising it invites a caller to believe the answer is
+// org-scoped.
+func (t Tool) NotOrgScoped() Tool {
+	t.notOrgScoped = true
+	return t
 }
 
 // HardError wraps an error to indicate it should propagate as a JSON-RPC protocol
@@ -65,10 +79,11 @@ func (t *Tool) Register(mcp *server.MCPServer) {
 
 // resolveTool returns the mcp.Tool to register. When dynamic multi-org is
 // enabled it injects the optional per-call orgId argument into the typed schema
-// and re-serializes; otherwise it returns the tool unchanged. Proxied tools are
-// registered directly (not via this method), so they are never amended.
+// and re-serializes; otherwise it returns the tool unchanged. Tools marked
+// NotOrgScoped are left alone. Proxied tools are registered directly (not via
+// this method), so they are never amended.
 func (t *Tool) resolveTool() mcp.Tool {
-	if !DynamicMultiOrgEnabled || t.inputSchemaProperties == nil {
+	if !DynamicMultiOrgEnabled || t.inputSchemaProperties == nil || t.notOrgScoped {
 		return t.Tool
 	}
 	// Clone so the retained schema stays pristine if Register runs again.
