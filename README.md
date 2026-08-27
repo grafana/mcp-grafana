@@ -411,6 +411,8 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `get_panel_image`                 | Rendering                 | Render a stored dashboard or panel — or a provisioning preview from a repository branch — as a PNG image     | `dashboards:read`                                      | `dashboards:uid:abc123`                             |
 | `list_provisioning_repositories`  | Provisioning              | List provisioning repositories (e.g. git-sync sources) with their source URL, branch, sync state, and health | `provisioning.repositories:read`                       | N/A                                                 |
 | `validate_provisioning_file`      | Provisioning              | Dry-run-apply a file from a provisioning repository and report admission validation errors                   | `provisioning.repositories:read`                       | N/A                                                 |
+| `search_docs`                     | Docs                      | Search Grafana documentation or list product groups (omit query to list products)                            | None (public grafana.com/docs)                         | N/A                                                 |
+| `get_doc`                         | Docs                      | Fetch a documentation page; set outline_only for headings, or section for bounded retrieval                  | None (public grafana.com/docs)                         | N/A                                                 |
 
 _* Disabled by default. Add category to `--enabled-tools` to enable._
 
@@ -494,6 +496,7 @@ Caller authentication is enforced only when `--server-auth-token` is set. When i
 - `--disable-provisioning`: Disable provisioning tools
 - `--disable-agento11y`: Disable Agent Observability tools
 - `--disable-assistant`: Disable Grafana Assistant tools
+- `--disable-docs`: Disable documentation tools
 
 ### Read-Only Mode
 
