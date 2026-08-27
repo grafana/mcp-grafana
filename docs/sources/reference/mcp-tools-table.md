@@ -128,6 +128,8 @@ The following table lists MCP tools, required RBAC permissions, and typical scop
 | `get_panel_image`                 | Rendering      | Render a stored dashboard or panel — or a provisioning preview from a repository branch — as a PNG image     | `dashboards:read`                                      | `dashboards:uid:abc123`                             |
 | `list_provisioning_repositories`  | Provisioning   | List provisioning repositories (e.g. git-sync sources) with their source URL, branch, sync state, and health | `provisioning.repositories:read`                       | N/A                                                 |
 | `validate_provisioning_file`      | Provisioning   | Dry-run-apply a file from a provisioning repository and report admission validation errors                   | `provisioning.repositories:read`                       | N/A                                                 |
+| `search_docs`                     | Docs           | Search Grafana documentation or list product groups (omit query to list products)                            | None (public grafana.com/docs)                         | N/A                                                 |
+| `get_doc`                         | Docs           | Fetch a documentation page; set outline_only for headings, or section for bounded retrieval                  | None (public grafana.com/docs)                         | N/A                                                 |
 
 _* Categories marked with `*` are off until you add them to `--enabled-tools`._
 
@@ -201,7 +203,7 @@ dashboards:uid:alerts-dashboard (dashboards:read)
 
 ## Enable or disable tools
 
-You can limit which tools the server exposes with `--enabled-tools`, `--disable-<category>`, and `--disable-write`. Refer to [Enable and disable tools](../../configure/enable-and-disable-tools/) and [Command-line flags](../../configure/command-line-flags/).
+You can limit which tools the server exposes with `--enabled-tools`, `--disable-<category>`, `--disable-write`, `--disable-query`, and `--enable-query`. Refer to [Enable and disable tools](../../configure/enable-and-disable-tools/) and [Command-line flags](../../configure/command-line-flags/).
 
 ## Panel and dashboard images
 
