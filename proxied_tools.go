@@ -982,16 +982,20 @@ func (tm *ToolManager) runProxiedToolSetBuild(ctx context.Context, set *proxiedT
 	size := len(tm.proxiedSets)
 	tm.proxiedSetsMu.Unlock()
 
-	close(set.ready)
-
 	// On any non-publish outcome the freshly-built clients were NOT stored on the
 	// set, so no teardown path can observe or close them: close them here (once,
 	// outside the lock) or their remote connections leak. This covers both the
 	// abandoned case (all sessions left mid-build) and the failed case where the
 	// builder connected some clients before erroring or panicking.
+	//
+	// Closing BEFORE signaling ready ensures that by the time any waiter unblocks
+	// and observes the failure, the cleanup is already complete. The built clients
+	// are local (never published to set.clients), so no waiter accesses them.
 	if !published {
 		tm.closeProxiedClients(built.clients)
 	}
+
+	close(set.ready)
 
 	switch {
 	case abandoned:
