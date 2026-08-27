@@ -92,7 +92,7 @@ async def test_list_users_by_org(
         mcp_server,
         "Does the response contain specific information about organization users "
         "in Grafana, such as usernames, emails, or roles?",
-        expected_tools="list_users_by_org",
+        expected_tools="admin_read",
     )
 
 
@@ -105,8 +105,8 @@ async def test_list_teams(
     grafana_team: Dict[str, str],
 ):
     """
-    Test list_teams using DeepEval MCP evaluation.
-    Asserts list_teams was called, evaluates tool usage (MCPUseMetric) and output quality (GEval).
+    Test the admin_read tool's list_teams operation using DeepEval MCP evaluation.
+    Asserts admin_read was called, evaluates tool usage (MCPUseMetric) and output quality (GEval).
     """
     team_name = grafana_team["name"]
     prompt = "Can you list the teams in Grafana?"
@@ -124,5 +124,5 @@ async def test_list_teams(
             "the teams in Grafana? "
             f"There should be a team named {team_name}."
         ),
-        expected_tools="list_teams",
+        expected_tools="admin_read",
     )
