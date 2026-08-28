@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `--base-path` now correctly prefixes the application routes: the SSE endpoints are reachable when the flag is given without a trailing slash, and the streamable-http endpoint is mounted under the prefix as the flag documentation already promised. `/healthz` and `/metrics` stay internal-only, mounted at the server root regardless of `--base-path` ([#1033](https://github.com/grafana/mcp-grafana/pull/1033))
+
 ## [1.2.0] - 2026-08-25
 
 ### Added
