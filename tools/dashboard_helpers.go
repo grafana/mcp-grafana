@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
@@ -229,18 +230,29 @@ func extractPanelQueries(panel map[string]interface{}, dashboardVars map[string]
 			RefID:      refID,
 		}
 
+		// Targets built in a datasource's visual editor carry no string
+		// expression at all. Hand back the target itself instead of dropping
+		// them silently.
+		if rawQuery == "" {
+			if !targetDescribesQuery(target) {
+				continue
+			}
+			pq.Target = queryTargetFields(target)
+		}
+
 		// Only do variable processing when dashboardVars is provided
 		if dashboardVars != nil {
-			pq.RequiredVariables = findVariablesInQuery(rawQuery, dashboardVars, overrides)
+			// A structured target has nothing runnable to substitute into, but it
+			// can still reference variables (a CloudWatch dimension of
+			// "$instance", say), so report those as required too.
+			pq.RequiredVariables = findVariablesInQuery(variableSearchText(pq), dashboardVars, overrides)
 			effectiveVars := buildEffectiveVariables(dashboardVars, overrides)
 			pq.ProcessedQuery = substituteVariables(rawQuery, effectiveVars)
 			dsInfo.UID = substituteVariables(dsInfo.UID, effectiveVars)
 			pq.Datasource = dsInfo
 		}
 
-		if rawQuery != "" {
-			queries = append(queries, pq)
-		}
+		queries = append(queries, pq)
 	}
 
 	return queries
@@ -257,6 +269,7 @@ func extractQueryExpression(target map[string]interface{}) string {
 		"rawSql",     // SQL databases
 		"rawSQL",     // Athena (grafana-athena-datasource)
 		"rawQuery",   // Some datasources
+		"target",     // Graphite metric path
 	}
 
 	for _, field := range queryFields {
@@ -266,6 +279,149 @@ func extractQueryExpression(target map[string]interface{}) string {
 	}
 
 	return ""
+}
+
+// structuredQueryFields are target fields we recognise as part of a query built
+// in a datasource's visual editor rather than written out as a string
+// expression: CloudWatch metric search, Pyroscope profile selection, InfluxDB's
+// query builder and so on. Recognising a field is not enough to call the target
+// a query -- see identifyingQueryFields.
+var structuredQueryFields = []string{
+	// CloudWatch metric search
+	"region", "namespace", "metricName", "statistic", "statistics", "dimensions", "accountId",
+	// Pyroscope
+	"profileTypeId", "labelSelector", "spanSelector",
+	// InfluxDB query builder
+	"policy", "measurement", "select", "tags", "groupBy",
+	// Elasticsearch aggregations
+	"metrics", "bucketAggs",
+	// Azure Monitor
+	"azureMonitor", "azureLogAnalytics", "azureTraces",
+}
+
+// structuredFieldSet indexes structuredQueryFields for lookups.
+var structuredFieldSet = func() map[string]bool {
+	set := make(map[string]bool, len(structuredQueryFields))
+	for _, field := range structuredQueryFields {
+		set[field] = true
+	}
+	return set
+}()
+
+// identifyingQueryFields is the subset of structuredQueryFields that says what a
+// query is *about*. The rest only refine one: Grafana persists them straight
+// from the query editor's defaults -- CloudWatch's "Average" statistic and
+// "default" region, InfluxDB's default retention policy -- so a query row nobody
+// filled in has them set and nothing else.
+var identifyingQueryFields = map[string]bool{
+	"metricName":        true, // CloudWatch metric search
+	"profileTypeId":     true, // Pyroscope
+	"measurement":       true, // InfluxDB query builder
+	"metrics":           true, // Elasticsearch aggregations (an empty lucene query is match-all, and still runs)
+	"azureMonitor":      true,
+	"azureLogAnalytics": true,
+	"azureTraces":       true,
+}
+
+// editorStateFields hold rendering, transport or query-editor state. Their
+// presence says nothing about whether a target asks for anything, so they don't
+// keep an otherwise-empty query row in the results. They are still returned to
+// the caller: queryType, for one, is what tells InfluxDB whether the panel is
+// influxql or flux.
+var editorStateFields = map[string]bool{
+	"datasource":       true,
+	"datasourceId":     true,
+	"refId":            true,
+	"hide":             true,
+	"hidden":           true,
+	"key":              true,
+	"id":               true,
+	"editorMode":       true,
+	"queryType":        true,
+	"queryMode":        true,
+	"metricQueryType":  true,
+	"metricEditorMode": true,
+	"matchExact":       true,
+	"format":           true,
+	"resultFormat":     true,
+	"instant":          true,
+	"range":            true,
+	"exemplar":         true,
+	"legendFormat":     true,
+	"alias":            true,
+	"interval":         true,
+	"intervalMs":       true,
+	"intervalFactor":   true,
+	"maxDataPoints":    true,
+}
+
+// targetDescribesQuery reports whether a target that carries no string
+// expression nevertheless describes a query. It distinguishes a real
+// visual-editor query from a query row somebody added in the UI and never
+// filled in, which Grafana saves with the editor's defaults in place.
+func targetDescribesQuery(target map[string]interface{}) bool {
+	for field, val := range target {
+		if isEmptyTargetValue(val) {
+			continue
+		}
+		if identifyingQueryFields[field] {
+			return true
+		}
+		// A field we don't recognise at all belongs to a datasource we have no
+		// list for. Take the target at its word rather than dropping the panel,
+		// which is the failure this whole path exists to avoid.
+		if !structuredFieldSet[field] && !editorStateFields[field] {
+			return true
+		}
+	}
+	return false
+}
+
+// queryTargetFields returns a target's fields for the caller to interpret,
+// minus the two the result already carries in their own fields. Nothing else is
+// filtered: Grafana runs a CloudWatch panel by posting the whole target back to
+// /api/ds/query, so any field may be part of what the panel asks for.
+func queryTargetFields(target map[string]interface{}) map[string]interface{} {
+	fields := make(map[string]interface{}, len(target))
+	for k, v := range target {
+		if k == "datasource" || k == "refId" {
+			continue
+		}
+		fields[k] = v
+	}
+	return fields
+}
+
+// isEmptyTargetValue reports whether a target field is set but carries no
+// information, which query editors leave behind routinely.
+func isEmptyTargetValue(val interface{}) bool {
+	switch v := val.(type) {
+	case nil:
+		return true
+	case string:
+		return v == ""
+	case []interface{}:
+		return len(v) == 0
+	case map[string]interface{}:
+		return len(v) == 0
+	default:
+		return false
+	}
+}
+
+// variableSearchText returns the text of a panel query to scan for template
+// variable references: the expression when there is one, otherwise the target's
+// JSON, which catches variables used inside structured fields such as a
+// CloudWatch dimension of "$instance".
+func variableSearchText(pq panelQuery) string {
+	if pq.Query != "" {
+		return pq.Query
+	}
+	encoded, err := json.Marshal(pq.Target)
+	if err != nil {
+		return ""
+	}
+	return string(encoded)
 }
 
 // variableRegex matches Grafana template variable patterns

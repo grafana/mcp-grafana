@@ -85,6 +85,48 @@ func TestGetPanelQueriesV2_WithVariableSubstitution(t *testing.T) {
 	assert.Equal(t, "web", queries[0].RequiredVariables[0].CurrentValue)
 }
 
+func TestExtractPanelQueriesV2_StructuredTarget(t *testing.T) {
+	// A CloudWatch metric search query has no string expression in its query
+	// spec; it must still show up, described rather than dropped.
+	panel := map[string]interface{}{
+		"title": "EC2 CPU",
+		"data": map[string]interface{}{
+			"spec": map[string]interface{}{
+				"queries": []interface{}{
+					map[string]interface{}{
+						"spec": map[string]interface{}{
+							"refId": "A",
+							"query": map[string]interface{}{
+								"group":      "cloudwatch",
+								"datasource": map[string]interface{}{"name": "cw-uid"},
+								"spec": map[string]interface{}{
+									"namespace":  "AWS/EC2",
+									"metricName": "CPUUtilization",
+									"statistic":  "Average",
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	queries := extractPanelQueriesV2(panel, nil, nil)
+
+	require.Len(t, queries, 1)
+	assert.Equal(t, "EC2 CPU", queries[0].Title)
+	assert.Equal(t, "A", queries[0].RefID)
+	assert.Empty(t, queries[0].Query)
+	assert.Equal(t, map[string]interface{}{
+		"namespace":  "AWS/EC2",
+		"metricName": "CPUUtilization",
+		"statistic":  "Average",
+	}, queries[0].Target)
+	assert.Equal(t, "cw-uid", queries[0].Datasource.UID)
+	assert.Equal(t, "cloudwatch", queries[0].Datasource.Type)
+}
+
 func TestExtractDashboardVariablesV2(t *testing.T) {
 	_, spec := loadV2Dashboard(t)
 

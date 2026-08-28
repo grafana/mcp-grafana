@@ -255,8 +255,24 @@ func TestExtractQueryExpression(t *testing.T) {
 			expected: "SELECT * FROM logs WHERE time > $__timeFilter",
 		},
 		{
+			name: "graphite target",
+			target: map[string]interface{}{
+				"target": "aliasByNode(stats.gauges.*.cpu, 2)",
+			},
+			expected: "aliasByNode(stats.gauges.*.cpu, 2)",
+		},
+		{
 			name:     "empty target",
 			target:   map[string]interface{}{},
+			expected: "",
+		},
+		{
+			name: "structured cloudwatch target has no string expression",
+			target: map[string]interface{}{
+				"namespace":  "AWS/EC2",
+				"metricName": "CPUUtilization",
+				"statistic":  "Average",
+			},
 			expected: "",
 		},
 	}
@@ -568,6 +584,298 @@ func TestExtractPanelQueries(t *testing.T) {
 		require.Len(t, queries, 2)
 		assert.Equal(t, "A", queries[0].RefID)
 		assert.Equal(t, "B", queries[1].RefID)
+	})
+}
+
+func TestTargetDescribesQuery(t *testing.T) {
+	tests := []struct {
+		name     string
+		target   map[string]interface{}
+		expected bool
+	}{
+		{
+			name: "cloudwatch metric search",
+			target: map[string]interface{}{
+				"refId":      "A",
+				"region":     "us-east-1",
+				"namespace":  "AWS/EC2",
+				"metricName": "CPUUtilization",
+				"statistic":  "Average",
+				"dimensions": map[string]interface{}{"InstanceId": "i-1234567890"},
+			},
+			expected: true,
+		},
+		{
+			name: "pyroscope profile selection",
+			target: map[string]interface{}{
+				"profileTypeId": "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
+				"labelSelector": `{service_name="checkout"}`,
+			},
+			expected: true,
+		},
+		{
+			name: "influxdb query builder",
+			target: map[string]interface{}{
+				"measurement": "cpu",
+				"select":      []interface{}{[]interface{}{map[string]interface{}{"type": "field", "params": []interface{}{"usage_idle"}}}},
+				"groupBy":     []interface{}{},
+			},
+			expected: true,
+		},
+		{
+			name: "elasticsearch match-all aggregation query",
+			target: map[string]interface{}{
+				"refId":      "A",
+				"query":      "",
+				"metrics":    []interface{}{map[string]interface{}{"type": "count", "id": "1"}},
+				"bucketAggs": []interface{}{map[string]interface{}{"type": "date_histogram", "id": "2", "field": "@timestamp"}},
+			},
+			expected: true,
+		},
+		{
+			name: "unrecognised datasource is taken at its word",
+			target: map[string]interface{}{
+				"refId":        "A",
+				"legendFormat": "{{host}}",
+				"entityType":   "host",
+				"counter":      "cpu.usage",
+			},
+			expected: true,
+		},
+		{
+			name: "cloudwatch row left on the editor defaults",
+			target: map[string]interface{}{
+				"refId":            "B",
+				"region":           "default",
+				"namespace":        "",
+				"metricName":       "",
+				"statistic":        "Average",
+				"dimensions":       map[string]interface{}{},
+				"matchExact":       true,
+				"metricQueryType":  float64(0),
+				"metricEditorMode": float64(0),
+				"id":               "",
+			},
+			expected: false,
+		},
+		{
+			name: "half-filled cloudwatch row with no metric chosen",
+			target: map[string]interface{}{
+				"refId":     "B",
+				"namespace": "AWS/EC2",
+				"statistic": "Average",
+			},
+			expected: false,
+		},
+		{
+			name: "influxdb row left on the editor defaults",
+			target: map[string]interface{}{
+				"refId":        "B",
+				"policy":       "default",
+				"resultFormat": "time_series",
+				"select":       []interface{}{[]interface{}{map[string]interface{}{"type": "field", "params": []interface{}{"value"}}}},
+				"groupBy":      []interface{}{map[string]interface{}{"type": "time", "params": []interface{}{"$__interval"}}},
+			},
+			expected: false,
+		},
+		{
+			name: "blank prometheus row",
+			target: map[string]interface{}{
+				"refId":        "B",
+				"expr":         "",
+				"range":        true,
+				"instant":      false,
+				"editorMode":   "builder",
+				"legendFormat": "__auto",
+			},
+			expected: false,
+		},
+		{
+			name: "blank loki row",
+			target: map[string]interface{}{
+				"refId":     "B",
+				"expr":      "",
+				"queryType": "range",
+			},
+			expected: false,
+		},
+		{
+			name: "target with nothing but presentation fields",
+			target: map[string]interface{}{
+				"refId":      "A",
+				"hide":       true,
+				"datasource": map[string]interface{}{"uid": "abc", "type": "cloudwatch"},
+				"expr":       "",
+			},
+			expected: false,
+		},
+		{
+			name:     "empty target",
+			target:   map[string]interface{}{},
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, targetDescribesQuery(tt.target))
+		})
+	}
+}
+
+func TestQueryTargetFields(t *testing.T) {
+	// Everything but the datasource and refId, which the result carries in its
+	// own fields: Grafana runs a CloudWatch panel by posting the whole target
+	// back, so no other field is safe to drop.
+	fields := queryTargetFields(map[string]interface{}{
+		"refId":      "A",
+		"datasource": map[string]interface{}{"uid": "cw-uid", "type": "cloudwatch"},
+		"namespace":  "AWS/EC2",
+		"metricName": "CPUUtilization",
+		"period":     "300",
+		"matchExact": true,
+		"hide":       false,
+	})
+
+	assert.Equal(t, map[string]interface{}{
+		"namespace":  "AWS/EC2",
+		"metricName": "CPUUtilization",
+		"period":     "300",
+		"matchExact": true,
+		"hide":       false,
+	}, fields)
+}
+
+func TestExtractPanelQueriesStructuredTargets(t *testing.T) {
+	t.Run("returns cloudwatch metric search panels", func(t *testing.T) {
+		panel := map[string]interface{}{
+			"title": "EC2 CPU",
+			"datasource": map[string]interface{}{
+				"uid":  "cloudwatch-uid",
+				"type": "cloudwatch",
+			},
+			"targets": []interface{}{
+				map[string]interface{}{
+					"refId":      "A",
+					"namespace":  "AWS/EC2",
+					"metricName": "CPUUtilization",
+					"statistic":  "Average",
+				},
+			},
+		}
+
+		queries := extractPanelQueries(panel, nil, nil)
+
+		require.Len(t, queries, 1)
+		assert.Equal(t, "EC2 CPU", queries[0].Title)
+		assert.Empty(t, queries[0].Query)
+		assert.Equal(t, map[string]interface{}{
+			"namespace":  "AWS/EC2",
+			"metricName": "CPUUtilization",
+			"statistic":  "Average",
+		}, queries[0].Target)
+		assert.Equal(t, "cloudwatch-uid", queries[0].Datasource.UID)
+	})
+
+	t.Run("returns both string and structured targets from a mixed panel", func(t *testing.T) {
+		panel := map[string]interface{}{
+			"title": "Mixed",
+			"targets": []interface{}{
+				map[string]interface{}{
+					"refId":      "A",
+					"expr":       "up",
+					"datasource": map[string]interface{}{"uid": "prom-uid", "type": "prometheus"},
+				},
+				map[string]interface{}{
+					"refId":      "B",
+					"namespace":  "AWS/EC2",
+					"metricName": "NetworkIn",
+					"datasource": map[string]interface{}{"uid": "cw-uid", "type": "cloudwatch"},
+				},
+			},
+		}
+
+		queries := extractPanelQueries(panel, nil, nil)
+
+		require.Len(t, queries, 2)
+		assert.Equal(t, "up", queries[0].Query)
+		assert.Nil(t, queries[0].Target)
+		assert.Empty(t, queries[1].Query)
+		assert.Equal(t, map[string]interface{}{
+			"namespace":  "AWS/EC2",
+			"metricName": "NetworkIn",
+		}, queries[1].Target)
+	})
+
+	t.Run("skips targets that describe no query", func(t *testing.T) {
+		panel := map[string]interface{}{
+			"targets": []interface{}{
+				map[string]interface{}{
+					"refId":      "A",
+					"datasource": map[string]interface{}{"uid": "prom-uid", "type": "prometheus"},
+				},
+			},
+		}
+
+		queries := extractPanelQueries(panel, nil, nil)
+
+		assert.Empty(t, queries)
+	})
+
+	t.Run("skips a query row left on the editor defaults", func(t *testing.T) {
+		panel := map[string]interface{}{
+			"title":      "EC2 CPU",
+			"datasource": map[string]interface{}{"uid": "cloudwatch-uid", "type": "cloudwatch"},
+			"targets": []interface{}{
+				map[string]interface{}{
+					"refId":      "A",
+					"namespace":  "AWS/EC2",
+					"metricName": "CPUUtilization",
+					"statistic":  "Average",
+				},
+				// Added in the UI and never filled in, so Grafana saved the
+				// editor's defaults.
+				map[string]interface{}{
+					"refId":            "B",
+					"region":           "default",
+					"namespace":        "",
+					"metricName":       "",
+					"statistic":        "Average",
+					"matchExact":       true,
+					"metricQueryType":  float64(0),
+					"metricEditorMode": float64(0),
+				},
+			},
+		}
+
+		queries := extractPanelQueries(panel, nil, nil)
+
+		require.Len(t, queries, 1)
+		assert.Equal(t, "A", queries[0].RefID)
+	})
+
+	t.Run("reports variables referenced by a structured target", func(t *testing.T) {
+		panel := map[string]interface{}{
+			"targets": []interface{}{
+				map[string]interface{}{
+					"refId":      "A",
+					"namespace":  "AWS/EC2",
+					"metricName": "CPUUtilization",
+					"dimensions": map[string]interface{}{"InstanceId": "$instance"},
+				},
+			},
+		}
+		dashboardVars := map[string]VariableInfo{
+			"instance": {Name: "instance", CurrentValue: "i-1234567890"},
+		}
+
+		queries := extractPanelQueries(panel, dashboardVars, nil)
+
+		require.Len(t, queries, 1)
+		require.Len(t, queries[0].RequiredVariables, 1)
+		assert.Equal(t, "instance", queries[0].RequiredVariables[0].Name)
+		assert.Equal(t, "i-1234567890", queries[0].RequiredVariables[0].CurrentValue)
+		assert.Empty(t, queries[0].ProcessedQuery)
 	})
 }
 
