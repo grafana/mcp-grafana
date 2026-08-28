@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -109,6 +110,19 @@ func TestOrgIDFromArguments(t *testing.T) {
 		{"empty string", map[string]any{"orgId": ""}, 0, false},
 		{"non-numeric string", map[string]any{"orgId": "abc"}, 0, false},
 		{"wrong type", map[string]any{"orgId": true}, 0, false},
+		// An org id is an identifier, so a fractional value is a caller mistake
+		// rather than something to round: 2.9 must not become org 2.
+		{"fractional json number", map[string]any{"orgId": 2.9}, 0, false},
+		{"fractional just below an org", map[string]any{"orgId": 2.0000001}, 0, false},
+		{"negative fractional", map[string]any{"orgId": -2.5}, 0, false},
+		{"fractional string", map[string]any{"orgId": "2.9"}, 0, false},
+		{"whole float is still accepted", map[string]any{"orgId": 2.0}, 2, true},
+		// Converting these to int64 is undefined, so they are rejected outright
+		// rather than reaching the conversion.
+		{"NaN", map[string]any{"orgId": math.NaN()}, 0, false},
+		{"positive infinity", map[string]any{"orgId": math.Inf(1)}, 0, false},
+		{"negative infinity", map[string]any{"orgId": math.Inf(-1)}, 0, false},
+		{"beyond int64", map[string]any{"orgId": 1e300}, 0, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

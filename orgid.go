@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -57,8 +58,8 @@ func injectOrgIDProperty(properties map[string]any) {
 //
 // The override can only reach organizations the underlying credential is a
 // member of — Grafana still enforces authorization, and a service-account token
-// remains bound to its single org. An absent, non-numeric, or non-positive
-// value leaves the connection-level OrgID untouched.
+// remains bound to its single org. An absent, non-numeric, fractional, or
+// non-positive value leaves the connection-level OrgID untouched.
 //
 // The orgId argument is stripped from the request before the handler runs so it
 // never propagates downstream — in particular, proxied tools forward all
@@ -83,10 +84,12 @@ func OrgIDOverrideMiddleware(next server.ToolHandlerFunc) server.ToolHandlerFunc
 	}
 }
 
-// orgIDFromArguments extracts a positive orgId from raw tool-call arguments,
-// tolerating both JSON numbers and numeric strings (some clients send integer
-// arguments as strings). It returns ok=false when the argument is absent,
-// unparseable, or not positive.
+// orgIDFromArguments extracts a positive, whole orgId from raw tool-call
+// arguments, tolerating both JSON numbers and numeric strings (some clients send
+// integer arguments as strings). It returns ok=false when the argument is absent,
+// unparseable, fractional, or not positive: an org id is an identifier, so a
+// value that is not exactly one is a caller mistake rather than something to
+// round.
 func orgIDFromArguments(args map[string]any) (int64, bool) {
 	raw, present := args[OrgIDArgument]
 	if !present {
@@ -96,6 +99,14 @@ func orgIDFromArguments(args map[string]any) (int64, bool) {
 	var orgID int64
 	switch v := raw.(type) {
 	case float64:
+		// JSON numbers decode to float64, so truncating would silently accept a
+		// fractional orgId and target a different org than asked for (2.9 -> 2).
+		// The same guard rejects NaN (which is never equal to its truncation) and
+		// infinities, and values at or beyond int64, whose conversion would be
+		// undefined.
+		if v != math.Trunc(v) || math.IsInf(v, 0) || v >= math.MaxInt64 {
+			return 0, false
+		}
 		orgID = int64(v)
 	case int64:
 		orgID = v
