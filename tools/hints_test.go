@@ -209,12 +209,12 @@ func TestGenerateEmptyResultHints(t *testing.T) {
 		// Check for ClickHouse-specific tool suggestions
 		foundListTablesAction := false
 		for _, action := range hints.SuggestedActions {
-			if contains(action, "list_clickhouse_tables") {
+			if contains(action, "list_sql_tables") {
 				foundListTablesAction = true
 				break
 			}
 		}
-		assert.True(t, foundListTablesAction, "Should suggest using list_clickhouse_tables")
+		assert.True(t, foundListTablesAction, "Should suggest using list_sql_tables")
 	})
 
 	t.Run("cloudwatch hints", func(t *testing.T) {

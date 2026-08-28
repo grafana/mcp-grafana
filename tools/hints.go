@@ -193,8 +193,8 @@ func getClickHouseCauses(ctx HintContext) []string {
 // getClickHouseActions returns suggested actions for empty ClickHouse results
 func getClickHouseActions(ctx HintContext) []string {
 	return []string{
-		"Use list_clickhouse_tables to verify the table exists",
-		"Use describe_clickhouse_table to check column names and types",
+		"Use list_sql_tables to verify the table exists",
+		"Use describe_sql_table to check column names and types",
 		"Try removing WHERE clause filters to see if the table contains data",
 		"Verify time parameters are in Unix milliseconds format",
 	}
@@ -289,8 +289,8 @@ func getAthenaCauses(ctx HintContext) []string {
 // getAthenaActions returns suggested actions for empty Athena results
 func getAthenaActions(ctx HintContext) []string {
 	return []string{
-		"Use list_athena_tables to verify the table exists",
-		"Use describe_athena_table to check column names, or run DESCRIBE db.table via query_athena for column types and partition spec",
+		"Use list_sql_tables to verify the table exists",
+		"Use describe_sql_table to check column names, or run DESCRIBE db.table via query_sql for column types and partition spec",
 		"Widen the time range or check partition column values (run DESCRIBE to see partition structure)",
 		"Try a simple SELECT * FROM table LIMIT 10 to verify access",
 	}
@@ -309,8 +309,8 @@ func getSnowflakeCauses(ctx HintContext) []string {
 // getSnowflakeActions returns suggested actions for empty Snowflake results
 func getSnowflakeActions(ctx HintContext) []string {
 	return []string{
-		"Use list_snowflake_tables to verify the table exists",
-		"Use describe_snowflake_table to check column names and types",
+		"Use list_sql_tables to verify the table exists",
+		"Use describe_sql_table to check column names and types",
 		"Try removing WHERE clause filters to see if the table contains data",
 		"Verify the datasource's default database/role has access to the table",
 	}

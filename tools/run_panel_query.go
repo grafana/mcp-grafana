@@ -10,6 +10,7 @@ import (
 
 	"github.com/grafana/grafana-openapi-client-go/client/datasources"
 	mcpgrafana "github.com/grafana/mcp-grafana"
+	sqldialect "github.com/grafana/mcp-grafana/tools/sql"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/prometheus/common/model"
@@ -227,16 +228,18 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 	case "influxdb":
 		results, err = executeInfluxDBQuery(ctx, datasourceUID, panelData, query, params.Start, params.End)
 	case "bigquery":
-		results, err = executeSQLPanelQuery(ctx, datasourceUID, panelData, query, params.Start, params.End, templateVariables, BigQueryDatasourceType)
+		results, err = executeSQLPanelQuery(ctx, datasourceUID, panelData, query, params.Start, params.End, templateVariables, sqldialect.BigQueryDatasourceType)
+	case "mysql":
+		results, err = executeSQLPanelQuery(ctx, datasourceUID, panelData, query, params.Start, params.End, templateVariables, sqldialect.MySQLDatasourceType)
 	case "mssql":
-		results, err = executeSQLPanelQuery(ctx, datasourceUID, panelData, query, params.Start, params.End, templateVariables, MSSQLDatasourceType)
+		results, err = executeSQLPanelQuery(ctx, datasourceUID, panelData, query, params.Start, params.End, templateVariables, sqldialect.MSSQLDatasourceType)
 	case "postgres":
 		// PostgreSQL exposes two datasource identifiers (grafana-postgresql-datasource
 		// and the legacy postgres); pass the resolved type through so the datasource
 		// object sent to Grafana matches what the panel actually declared.
 		results, err = executeSQLPanelQuery(ctx, datasourceUID, panelData, query, params.Start, params.End, templateVariables, datasourceType)
 	default:
-		return nil, fmt.Errorf("datasource type '%s' is not supported by run_panel_query; use the native query tool (e.g. query_prometheus\\, query_loki_logs\\, query_clickhouse\\, query_cloudwatch\\, query_influxdb) directly", datasourceType)
+		return nil, fmt.Errorf("datasource type '%s' is not supported by run_panel_query; use the native query tool (e.g. query_prometheus\\, query_loki_logs\\, query_sql\\, query_cloudwatch\\, query_influxdb) directly", datasourceType)
 	}
 
 	if err != nil {
@@ -581,15 +584,12 @@ func executeLokiQuery(ctx context.Context, datasourceUID, query, start, end stri
 	return result.Data, nil
 }
 
-// executeClickHouseQuery runs a ClickHouse query using the existing queryClickHouse function
-// NOTE: Do NOT substitute macros here - queryClickHouse() handles them internally
-func executeClickHouseQuery(ctx context.Context, datasourceUID, query, start, end string) (*ClickHouseQueryResult, error) {
-	return queryClickHouse(ctx, ClickHouseQueryParams{
+func executeClickHouseQuery(ctx context.Context, datasourceUID, query, start, end string) (*sqldialect.SQLQueryResult, error) {
+	return querySQLHandler(ctx, sqldialect.QuerySQLParams{
 		DatasourceUID: datasourceUID,
 		Query:         query,
 		Start:         start,
 		End:           end,
-		Variables:     nil, // Variables already substituted by runSinglePanelQuery
 	})
 }
 
@@ -650,19 +650,6 @@ func executeInfluxDBQuery(ctx context.Context, datasourceUID string, panelData *
 	})
 }
 
-// BigQueryDatasourceType is the type identifier for BigQuery datasources.
-const BigQueryDatasourceType = "grafana-bigquery-datasource"
-
-// MSSQLDatasourceType is the type identifier for Microsoft SQL Server datasources.
-const MSSQLDatasourceType = "mssql"
-
-// PostgresDatasourceType is the modern type identifier for PostgreSQL datasources.
-const PostgresDatasourceType = "grafana-postgresql-datasource"
-
-// PostgresLegacyDatasourceType is the legacy identifier that older and provisioned
-// Grafana installations still expose for the same PostgreSQL datasource.
-const PostgresLegacyDatasourceType = "postgres"
-
 // SQLFormatTable is the format value for table/tabular query results on sqlds-based
 // datasources such as BigQuery, whose query model takes a numeric format enum.
 const SQLFormatTable = 1
@@ -674,21 +661,13 @@ const MSSQLFormatTable = "table"
 // defaultSQLFormat returns the table format value understood by the given datasource.
 func defaultSQLFormat(datasourceType string) interface{} {
 	switch normalizeDatasourceType(datasourceType) {
-	case "mssql", "postgres":
-		// MSSQL and PostgreSQL both use Grafana's sqleng backend, whose query model
-		// unmarshals format into a string and errors on a number.
+	case "mssql", "postgres", "mysql":
+		// MSSQL, PostgreSQL, and MySQL use Grafana's sqleng backend, whose query
+		// model unmarshals format into a string and errors on a number.
 		return MSSQLFormatTable
 	default:
 		return SQLFormatTable
 	}
-}
-
-// SQLQueryResult represents the tabular result of a SQL panel query.
-type SQLQueryResult struct {
-	Columns        []string                 `json:"columns"`
-	Rows           []map[string]interface{} `json:"rows"`
-	RowCount       int                      `json:"rowCount"`
-	ProcessedQuery string                   `json:"processedQuery,omitempty"`
 }
 
 // executeSQLPanelQuery runs a panel query against a SQL datasource via Grafana's
@@ -698,7 +677,7 @@ type SQLQueryResult struct {
 // panel's raw target is preserved so datasource-specific fields (BigQuery's location,
 // project and dataset, for example) reach the backend; only rawSql, datasource, refId
 // and format are overridden.
-func executeSQLPanelQuery(ctx context.Context, datasourceUID string, panelData *panelInfo, query, start, end string, variables templateVariableValues, datasourceType string) (*SQLQueryResult, error) {
+func executeSQLPanelQuery(ctx context.Context, datasourceUID string, panelData *panelInfo, query, start, end string, variables templateVariableValues, datasourceType string) (*sqldialect.SQLQueryResult, error) {
 	if panelData == nil || panelData.RawTarget == nil {
 		return nil, fmt.Errorf("SQL panel target not available")
 	}
@@ -744,7 +723,7 @@ func executeSQLPanelQuery(ctx context.Context, datasourceUID string, panelData *
 		return nil, err
 	}
 
-	return &SQLQueryResult{
+	return &sqldialect.SQLQueryResult{
 		Columns:        columns,
 		Rows:           rows,
 		RowCount:       len(rows),
@@ -879,6 +858,12 @@ func normalizeDatasourceType(dsType string) string {
 		return "influxdb"
 	case strings.Contains(lower, "clickhouse"):
 		return "clickhouse"
+	case strings.Contains(lower, "athena"):
+		return "athena"
+	case strings.Contains(lower, "snowflake"):
+		return "snowflake"
+	case lower == "mysql":
+		return "mysql"
 	case lower == "mssql":
 		return "mssql"
 	case lower == "postgres" || lower == "grafana-postgresql-datasource":
@@ -900,11 +885,9 @@ func isEmptyPanelResult(results interface{}) bool {
 		return len(v) == 0
 	case []LogEntry:
 		return len(v) == 0
-	case *ClickHouseQueryResult:
-		return v == nil || len(v.Rows) == 0
 	case *InfluxDBQueryResult:
 		return v == nil || len(v.Rows) == 0
-	case *SQLQueryResult:
+	case *sqldialect.SQLQueryResult:
 		return v == nil || len(v.Rows) == 0
 	case model.Value:
 		switch m := v.(type) {
@@ -938,8 +921,8 @@ func generatePanelQueryHints(datasourceType, query string) []string {
 		)
 	case "clickhouse":
 		hints = append(hints,
-			"- Table may be empty for this time range - use query_clickhouse with a COUNT(*) to verify",
-			"- Column names or WHERE clause may not match - use describe_clickhouse_table to check schema",
+			"- Table may be empty for this time range - use query_sql with a COUNT(*) to verify",
+			"- Column names or WHERE clause may not match - use describe_sql_table to check schema",
 			"- Time filter may not match the actual timestamp column format",
 		)
 	case "cloudwatch":

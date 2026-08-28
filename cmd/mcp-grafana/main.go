@@ -97,11 +97,9 @@ var categoryDescription = map[string]string{
 	"plugin":        "Plugins: Check whether Grafana plugins are installed and fetch plugin details.",
 	"cloudwatch":    "CloudWatch: Query AWS CloudWatch datasources for metrics and logs.",
 	"examples":      "Examples: Query example tools.",
-	"clickhouse":    "ClickHouse: Query ClickHouse datasources via Grafana with macro and variable substitution support.",
-	"snowflake":     "Snowflake: Query Snowflake datasources via Grafana (including the SNOWFLAKE.TELEMETRY.EVENTS event table) with macro and variable substitution support.",
+	"sql":           "SQL: Query supported SQL datasources (ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, MSSQL) via Grafana with macro substitution, schema discovery, and variable support.",
 	"runpanelquery": "Run Panel Query: Execute panel queries directly.",
 	"graphite":      "Graphite: Query Graphite datasources for metrics.",
-	"athena":        "Athena: Query Amazon Athena datasources via Grafana with SQL, macro substitution, and schema discovery.",
 	"api":           "API: Make authenticated HTTP requests to any Grafana API endpoint with optional jq-style response filtering.",
 	"config":        "Config: Generate operator-facing configuration snippets (e.g. Alloy label-enforcement pipelines).",
 	"provisioning":  "Provisioning: List provisioning repositories (e.g. git-sync sources) to discover repository slugs for use with rendering tools.",
@@ -120,10 +118,8 @@ var categoryDescriptionNoQuery = map[string]string{
 	"loki":       "Loki: Retrieve log metadata and index stats, explore label names/values, and audit label strategy. Log query execution is disabled.",
 	"pyroscope":  "Pyroscope: Explore profile types and label names/values. Query execution is disabled.",
 	"cloudwatch": "CloudWatch: List AWS CloudWatch namespaces, metrics, and dimensions. Query execution is disabled.",
-	"clickhouse": "ClickHouse: List tables and describe table schemas in ClickHouse datasources. Query execution is disabled.",
-	"snowflake":  "Snowflake: List tables and describe table schemas in Snowflake datasources. Query execution is disabled.",
+	"sql":        "SQL: List tables and describe table schemas in SQL datasources (ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, MSSQL). Query execution is disabled.",
 	"graphite":   "Graphite: List Graphite metrics and tags. Query execution is disabled.",
-	"athena":     "Athena: Discover catalogs, databases, tables, and table schemas in Amazon Athena datasources. Query execution is disabled.",
 }
 
 // queryOnlyCategories register no tools at all when their query tools are
@@ -136,11 +132,11 @@ var queryOnlyCategories = []string{"elasticsearch", "quickwit", "influxdb", "run
 // query tools and write tools at once, so read-only mode removes them along with
 // the rest of the write tools, and --enable-query puts them back for operators
 // whose datasource credentials are known to be read-only.
-var mutatingQueryCategories = []string{"clickhouse", "snowflake", "athena", "influxdb"}
+var mutatingQueryCategories = []string{"sql", "influxdb"}
 
 // enableQueryToolNames are the tool names --enable-query is shorthand for
 // naming in --enable-write-tools: see writeToolOverridden.
-var enableQueryToolNames = []string{"query_clickhouse", "query_snowflake", "query_athena", "query_influxdb"}
+var enableQueryToolNames = []string{"query_sql", "query_influxdb"}
 
 // writeToolOverridden reports whether any of the given tool names should be
 // treated as named in --enable-write-tools, regardless of --disable-write.
@@ -190,7 +186,7 @@ func (dt *disabledTools) queryToolsEnabled(category string) bool {
 	return true
 }
 
-// mutatingQueryToolsEnabled reports whether any of the four raw-SQL query
+// mutatingQueryToolsEnabled reports whether any of the raw-SQL query
 // tools are enabled. Used to gate the query-capable variant of
 // grafana_api_request, which isn't specific to one datasource type so it
 // moves with the group rather than a single category.
@@ -214,8 +210,8 @@ type disabledTools struct {
 	prometheus, loki, elasticsearch, quickwit, influxdb, alerting,
 	dashboard, folder, oncall, asserts, sift, admin,
 	pyroscope, navigation, proxied, annotations, rendering, cloudwatch, write, query, enableQuery,
-	snapshot, examples, clickhouse, snowflake, graphite,
-	runpanelquery, athena, plugin, api, config, provisioning,
+	snapshot, examples, sql, graphite,
+	runpanelquery, plugin, api, config, provisioning,
 	agento11y, assistant, docs, user bool
 }
 
@@ -281,18 +277,19 @@ func (dt *disabledTools) addFlags() {
 	flag.BoolVar(&dt.proxied, "disable-proxied", false, "Disable proxied tools (tools from external MCP servers)")
 	flag.BoolVar(&dt.write, "disable-write", false, "Disable write tools (create/update operations)")
 	flag.BoolVar(&dt.query, "disable-query", false, "Disable query tools (tools that execute a query against a datasource, e.g. query_prometheus, query_loki_logs, run_panel_query). Metadata and discovery tools stay available.")
-	flag.BoolVar(&dt.enableQuery, "enable-query", false, "Keep the raw-SQL query tools (query_clickhouse, query_snowflake, query_athena, query_influxdb) registered even under --disable-write. They pass the query through unfiltered, so they can mutate data if the datasource credentials permit it; use this when those credentials are known to be read-only. Has no effect if --disable-query is also set. Equivalent to --enable-write-tools=query_clickhouse,query_snowflake,query_athena,query_influxdb; kept as a shorthand for that common case.")
+	flag.BoolVar(&dt.enableQuery, "enable-query", false, "Keep the raw-SQL query tools (query_sql, query_influxdb) registered even under --disable-write. They pass the query through unfiltered, so they can mutate data if the datasource credentials permit it; use this when those credentials are known to be read-only. Has no effect if --disable-query is also set. Equivalent to --enable-write-tools=query_sql,query_influxdb; kept as a shorthand for that common case.")
 	flag.StringVar(&dt.writeToolOverrides, "enable-write-tools", "", "Comma separated list of individual tool names to keep registered even under --disable-write, for tools whose write behavior is scoped enough to opt back in independently (e.g. find_error_pattern_logs,find_slow_requests, which only create ephemeral Sift investigation records and never touch a Grafana dashboard, alert, or datasource). Has no effect on a tool whose whole category is disabled, e.g. via --disable-sift.")
 	flag.BoolVar(&dt.annotations, "disable-annotations", false, "Disable annotation tools")
 	flag.BoolVar(&dt.rendering, "disable-rendering", false, "Disable rendering tools (panel/dashboard image export)")
 	flag.BoolVar(&dt.snapshot, "disable-snapshot", false, "Disable snapshot tools")
 	flag.BoolVar(&dt.cloudwatch, "disable-cloudwatch", false, "Disable CloudWatch tools")
 	flag.BoolVar(&dt.examples, "disable-examples", false, "Disable query examples tools")
-	flag.BoolVar(&dt.clickhouse, "disable-clickhouse", false, "Disable ClickHouse tools")
-	flag.BoolVar(&dt.snowflake, "disable-snowflake", false, "Disable Snowflake tools")
+	flag.BoolVar(&dt.sql, "disable-sql", false, "Disable SQL tools (ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, MSSQL)")
+	flag.BoolVar(&dt.sql, "disable-clickhouse", false, "Deprecated: use --disable-sql instead")
+	flag.BoolVar(&dt.sql, "disable-snowflake", false, "Deprecated: use --disable-sql instead")
+	flag.BoolVar(&dt.sql, "disable-athena", false, "Deprecated: use --disable-sql instead")
 	flag.BoolVar(&dt.runpanelquery, "disable-runpanelquery", false, "Disable run panel query tools")
 	flag.BoolVar(&dt.graphite, "disable-graphite", false, "Disable Graphite tools")
-	flag.BoolVar(&dt.athena, "disable-athena", false, "Disable Athena tools")
 	flag.BoolVar(&dt.plugin, "disable-plugin", false, "Disable plugin tools")
 	flag.BoolVar(&dt.api, "disable-api", false, "Disable API tools")
 	flag.BoolVar(&dt.config, "disable-config", false, "Disable config-generation tools")
@@ -428,11 +425,9 @@ func (dt *disabledTools) toolEntries() []toolEntry {
 		{func(mcp *server.MCPServer) { tools.AddSnapshotTools(mcp, enableWriteTools) }, dt.snapshot, "snapshot"},
 		{func(mcp *server.MCPServer) { tools.AddCloudWatchTools(mcp, enableQueryTools) }, dt.cloudwatch, "cloudwatch"},
 		{tools.AddExamplesTools, dt.examples, "examples"},
-		{func(mcp *server.MCPServer) { tools.AddClickHouseTools(mcp, dt.queryToolsEnabled("clickhouse")) }, dt.clickhouse, "clickhouse"},
-		{func(mcp *server.MCPServer) { tools.AddSnowflakeTools(mcp, dt.queryToolsEnabled("snowflake")) }, dt.snowflake, "snowflake"},
+		{func(mcp *server.MCPServer) { tools.AddSQLTools(mcp, dt.queryToolsEnabled("sql")) }, dt.sql, "sql"},
 		{func(mcp *server.MCPServer) { tools.AddRunPanelQueryTools(mcp, enableQueryTools) }, dt.runpanelquery, "runpanelquery"},
 		{func(mcp *server.MCPServer) { tools.AddGraphiteTools(mcp, enableQueryTools) }, dt.graphite, "graphite"},
-		{func(mcp *server.MCPServer) { tools.AddAthenaTools(mcp, dt.queryToolsEnabled("athena")) }, dt.athena, "athena"},
 		{func(mcp *server.MCPServer) { tools.AddPluginTools(mcp, enableWriteTools) }, dt.plugin, "plugin"},
 		{func(mcp *server.MCPServer) { tools.AddAPITools(mcp, enableWriteTools, dt.mutatingQueryToolsEnabled()) }, dt.api, "api"},
 		{tools.AddConfigTools, dt.config, "config"},
@@ -444,8 +439,44 @@ func (dt *disabledTools) toolEntries() []toolEntry {
 	}
 }
 
+// sqlCategoryAliases maps deprecated per-dialect category names to the unified
+// "sql" category. When any alias appears in --enabled-tools it is replaced with
+// "sql" and any --disable-sql / --disable-{dialect} flag is cleared, so an
+// explicit opt-in always wins.
+var sqlCategoryAliases = map[string]bool{
+	"clickhouse": true,
+	"snowflake":  true,
+	"athena":     true,
+}
+
+// normalizeEnabledTools rewrites the enabled-tools list, replacing deprecated
+// SQL dialect aliases with "sql". If any alias is present, the sql disable flag
+// is cleared so the explicit opt-in overrides --disable-sql.
+func (dt *disabledTools) normalizeEnabledTools() {
+	parts := strings.Split(dt.enabledTools, ",")
+	hasSQLAlias := false
+	seen := make(map[string]bool, len(parts))
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if sqlCategoryAliases[p] {
+			hasSQLAlias = true
+			p = "sql"
+		}
+		if !seen[p] {
+			seen[p] = true
+			out = append(out, p)
+		}
+	}
+	dt.enabledTools = strings.Join(out, ",")
+	if hasSQLAlias {
+		dt.sql = false
+	}
+}
+
 // processTools registers enabled tool categories on the server.
 func (dt *disabledTools) processTools(s *server.MCPServer) {
+	dt.normalizeEnabledTools()
 	if dt.query && dt.enableQuery {
 		slog.Warn("--enable-query has no effect because --disable-query is set; no query tools will be registered")
 	}
@@ -461,6 +492,7 @@ func (dt *disabledTools) processTools(s *server.MCPServer) {
 // buildInstructions constructs the server instruction string listing only
 // the capabilities that are actually enabled.
 func (dt *disabledTools) buildInstructions() string {
+	dt.normalizeEnabledTools()
 	enabledTools := strings.Split(dt.enabledTools, ",")
 
 	var capabilities []string
