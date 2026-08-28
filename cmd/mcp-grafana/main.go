@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path"
 	"regexp"
 	"slices"
 	"strconv"
@@ -906,7 +907,66 @@ func runOpsServer(addr string, h http.Handler) {
 	}
 }
 
+// normalizeBasePath canonicalises --base-path to "" (server root) or to
+// "/prefix" without a trailing slash. Mirrors how mcp-go normalizes the base
+// path it advertises to clients, so our mux patterns and the URLs the server
+// hands out cannot drift apart.
+func normalizeBasePath(basePath string) string {
+	joined := path.Join("/", basePath)
+	if joined == "/" {
+		return ""
+	}
+	return joined
+}
+
+// newHTTPMux builds the mux shared by the SSE and streamable-http transports,
+// carrying the MCP handler only. The operational endpoints are added by
+// registerOps, which decides per endpoint whether it stays on this mux or
+// moves to its own listener.
+//
+// mcpPattern is the ServeMux pattern the MCP handler is mounted on.
+// callerToken, when non-empty, gates the MCP handler behind bearer auth — the
+// operational endpoints stay open so probes and scrapers keep working.
+//
+// /healthz and /metrics are internal-only endpoints consumed by
+// infrastructure (liveness probes, scrapers), not by MCP clients, so
+// registerOps mounts them at the server root only — never under --base-path.
+// Putting them on the same prefix as the application endpoints would make it
+// harder for a reverse proxy to expose the API while keeping these internal.
+func newHTTPMux(mcpPattern string, mcpHandler http.Handler, callerToken string) *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.Handle(mcpPattern, withCallerAuth(callerToken, observability.WrapHandler(mcpHandler, mcpPattern)))
+	return mux
+}
+
+// newSSEMux mounts the SSE handler.
+//
+// basePath must already be normalized by the caller (normalizeBasePath).
+func newSSEMux(mcpHandler http.Handler, basePath, callerToken string) *http.ServeMux {
+	// The SSE server routes on the full request path (<base>/sse,
+	// <base>/message), so it needs the subtree pattern: an exact-match mount on
+	// the base path itself never reaches it.
+	return newHTTPMux(basePath+"/", mcpHandler, callerToken)
+}
+
+// newStreamableHTTPMux mounts the streamable-http handler.
+//
+// mcpEndpoint must already be computed by the caller (streamableEndpointPath).
+func newStreamableHTTPMux(mcpHandler http.Handler, mcpEndpoint, callerToken string) *http.ServeMux {
+	return newHTTPMux(mcpEndpoint, mcpHandler, callerToken)
+}
+
+// streamableEndpointPath is where the streamable-http server listens once
+// --base-path is taken into account.
+func streamableEndpointPath(basePath, endpointPath string) string {
+	return path.Join("/", basePath, endpointPath)
+}
+
 func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt disabledTools, gc mcpgrafana.GrafanaConfig, tls tlsConfig, hsc httpSecurityConfig, ca callerAuthConfig, obs observability.Config, sessionIdleTimeoutMinutes int, healthzAddress, instructionsAppend string) error {
+	if endpointPath == "/healthz" || endpointPath == "/metrics" {
+		return fmt.Errorf("--endpoint-path cannot be %q: reserved for operational endpoints", endpointPath)
+	}
+
 	stderrHandler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})
 	slog.SetDefault(slog.New(stderrHandler))
 
@@ -1019,6 +1079,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		return nil
 
 	case "sse":
+		basePath = normalizeBasePath(basePath)
 		httpSrv := &http.Server{Addr: addr}
 		srv := server.NewSSEServer(s,
 			server.WithSSEContextFunc(mcpgrafana.ComposedSSEContextFunc(gc, clientCache)),
@@ -1027,14 +1088,11 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 			server.WithSSECORS(server.WithCORSAllowedOrigins(hsc.corsOrigins()...)),
 			server.WithSSEDisableLocalhostProtection(disableLocalhostProtection),
 		)
-		mux := http.NewServeMux()
-		if basePath == "" {
-			basePath = "/"
-		}
-		mux.Handle(basePath, withCallerAuth(callerToken, observability.WrapHandler(
+		mux := newSSEMux(
 			mcpgrafana.ValidateGrafanaURLMiddleware(srv), //nolint:staticcheck // Retained temporarily to reject malformed legacy headers.
 			basePath,
-		)))
+			callerToken,
+		)
 		runOpsServers(registerOps(mux, o, healthzAddress, obs))
 		// Wrap the full mux so ops routes left on it are validated too.
 		httpSrv.Handler = mcpgrafana.DNSRebindingProtectionMiddleware(hsc.policy(addr))(mux)
@@ -1042,11 +1100,15 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 			"version", mcpgrafana.Version(), "address", addr, "basePath", basePath, "metrics", obs.MetricsEnabled)
 		return runHTTPServer(ctx, srv, addr, "SSE")
 	case "streamable-http":
+		// --base-path is documented for this transport too, so fold it into the
+		// endpoint the server listens on. The mux derives the same path from the
+		// same helper, so the two mounts cannot drift.
+		mcpEndpoint := streamableEndpointPath(basePath, endpointPath)
 		httpSrv := &http.Server{Addr: addr}
 		opts := []server.StreamableHTTPOption{
 			server.WithHTTPContextFunc(mcpgrafana.ComposedHTTPContextFunc(gc, clientCache)),
 			server.WithStateLess(dt.proxied), // Stateful when proxied tools enabled (requires sessions)
-			server.WithEndpointPath(endpointPath),
+			server.WithEndpointPath(mcpEndpoint),
 			server.WithStreamableHTTPServer(httpSrv),
 			server.WithStreamableHTTPCORS(server.WithCORSAllowedOrigins(hsc.corsOrigins()...)),
 			server.WithDisableLocalhostProtection(disableLocalhostProtection),
@@ -1064,16 +1126,16 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 			opts = append(opts, server.WithTLSCert(tls.certFile, tls.keyFile))
 		}
 		srv := server.NewStreamableHTTPServer(s, opts...)
-		mux := http.NewServeMux()
-		mux.Handle(endpointPath, withCallerAuth(callerToken, observability.WrapHandler(
+		mux := newStreamableHTTPMux(
 			mcpgrafana.ValidateGrafanaURLMiddleware(srv), //nolint:staticcheck // Retained temporarily to reject malformed legacy headers.
-			endpointPath,
-		)))
+			mcpEndpoint,
+			callerToken,
+		)
 		runOpsServers(registerOps(mux, o, healthzAddress, obs))
 		// Wrap the full mux so ops routes left on it are validated too.
 		httpSrv.Handler = mcpgrafana.DNSRebindingProtectionMiddleware(hsc.policy(addr))(mux)
 		slog.Info("Starting Grafana MCP server using StreamableHTTP transport",
-			"version", mcpgrafana.Version(), "address", addr, "endpointPath", endpointPath, "metrics", obs.MetricsEnabled)
+			"version", mcpgrafana.Version(), "address", addr, "endpointPath", mcpEndpoint, "metrics", obs.MetricsEnabled)
 		return runHTTPServer(ctx, srv, addr, "StreamableHTTP")
 	default:
 		return fmt.Errorf("invalid transport type: %s. Must be 'stdio', 'sse' or 'streamable-http'", transport)
@@ -1092,7 +1154,7 @@ func main() {
 	var serverName string
 	flag.StringVar(&serverName, "server-name", defaultServerName, "Server name used in the MCP handshake and OTel service.name. Overrides GRAFANA_MCP_SERVER_NAME env var.")
 	addr := flag.String("address", "localhost:8000", "The host and port to start the sse server on")
-	basePath := flag.String("base-path", "", "Base path for the sse server")
+	basePath := flag.String("base-path", "", "Base path for the sse or streamable-http server. /healthz and /metrics are always served at the root, not under this prefix")
 	endpointPath := flag.String("endpoint-path", "/mcp", "Endpoint path for the streamable-http server")
 	logLevel := flag.String("log-level", "info", "Log level (debug, info, warn, error)")
 	sessionIdleTimeoutMinutes := flag.Int("session-idle-timeout-minutes", 30, "Session idle timeout in minutes. Sessions with no activity for this duration are automatically reaped. Set to 0 to disable session reaping")

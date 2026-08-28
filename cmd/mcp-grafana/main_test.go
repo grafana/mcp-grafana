@@ -1564,3 +1564,156 @@ func TestListToolsResult_IncludesRequiredFields(t *testing.T) {
 	require.NotNil(t, ttl, "ttlMs must not be null")
 	assert.Equal(t, int64(0), *ttl)
 }
+
+// Regression test for https://github.com/grafana/mcp-grafana/issues/1021:
+// the SSE handler was mounted on an exact-match pattern so nothing under
+// --base-path was routed to it at all. /healthz and /metrics are
+// internal-only endpoints and stay mounted at the server root regardless of
+// --base-path.
+func TestHTTPMuxHonoursBasePath(t *testing.T) {
+	const mcpBody = "mcp"
+	mcpHandler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(mcpBody))
+	})
+	// Real observability: the ops endpoints come from registerOps, the same
+	// call the transports make, so the test cannot pass on a mount the server
+	// does not actually build.
+	metricsCfg := observability.Config{MetricsEnabled: true}
+	obs, err := observability.Setup(metricsCfg)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = obs.Shutdown(context.Background()) })
+
+	get := func(t *testing.T, mux *http.ServeMux, path string) (int, string) {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		return rec.Code, rec.Body.String()
+	}
+	assertBody := func(t *testing.T, mux *http.ServeMux, path, want string) {
+		t.Helper()
+		code, body := get(t, mux, path)
+		assert.Equal(t, http.StatusOK, code, "GET %s", path)
+		assert.Equal(t, want, body, "GET %s", path)
+	}
+
+	t.Run("sse", func(t *testing.T) {
+		cases := []struct {
+			name     string
+			basePath string
+			// paths the MCP (SSE) handler must serve
+			mcpPaths []string
+			// paths that must not reach the MCP handler
+			unroutedPaths []string
+		}{
+			{
+				name:     "no base path",
+				basePath: "",
+				mcpPaths: []string{"/sse", "/message"},
+			},
+			{
+				name:          "base path without trailing slash",
+				basePath:      "/my-custom-base",
+				mcpPaths:      []string{"/my-custom-base/sse", "/my-custom-base/message"},
+				unroutedPaths: []string{"/sse", "/message"},
+			},
+			{
+				name:          "base path with trailing slash",
+				basePath:      "/my-custom-base/",
+				mcpPaths:      []string{"/my-custom-base/sse", "/my-custom-base/message"},
+				unroutedPaths: []string{"/sse", "/message"},
+			},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				mux := newSSEMux(mcpHandler, normalizeBasePath(tc.basePath), "")
+				require.Empty(t, registerOps(mux, obs, "", metricsCfg),
+					"ops share the MCP listener when no ops address is set")
+				for _, p := range tc.mcpPaths {
+					assertBody(t, mux, p, mcpBody)
+				}
+				assertBody(t, mux, "/healthz", "ok")
+				if code, _ := get(t, mux, "/metrics"); code != http.StatusOK {
+					t.Fatalf("GET /metrics = %d, want 200", code)
+				}
+				// The base path is a prefix, not an alias: the MCP endpoints
+				// must not stay reachable at the server root as well.
+				for _, p := range tc.unroutedPaths {
+					code, _ := get(t, mux, p)
+					assert.Equal(t, http.StatusNotFound, code, "GET %s", p)
+				}
+				// /healthz and /metrics are internal-only and must never answer
+				// under --base-path. The SSE mux uses a subtree pattern, so a
+				// request for <base>/healthz falls through to the MCP handler
+				// rather than 404ing — it must not reach the operational one.
+				if base := normalizeBasePath(tc.basePath); base != "" {
+					_, body := get(t, mux, base+"/healthz")
+					assert.Equal(t, mcpBody, body, "GET %s/healthz reached the operational health handler", base)
+					_, body = get(t, mux, base+"/metrics")
+					assert.Equal(t, mcpBody, body, "GET %s/metrics reached the operational metrics handler", base)
+				}
+			})
+		}
+	})
+
+	t.Run("streamable-http", func(t *testing.T) {
+		cases := []struct {
+			name         string
+			basePath     string
+			endpointPath string
+			mcpPath      string
+		}{
+			{
+				name:         "no base path",
+				endpointPath: "/mcp",
+				mcpPath:      "/mcp",
+			},
+			{
+				name:         "base path prefixes the endpoint",
+				basePath:     "/my-custom-base",
+				endpointPath: "/mcp",
+				mcpPath:      "/my-custom-base/mcp",
+			},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				mux := newStreamableHTTPMux(mcpHandler, streamableEndpointPath(tc.basePath, tc.endpointPath), "")
+				require.Empty(t, registerOps(mux, obs, "", metricsCfg),
+					"ops share the MCP listener when no ops address is set")
+				assertBody(t, mux, tc.mcpPath, mcpBody)
+				assertBody(t, mux, "/healthz", "ok")
+				if code, _ := get(t, mux, "/metrics"); code != http.StatusOK {
+					t.Fatalf("GET /metrics = %d, want 200", code)
+				}
+				// /healthz and /metrics must never answer under --base-path.
+				if base := normalizeBasePath(tc.basePath); base != "" {
+					code, _ := get(t, mux, base+"/healthz")
+					assert.Equal(t, http.StatusNotFound, code, "GET %s/healthz", base)
+					code, _ = get(t, mux, base+"/metrics")
+					assert.Equal(t, http.StatusNotFound, code, "GET %s/metrics", base)
+				}
+			})
+		}
+	})
+
+	t.Run("metrics are absent when disabled", func(t *testing.T) {
+		mux := newSSEMux(mcpHandler, normalizeBasePath("/my-custom-base"), "")
+		require.Empty(t, registerOps(mux, newTestObservability(t), "", observability.Config{}))
+		code, _ := get(t, mux, "/metrics")
+		assert.Equal(t, http.StatusNotFound, code, "GET /metrics with metrics disabled")
+	})
+
+	// --endpoint-path is free-form, so it could otherwise name an operational
+	// path and collide with it. run() rejects that up front, before any mux
+	// is built, rather than silently letting the MCP mount win.
+	t.Run("endpoint path colliding with an operational path is rejected", func(t *testing.T) {
+		for _, reserved := range []string{"/healthz", "/metrics"} {
+			t.Run(reserved, func(t *testing.T) {
+				err := run("streamable-http", "localhost:0", "", reserved, slog.LevelInfo,
+					disabledTools{}, mcpgrafana.GrafanaConfig{}, tlsConfig{}, httpSecurityConfig{},
+					callerAuthConfig{}, observability.Config{}, 30, "", "")
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "reserved for operational endpoints")
+			})
+		}
+	})
+}
