@@ -45,5 +45,42 @@ func TestCloudIncidentTools(t *testing.T) {
 		assert.Equal(t, "1", result.IncidentID, "Should return the requested incident ID")
 		assert.NotEmpty(t, result.Title, "Incident should have a title")
 		assert.NotEmpty(t, result.Status, "Incident should have a status")
+		for _, f := range result.CustomFields {
+			assert.NotEmpty(t, f.UUID, "Custom field should have a UUID")
+			assert.NotEmpty(t, f.Name, "Custom field should have a name")
+		}
+	})
+
+	t.Run("list incident custom fields", func(t *testing.T) {
+		ctx := createCloudTestContext(t, "Incident", "GRAFANA_URL", "GRAFANA_API_KEY")
+		ctx = mcpgrafana.ExtractIncidentClientFromEnv(ctx)
+
+		result, err := listIncidentCustomFields(ctx, ListIncidentCustomFieldsParams{})
+		require.NoError(t, err)
+		require.NotNil(t, result, "Result should not be nil")
+		for _, f := range result.Fields {
+			assert.NotEmpty(t, f.UUID, "Custom field should have a UUID")
+			assert.NotEmpty(t, f.Name, "Custom field should have a name")
+			assert.NotEmpty(t, f.Type, "Custom field should have a type")
+			assert.False(t, f.Archived, "Archived fields should be excluded by default")
+		}
+	})
+
+	t.Run("list incidents with custom fields", func(t *testing.T) {
+		ctx := createCloudTestContext(t, "Incident", "GRAFANA_URL", "GRAFANA_API_KEY")
+		ctx = mcpgrafana.ExtractIncidentClientFromEnv(ctx)
+
+		result, err := listIncidents(ctx, ListIncidentsParams{
+			Limit:               1,
+			IncludeCustomFields: true,
+		})
+		require.NoError(t, err)
+		require.NotNil(t, result, "Result should not be nil")
+		for _, i := range result.Incidents {
+			for _, f := range i.CustomFields {
+				assert.NotEmpty(t, f.UUID, "Custom field should have a UUID")
+				assert.NotEmpty(t, f.Name, "Custom field should have a name")
+			}
+		}
 	})
 }
