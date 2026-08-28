@@ -1190,8 +1190,10 @@ curl http://localhost:8000/healthz
 # With custom address
 curl http://localhost:9090/healthz
 
-# With --base-path /my-base (healthz stays at the root, not under the prefix)
-curl http://localhost:8000/healthz
+# With --base-path /my-base the MCP routes move under the prefix
+# (/my-base/sse, /my-base/mcp), but healthz does not:
+curl http://localhost:8000/healthz          # 200 ok
+curl http://localhost:8000/my-base/healthz  # 404
 ```
 
 **Note:** The health check endpoint is only available when using SSE or streamable HTTP transports. It is not available when using the stdio transport (`-t stdio`), as stdio does not expose an HTTP server.
