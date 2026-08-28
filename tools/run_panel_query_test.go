@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/grafana/mcp-grafana/tools/sql"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -978,18 +979,18 @@ func TestIsEmptyPanelResult(t *testing.T) {
 			expected: false,
 		},
 		{
-			name:     "nil ClickHouseQueryResult",
-			results:  (*ClickHouseQueryResult)(nil),
+			name:     "nil sql.SQLQueryResult",
+			results:  (*sql.SQLQueryResult)(nil),
 			expected: true,
 		},
 		{
-			name:     "empty ClickHouseQueryResult",
-			results:  &ClickHouseQueryResult{Rows: []map[string]interface{}{}},
+			name:     "empty sql.SQLQueryResult",
+			results:  &sql.SQLQueryResult{Rows: []map[string]interface{}{}},
 			expected: true,
 		},
 		{
-			name: "non-empty ClickHouseQueryResult",
-			results: &ClickHouseQueryResult{
+			name: "non-empty sql.SQLQueryResult",
+			results: &sql.SQLQueryResult{
 				Rows: []map[string]interface{}{{"value": 1}},
 			},
 			expected: false,
@@ -1012,18 +1013,18 @@ func TestIsEmptyPanelResult(t *testing.T) {
 			expected: false,
 		},
 		{
-			name:     "nil SQLQueryResult",
-			results:  (*SQLQueryResult)(nil),
+			name:     "nil sql.SQLQueryResult",
+			results:  (*sql.SQLQueryResult)(nil),
 			expected: true,
 		},
 		{
-			name:     "empty SQLQueryResult",
-			results:  &SQLQueryResult{Rows: []map[string]interface{}{}},
+			name:     "empty sql.SQLQueryResult",
+			results:  &sql.SQLQueryResult{Rows: []map[string]interface{}{}},
 			expected: true,
 		},
 		{
-			name: "non-empty SQLQueryResult",
-			results: &SQLQueryResult{
+			name: "non-empty sql.SQLQueryResult",
+			results: &sql.SQLQueryResult{
 				Rows: []map[string]interface{}{{"count": 42}},
 			},
 			expected: false,
@@ -1074,7 +1075,7 @@ func TestGeneratePanelQueryHints(t *testing.T) {
 			containsHints: []string{
 				"No data found",
 				"Time range",
-				"describe_clickhouse_table",
+				"describe_sql_table",
 				"COUNT(*)",
 			},
 		},
@@ -1369,15 +1370,15 @@ func TestExtractPanelInfo_BigQuery(t *testing.T) {
 
 func TestExecuteSQLPanelQuery_NilTarget(t *testing.T) {
 	// A missing raw target should produce a clear error rather than panicking.
-	_, err := executeSQLPanelQuery(t.Context(), "bigquery-uid", &panelInfo{}, "SELECT 1", "now-1h", "now", nil, BigQueryDatasourceType)
+	_, err := executeSQLPanelQuery(t.Context(), "bigquery-uid", &panelInfo{}, "SELECT 1", "now-1h", "now", nil, sql.BigQueryDatasourceType)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "SQL panel target not available")
 
-	_, err = executeSQLPanelQuery(t.Context(), "mssql-uid", &panelInfo{}, "SELECT 1", "now-1h", "now", nil, MSSQLDatasourceType)
+	_, err = executeSQLPanelQuery(t.Context(), "mssql-uid", &panelInfo{}, "SELECT 1", "now-1h", "now", nil, sql.MSSQLDatasourceType)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "SQL panel target not available")
 
-	_, err = executeSQLPanelQuery(t.Context(), "postgres-uid", &panelInfo{}, "SELECT 1", "now-1h", "now", nil, PostgresDatasourceType)
+	_, err = executeSQLPanelQuery(t.Context(), "postgres-uid", &panelInfo{}, "SELECT 1", "now-1h", "now", nil, sql.PostgresDatasourceType)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "SQL panel target not available")
 }
@@ -1385,12 +1386,12 @@ func TestExecuteSQLPanelQuery_NilTarget(t *testing.T) {
 func TestDefaultSQLFormat(t *testing.T) {
 	// BigQuery's sqlds query model takes a numeric format enum, MSSQL's sqleng model
 	// unmarshals format into a string and errors on a number.
-	assert.Equal(t, SQLFormatTable, defaultSQLFormat(BigQueryDatasourceType))
-	assert.Equal(t, MSSQLFormatTable, defaultSQLFormat(MSSQLDatasourceType))
+	assert.Equal(t, SQLFormatTable, defaultSQLFormat(sql.BigQueryDatasourceType))
+	assert.Equal(t, MSSQLFormatTable, defaultSQLFormat(sql.MSSQLDatasourceType))
 	// PostgreSQL is also sqleng-based, so it uses the string table format under
 	// both its modern and legacy datasource identifiers.
-	assert.Equal(t, MSSQLFormatTable, defaultSQLFormat(PostgresDatasourceType))
-	assert.Equal(t, MSSQLFormatTable, defaultSQLFormat(PostgresLegacyDatasourceType))
+	assert.Equal(t, MSSQLFormatTable, defaultSQLFormat(sql.PostgresDatasourceType))
+	assert.Equal(t, MSSQLFormatTable, defaultSQLFormat(sql.PostgresLegacyDatasourceType))
 }
 
 func TestExtractPanelInfoMSSQL(t *testing.T) {
