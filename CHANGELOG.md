@@ -9,10 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Optional per-call `orgId` argument, where applicable, to target a Grafana organization, opt-in via the `--dynamic-multi-org` flag; also discovers proxied datasource tools across every org the credential can access. Tools that address no organization — documentation lookups, local config generation, static query examples — do not advertise it, since selecting one could not change their answer
-- `user_info` tool reporting the current identity, whether it is a Grafana admin, and the organizations the credential can access (with roles)
 - `--loki-enforced-matchers`: operator-configured LogQL label matchers AND-ed into every native-Loki query (logs, stats, patterns, and label enumeration) to restrict which streams the server can read. Fails closed on unparseable queries and refuses VictoriaLogs datasources while set. Pair with `--disable-api` so the raw datasource proxy cannot bypass it. A companion `--loki-label-enumeration-fallback` controls label-enumeration behaviour under purely-negative matchers ([#978](https://github.com/grafana/mcp-grafana/pull/978))
 - `--instructions-append` flag to append operator-supplied text to the server instructions returned to MCP clients on initialize, so every connecting agent sees it — e.g. to explain that Loki reads are restricted by `--loki-enforced-matchers` ([#978](https://github.com/grafana/mcp-grafana/pull/978))
+
+## [1.3.0] - 2026-08-28
+
+### Added
+
+- Optional per-call `orgId` argument, where applicable, to target a Grafana organization, opt-in via the `--dynamic-multi-org` flag; also discovers proxied datasource tools across every org the credential can access. Tools that address no organization — documentation lookups, local config generation, static query examples — do not advertise it, since selecting one could not change their answer ([#943](https://github.com/grafana/mcp-grafana/pull/943))
+- `user_info` tool reporting the current identity, whether it is a Grafana admin, and the organizations the credential can access (with roles) ([#943](https://github.com/grafana/mcp-grafana/pull/943))
+- Incident custom fields support for creating and updating incidents with user-defined fields ([#1131](https://github.com/grafana/mcp-grafana/pull/1131))
+- Grafana documentation tools backed by `mcp-doc-server` for querying Grafana product documentation ([#1116](https://github.com/grafana/mcp-grafana/pull/1116))
+- `--disable-query` flag to disable all query tools, and raw-SQL query tools (ClickHouse, Snowflake, Athena, MSSQL, PostgreSQL) are now gated behind `--disable-write` by default ([#1085](https://github.com/grafana/mcp-grafana/pull/1085))
+- `grafana_api_request` now supports POST to `/api/ds/query` when query tools are enabled, allowing datasource queries through the generic API tool ([#1125](https://github.com/grafana/mcp-grafana/pull/1125))
+
+### Fixed
+
+- `run_panel_query` now resolves `sqlstring`-type dashboard variables correctly ([#1132](https://github.com/grafana/mcp-grafana/pull/1132))
+- Dashboard tool now describes structured panel targets (e.g. CloudWatch, Elasticsearch) instead of silently dropping them ([#1130](https://github.com/grafana/mcp-grafana/pull/1130))
+- Proxied tools close non-published MCP clients before signaling readiness, preventing resource leaks during tool discovery ([#1128](https://github.com/grafana/mcp-grafana/pull/1128))
 
 ### Changed
 
@@ -415,6 +430,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Upgrade Docker base image packages to resolve critical OpenSSL CVE-2025-15467 (CVSS 9.8) ([#551](https://github.com/grafana/mcp-grafana/pull/551))
 
+[1.3.0]: https://github.com/grafana/mcp-grafana/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/grafana/mcp-grafana/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/grafana/mcp-grafana/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/grafana/mcp-grafana/compare/v0.17.2...v1.0.0

@@ -192,8 +192,8 @@ github.com/grafana/grafana-openapi-client-go v0.0.0-20260330113218-ee77c4f6f90e 
 github.com/grafana/grafana-openapi-client-go v0.0.0-20260330113218-ee77c4f6f90e/go.mod h1:sMcpxegie6TcvI6eVm+MbNneNC249GGWRcEO1M+UfSE=
 github.com/grafana/grafana-plugin-sdk-go v0.290.1 h1:wNX4R8sHxEAmtmFhmV05IsLGznzdMKvN94v+2Pz8Wkw=
 github.com/grafana/grafana-plugin-sdk-go v0.290.1/go.mod h1:KDkcxp1XqbKz0WD/q9p98Cf5Wp50LG0NkoPlVlptSWs=
-github.com/grafana/incident-go v0.0.0-20251003115753-d71681611ddd h1:y8uJA/UmFHjwNWAvppxDRq+w9zIQmb0z79YVV2vS96g=
-github.com/grafana/incident-go v0.0.0-20251003115753-d71681611ddd/go.mod h1:3QDfdZOWKRxNhMJFL+0C/+12+jLNHDlt0VKNr/i9Daw=
+github.com/grafana/incident-go v0.0.0-20260727130053-c21f107e4c42 h1:2vBu6b0IHnFOaT+EA4ch8dfYR27QGjco341MuL77U/I=
+github.com/grafana/incident-go v0.0.0-20260727130053-c21f107e4c42/go.mod h1:3QDfdZOWKRxNhMJFL+0C/+12+jLNHDlt0VKNr/i9Daw=
 github.com/grafana/mcp-doc-server v1.0.0 h1:59McgsHgNEa9Ifrh5VsXcJCz5pSQAbJNdDtF+6iK54I=
 github.com/grafana/mcp-doc-server v1.0.0/go.mod h1:ghhbVTtTKG11OjHFiztryyLWQIlNzPp1dx/IJ8/CZeg=
 github.com/grafana/otel-profiling-go v0.5.1 h1:stVPKAFZSa7eGiqbYuG25VcqYksR6iWvF3YH66t4qL8=

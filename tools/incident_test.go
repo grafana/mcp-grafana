@@ -26,6 +26,9 @@ func TestIncidentTools(t *testing.T) {
 		})
 		require.NoError(t, err)
 		assert.Len(t, result.Incidents, 2)
+		for _, i := range result.Incidents {
+			assert.Nil(t, i.CustomFields, "custom fields should be omitted unless requested")
+		}
 	})
 
 	t.Run("create incident", func(t *testing.T) {
@@ -44,6 +47,7 @@ func TestIncidentTools(t *testing.T) {
 		assert.Equal(t, "minor", result.Severity)
 		assert.True(t, result.IsDrill)
 		assert.Equal(t, "active", result.Status)
+		assert.Nil(t, result.CustomFields, "custom fields should be omitted when none were set")
 	})
 
 	t.Run("update incident", func(t *testing.T) {
@@ -57,6 +61,7 @@ func TestIncidentTools(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		assert.Equal(t, "incident-123", result.IncidentID)
+		assert.Nil(t, result.CustomFields, "custom fields should be omitted when none were set")
 	})
 
 	t.Run("update incident requires an incident ID", func(t *testing.T) {
@@ -74,7 +79,7 @@ func TestIncidentTools(t *testing.T) {
 			IncidentID: "incident-123",
 		})
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "at least one of status, severity or title")
+		assert.Contains(t, err.Error(), "at least one of status, severity, title or customFields")
 	})
 
 	t.Run("add activity to incident", func(t *testing.T) {

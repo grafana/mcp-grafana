@@ -10,6 +10,37 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// These test shims preserve the historic single-value helper signatures used
+// by the existing substitution and extraction tests. Production code uses the
+// multi-value helpers directly so formatted variables can retain all values.
+func testTemplateVariableValues(variables map[string]string) templateVariableValues {
+	if variables == nil {
+		return nil
+	}
+
+	result := make(templateVariableValues, len(variables))
+	for name, value := range variables {
+		result[name] = []string{value}
+	}
+	return result
+}
+
+func substituteTemplateVariables(query string, variables map[string]string) string {
+	return substituteTemplateVariableValues(query, testTemplateVariableValues(variables))
+}
+
+func substituteTemplateVariablesInMap(target map[string]interface{}, variables map[string]string) map[string]interface{} {
+	return substituteTemplateVariablesInMapWithValues(target, testTemplateVariableValues(variables))
+}
+
+func substituteTemplateVariablesInSlice(slice []interface{}, variables map[string]string) []interface{} {
+	return substituteTemplateVariablesInSliceWithValues(slice, testTemplateVariableValues(variables))
+}
+
+func extractTemplateVariables(db map[string]interface{}) map[string]string {
+	return firstTemplateVariableValues(extractTemplateVariableValues(db))
+}
+
 func TestFindPanelByIDForRunPanelQuery(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -582,6 +613,87 @@ func TestSubstituteTemplateVariables(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got := substituteTemplateVariables(tt.query, tt.variables)
 			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestSubstituteTemplateVariablesSQLString(t *testing.T) {
+	query := "SELECT * FROM orders WHERE order_intent_id = ${order_intent_id:sqlstring}"
+	variables := map[string]string{"order_intent_id": "oi-123"}
+
+	assert.Equal(t,
+		"SELECT * FROM orders WHERE order_intent_id = 'oi-123'",
+		substituteTemplateVariables(query, variables),
+	)
+}
+
+func TestSubstituteTemplateVariableValuesSQLString(t *testing.T) {
+	expression := "$" + "{order_intent_id:sqlstring}"
+	tests := []struct {
+		name      string
+		query     string
+		variables templateVariableValues
+		want      string
+	}{
+		{
+			name:      "single value",
+			query:     "WHERE order_intent_id = " + expression,
+			variables: templateVariableValues{"order_intent_id": {"oi-123"}},
+			want:      "WHERE order_intent_id = 'oi-123'",
+		},
+		{
+			name:      "multiple values",
+			query:     "WHERE order_intent_id IN (" + expression + ")",
+			variables: templateVariableValues{"order_intent_id": {"oi-123", "oi-456"}},
+			want:      "WHERE order_intent_id IN ('oi-123','oi-456')",
+		},
+		{
+			name:      "single quote is doubled",
+			query:     "WHERE order_intent_id = " + expression,
+			variables: templateVariableValues{"order_intent_id": {"oi'123"}},
+			want:      "WHERE order_intent_id = 'oi''123'",
+		},
+		{
+			name:      "double quote is escaped",
+			query:     "WHERE order_intent_id = " + expression,
+			variables: templateVariableValues{"order_intent_id": {"oi\"123"}},
+			want:      "WHERE order_intent_id = 'oi\\\"123'",
+		},
+		{
+			name:      "empty string is quoted",
+			query:     "WHERE order_intent_id = " + expression,
+			variables: templateVariableValues{"order_intent_id": {""}},
+			want:      "WHERE order_intent_id = ''",
+		},
+		{
+			name:      "empty multi-select is empty",
+			query:     "WHERE order_intent_id IN (" + expression + ")",
+			variables: templateVariableValues{"order_intent_id": {}},
+			want:      "WHERE order_intent_id IN ()",
+		},
+		{
+			name:      "unknown format falls back to glob",
+			query:     "WHERE order_intent_id IN ($" + "{order_intent_id:unsupported})",
+			variables: templateVariableValues{"order_intent_id": {"oi-123", "oi-456"}},
+			want:      "WHERE order_intent_id IN ({oi-123,oi-456})",
+		},
+		{
+			name:      "unformatted multi-select keeps historical first value",
+			query:     "WHERE order_intent_id = $order_intent_id",
+			variables: templateVariableValues{"order_intent_id": {"oi-123", "oi-456"}},
+			want:      "WHERE order_intent_id = oi-123",
+		},
+		{
+			name:      "missing variable remains unchanged",
+			query:     "WHERE order_intent_id = " + expression,
+			variables: templateVariableValues{},
+			want:      "WHERE order_intent_id = " + expression,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, substituteTemplateVariableValues(tt.query, tt.variables))
 		})
 	}
 }
