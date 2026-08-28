@@ -1215,8 +1215,11 @@ curl http://localhost:8000/healthz
 # Probe a side listener while MCP stays on loopback (Kubernetes + sidecar)
 ./mcp-grafana -t streamable-http --address 127.0.0.1:8000 --healthz-address :8080
 curl http://127.0.0.1:8080/healthz
-# With --base-path /my-base (healthz stays at the root, not under the prefix)
-curl http://localhost:8000/healthz
+
+# With --base-path /my-base the MCP routes move under the prefix
+# (/my-base/sse, /my-base/mcp), but healthz does not:
+curl http://localhost:8000/healthz          # 200 ok
+curl http://localhost:8000/my-base/healthz  # 404
 ```
 
 **Note:** The health check endpoint is only available when using SSE or streamable HTTP transports. It is not available when using the stdio transport (`-t stdio`), as stdio does not expose an HTTP server.
