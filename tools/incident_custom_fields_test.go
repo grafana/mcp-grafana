@@ -32,6 +32,12 @@ type fakeIncidentServer struct {
 	Calls []fakeIncidentCall
 }
 
+// fakeIncidentError, used in place of a response, makes the fake server reject
+// that call so tests can exercise failure handling.
+type fakeIncidentError struct {
+	message string
+}
+
 // newFakeIncidentClient serves the given responses, keyed by the RPC method
 // name the incident client appends to its base URL (e.g. "FieldsService.GetFields").
 func newFakeIncidentClient(t *testing.T, responses map[string]any) (context.Context, *fakeIncidentServer) {
@@ -48,6 +54,10 @@ func newFakeIncidentClient(t *testing.T, responses map[string]any) (context.Cont
 		if !ok {
 			t.Errorf("unexpected call to %s", method)
 			http.Error(w, "unexpected call to "+method, http.StatusNotFound)
+			return
+		}
+		if failure, ok := response.(fakeIncidentError); ok {
+			http.Error(w, failure.message, http.StatusInternalServerError)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -289,7 +299,7 @@ func TestCreateIncidentCustomFields(t *testing.T) {
 		assert.JSONEq(t, `["opt-injection","opt-ssrf"]`, request.Value)
 	})
 
-	t.Run("rejects an unknown field before recording anything", func(t *testing.T) {
+	t.Run("rejects an unknown field before creating the incident", func(t *testing.T) {
 		ctx, fake := newFakeIncidentClient(t, responses)
 
 		_, err := createIncident(ctx, CreateIncidentParams{
@@ -302,7 +312,28 @@ func TestCreateIncidentCustomFields(t *testing.T) {
 		})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), `no incident custom field "Blast Radius"`)
+		// Creating the incident is what notifies people, so a bad field must
+		// not leave one behind for a retry to duplicate.
+		assert.Zero(t, fake.countOf("IncidentsService.CreateIncident"))
 		assert.Zero(t, fake.countOf("FieldsService.RecordFieldValue"))
+	})
+
+	t.Run("says the incident exists when recording a field fails", func(t *testing.T) {
+		failing := customFieldResponses()
+		failing["FieldsService.RecordFieldValue"] = fakeIncidentError{message: "fields service is down"}
+		failing["IncidentsService.CreateIncident"] = responses["IncidentsService.CreateIncident"]
+		ctx, _ := newFakeIncidentClient(t, failing)
+
+		_, err := createIncident(ctx, CreateIncidentParams{
+			Title:      "checkout is down",
+			Severity:   "minor",
+			RoomPrefix: "test",
+			CustomFields: []IncidentCustomFieldInput{
+				{Field: "Customer Impact", Values: []string{"unknown"}},
+			},
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "incident 123 was created, do not retry")
 	})
 }
 
@@ -344,11 +375,12 @@ func TestUpdateIncidentCustomFields(t *testing.T) {
 		assert.Empty(t, request.Value)
 	})
 
-	t.Run("rejects too many values for a single-select field", func(t *testing.T) {
+	t.Run("rejects too many values for a single-select field before changing anything", func(t *testing.T) {
 		ctx, fake := newFakeIncidentClient(t, responses)
 
 		_, err := updateIncident(ctx, UpdateIncidentParams{
 			IncidentID: "123",
+			Status:     "resolved",
 			CustomFields: []IncidentCustomFieldInput{
 				{Field: "Debrief Status", Values: []string{"Report completed", "Report in progress"}},
 			},
@@ -356,6 +388,7 @@ func TestUpdateIncidentCustomFields(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "accepts at most one value")
 		assert.Zero(t, fake.countOf("FieldsService.RecordFieldValue"))
+		assert.Zero(t, fake.countOf("IncidentsService.UpdateStatus"), "the status must not change when a custom field is invalid")
 	})
 }
 

@@ -160,10 +160,17 @@ type CreateIncidentParams struct {
 // createIncident creates an incident and then records any custom field values.
 //
 // Custom fields cannot be set as part of the create request, so they are
-// applied afterwards. If applying one fails the incident has already been
-// created, and the error names the field that failed.
+// applied afterwards. They are validated and encoded first, though: creating
+// the incident is the step that may notify people, and an error raised after it
+// would invite a retry that creates a second incident.
 func createIncident(ctx context.Context, args CreateIncidentParams) (*IncidentResult, error) {
 	c := mcpgrafana.IncidentClientFromContext(ctx)
+
+	customFields, err := prepareIncidentCustomFields(ctx, c, args.CustomFields)
+	if err != nil {
+		return nil, err
+	}
+
 	is := incident.NewIncidentsService(c)
 	created, err := is.CreateIncident(ctx, incident.CreateIncidentRequest{
 		Title:         args.Title,
@@ -179,10 +186,16 @@ func createIncident(ctx context.Context, args CreateIncidentParams) (*IncidentRe
 		return nil, fmt.Errorf("create incident: %w", err)
 	}
 
-	if err := applyIncidentCustomFields(ctx, c, created.Incident.IncidentID, args.CustomFields); err != nil {
-		return nil, err
+	// Past this point the incident exists, so failures say so: retrying the
+	// create would open a second incident rather than fix anything.
+	if err := recordIncidentCustomFields(ctx, c, created.Incident.IncidentID, customFields); err != nil {
+		return nil, fmt.Errorf("incident %s was created, do not retry: %w", created.Incident.IncidentID, err)
 	}
-	return newIncidentResult(ctx, c, &created.Incident, len(args.CustomFields) > 0)
+	result, err := newIncidentResult(ctx, c, &created.Incident, len(customFields) > 0)
+	if err != nil {
+		return nil, fmt.Errorf("incident %s was created and its custom fields were set, do not retry: %w", created.Incident.IncidentID, err)
+	}
+	return result, nil
 }
 
 var CreateIncident = mcpgrafana.MustTool(
@@ -289,6 +302,14 @@ func updateIncident(ctx context.Context, args UpdateIncidentParams) (*IncidentRe
 	}
 
 	c := mcpgrafana.IncidentClientFromContext(ctx)
+
+	// Resolve and encode custom fields up front so an unknown field or option
+	// is rejected before any part of the incident is changed.
+	customFields, err := prepareIncidentCustomFields(ctx, c, args.CustomFields)
+	if err != nil {
+		return nil, err
+	}
+
 	is := incident.NewIncidentsService(c)
 
 	var updated *incident.Incident
@@ -322,7 +343,7 @@ func updateIncident(ctx context.Context, args UpdateIncidentParams) (*IncidentRe
 		}
 		updated = &resp.Incident
 	}
-	if err := applyIncidentCustomFields(ctx, c, args.IncidentID, args.CustomFields); err != nil {
+	if err := recordIncidentCustomFields(ctx, c, args.IncidentID, customFields); err != nil {
 		return nil, err
 	}
 
@@ -335,7 +356,7 @@ func updateIncident(ctx context.Context, args UpdateIncidentParams) (*IncidentRe
 		}
 		updated = &resp.Incident
 	}
-	return newIncidentResult(ctx, c, updated, len(args.CustomFields) > 0)
+	return newIncidentResult(ctx, c, updated, len(customFields) > 0)
 }
 
 var UpdateIncident = mcpgrafana.MustTool(

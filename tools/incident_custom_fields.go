@@ -231,38 +231,65 @@ func selectOptionLabel(field incident.CustomMetadataField, uuid string) string {
 	return uuid
 }
 
-// applyIncidentCustomFields records the requested custom field values against
-// an incident.
+// preparedIncidentCustomField is a custom field value that has been resolved
+// against its field definition and encoded, ready to be recorded.
+type preparedIncidentCustomField struct {
+	uuid  string
+	name  string
+	value string
+}
+
+// prepareIncidentCustomFields resolves the requested fields and encodes their
+// values without writing anything.
 //
-// The API records one field at a time, so if a later field fails the earlier
-// ones have already been written. The error names the field that failed.
-func applyIncidentCustomFields(ctx context.Context, c *incident.Client, incidentID string, inputs []IncidentCustomFieldInput) error {
+// Preparing is kept separate from recording so that a bad field name, an
+// unknown select option or too many values is rejected before any part of the
+// incident is mutated — for create_incident in particular, failing afterwards
+// would leave an incident behind that a retry would duplicate.
+func prepareIncidentCustomFields(ctx context.Context, c *incident.Client, inputs []IncidentCustomFieldInput) ([]preparedIncidentCustomField, error) {
 	if len(inputs) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	definitions, err := fetchIncidentCustomFields(ctx, c)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	fs := incident.NewFieldsService(c)
+	prepared := make([]preparedIncidentCustomField, 0, len(inputs))
 	for _, in := range inputs {
 		field, err := resolveIncidentCustomField(definitions, in.Field)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		value, err := encodeIncidentCustomFieldValue(field, in.Values)
 		if err != nil {
-			return err
+			return nil, err
 		}
+		prepared = append(prepared, preparedIncidentCustomField{uuid: field.UUID, name: field.Name, value: value})
+	}
+	return prepared, nil
+}
+
+// recordIncidentCustomFields writes prepared custom field values to an
+// incident.
+//
+// The API records one field at a time, so if a later field fails the earlier
+// ones have already been written. The error names the field that failed.
+func recordIncidentCustomFields(ctx context.Context, c *incident.Client, incidentID string, prepared []preparedIncidentCustomField) error {
+	if len(prepared) == 0 {
+		return nil
+	}
+
+	fs := incident.NewFieldsService(c)
+	for _, field := range prepared {
 		if _, err := fs.RecordFieldValue(ctx, incident.RecordFieldValueRequest{
-			FieldUUID:  field.UUID,
-			Value:      value,
+			FieldUUID:  field.uuid,
+			Value:      field.value,
 			TargetKind: incidentFieldTargetKind,
 			TargetID:   incidentID,
 		}); err != nil {
-			return fmt.Errorf("set custom field %q on incident %s: %w", field.Name, incidentID, err)
+			return fmt.Errorf("set custom field %q on incident %s: %w", field.name, incidentID, err)
 		}
 	}
 	return nil
