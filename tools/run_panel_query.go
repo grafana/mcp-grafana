@@ -153,12 +153,16 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 		return nil, fmt.Errorf("extracting panel info: %w", err)
 	}
 
-	// Extract template variables from dashboard
-	vars := extractTemplateVariables(params.DB)
+	// Extract template variables from the dashboard. Keep both the first value
+	// (used for datasource references) and the complete value list (used for
+	// formatted query interpolation).
+	templateVariables := extractTemplateVariableValues(params.DB)
+	vars := firstTemplateVariableValues(templateVariables)
 
 	// Apply variable overrides from user
 	for name, value := range params.Variables {
 		vars[name] = value
+		templateVariables[name] = []string{value}
 	}
 
 	// Resolve datasource UID and type
@@ -206,7 +210,7 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 	}
 
 	// Substitute variables in the query
-	query := substituteTemplateVariables(panelData.Query, vars)
+	query := substituteTemplateVariableValues(panelData.Query, templateVariables)
 
 	// Route to appropriate datasource and execute query
 	var results interface{}
@@ -219,18 +223,18 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 	case "clickhouse":
 		results, err = executeClickHouseQuery(ctx, datasourceUID, query, params.Start, params.End)
 	case "cloudwatch":
-		results, err = executeCloudWatchPanelQuery(ctx, datasourceUID, panelData, params.Start, params.End, vars)
+		results, err = executeCloudWatchPanelQuery(ctx, datasourceUID, panelData, params.Start, params.End, templateVariables)
 	case "influxdb":
 		results, err = executeInfluxDBQuery(ctx, datasourceUID, panelData, query, params.Start, params.End)
 	case "bigquery":
-		results, err = executeSQLPanelQuery(ctx, datasourceUID, panelData, query, params.Start, params.End, vars, BigQueryDatasourceType)
+		results, err = executeSQLPanelQuery(ctx, datasourceUID, panelData, query, params.Start, params.End, templateVariables, BigQueryDatasourceType)
 	case "mssql":
-		results, err = executeSQLPanelQuery(ctx, datasourceUID, panelData, query, params.Start, params.End, vars, MSSQLDatasourceType)
+		results, err = executeSQLPanelQuery(ctx, datasourceUID, panelData, query, params.Start, params.End, templateVariables, MSSQLDatasourceType)
 	case "postgres":
 		// PostgreSQL exposes two datasource identifiers (grafana-postgresql-datasource
 		// and the legacy postgres); pass the resolved type through so the datasource
 		// object sent to Grafana matches what the panel actually declared.
-		results, err = executeSQLPanelQuery(ctx, datasourceUID, panelData, query, params.Start, params.End, vars, datasourceType)
+		results, err = executeSQLPanelQuery(ctx, datasourceUID, panelData, query, params.Start, params.End, templateVariables, datasourceType)
 	default:
 		return nil, fmt.Errorf("datasource type '%s' is not supported by run_panel_query; use the native query tool (e.g. query_prometheus\\, query_loki_logs\\, query_clickhouse\\, query_cloudwatch\\, query_influxdb) directly", datasourceType)
 	}
@@ -256,35 +260,97 @@ func runSinglePanelQuery(ctx context.Context, params singlePanelQueryParams) (*P
 	}, nil
 }
 
-// substituteTemplateVariables replaces template variables in a query string
-// Supports ${varname}, [[varname]], and $varname (with word boundary) patterns
-func substituteTemplateVariables(query string, variables map[string]string) string {
-	if variables == nil {
-		return query
-	}
-	for name, value := range variables {
-		// Replace ${varname}
-		query = strings.ReplaceAll(query, "${"+name+"}", value)
-		// Replace [[varname]]
-		query = strings.ReplaceAll(query, "[["+name+"]]", value)
-		// Replace $varname with word boundary to avoid partial matches
-		varRe := regexp.MustCompile(fmt.Sprintf(`\$%s\b`, regexp.QuoteMeta(name)))
-		query = varRe.ReplaceAllLiteralString(query, value)
+type templateVariableValues map[string][]string
+
+// substituteTemplateVariableValues interpolates variables while retaining
+// multi-select values for formatters such as sqlstring. Explicitly supported
+// formatters follow Grafana's formatting syntax; unknown formatters fall back
+// to Grafana's glob representation.
+func substituteTemplateVariableValues(query string, variables templateVariableValues) string {
+	for name, values := range variables {
+		variableRe := regexp.MustCompile(fmt.Sprintf(
+			`\$\{%s(?::[^}]*)?\}|\[\[%s(?::[^\]]*)?\]\]|\$%s\b`,
+			regexp.QuoteMeta(name), regexp.QuoteMeta(name), regexp.QuoteMeta(name),
+		))
+		query = variableRe.ReplaceAllStringFunc(query, func(match string) string {
+			format, hasFormat := templateVariableFormat(match)
+			if !hasFormat {
+				return firstTemplateVariableValue(values)
+			}
+			return formatTemplateVariable(values, format)
+		})
 	}
 	return query
 }
 
-// substituteTemplateVariablesInMap recursively substitutes variables in a map's string values
-func substituteTemplateVariablesInMap(target map[string]interface{}, variables map[string]string) map[string]interface{} {
+func templateVariableFormat(match string) (string, bool) {
+	var inner string
+	switch {
+	case strings.HasPrefix(match, "${") && strings.HasSuffix(match, "}"):
+		inner = match[2 : len(match)-1]
+	case strings.HasPrefix(match, "[[") && strings.HasSuffix(match, "]]"):
+		inner = match[2 : len(match)-2]
+	default:
+		return "", false
+	}
+
+	separator := strings.IndexByte(inner, ':')
+	if separator < 0 {
+		return "", false
+	}
+	return inner[separator+1:], true
+}
+
+func firstTemplateVariableValue(values []string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	return values[0]
+}
+
+func formatTemplateVariable(values []string, format string) string {
+	formatName := format
+	if separator := strings.IndexByte(format, ':'); separator >= 0 {
+		formatName = format[:separator]
+	}
+
+	if formatName == "sqlstring" {
+		return formatSQLStringVariable(values)
+	}
+
+	// Grafana uses glob as the fallback for unknown formatting options.
+	if len(values) > 1 {
+		return "{" + strings.Join(values, ",") + "}"
+	}
+	return firstTemplateVariableValue(values)
+}
+
+func formatSQLStringVariable(values []string) string {
+	if len(values) == 0 {
+		return ""
+	}
+
+	formatted := make([]string, len(values))
+	for i, value := range values {
+		// Match Grafana's SQLString formatter: pair single quotes and escape
+		// double quotes with a backslash before surrounding the value in quotes.
+		value = strings.ReplaceAll(value, "'", "''")
+		value = strings.ReplaceAll(value, `"`, `\"`)
+		formatted[i] = "'" + value + "'"
+	}
+	return strings.Join(formatted, ",")
+}
+
+func substituteTemplateVariablesInMapWithValues(target map[string]interface{}, variables templateVariableValues) map[string]interface{} {
 	result := make(map[string]interface{})
 	for k, v := range target {
 		switch val := v.(type) {
 		case string:
-			result[k] = substituteTemplateVariables(val, variables)
+			result[k] = substituteTemplateVariableValues(val, variables)
 		case map[string]interface{}:
-			result[k] = substituteTemplateVariablesInMap(val, variables)
+			result[k] = substituteTemplateVariablesInMapWithValues(val, variables)
 		case []interface{}:
-			result[k] = substituteTemplateVariablesInSlice(val, variables)
+			result[k] = substituteTemplateVariablesInSliceWithValues(val, variables)
 		default:
 			result[k] = v
 		}
@@ -292,17 +358,16 @@ func substituteTemplateVariablesInMap(target map[string]interface{}, variables m
 	return result
 }
 
-// substituteTemplateVariablesInSlice recursively substitutes variables in a slice
-func substituteTemplateVariablesInSlice(slice []interface{}, variables map[string]string) []interface{} {
+func substituteTemplateVariablesInSliceWithValues(slice []interface{}, variables templateVariableValues) []interface{} {
 	result := make([]interface{}, len(slice))
 	for i, v := range slice {
 		switch val := v.(type) {
 		case string:
-			result[i] = substituteTemplateVariables(val, variables)
+			result[i] = substituteTemplateVariableValues(val, variables)
 		case map[string]interface{}:
-			result[i] = substituteTemplateVariablesInMap(val, variables)
+			result[i] = substituteTemplateVariablesInMapWithValues(val, variables)
 		case []interface{}:
-			result[i] = substituteTemplateVariablesInSlice(val, variables)
+			result[i] = substituteTemplateVariablesInSliceWithValues(val, variables)
 		default:
 			result[i] = v
 		}
@@ -368,9 +433,11 @@ func extractPanelInfo(panel map[string]interface{}, queryIndex int) (*panelInfo,
 	return info, nil
 }
 
-// extractTemplateVariables extracts template variables and their current values from dashboard
-func extractTemplateVariables(db map[string]interface{}) map[string]string {
-	variables := make(map[string]string)
+// extractTemplateVariableValues extracts all selected values of each dashboard
+// template variable. Grafana stores multi-select values in current.value as an
+// array, and formatted interpolation needs to retain that array.
+func extractTemplateVariableValues(db map[string]interface{}) templateVariableValues {
+	variables := make(templateVariableValues)
 
 	templating := safeObject(db, "templating")
 	if templating == nil {
@@ -391,27 +458,43 @@ func extractTemplateVariables(db map[string]interface{}) map[string]string {
 
 		// Get current value - can be in different formats
 		current := safeObject(variable, "current")
+		currentValueSet := false
 		if current != nil {
-			// Try "value" field first (can be string or array)
+			// Try "value" field first (can be string or array).
 			if val, ok := current["value"]; ok {
+				currentValueSet = true
 				switch v := val.(type) {
 				case string:
 					if v != "$__all" {
-						variables[name] = v
+						variables[name] = []string{v}
 					}
+				case nil:
+					// Grafana formats a defined null/undefined value as an empty
+					// string. Keep the empty slice distinguishable from a missing
+					// variable so formatted expressions are still replaced.
+					variables[name] = []string{}
 				case []interface{}:
-					// Multi-value - take first value for simplicity
-					if len(v) > 0 {
-						if str, ok := v[0].(string); ok && str != "$__all" {
-							variables[name] = str
+					if len(v) == 0 {
+						variables[name] = []string{}
+					} else if first, ok := v[0].(string); ok && first != "$__all" {
+						values := make([]string, 0, len(v))
+						for _, item := range v {
+							if str, ok := item.(string); ok {
+								values = append(values, str)
+							}
 						}
+						variables[name] = values
+					}
+				case []string:
+					if len(v) == 0 || v[0] != "$__all" {
+						variables[name] = append([]string(nil), v...)
 					}
 				}
 			}
 			// Fall back to "text" field
-			if variables[name] == "" {
+			if !currentValueSet {
 				if text, ok := current["text"].(string); ok && text != "" && text != "All" {
-					variables[name] = text
+					variables[name] = []string{text}
 				}
 			}
 		}
@@ -420,16 +503,26 @@ func extractTemplateVariables(db map[string]interface{}) map[string]string {
 		// frequently saved without a "current" at all. Without this fallback
 		// the raw $name survives substitution and reaches the datasource,
 		// which for SQL datasources is a syntax error.
-		if variables[name] == "" {
+		if !currentValueSet {
 			switch safeString(variable, "type") {
 			case "constant", "textbox":
 				if q := safeString(variable, "query"); q != "" {
-					variables[name] = q
+					variables[name] = []string{q}
 				}
 			}
 		}
 	}
 
+	return variables
+}
+
+func firstTemplateVariableValues(values templateVariableValues) map[string]string {
+	variables := make(map[string]string, len(values))
+	for name, value := range values {
+		if len(value) > 0 {
+			variables[name] = value[0]
+		}
+	}
 	return variables
 }
 
@@ -501,7 +594,7 @@ func executeClickHouseQuery(ctx context.Context, datasourceUID, query, start, en
 }
 
 // executeCloudWatchPanelQuery runs a CloudWatch query using Grafana's /api/ds/query endpoint
-func executeCloudWatchPanelQuery(ctx context.Context, datasourceUID string, panelData *panelInfo, start, end string, variables map[string]string) (interface{}, error) {
+func executeCloudWatchPanelQuery(ctx context.Context, datasourceUID string, panelData *panelInfo, start, end string, variables templateVariableValues) (interface{}, error) {
 	if panelData.RawTarget == nil {
 		return nil, fmt.Errorf("CloudWatch panel target not available")
 	}
@@ -524,7 +617,7 @@ func executeCloudWatchPanelQuery(ctx context.Context, datasourceUID string, pane
 	}
 
 	// Deep copy and substitute variables in target fields
-	target := substituteTemplateVariablesInMap(panelData.RawTarget, variables)
+	target := substituteTemplateVariablesInMapWithValues(panelData.RawTarget, variables)
 
 	// Ensure datasource is set correctly
 	target["datasource"] = map[string]interface{}{"uid": datasourceUID, "type": "cloudwatch"}
@@ -605,7 +698,7 @@ type SQLQueryResult struct {
 // panel's raw target is preserved so datasource-specific fields (BigQuery's location,
 // project and dataset, for example) reach the backend; only rawSql, datasource, refId
 // and format are overridden.
-func executeSQLPanelQuery(ctx context.Context, datasourceUID string, panelData *panelInfo, query, start, end string, variables map[string]string, datasourceType string) (*SQLQueryResult, error) {
+func executeSQLPanelQuery(ctx context.Context, datasourceUID string, panelData *panelInfo, query, start, end string, variables templateVariableValues, datasourceType string) (*SQLQueryResult, error) {
 	if panelData == nil || panelData.RawTarget == nil {
 		return nil, fmt.Errorf("SQL panel target not available")
 	}
@@ -624,7 +717,7 @@ func executeSQLPanelQuery(ctx context.Context, datasourceUID string, panelData *
 	processedQuery := substituteGrafanaMacros(query, startTime, endTime)
 
 	// Deep copy the raw target and substitute variables in its fields (e.g. location).
-	target := substituteTemplateVariablesInMap(panelData.RawTarget, variables)
+	target := substituteTemplateVariablesInMapWithValues(panelData.RawTarget, variables)
 
 	// Override the SQL with the fully-processed query and ensure required fields are set.
 	target["rawSql"] = processedQuery
