@@ -85,7 +85,75 @@ func TestEnforceLogQL(t *testing.T) {
 		{
 			name: "binary metric op injects into both selectors",
 			in:   `sum(rate({a="1"}[5m])) / sum(rate({b="2"}[5m]))`,
-			want: `(sum(rate({a="1", namespace!~"vault|payments"}[5m])) / sum(rate({b="2", namespace!~"vault|payments"}[5m])))`,
+			want: `sum(rate({a="1", namespace!~"vault|payments"}[5m])) / sum(rate({b="2", namespace!~"vault|payments"}[5m]))`,
+		},
+		{
+			name: "brace inside a backtick line filter is not a selector",
+			in:   "{app=\"x\"} |= `{\"json\": true}`",
+			want: "{app=\"x\", namespace!~\"vault|payments\"} |= `{\"json\": true}`",
+		},
+		{
+			name: "escaped quote inside a line filter does not end the string",
+			in:   `{app="x"} |= "he said \"{\" loudly"`,
+			want: `{app="x", namespace!~"vault|payments"} |= "he said \"{\" loudly"`,
+		},
+		{
+			name: "brace inside a selector's own label value",
+			in:   `{app="}"}`,
+			want: `{app="}", namespace!~"vault|payments"}`,
+		},
+		{
+			name: "brace inside a comment is not a selector",
+			in:   "{app=\"x\"} # note: {not a selector}\n",
+			want: "{app=\"x\", namespace!~\"vault|payments\"} # note: {not a selector}\n",
+		},
+		{
+			name: "user formatting and spacing are preserved",
+			in:   `sum by (level) (count_over_time({app="x"} |= "e" [5m]))`,
+			want: `sum by (level) (count_over_time({app="x", namespace!~"vault|payments"} |= "e" [5m]))`,
+		},
+		{
+			name: "trailing comma is not doubled",
+			in:   `{app="x",}`,
+			want: `{app="x", namespace!~"vault|payments"}`,
+		},
+		{
+			name: "label format template braces are not selectors",
+			in:   `{app="x"} | line_format "{{.msg}}"`,
+			want: `{app="x", namespace!~"vault|payments"} | line_format "{{.msg}}"`,
+		},
+		{
+			// Splicing lengthens the output, so the loop must keep indexing the
+			// original query. Three selectors of differing lengths would expose
+			// an offset that drifts; two symmetric ones might not.
+			name: "three selectors of differing lengths",
+			in:   `sum(rate({a="1"}[5m])) + sum(rate({bb="22"}[5m])) + sum(rate({ccc="333"}[5m]))`,
+			want: `sum(rate({a="1", namespace!~"vault|payments"}[5m])) + sum(rate({bb="22", namespace!~"vault|payments"}[5m])) + sum(rate({ccc="333", namespace!~"vault|payments"}[5m]))`,
+		},
+		{
+			name: "brace-bearing strings between selectors are skipped, both injected",
+			in:   `sum(count_over_time({a="1"} |= "{skip}" [5m])) / sum(count_over_time({b="2"} |= "{me}" [5m]))`,
+			want: `sum(count_over_time({a="1", namespace!~"vault|payments"} |= "{skip}" [5m])) / sum(count_over_time({b="2", namespace!~"vault|payments"} |= "{me}" [5m]))`,
+		},
+		{
+			name: "selector after a comment is still injected",
+			in:   "sum(rate({a=\"1\"}[5m])) # {nope}\n / sum(rate({b=\"2\"}[5m]))",
+			want: "sum(rate({a=\"1\", namespace!~\"vault|payments\"}[5m])) # {nope}\n / sum(rate({b=\"2\", namespace!~\"vault|payments\"}[5m]))",
+		},
+		{
+			name: "one selector already carrying the enforced label",
+			in:   `sum(rate({a="1", namespace="vault"}[5m])) / sum(rate({b="2"}[5m]))`,
+			want: `sum(rate({a="1", namespace="vault", namespace!~"vault|payments"}[5m])) / sum(rate({b="2", namespace!~"vault|payments"}[5m]))`,
+		},
+		{
+			name: "brace inside a block comment is not a selector",
+			in:   `{app="x"} /* {a="b"} */ |= "e"`,
+			want: `{app="x", namespace!~"vault|payments"} /* {a="b"} */ |= "e"`,
+		},
+		{
+			name: "brace inside a line comment is not a selector",
+			in:   "{app=\"x\"} // {a=\"b\"}\n",
+			want: "{app=\"x\", namespace!~\"vault|payments\"} // {a=\"b\"}\n",
 		},
 	}
 	for _, tc := range cases {
@@ -108,6 +176,94 @@ func TestEnforceLogQL(t *testing.T) {
 		_, err := enforceLogQL(ctx, `{app=}`)
 		assert.Error(t, err)
 	})
+
+	// The scan replaces a full LogQL parse, so a query whose stream selectors it
+	// cannot locate has to be refused rather than forwarded to Loki unfiltered.
+	t.Run("fails closed when no selector can be located", func(t *testing.T) {
+		for _, q := range []string{
+			``,                      // empty
+			`not a logql query`,     // no selector at all
+			`count_over_time([5m])`, // metric query with no selector
+			`{app="x"`,              // unterminated selector
+			// A stray quote makes the rest of the query string state, which
+			// could otherwise hide a selector from the scan.
+			`{app="x} |= "y"`,
+		} {
+			t.Run(q, func(t *testing.T) {
+				_, err := enforceLogQL(ctx, q)
+				assert.Error(t, err, "query %q must not be passed through unfiltered", q)
+			})
+		}
+	})
+
+	// Malformed tails that do not hide a selector are still enforced. They are
+	// left for Loki to reject on syntax: the point is that the matchers are
+	// present, so there is no unfiltered read either way.
+	t.Run("malformed query is still enforced before Loki rejects it", func(t *testing.T) {
+		for _, q := range []string{
+			`{app="x"}}`,           // unbalanced closing brace
+			`{app="x"} |= "oops`,   // unterminated string literal
+			"{app=\"x\"} |= `oops", // unterminated backtick string
+		} {
+			t.Run(q, func(t *testing.T) {
+				out, err := enforceLogQL(ctx, q)
+				require.NoError(t, err)
+				assert.Contains(t, out, `namespace!~"vault|payments"`)
+			})
+		}
+	})
+}
+
+func TestFindStreamSelectors(t *testing.T) {
+	t.Run("finds every selector", func(t *testing.T) {
+		q := `sum(rate({a="1"}[5m])) / sum(rate({b="2"}[5m]))`
+		spans, err := findStreamSelectors(q)
+		require.NoError(t, err)
+		require.Len(t, spans, 2)
+		assert.Equal(t, `{a="1"}`, q[spans[0].start:spans[0].end])
+		assert.Equal(t, `{b="2"}`, q[spans[1].start:spans[1].end])
+	})
+
+	t.Run("spans index the original query across strings and comments", func(t *testing.T) {
+		q := "sum(rate({a=\"1\"} |= \"{skip}\" [5m])) # {nope}\n / sum(rate({bb=\"22\"}[5m]))"
+		spans, err := findStreamSelectors(q)
+		require.NoError(t, err)
+		require.Len(t, spans, 2)
+		assert.Equal(t, `{a="1"}`, q[spans[0].start:spans[0].end])
+		assert.Equal(t, `{bb="22"}`, q[spans[1].start:spans[1].end])
+	})
+
+	t.Run("ignores braces inside strings and comments", func(t *testing.T) {
+		q := "{a=\"1\"} |= \"{x}\" | line_format `{y}` # {z}"
+		spans, err := findStreamSelectors(q)
+		require.NoError(t, err)
+		require.Len(t, spans, 1)
+		assert.Equal(t, `{a="1"}`, q[spans[0].start:spans[0].end])
+	})
+}
+
+func TestBlankLogQLComments(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "no comment is untouched", in: `{a="1"} |= "x"`, want: `{a="1"} |= "x"`},
+		{name: "hash comment", in: `{a="1"} # hi`, want: `{a="1"}     `},
+		{name: "line comment", in: `{a="1"} // hi`, want: `{a="1"}      `},
+		{name: "block comment", in: `{a="1"} /* hi */ x`, want: `{a="1"}          x`},
+		{name: "unterminated block comment", in: `{a="1"} /* hi`, want: `{a="1"}      `},
+		{name: "comment marker inside a string is not a comment", in: `{a="1"} |= "# no"`, want: `{a="1"} |= "# no"`},
+		{name: "comment marker inside a backtick string", in: "{a=\"1\"} |= `/* no */`", want: "{a=\"1\"} |= `/* no */`"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := blankLogQLComments(tc.in)
+			assert.Equal(t, tc.want, got)
+			// Offsets must stay valid for splicing into the original.
+			assert.Len(t, got, len(tc.in), "must preserve length")
+		})
+	}
 }
 
 func TestEnforceLogQLPositiveMatcher(t *testing.T) {
