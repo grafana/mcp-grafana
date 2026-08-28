@@ -155,17 +155,25 @@ func extractPanelQueriesV2(panel map[string]interface{}, dashboardVars map[strin
 			RefID:      safeString(pqSpec, "refId"),
 		}
 
+		// As in v1, a target built in a visual editor has no string expression;
+		// hand back the query body rather than dropping the panel.
+		if rawQuery == "" {
+			body := safeObject(query, "spec")
+			if body == nil || !targetDescribesQuery(body) {
+				continue
+			}
+			result.Target = queryTargetFields(body)
+		}
+
 		if dashboardVars != nil {
-			result.RequiredVariables = findVariablesInQuery(rawQuery, dashboardVars, overrides)
+			result.RequiredVariables = findVariablesInQuery(variableSearchText(result), dashboardVars, overrides)
 			effectiveVars := buildEffectiveVariables(dashboardVars, overrides)
 			result.ProcessedQuery = substituteVariables(rawQuery, effectiveVars)
 			dsInfo.UID = substituteVariables(dsInfo.UID, effectiveVars)
 			result.Datasource = dsInfo
 		}
 
-		if rawQuery != "" {
-			queries = append(queries, result)
-		}
+		queries = append(queries, result)
 	}
 
 	return queries
