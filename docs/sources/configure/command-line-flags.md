@@ -116,6 +116,7 @@ When caller authentication is enabled, the `Authorization` header is reserved fo
 - `--disable-agento11y`: Disable Agent Observability tools.
 - `--disable-assistant`: Disable Grafana Assistant tools.
 - `--disable-docs`: Disable documentation tools.
+- `--disable-user`: Disable user info tools.
 
 ## Configure tool limits
 
@@ -125,6 +126,7 @@ When caller authentication is enabled, the `Authorization` header is reserved fo
 - `--loki-guardrail-max-range`: Maximum effective time range for a single `query_loki_logs` call, including range-vector durations. Defaults to `24h`; `0` disables the range check. Falls back to `GRAFANA_LOKI_GUARDRAIL_MAX_RANGE`.
 
 The guardrail's decisions are also exported as OTel counters (`mcp_loki_guardrail_admitted_total`, `_would_block_total`, `_blocked_total`, `_fail_open_total`), which is the recommended way to size the affected population before promoting from `shadow` to `enforce`. See [Observability](../../developer/observability-metrics-and-tracing/#loki-cost-guardrail-metrics).
+- `--dynamic-multi-org`: Allow tool calls to select a Grafana organization per call via an optional `orgId` argument. Off by default. See [Multi-organization support](../multi-organization-and-headers/).
 
 ## Run without query execution
 

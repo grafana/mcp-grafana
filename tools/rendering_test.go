@@ -7,11 +7,13 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -156,6 +158,7 @@ func TestBuildRenderURL(t *testing.T) {
 	tests := []struct {
 		name        string
 		baseURL     string
+		orgID       int64
 		args        GetPanelImageParams
 		contains    []string
 		notContains []string
@@ -264,10 +267,10 @@ func TestBuildRenderURL(t *testing.T) {
 		{
 			name:    "With org ID",
 			baseURL: "http://localhost:3000",
+			orgID:   2,
 			args: GetPanelImageParams{
 				DashboardUID: "abc123",
 				PanelID:      intPtr(5),
-				OrgID:        intPtr(2),
 			},
 			contains: []string{
 				"targetOrgId=2",
@@ -471,11 +474,37 @@ func TestBuildRenderURL(t *testing.T) {
 			},
 			expectError: true,
 		},
+		{
+			// targetOrgId (not orgId): orgId would make the renderer's frontend
+			// persist an org switch via /api/user/using; targetOrgId scopes the
+			// org to this single render.
+			name:    "targetOrgId is added to the render URL when set",
+			baseURL: "http://localhost:3000",
+			orgID:   2,
+			args: GetPanelImageParams{
+				DashboardUID: "abc123",
+			},
+			contains: []string{
+				"http://localhost:3000/render/d/abc123",
+				"targetOrgId=2",
+			},
+		},
+		{
+			name:    "no org param when unset (default org)",
+			baseURL: "http://localhost:3000",
+			args: GetPanelImageParams{
+				DashboardUID: "abc123",
+			},
+			notContains: []string{
+				"targetOrgId",
+				"orgId",
+			},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := buildRenderURL(tt.baseURL, tt.args)
+			result, err := buildRenderURL(tt.baseURL, tt.orgID, tt.args)
 			if tt.expectError {
 				require.Error(t, err)
 				return
@@ -490,6 +519,72 @@ func TestBuildRenderURL(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The deeplink carries no org, so it is only emitted when it would open in the
+// org the image was rendered from. `?orgId=N` would persist an org switch onto
+// the viewer's user record via Grafana's OrgRedirect middleware, so a link that
+// cannot be shown to resolve correctly is dropped instead.
+func TestDeeplinkResolvesInRenderOrg(t *testing.T) {
+	// userOrg serves /api/user reporting the identity's stored org. That value is
+	// deliberately not request-scoped in Grafana, so it is what a browser session
+	// would land in regardless of GRAFANA_ORG_ID or X-Grafana-Org-Id.
+	userOrg := func(t *testing.T, orgID int64, status int) context.Context {
+		t.Helper()
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/api/user" {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			if status != http.StatusOK {
+				w.WriteHeader(status)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprintf(w, `{"orgId":%d}`, orgID)
+		}))
+		t.Cleanup(ts.Close)
+		return mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: ts.URL})
+	}
+
+	t.Run("no org selected: link agrees without a lookup", func(t *testing.T) {
+		// No server at all, proving the zero case short-circuits.
+		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: "http://127.0.0.1:1"})
+		assert.True(t, deeplinkResolvesInRenderOrg(ctx, 0))
+	})
+
+	t.Run("render org matches the viewer's org", func(t *testing.T) {
+		assert.True(t, deeplinkResolvesInRenderOrg(userOrg(t, 2, http.StatusOK), 2))
+	})
+
+	t.Run("render org differs from the viewer's org", func(t *testing.T) {
+		assert.False(t, deeplinkResolvesInRenderOrg(userOrg(t, 1, http.StatusOK), 2))
+	})
+
+	t.Run("lookup failure omits the link", func(t *testing.T) {
+		assert.False(t, deeplinkResolvesInRenderOrg(userOrg(t, 0, http.StatusForbidden), 2))
+	})
+
+	t.Run("negative org is treated as unset, like the render path", func(t *testing.T) {
+		// OrgIDRoundTripper and buildRenderURL both require > 0, so nothing was
+		// sent to the renderer and the identity's own org was used.
+		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: "http://127.0.0.1:1"})
+		assert.True(t, deeplinkResolvesInRenderOrg(ctx, -5))
+	})
+}
+
+// The deeplink must never carry orgId, whatever else it encodes.
+func TestBuildDashboardDeeplinkOmitsOrg(t *testing.T) {
+	panelID := 7
+	got, err := buildDashboardDeeplink("http://localhost:3000", GetPanelImageParams{
+		DashboardUID: "abc123",
+		PanelID:      &panelID,
+	})
+	require.NoError(t, err)
+	assert.Contains(t, got, "/d/abc123")
+	assert.Contains(t, got, "viewPanel=7")
+	assert.NotContains(t, got, "orgId")
+	assert.NotContains(t, got, "targetOrgId")
 }
 
 func TestGetPanelImage(t *testing.T) {
@@ -999,13 +1094,27 @@ func TestGetPanelImage(t *testing.T) {
 	})
 }
 
-func TestGetPanelImagePerCallOrgIDOmitDeeplink(t *testing.T) {
+// The org reaches this tool through GrafanaConfig, set by OrgIDOverrideMiddleware
+// from a per-call orgId or carried from the connection. The render must be scoped
+// to it, and the deeplink withheld when it is not where the viewer would land.
+func TestGetPanelImageOrgIDOmitDeeplink(t *testing.T) {
 	testPNGData := []byte("test PNG")
 	grafanaCfg := mcpgrafana.GrafanaConfig{
 		URL:    "http://grafana.test",
 		APIKey: "test-api-key",
-		OrgID:  1,
+		OrgID:  2,
 		BaseTransport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			// /api/user is the deeplink gate's viewer-org lookup; report org 1 so
+			// it differs from the render org and the link is withheld.
+			if req.URL.Path == "/api/user" {
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Body:       io.NopCloser(strings.NewReader(`{"orgId":1}`)),
+					Request:    req,
+				}, nil
+			}
+
 			assert.Equal(t, "2", req.Header.Get("X-Grafana-Org-Id"))
 			assert.Equal(t, "2", req.URL.Query().Get("targetOrgId"))
 			assert.Empty(t, req.URL.Query().Get("orgId"))
@@ -1022,7 +1131,6 @@ func TestGetPanelImagePerCallOrgIDOmitDeeplink(t *testing.T) {
 
 	result, err := getPanelImage(ctx, GetPanelImageParams{
 		DashboardUID: "test-dash",
-		OrgID:        intPtr(2),
 	})
 
 	require.NoError(t, err)

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -130,12 +131,125 @@ type DiscoveredDatasource struct {
 	Name   string
 	Type   string
 	MCPURL string // The MCP endpoint URL
+	OrgID  int64  // The Grafana org the datasource was discovered in
 }
 
-// discoverMCPDatasources discovers datasources that support MCP.
+// proxiedClientKey is the map key for a proxied client, scoped by org so the
+// same datasource UID in different orgs maps to distinct clients.
+func proxiedClientKey(orgID int64, datasourceType, datasourceUID string) string {
+	return fmt.Sprintf("%d|%s|%s", orgID, datasourceType, datasourceUID)
+}
+
+// accessibleOrgIDs returns the orgs to discover proxied datasources in, and the
+// connection org (the org a call targets when it omits orgId).
+//
+// With dynamic multi-org off it returns just the connection org (current
+// behavior). With it on it returns every org the user belongs to
+// (GET /api/user/orgs), always including the connection org; for credentials
+// that can't enumerate orgs (e.g. service-account tokens, which are single-org)
+// it falls back to the connection org.
+func accessibleOrgIDs(ctx context.Context, logger *slog.Logger) (orgs []int64, connectionOrg int64) {
+	connectionOrg = resolveConnectionOrgID(ctx, logger)
+	if !DynamicMultiOrgEnabled {
+		return []int64{connectionOrg}, connectionOrg
+	}
+	userOrgs, err := ListUserOrgs(ctx)
+	if err != nil || len(userOrgs) == 0 {
+		logger.DebugContext(ctx, "could not enumerate user orgs for proxied discovery; using connection org", "error", err)
+		return []int64{connectionOrg}, connectionOrg
+	}
+	ids := make([]int64, 0, len(userOrgs))
+	for _, o := range userOrgs {
+		if o.OrgID > 0 {
+			ids = append(ids, o.OrgID)
+		}
+	}
+	if len(ids) == 0 {
+		return []int64{connectionOrg}, connectionOrg
+	}
+	if connectionOrg <= 0 {
+		// /api/org was unavailable and no org is configured, so a call that omits
+		// orgId lands on the identity's own org. Ask for that directly: leaving it
+		// at 0 would both discover the same datasources a second time under a
+		// placeholder key (0 scopes no request, so it sees the identity's own org
+		// again) and leave connectionOrgID at 0, which no discovered client is
+		// keyed by.
+		if persisted, err := UserPersistedOrgID(ctx); err == nil && persisted > 0 {
+			connectionOrg = persisted
+		} else {
+			logger.DebugContext(ctx, "could not resolve the connection org; a call omitting orgId has no org to target", "error", err)
+		}
+	}
+	// Only a real org is worth discovering, and appending a non-positive one would
+	// duplicate the identity's own org under a placeholder key.
+	if connectionOrg > 0 && !slices.Contains(ids, connectionOrg) {
+		ids = append(ids, connectionOrg)
+	}
+	return ids, connectionOrg
+}
+
+// discoverMCPDatasources discovers MCP-capable datasources across every org the
+// credential can access (just the connection org when dynamic multi-org is off),
+// returning the union tagged with the org each was found in, the total number of
+// candidates considered, and the connection org a call targets when it omits
+// orgId. Per-org discovery runs in parallel.
+//
+// An error is reported only when every org failed: the caller treats an error as
+// transient (the set is dropped from the cache and rebuilt) and a nil error as a
+// stable result, so a total failure must not look like "found nothing", and one
+// unreachable org must not discard the orgs that did resolve.
+func discoverMCPDatasources(ctx context.Context, logger *slog.Logger, metrics discoveryMetrics) ([]DiscoveredDatasource, int, int64, error) {
+	orgs, connectionOrg := accessibleOrgIDs(ctx, logger)
+
+	perOrg := make([][]DiscoveredDatasource, len(orgs))
+	candidates := make([]int, len(orgs))
+	errs := make([]error, len(orgs))
+	var wg sync.WaitGroup
+	for i, org := range orgs {
+		wg.Add(1)
+		go func(i int, org int64) {
+			defer wg.Done()
+			perOrg[i], candidates[i], errs[i] = discoverMCPDatasourcesForOrg(ctx, org, logger, metrics)
+		}(i, org)
+	}
+	wg.Wait()
+
+	var firstErr error
+	failed, totalCandidates := 0, 0
+	for i, err := range errs {
+		totalCandidates += candidates[i]
+		if err == nil {
+			continue
+		}
+		failed++
+		if firstErr == nil {
+			firstErr = err
+		}
+		logger.DebugContext(ctx, "MCP datasource discovery failed for org", "org", orgs[i], "error", err)
+	}
+	if failed == len(orgs) {
+		return nil, 0, connectionOrg, firstErr
+	}
+
+	var discovered []DiscoveredDatasource
+	for _, found := range perOrg {
+		discovered = append(discovered, found...)
+	}
+	return discovered, totalCandidates, connectionOrg, nil
+}
+
+// discoverMCPDatasourcesForOrg discovers datasources that support MCP within a
+// single org. It scopes the request to orgID so the datasource list and the MCP
+// probes carry X-Grafana-Org-Id: orgID (OrgIDRoundTripper reads the org from the
+// request context), and tags each result with the org.
 // Returns the list of datasources with MCP endpoints and the number of
 // candidates considered (datasources of an MCP-enabled type, before probing).
-func discoverMCPDatasources(ctx context.Context, logger *slog.Logger, metrics discoveryMetrics) ([]DiscoveredDatasource, int, error) {
+func discoverMCPDatasourcesForOrg(ctx context.Context, orgID int64, logger *slog.Logger, metrics discoveryMetrics) ([]DiscoveredDatasource, int, error) {
+	if orgID > 0 {
+		cfg := GrafanaConfigFromContext(ctx)
+		cfg.OrgID = orgID
+		ctx = WithGrafanaConfig(ctx, cfg)
+	}
 	gc := GrafanaClientFromContext(ctx)
 	if gc == nil {
 		return nil, 0, fmt.Errorf("grafana client not found in context")
@@ -259,6 +373,7 @@ func discoverMCPDatasources(ctx context.Context, logger *slog.Logger, metrics di
 						Name:   c.name,
 						Type:   c.dsType,
 						MCPURL: probeURL,
+						OrgID:  orgID,
 					},
 					enabled: true,
 				}
@@ -317,6 +432,19 @@ func addDatasourceUidParameter(tool mcp.Tool, datasourceType string) mcp.Tool {
 
 	// Add to required fields
 	modifiedTool.InputSchema.Required = append(modifiedTool.InputSchema.Required, "datasourceUid")
+
+	// When dynamic multi-org is enabled, advertise the optional orgId so the
+	// datasourceUid can be resolved in a non-default org. Proxied tools are
+	// registered directly rather than through Tool.Register, so the native
+	// injector never sees them and the property is added here instead.
+	// OrgIDOverrideMiddleware reads it into the request context and strips it, so
+	// it is never forwarded to the upstream datasource MCP server.
+	if DynamicMultiOrgEnabled {
+		modifiedTool.InputSchema.Properties[OrgIDArgument] = map[string]any{
+			"type":        "integer",
+			"description": orgIDArgumentDescription,
+		}
+	}
 
 	return modifiedTool
 }
@@ -497,6 +625,10 @@ type proxiedToolSet struct {
 	// toolToDatasources maps a proxied tool name to the datasource keys that
 	// support it. Empty until built is true; immutable afterwards.
 	toolToDatasources map[string][]string
+	// connectionOrgID is the org a call targets when it omits orgId. Resolved
+	// during the build. Every session sharing this set shares the same
+	// connection-level org, because proxiedToolSetKey includes OrgID.
+	connectionOrgID int64
 
 	// refs is the number of live sessions currently attached to this set.
 	refs int
@@ -521,7 +653,10 @@ type ToolManager struct {
 	// These will be unused for HTTP/SSE transports.
 	serverMode    bool // true if using server-wide tools (stdio), false for per-session (HTTP/SSE)
 	serverClients map[string]*ProxiedClient
-	clientsMutex  sync.RWMutex
+	// connectionOrgID is the org a proxied call targets when it omits orgId in
+	// server (stdio) mode. Resolved during discovery; guarded by clientsMutex.
+	connectionOrgID int64
+	clientsMutex    sync.RWMutex
 
 	// For HTTP/SSE transport: shared, credential-keyed proxied tool sets.
 	// Sessions with identical credentials share a single entry, so memory no
@@ -641,7 +776,7 @@ func (tm *ToolManager) InitializeAndRegisterServerTools(ctx context.Context) err
 	logger := tm.loggerFromCtx(ctx)
 
 	// Discover datasources with MCP support
-	discovered, _, err := discoverMCPDatasources(ctx, logger, tm.metrics)
+	discovered, _, connectionOrg, err := discoverMCPDatasources(ctx, logger, tm.metrics)
 	if err != nil {
 		return fmt.Errorf("failed to discover MCP datasources: %w", err)
 	}
@@ -653,13 +788,14 @@ func (tm *ToolManager) InitializeAndRegisterServerTools(ctx context.Context) err
 
 	// Connect to each datasource and store in manager
 	tm.clientsMutex.Lock()
+	tm.connectionOrgID = connectionOrg
 	for _, ds := range discovered {
-		client, err := NewProxiedClient(ctx, ds.UID, ds.Name, ds.Type, ds.MCPURL)
+		client, err := NewProxiedClient(ctx, ds.OrgID, ds.UID, ds.Name, ds.Type, ds.MCPURL)
 		if err != nil {
 			logger.ErrorContext(ctx, "failed to create proxied client", "datasource", ds.UID, "error", err)
 			continue
 		}
-		key := ds.Type + "_" + ds.UID
+		key := proxiedClientKey(ds.OrgID, ds.Type, ds.UID)
 		tm.serverClients[key] = client
 	}
 	clientCount := len(tm.serverClients)
@@ -713,6 +849,7 @@ type builtProxiedTools struct {
 	tools             []mcp.Tool
 	toolToDatasources map[string][]string
 	stats             buildStats
+	connectionOrgID   int64
 }
 
 // buildProxiedToolSet discovers datasources, connects to them, and returns the
@@ -740,11 +877,12 @@ func (tm *ToolManager) buildProxiedToolSet(ctx context.Context, logger *slog.Log
 	}()
 
 	// Discover datasources with MCP support.
-	discovered, candidateCount, err := discoverMCPDatasources(ctx, logger, tm.metrics)
+	discovered, candidateCount, connectionOrg, err := discoverMCPDatasources(ctx, logger, tm.metrics)
 	if err != nil {
 		logger.ErrorContext(ctx, "failed to discover MCP datasources", "error", err)
 		return built, fmt.Errorf("failed to discover MCP datasources: %w", err)
 	}
+	built.connectionOrgID = connectionOrg
 
 	// Connect to each discovered datasource in parallel, retrying transient
 	// failures, mirroring the probe step's concurrency pattern in
@@ -794,7 +932,7 @@ func (tm *ToolManager) buildProxiedToolSet(ctx context.Context, logger *slog.Log
 					if attemptNum > 1 {
 						tm.metrics.connectRetries.Add(ctx, 1, typeAttr)
 					}
-					c, err := NewProxiedClient(ctx, ds.UID, ds.Name, ds.Type, ds.MCPURL)
+					c, err := NewProxiedClient(ctx, ds.OrgID, ds.UID, ds.Name, ds.Type, ds.MCPURL)
 					if err != nil {
 						return nil, classifyConnectError(err)
 					}
@@ -814,7 +952,7 @@ func (tm *ToolManager) buildProxiedToolSet(ctx context.Context, logger *slog.Log
 			}
 
 			tm.metrics.connectSuccess.Add(ctx, 1, typeAttr)
-			connectResults <- connectResult{key: ds.Type + "_" + ds.UID, client: client}
+			connectResults <- connectResult{key: proxiedClientKey(ds.OrgID, ds.Type, ds.UID), client: client}
 		}(ds)
 	}
 
@@ -975,6 +1113,7 @@ func (tm *ToolManager) runProxiedToolSetBuild(ctx context.Context, set *proxiedT
 		set.clients = built.clients
 		set.tools = built.tools
 		set.toolToDatasources = built.toolToDatasources
+		set.connectionOrgID = built.connectionOrgID
 		set.built = true
 	}
 	abandoned := set.refs == 0
@@ -1066,7 +1205,7 @@ func (tm *ToolManager) closeProxiedClients(clients map[string]*ProxiedClient) {
 // client while the call runs. The returned release func MUST be called (deferred)
 // once the call completes; it decrements the in-flight count and closes the set
 // if it was the last thing keeping it alive.
-func (tm *ToolManager) acquireProxiedClientForCall(set *proxiedToolSet, datasourceType, datasourceUID string) (*ProxiedClient, func(), error) {
+func (tm *ToolManager) acquireProxiedClientForCall(set *proxiedToolSet, orgID int64, datasourceType, datasourceUID string) (*ProxiedClient, func(), error) {
 	tm.proxiedSetsMu.Lock()
 	defer tm.proxiedSetsMu.Unlock()
 
@@ -1074,19 +1213,22 @@ func (tm *ToolManager) acquireProxiedClientForCall(set *proxiedToolSet, datasour
 		return nil, nil, fmt.Errorf("datasource '%s' is no longer available", datasourceUID)
 	}
 
-	key := datasourceType + "_" + datasourceUID
-	client, ok := set.clients[key]
+	// A call that omits orgId targets the connection org.
+	if orgID <= 0 {
+		orgID = set.connectionOrgID
+	}
+	client, ok := set.clients[proxiedClientKey(orgID, datasourceType, datasourceUID)]
 	if !ok {
 		var availableUIDs []string
 		for _, c := range set.clients {
-			if c.DatasourceType == datasourceType {
+			if c.DatasourceType == datasourceType && c.OrgID == orgID {
 				availableUIDs = append(availableUIDs, c.DatasourceUID)
 			}
 		}
 		if len(availableUIDs) > 0 {
-			return nil, nil, fmt.Errorf("datasource '%s' not found. Available %s datasources: %v", datasourceUID, datasourceType, availableUIDs)
+			return nil, nil, fmt.Errorf("datasource '%s' not found in org %d. Available %s datasources: %v", datasourceUID, orgID, datasourceType, availableUIDs)
 		}
-		return nil, nil, fmt.Errorf("datasource '%s' not found. No %s datasources with MCP support are configured", datasourceUID, datasourceType)
+		return nil, nil, fmt.Errorf("datasource '%s' not found in org %d. No %s datasources with MCP support are configured", datasourceUID, orgID, datasourceType)
 	}
 
 	set.inFlight++
@@ -1286,25 +1428,28 @@ func (tm *ToolManager) releaseSessionProxiedToolSet(state *SessionState) {
 }
 
 // GetServerClient retrieves a proxied client from server-level storage (for stdio transport)
-func (tm *ToolManager) GetServerClient(datasourceType, datasourceUID string) (*ProxiedClient, error) {
+func (tm *ToolManager) GetServerClient(orgID int64, datasourceType, datasourceUID string) (*ProxiedClient, error) {
 	tm.clientsMutex.RLock()
 	defer tm.clientsMutex.RUnlock()
 
-	key := datasourceType + "_" + datasourceUID
-	client, exists := tm.serverClients[key]
+	// A call that omits orgId targets the connection org.
+	if orgID <= 0 {
+		orgID = tm.connectionOrgID
+	}
+	client, exists := tm.serverClients[proxiedClientKey(orgID, datasourceType, datasourceUID)]
 	if !exists {
-		// List available datasources to help with debugging
+		// List available datasources (in this org) to help with debugging
 		var availableUIDs []string
 		for _, c := range tm.serverClients {
-			if c.DatasourceType == datasourceType {
+			if c.DatasourceType == datasourceType && c.OrgID == orgID {
 				availableUIDs = append(availableUIDs, c.DatasourceUID)
 			}
 		}
 
 		if len(availableUIDs) > 0 {
-			return nil, fmt.Errorf("datasource '%s' not found. Available %s datasources: %v", datasourceUID, datasourceType, availableUIDs)
+			return nil, fmt.Errorf("datasource '%s' not found in org %d. Available %s datasources: %v", datasourceUID, orgID, datasourceType, availableUIDs)
 		}
-		return nil, fmt.Errorf("datasource '%s' not found. No %s datasources with MCP support are configured", datasourceUID, datasourceType)
+		return nil, fmt.Errorf("datasource '%s' not found in org %d. No %s datasources with MCP support are configured", datasourceUID, orgID, datasourceType)
 	}
 
 	return client, nil
