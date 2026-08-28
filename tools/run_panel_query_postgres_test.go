@@ -170,8 +170,176 @@ func TestRunSinglePanelQuery_PostgresDispatch(t *testing.T) {
 	}
 }
 
-// TestRunSinglePanelQuery_PostgresEmptyResultHints verifies that an empty
-// PostgreSQL result surfaces PostgreSQL-specific hints through the real path.
+// postgresSQLStringPanelDashboard builds a PostgreSQL panel with an explicit
+// sqlstring variable expression. The target contains an extra string field so
+// the request test can verify recursive target interpolation and preservation.
+func postgresSQLStringPanelDashboard(currentValue interface{}, includeVariable bool) map[string]interface{} {
+	expression := "$" + "{order_intent_id:sqlstring}"
+	variableList := []interface{}{}
+	if includeVariable {
+		variableList = append(variableList, map[string]interface{}{
+			"name":    "order_intent_id",
+			"type":    "query",
+			"current": map[string]interface{}{"value": currentValue},
+		})
+	}
+
+	return map[string]interface{}{
+		"templating": map[string]interface{}{"list": variableList},
+		"panels": []interface{}{
+			map[string]interface{}{
+				"id":    float64(8),
+				"title": "Order replay",
+				"type":  "table",
+				"datasource": map[string]interface{}{
+					"uid":  "postgres-uid",
+					"type": PostgresDatasourceType,
+				},
+				"targets": []interface{}{
+					map[string]interface{}{
+						"refId":          "A",
+						"rawSql":         "SELECT * FROM orders WHERE order_intent_id IN (" + expression + ")",
+						"rawQuery":       true,
+						"preservedField": expression,
+					},
+				},
+			},
+		},
+	}
+}
+
+func TestRunSinglePanelQuery_PostgresSQLStringVariable(t *testing.T) {
+	expression := "$" + "{order_intent_id:sqlstring}"
+	baseQuery := "SELECT * FROM orders WHERE order_intent_id IN ("
+	tests := []struct {
+		name            string
+		currentValue    interface{}
+		includeVariable bool
+		wantQuery       string
+		wantField       string
+	}{
+		{
+			name:            "single value",
+			currentValue:    "oi-123",
+			includeVariable: true,
+			wantQuery:       baseQuery + "'oi-123')",
+			wantField:       "'oi-123'",
+		},
+		{
+			name:            "multiple values",
+			currentValue:    []interface{}{"oi-123", "oi-456"},
+			includeVariable: true,
+			wantQuery:       baseQuery + "'oi-123','oi-456')",
+			wantField:       "'oi-123','oi-456'",
+		},
+		{
+			name:            "value with a single quote",
+			currentValue:    "oi'123",
+			includeVariable: true,
+			wantQuery:       baseQuery + "'oi''123')",
+			wantField:       "'oi''123'",
+		},
+		{
+			name:            "empty value",
+			currentValue:    "",
+			includeVariable: true,
+			wantQuery:       baseQuery + "'')",
+			wantField:       "''",
+		},
+		{
+			name:            "empty multi-select",
+			currentValue:    []interface{}{},
+			includeVariable: true,
+			wantQuery:       baseQuery + ")",
+			wantField:       "",
+		},
+		{
+			name:            "missing variable",
+			includeVariable: false,
+			wantQuery:       baseQuery + expression + ")",
+			wantField:       expression,
+		},
+		{
+			name:            "defined variable with null value",
+			currentValue:    nil,
+			includeVariable: true,
+			wantQuery:       baseQuery + ")",
+			wantField:       "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			frames := data.Frames{
+				data.NewFrame("", data.NewField("order_intent_id", nil, []string{"oi-123"})),
+			}
+			var captured capturedQuery
+			ts := newDSQueryTestServer(t, &captured, frames)
+			ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: ts.URL})
+
+			result, err := runSinglePanelQuery(ctx, singlePanelQueryParams{
+				DB:         postgresSQLStringPanelDashboard(tt.currentValue, tt.includeVariable),
+				PanelID:    8,
+				QueryIndex: 0,
+				Start:      "now-1h",
+				End:        "now",
+			})
+			require.NoError(t, err)
+
+			sqlResult, ok := result.Results.(*SQLQueryResult)
+			require.True(t, ok, "expected *SQLQueryResult, got %T", result.Results)
+			assert.Equal(t, tt.wantQuery, sqlResult.ProcessedQuery)
+			assert.Equal(t, tt.wantQuery, captured.query["rawSql"])
+			assert.Equal(t, tt.wantField, captured.query["preservedField"])
+			assert.Equal(t, true, captured.query["rawQuery"])
+			assert.Equal(t, PostgresDatasourceType, captured.query["datasource"].(map[string]interface{})["type"])
+		})
+	}
+}
+
+func TestRunSinglePanelQuery_SQLDatasourceRegression(t *testing.T) {
+	tests := []struct {
+		name       string
+		dsType     string
+		wantFormat interface{}
+	}{
+		{name: "BigQuery", dsType: BigQueryDatasourceType, wantFormat: SQLFormatTable},
+		{name: "MSSQL", dsType: MSSQLDatasourceType, wantFormat: MSSQLFormatTable},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var captured capturedQuery
+			ts := newDSQueryTestServer(t, &captured, data.Frames{
+				data.NewFrame("", data.NewField("count", nil, []int64{1})),
+			})
+			ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{URL: ts.URL})
+
+			result, err := runSinglePanelQuery(ctx, singlePanelQueryParams{
+				DB:         postgresPanelDashboard(tt.dsType),
+				PanelID:    7,
+				QueryIndex: 0,
+				Start:      "now-1h",
+				End:        "now",
+			})
+			require.NoError(t, err)
+
+			sqlResult, ok := result.Results.(*SQLQueryResult)
+			require.True(t, ok, "expected *SQLQueryResult, got %T", result.Results)
+			assert.Contains(t, sqlResult.ProcessedQuery, "public.checks")
+			assert.Contains(t, sqlResult.ProcessedQuery, "$__timeFilter(ts)")
+			assert.NotContains(t, sqlResult.ProcessedQuery, "$__interval")
+			wantFormat := tt.wantFormat
+			if tt.dsType == BigQueryDatasourceType {
+				wantFormat = float64(SQLFormatTable)
+			}
+			assert.Equal(t, wantFormat, captured.query["format"])
+			assert.Equal(t, sqlResult.ProcessedQuery, captured.query["rawSql"])
+			assert.Equal(t, true, captured.query["rawQuery"])
+		})
+	}
+}
+
 func TestRunSinglePanelQuery_PostgresEmptyResultHints(t *testing.T) {
 	frames := data.Frames{
 		data.NewFrame("",
