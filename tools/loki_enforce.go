@@ -209,15 +209,35 @@ func enforceLogQL(ctx context.Context, query string) (string, error) {
 // both braces.
 func appendMatchers(selector, matchers string) string {
 	inner := strings.TrimRight(selector[1:len(selector)-1], " \t\r\n")
-	switch {
-	case inner == "":
+	if inner == "" {
 		return "{" + matchers + "}"
-	case strings.HasSuffix(inner, ","):
-		// Loki accepts a trailing comma; do not emit a doubled one.
-		return "{" + inner + " " + matchers + "}"
-	default:
-		return "{" + inner + ", " + matchers + "}"
 	}
+
+	// Judge the existing body with its comments blanked out. A comma inside a
+	// comment is not a real trailing comma, and a body ending inside a line
+	// comment would swallow anything appended on that line.
+	blanked := blankLogQLComments(inner)
+	real := strings.TrimRight(blanked, " \t\r\n")
+
+	// Loki accepts a trailing comma; do not emit a doubled one.
+	needComma := real != "" && !strings.HasSuffix(real, ",")
+	// inner has no trailing whitespace, so a blank last byte came from a comment.
+	endsInComment := blanked[len(blanked)-1] == ' '
+
+	var sep string
+	switch {
+	case endsInComment && needComma:
+		// Continue on a fresh line, or the matchers and the closing brace both
+		// end up commented out and Loki rejects the query.
+		sep = "\n, "
+	case endsInComment:
+		sep = "\n"
+	case needComma:
+		sep = ", "
+	default:
+		sep = " "
+	}
+	return "{" + inner + sep + matchers + "}"
 }
 
 // matchersString renders matchers as the inside of a stream selector.

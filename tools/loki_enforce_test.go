@@ -146,6 +146,29 @@ func TestEnforceLogQL(t *testing.T) {
 			want: `sum(rate({a="1", namespace="vault", namespace!~"vault|payments"}[5m])) / sum(rate({b="2", namespace!~"vault|payments"}[5m]))`,
 		},
 		{
+			// A trailing comment would otherwise swallow the injected matchers
+			// and the closing brace, and Loki would reject the whole query.
+			name: "trailing comment inside the selector",
+			in:   "{app=\"x\" # note\n}",
+			want: "{app=\"x\" # note\n, namespace!~\"vault|payments\"}",
+		},
+		{
+			name: "comment on its own line inside the selector",
+			in:   "{app=\"x\"\n# note\n}",
+			want: "{app=\"x\"\n# note\n, namespace!~\"vault|payments\"}",
+		},
+		{
+			name: "real trailing comma before a comment is not doubled",
+			in:   "{app=\"x\", # note\n}",
+			want: "{app=\"x\", # note\nnamespace!~\"vault|payments\"}",
+		},
+		{
+			// The comma is inside the comment, so it is not a real separator.
+			name: "comma inside a comment still needs a real one",
+			in:   "{app=\"x\" # note,\n}",
+			want: "{app=\"x\" # note,\n, namespace!~\"vault|payments\"}",
+		},
+		{
 			name: "brace inside a block comment is not a selector",
 			in:   `{app="x"} /* {a="b"} */ |= "e"`,
 			want: `{app="x", namespace!~"vault|payments"} /* {a="b"} */ |= "e"`,
