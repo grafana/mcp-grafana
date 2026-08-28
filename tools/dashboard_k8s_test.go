@@ -17,7 +17,7 @@ import (
 
 func TestFetchDashboardViaK8s_V1SingleFetch(t *testing.T) {
 	var v1Calls, v2Calls int32
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := httptest.NewServer(withFrontendSettings("default", func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.Contains(r.URL.Path, "/v1beta1/"):
 			atomic.AddInt32(&v1Calls, 1)
@@ -53,7 +53,7 @@ func TestFetchDashboardViaK8s_V1SingleFetch(t *testing.T) {
 }
 
 func TestFetchDashboardViaK8s_V2Refetch(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := httptest.NewServer(withFrontendSettings("default", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case strings.Contains(r.URL.Path, "/v1beta1/"):
@@ -160,7 +160,7 @@ func TestFetchDashboard_FailsClosedOnTransientDiscoveryError(t *testing.T) {
 // grafana.app/message metadata annotations.
 func TestUpdateDashboardV2_SetsFolderAndMessageAnnotations(t *testing.T) {
 	var putBody map[string]interface{}
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := httptest.NewServer(withFrontendSettings("default", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPut {
 			_ = json.NewDecoder(r.Body).Decode(&putBody)
 			w.Header().Set("Content-Type", "application/json")
@@ -205,7 +205,7 @@ func TestUpdateDashboardV2_SetsFolderAndMessageAnnotations(t *testing.T) {
 // the legacy save path.
 func TestCreateOrUpdateDashboardV2_RespectsOverwriteFalse(t *testing.T) {
 	var wrote bool
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := httptest.NewServer(withFrontendSettings("default", func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/dashboards/u1"):
 			// The dashboard already exists.
@@ -244,7 +244,7 @@ func TestCreateOrUpdateDashboardV2_RespectsOverwriteFalse(t *testing.T) {
 // and that no write is attempted.
 func TestCreateOrUpdateDashboardV2_RejectsV2BodyOverV1Stored(t *testing.T) {
 	var wrote bool
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := httptest.NewServer(withFrontendSettings("default", func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/dashboards/u1"):
 			// Existing dashboard is stored as classic v1 (no v2 conversion status).
@@ -280,7 +280,7 @@ func TestCreateOrUpdateDashboardV2_RejectsV2BodyOverV1Stored(t *testing.T) {
 // TestCreateOrUpdateDashboardV2_DoesNotMutateInput verifies the caller's dashboard
 // map is not mutated (its uid survives) when saving a v2 dashboard.
 func TestCreateOrUpdateDashboardV2_DoesNotMutateInput(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := httptest.NewServer(withFrontendSettings("default", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{

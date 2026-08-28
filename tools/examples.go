@@ -296,7 +296,7 @@ var GetQueryExamples = mcpgrafana.MustTool(
 	mcp.WithReadOnlyHintAnnotation(true),
 	mcp.WithDestructiveHintAnnotation(false),
 	mcp.WithOpenWorldHintAnnotation(false),
-)
+).NotOrgScoped()
 
 // AddExamplesTools registers all example-related tools to the MCP server.
 func AddExamplesTools(mcp *server.MCPServer) {

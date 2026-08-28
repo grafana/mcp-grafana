@@ -493,9 +493,10 @@ func newToolManagerWithServer(t *testing.T, build testBuildFunc) (*ToolManager, 
 func builtWith(clientType, clientUID string) builtProxiedTools {
 	return builtProxiedTools{
 		clients: map[string]*ProxiedClient{
-			clientType + "_" + clientUID: {DatasourceType: clientType, DatasourceUID: clientUID},
+			proxiedClientKey(1, clientType, clientUID): {DatasourceType: clientType, DatasourceUID: clientUID, OrgID: 1},
 		},
 		toolToDatasources: map[string][]string{},
+		connectionOrgID:   1,
 	}
 }
 

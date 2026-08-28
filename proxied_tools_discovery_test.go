@@ -99,7 +99,7 @@ func TestDiscoverMCPDatasources_ProbeRetry(t *testing.T) {
 		handler, callCount := scriptedHandler(t, http.StatusServiceUnavailable, http.StatusOK)
 		_, ctx := newFakeGrafana(t, fakeDatasource{uid: "flaky", name: "Flaky Tempo", handler: handler})
 
-		discovered, candidateCount, err := discoverMCPDatasources(ctx, slog.Default(), newDiscoveryMetrics(nil))
+		discovered, candidateCount, _, err := discoverMCPDatasources(ctx, slog.Default(), newDiscoveryMetrics(nil))
 		require.NoError(t, err)
 
 		assert.Equal(t, 1, candidateCount)
@@ -112,7 +112,7 @@ func TestDiscoverMCPDatasources_ProbeRetry(t *testing.T) {
 		handler, callCount := scriptedHandler(t, http.StatusNotFound)
 		_, ctx := newFakeGrafana(t, fakeDatasource{uid: "unsupported", name: "Not MCP", handler: handler})
 
-		discovered, candidateCount, err := discoverMCPDatasources(ctx, slog.Default(), newDiscoveryMetrics(nil))
+		discovered, candidateCount, _, err := discoverMCPDatasources(ctx, slog.Default(), newDiscoveryMetrics(nil))
 		require.NoError(t, err)
 
 		assert.Equal(t, 1, candidateCount)
@@ -124,7 +124,7 @@ func TestDiscoverMCPDatasources_ProbeRetry(t *testing.T) {
 		handler, callCount := scriptedHandler(t, http.StatusServiceUnavailable, http.StatusServiceUnavailable, http.StatusServiceUnavailable)
 		_, ctx := newFakeGrafana(t, fakeDatasource{uid: "down", name: "Down Tempo", handler: handler})
 
-		discovered, candidateCount, err := discoverMCPDatasources(ctx, slog.Default(), newDiscoveryMetrics(nil))
+		discovered, candidateCount, _, err := discoverMCPDatasources(ctx, slog.Default(), newDiscoveryMetrics(nil))
 		require.NoError(t, err)
 
 		assert.Equal(t, 1, candidateCount)
@@ -140,7 +140,7 @@ func TestDiscoverMCPDatasources_ProbeRetry(t *testing.T) {
 			fakeDatasource{uid: "bad", name: "Bad Tempo", handler: badHandler},
 		)
 
-		discovered, candidateCount, err := discoverMCPDatasources(ctx, slog.Default(), newDiscoveryMetrics(nil))
+		discovered, candidateCount, _, err := discoverMCPDatasources(ctx, slog.Default(), newDiscoveryMetrics(nil))
 		require.NoError(t, err)
 
 		assert.Equal(t, 2, candidateCount)
@@ -164,7 +164,7 @@ func TestDiscoverMCPDatasources_MetricsUseInjectedMeterProvider(t *testing.T) {
 	handler, _ := scriptedHandler(t, http.StatusOK)
 	_, ctx := newFakeGrafana(t, fakeDatasource{uid: "good", name: "Good Tempo", handler: handler})
 
-	_, _, err := discoverMCPDatasources(ctx, slog.Default(), newDiscoveryMetrics(provider))
+	_, _, _, err := discoverMCPDatasources(ctx, slog.Default(), newDiscoveryMetrics(provider))
 	require.NoError(t, err)
 
 	var data metricdata.ResourceMetrics
@@ -225,7 +225,9 @@ func TestBuildProxiedToolSet_ConnectFailureExcludedOthersSucceed(t *testing.T) {
 
 	assert.Equal(t, buildStats{candidates: badCount + 1, discovered: badCount + 1, connectFailed: badCount}, built.stats)
 	require.Len(t, built.clients, 1)
-	_, hasGood := built.clients["tempo_good"]
+	// Clients are keyed by (org, type, uid); this build has no per-call org, so
+	// they live under the connection org the build resolved.
+	_, hasGood := built.clients[proxiedClientKey(built.connectionOrgID, "tempo", "good")]
 	assert.True(t, hasGood, "the working datasource must still be connected")
 
 	// Each bad candidate takes mcpRetryMaxAttempts*badDelay to exhaust its

@@ -110,11 +110,14 @@ func fetchDashboard(ctx context.Context, uid string) (*dashboardResult, error) {
 // Callers only reach this after confirming v1beta1 is served, so a 404 here is a
 // genuine "dashboard not found".
 func fetchDashboardViaK8s(ctx context.Context, k8s *mcpgrafana.KubernetesClient, uid string) (*dashboardResult, error) {
-	ns, nsFromSettings := mcpgrafana.DashboardNamespace(ctx)
+	ns, err := mcpgrafana.GrafanaNamespace(ctx)
+	if err != nil {
+		return nil, err
+	}
 
 	obj, err := k8s.Get(ctx, dashboardDescriptor(dashboardReadVersion), ns, uid)
 	if err != nil {
-		return nil, k8sDashboardErr("get", uid, ns, nsFromSettings, err)
+		return nil, fmt.Errorf("get dashboard %q via k8s api: %w", uid, err)
 	}
 
 	// If the dashboard is stored as v2, the v1beta1 response is a lossy
@@ -355,10 +358,13 @@ func updateDashboardV2(ctx context.Context, uid string, res *dashboardResult, ar
 	// Honor folderUid (move) and message (version-history note) via annotations.
 	applyV2WriteMetadata(res.Object, args)
 
-	ns, nsFromSettings := mcpgrafana.DashboardNamespace(ctx)
+	ns, err := mcpgrafana.GrafanaNamespace(ctx)
+	if err != nil {
+		return nil, err
+	}
 	updated, err := k8s.Update(ctx, dashboardDescriptor(res.APIVersion), ns, uid, res.Object)
 	if err != nil {
-		return nil, k8sDashboardErr("update", uid, ns, nsFromSettings, err)
+		return nil, fmt.Errorf("update dashboard %q via k8s api: %w", uid, err)
 	}
 	return postDashboardOKBodyFromK8s(updated, uid), nil
 }
@@ -431,18 +437,6 @@ func isK8sNotFound(err error) bool {
 	return errors.As(err, &apiErr) && apiErr.StatusCode == 404
 }
 
-// k8sDashboardErr wraps a dashboard k8s API error. When it is a 404 and the
-// namespace was only derived from the org id (frontend settings was
-// unavailable), it adds a hint that the namespace itself may be wrong (e.g.
-// Grafana Cloud uses "stacks-{id}") rather than the dashboard being absent — so
-// the same diagnostic applies to both reads and writes.
-func k8sDashboardErr(action, uid, ns string, nsFromSettings bool, err error) error {
-	if isK8sNotFound(err) && !nsFromSettings {
-		return fmt.Errorf("%s dashboard %q: not found in namespace %q, which was derived from the org id because /api/frontend/settings was unavailable; the namespace may be wrong (e.g. Grafana Cloud uses \"stacks-{id}\"): %w", action, uid, ns, err)
-	}
-	return fmt.Errorf("%s dashboard %q via k8s api: %w", action, uid, err)
-}
-
 // updateDashboardWithFullJSON performs a traditional full dashboard update
 func updateDashboardWithFullJSON(ctx context.Context, args UpdateDashboardParams) (*models.PostDashboardOKBody, error) {
 	// A full dashboard JSON in the v2 schema (elements/layout) must be written
@@ -502,7 +496,10 @@ func createOrUpdateDashboardV2(ctx context.Context, args UpdateDashboardParams) 
 	}
 	delete(spec, "uid")
 
-	ns, nsFromSettings := mcpgrafana.DashboardNamespace(ctx)
+	ns, err := mcpgrafana.GrafanaNamespace(ctx)
+	if err != nil {
+		return nil, err
+	}
 	// TODO: negotiate the version to write instead of hardcoding v2beta1 — e.g.
 	// discover the group's preferred/served v2 version via GET /apis/dashboard.grafana.app
 	// (it could be v2, v2beta1, v2alpha1 depending on the Grafana version) rather
@@ -538,7 +535,7 @@ func createOrUpdateDashboardV2(ctx context.Context, args UpdateDashboardParams) 
 			applyV2WriteMetadata(obj, args)
 			updated, err := k8s.Update(ctx, dashboardDescriptor(version), ns, uid, obj)
 			if err != nil {
-				return nil, k8sDashboardErr("update", uid, ns, nsFromSettings, err)
+				return nil, fmt.Errorf("update dashboard %q via k8s api: %w", uid, err)
 			}
 			return postDashboardOKBodyFromK8s(updated, uid), nil
 		case err != nil && !isK8sNotFound(err):
@@ -561,7 +558,7 @@ func createOrUpdateDashboardV2(ctx context.Context, args UpdateDashboardParams) 
 	applyV2WriteMetadata(obj, args)
 	created, err := k8s.Create(ctx, dashboardDescriptor(version), ns, obj)
 	if err != nil {
-		return nil, k8sDashboardErr("create", uid, ns, nsFromSettings, err)
+		return nil, fmt.Errorf("create dashboard %q via k8s api: %w", uid, err)
 	}
 	createdUID := uid
 	if createdUID == "" {

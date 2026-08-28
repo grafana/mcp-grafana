@@ -1039,13 +1039,16 @@ type sharedSettings struct {
 	Version string
 }
 
-// settingsResult pairs the fetched settings with whether the fetch succeeded.
+// settingsResult pairs the fetched settings with the fetch error, if any.
 // singleflight hands back a single value, and success cannot be inferred from
 // the value itself: an instance may legitimately report none of these fields,
-// which is a successful fetch that happens to be empty.
+// which is a successful fetch that happens to be empty. The error is carried
+// rather than a bool so callers can tell "could not reach Grafana" from
+// "reached it, and it reports nothing" -- namespace resolution must not guess
+// in the first case.
 type settingsResult struct {
 	settings frontendSettings
-	ok       bool
+	err      error
 }
 
 // frontendSettingsKey builds the (URL, OrgID) cache key shared by the
@@ -1062,7 +1065,7 @@ func frontendSettingsKey(grafanaURL string, orgID int64) string {
 //
 // Concurrent callers for the same (URL, OrgID) are coalesced via singleflight.
 // Failures are not cached.
-func loadFrontendSettings(cfg *GrafanaConfig) (frontendSettings, bool) {
+func loadFrontendSettings(cfg *GrafanaConfig) (frontendSettings, error) {
 	key := frontendSettingsKey(cfg.URL, cfg.OrgID)
 
 	result, _, _ := frontendSettingsFlight.Do(key, func() (any, error) {
@@ -1077,7 +1080,7 @@ func loadFrontendSettings(cfg *GrafanaConfig) (frontendSettings, bool) {
 					AppURL:    s.AppURL,
 					Namespace: cachedNS.(string),
 					Version:   s.Version,
-				}, true}, nil
+				}, nil}, nil
 			}
 		}
 
@@ -1088,10 +1091,10 @@ func loadFrontendSettings(cfg *GrafanaConfig) (frontendSettings, bool) {
 		defer cancel()
 		fetchCtx = WithGrafanaConfig(fetchCtx, *cfg)
 
-		settings, ok := doFetchFrontendSettings(fetchCtx, cfg)
-		if !ok {
+		settings, err := doFetchFrontendSettings(fetchCtx, cfg)
+		if err != nil {
 			// Don't cache failures, so a transient error is retried.
-			return settingsResult{}, nil
+			return settingsResult{err: err}, nil
 		}
 
 		sharedSettingsCache.Store(cfg.URL, sharedSettings{
@@ -1104,11 +1107,11 @@ func loadFrontendSettings(cfg *GrafanaConfig) (frontendSettings, bool) {
 			namespaceCache.Store(key, settings.Namespace)
 		}
 
-		return settingsResult{settings, true}, nil
+		return settingsResult{settings, nil}, nil
 	})
 
 	r := result.(settingsResult)
-	return r.settings, r.ok
+	return r.settings, r.err
 }
 
 // cachedSharedSettings returns the org-independent settings for cfg's Grafana
@@ -1118,8 +1121,8 @@ func cachedSharedSettings(cfg *GrafanaConfig) (sharedSettings, bool) {
 		return cached.(sharedSettings), true
 	}
 
-	settings, ok := loadFrontendSettings(cfg)
-	if ok {
+	settings, err := loadFrontendSettings(cfg)
+	if err == nil {
 		return sharedSettings{AppURL: settings.AppURL, Version: settings.Version}, true
 	}
 
@@ -1148,27 +1151,27 @@ type frontendSettings struct {
 }
 
 // doFetchFrontendSettings performs the actual HTTP request to fetch the
-// Grafana frontend settings, returning the fields the MCP server uses and
-// whether the request succeeded. On any error it returns a zero-value
-// frontendSettings and false.
+// Grafana frontend settings, returning the fields the MCP server uses.
 //
-// Success is reported separately rather than inferred from the returned fields,
-// because an instance can legitimately report none of them — callers cache on
-// success, and must not treat such a response as a failure to be retried
-// forever.
-func doFetchFrontendSettings(ctx context.Context, cfg *GrafanaConfig) (frontendSettings, bool) {
+// A non-nil error means the settings could not be retrieved (transport, network,
+// non-200, read, or parse failure) -- the caller cannot know anything about the
+// instance. A nil error means the settings were retrieved and parsed; the
+// returned fields may still be empty if this Grafana version does not report
+// them (e.g. the namespace field predates v10.2.3). Distinguishing the two lets
+// namespace resolution avoid guessing when it simply could not reach Grafana.
+func doFetchFrontendSettings(ctx context.Context, cfg *GrafanaConfig) (frontendSettings, error) {
 	logger := cfg.LoggerOrDefault()
 	settingsURL := cfg.URL + "/api/frontend/settings"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, settingsURL, nil)
 	if err != nil {
 		logger.Warn("Failed to create request for frontend settings", "error", err)
-		return frontendSettings{}, false
+		return frontendSettings{}, fmt.Errorf("create frontend settings request: %w", err)
 	}
 
 	transport, err := BuildTransport(cfg, nil)
 	if err != nil {
 		logger.Warn("Failed to build transport for frontend settings request", "error", err)
-		return frontendSettings{}, false
+		return frontendSettings{}, fmt.Errorf("build frontend settings transport: %w", err)
 	}
 
 	httpClient := &http.Client{
@@ -1179,19 +1182,19 @@ func doFetchFrontendSettings(ctx context.Context, cfg *GrafanaConfig) (frontendS
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		logger.Warn("Failed to fetch frontend settings", "error", err)
-		return frontendSettings{}, false
+		return frontendSettings{}, fmt.Errorf("fetch frontend settings: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		logger.Warn("Frontend settings request returned non-OK status", "status", resp.StatusCode)
-		return frontendSettings{}, false
+		return frontendSettings{}, fmt.Errorf("frontend settings returned HTTP %d", resp.StatusCode)
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		logger.Warn("Failed to read frontend settings response", "error", err)
-		return frontendSettings{}, false
+		return frontendSettings{}, fmt.Errorf("read frontend settings response: %w", err)
 	}
 
 	var settings struct {
@@ -1203,7 +1206,7 @@ func doFetchFrontendSettings(ctx context.Context, cfg *GrafanaConfig) (frontendS
 	}
 	if err := json.Unmarshal(body, &settings); err != nil {
 		logger.Warn("Failed to parse frontend settings response", "error", err)
-		return frontendSettings{}, false
+		return frontendSettings{}, fmt.Errorf("parse frontend settings response: %w", err)
 	}
 
 	publicURL := strings.TrimRight(settings.AppURL, "/")
@@ -1214,7 +1217,7 @@ func doFetchFrontendSettings(ctx context.Context, cfg *GrafanaConfig) (frontendS
 		AppURL:    publicURL,
 		Namespace: settings.Namespace,
 		Version:   settings.BuildInfo.Version,
-	}, true
+	}, nil
 }
 
 // namespaceCache caches the Kubernetes-style namespace per (Grafana URL, OrgID).
@@ -1236,31 +1239,53 @@ func orgNamespace(orgID int64) string {
 	return fmt.Sprintf("org-%d", orgID)
 }
 
-// DashboardNamespace returns the Kubernetes-style namespace to use for
-// dashboard.grafana.app API calls, given the Grafana config in ctx, and whether
-// it was resolved from Grafana's /api/frontend/settings (fromSettings=true) or
-// fell back to the OrgID-derived value (fromSettings=false).
+// GrafanaNamespace returns the Kubernetes-style namespace to use for
+// app-platform (/apis/*.grafana.app) API calls, given the Grafana config in ctx.
 //
-// It prefers the namespace reported by /api/frontend/settings, which is correct
+// The namespace is a property of the (instance, org) pair, not of any
+// particular API group, so every app-platform tool — dashboards, provisioning,
+// etc. — should resolve it through this function. The org is taken from
+// GrafanaConfig.OrgID, which a per-call orgId override (see
+// OrgIDOverrideMiddleware) or the X-Grafana-Org-Id header can set, so this is
+// what makes multi-org selection work consistently across tools.
+//
+// It resolves the namespace reported by /api/frontend/settings, which is correct
 // for both single-tenant ("default" / "org-N") and Grafana Cloud ("stacks-{id}"),
-// caching successful results per (URL, OrgID). If the settings endpoint is
-// unavailable or omits the namespace, it falls back to deriving the namespace
-// from the OrgID — which is correct on-prem but may be wrong on Grafana Cloud,
-// so callers can use fromSettings to qualify a subsequent not-found.
-func DashboardNamespace(ctx context.Context) (namespace string, fromSettings bool) {
+// caching successful results per (URL, OrgID).
+//
+// If the settings endpoint cannot be reached (transport/network/non-200), it
+// returns an error rather than guessing: the namespace field predates every
+// /apis/* API this resolves for (it shipped in Grafana v10.2.3), so any instance
+// new enough to serve those APIs reports it, and guessing the OrgID-derived
+// namespace would silently misroute on Grafana Cloud (where it is "stacks-{id}",
+// not "org-N"). Because successful lookups are cached for the process lifetime,
+// the cost of requiring success is at most one settings call per (URL, OrgID).
+//
+// The one exception is a reachable instance that returns settings WITHOUT a
+// namespace: that means a pre-v10.2.3 Grafana. Such an instance serves no
+// /apis/* API and predates Grafana Cloud's "stacks-{id}" namespacing entirely,
+// so it is necessarily org-based and orgNamespace ("default" / "org-N") is the
+// correct answer. That value is not cached, so a later upgrade is picked up.
+func GrafanaNamespace(ctx context.Context) (string, error) {
 	cfg := GrafanaConfigFromContext(ctx)
 
-	if cached, ok := namespaceCache.Load(frontendSettingsKey(cfg.URL, cfg.OrgID)); ok {
-		return cached.(string), true
+	key := frontendSettingsKey(cfg.URL, cfg.OrgID)
+	if cached, ok := namespaceCache.Load(key); ok {
+		return cached.(string), nil
 	}
 
-	settings, ok := loadFrontendSettings(&cfg)
-	if !ok || settings.Namespace == "" {
-		// Fall back to the org-derived namespace. It is not cached, so a
-		// transient settings failure is retried rather than pinned.
-		return orgNamespace(cfg.OrgID), false
+	settings, err := loadFrontendSettings(&cfg)
+	if err != nil {
+		// Couldn't reach settings -- do not guess (would misroute on Cloud).
+		return "", fmt.Errorf("resolve grafana namespace from /api/frontend/settings: %w", err)
 	}
-	return settings.Namespace, true
+	if settings.Namespace == "" {
+		// Reached settings but no namespace reported: pre-v10.2.3 Grafana, which
+		// serves no /apis/* API and predates Cloud stacks namespacing. Derive it
+		// from the OrgID; loadFrontendSettings deliberately does not cache that.
+		return orgNamespace(cfg.OrgID), nil
+	}
+	return settings.Namespace, nil
 }
 
 // GrafanaVersion returns the version of the Grafana instance described by the

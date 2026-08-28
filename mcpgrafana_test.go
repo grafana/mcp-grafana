@@ -1642,7 +1642,7 @@ func clearFrontendSettingsCaches() {
 	clearNamespaceCache()
 }
 
-func TestDashboardNamespace(t *testing.T) {
+func TestGrafanaNamespace(t *testing.T) {
 	t.Cleanup(clearNamespaceCache)
 
 	t.Run("uses namespace from frontend settings", func(t *testing.T) {
@@ -1657,34 +1657,36 @@ func TestDashboardNamespace(t *testing.T) {
 		})
 
 		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{URL: ts.URL, APIKey: "test-key", OrgID: 1})
-		ns, fromSettings := DashboardNamespace(ctx)
+		ns, err := GrafanaNamespace(ctx)
+		require.NoError(t, err)
 		assert.Equal(t, "stacks-123", ns)
-		assert.True(t, fromSettings, "namespace came from frontend settings")
 	})
 
-	t.Run("falls back to default when settings omit namespace and org is 1", func(t *testing.T) {
+	t.Run("falls back to org-derived value when reachable settings omit namespace", func(t *testing.T) {
 		t.Cleanup(clearNamespaceCache)
+		// A 200 without a namespace means a pre-v10.2.3 Grafana: org-derived is
+		// correct (it predates Cloud stacks namespacing) and must not error.
 		ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"appUrl": "https://grafana.example.com"}`))
 		})
 
-		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{URL: ts.URL, OrgID: 1})
-		ns, fromSettings := DashboardNamespace(ctx)
-		assert.Equal(t, "default", ns)
-		assert.False(t, fromSettings, "namespace fell back to the org-derived value")
+		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{URL: ts.URL, OrgID: 5})
+		ns, err := GrafanaNamespace(ctx)
+		require.NoError(t, err)
+		assert.Equal(t, "org-5", ns)
 	})
 
-	t.Run("falls back to org-N when settings unavailable", func(t *testing.T) {
+	t.Run("errors when settings are unavailable instead of guessing", func(t *testing.T) {
 		t.Cleanup(clearNamespaceCache)
 		ts := newTestHTTPServer(t, func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusInternalServerError)
 		})
 
 		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{URL: ts.URL, OrgID: 5})
-		ns, fromSettings := DashboardNamespace(ctx)
-		assert.Equal(t, "org-5", ns)
-		assert.False(t, fromSettings, "namespace fell back to the org-derived value")
+		ns, err := GrafanaNamespace(ctx)
+		require.Error(t, err, "an unreachable settings endpoint must not be papered over with a guessed namespace")
+		assert.Empty(t, ns)
 	})
 
 	t.Run("caches successful namespace lookups", func(t *testing.T) {
@@ -1697,12 +1699,12 @@ func TestDashboardNamespace(t *testing.T) {
 		})
 
 		ctx := WithGrafanaConfig(context.Background(), GrafanaConfig{URL: ts.URL, OrgID: 2})
-		ns1, from1 := DashboardNamespace(ctx)
-		ns2, from2 := DashboardNamespace(ctx)
+		ns1, err1 := GrafanaNamespace(ctx)
+		ns2, err2 := GrafanaNamespace(ctx)
+		require.NoError(t, err1)
+		require.NoError(t, err2)
 		assert.Equal(t, "org-2", ns1)
 		assert.Equal(t, "org-2", ns2)
-		assert.True(t, from1)
-		assert.True(t, from2)
 		assert.Equal(t, int32(1), atomic.LoadInt32(&calls), "frontend settings should be fetched once and cached")
 	})
 }
@@ -2066,9 +2068,9 @@ func TestFrontendSettingsSharedByAllConsumers(t *testing.T) {
 
 	assert.Equal(t, "https://public.grafana.example.com", gc.PublicURL)
 	assert.Equal(t, "12.1.0", GrafanaVersion(ctx))
-	ns, fromSettings := DashboardNamespace(ctx)
+	ns, err := GrafanaNamespace(ctx)
+	require.NoError(t, err)
 	assert.Equal(t, "stacks-123", ns)
-	assert.True(t, fromSettings)
 
 	assert.Equal(t, int32(1), atomic.LoadInt32(&calls),
 		"public URL, version and namespace must share one frontend-settings fetch")
@@ -2092,12 +2094,12 @@ func TestNamespaceIsNotSharedAcrossOrgs(t *testing.T) {
 		}
 	})
 
-	ns2, from2 := DashboardNamespace(WithGrafanaConfig(context.Background(), GrafanaConfig{URL: ts.URL, OrgID: 2}))
-	require.True(t, from2)
+	ns2, err2 := GrafanaNamespace(WithGrafanaConfig(context.Background(), GrafanaConfig{URL: ts.URL, OrgID: 2}))
+	require.NoError(t, err2)
 	assert.Equal(t, "stacks-2", ns2)
 
-	ns7, from7 := DashboardNamespace(WithGrafanaConfig(context.Background(), GrafanaConfig{URL: ts.URL, OrgID: 7}))
-	require.True(t, from7)
+	ns7, err7 := GrafanaNamespace(WithGrafanaConfig(context.Background(), GrafanaConfig{URL: ts.URL, OrgID: 7}))
+	require.NoError(t, err7)
 	assert.Equal(t, "stacks-7", ns7,
 		"a second org must not be served the first org's namespace")
 	assert.Equal(t, int32(2), atomic.LoadInt32(&calls), "each org needs its own namespace lookup")

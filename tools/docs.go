@@ -169,7 +169,7 @@ var SearchDocsTool = mcpgrafana.MustTool(
 	mcp.WithReadOnlyHintAnnotation(true),
 	mcp.WithDestructiveHintAnnotation(false),
 	mcp.WithOpenWorldHintAnnotation(true),
-)
+).NotOrgScoped()
 
 // Get doc
 
@@ -238,7 +238,7 @@ var GetDocTool = mcpgrafana.MustTool(
 	mcp.WithReadOnlyHintAnnotation(true),
 	mcp.WithDestructiveHintAnnotation(false),
 	mcp.WithOpenWorldHintAnnotation(true),
-)
+).NotOrgScoped()
 
 // AddDocsTools registers all documentation tools on the MCP server.
 func AddDocsTools(mcp *server.MCPServer) {

@@ -336,7 +336,7 @@ func (sm *SessionManager) reapStaleSessions() {
 // client is still in use. The caller MUST invoke the returned release func
 // (deferred) once the call completes; only then may the set be torn down. On
 // error the release func is nil and must not be called.
-func (sm *SessionManager) GetProxiedClient(ctx context.Context, datasourceType, datasourceUID string) (*ProxiedClient, func(), error) {
+func (sm *SessionManager) GetProxiedClient(ctx context.Context, orgID int64, datasourceType, datasourceUID string) (*ProxiedClient, func(), error) {
 	session := server.ClientSessionFromContext(ctx)
 	if session == nil {
 		return nil, nil, fmt.Errorf("session not found in context")
@@ -371,5 +371,5 @@ func (sm *SessionManager) GetProxiedClient(ctx context.Context, datasourceType, 
 
 	// acquireProxiedClientForCall looks up the client and takes the in-flight
 	// count under the set lock, so it cannot race a last-ref release/Close.
-	return tm.acquireProxiedClientForCall(set, datasourceType, datasourceUID)
+	return tm.acquireProxiedClientForCall(set, orgID, datasourceType, datasourceUID)
 }
