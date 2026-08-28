@@ -130,16 +130,20 @@ func blankLogQLComments(query string) string {
 }
 
 // findStreamSelectors returns the span of every stream selector in a LogQL
-// query. Braces inside string literals and comments are never mistaken for a
-// selector.
+// query, together with the comment-blanked text the scan ran over. Braces
+// inside string literals and comments are never mistaken for a selector.
+//
+// Blanking preserves length, so the spans index the blanked text and the
+// original query alike: callers splice into the original to keep the user's
+// formatting, and parse the blanked form, which is free of comment syntax the
+// Prometheus parser does not accept.
 //
 // The string-aware scanning primitives are shared with the query cost
 // guardrail (see loki_guardrail.go), but the policy on top of them is the
 // opposite: the guardrail skips what it cannot parse and fails open, because a
 // missed cost estimate is not a correctness problem. Enforcement is a security
 // control, so anything unrecognised has to become an error here.
-func findStreamSelectors(query string) ([]selectorSpan, error) {
-	// Offsets are preserved, so spans found here index into query unchanged.
+func findStreamSelectors(query string) ([]selectorSpan, string, error) {
 	scan := blankLogQLComments(query)
 
 	var spans []selectorSpan
@@ -150,12 +154,12 @@ func findStreamSelectors(query string) ([]selectorSpan, error) {
 		}
 		end := closingBrace(scan, open)
 		if end < 0 {
-			return nil, fmt.Errorf("unterminated stream selector: no '}' closes the '{' at offset %d", open)
+			return nil, scan, fmt.Errorf("unterminated stream selector: no '}' closes the '{' at offset %d", open)
 		}
 		spans = append(spans, selectorSpan{start: open, end: end + 1})
 		i = end + 1
 	}
-	return spans, nil
+	return spans, scan, nil
 }
 
 // enforceLogQL AND-s the configured enforcement matchers into every stream
@@ -174,7 +178,7 @@ func enforceLogQL(ctx context.Context, query string) (string, error) {
 		return query, nil
 	}
 
-	spans, err := findStreamSelectors(query)
+	spans, scan, err := findStreamSelectors(query)
 	if err != nil {
 		return "", fmt.Errorf("enforced matcher injection: could not scan LogQL query %q: %w", query, err)
 	}
@@ -192,7 +196,10 @@ func enforceLogQL(ctx context.Context, query string) (string, error) {
 	prev := 0
 	for _, s := range spans {
 		selector := query[s.start:s.end]
-		if _, err := promqlParser.ParseMetricSelector(selector); err != nil {
+		// Parse the comment-blanked form: Loki allows #, // and /* */ inside a
+		// stream selector, but the Prometheus parser only knows #. The error
+		// still quotes the selector as the user wrote it.
+		if _, err := promqlParser.ParseMetricSelector(scan[s.start:s.end]); err != nil {
 			return "", fmt.Errorf("enforced matcher injection: could not parse stream selector %q in LogQL query %q: %w", selector, query, err)
 		}
 		b.WriteString(query[prev:s.start])
@@ -221,8 +228,7 @@ func appendMatchers(selector, matchers string) string {
 
 	// Loki accepts a trailing comma; do not emit a doubled one.
 	needComma := real != "" && !strings.HasSuffix(real, ",")
-	// inner has no trailing whitespace, so a blank last byte came from a comment.
-	endsInComment := blanked[len(blanked)-1] == ' '
+	endsInComment := endsInLineComment(inner, blanked)
 
 	var sep string
 	switch {
@@ -238,6 +244,23 @@ func appendMatchers(selector, matchers string) string {
 		sep = " "
 	}
 	return "{" + inner + sep + matchers + "}"
+}
+
+// endsInLineComment reports whether a selector body ends inside a comment that
+// runs to end of line (`#` or `//`), where appending on the same line would
+// comment the text out. A closed `/* */` needs no such break.
+//
+// blanked is inner with its comments overwritten by spaces, so the trailing run
+// of blanked bytes is exactly the trailing comment region; the check is on
+// which openers appear in it. It errs towards true — an unnecessary line break
+// is harmless, whereas missing one would comment out the enforced matchers.
+func endsInLineComment(inner, blanked string) bool {
+	i := len(inner)
+	for i > 0 && blanked[i-1] == ' ' {
+		i--
+	}
+	rest := inner[i:]
+	return strings.Contains(rest, "#") || strings.Contains(rest, "//")
 }
 
 // matchersString renders matchers as the inside of a stream selector.

@@ -178,6 +178,23 @@ func TestEnforceLogQL(t *testing.T) {
 			in:   "{app=\"x\"} // {a=\"b\"}\n",
 			want: "{app=\"x\", namespace!~\"vault|payments\"} // {a=\"b\"}\n",
 		},
+		{
+			// Loki accepts //-comments inside a stream selector; the Prometheus
+			// parser does not, so the blanked form is what gets validated.
+			name: "line comment inside the selector",
+			in:   "{app=\"x\" // note\n}",
+			want: "{app=\"x\" // note\n, namespace!~\"vault|payments\"}",
+		},
+		{
+			name: "block comment inside the selector",
+			in:   `{app="x" /* note */}`,
+			want: `{app="x" /* note */, namespace!~"vault|payments"}`,
+		},
+		{
+			name: "block comment between matchers in the selector",
+			in:   `{app="x" /* note */, tier="a"}`,
+			want: `{app="x" /* note */, tier="a", namespace!~"vault|payments"}`,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -240,7 +257,7 @@ func TestEnforceLogQL(t *testing.T) {
 func TestFindStreamSelectors(t *testing.T) {
 	t.Run("finds every selector", func(t *testing.T) {
 		q := `sum(rate({a="1"}[5m])) / sum(rate({b="2"}[5m]))`
-		spans, err := findStreamSelectors(q)
+		spans, _, err := findStreamSelectors(q)
 		require.NoError(t, err)
 		require.Len(t, spans, 2)
 		assert.Equal(t, `{a="1"}`, q[spans[0].start:spans[0].end])
@@ -249,7 +266,7 @@ func TestFindStreamSelectors(t *testing.T) {
 
 	t.Run("spans index the original query across strings and comments", func(t *testing.T) {
 		q := "sum(rate({a=\"1\"} |= \"{skip}\" [5m])) # {nope}\n / sum(rate({bb=\"22\"}[5m]))"
-		spans, err := findStreamSelectors(q)
+		spans, _, err := findStreamSelectors(q)
 		require.NoError(t, err)
 		require.Len(t, spans, 2)
 		assert.Equal(t, `{a="1"}`, q[spans[0].start:spans[0].end])
@@ -258,7 +275,7 @@ func TestFindStreamSelectors(t *testing.T) {
 
 	t.Run("ignores braces inside strings and comments", func(t *testing.T) {
 		q := "{a=\"1\"} |= \"{x}\" | line_format `{y}` # {z}"
-		spans, err := findStreamSelectors(q)
+		spans, _, err := findStreamSelectors(q)
 		require.NoError(t, err)
 		require.Len(t, spans, 1)
 		assert.Equal(t, `{a="1"}`, q[spans[0].start:spans[0].end])
