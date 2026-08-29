@@ -194,6 +194,43 @@ var UpdateAnnotationTool = mcpgrafana.MustTool(
 	mcp.WithOpenWorldHintAnnotation(false),
 )
 
+// DeleteAnnotationInput identifies the annotation to delete.
+type DeleteAnnotationInput struct {
+	ID int64 `json:"id" jsonschema:"required,description=Annotation ID to delete"`
+}
+
+// deleteAnnotation permanently removes an annotation by ID.
+func deleteAnnotation(ctx context.Context, args DeleteAnnotationInput) (*annotations.DeleteAnnotationByIDOK, error) {
+	// The jsonschema "required" is advisory — nothing rejects a call that omits
+	// id, and Grafana answers the resulting /api/annotations/0 with a permission
+	// error that reads as a real access problem. Say what is actually wrong.
+	if args.ID <= 0 {
+		return nil, fmt.Errorf("delete annotation: id is required and must be positive, got %d", args.ID)
+	}
+
+	c := mcpgrafana.GrafanaClientFromContext(ctx)
+	id := strconv.FormatInt(args.ID, 10)
+
+	resp, err := c.Annotations.DeleteAnnotationByIDWithParams(
+		annotations.NewDeleteAnnotationByIDParamsWithContext(ctx).WithAnnotationID(id),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("delete annotation: %w", err)
+	}
+	return resp, nil
+}
+
+var DeleteAnnotationTool = mcpgrafana.MustTool(
+	"delete_annotation",
+	"Permanently delete an annotation by ID. The annotation cannot be recovered afterwards.",
+	deleteAnnotation,
+	mcp.WithTitleAnnotation("Delete Annotation"),
+	mcp.WithIdempotentHintAnnotation(false),
+	mcp.WithReadOnlyHintAnnotation(false),
+	mcp.WithDestructiveHintAnnotation(true),
+	mcp.WithOpenWorldHintAnnotation(false),
+)
+
 // GetAnnotationTagsInput defines filters for retrieving annotation tags.
 type GetAnnotationTagsInput struct {
 	Tag   *string `json:"tag,omitempty"   jsonschema:"description=Optional filter by tag name"`
@@ -233,6 +270,7 @@ func AddAnnotationTools(mcp *server.MCPServer, enableWriteTools bool) {
 	if enableWriteTools {
 		CreateAnnotationTool.Register(mcp)
 		UpdateAnnotationTool.Register(mcp)
+		DeleteAnnotationTool.Register(mcp)
 	}
 	GetAnnotationTagsTool.Register(mcp)
 }
