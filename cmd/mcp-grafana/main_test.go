@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os/exec"
+	"strconv"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -1182,4 +1183,256 @@ func TestProcessTools_BothDisableFlags(t *testing.T) {
 	for _, name := range metadataToolNames {
 		assert.True(t, names[name], "%s should survive both flags", name)
 	}
+}
+
+// Regression test for https://github.com/grafana/mcp-grafana/issues/1021:
+// the SSE handler was mounted on an exact-match pattern so nothing under
+// --base-path was routed to it at all. /healthz and /metrics are
+// internal-only endpoints and stay mounted at the server root regardless of
+// --base-path.
+func TestHTTPMuxHonoursBasePath(t *testing.T) {
+	const (
+		mcpBody     = "mcp"
+		metricsBody = "metrics"
+	)
+	mcpHandler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(mcpBody))
+	})
+	metricsHandler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(metricsBody))
+	})
+
+	get := func(t *testing.T, mux *http.ServeMux, path string) (int, string) {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		return rec.Code, rec.Body.String()
+	}
+	assertBody := func(t *testing.T, mux *http.ServeMux, path, want string) {
+		t.Helper()
+		code, body := get(t, mux, path)
+		assert.Equal(t, http.StatusOK, code, "GET %s", path)
+		assert.Equal(t, want, body, "GET %s", path)
+	}
+
+	t.Run("sse", func(t *testing.T) {
+		cases := []struct {
+			name     string
+			basePath string
+			// paths the MCP (SSE) handler must serve
+			mcpPaths []string
+			// paths that must not reach the MCP handler
+			unroutedPaths []string
+		}{
+			{
+				name:     "no base path",
+				basePath: "",
+				mcpPaths: []string{"/sse", "/message"},
+			},
+			{
+				name:          "base path without trailing slash",
+				basePath:      "/my-custom-base",
+				mcpPaths:      []string{"/my-custom-base/sse", "/my-custom-base/message"},
+				unroutedPaths: []string{"/sse", "/message"},
+			},
+			{
+				name:          "base path with trailing slash",
+				basePath:      "/my-custom-base/",
+				mcpPaths:      []string{"/my-custom-base/sse", "/my-custom-base/message"},
+				unroutedPaths: []string{"/sse", "/message"},
+			},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				mux := newSSEMux(mcpHandler, normalizeBasePath(tc.basePath), "", metricsHandler)
+				for _, p := range tc.mcpPaths {
+					assertBody(t, mux, p, mcpBody)
+				}
+				assertBody(t, mux, "/healthz", "ok")
+				assertBody(t, mux, "/metrics", metricsBody)
+				// The base path is a prefix, not an alias: the MCP endpoints
+				// must not stay reachable at the server root as well.
+				for _, p := range tc.unroutedPaths {
+					code, _ := get(t, mux, p)
+					assert.Equal(t, http.StatusNotFound, code, "GET %s", p)
+				}
+				// /healthz and /metrics are internal-only and must never answer
+				// under --base-path. The SSE mux uses a subtree pattern, so a
+				// request for <base>/healthz falls through to the MCP handler
+				// rather than 404ing — it must not reach the operational one.
+				if base := normalizeBasePath(tc.basePath); base != "" {
+					_, body := get(t, mux, base+"/healthz")
+					assert.NotEqual(t, "ok", body, "GET %s/healthz reached the operational health handler", base)
+					_, body = get(t, mux, base+"/metrics")
+					assert.NotEqual(t, metricsBody, body, "GET %s/metrics reached the operational metrics handler", base)
+				}
+			})
+		}
+	})
+
+	t.Run("streamable-http", func(t *testing.T) {
+		cases := []struct {
+			name         string
+			basePath     string
+			endpointPath string
+			mcpPath      string
+		}{
+			{
+				name:         "no base path",
+				endpointPath: "/mcp",
+				mcpPath:      "/mcp",
+			},
+			{
+				name:         "base path prefixes the endpoint",
+				basePath:     "/my-custom-base",
+				endpointPath: "/mcp",
+				mcpPath:      "/my-custom-base/mcp",
+			},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				mux := newStreamableHTTPMux(mcpHandler, streamableEndpointPath(tc.basePath, tc.endpointPath), "", metricsHandler)
+				assertBody(t, mux, tc.mcpPath, mcpBody)
+				assertBody(t, mux, "/healthz", "ok")
+				assertBody(t, mux, "/metrics", metricsBody)
+				// /healthz and /metrics must never answer under --base-path.
+				if base := normalizeBasePath(tc.basePath); base != "" {
+					code, _ := get(t, mux, base+"/healthz")
+					assert.Equal(t, http.StatusNotFound, code, "GET %s/healthz", base)
+					code, _ = get(t, mux, base+"/metrics")
+					assert.Equal(t, http.StatusNotFound, code, "GET %s/metrics", base)
+				}
+			})
+		}
+	})
+
+	t.Run("metrics are absent when disabled", func(t *testing.T) {
+		mux := newSSEMux(mcpHandler, normalizeBasePath("/my-custom-base"), "", nil)
+		_, body := get(t, mux, "/metrics")
+		assert.NotEqual(t, metricsBody, body, "GET /metrics reached the metrics handler")
+	})
+}
+
+// The mount pattern is what can break, not the raw flag: --endpoint-path is
+// joined with --base-path and cleaned on the way to the mux, so a value that
+// does not read as an operational path can still resolve to one. ServeMux
+// panics both on a duplicate pattern and on a pattern it cannot parse, and it
+// quietly reinterprets a '{' segment as a wildcard, so none of the three may
+// reach the mount.
+func TestValidateMountFlags(t *testing.T) {
+	metricsOnListener := observability.Config{MetricsEnabled: true}
+
+	cases := []struct {
+		name         string
+		basePath     string
+		endpointPath string
+		obs          observability.Config
+		wantPath     string
+		wantErr      string
+		// wildcard marks a pattern ServeMux accepts but reads as a wildcard
+		// segment rather than the literal path the operator typed.
+		wildcard bool
+	}{
+		{name: "default", endpointPath: "/mcp", wantPath: "/mcp"},
+		{name: "under a base path", basePath: "/my-base", endpointPath: "/mcp", wantPath: "/my-base/mcp"},
+		{name: "healthz", endpointPath: "/healthz", wantPath: "/healthz", wantErr: "operational endpoint"},
+		{name: "healthz without a leading slash", endpointPath: "healthz", wantPath: "/healthz", wantErr: "operational endpoint"},
+		{name: "healthz with a trailing slash", endpointPath: "/healthz/", wantPath: "/healthz", wantErr: "operational endpoint"},
+		{name: "healthz contributed by the base path", basePath: "/healthz", endpointPath: "/", wantPath: "/healthz", wantErr: "operational endpoint"},
+		{name: "base path and endpoint path spelling healthz together", basePath: "/health", endpointPath: "../healthz", wantPath: "/healthz", wantErr: "operational endpoint"},
+		{name: "nested under an operational path is fine", endpointPath: "/healthz/mcp", wantPath: "/healthz/mcp"},
+		{name: "operational path as a prefix is fine", endpointPath: "/healthz-mcp", wantPath: "/healthz-mcp"},
+
+		// /metrics is only mounted when the metrics handler shares this
+		// listener, so the path is only taken then.
+		{name: "metrics with metrics on the listener", endpointPath: "/metrics", obs: metricsOnListener, wantPath: "/metrics", wantErr: "operational endpoint"},
+		{name: "metrics reached by traversal", endpointPath: "/foo/../metrics", obs: metricsOnListener, wantPath: "/metrics", wantErr: "operational endpoint"},
+		{name: "metrics with metrics disabled", endpointPath: "/metrics", wantPath: "/metrics"},
+		{name: "metrics with metrics on their own address", endpointPath: "/metrics", obs: observability.Config{MetricsEnabled: true, MetricsAddress: ":9090"}, wantPath: "/metrics"},
+
+		// ServeMux pattern syntax: a space or tab starts a method, '{' a
+		// wildcard segment.
+		{name: "space in the base path", basePath: "/my base", endpointPath: "/mcp", wantPath: "/my base/mcp", wantErr: "not a route path"},
+		{name: "tab in the endpoint path", endpointPath: "/m\tcp", wantPath: "/m\tcp", wantErr: "not a route path"},
+		{name: "wildcard segment", endpointPath: "/{mcp}", wantPath: "/{mcp}", wantErr: "not a route path", wildcard: true},
+	}
+
+	noop := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := streamableEndpointPath(normalizeBasePath(tc.basePath), tc.endpointPath)
+			assert.Equal(t, tc.wantPath, got)
+
+			err := validateMountFlags("streamable-http", tc.basePath, tc.endpointPath, tc.obs)
+
+			// The verdict has to match what actually happens at mount time.
+			var metricsHandler http.Handler
+			if tc.obs.MetricsEnabled && tc.obs.MetricsAddress == "" {
+				metricsHandler = noop
+			}
+			mount := func() { newStreamableHTTPMux(noop, got, "", metricsHandler) }
+
+			if tc.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tc.wantErr)
+				if tc.wildcard {
+					// ServeMux takes this pattern, but not as the path that was
+					// typed: it matches any single segment instead.
+					mcp := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+						_, _ = w.Write([]byte("mcp"))
+					})
+					mux := newStreamableHTTPMux(mcp, got, "", metricsHandler)
+					rec := httptest.NewRecorder()
+					mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/not-the-endpoint", nil))
+					assert.Equal(t, "mcp", rec.Body.String(), "GET /not-the-endpoint reached the MCP handler through the wildcard")
+					return
+				}
+				assert.Panics(t, mount, "mounting %q should panic", got)
+				return
+			}
+
+			assert.NoError(t, err)
+			assert.NotPanics(t, mount)
+
+			// mcp-go normalizes what WithEndpointPath is handed as
+			// "/" + strings.Trim(p, "/"), and does not clean "..". We hand it
+			// the already-resolved path, so the two agree — this pins that.
+			// Hand it the raw flag instead and "/foo/../mcp" would mount at
+			// "/mcp" while the SDK advertised "/foo/../mcp".
+			assert.Equal(t, "/"+strings.Trim(got, "/"), got,
+				"the mounted path must survive mcp-go's own normalization unchanged")
+		})
+	}
+}
+
+// --endpoint-path is only mounted by the streamable-http transport, so a value
+// that would be rejected there is nobody's problem on the others.
+func TestValidateMountFlags_EndpointPathIgnoredByOtherTransports(t *testing.T) {
+	for _, transport := range []string{"stdio", "sse"} {
+		t.Run(transport, func(t *testing.T) {
+			assert.NoError(t, validateMountFlags(transport, "", "/healthz", observability.Config{MetricsEnabled: true}))
+		})
+	}
+}
+
+// A base path is only ever mounted as a subtree, so it cannot collide with an
+// operational endpoint — but it still has to parse as a pattern.
+func TestValidateMountFlags_SSEBasePath(t *testing.T) {
+	assert.NoError(t, validateMountFlags("sse", "/healthz", "", observability.Config{MetricsEnabled: true}),
+		"--base-path /healthz mounts /healthz/, which does not collide with /healthz")
+
+	err := validateMountFlags("sse", "/my base", "", observability.Config{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--base-path")
+	assert.Contains(t, err.Error(), "not a route path")
+
+	// The check has to run on the pattern newSSEMux really mounts. Both derive
+	// it from the raw flag through normalizeBasePath, and the error quotes what
+	// was checked — so a base path whose raw and normalized forms differ pins
+	// the two together. Drop the normalization on either side and this reads
+	// "/my base//".
+	err = validateMountFlags("sse", "/my base/", "", observability.Config{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), strconv.Quote(normalizeBasePath("/my base/")+"/"))
 }

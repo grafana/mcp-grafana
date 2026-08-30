@@ -27,6 +27,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `get_panel_image` no longer declares its own `orgId` argument, using the per-call `orgId` injected into the native tools where an organization applies instead. The argument is therefore only advertised with `--dynamic-multi-org`, and without that flag a call passing `orgId` is rejected as an unknown argument. Renders still scope the organization with `targetOrgId` rather than `orgId`, so they do not change the user's active organization, and an organization fixed by `GRAFANA_ORG_ID` or the `X-Grafana-Org-Id` header now sets `targetOrgId` too.
 - `get_panel_image` returns the dashboard deeplink only when it would open in the organization the image was rendered from, which now also accounts for an organization fixed on the connection rather than passed per call. A link cannot carry an organization safely — `?orgId=N` is intercepted by Grafana's `OrgRedirect` middleware, which persists the switch onto the viewer's user record — so for any other organization the image is returned without a deeplink (and without the MCP Apps panel-viewer fallback) rather than with one that can resolve to a different dashboard of the same UID.
 
+### Fixed
+
+- `--base-path` now correctly prefixes the application routes: the SSE endpoints are reachable when the flag is given without a trailing slash, and the streamable-http endpoint is mounted under the prefix as the flag documentation already promised. `/healthz` and `/metrics` stay internal-only, mounted at the server root regardless of `--base-path`. **Upgrade note:** `--base-path` was previously accepted and silently ignored by `-t streamable-http`, so a deployment passing both moves its MCP endpoint from `/mcp` to `/<base-path>/mcp` — point clients at the new URL, or drop `--base-path` to keep `/mcp` ([#1033](https://github.com/grafana/mcp-grafana/pull/1033))
+
 ## [1.2.0] - 2026-08-25
 
 ### Added
