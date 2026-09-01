@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Security
+
+- Bumped `google.golang.org/grpc` from v1.80.0 to v1.82.1, fixing [GO-2026-6061](https://pkg.go.dev/vuln/GO-2026-6061) in the xDS RBAC authorization engine and the HTTP/2 transport server implementation.
+- Bumped `go.opentelemetry.io/otel` (and its co-versioned `metric`/`trace` submodules) from v1.43.0 to v1.44.0, fixing [CVE-2026-41178](https://nvd.nist.gov/vuln/detail/CVE-2026-41178) in the `propagation` and `baggage` packages, where removed raw-length rejection let `Parse` process an oversized value.
+
 ## [1.3.0] - 2026-08-28
 
 ### Added
