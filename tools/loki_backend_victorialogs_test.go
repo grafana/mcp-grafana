@@ -62,12 +62,24 @@ func TestVictoriaLogsBackend_ListLabelNames(t *testing.T) {
 	})
 	b := newTestVLBackend(t, fake.server)
 
-	names, err := b.ListLabelNames(context.Background(), time.Time{}, time.Time{})
+	names, err := b.ListLabelNames(context.Background(), "", time.Time{}, time.Time{})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"app", "pod"}, names)
 	assert.Equal(t, "/select/logsql/field_names", fake.lastPath)
 	assert.Equal(t, http.MethodGet, fake.lastMethod)
 	assert.Equal(t, victoriaLogsAllQuery, fake.lastQuery.Get("query"))
+}
+
+func TestVictoriaLogsBackend_ListLabelNames_PassesMatcher(t *testing.T) {
+	fake := newFakeVLServer(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"values":[{"value":"service","hits":3}]}`)
+	})
+	b := newTestVLBackend(t, fake.server)
+
+	names, err := b.ListLabelNames(context.Background(), `{namespace="prod"}`, time.Time{}, time.Time{})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"service"}, names)
+	assert.Equal(t, `{namespace="prod"}`, fake.lastQuery.Get("query"))
 }
 
 func TestVictoriaLogsBackend_ListLabelValues_PassesField(t *testing.T) {
@@ -78,12 +90,26 @@ func TestVictoriaLogsBackend_ListLabelValues_PassesField(t *testing.T) {
 
 	start := time.Date(2026, 5, 10, 12, 0, 0, 0, time.UTC)
 	end := start.Add(time.Hour)
-	values, err := b.ListLabelValues(context.Background(), "app", start, end)
+	values, err := b.ListLabelValues(context.Background(), "app", "", start, end)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"acme-app"}, values)
 	assert.Equal(t, "app", fake.lastQuery.Get("field"))
+	assert.Equal(t, victoriaLogsAllQuery, fake.lastQuery.Get("query"))
 	assert.Equal(t, start.Format(time.RFC3339), fake.lastQuery.Get("start"))
 	assert.Equal(t, end.Format(time.RFC3339), fake.lastQuery.Get("end"))
+}
+
+func TestVictoriaLogsBackend_ListLabelValues_PassesMatcher(t *testing.T) {
+	fake := newFakeVLServer(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"values":[{"value":"acme-app","hits":5}]}`)
+	})
+	b := newTestVLBackend(t, fake.server)
+
+	values, err := b.ListLabelValues(context.Background(), "app", `{namespace="prod"}`, time.Time{}, time.Time{})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"acme-app"}, values)
+	assert.Equal(t, "app", fake.lastQuery.Get("field"))
+	assert.Equal(t, `{namespace="prod"}`, fake.lastQuery.Get("query"))
 }
 
 func TestVictoriaLogsBackend_QueryLogs_ParsesNDJSON(t *testing.T) {

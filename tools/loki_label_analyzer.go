@@ -159,7 +159,7 @@ func getLokiLabelCardinality(ctx context.Context, args GetLokiLabelCardinalityPa
 
 	labels := args.LabelNames
 	if len(labels) == 0 {
-		all, err := backend.ListLabelNames(ctx, start, end)
+		all, err := backend.ListLabelNames(ctx, "", start, end)
 		if err != nil {
 			return nil, fmt.Errorf("listing label names: %w", err)
 		}
@@ -183,7 +183,7 @@ func getLokiLabelCardinality(ctx context.Context, args GetLokiLabelCardinalityPa
 
 	out := make([]LokiLabelCardinality, 0, len(labels))
 	for _, name := range labels {
-		values, err := backend.ListLabelValues(ctx, name, start, end)
+		values, err := backend.ListLabelValues(ctx, name, "", start, end)
 		if err != nil {
 			return nil, fmt.Errorf("listing values for %q: %w", name, err)
 		}

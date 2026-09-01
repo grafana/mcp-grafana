@@ -40,6 +40,17 @@ func TestLokiTools(t *testing.T) {
 		assert.NotEmpty(t, result, "Should have at least one container label value")
 	})
 
+	t.Run("get loki label values narrowed by matcher", func(t *testing.T) {
+		ctx := newTestContext()
+		result, err := listLokiLabelValues(ctx, ListLokiLabelValuesParams{
+			DatasourceUID: "loki",
+			LabelName:     "container",
+			Matcher:       `{container="grafana"}`,
+		})
+		require.NoError(t, err)
+		assert.NotEmpty(t, result, "Should have at least one container label value matching the selector")
+	})
+
 	t.Run("query loki stats", func(t *testing.T) {
 		ctx := newTestContext()
 		result, err := queryLokiStats(ctx, QueryLokiStatsParams{
