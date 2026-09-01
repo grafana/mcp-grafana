@@ -46,11 +46,14 @@ func serviceAccountTokenFileFromEnv() string {
 }
 
 func tokenFileMatchesAPIKey(path, apiKey string) bool {
+	token, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
 	if apiKey == "" {
 		return true
 	}
-	token, err := os.ReadFile(path)
-	return err == nil && strings.TrimSpace(string(token)) == strings.TrimSpace(apiKey)
+	return strings.TrimSpace(string(token)) == strings.TrimSpace(apiKey)
 }
 
 func (t *tokenFileRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {

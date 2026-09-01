@@ -172,6 +172,34 @@ func TestTokenFileRoundTripperAppliesFallbackWhenFileReadFails(t *testing.T) {
 	require.Equal(t, "Bearer fallback-token", captured.Header.Get("Authorization"))
 }
 
+func TestTokenFileRotationDoesNotEnableForUnreadableFileWithoutFallback(t *testing.T) {
+	tokenFile := t.TempDir() + "/missing-token"
+	t.Setenv(grafanaServiceAccountTokenEnvVar, "")
+	t.Setenv(grafanaServiceAccountTokenFileEnvVar, tokenFile)
+	t.Setenv(grafanaAPIEnvVar, "")
+
+	var received string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		received = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/api/frontend/settings" {
+			_, _ = w.Write([]byte(`{}`))
+			return
+		}
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	defer server.Close()
+
+	ctx := ExtractGrafanaInfoFromEnv(t.Context())
+	require.Empty(t, GrafanaConfigFromContext(ctx).APIKey)
+	client := NewGrafanaClient(ctx, server.URL, "", nil)
+	_, err := client.Datasources.GetDataSourcesWithParams(
+		datasources.NewGetDataSourcesParamsWithContext(ctx),
+	)
+	require.NoError(t, err)
+	require.Empty(t, received)
+}
+
 func TestNewGrafanaClientUsesRotatedTokenFile(t *testing.T) {
 	tokenFile := t.TempDir() + "/token"
 	require.NoError(t, os.WriteFile(tokenFile, []byte("first-token"), 0o600))
@@ -299,16 +327,26 @@ func TestBuildTransportPreservesTokenFileRoundTripperWithCustomTLS(t *testing.T)
 	require.Equal(t, "Bearer file-token", received)
 }
 
-func TestBuildTransportDoesNotDiscardCustomTokenFileUnderlyingWithTLS(t *testing.T) {
-	base := &capturingMockRT{}
+func TestBuildTransportPreservesCustomTokenFileUnderlyingWithTLS(t *testing.T) {
+	called := false
+	tokenFile := t.TempDir() + "/token"
+	require.NoError(t, os.WriteFile(tokenFile, []byte("file-token"), 0o600))
+	base := &capturingMockRT{fn: func(req *http.Request) (*http.Response, error) {
+		called = true
+		return &http.Response{StatusCode: http.StatusNoContent}, nil
+	}}
 	transport := &tokenFileRoundTripper{
-		path:       t.TempDir() + "/token",
+		path:       tokenFile,
 		underlying: base,
 	}
 
-	_, err := BuildTransport(&GrafanaConfig{TLSConfig: &TLSConfig{SkipVerify: true}}, transport, WithoutOtel())
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "token-file transport")
+	built, err := BuildTransport(&GrafanaConfig{TLSConfig: &TLSConfig{SkipVerify: true}}, transport, WithoutOtel())
+	require.NoError(t, err)
+	req, err := http.NewRequest(http.MethodGet, "https://example.com", nil)
+	require.NoError(t, err)
+	_, err = built.RoundTrip(req)
+	require.NoError(t, err)
+	require.True(t, called)
 }
 
 func TestServiceAccountTokenFileRemainsEnabledWithDeprecatedAPIKey(t *testing.T) {
@@ -381,4 +419,41 @@ func TestNewGrafanaClientDoesNotOverwriteRotatedTokenWithContextAPIKey(t *testin
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, len(received), 2)
 	require.Equal(t, "Bearer rotated-token", received[len(received)-1])
+}
+
+func TestCachedGrafanaClientPreservesRequestScopedAuthWhenFileRotates(t *testing.T) {
+	tokenFile := t.TempDir() + "/token"
+	require.NoError(t, os.WriteFile(tokenFile, []byte("request-token"), 0o600))
+	t.Setenv(grafanaServiceAccountTokenEnvVar, "")
+	t.Setenv(grafanaServiceAccountTokenFileEnvVar, tokenFile)
+	t.Setenv(grafanaAPIEnvVar, "")
+
+	var received []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		received = append(received, r.Header.Get("Authorization"))
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/api/frontend/settings" {
+			_, _ = w.Write([]byte(`{}`))
+			return
+		}
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	defer server.Close()
+	t.Setenv(grafanaURLEnvVar, server.URL)
+
+	cache := NewClientCache(nil)
+	req, err := http.NewRequest(http.MethodGet, "http://example.com", nil)
+	require.NoError(t, err)
+	req.Header.Set(grafanaServiceAccountTokenHeader, "request-token")
+
+	ctx := extractGrafanaClientCached(cache)(t.Context(), req)
+	client := GrafanaClientFromContext(ctx)
+	require.NotNil(t, client)
+	require.NoError(t, os.WriteFile(tokenFile, []byte("rotated-token"), 0o600))
+	_, err = client.Datasources.GetDataSourcesWithParams(
+		datasources.NewGetDataSourcesParamsWithContext(ctx),
+	)
+	require.NoError(t, err)
+	require.NotEmpty(t, received)
+	require.Equal(t, "Bearer request-token", received[len(received)-1])
 }

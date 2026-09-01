@@ -807,29 +807,32 @@ func BuildTransport(cfg *GrafanaConfig, base http.RoundTripper, opts ...Transpor
 		tlsBase := base
 		var restoreTokenFile func(http.RoundTripper) http.RoundTripper
 		if tokenFileTransport, ok := base.(*tokenFileRoundTripper); ok {
-			if _, ok := tokenFileTransport.underlying.(*http.Transport); !ok {
-				return nil, fmt.Errorf("cannot apply TLS configuration to token-file transport around %T", tokenFileTransport.underlying)
-			}
-			// Apply TLS to the network transport without discarding the
-			// token-file layer that reloads credentials for every request.
-			tlsBase = tokenFileTransport.underlying
-			restoreTokenFile = func(transport http.RoundTripper) http.RoundTripper {
-				wrapped := *tokenFileTransport
-				wrapped.underlying = transport
-				return &wrapped
+			if underlying, ok := tokenFileTransport.underlying.(*http.Transport); ok {
+				// Apply TLS to the network transport without discarding the
+				// token-file layer that reloads credentials for every request.
+				tlsBase = underlying
+				restoreTokenFile = func(transport http.RoundTripper) http.RoundTripper {
+					wrapped := *tokenFileTransport
+					wrapped.underlying = transport
+					return &wrapped
+				}
 			}
 		}
 		t, ok := tlsBase.(*http.Transport)
 		if !ok {
-			return nil, fmt.Errorf("cannot apply TLS configuration to non-*http.Transport base %T", tlsBase)
-		}
-		var err error
-		transport, err = cfg.TLSConfig.HTTPTransport(t)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create TLS transport: %w", err)
-		}
-		if restoreTokenFile != nil {
-			transport = restoreTokenFile(transport)
+			// A custom RoundTripper owns its connection and TLS behavior. Keep
+			// it intact when the TLS options cannot be applied through the
+			// *http.Transport API.
+			transport = base
+		} else {
+			var err error
+			transport, err = cfg.TLSConfig.HTTPTransport(t)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create TLS transport: %w", err)
+			}
+			if restoreTokenFile != nil {
+				transport = restoreTokenFile(transport)
+			}
 		}
 	}
 
