@@ -515,6 +515,13 @@ func newServer(serverName, transport string, dt disabledTools, obs *observabilit
 	serverOpts := []server.ServerOption{
 		server.WithInstructions(instructions),
 		server.WithHooks(hooks),
+		// A tool call with a JSON type mismatch (e.g. a number where the
+		// schema declares a string) is a client/agent input error, not a
+		// server fault: surface it as a structured tool result (IsError:
+		// true, with the validation message) instead of a raw JSON-RPC
+		// -32603 internal error, so the agent can see what was wrong and
+		// self-correct. See SEP-1303.
+		server.WithInputSchemaValidation(),
 	}
 	if mcpgrafana.DynamicMultiOrgEnabled {
 		// Honor an optional per-call "orgId" argument so a single connection can
