@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -93,16 +94,16 @@ func newPrometheusBackend(ctx context.Context, uid string, ds *models.DataSource
 		return nil, fmt.Errorf("failed to create custom transport: %w", err)
 	}
 
-	// Always convert POST→GET for Prometheus queries.
-	// The Prometheus client library sends POST first and only falls back to GET
-	// on 405/501 responses. However, some Grafana datasource proxy deployments
-	// drop the POST body entirely (returning 422 "missing query arg" from the
-	// Prometheus API) or return 500 instead of 405/501, which prevents the
-	// client's built-in retry from working.
-	// Since the Prometheus HTTP API accepts both GET and POST, we always use GET
-	// to avoid body-handling issues in intermediate proxies.
+	// Keep POST as the default so large PromQL expressions stay in the request
+	// body. Datasources explicitly configured for GET need the request converted
+	// before it reaches Grafana, while other datasources retry with GET only when
+	// the proxy rejects or drops the POST body.
 	// See https://github.com/grafana/mcp-grafana/issues/632
-	rt = &postToGetRoundTripper{underlying: rt}
+	if prometheusDatasourceUsesGET(ds) {
+		rt = &postToGetRoundTripper{underlying: rt}
+	} else {
+		rt = &postToGetFallbackRoundTripper{underlying: rt}
+	}
 
 	// Wrap with fallback transport: try the primary base first, fall back to
 	// the alternate for compatibility with different Grafana deployments (see
@@ -176,6 +177,20 @@ func (b *prometheusBackend) MetricMetadata(ctx context.Context, metric string, l
 	return metadata, nil
 }
 
+func prometheusDatasourceUsesGET(ds *models.DataSource) bool {
+	if ds == nil {
+		return false
+	}
+
+	jsonData, ok := ds.JSONData.(map[string]interface{})
+	if !ok {
+		return false
+	}
+
+	httpMethod, ok := jsonData["httpMethod"].(string)
+	return ok && strings.EqualFold(httpMethod, "GET")
+}
+
 // postToGetRoundTripper converts POST requests to GET requests by moving the
 // URL-encoded form body to the query string. This is needed because the
 // Prometheus client library's DoGetFallback sends POST first and only falls
@@ -190,16 +205,94 @@ func (rt *postToGetRoundTripper) RoundTrip(req *http.Request) (*http.Response, e
 		return rt.underlying.RoundTrip(req)
 	}
 
+	body, err := bufferRequestBody(req)
+	if err != nil {
+		return nil, err
+	}
+
+	cloned, err := postToGetRequest(req, body)
+	if err != nil {
+		return nil, err
+	}
+
+	return rt.underlying.RoundTrip(cloned)
+}
+
+// postToGetFallbackRoundTripper preserves POST for the initial request so
+// large queries are not placed in the URL. Some Grafana datasource proxy
+// deployments do not forward the POST body, however, and surface that as a
+// 422 or 500 response. In those cases, retry the request as GET.
+type postToGetFallbackRoundTripper struct {
+	underlying http.RoundTripper
+}
+
+func (rt *postToGetFallbackRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.Method != http.MethodPost {
+		return rt.underlying.RoundTrip(req)
+	}
+
+	body, err := bufferRequestBody(req)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := rt.underlying.RoundTrip(req)
+	if err != nil || !shouldRetryPostAsGet(resp) {
+		return resp, err
+	}
+
+	if resp.Body != nil {
+		_ = resp.Body.Close()
+	}
+
+	retryReq, err := postToGetRequest(req, body)
+	if err != nil {
+		return nil, err
+	}
+
+	return rt.underlying.RoundTrip(retryReq)
+}
+
+func shouldRetryPostAsGet(resp *http.Response) bool {
+	if resp == nil {
+		return false
+	}
+
+	return resp.StatusCode == http.StatusUnprocessableEntity || resp.StatusCode == http.StatusInternalServerError
+}
+
+// bufferRequestBody reads and restores a request body so the request can be
+// sent once as POST and replayed as GET if needed.
+func bufferRequestBody(req *http.Request) ([]byte, error) {
+	if req.Body == nil {
+		return nil, nil
+	}
+
+	body, err := io.ReadAll(req.Body)
+	_ = req.Body.Close()
+	if err != nil {
+		return nil, fmt.Errorf("reading request body: %w", err)
+	}
+
+	req.Body = io.NopCloser(bytes.NewReader(body))
+	req.ContentLength = int64(len(body))
+	req.GetBody = func() (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(body)), nil
+	}
+
+	return body, nil
+}
+
+func postToGetRequest(req *http.Request, body []byte) (*http.Request, error) {
 	cloned := req.Clone(req.Context())
 	cloned.Method = http.MethodGet
+	cloned.Body = nil
+	cloned.ContentLength = 0
+	cloned.GetBody = nil
+	cloned.Header.Del("Content-Type")
 
 	// Move URL-encoded form body to query string
 	if req.Body != nil && strings.HasPrefix(req.Header.Get("Content-Type"), "application/x-www-form-urlencoded") {
-		body, err := io.ReadAll(req.Body)
-		if err != nil {
-			return nil, fmt.Errorf("reading request body: %w", err)
-		}
-
 		params, err := url.ParseQuery(string(body))
 		if err != nil {
 			return nil, fmt.Errorf("parsing request body: %w", err)
@@ -213,11 +306,7 @@ func (rt *postToGetRoundTripper) RoundTrip(req *http.Request) (*http.Response, e
 			}
 		}
 		cloned.URL.RawQuery = q.Encode()
-
-		cloned.Body = nil
-		cloned.ContentLength = 0
-		cloned.Header.Del("Content-Type")
 	}
 
-	return rt.underlying.RoundTrip(cloned)
+	return cloned, nil
 }
