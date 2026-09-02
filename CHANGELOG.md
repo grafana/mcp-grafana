@@ -5,7 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.3.0] - 2026-08-28
+
+### Added
+
+- Optional per-call `orgId` argument, where applicable, to target a Grafana organization, opt-in via the `--dynamic-multi-org` flag; also discovers proxied datasource tools across every org the credential can access. Tools that address no organization — documentation lookups, local config generation, static query examples — do not advertise it, since selecting one could not change their answer ([#943](https://github.com/grafana/mcp-grafana/pull/943))
+- `user_info` tool reporting the current identity, whether it is a Grafana admin, and the organizations the credential can access (with roles) ([#943](https://github.com/grafana/mcp-grafana/pull/943))
+- Incident custom fields support for creating and updating incidents with user-defined fields ([#1131](https://github.com/grafana/mcp-grafana/pull/1131))
+- Grafana documentation tools backed by `mcp-doc-server` for querying Grafana product documentation ([#1116](https://github.com/grafana/mcp-grafana/pull/1116))
+- `--disable-query` flag to disable all query tools, and raw-SQL query tools (ClickHouse, Snowflake, Athena, MSSQL, PostgreSQL) are now gated behind `--disable-write` by default ([#1085](https://github.com/grafana/mcp-grafana/pull/1085))
+- `grafana_api_request` now supports POST to `/api/ds/query` when query tools are enabled, allowing datasource queries through the generic API tool ([#1125](https://github.com/grafana/mcp-grafana/pull/1125))
+
+### Fixed
+
+- `run_panel_query` now resolves `sqlstring`-type dashboard variables correctly ([#1132](https://github.com/grafana/mcp-grafana/pull/1132))
+- Dashboard tool now describes structured panel targets (e.g. CloudWatch, Elasticsearch) instead of silently dropping them ([#1130](https://github.com/grafana/mcp-grafana/pull/1130))
+- Proxied tools close non-published MCP clients before signaling readiness, preventing resource leaks during tool discovery ([#1128](https://github.com/grafana/mcp-grafana/pull/1128))
+
+### Changed
+
+- `get_panel_image` no longer declares its own `orgId` argument, using the per-call `orgId` injected into the native tools where an organization applies instead. The argument is therefore only advertised with `--dynamic-multi-org`, and without that flag a call passing `orgId` is rejected as an unknown argument. Renders still scope the organization with `targetOrgId` rather than `orgId`, so they do not change the user's active organization, and an organization fixed by `GRAFANA_ORG_ID` or the `X-Grafana-Org-Id` header now sets `targetOrgId` too.
+- `get_panel_image` returns the dashboard deeplink only when it would open in the organization the image was rendered from, which now also accounts for an organization fixed on the connection rather than passed per call. A link cannot carry an organization safely — `?orgId=N` is intercepted by Grafana's `OrgRedirect` middleware, which persists the switch onto the viewer's user record — so for any other organization the image is returned without a deeplink (and without the MCP Apps panel-viewer fallback) rather than with one that can resolve to a different dashboard of the same UID.
 
 ## [1.2.0] - 2026-08-25
 
@@ -403,6 +423,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Upgrade Docker base image packages to resolve critical OpenSSL CVE-2025-15467 (CVSS 9.8) ([#551](https://github.com/grafana/mcp-grafana/pull/551))
 
+[1.3.0]: https://github.com/grafana/mcp-grafana/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/grafana/mcp-grafana/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/grafana/mcp-grafana/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/grafana/mcp-grafana/compare/v0.17.2...v1.0.0

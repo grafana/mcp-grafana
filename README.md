@@ -173,7 +173,7 @@ Queries go through Grafana's Snowflake datasource (Grafana Enterprise plugin `gr
 
 ### Incidents
 
-- **Search, create, and update incidents:** Manage incidents in Grafana Incident, including searching, creating, and adding activities to incidents.
+- **Search, create, and update incidents:** Manage incidents in Grafana Incident, including searching, creating, adding activities, and reading or setting custom fields.
 
 ### Sift Investigations
 
@@ -211,6 +211,10 @@ Queries go through Grafana's Snowflake datasource (Grafana Enterprise plugin `gr
 - **List roles for teams:** List all roles assigned to one or more teams.
 - **List permissions for a resource:** List all permissions defined for a specific resource (dashboard, datasource, folder, etc.).
 - **Describe a Grafana resource:** List available permissions and assignment capabilities for a resource type.
+
+### User
+
+- **User info:** Get the current Grafana identity — login, email, name, whether it is a Grafana (server) admin, the current organization, and the organizations the credential can access (with roles). Use it to discover valid `orgId` values for [multi-organization](#multi-organization-support) requests.
 
 ### Navigation
 
@@ -323,6 +327,7 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `list_team_roles`                 | Admin                     | List roles for teams                                                                                         | `roles:read`                                           | `teams:id:7`                                        |
 | `get_resource_permissions`        | Admin                     | List permissions for a resource                                                                              | `permissions:read`                                     | `dashboards:uid:abcd1234`                           |
 | `get_resource_description`        | Admin                     | Describe a Grafana resource type                                                                             | `permissions:read`                                     | `dashboards:*`                                      |
+| `user_info`                       | User                      | Current identity, capabilities, and accessible organizations                                                 | None (signed-in user)                                  | —                                                   |
 | `search_dashboards`               | Search                    | Search for dashboards                                                                                        | `dashboards:read`                                      | `dashboards:*` or `dashboards:uid:abc123`           |
 | `get_dashboard_by_uid`            | Dashboard                 | Get a dashboard by uid                                                                                       | `dashboards:read`                                      | `dashboards:uid:abc123`                             |
 | `update_dashboard`                | Dashboard                 | Update or create a new dashboard                                                                             | `dashboards:create`, `dashboards:write`                | `dashboards:*`, `folders:*` or `folders:uid:xyz789` |
@@ -339,11 +344,12 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `list_prometheus_label_names`     | Prometheus                | List label names matching a selector                                                                         | `datasources:query`                                    | `datasources:uid:prometheus-uid`                    |
 | `list_prometheus_label_values`    | Prometheus                | List values for a specific label                                                                             | `datasources:query`                                    | `datasources:uid:prometheus-uid`                    |
 | `query_prometheus_histogram`      | Prometheus                | Calculate histogram percentile values                                                                        | `datasources:query`                                    | `datasources:uid:prometheus-uid`                    |
-| `list_incidents`                  | Incident                  | List incidents in Grafana Incident                                                                           | Viewer role                                            | N/A                                                 |
-| `create_incident`                 | Incident                  | Create an incident in Grafana Incident                                                                       | Editor role                                            | N/A                                                 |
+| `list_incidents`                  | Incident                  | List incidents in Grafana Incident, optionally with their custom field values                                | Viewer role                                            | N/A                                                 |
+| `create_incident`                 | Incident                  | Create an incident in Grafana Incident, optionally setting custom fields                                     | Editor role                                            | N/A                                                 |
 | `add_activity_to_incident`        | Incident                  | Add an activity item to an incident in Grafana Incident                                                      | Editor role                                            | N/A                                                 |
-| `update_incident`                 | Incident                  | Update an incident in Grafana Incident (status, severity, or title)                                          | Editor role                                            | N/A                                                 |
-| `get_incident`                    | Incident                  | Get a single incident by ID                                                                                  | Viewer role                                            | N/A                                                 |
+| `update_incident`                 | Incident                  | Update an incident in Grafana Incident (status, severity, title, or custom fields)                           | Editor role                                            | N/A                                                 |
+| `get_incident`                    | Incident                  | Get a single incident by ID, including its custom fields                                                     | Viewer role                                            | N/A                                                 |
+| `list_incident_custom_fields`     | Incident                  | List the custom fields configured for incidents, with their types and select options                         | Viewer role                                            | N/A                                                 |
 | `query_loki_logs`                 | Loki                      | Query and retrieve logs using LogQL (either log or metric queries)                                           | `datasources:query`                                    | `datasources:uid:loki-uid`                          |
 | `list_loki_label_names`           | Loki                      | List all available label names in logs                                                                       | `datasources:query`                                    | `datasources:uid:loki-uid`                          |
 | `list_loki_label_values`          | Loki                      | List values for a specific log label                                                                         | `datasources:query`                                    | `datasources:uid:loki-uid`                          |
@@ -411,6 +417,8 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `get_panel_image`                 | Rendering                 | Render a stored dashboard or panel — or a provisioning preview from a repository branch — as a PNG image     | `dashboards:read`                                      | `dashboards:uid:abc123`                             |
 | `list_provisioning_repositories`  | Provisioning              | List provisioning repositories (e.g. git-sync sources) with their source URL, branch, sync state, and health | `provisioning.repositories:read`                       | N/A                                                 |
 | `validate_provisioning_file`      | Provisioning              | Dry-run-apply a file from a provisioning repository and report admission validation errors                   | `provisioning.repositories:read`                       | N/A                                                 |
+| `search_docs`                     | Docs                      | Search Grafana documentation or list product groups (omit query to list products)                            | None (public grafana.com/docs)                         | N/A                                                 |
+| `get_doc`                         | Docs                      | Fetch a documentation page; set outline_only for headings, or section for bounded retrieval                  | None (public grafana.com/docs)                         | N/A                                                 |
 
 _* Disabled by default. Add category to `--enabled-tools` to enable._
 
@@ -468,6 +476,8 @@ Caller authentication is enforced only when `--server-auth-token` is set. When i
 - `--disable-incident`: Disable incident tools
 - `--disable-prometheus`: Disable prometheus tools
 - `--disable-write`: Disable write tools (create/update operations)
+- `--disable-query`: Disable query tools (tools that execute a query against a datasource); metadata and discovery tools stay available
+- `--enable-query`: Keep the raw-SQL query tools (`query_clickhouse`, `query_snowflake`, `query_athena`, `query_influxdb`) registered even under `--disable-write`
 - `--disable-loki`: Disable loki tools
 - `--disable-elasticsearch`: Disable elasticsearch and opensearch tools
 - `--disable-quickwit`: Disable quickwit tools
@@ -492,6 +502,7 @@ Caller authentication is enforced only when `--server-auth-token` is set. When i
 - `--disable-provisioning`: Disable provisioning tools
 - `--disable-agento11y`: Disable Agent Observability tools
 - `--disable-assistant`: Disable Grafana Assistant tools
+- `--disable-docs`: Disable documentation tools
 
 ### Read-Only Mode
 
@@ -534,6 +545,15 @@ When `--disable-write` is enabled, the following write operations are disabled:
 - `create_snapshot`
 - `delete_snapshot`
 
+**Raw-SQL Query Tools:**
+
+These execute whatever query you give them without inspecting it, so they can write when the datasource credentials permit it — `query_clickhouse` will run a `DROP TABLE`, `query_influxdb` will run a `DELETE`. Read-only mode therefore removes them. Pass `--enable-query` to keep them when the datasource credentials are known to be read-only.
+
+- `query_clickhouse`
+- `query_snowflake`
+- `query_athena`
+- `query_influxdb`
+
 **Agent Observability Tools:**
 - `agento11y_manage_evaluators` (upsert, delete, fork, test evaluator operations)
 - `agento11y_manage_eval_rules` (create, update, delete, preview rule and guard operations)
@@ -541,7 +561,62 @@ When `--disable-write` is enabled, the following write operations are disabled:
 - `agento11y_manage_experiments` (update and cancel experiment operations)
 - `agento11y_manage_test_suites` (create and update test suites; create and publish versions; upsert and delete test cases)
 
-All read operations remain available, allowing you to query dashboards, run PromQL/LogQL queries, list resources, and retrieve data.
+All read operations remain available, allowing you to query dashboards, run PromQL/LogQL queries, list resources, and retrieve data. The query languages that cannot express a write — PromQL, LogQL, TraceQL, the Elasticsearch DSL, Graphite, CloudWatch — keep their query tools in read-only mode; only the raw-SQL ones listed above are removed.
+
+### Query-Free Mode
+
+The `--disable-query` flag removes every tool that executes a query against a datasource, while leaving the metadata and discovery tools in place. This is useful when you want an assistant that can explore what exists — datasources, dashboards, metric names, labels, table schemas — without running potentially expensive or data-revealing queries, for example when the service account has `datasources:read` but not `datasources:query`.
+
+It is the strongest of the three query settings, and it wins over `--enable-query`:
+
+| Flags | Safe query tools (`query_prometheus`, `query_loki_logs`, `run_panel_query`, …) | Raw-SQL query tools (`query_clickhouse`, `query_snowflake`, `query_athena`, `query_influxdb`) |
+| --- | --- | --- |
+| _(none)_ | registered | registered |
+| `--disable-write` | registered | **not registered** |
+| `--disable-write --enable-query` | registered | registered |
+| `--disable-query` | not registered | not registered |
+| `--disable-query --enable-query` | not registered | not registered |
+
+When `--disable-query` is enabled, the following tools are not registered:
+
+**Prometheus Tools:**
+- `query_prometheus`
+- `query_prometheus_histogram`
+
+**Loki Tools:**
+- `query_loki_logs`
+- `query_loki_patterns`
+
+`query_loki_stats` and `analyze_loki_labels` stay registered: both send a selector to the datasource, but they read the index and return stream, chunk, and byte counts rather than log content.
+
+**Elasticsearch/OpenSearch and Quickwit Tools:**
+- `query_elasticsearch`
+- `query_quickwit`
+
+**InfluxDB Tools** (also removed by `--disable-write`, see above)**:**
+- `query_influxdb`
+
+**SQL Datasource Tools** (also removed by `--disable-write`, see above)**:**
+- `query_clickhouse`
+- `query_snowflake`
+- `query_athena`
+
+**Graphite Tools:**
+- `query_graphite`
+- `query_graphite_density`
+
+**CloudWatch Tools:**
+- `query_cloudwatch`
+
+**Pyroscope Tools:**
+- `query_pyroscope`
+
+**Run Panel Query Tools:**
+- `run_panel_query`
+
+The `elasticsearch`, `quickwit`, `influxdb`, and `runpanelquery` categories contain nothing else, so they register no tools at all when queries are disabled. The sibling tools in every other category — `list_prometheus_metric_names`, `list_loki_label_values`, `describe_clickhouse_table`, `list_cloudwatch_metrics`, and so on — remain available.
+
+Note that `--disable-query` gates the query tools and the `grafana_api_request` POST-to-`/api/ds/query` path, but does not police every route to a datasource. In read-only mode, `grafana_api_request` allows POST to `/api/ds/query` only when query tools are enabled (same gate as the raw-SQL tools — blocked by `--disable-write` unless `--enable-query` overrides). `get_panel_image`, which renders a panel server-side, is unaffected.
 
 **Client TLS Configuration (for Grafana connections):**
 - `--tls-cert-file`: Path to TLS certificate file for client authentication
@@ -594,6 +669,14 @@ You can specify which organization to interact with using either:
 - **HTTP header:** Set `X-Grafana-Org-Id` when using SSE or streamable HTTP transports (header takes precedence over environment variable - meaning you can set a default org as well).
 
 When an organization ID is provided, the MCP server will set the `X-Grafana-Org-Id` header on all requests to Grafana, ensuring that operations are performed within the specified organization context.
+
+#### Dynamic (per-call) organization selection
+
+The options above fix the organization for the whole connection. To let a single connection target different organizations per tool call, start the server with the `--dynamic-multi-org` flag. This is off by default.
+
+When enabled, every tool accepts an optional `orgId` argument that overrides the connection's organization for that call (driving both the `X-Grafana-Org-Id` header and, for app-platform APIs, the resolved Kubernetes namespace). Proxied datasource tools are additionally discovered across every organization the credential can access. Calls that omit `orgId` use the connection's default organization.
+
+This only works for credentials that belong to more than one organization (e.g. a user or on-behalf-of identity); a service-account token remains bound to its single organization. Use the [`user_info`](#user) tool to discover which `orgId` values are valid.
 
 **Example with organization ID:**
 

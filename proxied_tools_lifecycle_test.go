@@ -66,7 +66,7 @@ func TestTeardownReleaseToZeroDuringBuild(t *testing.T) {
 		<-releaseBuild // block here while the test tears the session down
 		return builtProxiedTools{
 			clients: map[string]*ProxiedClient{
-				"tempo_uid": newCloseCountingClient("tempo", "uid", &closes),
+				proxiedClientKey(1, "tempo", "uid"): newCloseCountingClient(1, "tempo", "uid", &closes),
 			},
 			toolToDatasources: map[string][]string{},
 		}, nil
@@ -359,7 +359,7 @@ func TestInFlightCallBlocksClose(t *testing.T) {
 	tm, sm := newTestToolManager(t, time.Hour, func(ctx context.Context, logger *slog.Logger) (builtProxiedTools, error) {
 		return builtProxiedTools{
 			clients: map[string]*ProxiedClient{
-				"tempo_uid": newCloseCountingClient("tempo", "uid", &closes),
+				proxiedClientKey(1, "tempo", "uid"): newCloseCountingClient(1, "tempo", "uid", &closes),
 			},
 			toolToDatasources: map[string][]string{},
 		}, nil
@@ -378,7 +378,7 @@ func TestInFlightCallBlocksClose(t *testing.T) {
 	require.NotNil(t, set)
 
 	// Acquire a client for a call, then start last-session teardown concurrently.
-	client, release, err := tm.acquireProxiedClientForCall(set, "tempo", "uid")
+	client, release, err := tm.acquireProxiedClientForCall(set, 1, "tempo", "uid")
 	require.NoError(t, err)
 	require.NotNil(t, client)
 
@@ -427,7 +427,7 @@ func TestFailedBuildClosesClients(t *testing.T) {
 		// A builder that connected a client, then hit an error.
 		return builtProxiedTools{
 			clients: map[string]*ProxiedClient{
-				"tempo_uid": newCloseCountingClient("tempo", "uid", &closes),
+				proxiedClientKey(1, "tempo", "uid"): newCloseCountingClient(1, "tempo", "uid", &closes),
 			},
 			toolToDatasources: map[string][]string{},
 		}, errors.New("failed after connecting a client")
@@ -448,10 +448,11 @@ func TestFailedBuildClosesClients(t *testing.T) {
 // newCloseCountingClient returns a ProxiedClient whose Close increments closes.
 // Its underlying Client is nil, so Close only runs the counter (all these tests
 // need to observe). The counter lets us assert "closed exactly once".
-func newCloseCountingClient(dsType, dsUID string, closes *int32) *ProxiedClient {
+func newCloseCountingClient(orgID int64, dsType, dsUID string, closes *int32) *ProxiedClient {
 	return &ProxiedClient{
 		DatasourceType: dsType,
 		DatasourceUID:  dsUID,
+		OrgID:          orgID,
 		closeHook:      func() { atomic.AddInt32(closes, 1) },
 	}
 }

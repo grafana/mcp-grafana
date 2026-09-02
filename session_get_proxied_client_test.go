@@ -32,7 +32,7 @@ func TestNewToolManager_WiresSetToolManager(t *testing.T) {
 	tm.InitializeAndRegisterProxiedTools(ctx, sess)
 
 	callCtx := srv.WithContext(ctx, sess)
-	client, release, err := sm.GetProxiedClient(callCtx, "tempo", "uid-1")
+	client, release, err := sm.GetProxiedClient(callCtx, 0, "tempo", "uid-1")
 	require.NoError(t, err, "GetProxiedClient must succeed once NewToolManager has wired itself onto sm")
 	require.NotNil(t, client)
 	assert.Equal(t, "uid-1", client.DatasourceUID)
@@ -58,7 +58,7 @@ func TestSessionManager_GetProxiedClient_NoToolManagerWired(t *testing.T) {
 	sm.CreateSession(ctx, sess)
 
 	callCtx := srv.WithContext(ctx, sess)
-	_, _, err := sm.GetProxiedClient(callCtx, "tempo", "uid-1")
+	_, _, err := sm.GetProxiedClient(callCtx, 0, "tempo", "uid-1")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "wiring error", "the error must call out the missing ToolManager wiring, not look like a discovery/permissions problem")
 }
