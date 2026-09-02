@@ -1265,3 +1265,35 @@ func TestRegisterOps_HealthzAddressDoesNotEnableMetrics(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, getPath(side[":8080"], "/metrics").Code)
 	assert.Equal(t, http.StatusNotFound, getPath(main, "/metrics").Code)
 }
+
+// TestNewServer_InvalidArgumentTypeReturnsToolErrorNotProtocolError verifies
+// that a tool call with a JSON type mismatch (e.g. a number where the schema
+// declares a string) surfaces as a structured tool result (IsError: true)
+// that an agent can act on, rather than escaping as a raw JSON-RPC internal
+// error (-32603) with a bare Go unmarshal message. See issue #830.
+func TestNewServer_InvalidArgumentTypeReturnsToolErrorNotProtocolError(t *testing.T) {
+	obs := newTestObservability(t)
+	s, _, sm := newServer(defaultServerName, "stdio", disabledTools{enabledTools: "datasource"}, obs, 0)
+	defer sm.Close()
+
+	c, err := client.NewInProcessClient(s)
+	require.NoError(t, err)
+	require.NoError(t, c.Start(context.Background()))
+	t.Cleanup(func() { _ = c.Close() })
+
+	_, err = c.Initialize(context.Background(), mcp.InitializeRequest{})
+	require.NoError(t, err)
+
+	result, err := c.CallTool(context.Background(), mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name: "list_datasources",
+			// "type" is declared as a string in ListDatasourcesParams; send a
+			// number instead, matching issue #830's exact repro.
+			Arguments: map[string]any{"type": 42},
+		},
+	})
+
+	require.NoError(t, err, "a schema type mismatch must not surface as a JSON-RPC protocol error")
+	require.NotNil(t, result)
+	assert.True(t, result.IsError, "a schema type mismatch must surface as a structured tool error")
+}
