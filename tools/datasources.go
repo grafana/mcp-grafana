@@ -769,7 +769,34 @@ type BulkDatasourceHealthResult struct {
 	Checked   int                           `json:"checked"` // Number of datasources health-checked in this page
 	Healthy   int                           `json:"healthy"`
 	Unhealthy int                           `json:"unhealthy"`
-	HasMore   bool                          `json:"hasMore"` // Whether more datasources exist beyond this page
+	// Unknown counts datasources whose plugin has no backend component (so
+	// the health endpoint can only ever fail for them, e.g. the built-in
+	// Alertmanager datasource type) and were therefore not asked at all,
+	// rather than genuinely unreachable. See issue #1069.
+	Unknown int  `json:"unknown"`
+	HasMore bool `json:"hasMore"` // Whether more datasources exist beyond this page
+}
+
+// datasourcesWithoutBackend returns the set of UIDs, among targets, whose
+// plugin declares meta.backend: false in GET /api/frontend/settings — i.e.
+// a frontend-only datasource type (the built-in Alertmanager datasource is
+// the common case) that the health endpoint can never successfully check,
+// because that endpoint always dispatches to a plugin backend. A UID absent
+// from the returned set (including every UID when frontend/settings itself
+// is unavailable to this token) must be treated as normally checkable: this
+// is a best-effort classification, not a requirement.
+func datasourcesWithoutBackend(ctx context.Context) map[string]bool {
+	settings, _, err := fetchFrontendSettingsDatasources(ctx)
+	if err != nil {
+		return nil
+	}
+	without := make(map[string]bool)
+	for _, ds := range settings {
+		if ds.Meta != nil && ds.Meta.Backend != nil && !*ds.Meta.Backend {
+			without[ds.UID] = true
+		}
+	}
+	return without
 }
 
 func checkDatasourcesHealth(ctx context.Context, args BulkCheckDatasourceHealthParams) (*BulkDatasourceHealthResult, error) {
@@ -821,6 +848,8 @@ func checkDatasourcesHealth(ctx context.Context, args BulkCheckDatasourceHealthP
 		targets = all[offset:end]
 	}
 
+	withoutBackend := datasourcesWithoutBackend(ctx)
+
 	results := make([]DatasourceHealthCheckResult, len(targets))
 	var wg sync.WaitGroup
 	for i, ds := range targets {
@@ -828,6 +857,12 @@ func checkDatasourcesHealth(ctx context.Context, args BulkCheckDatasourceHealthP
 		go func() {
 			defer wg.Done()
 			r := DatasourceHealthCheckResult{UID: ds.UID, Name: ds.Name, Type: ds.Type}
+			if withoutBackend[ds.UID] {
+				r.Status = "UNKNOWN"
+				r.Message = "This datasource's plugin has no backend component, so it cannot be health-checked."
+				results[i] = r
+				return
+			}
 			health, err := checkDatasourceHealth(ctx, CheckDatasourceHealthParams{UID: ds.UID})
 			if err != nil {
 				r.Error = err.Error()
@@ -840,11 +875,14 @@ func checkDatasourcesHealth(ctx context.Context, args BulkCheckDatasourceHealthP
 	}
 	wg.Wait()
 
-	healthy, unhealthy := 0, 0
+	healthy, unhealthy, unknown := 0, 0, 0
 	for _, r := range results {
-		if r.Error != "" || r.Status != "OK" {
+		switch {
+		case r.Status == "UNKNOWN":
+			unknown++
+		case r.Error != "" || r.Status != "OK":
 			unhealthy++
-		} else {
+		default:
 			healthy++
 		}
 	}
@@ -855,6 +893,7 @@ func checkDatasourcesHealth(ctx context.Context, args BulkCheckDatasourceHealthP
 		Checked:   len(results),
 		Healthy:   healthy,
 		Unhealthy: unhealthy,
+		Unknown:   unknown,
 		HasMore:   offset+len(results) < len(all),
 	}, nil
 }

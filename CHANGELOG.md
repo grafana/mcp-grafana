@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--loki-enforced-matchers`: operator-configured LogQL label matchers AND-ed into every native-Loki query (logs, stats, patterns, and label enumeration) to restrict which streams the server can read. Fails closed on unparseable queries and refuses VictoriaLogs datasources while set. Pair with `--disable-api` so the raw datasource proxy cannot bypass it. A companion `--loki-label-enumeration-fallback` controls label-enumeration behaviour under purely-negative matchers ([#978](https://github.com/grafana/mcp-grafana/pull/978))
 - `--instructions-append` flag to append operator-supplied text to the server instructions returned to MCP clients on initialize, so every connecting agent sees it — e.g. to explain that Loki reads are restricted by `--loki-enforced-matchers` ([#978](https://github.com/grafana/mcp-grafana/pull/978))
 
+### Fixed
+
+- `check_datasources_health` no longer reports a frontend-only datasource plugin (e.g. the built-in Alertmanager datasource) as unhealthy: those plugins have no backend to serve the health endpoint, so it always failed for them. Such datasources now report `"status": "UNKNOWN"` and are counted separately in a new `unknown` field on the bulk result, rather than inflating `unhealthy` ([#1069](https://github.com/grafana/mcp-grafana/issues/1069))
+
 ## [1.3.0] - 2026-08-28
 
 ### Added
