@@ -94,25 +94,7 @@ func newPrometheusBackend(ctx context.Context, uid string, ds *models.DataSource
 		return nil, fmt.Errorf("failed to create custom transport: %w", err)
 	}
 
-	// Keep POST as the default so large PromQL expressions stay in the request
-	// body. Datasources explicitly configured for GET need the request converted
-	// before it reaches Grafana, while other datasources retry with GET only when
-	// the proxy rejects or drops the POST body.
-	// See https://github.com/grafana/mcp-grafana/issues/632
-	if prometheusDatasourceUsesGET(ds) {
-		rt = &postToGetRoundTripper{underlying: rt}
-	} else {
-		rt = &postToGetFallbackRoundTripper{underlying: rt}
-	}
-
-	// Wrap with fallback transport: try the primary base first, fall back to
-	// the alternate for compatibility with different Grafana deployments (see
-	// fallback_transport.go for the per-mode retry rules).
-	if legacyMode {
-		rt = newLegacyDatasourceFallbackTransport(rt, primaryBase, fallbackBase)
-	} else {
-		rt = newDatasourceFallbackTransport(rt, primaryBase, fallbackBase)
-	}
+	rt = wrapPrometheusTransport(rt, ds, primaryBase, fallbackBase, legacyMode)
 
 	c, err := api.NewClient(api.Config{
 		Address:      url,
@@ -123,6 +105,29 @@ func newPrometheusBackend(ctx context.Context, uid string, ds *models.DataSource
 	}
 
 	return &prometheusBackend{api: promv1.NewAPI(c)}, nil
+}
+
+func wrapPrometheusTransport(rt http.RoundTripper, ds *models.DataSource, primaryBase, fallbackBase string, legacyMode bool) http.RoundTripper {
+	// Wrap with fallback transport: try the primary base first, fall back to
+	// the alternate for compatibility with different Grafana deployments (see
+	// fallback_transport.go for the per-mode retry rules). This must be inside
+	// the POST→GET wrapper below so a 500 from the primary path can first retry
+	// the alternate path with POST, keeping large queries out of the URL.
+	if legacyMode {
+		rt = newLegacyDatasourceFallbackTransport(rt, primaryBase, fallbackBase)
+	} else {
+		rt = newDatasourceFallbackTransport(rt, primaryBase, fallbackBase)
+	}
+
+	// Keep POST as the default so large PromQL expressions stay in the request
+	// body. Datasources explicitly configured for GET need the request converted
+	// before it reaches Grafana, while other datasources retry with GET only when
+	// the proxy rejects or drops the POST body after datasource path fallback.
+	// See https://github.com/grafana/mcp-grafana/issues/632
+	if prometheusDatasourceUsesGET(ds) {
+		return &postToGetRoundTripper{underlying: rt}
+	}
+	return &postToGetFallbackRoundTripper{underlying: rt}
 }
 
 func (b *prometheusBackend) Query(ctx context.Context, expr string, queryType string, start, end time.Time, stepSeconds int) (model.Value, promv1.Warnings, error) {
