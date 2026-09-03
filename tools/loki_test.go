@@ -42,10 +42,14 @@ func TestLokiTools(t *testing.T) {
 
 	t.Run("get loki label values narrowed by matcher", func(t *testing.T) {
 		ctx := newTestContext()
+		// A regex, not an exact match: promtail's docker_sd_configs derives
+		// the "container" label from the running container's actual name
+		// (testdata/promtail-config.yml), which Docker Compose generates as
+		// "<project>-grafana-<n>" rather than the bare service name "grafana".
 		result, err := listLokiLabelValues(ctx, ListLokiLabelValuesParams{
 			DatasourceUID: "loki",
 			LabelName:     "container",
-			Matcher:       `{container="grafana"}`,
+			Matcher:       `{container=~".*grafana.*"}`,
 		})
 		require.NoError(t, err)
 		assert.NotEmpty(t, result, "Should have at least one container label value matching the selector")
