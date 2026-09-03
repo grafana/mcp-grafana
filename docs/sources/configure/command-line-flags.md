@@ -31,6 +31,7 @@ You can look up defaults, choose `--disable-*` flags, or configure TLS without r
 - `--base-path`: Base path for the SSE or streamable-http server.
 - `--endpoint-path`: HTTP path for the streamable-http MCP endpoint. Default: `/mcp`.
 - `--session-idle-timeout-minutes`: Idle timeout for streamable-http sessions, in minutes. Sessions with no activity for this duration are automatically reaped. Set to `0` to disable. Default: `30`.
+- `--instructions-append`: Text appended to the server instructions returned to MCP clients on initialize, so every connecting agent sees it.
 
 ## Configure HTTP transport security
 
@@ -163,6 +164,22 @@ The raw-SQL query tools — `query_clickhouse`, `query_snowflake`, `query_athena
 | `--disable-write --enable-query` | Registered | Registered |
 | `--disable-query` | Not registered | Not registered |
 | `--disable-query --enable-query` | Not registered | Not registered |
+
+## Restrict which Loki streams can be read
+
+- `--loki-enforced-matchers`: LogQL label matchers AND-ed into every native-Loki query to restrict which log streams can be read (e.g. `environment=~"prod|staging"`). Unparseable queries are rejected; VictoriaLogs datasources are refused while set.
+- `--loki-label-enumeration-fallback`: What the label-enumeration tools do when negative enforced matchers can't scope them: `reject` (default) or `unfiltered`.
+
+{{< admonition type="warning" >}}
+Enforcement applies only to the Loki query tools. Other tools can reach Loki log data through paths that never touch the enforced backend, so you must also disable them for the restriction to hold:
+
+- `--disable-api`: `grafana_api_request` can query the Loki datasource proxy directly (full bypass).
+- `--disable-rendering`: `get_panel_image` renders Loki panels server-side, producing images with unrestricted log lines.
+- `--disable-sift`: Sift investigations analyze Loki logs server-side across all streams.
+- `--disable-assistant`: `ask_assistant` delegates to Grafana Assistant, which reads Loki server-side across all streams. It is only registered when write tools are enabled, so `--disable-write` closes it too.
+
+The server logs a warning at startup naming each of these that is still enabled. `run_panel_query` is safe (it reuses the enforced query path). Proxied tools currently expose only Tempo (traces), not Loki logs, so they are not a bypass today. Dashboard snapshots (`--disable-snapshot`) can embed log-panel data captured outside enforcement.
+{{< /admonition >}}
 
 ## Run in read-only mode
 
