@@ -171,19 +171,28 @@ func (b *victoriaLogsBackend) listValueHits(ctx context.Context, urlPath string,
 	return out, nil
 }
 
-func (b *victoriaLogsBackend) ListLabelNames(ctx context.Context, start, end time.Time) ([]string, error) {
+func (b *victoriaLogsBackend) ListLabelNames(ctx context.Context, matcher string, start, end time.Time) ([]string, error) {
 	params := url.Values{}
-	params.Set("query", victoriaLogsAllQuery)
+	params.Set("query", logsQLOrAll(matcher))
 	addVLTimeRange(params, start, end)
 	return b.listValueHits(ctx, "/select/logsql/field_names", params)
 }
 
-func (b *victoriaLogsBackend) ListLabelValues(ctx context.Context, labelName string, start, end time.Time) ([]string, error) {
+func (b *victoriaLogsBackend) ListLabelValues(ctx context.Context, labelName, matcher string, start, end time.Time) ([]string, error) {
 	params := url.Values{}
-	params.Set("query", victoriaLogsAllQuery)
+	params.Set("query", logsQLOrAll(matcher))
 	params.Set("field", labelName)
 	addVLTimeRange(params, start, end)
 	return b.listValueHits(ctx, "/select/logsql/field_values", params)
+}
+
+// logsQLOrAll returns matcher if non-empty, otherwise the "match everything"
+// expression, so an empty matcher still searches across all streams.
+func logsQLOrAll(matcher string) string {
+	if matcher == "" {
+		return victoriaLogsAllQuery
+	}
+	return matcher
 }
 
 // QueryLogs runs a LogsQL query. Range and instant requests both go through
