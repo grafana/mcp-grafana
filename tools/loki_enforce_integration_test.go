@@ -99,6 +99,46 @@ func TestLokiEnforcedMatchers(t *testing.T) {
 			"label value enumeration must be scoped to the enforced selector")
 	})
 
+	t.Run("user matcher narrows enumeration within the enforced bounds", func(t *testing.T) {
+		ctx := ctxWithEnforcedMatchers(t, allow, LabelEnumFallbackReject)
+		values, err := listLokiLabelValues(ctx, ListLokiLabelValuesParams{
+			DatasourceUID: "loki",
+			LabelName:     "container",
+			Matcher:       fmt.Sprintf(`{container=%q}`, grafanaC),
+		})
+		require.NoError(t, err)
+		assert.Equal(t, []string{grafanaC}, values)
+	})
+
+	t.Run("user matcher on enumeration cannot escape the enforced matcher", func(t *testing.T) {
+		ctx := ctxWithEnforcedMatchers(t, allow, LabelEnumFallbackReject)
+		// The user's selector is AND-ed with the enforced one, so asking for a
+		// different container enumerates nothing rather than that container.
+		values, err := listLokiLabelValues(ctx, ListLokiLabelValuesParams{
+			DatasourceUID: "loki",
+			LabelName:     "container",
+			Matcher:       fmt.Sprintf(`{container=%q}`, otherC),
+		})
+		require.NoError(t, err)
+		assert.Empty(t, values, "conflicting user matcher must enumerate no values")
+	})
+
+	t.Run("user matcher lets negative enforcement scope enumeration", func(t *testing.T) {
+		// Without a user matcher this configuration fails closed (see below);
+		// the user's positive matcher supplies the non-empty matcher Loki needs,
+		// so enumeration can be scoped instead of rejected.
+		ctx := ctxWithEnforcedMatchers(t, exclude, LabelEnumFallbackReject)
+		values, err := listLokiLabelValues(ctx, ListLokiLabelValuesParams{
+			DatasourceUID: "loki",
+			LabelName:     "container",
+			Matcher:       `{container=~".+"}`,
+		})
+		require.NoError(t, err)
+		require.NotEmpty(t, values)
+		assert.NotContains(t, values, grafanaC,
+			"negative enforcement must still exclude the container from enumeration")
+	})
+
 	t.Run("negative matcher rejects label enumeration by default", func(t *testing.T) {
 		ctx := ctxWithEnforcedMatchers(t, exclude, LabelEnumFallbackReject)
 		_, err := listLokiLabelValues(ctx, ListLokiLabelValuesParams{
