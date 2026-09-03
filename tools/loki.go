@@ -158,9 +158,15 @@ func (c *Client) makeRequest(ctx context.Context, method, urlPath string, params
 	return bytes.TrimSpace(bodyBytes), nil
 }
 
-// fetchData is a generic method to fetch data from Loki API
-func (c *Client) fetchData(ctx context.Context, urlPath string, startRFC3339, endRFC3339 string) ([]string, error) {
+// fetchData is a generic method to fetch data from Loki API. matcher, when
+// non-empty, is forwarded as the "query" parameter to narrow the label
+// search to streams selected by a LogQL stream selector (e.g. `{app="foo"}`),
+// per Loki's /labels and /label/<name>/values API.
+func (c *Client) fetchData(ctx context.Context, urlPath, matcher, startRFC3339, endRFC3339 string) ([]string, error) {
 	params := url.Values{}
+	if matcher != "" {
+		params.Add("query", matcher)
+	}
 	if startRFC3339 != "" {
 		params.Add("start", startRFC3339)
 	}
@@ -199,6 +205,7 @@ func (c *Client) fetchData(ctx context.Context, urlPath string, startRFC3339, en
 // ListLokiLabelNamesParams defines the parameters for listing Loki label names
 type ListLokiLabelNamesParams struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the datasource to query"`
+	Matcher       string `json:"matcher,omitempty" jsonschema:"description=Optionally\\, a stream selector to narrow the search to matching streams (Loki: LogQL\\, e.g. '{namespace=\"prod\"}'; VictoriaLogs: LogsQL). Defaults to searching across all streams."`
 	StartRFC3339  string `json:"startRfc3339,omitempty" jsonschema:"description=Optionally\\, the start time of the query in RFC3339 format or relative time (e.g. 'now-1h') (defaults to 1 hour ago)"`
 	EndRFC3339    string `json:"endRfc3339,omitempty" jsonschema:"description=Optionally\\, the end time of the query in RFC3339 format or relative time (e.g. 'now') (defaults to now)"`
 }
@@ -219,7 +226,7 @@ func listLokiLabelNames(ctx context.Context, args ListLokiLabelNamesParams) ([]s
 		return nil, fmt.Errorf("parsing end time: %w", err)
 	}
 
-	result, err := backend.ListLabelNames(ctx, start, end)
+	result, err := backend.ListLabelNames(ctx, args.Matcher, start, end)
 	if err != nil {
 		return nil, err
 	}
@@ -234,7 +241,7 @@ func listLokiLabelNames(ctx context.Context, args ListLokiLabelNamesParams) ([]s
 // ListLokiLabelNames is a tool for listing Loki label names
 var ListLokiLabelNames = mcpgrafana.MustTool(
 	"list_loki_label_names",
-	"Lists all available label/field names (keys) found in logs within a specified Loki or VictoriaLogs datasource and time range. Returns a list of unique label strings (e.g., `[\"app\", \"env\", \"pod\"]`). If the time range is not provided, it defaults to the last hour.",
+	"Lists all available label/field names (keys) found in logs within a specified Loki or VictoriaLogs datasource and time range. Returns a list of unique label strings (e.g., `[\"app\", \"env\", \"pod\"]`). If the time range is not provided, it defaults to the last hour. Optionally narrow the search to a subset of streams with `matcher` (e.g. `{namespace=\"prod\"}`).",
 	listLokiLabelNames,
 	mcp.WithTitleAnnotation("List Loki label names"),
 	mcp.WithIdempotentHintAnnotation(true),
@@ -247,6 +254,7 @@ var ListLokiLabelNames = mcpgrafana.MustTool(
 type ListLokiLabelValuesParams struct {
 	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the datasource to query"`
 	LabelName     string `json:"labelName" jsonschema:"required,description=The name of the label to retrieve values for (e.g. 'app'\\, 'env'\\, 'pod')"`
+	Matcher       string `json:"matcher,omitempty" jsonschema:"description=Optionally\\, a stream selector to narrow the search to matching streams (Loki: LogQL\\, e.g. '{namespace=\"prod\"}'; VictoriaLogs: LogsQL). Defaults to searching across all streams."`
 	StartRFC3339  string `json:"startRfc3339,omitempty" jsonschema:"description=Optionally\\, the start time of the query in RFC3339 format or relative time (e.g. 'now-1h') (defaults to 1 hour ago)"`
 	EndRFC3339    string `json:"endRfc3339,omitempty" jsonschema:"description=Optionally\\, the end time of the query in RFC3339 format or relative time (e.g. 'now') (defaults to now)"`
 }
@@ -267,7 +275,7 @@ func listLokiLabelValues(ctx context.Context, args ListLokiLabelValuesParams) ([
 		return nil, fmt.Errorf("parsing end time: %w", err)
 	}
 
-	result, err := backend.ListLabelValues(ctx, args.LabelName, start, end)
+	result, err := backend.ListLabelValues(ctx, args.LabelName, args.Matcher, start, end)
 	if err != nil {
 		return nil, err
 	}
@@ -283,7 +291,7 @@ func listLokiLabelValues(ctx context.Context, args ListLokiLabelValuesParams) ([
 // ListLokiLabelValues is a tool for listing Loki label values
 var ListLokiLabelValues = mcpgrafana.MustTool(
 	"list_loki_label_values",
-	"Retrieves all unique values associated with a specific `labelName` within a Loki or VictoriaLogs datasource and time range. Returns a list of string values (e.g., for `labelName=\"env\"`, might return `[\"prod\", \"staging\", \"dev\"]`). Useful for discovering filter options. Defaults to the last hour if the time range is omitted.",
+	"Retrieves all unique values associated with a specific `labelName` within a Loki or VictoriaLogs datasource and time range. Returns a list of string values (e.g., for `labelName=\"env\"`, might return `[\"prod\", \"staging\", \"dev\"]`). Useful for discovering filter options. Defaults to the last hour if the time range is omitted. Optionally narrow the search to a subset of streams with `matcher` (e.g. `{namespace=\"prod\"}`) — for example, to list `service` values seen only within a specific namespace.",
 	listLokiLabelValues,
 	mcp.WithTitleAnnotation("List Loki label values"),
 	mcp.WithIdempotentHintAnnotation(true),

@@ -528,11 +528,11 @@ type fakeLokiBackend struct {
 	statsCalled bool
 }
 
-func (f *fakeLokiBackend) ListLabelNames(ctx context.Context, start, end time.Time) ([]string, error) {
+func (f *fakeLokiBackend) ListLabelNames(ctx context.Context, matcher string, start, end time.Time) ([]string, error) {
 	return nil, nil
 }
 
-func (f *fakeLokiBackend) ListLabelValues(ctx context.Context, labelName string, start, end time.Time) ([]string, error) {
+func (f *fakeLokiBackend) ListLabelValues(ctx context.Context, labelName, matcher string, start, end time.Time) ([]string, error) {
 	return nil, nil
 }
 
