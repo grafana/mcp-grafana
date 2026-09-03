@@ -34,12 +34,12 @@ You can look up defaults, choose `--disable-*` flags, or configure TLS without r
 
 ## Configure HTTP transport security
 
-The SSE and streamable-http transports validate `Host` and `Origin` headers on every route (`/sse`, `/mcp`, `/healthz`, `/metrics`) to block DNS-rebinding attacks. Stdio transport is unaffected.
+The SSE and streamable-http transports validate `Host` and `Origin` headers on every route on the MCP listener (`/sse`, `/mcp`, and `/healthz` / `/metrics` when they stay on that listener) to block DNS-rebinding attacks. Stdio transport is unaffected. Side listeners started by `--healthz-address` or `--metrics-address` are not wrapped.
 
 - `--allowed-hosts`: Comma-separated allowlist of `Host` header values. When unset (or when the parsed value is empty — for example, `,,,`), it falls back to loopback variants of `--address` (for example, `localhost:8000`, `127.0.0.1:8000`, `[::1]:8000`). Pass `*` to disable the check — only safe behind a trusted reverse proxy that rewrites `Host`.
 - `--allowed-origins`: Comma-separated allowlist of `Origin` header values. Empty by default — any request that carries an `Origin` header is rejected (browsers always send `Origin` for cross-origin requests, and no browser should be calling this server directly). Pass an explicit list to permit browser clients, or `*` to disable the check.
 
-When deploying behind an ingress or reverse proxy that forwards the original `Host`, set `--allowed-hosts` to the expected hostname (or `*` if the proxy is fully trusted). Kubernetes `httpGet` liveness/readiness probes send `Host: <pod-ip>:<port>` by default — either set `--allowed-hosts '*'`, override the probe's `host:` field, or use a `tcpSocket` probe. External `/metrics` scrapes must add the scrape source's `Host` to the allowlist (or use `--metrics-address` to bind metrics on a separate port, which is unaffected).
+When deploying behind an ingress or reverse proxy that forwards the original `Host`, set `--allowed-hosts` to the expected hostname (or `*` if the proxy is fully trusted). Kubernetes `httpGet` liveness/readiness probes send `Host: <pod-ip>:<port>` by default — either set `--allowed-hosts '*'`, override the probe's `host:` field, use a `tcpSocket` probe, or bind `/healthz` on `--healthz-address` (and `/metrics` on `--metrics-address`). Those side listeners are not wrapped by Host/Origin validation.
 
 ## Configure caller authentication
 
@@ -74,6 +74,7 @@ When caller authentication is enabled, the `Authorization` header is reserved fo
 
 - `--metrics`: Expose a Prometheus metrics endpoint at `/metrics` (SSE and streamable-http only).
 - `--metrics-address`: Optional separate listen address for metrics (for example, `:9090`). If empty, metrics are served on the main HTTP server.
+- `--healthz-address`: Optional separate listen address for `/healthz` (for example, `:8080`). If empty, `/healthz` is served on the main HTTP server. If this matches `--metrics-address`, both routes share one extra listener. The side listener is not wrapped by Host/Origin validation, so Kubernetes probes can reach it while `--address` stays on loopback.
 
 ## Configure tool categories
 

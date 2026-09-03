@@ -206,5 +206,5 @@ Order articles from most popular language or framework to least.
 ### Observability (metrics and tracing)
 
 - **Context:** README.md (Observability)
-- **Include:** --metrics, --metrics-address; Prometheus metrics (mcp_server_operation_duration_seconds, etc.). OTEL env vars and tracing.
+- **Include:** --metrics, --metrics-address, --healthz-address; Prometheus metrics (mcp_server_operation_duration_seconds, etc.). OTEL env vars and tracing.
 - **Exclude:** Grafana datasource setup for metrics (out of scope).

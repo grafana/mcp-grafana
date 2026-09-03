@@ -435,9 +435,9 @@ The `mcp-grafana` binary supports various command-line flags for configuration:
 
 **HTTP Transport Security (SSE / streamable-http only):**
 
-`Host`/`Origin` validation is enforced on *every* route on the listener — `/sse`, `/mcp`, `/healthz`, and `/metrics` — so a DNS-rebinding browser cannot reach any of them. Stdio transport is unaffected.
+`Host`/`Origin` validation is enforced on *every* route on the MCP listener — `/sse`, `/mcp`, and `/healthz` / `/metrics` when they share that listener — so a DNS-rebinding browser cannot reach any of them. Stdio transport is unaffected. `--healthz-address` and `--metrics-address` start a separate listener that is not wrapped.
 
-- `--allowed-hosts`: Comma-separated allowlist of `Host` header values. Defaults to loopback variants of `--address` (e.g. `localhost:8000,127.0.0.1:8000,[::1]:8000`). A value that parses to empty (unset, `,`, ` , `, etc.) also falls back to the defaults so a typo cannot silently disable the check. Requests with a `Host` header outside the allowlist are rejected with `403`. Pass `*` to disable the check — only safe when running behind a trusted reverse proxy that rewrites `Host`, or in an isolated network. K8s `httpGet` probes and external `/metrics` scrapes will need either an explicit hostname in this list, `*`, or a `tcpSocket` probe / a separate metrics port (`--metrics-address`).
+- `--allowed-hosts`: Comma-separated allowlist of `Host` header values. Defaults to loopback variants of `--address` (e.g. `localhost:8000,127.0.0.1:8000,[::1]:8000`). A value that parses to empty (unset, `,`, ` , `, etc.) also falls back to the defaults so a typo cannot silently disable the check. Requests with a `Host` header outside the allowlist are rejected with `403`. Pass `*` to disable the check — only safe when running behind a trusted reverse proxy that rewrites `Host`, or in an isolated network. K8s `httpGet` probes and external `/metrics` scrapes will need either an explicit hostname in this list, `*`, a `tcpSocket` probe, or a separate port (`--healthz-address` / `--metrics-address`).
 - `--allowed-origins`: Comma-separated allowlist of `Origin` header values. Empty by default — any request that carries an `Origin` header is rejected (browsers always send one for cross-origin requests, and no browser should be calling this server directly). Set to an explicit list to permit browser-based clients, or `*` to disable the check.
 
 **Caller Authentication (SSE / streamable-http only):**
@@ -459,6 +459,7 @@ Caller authentication is enforced only when `--server-auth-token` is set. When i
 **Observability:**
 - `--metrics`: Enable Prometheus metrics endpoint at `/metrics`
 - `--metrics-address`: Separate address for metrics server (e.g., `:9090`). If empty, metrics are served on the main server
+- `--healthz-address`: Separate address for `/healthz` (e.g., `:8080`). If empty, `/healthz` is served on the main server. Shares a listener with `--metrics-address` when the two addresses match. Side listeners skip Host/Origin validation.
 - `--slow-request-threshold`: Log an event when any MCP request (tool invocation, list, resource read, etc.) takes longer than this duration. Accepts Go duration strings (e.g., `500ms`, `5s`). Default `0` disables slow-request logging. See the [Slow-request logging](#slow-request-logging) section.
 - `--slow-request-log-level`: Log level for slow-request events (`info` or `warn`) - default: `warn`.
 
@@ -1201,8 +1202,9 @@ When using the SSE (`-t sse`) or streamable HTTP (`-t streamable-http`) transpor
 # For streamable HTTP or SSE transport on default port
 curl http://localhost:8000/healthz
 
-# With custom address
-curl http://localhost:9090/healthz
+# Probe a side listener while MCP stays on loopback (Kubernetes + sidecar)
+./mcp-grafana -t streamable-http --address 127.0.0.1:8000 --healthz-address :8080
+curl http://127.0.0.1:8080/healthz
 ```
 
 **Note:** The health check endpoint is only available when using SSE or streamable HTTP transports. It is not available when using the stdio transport (`-t stdio`), as stdio does not expose an HTTP server.
