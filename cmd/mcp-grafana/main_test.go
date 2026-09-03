@@ -1202,3 +1202,85 @@ func TestProcessTools_BothDisableFlags(t *testing.T) {
 		assert.True(t, names[name], "%s should survive both flags", name)
 	}
 }
+
+func getPath(h http.Handler, path string) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+	return rec
+}
+
+func TestRegisterOps_DefaultKeepsHealthzOnMainMux(t *testing.T) {
+	main := http.NewServeMux()
+	side := registerOps(main, newTestObservability(t), "", observability.Config{})
+
+	assert.Empty(t, side, "no extra listener without --healthz-address or --metrics-address")
+	rec := getPath(main, "/healthz")
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, "ok", rec.Body.String())
+}
+
+func TestRegisterOps_MetricsOnMainMux(t *testing.T) {
+	obs, err := observability.Setup(observability.Config{MetricsEnabled: true})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = obs.Shutdown(context.Background()) })
+
+	main := http.NewServeMux()
+	side := registerOps(main, obs, "", observability.Config{MetricsEnabled: true})
+
+	assert.Empty(t, side, "--metrics with empty --metrics-address must not start a side listener")
+	assert.Equal(t, http.StatusOK, getPath(main, "/healthz").Code)
+	assert.Equal(t, http.StatusOK, getPath(main, "/metrics").Code)
+}
+
+func TestRegisterOps_HealthzAddressMovesItOffMainMux(t *testing.T) {
+	main := http.NewServeMux()
+	side := registerOps(main, newTestObservability(t), ":8080", observability.Config{})
+
+	assert.Equal(t, http.StatusNotFound, getPath(main, "/healthz").Code,
+		"/healthz must leave the MCP listener, not be served on both")
+	require.Len(t, side, 1)
+	require.Contains(t, side, ":8080")
+	rec := getPath(side[":8080"], "/healthz")
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, "ok", rec.Body.String())
+}
+
+func TestRegisterOps_SharedAddressUsesOneListener(t *testing.T) {
+	obs, err := observability.Setup(observability.Config{MetricsEnabled: true})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = obs.Shutdown(context.Background()) })
+
+	main := http.NewServeMux()
+	side := registerOps(main, obs, ":9090", observability.Config{MetricsEnabled: true, MetricsAddress: ":9090"})
+
+	require.Len(t, side, 1, "one bind address must not produce two listeners")
+	assert.Equal(t, http.StatusOK, getPath(side[":9090"], "/healthz").Code)
+	assert.Equal(t, http.StatusOK, getPath(side[":9090"], "/metrics").Code)
+	assert.Equal(t, http.StatusNotFound, getPath(main, "/healthz").Code)
+	assert.Equal(t, http.StatusNotFound, getPath(main, "/metrics").Code)
+}
+
+func TestRegisterOps_DistinctAddressesStaySplit(t *testing.T) {
+	obs, err := observability.Setup(observability.Config{MetricsEnabled: true})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = obs.Shutdown(context.Background()) })
+
+	main := http.NewServeMux()
+	side := registerOps(main, obs, ":8080", observability.Config{MetricsEnabled: true, MetricsAddress: ":9090"})
+
+	require.Len(t, side, 2)
+	assert.Equal(t, http.StatusOK, getPath(side[":8080"], "/healthz").Code)
+	assert.Equal(t, http.StatusNotFound, getPath(side[":8080"], "/metrics").Code)
+	assert.Equal(t, http.StatusOK, getPath(side[":9090"], "/metrics").Code)
+	assert.Equal(t, http.StatusNotFound, getPath(side[":9090"], "/healthz").Code)
+}
+
+// Metrics stay opt-in: --healthz-address alone must not expose /metrics.
+func TestRegisterOps_HealthzAddressDoesNotEnableMetrics(t *testing.T) {
+	main := http.NewServeMux()
+	side := registerOps(main, newTestObservability(t), ":8080", observability.Config{})
+
+	require.Len(t, side, 1)
+	assert.Equal(t, http.StatusNotFound, getPath(side[":8080"], "/metrics").Code)
+	assert.Equal(t, http.StatusNotFound, getPath(main, "/metrics").Code)
+}

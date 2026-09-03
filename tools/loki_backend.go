@@ -18,12 +18,16 @@ import (
 // into the shared LogEntry shape.
 type lokiBackend interface {
 	// ListLabelNames returns the available label/field names within the
-	// given time range. Empty start/end means "use server defaults".
-	ListLabelNames(ctx context.Context, start, end time.Time) ([]string, error)
+	// given time range. Empty start/end means "use server defaults". An
+	// empty matcher means "no filter"; a non-empty matcher narrows the
+	// search to streams selected by it (Loki: a LogQL stream selector,
+	// e.g. `{namespace="prod"}`; VictoriaLogs: a LogsQL filter).
+	ListLabelNames(ctx context.Context, matcher string, start, end time.Time) ([]string, error)
 
 	// ListLabelValues returns the values for a single label/field within
-	// the given time range.
-	ListLabelValues(ctx context.Context, labelName string, start, end time.Time) ([]string, error)
+	// the given time range, optionally narrowed to streams selected by
+	// matcher (see ListLabelNames).
+	ListLabelValues(ctx context.Context, labelName, matcher string, start, end time.Time) ([]string, error)
 
 	// QueryLogs runs a log/metric query and returns the raw entries plus
 	// the result type ("streams" | "vector" | "matrix") and (when known)
@@ -105,21 +109,21 @@ func formatRFC3339OrEmpty(t time.Time) string {
 	return t.Format(time.RFC3339)
 }
 
-func (b *lokiNativeBackend) ListLabelNames(ctx context.Context, start, end time.Time) ([]string, error) {
-	query, err := labelEnumerationSelector(ctx)
+func (b *lokiNativeBackend) ListLabelNames(ctx context.Context, matcher string, start, end time.Time) ([]string, error) {
+	query, err := labelEnumerationQuery(ctx, matcher)
 	if err != nil {
 		return nil, err
 	}
-	return b.client.fetchData(ctx, "/loki/api/v1/labels", formatRFC3339OrEmpty(start), formatRFC3339OrEmpty(end), query)
+	return b.client.fetchData(ctx, "/loki/api/v1/labels", query, formatRFC3339OrEmpty(start), formatRFC3339OrEmpty(end))
 }
 
-func (b *lokiNativeBackend) ListLabelValues(ctx context.Context, labelName string, start, end time.Time) ([]string, error) {
+func (b *lokiNativeBackend) ListLabelValues(ctx context.Context, labelName, matcher string, start, end time.Time) ([]string, error) {
 	urlPath := fmt.Sprintf("/loki/api/v1/label/%s/values", labelName)
-	query, err := labelEnumerationSelector(ctx)
+	query, err := labelEnumerationQuery(ctx, matcher)
 	if err != nil {
 		return nil, err
 	}
-	return b.client.fetchData(ctx, urlPath, formatRFC3339OrEmpty(start), formatRFC3339OrEmpty(end), query)
+	return b.client.fetchData(ctx, urlPath, query, formatRFC3339OrEmpty(start), formatRFC3339OrEmpty(end))
 }
 
 func (b *lokiNativeBackend) QueryLogs(ctx context.Context, p lokiQueryParams) (*lokiQueryResult, error) {

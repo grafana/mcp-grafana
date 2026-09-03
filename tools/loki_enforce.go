@@ -319,3 +319,24 @@ func labelEnumerationSelector(ctx context.Context) (string, error) {
 	}
 	return "", fmt.Errorf("label enumeration cannot be scoped by the configured (purely-negative) enforced matchers; set the label-enumeration fallback to %q to allow unscoped enumeration, or use a positive matcher", LabelEnumFallbackUnfiltered)
 }
+
+// labelEnumerationQuery builds the `query` parameter for Loki's label-name /
+// label-value endpoints from a user-supplied stream selector and the
+// enforcement policy.
+//
+//   - no user matcher -> the enforced selector alone (see
+//     labelEnumerationSelector), including its purely-negative fallback.
+//   - user matcher, enforcement disabled -> the user's selector unchanged.
+//   - user matcher under enforcement -> the enforced matchers AND-ed into it,
+//     by the same fail-closed rewrite used for queries. The user's own
+//     positive matcher is what makes a purely-negative enforced set usable
+//     here, so no fallback is needed.
+func labelEnumerationQuery(ctx context.Context, matcher string) (string, error) {
+	if strings.TrimSpace(matcher) == "" {
+		return labelEnumerationSelector(ctx)
+	}
+	if len(enforcedMatchers(ctx)) == 0 {
+		return matcher, nil
+	}
+	return enforceLogQL(ctx, matcher)
+}

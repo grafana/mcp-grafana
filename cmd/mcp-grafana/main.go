@@ -787,17 +787,43 @@ func handleHealthz(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte("ok"))
 }
 
-// runMetricsServer starts a separate HTTP server for metrics.
-func runMetricsServer(addr string, o *observability.Observability) {
-	mux := http.NewServeMux()
-	mux.Handle("/metrics", o.MetricsHandler())
-	slog.Info("Starting metrics server", "address", addr)
-	if err := http.ListenAndServe(addr, mux); err != nil {
-		slog.Error("metrics server error", "error", err)
+// registerOps mounts /healthz and /metrics. An empty address keeps the route
+// on mux; otherwise it goes on a side mux keyed by address (so matching
+// --healthz-address and --metrics-address share a listener). Callers pass the
+// result to runOpsServers. Side listeners skip Host/Origin checks.
+func registerOps(mux *http.ServeMux, o *observability.Observability, healthzAddr string, obs observability.Config) map[string]*http.ServeMux {
+	side := map[string]*http.ServeMux{}
+	target := func(addr string) *http.ServeMux {
+		if addr == "" {
+			return mux
+		}
+		if side[addr] == nil {
+			side[addr] = http.NewServeMux()
+		}
+		return side[addr]
+	}
+
+	target(healthzAddr).HandleFunc("/healthz", handleHealthz)
+	if obs.MetricsEnabled {
+		target(obs.MetricsAddress).Handle("/metrics", o.MetricsHandler())
+	}
+	return side
+}
+
+func runOpsServers(servers map[string]*http.ServeMux) {
+	for addr, h := range servers {
+		go runOpsServer(addr, h)
 	}
 }
 
-func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt disabledTools, gc mcpgrafana.GrafanaConfig, tls tlsConfig, hsc httpSecurityConfig, ca callerAuthConfig, obs observability.Config, sessionIdleTimeoutMinutes int, instructionsAppend string) error {
+func runOpsServer(addr string, h http.Handler) {
+	slog.Info("Starting ops server", "address", addr)
+	if err := http.ListenAndServe(addr, h); err != nil {
+		slog.Error("ops server error", "error", err)
+	}
+}
+
+func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt disabledTools, gc mcpgrafana.GrafanaConfig, tls tlsConfig, hsc httpSecurityConfig, ca callerAuthConfig, obs observability.Config, sessionIdleTimeoutMinutes int, healthzAddress, instructionsAppend string) error {
 	stderrHandler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})
 	slog.SetDefault(slog.New(stderrHandler))
 
@@ -921,15 +947,8 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 			mcpgrafana.ValidateGrafanaURLMiddleware(srv), //nolint:staticcheck // Retained temporarily to reject malformed legacy headers.
 			basePath,
 		)))
-		mux.HandleFunc("/healthz", handleHealthz)
-		if obs.MetricsEnabled {
-			if obs.MetricsAddress == "" {
-				mux.Handle("/metrics", o.MetricsHandler())
-			} else {
-				go runMetricsServer(obs.MetricsAddress, o)
-			}
-		}
-		// Wrap the full mux so /healthz and /metrics are validated too.
+		runOpsServers(registerOps(mux, o, healthzAddress, obs))
+		// Wrap the full mux so ops routes left on it are validated too.
 		httpSrv.Handler = mcpgrafana.DNSRebindingProtectionMiddleware(hsc.policy(addr))(mux)
 		slog.Info("Starting Grafana MCP server using SSE transport",
 			"version", mcpgrafana.Version(), "address", addr, "basePath", basePath, "metrics", obs.MetricsEnabled)
@@ -961,15 +980,8 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 			mcpgrafana.ValidateGrafanaURLMiddleware(srv), //nolint:staticcheck // Retained temporarily to reject malformed legacy headers.
 			endpointPath,
 		)))
-		mux.HandleFunc("/healthz", handleHealthz)
-		if obs.MetricsEnabled {
-			if obs.MetricsAddress == "" {
-				mux.Handle("/metrics", o.MetricsHandler())
-			} else {
-				go runMetricsServer(obs.MetricsAddress, o)
-			}
-		}
-		// Wrap the full mux so /healthz and /metrics are validated too.
+		runOpsServers(registerOps(mux, o, healthzAddress, obs))
+		// Wrap the full mux so ops routes left on it are validated too.
 		httpSrv.Handler = mcpgrafana.DNSRebindingProtectionMiddleware(hsc.policy(addr))(mux)
 		slog.Info("Starting Grafana MCP server using StreamableHTTP transport",
 			"version", mcpgrafana.Version(), "address", addr, "endpointPath", endpointPath, "metrics", obs.MetricsEnabled)
@@ -1010,6 +1022,7 @@ func main() {
 	var obs observability.Config
 	flag.BoolVar(&obs.MetricsEnabled, "metrics", false, "Enable Prometheus metrics endpoint")
 	flag.StringVar(&obs.MetricsAddress, "metrics-address", "", "Separate address for metrics server (e.g., :9090). If empty, metrics are served on the main server at /metrics")
+	healthzAddress := flag.String("healthz-address", "", "Separate address for /healthz (e.g., :8080). If empty, /healthz is served on the main HTTP server. A side listener is not wrapped by Host/Origin validation, matching --metrics-address.")
 	flag.DurationVar(&obs.SlowRequestThreshold, "slow-request-threshold", 0, "Log an event when any MCP request (tool invocation, list, resource read, etc.) takes longer than this threshold. Accepts Go duration strings, e.g. 500ms, 5s. Default 0 disables slow-request logging.")
 	var slowRequestLogLevelStr string
 	flag.StringVar(&slowRequestLogLevelStr, "slow-request-log-level", "warn", "Log level for slow-request events. One of \"info\" or \"warn\". Default \"warn\".")
@@ -1127,7 +1140,7 @@ func main() {
 		level = slog.LevelDebug
 	}
 
-	if err := run(transport, *addr, *basePath, *endpointPath, level, dt, grafanaConfig, tls, hsc, ca, obs, *sessionIdleTimeoutMinutes, *instructionsAppend); err != nil {
+	if err := run(transport, *addr, *basePath, *endpointPath, level, dt, grafanaConfig, tls, hsc, ca, obs, *sessionIdleTimeoutMinutes, *healthzAddress, *instructionsAppend); err != nil {
 		panic(err)
 	}
 }

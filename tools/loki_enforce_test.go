@@ -346,3 +346,39 @@ func TestLabelEnumerationSelector(t *testing.T) {
 		assert.Empty(t, q) // unscoped: no query param sent
 	})
 }
+
+func TestLabelEnumerationQuery(t *testing.T) {
+	t.Run("no user matcher falls back to the enforced selector", func(t *testing.T) {
+		ctx := ctxWithEnforced(t, `namespace=~"prod|staging"`)
+		q, err := labelEnumerationQuery(ctx, "  ")
+		require.NoError(t, err)
+		assert.Equal(t, `{namespace=~"prod|staging"}`, q)
+	})
+
+	t.Run("user matcher passes through when enforcement is disabled", func(t *testing.T) {
+		ctx := mcpgrafana.WithGrafanaConfig(context.Background(), mcpgrafana.GrafanaConfig{})
+		q, err := labelEnumerationQuery(ctx, `{app="x"}`)
+		require.NoError(t, err)
+		assert.Equal(t, `{app="x"}`, q)
+	})
+
+	t.Run("user matcher is AND-ed with the enforced matchers", func(t *testing.T) {
+		ctx := ctxWithEnforced(t, `namespace=~"prod|staging"`)
+		q, err := labelEnumerationQuery(ctx, `{app="x"}`)
+		require.NoError(t, err)
+		assert.Equal(t, `{app="x", namespace=~"prod|staging"}`, q)
+	})
+
+	t.Run("negative enforced matchers scope a user matcher without the fallback", func(t *testing.T) {
+		ctx := ctxWithEnforced(t, `namespace!~"vault|payments"`)
+		q, err := labelEnumerationQuery(ctx, `{app="x"}`)
+		require.NoError(t, err)
+		assert.Equal(t, `{app="x", namespace!~"vault|payments"}`, q)
+	})
+
+	t.Run("unparseable user matcher fails closed", func(t *testing.T) {
+		ctx := ctxWithEnforced(t, `namespace=~"prod|staging"`)
+		_, err := labelEnumerationQuery(ctx, `not a selector`)
+		assert.Error(t, err)
+	})
+}
