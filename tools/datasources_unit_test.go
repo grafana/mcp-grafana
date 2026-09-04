@@ -1084,6 +1084,48 @@ func TestCheckDatasourcesHealth_FrontendOnlyPluginReportsUnknownNotUnhealthy(t *
 	assert.Empty(t, alertmanagerResult.Error, "must not surface the health endpoint's error for a plugin that was never asked")
 }
 
+// TestCheckDatasourcesHealth_BackendPluginUnknownStatusCountsAsUnhealthy
+// guards against overloading Status == "UNKNOWN" to mean two different
+// things: a plugin skipped for lacking a backend (issue #1069) versus a
+// backend plugin whose own /health endpoint legitimately reports UNKNOWN
+// (a real, inconclusive-or-failed result). Only the former belongs in the
+// Unknown tally; folding the latter in there would hide a real problem from
+// Unhealthy.
+func TestCheckDatasourcesHealth_BackendPluginUnknownStatusCountsAsUnhealthy(t *testing.T) {
+	list := []*models.DataSourceListItemDTO{
+		{ID: 1, UID: "prom-1", Name: "Prometheus", Type: "prometheus"},
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/api/datasources":
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(list)
+		case r.URL.Path == "/api/frontend/settings":
+			// This plugin has a backend, so it must actually be health-checked.
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"datasources": map[string]any{
+					"Prometheus": map[string]any{
+						"id": 1, "uid": "prom-1", "name": "Prometheus", "type": "prometheus",
+						"meta": map[string]any{"backend": true},
+					},
+				},
+			})
+		default:
+			// The backend plugin's own health endpoint reports UNKNOWN.
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "UNKNOWN", "message": "check not implemented"})
+		}
+	}))
+	defer srv.Close()
+
+	result, err := checkDatasourcesHealth(mockDatasourcesCtx(srv), BulkCheckDatasourceHealthParams{})
+	require.NoError(t, err)
+	assert.Equal(t, 0, result.Healthy)
+	assert.Equal(t, 1, result.Unhealthy, "a backend plugin's own UNKNOWN health result must count as unhealthy, not be hidden in Unknown")
+	assert.Equal(t, 0, result.Unknown, "Unknown is reserved for plugins skipped for lacking a backend")
+}
+
 func TestCheckDatasourcesHealth_FrontendSettingsUnavailableFallsBackToNormalCheck(t *testing.T) {
 	// No frontend/settings handler at all: fetchFrontendSettingsDatasources
 	// fails, and the bulk check must fall back to today's behavior (call the
