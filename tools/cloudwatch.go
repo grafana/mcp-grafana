@@ -294,7 +294,7 @@ func generateCloudWatchEmptyResultHints() []string {
 		"No data found. Possible reasons:",
 		"- Namespace may not exist - use list_cloudwatch_namespaces to discover available namespaces",
 		"- Metric name may be incorrect - use list_cloudwatch_metrics to find valid metrics",
-		"- Dimensions may not match - use list_cloudwatch_dimensions to check valid dimension keys",
+		"- Dimensions may not match - use list_cloudwatch_dimensions to check valid dimension keys, then list_cloudwatch_dimension_values to check valid values",
 		"- Region may be incorrect - check if metrics exist in the specified region",
 		"- Time range may have no data - try extending with start=\"now-6h\"",
 	}
@@ -546,9 +546,76 @@ func listCloudWatchDimensions(ctx context.Context, args ListCloudWatchDimensions
 // ListCloudWatchDimensions is a tool for listing CloudWatch dimension keys
 var ListCloudWatchDimensions = mcpgrafana.MustTool(
 	"list_cloudwatch_dimensions",
-	"List dimension keys for a CloudWatch metric. Requires region. Supports cross-account monitoring via optional accountId parameter. Use after list_cloudwatch_metrics. NEXT: Use query_cloudwatch with discovered dimensions.",
+	"List dimension keys for a CloudWatch metric. Requires region. Supports cross-account monitoring via optional accountId parameter. Use after list_cloudwatch_metrics. NEXT: Use list_cloudwatch_dimension_values to discover valid values for a key\\, then query_cloudwatch.",
 	listCloudWatchDimensions,
 	mcp.WithTitleAnnotation("List CloudWatch dimensions"),
+	mcp.WithIdempotentHintAnnotation(true),
+	mcp.WithReadOnlyHintAnnotation(true),
+	mcp.WithDestructiveHintAnnotation(false),
+	mcp.WithOpenWorldHintAnnotation(false),
+)
+
+// ListCloudWatchDimensionValuesParams defines the parameters for listing
+// CloudWatch dimension values
+type ListCloudWatchDimensionValuesParams struct {
+	DatasourceUID string `json:"datasourceUid" jsonschema:"required,description=The UID of the CloudWatch datasource"`
+	Namespace     string `json:"namespace" jsonschema:"required,description=CloudWatch namespace (e.g. AWS/ECS)"`
+	MetricName    string `json:"metricName" jsonschema:"required,description=Metric name (e.g. CPUUtilization)"`
+	DimensionKey  string `json:"dimensionKey" jsonschema:"required,description=Dimension key to list values for (e.g. ClusterName)\\, as returned by list_cloudwatch_dimensions"`
+	Region        string `json:"region" jsonschema:"required,description=AWS region (e.g. us-east-1)"`
+	AccountId     string `json:"accountId,omitempty" jsonschema:"description=AWS account ID for cross-account monitoring. Specify an account ID to filter dimension values from a specific source account\\, or 'all' for all linked accounts."`
+}
+
+// listCloudWatchDimensionValues lists available values for a CloudWatch dimension key
+func listCloudWatchDimensionValues(ctx context.Context, args ListCloudWatchDimensionValuesParams) ([]string, error) {
+	client, err := newCloudWatchClient(ctx, args.DatasourceUID)
+	if err != nil {
+		return nil, fmt.Errorf("creating CloudWatch client: %w", err)
+	}
+
+	// Build query parameters
+	params := url.Values{}
+	params.Set("namespace", args.Namespace)
+	params.Set("metricName", args.MetricName)
+	params.Set("dimensionKey", args.DimensionKey)
+	if args.Region != "" {
+		params.Set("region", args.Region)
+	}
+	if args.AccountId != "" {
+		params.Set("accountId", args.AccountId)
+	}
+
+	resourceURL := client.baseURL + "/api/datasources/uid/" + args.DatasourceUID + "/resources/dimension-values?" + params.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, resourceURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating request: %w", err)
+	}
+
+	resp, err := client.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("executing request: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return nil, fmt.Errorf("CloudWatch dimension values returned status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	bodyBytes, err := readResponseBody(resp.Body, defaultResponseLimitBytes)
+	if err != nil {
+		return nil, fmt.Errorf("reading response body: %w", err)
+	}
+
+	return parseCloudWatchResourceResponse(bodyBytes)
+}
+
+// ListCloudWatchDimensionValues is a tool for listing CloudWatch dimension values
+var ListCloudWatchDimensionValues = mcpgrafana.MustTool(
+	"list_cloudwatch_dimension_values",
+	"List values for a CloudWatch dimension key (e.g. the specific cluster names behind a ClusterName dimension). Requires region. Supports cross-account monitoring via optional accountId parameter. Use after list_cloudwatch_dimensions to avoid guessing dimension values. NEXT: Use query_cloudwatch with the discovered value.",
+	listCloudWatchDimensionValues,
+	mcp.WithTitleAnnotation("List CloudWatch dimension values"),
 	mcp.WithIdempotentHintAnnotation(true),
 	mcp.WithReadOnlyHintAnnotation(true),
 	mcp.WithDestructiveHintAnnotation(false),
@@ -565,4 +632,5 @@ func AddCloudWatchTools(mcp *server.MCPServer, enableQueryTools bool) {
 	ListCloudWatchNamespaces.Register(mcp)
 	ListCloudWatchMetrics.Register(mcp)
 	ListCloudWatchDimensions.Register(mcp)
+	ListCloudWatchDimensionValues.Register(mcp)
 }

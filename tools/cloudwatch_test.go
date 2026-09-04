@@ -141,6 +141,24 @@ func TestListCloudWatchDimensionsParams_Structure(t *testing.T) {
 	assert.Equal(t, "987654321098", params.AccountId)
 }
 
+func TestListCloudWatchDimensionValuesParams_Structure(t *testing.T) {
+	params := ListCloudWatchDimensionValuesParams{
+		DatasourceUID: "test-uid",
+		Namespace:     "AWS/RDS",
+		MetricName:    "DatabaseConnections",
+		DimensionKey:  "DBInstanceIdentifier",
+		Region:        "ap-southeast-1",
+		AccountId:     "987654321098",
+	}
+
+	assert.Equal(t, "test-uid", params.DatasourceUID)
+	assert.Equal(t, "AWS/RDS", params.Namespace)
+	assert.Equal(t, "DatabaseConnections", params.MetricName)
+	assert.Equal(t, "DBInstanceIdentifier", params.DimensionKey)
+	assert.Equal(t, "ap-southeast-1", params.Region)
+	assert.Equal(t, "987654321098", params.AccountId)
+}
+
 func TestCloudWatchQueryResult_Hints(t *testing.T) {
 	// Test that hints field can be populated
 	result := CloudWatchQueryResult{
@@ -359,11 +377,12 @@ func TestCloudWatchMultiFrameStatistics(t *testing.T) {
 
 func TestCloudWatchURLEncoding(t *testing.T) {
 	tests := []struct {
-		name       string
-		namespace  string
-		metricName string
-		region     string
-		wantParams map[string]string
+		name         string
+		namespace    string
+		metricName   string
+		region       string
+		dimensionKey string
+		wantParams   map[string]string
 	}{
 		{
 			name:       "standard AWS namespace with slash",
@@ -374,6 +393,19 @@ func TestCloudWatchURLEncoding(t *testing.T) {
 				"namespace":  "AWS/EC2",
 				"metricName": "CPUUtilization",
 				"region":     "us-east-1",
+			},
+		},
+		{
+			name:         "dimension key with spaces for dimension-values lookup",
+			namespace:    "Custom Namespace",
+			metricName:   "My Metric",
+			region:       "eu-west-1",
+			dimensionKey: "Instance Name",
+			wantParams: map[string]string{
+				"namespace":    "Custom Namespace",
+				"metricName":   "My Metric",
+				"region":       "eu-west-1",
+				"dimensionKey": "Instance Name",
 			},
 		},
 		{
@@ -408,6 +440,9 @@ func TestCloudWatchURLEncoding(t *testing.T) {
 			params.Set("metricName", tt.metricName)
 			if tt.region != "" {
 				params.Set("region", tt.region)
+			}
+			if tt.dimensionKey != "" {
+				params.Set("dimensionKey", tt.dimensionKey)
 			}
 
 			encoded := params.Encode()
