@@ -851,6 +851,13 @@ func checkDatasourcesHealth(ctx context.Context, args BulkCheckDatasourceHealthP
 	withoutBackend := datasourcesWithoutBackend(ctx)
 
 	results := make([]DatasourceHealthCheckResult, len(targets))
+	// noBackend tracks which results were skipped for lacking a backend
+	// component, distinct from a backend plugin's own health check
+	// legitimately returning a "UNKNOWN" status: both currently surface as
+	// Status == "UNKNOWN", but only the former belongs in the unknown tally
+	// below — folding a real inconclusive/failed backend check into it would
+	// hide it from Unhealthy.
+	noBackend := make([]bool, len(targets))
 	var wg sync.WaitGroup
 	for i, ds := range targets {
 		wg.Add(1)
@@ -861,6 +868,7 @@ func checkDatasourcesHealth(ctx context.Context, args BulkCheckDatasourceHealthP
 				r.Status = "UNKNOWN"
 				r.Message = "This datasource's plugin has no backend component, so it cannot be health-checked."
 				results[i] = r
+				noBackend[i] = true
 				return
 			}
 			health, err := checkDatasourceHealth(ctx, CheckDatasourceHealthParams{UID: ds.UID})
@@ -876,9 +884,9 @@ func checkDatasourcesHealth(ctx context.Context, args BulkCheckDatasourceHealthP
 	wg.Wait()
 
 	healthy, unhealthy, unknown := 0, 0, 0
-	for _, r := range results {
+	for i, r := range results {
 		switch {
-		case r.Status == "UNKNOWN":
+		case noBackend[i]:
 			unknown++
 		case r.Error != "" || r.Status != "OK":
 			unhealthy++
