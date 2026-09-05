@@ -555,7 +555,10 @@ func TestConvertTool(t *testing.T) {
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "marshal args")
 
-		// Test with type mismatch
+		// Test with type mismatch: surfaced as a structured tool error
+		// (IsError: true), not a Go error, so an agent can see what was
+		// wrong and self-correct instead of the call escaping as a raw
+		// JSON-RPC protocol error. See issue #830.
 		mismatchRequest := mcp.CallToolRequest{
 			Params: mcp.CallToolParams{
 				Arguments: map[string]any{
@@ -565,9 +568,13 @@ func TestConvertTool(t *testing.T) {
 			},
 		}
 
-		_, err = handler(context.Background(), mismatchRequest)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "unmarshal args")
+		mismatchResult, err := handler(context.Background(), mismatchRequest)
+		require.NoError(t, err)
+		require.NotNil(t, mismatchResult)
+		assert.True(t, mismatchResult.IsError)
+		mismatchText, ok := mismatchResult.Content[0].(mcp.TextContent)
+		require.True(t, ok)
+		assert.Contains(t, mismatchText.Text, "invalid arguments")
 	})
 }
 
@@ -766,4 +773,34 @@ func TestValidateNoBooleanSchemasAllowsAdditionalPropertiesFalse(t *testing.T) {
 	input := `{"type":"object","properties":{"name":{"type":"string"}},"additionalProperties":false}`
 	err := validateNoBooleanSchemas("test_tool", []byte(input))
 	assert.NoError(t, err)
+}
+
+// TestConvertTool_UnmarshalTypeMismatchReturnsToolErrorNotProtocolError
+// verifies that an argument type mismatch that survives unmarshalWithIntConversion's
+// coercion (e.g. a boolean where an int is declared) surfaces as a structured
+// tool result (IsError: true), the same way an unknown argument does just
+// above it in the handler, rather than escaping as a raw JSON-RPC protocol
+// error via a returned Go error. See issue #830.
+func TestConvertTool_UnmarshalTypeMismatchReturnsToolErrorNotProtocolError(t *testing.T) {
+	_, handler, err := ConvertTool("test_tool", "A test tool", testToolHandler)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	request := mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name: "test_tool",
+			Arguments: map[string]any{
+				"name": "test",
+				// "value" is declared as int; a bool is not one of
+				// unmarshalWithIntConversion's coercions (string -> int,
+				// string -> []string), so this must still fail to unmarshal.
+				"value": true,
+			},
+		},
+	}
+
+	result, err := handler(ctx, request)
+	require.NoError(t, err, "an argument type mismatch must not surface as a JSON-RPC protocol error")
+	require.NotNil(t, result)
+	assert.True(t, result.IsError, "an argument type mismatch must surface as a structured tool error")
 }
