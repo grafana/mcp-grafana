@@ -232,6 +232,7 @@ Queries go through Grafana's Snowflake datasource (Grafana Enterprise plugin `gr
 - **Create Graphite Annotation:** Create annotations using Graphite format (`what`, `when`, `tags`, `data`).
 - **Update Annotation:** Replace all fields of an existing annotation (full update).
 - **Patch Annotation:** Update only specific fields of an annotation (partial update).
+- **Delete Annotation:** Permanently delete an annotation by ID.
 - **Get Annotation Tags:** List available annotation tags with optional filtering.
 
 ### Snapshots
@@ -409,6 +410,7 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `get_annotations`                 | Annotations               | Fetch annotations with filters                                                                               | `annotations:read`                                     | `annotations:*` or `annotations:id:123`             |
 | `create_annotation`               | Annotations               | Create a new annotation (standard or Graphite format)                                                        | `annotations:write`                                    | `annotations:*`                                     |
 | `update_annotation`               | Annotations               | Update specific fields of an annotation (partial update)                                                     | `annotations:write`                                    | `annotations:*`                                     |
+| `delete_annotation`               | Annotations               | Delete an annotation by ID                                                                                   | `annotations:delete`                                    | `annotations:*`                                     |
 | `get_annotation_tags`             | Annotations               | List annotation tags with optional filtering                                                                 | `annotations:read`                                     | `annotations:*`                                     |
 | `list_snapshots`                  | Snapshot                  | List dashboard snapshots with optional query and limit filters                                               | `dashboards:read`                                      | `dashboards:*` or `dashboards:uid:abc123`           |
 | `get_snapshot`                    | Snapshot                  | Get snapshot metadata and dashboard payload by snapshot key                                                  | `dashboards:read`                                      | `dashboards:*` or `dashboards:uid:abc123`           |
@@ -537,6 +539,7 @@ When `--disable-write` is enabled, the following write operations are disabled:
 **Annotation Tools:**
 - `create_annotation`
 - `update_annotation`
+- `delete_annotation`
 
 **Sift Tools:**
 - `find_error_pattern_logs` (creates investigations)
