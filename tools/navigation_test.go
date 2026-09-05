@@ -170,6 +170,32 @@ func TestGenerateDeeplink(t *testing.T) {
 			"a caller-supplied datasource, including its plugin type, must be preserved")
 	})
 
+	t.Run("Explore deeplink replaces a null or empty query datasource", func(t *testing.T) {
+		for name, ds := range map[string]interface{}{"null": nil, "empty": ""} {
+			t.Run(name, func(t *testing.T) {
+				params := GenerateDeeplinkParams{
+					ResourceType:  "explore",
+					DatasourceUID: stringPtr("prometheus-uid"),
+					Queries: []map[string]interface{}{
+						{"refId": "A", "datasource": ds},
+					},
+				}
+
+				result, err := generateDeeplink(ctx, params)
+				require.NoError(t, err)
+				u, err := url.Parse(result)
+				require.NoError(t, err)
+
+				var panes map[string]map[string]any
+				require.NoError(t, json.Unmarshal([]byte(u.Query().Get("panes")), &panes))
+				q := panes["a"]["queries"].([]any)[0].(map[string]any)
+				assert.Equal(t, map[string]any{"uid": "prometheus-uid"}, q["datasource"],
+					"a null or empty datasource must be replaced, not propagated: Grafana would "+
+						"resolve it to the default datasource and show the wrong data")
+			})
+		}
+	})
+
 	t.Run("With time range on dashboard", func(t *testing.T) {
 		params := GenerateDeeplinkParams{
 			ResourceType: "dashboard",

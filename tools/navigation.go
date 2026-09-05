@@ -379,13 +379,6 @@ func buildDashboardTargetURL(baseURL string, dashboardUID *string, preview *Deep
 	return target, nil
 }
 
-// toGrafanaTimeParam converts a time value to a format Grafana understands
-// in URL query parameters. Grafana's Scenes parseUrlParam uses hardcoded
-// string length checks and only recognizes ISO 8601 at exactly 24 chars
-// (with milliseconds, e.g. "2026-04-28T12:45:00.000Z"). Shorter ISO 8601
-// strings like "2026-04-28T12:45:00Z" (20 chars) are silently ignored.
-// This function converts RFC 3339 timestamps to epoch milliseconds, which
-// is universally supported. Relative strings and epoch values pass through.
 // supportsExplorePanes reports whether a Grafana version reads Explore state
 // from `panes`. Grafana 10.2 introduced it alongside schemaVersion; earlier
 // versions ignore both and read `left`.
@@ -458,14 +451,16 @@ func buildExplorePanesParams(args GenerateDeeplinkParams) (url.Values, error) {
 		// Queries carry their own datasource reference in the pane format.
 		// Preserve a caller-supplied one — it may include the plugin type,
 		// which some query editors need to select the right editor mode —
-		// and only fall back to the uid when absent.
+		// and only fall back to the uid when absent, null or empty. A null one
+		// must not be propagated: Grafana would resolve it to the default
+		// datasource and render the wrong data, which is worse than an empty pane.
 		queries := make([]map[string]interface{}, 0, len(args.Queries))
 		for _, q := range args.Queries {
 			enriched := make(map[string]interface{}, len(q)+1)
 			for k, v := range q {
 				enriched[k] = v
 			}
-			if _, ok := enriched["datasource"]; !ok {
+			if v, ok := enriched["datasource"]; !ok || v == nil || v == "" {
 				enriched["datasource"] = map[string]string{"uid": *args.DatasourceUID}
 			}
 			queries = append(queries, enriched)
@@ -527,6 +522,13 @@ func exploreTimeRange(tr *TimeRange) map[string]string {
 	return rangeObj
 }
 
+// toGrafanaTimeParam converts a time value to a format Grafana understands
+// in URL query parameters. Grafana's Scenes parseUrlParam uses hardcoded
+// string length checks and only recognizes ISO 8601 at exactly 24 chars
+// (with milliseconds, e.g. "2026-04-28T12:45:00.000Z"). Shorter ISO 8601
+// strings like "2026-04-28T12:45:00Z" (20 chars) are silently ignored.
+// This function converts RFC 3339 timestamps to epoch milliseconds, which
+// is universally supported. Relative strings and epoch values pass through.
 func toGrafanaTimeParam(value string) string {
 	if _, err := strconv.ParseInt(value, 10, 64); err == nil {
 		return value
