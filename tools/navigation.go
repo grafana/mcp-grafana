@@ -40,6 +40,18 @@ type DeeplinkProvisioningPreview struct {
 	PullRequestURL string `json:"pullRequestUrl,omitempty" jsonschema:"description=Upstream pull request URL to surface in Grafana's preview banner."`
 }
 
+const (
+	// exploreSchemaVersion is the Explore URL state schema used by Grafana 10.2+.
+	exploreSchemaVersion = "1"
+	// explorePaneID keys the single pane this tool generates. Grafana uses
+	// short random ids in the UI; any stable key works for a one-pane link.
+	explorePaneID = "a"
+	// explorePanesMinMajor and explorePanesMinMinor are the first Grafana
+	// version that reads Explore state from `panes`.
+	explorePanesMinMajor = 10
+	explorePanesMinMinor = 2
+)
+
 type TimeRange struct {
 	From string `json:"from" jsonschema:"description=Start time (e.g.\\, 'now-1h')"`
 	To   string `json:"to" jsonschema:"description=End time (e.g.\\, 'now')"`
@@ -105,38 +117,20 @@ func generateDeeplinkWithMode(ctx context.Context, args GenerateDeeplinkParams, 
 			return "", fmt.Errorf("datasourceUid is required for explore links")
 		}
 
-		// Build the full explore state inside `left` — Grafana Explore reads
-		// datasource, queries, and range all from this single JSON object.
-		exploreState := map[string]interface{}{
-			"datasource": *args.DatasourceUID,
+		// Grafana 10.2+ reads Explore state from `panes`; older versions
+		// ignore it and read `left`.
+		buildParams := buildExploreLeftParams
+		if supportsExplorePanes(mcpgrafana.GrafanaVersion(ctx)) {
+			buildParams = buildExplorePanesParams
 		}
-		if len(args.Queries) > 0 {
-			exploreState["queries"] = args.Queries
-		}
-		if args.TimeRange != nil {
-			rangeObj := map[string]string{}
-			if args.TimeRange.From != "" {
-				rangeObj["from"] = toGrafanaTimeParam(args.TimeRange.From)
-			}
-			if args.TimeRange.To != "" {
-				rangeObj["to"] = toGrafanaTimeParam(args.TimeRange.To)
-			}
-			if len(rangeObj) > 0 {
-				exploreState["range"] = rangeObj
-			}
-		}
-
-		leftJSON, err := json.Marshal(exploreState)
+		params, err := buildParams(args)
 		if err != nil {
-			return "", fmt.Errorf("failed to marshal explore state: %w", err)
+			return "", err
 		}
-
-		params := url.Values{}
-		params.Set("left", string(leftJSON))
 		deeplink = fmt.Sprintf("%s/explore?%s", baseURL, params.Encode())
 
-		// For explore, time range is already embedded in `left` — skip the
-		// generic time range block below by clearing it.
+		// For explore, the time range is embedded in the state object — skip
+		// the generic time range block below by clearing it.
 		args.TimeRange = nil
 
 	default:
@@ -383,6 +377,149 @@ func buildDashboardTargetURL(baseURL string, dashboardUID *string, preview *Deep
 		target += "?" + q.Encode()
 	}
 	return target, nil
+}
+
+// supportsExplorePanes reports whether a Grafana version reads Explore state
+// from `panes`. Grafana 10.2 introduced it alongside schemaVersion; earlier
+// versions ignore both and read `left`.
+//
+// An empty or unparseable version means unknown. mcpgrafana.GrafanaVersion
+// fails soft, so an unreadable settings endpoint is indistinguishable from an
+// ancient Grafana; unknown is treated as 10.2+ so that instances which cannot
+// report their version keep the format the overwhelming majority of them
+// understand.
+func supportsExplorePanes(version string) bool {
+	major, minor, ok := parseMajorMinor(version)
+	if !ok {
+		return true
+	}
+	if major != explorePanesMinMajor {
+		return major > explorePanesMinMajor
+	}
+	return minor >= explorePanesMinMinor
+}
+
+// parseMajorMinor extracts the major and minor numbers from a Grafana version
+// such as "10.2.3" or "11.0.0-64123pre". A missing minor reads as zero; a
+// pre-release or build suffix on either component is ignored.
+func parseMajorMinor(version string) (int, int, bool) {
+	parts := strings.SplitN(strings.TrimPrefix(strings.TrimSpace(version), "v"), ".", 3)
+	major, ok := leadingInt(parts[0])
+	if !ok {
+		return 0, 0, false
+	}
+	if len(parts) < 2 {
+		return major, 0, true
+	}
+	minor, ok := leadingInt(parts[1])
+	if !ok {
+		return 0, 0, false
+	}
+	return major, minor, true
+}
+
+// leadingInt parses the digits at the start of s, ignoring any suffix. It
+// reports false when s does not start with a digit.
+func leadingInt(s string) (int, bool) {
+	end := 0
+	for end < len(s) && s[end] >= '0' && s[end] <= '9' {
+		end++
+	}
+	if end == 0 {
+		return 0, false
+	}
+	n, err := strconv.Atoi(s[:end])
+	if err != nil {
+		return 0, false
+	}
+	return n, true
+}
+
+// buildExplorePanesParams builds Explore URL state in the `panes` format read
+// by Grafana 10.2+.
+//
+// Links built with `left` are migrated on load, and that migration is lossy
+// for datasource-specific query models: a Cloud Monitoring PromQL query goes
+// in as queryType "promQL" with a sibling promQLQuery, and comes back as an
+// empty Builder query with promQLQuery nested inside timeSeriesList, so the
+// pane renders nothing.
+func buildExplorePanesParams(args GenerateDeeplinkParams) (url.Values, error) {
+	pane := map[string]interface{}{
+		"datasource": *args.DatasourceUID,
+	}
+	if len(args.Queries) > 0 {
+		// Queries carry their own datasource reference in the pane format.
+		// Preserve a caller-supplied one — it may include the plugin type,
+		// which some query editors need to select the right editor mode —
+		// and only fall back to the uid when absent, null or empty. A null one
+		// must not be propagated: Grafana would resolve it to the default
+		// datasource and render the wrong data, which is worse than an empty pane.
+		queries := make([]map[string]interface{}, 0, len(args.Queries))
+		for _, q := range args.Queries {
+			enriched := make(map[string]interface{}, len(q)+1)
+			for k, v := range q {
+				enriched[k] = v
+			}
+			if v, ok := enriched["datasource"]; !ok || v == nil || v == "" {
+				enriched["datasource"] = map[string]string{"uid": *args.DatasourceUID}
+			}
+			queries = append(queries, enriched)
+		}
+		pane["queries"] = queries
+	}
+	if timeRange := exploreTimeRange(args.TimeRange); timeRange != nil {
+		pane["range"] = timeRange
+	}
+
+	panesJSON, err := json.Marshal(map[string]interface{}{explorePaneID: pane})
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal explore panes: %w", err)
+	}
+
+	params := url.Values{}
+	params.Set("schemaVersion", exploreSchemaVersion)
+	params.Set("panes", string(panesJSON))
+	return params, nil
+}
+
+// buildExploreLeftParams builds Explore URL state in the pre-10.2 `left`
+// format, where datasource, queries, and range share a single JSON object.
+func buildExploreLeftParams(args GenerateDeeplinkParams) (url.Values, error) {
+	exploreState := map[string]interface{}{
+		"datasource": *args.DatasourceUID,
+	}
+	if len(args.Queries) > 0 {
+		exploreState["queries"] = args.Queries
+	}
+	if timeRange := exploreTimeRange(args.TimeRange); timeRange != nil {
+		exploreState["range"] = timeRange
+	}
+
+	leftJSON, err := json.Marshal(exploreState)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal explore state: %w", err)
+	}
+
+	params := url.Values{}
+	params.Set("left", string(leftJSON))
+	return params, nil
+}
+
+func exploreTimeRange(tr *TimeRange) map[string]string {
+	if tr == nil {
+		return nil
+	}
+	rangeObj := map[string]string{}
+	if tr.From != "" {
+		rangeObj["from"] = toGrafanaTimeParam(tr.From)
+	}
+	if tr.To != "" {
+		rangeObj["to"] = toGrafanaTimeParam(tr.To)
+	}
+	if len(rangeObj) == 0 {
+		return nil
+	}
+	return rangeObj
 }
 
 // toGrafanaTimeParam converts a time value to a format Grafana understands
