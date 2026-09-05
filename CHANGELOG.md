@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Optional `matcher` parameter on `list_loki_label_names` and `list_loki_label_values` to narrow label discovery to a subset of streams (a LogQL stream selector on Loki, LogsQL on VictoriaLogs) ([#382](https://github.com/grafana/mcp-grafana/issues/382))
+- `delete_annotation` tool (write-gated) to permanently delete a Grafana annotation by ID, completing the annotation CRUD surface — the API was already wired up in the client but never exposed ([#1134](https://github.com/grafana/mcp-grafana/pull/1134))
 
 ## [1.3.0] - 2026-08-28
 

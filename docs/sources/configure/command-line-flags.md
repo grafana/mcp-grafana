@@ -196,6 +196,7 @@ When enabled, the following writes are disabled:
 
 - `create_annotation`
 - `update_annotation`
+- `delete_annotation`
 
 **Sift tools**
 
