@@ -82,7 +82,7 @@ When caller authentication is enabled, the `Authorization` header is reserved fo
 
   `search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering,snapshot,docs`
 
-  Categories **not** in that default string are off until you add them, including: `admin`, `agento11y`, `assistant`, `elasticsearch`, `cloudwatch`, `examples`, `clickhouse`, `snowflake`, `influxdb`, `quickwit`, and `runpanelquery`. Pass a full comma-separated list to replace the default entirely, or use `--disable-*` flags to turn off pieces of the default set.
+  Categories **not** in that default string are off until you add them, including: `admin`, `agento11y`, `assistant`, `elasticsearch`, `cloudwatch`, `examples`, `sql`, `influxdb`, `quickwit`, and `runpanelquery`. Pass a full comma-separated list to replace the default entirely, or use `--disable-*` flags to turn off pieces of the default set. Back-compat aliases `clickhouse`, `snowflake`, and `athena` are accepted and map to `sql`.
 
 - `--disable-search`: Disable search tools.
 - `--disable-datasource`: Disable datasource tools.
@@ -108,8 +108,7 @@ When caller authentication is enabled, the `Authorization` header is reserved fo
 - `--disable-snapshot`: Disable snapshot tools.
 - `--disable-cloudwatch`: Disable CloudWatch tools.
 - `--disable-examples`: Disable query examples tools.
-- `--disable-clickhouse`: Disable ClickHouse tools.
-- `--disable-snowflake`: Disable Snowflake tools.
+- `--disable-sql`: Disable SQL datasource tools (ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, MSSQL). Aliases `--disable-clickhouse`, `--disable-snowflake`, `--disable-athena` also work.
 - `--disable-runpanelquery`: Disable run panel query tools.
 - `--disable-annotations`: Disable annotation tools.
 - `--disable-proxied`: Disable proxied tools (tools from external MCP servers).
@@ -140,19 +139,19 @@ The following tools are not registered when the flag is set:
 - Prometheus: `query_prometheus`, `query_prometheus_histogram`
 - Loki: `query_loki_logs`, `query_loki_patterns` (`query_loki_stats` and `analyze_loki_labels` read the index rather than returning log content, so they stay registered)
 - Elasticsearch and OpenSearch, Quickwit: `query_elasticsearch`, `query_quickwit`
-- SQL datasources: `query_clickhouse`, `query_snowflake`, `query_athena`, `query_influxdb`
+- SQL datasources: `query_sql`, `query_influxdb`
 - Graphite: `query_graphite`, `query_graphite_density`
 - CloudWatch: `query_cloudwatch`
 - Pyroscope: `query_pyroscope`
 - Panels: `run_panel_query`
 
-The `elasticsearch`, `quickwit`, `influxdb`, and `runpanelquery` categories contain nothing else, so they expose no tools at all when queries are disabled. Sibling tools such as `list_prometheus_metric_names`, `list_loki_label_values`, `describe_clickhouse_table`, and `list_cloudwatch_metrics` remain available.
+The `elasticsearch`, `quickwit`, `influxdb`, and `runpanelquery` categories contain nothing else, so they expose no tools at all when queries are disabled. Sibling tools such as `list_prometheus_metric_names`, `list_loki_label_values`, `describe_sql_table`, and `list_cloudwatch_metrics` remain available.
 
 The flag gates the query tools and the `grafana_api_request` POST-to-`/api/ds/query` path, but doesn't police every route to a datasource. In read-only mode, `grafana_api_request` allows POST to `/api/ds/query` only when query tools are enabled (same gate as the raw-SQL tools — blocked by `--disable-write` unless `--enable-query` overrides). `get_panel_image`, which renders a panel server-side, is unaffected.
 
 ### Query execution and read-only mode
 
-The raw-SQL query tools — `query_clickhouse`, `query_snowflake`, `query_athena`, and `query_influxdb` — send the query to the datasource unfiltered, so they write whenever the datasource credentials permit it. Read-only mode removes them along with the other write tools.
+The raw-SQL query tools — `query_sql` and `query_influxdb` — send the query to the datasource unfiltered, so they write whenever the datasource credentials permit it. Read-only mode removes them along with the other write tools.
 
 `--enable-query` puts them back. Use it when the datasource credentials are known to be read-only and you want query execution in an otherwise read-only server. It doesn't re-enable any other write tool, and it has no effect alongside `--disable-query`, which always wins.
 

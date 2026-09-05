@@ -92,13 +92,16 @@ The dashboard tools now include several strategies to manage context window usag
 
 - **Query InfluxDB:** Execute queries against InfluxDB datasources using either InfluxQL (v1.x) or Flux (v2.x). The dialect is inferred from the datasource configuration, or can be set explicitly via the `dialect` parameter.
 
-### ClickHouse Querying
+### SQL Datasource Querying
 
-> **Note:** ClickHouse tools are **disabled by default**. To enable them, add `clickhouse` to your `--enabled-tools` flag.
+> **Note:** SQL tools are **disabled by default**. To enable them, add `sql` to your `--enabled-tools` flag. Back-compat aliases `clickhouse`, `snowflake`, and `athena` also work.
 
-- **List ClickHouse tables:** List all tables in a ClickHouse database with row counts and sizes.
-- **Describe table schema:** Get column names, types, and metadata for a ClickHouse table.
-- **Query ClickHouse:** Execute SQL queries with Grafana macro and variable substitution support.
+Unified SQL tools support **ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, and MSSQL** through a single set of tools. Queries go through Grafana's datasource plugins, so authentication is handled by datasource configuration — credentials are never seen by the MCP server.
+
+- **List databases/schemas/catalogs:** Discover organizational units for a SQL datasource. For Athena, omit catalog to list catalogs, or pass a catalog to list databases.
+- **List tables:** List tables in a database or schema with metadata (row counts, sizes where available).
+- **Describe table schema:** Get column names, types, nullability, defaults, and comments.
+- **Query SQL:** Execute SQL queries with datasource-specific macro substitution (`$__timeFilter(col)`, `$__from/$__to`, `$__interval`, `${varname}`), automatic limit enforcement, and template variable support.
 
 ### CloudWatch Querying
 
@@ -117,27 +120,6 @@ The dashboard tools now include several strategies to manage context window usag
 - **List Graphite metrics:** Browse and discover Graphite metric paths.
 - **List Graphite tags:** List available Graphite tags and tag values.
 - **Query Graphite density:** Query Graphite metric density for a given pattern.
-
-### Athena Querying
-
-> **Note:** Athena tools are **disabled by default**. To enable them, add `athena` to your `--enabled-tools` flag.
-
-- **List Athena catalogs:** Discover available data catalogs (e.g. AwsDataCatalog, Iceberg connectors).
-- **List Athena databases:** List databases in an Athena catalog.
-- **List Athena tables:** List tables in an Athena database.
-- **Describe Athena table:** Get column names for an Athena table.
-- **Query Athena:** Execute SQL queries against Amazon Athena via Grafana with macro substitution, limit enforcement, and template variable support.
-
-### Snowflake Querying
-
-> **Note:** Snowflake tools are **disabled by default**. To enable them, add `snowflake` to your `--enabled-tools` flag.
-
-Queries go through Grafana's Snowflake datasource (Grafana Enterprise plugin `grafana-snowflake-datasource`), so authentication is handled by the datasource configuration in Grafana — credentials are never seen by the MCP server. This is the same model used for the ClickHouse tools.
-
-- **List Snowflake tables:** Discover tables (with database, schema, kind, row count, and size) via `INFORMATION_SCHEMA.TABLES`. Optional database/schema filters.
-- **Describe table schema:** Get column names, data types, nullability, defaults, and comments for a Snowflake table.
-- **Query Snowflake:** Execute SQL queries with macro and variable substitution support. Useful for querying Snowflake's event tables (e.g. `SNOWFLAKE.TELEMETRY.EVENTS`) for logs and traces, or any user table.
-  - Supported macros: `$__timeFilter(column)`, `$__timeFrom`, `$__timeTo`, `$__from`, `$__to` (Unix ms), `$__interval` (seconds), `$__interval_ms`, and `${varname}` for template variable substitution.
 
 ### Elasticsearch/OpenSearch Querying
 
@@ -359,23 +341,16 @@ Scopes define the specific resources that permissions apply to. Each action requ
 | `analyze_loki_labels`             | Loki                      | Audit a Loki label strategy (live or static) and optionally diagnose query performance                       | `datasources:query`                                    | `datasources:uid:loki-uid`                          |
 | `suggest_loki_alloy_label_config` | Config                    | Generate an Alloy `loki.process` snippet enforcing approved labels                                           | N/A                                                    | N/A                                                 |
 | `query_influxdb`                  | InfluxDB                  | Query InfluxDB using InfluxQL (v1) or Flux (v2)                                                              | `datasources:query`                                    | `datasources:uid:influxdb-uid`                      |
-| `list_clickhouse_tables`          | ClickHouse*               | List tables in a ClickHouse database                                                                         | `datasources:query`                                    | `datasources:uid:*`                                 |
-| `describe_clickhouse_table`       | ClickHouse*               | Get table schema with column types                                                                           | `datasources:query`                                    | `datasources:uid:*`                                 |
-| `query_clickhouse`                | ClickHouse*               | Execute SQL queries with macro substitution                                                                  | `datasources:query`                                    | `datasources:uid:*`                                 |
+| `list_sql_databases`              | SQL*                      | List databases, schemas, or catalogs from a SQL datasource                                                   | `datasources:query`                                    | `datasources:uid:*`                                 |
+| `list_sql_tables`                 | SQL*                      | List tables in a SQL datasource                                                                              | `datasources:query`                                    | `datasources:uid:*`                                 |
+| `describe_sql_table`              | SQL*                      | Get column schema for a table                                                                                | `datasources:query`                                    | `datasources:uid:*`                                 |
+| `query_sql`                       | SQL*                      | Execute SQL queries with macro substitution                                                                  | `datasources:query`                                    | `datasources:uid:*`                                 |
 | `list_cloudwatch_namespaces`      | CloudWatch*               | List available AWS CloudWatch namespaces                                                                     | `datasources:query`                                    | `datasources:uid:*`                                 |
 | `list_cloudwatch_metrics`         | CloudWatch*               | List metrics in a namespace                                                                                  | `datasources:query`                                    | `datasources:uid:*`                                 |
 | `list_cloudwatch_dimensions`      | CloudWatch*               | List dimensions for a metric                                                                                 | `datasources:query`                                    | `datasources:uid:*`                                 |
 | `query_cloudwatch`                | CloudWatch*               | Execute CloudWatch metric queries                                                                            | `datasources:query`                                    | `datasources:uid:*`                                 |
-| `list_athena_catalogs`            | Athena*                   | List available Athena data catalogs                                                                          | `datasources:query`                                    | `datasources:uid:*`                                 |
-| `list_athena_databases`           | Athena*                   | List databases in an Athena catalog                                                                          | `datasources:query`                                    | `datasources:uid:*`                                 |
-| `list_athena_tables`              | Athena*                   | List tables in an Athena database                                                                            | `datasources:query`                                    | `datasources:uid:*`                                 |
-| `describe_athena_table`           | Athena*                   | Get column names for an Athena table                                                                         | `datasources:query`                                    | `datasources:uid:*`                                 |
-| `query_athena`                    | Athena*                   | Execute SQL queries with macro substitution                                                                  | `datasources:query`                                    | `datasources:uid:*`                                 |
 | `query_elasticsearch`             | Elasticsearch/OpenSearch* | Query Elasticsearch or OpenSearch using Lucene syntax or Query DSL                                           | `datasources:query`                                    | `datasources:uid:datasource-uid`                    |
 | `query_quickwit`                  | Quickwit*                 | Query Quickwit using Lucene syntax or Query DSL                                                              | `datasources:query`                                    | `datasources:uid:quickwit-uid`                      |
-| `list_snowflake_tables`           | Snowflake*                | List tables in a Snowflake database/schema via INFORMATION_SCHEMA                                            | `datasources:query`                                    | `datasources:uid:*`                                 |
-| `describe_snowflake_table`        | Snowflake*                | Get table schema (column types, nullability, defaults, comments)                                             | `datasources:query`                                    | `datasources:uid:*`                                 |
-| `query_snowflake`                 | Snowflake*                | Execute SQL queries with macro/variable substitution                                                         | `datasources:query`                                    | `datasources:uid:*`                                 |
 | `alerting_manage_rules`           | Alerting                  | Manage alert rules (list, get, versions, create, update, delete)                                             | `alert.rules:read` + `alert.rules:write` for mutations | `folders:*` or `folders:uid:alerts-folder`          |
 | `alerting_manage_routing`         | Alerting                  | Manage notification policies, contact points, and time intervals                                             | `alert.notifications:read`                             | Global scope                                        |
 | `alerting_manage_silences`        | Alerting                  | Manage alerting silences (list, get, create, update, expire)                                                 | `alert.instances:read` + `alert.instances:write` for mutations | Global scope                                        |
@@ -480,7 +455,7 @@ Caller authentication is enforced only when `--server-auth-token` is set. When i
 - `--disable-prometheus`: Disable prometheus tools
 - `--disable-write`: Disable write tools (create/update operations)
 - `--disable-query`: Disable query tools (tools that execute a query against a datasource); metadata and discovery tools stay available
-- `--enable-query`: Keep the raw-SQL query tools (`query_clickhouse`, `query_snowflake`, `query_athena`, `query_influxdb`) registered even under `--disable-write`
+- `--enable-query`: Keep the raw-SQL query tools (`query_sql`, `query_influxdb`) registered even under `--disable-write`
 - `--disable-loki`: Disable loki tools
 - `--disable-elasticsearch`: Disable elasticsearch and opensearch tools
 - `--disable-quickwit`: Disable quickwit tools
@@ -497,11 +472,9 @@ Caller authentication is enforced only when `--server-auth-token` is set. When i
 - `--disable-snapshot`: Disable snapshot tools
 - `--disable-cloudwatch`: Disable CloudWatch tools
 - `--disable-examples`: Disable query examples tools
-- `--disable-clickhouse`: Disable ClickHouse tools
-- `--disable-snowflake`: Disable Snowflake tools
+- `--disable-sql`: Disable SQL datasource tools (ClickHouse, Snowflake, Athena, MySQL, PostgreSQL, MSSQL). Aliases `--disable-clickhouse`, `--disable-snowflake`, `--disable-athena` also work.
 - `--disable-runpanelquery`: Disable run panel query tools
 - `--disable-graphite`: Disable Graphite tools
-- `--disable-athena`: Disable Athena tools
 - `--disable-provisioning`: Disable provisioning tools
 - `--disable-agento11y`: Disable Agent Observability tools
 - `--disable-assistant`: Disable Grafana Assistant tools
@@ -551,11 +524,9 @@ When `--disable-write` is enabled, the following write operations are disabled:
 
 **Raw-SQL Query Tools:**
 
-These execute whatever query you give them without inspecting it, so they can write when the datasource credentials permit it — `query_clickhouse` will run a `DROP TABLE`, `query_influxdb` will run a `DELETE`. Read-only mode therefore removes them. Pass `--enable-query` to keep them when the datasource credentials are known to be read-only.
+These execute whatever query you give them without inspecting it, so they can write when the datasource credentials permit it — `query_sql` will run a `DROP TABLE`, `query_influxdb` will run a `DELETE`. Read-only mode therefore removes them. Pass `--enable-query` to keep them when the datasource credentials are known to be read-only.
 
-- `query_clickhouse`
-- `query_snowflake`
-- `query_athena`
+- `query_sql`
 - `query_influxdb`
 
 **Agent Observability Tools:**
@@ -573,7 +544,7 @@ The `--disable-query` flag removes every tool that executes a query against a da
 
 It is the strongest of the three query settings, and it wins over `--enable-query`:
 
-| Flags | Safe query tools (`query_prometheus`, `query_loki_logs`, `run_panel_query`, …) | Raw-SQL query tools (`query_clickhouse`, `query_snowflake`, `query_athena`, `query_influxdb`) |
+| Flags | Safe query tools (`query_prometheus`, `query_loki_logs`, `run_panel_query`, …) | Raw-SQL query tools (`query_sql`, `query_influxdb`) |
 | --- | --- | --- |
 | _(none)_ | registered | registered |
 | `--disable-write` | registered | **not registered** |
@@ -601,9 +572,7 @@ When `--disable-query` is enabled, the following tools are not registered:
 - `query_influxdb`
 
 **SQL Datasource Tools** (also removed by `--disable-write`, see above)**:**
-- `query_clickhouse`
-- `query_snowflake`
-- `query_athena`
+- `query_sql`
 
 **Graphite Tools:**
 - `query_graphite`
@@ -618,7 +587,7 @@ When `--disable-query` is enabled, the following tools are not registered:
 **Run Panel Query Tools:**
 - `run_panel_query`
 
-The `elasticsearch`, `quickwit`, `influxdb`, and `runpanelquery` categories contain nothing else, so they register no tools at all when queries are disabled. The sibling tools in every other category — `list_prometheus_metric_names`, `list_loki_label_values`, `describe_clickhouse_table`, `list_cloudwatch_metrics`, and so on — remain available.
+The `elasticsearch`, `quickwit`, `influxdb`, and `runpanelquery` categories contain nothing else, so they register no tools at all when queries are disabled. The sibling tools in every other category — `list_prometheus_metric_names`, `list_loki_label_values`, `describe_sql_table`, `list_cloudwatch_metrics`, and so on — remain available.
 
 Note that `--disable-query` gates the query tools and the `grafana_api_request` POST-to-`/api/ds/query` path, but does not police every route to a datasource. In read-only mode, `grafana_api_request` allows POST to `/api/ds/query` only when query tools are enabled (same gate as the raw-SQL tools — blocked by `--disable-write` unless `--enable-query` overrides). `get_panel_image`, which renders a panel server-side, is unaffected.
 

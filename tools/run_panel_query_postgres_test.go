@@ -12,6 +12,7 @@ import (
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
 	"github.com/grafana/grafana-plugin-sdk-go/data"
 	mcpgrafana "github.com/grafana/mcp-grafana"
+	"github.com/grafana/mcp-grafana/tools/sql"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -133,9 +134,9 @@ func TestRunSinglePanelQuery_PostgresDispatch(t *testing.T) {
 			assert.Equal(t, tt.dsType, result.DatasourceType)
 			assert.Equal(t, "postgres-uid", result.DatasourceUID)
 
-			// Result parsing: frames became a tabular SQLQueryResult.
-			sqlResult, ok := result.Results.(*SQLQueryResult)
-			require.True(t, ok, "expected *SQLQueryResult, got %T", result.Results)
+			// Result parsing: frames became a tabular sql.SQLQueryResult.
+			sqlResult, ok := result.Results.(*sql.SQLQueryResult)
+			require.True(t, ok, "expected *sql.SQLQueryResult, got %T", result.Results)
 			assert.Equal(t, []string{"region", "count"}, sqlResult.Columns)
 			require.Len(t, sqlResult.Rows, 2)
 			assert.Equal(t, "us", sqlResult.Rows[0]["region"])
@@ -193,7 +194,7 @@ func postgresSQLStringPanelDashboard(currentValue interface{}, includeVariable b
 				"type":  "table",
 				"datasource": map[string]interface{}{
 					"uid":  "postgres-uid",
-					"type": PostgresDatasourceType,
+					"type": sql.PostgresDatasourceType,
 				},
 				"targets": []interface{}{
 					map[string]interface{}{
@@ -286,13 +287,13 @@ func TestRunSinglePanelQuery_PostgresSQLStringVariable(t *testing.T) {
 			})
 			require.NoError(t, err)
 
-			sqlResult, ok := result.Results.(*SQLQueryResult)
-			require.True(t, ok, "expected *SQLQueryResult, got %T", result.Results)
+			sqlResult, ok := result.Results.(*sql.SQLQueryResult)
+			require.True(t, ok, "expected *sql.SQLQueryResult, got %T", result.Results)
 			assert.Equal(t, tt.wantQuery, sqlResult.ProcessedQuery)
 			assert.Equal(t, tt.wantQuery, captured.query["rawSql"])
 			assert.Equal(t, tt.wantField, captured.query["preservedField"])
 			assert.Equal(t, true, captured.query["rawQuery"])
-			assert.Equal(t, PostgresDatasourceType, captured.query["datasource"].(map[string]interface{})["type"])
+			assert.Equal(t, sql.PostgresDatasourceType, captured.query["datasource"].(map[string]interface{})["type"])
 		})
 	}
 }
@@ -303,8 +304,8 @@ func TestRunSinglePanelQuery_SQLDatasourceRegression(t *testing.T) {
 		dsType     string
 		wantFormat interface{}
 	}{
-		{name: "BigQuery", dsType: BigQueryDatasourceType, wantFormat: SQLFormatTable},
-		{name: "MSSQL", dsType: MSSQLDatasourceType, wantFormat: MSSQLFormatTable},
+		{name: "BigQuery", dsType: sql.BigQueryDatasourceType, wantFormat: SQLFormatTable},
+		{name: "MSSQL", dsType: sql.MSSQLDatasourceType, wantFormat: MSSQLFormatTable},
 	}
 
 	for _, tt := range tests {
@@ -324,13 +325,13 @@ func TestRunSinglePanelQuery_SQLDatasourceRegression(t *testing.T) {
 			})
 			require.NoError(t, err)
 
-			sqlResult, ok := result.Results.(*SQLQueryResult)
-			require.True(t, ok, "expected *SQLQueryResult, got %T", result.Results)
+			sqlResult, ok := result.Results.(*sql.SQLQueryResult)
+			require.True(t, ok, "expected *sql.SQLQueryResult, got %T", result.Results)
 			assert.Contains(t, sqlResult.ProcessedQuery, "public.checks")
 			assert.Contains(t, sqlResult.ProcessedQuery, "$__timeFilter(ts)")
 			assert.NotContains(t, sqlResult.ProcessedQuery, "$__interval")
 			wantFormat := tt.wantFormat
-			if tt.dsType == BigQueryDatasourceType {
+			if tt.dsType == sql.BigQueryDatasourceType {
 				wantFormat = float64(SQLFormatTable)
 			}
 			assert.Equal(t, wantFormat, captured.query["format"])
@@ -359,7 +360,7 @@ func TestRunSinglePanelQuery_PostgresEmptyResultHints(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	sqlResult, ok := result.Results.(*SQLQueryResult)
+	sqlResult, ok := result.Results.(*sql.SQLQueryResult)
 	require.True(t, ok)
 	assert.Empty(t, sqlResult.Rows)
 

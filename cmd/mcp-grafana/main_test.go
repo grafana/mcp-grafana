@@ -190,12 +190,12 @@ func TestBuildInstructions_ReflectsEnabledCategories(t *testing.T) {
 		},
 		{
 			name:         "partially gated categories describe what remains when query disabled",
-			enabledTools: "prometheus,loki,clickhouse",
+			enabledTools: "prometheus,loki,sql",
 			disableFlags: map[string]bool{"query": true},
 			wantContains: []string{
 				"Prometheus: Retrieve metric metadata",
 				"Loki: Retrieve log metadata",
-				"ClickHouse: List tables and describe table schemas",
+				"SQL: List tables and describe table schemas",
 				"Query execution is disabled.",
 			},
 			wantNotContains: []string{
@@ -205,11 +205,10 @@ func TestBuildInstructions_ReflectsEnabledCategories(t *testing.T) {
 		},
 		{
 			name:         "raw-SQL categories reflect read-only mode",
-			enabledTools: "clickhouse,influxdb,athena",
+			enabledTools: "sql,influxdb",
 			disableFlags: map[string]bool{"write": true},
 			wantContains: []string{
-				"ClickHouse: List tables and describe table schemas",
-				"Athena: Discover catalogs, databases, tables",
+				"SQL: List tables and describe table schemas",
 				"Query execution is disabled.",
 			},
 			wantNotContains: []string{
@@ -218,12 +217,11 @@ func TestBuildInstructions_ReflectsEnabledCategories(t *testing.T) {
 		},
 		{
 			name:         "raw-SQL categories restored by enable-query",
-			enabledTools: "clickhouse,influxdb,athena",
+			enabledTools: "sql,influxdb",
 			disableFlags: map[string]bool{"write": true, "enableQuery": true},
 			wantContains: []string{
-				"ClickHouse: Query ClickHouse datasources",
+				"SQL: Query supported SQL datasources",
 				"InfluxDB:",
-				"Athena: Query Amazon Athena datasources",
 			},
 			wantNotContains: []string{
 				"Query execution is disabled.",
@@ -300,6 +298,82 @@ func TestBuildInstructions_TimestampNote(t *testing.T) {
 	dt := disabledTools{enabledTools: "search"}
 	instructions := dt.buildInstructions()
 	assert.Contains(t, instructions, "Timestamp parameters without a timezone offset are interpreted as UTC")
+}
+
+func TestNormalizeEnabledTools(t *testing.T) {
+	tests := []struct {
+		name         string
+		enabledTools string
+		disableSQL   bool
+		wantTools    string
+		wantDisabled bool
+	}{
+		{
+			name:         "clickhouse alias becomes sql",
+			enabledTools: "search,clickhouse",
+			wantTools:    "search,sql",
+			wantDisabled: false,
+		},
+		{
+			name:         "snowflake alias becomes sql",
+			enabledTools: "search,snowflake",
+			wantTools:    "search,sql",
+			wantDisabled: false,
+		},
+		{
+			name:         "athena alias becomes sql",
+			enabledTools: "search,athena",
+			wantTools:    "search,sql",
+			wantDisabled: false,
+		},
+		{
+			name:         "multiple aliases deduplicated",
+			enabledTools: "clickhouse,snowflake,athena",
+			wantTools:    "sql",
+			wantDisabled: false,
+		},
+		{
+			name:         "alias overrides disable-sql",
+			enabledTools: "search,clickhouse",
+			disableSQL:   true,
+			wantTools:    "search,sql",
+			wantDisabled: false,
+		},
+		{
+			name:         "sql without alias preserves disable flag",
+			enabledTools: "search,sql",
+			disableSQL:   true,
+			wantTools:    "search,sql",
+			wantDisabled: true,
+		},
+		{
+			name:         "no aliases no change",
+			enabledTools: "search,prometheus",
+			wantTools:    "search,prometheus",
+			wantDisabled: false,
+		},
+		{
+			name:         "alias coexists with sql",
+			enabledTools: "sql,clickhouse",
+			wantTools:    "sql",
+			wantDisabled: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			dt := disabledTools{enabledTools: tc.enabledTools, sql: tc.disableSQL}
+			dt.normalizeEnabledTools()
+			assert.Equal(t, tc.wantTools, dt.enabledTools)
+			assert.Equal(t, tc.wantDisabled, dt.sql, "sql disabled flag")
+		})
+	}
+}
+
+func TestBuildInstructions_SQLAliasBackCompat(t *testing.T) {
+	dt := disabledTools{enabledTools: "clickhouse"}
+	instructions := dt.buildInstructions()
+	assert.Contains(t, instructions, "SQL: Query supported SQL datasources")
 }
 
 func TestNewServer_SessionIdleTimeoutCustomValue(t *testing.T) {
@@ -1039,9 +1113,7 @@ var safeQueryToolNames = []string{
 // can write when the datasource credentials permit it. Both --disable-query and
 // --disable-write remove them; --enable-query overrides the latter.
 var mutatingQueryToolNames = []string{
-	"query_clickhouse",
-	"query_snowflake",
-	"query_athena",
+	"query_sql",
 	"query_influxdb",
 }
 
@@ -1061,14 +1133,9 @@ var metadataToolNames = []string{
 	// returning log content, so query gating does not apply to them.
 	"query_loki_stats",
 	"analyze_loki_labels",
-	"list_clickhouse_tables",
-	"describe_clickhouse_table",
-	"list_snowflake_tables",
-	"describe_snowflake_table",
-	"list_athena_catalogs",
-	"list_athena_databases",
-	"list_athena_tables",
-	"describe_athena_table",
+	"list_sql_databases",
+	"list_sql_tables",
+	"describe_sql_table",
 	"list_graphite_metrics",
 	"list_graphite_tags",
 	"list_cloudwatch_namespaces",

@@ -152,6 +152,28 @@ datasources:
       accessKey: test
       secretKey: test
     isDefault: false
+  - name: MySQL
+    uid: mysql
+    type: mysql
+    access: proxy
+    url: mysql:3306
+    database: test
+    user: root
+    secureJsonData:
+      password: rootroot
+    isDefault: false
+  - name: PostgreSQL
+    uid: postgres
+    type: grafana-postgresql-datasource
+    access: proxy
+    url: postgres:5432
+    database: test
+    user: postgres
+    jsonData:
+      sslmode: disable
+    secureJsonData:
+      password: postgres
+    isDefault: false
   - name: Graphite
     id: 9
     uid: graphite
