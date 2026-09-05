@@ -221,7 +221,7 @@ Queries go through Grafana's Snowflake datasource (Grafana Enterprise plugin `gr
 - **Generate deeplinks:** Create accurate deeplink URLs for Grafana resources instead of relying on LLM URL guessing.
   - **Dashboard links:** Generate direct links to dashboards using their UID (e.g., `http://localhost:3000/d/dashboard-uid`)
   - **Panel links:** Create links to specific panels within dashboards with viewPanel parameter (e.g., `http://localhost:3000/d/dashboard-uid?viewPanel=5`)
-  - **Explore links:** Generate links to Grafana Explore with pre-configured datasources (e.g., `http://localhost:3000/explore?left={"datasource":"prometheus-uid"}`)
+  - **Explore links:** Generate links to Grafana Explore with pre-configured datasources (e.g., `http://localhost:3000/explore?schemaVersion=1&panes={"a":{"datasource":"prometheus-uid"}}`). Grafana below 10.2 does not understand `panes`, so the legacy `?left={...}` format is emitted for those versions instead.
   - **Time range support:** Add time range parameters to links (`from=now-1h&to=now`)
   - **Custom parameters:** Include additional query parameters like dashboard variables or refresh intervals
 
