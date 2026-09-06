@@ -1,14 +1,18 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -660,6 +664,144 @@ func TestHTTPSecurityConfigPolicy(t *testing.T) {
 			got := hsc.policy(tc.address)
 			assert.Equal(t, tc.wantHosts, got.AllowedHosts)
 			assert.Equal(t, tc.wantOrigins, got.AllowedOrigins)
+		})
+	}
+}
+
+// Exercise the binary so the test covers both the SDK's loopback check and
+// our Host/Origin middleware, including how the CLI wires them together.
+func TestHTTPAllowedHostsLoopbackProxy(t *testing.T) {
+	bin := t.TempDir() + "/mcp-grafana"
+	build := exec.CommandContext(t.Context(), "go", "build", "-o", bin, ".")
+	out, err := build.CombinedOutput()
+	require.NoError(t, err, "go build failed: %s", out)
+
+	// Keep the test independent of the developer's Grafana and OTel settings.
+	var env []string
+	for _, value := range os.Environ() {
+		if !strings.HasPrefix(value, "GRAFANA_") && !strings.HasPrefix(value, "MCP_GRAFANA_") && !strings.HasPrefix(value, "OTEL_") {
+			env = append(env, value)
+		}
+	}
+	const token = "loopback-proxy-test-token"
+	env = append(env, "GRAFANA_URL=http://127.0.0.1:1", "GRAFANA_ORG_ID=1", "MCP_GRAFANA_SERVER_TOKEN="+token)
+
+	cases := []struct {
+		name       string
+		flags      []string
+		allowLocal bool
+		allowProxy bool
+		allowOther bool
+	}{
+		{name: "unset", allowLocal: true},
+		{name: "empty", flags: []string{"--allowed-hosts="}, allowLocal: true},
+		{name: "separators", flags: []string{"--allowed-hosts= , , "}, allowLocal: true},
+		{name: "explicit", flags: []string{"--allowed-hosts= mcp.example.com, other.example.com "}, allowProxy: true},
+		{name: "wildcard", flags: []string{"--allowed-hosts=*"}, allowLocal: true, allowProxy: true, allowOther: true},
+	}
+	for _, transport := range []string{"sse", "streamable-http"} {
+		t.Run(transport, func(t *testing.T) {
+			for _, tc := range cases {
+				t.Run(tc.name, func(t *testing.T) {
+					listener, err := net.Listen("tcp", "127.0.0.1:0")
+					require.NoError(t, err)
+					port := strconv.Itoa(listener.Addr().(*net.TCPAddr).Port)
+					require.NoError(t, listener.Close())
+					addr := "127.0.0.1:" + port
+					args := []string{"--transport=" + transport, "--address=0.0.0.0:" + port, "--enabled-tools=", "--disable-proxied"}
+					args = append(args, tc.flags...)
+					cmd := exec.CommandContext(t.Context(), bin, args...)
+					cmd.Env = env
+					var logs bytes.Buffer
+					cmd.Stdout, cmd.Stderr = &logs, &logs
+					require.NoError(t, cmd.Start())
+					t.Cleanup(func() {
+						_ = cmd.Process.Kill()
+						_ = cmd.Wait()
+						if t.Failed() {
+							t.Log(logs.String())
+						}
+					})
+					require.Eventually(t, func() bool {
+						conn, err := net.DialTimeout("tcp", addr, 100*time.Millisecond)
+						if err != nil {
+							return false
+						}
+						_ = conn.Close()
+						return true
+					}, 5*time.Second, 10*time.Millisecond)
+
+					client := &http.Client{Timeout: 3 * time.Second}
+					t.Cleanup(client.CloseIdleConnections)
+					request := func(t *testing.T, host, origin, auth string, wantStatus int) {
+						t.Helper()
+						method, path, body := http.MethodGet, "/sse", ""
+						if transport == "streamable-http" {
+							method, path = http.MethodPost, "/mcp"
+							body = `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}`
+						}
+						req, err := http.NewRequestWithContext(t.Context(), method, "http://"+addr+path, strings.NewReader(body))
+						require.NoError(t, err)
+						req.Host = host
+						req.Header.Set("Content-Type", "application/json")
+						req.Header.Set("Accept", "application/json, text/event-stream")
+						if origin != "" {
+							req.Header.Set("Origin", origin)
+						}
+						if auth != "" {
+							req.Header.Set("Authorization", auth)
+						}
+						resp, err := client.Do(req)
+						require.NoError(t, err)
+						defer func() { _ = resp.Body.Close() }()
+						require.Equal(t, wantStatus, resp.StatusCode)
+						if wantStatus != http.StatusOK {
+							return
+						}
+						if transport == "sse" {
+							line, err := bufio.NewReader(resp.Body).ReadString('\n')
+							require.NoError(t, err)
+							assert.Equal(t, "event: endpoint\n", line)
+						} else {
+							var result struct {
+								Result mcp.InitializeResult `json:"result"`
+							}
+							require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
+							assert.NotEmpty(t, result.Result.ProtocolVersion)
+						}
+					}
+					for _, host := range []struct {
+						name    string
+						allowed bool
+					}{
+						{"localhost:" + port, tc.allowLocal},
+						{"mcp.example.com", tc.allowProxy},
+						{"other.example.com", tc.allowProxy},
+						{"unlisted.example.com", tc.allowOther},
+					} {
+						t.Run(host.name, func(t *testing.T) {
+							status := http.StatusForbidden
+							if host.allowed {
+								status = http.StatusOK
+							}
+							request(t, host.name, "", "Bearer "+token, status)
+						})
+					}
+					allowedHost := "localhost:" + port
+					if tc.allowProxy {
+						allowedHost = "mcp.example.com"
+					}
+					t.Run("reject origin", func(t *testing.T) {
+						request(t, allowedHost, "https://untrusted.example.com", "Bearer "+token, http.StatusForbidden)
+					})
+					t.Run("require token", func(t *testing.T) {
+						request(t, allowedHost, "", "", http.StatusUnauthorized)
+					})
+					t.Run("reject wrong token", func(t *testing.T) {
+						request(t, allowedHost, "", "Bearer wrong-token", http.StatusUnauthorized)
+					})
+				})
+			}
 		})
 	}
 }
