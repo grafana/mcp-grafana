@@ -554,23 +554,10 @@ func appendInstructions(base, extra string) string {
 	return base
 }
 
-func newServer(serverName, transport string, dt disabledTools, obs *observability.Observability, sessionIdleTimeoutMinutes int, instructionsAppend string) (*server.MCPServer, *mcpgrafana.SessionManager) {
-	sm := mcpgrafana.NewSessionManager(
-		mcpgrafana.WithSessionTTL(time.Duration(sessionIdleTimeoutMinutes)*time.Minute),
-		mcpgrafana.WithSessionMeterProvider(obs.MeterProvider()),
-	)
-
-	hooks := &server.Hooks{
-		OnRegisterSession:   []server.OnRegisterSessionHookFunc{sm.CreateSession},
-		OnUnregisterSession: []server.OnUnregisterSessionHookFunc{sm.RemoveSession},
-	}
+func newServer(serverName string, dt disabledTools, obs *observability.Observability, instructionsAppend string) *server.MCPServer {
+	hooks := &server.Hooks{}
 
 	// Ensure ListToolsResult always includes resultType, cacheScope, and ttlMs.
-	// The mcp-go SDK only populates these fields for the "modern" protocol
-	// (2026-07-28+), but the Python MCP SDK (mcp>=2.0.0) requires them
-	// regardless of protocol version. Without this hook, tools/list responses
-	// to legacy-protocol clients omit the fields, causing validation errors in
-	// cross-SDK proxy setups (see #1140).
 	hooks.OnAfterListTools = append(hooks.OnAfterListTools,
 		func(_ context.Context, _ any, _ *mcp.ListToolsRequest, result *mcp.ListToolsResult) {
 			if result == nil {
@@ -602,11 +589,9 @@ func newServer(serverName, transport string, dt disabledTools, obs *observabilit
 	}
 	s := server.NewMCPServer(serverName, mcpgrafana.Version(), serverOpts...)
 
-	sm.SetMCPServer(s)
-
 	dt.processTools(s)
 	mcpgrafana.RegisterAppResources(s)
-	return s, sm
+	return s
 }
 
 type tlsConfig struct {
@@ -912,8 +897,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		defer clientCache.Close()
 	}
 
-	s, sm := newServer(obs.ServerName, transport, dt, o, sessionIdleTimeoutMinutes, instructionsAppend)
-	defer sm.Close()
+	s := newServer(obs.ServerName, dt, o, instructionsAppend)
 
 	// Create a context that will be cancelled on shutdown
 	ctx, cancel := context.WithCancel(context.Background())
