@@ -39,7 +39,10 @@ require (
 	gopkg.in/yaml.v3 v3.0.1
 )
 
-require github.com/santhosh-tekuri/jsonschema/v6 v6.0.2 // indirect
+require (
+	github.com/go-openapi/swag/pools v0.29.1 // indirect
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2 // indirect
+)
 
 require (
 	github.com/apache/arrow-go/v18 v18.5.1 // indirect
@@ -75,21 +78,21 @@ require (
 	github.com/go-openapi/analysis v0.24.3 // indirect
 	github.com/go-openapi/errors v0.22.7 // indirect
 	github.com/go-openapi/jsonpointer v1.0.0 // indirect
-	github.com/go-openapi/jsonreference v1.0.0 // indirect
+	github.com/go-openapi/jsonreference v1.0.1 // indirect
 	github.com/go-openapi/loads v0.23.3 // indirect
-	github.com/go-openapi/spec v0.22.4 // indirect
+	github.com/go-openapi/spec v1.0.0 // indirect
 	github.com/go-openapi/swag v0.25.4 // indirect
 	github.com/go-openapi/swag/cmdutils v0.25.4 // indirect
-	github.com/go-openapi/swag/conv v0.25.5 // indirect
+	github.com/go-openapi/swag/conv v0.29.1 // indirect
 	github.com/go-openapi/swag/fileutils v0.25.5 // indirect
 	github.com/go-openapi/swag/jsonname v0.25.5 // indirect
-	github.com/go-openapi/swag/jsonutils v0.25.5 // indirect
-	github.com/go-openapi/swag/loading v0.25.5 // indirect
+	github.com/go-openapi/swag/jsonutils v0.29.1 // indirect
+	github.com/go-openapi/swag/loading v0.29.1 // indirect
 	github.com/go-openapi/swag/mangling v0.25.5 // indirect
 	github.com/go-openapi/swag/netutils v0.25.4 // indirect
-	github.com/go-openapi/swag/stringutils v0.25.5 // indirect
-	github.com/go-openapi/swag/typeutils v0.25.5 // indirect
-	github.com/go-openapi/swag/yamlutils v0.25.5 // indirect
+	github.com/go-openapi/swag/stringutils v0.29.1 // indirect
+	github.com/go-openapi/swag/typeutils v0.29.1 // indirect
+	github.com/go-openapi/swag/yamlutils v0.29.1 // indirect
 	github.com/go-openapi/validate v0.25.2 // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
 	github.com/goccy/go-json v0.10.5 // indirect
@@ -164,7 +167,7 @@ require (
 	go.uber.org/atomic v1.11.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.4 // indirect
-	go.yaml.in/yaml/v3 v3.0.4 // indirect
+	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/exp v0.0.0-20260218203240-3dfff04db8fa // indirect
 	golang.org/x/mod v0.37.0 // indirect
 	golang.org/x/net v0.56.0 // indirect
