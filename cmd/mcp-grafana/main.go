@@ -559,7 +559,7 @@ type httpSecurityConfig struct {
 }
 
 func (hsc *httpSecurityConfig) addFlags() {
-	flag.StringVar(&hsc.allowedHosts, "allowed-hosts", "", "Comma-separated allowlist of Host header values for the HTTP/SSE transports. Defaults to loopback variants of --address. Use \"*\" to disable validation (only safe behind a trusted reverse proxy that rewrites Host).")
+	flag.StringVar(&hsc.allowedHosts, "allowed-hosts", "", "Comma-separated allowlist of Host header values for the HTTP/SSE transports. Defaults to loopback variants of --address. Use \"*\" to disable Host validation (only safe behind a trusted reverse proxy that validates Host).")
 	flag.StringVar(&hsc.allowedOrigins, "allowed-origins", "", "Comma-separated allowlist of Origin header values for the HTTP/SSE transports. Empty (the default) rejects any request that carries an Origin header — appropriate for non-browser MCP clients. Use \"*\" to disable validation.")
 }
 
@@ -841,6 +841,10 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 		}
 	}
 
+	// Our middleware enforces explicit Host allowlists, including over loopback.
+	// Keep the SDK's extra protection when the flag is unset or parses to empty.
+	disableLocalhostProtection := len(splitAndTrim(hsc.allowedHosts)) > 0
+
 	// Start the appropriate server based on transport
 	switch transport {
 	case "stdio":
@@ -871,6 +875,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 			server.WithStaticBasePath(basePath),
 			server.WithHTTPServer(httpSrv),
 			server.WithSSECORS(server.WithCORSAllowedOrigins(hsc.corsOrigins()...)),
+			server.WithSSEDisableLocalhostProtection(disableLocalhostProtection),
 		)
 		mux := http.NewServeMux()
 		if basePath == "" {
@@ -894,6 +899,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 			server.WithEndpointPath(endpointPath),
 			server.WithStreamableHTTPServer(httpSrv),
 			server.WithStreamableHTTPCORS(server.WithCORSAllowedOrigins(hsc.corsOrigins()...)),
+			server.WithDisableLocalhostProtection(disableLocalhostProtection),
 			// Enable the SDK's idle-session sweeper so per-session transport state
 			// (the tool/resource maps populated by AddSessionTools, keyed by
 			// session ID in the server's shared stores) is freed when a client
