@@ -543,7 +543,7 @@ func newServer(serverName, transport string, dt disabledTools, obs *observabilit
 				result.CacheScope = mcp.CacheScopePrivate
 			}
 			if result.TTLMs == nil {
-				ttl := int64(0)
+				ttl := int64(5 * 60 * 1000) // 5 minutes; the tool list rarely changes within a session
 				result.TTLMs = &ttl
 			}
 		},
