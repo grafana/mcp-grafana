@@ -131,13 +131,22 @@ func fallbackProxyBases(ctx context.Context, identifier string) (primaryBase, fa
 // frontendSettingsDatasource mirrors the datasource entries of
 // GET /api/frontend/settings.
 type frontendSettingsDatasource struct {
-	ID        int64          `json:"id"`
-	UID       string         `json:"uid"`
-	Name      string         `json:"name"`
-	Type      string         `json:"type"`
-	URL       string         `json:"url"`
-	IsDefault bool           `json:"isDefault"`
-	JSONData  map[string]any `json:"jsonData"`
+	ID        int64                           `json:"id"`
+	UID       string                          `json:"uid"`
+	Name      string                          `json:"name"`
+	Type      string                          `json:"type"`
+	URL       string                          `json:"url"`
+	IsDefault bool                            `json:"isDefault"`
+	JSONData  map[string]any                  `json:"jsonData"`
+	Meta      *frontendSettingsDatasourceMeta `json:"meta,omitempty"`
+}
+
+// frontendSettingsDatasourceMeta mirrors the subset of a datasource's plugin
+// metadata that GET /api/frontend/settings exposes. Backend is nil when the
+// server's response omits it (older Grafana, or a deployment that strips
+// plugin metadata), which callers must treat as "unknown" rather than false.
+type frontendSettingsDatasourceMeta struct {
+	Backend *bool `json:"backend,omitempty"`
 }
 
 func fetchFrontendSettingsDatasources(ctx context.Context) (map[string]frontendSettingsDatasource, string, error) {
