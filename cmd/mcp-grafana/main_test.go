@@ -639,6 +639,42 @@ func TestSplitAndTrim(t *testing.T) {
 	}
 }
 
+func TestRegisterAtBasePath(t *testing.T) {
+	cases := []struct {
+		name        string
+		base        string
+		suffix      string
+		wantHandled bool
+	}{
+		{"empty base is a no-op (default, unset --base-path)", "", "/healthz", false},
+		{"root base is a no-op (matches unset --base-path)", "/", "/healthz", false},
+		{"non-root base registers the suffixed path", "/my-custom-base", "/healthz", true},
+		{"trailing slash on base is trimmed before joining", "/my-custom-base/", "/healthz", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mux := http.NewServeMux()
+			called := false
+			registerAtBasePath(mux, tc.base, tc.suffix, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				called = true
+				w.WriteHeader(http.StatusOK)
+			}))
+
+			req := httptest.NewRequest(http.MethodGet, strings.TrimSuffix(tc.base, "/")+tc.suffix, nil)
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+
+			if tc.wantHandled {
+				assert.True(t, called, "expected the prefixed path to be routed to the handler")
+				assert.Equal(t, http.StatusOK, rec.Code)
+			} else {
+				assert.False(t, called, "expected no route to be registered for a root/empty base")
+				assert.Equal(t, http.StatusNotFound, rec.Code)
+			}
+		})
+	}
+}
+
 func TestHTTPSecurityConfigPolicy(t *testing.T) {
 	cases := []struct {
 		name           string
@@ -1354,7 +1390,7 @@ func getPath(h http.Handler, path string) *httptest.ResponseRecorder {
 
 func TestRegisterOps_DefaultKeepsHealthzOnMainMux(t *testing.T) {
 	main := http.NewServeMux()
-	side := registerOps(main, newTestObservability(t), "", observability.Config{})
+	side := registerOps(main, newTestObservability(t), "", observability.Config{}, "")
 
 	assert.Empty(t, side, "no extra listener without --healthz-address or --metrics-address")
 	rec := getPath(main, "/healthz")
@@ -1368,7 +1404,7 @@ func TestRegisterOps_MetricsOnMainMux(t *testing.T) {
 	t.Cleanup(func() { _ = obs.Shutdown(context.Background()) })
 
 	main := http.NewServeMux()
-	side := registerOps(main, obs, "", observability.Config{MetricsEnabled: true})
+	side := registerOps(main, obs, "", observability.Config{MetricsEnabled: true}, "")
 
 	assert.Empty(t, side, "--metrics with empty --metrics-address must not start a side listener")
 	assert.Equal(t, http.StatusOK, getPath(main, "/healthz").Code)
@@ -1377,7 +1413,7 @@ func TestRegisterOps_MetricsOnMainMux(t *testing.T) {
 
 func TestRegisterOps_HealthzAddressMovesItOffMainMux(t *testing.T) {
 	main := http.NewServeMux()
-	side := registerOps(main, newTestObservability(t), ":8080", observability.Config{})
+	side := registerOps(main, newTestObservability(t), ":8080", observability.Config{}, "")
 
 	assert.Equal(t, http.StatusNotFound, getPath(main, "/healthz").Code,
 		"/healthz must leave the MCP listener, not be served on both")
@@ -1394,7 +1430,7 @@ func TestRegisterOps_SharedAddressUsesOneListener(t *testing.T) {
 	t.Cleanup(func() { _ = obs.Shutdown(context.Background()) })
 
 	main := http.NewServeMux()
-	side := registerOps(main, obs, ":9090", observability.Config{MetricsEnabled: true, MetricsAddress: ":9090"})
+	side := registerOps(main, obs, ":9090", observability.Config{MetricsEnabled: true, MetricsAddress: ":9090"}, "")
 
 	require.Len(t, side, 1, "one bind address must not produce two listeners")
 	assert.Equal(t, http.StatusOK, getPath(side[":9090"], "/healthz").Code)
@@ -1409,7 +1445,7 @@ func TestRegisterOps_DistinctAddressesStaySplit(t *testing.T) {
 	t.Cleanup(func() { _ = obs.Shutdown(context.Background()) })
 
 	main := http.NewServeMux()
-	side := registerOps(main, obs, ":8080", observability.Config{MetricsEnabled: true, MetricsAddress: ":9090"})
+	side := registerOps(main, obs, ":8080", observability.Config{MetricsEnabled: true, MetricsAddress: ":9090"}, "")
 
 	require.Len(t, side, 2)
 	assert.Equal(t, http.StatusOK, getPath(side[":8080"], "/healthz").Code)
@@ -1421,11 +1457,45 @@ func TestRegisterOps_DistinctAddressesStaySplit(t *testing.T) {
 // Metrics stay opt-in: --healthz-address alone must not expose /metrics.
 func TestRegisterOps_HealthzAddressDoesNotEnableMetrics(t *testing.T) {
 	main := http.NewServeMux()
-	side := registerOps(main, newTestObservability(t), ":8080", observability.Config{})
+	side := registerOps(main, newTestObservability(t), ":8080", observability.Config{}, "")
 
 	require.Len(t, side, 1)
 	assert.Equal(t, http.StatusNotFound, getPath(side[":8080"], "/metrics").Code)
 	assert.Equal(t, http.StatusNotFound, getPath(main, "/metrics").Code)
+}
+
+// A base path (--base-path / the directory of --endpoint-path) additionally
+// mounts /healthz and /metrics under it on the main mux, alongside the
+// existing root routes, so a single path-routed reverse-proxy rule covers
+// the whole service. See issue #1021.
+func TestRegisterOps_BasePathAlsoMountsUnderPrefix(t *testing.T) {
+	obs, err := observability.Setup(observability.Config{MetricsEnabled: true})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = obs.Shutdown(context.Background()) })
+
+	main := http.NewServeMux()
+	side := registerOps(main, obs, "", observability.Config{MetricsEnabled: true}, "/my-custom-base")
+
+	assert.Empty(t, side)
+	assert.Equal(t, http.StatusOK, getPath(main, "/healthz").Code, "root /healthz must keep working")
+	assert.Equal(t, http.StatusOK, getPath(main, "/metrics").Code, "root /metrics must keep working")
+	assert.Equal(t, http.StatusOK, getPath(main, "/my-custom-base/healthz").Code)
+	assert.Equal(t, http.StatusOK, getPath(main, "/my-custom-base/metrics").Code)
+}
+
+// A dedicated --healthz-address/--metrics-address listener bypasses the
+// reverse-proxy prefix entirely, so the base path must not leak onto it.
+func TestRegisterOps_BasePathIgnoredOnDedicatedListener(t *testing.T) {
+	obs, err := observability.Setup(observability.Config{MetricsEnabled: true})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = obs.Shutdown(context.Background()) })
+
+	main := http.NewServeMux()
+	side := registerOps(main, obs, ":8080", observability.Config{MetricsEnabled: true, MetricsAddress: ":9090"}, "/my-custom-base")
+
+	assert.Equal(t, http.StatusNotFound, getPath(main, "/my-custom-base/healthz").Code)
+	assert.Equal(t, http.StatusNotFound, getPath(side[":8080"], "/my-custom-base/healthz").Code)
+	assert.Equal(t, http.StatusNotFound, getPath(side[":9090"], "/my-custom-base/metrics").Code)
 }
 
 // TestNewServer_InvalidArgumentTypeReturnsToolErrorNotProtocolError verifies

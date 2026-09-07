@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path"
 	"regexp"
 	"slices"
 	"strconv"
@@ -787,11 +788,31 @@ func handleHealthz(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte("ok"))
 }
 
+// registerAtBasePath additionally mounts handler at base+suffix (e.g.
+// "/my-base" + "/healthz") when base is a non-root path, so that a single
+// path-routed reverse-proxy rule for base can cover /healthz and /metrics
+// alongside the MCP endpoint. The unprefixed root registration is left in
+// place by the caller, so this is purely additive and preserves existing
+// behavior for callers that don't set a base path.
+func registerAtBasePath(mux *http.ServeMux, base, suffix string, handler http.Handler) {
+	base = strings.TrimSuffix(base, "/")
+	if base == "" {
+		return
+	}
+	mux.Handle(base+suffix, handler)
+}
+
 // registerOps mounts /healthz and /metrics. An empty address keeps the route
 // on mux; otherwise it goes on a side mux keyed by address (so matching
 // --healthz-address and --metrics-address share a listener). Callers pass the
 // result to runOpsServers. Side listeners skip Host/Origin checks.
-func registerOps(mux *http.ServeMux, o *observability.Observability, healthzAddr string, obs observability.Config) map[string]*http.ServeMux {
+//
+// When basePath is a non-root path, /healthz and /metrics are additionally
+// mounted under it on mux so a single path-routed reverse-proxy rule for
+// basePath can cover the whole service. This only applies to the routes that
+// stay on mux: a dedicated --healthz-address/--metrics-address listener
+// bypasses that proxy prefix entirely, so it keeps serving at its root.
+func registerOps(mux *http.ServeMux, o *observability.Observability, healthzAddr string, obs observability.Config, basePath string) map[string]*http.ServeMux {
 	side := map[string]*http.ServeMux{}
 	target := func(addr string) *http.ServeMux {
 		if addr == "" {
@@ -804,8 +825,14 @@ func registerOps(mux *http.ServeMux, o *observability.Observability, healthzAddr
 	}
 
 	target(healthzAddr).HandleFunc("/healthz", handleHealthz)
+	if healthzAddr == "" {
+		registerAtBasePath(mux, basePath, "/healthz", http.HandlerFunc(handleHealthz))
+	}
 	if obs.MetricsEnabled {
 		target(obs.MetricsAddress).Handle("/metrics", o.MetricsHandler())
+		if obs.MetricsAddress == "" {
+			registerAtBasePath(mux, basePath, "/metrics", o.MetricsHandler())
+		}
 	}
 	return side
 }
@@ -945,6 +972,10 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 			server.WithSSEDisableLocalhostProtection(disableLocalhostProtection),
 		)
 		mux := http.NewServeMux()
+		// Capture the base path before it's normalized to "/" below, so
+		// registerAtBasePath can tell "no base path configured" (root only)
+		// apart from an explicit "/" base path.
+		healthzMetricsBase := basePath
 		if basePath == "" {
 			basePath = "/"
 		}
@@ -952,7 +983,7 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 			mcpgrafana.ValidateGrafanaURLMiddleware(srv), //nolint:staticcheck // Retained temporarily to reject malformed legacy headers.
 			basePath,
 		)))
-		runOpsServers(registerOps(mux, o, healthzAddress, obs))
+		runOpsServers(registerOps(mux, o, healthzAddress, obs, healthzMetricsBase))
 		// Wrap the full mux so ops routes left on it are validated too.
 		httpSrv.Handler = mcpgrafana.DNSRebindingProtectionMiddleware(hsc.policy(addr))(mux)
 		slog.Info("Starting Grafana MCP server using SSE transport",
@@ -986,7 +1017,13 @@ func run(transport, addr, basePath, endpointPath string, logLevel slog.Level, dt
 			mcpgrafana.ValidateGrafanaURLMiddleware(srv), //nolint:staticcheck // Retained temporarily to reject malformed legacy headers.
 			endpointPath,
 		)))
-		runOpsServers(registerOps(mux, o, healthzAddress, obs))
+		// There's no separate --base-path flag for streamable-http, but
+		// --endpoint-path plays the same role: when it's nested under a
+		// prefix (e.g. "/my-custom-base/mcp"), that directory is the base a
+		// single reverse-proxy rule would route on. path.Dir("/mcp") is "/",
+		// so this is a no-op at the default endpoint path.
+		endpointBase := path.Dir(endpointPath)
+		runOpsServers(registerOps(mux, o, healthzAddress, obs, endpointBase))
 		// Wrap the full mux so ops routes left on it are validated too.
 		httpSrv.Handler = mcpgrafana.DNSRebindingProtectionMiddleware(hsc.policy(addr))(mux)
 		slog.Info("Starting Grafana MCP server using StreamableHTTP transport",
