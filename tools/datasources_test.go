@@ -210,7 +210,7 @@ func TestCheckDatasourcesHealthTool(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		assert.Greater(t, result.Total, 0)
-		assert.Len(t, result.Results, result.Healthy+result.Unhealthy)
+		assert.Len(t, result.Results, result.Healthy+result.Unhealthy+result.Unknown)
 		assert.LessOrEqual(t, len(result.Results), result.Total)
 	})
 
