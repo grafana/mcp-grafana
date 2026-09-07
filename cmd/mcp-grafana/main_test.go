@@ -15,7 +15,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"testing/synctest"
 	"time"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
@@ -27,16 +26,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// testClientSession implements server.ClientSession for unit tests.
-type testClientSession struct {
-	id string
-}
-
-func (s *testClientSession) SessionID() string                                   { return s.id }
-func (s *testClientSession) NotificationChannel() chan<- mcp.JSONRPCNotification { return nil }
-func (s *testClientSession) Initialize()                                         {}
-func (s *testClientSession) Initialized() bool                                   { return true }
-
 func newTestObservability(t *testing.T) *observability.Observability {
 	t.Helper()
 	obs, err := observability.Setup(observability.Config{})
@@ -45,24 +34,6 @@ func newTestObservability(t *testing.T) *observability.Observability {
 		_ = obs.Shutdown(context.Background())
 	})
 	return obs
-}
-
-func TestNewServer_SessionIdleTimeoutZeroDisablesReaping(t *testing.T) {
-	obs := newTestObservability(t)
-	synctest.Test(t, func(t *testing.T) {
-		_, sm := newServer(defaultServerName, "stdio", disabledTools{enabledTools: "search"}, obs, 0, "")
-		defer sm.Close()
-
-		session := &testClientSession{id: "should-persist"}
-		sm.CreateSession(context.Background(), session)
-
-		// Advance the fake clock well beyond any reasonable reaper interval.
-		// With reaper disabled (TTL=0), the session must survive.
-		time.Sleep(time.Hour)
-
-		_, exists := sm.GetSession("should-persist")
-		assert.True(t, exists, "Session should persist when idle timeout is 0 (reaper disabled)")
-	})
 }
 
 func TestBuildInstructions_ReflectsEnabledCategories(t *testing.T) {
@@ -397,25 +368,6 @@ func TestBuildInstructions_SQLAliasBackCompat(t *testing.T) {
 	dt := disabledTools{enabledTools: "clickhouse"}
 	instructions := dt.buildInstructions()
 	assert.Contains(t, instructions, "SQL: Query supported SQL datasources")
-}
-
-func TestNewServer_SessionIdleTimeoutCustomValue(t *testing.T) {
-	obs := newTestObservability(t)
-	synctest.Test(t, func(t *testing.T) {
-		_, sm := newServer(defaultServerName, "stdio", disabledTools{enabledTools: "search"}, obs, 1, "")
-		defer sm.Close()
-
-		session := &testClientSession{id: "custom-ttl"}
-		sm.CreateSession(context.Background(), session)
-
-		// Advance the fake clock past the 1-minute TTL.
-		// The reaper runs every TTL/2 (30s), so by 2 minutes
-		// it will have fired and reaped the idle session.
-		time.Sleep(2 * time.Minute)
-
-		_, exists := sm.GetSession("custom-ttl")
-		assert.False(t, exists, "Session should be reaped after exceeding the 1-minute idle timeout")
-	})
 }
 
 func TestParseSlowRequestLogLevel(t *testing.T) {
@@ -1089,8 +1041,8 @@ func TestValidateServerName(t *testing.T) {
 
 func TestNewServer_DefaultServerName(t *testing.T) {
 	obs := newTestObservability(t)
-	s, sm := newServer(defaultServerName, "stdio", disabledTools{enabledTools: "search"}, obs, 0, "")
-	defer sm.Close()
+	s := newServer(defaultServerName, disabledTools{enabledTools: "search"}, obs, "")
+
 
 	name := getServerNameFromInitialize(t, s)
 	assert.Equal(t, "mcp-grafana", name)
@@ -1098,8 +1050,8 @@ func TestNewServer_DefaultServerName(t *testing.T) {
 
 func TestNewServer_CustomServerName(t *testing.T) {
 	obs := newTestObservability(t)
-	s, sm := newServer("my-custom-server", "stdio", disabledTools{enabledTools: "search"}, obs, 0, "")
-	defer sm.Close()
+	s := newServer("my-custom-server", disabledTools{enabledTools: "search"}, obs, "")
+
 
 	name := getServerNameFromInitialize(t, s)
 	assert.Equal(t, "my-custom-server", name)
@@ -1108,10 +1060,10 @@ func TestNewServer_CustomServerName(t *testing.T) {
 func TestNewServer_MultiInstanceDistinctNames(t *testing.T) {
 	obs := newTestObservability(t)
 
-	sAlpha, smAlpha := newServer("instance-alpha", "stdio", disabledTools{enabledTools: "search"}, obs, 0, "")
-	defer smAlpha.Close()
-	sBeta, smBeta := newServer("instance-beta", "stdio", disabledTools{enabledTools: "search"}, obs, 0, "")
-	defer smBeta.Close()
+	sAlpha := newServer("instance-alpha", disabledTools{enabledTools: "search"}, obs, "")
+
+	sBeta := newServer("instance-beta", disabledTools{enabledTools: "search"}, obs, "")
+
 
 	nameAlpha := getServerNameFromInitialize(t, sAlpha)
 	nameBeta := getServerNameFromInitialize(t, sBeta)
@@ -1123,8 +1075,8 @@ func TestNewServer_MultiInstanceDistinctNames(t *testing.T) {
 
 func TestCustomServerName_DoesNotAffectUserAgent(t *testing.T) {
 	obs := newTestObservability(t)
-	s, sm := newServer("my-custom-instance", "stdio", disabledTools{enabledTools: "search"}, obs, 0, "")
-	defer sm.Close()
+	s := newServer("my-custom-instance", disabledTools{enabledTools: "search"}, obs, "")
+
 
 	name := getServerNameFromInitialize(t, s)
 	assert.Equal(t, "my-custom-instance", name)
@@ -1566,8 +1518,8 @@ func TestRegisterOps_HealthzAddressDoesNotEnableMetrics(t *testing.T) {
 // error (-32603) with a bare Go unmarshal message. See issue #830.
 func TestNewServer_InvalidArgumentTypeReturnsToolErrorNotProtocolError(t *testing.T) {
 	obs := newTestObservability(t)
-	s, sm := newServer(defaultServerName, "stdio", disabledTools{enabledTools: "datasource"}, obs, 0, "")
-	defer sm.Close()
+	s := newServer(defaultServerName, disabledTools{enabledTools: "datasource"}, obs, "")
+
 
 	c, err := client.NewInProcessClient(s)
 	require.NoError(t, err)
@@ -1599,8 +1551,7 @@ func TestNewServer_InvalidArgumentTypeReturnsToolErrorNotProtocolError(t *testin
 // setups. See #1140.
 func TestListToolsResult_IncludesRequiredFields(t *testing.T) {
 	obs := newTestObservability(t)
-	s, sm := newServer(defaultServerName, "stdio", disabledTools{enabledTools: "search"}, obs, 0, "")
-	defer sm.Close()
+	s := newServer(defaultServerName, disabledTools{enabledTools: "search"}, obs, "")
 
 	// Send a legacy-protocol tools/list request (no _meta.protocolVersion).
 	resp := s.HandleMessage(context.Background(), []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
