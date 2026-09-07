@@ -50,7 +50,7 @@ func newTestObservability(t *testing.T) *observability.Observability {
 func TestNewServer_SessionIdleTimeoutZeroDisablesReaping(t *testing.T) {
 	obs := newTestObservability(t)
 	synctest.Test(t, func(t *testing.T) {
-		_, _, sm := newServer(defaultServerName, "stdio", disabledTools{enabledTools: "search"}, obs, 0, "")
+		_, sm := newServer(defaultServerName, "stdio", disabledTools{enabledTools: "search"}, obs, 0, "")
 		defer sm.Close()
 
 		session := &testClientSession{id: "should-persist"}
@@ -114,7 +114,7 @@ func TestBuildInstructions_ReflectsEnabledCategories(t *testing.T) {
 		{
 			name:         "empty enabled list shows no capabilities",
 			enabledTools: "",
-			disableFlags: map[string]bool{"proxied": true},
+			disableFlags: map[string]bool{"tempo": true},
 			wantContains: []string{
 				"No tool categories are currently enabled.",
 			},
@@ -124,7 +124,7 @@ func TestBuildInstructions_ReflectsEnabledCategories(t *testing.T) {
 		},
 		{
 			name:         "agento11y excluded unless opted in",
-			enabledTools: "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering,plugin,api,config,provisioning",
+			enabledTools: "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,tempo,annotations,rendering,plugin,api,config,provisioning",
 			wantContains: []string{
 				"Search:",
 			},
@@ -152,7 +152,7 @@ func TestBuildInstructions_ReflectsEnabledCategories(t *testing.T) {
 		},
 		{
 			name:         "assistant excluded unless opted in",
-			enabledTools: "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,proxied,annotations,rendering,plugin,api,config,provisioning",
+			enabledTools: "search,datasource,incident,prometheus,loki,alerting,dashboard,folder,oncall,asserts,sift,pyroscope,navigation,tempo,annotations,rendering,plugin,api,config,provisioning",
 			wantContains: []string{
 				"Search:",
 			},
@@ -265,8 +265,8 @@ func TestBuildInstructions_ReflectsEnabledCategories(t *testing.T) {
 				if tc.disableFlags["prometheus"] {
 					dt.prometheus = true
 				}
-				if tc.disableFlags["proxied"] {
-					dt.proxied = true
+				if tc.disableFlags["tempo"] {
+					dt.tempo = true
 				}
 				if tc.disableFlags["agento11y"] {
 					dt.agento11y = true
@@ -402,7 +402,7 @@ func TestBuildInstructions_SQLAliasBackCompat(t *testing.T) {
 func TestNewServer_SessionIdleTimeoutCustomValue(t *testing.T) {
 	obs := newTestObservability(t)
 	synctest.Test(t, func(t *testing.T) {
-		_, _, sm := newServer(defaultServerName, "stdio", disabledTools{enabledTools: "search"}, obs, 1, "")
+		_, sm := newServer(defaultServerName, "stdio", disabledTools{enabledTools: "search"}, obs, 1, "")
 		defer sm.Close()
 
 		session := &testClientSession{id: "custom-ttl"}
@@ -801,7 +801,7 @@ func TestHTTPAllowedHostsLoopbackProxy(t *testing.T) {
 					port := strconv.Itoa(listener.Addr().(*net.TCPAddr).Port)
 					require.NoError(t, listener.Close())
 					addr := "127.0.0.1:" + port
-					args := []string{"--transport=" + transport, "--address=0.0.0.0:" + port, "--enabled-tools=", "--disable-proxied"}
+					args := []string{"--transport=" + transport, "--address=0.0.0.0:" + port, "--enabled-tools=", "--disable-tempo"}
 					args = append(args, tc.flags...)
 					cmd := exec.CommandContext(t.Context(), bin, args...)
 					cmd.Env = env
@@ -1089,7 +1089,7 @@ func TestValidateServerName(t *testing.T) {
 
 func TestNewServer_DefaultServerName(t *testing.T) {
 	obs := newTestObservability(t)
-	s, _, sm := newServer(defaultServerName, "stdio", disabledTools{enabledTools: "search"}, obs, 0, "")
+	s, sm := newServer(defaultServerName, "stdio", disabledTools{enabledTools: "search"}, obs, 0, "")
 	defer sm.Close()
 
 	name := getServerNameFromInitialize(t, s)
@@ -1098,7 +1098,7 @@ func TestNewServer_DefaultServerName(t *testing.T) {
 
 func TestNewServer_CustomServerName(t *testing.T) {
 	obs := newTestObservability(t)
-	s, _, sm := newServer("my-custom-server", "stdio", disabledTools{enabledTools: "search"}, obs, 0, "")
+	s, sm := newServer("my-custom-server", "stdio", disabledTools{enabledTools: "search"}, obs, 0, "")
 	defer sm.Close()
 
 	name := getServerNameFromInitialize(t, s)
@@ -1108,9 +1108,9 @@ func TestNewServer_CustomServerName(t *testing.T) {
 func TestNewServer_MultiInstanceDistinctNames(t *testing.T) {
 	obs := newTestObservability(t)
 
-	sAlpha, _, smAlpha := newServer("instance-alpha", "stdio", disabledTools{enabledTools: "search"}, obs, 0, "")
+	sAlpha, smAlpha := newServer("instance-alpha", "stdio", disabledTools{enabledTools: "search"}, obs, 0, "")
 	defer smAlpha.Close()
-	sBeta, _, smBeta := newServer("instance-beta", "stdio", disabledTools{enabledTools: "search"}, obs, 0, "")
+	sBeta, smBeta := newServer("instance-beta", "stdio", disabledTools{enabledTools: "search"}, obs, 0, "")
 	defer smBeta.Close()
 
 	nameAlpha := getServerNameFromInitialize(t, sAlpha)
@@ -1123,7 +1123,7 @@ func TestNewServer_MultiInstanceDistinctNames(t *testing.T) {
 
 func TestCustomServerName_DoesNotAffectUserAgent(t *testing.T) {
 	obs := newTestObservability(t)
-	s, _, sm := newServer("my-custom-instance", "stdio", disabledTools{enabledTools: "search"}, obs, 0, "")
+	s, sm := newServer("my-custom-instance", "stdio", disabledTools{enabledTools: "search"}, obs, 0, "")
 	defer sm.Close()
 
 	name := getServerNameFromInitialize(t, s)
@@ -1566,7 +1566,7 @@ func TestRegisterOps_HealthzAddressDoesNotEnableMetrics(t *testing.T) {
 // error (-32603) with a bare Go unmarshal message. See issue #830.
 func TestNewServer_InvalidArgumentTypeReturnsToolErrorNotProtocolError(t *testing.T) {
 	obs := newTestObservability(t)
-	s, _, sm := newServer(defaultServerName, "stdio", disabledTools{enabledTools: "datasource"}, obs, 0, "")
+	s, sm := newServer(defaultServerName, "stdio", disabledTools{enabledTools: "datasource"}, obs, 0, "")
 	defer sm.Close()
 
 	c, err := client.NewInProcessClient(s)
@@ -1599,7 +1599,7 @@ func TestNewServer_InvalidArgumentTypeReturnsToolErrorNotProtocolError(t *testin
 // setups. See #1140.
 func TestListToolsResult_IncludesRequiredFields(t *testing.T) {
 	obs := newTestObservability(t)
-	s, _, sm := newServer(defaultServerName, "stdio", disabledTools{enabledTools: "search"}, obs, 0, "")
+	s, sm := newServer(defaultServerName, "stdio", disabledTools{enabledTools: "search"}, obs, 0, "")
 	defer sm.Close()
 
 	// Send a legacy-protocol tools/list request (no _meta.protocolVersion).
