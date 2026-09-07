@@ -336,7 +336,13 @@ func ConvertTool[T any, R any](name, description string, toolHandler ToolHandler
 		if err := unmarshalWithIntConversion(argBytes, unmarshaledArgs); err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, "failed to unmarshal arguments")
-			return nil, fmt.Errorf("unmarshal args: %s", err)
+			// A type mismatch that survives unmarshalWithIntConversion's
+			// coercion is a client/agent input error, not a server fault:
+			// return it as a structured tool result (IsError: true), same as
+			// the unknown-arguments check above, so the agent can see what
+			// was wrong and self-correct instead of the call escaping as a
+			// raw JSON-RPC -32603 internal error.
+			return mcp.NewToolResultError(fmt.Sprintf("invalid arguments: %s", err)), nil
 		}
 
 		// Need to dereference the unmarshaled arguments
